@@ -119,16 +119,48 @@ import {
   moveNoteText,
   moveVerdict,
   notMovedMessage,
-  openUntil,
   overInCrm,
   PUT_MAY_LAND_MS,
   PUT_OK_NOTE,
   rescheduledMarkMessage,
+  rescheduleLink,
+  CUSTOM_STEP_MIN,
+  firstName as firstWord,
+  LATE_AFTER_MS,
+  kuwaitDay,
   sameTime,
   SLOT_DAYS,
   STALE_MOVING_MS,
   TOLD_HOW,
 } from "./reschedule.ts";
+import {
+  addDays,
+  busyMessage,
+  type BusyRow,
+  customCheck,
+  dayStartMs,
+  dayWords,
+  daysBetween,
+  extendedRanges,
+  farDays,
+  type FarState,
+  farNote,
+  freeLine,
+  hasHours,
+  hostWeek,
+  hostWindows,
+  hoursWords,
+  busyOf,
+  outsideMessage,
+  ownDays,
+  pageOf,
+  type Placement,
+  reachDaysOf,
+  reachUntil,
+  type Schedule,
+  type SlotDay,
+  windowUntil,
+} from "./farout.ts";
 import { clientDraftClosed, clientFacts, clientRefusal, DEAL_COLS, isClient, readClient } from "./clients.ts";
 import { CLIENT_MOVE_REFUSAL, closedCard, closedColumn, closedCounts, closedIsMine, myNames, OPEN_FIELDS, placeLead, sortClosed } from "./board.ts";
 import {
@@ -5089,6 +5121,225 @@ async function freeSlots(calendarId: string, from: number, to: number, userId: s
   return parseSlots(await ghl("GET", `/calendars/${enc(calendarId)}/free-slots?${q}`), Date.now());
 }
 
+// ---------------------------------------------------------------------------
+// Past the booking page (2026-10-11, farout.ts): the host's own hours and
+// calendar, read from HighLevel, so a rep can book or move a call further out
+// than the lead's own booking page reaches, on the same calendars, without
+// opening the public windows. Every read goes through ghl(), sales-api's one
+// HighLevel door (with its User-Agent and deadline); a failed read is logged
+// ("schedules unread", "host's calendar unread", "extended free slots
+// unread") and said on the picker, never shown as no free time. Only the
+// schedules are cached.
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 86_400_000;
+let scheduleCache: { at: number; list: Schedule[] } | null = null;
+
+/** Every availability schedule in the sub-account (HighLevel's "Work Hours"), cached ten minutes like the calendars. */
+async function schedulesFor(): Promise<Schedule[]> {
+  if (scheduleCache && Date.now() - scheduleCache.at < 10 * 60_000) return scheduleCache.list;
+  const d = await ghl("GET", `/calendars/schedules/search?locationId=${LOCATION}`);
+  if (!Array.isArray(d.schedules))
+    throw Object.assign(new Error("HighLevel's answer for the availability schedules had no list in it"), { status: 0 });
+  const list = d.schedules as Schedule[];
+  scheduleCache = { at: Date.now(), list };
+  return list;
+}
+
+/**
+ * The host's taken time from HighLevel, a day either side of the range: their
+ * appointments on every calendar (with each calendar's buffers) and their
+ * blocked time, Google Calendar events included. `exceptId`: the call being
+ * moved. An answer with no list in it is unread, never "free".
+ */
+async function hostBusy(userId: string, fromMs: number, toMs: number, exceptId: string | null = null): Promise<BusyRow[]> {
+  const q = `locationId=${LOCATION}&userId=${enc(userId)}&startTime=${Math.floor(fromMs - DAY_MS)}&endTime=${Math.ceil(toMs + DAY_MS)}`;
+  const [ev, bl] = await Promise.all([ghl("GET", `/calendars/events?${q}`), ghl("GET", `/calendars/blocked-slots?${q}`)]);
+  if (!Array.isArray(ev.events)) throw Object.assign(new Error("HighLevel's answer for the host's calls had no list in it"), { status: 0 });
+  if (!Array.isArray(bl.events)) throw Object.assign(new Error("HighLevel's answer for the host's blocked time had no list in it"), { status: 0 });
+  const events = ev.events as Row[];
+  const cals: Record<string, Row> = {};
+  await Promise.all(
+    [...new Set(events.map(e => String(e.calendarId ?? "")).filter(Boolean))].map(async id => {
+      try {
+        cals[id] = await calendarInfo(id);
+      } catch {
+        // A calendar that cannot be read adds no buffer; HighLevel's own check still runs on a far time.
+      }
+    }),
+  );
+  return busyOf(events, bl.events as Row[], cals, exceptId);
+}
+
+/**
+ * HighLevel's own free times for the host past the calendar's window
+ * (free-slots with ignoreDateRange=true: not in HighLevel's docs, read
+ * 2026-10-11), at most 31 days a call. Null when any call fails (logged):
+ * the cockpit's own times then stand, each checked by HighLevel at the write.
+ */
+async function extendedSlots(calendarId: string, userId: string, fromMs: number, toMs: number): Promise<SlotDay[] | null> {
+  try {
+    const out: SlotDay[] = [];
+    for (const [a, b] of extendedRanges(fromMs, toMs)) {
+      const q = new URLSearchParams({
+        startDate: String(Math.floor(a)),
+        endDate: String(Math.ceil(b)),
+        timezone: "Asia/Kuwait",
+        userId,
+        ignoreDateRange: "true",
+      });
+      out.push(...parseSlots(await ghl("GET", `/calendars/${enc(calendarId)}/free-slots?${q}`), Date.now()));
+    }
+    return out;
+  } catch (e) {
+    console.error("extended free slots unread", redact(String((e as Error)?.message ?? e)));
+    return null;
+  }
+}
+
+/** The booking setting's reach in days (60 when the row is absent), or null when the setting could not be read. */
+async function reachDays(): Promise<number | null> {
+  try {
+    return reachDaysOf(await setting<Row>("booking"));
+  } catch (e) {
+    console.error("booking setting unread", redact(String((e as Error)?.message ?? e)));
+    return null;
+  }
+}
+
+type FarHost = { user_id: string; name: string | null };
+
+/**
+ * The far-out part of a page: each host's own times on the page's days past
+ * the window, kept where HighLevel's extended answer agrees. A host with no
+ * hours on the calendar in the coming week is left out; every host without
+ * hours is "none". Any read that fails makes the part "unread", with no far
+ * times at all: missing is never shown as no free time.
+ */
+async function farPart(o: {
+  calendarId: string;
+  cal: Row;
+  hosts: FarHost[];
+  days: string[];
+  windowEnd: string;
+  reachEnd: string;
+  exceptId: string | null;
+  now: number;
+}): Promise<{ state: FarState; agreed: boolean | null; perUser: (FarHost & { days: SlotDay[] })[]; failed: string | null; schedules: Schedule[] | null }> {
+  let schedules: Schedule[];
+  try {
+    schedules = await schedulesFor();
+  } catch (e) {
+    console.error("schedules unread", redact(String((e as Error)?.message ?? e)));
+    return { state: "unread", agreed: null, perUser: [], failed: o.hosts[0]?.name ?? null, schedules: null };
+  }
+  const first = o.days[0];
+  if (!first) return { state: "ok", agreed: null, perUser: [], failed: null, schedules };
+  const week = daysBetween(first, addDays(first, 6));
+  const working = o.hosts.filter(h => hasHours(schedules, o.cal, o.calendarId, h.user_id, week));
+  if (!working.length) return { state: "none", agreed: null, perUser: [], failed: null, schedules };
+  const from = Math.max(o.now, dayStartMs(first));
+  const to = dayStartMs(o.days[o.days.length - 1] as string) + DAY_MS;
+  const reads = await Promise.all(
+    working.map(async h => {
+      try {
+        const [busy, ext] = await Promise.all([hostBusy(h.user_id, from, to, o.exceptId), extendedSlots(o.calendarId, h.user_id, from, to)]);
+        const own = ownDays({ schedules, cal: o.cal, calendarId: o.calendarId, userId: h.user_id, busy, days: o.days, now: o.now });
+        const far = farDays(own, ext, o.windowEnd, o.reachEnd);
+        return { host: h, days: far.days, agreed: far.agreed, ok: true };
+      } catch (e) {
+        console.error("host's calendar unread", redact(String((e as Error)?.message ?? e)));
+        return { host: h, days: [] as SlotDay[], agreed: false, ok: false };
+      }
+    }),
+  );
+  const bad = reads.find(r => !r.ok);
+  if (bad) return { state: "unread", agreed: null, perUser: [], failed: bad.host.name, schedules };
+  return {
+    state: "ok",
+    agreed: reads.every(r => r.agreed),
+    perUser: reads.map(r => ({ ...r.host, days: r.days })),
+    failed: null,
+    schedules,
+  };
+}
+
+/**
+ * book.slots' page (both modes): HighLevel's own times inside the window,
+ * exactly as before, then the far-out times past it (with their hosts named
+ * when the tiles go to whoever is free), where the window ends, the reach,
+ * the page, the host's hours and who a custom time can go to.
+ */
+async function slotsPage(o: {
+  calendarId: string;
+  cal: Row;
+  now: number;
+  from: unknown;
+  /** HighLevel's normal free-slots answer for SLOT_DAYS days, as the window part read it. */
+  windowDays: SlotDay[];
+  windowHosts?: Record<string, FarHost>;
+  /** Whose far times, in order; one host when the tiles are the host's own. */
+  farHosts: FarHost[];
+  /** The far tiles name who takes each (anyone free, or the host had no time). */
+  named: boolean;
+  exceptId: string | null;
+  customHost: FarHost | null;
+  team: FarHost[];
+}): Promise<Row> {
+  const windowEnd = windowUntil(o.windowDays, o.cal, o.now);
+  const reach = await reachDays();
+  const reachRaw = reach === null ? windowEnd : reachUntil(o.now, reach);
+  const reachEnd = reachRaw > windowEnd ? reachRaw : windowEnd;
+  const page = pageOf(o.now, o.from, reachEnd);
+  const inPage = (d: string) => d >= page.from && d <= page.to;
+  const windowPart = o.windowDays.filter(d => inPage(d.day));
+  const farFrom = page.from > windowEnd ? page.from : addDays(windowEnd, 1);
+  const farList = daysBetween(farFrom, page.to);
+  const single = o.named ? null : (o.farHosts[0]?.name ?? null);
+  let far: { state: FarState; agreed: boolean | null; note: string | null };
+  let farOut: (SlotDay & { far: true })[] = [];
+  let farHosts: Record<string, FarHost> = {};
+  let schedules: Schedule[] | null = null;
+  if (reach === null) far = { state: "unread", agreed: null, note: farNote("unread", single, windowEnd, "setting") };
+  else {
+    const part = await farPart({
+      calendarId: o.calendarId,
+      cal: o.cal,
+      hosts: o.farHosts,
+      days: farList,
+      windowEnd,
+      reachEnd,
+      exceptId: o.exceptId,
+      now: o.now,
+    });
+    schedules = part.schedules;
+    if (part.state === "ok") {
+      if (o.named) {
+        const m = mergeTeamSlots(part.perUser);
+        farOut = m.days.map(d => ({ ...d, far: true as const }));
+        farHosts = m.slot_hosts;
+      } else farOut = (part.perUser[0]?.days ?? []).map(d => ({ ...d, far: true as const }));
+    }
+    far = { state: part.state, agreed: part.agreed, note: farNote(part.state, part.state === "unread" ? part.failed : single, windowEnd) };
+  }
+  const hosts = { ...(o.windowHosts ?? {}), ...farHosts };
+  const ch = o.customHost;
+  return {
+    until: far.state === "ok" && reach !== null ? reachEnd : windowEnd,
+    window_until: windowEnd,
+    reach_until: reachEnd,
+    page,
+    days: [...windowPart, ...farOut].sort((a, b) => a.day.localeCompare(b.day)),
+    ...(Object.keys(hosts).length ? { slot_hosts: hosts } : {}),
+    far,
+    host_hours:
+      ch && schedules
+        ? { user_id: ch.user_id, name: ch.name, week: hostWeek({ schedules, cal: o.cal, calendarId: o.calendarId, userId: ch.user_id, now: o.now }) }
+        : null,
+    custom: { host: ch, hosts: o.team, step_min: CUSTOM_STEP_MIN },
+  };
+}
+
 /**
  * The lead's next intro or demo on HighLevel's calendar, if one is booked,
  * with its end, its rep and its status (the live count moves it only when it
@@ -5272,17 +5523,25 @@ async function moveGate(who: Who, m: MovePlan, now: number): Promise<{ lead: Row
 }
 
 /**
- * The free times to book or reschedule a call, 14 days asked (HighLevel
- * still returns only what each calendar opens: D10).
+ * The free times to book or reschedule a call. Inside the calendar's window
+ * they are HighLevel's own, 14 days asked (D10), exactly as before; past it,
+ * up to the booking setting's reach (60 days), the cockpit's own times from
+ * the host's hours and calendar, kept where HighLevel's extended answer
+ * agrees (farout.ts). `from` ("YYYY-MM-DD") asks for a later page of two
+ * weeks; the window part is read every time, so `window_until` is always
+ * HighLevel's own.
  *
  * Booking ({contact_id, kind, with: "me" | "anyone"}): the rep's own times
  * when they are on the calendar, else the team's (the calendar's round robin
- * picks who takes it), and the lead's call of that kind already ahead.
+ * picks who takes it), and the lead's call of that kind already ahead. Far
+ * tiles with anyone name who takes each (slot_hosts).
  *
  * Rescheduling ({appointment_id, with: "same" | "anyone"}): judged first
  * (not_yours, client, over, held, late), then the same host's times on the
  * call's own calendar (D7). A host with no free time, or "anyone" asked,
- * gives each teammate's times with who takes each (slot_hosts).
+ * gives each teammate's times with who takes each (slot_hosts). The lead's
+ * own link to pick another time (reschedule_link) where the calendar lets
+ * them (intros and Follow up call).
  */
 async function bookSlots(who: Who, b: Row) {
   const now = Date.now();
@@ -5295,30 +5554,45 @@ async function bookSlots(who: Who, b: Row) {
     let days: { day: string; slots: string[] }[] = anyone ? [] : await freeSlots(m.calendarId, now, to, m.userId);
     const fallback = !anyone && !days.length;
     let slotHosts: Record<string, { user_id: string; name: string | null }> | undefined;
+    const names = await namesByUser([m.userId, ...team]);
     if (anyone || fallback) {
       // The host first when anyone is asked; a host with no time is left out.
       const ids = [...(anyone && m.userId ? [m.userId] : []), ...team.filter(u => u !== m.userId)];
       if (ids.length) {
-        const names = await namesByUser(ids);
         const per = await Promise.all(
           ids.map(async u => ({ user_id: u, name: names.get(u) ?? null, days: await freeSlots(m.calendarId, now, to, u) })),
         );
         ({ days, slot_hosts: slotHosts } = mergeTeamSlots(per));
       } else days = await freeSlots(m.calendarId, now, to, null);
     }
+    const named = anyone || fallback;
+    const host = m.userId ? { user_id: m.userId, name: g.hostName } : null;
+    // Past the window: the host's own times, or (anyone, no time) the call's host first, then the team.
+    const farIds = named ? [...(m.userId ? [m.userId] : []), ...team.filter(u => u !== m.userId)] : m.userId ? [m.userId] : [];
+    const page = await slotsPage({
+      calendarId: m.calendarId,
+      cal: m.cal,
+      now,
+      from: b.from,
+      windowDays: days,
+      windowHosts: slotHosts,
+      farHosts: farIds.map(u => ({ user_id: u, name: u === m.userId ? (g.hostName ?? names.get(u) ?? null) : (names.get(u) ?? null) })),
+      named,
+      exceptId: m.id,
+      customHost: host,
+      team: team.map(u => ({ user_id: u, name: names.get(u) ?? null })),
+    });
     return {
       kind: m.kind,
       calendar_id: m.calendarId,
       calendar: String(m.cal.name ?? ""),
       minutes: m.minutes,
-      with: anyone || fallback ? "anyone" : "same",
+      with: named ? "anyone" : "same",
       fallback,
       on_team: Boolean(who.ghl_user_id && team.includes(String(who.ghl_user_id))),
       host: { user_id: m.userId, name: g.hostName },
       notice: noticeWords(m.kind, m.cal),
-      until: openUntil(m.cal, days, now),
-      days,
-      ...(slotHosts ? { slot_hosts: slotHosts } : {}),
+      ...page,
       existing: null,
       moving: {
         id: m.id,
@@ -5329,9 +5603,9 @@ async function bookSlots(who: Who, b: Row) {
         after_start: now > m.start,
       },
       booking_url: bookingUrl(m.calendarId, m.cal),
-      // D17: HighLevel's per-call reschedule link is not confirmed, so none
-      // is offered (a booking page's link would make a second call).
-      reschedule_link: null,
+      // D17, confirmed 2026-10-11 (reschedule.ts rescheduleLink): the lead's
+      // own link to this call's reschedule page, where HighLevel allows it.
+      reschedule_link: rescheduleLink(m.calendarId, m.cal, m.id),
     };
   }
   const p = await bookingPlan(who, b);
@@ -5344,6 +5618,23 @@ async function bookSlots(who: Who, b: Row) {
   const fallback = p.withMe && !mine.length;
   const days = fallback ? await freeSlots(p.calendarId, now, to, null) : mine;
   const withMe = p.withMe && !fallback;
+  const team = teamOf(p.cal);
+  const me = who.ghl_user_id ? String(who.ghl_user_id) : null;
+  const names = await namesByUser(team);
+  const nameOf = (u: string) => (u === me ? ((who.name as string) ?? names.get(u) ?? null) : (names.get(u) ?? null));
+  const farIds = withMe && me ? [me] : [...(p.onTeam && me ? [me] : []), ...team.filter(u => u !== me)];
+  const page = await slotsPage({
+    calendarId: p.calendarId,
+    cal: p.cal,
+    now,
+    from: b.from,
+    windowDays: days,
+    farHosts: farIds.map(u => ({ user_id: u, name: nameOf(u) })),
+    named: !withMe,
+    exceptId: null,
+    customHost: p.onTeam && me ? { user_id: me, name: nameOf(me) } : null,
+    team: team.map(u => ({ user_id: u, name: nameOf(u) })),
+  });
   return {
     kind: p.kind,
     calendar_id: p.calendarId,
@@ -5354,15 +5645,185 @@ async function bookSlots(who: Who, b: Row) {
     on_team: p.onTeam,
     host: { user_id: withMe ? p.userId : null, name: withMe ? ((who.name as string) ?? null) : null },
     notice: noticeWords(p.kind, p.cal),
-    until: openUntil(p.cal, days, now),
-    days,
+    ...page,
     existing: existing
       ? { id: existing.id, start: isoAt(existing.start), words: kuwaitWords12(existing.start), kind: p.kind }
       : null,
     moving: null,
     booking_url: bookingUrl(p.calendarId, p.cal),
+    // A call not booked yet has no reschedule page.
     reschedule_link: null,
   };
+}
+
+/** How a time is placed, who it goes to and the flags HighLevel's write carries; the audit row keeps all of it. */
+interface Place {
+  placement: Placement;
+  host: string | null;
+  flags: { ignoreDateRange: boolean; ignoreFreeSlotValidation: boolean };
+  window_until: string | null;
+  reach_days: number | null;
+  agreed_by_highlevel?: boolean | null;
+  outside_hours?: boolean;
+  host_checked_at?: string | null;
+}
+
+/** One of HighLevel's own offered times: written exactly as before 2026-10-11. */
+function windowPlace(host: string | null): Place {
+  return { placement: "window", host, flags: { ignoreDateRange: false, ignoreFreeSlotValidation: false }, window_until: null, reach_days: null };
+}
+
+/** The audit's metadata for how a call was placed (decision 2: every far-out or custom booking and move says so). */
+function placeMeta(p: Place): Row {
+  return {
+    placement: p.placement,
+    window_until: p.window_until,
+    reach_days: p.reach_days,
+    flags: { ...p.flags },
+    ...(p.placement === "far_out" ? { agreed_by_highlevel: p.agreed_by_highlevel ?? null } : {}),
+    ...(p.placement === "custom" ? { outside_hours: Boolean(p.outside_hours), host_checked_at: p.host_checked_at ?? null } : {}),
+  };
+}
+
+const possessiveOf = (name: string | null) => {
+  const n = firstWord(name);
+  return n ? (n.endsWith("s") ? `${n}'` : `${n}'s`) : "The host's";
+};
+
+/** The host's calendar could not be read, so a time past the window or a custom time cannot be checked. */
+function farUnread(hostName: string | null): Refusal {
+  return new Refusal(`${possessiveOf(hostName)} calendar could not be read just now, so that time can't be checked. Try again in a minute.`, 503, {
+    code: "far_unread",
+  });
+}
+
+/** The host's hours and taken time on a custom time's day, read fresh, and the time judged against them. */
+async function customRead(o: { calendarId: string; cal: Row; host: string; hostName: string | null; start: number; now: number; reachEnd: string; exceptId: string | null }) {
+  const day = kuwaitDay(o.start);
+  const at = Date.now();
+  let schedules: Schedule[];
+  let busy: BusyRow[];
+  try {
+    [schedules, busy] = await Promise.all([schedulesFor(), hostBusy(o.host, dayStartMs(day), dayStartMs(day) + DAY_MS, o.exceptId)]);
+  } catch (e) {
+    console.error("custom time unread", redact(String((e as Error)?.message ?? e)));
+    throw farUnread(o.hostName);
+  }
+  const windows = hostWindows(schedules, o.cal, o.calendarId, o.host, day);
+  return { at, windows, check: customCheck({ cal: o.cal, windows, busy, start: o.start, now: o.now, reachUntil: o.reachEnd }) };
+}
+
+/**
+ * A custom time's clash check once more, from a fresh read, right before
+ * HighLevel is written: with ignoreFreeSlotValidation HighLevel books right
+ * over a clash (2026-10-11, row 9), so this is the only guard. The refusal,
+ * or null; the read's time goes on the placement for the audit.
+ */
+async function customRecheck(place: Place, o: { calendarId: string; cal: Row; start: number; exceptId: string | null }): Promise<Refusal | null> {
+  const host = place.host as string;
+  const names = await namesByUser([host]);
+  const hostName = names.get(host) ?? null;
+  try {
+    const r = await customRead({ ...o, host, hostName, now: Date.now(), reachEnd: "9999-12-31" });
+    place.host_checked_at = isoAt(r.at);
+    return r.check.clash ? new Refusal(busyMessage(r.check.clash, hostName), 409, { code: "host_busy" }) : null;
+  } catch (e) {
+    return e instanceof Refusal ? e : farUnread(hostName);
+  }
+}
+
+/**
+ * A time HighLevel's own free slots for that day do not offer (book.create,
+ * book.move), placed from fresh reads or refused with what to do next:
+ * - custom: any time to the 5-minute mark up to the reach, for a named host,
+ *   clear of their calls and blocked time; outside their working hours only
+ *   when the rep pressed Book anyway. Written with both flags on.
+ * - otherwise a far-out time: past the window, up to the reach, one of the
+ *   host's own free times that HighLevel's extended answer also has (when it
+ *   could be read). Written with ignoreDateRange only, so HighLevel checks
+ *   the slot again. Inside the window a time HighLevel does not offer is
+ *   taken, as before.
+ */
+async function placeAway(o: {
+  calendarId: string;
+  cal: Row;
+  team: string[];
+  start: number;
+  now: number;
+  custom: boolean;
+  outsideOk: boolean;
+  /** Who takes the call, or null to pick the first teammate free then (a far tile booked with anyone). */
+  host: string | null;
+  /** Whose free slots the window is judged by: the host, me, or the round robin (null). */
+  windowUser: string | null;
+  /** The call being moved, which never blocks itself. */
+  exceptId: string | null;
+}): Promise<Place> {
+  const names = await namesByUser([o.host]);
+  const hostName = o.host ? (names.get(o.host) ?? null) : null;
+  const reach = await reachDays();
+  if (reach === null)
+    throw new Refusal("The cockpit's booking setting could not be read just now, so that time can't be checked. Try again in a minute.", 503, {
+      code: "far_unread",
+    });
+  const reachEnd = reachUntil(o.now, reach);
+  const day = kuwaitDay(o.start);
+  const beyond = () => new Refusal(`Pick a day up to ${dayWords(reachEnd)}.`, 400, { code: "beyond_reach" });
+  if (o.custom) {
+    if (o.start <= o.now + 5 * 60_000)
+      throw new Refusal("That time has passed or starts in under 5 minutes. Pick a later one.", 400, { code: "past" });
+    if (o.start % (CUSTOM_STEP_MIN * 60_000) !== 0) throw new Refusal("Pick a time on the 5-minute mark.", 400, { code: "step" });
+    if (day > reachEnd) throw beyond();
+    if (!o.host) throw new Refusal("Pick who takes the call.", 400, { code: "host_needed" });
+    const r = await customRead({ calendarId: o.calendarId, cal: o.cal, host: o.host, hostName, start: o.start, now: o.now, reachEnd, exceptId: o.exceptId });
+    if (r.check.clash) throw new Refusal(busyMessage(r.check.clash, hostName), 409, { code: "host_busy" });
+    if (r.check.outside && !o.outsideOk)
+      throw new Refusal(outsideMessage(hostName, r.windows, day), 409, { code: "outside_hours", hours_words: hoursWords(r.windows) });
+    return {
+      placement: "custom",
+      host: o.host,
+      flags: { ignoreDateRange: true, ignoreFreeSlotValidation: true },
+      window_until: null,
+      reach_days: reach,
+      outside_hours: r.check.outside,
+      host_checked_at: isoAt(r.at),
+    };
+  }
+  const taken = () => new Refusal("That time was just taken. Pick another.", 409, { code: "taken" });
+  const windowEnd = windowUntil(await freeSlots(o.calendarId, o.now, o.now + SLOT_DAYS * DAY_MS, o.windowUser), o.cal, o.now);
+  if (day <= windowEnd) throw taken();
+  if (day > reachEnd) throw beyond();
+  let schedules: Schedule[];
+  try {
+    schedules = await schedulesFor();
+  } catch (e) {
+    console.error("schedules unread", redact(String((e as Error)?.message ?? e)));
+    throw farUnread(hostName);
+  }
+  const dayStart = dayStartMs(day);
+  for (const u of o.host ? [o.host] : o.team) {
+    if (!hostWindows(schedules, o.cal, o.calendarId, u, day).length) continue;
+    let busy: BusyRow[];
+    try {
+      busy = await hostBusy(u, dayStart, dayStart + DAY_MS, o.exceptId);
+    } catch (e) {
+      console.error("host's calendar unread", redact(String((e as Error)?.message ?? e)));
+      throw farUnread(u === o.host ? hostName : ((await namesByUser([u])).get(u) ?? null));
+    }
+    const ext = await extendedSlots(o.calendarId, u, Math.max(o.now, dayStart), dayStart + DAY_MS);
+    const own = ownDays({ schedules, cal: o.cal, calendarId: o.calendarId, userId: u, busy, days: [day], now: o.now });
+    const far = farDays(own, ext, windowEnd, reachEnd);
+    if (far.days.some(d => d.slots.some(s => Date.parse(s) === o.start)))
+      return {
+        placement: "far_out",
+        host: u,
+        flags: { ignoreDateRange: true, ignoreFreeSlotValidation: false },
+        window_until: windowEnd,
+        reach_days: reach,
+        agreed_by_highlevel: far.agreed,
+      };
+  }
+  throw taken();
 }
 
 async function bookCreate(who: Who, b: Row) {
@@ -5373,6 +5834,13 @@ async function bookCreate(who: Who, b: Row) {
   const note = cleanText(b.note, 4000);
   if (note.length < 3)
     throw new Refusal("Write a line on the call, so whoever takes it knows what was said.", 400, { code: "note_needed" });
+  // Who a far tile or a custom time goes to (book.slots names them): someone on this calendar.
+  const team = teamOf(p.cal);
+  const asked = cleanText(b.user_id, 80) || null;
+  if (asked && !team.includes(asked))
+    throw new Refusal("That person is not on this calendar. Pick a time from the list.", 400, { code: "host" });
+  const me = who.ghl_user_id ? String(who.ghl_user_id) : null;
+  const custom = b.custom === true;
   // Where it was pressed (the lead page, Today, the Calendar, the dialer, a script).
   const source: MoveSource | null = (MOVE_SOURCES as readonly string[]).includes(String(b.source))
     ? (String(b.source) as MoveSource)
@@ -5420,10 +5888,25 @@ async function bookCreate(who: Who, b: Row) {
       code: "already_booked",
       existing: { id: existing.id, start: isoAt(existing.start), words: kuwaitWords12(existing.start), kind: p.kind },
     });
+  // One of HighLevel's own times that day: as before. Otherwise a far-out
+  // time past the calendar's window or a custom time, checked from fresh
+  // reads (placeAway); inside the window it was just taken.
   const dayStart = kuwaitAt(start, 0);
   const days = await freeSlots(p.calendarId, Math.max(Date.now(), dayStart), dayStart + 86_400_000, p.userId);
-  if (!slotOffered(new Date(start).toISOString(), days))
-    throw new Refusal("That time was just taken. Pick another.", 409, { code: "taken" });
+  const place = slotOffered(new Date(start).toISOString(), days)
+    ? windowPlace(p.userId)
+    : await placeAway({
+        calendarId: p.calendarId,
+        cal: p.cal,
+        team: [...(p.onTeam && me ? [me] : []), ...team.filter(u => u !== me)],
+        start,
+        now: Date.now(),
+        custom,
+        outsideOk: b.outside_hours_ok === true,
+        host: asked ?? (custom ? (p.onTeam ? me : null) : p.userId),
+        windowUser: p.userId,
+        exceptId: null,
+      });
 
   const end = start + p.minutes * 60_000;
   // Never on top of another live call of the same lead (D44).
@@ -5440,7 +5923,7 @@ async function bookCreate(who: Who, b: Row) {
         calendar_id: p.calendarId,
         start_at: new Date(start).toISOString(),
         end_at: new Date(end).toISOString(),
-        assigned_user_id: p.userId,
+        assigned_user_id: place.host ?? p.userId,
         rep_email: who.email,
         note,
         source,
@@ -5459,8 +5942,22 @@ async function bookCreate(who: Who, b: Row) {
       prefer: "return=representation",
     }).then(r => r[0] ?? { ...booking, ...body });
 
+  // A custom time is checked against the host's calendar once more, right
+  // before the write: HighLevel itself books over a clash with the flag on.
+  if (place.placement === "custom") {
+    const no = await customRecheck(place, { calendarId: p.calendarId, cal: p.cal, start, exceptId: null });
+    if (no) {
+      const row = await finish({ state: "failed", error: no.message });
+      await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, { ...placeMeta(place), refused: no.extra.code ?? null });
+      throw no;
+    }
+  }
+
   let apptId = "";
   try {
+    // Inside the window: HighLevel's own checks, as before. Far out: past
+    // the date range, the slot still checked by HighLevel. Custom: both
+    // flags, always with the host (HighLevel answers 422 without one).
     const d = await ghl("POST", "/calendars/events/appointments", {
       calendarId: p.calendarId,
       locationId: LOCATION,
@@ -5469,9 +5966,9 @@ async function bookCreate(who: Who, b: Row) {
       endTime: new Date(end).toISOString(),
       title: String(p.lead.name ?? "Sales call").slice(0, 120),
       appointmentStatus: "confirmed",
-      ...(p.userId ? { assignedUserId: p.userId } : {}),
-      ignoreFreeSlotValidation: false,
-      ignoreDateRange: false,
+      ...(place.host ? { assignedUserId: place.host } : {}),
+      ignoreFreeSlotValidation: place.flags.ignoreFreeSlotValidation,
+      ignoreDateRange: place.flags.ignoreDateRange,
     });
     apptId = String(d.id ?? (d.event as Row | undefined)?.id ?? (d.appointment as Row | undefined)?.id ?? "");
     if (!apptId) throw new Error("HighLevel answered without the booking's id");
@@ -5481,7 +5978,7 @@ async function bookCreate(who: Who, b: Row) {
     // all: it may have been, so it is left for a person to check.
     const refused = typeof (e as { status?: number }).status === "number";
     const row = await finish({ state: refused ? "failed" : "unverified", error: err });
-    await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row);
+    await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, placeMeta(place));
     throw new Refusal(
       refused
         ? `HighLevel did not book it: ${err}`
@@ -5505,7 +6002,7 @@ async function bookCreate(who: Who, b: Row) {
       String(back.calendarId ?? "") === p.calendarId &&
       ghlTime(back.startTime) === start,
   );
-  const assigned = back?.assignedUserId ? String(back.assignedUserId) : p.userId;
+  const assigned = back?.assignedUserId ? String(back.assignedUserId) : (place.host ?? p.userId);
   const row = await finish({
     state: verified ? "booked" : "unverified",
     appointment_id: apptId,
@@ -5566,6 +6063,7 @@ async function bookCreate(who: Who, b: Row) {
     owner: ownerId,
     kind: p.kind,
     source,
+    ...placeMeta(place),
   });
   const names = verified ? await namesByUser([assigned]) : new Map<string, string>();
   return {
@@ -5575,9 +6073,12 @@ async function bookCreate(who: Who, b: Row) {
     words,
     stage_move: { state: moves ? "pending" : "none" },
     owner: ownerId,
+    placement: place.placement,
     appointment: verified
       ? apptOut({ id: apptId, kind: p.kind, start, host: assigned, meet: meetUrl(back?.address) }, names)
       : null,
+    // The lead's own link to pick another time for this call (D17), where the calendar allows it.
+    reschedule_link: verified ? rescheduleLink(p.calendarId, p.cal, apptId) : null,
   };
 }
 
@@ -5667,6 +6168,8 @@ interface MoveCtx {
   putOk: boolean;
   /** The seat settling it is the one who pressed (only then is the dialer's call saved). */
   mine: boolean;
+  /** How the new time was placed (book.move only; a later check does not know). */
+  place?: Place | null;
 }
 
 /** The audit's metadata for a move. */
@@ -5747,17 +6250,35 @@ async function bookMove(who: Who, b: Row) {
   const asked = cleanText(b.user_id, 80) || null;
   if (asked && asked !== m.userId && asked !== liveHost && !teamOf(m.cal).includes(asked))
     throw new Refusal("That person is not on this call's calendar. Pick a time from the list.", 400, { code: "host" });
-  const toUser = asked || liveHost || m.userId;
+  let toUser = asked || liveHost || m.userId;
   const end = start + m.minutes * 60_000;
   // One of HighLevel's free times for the host that day (D44). A move that
   // already landed, its answer lost, makes its own time look taken, so
   // HighLevel's own copy (read above) says whether it is there already.
+  // Otherwise a far-out time past the calendar's window, or a custom time,
+  // checked from fresh reads (placeAway); inside the window it was taken.
   const dayStart = kuwaitAt(start, 0);
   const days = await freeSlots(m.calendarId, Math.max(now, dayStart), dayStart + 86_400_000, toUser);
   let landed = false;
+  let place = windowPlace(toUser);
   if (!slotOffered(isoAt(start), days)) {
     if (live && sameTime(ghlTime(live.startTime), start)) landed = true;
-    else throw new Refusal("That time was just taken. Pick another.", 409, { code: "taken" });
+    else {
+      const team = teamOf(m.cal);
+      place = await placeAway({
+        calendarId: m.calendarId,
+        cal: m.cal,
+        team: [...(toUser ? [toUser] : []), ...team.filter(u => u !== toUser)],
+        start,
+        now,
+        custom: b.custom === true,
+        outsideOk: b.outside_hours_ok === true,
+        host: toUser,
+        windowUser: toUser,
+        exceptId: m.id,
+      });
+      toUser = place.host ?? toUser;
+    }
   }
   const hit = clash(start, end, await otherCalls(m.contact, m.id, m.calendars, now));
   if (hit) throw new Refusal(clashMessage(hit), 409, { code: "clash" });
@@ -5814,15 +6335,34 @@ async function bookMove(who: Who, b: Row) {
     landed,
     putOk: landed,
     mine: true,
+    place,
   };
+  // A custom time is checked against the host's calendar once more, right
+  // before the write: HighLevel itself books over a clash with the flag on.
+  if (!landed && place.placement === "custom") {
+    const no = await customRecheck(place, { calendarId: m.calendarId, cal: m.cal, start, exceptId: m.id });
+    if (no) {
+      const failed = (await moveSettled(row, { state: "failed", error: no.message.slice(0, 300) })) ?? row;
+      await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: "failed" }, {
+        ...moveMeta(failed),
+        ...placeMeta(place),
+        error: no.message,
+      });
+      throw new Refusal(no.message, no.status, { ...no.extra, reschedule_id: row.id });
+    }
+  }
   if (!landed) {
     try {
+      // Inside the window: exactly as before. Far out: past the date range,
+      // the slot still checked by HighLevel. Custom: both flags, always with
+      // the host (HighLevel answers 422 without one).
       await ghl("PUT", `/calendars/events/appointments/${enc(m.id)}`, {
         calendarId: m.calendarId,
         startTime: isoAt(start),
         endTime: isoAt(end),
         ...(toUser ? { assignedUserId: toUser } : {}),
-        ignoreFreeSlotValidation: false,
+        ...(place.flags.ignoreDateRange ? { ignoreDateRange: true } : {}),
+        ignoreFreeSlotValidation: place.flags.ignoreFreeSlotValidation,
         toNotify: true,
       });
       ctx.putOk = true;
@@ -5831,7 +6371,11 @@ async function bookMove(who: Who, b: Row) {
         // An HTTP answer: HighLevel said no, and nothing moved.
         const why = redact(ghlReason(e));
         const failed = (await moveSettled(row, { state: "failed", error: why.slice(0, 300) })) ?? row;
-        await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: "failed" }, { ...moveMeta(failed), error: why });
+        await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: "failed" }, {
+          ...moveMeta(failed),
+          ...placeMeta(place),
+          error: why,
+        });
         throw new Refusal(`HighLevel did not reschedule it: ${why}. It is still at ${kuwaitWords12(m.start)}.`, 409, {
           code: "refused",
           reschedule_id: row.id,
@@ -5858,14 +6402,22 @@ async function bookMove(who: Who, b: Row) {
         body: { error: v.why },
         prefer: "return=minimal",
       });
-    await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: "moving" }, { ...moveMeta(row), put_ok: ctx.putOk });
-    return await moveAnswer({ ...row, error: v.why }, false);
+    await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: "moving" }, {
+      ...moveMeta(row),
+      ...placeMeta(place),
+      put_ok: ctx.putOk,
+    });
+    return { ...(await moveAnswer({ ...row, error: v.why }, false)), placement: place.placement };
   }
   const settled = (await moveSettled(row, { state: v.state, error: v.why })) ?? row;
-  await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: v.state }, { ...moveMeta(settled), error: v.why });
+  await audit(who, "book.move", "cockpit_sales_appointments", m.id, m.appt, { state: v.state }, {
+    ...moveMeta(settled),
+    ...placeMeta(place),
+    error: v.why,
+  });
   if (v.state === "not_moved") throw new Refusal(notMovedMessage(m.start), 409, { code: "not_moved", reschedule_id: row.id });
   // A third time in HighLevel: the page asks book.move.check, which says so.
-  return await moveAnswer(settled, false);
+  return { ...(await moveAnswer(settled, false)), placement: place.placement };
 }
 
 /**
@@ -5978,6 +6530,7 @@ async function moveDone(who: Who, row: Row, back: Row | null, ctx: MoveCtx, acti
     { start_at: isoAt(to), assigned_user_id: toUser, state: "moved" },
     {
       ...moveMeta(r),
+      ...(ctx.place ? placeMeta(ctx.place) : {}),
       host_changed: hostChanged,
       verified: true,
       landed: ctx.landed,
@@ -5993,8 +6546,20 @@ async function moveDone(who: Who, row: Row, back: Row | null, ctx: MoveCtx, acti
     host_changed: hostChanged,
     appointment: apptOut({ id, kind, start: to, host: toUser, meet }, names),
     words: `Rescheduled to ${kuwaitWords12(to)}`,
+    ...(ctx.place ? { placement: ctx.place.placement } : {}),
+    reschedule_link: await linkFor(String(r.calendar_id ?? ""), id),
     ...(out ? { attempt: out.attempt, state: out.state } : {}),
   };
+}
+
+/** The lead's own reschedule link for a call (D17), or null: the calendar does not allow it, or could not be read. */
+async function linkFor(calendarId: string, appointmentId: string): Promise<string | null> {
+  if (!calendarId) return null;
+  try {
+    return rescheduleLink(calendarId, await calendarInfo(calendarId), appointmentId);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -6034,6 +6599,7 @@ async function moveAnswer(r: Row, repeated: boolean): Promise<Row> {
       names,
     ),
     words: `Rescheduled to ${kuwaitWords12(to)}`,
+    reschedule_link: await linkFor(String(r.calendar_id ?? copy?.calendar_id ?? ""), id),
     ...(repeated ? { repeated: true } : {}),
   };
 }
@@ -6062,7 +6628,7 @@ async function recheck(who: Who, r: Row, opts: { mine: boolean; action: string }
       attempt = (await svc(`cockpit_sales_attempts?id=eq.${enc(String(r.attempt_id))}&select=*`))[0] ?? null;
       if (attempt && !["dialing", "placed", "failed"].includes(String(attempt.state))) attempt = null;
     }
-    await moveDone(who, r, back, { before, attempt, item_kind: null, as: null, landed: false, putOk: false, mine: opts.mine }, opts.action);
+    await moveDone(who, r, back, { before, attempt, item_kind: null, as: null, landed: false, putOk: false, mine: opts.mine, place: null }, opts.action);
     return (await rescheduleRow({ id: String(r.id) })) ?? r;
   }
   const settled = await moveSettled(r, { state: v.state, error: v.why });
@@ -6109,6 +6675,7 @@ async function bookMoveCheck(who: Who, b: Row) {
     appointment: copy
       ? apptOut({ id: String(r.appointment_id), kind: (r.call_type as CallKind) || "intro", start, host, meet: (copy.meet_url as string) ?? null }, names)
       : null,
+    reschedule_link: state === "moved" ? await linkFor(String(r.calendar_id ?? ""), String(r.appointment_id)) : null,
   };
 }
 
@@ -6204,6 +6771,151 @@ async function bookTold(who: Who, b: Row) {
     { moment, reschedule_id: rid || null, contact_id: contact },
   );
   return { told_at: at };
+}
+
+/**
+ * The picker's live line for a custom time (read-only, 2026-10-11): the
+ * same identity as book.slots plus `start` (ISO) and, optionally, who takes
+ * it (`user_id`, on the calendar). Gated as book.slots is. Says whether it
+ * is one of HighLevel's own times (window) or a custom one, whether it is on
+ * top of the host's call or busy time, outside their working hours (allowed
+ * with Book anyway), past, off the 5-minute mark or beyond the reach, and
+ * the one sentence to show. book.create and book.move check it all again.
+ */
+async function bookCheck(who: Who, b: Row) {
+  const now = Date.now();
+  const start = Date.parse(String(b.start ?? ""));
+  if (!Number.isFinite(start)) throw new Refusal("Pick a day and a time.", 400, { code: "time" });
+  const asked = cleanText(b.user_id, 80) || null;
+  let calendarId: string;
+  let cal: Row;
+  let host: string | null;
+  let windowUser: string | null;
+  let exceptId: string | null = null;
+  if (b.appointment_id) {
+    const m = await movePlan(b);
+    await moveGate(who, m, now);
+    if (asked && asked !== m.userId && !teamOf(m.cal).includes(asked))
+      throw new Refusal("That person is not on this call's calendar.", 400, { code: "host" });
+    calendarId = m.calendarId;
+    cal = m.cal;
+    host = asked || m.userId;
+    windowUser = host;
+    exceptId = m.id;
+  } else {
+    const p = await bookingPlan(who, b);
+    if (asked && !teamOf(p.cal).includes(asked)) throw new Refusal("That person is not on this calendar.", 400, { code: "host" });
+    const me = who.ghl_user_id ? String(who.ghl_user_id) : null;
+    calendarId = p.calendarId;
+    cal = p.cal;
+    host = asked || (p.onTeam ? me : null);
+    windowUser = asked || p.userId;
+  }
+  const reach = await reachDays();
+  if (reach === null)
+    throw new Refusal("The cockpit's booking setting could not be read just now, so that time can't be checked. Try again in a minute.", 503, {
+      code: "far_unread",
+    });
+  const reachEnd = reachUntil(now, reach);
+  const names = await namesByUser([host]);
+  const hostName = host ? (names.get(host) ?? (host === who.ghl_user_id ? ((who.name as string) ?? null) : null)) : null;
+  const dayStart = kuwaitAt(start, 0);
+  const offered =
+    start > now && slotOffered(isoAt(start), await freeSlots(calendarId, Math.max(now, dayStart), dayStart + DAY_MS, windowUser));
+  const placement: Placement = offered ? "window" : "custom";
+  const past = start <= now + 5 * 60_000;
+  const step = start % (CUSTOM_STEP_MIN * 60_000) !== 0;
+  const beyond = kuwaitDay(start) > reachEnd;
+  const base = {
+    start: isoAt(start),
+    words: kuwaitWords12(start),
+    host: host ? { user_id: host, name: hostName } : null,
+    placement,
+    beyond_reach: beyond,
+    past,
+    step,
+  };
+  if (!host)
+    return {
+      ...base,
+      clash: null,
+      outside_hours: false,
+      hours_words: null,
+      line: past
+        ? "That time has passed or starts in under 5 minutes. Pick a later one."
+        : step
+          ? "Pick a time on the 5-minute mark."
+          : beyond
+            ? `Pick a day up to ${dayWords(reachEnd)}.`
+            : "Pick who takes the call.",
+    };
+  const r = await customRead({ calendarId, cal, host, hostName, start, now, reachEnd, exceptId });
+  const c = r.check;
+  const day = kuwaitDay(start);
+  const line = past
+    ? "That time has passed or starts in under 5 minutes. Pick a later one."
+    : step
+      ? "Pick a time on the 5-minute mark."
+      : beyond
+        ? `Pick a day up to ${dayWords(reachEnd)}.`
+        : c.clash
+          ? busyMessage(c.clash, hostName)
+          : c.outside && !offered
+            ? outsideMessage(hostName, r.windows, day)
+            : freeLine(hostName);
+  return {
+    ...base,
+    clash: c.clash ? { start: isoAt(c.clash.start), end: isoAt(c.clash.end), what: c.clash.what } : null,
+    outside_hours: offered ? false : c.outside,
+    hours_words: hoursWords(r.windows),
+    line,
+  };
+}
+
+/**
+ * The lead's own reschedule links for their calls (the lead page's rows,
+ * D17): for each call this seat may reschedule now (reschedule.ts
+ * canReschedule: the host, the owner, the booker or a manager; not over,
+ * not more than 20 minutes past its start) on a calendar that lets the lead
+ * reschedule (intros and Follow up call). An active client gets none.
+ */
+async function bookLinks(who: Who, b: Row) {
+  const contact = cleanText(b.contact_id, 80);
+  if (!contact) throw new Refusal("Which lead?");
+  const now = Date.now();
+  const [lead, rows, marks, bookings] = await Promise.all([
+    svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=contact_id,name,tags,assigned_to`).then(r => r[0] ?? null),
+    svc(
+      `cockpit_sales_appointments?contact_id=eq.${enc(contact)}&start_at=gte.${enc(isoAt(now - LATE_AFTER_MS))}&select=appointment_id,calendar_id,status,start_at,assigned_user_id&limit=50`,
+    ),
+    svc(`cockpit_sales_dispositions?contact_id=eq.${enc(contact)}&superseded_at=is.null&select=appointment_id,status&limit=500`),
+    svc(`cockpit_sales_bookings?contact_id=eq.${enc(contact)}&appointment_id=not.is.null&select=appointment_id,rep_email&limit=200`),
+  ]);
+  if (!lead) throw new Refusal("That lead is not in the cockpit.", 404);
+  const client = await readClient(svc, contact, lead);
+  if (client.client) return { links: {}, client: true };
+  const markOf = new Map(marks.map(r => [String(r.appointment_id), String(r.status ?? "")]));
+  const bookerOf = new Map(bookings.map(r => [String(r.appointment_id), String(r.rep_email ?? "")]));
+  const links: Record<string, string> = {};
+  for (const r of rows) {
+    const id = String(r.appointment_id ?? "");
+    if (!id) continue;
+    const no = canReschedule({
+      appt: r,
+      mark: markOf.get(id) ?? null,
+      joined: false,
+      who,
+      owner: lead.assigned_to ? String(lead.assigned_to) : null,
+      bookerEmail: bookerOf.get(id) ?? null,
+      client: false,
+      clientMessage: "",
+      now,
+    });
+    if (no) continue;
+    const link = await linkFor(String(r.calendar_id ?? ""), id);
+    if (link) links[id] = link;
+  }
+  return { links };
 }
 
 /**
@@ -7571,6 +8283,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "dial.status": dialStatus,
   "dial.release": dialRelease,
   "book.slots": bookSlots,
+  "book.check": bookCheck,
+  "book.links": bookLinks,
   "book.create": bookCreate,
   "book.move": bookMove,
   "book.move.check": bookMoveCheck,
