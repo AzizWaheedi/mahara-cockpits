@@ -241,7 +241,14 @@ export function summarise(rows: Appt[]) {
     unknownOutcome: awaiting,
     upcoming,
     showRate: decided ? Math.round((100 * shows) / decided) : undefined,
-    closeRate: shows ? Math.round((100 * closes) / shows) : undefined,
+    // Of the people who came: a close logged without a show is still a
+    // close, but not in the rate, so the rate never passes 100%.
+    closeRate: shows
+      ? Math.round(
+          (100 * rows.filter(r => yes(r.show) && yes(r.closed)).length) /
+            shows,
+        )
+      : undefined,
     csat: scores.length
       ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) /
         10

@@ -76,6 +76,7 @@ const C = {
   currency: 24,
 };
 
+const unknownCurrencies = new Set<string>();
 // Rates to USD. The tracker stores raw account currency in a column labelled USD.
 const FX: Record<string, number> = {
   USD: 1,
@@ -999,8 +1000,18 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       };
       byCampaign.set(key, a);
     }
-    const fx = FX[a.currency] ?? 1;
-    const cost = num(r[C.cost]) * fx;
+    // An account currency outside FX would be summed as if it were USD.
+    // None is in use (2026-10-11: 29 USD, 1 QAR, 1 SAR accounts), so a new
+    // one is reported loudly once per run instead of passing silently.
+    const fx = FX[a.currency];
+    if (fx === undefined && !unknownCurrencies.has(a.currency)) {
+      unknownCurrencies.add(a.currency);
+      recordLog(
+        "error",
+        `No USD rate for account currency ${a.currency}; its spend is counted unconverted. Add it to FX in calculator.ts.`,
+      );
+    }
+    const cost = num(r[C.cost]) * (fx ?? 1);
     if (date < a.first) a.first = date;
     a.spend30 += cost;
     a.days30.add(date);

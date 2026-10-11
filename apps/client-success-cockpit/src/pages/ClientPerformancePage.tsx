@@ -22,7 +22,12 @@ import {
 } from "@/components/kit";
 import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
-import { bucketDays, TrendChart } from "@/components/TrendChart";
+import {
+  bucketDays,
+  partialBucket,
+  TrendChart,
+  type TrendPoint,
+} from "@/components/TrendChart";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -41,6 +46,7 @@ import {
 } from "@/lib/performance";
 
 import {
+  AD_TABLE_LIMIT,
   byAdIn,
   type CardChange,
   changesIn,
@@ -51,6 +57,7 @@ import {
   periodNumbers,
   periodOf,
   shiftDay,
+  withSheetMonth,
 } from "@/lib/reportPeriod";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +74,8 @@ import { cn } from "@/lib/utils";
 type Any = any;
 
 const num = (v: unknown) => (typeof v === "number" ? v : 0);
+/** A count, or "-" when the source did not say: missing is never zero. */
+const count = (v: unknown) => (typeof v === "number" ? v : "-");
 
 function Cell({ v, muted }: { v: unknown; muted?: boolean }) {
   const text = v === null || v === undefined || v === "" ? "-" : String(v);
@@ -188,6 +197,7 @@ function reportHtml(p: Any, per: Period, fig: Figures): string {
   const m = fig.m ?? {};
   const l = fig.l ?? {};
   const rows = (perf.stale ?? []) as Any[];
+  const staleTotal = Number(perf.staleCount ?? rows.length);
   // Done with you clients book their own appointments, so their report is leads and cost
   // per lead. Printing empty booking and close rows would just look like failure.
   const dwy = serviceModel(p.service).dwy;
@@ -228,7 +238,7 @@ function reportHtml(p: Any, per: Period, fig: Figures): string {
   }
   </table>
   ${dwy ? '<div class="note">Done with you: the client books and tracks their own appointments, so this report covers lead volume and cost per lead.</div>' : ""}
-  ${dwy ? "" : `<h2>Appointments with no outcome on the sheet (${rows.length})</h2>`}
+  ${dwy ? "" : `<h2>Appointments with no outcome on the sheet (${staleTotal})</h2>${staleTotal > rows.length ? `<div class="note">The first ${rows.length} are listed; the rest are on the client's sheet.</div>` : ""}`}
   ${
     dwy
       ? ""
@@ -305,14 +315,14 @@ function AdTree({ ads, clientName }: { ads: Any[]; clientName: string }) {
               </div>
             </div>
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
-              <span>{num(c.leads7d)} leads 7d</span>
+              <span>{count(c.leads7d)} leads 7d</span>
               <span>
                 {c.cpl
                   ? `$${Number(c.cpl).toFixed(2)} per lead`
                   : "no cost per lead"}
               </span>
-              <span>{num(c.bookings7d)} booked</span>
-              <span>{num(c.showed7d)} showed</span>
+              <span>{count(c.bookings7d)} booked</span>
+              <span>{count(c.showed7d)} showed</span>
             </div>
           </div>
           {(c.adsets ?? []).length === 0 ? (
@@ -1175,7 +1185,7 @@ function LeadsByAd({ rows }: { rows: Any[] }) {
   return (
     <section className="space-y-3">
       <SectionTitle>
-        Every lead, and the ad it came from
+        The latest leads, and the ad each came from
         <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
           {rows.length}
         </span>
@@ -1273,9 +1283,9 @@ function periodFigures(p: Any, per: Period): Figures {
     from && to ? periodNumbers(appts, daily, from, to) : null;
   if (per.key === "month" && perf.month)
     return {
-      m: { ...sum(per.from, per.to), ...perf.month },
+      m: withSheetMonth(sum(per.from, per.to), perf.month) ?? {},
       l: perf.lastMonth
-        ? { ...sum(per.prevFrom, per.prevTo), ...perf.lastMonth }
+        ? withSheetMonth(sum(per.prevFrom, per.prevTo), perf.lastMonth)
         : sum(per.prevFrom, per.prevTo),
       sheetMonth: true,
     };
@@ -1329,11 +1339,15 @@ function ProfileTrends({
       changes.map(c => ({ date: c.day, text: c.action })),
       from,
       to,
-    ).map(b => [b.key, b.rows.map(r => r.text)]),
+    )
+      .filter(b => b.rows.length)
+      .map(b => [b.key, b.rows.map(r => r.text)]),
   );
   // A change on a day with nothing charted still gets its day on the axis,
   // so its mark shows.
-  const marked = (points: { x: string; y: number | null }[]) => {
+  const weekly = (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
+  const today = kuwaitToday();
+  const marked = (points: TrendPoint[]) => {
     if (!points.length) return points;
     const have = new Set(points.map(pt => pt.x));
     return [
@@ -1343,7 +1357,11 @@ function ProfileTrends({
         .map(k => ({ x: k, y: null as number | null })),
     ]
       .sort((a, b) => (a.x < b.x ? -1 : a.x > b.x ? 1 : 0))
-      .map(pt => ({ ...pt, note: notes.get(pt.x) }));
+      .map(pt => ({
+        ...pt,
+        note: notes.get(pt.x),
+        partial: partialBucket(pt.x, weekly, today),
+      }));
   };
   const spendByKey = new Map(
     adBuckets.map(b => [
@@ -1361,9 +1379,12 @@ function ProfileTrends({
   }));
   const cpl = adBuckets.map(b => {
     const l = b.rows.reduce((s, r) => s + Number(r.leads ?? 0), 0);
+    const sp = spendByKey.get(b.key) ?? 0;
     return {
       x: b.key,
-      y: l ? Math.round(((spendByKey.get(b.key) ?? 0) / l) * 100) / 100 : null,
+      y: l ? Math.round((sp / l) * 100) / 100 : null,
+      num: sp,
+      den: l,
     };
   });
   const booked = apptBuckets.map(b => ({
@@ -1373,14 +1394,23 @@ function ProfileTrends({
   const showRate = apptBuckets.map(b => {
     const s = b.rows.filter(r => r.show === "y").length;
     const n = b.rows.filter(r => r.show === "n").length;
-    return { x: b.key, y: s + n ? Math.round((100 * s) / (s + n)) : null };
+    return {
+      x: b.key,
+      y: s + n ? Math.round((100 * s) / (s + n)) : null,
+      num: s,
+      den: s + n,
+    };
   });
   const cpb = apptBuckets.map(b => {
     const bk = b.rows.filter(r => r.booked).length;
     const sp = spendByKey.get(b.key) ?? 0;
-    return { x: b.key, y: bk && sp ? Math.round((sp / bk) * 100) / 100 : null };
+    return {
+      x: b.key,
+      y: bk && sp ? Math.round((sp / bk) * 100) / 100 : null,
+      num: sp,
+      den: bk,
+    };
   });
-  const weekly = (Date.parse(to) - Date.parse(from)) / 86400_000 > 45;
   const per = weekly ? "per week" : "per day";
   return (
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:gap-4">
@@ -1538,6 +1568,7 @@ function BookTrends({
   weekly: Any[];
   label: string;
 }) {
+  const today = kuwaitToday();
   if (!trend?.length && !weekly?.length)
     return (
       <p className="text-xs text-muted-foreground">
@@ -1548,25 +1579,45 @@ function BookTrends({
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:gap-4">
       <TrendChart
-        title={`Leads per day, ${label} clients`}
-        points={trend.map((r: Any) => ({ x: r.date, y: r.leads }))}
+        title={`Leads per day, ${label} clients, last 90 days`}
+        points={trend.map((r: Any) => ({
+          x: r.date,
+          y: r.leads,
+          partial: r.date >= today,
+        }))}
         kind="bar"
       />
       <TrendChart
-        title="Spend per day"
-        points={trend.map((r: Any) => ({ x: r.date, y: r.spend }))}
+        title="Spend per day, last 90 days"
+        points={trend.map((r: Any) => ({
+          x: r.date,
+          y: r.spend,
+          partial: r.date >= today,
+        }))}
         unit="$"
       />
       <TrendChart
-        title="Cost per lead"
-        points={trend.map((r: Any) => ({ x: r.date, y: r.cpl }))}
+        title="Cost per lead, last 90 days"
+        points={trend.map((r: Any) => ({
+          x: r.date,
+          y: r.cpl,
+          partial: r.date >= today,
+          num: r.spend,
+          den: r.leads,
+        }))}
         unit="$"
         mode="avg"
         goodWhen="down"
       />
       <TrendChart
-        title="Show rate per week"
-        points={(weekly ?? []).map((w: Any) => ({ x: w.week, y: w.showRate }))}
+        title="Show rate per week, last 90 days"
+        points={(weekly ?? []).map((w: Any) => ({
+          x: w.week,
+          y: w.showRate,
+          partial: partialBucket(w.week, true, today),
+          num: w.shows,
+          den: typeof w.shows === "number" ? w.shows + w.noshows : undefined,
+        }))}
         unit="%"
         mode="avg"
       />
@@ -1737,11 +1788,18 @@ export function ClientProfile({
     () => changesIn(p?.changes as CardChange[] | undefined, per.from, per.to),
     [p, per],
   );
-  const byAd = useMemo(
+  const byAdAll = useMemo(
     () =>
-      byAdIn((p?.performance?.appointments ?? []) as Any[], per.from, per.to),
+      byAdIn(
+        (p?.performance?.appointments ?? []) as Any[],
+        per.from,
+        per.to,
+        undefined,
+        Number.POSITIVE_INFINITY,
+      ),
     [p, per],
   );
+  const byAd = byAdAll.slice(0, AD_TABLE_LIMIT);
   if (profileError)
     return (
       <p role="alert" className="text-sm text-destructive">
@@ -1773,13 +1831,16 @@ export function ClientProfile({
   const stale: Any[] = perf.stale ?? [];
   const dwy = serviceModel(p.service).dwy;
   /** "12 in September 2026", "12 in the 7 days before"; nothing for all time. */
+  // This month is still running; last month is whole. Say so, or a month
+  // to date beside a full month reads as a fall.
+  const running = per.to > kuwaitToday();
   const was = (key: string) =>
-    l && per.prevLabel ? `${num(l[key])} in ${per.prevLabel}` : undefined;
-  // Where the leads figure came from: the sheet's own month figures say so
-  // in leadsSource; a summed period says so in leadsFrom.
-  const leadsFromAds = fig.sheetMonth
-    ? perf.leadsSource === "meta"
-    : m.leadsFrom !== "sheet";
+    l && per.prevLabel
+      ? `${count(l[key])} in ${running && per.month ? "all of " : ""}${per.prevLabel}`
+      : undefined;
+  // Leads come from the ads in every period; only a client with no ad
+  // history for the period falls back to the sheet, and leadsFrom says so.
+  const leadsFromAds = m.leadsFrom !== "sheet";
   return (
     <div className="space-y-6">
       {embedded ? (
@@ -2074,9 +2135,16 @@ export function ClientProfile({
                 <SectionTitle>
                   Appointments with no outcome on the sheet
                   <span className="ml-1.5 font-normal text-muted-foreground tabular-nums">
-                    {perf.staleCount ?? 0}
+                    {count(perf.staleCount)}
                   </span>
                 </SectionTitle>
+                {typeof perf.staleCount === "number" &&
+                perf.staleCount > stale.length ? (
+                  <p className="text-xs text-muted-foreground">
+                    The first {stale.length} are listed here; the other{" "}
+                    {perf.staleCount - stale.length} are on the client's sheet.
+                  </p>
+                ) : null}
                 {stale.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     Nothing outstanding, every appointment has an outcome.
@@ -2125,7 +2193,7 @@ export function ClientProfile({
                       >
                         {staleAll
                           ? "Show fewer"
-                          : `Show the other ${stale.length - 20}`}
+                          : `Show ${stale.length - 20} more`}
                       </Button>
                     ) : null}
                   </>
@@ -2138,10 +2206,14 @@ export function ClientProfile({
                       Which ad is producing the better leads
                     </SectionTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {capital(per.label)}, per ad. Judge an ad on what its
-                      leads did, not on how many it produced. "No outcome" is
-                      the ad's rows nobody filled in, so a high number there
-                      means the comparison is not fair yet.
+                      {capital(per.label)}, per ad
+                      {byAdAll.length > byAd.length
+                        ? `, the ${byAd.length} with the most closes of ${byAdAll.length}`
+                        : ""}
+                      . Judge an ad on what its leads did, not on how many it
+                      produced. "No outcome" is the ad's rows nobody filled in,
+                      so a high number there means the comparison is not fair
+                      yet.
                     </p>
                   </div>
                   <div className="overflow-x-auto rounded-2xl border bg-card">
@@ -2305,11 +2377,12 @@ export function ClientPerformancePage({
   // One reporting period for the list and every client opened from it.
   const [period, setPeriod] = useState<PeriodKey>("month");
   const per = useMemo(() => periodOf(period, kuwaitToday()), [period]);
-  // "This month" is the sheets' own month figures, already in the list.
+  // Every period, "This month" included, counts leads from the ads; the
+  // sheets' month tabs add their outcome counts on top (withSheetMonth).
   const [rangedRows, setRangedRows] = useState<Any[] | undefined>(undefined);
   useEffect(() => {
     setRangedRows(undefined);
-    if (!auth.client || period === "month") return;
+    if (!auth.client) return;
     let active = true;
     void fetchPerformancePeriod(auth.client, per.from, upTo(per))
       .then(value => {
@@ -2326,7 +2399,7 @@ export function ClientPerformancePage({
     return () => {
       active = false;
     };
-  }, [auth.client, period, per]);
+  }, [auth.client, per]);
   const ranged = useMemo(
     () =>
       rangedRows
@@ -2377,11 +2450,11 @@ export function ClientPerformancePage({
   const churned = all.filter(c => groupOf(c) === "churned");
   const live = all.filter(c => groupOf(c) !== "churned");
   const chosen = GROUPS.find(g => g.key === group) ?? GROUPS[0];
-  const rows = live
-    .filter(c => groupOf(c) === chosen.key)
-    .filter(c =>
-      c.clientName.toLowerCase().includes(query.trim().toLowerCase()),
-    );
+  const inGroup = live.filter(c => groupOf(c) === chosen.key);
+  const filtered = query.trim().length > 0;
+  const rows = inGroup.filter(c =>
+    c.clientName.toLowerCase().includes(query.trim().toLowerCase()),
+  );
   // DWY clients keep their own appointment tracking, so their unfilled rows are not our
   // chase list and must not inflate it.
   const totalStale = rows.reduce(
@@ -2389,11 +2462,14 @@ export function ClientPerformancePage({
     0,
   );
   const waiting = live.filter(c => (c.reportNudge as Any)?.url);
-  // The list's numbers for the period: the sheet's month figures for this
-  // month, the period query for anything else.
-  const periodLoading = period !== "month" && ranged === undefined;
-  const figuresOf = (c: Any): Any =>
-    period === "month" ? c.month : ranged?.get(c.clientName);
+  // The list's numbers for the period: ad leads from the period query, and
+  // for this month the sheet's month-tab outcomes on top. Missing stays
+  // missing ("-"), never 0.
+  const periodLoading = ranged === undefined;
+  const figuresOf = (c: Any): Any => {
+    const adBased = ranged?.get(c.clientName);
+    return period === "month" ? withSheetMonth(adBased, c.month) : adBased;
+  };
 
   return (
     <div
@@ -2478,21 +2554,38 @@ export function ClientPerformancePage({
           />
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
-            <StatTile label="Clients" value={rows.length} />
+            <StatTile
+              label="Clients"
+              value={rows.length}
+              sub={
+                filtered
+                  ? `${rows.length} of ${inGroup.length} match the search`
+                  : undefined
+              }
+            />
             <StatTile
               label="Appointments with no outcome"
               value={totalStale}
               tone={totalStale ? "txt-bad" : "txt-good"}
-              sub={`Across the ${chosen.label.toLowerCase()} clients' sheets`}
+              sub={`Across the ${filtered ? "matching " : ""}${chosen.label.toLowerCase()} clients' sheets`}
             />
             <StatTile
               label={`Closed, ${per.label}`}
               value={
                 periodLoading
                   ? "…"
-                  : rows.reduce((n, c) => n + num(figuresOf(c)?.closes), 0)
+                  : rows.reduce(
+                      (n, c) =>
+                        // Done-with-you clients close on their own, and their
+                        // row shows "-" for it, so the total leaves them out.
+                        n +
+                        (serviceModel(c.service).dwy
+                          ? 0
+                          : num(figuresOf(c)?.closes)),
+                      0,
+                    )
               }
-              sub="What the client actually banked"
+              sub="What done-for-you clients banked"
               className="col-span-2 sm:col-span-1"
             />
           </div>
@@ -2563,7 +2656,7 @@ export function ClientPerformancePage({
                       </td>
                       <Cell v={displayLabel(c.stage)} muted />
                       <Cell
-                        v={periodLoading ? "…" : (figuresOf(c)?.leads ?? 0)}
+                        v={periodLoading ? "…" : count(figuresOf(c)?.leads)}
                         muted={periodLoading}
                       />
                       <Cell
@@ -2572,7 +2665,7 @@ export function ClientPerformancePage({
                             ? "-"
                             : periodLoading
                               ? "…"
-                              : (figuresOf(c)?.booked ?? 0)
+                              : count(figuresOf(c)?.booked)
                         }
                         muted={serviceModel(c.service).dwy || periodLoading}
                       />
@@ -2582,7 +2675,7 @@ export function ClientPerformancePage({
                             ? "-"
                             : periodLoading
                               ? "…"
-                              : (figuresOf(c)?.shows ?? 0)
+                              : count(figuresOf(c)?.shows)
                         }
                         muted={serviceModel(c.service).dwy || periodLoading}
                       />
@@ -2592,14 +2685,23 @@ export function ClientPerformancePage({
                             ? "-"
                             : periodLoading
                               ? "…"
-                              : (figuresOf(c)?.closes ?? 0)
+                              : count(figuresOf(c)?.closes)
                         }
                         muted={serviceModel(c.service).dwy || periodLoading}
                       />
                       <td className="px-3 py-2 text-sm tabular-nums">
                         {serviceModel(c.service).dwy ? (
                           <span className="text-muted-foreground">-</span>
-                        ) : num(c.staleCount) ? (
+                        ) : c.sheetError ? (
+                          <span
+                            className="text-muted-foreground"
+                            title={String(c.sheetError)}
+                          >
+                            Sheet unreadable
+                          </span>
+                        ) : typeof c.staleCount !== "number" ? (
+                          <span className="text-muted-foreground">-</span>
+                        ) : c.staleCount ? (
                           <span className="tone-bad rounded-full px-2 py-0.5 font-medium">
                             {c.staleCount}
                           </span>
