@@ -34,8 +34,10 @@
 7 4 * * 6   flock -n $HOME/.ideation-radar/scan.lock    bash -c "set -a; . $HOME/.ideation-radar/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet scan" >> $HOME/.ideation-radar/out/cron.log 2>&1
 */5 * * * * flock -n $HOME/.ideation-radar/pending.lock bash -c "set -a; . $HOME/.ideation-radar/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet pending" >> $HOME/.ideation-radar/out/cron.log 2>&1
 
-# The guardian itself, installed 2026-10-03 in report-only mode.
-*/5 * * * *  flock -n $HOME/.cockpit-guardian/run.lock bash -c "cd $HOME/mahara-cockpits/hermes/cockpit-guardian && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.cockpit-guardian/env ] && . $HOME/.cockpit-guardian/env; set +a; python3 guardian.py --mode report-only --quiet run" >> $HOME/.cockpit-guardian/cron.log 2>&1
+# The guardian itself, installed 2026-10-03 in report-only mode; fix mode since 2026-10-11 (safe fixes only).
+# The CEO: "Scan for any issues happening with it and fix them immediately". The fixes it may make are the
+# README's safe list; everything else it still only reports.
+*/5 * * * *  flock -n $HOME/.cockpit-guardian/run.lock bash -c "cd $HOME/mahara-cockpits/hermes/cockpit-guardian && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.cockpit-guardian/env ] && . $HOME/.cockpit-guardian/env; set +a; python3 guardian.py --mode fix --quiet run" >> $HOME/.cockpit-guardian/cron.log 2>&1
 
 # Live calls Milestone 1 (hermes/sales-desk), installed 2026-10-07: the video room worker every minute, the room
 # host check every 10 minutes, the hourly doctor. Copied exactly from the live crontab (lines 62 to 64 of

@@ -4,6 +4,7 @@ Watches every Mahara cockpit and the machinery behind it, every five
 minutes, from the VPS: the pages, the CEO and machine sections the native
 workers write (Convex is paused and no longer probed),
 Creative Triage (tables, Edge Functions, pg_cron and what pg_net got back),
+the hiring sync (Typeform applications into HighLevel, the board copy),
 every hermes worker (crontab, logs, locks, status rows), the VPS itself
 (memory, disk, tunnels, the Claude proxy), the keys by name, the WhatsApp
 guard, the monitors Hermes already runs, and the live-calls build as it
@@ -56,10 +57,11 @@ python3 guardian.py report                  # the plain-English summary
 python3 guardian.py report --post           # the same to Slack, once a Kuwait day
 python3 guardian.py ai-brief --incident ID  # a brief a Claude Code session can act on
 python3 guardian.py ai-fix --incident ID    # Claude Code headless -> branch -> pull request
-python3 -m unittest                          # 245 tests, no network
+python3 -m unittest                          # 302 tests, no network (Python 3.11 or later)
 ```
 
-Flags: `--mode report-only|fix` (report-only unless the CEO says otherwise),
+Flags: `--mode report-only|fix` (report-only for a run by hand; the VPS cron line
+runs `--mode fix` since 2026-10-11, see "Fix mode" below),
 `--dry-run` (no Supabase write, no Slack; without `--state-dir` it works on a
 scratch copy of the state file, so the real one is never touched),
 `--only id,id`, `--json`, `--quiet`. ID is an incident id, its first eight
@@ -106,7 +108,14 @@ as in the state file, so a lost state or a new, empty Supabase project reads as
 "gone", not "not deployed yet". `live-code` reads which source modules sales-api
 and sales-live were deployed with, once per deploy: a deploy from a branch
 without live calls keeps the function's name and raises its version, and only
-the missing modules give it away.
+the missing modules give it away. A bundled deploy (Composio's
+`scripts/dev/deploy_composio.py` sends one bun bundle, so the API gives back a
+single `index.ts`) has no module names; each live-calls module is then found by
+strings its code leaves in the bundle (`LIVE_MARKERS`: `hungSend`,
+`ROOM_STATES`, `makeLiveIO`, `makeFollowupAgent`, `LEAD_ZONES` ... checked
+against sales-api v71 and sales-live v7 on 2026-10-11). Before that, every
+Composio deploy of sales-api read as "deployed without its live-calls modules"
+(a false alarm from 2026-10-10).
 
 ## Alerts
 
@@ -282,8 +291,10 @@ a proxy open to the internet is a door into the same box.
 Cron, one line, under its own lock, log in `~/.cockpit-guardian/cron.log`:
 
 ```
-*/5 * * * *  flock -n $HOME/.cockpit-guardian/run.lock bash -c "cd $HOME/mahara-cockpits/hermes/cockpit-guardian && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.cockpit-guardian/env ] && . $HOME/.cockpit-guardian/env; set +a; python3 guardian.py --mode report-only --quiet run" >> $HOME/.cockpit-guardian/cron.log 2>&1
+*/5 * * * *  flock -n $HOME/.cockpit-guardian/run.lock bash -c "cd $HOME/mahara-cockpits/hermes/cockpit-guardian && set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; [ -f $HOME/.cockpit-guardian/env ] && . $HOME/.cockpit-guardian/env; set +a; python3 guardian.py --mode fix --quiet run" >> $HOME/.cockpit-guardian/cron.log 2>&1
 ```
+
+(Installed 2026-10-03 with `--mode report-only`; fix mode since 2026-10-11.)
 
 There is no second line for the 09:00 summary: the first scan at or after
 09:00 Kuwait time posts it (a separate line waiting on the same lock could be
@@ -296,18 +307,41 @@ Then, once: a person adds a `cockpit-guardian` row to
 "pr", `repo` mahara-cockpits) so the Hermes reliability fixer reads the
 guardian's Hermes-owned incidents.
 
-## Switching from report-only to fix
+## Fix mode (since 2026-10-11)
 
-1. Run report-only for a few days. `python3 guardian.py report` lists
-   "Fixes it would make in fix mode" and every alert says what it did not
-   try. Check each would-be fix against the incident it was for.
-2. Change `--mode report-only` to `--mode fix` in the first cron line (or
-   set `GUARDIAN_MODE=fix` in `~/.cockpit-guardian/env` and drop the flag).
-3. Watch `~/.cockpit-guardian/guardian.log` and the next alerts: each now
-   says what the guardian tried and when.
+The CEO asked for a guardian that would "Scan for any issues happening with it
+and fix them immediately". It ran report-only from 2026-10-03 to 2026-10-11:
+236 incident rows, and every fix it would have made (a prepared crontab
+restore, catch-up runs of team-sync, the desk's copy jobs, editor-sync and the
+webinar pull, one radar resend) is on the safe list above. So the cron line
+runs `--mode fix`.
 
-Back to report-only by putting the flag back. A run off the VPS (ssh) or a
-dry run never fixes, whatever the mode.
+What changes: the safe fixes in the table above run, each logged in
+`~/.cockpit-guardian/guardian.log` and named in the next alert, and
+`cockpit_guardian_incidents.mode` reads `fix`. What does not: the "never
+automatic" list. No secret, deploy, migration, crontab install, HighLevel or
+Meta write, and nothing that reaches a lead or a candidate. On 2026-10-11 none
+of the 19 open incidents had a safe fix (each needs a key, a deploy, a person or
+Hermes), so fix mode closes none of them by itself. It catches the next late
+copy job, hung run, full log or loose env file.
+
+To switch, as hermes on the VPS, after copying this folder in:
+
+```bash
+mkdir -p ~/.cockpit-guardian/backups
+crontab -l > ~/.cockpit-guardian/backups/crontab.$(date -u +%Y%m%dT%H%M%SZ).before-fix-mode
+crontab -l | sed -e 's#python3 guardian.py --mode report-only --quiet run#python3 guardian.py --mode fix --quiet run#' \
+                 -e 's#scan every 5 min, report-only until its reports prove accurate#scan every 5 min and make the safe fixes (fix mode since 2026-10-11)#' \
+  > ~/.cockpit-guardian/crontab.new
+diff <(crontab -l) ~/.cockpit-guardian/crontab.new    # exactly the comment and the guardian line change
+crontab ~/.cockpit-guardian/crontab.new && rm ~/.cockpit-guardian/crontab.new
+crontab -l | grep -c 'guardian.py --mode fix --quiet run'   # 1
+```
+
+Back to report-only: the same `sed` the other way round (or restore the backup
+taken above). A run off the VPS (ssh) or a dry run never fixes, whatever the
+mode. `GUARDIAN_MODE` in `~/.cockpit-guardian/env` is unset on purpose: the cron
+line's flag decides.
 
 ## A read-only run from the Mac
 
@@ -338,7 +372,8 @@ the box.
 | Hung cron runs | A run holds its lock far past its interval and its CPU time stopped moving | Hermes | Read the job's log first; a run that sends is never stopped by the guardian |
 | Meta access | "API access blocked": B2B's Meta sync and the creative dashboard stop | the CEO, the systems manager | Settle the balance in Ads Manager or check Business Settings |
 | Webinar pull: the gift survey | Composio gives no session | the CEO | Reconnect Typeform in Composio or check `COMPOSIO_API_KEY` |
-| Tap payments sync | No good run for over an hour; 1249 "Charges not found" is an empty window that `listPage` throws on (a code fault, no payment lost) | Hermes | A candidate for `guardian.py ai-fix`; then a person deploys tap-charges-sync |
+| Tap payments sync | No good run for over an hour; 1249 "Charges not found" was an empty window that `listPage` threw on, fixed on main in 0a71aec (`tapResponse.ts`, deployed as v14 on 2026-10-07) | Hermes | If 1249 shows again, the function was redeployed from code without 0a71aec: redeploy tap-charges-sync from main (a person does this) |
+| Hiring sync | Typeform applications are not reaching HighLevel, or the hiring board copy is old (hiring-sync on Supabase since Convex stopped on 2026-10-07) | the CEO | Never run: set `GHL_HIRING_PIT`, `GHL_HIRING_LOCATION` and `HIRING_APPLY=true` as Edge Function secrets, then apply `20261009c_hiring_native.sql` (docs/hiring/SWITCH-ON.md). Failing: read the newest failed row in `cockpit_hiring_runs` and the hiring-sync log |
 | VPS backup | The nightly backup is old or failed | Hermes | Run the Nightly Backup job by hand and read why it exits with 1 |
 | WhatsApp double sends | The WA Connector is not recorded off with a single-copy test | the CEO | Switch it off in HighLevel, test one message, set `connector_off` and `single_copy_ok_at` |
 | CEO sections refresh | No section refreshed for 45 min: the native CEO refresh worker stopped or every run fails | Hermes | `bun run doctor` in hermes/ceo-refresh on the VPS; read the newest `cockpit_ceo_refresh_runs` row |
@@ -407,6 +442,7 @@ Generated with `python3 guardian.py checks --json`.
 | `desk-vault-lag` | W3 | The vault 3 or more days behind: warn. |  |
 | `desk-maqsam` | W4 | Fewer copied than Maqsam reports on any of the last 3 days: fail; no call at all for 7 days: warn. |  |
 | `hiring-engine` | W15 | Armed: warn. |  |
+| `hiring-sync` |  | No hiring-sync row, a job with ok false, the mirror or engine with no good run for 30 min, the intake for 90 min, or the newest candidate copied over 30 min ago: fail; the intake in a dry run (HIRING_APPLY not true): warn. |  |
 | `desk-requests` | H5, W2 | ok false, or older than 15 min: fail. A missing row: unknown. |  |
 | `desk-followups` | H5, W2 | ok false, or older than 75 min: fail. A missing row: unknown. |  |
 | `desk-notes` | H5, W2 | ok false, or older than 75 min: fail. A missing row: unknown. |  |

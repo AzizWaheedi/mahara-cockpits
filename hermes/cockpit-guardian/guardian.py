@@ -13,7 +13,8 @@
     ai-brief --incident ID   write a self-contained brief a Claude Code session can act on
     ai-fix --incident ID     run Claude Code headless on a fresh clone and open a pull request (never deploys)
 
---mode report-only (the default until the CEO says otherwise) never fixes anything, the AI fixer included.
+--mode report-only (the default for a run by hand) never fixes anything, the AI fixer included. The VPS cron
+line runs --mode fix since 2026-10-11 (the CEO: "fix them immediately"): only the safe fixes in the README.
 --dry-run writes nothing to Supabase and posts nothing; without --state-dir it works on a scratch copy
 of the state file, so the real one is never touched.
 Off the VPS (GUARDIAN_SSH set) the VPS is only read, nothing is written to Supabase, and nothing is fixed.
@@ -519,7 +520,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     def flags(p: argparse.ArgumentParser, sub: bool) -> None:
         d = (lambda v: argparse.SUPPRESS) if sub else (lambda v: v)
-        p.add_argument("--mode", choices=config_mod.MODES, default=d(None), help="report-only (default) or fix")
+        p.add_argument("--mode", choices=config_mod.MODES, default=d(None), help="report-only (the default for a hand run) or fix (what the VPS cron line runs since 2026-10-11)")
         p.add_argument("--dry-run", action="store_true", default=d(False), help="no Supabase writes, no Slack")
         p.add_argument("--quiet", action="store_true", default=d(False))
         p.add_argument("--json", action="store_true", default=d(False))
