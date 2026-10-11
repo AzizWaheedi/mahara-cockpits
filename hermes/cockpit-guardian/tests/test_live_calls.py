@@ -166,6 +166,62 @@ class DeployedCode(unittest.TestCase):
         self.assertEqual(r.status, FAIL)
         self.assertIn("sales-live is not deployed", r.summary)
 
+    # Composio deploys a function as one bun bundle: the API gives back a single index.ts (2026-10-11,
+    # sales-api v71), so the module names are gone and the code has to be read for its strings.
+    @staticmethod
+    def bundle(*skip: str) -> bytes:
+        marks = [m for mod, ms in live_calls.LIVE_MARKERS["sales-api"].items() if mod not in skip for m in ms]
+        code = "\n".join(f"// {m}\nconst x{i} = 1;" for i, m in enumerate(marks))
+        return (b'--b\r\nContent-Disposition: form-data; name="file"; filename="source/index.ts"\r\n\r\n'
+                + code.encode() + b"\r\n--b--\r\n")
+
+    def run_bundle(self, body, state, api=71):
+        db = fakes.FakeDb({}, functions=listed(api=api), files=LIVE_FILES, bodies={"sales-api": body})
+        return live_calls.run_code(fakes.ctx(Path(tempfile.mkdtemp()), db=db, state=state)), db
+
+    def test_a_bundled_deploy_with_the_live_calls_code_is_ok(self):
+        state = {}
+        r, db = self.run_bundle(self.bundle(), state)
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertIn("sales-api v71 (one bundle: found by its code)", r.summary)
+        self.assertEqual(state["live_code"]["sales-api"]["by"], "strings")
+        self.assertEqual(state["live_code"]["sales-live"]["by"], "files")
+        r, db = self.run_bundle(self.bundle(), state)
+        self.assertEqual((r.status, db.file_reads), (OK, []))
+
+    def test_a_bundle_from_the_old_branch_still_fails_urgent(self):
+        r, _ = self.run_bundle(b'--b\r\nfilename="source/index.ts"\r\n\r\nexport const clients = 1;\r\n--b--', {})
+        self.assertEqual(r.status, FAIL)
+        self.assertTrue(r.urgent)
+        self.assertIn("sales-api v71 was deployed without rooms.ts, roomlogic.ts, liveio.ts, followupAgent.ts, "
+                      "sendrules.ts", r.summary)
+
+    def test_a_bundle_without_one_module_names_that_module(self):
+        r, _ = self.run_bundle(self.bundle("sendrules.ts"), {})
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("sales-api v71 was deployed without sendrules.ts", r.summary)
+
+    def test_a_record_read_by_file_names_only_is_read_again_once(self):
+        """The VPS state of 2026-10-10 holds sales-api v71 as missing all five (read by names only)."""
+        state = {"live_code": {"sales-api": {"key": "v71:a71", "missing": list(live_calls.LIVE_MODULES["sales-api"]),
+                                             "modules": 1, "read_at": fakes.ago(60)}}}
+        r, db = self.run_bundle(self.bundle(), state)
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertIn("sales-api", db.file_reads)
+
+    def test_every_marker_comes_from_its_module(self):
+        """At least one string per module is in that module's source on main, so a rename shows up here."""
+        root = Path(__file__).resolve().parents[3] / "supabase" / "functions"
+        files = {(slug, mod): root / slug / mod for slug, mods in live_calls.LIVE_MARKERS.items() for mod in mods}
+        if not all(f.is_file() for f in files.values()):
+            # The VPS keeps an older checkout around this folder (no sales-live, no live-calls modules).
+            self.skipTest("the live-calls sources are not next to this copy (the VPS copy)")
+        for slug, mods in live_calls.LIVE_MARKERS.items():
+            self.assertEqual(sorted(mods), sorted(live_calls.LIVE_MODULES[slug]))
+            for mod, marks in mods.items():
+                text = files[(slug, mod)].read_text(encoding="utf-8")
+                self.assertTrue(any(m in text for m in marks), (slug, mod))
+
     def test_without_the_token_it_is_a_coverage_gap(self):
         r = live_calls.run_code(fakes.ctx(Path(tempfile.mkdtemp()), db=fakes.FakeDb({}), state={}))
         self.assertTrue(r.coverage_gap)

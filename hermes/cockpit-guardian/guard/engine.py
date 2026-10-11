@@ -662,6 +662,7 @@ def scan(ctx: Context, store: Store, checks: list[Check], outbox: alerts_mod.Out
          log: Any = None) -> Outcome:
     out = Outcome()
     now = ctx.now
+    store.clock = now
     by_id = {c.id: c for c in checks}
     out.findings = run_checks(ctx, checks)
     remember_log_offsets(ctx)

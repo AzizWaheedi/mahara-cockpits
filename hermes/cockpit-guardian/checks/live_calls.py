@@ -14,7 +14,9 @@ and the VPS worker each gate themselves.
 
 live-code reads which source modules sales-api and sales-live were deployed
 with, once per deploy: a deploy from a branch without live calls keeps its
-name and gets a higher version, and only its modules tell.
+name and gets a higher version, and only its modules tell. A bundled deploy
+(Composio's, one index.ts) has no module names, so each module is then found
+by strings its code leaves in the bundle (LIVE_MARKERS).
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ from guard import http
 from guard.alerts import in_hours
 from guard.config import SUPABASE_URL
 from guard.context import Context, SourceError, parent_of
+from guard.db import module_names
 from guard.model import (FAIL, NOT_DEPLOYED, OK, Check, Result, age_min, ago, fail, kuwait, not_deployed, ok, parse_time,
                          paused, unknown, warn)
 from guard.redact import clean
@@ -81,6 +84,29 @@ DEPLOYED = {
 LIVE_MODULES = {
     "sales-api": ("rooms.ts", "roomlogic.ts", "liveio.ts", "followupAgent.ts", "sendrules.ts"),
     "sales-live": ("cron.ts", "door.ts", "handler.ts", "sign.ts", "slack.ts", "zoom.ts"),
+}
+# What each module leaves in a bundled deploy. Composio deploys a function as one bun bundle
+# (scripts/dev/deploy_composio.py), so the API gives back a single index.ts and the module
+# names are gone; the code is still there. A module counts as deployed when any of its
+# strings is in the body. Checked against the deployed bodies on 2026-10-11 (sales-api v71,
+# one bundle; sales-live v7, multi-file): every string below is in them, and none is in a
+# deploy from the old branch, which has no live-calls code at all.
+LIVE_MARKERS = {
+    "sales-api": {
+        "rooms.ts": ("hungSend", "PHONE_CLOSE_KIND", "room.phone_close"),
+        "roomlogic.ts": ("ROOM_STATES", "sales-api/roomlogic.ts"),
+        "liveio.ts": ("makeLiveIO", "sales-api/liveio.ts"),
+        "followupAgent.ts": ("makeFollowupAgent", "sales-api/followupAgent.ts"),
+        "sendrules.ts": ("LEAD_ZONES", "sales-api/sendrules.ts"),
+    },
+    "sales-live": {
+        "cron.ts": ("cronForwardable", "CRON_FORWARD"),
+        "door.ts": ("isPreviewBot", "doorView"),
+        "handler.ts": ("makeHandler", "STATUS_JOBS"),
+        "sign.ts": ("slackSignatureOk", "zoomSignatureOk"),
+        "slack.ts": ("parseSlack", "SLACK_COPY"),
+        "zoom.ts": ("zoomLookup", "endpoint.url_validation"),
+    },
 }
 
 
@@ -220,6 +246,19 @@ def known_deployed(ctx: Context, check_id: str) -> bool:
     return check_id in (ctx.state.get("seen_deployed") or {}) or check_id in DEPLOYED
 
 
+def read_code(ctx: Context, slug: str, need: tuple[str, ...], key: str) -> dict:
+    """Which live-calls modules a deploy lacks. By file name for a multi-file deploy; for a module whose
+    name is not there (a bundled deploy has only index.ts), by its strings in the body. Only the
+    finding is kept, never the code."""
+    body = ctx.function_body(slug)
+    names = module_names(body)
+    unnamed = [m for m in need if m not in names]
+    marks = LIVE_MARKERS.get(slug, {})
+    missing = [m for m in unnamed if not any(x.encode() in body for x in marks.get(m, ()))]
+    return {"key": key, "missing": missing, "modules": len(names), "read_at": ctx.now.isoformat(),
+            "by": "files" if not unnamed else "files and strings" if len(unnamed) < len(need) else "strings"}
+
+
 def run_code(ctx: Context) -> Result:
     """Each function's modules are read once per deploy (a new version or bundle hash) and kept in the state."""
     try:
@@ -241,16 +280,18 @@ def run_code(ctx: Context) -> Result:
             continue
         key = f"v{f.get('version')}:{f.get('ezbr_sha256') or ''}"
         rec = known.get(slug)
-        if not isinstance(rec, dict) or rec.get("key") != key:
-            names = ctx.function_files(slug)
-            rec = {"key": key, "missing": [m for m in need if m not in names], "modules": len(names),
-                   "read_at": ctx.now.isoformat()}
+        # A record from before 2026-10-11 has no "by": it was read by file names only, which cries wolf
+        # on a bundled deploy, so it is read again once.
+        if not isinstance(rec, dict) or rec.get("key") != key or "by" not in rec:
+            rec = read_code(ctx, slug, need, key)
             known[slug] = rec
         if rec["missing"]:
             problems.append(f"{slug} {key.split(':')[0]} was deployed without {', '.join(rec['missing'])}")
         else:
-            seen.append(f"{slug} {key.split(':')[0]}")
-    ev = {k: {"key": v.get("key"), "missing": v.get("missing")} for k, v in known.items() if isinstance(v, dict)}
+            seen.append(f"{slug} {key.split(':')[0]}" + (" (one bundle: found by its code)" if rec.get("by") == "strings"
+                                                          else ""))
+    ev = {k: {"key": v.get("key"), "missing": v.get("missing"), "by": v.get("by")} for k, v in known.items()
+          if isinstance(v, dict)}
     if problems:
         return fail("The live-calls code is not what runs: " + "; ".join(problems) + " (deployed from a branch "
                     "without live calls?).", evidence=ev, items=sorted(LIVE_MODULES), urgent=True)
@@ -464,10 +505,11 @@ CHECKS = [
           run=deployable("live-function", "sales-live", run_function), action="Redeploy sales-live with verify_jwt false."),
     Check(id="live-code", area="live-calls", name="Live calls: deployed code",
           means="sales-api and sales-live were deployed with their live-calls modules.", severity="high",
-          reads="The functions list, and once per deploy the function's source module names (management API)",
+          reads="The functions list, and once per deploy the function's deployed code (management API): its module "
+                "names, or for a bundled deploy the strings each live-calls module leaves in it",
           threshold="A function deployed without its live-calls modules: fail (urgent).", run=run_code,
-          action="Redeploy from main at e166a0b or later: python3 scripts/dev/deploy_fn.py sales-api "
-                 "supabase/functions/sales-api, and sales-live with --no-verify-jwt (a person does this)."),
+          action="Redeploy from main at e166a0b or later: python3 scripts/dev/deploy_composio.py sales-api "
+                 "--verify-jwt on, and sales-live with --verify-jwt off (a person does this)."),
     Check(id="live-cron", area="live-calls", name="Live calls: database jobs",
           means="The rooms sweep and the sales watchdog are scheduled once the tables exist.", severity="high",
           reads="cron.job through the probe", threshold="Tables missing: not deployed yet; tables there and a job missing: fail.",

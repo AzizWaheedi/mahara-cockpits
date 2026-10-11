@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+import urllib.parse
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from . import http
@@ -361,6 +362,125 @@ No em-dashes anywhere."""
     out, model = model_json(cfg, prompt, schema, log)
     _put_meta(sb, f"headhunt:{role_key}", {"at": _now(), "model": model, "note": note, **out})
     return {"ok": True, "role": role.get("label"), "model": model, **out}
+
+
+# --- "Find people for this role" (the CEO Hiring tab, 2026-10-11) ------------
+#
+# The tab queues a request through the Edge Function hiring-api (operation
+# headhunt): cockpit_hiring_meta "headhunt-request:<role>" with status queued.
+# The five-minute `radar.py pending` cron answers it here with headhunt(),
+# which writes "headhunt:<role>", and marks the request done or failed. A
+# request is claimed with a conditional write (only while it is still queued,
+# or running and hung), so two runs never answer the same ask twice.
+
+REQUEST_PREFIX = "headhunt-request:"
+HEADHUNT_TRIES = 3
+HEADHUNT_HUNG_MIN = 30
+
+
+def _when(value: Any) -> Optional[datetime]:
+    try:
+        t = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def _iso(t: datetime) -> str:
+    return t.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _write_request(sb: Supabase, key: str, held: dict[str, Any], value: dict[str, Any], now: datetime) -> bool:
+    """Replace the request only if it is still the one that was read. True when it was."""
+    where = f"key=eq.{http.quote_key(key)}&value->>status=eq.{urllib.parse.quote(str(held.get('status') or ''), safe='')}"
+    if held.get("requestedAt"):
+        where += f"&value->>requestedAt=eq.{urllib.parse.quote(str(held['requestedAt']), safe='')}"
+    _, _, rows = sb.rest(
+        "PATCH",
+        f"cockpit_hiring_meta?{where}",
+        json_body={"value": value, "updated_at": _iso(now)},
+        prefer="return=representation",
+    )
+    return bool(rows)
+
+
+def due_requests(rows: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    """The asks to answer now, oldest first: queued, or running past the hung line."""
+    out = []
+    for r in rows:
+        v = r.get("value") if isinstance(r.get("value"), dict) else {}
+        status = v.get("status")
+        if status == "queued":
+            out.append(r)
+        elif status == "running":
+            started = _when(v.get("startedAt"))
+            if started is None or now - started > timedelta(minutes=HEADHUNT_HUNG_MIN):
+                out.append(r)
+    return sorted(out, key=lambda r: str((r.get("value") or {}).get("requestedAt") or ""))
+
+
+def answer_requests(
+    cfg: Config,
+    log: Callable[[str], None] = print,
+    *,
+    limit: int = 1,
+    dry_run: bool = False,
+    sb: Optional[Supabase] = None,
+    now: Optional[datetime] = None,
+    hunt: Optional[Callable[..., dict[str, Any]]] = None,
+) -> list[dict[str, Any]]:
+    """Answer the Hiring tab's queued headhunts. One per run by default: each is a model call."""
+    sb = sb or store(cfg)
+    hunt = hunt or headhunt
+    now = now or datetime.now(timezone.utc)
+    rows = sb.select("cockpit_hiring_meta", f"key=like.{urllib.parse.quote(REQUEST_PREFIX, safe='')}*&select=key,value&order=key&limit=50")
+    out: list[dict[str, Any]] = []
+    for r in due_requests(rows, now)[: max(0, int(limit))]:
+        key = str(r["key"])
+        held = dict(r.get("value") or {})
+        role = key[len(REQUEST_PREFIX):]
+        attempts = int(held.get("attempts") or 0) + 1
+        summary: dict[str, Any] = {"role": role, "attempts": attempts}
+        if dry_run:
+            summary["status"] = "would answer"
+            out.append(summary)
+            continue
+        if attempts > HEADHUNT_TRIES:
+            gave_up = {**held, "status": "failed", "attempts": attempts - 1, "finishedAt": _iso(now),
+                       "error": "The agent tried three times and never finished. Ask again."}
+            summary["status"] = "failed" if _write_request(sb, key, held, gave_up, now) else "taken"
+            out.append(summary)
+            continue
+        running = {**held, "status": "running", "attempts": attempts, "startedAt": _iso(now)}
+        running.pop("error", None)
+        if not _write_request(sb, key, held, running, now):
+            summary["status"] = "taken"
+            out.append(summary)
+            continue
+        try:
+            res = hunt(cfg, role, str(held.get("note") or ""), log)
+        except Exception as e:  # noqa: BLE001 - a model or network failure is recorded, never raised
+            err = http.scrub(str(e))[:300] or type(e).__name__
+            again = attempts < HEADHUNT_TRIES
+            after = {**running, "status": "queued" if again else "failed", "error": err}
+            if not again:
+                after["finishedAt"] = _iso(datetime.now(timezone.utc))
+            _write_request(sb, key, running, after, now)
+            summary.update({"status": after["status"], "error": err})
+            log(f"headhunt {role} failed (try {attempts} of {HEADHUNT_TRIES}): {err}")
+            out.append(summary)
+            continue
+        finished = _iso(datetime.now(timezone.utc))
+        if res.get("ok"):
+            after = {**running, "status": "done", "answeredAt": finished, "model": res.get("model")}
+        else:
+            # A role the spec does not know will not be known on a retry either.
+            after = {**running, "status": "failed", "finishedAt": finished, "error": str(res.get("error") or "No answer.")[:300]}
+        _write_request(sb, key, running, after, now)
+        summary["status"] = after["status"]
+        log(f"headhunt {role}: {after['status']}")
+        out.append(summary)
+    return out
 
 
 def doctor(cfg: Config) -> dict[str, Any]:

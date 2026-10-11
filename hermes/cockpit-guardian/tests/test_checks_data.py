@@ -113,7 +113,9 @@ class Tap(unittest.TestCase):
         self.assertEqual(r.status, FAIL)
         self.assertIn("window with no charges", r.summary)
         self.assertIn("No payment is lost", r.summary)
-        self.assertIn("ai-fix", r.action)
+        # Fixed on main in 0a71aec (2026-10-07): seen again, the deployed function lacks that fix.
+        self.assertIn("0a71aec", r.action)
+        self.assertIn("Redeploy tap-charges-sync from main", r.action)
         self.assertNotIn("may be", r.summary)
         row.update(ok=True, last_ok_at=fakes.ago(10))
         self.assertEqual(worker_status.run_tap(make({"cockpit_sync_state": [row]})).status, OK)

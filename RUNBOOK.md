@@ -16,12 +16,16 @@ last error and this fix next to it.
 - A screen that crashes in someone's browser shows "Try again / Reload" and
   files the same fix job on its own.
 - The cockpit guardian (hermes/cockpit-guardian) scans everything every 5
-  minutes from the VPS and posts one "[guardian]" message per new incident
-  and one when it clears, in #health, Saturday to Thursday 09:00 to 21:00
-  Kuwait time (Convex or Supabase down at any hour), plus a 09:00 summary.
-  Each message says what broke, since when, what the guardian tried, and
-  what a person must do. Its own rows are in its README; `python3
-  guardian.py report` on the VPS lists everything open.
+  minutes from the VPS and makes the safe fixes itself (fix mode since
+  2026-10-11: a catch-up run of a late copy-only job, stopping a hung run,
+  log rotation, env file modes, the radar resend, the editor-stills bucket,
+  a prepared crontab restore it never installs); everything else it posts
+  as one "[guardian]" message per new incident and one when it clears, in
+  #health, Saturday to Thursday 09:00 to 21:00 Kuwait time (Convex or
+  Supabase down at any hour), plus a 09:00 summary. Each message says what
+  broke, since when, what the guardian tried, and what a person must do. Its
+  own rows are in its README; `python3 guardian.py report` on the VPS lists
+  everything open.
 
 ## What to do, by system
 
@@ -560,6 +564,27 @@ approval as changed. In order:
 9. Ship the cockpit (`scripts/ship.sh media-buyer`, its auth preflight
    through Composio too), then open Team & payroll on production as the CEO:
    both connections say Connected.
+
+## Hiring
+
+The careers Typeforms into the MaharaMedia Hiring boards, the boards into the
+CEO Hiring tab, and the tab's buttons. On Supabase (built 2026-10-09, switched on by the steps in SWITCH-ON.md): Edge
+Functions `hiring-sync` (pg_cron `mahara-hiring-mirror` every 10 minutes,
+`mahara-hiring-engine` every 10, `mahara-hiring-intake` at :08 and :38) and
+`hiring-api` (the tab). How it was switched on, and how to switch it off, is in
+`docs/hiring/SWITCH-ON.md`.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Tab or `cockpit_sync_state` says "The hiring sub-account is not connected" | Set `GHL_HIRING_PIT` and `GHL_HIRING_LOCATION` as Edge Function secrets from the VPS runtime file (SWITCH-ON step 2) | Lead session |
+| A grade or the track switch says "Dry run: GoHighLevel writes are off" | `HIRING_APPLY` is not `true`; set it | Lead session |
+| `hiring-sync:intake` note starts "Dry run on purpose, the first intake run" | Nothing: the first run after the switch-on files nothing on purpose; the next one (30 minutes) files. Read the plan in `cockpit_hiring_runs.result` meanwhile | nobody |
+| `hiring-sync:intake` says "left to the other importer" | PR #31's importer files that form live. Only one importer may run on a form: switch one of them off for it | Lead session |
+| Intake `ok` false with "Typeform … answered 401" | `TYPEFORM_TOKEN` was rotated; set it again | Aziz |
+| Intake or mirror "GoHighLevel … answered 401" | The hiring private integration token was rotated; make a new one in MaharaMedia Hiring and set `GHL_HIRING_PIT` (and the VPS runtime file) | Aziz |
+| "The careers form import is already running" | A run holds the lock; it frees itself after 7 minutes if the run died | nobody |
+| "Find people for this role" stays at "Asked at …" past 10 minutes | The VPS `pending` cron answers it. `tail ~/.ideation-radar/out/cron.log` on the VPS for `headhunt`; a model failure retries three times, then the tab says why with Ask again | Hermes |
+| Candidate messages | GoHighLevel's 36 workflows send them once the CEO publishes them; the cockpit only drafts and never sends on a schedule. `HIRING_SEND_ENABLED` stays unset | Aziz |
 
 ## What never needs a person
 

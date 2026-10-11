@@ -51,8 +51,12 @@ export async function cronDoor(req: Request, deps: DoorDeps): Promise<Response> 
   if (req.method !== "POST" || !expected || !given || given !== expected)
     return json({ ok: false, note: "not allowed" }, 401);
   let job = "";
+  let dryRun = false;
   try {
-    job = String((await req.json())?.job ?? "");
+    const body = await req.json();
+    job = String(body?.job ?? "");
+    // {"job": "intake", "dryRun": true}: list what would be filed, file nothing.
+    dryRun = body?.dryRun === true;
   } catch {
     // An unreadable body names no job.
   }
@@ -65,7 +69,7 @@ export async function cronDoor(req: Request, deps: DoorDeps): Promise<Response> 
     return json({ ok: false, note: "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required." }, 503);
   }
   const ctx = makeCtx({ env: deps.env, store, actor: null, fetch: deps.fetch, sleep: deps.sleep, now: deps.now });
-  const out = await runJob(ctx, job as (typeof JOBS)[number], "schedule");
+  const out = await runJob(ctx, job as (typeof JOBS)[number], "schedule", { dryRun });
   // One clear line either way, so the monitor can tell them apart.
   if (out.ok) console.log(`hiring-sync ${job} ok: ${out.note}`);
   else console.error(`hiring-sync ${job} failed: ${out.note}`);

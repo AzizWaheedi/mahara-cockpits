@@ -1,5 +1,7 @@
 // hiring-api: the CEO cockpit Hiring tab's actions (refreshNow, grade,
-// reassign, setEngine, drafts, sendDraft), ported from Convex hiring.actions.
+// reassign, setEngine, drafts, sendDraft), ported from Convex hiring.actions,
+// and since 2026-10-11 headhunt (queue "Find people for this role" for the
+// VPS recruiting agent) and headhunts (read the requests and answers).
 //
 // Deploy with JWT verification on. Every call is checked again here: the
 // caller's token must belong to the CEO (public.cockpit_is_ceo()), and every

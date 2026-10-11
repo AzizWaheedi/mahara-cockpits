@@ -7,7 +7,7 @@
 
 import type { Ctx } from "./context.ts";
 import { type Any, GateError } from "./providers.ts";
-import { FIELDS, ROLES, type StageKey, stageKeyOnBoard } from "./spec.ts";
+import { fieldNames, FIELDS, ROLES, type StageKey, stageKeyOnBoard } from "./spec.ts";
 
 export type Meta = {
   location: string;
@@ -69,8 +69,14 @@ export function buildMeta(
     }
   }
   for (const f of FIELDS) {
-    const found = fields.find(x => same(x.name, f.name));
-    if (found) meta.fields[f.key] = found.id;
+    // The spec's name first, then any name it had before a rename.
+    for (const name of fieldNames(f.key)) {
+      const found = fields.find(x => same(x.name, name));
+      if (found) {
+        meta.fields[f.key] = found.id;
+        break;
+      }
+    }
   }
   return meta;
 }

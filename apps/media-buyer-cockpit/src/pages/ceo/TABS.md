@@ -954,11 +954,27 @@ It writes its score, verdict, reasoning and the questions to ask onto the
 candidate row, and the grading queue shows them beside the box Aziz types his
 own score into. It proposes only, and it learns from the gap.
 
+**Headhunting** (Aziz: "a recruiting agent as well, that keeps self-improving
+and that I can use to help me headhunt and recruit amazing people"). Under
+each role's funnel, "Find people for this role" with an optional line to aim
+it. It queues a request (`hiring-api` `headhunt`) that the VPS agent answers
+within five minutes: where to look today, what good looks like, what to skip
+on sight, and a first message and a four-day follow-up in his voice, each with
+a Copy button. The two messages sit on the teal rule because they are the part
+he pastes somewhere.
+
 **Build contract.** `convex/hiring/spec.ts` is the one description of roles,
 stages and fields. Change it there, run `hiring/setup:apply` then
 `hiring/sync:refreshIds`, never click it into GoHighLevel by hand. Three jobs
 run it: `hiring intake` every 30 minutes, `hiring board` every 10, `hiring
 engine` every 10, all in the health ledger.
+
+Since Convex stopped (2026-10-07) the three jobs are the Edge Function
+`hiring-sync` on pg_cron (migration `20261009c_hiring_native.sql`), the tab's
+buttons are `hiring-api`, and the spec lives in
+`supabase/functions/_shared/hiring/spec.ts`, `src/types/hiring/spec.ts` and
+`hermes/ceo-refresh/native/hiring/spec.js`, word for word. The switch-on steps
+are in `docs/hiring/SWITCH-ON.md`.
 
 # Tab 11: Machine
 

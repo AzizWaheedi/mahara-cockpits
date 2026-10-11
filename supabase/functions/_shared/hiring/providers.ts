@@ -31,6 +31,13 @@ export const SEND_NAME = "HIRING_SEND_ENABLED";
 
 const GHL_VERSION = "2021-07-28";
 const RETRIES = 2;
+/**
+ * HighLevel sits behind Cloudflare, which refuses a request without a
+ * browser-like agent (error 1010). sales-api and sales-mirror send this one
+ * from the same Edge runtime; Convex's runtime sent its own and never hit it.
+ */
+export const GHL_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 /** HIRING_APPLY must be exactly "true". Anything else is a dry run. */
 export const applyEnabled = (env: (n: string) => string | undefined) =>
@@ -82,11 +89,17 @@ export function ghlClient(
   o: ClientDeps & {
     token: string;
     location: string;
-    apply: boolean;
+    /**
+     * HIRING_APPLY, or a function that reads it at the moment of the write,
+     * so a run the caller turns into a dry run (the first intake) is gated
+     * here as well as in the job.
+     */
+    apply: boolean | (() => boolean);
     sendEnabled: boolean;
   },
 ) {
   const doFetch = o.fetch ?? fetch;
+  const applyNow = () => (typeof o.apply === "function" ? o.apply() : o.apply);
   const sleep = o.sleep ?? realSleep;
   const receipt = (method: string, path: string) => ({
     provider: "gohighlevel" as const,
@@ -114,6 +127,7 @@ export function ghlClient(
             Authorization: `Bearer ${o.token}`,
             Version: GHL_VERSION,
             Accept: "application/json",
+            "User-Agent": GHL_USER_AGENT,
             ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           },
           body: body === undefined ? undefined : JSON.stringify(body),
@@ -158,7 +172,9 @@ export function ghlClient(
 
   return {
     location: o.location,
-    apply: o.apply,
+    get apply() {
+      return applyNow();
+    },
     sendEnabled: o.sendEnabled,
     /** A read that returns whatever GoHighLevel answered. */
     read: (path: string) => call("GET", path),
@@ -166,7 +182,7 @@ export function ghlClient(
     readOk: async (path: string) => ok(await call("GET", path), "GET", path),
     /** A contact, opportunity or note write. Dry run unless HIRING_APPLY. */
     async write(method: "POST" | "PUT", path: string, body: unknown): Promise<Any> {
-      if (!o.apply) {
+      if (!applyNow()) {
         await o.health({ ...receipt(method, path), phase: "blocked" });
         throw new GateError(
           "Dry run: GoHighLevel writes are off on the server (HIRING_APPLY is not true), so nothing was written.",

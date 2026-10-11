@@ -131,6 +131,12 @@ def _columns(select: str) -> list[str]:
     return ["*"] if cols == ["*"] else [_check_ident(c) for c in cols]
 
 
+def module_names(body: bytes) -> list[str]:
+    """The source file names in a function body read back as multipart (a bundled deploy has one: index.ts)."""
+    names = re.findall(rb'filename="([^"]+)"', body or b"")
+    return sorted({n.decode("utf-8", "replace").split("/")[-1] for n in names})
+
+
 class Mgmt:
     """The Supabase Management API: health, functions list, read-only SQL."""
 
@@ -156,15 +162,18 @@ class Mgmt:
         out = self._get(f"/v1/projects/{self.ref}/functions")
         return out if isinstance(out, list) else []
 
-    def function_files(self, slug: str) -> list[str]:
-        """The source module names a function was deployed with (its body read back as multipart; only the
-        file names are kept)."""
+    def function_body(self, slug: str) -> bytes:
+        """A function's deployed code as the API gives it back (multipart: one part per source module, or one
+        part holding the whole bundle when it was deployed as a single bundled file, as Composio does)."""
         r = http.get(f"{MGMT_API}/v1/projects/{self.ref}/functions/{slug}/body", timeout=self.timeout,
                      headers={"Authorization": f"Bearer {self.token}", "Accept": "multipart/form-data"})
         if r.status != 200:
             raise DbError(f"management API {r.status}: {scrub(r.text(300))}")
-        names = re.findall(rb'filename="([^"]+)"', r.body)
-        return sorted({n.decode("utf-8", "replace").split("/")[-1] for n in names})
+        return r.body
+
+    def function_files(self, slug: str) -> list[str]:
+        """The source module names a function was deployed with (only the file names are kept)."""
+        return module_names(self.function_body(slug))
 
     def sql(self, query: str) -> list[dict[str, Any]]:
         r = http.request("POST", f"{MGMT_API}/v1/projects/{self.ref}/database/query",
@@ -202,9 +211,12 @@ class Db:
         return self.mgmt.functions()
 
     def function_files(self, slug: str) -> list[str]:
+        return module_names(self.function_body(slug))
+
+    def function_body(self, slug: str) -> bytes:
         if not self.mgmt:
             raise Unavailable("SUPABASE_ACCESS_TOKEN is not set, so the deployed code cannot be read")
-        return self.mgmt.function_files(slug)
+        return self.mgmt.function_body(slug)
 
     def health(self) -> list[dict[str, Any]]:
         if not self.mgmt:

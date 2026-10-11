@@ -8,6 +8,7 @@ import {
 import { sayCount } from "../lib/funnel";
 import {
   GOOGLE,
+  inLang,
   type L,
   type Lang,
   MARKETS,
@@ -291,6 +292,8 @@ function Devices({
   const [open, setOpen] = useState(false);
   // Pointing at the pair starts the live page loading, a head start on the click.
   const [warm, setWarm] = useState(false);
+  // The live page opens in the deck's language.
+  const href = live ? inLang(live, lang) : undefined;
   const bar = 44;
   // The browser takes the height; the phone overlaps its far corner.
   let bh = box.h - 24;
@@ -325,7 +328,7 @@ function Devices({
       </Phone>
     </>
   );
-  if (!live)
+  if (!href)
     return (
       <div className="dk-devices" style={size}>
         {pair}
@@ -355,7 +358,7 @@ function Devices({
       {warm ? (
         <span className="dk-live-warm" aria-hidden>
           <iframe
-            src={live}
+            src={href}
             title="The landing page, loading ahead"
             tabIndex={-1}
             sandbox="allow-scripts allow-same-origin"
@@ -364,7 +367,7 @@ function Devices({
       ) : null}
       {open ? (
         <LivePage
-          url={live}
+          url={href}
           lang={lang}
           desktop={desktop}
           phone={phone}

@@ -88,6 +88,22 @@ export class FakeStore implements Store {
     this.meta.set(key, structuredClone(value));
     return Promise.resolve();
   }
+  metaByPrefix(prefix: string) {
+    return Promise.resolve(
+      [...this.meta.entries()]
+        .filter(([k]) => k.startsWith(prefix))
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, value]) => ({ key, value: structuredClone(value), updated_at: "2026-10-09T12:00:00.000Z" })),
+    );
+  }
+  /** Forms PR #31's importer files live, by form id. */
+  liveForms = new Set<string>();
+  liveImporterFor(formId: string) {
+    return Promise.resolve(this.liveForms.has(formId) ? "hiring-intake (PR #31)" : null);
+  }
+  hasDryRun(job: Job) {
+    return Promise.resolve(this.runs.some(r => r.job === job && r.apply === false && r.status === "ok"));
+  }
   candidates() {
     return Promise.resolve([...this.cands.values()].map(r => ({ ...r })));
   }
@@ -192,7 +208,7 @@ export class FakeStore implements Store {
   }
 }
 
-export type Call = { method: string; url: string; body: unknown };
+export type Call = { method: string; url: string; body: unknown; headers?: Record<string, string> };
 type Route = [method: string, match: RegExp, answer: (call: Call) => { status?: number; body?: unknown }];
 
 /** A fetch that answers from routes; an unrouted call fails the test loudly. */
@@ -202,7 +218,7 @@ export function fakeFetch(routes: Route[]) {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    const call = { method, url, body };
+    const call = { method, url, body, headers: (init?.headers ?? {}) as Record<string, string> };
     calls.push(call);
     const route = routes.find(([m, re]) => m === method && re.test(url));
     if (!route) return Promise.reject(new Error(`unrouted ${method} ${url}`));

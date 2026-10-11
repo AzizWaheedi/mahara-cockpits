@@ -189,14 +189,15 @@ def run_tap(ctx: Context) -> Result:
     ev = {"ok": r.get("ok"), "last_ok_age_min": ok_age, "last_run_age_min": run_age, "note": note}
     if r.get("ok") is False or ok_age is None or ok_age > 60:
         if EMPTY_WINDOW.search(str(r.get("note") or "")):
-            # A window with no charges: Tap answers 1249 "Charges not found" and listPage() in
-            # supabase/functions/tap-charges-sync throws on it instead of reading zero charges.
+            # A window with no charges: Tap answers 1249 "Charges not found". listPage() threw on it until
+            # 0a71aec (2026-10-07, tapResponse.ts reads it as zero charges; deployed as v14). Seen again, the
+            # function was redeployed from code without that fix.
             return fail(f"Tap payments have not synced for {ago(ok_age)} because Tap answers 1249 'Charges not found' "
-                        "for a window with no charges and tap-charges-sync throws on it. No payment is lost (there "
-                        "were none in that window), but no new one is copied while it fails.",
+                        "for a window with no charges and the deployed tap-charges-sync throws on it. No payment is "
+                        "lost (there were none in that window), but no new one is copied while it fails.",
                         since=parse_time(r.get("last_ok_at")), evidence=ev, items=["empty-window"],
-                        action="A code fault in supabase/functions/tap-charges-sync (listPage must read 1249 as zero "
-                               "charges): a candidate for guardian.py ai-fix, then a person deploys the function.")
+                        action="Fixed on main in 0a71aec (tapResponse.ts); the deployed function lacks it. Redeploy "
+                               "tap-charges-sync from main (a person does this).")
         return fail(f"Tap payments have not synced for {ago(ok_age)}: {note}.", since=parse_time(r.get("last_ok_at")),
                     evidence=ev, items=[f"error: {clean(note, 60)}"])
     return ok(f"Tap payments synced {ago(ok_age)} ago.", evidence=ev)
@@ -260,6 +261,88 @@ def run_hiring_engine(ctx: Context) -> Result:
         return warn("The hiring message engine is armed: it now messages applicants. It was left disarmed on purpose.",
                     evidence={"armed": True}, action="If that was not a decision, disarm it on the Recruiting tab.")
     return ok("The hiring message engine is disarmed, as decided.", evidence={"armed": False})
+
+
+# hiring-sync (Supabase, since Convex stopped on 2026-10-07): pg_cron posts the board
+# mirror and the message engine every 10 minutes and the careers-form intake at :08
+# and :38 (migration 20261009c). Each job stamps cockpit_sync_state hiring-sync:<job>.
+HIRING_JOBS = {
+    # job: (minutes its last good run may be old, what it does)
+    "mirror": (30, "the board copy from HighLevel"),
+    "intake": (90, "the careers-form import into HighLevel"),
+    "engine": (30, "the message drafts"),
+}
+HIRING_BOARD_MIN = 30
+HIRING_DRY_MIN = 75          # the first intake run is dry on purpose; the next (30 min later) files
+HIRING_SWITCH_ON = ("Set GHL_HIRING_PIT, GHL_HIRING_LOCATION and HIRING_APPLY=true as Edge Function secrets and "
+                    "apply 20261009c (a person does this).")
+
+
+def run_hiring_sync(ctx: Context) -> Result:
+    """The hiring board and the Typeform applications reach the cockpit and HighLevel. Missing is never
+    healthy: no hiring-sync row means the jobs never ran here, whatever the old board copy says."""
+    keys = [f"hiring-sync:{j}" for j in HIRING_JOBS]
+    rows = {r.get("key"): r for r in ctx.rows("cockpit_sync_state", "key,ok,note,last_run_at,last_ok_at",
+                                              where=[("key", "in", keys)])}
+    newest = ctx.rows("cockpit_hiring_candidates", "synced_at", order="synced_at.desc", limit=1)
+    board_at = parse_time(newest[0].get("synced_at")) if newest else None
+    board_age = age_min(board_at, ctx.now)
+    ev = {"board_newest": board_at.isoformat() if board_at else None,
+          "board_age_min": None if board_age is None else round(board_age, 1),
+          "jobs": {k.split(":", 1)[1]: {"ok": r.get("ok"), "last_ok_at": r.get("last_ok_at"),
+                                         "note": clean(r.get("note"), 160)} for k, r in rows.items()}}
+    if not rows:
+        stopped = f"the board copy stopped at {kuwait(board_at)}" if board_at else "the board copy is empty"
+        return fail(f"hiring-sync has never run on Supabase; {stopped}. Typeform applications are not reaching "
+                    "HighLevel and the Hiring tab's buttons cannot work.", since=board_at, evidence=ev,
+                    items=["never-run"], action=HIRING_SWITCH_ON)
+    problems, names, since = [], [], []
+    for job, (limit, label) in HIRING_JOBS.items():
+        r = rows.get(f"hiring-sync:{job}")
+        if r is None:
+            problems.append(f"{job} ({label}) has never run")
+            names.append(f"{job}-never-run")
+            continue
+        if r.get("ok") is False:
+            problems.append(f"{job} ({label}) failed its last run: {brief_error(r.get('note'), 140)}")
+            names.append(f"{job}-failing")
+        ok_age = age_min(r.get("last_ok_at"), ctx.now)
+        if ok_age is None or ok_age > limit:
+            problems.append(f"{job} ({label}) has had no good run for {ago(ok_age)} (limit {ago(limit)})")
+            names.append(f"{job}-stale")
+            since.append(parse_time(r.get("last_ok_at")) or parse_time(r.get("last_run_at")))
+    if board_age is None or board_age > HIRING_BOARD_MIN:
+        problems.append(f"the newest candidate was copied {ago(board_age)} ago (limit {ago(HIRING_BOARD_MIN)})")
+        names.append("board-stale")
+        since.append(board_at)
+    if problems:
+        known = [t for t in since if t is not None]
+        return fail("Hiring is not syncing: " + "; ".join(problems) + ".", since=min(known) if known else None,
+                    evidence=ev, items=sorted(names),
+                    action="Read the newest failed row in cockpit_hiring_runs and the hiring-sync function log in "
+                           "Supabase; a 'not connected' note means " + HIRING_SWITCH_ON[0].lower() + HIRING_SWITCH_ON[1:])
+    intake = rows.get("hiring-sync:intake") or {}
+    note = str(intake.get("note") or "")
+    history = ctx.state.setdefault("history", {})
+    if not note.startswith("Dry run"):
+        history.pop("hiring_intake_dry_since", None)
+        return ok(f"Hiring syncs: the board copy is {ago(board_age)} old and the mirror, intake and engine ran on "
+                  "time.", evidence=ev)
+    if "HIRING_APPLY is not true" in note:
+        return warn("HIRING_APPLY is not true: applications are read but not filed in HighLevel "
+                    f"({clean(note, 120)}).", evidence=ev, items=["intake-dry-run"],
+                    action="Set HIRING_APPLY=true as an Edge Function secret (a person does this).")
+    # hiring-sync holds the first intake run after the switch-on dry on purpose (and a run asked to be dry):
+    # it lists what it would file and the next run files it. Only a dry run that lasts is a problem.
+    since = parse_time(history.setdefault("hiring_intake_dry_since", ctx.now.isoformat())) or ctx.now
+    dry_min = (ctx.now - since).total_seconds() / 60
+    if dry_min > HIRING_DRY_MIN:
+        return warn(f"The hiring intake has filed nothing for {ago(dry_min)}: every run since {kuwait(since)} was a dry "
+                    f"run ({clean(note, 140)}).", since=since, evidence=ev, items=["intake-dry-run"],
+                    action="Read the newest intake rows in cockpit_hiring_runs: a run that stays dry with HIRING_APPLY "
+                           "on means the first-run hold never cleared.")
+    return ok(f"Hiring syncs: the board copy is {ago(board_age)} old; the intake's last run was a dry run on purpose "
+              f"({clean(note, 140)}).", evidence=ev)
 
 
 def run_radar_scan(ctx: Context) -> Result:
@@ -363,6 +446,20 @@ CHECKS = [
         means="The hiring message engine stays disarmed until the CEO arms it.", severity="medium",
         reads="cockpit_sections hiring, payload.engine.armed", threshold="Armed: warn.", run=run_hiring_engine,
         action="Disarm it on the Recruiting tab if arming it was not a decision.",
+    ),
+    Check(
+        id="hiring-sync", area="workers", name="Hiring sync (Typeform to HighLevel, the board copy)",
+        means="The careers-form applications reach HighLevel and the hiring board is copied into the cockpit "
+              "(hiring-sync on Supabase since Convex stopped on 2026-10-07).",
+        severity="high",
+        reads="cockpit_sync_state keys hiring-sync:mirror, hiring-sync:intake and hiring-sync:engine, and "
+              "max(cockpit_hiring_candidates.synced_at)",
+        threshold=f"No hiring-sync row, a job with ok false, the mirror or engine with no good run for "
+                  f"{HIRING_JOBS['mirror'][0]} min, the intake for {HIRING_JOBS['intake'][0]} min, or the newest "
+                  f"candidate copied over {HIRING_BOARD_MIN} min ago: fail; the intake in a dry run because "
+                  f"HIRING_APPLY is not true, or dry for over {HIRING_DRY_MIN} min (the first run after the "
+                  "switch-on is dry on purpose): warn.",
+        run=run_hiring_sync, action=HIRING_SWITCH_ON,
     ),
 ]
 

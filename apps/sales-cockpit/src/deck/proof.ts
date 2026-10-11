@@ -522,6 +522,11 @@ export interface Profile {
  * and in dark mode, with the subscriber, video, view, post and follower
  * counts hidden before the capture. Run it again to refresh both pictures,
  * then set `r` and `w` from what it prints.
+ *
+ * On 2026-10-11 the Instagram bio's "Generated $72.3 million for our
+ * Partners" line, a retired figure, was taken out of the picture: the lines
+ * under it moved up and the picture kept its 1500 x 2078 size. The script now
+ * cuts that line before it captures, until the bio itself changes.
  */
 export const PROFILES: Profile[] = [
   {
@@ -957,6 +962,7 @@ export const JOURNEY: Stop[] = [
         w: 828,
       },
       // Aziz, 2026-10-08: "if we hover or click it it should make it popup".
+      // The pop-up adds the deck's language (journeys.tsx, inLang).
       live: LINKS.landing,
     },
   },
@@ -1253,8 +1259,8 @@ export const CLOSING_TOUR: Stop[] = [
       ar: "٦ كورسات: البداية، الأونبوردنق، تحسين قوقل، صناعة العرض، إتقان توقيع المشاريع، والفريق والتشغيل.",
     },
     why: {
-      en: "The frameworks and scripts our best partners use to close 40 to 50% of their proposals.",
-      ar: "نفس الطرق والسكربتات اللي أنجح عملائنا يقفلون فيها ٤٠ لـ٥٠٪ من عروضهم.",
+      en: "The frameworks and scripts our best partners use to close their proposals.",
+      ar: "نفس الطرق والسكربتات اللي أنجح عملائنا يقفلون فيها عروضهم.",
     },
     media: {
       kind: "shots",

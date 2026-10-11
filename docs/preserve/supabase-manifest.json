@@ -10283,5 +10283,99 @@
   "function_secret_names": [
    "CRON_SECRET"
   ]
+ },
+ "hiring": {
+  "note": "Hiring: Typeform applications into HighLevel, the board copy, the CEO's grade, reassign and refresh buttons and the message drafts. They ran on Convex until it stopped on 2026-10-07; the Supabase replacement (migration 20261009c, Edge Functions hiring-sync and hiring-api, deployed 2026-10-09 at 48339a6) was never switched on, and hiring was left out of the 2026-10-07 inventory. Added 2026-10-11 at the CEO's word ('save everything before it happens and make sure that everything will be saved once done'). state deployed: every object listed here must exist, so whatever is not switched on yet reads MISSING until a person sets GHL_HIRING_PIT, GHL_HIRING_LOCATION and HIRING_APPLY and applies 20261009c (docs/hiring/SWITCH-ON.md). HIRING_SEND_ENABLED is left unset on purpose and is not listed.",
+  "state": "deployed",
+  "migrations": [
+   "supabase/migrations/20260922a_cockpit_hiring.sql",
+   "supabase/migrations/20260922b_hiring_agent.sql",
+   "supabase/migrations/20260924q_ceo_and_team_access.sql",
+   "supabase/migrations/20261009c_hiring_native.sql"
+  ],
+  "tables": [
+   "cockpit_hiring_applications",
+   "cockpit_hiring_candidates",
+   "cockpit_hiring_events",
+   "cockpit_hiring_meta",
+   "cockpit_hiring_provider_health",
+   "cockpit_hiring_runs",
+   "cockpit_hiring_sends"
+  ],
+  "no_grant_tables": [],
+  "ceo_read_tables": {
+   "cockpit_hiring_applications": [
+    "cockpit_hiring_applications_ceo"
+   ],
+   "cockpit_hiring_candidates": [
+    "cockpit_hiring_candidates_ceo"
+   ]
+  },
+  "functions": [
+   "cockpit_hiring_claim_run"
+  ],
+  "ceo_functions": [],
+  "triggers": [],
+  "pg_cron": [
+   {
+    "jobname": "mahara-hiring-mirror",
+    "schedule": "1-59/10 * * * *"
+   },
+   {
+    "jobname": "mahara-hiring-engine",
+    "schedule": "6-59/10 * * * *"
+   },
+   {
+    "jobname": "mahara-hiring-intake",
+    "schedule": "8,38 * * * *"
+   }
+  ],
+  "edge_functions": [
+   {
+    "slug": "hiring-sync",
+    "verify_jwt": false
+   },
+   {
+    "slug": "hiring-api",
+    "verify_jwt": true
+   }
+  ],
+  "vault_secret_names": [
+   "cockpit_sync_secret"
+  ],
+  "function_secret_names": [
+   "CRON_SECRET",
+   "GHL_HIRING_LOCATION",
+   "GHL_HIRING_PIT",
+   "HIRING_APPLY",
+   "TYPEFORM_TOKEN"
+  ],
+  "freshness": [
+   {
+    "table": "cockpit_hiring_candidates",
+    "column": "synced_at",
+    "max_age_min": 30,
+    "what": "the hiring board copy (hiring-sync mirror, every 10 min)"
+   }
+  ],
+  "rows_recorded_on": "2026-10-11",
+  "rows_at_least": {
+   "cockpit_hiring_candidates": 255,
+   "cockpit_hiring_applications": 254,
+   "cockpit_hiring_events": 520
+  },
+  "keys_present": {
+   "cockpit_hiring_meta": [
+    "agent-calibration",
+    "ghl-ids",
+    "roles",
+    "intake:jYTRw2Sx",
+    "intake:oW8CWRhi",
+    "intake:rqv3Fkts",
+    "intake:tigKbFlO",
+    "intake:zo1Zm6u6"
+   ]
+  },
+  "rows_note": "The kept data, counted 2026-10-11 through Composio (read only): 255 candidates (all screened by the agent), 254 application questionnaires, 520 events, and the meta rows the import and the agent stand on (each form's filed responses, the board ids, the roles, the agent's lessons). None of these tables deletes a row, so fewer rows or a key gone reads MISSING. The candidate rows hold what HighLevel does not: the agent's screening and the CEO's grades."
  }
 }

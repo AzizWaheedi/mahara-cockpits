@@ -44,7 +44,10 @@ export const STAGES = [
   { key: "group", name: "Group interview", advancing: true, odds: 30 },
   {
     key: "one-to-one",
-    name: "One to one interview",
+    // Aziz's words for this stage (2026-10-11). The boards said "One to one
+    // interview" until scripts/hiring/ghl_hiring_stages.py renames them in
+    // place; STAGE_AKA keeps the old name matching until then.
+    name: "One-to-one interview",
     advancing: true,
     odds: 55,
   },
@@ -92,7 +95,7 @@ export const STAGE_LABELS: Partial<
 
 /** Names a stage used to have, so a rename finds the old one instead of building a second. */
 export const STAGE_AKA: Partial<Record<StageKey, string[]>> = {
-  "one-to-one": ["One-to-one interview"],
+  "one-to-one": ["One to one interview"],
   loom: ["Loom request", "Case studies"],
 };
 
@@ -274,7 +277,7 @@ export const ROLES: Role[] = [
     loomPrompt:
       "Two minutes, in Khaliji Arabic: introduce yourself, then book me into a meeting as if I had filled a form two days ago and did not remember doing it.",
     testProject:
-      "A fifteen minute live block after the one to one: a speed test, then a roleplay calling an Arabic speaking villa owner who filled a form two days ago and does not remember. Held in the language the phones are actually worked in.",
+      "A fifteen minute live block after the one-to-one: a speed test, then a roleplay calling an Arabic speaking villa owner who filled a form two days ago and does not remember. Held in the language the phones are actually worked in.",
     dailyResponsibilities:
       "Call the leads our ads bring in, qualify them in Khaliji Arabic, and book them into the client's calendar so they show up.",
   },
@@ -335,7 +338,7 @@ export const FIELDS: { key: string; name: string }[] = [
   { key: "scoreApplication", name: "Score 1, application" },
   { key: "scoreLoom", name: "Score 2, Loom" },
   { key: "scoreGroup", name: "Score 3, group interview" },
-  { key: "scoreOneToOne", name: "Score 4, one to one" },
+  { key: "scoreOneToOne", name: "Score 4, one-to-one" },
   { key: "scoreTestProject", name: "Score 5, test project" },
   { key: "scoreTotal", name: "Score 6, total" },
   { key: "notes", name: "Interview notes" },
@@ -345,6 +348,20 @@ export const FIELDS: { key: string; name: string }[] = [
   { key: "startDate", name: "Start date" },
   { key: "agreedComp", name: "Agreed compensation" },
 ];
+
+/**
+ * Names a field used to have, so a renamed field keeps its id. The account
+ * says "Score 4, one to one" until ghl_hiring_stages.py renames it in place.
+ */
+export const FIELD_AKA: Record<string, string[]> = {
+  scoreOneToOne: ["Score 4, one to one"],
+};
+
+/** Every name this field may be under in the account, the spec's own first. */
+export const fieldNames = (key: string): string[] => {
+  const f = FIELDS.find(x => x.key === key);
+  return [...(f ? [f.name] : []), ...(FIELD_AKA[key] ?? [])];
+};
 
 /**
  * The Typeform behind each role's careers page, checked 2026-09-22. The

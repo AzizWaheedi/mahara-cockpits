@@ -8,6 +8,8 @@
 // dark mode as well, that would be better." So before the capture this hides
 // YouTube's "N subscribers • N videos" row and each video's "▷ views  age"
 // line (the titles stay), and Instagram's posts / followers / following row.
+// Instagram's bio line with a dollar figure ("Generated $72.3 million for our
+// Partners", retired) is cut out too, until the bio itself changes.
 //
 // Both pages are read signed out, at 2x, with cookies declined: YouTube's
 // consent page gets "Reject all", Instagram's banner "Decline optional
@@ -314,6 +316,40 @@ async function instagram() {
       ),
   );
   if (left) throw new Error("Instagram: the header still shows a count");
+  // The bio's "Generated $72.3 million for our Partners" is a retired figure
+  // (mahara-context, 8 and 10 Oct 2026). Until the bio itself changes, that
+  // line goes, with the <br> that ends it, so the lines under it close up.
+  // Each bio line is a text node of its own between <br>s; a node that holds
+  // several lines loses only the one.
+  await page.evaluate(() => {
+    const money = /\$\s*[\d.,]+\s*(million|m)\b/i;
+    const header = document.querySelector("main header");
+    const walk = document.createTreeWalker(header, NodeFilter.SHOW_TEXT);
+    const lines = [];
+    for (let node = walk.nextNode(); node; node = walk.nextNode())
+      if (money.test(node.nodeValue ?? "")) lines.push(node);
+    for (const line of lines) {
+      if (line.nodeValue.includes("\n")) {
+        line.nodeValue = line.nodeValue
+          .split("\n")
+          .filter(l => !money.test(l))
+          .join("\n");
+        continue;
+      }
+      const br = [line.nextSibling, line.previousSibling].find(
+        s => s?.nodeName === "BR",
+      );
+      br?.remove();
+      line.remove();
+    }
+  });
+  await page.waitForTimeout(400);
+  const figure = await page.evaluate(() =>
+    /\$\s*[\d.,]+\s*(million|m)\b/i.test(
+      document.querySelector("main header")?.innerText ?? "",
+    ),
+  );
+  if (figure) throw new Error("Instagram: the bio still shows a dollar figure");
   const box = await page.evaluate(() => {
     const header = document.querySelector("main header");
     const main = header.closest("main");

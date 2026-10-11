@@ -18,7 +18,7 @@ import { loadMeta, requireGhl } from "./meta.ts";
 import { totalScore } from "./mirror.ts";
 import { GateError } from "./providers.ts";
 import { mergeSettings, SETTINGS_KEY, SettingsError, settingsPatch } from "./settings.ts";
-import { roleByKey, STAGE_KEYS, type StageKey, stageName } from "./spec.ts";
+import { roleByKey, ROLES, STAGE_KEYS, type StageKey, stageName } from "./spec.ts";
 import type { Row } from "./store.ts";
 
 export class ActionError extends Error {
@@ -33,7 +33,7 @@ const SCORES: Record<string, { field: string; col: string; label: string }> = {
   application: { field: "scoreApplication", col: "score_application", label: "Application" },
   loom: { field: "scoreLoom", col: "score_loom", label: "Loom request" },
   group: { field: "scoreGroup", col: "score_group", label: "Group interview" },
-  oneToOne: { field: "scoreOneToOne", col: "score_one_to_one", label: "One to one interview" },
+  oneToOne: { field: "scoreOneToOne", col: "score_one_to_one", label: "One-to-one interview" },
   testProject: { field: "scoreTestProject", col: "score_test_project", label: "Test project" },
 };
 
@@ -377,6 +377,97 @@ export async function refreshNow(ctx: Ctx, args: Row): Promise<Row> {
   return { intake, sync, engine };
 }
 
+/**
+ * Headhunting (Aziz, 2026-09-22: "a recruiting agent ... that I can use to
+ * help me headhunt and recruit amazing people"). The agent runs on the VPS
+ * (hermes/ideation-radar radar/hiring.py headhunt), so the Hiring tab's "Find
+ * people for this role" queues a request and the VPS answers it from its
+ * five-minute `pending` run. Both live in cockpit_hiring_meta:
+ *   headhunt-request:<role>  {status queued|running|done|failed, requestedAt,
+ *                             by, note, attempts, startedAt?, answeredAt?,
+ *                             error?, model?}
+ *   headhunt:<role>          the answer the agent wrote: searches, signals,
+ *                             disqualifiers, opener, followUp, at, model, note
+ */
+export const HEADHUNT_REQUEST = "headhunt-request:";
+export const HEADHUNT_ANSWER = "headhunt:";
+/** A request the VPS has held this long without answering can be asked again. */
+const HEADHUNT_STALE_MS = 30 * 60_000;
+
+const kuwaitClock = (iso: unknown): string => {
+  const d = new Date(String(iso ?? ""));
+  if (Number.isNaN(d.getTime())) return "a moment ago";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kuwait",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+};
+
+/** Queue one headhunt for a role. Refused while one is already waiting. */
+export async function headhunt(ctx: Ctx, args: Row): Promise<Row> {
+  const role = roleByKey(String(args.role ?? ""));
+  if (!role) throw new ActionError(`There is no role called ${String(args.role ?? "") || "that"}.`);
+  const note = optText(args.note, 500);
+  const key = `${HEADHUNT_REQUEST}${role.key}`;
+  const held = (await ctx.store.getMeta(key)) as Row | null;
+  const now = ctx.now();
+  if (held && (held.status === "queued" || held.status === "running")) {
+    const since = Date.parse(String(held.startedAt ?? held.requestedAt ?? ""));
+    if (Number.isFinite(since) && now.getTime() - since < HEADHUNT_STALE_MS)
+      throw new ActionError(
+        `Already asked at ${kuwaitClock(held.requestedAt)}. The agent answers within 5 minutes.`,
+        409,
+      );
+  }
+  const request = {
+    status: "queued",
+    role: role.key,
+    requestedAt: now.toISOString(),
+    by: ctx.actor,
+    note,
+    attempts: 0,
+  };
+  await audit(ctx, "hiring.headhunt", "cockpit_hiring_meta", key, {
+    before: held ?? null,
+    after: request,
+    metadata: { role: role.key, note: Boolean(note) },
+  });
+  await ctx.store.putMeta(key, request);
+  return { request };
+}
+
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.map(x => String(x ?? "").trim()).filter(Boolean) : [];
+
+/** Every role's latest request and answer, for the Hiring tab. Reads only. */
+export async function headhunts(ctx: Ctx): Promise<Row[]> {
+  const rows = await ctx.store.metaByPrefix("headhunt");
+  const by = new Map(rows.map(r => [String(r.key), r.value as Row | null]));
+  return ROLES.map(r => {
+    const request = by.get(`${HEADHUNT_REQUEST}${r.key}`) ?? null;
+    const a = by.get(`${HEADHUNT_ANSWER}${r.key}`) ?? null;
+    return {
+      role: r.key,
+      label: r.label,
+      request,
+      answer: a
+        ? {
+          at: a.at ?? null,
+          model: a.model ?? null,
+          note: a.note ?? "",
+          searches: strings(a.searches),
+          signals: strings(a.signals),
+          disqualifiers: strings(a.disqualifiers),
+          opener: String(a.opener ?? ""),
+          followUp: String(a.followUp ?? ""),
+        }
+        : null,
+    };
+  });
+}
+
 export const OPERATIONS = {
   refreshNow,
   grade,
@@ -384,5 +475,7 @@ export const OPERATIONS = {
   setEngine,
   drafts: (ctx: Ctx) => drafts(ctx),
   sendDraft,
+  headhunt,
+  headhunts: (ctx: Ctx) => headhunts(ctx),
 } as const;
 export type Operation = keyof typeof OPERATIONS;

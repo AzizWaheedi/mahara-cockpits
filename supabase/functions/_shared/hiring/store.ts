@@ -35,6 +35,16 @@ export type SendRow = {
 export interface Store {
   getMeta(key: string): Promise<unknown | null>;
   putMeta(key: string, value: unknown): Promise<void>;
+  /** Every meta row whose key starts with this prefix: key, value, updated_at. */
+  metaByPrefix(prefix: string): Promise<Row[]>;
+  /**
+   * The other importer's name when it files this form live, else null.
+   * PR #31's cockpit_hiring_intake_sources does not exist today, which reads
+   * as null; a row with mode "live" for this form means it is taken.
+   */
+  liveImporterFor(formId: string): Promise<string | null>;
+  /** True once this job has finished one dry run (apply false, status ok). */
+  hasDryRun(job: Job): Promise<boolean>;
   /** Every candidate, every page, with the columns the mirror merges. */
   candidates(): Promise<Row[]>;
   candidate(id: string): Promise<Row | null>;
@@ -160,6 +170,28 @@ export function restStore(o: { url: string; key: string; fetch?: typeof fetch })
         body: [{ key, value, updated_at: new Date().toISOString() }],
         prefer: merge,
       });
+    },
+    metaByPrefix: prefix =>
+      rows(
+        `cockpit_hiring_meta?key=like.${enc(`${prefix.replace(/[*%_]/g, "")}*`)}&select=key,value,updated_at&order=key&limit=200`,
+      ),
+    async liveImporterFor(formId) {
+      try {
+        const r = await rows(
+          `cockpit_hiring_intake_sources?form_id=eq.${enc(formId)}&mode=eq.live&select=form_id&limit=1`,
+        );
+        return r.length ? "hiring-intake (PR #31)" : null;
+      } catch (e) {
+        // No such table: the other importer was never installed.
+        if (e instanceof StoreError && e.status === 404) return null;
+        throw e;
+      }
+    },
+    async hasDryRun(job) {
+      const r = await rows(
+        `cockpit_hiring_runs?job=eq.${enc(job)}&apply=is.false&status=eq.ok&select=id&limit=1`,
+      );
+      return r.length > 0;
     },
     candidates: () =>
       paged(`cockpit_hiring_candidates?select=${HELD_COLUMNS.join(",")}&order=id`),

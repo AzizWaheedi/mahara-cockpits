@@ -15,6 +15,10 @@ export const HIRING_ACTIONS = [
   "setEngine",
   "drafts",
   "sendDraft",
+  // "Find people for this role": queue a headhunt for the VPS agent, and
+  // read every role's request and answer (2026-10-11).
+  "headhunt",
+  "headhunts",
 ] as const;
 export type HiringAction = (typeof HIRING_ACTIONS)[number];
 

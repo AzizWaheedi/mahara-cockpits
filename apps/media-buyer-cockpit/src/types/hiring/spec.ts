@@ -39,7 +39,9 @@ export const STAGES = [
   { key: "group", name: "Group interview", advancing: true, odds: 30 },
   {
     key: "one-to-one",
-    name: "One to one interview",
+    // Aziz's words for this stage (2026-10-11). STAGE_AKA keeps the old
+    // board name matching until scripts/hiring/ghl_hiring_stages.py runs.
+    name: "One-to-one interview",
     advancing: true,
     odds: 55,
   },
@@ -87,7 +89,7 @@ export const STAGE_LABELS: Partial<
 
 /** Names a stage used to have, so a rename finds the old one instead of building a second. */
 export const STAGE_AKA: Partial<Record<StageKey, string[]>> = {
-  "one-to-one": ["One-to-one interview"],
+  "one-to-one": ["One to one interview"],
   loom: ["Loom request", "Case studies"],
 };
 
@@ -277,7 +279,7 @@ export const ROLES: Role[] = [
     loomPrompt:
       "Two minutes, in Khaliji Arabic: introduce yourself, then book me into a meeting as if I had filled a form two days ago and did not remember doing it.",
     testProject:
-      "A fifteen minute live block after the one to one: a speed test, then a roleplay calling an Arabic speaking villa owner who filled a form two days ago and does not remember. Held in the language the phones are actually worked in.",
+      "A fifteen minute live block after the one-to-one: a speed test, then a roleplay calling an Arabic speaking villa owner who filled a form two days ago and does not remember. Held in the language the phones are actually worked in.",
     dailyResponsibilities:
       "Call the leads our ads bring in, qualify them in Khaliji Arabic, and book them into the client's calendar so they show up.",
   },
@@ -443,7 +445,9 @@ export const RENAMES: {
     from: "Score, group interview",
     to: "Score 3, group interview",
   },
-  { kind: "field", from: "Score, one-to-one", to: "Score 4, one to one" },
+  { kind: "field", from: "Score, one-to-one", to: "Score 4, one-to-one" },
+  // 2026-10-11: "One-to-one", Aziz's words (scripts/hiring/ghl_hiring_stages.py).
+  { kind: "field", from: "Score 4, one to one", to: "Score 4, one-to-one" },
   { kind: "field", from: "Score, test project", to: "Score 5, test project" },
   { kind: "field", from: "Score, total", to: "Score 6, total" },
 ];
@@ -551,7 +555,7 @@ export const FIELDS: FieldSpec[] = [
   },
   {
     key: "scoreOneToOne",
-    name: "Score 4, one to one",
+    name: "Score 4, one-to-one",
     type: "NUMERICAL",
     note: "Out of 10.",
   },
@@ -695,13 +699,14 @@ export const CALENDARS: CalendarSpec[] = [
   },
   {
     key: "one-to-one",
-    name: "One to one interview",
+    // Renamed in GoHighLevel by ghl_hiring_stages.py --calendar.
+    name: "One-to-one interview",
     fills: "Hiring - One-to-one booking link",
     type: "round_robin",
     minutes: 30,
     perSlot: 1,
     description:
-      "Book your one to one. It is held on Zoom. Be on a computer somewhere quiet and join five minutes early. If you were sent a test project, send it back before the call if you can.",
+      "Book your one-to-one. It is held on Zoom. Be on a computer somewhere quiet and join five minutes early. If you were sent a test project, send it back before the call if you can.",
   },
 ];
 
