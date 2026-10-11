@@ -474,6 +474,72 @@ describe("a custom time", () => {
     expect((auditOf("book.move")[0] as Row).metadata).toMatchObject({ placement: "custom" });
   });
 
+  // Review (setter and closer lens), 2026-10-11: two reps pressing the same
+  // host's time at once. Neither call is in HighLevel yet, and a custom time
+  // goes with HighLevel's own slot check off, so the cockpit's own rows are
+  // what the re-check counts.
+  test("a booking of the same host on its way: refused, nothing written; a stuck one does not block", async () => {
+    db.seed("cockpit_sales_bookings", [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        contact_id: "someone-else",
+        kind: "intro",
+        calendar_id: INTRO_CAL,
+        start_at: iso(at(FAR, "10:00")),
+        end_at: iso(at(FAR, "10:15")),
+        assigned_user_id: "G-closer",
+        rep_email: OTHER,
+        state: "creating",
+      },
+    ]);
+    const r = await move("closer", at(FAR, "10:05"), { custom: true });
+    expect(r.status).toBe(409);
+    expect(r.body).toMatchObject({ code: "host_busy", error: "Someone is booking Sami from 10:00 am to 10:15 am (Kuwait time) right now. Pick another time." });
+    expect(hl.puts).toHaveLength(0);
+    expect(db.t("cockpit_sales_reschedules")[0]?.state).toBe("failed");
+    // Stuck for five minutes: not on its way any more, so it no longer blocks.
+    (db.t("cockpit_sales_bookings")[0] as Row).created_at = iso(Date.now() - 5 * MIN);
+    const ok = await move("closer", at(FAR, "10:05"), { custom: true });
+    expect(ok.body).toMatchObject({ result: "moved", placement: "custom" });
+    await settleBackground(() => hl.notes.length > 0);
+  });
+
+  test("a move of the same host on its way blocks a custom booking; the booking's own row never blocks itself", async () => {
+    db.seed("cockpit_sales_reschedules", [
+      {
+        request_id: crypto.randomUUID(),
+        appointment_id: FOLLOW,
+        contact_id: LEAD2,
+        call_type: "follow_up",
+        calendar_id: FOLLOW_CAL,
+        from_start: iso(at(2, "15:00")),
+        to_start: iso(at(FAR, "11:00")),
+        from_user_id: "G-closer",
+        to_user_id: "G-closer",
+        reason: "they_asked",
+        source: "lead",
+        rep_email: OTHER,
+        state: "moving",
+      },
+    ]);
+    const r = await call("closer", { action: "book.create", contact_id: LEAD, kind: "intro", start: iso(at(FAR, "11:10")), note: "Their time.", custom: true, user_id: "G-setter" });
+    // An intro with someone else at that time: Sami's move does not block another host.
+    expect(r.body).toMatchObject({ verified: true, placement: "custom" });
+    expect(hl.posts[0]).toMatchObject({ assignedUserId: "G-setter" });
+    db.tables.cockpit_sales_bookings = [];
+    hl.posts.length = 0;
+    const s = await call("closer", { action: "book.create", contact_id: LEAD2, kind: "demo", start: iso(at(FAR, "11:10")), note: "Their time.", custom: true });
+    expect(s.status).toBe(409);
+    expect(s.body.code).toBe("host_busy");
+    expect(String(s.body.error)).toMatch(/^Someone is booking Sami from 11:00 am to \d{1,2}:\d{2} (am|pm) \(Kuwait time\) right now\. Pick another time\.$/);
+    expect(hl.posts).toHaveLength(0);
+    expect(db.t("cockpit_sales_bookings")[0]?.state).toBe("failed");
+    // Away from Sami's move, the booking's own creating row does not block it.
+    const fine = await call("closer", { action: "book.create", contact_id: LEAD2, kind: "demo", start: iso(at(FAR, "16:35")), note: "Their time.", custom: true });
+    expect(fine.body).toMatchObject({ verified: true, placement: "custom" });
+    await settleBackground();
+  });
+
   test("outside working hours: 409 with the hours, then Book anyway keeps it and the audit says so", async () => {
     const r = await move("closer", at(FAR, "20:00"), { custom: true });
     expect(r.status).toBe(409);
@@ -492,7 +558,9 @@ describe("a custom time", () => {
   });
 
   test("past, off the 5-minute mark, beyond the reach, and a call with no host", async () => {
-    const soon = Math.ceil((Date.now() + 2 * MIN) / (5 * MIN)) * 5 * MIN;
+    // On the 5-minute mark and at most 5 minutes ahead, whatever minute the
+    // test runs (rounding up from 2 minutes ahead could land 7 minutes out).
+    const soon = Math.floor((Date.now() + 5 * MIN) / (5 * MIN)) * 5 * MIN;
     expect((await move("closer", soon, { custom: true })).body.code).toBe("past");
     expect((await move("closer", at(FAR, "10:03"), { custom: true })).body.code).toBe("step");
     expect((await move("closer", at(70, "10:00"), { custom: true })).body.code).toBe("beyond_reach");

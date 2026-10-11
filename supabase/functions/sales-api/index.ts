@@ -137,6 +137,7 @@ import {
   addDays,
   busyMessage,
   type BusyRow,
+  clashAt,
   customCheck,
   dayStartMs,
   dayWords,
@@ -151,6 +152,8 @@ import {
   hostWindows,
   hoursWords,
   busyOf,
+  inFlightBusy,
+  inFlightMessage,
   outsideMessage,
   ownDays,
   pageOf,
@@ -5714,20 +5717,64 @@ async function customRead(o: { calendarId: string; cal: Row; host: string; hostN
 }
 
 /**
+ * The calls the cockpit is booking or moving for this host this minute
+ * (farout.ts inFlightBusy), a day either side of the time: not in
+ * HighLevel yet, so hostBusy cannot see them. `own`: the press's own row
+ * (its booking, or its call's move). Rows older than two minutes are stuck,
+ * not on their way (the same two minutes the stuck marks use).
+ */
+async function hostInFlight(host: string, start: number, own: { bookingId?: string | null; appointmentId?: string | null }): Promise<BusyRow[]> {
+  const since = enc(new Date(Date.now() - STALE_MOVING_MS).toISOString());
+  const lo = enc(new Date(start - DAY_MS).toISOString());
+  const hi = enc(new Date(start + 2 * DAY_MS).toISOString());
+  const [books, moves] = await Promise.all([
+    svc(
+      `cockpit_sales_bookings?state=eq.creating&assigned_user_id=eq.${enc(host)}&created_at=gte.${since}&start_at=lt.${hi}&end_at=gt.${lo}${own.bookingId ? `&id=neq.${enc(own.bookingId)}` : ""}&select=id,calendar_id,start_at,end_at&limit=50`,
+    ),
+    svc(
+      `cockpit_sales_reschedules?state=eq.moving&to_user_id=eq.${enc(host)}&created_at=gte.${since}&to_start=gt.${lo}&to_start=lt.${hi}${own.appointmentId ? `&appointment_id=neq.${enc(own.appointmentId)}` : ""}&select=id,calendar_id,to_start&limit=50`,
+    ),
+  ]);
+  const cals: Record<string, Row> = {};
+  await Promise.all(
+    [...new Set([...books, ...moves].map(r => String(r.calendar_id ?? "")).filter(Boolean))].map(async id => {
+      try {
+        cals[id] = await calendarInfo(id);
+      } catch {
+        // A calendar that cannot be read: no buffers, and a move counts an hour.
+      }
+    }),
+  );
+  return inFlightBusy(books, moves, cals);
+}
+
+/**
  * A custom time's clash check once more, from a fresh read, right before
  * HighLevel is written: with ignoreFreeSlotValidation HighLevel books right
- * over a clash (2026-10-11, row 9), so this is the only guard. The refusal,
- * or null; the read's time goes on the placement for the audit.
+ * over a clash (2026-10-11, row 9), so this is the only guard. It also
+ * counts the host's calls the cockpit is booking or moving this minute
+ * (review, 2026-10-11): two reps pressing the same host's time at once
+ * would otherwise both land, since neither is in HighLevel yet. The
+ * refusal, or null; the read's time goes on the placement for the audit.
  */
-async function customRecheck(place: Place, o: { calendarId: string; cal: Row; start: number; exceptId: string | null }): Promise<Refusal | null> {
+async function customRecheck(
+  place: Place,
+  o: { calendarId: string; cal: Row; start: number; exceptId: string | null; bookingId?: string | null },
+): Promise<Refusal | null> {
   const host = place.host as string;
   const names = await namesByUser([host]);
   const hostName = names.get(host) ?? null;
   try {
-    const r = await customRead({ ...o, host, hostName, now: Date.now(), reachEnd: "9999-12-31" });
+    const [r, flying] = await Promise.all([
+      customRead({ ...o, host, hostName, now: Date.now(), reachEnd: "9999-12-31" }),
+      hostInFlight(host, o.start, { bookingId: o.bookingId ?? null, appointmentId: o.exceptId }),
+    ]);
     place.host_checked_at = isoAt(r.at);
-    return r.check.clash ? new Refusal(busyMessage(r.check.clash, hostName), 409, { code: "host_busy" }) : null;
+    if (r.check.clash) return new Refusal(busyMessage(r.check.clash, hostName), 409, { code: "host_busy" });
+    const hit = clashAt(o.cal, flying, o.start);
+    return hit ? new Refusal(inFlightMessage(hit, hostName), 409, { code: "host_busy" }) : null;
   } catch (e) {
+    if (!(e instanceof Refusal)) console.error("custom time re-check unread", redact(String((e as Error)?.message ?? e)));
     return e instanceof Refusal ? e : farUnread(hostName);
   }
 }
@@ -5950,7 +5997,7 @@ async function bookCreate(who: Who, b: Row) {
   // A custom time is checked against the host's calendar once more, right
   // before the write: HighLevel itself books over a clash with the flag on.
   if (place.placement === "custom") {
-    const no = await customRecheck(place, { calendarId: p.calendarId, cal: p.cal, start, exceptId: null });
+    const no = await customRecheck(place, { calendarId: p.calendarId, cal: p.cal, start, exceptId: null, bookingId: String(booking.id) });
     if (no) {
       const row = await finish({ state: "failed", error: no.message });
       await audit(who, "book.create", "cockpit_sales_bookings", String(booking.id), null, row, { ...placeMeta(place), refused: no.extra.code ?? null });
