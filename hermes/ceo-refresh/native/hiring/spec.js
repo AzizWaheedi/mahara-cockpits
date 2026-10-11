@@ -36,7 +36,9 @@ export const STAGES = [
     { key: "group", name: "Group interview", advancing: true, odds: 30 },
     {
         key: "one-to-one",
-        name: "One to one interview",
+        // Aziz's words for this stage (2026-10-11). STAGE_AKA keeps the old
+        // board name matching until scripts/hiring/ghl_hiring_stages.py runs.
+        name: "One-to-one interview",
         advancing: true,
         odds: 55,
     },
@@ -70,7 +72,7 @@ export const STAGE_LABELS = {
 };
 /** Names a stage used to have, so a rename finds the old one instead of building a second. */
 export const STAGE_AKA = {
-    "one-to-one": ["One-to-one interview"],
+    "one-to-one": ["One to one interview"],
     loom: ["Loom request", "Case studies"],
 };
 export const stageNameFor = (role, key) => STAGE_LABELS[role]?.[key] ?? stageName(key);
@@ -349,7 +351,9 @@ export const RENAMES = [
         from: "Score, group interview",
         to: "Score 3, group interview",
     },
-    { kind: "field", from: "Score, one-to-one", to: "Score 4, one to one" },
+    { kind: "field", from: "Score, one-to-one", to: "Score 4, one-to-one" },
+    // 2026-10-11: "One-to-one", Aziz's words (scripts/hiring/ghl_hiring_stages.py).
+    { kind: "field", from: "Score 4, one to one", to: "Score 4, one-to-one" },
     { kind: "field", from: "Score, test project", to: "Score 5, test project" },
     { kind: "field", from: "Score, total", to: "Score 6, total" },
 ];
@@ -432,7 +436,7 @@ export const FIELDS = [
     },
     {
         key: "scoreOneToOne",
-        name: "Score 4, one to one",
+        name: "Score 4, one-to-one",
         type: "NUMERICAL",
         note: "Out of 10.",
     },
@@ -541,7 +545,8 @@ export const CALENDARS = [
     },
     {
         key: "one-to-one",
-        name: "One to one interview",
+        // Renamed in GoHighLevel by ghl_hiring_stages.py --calendar.
+        name: "One-to-one interview",
         fills: "Hiring - One-to-one booking link",
         type: "round_robin",
         minutes: 30,

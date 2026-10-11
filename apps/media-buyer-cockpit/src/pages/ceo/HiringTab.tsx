@@ -1,7 +1,9 @@
 import {
   ArrowUpRight,
   Bot,
+  Check,
   CircleDashed,
+  Copy,
   Inbox,
   Mail,
   MoveRight,
@@ -10,9 +12,10 @@ import {
   StickyNote,
   Timer,
   UserPlus,
+  UserSearch,
   Users,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
 import { FeedList } from "@/components/ceo/FeedList";
@@ -20,6 +23,7 @@ import { FilterChips } from "@/components/ceo/FilterChips";
 import { FunnelStrip } from "@/components/ceo/FunnelStrip";
 import {
   count,
+  dateTime,
   decimal,
   humanize,
   isNum,
@@ -651,6 +655,303 @@ function RolePanel({ r }: { r: HiringRoleFunnel }) {
           </>
         ) : null}
       </dl>
+
+      <Headhunt key={r.role} role={r.role} label={r.label} />
+    </div>
+  );
+}
+
+/** One request for the recruiting agent on the VPS, as hiring-api headhunts returns it. */
+type HeadhuntRequest = {
+  status?: "queued" | "running" | "done" | "failed";
+  requestedAt?: string;
+  startedAt?: string;
+  answeredAt?: string;
+  error?: string;
+  note?: string;
+};
+
+/** What the agent wrote for one role (radar.py hiring --headhunt). */
+type HeadhuntAnswer = {
+  at: string | null;
+  note: string;
+  searches: string[];
+  signals: string[];
+  disqualifiers: string[];
+  opener: string;
+  followUp: string;
+};
+
+type HeadhuntRow = {
+  role: string;
+  request: HeadhuntRequest | null;
+  answer: HeadhuntAnswer | null;
+};
+
+/** A waiting request is checked this often, for this long after it was asked. */
+const HEADHUNT_POLL_MS = 15_000;
+const HEADHUNT_POLL_FOR_MS = 20 * 60_000;
+
+/** "Sales closer (B2B)" inside a sentence: only the first letter drops. */
+const inSentence = (label: string) =>
+  label.charAt(0).toLowerCase() + label.slice(1);
+
+const isoMs = (iso: string | null | undefined): number | null => {
+  const t = Date.parse(String(iso ?? ""));
+  return Number.isFinite(t) ? t : null;
+};
+
+/** Copy one message, and say so on the button. */
+function CopyButton({ text, what }: { text: string; what: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setState("copied");
+    } catch {
+      setState("failed");
+    }
+  };
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      aria-label={`Copy the ${what}`}
+      onClick={() => void copy()}
+    >
+      {state === "copied" ? <Check aria-hidden /> : <Copy aria-hidden />}
+      {state === "copied"
+        ? "Copied"
+        : state === "failed"
+          ? "Select it to copy"
+          : "Copy"}
+    </Button>
+  );
+}
+
+/**
+ * A message to send as it is: the one part of the answer Aziz pastes
+ * somewhere, so it is the one part drawn as a message, on the teal rule.
+ */
+function MessageCard({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="grid min-w-0 content-start gap-1.5 border-l-2 border-[color:var(--mahara-teal)] pl-3">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-xs font-medium text-foreground">
+          {title}
+        </p>
+        <CopyButton text={text} what={title.toLowerCase()} />
+      </div>
+      <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+        {text}
+      </p>
+    </div>
+  );
+}
+
+function HeadhuntList({ title, items }: { title: string; items: string[] }) {
+  if (!items.length) return null;
+  return (
+    <div className="grid min-w-0 content-start gap-2">
+      <p className="text-xs font-medium text-foreground">{title}</p>
+      <ul className="grid gap-1.5">
+        {items.map(x => (
+          <li
+            key={x}
+            className="flex min-w-0 items-start gap-2 text-xs leading-relaxed text-muted-foreground"
+          >
+            <span
+              className="mt-[0.45rem] size-1 shrink-0 rounded-full bg-muted-foreground/60"
+              aria-hidden
+            />
+            <span className="min-w-0 break-words">{x}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * Headhunting, for the roles nobody applies to fast enough. The agent runs on
+ * the VPS; this queues a request (hiring-api headhunt) that its five-minute
+ * run answers, then shows where to look, what good looks like, what to skip,
+ * and the two messages to send.
+ */
+function Headhunt({ role, label }: { role: string; label: string }) {
+  const ask = useAction(api.hiring.actions.headhunt);
+  const [row, setRow] = useState<HeadhuntRow | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
+  const [readError, setReadError] = useState<string | null>(null);
+
+  // A read, called straight on the api so it does not refresh the whole tab.
+  const load = useCallback(async () => {
+    try {
+      const rows = (await api.hiring.actions.headhunts({})) as HeadhuntRow[];
+      setRow((rows ?? []).find(r => r.role === role) ?? null);
+      setReadError(null);
+    } catch (e) {
+      setReadError(
+        `The agent's answers could not be read: ${serverMessage(e)}`,
+      );
+    } finally {
+      setLoaded(true);
+    }
+  }, [role]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const req = row?.request ?? null;
+  const waiting = req?.status === "queued" || req?.status === "running";
+  const askedAt = isoMs(req?.requestedAt);
+
+  useEffect(() => {
+    if (!waiting) return;
+    const until = (askedAt ?? Date.now()) + HEADHUNT_POLL_FOR_MS;
+    const id = window.setInterval(() => {
+      if (Date.now() > until) window.clearInterval(id);
+      else void load();
+    }, HEADHUNT_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [waiting, askedAt, load]);
+
+  const find = async () => {
+    setBusy(true);
+    setAskError(null);
+    try {
+      const r = (await ask({ role, note: note.trim() || undefined })) as {
+        request?: HeadhuntRequest;
+      };
+      setRow(prev => ({
+        role,
+        answer: prev?.answer ?? null,
+        request: r?.request ?? {
+          status: "queued",
+          requestedAt: new Date().toISOString(),
+        },
+      }));
+      setNote("");
+    } catch (e) {
+      setAskError(serverMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const answer = row?.answer ?? null;
+
+  return (
+    <div className="grid min-w-0 gap-4 border-t border-[color:var(--ceo-grid)] pt-4">
+      <div className="min-w-0">
+        <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <UserSearch
+            className="size-4 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          Headhunt
+        </p>
+        <p className="mt-1 max-w-prose text-xs leading-relaxed text-muted-foreground">
+          Where to find a {inSentence(label)} who is not applying, and what to
+          send them.
+        </p>
+      </div>
+
+      <div className="grid gap-2 @lg:grid-cols-[minmax(0,1fr)_auto] @lg:items-center">
+        <input
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          disabled={busy || waiting}
+          maxLength={500}
+          placeholder="What to aim it at (optional)"
+          aria-label={`What to aim the ${label} headhunt at`}
+          className={`${field} min-w-0`}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          disabled={busy || waiting}
+          onClick={() => void find()}
+        >
+          <UserSearch aria-hidden />
+          {busy ? "Asking" : "Find people for this role"}
+        </Button>
+      </div>
+
+      {req?.status === "queued" ? (
+        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+          <StatusChip tone="neutral" label="Waiting" />
+          <span style={tabular}>
+            Asked at {dateTime(askedAt)}. The agent answers within 5 minutes.
+          </span>
+        </p>
+      ) : req?.status === "running" ? (
+        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+          <StatusChip tone="neutral" label="Writing" />
+          <span style={tabular}>
+            The agent is writing it now. Asked at {dateTime(askedAt)}.
+          </span>
+        </p>
+      ) : req?.status === "failed" ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <StatusChip tone="warning" label="Not answered" />
+          <span className="min-w-0 text-muted-foreground">
+            {req.error || "The agent stopped without saying why."}
+          </span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void find()}
+            className="inline-flex h-8 items-center rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            Ask again
+          </button>
+        </div>
+      ) : null}
+
+      {askError ? (
+        <p className="text-xs text-[var(--ceo-critical)]">{askError}</p>
+      ) : null}
+      {readError ? (
+        <p className="text-xs text-[var(--ceo-critical)]">{readError}</p>
+      ) : null}
+
+      {answer ? (
+        <div className="grid min-w-0 gap-5">
+          <div className="grid gap-x-6 gap-y-5 @2xl:grid-cols-3">
+            <HeadhuntList title="Where to look today" items={answer.searches} />
+            <HeadhuntList title="What good looks like" items={answer.signals} />
+            <HeadhuntList title="Skip on sight" items={answer.disqualifiers} />
+          </div>
+          <div className="grid gap-5 @2xl:grid-cols-2">
+            {answer.opener ? (
+              <MessageCard title="First message" text={answer.opener} />
+            ) : null}
+            {answer.followUp ? (
+              <MessageCard
+                title="Four days later, if they have not replied"
+                text={answer.followUp}
+              />
+            ) : null}
+          </div>
+          <p className="text-xs text-muted-foreground" style={tabular}>
+            Written {dateTime(isoMs(answer.at))}
+            {answer.note ? `, aimed at "${answer.note}"` : ""}. Ask again for a
+            fresh take.
+          </p>
+        </div>
+      ) : loaded && !req && !readError ? (
+        <p className="max-w-prose text-xs leading-relaxed text-muted-foreground">
+          The recruiting agent writes five searches to run today, what a good{" "}
+          {inSentence(label)} looks like, what to skip on sight, and a first
+          message in your voice.
+        </p>
+      ) : null}
     </div>
   );
 }
