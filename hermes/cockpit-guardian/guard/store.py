@@ -63,6 +63,9 @@ class Store:
         self.write_db = write_db and db is not None and getattr(db, "can_write", False)
         self.state = empty_state()
         self.db_note: Optional[str] = None
+        # The scan's clock (engine.scan sets it): resolved incidents are kept 7 days from it, so a scan
+        # replayed at another time (the tests' fixed 2026-10-03) trims by its own day, not the wall clock's.
+        self.clock: Optional[datetime] = None
 
     # ---- the file ---------------------------------------------------------------
     def load(self) -> dict[str, Any]:
@@ -134,7 +137,7 @@ class Store:
             raise StateUnwritable(clean(e, 160)) from e
 
     def _trim(self) -> None:
-        cutoff = datetime.now().astimezone() - timedelta(days=KEEP_RESOLVED_DAYS)
+        cutoff = (self.clock or datetime.now().astimezone()) - timedelta(days=KEEP_RESOLVED_DAYS)
         self.state["resolved"] = [i for i in self.state["resolved"]
                                   if (parse_time(i.get("resolved_at")) or cutoff) >= cutoff][-300:]
 
