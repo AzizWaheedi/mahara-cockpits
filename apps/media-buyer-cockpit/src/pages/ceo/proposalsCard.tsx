@@ -104,10 +104,13 @@ export function ProposalsCard({ order, now }: { order?: number; now: number }) {
       cell: r => {
         const chip = proposalChip(r);
         return (
+          // min-w-max: the status is the column a phone must not cut
+          // ("Archi…"); the lead's name wraps instead.
           <StatusChip
             tone={chip.tone}
             label={chip.label}
             hint={r.error ?? undefined}
+            className="min-w-max max-w-none"
           />
         );
       },
@@ -115,7 +118,7 @@ export function ProposalsCard({ order, now }: { order?: number; now: number }) {
     },
     {
       key: "closer",
-      header: "Closer",
+      header: "Asked by",
       cell: r => r.closer,
       sortValue: r => r.closer,
       hideBelow: "sm",

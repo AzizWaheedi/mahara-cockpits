@@ -51,7 +51,12 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
-import { addDays, type TabWindow, tabWindow } from "@/components/ceo/tabWindow";
+import {
+  addDays,
+  type TabWindow,
+  tabBounds,
+  tabWindow,
+} from "@/components/ceo/tabWindow";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
@@ -391,12 +396,14 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
   const portal = sections.portal;
   const today = day ?? kuwaitDay(now);
   const routed = useMemo(() => routeNotes(payload?.notes), [payload]);
-  // One bar for the tab (A127/A170): days run to yesterday, and the 7-day
-  // preset keeps the server's own 7-day columns.
+  // One bar for the tab (A127/A170): days run to yesterday (this month to
+  // today), and the 7-day preset keeps the server's own 7-day columns.
   const tf = useTimeframe("7d");
   const last = addDays(today, -1);
   const first = payload?.dailyFrom ?? null;
-  const bounds = useMemo(() => tf.bounds(last, first), [tf, last, first]);
+  // "This month" is the server's own month to date, through today, so it
+  // lines up with the extension form's month (tabBounds).
+  const bounds = useMemo(() => tabBounds(tf, today, first), [tf, today, first]);
   const w = useMemo(() => tabWindow(tf.range, bounds), [tf.range, bounds]);
   const windowState = useMemo<ClientWindowState>(
     () => ({ w, dailyFrom: payload?.dailyFrom, today, last }),
@@ -965,7 +972,7 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
             <EmptyState
               icon={CalendarSync}
               title="Not kept per day yet"
-              text={inWin.why}
+              text={`Each client's grants arrive per day with the next refresh. Until then the list covers only the form's own month, ${date(ext.from)} to ${date(ext.to)}: pick This month above.`}
               compact
             />
           ) : (

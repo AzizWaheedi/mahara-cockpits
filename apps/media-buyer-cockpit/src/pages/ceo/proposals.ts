@@ -79,9 +79,19 @@ export function proposalChip(row: Pick<ProposalRow, "status" | "fillCount">): {
 export const proposalHref = (id: string) =>
   `/sales/proposal/${encodeURIComponent(id)}`;
 
-/** "aziz" from "aziz@maharamedia.com". */
+/**
+ * Who asked for the draft, from their address: "Aziz" from
+ * "aziz@maharamedia.com", "Sara Ali" from "sara.ali@…". Proposals are asked
+ * for by whoever is signed in on the lead (a closer, or the CEO), so the
+ * column says "Asked by", not "Closer".
+ */
 export const closerName = (email: string | null | undefined) =>
-  (email ?? "").split("@")[0] || "Unknown";
+  (email ?? "")
+    .split("@")[0]
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ") || "Unknown";
 
 const stamp = (v: string | null | undefined) => {
   if (!v) return null;

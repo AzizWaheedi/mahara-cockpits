@@ -1,5 +1,6 @@
 import type { RangeKey } from "./chartKit";
 import { month as monthName, shortDate } from "./format";
+import type { Timeframe } from "./timeframe";
 import { range as rangeText } from "./windows";
 
 /**
@@ -90,4 +91,22 @@ export function startsLate(
   w: { from: string },
 ): boolean {
   return Boolean(first && first > w.from);
+}
+
+/**
+ * The days a tab's bar covers when the tab also shows the server's own
+ * month-to-date figures: "This month" runs through today, as those figures
+ * do (and as Sales and Frontend say it, "1 to 11 Oct, compared with 1 to 11
+ * Sep"); every other preset ends yesterday, the last whole day. A bar that
+ * stopped at yesterday would name other days than the numbers under it, and
+ * on the 1st would read all of last month.
+ */
+export function tabBounds(
+  tf: Pick<Timeframe, "range" | "bounds">,
+  today: string,
+  first: string | null,
+): { from: string; to: string } | null {
+  return tf.range === "mtd"
+    ? { from: `${today.slice(0, 7)}-01`, to: today }
+    : tf.bounds(addDays(today, -1), first);
 }

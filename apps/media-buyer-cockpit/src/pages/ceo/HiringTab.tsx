@@ -1498,7 +1498,7 @@ export function HiringTab({ sections, now, day }: CeoTabProps) {
                     ? `${w.label}${hired === null ? "" : ` · ${plural(hired, "hire")}`}`
                     : undefined
                 }
-                hint="Candidates by the day they applied, over every candidate on the board, not only the live ones. Hires are dated by the day the card moved to Hired."
+                hint="Candidates by the day they reached the board, over every candidate on it, not only the live ones. The applications imported from Typeform on 22 Sep 2026 carry that day, not the day they applied, so a window before 22 Sep shows none of them. Hires are dated by the day the card moved to Hired."
               />
               <StatTile
                 variant="plain"

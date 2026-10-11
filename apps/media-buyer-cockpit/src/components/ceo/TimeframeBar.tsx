@@ -41,7 +41,8 @@ export function TimeframeBar({
             : ""}
         {note ? <span className="block text-xs">{note}</span> : null}
       </p>
-      <div role="group" aria-label={ariaLabel}>
+      {/* shrink-0: a long note must not squeeze the picker ("This / month"). */}
+      <div role="group" aria-label={ariaLabel} className="shrink-0">
         <RangeControl
           range={tf.range}
           onRange={tf.setRange}

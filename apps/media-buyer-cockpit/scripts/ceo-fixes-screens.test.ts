@@ -14,6 +14,7 @@ import {
   previousOf,
   startsLate,
   sumIn,
+  tabBounds,
   tabWindow,
 } from "../src/components/ceo/tabWindow";
 import {
@@ -82,6 +83,33 @@ describe("R3: the LTV card says its refusal instead of blanking the Money tab", 
       "Finance totals need reconciliation before updating lifetime value. It clears by itself after the next successful Money refresh.",
     );
   });
+  test("each of the server's other refusals says what happens next", () => {
+    expect(
+      ltvRefusal(
+        new Error(
+          "Money attribution is missing or stale; refresh it before lifetime value",
+        ),
+      ),
+    ).toContain("after the next successful Money refresh.");
+    expect(
+      ltvRefusal(new Error("Client billing source is missing or stale")),
+    ).toBe(
+      "Client billing source is missing or stale. It clears by itself after the next billing sync, every half hour in the day.",
+    );
+    expect(
+      ltvRefusal(
+        new Error(
+          "Some active client billing rows are stale; refresh before lifetime value",
+        ),
+      ),
+    ).toContain("after the next billing sync");
+    // An invalid baseline never clears by itself: never promise it does.
+    const invalid = ltvRefusal(new Error("Lifetime value baseline is invalid"));
+    expect(invalid).not.toContain("clears by itself");
+    expect(invalid).toBe(
+      "Lifetime value baseline is invalid. It will not clear by itself: queue it as a bug under Changes and bugs on the Machine tab.",
+    );
+  });
   test("the card reads without throwing", () => {
     const card = src("../src/pages/ceo/moneyImport.tsx");
     const ltv = card.slice(card.indexOf("export function LtvWriteCard"));
@@ -141,6 +169,29 @@ describe("A127/A170: one timeframe for a tab", () => {
     });
     expect(startsLate("2026-08-13", { from: "2026-08-01" })).toBe(true);
     expect(startsLate("2026-08-13", { from: "2026-09-01" })).toBe(false);
+  });
+  test("this month runs through today, as the server's month-to-date figures do", () => {
+    const tf = (range: "mtd" | "7d") => ({
+      range,
+      // The shared hook's rule: the preset ends at the day it is given.
+      bounds: (last: string) => ({
+        from: range === "mtd" ? `${last.slice(0, 7)}-01` : "2026-10-04",
+        to: last,
+      }),
+    });
+    // "1 to 11 Oct, compared with 1 to 11 Sep", the same days as the
+    // cash pace ("by 11 Sep") and the growth funnel's month to date.
+    expect(tabBounds(tf("mtd"), "2026-10-11", null)).toEqual({
+      from: "2026-10-01",
+      to: "2026-10-11",
+    });
+    // On the 1st it is the new month, never all of last month.
+    expect(tabBounds(tf("mtd"), "2026-11-01", null)).toEqual({
+      from: "2026-11-01",
+      to: "2026-11-01",
+    });
+    // Every other preset ends yesterday, the last whole day.
+    expect(tabBounds(tf("7d"), "2026-10-11", null)?.to).toBe("2026-10-10");
   });
 });
 
@@ -723,8 +774,8 @@ describe("A234: proposals in the CEO cockpit", () => {
     );
     expect(rows.map(r => [r.id, r.lead, r.closer, r.language, r.href])).toEqual(
       [
-        ["b", "Lead Two", "closer", "Arabic", "/sales/proposal/b"],
-        ["a", "Lead c1", "closer", "Arabic", "/sales/proposal/a"],
+        ["b", "Lead Two", "Closer", "Arabic", "/sales/proposal/b"],
+        ["a", "Lead c1", "Closer", "Arabic", "/sales/proposal/a"],
       ],
     );
     expect(proposalChip(rows[0])).toEqual({
@@ -736,6 +787,8 @@ describe("A234: proposals in the CEO cockpit", () => {
     );
     expect(proposalSummary([])).toBe("No proposals yet");
     expect(closerName(null)).toBe("Unknown");
+    expect(closerName("aziz@maharamedia.com")).toBe("Aziz");
+    expect(closerName("sara.ali@example.test")).toBe("Sara Ali");
     expect(proposalHref("x/y")).toBe("/sales/proposal/x%2Fy");
   });
 });

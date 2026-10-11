@@ -45,6 +45,7 @@ import {
   startsLate,
   sumIn,
   type TabWindow,
+  tabBounds,
   tabWindow,
 } from "@/components/ceo/tabWindow";
 import { type Timeframe, useTimeframe } from "@/components/ceo/timeframe";
@@ -83,6 +84,10 @@ import { eodIn, refundsIn } from "./windowedNumbers";
 const TodayWindow = createContext<{
   tf: Timeframe;
   w: TabWindow | null;
+  /** The days the bar says the cards compare with. */
+  compare: { from: string; to: string } | null;
+  /** The days a card built from the daily series covers: those series end yesterday. */
+  daysLabel: string | null;
 } | null>(null);
 
 /** Month to date, for a card rendered outside the tab (never in practice). */
@@ -105,9 +110,13 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
     ? cashHeadline(sections.money.payload).rail.daily
     : null;
   const first = cashDaily?.[0]?.date ?? null;
-  const bounds = useMemo(() => tf.bounds(last, first), [tf, last, first]);
+  // Month to date is the server's own month through today: the cash
+  // headline, deals, contracted and the growth funnel all count today so
+  // far, and the pace compares with the same days last month ("by 11 Sep").
+  // So the bar says those days too, not a month that stops yesterday (which
+  // on the 1st would be all of last month).
+  const bounds = useMemo(() => tabBounds(tf, today, first), [tf, today, first]);
   const w = useMemo(() => tabWindow(tf.range, bounds), [tf.range, bounds]);
-  const ctx = useMemo(() => ({ tf, w }), [tf, w]);
   // What the cards compare with: the same days last month for month to date
   // (the cash pace), else the run of days just before.
   const compare = useMemo(() => {
@@ -122,6 +131,19 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
       to: `${prev}-${String(day).padStart(2, "0")}`,
     };
   }, [w]);
+  const daysLabel = useMemo(
+    () =>
+      w
+        ? w.to > last && last >= w.from
+          ? rangeText(w.from, last)
+          : w.label
+        : null,
+    [w, last],
+  );
+  const ctx = useMemo(
+    () => ({ tf, w, compare, daysLabel }),
+    [tf, w, compare, daysLabel],
+  );
   return (
     <TodayWindow.Provider value={ctx}>
       <div className="@container grid gap-4 lg:gap-6">
@@ -132,7 +154,7 @@ export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
           ariaLabel="Timeframe for every dated number on Today"
           first={first}
           last={last}
-          note="Cash, deals, refunds, both funnels, delivery by client and EOD counts follow these days. Yesterday's and today's tiles are single days."
+          note="Cash, deals, refunds, cost per lead, both funnels, delivery by client and EODs follow these days. Yesterday's and today's tiles are single days; speed to lead is the last 7 days."
         />
         <CashHero
           section={sections.money}
@@ -386,7 +408,13 @@ function CashHeroBody({
   const daily = w
     ? cash.daily.filter(p => p.date < today && inWindow(p.date, w))
     : cash.daily.filter(p => p.date < today).slice(-90);
-  const chartWords = w ? w.label : "last 90 days through yesterday";
+  // The chart stops at yesterday even when the window runs to today.
+  const chartTo = w && w.to >= today ? addDays(today, -1) : (w?.to ?? null);
+  const chartWords = w
+    ? chartTo && chartTo >= w.from
+      ? rangeText(w.from, chartTo)
+      : w.label
+    : "last 90 days through yesterday";
   const prevW = w && !own ? previousOf(w) : null;
   const winCash = own || !w ? cash.mtd : sumIn(cash.daily, w, p => p.value);
   const prevCash =
@@ -599,7 +627,8 @@ function KpiRow({
     : cplLeads && cplSpend !== null
       ? cplSpend / cplLeads
       : null;
-  const prevW = w && !own7 ? previousOf(w) : null;
+  // The comparison the bar names (the same days last month for month to date).
+  const prevW = w && !own7 ? (win?.compare ?? previousOf(w)) : null;
   const prevLeads = d && prevW ? sumIn(d.daily, prevW, r => r.leads) : null;
   const prevSpend = d && prevW ? sumIn(d.daily, prevW, r => r.spend) : null;
   const cplPrev = own7
@@ -775,7 +804,7 @@ function DeliveryFunnelCard({
   const own7 = !w || w.range === "7d";
   return (
     <SectionCard
-      kicker={own7 ? "Last 7 days" : (w?.label ?? "Last 7 days")}
+      kicker={own7 ? "Last 7 days" : (win?.daysLabel ?? "Last 7 days")}
       title="Client delivery funnel"
       section={delivery}
       alsoReads={[calls]}
@@ -835,7 +864,7 @@ function DeliveryFunnelCard({
           <>
             <FunnelStrip
               steps={steps}
-              ariaLabel={`Client delivery funnel, ${own7 ? "last 7 days" : w?.label}`}
+              ariaLabel={`Client delivery funnel, ${own7 ? "last 7 days" : win?.daysLabel}`}
               context={[
                 {
                   label: "Client ad spend",
@@ -1205,7 +1234,7 @@ function DeliveryByClientCard({
   const clientRows = clients?.payload?.rows ?? null;
   return (
     <SectionCard
-      kicker={own7 ? "Last 7 days" : (w?.label ?? "Last 7 days")}
+      kicker={own7 ? "Last 7 days" : (win?.daysLabel ?? "Last 7 days")}
       title="Delivery by client"
       section={section}
       alsoReads={own7 ? undefined : [clients]}
@@ -1260,7 +1289,7 @@ function DeliveryByClientCard({
               rows={rows}
               columns={DELIVERY_COLUMNS}
               rowKey={r => r.clickupTaskId ?? r.client}
-              caption={`Top clients by ad spend, ${own7 ? "last 7 days" : w?.label}`}
+              caption={`Top clients by ad spend, ${own7 ? "last 7 days" : win?.daysLabel}`}
               emptyText="No client spent on ads in these days."
             />
             {rows.length ? (
@@ -1342,10 +1371,14 @@ const EOD: Record<
 };
 
 /** One person's EODs over the tab's window, or the last 14 working days until the days are kept. */
-function eodHint(p: TeamPerson, w: TabWindow | null): string {
+function eodHint(
+  p: TeamPerson,
+  w: TabWindow | null,
+  label: string | null,
+): string {
   const c = eodIn(p, w);
   if (c && w)
-    return `${f.count(c.filed)} of ${f.count(c.due)} filed, ${w.label}, ${f.count(c.late)} late`;
+    return `${f.count(c.filed)} of ${f.count(c.due)} filed, ${label ?? w.label}, ${f.count(c.late)} late`;
   return `${f.count(p.eod14.filed)} of ${f.count(p.eod14.due)} filed in 14 working days, ${f.count(p.eod14.late)} late`;
 }
 
@@ -1358,7 +1391,8 @@ function TeamTodayCard({
   now: number;
   today: string;
 }) {
-  const w = useContext(TodayWindow)?.w ?? null;
+  const win = useContext(TodayWindow);
+  const w = win?.w ?? null;
   // The Management switch's live statuses, laid over the stored people so a
   // person set to Paused or Left leaves this card the moment it is saved,
   // the same as on the Management tab.
@@ -1434,7 +1468,7 @@ function TeamTodayCard({
                     <StatusChip
                       tone={eod.tone}
                       label={eod.label}
-                      hint={eodHint(p, w)}
+                      hint={eodHint(p, w, win?.daysLabel ?? null)}
                     />
                   </li>
                 );
