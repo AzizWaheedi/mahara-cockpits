@@ -21,8 +21,10 @@ export const EOD_CHANNELS: Record<string, string> = {
   "eods-csms": "C09RQS2TFST",
   "eods-salesreps": "C0AF5PJEAUX",
   "media-eods": "C0AQ2LD0PL1",
+  "tech-eods": "C0AS90M9SN6",
+  "eods-csr": "C09R4QJCZ5Y",
 };
-export const EOD_CHANNELS_UNREAD = ["tech-eods", "eods-csr"];
+export const EOD_CHANNELS_UNREAD: string[] = [];
 /** Sheet tab -> role label shown on the page. */
 export const TAB_ROLE: Record<string, string> = {
   "Media Buyer": "media buyer",
@@ -252,7 +254,7 @@ export async function eodSource(ctx: Ctx, sinceMs: number): Promise<Health> {
     note:
       `${reports.length} EODs read since ${kuwaitDay(sinceMs)} (${Object.entries(per).map(([k, v]) => `${k} ${v.read}`).join(", ") || "none"}), ${rows.length} client mentions across ${clientsWith} clients.` +
       (failed.length ? ` ${failed.length} sources failed: ${failed.join("; ")}` : "") +
-      ` Not read: #${EOD_CHANNELS_UNREAD.join(", #")} (the Slack bot is not a member; their EODs still come in through the sheet).`,
+      (EOD_CHANNELS_UNREAD.length ? ` Not read: #${EOD_CHANNELS_UNREAD.join(", #")} (the Slack bot is not a member; their EODs still come in through the sheet).` : ""),
     detail: { reports: reports.length, mentions: rows.length, clientsWith, per, failed, notRead: EOD_CHANNELS_UNREAD },
   };
 }
