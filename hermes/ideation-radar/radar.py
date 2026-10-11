@@ -215,6 +215,15 @@ def cmd_pending(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         except (SupabaseError, http.HttpError) as e:
             log.error(f"requests: {e}")
             summary["requests_error"] = str(e)[:200]
+        # "Find people for this role" from the CEO Hiring tab rides the same cron.
+        from radar.hiring import answer_requests
+        try:
+            hunted = answer_requests(cfg, log.info, limit=1, dry_run=args.dry_run)
+            if hunted:
+                summary["headhunts"] = hunted
+        except (SupabaseError, http.HttpError) as e:
+            log.error(f"headhunts: {e}")
+            summary["headhunts_error"] = str(e)[:200]
     _print(summary, args.json)
     return 1 if failed and not ideas else 0
 
