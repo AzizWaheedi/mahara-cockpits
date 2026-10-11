@@ -1,11 +1,12 @@
 /** Development preview. Synthetic data, no provider calls, not a production route. */
 import { createRoot } from "react-dom/client";
+import { clientMessage } from "../../../../hermes/ad-billing-guard/core";
 import {
   AdBillingSummary,
   type BillingPanel,
 } from "../components/AdBillingWatch";
-import { clientMessage } from "../../../../hermes/ad-billing-guard/core";
 import "../index.css";
+
 const now = new Date().toISOString();
 const data: BillingPanel = {
   apply: false,
