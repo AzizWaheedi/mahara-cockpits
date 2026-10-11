@@ -17,6 +17,8 @@ EXPECTED_JOBS = (
     "mahara-sync-business", "mahara-sync-overnight", "mahara-ghl-appointments", "mahara-sync-activities",
     "mahara-ghl-leads", "mahara-ghl-pipelines", "mahara-sync-client-config", "mahara-provision-client-panels",
     "mahara-appointment-outcomes-sync", "mahara-ghl-leads-reconcile", "mahara-tap-charges-sync", "mahara-sales-mirror",
+    # hiring-sync (migration 20261009c): the board mirror and the engine every 10 min, the careers-form intake at :08 and :38.
+    "mahara-hiring-mirror", "mahara-hiring-intake", "mahara-hiring-engine",
 )
 
 
@@ -137,7 +139,8 @@ def run_auth_roles(ctx: Context) -> Result:
 CHECKS = [
     Check(
         id="pg-cron-jobs", area="supabase", name="pg_cron jobs", catalogue="S2",
-        means="The 12 mahara-* database jobs exist and are switched on.", severity="high",
+        means=f"The {len(EXPECTED_JOBS)} mahara-* database jobs exist and are switched on (the three hiring jobs included).",
+        severity="high",
         reads="cron.job through public.cockpit_guardian_probe() (names, schedules, active; never the command)",
         threshold="A job missing or inactive: fail.", run=run_jobs,
         action="Re-create the job from its migration; schedules change only through a migration a person applies.",

@@ -27,6 +27,10 @@ EXPECTED = {
     "provision-client-panels": False,
     "appointment-outcomes-sync": False,
     "tap-charges-sync": False,
+    # Hiring (since Convex stopped on 2026-10-07): pg_cron calls hiring-sync with the cron secret, so its
+    # JWT check is off; the CEO's Hiring tab calls hiring-api signed in, so its JWT check is on.
+    "hiring-sync": False,
+    "hiring-api": True,
 }
 
 
@@ -43,8 +47,8 @@ def run_functions(ctx: Context) -> Result:
             raise SourceError(f"neither the functions list (no SUPABASE_ACCESS_TOKEN) nor sales-api answered ({e2})",
                               source="db") from e2
         if r.status == 401:
-            return unknown("sales-api is up (401 without sign-in); the other ten functions need SUPABASE_ACCESS_TOKEN "
-                           "to be checked.", coverage_gap=True, evidence={"sales-api": r.status})
+            return unknown(f"sales-api is up (401 without sign-in); the other {len(EXPECTED) - 1} functions need "
+                           "SUPABASE_ACCESS_TOKEN to be checked.", coverage_gap=True, evidence={"sales-api": r.status})
         return fail(f"sales-api answers {r.status} instead of 401, so the sales cockpit cannot reach its server.",
                     evidence={"sales-api": r.status})
     by = {f.get("slug"): f for f in listed}
@@ -80,7 +84,8 @@ def run_sales_api(ctx: Context) -> Result:
 CHECKS = [
     Check(
         id="edge-functions", area="supabase", name="Edge Functions", catalogue="S7",
-        means="The eleven Edge Functions are ACTIVE, sales-api with verify_jwt on and the rest off, sales-live included.",
+        means=f"The {len(EXPECTED)} Edge Functions are ACTIVE, sales-api and hiring-api with verify_jwt on and the rest "
+              "off, sales-live and hiring-sync included.",
         severity="high",
         reads="Management API GET /v1/projects/{ref}/functions (needs SUPABASE_ACCESS_TOKEN)",
         threshold="A function missing, not ACTIVE, or with the wrong verify_jwt: fail.", run=run_functions,
