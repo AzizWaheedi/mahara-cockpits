@@ -6,6 +6,7 @@ import {
   MoonStar,
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { AdBillingWatch } from "@/components/AdBillingWatch";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
@@ -3594,6 +3595,7 @@ function Cockpit({ view }: { view: View }) {
 
       {/* Only when the data is stale or the last refresh had problems. */}
       <ViktorStatus />
+      {(view === "sod" || view === "ads") && <AdBillingWatch />}
 
       {/* Clients who wrote on WhatsApp, with the reply already drafted.
           Above the numbers: an unanswered client costs more than a
