@@ -54,17 +54,18 @@ to the Churn Tracker.
 
 ## Install on the VPS
 
-As `hermes`, from the clone at `~/mahara-cockpits`:
+As `hermes`. The worker needs google-auth, which the system Python lacks, so it
+runs from its own virtual environment in `~/.invoice-desk/venv`:
 
 ```bash
-cd ~/mahara-cockpits && git pull -q --ff-only
 mkdir -p ~/.invoice-desk && chmod 700 ~/.invoice-desk
+python3 -m venv ~/.invoice-desk/venv
+~/.invoice-desk/venv/bin/python -m pip install -q google-auth requests
 # copy the service account JSON to ~/.invoice-desk/service-account.json, then:
 chmod 600 ~/.invoice-desk/service-account.json
-echo "INVOICE_GOOGLE_KEY_FILE=$HOME/.invoice-desk/service-account.json" > ~/.invoice-desk/env
+echo "INVOICE_GOOGLE_KEY_FILE=/home/hermes/.invoice-desk/service-account.json" > ~/.invoice-desk/env
 chmod 600 ~/.invoice-desk/env
-python3 -m pip install --user google-auth requests
-cd hermes/invoice-desk && python3 desk.py doctor
+cd ~/mahara-cockpits/hermes/invoice-desk && ~/.invoice-desk/venv/bin/python desk.py doctor
 ```
 
 `doctor` changes nothing. It checks the keys, google-auth, the tables, the
@@ -74,10 +75,18 @@ It ends with `ready` or names each line to fix.
 ### Cron
 
 ```
-* * * * * cd ~/mahara-cockpits/hermes/invoice-desk && flock -n /tmp/invoice-desk.lock python3 desk.py run >> ~/.invoice-desk/run.log 2>&1
+* * * * * cd /home/hermes/mahara-cockpits/hermes/invoice-desk && flock -n /tmp/invoice-desk.lock /home/hermes/.invoice-desk/venv/bin/python desk.py run >> /home/hermes/.invoice-desk/run.log 2>&1
 ```
 
 Edit with `crontab -l > f`, edit `f`, `crontab f`. Never pipe a stale copy.
+
+**Installed 11 Oct 2026** (doctor `ready`) from a copy of this folder in
+`~/invoice-desk`, because the branch `claude/cs-invoices` was not on main
+yet and a copy inside the shared clone would block every worker's
+`git pull`. The cron line points at `/home/hermes/invoice-desk`. Once the
+branch is on main and pulled, point the line at the clone as above and
+delete `~/invoice-desk`. The crontab before the change is in
+`~/.invoice-desk/crontab.before-invoice-desk`.
 
 ## Other commands
 

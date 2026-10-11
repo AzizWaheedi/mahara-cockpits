@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,8 @@ def doctor() -> int:
             line(True, f"invoice tables are there; {len(waiting)} invoice(s) waiting")
         except http.HttpError as e:
             good = line(False, f"the invoice tables are not reachable ({e}). Apply supabase/migrations/20261011v_cockpit_invoices.sql")
-    if cfg.google_key_file and Path(cfg.google_key_file).is_file():
+    # os.path.isfile, not Path.is_file: a path in someone else's home answers False, not PermissionError.
+    if cfg.google_key_file and os.path.isfile(cfg.google_key_file):
         try:
             g = Google(service_token(cfg.google_key_file))
             email = json.loads(Path(cfg.google_key_file).read_text(encoding="utf-8")).get("client_email", "?")
