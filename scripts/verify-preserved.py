@@ -2277,11 +2277,13 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
                 rep.add(area, "guardian last scan", UNKNOWN, "state.json carries no last scan time")
             elif age > GUARDIAN_MAX_AGE_MIN:
                 rep.add(area, "guardian last scan", CHANGED, f"last scan {age:.0f} min ago ({g['at']}); it runs every 5 min")
-            elif g.get("mode") != "report-only":
+            elif g.get("mode") not in ("report-only", "fix"):
+                # Fix mode since 2026-10-11 (the CEO: "Scan for any issues happening with it and fix them
+                # immediately"); report-only stays fine for a rollback.
                 rep.add(area, "guardian last scan", CHANGED, f"scanned {age:.1f} min ago in mode {g.get('mode')}, "
-                                                              "not report-only")
+                                                              "neither fix nor report-only")
             else:
-                rep.add(area, "guardian last scan", OK, f"{age:.1f} min ago ({g['at']}), report-only"
+                rep.add(area, "guardian last scan", OK, f"{age:.1f} min ago ({g['at']}), mode {g.get('mode')}"
                         + (", full scan" if g.get("full") else ""))
 
     if not broken("fixer", ["Hermes fixer entry"]):
