@@ -10,6 +10,7 @@ import {
   Settings,
   Sun,
   Sunrise,
+  Table2,
   X,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
@@ -176,6 +177,12 @@ function CeoRail() {
             href: "/admin",
             icon: COCKPIT_ICON.admin,
           },
+          {
+            key: "data",
+            label: "Data",
+            href: "/data",
+            icon: Table2,
+          },
         ]
       : []),
     ...(auth.roles.includes("media_buyer")
@@ -310,6 +317,15 @@ function SidebarNav() {
                 label="Admin"
                 icon={COCKPIT_ICON.admin}
                 isActive={location.pathname === "/admin"}
+              />
+            ) : null}
+            {/* Every lead and appointment, for checking the numbers. */}
+            {auth.isAdmin ? (
+              <NavLink
+                href="/data"
+                label="Data"
+                icon={Table2}
+                isActive={location.pathname === "/data"}
               />
             ) : null}
             {/* Everybody's: the team's meetings and their agendas. */}

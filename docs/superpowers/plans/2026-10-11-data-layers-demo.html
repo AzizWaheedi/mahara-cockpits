@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data View Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Tokens copied from apps/media-buyer-cockpit/src/index.css. No second palette. */
+:root {
+  --teal: #00cfc8; --teal-ink: #0a9e98; --deep: #091333; --royal: #2e5bd6;
+  --bg: oklch(0.985 0.003 250); --card: #ffffff; --fg: oklch(0.2 0.045 270);
+  --muted: oklch(0.96 0.008 250); --muted-fg: oklch(0.48 0.02 265);
+  --border: oklch(0.91 0.008 250); --grid: oklch(0.935 0.006 250);
+  --accent: oklch(0.95 0.02 195); --sidebar: oklch(0.975 0.004 250);
+  --ok: #059669; --ok-bg: oklch(0.96 0.04 160); --warn: #c2410c; --warn-bg: oklch(0.96 0.04 60);
+  --bad: oklch(0.55 0.22 25); --bad-bg: oklch(0.96 0.03 25); --info: var(--royal); --info-bg: oklch(0.96 0.02 265);
+  --shadow: 0 1px 2px oklch(0.2 0.045 270 / 6%), 0 8px 24px oklch(0.2 0.045 270 / 5%);
+  --radius: 0.75rem;
+  --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --teal-ink: #00cfc8; --bg: #091333; --card: #0f1b45; --fg: oklch(0.95 0.008 250);
+    --muted: oklch(1 0 0 / 7%); --muted-fg: oklch(0.7 0.015 250);
+    --border: oklch(1 0 0 / 11%); --grid: oklch(1 0 0 / 7%);
+    --accent: color-mix(in oklch, #00cfc8 14%, transparent); --sidebar: #070f2a;
+    --ok: #34d399; --ok-bg: oklch(0.6 0.12 160 / 15%); --warn: #fb923c; --warn-bg: oklch(0.7 0.15 60 / 14%);
+    --bad: oklch(0.7 0.18 25); --bad-bg: oklch(0.6 0.2 25 / 16%); --info: #8aa4ee; --info-bg: oklch(0.6 0.1 265 / 18%);
+    --shadow: 0 1px 2px oklch(0 0 0 / 30%), 0 10px 30px oklch(0 0 0 / 25%);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --teal-ink: #00cfc8; --bg: #091333; --card: #0f1b45; --fg: oklch(0.95 0.008 250);
+  --muted: oklch(1 0 0 / 7%); --muted-fg: oklch(0.7 0.015 250);
+  --border: oklch(1 0 0 / 11%); --grid: oklch(1 0 0 / 7%);
+  --accent: color-mix(in oklch, #00cfc8 14%, transparent); --sidebar: #070f2a;
+  --ok: #34d399; --ok-bg: oklch(0.6 0.12 160 / 15%); --warn: #fb923c; --warn-bg: oklch(0.7 0.15 60 / 14%);
+  --bad: oklch(0.7 0.18 25); --bad-bg: oklch(0.6 0.2 25 / 16%); --info: #8aa4ee; --info-bg: oklch(0.6 0.1 265 / 18%);
+  --shadow: 0 1px 2px oklch(0 0 0 / 30%), 0 10px 30px oklch(0 0 0 / 25%);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); font-feature-settings: "ss01", "cv11"; -webkit-font-smoothing: antialiased; }
+button, select, input { font: inherit; color: inherit; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; border-radius: 6px; }
+[hidden] { display: none !important; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted-fg); }
+.eyebrow { font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted-fg); }
+.btn { height: 34px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--border); background: var(--card); cursor: pointer; font-weight: 500; font-size: 13px; display: inline-flex; align-items: center; gap: 6px; text-decoration: none; white-space: nowrap; }
+.btn:hover { border-color: var(--teal); }
+.btn.primary { background: var(--teal); color: var(--deep); border-color: var(--teal); }
+.btn.small { height: 28px; font-size: 12.5px; padding: 0 10px; }
+.linkbtn { border: 0; background: none; padding: 0; color: var(--teal-ink); font-weight: 500; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.select, .seg, .iconbtn, .search { height: 34px; border: 1px solid var(--border); background: var(--card); border-radius: 9px; }
+.select { padding: 0 30px 0 10px; appearance: none; cursor: pointer; max-width: 170px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted-fg) 50%), linear-gradient(135deg, var(--muted-fg) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 15px, calc(100% - 10px) 15px; background-size: 5px 5px; background-repeat: no-repeat; }
+.seg { display: inline-flex; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: transparent; padding: 0 10px; border-radius: 6px; cursor: pointer; color: var(--muted-fg); font-size: 13px; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--fg); font-weight: 500; }
+.iconbtn { width: 34px; display: grid; place-items: center; cursor: pointer; flex: none; }
+.search { padding: 0 10px 0 32px; width: 230px; background-image: radial-gradient(circle at 15px 15px, transparent 5px, var(--muted-fg) 5.5px, var(--muted-fg) 6.5px, transparent 7px); }
+.search::placeholder { color: var(--muted-fg); }
+.demo-note { display: inline-flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted-fg); border: 1px dashed var(--border); border-radius: 999px; padding: 4px 12px; }
+.demo-note b { color: var(--fg); font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; display: inline-block; }
+.dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); } .dot.info { background: var(--info); }
+
+/* ---------- Screen 1: the cockpit, unchanged except one button ---------- */
+.cockpit { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+.side { background: var(--sidebar); border-right: 1px solid var(--border); padding: 18px 12px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; padding: 0 8px 18px; }
+.brand i { width: 22px; height: 22px; border-radius: 7px; background: var(--teal); display: inline-block; }
+.side .grp { font: 500 10.5px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted-fg); padding: 14px 8px 6px; }
+.side a { display: block; padding: 7px 10px; border-radius: 8px; text-decoration: none; color: var(--muted-fg); font-size: 13.5px; }
+.side a.on { background: var(--accent); color: var(--fg); font-weight: 500; }
+.main { padding: 28px 28px 60px; }
+.wrap { max-width: 1060px; margin: 0 auto; }
+.admin-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; }
+.admin-head h1 { font-size: 24px; margin: 0; letter-spacing: -0.015em; font-weight: 600; }
+.admin-head p { margin: 4px 0 0; color: var(--muted-fg); font-size: 14px; max-width: 56ch; }
+.head-actions { display: flex; gap: 8px; align-items: center; }
+.new-btn { position: relative; box-shadow: 0 0 0 3px color-mix(in oklch, var(--teal) 35%, transparent); }
+.new-tag { position: absolute; top: -9px; right: -8px; font: 600 9.5px/1 var(--mono); letter-spacing: .06em; background: var(--deep); color: var(--teal); padding: 3px 5px; border-radius: 5px; }
+.callout { margin-top: 14px; display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; border: 1px dashed color-mix(in oklch, var(--teal) 55%, var(--border)); background: var(--accent); font-size: 13px; max-width: 640px; margin-left: auto; }
+.cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 22px; }
+.ghost { border: 1px solid var(--border); background: var(--card); border-radius: 16px; padding: 16px; }
+.ghost b { font-weight: 600; font-size: 15px; } .ghost p { margin: 2px 0 12px; font-size: 12px; color: var(--muted-fg); }
+.ghost .st { font-size: 12.5px; display: flex; gap: 8px; align-items: center; color: var(--muted-fg); }
+.ghost-rows { margin-top: 18px; border: 1px solid var(--border); background: var(--card); border-radius: 16px; padding: 16px; }
+.bar { height: 10px; border-radius: 6px; background: var(--muted); margin: 10px 0; }
+
+/* ---------- Screen 2: the data view ---------- */
+.dv { min-height: 100vh; transition: padding-right .24s; }
+body.panel-open .dv { padding-right: min(460px, 100vw); }
+.topbar { position: sticky; top: 0; z-index: 30; background: color-mix(in oklch, var(--bg) 90%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+.topbar-in { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 16px; }
+.back { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: var(--muted-fg); font-size: 13px; padding: 6px 8px; border-radius: 8px; }
+.back:hover { background: var(--muted); color: var(--fg); }
+.title { display: flex; flex-direction: column; margin-right: auto; padding-left: 10px; border-left: 1px solid var(--border); }
+.title b { font-size: 16px; letter-spacing: -0.01em; font-weight: 600; line-height: 1.2; }
+.ctrls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.content { padding: 18px 16px 48px; max-width: 1400px; margin: 0 auto; }
+
+/* Overview: the summary reads as sentences, then the problems as cards. */
+.overview { display: grid; gap: 14px; }
+.headline { font-size: 20px; line-height: 1.35; letter-spacing: -0.015em; font-weight: 500; margin: 0; max-width: 62ch; }
+.headline b { font-weight: 650; font-variant-numeric: tabular-nums; }
+.headline .need { color: var(--bad); }
+.freshline { font-size: 13px; color: var(--muted-fg); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.howto { font-size: 13px; }
+.howto summary { cursor: pointer; color: var(--teal-ink); font-weight: 500; width: fit-content; list-style: none; }
+.howto summary::-webkit-details-marker { display: none; }
+.howto summary::before { content: "+ "; }
+.howto[open] summary::before { content: "− "; }
+.howto ol { margin: 8px 0 0; padding-left: 20px; color: var(--muted-fg); max-width: 75ch; }
+.howto ol b { color: var(--fg); font-weight: 500; }
+.problems { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.problem { border: 1px solid var(--border); border-left: 4px solid var(--warn); background: var(--card); border-radius: 12px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow); }
+.problem.bad { border-left-color: var(--bad); } .problem.info { border-left-color: var(--info); }
+.problem .pt { font-weight: 600; font-size: 14.5px; line-height: 1.3; }
+.problem .pd { font-size: 13px; color: var(--muted-fg); line-height: 1.45; flex: 1; }
+.problem .pw { font-size: 12px; color: var(--muted-fg); }
+.problem .pw b { color: var(--fg); font-weight: 500; }
+.problem .linkbtn { align-self: flex-start; margin-top: 2px; font-size: 13px; }
+.okline { font-size: 13px; color: var(--muted-fg); display: flex; gap: 8px; align-items: baseline; }
+.okline .dot { transform: translateY(-1px); }
+
+.tabs { display: flex; gap: 2px; margin-top: 24px; border-bottom: 1px solid var(--border); align-items: end; overflow-x: auto; }
+.tab { border: 0; background: transparent; padding: 8px 12px 10px; cursor: pointer; color: var(--muted-fg); border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; font-size: 14px; }
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--teal); }
+.tab .c { font: 500 11.5px var(--mono); color: var(--muted-fg); }
+.toolrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.qf { border: 1px solid var(--border); background: var(--card); border-radius: 999px; padding: 4px 11px; font-size: 13px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.qf .n { font: 500 11.5px var(--mono); color: var(--muted-fg); }
+.qf[aria-pressed="true"] { background: var(--accent); border-color: color-mix(in oklch, var(--teal) 50%, var(--border)); font-weight: 500; }
+.qf .dot { width: 6px; height: 6px; }
+.viewctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; color: var(--muted-fg); }
+.active-filter { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: var(--accent); font-size: 13px; margin-bottom: 10px; }
+.active-filter b { font-weight: 600; }
+
+/* Table */
+.sheet { border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; box-shadow: var(--shadow); }
+.gridwrap { overflow: auto; max-height: calc(100vh - 150px); min-height: 320px; }
+.gridwrap table { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 13.5px; }
+.gridwrap th, .gridwrap td { border-bottom: 1px solid var(--grid); padding: 0 14px; text-align: left; background: var(--card); vertical-align: middle; }
+.gridwrap.allcols th, .gridwrap.allcols td { border-right: 1px solid var(--grid); }
+.gridwrap thead th { position: sticky; top: 0; z-index: 3; height: 42px; font-size: 12.5px; font-weight: 600; color: var(--muted-fg); white-space: nowrap; box-shadow: 0 1px 0 var(--border); }
+.gridwrap thead tr.grp th { height: 28px; font: 600 10.5px/28px var(--mono); letter-spacing: .07em; text-transform: uppercase; background: var(--muted); }
+.gridwrap.allcols thead tr.cols th { top: 28px; }
+.th-in { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.th-in span { overflow: hidden; text-overflow: ellipsis; }
+.colhelp { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border); background: var(--card); color: var(--muted-fg); font: 600 10.5px/16px var(--sans); text-align: center; cursor: pointer; flex: none; padding: 0; }
+.colhelp:hover, .colhelp[aria-expanded="true"] { border-color: var(--teal); color: var(--teal-ink); }
+.gridwrap td { height: 56px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gridwrap.compact td { height: 38px; }
+.gridwrap.compact .l2 { display: none; }
+.l1 { overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+.l2 { overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; color: var(--muted-fg); line-height: 1.35; margin-top: 2px; }
+.l2.m { font-family: var(--mono); font-size: 12px; }
+td.strong .l1 { font-weight: 600; }
+td.m { font-family: var(--mono); font-size: 12.5px; }
+td.id { font-family: var(--mono); font-size: 12px; color: var(--muted-fg); }
+td.num { text-align: right; font-family: var(--mono); }
+.gridwrap tbody tr { cursor: pointer; }
+.gridwrap tbody tr:hover td { background: color-mix(in oklch, var(--muted) 70%, var(--card)); }
+.gridwrap tbody tr.sel td { background: var(--accent); }
+.fz { position: sticky; left: 0; z-index: 2; box-shadow: 1px 0 0 var(--border), 8px 0 12px -8px oklch(0 0 0 / 18%); }
+thead .fz { z-index: 5; }
+.na { color: var(--muted-fg); }
+.ns-cell { background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--muted) 6px 12px) !important; }
+.status { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 500; padding: 3px 10px 3px 8px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); max-width: 100%; }
+.status span { overflow: hidden; text-overflow: ellipsis; }
+.status .dot { width: 7px; height: 7px; }
+.status.warn { background: var(--warn-bg); color: var(--warn); } .status.bad { background: var(--bad-bg); color: var(--bad); }
+.status.info { background: var(--info-bg); color: var(--info); } .status.grey { background: var(--muted); color: var(--muted-fg); }
+.status.grey .dot { background: var(--muted-fg); }
+.more-issues { font-size: 11.5px; color: var(--muted-fg); margin-left: 6px; }
+.result { font-weight: 500; }
+.result.ok { color: var(--ok); } .result.bad { color: var(--bad); } .result.warn { color: var(--warn); } .result.grey { color: var(--muted-fg); }
+.sheet-foot { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 10px 14px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted-fg); }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; }
+.legend i { display: inline-block; width: 18px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; border: 1px solid var(--border); }
+.empty { padding: 48px 18px; text-align: center; color: var(--muted-fg); }
+.empty b { display: block; color: var(--fg); font-size: 14px; margin-bottom: 4px; }
+
+/* Column help popover */
+.pop { position: fixed; z-index: 60; width: 300px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 40px oklch(0 0 0 / 22%); padding: 14px; font-size: 13px; }
+.pop h4 { margin: 0 0 8px; font-size: 14px; }
+.pop dl { margin: 0; display: grid; gap: 8px; }
+.pop dt { font: 500 10.5px/1 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted-fg); }
+.pop dd { margin: 3px 0 0; line-height: 1.45; }
+.pop code { font-family: var(--mono); font-size: 12px; background: var(--muted); padding: 1px 5px; border-radius: 5px; }
+
+/* Compare tab */
+.compare { display: grid; gap: 16px; padding-top: 16px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 0; }
+.card-h { padding: 16px 18px 0; }
+.card-h h2 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+.card-h p { margin: 4px 0 0; color: var(--muted-fg); font-size: 13px; max-width: 80ch; }
+.lineage { padding: 6px 18px 8px; }
+.pipe { display: grid; grid-template-columns: 120px 1fr; gap: 14px; align-items: center; padding: 14px 0; }
+.pipe + .pipe { border-top: 1px solid var(--border); }
+.pipe-name { font-weight: 600; font-size: 13.5px; }
+.pipe-name small { display: block; font-weight: 400; font-size: 12px; color: var(--muted-fg); margin-top: 2px; }
+.hops { display: flex; align-items: stretch; min-width: 0; }
+.hop { flex: 1 1 0; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); }
+.hop .n { font: 600 26px/1.05 var(--mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.hop .l { font-size: 13px; margin-top: 4px; font-weight: 500; }
+.hop .t { font-size: 12px; color: var(--muted-fg); margin-top: 2px; line-height: 1.35; }
+.hop.first { border-color: color-mix(in oklch, var(--teal) 45%, var(--border)); background: var(--accent); }
+.link { flex: 0 0 clamp(96px, 10vw, 132px); position: relative; display: grid; place-items: center; }
+.link::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: linear-gradient(90deg, var(--teal), color-mix(in oklch, var(--teal) 35%, transparent)); }
+.link::after { content: ""; position: absolute; right: 0; top: calc(50% - 5px); border: 5px solid transparent; border-left: 6px solid color-mix(in oklch, var(--teal) 60%, transparent); border-right: 0; }
+.leak { position: relative; z-index: 1; max-width: 120px; text-align: center; font: 500 12px/1.25 var(--sans); padding: 5px 9px; border-radius: 8px; background: var(--card); border: 1px solid var(--border); color: var(--muted-fg); }
+button.leak { cursor: pointer; }
+.leak.warn { color: var(--warn); border-color: color-mix(in oklch, var(--warn) 45%, var(--border)); }
+.leak.bad { color: var(--bad); border-color: color-mix(in oklch, var(--bad) 50%, var(--border)); background: var(--bad-bg); }
+.why { margin: 0 18px 16px; padding: 12px 14px; border-radius: 10px; background: var(--muted); font-size: 13px; }
+.why ul { margin: 6px 0 0; padding-left: 18px; } .why li { margin: 3px 0; }
+.plain { overflow-x: auto; }
+.plain table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.plain th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted-fg); padding: 12px 14px 8px; white-space: nowrap; }
+.plain td { padding: 11px 14px; border-top: 1px solid var(--border); white-space: nowrap; }
+.plain tbody tr { cursor: pointer; } .plain tbody tr:hover td { background: var(--muted); }
+.plain .num { text-align: right; font-family: var(--mono); }
+.gap-bad { color: var(--bad); font-weight: 600; } .gap-warn { color: var(--warn); font-weight: 600; }
+.foot { padding: 10px 18px 14px; font-size: 12.5px; color: var(--muted-fg); border-top: 1px solid var(--border); }
+
+/* Side panel: not modal, the table stays usable */
+.panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 100vw); background: var(--card); border-left: 1px solid var(--border); box-shadow: -16px 0 40px oklch(0 0 0 / 12%); transform: translateX(100%); transition: transform .24s cubic-bezier(.2,.8,.2,1); display: flex; flex-direction: column; z-index: 41; }
+body.panel-open .panel { transform: none; }
+.p-head { padding: 16px 18px 14px; border-bottom: 1px solid var(--border); position: relative; }
+.p-head h3 { margin: 2px 40px 2px 0; font-size: 19px; letter-spacing: -0.015em; }
+.p-verdict { margin-top: 10px; }
+.p-body { padding: 4px 18px 28px; overflow-y: auto; flex: 1; }
+.p-sec { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.p-sec:last-child { border-bottom: 0; }
+.p-sec h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+.close { position: absolute; top: 14px; right: 14px; }
+.kv { display: grid; grid-template-columns: 128px 1fr; gap: 7px 12px; font-size: 13.5px; margin: 0; }
+.kv dt { color: var(--muted-fg); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv dd.m { font-family: var(--mono); font-size: 12.5px; }
+.story { list-style: none; margin: 0; padding: 0; position: relative; }
+.story::before { content: ""; position: absolute; left: 6px; top: 8px; bottom: 8px; width: 2px; background: var(--border); }
+.story li { position: relative; padding: 0 0 14px 26px; }
+.story li::before { content: ""; position: absolute; left: 0; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--card); border: 2px solid var(--teal); }
+.story li.miss::before { border-color: var(--bad); background: var(--bad-bg); }
+.story li.wait::before { border-color: var(--muted-fg); border-style: dashed; }
+.story .tt { font-weight: 500; line-height: 1.35; } .story li.miss .tt { color: var(--bad); }
+.story .tm { font-size: 12.5px; color: var(--muted-fg); }
+details.tech { border: 1px solid var(--border); border-radius: 10px; }
+details.tech summary { cursor: pointer; padding: 10px 12px; font-weight: 500; font-size: 13px; }
+details.tech .tin { padding: 0 12px 12px; }
+pre { margin: 10px 0 0; padding: 12px; font: 11.5px/1.5 var(--mono); overflow-x: auto; background: var(--bg); border-radius: 8px; border: 1px solid var(--border); }
+.toast { position: fixed; bottom: 18px; left: 50%; transform: translate(-50%, 20px); opacity: 0; background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 9px; font-size: 13px; transition: .2s; z-index: 70; pointer-events: none; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 1200px) { body.panel-open .dv { padding-right: 0; } }
+@media (max-width: 860px) {
+  .cockpit { grid-template-columns: 1fr; } .side { display: none; }
+  .main { padding: 20px 16px 48px; } .cards3 { grid-template-columns: 1fr; }
+  .search { width: 100%; } .ctrls { width: 100%; } .title { border-left: 0; padding-left: 0; }
+  .topbar { position: static; } .gridwrap { max-height: 70vh; } .headline { font-size: 17px; }
+}
+@media (max-width: 720px) {
+  .content { padding: 14px 8px 40px; }
+  .pipe { grid-template-columns: 1fr; gap: 8px; } .hops { flex-direction: column; } .link { flex-basis: 54px; }
+  .link::before { left: 50%; right: auto; top: 0; bottom: 0; width: 2px; height: auto; background: linear-gradient(180deg, var(--teal), color-mix(in oklch, var(--teal) 35%, transparent)); }
+  .link::after { right: auto; left: calc(50% - 5px); top: auto; bottom: 0; border: 5px solid transparent; border-top: 6px solid color-mix(in oklch, var(--teal) 60%, transparent); border-bottom: 0; }
+  .leak { max-width: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<!-- ============ Screen 1: the cockpit Admin page (unchanged) ============ -->
+<section id="screen-cockpit" class="cockpit" aria-label="Cockpit admin page">
+  <nav class="side" aria-label="Cockpit menu">
+    <div class="brand"><i></i>Mahara</div>
+    <a href="#cockpit" data-screen="cockpit">Today</a><a href="#cockpit" data-screen="cockpit">Clients</a><a href="#cockpit" data-screen="cockpit">Campaigns</a><a href="#cockpit" data-screen="cockpit">Ideation</a><a href="#cockpit" data-screen="cockpit">Playbook</a>
+    <div class="grp">Admin</div>
+    <a href="#cockpit" class="on" data-screen="cockpit">Admin</a><a href="#cockpit" data-screen="cockpit">CEO</a>
+  </nav>
+  <main class="main">
+    <div class="wrap">
+      <div style="margin-bottom:18px"><span class="demo-note"><span class="dot warn"></span><b>Demo.</b> Sample data. Made-up clients and contacts.</span></div>
+      <header class="admin-head">
+        <div>
+          <h1>Admin</h1>
+          <p>One sign-in for the whole team. Add a person, give them a seat, and the right cockpit opens for them the moment they log in.</p>
+        </div>
+        <div class="head-actions">
+          <a class="btn new-btn" href="#data" data-screen="data">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg>
+            Open data view<span class="new-tag">NEW</span>
+          </a>
+          <button class="btn primary" type="button" tabindex="-1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>Add a team member</button>
+        </div>
+      </header>
+      <div class="callout"><span class="dot" style="background:var(--teal);margin-top:6px"></span><div><b>The only change to the cockpit is this button.</b> Admins see it. It opens the data view in a new tab. Every other screen stays as it is now.</div></div>
+      <div class="cards3" aria-hidden="true">
+        <div class="ghost"><b>Media buyer</b><p>Campaigns, budgets and bookings</p><div class="st"><span class="dot"></span>Healthy, checked 3 min ago</div></div>
+        <div class="ghost"><b>Client success</b><p>Clients, meetings and billing</p><div class="st"><span class="dot"></span>Healthy, checked 5 min ago</div></div>
+        <div class="ghost"><b>Creative director</b><p>Ideas, scripts and reviews</p><div class="st"><span class="dot"></span>Healthy, checked 4 min ago</div></div>
+      </div>
+      <div class="ghost-rows" aria-hidden="true"><b style="font-size:15px">Team members</b><div class="bar" style="width:92%"></div><div class="bar" style="width:84%"></div><div class="bar" style="width:88%"></div></div>
+    </div>
+  </main>
+</section>
+
+<!-- ============ Screen 2: the data view ============ -->
+<section id="screen-data" class="dv" aria-label="Data view" hidden>
+  <div class="topbar">
+    <div class="topbar-in">
+      <a class="back" href="#cockpit" data-screen="cockpit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M15 18l-6-6 6-6"/></svg>Cockpit</a>
+      <div class="title"><span class="eyebrow">Admin only</span><b>Leads and appointments data</b></div>
+      <div class="ctrls">
+        <select id="client" class="select" aria-label="Client"></select>
+        <div class="seg" role="group" aria-label="Date range" id="range">
+          <button data-r="7">7 days</button><button data-r="30" aria-pressed="true">30 days</button><button data-r="90">90 days</button>
+        </div>
+        <input id="q" class="search" type="search" placeholder="Find a name, phone or campaign" aria-label="Search">
+        <button class="btn" id="export"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v3h16v-3"/></svg>Export CSV</button>
+        <button class="iconbtn" id="theme" aria-label="Switch light or dark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+      </div>
+    </div>
+  </div>
+  <div class="content">
+    <div class="overview" id="overview"></div>
+    <div class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" data-t="leads">Leads <span class="c" id="c-leads"></span></button>
+      <button class="tab" role="tab" data-t="appts">Appointments <span class="c" id="c-appts"></span></button>
+      <button class="tab" role="tab" data-t="compare">Compare with Meta and the cockpit</button>
+    </div>
+    <div id="panelArea"></div>
+  </div>
+</section>
+
+<aside class="panel" id="panel" aria-labelledby="p-title" tabindex="-1">
+  <div class="p-head">
+    <button class="iconbtn close" id="p-close" aria-label="Close details"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    <div class="eyebrow" id="p-kind"></div>
+    <h3 id="p-title"></h3>
+    <div class="muted" id="p-sub"></div>
+    <div class="p-verdict" id="p-verdict"></div>
+  </div>
+  <div class="p-body" id="p-body"></div>
+</aside>
+<div class="pop" id="pop" role="dialog" aria-label="About this column" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* ---------- Sample data, seeded so every reload looks the same ---------- */
+const NOW = new Date('2026-10-11T15:40:00+03:00').getTime();
+const H = 3600e3, D = 24 * H, DAYS = 90;
+const DAY0 = NOW - (NOW + 3 * H) % D;   // Riyadh midnight today
+let seed = 20261011;
+const R = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const pick = a => a[Math.floor(R() * a.length)];
+const gid = (n = 20) => { const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'; let s = ''; for (let i = 0; i < n; i++) s += c[Math.floor(R() * c.length)]; return s; };
+const digits = n => { let s = ''; for (let i = 0; i < n; i++) s += Math.floor(R() * 10); return s; };
+const metaId = () => '1202' + digits(14);
+const pois = l => { let L = Math.exp(-l), k = 0, p = 1; do { k++; p *= R(); } while (p > L); return k - 1; };
+
+const CLIENTS = [
+  { name: 'Noor Interiors', cc: '+965', rate: 3.8, theme: 'Living rooms' },
+  { name: 'Dar Al Bina', cc: '+965', rate: 2.6, theme: 'Villa build' },
+  { name: 'Qasr Kitchens', cc: '+966', rate: 4.8, theme: 'Kitchen reveal', formBreak: [3, 1] },
+  { name: 'Sahel Clinics', cc: '+965', rate: 2.0, theme: 'Smile offer' },
+  { name: 'Wadi Fitout', cc: '+966', rate: 1.6, theme: 'Office fitout', cockpitMiss: true, adIdShare: 0.55 },
+  { name: 'Lulu Dental', cc: '+965', rate: 3.2, theme: 'Implants', gcal: true },
+  { name: 'Marsa Realty', cc: '+966', rate: 2.4, theme: 'Sea view units' },
+  { name: 'Bayt Design', cc: '+965', rate: 1.3, theme: 'Majlis design' },
+].map(c => {
+  const camps = [['Leads | Broad', 'Broad'], ['Leads | Lookalike', 'LAL 3%'], ['Leads | Retarget', 'Warm 30d']].slice(0, 2 + Math.floor(R() * 2)).map(([cn, an]) => {
+    const date = `${1 + Math.floor(R() * 27)}-9-26`;
+    const adsets = [0, 1].map(i => ({ id: metaId(), name: `${c.theme} | ${an}${i ? ' | v2' : ''}`, ads: [1, 2, 3].map(v => ({ id: metaId(), name: `${date} | Video ${v}` })) }));
+    return { id: metaId(), name: `${c.name.split(' ')[0]} | ${cn} | ${date}`, adsets };
+  });
+  return { ...c, loc: gid(20), camps };
+});
+const FIRST = ['Fahad', 'Noura', 'Abdullah', 'Maryam', 'Khalid', 'Sara', 'Yousef', 'Hessa', 'Faisal', 'Dana', 'Saud', 'Latifa', 'Bader', 'Reem', 'Nasser', 'Shahad', 'Mishal', 'Ghala', 'Talal', 'Jana'];
+const LAST = ['Al-Ali', 'Al-Mutairi', 'Al-Enezi', 'Al-Shammari', 'Al-Harbi', 'Al-Otaibi', 'Al-Azmi', 'Al-Rashidi', 'Al-Kandari', 'Al-Saleh'];
+const CALS = ['A. Appointment Calendar (In Office)', 'B. Site Visit', 'C. Online Consultation'];
+const FEEDBACK = ['Serious, asked for a second visit', 'Budget lower than expected', 'Wants a full design package', 'Comparing three offices', 'Ready to sign this month', 'Only wanted prices'];
+const leads = [], appts = [], meta = {};
+CLIENTS.forEach(c => {
+  meta[c.name] = [];
+  for (let d = DAYS - 1; d >= 0; d--) {
+    const dayStart = DAY0 - d * D; let metaN = 0;
+    for (let i = pois(c.rate); i > 0; i--) {
+      const created = dayStart + Math.floor(R() * D);
+      if (created > NOW) continue;
+      const isMeta = R() < 0.78;
+      if (isMeta) metaN++;
+      if (isMeta && c.formBreak && d <= c.formBreak[0] && d >= c.formBreak[1]) continue;
+      const camp = pick(c.camps), adset = pick(camp.adsets), ad = pick(adset.ads);
+      const hasAd = isMeta && R() < (c.adIdShare ?? 0.88);
+      const src = isMeta ? 'Facebook Ads' : pick(['WhatsApp', 'Website form', 'Manual entry', 'Instagram DM']);
+      const lead = { kind: 'lead', id: gid(20), client: c.name, loc: c.loc, name: `${pick(FIRST)} ${pick(LAST)}`, phone: `${c.cc} ${pick(['5', '6', '9'])}${digits(3)} ${digits(4)}`,
+        created, synced: created + (1 + Math.floor(R() * 13)) * 60e3, channel: isMeta ? 'Meta' : 'Other', source: src,
+        adId: hasAd ? ad.id : null, adName: hasAd ? ad.name : null, adsetId: hasAd ? adset.id : null, adsetName: hasAd ? adset.name : null,
+        campaignId: hasAd ? camp.id : null, campaignName: hasAd ? camp.name : null,
+        utmSource: isMeta ? pick(['facebook', 'facebook', 'fb', 'ig']) : null, utmContent: hasAd ? ad.name : null, utmMedium: hasAd ? adset.name : null,
+        url: src === 'Website form' ? `https://${c.name.toLowerCase().replace(/ /g, '')}.com/offer` : null, deleted: R() < 0.012 };
+      leads.push(lead);
+      if (R() < 0.17 && !lead.deleted) {
+        const booked = created + (0.1 + R() * 40) * H;
+        if (booked > NOW) continue;
+        const start = DAY0 + Math.round((booked - DAY0) / D + 1 + Math.floor(R() * 5)) * D - 3 * H + (10 + Math.floor(R() * 8)) * H + (R() < .5 ? 0 : 30 * 60e3);
+        const past = start < NOW;
+        const status = past ? pick(['showed', 'showed', 'showed', 'noshow', 'noshow', 'confirmed', 'confirmed', 'confirmed', 'cancelled']) : (R() < 0.86 ? 'confirmed' : 'cancelled');
+        const outcome = status === 'showed' && R() < 0.6 ? { deal: pick(['Won', 'Lost', 'Pending', 'Pending']), quotation: pick(['Yes', 'Yes', 'No']), value: pick([null, 4500, 8000, 12500, 18000, 26000, 40000]), feedback: pick(FEEDBACK) } : null;
+        appts.push({ kind: 'appt', id: gid(20), contactId: lead.id, client: c.name, loc: c.loc, name: lead.name, phone: lead.phone, booked, start, status, calendar: pick(CALS),
+          made: pick([null, null, null, null, null, null, null, 'booking_widget', 'third_party', 'third_party']), clientLinked: R() < 0.35, channel: lead.channel, source: lead.source,
+          inCockpit: !c.cockpitMiss && R() > 0.04, imported: booked + (2 + Math.floor(R() * 25)) * 60e3, outcome });
+      }
+    }
+    meta[c.name][d] = Math.max(0, metaN + (R() < 0.25 ? pick([-1, 1]) : 0));
+  }
+  if (c.gcal) [2, 4, 9, 13, 21, 33, 47].forEach(d => {
+    const booked = NOW - d * D - 5 * H;
+    appts.push({ kind: 'appt', id: gid(20), contactId: gid(20), client: c.name, loc: c.loc, name: '', phone: null, booked, start: booked + 2 * H, status: 'confirmed',
+      calendar: 'Personal (Google)', made: 'google_calendar', clientLinked: false, channel: null, source: 'Calendar sync', inCockpit: true, imported: booked + 9 * 60e3, outcome: null, noLead: true });
+  });
+});
+leads.sort((a, b) => b.created - a.created);
+appts.sort((a, b) => b.booked - a.booked);
+const leadById = Object.fromEntries(leads.map(l => [l.id, l]));
+const apptsByContact = {};
+appts.forEach(a => (apptsByContact[a.contactId] ||= []).push(a));
+
+/* ---------- Plain words ---------- */
+const $ = s => document.querySelector(s);
+const fmtN = n => n.toLocaleString('en-US');
+const tz = { timeZone: 'Asia/Riyadh' };
+const ymd = t => new Date(t).toLocaleDateString('en-CA', tz);
+const fmtFull = t => `${ymd(t)} ${new Date(t).toLocaleTimeString('en-GB', { ...tz, hour12: false })}`;
+const fmtDT = t => new Date(t).toLocaleString('en-GB', { ...tz, weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }).replace(',', '');
+const fmtDay = t => new Date(t).toLocaleDateString('en-GB', { ...tz, weekday: 'short', day: 'numeric', month: 'short' }).replace(',', '');
+const fmtTime = t => new Date(t).toLocaleTimeString('en-US', { ...tz, hour: 'numeric', minute: '2-digit' });
+const rel = t => { const m = Math.round((t - NOW) / 60e3), a = Math.abs(m); const dd = Math.round(a / 1440); const s = a < 60 ? `${a} min` : a < 1440 ? `${Math.round(a / 60)} h` : `${dd} day${dd === 1 ? '' : 's'}`; return m < 0 ? `${s} ago` : `in ${s}`; };
+const after = (a, b) => { const m = Math.round((b - a) / 60e3); return m < 60 ? `${m} min later` : m < 1440 ? `${Math.round(m / 60)} h later` : `${Math.round(m / 1440)} days later`; };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const toast = msg => { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 1900); };
+const NA = '<span class="na" title="GHL has no value for this field">—</span>';
+const two = (a, b, cls = '') => `<div class="l1">${a}</div>${b ? `<div class="l2 ${cls}">${b}</div>` : ''}`;
+const plainSource = s => ({ 'Facebook Ads': 'Facebook ad', 'WhatsApp': 'WhatsApp message', 'Website form': 'Website form', 'Manual entry': 'Added by hand', 'Instagram DM': 'Instagram message', 'Calendar sync': 'Google Calendar sync' }[s] || s);
+const plainMade = m => ({ booking_widget: 'Booked on the booking page', third_party: 'Booked through another tool', google_calendar: 'Copied from Google Calendar' }[m] || 'Booking method not recorded');
+const result = a => a.status === 'cancelled' ? ['Cancelled', 'grey'] : a.status === 'showed' ? ['Showed up', 'ok'] : a.status === 'noshow' ? ['No-show', 'bad'] : a.start >= NOW ? ['Upcoming', 'grey'] : ['Result not recorded', 'warn'];
+
+/* Each row gets a one-line verdict: what is wrong with it, in plain words. */
+function leadIssues(l) {
+  const out = [];
+  if (l.deleted) out.push(['grey', 'Deleted in GHL', 'Someone deleted this contact in GHL. It is left out of every count.']);
+  if (l.channel === 'Meta' && !l.adId) out.push(['warn', 'Ad unknown', 'GHL did not receive the ad id, so this lead cannot be tied to an ad. Cost per lead by ad leaves it out.']);
+  return out;
+}
+function apptIssues(a) {
+  const out = [];
+  if (a.made === 'google_calendar') out.push(['warn', 'Calendar event, not a lead', 'This came from Google Calendar two-way sync. It is a calendar event, but the cockpit counts it as a booking.']);
+  if (!a.inCockpit) out.push(['bad', 'Cockpit did not count it', 'This booking is in GHL, but the cockpit bookings card does not count it.']);
+  if (a.start < NOW && a.status === 'confirmed' && a.made !== 'google_calendar') out.push(['warn', 'Result not recorded', 'The meeting time passed, and nobody marked "showed" or "no-show".']);
+  return out;
+}
+function verdict(issues, okText = 'Looks right') {
+  if (!issues.length) return `<span class="status"><span class="dot"></span><span>${okText}</span></span>`;
+  const [sev, label] = issues[0];
+  return `<span class="status ${sev}"><span class="dot ${sev === 'grey' ? '' : sev}"></span><span>${label}</span></span>${issues.length > 1 ? `<span class="more-issues">+${issues.length - 1} more</span>` : ''}`;
+}
+
+/* ---------- State ---------- */
+const state = { client: 'all', range: 30, tab: 'leads', qf: { leads: 'all', appts: 'all' }, q: '', limit: 100, sel: null, view: 'key', density: 'comfortable' };
+try { const t = localStorage.getItem('dv-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+function scope() {
+  const from = DAY0 - (state.range - 1) * D;
+  const inC = r => state.client === 'all' || r.client === state.client;
+  const L = leads.filter(l => inC(l) && l.created >= from), A = appts.filter(a => inC(a) && a.booked >= from);
+  const live = L.filter(l => !l.deleted), metaLive = live.filter(l => l.channel === 'Meta');
+  let metaReported = 0; const gapDays = [];
+  CLIENTS.filter(inC).forEach(c => {
+    for (let d = state.range - 1; d >= 0; d--) {
+      const rep = meta[c.name][d] || 0, ds = DAY0 - d * D;
+      metaReported += rep;
+      const got = metaLive.filter(l => l.client === c.name && l.created >= ds && l.created < ds + D).length;
+      if (rep - got >= 3) gapDays.push({ client: c.name, day: ds, rep, got });
+    }
+  });
+  return { from, L, A, live, metaLive, metaReported, gapDays, inC };
+}
+
+/* ---------- Filters, named the way you would ask the question ---------- */
+const QF = {
+  leads: [
+    ['all', 'All leads', null, s => s.live],
+    ['meta', 'From Facebook ads', null, s => s.metaLive],
+    ['other', 'From other channels', null, s => s.live.filter(l => l.channel !== 'Meta')],
+    ['booked', 'Booked a meeting', null, s => s.live.filter(l => apptsByContact[l.id])],
+    ['noAd', 'Ad unknown', 'warn', s => s.metaLive.filter(l => !l.adId)],
+    ['deleted', 'Deleted in GHL', null, s => s.L.filter(l => l.deleted)],
+  ],
+  appts: [
+    ['all', 'All appointments', null, s => s.A],
+    ['upcoming', 'Upcoming', null, s => s.A.filter(a => a.start >= NOW && a.status !== 'cancelled')],
+    ['showed', 'Showed up', null, s => s.A.filter(a => a.status === 'showed')],
+    ['notCockpit', 'Cockpit did not count', 'bad', s => s.A.filter(a => !a.inCockpit)],
+    ['noOutcome', 'Result not recorded', 'warn', s => s.A.filter(a => a.start < NOW && a.status === 'confirmed' && a.made !== 'google_calendar')],
+    ['gcal', 'Calendar events', 'warn', s => s.A.filter(a => a.made === 'google_calendar')],
+  ],
+};
+const qfRows = (tab, key, s) => QF[tab].find(f => f[0] === key)[3](s);
+const topClients = rows => { const m = {}; rows.forEach(r => m[r.client] = (m[r.client] || 0) + 1); return Object.entries(m).sort((a, b) => b[1] - a[1]); };
+const clientsSentence = rows => { const t = topClients(rows); if (!t.length) return ''; if (t.length === 1) return `All from <b>${esc(t[0][0])}</b>.`; return `Mostly <b>${esc(t[0][0])}</b> (${t[0][1]}), then ${esc(t[1][0])} (${t[1][1]}).`; };
+
+/* ---------- Columns ---------- */
+// Key view: the fewest columns that answer who, when, from where, what happened, and is it right.
+const LEAD_KEY = [
+  { l: 'Lead', w: 230, cls: 'strong', fz: 1, help: ['The person who came in.', 'client_leads.contact_name and contact_phone', 'Shows "No name" when GHL has no name.'], v: r => two(esc(r.name), esc(r.phone), 'm') },
+  { l: 'Client', w: 150, help: ['The Mahara client this lead belongs to.', 'ghl_clients.client_name, matched by GHL location', 'Never empty. Every location maps to one client.'], v: r => two(esc(r.client)) },
+  { l: 'Came in', w: 170, help: ['When GHL created the contact, in Riyadh time.', 'client_leads.created_at', 'Never empty.'], v: r => two(fmtDT(r.created), rel(r.created)) },
+  { l: 'Came from', w: 230, help: ['The channel, and the ad when it is an ad lead.', 'client_leads.source_field, ad name from cockpit_media_daily_stats', '"Ad unknown" means GHL did not receive the ad id.'], v: r => r.channel === 'Meta' ? two('Facebook ad', r.adName ? esc(r.adName) : '<span style="color:var(--warn)">Ad unknown</span>') : two(plainSource(r.source), 'Not from an ad') },
+  { l: 'Campaign', w: 260, help: ['The Meta campaign and ad set.', 'client_leads.campaign_id and adset_id, names from cockpit_media_daily_stats', '— when the lead is not from an ad, or the ad is unknown.'], v: r => r.campaignName ? two(esc(r.campaignName), esc(r.adsetName)) : NA },
+  { l: 'Meeting', w: 200, help: ['Whether this lead booked an appointment, and what happened.', 'appointments, matched by contact id', '"Not booked" means no appointment exists for this contact.'], v: r => { const a = apptsByContact[r.id]?.[0]; return a ? two('Booked', `${fmtDay(a.start)}, ${result(a)[0].toLowerCase()}`) : two('<span class="na">Not booked</span>'); } },
+  { l: 'Check', w: 210, help: ['Whether anything about this row looks wrong.', 'The checks listed at the top of the page', '"Looks right" means no check found a problem.'], v: r => verdict(leadIssues(r)) },
+];
+const APPT_KEY = [
+  { l: 'Lead', w: 230, cls: 'strong', fz: 1, help: ['The person who booked.', 'appointments.contact_name and contact_phone', '"Calendar event" when the booking came from Google Calendar.'], v: r => r.noLead ? two('<span class="na">Calendar event</span>', 'No contact') : two(esc(r.name), esc(r.phone), 'm') },
+  { l: 'Client', w: 150, help: ['The Mahara client.', 'ghl_clients.client_name, matched by GHL location', 'Never empty.'], v: r => two(esc(r.client)) },
+  { l: 'Meeting time', w: 190, help: ['When the meeting is or was, in Riyadh time.', 'appointments.start_at', 'Never empty.'], v: r => two(`${fmtDay(r.start)}, ${fmtTime(r.start)}`, rel(r.start)) },
+  { l: 'Result', w: 170, help: ['What happened at the meeting.', 'appointments.status', '"Result not recorded" means the time passed and nobody marked it.'], v: r => { const [t, c] = result(r); return two(`<span class="result ${c}">${t}</span>`); } },
+  { l: 'Booked', w: 230, help: ['When and how the booking was made.', 'appointments.booked_at and ghl_source', '"Booking method not recorded" means GHL did not say.'], v: r => two(fmtDT(r.booked), plainMade(r.made)) },
+  { l: 'Deal (portal)', w: 170, help: ['What the client reported after the meeting.', 'portal_data.appointment_outcomes', '— means the client has not filled it in the portal.'], v: r => r.outcome ? two(esc(r.outcome.deal), r.outcome.value ? `${fmtN(r.outcome.value)} USD` : 'No value given') : NA },
+  { l: 'Check', w: 230, help: ['Whether anything about this row looks wrong.', 'The checks listed at the top of the page', '"Looks right" means no check found a problem.'], v: r => verdict(apptIssues(r)) },
+];
+// All-columns view: every Master Dashboard column, in the sheet's order. A null reader means "not synced".
+const LEAD_ALL = [
+  ['Lead', 'Lead Name', 150, r => esc(r.name), 'contact_name'], ['Lead', 'Lead ID', 176, r => esc(r.id), 'ghl_contact_id', 'id'], ['Lead', 'Created Date & Time', 160, r => fmtFull(r.created), 'created_at', 'm'],
+  ['Lead', 'Phone Number', 140, r => esc(r.phone), 'contact_phone', 'm'], ['Lead', 'Client Name', 130, r => esc(r.client), 'ghl_clients.client_name'], ['Lead', 'Date', 104, r => ymd(r.created), 'created_at, as a Riyadh day', 'm'],
+  ['Lead', 'Source', 120, r => esc(r.source), 'source_field'],
+  ['Ad', 'AD ID', 170, r => r.adId ?? NA, 'ad_id', 'id'], ['Ad', 'AD NAME', 150, r => esc(r.adName) || NA, 'cockpit_media_daily_stats, adName'], ['Ad', 'ADSET ID', 170, r => r.adsetId ?? NA, 'adset_id', 'id'],
+  ['Ad', 'ADSET NAME', 180, r => esc(r.adsetName) || NA, 'cockpit_media_daily_stats, adSetName'], ['Ad', 'CAMPAIGN ID', 170, r => r.campaignId ?? NA, 'campaign_id', 'id'], ['Ad', 'CAMPAIGN NAME', 220, r => esc(r.campaignName) || NA, 'cockpit_media_daily_stats, campaignName'],
+  ['First touch', 'FIRST_UTM_SOURCE', 160, r => esc(r.utmSource) || NA, 'attribution_raw.utmSource'], ['First touch', 'FIRST_UTM_CONTENT', 170, r => esc(r.utmContent) || NA, 'attribution_raw.utmContent'], ['First touch', 'FIRST_UTM_MEDIUM', 180, r => esc(r.utmMedium) || NA, 'attribution_raw.utmMedium'],
+  ['Last touch', 'LAST_UTM_SOURCE', 160, null], ['Last touch', 'LAST_UTM_CONTENT', 170, null], ['Last touch', 'LAST_UTM_MEDIUM', 170, null],
+  ['Pages', 'FIRST_URL', 210, r => r.url ? esc(r.url) : NA, 'attribution_raw.url', 'm'], ['Pages', 'LAST_URL', 120, null], ['Pages', 'Platform', 100, r => r.channel === 'Meta' ? 'facebook' : 'other', 'channel'],
+];
+const APPT_ALL = [
+  ['Appointment', 'Lead Name', 150, r => r.noLead ? NA : esc(r.name), 'contact_name'], ['Appointment', 'Date Appointment Created', 190, r => fmtFull(r.booked), 'booked_at', 'm'], ['Appointment', 'Date Of Appointment', 160, r => ymd(r.start), 'start_at, as a Riyadh day', 'm'],
+  ['Appointment', 'Project Name', 140, r => esc(r.client), 'ghl_clients.client_name'], ['Appointment', 'Additional Notes', 150, null], ['Appointment', 'Lead Phone Number', 160, r => esc(r.phone) || NA, 'contact_phone', 'm'],
+  ['Appointment', 'Calendar Name', 240, r => esc(r.calendar), 'ghl_calendars.name'], ['Appointment', 'Requested Time', 130, r => fmtTime(r.start), 'start_at', 'm'],
+  ['Status', 'Stage Booked', 120, r => r.status, 'status'], ['Status', 'Agent Number', 130, null], ['Status', 'Contact Link', 120, r => r.noLead ? NA : 'Open in GHL', 'built from location and contact id'],
+  ['Status', 'Showed?', 100, r => r.status === 'showed' ? 'TRUE' : r.status === 'noshow' ? 'FALSE' : NA, 'status'], ['Status', 'Confirmed?', 110, r => r.status === 'cancelled' ? 'FALSE' : 'TRUE', 'status'],
+  ['Status', 'Closed?', 100, r => r.outcome ? (r.outcome.deal === 'Won' ? 'TRUE' : 'FALSE') : NA, 'appointment_outcomes.deal'], ['Status', 'Source', 150, r => esc(r.made === 'google_calendar' ? 'google_calendar' : r.source), 'ghl_source, then the lead source'],
+  ['Status', 'Contact ID', 176, r => esc(r.contactId), 'ghl_contact_id', 'id'], ['Status', 'PRE-PAY', 110, null], ['Status', 'Appointment ID', 176, r => esc(r.id), 'ghl_appointment_id', 'id'],
+  ['Status', 'Agent', 100, null], ['Status', 'Platform', 100, r => r.channel === 'Meta' ? 'facebook' : r.channel ? 'other' : NA, 'client_leads.channel'], ['Status', 'Cancelled?', 110, r => r.status === 'cancelled' ? 'Y' : NA, 'status'],
+  ['Portal', 'Project Value (USD)', 160, r => r.outcome?.value ? fmtN(r.outcome.value) : NA, 'appointment_outcomes.project_value', 'num'], ['Portal', 'Client Feedback (Portal)', 240, r => esc(r.outcome?.feedback) || NA, 'appointment_outcomes.feedback'],
+  ['Portal', 'Deal Status (Portal)', 170, r => esc(r.outcome?.deal) || NA, 'appointment_outcomes.deal'], ['Portal', 'Quotation Given (Portal)', 190, r => esc(r.outcome?.quotation) || NA, 'appointment_outcomes.quotation'],
+];
+const asCols = list => list.map(([g, l, w, v, src, c], i) => ({ g, l, w, c, fz: i === 0, v: v || (() => ''), ns: !v,
+  help: v ? [`The Master Dashboard column "${l}".`, src, '— means GHL has no value for this row.'] : [`The Master Dashboard column "${l}".`, 'Not stored in the database yet', 'Striped cells mean the field is not synced. It may still have a value in GHL.'] }));
+const COLS = () => state.tab === 'leads' ? (state.view === 'key' ? LEAD_KEY : asCols(LEAD_ALL)) : (state.view === 'key' ? APPT_KEY : asCols(APPT_ALL));
+const ALL_COUNT = { leads: LEAD_ALL.length, appts: APPT_ALL.length };
+
+/* ---------- Overview: what happened, then what needs a look ---------- */
+function problemsFor(s) {
+  const P = [];
+  const lost = s.gapDays.reduce((n, g) => n + g.rep - g.got, 0);
+  if (lost) P.push({ sev: 'bad', title: `${fmtN(lost)} Facebook leads never reached GHL`, why: 'Meta counted these leads, but GHL never received them. Usually the lead form connection stopped working.',
+    where: `${[...new Set(s.gapDays.map(g => g.client))].map(c => `<b>${esc(c)}</b>`).join(', ')}, on ${s.gapDays.map(g => fmtDay(g.day)).join(', ')}.`, go: ['compare'], cta: 'See the days' });
+  const nc = qfRows('appts', 'notCockpit', s);
+  if (nc.length) P.push({ sev: 'bad', title: `${nc.length} bookings are missing from the cockpit`, why: 'They are in GHL, but the cockpit bookings card does not count them, so it shows too few.', where: clientsSentence(nc), go: ['appts', 'notCockpit'], cta: 'Show these bookings' });
+  const gc = qfRows('appts', 'gcal', s);
+  if (gc.length) P.push({ sev: 'warn', title: `${gc.length} bookings are calendar events, not leads`, why: 'Google Calendar two-way sync copied them into GHL. The cockpit counts them, so bookings look higher than they are.', where: clientsSentence(gc), go: ['appts', 'gcal'], cta: 'Show these events' });
+  const na = qfRows('leads', 'noAd', s);
+  if (na.length) P.push({ sev: 'warn', title: `${na.length} Facebook leads have an unknown ad`, why: 'GHL did not receive the ad id, so we cannot tell which ad brought them. Cost per lead by ad leaves them out.', where: clientsSentence(na), go: ['leads', 'noAd'], cta: 'Show these leads' });
+  const no = qfRows('appts', 'noOutcome', s);
+  if (no.length) P.push({ sev: 'info', title: `${no.length} meetings have no result`, why: 'The meeting time passed, but nobody marked "showed" or "no-show" in GHL. Show-up rates stay uncertain until someone does.', where: clientsSentence(no), go: ['appts', 'noOutcome'], cta: 'Show these meetings' });
+  return P;
+}
+function renderOverview(s) {
+  const P = problemsFor(s), scopeTxt = state.client === 'all' ? 'all clients' : esc(state.client);
+  const del = s.L.filter(l => l.deleted).length;
+  $('#overview').innerHTML = `
+    <p class="headline">In the last ${state.range} days, for ${scopeTxt}: <b>${fmtN(s.live.length)} leads</b> came in and <b>${fmtN(s.A.length)} appointments</b> were booked.
+      ${P.length ? `<span class="need">${P.length} thing${P.length > 1 ? 's' : ''} need${P.length > 1 ? '' : 's'} a look.</span>` : 'Nothing needs a look.'}</p>
+    <div class="freshline"><span class="dot"></span>Data is fresh. Leads were copied from GHL 4 min ago and appointments 19 min ago. Meta numbers and cockpit bookings run up to yesterday, 10 Oct.</div>
+    <details class="howto"><summary>How to read this page</summary><ol>
+      <li><b>Start with the cards below.</b> Each card names a problem, says why it matters, and has a button that shows the exact rows.</li>
+      <li><b>Click any row</b> to see that person's story, from the first message to the meeting result.</li>
+      <li><b>Click the i next to a column name</b> to see what it means, where it comes from, and what an empty cell means.</li>
+      <li><b>"Compare with Meta and the cockpit"</b> shows where the counts stop matching between systems.</li></ol></details>
+    ${P.length ? `<div class="problems">${P.map((p, i) => `<article class="problem ${p.sev}"><div class="pt">${p.title}</div><div class="pd">${p.why}</div><div class="pw">${p.where}</div><button class="linkbtn" data-problem="${i}">${p.cta}</button></article>`).join('')}</div>` : ''}
+    <div class="okline"><span class="dot"></span><span>Checked and fine: every GHL location synced in the last 30 minutes, and every booking belongs to a lead or a calendar event.${del ? ` ${del} lead${del > 1 ? 's were' : ' was'} deleted in GHL and left out of the counts.` : ''}</span></div>`;
+  renderOverview.P = P;
+}
+
+/* ---------- Table ---------- */
+function search(rows) {
+  const q = state.q.trim().toLowerCase();
+  if (!q) return rows;
+  return rows.filter(r => [r.id, r.contactId, r.name, r.phone, r.adId, r.campaignName, r.client, r.adName].some(v => v && String(v).toLowerCase().includes(q)));
+}
+const currentRows = s => search(qfRows(state.tab, state.qf[state.tab], s));
+
+function renderTable(s) {
+  const tab = state.tab, cols = COLS(), rows = currentRows(s), shown = rows.slice(0, state.limit);
+  const f = QF[tab].find(x => x[0] === state.qf[tab]);
+  const chips = QF[tab].map(([k, l, sev, fn]) => `<button class="qf" data-qf="${k}" aria-pressed="${state.qf[tab] === k}">${sev ? `<span class="dot ${sev}"></span>` : ''}${l}<span class="n">${fmtN(fn(s).length)}</span></button>`).join('');
+  const all = state.view === 'all';
+  const groups = []; if (all) cols.forEach(c => { const last = groups[groups.length - 1]; if (last && last.g === c.g) last.n++; else groups.push({ g: c.g, n: 1 }); });
+  const head = (all ? `<tr class="grp">${groups.map((g, gi) => gi === 0 ? `<th class="fz">${g.g}</th>${g.n > 1 ? `<th colspan="${g.n - 1}"></th>` : ''}` : `<th colspan="${g.n}">${g.g}</th>`).join('')}</tr>` : '') +
+    `<tr class="cols">${cols.map((c, i) => `<th class="${c.fz ? 'fz' : ''}"><span class="th-in"><span>${esc(c.l)}</span><button class="colhelp" data-help="${i}" aria-label="About ${esc(c.l)}" aria-expanded="false">i</button></span></th>`).join('')}</tr>`;
+  const body = shown.map(r => `<tr data-id="${r.id}" class="${state.sel === r.id ? 'sel' : ''}">${cols.map(c => `<td class="${c.fz ? 'fz ' : ''}${c.cls || ''} ${c.c || ''} ${c.ns ? 'ns-cell' : ''}">${c.ns ? '' : c.v(r)}</td>`).join('')}</tr>`).join('');
+  const width = cols.reduce((n, c) => n + c.w, 0);
+  const nsCols = cols.filter(c => c.ns).length;
+
+  $('#panelArea').innerHTML = `
+    <div class="toolrow"><div class="chips" role="group" aria-label="Show">${chips}</div>
+      <div class="viewctl">
+        <div class="seg" role="group" aria-label="Columns"><button data-view="key" aria-pressed="${!all}">Key columns</button><button data-view="all" aria-pressed="${all}">All ${ALL_COUNT[tab]} sheet columns</button></div>
+        <div class="seg" role="group" aria-label="Row size"><button data-density="comfortable" aria-pressed="${state.density === 'comfortable'}">Roomy</button><button data-density="compact" aria-pressed="${state.density === 'compact'}">Compact</button></div>
+      </div></div>
+    ${state.qf[tab] !== 'all' || state.q ? `<div class="active-filter">Filtered to <b>${f[1]}</b>${state.q ? ` and "<b>${esc(state.q)}</b>"` : ''}. ${fmtN(rows.length)} of ${fmtN(qfRows(tab, 'all', s).length)} rows. <button class="linkbtn" data-clear>Show all</button></div>` : ''}
+    <div class="sheet">
+      ${rows.length ? `<div class="gridwrap ${all ? 'allcols' : ''} ${state.density}"><table style="width:max(${width}px,100%)"><colgroup>${cols.map(c => `<col style="width:${c.w}px">`).join('')}</colgroup><thead>${head}</thead><tbody>${body}</tbody></table></div>`
+        : `<div class="empty"><b>Nothing matches.</b>Clear the search or pick another filter. You can also choose a longer date range.</div>`}
+      <div class="sheet-foot"><span>Showing ${fmtN(shown.length)} of ${fmtN(rows.length)}. Newest first. Times are Riyadh time.</span>
+        <span class="legend"><span>— GHL has no value</span>${nsCols ? `<span><i class="ns-cell"></i>Not synced to the database yet (${nsCols} columns)</span>` : ''}</span>
+        ${rows.length > state.limit ? `<button class="btn small" data-more>Show ${fmtN(Math.min(100, rows.length - state.limit))} more</button>` : ''}</div>
+    </div>`;
+  renderTable.cols = cols;
+}
+
+/* ---------- Compare tab ---------- */
+function hop(n, label, sub, first) { return `<div class="hop ${first ? 'first' : ''}"><div class="n">${fmtN(n)}</div><div class="l">${label}</div><div class="t">${sub}</div></div>`; }
+function link(text, sev, go) { return go ? `<div class="link"><button class="leak ${sev}" data-go="${go}">${text}</button></div>` : `<div class="link"><span class="leak">${text}</span></div>`; }
+function renderCompare(s) {
+  const reached = s.metaLive.length, withAd = s.metaLive.filter(l => l.adId).length;
+  const lost = s.gapDays.reduce((n, g) => n + g.rep - g.got, 0);
+  const inC = s.A.filter(a => a.inCockpit), past = inC.filter(a => a.start < NOW && a.status !== 'cancelled'), outcome = past.filter(a => a.status === 'showed' || a.status === 'noshow');
+  const rows = CLIENTS.filter(s.inC).map(c => {
+    const L = s.metaLive.filter(l => l.client === c.name), A = s.A.filter(a => a.client === c.name);
+    let rep = 0; for (let d = state.range - 1; d >= 0; d--) rep += meta[c.name][d] || 0;
+    const days = s.gapDays.filter(g => g.client === c.name), gap = L.length - rep, miss = A.filter(a => !a.inCockpit).length;
+    const reason = days.length ? ['bad', `Lead form stopped on ${days.map(g => fmtDay(g.day)).join(', ')}`] : miss ? ['bad', `${miss} booking${miss > 1 ? 's' : ''} not counted by the cockpit`]
+      : Math.abs(gap) <= Math.max(2, rep * 0.15) ? ['ok', 'Normal timing difference'] : gap > 0 ? ['warn', 'GHL has extra leads, likely repeat forms'] : ['warn', 'Gap worth a look'];
+    return { c, rep, got: L.length, gap, booked: A.length, inC: A.length - miss, reason };
+  });
+  $('#panelArea').innerHTML = `<div class="compare">
+    <section class="card"><div class="card-h"><h2>Where the counts stop matching</h2><p>Each box is a count from one system. The label between two boxes says why the next count is smaller. Click a red or orange label to see the rows.</p></div>
+      <div class="lineage">
+        <div class="pipe"><div class="pipe-name">Leads<small>from Facebook ads</small></div><div class="hops">
+          ${hop(s.metaReported, 'Meta says', 'Ads Manager lead count', true)}
+          ${lost ? link(`${fmtN(lost)} never reached GHL`, 'bad', 'gapdays') : link(`${reached - s.metaReported >= 0 ? '+' : ''}${reached - s.metaReported}, normal`)}
+          ${hop(reached, 'GHL received', 'Contacts from Facebook')}
+          ${reached - withAd ? link(`${fmtN(reached - withAd)} ad unknown`, 'warn', 'noAd') : link('All tied to ads')}
+          ${hop(withAd, 'Tied to an ad', 'We know which ad')}
+        </div></div>
+        <div class="pipe"><div class="pipe-name">Appointments<small>booked in this range</small></div><div class="hops">
+          ${hop(s.A.length, 'GHL has', 'Appointments booked', true)}
+          ${s.A.length - inC.length ? link(`${fmtN(s.A.length - inC.length)} not counted`, 'bad', 'notCockpit') : link('All counted')}
+          ${hop(inC.length, 'Cockpit counts', 'Bookings card')}
+          ${link(`${fmtN(inC.length - past.length)} upcoming or cancelled`)}
+          ${hop(past.length, 'Meeting time passed', 'Should have a result')}
+          ${past.length - outcome.length ? link(`${fmtN(past.length - outcome.length)} no result`, 'warn', 'noOutcome') : link('All recorded')}
+          ${hop(outcome.length, 'Result recorded', 'Showed or no-show')}
+        </div></div>
+      </div>
+      <div class="why" id="gapdays"><b>Days where Meta counted more leads than GHL received</b>${s.gapDays.length ? `<ul>${s.gapDays.map(g => `<li>${esc(g.client)}, ${fmtDay(g.day)}: Meta says ${g.rep}, GHL received ${g.got}.</li>`).join('')}</ul><div style="margin-top:6px">What to do: open the client's lead form connection in GHL and check when it last delivered a lead.</div>` : '<div>None in this range.</div>'}</div>
+    </section>
+    <section class="card"><div class="card-h"><h2>Client by client</h2><p>Facebook leads only. A gap of one or two is normal, because Meta and GHL record the time a little differently.</p></div>
+      <div class="plain"><table><thead><tr><th>Client</th><th class="num">Meta says</th><th class="num">GHL received</th><th class="num">Difference</th><th class="num">Booked in GHL</th><th class="num">Cockpit counts</th><th>Likely reason</th></tr></thead>
+      <tbody>${rows.map(r => `<tr data-client="${esc(r.c.name)}"><td><b style="font-weight:500">${esc(r.c.name)}</b></td><td class="num">${r.rep}</td><td class="num">${r.got}</td>
+        <td class="num ${r.gap <= -3 ? 'gap-bad' : r.reason[0] === 'warn' ? 'gap-warn' : 'muted'}">${r.gap > 0 ? '+' : ''}${r.gap}</td><td class="num">${r.booked}</td><td class="num ${r.booked - r.inC ? 'gap-bad' : ''}">${r.inC}</td>
+        <td>${verdict(r.reason[0] === 'ok' ? [] : [[r.reason[0], r.reason[1]]], r.reason[1])}</td></tr>`).join('')}</tbody></table></div>
+      <div class="foot">Click a client to see its leads.</div></section></div>`;
+}
+
+function render() {
+  const s = scope();
+  const sel = $('#client');
+  if (!sel.options.length) sel.innerHTML = `<option value="all">All clients</option>` + CLIENTS.map(c => `<option>${esc(c.name)}</option>`).join('');
+  sel.value = state.client;
+  document.querySelectorAll('#range button').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.r === state.range)));
+  $('#c-leads').textContent = fmtN(s.live.length);
+  $('#c-appts').textContent = fmtN(s.A.length);
+  document.querySelectorAll('#tabs .tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.t === state.tab)));
+  renderOverview(s);
+  if (state.tab === 'compare') renderCompare(s); else renderTable(s);
+  closePop();
+}
+
+/* ---------- Column help ---------- */
+function openPop(btn) {
+  const c = renderTable.cols[+btn.dataset.help], pop = $('#pop');
+  if (btn.getAttribute('aria-expanded') === 'true') return closePop();
+  closePop();
+  pop.innerHTML = `<h4>${esc(c.l)}</h4><dl><div><dt>What it means</dt><dd>${esc(c.help[0])}</dd></div><div><dt>Where it comes from</dt><dd><code>${esc(c.help[1])}</code></dd></div><div><dt>When it is empty</dt><dd>${esc(c.help[2])}</dd></div></dl>`;
+  pop.hidden = false;
+  const r = btn.getBoundingClientRect();
+  pop.style.top = `${Math.min(r.bottom + 8, innerHeight - pop.offsetHeight - 8)}px`;
+  pop.style.left = `${Math.max(8, Math.min(r.left - 20, innerWidth - pop.offsetWidth - 8))}px`;
+  btn.setAttribute('aria-expanded', 'true');
+}
+function closePop() { $('#pop').hidden = true; document.querySelectorAll('.colhelp[aria-expanded="true"]').forEach(b => b.setAttribute('aria-expanded', 'false')); }
+
+/* ---------- Details panel: the person's story first, technical details last ---------- */
+function openRecord(id) {
+  const appt = appts.find(a => a.id === id);
+  const lead = leadById[id] || (appt && leadById[appt.contactId]);
+  const contactId = lead ? lead.id : appt.contactId, who = lead || appt;
+  const list = apptsByContact[contactId] || (appt ? [appt] : []);
+  const issues = [...(lead ? leadIssues(lead) : []), ...list.flatMap(apptIssues)];
+  state.sel = id;
+  $('#p-kind').textContent = lead ? 'Lead' : 'Calendar event';
+  $('#p-title').textContent = who.name || 'No contact';
+  $('#p-sub').innerHTML = `${esc(who.client)}${who.phone ? ` · <span class="mono">${esc(who.phone)}</span>` : ''}`;
+  $('#p-verdict').innerHTML = issues.length ? issues.map(([sev, label, why]) => `<div style="margin-bottom:8px">${verdict([[sev, label]])}<div class="muted" style="font-size:12.5px;margin:4px 0 0 2px">${esc(why)}</div></div>`).join('') : `${verdict([])}<div class="muted" style="font-size:12.5px;margin-top:4px">Every check passed for this person.</div>`;
+
+  const story = [];
+  if (lead) {
+    story.push(['', lead.channel === 'Meta' ? `Filled a Facebook lead form${lead.adName ? ` from the ad "${esc(lead.adName)}"` : ''}` : `Came in by ${plainSource(lead.source).toLowerCase()}`, `${fmtDT(lead.created)} · ${rel(lead.created)}`]);
+    story.push(['', 'Copied into our database', after(lead.created, lead.synced)]);
+    if (lead.channel === 'Meta' && !lead.adId) story.push(['miss', 'The ad could not be identified', 'GHL did not receive the ad id']);
+  } else story.push(['miss', 'No lead behind this booking', appt.made === 'google_calendar' ? 'Google Calendar sync created it' : 'No contact found']);
+  list.forEach(a => {
+    story.push(['', `Booked: ${esc(a.calendar)}`, `${fmtDT(a.booked)}${lead ? ` · ${after(lead.created, a.booked)}` : ''} · ${plainMade(a.made).toLowerCase()}`]);
+    story.push(a.inCockpit ? ['', 'Counted in the cockpit bookings card', after(a.booked, a.imported)] : ['miss', 'Not counted in the cockpit bookings card', 'The bookings card is short by this one']);
+    const [t] = result(a);
+    story.push([a.start >= NOW ? 'wait' : t === 'Result not recorded' ? 'miss' : '', a.start >= NOW ? `Meeting ${rel(a.start)}` : `Meeting: ${t.toLowerCase()}`, `${fmtDay(a.start)}, ${fmtTime(a.start)}`]);
+    if (a.outcome) story.push(['', `Client reported: deal ${a.outcome.deal.toLowerCase()}${a.outcome.value ? `, ${fmtN(a.outcome.value)} USD` : ''}`, `"${esc(a.outcome.feedback)}"`]);
+  });
+  if (lead && !list.length) story.push(['wait', 'Has not booked a meeting yet', '']);
+
+  const raw = lead ? { ghl_contact_id: lead.id, location_id: lead.loc, created_at: new Date(lead.created).toISOString(), channel: lead.channel, source_field: lead.source, ad_id: lead.adId, adset_id: lead.adsetId, campaign_id: lead.campaignId, deleted: lead.deleted,
+      attribution_raw: lead.channel === 'Meta' ? { isFirst: true, utmSource: lead.utmSource, utmContent: lead.utmContent, utmMedium: lead.utmMedium, utmAdId: lead.adId } : { medium: lead.source.toLowerCase(), url: lead.url } }
+    : { ghl_appointment_id: appt.id, ghl_contact_id: appt.contactId, ghl_location_id: appt.loc, ghl_source: appt.made, status: appt.status };
+  $('#p-body').innerHTML = `
+    <section class="p-sec"><h4>What happened</h4><ol class="story">${story.map(([c, t, m]) => `<li class="${c}"><div class="tt">${t}</div>${m ? `<div class="tm">${m}</div>` : ''}</li>`).join('')}</ol></section>
+    ${lead ? `<section class="p-sec"><h4>Where they came from</h4><dl class="kv"><dt>Channel</dt><dd>${plainSource(lead.source)}</dd>
+      <dt>Campaign</dt><dd>${esc(lead.campaignName) || NA}</dd><dt>Ad set</dt><dd>${esc(lead.adsetName) || NA}</dd><dt>Ad</dt><dd>${esc(lead.adName) || NA}</dd></dl></section>` : ''}
+    <section class="p-sec"><details class="tech"><summary>Technical details for debugging</summary><div class="tin">
+      <dl class="kv"><dt>Contact ID</dt><dd class="m">${esc(contactId)}</dd><dt>Location ID</dt><dd class="m">${esc(who.loc)}</dd>${list.map(a => `<dt>Appointment ID</dt><dd class="m">${esc(a.id)}</dd>`).join('')}
+      ${lead?.adId ? `<dt>Ad ID</dt><dd class="m">${lead.adId}</dd>` : ''}<dt>Tables</dt><dd class="m">client_leads, appointments, cockpit_media_booking_events</dd></dl>
+      <pre>${esc(JSON.stringify(raw, null, 2))}</pre>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn small" id="p-copy">Copy debug bundle</button><a class="btn small" href="#data" data-noop>Open in GHL</a></div>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">The bundle holds IDs and the story only. Opening this panel writes one audit row.</p></div></details></section>`;
+  $('#p-copy').onclick = () => {
+    const bundle = { contact_id: contactId, location_id: who.loc, client: who.client, appointment_ids: list.map(a => a.id), problems: issues.map(i => i[1]), story: story.map(x => x[1].replace(/<[^>]+>/g, '')) };
+    try { navigator.clipboard.writeText(JSON.stringify(bundle, null, 2)).then(() => toast('Copied debug bundle'), () => toast('The browser blocked the copy')); } catch (e) { toast('The browser blocked the copy'); }
+  };
+  document.body.classList.add('panel-open');
+  document.querySelectorAll('tr.sel').forEach(t => t.classList.remove('sel'));
+  document.querySelector(`tr[data-id="${id}"]`)?.classList.add('sel');
+}
+function closePanel() { document.body.classList.remove('panel-open'); state.sel = null; document.querySelectorAll('tr.sel').forEach(t => t.classList.remove('sel')); }
+
+/* ---------- CSV: always every sheet column, so it matches the Master Dashboard layout ---------- */
+function exportCsv() {
+  if (state.tab === 'compare') { toast('Open Leads or Appointments to export'); return; }
+  const s = scope(), list = state.tab === 'leads' ? LEAD_ALL : APPT_ALL, rows = currentRows(s);
+  const strip = h => { const d = document.createElement('div'); d.innerHTML = h; return d.textContent === '—' ? '' : d.textContent; };
+  const cell = v => /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const lines = [list.map(c => cell(c[3] ? c[1] : `${c[1]} (not synced)`)).join(',')].concat(rows.map(r => list.map(c => cell(c[3] ? strip(String(c[3](r))) : '')).join(',')));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
+  a.download = `${state.tab === 'leads' ? 'leads' : 'appointments'}-${ymd(NOW)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+  toast(`Exported ${fmtN(rows.length)} rows with all sheet columns`);
+}
+
+/* ---------- Routing and events ---------- */
+function route(screen) {
+  const data = (screen || (location.hash === '#data' ? 'data' : 'cockpit')) === 'data';
+  $('#screen-cockpit').hidden = data; $('#screen-data').hidden = !data;
+  if (data) render(); else closePanel();
+  window.scrollTo(0, 0);
+}
+document.addEventListener('click', e => {
+  const a = e.target.closest('[data-screen]');
+  if (a) { e.preventDefault(); route(a.dataset.screen); try { history.replaceState(null, '', '#' + a.dataset.screen); } catch (err) {} return; }
+  if (e.target.closest('[data-noop]')) { e.preventDefault(); toast('In the real page this opens the contact in GHL'); return; }
+  const help = e.target.closest('[data-help]');
+  if (help) { e.stopPropagation(); openPop(help); return; }
+  if (!e.target.closest('#pop')) closePop();
+  const pb = e.target.closest('[data-problem]');
+  if (pb) { const p = renderOverview.P[+pb.dataset.problem]; state.tab = p.go[0]; if (p.go[1]) state.qf[p.go[0]] = p.go[1]; state.limit = 100; render();
+    (p.go[0] === 'compare' ? $('#gapdays') : $('#tabs')).scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  const go = e.target.closest('[data-go]');
+  if (go) { const k = go.dataset.go; if (k === 'gapdays') { $('#gapdays').scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    state.tab = k === 'noAd' ? 'leads' : 'appts'; state.qf[state.tab] = k; state.limit = 100; render(); $('#tabs').scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  const qf = e.target.closest('[data-qf]'); if (qf) { state.qf[state.tab] = qf.dataset.qf; state.limit = 100; render(); return; }
+  const v = e.target.closest('[data-view]'); if (v) { state.view = v.dataset.view; render(); return; }
+  const dn = e.target.closest('[data-density]'); if (dn) { state.density = dn.dataset.density; render(); return; }
+  if (e.target.closest('[data-clear]')) { state.qf[state.tab] = 'all'; state.q = ''; $('#q').value = ''; render(); return; }
+  if (e.target.closest('[data-more]')) { state.limit += 100; render(); return; }
+  const cl = e.target.closest('tr[data-client]'); if (cl) { state.client = cl.dataset.client; state.tab = 'leads'; render(); return; }
+  const tr = e.target.closest('tr[data-id]'); if (tr) openRecord(tr.dataset.id);
+});
+$('#client').addEventListener('change', e => { state.client = e.target.value; state.limit = 100; render(); });
+$('#range').addEventListener('click', e => { const b = e.target.closest('button'); if (!b) return; state.range = +b.dataset.r; state.limit = 100; render(); });
+$('#q').addEventListener('input', e => { state.q = e.target.value; state.limit = 100; if (state.tab === 'compare') state.tab = 'leads'; render(); });
+$('#tabs').addEventListener('click', e => { const t = e.target.closest('.tab'); if (!t) return; state.tab = t.dataset.t; state.limit = 100; render(); });
+$('#export').addEventListener('click', exportCsv);
+$('#p-close').addEventListener('click', closePanel);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (!$('#pop').hidden) closePop(); else closePanel(); } });
+window.addEventListener('scroll', closePop, true);
+$('#theme').addEventListener('click', () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  root.dataset.theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('dv-theme', root.dataset.theme); } catch (e) {}
+});
+route();
+</script>
+</body>
+</html>

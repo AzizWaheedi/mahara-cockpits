@@ -9,6 +9,7 @@ import {
   Settings,
   Sun,
   Sunrise,
+  Table2,
   Users,
   Wallet,
   X,
@@ -115,6 +116,8 @@ function PortalGroup() {
   const isAdmin = Boolean(auth.isAdmin);
   const doors = [
     { key: "admin", label: "Admin", href: `${portal}/admin`, show: isAdmin },
+    // Every lead and appointment, for checking the numbers (2026-10-11).
+    { key: "data", label: "Data", href: `${portal}/data`, show: isAdmin },
     {
       key: "media_buyer",
       label: "Media buyer",
@@ -170,7 +173,8 @@ function PortalGroup() {
                   {...(d.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
                 >
                   {(() => {
-                    const Icon = COCKPIT_ICON[d.key];
+                    const Icon =
+                      d.key === "data" ? Table2 : COCKPIT_ICON[d.key];
                     return Icon ? <Icon className="size-4" /> : null;
                   })()}
                   <span>{d.label}</span>

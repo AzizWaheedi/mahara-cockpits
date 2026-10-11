@@ -7,6 +7,7 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Table2,
   Trash2,
   Users,
 } from "lucide-react";
@@ -261,9 +262,16 @@ export function AdminPage() {
             the right cockpit opens for them the moment they log in.
           </p>
         </div>
-        <Button disabled={!overview} onClick={() => setEditing("new")}>
-          <Plus className="size-4" /> Add a team member
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" asChild>
+            <a href="/data" target="_blank" rel="noopener">
+              <Table2 className="size-4" /> Open data view
+            </a>
+          </Button>
+          <Button disabled={!overview} onClick={() => setEditing("new")}>
+            <Plus className="size-4" /> Add a team member
+          </Button>
+        </div>
       </header>
 
       {/* Cockpits: switch, and see at a glance that each one is alive. */}

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   MoonStar,
+  Table2,
   X,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
@@ -79,6 +80,7 @@ import {
 import type { KitsPage, OnboardingRow } from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
+import { portalUrl } from "@/lib/portal";
 import { fold, matchScore } from "@/lib/search";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
@@ -1628,7 +1630,22 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 </span>
               ) : null}
             </div>
-            <ReportIssue page={`client: ${c.name}`} />
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Admins only: this client's leads and appointments in the
+                  portal's data view (2026-10-11). */}
+              {auth.isAdmin ? (
+                <a
+                  href={`${portalUrl()}/data?task=${encodeURIComponent(String(c.taskId))}`}
+                  target="_blank"
+                  rel="noopener"
+                  className="inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:border-primary hover:text-foreground"
+                >
+                  <Table2 aria-hidden className="size-3.5" />
+                  See this client's data
+                </a>
+              ) : null}
+              <ReportIssue page={`client: ${c.name}`} />
+            </div>
           </div>
           <p className="text-[15px] leading-6" dir="auto">
             {plainText(c.todo)}

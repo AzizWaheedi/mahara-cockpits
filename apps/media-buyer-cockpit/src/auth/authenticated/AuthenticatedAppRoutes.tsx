@@ -21,6 +21,7 @@ import {
   SwipePage,
   TodayPage,
 } from "@/pages";
+import { DataViewPage } from "@/pages/data/DataViewPage";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 
@@ -69,6 +70,12 @@ export function AuthenticatedRoutes() {
             page here was replaced by the client success cockpit. */}
         <Route path="/template" element={<Moved to="/dashboard" />} />
         <Route path="/csm" element={<Navigate to="/go/csm" replace />} />
+        {/* The data view: every lead and appointment, admin only, full width
+            without the cockpit shell (2026-10-11). */}
+        {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
+        <Route element={<RoleRoute role="admin" />}>
+          <Route path="/data" element={<DataViewPage />} />
+        </Route>
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="admin" />}>

@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Sun,
   Sunrise,
+  Table2,
   Truck,
   Wallet,
 } from "lucide-react";
@@ -130,6 +131,13 @@ export function MobileTabBar() {
                   icon: ShieldCheck,
                   to: "/admin",
                   active: path === "/admin",
+                },
+                {
+                  key: "data",
+                  label: "Data",
+                  icon: Table2,
+                  to: "/data",
+                  active: path === "/data",
                 },
               ]
             : []),
