@@ -154,10 +154,9 @@ export function withCallSummary<T extends Row>(
 ): T {
   if (!s) return c;
   const out: Row = { ...c };
-  if (s.nextCallAt) {
-    out.nextCallAt = s.nextCallAt;
-    out.nextCallKind = s.nextCallKind;
-  }
+  // The store read succeeded: no valid booking clears an older board date (cancelled or gone).
+  out.nextCallAt = s.nextCallAt ?? null;
+  out.nextCallKind = s.nextCallAt ? s.nextCallKind : null;
   const last = kuwaitDayOf(s.lastCall);
   if (last && (!c.lastCall || String(c.lastCall).slice(0, 10) < last)) {
     out.lastCall = last;

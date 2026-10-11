@@ -1608,7 +1608,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           : null))
       : calls.error
         ? `The change history could not be read: ${calls.error}`
-        : null;
+        : "Loading the change history.";
     const nc = nextCall(c, langOf(c));
     const reportUrl: string | undefined = (
       (profile?.reports ?? []) as { builtAt?: number; docUrl?: string }[]
@@ -1816,6 +1816,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                       if (said.startsWith("Saved")) toast.success(said);
                       else toast.warning(said);
                       calls.reload();
+                      void sb.refetch();
                     } catch (e) {
                       toast.error(
                         `Not saved: ${String((e as Error).message ?? e)}`,
@@ -2194,7 +2195,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   {changes.length === 0 ? (
                     <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
                       {changesStale
-                        ? "None found in the sources that are up to date."
+                        ? "None shown, but the history is incomplete, so this is not a confirmed zero."
                         : "No campaign changes since then."}
                     </p>
                   ) : (

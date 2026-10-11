@@ -590,7 +590,9 @@ export async function metaSource(ctx: Ctx, sinceMs: number): Promise<Health> {
             task_id: task,
           });
         }
-        if (!page.paging?.next || n >= 30) break;
+        if (!page.paging?.next) break;
+        // Never call a capped read complete: rows read so far are kept, the account fails and the window is retried.
+        if (n >= 30) throw new Error("Meta activity cursor unfinished after 31 pages");
         page = await t.metaNext(page.paging.next);
       }
     } catch (e) {
