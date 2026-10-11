@@ -32,6 +32,7 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
+import { type SourceHealth, staleSentence } from "@/lib/csmCalls";
 import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
 import { displayLabel, plural, shortDay } from "@/lib/format";
@@ -993,7 +994,17 @@ export function AddTask({
 
 function RecentCalls({ calls, brief }: { calls: Any[]; brief?: string }) {
   const [openUrl, setOpenUrl] = useState<string | null>(null);
-  if (!calls?.length) return null;
+  if (!calls?.length)
+    return (
+      <section className="space-y-2">
+        <SectionTitle>Recent calls</SectionTitle>
+        <p className="text-sm text-muted-foreground">
+          No recorded call mentions this client in Fathom. Recordings by a CSM
+          show here only when they are shared with the team. The client page's
+          Calls list has every booked, logged and recorded call.
+        </p>
+      </section>
+    );
   const when = (at: string) =>
     at
       ? new Date(at).toLocaleString("en-GB", {
@@ -1464,7 +1475,15 @@ const DECISION: Record<string, string> = {
  * the on/off switches, budgets, new ads and creatives, builds and decisions.
  * Each sits on the charts above on its day.
  */
-function ChangesList({ changes, per }: { changes: CardChange[]; per: Period }) {
+function ChangesList({
+  changes,
+  per,
+  stale,
+}: {
+  changes: CardChange[];
+  per: Period;
+  stale?: string | null;
+}) {
   // The client's card carries the last 90 days of changes (csmSync).
   const kept = shiftDay(kuwaitToday(), -89);
   return (
@@ -1480,10 +1499,16 @@ function ChangesList({ changes, per }: { changes: CardChange[]; per: Period }) {
           {capital(per.label)}. The dotted lines on the charts are these days.
         </p>
       </div>
+      {stale ? (
+        <p className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
+          {stale}
+        </p>
+      ) : null}
       {changes.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Nothing was changed on their campaigns in {per.label}. Every switch,
-          budget and new ad made in the media buyer cockpit shows here.
+          {stale
+            ? `No changes found in ${per.label} in the sources that are up to date.`
+            : `Nothing was changed on their campaigns in ${per.label}. Every switch, budget and new ad, in the media buyer cockpit or in Meta, shows here.`}
         </p>
       ) : (
         <ol className="divide-y rounded-2xl border bg-card">
@@ -1961,12 +1986,10 @@ export function ClientProfile({
             url={p.links?.clickup as string | undefined}
           />
 
-          {p.calls ? (
-            <RecentCalls
-              calls={p.calls as Any[]}
-              brief={p.callsBrief as string | undefined}
-            />
-          ) : null}
+          <RecentCalls
+            calls={(p.calls as Any[]) ?? []}
+            brief={p.callsBrief as string | undefined}
+          />
         </>
       ) : null}
 
@@ -2125,7 +2148,18 @@ export function ClientProfile({
             </section>
           )}
 
-          <ChangesList changes={changes} per={per} />
+          <ChangesList
+            changes={changes}
+            per={per}
+            stale={
+              p?.changesError
+                ? `The change history could not be read: ${p.changesError}`
+                : staleSentence(
+                    p?.changesHealth as SourceHealth | undefined,
+                    "csm-media-changes",
+                  )
+            }
+          />
 
           {p.links?.sheet ? (
             <>

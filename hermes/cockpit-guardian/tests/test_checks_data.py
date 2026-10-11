@@ -198,19 +198,23 @@ class Sections(unittest.TestCase):
         return {"cockpit_sections": [{"key": "machine", "ok": True, "error": None, "computed_at": fakes.ago(3), "payload": payload}]}
 
     def test_jobs(self):
-        now_ms = fakes.NOW.timestamp() * 1000
-        ok_job = {"job": "sync", "ok": True, "at": now_ms - 60_000, "everyMin": 10}
-        self.assertEqual(sections.run_jobs(make(self.machine(jobs=[ok_job]))).status, OK)
-        late = dict(ok_job, at=now_ms - 50 * 60_000)
-        self.assertEqual(sections.run_jobs(make(self.machine(jobs=[late]))).status, FAIL)
-        watch = {"job": "sales watch", "ok": False, "at": now_ms, "everyMin": 15, "error": SIGNED_OUT}
-        r = sections.run_jobs(make(self.machine(jobs=[ok_job, watch])))
-        self.assertEqual(r.caused_by, "claude-signin")
+        from checks.sections import run_jobs
+        keys = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log",
+                "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
+                "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hubstaff-sync", "onboarding-sync",
+                "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
+                "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile")
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
+        rows[0]["last_ok_at"] = fakes.ago(60)
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, FAIL)
+        rows[0]["last_ok_at"] = fakes.ago(1)
+        rows[1]["ok"] = False
+        self.assertIn("billing-sync", run_jobs(make({"cockpit_sync_state": rows})).items)
 
     def test_old_machine_section_cannot_vouch(self):
         t = {"cockpit_sections": [{"key": "machine", "computed_at": fakes.ago(90), "payload": {"jobs": []}}]}
-        with self.assertRaises(SourceError):
-            sections.run_jobs(make(t))
+        self.assertEqual(sections.run_jobs(make(t)).status, FAIL)
 
     def test_sources(self):
         p = self.machine(sources=[{"source": "sheets", "ok": False, "lastError": "HTTP 404"}, {"source": "meta", "ok": True}])

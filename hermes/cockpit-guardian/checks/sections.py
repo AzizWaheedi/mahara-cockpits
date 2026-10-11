@@ -73,33 +73,34 @@ def only_signin(error: object) -> bool:
 
 
 def run_jobs(ctx: Context) -> Result:
-    m = _machine(ctx)
-    jobs = m.get("jobs") or []
-    if not jobs:
-        return unknown("The machine section lists no cockpit jobs.")
-    now_ms = ctx.now.timestamp() * 1000
-    failing, stale, signin, names = [], [], [], []
-    for j in jobs:
-        every = int(j.get("everyMin") or 15)
-        age = (now_ms - float(j.get("at") or 0)) / 60000.0
-        if j.get("ok") is False:
-            if only_signin(j.get("error")):
-                signin.append(j["job"])
-            else:
-                failing.append(f"{j['job']} ({brief_error(j.get('error'), 90)})")
-                names.append(str(j["job"]))
-        elif age > max(3 * every, 45):
-            stale.append(f"{j['job']} ({ago(age)})")
-            names.append(str(j["job"]))
-    ev = {"jobs": len(jobs), "failing": failing, "stale": stale, "signin": signin}
-    if failing or stale:
-        return fail("Cockpit jobs: " + "; ".join(filter(None, [
-            f"failing {', '.join(failing)}" if failing else "", f"late {', '.join(stale)}" if stale else ""])) + ".",
-            evidence=ev, items=sorted(names))
-    if signin:
-        return fail(f"The cockpit's {', '.join(signin)} fails because the Claude sign-in on the VPS has lapsed.",
-                    evidence=ev, caused_by="claude-signin")
-    return ok(f"All {len(jobs)} cockpit jobs ran on time.", evidence=ev)
+    # The Machine section can be hours old while the sync rows are current.
+    # Read the producer ledger directly so a new stall inside an open incident
+    # changes its item set and the guardian alerts again.
+    keys = {
+        "ai-watch-tick": 45, "billing-sync": 45, "ceo-extensions-auto": 90,
+        "clickup-writeback:log": 45, "clickup-writeback:kpi": 90,
+        "clickup-writeback:dosdonts": 90, "comment-watch": 45,
+        "hiring-sync:engine": 45, "hiring-sync:intake": 90,
+        "hiring-sync:mirror": 45, "hours-kick": 90,
+        "hubstaff-sync": 90, "onboarding-sync": 45,
+        "tap-charges-sync": 45, "timetastic-sync": 90,
+        "tracking-audit": 26 * 60,
+        "csm-ghl-calls": 45, "csm-checkin-form": 45,
+        "csm-forms-history": 45, "csm-fathom": 45,
+        "csm-meta-activities": 45, "csm-media-changes": 45,
+        "csm-reconcile": 26 * 60,
+    }
+    rows = {r.get("key"): r for r in ctx.rows("cockpit_sync_state", "key,ok,note,last_ok_at", where=[("key", "in", list(keys))])}
+    bad = []
+    for key, cap in keys.items():
+        r = rows.get(key)
+        age = age_min(r.get("last_ok_at"), ctx.now) if r else None
+        if not r or r.get("ok") is False or age is None or age > cap:
+            bad.append(key)
+    if bad:
+        return fail("Cockpit jobs late or failing: " + ", ".join(bad) + ".",
+                    evidence={"late_or_failing": bad, "checked": len(keys)}, items=bad)
+    return ok(f"All {len(keys)} cockpit jobs have recent good sync rows.")
 
 
 def run_sources(ctx: Context) -> Result:

@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { executeCsmAction } from "./csmActionClient";
+import { readCallsSummary, withCallSummary } from "./csmCalls";
 import { buildCsmReadModel, readCsmSources } from "./csmReadModel";
 import {
   type CsmMoneyPatch,
@@ -383,9 +384,13 @@ export function useCsmSnapshot(
     try {
       setLoading(true);
 
-      const [staffState, source] = await Promise.all([
+      const [staffState, source, callSummary] = await Promise.all([
         readCsmState(client),
         readCsmSources(client),
+        // The call store's next and last call. A failed read is shown, never zero.
+        readCallsSummary(client).catch(
+          e => ({ error: String(e?.message ?? e) }) as const,
+        ),
       ]);
       const day = staffState.day;
 
@@ -440,6 +445,14 @@ export function useCsmSnapshot(
         eodOwner: eodContext.owner,
         eodDay: eodContext.day,
       });
+
+      if ("clients" in callSummary && callSummary.clients) {
+        const summary = callSummary.clients;
+        builtSnap.clients = builtSnap.clients.map(c =>
+          withCallSummary(c, summary[String(c.taskId)], day),
+        );
+        (builtSnap as Any).callHealth = (callSummary as Any).health;
+      } else (builtSnap as Any).callStoreError = (callSummary as Any).error;
 
       setSnap(builtSnap);
       setError(null);

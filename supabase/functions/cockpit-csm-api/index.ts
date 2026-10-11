@@ -17,6 +17,20 @@ Deno.serve(async(req:Request)=>{
   const url=Deno.env.get('SUPABASE_URL')!,anon=Deno.env.get('SUPABASE_ANON_KEY')!,service=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const client=createClient(url,anon,{global:{headers:{Authorization:auth}},auth:{persistSession:false}});
   const input=await req.json(),args=input.args??{},operation=input.operation;
+  if(operation==='calls.transcript'){
+   const {data:user,error:authError}=await client.auth.getUser();if(authError||!user.user)return json({error:'Sign in first'},401);
+   const taskId=String(args.taskId??''),callId=Number(args.callId);
+   if(!/^[A-Za-z0-9_-]{1,40}$/.test(taskId)||!Number.isSafeInteger(callId)||callId<1)return json({error:'Choose a client call'},400);
+   const {data:timeline,error:accessError}=await client.rpc('cockpit_csm_client_timeline',{p_task_id:taskId});
+   if(accessError)return json({error:'This client is outside your cockpit'},403);
+   const call=(timeline?.calls??[]).find((c:any)=>Number(c.id)===callId);
+   const path=String(call?.transcriptPath??'');
+   if(!/^fathom\/[A-Za-z0-9_-]+\.txt$/.test(path))return json({error:'No transcript is stored for this call'},404);
+   const store=createClient(url,service,{auth:{persistSession:false}});
+   const {data:signed,error:signError}=await store.storage.from('csm-call-transcripts').createSignedUrl(path,60);
+   if(signError||!signed?.signedUrl)throw Error('Could not read this private transcript');
+   return json({url:signed.signedUrl});
+  }
   if(operation==='reports.create')return json(await runReportOperation(client,createClient(url,service,{auth:{persistSession:false}}),input,name=>Deno.env.get(name)));
   if(operation==='checkIns.prepare'||operation==='checkIns.contact'||operation==='checkIns.book'){
    const {data:user,error:authError}=await client.auth.getUser();if(authError||!user.user)return json({error:'Sign in first'},401);
