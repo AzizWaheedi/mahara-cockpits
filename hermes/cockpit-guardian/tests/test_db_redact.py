@@ -18,6 +18,9 @@ def norm(s: str) -> str:
 
 class Migration(unittest.TestCase):
     def setUp(self):
+        if not MIGRATION.is_file():
+            # The VPS keeps an older checkout around this folder, from before the migration (2026-09-19).
+            self.skipTest(f"{MIGRATION.name} is not next to this copy (the VPS copy)")
         self.sql = MIGRATION.read_text()
 
     def test_probe_body_is_the_same_text_as_the_code(self):
