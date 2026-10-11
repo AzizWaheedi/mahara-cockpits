@@ -60,12 +60,24 @@ export type TimelineForm = {
   recordingUrl?: string | null;
   linkedCallId?: number | null;
 };
+export type TimelineEod = {
+  day: string;
+  at: string;
+  author?: string | null;
+  role?: string | null;
+  where?: string | null;
+  link?: string | null;
+  excerpt: string;
+  source: "cockpit" | "sheet" | "slack";
+};
 export type Timeline = {
   taskId: string;
   clientName: string;
   calls: TimelineCall[];
   forms: TimelineForm[];
   changes: (CardChange & { actor?: string; source?: string; link?: string })[];
+  /** Team EOD passages that name this client (older reads have none: undefined, not zero). */
+  eods?: TimelineEod[];
   health: SourceHealth[];
   unmatchedCount: number;
 };
@@ -83,6 +95,7 @@ const LIMITS: Record<string, number> = {
   "csm-fathom": 45,
   "csm-meta-activities": 45,
   "csm-media-changes": 45,
+  "csm-eod-mentions": 45,
   "csm-reconcile": 26 * 60,
 };
 export const SOURCE_NAMES: Record<string, string> = {
@@ -92,6 +105,7 @@ export const SOURCE_NAMES: Record<string, string> = {
   "csm-fathom": "Fathom recordings",
   "csm-meta-activities": "Meta's activity log",
   "csm-media-changes": "media buyer changes",
+  "csm-eod-mentions": "team EODs",
   "csm-reconcile": "the daily check",
 };
 

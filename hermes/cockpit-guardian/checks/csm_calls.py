@@ -21,6 +21,7 @@ CSM_KEYS = {
     "csm-fathom": (45, "Fathom recordings"),
     "csm-meta-activities": (45, "Meta's activity log"),
     "csm-media-changes": (45, "media buyer changes"),
+    "csm-eod-mentions": (45, "team EODs that mention a client"),
     "csm-reconcile": (26 * 60, "the daily source-against-store check"),
 }
 UNMATCHED_MAX = 0.20

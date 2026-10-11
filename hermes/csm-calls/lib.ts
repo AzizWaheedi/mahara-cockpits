@@ -15,6 +15,8 @@ export const REQUIRED = [
   "FATHOM_API_KEY",
   "TYPEFORM_TOKEN",
   "META_SYSTEM_TOKEN",
+  "SLACK_BOT_TOKEN",
+  "GOOGLE_APPLICATION_CREDENTIALS",
 ];
 
 const PROVIDERS: Record<string, string> = {
@@ -22,7 +24,11 @@ const PROVIDERS: Record<string, string> = {
   "api.fathom.ai": "fathom",
   "api.typeform.com": "typeform",
   "graph.facebook.com": "meta",
+  "sheets.googleapis.com": "google",
+  "slack.com": "slack",
 };
+/** The EOD Reports sheet: the only spreadsheet this worker may read. */
+export const EOD_SHEET = "1EhPp7x0jZfV8dNjUvmuWv_alNvduMGpe_COjUAB13bw";
 
 export type Receipt = {
   method: string;
@@ -63,6 +69,10 @@ export function makeTransport(
     if (!provider || u.protocol !== "https:") throw new Error("Unapproved provider URL");
     if (provider === "fathom" && u.pathname !== "/external/v1/meetings")
       throw new Error("Only Fathom /external/v1/meetings is permitted");
+    if (provider === "google" && !u.pathname.startsWith(`/v4/spreadsheets/${EOD_SHEET}`))
+      throw new Error("Only the EOD Reports sheet is permitted");
+    if (provider === "slack" && u.pathname !== "/api/conversations.history")
+      throw new Error("Only Slack conversations.history is permitted");
     if (++requests > 4000) throw new Error("Read budget exhausted");
     const resource = u.hostname + u.pathname.replace(/\/(act_)?\d{6,}/g, "/$1:id").replace(/\/contacts\/[A-Za-z0-9]+/, "/contacts/:id");
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -98,6 +108,8 @@ export function makeTransport(
         }
         if (body && typeof body === "object" && body.error && provider === "meta")
           throw new ProviderError(provider, res.status, `meta answered 200 with an error at ${resource}`);
+        if (provider === "slack" && body?.ok !== true)
+          throw new ProviderError(provider, res.status, `slack refused ${resource}: ${String(body?.error ?? "no ok flag")}`);
         return body;
       } catch (e) {
         if (e instanceof ProviderError) throw e;
@@ -113,8 +125,48 @@ export function makeTransport(
     }
     throw new ProviderError(provider, 0, `${provider} read attempts exhausted`);
   }
+  // Google: a read-only service-account token, minted once per run. The token
+  // exchange is the only POST this worker makes to a non-Supabase host.
+  let googleToken: string | undefined;
+  async function google(): Promise<string> {
+    if (googleToken) return googleToken;
+    const { readFileSync } = await import("node:fs");
+    const { createSign } = await import("node:crypto");
+    const account = JSON.parse(readFileSync(need("GOOGLE_APPLICATION_CREDENTIALS"), "utf8"));
+    if (account.type !== "service_account" || !account.client_email || !account.private_key)
+      throw new ProviderError("google", 0, "The Google service account file is not a service account");
+    const enc = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
+    const now = Math.floor(Date.now() / 1000);
+    const unsigned = `${enc({ alg: "RS256", typ: "JWT" })}.${enc({ iss: account.client_email, scope: "https://www.googleapis.com/auth/spreadsheets.readonly", aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 })}`;
+    const sig = createSign("RSA-SHA256").update(unsigned).sign(account.private_key).toString("base64url");
+    receipts.push({ method: "POST", resource: "oauth2.googleapis.com/token", phase: "intent", provider: "google", run_key: runKey });
+    const res = await request("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${unsigned}.${sig}` }).toString(),
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
+    });
+    receipts.push({ method: "POST", resource: "oauth2.googleapis.com/token", phase: "response", http_status: res.status, provider: "google", run_key: runKey });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok || typeof body.access_token !== "string")
+      throw new ProviderError("google", res.status, `google token exchange refused (${res.status})`);
+    return (googleToken = body.access_token);
+  }
   return {
     receipts,
+    sheet: async (range: string) =>
+      get(`https://sheets.googleapis.com/v4/spreadsheets/${EOD_SHEET}/values/${encodeURIComponent(range)}`, {
+        Authorization: `Bearer ${await google()}`,
+      }),
+    sheetTabs: async () =>
+      get(`https://sheets.googleapis.com/v4/spreadsheets/${EOD_SHEET}?fields=sheets.properties.title`, {
+        Authorization: `Bearer ${await google()}`,
+      }),
+    slackHistory: (params: Record<string, string>) =>
+      get(`https://slack.com/api/conversations.history?${new URLSearchParams(params)}`, {
+        Authorization: `Bearer ${need("SLACK_BOT_TOKEN")}`,
+      }),
     ghl: (path: string, params: Record<string, string>, version: string) =>
       get(`https://services.leadconnectorhq.com/${path}?${new URLSearchParams(params)}`, {
         Authorization: `Bearer ${need("GHL_CLIENT_PIT")}`,

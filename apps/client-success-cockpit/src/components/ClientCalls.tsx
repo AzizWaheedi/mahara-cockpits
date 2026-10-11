@@ -8,6 +8,7 @@ import {
   answerText,
   CALL_NAMES,
   FORM_NAMES,
+  isStale,
   matchUnmatched,
   readClientTimeline,
   readTranscript,
@@ -306,6 +307,75 @@ export function CallsTimeline({
       {calls.length > 12 ? (
         <Button size="sm" variant="ghost" onClick={() => setAll(v => !v)}>
           {all ? "Show fewer" : `Show the other ${calls.length - 12}`}
+        </Button>
+      ) : null}
+    </section>
+  );
+}
+
+/** What the team wrote about this client in their end-of-day reports, newest first. */
+export function TeamEods({ timeline }: { timeline: Timeline | null }) {
+  const [all, setAll] = useState(false);
+  if (!timeline) return null;
+  const eods = timeline.eods;
+  const health = timeline.health.find(h => h.key === "csm-eod-mentions");
+  const shown = all ? (eods ?? []) : (eods ?? []).slice(0, 8);
+  return (
+    <section className="space-y-3 rounded-2xl border bg-card p-4 sm:p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-[15px] font-semibold">
+          From the team's EODs{" "}
+          <span className="ml-1 font-normal tabular-nums text-muted-foreground">
+            {eods ? eods.length : ""}
+          </span>
+        </h2>
+        <span className="text-xs text-muted-foreground">
+          Lines that name this client, last 90 days
+        </span>
+      </div>
+      <Gaps health={timeline.health} keys={["csm-eod-mentions"]} />
+      {!eods || !health ? (
+        <p className="text-sm text-muted-foreground">
+          Team EODs have not synced yet, so nothing is shown here. This is not a
+          confirmed zero.
+        </p>
+      ) : eods.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {isStale(health)
+            ? "None found in the EODs read so far. The EOD sync is behind, so this is not a confirmed zero."
+            : "No one has named this client in an EOD in the last 90 days."}
+        </p>
+      ) : (
+        <ul className="-mx-4 divide-y sm:-mx-6">
+          {shown.map(e => (
+            <li
+              key={`${e.source}:${e.at}:${e.author}`}
+              className="space-y-1 px-4 py-3 sm:px-6"
+            >
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span className="text-sm font-medium text-foreground">
+                  {e.author || "Someone on the team"}
+                </span>
+                {e.role ? <span>{e.role}</span> : null}
+                <span className="tabular-nums">{when(e.at)}</span>
+                {e.link ? (
+                  <ExtLink href={e.link} className="ml-auto">
+                    {e.where ?? "Open"}
+                  </ExtLink>
+                ) : (
+                  <span className="ml-auto">{e.where}</span>
+                )}
+              </div>
+              <p dir="auto" className="whitespace-pre-line text-sm">
+                {e.excerpt}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {eods && eods.length > 8 ? (
+        <Button size="sm" variant="ghost" onClick={() => setAll(v => !v)}>
+          {all ? "Show fewer" : `Show the other ${eods.length - 8}`}
         </Button>
       ) : null}
     </section>
