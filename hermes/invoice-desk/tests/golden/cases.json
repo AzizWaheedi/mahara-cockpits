@@ -1,0 +1,81 @@
+[
+  {
+    "name": "paid in full, two transfers",
+    "invoiceNo": "INV-2026-024",
+    "invoice": {
+      "id": "00000000-0000-4000-8000-000000000024",
+      "clickup_task_id": "z8xmdvfpyw",
+      "client_name": "Shades Interior Design & General Contracting",
+      "kind": "paid",
+      "amount_usd": 6000,
+      "description": "90-day agreement",
+      "line_note": "Paid in full, covering all 90 days of the agreement",
+      "client_detail": "Jeddah, Saudi Arabia",
+      "period": "Days 1-90",
+      "pay_note": "This invoice confirms that BassamCo For Product Promotion received USD 6,000.00 in full for the 90-day agreement. Nothing further is due.",
+      "issue_date": "2026-10-11",
+      "due_date": null,
+      "checkout_url": null,
+      "payments": [
+        {
+          "date": "2026-10-03",
+          "method": "Bank transfer",
+          "amount": 500,
+          "ref": "DEPOSIT"
+        },
+        {
+          "date": "2026-10-06",
+          "method": "Bank transfer",
+          "amount": 5500,
+          "ref": "FINAL PAYMENT"
+        }
+      ],
+      "requested_by": "csm@maharamedia.com"
+    },
+    "sha256": "f9fe08cee4fc1bafec0c68a634b4214b2a8a216390c5ddf0a636a4d8768c2f36"
+  },
+  {
+    "name": "pay online, text that must be escaped",
+    "invoiceNo": "INV-2026-099",
+    "invoice": {
+      "id": "00000000-0000-4000-8000-000000000099",
+      "clickup_task_id": "madana01",
+      "client_name": "Madana <Consulting> & \"Engineering\"",
+      "kind": "checkout",
+      "amount_usd": 1500.5,
+      "description": "Days 1-30 of the client's {{AMOUNT}} plan <script>alert(1)</script>",
+      "line_note": "",
+      "client_detail": "Saudi Arabia",
+      "period": "Days 1-30",
+      "pay_note": null,
+      "issue_date": "2026-10-11",
+      "due_date": "2026-11-01",
+      "checkout_url": "https://whop.com/checkout/plan_xvX0i6dKyMYR4?email=turkido%40madana.com.sa&email.disabled=1",
+      "payments": [],
+      "requested_by": "csm@maharamedia.com"
+    },
+    "sha256": "012672aac8353748e8f1456b49b7e9d4aef31fc4b76edfb9e55fe9386d9138c5"
+  },
+  {
+    "name": "card on file, no period",
+    "invoiceNo": "INV-2026-100",
+    "invoice": {
+      "id": "00000000-0000-4000-8000-000000000100",
+      "clickup_task_id": "liwan01",
+      "client_name": "Liwan Limited Construction and Finishing Of Buildings",
+      "kind": "autocharge",
+      "amount_usd": "1333",
+      "description": "Marketing & Lead Generation",
+      "line_note": null,
+      "client_detail": null,
+      "period": null,
+      "pay_note": null,
+      "issue_date": "2026-10-11",
+      "due_date": "2026-10-11",
+      "checkout_url": null,
+      "payments": [],
+      "requested_by": "finance@maharamedia.com"
+    },
+    "sha256": "4fb6cac259948a3e1d9705481dc307ffc9db1443a5ff9ed375f23510c4d063f7"
+  }
+]

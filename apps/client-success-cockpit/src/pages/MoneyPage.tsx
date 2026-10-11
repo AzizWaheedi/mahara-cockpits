@@ -3,11 +3,13 @@ import { PageHeader, Pill, PillRow } from "@/components/kit";
 import { BillingPage } from "./BillingPage";
 import { ChurnPage } from "./ChurnPage";
 import { HotListPage, MyMoneyPage } from "./CsmPage";
+import { InvoicesPage } from "./InvoicesPage";
 import { ProjectionsPage } from "./ProjectionsPage";
 
 /**
- * Money: billing, the hot list, projections, churn and the CSM's own pay,
- * as five tabs of one place (they were five pages in two sidebar groups).
+ * Money: billing, the hot list, projections, churn, the CSM's own pay and
+ * invoices, as tabs of one place (they were five pages in two sidebar groups;
+ * invoices joined on 11 Oct 2026).
  * Each tab is the page it was, unchanged underneath; the old addresses
  * (/billing, /projections, /churn, /hotlist) land on their tab.
  */
@@ -17,6 +19,7 @@ const TABS = [
   { key: "projections", label: "Projections" },
   { key: "churn", label: "Churn" },
   { key: "mine", label: "My money" },
+  { key: "invoices", label: "Invoices" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
@@ -28,7 +31,7 @@ export function MoneyPage() {
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <PageHeader
         title="Money"
-        sub="Who pays next, who can buy more, who renews, who left, and what you earn."
+        sub="Who pays next, who can buy more, who renews, who left, what you earn, and the invoices you issue."
       >
         <div className="mt-3">
           <PillRow>
@@ -49,6 +52,7 @@ export function MoneyPage() {
       {tab === "projections" ? <ProjectionsPage embedded /> : null}
       {tab === "churn" ? <ChurnPage embedded /> : null}
       {tab === "mine" ? <MyMoneyPage embedded /> : null}
+      {tab === "invoices" ? <InvoicesPage embedded /> : null}
     </div>
   );
 }

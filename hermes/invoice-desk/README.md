@@ -1,0 +1,100 @@
+# Invoice desk
+
+Turns the invoices asked for on the client success cockpit (Money, Invoices)
+into numbered, locked PDFs in the client's Drive folder and rows on the
+invoice register (Churn Tracker, `07: Invoice Register`). Approved by
+Muhammed on 11 Oct 2026: client success, finance, sales, admin and CEO seats
+may ask; the person who asks types every value, what was paid included; the
+audit log records who. Nothing is sent to the client.
+
+## How one invoice goes
+
+1. The cockpit calls `cockpit_invoice_request` (migration
+   `20261011v_cockpit_invoices.sql`). The database checks the seat, the
+   client scope, the amount, and that the payments add up to the total, then
+   queues the row and writes the audit row `invoice.request`.
+2. Every minute `desk.py run` claims the oldest waiting invoice
+   (`cockpit_invoice_claim`, a 5 minute lease, `SKIP LOCKED`).
+3. It takes the next number: one above the highest `INV-<year>-###` on the
+   register or in `cockpit_invoices`. A number taken meanwhile moves to the next.
+4. It finds the folder: the one saved for the client, else exactly one Drive
+   folder named `Mahara - <client>`, else `<client> - Workspace`. A single exact
+   match is saved for next time. None, or two, fails the invoice with a
+   sentence; an admin pastes the folder link on the page, then Try again.
+5. It fills `template.html` (`desk/build.py`; the cockpit's preview runs the
+   same fill in `src/lib/invoiceTemplate.ts`), prints it with Chrome, and
+   refuses a PDF that is not one page or lost its fonts.
+6. It uploads the PDF (or replaces the same file on a retry), lets anyone
+   with the link view it, locks it against edits (the client folders give
+   link editors, so the lock is what keeps the PDF as issued), and writes the
+   register row. Each step is saved as it lands, so a retry reads it back
+   instead of doing it twice.
+7. `cockpit_invoice_finish` marks it issued (audit `invoice.issued`) or failed
+   with the reason (audit `invoice.failed`). Google down, a 429 or a 5xx leaves
+   the lease to run out, so the next run tries again; a worker that died five
+   times on one invoice fails it.
+
+Every Google call goes into `cockpit_invoice_desk_health` (no query strings,
+no secrets). Every run writes `cockpit_invoice_desk_status`; the page says so
+when the worker is missing, quiet for more than five minutes, or unwell.
+
+## Keys, read by name
+
+| Key | Where | What |
+| --- | --- | --- |
+| `INVOICE_SUPABASE_URL` / `_KEY` | falls back to `DESK_SUPABASE_*` in `~/.editor-desk/env` | Creative Triage, service role |
+| `INVOICE_GOOGLE_KEY_FILE` | `~/.invoice-desk/env` | path to the service account JSON (chmod 600) |
+| `INVOICE_REGISTER_SHEET` / `_TAB` | optional | default: the Churn Tracker, `07: Invoice Register` |
+| `CHROME_PATH` | `~/.sales-desk/env` | the headless shell; `desk/render.py` also finds the newest Playwright one |
+
+Key files are read in this order: `~/.invoice-desk/env`, `~/.editor-desk/env`,
+`~/.sales-desk/env`, `/opt/data/.env`. The service account is the one
+`make_invoice.py` uses; it needs edit access to the clients' shared drive and
+to the Churn Tracker.
+
+## Install on the VPS
+
+As `hermes`, from the clone at `~/mahara-cockpits`:
+
+```bash
+cd ~/mahara-cockpits && git pull -q --ff-only
+mkdir -p ~/.invoice-desk && chmod 700 ~/.invoice-desk
+# copy the service account JSON to ~/.invoice-desk/service-account.json, then:
+chmod 600 ~/.invoice-desk/service-account.json
+echo "INVOICE_GOOGLE_KEY_FILE=$HOME/.invoice-desk/service-account.json" > ~/.invoice-desk/env
+chmod 600 ~/.invoice-desk/env
+python3 -m pip install --user google-auth requests
+cd hermes/invoice-desk && python3 desk.py doctor
+```
+
+`doctor` changes nothing. It checks the keys, google-auth, the tables, the
+Google sign-in, the register's header, Chrome, and prints a sample invoice.
+It ends with `ready` or names each line to fix.
+
+### Cron
+
+```
+* * * * * cd ~/mahara-cockpits/hermes/invoice-desk && flock -n /tmp/invoice-desk.lock python3 desk.py run >> ~/.invoice-desk/run.log 2>&1
+```
+
+Edit with `crontab -l > f`, edit `f`, `crontab f`. Never pipe a stale copy.
+
+## Other commands
+
+- `python3 desk.py preview --id <uuid> --out x.pdf` prints one invoice as it
+  would be issued. It writes nothing anywhere else.
+- `python3 desk.py golden [--write]` checks (or rewrites, after a deliberate
+  template change) `tests/golden/cases.json`.
+
+## Tests
+
+```bash
+cd hermes/invoice-desk && python3 -m unittest discover -s tests
+cd apps/client-success-cockpit && bun test scripts/invoice-template.test.ts
+cd apps/media-buyer-cockpit && bun test scripts/invoices-supabase.test.ts
+```
+
+The template lives twice: here, and in the cockpit at
+`apps/client-success-cockpit/src/lib/invoice-template.html`. The cockpit test
+fails when the two differ or when either fill stops matching the golden
+hashes. Change both copies together, then `python3 desk.py golden --write`.

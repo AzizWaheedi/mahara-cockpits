@@ -786,3 +786,16 @@ The test run answers with `"memory":"slack"` when repeats can be held back,
 or `"memory":"unavailable (...)"` with Slack's reason when the scopes above
 are missing. `?dry=1` checks without sending anything; `?test=1` also sends a
 test DM that does not count as an alert.
+
+## Invoice desk
+
+Invoices issued from the client success cockpit (Money, Invoices). The worker on the VPS (`hermes/invoice-desk`) numbers each one from the invoice register, prints it, files it locked in the client's Drive folder and adds the register row. Cron as `hermes` every minute under `flock` (the line is in `hermes/invoice-desk/README.md`); log `~/.invoice-desk/run.log`. `python3 desk.py doctor` names what is wrong and changes nothing.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| The Invoices tab says the invoice worker has not started, or last checked in minutes ago | On the VPS as `hermes`: `crontab -l` has the invoice-desk line; `tail ~/.invoice-desk/run.log`; `cd ~/mahara-cockpits/hermes/invoice-desk && python3 desk.py doctor`. Waiting invoices go ahead on the next run | Muhammed |
+| An invoice failed with "No Drive folder named ..." or "2 Drive folders are named ..." | An admin pastes the client's folder link under the client on the Invoices tab, then presses Try again | Admin |
+| An invoice failed with "must fit on one" | Cancel it and issue it again with a shorter description, line under it or note | The person who asked |
+| "The invoice fonts did not load" | Google Fonts did not answer the worker. Try again in a few minutes; if it repeats, run `doctor` | Muhammed |
+| "The user does not have sufficient permissions" | The service account lost access to the client's shared drive or to the Churn Tracker. Give it edit access again, then Try again | Muhammed |
+| An issued invoice is wrong | Issued invoices are locked and on the register, so the cockpit cannot change one. Tell Muhammed: correcting it is a hand change to the register row and the Drive file | Muhammed |
