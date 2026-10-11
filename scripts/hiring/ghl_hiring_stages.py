@@ -27,10 +27,15 @@ What --apply changes, and nothing else:
   stops the run before any write.
 - The contact field "Score 4, one to one" becomes "Score 4, one-to-one". Its
   id and merge key stay.
-- With --calendar, the booking calendar "One to one interview" gets the new name.
+- The words a candidate reads: the custom value "Call centre agent - Test project"
+  says "after the one to one" and gets "after the one-to-one" (its name and key
+  stay). Only the exact phrases in TEXT_FIXES change, so --undo puts back
+  exactly what was there.
+- With --calendar, the booking calendar "One to one interview" gets the new
+  name, and its description's "Book your one to one" reads "Book your one-to-one".
 
-It never touches a workflow, a contact, a card, a custom value or a message,
-and it never publishes anything. Running it twice is safe: a board that already
+It never touches a workflow, a contact, a card or a message, changes no custom
+value beyond those phrases, and it never publishes anything. Running it twice is safe: a board that already
 has the new name is left alone. After every write it reads the thing back and
 says plainly if anything other than the one name moved.
 
@@ -54,6 +59,12 @@ OLD_FIELD = "Score 4, one to one"
 NEW_FIELD = "Score 4, one-to-one"
 OLD_CALENDAR = "One to one interview"
 NEW_CALENDAR = "One-to-one interview"
+# The candidate-facing phrases that still said "one to one" on 2026-10-11: the call centre test project
+# (a custom value the emails use) and the one-to-one calendar's description. Exact phrases only.
+TEXT_FIXES = (
+    ("after the one to one", "after the one-to-one"),
+    ("Book your one to one", "Book your one-to-one"),
+)
 
 # The hiring boards, by name (hiring spec ROLES[].pipeline).
 PIPELINES = (
@@ -163,10 +174,24 @@ def check_stages(before: dict[str, Any], after: dict[str, Any], old: str, new: s
     return problems
 
 
-def calendar_drift(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
-    """Calendar settings that differ after a rename, apart from the name and the timestamps."""
-    skip = {"name", "updatedAt", "dateUpdated", "updated_at", "lastUpdatedBy", "version"}
+def fix_text(text: Any, undo: bool = False) -> Optional[str]:
+    """The text with the TEXT_FIXES phrases changed (reversed with undo). None when nothing changes."""
+    t = str(text or "")
+    out = t
+    for old, new in TEXT_FIXES:
+        a, b = (new, old) if undo else (old, new)
+        out = out.replace(a, b)
+    return out if out != t else None
+
+
+def calendar_drift(before: dict[str, Any], after: dict[str, Any], also: tuple[str, ...] = ()) -> list[str]:
+    """Calendar settings that differ after a rename, apart from the name, the timestamps and `also`."""
+    skip = {"name", "updatedAt", "dateUpdated", "updated_at", "lastUpdatedBy", "version", *also}
     return sorted(k for k in set(before) | set(after) if k not in skip and before.get(k) != after.get(k))
+
+
+def _pairs(undo: bool) -> list[tuple[str, str]]:
+    return [(b, a) if undo else (a, b) for a, b in TEXT_FIXES]
 
 
 # --- The run --------------------------------------------------------------------
@@ -220,6 +245,21 @@ def run(get: Get, put: Put, loc: str, *, apply: bool, undo: bool, calendar: bool
         else:
             say(f"  field: no {old_f!r} field, left alone")
 
+    values: list[tuple[dict[str, Any], str]] = []
+    status, vbody = get(f"/locations/{loc}/customValues")
+    if status != 200:
+        say(f"Could not read the custom values: {status}")
+        failed += 1
+    else:
+        for v in vbody.get("customValues") or []:
+            new_v = fix_text(v.get("value"), undo)
+            if new_v is not None:
+                values.append((v, new_v))
+                say(f"  custom value {v['id']} {v.get('name')!r}: " + ", ".join(
+                    f"{a!r} -> {b!r}" for a, b in _pairs(undo) if a in str(v.get("value") or "")))
+        if not values:
+            say("  custom values: none says " + " or ".join(repr(a) for a, _ in _pairs(undo)) + ", left alone")
+
     cal = None
     if calendar:
         status, cbody = get(f"/calendars/?locationId={loc}", "2021-04-15")
@@ -228,9 +268,26 @@ def run(get: Get, put: Put, loc: str, *, apply: bool, undo: bool, calendar: bool
             failed += 1
         else:
             cals = cbody.get("calendars") or []
-            cal = next((c for c in cals if same(c.get("name"), old_c)), None)
-            if cal:
-                say(f"  calendar {cal['id']} {cal['name']!r} -> {new_c!r}")
+            found = next((c for c in cals if same(c.get("name"), old_c)), None) or \
+                next((c for c in cals if same(c.get("name"), new_c)), None)
+            if found:
+                cal_body: dict[str, Any] = {}
+                if same(found.get("name"), old_c):
+                    cal_body["name"] = new_c
+                desc = fix_text(found.get("description"), undo)
+                if desc is not None:
+                    cal_body["description"] = desc
+                if cal_body:
+                    cal = (found, cal_body)
+                    parts = []
+                    if "name" in cal_body:
+                        parts.append(f"name -> {new_c!r}")
+                    if "description" in cal_body:
+                        parts += [f"description {a!r} -> {b!r}" for a, b in _pairs(undo)
+                                  if a in str(found.get("description") or "")]
+                    say(f"  calendar {found['id']} {found['name']!r}: " + ", ".join(parts))
+                else:
+                    say(f"  calendar {found['id']}: its name and description already read {new_c!r}, left alone")
             else:
                 say(f"  calendar: no {old_c!r} calendar, left alone")
 
@@ -267,24 +324,42 @@ def run(get: Get, put: Put, loc: str, *, apply: bool, undo: bool, calendar: bool
             else:
                 say(f"  done field: {new_f!r}, same id and key")
 
+    for v, new_v in values:
+        status, out = put(f"/locations/{loc}/customValues/{v['id']}", {"name": v.get("name"), "value": new_v})
+        if status >= 300:
+            failed += 1
+            say(f"FAILED custom value {v.get('name')!r}: {status} {str(out)[:200]}")
+            continue
+        s2, vb = get(f"/locations/{loc}/customValues")
+        now = next((x for x in (vb or {}).get("customValues") or [] if x.get("id") == v["id"]), None) if s2 == 200 else None
+        if not now or now.get("value") != new_v or now.get("name") != v.get("name") or now.get("fieldKey") != v.get("fieldKey"):
+            failed += 1
+            say(f"CHECK custom value {v.get('name')!r}: reads name {now and now.get('name')!r}, key "
+                f"{now and now.get('fieldKey')!r}, and its words {'as asked' if now and now.get('value') == new_v else 'not as asked'}")
+        else:
+            say(f"  done custom value {v.get('name')!r}: new words, same name and key")
+
     if cal:
-        status, before = get(f"/calendars/{cal['id']}", "2021-04-15")
+        found, cal_body = cal
+        status, before = get(f"/calendars/{found['id']}", "2021-04-15")
         before = (before or {}).get("calendar", before) if status == 200 else None
-        status, out = put(f"/calendars/{cal['id']}", {"name": new_c}, "2021-04-15")
+        status, out = put(f"/calendars/{found['id']}", cal_body, "2021-04-15")
         if status >= 300:
             failed += 1
             say(f"FAILED calendar: {status} {str(out)[:200]}")
         else:
-            s2, after = get(f"/calendars/{cal['id']}", "2021-04-15")
+            s2, after = get(f"/calendars/{found['id']}", "2021-04-15")
             after = (after or {}).get("calendar", after) if s2 == 200 else None
-            drift = calendar_drift(before or {}, after or {}) if before and after else ["could not read it back"]
-            if not after or not same(after.get("name"), new_c) or drift:
+            drift = (calendar_drift(before or {}, after or {}, tuple(cal_body)) if before and after
+                     else ["could not read it back"])
+            wrong = [k for k, want in cal_body.items() if not after or str(after.get(k) or "") != want]
+            if not after or wrong or drift:
                 failed += 1
-                say(f"CHECK calendar: name {after and after.get('name')!r}; also changed: {', '.join(drift) or 'nothing'}")
+                say(f"CHECK calendar: not as asked: {', '.join(wrong) or 'nothing'}; also changed: {', '.join(drift) or 'nothing'}")
             else:
-                say(f"  done calendar: {new_c!r}, nothing else changed")
+                say(f"  done calendar: {', '.join(cal_body)} as asked, nothing else changed")
 
-    say("Nothing else was touched: no workflow, contact, card, custom value or message." + (" Some steps need a look (above)." if failed else ""))
+    say("Nothing else was touched: no workflow, contact, card or message, and no other custom value." + (" Some steps need a look (above)." if failed else ""))
     return 1 if failed else 0
 
 

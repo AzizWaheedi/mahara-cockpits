@@ -36,7 +36,13 @@ class FakeGhl:
         self.fields = [{"id": "f4", "name": "Score 4, one-to-one" if renamed else "Score 4, one to one",
                         "fieldKey": "contact.score_onetoone"}]
         self.calendar = {"id": "c1", "name": "One-to-one interview" if renamed else "One to one interview",
+                         "description": f"Book your {'one-to-one' if renamed else 'one to one'}. It is held on Zoom.",
                          "slotDuration": 30, "teamMembers": [{"userId": "u"}]}
+        self.values = [
+            {"id": "v1", "name": "Call centre agent - Test project", "fieldKey": "{{ custom_values.cc_test }}",
+             "value": f"A fifteen minute live block after the {'one-to-one' if renamed else 'one to one'}: a speed test."},
+            {"id": "v2", "name": "Hiring - Owner name", "fieldKey": "{{ custom_values.owner }}", "value": "Aziz"},
+        ]
         self.puts = []
         self.drop_id_on_put = False
 
@@ -45,6 +51,8 @@ class FakeGhl:
             return 200, {"pipelines": copy.deepcopy(self.pipelines)}
         if path.startswith("/locations/loc/customFields"):
             return 200, {"customFields": copy.deepcopy(self.fields)}
+        if path == "/locations/loc/customValues":
+            return 200, {"customValues": copy.deepcopy(self.values)}
         if path.startswith("/calendars/?"):
             return 200, {"calendars": [copy.deepcopy(self.calendar)]}
         if path == "/calendars/c1":
@@ -63,6 +71,10 @@ class FakeGhl:
             return 200, {"succeded": True}
         if path.startswith("/locations/loc/customFields/"):
             self.fields[0]["name"] = body["name"]
+            return 200, {}
+        if path.startswith("/locations/loc/customValues/"):
+            v = next(x for x in self.values if x["id"] == path.rsplit("/", 1)[1])
+            v.update(body)
             return 200, {}
         if path == "/calendars/c1":
             self.calendar.update(body)
@@ -112,6 +124,13 @@ class Pure(unittest.TestCase):
         bad["stages"][0]["stageWinProbability"] = 99
         self.assertTrue(g.check_stages(before, bad, g.OLD_STAGE, g.NEW_STAGE))
 
+    def test_fix_text_changes_only_the_exact_phrases_and_undoes_them(self):
+        self.assertEqual(g.fix_text("x after the one to one: y"), "x after the one-to-one: y")
+        self.assertEqual(g.fix_text("Book your one to one. It is held on Zoom."), "Book your one-to-one. It is held on Zoom.")
+        self.assertIsNone(g.fix_text("a one to one with me"), "only the recorded phrases")
+        self.assertIsNone(g.fix_text(None))
+        self.assertEqual(g.fix_text("after the one-to-one", undo=True), "after the one to one")
+
     def test_calendar_drift_ignores_the_name_and_timestamps(self):
         self.assertEqual(g.calendar_drift({"name": "a", "x": 1, "updatedAt": 1}, {"name": "b", "x": 1, "updatedAt": 2}), [])
         self.assertEqual(g.calendar_drift({"x": 1}, {"x": 2}), ["x"])
@@ -137,7 +156,15 @@ class Run(unittest.TestCase):
             self.assertEqual(set(body), {"name", "stages"}, "a pipeline PUT refuses locationId")
             self.assertTrue(all(s.get("id") for s in body["stages"]))
         self.assertEqual(ghl.fields[0]["name"], "Score 4, one-to-one")
+        self.assertEqual(ghl.values[0]["value"], "A fifteen minute live block after the one-to-one: a speed test.")
+        self.assertEqual((ghl.values[0]["name"], ghl.values[0]["fieldKey"]),
+                         ("Call centre agent - Test project", "{{ custom_values.cc_test }}"))
+        self.assertEqual(ghl.values[1]["value"], "Aziz")
+        self.assertEqual([b for p, b in ghl.puts if "/customValues/" in p],
+                         [{"name": "Call centre agent - Test project",
+                           "value": "A fifteen minute live block after the one-to-one: a speed test."}])
         self.assertEqual(ghl.calendar["name"], "One to one interview", "the calendar waits for --calendar")
+        self.assertIn("one to one", ghl.calendar["description"])
         self.assertNotIn("px", [p[0].rsplit("/", 1)[1] for p in pipeline_puts], "only the hiring boards")
 
     def test_a_second_apply_changes_nothing(self):
@@ -152,7 +179,16 @@ class Run(unittest.TestCase):
         code, out = run(ghl, apply=True, calendar=True)
         self.assertEqual(code, 0, out)
         self.assertEqual(ghl.calendar["name"], "One-to-one interview")
+        self.assertEqual(ghl.calendar["description"], "Book your one-to-one. It is held on Zoom.")
         self.assertEqual(ghl.calendar["teamMembers"], [{"userId": "u"}])
+
+    def test_a_renamed_calendar_still_gets_its_description(self):
+        ghl = FakeGhl()
+        ghl.calendar["name"] = "One-to-one interview"
+        code, out = run(ghl, apply=True, calendar=True)
+        self.assertEqual(code, 0, out)
+        cal_puts = [b for p, b in ghl.puts if p == "/calendars/c1"]
+        self.assertEqual(cal_puts, [{"description": "Book your one-to-one. It is held on Zoom."}])
 
     def test_undo_puts_the_old_names_back(self):
         ghl = FakeGhl(renamed=True)
@@ -163,6 +199,8 @@ class Run(unittest.TestCase):
         self.assertNotIn("One-to-one interview", names)
         self.assertEqual(ghl.fields[0]["name"], "Score 4, one to one")
         self.assertEqual(ghl.calendar["name"], "One to one interview")
+        self.assertEqual(ghl.calendar["description"], "Book your one to one. It is held on Zoom.")
+        self.assertIn("after the one to one:", ghl.values[0]["value"])
 
     def test_a_write_that_changes_an_id_is_reported_and_fails_the_run(self):
         ghl = FakeGhl()
