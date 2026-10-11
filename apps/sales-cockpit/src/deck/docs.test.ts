@@ -18,13 +18,22 @@ describe("deck documents", () => {
   test("every link set is a Google Doc's view address", () => {
     for (const [name, url] of Object.entries(links)) {
       if (url === null) continue;
-      expect({ name, ok: /^https:\/\/docs\.google\.com\/document\/d\/[\w-]{20,}\/view$/.test(url) }).toEqual({ name, ok: true });
+      expect({
+        name,
+        ok: /^https:\/\/docs\.google\.com\/document\/d\/[\w-]{20,}\/view$/.test(
+          url,
+        ),
+      }).toEqual({ name, ok: true });
     }
   });
 
   test("the script pages open the sample, never the partner's own script", () => {
     // The partner's document carries its owner's number, email and address.
-    expect(proof.SCRIPTS_DOC).not.toContain("1u2pp9r2cUyJRu7_McX-ewrWfafsogPcOe7K790uw1UI");
-    expect(proof.SCRIPTS_DOC).toContain("1QUIEoIIcM8285aJWLWQlkanSigAsp9B29QFPck1bnIo");
+    expect(proof.SCRIPTS_DOC).not.toContain(
+      "1u2pp9r2cUyJRu7_McX-ewrWfafsogPcOe7K790uw1UI",
+    );
+    expect(proof.SCRIPTS_DOC).toContain(
+      "1QUIEoIIcM8285aJWLWQlkanSigAsp9B29QFPck1bnIo",
+    );
   });
 });
