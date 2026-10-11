@@ -31,6 +31,13 @@ export const SEND_NAME = "HIRING_SEND_ENABLED";
 
 const GHL_VERSION = "2021-07-28";
 const RETRIES = 2;
+/**
+ * HighLevel sits behind Cloudflare, which refuses a request without a
+ * browser-like agent (error 1010). sales-api and sales-mirror send this one
+ * from the same Edge runtime; Convex's runtime sent its own and never hit it.
+ */
+export const GHL_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
 /** HIRING_APPLY must be exactly "true". Anything else is a dry run. */
 export const applyEnabled = (env: (n: string) => string | undefined) =>
@@ -120,6 +127,7 @@ export function ghlClient(
             Authorization: `Bearer ${o.token}`,
             Version: GHL_VERSION,
             Accept: "application/json",
+            "User-Agent": GHL_USER_AGENT,
             ...(body === undefined ? {} : { "Content-Type": "application/json" }),
           },
           body: body === undefined ? undefined : JSON.stringify(body),

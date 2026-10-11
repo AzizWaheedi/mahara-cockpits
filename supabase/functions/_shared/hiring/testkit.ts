@@ -208,7 +208,7 @@ export class FakeStore implements Store {
   }
 }
 
-export type Call = { method: string; url: string; body: unknown };
+export type Call = { method: string; url: string; body: unknown; headers?: Record<string, string> };
 type Route = [method: string, match: RegExp, answer: (call: Call) => { status?: number; body?: unknown }];
 
 /** A fetch that answers from routes; an unrouted call fails the test loudly. */
@@ -218,7 +218,7 @@ export function fakeFetch(routes: Route[]) {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    const call = { method, url, body };
+    const call = { method, url, body, headers: (init?.headers ?? {}) as Record<string, string> };
     calls.push(call);
     const route = routes.find(([m, re]) => m === method && re.test(url));
     if (!route) return Promise.reject(new Error(`unrouted ${method} ${url}`));

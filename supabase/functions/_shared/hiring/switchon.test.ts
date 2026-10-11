@@ -234,3 +234,12 @@ test("headhunts returns every role with its request and the agent's answer", asy
   assert.deepEqual(csm.answer.signals, []);
   assert.equal(rows.find(r => r.role === "media-buyer")!.answer, null);
 });
+
+test("every GoHighLevel call carries a browser-like agent, so Cloudflare does not refuse it (1010)", async () => {
+  const store = new FakeStore();
+  const { fetch, calls } = fakeFetch([...allBoards, ...ghlReads, ...typeform, ...ghlWrites(), ...otherForms]);
+  await runIntake(ctxFor(store, fetch, { HIRING_APPLY: "true" }));
+  const ghl = calls.filter(c => c.url.includes("leadconnectorhq"));
+  assert.ok(ghl.length > 0);
+  assert.ok(ghl.every(c => /^Mozilla\/5\.0/.test(String(c.headers?.["User-Agent"] ?? ""))), "User-Agent on every call");
+});
