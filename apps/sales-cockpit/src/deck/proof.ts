@@ -631,8 +631,14 @@ export const OFFER_DOC: string | null =
 /** The full acquisition pack: ads, landing page, VSL and booking funnel. */
 export const OFFER_PACK_DOC: string | null =
   "https://docs.google.com/document/d/1nU6gcpMm3v_pymu9VbQLALiKssbIOkOjo7UPba5n-qc/view";
-/** The call centre's script for a partner (the three script pages): none yet. */
-export const SCRIPTS_DOC: string | null = null;
+/**
+ * The call centre's script for a partner (the three script pages): a sample
+ * made on 2026-10-11 from a real partner's script, sections 01 to 07 only.
+ * The partner's name, contact numbers, email, address, offer terms and prices
+ * are left out, so link this copy and never the partner's own document.
+ */
+export const SCRIPTS_DOC: string | null =
+  "https://docs.google.com/document/d/1QUIEoIIcM8285aJWLWQlkanSigAsp9B29QFPck1bnIo/view";
 
 /**
  * The content library: how we think about ads, the Brand DNA and the
