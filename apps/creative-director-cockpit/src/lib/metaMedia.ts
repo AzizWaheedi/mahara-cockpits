@@ -138,9 +138,18 @@ export function cacheUntil(result: PreviewResult, now = Date.now()): number {
   }
 }
 
-/** Every value once, blanks dropped, order kept. */
+/**
+ * Convex was retired on 2026-10-09; its file links now answer
+ * "BackendIsNotRunning", so a still saved there can never load.
+ */
+export function deadStillHost(url: string): boolean {
+  return /^https:\/\/[a-z0-9-]+\.convex\.(cloud|site)\//i.test(url);
+}
+
+/** Every value once, blanks and dead hosts dropped, order kept. */
 export function uniqueUrls(list: (string | null | undefined)[]): string[] {
   const out: string[] = [];
-  for (const u of list) if (u && !out.includes(u)) out.push(u);
+  for (const u of list)
+    if (u && !deadStillHost(u) && !out.includes(u)) out.push(u);
   return out;
 }

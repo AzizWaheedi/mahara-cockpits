@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {creativeImageCandidates, stillCaptureDue, stillKeyFor} from './metaMedia';
+import {creativeImageCandidates, deadStillHost, stillCaptureDue, stillKeyFor} from './metaMedia';
 import type {Row, Reads} from './runtime';
 import type {Env} from './transport';
 
@@ -10,7 +10,7 @@ export async function captureStills(state: Row, tables: Record<string, Row[]>, r
   for (const row of [...tables.ads, ...tables.metaTree.filter(row => row.kind === 'ad'), ...tables.winnersArchive]) {
     const adId = row.adId ?? row.metaAdId ?? row.metaId;
     const key = stillKeyFor(row.creativeId, adId);
-    if (key && !row.stillUrl && stillCaptureDue(known.get(key), Date.now())) wanted.set(key, {...row, adId});
+    if (key && (!row.stillUrl || deadStillHost(row.stillUrl)) && stillCaptureDue(known.get(key), Date.now())) wanted.set(key, {...row, adId});
   }
   const assets: StillAsset[] = [], outcomes: Row[] = [], items = [...wanted.values()];
   let cursor = 0;
@@ -47,16 +47,22 @@ export async function captureStills(state: Row, tables: Record<string, Row[]>, r
         }
         const cached = known.get(key);
         if (cached?.status === 'saved' && cached.url) { outcomes.push(cached); continue; }
-        const creative = await reads.graph(creativeId, {fields: 'thumbnail_url,image_url,object_story_spec{video_data{image_url},link_data{picture}}', thumbnail_width: 320, thumbnail_height: 320});
-        const candidates = [creative.thumbnail_url, ...creativeImageCandidates(creative).map(row => row.url)].filter((url): url is string => typeof url === 'string');
+        const creative = await reads.graph(creativeId, {fields: 'thumbnail_url,image_url,object_story_spec{video_data{image_url},link_data{picture}}', thumbnail_width: 640, thumbnail_height: 640});
+        // The sized thumbnail first (small enough for cards, sharp in the
+        // dialog), then the full pictures; the next one is tried when a
+        // download fails.
+        const candidates = [...new Set([creative.thumbnail_url, ...creativeImageCandidates(creative).map(row => row.url)].filter((url): url is string => typeof url === 'string'))];
         if (!candidates.length) throw new Error('Meta creative has no still image');
-        const full = await download(candidates[0]), sha256 = createHash('sha256').update(full.bytes).digest('hex');
+        let full: {bytes: Uint8Array; contentType: string} | undefined, lastError: unknown;
+        for (const candidate of candidates) { try { full = await download(candidate); break; } catch (error) { lastError = error; } }
+        if (!full) throw lastError ?? new Error('Meta creative has no still image');
+        const sha256 = createHash('sha256').update(full.bytes).digest('hex');
         const path = `${createHash('sha256').update(key).digest('hex')}/${sha256}`;
         assets.push({key, path, ...full, sha256});
         outcomes.push({key, adId: item.adId, creativeId, campaignName: item.campaignName, accountId: item.accountId, status: 'captured', storagePath: path, sha256, bytes: full.bytes.length, contentType: full.contentType});
       } catch (error) {
         const old = known.get(key), attempts = Number(old?.attempts ?? 0) + 1;
-        outcomes.push({key, adId: item.adId, status: 'failed', attempts, lastAttemptAt: Date.now(), nextAttemptAt: Date.now() + (attempts >= 3 ? 7 * 86400000 : 3600000), error: 'Still image unavailable; inspect sanitized provider receipt'});
+        outcomes.push({key, adId: item.adId, status: 'failed', attempts, lastTriedAt: Date.now(), lastAttemptAt: Date.now(), nextAttemptAt: Date.now() + (attempts >= 3 ? 7 * 86400000 : 3600000), error: 'Still image unavailable; inspect sanitized provider receipt'});
       }
     }
   }

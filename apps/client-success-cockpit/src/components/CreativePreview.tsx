@@ -114,13 +114,15 @@ export function stillPropsFor(
   local: Record<string, LocalStill>,
 ) {
   const mine = row.stillKey ? local[row.stillKey] : undefined;
+  // A saved copy that is loading, refused or not made yet is skipped, not
+  // fatal: the row's own still and Meta's thumbnail still show. Blanking them
+  // left most cards empty when the read refused a creative it could not match.
   if (mine?.error)
     return {
       stillUrl: undefined,
       stillTinyUrl: undefined,
-      backupStillUrl: undefined,
-      backupStillTinyUrl: undefined,
-      thumbUrl: undefined,
+      backupStillUrl: row.stillUrl ?? undefined,
+      backupStillTinyUrl: row.stillTinyUrl ?? undefined,
       emptyReason: mine.error,
     };
   return {
@@ -439,12 +441,12 @@ function emptyText(p: CreativePreviewProps, now: number): string {
   }
   const act = p.variant === "card" ? "Click Watch" : "Open it";
   if (hadStill) {
-    return `The saved picture did not load. ${act} to get a new one from Meta.`;
+    return `The saved picture did not load. ${act} to see the ad from Meta.`;
   }
   if (p.thumbUrl && !metaImageUsable(p.thumbUrl, now)) {
-    return `Meta's picture link has expired and no copy is saved yet. ${act} to get a new one.`;
+    return `Meta's picture link has expired and no copy is saved yet. ${act} to see the ad from Meta.`;
   }
-  return `No saved picture yet. ${act} to get one from Meta.`;
+  return `No saved picture yet. ${act} to see the ad from Meta.`;
 }
 
 // ---------------------------------------------------------------------------

@@ -405,8 +405,19 @@ export function csmPerformance(
       }
     }
   }
-  const toTrend = (m: typeof byDate) =>
-    [...m.entries()]
+  const toTrend = (m: typeof byDate) => {
+    // A day with no ad rows between two that have them is a zero day, not a
+    // gap, so the chart's thirds compare equal spans.
+    const days = [...m.keys()].sort();
+    if (days.length > 1) {
+      const d = new Date(`${days[0]}T00:00:00Z`);
+      while (d.toISOString().slice(0, 10) < days[days.length - 1]) {
+        d.setUTCDate(d.getUTCDate() + 1);
+        const k = d.toISOString().slice(0, 10);
+        if (!m.has(k)) m.set(k, { leads: 0, spend: 0 });
+      }
+    }
+    return [...m.entries()]
       .sort((a, b) => (a[0] < b[0] ? -1 : 1))
       .map(([date, r]) => ({
         date,
@@ -414,6 +425,7 @@ export function csmPerformance(
         spend: Math.round(r.spend * 100) / 100,
         cpl: r.leads ? Math.round((r.spend / r.leads) * 100) / 100 : null,
       }));
+  };
   const trend = toTrend(byDate);
   const toWeekly = (m: typeof byWeek) =>
     [...m.entries()]
@@ -421,6 +433,8 @@ export function csmPerformance(
       .map(([week, w]) => ({
         week,
         booked: w.booked,
+        shows: w.shows,
+        noshows: w.noshows,
         showRate:
           w.shows + w.noshows
             ? Math.round((100 * w.shows) / (w.shows + w.noshows))
@@ -449,6 +463,8 @@ export function csmPerformance(
               staleCount?: number;
               error?: string;
               source?: string;
+              staleAt?: number | string;
+              staleReason?: string;
             }
           | undefined;
         return {
@@ -462,7 +478,14 @@ export function csmPerformance(
           month: perf?.month ?? null,
           lastMonth: perf?.lastMonth ?? null,
           staleCount: perf?.staleCount ?? null,
-          sheetError: perf?.error,
+          // A sheet that stopped answering keeps last month's figures with a
+          // staleReason; say so instead of showing them as current. Stopped
+          // clients keep their history on purpose and are not flagged.
+          sheetError:
+            perf?.error ??
+            (perf?.staleAt && !r.performanceRetained
+              ? (perf?.staleReason ?? "The sheet could not be read.")
+              : undefined),
           live: r.live ?? null,
           adsAccess: r.adsAccess ?? null,
           // Whose weekly report reminder is still sitting unapproved in #csm-general.

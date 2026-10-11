@@ -26,17 +26,45 @@ export async function fetchPerformancePeriod(
   to: string,
 ) {
   const { tables } = await readCsmSources(client);
+  // One client without period data shows "-" on its own row; it no longer
+  // replaces the whole list with an error.
   return currentCsmProfiles(tables.clientProfiles).map(row => {
     const appointments = row.performance?.appointments,
       adDays = row.adLeads?.daily;
-    if (!Array.isArray(appointments) || !Array.isArray(adDays))
-      throw Error(
-        `Period data for ${row.clientName} is unavailable. Refresh its native source before using period totals.`,
-      );
-    return {
-      clientName: row.clientName,
-      ...periodNumbers(appointments, adDays, from, to),
-    };
+    const figures: Record<string, unknown> = periodNumbers(
+      Array.isArray(appointments) ? appointments : [],
+      Array.isArray(adDays) ? adDays : [],
+      from,
+      to,
+    );
+    // No sheet rows read: the outcome counts are unknown, not zero.
+    if (!Array.isArray(appointments))
+      for (const k of [
+        "sheetLeads",
+        "booked",
+        "shows",
+        "noshows",
+        "quotes",
+        "closes",
+        "unknownOutcome",
+        "showRate",
+        "closeRate",
+      ])
+        figures[k] = null;
+    // No ad rows read: leads, spend and cost per lead are unknown. With no
+    // sheet either, there is no lead count from anywhere.
+    if (!Array.isArray(adDays)) {
+      figures.spend = null;
+      figures.cpl = null;
+      if (!Array.isArray(appointments)) {
+        figures.leads = null;
+        figures.leadsFrom = null;
+      }
+    } else if (!Array.isArray(appointments) && figures.leadsFrom === "sheet") {
+      figures.leads = null;
+      figures.leadsFrom = null;
+    }
+    return { clientName: row.clientName, ...figures };
   });
 }
 export async function fetchTasksAdded(

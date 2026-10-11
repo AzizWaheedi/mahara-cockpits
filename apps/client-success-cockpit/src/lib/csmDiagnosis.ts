@@ -3,7 +3,7 @@
  *
  * Two sources, nothing invented:
  * - The gates are Mahara's locked client KPI gates: CPL < $20 · lead→booking ≥ 25% ·
- *   cost per booking ≤ $60 · show rate ≥ 75% · close rate 20–30% · daily budget floor $30.
+ *   cost per booking ≤ $80 · show rate ≥ 75% · close rate 20–30% · daily budget floor $30.
  * - The diagnosis and the fixes are the company's doc "Diagnosing & Fixing Acquisition
  *   Constraints" (macro vs micro, the golden rule, scenarios 3–6, 9, 10).
  *
@@ -245,12 +245,16 @@ function diagnoseRaw(p: Any): Diagnosis {
   }
 
   // ---- Macro check: everything broken at once is one problem, not four. ----
+  // A gate counts as broken only on the same sample its own check needs
+  // (10 leads, 8 decided, 5 shows), and "never closed" needs the sheet's
+  // all-time total to be there: missing is not zero.
   const brokenGates = [
-    bookingRate != null && bookingRate < GATES.bookingRate,
-    showRate != null && showRate < GATES.showRate,
-    closeRate != null && closeRate < GATES.closeRate,
+    bookingRate != null && leads >= 10 && bookingRate < GATES.bookingRate,
+    showRate != null && decided >= 8 && showRate < GATES.showRate,
+    closeRate != null && shows >= 5 && closeRate < GATES.closeRate,
   ].filter(Boolean).length;
-  if (brokenGates >= 3 && Number(all.closes ?? 0) === 0 && leads >= 20) {
+  const neverClosed = typeof all.closes === "number" && all.closes === 0;
+  if (brokenGates >= 3 && neverClosed && leads >= 20) {
     found.unshift({
       id: "macro_offer",
       layer: "macro",
