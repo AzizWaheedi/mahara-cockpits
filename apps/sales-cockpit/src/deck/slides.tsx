@@ -1945,11 +1945,11 @@ function ProfileCard({
 }
 
 /**
- * Our own channels, inside the proof right after the slide on what they
- * teach (the CEO, 2026-10-10: "put it at the start where we're showing the
- * proof, so the proof can be in one section"). Each is its real page in
- * dark mode, with no counts on it and nothing ringed, one click from the
- * live one. Both are as tall as the room allows.
+ * Our own channels, the first slide of the proof, right before the
+ * partners' results (the CEO, 2026-10-10: "put it at the start where we're
+ * showing the proof, so the proof can be in one section"). Each is its real
+ * page in dark mode, with no counts on it and nothing ringed, one click from
+ * the live one. Both are as tall as the room allows.
  */
 function channelsSlide(ctx: DeckCtx) {
   const { lang } = ctx;

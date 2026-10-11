@@ -197,8 +197,8 @@ export const PROBLEMS: Problem[] = [
     },
     pillars: ["ads", "sales"],
     bridge: {
-      en: "You close well. This fills your calendar with qualified meetings.",
-      ar: "انت تقفل زين.. هذا يترس جدولك بمواعيد مؤهلة.",
+      en: "You close well. This is built to fill your calendar with qualified meetings.",
+      ar: "انت تقفل زين.. هذا مبني عشان يترس جدولك بمواعيد مؤهلة.",
     },
   },
 ];
@@ -403,6 +403,18 @@ export const LINKS = {
   academy: "https://www.skool.com/premium-projects-academy-3669/classroom",
   site: "https://maharamedia.com",
 };
+
+/**
+ * A live page in the deck's language: `?lang=en` or `?lang=ar`, so the
+ * Arabic deck's landing pop-up opens in Arabic. The Diwan landing page
+ * (LINKS.landing) takes it once its own source reads the parameter; until
+ * then it opens in its saved language, English by default.
+ */
+export function inLang(url: string, lang: Lang): string {
+  const u = new URL(url);
+  u.searchParams.set("lang", lang);
+  return u.toString();
+}
 
 /** The three example ads on Wistia (vertical). */
 export const EXAMPLE_ADS: { wistia: string; label: L; seconds: number }[] = [
