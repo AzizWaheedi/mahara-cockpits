@@ -5,7 +5,7 @@ import {
   PhoneIncoming,
   TriangleAlert,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { RowButtons, RowPanel } from "../components/CallsCard";
 import { DayLine } from "../components/DayLine";
@@ -19,7 +19,7 @@ import {
   StatTile,
   StatusChip,
 } from "../components/kit";
-import { MarkControls } from "../components/MarkControls";
+import { MarkControls, type MarkHold } from "../components/MarkControls";
 import { type ScopeView, useScope } from "../components/Scope";
 import {
   useCalendar,
@@ -45,8 +45,21 @@ import {
   money,
   when,
 } from "../lib/format";
+import { keepOpenRow } from "../lib/heldRows";
 import { liveChip } from "../lib/reschedule";
 import type { CalendarRow, InboxRow, Lead, Me } from "../lib/types";
+
+/**
+ * One panel open at a time (a Coming up row's picker or Tell them, an owed
+ * call's picker, or its "book it again" after Didn't happen), with the row
+ * as it was when the panel opened.
+ */
+type Open = {
+  id: string;
+  what: "reschedule" | "tell" | "again";
+  from: "owed" | "coming";
+  row: CalendarRow;
+} | null;
 
 /** The rep's day: where they are, what they owe, what comes next. */
 export default function TodayPage({ me }: { me: Me }) {
@@ -66,9 +79,13 @@ export default function TodayPage({ me }: { me: Me }) {
   const replies = useReplies(48);
   const mirror = useMirrorRun();
 
-  const upcoming = (coming.data ?? [])
-    .filter(r => r.status !== "cancelled")
-    .slice(0, 12);
+  const [open, setOpen] = useState<Open>(null);
+  const upcoming = keepOpenRow(
+    (coming.data ?? []).filter(r => r.status !== "cancelled").slice(0, 12),
+    open,
+    "coming",
+    false,
+  );
   const leadIds = upcoming
     .map(r => r.contact_id)
     .filter((x): x is string => Boolean(x));
@@ -78,12 +95,6 @@ export default function TodayPage({ me }: { me: Me }) {
     [briefs.data],
   );
 
-  // One panel open at a time: a Coming up row's picker or Tell them, or an
-  // owed call's "book it again" after Didn't happen.
-  const [open, setOpen] = useState<{
-    id: string;
-    what: "reschedule" | "tell" | "again";
-  } | null>(null);
   const reloadCalls = () => {
     coming.reload();
     todays.reload();
@@ -150,6 +161,7 @@ export default function TodayPage({ me }: { me: Me }) {
             error={owed.error}
             reload={reloadCalls}
             team={scope === "team"}
+            now={now}
             open={open}
             setOpen={setOpen}
           />
@@ -182,12 +194,23 @@ export default function TodayPage({ me }: { me: Me }) {
                     team={scope === "team"}
                     now={now}
                     open={
-                      open?.id === r.appointment_id && open.what !== "again"
+                      open?.id === r.appointment_id &&
+                      open.from === "coming" &&
+                      open.what !== "again"
                         ? open.what
                         : null
                     }
                     onOpen={what =>
-                      setOpen(what ? { id: r.appointment_id, what } : null)
+                      setOpen(
+                        what
+                          ? {
+                              id: r.appointment_id,
+                              what,
+                              from: "coming",
+                              row: r,
+                            }
+                          : null,
+                      )
                     }
                     reload={reloadCalls}
                   />
@@ -277,6 +300,7 @@ function OwedCard({
   error,
   reload,
   team,
+  now,
   open,
   setOpen,
 }: {
@@ -285,18 +309,20 @@ function OwedCard({
   error: string | null;
   reload: () => void;
   team: boolean;
-  open: { id: string; what: "reschedule" | "tell" | "again" } | null;
-  setOpen: (
-    o: { id: string; what: "reschedule" | "tell" | "again" } | null,
-  ) => void;
+  now: number;
+  open: Open;
+  setOpen: (o: Open) => void;
 }) {
-  const list = rows ?? [];
+  const owedCount = (rows ?? []).length;
+  const list = keepOpenRow(rows ?? [], open, "owed", true);
+  // Each row's mark on hold, so its Reschedule drops it (MarkHold).
+  const holds = useRef(new Map<string, MarkHold>());
   return (
     <SectionCard
       title={
         <span className="inline-flex items-center gap-2">
           Mark these calls
-          {list.length ? (
+          {owedCount ? (
             <span
               className="rounded-full px-1.5 text-xs font-semibold tabular-nums"
               style={{
@@ -304,7 +330,7 @@ function OwedCard({
                 color: "var(--warning-foreground)",
               }}
             >
-              {list.length}
+              {owedCount}
             </span>
           ) : null}
         </span>
@@ -332,52 +358,91 @@ function OwedCard({
             one as soon as it ends.
           </p>
           <ul className="divide-y hairline">
-            {list.slice(0, 15).map(r => (
-              <li key={r.appointment_id}>
-                <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center hover:bg-white/[0.02] transition-colors">
-                  <div className="min-w-0 flex-1">
-                    <Link
-                      to={`/lead/${r.contact_id ?? ""}`}
-                      className="block truncate text-sm font-semibold hover:underline hover:text-[color:var(--primary)] transition-colors"
-                      dir="auto"
-                    >
-                      {r.contact_name ?? "A lead"}
-                    </Link>
-                    <p className="muted text-xs mt-0.5">
-                      <Parts
-                        items={[
-                          callType(r.call_type),
-                          when(r.start_at),
-                          team ? r.assigned_user_name : null,
-                        ]}
+            {list.slice(0, 15).map(r => {
+              const rowOpen =
+                open?.id === r.appointment_id && open.from === "owed"
+                  ? open.what
+                  : null;
+              return (
+                <li key={r.appointment_id}>
+                  <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center hover:bg-white/[0.02] transition-colors">
+                    <div className="min-w-0 flex-1">
+                      <Link
+                        to={`/lead/${r.contact_id ?? ""}`}
+                        className="block truncate text-sm font-semibold hover:underline hover:text-[color:var(--primary)] transition-colors"
+                        dir="auto"
+                      >
+                        {r.contact_name ?? "A lead"}
+                      </Link>
+                      <p className="muted text-xs mt-0.5">
+                        <Parts
+                          items={[
+                            callType(r.call_type),
+                            when(r.start_at),
+                            team ? r.assigned_user_name : null,
+                          ]}
+                        />
+                      </p>
+                    </div>
+                    {/* In its first 20 minutes a call can still be rescheduled
+                      (sales-api's late rule), as on the lead page; the
+                      picker under the row then carries the controls. */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {rowOpen === "reschedule" ? null : (
+                        <MarkControls
+                          row={r}
+                          variant="row"
+                          onDone={() => reload()}
+                          onMarked={status => {
+                            if (status === "noshow" || status === "cancelled")
+                              setOpen({
+                                id: r.appointment_id,
+                                what: "again",
+                                from: "owed",
+                                row: r,
+                              });
+                          }}
+                          hold={h => {
+                            if (h) holds.current.set(r.appointment_id, h);
+                            else holds.current.delete(r.appointment_id);
+                          }}
+                          compact
+                        />
+                      )}
+                      {r.contact_id && !rowOpen ? (
+                        <RowButtons
+                          row={r}
+                          open={null}
+                          now={now}
+                          onOpen={what => {
+                            if (!what) return;
+                            holds.current.get(r.appointment_id)?.drop();
+                            setOpen({
+                              id: r.appointment_id,
+                              what,
+                              from: "owed",
+                              row: r,
+                            });
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                  </div>
+                  {rowOpen && rowOpen !== "tell" ? (
+                    <div className="px-3 pb-3 sm:px-4">
+                      <RowPanel
+                        me={me}
+                        row={r}
+                        what={rowOpen}
+                        source="today"
+                        onClose={() => setOpen(null)}
+                        onDone={() => reload()}
                       />
-                    </p>
-                  </div>
-                  <MarkControls
-                    row={r}
-                    variant="row"
-                    onDone={() => reload()}
-                    onMarked={status => {
-                      if (status === "noshow" || status === "cancelled")
-                        setOpen({ id: r.appointment_id, what: "again" });
-                    }}
-                    compact
-                  />
-                </div>
-                {open?.id === r.appointment_id && open.what === "again" ? (
-                  <div className="px-3 pb-3 sm:px-4">
-                    <RowPanel
-                      me={me}
-                      row={r}
-                      what="again"
-                      source="today"
-                      onClose={() => setOpen(null)}
-                      onDone={() => reload()}
-                    />
-                  </div>
-                ) : null}
-              </li>
-            ))}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
           {list.length > 15 ? (
             <p className="muted border-t hairline px-4 py-2 text-xs">

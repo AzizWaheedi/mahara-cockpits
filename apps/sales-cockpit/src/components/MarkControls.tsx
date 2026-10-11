@@ -70,6 +70,19 @@ const REASONS = [
   "Other",
 ];
 
+/**
+ * A row's hold on a mark, for the buttons beside it (2026-10-11 review):
+ * Reschedule pressed inside Didn't happen's five seconds means "move it,
+ * it was not a no-show", so it drops the mark (nothing is sent) before the
+ * picker opens. Without this, the picker opening unmounted these controls,
+ * whose leave-the-page rule sent the no-show at once, and HighLevel's
+ * no-show message went to the lead.
+ */
+export interface MarkHold {
+  /** Drops a mark still inside its five seconds; true when there was one. */
+  drop: () => boolean;
+}
+
 export interface MarkResult {
   /** The mark's own id (the row the calendar then shows as mark_id). */
   id?: number;
@@ -98,6 +111,7 @@ export function MarkControls({
   variant = "full",
   disqualify = true,
   onMarked,
+  hold,
 }: {
   row: CalendarRow;
   onDone: (r: MarkResult) => void;
@@ -119,6 +133,8 @@ export function MarkControls({
   disqualify?: boolean;
   /** The mark went to the server: the parent opens the picker to book again. */
   onMarked?: (status: MarkStatus) => void;
+  /** Hands the parent a way to drop a mark still on hold (null on unmount). */
+  hold?: (h: MarkHold | null) => void;
 }) {
   const [asking, setAsking] = useState(false);
   const [pending, setPending] = useState<{
@@ -207,6 +223,22 @@ export function MarkControls({
     },
     [],
   );
+
+  // The row's own Reschedule drops a mark still inside its five seconds
+  // (MarkHold): pressed then, it means the call is moving, not missed.
+  const holdRef = useRef(hold);
+  holdRef.current = hold;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: registers once; undo reads refs and a state setter only
+  useEffect(() => {
+    holdRef.current?.({
+      drop: () => {
+        if (!toSend.current) return false;
+        undo();
+        return true;
+      },
+    });
+    return () => holdRef.current?.(null);
+  }, []);
 
   if (pending && variant === "row")
     return (

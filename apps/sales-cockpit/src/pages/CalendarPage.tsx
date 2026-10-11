@@ -4,7 +4,7 @@ import {
   History,
   type LucideIcon,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { RowButtons, RowPanel } from "../components/CallsCard";
 import {
@@ -17,7 +17,11 @@ import {
   StatusChip,
   type Tone,
 } from "../components/kit";
-import { CrmLine, MarkControls } from "../components/MarkControls";
+import {
+  CrmLine,
+  MarkControls,
+  type MarkHold,
+} from "../components/MarkControls";
 import { useScope } from "../components/Scope";
 import {
   type Loaded,
@@ -38,6 +42,7 @@ import {
   kuwaitMidnight,
   statusLabel,
 } from "../lib/format";
+import { orderDays, withHeld } from "../lib/heldRows";
 import { liveChip } from "../lib/reschedule";
 import { supabase } from "../lib/supabase";
 import type { CalendarRow, Me } from "../lib/types";
@@ -105,6 +110,33 @@ function startOf(r: CalendarRow): number {
 function open(r: CalendarRow): boolean {
   const s = r.status ?? "new";
   return s === "new" || s === "confirmed";
+}
+
+/** A row's Kuwait day, the key Days groups by. */
+function dayKey(r: CalendarRow): string {
+  const t = startOf(r);
+  return Number.isFinite(t) ? kuwaitDay(t) : "";
+}
+
+/**
+ * Rows with a panel open under them (a picker, Tell them, or book it again),
+ * as they were when it opened (2026-10-11 review). Until the panel closes
+ * such a row stays in its day's card and in the list: a call moved to
+ * another day changed cards, and one marked missed or moved out of the view
+ * left the list, and either way the panel went with it, Tell them included.
+ */
+type Held = Record<string, { row: CalendarRow; day: string }>;
+
+function useHeld(): [Held, (r: CalendarRow, on: boolean) => void] {
+  const [held, setHeld] = useState<Held>({});
+  const hold = (r: CalendarRow, on: boolean) =>
+    setHeld(h => {
+      const next = { ...h };
+      if (on) next[r.appointment_id] = { row: r, day: dayKey(r) };
+      else delete next[r.appointment_id];
+      return next;
+    });
+  return [held, hold];
 }
 
 /** Owed a mark, or a past follow-up or callback still sitting as booked. */
@@ -355,7 +387,11 @@ function SpanView({
     return upcoming ? list : list.reverse();
   }, [cal.data, upcoming, now]);
   const capped = (cal.data?.length ?? 0) >= CALENDAR_CAP;
-  const shown = type ? rows.filter(r => r.call_type === type) : rows;
+  const [held, hold] = useHeld();
+  const shown = withHeld(
+    type ? rows.filter(r => r.call_type === type) : rows,
+    held,
+  );
   const reload = () => {
     cal.reload();
     onMarked();
@@ -368,7 +404,17 @@ function SpanView({
     body = <p className="muted text-sm">Reading the calendar…</p>;
   else if (shown.length)
     body = (
-      <Days me={me} rows={shown} now={now} team={team} reload={reload} tally />
+      <Days
+        me={me}
+        rows={shown}
+        now={now}
+        team={team}
+        reload={reload}
+        held={held}
+        hold={hold}
+        desc={!upcoming}
+        tally
+      />
     );
   else if (upcoming)
     body = (
@@ -450,7 +496,11 @@ function OwedView({
 }) {
   const rows = owed.data ?? [];
   const capped = rows.length >= OWED_CAP;
-  const shown = type ? rows.filter(r => r.call_type === type) : rows;
+  const [held, hold] = useHeld();
+  const shown = withHeld(
+    type ? rows.filter(r => r.call_type === type) : rows,
+    held,
+  );
   const backlog = useBacklog(mine, type);
   const before = day(new Date(now - OWED_DAYS * DAY_MS).toISOString());
   const older = backlog.data;
@@ -464,7 +514,16 @@ function OwedView({
     body = <p className="muted text-sm">Reading the calls to mark…</p>;
   else if (shown.length)
     body = (
-      <Days me={me} rows={shown} now={now} team={team} reload={owed.reload} />
+      <Days
+        me={me}
+        rows={shown}
+        now={now}
+        team={team}
+        reload={owed.reload}
+        held={held}
+        hold={hold}
+        desc
+      />
     );
   else
     body = (
@@ -533,13 +592,20 @@ function Empty({
   );
 }
 
-/** Rows under one card per Kuwait day, in the order they came. */
+/**
+ * Rows under one card per Kuwait day, in the order they came, the days in
+ * order (newest first when `desc`). A held row stays in the day it was in
+ * when its panel opened.
+ */
 function Days({
   me,
   rows,
   now,
   team,
   reload,
+  held,
+  hold,
+  desc = false,
   tally = false,
 }: {
   me: Me;
@@ -547,21 +613,31 @@ function Days({
   now: number;
   team: boolean;
   reload: () => void;
+  held: Held;
+  hold: (r: CalendarRow, on: boolean) => void;
+  desc?: boolean;
   /** Say beside each day how many of its calls still need a mark. */
   tally?: boolean;
 }) {
   const days = new Map<string, CalendarRow[]>();
   for (const r of rows) {
-    const t = startOf(r);
-    const key = Number.isFinite(t) ? kuwaitDay(t) : "";
+    const key = held[r.appointment_id]?.day ?? dayKey(r);
     const list = days.get(key);
     if (list) list.push(r);
     else days.set(key, [r]);
   }
+  const ordered = orderDays([...days.keys()], desc).map(
+    k => [k, days.get(k) ?? []] as const,
+  );
   return (
     <div className="space-y-6">
-      {[...days].map(([key, list]) => {
-        const iso = list[0]?.start_at ?? null;
+      {ordered.map(([key, list]) => {
+        // The day's own date: a held row moved elsewhere still sits here.
+        const iso =
+          list.find(r => dayKey(r) === key)?.start_at ??
+          held[list[0]?.appointment_id ?? ""]?.row.start_at ??
+          list[0]?.start_at ??
+          null;
         const title = key ? dayLabel(iso, now) : "No time set";
         const date =
           key && iso && RELATIVE.has(title)
@@ -595,6 +671,7 @@ function Days({
                   now={now}
                   team={team}
                   reload={reload}
+                  onHold={on => hold(r, on)}
                 />
               ))}
             </ul>
@@ -611,16 +688,28 @@ function CallRow({
   now,
   team,
   reload,
+  onHold,
 }: {
   me: Me;
   r: CalendarRow;
   now: number;
   team: boolean;
   reload: () => void;
+  /** A panel opened or closed under this row (Days keeps it in place). */
+  onHold: (on: boolean) => void;
 }) {
-  const [open, setOpen] = useState<"reschedule" | "tell" | "again" | null>(
+  const [open, setOpenState] = useState<"reschedule" | "tell" | "again" | null>(
     null,
   );
+  const setOpen = (what: "reschedule" | "tell" | "again" | null) => {
+    setOpenState(what);
+    onHold(what !== null);
+  };
+  // The mark on hold (Didn't happen's five seconds): Reschedule drops it.
+  const markHold = useRef<MarkHold | null>(null);
+  // The picker under the row carries the controls while it is open.
+  const showMarks = markable(r, now) && open !== "reschedule";
+  const showButtons = Boolean(r.contact_id) && !open;
   const live = liveChip(r, now);
   const chip =
     live.label === "Rescheduled" && startOf(r) > now
@@ -679,22 +768,40 @@ function CallRow({
               </div>
             ) : null}
           </div>
-          {markable(r, now) ? (
-            <MarkControls
-              row={r}
-              variant="row"
-              onDone={() => reload()}
-              onMarked={status => {
-                if (
-                  (status === "noshow" || status === "cancelled") &&
-                  r.contact_id
-                )
-                  setOpen("again");
-              }}
-              compact
-            />
-          ) : r.contact_id && open !== "again" ? (
-            <RowButtons row={r} open={open} onOpen={setOpen} now={now} />
+          {/* In its first 20 minutes a call shows Reschedule beside the
+              marks, as on the lead page (sales-api's late rule). */}
+          {showMarks || showButtons ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {showMarks ? (
+                <MarkControls
+                  row={r}
+                  variant="row"
+                  onDone={() => reload()}
+                  onMarked={status => {
+                    if (
+                      (status === "noshow" || status === "cancelled") &&
+                      r.contact_id
+                    )
+                      setOpen("again");
+                  }}
+                  hold={h => {
+                    markHold.current = h;
+                  }}
+                  compact
+                />
+              ) : null}
+              {showButtons ? (
+                <RowButtons
+                  row={r}
+                  open={null}
+                  now={now}
+                  onOpen={what => {
+                    if (what === "reschedule") markHold.current?.drop();
+                    setOpen(what);
+                  }}
+                />
+              ) : null}
+            </div>
           ) : null}
         </div>
       </div>

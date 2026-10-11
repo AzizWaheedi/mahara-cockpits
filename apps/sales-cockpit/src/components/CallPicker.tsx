@@ -110,6 +110,15 @@ const codeOf = (e: unknown) => (e instanceof ApiError ? e.code : null);
 let keyOwner = 0;
 let pickerSeq = 0;
 
+/** Some of the element is in the window, away from its very edges. */
+function onScreen(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  const h = window.innerHeight || document.documentElement.clientHeight;
+  return r.top < h - 48 && r.bottom > 48;
+}
+
 function typing(): boolean {
   const el = document.activeElement as HTMLElement | null;
   if (!el) return false;
@@ -626,6 +635,11 @@ export function CallPicker({
       if (keyOwner !== myId.current) return;
       const k = pickerKey(e, typing());
       if (!k) return;
+      // Only a picker the rep can see answers (2026-10-11 review): the
+      // script's Book the demo block sits below the lines being read, and a
+      // stray 1 after ticking a box started a booking whose strip and Undo
+      // were off the screen, so HighLevel's confirmation reached the lead.
+      if (!onScreen(rootRef.current)) return;
       const s = keyState.current;
       if (k === "esc") {
         if (s.phase.k === "hold") s.undo();

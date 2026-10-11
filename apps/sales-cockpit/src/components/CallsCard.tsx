@@ -1,5 +1,5 @@
 import { CalendarClock, MessageCircle, TriangleAlert } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useRef, useState } from "react";
 import { isClient } from "../lib/clients";
 import { useLead, useUnverifiedMoves } from "../lib/data";
 import { ghlContactUrl } from "../lib/highlevel";
@@ -28,7 +28,7 @@ import type { CalendarRow, Me } from "../lib/types";
 import type { Lang } from "../lib/zoomLink";
 import { CallPicker, type PickerDone } from "./CallPicker";
 import { button, Failed, Reading, StatusChip, type Tone } from "./kit";
-import { CrmLine, MarkControls } from "./MarkControls";
+import { CrmLine, MarkControls, type MarkHold } from "./MarkControls";
 import { TellThem } from "./TellThem";
 
 /**
@@ -42,7 +42,11 @@ import { TellThem } from "./TellThem";
  */
 
 type Panel =
-  | { what: "reschedule" | "tell"; id: string }
+  // `at`: the call's time when the panel opened. The row keeps that place
+  // in its group until the panel closes, so a move that changes the order
+  // (a later call moved before the next one) never remounts the picker and
+  // loses its done state, with Tell them, under the rep's thumb.
+  | { what: "reschedule" | "tell"; id: string; at: string | null }
   | { what: "book"; kind: CallKind; missed: CalendarRow | null }
   | null;
 
@@ -94,7 +98,14 @@ export function CallsCard({
     return m && m !== r.start_at ? m : r.start_at;
   };
   const list = rows ?? [];
-  const groups = groupCalls(list, now, startOf);
+  const groups = groupCalls(list, now, r =>
+    panel && panel.what !== "book" && panel.id === r.appointment_id
+      ? panel.at
+      : startOf(r),
+  );
+  // Each row's mark on hold (Didn't happen's five seconds), so its own
+  // Reschedule can drop it instead of sending it (MarkHold).
+  const holds = useRef(new Map<string, MarkHold>());
   const miss = latestMiss(list, now);
   const suggest = client ? null : suggestedBook(list, false, now);
   const leadDnd = { ...lead, dnd };
@@ -193,13 +204,24 @@ export function CallsCard({
           if (status === "noshow" || status === "cancelled")
             setPanel({ what: "book", kind: kindOf(r.call_type), missed: r });
         }}
+        hold={h => {
+          if (h) holds.current.set(r.appointment_id, h);
+          else holds.current.delete(r.appointment_id);
+        }}
       />
     ) : null;
     const resched = acts.includes("reschedule") ? (
       <button
         type="button"
         className={`${ROW_BTN} ${big ? "max-sm:flex-1" : ""}`}
-        onClick={() => setPanel({ what: "reschedule", id: r.appointment_id })}
+        onClick={() => {
+          holds.current.get(r.appointment_id)?.drop();
+          setPanel({
+            what: "reschedule",
+            id: r.appointment_id,
+            at: startOf(r),
+          });
+        }}
       >
         <CalendarClock className="size-3.5" aria-hidden />
         Reschedule
@@ -209,7 +231,9 @@ export function CallsCard({
       <button
         type="button"
         className={`${ROW_BTN} ${big ? "max-sm:flex-1" : ""}`}
-        onClick={() => setPanel({ what: "tell", id: r.appointment_id })}
+        onClick={() =>
+          setPanel({ what: "tell", id: r.appointment_id, at: startOf(r) })
+        }
       >
         <MessageCircle className="size-3.5" aria-hidden />
         Tell them
