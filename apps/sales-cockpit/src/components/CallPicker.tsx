@@ -1029,6 +1029,7 @@ export function CallPicker({
               // allows it: as sales-api answered the booking or the move, else
               // the calendar read's (a move keeps the call's id).
               link={doneLink(d.mode, d.link, slots?.reschedule_link)}
+              linkNote={linkLine(slots?.window_until ?? slots?.until)}
               extra={extras}
             />
           ) : (
@@ -1827,6 +1828,7 @@ export function CallPicker({
               moment="pick_time"
               lang={lang}
               link={slots.reschedule_link}
+              linkNote={linkLine(slots.window_until ?? slots.until)}
               extra={
                 <button
                   type="button"
@@ -1837,9 +1839,6 @@ export function CallPicker({
                 </button>
               }
             />
-            <p className="muted mt-2 text-xs">
-              {linkLine(slots.window_until ?? slots.until)}
-            </p>
           </div>
         ) : (
           <div className="space-y-0.5">

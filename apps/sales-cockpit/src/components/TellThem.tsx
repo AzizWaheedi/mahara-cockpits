@@ -7,6 +7,7 @@ import {
   firstOf,
   type LeadLike,
   leadFirst,
+  linkLine,
 } from "../lib/reschedule";
 import { supabase } from "../lib/supabase";
 import { TELL_LABELS, type TellMoment, tellMessage } from "../lib/tellThem";
@@ -113,6 +114,7 @@ export function TellThem({
   rescheduleId = null,
   link: given = null,
   readLink = false,
+  linkNote = null,
   label,
   extra,
 }: {
@@ -128,6 +130,12 @@ export function TellThem({
   link?: string | null;
   /** A call row's Tell them: read the lead's own link for this call (book.links) when none is given. */
   readLink?: boolean;
+  /**
+   * Under the pick-a-time message: what the lead sees on the link (linkLine
+   * with the booking page's last day, where the calendar was read); the same
+   * without the date when not given.
+   */
+  linkNote?: string | null;
   label?: string;
   /** Buttons that sit in the same row (Reschedule again, Done). */
   extra?: ReactNode;
@@ -256,6 +264,13 @@ export function TellThem({
       >
         {message}
       </p>
+      {linkMoment && link ? (
+        // The link offers only the booking page's own days: a call booked or
+        // moved past them gets no later day from it (review, 2026-10-11).
+        <p className="muted max-w-[38rem] text-xs leading-relaxed">
+          {linkNote ?? linkLine(null)}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         {digits && !blocked ? (
           <button
