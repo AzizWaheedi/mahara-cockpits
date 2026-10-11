@@ -4,21 +4,27 @@
 // reschedule (2026-10-11), against the design's tables.
 import { describe, expect, test } from "bun:test";
 import {
+  addDays,
   againLine,
   bookedAgain,
   callSubLine,
   clockLine,
+  dayBook,
   dayChips,
   dayLine,
   dayWords,
   defaultWith,
   doneSub,
   doneTitle,
+  farLine,
   groupCalls,
   holdWords,
+  isFarDay,
   isWhen,
   kindOf,
+  kwDay,
   latestMiss,
+  linkLine,
   liveChip,
   noTimesLine,
   pickerKey,
@@ -27,6 +33,8 @@ import {
   refusalLine,
   rowActions,
   rowPhase,
+  type Slots,
+  spanUntil,
   suggestedBook,
   theirTime,
   tiles,
@@ -34,6 +42,12 @@ import {
   timeParts,
   toastWords,
   untilWords,
+  weekOf,
+  weekRange,
+  weekSpan,
+  weekStartOf,
+  weekTitle,
+  weekToRead,
   whenWords,
 } from "./reschedule";
 
@@ -567,5 +581,249 @@ describe("the picker", () => {
     expect(defaultWith("demo", "closer")).toBe("me");
     expect(defaultWith("intro", "closer")).toBe("anyone");
     expect(defaultWith("follow_up", "manager")).toBe("me");
+  });
+});
+
+// ------------------------------------------------------------ booking further out (2026-10-11)
+
+/** A book.slots answer past the booking page: the demo's window ends Wed 14 Oct, the reach Tue 8 Dec. */
+function farSlots(over: Partial<Slots> = {}): Slots {
+  const at = (day: string, hm: string) => kw(`${day}T${hm}:00`);
+  return {
+    kind: "demo",
+    calendar_id: "jQqXS1YuFnmGZKLkrE62",
+    calendar: "Demo",
+    minutes: 45,
+    with: "same",
+    fallback: false,
+    on_team: true,
+    host: { user_id: "u-ahmad", name: "Ahmad Al Mutairi" },
+    notice: "",
+    until: "2026-12-08",
+    window_until: "2026-10-14",
+    reach_until: "2026-12-08",
+    page: {
+      from: "2026-10-11",
+      to: "2026-10-24",
+      prev: null,
+      next: "2026-10-25",
+    },
+    days: [
+      {
+        day: "2026-10-12",
+        slots: [at("2026-10-12", "10:00"), at("2026-10-12", "16:00")],
+      },
+      { day: "2026-10-14", slots: [at("2026-10-14", "11:00")] },
+      { day: "2026-10-15", slots: [at("2026-10-15", "09:00")], far: true },
+      {
+        day: "2026-10-18",
+        slots: [at("2026-10-18", "08:00"), at("2026-10-18", "09:00")],
+        far: true,
+      },
+    ],
+    far: { state: "ok", agreed: true, note: null },
+    existing: null,
+    moving: null,
+    ...over,
+  };
+}
+
+describe("Another day, a week at a time, past the booking page", () => {
+  test("the week starts on Sunday; its title and its days", () => {
+    expect(kwDay(NOW)).toBe("2026-10-11");
+    expect(weekStartOf("2026-10-15")).toBe("2026-10-11");
+    expect(weekStartOf("2026-10-11")).toBe("2026-10-11");
+    expect(addDays("2026-10-31", 1)).toBe("2026-11-01");
+    expect(weekTitle("2026-10-11", NOW)).toBe("This week");
+    expect(weekTitle("2026-10-18", NOW)).toBe("Next week");
+    expect(weekTitle("2026-10-25", NOW)).toBe("Week of 25 Oct");
+    expect(weekRange("2026-10-11")).toBe("11–17 Oct");
+    expect(weekRange("2026-10-25")).toBe("25–31 Oct");
+    expect(weekRange("2026-11-29")).toBe("29 Nov – 5 Dec");
+  });
+
+  test("each day's count of times ahead; the edge before the first day past the booking page", () => {
+    const cells = weekOf(dayBook(farSlots()), "2026-10-11", NOW);
+    expect(cells.map(c => `${c.wd} ${c.num} ${c.count}`)).toEqual([
+      "Sun 11 0",
+      "Mon 12 2",
+      "Tue 13 0",
+      "Wed 14 1",
+      "Thu 15 1",
+      "Fri 16 0",
+      "Sat 17 0",
+    ]);
+    expect(cells.filter(c => c.edgeBefore).map(c => c.day)).toEqual([
+      "2026-10-15",
+    ]);
+    expect(cells.filter(c => c.far).map(c => c.day)).toEqual([
+      "2026-10-15",
+      "2026-10-16",
+      "2026-10-17",
+    ]);
+    expect(cells[0].today).toBe(true);
+    // A day with no time cannot be pressed; one with times can.
+    expect(cells[0].disabled).toBe(true);
+    expect(cells[1].disabled).toBe(false);
+    expect(cells[1].label).toBe("Mon 12 Oct");
+  });
+
+  test("a day before today or past the reach is not offered; a day not read yet says so", () => {
+    const book = dayBook(farSlots());
+    const back = weekOf(book, "2026-10-04", NOW);
+    expect(back.every(c => c.count === null && c.disabled)).toBe(true);
+    const later = weekOf(book, "2026-10-25", NOW);
+    expect(later.every(c => c.reading && c.count === null)).toBe(true);
+    expect(weekToRead(book, "2026-10-25", NOW)).toBe("2026-10-25");
+    expect(weekToRead(book, "2026-10-18", NOW)).toBeNull();
+    const last = weekOf(book, "2026-12-06", NOW);
+    expect(last.map(c => c.reading)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(weekSpan(book, NOW)).toEqual({
+      first: "2026-10-11",
+      last: "2026-12-06",
+    });
+  });
+
+  test("a later page answers for every day it covers", () => {
+    const later = farSlots({
+      page: {
+        from: "2026-10-25",
+        to: "2026-11-07",
+        prev: "2026-10-11",
+        next: "2026-11-08",
+      },
+      days: [
+        { day: "2026-10-26", slots: [kw("2026-10-26T10:00:00")], far: true },
+      ],
+      slot_hosts: {
+        [kw("2026-10-26T10:00:00")]: { user_id: "u-o", name: "Omar Haddad" },
+      },
+    });
+    const book = dayBook(farSlots(), [later]);
+    expect(book.read).toEqual([
+      ["2026-10-11", "2026-10-24"],
+      ["2026-10-25", "2026-11-07"],
+    ]);
+    expect(weekToRead(book, "2026-10-25", NOW)).toBeNull();
+    const cells = weekOf(book, "2026-10-25", NOW);
+    expect(cells.map(c => c.count)).toEqual([0, 1, 0, 0, 0, 0, 0]);
+    expect(book.slot_hosts[kw("2026-10-26T10:00:00")].name).toBe("Omar Haddad");
+  });
+
+  test("an answer from before the far-out build (no page): everything it sent, up to its own last day", () => {
+    const old = farSlots({
+      page: undefined,
+      window_until: undefined,
+      reach_until: undefined,
+      far: undefined,
+      until: "2026-10-14",
+      days: farSlots().days.filter(d => !d.far),
+    });
+    const book = dayBook(old);
+    expect(book.read).toBeNull();
+    const cells = weekOf(book, "2026-10-11", NOW);
+    expect(cells.map(c => c.count)).toEqual([0, 2, 0, 1, null, null, null]);
+    expect(cells.some(c => c.edgeBefore || c.far || c.reading)).toBe(false);
+    expect(weekSpan(book, NOW).last).toBe("2026-10-11");
+  });
+
+  test("tiles past the booking page are marked far; the hold says so", () => {
+    const s = farSlots({
+      days: [
+        { day: "2026-10-15", slots: [kw("2026-10-15T09:00:00")], far: true },
+      ],
+    });
+    expect(isFarDay("2026-10-15", s)).toBe(true);
+    expect(isFarDay("2026-10-14", s)).toBe(false);
+    // After window_until even without the mark.
+    expect(isFarDay("2026-10-20", s)).toBe(true);
+    expect(tiles(s, faisal, 4, NOW)[0].far).toBe(true);
+    expect(
+      holdWords("reschedule", "demo", kw("2026-10-15T09:00:00"), NOW, {
+        far: true,
+      }),
+    ).toBe("Rescheduling to Thu 15 Oct, 9:00 am · past the booking page");
+    expect(
+      holdWords("book", "intro", kw("2026-11-04T20:00:00"), NOW, {
+        far: true,
+        outside: true,
+        host: "Ahmad Al Mutairi",
+      }),
+    ).toBe("Booking the intro for Wed 4 Nov, 8:00 pm · outside Ahmad's hours");
+  });
+
+  test("the lines: where the booking page stops, what the lead's link shows, how far 'no free time' reaches", () => {
+    expect(farLine({ windowUntil: "2026-10-14", who: "Ahmad" })).toBe(
+      "The lead's booking page stops at Wed 14 Oct. Later times come from Ahmad's working hours and calendar.",
+    );
+    expect(farLine({ windowUntil: "2026-10-14", who: "you" })).toBe(
+      "The lead's booking page stops at Wed 14 Oct. Later times come from your working hours and calendar.",
+    );
+    expect(farLine({ windowUntil: "2026-10-14", who: null })).toContain(
+      "each person's working hours",
+    );
+    expect(farLine({ windowUntil: null, who: "Ahmad" })).toBeNull();
+    expect(linkLine("2026-10-13")).toBe(
+      "They'll see the booking page's own days, up to Tue 13 Oct.",
+    );
+    expect(linkLine(null)).toBe("They'll see the booking page's own days.");
+    // "Another day" names the reach; "no free time" only what was read.
+    expect(untilWords(farSlots())).toBe("up to Tue 8 Dec");
+    expect(spanUntil(farSlots())).toBe("up to Sat 24 Oct");
+    expect(
+      spanUntil(
+        farSlots({
+          far: { state: "unread", agreed: null, note: "x" },
+          until: "2026-10-14",
+        }),
+      ),
+    ).toBe("up to Wed 14 Oct");
+  });
+
+  test("the new refusals: Book anyway outside hours; a busy host or an unread calendar reads again", () => {
+    expect(
+      refusalLine("outside_hours", "That's outside Ahmad's working hours."),
+    ).toEqual({
+      text: "That's outside Ahmad's working hours.",
+      tone: "warn",
+      reread: false,
+      blocked: false,
+      anyway: true,
+    });
+    expect(refusalLine("host_busy", "Ahmad has another call.").reread).toBe(
+      true,
+    );
+    expect(refusalLine("far_unread", "Could not check.").reread).toBe(true);
+    for (const code of ["beyond_reach", "step", "host_needed"]) {
+      const a = refusalLine(code, "Pick another.");
+      expect(a).toEqual({
+        text: "Pick another.",
+        tone: "warn",
+        reread: false,
+        blocked: false,
+      });
+    }
+  });
+
+  test("the done state says a custom time sits outside the host's hours", () => {
+    expect(
+      doneSub({
+        mode: "reschedule",
+        iso: kw("2026-11-04T20:00:00"),
+        lead: faisal,
+        host: "Ahmad Al Mutairi",
+        outside: true,
+      }),
+    ).toBe(
+      "Kuwait time, with Ahmad. Outside Ahmad's working hours. HighLevel's reminders now follow the new time.",
+    );
   });
 });
