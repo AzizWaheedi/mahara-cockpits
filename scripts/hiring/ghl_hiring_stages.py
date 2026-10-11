@@ -343,21 +343,28 @@ def run(get: Get, put: Put, loc: str, *, apply: bool, undo: bool, calendar: bool
         found, cal_body = cal
         status, before = get(f"/calendars/{found['id']}", "2021-04-15")
         before = (before or {}).get("calendar", before) if status == 200 else None
-        status, out = put(f"/calendars/{found['id']}", cal_body, "2021-04-15")
-        if status >= 300:
+        # HighLevel's calendar PUT treats a missing openHours as none at all: a
+        # name-only PUT on 2026-10-11 left the one-to-one calendar with no open
+        # hours (restored by hand the same hour). Send the hours it has, and
+        # never write a calendar whose hours could not be read first.
+        if not before or not before.get("openHours"):
             failed += 1
-            say(f"FAILED calendar: {status} {str(out)[:200]}")
+            say("FAILED calendar: its open hours could not be read first, so it was left alone")
         else:
-            s2, after = get(f"/calendars/{found['id']}", "2021-04-15")
-            after = (after or {}).get("calendar", after) if s2 == 200 else None
-            drift = (calendar_drift(before or {}, after or {}, tuple(cal_body)) if before and after
-                     else ["could not read it back"])
-            wrong = [k for k, want in cal_body.items() if not after or str(after.get(k) or "") != want]
-            if not after or wrong or drift:
+            status, out = put(f"/calendars/{found['id']}", {**cal_body, "openHours": before["openHours"]}, "2021-04-15")
+            if status >= 300:
                 failed += 1
-                say(f"CHECK calendar: not as asked: {', '.join(wrong) or 'nothing'}; also changed: {', '.join(drift) or 'nothing'}")
+                say(f"FAILED calendar: {status} {str(out)[:200]}")
             else:
-                say(f"  done calendar: {', '.join(cal_body)} as asked, nothing else changed")
+                s2, after = get(f"/calendars/{found['id']}", "2021-04-15")
+                after = (after or {}).get("calendar", after) if s2 == 200 else None
+                drift = (calendar_drift(before, after or {}, tuple(cal_body)) if after else ["could not read it back"])
+                wrong = [k for k, want in cal_body.items() if not after or str(after.get(k) or "") != want]
+                if not after or wrong or drift:
+                    failed += 1
+                    say(f"CHECK calendar: not as asked: {', '.join(wrong) or 'nothing'}; also changed: {', '.join(drift) or 'nothing'}")
+                else:
+                    say(f"  done calendar: {', '.join(cal_body)} as asked, nothing else changed")
 
     say("Nothing else was touched: no workflow, contact, card or message, and no other custom value." + (" Some steps need a look (above)." if failed else ""))
     return 1 if failed else 0

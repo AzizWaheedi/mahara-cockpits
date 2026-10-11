@@ -26,6 +26,9 @@ def board(pid, name, one="One to one interview"):
     }
 
 
+OPEN_HOURS = [{"daysOfTheWeek": [d], "hours": [{"openHour": 10, "openMinute": 0, "closeHour": 18, "closeMinute": 0}]} for d in (6, 0, 1, 2, 3, 4)]
+
+
 class FakeGhl:
     """The parts of the hiring sub-account the script reads and writes."""
 
@@ -37,7 +40,7 @@ class FakeGhl:
                         "fieldKey": "contact.score_onetoone"}]
         self.calendar = {"id": "c1", "name": "One-to-one interview" if renamed else "One to one interview",
                          "description": f"Book your {'one-to-one' if renamed else 'one to one'}. It is held on Zoom.",
-                         "slotDuration": 30, "teamMembers": [{"userId": "u"}]}
+                         "slotDuration": 30, "teamMembers": [{"userId": "u"}], "openHours": OPEN_HOURS}
         self.values = [
             {"id": "v1", "name": "Call centre agent - Test project", "fieldKey": "{{ custom_values.cc_test }}",
              "value": f"A fifteen minute live block after the {'one-to-one' if renamed else 'one to one'}: a speed test."},
@@ -77,7 +80,10 @@ class FakeGhl:
             v.update(body)
             return 200, {}
         if path == "/calendars/c1":
+            # As HighLevel did on 2026-10-11: a PUT without openHours leaves none.
             self.calendar.update(body)
+            if "openHours" not in body:
+                self.calendar["openHours"] = {}
             return 200, {}
         return 404, "unrouted"
 
@@ -188,7 +194,16 @@ class Run(unittest.TestCase):
         code, out = run(ghl, apply=True, calendar=True)
         self.assertEqual(code, 0, out)
         cal_puts = [b for p, b in ghl.puts if p == "/calendars/c1"]
-        self.assertEqual(cal_puts, [{"description": "Book your one-to-one. It is held on Zoom."}])
+        self.assertEqual(cal_puts, [{"description": "Book your one-to-one. It is held on Zoom.", "openHours": OPEN_HOURS}])
+        self.assertEqual(ghl.calendar["openHours"], OPEN_HOURS)
+
+    def test_a_calendar_whose_hours_cannot_be_read_is_left_alone(self):
+        ghl = FakeGhl()
+        ghl.calendar["openHours"] = {}
+        code, out = run(ghl, apply=True, calendar=True)
+        self.assertEqual(code, 1, out)
+        self.assertIn("its open hours could not be read first", out)
+        self.assertEqual([p for p, _ in ghl.puts if p == "/calendars/c1"], [])
 
     def test_undo_puts_the_old_names_back(self):
         ghl = FakeGhl(renamed=True)
