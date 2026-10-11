@@ -18,7 +18,9 @@ test("a refused saved copy keeps the row's own still and leaves the Meta thumbna
 });
 
 test("a still that is still loading does not blank the card either", () => {
-  const props = stillPropsFor(row, { "c:444444": { error: "Loading saved image." } });
+  const props = stillPropsFor(row, {
+    "c:444444": { error: "Loading saved image." },
+  });
   expect(props.backupStillUrl).toBe(rowStill);
 });
 
@@ -30,7 +32,8 @@ test("a saved copy, when it loads, comes first and the row's still is the backup
 });
 
 test("links to the retired Convex file store are never tried", () => {
-  const dead = "https://adorable-seahorse-418.convex.cloud/api/storage/d0adff4c-7578";
+  const dead =
+    "https://adorable-seahorse-418.convex.cloud/api/storage/d0adff4c-7578";
   expect(deadStillHost(dead)).toBe(true);
   expect(deadStillHost(rowStill)).toBe(false);
   expect(uniqueUrls([dead, rowStill, rowStill, null])).toEqual([rowStill]);

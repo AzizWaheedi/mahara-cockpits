@@ -20,7 +20,16 @@ import { ChartContainer, ChartTooltip } from "./ui/chart";
  * Each one is a thin mark on the chart and reads in the tooltip, so a jump
  * sits next to its cause.
  */
-export type TrendPoint = { x: string; y: number | null; note?: string[] };
+export type TrendPoint = {
+  x: string;
+  y: number | null;
+  note?: string[];
+  /** The bucket holds today: still filling, so it never sets the change or the headline. */
+  partial?: boolean;
+  /** A ratio's parts (spend and leads for cost per lead), so periods compare as sum over sum. */
+  num?: number;
+  den?: number;
+};
 
 /** The marks: one hairline per point that has a change on it. */
 function changeMarks(points: TrendPoint[]) {
@@ -40,27 +49,53 @@ function changeMarks(points: TrendPoint[]) {
 const fmt = (v: number | null | undefined, unit: string) => {
   if (v === null || v === undefined || Number.isNaN(v)) return "";
   if (unit === "$")
-    return `$${v >= 100 ? Math.round(v) : v.toFixed(2).replace(/\.?0+$/, "")}`;
+    return `$${v >= 100 ? Math.round(v) : v.toFixed(2).replace(/\.00$/, "")}`;
   if (unit === "%") return `${Math.round(v)}%`;
   return v >= 1000
     ? `${(v / 1000).toFixed(1)}k`
     : String(Math.round(v * 10) / 10);
 };
 
-/** Change of the last third of the points against the third before it, as a percentage. */
-function delta(points: TrendPoint[], mode: "sum" | "avg"): number | null {
-  const ys = points.map(p => p.y).filter((y): y is number => y !== null);
-  if (ys.length < 6) return null;
-  const n = Math.floor(ys.length / 3);
-  const recent = ys.slice(-n);
-  const before = ys.slice(-2 * n, -n);
-  const agg = (a: number[]) =>
-    mode === "sum"
-      ? a.reduce((s, v) => s + v, 0)
-      : a.reduce((s, v) => s + v, 0) / a.length;
+/**
+ * Change of the last third of the complete points against the third before
+ * it, as a percentage. A ratio compares sum over sum (all the spend over all
+ * the leads), not the average of daily ratios, and a bucket still filling
+ * (today, this week) is left out so a half day never reads as a fall.
+ */
+export function delta(
+  points: TrendPoint[],
+  mode: "sum" | "avg",
+): number | null {
+  const done = points.filter(p => !p.partial);
+  const ratio = mode === "avg" && done.some(p => p.den !== undefined);
+  const use = ratio
+    ? done.filter(p => p.den !== undefined)
+    : done.filter(p => typeof p.y === "number" && !Number.isNaN(p.y));
+  if (use.length < 6) return null;
+  const n = Math.floor(use.length / 3);
+  const recent = use.slice(-n);
+  const before = use.slice(-2 * n, -n);
+  const total = (a: TrendPoint[], k: "y" | "num" | "den") =>
+    a.reduce((s, p) => s + Number(p[k] ?? 0), 0);
+  const agg = (a: TrendPoint[]): number | null => {
+    if (ratio) {
+      const d = total(a, "den");
+      return d ? total(a, "num") / d : null;
+    }
+    return mode === "sum" ? total(a, "y") : total(a, "y") / a.length;
+  };
   const b = agg(before);
-  if (!b) return null;
-  return Math.round(((agg(recent) - b) / Math.abs(b)) * 100);
+  const r = agg(recent);
+  if (!b || r === null) return null;
+  return Math.round(((r - b) / Math.abs(b)) * 100);
+}
+
+/** Whether a day (or the week starting on that Monday) still includes today. */
+export function partialBucket(key: string, weekly: boolean, today: string) {
+  if (!weekly) return key >= today;
+  const end = new Date(`${key}T00:00:00Z`);
+  end.setUTCDate(end.getUTCDate() + 6);
+  return end.toISOString().slice(0, 10) >= today;
 }
 
 export function TrendChart({
@@ -82,10 +117,14 @@ export function TrendChart({
   goodWhen?: "up" | "down";
   hint?: string;
 }) {
-  const last = [...points].reverse().find(p => p.y !== null)?.y ?? null;
+  // The last complete point: today's half day would read as a drop.
+  const lastPoint = [...points]
+    .reverse()
+    .find(p => typeof p.y === "number" && !p.partial);
+  const last = lastPoint?.y ?? null;
   const d = delta(points, mode);
   const good = d === null ? null : goodWhen === "up" ? d >= 0 : d <= 0;
-  const hasData = points.some(p => p.y !== null);
+  const hasData = points.some(p => typeof p.y === "number");
   const label = (x: string) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(x);
     return m ? `${Number(m[3])}/${Number(m[2])}` : x;
@@ -101,7 +140,7 @@ export function TrendChart({
           {d !== null ? (
             <span
               className={`text-xs tabular-nums ${good ? "txt-good" : "txt-bad"}`}
-              title="Last third of the period against the third before it"
+              title="The last third of the charted days against the third before them. Today is left out until it is over."
             >
               {d > 0 ? "+" : ""}
               {d}%
@@ -256,17 +295,36 @@ export function bucketDays<T extends { date: string }>(
     (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) /
     86400_000;
   const weekly = days > 45;
-  const buckets = new Map<string, T[]>();
-  for (const r of rows) {
-    if (r.date < from || r.date > to) continue;
-    let key = r.date.slice(0, 10);
+  const keyOf = (date: string) => {
+    let key = date.slice(0, 10);
     if (weekly) {
       const d = new Date(`${key}T00:00:00Z`);
       const day = (d.getUTCDay() + 6) % 7;
       d.setUTCDate(d.getUTCDate() - day);
       key = d.toISOString().slice(0, 10);
     }
+    return key;
+  };
+  const buckets = new Map<string, T[]>();
+  for (const r of rows) {
+    if (r.date < from || r.date > to) continue;
+    const key = keyOf(r.date);
     (buckets.get(key) ?? buckets.set(key, []).get(key))?.push(r);
+  }
+  // A quiet day between two days with data is a zero, not a gap: keep it on
+  // the axis so the thirds compare like with like. The edges are not filled,
+  // since before the first row or after the last the data may simply not
+  // have arrived yet.
+  const keys = [...buckets.keys()].sort();
+  if (keys.length > 1) {
+    const step = weekly ? 7 : 1;
+    const d = new Date(`${keys[0]}T00:00:00Z`);
+    const lastKey = keys[keys.length - 1];
+    while (d.toISOString().slice(0, 10) < lastKey) {
+      d.setUTCDate(d.getUTCDate() + step);
+      const k = d.toISOString().slice(0, 10);
+      if (!buckets.has(k)) buckets.set(k, []);
+    }
   }
   return [...buckets.entries()]
     .sort((a, b) => (a[0] < b[0] ? -1 : 1))
