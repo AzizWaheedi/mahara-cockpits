@@ -251,6 +251,14 @@ minutes:
 */5 * * * * flock -n $HOME/.ideation-radar/pending.lock bash -c 'set -a; . $HOME/.ideation-radar/env; set +a; cd $HOME/mahara-cockpits/hermes/ideation-radar && python3 radar.py --quiet pending' >> $HOME/.ideation-radar/out/cron.log 2>&1
 ```
 
+The `pending` run also answers the CEO Hiring tab's "Find people for this
+role" (2026-10-11): it reads `cockpit_hiring_meta` `headhunt-request:<role>`,
+claims the oldest queued ask, runs `radar.py hiring --headhunt <role>` in
+process (`radar/hiring.py answer_requests`, one per run, three tries) and marks
+the ask done or failed; the answer lands in `headhunt:<role>`, where the tab
+reads it. No crontab change. `radar.py pending --dry-run` names the ask and
+writes nothing.
+
 `~/.ideation-radar/env` holds `RADAR_SUPABASE_URL`, `RADAR_SUPABASE_KEY` and
 `RADAR_SLACK_CHANNEL` (Aziz's Slack user id, so the digest arrives as a DM
 like the cockpit alerts). The creative cockpit's smoke check watches the
