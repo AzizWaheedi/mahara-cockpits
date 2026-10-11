@@ -38,7 +38,28 @@ The CEO's words this answers:
   (30 minutes later) files. `{"job":"intake","dryRun":true}` asks for another
   dry run at any time.
 
-## 1. Secrets (Edge Functions, Creative Triage `bldgtotkfmhoxmlzowdx`)
+## 1. Deploy the two functions (after the branch is merged)
+
+First, before any secret: until step 2 the new code only answers "not connected", so the old
+v4 code never runs with live writes and no first-run dry run.
+
+From a throwaway worktree at merged main (the shared checkout is never moved):
+
+```sh
+python3 scripts/dev/deploy_composio.py hiring-sync --extra supabase/functions/_shared/hiring --verify-jwt off --dry
+python3 scripts/dev/deploy_composio.py hiring-sync --extra supabase/functions/_shared/hiring --verify-jwt off
+python3 scripts/dev/deploy_composio.py hiring-api  --extra supabase/functions/_shared/hiring --verify-jwt on --dry
+python3 scripts/dev/deploy_composio.py hiring-api  --extra supabase/functions/_shared/hiring --verify-jwt on
+```
+
+`hiring-sync` must read `verify_jwt false` afterwards (the cron secret is its
+only key) and `hiring-api` `verify_jwt true`. Both were v4 on 2026-10-11.
+
+Then ship the portal, which carries the Hiring tab's "Find people for this
+role" and the "One-to-one interview" label: `scripts/ship.sh media-buyer`, and
+check the live bundle has the words "Find people for this role".
+
+## 2. Secrets (Edge Functions, Creative Triage `bldgtotkfmhoxmlzowdx`)
 
 | Name | Value | Where it comes from |
 |---|---|---|
@@ -71,27 +92,13 @@ composio execute SUPABASE_LIST_SECRETS -d '{"ref":"bldgtotkfmhoxmlzowdx"}' < /de
 
 The last line must print `HIRING_SEND_ENABLED: False` and the other five `True`.
 
-## 2. Deploy the two functions (after the branch is merged)
-
-From a throwaway worktree at merged main (the shared checkout is never moved):
-
-```sh
-python3 scripts/dev/deploy_composio.py hiring-sync --extra supabase/functions/_shared/hiring --verify-jwt off --dry
-python3 scripts/dev/deploy_composio.py hiring-sync --extra supabase/functions/_shared/hiring --verify-jwt off
-python3 scripts/dev/deploy_composio.py hiring-api  --extra supabase/functions/_shared/hiring --verify-jwt on --dry
-python3 scripts/dev/deploy_composio.py hiring-api  --extra supabase/functions/_shared/hiring --verify-jwt on
-```
-
-`hiring-sync` must read `verify_jwt false` afterwards (the cron secret is its
-only key) and `hiring-api` `verify_jwt true`. Both were v4 on 2026-10-11.
-
 ## 3. Apply the migration (it holds the schedule)
 
 `supabase/migrations/20261009c_hiring_native.sql` creates `cockpit_hiring_runs`
 (the run ledger and lock), `cockpit_hiring_provider_health`,
 `cockpit_hiring_sends`, the function `cockpit_hiring_claim_run`, the grants, and
 the three pg_cron jobs. Additive and safe to run again. Apply it after steps 1
-and 2, so the first scheduled runs find their keys and the new code.
+and 2, so the first scheduled runs find the new code and their keys.
 
 ```sh
 python3 - <<'PY' > /tmp/hiring-migration.json
@@ -132,19 +139,28 @@ then.
 
 ## 5. Rename the stage to "One-to-one interview" (his words)
 
-Read the dry run, then apply. It renames in place and keeps every stage id, so
-the 36 workflow triggers and every card stay where they are. It touches no
-workflow, contact, card, custom value or message.
+Read the dry run, then apply, both with `--calendar`: "make everything extremely
+neat: the custom values, the names, everything" covers the words a candidate
+reads too. It renames the stage in place on the six boards and keeps every stage
+id, so the 36 workflow triggers and every card stay where they are. It also
+renames the score field ("Score 4, one-to-one", same id and key), changes
+"after the one to one" to "after the one-to-one" in the custom value "Call
+centre agent - Test project", and with `--calendar` renames the booking calendar
+and its "Book your one to one" line. It touches no workflow, contact, card or
+message, and reads every change back.
 
 ```sh
-ssh -i ~/.ssh/faris-key hermes@187.77.156.166 'python3 -' < scripts/hiring/ghl_hiring_stages.py
-ssh -i ~/.ssh/faris-key hermes@187.77.156.166 'python3 - --apply' < scripts/hiring/ghl_hiring_stages.py
-ssh -i ~/.ssh/faris-key hermes@187.77.156.166 'python3 - --apply --calendar' < scripts/hiring/ghl_hiring_stages.py   # also the booking calendar's name
+ssh -i ~/.ssh/faris-key hermes@187.77.156.166 'python3 - --calendar' < scripts/hiring/ghl_hiring_stages.py           # dry run: reads only
+ssh -i ~/.ssh/faris-key hermes@187.77.156.166 'python3 - --apply --calendar' < scripts/hiring/ghl_hiring_stages.py
 ```
 
-Undo: the same with `--undo --apply`. Stage colours: HighLevel's API has no
-colour on a stage (only position, the two funnel flags and the win
-probability), so the script cannot set one.
+The 2026-10-11 dry run listed 6 stages, field `y0WMaKmIFg9FAMlpXnc0`, custom value
+`HZTUIxzh1uUPSHAZG58z` and calendar `YZ9oJi9KJJga9coMHoeK`; exit 0 after
+`--apply` means every read-back matched.
+
+Undo: the same with `--undo --apply --calendar`. Stage colours: a HighLevel
+stage has no colour (the API's stage record holds only its id, name, position,
+the two funnel flags and the win probability), so there is nothing to set.
 
 ## 6. WhatsApp as the backup (the CEO's browser)
 
@@ -204,4 +220,4 @@ select cron.unschedule(jobid) from cron.job where jobname like 'mahara-hiring-%'
 
 Then delete the `HIRING_APPLY` secret (Composio `SUPABASE_DELETE_SECRETS`) so
 every GoHighLevel write is a dry run again. The tables stay; nothing reads them
-until the jobs come back. The stage rename undoes with `--undo --apply`.
+until the jobs come back. The stage rename undoes with `--undo --apply --calendar`.
