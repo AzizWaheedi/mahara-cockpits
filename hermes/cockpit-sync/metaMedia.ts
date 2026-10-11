@@ -40,6 +40,14 @@ export function metaImageUsable(
 }
 
 /** The saved still's key: by creative when known (ads share creatives), else by ad. */
+/**
+ * Convex was retired on 2026-10-09; its file links answer
+ * "BackendIsNotRunning", so a still saved there must be captured again.
+ */
+export function deadStillHost(url?: string | null): boolean {
+  return Boolean(url && /^https:\/\/[a-z0-9-]+\.convex\.(cloud|site)\//i.test(url));
+}
+
 export function stillKeyFor(
   creativeId?: string | null,
   adId?: string | null,
