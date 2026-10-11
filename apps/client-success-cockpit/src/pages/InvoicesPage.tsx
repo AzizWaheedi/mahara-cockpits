@@ -162,7 +162,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
       ) : null}
 
       {data ? (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-start">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-start lg:gap-6">
           <InvoiceForm
             clients={data.clients}
             folders={data.folders}
@@ -189,7 +189,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
       {data ? (
         <div className="space-y-3">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <Kicker>Issued from the cockpit</Kicker>
+            <Kicker>Recent invoices</Kicker>
             {deskNote ? <p className="txt-warn text-xs">{deskNote}</p> : null}
           </div>
           <InvoiceList invoices={data.invoices} onChange={change} />

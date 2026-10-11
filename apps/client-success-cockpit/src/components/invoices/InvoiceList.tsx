@@ -82,7 +82,7 @@ export function InvoiceList({
                 <p className="txt-bad mt-1.5 text-xs">{inv.error}</p>
               ) : null}
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <div className="flex shrink-0 flex-col items-start gap-1.5 sm:items-end">
               <div className="font-mono text-sm tabular-nums">
                 USD {money(inv.amount_usd)}
               </div>

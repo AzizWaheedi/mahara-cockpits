@@ -34,7 +34,7 @@ export function InvoicePaper({
 
   const scale = width / PAGE_W;
   return (
-    <figure className="rounded-2xl bg-muted/50 p-3 sm:p-5">
+    <figure className="rounded-2xl bg-muted/40 p-4 sm:p-6">
       <div
         ref={box}
         className="relative w-full overflow-hidden rounded-[3px] bg-white shadow-[0_12px_40px_rgba(10,22,51,0.14)] ring-1 ring-black/5"
