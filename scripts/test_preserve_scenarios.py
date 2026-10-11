@@ -222,6 +222,23 @@ class Scenarios(unittest.TestCase):
         self.assertEqual(got["hiring freshness cockpit_hiring_candidates.synced_at"][0], "CHANGED")
         self.assertNotIn("hiring Edge Function hiring-sync", got)     # deployed on 2026-10-09
 
+    def test_hiring_rows_lost_or_a_meta_key_gone_reads_missing(self):
+        out = replay()
+        ok = {r["check"]: r["status"] for r in out["checks"]}
+        self.assertEqual(ok["hiring rows cockpit_hiring_candidates"], VP.OK)
+        self.assertEqual(ok["hiring keys cockpit_hiring_meta"], VP.OK)
+        t = copy.deepcopy(BASE)
+        t["sql rows hiring:cockpit_hiring_candidates"] = [{"n": 12}]
+        t["sql keys hiring:cockpit_hiring_meta"] = [{"key": "roles"}]
+        got = lines(ps.run(t, "backups", "origin/main"))
+        status, detail = got["hiring rows cockpit_hiring_candidates"]
+        self.assertEqual(status, "MISSING")
+        self.assertIn("fewer than the 255 recorded on 2026-10-11", detail)
+        status, detail = got["hiring keys cockpit_hiring_meta"]
+        self.assertEqual(status, "MISSING")
+        self.assertIn("intake:oW8CWRhi", detail)
+        self.assertNotIn("roles", detail.split(": ", 1)[1].split(", "))
+
     def test_hiring_cron_lines_on_the_vps_are_held(self):
         hiring = [l for l in VMAN["crontab"]["lines"] if l["kind"] == "job" and
                   any(h in l["text"] for h in VP.HIRING_CRON)]

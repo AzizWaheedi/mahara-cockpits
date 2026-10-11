@@ -1286,6 +1286,42 @@ def check_section(rep: Report, mg: Mgmt, man: Dict[str, Any], key: str, title: s
                                           "the job that writes it is not running")
         else:
             rep.add(area, label, OK, f"{what}: written {int(age)} min ago (limit {limit} min)")
+    # The kept data itself, for a section whose tables never delete a row (hiring): fewer rows than recorded,
+    # or a recorded key gone, means a reload or a restore lost what the CEO asked to keep.
+    floors = sec.get("rows_at_least") or {}
+    on = sec.get("rows_recorded_on") or "the record"
+    for table, floor in floors.items():
+        label = f"{title} rows {table}"
+        if not _IDENT.match(table):
+            rep.add(area, label, UNKNOWN, "not a plain table name in the manifest")
+            continue
+        if ("table", table) not in live:
+            rep.add(area, label, absent[0], absent[1] or "not there (never made, or dropped)")
+            continue
+        r = mg.sql(f"select count(*)::bigint as n from public.{table}", f"rows {key}:{table}")
+        n = int(r[0]["n"]) if r and r[0].get("n") is not None else None
+        if n is None:
+            rep.add(area, label, UNKNOWN, "the count did not come back")
+        elif n < int(floor):
+            rep.add(area, label, MISSING, f"{n:,} rows, fewer than the {int(floor):,} recorded on {on}; nothing here "
+                                          "deletes a row, so rows were lost (a reload or a restore to an earlier point)")
+        else:
+            rep.add(area, label, OK, f"{n:,} rows (at least {int(floor):,} on {on})")
+    for table, keys in (sec.get("keys_present") or {}).items():
+        label = f"{title} keys {table}"
+        if not _IDENT.match(table) or not all(isinstance(k, str) for k in keys):
+            rep.add(area, label, UNKNOWN, "not a plain table name or key list in the manifest")
+            continue
+        if ("table", table) not in live:
+            rep.add(area, label, absent[0], absent[1] or "not there (never made, or dropped)")
+            continue
+        r = mg.sql(f"select key from public.{table} where key = any({arr(keys)})", f"keys {key}:{table}")
+        have = {x.get("key") for x in r or []}
+        gone = [k for k in keys if k not in have]
+        if gone:
+            rep.add(area, label, MISSING, f"{len(gone)} of {len(keys)} recorded keys gone: " + ", ".join(gone))
+        else:
+            rep.add(area, label, OK, f"all {len(keys)} recorded keys present")
 
 
 def check_team_hours(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:

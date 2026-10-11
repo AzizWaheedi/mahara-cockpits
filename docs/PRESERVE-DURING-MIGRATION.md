@@ -84,6 +84,8 @@ the CEO asked to see what would not be saved).
 | Edge Functions | `hiring-sync` (`verify_jwt` off: pg_cron's cron secret is its key) and `hiring-api` (`verify_jwt` on: the CEO's Hiring tab), both v4 since 2026-10-09. |
 | Function secrets | `GHL_HIRING_PIT`, `GHL_HIRING_LOCATION`, `HIRING_APPLY` (set to `true`), `TYPEFORM_TOKEN`, `CRON_SECRET`. `HIRING_SEND_ENABLED` stays unset: no candidate message can leave. |
 | Freshness | The newest `cockpit_hiring_candidates.synced_at` under 30 minutes old (the mirror runs every 10). |
+| Kept data | At least the rows counted on 2026-10-11: 255 candidates (the agent's screening and the CEO's grades live only here), 254 application questionnaires, 520 events; and the meta keys `ghl-ids`, `roles`, `agent-calibration` and each form's `intake:<form>` (the responses already filed). Nothing deletes a hiring row, so fewer rows or a key gone reads MISSING. |
+| VPS | The recruiting agent's crontab lines, byte for byte: `radar.py --quiet hiring` (screens new applicants) and `radar.py --quiet pending` (answers "Find people for this role"). |
 | Watched by | The guardian's `hiring-sync` check, and `pg-cron-jobs` and `edge-functions`, which now expect the hiring jobs and functions. |
 
 ## 2. What the cutover must not remove or overwrite

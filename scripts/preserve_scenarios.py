@@ -113,6 +113,10 @@ def perfect_tape(sman: Dict[str, Any], vman: Dict[str, Any], ref: str = "origin/
             t[f"sql {key}"] = []
             for f in sec.get("freshness") or []:
                 t[f"sql fresh {key}:{f['table']}"] = [{"newest": None, "age_min": None}]
+            for table in sec.get("rows_at_least") or {}:
+                t[f"sql rows {key}:{table}"] = [{"n": 0}]
+            for table in sec.get("keys_present") or {}:
+                t[f"sql keys {key}:{table}"] = []
             continue
         ceo_read = sec.get("ceo_read_tables") or {}
         rows = [{"kind": "table", "name": n, "rls": True, "browser": n in ceo_read,
@@ -134,6 +138,10 @@ def perfect_tape(sman: Dict[str, Any], vman: Dict[str, Any], ref: str = "origin/
         t["sql vault"] += [{"name": n} for n in sec.get("vault_secret_names") or [] if n not in have]
         for f in sec.get("freshness") or []:
             t[f"sql fresh {key}:{f['table']}"] = [{"newest": "2026-10-11 12:00:00+00", "age_min": 3}]
+        for table, floor in (sec.get("rows_at_least") or {}).items():
+            t[f"sql rows {key}:{table}"] = [{"n": int(floor)}]
+        for table, keys in (sec.get("keys_present") or {}).items():
+            t[f"sql keys {key}:{table}"] = [{"key": k} for k in keys]
     t["pair cron_secret"] = {"function_secret": True, "vault_secret": True, "same": True}
     for slug, names in VP.RECORDED_SOURCES.items():
         at = VP.git_files(base, [f"supabase/functions/{slug}"], flat=True)

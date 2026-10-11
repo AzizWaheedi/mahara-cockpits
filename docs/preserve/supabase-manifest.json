@@ -10357,6 +10357,25 @@
     "max_age_min": 30,
     "what": "the hiring board copy (hiring-sync mirror, every 10 min)"
    }
-  ]
+  ],
+  "rows_recorded_on": "2026-10-11",
+  "rows_at_least": {
+   "cockpit_hiring_candidates": 255,
+   "cockpit_hiring_applications": 254,
+   "cockpit_hiring_events": 520
+  },
+  "keys_present": {
+   "cockpit_hiring_meta": [
+    "agent-calibration",
+    "ghl-ids",
+    "roles",
+    "intake:jYTRw2Sx",
+    "intake:oW8CWRhi",
+    "intake:rqv3Fkts",
+    "intake:tigKbFlO",
+    "intake:zo1Zm6u6"
+   ]
+  },
+  "rows_note": "The kept data, counted 2026-10-11 through Composio (read only): 255 candidates (all screened by the agent), 254 application questionnaires, 520 events, and the meta rows the import and the agent stand on (each form's filed responses, the board ids, the roles, the agent's lessons). None of these tables deletes a row, so fewer rows or a key gone reads MISSING. The candidate rows hold what HighLevel does not: the agent's screening and the CEO's grades."
  }
 }
