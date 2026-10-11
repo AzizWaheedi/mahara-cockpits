@@ -88,6 +88,10 @@ test("the commit goes through the CEO's gated door in one transaction, with the 
   expect(q).not.toMatch(/insert into public\.cockpit_bank_lines|insert into public\.cockpit_statements/i);
   const quoted = plan("/x/s.PDF", Buffer.from("s"), PDF_TEXT.replace("SHOP ONE", "SHOP $body$ ONE"), 1);
   expect(() => commitSql(quoted, "x")).toThrow(/quoting marker/);
+  // A marker past the body's 120-character file name still reaches meta in full.
+  const longName = plan(`/x/${"s".repeat(130)}$meta$.PDF`, Buffer.from("s"), PDF_TEXT, 1);
+  expect(longName.body?.statement.file_name).not.toContain("$meta$");
+  expect(() => commitSql(longName, "x")).toThrow(/quoting marker/);
   expect(readbackSql("it's")).toContain("'it''s'");
 });
 

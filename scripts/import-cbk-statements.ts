@@ -165,8 +165,10 @@ select 'revision', 'finance', null, revision::text || '/' || totals_revision::te
 export function commitSql(p: Planned, planHash: string): string {
   if (!p.body) throw new Error(`${p.file} has nothing to commit`);
   const body = JSON.stringify(p.body);
-  if (body.includes("$body$") || body.includes("$meta$")) throw new Error("The statement text contains a quoting marker; refusing to build SQL");
   const meta = JSON.stringify({ script: "scripts/import-cbk-statements.ts", file: p.file, file_sha256: p.fileSha256, plan_sha256: planHash, lines: p.body.lines.length, done_for: CEO_EMAIL });
+  // Both quoted blocks are checked: the file name reaches meta in full, the body only its first 120 characters.
+  if ([body, meta].some(text => text.includes("$body$") || text.includes("$meta$")))
+    throw new Error("The statement text or file name contains a quoting marker; refusing to build SQL");
   return `begin;
 select set_config('request.jwt.claim.sub', (select m.auth_user_id::text from public.cockpit_members m where m.email = ${sqlText(CEO_EMAIL)} and m.active), true);
 select set_config('request.jwt.claims', json_build_object('sub', current_setting('request.jwt.claim.sub', true), 'role', 'authenticated', 'email', ${sqlText(CEO_EMAIL)})::text, true);
