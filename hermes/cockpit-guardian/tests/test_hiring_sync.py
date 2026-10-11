@@ -5,6 +5,7 @@ application for days while every check read green. Missing is never healthy: no 
 """
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 
 from tests import fakes
@@ -97,11 +98,35 @@ class Thresholds(unittest.TestCase):
         self.assertEqual(r.status, FAIL)
         self.assertEqual(r.items, ["board-stale"])
 
-    def test_an_intake_dry_run_warns(self):
+    def test_an_intake_dry_run_without_hiring_apply_warns(self):
         note = "Dry run: 14 unseen applications, nothing written (HIRING_APPLY is not true)"
         r = run(healthy(intake=state("intake", ok_min=20, note=note)))
         self.assertEqual(r.status, WARN)
         self.assertIn("HIRING_APPLY is not true: applications are read but not filed", r.summary)
+
+    def test_the_first_intake_run_is_dry_on_purpose_and_only_a_lasting_one_warns(self):
+        note = ("Dry run on purpose, the first intake run: 40 unseen applications listed, nothing written. "
+                "The next run files them")
+        st = {}
+        rows = healthy(intake=state("intake", ok_min=5, note=note))
+        db = fakes.FakeDb({"cockpit_sync_state": rows, "cockpit_hiring_candidates": [{"synced_at": fakes.ago(4)}]})
+        r = worker_status.run_hiring_sync(fakes.ctx(Path(tempfile.mkdtemp()), db=db, state=st))
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertIn("dry run on purpose", r.summary)
+        later = fakes.ctx(Path(tempfile.mkdtemp()), db=db, state=st)
+        later.now = fakes.NOW + timedelta(minutes=80)
+        db.tables["cockpit_hiring_candidates"] = [{"synced_at": later.now.isoformat()}]
+        for r_ in db.tables["cockpit_sync_state"]:
+            r_["last_ok_at"] = later.now.isoformat()
+        r = worker_status.run_hiring_sync(later)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("has filed nothing for", r.summary)
+        db.tables["cockpit_sync_state"] = [dict(x, note="40 read, 40 added, 0 skipped") if x["key"].endswith("intake")
+                                           else x for x in db.tables["cockpit_sync_state"]]
+        filed = fakes.ctx(Path(tempfile.mkdtemp()), db=db, state=st)
+        filed.now = later.now
+        self.assertEqual(worker_status.run_hiring_sync(filed).status, OK)
+        self.assertNotIn("hiring_intake_dry_since", st["history"])
 
     def test_a_failure_outranks_the_dry_run_warning(self):
         note = "Dry run: 14 unseen applications, nothing written (HIRING_APPLY is not true)"

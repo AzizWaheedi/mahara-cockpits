@@ -273,6 +273,7 @@ HIRING_JOBS = {
     "engine": (30, "the message drafts"),
 }
 HIRING_BOARD_MIN = 30
+HIRING_DRY_MIN = 75          # the first intake run is dry on purpose; the next (30 min later) files
 HIRING_SWITCH_ON = ("Set GHL_HIRING_PIT, GHL_HIRING_LOCATION and HIRING_APPLY=true as Edge Function secrets and "
                     "apply 20261009c (a person does this).")
 
@@ -321,12 +322,27 @@ def run_hiring_sync(ctx: Context) -> Result:
                     action="Read the newest failed row in cockpit_hiring_runs and the hiring-sync function log in "
                            "Supabase; a 'not connected' note means " + HIRING_SWITCH_ON[0].lower() + HIRING_SWITCH_ON[1:])
     intake = rows.get("hiring-sync:intake") or {}
-    if str(intake.get("note") or "").startswith("Dry run"):
+    note = str(intake.get("note") or "")
+    history = ctx.state.setdefault("history", {})
+    if not note.startswith("Dry run"):
+        history.pop("hiring_intake_dry_since", None)
+        return ok(f"Hiring syncs: the board copy is {ago(board_age)} old and the mirror, intake and engine ran on "
+                  "time.", evidence=ev)
+    if "HIRING_APPLY is not true" in note:
         return warn("HIRING_APPLY is not true: applications are read but not filed in HighLevel "
-                    f"({clean(intake.get('note'), 120)}).", evidence=ev, items=["intake-dry-run"],
+                    f"({clean(note, 120)}).", evidence=ev, items=["intake-dry-run"],
                     action="Set HIRING_APPLY=true as an Edge Function secret (a person does this).")
-    return ok(f"Hiring syncs: the board copy is {ago(board_age)} old and the mirror, intake and engine ran on time.",
-              evidence=ev)
+    # hiring-sync holds the first intake run after the switch-on dry on purpose (and a run asked to be dry):
+    # it lists what it would file and the next run files it. Only a dry run that lasts is a problem.
+    since = parse_time(history.setdefault("hiring_intake_dry_since", ctx.now.isoformat())) or ctx.now
+    dry_min = (ctx.now - since).total_seconds() / 60
+    if dry_min > HIRING_DRY_MIN:
+        return warn(f"The hiring intake has filed nothing for {ago(dry_min)}: every run since {kuwait(since)} was a dry "
+                    f"run ({clean(note, 140)}).", since=since, evidence=ev, items=["intake-dry-run"],
+                    action="Read the newest intake rows in cockpit_hiring_runs: a run that stays dry with HIRING_APPLY "
+                           "on means the first-run hold never cleared.")
+    return ok(f"Hiring syncs: the board copy is {ago(board_age)} old; the intake's last run was a dry run on purpose "
+              f"({clean(note, 140)}).", evidence=ev)
 
 
 def run_radar_scan(ctx: Context) -> Result:
@@ -440,8 +456,9 @@ CHECKS = [
               "max(cockpit_hiring_candidates.synced_at)",
         threshold=f"No hiring-sync row, a job with ok false, the mirror or engine with no good run for "
                   f"{HIRING_JOBS['mirror'][0]} min, the intake for {HIRING_JOBS['intake'][0]} min, or the newest "
-                  f"candidate copied over {HIRING_BOARD_MIN} min ago: fail; the intake in a dry run "
-                  "(HIRING_APPLY not true): warn.",
+                  f"candidate copied over {HIRING_BOARD_MIN} min ago: fail; the intake in a dry run because "
+                  f"HIRING_APPLY is not true, or dry for over {HIRING_DRY_MIN} min (the first run after the "
+                  "switch-on is dry on purpose): warn.",
         run=run_hiring_sync, action=HIRING_SWITCH_ON,
     ),
 ]

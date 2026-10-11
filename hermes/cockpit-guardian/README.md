@@ -57,7 +57,7 @@ python3 guardian.py report                  # the plain-English summary
 python3 guardian.py report --post           # the same to Slack, once a Kuwait day
 python3 guardian.py ai-brief --incident ID  # a brief a Claude Code session can act on
 python3 guardian.py ai-fix --incident ID    # Claude Code headless -> branch -> pull request
-python3 -m unittest                          # 302 tests, no network (Python 3.11 or later)
+python3 -m unittest                          # 303 tests, no network (Python 3.11 or later)
 ```
 
 Flags: `--mode report-only|fix` (report-only for a run by hand; the VPS cron line
@@ -442,7 +442,7 @@ Generated with `python3 guardian.py checks --json`.
 | `desk-vault-lag` | W3 | The vault 3 or more days behind: warn. |  |
 | `desk-maqsam` | W4 | Fewer copied than Maqsam reports on any of the last 3 days: fail; no call at all for 7 days: warn. |  |
 | `hiring-engine` | W15 | Armed: warn. |  |
-| `hiring-sync` |  | No hiring-sync row, a job with ok false, the mirror or engine with no good run for 30 min, the intake for 90 min, or the newest candidate copied over 30 min ago: fail; the intake in a dry run (HIRING_APPLY not true): warn. |  |
+| `hiring-sync` |  | No hiring-sync row, a job with ok false, the mirror or engine with no good run for 30 min, the intake for 90 min, or the newest candidate copied over 30 min ago: fail; the intake in a dry run because HIRING_APPLY is not true, or dry for over 75 min (the first run after the switch-on is dry on purpose): warn. |  |
 | `desk-requests` | H5, W2 | ok false, or older than 15 min: fail. A missing row: unknown. |  |
 | `desk-followups` | H5, W2 | ok false, or older than 75 min: fail. A missing row: unknown. |  |
 | `desk-notes` | H5, W2 | ok false, or older than 75 min: fail. A missing row: unknown. |  |
