@@ -45,6 +45,7 @@ export class Transport {
 		url: string,
 		init: RequestInit = {},
 		read = false,
+		allowNoContent = false,
 	): Promise<any> {
 		for (let attempt = 0; attempt < (read ? 3 : 1); attempt++) {
 			try {
@@ -68,6 +69,9 @@ export class Transport {
 						response.status >= 500 || response.status === 408,
 					);
 				}
+				// PostgREST returns 204 for declared void RPCs. Provider sends still
+				// require their JSON receipt, including when HTTP status is successful.
+				if (allowNoContent && response.status === 204) return null;
 				try {
 					return await response.json();
 				} catch {
@@ -95,7 +99,11 @@ export class Transport {
 			method: "POST",
 			headers: this.dbHeaders(),
 			body: JSON.stringify(args),
-		});
+		}, false, [
+			"cockpit_ad_billing_roster_refresh",
+			"cockpit_ad_billing_observe",
+			"cockpit_ad_billing_finish",
+		].includes(name));
 	}
 	dbUrl() {
 		const url = this.needed("SUPABASE_URL").replace(/\/$/, "");

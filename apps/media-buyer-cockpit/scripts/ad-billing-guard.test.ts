@@ -421,6 +421,20 @@ test("ambiguous outbound failures are attempted only once", async () => {
   await expect(t.send(delivery)).rejects.toBeInstanceOf(ProviderError);
   expect(calls).toBe(1);
 });
+test("PostgREST void RPCs accept 204 while gates and provider receipts fail closed", async () => {
+  const t = new Transport({
+    SUPABASE_URL: "https://bldgtotkfmhoxmlzowdx.supabase.co",
+    SUPABASE_SERVICE_ROLE_KEY: "synthetic",
+  }, async () => new Response(null, { status: 204 }));
+  for (const name of ["roster_refresh", "observe", "finish"])
+    expect(await t.rpc(`cockpit_ad_billing_${name}`)).toBeNull();
+  for (const name of ["start", "claim", "begin_send", "result"])
+    await expect(t.rpc(`cockpit_ad_billing_${name}`)).rejects.toBeInstanceOf(ProviderError);
+  await expect(t.json("Whapi", "https://example.test")).rejects.toBeInstanceOf(ProviderError);
+  const malformed = new Transport(t.env, async () => new Response(null, { status: 200 }));
+  await expect(malformed.rpc("cockpit_ad_billing_finish")).rejects.toBeInstanceOf(ProviderError);
+});
+
 test("Whapi needs a sent=true message receipt; an HTTP 200 alone is not success", async () => {
   const t = new Transport(
     { AD_BILLING_WHAPI_TOKEN: "synthetic" },
