@@ -82,6 +82,7 @@ const sheet = [
 beforeAll(async () => {
   db = await cockpitTestDb({ supabaseDefaultPrivileges: true });
   await db.exec(migration("20261011174920_ad_billing_guard.sql"));
+  await db.exec(migration("20261011192500_ad_billing_roster_safe_update.sql"));
   await member(db, uid, "buyer@example.test", ["media_buyer"]);
 });
 afterAll(async () => {
@@ -421,6 +422,15 @@ test("ambiguous outbound failures are attempted only once", async () => {
   await expect(t.send(delivery)).rejects.toBeInstanceOf(ProviderError);
   expect(calls).toBe(1);
 });
+test("roster replacement uses a safeupdate predicate and rejects stale leases", async () => {
+  await reset();
+  await db.query("select cockpit_ad_billing_roster_refresh($1,$2)", [lease, JSON.stringify([{id:"old",name:"Old client"}])]);
+  await db.query("select cockpit_ad_billing_roster_refresh($1,$2)", [lease, JSON.stringify([{id:"current",name:"Current client"}])]);
+  expect((await db.query("select client_task_id from cockpit_ad_billing_roster")).rows).toEqual([{client_task_id:"current"}]);
+  await expect(db.query("select cockpit_ad_billing_roster_refresh($1,'[]')", [uid])).rejects.toThrow("lease");
+  expect(migration("20261011192500_ad_billing_roster_safe_update.sql")).toContain("WHERE client_task_id IS NOT NULL");
+});
+
 test("PostgREST void RPCs accept 204 while gates and provider receipts fail closed", async () => {
   const t = new Transport({
     SUPABASE_URL: "https://bldgtotkfmhoxmlzowdx.supabase.co",
