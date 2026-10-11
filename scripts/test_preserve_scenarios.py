@@ -222,6 +222,18 @@ class Scenarios(unittest.TestCase):
         self.assertEqual(got["hiring freshness cockpit_hiring_candidates.synced_at"][0], "CHANGED")
         self.assertNotIn("hiring Edge Function hiring-sync", got)     # deployed on 2026-10-09
 
+    def test_hiring_cron_lines_on_the_vps_are_held(self):
+        hiring = [l for l in VMAN["crontab"]["lines"] if l["kind"] == "job" and
+                  any(h in l["text"] for h in VP.HIRING_CRON)]
+        self.assertEqual(len(hiring), 2)
+        t = copy.deepcopy(BASE)
+        ps.drop_cron(t, CTX, tuple(l["n"] for l in hiring))
+        got = lines(ps.run(t, "backups", "origin/main"))
+        for l in hiring:
+            label = next(k for k in got if k.startswith(f"crontab line {l['n']} "))
+            self.assertEqual(got[label][0], "MISSING", label)
+            self.assertIn("radar.py --quiet", label)
+
     def test_hiring_ceo_policy_dropped_or_a_browser_grant_is_changed(self):
         t = copy.deepcopy(BASE)
         for r in t["sql hiring"]:
@@ -351,11 +363,14 @@ class Pieces(unittest.TestCase):
             VP.print_cron(VMAN, True)
         self.assertEqual(hashlib.sha256(buf.getvalue().encode()).hexdigest(), VMAN["crontab"]["sha256"])
 
-    def test_print_cron_ours_is_fourteen_lines(self):
+    def test_print_cron_ours_is_sixteen_lines(self):
+        # 14 sales desk and guardian lines, and since 2026-10-11 the two hiring lines (radar hiring, radar pending).
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             VP.print_cron(VMAN, False)
-        self.assertEqual(len(buf.getvalue().splitlines()), 14)
+        out = buf.getvalue().splitlines()
+        self.assertEqual(len(out), 16)
+        self.assertEqual(sum(any(h in x for h in VP.HIRING_CRON) for x in out), 2)
 
     def test_parse_utc(self):
         a = VP.parse_utc("2026-10-07T11:43:35.766487+00:00")

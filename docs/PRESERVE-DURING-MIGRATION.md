@@ -219,7 +219,8 @@ one line per check: `ok`, `CHANGED`, `MISSING` or `UNKNOWN`. It covers:
   `CRON_SECRET` still holding the vault's `cockpit_sync_secret` (two digests
   compared in memory, inside a read-only transaction); our function secrets set
   again after the inventory.
-- **VPS:** our crontab lines, byte for byte; the desk and guardian files against
+- **VPS:** our crontab lines, byte for byte (since 2026-10-11 the hiring agent's
+  two as well: `radar.py --quiet hiring` and `radar.py --quiet pending`); the desk and guardian files against
   `origin/main` and the copy recorded at the inventory; the env setting lines;
   which Supabase project the workers use; the reference deals; the call reviews;
   the Playwright shell; `desk.py doctor --offline`; `deploy-check`; the guardian's

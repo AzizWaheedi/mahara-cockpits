@@ -24,7 +24,7 @@ It compares docs/preserve/supabase-manifest.json and docs/preserve/vps-manifest.
   recorded pg_cron job, the settings switches, the WhatsApp template rows, the vault secret names, the
   extensions, every Edge Function (slug present, version not lower, verify_jwt as recorded), the function
   secret names and the private bucket sales-proposals.
-- The VPS, over ssh: our crontab lines, the sales desk and guardian files against origin/main, the env
+- The VPS, over ssh: our crontab lines (the hiring agent's two included), the sales desk and guardian files against origin/main, the env
   setting lines (compared on the VPS; only names and true/false come back), the reference deals, the call
   reviews against the 2026-10-07 backup, the Playwright shell, `desk.py doctor --offline`,
   `desk.py deploy-check` (ready, every switch off), the guardian's last scan, the Hermes fixer entry and the
@@ -105,6 +105,10 @@ SITE = "https://cockpit.maharamedia.com/sales/"
 VPS = "hermes@187.77.156.166"
 VPS_KEY = "~/.ssh/faris-key"
 OUR_FOLDERS = ("hermes/sales-desk", "hermes/cockpit-guardian")
+# Hiring on the VPS (added 2026-10-11): the recruiting agent screens new applicants every 30 minutes, and the
+# five-minute pending run answers the CEO Hiring tab's "Find people for this role". Their crontab lines are
+# held exactly, like ours; the radar folder's files are not (the VPS copy carries edits git does not have).
+HIRING_CRON = ("radar.py --quiet hiring", "radar.py --quiet pending")
 FIXER_FILE = "/opt/data/bibi/workspace/reliability/fixer-projects.json"
 
 # Ours, or what ours stands on: a change here is never "not part of the preserved work". The rooms and the
@@ -1923,7 +1927,7 @@ def our_env_names() -> Set[str]:
 
 def our_cron_lines(vman: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [l for l in vman["crontab"]["lines"]
-            if l["kind"] == "job" and any(f in l["text"] for f in OUR_FOLDERS)]
+            if l["kind"] == "job" and any(f in l["text"] for f in OUR_FOLDERS + HIRING_CRON)]
 
 
 def cron_parts(text: str) -> Tuple[Optional[str], Optional[str]]:
@@ -2001,7 +2005,8 @@ def check_vps(rep: Report, vman: Dict[str, Any], args: argparse.Namespace) -> No
         ours = our_cron_lines(vman)
         for l in ours:
             sched, cmd_sha = cron_parts(l["text"])
-            what = re.search(r"desk\.py --quiet ([a-z-]+(?: --[a-z-]+(?: \d+)?)?)|guardian\.py[^\"]*run", l["text"])
+            what = re.search(r"desk\.py --quiet ([a-z-]+(?: --[a-z-]+(?: \d+)?)?)|guardian\.py[^\"]*run|radar\.py --quiet [a-z]+",
+                             l["text"])
             label = f"crontab line {l['n']} ({what.group(0) if what else 'ours'})"
             purpose = l.get("changed_on_purpose") or {}
             if l["sha256"] in exact:
