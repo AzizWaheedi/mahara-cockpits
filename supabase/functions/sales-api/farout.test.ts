@@ -26,6 +26,8 @@ import {
   hostWeek,
   hostWindows,
   hoursWords,
+  inFlightBusy,
+  inFlightMessage,
   type Interval,
   openHoursOn,
   outsideMessage,
@@ -414,5 +416,38 @@ describe("the lead's own reschedule link (D17, verified 2026-10-11)", () => {
     expect(rescheduleLink(INTRO_Q, R.calendars[INTRO_Q], "a1&x=1")).toBeNull();
     expect(rescheduleLink("../x", R.calendars[INTRO_Q], "a1")).toBeNull();
     expect(rescheduleLink(INTRO_Q, R.calendars[INTRO_Q], "")).toBeNull();
+  });
+});
+
+// Review (setter and closer lens), 2026-10-11: a custom time goes with
+// HighLevel's own slot check off, so the cockpit's own calls on their way
+// to HighLevel count as taken.
+describe("the host's calls on their way to HighLevel", () => {
+  const t = (hm: string) => Date.parse(`2026-11-04T${hm}:00+03:00`);
+  test("a booking keeps its own end and its calendar's buffers; a move takes its calendar's length, else an hour", () => {
+    const cal = { slotDuration: 45, slotDurationUnit: "mins", slotBuffer: 10, slotBufferUnit: "mins" };
+    const rows = inFlightBusy(
+      [{ id: "b1", calendar_id: "C1", start_at: "2026-11-04T07:00:00+00:00", end_at: "2026-11-04T07:15:00+00:00" }],
+      [
+        { id: "m1", calendar_id: "C1", to_start: "2026-11-04T09:00:00+00:00" },
+        { id: "m2", calendar_id: "unread", to_start: "2026-11-04T12:00:00Z" },
+        { id: "m3", calendar_id: "C1", to_start: null },
+      ],
+      { C1: cal },
+    );
+    expect(rows.map(r => [r.start, r.end, r.from, r.to, r.what])).toEqual([
+      [t("10:00"), t("10:15"), t("10:00"), t("10:25"), "call"],
+      [t("12:00"), t("12:45"), t("12:00"), t("12:55"), "call"],
+      [t("15:00"), t("16:00"), t("15:00"), t("16:00"), "call"],
+    ]);
+  });
+
+  test("the sentence names the host and the time, on one day or across two", () => {
+    expect(inFlightMessage({ start: t("10:00"), end: t("10:15") }, "Sami Closer")).toBe(
+      "Someone is booking Sami from 10:00 am to 10:15 am (Kuwait time) right now. Pick another time.",
+    );
+    expect(inFlightMessage({ start: t("23:30"), end: t("23:30") + 60 * 60_000 }, null)).toBe(
+      "Someone is booking the host from Wed 4 Nov, 11:30 pm to Thu 5 Nov, 12:30 am (Kuwait time) right now. Pick another time.",
+    );
   });
 });

@@ -386,6 +386,33 @@ export function farDays(own: SlotDay[], ext: SlotDay[] | null, windowEnd: string
   return { days, agreed: ext !== null };
 }
 
+/**
+ * The calls the cockpit is writing for a host this minute, as busy stretches
+ * (review, 2026-10-11): a booking being made (cockpit_sales_bookings rows
+ * still `creating`) or a move on its way (cockpit_sales_reschedules rows
+ * still `moving`). HighLevel does not show them yet, and a custom time is
+ * written with HighLevel's own slot check off, so without them two reps
+ * pressing the same host's time at once would both land. A move's row keeps
+ * no end, so its calendar's call length is used (an hour when that calendar
+ * could not be read: the safe side).
+ */
+export function inFlightBusy(books: Row[], moves: Row[], calendars: Record<string, Row | undefined>): BusyRow[] {
+  const events: Row[] = [
+    ...(books ?? []).map(b => ({ id: `booking:${b.id}`, calendarId: b.calendar_id, startTime: b.start_at, endTime: b.end_at })),
+    ...(moves ?? []).map(m => {
+      const start = ghlTime(m.to_start);
+      const len = shapeOf(calendars[String(m.calendar_id ?? "")] ?? {}).len || HOUR;
+      return {
+        id: `move:${m.id}`,
+        calendarId: m.calendar_id,
+        startTime: m.to_start,
+        endTime: Number.isFinite(start) ? new Date(start + len).toISOString() : null,
+      };
+    }),
+  ];
+  return busyOf(events, [], calendars);
+}
+
 /** How a time is placed: one of HighLevel's own offered times, a far-out time, or a custom time. */
 export function placementOf(o: { start: number; windowUntil: string | null; offeredInWindow: boolean; custom: boolean }): Placement {
   if (o.offeredInWindow) return "window";
@@ -447,6 +474,14 @@ export function hoursWords(windows: Interval[]): string {
 }
 
 const possessive = (name: string) => (name.endsWith("s") ? `${name}'` : `${name}'s`);
+
+/** The sentence for a custom time on top of a call the cockpit is booking or moving for the same host right now. */
+export function inFlightMessage(c: { start: number; end: number }, hostName: string | null): string {
+  const who = firstName(hostName) ?? "the host";
+  const oneDay = kuwaitDay(c.start) === kuwaitDay(c.end - 1);
+  const span = oneDay ? `from ${clock12(c.start)} to ${clock12(c.end)}` : `from ${kuwaitWords12(c.start)} to ${kuwaitWords12(c.end)}`;
+  return `Someone is booking ${who} ${span} (Kuwait time) right now. Pick another time.`;
+}
 
 /** The sentence for a custom time on top of the host's own call or busy time. */
 export function busyMessage(c: { start: number; end: number; what: "call" | "busy" }, hostName: string | null): string {
