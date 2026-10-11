@@ -739,6 +739,8 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
       return { attempt: { id, crm_note: "written" } };
     }
     case "book.slots":
+    case "book.check":
+    case "book.links":
     case "book.move.check":
     case "book.told":
       // The booking actions keep their own state (bookingFake.ts).
