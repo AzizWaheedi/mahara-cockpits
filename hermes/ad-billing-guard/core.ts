@@ -4,6 +4,8 @@ export const ADS_LIST = "901817774521";
 export const CLIENT_STATUS = "9368ca9e-3549-4320-84ff-9abd0a2901cb";
 export const ADS_ACCOUNT = "8f9032d4-017c-4634-85d9-7ab046cc142f";
 export const SLACK_CHANNEL = "C0AF4SDLWNL";
+// Confirmed internal sandbox. Its Active dropdown does not make it a client.
+const NON_CLIENT_TASK_IDS = new Set(["86ex08t5v"]);
 export type Signal =
 	| "healthy"
 	| "payment_grace"
@@ -58,7 +60,12 @@ export function accountId(value: unknown): string | null {
 	}
 }
 export function activeTask(task: Task, expected: string): boolean {
-	if (task.id !== expected || task.list?.id !== CLIENT_LIST || task.archived)
+	if (
+		task.id !== expected ||
+		task.list?.id !== CLIENT_LIST ||
+		task.archived ||
+		NON_CLIENT_TASK_IDS.has(task.id)
+	)
 		return false;
 	const field = task.custom_fields?.find((f) => f.id === CLIENT_STATUS);
 	if (!field || field.value === undefined || field.value === null) return false;

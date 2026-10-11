@@ -53,7 +53,7 @@ From `apps/media-buyer-cockpit`, run `bun run harness` and open `/ad-billing-har
 10. Observe the next unattended run. Verify `last_finished_at`, the complete Active roster, each binding, the actual schedule, and logs. A fresh heartbeat is not proof of message delivery.
 11. Finish the manual scenario exclusions and save the evidence. Set `manual_cutover_verified=true` only for the approved bindings.
 12. Complete the internal transport test. Enable both global `apply` and runtime `AD_BILLING_APPLY` only after approval of the real-client pilot.
-13. Release the cockpit panel and guardian check through their normal reviewed releases. Confirm the guardian detects a synthetic stale heartbeat without sending a client alert. The guardian is a separate process on the VPS. Verify the existing external VPS outage alert before broad rollout; two processes on one failed host cannot alert each other.
+13. Release the cockpit panel and guardian check through their normal reviewed releases. Confirm the guardian detects a synthetic stale heartbeat without sending a client alert. The guardian is a separate process on the VPS. Verify the independent Supabase watchdog described below. Two processes on one failed host cannot alert each other.
 
 No cron or deployment is installed by the migration. There are three separate notification gates: runtime apply, database apply, and the binding's verified manual cutover.
 
@@ -90,4 +90,28 @@ Set `cockpit_ad_billing_config.apply=false`. Set `AD_BILLING_APPLY=false` in the
 
 Keep the incident tables, receipts and logs. Do not restore the old Make path until you check in-flight and unknown notifications. Re-enable the old client/platform route only after an explicit handover, or both systems can send the same message.
 
-Back up the database with the existing Supabase backup process. Retain unresolved events and unknown receipts. This candidate does not delete billing history automatically. Review retention before a broad rollout.
+Back up the database with the existing Supabase backup process. Retain unresolved events and unknown receipts. This service does not delete billing history automatically. Review retention before a broad rollout.
+
+
+## Installed external watchdog
+
+The billing-specific watchdog runs outside the VPS in Creative Triage Supabase. It does not depend on the older Cloudflare guardian heartbeat.
+
+- Edge Function: `ad-billing-watchdog`, version 1.
+- Database migration: `20261011195000_ad_billing_watchdog.sql`.
+- Cron: job `472`, `mahara-ad-billing-watchdog`, schedule `2-59/5 * * * *`.
+- Cron invokes the Edge Function with the existing Vault-held `CRON_SECRET`. Do not print or copy the secret into SQL scripts or logs.
+- `POST {"probe":true}` with authorized credentials checks private Slack access without sending a message.
+- Scheduled `POST {}` checks stale runs, source failures and overdue or failed deliveries.
+- `cockpit_ad_billing_watchdog` records the claim and Slack receipt. A repeated condition does not send another alert.
+- A timeout retains `unknown`. Inspect Slack history before a manual retry.
+
+Verify the cron row, recent `cron.job_run_details`, and the watchdog `checked_at`. A healthy state does not prove that a simulated VPS outage was tested live. Offline tests cover stale-worker detection and notification deduplication. The first unattended healthy run passed at 19:42 UTC on 11 October 2026.
+
+## Installed worker and rollback paths
+
+Runtime: `/home/hermes/.ad-billing-guard/runtime.json`, mode 600. Logs and lock share that private directory. Release symlink: `/home/hermes/ad-billing-current`. Keep `/home/hermes/cockpit-native-current` unchanged.
+
+The worker runs every five minutes under `flock` and a 540-second timeout. It rechecks all source mappings before each send. Zeiad sandbox task `86ex08t5v` is excluded by exact ID.
+
+The first live run produced 23 accepted receipts. The next scheduled run produced no duplicate alerts. Preserve these receipts during rollback. Never enable both the old manual route and this worker for the same client and platform.
