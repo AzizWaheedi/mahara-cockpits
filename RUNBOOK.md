@@ -59,6 +59,41 @@ last error and this fix next to it.
 
 Set a variable: `cd apps/<app> && bunx convex env set --prod NAME value`.
 
+## Database size and audit noise (Creative Triage)
+
+Since 2026-10-09 the audit triggers skip re-saves that change nothing, or
+change only a sync time or a rotating Facebook image link
+(`cockpit_audit_is_noise`). Source-mirror updates store only the changed keys
+(`metadata.audit_format = 'changed_keys'`). A daily pg_cron job,
+`cockpit-backend-retention` (01:17 UTC), trims the provider receipt ledgers,
+old media plans and cron history, and writes one `retention.applied` audit row
+with its counts. `select public.cockpit_backend_retention(false)` is a dry run.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Database grows by hundreds of MB a day again | Group `cockpit_audit_log` rows of the last hour by `entity_type, action`. A worker re-saving rows will show thousands of `update` rows. Add the key that changes to `cockpit_audit_strip_noise`; never turn off the audit trigger | Technical operations |
+| No `retention.applied` row for today | `select * from cron.job_run_details where jobid=(select jobid from cron.job where jobname='cockpit-backend-retention') order by start_time desc limit 3` | Technical operations |
+| Native monitor returns 500 again | `explain analyze select public.cockpit_native_monitor()` should take under 1 s. Check that the `*_provider_health_latest_idx` indexes exist and that the producer check does not read whole `cockpit_native_media_runs` rows | Technical operations |
+| Database restarts with "not properly shut down" | The server ran out of memory. Do not run queries that read many `cockpit_native_media_runs.plan` values (2 to 9 MB each) at once | Technical operations |
+
+## PULSE retirement
+
+PULSE (`client-watcher`) was retired on 2026-10-03 at the user's request.
+Its daily digest `acd8a3372bc3`, self-check `ce3b8d5bebf4`, system watchdog,
+profile, and sidecar identity were removed. The shared launcher and its reboot
+and five-minute cron entries now start Scout only.
+
+Do not restore the old PULSE cron or deployment bundle. Replacement design:
+[`docs/research/2026-10-03-pulse-reporting-proposal.md`](docs/research/2026-10-03-pulse-reporting-proposal.md).
+No replacement agent or schedule is enabled.
+
+Client data, panel views, and Scout remain intact. The portal migration reader
+still uses `pulse_client_credential(text)`; this shared credential helper was
+not dropped. Existing report artifacts are preserved on the VPS at
+`/home/muhammed/report-artifacts/pulse-retired-20261003`.
+The Slack app registration has not been uninstalled; removing it requires an
+authenticated app-owner session. No PULSE gateway remains behind that app.
+
 ## Scheduled jobs
 
 Every cron (the sync, the feeds, the outbox drains, the Hermes relay, the

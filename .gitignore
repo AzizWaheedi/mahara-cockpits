@@ -26,3 +26,8 @@ evidence/cutover-acceptance.json
 
 # Hours: shapes recorded from the live APIs (values replaced), never committed.
 supabase/functions/cockpit-hours-sync/fixtures/recorded/
+
+# Local secrets, sessions and scratch (never commit)
+env/
+tmp/
+.codex/
