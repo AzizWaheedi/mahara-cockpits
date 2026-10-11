@@ -522,6 +522,11 @@ export interface Profile {
  * and in dark mode, with the subscriber, video, view, post and follower
  * counts hidden before the capture. Run it again to refresh both pictures,
  * then set `r` and `w` from what it prints.
+ *
+ * On 2026-10-11 the Instagram bio's "Generated $72.3 million for our
+ * Partners" line, a retired figure, was taken out of the picture: the lines
+ * under it moved up and the picture kept its 1500 x 2078 size. The script now
+ * cuts that line before it captures, until the bio itself changes.
  */
 export const PROFILES: Profile[] = [
   {
