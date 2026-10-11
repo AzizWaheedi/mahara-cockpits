@@ -38,6 +38,7 @@ import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
 import { getCockpitSupabaseClient } from "@/auth/SupabaseAuthProvider";
+import { installCeoHarness } from "./ceoHarness";
 import { setFixtures } from "./convexStub";
 import { installHoursHarness } from "./hoursHarness";
 import { portalFixtures } from "./portalFixtures";
@@ -53,6 +54,8 @@ async function main() {
   // Team & payroll and Costs read through Supabase since the cutover: the
   // client's rpc answers from made-up fixtures (?hours= picks the scenario).
   installHoursHarness(getCockpitSupabaseClient());
+  // The CEO sections, actions and the proposals card (ceoHarness.ts).
+  installCeoHarness(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
     // Optional since the cutover: the CEO tabs that still read them show
     // their empty states without.

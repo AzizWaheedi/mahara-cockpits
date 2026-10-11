@@ -4,11 +4,19 @@ import { EmptyState } from "@/components/ceo/EmptyState";
 import { money, plural } from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
 import { Na } from "@/components/ceo/Na";
+import { Notes } from "@/components/ceo/Notes";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
-import { api, useAction, useMutation, useQuery } from "@/lib/cockpitApi";
+import {
+  api,
+  useAction,
+  useMutation,
+  useQuery,
+  useQueryState,
+} from "@/lib/cockpitApi";
+import { ltvRefusal } from "./ltvRefusal";
 
 // The kit's table look for the hand-built previews: sentence-case headers in
 // muted 12px, hairline rows, no box of their own inside the card.
@@ -483,7 +491,10 @@ export function ImportPaymentsCard({ order }: { order?: number }) {
  * right never appears, because there is nothing to say about it.
  */
 export function LtvWriteCard({ order }: { order?: number }) {
-  const plan = useQuery(api.ceo.ltv.preview, {});
+  // Not useQuery: its throw reached the tab's error boundary, so one refusal
+  // ("Finance totals need reconciliation…") blanked the statement upload,
+  // payer mapping, manual entries and exclusions with it (2026-10-11).
+  const { data: plan, error: refused } = useQueryState(api.ceo.ltv.preview, {});
   const apply = useAction(api.ceo.ltv.apply);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<string | null>(null);
@@ -511,6 +522,18 @@ export function LtvWriteCard({ order }: { order?: number }) {
       order={order}
     >
       {() => {
+        if (refused)
+          return (
+            <div className="grid gap-4">
+              <Notes
+                folded={false}
+                notes={[{ level: "warn", text: ltvRefusal(refused) }]}
+              />
+              <div>
+                <Button disabled>Write cards to ClickUp</Button>
+              </div>
+            </div>
+          );
         if (!plan) return null;
         const rows = plan.rows ?? [];
         const missing = plan.missing ?? [];

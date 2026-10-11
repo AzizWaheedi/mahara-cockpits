@@ -134,7 +134,7 @@ export const delivery = {
         const warn = (text) => notes.push({ level: "warn", text });
         const info = (text) => notes.push({ level: "info", text });
         info(triage
-            ? `Spend, leads and bookings come from the Creative Triage database, which holds every client ad account and every appointment, not only the campaigns carrying an Ads Management card. Spend is Meta only, converted to USD with the one fixed rate table the cockpit uses; a day is the ad account's reporting day, and a booking is dated by the day it is for. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`
+            ? `Spend and leads come from the media buyer's Meta sync in Creative Triage (cockpit_media_daily_stats), already in USD, for every campaign in it that ties to a client ad account through cockpit_campaigns, cards taken off the board included${triage.media.frozenRows ? `; days before ${triage.media.firstDay} come from the old snapshot table, frozen since 2 Oct, converted with the cockpit's fixed rate table` : ""}. A day is the ad account's reporting day. Bookings are the clients' appointments, dated by the day the meeting is for. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`
             : `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`);
         info(`Client status is Aziz's rule (2026-09-21): good with cost per lead within $${CPL_GATE}, cost per confirmed booking within $${CPB_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%; bad with cost per booking over $${CPB_BAD}, cost per lead over $${CPL_BAD.toFixed(2)} (spend with no leads counts as that); watch otherwise, which includes a show rate under ${SHOW_RATE_GOOD}% or one nobody has recorded. There is one show rate line for clients, ${SHOW_RATE_GOOD}%. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client with no bookings is judged on cost per lead alone.`);
         if (triageError)
@@ -152,9 +152,12 @@ export const delivery = {
         // far short of the totals mean a rewrite in flight or a failed write:
         // keep the last good payload rather than show missing spend as zero.
         const syncTotal = campaigns.reduce((s, c) => s + c.spend7d, 0);
+        // Like for like: the totals are the board campaigns', and the grain
+        // also keeps the rows of campaigns since taken off the board.
+        const boardNames = new Set(campaigns.map(c => c.campaignName));
         let grainTotal = 0;
         for (const d of grain)
-            if (d.date >= syncWeekFrom)
+            if (d.date >= syncWeekFrom && boardNames.has(d.campaignName))
                 grainTotal += d.spend;
         if (syncTotal >= 50 && grainTotal < syncTotal * 0.5)
             throw new Error(`Daily ad rows add up to ${dollars(grainTotal)} for the sync's last 7 days against ${dollars(syncTotal)} in the campaign totals (the sync may be rewriting them)`);
@@ -291,10 +294,15 @@ export const delivery = {
             if (mine) {
                 const gap = usd(mine.spend - board.spend);
                 const bookGap = mine.bookings - board.bookings;
+                // Spend and leads now come from one table on both sides
+                // (R2, 2026-10-11), so a spend gap can only be campaigns that tie
+                // to no client ad account; bookings still come from two places:
+                // the media sync ties a booking to an ad campaign, the clients'
+                // calendars hold every booking.
                 if (Math.abs(gap) >= 50 || Math.abs(bookGap) >= 3)
-                    info(`Cross-check, last 7 days: the Ads Management board sees ${dollars(board.spend)} and ${plural(board.bookings, "booking")}; this database sees ${dollars(mine.spend)} and ${plural(mine.bookings, "booking")}. The figures above are this database's. ${gap >= 0
-                        ? "It reads higher because the board carries only campaigns with a card."
-                        : "The board reads higher on spend here, which usually means this database's ad sync is a day behind on the most recent days rather than that the money is missing. Read a same-day comparison with that in mind."}`);
+                    info(`Cross-check, last 7 days: the media sync's own rows add up to ${dollars(board.spend)} and ${plural(board.bookings, "booking")} it tied to an ad campaign; the clients' calendars hold ${plural(mine.bookings, "booking")} for the same days. ${Math.abs(gap) >= 1
+                        ? `Spend tied to a client ad account is ${dollars(mine.spend)}: the ${dollars(Math.abs(gap))} gap is campaigns that tie to no client ad account (named below).`
+                        : "Spend is the same table on both sides, so it matches."} The figures above use the calendars, which also hold bookings the sync could not tie to a campaign.`);
             }
             const future = triage.bookings
                 .filter(b => b.date >= monthStart(today) && b.date <= today)
@@ -314,9 +322,9 @@ export const delivery = {
             const names = (list, fallback) => list.length ? list.join(", ") : fallback;
             const held = triage.notBookings.filter(k => k.count > 0);
             const provisionalSynced = triage.provisional.rowsEver > 0;
-            info(`Bookings are appointments on three calendar groups, counted on the day the meeting is for, future ones left out. Confirmed is the main group (${names(triage.calendarNames.main, "Main Appointment Calendar, In Office, In Home")}) plus the online group (${names(triage.calendarNames.online, "A. Appointment Calendar (Online)")}); provisional is the ${names(triage.provisional.names, "Not Confirmed Appointments")} calendar; total is confirmed plus provisional. ${provisionalSynced
-                ? `The provisional calendar has synced ${plural(triage.provisional.rowsEver, "row")} so far.`
-                : `The provisional calendar is set up on ${plural(triage.provisional.calendars, "client location")} and has produced no appointment row in this database yet, so provisional reads 0 everywhere until the sync covers it.`}${held.length
+            info(`Bookings are appointments on three calendar groups, counted on the day the meeting is for, future ones left out. Confirmed is the main group (${names(triage.calendarNames.main, "Main Appointment Calendar, In Office, In Home")}) plus the online group (${names(triage.calendarNames.online, "A. Appointment Calendar (Online)")}); provisional is the ${names(triage.provisional.names, "Not Confirmed Appointments")} calendar only; total is confirmed plus provisional. The appointments sync does not carry the provisional calendar${triage.provisional.inAppointmentsSync ? ` (${plural(triage.provisional.inAppointmentsSync, "row")} so far)` : ""}, so provisional is read from the call-centre report's own store, the dialer's GoHighLevel appointment facts and verified bookings, tied to the client by location: ${provisionalSynced
+                ? `${plural(triage.provisional.rowsEver, "provisional booking")} in the last 180 days, future ones included.`
+                : `no provisional booking in the last 180 days on ${plural(triage.provisional.calendars, "client location")} that carry the calendar.`} Show and close rates still cover the main and online calendars only.${held.length
                 ? ` Held out: ${held.map(k => `${plural(k.count, "row")} of ${KIND_WORDS[k.kind] ?? k.kind} (${k.calendars.join(", ")})`).join("; ")}.`
                 : ""}`);
             if (triage.noClientLocation.rows > 0)
@@ -361,6 +369,10 @@ export const delivery = {
                             .map(c => c.name)
                             .join(", ")}. That money is inside the totals above. Without ${gone.size === 1 ? "it" : "them"} the month reads ${dollars(month.spend - lost)} and ${plural(month.leads - leads, "lead")}.`);
                 }
+            }
+            if (triage.media.untied.length) {
+                const lost = triage.media.untied.reduce((n, u) => n + u.spend, 0);
+                warn(`${plural(triage.media.untied.length, "campaign")} in the media sync with ${dollars(lost)} of spend in the last 180 days ${triage.media.untied.length === 1 ? "ties" : "tie"} to no client ad account, so ${triage.media.untied.length === 1 ? "it is" : "they are"} in no figure here: ${triage.media.untied.slice(0, 5).map(u => `${u.campaign} (${dollars(u.spend)}, ${u.firstDay} to ${u.lastDay})`).join(", ")}${triage.media.untied.length > 5 ? ` and ${triage.media.untied.length - 5} more` : ""}.`);
             }
             if (triage.unmapped.length)
                 warn(`${plural(triage.unmapped.length, "ad account")} spending in this window ${triage.unmapped.length === 1 ? "is" : "are"} tied to no client card, so ${triage.unmapped.length === 1 ? "its" : "their"} spend is in the totals but has no client row: ${triage.unmapped.slice(0, 5).join(", ")}${triage.unmapped.length > 5 ? ` and ${triage.unmapped.length - 5} more` : ""}.`);
@@ -674,7 +686,9 @@ export const delivery = {
         const earliestNeeded = [seriesFrom, prevFrom, monthStart(today)].sort()[0];
         if (!data.firstDate)
             warn("No daily ad rows in the last 40 days.");
-        else if (data.firstDate > earliestNeeded)
+        // With the database read, days before the media table starts come from
+        // the frozen snapshot table, which the source note says.
+        else if (data.firstDate > earliestNeeded && !(triage && triage.media.frozenRows > 0))
             warn(`Daily ad history starts ${data.firstDate}, so earlier days read 0.`);
         if (data.lastDate && data.lastDate < yesterday)
             info(`The newest daily ad data is for ${data.lastDate}.`);
@@ -742,12 +756,20 @@ export const delivery = {
             : undefined;
         const sources = [
             {
-                name: "Creative Triage client ad snapshots",
+                name: "Client ad spend (media daily statistics)",
                 freshestAt: triage?.adsFreshAt,
                 ok: !!triage,
                 note: triage
-                    ? undefined
+                    ? `cockpit_media_daily_stats ${triage.media.firstDay} to ${triage.media.lastDay ?? "?"}, ${triage.media.rows} rows`
                     : (triageError ?? "Not read; falling back to the board"),
+            },
+            {
+                name: "Provisional bookings (call-centre reporting store)",
+                freshestAt: triage?.provisional.freshAt,
+                ok: !!triage,
+                note: triage
+                    ? `${triage.provisional.rowsEver} in the last 180 days`
+                    : (triageError ?? "Not read"),
             },
             {
                 name: "Creative Triage appointments",

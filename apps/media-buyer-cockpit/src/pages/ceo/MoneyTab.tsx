@@ -420,7 +420,11 @@ function AttributionBody({ p }: { p: MoneyPayload }) {
           label="Front-end cash"
           value={money(a.mtd.frontEnd)}
           sub={`${money(a.mtd.deposit)} deposits · ${money(a.mtd.kickoff)} rest of the cash · ${money(a.lastMonth.frontEnd)} in all of ${lastMonthName}`}
-          hint="Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Judged from the rails, because the kickoff form is not read yet."
+          hint={
+            a.kickoffRead
+              ? "Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Money that reached a rail; the kickoff form's own amount (read from 4 Oct 2026) is on the Sales and Frontend tabs, confirmed against these payments."
+              : "Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Judged from the rails, because the kickoff form is not read yet."
+          }
         />
         <StatTile
           variant="plain"

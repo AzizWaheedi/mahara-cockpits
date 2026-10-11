@@ -4,6 +4,7 @@ import type {
   ExpensesPayload,
   Note,
 } from "../payloads.ts";
+import { USD_PER } from "../data/tap.ts";
 import { B2B, num, sql, TRIAGE } from "../sb.ts";
 import { daysInMonth, kuwaitDay } from "../time.ts";
 import type { Adapter, DailyPoint, SourceStamp } from "../types.ts";
@@ -11,7 +12,7 @@ import type { Adapter, DailyPoint, SourceStamp } from "../types.ts";
 /**
  * Expenses and the P&L, from the bank statement import in the B2B Supabase
  * project (public.expenses) with cash in from Whop and client media from the
- * Creative Triage ad snapshots.
+ * native media feed (cockpit_media_daily_stats in Creative Triage).
  *
  * The import is a hand loaded CSV, not a live feed: it covers the months that
  * were loaded and nothing else. Everything here is about one month at a time,
@@ -138,6 +139,134 @@ function monthBounds(month: string): [string, string] {
   if (!/^\d{4}-\d{2}$/.test(month))
     throw new Error(`expenses: bad month ${month}`);
   return [`date '${month}-01'`, `date '${shiftMonth(month, 1)}-01'`];
+}
+
+/**
+ * Client media from the native media feed. cockpit_media_daily_stats holds
+ * one row per ad per day with spend already in USD (the media sync converts
+ * it, apps/media-buyer-cockpit/convex/sync.ts spendToUsd) and no client id.
+ * A row is tied to a client through its campaign name in cockpit_campaigns
+ * (rows the source deleted are kept for the tie), that campaign's Meta ad
+ * account, and the client whose meta_ad_account_id is that account. It is
+ * the same tie as the CEO worker's mediaClientDaysSql
+ * (hermes/ceo-refresh/native/data/triage.js). A campaign that does not tie is
+ * counted apart and named in the note, never dropped silently. Mahara's own
+ * accounts (maharamedia, maharamassdesign, as the worker folds names) are
+ * the company's own lead generation and are taken out.
+ */
+export const MEDIA_FEED_FIRST_DAY = "2026-08-13";
+const OWN_MEDIA_ACCOUNT_SQL = "regexp_replace(lower(coalesce(c.name, '')), '[^[:alnum:]]', '', 'g') in ('maharamedia', 'maharamassdesign')";
+
+export function clientMediaSql(fromSql: string, toSql: string): string {
+  return `with camp as (
+    select distinct on (raw_data->>'campaignName') raw_data->>'campaignName' as name,
+           coalesce(nullif(meta_account_id, ''), nullif(raw_data->>'metaAccountId', '')) as account
+    from public.cockpit_campaigns
+    where coalesce(raw_data->>'campaignName', '') <> ''
+    order by raw_data->>'campaignName', synced_at desc
+  ), d as (
+    select s.campaign_name, coalesce(nullif(s.data->>'spend', '')::numeric, 0) as spend, c.id::text as client_id,
+           coalesce(${OWN_MEDIA_ACCOUNT_SQL}, false) as own
+    from public.cockpit_media_daily_stats s
+    left join camp on camp.name = s.campaign_name
+    left join public.clients c on replace(c.meta_ad_account_id, 'act_', '') = camp.account
+    where s.day >= ${fromSql} and s.day < ${toSql}
+  )
+  select coalesce(sum(spend) filter (where client_id is not null and not own), 0) as spend,
+         coalesce(array_agg(distinct client_id) filter (where client_id is not null and not own), '{}') as client_ids,
+         coalesce(sum(spend) filter (where own), 0) as own_spend,
+         count(distinct client_id) filter (where own) as own_clients,
+         coalesce(sum(spend) filter (where client_id is null), 0) as untied_spend,
+         coalesce(array_agg(distinct campaign_name) filter (where client_id is null), '{}') as untied_campaigns,
+         (select to_char(min(day), 'YYYY-MM-DD') from public.cockpit_media_daily_stats) as first_day,
+         (select ready from public.cockpit_media_feed_state where feed = 'dailyStats') as ready,
+         (select source_rows from public.cockpit_media_feed_state where feed = 'dailyStats') as source_rows,
+         (select count(*) from public.cockpit_media_daily_stats) as actual_rows,
+         (select floor(extract(epoch from source_snapshot_at) * 1000) from public.cockpit_media_feed_state where feed = 'dailyStats') as synced_ms
+  from d`;
+}
+
+/** Days before the native feed's first day: the frozen ad snapshots, per currency, converted in code at USD_PER. */
+export function olderClientMediaSql(fromSql: string, toSql: string): string {
+  return `select coalesce(c.currency, 'USD') as currency,
+         coalesce(sum(a.spend) filter (where not coalesce(${OWN_MEDIA_ACCOUNT_SQL}, false)), 0) as spend,
+         coalesce(array_agg(distinct a.client_id::text) filter (where not coalesce(${OWN_MEDIA_ACCOUNT_SQL}, false)), '{}') as client_ids,
+         count(*) filter (where coalesce(${OWN_MEDIA_ACCOUNT_SQL}, false)) as own_rows
+  from public.ads_daily_snapshots a
+  left join public.clients c on c.id = a.client_id
+  where a.date >= ${fromSql} and a.date < ${toSql}
+  group by 1`;
+}
+
+/** Null when the feed can be trusted; otherwise the sentence that says why not. */
+export function mediaFeedCheck(r: Record<string, unknown>): string | null {
+  if (r.ready !== true) return "the native media feed is not marked ready (cockpit_media_feed_state dailyStats)";
+  if (num(r.source_rows) !== num(r.actual_rows))
+    return `the native media feed holds ${num(r.actual_rows)} rows but its state says ${num(r.source_rows)}, so it is mid-import`;
+  return null;
+}
+
+const asList = (x: unknown): string[] =>
+  Array.isArray(x)
+    ? x.map(String)
+    : typeof x === "string" && x.startsWith("{")
+      ? x.slice(1, -1).split(",").filter(Boolean).map(v => v.replace(/^"|"$/g, ""))
+      : [];
+
+export type ClientMedia = {
+  amount: number;
+  clients: number;
+  ownFound: boolean;
+  untiedSpend: number;
+  untiedCampaigns: string[];
+  olderUsd: number;
+  unknownCurrencies: string[];
+};
+
+/** The month's client media in USD: the native feed plus, before its first day, the old snapshots converted at USD_PER. */
+export function combineClientMedia(r: Record<string, unknown>, older: Record<string, unknown>[]): ClientMedia {
+  const ids = new Set(asList(r.client_ids));
+  let olderUsd = 0;
+  const unknownCurrencies: string[] = [];
+  let ownOlder = 0;
+  for (const o of older) {
+    const currency = String(o.currency ?? "USD").toUpperCase();
+    const rate = USD_PER[currency];
+    ownOlder += num(o.own_rows);
+    if (rate === undefined) {
+      if (num(o.spend)) unknownCurrencies.push(currency);
+      continue;
+    }
+    olderUsd += num(o.spend) * rate;
+    for (const id of asList(o.client_ids)) ids.add(id);
+  }
+  return {
+    amount: usd(num(r.spend) + olderUsd),
+    clients: ids.size,
+    ownFound: num(r.own_clients) > 0 || ownOlder > 0,
+    untiedSpend: usd(num(r.untied_spend)),
+    untiedCampaigns: asList(r.untied_campaigns).sort(),
+    olderUsd: usd(olderUsd),
+    unknownCurrencies,
+  };
+}
+
+export function clientMediaNote(month: string, firstDay: string, m: ClientMedia): string {
+  const parts = [
+    `Client media for ${month} is what clients' ad accounts spent on Meta, read from the native media feed (cockpit_media_daily_stats, already in dollars) and tied to each client through the campaign's ad account.`,
+    "It is a delivery cost carried against each client and is never company overhead, and it is never added to Mahara's own ad spend: the two are different money.",
+    m.ownFound
+      ? "Mahara's own accounts are taken out of this figure by name."
+      : "Mahara's own accounts had no spend in that month's rows, so nothing was taken out for them.",
+  ];
+  if (m.olderUsd)
+    parts.push(`Days before ${firstDay}, when the feed starts, come from the old ad snapshots (frozen on 2 Oct 2026), converted at the cockpit's fixed rates: ${dollars(m.olderUsd)}.`);
+  if (m.unknownCurrencies.length)
+    parts.push(`Spend in ${m.unknownCurrencies.join(", ")} has no fixed rate and is left out, so the figure is short by that much.`);
+  if (m.untiedCampaigns.length)
+    parts.push(`${m.untiedCampaigns.length} campaign${m.untiedCampaigns.length === 1 ? "" : "s"} could not be tied to a client and ${m.untiedCampaigns.length === 1 ? "is" : "are"} left out (${dollars(m.untiedSpend)}): ${m.untiedCampaigns.join(", ")}.`);
+  parts.push("It is Meta spend as Meta reported it, not a bank charge, so it will not match a bank line.");
+  return parts.join(" ");
 }
 
 /** Epoch ms computed in SQL (Postgres "+00" timestamps do not parse in JS). */
@@ -574,45 +703,44 @@ export const expenses: Adapter = {
       });
     }
 
-    // --- Secondary: client media for the same month, from the Creative Triage
-    // ad snapshots. It is a delivery cost carried per client and is never part
-    // of company overhead, so it is kept apart from every P&L group.
+    // --- Secondary: client media for the same month. A delivery cost carried
+    // per client, never part of company overhead, so it is kept apart from
+    // every P&L group. Read from the native media feed since 2026-10-11 (see
+    // clientMediaSql below); the old ad snapshots stopped on 2026-10-02.
     const clientAdSpend: ExpensesPayload["clientAdSpend"] = {
       amount: null,
       clients: null,
     };
     try {
-      const [r] = await sql(
-        TRIAGE,
-        `select coalesce(sum(a.spend), 0) as spend,
-                count(distinct a.client_id) as clients,
-                coalesce(sum(a.spend) filter (where lower(replace(coalesce(c.name, ''), ' ', '')) = 'maharamedia'), 0) as own_spend,
-                count(distinct a.client_id) filter (where lower(replace(coalesce(c.name, ''), ' ', '')) = 'maharamedia') as own_clients,
-                floor(extract(epoch from max(a.last_synced_at)) * 1000) as synced_ms
-         from public.ads_daily_snapshots a
-         left join public.clients c on c.id = a.client_id
-         where a.date >= ${monthFrom} and a.date < ${monthTo}`,
-      );
-      if (!r) throw new Error("client ad spend query returned no row");
-      const ownFound = num(r.own_clients) > 0;
-      clientAdSpend.amount = usd(num(r.spend) - num(r.own_spend));
-      clientAdSpend.clients = num(r.clients) - num(r.own_clients);
+      const [r] = await sql(TRIAGE, clientMediaSql(monthFrom, monthTo));
+      if (!r) throw new Error("client media query returned no row");
+      const feed = mediaFeedCheck(r);
+      if (feed) throw new Error(feed);
+      const firstDay = /^\d{4}-\d{2}-\d{2}$/.test(String(r.first_day)) ? String(r.first_day) : MEDIA_FEED_FIRST_DAY;
+      const older = `${month}-01` < firstDay
+        ? await sql(TRIAGE, olderClientMediaSql(monthFrom, `least(${monthTo}, date '${firstDay}')`))
+        : [];
+      const media = combineClientMedia(r, older);
+      clientAdSpend.amount = media.amount;
+      clientAdSpend.clients = media.clients;
       sources.push({
-        name: "Creative Triage ad snapshots",
+        name: "Native media feed (cockpit_media_daily_stats)",
         freshestAt: epoch(r.synced_ms),
         ok: true,
       });
+      if (older.length)
+        sources.push({
+          name: "Creative Triage ad snapshots (frozen 2 Oct 2026)",
+          ok: true,
+          note: `days before ${firstDay} only`,
+        });
       notes.push({
-        level: ownFound ? "info" : "warn",
-        text: `Client media for ${monthName(month)} is what clients' ad accounts spent, read from the Creative Triage snapshots. It is a delivery cost carried against each client and is never company overhead, and it is never added to Mahara's own ad spend: the two are different money. ${
-          ownFound
-            ? "Mahara's own account is taken out of this figure by name."
-            : "Mahara's own account could not be found by name in that month's rows, so this figure may still include it."
-        } It is Meta spend as Meta reported it, not a bank charge, so it will not match a bank line.`,
+        level: media.untiedCampaigns.length || media.unknownCurrencies.length ? "warn" : "info",
+        text: clientMediaNote(monthName(month), firstDay, media),
       });
     } catch (e) {
       sources.push({
-        name: "Creative Triage ad snapshots",
+        name: "Native media feed (cockpit_media_daily_stats)",
         ok: false,
         note: errText(e),
       });

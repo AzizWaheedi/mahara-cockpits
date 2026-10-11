@@ -24,6 +24,12 @@ export type Person = {
   currency: string;
   monthlyUsd: number | null;
   commission: { basis: CommissionBasis; rate: number | null };
+  /**
+   * The second commission line (A074, 2026-10-11): its own basis and rate,
+   * "none" when there is none. The setter's $10 per qualified intro shown
+   * and $50 per fully closed deal are two lines.
+   */
+  commission2: { basis: CommissionBasis; rate: number | null };
   commissionPct: number | null;
   commissionNote: string | null;
   isSales: boolean;

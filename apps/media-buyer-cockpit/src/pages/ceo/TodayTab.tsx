@@ -8,13 +8,14 @@ import {
   OctagonAlert,
   TriangleAlert,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { createContext, type ReactNode, useContext, useMemo } from "react";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { Delta } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FeedList } from "@/components/ceo/FeedList";
 import { type FunnelStep, FunnelStrip } from "@/components/ceo/FunnelStrip";
 import * as f from "@/components/ceo/format";
+import { useGrowthWindow } from "@/components/ceo/growthWindow";
 import { HeroFigure } from "@/components/ceo/HeroFigure";
 import { Meter } from "@/components/ceo/Meter";
 import {
@@ -36,11 +37,24 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { TabLink } from "@/components/ceo/TabLink";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
+import {
+  addDays,
+  inWindow,
+  previousOf,
+  startsLate,
+  sumIn,
+  type TabWindow,
+  tabWindow,
+} from "@/components/ceo/tabWindow";
+import { type Timeframe, useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSections } from "@/components/ceo/useCeo";
+import { range as rangeText } from "@/components/ceo/windows";
 import { cn } from "@/lib/utils";
 import type {
   ClientRow,
   DeliveryPayload,
+  GrowthDay,
   MoneyPayload,
   Note,
   Point,
@@ -49,51 +63,126 @@ import type {
 import {
   feedState,
   jobName,
+  sectionsFailing,
+  sectionsFailingText,
   sourceLabel,
   syncEvery,
   syncState,
 } from "./machineState";
 import { buildRoster, useLiveStatuses } from "./teamRoster";
 import type { CeoTabProps } from "./types";
+import { eodIn, refundsIn } from "./windowedNumbers";
+
+/**
+ * The window Today's timeframe bar picked (A127/A170). Each card keeps the
+ * server's own figure for its home window (month to date for cash, deals,
+ * refunds and the growth funnel; 7 days for client delivery) and rebuilds
+ * any other window from the daily series. Yesterday's and today's single-day
+ * tiles are days, not windows.
+ */
+const TodayWindow = createContext<{
+  tf: Timeframe;
+  w: TabWindow | null;
+} | null>(null);
+
+/** Month to date, for a card rendered outside the tab (never in practice). */
+const FALLBACK_TF: Timeframe = {
+  range: "mtd",
+  setRange: () => {},
+  custom: { from: "", to: "" },
+  setCustom: () => {},
+  bounds: last => ({ from: `${last.slice(0, 7)}-01`, to: last }),
+};
 
 type GoTab = CeoTabProps["goTab"];
 
 /** The one screen: are we OK, where is it leaking, what needs me. */
 export function TodayTab({ sections, now, day, goTab }: CeoTabProps) {
   const today = day ?? f.kuwaitDay(now);
+  const tf = useTimeframe("mtd");
+  const last = addDays(today, -1);
+  const cashDaily = sections.money?.payload
+    ? cashHeadline(sections.money.payload).rail.daily
+    : null;
+  const first = cashDaily?.[0]?.date ?? null;
+  const bounds = useMemo(() => tf.bounds(last, first), [tf, last, first]);
+  const w = useMemo(() => tabWindow(tf.range, bounds), [tf.range, bounds]);
+  const ctx = useMemo(() => ({ tf, w }), [tf, w]);
+  // What the cards compare with: the same days last month for month to date
+  // (the cash pace), else the run of days just before.
+  const compare = useMemo(() => {
+    if (!w) return null;
+    if (w.range !== "mtd") return previousOf(w);
+    const prev = f.shiftMonth(w.from.slice(0, 7), -1);
+    const dim = prev ? f.daysInMonth(prev) : null;
+    if (!prev || !dim) return null;
+    const day = Math.min(Number(w.to.slice(8, 10)), dim);
+    return {
+      from: `${prev}-01`,
+      to: `${prev}-${String(day).padStart(2, "0")}`,
+    };
+  }, [w]);
   return (
-    <div className="@container grid gap-4 lg:gap-6">
-      <CashHero section={sections.money} today={today} goTab={goTab} />
-
-      <KpiRow
-        delivery={sections.delivery}
-        calls={sections.calls}
-        day={day}
-        goTab={goTab}
-      />
-
-      <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
-        <DeliveryFunnelCard
-          delivery={sections.delivery}
-          calls={sections.calls}
+    <TodayWindow.Provider value={ctx}>
+      <div className="@container grid gap-4 lg:gap-6">
+        <TimeframeBar
+          tf={tf}
+          bounds={bounds}
+          compare={compare}
+          ariaLabel="Timeframe for every dated number on Today"
+          first={first}
+          last={last}
+          note="Cash, deals, refunds, both funnels, delivery by client and EOD counts follow these days. Yesterday's and today's tiles are single days."
+        />
+        <CashHero
+          section={sections.money}
+          growth={sections.growth}
+          today={today}
           goTab={goTab}
         />
-        <GrowthFunnelCard section={sections.growth} goTab={goTab} />
-      </div>
 
-      <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
-        <div className="grid min-w-0 gap-4 lg:gap-6">
-          <ClientsCard section={sections.clients} goTab={goTab} />
-          <DeliveryByClientCard section={sections.delivery} goTab={goTab} />
-        </div>
-        <div className="grid min-w-0 gap-4 lg:gap-6">
-          <LiveFeedCard section={sections.team} now={now} goTab={goTab} />
-          <TeamTodayCard section={sections.team} now={now} today={today} />
-        </div>
-      </div>
+        <KpiRow
+          delivery={sections.delivery}
+          calls={sections.calls}
+          day={day}
+          goTab={goTab}
+        />
 
-      <MachineLine section={sections.machine} goTab={goTab} />
-    </div>
+        <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
+          <DeliveryFunnelCard
+            delivery={sections.delivery}
+            calls={sections.calls}
+            goTab={goTab}
+          />
+          <GrowthFunnelCard
+            section={sections.growth}
+            goTab={goTab}
+            today={today}
+          />
+        </div>
+
+        <div className="grid items-start gap-4 lg:gap-6 @4xl:grid-cols-2">
+          <div className="grid min-w-0 gap-4 lg:gap-6">
+            <ClientsCard section={sections.clients} goTab={goTab} />
+            <DeliveryByClientCard
+              section={sections.delivery}
+              clients={sections.clients}
+              goTab={goTab}
+            />
+          </div>
+          <div className="grid min-w-0 gap-4 lg:gap-6">
+            <LiveFeedCard section={sections.team} now={now} goTab={goTab} />
+            <TeamTodayCard section={sections.team} now={now} today={today} />
+          </div>
+        </div>
+
+        <MachineLine
+          section={sections.machine}
+          sections={sections}
+          goTab={goTab}
+        />
+      </div>
+    </TodayWindow.Provider>
   );
 }
 
@@ -213,10 +302,12 @@ function daysBetween(from: string, to: string): number | null {
 
 function CashHero({
   section,
+  growth,
   today,
   goTab,
 }: {
   section: CeoSections["money"];
+  growth: CeoSections["growth"];
   today: string;
   goTab: GoTab;
 }) {
@@ -235,12 +326,31 @@ function CashHero({
       actions={<TabLink tab="money" label="Money" goTab={goTab} />}
       order={0}
     >
-      {m => <CashHeroBody m={m} today={today} />}
+      {m => (
+        <CashHeroBody
+          m={m}
+          days={growth?.payload?.daily ?? null}
+          today={today}
+        />
+      )}
     </SectionCard>
   );
 }
 
-function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
+function CashHeroBody({
+  m,
+  days,
+  today,
+}: {
+  m: MoneyPayload;
+  /** The growth section's days (closes and contracted on the closer form). */
+  days: GrowthDay[] | null;
+  today: string;
+}) {
+  const win = useContext(TodayWindow);
+  const w = win?.w ?? null;
+  // Month to date is the server's own figure; any other window is a sum of days.
+  const own = !w || w.range === "mtd";
   // The same rule the Frontend and Money tabs use, so the three headline cash
   // figures are one number under one name.
   const headline = cashHeadline(m);
@@ -273,7 +383,22 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
         : "serious";
 
   // Today is still running; its partial day would end the line on a false drop (as on the Money tab).
-  const daily = cash.daily.filter(p => p.date < today).slice(-90);
+  const daily = w
+    ? cash.daily.filter(p => p.date < today && inWindow(p.date, w))
+    : cash.daily.filter(p => p.date < today).slice(-90);
+  const chartWords = w ? w.label : "last 90 days through yesterday";
+  const prevW = w && !own ? previousOf(w) : null;
+  const winCash = own || !w ? cash.mtd : sumIn(cash.daily, w, p => p.value);
+  const prevCash =
+    prevW && !startsLate(cash.daily[0]?.date, prevW)
+      ? sumIn(cash.daily, prevW, p => p.value)
+      : null;
+  const closesIn = own || !w || !days ? null : sumIn(days, w, d => d.closes);
+  const contractedIn =
+    own || !w || !days ? null : sumIn(days, w, d => d.contracted);
+  const refundsWin = own
+    ? null
+    : refundsIn(m.attribution?.transactions, m.attribution?.from, w);
   const best = daily.reduce<Point | null>(
     (top, p) => (p.value > (top?.value ?? 0) ? p : top),
     null,
@@ -284,11 +409,25 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
     <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] @4xl:gap-10">
       <div className="min-w-0">
         <HeroFigure
-          label={`This month, ${headline.scope}`}
-          value={cash.mtd}
+          label={
+            own
+              ? `This month, ${headline.scope}`
+              : `${w?.label}, ${headline.scope}`
+          }
+          value={winCash}
           format={f.money}
-          countKey="today-cash-mtd"
-          delta={<Delta value={pace} size="md" vs={vs} />}
+          countKey={own ? "today-cash-mtd" : `today-cash-${w?.from}-${w?.to}`}
+          delta={
+            own ? (
+              <Delta value={pace} size="md" vs={vs} />
+            ) : prevW ? (
+              <Delta
+                value={f.change(winCash, prevCash)}
+                size="md"
+                vs={`vs ${f.money(prevCash)} in ${rangeText(prevW.from, prevW.to)}`}
+              />
+            ) : undefined
+          }
           sub={
             <>
               Projected{" "}
@@ -307,14 +446,14 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
               labels={daily.map(p => f.date(p.date))}
               format={f.money}
               height={72}
-              ariaLabel={`Cash per day over the last 90 days, through yesterday: ${f.money(total90)} in total${best ? `, best day ${f.money(best.value)} on ${f.date(best.date)}` : ""}.`}
+              ariaLabel={`Cash per day, ${chartWords}: ${f.money(total90)} in total${best ? `, best day ${f.money(best.value)} on ${f.date(best.date)}` : ""}.`}
             />
           ) : null}
           <div className="mt-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>
               {daily.length > 1
-                ? "Per day, last 90 days through yesterday"
-                : "No daily cash to chart yet"}
+                ? `Per day, ${chartWords}`
+                : "Pick at least two days to chart cash per day"}
             </span>
             {best ? (
               <span>
@@ -348,24 +487,38 @@ function CashHeroBody({ m, today }: { m: MoneyPayload; today: string }) {
         <dl>
           {/* The same names and figures as the Frontend and Sales tabs. */}
           <LedgerRow
-            label="Deals signed this month"
-            value={f.count(m.deals.mtd)}
-            sub={`${f.count(m.deals.lastMonth)} in all of ${prevName}`}
+            label={
+              own ? "Deals signed this month" : `Deals signed, ${w?.label}`
+            }
+            value={own ? f.count(m.deals.mtd) : f.count(closesIn)}
+            sub={
+              own
+                ? `${f.count(m.deals.lastMonth)} in all of ${prevName}`
+                : "On the closer form, by the day it was sent"
+            }
           />
           <LedgerRow
-            label={contracted.label}
-            value={f.money(contracted.value)}
-            sub={`${contracted.split ? `${contracted.split}. ` : ""}${f.money(contracted.lastMonth)} in all of ${prevName}`}
+            label={own ? contracted.label : `Contracted, ${w?.label}`}
+            value={own ? f.money(contracted.value) : f.money(contractedIn)}
+            sub={
+              own
+                ? `${contracted.split ? `${contracted.split}. ` : ""}${f.money(contracted.lastMonth)} in all of ${prevName}`
+                : "Contract value typed on the closer form; deal values logged by hand are counted month by month only"
+            }
           />
           {/* Whop is the only rail that reports refunds, so this stays Whop
               refunds even when the cash above covers more rails. */}
           <LedgerRow
-            label="Refunds this month"
-            value={f.money(m.refunds.mtd)}
+            label={own ? "Refunds this month" : `Refunds, ${w?.label}`}
+            value={own ? f.money(m.refunds.mtd) : f.money(refundsWin)}
             sub={
-              tapConnected
-                ? `Whop only, Tap refunds are not read yet. ${f.money(m.refunds.last90)} in the last 90 days.`
-                : `${f.money(m.refunds.last90)} in the last 90 days`
+              !own
+                ? refundsWin === null
+                  ? `The Transactions ledger starts ${m.attribution ? f.date(m.attribution.from) : "later"}, after these days begin, so refunds cannot be counted for them.`
+                  : "Whop refunds and refunds logged by hand, from the Transactions ledger"
+                : tapConnected
+                  ? `Whop only, Tap refunds are not read yet. ${f.money(m.refunds.last90)} in the last 90 days.`
+                  : `${f.money(m.refunds.last90)} in the last 90 days`
             }
           />
         </dl>
@@ -420,6 +573,8 @@ function KpiRow({
 }) {
   const title = "Client delivery and calls";
   const kicker = "Yesterday and today";
+  // Cost per lead follows the tab's bar; 7 days is the server's own figure.
+  const win = useContext(TodayWindow);
   // One link: most of the card is delivery. Calls is a tap away in the rail.
   const actions = <TabLink tab="delivery" label="Delivery" goTab={goTab} />;
   if (!delivery && !calls)
@@ -435,6 +590,27 @@ function KpiRow({
 
   const d = delivery?.payload ?? null;
   const c = calls?.payload ?? null;
+  const w = win?.w ?? null;
+  const own7 = !w || w.range === "7d";
+  const cplSpend = d && w && !own7 ? sumIn(d.daily, w, r => r.spend) : null;
+  const cplLeads = d && w && !own7 ? sumIn(d.daily, w, r => r.leads) : null;
+  const cplWin = own7
+    ? (d?.last7.cpl ?? null)
+    : cplLeads && cplSpend !== null
+      ? cplSpend / cplLeads
+      : null;
+  const prevW = w && !own7 ? previousOf(w) : null;
+  const prevLeads = d && prevW ? sumIn(d.daily, prevW, r => r.leads) : null;
+  const prevSpend = d && prevW ? sumIn(d.daily, prevW, r => r.spend) : null;
+  const cplPrev = own7
+    ? (d?.prevLast7.cpl ?? null)
+    : prevLeads &&
+        prevSpend !== null &&
+        d &&
+        prevW &&
+        !startsLate(d.daily[0]?.date, prevW)
+      ? prevSpend / prevLeads
+      : null;
   const pendingD = d ? undefined : "Delivery numbers are not computed yet";
   const pendingC = c ? undefined : "Call numbers are not computed yet";
   const s = c?.speedToLead ?? null;
@@ -483,21 +659,33 @@ function KpiRow({
         />
         <StatTile
           variant="plain"
-          label="Client cost per lead, 7 days"
-          value={d ? f.money(d.last7.cpl) : null}
+          label={
+            own7
+              ? "Client cost per lead, 7 days"
+              : `Client cost per lead, ${w?.short}`
+          }
+          value={d ? f.money(cplWin) : null}
           naHint={
             pendingD ??
-            (d?.last7.leads === 0 ? "No leads in the last 7 days" : undefined)
+            (own7
+              ? d?.last7.leads === 0
+                ? "No leads in the last 7 days"
+                : undefined
+              : "No leads in these days")
           }
           status={
-            d ? gateChip(d.last7.cpl, d.gates.cpl, "Cost per lead") : undefined
+            d ? gateChip(cplWin, d.gates.cpl, "Cost per lead") : undefined
           }
           delta={
             d ? (
               <Delta
-                value={f.change(d.last7.cpl, d.prevLast7.cpl)}
+                value={f.change(cplWin, cplPrev)}
                 goodWhen="down"
-                vs="vs previous 7 days"
+                vs={
+                  own7 || !prevW
+                    ? "vs previous 7 days"
+                    : `vs ${rangeText(prevW.from, prevW.to)}`
+                }
               />
             ) : undefined
           }
@@ -582,9 +770,12 @@ function DeliveryFunnelCard({
   calls: CeoSections["calls"];
   goTab: GoTab;
 }) {
+  const win = useContext(TodayWindow);
+  const w = win?.w ?? null;
+  const own7 = !w || w.range === "7d";
   return (
     <SectionCard
-      kicker="Last 7 days"
+      kicker={own7 ? "Last 7 days" : (w?.label ?? "Last 7 days")}
       title="Client delivery funnel"
       section={delivery}
       alsoReads={[calls]}
@@ -593,18 +784,49 @@ function DeliveryFunnelCard({
     >
       {d => {
         const c = calls?.payload?.last7 ?? null;
+        const callDays = calls?.payload?.daily ?? null;
+        // Calls keep 30 days per day; a window that starts earlier says so.
+        const callsKept =
+          own7 || (w && callDays && !startsLate(callDays[0]?.date, w));
+        const win7 =
+          own7 || !w
+            ? {
+                leads: d.last7.leads,
+                bookings: d.last7.bookings,
+                spend: d.last7.spend,
+                cpl: d.last7.cpl,
+                cpb: d.last7.cpb,
+                dials: c?.providerDials ?? null,
+                connected: c?.connected ?? null,
+              }
+            : (() => {
+                const leads = sumIn(d.daily, w, r => r.leads) ?? 0;
+                const bookings = sumIn(d.daily, w, r => r.bookings) ?? 0;
+                const spend = sumIn(d.daily, w, r => r.spend) ?? 0;
+                return {
+                  leads,
+                  bookings,
+                  spend,
+                  cpl: leads > 0 ? spend / leads : null,
+                  cpb: bookings > 0 ? spend / bookings : null,
+                  dials: callsKept ? sumIn(callDays, w, r => r.dials) : null,
+                  connected: callsKept
+                    ? sumIn(callDays, w, r => r.connected)
+                    : null,
+                };
+              })();
         const steps: FunnelStep[] = [
-          { label: "Leads", value: d.last7.leads },
+          { label: "Leads", value: win7.leads },
           // Several dials per lead is normal, so leads to dials is not a conversion.
           {
             label: "Actual calls",
-            value: c?.providerDials ?? null,
+            value: win7.dials,
             skipRate: true,
           },
-          { label: "Connected", value: c?.connected ?? null },
+          { label: "Connected", value: win7.connected },
           {
             label: "Bookings",
-            value: d.last7.bookings,
+            value: win7.bookings,
             // Delivery uses appointment date, so this is not a call conversion.
             skipRate: true,
           },
@@ -613,22 +835,28 @@ function DeliveryFunnelCard({
           <>
             <FunnelStrip
               steps={steps}
-              ariaLabel="Client delivery funnel, last 7 days"
+              ariaLabel={`Client delivery funnel, ${own7 ? "last 7 days" : w?.label}`}
               context={[
                 {
                   label: "Client ad spend",
-                  value: <Value value={f.money(d.last7.spend)} />,
+                  value: <Value value={f.money(win7.spend)} />,
                 },
                 {
                   label: "Cost per lead",
-                  value: <GateValue value={d.last7.cpl} gate={d.gates.cpl} />,
+                  value: <GateValue value={win7.cpl} gate={d.gates.cpl} />,
                 },
                 {
                   label: "Cost per booking",
-                  value: <GateValue value={d.last7.cpb} gate={d.gates.cpb} />,
+                  value: <GateValue value={win7.cpb} gate={d.gates.cpb} />,
                 },
               ]}
             />
+            {!callsKept ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Calls are kept per day for the last 30 days only, so dials and
+                connections are n/a for a window that starts earlier.
+              </p>
+            ) : null}
             {c ? (
               <details className="mt-4 text-xs text-muted-foreground">
                 <summary className="cursor-pointer select-none hover:text-foreground">
@@ -652,13 +880,25 @@ function DeliveryFunnelCard({
 function GrowthFunnelCard({
   section,
   goTab,
+  today,
 }: {
   section: CeoSections["growth"];
   goTab: GoTab;
+  today: string;
 }) {
+  const win = useContext(TodayWindow);
+  // The same rule as Sales and Frontend: a preset the server computed uses
+  // its window, any other run of days is rebuilt from the daily series.
+  const gw = useGrowthWindow(
+    section?.payload ?? null,
+    win?.tf ?? FALLBACK_TF,
+    today,
+  );
   return (
     <SectionCard
-      kicker="Month to date"
+      kicker={
+        gw.bounds ? rangeText(gw.bounds.from, gw.bounds.to) : "Month to date"
+      }
       title="Mahara growth funnel"
       section={section}
       notes={growthCardWarnings(section?.payload?.notes)}
@@ -666,7 +906,7 @@ function GrowthFunnelCard({
       order={4}
     >
       {g => {
-        const w = g.windows.mtd;
+        const w = gw.current ?? g.windows.mtd;
         const steps: FunnelStep[] = [
           { label: "Leads", value: w.leads },
           { label: "Intros booked", value: w.introsBooked },
@@ -694,7 +934,7 @@ function GrowthFunnelCard({
         return (
           <FunnelStrip
             steps={steps}
-            ariaLabel="Mahara growth funnel, month to date"
+            ariaLabel={`Mahara growth funnel, ${gw.bounds ? rangeText(gw.bounds.from, gw.bounds.to) : "month to date"}`}
             context={[
               {
                 label: "Lead-gen ad spend",
@@ -952,21 +1192,63 @@ const DELIVERY_COLUMNS: Column<DeliveryClient>[] = [
 
 function DeliveryByClientCard({
   section,
+  clients,
   goTab,
 }: {
   section: CeoSections["delivery"];
+  clients: CeoSections["clients"];
   goTab: GoTab;
 }) {
+  const win = useContext(TodayWindow);
+  const w = win?.w ?? null;
+  const own7 = !w || w.range === "7d";
+  const clientRows = clients?.payload?.rows ?? null;
   return (
     <SectionCard
-      kicker="Last 7 days"
+      kicker={own7 ? "Last 7 days" : (w?.label ?? "Last 7 days")}
       title="Delivery by client"
       section={section}
+      alsoReads={own7 ? undefined : [clients]}
       actions={<TabLink tab="delivery" label="Delivery" goTab={goTab} />}
       order={6}
     >
       {d => {
-        const rows = [...d.clients]
+        // Any window but the server's 7 days is each client's own days (the
+        // clients section); the status icon stays the 7-day rule.
+        const windowed: DeliveryClient[] | null =
+          own7 || !w
+            ? d.clients
+            : clientRows?.some(r => r.daily !== undefined)
+              ? clientRows
+                  .filter(r => Array.isArray(r.daily))
+                  .map(r => {
+                    const spend = sumIn(r.daily, w, x => x.spend) ?? 0;
+                    const leads = sumIn(r.daily, w, x => x.leads) ?? 0;
+                    const bookings = sumIn(r.daily, w, x => x.bookings) ?? 0;
+                    const seven = d.clients.find(
+                      c => c.clickupTaskId === r.clickupTaskId,
+                    );
+                    return {
+                      ...(seven ?? { status: "no-data" as const }),
+                      client: r.name,
+                      clickupTaskId: r.clickupTaskId,
+                      spend7d: spend,
+                      leads7d: leads,
+                      cpl7d: leads > 0 ? spend / leads : null,
+                      bookings7d: bookings,
+                    } as DeliveryClient;
+                  })
+                  .filter(r => r.spend7d > 0 || r.leads7d > 0)
+              : null;
+        if (windowed === null)
+          return (
+            <EmptyState
+              title="Not kept per day yet"
+              text="Spend, leads and bookings per client per day arrive with the next refresh of the clients section. Pick 7 days meanwhile."
+              compact
+            />
+          );
+        const rows = [...windowed]
           .sort((a, b) => b.spend7d - a.spend7d)
           .slice(0, 8);
         const shown = (
@@ -978,8 +1260,8 @@ function DeliveryByClientCard({
               rows={rows}
               columns={DELIVERY_COLUMNS}
               rowKey={r => r.clickupTaskId ?? r.client}
-              caption="Top clients by ad spend, last 7 days"
-              emptyText="No client spent on ads in the last 7 days."
+              caption={`Top clients by ad spend, ${own7 ? "last 7 days" : w?.label}`}
+              emptyText="No client spent on ads in these days."
             />
             {rows.length ? (
               <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs text-muted-foreground">
@@ -1002,10 +1284,10 @@ function DeliveryByClientCard({
                     );
                   })}
                 </ul>
-                {d.clients.length > rows.length ? (
+                {windowed.length > rows.length ? (
                   <span>
                     Top {f.count(rows.length)} of{" "}
-                    {f.plural(d.clients.length, "client")} by spend
+                    {f.plural(windowed.length, "client")} by spend
                   </span>
                 ) : null}
               </div>
@@ -1059,6 +1341,14 @@ const EOD: Record<
   "not due": { tone: "neutral", label: "No EOD due", rank: 3 },
 };
 
+/** One person's EODs over the tab's window, or the last 14 working days until the days are kept. */
+function eodHint(p: TeamPerson, w: TabWindow | null): string {
+  const c = eodIn(p, w);
+  if (c && w)
+    return `${f.count(c.filed)} of ${f.count(c.due)} filed, ${w.label}, ${f.count(c.late)} late`;
+  return `${f.count(p.eod14.filed)} of ${f.count(p.eod14.due)} filed in 14 working days, ${f.count(p.eod14.late)} late`;
+}
+
 function TeamTodayCard({
   section,
   now,
@@ -1068,6 +1358,7 @@ function TeamTodayCard({
   now: number;
   today: string;
 }) {
+  const w = useContext(TodayWindow)?.w ?? null;
   // The Management switch's live statuses, laid over the stored people so a
   // person set to Paused or Left leaves this card the moment it is saved,
   // the same as on the Management tab.
@@ -1143,7 +1434,7 @@ function TeamTodayCard({
                     <StatusChip
                       tone={eod.tone}
                       label={eod.label}
-                      hint={`${f.count(p.eod14.filed)} of ${f.count(p.eod14.due)} filed in 14 days, ${f.count(p.eod14.late)} late`}
+                      hint={eodHint(p, w)}
                     />
                   </li>
                 );
@@ -1167,9 +1458,11 @@ function TeamTodayCard({
  */
 function MachineLine({
   section,
+  sections,
   goTab,
 }: {
   section: CeoSections["machine"];
+  sections: CeoSections;
   goTab: GoTab;
 }) {
   const m = section?.payload ?? null;
@@ -1177,7 +1470,10 @@ function MachineLine({
   // The Machine tab's rules, so this line never disagrees with the tab it opens.
   const sync = syncState(m.syncAgeMin, syncEvery(m));
   const badFeeds = m.feeds.filter(feed => !feed.ok);
+  const failing = sectionsFailing(sections);
   const counts: string[] = [];
+  const sectionsLine = sectionsFailingText(failing);
+  if (sectionsLine) counts.push(sectionsLine);
   if (m.failingJobs > 0)
     counts.push(`${f.plural(m.failingJobs, "job")} failing`);
   if (m.staleJobs > 0) counts.push(`${f.plural(m.staleJobs, "job")} overdue`);
@@ -1202,7 +1498,8 @@ function MachineLine({
   const tone: StatusTone =
     m.failingJobs > 0
       ? "critical"
-      : m.failingSources > 0 ||
+      : failing.length > 0 ||
+          m.failingSources > 0 ||
           sync.tone === "serious" ||
           badFeeds.some(feed => feedState(feed).tone === "serious")
         ? "serious"

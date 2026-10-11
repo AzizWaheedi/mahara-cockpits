@@ -161,12 +161,15 @@ export function NextMonth({
   onClose,
   onSaved,
   onCosts,
+  qualifiedIntroShare = null,
 }: {
   board: Board;
   onClose: () => void;
   onSaved: (planId: number) => void;
   /** Opens the Costs page, where pay, commission and software are changed. */
   onCosts?: () => void;
+  /** Of intros shown lately, the share that qualified: prices a per-qualified-intro commission line (A074). */
+  qualifiedIntroShare?: number | null;
 }) {
   const savePlan = useAction(api.ceo.goals.savePlan);
   const saveTargets = useAction(api.ceo.goals.saveTargets);
@@ -247,11 +250,12 @@ export function NextMonth({
         demosShown: first.demosShown,
         closes: first.closes,
         mrrDue: drivers.mrrDue,
+        qualifiedIntroShare,
       },
       costs.usdPer,
       { money, count },
     );
-  }, [costs, drivers]);
+  }, [costs, drivers, qualifiedIntroShare]);
   const used = useMemo(
     () =>
       costs && pay

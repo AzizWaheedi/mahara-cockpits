@@ -1,7 +1,9 @@
 import { CPB_GATE, CPL_GATE } from "../constants.js";
 import { BUCKET_CHURNED, BUCKET_METRIC, LAUNCH_METRIC } from "../data/clients.js";
 import { tapKeyState } from "../data/tap.js";
-import { averageRetainer, createdDayOf, daysToLaunchOf, EXT_PAGE, EXTENSION_FIELD_NAME, FIELD_ASK, findExtensionField, readExtensionForm, summariseExtensions, summariseLaunch, } from "../extensions.js";
+import { averageRetainer, createdDayOf, daysToLaunchOf, EXT_PAGE, EXTENSION_FIELD_NAME, FIELD_ASK, findExtensionField, isInternalText, matchCard, readExtensionForm, summariseExtensions, summariseLaunch, } from "../extensions.js";
+import { mediaClientDaysSql } from "../data/triage.js";
+import { rollUp } from "../../../../apps/client-success-cockpit/src/lib/churnCore.ts";
 import { CEO_EMAILS } from "../gate.js";
 import { nameKey } from "../manualMatch.js";
 import { B2B, num, sql, TRIAGE } from "../sb.js";
@@ -111,16 +113,20 @@ async function read(project, query, timeoutMs) {
  * location through its indexes instead (lateral lookups, offset 0 to keep
  * the planner from parallel scans, which hang here). Bookings count on the
  * booking day, attendance on the meeting day up to today, unknown attendance
- * is never a no-show, spend is USD at the Pulse rates. Counts only.
+ * is never a no-show, spend is USD (the media sync's own conversion; the
+ * cockpit's rate table for days from the frozen snapshot table). Counts only.
  */
-const PULSE_SQL = `with w as (
+const pulseSql = (today) => `with w as (
   select d,
     (d - 27)::timestamp at time zone 'Asia/Kuwait' as c28,
     (d - 55)::timestamp at time zone 'Asia/Kuwait' as p28,
     (d - 89)::timestamp at time zone 'Asia/Kuwait' as b90,
     (d + 1)::timestamp at time zone 'Asia/Kuwait' as tmr
-  from (select (now() at time zone 'Asia/Kuwait')::date as d) x
-)
+  from (select date '${today}' as d) x
+),
+-- Client ad spend by client and day in USD (R2): the live media table, the
+-- frozen snapshot table before it starts (../data/triage.js mediaClientDaysSql).
+spend_days as (${mediaClientDaysSql(addDays(today, -89), today)})
 select g.clickup_id,
   coalesce(ap.appts_28d, 0) as appts_28d,
   coalesce(ap.appts_90d, 0) as appts_90d,
@@ -162,15 +168,10 @@ left join lateral (
   ) q
 ) le on true
 left join lateral (
-  select sum(s.spend / case c.currency when 'SAR' then 3.75 when 'AED' then 3.6725 when 'QAR' then 3.64 else 1 end) filter (where s.date >= w.d - 27) as spend_28d,
-    sum(s.spend / case c.currency when 'SAR' then 3.75 when 'AED' then 3.6725 when 'QAR' then 3.64 else 1 end) as spend_90d
+  select sum(s.spend_usd) filter (where s.day::date >= w.d - 27) as spend_28d,
+    sum(s.spend_usd) as spend_90d
   from public.ghl_client_ad_accounts m
-  join public.clients c on c.id = m.client_id
-  join lateral (
-    select s.spend, s.date from public.ads_daily_snapshots s
-    where s.client_id = m.client_id and s.date between w.d - 89 and w.d
-    offset 0
-  ) s on true
+  join spend_days s on s.client_id = m.client_id::text
   where m.location_id = g.location_id
 ) sp on true
 left join lateral (
@@ -789,6 +790,113 @@ export function computeChurn(input) {
         internal,
     };
 }
+/**
+ * The churn register (A078; Aziz, 2026-09-20: "churn percentage and LTV of
+ * clients as well, on average"): the client success Churn page's own tables,
+ * rolled up by its own rule (churnCore.ts rollUp: churn is a client lost
+ * before day 90 from launch, rate = churned over active at the start, the
+ * rolling three months is the number to manage). The CEO cockpit and the
+ * CSM read one number.
+ */
+const CHURN_MONTHS_SQL = `select month, active_at_start, new_clients, lost_before_register, note from public.cockpit_churn_months order by month`;
+const CHURN_DEPARTURES_SQL = `select to_char(left_on, 'YYYY-MM-DD') as left_on, to_char(launched_on, 'YYYY-MM-DD') as launched_on from public.cockpit_churn_departures where removed_at is null`;
+export function churnRegisterOf(monthRows, departureRows, today) {
+    const nullable = (x) => x === null || x === undefined || x === "" ? null : num(x);
+    const inputs = monthRows
+        .filter(r => /^\d{4}-\d{2}$/.test(String(r.month)))
+        .map(r => ({
+        month: String(r.month),
+        activeAtStart: nullable(r.active_at_start),
+        newClients: nullable(r.new_clients),
+        lostBeforeRegister: nullable(r.lost_before_register),
+        note: r.note ? String(r.note).slice(0, 400) : null,
+    }));
+    const departures = departureRows
+        .filter(r => ISO_DAY.test(String(r.left_on)))
+        .map(r => ({ leftOn: String(r.left_on), launchedOn: ISO_DAY.test(String(r.launched_on ?? "")) ? String(r.launched_on) : null }));
+    const through = today.slice(0, 7);
+    return { through, months: rollUp(inputs, departures, through), departures: departures.length };
+}
+/** The hourly job that writes the current extension to the ClickUp field (A120/A136), as the Client success card says it. */
+export function extensionJobNote(job, fieldFound) {
+    if (!fieldFound)
+        return FIELD_ASK;
+    if (!job)
+        return `The '${EXTENSION_FIELD_NAME}' field is written from the button on this card. The hourly job at :47 has not reported a run yet, so automatic writes are not confirmed.`;
+    const note = String(job.error ?? "").trim();
+    const at = num(job.at);
+    const when = at > 0 ? `${kuwaitDay(at)} ${new Date(at + KUWAIT_OFFSET_MS).toISOString().slice(11, 16)} Kuwait` : "an unknown time";
+    if (/^dry run/i.test(note))
+        return `Automatic writes are off (dry run): the hourly job at :47 checks the '${EXTENSION_FIELD_NAME}' field against the extension form but writes nothing (last run ${when}: ${note}). The button writes it now.`;
+    return `Kept current every hour at :47 from the extension form (last run ${when}${note ? `: ${note}` : ""}). The button writes it now.`;
+}
+/**
+ * Each client's spend, leads and due bookings per day (A127: the Client
+ * success tab rebuilds its 7-day numbers for any window). Campaigns reach the
+ * card by the same match as the 7-day numbers (the campaign's client tag,
+ * tags or client name to a card name or alias), deleted campaigns included so
+ * a past window keeps their days. Pure, for the tests.
+ */
+export function clientDailyOf(input) {
+    const { campaignTags, cardOf, daily, bookings, from, to } = input;
+    const taskOfCampaign = new Map();
+    for (const k of campaignTags) {
+        const taskId = cardOf([k.tag, ...(Array.isArray(k.tags) ? k.tags : []), k.client]);
+        if (taskId)
+            taskOfCampaign.set(String(k.name), taskId);
+    }
+    const byTask = new Map();
+    const at = (taskId, date) => {
+        let days = byTask.get(taskId);
+        if (!days) {
+            days = new Map();
+            byTask.set(taskId, days);
+        }
+        let r = days.get(date);
+        if (!r) {
+            r = { spend: 0, leads: 0, bookings: 0 };
+            days.set(date, r);
+        }
+        return r;
+    };
+    for (const d of daily) {
+        const taskId = taskOfCampaign.get(String(d.campaignName ?? ""));
+        const date = String(d.date ?? "");
+        if (!taskId || date < from || date > to)
+            continue;
+        const r = at(taskId, date);
+        r.spend += num(d.spend);
+        r.leads += num(d.leads);
+    }
+    for (const b of bookings) {
+        const taskId = taskOfCampaign.get(String(b.campaignName ?? ""));
+        const date = String(b.date ?? "");
+        if (!taskId || date < from || date > to)
+            continue;
+        at(taskId, date).bookings += Math.max(0, num(b.count) - num(b.future));
+    }
+    const out = new Map();
+    for (const taskId of new Set(taskOfCampaign.values())) {
+        const days = byTask.get(taskId);
+        const series = [];
+        for (let date = from; date <= to; date = addDays(date, 1)) {
+            const r = days?.get(date);
+            series.push({ date, spend: round2(r?.spend ?? 0), leads: r?.leads ?? 0, bookings: r?.bookings ?? 0 });
+        }
+        out.set(taskId, series);
+    }
+    return { byTask: out, campaigns: taskOfCampaign.size };
+}
+/** Extension grants per day for the last twelve months, matched to a card as the summary matches them. */
+export function grantRowsOf(grants, cards, today) {
+    const since = addDays(today, -365);
+    return grants
+        .filter(g => g.day >= since && g.day <= today)
+        .map(g => ({ g, card: matchCard(g.client, cards) }))
+        .filter(({ g, card }) => !isInternalText(g.client) && !(card && isInternalText(card.name)))
+        .map(({ g, card }) => ({ day: g.day, taskId: card?.taskId ?? null, client: card?.name ?? g.client, weeks: g.weeks, until: g.until }))
+        .sort((a, b) => a.day.localeCompare(b.day) || a.client.localeCompare(b.client));
+}
 export const clients = {
     key: "clients",
     label: "Client success",
@@ -804,6 +912,19 @@ export const clients = {
         // for the same reason (Aziz's spec of 2026-09-21, points 12 to 15).
         const extRead = readExtensionForm(ctx);
         const billingRead = ctx.repository.billing().then((rows) => ({ ok: true, rows }), (e) => ({ ok: false, error: errText(e) }));
+        const churnRead = Promise.all([sql(TRIAGE, CHURN_MONTHS_SQL), sql(TRIAGE, CHURN_DEPARTURES_SQL)])
+            .then(([months, departures]) => ({ ok: true, register: churnRegisterOf(months, departures, today) }), e => ({ ok: false, error: errText(e) }));
+        const extJobRead = Promise.all([
+            ctx.repository.jobs(),
+            sql(TRIAGE, `select count(*) filter (where written_at >= now() - interval '30 days') as written30, count(*) as written_all, floor(extract(epoch from max(written_at)) * 1000)::bigint as last_ms from public.cockpit_ceo_extension_field_writes`),
+        ]).then(([jobs, writes]) => ({ ok: true, job: jobs.find(j => j.job === "ceo-extensions-auto") ?? null, writes: writes[0] ?? null }), e => ({ ok: false, error: errText(e) }));
+        // The media history per client (shared with Delivery: one read per run)
+        // and every campaign's tags, deleted campaigns included.
+        const dailyRead = Promise.all([
+            ctx.repository.delivery(),
+            sql(TRIAGE, `select distinct on (raw_data->>'campaignName') raw_data->>'campaignName' as name, raw_data->>'clientTag' as tag, raw_data->'tags' as tags, raw_data->>'clientName' as client
+         from public.cockpit_campaigns where coalesce(raw_data->>'campaignName', '') <> '' order by raw_data->>'campaignName', synced_at desc`),
+        ]).then(([media, campaignTags]) => ({ ok: true, media, campaignTags }), e => ({ ok: false, error: errText(e) }));
         const data = await ctx.repository.clients();
         const roster = data?.clients ?? [];
         if (!roster.length)
@@ -877,7 +998,7 @@ export const clients = {
         // Pulse health from Creative Triage.
         let pulse = null;
         try {
-            const rows = await read(TRIAGE, PULSE_SQL, PULSE_TIMEOUT_MS);
+            const rows = await read(TRIAGE, pulseSql(today), PULSE_TIMEOUT_MS);
             if (!rows.length)
                 throw new Error("the Pulse roster came back empty");
             pulse = new Map(rows.map(r => [String(r.clickup_id), pulseOf(r)]));
@@ -1230,6 +1351,7 @@ export const clients = {
         const ext = await extRead;
         const cards = roster.map(c => ({ taskId: c.taskId, name: c.name }));
         let extensions;
+        const extJob = await extJobRead;
         if (ext.ok) {
             const s = summariseExtensions(ext.grants, cards, today);
             const fieldId = await findExtensionField();
@@ -1241,13 +1363,20 @@ export const clients = {
                 grants: s.grants,
                 perClient: s.perClient,
                 read: true,
-                // The write is started from the button on the tab, never here.
+                // The hourly job (mahara-ceo-extensions-auto, :47) writes the field
+                // when CEO_EXTENSIONS_APPLY is on; the button writes it now. The
+                // count is the field writes logged in the last 30 days.
                 clickupField: {
-                    written: 0,
-                    note: fieldId
-                        ? `The current extension is written to the '${EXTENSION_FIELD_NAME}' field by hand, from the button on this card, never automatically.`
-                        : FIELD_ASK,
+                    written: extJob.ok && extJob.writes ? num(extJob.writes.written30) : 0,
+                    note: extJob.ok
+                        ? extensionJobNote(extJob.job, Boolean(fieldId))
+                        : fieldId
+                            ? `The '${EXTENSION_FIELD_NAME}' field is written from the button on this card; the hourly job's state could not be read this run (${extJob.error}).`
+                            : FIELD_ASK,
                 },
+                // Grants by day for the last twelve months, so the tab can count
+                // weeks granted for any window (A127).
+                grantRows: grantRowsOf(ext.grants, cards, today),
                 lastMonth: s.lastMonth,
             };
             const perTask = new Map(s.perClient
@@ -1273,11 +1402,14 @@ export const clients = {
                     ? ` ${plural(s.internalTest, "test submission")} (an internal test card) ${s.internalTest === 1 ? "is" : "are"} left out.`
                     : ""}`,
             });
+            const autoOn = extJob.ok && extJob.job && !/^dry run/i.test(String(extJob.job.error ?? ""));
             notes.push({
                 level: fieldId ? "info" : "warn",
                 text: fieldId
-                    ? `The current extension reaches the ClickUp card only when the button on this card is pressed: it writes the live extension's weeks, or 0 once it has ended, to the '${EXTENSION_FIELD_NAME}' field on every card the form has named.`
-                    : `The current extension is not on the ClickUp cards yet. ClickUp's API cannot create a field, so: ${FIELD_ASK}. The button on this card then writes the live extension's weeks, or 0 once it has ended.`,
+                    ? `The current extension (the live extension's weeks, or 0 once it has ended) is written to the '${EXTENSION_FIELD_NAME}' field on every card the extension form has named, the same form the extension Make scenario fires on. ${autoOn
+                        ? "The hourly job at :47 keeps it current and writes only the cards that changed; the button on this card writes it now."
+                        : "The hourly job at :47 is a dry run, so only the button on this card writes it."}${extJob.ok && extJob.writes && num(extJob.writes.written_all) > 0 ? ` ${plural(num(extJob.writes.written30), "field write")} in the last 30 days.` : ""}`
+                    : `The current extension is not on the ClickUp cards yet. ClickUp's API cannot create a field, so: ${FIELD_ASK}. The hourly job and the button then write the live extension's weeks, or 0 once it has ended.`,
             });
         }
         else {
@@ -1346,11 +1478,57 @@ export const clients = {
                 text: `The client cards' billing fields could not be read this run (${billing.error}), so the average retainer, MRR and LTV per client are missing, not zero.`,
             });
         }
+        // --- The churn register (A078).
+        const churnReg = await churnRead;
+        let churnRegister = null;
+        if (churnReg.ok) {
+            churnRegister = churnReg.register;
+            sources.push({ name: "Churn register (client success Churn page)", ok: true, note: `${churnRegister.months.filter(m => m.hasData).length} months, ${plural(churnRegister.departures, "departure")} logged` });
+            const thisMonth = churnRegister.months.find(m => m.month === churnRegister.through);
+            const typed = thisMonth && (thisMonth.activeAtStart !== null || thisMonth.newClients !== null || thisMonth.churned > 0);
+            notes.push({
+                level: "info",
+                text: `Churn on Backend is the client success Churn page's register (cockpit_churn_months and cockpit_churn_departures), by its rule: a client lost before day 90 from launch, over the clients active at the start of the month; the rolling three months is the number to manage against.${typed ? "" : ` ${monthName(churnRegister.through)} is not in the register yet; log it on the client success Churn page.`}`,
+            });
+        }
+        else
+            notes.push({
+                level: "warn",
+                text: `The churn register could not be read this run (${churnReg.error}), so churn on Backend is missing, not zero.`,
+            });
+        // --- Spend, leads and bookings per client per day (A127).
+        const media = await dailyRead;
+        let dailyFrom = null;
+        let dailyTo = null;
+        if (media.ok) {
+            const m = media.media;
+            dailyTo = today;
+            dailyFrom = m?.firstDate && m.firstDate > addDays(today, -179) ? String(m.firstDate) : addDays(today, -179);
+            const cardOf = (keys) => keys.map(tight).filter(Boolean).map(key => cardByKey.get(key)).find(id => id && rosterIds.has(id)) ?? null;
+            const { byTask } = clientDailyOf({ campaignTags: media.campaignTags, cardOf, daily: m?.daily ?? [], bookings: m?.bookings ?? [], from: dailyFrom, to: dailyTo });
+            for (const r of rows)
+                r.daily = byTask.get(r.clickupTaskId) ?? null;
+            notes.push({
+                level: "info",
+                text: `Per-day spend, leads and bookings per client start ${shortDay(dailyFrom)} (the media buyer's Meta sync, campaigns taken off the board included), so a window that starts earlier counts from then. Bookings per day are the booking events tied to the client's campaigns, future appointments left out; the 7-day bookings column is the client's whole GoHighLevel count, so the two can differ.`,
+            });
+        }
+        else {
+            for (const r of rows)
+                r.daily = null;
+            notes.push({
+                level: "warn",
+                text: `The per-day media history could not be read this run (${media.error}), so a custom window shows these numbers as missing, not zero; the 7-day columns above still stand.`,
+            });
+        }
         const payload = {
             counts: { ...counts, total: rows.length },
             atRisk,
             rows,
             churn,
+            churnRegister,
+            dailyFrom,
+            dailyTo,
             extensions,
             launch,
             retainer,

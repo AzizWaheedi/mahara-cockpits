@@ -27,9 +27,19 @@ export function useCockpitAuth(): CockpitAuthState {
       cockpits: ["csm", "creative", "editor", "sales"],
       home: "/ceo",
     };
+    // ?reads=1 gives the harness a made-up session, so the reads that wait
+    // for one (useQuery, useQueryState: the LTV card, the proposals card)
+    // run against the fixtures in hoursHarness.ts. Off by default, as before.
+    const reads =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("reads") === "1";
     state = {
       client: getCockpitSupabaseClient(),
-      session: null,
+      session: reads
+        ? ({
+            user: { id: "harness-ceo", email: "ceo@example.test" },
+          } as unknown as CockpitAuthState["session"])
+        : null,
       access,
       ready: true,
       error: null,

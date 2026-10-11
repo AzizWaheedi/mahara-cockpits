@@ -720,10 +720,15 @@ export type FunnelWindow = {
   /** The deposit the closer typed on the form (the dashboard's `cash_collected`). */
   cash: number;
   /**
-   * Front-end cash: the deposit at signing plus the kickoff cash collected
-   * on the onboarding call. `kickoff` is null until the kickoff form is
-   * read, so `total` is the deposit alone. `confirmed` is the deposit money
-   * a Whop payment or a bank transfer on record backs; Tap is not checked.
+   * Front-end cash (Aziz, 2026-09-21: "deposit + kickoff cash, confirmed
+   * against the rails"): the deposit at signing plus the kickoff cash the
+   * CSM collects on the onboarding call. `kickoff` is the "Payment Amount"
+   * on the kickoff form (Typeform tG7dnxBn, read from
+   * cockpit_client_onboarding), dated by the day the form was submitted and
+   * read as USD (the form has no currency); null when no day of the window
+   * is read (the form carries the amount from 4 Oct 2026). `total` is
+   * deposit plus kickoff. `confirmed` is the deposit money a Whop payment or
+   * a bank transfer on record backs.
    */
   frontEndCash: {
     deposit: number;
@@ -733,6 +738,14 @@ export type FunnelWindow = {
     dealsConfirmed: number;
     confirmed: number;
     confirmedShare: number | null;
+    /**
+     * Kickoff money an attributed payment for the same card backs on any
+     * rail (Tap, Whop, a bank line or a transfer in cockpit_client_payments)
+     * within the match window. An unconfirmed kickoff still counts in
+     * `total`. Absent on payloads stored before 2026-10-11.
+     */
+    kickoffConfirmed?: number;
+    kickoffConfirmedShare?: number | null;
   };
   cac: number | null;
   /** The dashboard's `roas`: contracted over lead-gen spend. Same as `roasContracted`. */
@@ -797,6 +810,10 @@ export type GrowthDay = {
   contracted?: number;
   /** Deposits typed on the closer form that day. */
   deposit?: number;
+  /** Kickoff cash on the kickoff forms submitted that day; null (or absent) before the form was read (4 Oct 2026). */
+  kickoff?: number | null;
+  /** Of that kickoff cash, what a rail payment for the same card backs. */
+  kickoffConfirmed?: number;
 };
 
 export type GrowthPayload = {
@@ -1211,6 +1228,16 @@ export type ClientRow = {
   extensionWeeks?: number;
   /** The latest extension's end day, when one is still running. */
   extendedUntil?: string | null;
+  /**
+   * Spend (USD), leads and due bookings per Kuwait day, from `dailyFrom` to
+   * `dailyTo` on the payload (at most 180 days), so the tab rebuilds the
+   * 7-day numbers for any window (A127). null when no campaign ties to the
+   * card, or when the media history could not be read (a warn note says
+   * so); absent on payloads stored before 2026-10-11 ("not kept per day").
+   */
+  daily?:
+    | { date: string; spend: number; leads: number; bookings: number }[]
+    | null;
 };
 
 /** The payment that counts as a renewal under the 2026-09-16 rule. */
@@ -1355,7 +1382,13 @@ export type ClientsPayload = {
     }[];
     /** True when the form was read this run. */
     read: boolean;
-    /** Whether the current extension was written to the ClickUp card, and why not when not. */
+    /**
+     * The ClickUp extension field: `written` is the field writes logged in
+     * the last 30 days (cockpit_ceo_extension_field_writes), `note` the
+     * worker's sentence about the hourly job that keeps it current ("Kept
+     * current every hour at :47 …", or "Automatic writes are off (dry
+     * run) …" while CEO_EXTENSIONS_APPLY is off).
+     */
     clickupField: { written: number; note: string };
     /** The month before, for the tile's sub-line. */
     lastMonth?: {
@@ -1364,6 +1397,18 @@ export type ClientsPayload = {
       totalWeeks: number;
       grants: number;
     };
+    /**
+     * Every grant of the last twelve months, by the day the form was
+     * submitted, matched to a card where one matches (A127: weeks granted
+     * for any window). Absent on payloads stored before 2026-10-11.
+     */
+    grantRows?: {
+      day: string;
+      taskId: string | null;
+      client: string;
+      weeks: number;
+      until: string;
+    }[];
   };
   /**
    * Time to first launch: from the ClickUp card's creation to its Launch
@@ -1385,7 +1430,54 @@ export type ClientsPayload = {
   };
   /** Mean MRR over active cards on a recurring plan, and how many cards that is. Absent on older payloads. */
   retainer?: { averageUsd: number | null; cards: number };
+  /**
+   * The churn register (Aziz, 2026-09-20: "churn percentage … on
+   * average"): the client success Churn page's own tables,
+   * cockpit_churn_months and cockpit_churn_departures (removed_at is null),
+   * rolled up by its rule (apps/client-success-cockpit/src/lib/churnCore.ts
+   * rollUp): churn is a client lost before day 90 from launch, the rate is
+   * churned over active at the start, and the rolling three months is the
+   * number to manage against. Absent on payloads stored before 2026-10-11.
+   */
+  churnRegister?: ChurnRegister | ChurnRegisterMonth[] | null;
+  /** The days `rows[].daily` covers; null when the media history was not read. Absent on older payloads. */
+  dailyFrom?: string | null;
+  dailyTo?: string | null;
   notes: Note[];
+};
+
+/** One month of the churn register, as churnCore's rollUp returns it. */
+export type ChurnRegisterMonth = {
+  /** YYYY-MM. */
+  month: string;
+  activeAtStart: number | null;
+  /** The start came from the month before, not typed. */
+  startCarried?: boolean;
+  newClients: number | null;
+  churned: number;
+  completed?: number;
+  /** Departures with no launch date: not counted until one is given. */
+  unknown?: number;
+  lostBeforeRegister?: number | null;
+  activeAtEnd?: number | null;
+  /** Percent, 0..100 to one place. */
+  churnPct: number | null;
+  retentionPct?: number | null;
+  netGrowth?: number | null;
+  /** Percent, 0..100 to one place. */
+  rolling3Pct: number | null;
+  band?: { label: string; tone: "good" | "warn" | "bad" } | null;
+  note?: string | null;
+  hasData?: boolean;
+};
+
+export type ChurnRegister = {
+  /** The Kuwait month the rows run through, YYYY-MM. */
+  through?: string;
+  /** Oldest first. */
+  months: ChurnRegisterMonth[];
+  /** Departures logged on the Churn page (not removed). */
+  departures?: number;
 };
 
 // --- Team: EODs, activity and a live feed ---
@@ -1406,6 +1498,13 @@ export type TeamPerson = {
   eodYesterday: "on time" | "late" | "missed" | "not due";
   /** Only working days before `statusSince` count as due for a paused or left person. */
   eod14: { due: number; filed: number; late: number; missed: number };
+  /**
+   * One row per day from the person's first filing or seat (at most 180
+   * days back) to yesterday: due (a working day the person owed an EOD),
+   * filed and late, so the tab counts EODs for any window (A127). Absent on
+   * payloads stored before 2026-10-11.
+   */
+  eodDays?: { date: string; due: boolean; filed: boolean; late: boolean }[];
   lastActiveAt: number | null;
   actionsToday: number;
   energy: number | null;
@@ -1454,6 +1553,8 @@ export type TeamPayload = {
   inactive?: TeamPerson[];
   /** Newest first, at most 60. */
   feed: FeedItem[];
+  /** The first day `people[].eodDays` can cover. Absent on older payloads. */
+  eodFrom?: string;
   notes: Note[];
 };
 
@@ -1978,6 +2079,16 @@ export type HiringPayload = {
     rolesRunning: number;
     ungraded: number;
   };
+  /**
+   * Applications and hires per Kuwait day over every candidate read, not
+   * only the live ones (A127: applied and hired follow the timeframe bar).
+   * Days with nothing are left out. Absent on payloads stored before
+   * 2026-10-11.
+   */
+  appliedByDay?: { date: string; count: number }[];
+  hiredByDay?: { date: string; count: number }[];
+  /** False when the board held more candidates than were read, so the series are a floor. */
+  seriesComplete?: boolean;
   notes: Note[];
 };
 

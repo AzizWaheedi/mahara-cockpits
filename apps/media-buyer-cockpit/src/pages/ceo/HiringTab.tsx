@@ -15,7 +15,7 @@ import {
   UserSearch,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { Facts } from "@/components/ceo/Facts";
 import { FeedList } from "@/components/ceo/FeedList";
@@ -27,6 +27,7 @@ import {
   decimal,
   humanize,
   isNum,
+  kuwaitDay,
   pct,
   plural,
 } from "@/components/ceo/format";
@@ -36,6 +37,9 @@ import { SectionCard } from "@/components/ceo/SectionCard";
 import { ShowMore } from "@/components/ceo/ShowMore";
 import { StatTile } from "@/components/ceo/StatTile";
 import { StatusChip } from "@/components/ceo/StatusChip";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
+import { addDays, tabWindow } from "@/components/ceo/tabWindow";
+import { useTimeframe } from "@/components/ceo/timeframe";
 import { useRefresh } from "@/components/ceo/useCeo";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -48,6 +52,7 @@ import type {
 } from "@/types/ceo/payloads";
 import { STAGES, type StageKey } from "@/types/hiring/spec";
 import type { CeoTabProps } from "./types";
+import { countIn } from "./windowedNumbers";
 
 /**
  * Recruiting: the five roles Mahara hires on repeat, and the one thing that
@@ -1305,9 +1310,19 @@ function hiringKindIcon(kind: string) {
   return StickyNote;
 }
 
-export function HiringTab({ sections, now }: CeoTabProps) {
+export function HiringTab({ sections, now, day }: CeoTabProps) {
   const section = sections.hiring;
   const payload = section?.payload ?? null;
+  // One bar for the tab (A127/A170): applied and hired per day, to yesterday.
+  const tf = useTimeframe("30d");
+  const last = addDays(day ?? kuwaitDay(now), -1);
+  const first = payload?.appliedByDay?.[0]?.date ?? null;
+  const bounds = useMemo(() => tf.bounds(last, first), [tf, last, first]);
+  const w = useMemo(() => tabWindow(tf.range, bounds), [tf.range, bounds]);
+  const applied = countIn(payload?.appliedByDay, w);
+  const hired = countIn(payload?.hiredByDay, w);
+  const notKept =
+    "Not kept per day yet: the board's applications by day arrive with the next refresh.";
   const pull = useAction(api.hiring.actions.refreshNow);
   const { refresh } = useRefresh();
   const [role, setRole] = useState<string>("");
@@ -1429,6 +1444,20 @@ export function HiringTab({ sections, now }: CeoTabProps) {
 
   return (
     <div className="@container grid min-w-0 gap-4 lg:gap-6">
+      <TimeframeBar
+        tf={tf}
+        bounds={bounds}
+        ariaLabel="Timeframe for applications and hires"
+        first={first}
+        last={last}
+        note={
+          payload.appliedByDay === undefined
+            ? "Applications and hires are not kept per day yet; the counts fill in after the next refresh."
+            : payload.seriesComplete === false
+              ? "The board holds more candidates than were read, so applied and hired per day are a floor."
+              : "Applied and hired follow these days. Scores due, the funnel and the bench are right now."
+        }
+      />
       <SectionCard
         kicker="Grading queue"
         title="Waiting on you"
@@ -1455,8 +1484,21 @@ export function HiringTab({ sections, now }: CeoTabProps) {
               />
               <StatTile
                 variant="plain"
-                label="Applied in 30 days"
-                value={count(d.totals.applied30)}
+                label={w ? `Applied, ${w.short}` : "Applied in 30 days"}
+                value={
+                  w
+                    ? applied === null
+                      ? null
+                      : count(applied)
+                    : count(d.totals.applied30)
+                }
+                naHint={notKept}
+                sub={
+                  w
+                    ? `${w.label}${hired === null ? "" : ` · ${plural(hired, "hire")}`}`
+                    : undefined
+                }
+                hint="Candidates by the day they applied, over every candidate on the board, not only the live ones. Hires are dated by the day the card moved to Hired."
               />
               <StatTile
                 variant="plain"

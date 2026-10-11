@@ -1,19 +1,23 @@
 import { ListTodo } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips } from "@/components/ceo/FilterChips";
 import { plural, relative } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
-import { api, useAction, useQuery } from "@/lib/cockpitApi";
+import { api, useAction } from "@/lib/cockpitApi";
 
 /**
  * Changes and bugs, Aziz's own queue (2026-09-21). Two kinds, a text, a
  * queue. Bugs are picked up on the next scan; changes wait until Deploy
  * sends the batch. The scan runs from Aziz's desktop on a schedule and
  * writes its state back, so an item moves from queued to in progress to done.
- * Shown only to the founder addresses; the server refuses everyone else.
+ * Shown only to the CEO (the verified seat's isCeo, 2026-10-11: the old
+ * `isFounder` flag went with Convex, so the card had been hidden since the
+ * cutover); the server refuses everyone else (cockpit_ceo_action checks
+ * cockpit_is_ceo() and writes an audit row for each feedback.* change).
  */
 
 type Item = {
@@ -53,8 +57,8 @@ export function FeedbackQueueCard({
   order: number;
   now: number;
 }) {
-  const me = useQuery(api.roles.me, {});
-  if (!me || me.isFounder !== true) return null;
+  const { isCeo } = useCockpitAuth();
+  if (!isCeo) return null;
   return <FeedbackQueue order={order} now={now} />;
 }
 

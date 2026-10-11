@@ -6,6 +6,7 @@ import {
   rangeEnd,
   rangeStart,
 } from "./chartKit";
+import { isNum, money, pct } from "./format";
 
 /**
  * One timeframe for a whole tab (Aziz, 2026-09-21: "any number with a time
@@ -163,6 +164,13 @@ export function windowFromDaily(
   const closes = sum(d => d.closes);
   const contracted = r2(sum(d => d.contracted));
   const deposit = r2(sum(d => d.deposit));
+  // Kickoff cash is read only for days the worker read the form (from
+  // 4 Oct 2026); a window with no such day says "not read", never $0.
+  const kickoffDays = rows.filter(d => isNum(d.kickoff));
+  const kickoff = kickoffDays.length ? r2(sum(d => d.kickoff ?? 0)) : null;
+  const kickoffConfirmed =
+    kickoff === null ? undefined : r2(sum(d => d.kickoffConfirmed ?? 0));
+  const frontEnd = r2(deposit + (kickoff ?? 0));
   return {
     from,
     to,
@@ -220,16 +228,22 @@ export function windowFromDaily(
     cash: deposit,
     frontEndCash: {
       deposit,
-      kickoff: null,
-      total: deposit,
+      kickoff,
+      total: frontEnd,
       deals: closes,
+      // Which deposit a rail backs needs the server's deal join; not kept per day.
       dealsConfirmed: 0,
       confirmed: 0,
       confirmedShare: null,
+      kickoffConfirmed,
+      kickoffConfirmedShare:
+        kickoff === null || kickoffConfirmed === undefined
+          ? null
+          : share(kickoffConfirmed, kickoff),
     },
     cac: closes > 0 ? r2(spend / closes) : null,
     roas: spend > 0 ? r2(contracted / spend) : null,
-    roasCash: spend > 0 ? r2(deposit / spend) : null,
+    roasCash: spend > 0 ? r2(frontEnd / spend) : null,
     roasContracted: spend > 0 ? r2(contracted / spend) : null,
     raw: {
       spend,
@@ -245,6 +259,52 @@ export function windowFromDaily(
       demos_cancelled: demosCancelled,
     },
   };
+}
+
+/** The hint on every front-end cash tile. */
+export const FRONT_END_CASH_HINT =
+  "The deposit the closer typed at signing, for deals signed in this window, plus the kickoff cash the CSM collects on the onboarding call: the Payment Amount on the kickoff form, dated by the day the form was sent, read from 4 Oct 2026 and taken as USD because the form has no currency. Confirmed means a payment on a rail (Tap, Whop, a bank line or a transfer) attributed to the same deal or card backs it; an unconfirmed kickoff still counts.";
+
+/** The first day the CSM's kickoff form carries "Payment Amount" (Typeform tG7dnxBn). */
+export const KICKOFF_READ_FROM = "2026-10-04";
+
+/**
+ * The line under a front-end cash figure (Aziz, 2026-09-21: "deposit +
+ * kickoff cash, confirmed against the rails"): "deposit $X + kickoff $Y,
+ * Z% confirmed on a rail". The share is said only when both parts' backing
+ * is known (a window rebuilt from days does not keep which deposit a rail
+ * backs); a window that starts before the form carried the amount says so.
+ */
+export function frontEndCashSub(
+  fe: FunnelWindow["frontEndCash"],
+  from?: string | null,
+): string {
+  const kickoffRead = isNum(fe.kickoff);
+  const head = kickoffRead
+    ? `deposit ${money(fe.deposit)} + kickoff ${money(fe.kickoff)}`
+    : `deposit ${money(fe.deposit)}`;
+  const depositKnown = fe.deposit === 0 || isNum(fe.confirmedShare);
+  const kickoffKnown =
+    !kickoffRead || fe.kickoff === 0 || isNum(fe.kickoffConfirmed);
+  const backed = fe.confirmed + (kickoffRead ? (fe.kickoffConfirmed ?? 0) : 0);
+  let confirmed: string | null = null;
+  if (fe.total > 0 && depositKnown && kickoffKnown)
+    confirmed = `${pct(backed / fe.total)} confirmed on a rail`;
+  else if (
+    kickoffRead &&
+    (fe.kickoff ?? 0) > 0 &&
+    isNum(fe.kickoffConfirmedShare)
+  )
+    confirmed = `${pct(fe.kickoffConfirmedShare)} of the kickoff confirmed on a rail`;
+  else if (fe.deposit > 0 && isNum(fe.confirmedShare))
+    confirmed = `${pct(fe.confirmedShare)} of the deposit confirmed on a rail`;
+  const before =
+    !kickoffRead || (from ? from < KICKOFF_READ_FROM : false)
+      ? "kickoff read from 4 Oct"
+      : null;
+  return [confirmed ? `${head}, ${confirmed}` : head, before]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** True when the daily rows carry the per-stage counts a timeframe window needs. */

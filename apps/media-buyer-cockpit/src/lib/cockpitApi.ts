@@ -180,6 +180,8 @@ const READ_VERBS: Record<string, true> = {
   month: true,
   status: true,
   costs: true,
+  // api.ceo.hours.nudge: the morning note's switch and last run.
+  nudge: true,
 };
 function refreshAfter<T extends (...args: any[]) => any>(fn: T): T {
   const prior = refreshWrappers.get(fn);
@@ -212,8 +214,17 @@ export type Id<_T extends string = string> = string;
 export type FunctionReturnType<F extends (...args: any) => any = any> =
   F extends (...args: any) => infer R ? Awaited<R> : any;
 
+/**
+ * The query runner without the throw: `{ data, error }`, with the same
+ * polling and refresh-after-write as `useQuery`. For a card that must say
+ * its own error and let the rest of the tab render (the Money tab's LTV card
+ * since 2026-10-11, whose server refusal used to take the whole tab down).
+ */
 // biome-ignore lint/suspicious/noExplicitAny: universal query runner
-export function useQuery<T = any>(queryFn: any, args?: any): T {
+export function useQueryState<T = any>(
+  queryFn: any,
+  args?: any,
+): { data: T | undefined; error: Error | null } {
   const [data, setData] = useState<any>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const { session } = useCockpitAuth();
@@ -268,6 +279,12 @@ export function useQuery<T = any>(queryFn: any, args?: any): T {
     };
   }, [queryFn, argsJson, owner]);
 
+  return { data: data as T | undefined, error };
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: universal query runner
+export function useQuery<T = any>(queryFn: any, args?: any): T {
+  const { data, error } = useQueryState<T>(queryFn, args);
   if (error) throw error;
   return data as T;
 }

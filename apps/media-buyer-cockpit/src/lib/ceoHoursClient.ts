@@ -587,6 +587,80 @@ export function markHoursPaid(
   );
 }
 
+/**
+ * The morning Slack note to the CEO (A372, 2026-10-11): who is required to
+ * track and did not, yesterday. It ships off; this is the switch and its
+ * last run (cockpit_ceo_hours_nudge_get / _set, CEO-gated, the set audited).
+ */
+export type NudgeState = {
+  on: boolean;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  last: {
+    runAt: string | null;
+    okAt: string | null;
+    ok: boolean | null;
+    note: string | null;
+    listed: number | null;
+  } | null;
+};
+
+export function parseNudge(raw: unknown): NudgeState {
+  if (!isObject(raw) || typeof raw.on !== "boolean")
+    throw new Error("The morning note setting was not confirmed.");
+  const last = isObject(raw.last) ? raw.last : null;
+  const text = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return {
+    on: raw.on,
+    updatedAt: text(raw.updatedAt),
+    updatedBy: text(raw.updatedBy),
+    last: last
+      ? {
+          runAt: text(last.runAt),
+          okAt: text(last.okAt),
+          ok: typeof last.ok === "boolean" ? last.ok : null,
+          note: text(last.note),
+          // A run with no count (rows_seen null) is not "0 listed".
+          listed:
+            last.listed !== null &&
+            last.listed !== undefined &&
+            last.listed !== "" &&
+            Number.isFinite(Number(last.listed))
+              ? Number(last.listed)
+              : null,
+        }
+      : null,
+  };
+}
+
+export async function readNudge(
+  client: SupabaseClient | null,
+): Promise<NudgeState> {
+  return parseNudge(
+    await rpc(
+      client,
+      "cockpit_ceo_hours_nudge_get",
+      {},
+      "The morning note setting could not be read.",
+    ),
+  );
+}
+
+export async function setNudge(
+  client: SupabaseClient | null,
+  args: { on: boolean },
+): Promise<NudgeState> {
+  if (typeof args?.on !== "boolean") throw new Error("Choose on or off.");
+  return parseNudge(
+    await rpc(
+      client,
+      "cockpit_ceo_hours_nudge_set",
+      { p_on: args.on },
+      "The morning note was not switched.",
+    ),
+  );
+}
+
 /** The router for `api.ceo.hours.<op>` (cockpitApi.ts). Refusals come back as rejections. */
 export async function ceoHoursAction(
   client: SupabaseClient | null,
@@ -632,6 +706,10 @@ export async function ceoHoursAction(
       return withdrawHoursApproval(client, args);
     case "markPaid":
       return markHoursPaid(client, args);
+    case "nudge":
+      return readNudge(client);
+    case "setNudge":
+      return setNudge(client, args);
     default:
       throw new Error(`Unknown hours operation: ${op}`);
   }

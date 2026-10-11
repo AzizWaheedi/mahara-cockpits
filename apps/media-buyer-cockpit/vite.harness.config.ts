@@ -2,12 +2,33 @@
 // swapped for fixture-backed stand-ins. `bun run harness`, then open
 // http://localhost:5179/harness.html?tab=ads
 import path from "path";
-import { defineConfig, mergeConfig } from "vite";
+import { defineConfig, mergeConfig, type Plugin } from "vite";
 import base from "./vite.config";
+
+const authHarness = path.resolve(import.meta.dirname, "src/dev/authHarness.ts");
+
+/**
+ * The query runner (src/lib/cockpitApi.ts) imports the sign-in relatively,
+ * which the "@/auth/SupabaseAuthProvider" alias below does not catch: send
+ * that one import to the harness sign-in too, so `?reads=1` reaches useQuery.
+ */
+const relativeAuth: Plugin = {
+  name: "harness-relative-auth",
+  enforce: "pre",
+  resolveId(source, importer) {
+    if (
+      source === "../auth/SupabaseAuthProvider" &&
+      importer?.replace(/\\/g, "/").endsWith("/src/lib/cockpitApi.ts")
+    )
+      return authHarness;
+    return null;
+  },
+};
 
 export default mergeConfig(
   base,
   defineConfig({
+    plugins: [relativeAuth],
     resolve: {
       alias: [
         {

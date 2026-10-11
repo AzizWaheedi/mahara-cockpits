@@ -30,6 +30,14 @@ export const TEAM_ROLES = [
 ] as const;
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
+function basisOf(v: unknown): CommissionBasis {
+  return (COMMISSION_BASES as readonly string[]).includes(String(v ?? ""))
+    ? (String(v) as CommissionBasis)
+    : "none";
+}
+const rateOf = (v: unknown) =>
+  v === null || v === undefined ? null : Number(v);
+
 function shape(r: Row): Person {
   const cost = r.monthly_cost === null ? null : Number(r.monthly_cost);
   const currency = String(r.currency ?? "USD").toUpperCase();
@@ -52,15 +60,16 @@ function shape(r: Row): Person {
     monthlyUsd:
       cost === null || rate === undefined ? null : round2(cost * rate),
     commission: {
-      basis: (COMMISSION_BASES as readonly string[]).includes(
-        String(r.commission_basis ?? ""),
-      )
-        ? (String(r.commission_basis) as CommissionBasis)
-        : "none",
+      basis: basisOf(r.commission_basis),
+      rate: rateOf(r.commission_rate),
+    },
+    // Absent before the two-line migration (20261011d): no second line.
+    commission2: {
+      basis: basisOf(r.commission2_basis),
       rate:
-        r.commission_rate === null || r.commission_rate === undefined
+        basisOf(r.commission2_basis) === "none"
           ? null
-          : Number(r.commission_rate),
+          : rateOf(r.commission2_rate),
     },
     commissionPct:
       r.commission_pct === null || r.commission_pct === undefined
