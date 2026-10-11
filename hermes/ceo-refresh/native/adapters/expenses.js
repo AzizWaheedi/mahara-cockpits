@@ -140,7 +140,7 @@ export function createExpensesAdapter(snapshot) {
         sql(B2B, `/* ceo-refresh:expenses.revenue */ SELECT coalesce(sum(net_amount),0) AS revenue,floor(extract(epoch FROM max(synced_at))*1000)::bigint AS synced_ms FROM public.whop_payments WHERE status='paid' AND currency='usd' AND paid_on>=date '${month}-01' AND paid_on<date '${month}-01'+interval '1 month'`),
         // Client ad spend for the statement month (R2): the live media table in
         // USD, tied to the client through its campaign's ad account; the frozen
-        // snapshot table only for days before the live one starts.
+        // snapshot table for the ad-days the live one lacks (up to 2 Oct).
         sql(TRIAGE, `/* ceo-refresh:expenses.client_ads */ with days as (${mediaClientDaysSql(`${month}-01`, monthEnd(month, today))}),
           tagged as (select d.*, lower(replace(coalesce(c.name,''),' ','')) in (${OWN_ACCOUNT_NAMES.map(name => `'${name}'`).join(",")}) as own from days d join public.clients c on c.id::text=d.client_id)
           SELECT coalesce(sum(spend_usd) FILTER (WHERE NOT own),0) AS spend,count(DISTINCT client_id) FILTER (WHERE NOT own) AS clients,
@@ -203,7 +203,7 @@ export function createExpensesAdapter(snapshot) {
           ...(bankStale ? [{ level: "warn", text: `The newest bank statement ends ${latestStatement.toDay}, ${statementAge} days ago (past ${BANK_STALE_DAYS} days). Upload this week's CBK statement on the Money tab; until then these expenses stop at that day.` }] : []),
           { level: "warn", text: `These numbers cover ${monthName}; each classified expense line comes from the current canonical CBK statement snapshot.` },
           { level: "info", text: `${excludedLines.size} bank lines worth $${excludedUsd.toFixed(2)} are excluded by the saved bank classification or human exclusion list.` },
-          { level: "info", text: `Client advertising spend of $${clientAdSpend.amount.toFixed(2)} stays separate from Mahara expense lines. It is the media buyer's Meta sync (cockpit_media_daily_stats, already in USD) for ${monthName}, tied to each client through its campaign's ad account; Mahara's own accounts are left out.${num(adRows[0].frozen_days) ? ` Days before ${mediaFeed.firstDay} come from the frozen ads_daily_snapshots table.` : ""}${adUnknownDays ? ` ${adUnknownDays} client days in a currency with no exchange rate are left out.` : ""}` },
+          { level: "info", text: `Client advertising spend of $${clientAdSpend.amount.toFixed(2)} stays separate from Mahara expense lines. It is the media buyer's Meta sync (cockpit_media_daily_stats, already in USD) for ${monthName}, tied to each client through its campaign's ad account; Mahara's own accounts are left out.${num(adRows[0].frozen_days) ? ` Ads the live table does not hold (campaigns with no card, or taken off the board) come from the frozen ads_daily_snapshots table up to 2 Oct, matched by Meta ad id and converted at the cockpit's fixed rates: ${num(adRows[0].frozen_days)} client days.` : ""}${adUnknownDays ? ` ${adUnknownDays} client days in a currency with no exchange rate are left out.` : ""}` },
         ],
       };
       const sources = [

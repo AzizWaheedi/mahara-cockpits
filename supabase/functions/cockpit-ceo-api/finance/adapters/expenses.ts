@@ -153,24 +153,40 @@ function monthBounds(month: string): [string, string] {
  * counted apart and named in the note, never dropped silently. Mahara's own
  * accounts (maharamedia, maharamassdesign, as the worker folds names) are
  * the company's own lead generation and are taken out.
+ *
+ * The feed carries only the campaigns the media buyer cockpit tracks and
+ * drops a campaign's rows when it leaves the board, so up to 2 Oct 2026 the
+ * old ad snapshots fill every ad-day the feed has no tied row for, matched by
+ * Meta ad id (metaAdId = ad_id), as the worker does (olderClientMediaSql).
  */
 export const MEDIA_FEED_FIRST_DAY = "2026-08-13";
 const OWN_MEDIA_ACCOUNT_SQL = "regexp_replace(lower(coalesce(c.name, '')), '[^[:alnum:]]', '', 'g') in ('maharamedia', 'maharamassdesign')";
 
-export function clientMediaSql(fromSql: string, toSql: string): string {
-  return `with camp as (
+/** The campaign tie (newest row per name, deleted ones kept) as a CTE body. */
+const CAMP_CTE = `camp as (
     select distinct on (raw_data->>'campaignName') raw_data->>'campaignName' as name,
            coalesce(nullif(meta_account_id, ''), nullif(raw_data->>'metaAccountId', '')) as account
     from public.cockpit_campaigns
     where coalesce(raw_data->>'campaignName', '') <> ''
     order by raw_data->>'campaignName', synced_at desc
-  ), d as (
-    select s.campaign_name, coalesce(nullif(s.data->>'spend', '')::numeric, 0) as spend, c.id::text as client_id,
+  )`;
+
+export function clientMediaSql(fromSql: string, toSql: string): string {
+  return `with ${CAMP_CTE}, d0 as (
+    select s.campaign_name, s.day, coalesce(nullif(s.data->>'metaAdId', ''), s.source_id) as ad,
+           coalesce(nullif(s.data->>'spend', '')::numeric, 0) as spend, c.id::text as client_id,
            coalesce(${OWN_MEDIA_ACCOUNT_SQL}, false) as own
     from public.cockpit_media_daily_stats s
     left join camp on camp.name = s.campaign_name
-    left join public.clients c on replace(c.meta_ad_account_id, 'act_', '') = camp.account
+    left join public.clients c on camp.account is not null and replace(c.meta_ad_account_id, 'act_', '') = camp.account
     where s.day >= ${fromSql} and s.day < ${toSql}
+  ), d as (
+    -- An untied ad-day the old snapshots hold for a client is counted there
+    -- (olderClientMediaSql), so it is not counted as untied here.
+    select * from d0
+    where client_id is not null
+       or not exists (select 1 from public.ads_daily_snapshots a join public.clients c on c.id = a.client_id
+                      where a.date = d0.day and a.ad_id = d0.ad)
   )
   select coalesce(sum(spend) filter (where client_id is not null and not own), 0) as spend,
          coalesce(array_agg(distinct client_id) filter (where client_id is not null and not own), '{}') as client_ids,
@@ -186,15 +202,25 @@ export function clientMediaSql(fromSql: string, toSql: string): string {
   from d`;
 }
 
-/** Days before the native feed's first day: the frozen ad snapshots, per currency, converted in code at USD_PER. */
+/**
+ * The old ad snapshots (frozen on 2 Oct 2026) for the ad-days the native feed
+ * has no tied row for, per currency, converted in code at USD_PER.
+ */
 export function olderClientMediaSql(fromSql: string, toSql: string): string {
-  return `select coalesce(c.currency, 'USD') as currency,
+  return `with ${CAMP_CTE}
+  select coalesce(c.currency, 'USD') as currency,
          coalesce(sum(a.spend) filter (where not coalesce(${OWN_MEDIA_ACCOUNT_SQL}, false)), 0) as spend,
          coalesce(array_agg(distinct a.client_id::text) filter (where not coalesce(${OWN_MEDIA_ACCOUNT_SQL}, false)), '{}') as client_ids,
          count(*) filter (where coalesce(${OWN_MEDIA_ACCOUNT_SQL}, false)) as own_rows
   from public.ads_daily_snapshots a
   left join public.clients c on c.id = a.client_id
   where a.date >= ${fromSql} and a.date < ${toSql}
+    and a.spend <> 0
+    and not exists (
+      select 1 from public.cockpit_media_daily_stats s
+      join camp on camp.name = s.campaign_name
+      join public.clients t on replace(t.meta_ad_account_id, 'act_', '') = camp.account
+      where s.day = a.date and coalesce(nullif(s.data->>'metaAdId', ''), s.source_id) = a.ad_id)
   group by 1`;
 }
 
@@ -223,7 +249,7 @@ export type ClientMedia = {
   unknownCurrencies: string[];
 };
 
-/** The month's client media in USD: the native feed plus, before its first day, the old snapshots converted at USD_PER. */
+/** The month's client media in USD: the native feed plus the old snapshots for the ad-days it lacks, converted at USD_PER. */
 export function combineClientMedia(r: Record<string, unknown>, older: Record<string, unknown>[]): ClientMedia {
   const ids = new Set(asList(r.client_ids));
   let olderUsd = 0;
@@ -260,7 +286,7 @@ export function clientMediaNote(month: string, firstDay: string, m: ClientMedia)
       : "Mahara's own accounts had no spend in that month's rows, so nothing was taken out for them.",
   ];
   if (m.olderUsd)
-    parts.push(`Days before ${firstDay}, when the feed starts, come from the old ad snapshots (frozen on 2 Oct 2026), converted at the cockpit's fixed rates: ${dollars(m.olderUsd)}.`);
+    parts.push(`The feed starts ${firstDay} and holds only the campaigns the media buyer tracks, so ads it does not hold come from the old ad snapshots (frozen on 2 Oct 2026), matched by Meta ad id and converted at the cockpit's fixed rates: ${dollars(m.olderUsd)}.`);
   if (m.unknownCurrencies.length)
     parts.push(`Spend in ${m.unknownCurrencies.join(", ")} has no fixed rate and is left out, so the figure is short by that much.`);
   if (m.untiedCampaigns.length)
@@ -717,8 +743,9 @@ export const expenses: Adapter = {
       const feed = mediaFeedCheck(r);
       if (feed) throw new Error(feed);
       const firstDay = /^\d{4}-\d{2}-\d{2}$/.test(String(r.first_day)) ? String(r.first_day) : MEDIA_FEED_FIRST_DAY;
-      const older = `${month}-01` < firstDay
-        ? await sql(TRIAGE, olderClientMediaSql(monthFrom, `least(${monthTo}, date '${firstDay}')`))
+      // The old snapshots stop on 2 Oct 2026; a later month reads none.
+      const older = `${month}-01` <= "2026-10-02"
+        ? await sql(TRIAGE, olderClientMediaSql(monthFrom, monthTo))
         : [];
       const media = combineClientMedia(r, older);
       clientAdSpend.amount = media.amount;
@@ -732,7 +759,7 @@ export const expenses: Adapter = {
         sources.push({
           name: "Creative Triage ad snapshots (frozen 2 Oct 2026)",
           ok: true,
-          note: `days before ${firstDay} only`,
+          note: "ad-days the native feed has no tied row for, up to 2 Oct 2026",
         });
       notes.push({
         level: media.untiedCampaigns.length || media.unknownCurrencies.length ? "warn" : "info",

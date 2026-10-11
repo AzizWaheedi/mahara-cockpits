@@ -76,7 +76,7 @@ const CLICKUP = "ClickUp, the Clients - Mahara list, synced into the cockpit";
  * tied to a client through the campaign's ad account; the old snapshot table
  * stopped on 2026-10-02 and is read only before the live table's first day.
  */
-const MEDIA = `${TRIAGE} cockpit_media_daily_stats (the media buyer's Meta sync, USD), tied to the client through cockpit_campaigns and the ad account; ads_daily_snapshots (frozen on 2026-10-02) only for days before the live table starts (2026-08-13)`;
+const MEDIA = `${TRIAGE} cockpit_media_daily_stats (the media buyer's Meta sync, USD), tied to the client through cockpit_campaigns and the ad account; ads_daily_snapshots (frozen on 2026-10-02) for the ad-days the live table lacks, matched by Meta ad id`;
 /**
  * B2B keeps a voided deal in closed_deals and marks it in record_voids; every
  * deal figure here leaves it out (./voids.ts), the B2B dashboard does not.

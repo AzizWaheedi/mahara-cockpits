@@ -110,78 +110,121 @@ export function usdRateSql(currencyExpr) {
     return `(case upper(coalesce(nullif(btrim(${currencyExpr}), ''), 'USD')) ${cases} end)`;
 }
 /**
- * Client ad spend and leads by client and day (R2, 2026-10-11; Aziz, A006:
- * "client ad spend, leads, and cost per lead ... just use the Supabase
- * table").
+ * The two ad tables, row by row, per ad and day (R2, 2026-10-11).
  *
- * The live table is public.cockpit_media_daily_stats, the media buyer's Meta
- * sync, one row per ad per day, spend already in USD (the sync converts with
+ * `live`: public.cockpit_media_daily_stats, the media buyer's Meta sync, one
+ * row per ad per day, spend already in USD (the sync converts with
  * spendToUsd), with no client id. A row reaches a client through its
  * campaign: campaign_name -> cockpit_campaigns (raw_data campaignName, the
  * newest row, deleted ones kept for the tie) -> the Meta ad account ->
- * clients.meta_ad_account_id ("act_" + id). A campaign that ties to nothing
- * is left out here and named by mediaUntiedSql.
+ * clients.meta_ad_account_id ("act_" + id); client_id is null when it ties
+ * to nothing.
  *
- * public.ads_daily_snapshots stopped on 2026-10-02. It is still read, frozen,
- * for the days before the live table's first day (13 Aug 2026), converted to
- * USD with the rate table, so a 180-day history keeps its older days. Each row
- * says which table it came from (`source`: media or frozen).
+ * `old`: public.ads_daily_snapshots, stopped on 2026-10-02, in the account's
+ * own currency with the client on the row. It fills only the ad-days the live
+ * table has no tied row for. The live table is the board's sync: it lacks
+ * campaigns with no card and drops a campaign's rows when it leaves the
+ * board, so from 13 Aug to mid-September it holds a fraction of what clients
+ * spent (checked 2026-10-11, Mahara's own accounts left out: 17 to 23 Aug
+ * $472.75 live against $2,001.86 in the snapshots; September $8,773.94
+ * against $10,472.85). Both tables carry Meta's ad id (metaAdId, ad_id): 500 ad-days
+ * from 14 Sep to 2 Oct are in both, and no ad-day missing from one sits in
+ * the other under a different id, so filling by ad id never counts a day
+ * twice.
  */
-export function mediaClientDaysSql(from, to) {
-    return `with camp as (
+function adRowsCte(from, to) {
+    return `camp as (
     select distinct on (raw_data->>'campaignName') raw_data->>'campaignName' as name,
            coalesce(nullif(meta_account_id, ''), nullif(raw_data->>'metaAccountId', '')) as account
     from public.cockpit_campaigns
     where coalesce(raw_data->>'campaignName', '') <> ''
     order by raw_data->>'campaignName', synced_at desc
   ),
-  b as (select min(day) as first from public.cockpit_media_daily_stats),
-  media as (
-    select c.id::text as client_id, d.day,
-           sum(coalesce(nullif(d.data->>'spend', '')::numeric, 0)) as spend_usd,
-           sum(coalesce(nullif(d.data->>'leads', '')::numeric, 0)) as leads,
-           coalesce(jsonb_agg(distinct d.campaign_name) filter (where coalesce(nullif(d.data->>'spend', '')::numeric, 0) > 0), '[]'::jsonb) as campaigns,
-           'USD'::text as currency
+  live as (
+    select c.id::text as client_id, d.day, coalesce(nullif(d.data->>'metaAdId', ''), d.source_id) as ad, d.campaign_name,
+           coalesce(nullif(d.data->>'spend', '')::numeric, 0) as spend,
+           coalesce(nullif(d.data->>'leads', '')::numeric, 0) as leads
     from public.cockpit_media_daily_stats d
-    join camp on camp.name = d.campaign_name
-    join public.clients c on replace(c.meta_ad_account_id, 'act_', '') = camp.account
+    left join camp on camp.name = d.campaign_name
+    left join public.clients c on camp.account is not null and replace(c.meta_ad_account_id, 'act_', '') = camp.account
     where d.day between ${day(from)} and ${day(to)}
-    group by 1, 2
   ),
-  frozen as (
-    select a.client_id::text as client_id, a.date as day,
-           sum(a.spend) * ${usdRateSql("c.currency")} as spend_usd,
-           sum(coalesce(a.leads, 0))::numeric as leads,
-           coalesce(jsonb_agg(distinct a.campaign_id) filter (where a.spend > 0), '[]'::jsonb) as campaigns,
+  old as (
+    select a.client_id::text as client_id, a.date as day, a.ad_id as ad,
+           coalesce(nullif(a.campaign_name, ''), a.campaign_id) as campaign_name,
+           a.spend, coalesce(a.leads, 0)::numeric as leads,
            upper(coalesce(nullif(btrim(c.currency), ''), 'USD')) as currency
     from public.ads_daily_snapshots a
     join public.clients c on c.id = a.client_id
-    cross join b
-    where a.date between ${day(from)} and ${day(to)} and b.first is not null and a.date < b.first
-    group by 1, 2, c.currency
+    where a.date between ${day(from)} and ${day(to)}
+      and (a.spend <> 0 or coalesce(a.leads, 0) <> 0)
+      and not exists (select 1 from live l where l.client_id is not null and l.day = a.date and l.ad = a.ad_id)
+  )`;
+}
+/**
+ * Client ad spend and leads by client and day (R2, 2026-10-11; Aziz, A006:
+ * "client ad spend, leads, and cost per lead ... just use the Supabase
+ * table"), from adRowsCte: the live media table's tied rows, plus the frozen
+ * snapshot rows for the ad-days the live table lacks, converted to USD with
+ * the rate table (a currency with no rate gives a null spend, named by the
+ * caller). A client day can have one row from each table; `source` says which
+ * (media or frozen), and every caller adds them. A live campaign that ties to
+ * nothing is left out here and named by mediaUntiedSql.
+ */
+export function mediaClientDaysSql(from, to) {
+    return `with ${adRowsCte(from, to)},
+  media as (
+    select client_id, day, sum(spend) as spend_usd, sum(leads) as leads,
+           coalesce(jsonb_agg(distinct campaign_name) filter (where spend > 0), '[]'::jsonb) as campaigns,
+           'USD'::text as currency
+    from live
+    where client_id is not null
+    group by 1, 2
+  ),
+  frozen as (
+    select client_id, day, sum(spend) * ${usdRateSql("currency")} as spend_usd, sum(leads) as leads,
+           coalesce(jsonb_agg(distinct campaign_name) filter (where spend > 0), '[]'::jsonb) as campaigns,
+           currency
+    from old
+    group by client_id, day, currency
   )
   select client_id, to_char(day, 'YYYY-MM-DD') as day, spend_usd, leads, campaigns, currency, 'media' as source from media
   union all
   select client_id, to_char(day, 'YYYY-MM-DD') as day, spend_usd, leads, campaigns, currency, 'frozen' as source from frozen`;
 }
-/** Campaigns in the live media table with spend in the window that reach no client (named, never dropped silently). */
+/**
+ * Campaigns in the live media table with spend in the window that reach no
+ * client (named, never dropped silently). An ad-day the frozen snapshot table
+ * holds for a client is counted from there, so it is not named here.
+ */
 export function mediaUntiedSql(from, to) {
-    return `with camp as (
-    select distinct on (raw_data->>'campaignName') raw_data->>'campaignName' as name,
-           coalesce(nullif(meta_account_id, ''), nullif(raw_data->>'metaAccountId', '')) as account
-    from public.cockpit_campaigns
-    where coalesce(raw_data->>'campaignName', '') <> ''
-    order by raw_data->>'campaignName', synced_at desc
-  )
-  select d.campaign_name as campaign, round(sum(coalesce(nullif(d.data->>'spend', '')::numeric, 0)), 2) as spend_usd,
-         to_char(min(d.day), 'YYYY-MM-DD') as first_day, to_char(max(d.day), 'YYYY-MM-DD') as last_day
-  from public.cockpit_media_daily_stats d
-  left join camp on camp.name = d.campaign_name
-  where d.day between ${day(from)} and ${day(to)}
-    and not exists (select 1 from public.clients c where camp.account is not null and replace(c.meta_ad_account_id, 'act_', '') = camp.account)
+    return `with ${adRowsCte(from, to)}
+  select l.campaign_name as campaign, round(sum(l.spend), 2) as spend_usd,
+         to_char(min(l.day), 'YYYY-MM-DD') as first_day, to_char(max(l.day), 'YYYY-MM-DD') as last_day
+  from live l
+  where l.client_id is null
+    and not exists (select 1 from public.ads_daily_snapshots a join public.clients c on c.id = a.client_id
+                    where a.date = l.day and a.ad_id = l.ad)
   group by 1
-  having sum(coalesce(nullif(d.data->>'spend', '')::numeric, 0)) > 0
+  having sum(l.spend) > 0
   order by 2 desc`;
+}
+/**
+ * The frozen snapshot ad-days the live table has no tied row for (adRowsCte
+ * `old`), one row per ad and day, in USD, with the client's ClickUp card
+ * (ad account -> ghl_client_ad_accounts -> ghl_clients.clickup_id), for a
+ * series keyed by card that reads the live table by campaign tags (Client
+ * success, A127). The caller drops an ad-day it already counted from the
+ * live table, so a day is never counted twice.
+ */
+export function frozenFillByCardSql(from, to) {
+    return `with ${adRowsCte(from, to)}
+  select g.clickup_id as task_id, to_char(o.day, 'YYYY-MM-DD') as day, o.ad,
+         o.spend * ${usdRateSql("o.currency")} as spend_usd, o.leads, o.currency
+  from old o
+  join public.ghl_client_ad_accounts m on m.client_id::text = o.client_id
+  join public.ghl_clients g on g.location_id = m.location_id
+  where coalesce(g.clickup_id, '') <> ''`;
 }
 /**
  * The live media table's own health: the sync marks the feed ready with the
@@ -327,8 +370,8 @@ const tied = (where) => `
  * appointment from `recentFrom` with its Mahara OS outcome.
  *
  * Spend and leads come from mediaClientDaysSql: the live media table, already
- * in USD, and the frozen snapshot table for the days before the live one
- * starts, converted with the one rate table (./tap.js USD_PER). An account in
+ * in USD, and the frozen snapshot table for the ad-days the live one lacks,
+ * converted with the one rate table (./tap.js USD_PER). An account in
  * a currency that table has no rate for is reported in `unknownCurrencies`
  * and its spend is left out rather than counted at one to one, which would
  * silently understate or inflate it.

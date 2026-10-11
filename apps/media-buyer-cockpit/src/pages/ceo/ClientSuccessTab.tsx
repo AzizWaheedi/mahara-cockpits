@@ -2559,10 +2559,10 @@ function ChurnRenewals({
       }
       sub={
         reg
-          ? `${count(reg.churned)} lost${reg.starts !== null ? ` of ${count(reg.starts)} at the start` : ""}, ${regMonths}${reg.missing.length ? ` · ${reg.missing.map(m => month(m)).join(", ")} not logged` : ""}`
+          ? `${reg.starts !== null ? `${count(reg.churned)} lost of ${count(reg.starts)} at the start` : `${count(reg.lostNoStart)} lost`}, ${regMonths}${reg.starts !== null && reg.lostNoStart ? ` · ${count(reg.lostNoStart)} more lost in a month with no start count, not in the rate` : ""}${reg.missing.length ? ` · ${reg.missing.map(m => month(m)).join(", ")} not logged` : ""}`
           : undefined
       }
-      hint="From the churn register on the client success Churn page, by month: clients lost before day 90 from launch, over the clients active at the start of each month the timeframe touches. The cards below are the roster's own history for this month."
+      hint="From the churn register on the client success Churn page, by month: clients lost before day 90 from launch, over the clients active at the start of each month the timeframe touches that has a start count (the Churn page's own rolling rule). Losses in a month with no start count are said apart, not in the rate. The cards below are the roster's own history for this month."
     />
   );
   const churnCols = useMemo(() => churnColumns(today, true), [today]);

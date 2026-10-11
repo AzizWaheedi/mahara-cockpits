@@ -14,7 +14,7 @@ beforeAll(async () => {
     create table public.cockpit_campaigns(id bigserial primary key, meta_account_id text, raw_data jsonb, synced_at timestamptz, source_deleted boolean default false);
     create table public.cockpit_media_daily_stats(source_id text primary key, campaign_name text, day date, data jsonb);
     create table public.cockpit_media_feed_state(feed text primary key, ready boolean, source_rows bigint, source_snapshot_at timestamptz);
-    create table public.ads_daily_snapshots(client_id uuid, date date, spend numeric, campaign_id text);
+    create table public.ads_daily_snapshots(client_id uuid, date date, spend numeric, campaign_id text, ad_id text);
     insert into public.clients values
       ('00000000-0000-4000-8000-000000000001','Alpha Build','act_111','USD'),
       ('00000000-0000-4000-8000-000000000002','Beta Riyadh','act_222','SAR'),
@@ -25,25 +25,29 @@ beforeAll(async () => {
       ('222','{"campaignName":"Beta leads"}','2026-10-01',true),     -- deleted at the source, kept for the tie
       ('999','{"campaignName":"Mahara own"}','2026-10-10',false);
     insert into public.cockpit_media_daily_stats values
-      ('a1','Alpha leads','2026-10-01','{"spend":100.5,"leads":4}'),
-      ('a2','Alpha leads','2026-10-02','{"spend":50,"leads":1}'),
-      ('b1','Beta leads','2026-10-01','{"spend":221.66,"leads":2}'),
-      ('m1','Mahara own','2026-10-01','{"spend":75,"leads":3}'),
-      ('x1','Nobody knows','2026-10-02','{"spend":12.34,"leads":0}'),
-      ('s1','Alpha leads','2026-09-30','{"spend":999,"leads":9}'),
-      ('f1','Alpha leads','2026-08-13','{"spend":10,"leads":1}');
-    insert into public.cockpit_media_feed_state values('dailyStats',true,7,'2026-10-11T10:00:00Z');
+      ('a1','Alpha leads','2026-10-01','{"metaAdId":"a-1","spend":100.5,"leads":4}'),
+      ('a2','Alpha leads','2026-10-02','{"metaAdId":"a-1","spend":50,"leads":1}'),
+      ('b1','Beta leads','2026-10-01','{"metaAdId":"b-1","spend":221.66,"leads":2}'),
+      ('m1','Mahara own','2026-10-01','{"metaAdId":"m-1","spend":75,"leads":3}'),
+      ('x1','Nobody knows','2026-10-02','{"metaAdId":"x-1","spend":12.34,"leads":0}'),
+      ('s1','Alpha leads','2026-09-30','{"metaAdId":"a-1","spend":999,"leads":9}'),
+      ('g1','Ghost leads','2026-09-15','{"metaAdId":"g-1","spend":30,"leads":1}'),
+      ('f1','Alpha leads','2026-08-13','{"metaAdId":"a-f1","spend":10,"leads":1}');
+    insert into public.cockpit_media_feed_state values('dailyStats',true,8,'2026-10-11T10:00:00Z');
     insert into public.ads_daily_snapshots values
-      ('00000000-0000-4000-8000-000000000002','2026-08-01',375,'c1'),
-      ('00000000-0000-4000-8000-000000000001','2026-08-02',20,'c2'),
-      ('00000000-0000-4000-8000-000000000003','2026-08-02',40,'c3'),
-      ('00000000-0000-4000-8000-000000000002','2026-08-20',999,'c1');`);
+      ('00000000-0000-4000-8000-000000000002','2026-08-01',375,'c1','b-old'),
+      ('00000000-0000-4000-8000-000000000001','2026-08-02',20,'c2','a-old'),
+      ('00000000-0000-4000-8000-000000000003','2026-08-02',40,'c3','m-old'),
+      ('00000000-0000-4000-8000-000000000001','2026-08-13',10,'c2','a-f1'),   -- the feed holds this ad-day: the feed's row wins
+      ('00000000-0000-4000-8000-000000000002','2026-08-20',999,'c1','b-old'), -- the feed lacks Beta that day: counted
+      ('00000000-0000-4000-8000-000000000001','2026-09-15',30,'cg','g-1');    -- the feed's untied ghost ad, tied here to Alpha`);
 });
 afterAll(async () => { await db.close(); });
 
 test("October: USD as stored, tied through the campaign's ad account, own account out, the untied campaign named", async () => {
   const [r] = await rows(clientMediaSql("date '2026-10-01'", "date '2026-11-01'"));
   expect(mediaFeedCheck(r)).toBeNull();
+  expect(await rows(olderClientMediaSql("date '2026-10-01'", "date '2026-11-01'"))).toEqual([]);
   const m = combineClientMedia(r, []);
   // 100.5 + 50 (Alpha) + 221.66 (Beta, already dollars: never multiplied by the SAR rate again).
   expect(m.amount).toBe(372.16);
@@ -57,16 +61,28 @@ test("October: USD as stored, tied through the campaign's ad account, own accoun
   expect(note).toContain("Mahara's own accounts are taken out of this figure by name.");
 });
 
-test("August: days before the feed's first day come from the frozen snapshots, converted at the fixed rates", async () => {
+test("August: the frozen snapshots fill the ad-days the feed lacks, matched by Meta ad id, converted at the fixed rates", async () => {
   const [r] = await rows(clientMediaSql("date '2026-08-01'", "date '2026-09-01'"));
-  const older = await rows(olderClientMediaSql("date '2026-08-01'", "least(date '2026-09-01', date '2026-08-13')"));
+  const older = await rows(olderClientMediaSql("date '2026-08-01'", "date '2026-09-01'"));
   const m = combineClientMedia(r, older);
-  // Feed: Alpha 10 on 13 Aug. Snapshots before 13 Aug: Beta 375 SAR = $99.975, Alpha $20; Mahara's own $40 out; 20 Aug ignored.
-  expect(m.olderUsd).toBe(119.98);
-  expect(m.amount).toBe(129.98);
+  // Feed: Alpha 10 on 13 Aug (its snapshot copy, ad a-f1, is not counted again).
+  // Snapshots: Beta 375 + 999 SAR = 1,374 SAR = $366.31, Alpha $20; Mahara's own $40 out.
+  expect(m.olderUsd).toBe(386.31);
+  expect(m.amount).toBe(396.31);
   expect(m.clients).toBe(2);
   expect(m.ownFound).toBe(true);
-  expect(clientMediaNote("August 2026", "2026-08-13", m)).toContain("Days before 2026-08-13, when the feed starts, come from the old ad snapshots (frozen on 2 Oct 2026), converted at the cockpit's fixed rates: $120.");
+  expect(clientMediaNote("August 2026", "2026-08-13", m)).toContain("ads it does not hold come from the old ad snapshots (frozen on 2 Oct 2026), matched by Meta ad id and converted at the cockpit's fixed rates: $386.");
+});
+
+test("September: an untied feed ad-day that the snapshots tie to a client is counted there, not named as untied", async () => {
+  const [r] = await rows(clientMediaSql("date '2026-09-01'", "date '2026-10-01'"));
+  const older = await rows(olderClientMediaSql("date '2026-09-01'", "date '2026-10-01'"));
+  const m = combineClientMedia(r, older);
+  // Feed: Alpha 999 on 30 Sep. The ghost ad g-1 (30) ties to nothing in the feed but is Alpha's in the snapshots.
+  expect(m.untiedCampaigns).toEqual([]);
+  expect(m.untiedSpend).toBe(0);
+  expect(m.olderUsd).toBe(30);
+  expect(m.amount).toBe(1029);
 });
 
 test("a currency with no fixed rate is left out and said, never counted at one to one", () => {
@@ -78,10 +94,10 @@ test("a currency with no fixed rate is left out and said, never counted at one t
 });
 
 test("a feed that is not ready, or is mid-import, is refused: missing, never zero", async () => {
-  await db.exec("update public.cockpit_media_feed_state set source_rows=8");
+  await db.exec("update public.cockpit_media_feed_state set source_rows=9");
   let [r] = await rows(clientMediaSql("date '2026-10-01'", "date '2026-11-01'"));
-  expect(mediaFeedCheck(r)).toBe("the native media feed holds 7 rows but its state says 8, so it is mid-import");
-  await db.exec("update public.cockpit_media_feed_state set source_rows=7, ready=false");
+  expect(mediaFeedCheck(r)).toBe("the native media feed holds 8 rows but its state says 9, so it is mid-import");
+  await db.exec("update public.cockpit_media_feed_state set source_rows=8, ready=false");
   [r] = await rows(clientMediaSql("date '2026-10-01'", "date '2026-11-01'"));
   expect(mediaFeedCheck(r)).toContain("not marked ready");
   await db.exec("update public.cockpit_media_feed_state set ready=true");

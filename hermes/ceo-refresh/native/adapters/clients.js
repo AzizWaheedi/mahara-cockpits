@@ -2,7 +2,7 @@ import { CPB_GATE, CPL_GATE } from "../constants.js";
 import { BUCKET_CHURNED, BUCKET_METRIC, LAUNCH_METRIC } from "../data/clients.js";
 import { tapKeyState } from "../data/tap.js";
 import { averageRetainer, createdDayOf, daysToLaunchOf, EXT_PAGE, EXTENSION_FIELD_NAME, FIELD_ASK, findExtensionField, isInternalText, matchCard, readExtensionForm, summariseExtensions, summariseLaunch, } from "../extensions.js";
-import { mediaClientDaysSql } from "../data/triage.js";
+import { frozenFillByCardSql, mediaClientDaysSql } from "../data/triage.js";
 import { rollUp } from "../../../../apps/client-success-cockpit/src/lib/churnCore.ts";
 import { CEO_EMAILS } from "../gate.js";
 import { nameKey } from "../manualMatch.js";
@@ -125,7 +125,7 @@ const pulseSql = (today) => `with w as (
   from (select date '${today}' as d) x
 ),
 -- Client ad spend by client and day in USD (R2): the live media table, the
--- frozen snapshot table before it starts (../data/triage.js mediaClientDaysSql).
+-- frozen snapshot table for the ad-days it lacks (../data/triage.js mediaClientDaysSql).
 spend_days as (${mediaClientDaysSql(addDays(today, -89), today)})
 select g.clickup_id,
   coalesce(ap.appts_28d, 0) as appts_28d,
@@ -838,7 +838,7 @@ export function extensionJobNote(job, fieldFound) {
  * a past window keeps their days. Pure, for the tests.
  */
 export function clientDailyOf(input) {
-    const { campaignTags, cardOf, daily, bookings, from, to } = input;
+    const { campaignTags, cardOf, daily, bookings, from, to, fill = [] } = input;
     const taskOfCampaign = new Map();
     for (const k of campaignTags) {
         const taskId = cardOf([k.tag, ...(Array.isArray(k.tags) ? k.tags : []), k.client]);
@@ -859,6 +859,8 @@ export function clientDailyOf(input) {
         }
         return r;
     };
+    // Ad-days counted from the live table, so the frozen fill never adds one twice.
+    const counted = new Set();
     for (const d of daily) {
         const taskId = taskOfCampaign.get(String(d.campaignName ?? ""));
         const date = String(d.date ?? "");
@@ -867,6 +869,25 @@ export function clientDailyOf(input) {
         const r = at(taskId, date);
         r.spend += num(d.spend);
         r.leads += num(d.leads);
+        if (d.metaAdId)
+            counted.add(`${d.metaAdId}|${date}`);
+    }
+    // The frozen snapshot table's ad-days the live table lacks (up to 2 Oct
+    // 2026), already tied to the card by its ad account and in USD.
+    const fillTasks = new Set();
+    let filled = 0;
+    let filledUsd = 0;
+    for (const f of fill) {
+        const taskId = String(f.taskId ?? "");
+        const date = String(f.date ?? "");
+        if (!taskId || date < from || date > to || counted.has(`${f.ad}|${date}`))
+            continue;
+        const r = at(taskId, date);
+        r.spend += num(f.spend);
+        r.leads += num(f.leads);
+        fillTasks.add(taskId);
+        filled += 1;
+        filledUsd += num(f.spend);
     }
     for (const b of bookings) {
         const taskId = taskOfCampaign.get(String(b.campaignName ?? ""));
@@ -876,7 +897,7 @@ export function clientDailyOf(input) {
         at(taskId, date).bookings += Math.max(0, num(b.count) - num(b.future));
     }
     const out = new Map();
-    for (const taskId of new Set(taskOfCampaign.values())) {
+    for (const taskId of new Set([...taskOfCampaign.values(), ...fillTasks])) {
         const days = byTask.get(taskId);
         const series = [];
         for (let date = from; date <= to; date = addDays(date, 1)) {
@@ -885,7 +906,7 @@ export function clientDailyOf(input) {
         }
         out.set(taskId, series);
     }
-    return { byTask: out, campaigns: taskOfCampaign.size };
+    return { byTask: out, campaigns: taskOfCampaign.size, filled, filledUsd: round2(filledUsd) };
 }
 /** Extension grants per day for the last twelve months, matched to a card as the summary matches them. */
 export function grantRowsOf(grants, cards, today) {
@@ -922,9 +943,10 @@ export const clients = {
         // and every campaign's tags, deleted campaigns included.
         const dailyRead = Promise.all([
             ctx.repository.delivery(),
+            sql(TRIAGE, frozenFillByCardSql(addDays(today, -179), today)),
             sql(TRIAGE, `select distinct on (raw_data->>'campaignName') raw_data->>'campaignName' as name, raw_data->>'clientTag' as tag, raw_data->'tags' as tags, raw_data->>'clientName' as client
          from public.cockpit_campaigns where coalesce(raw_data->>'campaignName', '') <> '' order by raw_data->>'campaignName', synced_at desc`),
-        ]).then(([media, campaignTags]) => ({ ok: true, media, campaignTags }), e => ({ ok: false, error: errText(e) }));
+        ]).then(([media, fillRows, campaignTags]) => ({ ok: true, media, fillRows, campaignTags }), e => ({ ok: false, error: errText(e) }));
         const data = await ctx.repository.clients();
         const roster = data?.clients ?? [];
         if (!roster.length)
@@ -1505,12 +1527,26 @@ export const clients = {
             dailyTo = today;
             dailyFrom = m?.firstDate && m.firstDate > addDays(today, -179) ? String(m.firstDate) : addDays(today, -179);
             const cardOf = (keys) => keys.map(tight).filter(Boolean).map(key => cardByKey.get(key)).find(id => id && rosterIds.has(id)) ?? null;
-            const { byTask } = clientDailyOf({ campaignTags: media.campaignTags, cardOf, daily: m?.daily ?? [], bookings: m?.bookings ?? [], from: dailyFrom, to: dailyTo });
+            // The frozen snapshot rows only for cards on this roster; a
+            // currency with no rate has no dollar figure and is named.
+            const noRate = new Set();
+            const fill = [];
+            for (const f of media.fillRows) {
+                const taskId = String(f.task_id ?? "");
+                if (!rosterIds.has(taskId))
+                    continue;
+                if (f.spend_usd === null || f.spend_usd === undefined) {
+                    noRate.add(String(f.currency ?? "unknown"));
+                    continue;
+                }
+                fill.push({ taskId, date: String(f.day), ad: String(f.ad ?? ""), spend: num(f.spend_usd), leads: num(f.leads) });
+            }
+            const { byTask, filled, filledUsd } = clientDailyOf({ campaignTags: media.campaignTags, cardOf, daily: m?.daily ?? [], bookings: m?.bookings ?? [], from: dailyFrom, to: dailyTo, fill });
             for (const r of rows)
                 r.daily = byTask.get(r.clickupTaskId) ?? null;
             notes.push({
                 level: "info",
-                text: `Per-day spend, leads and bookings per client start ${shortDay(dailyFrom)} (the media buyer's Meta sync, campaigns taken off the board included), so a window that starts earlier counts from then. Bookings per day are the booking events tied to the client's campaigns, future appointments left out; the 7-day bookings column is the client's whole GoHighLevel count, so the two can differ.`,
+                text: `Per-day spend, leads and bookings per client start ${shortDay(dailyFrom)} (the media buyer's Meta sync, campaigns taken off the board included), so a window that starts earlier counts from then. That sync holds only the campaigns the media buyer tracks, so up to 2 Oct the ads it does not hold come from the old snapshot table (frozen since 2 Oct), tied to the card by its ad account, matched by Meta ad id so no day counts twice, converted at the cockpit's fixed rates${filled ? `: ${plural(filled, "ad-day")}, $${filledUsd.toFixed(2)}` : ""}.${noRate.size ? ` Spend in ${[...noRate].sort().join(", ")} has no fixed rate and is left out of those days.` : ""} Bookings per day are the booking events tied to the client's campaigns, future appointments left out; the 7-day bookings column is the client's whole GoHighLevel count, so the two can differ.`,
             });
         }
         else {

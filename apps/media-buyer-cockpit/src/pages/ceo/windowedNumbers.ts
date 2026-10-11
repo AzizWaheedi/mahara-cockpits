@@ -173,16 +173,28 @@ export function extensionsIn(
 export type RegisterWindow = {
   /** Months the window touches, oldest first ("2026-09"). */
   months: string[];
+  /** Clients lost in the months that have a start count: the rate's top. */
   churned: number;
   /** Clients active at the start of those months, added up; null when none has a start. */
   starts: number | null;
   /** churned over starts, 0..1. */
   rate: number | null;
+  /**
+   * Clients lost in months the register has no start count for. They are not
+   * in the rate (the Churn page's own rule, churnCore.ts rollUp: churned over
+   * starts across the months with a start), and the card says them apart.
+   */
+  lostNoStart: number;
   /** Months the window touches that the register has nothing for. */
   missing: string[];
 };
 
-/** Churn is kept by month, so a window counts every month it touches. */
+/**
+ * Churn is kept by month, so a window counts every month it touches. The
+ * rate is the Churn page's rolling rule: clients lost over clients active at
+ * the start, across the months that have a start count, so a month with
+ * losses but no start never inflates it.
+ */
 export function registerIn(
   reg: ChurnRegister | ChurnRegisterMonth[] | null | undefined,
   w: Win | null,
@@ -194,6 +206,7 @@ export function registerIn(
     months.push(m);
   const byMonth = new Map(rows.map(r => [r.month, r]));
   let churned = 0;
+  let lostNoStart = 0;
   let starts = 0;
   let withStart = 0;
   const missing: string[] = [];
@@ -203,11 +216,11 @@ export function registerIn(
       missing.push(m);
       continue;
     }
-    churned += r.churned;
-    if (r.activeAtStart !== null) {
+    if (r.activeAtStart) {
+      churned += r.churned;
       starts += r.activeAtStart;
       withStart += 1;
-    }
+    } else lostNoStart += r.churned;
   }
   return {
     months,
@@ -217,6 +230,7 @@ export function registerIn(
       withStart && starts > 0
         ? Math.round((churned / starts) * 1000) / 1000
         : null,
+    lostNoStart,
     missing,
   };
 }

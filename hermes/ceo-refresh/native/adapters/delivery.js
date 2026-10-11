@@ -134,7 +134,7 @@ export const delivery = {
         const warn = (text) => notes.push({ level: "warn", text });
         const info = (text) => notes.push({ level: "info", text });
         info(triage
-            ? `Spend and leads come from the media buyer's Meta sync in Creative Triage (cockpit_media_daily_stats), already in USD, for every campaign in it that ties to a client ad account through cockpit_campaigns, cards taken off the board included${triage.media.frozenRows ? `; days before ${triage.media.firstDay} come from the old snapshot table, frozen since 2 Oct, converted with the cockpit's fixed rate table` : ""}. A day is the ad account's reporting day. Bookings are the clients' appointments, dated by the day the meeting is for. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`
+            ? `Spend and leads come from the media buyer's Meta sync in Creative Triage (cockpit_media_daily_stats), already in USD, for every campaign in it that ties to a client ad account through cockpit_campaigns, cards taken off the board included${triage.media.frozenRows ? `; up to 2 Oct, ads the media sync does not hold (campaigns with no card, or taken off the board) come from the old snapshot table, frozen since 2 Oct, matched by Meta ad id so no day counts twice and converted with the cockpit's fixed rate table` : ""}. A day is the ad account's reporting day. Bookings are the clients' appointments, dated by the day the meeting is for. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`
             : `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`);
         info(`Client status is Aziz's rule (2026-09-21): good with cost per lead within $${CPL_GATE}, cost per confirmed booking within $${CPB_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%; bad with cost per booking over $${CPB_BAD}, cost per lead over $${CPL_BAD.toFixed(2)} (spend with no leads counts as that); watch otherwise, which includes a show rate under ${SHOW_RATE_GOOD}% or one nobody has recorded. There is one show rate line for clients, ${SHOW_RATE_GOOD}%. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client with no bookings is judged on cost per lead alone.`);
         if (triageError)
@@ -686,8 +686,8 @@ export const delivery = {
         const earliestNeeded = [seriesFrom, prevFrom, monthStart(today)].sort()[0];
         if (!data.firstDate)
             warn("No daily ad rows in the last 40 days.");
-        // With the database read, days before the media table starts come from
-        // the frozen snapshot table, which the source note says.
+        // With the database read, ad-days the media table lacks come from the
+        // frozen snapshot table up to 2 Oct, which the source note says.
         else if (data.firstDate > earliestNeeded && !(triage && triage.media.frozenRows > 0))
             warn(`Daily ad history starts ${data.firstDate}, so earlier days read 0.`);
         if (data.lastDate && data.lastDate < yesterday)

@@ -6,7 +6,8 @@ import { clientDelivery, mediaFeedFresh, usdRateSql } from "./triage.js";
  * R2 and A113 (2026-10-11) against a real Postgres (PGlite) with the
  * production column shapes: client spend and leads from the live media table
  * (already USD, tied through cockpit_campaigns), the frozen snapshot table
- * only before the live table's first day, and provisional bookings from the
+ * for the ad-days the live table has no tied row for (matched by Meta ad id),
+ * and provisional bookings from the
  * call-centre reporting store, provisional calendar only.
  */
 const now = Date.now();
@@ -23,7 +24,7 @@ const SCHEMA = `
   CREATE TABLE public.cockpit_campaigns(id bigint, meta_account_id text, raw_data jsonb, synced_at timestamptz, source_deleted boolean DEFAULT false);
   CREATE TABLE public.cockpit_media_daily_stats(source_id text, campaign_name text, day date, data jsonb);
   CREATE TABLE public.cockpit_media_feed_state(feed text, ready boolean, source_snapshot_at timestamptz, source_rows bigint);
-  CREATE TABLE public.ads_daily_snapshots(client_id uuid, date date, campaign_id text, spend numeric, leads integer, last_synced_at timestamptz);
+  CREATE TABLE public.ads_daily_snapshots(ad_id text, client_id uuid, date date, campaign_id text, campaign_name text, spend numeric, leads integer, last_synced_at timestamptz);
   CREATE TABLE public.ghl_client_ad_accounts(client_id uuid, location_id text, matched_by text);
   CREATE TABLE public.ghl_clients(location_id text, client_name text, clickup_id text, service_mode text, status text);
   CREATE TABLE public.appointments(ghl_appointment_id text, ghl_location_id text, ghl_location text, client_id uuid, calendar_id text,
@@ -48,16 +49,22 @@ async function seed(db: { exec(sql: string): Promise<unknown> }, opts: { feedRow
       (2,'111','{"campaignName":"Ardon old"}',now() - interval '5 days',true),
       (3,'222','{"campaignName":"Ocean A"}',now(),false);
     INSERT INTO public.cockpit_media_daily_stats VALUES
-      ('m1','Ardon A','${D(-2)}','{"spend":100,"leads":4}'),
-      ('m2','Ardon A','${D(-2)}','{"spend":20.5,"leads":1}'),
-      ('m3','Ardon old','${D(-10)}','{"spend":50,"leads":2}'),
-      ('m4','Ocean A','${D(-1)}','{"spend":30,"leads":3}'),
-      ('m5','Ghost campaign','${D(-1)}','{"spend":12.34,"leads":1}');
-    INSERT INTO public.cockpit_media_feed_state VALUES ('dailyStats', ${opts.ready ?? true}, now() - interval '10 minutes', ${opts.feedRows ?? 5});
-    -- Frozen table: a SAR day before the live table's first day (converted), and one inside it (ignored).
+      ('m1','Ardon A','${D(-2)}','{"metaAdId":"ad-1","spend":100,"leads":4}'),
+      ('m2','Ardon A','${D(-2)}','{"metaAdId":"ad-2","spend":20.5,"leads":1}'),
+      ('m3','Ardon old','${D(-10)}','{"metaAdId":"ad-3","spend":50,"leads":2}'),
+      ('m4','Ocean A','${D(-1)}','{"metaAdId":"ad-4","spend":30,"leads":3}'),
+      ('m5','Ghost campaign','${D(-1)}','{"metaAdId":"ad-5","spend":12.34,"leads":1}'),
+      ('m6','Ghost campaign','${D(-12)}','{"metaAdId":"ad-6","spend":40,"leads":2}');
+    INSERT INTO public.cockpit_media_feed_state VALUES ('dailyStats', ${opts.ready ?? true}, now() - interval '10 minutes', ${opts.feedRows ?? 6});
+    -- Frozen table, in SAR: a day before the live table's first day (converted);
+    -- the live table's own ad-day (ignored: the live row wins); an ad the live
+    -- table does not hold on a live day (converted, counted); and the ghost
+    -- campaign's untied ad-day, which the frozen table ties to the client.
     INSERT INTO public.ads_daily_snapshots VALUES
-      ('${SAR}','${D(-30)}','c-old',100,5,now() - interval '9 days'),
-      ('${SAR}','${D(-2)}','c-old',999,9,now() - interval '9 days');
+      ('ad-0','${SAR}','${D(-30)}','c-old','Ardon gone',100,5,now() - interval '9 days'),
+      ('ad-1','${SAR}','${D(-2)}','c-a','Ardon A',999,9,now() - interval '9 days'),
+      ('ad-7','${SAR}','${D(-2)}','c-off','Ardon off board',50,3,now() - interval '9 days'),
+      ('ad-6','${SAR}','${D(-12)}','c-ghost','Ghost campaign',150,2,now() - interval '9 days');
     INSERT INTO public.ghl_client_ad_accounts VALUES ('${SAR}','loc-sar','exact'),('${USD}','loc-usd','exact');
     INSERT INTO public.ghl_clients VALUES ('loc-sar','Ardon','task-ardon','DFY','Active'),('loc-usd','Ocean Home','task-ocean','DFY','Active');
     INSERT INTO public.ghl_calendars VALUES
@@ -99,14 +106,20 @@ async function withDb<T>(opts: { feedRows?: number; ready?: boolean }, run: () =
 }
 
 describe("clientDelivery on the live media table (R2) with PGlite", () => {
-  test("spend is already USD, ties through the campaign's ad account, and frozen days come only before the first live day", async () => {
+  test("spend is already USD, ties through the campaign's ad account, and the frozen table fills only the ad-days the live table lacks", async () => {
     const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as {
       days: Row[]; clients: Row[]; media: { firstDay: string; untied: Row[]; frozenRows: number }; unknownCurrencies: string[];
     };
     const sum = (id: string, from = D(-40)) => result.days.filter(d => d.clientId === id && String(d.date) >= from).reduce((n, d) => n + Number(d.spend), 0);
     // 100 + 20.5 on one day, not converted from SAR a second time.
-    expect(result.days.find(d => d.clientId === SAR && d.date === D(-2))?.spend).toBe(120.5);
-    expect(result.days.find(d => d.clientId === SAR && d.date === D(-2))?.leads).toBe(5);
+    const live2 = result.days.filter(d => d.clientId === SAR && d.date === D(-2) && d.source === "media");
+    expect(live2.map(d => d.spend)).toEqual([120.5]);
+    expect(live2[0]?.leads).toBe(5);
+    // Same day: ad-1's frozen 999 SAR is ignored (the live row wins); ad-7,
+    // which the live table does not hold, is counted at the rate: 50 SAR = $13.33.
+    const filled = result.days.filter(d => d.clientId === SAR && d.date === D(-2) && d.source === "frozen");
+    expect(filled.map(d => d.spend)).toEqual([13.33]);
+    expect(filled[0]?.leads).toBe(3);
     // The deleted campaign still ties.
     expect(result.days.find(d => d.clientId === SAR && d.date === D(-10))?.spend).toBe(50);
     // Frozen: 100 SAR before the first live day at the rate table (0.2666), source frozen;
@@ -114,11 +127,14 @@ describe("clientDelivery on the live media table (R2) with PGlite", () => {
     const frozen = result.days.find(d => d.clientId === SAR && d.date === D(-30));
     expect(frozen?.spend).toBe(26.66);
     expect(frozen?.source).toBe("frozen");
-    expect(sum(SAR)).toBeCloseTo(120.5 + 50 + 26.66, 2);
-    expect(result.media.frozenRows).toBe(1);
-    expect(result.media.firstDay).toBe(D(-10));
+    // The ghost campaign's ad-day the frozen table ties to the client: 150 SAR = $39.99.
+    expect(result.days.find(d => d.clientId === SAR && d.date === D(-12))?.spend).toBe(39.99);
+    expect(sum(SAR)).toBeCloseTo(120.5 + 13.33 + 50 + 39.99 + 26.66, 2);
+    expect(result.media.frozenRows).toBe(3);
+    expect(result.media.firstDay).toBe(D(-12));
     expect(result.days.find(d => d.clientId === USD)?.spend).toBe(30);
-    // The campaign that ties to nothing is named, never dropped silently.
+    // The campaign that ties to nothing is named, never dropped silently; its
+    // ad-day the frozen table counts for the client is not named again.
     expect(result.media.untied).toEqual([{ campaign: "Ghost campaign", spend: 12.34, firstDay: D(-1), lastDay: D(-1) }]);
     // Mahara's own hidden account is not a client row.
     expect(result.clients.map(c => c.clientId).sort()).toEqual([SAR, USD].sort());

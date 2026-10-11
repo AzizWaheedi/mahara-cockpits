@@ -550,6 +550,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 type RailRow = { key: string; rail: CashRail };
 
 function railNaHint(rail: CashRail, what: string): string {
+  if (rail.connected && rail.coveredTo)
+    return `The newest bank statement ends ${date(rail.coveredTo)}, so the ${rail.label} rail has nothing for ${what} yet. Upload a newer CBK statement on this tab.`;
   return rail.connected
     ? `The ${rail.label} rail cannot give ${what} yet.`
     : `${rail.label} is not connected yet, so ${what} is not read at all.`;
@@ -705,7 +707,12 @@ function RailsBody({
             date: d.date,
             whop: d.value,
           };
-          for (const [key, m] of maps) row[key] = m.get(d.date) ?? 0;
+          // A day a rail has no point for (the bank after its newest
+          // statement) is a gap in its line, not $0.
+          for (const [key, m] of maps) {
+            const v = m.get(d.date);
+            if (v !== undefined) row[key] = v;
+          }
           return row;
         }),
       series: [

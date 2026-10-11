@@ -52,7 +52,10 @@ function reader(overrides: Record<string, Row[]> = {}) {
     "money.tap_state": [{ ok: true, note: null, rows_seen: 0, run_ms: now, ok_ms: now }],
     "money.tap_charges": [],
     "money.media_feed": [{ ready: true, source_rows: 2, actual_rows: 2, snapshot_ms: now - 600_000, first_day: "2026-08-13", last_day: today }],
-    "money.client_ads": [{ client_id: "c-1", day: today, spend_usd: 40, leads: 2, campaigns: ["Camp A"], currency: "USD", source: "media" }],
+    "money.client_ads": [
+      { client_id: "c-1", day: today, spend_usd: 40, leads: 2, campaigns: ["Camp A"], currency: "USD", source: "media", own: false },
+      { client_id: "own-1", day: today, spend_usd: 25, leads: 1, campaigns: ["Mahara own"], currency: "USD", source: "media", own: true },
+    ],
     "expenses.revenue": [{ revenue: 100, synced_ms: now }],
     "expenses.client_ads": [{ spend: 40, clients: 1, own_spend: 0, own_clients: 0, unknown_days: 0, frozen_days: 0 }],
     "expenses.media_feed": [{ ready: true, source_rows: 2, actual_rows: 2, snapshot_ms: now - 600_000, first_day: "2026-08-13", last_day: today }],
@@ -92,6 +95,21 @@ describe("A stale bank statement warns and still publishes (R1)", () => {
     expect(m.notes.some(n => n.level === "warn" && n.text.includes("20 days ago (past 7 days)"))).toBe(true);
     const bankSource = money.sources.find(s => s.name === "Bank statements and classification");
     expect(bankSource?.note).toContain("past 7 days");
+    // The bank knows nothing after the statement's last day: those windows
+    // are n/a, never $0, and the series stops at that day.
+    const bank = (m as Row & { rails: { bank: Row & { daily: { date: string }[] } } }).rails.bank;
+    expect(bank.coveredTo).toBe(addDays(today, -20));
+    expect(bank.today).toBeNull();
+    expect(bank.yesterday).toBeNull();
+    expect(bank.daily.at(-1)?.date).toBe(addDays(today, -20));
+    if (addDays(today, -20) < `${today.slice(0, 7)}-01`) {
+      expect(bank.mtd).toBeNull();
+      expect(bank.projectedMonth).toBeNull();
+    }
+    // Mahara's own account is not client ad spend.
+    const adSource = money.sources.find(s => s.name === "Client ad spend (media daily statistics)");
+    expect(adSource?.note).toContain("1 client ad accounts, $40.00");
+    expect(adSource?.note).toContain("Mahara's own accounts, $25.00, left out");
     const e = expenses.payload as Row & { notes: { level: string; text: string }[]; clientAdSpend: Row };
     expect(e.notes[0].level).toBe("warn");
     expect(e.notes[0].text).toContain("20 days ago (past 7 days)");
@@ -100,8 +118,12 @@ describe("A stale bank statement warns and still publishes (R1)", () => {
 
   test("a fresh statement adds no stale warning", async () => {
     const { money, expenses } = await computeBoth(addDays(today, -2));
-    const m = money.payload as Row & { bank: Row; notes: { level: string; text: string }[] };
+    const m = money.payload as Row & { bank: Row; notes: { level: string; text: string }[]; rails: { bank: Row } };
     expect(m.bank.stale).toBe(false);
+    // Even a fresh statement says nothing about the days after it ends.
+    expect(m.rails.bank.yesterday).toBeNull();
+    expect(m.rails.bank.today).toBeNull();
+    expect((m.rails.bank.daily as { date: string }[]).at(-1)?.date).toBe(addDays(today, -2));
     expect(m.notes.some(n => n.text.includes("past 7 days"))).toBe(false);
     const e = expenses.payload as Row & { notes: { level: string; text: string }[] };
     expect(e.notes.some(n => n.text.includes("past 7 days"))).toBe(false);

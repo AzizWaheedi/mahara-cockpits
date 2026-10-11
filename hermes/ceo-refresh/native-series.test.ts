@@ -153,6 +153,34 @@ describe("Per-day series for the timeframe bar (A127)", () => {
     expect(byTask.has("nobody")).toBe(false);
   });
 
+  test("the frozen snapshot fill adds only ad-days the live rows did not count, and gives a card with no live campaign its days", () => {
+    const cardByKey = new Map([["oceanhome", "t-ocean"]]);
+    const cardOf = (keys: unknown[]) => keys.map(k => String(k ?? "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "")).map(k => cardByKey.get(k)).find(Boolean) ?? null;
+    const { byTask, filled, filledUsd } = clientDailyOf({
+      campaignTags: [{ name: "Ocean A", tag: "oceanhome", tags: [], client: "Ocean Home" }],
+      cardOf,
+      daily: [{ campaignName: "Ocean A", metaAdId: "ad-1", date: "2026-09-20", spend: 10, leads: 1 }],
+      bookings: [],
+      from: "2026-09-20",
+      to: "2026-09-21",
+      fill: [
+        // The live row's own ad-day: already counted, so not added again.
+        { taskId: "t-ocean", date: "2026-09-20", ad: "ad-1", spend: 10, leads: 1 },
+        // An ad the live table does not hold: added.
+        { taskId: "t-ocean", date: "2026-09-20", ad: "ad-2", spend: 5.25, leads: 2 },
+        // A card whose campaigns are not on the board at all.
+        { taskId: "t-ribalo", date: "2026-09-21", ad: "ad-9", spend: 20, leads: 0 },
+      ],
+    });
+    expect(byTask.get("t-ocean")?.[0]).toEqual({ date: "2026-09-20", spend: 15.25, leads: 3, bookings: 0 });
+    expect(byTask.get("t-ribalo")).toEqual([
+      { date: "2026-09-20", spend: 0, leads: 0, bookings: 0 },
+      { date: "2026-09-21", spend: 20, leads: 0, bookings: 0 },
+    ]);
+    expect(filled).toBe(2);
+    expect(filledUsd).toBe(25.25);
+  });
+
   test("EOD days: due, filed and late, from the person's first day, Fridays and paused days not due", () => {
     const days = new Map([
       ["2026-10-07", { day: "2026-10-07", at: 1, onTime: true }],

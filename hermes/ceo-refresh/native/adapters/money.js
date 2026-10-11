@@ -602,21 +602,28 @@ export function createMoneyAdapter(snapshot) {
 
       // Client ad spend over the twelve months (R2): the live media table
       // (USD, tied to the client through its campaign's ad account), the
-      // frozen snapshot table before the live one starts. The feed must be
+      // frozen snapshot table for the ad-days the live one lacks (up to 2 Oct). The feed must be
       // ready, whole and written within the media sync's 3-hour stale line.
       const [mediaFeedRows, clientAdRows] = await Promise.all([
         sql(TRIAGE, `/* ceo-refresh:money.media_feed */ ${MEDIA_FEED_SQL}`),
-        sql(TRIAGE, `/* ceo-refresh:money.client_ads */ ${mediaClientDaysSql(dates.from12, today)}`),
+        // Mahara's own accounts sit in the clients table too; they are the
+        // company's own lead generation, not client spend (as Expenses does).
+        sql(TRIAGE, `/* ceo-refresh:money.client_ads */ with days as (${mediaClientDaysSql(dates.from12, today)})
+          select d.*, regexp_replace(lower(coalesce(c.name, '')), '[^[:alnum:]]', '', 'g') in ('maharamedia', 'maharamassdesign') as own
+          from days d join public.clients c on c.id::text = d.client_id`),
       ]);
       let mediaFeed;
       try { mediaFeed = mediaFeedFresh(mediaFeedRows[0], now, MEDIA_STALE_MS); }
       catch (error) { failSource("Client ad spend (media daily statistics)", error instanceof Error ? error.message : String(error)); }
+      const usdOf = row => (row.spend_usd === null || row.spend_usd === undefined ? 0 : num(row.spend_usd));
+      const clientRows = clientAdRows.filter(row => row.own !== true);
       const clientAdSpend = {
-        amount: ROUND2(clientAdRows.reduce((sum, row) => sum + (row.spend_usd === null || row.spend_usd === undefined ? 0 : num(row.spend_usd)), 0)),
-        clients: new Set(clientAdRows.map(row => String(row.client_id))).size,
+        amount: ROUND2(clientRows.reduce((sum, row) => sum + usdOf(row), 0)),
+        clients: new Set(clientRows.map(row => String(row.client_id))).size,
+        ownUsd: ROUND2(clientAdRows.filter(row => row.own === true).reduce((sum, row) => sum + usdOf(row), 0)),
         unknownCurrencyDays: clientAdRows.filter(row => row.spend_usd === null || row.spend_usd === undefined).length,
       };
-      sources.push({ name: "Client ad spend (media daily statistics)", freshestAt: mediaFeed.at, ok: true, note: `${clientAdSpend.clients} ad accounts, $${clientAdSpend.amount.toFixed(2)} since ${dates.from12}; the live table starts ${mediaFeed.firstDay}, earlier days from the frozen snapshot table${clientAdSpend.unknownCurrencyDays ? `; ${clientAdSpend.unknownCurrencyDays} client days in a currency with no rate left out` : ""}` });
+      sources.push({ name: "Client ad spend (media daily statistics)", freshestAt: mediaFeed.at, ok: true, note: `${clientAdSpend.clients} client ad accounts, $${clientAdSpend.amount.toFixed(2)} since ${dates.from12} (Mahara's own accounts, $${clientAdSpend.ownUsd.toFixed(2)}, left out); the live table starts ${mediaFeed.firstDay}; ads it does not hold come from the frozen snapshot table up to 2 Oct, matched by Meta ad id${clientAdSpend.unknownCurrencyDays ? `; ${clientAdSpend.unknownCurrencyDays} client days in a currency with no rate left out` : ""}` });
 
       const whopRail = { label: "Whop", connected: true, ...whopCash, refundsMtd: ROUND2(num(summary.refunds_mtd)), lastPaymentAt: epoch(summary.whop_last_paid_ms) };
       const manualDayTotals = new Map();
@@ -638,16 +645,24 @@ export function createMoneyAdapter(snapshot) {
       };
       const bankDayTotals = new Map();
       for (const line of bankLines) if (line.kind === "client_payment" && line.day >= dates.from180) bankDayTotals.set(line.day, (bankDayTotals.get(line.day) ?? 0) + line.usd);
+      // The bank rail knows nothing after the newest statement ends. A day
+      // after it is missing, not $0 (since R1 a stale statement publishes):
+      // the series stops there, a window that starts after it is null, and a
+      // window that runs past it holds the statement's days only.
+      const bankTo = bankFacts.latestStatementDay;
       const bankDaily = [];
-      for (let day = dates.from180; day <= today; day = addDays(day, 1)) bankDaily.push({ date: day, value: ROUND2(bankDayTotals.get(day) ?? 0) });
-      const bankBetween = (from, to) => ROUND2(bankDaily.filter(row => row.date >= from && row.date <= to).reduce((sum, row) => sum + row.value, 0));
+      for (let day = dates.from180; day <= today && day <= bankTo; day = addDays(day, 1)) bankDaily.push({ date: day, value: ROUND2(bankDayTotals.get(day) ?? 0) });
+      const bankBetween = (from, to) => from > bankTo ? null : ROUND2(bankDaily.filter(row => row.date >= from && row.date <= to).reduce((sum, row) => sum + row.value, 0));
       const bankNewestPayment = bankLines.filter(line => line.kind === "client_payment").map(line => line.day).sort().at(-1) ?? null;
+      const bankMtd = bankBetween(monthStart(today), today);
+      // Projected over the days the statement covers this month, not over every day so far.
+      const bankDaysThisMonth = bankTo < monthStart(today) ? 0 : Math.min(dates.dayOfMonth, Number(bankTo.slice(8, 10)));
       const bankRail = {
-        label: "Bank", connected: statementRows.length > 0,
+        label: "Bank", connected: statementRows.length > 0, coveredTo: bankTo,
         today: bankBetween(today, today), yesterday: bankBetween(addDays(today, -1), addDays(today, -1)),
-        mtd: bankBetween(monthStart(today), today), lastMonthToDate: bankBetween(dates.lastMonthStart, dates.lastMonthToDateEnd),
+        mtd: bankMtd, lastMonthToDate: bankBetween(dates.lastMonthStart, dates.lastMonthToDateEnd),
         lastMonth: bankBetween(dates.lastMonthStart, dates.lastMonthEnd),
-        projectedMonth: ROUND2(bankBetween(monthStart(today), today) / dates.dayOfMonth * dates.dim),
+        projectedMonth: bankMtd === null || bankDaysThisMonth === 0 ? null : ROUND2(bankMtd / bankDaysThisMonth * dates.dim),
         refundsMtd: null, daily: bankDaily, lastPaymentAt: bankNewestPayment ? dayStart(bankNewestPayment) : null,
       };
       const connected = [whopRail, tapRail, manualRail, bankRail].filter(rail => rail.connected);
@@ -823,7 +838,7 @@ export function createMoneyAdapter(snapshot) {
         notes: [
           { level: "info", text: "Cash totals use source-confirmed Whop, Tap, manual, and uploaded bank statement rows. Bank payout and settlement lines are not counted as client cash." },
           { level: "info", text: "Manual payments, human payer mappings, bank classifications, exclusions, and client billing snapshots came from the canonical Creative Triage finance revision." },
-          ...(bankFresh ? [] : [{ level: "warn", text: `The newest bank statement ends ${bankFacts.latestStatementDay}, ${statementAge} days ago (past ${BANK_STALE_DAYS} days). Upload this week's CBK statement on this tab; until then the bank rail and the expense lines stop at that day.` }]),
+          ...(bankFresh ? [] : [{ level: "warn", text: `The newest bank statement ends ${bankFacts.latestStatementDay}, ${statementAge} days ago (past ${BANK_STALE_DAYS} days). Upload this week's CBK statement on this tab; until then the bank rail and the expense lines stop at that day: the bank's later days read n/a, not $0, and the all-rails total has no bank money after it.` }]),
           { level: "warn", text: `The newest bank statement ends ${bankFacts.latestStatementDay}; its classification revision is checked again before publication.` },
           ...(series ? [] : [{ level: "info", text: "Earlier months of the client book are not in this finance read, so the history is empty, not zero." }]),
           ...(tapCovered.size ? [{ level: "info", text: `${tapCovered.size} Tap charges are covered by bank settlement lines and were counted once.` }] : []),

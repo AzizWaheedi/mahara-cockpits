@@ -388,7 +388,23 @@ describe("A127: extensions, churn register and portal over the window", () => {
       churned: 1,
       starts: 22,
       rate: 0.045,
+      lostNoStart: 0,
       missing: ["2026-10"],
+    });
+    // August lost 2 with no start count: said apart, never in the rate (the
+    // Churn page's rolling rule), so the rate stays 1 of 22, not 3 of 22.
+    expect(
+      registerIn(
+        { months },
+        { range: "90d", from: "2026-07-13", to: "2026-10-10" },
+      ),
+    ).toEqual({
+      months: ["2026-07", "2026-08", "2026-09", "2026-10"],
+      churned: 1,
+      starts: 22,
+      rate: 0.045,
+      lostNoStart: 2,
+      missing: ["2026-07", "2026-10"],
     });
     expect(
       registerIn(null, { range: "30d", from: "2026-09-11", to: "2026-10-10" }),

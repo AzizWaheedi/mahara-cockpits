@@ -45,6 +45,11 @@ export type CashRail = {
   daily: Point[];
   /** Newest payment seen on this rail, epoch ms. */
   lastPaymentAt: number | null;
+  /**
+   * The bank rail only: the newest statement's last day (YYYY-MM-DD). The
+   * rail knows nothing after it, so a window that starts later is null.
+   */
+  coveredTo?: string | null;
 };
 
 /**
