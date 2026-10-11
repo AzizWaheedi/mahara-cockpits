@@ -615,3 +615,63 @@ describe("the lead's own reschedule link", () => {
     expect((await call("setter", { action: "book.links", contact_id: CLIENT })).body).toMatchObject({ links: {}, client: true });
   });
 });
+
+// Review (backend and HighLevel lens), 2026-10-11: the person a custom time
+// or a far tile names takes the call, and the window is judged by their own
+// times, even when the round robin's times include that minute (else the
+// call went out with no host and HighLevel's round robin picked one).
+describe("the named host takes the call", () => {
+  test("book.create custom naming Aziz at a time the round robin offers through Sami: Aziz, checked as his", async () => {
+    const r = await call("setter", {
+      action: "book.create",
+      contact_id: LEAD2,
+      kind: "demo",
+      with: "anyone",
+      start: iso(at(1, "10:00")),
+      note: "Aziz takes this one.",
+      custom: true,
+      user_id: "G-aziz",
+      outside_hours_ok: true,
+    });
+    expect(r.body).toMatchObject({ verified: true, placement: "custom" });
+    expect(hl.posts[0]).toMatchObject({ assignedUserId: "G-aziz", ignoreDateRange: true, ignoreFreeSlotValidation: true });
+    expect((auditOf("book.create")[0] as Row).metadata).toMatchObject({ placement: "custom", outside_hours: true });
+    await settleBackground();
+  });
+
+  test("naming the host whose own time it is: a window time for them, HighLevel's checks on", async () => {
+    const r = await call("setter", {
+      action: "book.create",
+      contact_id: LEAD2,
+      kind: "demo",
+      with: "anyone",
+      start: iso(at(1, "10:00")),
+      note: "Sami's own time.",
+      custom: true,
+      user_id: "G-closer",
+    });
+    expect(r.body).toMatchObject({ verified: true, placement: "window" });
+    expect(hl.posts[0]).toMatchObject({ assignedUserId: "G-closer", ignoreDateRange: false, ignoreFreeSlotValidation: false });
+    await settleBackground();
+  });
+
+  test("book.check and book.create agree: a teammate's time is not the host's window time", async () => {
+    // Aziz is free at 11:00 tomorrow on HighLevel's grid; Sami, who checks and takes it, is not.
+    hl.free.set("G-aziz", [at(1, "11:00")]);
+    const check = await call("closer", { action: "book.check", contact_id: LEAD2, kind: "demo", with: "anyone", start: iso(at(1, "11:00")) });
+    expect(check.body).toMatchObject({ host: { user_id: "G-closer" }, placement: "custom", clash: null, line: "Free for Sami, inside working hours." });
+    const r = await call("closer", {
+      action: "book.create",
+      contact_id: LEAD2,
+      kind: "demo",
+      with: "anyone",
+      start: iso(at(1, "11:00")),
+      note: "Sami's custom time.",
+      custom: true,
+      user_id: "G-closer",
+    });
+    expect(r.body).toMatchObject({ verified: true, placement: "custom" });
+    expect(hl.posts[0]).toMatchObject({ assignedUserId: "G-closer", ignoreDateRange: true, ignoreFreeSlotValidation: true });
+    await settleBackground();
+  });
+});
