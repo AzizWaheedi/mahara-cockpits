@@ -167,6 +167,10 @@ class Context:
     def function_files(self, slug: str) -> list[str]:
         return self._mgmt("function_files:" + slug, lambda: self.need_db().function_files(slug))
 
+    def function_body(self, slug: str) -> bytes:
+        """The deployed code itself (read once per deploy by live-code, never kept: only what it found is)."""
+        return self._mgmt("function_body:" + slug, lambda: self.need_db().function_body(slug))
+
     def supabase_health(self) -> list[dict[str, Any]]:
         return self._mgmt("health", lambda: self.need_db().health())
 

@@ -32,9 +32,11 @@ class FakeDb(Db):
 
     def __init__(self, tables: Optional[dict[str, list[dict]]] = None, *, missing: tuple[str, ...] = (),
                  probe: Any = None, functions: Any = None, health: Any = None, can_write: bool = True,
-                 down: bool = False, files: Optional[dict[str, list[str]]] = None):
+                 down: bool = False, files: Optional[dict[str, list[str]]] = None,
+                 bodies: Optional[dict[str, bytes]] = None):
         super().__init__(None)
         self.files = files            # slug -> deployed source module names
+        self.bodies = bodies or {}    # slug -> the deployed body itself (a bundle), when files alone will not do
         self.file_reads: list[str] = []
         self.tables = tables or {}
         self.missing = set(missing)
@@ -115,11 +117,15 @@ class FakeDb(Db):
             raise Unavailable("SUPABASE_ACCESS_TOKEN is not set")
         return self._health
 
-    def function_files(self, slug):
-        if self.files is None:
+    def function_body(self, slug):
+        """The body as the management API gives it back: one multipart part per file."""
+        if self.files is None and not self.bodies:
             raise Unavailable("SUPABASE_ACCESS_TOKEN is not set")
         self.file_reads.append(slug)
-        return list(self.files.get(slug, []))
+        if slug in self.bodies:
+            return self.bodies[slug]
+        return b"".join(b'--b\r\nContent-Disposition: form-data; name="file"; filename="source/' + n.encode() +
+                        b'"\r\n\r\n// code\r\n' for n in (self.files or {}).get(slug, [])) + b"--b--\r\n"
 
     def ping_seconds(self):
         self._guard()
