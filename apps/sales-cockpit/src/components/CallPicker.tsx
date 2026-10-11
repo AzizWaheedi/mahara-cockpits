@@ -213,6 +213,8 @@ export function CallPicker({
   const [view, setView] = useState<"soonest" | "another">("soonest");
   const [day, setDay] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ k: "pick" });
+  /** The booking or move "Reschedule" in the done state left: Keep it goes back. */
+  const [kept, setKept] = useState<PickerDone | null>(null);
   const [line, setLine] = useState<Line | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [reason, setReason] = useState<MoveReason>("they_asked");
@@ -324,6 +326,7 @@ export function CallPicker({
     };
     toast.success(toastWords("reschedule", d.kind, r.start));
     setLine(null);
+    setKept(null);
     setPhase({ k: "done", d });
     doneRef.current?.(d);
   }
@@ -352,6 +355,7 @@ export function CallPicker({
     };
     if (r.verified) toast.success(toastWords("book", d.kind, start));
     setLine(null);
+    setKept(null);
     setPhase({ k: "done", d });
     doneRef.current?.(d);
   }
@@ -706,6 +710,7 @@ export function CallPicker({
               setMode("reschedule");
               setAppointmentId(d.appointment.id);
             }
+            setKept(d);
             setPhase({ k: "pick" });
             setView("soonest");
             setAnyone(false);
@@ -867,11 +872,19 @@ export function CallPicker({
       </div>
     ) : null;
 
-  const keysLine = (
+  // Only what the keys do here: 1 to 4 press the soonest times (not the
+  // day's list), and Esc closes only a picker that can be closed.
+  const keysWords = [
+    view === "soonest" ? "Keys 1 to 4 pick a time." : null,
+    onClose ? "Esc closes." : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const keysLine = keysWords ? (
     <span className="muted text-xs max-sm:hidden pointer-coarse:hidden">
-      Keys 1 to 4 pick a time. Esc closes.
+      {keysWords}
     </span>
-  );
+  ) : null;
 
   let body: ReactNode;
   if (holding) {
@@ -911,7 +924,7 @@ export function CallPicker({
           <button
             type="button"
             onClick={undo}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold text-teal-300 hover:bg-teal-500/15 pointer-coarse:min-h-11"
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13px] font-semibold txt-now hover:bg-teal-500/15 pointer-coarse:min-h-11"
           >
             <RotateCcw className="size-3.5" aria-hidden />
             Undo
@@ -1086,6 +1099,7 @@ export function CallPicker({
     !readError &&
     slots &&
     !blocked &&
+    !noTimes &&
     !(mode === "book" && slots.existing);
 
   return (
@@ -1120,6 +1134,20 @@ export function CallPicker({
             className="muted shrink-0 text-xs underline underline-offset-2 hover:text-[color:var(--foreground)] pointer-coarse:min-h-10"
           >
             {closeLabel}
+          </button>
+        ) : kept && !holding ? (
+          // No Close here (a script's block): the way back to the call as
+          // it was booked, with its Tell them.
+          <button
+            type="button"
+            onClick={() => {
+              setLine(null);
+              setPhase({ k: "done", d: kept });
+              setKept(null);
+            }}
+            className="muted shrink-0 text-xs underline underline-offset-2 hover:text-[color:var(--foreground)] pointer-coarse:min-h-10"
+          >
+            Keep {whenWords(kept.start)}
           </button>
         ) : null}
       </div>

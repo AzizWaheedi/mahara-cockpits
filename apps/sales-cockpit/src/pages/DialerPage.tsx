@@ -2926,17 +2926,20 @@ function LeadCallsStrip({
             key={r.appointment_id}
             className="flex flex-wrap items-center gap-2 text-sm"
           >
+            {/* When first, then which call, as on the lead page; in the
+                narrow pane a time is never split from its am or pm. */}
             <span className="min-w-0 flex-1">
-              {kindTitle(kindOf(r.call_type))} ·{" "}
-              {r.start_at
-                ? `${dayWords(r.start_at, now)}, ${time12(r.start_at)}`
-                : "no time"}
-              {r.assigned_user_name ? (
-                <span className="muted">
-                  {" "}
-                  · with {firstOf(r.assigned_user_name)}
-                </span>
-              ) : null}
+              <span className="block whitespace-nowrap font-medium">
+                {r.start_at
+                  ? `${dayWords(r.start_at, now)}, ${time12(r.start_at)}`
+                  : "No time set"}
+              </span>
+              <span className="muted block text-xs">
+                {kindTitle(kindOf(r.call_type))}
+                {r.assigned_user_name
+                  ? ` with ${firstOf(r.assigned_user_name)}`
+                  : ""}
+              </span>
             </span>
             <button
               type="button"
@@ -2951,10 +2954,14 @@ function LeadCallsStrip({
         {rebook ? (
           <li className="flex flex-wrap items-center gap-2 text-sm">
             <span className="min-w-0 flex-1">
-              Missed the {kindNoun(kindOf(rebook.call_type))}
-              {rebook.start_at
-                ? ` · ${dayWords(rebook.start_at, now)}, ${time12(rebook.start_at)}`
-                : ""}
+              <span className="block font-medium">
+                Missed the {kindNoun(kindOf(rebook.call_type))}
+              </span>
+              {rebook.start_at ? (
+                <span className="muted block whitespace-nowrap text-xs">
+                  {dayWords(rebook.start_at, now)}, {time12(rebook.start_at)}
+                </span>
+              ) : null}
             </span>
             <button
               type="button"

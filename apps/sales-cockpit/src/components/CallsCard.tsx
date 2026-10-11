@@ -297,9 +297,11 @@ export function CallsCard({
     body = (
       <>
         {client ? (
-          <p className="muted border-b hairline px-4 py-3 text-sm sm:px-6">
-            An active client: client success looks after them, so their calls
-            are listed here without booking or rescheduling.
+          // The page's header already says they are an active client.
+          <p className="muted px-4 py-3 text-sm sm:px-6">
+            {list.length
+              ? "Their calls are listed only. Client success books and reschedules them."
+              : "No calls on the calendar. Client success books and reschedules their calls."}
           </p>
         ) : null}
         {n ? (
@@ -328,9 +330,12 @@ export function CallsCard({
               >
                 No next call booked.
               </p>
-              <p className="muted mt-0.5 text-sm">
-                Book one above, or set a call-back in the dialer.
-              </p>
+              {/* With a booking open under it, the picker is what to do next. */}
+              {panel?.what === "book" ? null : (
+                <p className="muted mt-0.5 text-sm">
+                  Book one above, or set a call-back in the dialer.
+                </p>
+              )}
             </div>
           </div>
         )}

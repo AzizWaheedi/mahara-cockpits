@@ -73,6 +73,9 @@
   /* Pure teal is under 2:1 on white, too faint for a focus ring: on the
      light canvas the ring mixes it with the ink (as the countdown does). */
   --ring: color-mix(in oklch, var(--mahara-teal) 55%, var(--foreground));
+  /* Teal words (an undo strip's Undo): pure teal is under 2:1 on the light
+     canvas, so there it is mixed with the ink; on Deep Space it is the teal. */
+  --now-ink: color-mix(in oklch, var(--mahara-teal) 45%, var(--foreground));
 }
 
 .dark {
@@ -96,6 +99,7 @@
   --destructive: oklch(0.65 0.2 25);
   --border: oklch(1 0 0 / 10%);
   --ring: var(--mahara-teal);
+  --now-ink: oklch(0.855 0.138 181.071);
 }
 
 html,
@@ -279,6 +283,9 @@ h3 {
 }
 @utility txt-bad {
   color: var(--destructive);
+}
+@utility txt-now {
+  color: var(--now-ink);
 }
 @utility txt-warn {
   color: color-mix(in oklch, var(--warning) 85%, var(--foreground));

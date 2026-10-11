@@ -244,7 +244,7 @@ export function MarkControls({
           <button
             type="button"
             onClick={undo}
-            className="col-start-2 row-span-2 row-start-1 inline-flex h-8 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-semibold text-teal-300 hover:bg-teal-500/15 sm:ms-auto"
+            className="col-start-2 row-span-2 row-start-1 inline-flex h-8 shrink-0 items-center gap-1 rounded-full px-2.5 text-xs font-semibold txt-now hover:bg-teal-500/15 sm:ms-auto"
           >
             <RotateCcw className="size-3" aria-hidden />
             Undo
@@ -280,7 +280,7 @@ export function MarkControls({
           <button
             type="button"
             onClick={undo}
-            className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-teal-300 underline-offset-2 hover:underline"
+            className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold txt-now underline-offset-2 hover:underline"
           >
             <RotateCcw className="size-3" aria-hidden />
             Undo
