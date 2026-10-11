@@ -2,9 +2,12 @@ import {
   ArrowLeft,
   CalendarClock,
   CalendarPlus,
+  ChevronLeft,
+  ChevronRight,
   CircleCheck,
   RotateCcw,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import {
   type CSSProperties,
@@ -18,36 +21,58 @@ import { ghlContactUrl } from "../lib/highlevel";
 import {
   type ApptOut,
   type As,
+  addDays,
   type BookResult,
   type CallKind,
   CHECK_EVERY_MS,
   CHECK_FOR_MS,
   type CheckResult,
+  checkView,
   clockLine,
+  customIso,
+  customPrecheck,
+  customTile,
+  dayBook,
   dayChips,
   defaultWith,
+  doneLink,
   doneSub,
   doneTitle,
+  farLine,
   firstOf,
   HOLD_MS,
   holdWords,
+  isFarDay,
   kindNoun,
+  kwDay,
   type LeadLike,
+  linkLine,
   type MoveReason,
   type MoveResult,
   type MoveSource,
   noTimesLine,
+  type Placement,
   pickerKey,
   pickerLine,
+  pressExtras,
   reasonChips,
   refusalLine,
   type Slots,
+  spanUntil,
   type Tile,
+  type TimeCheck,
   theirTime,
   tileOf,
   tiles,
   toastWords,
   untilWords,
+  type WeekCell,
+  weekOf,
+  weekRange,
+  weekSpan,
+  weekStartOf,
+  weekTitle,
+  weekToRead,
   whenWords,
 } from "../lib/reschedule";
 import { toast } from "../lib/toast";
@@ -67,6 +92,15 @@ import { TellThem } from "./TellThem";
  *
  * Desktop keys, as an extra: 1 to 4 press the soonest times, A opens
  * Another day, Esc closes the picker or undoes the hold.
+ *
+ * Booking further out (2026-10-11): Another day shows a week at a time up
+ * to the reach (60 days), past the calendar's own booking page, which
+ * stays as it is for the lead. A dashed teal hairline in the week strip is
+ * where the booking page ends; days past it press exactly like the others.
+ * Custom time takes a day and a time the rep types, checks it against the
+ * host's calendar and hours (book.check), and offers Book anyway outside
+ * working hours. The lead's own link to pick a time shows where HighLevel
+ * lets them reschedule (intros and Follow up call).
  */
 
 export interface PickerDone {
@@ -80,6 +114,26 @@ export interface PickerDone {
   rescheduleId: string | null;
   /** False: HighLevel took it, but reading it back did not match. */
   verified: boolean;
+  /** Where the time sat: the booking page, past it, or typed (sales-api's answer). */
+  placement?: Placement | null;
+  /** A custom time booked outside the host's working hours. */
+  outside?: boolean;
+  /**
+   * The lead's own link to pick another time, as sales-api answered the
+   * booking or the move (undefined: an older server said nothing).
+   */
+  link?: string | null;
+}
+
+/** What a press sends besides the time: who takes it, and whether it was typed. */
+interface Press {
+  iso: string;
+  hostId?: string | null;
+  host?: string | null;
+  far?: boolean;
+  custom?: boolean;
+  /** Book anyway, outside the host's working hours. */
+  outsideOk?: boolean;
 }
 
 type Phase =
@@ -90,6 +144,9 @@ type Phase =
       userId: string | null;
       host: string | null;
       requestId: string;
+      far: boolean;
+      custom: boolean;
+      outsideOk: boolean;
     }
   | { k: "sending"; start: string }
   | {
@@ -221,6 +278,23 @@ export function CallPicker({
   const [tick, setTick] = useState(0);
   const [view, setView] = useState<"soonest" | "another">("soonest");
   const [day, setDay] = useState<string | null>(null);
+  // Another day, a week at a time: the week shown (its Sunday) and the
+  // later pages of free times read for it (book.slots with `from`).
+  const [week, setWeek] = useState<string | null>(null);
+  const [pages, setPages] = useState<Slots[]>([]);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [pageTick, setPageTick] = useState(0);
+  // Custom time: a day and a time the rep types, checked by book.check.
+  const [customOpen, setCustomOpen] = useState(false);
+  const [cDate, setCDate] = useState("");
+  const [cTime, setCTime] = useState("");
+  const [cHostId, setCHostId] = useState("");
+  const [cTick, setCTick] = useState(0);
+  const [cCheck, setCCheck] = useState<{
+    key: string;
+    r: TimeCheck | null;
+    error: string | null;
+  }>({ key: "", r: null, error: null });
   const [phase, setPhase] = useState<Phase>({ k: "pick" });
   /** The booking or move "Reschedule" in the done state left: Keep it goes back. */
   const [kept, setKept] = useState<PickerDone | null>(null);
@@ -252,6 +326,17 @@ export function CallPicker({
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
   const alive = useRef(true);
+  /** The last time pressed: its flags reach the done state, however the answer came. */
+  const pressed = useRef<Extract<Phase, { k: "hold" }> | null>(null);
+  /** Which calendar read the later pages belong to (a page for an old read is dropped). */
+  const readKey = `${mode}|${appointmentId}|${anyone}|${lead.contact_id}|${kind}|${withWho}`;
+  const readKeyRef = useRef(readKey);
+  readKeyRef.current = readKey;
+  /** Who the calendar is read for: the call to move, or the lead and the kind of call. */
+  const who = (): Record<string, unknown> =>
+    mode === "reschedule"
+      ? { appointment_id: appointmentId, with: anyone ? "anyone" : "same" }
+      : { contact_id: lead.contact_id, kind, with: withWho };
 
   useEffect(() => {
     alive.current = true;
@@ -268,15 +353,14 @@ export function CallPicker({
   useEffect(() => {
     let live = true;
     setReadError(null);
-    const body =
-      mode === "reschedule"
-        ? { appointment_id: appointmentId, with: anyone ? "anyone" : "same" }
-        : { contact_id: lead.contact_id, kind, with: withWho };
-    api<Slots>("book.slots", body)
+    api<Slots>("book.slots", who())
       .then(s => {
         if (!live) return;
         setNow(Date.now());
         setSlots(s);
+        // A fresh read starts the later pages again: they were the old read's.
+        setPages([]);
+        setPageError(null);
         slotsRef.current?.(tiles(s, lead, 4).map(t => t.iso));
         readRef.current?.(s);
         const asked = tried.current;
@@ -316,11 +400,23 @@ export function CallPicker({
   }, [mode, appointmentId, anyone, lead.contact_id, kind, withWho, tick]);
 
   // ------------------------------------------------------------ sending
+  /** What the done state says about how the time was placed. */
+  function placed(placement: Placement | null | undefined) {
+    const p = pressed.current;
+    return {
+      placement:
+        placement ?? (p?.custom ? "custom" : p?.far ? "far_out" : null),
+      outside: Boolean(p?.custom && p.outsideOk),
+    };
+  }
+
   function finishMove(r: {
     start: string;
     appointment: ApptOut | null;
     host_changed?: boolean;
     reschedule_id?: string | null;
+    placement?: Placement;
+    reschedule_link?: string | null;
   }) {
     const was = slots?.moving?.host_name ?? current?.host ?? null;
     const d: PickerDone = {
@@ -332,6 +428,8 @@ export function CallPicker({
       wasHost: r.host_changed ? was : null,
       rescheduleId: r.reschedule_id ?? null,
       verified: true,
+      ...placed(r.placement),
+      link: r.reschedule_link,
     };
     toast.success(toastWords("reschedule", d.kind, r.start));
     setLine(null);
@@ -357,10 +455,13 @@ export function CallPicker({
       appointment: r.appointment ?? null,
       host:
         r.appointment?.host_name ??
+        (pressed.current?.host || null) ??
         (withWho === "me" && !slots?.fallback ? (me.name ?? null) : null),
       wasHost: null,
       rescheduleId: null,
       verified: r.verified,
+      ...placed(r.placement),
+      link: r.reschedule_link,
     };
     if (r.verified) toast.success(toastWords("book", d.kind, start));
     setLine(null);
@@ -396,6 +497,7 @@ export function CallPicker({
           start: r.start ?? start,
           appointment: r.appointment,
           reschedule_id: rescheduleId,
+          reschedule_link: r.reschedule_link,
         });
         return;
       }
@@ -461,7 +563,7 @@ export function CallPicker({
       start: h.start,
       reason,
       ...(reason === "other" ? { note: note.trim() } : {}),
-      ...(h.userId ? { user_id: h.userId } : {}),
+      ...pressExtras(h),
       request_id: h.requestId,
       source,
       ...(attemptId ? { attempt_id: attemptId } : {}),
@@ -477,6 +579,8 @@ export function CallPicker({
       with: slots?.with === "anyone" ? "anyone" : withWho,
       start: h.start,
       note: bookLine.trim(),
+      // A far-out tile names who takes it, and a custom time always does.
+      ...pressExtras(h),
       request_id: h.requestId,
       source,
       ...(attemptId ? { attempt_id: attemptId } : {}),
@@ -505,6 +609,8 @@ export function CallPicker({
       setLine({ text: a.text, tone: a.tone });
       if (a.blocked) setBlocked(true);
       if (a.reread) setTick(n => n + 1);
+      // A typed time is checked again: Book anyway, or whose call is there now.
+      if (h.custom && (a.reread || a.anyway)) setCTick(n => n + 1);
     }
   }
 
@@ -559,14 +665,11 @@ export function CallPicker({
         /taken|already have/i.test(msg(e))
       )
         setTick(n => n + 1);
+      if (h.custom && (a.reread || a.anyway)) setCTick(n => n + 1);
     }
   }
 
-  function press(t: {
-    iso: string;
-    hostId?: string | null;
-    host?: string | null;
-  }) {
+  function press(t: Press) {
     if (phase.k !== "pick" || blocked) return;
     if (mode === "reschedule" && reason === "other" && note.trim().length < 3) {
       setLine({
@@ -591,7 +694,11 @@ export function CallPicker({
       userId: t.hostId ?? null,
       host: t.host ?? null,
       requestId: newId(),
+      far: Boolean(t.far),
+      custom: Boolean(t.custom),
+      outsideOk: Boolean(t.custom && t.outsideOk),
     };
+    pressed.current = h;
     setPhase(h);
     const go = mode === "reschedule" ? () => sendMove(h) : () => sendBook(h);
     toSend.current = go;
@@ -694,18 +801,109 @@ export function CallPicker({
     .filter(Boolean)
     .join(" ");
   const until = untilWords(slots);
-  const chips = dayChips(slots, now);
+  // What the booking page alone offers: "no free time" and the team's
+  // fallback are about those days (the far-out part is read separately).
+  const windowWords = untilWords(
+    slots
+      ? { days: slots.days, until: slots.window_until ?? slots.until }
+      : null,
+  );
+  const book = dayBook(slots, pages);
+  const chips = dayChips(book, now);
   // Another day opens on the first day the soonest four leave times on.
   const inSoonest = new Set(soonest.map(t => t.iso));
-  const shownDay =
-    chips.find(c => c.day === day) ??
-    chips.find(c => c.slots.some(x => !inSoonest.has(x))) ??
-    chips[0] ??
+  const firstDay =
+    chips.find(c => c.slots.some(x => !inSoonest.has(x)))?.day ??
+    chips[0]?.day ??
     null;
+  const today = kwDay(now);
+  const span = weekSpan(book, now);
+  const weekShown = (() => {
+    const w = week ?? weekStartOf(day ?? firstDay ?? today);
+    return w < span.first ? span.first : w > span.last ? span.last : w;
+  })();
+  const cells: WeekCell[] = weekOf(book, weekShown, now);
+  const shownCell =
+    cells.find(c => c.day === day && c.count) ??
+    (week === null && !day
+      ? cells.find(c => c.day === firstDay && c.count)
+      : undefined) ??
+    cells.find(c => c.count) ??
+    null;
+  const toRead =
+    view === "another" && slots && !pageError
+      ? weekToRead(book, weekShown, now)
+      : null;
+  const farState = slots?.far?.state ?? null;
   const team =
     mode === "reschedule" &&
     (anyone || slots?.with === "anyone" || slots?.fallback);
   const noTimes = slots && !readError && !soonest.length && !slots.existing;
+  const custom = slots?.custom ?? null;
+  const customHost =
+    custom?.host ?? custom?.hosts.find(h => h.user_id === cHostId) ?? null;
+  const customStart = customIso(cDate, cTime);
+  const customPre = customOpen
+    ? custom && !customHost
+      ? { line: "Pick who takes the call.", tone: "muted" as const }
+      : customPrecheck(cDate, cTime, {
+          now,
+          reachUntil: slots?.reach_until ?? slots?.until ?? null,
+          stepMin: custom?.step_min ?? 5,
+        })
+    : null;
+  const customKey = `${readKey}|${customStart}|${customHost?.user_id ?? ""}|${cTick}`;
+
+  // A week Another day has not read yet: ask for it (book.slots with `from`).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: who() and readKey are the read's identity
+  useEffect(() => {
+    if (!toRead) return;
+    let live = true;
+    const key = readKey;
+    api<Slots>("book.slots", { ...who(), from: toRead })
+      .then(s => {
+        if (!live || readKeyRef.current !== key) return;
+        // An answer that pages nowhere (an older server), or not for the
+        // week asked: said, never shown as a week with no free time.
+        if (!s.page || toRead < s.page.from || toRead > s.page.to) {
+          setPageError("The calendar did not answer for that week.");
+          return;
+        }
+        setPages(p => [...p, s]);
+      })
+      .catch(e => {
+        if (live && readKeyRef.current === key) setPageError(msg(e));
+      });
+    return () => {
+      live = false;
+    };
+  }, [toRead, pageTick]);
+
+  // The custom time, checked against the host's calendar a moment after
+  // the last change (book.check is read-only).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: customKey holds the time, the host, the read and the re-check
+  useEffect(() => {
+    if (!customOpen || !custom || customPre || !customStart) return;
+    let live = true;
+    const key = customKey;
+    const t = window.setTimeout(() => {
+      api<TimeCheck>("book.check", {
+        ...who(),
+        start: customStart,
+        ...(custom.host ? {} : { user_id: customHost?.user_id }),
+      })
+        .then(r => {
+          if (live) setCCheck({ key, r, error: null });
+        })
+        .catch(e => {
+          if (live) setCCheck({ key, r: null, error: msg(e) });
+        });
+    }, 300);
+    return () => {
+      live = false;
+      window.clearTimeout(t);
+    };
+  }, [customOpen, customKey, customPre?.line]);
 
   const frameCls = frame
     ? "@container rounded-[18px] border border-[color:color-mix(in_oklch,var(--primary)_35%,transparent)] bg-[color:var(--card)] p-3.5 sm:p-4"
@@ -727,6 +925,9 @@ export function CallPicker({
             setKept(d);
             setPhase({ k: "pick" });
             setView("soonest");
+            setWeek(null);
+            setDay(null);
+            setCustomOpen(false);
             setAnyone(false);
             setTick(n => n + 1);
           }}
@@ -780,6 +981,7 @@ export function CallPicker({
                 host: d.host,
                 wasHost: d.wasHost,
                 missed: Boolean(missed),
+                outside: d.outside,
               })}
             </p>
           </div>
@@ -823,6 +1025,10 @@ export function CallPicker({
               }
               lang={lang}
               rescheduleId={d.rescheduleId}
+              // The lead's own link to pick another time, where HighLevel
+              // allows it: as sales-api answered the booking or the move, else
+              // the calendar read's (a move keeps the call's id).
+              link={doneLink(d.mode, d.link, slots?.reschedule_link)}
               extra={extras}
             />
           ) : (
@@ -839,16 +1045,35 @@ export function CallPicker({
   const holdIso = holding ? phase.start : null;
   const holdTheirs = holdIso ? theirTime(holdIso, lead) : null;
 
-  const tileBtn = (t: Tile, i: number | null, small = false) => (
+  const tileBtn = (
+    t: Tile,
+    i: number | null,
+    small = false,
+    typed: { anyway: boolean } | null = null,
+  ) => (
     <button
       key={t.iso}
       type="button"
-      onClick={() => press({ iso: t.iso, hostId: t.hostId, host: t.host })}
+      onClick={() =>
+        press({
+          iso: t.iso,
+          hostId: t.hostId,
+          host: t.host,
+          far: t.far,
+          custom: Boolean(typed),
+          outsideOk: Boolean(typed?.anyway),
+        })
+      }
       disabled={blocked}
-      aria-label={`${mode === "reschedule" ? "Reschedule to" : "Book"} ${t.day} ${t.digits} ${t.ap}${t.theirs ? `, ${t.theirs}` : ""}${t.host ? `, with ${t.host}` : ""}${i !== null ? ` (key ${i + 1})` : ""}`}
-      className={`flex flex-col items-start justify-center rounded-[14px] border border-[color:var(--border)] bg-[color:color-mix(in_oklch,var(--foreground)_3%,transparent)] text-left transition-colors hover:border-[color:color-mix(in_oklch,var(--primary)_60%,transparent)] hover:bg-[color:color-mix(in_oklch,var(--primary)_8%,transparent)] disabled:opacity-50 ${
-        small ? "min-h-[3.6rem] px-2.5 py-1.5" : "min-h-[4.6rem] px-3 py-2"
-      }`}
+      aria-label={`${typed?.anyway ? "Book anyway, outside working hours: " : ""}${mode === "reschedule" ? "Reschedule to" : "Book"} ${t.day} ${t.digits} ${t.ap}${t.theirs ? `, ${t.theirs}` : ""}${t.host ? `, with ${t.host}` : ""}${t.far ? ", past the booking page" : ""}${i !== null ? ` (key ${i + 1})` : ""}`}
+      className={`flex flex-col items-start justify-center rounded-[14px] border bg-[color:color-mix(in_oklch,var(--foreground)_3%,transparent)] text-left transition-colors hover:border-[color:color-mix(in_oklch,var(--primary)_60%,transparent)] hover:bg-[color:color-mix(in_oklch,var(--primary)_8%,transparent)] disabled:opacity-50 ${
+        typed?.anyway
+          ? "border-[color:color-mix(in_oklch,var(--warning)_45%,transparent)]"
+          : "border-[color:var(--border)]"
+      } ${small ? "px-2.5 py-1.5" : "px-3 py-2"}`}
+      // Inline, so the phone's 40 px floor for buttons (index.css, outside
+      // the layers) cannot shrink a tile below its own height.
+      style={{ minHeight: small ? "3.6rem" : "4.6rem" }}
     >
       {!small ? (
         <span className="muted text-[11px] font-medium">{t.day}</span>
@@ -861,6 +1086,9 @@ export function CallPicker({
       </span>
       {t.theirs ? <span className="muted text-[11px]">{t.theirs}</span> : null}
       {t.host ? <span className="text-[11px]">with {t.host}</span> : null}
+      {typed?.anyway ? (
+        <span className="txt-warn text-[11px] font-semibold">Book anyway</span>
+      ) : null}
     </button>
   );
 
@@ -907,7 +1135,11 @@ export function CallPicker({
         ? "No answer from HighLevel yet. Checking the calendar…"
         : phase.k === "sending"
           ? `Sending to HighLevel: ${whenWords(phase.start)}`
-          : holdWords(mode, callKind, phase.start);
+          : holdWords(mode, callKind, phase.start, Date.now(), {
+              far: phase.far,
+              outside: phase.outsideOk,
+              host: phase.host ?? hostName ?? me.name,
+            });
     body = (
       <div
         role="status"
@@ -986,6 +1218,9 @@ export function CallPicker({
             setAppointmentId(ex.id);
             setLine(null);
             setView("soonest");
+            setWeek(null);
+            setDay(null);
+            setCustomOpen(false);
             setTick(n => n + 1);
           }}
         >
@@ -994,7 +1229,7 @@ export function CallPicker({
         </button>
       </div>
     );
-  } else if (noTimes) {
+  } else if (noTimes && view === "soonest") {
     body = (
       <div className="callout-warn flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border px-3 py-2 text-sm">
         <span className="min-w-0 flex-1">
@@ -1006,7 +1241,7 @@ export function CallPicker({
                 : withWho === "me"
                   ? me.name
                   : null,
-            until,
+            until: spanUntil(slots),
             withWho:
               mode === "reschedule" ? (team ? "anyone" : "same") : withWho,
             onTeam: slots.on_team,
@@ -1032,6 +1267,29 @@ export function CallPicker({
             Anyone free
           </button>
         ) : null}
+        {farState === "ok" && slots.page?.next ? (
+          <button
+            type="button"
+            className={`${button} h-8`}
+            onClick={() => {
+              const next = slots.page?.next ?? today;
+              setWeek(weekStartOf(next));
+              setDay(next);
+              setView("another");
+            }}
+          >
+            Later weeks
+          </button>
+        ) : null}
+        {custom && !customOpen ? (
+          <button
+            type="button"
+            className={`${button} h-8`}
+            onClick={() => setCustomOpen(true)}
+          >
+            Custom time
+          </button>
+        ) : null}
         <a
           href={ghlContactUrl(lead.contact_id)}
           target="_blank"
@@ -1043,65 +1301,242 @@ export function CallPicker({
       </div>
     );
   } else if (view === "another") {
+    const edgeIdx = cells.findIndex(c => c.edgeBefore);
+    const weekFar = cells.some(c => c.far && c.count !== null);
+    const whose =
+      mode === "reschedule"
+        ? team
+          ? null
+          : firstOf(hostName) || null
+        : // Mine only when sales-api read my own times ("me"): a rep not on
+          // the calendar's team, or with no time of their own, gets the
+          // team's, each tile naming who takes it.
+          slots.with === "me" && !slots.fallback
+          ? "you"
+          : null;
+    const go = (n: number) => {
+      setWeek(addDays(weekShown, n));
+      setDay(null);
+      setPageError(null);
+    };
+    const navBtn =
+      "inline-flex size-9 shrink-0 items-center justify-center rounded-full border hairline transition-colors hover:bg-[color:var(--secondary)] disabled:opacity-30 disabled:hover:bg-transparent pointer-coarse:size-11";
+    const reading = cells.some(c => c.reading);
     body = (
       <div className="space-y-2.5">
-        <div
-          className="grid grid-cols-2 gap-1.5 @2xl:flex @2xl:flex-wrap"
-          role="group"
-          aria-label="Day"
-        >
-          {chips.map(c => (
+        <div className="space-y-1 @2xl:max-w-[44rem]">
+          <div className="flex items-center gap-2">
             <button
-              key={c.day}
               type="button"
-              aria-pressed={shownDay?.day === c.day}
-              onClick={() => setDay(c.day)}
-              className={`inline-flex h-10 items-center justify-center gap-1.5 rounded-full border px-3 text-xs font-medium @2xl:h-8 ${
-                shownDay?.day === c.day
-                  ? "border-[color:color-mix(in_oklch,var(--primary)_45%,transparent)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)]"
-                  : "hairline hover:bg-[color:var(--secondary)]"
-              }`}
+              aria-label="The week before"
+              disabled={weekShown <= span.first}
+              onClick={() => go(-7)}
+              className={navBtn}
             >
-              {c.label}
-              <span className="tabular-nums opacity-70">{c.count}</span>
+              <ChevronLeft className="size-4" aria-hidden />
             </button>
-          ))}
+            <p
+              className="min-w-0 flex-1 text-center text-sm font-semibold"
+              aria-live="polite"
+            >
+              {weekTitle(weekShown, now)}
+              <span className="muted ms-2 font-mono text-xs font-medium">
+                {weekRange(weekShown)}
+              </span>
+            </p>
+            <button
+              type="button"
+              aria-label="The week after"
+              disabled={weekShown >= span.last}
+              onClick={() => go(7)}
+              className={navBtn}
+            >
+              <ChevronRight className="size-4" aria-hidden />
+            </button>
+          </div>
+          <div
+            className="grid grid-cols-7 gap-1 @max-md:-mx-2 @max-md:gap-px"
+            role="group"
+            aria-label="Day"
+          >
+            {cells.map(c => {
+              const on = shownCell?.day === c.day;
+              const state = c.reading
+                ? "reading the calendar"
+                : c.count === null
+                  ? "not offered"
+                  : c.count
+                    ? `${c.count} free time${c.count === 1 ? "" : "s"}`
+                    : "no free time";
+              return (
+                <button
+                  key={c.day}
+                  type="button"
+                  disabled={c.disabled}
+                  aria-pressed={on}
+                  aria-label={`${c.label}: ${state}${c.far && c.count !== null ? ", past the booking page" : ""}`}
+                  onClick={() => {
+                    setDay(c.day);
+                    setWeek(weekShown);
+                  }}
+                  className={`relative flex min-h-[3.75rem] min-w-0 flex-col items-center justify-center gap-0.5 rounded-[12px] border py-1.5 transition-colors disabled:cursor-default ${
+                    on
+                      ? "border-[color:color-mix(in_oklch,var(--primary)_45%,transparent)] bg-[color:color-mix(in_oklch,var(--primary)_15%,transparent)]"
+                      : "border-transparent enabled:hover:bg-[color:var(--secondary)]"
+                  }`}
+                >
+                  {c.edgeBefore ? (
+                    <span
+                      aria-hidden
+                      className="pointer-events-none absolute -start-[3px] -top-1 -bottom-1 border-s border-dashed border-[color:var(--now)]"
+                    />
+                  ) : null}
+                  <span
+                    className={`text-[11px] font-medium leading-4 ${c.today ? "txt-now" : "muted"}`}
+                  >
+                    {c.wd}
+                  </span>
+                  <span
+                    className={`font-mono text-[15px] font-semibold leading-5 tabular-nums ${c.count ? "" : "opacity-40"}`}
+                  >
+                    {c.num}
+                  </span>
+                  <span className="muted font-mono text-[11px] leading-4 tabular-nums">
+                    {/* A day not offered keeps the line, so the week's numbers stay level. */}
+                    {c.reading
+                      ? "…"
+                      : c.count === null
+                        ? "\u00a0"
+                        : c.count || "–"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {edgeIdx >= 0 ? (
+            <div
+              className="grid grid-cols-7 gap-1 @max-md:-mx-2 @max-md:gap-px"
+              aria-hidden
+            >
+              <span
+                className="relative h-4"
+                style={{ gridColumnStart: edgeIdx + 1 }}
+              >
+                <span
+                  className={`muted absolute top-0 whitespace-nowrap border-dashed border-[color:var(--now)] text-[11px] leading-4 ${
+                    edgeIdx <= 3
+                      ? "-start-[3px] border-s ps-1.5"
+                      : "end-[calc(100%+2px)] border-e pe-1.5"
+                  }`}
+                >
+                  booking page ends
+                </span>
+              </span>
+            </div>
+          ) : null}
         </div>
-        <div
-          className="grid grid-cols-3 gap-2 @2xl:grid-cols-[repeat(7,minmax(0,8.5rem))]"
-          role="group"
-          aria-label={`Times on ${shownDay?.label ?? "the day"}`}
-        >
-          {(shownDay?.slots ?? []).map(iso =>
-            tileBtn(tileOf(iso, lead, now, slots.slot_hosts), null, true),
-          )}
+        {pageError ? (
+          <p className="callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm">
+            This week could not be read: {pageError}{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setPageError(null);
+                setPageTick(n => n + 1);
+              }}
+              className="underline underline-offset-2"
+            >
+              Read it again
+            </button>
+          </p>
+        ) : shownCell ? (
+          <div
+            className="grid grid-cols-3 gap-2 @2xl:grid-cols-[repeat(7,minmax(0,8.5rem))]"
+            role="group"
+            aria-label={`Times on ${shownCell.label}`}
+          >
+            {shownCell.slots.map(iso =>
+              tileBtn(
+                tileOf(iso, lead, now, book.slot_hosts, shownCell.far),
+                null,
+                true,
+              ),
+            )}
+          </div>
+        ) : reading ? (
+          <p className="muted text-sm">Reading the calendar…</p>
+        ) : (
+          <p className="muted text-sm">
+            No free time this week.{" "}
+            {weekShown < span.last
+              ? "Try the week after"
+              : "Try an earlier week"}
+            {custom ? ", or a custom time." : "."}
+          </p>
+        )}
+        {weekFar && farState === "ok" ? (
+          <p className="muted text-xs leading-relaxed">
+            {farLine({ windowUntil: slots.window_until, who: whose })}
+          </p>
+        ) : null}
+        {farState && farState !== "ok" && slots.far?.note ? (
+          <p className="muted hairline rounded-[var(--radius-md)] border px-3 py-2 text-xs leading-relaxed">
+            {slots.far.note}
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <button
+            type="button"
+            onClick={() => setView("soonest")}
+            className="muted inline-flex items-center gap-1 text-xs underline underline-offset-2 hover:text-[color:var(--foreground)] pointer-coarse:h-11"
+          >
+            <ArrowLeft className="size-3" aria-hidden /> Back to the soonest
+          </button>
+          {custom && !customOpen ? (
+            <button
+              type="button"
+              onClick={() => {
+                setCustomOpen(true);
+                if (!cDate && shownCell) setCDate(shownCell.day);
+              }}
+              className="muted inline-flex items-center text-xs underline underline-offset-2 hover:text-[color:var(--foreground)] pointer-coarse:h-11"
+            >
+              Custom time
+            </button>
+          ) : null}
         </div>
-        <button
-          type="button"
-          onClick={() => setView("soonest")}
-          className="muted inline-flex items-center gap-1 text-xs underline underline-offset-2 hover:text-[color:var(--foreground)]"
-        >
-          <ArrowLeft className="size-3" aria-hidden /> Back to the soonest
-        </button>
       </div>
     );
   } else {
     body = (
-      <div
-        className="grid grid-cols-2 gap-2 @2xl:grid-cols-[repeat(5,minmax(0,11rem))]"
-        role="group"
-        aria-label="The soonest free times"
-      >
-        {soonest.map((t, i) => tileBtn(t, i))}
-        {chips.length ? (
+      <div className="space-y-2">
+        <div
+          className="grid grid-cols-2 gap-2 @2xl:grid-cols-[repeat(5,minmax(0,11rem))]"
+          role="group"
+          aria-label="The soonest free times"
+        >
+          {soonest.map((t, i) => tileBtn(t, i))}
+          {chips.length || slots.page?.next ? (
+            <button
+              type="button"
+              onClick={() => setView("another")}
+              aria-label={`Another day${until ? `, ${until}` : ""} (key A)`}
+              className="col-span-2 flex min-h-12 items-center justify-between gap-2 rounded-[14px] border border-[color:var(--border)] px-3 py-2 text-left transition-colors hover:border-[color:color-mix(in_oklch,var(--primary)_60%,transparent)] hover:bg-[color:color-mix(in_oklch,var(--primary)_8%,transparent)] @2xl:col-span-1 @2xl:min-h-[4.6rem] @2xl:flex-col @2xl:items-start @2xl:justify-center @2xl:gap-0"
+            >
+              <span className="text-sm font-semibold">Another day</span>
+              {until ? (
+                <span className="muted text-[11px]">{until}</span>
+              ) : null}
+            </button>
+          ) : null}
+        </div>
+        {custom && !customOpen ? (
           <button
             type="button"
-            onClick={() => setView("another")}
-            aria-label={`Another day${until ? `, ${until}` : ""} (key A)`}
-            className="col-span-2 flex min-h-12 items-center justify-between gap-2 rounded-[14px] border border-[color:var(--border)] px-3 py-2 text-left transition-colors hover:border-[color:color-mix(in_oklch,var(--primary)_60%,transparent)] hover:bg-[color:color-mix(in_oklch,var(--primary)_8%,transparent)] @2xl:col-span-1 @2xl:min-h-[4.6rem] @2xl:flex-col @2xl:items-start @2xl:justify-center @2xl:gap-0"
+            onClick={() => setCustomOpen(true)}
+            className="muted inline-flex items-center text-xs underline underline-offset-2 hover:text-[color:var(--foreground)] pointer-coarse:h-11"
           >
-            <span className="text-sm font-semibold">Another day</span>
-            {until ? <span className="muted text-[11px]">{until}</span> : null}
+            Custom time
           </button>
         ) : null}
       </div>
@@ -1113,8 +1548,136 @@ export function CallPicker({
     !readError &&
     slots &&
     !blocked &&
-    !noTimes &&
-    !(mode === "book" && slots.existing);
+    !(mode === "book" && slots.existing) &&
+    (!noTimes || customOpen || view === "another");
+
+  // ------------------------------------------------------------ custom time
+  let customRow: ReactNode = null;
+  if (showFoot && custom && customOpen) {
+    const answer = cCheck.key === customKey ? cCheck : null;
+    const cv = answer ? checkView(answer.r) : null;
+    const hostFirst = firstOf(customHost?.name) || "the host";
+    const said: { line: string; tone: "muted" | "warn" } | null = customPre
+      ? customPre
+      : !answer
+        ? { line: `Checking ${hostFirst}'s calendar…`, tone: "muted" }
+        : answer.error
+          ? {
+              line: `The time could not be checked: ${answer.error}`,
+              tone: "warn",
+            }
+          : cv;
+    const typed =
+      cv?.tile && customStart && !customPre
+        ? (() => {
+            const named = answer?.r?.host ?? customHost;
+            const t = customTile(
+              customStart,
+              lead,
+              named,
+              now,
+              isFarDay(cDate, slots),
+            );
+            // The call's own host (or me) needs no name on the tile; a
+            // person picked from the list does.
+            return custom.host ? { ...t, host: null } : t;
+          })()
+        : null;
+    const reach = slots?.reach_until ?? slots?.until ?? undefined;
+    customRow = (
+      <div
+        className="space-y-2.5 rounded-[14px] border hairline p-3"
+        role="group"
+        aria-label="Custom time"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold">
+            Custom time
+            <span className="muted ms-2 text-xs font-normal">Kuwait time</span>
+          </p>
+          <button
+            type="button"
+            aria-label="Close custom time"
+            onClick={() => setCustomOpen(false)}
+            className="muted inline-flex size-8 items-center justify-center rounded-full hover:bg-[color:var(--secondary)] hover:text-[color:var(--foreground)] pointer-coarse:size-11"
+          >
+            <X className="size-4" aria-hidden />
+          </button>
+        </div>
+        <div className="grid grid-cols-1 gap-2 @md:grid-cols-2 @lg:flex @lg:flex-wrap @lg:items-end">
+          <label className="block min-w-0 space-y-1 @lg:w-44">
+            <span className="muted block text-xs">Day</span>
+            <input
+              type="date"
+              value={cDate}
+              min={today}
+              max={
+                reach && /^\d{4}-\d{2}-\d{2}$/.test(reach) ? reach : undefined
+              }
+              onChange={e => setCDate(e.target.value)}
+              className={`${field} min-w-0 font-mono tabular-nums dark:[color-scheme:dark] pointer-coarse:min-h-11`}
+            />
+          </label>
+          <label className="block min-w-0 space-y-1 @lg:w-36">
+            <span className="muted block text-xs">Time</span>
+            <input
+              type="time"
+              step={300}
+              value={cTime}
+              onChange={e => setCTime(e.target.value)}
+              className={`${field} min-w-0 font-mono tabular-nums dark:[color-scheme:dark] pointer-coarse:min-h-11`}
+            />
+          </label>
+          {!custom.host ? (
+            <label className="block min-w-0 space-y-1 @md:col-span-2 @lg:w-52">
+              <span className="muted block text-xs">Who takes it</span>
+              <select
+                value={cHostId}
+                onChange={e => setCHostId(e.target.value)}
+                className={`${field} pointer-coarse:min-h-11`}
+              >
+                <option value="">Pick someone</option>
+                {custom.hosts.map(h => (
+                  <option key={h.user_id} value={h.user_id}>
+                    {h.name ?? h.user_id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+        </div>
+        {said ? (
+          <p
+            role="status"
+            className={
+              said.tone === "warn"
+                ? "callout-warn rounded-[var(--radius-md)] border px-3 py-2 text-sm"
+                : "muted text-xs leading-relaxed"
+            }
+          >
+            {said.line}
+            {answer?.error ? (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  onClick={() => setCTick(n => n + 1)}
+                  className="underline underline-offset-2"
+                >
+                  Check again
+                </button>
+              </>
+            ) : null}
+          </p>
+        ) : null}
+        {typed ? (
+          <div className="grid grid-cols-2 gap-2 @2xl:grid-cols-[repeat(5,minmax(0,11rem))]">
+            {tileBtn(typed, null, false, { anyway: cv?.tile === "anyway" })}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -1189,11 +1752,12 @@ export function CallPicker({
       {team && slots && soonest.length && !holding ? (
         <p className="muted text-xs">
           {firstOf(hostName) || "The host"} has no free time
-          {until ? ` ${until}` : ""}, so these are the team's times; each names
-          who takes it.
+          {windowWords ? ` ${windowWords}` : ""}, so these are the team's times;
+          each names who takes it.
         </p>
       ) : null}
       {body}
+      {customRow}
       {line ? (
         <p
           role="status"
@@ -1273,15 +1837,23 @@ export function CallPicker({
                 </button>
               }
             />
+            <p className="muted mt-2 text-xs">
+              {linkLine(slots.window_until ?? slots.until)}
+            </p>
           </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => setLinkOpen(true)}
-            className="muted text-xs underline underline-offset-2 hover:text-[color:var(--foreground)]"
-          >
-            Or send them the link to pick a time themselves
-          </button>
+          <div className="space-y-0.5">
+            <button
+              type="button"
+              onClick={() => setLinkOpen(true)}
+              className="muted inline-flex items-center text-xs underline underline-offset-2 hover:text-[color:var(--foreground)] pointer-coarse:h-11"
+            >
+              Or send them the link to pick a time themselves
+            </button>
+            <p className="muted text-[11px] leading-snug opacity-80">
+              {linkLine(slots.window_until ?? slots.until)}
+            </p>
+          </div>
         )
       ) : null}
       {footer}
