@@ -735,10 +735,13 @@ function RateCell({
   bad,
   hint,
   detail,
+  under = "below the gate",
 }: {
   value: number | null;
   /** Percent at which the rate is good. */
   gate: number;
+  /** What a rate under the gate is called, read out after the figure. */
+  under?: string;
   /** Percent below which the rate is serious; default is 70% of the gate. */
   bad?: number;
   /** Why there is no rate. */
@@ -757,7 +760,7 @@ function RateCell({
       />
       {pct(value)}
       <span className="sr-only">
-        {tone === "good" ? ", at the gate" : ", below the gate"}
+        {tone === "good" ? ", at the gate" : `, ${under}`}
       </span>
     </>
   );
@@ -953,6 +956,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
           value={r.rates30?.showRate ?? null}
           gate={SHOW_RATE_GOOD}
           bad={0}
+          under={`under the ${SHOW_RATE_GOOD}% line, a watch`}
           hint="No past meeting with an attendance recorded in the last 30 days"
           detail={
             r.rates30
