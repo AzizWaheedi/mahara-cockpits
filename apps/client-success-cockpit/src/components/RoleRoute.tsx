@@ -7,7 +7,13 @@ import { portalUrl } from "@/lib/portal";
  * success link is sent to her own screen, and if she has no role at all she is told
  * plainly instead of shown an empty dashboard. The server enforces the same rule.
  */
-export function RoleRoute({ role, anyOf = [] }: { role?: string; anyOf?: string[] }) {
+export function RoleRoute({
+  role,
+  anyOf = [],
+}: {
+  role?: string;
+  anyOf?: string[];
+}) {
   const { access, ready, session } = useCockpitAuth();
 
   if (!ready) {
@@ -17,7 +23,11 @@ export function RoleRoute({ role, anyOf = [] }: { role?: string; anyOf?: string[
       </div>
     );
   }
-  if (access?.isAdmin || access?.isCeo || [...(role ? [role] : []), ...anyOf].some(r => access?.roles.includes(r))) {
+  if (
+    access?.isAdmin ||
+    access?.isCeo ||
+    [...(role ? [role] : []), ...anyOf].some(r => access?.roles.includes(r))
+  ) {
     return <Outlet key={session?.user.id ?? "signed-out"} />;
   }
 
@@ -43,7 +53,10 @@ export function BillingReviewLayout() {
   return (
     <main className="min-h-screen bg-background px-4 py-8 sm:px-6">
       <div className="mx-auto mb-5 max-w-4xl">
-        <a className="text-sm text-muted-foreground underline" href={`${portalUrl()}${access?.home || "/"}`}>
+        <a
+          className="text-sm text-muted-foreground underline"
+          href={`${portalUrl()}${access?.home || "/"}`}
+        >
           Back to your cockpit
         </a>
       </div>

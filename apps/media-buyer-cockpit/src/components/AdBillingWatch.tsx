@@ -71,10 +71,16 @@ export function AdBillingSummary({
         href="/client-success/ad-billing"
         className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 hover:bg-primary/10"
       >
-        <span><strong className="block text-sm">Daily ad billing review</strong>
-          <span className="text-xs text-muted-foreground">Check the draft messages once today. Either reviewer can approve, edit or deny.</span>
+        <span>
+          <strong className="block text-sm">Daily ad billing review</strong>
+          <span className="text-xs text-muted-foreground">
+            Check the draft messages once today. Either reviewer can approve,
+            edit or deny.
+          </span>
         </span>
-        <span className="text-sm font-medium text-primary">Review messages →</span>
+        <span className="text-sm font-medium text-primary">
+          Review messages →
+        </span>
       </a>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span
@@ -215,11 +221,11 @@ export function AdBillingSummary({
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        Client WhatsApp requires approval from either the CSM or media buyer. New Slack posts and client
-        messages are limited to once per client every 72 hours. This checks Meta
-        billing signals. It does not retry payments or switch campaigns on.
-        “Accepted” confirms a provider receipt, not that a person read the
-        message.
+        Client WhatsApp requires approval from either the CSM or media buyer.
+        New Slack posts and client messages are limited to once per client every
+        72 hours. This checks Meta billing signals. It does not retry payments
+        or switch campaigns on. “Accepted” confirms a provider receipt, not that
+        a person read the message.
       </p>
     </div>
   );
