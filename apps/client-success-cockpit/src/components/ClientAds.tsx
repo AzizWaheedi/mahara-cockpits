@@ -110,7 +110,7 @@ export function ClientAds({
   if (error)
     return (
       <p role="alert" className="text-sm text-destructive">
-        The ads could not be read: {error.replace(/.?s*$/, ".")} Reload the
+        The ads could not be read: {error.replace(/\.?\s*$/, ".")} Reload the
         page. If it keeps failing, use Report an issue at the top of the page.
       </p>
     );

@@ -30,19 +30,28 @@ export const MAX_RANGE_DAYS = 400;
 // ---------------------------------------------------------------------------
 // The read.
 
+// A missing field reads as empty, never as a broken read: the 30 days before
+// the period come without impressions, link clicks or frequency.
 const text = z
   .unknown()
+  .optional()
   .transform(v => (typeof v === "string" && v.trim() ? v : undefined));
-const amount = z.unknown().transform(v => {
-  if (v === null || v === undefined || v === "") return 0;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-});
-const maybe = z.unknown().transform(v => {
-  if (v === null || v === undefined || v === "") return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-});
+const amount = z
+  .unknown()
+  .optional()
+  .transform(v => {
+    if (v === null || v === undefined || v === "") return 0;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  });
+const maybe = z
+  .unknown()
+  .optional()
+  .transform(v => {
+    if (v === null || v === undefined || v === "") return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  });
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}/)
@@ -187,7 +196,7 @@ export async function fetchClientAds(
   const parsed = readSchema.safeParse(data);
   if (!parsed.success)
     throw new Error(
-      "The ad numbers came back in a shape this page cannot read. Say so with Report an issue at the top of the page.",
+      "The ad numbers came back in a shape this page cannot read.",
     );
   return parsed.data;
 }
