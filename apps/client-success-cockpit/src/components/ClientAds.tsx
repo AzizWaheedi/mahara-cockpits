@@ -1,4 +1,11 @@
-import { ArrowUpRight, ChartLine, TriangleAlert, X } from "lucide-react";
+import {
+  ArrowUpRight,
+  ChartLine,
+  ChevronDown,
+  ChevronRight,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Area,
@@ -13,7 +20,7 @@ import {
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { CreativePreview } from "@/components/CreativePreview";
 import { Hint } from "@/components/Hint";
-import { Chip, Dot, Kicker, Pill, PillRow } from "@/components/kit";
+import { Chip, Dot, Pill, PillRow } from "@/components/kit";
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import {
   type AdNode,
@@ -65,12 +72,15 @@ export function ClientAds({
   clientName,
   per,
   dwy,
+  onCount,
 }: {
   taskId?: string;
   clientName: string;
   per: Period;
   /** Done with you: the client books their own calls, so no booking numbers. */
   dwy: boolean;
+  /** How many ads spent or brought a lead in the period, once read. */
+  onCount?: (n: number | undefined) => void;
 }) {
   const auth = useCockpitAuth();
   const [read, setRead] = useState<ClientAdsRead | undefined>();
@@ -100,6 +110,16 @@ export function ClientAds({
     () => (read ? buildAdsModel(read, per) : undefined),
     [read, per],
   );
+  useEffect(() => {
+    onCount?.(
+      model
+        ? model.campaigns
+            .flatMap(c => c.sets)
+            .flatMap(s => s.ads)
+            .filter(a => a.active).length
+        : undefined,
+    );
+  }, [model, onCount]);
 
   if (!taskId)
     return (
@@ -185,9 +205,9 @@ export function AdsView({
       />
 
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pt-2">
-        <Kicker>Campaigns, ad sets and ads</Kicker>
+        <h3 className="text-sm font-semibold">Campaigns, ad sets and ads</h3>
         <div className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+          <span className="shrink-0 text-xs text-muted-foreground">
             Sort ads
           </span>
           <PillRow>
@@ -284,11 +304,15 @@ function AmLink({
       )}
     >
       <span dir="auto">{children}</span>
+      {/* A word joiner keeps the arrow on the name's last line. */}
+      <span className="whitespace-nowrap">
+        {"⁠"}
+        <ArrowUpRight
+          aria-hidden
+          className="ml-1 inline size-3.5 -translate-y-px text-muted-foreground group-hover:text-primary"
+        />
+      </span>
       <span className="sr-only"> (opens Ads Manager)</span>
-      <ArrowUpRight
-        aria-hidden
-        className="ml-1 inline size-3.5 -translate-y-px text-muted-foreground group-hover:text-primary"
-      />
     </a>
   );
 }
@@ -337,15 +361,13 @@ function Stat({
 }) {
   return (
     <div className="flex min-w-0 flex-col">
-      <dt className="font-mono text-[10px] uppercase leading-tight tracking-[0.08em] text-muted-foreground">
-        {label}
-      </dt>
+      <dt className="text-xs leading-tight text-muted-foreground">{label}</dt>
       <dd
         className={cn(
           "mt-auto whitespace-nowrap pt-0.5 tabular-nums",
           value === undefined
             ? "text-[13px] text-muted-foreground"
-            : "text-[15px] font-medium",
+            : "text-sm font-medium",
         )}
       >
         {value ?? empty}
@@ -419,7 +441,7 @@ function Meter({
 }) {
   if (!t.leads)
     return t.spend > 0 ? (
-      <div className="flex min-w-0 flex-[1_1_320px] items-center gap-2 text-[12.5px] text-muted-foreground">
+      <div className="flex min-w-0 flex-[1_1_320px] items-center gap-2 text-xs text-muted-foreground">
         <Dot tone="bad" />
         No leads from {money(t.spend, currency)} in this period
       </div>
@@ -465,7 +487,7 @@ function Meter({
           style={{ left: `${pos}%` }}
         />
       </span>
-      <span className="min-w-0 flex-[1_1_220px] text-[12.5px] text-muted-foreground">
+      <span className="min-w-0 flex-[1_1_220px] text-xs text-muted-foreground">
         {tone === "even" ? (
           words
         ) : (
@@ -483,6 +505,9 @@ function Meter({
 
 // ---------------------------------------------------------------------------
 // The one chart.
+
+/** Changes listed under the chart before "Show all". */
+const CHANGES_SHOWN = 3;
 
 const fmtY = (
   v: number | null | undefined,
@@ -610,7 +635,9 @@ function AdsChart({
   const avg = shownMeasure === "cpl" ? t.cpl : undefined;
   const hasData = series.points.some(p => p.y !== null);
   const name = scopeName(model, scope);
-  const visible = allChanges ? series.changes : series.changes.slice(0, 8);
+  const visible = allChanges
+    ? series.changes
+    : series.changes.slice(0, CHANGES_SHOWN);
   const pts = series.points;
   const [width, setWidth] = useState(0);
   const labels = useMemo(() => markLabels(pts, width), [pts, width]);
@@ -696,9 +723,9 @@ function AdsChart({
 
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
         <div className="min-w-0">
-          <div className="text-[15px] font-semibold">{title}</div>
+          <div className="text-sm font-semibold">{title}</div>
           <div
-            className="mt-0.5 text-[12.5px] text-muted-foreground [overflow-wrap:anywhere]"
+            className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]"
             dir="auto"
           >
             {name}, {label}
@@ -847,7 +874,7 @@ function AdsChart({
       )}
 
       <div className="space-y-2">
-        <Kicker>What changed</Kicker>
+        <h4 className="text-[13px] font-medium">What changed</h4>
         {series.changes.length ? (
           <ol className="space-y-2">
             {visible.map(ch => (
@@ -892,7 +919,7 @@ function AdsChart({
             No changes in this period.
           </p>
         )}
-        {series.changes.length > 8 ? (
+        {series.changes.length > CHANGES_SHOWN ? (
           <button
             type="button"
             onClick={() => setAllChanges(v => !v)}
@@ -912,7 +939,7 @@ function AdsChart({
         <div className="mt-2 max-h-80 overflow-auto rounded-xl border">
           <table className="w-full text-left text-xs tabular-nums">
             <thead className="sticky top-0 bg-card">
-              <tr className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+              <tr className="text-muted-foreground">
                 <th className="px-3 py-2 font-normal">
                   {series.weekly ? "Week" : "Day"}
                 </th>
@@ -965,7 +992,7 @@ function FilterRow({
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      <span className="w-16 shrink-0 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
+      <span className="w-16 shrink-0 text-xs text-muted-foreground">
         {label}
       </span>
       <PillRow className="min-w-0 flex-1">{children}</PillRow>
@@ -1046,7 +1073,7 @@ function CampaignList({
     .sort((x, y) => y.t.spend - x.t.spend);
   const quiet = model.campaigns.filter(c => !c.active);
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {active.length ? null : (
         <p className="text-sm text-muted-foreground">
           No ad spent or brought a lead in this period.
@@ -1088,6 +1115,40 @@ function CampaignList({
   );
 }
 
+/** Spent, leads, cost per lead and booked, as one line of words. */
+function Totals({
+  t,
+  currency,
+  booked,
+  className,
+}: {
+  t: Metrics;
+  currency: string;
+  booked: boolean;
+  className?: string;
+}) {
+  const b = (v?: string | number) => (
+    <b className="font-medium text-foreground tabular-nums">{v}</b>
+  );
+  return (
+    <p
+      className={cn(
+        "flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground",
+        className,
+      )}
+    >
+      <span>{b(money(t.spend, currency) ?? "-")} spent</span>
+      <span>
+        {b(t.leads)} {t.leads === 1 ? "lead" : "leads"}
+      </span>
+      {t.cpl !== undefined ? (
+        <span>{b(money(t.cpl, currency, true))} a lead</span>
+      ) : null}
+      {booked ? <span>{b(t.booked)} booked</span> : null}
+    </p>
+  );
+}
+
 function CampaignCard({
   c,
   model,
@@ -1105,6 +1166,9 @@ function CampaignCard({
   bookings: boolean;
   clientName: string;
 }) {
+  // An ended campaign opens folded: its line says what it did in the period,
+  // and its ads are a tap away.
+  const [open, setOpen] = useState(!c.ended);
   const sets = [...c.sets].sort((x, y) => y.t.spend - x.t.spend);
   const spent = sets.filter(s => s.active);
   const quiet = sets.filter(s => !s.active);
@@ -1113,17 +1177,34 @@ function CampaignCard({
   const avg = model.currency ? model.t.cpl : c.t.cpl;
   return (
     <article className="@container overflow-hidden rounded-2xl border bg-card">
-      <header className="flex items-start justify-between gap-3 px-4 pt-4 @xl:px-6">
-        <div className="min-w-0">
-          <Kicker className="mb-1 text-[10px]">
-            Campaign · {plural(c.sets.length, "ad set")}
-          </Kicker>
-          <AmLink href={campaignUrl(c)} className="text-[15px] font-semibold">
+      <header className="flex items-start gap-2 px-3 py-3.5 @xl:px-5">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={open ? "Fold this campaign" : "Open this campaign"}
+          onClick={() => setOpen(v => !v)}
+          className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <ChevronRight
+            aria-hidden
+            className={cn("size-4 transition-transform", open && "rotate-90")}
+          />
+        </button>
+        <div className="min-w-0 flex-1 pt-1">
+          <AmLink href={campaignUrl(c)} className="text-sm font-semibold">
             {c.name}
           </AmLink>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {[c.accountName, c.budgetText].filter(Boolean).join(" · ")}
-          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {[c.accountName, c.budgetText, plural(c.sets.length, "ad set")]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+          <Totals
+            t={c.t}
+            currency={c.currency}
+            booked={bookings && model.bookingsReady}
+            className="mt-1.5"
+          />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <Chip tone={c.tone}>{c.statusText}</Chip>
@@ -1135,54 +1216,61 @@ function CampaignCard({
           />
         </div>
       </header>
-      <Stats
-        t={c.t}
-        currency={c.currency}
-        bookings={bookings}
-        ready={model.bookingsReady}
-        className="mx-4 mt-3 rounded-xl bg-muted/40 px-3.5 py-3 @xl:mx-6"
-      />
-      <div className="space-y-3 px-3 py-3 @xl:px-6 @xl:py-4">
-        {spent.map(s => (
-          <SetPanel
-            key={s.key}
-            s={s}
-            c={c}
-            avg={avg}
-            model={model}
-            scope={scope}
-            onScope={onScope}
-            sort={sort}
-            bookings={bookings}
-            clientName={clientName}
-          />
-        ))}
-        {quiet.length ? (
-          <details className="rounded-xl bg-muted/40">
-            <summary className="cursor-pointer px-3 py-2.5 text-[13px] text-muted-foreground hover:text-foreground @xl:px-4">
-              {plural(quiet.length, "ad set")} did not spend in this period
-            </summary>
-            <ul className="space-y-2 px-3 pb-3 @xl:px-4">
-              {quiet.map(s => (
-                <li key={s.key} className="flex items-center gap-2 text-[13px]">
-                  <Dot tone={s.tone} />
-                  <span className="min-w-0 flex-1">
-                    <AmLink href={adSetUrl(s, c)}>{s.name}</AmLink>
-                  </span>
-                  <small className="shrink-0 text-xs text-muted-foreground">
-                    {plural(s.ads.length, "ad")}
-                  </small>
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
-      </div>
+      {open ? (
+        <div className="border-t">
+          {spent.map(s => (
+            <SetBlock
+              key={s.key}
+              s={s}
+              c={c}
+              avg={avg}
+              model={model}
+              scope={scope}
+              onScope={onScope}
+              sort={sort}
+              bookings={bookings}
+              clientName={clientName}
+            />
+          ))}
+          {quiet.length ? (
+            <details className="border-t">
+              <summary className="cursor-pointer px-4 py-2.5 text-[13px] text-muted-foreground hover:text-foreground @xl:px-6">
+                {plural(quiet.length, "ad set")} did not spend in this period
+              </summary>
+              <ul className="space-y-2 px-4 pb-3 @xl:px-6">
+                {quiet.map(s => (
+                  <li
+                    key={s.key}
+                    className="flex items-center gap-2 text-[13px]"
+                  >
+                    <Dot tone={s.tone} />
+                    <span className="min-w-0 flex-1">
+                      <AmLink href={adSetUrl(s, c)}>{s.name}</AmLink>
+                    </span>
+                    <small className="shrink-0 text-xs text-muted-foreground">
+                      {plural(s.ads.length, "ad")}
+                    </small>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }
 
-function SetPanel({
+// One grid for the column labels and every ad, so the numbers line up. The
+// columns appear once the card is wide enough; narrower, an ad reads as a
+// line of words under its name.
+const AD_GRID = "grid grid-cols-[40px_minmax(0,1fr)_auto] gap-x-3";
+const AD_COLUMNS = {
+  booked: "@2xl:grid-cols-[40px_minmax(0,1fr)_repeat(4,5.5rem)_7.5rem]",
+  plain: "@2xl:grid-cols-[40px_minmax(0,1fr)_repeat(3,5.5rem)_7.5rem]",
+};
+
+function SetBlock({
   s,
   c,
   avg,
@@ -1205,20 +1293,17 @@ function SetPanel({
 }) {
   const spent = s.ads.filter(a => a.active).sort(SORTS[sort]);
   const quiet = s.ads.filter(a => !a.active);
-  const cur = c.currency;
+  const cols = bookings ? AD_COLUMNS.booked : AD_COLUMNS.plain;
   return (
-    <div className="rounded-xl bg-muted/40 px-3 pt-3 pb-1 @xl:px-4 @xl:pt-3.5">
-      <div className="flex items-start justify-between gap-2.5">
+    <div className="border-t first:border-t-0">
+      <div className="flex items-start justify-between gap-3 bg-muted/40 px-4 py-2.5 @xl:px-6">
         <div className="min-w-0">
-          <Kicker className="text-[10px]">
-            Ad set · {plural(s.ads.length, "ad")}
-          </Kicker>
-          <AmLink
-            href={adSetUrl(s, c)}
-            className="mt-0.5 text-sm font-semibold"
-          >
-            {s.name}
-          </AmLink>
+          <p className="text-[13px]">
+            <span className="text-muted-foreground">Ad set </span>
+            <AmLink href={adSetUrl(s, c)} className="font-medium">
+              {s.name}
+            </AmLink>
+          </p>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
             <Dot tone={s.tone} />
             <span>{s.statusText}</span>
@@ -1229,40 +1314,12 @@ function SetPanel({
               </>
             ) : null}
           </div>
-          <div className="mt-1.5 flex flex-wrap gap-x-3.5 gap-y-0.5 text-[12.5px] text-muted-foreground">
-            <span>
-              <b className="font-medium text-foreground tabular-nums">
-                {money(s.t.spend, cur)}
-              </b>{" "}
-              spent
-            </span>
-            <span>
-              <b className="font-medium text-foreground tabular-nums">
-                {s.t.leads}
-              </b>{" "}
-              leads
-            </span>
-            <span>
-              {s.t.cpl !== undefined ? (
-                <>
-                  <b className="font-medium text-foreground tabular-nums">
-                    {money(s.t.cpl, cur, true)}
-                  </b>{" "}
-                  a lead
-                </>
-              ) : (
-                "No leads"
-              )}
-            </span>
-            {bookings && model.bookingsReady ? (
-              <span>
-                <b className="font-medium text-foreground tabular-nums">
-                  {s.t.booked}
-                </b>{" "}
-                booked
-              </span>
-            ) : null}
-          </div>
+          <Totals
+            t={s.t}
+            currency={c.currency}
+            booked={bookings && model.bookingsReady}
+            className="mt-1"
+          />
         </div>
         <ChartButton
           target={{ level: "set", campaign: c.name, set: s.key }}
@@ -1271,28 +1328,47 @@ function SetPanel({
           label="Show this ad set on the chart"
         />
       </div>
-      <ul className="ads-tree mt-1.5">
-        {spent.map(a => (
-          <AdRow
-            key={a.key}
-            a={a}
-            c={c}
-            avg={avg}
-            model={model}
-            scope={scope}
-            onScope={onScope}
-            bookings={bookings}
-            clientName={clientName}
-          />
-        ))}
-      </ul>
+      <div className="px-4 pb-1 @xl:px-6">
+        <div
+          aria-hidden
+          className={cn(
+            AD_GRID,
+            cols,
+            "hidden pt-2.5 pl-[34px] text-xs text-muted-foreground @2xl:grid",
+          )}
+        >
+          <span />
+          <span>Ad</span>
+          <span className="text-right">Spent</span>
+          <span className="text-right">Leads</span>
+          <span className="text-right">Cost per lead</span>
+          {bookings ? <span className="text-right">Booked</span> : null}
+          <span />
+        </div>
+        <ul className="ads-tree">
+          {spent.map(a => (
+            <AdRow
+              key={a.key}
+              a={a}
+              c={c}
+              avg={avg}
+              model={model}
+              scope={scope}
+              onScope={onScope}
+              bookings={bookings}
+              clientName={clientName}
+              cols={cols}
+            />
+          ))}
+        </ul>
+      </div>
       {quiet.length ? (
-        <details className="-mx-3 border-t @xl:-mx-4">
-          <summary className="cursor-pointer px-3 py-2.5 text-[13px] text-muted-foreground hover:text-foreground @xl:px-4">
+        <details className="border-t">
+          <summary className="cursor-pointer px-4 py-2.5 text-[13px] text-muted-foreground hover:text-foreground @xl:px-6">
             {plural(quiet.length, "ad")} in this ad set did not spend in this
             period
           </summary>
-          <ul className="space-y-2 px-3 pb-3 @xl:px-4">
+          <ul className="space-y-2 px-4 pb-3 @xl:px-6">
             {quiet.map(a => (
               <li key={a.key} className="flex items-center gap-2.5 text-[13px]">
                 <AdPicture a={a} c={c} clientName={clientName} size="sm" />
@@ -1341,6 +1417,25 @@ function AdPicture({
   );
 }
 
+/** One number in an ad's row, in its column once the card is wide. */
+function Num({ v, empty = "-" }: { v?: string | number; empty?: string }) {
+  return (
+    <span
+      className={cn(
+        "hidden pt-0.5 text-right tabular-nums @2xl:block",
+        v === undefined ? "text-xs text-muted-foreground" : "text-sm",
+      )}
+    >
+      {v ?? empty}
+    </span>
+  );
+}
+
+/**
+ * One ad on one line: picture, name, verdict and the four numbers. "Details"
+ * opens the rest: attended, cost per booking, the meter and the delivery
+ * numbers.
+ */
 function AdRow({
   a,
   c,
@@ -1350,6 +1445,7 @@ function AdRow({
   onScope,
   bookings,
   clientName,
+  cols,
 }: {
   a: AdNode;
   c: CampaignNode;
@@ -1359,57 +1455,89 @@ function AdRow({
   onScope: (s: Scope) => void;
   bookings: boolean;
   clientName: string;
+  cols: string;
 }) {
+  const [open, setOpen] = useState(false);
   const cur = c.currency;
+  const ready = model.bookingsReady;
   return (
-    <li className="border-t py-3 first:border-t-0">
-      <div className="flex items-start gap-3 @xl:gap-4">
-        <AdPicture a={a} c={c} clientName={clientName} size="md" />
-        <div className="min-w-0 flex-1 pt-0.5">
+    <li className="border-t py-2.5 first:border-t-0">
+      <div className={cn(AD_GRID, cols, "items-start gap-y-1")}>
+        <AdPicture a={a} c={c} clientName={clientName} size="sm" />
+        <div className="min-w-0">
           <AmLink href={adUrl(a)} className="text-sm font-medium">
             {a.name}
           </AmLink>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs text-muted-foreground">
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span className="flex min-w-0 items-center gap-1.5">
               <Dot tone={a.tone} />
               <span>{a.statusText}</span>
             </span>
-            <Verdict a={a} className="@xl:hidden" />
+            <Verdict a={a} />
           </div>
+          <Totals
+            t={a.t}
+            currency={cur}
+            booked={bookings && ready}
+            className="mt-1 @2xl:hidden"
+          />
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Verdict a={a} className="hidden @xl:inline-flex" />
+        <Num v={money(a.t.spend, cur)} />
+        <Num v={a.t.leads} />
+        <Num v={money(a.t.cpl, cur, true)} empty="No leads" />
+        {bookings ? (
+          <Num v={ready ? a.t.booked : undefined} empty="Not imported" />
+        ) : null}
+        <div className="flex items-center justify-end gap-1">
           <ChartButton
             target={{ level: "ad", campaign: c.name, set: a.setKey, ad: a.key }}
             scope={scope}
             onScope={onScope}
             label="Show this ad on the chart"
           />
-        </div>
-      </div>
-      <div className="mt-3 flex flex-col gap-3 @xl:pl-[72px]">
-        <Stats
-          t={a.t}
-          currency={cur}
-          bookings={bookings}
-          ready={model.bookingsReady}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2.5">
-          <Meter t={a.t} avg={avg} currency={cur} />
-          <dl className="flex flex-wrap gap-x-4 gap-y-1 text-[12.5px]">
-            <SmallStat label="Link CTR" value={pct(a.t.linkCtr)} />
-            <SmallStat label="CPM" value={money(a.t.cpm, cur, true)} />
-            <SmallStat
-              label="Frequency"
-              value={
-                a.t.frequency !== undefined
-                  ? a.t.frequency.toFixed(1)
-                  : undefined
-              }
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen(v => !v)}
+            className="inline-flex h-8 items-center gap-0.5 rounded-lg px-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <span className="hidden @md:inline">Details</span>
+            <span className="sr-only @md:hidden">Details</span>
+            <ChevronDown
+              aria-hidden
+              className={cn(
+                "size-4 transition-transform",
+                open && "rotate-180",
+              )}
             />
-          </dl>
+          </button>
         </div>
       </div>
+      {open ? (
+        <div className="mt-2.5 space-y-3 rounded-xl bg-muted/40 p-3 @2xl:ml-[52px]">
+          <Stats
+            t={a.t}
+            currency={cur}
+            bookings={bookings}
+            ready={model.bookingsReady}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2.5">
+            <Meter t={a.t} avg={avg} currency={cur} />
+            <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              <SmallStat label="Link CTR" value={pct(a.t.linkCtr)} />
+              <SmallStat label="CPM" value={money(a.t.cpm, cur, true)} />
+              <SmallStat
+                label="Frequency"
+                value={
+                  a.t.frequency !== undefined
+                    ? a.t.frequency.toFixed(1)
+                    : undefined
+                }
+              />
+            </dl>
+          </div>
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -1438,9 +1566,7 @@ function Verdict({ a, className }: { a: AdNode; className?: string }) {
 function SmallStat({ label, value }: { label: string; value?: string }) {
   return (
     <div className="flex items-baseline gap-1.5">
-      <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
-        {label}
-      </dt>
+      <dt className="text-muted-foreground">{label}</dt>
       <dd
         className={cn(
           "tabular-nums",

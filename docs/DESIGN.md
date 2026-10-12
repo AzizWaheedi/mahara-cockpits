@@ -50,6 +50,13 @@ The brand itself is Mahara Media Brand Guidelines v1.0.
   says when numbers were computed; a card speaks up only when its own
   numbers are stale.
 - Sections `space-y-6`; grids `gap-4 lg:gap-6`; the 8px grid.
+- A tab longer than about three screens gets parts and a contents bar
+  (client-success `ResultsLayout.tsx`): each part has an 18px heading with
+  its count, one 13px grey lede 4px under it, content 16px below, and 48px
+  plus a hairline between parts. The bar sticks under the shell's top bar,
+  scrolls to a part on a tap and lights the part being read. Inside a part,
+  text stays at 12, 13 or 14px; long lists show the first 3 to 5 and "Show
+  the other N".
 
 ## Cards and numbers
 
