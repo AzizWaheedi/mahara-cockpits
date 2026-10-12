@@ -249,7 +249,7 @@ Show, quote, close and revenue come from each client's stat sheet, filled in by 
 | OUT-04 | Paused clients and days paused | Today minus Paused On | CU 930c49eb | Client; sync | CSM | Churn at 14 days (code) vs 15 (billing script): decision 4 | DERIVE |
 | OUT-05 | Client risk score | Weighted signals, 0-100, with top reasons (3.11) | `ceoSnapshots` inputs | Client, day; sync | CSM | Red >= 50 | DERIVE (weights are a proposal, calibrated in Phase 4) |
 | OUT-06 | Appointments booked (sheet) | Stat sheet rows with an appointment date | `csmProfiles.ts summarise` | Client, month; 25 min | AG | none | NOW. The creative feed counts rows with a name in col A instead (`fanout.ts readStatSheet`), so both are shown (data issue). |
-| OUT-07 | Show rate | Shows / (shows + no-shows) x 100. Coverage = decided / past booked. | Stat sheet col J | Client, week, month; 25 min | CSM | 75% | NOW. Coverage is shown per client. GHL show status is never set, and DB Appointments Showed? is filled on only 32% of rows. |
+| OUT-07 | Show rate | Shows / (shows + no-shows) x 100. Coverage = decided / past booked. | Stat sheet col J | Client, week, month; 25 min | CSM | 60%, the one client line; under it is watch (Aziz, 2026-10-12) | NOW. Coverage is shown per client. GHL show status is never set, and DB Appointments Showed? is filled on only 32% of rows. |
 | OUT-08 | Close rate | Closes / shows (decision 3) | Stat sheet col L | Client, month; 25 min | CSM | 20-30% | NOW (the creative cockpit divides by quotes instead; DB Appointments Closed? is filled on 14% of rows) |
 | OUT-09 | Appointments with no outcome | Past 2+ days with blank Show, or Show = Y and Closed blank | `csmProfiles.ts staleRows`, `unknownOutcome` | Client; 25 min | CSM | 0 | NOW |
 | OUT-10 | Client revenue and average deal | Sum and mean of Total Customer Revenue on closed rows, in each client's currency. Portal Project Value (USD) replaces it once portal outcomes cover a client (decision 3). | Stat sheet Total Customer Revenue, found by header (col N in code, col M in one layout doc); DB Appointments col BO | Client, month; 25 min | CSM | $10,000+ renovations; $40,000+ full builds; $5,000+ interior only | DERIVE for the stat sheet revenue column (never read today); NEW (probe) for DB Appointments col BO (Phase 4 probe). Currency comes from the DIAL GHL location or the Client Data Country column. |
@@ -488,7 +488,7 @@ export type MetricDef = {
 | cpl_gate | $15 | kpi.ts (Aziz, 2026-09-03), README | $20 in constraints checklist and csmDiagnosis; $40 client-approval line (2026-09-12 meeting) |
 | cpb_gate | $80 | sync.ts CPB_GATE, constraints checklist | Under $60 in README |
 | booking_rate | 25% | README, reportDocs GATES | 20% business-knowledge.md; 60% in sync.ts (unit bug) |
-| show_rate | 75% | README, csmDiagnosis | 70% csm-templates |
+| show_rate | 60% | Aziz, 2026-09-21 and 2026-10-12: one client line, under it is watch | Resolved 2026-10-12 |
 | close_rate | 20% (band 20-30%) | README, GATES.closeRate | CR divides by quotes |
 | quote_rate | 50% | constraints checklist ("same-day") | Timing not captured |
 | cancellation_rate | Under 10% | constraints checklist | none |
@@ -966,7 +966,7 @@ Tiers: red >= 50, amber 25-49, green under 25. Each score lists its top 3 signal
 | Waste | $50+ spend and 0 leads | sync.ts diagnose |
 | Account blocked | DEL-11 > 0 | Meta account_status |
 | Leads uncalled | CALL-06 > 0 | CCD definition |
-| Show rate | OUT-07 under 75% with 8+ decided appointments | csmDiagnosis |
+| Show rate (watch) | OUT-07 under 60% with 8+ decided appointments; a watch, never a fix-first | csmDiagnosis |
 | Kill not actioned | Kill verdict older than 1 working day with no decision or change | proposed |
 | Rule overridden | DEL-30 rule overridden 3+ times in 30 days | onboarding_launch_cockpits.md |
 | EOD missing | 2 working days missed | EOD Radar rule; window proposed |

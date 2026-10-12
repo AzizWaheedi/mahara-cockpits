@@ -36,7 +36,7 @@ Mahara's KPIs, not generic ones:
 | Leads to bookings | Lead to booking rate | 25% or more |
 | | Cost per booking | under $60 |
 | | Pickup rate | 35% or more |
-| Bookings to shows | Show rate on confirmed | 75% or more |
+| Bookings to shows | Show rate on confirmed | 60%; under it is watch, never the constraint |
 | Shows to closes | Close rate | 20% to 30% |
 
 Find the first step that is below target. That is where the leak is. Do not
@@ -105,7 +105,9 @@ Not before.
 
 ## Booking but not showing
 
-Show rate under 75%.
+Show rate under 60%. One line for clients: anything around 60% is fine, and
+under it is a watch, never the constraint. Bad is cost per booking or cost per
+lead.
 
 Booking window is the big one. **48 to 72 hours.** Past 72 hours show rates fall
 off a cliff. Confirm every appointment, use the provisional calendar for

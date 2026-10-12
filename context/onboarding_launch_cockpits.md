@@ -122,7 +122,7 @@ SOP doc IDs are listed in `references/session_notes_2026-09-02.md` (comms, const
 backend, journey, media + tech onboarding, the four call frameworks, onboarding→launch messaging).
 
 - **KPI gates:** CPL < $20 · lead→booking ≥ 25% · cost per booking ≤ $80 · pickup ≥ 35% ·
-  show rate ≥ 75% · close rate 20–30% · daily budget floor $30 · creative refresh every 7–14 days.
+  show rate ≥ 60% (under it is watch, never bad) · close rate 20–30% · daily budget floor $30 · creative refresh every 7–14 days.
 - **Comms:** WhatsApp sprints 10:00–10:30, ~14:00, 17:30–18:00, Friday off; concerns never wait for
   a sprint (call); reply within 2–4h. Min 3 group touchpoints/week/client, 2 deep/month; media buyer
   1–2/week; never two team messages to one client in a day (CSM's daily wins); CSM messages daily

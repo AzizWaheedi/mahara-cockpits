@@ -56,7 +56,7 @@ SHARE_WITH = ["aziz@maharamedia.com", "abdulelah@maharamedia.com"]
 
 # The client KPI gates Aziz locked. Kept in step with src/lib/csmDiagnosis.ts — change
 # both or neither.
-GATES = {"bookingRate": 25, "showRate": 75, "closeRate": 20}
+GATES = {"bookingRate": 25, "showRate": 60, "closeRate": 20}
 
 # The optional extras the CSM can tick in the app. Keys must match src/pages
 # ClientPerformancePage.tsx REPORT_EXTRAS or a ticked box does nothing.
@@ -279,8 +279,8 @@ def constraints_for(profile: dict) -> list[str]:
         )
     if sr is not None and (shows + noshows) >= 8 and sr < GATES["showRate"]:
         out.append(
-            f"show rate {sr}% (target {GATES['showRate']}%), book same or next day and "
-            "confirm twice, once at booking and once the morning of"
+            f"show rate {sr}%, under our {GATES['showRate']}% line: book same or next day "
+            "and confirm twice, once at booking and once the morning of"
         )
     if cr is not None and shows >= 5 and cr < GATES["closeRate"]:
         out.append(

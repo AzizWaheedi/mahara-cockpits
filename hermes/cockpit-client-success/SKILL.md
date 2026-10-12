@@ -77,7 +77,7 @@ Full version in `client-launch-campaign/references/diagnostics.md`.
 | Cost per booking | under $60 |
 | Lead to booking | 25% or more |
 | Pickup rate | 35% or more |
-| Show rate on confirmed | 75% or more |
+| Show rate on confirmed | 60%; under it is watch, never the constraint |
 | Close rate | 20% to 30% |
 
 Find the **first** step below target. That is the constraint. Do not report five
