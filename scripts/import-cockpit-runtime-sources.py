@@ -1038,13 +1038,19 @@ def statistics_key(table, row):
         return (row.get("campaignName"), row.get("date"), row.get("metaAdId", row.get("adName", "")), row.get("adSetName", ""))
     if table != "bookingEvents":
         raise ValueError("Unsupported statistics table")
-    identity = next((row.get(field) for field in ("eventId", "id", "contactId") if row.get(field) not in (None, "")), None)
-    if identity is None:
-        source_id = row.get("_id")
-        if not isinstance(source_id, str) or not source_id:
-            raise ValueError("Booking event identity is unavailable")
-        return ("legacy-source-row", source_id)
-    return (row.get("campaignName"), row.get("locationId", ""), identity, row.get("startTime", row.get("date")))
+    # Same key as the live public.cockpit_native_grain_key (20260927x). A row with no
+    # provider id has no per-row identity, so two of them on one campaign and day collide
+    # and the plan stops instead of counting Convex copies as separate bookings.
+    def first(*fields, default=None):  # SQL coalesce: a missing key and JSON null both fall through
+        return next((row[field] for field in fields if row.get(field) is not None), default)
+    return (row.get("campaignName"), first("locationId", default=""), first("eventId", "id", "contactId"), first("startTime", "date"))
+
+def require_convex_era(table, current_stats):
+    """The native sync owns both statistics feeds since 8 Sep 2026. Importing Convex rows
+    again would bring back what supabase/maintenance/20261012_booking_events_convex_cleanup.sql
+    removed. scripts/import-media-statistics.py refuses for the same reason."""
+    if any(row.get("source_deployment") == "native:media" for row in current_stats):
+        raise ValueError(f"{table} is written by the native sync; the Convex import is retired")
 
 def validate_source_inventory(state, rows, label, count_field, stamped_rows=False):
     ready, count, stamp = state.get("ready"), state.get(count_field), state.get("source_snapshot_at")
@@ -1121,6 +1127,7 @@ def build_plan(snapshots, inventory, scope):
                 if len(states) != 1:
                     raise ValueError("Statistics source_state missing or ambiguous")
                 current_stats = target_tables[target]
+                require_convex_era(table, current_stats)
                 validate_source_inventory(states[0], current_stats, table, "source_rows")
                 target_stamp = states[0].get("source_snapshot_at")
                 if target_stamp and datetime.fromisoformat(target_stamp.replace("Z", "+00:00")) > datetime.fromisoformat(snapshot["captured_at"].replace("Z", "+00:00")):
