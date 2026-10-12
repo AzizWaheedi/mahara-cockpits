@@ -53,7 +53,10 @@ test('GHL is asked for past and future meetings, each booking once, dated by whe
    const cancelled = {id: 'gone', contactId: 'c3', startTime: new Date(now + 86400000).toISOString(), dateAdded: '2026-10-12T09:00:00Z', appointmentStatus: 'cancelled'};
    // The meeting at the boundary comes back from both asks.
    const edge = {id: 'edge', contactId: 'c4', startTime: new Date(now).toISOString(), dateAdded: '2026-10-11T09:00:00Z', appointmentStatus: 'confirmed'};
-   return Response.json({events: start < now - 86400000 ? [past, edge] : [ahead, cancelled, edge]});
+   // A client's own Google Calendar event and a deleted event are not bookings.
+   const gcal = {id: 'gcal', startTime: new Date(now - 2 * 86400000).toISOString(), dateAdded: '2026-10-08T09:00:00Z', appointmentStatus: 'confirmed', createdBy: {source: 'google_calendar'}};
+   const deleted = {id: 'deleted', contactId: 'c5', startTime: new Date(now + 2 * 86400000).toISOString(), dateAdded: '2026-10-12T09:00:00Z', appointmentStatus: 'confirmed', deleted: true};
+   return Response.json({events: start < now - 86400000 ? [past, edge, gcal] : [ahead, cancelled, edge, deleted]});
   }
   if (u.pathname === '/opportunities/search') return Response.json({opportunities: [{contactId: 'c2', attributions: [{utmAdId: 'ad-1'}]}]});
   return new Response('', {status: 404});

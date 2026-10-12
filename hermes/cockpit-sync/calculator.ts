@@ -530,6 +530,12 @@ export async function ghlBookingEvents(
     for (const e of events) {
       const status = String(e.appointmentStatus ?? "").toLowerCase();
       if (status === "cancelled") continue;
+      // A client's own Google Calendar event that two-way sync copied into
+      // GHL is not a lead's booking (16 at Atlantis and 6 at Merge Studio in
+      // 30 days). GHL marks it createdBy.source "google_calendar". Deleted
+      // events are not bookings either. (Muhammed, 2026-10-12)
+      if (String(e.createdBy?.source ?? "").toLowerCase() === "google_calendar") continue;
+      if (e.deleted === true) continue;
       // The day the booking was MADE, not the day of the appointment. Cost per
       // booking divides spend in a window by the bookings that window bought;
       // dating by the appointment pushes next week's calls outside the window
