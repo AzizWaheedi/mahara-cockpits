@@ -4,6 +4,7 @@ import {
   CalendarClock,
   ChevronRight,
   History,
+  UserRound,
 } from "lucide-react";
 import {
   type ReactNode,
@@ -210,6 +211,17 @@ function Group({
 function Strip({ b }: { b: Brief }) {
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+      {b.contact ? (
+        <span
+          className="inline-flex items-center gap-1.5"
+          title="The name on their newest booking"
+        >
+          <UserRound aria-hidden className="size-3.5 text-muted-foreground" />
+          <span>
+            With <bdi>{b.contact}</bdi>
+          </span>
+        </span>
+      ) : null}
       <span className="inline-flex items-center gap-1.5">
         <History aria-hidden className="size-3.5 text-muted-foreground" />
         {b.lastCall ? (

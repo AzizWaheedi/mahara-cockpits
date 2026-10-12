@@ -9,6 +9,7 @@ import type { Timeline, TimelineCall, TimelineEod } from "../src/lib/csmCalls";
 
 // Monday 12 October 2026, 16:00 in Kuwait.
 const NOW = Date.parse("2026-10-12T13:00:00Z");
+const DAY_MS = 86_400_000;
 const OK = new Date(NOW - 5 * 60_000).toISOString();
 
 const FATHOM = [
@@ -125,14 +126,16 @@ describe("the brief for a live client", () => {
     });
     expect(b.lastCall?.day).toBe("11 Oct");
     expect(b.call.lines[0].text).toContain("مشكلة الجودة");
-    // Fathom's owners: ours by name, others kept with their owner.
+    // Fathom's owners: ours by name; a name that is not on the team is
+    // theirs (it used to sit unsorted under "steps", review 2, defect 1).
     expect(b.promises.ours.map(l => l.text)).toEqual([
       "Send the new scripts.",
       "كتابة نصوص جديدة.",
     ]);
-    expect(b.promises.steps.map(l => `${l.label}: ${l.text}`)).toEqual([
-      "Abdullah: Watch the training video.",
+    expect(b.promises.theirs.map(l => l.text)).toEqual([
+      "Watch the training video.",
     ]);
+    expect(b.promises.steps).toEqual([]);
   });
 
   test("a newest call with no notes points to the newest call that has them", () => {
@@ -211,9 +214,11 @@ describe("the brief for a live client", () => {
       }),
     });
     expect(b.defcon).toEqual({ value: "At Risk", day: "11 Oct", risk: true, old: false });
+    // The at-risk mark folds into the escalation line (review 2, defect 70).
     expect(b.raise[0].text).toStartWith("City Wood is very angry about the lead quality.");
-    expect(b.raise[1].text).toStartWith("Marked At Risk, priority High, on 11 Oct.");
-    expect(b.raise[2].text).toContain("2 calls are booked on 13 Oct (11:00 and 16:30)");
+    expect(b.raise[0].text).toContain("Marked At Risk, priority High, on 11 Oct.");
+    expect(b.raise.filter(l => l.text.includes("before anything else")).length).toBe(1);
+    expect(b.raise[1].text).toContain("2 calls are booked on 13 Oct (11:00 and 16:30)");
   });
 
   test("a change the client made to their own ads is raised; the team's are not", () => {
@@ -469,5 +474,616 @@ describe("WhatsApp in the brief", () => {
     });
     expect(s.quiet).toBeUndefined();
     expect(s.raise.some(l => l.text.startsWith("Ahmed City Wood wrote on WhatsApp on 12 Oct"))).toBe(true);
+  });
+});
+
+// ---- Review 2 (53 clients, 73 defects): one test group per rule. ----------
+
+const fathomCall = (summary: string, at = "2026-10-08T12:00:00Z") =>
+  call({ source: "fathom", kind: "checkin", status: "held", startsAt: at, endsAt: at, summary, recordingUrl: "https://fathom.video/x" });
+
+describe("names: one matcher per client", () => {
+  const team = (b: ReturnType<typeof buildBrief>) => b.since.team.map(l => l.text);
+  test("stop words between parts are optional and all-caps names match any case", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: { name: "Lina and Rami Company", stage: "Active" },
+      digests: [],
+      otherClients: ["Lina and Rami Company", "ZENTRO"],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-10-01T10:00:00Z", endsAt: "2026-10-01T10:30:00Z" })],
+        eods: [
+          eod({ excerpt: "Delivered three reels for Lina & Rami today." }),
+          eod({ day: "2026-10-10", at: "2026-10-10T15:00:00Z", excerpt: "Fixed the form for lina and rami after the review." }),
+        ],
+      }),
+    });
+    expect(team(b)).toEqual([
+      "Delivered three reels for Lina & Rami today.",
+      "Fixed the form for lina and rami after the review.",
+    ]);
+    const a = buildBrief({
+      now: NOW,
+      client: { name: "ZENTRO", stage: "Stopped" },
+      digests: [],
+      timeline: timeline({ eods: [eod({ excerpt: "Zentro paused their ads because the owner is travelling." })] }),
+    });
+    expect(a.raise[0].text).toBe("Stopped: Zentro paused their ads because the owner is travelling.");
+  });
+
+  test("a long legal name matches its first distinctive word; another client's short name cuts a roll-up", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: { name: "Varnak Limited Construction and Finishing Of Buildings", stage: "Active" },
+      digests: [],
+      otherClients: ["Varnak Limited Construction and Finishing Of Buildings", "Morvane Industries", "Halvor Technology"],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-10-01T10:00:00Z", endsAt: "2026-10-01T10:30:00Z" })],
+        eods: [
+          eod({
+            excerpt:
+              "Delivered 3 videos for Morvane. Finalized the new video for Varnak. Halvor Tech's video was completed. Tomorrow, I will work on Varnak again.",
+          }),
+        ],
+      }),
+    });
+    expect(team(b)).toEqual(["Finalized the new video for Varnak."]);
+  });
+
+  test("an ordinary-word name matches as written or where a name sits, never as the word", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: { name: "Vision", stage: "Active" },
+      digests: [],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-10-01T10:00:00Z", endsAt: "2026-10-01T10:30:00Z" })],
+        eods: [
+          eod({ excerpt: "Fixed the vision of the report in the dashboard." }),
+          eod({ day: "2026-10-10", at: "2026-10-10T15:00:00Z", excerpt: "Jumped on a meeting with vision and agreed the account setup." }),
+        ],
+      }),
+    });
+    expect(team(b)).toEqual(["Jumped on a meeting with vision and agreed the account setup."]);
+  });
+
+  test("a duplicated card name in the client list counts as one other client", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      otherClients: ["City Wood", "South Reef Systems", "South Reef Systems"],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-10-01T10:00:00Z", endsAt: "2026-10-01T10:30:00Z" })],
+        eods: [eod({ excerpt: "Sent the new scripts to City Wood and South Reef Systems for review." })],
+      }),
+    });
+    expect(team(b)).toEqual(["Sent the new scripts to City Wood and South Reef Systems for review."]);
+  });
+});
+
+describe("EODs: only what names the client", () => {
+  const since = (excerpt: string, over: Partial<TimelineEod> = {}) =>
+    buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      otherClients: ["City Wood", "Atlantis Contracting"],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-10-01T10:00:00Z", endsAt: "2026-10-01T10:30:00Z" })],
+        eods: [eod({ excerpt, ...over })],
+      }),
+    }).since.team.map(l => `${l.text} [${l.source}]`);
+
+  test("a passage that never names the client is not theirs", () => {
+    expect(since("Built a tool bridge on a separate port; it had never made a call in its life.")).toEqual([]);
+  });
+
+  test("dash lists keep this client's items; a name-only item says nothing", () => {
+    expect(
+      since("Account Summary: Atlantis new form - City Wood activating two new videos - Meeting with the team - City Wood"),
+    ).toEqual(["City Wood activating two new videos [Saleh, media buyer]"]);
+  });
+
+  test("the client's own name and dash at the start go; a cut-off part never starts a line", () => {
+    expect(since("City Wood — launched the retargeting campaign;\n2,000) and City Wood(1,300), fixed the runner")).toEqual([
+      "Launched the retargeting campaign [Saleh, media buyer]",
+    ]);
+  });
+
+  test("a call-centre win is a meeting for one of their leads, never contact", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-09-20T10:00:00Z", endsAt: "2026-09-20T10:30:00Z" })],
+        eods: [eod({ role: "client sales rep", author: "Daniya", excerpt: "Wins: Meeting with City Wood" })],
+      }),
+    });
+    expect(b.since.team.map(l => l.text)).toEqual(["Call centre booked a meeting for one of their leads"]);
+    expect(b.raise.find(l => l.text.startsWith("No next call is booked"))?.text).toContain("the last was 22 days ago");
+  });
+
+  test("the EOD on the call's own day counts by Kuwait day; one KPI line shows the trend", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-09-15T13:00:00Z", endsAt: "2026-09-15T13:30:00Z" })],
+        eods: [
+          eod({ day: "2026-09-15", at: "2026-09-15T20:00:00Z", source: "cockpit", author: null, excerpt: "account Summary: • City Wood — cost per booking $249 → Judge the ads on bookings." }),
+          eod({ day: "2026-10-07", at: "2026-10-07T20:00:00Z", source: "cockpit", author: null, excerpt: "account Summary: • City Wood — cost per booking $89 → Judge the ads on bookings." }),
+          eod({ day: "2026-09-15", at: "2026-09-15T09:00:00Z", author: "Muhammed", role: "systems manager", excerpt: "Created the reactivation campaign for City Wood's old leads." }),
+        ],
+      }),
+    });
+    expect(b.since.team.map(l => `${l.text} [${l.source}]`)).toEqual([
+      "Cost per booking: $249 (15 Sep) → $89 (7 Oct) [Media buyer cockpit (auto)]",
+      "Created the reactivation campaign for City Wood's old leads. [Muhammed, systems manager]",
+    ]);
+  });
+});
+
+describe("stopped and paused: why, in their own sentence", () => {
+  const stopped = (eods: TimelineEod[], over: Partial<Timeline> = {}) =>
+    buildBrief({ now: NOW, client: { name: "City Wood", stage: "Stopped" }, digests: [], timeline: timeline({ eods, ...over }) });
+
+  test("a payment line is a billing note, never the reason; the reason quotes the sentence that names them", () => {
+    const b = stopped([
+      eod({ day: "2026-08-08", at: "2026-08-08T15:00:00Z", author: "Muhammed", role: "systems manager", excerpt: "Summary: City Wood: issued INV-7, $2,000 paid, filed to Drive. Another client renewed. City Wood has no launch date, so month two won't be chased." }),
+    ]);
+    expect(b.raise[0].text).toBe("Stopped: City Wood has no launch date, so month two won't be chased.");
+    expect(b.raise[1].text).toBe("Last billing note: Issued INV-7, $2,000 paid, filed to Drive.");
+  });
+
+  test("a line with the cause wins; stopping an ad is not the client stopping; nothing twice", () => {
+    const b = stopped([
+      eod({ day: "2026-07-15", at: "2026-07-15T06:00:00Z", author: "Saleh", role: "account manager", excerpt: "Call Summary: - City Wood paused their ads because they are moving office and will relaunch next month" }),
+      eod({ day: "2026-07-25", at: "2026-07-25T06:00:00Z", author: "Saleh", role: "account manager", excerpt: "Call Summary: - City Wood needs time to finish payment as he said" }),
+      eod({ day: "2026-07-25", at: "2026-07-25T06:05:00Z", author: "Date", role: "csms", source: "slack", excerpt: "- City Wood needs time to finish payment as he said" }),
+      eod({ day: "2026-08-01", at: "2026-08-01T15:00:00Z", author: "Nada", role: "media buyer", excerpt: "Account Summary: Stopped high-cost videos for City Wood and two others." }),
+    ]);
+    expect(b.raise[0].text).toBe(
+      "Stopped: City Wood paused their ads because they are moving office and will relaunch next month.",
+    );
+    const all = [...b.raise.map(l => l.text), ...b.since.team.map(l => l.text), b.call.empty ?? ""].join("\n");
+    expect(all.match(/needs time to finish payment/g)?.length).toBe(1);
+    expect(b.raise.some(l => /high-cost videos/.test(l.text) && l.text.startsWith("Stopped:"))).toBe(false);
+  });
+
+  test("no exit word: the newest renewal or no-reply line, and the last activity", () => {
+    const b = stopped(
+      [
+        eod({ day: "2026-07-22", at: "2026-07-22T06:00:00Z", author: "Saleh", role: "account manager", excerpt: "Call Summary: - Requested a meeting about City Wood renewal and no response till now" }),
+      ],
+      { changes: [{ day: "2026-09-23", at: Date.parse("2026-09-23T09:00:00Z"), kind: "touch", action: "Client updated: shared the week's result", source: "decision" }] as never },
+    );
+    expect(b.raise[0].text).toBe(
+      "Stopped. No stop reason is on record. Last on record: Requested a meeting about City Wood renewal and no response till now.",
+    );
+    expect(b.raise[1].text).toBe("Last activity on record, 23 Sep: Client updated: shared the week's result.");
+    // A request with no reply is not a held meeting.
+    expect(b.call.empty).toBe("No call with them is on record since 1 Jun.");
+  });
+});
+
+describe("owners and the contact", () => {
+  const summary = [
+    "## Key takeaways",
+    "  - **Billing:** a dispute over the contract length.",
+    "## Next steps",
+    "  - **Faris:**",
+    "    - Log post-meeting notes for every appointment.",
+    "    - Finish the sales course.",
+    "  - **Abdulaziz:**",
+    "    - Send the corrected invoice.",
+    "  - **عبد العزيز:**",
+    "    - إصلاح النموذج.",
+    "  - **Both:**",
+    "    - Follow-up meeting on Sat 26 Sep.",
+  ].join("\n");
+  test("the booking names the contact; team first names are ours, any other name is theirs", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      teamActors: ["Abdulaziz Waheedi"],
+      timeline: timeline({
+        calls: [
+          call({ startsAt: "2026-09-15T13:00:00Z", endsAt: "2026-09-15T13:30:00Z", summary, recordingUrl: "https://fathom.video/x" }),
+          call({ upcoming: true, status: "booked", startsAt: "2026-10-14T09:00:00Z", title: "Faris Haddad - Check In" }),
+        ],
+      }),
+    });
+    expect(b.contact).toBe("Faris Haddad");
+    expect(b.promises.ours.map(l => l.text)).toEqual(["Send the corrected invoice.", "إصلاح النموذج."]);
+    expect(b.promises.theirs.map(l => l.text)).toEqual(["Log post-meeting notes for every appointment.", "Finish the sales course."]);
+    // The joint meeting's date has passed: it is not a step any more.
+    expect(b.promises.steps).toEqual([]);
+    const texts = b.raise.map(l => l.text);
+    expect(texts).toContain("Check our 2 next steps are done before the call, starting with: Send the corrected invoice.");
+    expect(texts).toContain("Ask if they did it: Log post-meeting notes for every appointment. (and 1 more step of theirs)");
+  });
+
+  test("a booking titled with the client's own name is not a contact", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [
+          call({ title: "City Wood - Check In" }),
+          call({ startsAt: "2026-09-28T10:00:00Z", endsAt: "2026-09-28T10:30:00Z", title: "Yusuf Kamal - Check In" }),
+        ],
+      }),
+    });
+    expect(b.contact).toBe("Yusuf Kamal");
+  });
+});
+
+describe("last contact and calls", () => {
+  test("an EOD meeting after the last call counts as contact, said with both days", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: { name: "City Wood", stage: "Ready For Launch" },
+      digests: [],
+      timeline: timeline({
+        calls: [call({ source: "fathom", kind: "onboarding", title: "Official Onboarding (City Wood)", startsAt: "2026-07-29T10:00:00Z", endsAt: "2026-07-29T11:00:00Z" })],
+        eods: [eod({ day: "2026-09-13", at: "2026-09-13T15:00:00Z", author: "Muhammed", role: "systems manager", excerpt: "Jumped on a meeting with City Wood and agreed to create the accounts." })],
+      }),
+    });
+    expect(b.raise.find(l => l.text.startsWith("Still onboarding"))?.text).toBe(
+      "Still onboarding. Last call on record 29 Jul; the systems manager's EOD records a meeting on 13 Sep. Nothing is booked: book their launch call.",
+    );
+  });
+
+  test("call data, a postponed meeting and a request are not meetings", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: { name: "City Wood", stage: "Stopped" },
+      digests: [],
+      timeline: timeline({
+        eods: [
+          eod({ author: "Muhammed", role: "systems manager", excerpt: "Confirmed we have enough call data from City Wood to build the packs." }),
+          eod({ day: "2026-07-25", at: "2026-07-25T06:00:00Z", role: "account manager", excerpt: "Call Summary: - City Wood meeting at 9:30AM but they didn't attend so we postpone it to Sunday" }),
+        ],
+      }),
+    });
+    expect(b.call.empty).toBe("No call with them is on record since 1 Jun.");
+  });
+
+  test("a meeting the team booked outside GoHighLevel is said, not 'book one'", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-09-30T12:00:00Z", endsAt: "2026-09-30T12:30:00Z" })],
+        eods: [eod({ day: "2026-10-10", at: "2026-10-10T15:00:00Z", role: "account manager", author: "Rasem", excerpt: "Roll Up: following up with City Wood, booked a meeting on monday at 3PM to discuss their concern." })],
+      }),
+    });
+    const line = b.raise.find(l => l.text.startsWith("No call is booked in GoHighLevel"));
+    expect(line?.text).toContain('"booked a meeting on monday at 3PM to discuss their concern"');
+    expect(b.raise.some(l => l.text.startsWith("No next call is booked"))).toBe(false);
+  });
+
+  test("a promised meeting is one with us, never a lead's appointment", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      timeline: timeline({ calls: [call({ startsAt: "2026-09-30T12:00:00Z", endsAt: "2026-09-30T12:30:00Z" })] }),
+      digests: [digest({ at: Date.parse("2026-09-30T14:00:00Z"), nextSteps: ["Mahara: Book every appointment as a site visit and offer a free call with the engineer."] })],
+    });
+    const line = b.raise.find(l => l.text.startsWith("No next call is booked"));
+    expect(line?.text).toBe("No next call is booked, and the last was 12 days ago. Book a check-in.");
+  });
+
+  test("the recording on any row of the call's day is linked before saying there is none", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [call({ source: "checkin_form", status: "held", startsAt: "2026-10-05T10:00:00Z", endsAt: "2026-10-05T10:00:00Z", recordingUrl: "https://fathom.video/share/abc" })],
+      }),
+    });
+    expect(b.call.lines[0]).toMatchObject({ text: "Recording on Fathom; no summary was pulled from it.", href: "https://fathom.video/share/abc" });
+  });
+});
+
+describe("the raise list", () => {
+  test("Next: is the step that answers the risk, a passed weekday is flagged, a client step waiting on our delivery is not asked", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      timeline: timeline({ calls: [call({ startsAt: "2026-10-08T12:00:00Z", endsAt: "2026-10-08T12:30:00Z" })] }),
+      digests: [
+        digest({
+          at: Date.parse("2026-10-08T14:00:00Z"),
+          summary: "The call summary mentions Meta receipts.",
+          nextSteps: [
+            "Mahara: Send Hani official Meta spending receipts since July.",
+            "Mahara: If Safety campaigns remain underperforming by Sunday, pause them and move the budget to Plans.",
+            "Client: Confirm receipt of the Meta receipts.",
+            "Client: Attend next week's review and decide on Safety.",
+          ],
+          risks: ["Safety campaign underperformance may lead to a pause by Sunday."],
+        }),
+      ],
+    });
+    const risk = b.raise.find(l => l.text.startsWith("Safety campaign"));
+    expect(risk?.text).toBe(
+      "Safety campaign underperformance may lead to a pause by Sunday (that was Sun 11 Oct: check it was done). Next: If Safety campaigns remain underperforming by Sunday, pause them and move the budget to Plans.",
+    );
+    expect(b.raise.some(l => l.text.startsWith("Ask if they did it"))).toBe(false);
+    expect(b.raise.some(l => l.text.startsWith("Meta:"))).toBe(false);
+  });
+
+  test("a money takeaway says what happened since and asks if it was paid", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [fathomCall("## Key takeaways\n  - **Billing:** a dispute over the invoice period.", "2026-09-15T13:00:00Z")],
+        eods: [eod({ day: "2026-10-03", at: "2026-10-03T15:00:00Z", author: "Muhammed", role: "systems manager", excerpt: "Summary: Corrected the City Wood invoice to $1,450 and prepared the payment link." })],
+      }),
+    });
+    expect(b.raise.find(l => l.text.startsWith("From the 15 Sep call"))?.text).toBe(
+      "From the 15 Sep call: Billing: a dispute over the invoice period. Since then: Corrected the City Wood invoice to $1,450 and prepared the payment link. (Muhammed, systems manager, 3 Oct) Check it was paid.",
+    );
+  });
+
+  test("a risk gets the figure its note gives; kickoff facts about the business go under who they are", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      timeline: timeline({ calls: [call({})] }),
+      digests: [
+        digest({ kind: "note", at: NOW - DAY_MS, summary: "On a special offer: the next USD 3,000 payment is due when they close a deal.", risks: ["The next payment depends on the client closing a deal."] }),
+        digest({ kind: "kickoff", at: NOW - DAY_MS, summary: "Kickoff.", risks: ["The business has no completed projects to show.", "Engineer details have not yet been provided."] }),
+      ],
+    });
+    const texts = b.raise.map(l => l.text);
+    expect(texts).toContain("The next payment depends on the client closing a deal (USD 3,000, special offer).");
+    expect(texts).toContain("Engineer details have not yet been provided.");
+    expect(texts.some(t => t.includes("no completed projects"))).toBe(false);
+    expect(b.who.map(l => `${l.label}: ${l.text}`)).toContain("From the kickoff: The business has no completed projects to show.");
+  });
+
+  test("two billing notices are one line, and the other's step is not raised again", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      timeline: timeline({ calls: [call({ startsAt: "2026-09-10T10:00:00Z", endsAt: "2026-09-10T10:30:00Z" })] }),
+      digests: [
+        digest({ kind: "note", at: NOW - DAY_MS, summary: "Unsettled balance.", nextSteps: ["Mahara: Open Meta Billing to verify the unsettled account balance."], risks: ["Meta reports an unsettled account balance."] }),
+        digest({ kind: "note", at: NOW - DAY_MS - 60_000, summary: "Grace period.", nextSteps: ["Mahara: Open Meta Billing to verify the payment grace-period notice."], risks: ["The payment grace period requires action."] }),
+      ],
+    });
+    expect(b.raise.filter(l => /Meta Billing/.test(l.text)).length).toBe(1);
+  });
+});
+
+describe("problems, offers and plans", () => {
+  test("a Problem bullet under the topics is followed up with its root cause", () => {
+    const s = [
+      "## Key takeaways",
+      "  - **Content:** fix the spelling in the ads.",
+      "## Topics",
+      "### Performance",
+      "  - **المشكلة:** لم يتم إغلاق أي صفقات حتى الآن.",
+      "  - **السبب الجذري:** عدم وجود ملاحظات ما بعد الاجتماع.",
+    ].join("\n");
+    const b = buildBrief({ now: NOW, client: live, digests: [], timeline: timeline({ calls: [fathomCall(s)] }) });
+    expect(b.raise.find(l => l.text.startsWith("Follow up on"))?.text).toBe(
+      'Follow up on "لم يتم إغلاق أي صفقات حتى الآن" from the 8 Oct call (root cause noted: "عدم وجود ملاحظات ما بعد الاجتماع"): has it improved since?',
+    );
+  });
+
+  test("0% and worries count as problems; a label quotes only when it is the problem", () => {
+    const zero = buildBrief({ now: NOW, client: live, digests: [], timeline: timeline({ calls: [fathomCall("## Key takeaways\n  - **Primary Bottleneck:** A 0% show rate is the main constraint.")] }) });
+    expect(zero.raise.find(l => l.text.startsWith("Follow up on"))?.text).toContain('"A 0% show rate is the main constraint"');
+    const worry = buildBrief({ now: NOW, client: live, digests: [], timeline: timeline({ calls: [fathomCall("## Key takeaways\n  - **تصحيح المسار:** أثار العميل مخاوف جدية بشأن جودة الإعلانات.")] }) });
+    expect(worry.raise.find(l => l.text.startsWith("Follow up on"))?.text).toContain("أثار العميل مخاوف جدية بشأن جودة الإعلانات");
+  });
+
+  test("an offer is an open decision with their step, not a problem", () => {
+    const s = [
+      "## Key takeaways",
+      "  - **فرصة SEO/GEO:** عرضت MaharaMedia حزمة SEO/GEO بعد أن لاحظت ضعف حضورها.",
+      "## Next steps",
+      "  - **City Wood:**",
+      "    - تقييم عرض SEO/GEO مع مطور الموقع.",
+    ].join("\n");
+    const b = buildBrief({ now: NOW, client: live, digests: [], timeline: timeline({ calls: [fathomCall(s)] }) });
+    const texts = b.raise.map(l => l.text);
+    expect(texts).toContain('Open offer from the 8 Oct call: "فرصة SEO/GEO". Did they decide? Their step: تقييم عرض SEO/GEO مع مطور الموقع.');
+    expect(texts.some(t => t.startsWith("Follow up on"))).toBe(false);
+  });
+
+  test("with no next steps, the plan is split by owner and a promised targeting change is checked in Meta", () => {
+    const s = "## Key takeaways\n  - **الخطة:** ستعمل MaharaMedia على تحسين استهداف الحملة، وستقوم City Wood بتوفير محتوى جديد.";
+    const b = buildBrief({ now: NOW, client: live, digests: [], timeline: timeline({ calls: [fathomCall(s)] }) });
+    expect(b.promises.ours.map(l => l.text)).toEqual(["ستعمل MaharaMedia على تحسين استهداف الحملة"]);
+    expect(b.promises.theirs.map(l => l.text)).toEqual(["ستقوم City Wood بتوفير محتوى جديد"]);
+    expect(b.raise.some(l => l.text.startsWith('Promised on the 8 Oct call: "ستعمل MaharaMedia على تحسين استهداف الحملة". No targeting change'))).toBe(true);
+  });
+});
+
+describe("ad changes and numbers", () => {
+  const at = Date.parse("2026-10-10T06:00:00Z");
+  test("decision notes alone are not ad changes; identical decision rows are one", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-10-01T10:00:00Z", endsAt: "2026-10-01T10:30:00Z" })],
+        changes: [1, 2, 3].map(() => ({ day: "2026-10-10", at, kind: "touch", action: "Client updated", evidence: "CPL $11.66 is under the $15 gate on $210 spend.", source: "decision" })) as never,
+      }),
+    });
+    expect(b.since.notes.map(n => n.text)).toEqual(["Sent the client an update"]);
+    expect(b.raise.some(l => l.text.startsWith("No ad changes are recorded"))).toBe(true);
+  });
+
+  test("an edit to an ad made that day is part of making it; edits count per ad; a budget note gives the figure", () => {
+    const row = (kind: string, evidence: string, plus = 0) => ({ day: "2026-10-10", at: at + plus, kind, action: kind, evidence, actor: "Saleh Attale", source: "meta_activity" });
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      teamActors: ["Saleh Attale"],
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-10-01T10:00:00Z", endsAt: "2026-10-01T10:30:00Z" })],
+        changes: [
+          row("create_ad", "ad-1"),
+          row("update_ad_creative", "ad-1", 240_000),
+          row("update_ad_creative", "ad-9", 300_000),
+          row("update_ad_creative", "ad-9", 360_000),
+          row("update_campaign_budget", "Campaign A", 400_000),
+          { day: "2026-10-10", at: at + 400_000, kind: "manual", action: "Set the campaign's daily budget to $38", source: "legacy_manual" },
+          { day: "2026-10-10", at: at + 500_000, kind: "alternative", action: "Duplicate the winner", evidence: "CPL $10.50 is under the $15 gate on $105 spend.", source: "decision" },
+        ] as never,
+      }),
+    });
+    expect(b.raise.find(l => l.text.startsWith("Tell them"))?.text).toBe(
+      "Tell them what we changed on their ads (10 Oct): we launched 1 new ad, set the daily budget to $38, updated 1 ad.",
+    );
+    expect(b.since.notes.map(n => n.text)).toContain("Duplicate the winner (that ad set's cost per lead is under the $15 gate on $105 spend.)");
+  });
+});
+
+describe("who they are", () => {
+  const onboardingForm = (answers: { title: string; value: unknown }[]) => ({
+    token: "o1",
+    formId: "KFRCXPFx",
+    kind: "onboarding",
+    submittedAt: "2026-09-01T10:00:00Z",
+    answers,
+  });
+  test("a goal's currency comes from the call or the form's other answers, with where it came from", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [fathomCall("## Key takeaways\n  - **الهدف:** تحقيق 2 مليون ريال سعودي خلال 90 يومًا.")],
+        forms: [onboardingForm([{ title: "What is your realistic goal revenue in 90 Days?", value: 2000000 }])],
+      }),
+    });
+    expect(b.who.find(l => l.label === "90-day revenue goal")?.text).toBe("2,000,000 (SAR, from the 8 Oct call)");
+  });
+
+  test("no 'wants to grow': what they do and where; damaged Arabic is skipped", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        forms: [
+          onboardingForm([
+            { title: "Out of those what is the #1 service/type of project you want to focus on scaling?", value: "نقدم ح خدمات ب التصميم و ل التنفيذ في كل المناطق" },
+            { title: "1) What services do you offer list all of them?", value: "Joinery, fit-out & installation of kitchens. Also wardrobes." },
+            { title: "What service areas do you cover? Please list all cities", value: "Kuwait, Bahrain" },
+          ]),
+        ],
+      }),
+    });
+    expect(b.who.map(l => `${l.label}: ${l.text}`)).toEqual([
+      "What they do: Joinery, fit-out & installation of kitchens.",
+      "Where: Kuwait, Bahrain",
+    ]);
+  });
+
+  test("a repeated kickoff title is read in full: links skipped, goal lines parsed; old leads with no list are asked for", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: { name: "City Wood", stage: "Brand Blueprint Booked" },
+      digests: [],
+      timeline: timeline({
+        forms: [
+          {
+            token: "k1",
+            formId: "kick",
+            kind: "kickoff",
+            submittedAt: "2026-10-04T10:00:00Z",
+            answers: [
+              { title: "Anything to add?", value: "Will change office location here is google maps: https://share.google/x" },
+              { title: "Anything to add?", value: "Last Year's Total Revenue: 45000KWD\n90-Day Goal Revenue: 25000KWD\n12-24 Month Revenue Goal: 250000KWD" },
+              { title: "Do you have pre-existing leads?", value: true },
+              { title: "Do you want us to reach out to those leads?", value: true },
+              { title: "Provide link or notes for those leads.", value: "n/a" },
+              { title: "WhatsApp Status", value: "Access confirmed." },
+              { title: "Whatsapp synced to Mahara OS?", value: "Needs Integrating" },
+              { title: "Mahara OS Access Status", value: "Tech Issue" },
+              { title: "Facebook Access Status?", value: "Requested" },
+            ],
+          },
+          {
+            token: "c1",
+            formId: "fRokTITH",
+            kind: "checkin",
+            submittedAt: "2026-10-04T11:00:00Z",
+            answers: [{ title: "Additional Notes", value: "The calendar link is glitching and the portal isn't working on mobile." }],
+          },
+        ],
+      }),
+    });
+    const who = b.who.map(l => `${l.label}: ${l.text}`);
+    expect(who.some(t => t.startsWith("Kickoff notes: Last Year's Total Revenue"))).toBe(true);
+    expect(who).toContain("90-day revenue goal: 25,000 KWD (from the kickoff notes)");
+    const texts = b.raise.map(l => l.text);
+    expect(texts).toContain(
+      'Still open from the 4 Oct kickoff: Facebook access, Mahara OS access, WhatsApp sync to Mahara OS. Your 1-1 notes add: "The calendar link is glitching and the portal isn\'t working on mobile."',
+    );
+    expect(texts.some(t => t.startsWith("Ask for their old leads list"))).toBe(true);
+  });
+
+  test("1-1 note fragments join their neighbours; imperatives to us are our promises", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: timeline({
+        calls: [call({ source: "checkin_form", status: "held", startsAt: "2026-10-05T10:00:00Z", endsAt: "2026-10-05T10:00:00Z" })],
+        forms: [
+          {
+            token: "c1",
+            formId: "fRokTITH",
+            kind: "checkin",
+            submittedAt: "2026-10-05T10:00:00Z",
+            answers: [
+              { title: "Client Notes", value: "صور اوضح - من مشاريعنا السابقة - فيديو قصير يعرض خدمة التصميم الداخلي للفلل" },
+              { title: "Additional Notes", value: "- Send them the welcome survey.\n- Send them a QR code to scan." },
+            ],
+          },
+        ],
+      }),
+    });
+    expect(b.call.lines.map(l => l.text)).toEqual([
+      "صور اوضح - من مشاريعنا السابقة",
+      "فيديو قصير يعرض خدمة التصميم الداخلي للفلل",
+    ]);
+    expect(b.promises.ours.map(l => l.text)).toEqual(["Send them the welcome survey.", "Send them a QR code to scan."]);
+  });
+});
+
+describe("mood and billing carry-overs", () => {
+  test("a testimonial mood asks for the testimonial; a card billing step from before the call stays ours", () => {
+    const b = buildBrief({
+      now: NOW,
+      client: live,
+      timeline: timeline({
+        calls: [call({ startsAt: "2026-10-09T10:00:00Z", endsAt: "2026-10-09T10:30:00Z" })],
+        forms: [{ token: "c1", formId: "f", kind: "checkin", submittedAt: "2026-09-14T10:00:00Z", answers: [{ title: "Defcon Status", value: "Very Happy (testimonial)" }] }],
+      }),
+      digests: [digest({ kind: "note", at: Date.parse("2026-10-06T10:00:00Z"), summary: "A USD 1,900 payment was logged.", nextSteps: ["Mahara: Set the next payment date once it is agreed with the client."] })],
+    });
+    const texts = b.raise.map(l => l.text);
+    expect(texts).toContain("They were marked ready for a testimonial on 14 Sep. Ask for it.");
+    expect(texts.some(t => t.startsWith("Their mood was last recorded"))).toBe(false);
+    expect(b.promises.ours.map(l => l.text)).toEqual(["Set the next payment date once it is agreed with the client."]);
   });
 });
