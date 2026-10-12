@@ -20,7 +20,7 @@ async function acceptedSlack() {
 }
 beforeAll(async()=>{
  db=await cockpitTestDb({supabaseDefaultPrivileges:true});
- for(const name of ["20261011174920_ad_billing_guard.sql","20261011192500_ad_billing_roster_safe_update.sql","20261012110708_ad_billing_approval.sql","20261012114355_ad_billing_shared_reviewers.sql"]) await db.exec(migration(name));
+ for(const name of ["20261011174920_ad_billing_guard.sql","20261011192500_ad_billing_roster_safe_update.sql","20261012110708_ad_billing_approval.sql","20261012114355_ad_billing_shared_reviewers.sql","20261012115521_ad_billing_quiet_slack_cards.sql"]) await db.exec(migration(name));
  await member(db,uid,"csm@example.test",["csm"]); await member(db,buyer,"buyer@example.test",["media_buyer"]);
 });
 afterAll(async()=>await db?.close());
@@ -113,11 +113,12 @@ test("send gate refuses a second fresh Slack post even if incorrectly queued",as
  const id=await scalar("insert into cockpit_ad_billing_deliveries(event_id,binding_id,revision,channel,destination,body,state,claim,claimed_at) values($1,$2,1,'slack','C09RZ0GS0V9','Bad duplicate','claimed',$3,now()) returning id",[r.event_id,bid,claim]);
  expect(await scalar("select cockpit_ad_billing_begin_send($1,$2)",[id,claim])).toBe(false);
 });
-test("72 hours permits a fresh unresolved review post; historical decision retained",async()=>{
+test("72-hour renewal keeps the same Slack card; historical decision retained",async()=>{
  await observe();await acceptedSlack();await decide("deny",null,"Check again in three days");await owner(db);
  await db.exec("update cockpit_ad_billing_reviews set created_at=now()-interval '73 hours'; update cockpit_ad_billing_deliveries set provider_id=extract(epoch from now()-interval '73 hours')::text where channel='slack' and state='accepted'");
  await observe();expect((await review()).state).toBe("pending");
- expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='slack' and state='queued' and slack_update_ts is null")).toBe(2);
+ expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='slack' and state='queued' and slack_update_ts is null")).toBe(0);
+ expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='slack' and state='queued' and slack_update_ts is not null")).toBe(2);
 });
 test("daily review records attention without sending or clearing pending clients",async()=>{
  await observe();await actor(db,uid);await scalar("select cockpit_ad_billing_daily_done()");
@@ -186,4 +187,18 @@ test("media buyer client scope and current role remain required",async()=>{
  await owner(db);await db.query("update cockpit_members set clients='{}',roles=array['creative_director'] where auth_user_id=$1",[buyer]);await actor(db,buyer);
  await expect(scalar("select cockpit_ad_billing_review_panel()")).rejects.toThrow();
  await expect(scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id])).rejects.toThrow("billing reviewer access");
+});
+
+test("Slack card stays short and leaves the full Arabic draft on the review page",async()=>{
+ await observe();const card=await scalar("select body from cockpit_ad_billing_deliveries where channel='slack' limit 1");
+ expect(card.split("\n")).toHaveLength(3);expect(card.length).toBeLessThan(300);
+ expect(card).toContain("Needs approval");expect(card).not.toContain(clientMessage("unsettled","1234"));
+});
+
+test("a genuinely new incident may notify again only after the 72-hour budget",async()=>{
+ await observe();await acceptedSlack();await db.exec("update cockpit_ad_billing_deliveries set provider_id=extract(epoch from now()-interval '73 hours')::text where channel='slack'");
+ await observe("healthy");await db.exec("update cockpit_ad_billing_bindings set healthy_since=now()-interval '5 minutes'");await observe("healthy");
+ await db.exec("update cockpit_ad_billing_deliveries set state='accepted',provider_id=slack_update_ts where channel='slack' and state='queued' and slack_update_ts is not null");
+ await observe("unsettled");
+ expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='slack' and state='queued' and slack_update_ts is null")).toBe(2);
 });
