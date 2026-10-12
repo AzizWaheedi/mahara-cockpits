@@ -352,7 +352,8 @@ export function AdBillingReviewPage() {
           <h1 className="text-2xl font-semibold">Ad billing review</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Check daily. Edit the Arabic draft, approve it, or record why it
-            should not be sent. Either the CSM or media buyer can decide; the first decision closes the review for both.
+            should not be sent. Either the CSM or media buyer can decide; the
+            first decision closes the review for both.
           </p>
         </div>
         <Button variant="outline" onClick={() => void reload()}>
