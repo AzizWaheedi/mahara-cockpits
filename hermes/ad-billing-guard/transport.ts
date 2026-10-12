@@ -383,5 +383,6 @@ export function billingBlocks(d: Delivery, text: string) {
    { type: "button", text: { type: "plain_text", text: "Edit / تعديل" }, url: `${url}&mode=edit` },
    { type: "button", text: { type: "plain_text", text: "Deny / رفض" }, url: `${url}&mode=deny` },
   ] },
+  { type: "context", elements: [{ type: "mrkdwn", text: `<${url}|Open secure review> · Opening a link does not send a message.` }] },
  ];
 }
