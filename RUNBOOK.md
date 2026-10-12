@@ -668,6 +668,11 @@ from an app `.env.local`, by name and without printing them, and runs
 powershell -ExecutionPolicy Bypass -File scripts\ship.ps1 client-success
 ```
 
+On a Mac with the existing authorized Composio Supabase connection, set
+`COCKPIT_AUTH_USE_COMPOSIO=1` instead of supplying a management token. The same
+live authentication/RPC verification still runs before deployment; this selects
+the already-supported connection and does not skip any check.
+
 The cutover evidence check (`evidence/cutover-acceptance.json`) runs after
 the deploy only when that file exists. Only the coordinated cutover
 procedure writes it (`docs/CUTOVER-ACCEPTANCE.md`).

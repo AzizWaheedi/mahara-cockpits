@@ -82,13 +82,9 @@ done
 # Each app's link must name the project config/vercel-projects.json names, or
 # the CLI deploys to a new project and the site keeps its old bundle
 # (2026-10-05). The ids are not secret.
-while IFS= read -r line; do
-  case "$line" in
-    ok:*) echo "${line#ok:}" ;;
-    missing:*) missing+=("${line#missing:}") ;;
-    failed:*) failed+=("${line#failed:}") ;;
-  esac
-done < <(APPLY="$apply" "$py_bin" - <<'PY'
+# macOS Bash 3.2 misparses a Python heredoc inside process substitution.
+# Capture first and preserve failures instead of silently reporting readiness.
+links_output=$(APPLY="$apply" "$py_bin" - <<'PY'
 import json, os, pathlib
 config = json.loads(pathlib.Path("config/vercel-projects.json").read_text(encoding="utf-8"))
 apply = bool(os.environ.get("APPLY"))
@@ -114,7 +110,14 @@ for app_dir, project in config.items():
     except OSError as exc:
         print("failed:could not write %s: %s" % (link.as_posix(), exc))
 PY
-)
+) || failed+=("Could not inspect Vercel project links")
+while IFS= read -r line; do
+  case "$line" in
+    ok:*) echo "${line#ok:}" ;;
+    missing:*) missing+=("${line#missing:}") ;;
+    failed:*) failed+=("${line#failed:}") ;;
+  esac
+done <<< "$links_output"
 
 if [ ${#failed[@]} -gt 0 ]; then
   echo "Could not prepare this worktree:"

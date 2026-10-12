@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 APPS = ["media-buyer-cockpit", "client-success-cockpit", "creative-director-cockpit", "video-editor-cockpit", "sales-cockpit"]
-SECRET_NAMES = ("COCKPIT_MANAGEMENT_TOKEN", "SUPABASE_ACCESS_TOKEN", "supabase_token", "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "VERCEL_TOKEN")
+SECRET_NAMES = ("COCKPIT_AUTH_USE_COMPOSIO", "COCKPIT_MANAGEMENT_TOKEN", "SUPABASE_ACCESS_TOKEN", "supabase_token", "VITE_SUPABASE_URL", "VITE_SUPABASE_ANON_KEY", "VERCEL_TOKEN")
 REF = "abcdefghijklmnopqrst"
 
 
@@ -105,6 +105,17 @@ class ShipPreflightTest(unittest.TestCase):
         code, out = self.run_preflight(**self.ready_values())
         self.assertEqual(code, 0, out)
         self.assertIn("ready", out)
+        self.assertNotIn("management-token-value", out)
+
+    def test_explicit_composio_route_uses_no_dummy_management_token(self):
+        self.prepare()
+        executable = self.stub / "composio"
+        executable.write_text("#!/usr/bin/env bash\nexit 0\n")
+        executable.chmod(0o755)
+        values = self.ready_values()
+        del values["COCKPIT_MANAGEMENT_TOKEN"]
+        code, out = self.run_preflight(COCKPIT_AUTH_USE_COMPOSIO="1", **values)
+        self.assertEqual(code, 0, out)
         self.assertNotIn("management-token-value", out)
 
     def test_service_key_is_refused_without_printing_it(self):

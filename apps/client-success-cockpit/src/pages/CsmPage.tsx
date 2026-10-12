@@ -18,6 +18,7 @@ import {
 } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { AdBillingDailyTask } from "@/components/AdBillingReview";
 import {
   CallsTimeline,
   FormsHistory,
@@ -2542,6 +2543,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           </details>
         </div>
       )}
+
+      {section === "today" && <AdBillingDailyTask />}
 
       {section === "today" && <TodaysCalls snap={snap} />}
 

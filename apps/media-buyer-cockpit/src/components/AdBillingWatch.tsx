@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 
 type Delivery = {
   channel: string;
+  channelLabel?: string;
   state: string;
   error: string | null;
   providerId: string | null;
@@ -23,6 +24,11 @@ type Binding = {
   lastGoodAt: string | null;
   error: string | null;
   deliveries: Delivery[];
+  review?: {
+    state: string;
+    reason: string | null;
+    decidedAt: string | null;
+  } | null;
 };
 export type BillingPanel = {
   apply: boolean;
@@ -66,8 +72,8 @@ export function AdBillingSummary({
           className={`rounded-full px-3 py-1 font-medium ${data.apply ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}
         >
           {data.apply
-            ? "Notifications enabled"
-            : "Preview mode · no notifications"}
+            ? "CSM approval enabled"
+            : "Delivery paused · checks continue"}
         </span>
         <span className="text-muted-foreground">
           {data.roster.length - missing.length} of {data.roster.length} active
@@ -147,13 +153,24 @@ export function AdBillingSummary({
                   {b.error}
                 </p>
               )}
+              {b.review && (
+                <p className="mt-3 text-sm">
+                  Client message:{" "}
+                  <strong>
+                    {b.review.state === "pending"
+                      ? "Awaiting CSM approval"
+                      : b.review.state}
+                  </strong>
+                  {b.review.reason ? ` · ${b.review.reason}` : ""}
+                </p>
+              )}
               <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
                 {b.deliveries.map((d, i) => (
                   <li key={`${d.channel}-${i}`}>
                     {d.channel === "whatsapp"
                       ? "Client WhatsApp"
                       : d.channel === "slack"
-                        ? "Media announcements"
+                        ? (d.channelLabel ?? "Media announcements")
                         : d.commentRole === "client"
                           ? "Client task comment"
                           : d.commentRole === "ads"
@@ -189,9 +206,11 @@ export function AdBillingSummary({
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        This checks Meta billing signals. It does not retry payments or switch
-        campaigns on. “Accepted” confirms a provider receipt, not that a person
-        read the message.
+        Client WhatsApp requires CSM approval. New Slack posts and client
+        messages are limited to once per client every 72 hours. This checks Meta
+        billing signals. It does not retry payments or switch campaigns on.
+        “Accepted” confirms a provider receipt, not that a person read the
+        message.
       </p>
     </div>
   );
