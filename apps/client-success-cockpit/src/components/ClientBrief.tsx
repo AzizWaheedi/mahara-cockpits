@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { ArrowUpRight, CalendarClock, ChevronRight, History } from "lucide-react";
+import {
+  ArrowUpRight,
+  CalendarClock,
+  ChevronRight,
+  History,
+} from "lucide-react";
 import {
   type ReactNode,
   useEffect,
@@ -12,12 +17,13 @@ import { parseDosDonts } from "@/components/DosDonts";
 import { Chip, Dot, Kicker } from "@/components/kit";
 import {
   type Brief,
+  type BriefInput,
   type BriefLine,
   buildBrief,
   type Digest,
 } from "@/lib/clientBrief";
-import { diagnose } from "@/lib/csmDiagnosis";
 import { readClientDigests, type Timeline } from "@/lib/csmCalls";
+import { diagnose } from "@/lib/csmDiagnosis";
 import { cn } from "@/lib/utils";
 
 /**
@@ -249,6 +255,7 @@ export function ClientBrief({
   onOpenCalls,
   otherClients,
   notes: given,
+  whatsapp,
 }: {
   client: SupabaseClient | null;
   /** The client's row from the CSM snapshot. */
@@ -263,6 +270,8 @@ export function ClientBrief({
   otherClients?: string[];
   /** Stored card notes instead of a read (the dev harness). */
   notes?: CardNotes | null;
+  /** The client's linked WhatsApp chats for the day, once read. */
+  whatsapp?: BriefInput["whatsapp"];
 }) {
   const taskId = String(row.taskId ?? "");
   const read = useCardNotes(given === undefined ? client : null, taskId);
@@ -286,9 +295,10 @@ export function ClientBrief({
             teamActors: notes?.teamActors,
             diagnosis,
             otherClients,
+            whatsapp,
           })
         : null,
-    [row, timeline, notes, diagnosis, otherClients],
+    [row, timeline, notes, diagnosis, otherClients, whatsapp],
   );
   const dosDonts = useMemo(
     () => parseDosDonts(profile?.dosDonts as string | undefined),
@@ -410,7 +420,9 @@ export function ClientBrief({
                   {b.call.lines.length ? (
                     <Lines lines={b.call.lines} first={4} noun="points" />
                   ) : (
-                    <Empty>{b.call.empty ?? "No notes from the last call."}</Empty>
+                    <Empty>
+                      {b.call.empty ?? "No notes from the last call."}
+                    </Empty>
                   )}
                 </Group>
 
@@ -421,11 +433,29 @@ export function ClientBrief({
                         {b.promises.from}
                       </p>
                     ) : null}
-                    <Part title="We said we would" lines={b.promises.ours} noun="promises" />
-                    <Part title="They said they would" lines={b.promises.theirs} noun="promises" />
-                    <Part title="Next steps from the call" lines={b.promises.steps} noun="steps" />
-                    <Part title="Still open" lines={b.promises.open} noun="loose ends" />
-                    {b.promises.empty ? <Empty>{b.promises.empty}</Empty> : null}
+                    <Part
+                      title="We said we would"
+                      lines={b.promises.ours}
+                      noun="promises"
+                    />
+                    <Part
+                      title="They said they would"
+                      lines={b.promises.theirs}
+                      noun="promises"
+                    />
+                    <Part
+                      title="Next steps from the call"
+                      lines={b.promises.steps}
+                      noun="steps"
+                    />
+                    <Part
+                      title="Still open"
+                      lines={b.promises.open}
+                      noun="loose ends"
+                    />
+                    {b.promises.empty ? (
+                      <Empty>{b.promises.empty}</Empty>
+                    ) : null}
                   </Group>
                 ) : null}
               </div>
@@ -451,8 +481,18 @@ export function ClientBrief({
                       ) : null}
                     </div>
                   ) : null}
+                  <Part
+                    title="On WhatsApp"
+                    lines={b.since.chats}
+                    noun="messages"
+                  />
                   <Part title="Notes" lines={b.since.notes} noun="notes" />
-                  <Part title="The team said" lines={b.since.team} first={2} noun="mentions" />
+                  <Part
+                    title="The team said"
+                    lines={b.since.team}
+                    first={2}
+                    noun="mentions"
+                  />
                   {b.since.empty ? <Empty>{b.since.empty}</Empty> : null}
                 </Group>
 

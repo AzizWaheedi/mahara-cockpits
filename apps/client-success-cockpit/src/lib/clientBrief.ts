@@ -84,6 +84,8 @@ export type Brief = {
     notes: BriefLine[];
     team: BriefLine[];
     changeTotal: number;
+    /** What the client wrote on WhatsApp in the window, newest first. */
+    chats: BriefLine[];
     capped?: string;
     stale?: string;
     empty?: string;
@@ -108,6 +110,27 @@ export type BriefInput = {
   otherClients?: string[];
   /** The team's Meta users; a change by anyone else was made by the client. */
   teamActors?: string[];
+  /** The client's linked WhatsApp chats (cockpit_csm_client_whatsapp). */
+  whatsapp?: {
+    stale?: boolean;
+    threads: WaThread[];
+  } | null;
+};
+
+export type WaThread = {
+  name: string;
+  isGroup: boolean;
+  archived: boolean;
+  awaitingUs: boolean;
+  lastInboundAt: number | null;
+  messages: {
+    direction: string;
+    body: string | null;
+    kind: string;
+    speaker: string | null;
+    at: number;
+    today: boolean;
+  }[];
 };
 
 const DAY = 86_400_000;
@@ -178,6 +201,13 @@ const norm = (s: string) =>
     .replace(/[^\p{L}\p{N} ]+/gu, "")
     .replace(/\s+/g, " ")
     .trim();
+
+/** A WhatsApp message as one readable line: a voice note says so. */
+function waText(m: { body: string | null; kind: string }, max = 0) {
+  const t = clean(m.body ?? "");
+  if (!t) return m.kind === "audio" ? "A voice note." : `A ${m.kind}.`;
+  return max && t.length > max ? `${t.slice(0, max).trimEnd()}…` : t;
+}
 
 const firstSentence = (s: string) => {
   const m = /^(.{20,}?[.!?؟])(\s|$)/u.exec(s);
@@ -519,6 +549,19 @@ export function buildBrief(input: BriefInput): Brief {
     .map(nameRe)
     .filter((r): r is RegExp => Boolean(r));
   const team = new Set((input.teamActors ?? []).map(a => norm(a)));
+  // What they wrote on WhatsApp, newest first, with who wrote it.
+  const waThreads = input.whatsapp?.threads ?? [];
+  const waInbound = waThreads
+    .flatMap(t =>
+      t.messages
+        .filter(m => m.direction === "inbound")
+        .map(m => ({
+          m,
+          t,
+          who: t.isGroup ? `${m.speaker ?? "Someone"} in ${t.name}` : t.name,
+        })),
+    )
+    .sort((a, b) => b.m.at - a.m.at);
 
   // ---- The last call: the newest day a call happened. All rows that day
   // (the booking, the recording, the 1-1 form, a logged call) are one call.
@@ -575,6 +618,7 @@ export function buildBrief(input: BriefInput): Brief {
       notes: [],
       team: [],
       changeTotal: 0,
+      chats: [],
     },
     who: [],
     gaps: [],
@@ -1136,10 +1180,22 @@ export function buildBrief(input: BriefInput): Brief {
     .sort((a, b) => Number(b.event) - Number(a.event) || b.t - a.t)
     .map(({ event: _e, t: _t, ...l }) => l);
 
+  // What they wrote on WhatsApp in the same window: the newest three.
+  brief.since.chats = waInbound
+    .filter(x => x.m.at >= windowStart)
+    .slice(0, 3)
+    .map(x => ({
+      label: x.who,
+      text: waText(x.m),
+      source: "WhatsApp",
+      day: kuwaitDay(x.m.at),
+    }));
+
   if (
     !brief.since.changes.length &&
     !brief.since.notes.length &&
-    !brief.since.team.length
+    !brief.since.team.length &&
+    !brief.since.chats.length
   )
     brief.since.empty = brief.since.stale
       ? "No card notes or team mentions since then either."
@@ -1228,6 +1284,13 @@ export function buildBrief(input: BriefInput): Brief {
         source: money1.source,
         day: kuwaitDay(money1.at),
       });
+    const wrote = waInbound.find(x => now - x.m.at < 30 * DAY);
+    if (wrote)
+      add(1.5, {
+        text: `${wrote.who} wrote on WhatsApp on ${kuwaitDay(wrote.m.at)}: "${waText(wrote.m, 140).replace(/[.!?؟]+$/, "")}".`,
+        source: "WhatsApp",
+        day: kuwaitDay(wrote.m.at),
+      });
     if (brief.defcon)
       add(2, {
         text: `Last mood on record: ${brief.defcon.value} on ${brief.defcon.day}.`,
@@ -1246,7 +1309,8 @@ export function buildBrief(input: BriefInput): Brief {
       !forms.length &&
       !(timeline?.changes ?? []).length &&
       !(timeline?.eods ?? []).length &&
-      !(digests ?? []).length;
+      !(digests ?? []).length &&
+      !waInbound.length;
     if (nothing)
       brief.quiet = `${word}. Nothing on record since 1 Jun: no calls, forms, card notes or team mentions.`;
     // The newest two team mentions, at any age.
@@ -1266,6 +1330,7 @@ export function buildBrief(input: BriefInput): Brief {
       notes: [],
       team: lastTeam,
       changeTotal: 0,
+      chats: [],
     };
     if (!lastTeam.length) brief.since.empty = "No team mentions on record.";
     brief.promises = {
@@ -1298,6 +1363,13 @@ export function buildBrief(input: BriefInput): Brief {
       ...brief.call.lines
         .filter(l => l.source === "Your 1-1 notes")
         .map(l => ({ text: l.text, at: lastTime, source: "Your 1-1 notes" })),
+      ...waInbound
+        .filter(x => x.m.at >= sinceStart)
+        .map(x => ({
+          text: clean(x.m.body ?? ""),
+          at: x.m.at,
+          source: "WhatsApp",
+        })),
     ]
       .flatMap(x =>
         x.text.split(/(?<=[.!?؟])\s+/).map(s => ({ ...x, text: s })),
@@ -1311,6 +1383,23 @@ export function buildBrief(input: BriefInput): Brief {
         source: upset.source,
         day: kuwaitDay(upset.at),
       });
+    // A WhatsApp message waiting on our reply: answer it before the call.
+    for (const t of waThreads.filter(x => x.awaitingUs && !x.archived)) {
+      const last = waInbound.find(x => x.t === t);
+      if (!last) continue;
+      const since =
+        kuwaitDay(last.m.at) === kuwaitDay(now)
+          ? `${kuwaitWhen(last.m.at).split(", ").pop()} today`
+          : kuwaitWhen(last.m.at);
+      add(0.5, {
+        risk: now - last.m.at >= DAY,
+        text: last.m.body?.trim()
+          ? `${last.who} is waiting on a WhatsApp reply since ${since}: "${waText(last.m, 140).replace(/[.!?؟]+$/, "")}". Answer it before the call.`
+          : `${last.who} sent ${last.m.kind === "audio" ? "a voice note" : `a ${last.m.kind}`} on WhatsApp ${since.endsWith("today") ? "at" : "on"} ${since} and is waiting on a reply. Answer it before the call.`,
+        source: "WhatsApp",
+        day: kuwaitDay(last.m.at),
+      });
+    }
     if (brief.defcon?.risk && !brief.defcon.old)
       add(0, {
         risk: true,

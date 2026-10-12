@@ -96,6 +96,41 @@ const mockClient: any = {
     if (name === "cockpit_csm_onboarding_read") {
       return Promise.resolve({ data: KITS, error: null });
     }
+    if (name === "cockpit_csm_client_whatsapp") {
+      const at = Date.now() - 30 * 60_000;
+      return Promise.resolve({
+        data: {
+          configured: true,
+          ready: true,
+          stale: false,
+          syncedAt: Date.now() - 5 * 60_000,
+          note: null,
+          dayStart: Date.now() - 60 * 60_000,
+          taskId: _args.p_task_id,
+          clientName: "Greystone Contracting",
+          threads: [
+            {
+              threadId: "wa-1",
+              name: "Omar Greystone",
+              isGroup: false,
+              archived: false,
+              awaitingUs: true,
+              lastInboundAt: at,
+              lastAt: at,
+              today: { inbound: 1, outbound: 0 },
+              messages: [
+                { id: "m1", direction: "inbound", body: "Can we move the shoot to Thursday?", kind: "text", speaker: null, at, status: null, today: true },
+              ],
+              draft: null,
+              contextKey: "0123456789abcdef0123456789abcdef",
+              sendSupported: true,
+              replyState: null,
+            },
+          ],
+        },
+        error: null,
+      });
+    }
     throw new Error(`Unexpected RPC call: ${name}`);
   },
   from: () => ({
@@ -713,6 +748,11 @@ test("a client's page has one booking button, the actions and four tabs", async 
     expect(text).not.toContain("Prep for this call");
     // This fake cannot read the call history: the brief says so, never "no calls".
     expect(text).toContain("The call history could not be read");
+    // The client's WhatsApp for the day, with the reply box under it.
+    expect(text).toContain("Can we move the shoot to Thursday?");
+    expect(text).toContain("Waiting on us");
+    expect(text).toContain("Send to Omar Greystone");
+    expect(text).toContain("Today: 1 from them, 0 from us");
     // Results: the period and the report at the top.
     const results = await renderSection(
       "client",

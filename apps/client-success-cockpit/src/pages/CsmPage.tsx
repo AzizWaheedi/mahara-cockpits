@@ -29,6 +29,7 @@ import {
   useClientTimeline,
 } from "@/components/ClientCalls";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
+import { ClientWhatsApp } from "@/components/ClientWhatsApp";
 import {
   Chip,
   Dot,
@@ -51,6 +52,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
+import { useClientWhatsApp } from "@/lib/clientWhatsApp";
 import { kuwaitDayOf, logCall } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
@@ -1167,6 +1169,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     auth.client,
     clientRow ? String(clientRow.taskId) : undefined,
   );
+  /** The client's WhatsApp for the day, for its card and the brief. */
+  const whatsapp = useClientWhatsApp(
+    auth.client,
+    clientRow ? String(clientRow.taskId) : undefined,
+  );
   /** The client's profile: their links in the header (the tabs read it too). */
   const [profile, setProfile] = useState<Client | undefined>(undefined);
   useEffect(() => {
@@ -2141,11 +2148,21 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               profile={profile ?? null}
               error={calls.error}
               otherClients={clientNames}
+              whatsapp={whatsapp.data}
               onOpenCalls={() =>
                 document
                   .getElementById("client-calls")
                   ?.scrollIntoView({ behavior: "smooth", block: "start" })
               }
+            />
+            <ClientWhatsApp
+              client={auth.client}
+              taskId={String(c.taskId)}
+              clientName={String(c.name)}
+              data={whatsapp.data}
+              error={whatsapp.error}
+              loading={whatsapp.loading}
+              reload={() => void whatsapp.reload()}
             />
             <ClientProfile
               name={String(c.name)}

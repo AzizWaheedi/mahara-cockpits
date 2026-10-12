@@ -390,3 +390,84 @@ describe("the brief for a stopped or onboarding client", () => {
     expect(b.raise[0].text).toBe("Book their onboarding call.");
   });
 });
+
+describe("WhatsApp in the brief", () => {
+  const msg = (at: string, body: string | null, over: Record<string, unknown> = {}) => ({
+    direction: "inbound",
+    body,
+    kind: "text",
+    speaker: null,
+    at: Date.parse(at),
+    today: Date.parse(at) >= Date.parse("2026-10-11T21:00:00Z"),
+    ...over,
+  });
+  const chat = (over: Record<string, unknown> = {}) => ({
+    name: "Ahmed City Wood",
+    isGroup: false,
+    archived: false,
+    awaitingUs: true,
+    lastInboundAt: Date.parse("2026-10-12T09:05:00Z"),
+    messages: [
+      msg("2026-10-10T08:00:00Z", "Thanks, all good."),
+      msg("2026-10-12T09:05:00Z", "When do the new videos go live?"),
+    ],
+    ...over,
+  });
+  const lastCall = timeline({ calls: [call({ startsAt: "2026-10-09T10:00:00Z", endsAt: "2026-10-09T10:30:00Z" })] });
+
+  test("a message waiting on our reply is raised with its words; what they wrote shows under since", () => {
+    const b = buildBrief({ now: NOW, client: live, digests: [], timeline: lastCall, whatsapp: { threads: [chat()] } });
+    const wait = b.raise.find(l => l.source === "WhatsApp");
+    expect(wait?.text).toBe(
+      'Ahmed City Wood is waiting on a WhatsApp reply since 12:05 today: "When do the new videos go live". Answer it before the call.',
+    );
+    expect(wait?.risk).toBe(false);
+    expect(b.since.chats.map(l => l.text)).toEqual(["When do the new videos go live?", "Thanks, all good."]);
+    expect(b.since.empty).toBeUndefined();
+  });
+
+  test("a reply already sent is not raised, a day-old wait is a risk, and an angry message comes first", () => {
+    const answered = buildBrief({ now: NOW, client: live, digests: [], timeline: lastCall, whatsapp: { threads: [chat({ awaitingUs: false })] } });
+    expect(answered.raise.some(l => l.source === "WhatsApp")).toBe(false);
+    const old = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: lastCall,
+      whatsapp: { threads: [chat({ messages: [msg("2026-10-11T08:00:00Z", null, { kind: "audio" })] })] },
+    });
+    expect(old.raise.find(l => l.source === "WhatsApp")?.text).toBe(
+      "Ahmed City Wood sent a voice note on WhatsApp on Sun 11 Oct, 11:00 and is waiting on a reply. Answer it before the call.",
+    );
+    expect(old.raise.find(l => l.source === "WhatsApp")?.risk).toBe(true);
+    const angry = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: lastCall,
+      whatsapp: { threads: [chat({ messages: [msg("2026-10-12T08:00:00Z", "I am frustrated, no leads came this week")] })] },
+    });
+    expect(angry.raise[0].source).toBe("WhatsApp");
+    expect(angry.raise[0].text).toEndWith("Open with it, calmly, before anything else.");
+  });
+
+  test("a group names who wrote; a stopped client who wrote is not quiet", () => {
+    const g = buildBrief({
+      now: NOW,
+      client: live,
+      digests: [],
+      timeline: lastCall,
+      whatsapp: { threads: [chat({ name: "City Wood x Mahara", isGroup: true, messages: [msg("2026-10-12T09:05:00Z", "Any update?", { speaker: "Sara" })] })] },
+    });
+    expect(g.raise.find(l => l.source === "WhatsApp")?.text).toStartWith("Sara in City Wood x Mahara is waiting");
+    const s = buildBrief({
+      now: NOW,
+      client: { name: "Gone Co", stage: "Stopped" },
+      digests: [],
+      timeline: timeline(),
+      whatsapp: { threads: [chat({ awaitingUs: false })] },
+    });
+    expect(s.quiet).toBeUndefined();
+    expect(s.raise.some(l => l.text.startsWith("Ahmed City Wood wrote on WhatsApp on 12 Oct"))).toBe(true);
+  });
+});
