@@ -8,8 +8,9 @@
 #   scripts/prepare-worktree.sh             report only (exit 1 if anything is missing)
 #   scripts/prepare-worktree.sh --apply     install, copy and link
 #
-# SOURCE_CHECKOUT is the clone the generated types are copied from. It
+# SOURCE_CHECKOUT is the first clone the generated types are copied from. It
 # defaults to the main worktree (the first one `git worktree list` names).
+# When it has no full copy, the other worktrees are tried in turn.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -50,20 +51,31 @@ for d in "${dep_dirs[@]}"; do
   fi
 done
 
+# A copy counts only when it holds api.js. On 2026-10-12 the main checkout's
+# creative folder was empty, so an empty folder was copied and the ship
+# stopped at the creative retention test. The first clone with a full copy
+# is used: SOURCE_CHECKOUT, then every other worktree of this repository.
+sources=("$source_checkout")
+while IFS= read -r w; do sources+=("$w"); done \
+  < <(git worktree list --porcelain | sed -n 's/^worktree //p')
 for d in "${generated_dirs[@]}"; do
   [ -d "$d/convex" ] || continue
-  [ -d "$d/convex/_generated" ] && continue
-  from="$source_checkout/$d/convex/_generated"
-  if [ ! -d "$from" ]; then
-    failed+=("$d/convex/_generated is missing and $from has no copy. Set SOURCE_CHECKOUT to a clone that has it")
+  [ -f "$d/convex/_generated/api.js" ] && continue
+  from=""
+  for s in "${sources[@]}"; do
+    if [ -f "$s/$d/convex/_generated/api.js" ]; then from="$s"; break; fi
+  done
+  if [ -z "$from" ]; then
+    failed+=("$d/convex/_generated has no api.js, and no worktree of this repository has a full copy. Set SOURCE_CHECKOUT to a clone that has one")
   elif [ -n "$apply" ]; then
-    if cp -r "$from" "$d/convex/"; then
-      echo "generated types copied into $d/convex/_generated from $source_checkout"
+    if mkdir -p "$d/convex/_generated" \
+       && cp -r "$from/$d/convex/_generated/." "$d/convex/_generated/"; then
+      echo "generated types copied into $d/convex/_generated from $from"
     else
-      failed+=("could not copy $from")
+      failed+=("could not copy $from/$d/convex/_generated")
     fi
   else
-    missing+=("generated Convex types in $d/convex/_generated (copied from $source_checkout)")
+    missing+=("generated Convex types in $d/convex/_generated (copied from $from)")
   fi
 done
 

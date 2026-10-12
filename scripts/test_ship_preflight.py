@@ -53,7 +53,7 @@ class ShipPreflightTest(unittest.TestCase):
             src = self.repo / "apps" / app / "src"
             src.mkdir(parents=True)
             (src / "env.ts").write_text("export const url = import.meta.env.VITE_SUPABASE_URL;\n")
-        (self.repo / ".gitignore").write_text("node_modules/\n.vercel/\n")
+        (self.repo / ".gitignore").write_text("node_modules/\n.vercel/\n_generated/\n")
         origin = self.tmp / "origin.git"
         git(self.tmp, "init", "-q", "--bare", origin.as_posix())
         git(self.repo, "init", "-q", "-b", "main")
@@ -147,6 +147,31 @@ class ShipPreflightTest(unittest.TestCase):
         code, out = self.run_preflight(**self.ready_values())
         self.assertEqual(code, 1, out)
         self.assertIn("not signed in", out)
+
+    def generated(self, root, full):
+        folder = root / "apps" / "media-buyer-cockpit" / "convex" / "_generated"
+        folder.mkdir(parents=True, exist_ok=True)
+        if full:
+            (folder / "api.js").write_text("export const api = {};\n")
+        return folder
+
+    def test_empty_generated_folder_is_not_a_copy(self):
+        # 2026-10-12: an empty folder passed as present and the ship stopped
+        # at the creative retention test.
+        self.prepare()
+        self.generated(self.repo, full=False)
+        code, out = self.run_preflight(**self.ready_values())
+        self.assertEqual(code, 1, out)
+        self.assertIn("apps/media-buyer-cockpit/convex/_generated has no api.js", out)
+
+    def test_full_copy_comes_from_another_worktree(self):
+        other = self.tmp / "other"
+        git(self.repo, "worktree", "add", "-q", other.as_posix())
+        self.generated(other, full=True)
+        empty = self.generated(self.repo, full=False)
+        self.prepare()
+        self.assertTrue((empty / "api.js").is_file())
+        self.assertFalse((empty / "_generated").exists())
 
 
 if __name__ == "__main__":
