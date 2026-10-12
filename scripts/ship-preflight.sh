@@ -33,7 +33,13 @@ done
 
 # The read-only auth check reads the management token from the environment.
 if [ -z "${COCKPIT_MANAGEMENT_TOKEN:-}${SUPABASE_ACCESS_TOKEN:-}${supabase_token:-}" ]; then
-  problems+=("No Supabase management token (COCKPIT_MANAGEMENT_TOKEN) is set. Ship from PowerShell with scripts/ship.ps1, which loads it")
+  # check-cockpit-auth-config.py already supports the authorized Composio
+  # connection. Its live verification still runs before any deployment.
+  if [ "${COCKPIT_AUTH_USE_COMPOSIO:-}" = "1" ]; then
+    command -v composio >/dev/null 2>&1 || problems+=("Composio auth verification selected, but its CLI is not available")
+  else
+    problems+=("No Supabase management token (COCKPIT_MANAGEMENT_TOKEN) is set. Use scripts/ship.ps1 or set COCKPIT_AUTH_USE_COMPOSIO=1 for the existing connected Composio verification")
+  fi
 fi
 
 # Every app reads Supabase in the browser, and the readiness check builds all

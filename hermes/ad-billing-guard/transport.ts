@@ -5,6 +5,8 @@ import {
 	ADS_LIST,
 	CLIENT_LIST,
 	SLACK_CHANNEL,
+	CSM_SLACK_CHANNEL,
+	BILLING_REVIEW_URL,
 	type Binding,
 	type Task,
 	validateBinding,
@@ -18,6 +20,8 @@ export interface Delivery {
 	destination: string;
 	body: string;
 	claim: string;
+	review_id?: string | null;
+	slack_update_ts?: string | null;
 	state: string;
 }
 export class ProviderError extends Error {
@@ -233,7 +237,7 @@ export class Transport {
 	preflight(d: Delivery) {
 		if (d.channel === "slack") {
 			this.needed("SLACK_BOT_TOKEN");
-			if (d.destination !== SLACK_CHANNEL)
+			if (![SLACK_CHANNEL, CSM_SLACK_CHANNEL].includes(d.destination))
 				throw new Error("Wrong Slack channel");
 		}
 		if (d.channel === "clickup") this.needed("CLICKUP_API_TOKEN");
@@ -251,7 +255,7 @@ export class Transport {
 		if (d.channel === "slack") {
 			result = await this.json(
 				"Slack",
-				"https://slack.com/api/chat.postMessage",
+				d.slack_update_ts ? "https://slack.com/api/chat.update" : "https://slack.com/api/chat.postMessage",
 				{
 					method: "POST",
 					headers: {
@@ -264,7 +268,8 @@ export class Transport {
 							.replace(/&/g, "&amp;")
 							.replace(/</g, "&lt;")
 							.replace(/>/g, "&gt;"),
-						client_msg_id: d.id,
+						...(d.slack_update_ts ? { ts: d.slack_update_ts } : { client_msg_id: d.id }),
+						...(d.review_id ? { blocks: billingBlocks(d, body) } : {}),
 						unfurl_links: false,
 						unfurl_media: false,
 					}),
@@ -366,4 +371,17 @@ export class Transport {
 			)?.id ?? null
 		);
 	}
+}
+
+/** URL buttons only open the authenticated editor. No GET action can approve. */
+export function billingBlocks(d: Delivery, text: string) {
+ const url = `${BILLING_REVIEW_URL}?binding=${encodeURIComponent(d.binding_id)}`;
+ return [
+  { type: "section", text: { type: "plain_text", text: text.slice(0, 2900) } },
+  { type: "actions", elements: [
+   { type: "button", text: { type: "plain_text", text: "Approve / موافقة" }, url: `${url}&mode=approve` },
+   { type: "button", text: { type: "plain_text", text: "Edit / تعديل" }, url: `${url}&mode=edit` },
+   { type: "button", text: { type: "plain_text", text: "Deny / رفض" }, url: `${url}&mode=deny` },
+  ] },
+ ];
 }

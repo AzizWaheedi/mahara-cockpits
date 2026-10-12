@@ -1,5 +1,48 @@
 # Ad billing watch operator runbook
 
+## CSM approval and three-day cadence (12 October)
+
+Client WhatsApp is never sent from detection alone. The CSM opens the private
+`#csm-general` or `#media-announcments` card, reviews the Arabic text and either
+approves it, edits then approves, or denies with a mandatory written reason.
+Buttons are safe links to the authenticated CSM review page:
+https://cockpit.maharamedia.com/client-success/ad-billing
+Opening a link, including a Slack unfurl, cannot approve anything.
+
+The CSM Today page includes **Daily ad billing review**. Record the daily check
+there; this records attention without clearing unresolved items or sending.
+Decisions and their authors are retained. Current seat/client access is checked
+at decision time and again before sending an approved draft.
+
+- One new Slack post per exact client per channel per rolling 72 hours. Earlier
+  status changes and decisions update that bot's existing card with `chat.update`.
+  Ambiguous or failed Slack receipts do not cause replacement spam.
+- Client WhatsApp also has a rolling 72-hour cooldown across billing states.
+  Existing accepted messages count. An unresolved send blocks further messages
+  until its actual provider result is reconciled.
+- A pending review expires after 72 hours. An approved draft expires after 24
+  hours or on a changed account, card suffix, billing signal or destination.
+  A continuing incident can produce a new review cycle, always requiring a new
+  human decision. No automatic recovery WhatsApp is generated.
+- Approve queues a message, normally delivered on the next five-minute run.
+  The UI distinguishes queued from provider-accepted. A fresh Active-client,
+  task, sheet, exact Meta account and current signal check still precedes send.
+- ClickUp comments continue to record actual billing observations on the client
+  and its verified Ads Management tasks, independently of the client decision.
+- The yellow-warning draft does not invent a three-hour payment retry, debt,
+  currency or confirmed bank decline. Card suffixes appear only when verified.
+
+Migration `20261012110708_ad_billing_approval.sql` deliberately pauses database
+apply. Deploy the matching worker and CSM UI, verify permissions and review
+links, then enable database/runtime apply together. Never roll back to the
+pre-approval observer/sender; rollback must leave apply disabled. Raw review
+and delivery tables remain unavailable to browser roles.
+
+Existing manual Make scenario 8866601 stays excluded for the 16 enrolled Meta
+clients. Unenrolled clients and other platforms still use the existing manual
+route; this rollout does not migrate those unrelated manual paths. Brillant
+Touch still requires exact Meta account identity before enrollment.
+
 ## Ownership and credentials
 
 Use the existing Creative Triage Supabase project `bldgtotkfmhoxmlzowdx`. The worker refuses any other database URL. Do not create a new project or modify the native media publication tables.

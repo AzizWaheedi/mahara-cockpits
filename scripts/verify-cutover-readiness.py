@@ -67,6 +67,8 @@ RELEVANT_TEST_FILES = [
     "scripts/native-onboarding.test.ts",
     "apps/client-success-cockpit/scripts/check-in.test.ts",
     "apps/client-success-cockpit/scripts/csm-page.test.tsx",
+    "apps/client-success-cockpit/scripts/ad-billing-review.test.tsx",
+    "apps/media-buyer-cockpit/scripts/ad-billing-approval.test.ts",
     "apps/client-success-cockpit/scripts/onboarding.test.ts",
     "apps/client-success-cockpit/scripts/csm-interactions.test.tsx",
     "apps/client-success-cockpit/scripts/portal-tasks.test.ts",

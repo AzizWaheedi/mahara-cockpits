@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes, useLocation } from "react-router";
+import { AdBillingReviewPage } from "@/components/AdBillingReview";
 import { AppLayout } from "@/components/AppLayout";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
@@ -49,6 +50,7 @@ export function AuthenticatedRoutes() {
           <Route element={<RoleRoute role="csm" />}>
             {/* Five places (the simplification audit, approved 2026-10-06). */}
             <Route path="/dashboard" element={<TodayPage />} />
+            <Route path="/ad-billing" element={<AdBillingReviewPage />} />
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:key" element={<ClientPage />} />
