@@ -3,15 +3,18 @@
  *
  * Two sources, nothing invented:
  * - The gates are Mahara's locked client KPI gates: CPL < $20 · lead→booking ≥ 25% ·
- *   cost per booking ≤ $80 · show rate ≥ 75% · close rate 20–30% · daily budget floor $30.
+ *   cost per booking ≤ $80 · show rate ≥ 60% (watch below, never the first fix) ·
+ *   close rate 20–30% · daily budget floor $30.
  * - The diagnosis and the fixes are the company's doc "Diagnosing & Fixing Acquisition
  *   Constraints" (macro vs micro, the golden rule, scenarios 3–6, 9, 10).
  *
  * The golden rule is enforced in the output: ONE constraint is flagged "fix this first",
  * everything else is listed as "after that". A client whose gates are all met gets
- * "nothing needs fixing — scale" instead of manufactured work.
+ * "nothing needs fixing — scale" instead of manufactured work. A show rate under the
+ * one client line is a watch item: it sits beside the diagnosis, never in it.
  */
 
+import { SHOW_RATE_GOOD } from "./clientGates";
 import { humanise, humaniseDeep, serviceModel } from "./csmTemplates";
 
 // biome-ignore lint/suspicious/noExplicitAny: profile payloads are untyped by design
@@ -19,7 +22,7 @@ type Any = any;
 
 export const GATES = {
   bookingRate: 25,
-  showRate: 75,
+  showRate: SHOW_RATE_GOOD,
   closeRate: 20,
   cpl: 20,
   costPerBooking: 80,
@@ -43,6 +46,11 @@ export type Diagnosis = {
   /** The one thing to fix first. Undefined only when nothing is out of KPI. */
   top?: Constraint;
   rest: Constraint[];
+  /**
+   * Lines to keep an eye on: never `top`, never in `rest`, never counted. Today
+   * only a show rate under the one client line (Aziz, 2026-10-12).
+   */
+  watch: Constraint[];
   /** True when every gate with enough data behind it is met. */
   healthy: boolean;
   /** Why the ranking came out this way, in one line. */
@@ -103,6 +111,7 @@ function diagnoseRaw(p: Any): Diagnosis {
   const closeRate = pct(closes, shows);
 
   const found: Constraint[] = [];
+  const watch: Constraint[] = [];
 
   // ---- Admin blockers first: without the sheet there is nothing to diagnose. ----
   if (!p?.links?.sheet) {
@@ -200,14 +209,15 @@ function diagnoseRaw(p: Any): Diagnosis {
     });
   }
 
+  // One line for clients, and under it is a watch, never the first fix: bad is
+  // cost per booking or cost per lead (Aziz, 2026-09-21 and 2026-10-12).
   if (showRate != null && decided >= 8 && showRate < GATES.showRate) {
-    found.push({
+    watch.push({
       id: "show_rate",
       layer: "micro",
-      title: `Show rate is ${showRate}% (gate ${GATES.showRate}%)`,
+      title: `Show rate is ${showRate}%, under the ${GATES.showRate}% line`,
       evidence: `${shows} attended out of ${decided} appointments with an outcome over the last two months.`,
-      diagnosis:
-        "Below 70% they are not just losing deals, they are losing 40% of their own selling time to empty slots. This is fixed with confirmation discipline, not more leads.",
+      diagnosis: `${100 - showRate}% of booked slots sat empty; confirmation discipline fixes it, not more leads.`,
       fixes: [
         "Confirm every appointment twice: right after booking, and the morning of.",
         "Same-day or next-day appointments only, the further out the slot, the more no-shows.",
@@ -292,7 +302,7 @@ function diagnoseRaw(p: Any): Diagnosis {
   }
 
   // No em dashes in anything the client reads.
-  for (const c of found)
+  for (const c of [...found, ...watch])
     if (c.say) c.say = { en: humanise(c.say.en), ar: humanise(c.say.ar) };
 
   // Done with you: the client books and tracks their own appointments, so we are not
@@ -328,6 +338,7 @@ function diagnoseRaw(p: Any): Diagnosis {
   return {
     top: ranked[0],
     rest: ranked.slice(1),
+    watch: dwy ? watch.filter(c => !DWY_BLIND.has(c.id)) : watch,
     healthy,
     headline: healthy
       ? dwy

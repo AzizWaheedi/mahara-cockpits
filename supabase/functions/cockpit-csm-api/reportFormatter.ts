@@ -1,4 +1,5 @@
 import {type AdDay,type Appt,type Period,periodOf,periodNumbers,byAdIn} from './reportPeriod.ts';
+import {SHOW_RATE_GOOD} from '../../../apps/client-success-cockpit/src/lib/clientGates.ts';
 // biome-ignore lint/suspicious/noExplicitAny: profile and Docs payloads
 type Any = any;
 
@@ -11,10 +12,13 @@ const BAND = { red: 0xf4 / 255, green: 0xfa / 255, blue: 0xfa / 255 };
 const RULE = { red: 0xdd / 255, green: 0xe2 / 255, blue: 0xe8 / 255 };
 
 
-/** Client KPI gates Aziz locked. Kept in step with the CS app's csmDiagnosis.ts. */
+/**
+ * Client KPI gates Aziz locked. Kept in step with the CS app's csmDiagnosis.ts.
+ * The show rate is not here: it is the one client line, SHOW_RATE_GOOD, read
+ * from the CS app so the two cannot drift (Aziz, 2026-09-21 and 2026-10-12).
+ */
 const GATES = {
   bookingRate: 25,
-  showRate: 75,
   closeRate: 20,
 };
 const EXTRAS = ["lost", "byAd", "appointments", "ads"];
@@ -209,9 +213,9 @@ function constraintsFor(profile: Any): string[] {
     out.push(
       `only ${br}% of enquiries became appointments (target ${GATES.bookingRate}%), speed to lead and follow-up on the client's side, not the ads`,
     );
-  if (sr !== null && shows + noshows >= 8 && sr < GATES.showRate)
+  if (sr !== null && shows + noshows >= 8 && sr < SHOW_RATE_GOOD)
     out.push(
-      `show rate ${sr}% (target ${GATES.showRate}%), book same or next day and confirm twice, once at booking and once the morning of`,
+      `show rate ${sr}%, under our ${SHOW_RATE_GOOD}% line: book same or next day and confirm twice, once at booking and once the morning of`,
     );
   if (cr !== null && shows >= 5 && cr < GATES.closeRate)
     out.push(

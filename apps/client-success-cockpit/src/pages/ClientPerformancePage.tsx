@@ -509,10 +509,17 @@ function DiagnosisSection({ p }: { p: Any }) {
           ))}
         </div>
       )}
+      {d.watch.map(w => (
+        <p key={w.id} className="text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">Watch:</span> {w.title}.{" "}
+          {w.diagnosis} {w.fixes[0]}
+        </p>
+      ))}
       <p className="text-xs text-muted-foreground">
-        Gates: cost per lead under $20 · a quarter of leads booked · 75% of
-        appointments attended · a fifth of attended closed. Fixes come from
-        Diagnosing &amp; Fixing Acquisition Constraints, one leak at a time.
+        Lines: cost per lead under $20 · a quarter of leads booked · 60% of
+        appointments attended (under it is a watch, not a fix) · a fifth of
+        attended closed. Fixes come from Diagnosing &amp; Fixing Acquisition
+        Constraints, one leak at a time.
       </p>
     </section>
   );

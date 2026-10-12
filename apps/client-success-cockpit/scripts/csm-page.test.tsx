@@ -581,8 +581,10 @@ test("diagnosis identifies top constraint and healthy branch correctly", async (
       },
     ],
   });
+  // A show rate under the one client line is a watch, never a constraint.
   const ids = [leak.top, ...leak.rest].map(c => c?.id);
-  expect(ids).toContain("show_rate");
+  expect(ids).not.toContain("show_rate");
+  expect(leak.watch.map(c => c.id)).toEqual(["show_rate"]);
 
   const blind = diagnose({
     clientName: "No Sheet",
@@ -591,6 +593,163 @@ test("diagnosis identifies top constraint and healthy branch correctly", async (
     performance: {},
   });
   expect(blind.top?.id).toBe("no_sheet");
+});
+
+/**
+ * The one client show rate line. Aziz, 2026-10-12: "the show rate metric is
+ * 60%, so anything around that is fine, not 70%". Under it is a quiet watch
+ * line beside the diagnosis: never the first fix, never counted, never bad.
+ */
+function lineClient(
+  shows: number,
+  noshows: number,
+  extra: {
+    leads?: number;
+    booked?: number;
+    closes?: number;
+    service?: string;
+  } = {},
+) {
+  return {
+    clientName: "Line Client",
+    stage: "Active",
+    service: extra.service ?? "DFY",
+    links: { sheet: "https://sheet" },
+    performance: {
+      staleCount: 0,
+      month: {
+        leads: extra.leads ?? 40,
+        booked: extra.booked ?? 20,
+        shows,
+        noshows,
+        closes: extra.closes ?? shows,
+      },
+      lastMonth: {},
+      allTime: { closes: extra.closes ?? 9 },
+    },
+    ads: [
+      {
+        campaign: "c",
+        spend7d: 300,
+        leads7d: 30,
+        adsets: [{ ads: [{ status: "ACTIVE" }] }],
+      },
+    ],
+  };
+}
+
+test("the client show rate line is 60, and under it is a watch, never a fix", async () => {
+  const { diagnose, GATES } = await import("../src/lib/csmDiagnosis");
+  const { SHOW_RATE_GOOD } = await import("../src/lib/clientGates");
+  expect(SHOW_RATE_GOOD).toBe(60);
+  expect(GATES.showRate).toBe(SHOW_RATE_GOOD);
+  const counted = (d: ReturnType<typeof diagnose>) =>
+    [d.top, ...d.rest].map(c => c?.id);
+
+  // 60% on 8 or more decided: on the line, nothing to watch or fix.
+  for (const [shows, noshows] of [
+    [6, 4],
+    [9, 6],
+    [48, 32],
+  ]) {
+    const d = diagnose(lineClient(shows, noshows));
+    expect(d.healthy).toBe(true);
+    expect(d.top).toBeUndefined();
+    expect(d.watch).toEqual([]);
+  }
+
+  // 59%: a watch item, never top, never in rest.
+  const under = diagnose(lineClient(13, 9));
+  expect(under.healthy).toBe(true);
+  expect(under.top).toBeUndefined();
+  expect(under.rest).toEqual([]);
+  expect(under.watch.map(c => c.id)).toEqual(["show_rate"]);
+  expect(under.watch[0].title).toBe("Show rate is 59%, under the 60% line");
+  expect(under.watch[0].diagnosis).toContain("confirmation discipline");
+  expect(under.watch[0].fixes[0]).toMatch(/Confirm every appointment twice/);
+
+  // Only a 50% show rate: nothing needs fixing, plus the watch line.
+  const half = diagnose(lineClient(5, 5));
+  expect(half.healthy).toBe(true);
+  expect(half.top).toBeUndefined();
+  expect(half.headline).toMatch(
+    /^Every gate with enough data behind it is met/,
+  );
+  expect(half.watch[0].title).toBe("Show rate is 50%, under the 60% line");
+  expect(half.watch[0].diagnosis).toBe(
+    "50% of booked slots sat empty; confirmation discipline fixes it, not more leads.",
+  );
+
+  // Under 8 decided is noise: no watch either.
+  expect(diagnose(lineClient(3, 4)).watch).toEqual([]);
+
+  // Beside a real constraint, the show rate still never joins the ranking.
+  const both = diagnose(lineClient(4, 6, { leads: 40, booked: 6 }));
+  expect(both.top?.id).toBe("booking_rate");
+  expect(counted(both)).not.toContain("show_rate");
+  expect(both.watch.map(c => c.id)).toEqual(["show_rate"]);
+
+  // Done with you: they book their own, so there is nothing to watch.
+  expect(diagnose(lineClient(2, 8, { service: "DWY" })).watch).toEqual([]);
+
+  // The macro scenario still counts a show rate under the line as broken.
+  const macro = diagnose(lineClient(5, 5, { leads: 40, booked: 6, closes: 0 }));
+  expect(macro.top?.id).toBe("macro_offer");
+  const notMacro = diagnose(
+    lineClient(6, 4, { leads: 40, booked: 6, closes: 0 }),
+  );
+  expect(counted(notMacro)).not.toContain("macro_offer");
+
+  // No title, diagnosis or line anywhere says 70% or 75%.
+  for (const d of [under, half, both, macro, diagnose(perfFixture.profile)])
+    expect(JSON.stringify(d)).not.toMatch(/7[05]%/);
+});
+
+test("the diagnosis footer says the 60% line and the watch line renders quietly", async () => {
+  const { SHOW_RATE_GOOD } = await import("../src/lib/clientGates");
+  const diagnosisText = (text: string) =>
+    text.slice(
+      text.indexOf("What is holding this client back"),
+      text.indexOf("Constraints, one leak at a time.") + 32,
+    );
+  profileDeferred = null;
+  try {
+    const page = diagnosisText(
+      await renderSection("client", `/clients/${GREYSTONE}`),
+    );
+    expect(page).toContain(
+      `${SHOW_RATE_GOOD}% of appointments attended (under it is a watch, not a fix)`,
+    );
+    expect(page).not.toMatch(/7[05]%/);
+    // The fixture sits on the line (9 of 15), so there is nothing to watch.
+    expect(page).not.toContain("Watch:");
+
+    const base = perfFixture.profile;
+    profileDeferred = createDeferred<any>();
+    profileDeferred.resolve({
+      ...base,
+      performance: {
+        ...base.performance,
+        staleCount: 0,
+        lastMonth: {
+          ...base.performance.lastMonth,
+          shows: 5,
+          noshows: 5,
+          closes: 2,
+        },
+      },
+    });
+    const watched = diagnosisText(
+      await renderSection("client", `/clients/${GREYSTONE}`),
+    );
+    expect(watched).toContain(
+      "Watch: Show rate is 50%, under the 60% line. 50% of booked slots sat empty; confirmation discipline fixes it, not more leads.",
+    );
+    expect(watched).not.toContain("Fix this first");
+    expect(watched).not.toMatch(/7[05]%/);
+  } finally {
+    profileDeferred = null;
+  }
 });
 
 test("the onboarding spine maps days and handles out-of-range boundaries", () => {
