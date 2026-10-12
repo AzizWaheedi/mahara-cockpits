@@ -9,7 +9,10 @@ def check_worker(ctx,key,label):
         return Result(NOT_DEPLOYED, f'{label} have not been installed.')
     row = rows[0]
     age = age_min(row.get('last_run_at'), ctx.now)
-    if age is None or not 0 <= age <= 10:
+    # ctx.now is the start of the full guardian scan. A worker can finish
+    # while earlier checks run, making a valid fresh heartbeat slightly
+    # newer than that clock. Reject large future skew, not normal overlap.
+    if age is None or not -5 <= age <= 10:
         return fail(f'{label} have no current heartbeat.', urgent=True)
     try:
         detail = json.loads(row.get('note') or '{}')
