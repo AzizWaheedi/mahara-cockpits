@@ -373,14 +373,55 @@ function Chat({
   );
 }
 
+/** Words that say nothing about which client a chat belongs to. */
+const NOT_A_NAME = new Set([
+  "mahara",
+  "media",
+  "company",
+  "co",
+  "llc",
+  "wll",
+  "est",
+  "the",
+  "and",
+  "of",
+  "for",
+  "group",
+  "شركة",
+  "مؤسسة",
+]);
+
+const words = (s: string) =>
+  s
+    .toLowerCase()
+    .normalize("NFKC")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(w => w.length >= 3 && !NOT_A_NAME.has(w));
+
+/**
+ * How surely a chat is named after the client: client groups are named
+ * "Mahara | <client>". 2 when every distinctive word of the client's name is
+ * in it, 1 when only the first one (4 letters or more) is, as with a long
+ * legal name, 0 otherwise.
+ */
+export function namedAfter(chat: string, client: string): 0 | 1 | 2 {
+  const want = words(client);
+  if (!want.length) return 0;
+  const have = new Set(words(chat));
+  if (want.every(w => have.has(w))) return 2;
+  return want[0].length >= 4 && have.has(want[0]) ? 1 : 0;
+}
+
 function CandidateRow({
   c,
   onLink,
   busy,
+  named = 0,
 }: {
   c: LinkCard;
   onLink: () => void;
   busy: boolean;
+  named?: 0 | 1 | 2;
 }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -395,9 +436,13 @@ function CandidateRow({
           ? "Their GoHighLevel contact"
           : c.match === "phone"
             ? "Same phone number"
-            : c.lastAt
-              ? `Active ${kuwaitWhen(c.lastAt)}`
-              : null}
+            : named
+              ? named === 2
+                ? "Named after them"
+                : "Has their name in it"
+              : c.lastAt
+                ? `Active ${kuwaitWhen(c.lastAt)}`
+                : null}
         {c.linkedElsewhere ? ", linked to another client" : ""}
       </span>
       <button
@@ -499,7 +544,11 @@ function LinkChat({
       </div>
     );
 
-  const groups = allGroups ? found.groups : found.groups.slice(0, 6);
+  // A group named after the client goes first; the rest are by last activity.
+  const sorted = [...found.groups].sort(
+    (a, b) => namedAfter(b.name, clientName) - namedAfter(a.name, clientName),
+  );
+  const groups = allGroups ? sorted : sorted.slice(0, 6);
   return (
     <div className="space-y-4">
       {found.note ? (
@@ -538,6 +587,7 @@ function LinkChat({
                   <CandidateRow
                     key={c.threadId}
                     c={c}
+                    named={namedAfter(c.name, clientName)}
                     busy={busy !== null}
                     onLink={() => void link(c)}
                   />
