@@ -21,6 +21,7 @@ export interface Delivery {
 	body: string;
 	claim: string;
 	review_id?: string | null;
+	review_state?: "pending" | "approved" | "denied" | "expired" | null;
 	slack_update_ts?: string | null;
 	state: string;
 }
@@ -269,7 +270,7 @@ export class Transport {
 							.replace(/</g, "&lt;")
 							.replace(/>/g, "&gt;"),
 						...(d.slack_update_ts ? { ts: d.slack_update_ts } : { client_msg_id: d.id }),
-						...(d.review_id ? { blocks: billingBlocks(d, body) } : {}),
+						blocks: d.review_id ? billingBlocks(d, d.body) : [],
 						unfurl_links: false,
 						unfurl_media: false,
 					}),
@@ -378,11 +379,11 @@ export function billingBlocks(d: Delivery, text: string) {
  const url = `${BILLING_REVIEW_URL}?binding=${encodeURIComponent(d.binding_id)}`;
  return [
   { type: "section", text: { type: "plain_text", text: text.slice(0, 2900) } },
-  { type: "actions", elements: [
+  ...(d.review_state === "pending" ? [{ type: "actions", elements: [
    { type: "button", text: { type: "plain_text", text: "Approve / موافقة" }, url: `${url}&mode=approve` },
    { type: "button", text: { type: "plain_text", text: "Edit / تعديل" }, url: `${url}&mode=edit` },
    { type: "button", text: { type: "plain_text", text: "Deny / رفض" }, url: `${url}&mode=deny` },
-  ] },
+  ] }] : []),
   { type: "context", elements: [{ type: "mrkdwn", text: `<${url}|Open secure review> · Opening a link does not send a message.` }] },
  ];
 }

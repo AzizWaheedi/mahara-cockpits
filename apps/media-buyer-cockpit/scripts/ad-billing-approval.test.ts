@@ -20,7 +20,7 @@ async function acceptedSlack() {
 }
 beforeAll(async()=>{
  db=await cockpitTestDb({supabaseDefaultPrivileges:true});
- for(const name of ["20261011174920_ad_billing_guard.sql","20261011192500_ad_billing_roster_safe_update.sql","20261012110708_ad_billing_approval.sql","20261012114355_ad_billing_shared_reviewers.sql","20261012115521_ad_billing_quiet_slack_cards.sql"]) await db.exec(migration(name));
+ for(const name of ["20261011174920_ad_billing_guard.sql","20261011192500_ad_billing_roster_safe_update.sql","20261012110708_ad_billing_approval.sql","20261012114355_ad_billing_shared_reviewers.sql","20261012115521_ad_billing_quiet_slack_cards.sql","20261012120601_ad_billing_close_slack_review.sql"]) await db.exec(migration(name));
  await member(db,uid,"csm@example.test",["csm"]); await member(db,buyer,"buyer@example.test",["media_buyer"]);
 });
 afterAll(async()=>await db?.close());
@@ -128,14 +128,14 @@ test("daily review records attention without sending or clearing pending clients
 test("opening/readback of review is read-only; links never include action tokens",async()=>{
  await observe();await actor(db,uid);await scalar("select cockpit_ad_billing_review_panel()");await scalar("select cockpit_ad_billing_review_panel()");
  await owner(db);expect((await review()).state).toBe("pending");
- const d={id:claim,binding_id:bid,review_id:uid,revision:1,channel:"slack",destination:"C09RZ0GS0V9",body:"Review",claim,state:"queued"} as Delivery;
+ const d={id:claim,binding_id:bid,review_id:uid,review_state:"pending",revision:1,channel:"slack",destination:"C09RZ0GS0V9",body:"Review",claim,state:"queued"} as Delivery;
  const blocks=billingBlocks(d,"Safe preview");
  for(const e of (blocks[1] as any).elements) {expect(e.url).toContain("/client-success/ad-billing?binding=");expect(e.url).not.toContain("action=");}
 });
 test("Slack updates use chat.update and keep safe URL review buttons",async()=>{
  let body:any;let url="";
  const t=new Transport({SLACK_BOT_TOKEN:"test"},(async(u,i)=>{url=String(u);body=JSON.parse(i!.body as string);return Response.json({ok:true,ts:"1791800000.001"});}) as typeof fetch);
- await t.send({id:claim,binding_id:bid,review_id:uid,revision:1,channel:"slack",destination:"C09RZ0GS0V9",body:"Review",claim,state:"sending",slack_update_ts:"1791800000.001"});
+ await t.send({id:claim,binding_id:bid,review_id:uid,review_state:"pending",revision:1,channel:"slack",destination:"C09RZ0GS0V9",body:"Review",claim,state:"sending",slack_update_ts:"1791800000.001"});
  expect(url).toEndWith("chat.update");expect(body.ts).toBe("1791800000.001");expect(body.client_msg_id).toBeUndefined();expect(body.blocks[1].elements).toHaveLength(3);
 });
 test("two competing decisions commit exactly one intent",async()=>{
@@ -201,4 +201,52 @@ test("a genuinely new incident may notify again only after the 72-hour budget",a
  await db.exec("update cockpit_ad_billing_deliveries set state='accepted',provider_id=slack_update_ts where channel='slack' and state='queued' and slack_update_ts is not null");
  await observe("unsettled");
  expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='slack' and state='queued' and slack_update_ts is null")).toBe(2);
+});
+
+
+test("closed and unknown reviews have no Slack decision buttons",()=>{
+ const d={id:claim,binding_id:bid,review_id:uid,revision:1,channel:"slack",destination:"C09RZ0GS0V9",body:"Approved",claim,state:"sending"} as Delivery;
+ for(const state of ["approved","denied","expired",null,undefined] as const) {
+  const blocks=billingBlocks({...d,review_state:state},d.body);
+  expect(blocks.some(b=>b.type==="actions")).toBe(false);
+  expect(JSON.stringify(blocks)).not.toContain("mode=");
+  expect(JSON.stringify(blocks)).toContain("Open secure review");
+ }
+ expect(billingBlocks({...d,review_state:"pending"},d.body).filter(b=>b.type==="actions")).toHaveLength(1);
+});
+
+test("closed Slack updates replace old actions in both channels without posting again",async()=>{
+ const requests:any[]=[];
+ const t=new Transport({SLACK_BOT_TOKEN:"test"},(async(u,i)=>{requests.push({url:String(u),body:JSON.parse(i!.body as string)});return Response.json({ok:true,ts:"1791800000.001"});}) as typeof fetch);
+ for(const destination of ["C09RZ0GS0V9","C0AF4SDLWNL"]) {
+  await t.send({id:claim,binding_id:bid,review_id:uid,review_state:"approved",revision:1,channel:"slack",destination,body:"Approved · queued",claim,state:"sending",slack_update_ts:"1791800000.001"});
+ }
+ for(const req of requests) {
+  expect(req.url).toEndWith("chat.update");expect(req.body.blocks.some((b:any)=>b.type==="actions")).toBe(false);
+  expect(req.body.text).toContain("Reference: BG-");expect(JSON.stringify(req.body.blocks)).not.toContain("Reference: BG-");
+ }
+ await t.send({id:claim,binding_id:bid,revision:1,channel:"slack",destination:"C09RZ0GS0V9",body:"Internal follow-up only",claim,state:"sending",slack_update_ts:"1791800000.001"});
+ expect(requests[2].body.blocks).toEqual([]);
+});
+
+for(const who of [uid,buyer]) test(`first reviewer ${who} closes both cards and the claim carries current state`,async()=>{
+ await observe();await acceptedSlack();const r=await review();await actor(db,who);
+ await scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id]);
+ await actor(db,who===uid?buyer:uid);await expect(scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id])).rejects.toThrow("review changed");
+ await owner(db);
+ expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='whatsapp'")).toBe(1);
+ expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='slack' and state='queued' and slack_update_ts is not null")).toBe(2);
+ // Consume only fictional local claims; no provider requests occur in this test.
+ const claimed:any[]=[];
+ for(let i=0;i<5;i++) {const d=await scalar("select cockpit_ad_billing_claim($1)",[claim]);if(d)claimed.push(d);}
+ const cards=claimed.filter(d=>d.channel==="slack");expect(cards).toHaveLength(2);
+ expect(new Set(cards.map(d=>d.destination)).size).toBe(2);
+ for(const d of cards) {expect(d.review_state).toBe("approved");expect(billingBlocks(d,d.body).some(b=>b.type==="actions")).toBe(false);}
+});
+
+test("denial closes both channel cards without a send intent",async()=>{
+ await observe();await acceptedSlack();await decide("deny",null,"Client has already been notified");await owner(db);
+ expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='whatsapp'")).toBe(0);
+ const cards:any[]=[];for(let i=0;i<4;i++){const d=await scalar("select cockpit_ad_billing_claim($1)",[claim]);if(d?.channel==="slack")cards.push(d);}
+ expect(cards).toHaveLength(2);for(const d of cards){expect(d.review_state).toBe("denied");expect(billingBlocks(d,d.body).some(b=>b.type==="actions")).toBe(false);}
 });

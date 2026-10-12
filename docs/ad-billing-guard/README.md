@@ -1,8 +1,8 @@
 # Ad billing watch
 
-Status: approval rollout prepared on 12 October 2026 for 16 verified Active clients. Both apply switches stay off until matching SQL and both frontends are verified; see the shared project record for activation evidence. The five-minute source worker, guardian and independent watchdog continue.
+Status: shared approval is live as of 12 October 2026 for 16 verified Active clients. Both apply switches are enabled after SQL, both frontends and provider readback were verified. Activation posted seven CSM cards and edited seven existing media cards, with no new client WhatsApp or ClickUp comments. The five-minute source worker, guardian and independent watchdog continue. See the shared project record for current release evidence.
 
-This service checks Meta billing for explicitly enrolled clients. It requires a current Active status on the exact Clients task before each message. It posts a review to private CSM general and media announcements and records observations on both ClickUp task types. Client WhatsApp requires approval from either the CSM or media buyer. The first decision closes the review for both; denial requires a reason. New Slack posts and client messages each have a rolling 72-hour cap. Unresolved incidents keep the same compact card, even after 72 hours. Only a genuinely new incident can post again after that limit.
+This service checks Meta billing for explicitly enrolled clients. It requires a current Active status on the exact Clients task before each message. It posts a review to private CSM general and media announcements and records observations on both ClickUp task types. Client WhatsApp requires approval from either the CSM or media buyer. The first decision closes the review for both; denial requires a reason. Both Slack cards lose their decision buttons on the next worker update, normally within five minutes. Duplicate approval is blocked immediately in the database, including stale links or simultaneous clicks. The status and audit record remain visible. New Slack posts and client messages each have a rolling 72-hour cap. Unresolved incidents keep the same compact card, even after 72 hours. Only a genuinely new incident can post again after that limit.
 
 ## What it can detect
 
@@ -67,6 +67,7 @@ Save the scenario revision and test evidence in `manual_cutover_evidence`. A Boo
 - `hermes/cockpit-guardian/checks/ad_billing.py`: independent stale-worker, coverage and failed-delivery detection. The guardian uses its existing alert path; it never retries a client message.
 - `apps/media-buyer-cockpit/scripts/ad-billing-guard.test.ts`: 35 tests against the real SQL in isolated PostgreSQL and synthetic provider transports.
 - `apps/media-buyer-cockpit/scripts/ad-billing-watchdog.test.ts`: 7 independent-watchdog tests.
+- `apps/media-buyer-cockpit/scripts/ad-billing-approval.test.ts`: 32 approval, access, cooldown, race and two-channel card tests.
 - Guardian regression suite: 314 tests with Python 3.11 or later.
 - App production build and worker TypeScript check pass.
 - Desktop 1280 px and phone 390 px previews pass overflow and Arabic-digit checks. These are synthetic previews, not delivery tests.
