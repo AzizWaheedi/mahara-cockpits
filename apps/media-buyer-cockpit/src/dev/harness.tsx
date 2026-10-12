@@ -31,6 +31,7 @@ import { ThemeProvider as LibThemeProvider } from "@/lib/theme";
 import { AdminPage } from "@/pages/AdminPage";
 import { CeoPage } from "@/pages/CeoPage";
 import { AdsPage, EndOfDayPage, TodayPage } from "@/pages/CockpitPage";
+import { DataViewPage } from "@/pages/data/DataViewPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PlaybookPage } from "@/pages/PlaybookPage";
 import { SettingsPage } from "@/pages/SettingsPage";
@@ -40,6 +41,7 @@ import "@/index.css";
 import { getCockpitSupabaseClient } from "@/auth/SupabaseAuthProvider";
 import { installCeoHarness } from "./ceoHarness";
 import { setFixtures } from "./convexStub";
+import { installDataViewHarness } from "./dataViewHarness";
 import { installHoursHarness } from "./hoursHarness";
 import { portalFixtures } from "./portalFixtures";
 import { webinarTargetsFixtures } from "./webinarTargetsFixture";
@@ -56,6 +58,8 @@ async function main() {
   installHoursHarness(getCockpitSupabaseClient());
   // The CEO sections, actions and the proposals card (ceoHarness.ts).
   installCeoHarness(getCockpitSupabaseClient());
+  // The data view (?path=/data&reads=1): made-up rows after a delay.
+  installDataViewHarness(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
     // Optional since the cutover: the CEO tabs that still read them show
     // their empty states without.
@@ -113,6 +117,7 @@ async function main() {
                   }
                 />
                 <Route path="/admin" element={<AdminPage />} />
+                <Route path="/data" element={<DataViewPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/ceo" replace />} />
               </Route>
