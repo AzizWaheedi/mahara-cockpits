@@ -197,9 +197,13 @@ def process_action(db,api,row):
                 if len(links)!=1 or links[0]['flow_source_url']!=cut(task):finish(db,row,'skipped');return
                 decisions=api.rows('review_items','select=decision&token=eq.'+urllib.parse.quote(links[0]['token']))
                 if len(decisions)!=1 or decisions[0]['decision']!='approved':finish(db,row,'skipped');return
-            jobs=api.rows('editor_jobs','select=client_task_id,client&task_id=eq.'+task['id'])
+            jobs=api.rows('editor_jobs','select=client_task_id&task_id=eq.'+task['id'])
             if len(jobs)!=1 or not jobs[0]['client_task_id']:raise ValueError('Approved video client mapping is missing')
-            mentions=api.roles('media_buyer',jobs[0]['client']);channel=BUYERS
+            clients=api.rows('editor_clients','select=name&task_id=eq.'+urllib.parse.quote(jobs[0]['client_task_id']))
+            if len(clients)!=1 or not clients[0]['name']:raise ValueError('Approved video client card is unavailable')
+            # The first video tag can be an alias or production label. Scope
+            # the buyer against the resolved client card, as the staff RPC does.
+            mentions=api.roles('media_buyer',clients[0]['name']);channel=BUYERS
             text='*Client approved: ready to launch*\n'+assignment.escape(task['name'])+'\n'+' '.join('<@'+x+'>' for x in mentions)+'\nLaunch the approved cut, then move this task to Live after the ad is running.'
         payload=slack_payload(row,task,channel,text,buttons)
     else:
