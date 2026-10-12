@@ -83,6 +83,8 @@ const readSchema = z.object({
   bookingsReady: z.boolean(),
   coverage: z.object({ first: day.nullable(), last: day.nullable() }),
   feedFirst: day.nullable(),
+  // The last imported day, from 20261012d. Older reads lack it.
+  feedLast: day.nullish().transform(v => v ?? undefined),
   campaigns: z.array(
     z.object({
       name: z.string().min(1),
@@ -438,7 +440,11 @@ export function buildAdsModel(
     ? kuwaitDay(Date.parse(read.statsAt))
     : read.end;
   const to = period.to > today ? today : period.to;
-  const dataTo = statsDay < to ? statsDay : to;
+  // Statistics arrive through the day before the import, so a day after the
+  // last imported one is not in yet: it ends the period, never a zero.
+  const lastIn =
+    read.feedLast && read.feedLast < statsDay ? read.feedLast : statsDay;
+  const dataTo = lastIn < to ? lastIn : to;
   const feedFirst = read.feedFirst ?? undefined;
   const dataFrom = feedFirst && feedFirst > read.start ? feedFirst : read.start;
   const inPeriod = (d: string) => d >= dataFrom && d <= dataTo;

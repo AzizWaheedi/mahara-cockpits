@@ -375,6 +375,28 @@ describe("the chart", () => {
     expect(m.cut).toBe(true);
     expect(m.dataFrom).toBe("2026-08-13");
   });
+
+  test("a day after the last imported one ends the period, not a zero", () => {
+    const r = read({
+      start: "2026-10-10",
+      end: "2026-10-12",
+      feedLast: "2026-10-11",
+    });
+    const m = buildAdsModel(r, { from: "2026-10-10", to: "2026-10-12" }, NOW);
+    expect(m.dataTo).toBe("2026-10-11");
+    const s = chartSeries(m, { level: "all" }, "leads");
+    expect(s.points.map(p => p.key)).toEqual(["2026-10-10", "2026-10-11"]);
+  });
+
+  test("a period with no imported day yet is empty", () => {
+    const r = read({
+      start: "2026-10-12",
+      end: "2026-10-12",
+      feedLast: "2026-10-11",
+    });
+    const m = buildAdsModel(r, { from: "2026-10-12", to: "2026-10-12" }, NOW);
+    expect(m.dataTo < m.dataFrom).toBe(true);
+  });
 });
 
 describe("reads and links", () => {
