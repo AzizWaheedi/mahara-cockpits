@@ -132,7 +132,7 @@ export function TrendChart({
   return (
     <div className="min-w-0 rounded-2xl border bg-card p-4">
       <div className="flex items-baseline justify-between gap-2">
-        <div className="min-w-0 truncate font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+        <div className="min-w-0 truncate text-xs text-muted-foreground">
           {title}
         </div>
         <div className="flex shrink-0 items-baseline gap-2 text-sm">
