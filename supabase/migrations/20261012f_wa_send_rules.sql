@@ -13,9 +13,11 @@
 --     never reached GoHighLevel, do not count): 20 per person and 5 per chat
 --     in any 10 minutes.
 --  c. Client messages never quote leads or cost per lead: English "lead",
---     "leads", "CPL", "cost per lead" as whole words; Arabic ليد, ليدز, ليدات
---     with the usual attached prefixes (ال, ب, ك, ل, و/ف before those), and
---     "عملاء محتملين". The name وليد and words like تقليدي do not match.
+--     "leads", "CPL", "CPLs", "cost per lead" as whole words; Arabic ليد,
+--     ليدز, ليدات with the usual attached prefixes (ال, لل, ب, ك, ل, و/ف
+--     before those) and possessive endings (ليدكم, ليداتكم, ليدزهم...), and
+--     "عملاء محتملين". The name وليد and words like تقليدي, مواليد, ليدي
+--     ("lady", so ي is not an ending), leadership and mislead do not match.
 --  The ceilings and the wording rule hold for every desk, because they protect
 --  the one WhatsApp number and its clients. The client gate is client success
 --  only. The media buyer and creative desks have no connected number today.
@@ -72,7 +74,7 @@ BEGIN
   SELECT t.client_task_id INTO task FROM public.wa_threads t WHERE t.id=p_thread;
   IF task IS NOT NULL THEN PERFORM public.cockpit_csm_client_gate(task);END IF;
  END IF;
- IF p_body ~* '(^|[^ء-ي٠-٩A-Za-z0-9_])([وف]?(ال|[بكل]|[بك]ال))?ليد(ز|ات)?($|[^ء-ي٠-٩A-Za-z0-9_])|(ال)?عملاء\s+(ال)?محتمل(ين|ون)|\mleads?\M|\mcpl\M|\mcost\s+per\s+lead\M' THEN
+ IF p_body ~* '(^|[^ء-ي٠-٩A-Za-z0-9_])([وف]?(ال|لل|[بكل]|[بك]ال))?ليد(ز|ات)?(كم|كن|هم|هن|ها|ه|نا|ك)?($|[^ء-ي٠-٩A-Za-z0-9_])|(ال)?عملاء\s+(ال)?محتمل(ين|ون)|\mleads?\M|\mcpls?\M|\mcost\s+per\s+lead\M' THEN
   RAISE EXCEPTION 'Client messages never quote leads or cost per lead. Say how the campaign is doing, or count appointments for clients we book for.';
  END IF;
  IF NOT p_apply THEN

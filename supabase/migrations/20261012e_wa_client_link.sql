@@ -13,7 +13,8 @@
 --    client's chat. A chat linked to another client is unlinked there first.
 --    Applying writes one cockpit_audit_log row (entity_type wa_thread_link)
 --    whose metadata keeps the request ID, so a retried request returns its
---    first outcome and a reused ID with other inputs is refused.
+--    first outcome (before the chat check, so a limited seat's retried unlink
+--    still answers) and a reused ID with other inputs is refused.
 -- 2. cockpit_csm_wa_link_candidates lists what could be linked. GoHighLevel's
 --    contact for a client is found by the cockpit (checkIns.contact, Client ID
 --    field Csj6vsVH3wSRseT3OkMU), not by the database, so the browser passes
@@ -35,7 +36,8 @@ BEGIN
  PERFORM public.cockpit_wa_actor('client-success');
  gate:=public.cockpit_csm_client_gate(p_task_id);
  IF p_request_id IS NULL OR p_apply IS NULL OR p_unlink IS NULL THEN RAISE EXCEPTION 'Retain the original link request ID';END IF;
- PERFORM public.cockpit_wa_context(auth.uid(),'client-success',p_thread,true);
+ -- A retry returns its first outcome before the chat check: an applied unlink
+ -- takes the chat out of a limited seat's reach, so the check would refuse it.
  IF p_apply THEN
   PERFORM pg_advisory_xact_lock(hashtextextended('wa-link:'||p_request_id::text,0));
   SELECT * INTO prior FROM public.cockpit_audit_log a WHERE a.entity_type='wa_thread_link' AND a.metadata->>'requestId'=p_request_id::text ORDER BY a.created_at LIMIT 1;
@@ -43,8 +45,9 @@ BEGIN
    IF prior.metadata->>'actorId' IS DISTINCT FROM auth.uid()::text OR prior.entity_id IS DISTINCT FROM p_thread OR prior.metadata->>'taskId' IS DISTINCT FROM p_task_id OR (prior.metadata->>'unlink')::boolean IS DISTINCT FROM p_unlink THEN RAISE EXCEPTION 'Link ID already used for different inputs';END IF;
    RETURN prior.metadata->'outcome';
   END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended('wa-thread:'||p_thread,0));
  END IF;
+ PERFORM public.cockpit_wa_context(auth.uid(),'client-success',p_thread,true);
+ IF p_apply THEN PERFORM pg_advisory_xact_lock(hashtextextended('wa-thread:'||p_thread,0));END IF;
  SELECT * INTO t FROM public.wa_threads WHERE id=p_thread FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'The WhatsApp thread is unavailable';END IF;
  IF p_unlink AND t.client_task_id IS DISTINCT FROM p_task_id THEN RAISE EXCEPTION 'This chat is not linked to this client';END IF;

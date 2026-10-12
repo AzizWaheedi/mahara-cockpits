@@ -79,6 +79,16 @@ describe('20261012e: linking chats to clients',()=>{
   expect(await count("SELECT count(*)::int n FROM wa_threads WHERE id='thread-one' AND client_task_id IS NULL")).toBe(1);
   expect(await count("SELECT count(*)::int n FROM cockpit_audit_log WHERE entity_type='wa_thread_link' AND action='wa_thread_unlink' AND after->>'client_task_id' IS NULL")).toBe(1);
  });
+ test('a limited seat retrying its applied unlink gets the first outcome, though the chat is now out of its reach',async()=>{
+  const args={p_thread:'thread-one',p_task_id:'cu-alpha',p_request_id:randomUUID(),p_apply:true,p_unlink:true};
+  await actor(db,UID);const first=await rpc('cockpit_wa_link_thread',args);
+  expect(first).toMatchObject({ok:true,linked:false,changed:true});
+  await actor(db,UID);expect(await rpc('cockpit_wa_link_thread',args)).toEqual(first);
+  await actor(db,UID);await expect(rpc('cockpit_wa_link_thread',{...args,p_unlink:false})).rejects.toThrow('different inputs');
+  await actor(db,UID);await expect(rpc('cockpit_wa_link_thread',{...args,p_request_id:randomUUID()})).rejects.toThrow('client mapping');
+  await actor(db,OTHER);await expect(rpc('cockpit_wa_link_thread',args)).rejects.toThrow('access list');
+  expect(await count("SELECT count(*)::int n FROM cockpit_audit_log WHERE entity_type='wa_thread_link'")).toBe(1);
+ });
  test('a seat limited to some clients cannot claim another chat, and other clients and anonymous callers are refused',async()=>{
   await actor(db,UID);await expect(rpc('cockpit_wa_link_thread',{p_thread:'thread-two',p_task_id:'cu-alpha',p_request_id:randomUUID(),p_apply:true})).rejects.toThrow('client mapping');
   await actor(db,UID);await expect(rpc('cockpit_wa_link_thread',{p_thread:'thread-two',p_task_id:'cu-beta',p_request_id:randomUUID()})).rejects.toThrow('access list');
@@ -132,11 +142,11 @@ describe('20261012f: send rules',()=>{
   return rpc('cockpit_wa_reply_begin',{p_app:'client-success',p_thread:thread,p_body:body,p_context_key:contextKey,p_request_id:opts.id??randomUUID(),p_apply:opts.apply??false});
  }
  test('lead and cost-per-lead wording is refused in English and Arabic, before anything is stored',async()=>{
-  for(const body of ['We got 12 leads this week','Your CPL is 3 KWD','Cost per lead dropped','Lead quality is up','عدد الليدز اليوم ١٢','جبنا ليد جديد','عندكم عملاء محتملين كثير','وصلنا للعملاء المحتملين']){
+  for(const body of ['We got 12 leads this week','Your CPL is 3 KWD','Cost per lead dropped','Lead quality is up','عدد الليدز اليوم ١٢','جبنا ليد جديد','عندكم عملاء محتملين كثير','وصلنا للعملاء المحتملين','ليداتكم هالشهر ٤٠','ليدكم زاد','ليدزكم أحسن','وصلكم ٣٠ للليد','CPLs dropped']){
    await expect(begin(UID,body)).rejects.toThrow('Client messages never quote leads or cost per lead. Say how the campaign is doing, or count appointments for clients we book for.');
    await expect(begin(UID,body,{apply:true})).rejects.toThrow('never quote leads');
   }
-  for(const body of ['هلا وليد، الحملة شغالة','Leadership call tomorrow','Four appointments booked today','الطريقة التقليدية'])expect(await begin(UID,body)).toEqual({ok:false,dryRun:true});
+  for(const body of ['هلا وليد، الحملة شغالة','Leadership call tomorrow','Four appointments booked today','الطريقة التقليدية','شغل تقليدي','مواليد الشهر','ليدي غاغا','Good leadership','Nothing here should mislead you'])expect(await begin(UID,body)).toEqual({ok:false,dryRun:true});
   expect(await count('SELECT count(*)::int n FROM cockpit_wa_reply_intents')).toBe(0);
  });
  test('a linked chat needs client success access to its client; an unlinked chat keeps the full-scope rule',async()=>{
