@@ -1,5 +1,11 @@
 import { Download, RefreshCw, Search } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useSearchParams } from "react-router";
 import { toast as notify } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
@@ -313,6 +319,10 @@ export function DataViewPage() {
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
   );
+  // The pill moves at once; the sheet redraws in the background, like the
+  // CEO kit's DataTable search, so the click never waits for the cells.
+  const gridView = useDeferredValue(view);
+  const gridDensity = useDeferredValue(density);
   const [selected, setSelected] = useState<string | null>(null);
 
   const summary = useSummary(client, actor, { location, days });
@@ -778,8 +788,8 @@ export function DataViewPage() {
                 <SheetGrid
                   key={rows.key ?? "none"}
                   kind={rows.kind}
-                  view={view}
-                  density={density}
+                  view={gridView}
+                  density={gridDensity}
                   rows={rows.rows}
                   now={now}
                   selected={selected}

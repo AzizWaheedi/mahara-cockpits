@@ -132,6 +132,7 @@ Work in a fresh worktree from `origin/main`. Local `main` is 581 commits behind 
 3. Build approved, revision 3 layout confirmed, migration and release approved.
 4. Admins only (CEO passes the same gate). Entry points in both cockpits and on each client page.
 5. 2026-10-12: switching tabs and filters felt like opening another page. The page now follows the cockpit's own mechanics: it sits in the shell, uses `CeoTabs` and `FilterChips`, keeps the rows on screen while the next ones load, remembers answers for a minute, fetches the other tab and chips ahead, and gives the sheet one fixed window height. Harness: `bun run harness`, then `/harness.html?path=/data&reads=1&delay=600` (made-up rows).
+6. 2026-10-12: Muhammed found the page froze the laptop, mostly on "Key columns" / "All sheet columns". Measured on production: each switch blocked the page for 60 to 130 ms (3,300 cells for 14 visible rows), and four endless loading animations on hidden elements (the busy bar, the closed side panel's placeholders) kept the browser redrawing while idle. Fix: `SheetGrid` draws only the rows in the sheet window (plus 10 above and below, placed in the scroll handler), rows and the grid are memoized, the columns and row-size switches redraw in the background (`useDeferredValue`), and the animations run only while visible. Harness: 10 to 16 ms per switch, no long tasks, 218 to 772 cells, no animation while idle.
 
 ## Not in v1
 
