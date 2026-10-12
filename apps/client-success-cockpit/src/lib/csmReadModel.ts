@@ -199,8 +199,13 @@ export function buildCsmReadModel(
       return {
         ...c,
         ...patch,
+        // The ClickUp id first: two clients can share a name, a task cannot.
         profile:
-          clientProfiles.find(p => norm(p.clientName) === norm(c.name)) ?? null,
+          (c.taskId
+            ? clientProfiles.find(p => p.taskId && p.taskId === c.taskId)
+            : undefined) ??
+          clientProfiles.find(p => norm(p.clientName) === norm(c.name)) ??
+          null,
         staffProfile: edits ?? null,
         hotBlocked: hotUsed.has(norm(c.name)),
         loose: visibleLooseEnds(state, c.name, c.loose),
