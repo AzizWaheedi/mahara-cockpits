@@ -161,6 +161,7 @@ mock.module("@/lib/useCsmSnapshot", () => ({
     saveMoneyGoals: async () => {},
   }),
   kuwaitToday: () => "2026-10-06",
+  CLICKUP_ACT_KINDS: new Set(["stage", "happiness"]),
   fetchDailyChecksRpc: async () => [],
   executeToggleCheck: async () => {},
   executeSubmitEod: async () => {},

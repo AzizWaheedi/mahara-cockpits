@@ -91,7 +91,11 @@ import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
 import { portalUrl } from "@/lib/portal";
 import { fold, matchScore } from "@/lib/search";
-import { kuwaitToday, useCsmSnapshot } from "@/lib/useCsmSnapshot";
+import {
+  CLICKUP_ACT_KINDS,
+  kuwaitToday,
+  useCsmSnapshot,
+} from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
 import { BacklogPage } from "./BacklogPage";
 import {
@@ -1472,14 +1476,17 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     setTicketNote("");
     // The message panel stays open: it asks for the next call once logged.
     if (panel !== "message" && panel !== "update") setPanel(null);
-    // Only a ticket goes to ClickUp from here, and only once the ClickUp log
-    // delivers it: the ticket list shows when it lands.
+    // Stage and happiness are on the client's ClickUp card once act returns.
+    // A ticket reaches its team through the ClickUp log: the ticket list shows
+    // when it lands. Everything else stays in the cockpit.
     toast.success(
-      kind === "ticket"
-        ? "Request saved. It shows as landed once it is on the team's board."
-        : kind === "left"
-          ? "Left, with a reason logged"
-          : "Saved in the cockpit",
+      CLICKUP_ACT_KINDS.has(kind)
+        ? "Saved, ClickUp updated"
+        : kind === "ticket"
+          ? "Request saved. It shows as landed once it is on the team's board."
+          : kind === "left"
+            ? "Left, with a reason logged"
+            : "Saved in the cockpit",
     );
   };
 
