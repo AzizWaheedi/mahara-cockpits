@@ -166,8 +166,10 @@ Rules:
 - Write in the requested language, and in Gulf Arabic if that is Arabic, not formal translation Arabic.
 
 Return JSON with:
-- "means": 2 to 4 sentences for the client explaining what the numbers say, including the single biggest leak.
-- "next": 3 to 5 short lines: what Mahara is doing next, and what the client's own team should change. Derived only from the constraints given.
+- "means": 2 to 4 sentences for the client explaining what the numbers say, including the single biggest leak, which is the first of the constraints given.
+- "next": 3 to 5 short lines: what Mahara is doing next, and what the client's own team should change. Derived only from the constraints given, then the watch line if there is one.
+
+A "watch" line is something to keep an eye on, never a constraint, never the leak and never the first thing to fix. Mention it after the constraints, if at all.
 
 The data:
 `;
@@ -229,6 +231,10 @@ function reportingPeriod(
   return [m, l, String(perf?.monthLabel ?? kuwaitMonth())];
 }
 
+/**
+ * The client's real constraints, in order. The show rate is never one of them:
+ * under the one client line it is a watch (watchFor), never the leak.
+ */
 function constraintsFor(profile: Any): string[] {
   const perf = profile?.performance ?? {};
   const m = nums(perf.month);
@@ -236,7 +242,6 @@ function constraintsFor(profile: Any): string[] {
   const leads = (m.leads ?? 0) + (l.leads ?? 0);
   const booked = (m.booked ?? 0) + (l.booked ?? 0);
   const shows = (m.shows ?? 0) + (l.shows ?? 0);
-  const noshows = (m.noshows ?? 0) + (l.noshows ?? 0);
   const closes = (m.closes ?? 0) + (l.closes ?? 0);
   if (leads === 0)
     return [
@@ -244,7 +249,6 @@ function constraintsFor(profile: Any): string[] {
     ];
   const out: string[] = [];
   const br = pct(booked, leads);
-  const sr = pct(shows, shows + noshows);
   const cr = pct(closes, shows);
   if (perf.staleCount)
     out.push(
@@ -253,10 +257,6 @@ function constraintsFor(profile: Any): string[] {
   if (br !== null && leads >= 10 && br < GATES.bookingRate)
     out.push(
       `only ${br}% of enquiries became appointments (target ${GATES.bookingRate}%), speed to lead and follow-up on the client's side, not the ads`,
-    );
-  if (sr !== null && shows + noshows >= 8 && sr < GATES.showRate)
-    out.push(
-      `show rate ${sr}%, under our ${GATES.showRate}% line: book same or next day and confirm twice, once at booking and once the morning of`,
     );
   if (cr !== null && shows >= 5 && cr < GATES.closeRate)
     out.push(
@@ -269,6 +269,23 @@ function constraintsFor(profile: Any): string[] {
   return out;
 }
 
+/**
+ * A show rate under the one client line, as a line to keep an eye on: it goes
+ * after the constraints and is never the main one (Aziz, 2026-10-12).
+ */
+function watchFor(profile: Any): string | null {
+  const perf = profile?.performance ?? {};
+  const m = nums(perf.month);
+  const l = nums(perf.lastMonth);
+  if ((m.leads ?? 0) + (l.leads ?? 0) === 0) return null;
+  const shows = (m.shows ?? 0) + (l.shows ?? 0);
+  const noshows = (m.noshows ?? 0) + (l.noshows ?? 0);
+  const sr = pct(shows, shows + noshows);
+  return sr !== null && shows + noshows >= 8 && sr < GATES.showRate
+    ? `show rate ${sr}%, under our ${GATES.showRate}% line: book same or next day and confirm twice, once at booking and once the morning of`
+    : null;
+}
+
 /** The diagnosis as prose, for when no model is available. Facts only. */
 function plainStory(
   profile: Any,
@@ -277,15 +294,20 @@ function plainStory(
   const perf = profile?.performance ?? {};
   const [m, l, label] = reportingPeriod(perf);
   const cons = constraintsFor(profile);
+  const watch = watchFor(profile);
+  const lines = watch ? [...cons, watch] : cons;
   const prev = perf.period ? perf.lastMonthLabel : undefined;
   if (language === "ar") {
     const before = LABELS.ar.before(prev, perf.periodMonthly);
     const means = `هذا التقرير يغطي ${label}: ${m.leads ?? 0} استفسار، ${m.booked ?? 0} موعد محجوز، ${m.shows ?? 0} حضروا، ${m.closes ?? 0} تقفلت${(l.leads ?? 0) > 0 ? ` (${before}: ${l.leads ?? 0} استفسار، ${l.booked ?? 0} موعد)` : ""}.`;
-    return { means, next: cons.map(c => c) };
+    return { means, next: lines.map(c => c) };
   }
   const before = LABELS.en.before(prev);
   const means = `This report covers ${label}: ${m.leads ?? 0} enquiries, ${m.booked ?? 0} appointments booked, ${m.shows ?? 0} attended, ${m.closes ?? 0} closed${(l.leads ?? 0) > 0 ? ` (${before}: ${l.leads ?? 0} enquiries, ${l.booked ?? 0} booked)` : ""}. The main constraint right now: ${cons[0]}.`;
-  return { means, next: cons.map(c => c.charAt(0).toUpperCase() + c.slice(1)) };
+  return {
+    means,
+    next: lines.map(c => c.charAt(0).toUpperCase() + c.slice(1)),
+  };
 }
 
 function outcomeOf(row: Any, L: Any): string {
@@ -864,6 +886,7 @@ function narrativePrompt(profile: Any, language: Lang, note?: string): string {
       allTime: nums(perf.allTime),
       appointmentsWithNoOutcome: perf.staleCount,
       constraints: constraintsFor(profile),
+      watch: watchFor(profile) ?? "",
       csmNote: note ?? "",
       language: language === "ar" ? "Arabic" : "English",
     })
