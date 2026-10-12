@@ -344,11 +344,15 @@ function ThisMonth({
             {pct(row.rolling3Pct)}
           </div>
           <div className="text-xs text-muted-foreground">
-            Churn over the last three months · target under {TARGET_PCT}%
+            Churn over the last three months
+            {row.rolling3Pct !== null && row.rolling3Months < 3
+              ? ` (only ${row.rolling3Months} of them have a start figure)`
+              : ""}{" "}
+            · target under {TARGET_PCT}%
           </div>
         </div>
         <div className="pb-1 text-sm">
-          This month{" "}
+          {row.running ? "This month to date" : "This month"}{" "}
           <span className="font-semibold tabular-nums">
             {pct(row.churnPct)}
           </span>
@@ -357,6 +361,12 @@ function ThisMonth({
               ? ` · ${row.churned} of ${row.activeAtStart} active at the start`
               : ""}
           </span>
+          {row.registerShort > 0 ? (
+            <div className="text-xs txt-warn">
+              The old sheet counted {row.registerShort} more lost this month
+              than the register holds. Log the missing departures.
+            </div>
+          ) : null}
         </div>
       </div>
       <div className="@container px-4 pb-4 pt-4 sm:px-6 sm:pb-6">
@@ -1124,6 +1134,14 @@ function Months({
                     >
                       from the old sheet
                     </span>
+                  ) : r.registerShort > 0 ? (
+                    <span className="block text-xs txt-warn">
+                      {r.registerShort} not logged yet
+                    </span>
+                  ) : r.running ? (
+                    <span className="block text-xs text-muted-foreground">
+                      to date
+                    </span>
                   ) : null}
                 </td>
                 <td className="px-4 py-2.5">
@@ -1149,6 +1167,11 @@ function Months({
                 <td className="px-4 py-2.5">{pct(r.churnPct)}</td>
                 <td className="px-4 py-2.5 font-medium">
                   {pct(r.rolling3Pct)}
+                  {r.rolling3Pct !== null && r.rolling3Months < 3 ? (
+                    <span className="block text-xs font-normal text-muted-foreground">
+                      {r.rolling3Months} of 3 months
+                    </span>
+                  ) : null}
                 </td>
                 <td className="px-4 py-2.5 pr-4 sm:pr-6">
                   {r.band ? (

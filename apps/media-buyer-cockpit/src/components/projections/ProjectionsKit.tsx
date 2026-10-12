@@ -721,16 +721,24 @@ export function RenewalWindow({
     filter === "all"
       ? rows.filter(r => r.state !== "done")
       : rows.filter(r => r.filters.includes(filter));
-  const red = rows.filter(
-    r => r.state === "red" || r.state === "missed",
-  ).length;
+  // A renewal date that has passed is "missed", not "inside 30 days".
+  const red = rows.filter(r => r.state === "red").length;
+  const missed = rows.filter(r => r.state === "missed").length;
   const filters: WindowFilter[] = ["0-30", "31-60", "booked", "done"];
+  const subParts = [
+    red
+      ? `${red} client${red === 1 ? "" : "s"} inside 30 days with no proactive call booked or reason written`
+      : "",
+    missed
+      ? `${missed} renewal date${missed === 1 ? "" : "s"} passed with no outcome logged`
+      : "",
+  ].filter(Boolean);
   return (
     <Card
       title="Renewal window"
       sub={
-        red
-          ? `${red} client${red === 1 ? "" : "s"} inside 30 days with no proactive call booked or reason written`
+        subParts.length
+          ? subParts.join(". ")
           : "Every client whose contract ends in the next 60 days"
       }
       action={
@@ -759,7 +767,10 @@ export function RenewalWindow({
         <div className="px-4 pb-4 sm:px-6 sm:pb-6">
           {page.window.tracked ? (
             <p className="rounded-xl bg-muted/40 p-4 text-sm text-muted-foreground">
-              Nobody renews in the next 60 days.
+              {/* Blank dates are not "nobody renews". */}
+              {page.window.missing.length
+                ? "No dated renewal in the next 60 days."
+                : "Nobody renews in the next 60 days."}
             </p>
           ) : null}
           {!page.window.tracked || page.window.missing.length ? (
@@ -1791,7 +1802,7 @@ export function DailyPanel({ page }: { page: ProjectionsPage }) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-xl bg-muted/40 p-4">
           <div className="text-xs text-muted-foreground">
-            Hardest renewal this week
+            Hardest open renewal, next 60 days
           </div>
           {h ? (
             <>
@@ -1809,9 +1820,11 @@ export function DailyPanel({ page }: { page: ProjectionsPage }) {
             </>
           ) : (
             <div className="mt-1 text-sm text-muted-foreground">
-              {page.window.tracked
-                ? "Nobody renews in the next 60 days."
-                : "Renewal dates are not on the client cards yet."}
+              {!page.window.tracked
+                ? "Renewal dates are not on the client cards yet."
+                : page.window.missing.length
+                  ? `No dated renewal in the next 60 days. ${page.window.missing.length} client${page.window.missing.length === 1 ? " has" : "s have"} no contract end date.`
+                  : "Nobody renews in the next 60 days."}
             </div>
           )}
         </div>

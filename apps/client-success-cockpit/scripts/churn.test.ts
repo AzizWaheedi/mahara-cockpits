@@ -136,6 +136,21 @@ describe("a month", () => {
     const oct = rows[rows.length - 1];
     expect(oct.rolling3Pct).toBe(4.4); // (1 + 1) / (22 + 23)
     expect(oct.band?.label).toBe("Good");
+    // The page says the rate covers two of the three months, and that
+    // October is still running.
+    expect(oct.rolling3Months).toBe(2);
+    expect(oct.running).toBe(true);
+    expect(rows[rows.length - 2].running).toBe(false);
+  });
+
+  test("a register that holds fewer lost clients than the old sheet says so", () => {
+    const rows = rollUp(
+      [{ month: "2026-09", activeAtStart: 22, newClients: 2, lostBeforeRegister: 3, note: null }],
+      [left("2026-09-20", 40)],
+      "2026-09",
+    );
+    expect(rows[0].churned).toBe(1);
+    expect(rows[0].registerShort).toBe(2);
   });
 
   test("once the register covers a month, the old sheet's count for it steps aside", () => {

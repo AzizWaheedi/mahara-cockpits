@@ -313,6 +313,9 @@ export async function executeAct(
   const metadata: Record<string, any> = {
     ...(args.metadata ?? {}),
   };
+  // The ClickUp id finds the client after a rename, and the ClickUp log uses it
+  // to link a ticket on the client's own task.
+  if (args.taskId && !metadata.taskId) metadata.taskId = String(args.taskId);
   if (reroutedTo !== undefined && reroutedTo !== null) {
     metadata.reroutedTo = reroutedTo;
   }
@@ -466,6 +469,25 @@ export function useCsmSnapshot(
 
   useEffect(() => {
     void fetchSnapshot();
+  }, [fetchSnapshot]);
+
+  // A page left open overnight moves to the new Kuwait day by itself: checked
+  // every minute and whenever the tab comes back into view.
+  const loadedDay = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    loadedDay.current = snap?.day;
+  }, [snap]);
+  useEffect(() => {
+    const check = () => {
+      if (loadedDay.current && kuwaitToday() !== loadedDay.current)
+        void fetchSnapshot();
+    };
+    const timer = setInterval(check, 60_000);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", check);
+    };
   }, [fetchSnapshot]);
 
   const toggleCheck = useCallback(

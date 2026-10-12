@@ -46,9 +46,13 @@ export function gate(env: Deps["env"]) {
       .map(s => s.trim())
       .filter(Boolean),
   );
+  // Client success tickets can go live on their own, while the rest of the log
+  // stays a dry run (2026-10-12).
+  const csmTickets = env("CLICKUP_WRITEBACK_APPLY_CSM_TICKETS") === "true";
   return {
     apply,
     only,
+    csmTickets,
     mode: !apply ? "dry_run" : only.size ? "apply_limited" : "apply",
     live: (taskId: string | null | undefined) => apply && (only.size === 0 || (taskId ? only.has(taskId) : false)),
   };
@@ -174,7 +178,8 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
   const token = deps.uuid();
   const items = ((await deps.rpc("cockpit_clickup_writeback_claim", { p_token: token, p_limit: limit })) ?? []) as QueueItem[];
   if (!items.length) return idle(deps, "log", true, `The ClickUp log queue is empty${enqueued ? ` after enqueuing ${enqueued}` : ""}.`);
-  const run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "log", p_mode: g.mode, p_exclusive: false });
+  const mode = !g.apply && g.csmTickets ? "apply_limited" : g.mode;
+  const run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "log", p_mode: mode, p_exclusive: false });
   const counts = { claimed: items.length, delivered: 0, dryRun: 0, skipped: 0, retry: 0, unknown: 0, failed: 0 };
   const planned: Planned[] = [];
   const save = (id: string, patch: Row) => deps.rpc("cockpit_clickup_writeback_save", { p_id: id, p_token: token, p_patch: patch });
@@ -201,7 +206,10 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
         }
         const tasks = stepTasks(built.steps);
         const createsTask = built.steps.some(s => s.type === "create_task");
-        const live = g.apply && tasks.every(t => g.live(t)) && (!createsTask || g.only.size === 0 || tasks.length > 0);
+        const csmTicket = item.kind === "decision" && item.payload?.role === "csm";
+        const live =
+          (csmTicket && g.csmTickets) ||
+          (g.apply && tasks.every(t => g.live(t)) && (!createsTask || g.only.size === 0 || tasks.length > 0));
         if (!live) {
           const plan = await planItem(item, built.steps, provider, boardFields, clientFields);
           planned.push(...plan);
@@ -236,8 +244,12 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
     }
     const note = g.apply
       ? `${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed, ${counts.skipped} stay in the cockpit${counts.dryRun ? `, ${counts.dryRun} held as dry runs outside the allowed cards` : ""}.${stop ? ` Stopped: ${redact(stop)}` : ""}`
-      : `Dry run: ${counts.dryRun} log entries planned, ${counts.skipped} stay in the cockpit. Nothing was written to ClickUp.`;
-    return finish(deps, run.id, "log", g.mode, counts.failed === 0 && !stop, note, counts, planned);
+      : `Dry run: ${counts.dryRun} log entries planned, ${counts.skipped} stay in the cockpit. ${
+          g.csmTickets
+            ? `Client success tickets are live: ${counts.delivered} delivered, ${counts.retry + counts.unknown} to retry, ${counts.failed} failed.${stop ? ` Stopped: ${redact(stop)}` : ""}`
+            : "Nothing was written to ClickUp."
+        }`;
+    return finish(deps, run.id, "log", mode, counts.failed === 0 && !stop, note, counts, planned);
   } catch (e) {
     return finish(deps, run.id, "log", g.mode, false, redact(String(e instanceof Error ? e.message : e)), counts, planned);
   }

@@ -101,6 +101,7 @@ export function buildSteps(item: QueueItem, campaigns: Campaign[], now: number):
   }
   if (item.kind === "billing") return billingSteps(item);
   if (item.source_exists === false) return { skip: "The cockpit entry was removed before it reached ClickUp, so nothing was posted." };
+  if (item.kind === "decision" && p.role === "csm") return csmTicketSteps(item);
   if (item.kind === "decision") {
     const subject = String(p.subject ?? "");
     const card = cardFor(subject, campaigns);
@@ -146,13 +147,7 @@ export function buildSteps(item: QueueItem, campaigns: Campaign[], now: number):
           tags: tag ? [tag] : [],
         },
       });
-      if (p.reroutedTo === "tech") {
-        const rt = TECH_REQUEST_TYPE[String(p.action)];
-        if (rt) steps.push({ key: "ticket_type", type: "field", taskId: "$ticket", fieldId: TECH_FIELD.requestType, field: "Request Type", value: rt });
-        steps.push({ key: "ticket_notes", type: "field", taskId: "$ticket", fieldId: TECH_FIELD.additionalNotes, field: "Additional Notes", value: trimTo(p.reason || p.evidence, 250) });
-        if (String(p.action).includes("qualification"))
-          steps.push({ key: "ticket_questions", type: "field", taskId: "$ticket", fieldId: TECH_FIELD.qualificationQuestions, field: "Qualification Questions", value: trimTo(p.reason || "See notes", 250) });
-      }
+      if (p.reroutedTo === "tech") steps.push(...techFields(String(p.action), p.reason || p.evidence, p.reason || "See notes"));
       steps.push({
         key: "ticket_link",
         type: "comment",
@@ -178,6 +173,58 @@ export function buildSteps(item: QueueItem, campaigns: Campaign[], now: number):
   const metaCampaignId = String(p.metaId || card.campaign?.metaCampaignId || "");
   if (p.syncAdStatus === true && card.ownCard && /^\d{5,}$/.test(metaCampaignId))
     steps.push({ key: "ad_status", type: "ad_status", taskId: card.taskId, metaCampaignId });
+  return { steps };
+}
+
+/** The tech ticket's form fields, filled the way the request form would. */
+function techFields(action: string, notes: unknown, questions: unknown): Step[] {
+  const steps: Step[] = [];
+  const rt = TECH_REQUEST_TYPE[action];
+  if (rt) steps.push({ key: "ticket_type", type: "field", taskId: "$ticket", fieldId: TECH_FIELD.requestType, field: "Request Type", value: rt });
+  steps.push({ key: "ticket_notes", type: "field", taskId: "$ticket", fieldId: TECH_FIELD.additionalNotes, field: "Additional Notes", value: trimTo(notes, 250) });
+  if (action.includes("qualification"))
+    steps.push({ key: "ticket_questions", type: "field", taskId: "$ticket", fieldId: TECH_FIELD.qualificationQuestions, field: "Qualification Questions", value: trimTo(questions, 250) });
+  return steps;
+}
+
+/**
+ * A client success "Ask a team" request: the ticket on that team's board, then
+ * a link on the client's own ClickUp task. Convex did this through its outbox;
+ * the native cockpit only logged the request, so no team saw it (2026-10-12).
+ * Every other client success entry stays in the cockpit.
+ */
+function csmTicketSteps(item: QueueItem): { steps: Step[] } | { skip: string } {
+  const p = item.payload ?? {};
+  const client = String(p.subject ?? "").trim();
+  const taskId = String(p.clientTaskId ?? "").trim();
+  const dest = p.reroutedTo ? DEPARTMENT_LIST[String(p.reroutedTo)] : undefined;
+  if (p.kind !== "ticket") return { skip: "Only a client success ticket goes to ClickUp from the log, so this entry stays in the cockpit." };
+  if (!dest) return { skip: `No board for the team "${p.reroutedTo ?? ""}", so this request stays in the cockpit.` };
+  if (!/^[a-zA-Z0-9_-]+$/.test(taskId)) return { skip: `No ClickUp task for ${client || "this client"}, so this request stays in the cockpit.` };
+  const action = String(p.action ?? "");
+  const note = String(p.note ?? p.reason ?? "").trim();
+  const marker = refLine(item.id, "t");
+  const description = [
+    "Requested from the Client Success Cockpit.",
+    `Client: ${client}`,
+    note ? `Note: ${note}` : "",
+    `Client task: https://app.clickup.com/t/${taskId}`,
+    p.byEmail ? `Raised by: ${p.byEmail}` : "",
+  ].filter(Boolean).join("\n");
+  const steps: Step[] = [{
+    key: "ticket",
+    type: "create_task",
+    listId: dest.id,
+    marker,
+    body: { name: `${client} - ${action}`, markdown_description: `${description}\n\n${marker}`, status: "to do" },
+  }];
+  if (p.reroutedTo === "tech") steps.push(...techFields(action, note, note || "See notes"));
+  steps.push({
+    key: "ticket_link",
+    type: "comment",
+    taskId,
+    text: `Cockpit · Client success asked ${dest.label}: ${action}\n$ticketUrl\n\n${refLine(item.id, "l")}`,
+  });
   return { steps };
 }
 

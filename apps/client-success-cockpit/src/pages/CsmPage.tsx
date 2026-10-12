@@ -91,7 +91,7 @@ import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
 import { portalUrl } from "@/lib/portal";
 import { fold, matchScore } from "@/lib/search";
-import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
+import { kuwaitToday, useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
 import { BacklogPage } from "./BacklogPage";
 import {
@@ -104,6 +104,10 @@ import {
 import { MeetingsPage } from "./MeetingsPage";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
+/** A ticket's team as people say it: "Media buyer", not media_buyer. */
+const teamName = (dept?: string) =>
+  TICKETS.find(t => t.dept === dept)?.deptLabel ?? dept ?? "another team";
+
 const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
   {
     label: "Switch this campaign to a landing page",
@@ -881,7 +885,7 @@ function HotSheet({
                             className={`h-8 w-full rounded-lg border border-transparent bg-transparent px-2 hover:border-input focus:border-input focus:bg-background ${
                               field === "nextFu" &&
                               r.nextFu &&
-                              r.nextFu < new Date().toISOString().slice(0, 10)
+                              r.nextFu < kuwaitToday()
                                 ? "tone-bad"
                                 : ""
                             }`}
@@ -1393,7 +1397,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const hotToday = ds.filter(d =>
     /upsell|referral|review/i.test(d.action),
   ).length;
-  const ticketsToday = ds.filter(d => d.kind === "rerouted").length;
+  // "ticket" is what the native page saves; "rerouted" is the Convex history.
+  // A ticket counts once ClickUp has it, the same rule as the list below.
+  const ticketsToday = ds.filter(
+    d => (d.kind === "ticket" || d.kind === "rerouted") && d.clickupTaskUrl,
+  ).length;
   const clients: Client[] = snap.clients;
   // Who needs you = the combined priority list across both motions.
   const needsAction = (c: Client) => c.rank < 40 && c.level !== "green";
@@ -1412,7 +1420,9 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       .flatMap((c: Client) => opportunitiesFor(c)),
   );
   const looseList = clients.filter(c => c.loose.length > 0);
-  const ticketRows = ds.filter(d => d.kind === "rerouted");
+  const ticketRows = ds.filter(
+    d => d.kind === "ticket" || d.kind === "rerouted",
+  );
   // A commitment counts as outstanding until the CSM turns it into a task or says done.
   const handledText = new Set(ds.map(d => d.action));
   const commitmentRows = clients.flatMap((c: Client) =>
@@ -1445,9 +1455,10 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     extra: Record<string, unknown> = {},
   ) => {
     try {
-      // The ClickUp id survives the sync replacing every row; the document id may not.
+      // The name is what "Handled today" and the hot list match on; the
+      // ClickUp id, kept in metadata, survives a rename.
       await act({
-        clientId: c._id as string,
+        clientName: String(c.name),
         taskId: c.taskId,
         action,
         kind,
@@ -1461,12 +1472,14 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     setTicketNote("");
     // The message panel stays open: it asks for the next call once logged.
     if (panel !== "message" && panel !== "update") setPanel(null);
+    // Only a ticket goes to ClickUp from here, and only once the ClickUp log
+    // delivers it: the ticket list shows when it lands.
     toast.success(
       kind === "ticket"
-        ? "Ticket created on the right board"
+        ? "Request saved. It shows as landed once it is on the team's board."
         : kind === "left"
           ? "Left, with a reason logged"
-          : "Saved, ClickUp updated",
+          : "Saved in the cockpit",
     );
   };
 
@@ -1700,12 +1713,17 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               {c.lastPoc
                 ? `${shortDay(c.lastPoc)} (${c.silentDays}d ago)`
                 : "never"}
-              {cad.daysLate > 0 ? `, ${cad.daysLate}d late` : ""}
+              {cad.daysLate > 0
+                ? `, ${cad.daysLate}d late`
+                : cad.messageDue
+                  ? ", due today"
+                  : ""}
             </span>
             {" · "}
             <span className={cad.callOverdue ? "font-semibold txt-bad" : ""}>
               last call {c.lastCall ? shortDay(c.lastCall) : "never"} (
-              {cad.callLabel}){cad.callOverdue ? ", due" : ""}
+              {cad.callLabel})
+              {cad.callOverdue ? ", overdue" : cad.callDue ? ", due" : ""}
             </span>
             {c.nextCallAt ? (
               <>
@@ -2414,10 +2432,15 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   };
   const todayLine = (
     <>
-      {new Date().toLocaleDateString("en-GB", {
+      {/* The day the numbers are for, in Kuwait, not the browser's clock. */}
+      {(snap?.day
+        ? new Date(`${snap.day}T12:00:00Z`)
+        : new Date()
+      ).toLocaleDateString("en-GB", {
         weekday: "long",
         day: "numeric",
         month: "long",
+        timeZone: snap?.day ? "UTC" : "Asia/Kuwait",
       })}{" "}
       ·{" "}
       {snap.lastSyncAt
@@ -2554,7 +2577,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           <SectionCard
             title="Tickets raised today"
             count={ticketRows.length}
-            sub="Verified against ClickUp: a ticket only counts once it exists on the other team's board."
+            sub="Verified against ClickUp: a ticket counts as landed once it exists on the other team's board."
             flush
           >
             {ticketRows.length === 0 ? (
@@ -2577,7 +2600,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     meta={
                       <>
                         <span className="text-xs text-muted-foreground">
-                          to {d.reroutedTo ?? "an unknown team"}
+                          to {teamName(d.reroutedTo)}
                         </span>
                         <Chip
                           tone={
@@ -2592,16 +2615,16 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                             ? "Landed"
                             : d.logError
                               ? "Failed"
-                              : "Sending"}
+                              : "Waiting"}
                         </Chip>
                       </>
                     }
                     why={
                       d.clickupTaskUrl
-                        ? `Created on the ${d.reroutedTo} board.`
+                        ? `Created on the ${teamName(d.reroutedTo)} board.`
                         : d.logError
                           ? `ClickUp rejected it: ${d.logError}. Raise it again.`
-                          : "Still being created, refresh in a moment."
+                          : `Not on the ${teamName(d.reroutedTo)} board yet. If it is urgent, tell the team directly.`
                     }
                     action={
                       d.clickupTaskUrl ? (
@@ -3355,7 +3378,9 @@ function MoneySection({
     <div className="space-y-6">
       <section className="rounded-2xl border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-6 sm:pt-6">
-          <h2 className="text-[15px] font-semibold">Churn this month</h2>
+          <h2 className="text-[15px] font-semibold">
+            Churn this month to date
+          </h2>
           {churn === null ? null : churn <= CHURN_TARGET ? (
             <Chip tone="good">Under target</Chip>
           ) : (
@@ -3457,7 +3482,8 @@ function MoneySection({
             <div>
               Retention bonus at this rate:{" "}
               <span className="font-semibold tabular-nums">
-                {usd(pay.retention)}
+                {/* Unknown churn is not a $0 bonus. */}
+                {churn === null ? "Measuring" : usd(pay.retention)}
               </span>
             </div>
             <div className="text-xs text-muted-foreground">
@@ -3632,14 +3658,23 @@ function MoneySection({
           <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-5">
             {[
               ["Base", pay.base],
-              ["Retention", pay.retention],
+              ["Retention", churn === null ? null : pay.retention],
               ["Commission", pay.commission],
               ["Penalties", pay.penalties],
             ].map(([k, val]) => (
-              <StatTile key={k} plain label={k} value={usd(Number(val))} />
+              <StatTile
+                key={k}
+                plain
+                label={k}
+                value={val === null ? "Measuring" : usd(Number(val))}
+              />
             ))}
             <StatTile
-              label="On track this month"
+              label={
+                churn === null
+                  ? "On track, before retention"
+                  : "On track this month"
+              }
               value={usd(pay.total)}
               className="col-span-2 rounded-xl border-primary/40 bg-primary/10 @2xl:col-span-1"
             />

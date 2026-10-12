@@ -46,6 +46,9 @@ export const TECH_REQUEST_TYPE: Record<string, string> = {
   "Add qualification questions to the lead form": "37d99ca0-e53f-4499-90e8-f1be8a21b207",
   "Switch to a landing page": "37d99ca0-e53f-4499-90e8-f1be8a21b207",
   "Landing page or tracking is broken": "9fd304bb-7078-4485-9b9f-aa19ad47ed98",
+  // The same requests as the client success page words them.
+  "Switch this campaign to a landing page": "37d99ca0-e53f-4499-90e8-f1be8a21b207",
+  "Tracking / page is broken": "9fd304bb-7078-4485-9b9f-aa19ad47ed98",
 };
 /** Where a rerouted request lands (convex/writeback.ts DEPARTMENT_LIST). */
 export const DEPARTMENT_LIST: Record<string, { id: string; label: string }> = {

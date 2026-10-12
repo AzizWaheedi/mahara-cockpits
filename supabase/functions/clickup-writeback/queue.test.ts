@@ -72,6 +72,29 @@ describe("what each log entry writes", () => {
     expect((built.steps[3] as any)).toMatchObject({ taskId: "$ticket", fieldId: TECH_FIELD.additionalNotes, value: "Ask budget and timeline" });
     expect((built.steps[0] as any).text.startsWith("🎯 Cockpit · SENT TO TECH - Add qualification questions to the lead form")).toBe(true);
   });
+  const csm = (payload: any) => item({ kind: "decision", payload: { role: "csm", kind: "ticket", subject: "City Wood", clientTaskId: "86eyt1d33", ...payload } });
+  it("a client success ticket lands on the team's board, then links on the client's own task", () => {
+    const built = buildSteps(csm({ action: "New scripts needed", reroutedTo: "creative", note: "Faces on camera", byEmail: "rasem@maharamedia.com" }), CAMPAIGNS, NOW);
+    if (!("steps" in built)) throw new Error("expected steps");
+    expect(built.steps.map(s => s.key)).toEqual(["ticket", "ticket_link"]);
+    const ticket = built.steps[0] as Extract<Step, { type: "create_task" }>;
+    expect(ticket.listId).toBe(DEPARTMENT_LIST.creative.id);
+    expect(ticket.body.name).toBe("City Wood - New scripts needed");
+    expect(ticket.body.markdown_description).toBe(`Requested from the Client Success Cockpit.\nClient: City Wood\nNote: Faces on camera\nClient task: https://app.clickup.com/t/86eyt1d33\nRaised by: rasem@maharamedia.com\n\n${ticket.marker}`);
+    expect(built.steps[1]).toMatchObject({ type: "comment", taskId: "86eyt1d33" });
+    expect((built.steps[1] as any).text).toContain("$ticketUrl");
+  });
+  it("a client success tech ticket fills the tech form the way the request form would", () => {
+    const built = buildSteps(csm({ action: "Tracking / page is broken", reroutedTo: "tech", note: "Form not firing" }), CAMPAIGNS, NOW);
+    if (!("steps" in built)) throw new Error("expected steps");
+    expect(built.steps.map(s => s.key)).toEqual(["ticket", "ticket_type", "ticket_notes", "ticket_link"]);
+    expect(built.steps[2]).toMatchObject({ taskId: "$ticket", fieldId: TECH_FIELD.additionalNotes, value: "Form not firing" });
+  });
+  it("other client success entries, unknown teams and clients without a ClickUp task stay in the cockpit", () => {
+    expect(buildSteps(csm({ kind: "stage", action: "Moved to Paused" }), CAMPAIGNS, NOW)).toEqual({ skip: expect.stringContaining("stays in the cockpit") });
+    expect(buildSteps(csm({ action: "x", reroutedTo: "legal" }), CAMPAIGNS, NOW)).toEqual({ skip: expect.stringContaining("No board") });
+    expect(buildSteps(csm({ action: "x", reroutedTo: "creative", clientTaskId: null }), CAMPAIGNS, NOW)).toEqual({ skip: expect.stringContaining("No ClickUp task for City Wood") });
+  });
 });
 
 describe("delivery without duplicate comments", () => {
