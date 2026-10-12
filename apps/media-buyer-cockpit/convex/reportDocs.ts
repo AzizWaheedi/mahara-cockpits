@@ -14,7 +14,7 @@ import { bridge } from "./comms";
 import {
   BOOKING_RATE_GATE,
   CLOSE_RATE_GATE,
-  SHOW_RATE_GATE,
+  SHOW_RATE_GOOD,
 } from "./constants";
 import { googleAccessToken } from "./tools";
 
@@ -49,7 +49,7 @@ const SHARE_WITH = ["aziz@maharamedia.com", "abdulelah@maharamedia.com"];
 /** Client KPI gates Aziz locked. Kept in step with the CS app's csmDiagnosis.ts. */
 const GATES = {
   bookingRate: BOOKING_RATE_GATE,
-  showRate: SHOW_RATE_GATE,
+  showRate: SHOW_RATE_GOOD,
   closeRate: CLOSE_RATE_GATE,
 };
 const EXTRAS = ["lost", "byAd", "appointments", "ads"];
@@ -256,7 +256,7 @@ function constraintsFor(profile: Any): string[] {
     );
   if (sr !== null && shows + noshows >= 8 && sr < GATES.showRate)
     out.push(
-      `show rate ${sr}% (target ${GATES.showRate}%), book same or next day and confirm twice, once at booking and once the morning of`,
+      `show rate ${sr}%, under our ${GATES.showRate}% line: book same or next day and confirm twice, once at booking and once the morning of`,
     );
   if (cr !== null && shows >= 5 && cr < GATES.closeRate)
     out.push(

@@ -4,6 +4,10 @@
  * outcome, the client status rule and the cost of a shown booking.
  */
 import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import * as native from "../../../hermes/ceo-refresh/native/constants.js";
+import * as clientGates from "../../client-success-cockpit/src/lib/clientGates";
 import {
   clientStatus,
   costPerShownAt60,
@@ -23,6 +27,10 @@ import {
   SHOW_RATE_GOOD,
 } from "../convex/constants";
 import * as kpi from "../src/lib/kpi";
+import { rateTone } from "../src/pages/ceo/DeliveryTab";
+
+/** The media buyer app's folder. */
+const APP = join(import.meta.dir, "..");
 
 describe("calendarKind", () => {
   test("splits the booking calendars into main, online and provisional", () => {
@@ -232,5 +240,61 @@ describe("the gates", () => {
     expect(SHOW_RATE_GOOD).toBe(60);
     expect(CPB_BAD).toBe(80);
     expect(CPL_GATE * 1.5).toBe(22.5);
+  });
+  // Aziz, 2026-10-12: "the show rate metric is 60%, so anything around that is
+  // fine, not 70%". One client line everywhere, and under it is watch.
+  test("one client show rate line, the same in every copy", () => {
+    expect(native.SHOW_RATE_GOOD).toBe(kpi.SHOW_RATE_GOOD);
+    expect(clientGates.SHOW_RATE_GOOD).toBe(kpi.SHOW_RATE_GOOD);
+    for (const file of [
+      "src/lib/kpi.ts",
+      "convex/constants.ts",
+      "../../hermes/ceo-refresh/native/constants.js",
+    ])
+      expect(readFileSync(join(APP, file), "utf8")).not.toContain(
+        "SHOW_RATE_GATE",
+      );
+    expect("SHOW_RATE_GATE" in kpi).toBe(false);
+    expect("SHOW_RATE_GATE" in native).toBe(false);
+  });
+  test("a client show rate under the line is amber, never red", () => {
+    expect(rateTone(60, SHOW_RATE_GOOD, 0)).toBe("good");
+    expect(rateTone(59.9, SHOW_RATE_GOOD, 0)).toBe("warning");
+    for (const p of [41, 20, 0])
+      expect(rateTone(p, SHOW_RATE_GOOD, 0)).toBe("warning");
+    // The other rates keep their floor at seven tenths of the gate.
+    expect(rateTone(17, 25)).toBe("serious");
+    expect(rateTone(18, 25)).toBe("warning");
+    const delivery = readFileSync(
+      join(APP, "src/pages/ceo/DeliveryTab.tsx"),
+      "utf8",
+    );
+    expect(delivery).toMatch(/gate=\{SHOW_RATE_GOOD\}\s+bad=\{0\}/);
+  });
+  test("no client show rate text says 70% or 75%", () => {
+    const roots = [
+      "../client-success-cockpit/src",
+      "../client-success-cockpit/scripts",
+      "../../supabase/functions/cockpit-csm-api",
+      "../../hermes/cockpit-client-success",
+      "../../hermes/cockpit-ask-ai/references/mahara-context/client-launch-campaign",
+    ];
+    const bad = /showRate:\s*7[05]\b|show rate[^\n]{0,40}\b7[05] ?%/i;
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        if (name === "node_modules" || name === "dist") continue;
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.(ts|tsx|js|md|json|py)$/.test(name))
+          readFileSync(path, "utf8")
+            .split("\n")
+            .forEach((line, i) => {
+              if (bad.test(line)) hits.push(`${path}:${i + 1}`);
+            });
+      }
+    };
+    for (const root of roots) walk(join(APP, root));
+    expect(hits).toEqual([]);
   });
 });

@@ -710,9 +710,24 @@ function GateCell({
 type Filter = "all" | ClientStatus;
 
 /**
- * A funnel rate against its gate: green at the gate, amber down to the floor
- * (seven tenths of the gate unless `bad` says otherwise), red below. `detail`
- * opens a tooltip with the figures behind the rate.
+ * The tone of a rate in percent against its gate: good at the gate, warning
+ * down to the floor (seven tenths of the gate unless `bad` says otherwise),
+ * serious below. The client show rate passes `bad` 0: under its one line is
+ * watch, never serious (Aziz, 2026-09-21 and 2026-10-12).
+ */
+export function rateTone(
+  p: number,
+  gate: number,
+  bad?: number,
+): "good" | "warning" | "serious" {
+  const floor = bad ?? gate * 0.7;
+  return p >= gate ? "good" : p >= floor ? "warning" : "serious";
+}
+
+/**
+ * A funnel rate against its gate, toned by rateTone: green at the gate, amber
+ * down to the floor, red below. `detail` opens a tooltip with the figures
+ * behind the rate.
  */
 function RateCell({
   value,
@@ -732,10 +747,7 @@ function RateCell({
   detail?: string;
 }) {
   if (!isNum(value)) return <Na hint={hint} />;
-  const p = value * 100;
-  const floor = bad ?? gate * 0.7;
-  const tone =
-    p >= gate ? "good" : p >= floor ? "warning" : ("serious" as const);
+  const tone = rateTone(value * 100, gate, bad);
   const inner = (
     <>
       <span
@@ -940,6 +952,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
         <RateCell
           value={r.rates30?.showRate ?? null}
           gate={SHOW_RATE_GOOD}
+          bad={0}
           hint="No past meeting with an attendance recorded in the last 30 days"
           detail={
             r.rates30
