@@ -672,12 +672,13 @@ test("the client show rate line is 60, and under it is a watch, never a fix", as
   const half = diagnose(lineClient(5, 5));
   expect(half.healthy).toBe(true);
   expect(half.top).toBeUndefined();
-  expect(half.headline).toMatch(
-    /^Every gate with enough data behind it is met/,
+  expect(half.headline).toBe(
+    "Nothing needs fixing first. Keep an eye on the show rate below, and ask for a review, a referral or more budget.",
   );
+  expect(under.headline).toBe(half.headline);
   expect(half.watch[0].title).toBe("Show rate is 50%, under the 60% line");
   expect(half.watch[0].diagnosis).toBe(
-    "50% of booked slots sat empty; confirmation discipline fixes it, not more leads.",
+    "50% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.",
   );
 
   // Under 8 decided is noise: no watch either.
@@ -692,13 +693,25 @@ test("the client show rate line is 60, and under it is a watch, never a fix", as
   // Done with you: they book their own, so there is nothing to watch.
   expect(diagnose(lineClient(2, 8, { service: "DWY" })).watch).toEqual([]);
 
-  // The macro scenario still counts a show rate under the line as broken.
+  // The show rate never decides the macro check: booking and closing both
+  // under their gates and nothing ever closed is macro at any show rate.
   const macro = diagnose(lineClient(5, 5, { leads: 40, booked: 6, closes: 0 }));
   expect(macro.top?.id).toBe("macro_offer");
+  for (const [shows, noshows] of [
+    [6, 4],
+    [9, 1],
+  ])
+    expect(
+      diagnose(lineClient(shows, noshows, { leads: 40, booked: 6, closes: 0 }))
+        .top?.id,
+    ).toBe("macro_offer");
+  // Booking under its gate and the show rate under the line, with too few
+  // shows to judge the close rate: one leak plus a watch, never macro.
   const notMacro = diagnose(
-    lineClient(6, 4, { leads: 40, booked: 6, closes: 0 }),
+    lineClient(4, 6, { leads: 40, booked: 6, closes: 0 }),
   );
-  expect(counted(notMacro)).not.toContain("macro_offer");
+  expect(counted(notMacro)).toEqual(["booking_rate"]);
+  expect(notMacro.watch.map(c => c.id)).toEqual(["show_rate"]);
 
   // No title, diagnosis or line anywhere says 70% or 75%.
   for (const d of [under, half, both, macro, diagnose(perfFixture.profile)])
@@ -743,7 +756,10 @@ test("the diagnosis footer says the 60% line and the watch line renders quietly"
       await renderSection("client", `/clients/${GREYSTONE}`),
     );
     expect(watched).toContain(
-      "Watch: Show rate is 50%, under the 60% line. 50% of booked slots sat empty; confirmation discipline fixes it, not more leads.",
+      "Watch: Show rate is 50%, under the 60% line. 50% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.",
+    );
+    expect(watched).toContain(
+      "Nothing needs fixing first. Keep an eye on the show rate below",
     );
     expect(watched).not.toContain("Fix this first");
     expect(watched).not.toMatch(/7[05]%/);

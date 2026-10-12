@@ -217,7 +217,7 @@ function diagnoseRaw(p: Any): Diagnosis {
       layer: "micro",
       title: `Show rate is ${showRate}%, under the ${GATES.showRate}% line`,
       evidence: `${shows} attended out of ${decided} appointments with an outcome over the last two months.`,
-      diagnosis: `${100 - showRate}% of booked slots sat empty; confirmation discipline fixes it, not more leads.`,
+      diagnosis: `${100 - showRate}% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.`,
       fixes: [
         "Confirm every appointment twice: right after booking, and the morning of.",
         "Same-day or next-day appointments only, the further out the slot, the more no-shows.",
@@ -256,15 +256,16 @@ function diagnoseRaw(p: Any): Diagnosis {
 
   // ---- Macro check: everything broken at once is one problem, not four. ----
   // A gate counts as broken only on the same sample its own check needs
-  // (10 leads, 8 decided, 5 shows), and "never closed" needs the sheet's
-  // all-time total to be there: missing is not zero.
-  const brokenGates = [
+  // (10 leads, 5 shows), and "never closed" needs the sheet's all-time total
+  // to be there: missing is not zero. The show rate is not a gate here: it is
+  // a watch, so it can never tip a client into this constraint (2026-10-12).
+  const gates = [
     bookingRate != null && leads >= 10 && bookingRate < GATES.bookingRate,
-    showRate != null && decided >= 8 && showRate < GATES.showRate,
     closeRate != null && shows >= 5 && closeRate < GATES.closeRate,
-  ].filter(Boolean).length;
+  ];
+  const everyGateBroken = gates.every(Boolean);
   const neverClosed = typeof all.closes === "number" && all.closes === 0;
-  if (brokenGates >= 3 && neverClosed && leads >= 20) {
+  if (everyGateBroken && neverClosed && leads >= 20) {
     found.unshift({
       id: "macro_offer",
       layer: "macro",
@@ -343,9 +344,11 @@ function diagnoseRaw(p: Any): Diagnosis {
     headline: healthy
       ? dwy
         ? "Lead volume and cost per lead are both inside the gates. They book their own appointments, so ask about their close rate on the call rather than reporting it."
-        : Number(m.leads ?? 0) > 0
-          ? "Every gate with enough data behind it is met. Do not manufacture work here, ask for a review, a referral or more budget."
-          : "Nothing is out of KPI, but there is not enough data yet to judge. Get the sheet filled and come back to it."
+        : watch.length > 0
+          ? "Nothing needs fixing first. Keep an eye on the show rate below, and ask for a review, a referral or more budget."
+          : Number(m.leads ?? 0) > 0
+            ? "Every gate with enough data behind it is met. Do not manufacture work here, ask for a review, a referral or more budget."
+            : "Nothing is out of KPI, but there is not enough data yet to judge. Get the sheet filled and come back to it."
       : `Fix ${ranked[0].title.toLowerCase()} first. ${ranked.length - 1 > 0 ? `${ranked.length - 1} more below, one leak at a time.` : "One leak at a time."}`,
     basis,
   };
