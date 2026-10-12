@@ -1,0 +1,31 @@
+import {createRequire} from 'node:module';
+const require=createRequire(new URL('../../client-success-cockpit/package.json', import.meta.url));
+const {chromium}=require('playwright');
+const browser=await chromium.launch({headless:true,channel:"chrome"});
+const page=await browser.newPage({viewport:{width:390,height:844}});
+let decision=null, notes=[], calls=[];
+await page.route('**/*',async route=>{
+ const url=route.request().url();
+ if(url.includes('/rest/v1/rpc/review_open'))return route.fulfill({json:{title:'مراجعة فيديو تجريبي',note:'شاهدوا الفيديو ثم شاركونا رأيكم',client:'عميل تجريبي',reviewer:null,items:[{id:'test:1',n:1,kind:'video',title:'تصميم داخلي تجريبي',video_url:'https://drive.google.com/file/d/1234567890abcd/view',poster_url:null,seconds:30,decision,notes}]}});
+ if(url.includes('/rest/v1/rpc/review_decide')){const data=route.request().postDataJSON();calls.push(data);if(data.p_note)notes.push({at_seconds:data.p_at,body:data.p_note,at:new Date().toISOString()});decision=data.p_decision??decision;return route.fulfill({json:{ok:true}});}
+ if(url.startsWith('http://127.0.0.1:5197'))return route.continue();
+ if(url.includes('drive.google.com'))return route.fulfill({contentType:'text/html; charset=utf-8',body:'<body style="background:#11203b;color:white;display:grid;place-items:center;height:90vh;font-family:sans-serif">فيديو تجريبي • Synthetic video</body>'});
+ return route.abort();
+});
+await page.goto('http://127.0.0.1:5197/editor/review/test?lang=ar');
+await page.getByRole('button',{name:'طلب تعديل',exact:true}).waitFor();
+if(await page.locator('main').getAttribute('dir')!=='rtl')throw Error('Arabic layout is not RTL');
+if(await page.locator('iframe').getAttribute('src')!=='https://drive.google.com/file/d/1234567890abcd/preview')throw Error('Drive preview failed');
+await page.screenshot({path:'/tmp/mahara-review-ar-mobile.png',fullPage:true});
+await page.getByRole('button',{name:'طلب تعديل',exact:true}).click();
+await page.locator('#note').fill('يرجى تعديل الشعار في النهاية');
+await page.getByRole('button',{name:'إرسال الملاحظة',exact:true}).click();
+await page.getByText('وصلت ملاحظاتكم إلى فريق المونتاج.').waitFor();
+if(calls.length!==1||calls[0].p_at!==null||calls[0].p_item!=='test:1')throw Error('Comment or timecode mismatch');
+await page.setViewportSize({width:1360,height:900});
+await page.reload();
+await page.getByRole('button',{name:'English',exact:true}).click();
+await page.getByText('Your notes are with the editor.').waitFor();
+await page.screenshot({path:'/tmp/mahara-review-en-desktop.png',fullPage:true});
+console.log(JSON.stringify({arabicMobile:true,drivePreview:true,exactTaskItem:true,commentSavedOnce:true,noFalseDriveTimestamp:true,englishDesktop:true,externalWrites:0}));
+await browser.close();

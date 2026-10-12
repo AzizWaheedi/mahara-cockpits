@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import logo from "../assets/mahara-logo-dark.png";
+import { drivePreview } from "../lib/reviewMedia";
 import { supabase } from "../lib/supabase";
 import "../review.css";
 
@@ -122,16 +123,26 @@ function Bang() {
  * the title already say it is waiting, so a "Waiting for you" pill said it
  * twice.
  */
-function Status({ decision }: { decision: Item["decision"] }) {
+function Status({
+  decision,
+  arabic = false,
+}: {
+  decision: Item["decision"];
+  arabic?: boolean;
+}) {
   if (decision === "approved")
     return (
       <span className="pill ok mono">
         <Check />
-        Approved
+        {arabic ? "تمت الموافقة" : "Approved"}
       </span>
     );
   if (decision === "changes")
-    return <span className="pill change mono">Change asked</span>;
+    return (
+      <span className="pill change mono">
+        {arabic ? "مطلوب تعديل" : "Change asked"}
+      </span>
+    );
   return null;
 }
 
@@ -147,6 +158,7 @@ function Thumb({ x }: { x: Item }) {
     );
   }
   if (x.poster_url) return <img src={x.poster_url} alt="" loading="lazy" />;
+  if (drivePreview(x.video_url)) return <span aria-hidden="true">▶</span>;
   if (x.kind === "image")
     return <img src={x.video_url} alt="" loading="lazy" />;
   return (
@@ -340,6 +352,10 @@ function Foot() {
 
 export default function ReviewPage() {
   const { token = "" } = useParams();
+  const [arabic, setArabic] = useState(
+    () => new URLSearchParams(window.location.search).get("lang") === "ar",
+  );
+  const t = (en: string, ar: string) => (arabic ? ar : en);
   const [bundle, setBundle] = useState<Bundle | null | "missing">(null);
   const [at, setAt] = useState(0);
   const [openIndex, setOpenIndex] = useState(0);
@@ -419,9 +435,14 @@ export default function ReviewPage() {
       <main className="screen">
         <div className="sheet" style={{ margin: "auto" }}>
           <img src={logo} alt="Mahara Media" className="logo" />
-          <h1 className="display">This link has expired</h1>
+          <h1 className="display">
+            {t("This link is unavailable", "رابط المراجعة غير متاح")}
+          </h1>
           <p className="lede">
-            Ask whoever sent it for a new one and it will open straight away.
+            {t(
+              "Ask the team for the current review link.",
+              "اطلبوا من الفريق رابط المراجعة الحالي.",
+            )}
           </p>
         </div>
         <Foot />
@@ -431,6 +452,7 @@ export default function ReviewPage() {
   const items = bundle.items;
   const here = Math.min(openIndex, items.length - 1);
   const item = items[here];
+  const embedded = item ? drivePreview(item.video_url) : null;
   const decided = items.filter(i => i.decision).length;
   const allDone = decided === items.length && items.length > 0;
   const approvedCount = items.filter(i => i.decision === "approved").length;
@@ -466,11 +488,18 @@ export default function ReviewPage() {
         p_at:
           decision === "approved" || item.kind !== "video"
             ? null
-            : Math.floor(at),
+            : embedded
+              ? null
+              : Math.floor(at),
         p_name: name.trim() || null,
       });
       if (!(data as { ok?: boolean } | null)?.ok) {
-        setProblem("That did not save. Refresh the page and try once more.");
+        setProblem(
+          t(
+            "That did not save. Refresh the page and try once more.",
+            "لم يتم حفظ الرد. حدّثوا الصفحة وحاولوا مرة أخرى.",
+          ),
+        );
         return;
       }
       setNote("");
@@ -492,7 +521,11 @@ export default function ReviewPage() {
   }
 
   return (
-    <main className="screen">
+    <main
+      className="screen"
+      dir={arabic ? "rtl" : "ltr"}
+      lang={arabic ? "ar" : "en"}
+    >
       <header className="bar">
         <img
           src={logo}
@@ -503,10 +536,17 @@ export default function ReviewPage() {
         />
         {bundle.client ? (
           <span className="for mono">
-            <span className="lbl">Prepared for</span>
+            <span className="lbl">{t("Prepared for", "أُعدّ لكم")}</span>
             <bdi>{bundle.client}</bdi>
           </span>
         ) : null}
+        <button
+          type="button"
+          className="btn link"
+          onClick={() => setArabic(v => !v)}
+        >
+          {arabic ? "English" : "العربية"}
+        </button>
       </header>
       {items.length > 1 ? (
         <div
@@ -534,22 +574,31 @@ export default function ReviewPage() {
 
       {allDone && !reopened ? (
         <section className="sheet done">
-          <p className="cut mono">Thank you</p>
+          <p className="cut mono">{t("Thank you", "شكرًا لكم")}</p>
           <h1 className="display">
             {changeCount === 0
-              ? "Everything is approved."
+              ? t("Everything is approved.", "تمت الموافقة على الفيديو.")
               : posts
                 ? "Your notes are with the team."
-                : "Your notes are with the editor."}
+                : t(
+                    "Your notes are with the editor.",
+                    "وصلت ملاحظاتكم إلى فريق المونتاج.",
+                  )}
           </h1>
           <p className="lede">
             {changeCount === 0
               ? posts
                 ? "We will post them on their days."
-                : "We will take it from here."
+                : t(
+                    "We will take it from here.",
+                    "سيتابع فريقنا تجهيز الإطلاق.",
+                  )
               : posts
                 ? "We will send you the changes shortly."
-                : "You will have the next cut shortly."}
+                : t(
+                    "The team will review your requested changes.",
+                    "سيراجع الفريق التعديلات المطلوبة ويتابع معكم.",
+                  )}
           </p>
           {/* With one item the sentence above already is the tally. */}
           {items.length > 1 ? (
@@ -589,6 +638,18 @@ export default function ReviewPage() {
               <div className="ring">
                 {item.kind === "image" ? (
                   <img src={item.video_url} alt={item.title} className="film" />
+                ) : embedded ? (
+                  <iframe
+                    src={embedded}
+                    title={item.title}
+                    className="film"
+                    allow="fullscreen"
+                    style={{
+                      width: "min(90vw, 900px)",
+                      height: "60dvh",
+                      border: 0,
+                    }}
+                  />
                 ) : (
                   /* biome-ignore lint/a11y/useMediaCaption: the client's own footage, no track exists */
                   <video
@@ -627,7 +688,7 @@ export default function ReviewPage() {
                     ? "Image"
                     : item.kind === "post"
                       ? "Post"
-                      : "Video"}
+                      : t("Video", "فيديو")}
               </span>
               {item.kind === "video" && item.seconds ? (
                 <span className="dur mono">{clock(item.seconds)}</span>
@@ -644,11 +705,21 @@ export default function ReviewPage() {
                     .join(" + ")}
                 </span>
               ) : null}
-              <Status decision={item.decision} />
+              <Status decision={item.decision} arabic={arabic} />
             </div>
             <h1 className="title" dir="auto">
               {item.title}
             </h1>
+            {embedded && (
+              <p className="lede">
+                <a href={item.video_url} target="_blank" rel="noreferrer">
+                  {t(
+                    "If the video does not play, open it here. Ask the team for access if needed.",
+                    "إذا لم يعمل الفيديو، افتحوه من هنا. اطلبوا من الفريق صلاحية المشاهدة عند الحاجة.",
+                  )}
+                </a>
+              </p>
+            )}
             {item.kind === "post" ? (
               item.post ? (
                 <CaptionCard key={item.id} post={item.post} />
@@ -665,8 +736,8 @@ export default function ReviewPage() {
                   {item.decision === "approved"
                     ? item.kind === "post"
                       ? "You approved this post."
-                      : "You approved this one."
-                    : "You asked for a change."}
+                      : t("You approved this one.", "تم تسجيل موافقتكم.")
+                    : t("You asked for a change.", "تم تسجيل طلب التعديل.")}
                 </p>
                 {item.notes.length ? (
                   <span className="notes">
@@ -699,7 +770,7 @@ export default function ReviewPage() {
                       setAsking(true);
                     }}
                   >
-                    Add another note
+                    {t("Add another note", "إضافة ملاحظة")}
                   </button>
                   {item.decision === "changes" ? (
                     <button
@@ -708,7 +779,7 @@ export default function ReviewPage() {
                       disabled={busy}
                       onClick={() => void decide("approved")}
                     >
-                      Actually, approve it
+                      {t("Actually, approve it", "الموافقة على النسخة الحالية")}
                     </button>
                   ) : null}
                 </span>
@@ -716,8 +787,8 @@ export default function ReviewPage() {
             ) : asking ? (
               <div className="ask">
                 <label htmlFor="note" className="askLabel">
-                  What should change?
-                  {item.kind === "video" ? (
+                  {t("What should change?", "ما التعديل المطلوب؟")}
+                  {item.kind === "video" && !embedded ? (
                     <span className="mono">At {clock(at) || "0:00"}</span>
                   ) : item.kind === "post" && slides > 1 ? (
                     <span className="mono">Slide {slide + 1}</span>
@@ -732,7 +803,10 @@ export default function ReviewPage() {
                   placeholder={
                     item.kind === "post"
                       ? "Use the photo of the finished kitchen instead"
-                      : "The logo at the end is the old one"
+                      : t(
+                          "For example: replace the logo at the end",
+                          "مثال: يرجى تغيير الشعار في نهاية الفيديو",
+                        )
                   }
                 />
                 {bundle.reviewer ? null : (
@@ -743,7 +817,10 @@ export default function ReviewPage() {
                     placeholder={
                       posts
                         ? "Your name, so the team knows who asked"
-                        : "Your name, so the editor knows who asked"
+                        : t(
+                            "Your name, so the editor knows who asked",
+                            "اسمكم ليعرف الفريق صاحب الملاحظة",
+                          )
                     }
                   />
                 )}
@@ -756,7 +833,10 @@ export default function ReviewPage() {
                       void decide(item.decision ? null : "changes")
                     }
                   >
-                    {item.decision ? "Add this note" : "Send this note"}
+                    {t(
+                      item.decision ? "Add this note" : "Send this note",
+                      "إرسال الملاحظة",
+                    )}
                   </button>
                   <button
                     type="button"
@@ -766,7 +846,7 @@ export default function ReviewPage() {
                       setAsking(false);
                     }}
                   >
-                    Cancel
+                    {t("Cancel", "رجوع")}
                   </button>
                 </div>
               </div>
@@ -778,12 +858,12 @@ export default function ReviewPage() {
                   disabled={busy}
                   onClick={() => void decide("approved")}
                 >
-                  Approve this{" "}
+                  {arabic ? "موافقة على " : "Approve this "}
                   {item.kind === "post"
                     ? "post"
                     : item.kind === "image"
                       ? "image"
-                      : "video"}
+                      : t("video", "الفيديو")}
                 </button>
                 <button
                   type="button"
@@ -795,7 +875,7 @@ export default function ReviewPage() {
                     setAsking(true);
                   }}
                 >
-                  Ask for a change
+                  {t("Ask for a change", "طلب تعديل")}
                 </button>
               </div>
             )}
@@ -826,7 +906,7 @@ export default function ReviewPage() {
               ? `All ${items.length}${noun}`
               : posts
                 ? "Look at one again"
-                : "Watch one again"}
+                : t("Watch one again", "مشاهدة الفيديو مرة أخرى")}
           </p>
           <div className="frames">
             {items.map((x, i) => (
