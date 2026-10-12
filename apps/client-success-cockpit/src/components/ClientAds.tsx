@@ -220,9 +220,11 @@ export function AdsView({
       ) : null}
       {model.missingPictures ? (
         <p className="text-xs text-muted-foreground">
-          {plural(model.missingPictures, "ad")} had no saved picture, so the
-          page asked Meta for one. A picture that still does not show is saved
-          on a later sync.
+          {plural(model.missingPictures, "ad")} that no longer{" "}
+          {model.missingPictures === 1 ? "runs has" : "run have"} no saved
+          picture, so{" "}
+          {model.missingPictures === 1 ? "its tile stays" : "their tiles stay"}{" "}
+          blank.
         </p>
       ) : null}
     </div>
@@ -1325,7 +1327,9 @@ function AdPicture({
       campaignName={c.name}
       clientName={clientName}
       size={size}
-      autoFetch
+      // An ad that still runs asks Meta for a missing picture; one that no
+      // longer runs is not looked up (Muhammed, 2026-10-12).
+      autoFetch={a.listed}
     />
   );
 }

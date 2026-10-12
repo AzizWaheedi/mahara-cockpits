@@ -232,6 +232,8 @@ export type AdNode = {
   verdict?: { label: string; tone: Tone; reason?: string };
   /** Spent, booked or brought a lead in the period. */
   active: boolean;
+  /** In Meta's current list of the client's ads, so it still runs or can. */
+  listed: boolean;
   t: Metrics;
   days: Map<string, DayCell>;
 };
@@ -300,7 +302,11 @@ export type AdsModel = {
   unattributedCount: number;
   bookingsReady: boolean;
   changes: ScopedChange[];
-  /** Ads with spend in the period that have no saved or Meta picture yet. */
+  /**
+   * Ads that spent in the period, no longer run, and have no saved picture.
+   * Pictures are saved only for ads that run (Muhammed, 2026-10-12), so these
+   * tiles stay blank and the page says so.
+   */
   missingPictures: number;
 };
 
@@ -463,6 +469,7 @@ export function buildAdsModel(
         statusText: "",
         tone: "neutral",
         active: false,
+        listed: false,
         t: empty(),
         days: new Map(),
       };
@@ -563,6 +570,7 @@ export function buildAdsModel(
     a.setKey = setKey;
     a.accountId = tree?.accountId ?? campaignOf.get(a.campaign)?.accountId;
     a.thumbUrl = tree?.thumbUrl;
+    a.listed = Boolean(tree);
     const still = a.id ? read.stills[a.id] : undefined;
     a.stillUrl = still?.url;
     a.stillTinyUrl = still?.tinyUrl;
@@ -679,8 +687,14 @@ export function buildAdsModel(
     changes: [],
     missingPictures: list
       .flatMap(c => c.sets.flatMap(s => s.ads))
-      .filter(a => a.active && !a.stillUrl && !a.stillTinyUrl && !a.thumbUrl)
-      .length,
+      .filter(
+        a =>
+          a.active &&
+          !a.listed &&
+          !a.stillUrl &&
+          !a.stillTinyUrl &&
+          !a.thumbUrl,
+      ).length,
   };
   model.changes = mapChanges(read.changes, model);
   return model;

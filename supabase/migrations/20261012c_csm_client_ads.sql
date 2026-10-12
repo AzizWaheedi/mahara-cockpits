@@ -123,8 +123,10 @@ BEGIN
    WHERE a.campaign_name = ANY(v_names) AND NOT a.source_deleted;
 
   -- Each ad's saved picture: by its creative (from Meta's tree or the ads
-  -- board), else saved under its own id, else a shared creative that lists it.
-  -- Only pictures in this project's own bucket are returned.
+  -- board), else saved under its own id. Pictures are saved for ads that still
+  -- run; an ad that no longer runs keeps one only if it was saved before
+  -- (Muhammed, 2026-10-12: no backfill for ended ads). Only pictures in this
+  -- project's own bucket are returned.
   WITH ids AS (
     SELECT DISTINCT x.id FROM (
       SELECT e->>'adId' id FROM jsonb_array_elements(v_rows) e
@@ -149,8 +151,7 @@ BEGIN
     CROSS JOIN LATERAL (
       SELECT st.data FROM public.cockpit_native_stills st
        WHERE st.data->>'status'='saved' AND st.data->>'url' ~ native_url
-         AND (st.key = ANY(c.keys) OR st.key = 'a:'||c.id OR st.data->>'adId' = c.id
-              OR (jsonb_typeof(st.data->'adIds')='array' AND st.data->'adIds' ? c.id))
+         AND (st.key = ANY(c.keys) OR st.key = 'a:'||c.id OR st.data->>'adId' = c.id)
        ORDER BY (st.key = ANY(c.keys)) DESC, (st.key = 'a:'||c.id) DESC, st.updated_at DESC
        LIMIT 1) s;
 
