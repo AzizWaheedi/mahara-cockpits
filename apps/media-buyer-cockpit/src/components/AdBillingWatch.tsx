@@ -67,12 +67,21 @@ export function AdBillingSummary({
   );
   return (
     <div className="space-y-4">
+      <a
+        href="/client-success/ad-billing"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 hover:bg-primary/10"
+      >
+        <span><strong className="block text-sm">Daily ad billing review</strong>
+          <span className="text-xs text-muted-foreground">Check the draft messages once today. Either reviewer can approve, edit or deny.</span>
+        </span>
+        <span className="text-sm font-medium text-primary">Review messages →</span>
+      </a>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span
           className={`rounded-full px-3 py-1 font-medium ${data.apply ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}
         >
           {data.apply
-            ? "CSM approval enabled"
+            ? "Team approval enabled"
             : "Delivery paused · checks continue"}
         </span>
         <span className="text-muted-foreground">
@@ -158,7 +167,7 @@ export function AdBillingSummary({
                   Client message:{" "}
                   <strong>
                     {b.review.state === "pending"
-                      ? "Awaiting CSM approval"
+                      ? "Awaiting CSM or media buyer approval"
                       : b.review.state}
                   </strong>
                   {b.review.reason ? ` · ${b.review.reason}` : ""}
@@ -206,7 +215,7 @@ export function AdBillingSummary({
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        Client WhatsApp requires CSM approval. New Slack posts and client
+        Client WhatsApp requires approval from either the CSM or media buyer. New Slack posts and client
         messages are limited to once per client every 72 hours. This checks Meta
         billing signals. It does not retry payments or switch campaigns on.
         “Accepted” confirms a provider receipt, not that a person read the

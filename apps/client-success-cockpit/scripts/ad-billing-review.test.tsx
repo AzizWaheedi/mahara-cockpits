@@ -4,12 +4,15 @@ const win = new Window({url:"https://localhost/"});
 for(const k of ["window","document","navigator","HTMLElement","HTMLFormElement","MutationObserver","Element","Node","Event","MouseEvent","DocumentFragment","Text"]) (globalThis as any)[k] = k === "window" ? win : (win as any)[k];
 (globalThis as any).getComputedStyle=win.getComputedStyle.bind(win);
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
+let authRoles = ["csm"];
+mock.module("@/auth/SupabaseAuthProvider",()=>({useCockpitAuth:()=>({ready:true,session:{user:{id:"test-user"}},access:{roles:authRoles,isAdmin:false,isCeo:false,home:"/dashboard"}})}));
 const calls:{name:string,args:any}[]=[];
 const panel={apply:true,finishedAt:new Date().toISOString(),error:null,dailyReviewedAt:null,clients:[{bindingId:"binding1",client:"Fictional Design",clientTaskId:"test1",accountId:"123456",signal:"unsettled",error:null,fresh:true,checkedAt:new Date().toISOString(),nextSendAt:null,review:{id:"review1",version:1,body:"⚠️ تنبيه بخصوص وسيلة الدفع في الحساب الإعلاني",state:"pending",reason:null,createdAt:new Date().toISOString(),actor:null,decidedAt:null,delivery:null}}]};
 mock.module("@/lib/supabase",()=>({supabase:{rpc(name:string,args:any){calls.push({name,args});const promise=Promise.resolve({data:name==="cockpit_ad_billing_review_panel" ? structuredClone(panel) : "review1",error:null});return Object.assign(promise,{abortSignal:()=>promise});}}}));
 const {createRoot}=await import("react-dom/client");
 const {act}=await import("react");
-const {MemoryRouter}=await import("react-router");
+const {MemoryRouter,Routes,Route}=await import("react-router");
+const {RoleRoute}=await import("../src/components/RoleRoute");
 const {AdBillingReviewPage}=await import("../src/components/AdBillingReview");
 const host=win.document.createElement("div");win.document.body.append(host);const root=createRoot(host as any);
 async function render(mode="approve") {await act(async()=>{root.render(<MemoryRouter key={mode} initialEntries={[`/ad-billing?binding=binding1&mode=${mode}`]}><AdBillingReviewPage /></MemoryRouter>);});}
@@ -29,4 +32,18 @@ test("explicit approval sends the version and exact reviewed body once",async()=
 });
 test("cooldown disables approval while preserving deny and daily review",async()=>{
  (panel.clients[0] as any).nextSendAt=new Date(Date.now()+3600000).toISOString();await render("cooldown");expect((button("Approve & queue") as any).disabled).toBe(true);expect((button("Deny with") as any).disabled).toBe(false);expect(host.textContent).toContain("already sent recently");
+});
+
+test("shared review route admits CSM and media buyer; other CSM pages remain restricted",async()=>{
+ async function screen(roles:string[], path:string) {
+  authRoles=roles;
+  await act(async()=>root.render(<MemoryRouter key={`${roles}-${path}`} initialEntries={[path]}><Routes>
+    <Route element={<RoleRoute anyOf={["csm","media_buyer"]} />}><Route path="/ad-billing" element={<span>Shared billing review allowed</span>} /></Route>
+    <Route element={<RoleRoute role="csm" />}><Route path="/dashboard" element={<span>CSM dashboard allowed</span>} /></Route>
+  </Routes></MemoryRouter>));
+ }
+ for(const role of ["csm","media_buyer"]) {await screen([role],"/ad-billing");expect(host.textContent).toContain("Shared billing review allowed");}
+ await screen(["media_buyer"],"/dashboard");expect(host.textContent).toContain("This cockpit isn't yours");
+ await screen(["creative_director"],"/ad-billing");expect(host.textContent).toContain("This cockpit isn't yours");
+ await screen(["csm"],"/dashboard");expect(host.textContent).toContain("CSM dashboard allowed");
 });
