@@ -368,6 +368,32 @@ export async function executeAct(
   return data;
 }
 
+/**
+ * The kinds that change the client's card on the ClickUp Clients board. They
+ * go through cockpit-csm-api, which sets the field, reads it back, comments on
+ * the client's task and records the decision itself. Every other kind is saved
+ * in the cockpit; a ticket reaches its team through the ClickUp log.
+ */
+export const CLICKUP_ACT_KINDS = new Set(["stage", "happiness"]);
+
+export async function performAct(
+  client: SupabaseClient | null,
+  args: Parameters<typeof executeAct>[1],
+) {
+  if (!args.kind || !CLICKUP_ACT_KINDS.has(args.kind))
+    return executeAct(client, args);
+  if (!args.taskId)
+    throw new Error(
+      "This client has no ClickUp card, so the change cannot be saved",
+    );
+  return executeCsmAction(client, "act", {
+    taskId: String(args.taskId),
+    kind: args.kind,
+    action: args.action.trim(),
+    value: String(args.value ?? ""),
+  });
+}
+
 export function useCsmSnapshot(
   client: SupabaseClient | null,
   allowedClients?: string[] | null,
@@ -521,7 +547,7 @@ export function useCsmSnapshot(
       metadata?: Record<string, any>;
       [key: string]: any;
     }) => {
-      await executeAct(client, args);
+      await performAct(client, args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],

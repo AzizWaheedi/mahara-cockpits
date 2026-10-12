@@ -33,6 +33,10 @@ What --apply changes, and nothing else:
   exactly what was there.
 - With --calendar, the booking calendar "One to one interview" gets the new
   name, and its description's "Book your one to one" reads "Book your one-to-one".
+  HighLevel's calendar PUT takes a calendar out of its hosts' availability
+  schedules, so any schedule that listed it before the write lists it again
+  after (rules and timezone as read); a schedule that cannot be read first
+  stops the calendar write.
 
 It never touches a workflow, a contact, a card or a message, changes no custom
 value beyond those phrases, and it never publishes anything. Running it twice is safe: a board that already
@@ -188,6 +192,45 @@ def calendar_drift(before: dict[str, Any], after: dict[str, Any], also: tuple[st
     """Calendar settings that differ after a rename, apart from the name, the timestamps and `also`."""
     skip = {"name", "updatedAt", "dateUpdated", "updated_at", "lastUpdatedBy", "version", *also}
     return sorted(k for k in set(before) | set(after) if k not in skip and before.get(k) != after.get(k))
+
+
+def linked_schedules(get: Get, loc: str, cal: dict[str, Any]) -> Optional[list[dict[str, Any]]]:
+    """The hosts' availability schedules that list this calendar, or None when one cannot be read."""
+    out: list[dict[str, Any]] = []
+    for m in cal.get("teamMembers") or []:
+        uid = m.get("userId")
+        if not uid:
+            continue
+        status, body = get(f"/calendars/schedules/search?locationId={loc}&userId={uid}", "2021-04-15")
+        if status != 200:
+            return None
+        for s in (body or {}).get("schedules") or []:
+            if not s.get("deleted") and cal.get("id") in (s.get("calendarIds") or []):
+                out.append(s)
+    return out
+
+
+def relink_schedule(get: Get, put: Put, sched: dict[str, Any], cal_id: str, say: Callable[[str], None]) -> int:
+    """Put the calendar back in a schedule the calendar PUT took it out of. Returns 1 on a failure."""
+    path = f"/calendars/schedules/{sched['id']}"
+    status, body = get(path, "2021-04-15")
+    now = (body or {}).get("schedule", body) if status == 200 else None
+    if not now:
+        say(f"CHECK schedule {sched.get('name')!r}: could not be read after the calendar write")
+        return 1
+    ids = list(now.get("calendarIds") or [])
+    if cal_id in ids:
+        say(f"  schedule {now.get('name')!r} still lists the calendar")
+        return 0
+    status, out = put(path, {"name": now.get("name"), "rules": now.get("rules"), "timezone": now.get("timezone"),
+                             "calendarIds": ids + [cal_id]}, "2021-04-15")
+    s2, back = get(path, "2021-04-15")
+    back = (back or {}).get("schedule", back) if s2 == 200 else None
+    if status >= 300 or not back or cal_id not in (back.get("calendarIds") or []) or back.get("rules") != now.get("rules"):
+        say(f"CHECK schedule {now.get('name')!r}: the calendar is not back in it ({status} {str(out)[:120]})")
+        return 1
+    say(f"  re-linked the calendar to the {now.get('name')!r} schedule, its hours unchanged")
+    return 0
 
 
 def _pairs(undo: bool) -> list[tuple[str, str]]:
@@ -347,9 +390,16 @@ def run(get: Get, put: Put, loc: str, *, apply: bool, undo: bool, calendar: bool
         # name-only PUT on 2026-10-11 left the one-to-one calendar with no open
         # hours (restored by hand the same hour). Send the hours it has, and
         # never write a calendar whose hours could not be read first.
+        # A PUT that carries openHours also takes the calendar out of every
+        # host's availability schedule (2026-10-11: the demo calendars fell back
+        # to their own 00:00-23:55 hours). Note the schedules first, re-link after.
+        linked = linked_schedules(get, loc, before) if before and before.get("openHours") else None
         if not before or not before.get("openHours"):
             failed += 1
             say("FAILED calendar: its open hours could not be read first, so it was left alone")
+        elif linked is None:
+            failed += 1
+            say("FAILED calendar: its hosts' schedules could not be read first, so it was left alone")
         else:
             status, out = put(f"/calendars/{found['id']}", {**cal_body, "openHours": before["openHours"]}, "2021-04-15")
             if status >= 300:
@@ -365,6 +415,8 @@ def run(get: Get, put: Put, loc: str, *, apply: bool, undo: bool, calendar: bool
                     say(f"CHECK calendar: not as asked: {', '.join(wrong) or 'nothing'}; also changed: {', '.join(drift) or 'nothing'}")
                 else:
                     say(f"  done calendar: {', '.join(cal_body)} as asked, nothing else changed")
+                for s in linked:
+                    failed += relink_schedule(get, put, s, found["id"], say)
 
     say("Nothing else was touched: no workflow, contact, card or message, and no other custom value." + (" Some steps need a look (above)." if failed else ""))
     return 1 if failed else 0

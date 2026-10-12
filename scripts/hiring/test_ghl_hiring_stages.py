@@ -46,6 +46,11 @@ class FakeGhl:
              "value": f"A fifteen minute live block after the {'one-to-one' if renamed else 'one to one'}: a speed test."},
             {"id": "v2", "name": "Hiring - Owner name", "fieldKey": "{{ custom_values.owner }}", "value": "Aziz"},
         ]
+        # The host's own schedule; the hiring calendar is not in it on the live account.
+        self.schedules = [{"id": "s1", "name": "Work Hours", "userId": "u", "calendarIds": [],
+                           "rules": [{"day": "monday", "type": "wday", "intervals": [{"from": "08:00", "to": "17:00"}]}],
+                           "timezone": "Asia/Kuwait", "deleted": False}]
+        self.schedule_read_fails = False
         self.puts = []
         self.drop_id_on_put = False
 
@@ -60,6 +65,14 @@ class FakeGhl:
             return 200, {"calendars": [copy.deepcopy(self.calendar)]}
         if path == "/calendars/c1":
             return 200, {"calendar": copy.deepcopy(self.calendar)}
+        if path.startswith("/calendars/schedules/search?"):
+            if self.schedule_read_fails:
+                return 500, "schedules unavailable"
+            uid = path.rsplit("userId=", 1)[1]
+            return 200, {"schedules": [copy.deepcopy(s) for s in self.schedules if s["userId"] == uid]}
+        if path.startswith("/calendars/schedules/"):
+            s = next((x for x in self.schedules if x["id"] == path.rsplit("/", 1)[1]), None)
+            return (200, {"schedule": copy.deepcopy(s)}) if s else (404, "no schedule")
         return 404, "unrouted " + path
 
     def put(self, path, body, version="2021-07-28"):
@@ -84,7 +97,16 @@ class FakeGhl:
             self.calendar.update(body)
             if "openHours" not in body:
                 self.calendar["openHours"] = {}
+            else:
+                # As HighLevel did on 2026-10-11: openHours in the body takes the
+                # calendar out of every host's schedule.
+                for s in self.schedules:
+                    s["calendarIds"] = [c for c in s["calendarIds"] if c != "c1"]
             return 200, {}
+        if path.startswith("/calendars/schedules/"):
+            s = next(x for x in self.schedules if x["id"] == path.rsplit("/", 1)[1])
+            s.update(copy.deepcopy(body))
+            return 200, {"schedule": copy.deepcopy(s)}
         return 404, "unrouted"
 
 
@@ -203,6 +225,32 @@ class Run(unittest.TestCase):
         code, out = run(ghl, apply=True, calendar=True)
         self.assertEqual(code, 1, out)
         self.assertIn("its open hours could not be read first", out)
+        self.assertEqual([p for p, _ in ghl.puts if p == "/calendars/c1"], [])
+
+    def test_a_calendar_in_a_hosts_schedule_is_linked_again_after_the_write(self):
+        ghl = FakeGhl()
+        ghl.schedules[0]["calendarIds"] = ["other", "c1"]
+        rules = copy.deepcopy(ghl.schedules[0]["rules"])
+        code, out = run(ghl, apply=True, calendar=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(ghl.schedules[0]["calendarIds"], ["other", "c1"])
+        self.assertEqual(ghl.schedules[0]["rules"], rules)
+        self.assertEqual(ghl.schedules[0]["timezone"], "Asia/Kuwait")
+        self.assertIn("re-linked the calendar to the 'Work Hours' schedule", out)
+
+    def test_a_calendar_outside_every_schedule_writes_no_schedule(self):
+        ghl = FakeGhl()
+        code, out = run(ghl, apply=True, calendar=True)
+        self.assertEqual(code, 0, out)
+        self.assertEqual([p for p, _ in ghl.puts if p.startswith("/calendars/schedules/")], [])
+        self.assertEqual(ghl.schedules[0]["calendarIds"], [])
+
+    def test_a_calendar_whose_schedules_cannot_be_read_is_left_alone(self):
+        ghl = FakeGhl()
+        ghl.schedule_read_fails = True
+        code, out = run(ghl, apply=True, calendar=True)
+        self.assertEqual(code, 1, out)
+        self.assertIn("schedules could not be read first", out)
         self.assertEqual([p for p, _ in ghl.puts if p == "/calendars/c1"], [])
 
     def test_undo_puts_the_old_names_back(self):
