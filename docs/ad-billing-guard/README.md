@@ -2,7 +2,7 @@
 
 Status: approval rollout prepared on 12 October 2026 for 16 verified Active clients. Both apply switches stay off until matching SQL and both frontends are verified; see the shared project record for activation evidence. The five-minute source worker, guardian and independent watchdog continue.
 
-This service checks Meta billing for explicitly enrolled clients. It requires a current Active status on the exact Clients task before each message. It posts a review to private CSM general and media announcements and records observations on both ClickUp task types. Client WhatsApp requires approval from either the CSM or media buyer. The first decision closes the review for both; denial requires a reason. New Slack posts and client messages each have a rolling 72-hour cap. Earlier status changes edit the same card.
+This service checks Meta billing for explicitly enrolled clients. It requires a current Active status on the exact Clients task before each message. It posts a review to private CSM general and media announcements and records observations on both ClickUp task types. Client WhatsApp requires approval from either the CSM or media buyer. The first decision closes the review for both; denial requires a reason. New Slack posts and client messages each have a rolling 72-hour cap. Unresolved incidents keep the same compact card, even after 72 hours. Only a genuinely new incident can post again after that limit.
 
 ## What it can detect
 

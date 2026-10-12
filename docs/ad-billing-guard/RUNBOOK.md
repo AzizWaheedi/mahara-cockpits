@@ -16,8 +16,11 @@ there; this records attention without clearing unresolved items or sending.
 Decisions and their authors are retained. Current seat/client access is checked
 at decision time and again before sending an approved draft.
 
-- One new Slack post per exact client per channel per rolling 72 hours. Earlier
-  status changes and decisions update that bot's existing card with `chat.update`.
+- A compact three-line Slack card identifies the client, issue and decision.
+  Approve, Edit and Deny URL buttons open the secure review page with the full Arabic draft.
+  An unresolved incident always reuses its existing card, even after 72 hours.
+  A genuinely new incident can create a new card only after the rolling 72-hour budget.
+  Status changes and decisions update that bot's existing card with `chat.update`.
   Ambiguous or failed Slack receipts do not cause replacement spam.
 - Client WhatsApp also has a rolling 72-hour cooldown across billing states.
   Existing accepted messages count. An unresolved send blocks further messages
@@ -35,7 +38,8 @@ at decision time and again before sending an approved draft.
   currency or confirmed bank decline. Card suffixes appear only when verified.
 
 Migration `20261012110708_ad_billing_approval.sql` deliberately pauses database
-apply. Apply `20261012114355_ad_billing_shared_reviewers.sql`. Deploy the matching worker and both UIs, verify permissions and review
+apply. Apply `20261012114355_ad_billing_shared_reviewers.sql` and
+`20261012115521_ad_billing_quiet_slack_cards.sql`. Deploy the matching worker and both UIs, verify permissions and review
 links, then enable database/runtime apply together. Never roll back to the
 pre-approval observer/sender; rollback must leave apply disabled. Raw review
 and delivery tables remain unavailable to browser roles.
