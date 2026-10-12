@@ -4,7 +4,7 @@ import { AppLayout } from "@/components/AppLayout";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute";
-import { RoleRoute } from "@/components/RoleRoute";
+import { BillingReviewLayout, RoleRoute } from "@/components/RoleRoute";
 import {
   BacklogPage,
   ClientPage,
@@ -45,12 +45,17 @@ export function AuthenticatedRoutes() {
       </Route>
 
       <Route element={<ProtectedRoute />}>
+        {/* Shared billing access does not mount the CSM sidebar or expose CSM pages. */}
+        <Route element={<RoleRoute anyOf={["csm", "media_buyer"]} />}>
+          <Route element={<BillingReviewLayout />}>
+            <Route path="/ad-billing" element={<AdBillingReviewPage />} />
+          </Route>
+        </Route>
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="csm" />}>
             {/* Five places (the simplification audit, approved 2026-10-06). */}
             <Route path="/dashboard" element={<TodayPage />} />
-            <Route path="/ad-billing" element={<AdBillingReviewPage />} />
             <Route path="/inbox" element={<InboxPage />} />
             <Route path="/clients" element={<ClientsPage />} />
             <Route path="/clients/:key" element={<ClientPage />} />

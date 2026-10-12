@@ -20,7 +20,7 @@ async function acceptedSlack() {
 }
 beforeAll(async()=>{
  db=await cockpitTestDb({supabaseDefaultPrivileges:true});
- for(const name of ["20261011174920_ad_billing_guard.sql","20261011192500_ad_billing_roster_safe_update.sql","20261012110708_ad_billing_approval.sql"]) await db.exec(migration(name));
+ for(const name of ["20261011174920_ad_billing_guard.sql","20261011192500_ad_billing_roster_safe_update.sql","20261012110708_ad_billing_approval.sql","20261012114355_ad_billing_shared_reviewers.sql"]) await db.exec(migration(name));
  await member(db,uid,"csm@example.test",["csm"]); await member(db,buyer,"buyer@example.test",["media_buyer"]);
 });
 afterAll(async()=>await db?.close());
@@ -29,6 +29,7 @@ beforeEach(async()=>{
  await db.query("update cockpit_ad_billing_config set apply=true,lease=$1,lease_until=now()+interval '10 minutes',last_finished_at=now(),last_error=null",[lease]);
  await db.query("insert into cockpit_ad_billing_bindings(id,client_task_id,client_name,account_id,ads_task_ids,whatsapp_group,sheet_account_ref,identity_evidence,identity_verified_at,enabled,manual_cutover_verified,manual_cutover_evidence) values($1,'client1','Synthetic Client','123456',array['ads1'],'12345@g.us','123456','Synthetic proof only',now(),true,true,'Manual cutover verified')",[bid]);
  await db.query("update cockpit_members set active=true,clients='{}',roles=array['csm'] where auth_user_id=$1",[uid]);
+ await db.query("update cockpit_members set active=true,clients='{}',roles=array['media_buyer'] where auth_user_id=$1",[buyer]);
 });
 test("observation creates two review cards and ClickUp comments but NO WhatsApp",async()=>{
  await observe(); expect(await scalar("select count(*) from cockpit_ad_billing_reviews")).toBe(1);
@@ -49,11 +50,11 @@ test("denial requires reason and no new pending draft is generated for 72 hours"
  expect((await review()).state).toBe("denied"); expect(await scalar("select count(*) from cockpit_ad_billing_reviews")).toBe(1);
  expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='whatsapp'")).toBe(0);
 });
-test("anonymous, media buyer, inactive and wrong-client CSM cannot approve",async()=>{
+test("anonymous, inactive and wrong-client CSM cannot approve",async()=>{
  await observe();const r=await review();
- for(const who of [null,buyer]) {await actor(db,who);await expect(scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id])).rejects.toThrow();}
- await owner(db);await db.query("update cockpit_members set active=false where auth_user_id=$1",[uid]);await expect(decide()).rejects.toThrow("CSM access");
- await owner(db);await db.query("update cockpit_members set active=true,clients=array['Other Client'] where auth_user_id=$1",[uid]);await expect(decide()).rejects.toThrow("CSM access");
+ for(const who of [null]) {await actor(db,who);await expect(scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id])).rejects.toThrow();}
+ await owner(db);await db.query("update cockpit_members set active=false where auth_user_id=$1",[uid]);await expect(decide()).rejects.toThrow("billing reviewer access");
+ await owner(db);await db.query("update cockpit_members set active=true,clients=array['Other Client'] where auth_user_id=$1",[uid]);await expect(decide()).rejects.toThrow("billing reviewer access");
 });
 test("raw review tables and service helpers are inaccessible to browser roles",async()=>{
  await actor(db,uid);await expect(db.query("select * from cockpit_ad_billing_reviews")).rejects.toThrow();
@@ -158,4 +159,31 @@ test("approved intent passes begin-send and persists provider receipt",async()=>
  expect(await scalar("select cockpit_ad_billing_begin_send($1,$2)",[id,claim])).toBe(true);
  expect(await scalar("select cockpit_ad_billing_result($1,$2,'accepted','synthetic-provider-id',null)",[id,claim])).toBe(true);
  expect(await scalar("select provider_id from cockpit_ad_billing_deliveries where id=$1",[id])).toBe("synthetic-provider-id");
+});
+
+test("media buyer may approve and CSM cannot decide again",async()=>{
+ await observe();const r=await review();await actor(db,buyer);
+ const p=await scalar("select cockpit_ad_billing_review_panel()");expect(p.clients).toHaveLength(1);
+ await scalar("select cockpit_ad_billing_daily_done()");
+ await scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id]);
+ await actor(db,uid);await expect(scalar("select cockpit_ad_billing_decide($1,1,'deny',null,'Already handled')",[r.id])).rejects.toThrow("review changed");
+ await owner(db);expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='whatsapp'")).toBe(1);
+ const id=await scalar("select id from cockpit_ad_billing_deliveries where channel='whatsapp'");
+ expect(await scalar("select cockpit_ad_billing_approved_delivery($1)",[id])).toBe(true);
+ await db.query("update cockpit_members set active=false where auth_user_id=$1",[buyer]);
+ expect(await scalar("select cockpit_ad_billing_approved_delivery($1)",[id])).toBe(false);
+});
+test("CSM denial blocks a later media-buyer approval",async()=>{
+ await observe();const r=await review();await decide("deny",null,"Client already handling the issue");await actor(db,buyer);
+ await expect(scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id])).rejects.toThrow("review changed");
+ await owner(db);expect(await scalar("select count(*) from cockpit_ad_billing_deliveries where channel='whatsapp'")).toBe(0);
+});
+test("media buyer client scope and current role remain required",async()=>{
+ await observe();const r=await review();
+ await db.query("update cockpit_members set clients=array['Other Client'] where auth_user_id=$1",[buyer]);await actor(db,buyer);
+ expect((await scalar("select cockpit_ad_billing_review_panel()")).clients).toHaveLength(0);
+ await expect(scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id])).rejects.toThrow("billing reviewer access");
+ await owner(db);await db.query("update cockpit_members set clients='{}',roles=array['creative_director'] where auth_user_id=$1",[buyer]);await actor(db,buyer);
+ await expect(scalar("select cockpit_ad_billing_review_panel()")).rejects.toThrow();
+ await expect(scalar("select cockpit_ad_billing_decide($1,1,'approve',null,null)",[r.id])).rejects.toThrow("billing reviewer access");
 });

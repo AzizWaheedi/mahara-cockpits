@@ -1,17 +1,17 @@
 # Ad billing watch
 
-Status: live for 16 verified Active clients as of 11 October 2026, 19:45 UTC. The five-minute VPS worker, cockpit panel, guardian check and independent Supabase watchdog are installed.
+Status: approval rollout prepared on 12 October 2026 for 16 verified Active clients. Both apply switches stay off until matching SQL and both frontends are verified; see the shared project record for activation evidence. The five-minute source worker, guardian and independent watchdog continue.
 
-This service checks Meta billing for explicitly enrolled clients. It requires a current Active status on the exact Clients task before each message. It sends one incident notification to the client group, private media channel, Client task and each verified Ads Management task. Repeated polls do not repeat the notification.
+This service checks Meta billing for explicitly enrolled clients. It requires a current Active status on the exact Clients task before each message. It posts a review to private CSM general and media announcements and records observations on both ClickUp task types. Client WhatsApp requires approval from either the CSM or media buyer. The first decision closes the review for both; denial requires a reason. New Slack posts and client messages each have a rolling 72-hour cap. Earlier status changes edit the same card.
 
 ## What it can detect
 
 | Source signal | Action |
 | --- | --- |
-| Meta account status 9 | Warn the client about the payment grace period before a possible interruption. |
-| Meta account status 3 | Ask the client to check an unsettled balance. Notify the buyer and comment on both task types. |
+| Meta account status 9 | Draft a payment-grace warning for approval before a possible interruption. |
+| Meta account status 3 | Draft an unsettled-balance notice for approval. Notify the team and comment on both task types. |
 | Meta account status 2 or another restriction | Notify the team for investigation. Do not tell the client that a card declined. |
-| Two active-status reads at least four minutes apart | Record recovery. Send a client update only if the earlier incident message has a provider receipt. |
+| Two active-status reads at least four minutes apart | Record recovery, expire unsent approvals and update the existing Slack cards. No automatic client message. |
 | Missing access, missing status, or a changed mapping | Block outbound messages for that binding. Show the fault. Keep the previous incident open. |
 
 The API does not expose the bank's available funds or guarantee an advance warning of an issuer decline. Status 3 is not proof that a particular card was rejected. The messages preserve that distinction. They do not promise a retry time, claim that ads are delivering, or convert debt to dollars.
@@ -24,13 +24,15 @@ Sources: [Meta account fields](https://github.com/facebook/facebook-python-busin
 
 1. Open **Today** or **Ads management** in the media buyer cockpit.
 2. Read **Ad billing watch**. Check the last run, active-client coverage and open issues.
-3. Open the linked client task or Meta billing account to investigate.
+3. Open **Daily ad billing review**. Check the exact account and Arabic draft. Approve, edit then approve, or deny with a reason. Record today’s check without clearing pending issues.
 4. If a message says **unknown**, inspect provider history. Do not resend it manually without checking.
 5. Correct a missing account link through technical operations. A name or tag is not enough to enroll an account.
 
 “Accepted by provider” means the API returned a message or comment ID. It does not mean that a client read the WhatsApp message. Client and Ads Management comments are separate deliveries. A partial failure does not undo completed deliveries.
 
-## Verified installation, 11 October 2026
+## Historical installation, 11 October 2026
+
+These receipt counts describe the former automatic sender. The approval policy above supersedes that behavior.
 
 - Runtime and database notification switches are on. All 16 bindings have current identity checks and recorded manual cutover evidence.
 - First live batch: 5 WhatsApp messages, 6 private Slack messages and 12 ClickUp comments accepted. No delivery is queued, failed or unknown.

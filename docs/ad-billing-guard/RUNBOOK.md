@@ -1,15 +1,17 @@
 # Ad billing watch operator runbook
 
-## CSM approval and three-day cadence (12 October)
+## Shared approval and three-day cadence (12 October)
 
-Client WhatsApp is never sent from detection alone. The CSM opens the private
+Client WhatsApp is never sent from detection alone. Either the CSM or media buyer opens the private
 `#csm-general` or `#media-announcments` card, reviews the Arabic text and either
 approves it, edits then approves, or denies with a mandatory written reason.
-Buttons are safe links to the authenticated CSM review page:
+Buttons are safe links to the authenticated shared review page:
 https://cockpit.maharamedia.com/client-success/ad-billing
 Opening a link, including a Slack unfurl, cannot approve anything.
 
-The CSM Today page includes **Daily ad billing review**. Record the daily check
+The CSM Today page and media buyer billing panel include **Daily ad billing review**.
+Either role may decide within their existing client access. The first decision
+locks the review for both. Media buyers do not gain access to other CSM pages. Record the daily check
 there; this records attention without clearing unresolved items or sending.
 Decisions and their authors are retained. Current seat/client access is checked
 at decision time and again before sending an approved draft.
@@ -33,7 +35,7 @@ at decision time and again before sending an approved draft.
   currency or confirmed bank decline. Card suffixes appear only when verified.
 
 Migration `20261012110708_ad_billing_approval.sql` deliberately pauses database
-apply. Deploy the matching worker and CSM UI, verify permissions and review
+apply. Apply `20261012114355_ad_billing_shared_reviewers.sql`. Deploy the matching worker and both UIs, verify permissions and review
 links, then enable database/runtime apply together. Never roll back to the
 pre-approval observer/sender; rollback must leave apply disabled. Raw review
 and delivery tables remain unavailable to browser roles.
