@@ -4,6 +4,9 @@ import type {Row, Reads} from './runtime';
 import type {Env} from './transport';
 
 export interface StillAsset {key: string; path: string; contentType: string; bytes: Uint8Array; sha256: string}
+/** Ads from the stored history (ended campaigns) looked up per run, so a backlog never floods Meta. */
+export const HISTORY_STILLS_PER_RUN = 25;
+const adIdsOf = (row: Row | undefined): string[] => row ? [row.adId, ...(Array.isArray(row.adIds) ? row.adIds : [])].filter(id => id !== undefined && id !== null && id !== '').map(String) : [];
 export async function captureStills(state: Row, tables: Record<string, Row[]>, reads: Reads) {
   const known = new Map<string, Row>((state.stills ?? []).map((row: Row) => [row.key, row]));
   const wanted = new Map<string, Row>();
@@ -11,6 +14,24 @@ export async function captureStills(state: Row, tables: Record<string, Row[]>, r
     const adId = row.adId ?? row.metaAdId ?? row.metaId;
     const key = stillKeyFor(row.creativeId, adId);
     if (key && (!row.stillUrl || deadStillHost(row.stillUrl)) && stillCaptureDue(known.get(key), Date.now())) wanted.set(key, {...row, adId});
+  }
+  // An ad that spent but is no longer on the ads board or in Meta's tree (an
+  // ended campaign) still gets a picture, so a past period on the CSM client
+  // page shows every ad. Each still lists the ad ids that use its creative, so
+  // that page finds the picture by ad id; an ad already listed is not asked for again.
+  const lastByAd = new Map<string, Row>();
+  for (const row of known.values()) for (const id of adIdsOf(row)) if (lastByAd.get(id)?.status !== 'saved') lastByAd.set(id, row);
+  const listed = new Set<string>();
+  for (const row of [...tables.ads, ...tables.metaTree.filter(row => row.kind === 'ad'), ...tables.winnersArchive]) listed.add(String(row.adId ?? row.metaAdId ?? row.metaId));
+  let backfill = 0;
+  for (const row of [...(state.dailyStats ?? []), ...(tables.dailyStats ?? [])]) {
+    const adId = row.metaAdId === undefined || row.metaAdId === null ? '' : String(row.metaAdId);
+    if (!/^[0-9]{5,25}$/.test(adId) || listed.has(adId) || !(Number(row.spend) > 0 || Number(row.impressions) > 0)) continue;
+    listed.add(adId);
+    const last = lastByAd.get(adId) ?? known.get(`a:${adId}`);
+    if (last?.status === 'saved' || !stillCaptureDue(last, Date.now()) || backfill >= HISTORY_STILLS_PER_RUN) continue;
+    backfill++;
+    wanted.set(`a:${adId}`, {adId, campaignName: row.campaignName});
   }
   const assets: StillAsset[] = [], outcomes: Row[] = [], items = [...wanted.values()];
   let cursor = 0;
@@ -46,7 +67,7 @@ export async function captureStills(state: Row, tables: Record<string, Row[]>, r
           if(String(row.adId??row.metaAdId??row.metaId)===String(item.adId)&&(!row.creativeId||row.creativeId===creativeId))Object.assign(row,{creativeId,stillKey:key});
         }
         const cached = known.get(key);
-        if (cached?.status === 'saved' && cached.url) { outcomes.push(cached); continue; }
+        if (cached?.status === 'saved' && cached.url) { outcomes.push({...cached, adIds: [...new Set([...adIdsOf(cached), String(item.adId)])]}); continue; }
         const creative = await reads.graph(creativeId, {fields: 'thumbnail_url,image_url,object_story_spec{video_data{image_url},link_data{picture}}', thumbnail_width: 640, thumbnail_height: 640});
         // The sized thumbnail first (small enough for cards, sharp in the
         // dialog), then the full pictures; the next one is tried when a
@@ -59,7 +80,7 @@ export async function captureStills(state: Row, tables: Record<string, Row[]>, r
         const sha256 = createHash('sha256').update(full.bytes).digest('hex');
         const path = `${createHash('sha256').update(key).digest('hex')}/${sha256}`;
         assets.push({key, path, ...full, sha256});
-        outcomes.push({key, adId: item.adId, creativeId, campaignName: item.campaignName, accountId: item.accountId, status: 'captured', storagePath: path, sha256, bytes: full.bytes.length, contentType: full.contentType});
+        outcomes.push({key, adId: item.adId, adIds: [String(item.adId)], creativeId, campaignName: item.campaignName, accountId: item.accountId, status: 'captured', storagePath: path, sha256, bytes: full.bytes.length, contentType: full.contentType});
       } catch (error) {
         const old = known.get(key), attempts = Number(old?.attempts ?? 0) + 1;
         outcomes.push({key, adId: item.adId, status: 'failed', attempts, lastTriedAt: Date.now(), lastAttemptAt: Date.now(), nextAttemptAt: Date.now() + (attempts >= 3 ? 7 * 86400000 : 3600000), error: 'Still image unavailable; inspect sanitized provider receipt'});
@@ -67,7 +88,12 @@ export async function captureStills(state: Row, tables: Record<string, Row[]>, r
     }
   }
   await Promise.all(Array.from({length: Math.min(4, items.length)}, () => consume()));
-  for (const row of outcomes) known.set(row.key,row);
+  // Two ads that share a new creative in one run both stay listed on it.
+  for (const row of outcomes) {
+    const before = known.get(row.key);
+    const keep = row.status !== 'failed' && before && before.status !== 'failed' ? adIdsOf(before) : [];
+    known.set(row.key, {...row, adIds: [...new Set([...keep, ...adIdsOf(row)])]});
+  }
   tables.adStills = [...known.values()];
   return assets;
 }

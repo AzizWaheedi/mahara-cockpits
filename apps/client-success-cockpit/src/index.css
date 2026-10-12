@@ -58,9 +58,6 @@
 }
 
 :root {
-  --sidebar-width: 16rem;
-  --sidebar-width-icon: 3rem;
-
   --mahara-teal: #00cfc8;
   --deep-space: #091333;
   --royal-blue: #2e5bd6;
@@ -368,5 +365,52 @@
 @media (prefers-reduced-motion: reduce) {
   .cockpit-nav-link {
     transition: none;
+  }
+}
+
+/*
+ * Results tab: each ad hangs off its ad set on a hairline, so the tree reads
+ * campaign, then ad set, then ad (Muhammed, 2026-10-12). The branch meets the
+ * middle of the 56px picture: 12px row padding plus 28px.
+ */
+.ads-tree {
+  list-style: none;
+  margin: 0 0 0 8px;
+  padding: 0 0 0 18px;
+}
+.ads-tree > li {
+  position: relative;
+}
+.ads-tree > li::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid color-mix(in oklch, var(--foreground) 22%, transparent);
+}
+.ads-tree > li:last-child::before {
+  bottom: auto;
+  height: 40px;
+}
+.ads-tree > li::after {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 40px;
+  width: 12px;
+  border-top: 1px solid color-mix(in oklch, var(--foreground) 22%, transparent);
+}
+@container (min-width: 36rem) {
+  .ads-tree {
+    margin-left: 12px;
+    padding-left: 22px;
+  }
+  .ads-tree > li::before,
+  .ads-tree > li::after {
+    left: -22px;
+  }
+  .ads-tree > li::after {
+    width: 16px;
   }
 }

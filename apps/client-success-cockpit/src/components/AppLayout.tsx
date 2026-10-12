@@ -1,5 +1,6 @@
+import { useReducedMotion } from "framer-motion";
 import { Search } from "lucide-react";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { Outlet, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { openSearch } from "@/lib/search";
@@ -8,11 +9,28 @@ import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
 import { SyncStrip } from "./SyncStrip";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "./ui/sidebar";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar,
+} from "./ui/sidebar";
 import { Wordmark } from "./Wordmark";
 
 export function AppLayout() {
+  return (
+    <SidebarProvider>
+      <LayoutContent />
+    </SidebarProvider>
+  );
+}
+
+function LayoutContent() {
   const { client } = useCockpitAuth();
+  const reduced = useReducedMotion();
+  const { open, isMobile } = useSidebar();
+  const inset = useRef<HTMLDivElement>(null);
+  const previousOpen = useRef(open);
 
   const handleReport = useCallback(
     // biome-ignore lint/suspicious/noExplicitAny: error boundary param
@@ -39,10 +57,30 @@ export function AppLayout() {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [pathname]);
+  // Folding the rail slides the page with it, as in the media buyer cockpit.
+  useLayoutEffect(() => {
+    if (previousOpen.current === open) return;
+    previousOpen.current = open;
+    const element = inset.current;
+    if (!element || isMobile || reduced) return;
+    const liveTransform = getComputedStyle(element).transform;
+    const currentX =
+      liveTransform === "none" ? 0 : new DOMMatrixReadOnly(liveTransform).m41;
+    element.getAnimations().forEach(animation => {
+      animation.cancel();
+    });
+    element.animate(
+      [
+        { transform: `translateX(${currentX + (open ? -160 : 160)}px)` },
+        { transform: "translateX(0)" },
+      ],
+      { duration: 150, easing: "cubic-bezier(.4,0,.2,1)" },
+    );
+  }, [open, isMobile, reduced]);
   return (
-    <SidebarProvider>
+    <>
       <AppSidebar />
-      <SidebarInset>
+      <SidebarInset ref={inset}>
         {/* Below 1024px a slim bar holds the menu and the search, clear of the
             phone's status bar in the installed app (pt-safe, Aziz 2026-09-21).
             From 1024px up the rail is always there, so there is no bar at all;
@@ -73,6 +111,6 @@ export function AppLayout() {
         <CommandPalette />
         <HermesChat />
       </SidebarInset>
-    </SidebarProvider>
+    </>
   );
 }
