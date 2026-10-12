@@ -229,7 +229,7 @@ const TEMPLATES: Template[] = [
         accountability: "Keep churn as low as possible on your pod",
         lookingAt: [
           "Client experience: the wow factor, being a friend, never making them feel like a number",
-          "Client results: the offer, a sub-$60 cost per booking, a show rate over 70%, sales coaching, problem-solving, holding them accountable",
+          "Client results: the offer, a sub-$60 cost per booking, a show rate at or above 60%, sales coaching, problem-solving, holding them accountable",
         ],
         scale: {
           a: "Under 7%",

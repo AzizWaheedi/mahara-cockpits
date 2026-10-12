@@ -264,7 +264,7 @@ Show, quote, close and revenue come from each client's stat sheet, filled in by 
 | OUT-19 | Quotation rate | Quotes / shows | Stat sheet col K (`csmProfiles.ts summarise`) | Client, month; 25 min | CSM | 50%+ same-day quotes (constraints checklist; timing is not captured) | DERIVE |
 | OUT-20 | Cancellation rate | Cancelled / appointments booked | Stat sheet Dashboard tab (Cancelled, Cancellation Rate) | Client, month; hourly | CSM | Under 10% | NEW (probe) |
 | OUT-21 | Lead to booking rate (sheet) | Stat sheet booked / Meta leads over this and last month; needs 10+ leads | `reportDocs.ts constraintsFor`; `csmDiagnosis.ts` (browser); `csmProfiles.ts byAd` | Client, 2 months; sync | CSM, AG | 25% | NOW. Only 14 of 49 clients have matched Meta leads; the rest fall back to sheet row counts, so trust is partial. |
-| OUT-22 | Constraint diagnosis | The first failing constraint, in order: no_sheet, sheet_not_filled, nothing_live, cpl_high, booking_rate, show_rate, close_rate, macro_offer, silence. DWY clients skip the sheet and funnel constraints. | `csmDiagnosis.ts diagnose` (browser); `reportDocs.ts constraintsFor` (MB) | Client; sync | CSM, MB | No failing constraint | DERIVE. Phase 4 ports both into one shared function used by CS, report docs and CEO. Gates follow decision 3. nothing_live counts only for a client with a confirmed meta_account alias. |
+| OUT-22 | Constraint diagnosis | The first failing constraint, in order: no_sheet, sheet_not_filled, nothing_live, cpl_high, booking_rate, close_rate, macro_offer, silence. A show rate under 60% (show_rate) is a watch beside it, never a constraint. DWY clients skip the sheet and funnel constraints. | `csmDiagnosis.ts diagnose` (browser); `reportDocs.ts constraintsFor` (MB) | Client; sync | CSM, MB | No failing constraint | DERIVE. Phase 4 ports both into one shared function used by CS, report docs and CEO. Gates follow decision 3. nothing_live counts only for a client with a confirmed meta_account alias. |
 | OUT-23 | Performance by ad (sheet) | Per ad: leads, booked, shows, no-shows, closes, unknown, book rate, show rate, close rate; top 12 for 2 months and all time | `csmProfiles.ts byAd` (stat sheet Ad column) | Client x ad; sync | CSM, MB, CD | none | NOW. It is the only link from an ad to a close. Ads are keyed by the name typed in the sheet. |
 | OUT-24 | Book trends by group | Last 90 days: leads, spend and CPL per day; booked and show rate per ISO week; for the active, onboarding and paused groups | CS `csm.ts buildPerformanceOverview` (`trendByGroup`, `weeklyByGroup`) | Company, day and week; sync | CSM | none | NOW (read through `ceoFacts`) |
 
@@ -929,7 +929,7 @@ Labels shown next to the value that do not lower trust: backfill, manual, defini
 | Called within 24h | CALL-06 | 100% |
 | Connected | CALL-02 | 35% |
 | Booked | DEL-06 (GHL) or OUT-06 (sheet) | 25% of leads |
-| Showed | OUT-07 | 75% |
+| Showed | OUT-07 | 60% (watch; never named the leak) |
 | Quoted | OUT-19 | 50% |
 | Closed | OUT-08 | 20% |
 | Client revenue | OUT-10 | none |

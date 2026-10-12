@@ -278,23 +278,54 @@ describe("the gates", () => {
       "../../supabase/functions/cockpit-csm-api",
       "../../hermes/cockpit-client-success",
       "../../hermes/cockpit-ask-ai/references/mahara-context/client-launch-campaign",
+      "../../hermes/cockpit-ask-ai/references/mahara-context/b2b-marketing-ops/SKILL.md",
+      "../../context/meta-ads-skill-pack/mahara-context/b2b-marketing-ops/SKILL.md",
+      "../../CEO_COCKPIT_PLAN.md",
+      "../../viktor-side-scripts/csm",
+      "convex/ceo/scorecardSeed.ts",
+      "convex/reportDocs.ts",
     ];
-    const bad = /showRate:\s*7[05]\b|show rate[^\n]{0,40}\b7[05] ?%/i;
+    // "show rate 75%", "a show rate over 70%", "booking→show 75%" and the
+    // plan's "| Showed | OUT-07 | 75% |" row are all the client line.
+    const bad = new RegExp(
+      [
+        String.raw`showRate:\s*7[05]\b`,
+        String.raw`show rate[^\n]{0,40}\b7[05] ?%`,
+        String.raw`booking\s*(?:→|->|to)\s*show\b[^\n]{0,20}\b7[05] ?%`,
+        String.raw`\|\s*Showed\s*\|[^|\n]*\|\s*7[05] ?%`,
+      ].join("|"),
+      "i",
+    );
+    // Mahara's own intro and demo show rates are the sales team's lines, not
+    // the client line, and keep their own numbers.
+    const own = /\b(intro|demo)/i;
     const hits: string[] = [];
-    const walk = (dir: string) => {
-      for (const name of readdirSync(dir)) {
-        if (name === "node_modules" || name === "dist") continue;
-        const path = join(dir, name);
-        if (statSync(path).isDirectory()) walk(path);
-        else if (/\.(ts|tsx|js|md|json|py)$/.test(name))
-          readFileSync(path, "utf8")
-            .split("\n")
-            .forEach((line, i) => {
-              if (bad.test(line)) hits.push(`${path}:${i + 1}`);
-            });
-      }
+    const scan = (path: string) => {
+      if (statSync(path).isDirectory()) {
+        for (const name of readdirSync(path))
+          if (name !== "node_modules" && name !== "dist")
+            scan(join(path, name));
+      } else if (/\.(ts|tsx|js|md|json|py)$/.test(path))
+        readFileSync(path, "utf8")
+          .split("\n")
+          .forEach((line, i) => {
+            if (bad.test(line) && !own.test(line))
+              hits.push(`${path}:${i + 1}`);
+          });
     };
-    for (const root of roots) walk(join(APP, root));
+    for (const root of roots) scan(join(APP, root));
     expect(hits).toEqual([]);
+    // The guard itself catches each way the old line was written.
+    for (const line of [
+      "show rate 75%",
+      "a show rate over 70%",
+      "booking→show 75% · show→close 20%",
+      "| Showed | OUT-07 | 75% |",
+      "showRate: 75,",
+    ])
+      expect(bad.test(line)).toBe(true);
+    expect(
+      bad.test("booking→show 60% (under it is watch, never the constraint)"),
+    ).toBe(false);
   });
 });
