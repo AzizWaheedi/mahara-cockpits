@@ -89,9 +89,12 @@ const mockClient: any = {
     }),
     signOut: async () => ({ error: null }),
   },
-  rpc: async (name: string, _args: any) => {
+  rpc: (name: string, _args: any) => {
+    if (name === "cockpit_ad_billing_review_panel") {
+      return { abortSignal: async () => ({ data: { apply: true, clients: [], dailyReviewedAt: null }, error: null }) };
+    }
     if (name === "cockpit_csm_onboarding_read") {
-      return { data: KITS, error: null };
+      return Promise.resolve({ data: KITS, error: null });
     }
     throw new Error(`Unexpected RPC call: ${name}`);
   },
