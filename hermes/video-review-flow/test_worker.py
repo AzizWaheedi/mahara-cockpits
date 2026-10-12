@@ -14,6 +14,7 @@ class API:
   return '123.456'
  def rows(self,table,query):
   if table=='editor_jobs':return [{'client_task_id':'c1','client':'Client'}]
+  if table=='editor_clients':return [{'name':'Client'}]
   if table=='review_items':return [{'decision':'approved','decided_at':'now'}]
   return []
  def link(self,token):return self.link_data
@@ -44,6 +45,15 @@ class Tests(unittest.TestCase):
   api=self.phase('client review');w.dispatch(self.db,api);self.assertEqual(api.sent,[])
  def test_client_approved_notifies_buyer(self):
   api=self.phase('client approved');w.dispatch(self.db,api);self.assertEqual(api.sent[0]['channel'],w.BUYERS);self.assertIn('<@UBUYER>',api.sent[0]['text']);self.assertIn('after the ad is running',api.sent[0]['text'])
+ def test_buyer_scope_uses_client_card_not_first_video_tag(self):
+  api=self.phase('client approved');original=api.rows;scopes=[]
+  api.rows=lambda table,query: [{'name':'Canonical Client'}] if table=='editor_clients' else original(table,query)
+  api.roles=lambda role,client=None: scopes.append((role,client)) or ['UBUYER']
+  w.dispatch(self.db,api);self.assertEqual(scopes,[('media_buyer','Canonical Client')]);self.assertEqual(len(api.sent),1)
+ def test_missing_client_card_blocks_buyer_alert(self):
+  api=self.phase('client approved');original=api.rows
+  api.rows=lambda table,query: [] if table=='editor_clients' else original(table,query)
+  w.dispatch(self.db,api);self.assertEqual(api.sent,[]);self.assertEqual(self.rows()[0]['state'],'queued')
  def test_subtasks_excluded(self):
   t=task();t['parent']='p';w.observe(self.db,[t]);self.assertEqual(self.rows(),[])
  def test_wrong_list_refused(self):
