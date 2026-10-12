@@ -127,7 +127,7 @@ def main() -> int:
     links = sb.call(
         "GET",
         "review_links?select=token,title,client_name,reviewer_name,"
-        "last_activity_at,announced_at&revoked=is.false"
+        "last_activity_at,announced_at&revoked=is.false&flow_task_id=is.null"
         "&last_activity_at=not.is.null&order=last_activity_at.desc&limit=40",
     )
     pending = [

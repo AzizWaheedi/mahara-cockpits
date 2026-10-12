@@ -85,7 +85,9 @@ def run_deliver(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: Click
     if not url:
         raise ValueError("no link was given")
     cu.set_field(task_id, "edited_video", url)
-    status = str((req.get("params") or {}).get("status") or "client review")
+    # Every new cut returns to the internal gate. A browser parameter cannot
+    # bypass the reviewer or retain approval for an earlier cut.
+    status = "internal review"
     try:
         cu.set_status(task_id, status)
     except http.HttpError as e:

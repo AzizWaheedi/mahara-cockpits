@@ -42,7 +42,7 @@ Daily consistent SQLite backups retain seven days. Keep the live ledger across r
 ## Install
 
 1. Test with `python3 -m unittest discover -s hermes/task-assignment-alerts`.
-2. Install the reviewed source in its own versioned VPS directory.
+2. Install the reviewed source in its own versioned VPS directory. Ensure `run.sh` is executable (`chmod 750 run.sh`); the installer must verify this before adding cron.
 3. Create a private config with `apply: false` and `credentials_file` pointing to the existing private service runtime.
 4. Verify the native Slack bot can access all six channels. Verify assignee email matches and channel membership.
 5. Run `worker.py --config <private-config> --state-dir <private-state> --bootstrap` once.

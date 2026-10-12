@@ -1,4 +1,4 @@
-import { ArrowLeft, CircleCheck, Send, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CircleCheck, TriangleAlert } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import AddRule from "../components/AddRule";
@@ -19,7 +19,7 @@ import {
 } from "../components/bits";
 import Footage from "../components/Footage";
 import MoveCard from "../components/MoveCard";
-import { Button, buttonClass } from "../components/ui/button";
+import { Button } from "../components/ui/button";
 import { useWho } from "../lib/auth";
 import {
   addNote,
@@ -186,7 +186,7 @@ export default function JobPage() {
         ? `That could not be queued: ${err}`
         : kind === "check"
           ? "Queued. The desk will read the cut and report back here."
-          : "Queued. The desk will put the link on the card and move it to client review.",
+          : "Queued. The desk will put the cut on the card and request internal review.",
     );
     if (!err) requests.reload();
   }
@@ -291,27 +291,7 @@ export default function JobPage() {
           </section>
         ) : null}
 
-        <Section
-          title="The cut"
-          side={
-            // Making the client's review link is its own page; this card
-            // moves the ClickUp card. Two different things, two names.
-            <Link
-              to={`/send-review?${new URLSearchParams({
-                client: j.client ?? "",
-                card: j.client_task_id ?? "",
-              }).toString()}`}
-              className={buttonClass({
-                variant: "outline",
-                size: "sm",
-                className: "pointer-coarse:h-10",
-              })}
-            >
-              <Send aria-hidden />
-              Make a review link
-            </Link>
-          }
-        >
+        <Section title="The cut">
           <div className="space-y-4">
             <FrameioCut job={j} openNotes={openNotes} />
             <div>
@@ -340,7 +320,7 @@ export default function JobPage() {
                 Check it first
               </Button>
               <Button disabled={busy} onClick={() => send("deliver")}>
-                Move to client review
+                Request internal review
               </Button>
               {j.edited_url ? (
                 <span className="text-sm sm:ml-auto">
