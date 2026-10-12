@@ -456,8 +456,15 @@ export async function ghlBookingEvents(
     Version: "2021-07-28",
     Accept: "application/json",
   };
-  const end = Date.now();
-  const start = end - 30 * 86400000;
+  // GHL filters events by meeting time. Asking only up to now hid every
+  // booking for a meeting still ahead until its day came, so the booked-call
+  // count ran short (Muhammed, 2026-10-12). Two asks per calendar: the
+  // meetings of the last 30 days, and those booked for the next 60.
+  const now = Date.now();
+  const windows: [number, number][] = [
+    [now - 30 * 86400000, now],
+    [now, now + 60 * 86400000],
+  ];
   try {
     const calRes = await providerFetch(
       `https://services.leadconnectorhq.com/calendars/?locationId=${loc}`,
@@ -468,6 +475,7 @@ export async function ghlBookingEvents(
     const cals: any[] = (await calRes.json())?.calendars ?? [];
     // biome-ignore lint/suspicious/noExplicitAny: GHL payload
     const events: any[] = [];
+    const seen = new Set<string>();
     for (const c of cals) {
       // "Not Confirmed Appointments" is the provisional calendar and the
       // callback / reschedule calendars are agent scheduling, not bookings.
@@ -478,12 +486,20 @@ export async function ghlBookingEvents(
         )
       )
         continue;
-      const evRes = await providerFetch(
-        `https://services.leadconnectorhq.com/calendars/events?locationId=${loc}&calendarId=${c.id}&startTime=${start}&endTime=${end}`,
-        { headers: calHeaders },
-      );
-      if (!evRes.ok) continue;
-      events.push(...((await evRes.json())?.events ?? []));
+      for (const [start, end] of windows) {
+        const evRes = await providerFetch(
+          `https://services.leadconnectorhq.com/calendars/events?locationId=${loc}&calendarId=${c.id}&startTime=${start}&endTime=${end}`,
+          { headers: calHeaders },
+        );
+        if (!evRes.ok) continue;
+        // biome-ignore lint/suspicious/noExplicitAny: GHL payload
+        for (const e of ((await evRes.json())?.events ?? []) as any[]) {
+          // A meeting starting exactly now comes back from both asks.
+          if (e?.id && seen.has(String(e.id))) continue;
+          if (e?.id) seen.add(String(e.id));
+          events.push(e);
+        }
+      }
     }
     if (events.length === 0) return [];
 
@@ -555,6 +571,57 @@ export function bookingTotals(
     if (e.status === "noshow") noshow += 1;
   }
   return { booked, showed, noshow };
+}
+
+/**
+ * Where each of one client's bookings is counted (Muhammed, 2026-10-12).
+ *
+ * Every booking the client's GHL holds counts once, on the day it was made,
+ * under the campaign whose ad bought it, even when that campaign has stopped
+ * or left the board. Until then a booking whose ad was not in a campaign that
+ * spent in the last 7 days was dropped, so stopped and replaced campaigns
+ * (Castello, Liwan, Marble and more) lost every booking they had bought.
+ *
+ * A booking whose ad is unknown, or whose lead has no ad at all, goes to the
+ * client's current campaign without an ad id, and says so in `attribution`:
+ * "ad" (placed by its ad), "unknown_ad" (the lead names an ad we never saw)
+ * or "none" (the lead has no ad).
+ */
+export function placeBookings(
+  client: string,
+  events: BookingEvent[],
+  adCampaign: Map<string, string>,
+  current: string | undefined,
+  syncedAt: number,
+) {
+  // biome-ignore lint/suspicious/noExplicitAny: rows for storage
+  const rows: any[] = [];
+  let unplaced = 0;
+  for (const e of events) {
+    const byAd = e.adId ? adCampaign.get(e.adId) : undefined;
+    const campaignName = byAd ?? current;
+    if (!campaignName) {
+      unplaced += 1;
+      continue;
+    }
+    rows.push({
+      campaignName,
+      client,
+      date: e.date,
+      appointmentDate: e.appointmentDate,
+      eventId: e.eventId,
+      locationId: e.locationId,
+      contactId: e.contactId,
+      startTime: e.startTime,
+      status: e.status,
+      // Only a placed ad carries its id, so an unknown ad never moves an
+      // ad-level number.
+      adId: byAd ? e.adId : undefined,
+      attribution: byAd ? "ad" : e.adId ? "unknown_ad" : "none",
+      syncedAt,
+    });
+  }
+  return { rows, unplaced };
 }
 
 /**
@@ -1326,7 +1393,48 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // One row per booked appointment, tied to its ad.
   // biome-ignore lint/suspicious/noExplicitAny: rows for storage
   const bookingRows: any[] = [];
-  const unattributedTaken = new Set<string>();
+  // Where each ad ran: the native state's older history (from mid August),
+  // then this run's 30 days, the latest day winning, so a booking from an ad
+  // that has since stopped still finds its campaign.
+  const adCampaign = new Map<string, string>();
+  {
+    const latest = new Map<string, string>();
+    const note = (adId: unknown, campaign: unknown, date: unknown) => {
+      if (!adId || !campaign) return;
+      const id = String(adId);
+      const day = String(date ?? "");
+      if ((latest.get(id) ?? "") > day) return;
+      latest.set(id, day);
+      adCampaign.set(id, String(campaign));
+    };
+    const history = (await ctx.runQuery(internal.sync.adHistory, {})) as {
+      metaAdId: string;
+      campaignName: string;
+      date: string;
+    }[];
+    for (const h of history) note(h.metaAdId, h.campaignName, h.date);
+    for (const [name, a] of byCampaign)
+      for (const d of a.daily.values()) note(d.metaAdId, name, d.date);
+  }
+  // Bookings for every client that spent in the last 30 days, not only those
+  // still spending this week: a stopped campaign still bought its bookings.
+  const clientNameByKey = new Map<string, string>();
+  for (const [, a] of byCampaign) {
+    if (a.spend30 < 0.5) continue;
+    if (INTERNAL_ACCOUNTS.includes(normalize(a.account))) continue;
+    const client = clientByAccount.get(normalize(a.account));
+    if (!client) continue;
+    const key = normalize(client);
+    if (modeByClient.get(key) === "DWY") continue;
+    if (!clientNameByKey.has(key)) clientNameByKey.set(key, client);
+    if (!eventsByClient.has(key)) {
+      const cred = ghlByClient.get(key);
+      eventsByClient.set(
+        key,
+        cred ? await ghlBookingEvents(cred.loc, cred.token) : undefined,
+      );
+    }
+  }
 
   for (const [name, a] of byCampaign) {
     if (a.spend < 0.5) continue;
@@ -1550,46 +1658,19 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       syncedAt: now,
     });
 
-    // Raw daily grain for this campaign, and its bookings tied to ads.
-    const adIdsHere = new Set<string>();
+    // Raw daily grain for this campaign. Its bookings are placed after the
+    // loop (placeBookings), once per client.
     // The tracker's own ad id per ad name (latest day wins), so an ad that is
     // no longer in Meta's list can still get its picture and preview.
     const adIdByName = new Map<string, { id: string; date: string }>();
     for (const d of a.daily.values()) {
       if (d.metaAdId) {
-        adIdsHere.add(d.metaAdId);
         const seen = adIdByName.get(d.adName);
         if (!seen || d.date > seen.date)
           adIdByName.set(d.adName, { id: d.metaAdId, date: d.date });
       }
       daily.push({ campaignName: name, ...d });
     }
-    if (clientEvents) {
-      // Unattributed bookings land on the first campaign we see for the
-      // client, once only — never spread across their campaigns twice.
-      for (const e of clientEvents) {
-        // An event belongs to this campaign if the ad that bought it ran
-        // here. Unattributed bookings (about 5%) are attached to the
-        // client's campaign so the campaign total stays right, but they
-        // carry no adId and therefore never distort an ad-level number.
-        const mine = e.adId
-          ? adIdsHere.has(e.adId)
-          : Boolean(client) && !unattributedTaken.has(normalize(client ?? ""));
-        if (!mine) continue;
-        bookingRows.push({
-          campaignName: name,
-          client,
-          date: e.date,
-          appointmentDate: e.appointmentDate,
-          eventId: e.eventId, locationId: e.locationId, contactId: e.contactId, startTime: e.startTime,
-          status: e.status,
-          adId: e.adId,
-          syncedAt: now,
-        });
-      }
-    }
-
-    if (client && clientEvents) unattributedTaken.add(normalize(client));
 
     for (const [adName, ad] of a.ads) {
       const adCpl = ad.leads > 0 ? ad.spend / ad.leads : undefined;
@@ -1627,6 +1708,41 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         syncedAt: now,
       });
     }
+  }
+
+  // Each client's bookings, placed once (placeBookings). The client's current
+  // campaign is its on-board campaign with the most spend this week, else
+  // its campaign with the most spend in 30 days.
+  const onBoardNow = new Set(
+    campaigns.filter(c => c.onBoard).map(c => c.campaignName),
+  );
+  for (const [key, events] of eventsByClient) {
+    const client = clientNameByKey.get(key);
+    if (!events || !client) continue;
+    let current: string | undefined;
+    let best: [number, number, number] = [-1, -1, -1];
+    for (const [name, a] of byCampaign) {
+      const owner = clientByAccount.get(normalize(a.account));
+      if (!owner || normalize(owner) !== key) continue;
+      const score: [number, number, number] = [
+        onBoardNow.has(name) ? 1 : 0,
+        a.spend,
+        a.spend30,
+      ];
+      const better =
+        score[0] - best[0] || score[1] - best[1] || score[2] - best[2];
+      if (better > 0) {
+        best = score;
+        current = name;
+      }
+    }
+    const placed = placeBookings(client, events, adCampaign, current, now);
+    bookingRows.push(...placed.rows);
+    if (placed.unplaced)
+      recordLog(
+        "error",
+        `${placed.unplaced} booking(s) for ${client} have no campaign to count under and are not in the feed.`,
+      );
   }
 
   campaigns.sort((x, y) => x.rank - y.rank || y.spend7d - x.spend7d);
@@ -2242,10 +2358,26 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   const onBoardNames = new Set(
     campaigns.filter(c => c.onBoard).map(c => c.campaignName),
   );
-  const dailyScoped = daily.filter(d => onBoardNames.has(d.campaignName));
-  const bookingScoped = bookingRows.filter(b =>
-    onBoardNames.has(b.campaignName),
-  );
+  // Bookings stay with the campaign that bought them, on the board or not,
+  // and that campaign's spend for the same days comes with them, so its cost
+  // per booking stays honest (Muhammed, 2026-10-12). A campaign with no spend
+  // this week never reached the loop above, so its 30 days are added here.
+  const bookedNames = new Set(bookingRows.map(b => b.campaignName));
+  const withDaily = new Set(daily.map(d => d.campaignName));
+  // biome-ignore lint/suspicious/noExplicitAny: rows for storage
+  const bookedDaily: any[] = [];
+  for (const [name, a] of byCampaign) {
+    if (!bookedNames.has(name) || withDaily.has(name)) continue;
+    for (const d of a.daily.values())
+      bookedDaily.push({ campaignName: name, ...d });
+  }
+  const dailyScoped = [
+    ...daily.filter(
+      d => onBoardNames.has(d.campaignName) || bookedNames.has(d.campaignName),
+    ),
+    ...bookedDaily,
+  ];
+  const bookingScoped = bookingRows;
   await replaceGrainForSync(ctx, {
     campaignCount: campaigns.length,
     since: since30,

@@ -13,6 +13,8 @@ export function capture(state:Row){
     case 'sync.onboardingClients':return (tables.onboardings??state.onboardings).map((r:Row)=>({client:r.client,taskUrl:r.taskUrl,status:r.status,accountId:r.accountId,accountName:r.accountName}));
     case 'sync.preLaunchClients':return state.clients.filter((r:Row)=>/launch booked|ready for launch|blueprint|onboarding booked/i.test(r.stage??'')).map((r:Row)=>({name:r.name,stage:r.stage}));
     case 'sync.recentManualChanges':return state.manualChanges.filter((r:Row)=>Number(r.at)>Date.now()-14*86400000);
+    // Where each ad ran, so a booking from a stopped ad finds its campaign (2026-10-12).
+    case 'sync.adHistory':if(!Array.isArray(state.dailyStats))throw new Error('Ad history (dailyStats) has not been initialized; no feed will be published');return state.dailyStats.filter((r:Row)=>r.metaAdId&&r.campaignName).map((r:Row)=>({metaAdId:String(r.metaAdId),campaignName:String(r.campaignName),date:String(r.date??'')}));
     default:throw new Error(`Unsupported native query contract: ${name}`);
    }
   },

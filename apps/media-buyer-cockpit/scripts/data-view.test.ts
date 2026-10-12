@@ -163,6 +163,24 @@ describe("one verdict per row", () => {
     expect(cal.map(i => i.label)).toEqual(["Calendar event, not a lead"]);
     expect(cal[0].why).toContain("counts it");
   });
+  test("a booking counted without an ad says so (2026-10-12)", () => {
+    const upcoming = { ...appt, start_at: "2026-10-12T09:30:00+03:00" };
+    expect(apptIssues({ ...upcoming, cockpit_attribution: "ad" }, NOW)).toEqual(
+      [],
+    );
+    expect(
+      apptIssues({ ...upcoming, cockpit_attribution: "none" }, NOW).map(
+        i => i.label,
+      ),
+    ).toEqual(["Counted, no ad on the lead"]);
+    expect(
+      apptIssues({ ...upcoming, cockpit_attribution: "unknown_ad" }, NOW)[0]
+        .label,
+    ).toBe("Counted, ad not found");
+    // Rows from before migration 20261012h carry no attribution at all.
+    const { cockpit_attribution: _, ...old } = upcoming;
+    expect(apptRowSchema.parse(old).cockpit_attribution).toBeUndefined();
+  });
   test("results and booking methods in words", () => {
     expect(result({ status: "showed", start_at: appt.start_at }, NOW)).toEqual([
       "Showed up",

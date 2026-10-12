@@ -82,6 +82,9 @@ export const apptRowSchema = z.object({
   outcome_at: str,
   cockpit: z.enum(COCKPIT_STATES),
   cockpit_at: str,
+  // How the media sync attributed a counted booking (2026-10-12): "ad",
+  // "unknown_ad" or "none". Absent before migration 20261012h.
+  cockpit_attribution: str.optional(),
 });
 export type ApptRow = z.infer<typeof apptRowSchema>;
 
@@ -399,6 +402,19 @@ export function apptIssues(a: ApptRow, now: number): Issue[] {
       tone: "bad",
       label: "Cockpit did not count it",
       why: "Before 8 Sep the cockpit stored bookings without ids. It has no booking for this client on this day.",
+    });
+  // Muhammed, 2026-10-12: a booking counted without an ad must say so.
+  if (counted && a.cockpit_attribution === "none")
+    out.push({
+      tone: "warn",
+      label: "Counted, no ad on the lead",
+      why: "GHL has no ad for this lead, so the cockpit counts the booking under the client's current campaign without an ad.",
+    });
+  if (counted && a.cockpit_attribution === "unknown_ad")
+    out.push({
+      tone: "warn",
+      label: "Counted, ad not found",
+      why: "The lead names an ad the cockpit has no record of, so the booking counts under the client's current campaign without an ad.",
     });
   if (a.cockpit === "twice")
     out.push({
