@@ -110,7 +110,7 @@ export function ClientAds({
   if (error)
     return (
       <p role="alert" className="text-sm text-destructive">
-        The ads could not be read: {error.replace(/.?s*$/, ".")} Reload the
+        The ads could not be read: {error.replace(/\.?\s*$/, ".")} Reload the
         page. If it keeps failing, use Report an issue at the top of the page.
       </p>
     );
@@ -144,6 +144,13 @@ export function AdsView({
   const [sort, setSort] = useState<Measure>("spend");
   const shown = validScope(model, scope);
   const bookings = !dwy;
+  if (model.dataTo < model.dataFrom)
+    return (
+      <p className="text-sm text-muted-foreground">
+        No ad numbers are in for {per.label} yet. Each day is imported after it
+        ends, and the last imported day is {dayLabel(model.dataTo)}.
+      </p>
+    );
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">

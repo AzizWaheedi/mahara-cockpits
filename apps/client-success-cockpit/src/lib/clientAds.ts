@@ -30,19 +30,28 @@ export const MAX_RANGE_DAYS = 400;
 // ---------------------------------------------------------------------------
 // The read.
 
+// A missing field reads as empty, never as a broken read: the 30 days before
+// the period come without impressions, link clicks or frequency.
 const text = z
   .unknown()
+  .optional()
   .transform(v => (typeof v === "string" && v.trim() ? v : undefined));
-const amount = z.unknown().transform(v => {
-  if (v === null || v === undefined || v === "") return 0;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
-});
-const maybe = z.unknown().transform(v => {
-  if (v === null || v === undefined || v === "") return undefined;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : undefined;
-});
+const amount = z
+  .unknown()
+  .optional()
+  .transform(v => {
+    if (v === null || v === undefined || v === "") return 0;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  });
+const maybe = z
+  .unknown()
+  .optional()
+  .transform(v => {
+    if (v === null || v === undefined || v === "") return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  });
 const day = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}/)
@@ -74,6 +83,8 @@ const readSchema = z.object({
   bookingsReady: z.boolean(),
   coverage: z.object({ first: day.nullable(), last: day.nullable() }),
   feedFirst: day.nullable(),
+  // The last imported day, from 20261012d. Older reads lack it.
+  feedLast: day.nullish().transform(v => v ?? undefined),
   campaigns: z.array(
     z.object({
       name: z.string().min(1),
@@ -187,7 +198,7 @@ export async function fetchClientAds(
   const parsed = readSchema.safeParse(data);
   if (!parsed.success)
     throw new Error(
-      "The ad numbers came back in a shape this page cannot read. Say so with Report an issue at the top of the page.",
+      "The ad numbers came back in a shape this page cannot read.",
     );
   return parsed.data;
 }
@@ -429,7 +440,11 @@ export function buildAdsModel(
     ? kuwaitDay(Date.parse(read.statsAt))
     : read.end;
   const to = period.to > today ? today : period.to;
-  const dataTo = statsDay < to ? statsDay : to;
+  // Statistics arrive through the day before the import, so a day after the
+  // last imported one is not in yet: it ends the period, never a zero.
+  const lastIn =
+    read.feedLast && read.feedLast < statsDay ? read.feedLast : statsDay;
+  const dataTo = lastIn < to ? lastIn : to;
   const feedFirst = read.feedFirst ?? undefined;
   const dataFrom = feedFirst && feedFirst > read.start ? feedFirst : read.start;
   const inPeriod = (d: string) => d >= dataFrom && d <= dataTo;

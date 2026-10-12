@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   adSetUrl,
   adsRange,
@@ -7,6 +8,7 @@ import {
   type ClientAdsRead,
   campaignUrl,
   chartSeries,
+  fetchClientAds,
   scopeChanges,
   scopeTotals,
 } from "../src/lib/clientAds";
@@ -373,9 +375,61 @@ describe("the chart", () => {
     expect(m.cut).toBe(true);
     expect(m.dataFrom).toBe("2026-08-13");
   });
+
+  test("a day after the last imported one ends the period, not a zero", () => {
+    const r = read({
+      start: "2026-10-10",
+      end: "2026-10-12",
+      feedLast: "2026-10-11",
+    });
+    const m = buildAdsModel(r, { from: "2026-10-10", to: "2026-10-12" }, NOW);
+    expect(m.dataTo).toBe("2026-10-11");
+    const s = chartSeries(m, { level: "all" }, "leads");
+    expect(s.points.map(p => p.key)).toEqual(["2026-10-10", "2026-10-11"]);
+  });
+
+  test("a period with no imported day yet is empty", () => {
+    const r = read({
+      start: "2026-10-12",
+      end: "2026-10-12",
+      feedLast: "2026-10-11",
+    });
+    const m = buildAdsModel(r, { from: "2026-10-12", to: "2026-10-12" }, NOW);
+    expect(m.dataTo < m.dataFrom).toBe(true);
+  });
 });
 
 describe("reads and links", () => {
+  test("the 30 days before the period read in the shape the server sends", async () => {
+    // cockpit_csm_client_ads sends these rows without impressions, link
+    // clicks or frequency. On 12 Oct every client with ads failed to read.
+    const base = read();
+    const payload = {
+      ...base,
+      history: base.history.map(r => ({
+        date: r.date,
+        campaignName: r.campaignName,
+        adSetName: r.adSetName,
+        adName: r.adName,
+        adId: r.adId,
+        spend: r.spend,
+        leads: r.leads,
+      })),
+    };
+    const client = {
+      rpc: async () => ({ data: payload, error: null }),
+    } as unknown as SupabaseClient;
+    const got = await fetchClientAds(
+      client,
+      "task",
+      "2026-09-01",
+      "2026-09-30",
+    );
+    expect(got.history).toHaveLength(base.history.length);
+    expect(got.history[0]?.impressions).toBe(0);
+    expect(got.history[0]?.spend).toBe(base.history[0]?.spend);
+  });
+
   test("never past today, never more than 400 days", () => {
     expect(adsRange("2000-01-01", "2026-12-31", "2026-10-12")).toEqual({
       start: "2025-09-08",
