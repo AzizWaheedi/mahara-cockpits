@@ -96,6 +96,41 @@ const mockClient: any = {
     if (name === "cockpit_csm_onboarding_read") {
       return Promise.resolve({ data: KITS, error: null });
     }
+    if (name === "cockpit_csm_client_whatsapp") {
+      const at = Date.now() - 30 * 60_000;
+      return Promise.resolve({
+        data: {
+          configured: true,
+          ready: true,
+          stale: false,
+          syncedAt: Date.now() - 5 * 60_000,
+          note: null,
+          dayStart: Date.now() - 60 * 60_000,
+          taskId: _args.p_task_id,
+          clientName: "Greystone Contracting",
+          threads: [
+            {
+              threadId: "wa-1",
+              name: "Omar Greystone",
+              isGroup: false,
+              archived: false,
+              awaitingUs: true,
+              lastInboundAt: at,
+              lastAt: at,
+              today: { inbound: 1, outbound: 0 },
+              messages: [
+                { id: "m1", direction: "inbound", body: "Can we move the shoot to Thursday?", kind: "text", speaker: null, at, status: null, today: true },
+              ],
+              draft: null,
+              contextKey: "0123456789abcdef0123456789abcdef",
+              sendSupported: true,
+              replyState: null,
+            },
+          ],
+        },
+        error: null,
+      });
+    }
     throw new Error(`Unexpected RPC call: ${name}`);
   },
   from: () => ({
@@ -546,8 +581,10 @@ test("diagnosis identifies top constraint and healthy branch correctly", async (
       },
     ],
   });
+  // A show rate under the one client line is a watch, never a constraint.
   const ids = [leak.top, ...leak.rest].map(c => c?.id);
-  expect(ids).toContain("show_rate");
+  expect(ids).not.toContain("show_rate");
+  expect(leak.watch.map(c => c.id)).toEqual(["show_rate"]);
 
   const blind = diagnose({
     clientName: "No Sheet",
@@ -556,6 +593,179 @@ test("diagnosis identifies top constraint and healthy branch correctly", async (
     performance: {},
   });
   expect(blind.top?.id).toBe("no_sheet");
+});
+
+/**
+ * The one client show rate line. Aziz, 2026-10-12: "the show rate metric is
+ * 60%, so anything around that is fine, not 70%". Under it is a quiet watch
+ * line beside the diagnosis: never the first fix, never counted, never bad.
+ */
+function lineClient(
+  shows: number,
+  noshows: number,
+  extra: {
+    leads?: number;
+    booked?: number;
+    closes?: number;
+    service?: string;
+  } = {},
+) {
+  return {
+    clientName: "Line Client",
+    stage: "Active",
+    service: extra.service ?? "DFY",
+    links: { sheet: "https://sheet" },
+    performance: {
+      staleCount: 0,
+      month: {
+        leads: extra.leads ?? 40,
+        booked: extra.booked ?? 20,
+        shows,
+        noshows,
+        closes: extra.closes ?? shows,
+      },
+      lastMonth: {},
+      allTime: { closes: extra.closes ?? 9 },
+    },
+    ads: [
+      {
+        campaign: "c",
+        spend7d: 300,
+        leads7d: 30,
+        adsets: [{ ads: [{ status: "ACTIVE" }] }],
+      },
+    ],
+  };
+}
+
+test("the client show rate line is 60, and under it is a watch, never a fix", async () => {
+  const { diagnose, GATES } = await import("../src/lib/csmDiagnosis");
+  const { SHOW_RATE_GOOD } = await import("../src/lib/clientGates");
+  expect(SHOW_RATE_GOOD).toBe(60);
+  expect(GATES.showRate).toBe(SHOW_RATE_GOOD);
+  const counted = (d: ReturnType<typeof diagnose>) =>
+    [d.top, ...d.rest].map(c => c?.id);
+
+  // 60% on 8 or more decided: on the line, nothing to watch or fix.
+  for (const [shows, noshows] of [
+    [6, 4],
+    [9, 6],
+    [48, 32],
+  ]) {
+    const d = diagnose(lineClient(shows, noshows));
+    expect(d.healthy).toBe(true);
+    expect(d.top).toBeUndefined();
+    expect(d.watch).toEqual([]);
+  }
+
+  // 59%: a watch item, never top, never in rest.
+  const under = diagnose(lineClient(13, 9));
+  expect(under.healthy).toBe(true);
+  expect(under.top).toBeUndefined();
+  expect(under.rest).toEqual([]);
+  expect(under.watch.map(c => c.id)).toEqual(["show_rate"]);
+  expect(under.watch[0].title).toBe("Show rate is 59%, under the 60% line");
+  expect(under.watch[0].diagnosis).toContain("confirmation discipline");
+  expect(under.watch[0].fixes[0]).toMatch(/Confirm every appointment twice/);
+
+  // Only a 50% show rate: nothing needs fixing, plus the watch line.
+  const half = diagnose(lineClient(5, 5));
+  expect(half.healthy).toBe(true);
+  expect(half.top).toBeUndefined();
+  expect(half.headline).toBe(
+    "Nothing needs fixing first. Keep an eye on the show rate below, and ask for a review, a referral or more budget.",
+  );
+  expect(under.headline).toBe(half.headline);
+  expect(half.watch[0].title).toBe("Show rate is 50%, under the 60% line");
+  expect(half.watch[0].diagnosis).toBe(
+    "50% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.",
+  );
+
+  // Under 8 decided is noise: no watch either.
+  expect(diagnose(lineClient(3, 4)).watch).toEqual([]);
+
+  // Beside a real constraint, the show rate still never joins the ranking.
+  const both = diagnose(lineClient(4, 6, { leads: 40, booked: 6 }));
+  expect(both.top?.id).toBe("booking_rate");
+  expect(counted(both)).not.toContain("show_rate");
+  expect(both.watch.map(c => c.id)).toEqual(["show_rate"]);
+
+  // Done with you: they book their own, so there is nothing to watch.
+  expect(diagnose(lineClient(2, 8, { service: "DWY" })).watch).toEqual([]);
+
+  // The show rate never decides the macro check: booking and closing both
+  // under their gates and nothing ever closed is macro at any show rate.
+  const macro = diagnose(lineClient(5, 5, { leads: 40, booked: 6, closes: 0 }));
+  expect(macro.top?.id).toBe("macro_offer");
+  for (const [shows, noshows] of [
+    [6, 4],
+    [9, 1],
+  ])
+    expect(
+      diagnose(lineClient(shows, noshows, { leads: 40, booked: 6, closes: 0 }))
+        .top?.id,
+    ).toBe("macro_offer");
+  // Booking under its gate and the show rate under the line, with too few
+  // shows to judge the close rate: one leak plus a watch, never macro.
+  const notMacro = diagnose(
+    lineClient(4, 6, { leads: 40, booked: 6, closes: 0 }),
+  );
+  expect(counted(notMacro)).toEqual(["booking_rate"]);
+  expect(notMacro.watch.map(c => c.id)).toEqual(["show_rate"]);
+
+  // No title, diagnosis or line anywhere says 70% or 75%.
+  for (const d of [under, half, both, macro, diagnose(perfFixture.profile)])
+    expect(JSON.stringify(d)).not.toMatch(/7[05]%/);
+});
+
+test("the diagnosis footer says the 60% line and the watch line renders quietly", async () => {
+  const { SHOW_RATE_GOOD } = await import("../src/lib/clientGates");
+  const diagnosisText = (text: string) =>
+    text.slice(
+      text.indexOf("What is holding this client back"),
+      text.indexOf("Constraints, one leak at a time.") + 32,
+    );
+  profileDeferred = null;
+  try {
+    const page = diagnosisText(
+      await renderSection("client", `/clients/${GREYSTONE}`),
+    );
+    expect(page).toContain(
+      `${SHOW_RATE_GOOD}% of appointments attended (under it is a watch, not a fix)`,
+    );
+    expect(page).not.toMatch(/7[05]%/);
+    // The fixture sits on the line (9 of 15), so there is nothing to watch.
+    expect(page).not.toContain("Watch:");
+
+    const base = perfFixture.profile;
+    profileDeferred = createDeferred<any>();
+    profileDeferred.resolve({
+      ...base,
+      performance: {
+        ...base.performance,
+        staleCount: 0,
+        lastMonth: {
+          ...base.performance.lastMonth,
+          shows: 5,
+          noshows: 5,
+          closes: 2,
+        },
+      },
+    });
+    const watched = diagnosisText(
+      await renderSection("client", `/clients/${GREYSTONE}`),
+    );
+    expect(watched).toContain(
+      "Watch: Show rate is 50%, under the 60% line. 50% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.",
+    );
+    expect(watched).toContain(
+      "Nothing needs fixing first. Keep an eye on the show rate below",
+    );
+    expect(watched).not.toContain("Fix this first");
+    expect(watched).not.toMatch(/7[05]%/);
+  } finally {
+    profileDeferred = null;
+  }
 });
 
 test("the onboarding spine maps days and handles out-of-range boundaries", () => {
@@ -704,10 +914,20 @@ test("a client's page has one booking button, the actions and four tabs", async 
       expect(text).toContain(action);
     for (const tab of ["Overview", "Results", "Onboarding & files", "Money"])
       expect(text).toContain(tab);
-    // Overview: one "Before the call" block, the diagnosis inside it.
+    // Overview (2026-10-12): the "Before the call" brief first, then the
+    // numbers with the diagnosis inside; the old scattered cards are gone.
+    expect(text.match(/Before the call/g)?.length).toBe(1);
+    expect(text).toContain("The numbers");
     expect(text).toContain("What is holding this client back");
-    expect(text).toContain("What the media buyer changed since your last call");
+    expect(text).not.toContain("What the media buyer changed since your last call");
     expect(text).not.toContain("Prep for this call");
+    // This fake cannot read the call history: the brief says so, never "no calls".
+    expect(text).toContain("The call history could not be read");
+    // The client's WhatsApp for the day, with the reply box under it.
+    expect(text).toContain("Can we move the shoot to Thursday?");
+    expect(text).toContain("Waiting on us");
+    expect(text).toContain("Send to Omar Greystone");
+    expect(text).toContain("Today: 1 from them, 0 from us");
     // Results: the period and the report at the top.
     const results = await renderSection(
       "client",
@@ -744,6 +964,18 @@ test("closing a commitment is not contact with the client", async () => {
           pageFor("client", MOFAG),
         ),
       );
+    });
+    // Since 2026-10-12 the notes to act on sit in a fold under the calls
+    // (the brief above already shows them); open it.
+    const fold = [...host.querySelectorAll("details")].find(d =>
+      (d.textContent ?? "").includes("Your 1-1 notes to act on"),
+    );
+    expect(fold).toBeDefined();
+    await reactAct(async () => {
+      if (fold) {
+        fold.open = true;
+        fold.dispatchEvent(new win.Event("toggle"));
+      }
     });
     const call = [...host.querySelectorAll("button")].find(b =>
       (b.textContent ?? "").startsWith("Your call on"),

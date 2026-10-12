@@ -56,7 +56,7 @@ SHARE_WITH = ["aziz@maharamedia.com", "abdulelah@maharamedia.com"]
 
 # The client KPI gates Aziz locked. Kept in step with src/lib/csmDiagnosis.ts — change
 # both or neither.
-GATES = {"bookingRate": 25, "showRate": 75, "closeRate": 20}
+GATES = {"bookingRate": 25, "showRate": 60, "closeRate": 20}
 
 # The optional extras the CSM can tick in the app. Keys must match src/pages
 # ClientPerformancePage.tsx REPORT_EXTRAS or a ticked box does nothing.
@@ -170,7 +170,8 @@ NARRATIVE_SCHEMA = {
             "type": "string",
             "description": (
                 "2–4 sentences for the client explaining what the numbers say, including "
-                "the single biggest leak. Use only the numbers given. No new facts, no "
+                "the single biggest leak, which is the first of the constraints given. "
+                "Use only the numbers given. No new facts, no "
                 "promises, no percentages that are not in the data."
             ),
         },
@@ -179,7 +180,8 @@ NARRATIVE_SCHEMA = {
             "items": {"type": "string"},
             "description": (
                 "3–5 short lines: what Mahara is doing next, and what the client's own "
-                "team should change. Derived only from the constraints given."
+                "team should change. Derived only from the constraints given, then the "
+                "watch line if there is one."
             ),
         },
     },
@@ -200,6 +202,8 @@ Rules:
 - Never use an em dash or an en dash. A comma or a full stop, always.
 - Write in the requested language, and in Gulf Arabic if that is Arabic, not formal
   translation Arabic.
+- A "watch" line is something to keep an eye on, never a constraint, never the leak
+  and never the first thing to fix. Mention it after the constraints, if at all.
 """
 
 
@@ -246,7 +250,8 @@ def constraints_for(profile: dict) -> list[str]:
     """The same gate logic the app shows the CSM, in one line each.
 
     Deliberately duplicated from src/lib/csmDiagnosis.ts rather than imported — the app is
-    TypeScript. Gates live in GATES above; keep the two in step.
+    TypeScript. Gates live in GATES above; keep the two in step. The show rate is
+    never a constraint: under the one client line it is a watch (watch_for).
     """
     perf = profile.get("performance") or {}
     m = _month_num(perf, "month")
@@ -254,7 +259,6 @@ def constraints_for(profile: dict) -> list[str]:
     leads = m.get("leads", 0) + l.get("leads", 0)
     booked = m.get("booked", 0) + l.get("booked", 0)
     shows = m.get("shows", 0) + l.get("shows", 0)
-    noshows = m.get("noshows", 0) + l.get("noshows", 0)
     closes = m.get("closes", 0) + l.get("closes", 0)
     out = []
     if leads == 0:
@@ -265,7 +269,6 @@ def constraints_for(profile: dict) -> list[str]:
             "the funnel is healthy"
         ]
     br = _pct(booked, leads)
-    sr = _pct(shows, shows + noshows)
     cr = _pct(closes, shows)
     if perf.get("staleCount"):
         out.append(
@@ -277,11 +280,6 @@ def constraints_for(profile: dict) -> list[str]:
             f"only {br}% of enquiries became appointments (target {GATES['bookingRate']}%), "
             "speed to lead and follow-up on the client's side, not the ads"
         )
-    if sr is not None and (shows + noshows) >= 8 and sr < GATES["showRate"]:
-        out.append(
-            f"show rate {sr}% (target {GATES['showRate']}%), book same or next day and "
-            "confirm twice, once at booking and once the morning of"
-        )
     if cr is not None and shows >= 5 and cr < GATES["closeRate"]:
         out.append(
             f"close rate {cr}% of attended (target {GATES['closeRate']} to 30%), review two "
@@ -289,10 +287,31 @@ def constraints_for(profile: dict) -> list[str]:
         )
     if not out:
         out.append(
-            "every measurable stage is at or above target, the constraint is budget and "
+            "the booking and close rates are at or above target, the constraint is budget and "
             "capacity, not the funnel"
         )
     return out
+
+
+def watch_for(profile: dict) -> str | None:
+    """A show rate under the one client line, as a line to keep an eye on.
+
+    It goes after the constraints and is never the main one (Aziz, 2026-10-12).
+    """
+    perf = profile.get("performance") or {}
+    m = _month_num(perf, "month")
+    l = _month_num(perf, "lastMonth")
+    if m.get("leads", 0) + l.get("leads", 0) == 0:
+        return None
+    shows = m.get("shows", 0) + l.get("shows", 0)
+    noshows = m.get("noshows", 0) + l.get("noshows", 0)
+    sr = _pct(shows, shows + noshows)
+    if sr is not None and (shows + noshows) >= 8 and sr < GATES["showRate"]:
+        return (
+            f"show rate {sr}%, under our {GATES['showRate']}% line: book same or next day "
+            "and confirm twice, once at booking and once the morning of"
+        )
+    return None
 
 
 async def narrative(profile: dict, language: str, note: str | None) -> dict:
@@ -306,6 +325,7 @@ async def narrative(profile: dict, language: str, note: str | None) -> dict:
         "allTime": _month_num(perf, "allTime"),
         "appointmentsWithNoOutcome": perf.get("staleCount"),
         "constraints": constraints_for(profile),
+        "watch": watch_for(profile) or "",
         "csmNote": note or "",
         "language": "Arabic" if language == "ar" else "English",
     }

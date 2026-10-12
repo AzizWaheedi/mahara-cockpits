@@ -294,7 +294,7 @@ and falls back to the lead's age, never as upcoming. Only `appPast is False` sho
 genuinely upcoming rows stopped being chased [csm sync, 2026-09-08].
 
 ## GHL client calendars [2026-09-07]
-Client sub-account location **`wwG426bwruWWv9W3fazQ`**, PIT `pit-fd12f076-eeb0-43c3-b097-305d8bea378d`.
+Client sub-account location **`wwG426bwruWWv9W3fazQ`**. Its token is the Supabase Edge secret `GHL_MAHARA_PIT` (never written here; the old one in this file was public and must be rotated, 2026-10-12).
 Reads live in `cockpit/convex/ghlCalendar.ts` (`calendars`, `events`, `contacts`), called from
 the bridge step `calendar_rows()` then `apply_next_call()`. Calendars: Onboarding
 `z1Ne59rohCCj87KhcXoi`, Brand Blueprint `x84ET6KnA8odlsjYiVLq`, Launch `5E1EVxLJbGiDM3iYl2kL`,
@@ -307,7 +307,7 @@ client (0 of 3 on 2026-09-07). Unmatched calls still show, labelled as unmatched
 Only 4 bookings existed across 8 weeks on 2026-09-07 [ghl, 2026-09-07].
 
 ## GHL client-account PIT [2026-09-07]
-Location Private Integration Token `pit-fd12f076-eeb0-43c3-b097-305d8bea378d`. Direct
+Location Private Integration Token: the Edge secret `GHL_MAHARA_PIT`. Direct
 requests from the sandbox are blocked by Cloudflare (error 1010), but a plain `fetch` from a
 Convex action works, see `cockpit/convex/ghlProbe.ts`. The agency `highlevel_oauth`
 integration cannot read calendars ("authClass type is not allowed to access this scope").

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Digest } from "./clientBrief";
 import { executeCsmAction } from "./csmActionClient";
 import type { CardChange } from "./reportPeriod";
 
@@ -126,13 +127,17 @@ export function staleSentence(
 ) {
   if (!isStale(h, now)) return null;
   const name = SOURCE_NAMES[key] ?? key;
-  if (!h) return `${capital(name)} have not synced yet.`;
-  const since = h.lastOkAt ? ` since ${shortStamp(h.lastOkAt)}` : "";
+  // "Fathom recordings have", "Meta's activity log has".
+  const has = /s$/.test(name) ? "have" : "has";
+  if (!h) return `${capital(name)} ${has} not synced yet.`;
+  const since = h.lastOkAt
+    ? `not updated since ${shortStamp(h.lastOkAt)}`
+    : "never updated";
   const why = String(h.note ?? "").replace(
     /^Failed, last good rows kept\.\s*/,
     "",
   );
-  return `${capital(name)} stale${since}${why ? `: ${why}` : "."}`;
+  return `${capital(name)} ${has} ${since}${why ? `: ${why}` : "."}`;
 }
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const shortStamp = (iso: string) =>
@@ -208,6 +213,37 @@ export async function readClientTimeline(
   )
     throw Error("The call history read was incomplete");
   return data as Timeline;
+}
+
+/**
+ * The client's ClickUp card digests (newest twelve, 90 days) and the team's
+ * Meta users, for the brief.
+ */
+export async function readClientDigests(
+  client: SupabaseClient,
+  taskId: string,
+): Promise<{ digests: Digest[]; teamActors: string[] }> {
+  const { data, error } = await client.rpc("cockpit_csm_client_digests", {
+    p_task_id: taskId,
+  });
+  if (error) throw Error(error.message);
+  if (!data || !Array.isArray(data.digests))
+    throw Error("The ClickUp card notes read was incomplete");
+  const list = (v: unknown) => (Array.isArray(v) ? v.map(String) : []);
+  return {
+    digests: (data.digests as Row[]).map(d => ({
+      kind: String(d.kind ?? ""),
+      at: Number.isFinite(Number(d.at)) ? Number(d.at) : null,
+      by: d.by ?? null,
+      summary: d.summary ?? null,
+      nextSteps: list(d.nextSteps),
+      risks: list(d.risks),
+      clientRequests: list(d.clientRequests),
+      dos: list(d.dos),
+      donts: list(d.donts),
+    })),
+    teamActors: list(data.teamActors),
+  };
 }
 
 export type Unmatched = {

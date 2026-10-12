@@ -5,16 +5,20 @@
  */
 export const CPL_GATE = 15;
 export const CPB_GATE = 60;
-/** The rate gates the client reports use, in percent. Keep in step with convex/constants.ts. */
+/**
+ * The rate gates the client reports use, in percent. The show rate has no gate
+ * of its own: it is SHOW_RATE_GOOD below. Keep in step with convex/constants.ts.
+ */
 export const BOOKING_RATE_GATE = 25;
-export const SHOW_RATE_GATE = 75;
 export const CLOSE_RATE_GATE = 20;
 /**
  * The client status rule on the CEO Delivery tab (Aziz, 2026-09-21): good
  * needs a show rate of at least SHOW_RATE_GOOD and a cost per confirmed
  * booking within CPB_GATE; bad is a cost per booking over CPB_BAD or a bad
  * cost per lead (CPL_GATE * 1.5). There is one show rate line for clients,
- * 60, and no lower one (Aziz, 2026-09-21). Keep in step with convex/constants.ts.
+ * 60, and no lower or higher one (Aziz, 2026-09-21 and 2026-10-12): under it
+ * is watch, never bad. The CS app's src/lib/clientGates.ts holds the same
+ * number. Keep in step with convex/constants.ts.
  */
 export const SHOW_RATE_GOOD = 60;
 export const CPB_BAD = 80;

@@ -3,15 +3,18 @@
  *
  * Two sources, nothing invented:
  * - The gates are Mahara's locked client KPI gates: CPL < $20 · lead→booking ≥ 25% ·
- *   cost per booking ≤ $80 · show rate ≥ 75% · close rate 20–30% · daily budget floor $30.
+ *   cost per booking ≤ $80 · show rate ≥ 60% (watch below, never the first fix) ·
+ *   close rate 20–30% · daily budget floor $30.
  * - The diagnosis and the fixes are the company's doc "Diagnosing & Fixing Acquisition
  *   Constraints" (macro vs micro, the golden rule, scenarios 3–6, 9, 10).
  *
  * The golden rule is enforced in the output: ONE constraint is flagged "fix this first",
  * everything else is listed as "after that". A client whose gates are all met gets
- * "nothing needs fixing — scale" instead of manufactured work.
+ * "nothing needs fixing — scale" instead of manufactured work. A show rate under the
+ * one client line is a watch item: it sits beside the diagnosis, never in it.
  */
 
+import { SHOW_RATE_GOOD } from "./clientGates";
 import { humanise, humaniseDeep, serviceModel } from "./csmTemplates";
 
 // biome-ignore lint/suspicious/noExplicitAny: profile payloads are untyped by design
@@ -19,7 +22,7 @@ type Any = any;
 
 export const GATES = {
   bookingRate: 25,
-  showRate: 75,
+  showRate: SHOW_RATE_GOOD,
   closeRate: 20,
   cpl: 20,
   costPerBooking: 80,
@@ -43,6 +46,11 @@ export type Diagnosis = {
   /** The one thing to fix first. Undefined only when nothing is out of KPI. */
   top?: Constraint;
   rest: Constraint[];
+  /**
+   * Lines to keep an eye on: never `top`, never in `rest`, never counted. Today
+   * only a show rate under the one client line (Aziz, 2026-10-12).
+   */
+  watch: Constraint[];
   /** True when every gate with enough data behind it is met. */
   healthy: boolean;
   /** Why the ranking came out this way, in one line. */
@@ -103,6 +111,7 @@ function diagnoseRaw(p: Any): Diagnosis {
   const closeRate = pct(closes, shows);
 
   const found: Constraint[] = [];
+  const watch: Constraint[] = [];
 
   // ---- Admin blockers first: without the sheet there is nothing to diagnose. ----
   if (!p?.links?.sheet) {
@@ -200,24 +209,21 @@ function diagnoseRaw(p: Any): Diagnosis {
     });
   }
 
+  // One line for clients, and under it is a watch, never the first fix: bad is
+  // cost per booking or cost per lead (Aziz, 2026-09-21 and 2026-10-12).
   if (showRate != null && decided >= 8 && showRate < GATES.showRate) {
-    found.push({
+    watch.push({
       id: "show_rate",
       layer: "micro",
-      title: `Show rate is ${showRate}% (gate ${GATES.showRate}%)`,
+      title: `Show rate is ${showRate}%, under the ${GATES.showRate}% line`,
       evidence: `${shows} attended out of ${decided} appointments with an outcome over the last two months.`,
-      diagnosis:
-        "Below 70% they are not just losing deals, they are losing 40% of their own selling time to empty slots. This is fixed with confirmation discipline, not more leads.",
+      diagnosis: `${100 - showRate}% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.`,
       fixes: [
         "Confirm every appointment twice: right after booking, and the morning of.",
         "Same-day or next-day appointments only, the further out the slot, the more no-shows.",
         "Have them send a voice note before the meeting rather than a text; it lifts attendance.",
         "Get the reminder sequence switched on in their sub-account (ticket to tech).",
       ],
-      say: {
-        en: `Hey ${name}, one thing is costing you more than anything else right now: ${100 - showRate}% of the appointments booked are not being attended. That is your team's time, not just leads.\n\nTwo changes fix most of it, book people in the same or next day rather than later in the week, and confirm twice: once when it's booked, once the morning of. I'll switch on the automatic reminders from our side today.`,
-        ar: `هلا ${name}، فيه شي يكلفك أكثر من أي شي ثاني حالياً: ${100 - showRate}% من المواعيد المحجوزة ما يتم حضورها. وهذا وقت فريقك، مو بس ليدز.\n\nتغييرين يحلون أغلبها, احجزوا نفس اليوم أو اليوم اللي بعده بدال آخر الأسبوع، وأكدوا مرتين: أول ما يتحجز، وصباح نفس اليوم. وأنا أشغّل التذكيرات الأوتوماتيكية من طرفنا اليوم.`,
-      },
       owner: "CSM",
     });
   }
@@ -246,23 +252,24 @@ function diagnoseRaw(p: Any): Diagnosis {
 
   // ---- Macro check: everything broken at once is one problem, not four. ----
   // A gate counts as broken only on the same sample its own check needs
-  // (10 leads, 8 decided, 5 shows), and "never closed" needs the sheet's
-  // all-time total to be there: missing is not zero.
-  const brokenGates = [
+  // (10 leads, 5 shows), and "never closed" needs the sheet's all-time total
+  // to be there: missing is not zero. The show rate is not a gate here: it is
+  // a watch, so it can never tip a client into this constraint (2026-10-12).
+  const gates = [
     bookingRate != null && leads >= 10 && bookingRate < GATES.bookingRate,
-    showRate != null && decided >= 8 && showRate < GATES.showRate,
     closeRate != null && shows >= 5 && closeRate < GATES.closeRate,
-  ].filter(Boolean).length;
+  ];
+  const everyGateBroken = gates.every(Boolean);
   const neverClosed = typeof all.closes === "number" && all.closes === 0;
-  if (brokenGates >= 3 && neverClosed && leads >= 20) {
+  if (everyGateBroken && neverClosed && leads >= 20) {
     found.unshift({
       id: "macro_offer",
       layer: "macro",
       title:
-        "Every stage is leaking and nothing has ever closed, treat this as one problem",
+        "Booking and closing are both under target and nothing has ever closed, treat this as one problem",
       evidence: `${leads} leads, ${booked} booked, ${shows} attended, 0 closed ever on their sheet.`,
       diagnosis:
-        "When every metric is broken at once, the constraint is upstream: the offer or the message is attracting the wrong people. Patching each leak separately wastes months, this is a macro constraint.",
+        "When booking and closing both fail at once, the constraint is upstream: the offer or the message is attracting the wrong people. Patching each leak separately wastes months, this is a macro constraint.",
       fixes: [
         "Book a reset call, not a check-in. Use the reset call framework.",
         "Rebuild the offer and the message with them: who exactly, what project size, what price.",
@@ -292,7 +299,7 @@ function diagnoseRaw(p: Any): Diagnosis {
   }
 
   // No em dashes in anything the client reads.
-  for (const c of found)
+  for (const c of [...found, ...watch])
     if (c.say) c.say = { en: humanise(c.say.en), ar: humanise(c.say.ar) };
 
   // Done with you: the client books and tracks their own appointments, so we are not
@@ -328,13 +335,16 @@ function diagnoseRaw(p: Any): Diagnosis {
   return {
     top: ranked[0],
     rest: ranked.slice(1),
+    watch: dwy ? watch.filter(c => !DWY_BLIND.has(c.id)) : watch,
     healthy,
     headline: healthy
       ? dwy
         ? "Lead volume and cost per lead are both inside the gates. They book their own appointments, so ask about their close rate on the call rather than reporting it."
-        : Number(m.leads ?? 0) > 0
-          ? "Every gate with enough data behind it is met. Do not manufacture work here, ask for a review, a referral or more budget."
-          : "Nothing is out of KPI, but there is not enough data yet to judge. Get the sheet filled and come back to it."
+        : watch.length > 0
+          ? "Nothing needs fixing first. Keep an eye on the show rate below, and ask for a review, a referral or more budget."
+          : Number(m.leads ?? 0) > 0
+            ? "Every gate with enough data behind it is met. Do not manufacture work here, ask for a review, a referral or more budget."
+            : "Nothing is out of KPI, but there is not enough data yet to judge. Get the sheet filled and come back to it."
       : `Fix ${ranked[0].title.toLowerCase()} first. ${ranked.length - 1 > 0 ? `${ranked.length - 1} more below, one leak at a time.` : "One leak at a time."}`,
     basis,
   };

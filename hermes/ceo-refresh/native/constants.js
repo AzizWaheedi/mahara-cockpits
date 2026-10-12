@@ -8,21 +8,22 @@ export const CPL_GATE = 15;
 export const CPB_GATE = 60;
 /**
  * The rate gates the client reports use (reportDocs.ts), in percent: at least
- * a quarter of leads booked, three quarters of booked meetings showing up,
- * one close in five shows. Keep in step with src/lib/kpi.ts.
+ * a quarter of leads booked and one close in five shows. The show rate has no
+ * gate of its own: it is the one client line, SHOW_RATE_GOOD below. Keep in
+ * step with src/lib/kpi.ts.
  */
 export const BOOKING_RATE_GATE = 25;
-export const SHOW_RATE_GATE = 75;
 export const CLOSE_RATE_GATE = 20;
 /**
  * The client status rule on the CEO Delivery tab (Aziz, 2026-09-21), in
  * percent and dollars. Good needs a show rate of at least SHOW_RATE_GOOD and
  * a cost per confirmed booking within CPB_GATE; bad is a cost per booking
  * over CPB_BAD or a bad cost per lead. There is one show rate line for
- * clients, 60, and no lower one: Aziz (2026-09-21) "60% show rate is our
- * thing for clients, not 40%". The bad cost per lead stays CPL_GATE * 1.5
- * ($22.50) where the sync and the adapters already compute it. Keep in step
- * with src/lib/kpi.ts.
+ * clients, 60, and no lower or higher one: Aziz (2026-09-21) "60% show rate
+ * is our thing for clients, not 40%", and (2026-10-12) "the show rate metric
+ * is 60%, so anything around that is fine". Under it is watch, never bad.
+ * The bad cost per lead stays CPL_GATE * 1.5 ($22.50) where the sync and the
+ * adapters already compute it. Keep in step with src/lib/kpi.ts.
  */
 export const SHOW_RATE_GOOD = 60;
 export const CPB_BAD = 80;
