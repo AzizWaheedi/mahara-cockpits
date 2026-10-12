@@ -17,6 +17,9 @@ beforeEach(async()=>{
  await db.exec("INSERT INTO wa_state(location_id,scan_since,last_scan) VALUES('mahara-location','2026-09-20T00:00:00Z',now())");
  await db.exec("INSERT INTO wa_threads(id,location_id,contact_id,contact_name,phone,desk,client_task_id,provider_id,is_group,last_at,last_inbound_at,awaiting_us) VALUES('thread-one','mahara-location','contact-one','Alpha group','+861234567890','csm','cu-alpha','custom-whatsapp-provider',true,now()-interval '1 minute',now()-interval '1 minute',true)");
  await db.exec("INSERT INTO wa_drafts(thread_id,ar,en,based_on) VALUES('thread-one','Original Arabic draft','Original English draft','Original incoming request')");
+ const gate=migration('20261006c_csm_onboarding_checkins.sql').match(/CREATE FUNCTION public\.cockpit_csm_client_gate_for_actor[\s\S]*?GRANT EXECUTE ON FUNCTION public\.cockpit_csm_client_gate\(text\) TO authenticated;/)?.[0];
+ if(!gate)throw new Error('Canonical client gate missing');await db.exec(gate);
+ for(const name of ['20261008e_whatsapp_mirror_noop.sql','20261012d_wa_access.sql','20261012e_wa_client_link.sql','20261012f_wa_send_rules.sql'])await db.exec(migration(name));
 });
 afterEach(async()=>{await db.close();});
 async function rpc(name:string,args:Row){if(!/^cockpit_wa_[a-z_]+$/.test(name))throw new Error('Unsafe fixture RPC');const keys=Object.keys(args);return (await db.query<{value:Row}>(`SELECT ${name}(${keys.map((key,index)=>`${key}=>$${index+1}`).join(',')}) value`,Object.values(args))).rows[0].value;}
@@ -74,18 +77,19 @@ test('actual provider helper uses verified Custom routing and reuses the accepte
  await actor(db,UID);const context=await rpc('cockpit_wa_reply_context',{p_app:'client-success',p_thread:'thread-one'});
  const args={app:'client-success',chatId:'thread-one',text:'Review this exact reply.',contextKey:context.contextKey,requestId:randomUUID(),apply:true};let calls=0;
  const request:typeof fetch=async(input,init)=>{
-  calls++;const body=JSON.parse(String(init?.body));
+  calls++;if(init?.method==='GET'){calls--;return String(input)==='https://services.leadconnectorhq.com/contacts/contact-one'?Response.json({contact:{id:'contact-one',locationId:'mahara-location',dnd:false,dndSettings:{}}}):Response.json({error:'Wrong contact'},{status:400});}
+  const body=JSON.parse(String(init?.body));
   if(String(input)!=='https://services.leadconnectorhq.com/conversations/messages'||init?.method!=='POST'||body.type!=='Custom'||body.contactId!=='contact-one'||body.conversationProviderId!=='custom-whatsapp-provider'||body.status!=='pending'||body.toNumber!==undefined)return Response.json({error:'Wrong recipient route'},{status:400});
   return Response.json({conversationId:'thread-one',messageId:'confirmed-provider-message'});
  };
  const result=await executeWhatsappReply(roleClient(true),roleClient(false),args,senderEnv,request);expect(result).toMatchObject({state:'accepted',deliveryConfirmed:false,providerMessageId:'confirmed-provider-message'});
  expect(await executeWhatsappReply(roleClient(true),roleClient(false),args,senderEnv,request)).toMatchObject({state:'accepted',providerMessageId:'confirmed-provider-message'});expect(calls).toBe(1);
  await owner(db);expect((await db.query<{id:string;body:string;status:string}>('SELECT id,body,delivery_status status FROM wa_messages')).rows).toEqual([{id:'confirmed-provider-message',body:'Review this exact reply.',status:'pending'}]);
- expect((await db.query<{count:number}>('SELECT count(*)::int count FROM cockpit_wa_provider_health')).rows[0].count).toBe(2);
+ expect((await db.query<{count:number}>('SELECT count(*)::int count FROM cockpit_wa_provider_health')).rows[0].count).toBe(4);
 });
 test('ambiguous actual POST never produces a fabricated outbound row or a second request',async()=>{
  await actor(db,UID);const context=await rpc('cockpit_wa_reply_context',{p_app:'client-success',p_thread:'thread-one'});const args={app:'client-success',chatId:'thread-one',text:'One original reply',contextKey:context.contextKey,requestId:randomUUID(),apply:true};let calls=0;
- const request:typeof fetch=async()=>{calls++;throw new Error('Connection lost after acceptance');};
+ const request:typeof fetch=async(_input,init)=>{if(init?.method==='GET')return Response.json({contact:{id:'contact-one',locationId:'mahara-location'}});calls++;throw new Error('Connection lost after acceptance');};
  await expect(executeWhatsappReply(roleClient(true),roleClient(false),args,senderEnv,request)).rejects.toThrow('reconciliation');await expect(executeWhatsappReply(roleClient(true),roleClient(false),args,senderEnv,request)).rejects.toThrow('Nothing was resent');expect(calls).toBe(1);
  await owner(db);expect((await db.query<{count:number}>('SELECT count(*)::int count FROM wa_messages')).rows[0].count).toBe(0);
 });
