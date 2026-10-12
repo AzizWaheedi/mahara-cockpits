@@ -15,6 +15,7 @@ import zipfile
 DRY_RUN = True
 URL = "https://bldgtotkfmhoxmlzowdx.supabase.co"
 DEPLOYMENT = "adorable-seahorse-418"
+NATIVE = "native:media"
 TABLES = {"dailyStats": "cockpit_media_daily_stats", "bookingEvents": "cockpit_media_booking_events"}
 REPO = Path(__file__).resolve().parents[1]
 
@@ -88,6 +89,14 @@ class Api:
                 return result
             offset += len(page)
 
+    def has_native(self, table):
+        if table not in TABLES.values():
+            raise ValueError("Unexpected import table")
+        page = self.request(table + "?" + urllib.parse.urlencode({"select": "source_id", "source_deployment": f"eq.{NATIVE}", "limit": 1}))
+        if not isinstance(page, list):
+            raise ValueError("Target read did not return rows")
+        return bool(page)
+
     def insert(self, table, rows):
         self.request(table, "POST", rows)
 
@@ -113,8 +122,17 @@ def compare(expected, existing):
         raise ValueError(f"Target/source conflict: {len(extras)} extra and {len(conflicts)} changed records; preserve and review")
     return [r for r in expected if r["source_id"] not in target]
 
+def require_convex_era(api):
+    """The native sync owns both feeds since 8 Sep 2026. Re-importing would bring back the
+    rows supabase/maintenance/20261012_booking_events_convex_cleanup.sql removed and reset
+    the feed counts the CEO refresh checks."""
+    for table in TABLES.values():
+        if api.has_native(table):
+            raise ValueError(f"{table} is written by the native sync; the Convex import is retired")
+
 def plan(snapshot, api, snapshot_at):
     snapshot = protected(snapshot)
+    require_convex_era(api)
     stamp = datetime.fromisoformat(snapshot_at.replace("Z","+00:00"))
     if stamp.tzinfo is None or stamp > datetime.now(timezone.utc):
         raise ValueError("Use the actual source export timestamp including its timezone")
@@ -134,6 +152,7 @@ def apply(plan_path, expected_hash, api):
         raise ValueError("Wrong plan version or destination project")
     if digest(protected(p["snapshot"])) != p["source_sha256"] or source_rows(p["snapshot"]) != p["expected"]:
         raise ValueError("Source archive changed")
+    require_convex_era(api)
     for table in TABLES.values():
         current = api.rows(table)
         if current != p["before"][table]:
@@ -165,6 +184,7 @@ def finalize(plan_path, expected_hash, api):
         raise ValueError("Wrong destination")
     if digest(protected(p["snapshot"]))!=p["source_sha256"] or source_rows(p["snapshot"])!=p["expected"]:
         raise ValueError("Source archive changed")
+    require_convex_era(api)
     for table,rows in p["expected"].items():
         for start in range(0,max(1,len(rows)),1000):
             batch=rows[start:start+1000]
