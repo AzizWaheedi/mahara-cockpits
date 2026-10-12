@@ -67,8 +67,8 @@ test('the show rate is never the main constraint: it goes after the real ones',(
  expect(text.indexOf('Close rate 0% of attended')).toBeLessThan(text.indexOf('Show rate 50%, under our 60% line'));
  // Only the show rate under the line: every gated stage is met, and the show rate is the watch.
  const only=attended(5,5),onlyCons=constraintsOf(narrativePrompt(profileForReport(only,range),'en'));
- expect(onlyCons).toEqual(['every measurable stage is at or above target, the constraint is budget and capacity, not the funnel']);
+ expect(onlyCons).toEqual(['the booking and close rates are at or above target, the constraint is budget and capacity, not the funnel']);
  const onlyText=prepareReport(only,range).expected.join(' ');
- expect(onlyText).toContain('The main constraint right now: every measurable stage is at or above target');
+ expect(onlyText).toContain('The main constraint right now: the booking and close rates are at or above target');
  expect(onlyText).not.toContain('The main constraint right now: show rate');
 });

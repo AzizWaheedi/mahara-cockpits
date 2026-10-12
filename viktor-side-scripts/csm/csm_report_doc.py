@@ -287,7 +287,7 @@ def constraints_for(profile: dict) -> list[str]:
         )
     if not out:
         out.append(
-            "every measurable stage is at or above target, the constraint is budget and "
+            "the booking and close rates are at or above target, the constraint is budget and "
             "capacity, not the funnel"
         )
     return out

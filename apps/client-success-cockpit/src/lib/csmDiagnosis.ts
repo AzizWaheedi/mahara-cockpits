@@ -224,10 +224,6 @@ function diagnoseRaw(p: Any): Diagnosis {
         "Have them send a voice note before the meeting rather than a text; it lifts attendance.",
         "Get the reminder sequence switched on in their sub-account (ticket to tech).",
       ],
-      say: {
-        en: `Hey ${name}, one thing is costing you more than anything else right now: ${100 - showRate}% of the appointments booked are not being attended. That is your team's time, not just leads.\n\nTwo changes fix most of it, book people in the same or next day rather than later in the week, and confirm twice: once when it's booked, once the morning of. I'll switch on the automatic reminders from our side today.`,
-        ar: `هلا ${name}، فيه شي يكلفك أكثر من أي شي ثاني حالياً: ${100 - showRate}% من المواعيد المحجوزة ما يتم حضورها. وهذا وقت فريقك، مو بس ليدز.\n\nتغييرين يحلون أغلبها, احجزوا نفس اليوم أو اليوم اللي بعده بدال آخر الأسبوع، وأكدوا مرتين: أول ما يتحجز، وصباح نفس اليوم. وأنا أشغّل التذكيرات الأوتوماتيكية من طرفنا اليوم.`,
-      },
       owner: "CSM",
     });
   }
@@ -270,10 +266,10 @@ function diagnoseRaw(p: Any): Diagnosis {
       id: "macro_offer",
       layer: "macro",
       title:
-        "Every stage is leaking and nothing has ever closed, treat this as one problem",
+        "Booking and closing are both under target and nothing has ever closed, treat this as one problem",
       evidence: `${leads} leads, ${booked} booked, ${shows} attended, 0 closed ever on their sheet.`,
       diagnosis:
-        "When every metric is broken at once, the constraint is upstream: the offer or the message is attracting the wrong people. Patching each leak separately wastes months, this is a macro constraint.",
+        "When booking and closing both fail at once, the constraint is upstream: the offer or the message is attracting the wrong people. Patching each leak separately wastes months, this is a macro constraint.",
       fixes: [
         "Book a reset call, not a check-in. Use the reset call framework.",
         "Rebuild the offer and the message with them: who exactly, what project size, what price.",

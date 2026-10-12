@@ -223,7 +223,7 @@ function constraintsFor(profile: Any): string[] {
     );
   if (!out.length)
     out.push(
-      "every measurable stage is at or above target, the constraint is budget and capacity, not the funnel",
+      "the booking and close rates are at or above target, the constraint is budget and capacity, not the funnel",
     );
   return out;
 }
