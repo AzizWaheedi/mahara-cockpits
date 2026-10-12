@@ -704,10 +704,15 @@ test("a client's page has one booking button, the actions and four tabs", async 
       expect(text).toContain(action);
     for (const tab of ["Overview", "Results", "Onboarding & files", "Money"])
       expect(text).toContain(tab);
-    // Overview: one "Before the call" block, the diagnosis inside it.
+    // Overview (2026-10-12): the "Before the call" brief first, then the
+    // numbers with the diagnosis inside; the old scattered cards are gone.
+    expect(text.match(/Before the call/g)?.length).toBe(1);
+    expect(text).toContain("The numbers");
     expect(text).toContain("What is holding this client back");
-    expect(text).toContain("What the media buyer changed since your last call");
+    expect(text).not.toContain("What the media buyer changed since your last call");
     expect(text).not.toContain("Prep for this call");
+    // This fake cannot read the call history: the brief says so, never "no calls".
+    expect(text).toContain("The call history could not be read");
     // Results: the period and the report at the top.
     const results = await renderSection(
       "client",
@@ -744,6 +749,18 @@ test("closing a commitment is not contact with the client", async () => {
           pageFor("client", MOFAG),
         ),
       );
+    });
+    // Since 2026-10-12 the notes to act on sit in a fold under the calls
+    // (the brief above already shows them); open it.
+    const fold = [...host.querySelectorAll("details")].find(d =>
+      (d.textContent ?? "").includes("Your 1-1 notes to act on"),
+    );
+    expect(fold).toBeDefined();
+    await reactAct(async () => {
+      if (fold) {
+        fold.open = true;
+        fold.dispatchEvent(new win.Event("toggle"));
+      }
     });
     const call = [...host.querySelectorAll("button")].find(b =>
       (b.textContent ?? "").startsWith("Your call on"),

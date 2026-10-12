@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AdBillingDailyTask } from "@/components/AdBillingReview";
+import { ClientBrief } from "@/components/ClientBrief";
 import {
   CallsTimeline,
   FormsHistory,
@@ -50,7 +51,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
-import { kuwaitDayOf, logCall, staleSentence } from "@/lib/csmCalls";
+import { kuwaitDayOf, logCall } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
@@ -986,28 +987,6 @@ function HotSheet({
   );
 }
 
-/**
- * The media buyer's changes since the last logged call, or the last two weeks
- * when no call is logged: the newest eight. The card carries 90 days of them
- * (the Client performance page shows any period).
- */
-function sinceLastCall(c: Client, changes: Client[] | undefined): Client[] {
-  const since = c.lastCall
-    ? String(c.lastCall).slice(0, 10)
-    : new Date(Date.now() + 3 * 3_600_000 - 14 * 86_400_000)
-        .toISOString()
-        .slice(0, 10);
-  // An item with no day is never "since your last call" (String(undefined) >= date was true).
-  return ((changes ?? []) as Client[])
-    .filter(
-      ch =>
-        /^\d{4}-\d{2}-\d{2}$/.test(String(ch.day ?? "")) &&
-        String(ch.day) >= since,
-    )
-    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
-    .slice(0, 8);
-}
-
 /** The client page's tabs, in the order a CSM reaches for them. */
 const CLIENT_TABS = [
   { key: "overview", label: "Overview" },
@@ -1408,6 +1387,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     d => (d.kind === "ticket" || d.kind === "rerouted") && d.clickupTaskUrl,
   ).length;
   const clients: Client[] = snap.clients;
+  const clientNames = clients.map(x => String(x.name ?? ""));
   // Who needs you = the combined priority list across both motions.
   const needsAction = (c: Client) => c.rank < 40 && c.level !== "green";
   const todayList = clients.filter(needsAction);
@@ -1615,22 +1595,6 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       ...((profile?.links ?? {}) as Record<string, string>),
     };
     const mine = commitmentRows.filter(r => r.client.taskId === c.taskId);
-    const changes = sinceLastCall(c, calls.timeline?.changes);
-    const changesStale = calls.timeline
-      ? (staleSentence(
-          calls.timeline.health.find(h => h.key === "csm-media-changes"),
-          "csm-media-changes",
-        ) ??
-        (calls.timeline.health.find(h => h.key === "csm-media-changes")?.detail
-          ?.metaStale
-          ? staleSentence(
-              calls.timeline.health.find(h => h.key === "csm-meta-activities"),
-              "csm-meta-activities",
-            )
-          : null))
-      : calls.error
-        ? `The change history could not be read: ${calls.error}`
-        : "Loading the change history.";
     const nc = nextCall(c, langOf(c));
     const reportUrl: string | undefined = (
       (profile?.reports ?? []) as { builtAt?: number; docUrl?: string }[]
@@ -2169,110 +2133,71 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         </nav>
 
         {clientTab === "overview" && (
-          <ClientProfile
-            name={String(c.name)}
-            part="overview"
-            embedded
-            period={period}
-            onPeriod={k => setParam("period", k)}
-            afterPrep={
-              <>
-                <UnmatchedQueue
-                  client={auth.client}
-                  taskId={String(c.taskId)}
-                  clientName={String(c.name)}
-                  onMatched={calls.reload}
-                />
-                {calls.error ? (
-                  <p className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
-                    The call history could not be read: {calls.error}
-                  </p>
-                ) : (
-                  <CallsTimeline
-                    timeline={calls.timeline}
+          <>
+            <ClientBrief
+              client={auth.client}
+              row={c}
+              timeline={calls.timeline}
+              profile={profile ?? null}
+              error={calls.error}
+              otherClients={clientNames}
+              onOpenCalls={() =>
+                document
+                  .getElementById("client-calls")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+            />
+            <ClientProfile
+              name={String(c.name)}
+              part="overview"
+              embedded
+              withBrief
+              period={period}
+              onPeriod={k => setParam("period", k)}
+              afterPrep={
+                <>
+                  <UnmatchedQueue
                     client={auth.client}
+                    taskId={String(c.taskId)}
+                    clientName={String(c.name)}
+                    onMatched={calls.reload}
                   />
-                )}
-                <SectionCard
-                  title="What the media buyer changed since your last call"
-                  count={changes.length}
-                  sub={
-                    <>
-                      Since{" "}
-                      {c.lastCall
-                        ? `your call on ${shortDay(c.lastCall)}`
-                        : "two weeks ago, no call is logged"}
-                      .{" "}
-                      <button
-                        type="button"
-                        className="text-primary underline-offset-4 hover:underline"
-                        onClick={() => setParam("tab", "results")}
-                      >
-                        Any period on Results
-                      </button>
-                    </>
-                  }
-                  flush
-                >
-                  {changesStale ? (
-                    <p className="px-4 pt-4 text-xs text-muted-foreground sm:px-6">
-                      {changesStale}
-                    </p>
+                  <div id="client-calls" className="scroll-mt-20">
+                    {calls.error ? (
+                      <p className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
+                        The call history could not be read: {calls.error}
+                      </p>
+                    ) : (
+                      <CallsTimeline
+                        timeline={calls.timeline}
+                        client={auth.client}
+                      />
+                    )}
+                  </div>
+                  {mine.length ? (
+                    <Fold
+                      title="Your 1-1 notes to act on"
+                      hint="Make each one a task, or close it"
+                    >
+                      {commitmentsBlock(mine, false)}
+                    </Fold>
                   ) : null}
-                  {changes.length === 0 ? (
-                    <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                      {changesStale
-                        ? "None shown, but the history is incomplete, so this is not a confirmed zero."
-                        : "No campaign changes since then."}
-                    </p>
-                  ) : (
-                    changes.map(
-                      (
-                        ch: { action: string; day: string; evidence: string },
-                        i: number,
-                      ) => (
-                        <div
-                          key={`${ch.day}-${i}`}
-                          className="px-4 py-3 text-sm sm:px-6"
-                        >
-                          <span className="font-medium">
-                            {shortDay(ch.day)}
-                          </span>
-                          , {ch.action}
-                          {ch.evidence ? (
-                            <span className="text-muted-foreground">
-                              . {ch.evidence}
-                            </span>
-                          ) : null}
-                        </div>
-                      ),
-                    )
-                  )}
-                </SectionCard>
-                <TeamEods timeline={calls.timeline} />
-                <FormsHistory timeline={calls.timeline} />
-                {mine.length ? (
-                  <SectionCard
-                    title="What you said you would do"
-                    count={mine.length}
-                    sub="From your 1-1 call notes. Make each one a task, or close it."
-                    flush
+                  <Fold
+                    title="Everything the team wrote"
+                    hint="EOD lines that name this client, 90 days"
                   >
-                    {commitmentsBlock(mine, false)}
-                  </SectionCard>
-                ) : null}
-                {c.loose.length ? (
-                  <SectionCard title="Loose ends" count={c.loose.length} flush>
-                    {c.loose.map((l: string) => (
-                      <div key={l} className="px-4 py-3 text-sm sm:px-6">
-                        {plainText(l)}
-                      </div>
-                    ))}
-                  </SectionCard>
-                ) : null}
-              </>
-            }
-          />
+                    <TeamEods timeline={calls.timeline} />
+                  </Fold>
+                  <Fold
+                    title="Every form"
+                    hint="1-1, onboarding, kickoff, Blueprint"
+                  >
+                    <FormsHistory timeline={calls.timeline} />
+                  </Fold>
+                </>
+              }
+            />
+          </>
         )}
 
         {clientTab === "results" && (

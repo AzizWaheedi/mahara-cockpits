@@ -417,7 +417,7 @@ function ConstraintCard({ c, first }: { c: Constraint; first?: boolean }) {
  * diagnosis, and the first repeated the second's top card (the simplification audit,
  * 2026-10-06). Nothing here is invented: when a number is missing it says what to ask for.
  */
-function BeforeTheCall({ p }: { p: Any }) {
+function BeforeTheCall({ p, withBrief }: { p: Any; withBrief?: boolean }) {
   const perf = (p.performance ?? {}) as Any;
   const m = (perf.month ?? {}) as Any;
   const l = (perf.lastMonth ?? {}) as Any;
@@ -460,10 +460,13 @@ function BeforeTheCall({ p }: { p: Any }) {
         </div>
       ) : null}
       <div>
-        <h3 className="text-[15px] font-semibold">Before the call</h3>
+        <h3 className="text-[15px] font-semibold">
+          {withBrief ? "The numbers" : "Before the call"}
+        </h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Read this once before you dial. Lead with the first thing holding them
-          back, offer its fix, then make the ask.
+          {withBrief
+            ? "Where they stand this month and the first thing holding them back."
+            : "Read this once before you dial. Lead with the first thing holding them back, offer its fix, then make the ask."}
         </p>
       </div>
       <div className="text-sm">
@@ -1649,6 +1652,7 @@ export function ClientProfile({
   part = "all",
   embedded = false,
   afterPrep,
+  withBrief = false,
 }: {
   name: string;
   onBack?: () => void;
@@ -1665,6 +1669,12 @@ export function ClientProfile({
   embedded?: boolean;
   /** What the client page puts right after "Before the call". */
   afterPrep?: React.ReactNode;
+  /**
+   * The client page shows its "Before the call" brief above this, which
+   * already carries the do's and don'ts, the card's notes, the last call and
+   * the profile; the overview then shows only the numbers and the calls.
+   */
+  withBrief?: boolean;
 }) {
   const auth = useCockpitAuth();
   const [p, setP] = useState<Any | undefined>(undefined);
@@ -1862,25 +1872,29 @@ export function ClientProfile({
 
       {showOverview ? (
         <>
-          <BeforeTheCall p={p} />
+          <BeforeTheCall p={p} withBrief={withBrief} />
 
           {afterPrep}
 
-          <DosDontsCard
-            text={p.dosDonts as string | undefined}
-            url={p.links?.clickup as string | undefined}
-          />
+          {withBrief ? null : (
+            <>
+              <DosDontsCard
+                text={p.dosDonts as string | undefined}
+                url={p.links?.clickup as string | undefined}
+              />
 
-          <ClientUpdates
-            updates={p.updates as never}
-            focus="csm"
-            url={p.links?.clickup as string | undefined}
-          />
+              <ClientUpdates
+                updates={p.updates as never}
+                focus="csm"
+                url={p.links?.clickup as string | undefined}
+              />
 
-          <RecentCalls
-            calls={(p.calls as Any[]) ?? []}
-            brief={p.callsBrief as string | undefined}
-          />
+              <RecentCalls
+                calls={(p.calls as Any[]) ?? []}
+                brief={p.callsBrief as string | undefined}
+              />
+            </>
+          )}
         </>
       ) : null}
 
@@ -2212,7 +2226,7 @@ export function ClientProfile({
         </>
       ) : null}
 
-      {showOverview && p.profileText ? (
+      {showOverview && !withBrief && p.profileText ? (
         <section className="space-y-3">
           <SectionTitle>Client profile</SectionTitle>
           <p
