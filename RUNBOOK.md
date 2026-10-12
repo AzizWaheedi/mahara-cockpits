@@ -638,11 +638,39 @@ Functions `hiring-sync` (pg_cron `mahara-hiring-mirror` every 10 minutes,
 
 ## Shipping a fix
 
-`scripts/ship.sh <app>` lints, typechecks, deploys the backend, builds and
-deploys the site, then runs the smoke check. It stops at the first failure,
-so a broken change never replaces a working deployment. Ship the receiving
-cockpits before the media buyer when a bridge payload gains a field
-(`scripts/ship.sh all` does this in the right order).
+`scripts/ship.sh <app>` checks its setup first (`scripts/ship-preflight.sh`
+lists everything missing at once, in seconds), runs the guard tests and the
+local readiness checks, then lints, typechecks, builds and deploys the site,
+then runs the smoke check. It stops at the first failure, so a broken change
+never replaces a working deployment. Ship the receiving cockpits before the
+media buyer when a bridge payload gains a field (`scripts/ship.sh all` does
+this in the right order).
+
+### From a fresh worktree (Windows)
+
+A new worktree has none of the git-ignored files a ship needs. This adds
+them: dependencies in the root, the five apps and `hermes/media-native`,
+`convex/_generated` for the media buyer and creative director apps (copied
+from the main checkout), and each `.vercel/project.json` (written from
+`config/vercel-projects.json`). Without `--apply` it only reports.
+
+```bash
+scripts/prepare-worktree.sh --apply
+```
+
+Then a person ships from PowerShell, because loading a secret into a deploy
+is a person's step. `ship.ps1` reads `supabase_token` from the main
+checkout's `.env.local` and `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`
+from an app `.env.local`, by name and without printing them, and runs
+`ship.sh` in Git Bash. `-CheckOnly` runs only the preflight.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\ship.ps1 client-success
+```
+
+The cutover evidence check (`evidence/cutover-acceptance.json`) runs after
+the deploy only when that file exists. Only the coordinated cutover
+procedure writes it (`docs/CUTOVER-ACCEPTANCE.md`).
 
 Production is a CLI upload (`vercel deploy --prod`, or the Composio path when
 the CLI is logged out). The CLI stamps the local commit and does not ask

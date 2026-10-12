@@ -78,6 +78,8 @@ python scripts/verify-cutover-readiness.py --mode local --report local-report.js
 ```
 *(Produces `LOCAL_PASSED` on success, but explicitly notes that release readiness is not certified).*
 
+Since 2026-10-12, `scripts/ship.sh` runs `--mode local` before every deploy, so a failure stops the upload. It runs `--mode release` after the deploy only when `evidence/cutover-acceptance.json` exists.
+
 ---
 
 ## 4. Acceptance Evidence Specification
