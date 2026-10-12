@@ -158,6 +158,11 @@ export type CreativePreviewProps = {
   /** Where the ad runs, so the access check can find its client. */
   campaignName?: string;
   clientName?: string;
+  /**
+   * With no picture to show, ask Meta for one without waiting for a click,
+   * a few rows at a time. The Results tab sets it so every ad has a picture.
+   */
+  autoFetch?: boolean;
 };
 
 const MINUTE = 60_000;
@@ -305,6 +310,27 @@ function cleanResult(adId: string, r: unknown): PreviewResult {
   if (!r || typeof r !== "object") return { ok: false, adId, reason: "error" };
   const result = r as PreviewResult;
   return { ...result, adId: result.adId || adId };
+}
+
+// Rows that ask for a picture on their own wait their turn: two at a time,
+// and a row that leaves the page before its turn is skipped.
+const AUTO_AT_ONCE = 2;
+let autoRunning = 0;
+const autoWaiting: (() => Promise<unknown> | null)[] = [];
+function runAuto() {
+  while (autoRunning < AUTO_AT_ONCE && autoWaiting.length) {
+    const job = autoWaiting.shift()?.();
+    if (!job) continue;
+    autoRunning++;
+    void job.finally(() => {
+      autoRunning--;
+      runAuto();
+    });
+  }
+}
+function queueAuto(job: () => Promise<unknown> | null) {
+  autoWaiting.push(job);
+  runAuto();
 }
 
 /** One call per ad at a time, reused until it goes stale. */
@@ -757,6 +783,23 @@ export function CreativePreview(props: CreativePreviewProps) {
   const shown = useFirstWorking(chain);
   // Live links are authorized on opening, including server-cache hits.
   const canWatch = Boolean(metaAdId);
+  const auto = Boolean(props.autoFetch);
+  const autoCampaign = cleanName(props.campaignName);
+  const autoClient = cleanName(props.clientName);
+  const wantsPicture = auto && !shown && Boolean(metaAdId) && !known;
+  useEffect(() => {
+    if (!wantsPicture || !metaAdId) return;
+    let left = false;
+    const args: FreshArgs = { adId: metaAdId };
+    if (autoCampaign) args.campaignName = autoCampaign;
+    if (autoClient) args.clientName = autoClient;
+    queueAuto(() =>
+      left ? null : loadPreview(nativeAdPreview, args, actorId),
+    );
+    return () => {
+      left = true;
+    };
+  }, [wantsPicture, metaAdId, actorId, autoCampaign, autoClient]);
 
   if (variant === "card") {
     return (

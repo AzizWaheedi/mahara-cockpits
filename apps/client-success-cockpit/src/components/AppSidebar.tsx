@@ -5,6 +5,8 @@ import {
   Link2,
   LogOut,
   Moon,
+  PanelLeft,
+  PanelLeftClose,
   Search,
   Settings,
   Sun,
@@ -167,7 +169,12 @@ function PortalGroup() {
         <SidebarMenu>
           {rows.map(d => (
             <SidebarMenuItem key={d.key}>
-              <SidebarMenuButton asChild>
+              {/* Folded, the rail keeps the icon and names it on hover. */}
+              <SidebarMenuButton
+                asChild
+                tooltip={d.label}
+                className="cockpit-nav-link"
+              >
                 <a
                   href={d.href}
                   {...(d.newTab ? { target: "_blank", rel: "noreferrer" } : {})}
@@ -175,7 +182,7 @@ function PortalGroup() {
                   {(() => {
                     const Icon =
                       d.key === "data" ? Table2 : COCKPIT_ICON[d.key];
-                    return Icon ? <Icon className="size-4" /> : null;
+                    return Icon ? <Icon /> : null;
                   })()}
                   <span>{d.label}</span>
                 </a>
@@ -215,21 +222,36 @@ function SidebarNav() {
 
 /**
  * The search field at the top of the rail: it opens the search box, which
- * also opens with Ctrl/Cmd + K or "/" from any page.
+ * also opens with Ctrl/Cmd + K or "/" from any page. A folded rail keeps the
+ * icon, as the media buyer's does.
  */
 function SearchField() {
-  const { setOpenMobile } = useSidebar();
+  const { setOpenMobile, open, isMobile } = useSidebar();
   const mac =
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+  const click = () => {
+    setOpenMobile(false);
+    openSearch();
+  };
+  if (!open && !isMobile)
+    return (
+      <div className="flex justify-center px-2 pt-2">
+        <button
+          type="button"
+          onClick={click}
+          aria-label="Search clients and links"
+          className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+        >
+          <Search aria-hidden className="size-4" />
+        </button>
+      </div>
+    );
   return (
-    <div className="px-2 pb-2">
+    <div className="px-2 pt-2">
       <button
         type="button"
-        onClick={() => {
-          setOpenMobile(false);
-          openSearch();
-        }}
+        onClick={click}
         className="flex h-10 w-full items-center gap-2 rounded-lg border border-sidebar-border bg-background/60 px-3 text-left text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
       >
         <Search aria-hidden className="size-4 shrink-0" />
@@ -271,7 +293,7 @@ function SidebarUserMenu() {
             <DropdownMenuContent
               side="top"
               align="start"
-              className="w-[--radix-dropdown-menu-trigger-width]"
+              className="w-(--radix-dropdown-menu-trigger-width)"
             >
               <DropdownMenuItem asChild>
                 <Link to="/settings" onClick={() => setOpenMobile(false)}>
@@ -315,37 +337,54 @@ function SidebarUserMenu() {
 }
 
 function SidebarHeaderContent() {
-  const { setOpenMobile, isMobile } = useSidebar();
+  const { setOpenMobile, open, isMobile, toggleSidebar } = useSidebar();
 
   return (
     <SidebarHeader className="flex-row items-center justify-between border-b border-sidebar-border">
-      {/* The logo opens the day, not the marketing page at "/". */}
-      <Link
-        to="/dashboard"
-        onClick={() => setOpenMobile(false)}
-        className="flex items-center px-2 py-2"
-      >
-        <Wordmark size="sm" />
-      </Link>
-      {/* Below 1024px the rail is a sheet whose own close button is hidden,
-          so it carries one here. From 1024px up the rail is always there. */}
+      {/* The logo opens the day, not the marketing page at "/". A folded rail
+          keeps only the button that unfolds it. */}
+      {open || isMobile ? (
+        <Link
+          to="/dashboard"
+          onClick={() => setOpenMobile(false)}
+          className="flex items-center px-2 py-2"
+        >
+          <Wordmark size="sm" />
+        </Link>
+      ) : null}
+      {/* Below 1024px the rail is a sheet, so this closes it; on a laptop it
+          folds the rail to its icons (Ctrl/Cmd + B does the same). */}
       {isMobile ? (
         <button
           type="button"
           onClick={() => setOpenMobile(false)}
           aria-label="Close menu"
-          className="inline-flex size-10 items-center justify-center rounded-lg text-sidebar-foreground hover:bg-sidebar-accent"
+          className="inline-flex size-10 items-center justify-center rounded-lg border hover:bg-sidebar-accent"
         >
-          <X className="size-5" aria-hidden />
+          <X className="size-[18px]" aria-hidden />
         </button>
-      ) : null}
+      ) : (
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="rounded-lg border p-2 hover:bg-sidebar-accent"
+          aria-label={open ? "Collapse sidebar" : "Expand sidebar"}
+          aria-expanded={open}
+        >
+          {open ? (
+            <PanelLeftClose size={16} aria-hidden />
+          ) : (
+            <PanelLeft size={16} aria-hidden />
+          )}
+        </button>
+      )}
     </SidebarHeader>
   );
 }
 
 export function AppSidebar() {
   return (
-    <Sidebar>
+    <Sidebar collapsible="icon" variant="floating">
       <SidebarHeaderContent />
       <SearchField />
       <SidebarNav />

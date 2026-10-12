@@ -35,6 +35,9 @@ The brand itself is Mahara Media Brand Guidelines v1.0.
   other cockpits sit at the foot of the rail.
 - The active rail row is the teal lamp (`.cockpit-nav-link`,
   `.cockpit-nav-lamp`).
+- From 1024px the media buyer and client success rails fold to their icons
+  (the button at the top of the rail, or Ctrl/Cmd + B); a folded row names
+  itself on hover, search keeps its icon, and the choice is remembered.
 - Floating things never cover content on a phone: Ask Hermes is a round
   button below `sm`; "Report a problem" lives in page headers.
 

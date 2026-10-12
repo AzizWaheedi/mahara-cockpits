@@ -3,13 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { ClientAds } from "@/components/ClientAds";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientUpdates } from "@/components/ClientUpdates";
-import {
-  CreativePreview,
-  stillPropsFor,
-  useLocalStills,
-} from "@/components/CreativePreview";
 import { DosDontsCard } from "@/components/DosDonts";
 import {
   Chip,
@@ -275,111 +271,6 @@ function openReport(p: Any, per: Period, fig: Figures) {
   if (!w) return;
   w.document.write(reportHtml(p, per, fig));
   w.document.close();
-}
-
-/**
- * Campaigns, ad sets and ads, each ad with its saved picture. Opening an ad
- * fetches Meta's live preview through the media buyer system; when that is
- * not available (the media buyer is down, or Meta refused) the saved picture
- * shows with the reason. No preview link is stored on the profile.
- */
-function AdTree({ ads, clientName }: { ads: Any[]; clientName: string }) {
-  const stills = useLocalStills(
-    (ads ?? []).flatMap((c: Any) =>
-      (c.adsets ?? []).flatMap((s: Any) =>
-        (s.ads ?? []).map((a: Any) => a.stillKey),
-      ),
-    ),
-  );
-  if (!ads?.length)
-    return (
-      <p className="text-sm text-muted-foreground">
-        No campaigns are synced for this client. If they are running ads, the
-        ads board is missing the client name: say so with Report an issue at the
-        top of this page and the mapping gets fixed.
-      </p>
-    );
-  return (
-    <div className="space-y-4">
-      {ads.map(c => (
-        <div
-          key={c.campaign}
-          className="overflow-hidden rounded-2xl border bg-card"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-3 sm:px-6">
-            <div className="min-w-0">
-              <div className="text-sm font-semibold" dir="auto">
-                {c.campaign}
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {c.account} · {c.status ?? "Status unknown"}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums text-muted-foreground">
-              <span>{count(c.leads7d)} leads 7d</span>
-              <span>
-                {c.cpl
-                  ? `$${Number(c.cpl).toFixed(2)} per lead`
-                  : "no cost per lead"}
-              </span>
-              <span>{count(c.bookings7d)} booked</span>
-              <span>{count(c.showed7d)} showed</span>
-            </div>
-          </div>
-          {(c.adsets ?? []).length === 0 ? (
-            <p className="px-4 py-3 text-xs text-muted-foreground sm:px-6">
-              Meta did not return the ad sets for this campaign. Either Mahara's
-              Meta access does not cover ad account {c.accountId ?? "(unknown)"}
-              , or the campaign name on the ads board does not match Meta.
-            </p>
-          ) : null}
-          <div className="divide-y">
-            {(c.adsets ?? []).map((s: Any, si: number) => (
-              <div
-                key={s.metaId ?? `${s.name}:${si}`}
-                className="px-4 py-3 sm:px-6"
-              >
-                <div className="text-sm font-medium" dir="auto">
-                  {s.name}{" "}
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {s.status}
-                  </span>
-                </div>
-                <div className="mt-2 space-y-1.5">
-                  {(s.ads ?? []).map((ad: Any, ai: number) => (
-                    <div
-                      key={ad.metaId ?? `${ad.name}:${ai}`}
-                      className="flex items-center gap-2"
-                    >
-                      <CreativePreview
-                        name={String(ad.name ?? "Ad")}
-                        metaAdId={ad.metaId ?? undefined}
-                        accountId={ad.accountId ?? c.accountId ?? undefined}
-                        clientName={clientName}
-                        campaignName={c.campaign}
-                        thumbUrl={ad.thumbUrl ?? undefined}
-                        {...stillPropsFor(ad, stills)}
-                        size="sm"
-                      />
-                      <span
-                        className="min-w-0 flex-1 truncate text-sm"
-                        dir="auto"
-                      >
-                        {ad.name}
-                      </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {ad.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 /**
@@ -2161,6 +2052,16 @@ export function ClientProfile({
             }
           />
 
+          <section className="space-y-3">
+            <SectionTitle>Ads, {per.label}</SectionTitle>
+            <ClientAds
+              taskId={p.taskId ? String(p.taskId) : undefined}
+              clientName={name}
+              per={per}
+              dwy={dwy}
+            />
+          </section>
+
           {p.links?.sheet ? (
             <>
               <section
@@ -2306,13 +2207,6 @@ export function ClientProfile({
 
           {p.lost ? <LostLeads lost={p.lost as Any} /> : null}
           {p.provisional ? <Provisional pv={p.provisional as Any} /> : null}
-
-          <section className="space-y-3">
-            <SectionTitle>
-              Live campaigns, ad sets and ads, last 7 days
-            </SectionTitle>
-            <AdTree ads={(p.ads ?? []) as Any[]} clientName={name} />
-          </section>
 
           {embedded ? null : <ReportSection p={p} per={per} fig={fig} />}
         </>
