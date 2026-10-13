@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import * as native from "../../../hermes/ceo-refresh/native/constants.js";
-import * as clientGates from "../../client-success-cockpit/src/lib/clientGates";
+import * as csKpi from "../../client-success-cockpit/src/lib/kpi";
 import {
   clientStatus,
   costPerShownAt60,
@@ -235,19 +235,38 @@ describe("the gates", () => {
     expect(kpi.CPB_BAD).toBe(CPB_BAD);
     expect(kpi.CPB_GATE).toBe(CPB_GATE);
     expect(kpi.CPL_GATE).toBe(CPL_GATE);
+    expect(native.CPB_GATE).toBe(kpi.CPB_GATE);
+    expect(native.CPL_GATE).toBe(kpi.CPL_GATE);
+    expect(native.CPB_BAD).toBe(kpi.CPB_BAD);
+    expect(native.BOOKING_RATE_GATE).toBe(kpi.BOOKING_RATE_GATE);
+    expect(native.CLOSE_RATE_GATE).toBe(kpi.CLOSE_RATE_GATE);
+  });
+  // Aziz, 2026-10-13: "The CSM: make it $15 cost per lead and $60 cost per
+  // booking." The client success cockpit holds the same file.
+  test("the client success cockpit judges on the same gates", () => {
+    expect({ ...csKpi }).toEqual({ ...kpi });
+    expect(
+      readFileSync(
+        join(APP, "../client-success-cockpit/src/lib/kpi.ts"),
+        "utf8",
+      ),
+    ).toBe(readFileSync(join(APP, "src/lib/kpi.ts"), "utf8"));
   });
   test("are Aziz's numbers", () => {
     expect(SHOW_RATE_GOOD).toBe(60);
     expect(CPB_BAD).toBe(80);
     expect(CPL_GATE * 1.5).toBe(22.5);
+    expect(kpi.CPL_GATE).toBe(15);
+    expect(kpi.CPB_GATE).toBe(60);
   });
   // Aziz, 2026-10-12: "the show rate metric is 60%, so anything around that is
   // fine, not 70%". One client line everywhere, and under it is watch.
   test("one client show rate line, the same in every copy", () => {
     expect(native.SHOW_RATE_GOOD).toBe(kpi.SHOW_RATE_GOOD);
-    expect(clientGates.SHOW_RATE_GOOD).toBe(kpi.SHOW_RATE_GOOD);
+    expect(csKpi.SHOW_RATE_GOOD).toBe(kpi.SHOW_RATE_GOOD);
     for (const file of [
       "src/lib/kpi.ts",
+      "../client-success-cockpit/src/lib/kpi.ts",
       "convex/constants.ts",
       "../../hermes/ceo-refresh/native/constants.js",
     ])
@@ -256,6 +275,16 @@ describe("the gates", () => {
       );
     expect("SHOW_RATE_GATE" in kpi).toBe(false);
     expect("SHOW_RATE_GATE" in native).toBe(false);
+  });
+  // Aziz, 2026-10-13: "The October KPI is what we shoot for, but I don't want
+  // to make that the main constraint." The aim sits above the line, never in
+  // its place.
+  test("the show rate aim is 70, above the line and never the line", () => {
+    expect(kpi.SHOW_RATE_AIM).toBe(70);
+    expect(native.SHOW_RATE_AIM).toBe(kpi.SHOW_RATE_AIM);
+    expect(csKpi.SHOW_RATE_AIM).toBe(kpi.SHOW_RATE_AIM);
+    expect(kpi.SHOW_RATE_AIM).toBeGreaterThan(kpi.SHOW_RATE_GOOD);
+    expect(kpi.SHOW_RATE_GOOD).toBe(60);
   });
   test("a client show rate under the line is amber, never red", () => {
     expect(rateTone(60, SHOW_RATE_GOOD, 0)).toBe("good");
@@ -299,6 +328,11 @@ describe("the gates", () => {
     // Mahara's own intro and demo show rates are the sales team's lines, not
     // the client line, and keep their own numbers.
     const own = /\b(intro|demo)/i;
+    // The aim may be said (Aziz, 2026-10-13): "we aim for 70%" is not a line
+    // or a target. It is taken out before the line is read, so the rest of
+    // the line is still judged.
+    const aim = /\b(?:we )?aims? for 70 ?%/gi;
+    const judged = (line: string) => bad.test(line.replace(aim, ""));
     const hits: string[] = [];
     const scan = (path: string) => {
       if (statSync(path).isDirectory()) {
@@ -309,8 +343,7 @@ describe("the gates", () => {
         readFileSync(path, "utf8")
           .split("\n")
           .forEach((line, i) => {
-            if (bad.test(line) && !own.test(line))
-              hits.push(`${path}:${i + 1}`);
+            if (judged(line) && !own.test(line)) hits.push(`${path}:${i + 1}`);
           });
     };
     for (const root of roots) scan(join(APP, root));
@@ -322,10 +355,21 @@ describe("the gates", () => {
       "booking→show 75% · show→close 20%",
       "| Showed | OUT-07 | 75% |",
       "showRate: 75,",
+      "the client show rate target 70%",
+      "show rate line 70%",
+      "Show rate: 70% target",
+      "| Show rate on confirmed | 70% |",
+      "show rate: we aim for 75%",
+      "show rate: we aim for 70%, target 75%",
+      "show rate: we aim for 70%; the line is 70%",
     ])
-      expect(bad.test(line)).toBe(true);
-    expect(
-      bad.test("booking→show 60% (under it is watch, never the constraint)"),
-    ).toBe(false);
+      expect(judged(line)).toBe(true);
+    for (const line of [
+      "booking→show 60% (under it is watch, never the constraint)",
+      "show rate (we aim for 70%; 60% is the line, under it is a watch, not a fix)",
+      "| Show rate on confirmed | 60%; we aim for 70%, 60% is the line, under it is a watch, never the main constraint |",
+      "booking→show 60% (aim for 70%; 60% is the line, under it is a watch, never the main constraint)",
+    ])
+      expect(judged(line)).toBe(false);
   });
 });

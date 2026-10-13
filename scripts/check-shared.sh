@@ -103,6 +103,20 @@ same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"
 # and the client success cockpit. The two differ only in how each app's
 # actions are wired to the screen (ceo/BillingTab.tsx, pages/BillingPage.tsx).
 CS=apps/client-success-cockpit
+
+# The official KPI gates: $15 a lead, $60 a booking, the client show rate
+# line and its aim. The client success cockpit judges on the same numbers
+# (Aziz, 2026-10-13) and holds its own copy, since an app cannot import from
+# another. Neither copy may import anything, so the whole file is compared:
+# the cockpit-ceo-api and cockpit-csm-api Edge Functions bundle them.
+same kpi.ts "$MB/src/lib/kpi.ts" "$CS/src/lib/kpi.ts"
+for f in "$MB/src/lib/kpi.ts" "$CS/src/lib/kpi.ts"; do
+  if [ -f "$f" ] && grep -qE '^(import |export .* from )' "$f"; then
+    echo "IMPORTS  $f must stay import-free: two Edge Functions bundle it"
+    fails=$((fails + 1))
+  fi
+done
+
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
 same personalEod.ts "$MB/src/lib/personalEod.ts" "$CS/src/lib/personalEod.ts"

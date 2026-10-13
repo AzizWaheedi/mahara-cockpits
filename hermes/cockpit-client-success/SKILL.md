@@ -77,11 +77,16 @@ Full version in `client-launch-campaign/references/diagnostics.md`.
 | Cost per booking | under $60 |
 | Lead to booking | 25% or more |
 | Pickup rate | 35% or more |
-| Show rate on confirmed | 60%; under it is watch, never the constraint |
+| Show rate on confirmed | aim for 70%; 60% is the line, under it is a watch, never the main constraint |
 | Close rate | 20% to 30% |
 
 Find the **first** step below target. That is the constraint. Do not report five
 problems, and do not start at the end of the funnel.
+
+Cost per booking decides, not cost per lead. While bookings cost $60 or less, a
+cost per lead over $15 is a watch, not the constraint: leave the ads alone. With
+the cost per booking unknown or over $60, the cost per lead over $15 counts. A
+week with no bookings at all after more than $60 spent is over $60.
 
 Macro before micro: if every number is bad at once, that is one problem, almost
 always the offer or the messaging, not five separate leaks.

@@ -38,6 +38,7 @@ import { type SourceHealth, staleSentence } from "@/lib/csmCalls";
 import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
 import { displayLabel, plural, shortDay } from "@/lib/format";
+import { CPB_GATE, CPL_GATE, SHOW_RATE_AIM, SHOW_RATE_GOOD } from "@/lib/kpi";
 import { publishOpenClient } from "@/lib/openClient";
 import {
   addTask,
@@ -496,6 +497,12 @@ function BeforeTheCall({ p, withBrief }: { p: Any; withBrief?: boolean }) {
   );
 }
 
+/**
+ * The lines the diagnosis judges against, said from the gates themselves so
+ * the footer cannot drift from them. The show rate aim is said, never judged.
+ */
+const DIAGNOSIS_LINES = `Lines: cost per lead under $${CPL_GATE} · cost per booking under $${CPB_GATE} · a quarter of leads booked · show rate (we aim for ${SHOW_RATE_AIM}%; ${SHOW_RATE_GOOD}% is the line, under it is a watch, not a fix) · a fifth of attended closed.`;
+
 function DiagnosisSection({ p }: { p: Any }) {
   const d = diagnose(p);
   return (
@@ -522,9 +529,7 @@ function DiagnosisSection({ p }: { p: Any }) {
         </p>
       ))}
       <p className="text-xs text-muted-foreground">
-        Lines: cost per lead under $20 · a quarter of leads booked · 60% of
-        appointments attended (under it is a watch, not a fix) · a fifth of
-        attended closed. Fixes come from Diagnosing &amp; Fixing Acquisition
+        {DIAGNOSIS_LINES} Fixes come from Diagnosing &amp; Fixing Acquisition
         Constraints, one leak at a time.
       </p>
     </section>

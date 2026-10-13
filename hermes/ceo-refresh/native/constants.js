@@ -27,6 +27,14 @@ export const CLOSE_RATE_GATE = 20;
  */
 export const SHOW_RATE_GOOD = 60;
 export const CPB_BAD = 80;
+/**
+ * The client show rate we aim for, in percent: the October KPI. Aziz,
+ * 2026-10-13: "The October KPI is what we shoot for, but I don't want to make
+ * that the main constraint." The aim, never the main constraint: nothing is
+ * judged against it, and the line stays SHOW_RATE_GOOD. Keep in step with
+ * src/lib/kpi.ts.
+ */
+export const SHOW_RATE_AIM = 70;
 /** ClickUp form that creates the campaign card on the ads management board. Aziz, 2026-09-10. */
 export const NEW_CAMPAIGN_FORM_URL = "https://forms.clickup.com/90182518398/f/2kzmr1ky-3878/1BO7T0R9GQCL88NBHR";
 /**

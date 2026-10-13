@@ -3,7 +3,8 @@ import { diagnose } from "../src/lib/csmDiagnosis";
 
 // Muhammed, 2026-10-13: cost per lead and cost per booking are read together.
 // A client whose leads cost more than the gate but book within the line is
-// not raised to the media buyer for cost per lead alone.
+// not raised to the media buyer for cost per lead alone. Aziz, 2026-10-13: the
+// CSM's line is $60 a booking.
 
 const profile = (ads: Record<string, unknown>[]) => ({
   clientName: "Ocean Home",
@@ -32,9 +33,9 @@ describe("cost per lead finding", () => {
   });
 
   test("dear leads that book over the line are raised, with the bookings", () => {
-    expect(
-      cplHigh([{ spend7d: 210, leads7d: 9, bookings7d: 1 }])?.evidence,
-    ).toContain("1 booking, $210 each, over the $80 line");
+    const ads = [{ spend7d: 210, leads7d: 9, bookings7d: 1 }];
+    expect(cplHigh(ads)?.evidence).toContain("each booking costs $210.00");
+    expect(ids(profile(ads))).toContain("cpb_high");
   });
 
   test("dear leads with no booking are raised and say so", () => {
@@ -45,7 +46,7 @@ describe("cost per lead finding", () => {
 
   test("unknown bookings are not zero: the cost per lead rule stands", () => {
     expect(cplHigh([{ spend7d: 210, leads7d: 9 }])?.evidence).toBe(
-      "$210 spent in the last 7 days for 9 leads.",
+      "$210 spent in the last 7 days for 9 leads. No cost per booking to weigh it against, so the cost per lead decides.",
     );
   });
 });

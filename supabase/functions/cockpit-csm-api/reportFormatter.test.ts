@@ -1,6 +1,6 @@
 import {expect,test} from 'bun:test';
 import {prepareReport,profileForReport,requestedPeriod,narrativePrompt} from './reportFormatter';
-import {SHOW_RATE_GOOD} from '../../../apps/client-success-cockpit/src/lib/clientGates.ts';
+import {SHOW_RATE_GOOD} from '../../../apps/client-success-cockpit/src/lib/kpi.ts';
 const profile={clientName:'Alpha',performance:{month:{leads:999,booked:99},lastMonth:{leads:888},monthLabel:'October 2026',appointments:[{added:'2026-09-03',booked:true,show:'y',closed:'n'},{added:'2026-10-02',booked:true,show:'y',closed:'y'}]},adLeads:{daily:[{date:'2026-09-03',leads:7,spend:14},{date:'2026-10-02',leads:50,spend:500}]}};
 test('the document honors the selected range rather than the cached current month',()=>{
  const plan=prepareReport(profile,{from:'2026-09-01',to:'2026-09-14',language:'en',extras:[]},{means:'Reviewed facts',next:[]});

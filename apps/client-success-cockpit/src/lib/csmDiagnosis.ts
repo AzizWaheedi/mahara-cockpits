@@ -2,9 +2,11 @@
  * Constraint diagnosis for one client — "bring solutions, not updates".
  *
  * Two sources, nothing invented:
- * - The gates are Mahara's locked client KPI gates: CPL < $20 · lead→booking ≥ 25% ·
- *   cost per booking ≤ $80 · show rate ≥ 60% (watch below, never the first fix) ·
- *   close rate 20–30% · daily budget floor $30.
+ * - The gates are the official KPI gates in kpi.ts, the media buyer's own file
+ *   copied here (Aziz, 2026-10-13: "The CSM: make it $15 cost per lead and $60
+ *   cost per booking"): CPL ≤ $15 · lead→booking ≥ 25% · cost per booking ≤ $60 ·
+ *   close rate 20–30% · daily budget floor $30. The show rate: we aim for 70%,
+ *   60% is the line, and under it is a watch, never the main constraint.
  * - The diagnosis and the fixes are the company's doc "Diagnosing & Fixing Acquisition
  *   Constraints" (macro vs micro, the golden rule, scenarios 3–6, 9, 10).
  *
@@ -12,20 +14,33 @@
  * everything else is listed as "after that". A client whose gates are all met gets
  * "nothing needs fixing — scale" instead of manufactured work. A show rate under the
  * one client line is a watch item: it sits beside the diagnosis, never in it.
+ *
+ * Cost per booking decides, not cost per lead (the constraints checklist's golden
+ * rule): with bookings known to cost $60 or less, a cost per lead over $15 is a watch
+ * line and the ads are left alone. With the cost per booking unknown or over $60, the
+ * cost per lead over its gate is a constraint, and a cost per booking over $60 is one
+ * of its own. A week GoHighLevel read with no bookings at all, after more than $60
+ * spent, is over $60: zero bookings there is data, not a gap.
  */
 
-import { SHOW_RATE_GOOD } from "./clientGates";
 import { humanise, humaniseDeep, serviceModel } from "./csmTemplates";
+import {
+  BOOKING_RATE_GATE,
+  CLOSE_RATE_GATE,
+  CPB_GATE,
+  CPL_GATE,
+  SHOW_RATE_GOOD,
+} from "./kpi";
 
 // biome-ignore lint/suspicious/noExplicitAny: profile payloads are untyped by design
 type Any = any;
 
 export const GATES = {
-  bookingRate: 25,
+  bookingRate: BOOKING_RATE_GATE,
   showRate: SHOW_RATE_GOOD,
-  closeRate: 20,
-  cpl: 20,
-  costPerBooking: 80,
+  closeRate: CLOSE_RATE_GATE,
+  cpl: CPL_GATE,
+  costPerBooking: CPB_GATE,
   staleDays: 7,
 } as const;
 
@@ -47,8 +62,9 @@ export type Diagnosis = {
   top?: Constraint;
   rest: Constraint[];
   /**
-   * Lines to keep an eye on: never `top`, never in `rest`, never counted. Today
-   * only a show rate under the one client line (Aziz, 2026-10-12).
+   * Lines to keep an eye on: never `top`, never in `rest`, never counted: a show
+   * rate under the one client line (Aziz, 2026-10-12), and a cost per lead over
+   * its gate while bookings cost no more than theirs (the golden rule).
    */
   watch: Constraint[];
   /** True when every gate with enough data behind it is met. */
@@ -98,15 +114,24 @@ function diagnoseRaw(p: Any): Diagnosis {
   const spend7 = ads.reduce((n, c) => n + Number(c.spend7d ?? 0), 0);
   const leads7 = ads.reduce((n, c) => n + Number(c.leads7d ?? 0), 0);
   const cpl = leads7 > 0 ? spend7 / leads7 : null;
-  // Bookings within the line make a dearer lead fine (Muhammed, 2026-10-13):
-  // cost per lead is not raised on its own. Unknown bookings are not zero.
-  const booked7 = ads.some(
-    c => c.bookings7d !== undefined && c.bookings7d !== null,
-  )
-    ? ads.reduce((n, c) => n + Number(c.bookings7d ?? 0), 0)
-    : null;
-  const cpb7 = booked7 ? spend7 / booked7 : null;
-  const booksCheaply = cpb7 !== null && cpb7 <= GATES.costPerBooking;
+  // Done with you: the client books their own, so cost per lead alone decides.
+  const dwy = serviceModel(p?.service).dwy;
+  // Cost per booking over the same 7 days, only where the sync read the
+  // client's GoHighLevel. Bookings are counted per campaign (Muhammed,
+  // 2026-10-13), so they add up against the spend of the campaigns that carry
+  // them. A campaign without the count is unknown (the read failed or never
+  // ran): missing is never zero.
+  const tracked = ads.filter(
+    c => typeof c.bookings7d === "number" && Number.isFinite(c.bookings7d),
+  );
+  const bookings7 = tracked.reduce((n, c) => n + Number(c.bookings7d), 0);
+  const bookedSpend7 = tracked.reduce((n, c) => n + Number(c.spend7d ?? 0), 0);
+  const cpb =
+    !dwy && bookings7 > 0 && bookedSpend7 > 0 ? bookedSpend7 / bookings7 : null;
+  // GoHighLevel was read and the week booked nothing: that is data, not a gap.
+  // Once more than one booking's worth of spend has gone, bookings are known
+  // to cost over the gate, though there is no number to put on them.
+  const noBookings = !dwy && tracked.length > 0 && bookings7 === 0;
 
   // Two months of the client's own sheet — enough volume to judge, recent enough to act.
   const leads = Number(m.leads ?? 0) + Number(l.leads ?? 0);
@@ -178,27 +203,74 @@ function diagnoseRaw(p: Any): Diagnosis {
       ],
       owner: "Media buyer",
     });
-  } else if (cpl != null && cpl > GATES.cpl && leads7 >= 5 && !booksCheaply) {
-    found.push({
-      id: "cpl_high",
-      layer: "micro",
-      title: `Cost per lead is $${cpl.toFixed(2)} against a $${GATES.cpl} gate`,
-      evidence: `$${spend7.toFixed(0)} spent in the last 7 days for ${leads7} leads${
-        booked7 === null
-          ? "."
-          : booked7 === 0
-            ? ", and no booking."
-            : ` and ${booked7} booking${booked7 === 1 ? "" : "s"}, $${(cpb7 ?? 0).toFixed(0)} each, over the $${GATES.costPerBooking} line.`
-      }`,
-      diagnosis:
-        "Their cost per lead is above the gate, so the same budget is buying fewer chances. Creative fatigue and a high cost per booking are the only two things that force a decision here.",
-      fixes: [
-        "Raise a ticket to the media buyer: creative refresh, this account, with the current CPL.",
-        "Check the last creative refresh date, anything past 14 days is due.",
-        "Do not promise the client a lower CPL on the call; promise the refresh and a date.",
-      ],
-      owner: "Media buyer",
-    });
+  } else if (leads7 >= 5) {
+    // ---- Cost: per booking decides, per lead only when per booking cannot. ----
+    const cplOver = cpl != null && cpl > GATES.cpl;
+    const unbooked = noBookings && bookedSpend7 > GATES.costPerBooking;
+    const cpbOver = (cpb != null && cpb > GATES.costPerBooking) || unbooked;
+    if (cpbOver) {
+      const fewBook = unbooked
+        ? "none of them booked, so the week's spend bought no appointments"
+        : "too few of them book, so every appointment costs more than it should";
+      const ticket =
+        "Raise a ticket to the media buyer with the cost per booking: judge the ads on bookings, and cut the ad with the worst cost per booking, not the worst cost per lead.";
+      const speed =
+        "Ask how fast their leads get called and how many times, before anything changes in the account.";
+      found.push({
+        id: "cpb_high",
+        layer: "micro",
+        title:
+          cpb != null
+            ? `Cost per booking is $${cpb.toFixed(2)} against a $${GATES.costPerBooking} gate`
+            : `No bookings from $${bookedSpend7.toFixed(0)} spent in the last 7 days, against a $${GATES.costPerBooking} gate`,
+        evidence: `$${bookedSpend7.toFixed(0)} spent in the last 7 days for ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"} from ${leads7} leads.`,
+        diagnosis: cplOver
+          ? `The leads cost more than the gate and ${fewBook}. Cost per booking is the number that decides.`
+          : `The leads are cheap enough, but ${fewBook}. That is usually speed to lead on the client's side, not the ads.`,
+        // Cheap leads put the CSM's question first: the brief shows one fix.
+        fixes: [
+          ...(cplOver ? [ticket, speed] : [speed, ticket]),
+          "Do not promise the client a lower cost on the call; promise the change and a date.",
+        ],
+        owner: cplOver ? "Media buyer" : "CSM",
+      });
+    }
+    if (cpl != null && cplOver && cpb != null && !cpbOver)
+      watch.push({
+        id: "cpl_watch",
+        layer: "micro",
+        title: `Cost per lead is $${cpl.toFixed(2)}, over the $${GATES.cpl} gate, but bookings still cost $${cpb.toFixed(2)}, ${cpb < GATES.costPerBooking ? "under" : "on"} the $${GATES.costPerBooking} gate`,
+        evidence: `$${spend7.toFixed(0)} spent in the last 7 days for ${leads7} leads and ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"}.`,
+        diagnosis:
+          "Cost per booking decides, not cost per lead, so a higher cost per lead is not the constraint while those leads still book.",
+        fixes: [
+          `Bookings still cost ${cpb < GATES.costPerBooking ? "under" : "no more than"} $${GATES.costPerBooking}, so leave the ads alone. Look again if cost per booking passes the gate.`,
+        ],
+        owner: "Media buyer",
+      });
+    else if (cpl != null && cplOver)
+      found.push({
+        id: "cpl_high",
+        layer: "micro",
+        title: `Cost per lead is $${cpl.toFixed(2)} against a $${GATES.cpl} gate`,
+        evidence: `$${spend7.toFixed(0)} spent in the last 7 days for ${leads7} leads${
+          cpb != null
+            ? `, and each booking costs $${cpb.toFixed(2)}.`
+            : unbooked
+              ? ", and no bookings in those 7 days."
+              : noBookings
+                ? ". No bookings yet in those 7 days, so the cost per lead decides."
+                : ". No cost per booking to weigh it against, so the cost per lead decides."
+        }`,
+        diagnosis:
+          "Their cost per lead is above the gate, so the same budget is buying fewer chances. Creative fatigue and a high cost per booking are the only two things that force a decision here.",
+        fixes: [
+          "Raise a ticket to the media buyer: creative refresh, this account, with the current CPL.",
+          "Check the last creative refresh date, anything past 14 days is due.",
+          "Do not promise the client a lower CPL on the call; promise the refresh and a date.",
+        ],
+        owner: "Media buyer",
+      });
   }
 
   // ---- Micro leaks, in the doc's own diagnostic order. ----
@@ -320,7 +392,6 @@ function diagnoseRaw(p: Any): Diagnosis {
   // Done with you: the client books and tracks their own appointments, so we are not
   // accountable for the sheet or for anything downstream of the lead. Judging them on
   // booking, attendance and close rates would send the CSM chasing work that is not ours.
-  const dwy = serviceModel(p?.service).dwy;
   const DWY_BLIND = new Set([
     "no_sheet",
     "sheet_not_filled",
@@ -328,6 +399,7 @@ function diagnoseRaw(p: Any): Diagnosis {
     "show_rate",
     "close_rate",
     "macro_offer",
+    "cpb_high",
   ]);
   const ranked = dwy ? found.filter(c => !DWY_BLIND.has(c.id)) : found;
   const healthy = ranked.length === 0;
@@ -347,16 +419,20 @@ function diagnoseRaw(p: Any): Diagnosis {
         "last two months of their sheet",
       ].join(" · ");
 
+  const watched = dwy ? watch.filter(c => !DWY_BLIND.has(c.id)) : watch;
+  const watching = watched
+    .map(c => (c.id === "show_rate" ? "the show rate" : "the cost per lead"))
+    .join(" and ");
   return {
     top: ranked[0],
     rest: ranked.slice(1),
-    watch: dwy ? watch.filter(c => !DWY_BLIND.has(c.id)) : watch,
+    watch: watched,
     healthy,
     headline: healthy
       ? dwy
         ? "Lead volume and cost per lead are both inside the gates. They book their own appointments, so ask about their close rate on the call rather than reporting it."
-        : watch.length > 0
-          ? "Nothing needs fixing first. Keep an eye on the show rate below, and ask for a review, a referral or more budget."
+        : watched.length > 0
+          ? `Nothing needs fixing first. Keep an eye on ${watching} below, and ask for a review, a referral or more budget.`
           : Number(m.leads ?? 0) > 0
             ? "Every gate with enough data behind it is met. Do not manufacture work here, ask for a review, a referral or more budget."
             : "Nothing is out of KPI, but there is not enough data yet to judge. Get the sheet filled and come back to it."

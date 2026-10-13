@@ -640,7 +640,7 @@ function lineClient(
 
 test("the client show rate line is 60, and under it is a watch, never a fix", async () => {
   const { diagnose, GATES } = await import("../src/lib/csmDiagnosis");
-  const { SHOW_RATE_GOOD } = await import("../src/lib/clientGates");
+  const { SHOW_RATE_GOOD } = await import("../src/lib/kpi");
   expect(SHOW_RATE_GOOD).toBe(60);
   expect(GATES.showRate).toBe(SHOW_RATE_GOOD);
   const counted = (d: ReturnType<typeof diagnose>) =>
@@ -718,8 +718,187 @@ test("the client show rate line is 60, and under it is a watch, never a fix", as
     expect(JSON.stringify(d)).not.toMatch(/7[05]%/);
 });
 
-test("the diagnosis footer says the 60% line and the watch line renders quietly", async () => {
-  const { SHOW_RATE_GOOD } = await import("../src/lib/clientGates");
+/**
+ * The official gates for clients (Aziz, 2026-10-13: "The CSM: make it $15
+ * cost per lead and $60 cost per booking") and the golden rule: cost per
+ * booking decides. A client on the show rate line, so only cost is judged.
+ */
+function costClient(
+  campaigns: { spend7d: number; leads7d: number; bookings7d?: number }[],
+  service = "DFY",
+) {
+  return {
+    ...lineClient(6, 4, { service }),
+    ads: campaigns.map((c, i) => ({
+      campaign: `c${i}`,
+      ...c,
+      adsets: [{ ads: [{ status: "ACTIVE" }] }],
+    })),
+  };
+}
+
+test("the client gates are $15 a lead and $60 a booking, and cost per booking decides", async () => {
+  const { diagnose, GATES } = await import("../src/lib/csmDiagnosis");
+  const { CPB_GATE, CPL_GATE } = await import("../src/lib/kpi");
+  expect(CPL_GATE).toBe(15);
+  expect(CPB_GATE).toBe(60);
+  expect(GATES.cpl).toBe(CPL_GATE);
+  expect(GATES.costPerBooking).toBe(CPB_GATE);
+  const counted = (d: ReturnType<typeof diagnose>) =>
+    [d.top, ...d.rest].map(c => c?.id);
+
+  // $16 to $19.99 a lead with no cost per booking known: a constraint now.
+  for (const [spend7d, title] of [
+    [160, "Cost per lead is $16.00 against a $15 gate"],
+    [175, "Cost per lead is $17.50 against a $15 gate"],
+    [199.9, "Cost per lead is $19.99 against a $15 gate"],
+  ] as const) {
+    const d = diagnose(costClient([{ spend7d, leads7d: 10 }]));
+    expect(d.top?.id).toBe("cpl_high");
+    expect(d.top?.title).toBe(title);
+    expect(d.top?.evidence).toContain(
+      "No cost per booking to weigh it against",
+    );
+    expect(d.top?.say).toBeUndefined();
+    expect(d.watch).toEqual([]);
+  }
+  // On the gate is inside it.
+  expect(diagnose(costClient([{ spend7d: 150, leads7d: 10 }])).healthy).toBe(
+    true,
+  );
+  // Too few leads to judge a cost per lead.
+  expect(diagnose(costClient([{ spend7d: 80, leads7d: 4 }])).healthy).toBe(
+    true,
+  );
+  // GoHighLevel read and no bookings in the week is data, not a gap: past
+  // $60 spent, bookings cost over the gate, and the dearer leads are too.
+  const none = diagnose(
+    costClient([{ spend7d: 175, leads7d: 10, bookings7d: 0 }]),
+  );
+  expect(counted(none)).toEqual(["cpb_high", "cpl_high"]);
+  expect(none.top?.title).toBe(
+    "No bookings from $175 spent in the last 7 days, against a $60 gate",
+  );
+  expect(none.top?.evidence).toBe(
+    "$175 spent in the last 7 days for 0 bookings from 10 leads.",
+  );
+  expect(none.rest[0].evidence).toBe(
+    "$175 spent in the last 7 days for 10 leads, and no bookings in those 7 days.",
+  );
+  // Cheap leads and nothing booked is never healthy: the CSM asks about
+  // speed to lead first, since the brief shows only the first fix.
+  const unbooked = diagnose(
+    costClient([{ spend7d: 140, leads7d: 10, bookings7d: 0 }]),
+  );
+  expect(unbooked.healthy).toBe(false);
+  expect(counted(unbooked)).toEqual(["cpb_high"]);
+  expect(unbooked.top?.title).toBe(
+    "No bookings from $140 spent in the last 7 days, against a $60 gate",
+  );
+  expect(unbooked.top?.owner).toBe("CSM");
+  expect(unbooked.top?.diagnosis).toContain("none of them booked");
+  expect(unbooked.top?.fixes[0]).toBe(
+    "Ask how fast their leads get called and how many times, before anything changes in the account.",
+  );
+  expect(unbooked.headline).not.toContain("Every gate");
+  // Not yet a booking's worth spent where bookings are read: nothing known.
+  const early = diagnose(
+    costClient([
+      { spend7d: 50, leads7d: 2, bookings7d: 0 },
+      { spend7d: 110, leads7d: 4 },
+    ]),
+  );
+  expect(counted(early)).toEqual(["cpl_high"]);
+  expect(early.top?.evidence).toBe(
+    "$160 spent in the last 7 days for 6 leads. No bookings yet in those 7 days, so the cost per lead decides.",
+  );
+
+  // Bookings within $60: the dearer leads are a watch, never a constraint.
+  const within = diagnose(
+    costClient([{ spend7d: 175, leads7d: 10, bookings7d: 4 }]),
+  );
+  expect(within.healthy).toBe(true);
+  expect(within.top).toBeUndefined();
+  expect(within.rest).toEqual([]);
+  expect(within.watch.map(c => c.id)).toEqual(["cpl_watch"]);
+  expect(within.watch[0].title).toBe(
+    "Cost per lead is $17.50, over the $15 gate, but bookings still cost $43.75, under the $60 gate",
+  );
+  expect(within.watch[0].fixes[0]).toBe(
+    "Bookings still cost under $60, so leave the ads alone. Look again if cost per booking passes the gate.",
+  );
+  expect(within.watch[0].say).toBeUndefined();
+  expect(within.headline).toBe(
+    "Nothing needs fixing first. Keep an eye on the cost per lead below, and ask for a review, a referral or more budget.",
+  );
+  // Every campaign carries the client's whole booking count: taken once,
+  // never summed ($175 for 3 bookings is $58.33, not $29.17).
+  const twoCampaigns = diagnose(
+    costClient([
+      { spend7d: 100, leads7d: 5, bookings7d: 3 },
+      { spend7d: 75, leads7d: 5, bookings7d: 3 },
+    ]),
+  );
+  expect(twoCampaigns.watch[0].title).toContain("bookings still cost $58.33");
+  // Under $15 a lead and within $60 a booking: nothing at all.
+  const fine = diagnose(
+    costClient([{ spend7d: 140, leads7d: 10, bookings7d: 4 }]),
+  );
+  expect(fine.healthy).toBe(true);
+  expect(fine.watch).toEqual([]);
+
+  // Bookings over $60: a constraint of its own, and the cost per lead too.
+  const over = diagnose(
+    costClient([{ spend7d: 175, leads7d: 10, bookings7d: 2 }]),
+  );
+  expect(counted(over)).toEqual(["cpb_high", "cpl_high"]);
+  expect(over.top?.title).toBe("Cost per booking is $87.50 against a $60 gate");
+  expect(over.top?.evidence).toBe(
+    "$175 spent in the last 7 days for 2 bookings from 10 leads.",
+  );
+  expect(over.rest[0].evidence).toContain("each booking costs $87.50");
+  expect(over.watch).toEqual([]);
+  // Cheap leads that do not book: the booking cost alone, on the CSM.
+  const cheap = diagnose(
+    costClient([{ spend7d: 130, leads7d: 10, bookings7d: 2 }]),
+  );
+  expect(counted(cheap)).toEqual(["cpb_high"]);
+  expect(cheap.top?.title).toBe(
+    "Cost per booking is $65.00 against a $60 gate",
+  );
+  expect(cheap.top?.owner).toBe("CSM");
+  expect(cheap.top?.diagnosis).toContain("speed to lead");
+  expect(cheap.top?.fixes[0]).toBe(
+    "Ask how fast their leads get called and how many times, before anything changes in the account.",
+  );
+  // Dear leads that do not book: the media buyer's ticket comes first.
+  expect(over.top?.owner).toBe("Media buyer");
+  expect(over.top?.fixes[0]).toContain("Raise a ticket to the media buyer");
+
+  // Done with you: they book their own, so the cost per lead alone decides.
+  const dwy = diagnose(
+    costClient([{ spend7d: 175, leads7d: 10, bookings7d: 2 }], "DWY"),
+  );
+  expect(counted(dwy)).toEqual(["cpl_high"]);
+  expect(dwy.watch).toEqual([]);
+  // Their bookings are not ours to judge, so none booked is no constraint.
+  expect(
+    diagnose(costClient([{ spend7d: 140, leads7d: 10, bookings7d: 0 }], "DWY"))
+      .healthy,
+  ).toBe(true);
+
+  // Nothing here tells the client a cost, and nothing says 70% or 75%.
+  for (const d of [within, over, cheap, none, unbooked, early, dwy]) {
+    for (const c of [d.top, ...d.rest, ...d.watch])
+      expect(c?.say).toBeUndefined();
+    expect(JSON.stringify(d)).not.toMatch(/7[05]%/);
+  }
+});
+
+test("the diagnosis footer says the gates and the 60% line, and the watch line renders quietly", async () => {
+  const { SHOW_RATE_GOOD } = await import("../src/lib/kpi");
+  // The aim is said in the footer and nowhere else; 75% is said nowhere.
+  const AIM = "we aim for 70%";
   const diagnosisText = (text: string) =>
     text.slice(
       text.indexOf("What is holding this client back"),
@@ -731,9 +910,12 @@ test("the diagnosis footer says the 60% line and the watch line renders quietly"
       await renderSection("client", `/clients/${GREYSTONE}`),
     );
     expect(page).toContain(
-      `${SHOW_RATE_GOOD}% of appointments attended (under it is a watch, not a fix)`,
+      `Lines: cost per lead under $15 · cost per booking under $60 · a quarter of leads booked · show rate (${AIM}; ${SHOW_RATE_GOOD}% is the line, under it is a watch, not a fix) · a fifth of attended closed. Fixes come from Diagnosing & Fixing Acquisition Constraints, one leak at a time.`,
     );
-    expect(page).not.toMatch(/7[05]%/);
+    expect(page).not.toContain("$20");
+    expect(page).not.toContain("$80");
+    expect(page.split(AIM)).toHaveLength(2);
+    expect(page.replace(AIM, "")).not.toMatch(/7[05]%/);
     // The fixture sits on the line (9 of 15), so there is nothing to watch.
     expect(page).not.toContain("Watch:");
 
@@ -762,7 +944,7 @@ test("the diagnosis footer says the 60% line and the watch line renders quietly"
       "Nothing needs fixing first. Keep an eye on the show rate below",
     );
     expect(watched).not.toContain("Fix this first");
-    expect(watched).not.toMatch(/7[05]%/);
+    expect(watched.replace(AIM, "")).not.toMatch(/7[05]%/);
   } finally {
     profileDeferred = null;
   }
