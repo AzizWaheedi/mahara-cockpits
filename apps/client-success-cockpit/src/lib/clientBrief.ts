@@ -680,7 +680,11 @@ export function teamSpeaker(
     const arabic = (x: string) => /[\u0600-\u06FF]/.test(x);
     return teamNames.some(n => {
       const tw = words(n);
-      if (tw.some(t => t === w || t.replace(/^(abdul|abdel|abd|عبد|عبدال)/, "") === w))
+      if (
+        tw.some(
+          t => t === w || t.replace(/^(abdul|abdel|abd|عبد|عبدال)/, "") === w,
+        )
+      )
         return true;
       // An Arabic spelling of an English first name, or the other way round.
       const first = tw[0] ?? "";
