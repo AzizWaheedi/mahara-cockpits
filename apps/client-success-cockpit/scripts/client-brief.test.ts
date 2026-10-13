@@ -1951,6 +1951,15 @@ describe("the team writing in a client group", () => {
     expect(teamSpeaker(null, team)).toBe(false);
   });
 
+  test("a lone name matches a team member's name letter for letter, never by its consonants", () => {
+    const roster = ["Ahmed Sabry", "Abdulaziz Waheedi", "Maria Lopez"];
+    expect(teamSpeaker("Sabry", roster)).toBe(true);
+    expect(teamSpeaker("Aziz", roster)).toBe(true);
+    // "Umar" and "Maria" share their consonants; a client named Umar is not the team.
+    expect(teamSpeaker("Umar", roster)).toBe(false);
+    expect(teamSpeaker("Mo", roster)).toBe(false);
+  });
+
   test("a chat waits on us only when the client wrote last, not a team member", () => {
     const m = (direction: string, speaker: string | null, at: number) => ({
       direction,
@@ -2047,6 +2056,49 @@ describe("the team writing in a client group", () => {
     });
     expect(clientLast.raise.find(l => l.source === "WhatsApp")?.text).toBe(
       'Malak Rahal in Mahara | City Wood is waiting on a WhatsApp reply since 12:00 today: "A link (app.leadsie.com)". Answer it before the call.',
+    );
+  });
+});
+
+describe("a client request already raised", () => {
+  // Invented: a kickoff that has old leads and no list, and a later call
+  // where the same ask was logged in the client's own words.
+  const kickoff = {
+    token: "k9",
+    formId: "kick",
+    kind: "kickoff",
+    submittedAt: "2026-10-04T10:00:00Z",
+    answers: [
+      { title: "Do you have pre-existing leads?", value: true },
+      { title: "Do you want us to reach out to those leads?", value: true },
+      { title: "Provide link or notes for those leads.", value: "n/a" },
+    ],
+  };
+  const asked = (clientRequests: string[]) =>
+    buildBrief({
+      now: NOW,
+      client: { name: "Cedar Joinery", stage: "Active" },
+      digests: [digest({ clientRequests })],
+      timeline: timeline({ clientName: "Cedar Joinery", forms: [kickoff] }),
+    }).raise.map(l => l.text);
+
+  test("is not asked again as a request: the old leads list says it once", () => {
+    const texts = asked(["Have Mahara contact pre-existing leads."]);
+    expect(texts.some(t => t.startsWith("Ask for their old leads list"))).toBe(
+      true,
+    );
+    expect(texts.some(t => t.startsWith("They asked for:"))).toBe(false);
+  });
+
+  test("the next request is asked instead, and one shared word is not enough", () => {
+    expect(
+      asked([
+        "Have Mahara contact pre-existing leads.",
+        "Send the new price list for wardrobes.",
+      ]),
+    ).toContain("They asked for: Send the new price list for wardrobes.");
+    expect(asked(["More leads from Ahmadi."])).toContain(
+      "They asked for: More leads from Ahmadi.",
     );
   });
 });

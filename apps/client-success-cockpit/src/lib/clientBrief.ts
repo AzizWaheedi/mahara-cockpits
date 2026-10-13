@@ -647,8 +647,11 @@ function firstName(s: string): string {
  * groups from their own phones ("Rasem Abdel all", "Nada | MaharaMedia"), so
  * the inbox mirror files those as inbound. A name with Mahara in it is the
  * team; a full name is when its first two words are a team member's first two
- * (so "Ahmed Salama" is not a team "Ahmed"); a lone name is when it is a team
- * member's first name.
+ * (so "Ahmed Salama" is not a team "Ahmed"); a lone name is when it is, letter
+ * for letter, one of a team member's names ("Sabry" for "Ahmed Sabry", "Aziz"
+ * for "Abdulaziz"). Within one script a lone name is not matched by its
+ * consonants ("Umar" and "Maria" share them); across scripts it is, so "دانيا"
+ * is the team's Daniya.
  */
 export function teamSpeaker(
   speaker: string | null | undefined,
@@ -664,11 +667,33 @@ export function teamSpeaker(
       .map(skeleton)
       .filter(Boolean);
   const sp = parts(s);
-  if (!sp.length || sp[0].length < 2) return false;
+  if (!sp.length) return false;
+  const words = (n: string) =>
+    clean(n)
+      .toLowerCase()
+      .replace(/[^\p{L}\s]/gu, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+  if (sp.length === 1) {
+    const w = words(s)[0] ?? "";
+    if (w.length < 3) return false;
+    const arabic = (x: string) => /[\u0600-\u06FF]/.test(x);
+    return teamNames.some(n => {
+      const tw = words(n);
+      if (tw.some(t => t === w || t.replace(/^(abdul|abdel|abd|عبد|عبدال)/, "") === w))
+        return true;
+      // An Arabic spelling of an English first name, or the other way round.
+      const first = tw[0] ?? "";
+      return (
+        arabic(w) !== arabic(first) &&
+        sp[0].length >= 2 &&
+        sp[0] === skeleton(first)
+      );
+    });
+  }
+  if (sp[0].length < 2) return false;
   return teamNames.some(n => {
     const tp = parts(n);
-    if (!tp.length) return false;
-    if (sp.length === 1) return sp[0] === tp[0];
     return tp.length >= 2 && sp[0] === tp[0] && sp[1] === tp[1];
   });
 }
@@ -3360,6 +3385,16 @@ export function buildBrief(input: BriefInput): Brief {
         },
         askable.text,
       );
+    // A request a line above already raises is not asked again: "Have Mahara
+    // contact pre-existing leads" is the kickoff's old leads list. Two of its
+    // words at least, so "More leads" is not covered by every line on leads.
+    const raised = (r: string) => {
+      const size = new Set(contentWords(r)).size;
+      return raise.some(l => {
+        const o = overlapOf(r, l.text);
+        return o >= 0.5 && Math.round(o * size) >= 2;
+      });
+    };
     const ask = recent
       .flatMap(d => (d.clientRequests ?? []).map(r => ({ r: String(r), d })))
       .filter(
@@ -3369,7 +3404,9 @@ export function buildBrief(input: BriefInput): Brief {
             /^(focus on|grow|attract|organi[sz]e|help|increase|get more|bring)\b/i.test(
               x.r,
             )
-          ) && !brief.promises.ours.some(o => sharedWords(o.text, x.r) >= 0.5),
+          ) &&
+          !brief.promises.ours.some(o => sharedWords(o.text, x.r) >= 0.5) &&
+          !raised(x.r),
       )[0];
     if (ask)
       add(

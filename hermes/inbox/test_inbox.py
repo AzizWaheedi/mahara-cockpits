@@ -225,7 +225,7 @@ class InboxActivationTests(unittest.TestCase):
         store=MainStore()
         store.waiting=[{'id':f'thread-{i}','contact_name':'Client','is_group':False,'last_inbound_at':'2026-10-08T10:00:00+00:00'} for i in range(141)]
         store.drafts={f'thread-{i}':'2026-10-08T10:00:00+00:00' for i in range(100)}
-        def persist(_sb,thread):
+        def persist(_sb,thread,_team=()):
             store.drafts[thread['id']]=thread['last_inbound_at']
             return True
         first,_,_,_,first_draft=self.run_main(['--apply'],store=store,draft_side_effect=persist)
@@ -246,6 +246,157 @@ class InboxActivationTests(unittest.TestCase):
         self.assertEqual(result,1)
         self.assertEqual(draft.call_count,0)
         self.assertEqual(store.patches,[])
+
+TEAM = ['Rasem Abdel Al', 'Nada Ali', 'Sabry Hassan', 'Ahmed Fathy', 'Daniya Saleh']
+
+def wa(direction, speaker, minute, body='Text', delivery_status=None):
+    return {'direction': direction, 'speaker': speaker, 'at': f'2026-10-01T11:{minute:02d}:00+00:00',
+            'body': body, 'kind': 'text', 'delivery_status': delivery_status}
+
+class DraftStore:
+    apply = True
+    def __init__(self, messages):
+        self.messages = messages; self.saved = []
+    def get(self, path):
+        # The worker asks newest first.
+        return list(reversed(self.messages)) if path.startswith('wa_messages?') else []
+    def save_draft(self, thread, previous_drafted_at, draft):
+        self.saved.append(draft); return [{'thread_id': thread['id']}]
+
+class TeamStore(MainStore):
+    def __init__(self, fail=False):
+        super().__init__(); self.fail = fail
+    def get(self, path):
+        if path.startswith(('cockpit_people?', 'cockpit_members?')):
+            self.queries.append(path)
+            if self.fail: raise inbox.urllib.error.URLError('unreachable')
+            if path.startswith('cockpit_people?'): return [{'name': 'Rasem Abdel All'}, {'name': ' Nada  Al Saed '}]
+            return [{'name': 'Rasem Abdel All'}, {'name': None}]
+        return super().get(path)
+
+class InboxTeamTests(unittest.TestCase):
+    """The rule is the cockpit's teamSpeaker and clientWaiting (clientBrief.ts)."""
+
+    def test_the_team_is_told_apart_from_the_clients_people_by_name(self):
+        for speaker in ('Rasem Abdel all', 'Nada | MaharaMedia', 'Karim@Maharamedia', 'Sabry', 'DANIYA', 'دانيا', 'مهارة'):
+            with self.subTest(speaker=speaker):
+                self.assertTrue(inbox.team_speaker(speaker, TEAM))
+        # A client contact who shares a team member's first name is the client.
+        for speaker in ('Ahmed Salama', 'Malak Rahal', 'M', None, '', 'Fathy Ahmed'):
+            with self.subTest(speaker=speaker):
+                self.assertFalse(inbox.team_speaker(speaker, TEAM))
+
+    def test_a_one_letter_name_is_never_the_team(self):
+        # "Mo" reduces to "m" too, so only the length rule keeps "M" out.
+        self.assertFalse(inbox.team_speaker('M', TEAM + ['Mo Salah']))
+
+    def test_a_lone_name_matches_letter_for_letter_never_by_consonants(self):
+        roster = ['Ahmed Sabry', 'Abdulaziz Waheedi', 'Maria Lopez']
+        self.assertTrue(inbox.team_speaker('Sabry', roster))
+        self.assertTrue(inbox.team_speaker('Aziz', roster))
+        # "Umar" and "Maria" share their consonants; a client named Umar is not the team.
+        self.assertFalse(inbox.team_speaker('Umar', roster))
+        self.assertFalse(inbox.team_speaker('Mo', roster))
+
+    def test_markdown_in_a_name_is_read_the_way_the_cockpit_cleans_it(self):
+        for speaker in ('Maha`ra', 'Ma**hara'):
+            with self.subTest(speaker=speaker):
+                self.assertTrue(inbox.team_speaker(speaker, []))
+                self.assertTrue(inbox.team_speaker(speaker, TEAM))
+        self.assertTrue(inbox.team_speaker('[Nada](https://x.y)', TEAM))
+        self.assertFalse(inbox.team_speaker('[Nada](https://x.y)', []))
+        self.assertFalse(inbox.team_speaker('[Team](https://mahara.com)', TEAM))
+        self.assertTrue(inbox.team_speaker('Nada', ['Na**da Ali']))
+
+    def test_without_team_names_only_a_mahara_name_is_the_team(self):
+        self.assertTrue(inbox.team_speaker('Muhammed | MaharaMedia', []))
+        self.assertFalse(inbox.team_speaker('Rasem Abdel all', []))
+        self.assertFalse(inbox.team_speaker('Sabry', []))
+
+    def test_a_chat_waits_on_us_only_when_the_client_wrote_last_not_a_team_member(self):
+        self.assertIsNone(inbox.client_waiting([wa('inbound', 'Malak Rahal', 1), wa('inbound', 'Rasem Abdel all', 2)], TEAM))
+        self.assertEqual(inbox.client_waiting([wa('inbound', 'Rasem Abdel all', 1), wa('inbound', 'Malak Rahal', 2)], TEAM)['at'],
+                         '2026-10-01T11:02:00+00:00')
+        self.assertIsNone(inbox.client_waiting([wa('inbound', None, 1), wa('outbound', None, 2)], TEAM))
+        self.assertEqual(inbox.client_waiting([wa('outbound', None, 1), wa('inbound', None, 2)], TEAM)['at'],
+                         '2026-10-01T11:02:00+00:00')
+
+    def pull_group(self, speakers, team=TEAM):
+        store = MemoryStore()
+        messages = [{'id': f'm{i}', 'dateAdded': f'2026-10-01T11:0{i}:00Z', 'direction': 'inbound',
+                     'body': f'👤 {name} (+96500000000)\n\nText', 'messageType': 'TYPE_CUSTOM_SMS'}
+                    for i, name in enumerate(speakers)]
+        with patch.object(inbox, 'ghl', return_value={'messages': {'messages': messages, 'nextPage': False}}):
+            inbox.pull_thread(store, 'fixture', 'location', {'id': 'thread', 'contactId': 'contact', 'fullName': 'Group', 'phone': '+86123'},
+                              datetime(2026, 9, 20, tzinfo=timezone.utc), team)
+        return store.tables['wa_threads'][0]
+
+    def test_a_team_member_writing_last_in_a_group_is_not_waiting_on_us(self):
+        thread = self.pull_group(['Malak Rahal', 'Rasem Abdel all'])
+        self.assertFalse(thread['awaiting_us'])
+        self.assertEqual(thread['last_inbound_at'], '2026-10-01T11:00:00+00:00')
+        self.assertEqual(thread['last_outbound_at'], '2026-10-01T11:01:00+00:00')
+
+    def test_the_client_writing_after_a_team_member_is_waiting_on_us(self):
+        thread = self.pull_group(['Sabry', 'Ahmed Salama'])
+        self.assertTrue(thread['awaiting_us'])
+        self.assertEqual(thread['last_inbound_at'], '2026-10-01T11:01:00+00:00')
+
+    def test_without_team_names_a_plain_team_name_still_reads_as_the_client(self):
+        self.assertTrue(self.pull_group(['Malak Rahal', 'Rasem Abdel all'], team=())['awaiting_us'])
+        self.assertFalse(self.pull_group(['Malak Rahal', 'Nada | MaharaMedia'], team=())['awaiting_us'])
+
+    def test_no_draft_when_a_team_member_wrote_last(self):
+        store = DraftStore([wa('inbound', 'Malak Rahal', 1, 'When is the shoot?'), wa('inbound', 'Rasem Abdel all', 2, 'Thursday.')])
+        with patch.object(inbox, 'deepseek', side_effect=AssertionError('no model call')):
+            self.assertFalse(inbox.draft_for(store, {'id': 'thread', 'is_group': True}, TEAM))
+        self.assertEqual(store.saved, [])
+
+    def test_the_draft_answers_the_clients_people_and_shows_the_team_as_us(self):
+        store = DraftStore([wa('inbound', 'Rasem Abdel all', 1, 'The shoot is Thursday.'), wa('inbound', 'Malak Rahal', 2, 'Which time?')])
+        with patch.object(inbox, 'deepseek', return_value='{"ar": "الساعة ١٠", "en": "At 10.", "why": "Shoot time"}') as model:
+            self.assertTrue(inbox.draft_for(store, {'id': 'thread', 'is_group': True}, TEAM))
+        prompt = model.call_args.args[2]
+        self.assertIn('US (Rasem Abdel all): The shoot is Thursday.', prompt)
+        self.assertIn('Malak Rahal: Which time?', prompt)
+        self.assertEqual(store.saved[0]['based_on'], 'Which time?')
+
+    def test_a_delivered_reply_answers_the_client_and_a_pending_one_does_not(self):
+        for status, drafted in (('delivered', False), ('read', False), ('pending', True), (None, True)):
+            with self.subTest(status=status):
+                store = DraftStore([wa('inbound', 'Malak Rahal', 1, 'Which time?'), wa('outbound', None, 2, 'At 10.', status)])
+                with patch.object(inbox, 'deepseek', return_value='{"ar": "تمام", "en": "Done.", "why": "x"}'):
+                    self.assertEqual(inbox.draft_for(store, {'id': 'thread', 'is_group': True}, TEAM), drafted)
+
+class InboxTeamRunTests(unittest.TestCase):
+    run_main = InboxActivationTests.run_main
+
+    def test_the_run_reads_the_team_and_hands_it_to_the_scan_and_the_drafts(self):
+        with patch.object(inbox, 'note') as note:
+            code, store, scan, _, draft = self.run_main(['--apply'], store=TeamStore())
+        self.assertEqual(code, 0)
+        self.assertEqual(scan.call_args.args[4], ['Rasem Abdel All', 'Nada Al Saed'])
+        self.assertEqual(draft.call_args.args[2], ['Rasem Abdel All', 'Nada Al Saed'])
+        self.assertIn('Team names: 2 from cockpit_people and cockpit_members.', [call.args[0] for call in note.call_args_list])
+        self.assertTrue(all('name=not.is.null' in path for path in store.queries if path.startswith(('cockpit_people?', 'cockpit_members?'))))
+
+    def test_a_failed_team_read_falls_back_to_the_mahara_rule_and_says_so(self):
+        with patch.object(inbox, 'note') as note:
+            code, store, scan, _, draft = self.run_main(['--apply'], store=TeamStore(fail=True))
+        self.assertEqual(code, 0)
+        self.assertEqual(scan.call_args.args[4], [])
+        self.assertEqual(draft.call_args.args[2], [])
+        self.assertTrue(any('Team names could not be read (URLError). Only a Mahara name counts as the team this run' in call.args[0]
+                            for call in note.call_args_list))
+        self.assertEqual(store.patches[-1][1]['scan_since'], '2026-10-08T12:05:00+00:00')
+
+    def test_doctor_says_when_there_are_no_team_names(self):
+        with patch.object(inbox, 'note') as note:
+            code, _, scan, _, _ = self.run_main(['--doctor'])
+        self.assertEqual(code, 0)
+        scan.assert_not_called()
+        self.assertIn('No team names in cockpit_people or cockpit_members. Only a Mahara name counts as the team this run.',
+                      [call.args[0] for call in note.call_args_list])
 
 class InboxObserveTests(unittest.TestCase):
     def observe(self, current, status, store=None):
