@@ -5,7 +5,11 @@
  */
 export type Row = Record<string, any>;
 
-export type Client = { taskId: string; name: string; aliases: string[] };
+/** A client card. `stopped` is a card whose stage says the work has ended. */
+export type Client = { taskId: string; name: string; aliases: string[]; stopped?: boolean };
+
+/** A ClickUp stage that means the client no longer runs with us. */
+export const STOPPED_STAGE = /stopped|churn|cancel|paused|lost/i;
 
 export const CALENDAR_KIND: Record<string, Kind> = {
   z1Ne59rohCCj87KhcXoi: "onboarding",

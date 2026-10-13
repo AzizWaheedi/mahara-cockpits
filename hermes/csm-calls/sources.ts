@@ -22,6 +22,7 @@ import {
   changesForClient,
   isClientOf,
   isPersonChange,
+  STOPPED_STAGE,
   hashOf,
   kuwaitDay,
   tight,
@@ -71,7 +72,12 @@ export async function loadClients(db: Db): Promise<Client[]> {
   for (const r of rows) {
     const d = r.data ?? {};
     if (!d.taskId || !d.name) continue;
-    out.push({ taskId: String(d.taskId), name: String(d.name), aliases: [...new Set(aliases.get(String(d.taskId)) ?? [])] });
+    out.push({
+      taskId: String(d.taskId),
+      name: String(d.name),
+      aliases: [...new Set(aliases.get(String(d.taskId)) ?? [])],
+      stopped: STOPPED_STAGE.test(String(d.stage ?? "")),
+    });
   }
   if (out.length < 10) throw new Error(`Client roster has only ${out.length} rows; refusing to match against it`);
   return out;
@@ -566,9 +572,11 @@ export async function fathomSource(ctx: Ctx, since: string, transcriptsPerRun = 
 export async function metaSource(ctx: Ctx, sinceMs: number): Promise<Health> {
   const { t, db } = ctx;
   const accounts = new Map<string, string>(); // account id → task id
+  // A stopped client's account is often no longer shared with us; Meta then
+  // refuses it and the whole source reads as failing. Skip their cards.
   for (const c of await db.all("clients", "select=name,meta_ad_account_id&is_active=eq.true&meta_ad_account_id=not.is.null")) {
     const card = ctx.clients.find(k => isClientOf(c.name, k));
-    if (card) accounts.set(String(c.meta_ad_account_id).replace(/^act_/, ""), card.taskId);
+    if (card && !card.stopped) accounts.set(String(c.meta_ad_account_id).replace(/^act_/, ""), card.taskId);
   }
   for (const c of await db.all("cockpit_campaigns", "select=client_name,meta_account_id&source_deleted=is.false")) {
     const card = ctx.clients.find(k => isClientOf(c.client_name, k));

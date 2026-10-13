@@ -14,6 +14,7 @@ import {
   CHECKIN_TASK_REF,
   type Client,
   type Change,
+  STOPPED_STAGE,
 } from "./match";
 
 const clients: Client[] = [
@@ -175,4 +176,9 @@ describe("1-1 check-in form", () => {
     expect(checkinClient(form({ task_id: "gone" }, "typo"), valid)).toMatchObject({ taskId: null, by: null });
     expect(checkinClient(form(undefined, "typo"), valid).reason).toBe('Typed client ID "typo" is not a client on the board');
   });
+});
+
+test("a stopped client card is known by its stage", () => {
+  for (const stage of ["Stopped", "Churned", "Cancelled", "Paused"]) expect(STOPPED_STAGE.test(stage)).toBe(true);
+  for (const stage of ["Active", "Brand Blueprint Booked♠️", "Ready For Launch🚀", "Onboarding"]) expect(STOPPED_STAGE.test(stage)).toBe(false);
 });
