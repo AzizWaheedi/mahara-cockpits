@@ -182,6 +182,17 @@ export function normalizeDecisions(decisionRows: Any[] | null | undefined) {
       amount,
       metricAtDecision: rawMetric,
       day: d.day,
+      // When the row was saved, and the ClickUp task it was posted to. A
+      // native row gets logged_at on insert even while ClickUp posting is
+      // off, so only the URL says it reached ClickUp.
+      loggedAt: Number.isFinite(Date.parse(String(d.logged_at ?? "")))
+        ? Date.parse(String(d.logged_at))
+        : undefined,
+      clickupTaskUrl:
+        typeof d.clickup_task_url === "string" &&
+        /^https:\/\/app\.clickup\.com\//.test(d.clickup_task_url)
+          ? d.clickup_task_url
+          : undefined,
     };
   });
 }

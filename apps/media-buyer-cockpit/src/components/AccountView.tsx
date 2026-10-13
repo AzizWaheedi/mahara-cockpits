@@ -1,10 +1,15 @@
-import { ChevronLeft } from "lucide-react";
+import "@/components/ceo/ceo.css";
+import { ArrowUpRight, ChevronLeft, TriangleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { money } from "@/components/ceo/format";
 import { StatTile } from "@/components/ceo/StatTile";
-import { StatusChip, type StatusTone } from "@/components/ceo/StatusChip";
+import {
+  STATUS_COLOR,
+  StatusChip,
+  type StatusTone,
+} from "@/components/ceo/StatusChip";
 import { LostLeads } from "@/components/LostLeads";
 import { RangePicker } from "@/components/RangePicker";
 import { RequestCreativeButton } from "@/components/RequestCreativeButton";
@@ -20,8 +25,10 @@ import {
 import { StatusToggle } from "@/components/StatusToggle";
 import { TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
+import { accountIssueFlag, metaBillingUrl } from "@/lib/adBillingStrip";
 import { api, useQueries, useQuery } from "@/lib/cockpitApi";
-import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
+import { COST_DOT, type CostTone, cpbTone, cplTone } from "@/lib/costTone";
+import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "@/lib/kpi";
 import { kuwaitDay, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 
@@ -64,6 +71,9 @@ const MIN_LINK_CLICKS = 50;
 const BEST_MIN_LEADS = 3;
 /** Cards shown before "Show all". */
 const WALL_PAGE = 48;
+/** Why an ad tile reads n/a: on hover, since the wall says it once. */
+const FAILED_READ =
+  "This campaign's numbers could not be read. Reload to try again.";
 
 const VERDICT_TONE: Record<string, StatusTone> = {
   scale: "good",
@@ -115,6 +125,8 @@ type AdCard = {
   name: string;
   /** Its numbers over the range; absent when it did not spend in it. */
   row?: RangeRow;
+  /** Its campaign's numbers could not be read: n/a, never $0 and 0. */
+  failed: boolean;
   /** The Meta tree nodes behind this name (several ads can share one). */
   nodes: Row[];
   ids: string[];
@@ -240,12 +252,14 @@ export function AccountView({
     trend.map(r => ({ x: r.date, y: r[k] ?? null }));
 
   // Every ad in the account: the ones that spent in the range with their
-  // numbers, then every other ad Meta has, at $0.
+  // numbers, then every other ad Meta has, at $0. When a campaign's read
+  // failed its ads show n/a with the reason, never $0 and 0.
   const cards: AdCard[] = [];
   {
     const out = cards;
     for (const c of campaigns) {
       const name = String(c.campaignName);
+      const failedRead = ranges[name] instanceof Error;
       const rows: RangeRow[] = read(name)?.ads ?? [];
       const nodes = tree.filter(
         (t: Row) => t.kind === "ad" && t.campaignName === name,
@@ -282,6 +296,7 @@ export function AccountView({
           campaign: c,
           name: adName,
           row,
+          failed: !row && failedRead,
           nodes: mine,
           ids,
           running: mine.some(isLive),
@@ -408,16 +423,41 @@ export function AccountView({
   );
   const fewImpressions =
     "Fewer than 1,000 impressions in this range, so the rate would be noise.";
-  const gate = (value: number | undefined, limit: number) =>
-    value === undefined ? undefined : (
+  // Muhammed's grid (kpi.ts): good to the gate, a warning to the bad line,
+  // serious above it. The same bands colour the board.
+  const gate = (
+    value: number | undefined,
+    tone: CostTone | undefined,
+    limit: number,
+    bad: number,
+  ) =>
+    value === undefined || !tone ? undefined : (
       <StatusChip
-        tone={value > limit ? "serious" : "good"}
-        label={value > limit ? `Over $${limit}` : `Under $${limit}`}
+        tone={
+          tone === "good" ? "good" : tone === "warn" ? "warning" : "serious"
+        }
+        label={
+          tone === "good"
+            ? `Within $${limit}`
+            : tone === "warn"
+              ? `Over $${limit}`
+              : `Over $${Number.isInteger(bad) ? bad : bad.toFixed(2)}`
+        }
       />
     );
+  const allFailed = names.length > 0 && failed.length === names.length;
+  // Meta flags this client's ad account: one line, once per account.
+  const issues = [
+    ...new Map(
+      campaigns
+        .filter(c => accountIssueFlag(c.accountIssue))
+        .map(c => [String(c.metaAccountId ?? c.accountIssue), c] as const),
+    ).values(),
+  ];
 
   return (
-    <div className="space-y-6">
+    // ceo-root: the kit's status chips take their colours from it.
+    <div className="ceo-root space-y-6">
       {/* The client and the range stay above the contents bar, as on the
           client success client page; the bar then holds while you scroll. */}
       <header>
@@ -445,6 +485,33 @@ export function AccountView({
           </div>
           <RangePicker value={range} onChange={onRangeChange} />
         </div>
+        {issues.map(c => {
+          const flag = accountIssueFlag(c.accountIssue);
+          return (
+            <p
+              key={String(c.metaAccountId ?? c.accountIssue)}
+              className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl bg-muted/40 px-3 py-2 text-sm"
+            >
+              <TriangleAlert
+                className="size-4 shrink-0"
+                style={{ color: STATUS_COLOR[flag?.tone ?? "warning"] }}
+                aria-hidden
+              />
+              <span className="min-w-0 flex-1">{c.accountIssue}</span>
+              {c.metaAccountId ? (
+                <a
+                  className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
+                  href={metaBillingUrl(String(c.metaAccountId))}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Meta billing
+                  <ArrowUpRight className="size-3.5" aria-hidden />
+                </a>
+              ) : null}
+            </p>
+          );
+        })}
       </header>
 
       <SectionNav parts={parts} />
@@ -463,7 +530,7 @@ export function AccountView({
             that has not been pulled yet; it is not missing.
           </p>
         )}
-        {failed.length > 0 && (
+        {failed.length > 0 && !allFailed && (
           <p className="callout-warn mt-4 rounded-lg border px-3 py-2 text-xs">
             The numbers for {failed.join(", ")} could not be read, so the totals
             below leave them out. Reload the page to try again.
@@ -475,6 +542,12 @@ export function AccountView({
             <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
               Loading {range.label.toLowerCase()}…
             </p>
+          ) : allFailed ? (
+            <EmptyState
+              compact
+              title="The numbers could not be read"
+              text="This does not mean nothing was spent. Reload the page to try again."
+            />
           ) : !sum.hasData ? (
             <EmptyState
               compact
@@ -486,7 +559,7 @@ export function AccountView({
               {tile("Spend", money(sum.spend))}
               {tile("Leads", String(sum.leads))}
               {tile("Cost per lead", usd2(cpl), {
-                status: gate(cpl, CPL_GATE),
+                status: gate(cpl, cplTone(cpl), CPL_GATE, CPL_BAD),
                 naHint: "No leads in this range.",
               })}
               {!leadsOnly &&
@@ -501,7 +574,7 @@ export function AccountView({
                   "Cost per booking",
                   cpb === undefined ? "n/a" : money(cpb),
                   {
-                    status: gate(cpb, CPB_GATE),
+                    status: gate(cpb, cpbTone(cpb), CPB_GATE, CPB_BAD),
                     naHint: "No bookings in this range.",
                   },
                 )}
@@ -594,6 +667,14 @@ export function AccountView({
           </div>
         </div>
 
+        {!loading && failed.length > 0 && cards.some(c => c.failed) && (
+          <p className="mt-3 text-xs text-muted-foreground">
+            {allFailed
+              ? "The numbers could not be read, so every ad shows n/a."
+              : `Ads in ${failed.join(", ")} show n/a: their numbers could not be read.`}{" "}
+            Reload the page to try again.
+          </p>
+        )}
         {loading ? (
           <p className="mt-4 rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
             Loading the ads for {range.label.toLowerCase()}…
@@ -653,7 +734,9 @@ export function AccountView({
             const facts = [
               r
                 ? `${money(r.total?.spend)} · ${r.total?.leads ?? 0} leads · ${usd2(r.total?.cpl)} a lead`
-                : "Loading…",
+                : ranges[String(c.campaignName)] instanceof Error
+                  ? "Numbers could not be read. Reload to try again."
+                  : "Loading…",
               r && !dwy && r.total?.bookings !== undefined
                 ? `${r.bookingsTotal ?? r.total.bookings} booked${r.total?.costPerBooking !== undefined ? ` at ${money(r.total.costPerBooking)}` : ""}`
                 : null,
@@ -762,28 +845,22 @@ function AdTile({
     : card.nodes.length
       ? metaWords(card.nodes[0]) || "Not running"
       : "Not in Meta's list";
-  const cells: [string, ReactNode, string?][] = [
-    ["Spend", r ? usd2(r.spend) : "$0.00"],
-    ["Leads", r ? String(r.leads) : "0"],
-    [
-      "CPL",
-      usd2(r?.cpl),
-      r?.cpl === undefined ? undefined : r.cpl > CPL_GATE ? "bad" : "good",
-    ],
+  // A failed read is n/a, never $0.00 and 0; an ad that did not spend in a
+  // range that was read is $0.00 and 0. Cost colours follow the grid.
+  const quiet = card.failed ? "n/a" : undefined;
+  const cells: [string, ReactNode, CostTone?][] = [
+    ["Spend", quiet ?? (r ? usd2(r.spend) : "$0.00")],
+    ["Leads", quiet ?? (r ? String(r.leads) : "0")],
+    ["CPL", usd2(r?.cpl), cplTone(r?.cpl)],
   ];
   if (!dwy) {
+    const counted = r?.bookingsAttributed && r.costPerBooking !== undefined;
     cells.push(
       ["Booked", r?.bookingsAttributed ? String(r.bookings) : "n/a"],
       [
         "Per booking",
-        r?.bookingsAttributed && r.costPerBooking !== undefined
-          ? money(r.costPerBooking)
-          : "n/a",
-        r?.bookingsAttributed && r.costPerBooking !== undefined
-          ? r.costPerBooking > CPB_GATE
-            ? "bad"
-            : "good"
-          : undefined,
+        counted ? money(r.costPerBooking) : "n/a",
+        counted ? cpbTone(r.costPerBooking) : undefined,
       ],
     );
   }
@@ -840,7 +917,11 @@ function AdTile({
           </span>
         )}
       </div>
-      <dl className="grid grid-cols-3 gap-x-2 gap-y-2">
+      <dl
+        className="grid grid-cols-3 gap-x-2 gap-y-2"
+        // Said once above the wall; the tile keeps the reason on hover.
+        title={card.failed ? FAILED_READ : undefined}
+      >
         {cells.map(([label, value, tone]) => (
           <div key={label} className="min-w-0">
             <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
@@ -851,10 +932,7 @@ function AdTile({
                 <span
                   aria-hidden
                   className="size-1.5 shrink-0 rounded-full"
-                  style={{
-                    backgroundColor:
-                      tone === "bad" ? "var(--destructive)" : "var(--success)",
-                  }}
+                  style={{ backgroundColor: COST_DOT[tone] }}
                 />
               )}
               {value}

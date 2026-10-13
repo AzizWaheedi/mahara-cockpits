@@ -80,7 +80,9 @@ function summary(d: FunnelDestination): string {
   const ads = `${d.ads.length} ad${d.ads.length === 1 ? "" : "s"}`;
   if (d.kind !== "form")
     return `${KIND[d.kind].name}${d.url ? ` · ${shortUrl(d.url)}` : ""} · ${ads}`;
-  if (!d.form) return `Instant form · Meta would not show it · ${ads}`;
+  // The function's pageRefusal names an unshared Page; say it on the line.
+  if (!d.form)
+    return `Instant form · ${/not shared with MaharaMedia/.test(d.unreadable ?? "") ? "the Page is not shared with Mahara" : "Meta would not show it"} · ${ads}`;
   const spec = d.form.spec;
   const filters = filteringCount(spec);
   const extra = frictionSteps(spec).filter(s => !/filtering/.test(s));

@@ -1,240 +1,434 @@
-import { CreditCard, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import "@/components/ceo/ceo.css";
+import {
+  ArrowUpRight,
+  ChevronRight,
+  CreditCard,
+  RefreshCw,
+  TriangleAlert,
+} from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useId, useState } from "react";
+import { shortDate } from "@/components/ceo/format";
+import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
+import {
+  type BillingPanel,
+  billingStrip,
+  chipNeedsAll,
+  FIRST_ROWS,
+  metaBillingUrl,
+  REVIEW_HREF,
+  readFold,
+  receiptsLine,
+  reviewLabel,
+  type StripAccount,
+  type StripCampaign,
+  type StripChip,
+  stoppedLine,
+  stripChips,
+  unmappedLine,
+  writeFold,
+} from "@/lib/adBillingStrip";
 import { supabase } from "@/lib/supabase";
+import { cn } from "@/lib/utils";
 
-type Delivery = {
-  channel: string;
-  channelLabel?: string;
-  state: string;
-  error: string | null;
-  providerId: string | null;
-  taskId?: string | null;
-  commentRole?: "client" | "ads" | null;
-};
-type Binding = {
-  id: string;
-  client: string;
-  clientTaskId: string;
-  accountId: string;
-  signal: string;
-  enabled: boolean;
-  ready: boolean;
-  checkedAt: string | null;
-  lastGoodAt: string | null;
-  error: string | null;
-  deliveries: Delivery[];
-  review?: {
-    state: string;
-    reason: string | null;
-    decidedAt: string | null;
-  } | null;
-};
-export type BillingPanel = {
-  apply: boolean;
-  finishedAt: string | null;
-  error: string | null;
-  bindings: Binding[];
-  roster: { client: string; clientTaskId: string; enrolled: boolean }[];
-};
-const labels: Record<string, string> = {
-  healthy: "No payment warning",
-  payment_grace: "Payment grace period",
-  unsettled: "Payment needs attention",
-  restricted: "Account restriction",
-  unknown: "Not yet verified",
-};
+export type { BillingPanel } from "@/lib/adBillingStrip";
 
-export function AdBillingSummary({
-  data,
-  now = Date.now(),
+/**
+ * Payments, on Today and above the Ads board: one quiet row (Aziz,
+ * 2026-10-13, "so we can focus on the ads"). It says how many accounts Meta
+ * flags, which of them stopped spending, and the one thing to do (review the
+ * client messages); Show opens the detail. Nothing at all when every check
+ * is fresh and every account is fine. The rules are in lib/adBillingStrip.ts.
+ */
+
+const LINK =
+  "inline-flex items-center gap-1 whitespace-nowrap text-muted-foreground hover:text-foreground hover:underline";
+
+/**
+ * The row itself: icon, "Payments", what it says, and its buttons. One line
+ * from `sm` up; on a phone Show or Refresh stays beside the title, what it
+ * says takes the next line and the review button the last.
+ */
+function StripRow({
+  labelId,
+  children,
+  primary,
+  toggle,
+  panel,
 }: {
-  data: BillingPanel;
-  now?: number;
+  labelId: string;
+  children: ReactNode;
+  /** The one action that matters, such as "Review 9 client messages". */
+  primary?: ReactNode;
+  /** Show, Hide or Refresh. */
+  toggle?: ReactNode;
+  panel?: ReactNode;
 }) {
-  const stale =
-    !data.finishedAt || now - Date.parse(data.finishedAt) > 15 * 60_000;
-  const missing = data.roster.filter(c => !c.enrolled);
-  const attention = data.bindings.filter(
-    b =>
-      b.signal !== "healthy" ||
-      b.error ||
-      !b.ready ||
-      !b.enabled ||
-      !b.lastGoodAt ||
-      now - Date.parse(b.lastGoodAt) > 15 * 60_000 ||
-      b.deliveries.some(d => !["accepted", "skipped"].includes(d.state)),
-  );
   return (
-    <div className="space-y-4">
-      <a
-        href="/client-success/ad-billing"
-        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 hover:bg-primary/10"
-      >
-        <span>
-          <strong className="block text-sm">Daily ad billing review</strong>
-          <span className="text-xs text-muted-foreground">
-            Check the draft messages once today. Either reviewer can approve,
-            edit or deny.
-          </span>
-        </span>
-        <span className="text-sm font-medium text-primary">
-          Review messages →
-        </span>
-      </a>
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={`rounded-full px-3 py-1 font-medium ${data.apply ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"}`}
+    <section
+      aria-labelledby={labelId}
+      className="ceo-root rounded-xl border text-sm"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 sm:px-4">
+        <CreditCard
+          className="order-1 size-4 shrink-0 text-muted-foreground"
+          aria-hidden
+        />
+        <h2
+          id={labelId}
+          className="order-2 flex-1 text-sm font-medium sm:flex-none sm:shrink-0"
         >
-          {data.apply
-            ? "Team approval enabled"
-            : "Delivery paused · checks continue"}
-        </span>
-        <span className="text-muted-foreground">
-          {data.roster.length - missing.length} of {data.roster.length} active
-          clients enrolled
-        </span>
-        <span className="text-muted-foreground">
-          {data.finishedAt
-            ? `Last run ${new Date(data.finishedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-            : "No completed run"}
-        </span>
-      </div>
-      {(stale || data.error) && (
-        <p
-          role="alert"
-          className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm"
-        >
-          {data.error ||
-            "Billing checks are overdue. Verify the worker before relying on these results."}
-        </p>
-      )}
-      {missing.length > 0 && (
-        <details className="rounded-xl border p-3 text-sm" open>
-          <summary className="cursor-pointer font-medium">
-            {missing.length} active clients need account mapping
-          </summary>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {missing.map(c => (
-              <a
-                key={c.clientTaskId}
-                href={`https://app.clickup.com/t/${c.clientTaskId}`}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-full bg-muted px-3 py-1 underline-offset-2 hover:underline"
-              >
-                {c.client}
-              </a>
-            ))}
-          </div>
-        </details>
-      )}
-      {attention.length > 0 && (
-        <div className="grid gap-3 lg:grid-cols-2">
-          {attention.map(b => (
-            <article key={b.id} className="rounded-xl border bg-background p-4">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <a
-                  className="font-semibold hover:underline"
-                  href={`https://app.clickup.com/t/${b.clientTaskId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {b.client}
-                </a>
-                <span className="text-xs text-amber-700 dark:text-amber-300">
-                  {b.error
-                    ? "Verification required"
-                    : !b.enabled
-                      ? "Monitoring disabled"
-                      : !b.ready
-                        ? "Manual flow cutover needed"
-                        : !b.lastGoodAt ||
-                            now - Date.parse(b.lastGoodAt) > 15 * 60_000
-                          ? "Check overdue"
-                          : labels[b.signal] || "Unverified state"}
-                </span>
-              </div>
-              <a
-                className="mt-1 block text-xs text-muted-foreground hover:underline"
-                href={`https://business.facebook.com/billing_hub/accounts/details/?asset_id=${b.accountId}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Meta account {b.accountId}
-              </a>
-              {b.error && (
-                <p className="mt-2 text-sm" role="status">
-                  {b.error}
-                </p>
-              )}
-              {b.review && (
-                <p className="mt-3 text-sm">
-                  Client message:{" "}
-                  <strong>
-                    {b.review.state === "pending"
-                      ? "Awaiting CSM or media buyer approval"
-                      : b.review.state}
-                  </strong>
-                  {b.review.reason ? ` · ${b.review.reason}` : ""}
-                </p>
-              )}
-              <ul className="mt-3 space-y-1 text-xs text-muted-foreground">
-                {b.deliveries.map((d, i) => (
-                  <li key={`${d.channel}-${i}`}>
-                    {d.channel === "whatsapp"
-                      ? "Client WhatsApp"
-                      : d.channel === "slack"
-                        ? (d.channelLabel ?? "Media announcements")
-                        : d.commentRole === "client"
-                          ? "Client task comment"
-                          : d.commentRole === "ads"
-                            ? "Ads Management comment"
-                            : "ClickUp comment"}
-                    :{" "}
-                    <strong className="font-medium text-foreground">
-                      {d.state === "accepted"
-                        ? "Accepted by provider"
-                        : d.state}
-                    </strong>
-                    {d.error ? ` · ${d.error}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </article>
-          ))}
+          Payments
+        </h2>
+        <div className="order-4 flex min-w-0 basis-full flex-wrap items-center gap-x-2 gap-y-1.5 sm:basis-0 sm:flex-1">
+          {children}
         </div>
-      )}
-      {attention.length === 0 &&
-        missing.length === 0 &&
-        !stale &&
-        !data.error &&
-        data.bindings.length > 0 && (
-          <p className="text-sm text-muted-foreground">
-            No payment warnings on the enrolled accounts. Bank declines can
-            still occur without a prior warning.
-          </p>
-        )}
-      {data.roster.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          No active-client coverage has been verified for your scope yet.
-        </p>
-      )}
-      <p className="text-xs text-muted-foreground">
-        Client WhatsApp requires approval from either the CSM or media buyer.
-        New Slack posts and client messages are limited to once per client every
-        72 hours. This checks Meta billing signals. It does not retry payments
-        or switch campaigns on. “Accepted” confirms a provider receipt, not that
-        a person read the message.
-      </p>
-    </div>
+        {primary ? <div className="order-5 shrink-0">{primary}</div> : null}
+        {toggle ? (
+          <div className="order-3 shrink-0 sm:order-6">{toggle}</div>
+        ) : null}
+      </div>
+      {panel}
+    </section>
   );
 }
 
-export function AdBillingWatch() {
+/** One flagged account in the opened panel: a divided row, no card. */
+function AccountRow({ a }: { a: StripAccount }) {
+  const facts = [
+    a.review,
+    a.stopped && a.lastSpend ? `Not spent since ${shortDate(a.lastSpend)}` : "",
+    receiptsLine(a),
+    a.fault,
+  ].filter(Boolean);
+  return (
+    <li className="flex flex-wrap items-start gap-x-4 gap-y-1.5 py-2.5 first:pt-0 last:pb-0">
+      <div className="min-w-0 flex-1 basis-64">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="break-words font-medium" dir="auto">
+            {a.client}
+          </span>
+          <StatusChip tone={a.tone} label={a.label} />
+        </div>
+        {facts.length > 0 && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {facts.join(" · ")}
+          </p>
+        )}
+        {a.failures.map((f, i) => (
+          <p
+            key={`${f.label}-${i}`}
+            className="mt-1 flex items-start gap-1.5 text-xs"
+          >
+            <TriangleAlert
+              className="mt-px size-3.5 shrink-0"
+              style={{ color: STATUS_COLOR.warning }}
+              aria-hidden
+            />
+            <span>
+              {f.label}: {f.state === "unknown" ? "not confirmed" : "failed"}
+              {f.error ? `. ${f.error}` : "."}
+            </span>
+          </p>
+        ))}
+      </div>
+      <div className="flex shrink-0 items-center gap-3 text-xs">
+        {a.accountId && (
+          <a
+            className={LINK}
+            href={metaBillingUrl(a.accountId)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Meta billing
+            <ArrowUpRight className="size-3.5" aria-hidden />
+          </a>
+        )}
+        {a.clientTaskId && (
+          <a
+            className={LINK}
+            href={`https://app.clickup.com/t/${a.clientTaskId}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            ClickUp
+            <ArrowUpRight className="size-3.5" aria-hidden />
+          </a>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * The strip for one panel read: the row, and the detail when open. Pure
+ * from its props, so the dev harness draws every state from fixtures.
+ */
+export function AdBillingSummary({
+  data,
+  now = Date.now(),
+  campaigns,
+  open = false,
+  onOpenChange,
+  onShowOnBoard,
+  onRefresh,
+  busy = false,
+}: {
+  data: BillingPanel;
+  now?: number;
+  /** The snapshot's campaigns: their last day of spend per ad account. */
+  campaigns?: StripCampaign[];
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Turns on the board's Payment problem filter. */
+  onShowOnBoard?: () => void;
+  onRefresh?: () => void;
+  busy?: boolean;
+}) {
+  const labelId = useId();
+  const panelId = useId();
+  const [all, setAll] = useState(false);
+  const s = billingStrip(data, { now, campaigns });
+  if (s.hidden) return null;
+  const chips = stripChips(s);
+  const stopped = stoppedLine(s);
+  const shown = all ? s.accounts : s.accounts.slice(0, FIRST_ROWS);
+
+  const chip = (c: StripChip) => {
+    // A count whose accounts are not all on the board opens the panel, with
+    // every row shown when one of them sits past the first five.
+    const onClick =
+      c.action === "board" && onShowOnBoard
+        ? onShowOnBoard
+        : c.action === "panel" && onOpenChange
+          ? () => {
+              if (chipNeedsAll(s, c.key)) setAll(true);
+              onOpenChange(true);
+            }
+          : undefined;
+    const inner = <StatusChip tone={c.tone} label={c.label} />;
+    if (!onClick) return <span key={c.key}>{inner}</span>;
+    return (
+      <button
+        key={c.key}
+        type="button"
+        onClick={onClick}
+        title={
+          c.action === "board"
+            ? "Show these campaigns on the board"
+            : "Show the details"
+        }
+        className="no-touch relative rounded-full after:absolute after:-inset-1.5 after:content-[''] hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {inner}
+      </button>
+    );
+  };
+
+  const panel = open ? (
+    <div
+      id={panelId}
+      className="mx-2 mb-2 space-y-3 rounded-xl bg-muted/40 p-4 sm:mx-3 sm:mb-3"
+    >
+      {data.error && (
+        <p className="text-xs text-muted-foreground">
+          The worker said: {data.error}
+        </p>
+      )}
+      {s.accounts.length > 0 ? (
+        <>
+          <ul className="divide-y divide-border/60">
+            {shown.map(a => (
+              <AccountRow key={a.id} a={a} />
+            ))}
+          </ul>
+          {!all && s.accounts.length > FIRST_ROWS && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="-ml-2 h-7 text-xs"
+              onClick={() => setAll(true)}
+            >
+              Show the other {s.accounts.length - FIRST_ROWS}
+            </Button>
+          )}
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          No account has a payment warning. A bank can still decline a card
+          without one.
+        </p>
+      )}
+      {s.unmapped.length > 0 && (
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/60 pt-3 text-xs">
+          <span>{unmappedLine(s.unmapped.length)}:</span>
+          {s.unmapped.map(c => (
+            <a
+              key={c.clientTaskId}
+              className={LINK}
+              href={`https://app.clickup.com/t/${c.clientTaskId}`}
+              target="_blank"
+              rel="noreferrer"
+              dir="auto"
+            >
+              {c.client}
+              <ArrowUpRight className="size-3.5" aria-hidden />
+            </a>
+          ))}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+        <span>
+          {[
+            s.apply
+              ? "Team approval on"
+              : "Client messages paused, checks continue",
+            `${s.enrolled} of ${s.rosterSize} active clients enrolled`,
+            s.lastRun ? `last check ${s.lastRun}` : "no check finished yet",
+          ].join(" · ")}
+        </span>
+        {onRefresh && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs"
+            disabled={busy}
+            onClick={onRefresh}
+          >
+            <RefreshCw className={cn(busy && "animate-spin")} aria-hidden />
+            Refresh
+          </Button>
+        )}
+      </div>
+      <details className="text-xs text-muted-foreground">
+        <summary className="cursor-pointer font-medium text-foreground">
+          How this works
+        </summary>
+        <p className="mt-2 max-w-3xl leading-relaxed">
+          This is the ad billing watch. It reads Meta's billing status for each
+          enrolled client every five minutes. It does not retry payments or
+          switch campaigns on. A client WhatsApp goes out only after the CSM or
+          the media buyer approves it, and new Slack posts and client messages
+          are limited to once per client every 72 hours. "Sent" means the
+          provider accepted it, not that a person read it.
+        </p>
+      </details>
+    </div>
+  ) : null;
+
+  return (
+    <StripRow
+      labelId={labelId}
+      panel={panel}
+      primary={
+        s.pending > 0 ? (
+          <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+            <a href={REVIEW_HREF}>
+              {reviewLabel(s.pending)}
+              <ChevronRight aria-hidden />
+            </a>
+          </Button>
+        ) : null
+      }
+      toggle={
+        onOpenChange || (s.sentence && onRefresh) ? (
+          <div className="flex items-center gap-1">
+            {/* The sentence says to refresh: the button sits beside it. */}
+            {s.sentence && onRefresh && !open ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                disabled={busy}
+                onClick={onRefresh}
+              >
+                <RefreshCw className={cn(busy && "animate-spin")} aria-hidden />
+                Refresh
+              </Button>
+            ) : null}
+            {onOpenChange ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                aria-expanded={open}
+                aria-controls={open ? panelId : undefined}
+                onClick={() => onOpenChange(!open)}
+              >
+                {open ? "Hide" : "Show"}
+              </Button>
+            ) : null}
+          </div>
+        ) : null
+      }
+    >
+      {s.sentence ? (
+        <span className="text-xs text-muted-foreground">{s.sentence}</span>
+      ) : (
+        chips.map(chip)
+      )}
+      {stopped && (
+        <span className="text-xs text-muted-foreground">{stopped}</span>
+      )}
+    </StripRow>
+  );
+}
+
+/** The row when the panel could not be read: never "all paid". */
+export function BillingUnavailable({
+  reason,
+  onRefresh,
+  busy = false,
+}: {
+  reason: "failed" | "refused";
+  onRefresh?: () => void;
+  busy?: boolean;
+}) {
+  const labelId = useId();
+  return (
+    <StripRow
+      labelId={labelId}
+      toggle={
+        onRefresh ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs"
+            disabled={busy}
+            onClick={onRefresh}
+          >
+            <RefreshCw className={cn(busy && "animate-spin")} aria-hidden />
+            Refresh
+          </Button>
+        ) : null
+      }
+    >
+      <span role="alert" className="text-xs text-muted-foreground">
+        {reason === "refused"
+          ? "Your seat cannot read billing status. Ask technical operations for media buyer access."
+          : "Billing status could not load. This does not mean the accounts are paid. Refresh to try again."}
+      </span>
+    </StripRow>
+  );
+}
+
+/** The live strip: reads the panel, polls once a minute while visible. */
+export function AdBillingWatch({
+  campaigns,
+  onShowOnBoard,
+}: {
+  campaigns?: StripCampaign[];
+  onShowOnBoard?: () => void;
+}) {
   const [data, setData] = useState<BillingPanel | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<"failed" | "refused" | null>(null);
   const [busy, setBusy] = useState(false);
+  // Starts folded and never opens by itself; the choice is kept per device.
+  const [open, setOpen] = useState(() => readFold());
+  const fold = (next: boolean) => {
+    setOpen(next);
+    writeFold(next);
+  };
   const load = useCallback(async (signal?: AbortSignal) => {
     setBusy(true);
     try {
@@ -252,15 +446,15 @@ export function AdBillingWatch() {
         !Array.isArray(response.data.bindings) ||
         !Array.isArray(response.data.roster)
       ) {
-        setError(true);
+        setError(response.error?.code === "42501" ? "refused" : "failed");
         setData(null);
       } else {
         setData(response.data as BillingPanel);
-        setError(false);
+        setError(null);
       }
     } catch {
       if (!signal?.aborted) {
-        setError(true);
+        setError("failed");
         setData(null);
       }
     } finally {
@@ -278,47 +472,27 @@ export function AdBillingWatch() {
       window.clearInterval(timer);
     };
   }, [load]);
+
+  if (error)
+    return (
+      <BillingUnavailable
+        reason={error}
+        onRefresh={() => void load()}
+        busy={busy}
+      />
+    );
+  // Nothing while the first read is in flight: the row appears only when
+  // there is something to say.
+  if (!data) return null;
   return (
-    <section
-      aria-labelledby="billing-watch-title"
-      className="rounded-2xl border bg-card p-5 sm:p-6"
-    >
-      <header className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <h2
-            id="billing-watch-title"
-            className="flex items-center gap-2 text-base font-semibold"
-          >
-            <CreditCard size={18} aria-hidden /> Ad billing watch
-          </h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Payment warnings, client coverage, and notification receipts.
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={busy}
-          onClick={() => void load()}
-          aria-label="Refresh billing status"
-        >
-          <RefreshCw size={14} aria-hidden />
-          Refresh
-        </Button>
-      </header>
-      {error ? (
-        <p role="alert" className="text-sm text-muted-foreground">
-          Billing monitoring is unavailable. Refresh, or ask technical
-          operations to check its connection. This does not mean the accounts
-          are healthy.
-        </p>
-      ) : data ? (
-        <AdBillingSummary data={data} />
-      ) : (
-        <p role="status" className="text-sm text-muted-foreground">
-          Checking billing status…
-        </p>
-      )}
-    </section>
+    <AdBillingSummary
+      data={data}
+      campaigns={campaigns}
+      open={open}
+      onOpenChange={fold}
+      onShowOnBoard={onShowOnBoard}
+      onRefresh={() => void load()}
+      busy={busy}
+    />
   );
 }

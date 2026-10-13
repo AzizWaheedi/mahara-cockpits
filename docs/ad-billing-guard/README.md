@@ -22,13 +22,16 @@ Sources: [Meta account fields](https://github.com/facebook/facebook-python-busin
 
 ## Daily use
 
-1. Open **Today** or **Ads management** in the media buyer cockpit.
-2. Read **Ad billing watch**. Check the last run, active-client coverage and open issues.
-3. Open **Daily ad billing review**. Check the exact account and Arabic draft. Approve, edit then approve, or deny with a reason. Record today’s check without clearing pending issues.
-4. If a message says **unknown**, inspect provider history. Do not resend it manually without checking.
-5. Correct a missing account link through technical operations. A name or tag is not enough to enroll an account.
+1. Open **Today** or **Ads** in the media buyer cockpit. The ad billing watch is the **Payments** row above the numbers (since 13 October 2026). It is one line: counts of unpaid, restricted and grace-period accounts, the flagged accounts that have stopped spending, and **Review N client messages** when drafts wait. It is not drawn at all when every check is fresh, every account is healthy, nothing waits and every active client is mapped.
+2. If the row says no billing check has finished for 30 minutes, or that the last one failed, the counts give way to that sentence: treat everything as old until the next run passes. Select **Refresh** on the row, and tell technical operations if it stays. A row that says billing status could not load does not mean the accounts are paid.
+3. Select **Review N client messages** to open **Daily ad billing review**. Check the exact account and Arabic draft. Approve, edit then approve, or deny with a reason. Record today’s check without clearing pending issues.
+4. The unpaid, restricted and grace-period counts turn on the Ads board's **Payment problem** filter when every account they count has a running campaign there. When one does not (an account with no campaign on the board, or only parked ones), the count opens the detail instead, with every row shown. The other counts (accounts to check, messages to check, clients not mapped) always open the detail. **Show** opens it too: one line per flagged account, most urgent first, with its client message state, receipts ("4 sent", failures listed), Meta billing and ClickUp links, the unmapped clients, and the approval and enrolment line. The fold is remembered on the device.
+5. If a message says **not confirmed** (state `unknown`), inspect provider history. Do not resend it manually without checking.
+6. Correct a missing account link through technical operations. A name or tag is not enough to enroll an account.
 
-“Accepted by provider” means the API returned a message or comment ID. It does not mean that a client read the WhatsApp message. Client and Ads Management comments are separate deliveries. A partial failure does not undo completed deliveries.
+On the board each campaign whose ad account Meta flags carries one chip: **Unpaid balance** (status 3) and **Account disabled** or **Account closed** in red; **Payment grace period** (status 9) and **Payment under review** (status 7 or 8) as warnings, because Meta still runs those accounts. A client's own Ads page shows one line when its ad account is flagged, with the Meta billing link.
+
+“Sent” (the provider state `accepted`) means the API returned a message or comment ID. It does not mean that a client read the WhatsApp message. Client and Ads Management comments are separate deliveries. A partial failure does not undo completed deliveries.
 
 ## Historical installation, 11 October 2026
 
@@ -63,7 +66,7 @@ Save the scenario revision and test evidence in `manual_cutover_evidence`. A Boo
 
 - `hermes/ad-billing-guard`: polling, exact-ID checks, provider adapters, enrollment validation, receipt reconciliation.
 - `supabase/migrations/20261011174920_ad_billing_guard.sql`: private registry, incidents, outbox, atomic claims, audit records, scoped dashboard read.
-- `apps/media-buyer-cockpit/src/components/AdBillingWatch.tsx`: the team view.
+- `apps/media-buyer-cockpit/src/components/AdBillingWatch.tsx`: the team view, the Payments row. Its rules (the one 30-minute overdue line, counts, urgency order, stopped spending, the fold) are in `src/lib/adBillingStrip.ts` and tested by `scripts/ad-billing-strip.test.ts`. Preview every state with `bun run harness`, then `/ad-billing-harness.html`.
 - `hermes/cockpit-guardian/checks/ad_billing.py`: independent stale-worker, coverage and failed-delivery detection. The guardian uses its existing alert path; it never retries a client message.
 - `apps/media-buyer-cockpit/scripts/ad-billing-guard.test.ts`: 35 tests against the real SQL in isolated PostgreSQL and synthetic provider transports.
 - `apps/media-buyer-cockpit/scripts/ad-billing-watchdog.test.ts`: 7 independent-watchdog tests.

@@ -42,8 +42,18 @@ export function pages(p:Provider){
   return seen.get(pageId)!;
  };
 }
-function pageRefusal(pageId:string,error?:unknown){
+/** MaharaMedia's Business Manager: where a client shares its Page. */
+export const MAHARA_BUSINESS='767701513092162';
+/**
+ * Meta's answer when the system user cannot see the Page at all: code 10, or
+ * 100 with subcode 33 (Ardon, 2026-10-13: the Page was never shared with the
+ * business). Only here, on the Page read: code 10 also comes back on posts the
+ * system user can manage, so explainMeta does not map it everywhere.
+ */
+const UNSHARED=/\bcode (?:10|100\/33)\b/;
+export function pageRefusal(pageId:string,error?:unknown){
  const raw=error instanceof Error?error.message:'';
+ if(UNSHARED.test(raw))return `This Page (${pageId}) is not shared with MaharaMedia's Business Manager, or the Claude system user is not assigned to it. Ask the client to share the Page with business ${MAHARA_BUSINESS} (Ads, Leads, Insights).`;
  return `Meta will not let the cockpit act for the client's Facebook Page (${pageId}). The app needs a role on the Page that can manage ads: add it in the client's Business Settings under Pages, then try again.${raw?` Meta said: ${explainMeta(raw)}`:''}`;
 }
 
@@ -83,17 +93,23 @@ function pageOf(creative:Row|undefined):string|null{
  return /^\d{5,}$/.test(String(page??''))?String(page):null;
 }
 
-/** An ad built on an existing post keeps its destination on the post's button. */
+/**
+ * An ad built on an existing post keeps its destination on the post's button.
+ * The Page token first: the system token is refused on a post (code 10) and
+ * left a failed read in the provider log on every open (Arcturus, 16 from
+ * 10 to 13 October). The system token stays as the fallback for a Page it
+ * cannot open.
+ */
 async function postDestination(ad:Row,p:Provider,page:(id:string)=>Promise<Page>):Promise<Row|null>{
  const post=String(ad.creative?.object_story_id??ad.creative?.effective_object_story_id??'');
  if(ad.creative?.object_story_spec||!/^\d{5,}_\d{5,}$/.test(post))return null;
  const pageId=post.split('_')[0];
- for(const as of ['system','page'] as const){
+ for(const as of ['page','system'] as const){
   try{
    const token=as==='page'?{token:(await page(pageId)).token}:undefined;
    const read=await p.call('meta','GET',`${post}?fields=call_to_action`,undefined,token);
    return {...ad,postCta:read.call_to_action??{}};
-  }catch{/* try the Page token, then give up and call it unknown */}
+  }catch{/* then the system token, then give up and call it unknown */}
  }
  return null;
 }

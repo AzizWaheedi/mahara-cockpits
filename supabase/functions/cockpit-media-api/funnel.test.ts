@@ -1,5 +1,5 @@
 import {test,expect} from 'bun:test';
-import {destinationOf,formIdOf,preparePublish,prepareSwitch,readFunnel,withForm} from './funnel';
+import {destinationOf,formIdOf,pageRefusal,preparePublish,prepareSwitch,readFunnel,withForm} from './funnel';
 import {executePlan} from './execute';
 type Row=Record<string,any>;
 const scope={account:'123456',campaign:'222222',campaignName:'Villa | Leads'};
@@ -169,4 +169,54 @@ test('an ad built on an existing post shows its form, and the check says it cann
  const narrowed=await preparePublish({campaignName:scope.campaignName,fromFormId:'111111',spec,adIds:['300301']},scope,meta(routes) as any);
  expect(narrowed.check?.ready).toBe(true);
  expect(narrowed.steps.map(s=>s.path)).toEqual(['777777/leadgen_forms','act_123456/adcreatives','300301']);
+});
+
+test('a Page the system user cannot see says to share it with the business, and only on the Page read',()=>{
+ const shared="This Page (777777) is not shared with MaharaMedia's Business Manager, or the Claude system user is not assigned to it. Ask the client to share the Page with business 767701513092162 (Ads, Leads, Insights).";
+ expect(pageRefusal(PAGE,new Error('meta rejected the request (400 code 10): (#10) To use this endpoint you need pages_read_engagement'))).toBe(shared);
+ expect(pageRefusal(PAGE,new Error('meta rejected the request (400 code 100/33): Unsupported get request.'))).toBe(shared);
+ // Other refusals keep the role wording and Meta's own words.
+ const other=pageRefusal(PAGE,new Error('meta rejected the request (400 code 100/2108006): Something else'));
+ expect(other).toContain('needs a role on the Page');
+ expect(other).toContain('Something else');
+ expect(pageRefusal(PAGE,new Error('meta rejected the request (400 code 190): token expired'))).toContain('needs a role on the Page');
+ expect(pageRefusal(PAGE)).toContain('needs a role on the Page');
+});
+
+test('a form on a Page that is not shared reads as unreadable with the sharing step',async()=>{
+ const p=meta([
+  [/^GET 222222\/ads/,()=>({data:[ad('300301')]})],
+  [/^GET 111111\?fields=/,()=>{throw new Error('meta rejected the request (400 code 100/33): Unsupported get request');}],
+  [/^GET 777777\?fields=id,name,access_token/,()=>{throw new Error('meta rejected the request (400 code 10): (#10) pages_read_engagement');}],
+ ]);
+ const read=await readFunnel(scope,p as any);
+ expect(read.destinations[0].unreadable).toContain('not shared with MaharaMedia');
+ expect(read.destinations[0].unreadable).toContain('767701513092162');
+});
+
+test('a post-based ad reads its button with the Page token first, so no refused system read is logged',async()=>{
+ const postAd={id:'300309',name:'Post ad',account_id:'123456',campaign_id:'222222',effective_status:'ACTIVE',creative:{id:'900009',object_story_id:`${PAGE}_555555`}};
+ const p=meta([
+  [/^GET 222222\/ads/,()=>({data:[postAd]})],
+  [/^GET 777777_555555\?fields=call_to_action/,()=>({call_to_action:{type:'SIGN_UP',value:{lead_gen_form_id:'111111'}}})],
+  [/^GET 777777\?fields=id,name,access_token/,()=>({id:PAGE,name:'Villa Builders',access_token:PAGE_TOKEN})],
+  [/^GET 111111\?fields=/,()=>FORM],
+  [/^GET 777777\/leadgen_forms/,()=>({data:[]})],
+ ]);
+ const read=await readFunnel(scope,p as any);
+ expect(read.destinations[0].ads[0].fromPost).toBe(true);
+ const postReads=p.calls.filter(c=>c.path.startsWith('777777_555555'));
+ expect(postReads.map(c=>c.token)).toEqual([PAGE_TOKEN]);
+});
+
+test('a post-based ad falls back to the system token when the Page token cannot be had',async()=>{
+ const postAd={id:'300309',name:'Post ad',account_id:'123456',campaign_id:'222222',effective_status:'ACTIVE',creative:{id:'900009',object_story_id:`${PAGE}_555555`}};
+ const p=meta([
+  [/^GET 222222\/ads/,()=>({data:[postAd]})],
+  [/^GET 777777_555555\?fields=call_to_action/,()=>({call_to_action:{type:'LEARN_MORE',value:{link:'https://villa.example/offer'}}})],
+  [/^GET 777777\?fields=id,name,access_token/,()=>{throw new Error('meta rejected the request (400 code 10): no access');}],
+ ]);
+ const read=await readFunnel(scope,p as any);
+ expect(read.destinations.map((d:Row)=>[d.kind,d.url])).toEqual([['website','https://villa.example/offer']]);
+ expect(p.calls.filter(c=>c.path.startsWith('777777_555555')).map(c=>c.token)).toEqual([undefined]);
 });
