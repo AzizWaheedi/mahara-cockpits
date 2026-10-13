@@ -4,6 +4,8 @@
  * real payloads (cockpit:snapshot and the queries beside it), with a spread
  * of cases so every chip, flag and empty state has something to show.
  */
+import { cleanLostNote } from "../../convex/lostNotes";
+
 const H = 3_600_000;
 const D = 24 * H;
 
@@ -49,10 +51,63 @@ function campaign(over: Row): Row {
   };
 }
 
+/**
+ * Lost leads as the power dialer writes them into GHL, cleaned the way the
+ * sync cleans them (convex/lostNotes.ts).
+ */
+function lostFixture(): Row {
+  const agent =
+    "Outcome recorded by the agent; this does not establish a verified Maqsam call.";
+  const ad = (n: number) => `ad-Liwan | Villa fit-out | Leads-${n}`;
+  const ladder = "NO ANSWER: Follow-up ladder exhausted. Lost: Unreachable.";
+  const raw: [string, string, number, number][] = [
+    ["Other", `LOST: Other\n${agent}\nHe's not Arab, not serious.`, 1, 0],
+    ["Unreachable", `${ladder}\n${agent}\nNo answer`, 1, 0],
+    [
+      "Other",
+      `LOST: Other\n${agent}\nShe closed the line: not interested.`,
+      2,
+      0,
+    ],
+    ["Unreachable", `${ladder}\n${agent}\nNo answer`, 2, 0],
+    ["Unreachable", `${ladder}\n${agent}\nBusy`, 1, 0],
+    [
+      "Financial Issue",
+      "LOST: Financial Issue\nالسعر عالي عليه، بيفكر ويرجع لنا",
+      2,
+      1,
+    ],
+    // GHL can hand the note back with its line breaks gone.
+    [
+      "Other",
+      `LOST: Other ${agent} He's not Arab. He doesn't have any project.`,
+      1,
+      1,
+    ],
+  ];
+  const notes = raw.map(([reason, body, n, ago], i) => ({
+    ...cleanLostNote(`${body}\n[mahara:fixture-${i}]`),
+    reason,
+    adId: ad(n),
+    at: `${day(ago)}T10:0${i}:00Z`,
+  }));
+  return {
+    total: 31,
+    reasons: [
+      { reason: "Other (write why in the notes section)", count: 14 },
+      { reason: "Unreachable", count: 11 },
+      { reason: "Financial Issue", count: 6 },
+    ],
+    notes,
+    byAd: { [ad(1)]: 18, [ad(2)]: 13 },
+  };
+}
+
 const campaigns: Row[] = [
   campaign({
     campaignName: "Liwan | Villa fit-out | Leads",
     clientName: "Liwan Limited",
+    lost: lostFixture(),
     verdict: "hold",
     cpl: 18.2,
     costPerBooking: 92,

@@ -3,6 +3,7 @@
 import {type ActionCtx,internal,graph,allAdAccounts,callTool,supabaseQuery,unwrap,providerFetch,recordLog,MAHARA_BUSINESS_ID} from './runtime';
 import {CPL_GATE,CPB_GATE,CPB_BAD,BOOKING_RATE_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';
 import {withoutExcludedAds} from './excludedAds';
+import {cleanLostNote} from './lostNotes';
 import {hasPicture,isMetaId,metaImageExpiry,metaImageUsable,sameStoredRow,stillCaptureDue,stillKeyFor} from './metaMedia';
 const TRACKER = "1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro";
 
@@ -774,7 +775,13 @@ export async function ghlLostLeads(
   | {
       total: number;
       reasons: { reason: string; count: number }[];
-      notes: { note: string; reason: string; adId?: string; at: string }[];
+      notes: {
+        note: string;
+        reason: string;
+        adId?: string;
+        at: string;
+        unverified?: boolean;
+      }[];
       byAd: Record<string, number>;
     }
   | undefined
@@ -837,6 +844,7 @@ export async function ghlLostLeads(
       reason: string;
       adId?: string;
       at: string;
+      unverified?: boolean;
     }[] = [];
     for (let i = 0; i < recent.length; i += 8) {
       const batch = recent.slice(i, i + 8);
@@ -854,10 +862,8 @@ export async function ghlLostLeads(
               (a: { utmAdId?: string }) => a?.utmAdId,
             );
             for (const n of ns) {
-              const text = String(n.bodyText ?? "")
-                .replace(/<[^>]+>/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
+              const cleaned = cleanLostNote(String(n.body ?? n.bodyText ?? ""));
+              const text = cleaned?.note ?? "";
               // Skip everything GHL wrote for us. Two kinds, both useless here:
               // the knowledge-base / booking-calendar note, and the "📋 Form
               // Answers" dump, which is just the qualification form echoed back
@@ -876,6 +882,7 @@ export async function ghlLostLeads(
                 reason: stageName.get(o.pipelineStageId) ?? "Unlabelled",
                 adId: attr?.utmAdId as string | undefined,
                 at: String(n.dateAdded ?? ""),
+                ...(cleaned?.unverified ? { unverified: true } : {}),
               };
             }
             return null;

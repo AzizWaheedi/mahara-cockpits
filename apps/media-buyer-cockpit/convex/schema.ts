@@ -65,6 +65,8 @@ const schema = defineSchema({
             reason: v.string(),
             adId: v.optional(v.string()),
             at: v.string(),
+            /** Outcome entered by the agent with no matched Maqsam call. */
+            unverified: v.optional(v.boolean()),
           }),
         ),
         byAd: v.record(v.string(), v.number()),
