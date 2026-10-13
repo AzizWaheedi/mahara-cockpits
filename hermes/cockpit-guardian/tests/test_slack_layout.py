@@ -57,13 +57,66 @@ class Layout(unittest.TestCase):
         text = alerts.resolved_digest_text(["✅ *Resolved: Salma*\n_Open 65 min_", "[guardian] Resolved: Ask AI queue\nIt was open"])
         self.assertEqual(text, "✅ *Also resolved:* Salma; Ask AI queue.")
 
-    def test_the_daily_summary_has_bold_sections_and_bullets(self):
+    def test_the_daily_summary_has_a_title_bold_sections_and_bullets(self):
         lines = report.slack_layout(["Cockpit guardian, 13 Oct 09:00 Kuwait time. Last scan under a minute ago in fix mode.", "",
                                      "Broken now (1):", "- Meta access (since 11 Oct): Settle it. (the CEO)", "",
                                      "Could not be checked (2): A, B.", "Healthy: 80 of 90 checks."])
-        self.assertEqual(lines, ["*Cockpit guardian, 13 Oct 09:00 Kuwait time. Last scan under a minute ago in fix mode*", "",
-                                 "*Broken now (1):*", "• Meta access (since 11 Oct): Settle it. (the CEO)", "",
-                                 "Could not be checked (2): A, B.", "*Healthy: 80 of 90 checks.*"])
+        self.assertEqual(lines, ["*Cockpit guardian · 13 Oct 09:00 Kuwait time*", "_Last scan under a minute ago in fix mode._", "",
+                                 "*Broken now (1)*", "• Meta access (since 11 Oct): Settle it. (the CEO)", "",
+                                 "Could not be checked (2): A, B.", "_Healthy: 80 of 90 checks._"])
+
+
+class Blocks(unittest.TestCase):
+    """What Slack draws: a large title, sections between dividers, the owner line small and grey (like PULSE)."""
+
+    def sent(self, text):
+        bodies = []
+        alerts.Slack("xoxb-test", "C1", post=lambda body: bodies.append(body)).send(text)
+        return bodies[0]
+
+    def kinds(self, blocks):
+        return [b["type"] for b in blocks]
+
+    def test_an_opening(self):
+        b = Box(fixable=False)
+        b.check = dataclasses.replace(b.check, owner="the systems manager")
+        h = Harness([b.check])
+        b.result = fail("Demo has not run for 3 h.")
+        h.scan()
+        body = self.sent(h.posted[0])
+        self.assertEqual(body["text"], h.posted[0], "the text stays as the notification")
+        blocks = body["blocks"]
+        self.assertEqual(self.kinds(blocks), ["header", "section", "divider", "section", "divider", "context"])
+        self.assertEqual(blocks[0]["text"], {"type": "plain_text", "text": "🔴 Broken: Demo job", "emoji": True})
+        self.assertEqual(blocks[3]["text"]["text"], "*What to do*\nRead the demo log.")
+        self.assertIn(MUHAMMED, blocks[5]["elements"][0]["text"])
+
+    def test_a_change_sits_small_under_the_title(self):
+        text = alerts.worse_text({"title": "Demo job", "level": "fail", "detail": "late", "owner": "the CEO", "check_id": "demo"},
+                                 None, fakes.NOW, "fix", ["it went from warning to broken"])
+        blocks = self.sent(text)["blocks"]
+        self.assertEqual(self.kinds(blocks)[:3], ["header", "context", "section"])
+        self.assertEqual(blocks[1]["elements"][0]["text"], "It went from warning to broken.")
+
+    def test_a_resolution_is_quiet(self):
+        text = alerts.resolved_text({"title": "Salma", "first_seen_at": fakes.ago(65), "resolved_by": "it cleared by itself"}, fakes.NOW)
+        self.assertEqual(self.kinds(self.sent(text)["blocks"]), ["section", "context"])
+
+    def test_the_daily_summary(self):
+        text = "\n".join(report.slack_layout(["Cockpit guardian, 13 Oct 09:00 Kuwait time. Last scan 2 min ago in fix mode.", "",
+                                               "Broken now (1):", "- Meta access: Settle it. (the systems manager)", "",
+                                               "Watching (2):", "- A: do a.", "- B: do b.", "", "Healthy: 80 of 90 checks."]))
+        blocks = self.sent(text)["blocks"]
+        self.assertEqual(self.kinds(blocks), ["header", "context", "divider", "section", "divider", "section", "divider", "context"])
+        self.assertEqual(blocks[0]["text"]["text"], "Cockpit guardian · 13 Oct 09:00 Kuwait time")
+        self.assertEqual(blocks[5]["text"]["text"], "*Watching (2)*\n• A: do a.\n• B: do b.")
+
+    def test_slack_limits(self):
+        from guard import blocks as bk
+        long = bk.to_blocks("🔴 *" + "x" * 300 + "*\n" + "\n".join("line %d %s" % (i, "y" * 80) for i in range(60)))
+        self.assertLessEqual(len(long[0]["text"]["text"]), 150)
+        self.assertTrue(all(len(b["text"]["text"]) <= 3000 for b in long if b["type"] == "section"))
+        self.assertIsNone(bk.to_blocks("*T*\n" + "\n\n".join("p%d" % i for i in range(40))), "over 50 blocks: text only")
 
 
 class Better(unittest.TestCase):

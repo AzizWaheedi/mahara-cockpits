@@ -122,15 +122,23 @@ def build(state: dict[str, Any], checks: dict[str, Any], now: datetime, *, for_s
 
 
 def slack_layout(lines: list[str]) -> list[str]:
-    """Slack mrkdwn for the 09:00 post (13 Oct 2026): bold headline and section names, real bullets."""
-    out = []
+    """The 09:00 post in the shape guard/blocks.py turns into Block Kit (13 Oct 2026): a title, the scan line small
+    and grey under it, one section per group with its name in bold, bullets, and the totals small at the end."""
+    head = next((l for l in lines if l.startswith("Cockpit guardian, ")), "")
+    title, _, rest = head.rstrip(".").partition(". ")
+    out = [f"*{title.replace('Cockpit guardian, ', 'Cockpit guardian · ')}*"]
+    if rest:
+        out.append(f"_{rest}._")
+    out += [f"_⚠️ {l}_" for l in lines if l.startswith("The guardian has not scanned")]
     for line in lines:
+        if line == head or line.startswith("The guardian has not scanned"):
+            continue
         if line.startswith("- "):
             line = "• " + line[2:]
-        elif line.startswith("Cockpit guardian, "):
-            line = f"*{line.rstrip('.')}*"
-        elif line and (line.endswith(":") or line.startswith(("Broken now: nothing", "Healthy: "))):
-            line = f"*{line}*"
+        elif line.startswith(("Healthy: ", "Note: ")):
+            line = f"_{line}_"
+        elif line and (line.endswith(":") or line.startswith("Broken now: nothing")):
+            line = f"*{line.rstrip(':')}*"
         out.append(line)
     return out
 

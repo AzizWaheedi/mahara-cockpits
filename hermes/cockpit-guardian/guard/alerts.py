@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from . import http
+from .blocks import to_blocks
 from .model import KUWAIT, ago, kuwait, parse_time
 from .redact import clean
 
@@ -167,6 +168,9 @@ class Slack:
         if not self.ready:
             return "SLACK_BOT_TOKEN or SLACK_HEALTH_CHANNEL is not set"
         body = {"channel": self.channel, "text": text[:3800], "unfurl_links": False, "unfurl_media": False}
+        blocks = to_blocks(text[:3800])
+        if blocks:
+            body["blocks"] = blocks  # the text stays as the notification and fallback
         if self._post:
             return self._post(body)
         try:
