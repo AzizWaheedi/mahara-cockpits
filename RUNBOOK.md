@@ -685,11 +685,22 @@ first and refuses the ship unless all three are true:
 1. `HEAD` is already on `origin/main` (fetched during the check).
 2. The app directory matches that commit. A dirty tree is uploaded under the
    last commit's name.
-3. The commit named in the live page's bundle is in this clone and is an
-   ancestor of `HEAD`. If production is a commit this clone does not have,
-   shipping main would replace it with an older tree.
+3. The commit production serves, read from Vercel's record of the live
+   deployment (`scripts/check-vercel-project.py <app dir>
+   --production-in-head`), is in this clone and in `HEAD`, by name or as the
+   same patch after a rebase. If production is a commit this clone does not
+   have, or has commits `HEAD` lacks, shipping would take it backwards.
+   `scripts/ship-preflight.sh` runs the same check, so a stale worktree stops
+   in seconds. Until 2026-10-13 this read a commit stamp in the live bundle.
+   No cockpit bundle carries that stamp any more, so the comparison was
+   skipped on every ship with only a note.
 
 `ALLOW_UNPUSHED_SHIP=yes` skips the refusal and says so. That is the hole.
+If production's commit cannot be read (CLI signed out, no commit on the
+deployment), the ship stops. `ALLOW_UNKNOWN_PRODUCTION=yes` lets it continue
+after someone has checked production another way. It never covers a
+production that has commits `HEAD` lacks. To go back on purpose, promote an
+earlier deployment in Vercel.
 
 On 2026-09-22 the media buyer project (`mahara-media-buyer`, source `cli`,
 user `aziz-6097`) promoted two commits that GitHub has never had. There was

@@ -87,17 +87,25 @@ if ! prep=$(scripts/prepare-worktree.sh 2>&1); then
   done <<<"$prep"
 fi
 
+vercel_problem=""
 if ! command -v vercel >/dev/null 2>&1; then
-  problems+=("The Vercel CLI is not installed. Install it (npm i -g vercel) and run vercel login")
+  vercel_problem="The Vercel CLI is not installed. Install it (npm i -g vercel) and run vercel login"
 elif ! vercel whoami ${VERCEL_TOKEN:+--token "$VERCEL_TOKEN"} >/dev/null 2>&1; then
-  problems+=("The Vercel CLI is not signed in. Run vercel login")
+  vercel_problem="The Vercel CLI is not signed in. Run vercel login"
 fi
+[ -n "$vercel_problem" ] && problems+=("$vercel_problem")
 
 # The deploy refuses a commit GitHub main does not have, or an app folder
 # that differs from it (scripts/require-github-main.sh). Say so now.
 if git fetch --quiet origin main 2>/dev/null; then
   if ! git merge-base --is-ancestor HEAD origin/main; then
     problems+=("$(git rev-parse --short HEAD) is not on origin/main. Push it to main, or rebase onto origin/main and push")
+  elif [ -z "$vercel_problem" ]; then
+    # The deploy also refuses a commit that lacks what production serves, so
+    # an older worktree cannot take a newer fix off the site (2026-10-13).
+    for d in "${dirs[@]}"; do
+      out=$("$py_bin" scripts/check-vercel-project.py "$d" --production-in-head 2>&1) || problems+=("$d: $out")
+    done
   fi
 else
   problems+=("Could not fetch origin main to check that this commit is on GitHub")

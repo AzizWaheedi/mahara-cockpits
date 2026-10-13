@@ -46,7 +46,7 @@ class ShipPreflightTest(unittest.TestCase):
         self.repo = self.tmp / "work"
         (self.repo / "scripts").mkdir(parents=True)
         (self.repo / "config").mkdir()
-        for name in ("ship-preflight.sh", "prepare-worktree.sh"):
+        for name in ("ship-preflight.sh", "prepare-worktree.sh", "check-vercel-project.py"):
             shutil.copy(ROOT / "scripts" / name, self.repo / "scripts" / name)
         shutil.copy(ROOT / "config" / "vercel-projects.json", self.repo / "config" / "vercel-projects.json")
         for app in APPS:
@@ -68,10 +68,26 @@ class ShipPreflightTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def vercel(self, signed_in):
+    def vercel(self, signed_in, production="HEAD"):
+        """A stub CLI: `vercel api` answers with the production deployment.
+
+        `production` is the commit production serves ("HEAD" by default,
+        None for a deployment that names no commit).
+        """
+        code = 0 if signed_in else 1
+        config = json.loads((self.repo / "config" / "vercel-projects.json").read_text())["apps/client-success-cockpit"]
+        sha = subprocess.run(["git", "rev-parse", production], cwd=self.repo, capture_output=True, text=True,
+                             check=True).stdout.strip() if production else None
+        deployment = {"id": "dpl_live", "projectId": config["projectId"], "ownerId": config["orgId"],
+                      "meta": {"gitCommitSha": sha} if sha else {}}
+        (self.stub / "deployment.json").write_text(json.dumps(deployment))
         stub = self.stub / "vercel"
-        stub.write_text("#!/usr/bin/env bash\nexit %d\n" % (0 if signed_in else 1), newline="\n")
+        stub.write_text('#!/usr/bin/env bash\n[ "$1" = api ] && cat "$(dirname "$0")/deployment.json"\nexit %d\n' % code,
+                        newline="\n")
         stub.chmod(0o755)
+        # check-vercel-project.py looks for vercel.cmd first on Windows.
+        (self.stub / "vercel.cmd").write_text('@echo off\r\nif "%%1"=="api" type "%%~dp0deployment.json"\r\nexit /b %d\r\n' % code,
+                                              newline="")
 
     def run_preflight(self, **values):
         env = {k: v for k, v in os.environ.items() if k not in SECRET_NAMES}
@@ -151,6 +167,30 @@ class ShipPreflightTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("is not on origin/main", out)
         self.assertIn("apps/client-success-cockpit has uncommitted changes", out)
+
+    def test_older_worktree_than_production_is_refused(self):
+        # 2026-10-13: a worktree from before the screen-blip fix could still
+        # ship and take the fix off the site, because the comparison with
+        # production was skipped on every ship.
+        self.prepare()
+        (self.repo / "fix.txt").write_text("fix\n")
+        git(self.repo, "add", "fix.txt")
+        git(self.repo, "commit", "-q", "-m", "screens survive a blip")
+        git(self.repo, "push", "-q", "origin", "main")
+        self.vercel(signed_in=True, production="HEAD")
+        git(self.repo, "reset", "-q", "--hard", "HEAD~1")
+        code, out = self.run_preflight(**self.ready_values())
+        self.assertEqual(code, 1, out)
+        self.assertIn("1 commit(s)", out)
+        self.assertIn("screens survive a blip", out)
+
+    def test_production_that_names_no_commit_stops_the_ship(self):
+        self.prepare()
+        self.vercel(signed_in=True, production=None)
+        code, out = self.run_preflight(**self.ready_values())
+        self.assertEqual(code, 1, out)
+        self.assertIn("does not name the commit", out)
+        self.assertIn("ALLOW_UNKNOWN_PRODUCTION=yes", out)
 
     def test_signed_out_vercel_is_named(self):
         self.prepare()

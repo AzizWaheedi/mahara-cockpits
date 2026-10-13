@@ -135,10 +135,11 @@ ship() {
   fi
 
   # The CLI upload stamps local HEAD and does not check GitHub. Refuse a
-  # commit main does not have, a dirty app directory, or a production SHA
-  # this clone cannot see (2026-09-22, cockpit.maharamedia.com on 7efca15f).
+  # commit main does not have, a dirty app directory, or a production this
+  # commit does not contain (2026-09-22, cockpit.maharamedia.com on 7efca15f;
+  # 2026-10-13, the production comparison had been skipped on every ship).
   echo "== $app: source is on GitHub main"
-  scripts/require-github-main.sh "$dir" "$SITE"
+  scripts/require-github-main.sh "$dir"
   # So the Composio path, which ship calls only after this, does not fetch
   # and decide again. A direct run of that script still checks.
   export GITHUB_MAIN_OK=1

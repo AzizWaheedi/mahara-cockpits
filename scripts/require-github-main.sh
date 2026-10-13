@@ -14,49 +14,28 @@
 # repo mahara-cockpits. GitHub's push log has no force-push that would have
 # deleted them: they were never pushed.
 #
-# ALLOW_UNPUSHED_SHIP=yes skips the refusal. It is the hole this script
-# exists to close, so it prints the local SHA and the live SHA and then
-# stops protecting you.
+# Production must also be contained in what is shipped. Its commit comes from
+# Vercel's record of the live deployment (check-vercel-project.py
+# --production-in-head), read before anything is uploaded. Until 2026-10-13
+# this script read it from a stamp in the live bundle, which no cockpit
+# bundle carries any more, so the comparison was skipped on every ship with
+# only a note. An unread production commit now stops the ship.
+#
+# ALLOW_UNPUSHED_SHIP=yes skips every refusal here. It is the hole this script
+# exists to close, so it says so and then stops protecting you.
+# ALLOW_UNKNOWN_PRODUCTION=yes only lets the ship continue when production's
+# commit cannot be read; a production with commits HEAD lacks still stops it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-dir="${1:?usage: scripts/require-github-main.sh <app dir> [site url]}"
+dir="${1:?usage: scripts/require-github-main.sh <app dir>}"
 [ -d "$dir" ] || { echo "no such app directory: $dir"; exit 2; }
 py_bin="python"
 command -v python >/dev/null 2>&1 || py_bin="python3"
 "$py_bin" scripts/check-vercel-project.py "$dir"
 
-case "$dir" in
-  apps/media-buyer-cockpit)      default_site=https://cockpit.maharamedia.com ;;
-  apps/client-success-cockpit)   default_site=https://cockpit.maharamedia.com/client-success ;;
-  apps/creative-director-cockpit) default_site=https://cockpit.maharamedia.com/creative ;;
-  apps/video-editor-cockpit)     default_site=https://cockpit.maharamedia.com/editor ;;
-  apps/sales-cockpit)            default_site=https://cockpit.maharamedia.com/sales ;;
-  *) default_site="" ;;
-esac
-site="${2:-$default_site}"
-
-# The entry bundle of a Vite deploy on Vercel carries the commit the CLI
-# stamped. Read that, not the Vercel API, so the check needs no token.
-live_sha=""
-if [ -n "$site" ]; then
-  html=$(curl -fsS -m 20 -H 'Cache-Control: no-cache' "$site/?cb=$RANDOM") \
-    || { echo "refusing to ship: could not read $site"; exit 1; }
-  js_path=$(printf '%s' "$html" | grep -oE 'src="[^"]*index-[A-Za-z0-9_-]+\.js"' | head -1 | sed -E 's/^src="([^"]+)".*/\1/' || true)
-  if [ -n "$js_path" ]; then
-    case "$js_path" in
-      http*) js_url="$js_path" ;;
-      /*)    js_url="https://cockpit.maharamedia.com$js_path" ;;
-      *)     js_url="${site%/}/$js_path" ;;
-    esac
-    js=$(curl -fsS -m 40 "$js_url") || { echo "refusing to ship: could not read $js_url"; exit 1; }
-    live_sha=$(printf '%s' "$js" | grep -oE 'VITE_VERCEL_GIT_COMMIT_SHA:"[0-9a-f]{40}"' | head -1 | sed -E 's/.*"([0-9a-f]{40})".*/\1/' || true)
-  fi
-fi
-
 head_sha=$(git rev-parse HEAD)
 if [ "${ALLOW_UNPUSHED_SHIP:-}" = "yes" ]; then
-  echo "ALLOW_UNPUSHED_SHIP=yes — shipping $(git rev-parse --short "$head_sha") with no check that GitHub has it."
-  [ -n "$live_sha" ] && echo "  production is currently $live_sha. This can replace it."
+  echo "ALLOW_UNPUSHED_SHIP=yes — shipping $(git rev-parse --short "$head_sha") with no check that GitHub has it or that it contains production."
   exit 0
 fi
 
@@ -78,34 +57,6 @@ if [ -n "$dirty" ]; then
   exit 1
 fi
 
-if [ -n "$live_sha" ]; then
-  if ! git cat-file -e "${live_sha}^{commit}" 2>/dev/null; then
-    echo "refusing to ship $dir: production is $live_sha, and this clone does not have that commit."
-    echo "It was uploaded from another checkout and never pushed (media buyer, 2026-09-22: db78d278, then 7efca15f, both still absent from GitHub)."
-    echo "Push it from the machine that shipped it — Aziz Waheedi's clone, reflog around those SHAs — before deploying again."
-    echo "Deploying GitHub main from here would replace that production with an older tree."
-    exit 1
-  fi
-  if ! git merge-base --is-ancestor "$live_sha" "$head_sha"; then
-    # A rebase gives the same commits new names: production built from the
-    # old name is still contained in HEAD when every commit it has beyond
-    # the fork point is in HEAD as the same patch (git cherry marks those
-    # "-", and a commit HEAD really lacks "+"). 2026-09-23: production was
-    # 7efca15, rebased onto main as 7a7668e with an identical patch.
-    base=$(git merge-base "$live_sha" "$head_sha")
-    lacking=$(git cherry "$head_sha" "$live_sha" "$base" | grep -c '^+' || true)
-    if [ "$lacking" -ne 0 ]; then
-      echo "refusing to ship $dir: production is $(git rev-parse --short "$live_sha"), which is not an ancestor of $(git rev-parse --short "$head_sha")."
-      echo "It has $lacking commit(s) this tree does not have, by name or by patch:"
-      git cherry -v "$head_sha" "$live_sha" "$base" | grep '^+' | sed 's/^/  /'
-      echo "This deploy would move production sideways or backwards."
-      exit 1
-    fi
-    echo "ship source: $(git rev-parse --short "$head_sha") is on origin/main; production $(git rev-parse --short "$live_sha") is in it under rebased names (every patch the same); $dir is clean"
-  else
-    echo "ship source: $(git rev-parse --short "$head_sha") is on origin/main; production $(git rev-parse --short "$live_sha") is contained in it; $dir is clean"
-  fi
-else
-  echo "ship source: $(git rev-parse --short "$head_sha") is on origin/main and $dir is clean"
-  echo "  (the live page did not name a commit, so this did not compare against production)"
-fi
+# Before upload: production's commit must be in HEAD, by name or by patch.
+"$py_bin" scripts/check-vercel-project.py "$dir" --production-in-head
+echo "ship source: $(git rev-parse --short "$head_sha") is on origin/main and $dir is clean"
