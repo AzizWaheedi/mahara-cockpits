@@ -10,6 +10,8 @@ import {
   isPersonChange,
   formAnswers,
   recordingIn,
+  checkinClient,
+  CHECKIN_TASK_REF,
   type Client,
   type Change,
 } from "./match";
@@ -128,5 +130,49 @@ describe("forms", () => {
     expect(nearestCheckin("t", now, calls)).toBe(1);
     expect(nearestCheckin("t", now + 40 * 3_600_000, calls)).toBeUndefined();
     expect(nearestCheckin("other", now, calls)).toBeUndefined();
+  });
+});
+
+describe("1-1 check-in form", () => {
+  const valid = new Set(clients.map(c => c.taskId));
+  const form = (hidden: Record<string, string> | undefined, typed?: string) => ({
+    ...(hidden ? { hidden } : {}),
+    answers: typed === undefined ? [] : [{ type: "text", text: typed, field: { ref: CHECKIN_TASK_REF, type: "short_text" } }],
+  });
+  test("the link's hidden task_id beats a different typed id, and the difference is flagged", () => {
+    expect(checkinClient(form({ task_id: "86eyt1d33" }, "86ewvnqh5"), valid)).toMatchObject({
+      taskId: "86eyt1d33",
+      by: "hidden_field",
+      typed: "86ewvnqh5",
+      disagree: true,
+    });
+    expect(checkinClient(form({ task_id: "86eyt1d33" }, "86eyt1d33"), valid)).toMatchObject({ by: "hidden_field", disagree: false });
+  });
+  test("a blank hidden task_id falls back to the typed id", () => {
+    for (const hidden of [undefined, {}, { task_id: "" }, { task_id: "  " }])
+      expect(checkinClient(form(hidden, " 86ewvnqh5 "), valid)).toMatchObject({
+        taskId: "86ewvnqh5",
+        by: "typed_task_id",
+        typed: "86ewvnqh5",
+        hidden: null,
+        disagree: false,
+      });
+  });
+  test("a hidden id that is not a client falls back to the typed id", () => {
+    expect(checkinClient(form({ task_id: "not-a-card" }, "z8xmdvgf5g"), valid)).toMatchObject({
+      taskId: "z8xmdvgf5g",
+      by: "typed_task_id",
+      hidden: "not-a-card",
+      disagree: true,
+    });
+  });
+  test("neither gives no client and says why", () => {
+    expect(checkinClient(form(undefined), valid)).toMatchObject({
+      taskId: null,
+      by: null,
+      reason: "Opened without the client's link and no Client ID typed",
+    });
+    expect(checkinClient(form({ task_id: "gone" }, "typo"), valid)).toMatchObject({ taskId: null, by: null });
+    expect(checkinClient(form(undefined, "typo"), valid).reason).toBe('Typed client ID "typo" is not a client on the board');
   });
 });

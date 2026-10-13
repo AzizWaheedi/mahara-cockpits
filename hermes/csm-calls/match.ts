@@ -289,6 +289,50 @@ export function formAnswers(item: Row, titles: Map<string, string>): Row[] {
   }));
 }
 
+/** The 1-1 check-in form's typed "Client ID" question. */
+export const CHECKIN_TASK_REF = "c484f390-9695-4ffa-9693-9cc219592713";
+
+/**
+ * Who a 1-1 check-in form (fRokTITH) belongs to. The client page opens it with
+ * the card id in the hidden field task_id, so that wins when it is a client on
+ * the board; else the Client ID typed into the form; else no one. The typed
+ * answer is always kept, and a link and a typed id that differ are flagged.
+ */
+export function checkinClient(
+  item: Row,
+  valid: Set<string>,
+): {
+  taskId: string | null;
+  by: "hidden_field" | "typed_task_id" | null;
+  typed: string | null;
+  hidden: string | null;
+  disagree: boolean;
+  reason?: string;
+} {
+  const typed =
+    String((item.answers ?? []).find((a: Row) => a.field?.ref === CHECKIN_TASK_REF)?.text ?? "").trim() || null;
+  const hidden = String(item.hidden?.task_id ?? "").trim() || null;
+  const disagree = !!hidden && !!typed && hidden !== typed;
+  if (hidden && valid.has(hidden)) return { taskId: hidden, by: "hidden_field", typed, hidden, disagree };
+  if (typed && valid.has(typed)) return { taskId: typed, by: "typed_task_id", typed, hidden, disagree };
+  const q = (s: string) => `"${s.slice(0, 30)}"`;
+  return {
+    taskId: null,
+    by: null,
+    typed,
+    hidden,
+    disagree,
+    reason:
+      hidden && typed
+        ? `Neither the link's client ID ${q(hidden)} nor the typed ${q(typed)} is a client on the board`
+        : hidden
+          ? `The link's client ID ${q(hidden)} is not a client on the board and no Client ID typed`
+          : typed
+            ? `Typed client ID ${q(typed)} is not a client on the board`
+            : "Opened without the client's link and no Client ID typed",
+  };
+}
+
 /** Field titles by ref and id, including fields nested in groups. */
 export function fieldTitles(definition: Row): Map<string, string> {
   const out = new Map<string, string>();

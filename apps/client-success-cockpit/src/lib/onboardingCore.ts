@@ -94,6 +94,18 @@ export function kickoffFormLink(taskId: string): string {
   return `https://maharamedia.typeform.com/to/${FORMS.kickoff}#onboarding_client_id=${encodeURIComponent(taskId)}`;
 }
 
+/**
+ * The 1-1 check-in form (fRokTITH) for one client: the card id rides in the
+ * hidden field task_id, so the response is tied to the client without
+ * typing. Typeform drops the value until the form declares the field, and
+ * the typed Client ID stays the fallback. No id, the bare link.
+ */
+export function checkinFormLink(taskId?: string | null): string {
+  const base = "https://maharamedia.typeform.com/to/fRokTITH";
+  const id = String(taskId ?? "").trim();
+  return id ? `${base}#task_id=${encodeURIComponent(id)}` : base;
+}
+
 /** Everything before a client is live, as the roster's bucket says (media buyer csmSync ONBOARDING). */
 export const ONBOARDING_STAGES = new Set([
   "Needs Contacting",

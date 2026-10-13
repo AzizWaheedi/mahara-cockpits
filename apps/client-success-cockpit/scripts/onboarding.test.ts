@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 import {
   answerValue,
   cardRow,
+  checkinFormLink,
   F,
   FORMS,
   formsFor,
@@ -319,5 +320,23 @@ describe("titles and values", () => {
     expect(onboardingFormLink("z8xmdvffcd")).toBe(
       "https://maharamedia.typeform.com/to/KFRCXPFx#onboarding_client_id=z8xmdvffcd",
     );
+  });
+});
+
+describe("the 1-1 check-in form", () => {
+  test("carries the card id in the hidden task_id", () => {
+    expect(checkinFormLink("86c1abc2d")).toBe(
+      "https://maharamedia.typeform.com/to/fRokTITH#task_id=86c1abc2d",
+    );
+    expect(checkinFormLink(" a b&c ")).toBe(
+      "https://maharamedia.typeform.com/to/fRokTITH#task_id=a%20b%26c",
+    );
+  });
+
+  test("no id gives the bare link, so the typed Client ID still works", () => {
+    for (const id of ["", "  ", null, undefined])
+      expect(checkinFormLink(id)).toBe(
+        "https://maharamedia.typeform.com/to/fRokTITH",
+      );
   });
 });

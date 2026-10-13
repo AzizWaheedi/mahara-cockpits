@@ -16,6 +16,7 @@ import {
   titleKind,
   formAnswers,
   fieldTitles,
+  checkinClient,
   recordingIn,
   nearestCheckin,
   changesForClient,
@@ -36,7 +37,6 @@ export const FORMS: Record<string, string> = {
   BbJy6xg4: "kickoff_old",
   oYZKtogO: "blueprint",
 };
-const TASK_REF = "c484f390-9695-4ffa-9693-9cc219592713";
 const TRANSCRIPT_REF = "0773087f-beda-4e2c-bf50-acdac0dcbe05";
 const DAY = 86_400_000;
 
@@ -239,19 +239,21 @@ export async function typeformSource(ctx: Ctx): Promise<Health[]> {
     const { items, total } = await allResponses(t, form);
     let matched = 0;
     const bad: string[] = [];
+    const byMethod: Record<string, number> = {};
+    let disagree = 0;
     let newest = "";
     for (const item of items) {
       if (!item?.token || !Number.isFinite(Date.parse(item.submitted_at))) continue;
       const answers = formAnswers(item, titles);
       let task: string | null = null,
         by: string | null = null,
-        typed: string | null = null;
+        typed: string | null = null,
+        reason: string | undefined;
       if (form === "fRokTITH") {
-        typed = String((item.answers ?? []).find((a: Row) => a.field?.ref === TASK_REF)?.text ?? "").trim() || null;
-        if (typed && valid.has(typed)) {
-          task = typed;
-          by = "typed_task_id";
-        }
+        // The client page's link carries the card id (hidden task_id); the typed Client ID is the fallback.
+        const who = checkinClient(item, valid);
+        ({ taskId: task, by, typed, reason } = who);
+        if (who.disagree) disagree++;
       } else {
         const hid = String(item.hidden?.onboarding_client_id ?? "").trim();
         if (hid && valid.has(hid)) {
@@ -264,8 +266,10 @@ export async function typeformSource(ctx: Ctx): Promise<Health[]> {
         task = prior.task_id;
         by = "manual";
       }
-      if (task) matched++;
-      else if (form === "fRokTITH") bad.push(typed ?? "(blank)");
+      if (task) {
+        matched++;
+        if (by) byMethod[by] = (byMethod[by] ?? 0) + 1;
+      } else if (form === "fRokTITH") bad.push(typed ?? "(blank)");
       if (item.submitted_at > newest) newest = item.submitted_at;
       const row: Row = {
         token: String(item.token),
@@ -283,12 +287,20 @@ export async function typeformSource(ctx: Ctx): Promise<Health[]> {
       formRows.push(row);
       if (form === "fRokTITH") {
         const transcript = (item.answers ?? []).find((a: Row) => a.field?.ref === TRANSCRIPT_REF)?.text;
-        checkins.push({ row, transcript: transcript ? String(transcript) : null });
+        checkins.push({ row, transcript: transcript ? String(transcript) : null, reason });
         const share = /https:\/\/fathom\.video\/share\/[A-Za-z0-9_-]+/.exec(String(transcript ?? ""))?.[0];
         if (share && task) ctx.shareToTask.set(share, task);
       }
     }
-    counts[form] = { total, stored: items.length, matched, unmatched: items.length - matched, newest, bad: bad.slice(0, 10) };
+    counts[form] = {
+      total,
+      stored: items.length,
+      matched,
+      unmatched: items.length - matched,
+      newest,
+      bad: bad.slice(0, 10),
+      ...(form === "fRokTITH" ? { byMethod, disagree } : {}),
+    };
   }
   ctx.plan.typeform = counts;
 
@@ -342,10 +354,10 @@ export async function typeformSource(ctx: Ctx): Promise<Health[]> {
         if (stale && stale.status !== "gone")
           await db.patch("cockpit_csm_calls", `id=eq.${stale.id}`, { status: "gone", linked_call_id: row.linked_call_id, updated_at: iso(ctx.now) });
       }
-    for (const r of formRows)
-      if (!r.task_id && r.form_id === "fRokTITH")
+    for (const { row: r, reason } of checkins)
+      if (!r.task_id)
         ctx.reasons.set(`form:${r.token}`, {
-          reason: r.typed_client ? `Typed client ID "${String(r.typed_client).slice(0, 30)}" is not a client on the board` : "No client ID typed",
+          reason: reason ?? "No client on the board",
           title: "1-1 call notes form",
           at: r.submitted_at,
         });
@@ -355,7 +367,7 @@ export async function typeformSource(ctx: Ctx): Promise<Health[]> {
     key: "csm-checkin-form",
     ok: true,
     rows: ck.stored,
-    note: `${ck.stored} of ${ck.total} 1-1 forms stored, ${ck.matched} matched to a client (${linked} linked to a booked check-in, ${own.length} on their own), ${ck.unmatched} with a typed ID that is not a client. Newest ${String(ck.newest).slice(0, 10)}.`,
+    note: `${ck.stored} of ${ck.total} 1-1 forms stored, ${ck.matched} matched to a client (${ck.byMethod.hidden_field ?? 0} by the client page's link, ${ck.byMethod.typed_task_id ?? 0} by the typed ID${ck.byMethod.manual ? `, ${ck.byMethod.manual} by hand` : ""}; ${linked} linked to a booked check-in, ${own.length} on their own), ${ck.unmatched} with no client link and no typed ID on the board${ck.disagree ? `, ${ck.disagree} where the link and the typed ID differ` : ""}. Newest ${String(ck.newest).slice(0, 10)}.`,
     detail: { ...ck, linked, ownCalls: own.length },
   });
   const others = Object.entries(counts).filter(([f]) => f !== "fRokTITH");

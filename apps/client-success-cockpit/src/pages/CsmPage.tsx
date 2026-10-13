@@ -74,7 +74,6 @@ import {
   humanise,
   isChurned,
   type Lang,
-  LINKS,
   nextCall,
   nextPocState,
   serviceModel,
@@ -90,7 +89,11 @@ import {
   readOnboardingKits,
   refreshOnboardingKits,
 } from "@/lib/onboardingClient";
-import type { KitsPage, OnboardingRow } from "@/lib/onboardingCore";
+import {
+  checkinFormLink,
+  type KitsPage,
+  type OnboardingRow,
+} from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
 import { portalUrl } from "@/lib/portal";
@@ -605,7 +608,7 @@ function TemplatePicker({
         {c.noteMissing && (
           <a
             className="inline-flex items-center gap-1.5 font-medium txt-bad underline-offset-4 hover:underline"
-            href={LINKS.callSummaryForm}
+            href={checkinFormLink(c.taskId)}
             target="_blank"
             rel="noreferrer"
           >
@@ -1851,7 +1854,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </div>
               <p className="text-xs text-muted-foreground">
                 The call summary form is still the record of the call:{" "}
-                <ExtLink href={LINKS.callSummaryForm}>
+                <ExtLink href={checkinFormLink(c.taskId)}>
                   1-1 call summary form
                 </ExtLink>
                 .
