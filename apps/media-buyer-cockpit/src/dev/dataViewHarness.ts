@@ -15,6 +15,8 @@ const CLIENTS = [
   { location_id: "harness-loc-harbor", name: "Harbor Interiors" },
   { location_id: "harness-loc-dune", name: "Dune Contracting" },
   { location_id: "harness-loc-palm", name: "Palm Studio" },
+  // An account the cockpit does not count bookings for (Mahara's own sales).
+  { location_id: "harness-loc-own", name: "Mahara sales" },
 ];
 const FIRST = [
   "Sara",
@@ -114,14 +116,24 @@ function build() {
         lead_quality: status === "showed" ? 3 + (i % 3) : null,
         not_closed_reason: null,
         outcome_at: status === "showed" ? iso(start + 2 * HOUR) : null,
-        cockpit: !meta
-          ? "not_ad"
-          : i % 24 === 0
-            ? "missing"
-            : i % 18 === 0
-              ? "twice"
-              : "counted",
+        cockpit:
+          c.location_id === "harness-loc-own"
+            ? "not_tracked"
+            : status === "cancelled" || calendarEvent
+              ? "left_out"
+              : i % 24 === 0
+                ? "missing"
+                : i % 18 === 0
+                  ? "twice"
+                  : "counted",
         cockpit_at: meta && i % 24 !== 0 ? iso(at + 1 * HOUR) : null,
+        // Some results live only in the sheet (attended), not in GHL.
+        result:
+          status === "showed" || status === "noshow"
+            ? status
+            : status === "confirmed" && start < NOW && i % 3 === 0
+              ? "showed"
+              : null,
         // Some bookings are not in the client portal yet; one agent is new.
         notes:
           i % 7 === 0
@@ -138,6 +150,8 @@ function build() {
 const DATA = build();
 const since = (days: number) => NOW - days * 24 * HOUR;
 const past = (r: Row) => Date.parse(String(r.start_at)) <= NOW;
+const counted = (r: Row) =>
+  ["counted", "twice", "by_day"].includes(String(r.cockpit));
 
 const LEAD_FILTERS: Record<string, (r: Row) => boolean> = {
   any: () => true,
@@ -152,12 +166,16 @@ const APPT_FILTERS: Record<string, (r: Row) => boolean> = {
   any: () => true,
   all: () => true,
   upcoming: r => !past(r) && r.status !== "cancelled",
-  showed: r => r.status === "showed",
+  showed: r => r.result === "showed",
   not_counted: r => r.cockpit === "missing",
   twice: r => r.cockpit === "twice",
   no_result: r =>
-    past(r) && r.status === "confirmed" && r.ghl_source !== "google_calendar",
+    past(r) &&
+    r.status === "confirmed" &&
+    !r.result &&
+    r.ghl_source !== "google_calendar",
   calendar: r => r.ghl_source === "google_calendar",
+  counted_no_result: r => counted(r) && past(r) && !r.result,
 };
 
 function scoped(kind: "leads" | "appointments", loc: unknown, days: unknown) {
@@ -167,6 +185,57 @@ function scoped(kind: "leads" | "appointments", loc: unknown, days: unknown) {
   return rows.filter(
     r => (!loc || r.location_id === loc) && Date.parse(String(r[at])) >= from,
   );
+}
+
+/** The Compare tab's booking line, by the same rules as the SQL. */
+function bookingLine(appts: Row[]) {
+  const line = appts.filter(
+    r => r.cockpit !== "not_tracked" && r.cockpit !== "not_ad",
+  );
+  const n = (f: (r: Row) => boolean) => line.filter(f).length;
+  const left = (r: Row) => r.cockpit === "left_out";
+  const outside = new Map<
+    string,
+    { location_id: string; client: string; n: number; meta: number }
+  >();
+  for (const r of appts.filter(r => r.cockpit === "not_tracked")) {
+    const o = outside.get(String(r.location_id)) ?? {
+      location_id: String(r.location_id),
+      client: String(r.client),
+      n: 0,
+      meta: 0,
+    };
+    o.n += 1;
+    if (r.lead_channel === "Meta") o.meta += 1;
+    outside.set(o.location_id, o);
+  }
+  return {
+    appts: line.length,
+    clients: new Set(line.map(r => r.location_id)).size,
+    counted: n(counted),
+    twice: n(r => r.cockpit === "twice"),
+    cancelled: n(r => left(r) && r.status === "cancelled"),
+    calendar: n(
+      r =>
+        left(r) &&
+        r.status !== "cancelled" &&
+        r.ghl_source === "google_calendar",
+    ),
+    provisional: n(
+      r =>
+        left(r) &&
+        r.status !== "cancelled" &&
+        r.ghl_source !== "google_calendar",
+    ),
+    other_booking: n(r => r.cockpit === "other_booking"),
+    not_counted: n(r => r.cockpit === "missing" || r.cockpit === "missing_old"),
+    ahead: n(r => counted(r) && !past(r)),
+    passed: n(r => counted(r) && past(r)),
+    showed: n(r => counted(r) && past(r) && r.result === "showed"),
+    noshow: n(r => counted(r) && past(r) && r.result === "noshow"),
+    outside: [...outside.values()].sort((a, b) => b.n - a.n),
+    old_not_ad: appts.filter(r => r.cockpit === "not_ad").length,
+  };
 }
 
 function summary(loc: unknown, days: unknown) {
@@ -193,14 +262,14 @@ function summary(loc: unknown, days: unknown) {
       meta_received: count(l, LEAD_FILTERS, "meta"),
       never_reached: 0,
       appts: a.length,
-      counted: a.filter(r => r.cockpit === "counted").length,
+      counted: a.filter(counted).length,
       not_counted: count(a, APPT_FILTERS, "not_counted"),
       twice: count(a, APPT_FILTERS, "twice"),
-      not_tracked: 0,
+      not_tracked: a.filter(r => r.cockpit === "not_tracked").length,
       calendar: count(a, APPT_FILTERS, "calendar"),
       no_result: count(a, APPT_FILTERS, "no_result"),
       passed: a.filter(past).length,
-      recorded: a.filter(r => past(r) && r.status !== "confirmed").length,
+      recorded: a.filter(r => !!r.result).length,
       showed: count(a, APPT_FILTERS, "showed"),
       upcoming: count(a, APPT_FILTERS, "upcoming"),
       cancelled: a.filter(r => r.status === "cancelled").length,
@@ -266,6 +335,7 @@ function summary(loc: unknown, days: unknown) {
       passed: sum("passed"),
       recorded: sum("recorded"),
       compare_to: "2026-10-10",
+      bookings: bookingLine(appts),
     },
     per_client: per,
     gap_days: [],

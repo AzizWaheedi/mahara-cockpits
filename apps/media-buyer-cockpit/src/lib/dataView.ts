@@ -19,6 +19,10 @@ export const COCKPIT_STATES = [
   "other_booking",
   "not_tracked",
   "not_ad",
+  // Cancelled, a Google Calendar copy, or on a provisional, callback,
+  // reschedule or personal calendar: the media sync skips these on purpose
+  // (migration 20261013d).
+  "left_out",
 ] as const;
 export type CockpitState = (typeof COCKPIT_STATES)[number];
 
@@ -91,6 +95,9 @@ export const apptRowSchema = z.object({
   notes: str.optional(),
   agent: str.optional(),
   agent_number: str.optional(),
+  // "showed" or "noshow": GHL's status, else the sheet's attended
+  // (2026-10-13). Absent before migration 20261013d.
+  result: str.optional(),
 });
 export type ApptRow = z.infer<typeof apptRowSchema>;
 
@@ -143,6 +150,39 @@ export const perClientSchema = z.object({
   won: z.number(),
 });
 export type PerClient = z.infer<typeof perClientSchema>;
+
+/**
+ * Bookings at clients the cockpit counts bookings for, step by step. Each
+ * step adds up to the one before: appts = counted + cancelled + calendar +
+ * provisional + other_booking + not_counted; counted = ahead + passed;
+ * passed = showed + noshow + no result. `outside` lists the accounts left
+ * out of the line.
+ */
+export const bookingLineSchema = z.object({
+  appts: z.number(),
+  clients: z.number(),
+  counted: z.number(),
+  twice: z.number(),
+  cancelled: z.number(),
+  calendar: z.number(),
+  provisional: z.number(),
+  other_booking: z.number(),
+  not_counted: z.number(),
+  ahead: z.number(),
+  passed: z.number(),
+  showed: z.number(),
+  noshow: z.number(),
+  outside: z.array(
+    z.object({
+      location_id: z.string(),
+      client: z.string(),
+      n: z.number(),
+      meta: z.number(),
+    }),
+  ),
+  old_not_ad: z.number(),
+});
+export type BookingLine = z.infer<typeof bookingLineSchema>;
 
 export const summarySchema = z.object({
   location_id: str,
@@ -201,6 +241,9 @@ export const summarySchema = z.object({
     passed: z.number(),
     recorded: z.number(),
     compare_to: z.string(),
+    // The booking line over clients the cockpit tracks. Absent before
+    // migration 20261013d.
+    bookings: bookingLineSchema.optional(),
   }),
   per_client: z.array(perClientSchema),
   gap_days: z.array(
@@ -340,15 +383,21 @@ export function plainMade(source: string | null): string {
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "grey";
 
+/** Showed or no-show: GHL's status first, then the sheet's attended. */
+export function outcome(a: Pick<ApptRow, "status" | "result">) {
+  if (a.status === "showed" || a.status === "noshow") return a.status;
+  return a.result === "showed" || a.result === "noshow" ? a.result : null;
+}
+
 /** What happened at the meeting, in words, with its tone. */
 export function result(
-  a: Pick<ApptRow, "status" | "start_at">,
+  a: Pick<ApptRow, "status" | "start_at" | "result">,
   now: number,
 ): [string, Tone] {
   const start = ms(a.start_at) ?? 0;
   if (a.status === "cancelled") return ["Cancelled", "grey"];
-  if (a.status === "showed") return ["Showed up", "ok"];
-  if (a.status === "noshow") return ["No-show", "bad"];
+  if (outcome(a) === "showed") return ["Showed up", "ok"];
+  if (outcome(a) === "noshow") return ["No-show", "bad"];
   if (start >= now) return ["Upcoming", "grey"];
   if (a.status === "confirmed") return ["Result not recorded", "warn"];
   return [a.status ? `Status: ${a.status}` : "No status", "grey"];
@@ -382,6 +431,7 @@ export function isNoResult(a: ApptRow, now: number) {
   return (
     (ms(a.start_at) ?? 0) < now &&
     a.status === "confirmed" &&
+    !outcome(a) &&
     a.ghl_source !== "google_calendar"
   );
 }
@@ -401,7 +451,7 @@ export function apptIssues(a: ApptRow, now: number): Issue[] {
     out.push({
       tone: "bad",
       label: "Cockpit did not count it",
-      why: "This Facebook lead booked in GHL, but the cockpit bookings card has no booking with this appointment id.",
+      why: "This booking is in GHL, but the cockpit bookings card has no booking with this appointment id.",
     });
   if (a.cockpit === "missing_old")
     out.push({
@@ -432,13 +482,24 @@ export function apptIssues(a: ApptRow, now: number): Issue[] {
     out.push({
       tone: "warn",
       label: "Result not recorded",
-      why: 'The meeting time passed, and nobody marked "showed" or "no-show" in GHL.',
+      why: 'The meeting time passed, and nobody marked "showed" or "no-show" in GHL or the sheet.',
     });
   if (a.cockpit === "not_tracked")
     out.push({
       tone: "grey",
       label: "Client not in the cockpit",
       why: "This client has no campaign and no bookings in the media buyer cockpit, so nothing there counts it.",
+    });
+  // A Google Calendar copy already says so above; cancelled shows as the result.
+  if (
+    a.cockpit === "left_out" &&
+    a.status !== "cancelled" &&
+    a.ghl_source !== "google_calendar"
+  )
+    out.push({
+      tone: "grey",
+      label: "Provisional or callback calendar",
+      why: `This booking is on the ${a.calendar ? `"${a.calendar}"` : "unnamed"} calendar. The cockpit leaves out the provisional, callback and reschedule calendars.`,
     });
   if (a.cockpit === "other_booking")
     out.push({
@@ -465,8 +526,14 @@ export function cockpitWords(a: ApptRow): string {
       return "Not counted itself; their other booking was";
     case "not_tracked":
       return "Client not in the cockpit";
+    case "left_out":
+      return a.status === "cancelled"
+        ? "Not counted: cancelled"
+        : a.ghl_source === "google_calendar"
+          ? "Not counted: a Google Calendar copy"
+          : "Not counted: provisional or callback calendar";
     default:
-      return "Not a Facebook lead, so the cockpit does not count it";
+      return "Not counted: before 8 Sep the cockpit counted only bookings from ads";
   }
 }
 
@@ -774,8 +841,12 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
     label: "Showed?",
     width: 120,
     get: r =>
-      r.status === "showed" ? "TRUE" : r.status === "noshow" ? "FALSE" : null,
-    source: "appointments.status",
+      outcome(r) === "showed"
+        ? "TRUE"
+        : outcome(r) === "noshow"
+          ? "FALSE"
+          : null,
+    source: "appointments.status, then attended",
   },
   {
     group: "Status",

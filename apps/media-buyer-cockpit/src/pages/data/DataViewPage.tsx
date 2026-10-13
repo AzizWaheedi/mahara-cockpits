@@ -54,6 +54,8 @@ type Filter = {
   label: string;
   tone?: "warn" | "bad" | "info";
   count: (s: Summary) => number;
+  /** Opened from the Compare tab only: a chip while it is the filter. */
+  hidden?: boolean;
 };
 /** The cockpit's status colours for the filter dots (StatusChip). */
 const TONE: Record<NonNullable<Filter["tone"]>, StatusTone> = {
@@ -107,6 +109,16 @@ const FILTERS: Record<Kind, Filter[]> = {
       label: "Calendar events",
       tone: "warn",
       count: s => s.appointments.calendar,
+    },
+    {
+      key: "counted_no_result",
+      label: "Counted, no result",
+      tone: "warn",
+      hidden: true,
+      count: s => {
+        const b = s.lineage.bookings;
+        return b ? b.passed - b.showed - b.noshow : 0;
+      },
     },
   ],
 };
@@ -202,7 +214,7 @@ function problemsFor(
     P.push({
       tone: "bad",
       title: `${fmtN(s.appointments.not_counted)} bookings are missing from the cockpit`,
-      why: "These Facebook leads booked in GHL, but the cockpit bookings card does not count them, so it shows too few.",
+      why: "These bookings are in GHL, but the cockpit bookings card does not count them, so it shows too few.",
       where: whereSentence(per, c => c.not_counted),
       cta: "Show these bookings",
       go: () => go("appointments", "not_counted"),
@@ -251,7 +263,7 @@ function problemsFor(
     P.push({
       tone: "info",
       title: `${fmtN(s.appointments.no_result)} meetings have no result`,
-      why: 'The meeting time passed, but nobody marked "showed" or "no-show" in GHL. Show-up rates stay uncertain until someone does.',
+      why: 'The meeting time passed, but nobody marked "showed" or "no-show" in GHL or the sheet. Show-up rates stay uncertain until someone does.',
       where: whereSentence(per, c => c.no_result),
       cta: "Show these meetings",
       go: () => go("appointments", "no_result"),
@@ -366,7 +378,7 @@ export function DataViewPage() {
     const ahead: RowQuery[] = [
       { kind: other, location, days, filter: "all", search: "" },
       ...FILTERS[kind]
-        .filter(f => f.key !== filter && f.count(s) > 0)
+        .filter(f => !f.hidden && f.key !== filter && f.count(s) > 0)
         .map(f => ({ kind, location, days, filter: f.key, search: "" })),
     ];
     let stop = false;
@@ -698,12 +710,14 @@ export function DataViewPage() {
                 ariaLabel="Show"
                 value={filter}
                 onChange={key => set({ filter: key === "all" ? null : key })}
-                options={FILTERS[kind].map(f => ({
-                  key: f.key,
-                  label: f.label,
-                  count: s ? f.count(s) : undefined,
-                  tone: f.tone ? TONE[f.tone] : undefined,
-                }))}
+                options={FILTERS[kind]
+                  .filter(f => !f.hidden || f.key === filter)
+                  .map(f => ({
+                    key: f.key,
+                    label: f.label,
+                    count: s ? f.count(s) : undefined,
+                    tone: f.tone ? TONE[f.tone] : undefined,
+                  }))}
               />
               <div className="dv-viewctl">
                 <FilterChips

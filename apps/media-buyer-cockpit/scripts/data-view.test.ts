@@ -5,12 +5,14 @@ import {
   apptIssues,
   apptRowSchema,
   buildStory,
+  cockpitWords,
   csvCell,
   debugBundle,
   LEAD_ALL,
   type LeadRow,
   leadIssues,
   leadRowSchema,
+  outcome,
   plainMade,
   type RecordData,
   result,
@@ -212,6 +214,42 @@ describe("one verdict per row", () => {
     expect(plainMade("booking_widget")).toBe("Booked on the booking page");
     expect(plainMade(null)).toBe("Booking method not recorded");
     expect(plainMade("something_new")).toBe("something_new");
+  });
+  test("a result in the sheet counts when GHL still says confirmed (2026-10-13)", () => {
+    const sheet = { ...appt, result: "noshow" };
+    expect(outcome(sheet)).toBe("noshow");
+    expect(result(sheet, NOW)).toEqual(["No-show", "bad"]);
+    expect(apptIssues(sheet, NOW)).toEqual([]);
+    // GHL's own status wins over the sheet.
+    expect(outcome({ status: "showed", result: "noshow" })).toBe("showed");
+    // Rows from before migration 20261013d carry no result at all.
+    const { result: _, ...old } = sheet;
+    expect(outcome(apptRowSchema.parse(old))).toBeNull();
+  });
+  test("bookings the sync skips on purpose say why (2026-10-13)", () => {
+    const left = { ...appt, cockpit: "left_out" as const };
+    expect(cockpitWords({ ...left, status: "cancelled" })).toBe(
+      "Not counted: cancelled",
+    );
+    expect(cockpitWords({ ...left, ghl_source: "google_calendar" })).toBe(
+      "Not counted: a Google Calendar copy",
+    );
+    const provisional = {
+      ...left,
+      calendar: "Not Confirmed Appointments",
+      start_at: "2026-10-12T09:30:00+03:00",
+    };
+    expect(cockpitWords(provisional)).toBe(
+      "Not counted: provisional or callback calendar",
+    );
+    expect(apptIssues(provisional, NOW).map(i => i.label)).toEqual([
+      "Provisional or callback calendar",
+    ]);
+    // A miss is any booking the sync should have counted, Facebook or not.
+    expect(
+      apptIssues({ ...appt, cockpit: "missing", lead_channel: "Other" }, NOW)[0]
+        .why,
+    ).toContain("This booking is in GHL");
   });
 });
 

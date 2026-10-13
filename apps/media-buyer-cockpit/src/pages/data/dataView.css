@@ -177,27 +177,104 @@
 .dv-card-h { padding: 16px 18px 0; }
 .dv-card-h h2 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
 .dv-card-h p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 13px; max-width: 84ch; }
-.dv-lineage { padding: 6px 18px 8px; }
-.dv-pipe { display: grid; grid-template-columns: 120px 1fr; gap: 14px; align-items: center; padding: 14px 0; }
+/*
+ * The lineage card (2026-10-13). Each count sits on a raised step: a surface
+ * one shade above the card, lit from the top edge, with a meter on the
+ * line's own scale (the CEO funnel strip's bars) so the eye sees where the
+ * count shrinks. The first step of a line wears the brand gradient ring.
+ * Between steps, a signed delta and one chip per reason; the colour is on
+ * the dot, never on the words.
+ */
+.dv-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted-foreground); }
+.dv-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.dv-legend .dot, .dv-reason .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted-foreground); }
+.dv-legend .dot.warn, .dv-reason.warn .dot { background: var(--dv-warn); }
+.dv-legend .dot.bad, .dv-reason.bad .dot { background: var(--dv-bad); box-shadow: 0 0 0 3px var(--dv-bad-bg); }
+.dv-lineage { padding: 4px 18px 6px; container-type: inline-size; }
+.dv-pipe { padding: 16px 0 18px; }
 .dv-pipe + .dv-pipe { border-top: 1px solid var(--border); }
-.dv-pipe-name { font-weight: 600; font-size: 13.5px; }
-.dv-pipe-name small { display: block; font-weight: 400; font-size: 12px; color: var(--muted-foreground); margin-top: 2px; }
+.dv-pipe-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.dv-pipe-name small { font-weight: 400; font-size: 12.5px; color: var(--muted-foreground); }
 .dv-hops { display: flex; align-items: stretch; min-width: 0; }
-.dv-hop { flex: 1 1 0; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--background); }
-.dv-hop .n { font: 600 26px/1.05 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
-.dv-hop .l { font-size: 13px; margin-top: 4px; font-weight: 500; }
-.dv-hop .t { font-size: 12px; color: var(--muted-foreground); margin-top: 2px; line-height: 1.35; }
-.dv-hop.first { border-color: color-mix(in oklch, var(--dv-teal) 45%, var(--border)); background: var(--accent); }
-.dv-flow { flex: 0 0 clamp(96px, 10vw, 136px); position: relative; display: grid; place-items: center; }
-.dv-flow::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: linear-gradient(90deg, var(--dv-teal), color-mix(in oklch, var(--dv-teal) 35%, transparent)); }
-.dv-flow::after { content: ""; position: absolute; right: 0; top: calc(50% - 5px); border: 5px solid transparent; border-left: 6px solid color-mix(in oklch, var(--dv-teal) 60%, transparent); border-right: 0; }
-.dv-leak { position: relative; z-index: 1; max-width: 124px; text-align: center; font: 500 12px/1.25 var(--font-sans); padding: 5px 9px; border-radius: 8px; background: var(--card); border: 1px solid var(--border); color: var(--muted-foreground); }
-button.dv-leak { cursor: pointer; }
-.dv-leak.warn { color: var(--dv-warn); border-color: color-mix(in oklch, var(--dv-warn) 45%, var(--border)); }
-.dv-leak.bad { color: var(--dv-bad); border-color: color-mix(in oklch, var(--dv-bad) 50%, var(--border)); background: var(--dv-bad-bg); }
-.dv-why { margin: 0 18px 16px; padding: 12px 14px; border-radius: 10px; background: var(--muted); font-size: 13px; }
-.dv-why ul { margin: 6px 0 0; padding-left: 18px; list-style: disc; }
-.dv-why li { margin: 3px 0; }
+.dv-step {
+  /* Light: a white step, a hairline that fades down, a whisper of lift. */
+  --dv-step-top: var(--card);
+  --dv-step-bottom: color-mix(in oklch, var(--background) 65%, var(--card));
+  --dv-step-edge: linear-gradient(180deg, color-mix(in oklch, var(--foreground) 13%, transparent), color-mix(in oklch, var(--foreground) 7%, transparent));
+  --dv-step-light: inset 0 1px 0 oklch(1 0 0 / 80%);
+  --dv-step-lift: 0 1px 2px oklch(0.2 0.045 270 / 6%), 0 8px 18px -10px oklch(0.2 0.045 270 / 16%);
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px 14px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: linear-gradient(180deg, var(--dv-step-top), var(--dv-step-bottom)) padding-box, var(--dv-step-edge) border-box;
+  box-shadow: var(--dv-step-light), var(--dv-step-lift);
+}
+/* Dark: one shade above the card, lit along the top edge; no grey shadow. */
+.dark .dv-step {
+  --dv-step-top: color-mix(in oklch, var(--card) 86%, var(--foreground));
+  --dv-step-bottom: color-mix(in oklch, var(--card) 94%, var(--foreground));
+  --dv-step-edge: linear-gradient(180deg, color-mix(in oklch, var(--foreground) 12%, transparent), color-mix(in oklch, var(--foreground) 4%, transparent));
+  --dv-step-light: inset 0 1px 0 color-mix(in oklch, var(--foreground) 7%, transparent);
+  --dv-step-lift: 0 0 0 0 transparent;
+}
+/* The first step of a line: the brand gradient ring and a low teal glow. */
+.dv-step.source {
+  --dv-step-edge: linear-gradient(135deg, var(--royal-blue), var(--mahara-teal) 65%);
+  box-shadow: var(--dv-step-light), 0 10px 28px -14px color-mix(in oklch, var(--mahara-teal) 55%, transparent);
+}
+.dv-step-sys { display: inline-flex; align-items: center; gap: 6px; font: 500 10.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground); }
+.dv-step-sys::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.dv-step-sys.meta::before { background: var(--dv-info); }
+.dv-step-sys.ghl::before { background: color-mix(in oklch, var(--foreground) 70%, transparent); }
+.dv-step-sys.cockpit::before { background: var(--dv-teal); }
+.dv-step-n { font: 600 28px/1.1 var(--font-sans); letter-spacing: -0.025em; font-variant-numeric: tabular-nums; margin-top: 10px; white-space: nowrap; }
+.dv-step-l { font-size: 13px; font-weight: 500; margin-top: 4px; }
+.dv-step-t { font-size: 12px; color: var(--muted-foreground); margin-top: 2px; line-height: 1.35; flex: 1; }
+.dv-step-bar { height: 4px; border-radius: 4px; margin-top: 12px; background: var(--ceo-emphasis-track); overflow: hidden; }
+.dv-step-bar i { display: block; height: 100%; border-radius: inherit; background: var(--ceo-emphasis); }
+.dv-step-wait { flex: 1; padding: 14px; border-radius: 14px; background: var(--muted); font-size: 13px; color: var(--muted-foreground); }
+.dv-gap { flex: 0 0 auto; min-width: 104px; max-width: 220px; position: relative; padding: 0 12px; display: flex; flex-direction: column; align-items: center; }
+.dv-gap-delta { height: 22px; margin-top: 18px; font: 500 11.5px/22px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+.dv-gap-line { align-self: stretch; position: relative; height: 2px; margin: 0 -12px; background: linear-gradient(90deg, color-mix(in oklch, var(--dv-teal) 70%, transparent), color-mix(in oklch, var(--dv-teal) 25%, transparent)); }
+.dv-gap-line::after { content: ""; position: absolute; right: -1px; top: -4px; border: 5px solid transparent; border-left: 6px solid color-mix(in oklch, var(--dv-teal) 55%, transparent); border-right: 0; }
+.dv-gap-why { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; justify-items: center; width: 100%; }
+.dv-reason { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; white-space: nowrap; padding: 4px 9px; border-radius: 999px; font: 500 12px/1.3 var(--font-sans); color: var(--foreground); background: var(--card); border: 1px solid var(--border); text-align: left; }
+.dv-reason.grey { color: var(--muted-foreground); }
+.dv-reason.quiet { color: var(--muted-foreground); border-style: dashed; background: transparent; }
+button.dv-reason { cursor: pointer; transition: border-color 0.15s, background-color 0.15s; }
+button.dv-reason:hover { border-color: color-mix(in oklch, var(--dv-teal) 60%, var(--border)); background: color-mix(in oklch, var(--dv-teal) 8%, var(--card)); }
+.dv-reason.bad { border-color: color-mix(in oklch, var(--dv-bad) 40%, var(--border)); }
+.dv-reason.warn { border-color: color-mix(in oklch, var(--dv-warn) 35%, var(--border)); }
+.dv-reason .chev { width: 13px; height: 13px; margin-right: -3px; color: var(--muted-foreground); flex: none; }
+/* A narrow card stacks the steps; the line runs down the left. */
+@container (max-width: 760px) {
+  .dv-hops { flex-direction: column; }
+  .dv-step { display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr); column-gap: 16px; }
+  .dv-step-sys { grid-column: 1 / -1; }
+  .dv-step-n { grid-row: 2 / 4; align-self: center; margin-top: 8px; }
+  .dv-step-l, .dv-step-t { grid-column: 2; }
+  .dv-step-l { margin-top: 10px; }
+  .dv-step-bar { grid-column: 1 / -1; }
+  .dv-gap { width: auto; max-width: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 0 8px 22px; min-height: 48px; }
+  .dv-gap-line { position: absolute; left: 22px; top: 0; bottom: 0; width: 2px; height: auto; margin: 0; background: linear-gradient(180deg, color-mix(in oklch, var(--dv-teal) 70%, transparent), color-mix(in oklch, var(--dv-teal) 25%, transparent)); }
+  .dv-gap-line::after { right: auto; left: -4px; top: auto; bottom: -1px; border: 5px solid transparent; border-top: 6px solid color-mix(in oklch, var(--dv-teal) 55%, transparent); border-bottom: 0; }
+  .dv-gap-delta { margin: 0 0 0 18px; }
+  .dv-gap-why { display: flex; flex-wrap: wrap; margin: 0; width: auto; justify-items: start; }
+}
+.dv-notes { display: grid; gap: 8px; margin: 2px 18px 18px; }
+.dv-note { display: flex; gap: 10px; padding: 12px 14px; border-radius: 12px; background: color-mix(in oklch, var(--muted) 70%, transparent); font-size: 13px; line-height: 1.5; }
+.dv-note b { font-weight: 600; display: block; }
+.dv-note-icon { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--muted-foreground); }
+.dv-note.warn .dv-note-icon { color: var(--dv-warn); }
+.dv-note-body { color: var(--muted-foreground); margin-top: 2px; }
+.dv-note-body ul { margin: 4px 0 6px; padding-left: 18px; list-style: disc; color: var(--foreground); }
+.dv-note-body li { margin: 2px 0; }
+.dv-note-do { margin-top: 4px; color: var(--foreground); }
 .dv-plain { overflow-x: auto; }
 .dv-plain table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .dv-plain th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted-foreground); padding: 12px 14px 8px; white-space: nowrap; }
@@ -242,14 +319,6 @@ button.dv-leak { cursor: pointer; }
 @media (max-width: 860px) {
   .dv-root { --dv-sheet-h: 70vh; }
   .dv-headline { font-size: 17px; }
-}
-@media (max-width: 720px) {
-  .dv-pipe { grid-template-columns: 1fr; gap: 8px; }
-  .dv-hops { flex-direction: column; }
-  .dv-flow { flex-basis: 54px; }
-  .dv-flow::before { left: 50%; right: auto; top: 0; bottom: 0; width: 2px; height: auto; background: linear-gradient(180deg, var(--dv-teal), color-mix(in oklch, var(--dv-teal) 35%, transparent)); }
-  .dv-flow::after { right: auto; left: calc(50% - 5px); top: auto; bottom: 0; border: 5px solid transparent; border-top: 6px solid color-mix(in oklch, var(--dv-teal) 60%, transparent); border-bottom: 0; }
-  .dv-leak { max-width: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .dv-root, .dv-root *, .dv-panel { animation: none !important; transition: none !important; }
