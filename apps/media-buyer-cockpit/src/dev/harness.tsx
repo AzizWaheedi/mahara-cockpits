@@ -17,7 +17,8 @@
  *   people.json   - the result of ceo/people:list
  *   fixtures.json - any other function's result, keyed by its Convex name
  * The media buyer's own screens (/dashboard, /ads, /eod, /playbook) and /admin and /settings read the stand-in data in
- * portalFixtures.ts.
+ * portalFixtures.ts. A client's Calls part reads callCentreHarness.ts
+ * (`&calls=` picks the answer).
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -39,6 +40,8 @@ import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
 import { getCockpitSupabaseClient } from "@/auth/SupabaseAuthProvider";
+import { installCallCentreHarness } from "./callCentreHarness";
+import { CallsHarnessPage } from "./callsHarnessPage";
 import { installCeoHarness } from "./ceoHarness";
 import { setFixtures } from "./convexStub";
 import { installDataViewHarness } from "./dataViewHarness";
@@ -60,6 +63,8 @@ async function main() {
   installCeoHarness(getCockpitSupabaseClient());
   // The data view (?path=/data&reads=1): made-up rows after a delay.
   installDataViewHarness(getCockpitSupabaseClient());
+  // A client's Calls part (?path=/calls?account=...&calls=on_track).
+  installCallCentreHarness(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
     // Optional since the cutover: the CEO tabs that still read them show
     // their empty states without.
@@ -107,6 +112,7 @@ async function main() {
                 <Route path="/team/:id" element={<MeetingPage />} />
                 <Route path="/dashboard" element={<TodayPage />} />
                 <Route path="/ads" element={<AdsPage />} />
+                <Route path="/calls" element={<CallsHarnessPage />} />
                 <Route path="/eod" element={<EndOfDayPage />} />
                 <Route
                   path="/playbook"

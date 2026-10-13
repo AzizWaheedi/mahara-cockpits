@@ -1750,16 +1750,21 @@ function Cockpit({ view }: { view: View }) {
 
   const now = new Date();
   const lastSync = snap.lastSyncAt ? new Date(snap.lastSyncAt) : null;
+  // Kuwait time, like every other time in the cockpit: the browser's own
+  // zone made the header disagree with the refresh line under it.
+  const kuwaitDate = (d: Date) =>
+    d.toLocaleDateString("en-CA", { timeZone: "Asia/Kuwait" });
   const synced = lastSync ? (
     <>
       synced{" "}
-      {lastSync.toDateString() === now.toDateString()
+      {kuwaitDate(lastSync) === kuwaitDate(now)
         ? ""
-        : `${lastSync.toLocaleDateString("en-GB", { weekday: "short" })} `}
+        : `${lastSync.toLocaleDateString("en-GB", { weekday: "short", timeZone: "Asia/Kuwait" })} `}
       <span className="font-mono">
         {lastSync.toLocaleTimeString("en-GB", {
           hour: "2-digit",
           minute: "2-digit",
+          timeZone: "Asia/Kuwait",
         })}
       </span>
     </>
@@ -3096,6 +3101,28 @@ function Cockpit({ view }: { view: View }) {
                     .map((t: Campaign) => [t.metaId, t.name]),
                 )}
               />
+            )}
+            {/* The client's calls live on its page (CallCentreSection); the
+                board reads nothing for them, it only links there. */}
+            {!where.inAccount && !c.internal && c.serviceMode !== "DWY" && (
+              <p className="text-xs">
+                <Link
+                  to={{
+                    pathname: "/ads",
+                    search: `?${new URLSearchParams({
+                      ...Object.fromEntries(
+                        [...params].filter(([k]) => k !== "campaign"),
+                      ),
+                      account: clientOf(c),
+                    })}`,
+                    hash: "#calls",
+                  }}
+                  className="inline-flex items-center gap-1 font-medium text-muted-foreground hover:text-foreground hover:underline"
+                >
+                  Calls for this client
+                  <ChevronRight className="size-3.5" aria-hidden />
+                </Link>
+              </p>
             )}
             <BuildPanel
               key={`${c.clientTag ?? c.accountName}:${c.metaAccountId}`}

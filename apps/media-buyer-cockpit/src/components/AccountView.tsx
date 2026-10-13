@@ -1,6 +1,11 @@
 import "@/components/ceo/ceo.css";
 import { ArrowUpRight, ChevronLeft, TriangleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  CallCentreSection,
+  CallerLine,
+  useCallsHoldLost,
+} from "@/components/CallCentreSection";
 import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { money } from "@/components/ceo/format";
@@ -26,6 +31,7 @@ import { StatusToggle } from "@/components/StatusToggle";
 import { TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
 import { accountIssueFlag, metaBillingUrl } from "@/lib/adBillingStrip";
+import { callCentreKey } from "@/lib/callCentreClient";
 import { api, useQueries, useQuery } from "@/lib/cockpitApi";
 import { COST_DOT, type CostTone, cpbTone, cplTone } from "@/lib/costTone";
 import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "@/lib/kpi";
@@ -383,13 +389,20 @@ export function AccountView({
   const multi = campaigns.length > 1;
   // Bookings come from one HighLevel read per client, so any campaign carries them.
   const lost = campaigns.find(c => c.lost)?.lost;
+  // The client's calls are read by its ad account (CallCentreSection).
+  const callsKey = callCentreKey(campaigns);
+  // One lost breakdown per client: for a client we call, the Calls part's
+  // "Why leads were lost" (the dialer's outcomes, with the calls to play)
+  // stands in for the lost pipeline; done-with-you clients keep the pipeline.
+  const callsHoldLost = useCallsHoldLost(callsKey, range, leadsOnly);
   // The contents bar: one pill per card, in page order. Lost leads and the
   // open campaign show only when the page has them.
   const parts: SectionNavPart[] = [
     { id: "account-numbers", label: "Numbers" },
-    ...(lost?.total
+    ...(lost?.total && !callsHoldLost
       ? [{ id: "account-lost", label: "Lost leads", count: lost.total }]
       : []),
+    { id: "calls", label: "Calls" },
     { id: "account-ads", label: "Ads", count: cards.length },
     { id: "account-campaigns", label: "Campaigns", count: campaigns.length },
     ...(current
@@ -482,6 +495,12 @@ export function AccountView({
               {campaigns.length} campaign{campaigns.length === 1 ? "" : "s"} ·{" "}
               {liveCampaigns} running on Meta · {range.start} to {range.end}
             </p>
+            <CallerLine
+              clientName={client}
+              accountKey={callsKey}
+              range={range}
+              leadsOnly={leadsOnly}
+            />
           </div>
           <RangePicker value={range} onChange={onRangeChange} />
         </div>
@@ -608,17 +627,26 @@ export function AccountView({
             />
           </div>
         )}
-        <div id="account-lost" className={SECTION_OFFSET}>
-          <LostLeads
-            lost={lost}
-            adNameById={Object.fromEntries(
-              tree
-                .filter((t: Row) => t.kind === "ad" && t.metaId)
-                .map((t: Row) => [t.metaId, t.name]),
-            )}
-          />
-        </div>
+        {callsHoldLost ? null : (
+          <div id="account-lost" className={SECTION_OFFSET}>
+            <LostLeads
+              lost={lost}
+              adNameById={Object.fromEntries(
+                tree
+                  .filter((t: Row) => t.kind === "ad" && t.metaId)
+                  .map((t: Row) => [t.metaId, t.name]),
+              )}
+            />
+          </div>
+        )}
       </section>
+
+      <CallCentreSection
+        accountKey={callsKey}
+        clientName={client}
+        range={range}
+        leadsOnly={leadsOnly}
+      />
 
       <section
         id="account-ads"
