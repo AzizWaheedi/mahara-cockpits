@@ -1169,10 +1169,11 @@ def check_edge(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
             rep.add("supabase", label, OK, head + " as recorded")
 
 
-# A section of the manifest added after the inventory (team_hours 2026-10-09, hiring 2026-10-11): what must exist
-# once it is deployed. Before its first deploy (state pending_deploy) an absent object is ok, not deployed yet;
-# once deployed it is MISSING. A JWT check, row security, grant or schedule that drifts is CHANGED either way.
-SECTIONS = (("team_hours", "team-hours"), ("hiring", "hiring"))
+# A section of the manifest added after the inventory (team_hours 2026-10-09, hiring 2026-10-11, hours_watch
+# 2026-10-13): what must exist once it is deployed. Before its first deploy (state pending_deploy) an absent
+# object is ok, not deployed yet; once deployed it is MISSING. A JWT check, row security, grant or schedule that
+# drifts is CHANGED either way.
+SECTIONS = (("team_hours", "team-hours"), ("hiring", "hiring"), ("hours_watch", "hours-watch"))
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
@@ -2443,6 +2444,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             ("Edge Functions", lambda: check_edge(rep, mg, sman)),
             ("team-hours", lambda: check_section(rep, mg, sman, "team_hours", "team-hours")),
             ("hiring", lambda: check_section(rep, mg, sman, "hiring", "hiring")),
+            ("hours-watch", lambda: check_section(rep, mg, sman, "hours_watch", "hours-watch")),
             ("Edge Function sources", lambda: check_function_sources(rep, mg, sman, args.ref, ref_ok)),
             ("function secret names", lambda: check_secrets(rep, mg, sman)),
             ("CRON_SECRET pairing", lambda: check_secret_pair(rep, mg)),

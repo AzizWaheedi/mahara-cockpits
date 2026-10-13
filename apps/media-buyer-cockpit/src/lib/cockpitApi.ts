@@ -183,6 +183,10 @@ const READ_VERBS: Record<string, true> = {
   costs: true,
   // api.ceo.hours.nudge: the morning note's switch and last run.
   nudge: true,
+  // api.ceo.hours.watchBoard: Hubstaff watch, polled every 30 seconds; and
+  // watchShotUrl, which only signs a screenshot link and changes nothing.
+  watchBoard: true,
+  watchShotUrl: true,
 };
 function refreshAfter<T extends (...args: any[]) => any>(fn: T): T {
   const prior = refreshWrappers.get(fn);

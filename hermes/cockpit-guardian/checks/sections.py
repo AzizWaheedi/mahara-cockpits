@@ -82,6 +82,7 @@ def run_jobs(ctx: Context) -> Result:
         "clickup-writeback:dosdonts": 90, "comment-watch": 45,
         "hiring-sync:engine": 45, "hiring-sync:intake": 90,
         "hiring-sync:mirror": 45, "hours-kick": 90,
+        "hours-watch": 15,
         "hubstaff-sync": 90, "onboarding-sync": 45,
         "tap-charges-sync": 45, "timetastic-sync": 90,
         "tracking-audit": 26 * 60,

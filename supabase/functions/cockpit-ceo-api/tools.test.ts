@@ -222,3 +222,30 @@ test("a 403 from Hubstaff's firewall is its own kind, never a refused key; Hubst
   await expect(hubstaffGet(HS_TOKEN, health, async () => new Response('{"error":"forbidden"}', { status: 403, headers: viaCf }), 'organizations')).rejects.toMatchObject({ kind: 'refused' });
   await expect(hubstaffGet(HS_TOKEN, health, async () => new Response('{"code":10006,"error":"Organization does not have an active plan with API access"}', { status: 403, headers: viaCf }), 'organizations')).rejects.toMatchObject({ kind: 'plan_blocked' });
 });
+
+test('the Hubstaff watch reads (screenshots, tool usage, screenshot settings, timer events) are allowed, GET only, with template receipts', async () => {
+  const { rows, health } = recorder();
+  const called: string[] = [];
+  const spy = async (input: RequestInfo | URL, init?: RequestInit) => {
+    called.push(`${init?.method} ${new URL(String(input)).pathname}`);
+    return new Response('{"screenshots":[]}', { status: 200 });
+  };
+  for (const path of ['screenshots', 'tool_usages', 'screenshot_settings', 'tracking_states'])
+    await hubstaffGet(HS_TOKEN, health, spy, `organizations/705266/${path}`, { 'time_slot[start]': '2026-10-13T07:00:00Z' });
+  expect(called).toEqual([
+    'GET /v2/organizations/705266/screenshots', 'GET /v2/organizations/705266/tool_usages',
+    'GET /v2/organizations/705266/screenshot_settings', 'GET /v2/organizations/705266/tracking_states',
+  ]);
+  expect(rows.filter(r => r.phase === 'intent').map(r => r.resource)).toEqual([
+    'api.hubstaff.com/v2/organizations/{org}/screenshots', 'api.hubstaff.com/v2/organizations/{org}/tool_usages',
+    'api.hubstaff.com/v2/organizations/{org}/screenshot_settings', 'api.hubstaff.com/v2/organizations/{org}/tracking_states',
+  ]);
+  expect(JSON.stringify(rows)).not.toContain('705266');
+  // A single screenshot, another organisation's id shape, or a write are still refused before a request exists.
+  let requested = false;
+  const never = async () => { requested = true; return new Response('{}'); };
+  for (const path of ['organizations/705266/screenshots/123', 'organizations/abc/screenshots', 'organizations/705266/tool_usages/daily'])
+    await expect(hubstaffGet(HS_TOKEN, health, never, path)).rejects.toMatchObject({ kind: 'invalid' });
+  await expect(hubstaffCall('DELETE', HS_TOKEN, health, never, 'organizations/705266/screenshots', {})).rejects.toMatchObject({ kind: 'invalid' });
+  expect(requested).toBe(false);
+});

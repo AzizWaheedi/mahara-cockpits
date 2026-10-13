@@ -10377,5 +10377,110 @@
    ]
   },
   "rows_note": "The kept data, counted 2026-10-11 through Composio (read only): 255 candidates (all screened by the agent), 254 application questionnaires, 520 events, and the meta rows the import and the agent stand on (each form's filed responses, the board ids, the roles, the agent's lessons). None of these tables deletes a row, so fewer rows or a key gone reads MISSING. The candidate rows hold what HighLevel does not: the agent's screening and the CEO's grades."
+ },
+ "hours_watch": {
+  "note": "Hubstaff watch (2026-10-13, docs/hours-watch/SPEC.md): every 5 minutes cockpit-hours-watch reads Hubstaff, judges new screenshots with a vision model, keeps each watched person's state and alerts here and posts the alerts to Slack #team-management; the CEO's Management tab reads it. state pending_deploy: absent objects are reported ok as not deployed yet. After 20261013d is applied and cockpit-hours-watch is deployed (RUNBOOK.md, Hubstaff watch), set state to deployed. internal_functions have no grant to any role. Not checked here: the cockpit_settings row hours.watch, the private bucket cockpit-hours-watch and its storage policy cockpit_hours_watch_read, the cockpit_sync_state rows hours-watch, hours-watch-kick and hours-watch-prune, the incident columns slack_claimed_at and resolve_claimed_at (the 10-minute Slack sweep), the slot column input_tracked_s, the status state on_break (cockpit_hours_watch_status_state_check), and the settings keys mention and mentionUser (defaults, so an older row needs no change). cockpit-hours-api (ops watchNow and watchKey) stays in team_hours.",
+  "state": "pending_deploy",
+  "migrations": [
+   "supabase/migrations/20261013d_cockpit_hours_watch.sql"
+  ],
+  "tables": [
+   "cockpit_hours_watch_incidents",
+   "cockpit_hours_watch_keys",
+   "cockpit_hours_watch_runs",
+   "cockpit_hours_watch_shots",
+   "cockpit_hours_watch_slots",
+   "cockpit_hours_watch_status"
+  ],
+  "no_grant_tables": [
+   "cockpit_hours_watch_keys"
+  ],
+  "guarded_tables": [
+   "cockpit_hours_watch_incidents"
+  ],
+  "functions": [
+   "cockpit_ceo_hours_watch_board",
+   "cockpit_ceo_hours_watch_review",
+   "cockpit_ceo_hours_watch_set",
+   "cockpit_hours_watch_apply",
+   "cockpit_hours_watch_cron_on",
+   "cockpit_hours_watch_default_schedule",
+   "cockpit_hours_watch_defaults",
+   "cockpit_hours_watch_finish",
+   "cockpit_hours_watch_incident_guard",
+   "cockpit_hours_watch_incident_json",
+   "cockpit_hours_watch_inputs",
+   "cockpit_hours_watch_key_get",
+   "cockpit_hours_watch_key_mark",
+   "cockpit_hours_watch_key_put",
+   "cockpit_hours_watch_kick",
+   "cockpit_hours_watch_lease_claim",
+   "cockpit_hours_watch_leave",
+   "cockpit_hours_watch_object_allowed",
+   "cockpit_hours_watch_prune",
+   "cockpit_hours_watch_roster",
+   "cockpit_hours_watch_setting_problem",
+   "cockpit_hours_watch_settings",
+   "cockpit_hours_watch_slack_claim",
+   "cockpit_hours_watch_slack_result",
+   "cockpit_hours_watch_today",
+   "cockpit_hours_watch_window"
+  ],
+  "ceo_functions": [
+   "cockpit_ceo_hours_watch_board",
+   "cockpit_ceo_hours_watch_review",
+   "cockpit_ceo_hours_watch_set",
+   "cockpit_hours_watch_object_allowed"
+  ],
+  "service_functions": [
+   "cockpit_hours_watch_lease_claim",
+   "cockpit_hours_watch_inputs",
+   "cockpit_hours_watch_apply",
+   "cockpit_hours_watch_slack_claim",
+   "cockpit_hours_watch_slack_result",
+   "cockpit_hours_watch_finish",
+   "cockpit_hours_watch_key_get",
+   "cockpit_hours_watch_key_put",
+   "cockpit_hours_watch_key_mark",
+   "cockpit_hours_watch_prune"
+  ],
+  "internal_functions": [
+   "cockpit_hours_watch_defaults",
+   "cockpit_hours_watch_setting_problem",
+   "cockpit_hours_watch_settings",
+   "cockpit_hours_watch_incident_guard",
+   "cockpit_hours_watch_default_schedule",
+   "cockpit_hours_watch_window",
+   "cockpit_hours_watch_today",
+   "cockpit_hours_watch_leave",
+   "cockpit_hours_watch_roster",
+   "cockpit_hours_watch_incident_json",
+   "cockpit_hours_watch_cron_on",
+   "cockpit_hours_watch_kick"
+  ],
+  "triggers": [
+   "cockpit_hours_watch_incidents_guard",
+   "cockpit_hours_watch_incidents_guard_delete",
+   "cockpit_hours_watch_incidents_guard_truncate"
+  ],
+  "pg_cron": [
+   {
+    "jobname": "mahara-hours-watch",
+    "schedule": "*/5 * * * *"
+   }
+  ],
+  "edge_functions": [
+   {
+    "slug": "cockpit-hours-watch",
+    "verify_jwt": false
+   }
+  ],
+  "vault_secret_names": [
+   "cockpit_sync_secret"
+  ],
+  "function_secret_names": [
+   "CRON_SECRET",
+   "SLACK_BOT_TOKEN"
+  ]
  }
 }

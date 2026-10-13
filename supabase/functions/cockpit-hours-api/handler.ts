@@ -7,6 +7,8 @@
  *   saveKey     {provider, key}             test, then store; start doctor and a deep read
  *   syncNow     {mode, month?, dryRun?}     claim the lease and read in the background
  *   approveMany {month, items}              recompute each person on the server and store
+ *   watchNow    {}                          start a Hubstaff watch run now ("Check now")
+ *   watchKey    {provider, key}             test the screenshot check's AI key, then store it
  *
  * Approval lives here, not in cockpit-ceo-api, so a redeploy of that
  * function by anyone else can never remove it. Errors are one sentence.
@@ -20,6 +22,9 @@ import { type InsertReceipt, type Rpc, runHealth } from "../cockpit-hours-sync/d
 import { testAndSaveKey } from "../cockpit-hours-sync/keys.ts";
 import { claimLease, type Mode } from "../cockpit-hours-sync/lease.ts";
 import { runSync } from "../cockpit-hours-sync/sync.ts";
+import { checkAiKey } from "../cockpit-hours-watch/classify.ts";
+import { AI_NAMES, aiAccess } from "../cockpit-hours-watch/keys.ts";
+import { type WatchInsert, watchHealth } from "../cockpit-hours-watch/ledger.ts";
 
 export type ApiDeps = {
   /** The user id in a verified JWT, or null. */
@@ -30,6 +35,12 @@ export type ApiDeps = {
   sleep: (ms: number) => Promise<void>;
   now: () => Date;
   waitUntil: (work: Promise<unknown>) => void;
+  /** CRON_SECRET, read by name: the key to cockpit-hours-watch's door. */
+  cronSecret?: () => string;
+  /** Where cockpit-hours-watch is served (SUPABASE_URL/functions/v1/cockpit-hours-watch). */
+  watchUrl?: string;
+  /** Receipts for the AI key check (provider google-ai or openai), in the hours ledger. */
+  insertWatchReceipt?: WatchInsert;
 };
 
 const cors = {
@@ -70,6 +81,8 @@ export function makeHoursApi(deps: ApiDeps) {
       if (body.op === "saveKey") return json(await saveKey(deps, email, body));
       if (body.op === "syncNow") return json(await syncNow(deps, email, body));
       if (body.op === "approveMany") return json(await approveMany(deps, actorId, body));
+      if (body.op === "watchNow") return json(await watchNow(deps, email));
+      if (body.op === "watchKey") return json(await watchKey(deps, email, body));
       throw new Error("Unknown action.");
     } catch (e) {
       return json({ error: e instanceof Error ? e.message.slice(0, 240) : "The action failed." }, 400);
@@ -109,6 +122,64 @@ async function syncNow(deps: ApiDeps, email: string, body: Record<string, unknow
   if (!claim.ok) return { ok: false, busy: true, since: claim.since };
   deps.waitUntil(runSync(deps, { runId: claim.runId, leaseToken: claim.leaseToken, mode, month, dryRun }).catch(() => undefined));
   return { ok: true, runId: claim.runId };
+}
+
+/**
+ * "Check now" on the Hubstaff watch card: the same door the cron uses, with
+ * the shared cron secret, recorded as the CEO's run (the lease claim writes
+ * the audit row hours.watch.runNow). The watch answers at once and works in
+ * the background.
+ */
+async function watchNow(deps: ApiDeps, email: string) {
+  const secret = deps.cronSecret?.().trim() ?? "";
+  if (!secret || !deps.watchUrl) throw new Error("CRON_SECRET is not set on cockpit-hours-api, so a check can't be started from here. Set it in the function's secrets.");
+  let res: Response;
+  try {
+    res = await deps.fetch(deps.watchUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-cron-secret": secret },
+      body: JSON.stringify({ job: "watch", requestedBy: email }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch {
+    throw new Error("Hubstaff watch did not answer. Try again in a minute.");
+  }
+  const out = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  if (res.status === 202 && out?.ok === true) return { ok: true, runId: Number(out.runId), text: "Checking now. The card updates in about a minute." };
+  if (out?.busy === true) return { ok: false, busy: true, since: typeof out.since === "string" ? out.since : null, text: "A check is already running. The card updates when it ends." };
+  const note = typeof out?.note === "string" ? `: ${out.note.slice(0, 160)}` : "";
+  throw new Error(`Hubstaff watch answered ${res.status}${note}.`);
+}
+
+/**
+ * The screenshot check's key: one model list call with the pasted key, then
+ * cockpit_hours_watch_key_put (which writes the audit row hours.watch.keySaved,
+ * never the key). A refused key stores nothing and the old one keeps working;
+ * an unreachable provider stores it as unchecked. The answer names the
+ * provider the next run will actually use (the first saved key not refused,
+ * OpenAI first), read back from the saved keys' states. Only the last 4
+ * characters ever come back.
+ */
+async function watchKey(deps: ApiDeps, email: string, body: Record<string, unknown>) {
+  const provider = body.provider;
+  if (provider !== "google_ai" && provider !== "openai") throw new Error("Choose Google AI or OpenAI.");
+  if (typeof body.key !== "string") throw new Error("Paste the key.");
+  const key = body.key.trim();
+  const name = provider === "google_ai" ? "Google AI" : "OpenAI";
+  if (key.length < 10 || key.length > 400 || /\s/.test(key))
+    return { ok: false, state: "missing_key", text: "That doesn't look like a key: it should be one line, 10 to 400 characters, with no spaces. Nothing was changed." };
+  const insert = deps.insertWatchReceipt ?? (deps.insertReceipt as unknown as WatchInsert);
+  const { health } = watchHealth(insert, null);
+  const check = await checkAiKey({ health, fetch: deps.fetch }, provider, key);
+  if (check.state === "refused") return { ok: false, state: "refused", text: `${name} refused this key. Nothing was changed.` };
+  await deps.rpc("cockpit_hours_watch_key_put", { p: { provider, secret: key, savedBy: email, state: check.state, stateNote: check.note } });
+  const last4 = key.slice(-4);
+  // Which key the next run picks; when it can't be read, the saved one is named as before.
+  const next = await aiAccess(deps.rpc).then(a => (a.ok ? a.key.provider : provider), () => provider);
+  const used = next === provider ? null : `The screenshot check keeps using ${AI_NAMES[next]}, which comes first; this key is used only if that one is refused or removed.`;
+  if (check.state === "connected")
+    return { ok: true, state: "connected", text: used ? `Connected. ${used}` : `Connected. The screenshot check uses ${name} from the next run.`, last4 };
+  return { ok: true, state: "unchecked", text: `The key is saved, but ${name} couldn't be reached to check it. ${used ?? "The next run tries it."}`, last4 };
 }
 
 function sameMoney(a: number, b: number, currency: string): boolean {

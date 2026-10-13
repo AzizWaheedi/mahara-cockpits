@@ -8,6 +8,12 @@
  * by the production app.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  watchBoardFixture,
+  watchReviewed,
+  watchSettings,
+  watchShotPicture,
+} from "./watchFixture";
 
 type Answer = { data: unknown; error: { message: string } | null };
 const ok = (data: unknown): Answer => ({ data, error: null });
@@ -159,6 +165,10 @@ export function installCeoHarness(client: SupabaseClient): void {
     rpc: (name: string, args?: Record<string, unknown>) => Promise<Answer>;
     from: (table: string) => unknown;
     auth: { getUser: () => unknown };
+    functions: {
+      invoke: (name: string, opts?: { body?: unknown }) => Promise<Answer>;
+    };
+    storage: { from: (bucket: string) => unknown };
   };
   // With ?reads=1 the shell's own reads run too: "who am I" answers "nobody
   // signed in" rather than throwing, as the real hook would with no session.
@@ -223,8 +233,51 @@ export function installCeoHarness(client: SupabaseClient): void {
         nudge.updatedAt = new Date().toISOString();
         nudge.updatedBy = "ceo@example.test";
         return ok(nudge);
+      // Hubstaff watch (watchFixture.ts, ?watch=full|none|source|noai|aifail|offshift|slack).
+      case "cockpit_ceo_hours_watch_board":
+        return ok(watchBoardFixture());
+      case "cockpit_ceo_hours_watch_set":
+        Object.assign(watchSettings, (args.p ?? {}) as Record<string, unknown>);
+        return ok({ ok: true, settings: { ...watchSettings } });
+      case "cockpit_ceo_hours_watch_review": {
+        const p = (args.p ?? {}) as { incidentId?: number };
+        const at = new Date().toISOString();
+        watchReviewed.set(Number(p.incidentId), at);
+        return ok({ ok: true, reviewedAt: at });
+      }
       default:
         return hoursRpc(name, args);
     }
   };
+  // The watch's two Edge actions; the rest go where they went before.
+  // supabase-js builds a new `functions` client on every read of the
+  // property, so one is kept on the client, or the patch would be lost.
+  const functions = c.functions;
+  const hoursInvoke = functions.invoke.bind(functions);
+  Object.defineProperty(client, "functions", {
+    configurable: true,
+    value: functions,
+  });
+  functions.invoke = async (name, opts = {}) => {
+    const body = (opts.body ?? {}) as Record<string, unknown>;
+    if (name === "cockpit-hours-api" && body.op === "watchNow")
+      return ok({ ok: true });
+    // The answer names the provider the next run will use, as the server's does.
+    if (name === "cockpit-hours-api" && body.op === "watchKey")
+      return ok({
+        ok: true,
+        state: "connected",
+        text: `Connected: ${body.provider === "google_ai" ? "Google AI" : "OpenAI"}. The next screenshots are read with it.`,
+      });
+    return hoursInvoke(name, opts);
+  };
+  // Stored screenshots: an invented picture, never the network.
+  const realStorage = c.storage.from.bind(c.storage);
+  c.storage.from = (bucket: string) =>
+    bucket === "cockpit-hours-watch"
+      ? {
+          createSignedUrl: async (path: string) =>
+            ok({ signedUrl: watchShotPicture(path) }),
+        }
+      : realStorage(bucket);
 }

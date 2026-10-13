@@ -63,6 +63,7 @@ import type {
   TeamStatus,
 } from "@/types/ceo/payloads";
 import type { Roster } from "@/types/ceo/people";
+import { HubstaffWatch } from "./hours/HubstaffWatch";
 import { PeopleCard } from "./peopleCard";
 import { PersonPage, usePersonParam } from "./personPage";
 import { ScorecardTemplates } from "./scorecardTemplates";
@@ -365,7 +366,7 @@ function PersonName({ name }: { name: string }) {
   );
 }
 
-export function ManagementTab({ sections, now, day }: CeoTabProps) {
+export function ManagementTab({ sections, now, day, goTab }: CeoTabProps) {
   const [personId, setPerson] = usePersonParam();
   const loadRoster = useAction(api.ceo.people.list);
   const [index, setIndex] = useState<Map<string, number>>(new Map());
@@ -453,6 +454,7 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
   if (!payload)
     return (
       <div className="grid gap-4 lg:gap-6">
+        <HubstaffWatch order={0} goTab={goTab} />
         <PeopleCard order={0} />
         <SectionCard title="Departments" section={team}>
           {() => null}
@@ -469,6 +471,9 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
       <PeopleIndex.Provider value={index}>
         <EodWindow.Provider value={eodWords}>
           <div className="grid gap-4 lg:gap-6">
+            {/* Who is working right now (Hubstaff watch, 2026-10-13): live,
+                so above the timeframe bar, which only moves the EOD counts. */}
+            <HubstaffWatch order={0} goTab={goTab} />
             <TimeframeBar
               tf={tf}
               bounds={bounds}
