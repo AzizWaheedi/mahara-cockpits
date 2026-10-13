@@ -4,9 +4,9 @@ export interface WatchdogDeps {
   rpc: (name: string, args?: Record<string, unknown>) => Promise<any>;
   fetch: typeof fetch;
 }
-const channel = "C0AF4SDLWNL";
+const channel = "C0BC6MPL6LU"; // #mahara-systems-health. Monitor health only, never client billing cards.
 const lines: Record<string, string> = {
-  stale: "Ad billing monitoring has no completed check within 15 minutes. Check the VPS worker before relying on automatic client alerts.",
+  stale: "Ad billing monitoring has no completed check within 30 minutes. Check the VPS worker before relying on automatic client alerts.",
   source_error: "Ad billing monitoring cannot verify one or more source records. Review Ad billing watch in the media buyer cockpit.",
   delivery_error: "An ad billing notification is delayed, failed, or has an unknown result. Check its receipt before retrying.",
   healthy: "Ad billing monitoring is current again. This confirms monitor health, not campaign delivery or payment completion.",

@@ -32,7 +32,7 @@ function harness(mode = "ok") {
     results.push(args); return true;
   }, fetch: (async (url: any, init: any) => {
     if (String(url).includes("conversations.info")) return Response.json({ok:true,channel:{is_private:true}});
-    posts++; expect(JSON.parse(init.body).channel).toBe("C0AF4SDLWNL");
+    posts++; expect(JSON.parse(init.body).channel).toBe("C0BC6MPL6LU");
     if (mode === "timeout") throw new Error("Timeout");
     if (mode === "empty") return new Response(null, { status: 204 });
     if (mode === "refused") return Response.json({ok:false});
