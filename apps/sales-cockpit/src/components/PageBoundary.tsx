@@ -1,9 +1,9 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { buttonPrimary } from "./kit";
 
-/** An old tab asking for a page file that a newer deploy replaced. */
-function isStaleBuild(error: Error) {
-  return /dynamically imported module|Importing a module script failed|error loading dynamically/i.test(
+/** An old tab asking for a page file (script or stylesheet) that a newer deploy replaced, or that failed to load once. */
+export function isStaleBuild(error: Error) {
+  return /dynamically imported module|Importing a module script failed|error loading dynamically|Unable to preload CSS/i.test(
     error.message,
   );
 }
