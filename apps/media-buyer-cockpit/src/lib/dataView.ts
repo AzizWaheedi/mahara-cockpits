@@ -487,8 +487,10 @@ export type SheetColumn<T> = {
   cls?: "m" | "id" | "num";
 };
 
+// The portal keeps CRM bookings only, so a Google Calendar copy never has
+// a portal row (checked 2026-10-13: 26 of the 72 missing rows in 30 days).
 const PORTAL_EMPTY =
-  "— means the client portal has not captured this booking yet, or the booking has none.";
+  "— means the booking has none, or the client portal does not have this booking. The portal skips Google Calendar copies.";
 
 const LAST_TOUCH_WHY =
   "GHL keeps the last touch on the contact. The lead sync stores only the first touch, so this column is empty here.";
