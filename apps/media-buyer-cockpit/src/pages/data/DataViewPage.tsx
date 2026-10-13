@@ -823,7 +823,8 @@ export function DataViewPage() {
                   {ns ? (
                     <span>
                       <i className="ns-cell" />
-                      Not copied to the database yet ({ns} columns)
+                      Not copied to the database yet ({ns}{" "}
+                      {ns === 1 ? "column" : "columns"})
                     </span>
                   ) : null}
                 </span>

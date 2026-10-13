@@ -61,6 +61,9 @@ html:has(.screen),
 html:has(.screen) body {
   background: #091333;
   color-scheme: dark !important;
+  /* The cockpit scrollbar's dark ink, whatever the saved theme. */
+  --scrollbar: oklch(1 0 0 / 16%);
+  --scrollbar-hover: oklch(1 0 0 / 30%);
 }
 .screen ::selection {
   background: rgb(0 207 200 / 0.3);
@@ -433,7 +436,6 @@ img.film {
   overflow-x: auto;
   padding: 4px 4px 8px;
   margin: -4px;
-  scrollbar-width: thin;
   scroll-snap-type: x proximity;
 }
 .frame {

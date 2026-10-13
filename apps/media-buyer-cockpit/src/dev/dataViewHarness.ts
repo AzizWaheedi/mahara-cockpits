@@ -122,6 +122,13 @@ function build() {
               ? "twice"
               : "counted",
         cockpit_at: meta && i % 24 !== 0 ? iso(at + 1 * HOUR) : null,
+        // Some bookings are not in the client portal yet; one agent is new.
+        notes:
+          i % 7 === 0
+            ? null
+            : "Wants a site visit next week. Asked about the villa package and payment in two parts.",
+        agent: i % 7 === 0 ? null : i % 5 === 0 ? "New Agent" : "Daniya Ziad",
+        agent_number: i % 7 === 0 || i % 5 === 0 ? null : "7",
       });
     }
   }

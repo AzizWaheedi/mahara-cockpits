@@ -165,7 +165,7 @@ export function Strip({
   const fixed = { width: "56px" };
 
   return (
-    <div className="flex gap-1.5 overflow-x-auto px-5 py-3 [scrollbar-width:thin]">
+    <div className="flex gap-1.5 overflow-x-auto px-5 py-3">
       {items.map((item, i) => (
         <button
           key={`${item.url}-${i}`}

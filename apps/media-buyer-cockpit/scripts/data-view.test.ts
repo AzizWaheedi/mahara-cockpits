@@ -78,6 +78,9 @@ const appt: ApptRow = apptRowSchema.parse({
   outcome_at: null,
   cockpit: "counted",
   cockpit_at: "2026-10-10T10:12:00+03:00",
+  notes: "Wants a quote for the kitchen",
+  agent: "Daniya Ziad",
+  agent_number: "7",
 });
 
 describe("columns follow the Master Dashboard", () => {
@@ -90,12 +93,11 @@ describe("columns follow the Master Dashboard", () => {
       "LAST_UTM_MEDIUM",
       "LAST_URL",
     ]);
-    expect(APPT_ALL.filter(c => !c.get).map(c => c.label)).toEqual([
-      "Additional Notes",
-      "Agent Number",
-      "PRE-PAY",
-      "Agent",
-    ]);
+    expect(APPT_ALL.filter(c => !c.get).map(c => c.label)).toEqual(["PRE-PAY"]);
+  });
+  test("every unsynced column says why it is empty", () => {
+    for (const c of [...LEAD_ALL, ...APPT_ALL].filter(c => !c.get))
+      expect(c.why ?? "").not.toBe("");
   });
   test("sheet values use Riyadh time and plain sheet words", () => {
     const get = (label: string) =>
@@ -110,6 +112,21 @@ describe("columns follow the Master Dashboard", () => {
     );
     expect(aget("Showed?")).toBeNull();
     expect(aget("Confirmed?")).toBe("TRUE");
+    expect(aget("Additional Notes")).toBe("Wants a quote for the kitchen");
+    expect(aget("Agent")).toBe("Daniya Ziad");
+    expect(aget("Agent Number")).toBe("7");
+  });
+  test("rows from before the agent columns still parse, as empty cells", () => {
+    const old = apptRowSchema.parse({
+      ...appt,
+      notes: undefined,
+      agent: undefined,
+      agent_number: undefined,
+    });
+    const aget = (label: string) =>
+      APPT_ALL.find(c => c.label === label)?.get?.(old);
+    expect(aget("Additional Notes")).toBeNull();
+    expect(aget("Agent Number")).toBeNull();
   });
 });
 

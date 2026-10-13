@@ -115,7 +115,7 @@
 .dv-gridwrap th, .dv-gridwrap td { border-bottom: 1px solid var(--dv-grid); padding: 0 14px; text-align: left; background: var(--card); vertical-align: middle; }
 .dv-gridwrap.allcols th, .dv-gridwrap.allcols td { border-right: 1px solid var(--dv-grid); }
 .dv-gridwrap thead th { position: sticky; top: 0; z-index: 3; height: 42px; font-size: 12.5px; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; box-shadow: 0 1px 0 var(--border); }
-.dv-gridwrap thead tr.grp th { height: 28px; font: 600 10.5px/28px var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; background: var(--muted); }
+.dv-gridwrap thead tr.grp th { height: 28px; font: 600 10.5px/28px var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; background: linear-gradient(var(--muted), var(--muted)), var(--card); }
 .dv-gridwrap.allcols thead tr.cols th { top: 28px; }
 .dv-th { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .dv-th span { overflow: hidden; text-overflow: ellipsis; }
@@ -132,8 +132,11 @@
 .dv-gridwrap td.id { font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground); }
 .dv-gridwrap td.num { text-align: right; font-family: var(--font-mono); }
 .dv-gridwrap tbody tr { cursor: pointer; }
-.dv-gridwrap tbody tr:hover td { background: color-mix(in oklch, var(--muted) 70%, var(--card)); }
-.dv-gridwrap tbody tr.sel td { background: var(--accent); }
+/* --muted and --accent are see-through in dark mode, so each tint is laid
+   over the card: the frozen column and the sticky rows stay solid while the
+   sheet scrolls under them. */
+.dv-gridwrap tbody tr:hover td { background: linear-gradient(var(--muted), var(--muted)), var(--card); }
+.dv-gridwrap tbody tr.sel td { background: linear-gradient(var(--accent), var(--accent)), var(--card); }
 /* Stand-ins for the rows outside the sheet window (SheetGrid draws only the
    rows in view), so the scrollbar keeps the full length. */
 .dv-gridwrap tbody tr.dv-spacer { cursor: default; }

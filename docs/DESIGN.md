@@ -87,6 +87,14 @@ The brand itself is Mahara Media Brand Guidelines v1.0.
 - Disclosures: `<summary>` gets one CSS chevron in every browser (the
   "Disclosures" block in index.css); a summary that draws its own chevron
   uses `no-marker`.
+- Scrollbars: one slim rounded thumb in every cockpit (the scrollbar block at
+  the end of each index.css, tokens `--scrollbar` and `--scrollbar-hover`),
+  only for a mouse or trackpad. Do not set `scrollbar-width` or
+  `scrollbar-color` on a scroller: Chrome then draws its own bar instead. To
+  hide a bar, use `no-scrollbar`.
+- Sticky cells (frozen columns, sticky headers) need an opaque background.
+  `--muted` and `--accent` are see-through in dark mode, so lay a tint over
+  the card: `linear-gradient(var(--accent), var(--accent)), var(--card)`.
 
 ## Arrows and repetition
 

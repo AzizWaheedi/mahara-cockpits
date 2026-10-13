@@ -85,6 +85,12 @@ export const apptRowSchema = z.object({
   // How the media sync attributed a counted booking (2026-10-12): "ad",
   // "unknown_ad" or "none". Absent before migration 20261012h.
   cockpit_attribution: str.optional(),
+  // The booking's notes and call agent (2026-10-13), from
+  // portal_data.appointments; the number is the Agent Data tab's code for
+  // that agent. Absent before migration 20261013a.
+  notes: str.optional(),
+  agent: str.optional(),
+  agent_number: str.optional(),
 });
 export type ApptRow = z.infer<typeof apptRowSchema>;
 
@@ -473,8 +479,19 @@ export type SheetColumn<T> = {
   /** null: the field is not synced to the database yet. */
   get: ((row: T) => string | null) | null;
   source: string;
+  /** For a column that is not synced: where the value lives and why the
+   *  database does not have it. */
+  why?: string;
+  /** What a — means here, when it is not "GHL has no value". */
+  empty?: string;
   cls?: "m" | "id" | "num";
 };
+
+const PORTAL_EMPTY =
+  "— means the client portal has not captured this booking yet, or the booking has none.";
+
+const LAST_TOUCH_WHY =
+  "GHL keeps the last touch on the contact. The lead sync stores only the first touch, so this column is empty here.";
 
 const v = (s: string | null | undefined) =>
   s === null || s === undefined || s === "" ? null : s;
@@ -504,7 +521,7 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
   {
     group: "Lead",
     label: "Created Date & Time",
-    width: 170,
+    width: 180,
     get: r => t(r.created_at, fmtFull),
     source: "client_leads.created_at",
     cls: "m",
@@ -522,7 +539,8 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
     label: "Client Name",
     width: 170,
     get: r => r.client,
-    source: "ghl_clients.client_name, by GHL location",
+    source:
+      "ghl_clients.client_name, else the cockpit's client list, else the GHL account name",
   },
   {
     group: "Lead",
@@ -587,7 +605,7 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
   {
     group: "First touch",
     label: "FIRST_UTM_SOURCE",
-    width: 160,
+    width: 190,
     get: r => v(r.utm_source),
     source: "client_leads.attribution_raw.utmSource",
   },
@@ -608,23 +626,26 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
   {
     group: "Last touch",
     label: "LAST_UTM_SOURCE",
-    width: 160,
+    width: 180,
     get: null,
     source: "Not synced",
+    why: LAST_TOUCH_WHY,
   },
   {
     group: "Last touch",
     label: "LAST_UTM_CONTENT",
-    width: 170,
+    width: 190,
     get: null,
     source: "Not synced",
+    why: LAST_TOUCH_WHY,
   },
   {
     group: "Last touch",
     label: "LAST_UTM_MEDIUM",
-    width: 170,
+    width: 180,
     get: null,
     source: "Not synced",
+    why: LAST_TOUCH_WHY,
   },
   {
     group: "Pages",
@@ -640,6 +661,7 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
     width: 130,
     get: null,
     source: "Not synced",
+    why: LAST_TOUCH_WHY,
   },
   {
     group: "Pages",
@@ -666,7 +688,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Appointment",
     label: "Date Appointment Created",
-    width: 190,
+    width: 220,
     get: r => t(r.booked_at, fmtFull),
     source: "appointments.booked_at",
     cls: "m",
@@ -674,7 +696,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Appointment",
     label: "Date Of Appointment",
-    width: 160,
+    width: 190,
     get: r => t(r.start_at, ymd),
     source: "appointments.start_at, as a Riyadh day",
     cls: "m",
@@ -684,19 +706,21 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
     label: "Project Name",
     width: 170,
     get: r => r.client,
-    source: "ghl_clients.client_name, by GHL location",
+    source:
+      "ghl_clients.client_name, else the cockpit's client list, else the GHL account name",
   },
   {
     group: "Appointment",
     label: "Additional Notes",
-    width: 150,
-    get: null,
-    source: "Not synced",
+    width: 260,
+    get: r => v(r.notes),
+    source: "portal_data.appointments.notes",
+    empty: PORTAL_EMPTY,
   },
   {
     group: "Appointment",
     label: "Lead Phone Number",
-    width: 160,
+    width: 180,
     get: r => v(r.phone),
     source: "appointments.contact_phone",
     cls: "m",
@@ -711,7 +735,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Appointment",
     label: "Requested Time",
-    width: 130,
+    width: 160,
     get: r => t(r.start_at, fmtTime),
     source: "appointments.start_at",
     cls: "m",
@@ -719,16 +743,20 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Stage Booked",
-    width: 130,
+    width: 150,
     get: r => v(r.status),
     source: "appointments.status",
   },
   {
     group: "Status",
     label: "Agent Number",
-    width: 130,
-    get: null,
-    source: "Not synced",
+    width: 150,
+    get: r => v(r.agent_number),
+    source:
+      "The Agent Data tab's code for the agent, kept in cockpit_call_agents",
+    empty:
+      "— means there is no agent, or the agent is not in cockpit_call_agents yet. Add them there.",
+    cls: "num",
   },
   {
     group: "Status",
@@ -742,7 +770,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Showed?",
-    width: 100,
+    width: 120,
     get: r =>
       r.status === "showed" ? "TRUE" : r.status === "noshow" ? "FALSE" : null,
     source: "appointments.status",
@@ -750,14 +778,14 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Confirmed?",
-    width: 110,
+    width: 130,
     get: r => (r.status === "cancelled" ? "FALSE" : "TRUE"),
     source: "appointments.status",
   },
   {
     group: "Status",
     label: "Closed?",
-    width: 100,
+    width: 110,
     get: r => (r.deal ? (r.deal === "won" ? "TRUE" : "FALSE") : null),
     source: "appointment_outcomes.deal",
   },
@@ -782,6 +810,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
     width: 110,
     get: null,
     source: "Not synced",
+    why: "A GHL contact field. The appointment sync does not store it, so this column is empty here.",
   },
   {
     group: "Status",
@@ -794,9 +823,10 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Agent",
-    width: 100,
-    get: null,
-    source: "Not synced",
+    width: 170,
+    get: r => v(r.agent),
+    source: "portal_data.appointments.assigned_agent",
+    empty: PORTAL_EMPTY,
   },
   {
     group: "Status",
@@ -815,7 +845,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Cancelled?",
-    width: 110,
+    width: 130,
     get: r => (r.status === "cancelled" ? "Y" : null),
     source: "appointments.status",
   },
@@ -847,7 +877,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Portal",
     label: "Quotation Given (Portal)",
-    width: 190,
+    width: 200,
     get: r => (r.quotation === null ? null : r.quotation ? "Yes" : "No"),
     source: "appointment_outcomes.quotation",
   },

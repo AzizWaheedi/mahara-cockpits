@@ -38,7 +38,8 @@ type Col = {
   group?: string;
   cls?: string;
   frozen?: boolean;
-  notSynced?: boolean;
+  /** Set for a column the database does not have: why it is empty. */
+  notSynced?: string;
   help: Help;
   render: (row: Row, now: number) => ReactNode;
 };
@@ -115,8 +116,8 @@ const LEAD_KEY: Col[] = [
     width: 160,
     help: [
       "The Mahara client this lead belongs to.",
-      "ghl_clients.client_name, matched by GHL location",
-      "Never empty. A location that is not a client shows its id.",
+      "ghl_clients.client_name, else the cockpit's client list, else the GHL account name",
+      "Never empty. An account with no name anywhere shows as Unknown GHL account and its id.",
     ],
     render: r => <Two a={r.client} />,
   },
@@ -250,8 +251,8 @@ const APPT_KEY: Col[] = [
     width: 160,
     help: [
       "The Mahara client.",
-      "ghl_clients.client_name, matched by GHL location",
-      "Never empty.",
+      "ghl_clients.client_name, else the cockpit's client list, else the GHL account name",
+      "Never empty. An account with no name anywhere shows as Unknown GHL account and its id.",
     ],
     render: r => <Two a={r.client} />,
   },
@@ -338,22 +339,32 @@ function sheetCols<T>(list: SheetColumn<T>[]): Col[] {
     group: c.group,
     cls: c.cls,
     frozen: i === 0,
-    notSynced: !c.get,
+    notSynced: c.get
+      ? undefined
+      : (c.why ??
+        "Not stored in the database. It may still have a value in GHL."),
     help: c.get
       ? [
           `The Master Dashboard column "${c.label}".`,
           c.source,
-          "— means GHL has no value for this row.",
+          c.empty ?? "— means GHL has no value for this row.",
         ]
       : [
           `The Master Dashboard column "${c.label}".`,
-          "Not stored in the database yet",
-          "Striped cells mean the field is not synced. It may still have a value in GHL.",
+          "Not stored in the database",
+          `Always striped. ${c.why ?? "It may still have a value in GHL."}`,
         ],
     render: (row: Row) => {
       if (!c.get) return null;
       const value = c.get(row as T);
-      return value === null ? NA : value;
+      if (value !== null) return value;
+      return c.empty ? (
+        <span className="na" title={c.empty}>
+          —
+        </span>
+      ) : (
+        NA
+      );
     },
   }));
 }
@@ -477,6 +488,7 @@ const SheetRow = memo(function SheetRow({
               .join(" ")
               .trim() || undefined
           }
+          title={c.notSynced}
         >
           {c.notSynced ? null : c.render(row, now)}
         </td>
@@ -617,7 +629,7 @@ export const SheetGrid = memo(function SheetGrid({
             {cols.map((c, i) => (
               <th key={c.label} className={c.frozen ? "fz" : undefined}>
                 <span className="dv-th">
-                  <span>{c.label}</span>
+                  <span title={c.label}>{c.label}</span>
                   <button
                     type="button"
                     className="dv-colhelp"
