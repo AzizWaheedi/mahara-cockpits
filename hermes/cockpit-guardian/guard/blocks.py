@@ -13,6 +13,7 @@ SECTION_MAX = 2900                                # Slack allows 3000 characters
 HEADLINE = re.compile(r"^(\S+) \*(.+)\*$")        # "🔴 *Broken: Demo job*"
 QUIET = ("✅", "⏰")                              # resolutions and reminders get no large title
 LABELS = {"*Do:*": "*What to do*", "*Guardian:*": "*What the guardian did*"}
+BLOCK_ERRORS = ("invalid_blocks", "msg_blocks_too_long")  # Slack refusing the layout; the text then goes alone
 
 
 def _plain(text: str) -> str:
@@ -45,9 +46,9 @@ def to_blocks(text: str, headline: Optional[bool] = None) -> Optional[list[dict[
     whole_bold = len(first) > 2 and first.startswith("*") and first.endswith("*")
     big = headline if headline is not None else ((bool(m) and not first.startswith(QUIET)) or whole_bold)
     blocks: list[dict[str, Any]] = []
-    if big:
-        title = f"{m.group(1)} {m.group(2)}" if m else first.strip("*").rstrip(":")
-        blocks.append({"type": "header", "text": {"type": "plain_text", "text": _plain(title), "emoji": True}})
+    title = _plain(f"{m.group(1)} {m.group(2)}" if m else first.strip("*").rstrip(":")) if big else ""
+    if title:   # Slack refuses an empty header, so a title that was only a mention stays a section
+        blocks.append({"type": "header", "text": {"type": "plain_text", "text": title, "emoji": True}})
     else:
         blocks += _sections(first)
     group: list[str] = []
@@ -65,13 +66,14 @@ def to_blocks(text: str, headline: Optional[bool] = None) -> Optional[list[dict[
         elif line.startswith("*Changed:*"):
             flush()
             change = line[len("*Changed:*"):].strip()
-            blocks.append(_context(change[:1].upper() + change[1:]))
+            if change:
+                blocks.append(_context(change[:1].upper() + change[1:]))
         elif label:
             flush()
             if label == "*Do:*":
                 _divider(blocks)
             blocks.extend(_sections(f"{LABELS[label]}\n{line[len(label):].strip()}"))
-        elif len(line) > 2 and line.startswith("_") and line.endswith("_"):
+        elif len(line) > 2 and line.startswith("_") and line.endswith("_") and line[1:-1].strip():
             flush()
             if len(blocks) > 2:
                 _divider(blocks)

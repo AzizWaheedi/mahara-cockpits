@@ -122,6 +122,28 @@ class Blocks(unittest.TestCase):
         self.assertTrue(lines[-4].startswith("• Item ") and lines[-4].endswith("do this"), "whole lines only")
         self.assertEqual(self.kinds(self.sent(text)["blocks"])[-3:], ["context", "divider", "context"])
 
+    def test_a_layout_slack_refuses_still_sends_the_alert_as_text(self):
+        bodies = []
+        answers = iter(["Slack answered 200 invalid_blocks", None])
+        slack = alerts.Slack("xoxb-test", "C1", post=lambda body: bodies.append(body) or next(answers))
+        self.assertIsNone(slack.send("🔴 *Broken: Demo job*\nlate"))
+        self.assertEqual(["blocks" in b for b in bodies], [True, False])
+        self.assertEqual(bodies[1]["text"], "🔴 *Broken: Demo job*\nlate")
+
+    def test_other_slack_errors_are_not_retried(self):
+        bodies = []
+        slack = alerts.Slack("xoxb-test", "C1", post=lambda body: bodies.append(body) or "Slack answered 200 channel_not_found")
+        self.assertEqual(slack.send("🔴 *Broken: Demo job*\nlate"), "Slack answered 200 channel_not_found")
+        self.assertEqual(len(bodies), 1)
+
+    def test_no_empty_blocks(self):
+        from guard import blocks as bk
+        out = bk.to_blocks("*<@U0AS90SHMH8>*\n*Changed:*\n_ _\nlate")
+        self.assertNotEqual(out[0]["type"], "header", "a title that is only a mention stays a section")
+        for b in out:
+            for t in [b.get("text", {}).get("text")] + [e["text"] for e in b.get("elements", [])]:
+                self.assertTrue(t is None or t.strip(), b)
+
     def test_slack_limits(self):
         from guard import blocks as bk
         long = bk.to_blocks("🔴 *" + "x" * 300 + "*\n" + "\n".join("line %d %s" % (i, "y" * 80) for i in range(60)))

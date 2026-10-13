@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from . import http
-from .blocks import to_blocks
+from .blocks import BLOCK_ERRORS, to_blocks
 from .model import KUWAIT, ago, kuwait, parse_time
 from .redact import clean
 
@@ -171,6 +171,13 @@ class Slack:
         blocks = to_blocks(text[:3800])
         if blocks:
             body["blocks"] = blocks  # the text stays as the notification and fallback
+        why = self._send(body)
+        if why and "blocks" in body and any(e in why for e in BLOCK_ERRORS):
+            # a layout Slack refuses must never stop the alert: send the text alone
+            why = self._send({k: v for k, v in body.items() if k != "blocks"})
+        return why
+
+    def _send(self, body: dict) -> Optional[str]:
         if self._post:
             return self._post(body)
         try:
