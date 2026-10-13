@@ -83,9 +83,10 @@ def _message(icon: str, head: str, inc: dict[str, Any], check: Any, now: datetim
     if changed:
         lines.append(f"*Changed:* {clean(changed, 400)}.")
     lines.append(clean(inc.get("detail"), 600))
-    tried = tried_sentence(inc, check, mode)
-    if tried != NO_FIX:
-        lines.append(f"*Guardian:* {clean(tried, 400)}.")
+    tried = clean(tried_sentence(inc, check, mode), 400)
+    # A capped fix is both the change and what the guardian did; say it once (VPS disk, 13 Oct 2026).
+    if tried != NO_FIX and tried not in clean(changed, 400):
+        lines.append(f"*Guardian:* {tried}.")
     lines.append(f"*Do:* {owner_tag(inc.get('action') or 'read this check in python3 guardian.py report on the VPS')}")
     lines.append(f"_Owner: {owner_tag(inc.get('owner') or 'nobody named')} · since {_since(inc, now)} · "
                  f"{clean(inc.get('check_id'), 80)}_")

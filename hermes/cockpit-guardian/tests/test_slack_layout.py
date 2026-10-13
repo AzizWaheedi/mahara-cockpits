@@ -36,6 +36,17 @@ class Layout(unittest.TestCase):
         h.scan(fix=False)
         self.assertIn("\n*Guardian:* nothing yet; it will start one catch-up run of demo on its next run.\n", h.posted[0])
 
+    def test_a_capped_fix_is_said_once(self):
+        note = "its safe fix ran 3 times in 24 hours and the cause is still there, so the guardian stopped; a person must find the cause"
+        inc = {"title": "VPS disk", "level": "fail", "detail": "The VPS disk is 86.3% full.", "owner": "the CEO",
+               "check_id": "vps-disk", "fix_capped": True, "fix_note": note}
+        text = alerts.worse_text(inc, None, fakes.NOW, "fix", [note])
+        self.assertEqual(text.count("safe fix ran 3 times"), 1)
+        self.assertNotIn("*Guardian:*", text)
+        self.assertIn("*Changed:* " + note + ".", text)
+        opened = alerts.opened_text(inc, None, fakes.NOW, "fix")
+        self.assertIn("*Guardian:* " + note + ".", opened, "without a Changed line it still says what the guardian did")
+
     def test_the_systems_manager_is_tagged_in_owner_and_action(self):
         b = Box(fixable=False)
         b.check = dataclasses.replace(b.check, owner="the systems manager",
