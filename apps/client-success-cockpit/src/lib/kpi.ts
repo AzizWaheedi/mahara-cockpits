@@ -51,3 +51,93 @@ export const LAUNCH_WATCH_DAYS = 3;
  * in convex/sync.ts. [tracker, 2026-09-06]
  */
 export const LINK_CTR_FLOOR = 0.3;
+
+/** Cost per lead over this is very high: half again over the gate. */
+export const CPL_BAD = CPL_GATE * 1.5;
+
+export type GridVerdict = "scale" | "hold" | "kill";
+export type GridRow = "good" | "watch" | "bad" | "early";
+
+/**
+ * How an ad or a campaign is judged (Muhammed, 2026-10-13): cost per lead and
+ * cost per booking are read together, and neither one decides alone. Rows are
+ * the cost per booking over 7 days, columns the cost per lead (up to the gate,
+ * up to CPL_BAD, over it). The worker applies it in `judge`
+ * (hermes/cockpit-sync/calculator.ts); this copy draws the playbook and the
+ * filters. Keep the two in step.
+ */
+export const AD_GRID: Record<
+  GridRow,
+  {
+    label: string;
+    note?: string;
+    cells: [GridVerdict, GridVerdict, GridVerdict];
+  }
+> = {
+  good: {
+    label: `Up to $${CPB_GATE} a booking`,
+    cells: ["scale", "scale", "hold"],
+  },
+  watch: {
+    label: `$${CPB_GATE} to $${CPB_BAD} a booking`,
+    note: "or no booking yet after that much spend",
+    cells: ["hold", "hold", "kill"],
+  },
+  bad: {
+    label: `Over $${CPB_BAD} a booking`,
+    note: "or no booking yet after that much spend",
+    cells: ["kill", "kill", "kill"],
+  },
+  early: {
+    label: "No booking yet",
+    note: `under $${CPB_GATE} spent`,
+    cells: ["hold", "hold", "kill"],
+  },
+};
+
+export const GRID_COLUMNS = [
+  `Up to $${CPL_GATE} a lead`,
+  `$${CPL_GATE} to $${CPL_BAD.toFixed(2)}`,
+  `Over $${CPL_BAD.toFixed(2)}`,
+] as const;
+
+/** Where 7-day spend, leads and bookings land in AD_GRID. Needs leads. */
+export function gridCell(
+  spend: number,
+  leads: number,
+  booked: number,
+): { row: GridRow; column: 0 | 1 | 2; verdict: GridVerdict } {
+  const cpl = spend / leads;
+  const column = cpl <= CPL_GATE ? 0 : cpl <= CPL_BAD ? 1 : 2;
+  // No booking yet: what it has spent is already the least one booking costs.
+  const cpb = booked > 0 ? spend / booked : spend;
+  const row: GridRow =
+    booked === 0 && spend <= CPB_GATE
+      ? "early"
+      : cpb <= CPB_GATE
+        ? "good"
+        : cpb <= CPB_BAD
+          ? "watch"
+          : "bad";
+  return { row, column, verdict: AD_GRID[row].cells[column] };
+}
+
+/**
+ * Out of KPI by both numbers: a hold or a kill on the grid, but not a
+ * campaign that is only too early to judge on bookings. Without booking data
+ * (Done With You, no GHL) it is the cost per lead gate alone.
+ */
+export function belowKpi(c: {
+  spend7d: number;
+  leads7d: number;
+  cpl?: number;
+  bookings7d?: number | null;
+}): boolean {
+  if (c.bookings7d === undefined || c.bookings7d === null)
+    return c.cpl !== undefined && c.cpl > CPL_GATE;
+  if (c.leads7d <= 0) return c.spend7d >= 1;
+  const cell = gridCell(c.spend7d, c.leads7d, c.bookings7d);
+  return (
+    cell.verdict === "kill" || (cell.verdict === "hold" && cell.row !== "early")
+  );
+}

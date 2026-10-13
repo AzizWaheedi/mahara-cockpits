@@ -244,7 +244,12 @@ describe("the gates", () => {
   // Aziz, 2026-10-13: "The CSM: make it $15 cost per lead and $60 cost per
   // booking." The client success cockpit holds the same file.
   test("the client success cockpit judges on the same gates", () => {
-    expect({ ...csKpi }).toEqual({ ...kpi });
+    // Values only: the two copies' functions are different objects.
+    const values = (m: Record<string, unknown>) =>
+      JSON.stringify(
+        Object.entries(m).filter(([, v]) => typeof v !== "function"),
+      );
+    expect(values(csKpi)).toBe(values(kpi));
     expect(
       readFileSync(
         join(APP, "../client-success-cockpit/src/lib/kpi.ts"),

@@ -831,12 +831,12 @@ test("the client gates are $15 a lead and $60 a booking, and cost per booking de
   expect(within.headline).toBe(
     "Nothing needs fixing first. Keep an eye on the cost per lead below, and ask for a review, a referral or more budget.",
   );
-  // Every campaign carries the client's whole booking count: taken once,
-  // never summed ($175 for 3 bookings is $58.33, not $29.17).
+  // Bookings are counted per campaign (Muhammed, 2026-10-13), so they add up:
+  // $175 for 2 + 1 bookings is $58.33.
   const twoCampaigns = diagnose(
     costClient([
-      { spend7d: 100, leads7d: 5, bookings7d: 3 },
-      { spend7d: 75, leads7d: 5, bookings7d: 3 },
+      { spend7d: 100, leads7d: 5, bookings7d: 2 },
+      { spend7d: 75, leads7d: 5, bookings7d: 1 },
     ]),
   );
   expect(twoCampaigns.watch[0].title).toContain("bookings still cost $58.33");
