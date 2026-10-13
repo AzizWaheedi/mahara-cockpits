@@ -390,6 +390,12 @@ export type CallCentreVerdict = {
   why: string;
   /** Every reason that held, most pressing first; the first is `why`. */
   reasons: string[];
+  /**
+   * Call centre checks that missed their line on a client who still books
+   * at or above the gate: worth fixing, never the verdict (Aziz, 2026-10-13:
+   * "is this a call center issue or is it not?").
+   */
+  watch: string[];
   tone: "bad" | "watch" | "good" | "muted";
 };
 
@@ -420,7 +426,11 @@ export function targetingShare(data: CallCentre): number | null {
   return rate(targeting, total);
 }
 
-function verdict(kind: VerdictKind, reasons: string[]): CallCentreVerdict {
+function verdict(
+  kind: VerdictKind,
+  reasons: string[],
+  watch: string[] = [],
+): CallCentreVerdict {
   const tone =
     kind === "call_centre"
       ? "bad"
@@ -429,7 +439,14 @@ function verdict(kind: VerdictKind, reasons: string[]): CallCentreVerdict {
         : kind === "on_track"
           ? "good"
           : "muted";
-  return { kind, label: VERDICT_LABELS[kind], why: reasons[0], reasons, tone };
+  return {
+    kind,
+    label: VERDICT_LABELS[kind],
+    why: reasons[0],
+    reasons,
+    watch,
+    tone,
+  };
 }
 
 export function callCentreVerdict(data: CallCentre): CallCentreVerdict {
@@ -498,13 +515,18 @@ export function callCentreVerdict(data: CallCentre): CallCentreVerdict {
         : `Only ${formatRate(reached)} of dials are answered (the line is ${REACHED_GATE}%) though calls are fast and repeated: check the caller number for a spam flag or a wrong country code.`,
     );
   }
-  if (reasons.length) return verdict("call_centre", reasons);
-
+  // A client who books at or above the gate is on track: what the call
+  // centre still misses is a watch beside it, not the verdict.
   const booked = s.bookedRate;
-  if (booked !== null && booked >= BOOKING_RATE_GATE)
-    return verdict("on_track", [
-      `${formatRate(booked)} of leads booked a confirmed appointment (the line is ${BOOKING_RATE_GATE}%).`,
-    ]);
+  if (booked !== null && booked >= BOOKING_RATE_GATE && s.dials !== 0)
+    return verdict(
+      "on_track",
+      [
+        `${formatRate(booked)} of leads booked a confirmed appointment (the line is ${BOOKING_RATE_GATE}%).`,
+      ],
+      reasons,
+    );
+  if (reasons.length) return verdict("call_centre", reasons);
   const quality = [
     `Calls are fast and repeated, ${formatRate(reached)} of dials are answered and ${formatRate(talked)} talk over 2 minutes, but only ${formatRate(booked)} of leads booked (the line is ${BOOKING_RATE_GATE}%): look at who the ads bring.`,
   ];

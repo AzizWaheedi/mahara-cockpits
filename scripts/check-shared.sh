@@ -139,6 +139,16 @@ for f in "$MB/src/lib/callCentre.ts" "$CS/src/lib/callCentre.ts"; do
   fi
 done
 
+# Playing a call centre recording through cockpit-call-recording: the same
+# file in both cockpits, with no imports.
+same callRecording.ts "$MB/src/lib/callRecording.ts" "$CS/src/lib/callRecording.ts"
+for f in "$MB/src/lib/callRecording.ts" "$CS/src/lib/callRecording.ts"; do
+  if [ -f "$f" ] && grep -qE "^import " "$f"; then
+    echo "IMPORTS  $f may import nothing"
+    fails=$((fails + 1))
+  fi
+done
+
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
 same personalEod.ts "$MB/src/lib/personalEod.ts" "$CS/src/lib/personalEod.ts"

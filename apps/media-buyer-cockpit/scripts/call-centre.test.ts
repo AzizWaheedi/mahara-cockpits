@@ -295,7 +295,28 @@ describe("summarize", () => {
   });
 });
 
+/** The same client booking 10% of its leads, so a call centre miss is the verdict. */
+const booking10 = (edit: (r: Raw) => void = () => {}) =>
+  read(r => {
+    r.official.confirmedBookings = 10;
+    edit(r);
+  });
+
 describe("callCentreVerdict", () => {
+  test("a client booking at the gate is on track; a call centre miss is a watch beside it", () => {
+    const v = callCentreVerdict(
+      read(r => (r.official.medianSpeedSeconds = 3 * 3600 + 12 * 60)),
+    );
+    expect(v.kind).toBe("on_track");
+    expect(v.why).toBe(
+      "30% of leads booked a confirmed appointment (the line is 25%).",
+    );
+    expect(v.watch).toEqual([
+      "The first call takes 3 h 12 min of working time at the median (the line is 30 min).",
+    ]);
+    expect(callCentreVerdict(read()).watch).toEqual([]);
+  });
+
   test("on track: 25% or more of leads booked a confirmed appointment", () => {
     const v = callCentreVerdict(read());
     expect(v).toMatchObject({
@@ -330,7 +351,7 @@ describe("callCentreVerdict", () => {
 
   test("call centre: leads older than a working hour left untouched", () => {
     const v = callCentreVerdict(
-      read(r => {
+      booking10(r => {
         r.waiting.callable = 40;
         r.waiting.touched = 30;
         r.waiting.untouched.count = 10;
@@ -345,7 +366,7 @@ describe("callCentreVerdict", () => {
 
   test("call centre: the first call is slow in working time", () => {
     const v = callCentreVerdict(
-      read(r => (r.official.medianSpeedSeconds = 3 * 3600 + 12 * 60)),
+      booking10(r => (r.official.medianSpeedSeconds = 3 * 3600 + 12 * 60)),
     );
     expect(v.kind).toBe("call_centre");
     expect(v.why).toBe(
@@ -355,7 +376,7 @@ describe("callCentreVerdict", () => {
 
   test("call centre: unanswered leads are not called again enough", () => {
     const v = callCentreVerdict(
-      read(r => {
+      booking10(r => {
         r.followUp = { leads: 10, calls: 14, threePlus: 1 };
       }),
     );
@@ -374,7 +395,7 @@ describe("callCentreVerdict", () => {
 
   test("call centre: answered, but few conversations over two minutes", () => {
     const v = callCentreVerdict(
-      read(r => {
+      booking10(r => {
         r.official.connectionRate = 0.6;
         r.window.talked120 = 30;
       }),
@@ -387,7 +408,7 @@ describe("callCentreVerdict", () => {
 
   test("call centre: few dials answered with a slow first call", () => {
     const v = callCentreVerdict(
-      read(r => {
+      booking10(r => {
         r.official.connectionRate = 0.2;
         r.official.medianSpeedSeconds = 600;
       }),
@@ -400,7 +421,7 @@ describe("callCentreVerdict", () => {
 
   test("call centre: few dials answered with shallow follow-up", () => {
     const v = callCentreVerdict(
-      read(r => {
+      booking10(r => {
         r.official.connectionRate = 0.2;
         r.followUp = { leads: 10, calls: 40, threePlus: 10 };
       }),
@@ -412,7 +433,7 @@ describe("callCentreVerdict", () => {
 
   test("call centre: few dials answered though calls are fast and repeated points at the number", () => {
     const v = callCentreVerdict(
-      read(r => {
+      booking10(r => {
         r.official.connectionRate = 0.2;
         r.official.medianSpeedSeconds = 120;
         r.followUp = { leads: 10, calls: 95, threePlus: 10 };
@@ -424,7 +445,7 @@ describe("callCentreVerdict", () => {
 
   test("call centre: no verified call at all", () => {
     const v = callCentreVerdict(
-      read(r => {
+      booking10(r => {
         r.official.providerDials = 0;
         r.official.connectionRate = null;
       }),
@@ -437,7 +458,7 @@ describe("callCentreVerdict", () => {
 
   test("every reason that holds is kept, most pressing first", () => {
     const v = callCentreVerdict(
-      read(r => {
+      booking10(r => {
         r.waiting.touched = 60;
         r.official.medianSpeedSeconds = 7200;
         r.followUp = { leads: 10, calls: 10, threePlus: 0 };
