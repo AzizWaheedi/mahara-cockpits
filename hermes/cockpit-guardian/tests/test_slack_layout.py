@@ -97,6 +97,11 @@ class AdBillingCoverage(unittest.TestCase):
         roster = [{'client_task_id': 'one'}, {'client_task_id': '86ex4j8f3'}]
         self.assertEqual(ad_billing.run(context(roster=roster, bindings=[bound])).status, 'ok')
 
+    def test_a_run_that_finished_during_the_scan_is_fresh(self):
+        bound = [{'client_task_id': 'one', 'enabled': True, 'manual_cutover_verified': True}]
+        self.assertEqual(ad_billing.run(context(age=-0.5, roster=[{'client_task_id': 'one'}], bindings=bound)).status, 'ok')
+        self.assertEqual(ad_billing.run(context(age=-6)).status, 'fail', 'a finish far ahead of the clock is still wrong')
+
     def test_any_other_unbound_client_still_warns(self):
         roster = [{'client_task_id': '86ex4j8f3'}, {'client_task_id': 'two'}]
         result = ad_billing.run(context(roster=roster))

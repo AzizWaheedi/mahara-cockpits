@@ -16,7 +16,10 @@ def run(ctx):
     if cfg.get('apply') is not True:
         return Result(PAUSED, 'Ad billing notifications are in preview mode.')
     age = age_min(cfg.get('last_finished_at'), ctx.now)
-    if age is None or not 0 <= age <= 15:
+    # The worker starts on the same 5-minute marks as the guardian and finishes about 30 s later, so a scan that began
+    # before it finished reads a finish time after the scan's own clock. That run is fresh, not missing: it was the
+    # false "no completed run" Broken of 12 Oct 2026. Only a time more than 5 minutes ahead means a wrong clock.
+    if age is None or not -5 <= age <= 15:
         return fail('Ad billing checks have no completed run within 15 minutes.', urgent=True)
     if cfg.get('last_error'):
         return fail('The last ad billing run failed. Review the media buyer billing panel.', urgent=True)
