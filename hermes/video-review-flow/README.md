@@ -8,7 +8,7 @@ User decision, 12 October 2026: notify the media buyer **only after client appro
 2. One Slack notice in **csm-general** mentions the active creative director and CSM. Either reviews the cut in ClickUp and moves it to **Internal Approved**, or leaves changes on the task.
 3. Internal Approved sends the CSM a **Prepare client link** button. It opens the exact task in the existing CSM Inbox. The approved cut must have a link and a verified client card.
 4. The CSM prepares the review link. The worker verifies the current ClickUp task and cut, moves the task to **Client Review**, and confirms the link is ready. Preparing or copying does not send a message. The CSM copies the prepared Arabic message and sends it through the existing WhatsApp desk. This preserves human control and existing client-group routing.
-5. The client watches the video and selects **موافقة** or **طلب تعديل**. Comments save in the review database and editor notes. The worker copies each comment to the exact ClickUp video task before notifying **video-editors-labs**.
+5. The client watches the video and selects **موافقة** or **طلب تعديل**. Comments save in the review database and editor notes. The worker copies each comment to the exact ClickUp video task. Feedback does not post to **video-editors-labs**, which only receives new video requests.
 6. A change request or a new comment after approval returns the task to **Update Required**. Approval changes it to **Client Approved**, adds a decision comment, and notifies the current client-scoped media buyer in **client-ads-general**.
 7. After launch, the buyer moves the task to **Live** in ClickUp. The approved review remains readable. The worker does not infer that an ad is live.
 
@@ -25,6 +25,8 @@ Use a **new file/link for every replacement cut**. Changing the contents of the 
 - Unlinked historical reviews and social reviews keep their existing path. The old review watcher excludes `flow_task_id` reviews so two workers cannot post the same comment.
 
 ## Reliability
+
+The 13 October 2026 correction stops new feedback Slack notices. Previously queued feedback notices are skipped. Interrupted or unknown sends still reconcile against the original editor channel. Existing receipts and ClickUp comments remain unchanged. Internal Review stays in **csm-general**, with the creative director and CSM mentioned.
 
 The worker polls every two minutes. The existing editor read sync runs every five minutes (previously thirty), so the CSM panel follows current task metadata. First installation records a silent baseline and does not announce old review tasks. SQLite stores status observations, separate delivery intents, receipts and unknown outcomes. An OS lock prevents concurrent workers. A timeout or interrupted send stays unknown until provider history confirms it; it is never blindly resent. Slack and ClickUp comments contain a stable event reference. Status PUTs are checked by readback. A failed source for one task does not block other tasks.
 

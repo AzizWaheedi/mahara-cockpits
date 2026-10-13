@@ -72,6 +72,10 @@ def eligible(task, lid):
             and task.get("status", {}).get("type") not in (None, "closed", "done"))
 
 
+def new_video_request(task):
+    return str(task.get("status", {}).get("status", "")).strip().lower() == "new video request"
+
+
 def escape(value):
     return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -229,8 +233,9 @@ def observe(db, tasks, lid, stamp, baseline=False):
             added = sorted(set(assigned)-set(old))
             db.execute("insert into tasks values(?,?,?,?) on conflict(id) do update set list_id=excluded.list_id,assignees=excluded.assignees,generation=excluded.generation",
                        (task["id"], lid, json.dumps(assigned), generation))
-            new_video = lid == VIDEO_LIST and previous is None
-            if (added or new_video) and not baseline and eligible(task, lid):
+            new_video = lid == VIDEO_LIST and previous is None and new_video_request(task)
+            notify = new_video if lid == VIDEO_LIST else bool(added)
+            if notify and not baseline and eligible(task, lid):
                 event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"mahara:task-assignment:{lid}:{task['id']}:{generation}:{','.join(added)}"))
                 pending = db.execute("select id,assignees from deliveries where task_id=? and list_id=? and state='queued' and attempts=0 order by created_ms limit 1", (task["id"], lid)).fetchone()
                 if pending:
@@ -243,7 +248,12 @@ def observe(db, tasks, lid, stamp, baseline=False):
 
 
 def message(task, delivery, users):
-    recipients = set(json.loads(delivery["assignees"])) & set(ids(task))
+    new_video = delivery["kind"] == "video_created"
+    # Retire old queued assignment alerts, and recheck the request phase before
+    # delivery. Do not change eligible(), which the review worker also uses.
+    if delivery["list_id"] == VIDEO_LIST and (not new_video or not new_video_request(task)):
+        return None, 0
+    recipients = set(ids(task)) if new_video else set(json.loads(delivery["assignees"])) & set(ids(task))
     mentions, unmapped = [], 0
     for user in people(task):
         if str(user["id"]) not in recipients:
@@ -254,7 +264,6 @@ def message(task, delivery, users):
         else:
             mentions.append(escape(user.get("username") or "ClickUp user "+str(user["id"])))
             unmapped += 1
-    new_video = delivery["kind"] == "video_created"
     if not mentions and not new_video:
         return None, 0
     name = str(task.get("name") or "Untitled task")[:400]
@@ -306,7 +315,7 @@ def dispatch(db, api, now):
             payload, unmapped = message(task, row, users) if eligible(task, row["list_id"]) else (None, 0)
             if payload is None:
                 with db:
-                    db.execute("update deliveries set state='skipped',error='Task closed, moved, became a subtask or assignment removed.' where id=?", (row["id"],))
+                    db.execute("update deliveries set state='skipped',error='Task or delivery no longer meets the channel notification rules.' where id=?", (row["id"],))
                 continue
             with db:
                 db.execute("update deliveries set state='sending',attempts=attempts+1,sent_ms=?,unmapped=? where id=?", (now, unmapped, row["id"]))

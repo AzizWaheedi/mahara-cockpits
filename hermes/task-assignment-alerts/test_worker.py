@@ -207,8 +207,8 @@ class Worker(unittest.TestCase):
         self.observe(task(due_date=str(NOW), due_date_time=True)); w.dispatch(self.db, self.api, NOW+60000)
         self.assertIn("Kuwait time", self.api.posts[0]["text"])
 
-    def video(self, assigned=(), editors=(), tid="video1"):
-        t = task(tid=tid, people=assigned, list={"id": w.VIDEO_LIST}, custom_fields=[
+    def video(self, assigned=(), editors=(), tid="video1", phase="new video request"):
+        t = task(tid=tid, people=assigned, list={"id": w.VIDEO_LIST}, status={"type": "custom", "status": phase}, custom_fields=[
             {"id": w.EDITOR_FIELD, "type": "users", "value": [{"id": x, "email": f"u{x}@example.test", "username": f"User {x}"} for x in editors]}])
         self.api.rows[w.VIDEO_LIST] = [t]; self.api.current[tid] = t
         w.poll(self.db, self.api, now=NOW+60000)
@@ -234,11 +234,58 @@ class Worker(unittest.TestCase):
         self.assertIn("<@U001>", self.api.posts[0]["text"])
         self.assertEqual(self.state(), {"accepted": 1})
 
-    def test_video_assignment_after_initial_post_mentions_editor(self):
+    def test_video_assignment_after_initial_post_does_not_realert(self):
         self.video(); w.dispatch(self.db, self.api, NOW+60000)
         self.video(editors=(2,)); w.dispatch(self.db, self.api, NOW+120000)
-        self.assertEqual(len(self.api.posts), 2)
-        self.assertIn("<@U002>", self.api.posts[1]["text"])
+        self.assertEqual(len(self.api.posts), 1)
+
+    def test_video_first_seen_in_other_phases_is_silent(self):
+        for n, phase in enumerate(("planning", "in progress", "internal review", "internal approved", "client review", "client approved", "update required", "on hold", "")):
+            self.video(assigned=(1,), editors=(2,), tid=f"v{n}", phase=phase)
+        w.dispatch(self.db, self.api, NOW+120000)
+        self.assertEqual(self.state(), {})
+        self.assertEqual(self.api.posts, [])
+
+    def test_existing_video_review_reassignments_and_reopening_are_silent(self):
+        self.video(phase="internal review")
+        self.video(assigned=(1,), phase="internal review")
+        self.video(editors=(2,), phase="client review")
+        self.video(editors=(2,), phase="new video request")
+        w.dispatch(self.db, self.api, NOW+120000)
+        self.assertEqual(self.api.posts, [])
+
+    def test_request_that_reaches_review_before_delivery_is_skipped(self):
+        self.video(); self.video(assigned=(1,), phase="internal review")
+        w.dispatch(self.db, self.api, NOW+120000)
+        self.assertEqual(self.state(), {"skipped": 1})
+        self.assertEqual(self.api.posts, [])
+
+    def test_request_uses_current_recipients_before_first_delivery(self):
+        self.video(editors=(1,)); self.video(editors=(2,))
+        w.dispatch(self.db, self.api, NOW+120000)
+        self.assertEqual(len(self.api.posts), 1)
+        self.assertNotIn("<@U001>", self.api.posts[0]["text"])
+        self.assertIn("<@U002>", self.api.posts[0]["text"])
+
+    def test_legacy_queued_and_retry_video_assignments_are_retired(self):
+        for n, state in enumerate(("queued", "retry")):
+            self.video(editors=(1,), tid=f"v{n}")
+            with self.db:
+                self.db.execute("update deliveries set kind='assignment',state=? where task_id=?", (state, f"v{n}"))
+        w.dispatch(self.db, self.api, NOW+120000)
+        self.assertEqual(self.state(), {"skipped": 2})
+        self.assertEqual(self.api.posts, [])
+
+    def test_legacy_unknown_video_assignment_reconciles_without_resend(self):
+        self.video(editors=(1,))
+        with self.db: self.db.execute("update deliveries set kind='assignment',state='unknown'")
+        event = self.db.execute("select id from deliveries").fetchone()[0]
+        w.dispatch(self.db, self.api, NOW+120000)
+        self.assertEqual(self.state(), {"unknown": 1})
+        self.api.receipts[event] = "1791816000.001"
+        w.dispatch(self.db, self.api, NOW+180000)
+        self.assertEqual(self.state(), {"accepted": 1})
+        self.assertEqual(self.api.posts, [])
 
     def test_video_subtask_and_missing_editor_field_do_not_notify(self):
         t = task(tid="v1", people=(), list={"id": w.VIDEO_LIST}, parent="v0", custom_fields=[{"id": w.EDITOR_FIELD, "type": "users"}])

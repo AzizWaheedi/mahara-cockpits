@@ -164,15 +164,17 @@ def dispatch(db,api):
         except Exception as exc:
             current=db.execute("select state from actions where id=?",(row["id"],)).fetchone()[0]
             finish(db,row,"unknown" if current in ('sending','unknown') else "queued",error=str(exc) if isinstance(exc,(ValueError,assignment.ProviderError)) else "Source check failed")
-    # Accepted feedback becomes a separate durable editor alert. This also
-    # recovers a crash after the ClickUp receipt and before enqueueing Slack.
-    with db:
-        for row in db.execute("select * from actions where kind='comment' and state='accepted'").fetchall():
-            p=json.loads(row['payload'])
-            enqueue(db,'feedback:'+row['id'],'feedback_slack',row['task_id'],{'token':p['token'],'text':p['note']['body'][:1500]})
 
 
 def process_action(db,api,row):
+    # Editor Labs is for new requests only. Preserve old receipts and reconcile
+    # uncertain feedback sends in their original channel without sending again.
+    if row['kind']=='feedback_slack':
+        if row['state']=='unknown':
+            receipt=api.find_receipt(EDITORS,row['id'],int((row['sent_at'] or row['created_at'])*1000))
+            if receipt:finish(db,row,'accepted',receipt)
+        else:finish(db,row,'skipped',error='Video Editors Labs only receives new video requests.')
+        return
     p=json.loads(row['payload']); marker='VR-'+row['id']; task=api.task(row['task_id'])
     if not assignment.eligible(task,VIDEO_LIST):finish(db,row,'skipped');return
     payload=None; target=None; comment=None
@@ -223,9 +225,6 @@ def process_action(db,api,row):
             if state(current)!=target or not api.valid_link(link,current):raise ValueError('Client decision status not confirmed')
             api.mutate('Supabase','editor_jobs?task_id=eq.'+task['id'],{'status':target},'PATCH')
             comment=f"Client review: {p['item']['decision']}\nReviewed by: {p['who']}\n{REVIEW_BASE}{p['token']}\n\n{marker}"
-        elif row['kind']=='feedback_slack':
-            text='*Client video feedback*\n'+assignment.escape(task['name'])+'\n'+assignment.escape(p['text'])+'\nThe comments are saved on the ClickUp task.'
-            payload=slack_payload(row,task,EDITORS,text,[('Read client comments','https://app.clickup.com/t/'+task['id'])])
     try:
         if row['state']=='unknown':
             receipt=api.find_receipt(payload['channel'],row['id'],int(row['sent_at']*1000)) if payload else api.comment_receipt(task['id'],marker)
