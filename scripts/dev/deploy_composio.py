@@ -45,6 +45,30 @@ def live(slug):
     return None
 
 
+def apply_import_map(tmp, base):
+    """A one-file deploy carries no deno.json, so its bare imports ("zod") are
+    rewritten to the mapped specifier ("npm:zod@4.1.12"), which bun leaves
+    external and the Edge runtime resolves."""
+    path = os.path.join(tmp, base, "deno.json")
+    if not os.path.exists(path):
+        return
+    imports = json.load(open(path)).get("imports") or {}
+    if not imports:
+        return
+    for root, _, files in os.walk(tmp):
+        for name in files:
+            if not name.endswith((".ts", ".tsx", ".js", ".mjs")):
+                continue
+            f = os.path.join(root, name)
+            text = open(f).read()
+            new = text
+            for bare, spec in imports.items():
+                for q in ("'", '"'):
+                    new = new.replace(f"from {q}{bare}{q}", f"from {q}{spec}{q}")
+            if new != text:
+                open(f, "w").write(new)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("slug")
@@ -60,6 +84,7 @@ def main():
         if arch.returncode:
             sys.exit(arch.stderr.decode()[:400])
         subprocess.run(["tar", "-x", "-C", tmp], input=arch.stdout, check=True)
+        apply_import_map(tmp, base)
         bundle = os.path.join(tmp, "bundle.js")
         b = subprocess.run(["bun", "build", os.path.join(base, "index.ts"), "--target=browser", "--format=esm",
                             "--external", "npm:*", "--external", "jsr:*", "--external", "node:*", "--external", "https:*",
