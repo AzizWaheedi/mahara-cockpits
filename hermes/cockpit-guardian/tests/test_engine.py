@@ -94,7 +94,7 @@ class Dedupe(unittest.TestCase):
         out = h.scan(fakes.NOW + timedelta(minutes=5))
         self.assertEqual(len(out.resolved), 1)
         self.assertIn("catch-up:demo", out.resolved[0]["resolved_by"])
-        self.assertTrue(any(t.startswith("[guardian] Resolved: Demo job") for t in h.posted))
+        self.assertTrue(any(t.startswith("✅ *Resolved: Demo job*") for t in h.posted))
 
     def test_cleared_by_itself(self):
         b = Box(fixable=False)
@@ -250,8 +250,8 @@ class Alerts(unittest.TestCase):
                         since=fakes.NOW - timedelta(hours=3))
         h.scan()
         text = h.posted[0]
-        self.assertTrue(text.startswith("[guardian] Broken: Demo job"))
-        for part in ("What broke:", "Since:", "What the guardian tried:", "What a person must do (the CEO): Read the demo log."):
+        self.assertTrue(text.startswith("🔴 *Broken: Demo job*"))
+        for part in ("*Do:* Read the demo log.", "_Owner: the CEO · since ", " · demo-check_"):
             self.assertIn(part, text)
         self.assertIn("Kuwait time (3.0 h)", text)
         for bad in ("—", "9999", "ali@example.com", "sk-abcdefghijk"):

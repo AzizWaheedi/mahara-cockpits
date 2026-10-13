@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from .model import FAIL, NOT_DEPLOYED, OK, PAUSED, UNKNOWN, WARN, ago, kuwait, parse_time
+from .alerts import owner_tag
 from .redact import clean
 
 ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -41,7 +42,7 @@ def build(state: dict[str, Any], checks: dict[str, Any], now: datetime, *, for_s
     def inc_line(i: dict[str, Any]) -> str:
         since = parse_time(i.get("first_seen_at"))
         if for_slack:
-            return clean(f"- {i.get('title')} (since {kuwait(since)}): {i.get('action')} ({i.get('owner')})", 300)
+            return owner_tag(f"- {i.get('title')} (since {kuwait(since)}): {i.get('action')} ({i.get('owner')})", 300)
         s = f"- {i.get('title')}: {i.get('detail')} Since {kuwait(since)}."
         attempts = [a for a in i.get("fix_attempts") or [] if not a.get("planned")]
         if attempts:
@@ -114,8 +115,24 @@ def build(state: dict[str, Any], checks: dict[str, Any], now: datetime, *, for_s
     lines.append(f"Healthy: {healthy} of {len(results)} checks.")
     for n in scan.get("notes") or []:
         lines.append(clean(f"Note: {n}", 300))
+    if for_slack:
+        lines = slack_layout(lines)
     text = "\n".join(lines)
     return text[:3800] + ("\n(cut short; run guardian.py report on the VPS for the rest)" if for_slack and len(text) > 3800 else "")
+
+
+def slack_layout(lines: list[str]) -> list[str]:
+    """Slack mrkdwn for the 09:00 post (13 Oct 2026): bold headline and section names, real bullets."""
+    out = []
+    for line in lines:
+        if line.startswith("- "):
+            line = "• " + line[2:]
+        elif line.startswith("Cockpit guardian, "):
+            line = f"*{line.rstrip('.')}*"
+        elif line and (line.endswith(":") or line.startswith(("Broken now: nothing", "Healthy: "))):
+            line = f"*{line}*"
+        out.append(line)
+    return out
 
 
 def daily_due(state: dict[str, Any], now: datetime) -> bool:

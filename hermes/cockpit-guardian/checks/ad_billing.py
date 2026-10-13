@@ -1,6 +1,10 @@
 """Independent read-only watchdog. Never sends a client message or retries a payment."""
 from guard.model import Check, Result, NOT_DEPLOYED, PAUSED, age_min, fail, ok, warn
 
+# Active clients whose Meta ad account Mahara cannot access (Muhammed, 13 Oct 2026). They stay on the manual Make
+# route, so counting them only kept this check warning for good. The worker excludes the Zeiad sandbox the same way.
+NO_META_ACCESS = {'86ex4j8f3'}  # Brillant Touch Company
+
 
 def run(ctx):
     if not ctx.exists('cockpit_ad_billing_config'):
@@ -26,7 +30,7 @@ def run(ctx):
     roster = ctx.rows('cockpit_ad_billing_roster', 'client_task_id')
     bindings = ctx.rows('cockpit_ad_billing_bindings', 'client_task_id,enabled,manual_cutover_verified,error')
     covered = {b['client_task_id'] for b in bindings if b.get('enabled') and b.get('manual_cutover_verified') and not b.get('error')}
-    missing = len([r for r in roster if r.get('client_task_id') not in covered])
+    missing = len([r for r in roster if r.get('client_task_id') not in covered | NO_META_ACCESS])
     if missing:
         return warn('Some active clients lack verified ad billing coverage.', evidence={'missing_clients': missing})
     return ok('Ad billing checks are current and no delivery is awaiting review.')

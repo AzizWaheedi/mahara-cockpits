@@ -19,6 +19,7 @@ Rules (catalogue G1):
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -30,6 +31,10 @@ THROTTLE = timedelta(hours=6)
 MAX_OPENINGS = 3            # posted one by one in a run; the rest in one digest
 MAX_RESOLVED = 3
 LEVEL_WORDS = {"fail": "Broken", "warn": "Warning", "unknown": "Could not be checked"}
+LEVEL_ICONS = {"fail": "🔴", "warn": "🟠", "unknown": "⚪"}
+# Owners tagged in Slack on their own incidents (13 Oct 2026: Muhammed). Every other owner stays plain text.
+OWNER_MENTIONS = {"the systems manager": "U0AS90SHMH8"}
+NO_FIX = "nothing; there is no safe automatic fix for this"
 
 
 def in_hours(now: datetime) -> bool:
@@ -58,60 +63,90 @@ def tried_sentence(inc: dict[str, Any], check: Any, mode: str) -> str:
         if mode != "fix":
             return f"nothing yet; it is in report-only mode, so it did not {check.fix.describe}"
         return f"nothing yet; it will {check.fix.describe} on its next run"
-    return "nothing; there is no safe automatic fix for this"
+    return NO_FIX
+
+
+def owner_tag(text: Any, limit: int = 600) -> str:
+    """Cleans `text`, then turns every owner who asked to be tagged into a Slack mention."""
+    out = clean(text, limit)
+    for label, uid in OWNER_MENTIONS.items():
+        out = re.sub(re.escape(label), f"<@{uid}>", out, flags=re.IGNORECASE)
+    return out
+
+
+def _message(icon: str, head: str, inc: dict[str, Any], check: Any, now: datetime, mode: str,
+             changed: str = "") -> str:
+    """Slack mrkdwn (13 Oct 2026): a bold headline, what it reads, what the guardian did (only when it did
+    something), what a person must do, then one grey line with the owner, since when and the check id."""
+    lines = [f"{icon} *{clean(head, 200)}*"]
+    if changed:
+        lines.append(f"*Changed:* {clean(changed, 400)}.")
+    lines.append(clean(inc.get("detail"), 600))
+    tried = tried_sentence(inc, check, mode)
+    if tried != NO_FIX:
+        lines.append(f"*Guardian:* {clean(tried, 400)}.")
+    lines.append(f"*Do:* {owner_tag(inc.get('action') or 'read this check in python3 guardian.py report on the VPS')}")
+    lines.append(f"_Owner: {owner_tag(inc.get('owner') or 'nobody named')} · since {_since(inc, now)} · "
+                 f"{clean(inc.get('check_id'), 80)}_")
+    return "\n".join(l for l in lines if l)
 
 
 def opened_text(inc: dict[str, Any], check: Any, now: datetime, mode: str) -> str:
-    level = LEVEL_WORDS.get(inc.get("level"), "Problem")
-    lines = [
-        f"[guardian] {level}: {inc.get('title')}",
-        f"What broke: {inc.get('detail')}",
-        f"Since: {_since(inc, now)}.",
-        f"What the guardian tried: {tried_sentence(inc, check, mode)}.",
-        f"What a person must do ({inc.get('owner')}): {inc.get('action') or 'look at the check named above'}",
-    ]
-    return "\n".join(clean(l, 600) for l in lines)
+    level = inc.get("level")
+    return _message(LEVEL_ICONS.get(level, "⚪"), f"{LEVEL_WORDS.get(level, 'Problem')}: {inc.get('title')}",
+                    inc, check, now, mode)
 
 
 def worse_text(inc: dict[str, Any], check: Any, now: datetime, mode: str, changes: list[str]) -> str:
-    lines = [
-        f"[guardian] Worse: {inc.get('title')}",
-        f"What changed: {'; '.join(changes)}.",
-        f"What it reads now: {inc.get('detail')}",
-        f"Since: {_since(inc, now)}.",
-        f"What the guardian tried: {tried_sentence(inc, check, mode)}.",
-        f"What a person must do ({inc.get('owner')}): {inc.get('action') or 'look at the check named above'}",
-    ]
-    return "\n".join(clean(l, 600) for l in lines)
+    return _message(LEVEL_ICONS.get(inc.get("level"), "⚪"), f"Worse: {inc.get('title')}", inc, check, now, mode,
+                    "; ".join(changes))
+
+
+def better_text(inc: dict[str, Any], check: Any, now: datetime, mode: str, changes: list[str]) -> str:
+    """Still open, but no longer broken: without it the last word in the channel stayed 'Worse' for hours
+    after the cause had cleared (Ad billing alerts, 12 Oct 2026)."""
+    return _message(LEVEL_ICONS.get(inc.get("level"), "⚪"), f"Better: {inc.get('title')}", inc, check, now, mode,
+                    "; ".join(changes))
 
 
 def digest_text(incs: list[dict[str, Any]]) -> str:
-    parts = [f"{i.get('title')} ({LEVEL_WORDS.get(i.get('level'), 'problem').lower()}, {i.get('owner')})" for i in incs]
-    return clean(f"[guardian] {len(incs)} more problem(s) opened in the same scan: " + "; ".join(parts) +
-                 ". Each is in `python3 guardian.py report` on the VPS with what it read and what to do.", 3000)
+    lines = [f"*{len(incs)} more problems opened in the same scan:*"]
+    for i in incs:
+        level = i.get("level")
+        lines.append(f"• {LEVEL_ICONS.get(level, '⚪')} " + owner_tag(
+            f"{i.get('title')} ({LEVEL_WORDS.get(level, 'problem').lower()}, {i.get('owner')})"))
+    lines.append("_Each is in `python3 guardian.py report` on the VPS, with what it read and what to do._")
+    return "\n".join(lines)
+
+
+def _resolved_title(text: str) -> str:
+    first = text.splitlines()[0] if text else ""
+    m = re.match(r"^(?:✅ \*Resolved: (.*)\*|\[guardian\] Resolved: (.*))$", first)  # the second: queued before 13 Oct
+    return (m.group(1) or m.group(2)) if m else first
 
 
 def resolved_digest_text(texts: list[str]) -> str:
-    titles = [t.splitlines()[0].replace("[guardian] Resolved: ", "") for t in texts]
-    return clean(f"[guardian] Also resolved: {'; '.join(titles)}.", 3000)
+    return clean(f"✅ *Also resolved:* {'; '.join(_resolved_title(t) for t in texts)}.", 3000)
 
 
 def unwritable_text(home: str, error: str) -> str:
-    return clean(f"[guardian] Broken: the guardian cannot write {home} ({error}). Until it can, it reads only: it posts "
-                 "nothing else and fixes nothing, because every throttle and backoff lives in that folder. "
-                 f"What a person must do (Hermes): free space on the VPS (df -h; du -xh ~ | sort -h | tail), then check "
-                 f"{home} is writable by hermes. This message repeats at most every 6 hours.", 1000)
+    return "\n".join([
+        clean(f"🔴 *Broken: the guardian cannot write {home}*", 300),
+        clean(f"{error}. Until it can, it reads only: it posts nothing else and fixes nothing, because every "
+              "throttle and backoff lives in that folder.", 600),
+        clean(f"*Do:* free space on the VPS (df -h; du -xh ~ | sort -h | tail), then check {home} is writable by "
+              "hermes.", 400),
+        "_Owner: Hermes · this message repeats at most every 6 hours_",
+    ])
 
 
 def resolved_text(inc: dict[str, Any], now: datetime) -> str:
     opened = parse_time(inc.get("first_seen_at")) or parse_time(inc.get("opened_at"))
     took = ago((now - opened).total_seconds() / 60) if opened else "an unknown time"
-    lines = [
-        f"[guardian] Resolved: {inc.get('title')}",
-        f"It was open from {kuwait(opened)} to {kuwait(now)} ({took}).",
-        f"What fixed it: {inc.get('resolved_by')}.",
-    ]
-    return "\n".join(clean(l, 600) for l in lines)
+    return "\n".join([
+        clean(f"✅ *Resolved: {inc.get('title')}*", 300),
+        clean(f"_Open {took}, from {kuwait(opened)} to {kuwait(now)} · {inc.get('resolved_by')}_", 600),
+    ])
 
 
 class Slack:
