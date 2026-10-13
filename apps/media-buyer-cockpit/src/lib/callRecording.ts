@@ -31,7 +31,8 @@ export async function fetchCallRecording(
   callId: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<RecordingResult> {
-  if (!callId.trim()) return { ok: false, message: "This lead has no call to play." };
+  if (!callId.trim())
+    return { ok: false, message: "This lead has no call to play." };
   let res: Response;
   try {
     res = await fetchImpl(
