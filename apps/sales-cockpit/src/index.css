@@ -2,7 +2,7 @@
    Geist has no Arabic, and half of what a lead writes is Arabic, so IBM Plex
    Sans Arabic (the brand's Arabic face) sits behind it in the stack: the
    browser takes each Arabic letter from Plex and every Latin one from Geist. */
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap");
+/* Fonts: <link> in index.html. A blocked font host must never fail a stylesheet. */
 @import "tailwindcss";
 @import "./components/ui/animated-select.css";
 @custom-variant dark (&:is(.dark *));
