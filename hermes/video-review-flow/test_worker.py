@@ -84,11 +84,33 @@ class Tests(unittest.TestCase):
  def test_revoked_link_refused(self):
   api=API(task());api.link_data['revoked']=True;self.assertFalse(api.valid_link(api.link_data,api.t))
  def test_missing_ledger_refused(self):self.assertRaises(RuntimeError,w.open_db,pathlib.Path(self.temp.name)/'missing')
- def test_comment_saved_once_before_slack(self):
+ def test_comment_saved_once_without_editor_channel_post(self):
   api=API(task('client review'))
   with self.db:w.enqueue(self.db,'note:1','comment','v1',{'token':'token','who':'Client','note':{'id':1,'body':'غيّروا الشعار','at_seconds':65}})
   w.dispatch(self.db,api);self.assertEqual(len(api.comments),1);self.assertIn('(1:05)',api.comments[0]['comment_text']);self.assertEqual(api.sent,[])
-  w.dispatch(self.db,api);self.assertEqual(len(api.comments),1);self.assertEqual(len(api.sent),1);self.assertEqual(api.sent[0]['channel'],w.EDITORS)
+  w.dispatch(self.db,api);self.assertEqual(len(api.comments),1);self.assertEqual(api.sent,[]);self.assertEqual(len(self.rows()),1)
+ def test_legacy_queued_feedback_does_not_post(self):
+  api=API(task('client review'))
+  with self.db:w.enqueue(self.db,'feedback:old','feedback_slack','v1',{'token':'token','text':'Change logo'})
+  w.dispatch(self.db,api);self.assertEqual(api.sent,[]);self.assertEqual(self.rows()[0]['state'],'skipped')
+ def test_legacy_interrupted_feedback_reconciles_in_original_channel(self):
+  api=API(task('cancelled'));channels=[]
+  with self.db:
+   w.enqueue(self.db,'feedback:old','feedback_slack','v1',{'token':'token','text':'Change logo'})
+   self.db.execute("update actions set state='sending',sent_at=123")
+  api.find_receipt=lambda channel,*args:channels.append(channel) or None
+  w.dispatch(self.db,api);self.assertEqual(self.rows()[0]['state'],'unknown')
+  api.find_receipt=lambda channel,*args:channels.append(channel) or '123.456'
+  w.dispatch(self.db,api);self.assertEqual(self.rows()[0]['state'],'accepted')
+  self.assertEqual(channels,[w.EDITORS,w.EDITORS]);self.assertEqual(api.sent,[])
+ def test_legacy_feedback_history_failure_stays_unknown(self):
+  api=API(task())
+  with self.db:
+   w.enqueue(self.db,'feedback:old','feedback_slack','v1',{'token':'token','text':'Change logo'})
+   self.db.execute("update actions set state='unknown',sent_at=123")
+  def unavailable(*args):raise ValueError('History unavailable')
+  api.find_receipt=unavailable;w.dispatch(self.db,api)
+  self.assertEqual(self.rows()[0]['state'],'unknown');self.assertEqual(api.sent,[])
  def test_unknown_comment_not_repeated_or_announced(self):
   api=API(task('client review'));api.fail=w.assignment.ProviderError('ClickUp','timeout',ambiguous=True)
   with self.db:w.enqueue(self.db,'note:1','comment','v1',{'token':'token','who':'Client','note':{'id':1,'body':'Change logo','at_seconds':None}})

@@ -17,10 +17,11 @@ Aziz excluded Sales on 12 October 2026. Other lists, templates and subtasks are 
 ## Behavior
 
 - The first baseline records existing assignments without sending historical alerts.
-- A new assigned task generates one message. A later assignment notifies only the added people.
+- On the five department boards, a new assigned task generates one message. A later assignment notifies only the added people.
 - Multiple assignments before delivery combine into one message.
-- A new video request also generates a message when no editor is assigned.
-- Video recipients include normal assignees and the verified Assigned Editor users field, `8e519279-da37-4ae2-93fa-78865ee187fc`.
+- Video Editors Labs receives one notice per newly observed main task in **New Video Request**, including unassigned requests. The task must still have that status at delivery.
+- Video reassignment, review, feedback and reopening do not post to Video Editors Labs. Existing tasks do not become new requests when someone edits them.
+- The first video notice includes current normal assignees and the verified Assigned Editor users field, `8e519279-da37-4ae2-93fa-78865ee187fc`.
 - Subtasks, archived tasks and completed tasks cannot generate messages. Before sending, the worker checks the current task again.
 - Title, due date, comment and status edits do not repeat assignment alerts. Removing a person does not post an alert.
 - Slack identities match exact, unique active email addresses. Unknown matches use the ClickUp name and raise a health warning. Names never select a Slack account.
@@ -66,6 +67,8 @@ Set private `apply` to false to stop sends while preserving task observation. Do
 The guardian reports stale health after ten minutes and flags source, identity or delivery faults through its existing incident process.
 Inspect `unknown` and `failed` rows before any manual retry. Check Slack history and the exact event reference. Do not convert an unknown outcome directly to queued.
 Route changes require a reviewed ledger migration because the worker checks the route fingerprint.
+
+The 13 October 2026 correction preserves the ledger. Old queued video assignment notices are skipped at delivery. Unknown sends still require provider-history reconciliation. Existing receipts are never replayed. Internal Review uses the separate video worker and **csm-general**.
 
 Existing Make workflows are unchanged. Their form-based campaign, call-summary and editor-receipt notices are separate from these ClickUp assignment events.
 
