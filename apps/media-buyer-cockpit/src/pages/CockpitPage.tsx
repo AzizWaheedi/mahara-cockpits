@@ -3602,7 +3602,11 @@ function Cockpit({ view }: { view: View }) {
 
       {/* Only when the data is stale or the last refresh had problems. */}
       <ViktorStatus />
-      {(view === "sod" || view === "ads") && <AdBillingWatch />}
+      {/* Not on one client's page (Muhammed, 2026-10-13): there it listed
+          every other client's billing problem above the one you opened. */}
+      {(view === "sod" || (view === "ads" && !accountView)) && (
+        <AdBillingWatch />
+      )}
 
       {/* Clients who wrote on WhatsApp, with the reply already drafted.
           Above the numbers: an unanswered client costs more than a

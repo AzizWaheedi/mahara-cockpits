@@ -9,6 +9,11 @@ import { LostLeads } from "@/components/LostLeads";
 import { RangePicker } from "@/components/RangePicker";
 import { RequestCreativeButton } from "@/components/RequestCreativeButton";
 import {
+  SECTION_OFFSET,
+  SectionNav,
+  type SectionNavPart,
+} from "@/components/SectionNav";
+import {
   type SavedState,
   SaveWinnerButton,
 } from "@/components/SaveWinnerButton";
@@ -363,6 +368,19 @@ export function AccountView({
   const multi = campaigns.length > 1;
   // Bookings come from one HighLevel read per client, so any campaign carries them.
   const lost = campaigns.find(c => c.lost)?.lost;
+  // The contents bar: one pill per card, in page order. Lost leads and the
+  // open campaign show only when the page has them.
+  const parts: SectionNavPart[] = [
+    { id: "account-numbers", label: "Numbers" },
+    ...(lost?.total
+      ? [{ id: "account-lost", label: "Lost leads", count: lost.total }]
+      : []),
+    { id: "account-ads", label: "Ads", count: cards.length },
+    { id: "account-campaigns", label: "Campaigns", count: campaigns.length },
+    ...(current
+      ? [{ id: "account-campaign", label: String(current.campaignName) }]
+      : []),
+  ];
   const behind =
     coverage?.last && coverage.last < kuwaitDay(1) && range.end > coverage.last;
 
@@ -400,7 +418,9 @@ export function AccountView({
 
   return (
     <div className="space-y-6">
-      <section className="rounded-2xl border bg-card p-4 sm:p-6">
+      {/* The client and the range stay above the contents bar, as on the
+          client success client page; the bar then holds while you scroll. */}
+      <header>
         <Button
           size="sm"
           variant="ghost"
@@ -425,7 +445,18 @@ export function AccountView({
           </div>
           <RangePicker value={range} onChange={onRangeChange} />
         </div>
+      </header>
 
+      <SectionNav parts={parts} />
+
+      <section
+        id="account-numbers"
+        aria-labelledby="account-numbers-title"
+        className={cn("rounded-2xl border bg-card p-4 sm:p-6", SECTION_OFFSET)}
+      >
+        <h3 id="account-numbers-title" className="text-[15px] font-semibold">
+          Numbers
+        </h3>
         {behind && (
           <p className="callout-warn mt-4 rounded-lg border px-3 py-2 text-xs">
             The tracker sheet has spend up to {coverage.last}. Anything after
@@ -439,7 +470,7 @@ export function AccountView({
           </p>
         )}
 
-        <div className="@container mt-5">
+        <div className="@container mt-4">
           {loading ? (
             <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
               Loading {range.label.toLowerCase()}…
@@ -504,17 +535,22 @@ export function AccountView({
             />
           </div>
         )}
-        <LostLeads
-          lost={lost}
-          adNameById={Object.fromEntries(
-            tree
-              .filter((t: Row) => t.kind === "ad" && t.metaId)
-              .map((t: Row) => [t.metaId, t.name]),
-          )}
-        />
+        <div id="account-lost" className={SECTION_OFFSET}>
+          <LostLeads
+            lost={lost}
+            adNameById={Object.fromEntries(
+              tree
+                .filter((t: Row) => t.kind === "ad" && t.metaId)
+                .map((t: Row) => [t.metaId, t.name]),
+            )}
+          />
+        </div>
       </section>
 
-      <section className="rounded-2xl border bg-card p-4 sm:p-6">
+      <section
+        id="account-ads"
+        className={cn("rounded-2xl border bg-card p-4 sm:p-6", SECTION_OFFSET)}
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-[15px] font-semibold">Every ad</h3>
@@ -594,7 +630,10 @@ export function AccountView({
         )}
       </section>
 
-      <section className="rounded-2xl border bg-card p-4 sm:p-6">
+      <section
+        id="account-campaigns"
+        className={cn("rounded-2xl border bg-card p-4 sm:p-6", SECTION_OFFSET)}
+      >
         <h3 className="text-[15px] font-semibold">Campaigns</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           Pick one to see it in full below, with every action the table has. The
@@ -680,7 +719,11 @@ export function AccountView({
       {current && (
         <section
           ref={panelRef}
-          className="scroll-mt-6 rounded-2xl border bg-card p-4 sm:p-6"
+          id="account-campaign"
+          className={cn(
+            "rounded-2xl border bg-card p-4 sm:p-6",
+            SECTION_OFFSET,
+          )}
           aria-label={`${current.campaignName} in full`}
         >
           <h3 className="mb-4 break-words text-[15px] font-semibold" dir="auto">
