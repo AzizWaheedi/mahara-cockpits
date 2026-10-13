@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from pathlib import Path
@@ -145,3 +146,235 @@ class HelpersTests(unittest.TestCase):
         self.assertLess(len(yt), 1_900_001)
         self.assertEqual(Image.open(__import__("io").BytesIO(yt)).size, (1280, 720))
         self.assertEqual(Image.open(__import__("io").BytesIO(cv)).size, (1080, 1920))
+
+
+class KindsTest(unittest.TestCase):
+    def test_kind_of(self):
+        from radar.posting import write
+
+        self.assertEqual(write.kind_of({"kind": "post"}), "post")
+        self.assertEqual(write.kind_of({"kind": "reel"}, 400), "reel")
+        self.assertEqual(write.kind_of({}, 400), "video")
+        self.assertEqual(write.kind_of({}, 40), "reel")
+
+    def test_reel_prompt_asks_for_the_cover_pair_and_no_chapters(self):
+        from radar.posting import write
+
+        p = write.prompt_for({"id": 1, "kind": "reel"}, {"language": "ar", "segments": []}, {"duration_sec": 40}, [])
+        self.assertIn("cover_lines", p)
+        self.assertIn("#Shorts", p)
+        self.assertIn("A Short has no chapters", p)
+
+    def test_reel_normalise_keeps_pairs_and_drops_chapters(self):
+        from radar.posting import write
+
+        raw = {
+            "language": "ar",
+            "cover_lines": ["الجمهور الغلط؟", "اقرأ إعلانك"],
+            "thumb_text_options": ["الجمهور الغلط؟ | اقرأ إعلانك", "كم أرخص سعر | جوابك هنا", "خمسة أرقام تقولك وين مشكلتك بالضبط اليوم"],
+            "chapters": [{"at_sec": 0, "title": "a"}, {"at_sec": 20, "title": "b"}, {"at_sec": 40, "title": "c"}],
+            "yt_title_options": ["t"],
+            "yt_description": "d",
+        }
+        out = write.normalise(raw, duration=150, kind="reel")
+        self.assertEqual(out["chapters"], [])
+        self.assertEqual(out["thumb_text"], "الجمهور الغلط؟ | اقرأ إعلانك")
+        self.assertIn("كم أرخص سعر | جوابك هنا", out["thumb_text_options"])
+        self.assertTrue(all("|" in t for t in out["thumb_text_options"]))
+
+    def test_post_prompt_and_normalise(self):
+        from radar.posting import write
+
+        p = write.post_prompt({"id": 2, "kind": "post", "brief": "ثلاث أسئلة قبل ما تقول الإعلانات ما تشتغل", "images": ["a", "b"]})
+        self.assertIn("2 images", p)
+        self.assertIn("ثلاث أسئلة", p)
+        out = write.normalise_post({"language": "ar", "ig_caption": " hook ", "ig_hashtags": ["#a", "a", "#b b"]})
+        self.assertEqual(out["ig_caption"], "hook")
+        self.assertEqual(out["ig_hashtags"], ["#a", "#bb"])
+
+    def test_split_cover(self):
+        from radar.posting import thumbs
+
+        self.assertEqual(thumbs.split_cover("a b | c d"), ["a b", "c d"])
+        self.assertEqual(thumbs.split_cover("one two three four"), ["one two", "three four"])
+        self.assertEqual(thumbs.split_cover("one"), ["one"])
+
+
+class HardeningTest(unittest.TestCase):
+    def test_normalise_survives_garbage(self):
+        from radar.posting import write
+
+        for raw in (None, [], "text", {"yt_title_options": "not a list", "chapters": {"a": 1}, "ig_hashtags": 42, "thumb_text_options": [None, 3, {"x": 1}]}):
+            out = write.normalise(raw, duration=500, kind="video")
+            self.assertEqual(out["chapters"], [])
+            self.assertIsNone(out["yt_title"])
+            self.assertEqual(out["ig_hashtags"], [])
+        huge = {"yt_title_options": ["x" * 5000], "yt_description": "y" * 20000, "ig_caption": "z" * 9000, "ig_hashtags": ["#" + "h" * 200] * 50, "thumb_text_options": ["one two three four five six seven eight"], "cover_lines": ["a" * 100, "b"]}
+        out = write.normalise(huge, duration=500, kind="video")
+        self.assertLessEqual(len(out["yt_title"]), 100)
+        self.assertLessEqual(len(out["yt_description"]), 4800)
+        self.assertLessEqual(len(out["ig_caption"]), 2200)
+        self.assertLessEqual(len(out["ig_hashtags"]), 12)
+        self.assertEqual(out["thumb_text_options"], [])
+        reel = write.normalise(huge, duration=40, kind="reel")
+        # An eight-word line without a bar is split into a pair; the hundred-letter cover line is refused.
+        self.assertEqual(reel["thumb_text_options"], ["one two three four | five six seven eight"])
+        self.assertEqual(reel["thumb_text"], "one two three four | five six seven eight")
+
+    def test_chapters_are_cleaned_and_anchored(self):
+        from radar.posting import write
+
+        raw = {"chapters": [{"at_sec": "12", "title": "  two  "}, {"at_sec": 900, "title": "past the end"}, {"at_sec": -5, "title": "neg"}, {"at_sec": 40, "title": "three"}, {"at_sec": 12, "title": "dup"}, {"at_sec": 80, "title": "four"}], "yt_description": "d"}
+        out = write.normalise(raw, duration=300, kind="video")
+        # 12 s is kept and a 00:00 anchor is added before it; the out-of-range, negative and duplicate ones go.
+        self.assertEqual([c["at_sec"] for c in out["chapters"]], [0, 12, 40, 80])
+        self.assertIn("00:00", out["yt_description"])
+
+    def test_post_normalise_hashtags_and_limits(self):
+        from radar.posting import write
+
+        out = write.normalise_post({"ig_caption": "x" * 3000, "ig_hashtags": ["#مقاولات", "#", "##a", "b c"]})
+        self.assertEqual(len(out["ig_caption"]), 2200)
+        self.assertEqual(out["ig_hashtags"], ["#مقاولات", "#a", "#bc"])
+
+    def test_instagram_image_shapes_and_formats(self):
+        import io
+
+        from PIL import Image
+
+        from radar.posting import thumbs
+
+        def img(w, h, mode="RGB", fmt="PNG"):
+            buf = io.BytesIO()
+            Image.new(mode, (w, h), (10, 20, 30) if mode == "RGB" else (10, 20, 30, 128)).save(buf, fmt)
+            return buf.getvalue()
+
+        tall = Image.open(io.BytesIO(thumbs.instagram_image(img(600, 1200))))
+        self.assertEqual(tall.format, "JPEG")
+        self.assertGreaterEqual(tall.width / tall.height, 0.8 - 0.01)
+        wide = Image.open(io.BytesIO(thumbs.instagram_image(img(4000, 800))))
+        self.assertLessEqual(wide.width, 1440)
+        self.assertLessEqual(wide.width / wide.height, 1.91 + 0.01)
+        alpha = Image.open(io.BytesIO(thumbs.instagram_image(img(800, 800, "RGBA"))))
+        self.assertEqual(alpha.mode, "RGB")
+        with self.assertRaises(Exception):
+            thumbs.instagram_image(b"not an image at all")
+
+    def test_run_post_makes_images_ready_and_names_a_bad_one(self):
+        import io
+
+        from PIL import Image
+
+        from radar.posting import prepare, write
+
+        class Store:
+            def __init__(self):
+                self.blobs = {}
+                self.patched = {}
+
+            def download(self, path):
+                if path == "bad.bin":
+                    return b"nope"
+                buf = io.BytesIO()
+                Image.new("RGB", (900, 1500), (1, 2, 3)).save(buf, "PNG")
+                return buf.getvalue()
+
+            def upload(self, path, data, content_type):
+                self.blobs[path] = (len(data), content_type)
+                return path
+
+            def patch_post(self, pid, patch):
+                self.patched = patch
+
+        store = Store()
+        original = write.compose_post
+        write.compose_post = lambda cfg, log, post: ({"language": "ar", "ig_caption": "hook", "ig_hashtags": ["#a"], "notes": None}, "stub")
+        try:
+            out = prepare.run_post(None, lambda m: None, store, {"id": 7, "kind": "post", "images": ["a.png", "b.png"], "brief": "x"})
+            self.assertEqual(out["images"], 2)
+            self.assertEqual(store.patched["images"], ["posts/7/images/0.jpg", "posts/7/images/1.jpg"])
+            self.assertEqual(store.patched["status"], "ready")
+            self.assertEqual(store.blobs["posts/7/images/0.jpg"][1], "image/jpeg")
+            with self.assertRaises(ValueError) as caught:
+                prepare.run_post(None, lambda m: None, store, {"id": 8, "kind": "post", "images": ["a.png", "bad.bin"], "brief": "x"})
+            self.assertIn("image 2", str(caught.exception))
+            with self.assertRaises(ValueError):
+                prepare.run_post(None, lambda m: None, store, {"id": 9, "kind": "post", "images": ["a.png"] * 11, "brief": "x"})
+        finally:
+            write.compose_post = original
+
+    def test_render_cover_edge_cases(self):
+        import io
+
+        from PIL import Image
+
+        from radar.posting import thumbs
+
+        fonts = thumbs.ensure_fonts()
+        frame = Path(__file__).with_name("_frame.jpg")
+        Image.new("RGB", (64, 36), (90, 90, 90)).save(frame, "JPEG")
+        try:
+            for text in ("x", "a very long english headline that should still fit on the cover somehow | and a punch", "|", "  "):
+                out = thumbs.render_cover(frame, text, fonts=fonts)
+                img = Image.open(io.BytesIO(out))
+                self.assertEqual(img.size, (1080, 1920))
+        finally:
+            frame.unlink(missing_ok=True)
+
+
+class HandoverRules(unittest.TestCase):
+    """Drive links both ways, and the banner and caption rules from the 2026-09-13 handover."""
+
+    def test_drive_ref_reads_file_and_folder_links(self):
+        from radar.posting.fetch import drive_id, drive_ref
+
+        assert drive_ref("https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/view?usp=drive_link") == ("file", "1AbCdEfGhIjKlMnOpQrStUvWxYz012345")
+        assert drive_ref("https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345") == ("file", "1AbCdEfGhIjKlMnOpQrStUvWxYz012345")
+        assert drive_ref("1AbCdEfGhIjKlMnOpQrStUvWxYz012345") == ("file", "1AbCdEfGhIjKlMnOpQrStUvWxYz012345")
+        assert drive_ref("https://drive.google.com/drive/folders/1FoLdErIdAbCdEfGhIjKlMnOp?usp=sharing") == ("folder", "1FoLdErIdAbCdEfGhIjKlMnOp")
+        assert drive_ref("https://drive.google.com/drive/u/0/folders/1FoLdErIdAbCdEfGhIjKlMnOp") == ("folder", "1FoLdErIdAbCdEfGhIjKlMnOp")
+        assert drive_ref("https://example.com/video.mp4") is None
+        assert drive_id("https://drive.google.com/drive/folders/1FoLdErIdAbCdEfGhIjKlMnOp") is None
+
+    def test_higgsfield_prompt_and_caption_rules(self):
+        from radar.posting.higgsfield import _result_urls, clean_line, compose_prompt
+        from radar.posting.write import tidy_caption
+
+        p = compose_prompt(["أحسن من الإعلانات", "«العروض» → المشاريع"], graphic="one small teal spark", side="right")
+        assert "Line one in solid white: أحسن من الإعلانات." in p
+        assert "«" not in p and "→" not in p
+        assert "GRAPHIC ELEMENT: one small teal spark." in p
+        assert "PHOTO COMPOSITING task" in p
+        assert clean_line("«كلمة»") == "كلمة"
+        assert _result_urls('{"results":[{"url":"https://d1.cloudfront.net/a/b.png"}]}') == ["https://d1.cloudfront.net/a/b.png"]
+        assert _result_urls("done: https://x.higgsfield.ai/out/1.jpg") == ["https://x.higgsfield.ai/out/1.jpg"]
+        assert tidy_caption("جرّب — «الطريقة» بـ $500") == "جرّب .. الطريقة بـ دولار 500"
+
+
+class ResultLinks(unittest.TestCase):
+    def test_result_url_wins_over_the_uploaded_reference(self):
+        from radar.posting import higgsfield
+        raw = json.dumps([{
+            "id": "job",
+            "params": {"input_images": [{"url": "https://in.cloudfront.net/frame.jpg"}], "prompt": "x"},
+            "min_result_url": "https://out.cloudfront.net/min.png",
+            "result_url": "https://out.cloudfront.net/full.png",
+            "status": "completed",
+        }])
+        urls = higgsfield._result_urls(raw)
+        self.assertEqual(urls[0], "https://out.cloudfront.net/full.png")
+        self.assertNotIn("https://in.cloudfront.net/frame.jpg", urls)
+
+    def test_plain_text_output_still_yields_a_link(self):
+        from radar.posting import higgsfield
+        urls = higgsfield._result_urls("done: https://out.cloudfront.net/x.png")
+        self.assertEqual(urls, ["https://out.cloudfront.net/x.png"])
+
+
+class CoverLayout(unittest.TestCase):
+    def test_cover_layout_defaults_to_the_middle(self):
+        from radar.posting.higgsfield import compose_prompt
+        self.assertIn("the man centred, occupying the lower middle", compose_prompt(["عشرين ضعف العائد"]))
+        self.assertIn("lower right portion", compose_prompt(["عشرين ضعف العائد"], side="right"))
+        self.assertIn("lower left portion", compose_prompt(["عشرين ضعف العائد"], side="left"))
+
