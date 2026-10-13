@@ -214,9 +214,14 @@ const norm = (s: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+/** WhatsApp @-mentions arrive as raw account numbers; show them as a mention. */
+export function waMentions(text: string): string {
+  return text.replace(/@\d{8,}/g, "@mention");
+}
+
 /** A WhatsApp message as one readable line: a voice note says so. */
 function waText(m: { body: string | null; kind: string }, max = 0) {
-  const t = clean(m.body ?? "");
+  const t = clean(waMentions(m.body ?? ""));
   if (!t) return m.kind === "audio" ? "A voice note." : `A ${m.kind}.`;
   if (/^https?:\/\/\S+$/i.test(t)) {
     const host = t.replace(/^https?:\/\/(www\.)?/i, "").split(/[/?#]/)[0];

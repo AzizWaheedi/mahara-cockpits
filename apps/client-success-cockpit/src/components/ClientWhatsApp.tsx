@@ -12,7 +12,12 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Chip, Dot, Kicker } from "@/components/kit";
 import { readClientContact } from "@/lib/checkInClient";
-import { clientWaiting, kuwaitWhen, teamSpeaker } from "@/lib/clientBrief";
+import {
+  clientWaiting,
+  kuwaitWhen,
+  teamSpeaker,
+  waMentions,
+} from "@/lib/clientBrief";
 import {
   type ClientWhatsAppDay,
   type ClientWhatsAppMessage,
@@ -56,7 +61,7 @@ function waited(at: number | null) {
 }
 
 function Body({ m }: { m: ClientWhatsAppMessage }) {
-  const text = (m.body ?? "").trim();
+  const text = waMentions(m.body ?? "").trim();
   if (m.kind === "audio" && !text)
     return (
       <span className="inline-flex items-center gap-1 italic text-muted-foreground">

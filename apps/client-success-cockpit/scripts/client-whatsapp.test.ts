@@ -11,3 +11,9 @@ test("a client's group is found by its name, the way the team names groups", () 
   expect(namedAfter("Mahara Media team", "Mahara Media")).toBe(0);
   expect(namedAfter("Mahara | Ideal Homes", "شركة العلا")).toBe(0);
 });
+
+test("raw WhatsApp mentions read as a mention, phone numbers in text stay", async () => {
+  const { waMentions } = await import("../src/lib/clientBrief");
+  expect(waMentions("@127891912274049 بس أكدلي")).toBe("@mention بس أكدلي");
+  expect(waMentions("call 96512345 now")).toBe("call 96512345 now");
+});
