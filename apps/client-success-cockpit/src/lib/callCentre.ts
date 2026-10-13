@@ -539,6 +539,30 @@ export function callCentreVerdict(data: CallCentre): CallCentreVerdict {
 }
 
 // ---------------------------------------------------------------------------
+// One campaign's or ad's rates, read the same in both cockpits.
+
+export type RowRates = {
+  /** Share of its leads with a verified call. */
+  calledRate: number | null;
+  /** Verified calls per lead. */
+  dialsPerLead: number | null;
+  /** Reached per lead called (voicemail included). */
+  answeredRate: number | null;
+  /** Booked per lead called, provisional included, as rowFlag judges it. */
+  bookedRate: number | null;
+};
+
+/** A campaign's or an ad's rates: called of its leads, dials per lead, and answered and booked per lead called. */
+export function rowRates(row: CallRow): RowRates {
+  return {
+    calledRate: rate(row.called, row.leads),
+    dialsPerLead: row.leads > 0 ? row.dials / row.leads : null,
+    answeredRate: rate(row.reached, row.called),
+    bookedRate: rate(row.booked, row.called),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // One ad or campaign against the client's own average.
 
 export type RowFlag = {
