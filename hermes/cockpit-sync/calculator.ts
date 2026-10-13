@@ -735,10 +735,10 @@ export function judgeWithBookings(
     const booked = counted
       ? ids.reduce((n, id) => n + (byAd.get(id) ?? 0), 0)
       : undefined;
-    if (booked !== undefined) {
-      a.bookings7d = booked;
-      a.costPerBooking = booked > 0 ? a.spend / booked : undefined;
-    }
+    // The count only feeds the verdict. It is never written onto the ad: the
+    // database mirror (cockpit_native_mirrors) owns a fixed list of ad fields
+    // and refuses a publish that changes any other one ("Untracked raw
+    // annotation changed"), which stopped every publish on 2026-10-13.
     const j = judge(
       a.spend,
       a.leads,

@@ -135,12 +135,21 @@ test('an ad counts the bookings of every Meta id it ran under, and only those', 
  const ids = new Map<object, string[]>([[ad, ['a1', 'a2']], [other, ['b1']], [lost, []]]);
  const rows = [booking('C', 'a1'), booking('C', 'a2'), booking('C', undefined)];
  judgeWithBookings([], [ad, other, lost], rows, '2026-10-06', new Set(['C']), new Map(), ids);
- assert.equal((ad as Record<string, unknown>).bookings7d, 2);
  assert.equal(ad.verdict, 'scale');
- assert.equal((other as Record<string, unknown>).bookings7d, 0);
+ assert.match(ad.reason, /\$48 a booking \(2 bookings\)/);
  assert.equal(other.verdict, 'hold'); // $70, no booking yet
- assert.equal((lost as Record<string, unknown>).bookings7d, undefined);
+ assert.match(other.reason, /no booking yet/);
  assert.match(lost.reason, /no Meta id/);
+});
+
+// The ad fields cockpit_native_mirrors owns for cockpit_ads (2026-10-13). Any
+// other field on an ad row is refused by the publish once its value changes.
+const MIRROR_AD_FIELDS = new Set(['_id', '_creationTime', 'campaignName', 'adName', 'spend', 'leads', 'cpl', 'linkCtr', 'cpm', 'optInRate', 'frequency', 'thumbnailUrl', 'previewSrc', 'metaAdId', 'stillKey', 'stillUrl', 'stillTinyUrl', 'verdict', 'reason', 'syncedAt', 'creativeId']);
+
+test('judging adds no field to an ad that the database mirror does not own', () => {
+ const ad = {campaignName: 'C', adName: 'ad-4', spend: 96, leads: 5, cpl: 19.2, verdict: 'hold', reason: ''};
+ judgeWithBookings([], [ad], [booking('C', 'a1')], '2026-10-06', new Set(['C']), new Map(), new Map([[ad, ['a1']]]));
+ assert.deepEqual(Object.keys(ad).filter(k => !MIRROR_AD_FIELDS.has(k)), []);
 });
 
 test('findings: dear leads that book cheaply are not an offer problem', () => {
