@@ -386,7 +386,7 @@ class Supabase:
         (A null source is a row the Fathom step wrote.)"""
         return self.select(RECORDINGS, f"select=*&contact_id=eq.{http.quote(contact_id)}"
                                        "&or=(source.is.null,source.neq.maqsam)"
-                                       "&order=started_at.desc&limit=20")
+                                       "&hidden_reason=is.null&order=started_at.desc&limit=20")
 
     def recording(self, recording_id: str) -> Optional[dict[str, Any]]:
         rows = self.select(RECORDINGS, f"select=*&recording_id=eq.{http.quote(recording_id)}&limit=1")

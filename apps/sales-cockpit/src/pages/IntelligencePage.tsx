@@ -34,6 +34,7 @@ interface Digest {
   };
   model: string | null;
   written_at: string;
+  invalidated_at?: string | null;
 }
 
 export default function IntelligencePage() {
@@ -49,7 +50,8 @@ export default function IntelligencePage() {
         .maybeSingle(),
     [days],
   );
-  const d = digest.data;
+  const refreshing = Boolean(digest.data?.invalidated_at);
+  const d = refreshing ? null : digest.data;
   return (
     <main className="mx-auto w-full max-w-5xl space-y-5 px-4 py-6 md:px-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -58,19 +60,21 @@ export default function IntelligencePage() {
             What prospects are saying
           </h1>
           <p className="muted text-sm">
-            {d
-              ? d.calls_used
-                ? `From ${
-                    d.digest.partial && d.digest.calls_total
-                      ? `${d.calls_used} of ${d.digest.calls_total} recorded calls (the rest still have their notes being written)`
-                      : `${d.calls_used} recorded call${d.calls_used === 1 ? "" : "s"}`
-                  }, ${day(d.from_at)} to ${day(d.to_at)}. Updated ${ago(d.written_at)}.${
-                    d.digest.calls_unmarked
-                      ? ` ${d.digest.calls_unmarked} past call${d.digest.calls_unmarked === 1 ? " is" : "s are"} not marked yet.`
-                      : ""
-                  }`
-                : `No recorded sales calls between ${day(d.from_at)} and ${day(d.to_at)}.`
-              : "Most frequent first, from the notes of every recorded sales call."}
+            {refreshing
+              ? "The sales-call filter changed. Updated insights are pending."
+              : d
+                ? d.calls_used
+                  ? `From ${
+                      d.digest.partial && d.digest.calls_total
+                        ? `${d.calls_used} of ${d.digest.calls_total} recorded calls (the rest still have their notes being written)`
+                        : `${d.calls_used} recorded call${d.calls_used === 1 ? "" : "s"}`
+                    }, ${day(d.from_at)} to ${day(d.to_at)}. Updated ${ago(d.written_at)}.${
+                      d.digest.calls_unmarked
+                        ? ` ${d.digest.calls_unmarked} past call${d.digest.calls_unmarked === 1 ? " is" : "s are"} not marked yet.`
+                        : ""
+                    }`
+                  : `No recorded sales calls between ${day(d.from_at)} and ${day(d.to_at)}.`
+                : "Most frequent first, from the notes of every recorded sales call."}
           </p>
         </div>
         <Segmented
@@ -92,8 +96,18 @@ export default function IntelligencePage() {
         <div className="panel">
           <EmptyState
             icon={Lightbulb}
-            title={d ? "No calls in this window" : "No digest written yet"}
-            text="The desk writes the digest every morning from the notes of the recorded sales calls. It fills in as calls are recorded again."
+            title={
+              refreshing
+                ? "Updating sales insights"
+                : d
+                  ? "No calls in this window"
+                  : "No digest written yet"
+            }
+            text={
+              refreshing
+                ? "The previous digest is hidden while its sources are checked. The next digest will use the filtered sales calls."
+                : "The desk writes the digest every morning from the notes of the recorded sales calls. It fills in as calls are recorded again."
+            }
           />
         </div>
       ) : (
