@@ -12,7 +12,7 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Chip, Dot, Kicker } from "@/components/kit";
 import { readClientContact } from "@/lib/checkInClient";
-import { kuwaitWhen } from "@/lib/clientBrief";
+import { clientWaiting, kuwaitWhen, teamSpeaker } from "@/lib/clientBrief";
 import {
   type ClientWhatsAppDay,
   type ClientWhatsAppMessage,
@@ -77,15 +77,18 @@ function Messages({
   list,
   t,
   dayStart,
+  team,
 }: {
   list: ClientWhatsAppMessage[];
   t: ClientWhatsAppThread;
   dayStart: number;
+  team: string[];
 }) {
   return (
     <ul className="max-w-3xl space-y-2">
       {list.map(m => {
-        const ours = m.direction === "outbound";
+        // A team member writing in the group from their own phone is us.
+        const ours = m.direction === "outbound" || teamSpeaker(m.speaker, team);
         return (
           <li
             key={m.id}
@@ -242,14 +245,17 @@ function Chat({
   day,
   taskId,
   onChanged,
+  team,
 }: {
   client: SupabaseClient;
   t: ClientWhatsAppThread;
   day: ClientWhatsAppDay;
   taskId: string;
   onChanged: () => void;
+  team: string[];
 }) {
   const [earlier, setEarlier] = useState(false);
+  const waiting = t.awaitingUs ? clientWaiting(t.messages, team) : undefined;
   const [confirmUnlink, setConfirmUnlink] = useState(false);
   const [busy, setBusy] = useState(false);
   const unlinkId = useRef<string | null>(null);
@@ -269,8 +275,8 @@ function Chat({
             </span>
           </Chip>
         ) : null}
-        {t.awaitingUs ? (
-          <Chip tone="warn">Waiting on us {waited(t.lastInboundAt)}</Chip>
+        {waiting ? (
+          <Chip tone="warn">Waiting on us {waited(waiting.at)}</Chip>
         ) : null}
         <span className="text-xs text-muted-foreground">
           Today: {t.today.inbound} from them, {t.today.outbound} from us
@@ -279,7 +285,7 @@ function Chat({
 
       {today.length ? (
         <div className="max-h-96 overflow-y-auto pr-1">
-          <Messages list={today} t={t} dayStart={day.dayStart} />
+          <Messages list={today} t={t} dayStart={day.dayStart} team={team} />
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -302,7 +308,12 @@ function Chat({
           </button>
           {earlier ? (
             <div className="mt-2 max-h-80 overflow-y-auto pr-1">
-              <Messages list={before} t={t} dayStart={day.dayStart} />
+              <Messages
+                list={before}
+                t={t}
+                dayStart={day.dayStart}
+                team={team}
+              />
             </div>
           ) : null}
         </div>
@@ -620,6 +631,7 @@ export function ClientWhatsApp({
   error,
   loading,
   reload,
+  team = [],
 }: {
   client: SupabaseClient | null;
   taskId: string;
@@ -628,6 +640,8 @@ export function ClientWhatsApp({
   error: string | null;
   loading: boolean;
   reload: () => void;
+  /** The team's names: their messages in a group are ours, not the client's. */
+  team?: string[];
 }) {
   const [adding, setAdding] = useState(false);
   // Not set up for client success: one quiet line, the why folded under it.
@@ -644,7 +658,9 @@ export function ClientWhatsApp({
 
   const live = data?.threads.filter(t => !t.archived) ?? [];
   const archived = data?.threads.filter(t => t.archived) ?? [];
-  const waiting = live.filter(t => t.awaitingUs).length;
+  const waiting = live.filter(
+    t => t.awaitingUs && clientWaiting(t.messages, team),
+  ).length;
 
   return (
     <section
@@ -701,6 +717,7 @@ export function ClientWhatsApp({
               day={data}
               taskId={taskId}
               onChanged={reload}
+              team={team}
             />
           ))}
           {adding ? (

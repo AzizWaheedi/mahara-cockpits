@@ -19,7 +19,7 @@ import {
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AdBillingDailyTask } from "@/components/AdBillingReview";
-import { ClientBrief } from "@/components/ClientBrief";
+import { ClientBrief, useCardNotes } from "@/components/ClientBrief";
 import {
   CallsTimeline,
   FormsHistory,
@@ -1170,6 +1170,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     clientRow ? String(clientRow.taskId) : undefined,
   );
   /** The client's WhatsApp for the day, for its card and the brief. */
+  /** The card notes and the team's names, for the brief and the WhatsApp card. */
+  const cardNotes = useCardNotes(
+    auth.client,
+    clientRow ? String(clientRow.taskId) : "",
+  );
   const whatsapp = useClientWhatsApp(
     auth.client,
     clientRow ? String(clientRow.taskId) : undefined,
@@ -2149,6 +2154,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               error={calls.error}
               otherClients={clientNames}
               whatsapp={whatsapp.data}
+              notes={cardNotes}
+              notesFromParent
               onOpenCalls={() =>
                 document
                   .getElementById("client-calls")
@@ -2156,6 +2163,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               }
             />
             <ClientWhatsApp
+              team={cardNotes?.teamActors ?? []}
               client={auth.client}
               taskId={String(c.taskId)}
               clientName={String(c.name)}

@@ -38,10 +38,13 @@ import { cn } from "@/lib/utils";
  */
 
 type Row = Record<string, any>;
-type CardNotes = { digests: Digest[]; teamActors: string[] };
+export type CardNotes = { digests: Digest[]; teamActors: string[] };
 
-/** Read the client's ClickUp card notes once per client. */
-function useCardNotes(client: SupabaseClient | null, taskId: string) {
+/**
+ * Read the client's ClickUp card notes and the team's names once per client.
+ * The page reads them once and hands them to the brief and the WhatsApp card.
+ */
+export function useCardNotes(client: SupabaseClient | null, taskId: string) {
   const [notes, setNotes] = useState<CardNotes | null | undefined>(undefined);
   useEffect(() => {
     setNotes(undefined);
@@ -267,6 +270,7 @@ export function ClientBrief({
   onOpenCalls,
   otherClients,
   notes: given,
+  notesFromParent = false,
   whatsapp,
 }: {
   client: SupabaseClient | null;
@@ -280,14 +284,17 @@ export function ClientBrief({
   onOpenCalls?: () => void;
   /** Every client's name, so a team roll-up keeps only this client's part. */
   otherClients?: string[];
-  /** Stored card notes instead of a read (the dev harness). */
+  /** Card notes read elsewhere (the page, or the dev harness's stored ones). */
   notes?: CardNotes | null;
+  /** The page reads the notes itself: undefined then means still reading. */
+  notesFromParent?: boolean;
   /** The client's linked WhatsApp chats for the day, once read. */
   whatsapp?: BriefInput["whatsapp"];
 }) {
   const taskId = String(row.taskId ?? "");
-  const read = useCardNotes(given === undefined ? client : null, taskId);
-  const notes = given === undefined ? read : given;
+  const own = !notesFromParent && given === undefined;
+  const read = useCardNotes(own ? client : null, taskId);
+  const notes = own ? read : given;
   const diagnosis = useMemo(() => {
     if (!profile?.performance) return null;
     try {

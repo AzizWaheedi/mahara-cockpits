@@ -218,6 +218,10 @@ const norm = (s: string) =>
 function waText(m: { body: string | null; kind: string }, max = 0) {
   const t = clean(m.body ?? "");
   if (!t) return m.kind === "audio" ? "A voice note." : `A ${m.kind}.`;
+  if (/^https?:\/\/\S+$/i.test(t)) {
+    const host = t.replace(/^https?:\/\/(www\.)?/i, "").split(/[/?#]/)[0];
+    return `A link (${host})`;
+  }
   return max && t.length > max ? `${t.slice(0, max).trimEnd()}…` : t;
 }
 
@@ -631,6 +635,56 @@ function firstName(s: string): string {
   if (t.length > 1 && /^(abd|abdul|abdel|abu|abo|عبد|أبو|ابو)$/i.test(t[0]))
     return `${t[0]}${t[1]}`;
   return t[0] ?? "";
+}
+
+/**
+ * Whether a WhatsApp speaker is one of the team. The team post in client
+ * groups from their own phones ("Rasem Abdel all", "Nada | MaharaMedia"), so
+ * the inbox mirror files those as inbound. A name with Mahara in it is the
+ * team; a full name is when its first two words are a team member's first two
+ * (so "Ahmed Salama" is not a team "Ahmed"); a lone name is when it is a team
+ * member's first name.
+ */
+export function teamSpeaker(
+  speaker: string | null | undefined,
+  teamNames: string[],
+): boolean {
+  const s = clean(String(speaker ?? ""));
+  if (!s) return false;
+  if (/mahara|مهارة/i.test(s)) return true;
+  const parts = (n: string) =>
+    clean(n)
+      .replace(/[^\p{L}\s]/gu, " ")
+      .split(/\s+/)
+      .map(skeleton)
+      .filter(Boolean);
+  const sp = parts(s);
+  if (!sp.length || sp[0].length < 2) return false;
+  return teamNames.some(n => {
+    const tp = parts(n);
+    if (!tp.length) return false;
+    if (sp.length === 1) return sp[0] === tp[0];
+    return tp.length >= 2 && sp[0] === tp[0] && sp[1] === tp[1];
+  });
+}
+
+/**
+ * The client's newest message in a chat when nothing from us (a reply, or a
+ * team member writing in the group) came after it: the chat is waiting on us.
+ */
+export function clientWaiting<
+  M extends { direction: string; speaker: string | null; at: number },
+>(messages: M[], teamNames: string[]): M | undefined {
+  let client: M | undefined;
+  let ours = Number.NEGATIVE_INFINITY;
+  for (const m of messages) {
+    const theirs =
+      m.direction === "inbound" && !teamSpeaker(m.speaker, teamNames);
+    if (theirs) {
+      if (!client || m.at > client.at) client = m;
+    } else if (m.at > ours) ours = m.at;
+  }
+  return client && client.at > ours ? client : undefined;
 }
 
 const esc = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1370,11 +1424,15 @@ export function buildBrief(input: BriefInput): Brief {
   };
 
   // What they wrote on WhatsApp, newest first, with who wrote it.
+  // A team member writing in a client group is us, not the client.
+  const waTeam = [...teamNames, ...(input.teamActors ?? [])];
   const waThreads = input.whatsapp?.threads ?? [];
   const waInbound = waThreads
     .flatMap(t =>
       t.messages
-        .filter(m => m.direction === "inbound")
+        .filter(
+          m => m.direction === "inbound" && !teamSpeaker(m.speaker, waTeam),
+        )
         .map(m => ({
           m,
           t,
@@ -2755,8 +2813,11 @@ export function buildBrief(input: BriefInput): Brief {
         upset.text,
       );
     // A WhatsApp message waiting on our reply: answer it before the call.
+    // The mirror's flag, checked against the messages: a team member writing
+    // in the group counts as ours, though the mirror files it as inbound.
     for (const t of waThreads.filter(x => x.awaitingUs && !x.archived)) {
-      const last = waInbound.find(x => x.t === t);
+      const waiting = clientWaiting(t.messages, waTeam);
+      const last = waiting && waInbound.find(x => x.m === waiting);
       if (!last) continue;
       const since =
         kuwaitDay(last.m.at) === kuwaitDay(now)
