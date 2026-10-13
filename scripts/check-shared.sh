@@ -61,6 +61,10 @@ same adAsIdea "$CD/convex/adAsIdea.ts" "$ED/src/lib/adAsIdea.ts"
 # did in their words) reads the same from the media buyer and from the CSM.
 same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src/lib/clientUpdate.ts"
 
+# A lost lead's note shows what the agent typed, never the power dialer's
+# system lines, the same way for the media buyer and for the CSM.
+same lostNotes "$MB/convex/lostNotes.ts" "apps/client-success-cockpit/src/lib/lostNotes.ts"
+
 # The Projections screen: the client success cockpit owns the data and its
 # own tab, and the Sunday meeting's page in the media buyer shows the same
 # parts. One set of words and shapes, one set of parts.
@@ -113,6 +117,24 @@ same kpi.ts "$MB/src/lib/kpi.ts" "$CS/src/lib/kpi.ts"
 for f in "$MB/src/lib/kpi.ts" "$CS/src/lib/kpi.ts"; do
   if [ -f "$f" ] && grep -qE '^(import |export .* from )' "$f"; then
     echo "IMPORTS  $f must stay import-free: two Edge Functions bundle it"
+    fails=$((fails + 1))
+  fi
+done
+
+# One client's call centre: the contract of cockpit_client_calls, the verdict
+# ("is this a call centre issue or not?") and how its numbers read, the same
+# for client success and the media buyer (Aziz, 2026-10-13). Byte for byte,
+# imports included: it may import only zod and the gates in ./kpi.ts.
+same callCentre.ts "$MB/src/lib/callCentre.ts" "$CS/src/lib/callCentre.ts"
+if [ -f "$MB/src/lib/callCentre.ts" ] && [ -f "$CS/src/lib/callCentre.ts" ] \
+  && ! cmp -s "$MB/src/lib/callCentre.ts" "$CS/src/lib/callCentre.ts"; then
+  echo "DRIFTED  callCentre.ts imports: the two copies must be byte for byte"
+  fails=$((fails + 1))
+fi
+for f in "$MB/src/lib/callCentre.ts" "$CS/src/lib/callCentre.ts"; do
+  if [ -f "$f" ] && grep -oE "(from|import) +[\"'][^\"']+[\"']" "$f" \
+    | grep -vE "[\"'](zod|\./kpi\.ts)[\"']$" >/dev/null; then
+    echo "IMPORTS  $f may import only zod and ./kpi.ts"
     fails=$((fails + 1))
   fi
 done

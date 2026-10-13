@@ -43,6 +43,21 @@ export const LEARNING_DAYS = 3;
 export const LAUNCH_WATCH_DAYS = 3;
 
 /**
+ * The call centre lines, from the constraints checklist (mahara-context
+ * context/constraints-checklist.md, "2: Appointment booking" and its Section A,
+ * the pickup / call centre constraint): pickup 35% or more, conversations over
+ * two minutes 25% or more, the first call within 5 minutes, and at least 9
+ * attempts over three days (4 on day one, 3 on day two, 2 on day three). Under
+ * either rate line is a call centre constraint. Both rates are read per dial,
+ * the official denominator; per lead called is context beside it (the CEO's
+ * call, 2026-10-13). callCentre.ts judges with these.
+ */
+export const REACHED_GATE = 35;
+export const CONVERSATION_GATE = 25;
+export const FIRST_CALL_MINUTES = 5;
+export const FOLLOW_UP_ATTEMPTS = 9;
+
+/**
  * Link CTR below this reads as a hook that is not landing.
  *
  * Grounded in Mahara's own tracker rather than a generic 1% "industry floor":
