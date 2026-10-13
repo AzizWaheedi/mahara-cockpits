@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/popover";
 import {
   AD_GRID,
+  CPB_BAD,
   CPB_GATE,
   CPL_BAD,
   CPL_GATE,
@@ -173,7 +174,10 @@ export function VerdictPlaybook() {
 
         <dl className="mt-4 space-y-1.5 border-t pt-3 text-[13px] leading-relaxed">
           {[
-            ["Zero leads after spend", "Kill."],
+            [
+              "Zero leads after spend",
+              `Kill. If earlier leads still booked: Hold, or Kill over $${CPB_BAD} a booking.`,
+            ],
             [
               "A working ad seen 2.5 times per person",
               "Fatiguing: queue a refresh.",

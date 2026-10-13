@@ -49,6 +49,22 @@ test('the reason says both numbers', () => {
  assert.match(judge(145, 20, 7.25, undefined, undefined, undefined, 0).reason, /Cheap leads that do not book/);
 });
 
+test('a no-booking kill on dear leads names the cost per lead once', () => {
+ for (const [spend, leads] of [[70, 1], [50, 2]]) {
+  const r = judge(spend, leads, spend / leads, undefined, undefined, undefined, 0).reason;
+  assert.equal(r.match(/a lead/g)?.length, 1, r);
+  assert.match(r, /over \$22\.50, and no booking yet\.$/);
+ }
+});
+
+test('zero new leads but earlier leads booked: hold, or kill over the $80 line', () => {
+ assert.equal(v(5, 0, 2), 'hold'); // AD-post-2 of 2026-10-13: $5, 2 bookings
+ assert.equal(v(150, 0, 2), 'hold'); // $75 a booking: within the line, never scale
+ assert.equal(v(170, 0, 2), 'kill'); // $85 a booking
+ assert.equal(v(50, 0, 2, 3), 'hold'); // frequency does not turn it into a refresh
+ assert.match(judge(5, 0, undefined, undefined, undefined, undefined, 2).reason, /earlier leads booked: \$3 a booking \(2 bookings\)/);
+});
+
 test('fatigue turns a working ad into a refresh, never rescues a kill', () => {
  assert.equal(v(177, 21, 9, 3), 'fatiguing');
  assert.equal(v(236, 19, 1, 3), 'kill');

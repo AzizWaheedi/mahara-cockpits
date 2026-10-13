@@ -942,6 +942,23 @@ export function judge(
     };
   }
   if (leads === 0) {
+    // Bookings from earlier leads still came in: judge them, but an ad that
+    // brings no new leads is never scaled (Muhammed, 2026-10-13).
+    if (booked !== undefined && booked > 0) {
+      const cpb = spend / booked;
+      const b = `$${cpb.toFixed(0)} a booking (${booked} booking${booked === 1 ? "" : "s"})`;
+      return cpb > CPB_BAD
+        ? {
+            verdict: "kill",
+            reason: `$${spend.toFixed(0)} spent, zero leads in 7 days, and ${b} is over the $${CPB_BAD} line.`,
+            rank: 6,
+          }
+        : {
+            verdict: "hold",
+            reason: `$${spend.toFixed(0)} spent and zero leads in 7 days, but earlier leads booked: ${b}. Watch whether leads come back. Do not scale.`,
+            rank: 15,
+          };
+    }
     return {
       verdict: "kill",
       reason: `$${spend.toFixed(0)} spent, zero leads in 7 days.`,
@@ -1047,7 +1064,7 @@ export function bookingGrid(
     return band === "very high"
       ? {
           verdict: "kill",
-          reason: `${none}, no booking yet, and ${veryHigh}.`,
+          reason: `${none}, over $${CPL_BAD.toFixed(2)}, and no booking yet.`,
           rank: 8,
         }
       : {
@@ -1058,7 +1075,7 @@ export function bookingGrid(
   if (band === "very high")
     return {
       verdict: "kill",
-      reason: `${none}, no booking yet, and ${veryHigh}.`,
+      reason: `${none}, over $${CPL_BAD.toFixed(2)}, and no booking yet.`,
       rank: 10,
     };
   return {
