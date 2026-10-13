@@ -117,8 +117,28 @@ def build(state: dict[str, Any], checks: dict[str, Any], now: datetime, *, for_s
         lines.append(clean(f"Note: {n}", 300))
     if for_slack:
         lines = slack_layout(lines)
+        return slack_fit(lines)
+    return "\n".join(lines)
+
+
+SLACK_MAX = 3800   # Slack.send cuts the text here too, so the summary must fit inside it whole
+
+
+def slack_fit(lines: list[str]) -> str:
+    """The summary within SLACK_MAX: whole lines only, the Healthy footer kept, and a grey note saying it was cut."""
     text = "\n".join(lines)
-    return text[:3800] + ("\n(cut short; run guardian.py report on the VPS for the rest)" if for_slack and len(text) > 3800 else "")
+    if len(text) <= SLACK_MAX:
+        return text
+    last_blank = max((i for i, line in enumerate(lines) if not line), default=len(lines))
+    body, footer = lines[:last_blank], lines[last_blank:]
+    note = "_Cut short. Run guardian.py report on the VPS for the rest._"
+    room = SLACK_MAX - len("\n".join(footer)) - len(note) - 2
+    keep: list[str] = []
+    for line in body:
+        if len("\n".join(keep + [line])) > room:
+            break
+        keep.append(line)
+    return "\n".join(keep + [note] + footer)[:SLACK_MAX]
 
 
 def slack_layout(lines: list[str]) -> list[str]:

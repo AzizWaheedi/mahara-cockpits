@@ -111,6 +111,17 @@ class Blocks(unittest.TestCase):
         self.assertEqual(blocks[0]["text"]["text"], "Cockpit guardian · 13 Oct 09:00 Kuwait time")
         self.assertEqual(blocks[5]["text"]["text"], "*Watching (2)*\n• A: do a.\n• B: do b.")
 
+    def test_a_long_summary_is_cut_at_a_line_and_keeps_its_footer(self):
+        items = ["- Item %d: %s" % (i, " ".join(["do this"] * 12)) for i in range(80)]
+        text = report.slack_fit(report.slack_layout(["Cockpit guardian, 13 Oct 09:00 Kuwait time. Last scan 2 min ago in fix mode.", "",
+                                                     "Watching (80):"] + items + ["", "Healthy: 80 of 90 checks."]))
+        self.assertLessEqual(len(text), report.SLACK_MAX)
+        self.assertEqual(self.sent(text)["text"], text, "Slack.send no longer cuts it a second time")
+        lines = text.split("\n")
+        self.assertEqual(lines[-3:], ["_Cut short. Run guardian.py report on the VPS for the rest._", "", "_Healthy: 80 of 90 checks._"])
+        self.assertTrue(lines[-4].startswith("• Item ") and lines[-4].endswith("do this"), "whole lines only")
+        self.assertEqual(self.kinds(self.sent(text)["blocks"])[-3:], ["context", "divider", "context"])
+
     def test_slack_limits(self):
         from guard import blocks as bk
         long = bk.to_blocks("🔴 *" + "x" * 300 + "*\n" + "\n".join("line %d %s" % (i, "y" * 80) for i in range(60)))
