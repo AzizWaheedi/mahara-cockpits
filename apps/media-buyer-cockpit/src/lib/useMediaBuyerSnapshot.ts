@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readMediaSnapshot } from "./mediaSourceClient";
 import { readPersonalEod, savePersonalEod } from "./personalEod";
+import { markStale, retryDelay, toError } from "./readHealth";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic cockpit rows
 type Any = any;
@@ -310,6 +311,12 @@ export function useMediaBuyerSnapshot(
   const reportDay = useRef<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  // A failed refresh keeps the last snapshot on screen and tries again; only
+  // a snapshot that never loaded becomes `error` (readHealth.ts, 2026-10-13).
+  const [retry, setRetry] = useState<{ ms: number } | null>(null);
+  const hasSnap = useRef(false);
+  const failures = useRef(0);
+  const read = useRef({}).current;
 
   const fetchSnapshot = useCallback(async () => {
     if (!client) {
@@ -381,19 +388,37 @@ export function useMediaBuyerSnapshot(
         eodDay: eodContext.day,
       };
 
+      failures.current = 0;
+      hasSnap.current = true;
+      markStale(read, false);
+      setRetry(null);
       setSnap(builtSnap);
       setError(null);
     } catch (err: unknown) {
       console.error("Failed to load media buyer snapshot from Supabase:", err);
-      setError(err instanceof Error ? err : new Error(String(err)));
+      failures.current += 1;
+      const wait = retryDelay(err, failures.current);
+      if (hasSnap.current) {
+        markStale(read, true);
+        setRetry({ ms: wait ?? 30_000 });
+      } else if (wait !== null) setRetry({ ms: wait });
+      else setError(toError(err));
     } finally {
       setLoading(false);
     }
-  }, [client, allowedClients]);
+  }, [client, allowedClients, read]);
 
   useEffect(() => {
     void fetchSnapshot();
   }, [fetchSnapshot]);
+
+  useEffect(() => {
+    if (!retry) return;
+    const timer = setTimeout(() => void fetchSnapshot(), retry.ms);
+    return () => clearTimeout(timer);
+  }, [retry, fetchSnapshot]);
+
+  useEffect(() => () => markStale(read, false), [read]);
 
   const toggleCheck = useCallback(
     async (args: {
