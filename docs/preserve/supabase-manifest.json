@@ -10380,7 +10380,7 @@
  },
  "hours_watch": {
   "note": "Hubstaff watch (2026-10-13, docs/hours-watch/SPEC.md): every 5 minutes cockpit-hours-watch reads Hubstaff, judges new screenshots with a vision model, keeps each watched person's state and alerts here and posts the alerts to Slack #team-management; the CEO's Management tab reads it. state pending_deploy: absent objects are reported ok as not deployed yet. After 20261013d is applied and cockpit-hours-watch is deployed (RUNBOOK.md, Hubstaff watch), set state to deployed. internal_functions have no grant to any role. Not checked here: the cockpit_settings row hours.watch, the private bucket cockpit-hours-watch and its storage policy cockpit_hours_watch_read, the cockpit_sync_state rows hours-watch, hours-watch-kick and hours-watch-prune, the incident columns slack_claimed_at and resolve_claimed_at (the 10-minute Slack sweep), the slot column input_tracked_s, the status state on_break (cockpit_hours_watch_status_state_check), and the settings keys mention and mentionUser (defaults, so an older row needs no change). cockpit-hours-api (ops watchNow and watchKey) stays in team_hours.",
-  "state": "pending_deploy",
+  "state": "deployed",
   "migrations": [
    "supabase/migrations/20261013d_cockpit_hours_watch.sql"
   ],
