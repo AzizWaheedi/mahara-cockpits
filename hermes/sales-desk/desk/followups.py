@@ -75,6 +75,7 @@ from typing import Any, Callable, Optional
 
 from . import http
 from .errors import NotNow
+from .call_scope import visible_notes
 
 KUWAIT = timedelta(hours=3)
 GHL = "https://services.leadconnectorhq.com"
@@ -1554,9 +1555,9 @@ def context_for(sb: Any, lead: dict[str, Any], ghl_token: str, now: datetime,
     notes = sb.select("cockpit_sales_notes", f"select=body,author,created_at&contact_id=eq.{_q(c)}"
                                              "&deleted_at=is.null&order=created_at.desc&limit=5")
     recs = sb.select("cockpit_sales_recordings",
-                     f"select=title,started_at,summary,action_items&contact_id=eq.{_q(c)}&order=started_at.desc&limit=2")
-    call_notes = sb.select("cockpit_sales_call_notes",
-                           f"select=call_type,call_at,notes&contact_id=eq.{_q(c)}&order=call_at.desc&limit=2")
+                     f"select=title,started_at,summary,action_items&contact_id=eq.{_q(c)}&hidden_reason=is.null&order=started_at.desc&limit=2")
+    call_notes = visible_notes(sb, sb.select("cockpit_sales_call_notes",
+                           f"select=recording_id,call_type,call_at,notes&contact_id=eq.{_q(c)}&order=call_at.desc&limit=20"))[:2]
     research = sb.select("cockpit_sales_research",
                          f"select=brief&contact_id=eq.{_q(c)}&status=eq.ready&order=requested_at.desc&limit=1")
     # A conversation that cannot be read is not an empty one: without it the

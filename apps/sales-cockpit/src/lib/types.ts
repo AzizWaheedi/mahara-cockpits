@@ -251,7 +251,12 @@ export interface Recording {
   transcript_path?: string | null;
   transcript_chars?: number | null;
   /** duplicate: a second recording of a meeting kept elsewhere; too short: only the phone network's message. */
-  hidden_reason?: "duplicate" | "too short" | null;
+  hidden_reason?:
+    | "duplicate"
+    | "too short"
+    | "client service"
+    | "internal"
+    | null;
   /** The recording kept for the same meeting. */
   duplicate_of?: string | null;
   /** sales: a Fathom sales call; phone: a Maqsam call; training. */

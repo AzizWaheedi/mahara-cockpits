@@ -315,6 +315,8 @@ def pick(sb: Any, fathom: Fathom, log: Callable[[str], None], *, contact_id: str
     """
     if recording_id:
         row = sb.recording(recording_id) or {"recording_id": recording_id}
+        if row.get("hidden_reason"):
+            raise Refused("This recording is excluded from sales. Choose a sales call for the proposal.")
         if is_phone(row):
             raise Refused(PHONE_CALL)
         text = words_of(sb, fathom, row)
@@ -330,7 +332,7 @@ def pick(sb: Any, fathom: Fathom, log: Callable[[str], None], *, contact_id: str
         log(f"no recording indexed for {contact_id} yet; reading Fathom again")
         reindex()
         rows = sb.recordings_of(contact_id)
-    rows = [r for r in rows if not is_phone(r)]
+    rows = [r for r in rows if not is_phone(r) and not r.get("hidden_reason")]
     if not rows:
         raise Refused(NO_RECORDING)
     for row in rows:

@@ -1090,6 +1090,29 @@ async function main() {
     cockpit_sales_notes: scriptNotes,
     cockpit_sales_proposals: F.PROPOSALS,
     cockpit_sales_requests: F.REQUESTS,
+    // /sales/harness.html?path=/intelligence&intelligence=filtered
+    // The stale digest deliberately contains text that must never be rendered.
+    cockpit_sales_digests:
+      new URLSearchParams(location.search).get("intelligence") === "filtered"
+        ? [7, 30].map(days => ({
+            id: `filtered-${days}`,
+            days,
+            from_at: "2026-10-01T00:00:00Z",
+            to_at: "2026-10-13T00:00:00Z",
+            written_at: "2026-10-13T00:00:00Z",
+            invalidated_at: "2026-10-13T01:00:00Z",
+            calls_used: 1,
+            digest: {
+              questions: [
+                { text: "EXCLUDED CLIENT QUESTION", count: 1, example: "" },
+              ],
+              objections: [],
+              problems: [],
+              expectations: [],
+              marketing: [],
+            },
+          }))
+        : [],
     cockpit_sales_recordings: F.RECORDINGS,
     cockpit_sales_client_forms: [],
     cockpit_sales_scorecards: F.scorecards(),

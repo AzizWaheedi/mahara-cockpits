@@ -323,7 +323,11 @@ function CallRow({
               label={
                 r.hidden_reason === "duplicate"
                   ? "Second recording"
-                  : "Network message"
+                  : r.hidden_reason === "client service"
+                    ? "Client service"
+                    : r.hidden_reason === "internal"
+                      ? "Internal meeting"
+                      : "Network message"
               }
             />
           ) : review ? (

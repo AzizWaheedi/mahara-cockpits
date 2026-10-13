@@ -8179,6 +8179,8 @@ async function reviewAsk(who: Who, b: Row) {
     throw new Refusal("This is a second recording of a meeting already in the cockpit. Ask for a review of the longer one.", 409);
   if (rec.hidden_reason === "too short")
     throw new Refusal("This call's transcript is only the phone network's message, so there is nothing to review.", 409);
+  if (rec.hidden_reason)
+    throw new Refusal("This call is excluded from sales reviews.", 409);
   if (!rec.transcript_path)
     throw new Refusal("This call has no transcript yet, so there is nothing to review.", 409);
   const done = await svc(`cockpit_sales_reviews?recording_id=eq.${enc(id)}&select=id&limit=1`);
