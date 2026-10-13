@@ -83,7 +83,7 @@ export function AdBillingDailyTask() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="space-y-1">
           <p className="flex items-center gap-2 font-semibold">
-            <AlertTriangle className="size-4 text-amber-600" /> Daily ad billing
+            <AlertTriangle className="size-4 text-warning" /> Daily ad billing
             review
           </p>
           <p className="text-sm text-muted-foreground">
@@ -243,21 +243,37 @@ function ReviewCard({
           {r.state === "pending" && (
             <>
               {!apply && (
-                <p role="status" className="text-sm text-amber-700">
-                  Outbound delivery is paused. You can review or deny; approval
-                  will be available when delivery is enabled.
+                <p role="status" className="flex items-start gap-2 text-sm">
+                  <AlertTriangle
+                    aria-hidden
+                    className="mt-0.5 size-4 shrink-0 text-warning"
+                  />
+                  <span>
+                    Outbound delivery is paused. You can review or deny;
+                    approval will be available when delivery is enabled.
+                  </span>
                 </p>
               )}
               {cooling && (
-                <p role="status" className="text-sm text-amber-700">
-                  {client.nextSendAt === "infinity"
-                    ? "A previous delivery has an uncertain result. Check it before sending again."
-                    : `A client message was already sent recently. Next approval available after ${when(client.nextSendAt)}.`}
+                <p role="status" className="flex items-start gap-2 text-sm">
+                  <AlertTriangle
+                    aria-hidden
+                    className="mt-0.5 size-4 shrink-0 text-warning"
+                  />
+                  <span>
+                    {client.nextSendAt === "infinity"
+                      ? "A previous delivery has an uncertain result. Check it before sending again."
+                      : `A client message was already sent recently. Next approval available after ${when(client.nextSendAt)}.`}
+                  </span>
                 </p>
               )}
               {!client.fresh && (
-                <p role="status" className="text-sm text-amber-700">
-                  Waiting for a fresh successful source check.
+                <p role="status" className="flex items-start gap-2 text-sm">
+                  <AlertTriangle
+                    aria-hidden
+                    className="mt-0.5 size-4 shrink-0 text-warning"
+                  />
+                  <span>Waiting for a fresh successful source check.</span>
                 </p>
               )}
               <div className="flex flex-wrap gap-2">

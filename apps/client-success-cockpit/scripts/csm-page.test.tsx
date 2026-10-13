@@ -68,6 +68,86 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+/** cockpit_csm_client_ads v3 for Greystone: one live campaign, one ad. */
+const ADS_READ = {
+  taskId: "86exnk0v4",
+  clientName: "Greystone Contracting",
+  start: "2026-09-01",
+  end: "2026-09-30",
+  at: "2026-10-13T09:00:00Z",
+  statsAt: "2026-10-13T03:00:00Z",
+  bookingsReady: true,
+  bookingsAt: "2026-10-13T03:00:00Z",
+  coverage: { first: "2026-09-01", last: "2026-10-12" },
+  feedFirst: "2026-08-13",
+  feedLast: "2026-10-12",
+  campaigns: [
+    {
+      name: "Greystone | Leads",
+      metaCampaignId: "111",
+      accountId: "999",
+      accountName: "greystone ads",
+      currency: "USD",
+      budgetDaily: 30,
+      budgetLevel: "campaign",
+      ended: false,
+      verdict: "kill",
+      reason: "$162 a booking (1 booking) is over the $80 line.",
+      findings: [
+        {
+          constraint: "Cost per booking",
+          severity: "fix",
+          evidence: "$161.58 per booking against the $60 gate.",
+          fixes: ["Cut the ad with the worst cost per booking."],
+        },
+      ],
+      boardAdStatus: "Live",
+      daysLive: 12,
+      lostByAd: { "7001": 2 },
+    },
+  ],
+  adsets: [
+    {
+      id: "5001",
+      name: "Villas",
+      campaignName: "Greystone | Leads",
+      status: "ACTIVE",
+      effectiveStatus: "ACTIVE",
+    },
+  ],
+  ads: [
+    {
+      id: "7001",
+      name: "Villa reel",
+      adsetId: "5001",
+      campaignName: "Greystone | Leads",
+      status: "ACTIVE",
+      effectiveStatus: "ACTIVE",
+      accountId: "999",
+    },
+  ],
+  rows: [
+    {
+      date: "2026-09-10",
+      campaignName: "Greystone | Leads",
+      adSetName: "Villas",
+      adName: "Villa reel",
+      adId: "7001",
+      spend: 40,
+      leads: 3,
+      impressions: 2000,
+      linkClicks: 20,
+      frequency: 1.1,
+    },
+  ],
+  history: [],
+  bookings: [],
+  verdicts: [],
+  stills: {},
+  changes: [],
+};
+const adsReads: any[] = [];
+
 let overviewDeferred: Deferred<any> | null = null;
 let profileDeferred: Deferred<any> | null = null;
 let selectedClientForProfile: string | null = null;
@@ -91,10 +171,19 @@ const mockClient: any = {
   },
   rpc: (name: string, _args: any) => {
     if (name === "cockpit_ad_billing_review_panel") {
-      return { abortSignal: async () => ({ data: { apply: true, clients: [], dailyReviewedAt: null }, error: null }) };
+      return {
+        abortSignal: async () => ({
+          data: { apply: true, clients: [], dailyReviewedAt: null },
+          error: null,
+        }),
+      };
     }
     if (name === "cockpit_csm_onboarding_read") {
       return Promise.resolve({ data: KITS, error: null });
+    }
+    if (name === "cockpit_csm_client_ads") {
+      adsReads.push(_args);
+      return Promise.resolve({ data: ADS_READ, error: null });
     }
     if (name === "cockpit_csm_client_whatsapp") {
       const at = Date.now() - 30 * 60_000;
@@ -119,7 +208,16 @@ const mockClient: any = {
               lastAt: at,
               today: { inbound: 1, outbound: 0 },
               messages: [
-                { id: "m1", direction: "inbound", body: "Can we move the shoot to Thursday?", kind: "text", speaker: null, at, status: null, today: true },
+                {
+                  id: "m1",
+                  direction: "inbound",
+                  body: "Can we move the shoot to Thursday?",
+                  kind: "text",
+                  speaker: null,
+                  at,
+                  status: null,
+                  today: true,
+                },
               ],
               draft: null,
               contextKey: "0123456789abcdef0123456789abcdef",
@@ -188,7 +286,9 @@ mock.module("@/lib/useCsmSnapshot", () => ({
     error: snapshotError,
     refetch: async () => {},
     toggleCheck: async () => {},
-    act: async (args: Record<string, unknown>) => { sent.push(["act", args]); },
+    act: async (args: Record<string, unknown>) => {
+      sent.push(["act", args]);
+    },
     submitEod: async () => {},
     addPlanItems: async () => {},
     updateProfile: async () => {},
@@ -467,7 +567,14 @@ test("client performance renders loading, resolves overview, selects client, and
 
   try {
     await reactAct(async () => {
-      root.render(createElement(ClientPerformancePage, {}));
+      // A client's Results links to its Ads tab, so it renders in a router.
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(ClientPerformancePage, {}),
+        ),
+      );
     });
     expect(host.innerHTML).toContain("Loading client results");
 
@@ -785,8 +892,9 @@ test("the client gates are $15 a lead and $60 a booking, and cost per booking de
   expect(none.rest[0].evidence).toBe(
     "$175 spent in the last 7 days for 10 leads, and no bookings in those 7 days.",
   );
-  // Cheap leads and nothing booked is never healthy: the CSM asks about
-  // speed to lead first, since the brief shows only the first fix.
+  // Cheap leads and nothing booked is never healthy. Done for you, our call
+  // centre calls the leads, so its calls come first, since the brief shows
+  // only the first fix (the call centre review, 2026-10-13).
   const unbooked = diagnose(
     costClient([{ spend7d: 140, leads7d: 10, bookings7d: 0 }]),
   );
@@ -795,10 +903,11 @@ test("the client gates are $15 a lead and $60 a booking, and cost per booking de
   expect(unbooked.top?.title).toBe(
     "No bookings from $140 spent in the last 7 days, against a $60 gate",
   );
-  expect(unbooked.top?.owner).toBe("CSM");
+  expect(unbooked.top?.owner).toBe("Call centre");
   expect(unbooked.top?.diagnosis).toContain("none of them booked");
+  expect(unbooked.top?.diagnosis).toContain("our call centre calls the leads");
   expect(unbooked.top?.fixes[0]).toBe(
-    "Ask how fast their leads get called and how many times, before anything changes in the account.",
+    "Check the client's Calls section: first call time, dials per lead and why leads were lost.",
   );
   expect(unbooked.headline).not.toContain("Every gate");
   // Not yet a booking's worth spent where bookings are read: nothing known.
@@ -858,7 +967,8 @@ test("the client gates are $15 a lead and $60 a booking, and cost per booking de
   );
   expect(over.rest[0].evidence).toContain("each booking costs $87.50");
   expect(over.watch).toEqual([]);
-  // Cheap leads that do not book: the booking cost alone, on the CSM.
+  // Cheap leads that do not book: the booking cost alone, on our call
+  // centre, never "speed to lead on the client's side".
   const cheap = diagnose(
     costClient([{ spend7d: 130, leads7d: 10, bookings7d: 2 }]),
   );
@@ -866,10 +976,13 @@ test("the client gates are $15 a lead and $60 a booking, and cost per booking de
   expect(cheap.top?.title).toBe(
     "Cost per booking is $65.00 against a $60 gate",
   );
-  expect(cheap.top?.owner).toBe("CSM");
-  expect(cheap.top?.diagnosis).toContain("speed to lead");
+  expect(cheap.top?.owner).toBe("Call centre");
+  expect(cheap.top?.diagnosis).toBe(
+    "The leads are cheap enough, but too few of them book, so every appointment costs more than it should. That is usually how fast and how often our call centre calls the leads, not the ads.",
+  );
+  expect(cheap.top?.diagnosis).not.toContain("client's side");
   expect(cheap.top?.fixes[0]).toBe(
-    "Ask how fast their leads get called and how many times, before anything changes in the account.",
+    "Check the client's Calls section: first call time, dials per lead and why leads were lost.",
   );
   // Dear leads that do not book: the media buyer's ticket comes first.
   expect(over.top?.owner).toBe("Media buyer");
@@ -1094,14 +1207,22 @@ test("a client's page has one booking button, the actions and four tabs", async 
       "Leave it",
     ])
       expect(text).toContain(action);
-    for (const tab of ["Overview", "Results", "Onboarding & files", "Money"])
+    for (const tab of [
+      "Overview",
+      "Results",
+      "Ads",
+      "Onboarding & files",
+      "Money",
+    ])
       expect(text).toContain(tab);
     // Overview (2026-10-12): the "Before the call" brief first, then the
     // numbers with the diagnosis inside; the old scattered cards are gone.
     expect(text.match(/Before the call/g)?.length).toBe(1);
     expect(text).toContain("The numbers");
     expect(text).toContain("What is holding this client back");
-    expect(text).not.toContain("What the media buyer changed since your last call");
+    expect(text).not.toContain(
+      "What the media buyer changed since your last call",
+    );
     expect(text).not.toContain("Prep for this call");
     // This fake cannot read the call history: the brief says so, never "no calls".
     expect(text).toContain("The call history could not be read");
@@ -1181,3 +1302,174 @@ test("closing a commitment is not contact with the client", async () => {
   }
 });
 
+/**
+ * The Ads tab (Aziz, 2026-10-13: the CSM looks at the ads "the same way it is
+ * on the media buyer cockpit"), read only: the ads, the client's lost leads
+ * (why, the team's notes, and how many per ad) and the board's notes. Results
+ * links to it instead of drawing the ads twice, and its lost notes show only
+ * what the agent wrote, saying so when no Maqsam call backs the outcome.
+ */
+test("the Ads tab shows the ads read only, and Results links to it", async () => {
+  const lostNote = [
+    "LOST: Other",
+    "Outcome recorded by the agent; this does not establish a verified Maqsam call.",
+    "He's not Arab, not serious.",
+    "[mahara:8a03189f-5850-467c-9e20-06d7117e0b09]",
+  ].join("\n");
+  const withLost = {
+    ...perfFixture.profile,
+    lost: {
+      total: 3,
+      pipeline: "Lost Leads",
+      reasons: [{ reason: "Other (Write why in the notes section)", count: 3 }],
+      leads: [
+        {
+          name: "Lead One",
+          reason: "Other (Write why in the notes section)",
+          note: `${lostNote} · Called twice, no answer`,
+          movedAt: "2026-09-26",
+        },
+      ],
+    },
+  };
+  profileDeferred = createDeferred();
+  profileDeferred.resolve(withLost);
+  adsReads.length = 0;
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+  const root = createRoot(host as any);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  const settle = () =>
+    reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+  // The chart measures its width; happy-dom has no ResizeObserver.
+  const g = globalThis as any;
+  const hadObserver = "ResizeObserver" in g;
+  g.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  const show = async (url: string) => {
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          { key: url, initialEntries: [url] },
+          pageFor("client"),
+        ),
+      );
+    });
+    await settle();
+    return (host.textContent ?? "").replace(/\s+/g, " ");
+  };
+  try {
+    const ads = await show(`/clients/${GREYSTONE}?tab=ads&period=lastMonth`);
+    expect(adsReads.at(-1)).toMatchObject({ p_task_id: GREYSTONE });
+    // Said once, in muted text: the media buyer makes the changes.
+    expect(
+      ads.match(/Read only: the media buyer makes every change/g)?.length,
+    ).toBe(1);
+    expect(ads).toContain("Reporting period");
+    expect(ads).toContain("Campaigns, ad sets and ads");
+    expect(ads).toContain("Villa reel");
+    // Lost leads: why, in the team's words, then the board's count per ad.
+    expect(ads).toContain("3 leads sit in Lost Leads.");
+    expect(ads).toContain("Other3");
+    expect(ads).toContain("Lead One");
+    expect(ads).toContain(
+      "He's not Arab, not serious. · Called twice, no answer",
+    );
+    expect(ads).toContain("Logged by the agent without a matched Maqsam call.");
+    expect(ads).not.toContain("[mahara:");
+    expect(ads).not.toContain("LOST: Other");
+    expect(ads).not.toContain("Outcome recorded by the agent");
+    expect(ads).toContain("By ad");
+    expect(ads).toContain(
+      "All time, not only this period: 3 leads in their lost pipeline, 2 of them from the ads below.",
+    );
+    expect(ads).toContain("2 lost");
+    expect(ads).not.toContain("Read why each lead was lost on Results");
+    // What the media buyer sees: the call, the reason and the fix.
+    expect(ads).toContain("What the media buyer sees");
+    expect(ads).toContain("Board says Live · 12 days since its first spend");
+    expect(ads).toContain("Kill");
+    expect(ads).toContain("$162 a booking (1 booking) is over the $80 line.");
+    expect(ads).toContain("Fix this first");
+    expect(ads).toContain("Cut the ad with the worst cost per booking.");
+    // Nothing on the tab changes an ad.
+    const writes = [...host.querySelectorAll("button")]
+      .map(b => `${b.textContent ?? ""} ${b.getAttribute("aria-label") ?? ""}`)
+      .filter(t =>
+        /pause|resume|turn (on|off)|budget|duplicate|winner|publish|request a creative/i.test(
+          t,
+        ),
+      );
+    expect(writes).toEqual([]);
+    // Ads Manager links stay.
+    expect(
+      [...host.querySelectorAll("a")].some(a =>
+        (a.getAttribute("href") ?? "").startsWith(
+          "https://adsmanager.facebook.com/",
+        ),
+      ),
+    ).toBe(true);
+
+    // Results: one line to the Ads tab, and the notes without system lines.
+    const results = await show(
+      `/clients/${GREYSTONE}?tab=results&period=lastMonth`,
+    );
+    expect(results).toContain("on the Ads tab");
+    expect(results).not.toContain("Campaigns, ad sets and ads");
+    const link = [...host.querySelectorAll("a")].find(a =>
+      (a.textContent ?? "").includes("on the Ads tab"),
+    );
+    // The profile's own card: the fixture's profile is another client's.
+    expect(link?.getAttribute("href")).toBe(
+      `/clients/${withLost.taskId}?tab=ads&period=lastMonth`,
+    );
+    expect(results).toContain(
+      "He's not Arab, not serious. · Called twice, no answer",
+    );
+    expect(results).not.toContain("[mahara:");
+    expect(results).not.toContain("LOST: Other");
+    expect(results).not.toContain("Outcome recorded by the agent");
+    expect(results).toContain(
+      "Logged by the agent without a matched Maqsam call.",
+    );
+
+    // All time starts on the profile's first day: the ads are read once,
+    // after the profile, not once without it and again with it.
+    profileDeferred = createDeferred();
+    adsReads.length = 0;
+    const waiting = await show(`/clients/${GREYSTONE}?tab=ads&period=all`);
+    expect(adsReads).toHaveLength(0);
+    expect(waiting).toContain("Loading the ads…");
+    await reactAct(async () => profileDeferred?.resolve(withLost));
+    await settle();
+    await settle();
+    expect(adsReads).toHaveLength(1);
+    expect(host.textContent).toContain("Villa reel");
+    // A profile that cannot be read does not hold the ads back for ever.
+    // (The same address in another order: a fresh page, not a re-render.)
+    profileDeferred = createDeferred();
+    adsReads.length = 0;
+    await show(`/clients/${GREYSTONE}?period=all&tab=ads`);
+    expect(adsReads).toHaveLength(0);
+    await reactAct(async () =>
+      profileDeferred?.reject(new Error("The profile could not be read.")),
+    );
+    await settle();
+    await settle();
+    expect(adsReads).toHaveLength(1);
+  } finally {
+    profileDeferred = null;
+    await reactAct(async () => root.unmount());
+    host.remove();
+    if (!hadObserver) delete g.ResizeObserver;
+  }
+});

@@ -21,12 +21,19 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { CreativePreview } from "@/components/CreativePreview";
 import { Hint } from "@/components/Hint";
 import { Chip, Dot, Pill, PillRow } from "@/components/kit";
+import {
+  ResultsNav,
+  type ResultsPart,
+  ResultsParts,
+  ResultsSection,
+} from "@/components/ResultsLayout";
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import {
   type AdNode,
   type AdsModel,
   adSetUrl,
   adUrl,
+  type BoardView,
   buildAdsModel,
   type CampaignNode,
   type ChartPoint,
@@ -35,8 +42,11 @@ import {
   chartSeries,
   fetchClientAds,
   findScope,
+  type LostByAd,
+  lostByAdOf,
   type Measure,
   type Metrics,
+  mediaBuyerView,
   money,
   type Scope,
   type SetNode,
@@ -51,11 +61,15 @@ import { dayLabel } from "@/lib/reportPeriod";
 import { cn } from "@/lib/utils";
 
 /**
- * The client's ads for the chosen period, on the Results tab (Muhammed,
- * 2026-10-12, from the approved mock): one chart that follows a campaign, an
- * ad set or an ad, with the media buyer's changes marked on it; then each
- * campaign, its ad sets, and their ads with a picture, the numbers that
- * matter and a link to Ads Manager.
+ * The client page's Ads tab (Aziz, 2026-10-13: the client success manager
+ * looks at the ads "the same way it is on the media buyer cockpit"), read
+ * only. First the ads for the chosen period (Muhammed, 2026-10-12, from the
+ * approved mock): one chart that follows a campaign, an ad set or an ad, with
+ * the media buyer's changes marked on it; then each campaign, its ad sets,
+ * and their ads with a picture, the numbers that matter and a link to Ads
+ * Manager. Then the client's lost leads (why, the team's notes, how many per
+ * ad), and what the media buyer's board says about each campaign. Nothing
+ * here changes an ad: the media buyer makes every change.
  */
 
 type Period = { from: string; to: string; label: string };
@@ -67,29 +81,25 @@ const MEASURES: { key: Measure; label: string; booking?: boolean }[] = [
   { key: "booked", label: "Booked", booking: true },
 ];
 
-export function ClientAds({
-  taskId,
-  clientName,
-  per,
-  dwy,
-  onCount,
-}: {
-  taskId?: string;
-  clientName: string;
-  per: Period;
-  /** Done with you: the client books their own calls, so no booking numbers. */
-  dwy: boolean;
-  /** How many ads spent or brought a lead in the period, once read. */
-  onCount?: (n: number | undefined) => void;
-}) {
+/**
+ * One read of the client's ads for the period, and the model built from it.
+ * A local preview passes its own read and nothing is asked of the database.
+ * `hold` keeps the read back while the period still waits on its first day.
+ */
+function useClientAdsRead(
+  taskId: string | undefined,
+  per: Period,
+  preview?: ClientAdsRead,
+  hold = false,
+) {
   const auth = useCockpitAuth();
-  const [read, setRead] = useState<ClientAdsRead | undefined>();
+  const [read, setRead] = useState<ClientAdsRead | undefined>(preview);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setRead(undefined);
+    setRead(preview);
     setError(null);
-    if (!auth.client || !taskId) return;
+    if (preview || hold || !auth.client || !taskId) return;
     let live = true;
     fetchClientAds(auth.client, taskId, per.from, per.to)
       .then(r => {
@@ -104,23 +114,172 @@ export function ClientAds({
     return () => {
       live = false;
     };
-  }, [auth.client, taskId, per.from, per.to]);
+  }, [auth.client, taskId, per.from, per.to, preview, hold]);
 
   const model = useMemo(
     () => (read ? buildAdsModel(read, per) : undefined),
     [read, per],
   );
-  useEffect(() => {
-    onCount?.(
-      model
-        ? model.campaigns
-            .flatMap(c => c.sets)
-            .flatMap(s => s.ads)
-            .filter(a => a.active).length
-        : undefined,
-    );
-  }, [model, onCount]);
+  return { read, error, model };
+}
 
+/** The lost-lead rows shown before "Show the other". */
+const LOST_SHOWN = 5;
+
+export function ClientAdsTab({
+  taskId,
+  clientName,
+  per,
+  dwy,
+  lostTotal,
+  lostLeads,
+  periodBar,
+  hold,
+  preview,
+}: {
+  taskId?: string;
+  clientName: string;
+  per: Period;
+  /** Done with you: the client books their own calls, so no booking numbers. */
+  dwy: boolean;
+  /** Their whole lost pipeline, from the client's profile; undefined when not known. */
+  lostTotal?: number;
+  /**
+   * Why their leads were marked lost, from the client's profile: the reasons
+   * and the team's note on each lead, the list Results shows. Only when the
+   * profile has one.
+   */
+  lostLeads?: { lede: string; list: React.ReactNode };
+  /** The reporting period control, the same one Results uses. */
+  periodBar?: React.ReactNode;
+  /**
+   * The period's first day is not known yet (all time waits on the client's
+   * profile): the ads are read once it is, never twice.
+   */
+  hold?: boolean;
+  /** A read to show instead of the database's: the local preview's. */
+  preview?: ClientAdsRead;
+}) {
+  const { read, error, model } = useClientAdsRead(taskId, per, preview, hold);
+  const board = useMemo(
+    () => (read && model ? mediaBuyerView(read, model) : undefined),
+    [read, model],
+  );
+  const lost = useMemo(
+    () => (read && model ? lostByAdOf(read, model) : undefined),
+    [read, model],
+  );
+  const active = model
+    ? model.campaigns
+        .flatMap(c => c.sets)
+        .flatMap(s => s.ads)
+        .filter(a => a.active).length
+    : undefined;
+  // The per-ad counts and the board's notes read from the same campaigns:
+  // they wait for them. The profile's lost leads do not.
+  const more = Boolean(model?.campaigns.length && board && lost);
+  const lostPart = more || Boolean(lostLeads);
+  const parts: ResultsPart[] = [
+    { id: "ads-ads", label: "Ads", count: active },
+    ...(lostPart
+      ? [
+          {
+            id: "ads-lost",
+            label: "Lost leads",
+            count: lostTotal ?? lost?.tied,
+          },
+        ]
+      : []),
+    ...(more
+      ? [
+          {
+            id: "ads-media-buyer",
+            label: "Media buyer",
+            count: board?.campaigns.reduce((n, c) => n + c.findings.length, 0),
+          },
+        ]
+      : []),
+  ];
+  return (
+    <div className="space-y-6">
+      <div className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Read only: the media buyer makes every change to these ads. To ask for
+          one, use Add a task at the top of the page. Each name opens Ads
+          Manager.
+        </p>
+        {periodBar}
+      </div>
+      <ResultsNav parts={parts} />
+      <ResultsParts>
+        <ResultsSection id="ads-ads" title="Ads" count={active}>
+          <AdsSection
+            taskId={taskId}
+            error={error}
+            model={model}
+            clientName={clientName}
+            per={per}
+            dwy={dwy}
+          />
+        </ResultsSection>
+        {lostPart ? (
+          <ResultsSection
+            id="ads-lost"
+            title="Lost leads"
+            count={lostTotal ?? lost?.tied}
+            lede={lostLeads?.lede}
+          >
+            {lostLeads?.list}
+            {more && model && lost && board ? (
+              <div className="space-y-3 pt-2">
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold">By ad</h3>
+                  <p className="text-[13px] text-muted-foreground">
+                    {lostLede(lost, lostTotal, board.known) ??
+                      "Which ads the lost leads came from, most first."}
+                  </p>
+                </div>
+                <LostByAdList
+                  lost={lost}
+                  model={model}
+                  clientName={clientName}
+                  known={board.known}
+                  tagged={Boolean(lostLeads)}
+                />
+              </div>
+            ) : null}
+          </ResultsSection>
+        ) : null}
+        {more && board ? (
+          <ResultsSection
+            id="ads-media-buyer"
+            title="What the media buyer sees"
+            lede="The board's call on each campaign that runs, and the fixes it lists, as the media buyer reads them."
+          >
+            <MediaBuyerList board={board} />
+          </ResultsSection>
+        ) : null}
+      </ResultsParts>
+    </div>
+  );
+}
+
+/** The ads part: the read's state, then the section itself. */
+function AdsSection({
+  taskId,
+  error,
+  model,
+  clientName,
+  per,
+  dwy,
+}: {
+  taskId?: string;
+  error: string | null;
+  model?: AdsModel;
+  clientName: string;
+  per: Period;
+  dwy: boolean;
+}) {
   if (!taskId)
     return (
       <p className="text-sm text-muted-foreground">
@@ -1623,5 +1782,234 @@ function SmallStat({ label, value }: { label: string; value?: string }) {
         {value ?? (label === "Frequency" ? "-" : "Too few views")}
       </dd>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The client's lost leads per ad, and what the media buyer's board says.
+
+function lostLede(
+  lost: LostByAd,
+  lostTotal: number | undefined,
+  known: boolean,
+): string | undefined {
+  if (!known || !lost.known) return undefined;
+  if (lostTotal !== undefined && lostTotal >= lost.tied)
+    return `All time, not only this period: ${plural(lostTotal, "lead")} in their lost pipeline, ${lost.tied} of them from the ads below.`;
+  return `All time, not only this period: ${plural(lost.tied, "lost lead")} came from the ads below.`;
+}
+
+/**
+ * Which ads the lost leads came from, most first, each with its share of the
+ * worst one: the ad to look at first is the one whose promise loses leads.
+ */
+function LostByAdList({
+  lost,
+  model,
+  clientName,
+  known,
+  tagged,
+}: {
+  lost: LostByAd;
+  model: AdsModel;
+  clientName: string;
+  known: boolean;
+  /** The lost leads are listed above, each tagged with its ad. */
+  tagged: boolean;
+}) {
+  const [all, setAll] = useState(false);
+  const meanwhile = tagged
+    ? "Until then, the tag on each lost lead above says which ad it came from."
+    : "Until then, ask the media buyer which ads lose the most leads.";
+  if (!known)
+    return (
+      <p className="text-sm text-muted-foreground">
+        Lost leads per ad are not in this read yet. {meanwhile}
+      </p>
+    );
+  if (!lost.known)
+    return (
+      <p className="text-sm text-muted-foreground">
+        The board has no lost-lead counts for these campaigns yet. {meanwhile}
+      </p>
+    );
+  if (!lost.rows.length)
+    return (
+      <p className="text-sm text-muted-foreground">
+        No lost lead is tied to one of these ads on the board.
+      </p>
+    );
+  const top = lost.rows[0].count;
+  const shown = all ? lost.rows : lost.rows.slice(0, LOST_SHOWN);
+  return (
+    <div className="space-y-2">
+      <ul className="@container divide-y rounded-2xl border bg-card">
+        {shown.map(r => {
+          const c = r.ad
+            ? model.campaigns.find(x => x.name === r.ad?.campaign)
+            : undefined;
+          return (
+            <li
+              key={r.adId}
+              className="flex items-center gap-3 px-4 py-2.5 sm:px-6"
+            >
+              {r.ad && c ? (
+                <AdPicture a={r.ad} c={c} clientName={clientName} size="sm" />
+              ) : (
+                <CreativePreview
+                  name={r.name}
+                  metaAdId={r.adId}
+                  clientName={clientName}
+                  size="sm"
+                />
+              )}
+              <div className="min-w-0 flex-1">
+                <AmLink
+                  href={adUrl({ id: r.adId, accountId: r.accountId })}
+                  className="text-sm font-medium"
+                >
+                  {r.name}
+                </AmLink>
+                <p
+                  className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]"
+                  dir="auto"
+                >
+                  {r.ad
+                    ? `${r.ad.campaign} · ${r.ad.statusText}`
+                    : "Not among this period's ads"}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <span
+                  aria-hidden
+                  className="hidden h-1.5 w-24 overflow-hidden rounded-full bg-muted @md:block"
+                >
+                  <span
+                    className="block h-full rounded-full bg-foreground/45"
+                    style={{ width: `${Math.max(4, (r.count / top) * 100)}%` }}
+                  />
+                </span>
+                <span className="w-16 text-right text-sm tabular-nums">
+                  <b className="font-medium">{r.count}</b>
+                  <span className="text-xs text-muted-foreground"> lost</span>
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {lost.rows.length > LOST_SHOWN ? (
+        <button
+          type="button"
+          onClick={() => setAll(v => !v)}
+          className="text-xs text-primary underline-offset-4 hover:underline"
+        >
+          {all
+            ? "Show fewer ads"
+            : `Show the other ${lost.rows.length - LOST_SHOWN}`}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** The board's call and findings on each campaign that still runs, read only. */
+function MediaBuyerList({ board }: { board: BoardView }) {
+  if (!board.known)
+    return (
+      <p className="text-sm text-muted-foreground">
+        The board's notes are not in this read yet. Until they are, ask the
+        media buyer for the call on these campaigns.
+      </p>
+    );
+  if (!board.campaigns.length)
+    return (
+      <p className="text-sm text-muted-foreground">
+        None of their campaigns runs now, so the board has no call to show.
+      </p>
+    );
+  if (!board.campaigns.some(c => c.verdict || c.findings.length))
+    return (
+      <p className="text-sm text-muted-foreground">
+        The board has no call on these campaigns yet. It writes one on its next
+        sync.
+      </p>
+    );
+  return (
+    <ul className="divide-y rounded-2xl border bg-card">
+      {board.campaigns.map(c => {
+        const facts = [
+          c.boardAdStatus ? `Board says ${c.boardAdStatus}` : null,
+          c.daysLive !== undefined
+            ? `${plural(c.daysLive, "day")} since its first spend`
+            : null,
+        ].filter(Boolean);
+        return (
+          <li key={c.name} className="space-y-3 px-4 py-4 sm:px-6">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <AmLink href={campaignUrl(c)} className="text-sm font-semibold">
+                  {c.name}
+                </AmLink>
+                {facts.length ? (
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {facts.join(" · ")}
+                  </p>
+                ) : null}
+              </div>
+              {c.verdict ? (
+                <Chip tone={c.verdict.tone} className="shrink-0">
+                  {c.verdict.label}
+                </Chip>
+              ) : null}
+            </div>
+            {c.verdict?.reason ? (
+              <p className="text-[13px] text-muted-foreground" dir="auto">
+                {c.verdict.reason}
+              </p>
+            ) : null}
+            {c.offOnBoard ? (
+              <p className="flex items-start gap-2 text-xs">
+                <span className="mt-1.5 flex">
+                  <Dot tone="bad" />
+                </span>
+                The board has it as {c.boardAdStatus}, but Meta still runs it.
+                Ask the media buyer which is right.
+              </p>
+            ) : null}
+            {c.findings.length ? (
+              <ol className="space-y-3 rounded-xl bg-muted/40 p-3 sm:p-4">
+                {c.findings.map((f, i) => (
+                  <li key={`${f.constraint}-${i}`} className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2 text-[13px] font-medium">
+                      <span dir="auto">{f.constraint}</span>
+                      {f.optional ? (
+                        <Chip dot={false}>Optional</Chip>
+                      ) : i === 0 ? (
+                        <Chip tone="bad">Fix this first</Chip>
+                      ) : null}
+                    </div>
+                    {f.evidence ? (
+                      <p className="text-xs text-muted-foreground" dir="auto">
+                        {f.evidence}
+                      </p>
+                    ) : null}
+                    {f.fixes.length ? (
+                      <ul className="list-disc space-y-0.5 pl-5 text-[13px]">
+                        {f.fixes.map(x => (
+                          <li key={x} dir="auto">
+                            {x}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

@@ -50,3 +50,43 @@ describe("cost per lead finding", () => {
     );
   });
 });
+
+// The call centre review, 2026-10-13: for a done-for-you client our call
+// centre calls the leads, so cheap leads that do not book are never put on
+// "speed to lead on the client's side"; the first fix is the client's calls.
+describe("cheap leads that do not book", () => {
+  const CALLS =
+    "Check the client's Calls section: first call time, dials per lead and why leads were lost.";
+  const cpbHigh = (
+    service: string | undefined,
+    ads: Record<string, unknown>[],
+  ) => all({ ...profile(ads), service }).find(c => c.id === "cpb_high");
+
+  test("done for you: the call centre owns it and its calls come first", () => {
+    for (const service of ["DFY", undefined]) {
+      const c = cpbHigh(service, [
+        { spend7d: 130, leads7d: 10, bookings7d: 2 },
+      ]);
+      expect(c?.owner).toBe("Call centre");
+      expect(c?.diagnosis).toContain(
+        "That is usually how fast and how often our call centre calls the leads, not the ads.",
+      );
+      expect(c?.diagnosis).not.toContain("client's side");
+      expect(c?.fixes[0]).toBe(CALLS);
+      expect(c?.fixes[1]).toContain("Raise a ticket to the media buyer");
+    }
+  });
+
+  test("dear leads stay the media buyer's, with the calls check second", () => {
+    const c = cpbHigh("DFY", [{ spend7d: 210, leads7d: 9, bookings7d: 1 }]);
+    expect(c?.owner).toBe("Media buyer");
+    expect(c?.fixes[0]).toContain("Raise a ticket to the media buyer");
+    expect(c?.fixes[1]).toBe(CALLS);
+  });
+
+  test("done with you: they book their own, so bookings are not judged", () => {
+    expect(
+      cpbHigh("DWY", [{ spend7d: 130, leads7d: 10, bookings7d: 2 }]),
+    ).toBeUndefined();
+  });
+});

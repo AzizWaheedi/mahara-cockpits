@@ -19,6 +19,7 @@ import {
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AdBillingDailyTask } from "@/components/AdBillingReview";
+import { ClientAdsTab } from "@/components/ClientAds";
 import { ClientBrief, useCardNotes } from "@/components/ClientBrief";
 import {
   CallsTimeline,
@@ -97,6 +98,7 @@ import {
 import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
 import { portalUrl } from "@/lib/portal";
+import { kuwaitDay, periodOf } from "@/lib/reportPeriod";
 import { fold, matchScore } from "@/lib/search";
 import {
   CLICKUP_ACT_KINDS,
@@ -110,7 +112,13 @@ import {
   ClientLinks,
   ClientPerformancePage,
   ClientProfile,
+  firstDate,
+  hasLostLeads,
   LINK_LABELS,
+  LostLeadsList,
+  lostLeadsLede,
+  monthsAvailable,
+  PeriodBar,
 } from "./ClientPerformancePage";
 import { MeetingsPage } from "./MeetingsPage";
 
@@ -996,10 +1004,76 @@ function HotSheet({
 const CLIENT_TABS = [
   { key: "overview", label: "Overview" },
   { key: "results", label: "Results" },
+  { key: "ads", label: "Ads" },
   { key: "onboarding", label: "Onboarding & files" },
   { key: "money", label: "Money" },
 ] as const;
 type ClientTab = (typeof CLIENT_TABS)[number]["key"];
+
+/**
+ * The Ads tab (Aziz, 2026-10-13: the CSM looks at the ads "the same way it
+ * is on the media buyer cockpit"), read only, under the reporting period
+ * Results uses: the address carries it, so it follows from one tab to the
+ * other. `profile` is undefined while it loads and null when it could not be
+ * read.
+ */
+function AdsTab({
+  client: c,
+  profile,
+  period,
+  onPeriod,
+}: {
+  client: Client;
+  profile?: Client | null;
+  period: string;
+  onPeriod: (k: string) => void;
+}) {
+  const earliest = useMemo(
+    () => (profile ? firstDate(profile) : undefined),
+    [profile],
+  );
+  const months = useMemo(
+    () => (profile ? monthsAvailable(profile) : []),
+    [profile],
+  );
+  const per = useMemo(
+    () => periodOf(period, kuwaitDay(), earliest),
+    [period, earliest],
+  );
+  // The whole lost pipeline from the profile; missing is not zero.
+  const total = Number(profile?.lost?.total);
+  const lost = profile?.lost;
+  return (
+    <ClientAdsTab
+      taskId={c.taskId ? String(c.taskId) : undefined}
+      clientName={String(c.name)}
+      per={per}
+      dwy={serviceModel(profile?.service ?? c.service).dwy}
+      lostTotal={
+        profile?.lost?.total != null && Number.isFinite(total)
+          ? total
+          : undefined
+      }
+      lostLeads={
+        hasLostLeads(lost)
+          ? { lede: lostLeadsLede(lost), list: <LostLeadsList lost={lost} /> }
+          : undefined
+      }
+      // All time starts on the profile's first day: read once it is known
+      // (or the profile failed), not once without it and again with it.
+      hold={per.key === "all" && profile === undefined}
+      periodBar={
+        <PeriodBar
+          per={per}
+          value={period}
+          onChange={onPeriod}
+          months={months}
+          earliest={earliest}
+        />
+      }
+    />
+  );
+}
 
 /**
  * What you do to a client, one panel each. Booking is not here: it is the
@@ -1183,7 +1257,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     clientRow ? String(clientRow.taskId) : undefined,
   );
   /** The client's profile: their links in the header (the tabs read it too). */
-  const [profile, setProfile] = useState<Client | undefined>(undefined);
+  // Undefined while it loads, null when it could not be read.
+  const [profile, setProfile] = useState<Client | null | undefined>(undefined);
   useEffect(() => {
     setProfile(undefined);
     if (!auth.client || !clientRow) return;
@@ -1193,12 +1268,13 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         if (live) setProfile(value);
       })
       .catch(error => {
-        if (live)
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : "The client profile could not be read.",
-          );
+        if (!live) return;
+        setProfile(null);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "The client profile could not be read.",
+        );
       });
     return () => {
       live = false;
@@ -2233,6 +2309,15 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             name={String(c.name)}
             part="results"
             embedded
+            period={period}
+            onPeriod={k => setParam("period", k)}
+          />
+        )}
+
+        {clientTab === "ads" && (
+          <AdsTab
+            client={c}
+            profile={profile}
             period={period}
             onPeriod={k => setParam("period", k)}
           />

@@ -214,8 +214,13 @@ function diagnoseRaw(p: Any): Diagnosis {
         : "too few of them book, so every appointment costs more than it should";
       const ticket =
         "Raise a ticket to the media buyer with the cost per booking: judge the ads on bookings, and cut the ad with the worst cost per booking, not the worst cost per lead.";
-      const speed =
-        "Ask how fast their leads get called and how many times, before anything changes in the account.";
+      // Done for you: our call centre calls their leads, so how fast and how
+      // often they are called is ours to check, never the client's (the call
+      // centre review, 2026-10-13). Done with you: the client calls their own.
+      const ourCalls = !dwy;
+      const speed = ourCalls
+        ? "Check the client's Calls section: first call time, dials per lead and why leads were lost."
+        : "Ask how fast their leads get called and how many times, before anything changes in the account.";
       found.push({
         id: "cpb_high",
         layer: "micro",
@@ -226,13 +231,15 @@ function diagnoseRaw(p: Any): Diagnosis {
         evidence: `$${bookedSpend7.toFixed(0)} spent in the last 7 days for ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"} from ${leads7} leads.`,
         diagnosis: cplOver
           ? `The leads cost more than the gate and ${fewBook}. Cost per booking is the number that decides.`
-          : `The leads are cheap enough, but ${fewBook}. That is usually speed to lead on the client's side, not the ads.`,
-        // Cheap leads put the CSM's question first: the brief shows one fix.
+          : ourCalls
+            ? `The leads are cheap enough, but ${fewBook}. That is usually how fast and how often our call centre calls the leads, not the ads.`
+            : `The leads are cheap enough, but ${fewBook}. That is usually speed to lead on the client's side, not the ads.`,
+        // Cheap leads put the calls first: the brief shows one fix.
         fixes: [
           ...(cplOver ? [ticket, speed] : [speed, ticket]),
           "Do not promise the client a lower cost on the call; promise the change and a date.",
         ],
-        owner: cplOver ? "Media buyer" : "CSM",
+        owner: cplOver ? "Media buyer" : ourCalls ? "Call centre" : "CSM",
       });
     }
     if (cpl != null && cplOver && cpb != null && !cpbOver)

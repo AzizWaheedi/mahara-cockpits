@@ -1,9 +1,13 @@
-import { ArrowLeft, ArrowUpRight, ChevronDown } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  ChevronDown,
+  ChevronRight,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { ClientAds } from "@/components/ClientAds";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import { DosDontsCard } from "@/components/DosDonts";
@@ -39,6 +43,7 @@ import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
 import { displayLabel, plural, shortDay } from "@/lib/format";
 import { CPB_GATE, CPL_GATE, SHOW_RATE_AIM, SHOW_RATE_GOOD } from "@/lib/kpi";
+import { cleanLostNote } from "@/lib/lostNotes";
 import { publishOpenClient } from "@/lib/openClient";
 import {
   addTask,
@@ -1021,19 +1026,49 @@ function RecentCalls({ calls, brief }: { calls: Any[]; brief?: string }) {
 /** Lost leads shown before "Show the other": enough to see the pattern. */
 const LOST_SHOWN = 3;
 
-function LostLeads({ lost }: { lost: Any }) {
+/**
+ * A lost lead's notes as the team wrote them. The profile joins a lead's
+ * notes with " · ", and a power dialer note carries its system lines ("LOST:
+ * Other", the Maqsam line, the "[mahara:…]" tag), which say nothing about
+ * why. Each note goes through cleanLostNote, the media buyer's own rule
+ * (lostNotes.ts, the same file in both cockpits). The dialer's "this does not
+ * establish a verified Maqsam call" line is cut too, so it comes back as
+ * `unverified` and the list says it in words (as the media buyer's does).
+ */
+export function teamNote(raw: unknown): { note: string; unverified: boolean } {
+  const parts = String(raw ?? "")
+    .split(" · ")
+    .map(part => cleanLostNote(part))
+    .filter(n => n !== null);
+  return {
+    note: parts.map(n => n.note).join(" · "),
+    unverified: parts.some(n => n.unverified),
+  };
+}
+
+/** The profile's lost pipeline has a reason or a lead to show. */
+export function hasLostLeads(lost: Any): boolean {
+  return Boolean(lost?.reasons?.length || lost?.leads?.length);
+}
+
+/** One grey line: how many sit in the lost pipeline, and how many are listed. */
+export function lostLeadsLede(lost: Any): string {
+  const leads = (lost?.leads ?? []) as Any[];
+  return `${lost.total} leads sit in ${lost.pipeline || "their lost pipeline"}.${leads.length < lost.total ? ` These are the ${leads.length} most recent.` : ""}`;
+}
+
+/**
+ * The reasons, then each lead with the team's note. Results and the Ads tab
+ * show the same list, so a CSM reads why leads died next to the ads too.
+ */
+export function LostLeadsList({ lost }: { lost: Any }) {
   const [open, setOpen] = useState(false);
   const reasons = (lost?.reasons ?? []) as Any[];
   const leads = (lost?.leads ?? []) as Any[];
   if (!reasons.length && !leads.length) return null;
   const shown = open ? leads : leads.slice(0, LOST_SHOWN);
   return (
-    <ResultsSection
-      id="results-lost"
-      title="Why leads were marked lost"
-      count={lost.total}
-      lede={`${lost.total} leads sit in ${lost.pipeline || "their lost pipeline"}.${leads.length < lost.total ? ` These are the ${leads.length} most recent.` : ""}`}
-    >
+    <>
       <div className="flex flex-wrap gap-2">
         {reasons.map(r => (
           <span
@@ -1048,45 +1083,67 @@ function LostLeads({ lost }: { lost: Any }) {
         ))}
       </div>
       <ul className="divide-y rounded-2xl border bg-card">
-        {shown.map((l, i) => (
-          <li key={i} className="space-y-1 px-4 py-3 text-sm sm:px-6">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="font-medium" dir="auto">
-                {String(l.name)}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {String(l.reason).replace(/\s*\(Write why.*\)/i, "")}
-              </span>
-              {l.ad ? (
-                <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                  {String(l.ad)}
+        {shown.map((l, i) => {
+          const said = teamNote(l.note);
+          return (
+            <li key={i} className="space-y-1 px-4 py-3 text-sm sm:px-6">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-medium" dir="auto">
+                  {String(l.name)}
                 </span>
-              ) : null}
-              {l.movedAt ? (
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {shortDay(String(l.movedAt))}
+                <span className="text-xs text-muted-foreground">
+                  {String(l.reason).replace(/\s*\(Write why.*\)/i, "")}
                 </span>
+                {l.ad ? (
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
+                    {String(l.ad)}
+                  </span>
+                ) : null}
+                {l.movedAt ? (
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {shortDay(String(l.movedAt))}
+                  </span>
+                ) : null}
+              </div>
+              {said.note ? (
+                <p
+                  className={cn(
+                    "text-[13px] text-muted-foreground",
+                    open ? null : "line-clamp-2",
+                  )}
+                  dir="auto"
+                >
+                  {said.note}
+                </p>
               ) : null}
-            </div>
-            {l.note ? (
-              <p
-                className={cn(
-                  "text-[13px] text-muted-foreground",
-                  open ? null : "line-clamp-2",
-                )}
-                dir="auto"
-              >
-                {String(l.note)}
-              </p>
-            ) : null}
-          </li>
-        ))}
+              {said.unverified ? (
+                <p className="text-xs text-muted-foreground">
+                  Logged by the agent without a matched Maqsam call.
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
       </ul>
       {leads.length > LOST_SHOWN ? (
         <Button variant="ghost" size="sm" onClick={() => setOpen(v => !v)}>
           {open ? "Show fewer" : `Show the other ${leads.length - LOST_SHOWN}`}
         </Button>
       ) : null}
+    </>
+  );
+}
+
+function LostLeads({ lost }: { lost: Any }) {
+  if (!hasLostLeads(lost)) return null;
+  return (
+    <ResultsSection
+      id="results-lost"
+      title="Why leads were marked lost"
+      count={lost.total}
+      lede={lostLeadsLede(lost)}
+    >
+      <LostLeadsList lost={lost} />
     </ResultsSection>
   );
 }
@@ -1202,7 +1259,7 @@ function rangeBounds(key: RangeKey, p?: Any): [string, string, string] {
 }
 
 /** The earliest day with any data, ads or sheet, for "all time" and the custom picker. */
-function firstDate(p: Any): string | undefined {
+export function firstDate(p: Any): string | undefined {
   let first: string | undefined;
   for (const d of p?.adLeads?.daily ?? [])
     if (!first || d.date < first) first = String(d.date);
@@ -1242,7 +1299,7 @@ function periodFigures(p: Any, per: Period): Figures {
 }
 
 /** Months with any data, newest first, for the month picker. */
-function monthsAvailable(p: Any): string[] {
+export function monthsAvailable(p: Any): string[] {
   const set = new Set<string>();
   for (const d of p.adLeads?.daily ?? []) set.add(String(d.date).slice(0, 7));
   for (const r of p.performance?.appointments ?? [])
@@ -1489,7 +1546,7 @@ function ChangesList({
 }
 
 /** The one control every number on a client's page follows. */
-function PeriodBar({
+export function PeriodBar({
   per,
   value,
   onChange,
@@ -1749,8 +1806,6 @@ export function ClientProfile({
   // Hooks before any early return, so their order never changes.
   // The chase list can run past a hundred rows: first 20, the rest on a tap.
   const [staleAll, setStaleAll] = useState(false);
-  // How many ads spent or brought a lead in the period, for the contents bar.
-  const [adsCount, setAdsCount] = useState<number>();
   const earliest = useMemo(() => firstDate(p ?? {}), [p]);
   const per = useMemo(
     () => periodOf(period, kuwaitToday(), earliest),
@@ -1827,7 +1882,7 @@ export function ClientProfile({
     typeof perf.staleCount === "number" ? perf.staleCount : undefined;
   const resultsParts: ResultsPart[] = [
     { id: "results-numbers", label: "Numbers" },
-    { id: "results-ads", label: "Ads", count: adsCount },
+    { id: "results-ads", label: "Ads" },
     { id: "results-changes", label: "Changes", count: changes.length },
     ...(hasSheet && !dwy
       ? [
@@ -2150,14 +2205,24 @@ export function ClientProfile({
               )}
             </ResultsSection>
 
-            <ResultsSection id="results-ads" title="Ads" count={adsCount}>
-              <ClientAds
-                taskId={p.taskId ? String(p.taskId) : undefined}
-                clientName={name}
-                per={per}
-                dwy={dwy}
-                onCount={setAdsCount}
-              />
+            {/* The ads have their own tab since 2026-10-13 (Aziz: the CSM
+                sees them as the media buyer does), so they show once. */}
+            <ResultsSection id="results-ads" title="Ads">
+              {p.taskId ? (
+                <Link
+                  to={`/clients/${encodeURIComponent(String(p.taskId))}?tab=ads&period=${encodeURIComponent(period)}`}
+                  className="inline-flex items-center gap-0.5 text-sm text-primary underline-offset-4 hover:underline"
+                >
+                  See every campaign, ad set and ad for {per.label} on the Ads
+                  tab
+                  <ChevronRight aria-hidden className="size-4 shrink-0" />
+                </Link>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  This client has no ClickUp card yet, so their ads cannot be
+                  matched.
+                </p>
+              )}
             </ResultsSection>
 
             <ChangesList

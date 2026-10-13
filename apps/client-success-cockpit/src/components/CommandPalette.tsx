@@ -178,6 +178,12 @@ const CLIENT_TABS: { tab: string; label: string; keywords: string }[] = [
     keywords: "results numbers leads booked closed report period print doc",
   },
   {
+    tab: "ads",
+    label: "Ads",
+    keywords:
+      "ads campaigns ad sets creatives meta ads manager lost leads by ad media buyer verdict findings",
+  },
+  {
     tab: "onboarding",
     label: "Onboarding & files",
     keywords:

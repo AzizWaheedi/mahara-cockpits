@@ -4,11 +4,15 @@ import {
   adSetUrl,
   adsRange,
   adUrl,
+  boardKnown,
   buildAdsModel,
   type ClientAdsRead,
   campaignUrl,
   chartSeries,
   fetchClientAds,
+  findingsOf,
+  lostByAdOf,
+  mediaBuyerView,
   scopeChanges,
   scopeTotals,
 } from "../src/lib/clientAds";
@@ -451,5 +455,258 @@ describe("reads and links", () => {
     expect(adUrl({ id: "7001", accountId: "999" })).toBe(
       "https://adsmanager.facebook.com/adsmanager/manage/ads?act=999&selected_ad_ids=7001",
     );
+  });
+});
+
+/**
+ * The Ads tab (Aziz, 2026-10-13): v3 of cockpit_csm_client_ads adds the
+ * media buyer board's call, findings, Ad Status, days live and lost leads per
+ * ad to each campaign. A read from before v3 has none of them and still
+ * renders; the tab then says the board's notes are not in yet.
+ */
+describe("the media buyer's board on the Ads tab", () => {
+  const v3 = (base = read()) => ({
+    ...base,
+    campaigns: [
+      {
+        ...base.campaigns[0],
+        verdict: "kill",
+        reason: "$162 a booking — over the $80 line.",
+        findings: [
+          {
+            constraint: "Cost per booking",
+            severity: "fix",
+            evidence: "$161.58 per booking against the $60 gate.",
+            fixes: ["Cut the ad with the worst cost per booking."],
+          },
+          { constraint: "", severity: "fix", evidence: "no name", fixes: [] },
+          "not a finding",
+          {
+            constraint: "In learning — leave it alone",
+            severity: "optimization",
+            evidence: "Live 3 days.",
+            fixes: ["Leave it.", 4, " "],
+          },
+        ],
+        boardAdStatus: "Paused",
+        daysLive: 6.4,
+        lostByAd: { "7001": 4, "7002": "2.0", "9999": 1, "7101": 0 },
+      },
+      {
+        ...base.campaigns[1],
+        verdict: "scale",
+        reason: null,
+        findings: [
+          {
+            constraint: "Room to scale",
+            severity: "optimization",
+            evidence: "Cheap.",
+            fixes: ["Raise the budget."],
+          },
+        ],
+        boardAdStatus: "Live",
+        daysLive: 30,
+        // The same client's pipeline, an older copy on an ended campaign.
+        lostByAd: { "7001": 9 },
+      },
+    ],
+  });
+
+  async function parsed(payload: unknown) {
+    const client = {
+      rpc: async () => ({ data: payload, error: null }),
+    } as unknown as SupabaseClient;
+    return fetchClientAds(client, "task", "2026-09-01", "2026-09-30");
+  }
+
+  test("the new keys parse, and a read without them still renders", async () => {
+    const now = await parsed(v3());
+    expect(now.campaigns[0]).toMatchObject({
+      verdict: "kill",
+      boardAdStatus: "Paused",
+      daysLive: 6.4,
+    });
+    expect(now.campaigns[0].findings).toHaveLength(4);
+    expect(boardKnown(now)).toBe(true);
+    // v3 sends null when the board wrote nothing: still a v3 read.
+    const nulls = await parsed({
+      ...read(),
+      campaigns: read().campaigns.map(c => ({
+        ...c,
+        verdict: null,
+        reason: null,
+        findings: null,
+        boardAdStatus: null,
+        daysLive: null,
+        lostByAd: null,
+      })),
+    });
+    expect(boardKnown(nulls)).toBe(true);
+    expect(nulls.campaigns[0].verdict).toBeUndefined();
+    expect(lostByAdOf(nulls).known).toBe(false);
+
+    // The shape before v3: no board keys at all.
+    const old = await parsed(read());
+    expect(boardKnown(old)).toBe(false);
+    const m = buildAdsModel(old, { from: "2026-09-01", to: "2026-09-30" }, NOW);
+    expect(m.campaigns.map(c => c.name).sort()).toEqual(["LIVE", "OLD"]);
+    expect(mediaBuyerView(old, m)).toMatchObject({ known: false });
+    expect(lostByAdOf(old, m)).toEqual({ known: false, tied: 0, rows: [] });
+  });
+
+  test("the board's call on each campaign that runs, decisions first", async () => {
+    const r = await parsed(v3());
+    const m = buildAdsModel(r, { from: "2026-09-01", to: "2026-09-30" }, NOW);
+    const view = mediaBuyerView(r, m);
+    // OLD has ended: the board no longer judges it.
+    expect(view.campaigns.map(c => c.name)).toEqual(["LIVE"]);
+    const live = view.campaigns[0];
+    expect(live.verdict).toEqual({
+      label: "Kill",
+      tone: "bad",
+      reason: "$162 a booking, over the $80 line.",
+    });
+    expect(live.daysLive).toBe(6);
+    expect(live.needsDecision).toBe(true);
+    // The board has it paused while an ad still runs on Meta.
+    expect(live.offOnBoard).toBe(true);
+    // Malformed findings are left out; em dashes read as commas.
+    expect(live.findings).toEqual([
+      {
+        constraint: "Cost per booking",
+        evidence: "$161.58 per booking against the $60 gate.",
+        fixes: ["Cut the ad with the worst cost per booking."],
+        optional: false,
+      },
+      {
+        constraint: "In learning, leave it alone",
+        evidence: "Live 3 days.",
+        fixes: ["Leave it."],
+        optional: true,
+      },
+    ]);
+    expect(findingsOf(null)).toEqual([]);
+
+    // A board that says Live is never flagged, and an unknown call reads plainly.
+    const calm = mediaBuyerView({
+      ...r,
+      campaigns: [
+        {
+          ...r.campaigns[0],
+          boardAdStatus: "Live",
+          verdict: "no_delivery_yet",
+          findings: [],
+        },
+        { ...r.campaigns[1], ended: false },
+      ],
+    });
+    expect(calm.campaigns.map(c => c.name)).toEqual(["LIVE", "OLD"]);
+    expect(calm.campaigns[0].offOnBoard).toBe(false);
+    expect(calm.campaigns[0].verdict).toMatchObject({
+      label: "No delivery yet",
+      tone: "neutral",
+    });
+  });
+
+  test("below KPI and off board read in the media buyer's words and tones", async () => {
+    const r = await parsed(v3());
+    // hermes/cockpit-sync/calculator.ts writes "below KPI" and "off board";
+    // the media buyer shows them as a warning and a serious call.
+    const view = mediaBuyerView({
+      ...r,
+      campaigns: [
+        { ...r.campaigns[0], verdict: "below KPI", reason: null },
+        { ...r.campaigns[1], ended: false, verdict: "off board" },
+      ],
+    });
+    expect(view.campaigns.map(c => c.verdict)).toEqual([
+      { label: "Below KPI", tone: "warn", reason: undefined },
+      { label: "Off board", tone: "bad", reason: undefined },
+    ]);
+    // The same words on an ad's own verdict.
+    const m = buildAdsModel(
+      {
+        ...r,
+        verdicts: r.verdicts.map(v => ({ ...v, verdict: "below KPI" })),
+      },
+      { from: "2026-09-01", to: "2026-09-30" },
+      NOW,
+    );
+    const ad1 = m.campaigns
+      .flatMap(c => c.sets)
+      .flatMap(x => x.ads)
+      .find(a => a.id === "7001");
+    expect(ad1?.verdict).toMatchObject({ label: "Below KPI", tone: "warn" });
+  });
+
+  test("lost leads per ad: one copy of the client's pipeline, never a sum", async () => {
+    const r = await parsed(v3());
+    const m = buildAdsModel(r, { from: "2026-09-01", to: "2026-09-30" }, NOW);
+    const lost = lostByAdOf(r, m);
+    expect(lost.known).toBe(true);
+    // The live campaign's copy, not 4 + 9 for ad 7001; zero counts drop out.
+    expect(lost.tied).toBe(7);
+    expect(lost.rows.map(x => [x.adId, x.count, x.name])).toEqual([
+      ["7001", 4, "Ad-1 gates"],
+      ["7002", 2, "Ad-2 quiet"],
+      ["9999", 1, "Ad 9999"],
+    ]);
+    expect(lost.rows[0].ad?.statusText).toBe("Active");
+    expect(lost.rows[2].ad).toBeUndefined();
+    // An ad the period does not list still opens in the client's account,
+    // the one its counts came from, never whichever account was used last.
+    expect(lost.rows[2].accountId).toBe("999");
+    const r9 = lost.rows[2];
+    expect(adUrl({ id: r9.adId, accountId: r9.accountId })).toBe(
+      "https://adsmanager.facebook.com/adsmanager/manage/ads?act=999&selected_ad_ids=9999",
+    );
+    const elsewhere = lostByAdOf(
+      {
+        ...r,
+        campaigns: [
+          { ...r.campaigns[0], accountId: undefined },
+          { ...r.campaigns[1], ended: false, accountId: "555", lostByAd: null },
+        ],
+      },
+      m,
+    );
+    // The copy's campaign has no account: one that runs lends its own.
+    expect(elsewhere.rows.find(x => x.adId === "9999")?.accountId).toBe("555");
+    // An ad in the period keeps its own account.
+    expect(elsewhere.rows.find(x => x.adId === "7001")?.accountId).toBe("999");
+
+    // Two live copies of the same pipeline: the fuller one, still not a sum.
+    const both = lostByAdOf(
+      {
+        ...r,
+        campaigns: [
+          r.campaigns[0],
+          { ...r.campaigns[1], ended: false, lostByAd: { "7001": 5 } },
+        ],
+      },
+      m,
+    );
+    expect(both.tied).toBe(7);
+    // Only ended campaigns carry it: their copy is what is known.
+    const ended = lostByAdOf({ ...r, campaigns: [{ ...r.campaigns[1] }] }, m);
+    expect(ended.rows.map(x => [x.adId, x.count])).toEqual([["7001", 9]]);
+    // An ad the period does not list is named from the board's verdicts.
+    const named = lostByAdOf(
+      {
+        ...r,
+        verdicts: [
+          ...r.verdicts,
+          {
+            adId: "9999",
+            adName: "Winter promo",
+            campaignName: "LIVE",
+            verdict: "kill",
+            reason: undefined,
+          },
+        ],
+      },
+      m,
+    );
+    expect(named.rows.find(x => x.adId === "9999")?.name).toBe("Winter promo");
   });
 });

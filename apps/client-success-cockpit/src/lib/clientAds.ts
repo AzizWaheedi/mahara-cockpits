@@ -4,8 +4,9 @@ import { plainText } from "./format";
 import { dayLabel, kuwaitDay, shiftDay } from "./reportPeriod";
 
 /**
- * One client's campaigns, ad sets and ads for a period, for the Results tab
- * (Muhammed, 2026-10-12). The numbers come from cockpit_csm_client_ads, which
+ * One client's campaigns, ad sets and ads for a period, for the client page's
+ * Ads tab (Muhammed, 2026-10-12; its own tab since Aziz, 2026-10-13). The
+ * numbers come from cockpit_csm_client_ads, which
  * reads the same daily statistics and booked calls as the media buyer's range
  * table, and the sums here follow its rules (mediaStatsClient.ts in the media
  * buyer cockpit):
@@ -98,6 +99,16 @@ const readSchema = z.object({
         .boolean()
         .nullish()
         .transform(v => Boolean(v)),
+      // What the media buyer's board says, from 20261013180100 (v3). Older
+      // reads lack them, and the Ads tab then says the notes are not in yet.
+      // findings and lostByAd keep null apart from missing: v3 sends null
+      // when the board wrote none, an older read sends no key at all.
+      verdict: text,
+      reason: text,
+      findings: z.array(z.unknown()).nullish(),
+      boardAdStatus: text,
+      daysLive: maybe,
+      lostByAd: z.record(z.string(), z.unknown()).nullish(),
     }),
   ),
   adsets: z.array(
@@ -380,6 +391,10 @@ const VERDICTS: Record<string, { label: string; tone: Tone }> = {
   fatiguing: { label: "Fatiguing", tone: "warn" },
   kill: { label: "Kill", tone: "bad" },
   "no delivery": { label: "No delivery", tone: "neutral" },
+  // The board writes these two as well (hermes/cockpit-sync/calculator.ts);
+  // the media buyer shows them in the same tones (AccountView VERDICT_TONE).
+  "below kpi": { label: "Below KPI", tone: "warn" },
+  "off board": { label: "Off board", tone: "bad" },
 };
 
 /** Meta's delivery status, in words. */
@@ -1041,3 +1056,200 @@ export const SORTS: Record<Measure, (x: AdNode, y: AdNode) => number> = {
     (y.t.cpl ?? Number.POSITIVE_INFINITY),
   booked: (x, y) => y.t.booked - x.t.booked,
 };
+
+// ---------------------------------------------------------------------------
+// What the media buyer's board says (v3), read only, for the Ads tab: the
+// call on each campaign, its findings, and the client's lost leads per ad.
+
+export type Finding = {
+  constraint: string;
+  evidence?: string;
+  fixes: string[];
+  /** An optimization: nothing here needs a decision. */
+  optional: boolean;
+};
+
+export type BoardCampaign = {
+  name: string;
+  id?: string;
+  accountId?: string;
+  verdict?: { label: string; tone: Tone; reason?: string };
+  boardAdStatus?: string;
+  daysLive?: number;
+  /** The board has it off (Paused, Dead Campaign, Lost Client) while Meta runs it. */
+  offOnBoard: boolean;
+  findings: Finding[];
+  /** A finding that is not an optimization: someone has to decide. */
+  needsDecision: boolean;
+};
+
+export type BoardView = {
+  /** The read carries the board's notes; a read from before v3 does not. */
+  known: boolean;
+  /** The campaigns that have not ended: the ones the board still judges. */
+  campaigns: BoardCampaign[];
+};
+
+/** The media buyer's own list of statuses that take a campaign off the board. */
+const OFF_ON_BOARD = ["paused", "dead campaign", "lost client"];
+
+/** v3 sends findings and lostByAd on every campaign, null when there are none. */
+export function boardKnown(read: ClientAdsRead): boolean {
+  return read.campaigns.some(
+    c => c.findings !== undefined || c.lostByAd !== undefined,
+  );
+}
+
+function verdictOf(raw: string): { label: string; tone: Tone } {
+  const kind = VERDICTS[raw.toLowerCase()];
+  if (kind) return kind;
+  const words = raw.replace(/_/g, " ").toLowerCase();
+  return {
+    label: words.charAt(0).toUpperCase() + words.slice(1),
+    tone: "neutral",
+  };
+}
+
+const words = (v: unknown) =>
+  typeof v === "string" && v.trim() ? plainText(v.trim()) : undefined;
+
+/** The board's findings, each one checked: a malformed one is left out. */
+export function findingsOf(raw?: unknown[] | null): Finding[] {
+  return (raw ?? []).flatMap(f => {
+    if (!f || typeof f !== "object") return [];
+    const o = f as Record<string, unknown>;
+    const constraint = words(o.constraint);
+    if (!constraint) return [];
+    const fixes = Array.isArray(o.fixes)
+      ? o.fixes.map(words).filter((x): x is string => Boolean(x))
+      : [];
+    return [
+      {
+        constraint,
+        evidence: words(o.evidence),
+        fixes,
+        optional: o.severity === "optimization",
+      },
+    ];
+  });
+}
+
+export function mediaBuyerView(
+  read: ClientAdsRead,
+  model?: Pick<AdsModel, "campaigns">,
+): BoardView {
+  const status = new Map(
+    (model?.campaigns ?? []).map(c => [c.name, c.statusText]),
+  );
+  const campaigns = read.campaigns
+    .filter(c => !c.ended)
+    .map((c): BoardCampaign => {
+      const findings = findingsOf(c.findings);
+      const board = c.boardAdStatus;
+      return {
+        name: c.name,
+        id: c.metaCampaignId,
+        accountId: c.accountId,
+        verdict: c.verdict
+          ? {
+              ...verdictOf(c.verdict),
+              reason: c.reason ? plainText(c.reason) : undefined,
+            }
+          : undefined,
+        boardAdStatus: board,
+        daysLive:
+          c.daysLive !== undefined && c.daysLive >= 0
+            ? Math.round(c.daysLive)
+            : undefined,
+        offOnBoard: Boolean(
+          board &&
+            OFF_ON_BOARD.includes(board.toLowerCase()) &&
+            status.get(c.name) === "Active",
+        ),
+        findings,
+        needsDecision: findings.some(f => !f.optional),
+      };
+    })
+    // What needs a decision first; the read's own order (by name) otherwise.
+    .sort((x, y) => Number(y.needsDecision) - Number(x.needsDecision));
+  return { known: boardKnown(read), campaigns };
+}
+
+export type LostAd = {
+  adId: string;
+  count: number;
+  /** The ad in the period's tree, for its name, picture and status. */
+  ad?: AdNode;
+  name: string;
+  /**
+   * The ad account its Ads Manager link opens: the ad's own, else the
+   * account of the campaign the counts came from. Without one, Ads Manager
+   * opens whichever account the viewer used last and finds nothing.
+   */
+  accountId?: string;
+};
+
+export type LostByAd = {
+  /** The board has a lost count for this client's campaigns. */
+  known: boolean;
+  /** Lost leads the board ties to an ad. */
+  tied: number;
+  rows: LostAd[];
+};
+
+function lostCounts(raw?: Record<string, unknown> | null): [string, number][] {
+  return Object.entries(raw ?? {}).flatMap(([id, v]) => {
+    const n = Math.round(Number(v));
+    return id.trim() && Number.isFinite(n) && n > 0
+      ? [[id.trim(), n] as [string, number]]
+      : [];
+  });
+}
+
+/**
+ * The client's lost leads per ad, all time. The board keeps one copy of the
+ * client's whole lost pipeline on each of their campaigns (the live query on
+ * 2026-10-13: Atlantis's two campaigns carry the same counts), so one copy is
+ * taken, never a sum: a campaign that still runs, the fullest if several do.
+ */
+export function lostByAdOf(
+  read: ClientAdsRead,
+  model?: Pick<AdsModel, "campaigns">,
+): LostByAd {
+  const copies = read.campaigns.filter(c => c.lostByAd != null);
+  const live = copies.filter(c => !c.ended);
+  const pool = (live.length ? live : copies).map(c => ({
+    accountId: c.accountId,
+    counts: lostCounts(c.lostByAd),
+  }));
+  if (!pool.length) return { known: false, tied: 0, rows: [] };
+  const total = (l: [string, number][]) => l.reduce((n, [, k]) => n + k, 0);
+  const copy = pool.sort((x, y) => total(y.counts) - total(x.counts))[0];
+  const counts = copy.counts;
+  // The copy's own account, else one that still runs, else any.
+  const account =
+    copy.accountId ??
+    read.campaigns.find(c => !c.ended && c.accountId)?.accountId ??
+    read.campaigns.find(c => c.accountId)?.accountId;
+  const ads = new Map<string, AdNode>();
+  for (const c of model?.campaigns ?? [])
+    for (const s of c.sets) for (const a of s.ads) if (a.id) ads.set(a.id, a);
+  const named = new Map(
+    read.verdicts
+      .filter(v => v.adId && v.adName)
+      .map(v => [String(v.adId), String(v.adName)]),
+  );
+  const rows = counts
+    .map(([adId, count]): LostAd => {
+      const ad = ads.get(adId);
+      return {
+        adId,
+        count,
+        ad,
+        name: ad?.name ?? named.get(adId) ?? `Ad ${adId}`,
+        accountId: ad?.accountId ?? account,
+      };
+    })
+    .sort((x, y) => y.count - x.count || x.name.localeCompare(y.name));
+  return { known: true, tied: total(counts), rows };
+}
