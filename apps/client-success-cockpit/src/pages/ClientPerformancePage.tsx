@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { CallCentreSection } from "@/components/CallCentreSection";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import { DosDontsCard } from "@/components/DosDonts";
@@ -1806,6 +1807,10 @@ export function ClientProfile({
   // Hooks before any early return, so their order never changes.
   // The chase list can run past a hundred rows: first 20, the rest on a tap.
   const [staleAll, setStaleAll] = useState(false);
+  // The Calls part says when it shows the dialer's lost reasons; until then
+  // (loading, an error, a done-with-you client, nobody lost in the dialer)
+  // Results keeps the GoHighLevel list, so lost reasons always show once.
+  const [callsShowLost, setCallsShowLost] = useState(false);
   const earliest = useMemo(() => firstDate(p ?? {}), [p]);
   const per = useMemo(
     () => periodOf(period, kuwaitToday(), earliest),
@@ -1875,6 +1880,9 @@ export function ClientProfile({
   const lostShown = Boolean(
     p.lost && ((p.lost.reasons ?? []).length || (p.lost.leads ?? []).length),
   );
+  const adsTabHref = p.taskId
+    ? `/clients/${encodeURIComponent(String(p.taskId))}?tab=ads&period=${encodeURIComponent(period)}`
+    : undefined;
   const provisionalShown = Boolean(
     p.provisional && (p.provisional.count || p.provisional.callbacks),
   );
@@ -1882,6 +1890,7 @@ export function ClientProfile({
     typeof perf.staleCount === "number" ? perf.staleCount : undefined;
   const resultsParts: ResultsPart[] = [
     { id: "results-numbers", label: "Numbers" },
+    { id: "results-calls", label: "Calls" },
     { id: "results-ads", label: "Ads" },
     { id: "results-changes", label: "Changes", count: changes.length },
     ...(hasSheet && !dwy
@@ -1896,7 +1905,7 @@ export function ClientProfile({
     ...(hasSheet && (byAd.length || recentCount)
       ? [{ id: "results-leads", label: "Leads", count: recentCount }]
       : []),
-    ...(lostShown
+    ...(lostShown && !callsShowLost
       ? [
           {
             id: "results-lost",
@@ -2205,12 +2214,22 @@ export function ClientProfile({
               )}
             </ResultsSection>
 
+            {/* The call centre for this client (Aziz, 2026-10-13): reads on
+                its own and never holds up the rest of the tab. */}
+            <CallCentreSection
+              taskId={p.taskId ? String(p.taskId) : undefined}
+              from={per.from}
+              to={per.to}
+              lostElsewhereHref={lostShown ? adsTabHref : undefined}
+              onLostShown={setCallsShowLost}
+            />
+
             {/* The ads have their own tab since 2026-10-13 (Aziz: the CSM
                 sees them as the media buyer does), so they show once. */}
             <ResultsSection id="results-ads" title="Ads">
-              {p.taskId ? (
+              {adsTabHref ? (
                 <Link
-                  to={`/clients/${encodeURIComponent(String(p.taskId))}?tab=ads&period=${encodeURIComponent(period)}`}
+                  to={adsTabHref}
                   className="inline-flex items-center gap-0.5 text-sm text-primary underline-offset-4 hover:underline"
                 >
                   See every campaign, ad set and ad for {per.label} on the Ads
@@ -2380,7 +2399,9 @@ export function ClientProfile({
               </ResultsSection>
             ) : null}
 
-            {lostShown ? <LostLeads lost={p.lost as Any} /> : null}
+            {lostShown && !callsShowLost ? (
+              <LostLeads lost={p.lost as Any} />
+            ) : null}
             {provisionalShown ? (
               <Provisional pv={p.provisional as Any} />
             ) : null}

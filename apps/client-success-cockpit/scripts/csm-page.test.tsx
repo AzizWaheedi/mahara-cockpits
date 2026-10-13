@@ -7,6 +7,8 @@
  */
 
 import { afterAll, expect, mock, test } from "bun:test";
+import { callCentreFixture } from "../src/dev/callCentreFixture";
+import { forgetCallReads } from "../src/lib/callCentreClient";
 
 const snapshot = await Bun.file(
   new URL("./fixtures/csm-snapshot.json", import.meta.url),
@@ -14,7 +16,6 @@ const snapshot = await Bun.file(
 const perfFixture = await Bun.file(
   new URL("./fixtures/csm-profiles.json", import.meta.url),
 ).json();
-
 
 const KITS = {
   rows: [
@@ -147,6 +148,13 @@ const ADS_READ = {
   changes: [],
 };
 const adsReads: any[] = [];
+const callReads: any[] = [];
+// The call read's answer; a test swaps it to see the page without it.
+const onTrackCalls = () => ({
+  data: callCentreFixture("on_track"),
+  error: null,
+});
+let callAnswer: () => any = onTrackCalls;
 
 let overviewDeferred: Deferred<any> | null = null;
 let profileDeferred: Deferred<any> | null = null;
@@ -184,6 +192,30 @@ const mockClient: any = {
     if (name === "cockpit_csm_client_ads") {
       adsReads.push(_args);
       return Promise.resolve({ data: ADS_READ, error: null });
+    }
+    // The call centre (2026-10-13): one client's calls, every client's caller.
+    if (name === "cockpit_client_calls") {
+      callReads.push(_args);
+      return Promise.resolve(callAnswer());
+    }
+    if (name === "cockpit_client_callers") {
+      return Promise.resolve({
+        data: {
+          clients: [
+            {
+              taskId: "86exnk0v4",
+              locationId: "loc-greystone",
+              clientName: "Greystone Contracting",
+              callers: [
+                { email: "caller@example.test", name: "Example Caller" },
+              ],
+            },
+          ],
+          source: "The dialer's client assignments",
+          generatedAt: "2026-10-13T09:00:00Z",
+        },
+        error: null,
+      });
     }
     if (name === "cockpit_csm_client_whatsapp") {
       const at = Date.now() - 30 * 60_000;
@@ -370,17 +402,38 @@ mock.module("@/lib/nativeStillClient", () => ({
 }));
 
 mock.module("@/lib/checkInClient", () => ({
-  readClientContact: async () => ({id:"contact-1",name:"Example Owner",phone:null,email:null,url:"https://example.com/contact"}),
-  prepareClientCheckIn: async () => { throw new Error("Choose a booking day in the booking test."); },
-  bookClientCheckIn: async () => { throw new Error("Booking is not exercised by page rendering."); },
+  readClientContact: async () => ({
+    id: "contact-1",
+    name: "Example Owner",
+    phone: null,
+    email: null,
+    url: "https://example.com/contact",
+  }),
+  prepareClientCheckIn: async () => {
+    throw new Error("Choose a booking day in the booking test.");
+  },
+  bookClientCheckIn: async () => {
+    throw new Error("Booking is not exercised by page rendering.");
+  },
 }));
 mock.module("@/lib/backlog", () => ({
-  fetchBacklog: async () => ({rows:[],counts:{},activeClients:snapshot.clients.length}),
-  queueGap: async () => { throw new Error("Gap queueing is not exercised by page rendering."); },
+  fetchBacklog: async () => ({
+    rows: [],
+    counts: {},
+    activeClients: snapshot.clients.length,
+  }),
+  queueGap: async () => {
+    throw new Error("Gap queueing is not exercised by page rendering.");
+  },
 }));
 
 mock.module("sonner", () => ({
-  toast: { success: () => {}, error: () => {}, info: () => {}, warning: () => {} },
+  toast: {
+    success: () => {},
+    error: () => {},
+    info: () => {},
+    warning: () => {},
+  },
 }));
 
 const { CsmPage } = await import("../src/pages/CsmPage");
@@ -422,7 +475,9 @@ g.Node = win.Node;
 
 for (const key of Object.getOwnPropertyNames(win)) {
   if (
-    /^(HTML\w*Element|SVG\w*Element|\w*Event|DocumentFragment|Text)$/.test(key) &&
+    /^(HTML\w*Element|SVG\w*Element|\w*Event|DocumentFragment|Text)$/.test(
+      key,
+    ) &&
     g[key] == null
   ) {
     if (!(key in originalGlobalProps)) originalGlobalProps[key] = g[key];
@@ -548,8 +603,6 @@ test("the hot list and the message drafts render real client copy", async () => 
   expect(html).toContain("Hot list");
   await reactAct(async () => root.unmount());
 });
-
-
 
 test("client performance renders loading, resolves overview, selects client, and copies taskId", async () => {
   const host = win.document.createElement("div");
@@ -1375,6 +1428,8 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
       ads.match(/Read only: the media buyer makes every change/g)?.length,
     ).toBe(1);
     expect(ads).toContain("Reporting period");
+    // The call centre caller, in the header beside the main contact.
+    expect(ads).toContain("Caller: Example Caller");
     expect(ads).toContain("Campaigns, ad sets and ads");
     expect(ads).toContain("Villa reel");
     // Lost leads: why, in the team's words, then the board's count per ad.
@@ -1432,15 +1487,68 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     expect(link?.getAttribute("href")).toBe(
       `/clients/${withLost.taskId}?tab=ads&period=lastMonth`,
     );
-    expect(results).toContain(
-      "He's not Arab, not serious. · Called twice, no answer",
-    );
+    // Lost reasons show once (2026-10-13): the dialer's under Calls, right
+    // after Numbers, read for the profile's card and the period's dates;
+    // the GoHighLevel list (its cleaned notes checked above) stays on Ads.
+    expect(callReads.at(-1)).toEqual({
+      p_key: withLost.taskId,
+      p_from: "2026-09-01",
+      p_to: "2026-09-30",
+    });
+    expect(results).toContain("On track");
+    expect(results).toContain("Why leads were lost");
+    expect(results).not.toContain("He's not Arab, not serious.");
+    expect(results).not.toContain("3 leads sit in Lost Leads.");
     expect(results).not.toContain("[mahara:");
     expect(results).not.toContain("LOST: Other");
-    expect(results).not.toContain("Outcome recorded by the agent");
-    expect(results).toContain(
-      "Logged by the agent without a matched Maqsam call.",
-    );
+    expect(
+      [...host.querySelectorAll("a")]
+        .find(a =>
+          (a.textContent ?? "").includes("Leads marked lost in GoHighLevel"),
+        )
+        ?.getAttribute("href"),
+    ).toBe(`/clients/${withLost.taskId}?tab=ads&period=lastMonth`);
+    const parts = [
+      ...host.querySelectorAll('nav[aria-label="On this tab"] a'),
+    ].map(a => a.getAttribute("href"));
+    expect(parts.slice(0, 3)).toEqual([
+      "#results-numbers",
+      "#results-calls",
+      "#results-ads",
+    ]);
+    expect(parts).not.toContain("#results-lost");
+
+    // When Calls shows no lost reasons (here the read times out), Results
+    // keeps the GoHighLevel list, so lost reasons never vanish from the tab.
+    forgetCallReads();
+    callAnswer = () => ({
+      data: null,
+      error: { code: "57014", message: "statement timeout" },
+    });
+    try {
+      // The same address in another order: a fresh page, not a re-render.
+      const failed = await show(
+        `/clients/${GREYSTONE}?period=lastMonth&tab=results`,
+      );
+      await settle();
+      const now = (host.textContent ?? "").replace(/\s+/g, " ");
+      expect(failed + now).toContain("The dialer took too long to answer.");
+      expect(now).toContain(
+        "He's not Arab, not serious. · Called twice, no answer",
+      );
+      expect(now).toContain(
+        "Logged by the agent without a matched Maqsam call.",
+      );
+      expect(now).not.toContain("Leads marked lost in GoHighLevel");
+      expect(
+        [...host.querySelectorAll('nav[aria-label="On this tab"] a')].map(a =>
+          a.getAttribute("href"),
+        ),
+      ).toContain("#results-lost");
+    } finally {
+      callAnswer = onTrackCalls;
+      forgetCallReads();
+    }
 
     // All time starts on the profile's first day: the ads are read once,
     // after the profile, not once without it and again with it.

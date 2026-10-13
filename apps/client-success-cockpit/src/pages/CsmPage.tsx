@@ -19,6 +19,10 @@ import {
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AdBillingDailyTask } from "@/components/AdBillingReview";
+import {
+  ClientCallerChip,
+  ClientCallerLine,
+} from "@/components/CallCentreSection";
 import { ClientAdsTab } from "@/components/ClientAds";
 import { ClientBrief, useCardNotes } from "@/components/ClientBrief";
 import {
@@ -51,6 +55,7 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
+import { type Caller, useClientCallers } from "@/lib/callCentreClient";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
 import { useClientWhatsApp } from "@/lib/clientWhatsApp";
@@ -1108,11 +1113,14 @@ function ClientRow({
   today,
   handled,
   kit,
+  callers,
 }: {
   c: Client;
   today: string;
   handled: boolean;
   kit?: OnboardingRow | null;
+  /** The client's callers in the dialer; undefined until they are read. */
+  callers?: Caller[];
 }) {
   const poc = nextPocState(c, today);
   const sm = serviceModel(c.service);
@@ -1139,6 +1147,10 @@ function ClientRow({
               {sm.label}
             </Chip>
           )}
+          <ClientCallerChip
+            callers={callers}
+            expected={c.bucket === "management" && !sm.dwy}
+          />
           {handled && (
             <span className="inline-flex items-center gap-1 text-xs font-medium txt-good">
               <Check aria-hidden className="size-3.5" />
@@ -1241,6 +1253,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     publishOpenClient(openName);
     return () => publishOpenClient(null);
   }, [openName]);
+  /** Every client's assigned callers in the dialer, for the list and the header. */
+  const callerRead = useClientCallers(auth.client, auth.session?.user.id ?? "");
   /** The client's calls, forms and media buyer changes from the call store. */
   const calls = useClientTimeline(
     auth.client,
@@ -1583,6 +1597,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       today={snap.day}
       handled={done.has(c.name)}
       kit={kitOf(c)}
+      callers={
+        callerRead.byTask
+          ? (callerRead.byTask.get(String(c.taskId)) ?? [])
+          : undefined
+      }
     />
   );
 
@@ -1809,6 +1828,13 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </span>
             )}
           </p>
+          {/* The call centre caller, easy to see (Aziz, 2026-10-13), just
+              above the client's main contact. */}
+          <ClientCallerLine
+            read={callerRead}
+            taskId={String(c.taskId)}
+            dwy={sm.dwy}
+          />
           {/* One links row, one name per link, the same names as Results. */}
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-sm">
             {LINK_LABELS.filter(l => links[l.key]).map(l => (

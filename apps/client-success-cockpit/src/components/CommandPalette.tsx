@@ -175,7 +175,8 @@ const CLIENT_TABS: { tab: string; label: string; keywords: string }[] = [
   {
     tab: "results",
     label: "Results",
-    keywords: "results numbers leads booked closed report period print doc",
+    keywords:
+      "results numbers leads booked closed report period print doc calls call centre center dials caller agent recordings listen lost reasons speed to lead",
   },
   {
     tab: "ads",
