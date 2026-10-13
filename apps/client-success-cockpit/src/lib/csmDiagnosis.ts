@@ -98,6 +98,15 @@ function diagnoseRaw(p: Any): Diagnosis {
   const spend7 = ads.reduce((n, c) => n + Number(c.spend7d ?? 0), 0);
   const leads7 = ads.reduce((n, c) => n + Number(c.leads7d ?? 0), 0);
   const cpl = leads7 > 0 ? spend7 / leads7 : null;
+  // Bookings within the line make a dearer lead fine (Muhammed, 2026-10-13):
+  // cost per lead is not raised on its own. Unknown bookings are not zero.
+  const booked7 = ads.some(
+    c => c.bookings7d !== undefined && c.bookings7d !== null,
+  )
+    ? ads.reduce((n, c) => n + Number(c.bookings7d ?? 0), 0)
+    : null;
+  const cpb7 = booked7 ? spend7 / booked7 : null;
+  const booksCheaply = cpb7 !== null && cpb7 <= GATES.costPerBooking;
 
   // Two months of the client's own sheet — enough volume to judge, recent enough to act.
   const leads = Number(m.leads ?? 0) + Number(l.leads ?? 0);
@@ -169,12 +178,18 @@ function diagnoseRaw(p: Any): Diagnosis {
       ],
       owner: "Media buyer",
     });
-  } else if (cpl != null && cpl > GATES.cpl && leads7 >= 5) {
+  } else if (cpl != null && cpl > GATES.cpl && leads7 >= 5 && !booksCheaply) {
     found.push({
       id: "cpl_high",
       layer: "micro",
       title: `Cost per lead is $${cpl.toFixed(2)} against a $${GATES.cpl} gate`,
-      evidence: `$${spend7.toFixed(0)} spent in the last 7 days for ${leads7} leads.`,
+      evidence: `$${spend7.toFixed(0)} spent in the last 7 days for ${leads7} leads${
+        booked7 === null
+          ? "."
+          : booked7 === 0
+            ? ", and no booking."
+            : ` and ${booked7} booking${booked7 === 1 ? "" : "s"}, $${(cpb7 ?? 0).toFixed(0)} each, over the $${GATES.costPerBooking} line.`
+      }`,
       diagnosis:
         "Their cost per lead is above the gate, so the same budget is buying fewer chances. Creative fatigue and a high cost per booking are the only two things that force a decision here.",
       fixes: [

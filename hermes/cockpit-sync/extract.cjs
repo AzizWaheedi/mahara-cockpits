@@ -16,7 +16,7 @@ for(const statement of ast.statements){
  chunks.push(text.replace(/\bfetch\(/g,'providerFetch(').replace(/\bconsole\.(log|warn|error)\(/g,(_,level)=>`recordLog("${level}",`));
 }
 const digest=crypto.createHash('sha256').update(source).digest('hex');
-const header=`// Generated from the original calculator. Source SHA256: ${digest}\n// Regenerate with node hermes/cockpit-sync/extract.cjs; no service runtime dependency.\nimport {type ActionCtx,internal,graph,allAdAccounts,callTool,supabaseQuery,unwrap,providerFetch,recordLog,MAHARA_BUSINESS_ID} from './runtime';\nimport {CPL_GATE,CPB_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';\nimport {hasPicture,isMetaId,metaImageExpiry,metaImageUsable,sameStoredRow,stillCaptureDue,stillKeyFor} from './metaMedia';\n`;
+const header=`// Generated from the original calculator. Source SHA256: ${digest}\n// Regenerate with node hermes/cockpit-sync/extract.cjs; no service runtime dependency.\nimport {type ActionCtx,internal,graph,allAdAccounts,callTool,supabaseQuery,unwrap,providerFetch,recordLog,MAHARA_BUSINESS_ID} from './runtime';\nimport {CPL_GATE,CPB_GATE,CPB_BAD,BOOKING_RATE_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';\nimport {hasPicture,isMetaId,metaImageExpiry,metaImageUsable,sameStoredRow,stillCaptureDue,stillKeyFor} from './metaMedia';\n`;
 // Retain upstream event identity that the old in-memory calculation discarded.
 // This adds provenance only; date/status attribution and totals stay unchanged.
 let generated=(header+chunks.join('\n\n')+'\n').replace(/\r\n/g,'\n');
@@ -26,5 +26,5 @@ generated=generated.replace('          appointmentDate: e.appointmentDate,','   
 fs.writeFileSync(path.join(__dirname,'calculator.ts'),generated);
 fs.copyFileSync(path.join(root,'apps/media-buyer-cockpit/convex/metaMedia.ts'),path.join(__dirname,'metaMedia.ts'));
 const constants=fs.readFileSync(path.join(root,'apps/media-buyer-cockpit/convex/constants.ts'),'utf8'),ca=ts.createSourceFile('constants.ts',constants,ts.ScriptTarget.Latest,true);
-fs.writeFileSync(path.join(__dirname,'constants.ts'),ca.statements.filter(s=>ts.isVariableStatement(s)&&s.declarationList.declarations.some(d=>['CPL_GATE','CPB_GATE','NEW_CAMPAIGN_FORM_URL'].includes(d.name.getText()))).map(s=>s.getText()).join('\n'));
+fs.writeFileSync(path.join(__dirname,'constants.ts'),ca.statements.filter(s=>ts.isVariableStatement(s)&&s.declarationList.declarations.some(d=>['CPL_GATE','CPB_GATE','BOOKING_RATE_GATE','CPB_BAD','NEW_CAMPAIGN_FORM_URL'].includes(d.name.getText()))).map(s=>s.getText()).join('\n'));
 process.stdout.write(JSON.stringify({generated:true,source_sha256:digest,calculator_lines:chunks.join('\n').split('\n').length})+'\n');

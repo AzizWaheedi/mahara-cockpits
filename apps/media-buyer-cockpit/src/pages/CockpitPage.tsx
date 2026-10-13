@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { VerdictPlaybook } from "@/components/VerdictPlaybook";
 import { ViktorStatus } from "@/components/ViktorStatus";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useContentTransition } from "@/hooks/use-content-transition";
@@ -53,7 +54,7 @@ import {
   whatWeDidAll,
 } from "@/lib/clientUpdate";
 import { type Id, useQueries } from "@/lib/cockpitApi";
-import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
+import { belowKpi, CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
 import {
   defaultRange,
   kuwaitDay as kuwaitToday,
@@ -126,7 +127,9 @@ const FILTERS: { label: string; test: (c: Campaign) => boolean }[] = [
       c.verdict === "off board" ||
       (c.leads7d === 0 && c.spend7d > 20),
   },
-  { label: "Below KPI", test: c => c.cpl !== undefined && c.cpl > CPL_GATE },
+  // Both numbers (Muhammed, 2026-10-13): a hold or kill on the booking grid,
+  // or over the cost per lead gate where bookings are not tracked.
+  { label: "Below KPI", test: c => belowKpi(c) },
   {
     label: "Fatiguing",
     test: c => c.verdict === "fatiguing" || (c.daysLive ?? 0) >= 14,
@@ -432,12 +435,16 @@ function isExecutable(action: string): boolean {
 function actionsFor(c: Campaign): string[] {
   if (!c.onBoard && !c.internal)
     return ["Add to Ads Management board", "Confirm it should be running"];
+  // Cheap leads that do not book: the first look is the booking side, not
+  // the switch.
+  if (c.verdict === "kill" && (c.cpl ?? Number.POSITIVE_INFINITY) <= CPL_GATE)
+    return ["Cut the worst ad", "Check speed to lead with the CSM"];
   if (c.verdict === "kill") return ["Turn it off", "Cut the worst ad"];
   if (c.verdict === "fatiguing")
     return ["Queue replacement creative", "Cut the worst ad"];
-  // Only a campaign inside the $15 gate earns a one-click raise; the server's
-  // "hold" verdict starts just above it and says "watch, do not scale".
-  if (c.dayRate < 30 && c.cpl !== undefined && c.cpl <= CPL_GATE) {
+  // Only a campaign the grid calls Scale earns a one-click raise: cheap leads
+  // with no bookings do not.
+  if (c.dayRate < 30 && c.verdict === "scale") {
     const target =
       c.contractedBudget && c.contractedBudget > c.dayRate
         ? c.contractedBudget
@@ -1404,11 +1411,7 @@ function Cockpit({ view }: { view: View }) {
     const leads = cs.reduce((t, c) => t + c.leads7d, 0);
     const bookings = cs.reduce((t, c) => t + (c.bookings7d ?? 0), 0);
     const overGate = cs.filter(c => (c.cpl ?? 0) > CPL_GATE);
-    const outOfKpi = cs.filter(
-      c =>
-        (c.cpl ?? 0) > CPL_GATE ||
-        (c.serviceMode !== "DWY" && (c.costPerBooking ?? 0) > CPB_GATE),
-    );
+    const outOfKpi = cs.filter(c => belowKpi(c));
     const lines: string[] = [
       `EOD - ${snap?.eodDay ? new Date(snap.eodDay + "T12:00:00+03:00").toLocaleDateString("en-GB", { timeZone: "Asia/Kuwait", weekday: "long", day: "numeric", month: "long" }) : "Date unavailable"}`,
       "",
@@ -1434,9 +1437,11 @@ function Cockpit({ view }: { view: View }) {
             .map(
               c =>
                 `• ${c.clientName ?? c.campaignName} — ${
-                  c.serviceMode !== "DWY" && (c.costPerBooking ?? 0) > 80
-                    ? `cost per booking ${money(c.costPerBooking, 0)}`
-                    : `CPL ${money(c.cpl, 2)}`
+                  c.bookings7d === undefined || c.bookings7d === null
+                    ? `CPL ${money(c.cpl, 2)}`
+                    : c.bookings7d === 0
+                      ? `no booking on ${money(c.spend7d, 0)}, CPL ${money(c.cpl, 2)}`
+                      : `cost per booking ${money(c.costPerBooking, 0)}, CPL ${money(c.cpl, 2)}`
                 } → ${c.findings?.[0]?.fixes?.[0] ?? "watching it"}`,
             )
         : ["• None"]),
@@ -3485,6 +3490,7 @@ function Cockpit({ view }: { view: View }) {
                         <div className="flex flex-wrap items-center gap-1.5">
                           <StatusChip
                             tone={VERDICT_TONE[c.verdict] ?? "neutral"}
+                            title={c.reason}
                           >
                             {sentence(c.verdict)}
                           </StatusChip>
@@ -3589,6 +3595,7 @@ function Cockpit({ view }: { view: View }) {
               </Link>
             </Button>
           ) : null}
+          {view === "ads" ? <VerdictPlaybook /> : null}
           {reportProblem}
         </div>
       </header>

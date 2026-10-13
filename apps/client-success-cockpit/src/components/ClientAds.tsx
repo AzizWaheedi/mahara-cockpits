@@ -429,32 +429,62 @@ function Stats({
   );
 }
 
-/** The signature: this ad's cost per lead against the client's average. */
+/**
+ * The signature: this ad's cost per lead, or per booking, against the
+ * client's average. Both are shown (Muhammed, 2026-10-13): neither number
+ * judges an ad alone.
+ */
 function Meter({
   t,
   avg,
   currency,
+  measure = "cpl",
+  className = "flex-[1_1_320px]",
 }: {
   t: Metrics;
   avg?: number;
   currency: string;
+  measure?: "cpl" | "cpb";
+  className?: string;
 }) {
-  if (!t.leads)
+  const noun = measure === "cpl" ? "lead" : "booking";
+  if (measure === "cpl" && !t.leads)
     return t.spend > 0 ? (
-      <div className="flex min-w-0 flex-[1_1_320px] items-center gap-2 text-xs text-muted-foreground">
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
+          className,
+        )}
+      >
         <Dot tone="bad" />
         No leads from {money(t.spend, currency)} in this period
       </div>
     ) : null;
-  if (!avg || t.cpl === undefined) return null;
-  const r = t.cpl / avg;
+  // No booking yet is worth a line only once the ad has spent more than an
+  // average booking costs this client.
+  if (measure === "cpb" && !t.booked)
+    return avg && t.spend > avg ? (
+      <div
+        className={cn(
+          "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
+          className,
+        )}
+      >
+        <Dot tone="bad" />
+        No booking from {money(t.spend, currency)}, more than this client's
+        average of {money(avg, currency, true)} a booking
+      </div>
+    ) : null;
+  const value = measure === "cpl" ? t.cpl : t.cpb;
+  if (!avg || value === undefined) return null;
+  const r = value / avg;
   const pos = Math.max(2, Math.min(98, (r - 0.5) * 100));
   const diff = Math.round((r - 1) * 100);
   const tone = Math.abs(diff) <= 4 ? "even" : diff < 0 ? "cheap" : "dear";
   const words =
     tone === "even"
-      ? `About this client's average of ${money(avg, currency, true)} a lead`
-      : `${Math.abs(diff)}% ${diff < 0 ? "cheaper" : "more expensive"} than this client's average of ${money(avg, currency, true)} a lead`;
+      ? `About this client's average of ${money(avg, currency, true)} a ${noun}`
+      : `${Math.abs(diff)}% ${diff < 0 ? "cheaper" : "more expensive"} than this client's average of ${money(avg, currency, true)} a ${noun}`;
   const color =
     tone === "cheap"
       ? "bg-primary"
@@ -465,7 +495,10 @@ function Meter({
     <div
       role="img"
       aria-label={words}
-      className="flex min-w-0 flex-[1_1_320px] flex-wrap items-center gap-x-3 gap-y-2"
+      className={cn(
+        "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2",
+        className,
+      )}
     >
       <span className="relative h-1.5 min-w-30 max-w-50 flex-[1_1_140px] rounded-full bg-muted">
         <span className="absolute inset-y-[-5px] left-1/2 -ml-px w-0.5 rounded-sm bg-foreground/45" />
@@ -495,7 +528,7 @@ function Meter({
             <b className="font-medium text-foreground">
               {Math.abs(diff)}% {diff < 0 ? "cheaper" : "more expensive"}
             </b>{" "}
-            than this client's average of {money(avg, currency, true)} a lead
+            than this client's average of {money(avg, currency, true)} a {noun}
           </>
         )}
       </span>
@@ -1460,6 +1493,9 @@ function AdRow({
   const [open, setOpen] = useState(false);
   const cur = c.currency;
   const ready = model.bookingsReady;
+  // The same base as the cost per lead meter: the client, or the campaign
+  // when the client's campaigns spend in different currencies.
+  const avgCpb = model.currency ? model.t.cpb : c.t.cpb;
   return (
     <li className="border-t py-2.5 first:border-t-0">
       <div className={cn(AD_GRID, cols, "items-start gap-y-1")}>
@@ -1522,7 +1558,18 @@ function AdRow({
             ready={model.bookingsReady}
           />
           <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2.5">
-            <Meter t={a.t} avg={avg} currency={cur} />
+            <div className="min-w-0 flex-[1_1_320px] space-y-2.5">
+              <Meter t={a.t} avg={avg} currency={cur} className="" />
+              {bookings && ready ? (
+                <Meter
+                  t={a.t}
+                  avg={avgCpb}
+                  currency={cur}
+                  measure="cpb"
+                  className=""
+                />
+              ) : null}
+            </div>
             <dl className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
               <SmallStat label="Link CTR" value={pct(a.t.linkCtr)} />
               <SmallStat label="CPM" value={money(a.t.cpm, cur, true)} />
