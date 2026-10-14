@@ -36,6 +36,7 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
+import { LeadSyncTable } from "@/components/LeadSync";
 import {
   BOOKING_RATE_GATE,
   CLOSE_RATE_GATE,
@@ -192,6 +193,7 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
 
   return (
     <div className="@container grid min-w-0 gap-4 lg:gap-6">
+      <LeadSyncTable />
       <SectionCard
         kicker="Last 7 days"
         title="Client ads"

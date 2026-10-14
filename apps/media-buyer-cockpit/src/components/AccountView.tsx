@@ -37,6 +37,7 @@ import { COST_DOT, type CostTone, cpbTone, cplTone } from "@/lib/costTone";
 import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "@/lib/kpi";
 import { kuwaitDay, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
+import { LeadSyncPanel } from "./LeadSync";
 
 /**
  * One client on a page of its own: everything the Ads management table can
@@ -503,6 +504,9 @@ export function AccountView({
             />
           </div>
           <RangePicker value={range} onChange={onRangeChange} />
+        </div>
+        <div className="mt-3">
+          <LeadSyncPanel client={client} />
         </div>
         {issues.map(c => {
           const flag = accountIssueFlag(c.accountIssue);

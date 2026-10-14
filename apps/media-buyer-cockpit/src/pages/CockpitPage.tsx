@@ -85,6 +85,7 @@ import {
 import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
 import { CampaignChat } from "../components/CampaignChat";
+import { LeadSyncBadge, LeadSyncStrip } from "../components/LeadSync";
 import { RequestCreativeButton } from "../components/RequestCreativeButton";
 
 /** What one role can actually ask another for. Picking the request picks the board. */
@@ -556,6 +557,7 @@ function ClientHeader({
             {name}
           </span>
         )}
+        <LeadSyncBadge client={name} />
       </span>
       <ClientLinks
         links={links}
@@ -3756,6 +3758,7 @@ function Cockpit({ view }: { view: View }) {
       {view === "ads" && (
         <>
           {!accountView && tiles}
+          {!accountView && <LeadSyncStrip />}
           {!accountView && <TrackingIssues />}
           {accountView && (
             <AccountView

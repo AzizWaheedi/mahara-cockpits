@@ -203,7 +203,8 @@ class Sections(unittest.TestCase):
                 "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
                 "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync",
                 "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
-                "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile")
+                "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile",
+                "lead-sync-watch")
         rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
         rows[0]["last_ok_at"] = fakes.ago(60)
@@ -219,7 +220,8 @@ class Sections(unittest.TestCase):
                 "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
                 "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hubstaff-sync", "onboarding-sync",
                 "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
-                "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile")
+                "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile",
+                "lead-sync-watch")
         rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
         missing = run_jobs(make({"cockpit_sync_state": rows}))
         self.assertEqual(missing.status, FAIL)
@@ -230,6 +232,21 @@ class Sections(unittest.TestCase):
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["hours-watch"])
         rows[-1].update(last_ok_at=fakes.ago(1), ok=False)
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["hours-watch"])
+
+    def test_lead_sync_watch_is_watched_at_45_minutes(self):
+        # The Facebook-vs-CRM watch runs every 15 minutes; three missed runs is late.
+        from checks.sections import run_jobs
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in (
+            "ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log",
+            "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
+            "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync",
+            "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
+            "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile")]
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["lead-sync-watch"])
+        rows.append({"key": "lead-sync-watch", "ok": True, "last_ok_at": fakes.ago(44)})
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
+        rows[-1]["last_ok_at"] = fakes.ago(46)
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["lead-sync-watch"])
 
     def test_old_machine_section_cannot_vouch(self):
         t = {"cockpit_sections": [{"key": "machine", "computed_at": fakes.ago(90), "payload": {"jobs": []}}]}

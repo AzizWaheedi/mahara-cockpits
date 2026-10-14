@@ -90,6 +90,8 @@ def run_jobs(ctx: Context) -> Result:
         "csm-forms-history": 45, "csm-fathom": 45,
         "csm-meta-activities": 45, "csm-media-changes": 45,
         "csm-reconcile": 26 * 60,
+        # Facebook leads vs CRM, every 15 min (hermes/lead-sync-watch).
+        "lead-sync-watch": 45,
     }
     rows = {r.get("key"): r for r in ctx.rows("cockpit_sync_state", "key,ok,note,last_ok_at", where=[("key", "in", list(keys))])}
     bad = []
