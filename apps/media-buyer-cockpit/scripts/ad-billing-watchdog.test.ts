@@ -25,6 +25,34 @@ test("external watchdog is service-only and deduplicates stale, unknown and reco
   } finally { await db.close(); }
 });
 
+test("a safe stop that a newer event replaced is not a delivery problem; other failures still are", async () => {
+  const db = await cockpitTestDb({ supabaseDefaultPrivileges: true });
+  try {
+    for (const f of ["20261011174920_ad_billing_guard.sql", "20261011195000_ad_billing_watchdog.sql",
+      "20261013104500_ad_billing_watchdog_quieter.sql", "20261014142708_ad_billing_watchdog_replaced_safe_stop.sql"])
+      await db.exec(migration(f));
+    const call = async () => (await db.query<any>("select cockpit_ad_billing_watchdog_claim() as event")).rows[0].event;
+    const binding = (await db.query<any>(`insert into cockpit_ad_billing_bindings(client_task_id,client_name,account_id,ads_task_ids,
+      whatsapp_group,sheet_account_ref,identity_evidence,identity_verified_at,enabled)
+      values('abc123','Synthetic client','1234567','{t1}','123-456@g.us','ref','synthetic evidence',now(),true) returning id`)).rows[0].id;
+    const event = async (seq: number, signal: string, at: string) => (await db.query<any>(
+      "insert into cockpit_ad_billing_events(binding_id,sequence,episode,signal,created_at) values($1,$2,1,$3,$4) returning id",
+      [binding, seq, signal, at])).rows[0].id;
+    const unsettled = await event(1, "unsettled", "2026-10-14T09:05:00Z");
+    const stop = (await db.query<any>(`insert into cockpit_ad_billing_deliveries(event_id,binding_id,revision,channel,destination,body,state,
+      error,created_at) values($1,$2,1,'slack','C1','card','failed','Source state changed. Poll again before delivery.',
+      '2026-10-14T09:05:18Z') returning id`, [unsettled, binding])).rows[0].id;
+    await db.exec("update cockpit_ad_billing_config set apply=true,last_finished_at=now() where singleton");
+    expect((await call()).kind).toBe("delivery_error"); // nothing replaced the stop yet
+    await event(2, "healthy", "2026-10-14T09:10:00Z");
+    expect((await call()).kind).toBe("healthy"); // the next poll handled the change
+    await db.query("update cockpit_ad_billing_deliveries set attempts=1 where id=$1", [stop]);
+    expect((await call()).kind).toBe("delivery_error"); // a provider refused a real send
+    await db.query("update cockpit_ad_billing_deliveries set attempts=0,state='unknown' where id=$1", [stop]);
+    expect(await call()).toBeNull(); // still delivery_error: an unknown result always needs a person
+  } finally { await db.close(); }
+});
+
 function harness(mode = "ok") {
   let posts = 0; const results: any[] = [];
   const handler = makeHandler({ secret: "synthetic", slackToken: "synthetic", rpc: async (name, args) => {
