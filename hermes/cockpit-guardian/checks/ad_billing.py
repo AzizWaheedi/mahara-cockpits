@@ -1,9 +1,31 @@
 """Independent read-only watchdog. Never sends a client message or retries a payment."""
-from guard.model import Check, Result, NOT_DEPLOYED, PAUSED, age_min, fail, ok, warn
+from guard.model import Check, Result, NOT_DEPLOYED, PAUSED, age_min, fail, ok, parse_time, warn
 
 # Active clients whose Meta ad account Mahara cannot access (Muhammed, 13 Oct 2026). They stay on the manual Make
 # route, so counting them only kept this check warning for good. The worker excludes the Zeiad sandbox the same way.
 NO_META_ACCESS = {'86ex4j8f3'}  # Brillant Touch Company
+
+
+def _replaced(ctx, problems):
+    """Failed notifications that never went out and that a newer status for the same client has replaced.
+
+    Before every send the worker reads Meta again and stops if the status moved on. It records that safe stop as
+    'failed', the same word as a send the provider refused, so the stop read as Broken for good (14 Oct 2026: a client
+    turned unsettled at 12:05, paid within seconds, and both Slack cards stayed 'failed'). Nothing was sent, and the
+    newer status has its own messages. Without a newer status nothing has taken the card's place, so it still counts."""
+    unsent = [r for r in problems if r.get('state') == 'failed' and not r.get('attempts') and not r.get('provider_id')
+              and r.get('binding_id')]
+    if not unsent:
+        return set()
+    latest = {}
+    for e in ctx.rows('cockpit_ad_billing_events', 'binding_id,created_at',
+                      where=[('binding_id', 'in', sorted({r['binding_id'] for r in unsent}))]):
+        at = parse_time(e.get('created_at'))
+        if at and (e['binding_id'] not in latest or at > latest[e['binding_id']]):
+            latest[e['binding_id']] = at
+    return {r['id'] for r in unsent
+            if latest.get(r['binding_id']) and parse_time(r.get('created_at'))
+            and latest[r['binding_id']] > parse_time(r.get('created_at'))}
 
 
 def run(ctx):
@@ -23,10 +45,11 @@ def run(ctx):
         return fail('Ad billing checks have no completed run within 15 minutes.', urgent=True)
     if cfg.get('last_error'):
         return fail('The last ad billing run failed. Review the media buyer billing panel.', urgent=True)
-    problems = ctx.rows('cockpit_ad_billing_deliveries', 'id,state,created_at',
+    problems = ctx.rows('cockpit_ad_billing_deliveries', 'id,state,created_at,attempts,provider_id,binding_id',
                         where=[('state', 'in', ['failed', 'unknown', 'queued', 'retry', 'claimed', 'sending'])], limit=250)
-    blocked = [r for r in problems if r.get('state') in ('failed', 'unknown') or
-               (age_min(r.get('created_at'), ctx.now) or 0) > 15]
+    replaced = _replaced(ctx, problems)
+    blocked = [r for r in problems if r.get('id') not in replaced and (r.get('state') in ('failed', 'unknown') or
+               (age_min(r.get('created_at'), ctx.now) or 0) > 15)]
     if blocked:
         return fail('Ad billing notifications need delivery review. Do not resend an unknown result.',
                     evidence={'pending_review': len(blocked)}, urgent=True)

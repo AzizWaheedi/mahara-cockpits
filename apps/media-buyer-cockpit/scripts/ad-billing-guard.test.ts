@@ -27,6 +27,7 @@ import {
 } from "../../../hermes/ad-billing-guard/transport";
 import {
   dispatchOne,
+  poll,
   reconcileUnknown,
 } from "../../../hermes/ad-billing-guard/worker";
 
@@ -651,4 +652,36 @@ test("an unsettled incident that oscillates into grace does not repeat the clien
   const t=new LocalWorkflow(); for(let i=0;i<4;i++)await dispatchOne(t);
   await observe('payment_grace'); await observe('unsettled');
   expect(await scalar("SELECT count(*) FROM cockpit_ad_billing_deliveries WHERE channel='whatsapp'")).toBe(1);
+});
+
+// 14 Oct 2026: a database network error crashed the 10:10 UTC run and also failed its finish call, so the
+// 10-minute lease made the next two runs answer busy. The finish call is now tried again before the error goes up.
+function crashingRun(finishFailures: number) {
+  const calls: string[] = [];
+  const t = {
+    env: {},
+    rpc: async (name: string) => {
+      calls.push(name);
+      if (name === "cockpit_ad_billing_start") return true;
+      if (name === "cockpit_ad_billing_finish" && calls.filter((c) => c === name).length <= finishFailures)
+        throw new ProviderError("Database", 0, true);
+      return null;
+    },
+    tasks: async () => {
+      throw new ProviderError("Database", 0, true);
+    },
+  };
+  return { t: t as unknown as Transport, finishes: () => calls.filter((c) => c === "cockpit_ad_billing_finish").length };
+}
+
+test("a crashed run frees its lease even when the first finish calls fail", async () => {
+  const run = crashingRun(2);
+  await expect(poll(run.t, [0, 0, 0, 0])).rejects.toThrow("Database request failed (network).");
+  expect(run.finishes()).toBe(3);
+});
+
+test("when every finish call fails, the run's own error still goes up", async () => {
+  const run = crashingRun(99);
+  await expect(poll(run.t, [0, 0, 0, 0])).rejects.toThrow("Database request failed (network).");
+  expect(run.finishes()).toBe(4);
 });

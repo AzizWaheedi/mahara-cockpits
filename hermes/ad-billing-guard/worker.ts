@@ -6,7 +6,11 @@ import {
 	type Binding,
 } from "./core";
 import { ProviderError, Transport, type Delivery } from "./transport";
-export async function poll(t: Transport) {
+// A run that dies must still free its 10-minute lease, or the next two runs answer busy and check nothing. On
+// 14 Oct 2026 one database network error at 10:10 UTC also failed the finish call, so 10:15 and 10:20 were skipped.
+// The finish call meets the same short outage, so it is tried again after these waits.
+export const FINISH_WAITS_MS = [0, 2000, 5000, 10000];
+export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 	const lease = crypto.randomUUID();
 	if (!(await t.rpc("cockpit_ad_billing_start", { p_lease: lease })))
 		return { busy: true, checked: 0 };
@@ -62,10 +66,18 @@ export async function poll(t: Transport) {
 		});
 		return { busy: false, checked, failures };
 	} catch (error) {
-		await t.rpc("cockpit_ad_billing_finish", {
-			p_lease: lease,
-			p_error: "Monitor did not complete. Check the worker and source access.",
-		});
+		for (const wait of finishWaits) {
+			if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+			try {
+				await t.rpc("cockpit_ad_billing_finish", {
+					p_lease: lease,
+					p_error: "Monitor did not complete. Check the worker and source access.",
+				});
+				break;
+			} catch {
+				/* The lease expires by itself after 10 minutes if every try fails. */
+			}
+		}
 		throw error;
 	}
 }
