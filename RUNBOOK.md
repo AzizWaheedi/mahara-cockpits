@@ -767,6 +767,74 @@ card keeps working; to stop the runs too,
 `select cron.unschedule(jobid) from cron.job where jobname = 'mahara-hours-watch';`
 and take `hours-watch` out of the guardian's keys. The alerts are kept.
 
+## EOD Radar
+
+CEO cockpit, Management tab: the "EOD Radar" card (built 2026-10-15; it
+replaces the OpenClaw daemon on the VPS, whose Slack bot "Aziz's Assistant" was
+deleted, so it has marked everyone missed since 3 August). At minutes 1 and 31
+the pg_cron job `mahara-eod-radar` posts `{"job":"run"}` to the Edge Function
+`eod-radar` (JWT check off, `x-cron-secret` from the vault's
+`cockpit_sync_secret`). It reads the five EOD channels (`#tech-eods`,
+`#media-eods`, `#eods-csms`, `#eods-salesreps`, `#eods-csr`, all private) as
+mahara-club-bot with `SLACK_BOT_TOKEN`, credits each post to a person (the
+cockpit outbox row Slack has under that ts, else "Submitted by: <@id>", else
+the "*Name - X*" line, else who posted it; a name that fits two people credits
+nobody and is listed as unmatched; "[TEST SUBMISSION]" posts are skipped) and
+writes one row per person per working day to `cockpit_eod_radar`: on time
+(by 22:00 Kuwait on the EOD day), late (with the minutes), missed (only after
+23:00 and only when every channel was read), pending, leave (a full-day
+Timetastic booking, approved or pending), off (Friday, before the roster, after
+the last day, paused, public holiday) or not read (Slack refused a channel, or
+the person has no Slack id). The EOD day is the post's Date line, else Kuwait
+time minus 4 hours. The window is today's working day and the `lookback_days`
+before it (2), so a post that arrives late is credited. After 23:00 it posts
+one closeout line in #team-management ("EOD Radar, Wed 14 Oct: 6 on time, 1
+late, 2 missed (...), 1 on leave."), once per day (`cockpit_eod_radar_digests`).
+Nobody is ever messaged directly; reminders and strikes are not built and the
+settings row cannot switch them on. Who files where is `cockpit_eod_channels`
+(a regex on the roster role). Slack ids are `cockpit_eod_radar_slack_ids`,
+looked up by email weekly (seeded 2026-10-15). Each run writes the freshness
+row `eod-radar` (the kick has `eod-radar-kick`); every Slack call is receipted
+in `cockpit_eod_radar_receipts` (30 days). The settings are the single row of
+`cockpit_eod_radar_settings`.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| "Could not read #x: the Slack app needs the groups:history scope" | The five EOD channels are private. In api.slack.com/apps, mahara-club-bot, OAuth & Permissions, add the bot scope `groups:history` (and `users:read`, `users:read.email` for the email lookup), reinstall the app, and keep `SLACK_BOT_TOKEN` (reinstalling does not change a bot token; if Slack issues a new one, set it as a function secret). The people of that channel read "not read" until then, never missed. | CEO (Slack admin) |
+| "Could not read #x: the bot is not in it" | Invite @mahara-club-bot to the channel (`/invite @mahara-club-bot`). A new EOD channel also needs a row in `cockpit_eod_channels`. | CEO or Systems manager |
+| Someone reads missed but filed | Open the person on the card: the day says what was looked for. Their post named someone else or nobody (the card's "named nobody on the radar" line), or it was posted with a Date line more than 14 days back or in the future (counted for the day it was posted). A Make form whose "Submitted by" carries a person who has left still credits the Name line. A post that only lives in the EOD sheet or Typeform is not read: the radar reads Slack and the cockpit's sent EODs. Run a backfill once the cause is fixed. | Systems manager |
+| "No Slack id for X" | The roster has no email for them, or Slack has no member with it. Add their work email on Team & payroll; the next run looks it up. Until then only posts that carry their Name line credit them, and a day with none reads "not read". | CEO |
+| "Not on the radar: X (role)" | Their role matches no row of `cockpit_eod_channels`. Add a row (`role_pattern` regex, `channel_id`, `channel_name`) if the role files EODs. | Systems manager |
+| The closeout post did not arrive | `select * from cockpit_eod_radar_digests order by day desc limit 3`. `failed` names Slack's refusal (it is tried again up to 3 times while the day is current); `unknown` may have arrived and is never sent again; no row means the digest is off, nobody owed an EOD, or no run reached 23:00. | Systems manager |
+| The run stopped (card: "The last run was ...") | Read the `cockpit_sync_state` rows `eod-radar` and `eod-radar-kick` (a missing vault secret or pg_net is named there). Check `mahara-eod-radar` is in `cron.job` and active, `eod-radar` is deployed with the JWT check OFF (a POST with no `x-cron-secret` answers 401), and `CRON_SECRET` equals the vault's `cockpit_sync_secret`. | Systems manager |
+
+Deploying (the lead session). In order:
+
+1. Deploy `eod-radar` with the JWT check OFF, from a throwaway worktree at
+   merged main:
+
+   ```sh
+   python3 scripts/dev/deploy_composio.py eod-radar --extra supabase/functions/cockpit-hours-sync/db.ts supabase/functions/cockpit-ceo-api/tools.ts --verify-jwt off
+   ```
+
+   Secrets by name, already set project-wide for the hours functions:
+   `CRON_SECRET`, `SLACK_BOT_TOKEN`.
+2. Apply `20261015210000_eod_radar.sql` (Composio `SUPABASE_APPLY_A_MIGRATION`,
+   BEGIN and COMMIT stripped, as for the Hubstaff watch). It needs
+   `20261009a` and `20260922a`. The job starts at once.
+3. Doctor: `net.http_post` to the function with body `'{"job":"doctor"}'::jsonb`
+   (as step 6 of the Hubstaff watch). It names any missing scope and each
+   channel it cannot read.
+4. A dry run with body `'{"job":"backfill","days":14,"dryRun":true}'::jsonb`:
+   compare its rows with what the channels show, then a real backfill without
+   `dryRun` to fill the card.
+5. Ship the cockpit (`scripts/ship.sh media-buyer`) and open Management.
+
+To stop the closeout post: `update cockpit_eod_radar_settings set digest_on = false`.
+To stop the runs: `select cron.unschedule(jobid) from cron.job where jobname = 'mahara-eod-radar';`.
+The old daemon on the VPS is separate: stop it there (both copies) so
+#team-management does not get its false lines.
+
 ## Hiring
 
 The careers Typeforms into the MaharaMedia Hiring boards, the boards into the
