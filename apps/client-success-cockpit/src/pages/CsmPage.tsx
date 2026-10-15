@@ -102,6 +102,7 @@ import {
 } from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
+import { eodDeliveryNote } from "@/lib/personalEod";
 import { portalUrl } from "@/lib/portal";
 import { kuwaitDay, periodOf } from "@/lib/reportPeriod";
 import { fold, matchScore } from "@/lib/search";
@@ -1350,6 +1351,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const [extended, setExtended] = useState("");
   const [pausedToday, setPausedToday] = useState("");
   const [eodSaving, setEodSaving] = useState(false);
+  /** Where the submitted EOD is on its way to Slack, from its outbox row. */
+  const eodDelivery = eodDeliveryNote(snap?.eod);
   useEffect(() => {
     if (!snap?.eodOwner) return;
     const a = snap.eod?.answers ?? {};
@@ -3350,7 +3353,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     },
                   });
                   toast.success(
-                    "Your EOD is submitted in the cockpit. Slack and sheet delivery are not enabled here yet.",
+                    "Your EOD is submitted. It posts to #eods-csms within 5 minutes.",
                   );
                 } catch (error) {
                   toast.error(
@@ -3369,6 +3372,14 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   ? "Submitted"
                   : "File my EOD"}
             </Button>
+            {eodDelivery && (
+              <p role="status" className="flex items-start gap-2 text-sm">
+                <span className="mt-1.5 inline-flex">
+                  <Dot tone={eodDelivery.tone} />
+                </span>
+                <span>{eodDelivery.text}</span>
+              </p>
+            )}
           </fieldset>
         </SectionCard>
       )}

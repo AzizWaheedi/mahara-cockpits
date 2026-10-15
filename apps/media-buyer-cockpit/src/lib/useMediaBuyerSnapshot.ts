@@ -54,6 +54,8 @@ export interface UseMediaBuyerSnapshotResult {
     description: string;
     category?: string;
   }) => Promise<void>;
+  /** Reads the shown EOD again (one call), for its Slack delivery state. */
+  refreshEod: () => Promise<void>;
 }
 
 export async function fetchDailyChecksRpc(
@@ -318,7 +320,8 @@ export function useMediaBuyerSnapshot(
   allowedClients?: string[] | null,
 ): UseMediaBuyerSnapshotResult {
   const [snap, setSnap] = useState<Any | undefined>(undefined);
-  // Keep the chosen report day stable while someone is writing across midnight.
+  // Keep the chosen report day stable while someone is writing across the
+  // 04:00 cut-off; once that day is submitted, the next read opens the new day.
   const reportDay = useRef<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -364,7 +367,7 @@ export function useMediaBuyerSnapshot(
         reportDay.current,
       );
       const eodRow = eodContext.report;
-      reportDay.current = eodContext.day;
+      reportDay.current = eodRow?.submitted_at ? undefined : eodContext.day;
 
       // Normalize checks
       const checks = normalizeChecks(checkRows);
@@ -503,6 +506,21 @@ export function useMediaBuyerSnapshot(
     [client, fetchSnapshot, snap?.eodOwner, snap?.eodDay],
   );
 
+  const refreshEod = useCallback(async () => {
+    const day = snap?.eodDay;
+    if (!client || !day) return;
+    const eodContext = await readPersonalEod(client, "media_buyer", day);
+    setSnap((s: Any) =>
+      s && s.eodDay === eodContext.day
+        ? {
+            ...s,
+            eod: eodContext.report ?? null,
+            eodSubmitted: Boolean(eodContext.report?.submitted_at),
+          }
+        : s,
+    );
+  }, [client, snap?.eodDay]);
+
   const addPlanItems = useCallback(
     async (args: {
       items: Array<{
@@ -571,5 +589,6 @@ export function useMediaBuyerSnapshot(
     saveEod,
     addPlanItems,
     sendFeedback,
+    refreshEod,
   };
 }

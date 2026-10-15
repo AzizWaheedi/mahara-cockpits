@@ -36,6 +36,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { CopyButton } from "@/components/WinningAds";
 import { fill, TEMPLATES } from "@/lib/creativeTemplates";
+import { eodDeliveryNote } from "@/lib/personalEod";
 import { useCreativeSnapshot } from "@/lib/useCreativeSnapshot";
 import { ScriptingCalendar } from "./CalendarPage";
 
@@ -1548,7 +1549,7 @@ function EndOfDay({
       <Section
         icon={PenLine}
         title="Your EOD"
-        sub="Your personal draft. Slack and sheet delivery are not enabled here yet."
+        sub="A draft only you see. Your EOD for Slack and the sheet is still the Creative Director EOD form."
       >
         <div className="space-y-4">
           {EOD_QUESTIONS.map((q: Any) => (
@@ -1623,8 +1624,9 @@ function EndOfDay({
             {snap.eod && (
               <p className="text-[12px] text-muted-foreground">
                 {snap.eod.submittedAt ? "Submitted" : "Draft saved"} for{" "}
-                {snap.eodDay} at {new Date(snap.eod.at).toLocaleTimeString()}.
-                Slack and sheet delivery are not enabled here yet.
+                {snap.eodDay} at {new Date(snap.eod.at).toLocaleTimeString()}.{" "}
+                {eodDeliveryNote(snap.eod)?.text ??
+                  "This draft is not posted to Slack or the sheet."}
               </p>
             )}
           </div>

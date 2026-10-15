@@ -66,6 +66,7 @@ import {
   cpbTone,
   cplTone,
 } from "@/lib/costTone";
+import { HEALTH, healthScore, missingHealth } from "@/lib/eodForm";
 import {
   belowKpi,
   CPB_GATE,
@@ -73,6 +74,7 @@ import {
   CPL_GATE,
   LEARNING_DAYS,
 } from "@/lib/kpi";
+import { type EodOutbox, eodDeliveryNote } from "@/lib/personalEod";
 import {
   defaultRange,
   kuwaitDay as kuwaitToday,
@@ -252,6 +254,21 @@ const choice = (on: boolean) =>
       : "text-muted-foreground hover:bg-muted hover:text-foreground"
   }`;
 const CARD = "rounded-2xl border bg-card p-4 sm:p-6";
+/** A new day's EOD form: health scores to fill in, the tasks at their usual Yes. */
+const EOD_BLANK: Record<string, string> = {
+  focus: "",
+  energy: "",
+  biology: "",
+  dashboard: "Yes",
+  onBudget: "Yes",
+  flagged: "Yes",
+  videoRequests: "Yes",
+  creativesUploaded: "Yes",
+  launchedPaused: "Yes",
+  accountSummary: "",
+  outOfKpi: "",
+};
+
 const KICKER =
   "font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground";
 
@@ -1101,7 +1118,27 @@ function Cockpit({ view }: { view: View }) {
     submittedAt?: number;
     error?: string;
     answers?: Record<string, unknown>;
+    delivery?: EodOutbox | null;
   } | null;
+  /** Where the submitted EOD is on its way to Slack, from its outbox row. */
+  const eodDelivery = eodDeliveryNote(eodRow);
+  // While it waits for the worker (every 5 minutes), read its state again each
+  // minute for up to 20 minutes, so "Posted to Slack at" appears on its own.
+  const eodWaiting =
+    Boolean(eodRow?.submittedAt) &&
+    !eodRow?.delivery?.slackPosted &&
+    (eodRow?.delivery?.status === "queued" ||
+      eodRow?.delivery?.status === "processing");
+  const refreshEod = sb.refreshEod;
+  useEffect(() => {
+    if (!eodWaiting) return;
+    let left = 20;
+    const timer = setInterval(() => {
+      if (left-- <= 0) clearInterval(timer);
+      else void refreshEod().catch(() => undefined);
+    }, 60_000);
+    return () => clearInterval(timer);
+  }, [eodWaiting, refreshEod]);
 
   const [open, setOpen] = useState<string | null>(null);
   /**
@@ -1220,6 +1257,8 @@ function Cockpit({ view }: { view: View }) {
   const [note, setNote] = useState("");
   const [onePercent, setOnePercent] = useState("");
   const [eodSending, setEodSending] = useState(false);
+  /** After a refused submit, the empty health scores are outlined. */
+  const [eodTried, setEodTried] = useState(false);
   /** A client's page reads the board's range, and opens a campaign the
    *  search box named (?campaign=). */
   const accountRange = globalRange;
@@ -1243,25 +1282,27 @@ function Cockpit({ view }: { view: View }) {
       ?.scrollIntoView({ block: "start" });
   }, [view, location.hash, ready]);
   /** The EOD form's own human answers. Numbers are filled in for her. */
-  const [eodForm, setEodForm] = useState<Record<string, string>>({
-    focus: "",
-    energy: "",
-    biology: "",
-    dashboard: "Yes",
-    onBudget: "Yes",
-    flagged: "Yes",
-    videoRequests: "Yes",
-    creativesUploaded: "Yes",
-    launchedPaused: "Yes",
-    accountSummary: "",
-    outOfKpi: "",
-  });
+  const [eodForm, setEodForm] = useState<Record<string, string>>(EOD_BLANK);
   const setEod = (k: string, val: string) =>
     setEodForm(f => ({ ...f, [k]: val }));
   // Switching tabs remounts this component and a reload clears it, but
   // today's row may already be saved: show what was filed rather than an
   // empty form under a "Submitted" button.
   const eodSeeded = useRef(false);
+  // A new report day (the page stayed open past 04:00 after a submit) starts
+  // from a blank form, not from yesterday's answers.
+  const eodFormDay = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const day = snap?.eodDay as string | undefined;
+    if (!day) return;
+    if (eodFormDay.current && eodFormDay.current !== day) {
+      eodSeeded.current = false;
+      setEodForm(EOD_BLANK);
+      setOnePercent("");
+      setEodTried(false);
+    }
+    eodFormDay.current = day;
+  }, [snap?.eodDay]);
   useEffect(() => {
     const a = eodRow?.answers;
     if (!a || eodSeeded.current) return;
@@ -1439,6 +1480,28 @@ function Cockpit({ view }: { view: View }) {
     };
   }, [snap]);
 
+  /**
+   * The clients out of KPI, one "• client — metric → next action" line each:
+   * the preview's list, and what "Start from the cockpit's list" puts in her
+   * answer so she edits it instead of copying from the preview.
+   */
+  const outOfKpiLines = useMemo(() => {
+    const cs = ((snap?.campaigns ?? []) as Campaign[]).filter(c => !c.internal);
+    return cs
+      .filter(c => belowKpi(c))
+      .slice(0, 8)
+      .map(
+        c =>
+          `• ${c.clientName ?? c.campaignName} — ${
+            c.bookings7d === undefined || c.bookings7d === null
+              ? `CPL ${money(c.cpl, 2)}`
+              : c.bookings7d === 0
+                ? `no booking on ${money(c.spend7d, 0)}, CPL ${money(c.cpl, 2)}`
+                : `cost per booking ${money(c.costPerBooking, 0)}, CPL ${money(c.cpl, 2)}`
+          } → ${c.findings?.[0]?.fixes?.[0] ?? "watching it"}`,
+      );
+  }, [snap]);
+
   const eodReport = useMemo(() => {
     if (snap?.eod?.submittedAt && typeof snap.eod.body === "string")
       return snap.eod.body;
@@ -1453,7 +1516,6 @@ function Cockpit({ view }: { view: View }) {
     const leads = cs.reduce((t, c) => t + c.leads7d, 0);
     const bookings = cs.reduce((t, c) => t + (c.bookings7d ?? 0), 0);
     const overGate = cs.filter(c => (c.cpl ?? 0) > CPL_GATE);
-    const outOfKpi = cs.filter(c => belowKpi(c));
     const lines: string[] = [
       `EOD - ${snap?.eodDay ? new Date(snap.eodDay + "T12:00:00+03:00").toLocaleDateString("en-GB", { timeZone: "Asia/Kuwait", weekday: "long", day: "numeric", month: "long" }) : "Date unavailable"}`,
       "",
@@ -1473,23 +1535,10 @@ function Cockpit({ view }: { view: View }) {
         : ["• No changes logged today"]),
       "",
       "CLIENTS OUT OF KPI — METRIC AND NEXT ACTION",
-      ...(outOfKpi.length
-        ? outOfKpi
-            .slice(0, 8)
-            .map(
-              c =>
-                `• ${c.clientName ?? c.campaignName} — ${
-                  c.bookings7d === undefined || c.bookings7d === null
-                    ? `CPL ${money(c.cpl, 2)}`
-                    : c.bookings7d === 0
-                      ? `no booking on ${money(c.spend7d, 0)}, CPL ${money(c.cpl, 2)}`
-                      : `cost per booking ${money(c.costPerBooking, 0)}, CPL ${money(c.cpl, 2)}`
-                } → ${c.findings?.[0]?.fixes?.[0] ?? "watching it"}`,
-            )
-        : ["• None"]),
+      ...(outOfKpiLines.length ? outOfKpiLines : ["• None"]),
     ];
     return lines.join("\n");
-  }, [snap]);
+  }, [snap, outOfKpiLines]);
 
   const decidedBySubject = useMemo(() => {
     const m = new Map<string, { action: string; reroutedTo?: string }>();
@@ -2370,16 +2419,10 @@ function Cockpit({ view }: { view: View }) {
         <div>
           <h2 className="text-[15px] font-semibold">Your EOD report</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Already written from today's decisions.
+            Your day from today's decisions. Submit below and your answers go to
+            #media-eods and the EOD sheet for you.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => navigator.clipboard.writeText(eodReport)}
-        >
-          Copy for Slack
-        </Button>
       </div>
       <pre className="mt-4 whitespace-pre-wrap rounded-xl bg-muted/40 p-4 font-sans text-sm leading-relaxed">
         {eodReport}
@@ -2389,22 +2432,24 @@ function Cockpit({ view }: { view: View }) {
         className="mt-6 space-y-6"
       >
         <div>
-          <div className={KICKER}>Health</div>
+          <div className={KICKER}>Health, 1 to 10</div>
           <div className="mt-2 grid grid-cols-3 gap-3">
-            {[
-              ["focus", "Focus"],
-              ["energy", "Energy"],
-              ["biology", "Food, sleep, water"],
-            ].map(([k, label]) => (
+            {HEALTH.map(([k, label]) => (
               <label key={k} className="text-xs">
                 <span className="text-muted-foreground">{label}</span>
                 <input
                   type="number"
+                  inputMode="numeric"
+                  required
                   min={1}
                   max={10}
+                  step={1}
                   value={eodForm[k]}
+                  aria-invalid={
+                    eodTried && !healthScore(eodForm[k]) ? true : undefined
+                  }
                   onChange={e => setEod(k, e.target.value)}
-                  className="mt-1 h-9 w-full rounded-lg border bg-background px-2 text-sm"
+                  className="mt-1 h-9 w-full rounded-lg border bg-background px-2 text-sm aria-[invalid=true]:border-destructive"
                 />
               </label>
             ))}
@@ -2491,10 +2536,20 @@ function Cockpit({ view }: { view: View }) {
           />
           <Textarea
             className="min-h-[50px] text-sm"
-            placeholder="Clients out of KPI and what you're doing about it."
+            placeholder="Clients out of KPI and what you're doing about it, one client per line."
             value={eodForm.outOfKpi}
             onChange={e => setEod("outOfKpi", e.target.value)}
           />
+          {outOfKpiLines.length > 0 && !eodForm.outOfKpi.trim() && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setEod("outOfKpi", outOfKpiLines.join("\n"))}
+            >
+              Start from the cockpit's list ({outOfKpiLines.length})
+            </Button>
+          )}
           <Textarea
             className="min-h-[50px] text-sm"
             placeholder="One thing that would make us 1% better, to add or to remove."
@@ -2508,6 +2563,12 @@ function Cockpit({ view }: { view: View }) {
             size="sm"
             disabled={eodSending || Boolean(eodRow?.submittedAt)}
             onClick={async () => {
+              setEodTried(true);
+              const missing = missingHealth(eodForm);
+              if (missing) {
+                toast.error(`Add your ${missing} (1 to 10) first.`);
+                return;
+              }
               if (!eodForm.accountSummary.trim()) {
                 toast.error("Add your account summary first.");
                 return;
@@ -2531,9 +2592,10 @@ function Cockpit({ view }: { view: View }) {
                   submit: true,
                 });
                 // "Sent" is only true once submittedAt lands; the
-                // button below reads that from the snapshot.
+                // button below reads that from the snapshot, and the
+                // line under it says when Slack took it.
                 toast.success(
-                  "Your EOD is submitted in the cockpit. Slack and sheet delivery are not enabled here yet.",
+                  "Your EOD is submitted. It posts to #media-eods within 5 minutes.",
                 );
               } catch (e) {
                 toast.error(
@@ -2566,10 +2628,24 @@ function Cockpit({ view }: { view: View }) {
           )}
         </div>
       </fieldset>
-      <p className="mt-4 text-xs text-muted-foreground">
-        Your personal report is saved in the cockpit. Slack and sheet delivery
-        are not enabled here yet.
-      </p>
+      {eodDelivery ? (
+        <p
+          role="status"
+          className="mt-4 flex items-start gap-2 text-sm text-foreground"
+        >
+          <span
+            aria-hidden
+            className="mt-1.5 size-1.5 shrink-0 rounded-full"
+            style={{ backgroundColor: TONE_DOT[eodDelivery.tone] }}
+          />
+          <span>{eodDelivery.text}</span>
+        </p>
+      ) : (
+        <p className="mt-4 text-xs text-muted-foreground">
+          Submit before 04:00 Kuwait time: after that the form opens the next
+          day.
+        </p>
+      )}
     </section>
   );
 
