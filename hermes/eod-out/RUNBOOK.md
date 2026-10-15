@@ -42,7 +42,7 @@ Required variables:
 - Sales EODs: `supabase/functions/sales-api` (`sales_setter`, `sales_closer`). Client success wins: `csm-win` rows from `20261004a_csm_churn_projections.sql`.
 - Reports submitted before `20261009g` were never queued. Queue one only after approval: `select public.cockpit_enqueue_personal_eod(<report id>);` as the service role.
 
-### Retries and the report's Slack timestamp (`20261015b`)
+### Retries and the report's Slack timestamp (`20261015190100`)
 - A row that failed on a Slack refusal proving nothing was posted (`channel_not_found`, `not_in_channel`, `is_archived`, `invalid_auth`, `token_revoked`, `account_inactive`, `missing_scope`, `ratelimited`, HTTP 429, no token) is queued again once an hour (pg_cron `mahara-eod-retry`, minute 12) for 48 hours from when it was filed, with `attempts` set to 4 so each retry is one try for either worker. Timeouts, 5xx, interrupted sends and anything already posted are never retried by it.
 - After fixing the cause by hand, queue one row again with a full 5 tries: `select public.cockpit_requeue_eod_outbox(<id>);` as the service role. It refuses a row that is not failed, is already in Slack and the sheet, or had a send started without a receipt (reconcile that first, section 3).
 - Slack has it but the sheet never took the row (`slack_ts` set, `sheet_at` empty, `status = 'failed'`: the live worker files the sheet first and stops after 5 refusals even when Slack took the post). Look for the row in its tab first: the live worker cannot tell a timed-out append from a refused one. If it is missing, fix the cause (the sheet shared with the Google account eod-out files through), then run the same requeue. Both workers skip Slack when `slack_ts` is set, so only the sheet row goes again. The hourly retry never queues these.
@@ -102,9 +102,9 @@ cd apps/media-buyer-cockpit && bun test scripts/eod-delivery-supabase.test.ts sc
 
 ## 5. VPS release steps (Hermes)
 
-Order: apply `20261015a` and `20261015b` first (from the Mac, through Composio), then the guardian, then the token pin. Nothing below posts to Slack or writes the sheet.
+Order: apply `20261015190000` and `20261015190100` first (from the Mac, through Composio), then the guardian, then the token pin. Nothing below posts to Slack or writes the sheet.
 
-1. **Guardian** (`hermes/cockpit-guardian`, copied by hand like the rest). Only after `20261015b` is applied: from the Mac, `select jobname, active from cron.job where jobname = 'mahara-eod-retry';` (read-only, through Composio) must return one active row, or the `pg-cron-jobs` check fails until it does.
+1. **Guardian** (`hermes/cockpit-guardian`, copied by hand like the rest). Only after `20261015190100` is applied: from the Mac, `select jobname, active from cron.job where jobname = 'mahara-eod-retry';` (read-only, through Composio) must return one active row, or the `pg-cron-jobs` check fails until it does.
 
    Four files are replaced or added, and three lines of one test are edited. On the 10-13 VPS snapshot (`origin/vps-snapshot-2026-10-13`) `checks/queues.py`, `checks/pg_cron.py` and `tests/test_hiring_sync.py` were byte for byte origin/main `2a208acb`'s, but `tests/test_coverage.py` is older than main's, so that file is edited rather than copied. Nothing is copied unless every file still matches; if one does not, the block stops and says which, and that file is merged by hand.
    ```bash

@@ -103,7 +103,7 @@ class EodOutbox(unittest.TestCase):
 
     def test_it_says_when_the_hourly_retry_is_not_scheduled(self):
         r = queues.run_eod_outbox(make([row()], probe={"cron_jobs": [{"jobname": "mahara-sales-mirror", "active": True}]}))
-        self.assertIn("is not scheduled: apply 20261015b", r.action)
+        self.assertIn("is not scheduled: apply 20261015190100", r.action)
         self.assertNotIn("tried again hourly", r.summary)
 
     def test_the_pg_cron_jobs_check_fails_when_the_hourly_retry_is_missing_or_off(self):

@@ -3,7 +3,7 @@ export type EodRole = "media_buyer" | "csm" | "creative";
 /**
  * Where a submitted EOD is on its way to Slack and the EOD sheet: the
  * eod_outbox row cockpit_personal_eod returns as `outbox` (20261009g,
- * 20261015b). Null when the report was never queued.
+ * 20261015190100). Null when the report was never queued.
  */
 export type EodOutbox = {
   status: "queued" | "processing" | "sent" | "failed";

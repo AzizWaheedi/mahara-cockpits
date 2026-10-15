@@ -117,7 +117,7 @@ def queue_check(q: Queue) -> Callable[[Context], Result]:
 
 EOD_WAIT_MIN = 15          # the worker runs every 5 minutes
 EOD_LOOKBACK_DAYS = 7      # an unposted EOD older than this is history, not an incident
-EOD_RETRY_HOURS = 48       # 20261015b: mahara-eod-retry queues a fixable refusal hourly for 48 hours
+EOD_RETRY_HOURS = 48       # 20261015190100: mahara-eod-retry queues a fixable refusal hourly for 48 hours
 EOD_RETRY_JOB = "mahara-eod-retry"
 # The bot eod-out posted as when it worked (2026-10-14 12:36 onwards): a member of every EOD channel.
 EOD_BOT = "mahara-club-bot (U0C0MJZNS2Y)"
@@ -127,7 +127,7 @@ EOD_ROLES = {"media_buyer": "media buyer", "csm": "CSM", "creative": "creative d
 _EOD_CHANNEL_ERR = re.compile(r"channel_not_found|not_in_channel|is_archived|restricted_action|missing_scope|no_permission")
 _EOD_AUTH_ERR = re.compile(r"invalid_auth|not_authed|token_revoked|token_expired|account_inactive|SLACK_BOT_TOKEN is not set")
 _EOD_RATE_ERR = re.compile(r"ratelimited|rate_limited|HTTP( Error)? 429")
-# The same list as public.cockpit_eod_retryable (20261015b).
+# The same list as public.cockpit_eod_retryable (20261015190100).
 _EOD_RETRYABLE = re.compile(_EOD_CHANNEL_ERR.pattern + "|" + _EOD_AUTH_ERR.pattern + "|" + _EOD_RATE_ERR.pattern, re.I)
 # Never a name column: who filed it is told by role and day only.
 EOD_COLUMNS = ("id,role,day,status,channel,tab,error,sheet_error,slack_ts,sheet_at,sheet_started_at,"
@@ -156,7 +156,7 @@ def eod_action(r: dict[str, Any], retry_job: Optional[bool] = True) -> str:
         return (f"A send was cut off: look in {where} for it first, then follow the reconciliation steps in "
                 "hermes/eod-out/RUNBOOK.md. Never send it again without looking.")
     if r.get("slack_ts") and not r.get("sheet_at"):
-        # 20261015b: the requeue takes a row Slack has; both workers skip Slack when slack_ts is set.
+        # 20261015190100: the requeue takes a row Slack has; both workers skip Slack when slack_ts is set.
         return (f"Slack has it; the EOD sheet did not take the row. Look for it in the {tab} first: eod-out cannot "
                 "tell a timed-out append from a refused one. If it is missing, check that the sheet is shared with "
                 f"the Google account eod-out files through, then run {requeue} (only the sheet row goes again).")
@@ -170,7 +170,7 @@ def eod_action(r: dict[str, Any], retry_job: Optional[bool] = True) -> str:
     else:
         return f"Read ~/.eodout.log on the VPS for row {rid}; once the cause is fixed, run {requeue}."
     if retry_job is False:
-        return f"{what}. The hourly retry ({EOD_RETRY_JOB}) is not scheduled: apply 20261015b, or run {requeue}."
+        return f"{what}. The hourly retry ({EOD_RETRY_JOB}) is not scheduled: apply 20261015190100, or run {requeue}."
     return f"{what}. The hourly retry posts it within the hour after that, or run {requeue}."
 
 

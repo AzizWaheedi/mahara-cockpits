@@ -42,7 +42,7 @@
 --   still check it.
 --
 -- Safe to apply twice. pg_cron is touched only inside guarded dynamic SQL, so
--- the file loads in PGlite. Apply after 20261015a (either order works).
+-- the file loads in PGlite. Apply after 20261015190000 (either order works).
 BEGIN;
 
 DO $$

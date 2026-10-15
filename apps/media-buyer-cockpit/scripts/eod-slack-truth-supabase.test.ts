@@ -1,5 +1,5 @@
-// The EOD Slack message reads cleanly (20261015a) and the outbox is retried,
-// written back and told to the person truthfully (20261015b). In-memory PGlite
+// The EOD Slack message reads cleanly (20261015190000) and the outbox is retried,
+// written back and told to the person truthfully (20261015190100). In-memory PGlite
 // only: no live database, Slack or Google call is made. The answers below have
 // the shape of the media buyer's 2026-10-07, 2026-10-11 and 2026-10-13 reports
 // (a pasted list with a leading blank line, a pasted list missing its first
@@ -13,7 +13,7 @@ import {eodDeliveryNote,type EodOutbox,readPersonalEod} from "../src/lib/persona
 import {missingHealth} from "../src/lib/eodForm";
 
 const NADA="00000000-0000-4000-8000-000000000021";
-const NATIVE="20261009g_eod_outbox_native.sql",MESSAGE="20261015a_eod_slack_message.sql",TRUTH="20261015b_eod_delivery_truth.sql";
+const NATIVE="20261009g_eod_outbox_native.sql",MESSAGE="20261015190000_eod_slack_message.sql",TRUTH="20261015190100_eod_delivery_truth.sql";
 const TASKS={dashboard:"Yes",onBudget:"Yes",flagged:"Yes",videoRequests:"Yes",creativesUploaded:"Yes",launchedPaused:"Yes"};
 const OCT_13={...TASKS,focus:"",energy:"",biology:"",
  accountSummary:"\n*Marble & More* launched a new campaign. \nCity Wood relaunched with the new card. \n---------\nAcme needs the payment code. \n------\nCastello waits on the card.",
@@ -310,7 +310,7 @@ test("Slack has it but the sheet never took the row: a person's requeue sends on
  }finally{await d.close();}
 });
 
-test("reports posted before the trigger get their Slack timestamp when 20261015b applies",async()=>{
+test("reports posted before the trigger get their Slack timestamp when 20261015190100 applies",async()=>{
  const d=await db([NATIVE,MESSAGE]);try{
   const {id,outbox}=await filed(d,"2026-10-13",OCT_13,{});
   await vps(d,outbox,{slack_ts:"1791970614.176209",sent_at:new Date().toISOString(),sheet_at:new Date().toISOString(),status:"sent"});

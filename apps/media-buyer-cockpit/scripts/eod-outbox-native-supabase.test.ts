@@ -1,5 +1,5 @@
 // Native EOD submits queue exactly one eod_outbox row (20261009g), in the
-// Slack and sheet shape of 20261015a. In-memory PGlite only: no live
+// Slack and sheet shape of 20261015190000. In-memory PGlite only: no live
 // database, Slack or Google call is made.
 import {expect,test} from "bun:test";
 import type {SupabaseClient} from "@supabase/supabase-js";
@@ -11,7 +11,7 @@ const NADA="00000000-0000-4000-8000-000000000011",MAYA="00000000-0000-4000-8000-
 const SALEH="00000000-0000-4000-8000-000000000013",SABRI="00000000-0000-4000-8000-000000000014";
 const LINA="00000000-0000-4000-8000-000000000015",TWIN="00000000-0000-4000-8000-000000000016";
 const MIGRATION="20261009g_eod_outbox_native.sql";
-const MESSAGE="20261015a_eod_slack_message.sql",TRUTH="20261015b_eod_delivery_truth.sql";
+const MESSAGE="20261015190000_eod_slack_message.sql",TRUTH="20261015190100_eod_delivery_truth.sql";
 
 const MEDIA_ANSWERS={focus:"8",energy:"7",biology:"Slept 7h",dashboard:"Yes",onBudget:"Yes",flagged:"No",
  videoRequests:"Yes",creativesUploaded:"No",launchedPaused:"Yes",accountSummary:"All four accounts on target",
