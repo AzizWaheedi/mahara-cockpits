@@ -136,9 +136,12 @@ EOD_COLUMNS = ("id,role,day,status,channel,error,sheet_error,slack_ts,sheet_at,r
 EOD_PERSON_ROLES = ("media_buyer", "csm", "creative", "sales_setter", "sales_closer", "editor")
 
 
-def _eod_unposted(r: dict[str, Any]) -> bool:
-    """Not delivered and not simply waiting its turn: failed, cut off, or refused and being tried again."""
-    return r.get("status") == "failed" or bool(r.get("reconciliation_needed")) or bool(r.get("error"))
+def _eod_unposted(r: dict[str, Any], now) -> bool:
+    """Not delivered and not simply waiting its turn: failed, cut off, or refused and still being tried
+    past the first 15 minutes (a first refusal the worker's next run clears is not an incident)."""
+    if r.get("status") == "failed" or r.get("reconciliation_needed"):
+        return True
+    return bool(r.get("error")) and (age_min(r.get("created_at"), now) or 0) > EOD_WAIT_MIN
 
 
 def eod_action(r: dict[str, Any], retry_job: Optional[bool] = True) -> str:
@@ -172,8 +175,8 @@ def run_eod_outbox(ctx: Context) -> Result:
     rows = ctx.rows("eod_outbox", EOD_COLUMNS, where=[("status", "in", ["queued", "processing", "failed"]),
                                                       ("created_at", "gt", since)],
                     order="created_at.asc", limit=100)
-    bad = [r for r in rows if _eod_unposted(r)]
-    waiting = [r for r in rows if not _eod_unposted(r)
+    bad = [r for r in rows if _eod_unposted(r, ctx.now)]
+    waiting = [r for r in rows if not _eod_unposted(r, ctx.now)
                and (age_min(r.get("created_at"), ctx.now) or 0) > EOD_WAIT_MIN]
     ev: dict[str, Any] = {"open": len(rows), "not_posted": len(bad), "waiting_over_limit": len(waiting)}
     if not bad and not waiting:

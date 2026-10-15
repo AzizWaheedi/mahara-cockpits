@@ -63,6 +63,11 @@ class EodOutbox(unittest.TestCase):
         r = queues.run_eod_outbox(make([row(status="queued", attempts=4, created_at=fakes.ago(26 * 60))]))
         self.assertEqual(r.status, FAIL)
 
+    def test_a_first_refusal_the_next_run_may_clear_is_not_an_incident(self):
+        first = row(status="queued", attempts=1, error="RuntimeError: slack: ratelimited", created_at=fakes.ago(6))
+        self.assertEqual(queues.run_eod_outbox(make([first])).status, OK)
+        self.assertEqual(queues.run_eod_outbox(make([dict(first, created_at=fakes.ago(20))])).status, FAIL)
+
     def test_a_row_with_no_answer_from_the_worker_warns_after_15_minutes(self):
         fresh = row(status="queued", attempts=0, error=None, sheet_at=None)
         self.assertEqual(queues.run_eod_outbox(make([dict(fresh, created_at=fakes.ago(10))])).status, OK)
