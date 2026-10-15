@@ -17,9 +17,9 @@
 -- * Every answer sits on its question's line ("Food, Sleep, Water - 7"). An
 --   answer of more than one line goes under its question, which is bold on a
 --   line of its own; never with a blank line before it.
--- * A list (the clients out of KPI, the CSM's one-client-per-line answers, or
---   any answer most of whose lines already start with a bullet) has "• " on
---   every item: no missing first bullet, no blank or "-----" lines between.
+-- * A list (the clients out of KPI, the CSM's one-client-per-line answers)
+--   has "• " on every item: no missing first bullet, no blank or "-----"
+--   lines between. Other answers keep their lines as typed, trimmed.
 -- * An answer left blank reads "Not answered" ("None" where the form says
 --   blank means none). A number the cockpit did not send reads "n/a", never 0.
 -- * Money reads as the CEO kit's money() in components/ceo/format.ts: "$1,234",
@@ -62,13 +62,14 @@ $$;
 -- One typed answer, tidied for Slack. '' when nothing was typed.
 -- Spaces at line ends, carriage returns and blank lines at either end go;
 -- blank lines inside collapse to one. One line loses a lone bullet mark.
--- A list (p_list, or most lines already marked) becomes one "• item" a line.
+-- A list (p_list) becomes one "• item" a line, whatever marks it was typed
+-- with (pasted from the cockpit's preview, the first line often has none).
 CREATE OR REPLACE FUNCTION public.cockpit_eod_tidy(p_value text,p_list boolean DEFAULT false)
 RETURNS text LANGUAGE plpgsql IMMUTABLE SET search_path='' AS $$
 DECLARE
  -- A bullet, dash, star or "1." / "1)" that starts an item, with what follows it.
  mark constant text:='^([•·▪◦‣●]|[*–—-](?=[[:space:]])|[0-9]{1,2}[.)](?=[[:space:]]))[[:space:]]*';
- t text; x text; lines text[]; items text[]:='{}'; n integer:=0; marked integer:=0;
+ t text; x text; lines text[]; items text[]:='{}'; n integer:=0;
 BEGIN
  t:=replace(replace(coalesce(p_value,''),E'\r',''),chr(160),' ');
  t:=regexp_replace(t,E'[ \t]+(\n|$)',E'\\1','g');
@@ -77,13 +78,10 @@ BEGIN
  IF t='' THEN RETURN ''; END IF;
  lines:=regexp_split_to_array(t,E'\n');
  FOREACH x IN ARRAY lines LOOP
-  IF btrim(x)<>'' THEN
-   n:=n+1;
-   IF btrim(x) ~ mark THEN marked:=marked+1; END IF;
-  END IF;
+  IF btrim(x)<>'' THEN n:=n+1; END IF;
  END LOOP;
  IF n=1 THEN RETURN public.cockpit_eod_slack_escape(btrim(regexp_replace(t,mark,''))); END IF;
- IF NOT (p_list OR marked*2>=n) THEN RETURN public.cockpit_eod_slack_escape(t); END IF;
+ IF NOT p_list THEN RETURN public.cockpit_eod_slack_escape(t); END IF;
  FOREACH x IN ARRAY lines LOOP
   x:=btrim(regexp_replace(btrim(x),mark,''));
   -- Blank lines and separator lines ("-----") are not items.

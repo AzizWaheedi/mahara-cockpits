@@ -143,7 +143,9 @@ test("money and counts read as the CEO kit's; text and blanks are never turned i
   expect(await tidy("- 5% better")).toBe("5% better");
   expect(await tidy("-5% on CPL")).toBe("-5% on CPL");
   expect(await tidy("a\nb",true)).toBe("• a\n• b");
-  expect(await tidy("1. a\n2) b\n* c\n- d\n—— \n")).toBe("• a\n• b\n• c\n• d");
+  expect(await tidy("1. a\n2) b\n* c\n- d\n—— \n",true)).toBe("• a\n• b\n• c\n• d");
+  // Not a list: lines stay as typed (a lead-in line before bullets keeps no bullet).
+  expect(await tidy("Did three things:\n• a\n• b")).toBe("Did three things:\n• a\n• b");
   expect(await tidy("para one\n\n\n\npara two")).toBe("para one\n\npara two");
   expect(await tidy("CPL < $15 & falling > yesterday")).toBe("CPL &lt; $15 &amp; falling &gt; yesterday");
   expect((await sql(d,"select cockpit_eod_answer('Q','',false) as v")).v).toBe("Q - Not answered");
