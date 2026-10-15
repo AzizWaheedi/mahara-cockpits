@@ -52,6 +52,20 @@ describe("invoice preview", () => {
     expect(html).toContain("client&#x27;s {{AMOUNT}} plan");
   });
 
+  test("the payment link is a Pay now button and one inline link, never raw text", () => {
+    const c = cases.find(x => x.name.startsWith("pay online"));
+    if (!c) throw new Error("golden case missing");
+    const url = "https://whop.com/checkout/plan_Abc123XYZ";
+    const html = fillInvoice(
+      { ...c.invoice, checkout_url: url },
+      "INV-2026-099",
+      appTemplate,
+    );
+    expect(html).toContain(`<a class="pay-btn" href="${url}">Pay now</a>`);
+    expect(html.split(`href="${url}"`).length - 1).toBe(2);
+    expect(html).not.toContain(`>${url}<`);
+  });
+
   test("money rounds half up as typed, like Python's Decimal", () => {
     expect(money(6000)).toBe("6,000.00");
     expect(money("1500.5")).toBe("1,500.50");

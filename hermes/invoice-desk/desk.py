@@ -25,6 +25,7 @@ from desk import build, http, render
 from desk.config import Config
 from desk.google import Google, service_token
 from desk.supa import Supa
+from desk.whop import Whop
 from desk.worker import VERSION, Desk, Ledger, print_pdf
 
 HERE = Path(__file__).resolve().parent
@@ -36,6 +37,27 @@ REGISTER_HEADER = ["Invoice #", "Client", "ClickUp Task ID", "Amount (USD)", "Is
 def line(ok: bool, text: str) -> bool:
     print(("ok " if ok else "-- ") + text)
     return ok
+
+
+def whop_doctor(cfg: Config) -> bool:
+    """Can the Whop key create plans? Asks for a plan under a product that does
+    not exist: a permission error means no, a validation error means yes.
+    Nothing is created. Prints a fingerprint, never the key."""
+    if not cfg.whop_key:
+        return line(False, "no Whop key: Whop links cannot be made (INVOICE_WHOP_KEY, or WHOP_API_KEY in /opt/data/bibi/api-keys.env)")
+    fingerprint = hashlib.sha256(cfg.whop_key.encode()).hexdigest()[:8]
+    try:
+        http.request("POST", "https://api.whop.com/api/v2/plans", retries=1,
+                     headers={"Authorization": f"Bearer {cfg.whop_key}", "Accept": "application/json"},
+                     json_body={"product": "prod_0000000000000", "plan_type": "one_time", "initial_price": 1,
+                                "visibility": "hidden", "internal_notes": "invoice-desk doctor probe"})
+        return line(False, f"Whop key {fingerprint}: the probe plan was ACCEPTED. Archive any plan named 'invoice-desk doctor probe'.")
+    except http.HttpError as e:
+        if e.status in (401, 403):
+            return line(False, f"Whop key {fingerprint} may not create plans ({e.status}). Use a key that can.")
+        if e.status in (400, 404, 422):
+            return line(True, f"Whop key {fingerprint} may create plans (probe refused only for its fake product)")
+        return line(False, f"Whop did not answer the probe clearly ({http.scrub(e)[:120]})")
 
 
 def doctor() -> int:
@@ -57,6 +79,12 @@ def doctor() -> int:
             line(True, f"invoice tables are there; {len(waiting)} invoice(s) waiting")
         except http.HttpError as e:
             good = line(False, f"the invoice tables are not reachable ({e}). Apply supabase/migrations/20261011v_cockpit_invoices.sql")
+        try:
+            supa.select("cockpit_invoices", "select=checkout_source,whop_plan_id,whop_started_at&limit=1")
+            line(True, "the Whop link columns are there")
+        except http.HttpError:
+            good = line(False, "the Whop link columns are missing. Apply supabase/migrations/20261015a_cockpit_invoice_whop_links.sql")
+    good = whop_doctor(cfg) and good
     # os.path.isfile, not Path.is_file: a path in someone else's home answers False, not PermissionError.
     if cfg.google_key_file and os.path.isfile(cfg.google_key_file):
         try:
@@ -110,7 +138,8 @@ def run(limit: int) -> int:
         return 1
     ledger = Ledger()
     http.ledger = ledger
-    desk = Desk(supa=supa, google=Google(token), cfg=cfg, template=build.TEMPLATE.read_text(encoding="utf-8"))
+    desk = Desk(supa=supa, google=Google(token), cfg=cfg, template=build.TEMPLATE.read_text(encoding="utf-8"),
+                whop_api=Whop(cfg.whop_key, cfg.whop_product) if cfg.whop_key else None)
     results: dict[str, int] = {}
     try:
         for _ in range(limit):

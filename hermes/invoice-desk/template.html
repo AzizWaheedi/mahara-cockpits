@@ -97,6 +97,15 @@
   .receipt-line { font-size: 13.5px; font-variant-numeric: tabular-nums; line-height: 1.5; color: var(--ink); }
   .receipt-line + .receipt-line { margin-top: 8px; }
   .receipt-line b { font-weight: 600; }
+  /* Checkout: a button plus one inline link, never the raw URL (15 Oct 2026). */
+  .pay-row { display: flex; align-items: center; gap: 18px; margin-top: 18px; }
+  .pay-btn {
+    display: inline-block; padding: 12px 30px; border-radius: 10px;
+    background: var(--teal); color: var(--navy); text-decoration: none;
+    font-size: 14px; font-weight: 600; letter-spacing: .01em; white-space: nowrap;
+  }
+  .pay-alt { font-size: 12.5px; color: var(--body); }
+  .pay-alt a { color: var(--ink); font-weight: 500; text-decoration: underline; text-decoration-color: var(--teal); text-underline-offset: 3px; }
   .card .note { margin-top: 16px; font-size: 12.5px; line-height: 1.8; color: var(--body); }
 
   footer {
@@ -191,7 +200,10 @@
       <h2>Payment by card</h2>
       <div class="kv">
         <div class="k">Payable to</div><div class="v">BassamCo For Product Promotion</div>
-        <div class="k">Pay online</div><div class="v"><a href="{{CHECKOUT_URL}}">{{CHECKOUT_URL}}</a></div>
+      </div>
+      <div class="pay-row">
+        <a class="pay-btn" href="{{CHECKOUT_URL}}">Pay now</a>
+        <span class="pay-alt">Button not working? Open the <a href="{{CHECKOUT_URL}}">secure checkout page</a>.</span>
       </div>
       <p class="note">Card processing fees are added at checkout and are payable by the client, so the total charged will be slightly above the invoice amount. Send a screenshot of the confirmation in the WhatsApp group once it is paid.</p>
     </section>

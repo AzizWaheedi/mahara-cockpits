@@ -147,7 +147,8 @@ def register_row(inv: dict[str, Any], invoice_no: str, link: str) -> list[Any]:
             for p in inv.get("payments") or [])
         summary = f"Paid in full: {lines}."
     elif kind == "checkout":
-        summary = f"Pay online link: {inv.get('checkout_url')}."
+        made = f" (Whop plan {inv['whop_plan_id']}, made by the invoice desk)" if inv.get("whop_plan_id") else ""
+        summary = f"Pay online link{made}: {inv.get('checkout_url')}."
     else:
         summary = "Card on file, charged automatically on the due date."
     notes = f"{inv['description']}. {summary} Issued from the client success cockpit by {who}."

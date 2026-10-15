@@ -72,9 +72,14 @@ type State = {
   period: string;
   payNote: string;
   dueDate: string;
+  /** "Pay online": the worker creates the Whop link, or a person pastes one. */
+  linkMode: "whop" | "paste";
   checkoutUrl: string;
   payments: PayLine[];
 };
+
+/** What the preview's Pay now button points at until the worker makes the real link. */
+const WHOP_PREVIEW = "https://whop.com/checkout/";
 
 let nextKey = 1;
 const blankPayment = (today: string): PayLine => ({
@@ -95,6 +100,7 @@ const fresh = (today: string, taskId = "", clientDetail = ""): State => ({
   period: "",
   payNote: "",
   dueDate: "",
+  linkMode: "whop",
   checkoutUrl: "",
   payments: [blankPayment(today)],
 });
@@ -135,6 +141,7 @@ function problemOf(s: State, today: string): string | null {
     return 'Type a description, for example "90-day agreement".';
   if (
     s.kind === "checkout" &&
+    s.linkMode === "paste" &&
     !/^https:\/\/[^\s<>"']+$/.test(s.checkoutUrl.trim())
   ) {
     return "Paste the full payment link, starting with https://.";
@@ -229,7 +236,12 @@ export function InvoiceForm({
       pay_note: s.payNote.trim() || null,
       issue_date: today,
       due_date: s.kind === "paid" ? null : s.dueDate || today,
-      checkout_url: s.kind === "checkout" ? s.checkoutUrl.trim() : null,
+      checkout_url:
+        s.kind !== "checkout"
+          ? null
+          : s.linkMode === "whop"
+            ? WHOP_PREVIEW
+            : s.checkoutUrl.trim(),
       payments:
         s.kind === "paid"
           ? s.payments.map(p => {
@@ -261,7 +273,12 @@ export function InvoiceForm({
       period: trim(s.period),
       payNote: trim(s.payNote),
       dueDate: s.kind === "paid" ? undefined : s.dueDate,
-      checkoutUrl: s.kind === "checkout" ? s.checkoutUrl.trim() : undefined,
+      checkoutUrl:
+        s.kind === "checkout" && s.linkMode === "paste"
+          ? s.checkoutUrl.trim()
+          : undefined,
+      createLink:
+        s.kind === "checkout" && s.linkMode === "whop" ? true : undefined,
       payments:
         s.kind === "paid"
           ? s.payments.map(p => ({
@@ -527,8 +544,31 @@ export function InvoiceForm({
       ) : (
         <section className="space-y-4">
           <Kicker>Payment</Kicker>
+          {s.kind === "checkout" ? (
+            <div className="space-y-2">
+              <PillRow>
+                <Pill
+                  active={s.linkMode === "whop"}
+                  onClick={() => set({ linkMode: "whop" })}
+                >
+                  Create a Whop link
+                </Pill>
+                <Pill
+                  active={s.linkMode === "paste"}
+                  onClick={() => set({ linkMode: "paste" })}
+                >
+                  Paste a link
+                </Pill>
+              </PillRow>
+              <p className="text-xs text-muted-foreground">
+                {s.linkMode === "whop"
+                  ? "The worker creates a private one-time Whop checkout for this amount and puts it on the invoice as a Pay now button."
+                  : "Use a payment link you already have. It goes on the invoice as a Pay now button."}
+              </p>
+            </div>
+          ) : null}
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
-            {s.kind === "checkout" ? (
+            {s.kind === "checkout" && s.linkMode === "paste" ? (
               <Field id="inv-link" label="Payment link">
                 <Input
                   id="inv-link"
@@ -592,6 +632,9 @@ export function InvoiceForm({
               {total !== null ? usd(total) : ""} for {chosen?.name}. It gets the
               next invoice number, goes into the client's Drive folder, where
               the client can see it, and is locked against edits.
+              {s.kind === "checkout" && s.linkMode === "whop"
+                ? " The worker also creates its private Whop payment link first."
+                : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

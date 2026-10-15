@@ -32,13 +32,13 @@ export function InvoiceList({
     setBusy(null);
   }
 
-  async function copy(url: string) {
+  async function copy(url: string, what: string) {
     try {
       await navigator.clipboard.writeText(url);
-      toast.success("Link copied");
+      toast.success(`${what} copied`);
     } catch {
       toast.error(
-        "The link was not copied. Open the PDF and copy it from Drive.",
+        `The ${what.toLowerCase()} was not copied. Open it and copy it from the address bar.`,
       );
     }
   }
@@ -89,16 +89,33 @@ export function InvoiceList({
               <Chip tone={status.tone}>{status.label}</Chip>
             </div>
             {inv.status === "issued" && inv.drive_url ? (
-              <div className="flex w-full items-center justify-end gap-3 text-xs">
+              <div className="flex w-full flex-wrap items-center justify-end gap-x-3 gap-y-1 text-xs">
                 <ExtLink href={inv.drive_url}>Open PDF</ExtLink>
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => copy(inv.drive_url ?? "")}
+                  onClick={() => copy(inv.drive_url ?? "", "PDF link")}
                 >
                   <Copy />
-                  Copy link
+                  Copy PDF link
                 </Button>
+                {inv.kind === "checkout" && inv.checkout_url ? (
+                  <>
+                    <ExtLink href={inv.checkout_url}>
+                      {inv.whop_plan_id ? "Whop payment page" : "Payment page"}
+                    </ExtLink>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        copy(inv.checkout_url ?? "", "Payment link")
+                      }
+                    >
+                      <Copy />
+                      Copy payment link
+                    </Button>
+                  </>
+                ) : null}
               </div>
             ) : null}
             {inv.status === "failed" || inv.status === "queued" ? (

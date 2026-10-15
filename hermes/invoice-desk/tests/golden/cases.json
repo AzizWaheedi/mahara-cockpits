@@ -32,7 +32,7 @@
       ],
       "requested_by": "csm@maharamedia.com"
     },
-    "sha256": "f9fe08cee4fc1bafec0c68a634b4214b2a8a216390c5ddf0a636a4d8768c2f36"
+    "sha256": "ee050de23109165aeb053c31f2ae7d16bf5257497acabc40d6f5722c8772ce43"
   },
   {
     "name": "pay online, text that must be escaped",
@@ -54,7 +54,7 @@
       "payments": [],
       "requested_by": "csm@maharamedia.com"
     },
-    "sha256": "012672aac8353748e8f1456b49b7e9d4aef31fc4b76edfb9e55fe9386d9138c5"
+    "sha256": "1ed7422455cc843de52a0036464b5ac9b0957ec0cf9cc93f98181aeddbd86dc0"
   },
   {
     "name": "card on file, no period",
@@ -76,6 +76,6 @@
       "payments": [],
       "requested_by": "finance@maharamedia.com"
     },
-    "sha256": "4fb6cac259948a3e1d9705481dc307ffc9db1443a5ff9ed375f23510c4d063f7"
+    "sha256": "f9e8995657c316f72227428a8a7b847c3bcb09bed4d0748e9f3bd285b9a9db07"
   }
 ]

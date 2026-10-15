@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import type { PGlite } from "@electric-sql/pglite";
 import { actor, cockpitTestDb, member, migration, owner } from "./lib/cockpitTestDb";
 
-// supabase/migrations/20261011v_cockpit_invoices.sql against canonical SQL:
+// supabase/migrations/20261011v_cockpit_invoices.sql, with 20261015a's Whop
+// payment links on top, against canonical SQL:
 // who may ask for an invoice from the client success cockpit, what the form
 // must hold, who sees which invoices, and the worker's claim / progress /
 // finish cycle. Supabase's default grants are on, so a missing REVOKE fails here.
@@ -29,6 +30,7 @@ beforeEach(async () => {
   await db.exec(extract("20260926m_cockpit_csm_state.sql", /CREATE OR REPLACE FUNCTION public\.cockpit_client_allowed\([\s\S]*?END \$\$;/));
   await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_client_allowed(text) TO authenticated, service_role;");
   await db.exec(migration("20261011v_cockpit_invoices.sql"));
+  await db.exec(migration("20261015a_cockpit_invoice_whop_links.sql"));
   await member(db, CEO, "aziz@maharamedia.com", []);
   await member(db, CSM, "csm@maharamedia.com", ["csm"]);
   await member(db, OTHER_CSM, "other@maharamedia.com", ["csm"]);
@@ -190,6 +192,45 @@ test("the worker claims, numbers, files and finishes an invoice, and the audit l
   const actions = (await db.query<{ action: string }>(
     "SELECT action FROM public.cockpit_audit_log WHERE entity_id=$1 ORDER BY created_at, action", [row.id])).rows.map((r) => r.action);
   expect(actions).toContain("invoice.issued");
+});
+
+test("Create a Whop link: queued without a link, never issued without one", async () => {
+  const checkout = { taskId: "z8xmdvfpyw", kind: "checkout", amount: "5500", description: "90-day agreement", dueDate: "2026-11-01" };
+  await refused(CSM, { ...checkout, createLink: "yes" }, /create the Whop link or paste one/);
+  await refused(CSM, { ...checkout, createLink: false }, /Paste the full payment link/);
+  const row = await request(CSM, { ...checkout, createLink: true, checkoutUrl: "https://ignored.example" });
+  expect(row.checkout_source).toBe("whop");
+  expect(row.checkout_url).toBeNull();
+  const card = await request(CSM, { ...checkout, kind: "autocharge", createLink: true });
+  expect(card.checkout_source).toBe("pasted");
+
+  await asService("SELECT * FROM public.cockpit_invoice_claim(300)");
+  const progress = (patch: unknown) =>
+    asService<Record<string, unknown>>("SELECT * FROM public.cockpit_invoice_progress($1,$2::jsonb)", [row.id, JSON.stringify(patch)]);
+  const [started] = await progress({ whopStarted: true });
+  expect(started.whop_started_at).not.toBeNull();
+  await progress({ invoiceNo: "INV-2026-025", driveFileId: "file123", driveUrl: "https://drive.google.com/file/d/file123/view", registerRow: 26 });
+  await expect(asService("SELECT public.cockpit_invoice_finish($1,true)", [row.id])).rejects.toThrow(/cockpit_invoices_checkout_link_issued/);
+  await expect(progress({ whopPlanId: "plan_Abc123XYZ", checkoutUrl: "https://evil.example/plan_Abc123XYZ" }))
+    .rejects.toThrow(/do not match/);
+  const [linked] = await progress({ whopPlanId: "plan_Abc123XYZ", checkoutUrl: "https://whop.com/checkout/plan_Abc123XYZ" });
+  expect(linked.checkout_url).toBe("https://whop.com/checkout/plan_Abc123XYZ");
+  await expect(progress({ whopPlanId: "plan_Other99999", checkoutUrl: "https://whop.com/checkout/plan_Other99999" }))
+    .rejects.toThrow(/already has Whop plan plan_Abc123XYZ/);
+  const [done] = await asService<{ status: string; whop_plan_id: string }>("SELECT * FROM public.cockpit_invoice_finish($1,true)", [row.id]);
+  expect(done.status).toBe("issued");
+  expect(done.whop_plan_id).toBe("plan_Abc123XYZ");
+});
+
+test("a pasted link or a finished invoice never takes a Whop plan", async () => {
+  const pasted = await request(CSM, { taskId: "z8xmdvfpyw", kind: "checkout", amount: "1500", description: "90-day agreement",
+    dueDate: "2026-11-01", checkoutUrl: "https://whop.com/checkout/plan_pasted01" });
+  await asService("SELECT * FROM public.cockpit_invoice_claim(300)");
+  await expect(asService("SELECT public.cockpit_invoice_progress($1,$2::jsonb)", [pasted.id, JSON.stringify({ whopStarted: true })]))
+    .rejects.toThrow(/does not take a Whop link/);
+  await asService("SELECT public.cockpit_invoice_finish($1,false,$2)", [pasted.id, "test"]);
+  await expect(asService("SELECT public.cockpit_invoice_progress($1,$2::jsonb)", [pasted.id, JSON.stringify({ registerRow: 9 })]))
+    .rejects.toThrow(/is not being rendered/);
 });
 
 test("an invoice number is never used twice", async () => {

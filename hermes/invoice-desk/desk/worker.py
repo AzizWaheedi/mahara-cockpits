@@ -3,6 +3,8 @@
 The steps, each recorded on the row as it lands so a retry reads back instead
 of repeating it:
   1. number    INV-<year>-### above every number on the register and in the table
+  1b. link     "Pay online" with "Create a Whop link": the invoice's own hidden
+               one-time Whop plan, found again by its invoice id before any create
   2. folder    the client's Drive folder (saved, or one exact name match)
   3. render    the template, filled, printed by Chrome, one page, fonts embedded
   4. upload    a new file, or the same file replaced (unlock, replace, lock)
@@ -20,12 +22,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
 
-from . import build, http, render
+from . import build, http, render, whop
 from .config import Config
 from .google import FOLDER, Google
 from .supa import Supa
 
-VERSION = "invoice-desk 2026-10-11"
+VERSION = "invoice-desk 2026-10-15"
 
 
 class Problem(Exception):
@@ -58,6 +60,7 @@ class Desk:
     template: str
     render: Callable[[str], bytes] = print_pdf
     log: Callable[[str], None] = print
+    whop_api: Optional[whop.Whop] = None
 
     # 1 ---------------------------------------------------------------------
     def number(self, inv: dict[str, Any]) -> str:
@@ -74,6 +77,37 @@ class Desk:
                     continue
                 raise
         raise Problem("Another invoice took the same number three times in a row. Press Try again.")
+
+    # 1b --------------------------------------------------------------------
+    def link(self, inv: dict[str, Any], number: str) -> None:
+        """Make sure a Whop invoice has its own payment link before it is printed."""
+        if inv["kind"] != "checkout" or inv.get("checkout_source") != "whop":
+            return
+        if inv.get("whop_plan_id") and inv.get("checkout_url"):
+            return
+        if self.whop_api is None:
+            raise Problem("The Whop key is not set on the invoice worker, so the payment link cannot be made. "
+                          "Cancel this invoice and ask again with a pasted link, or tell Muhammed.")
+        amount = inv["amount_usd"]
+        try:
+            # After an unknown outcome Whop may already hold this invoice's plan.
+            plan = self.whop_api.find(inv["id"]) if inv.get("whop_started_at") else None
+            if plan is None:
+                self.supa.progress(inv["id"], {"whopStarted": True})
+                plan = self.whop_api.create(amount, whop.notes_for(inv, number))
+            url = self.whop_api.check(plan, amount)
+        except http.HttpError as e:
+            if e.status in (401, 403):
+                raise Problem("The Whop key on the invoice worker may not create payment links. "
+                              "Cancel this invoice and ask again with a pasted link, or tell Muhammed.") from None
+            if 400 <= e.status < 500 and e.status not in http.RETRY_STATUSES:
+                raise Problem(f"Whop refused the payment link ({http.scrub(e)[:160]}). "
+                              "Cancel this invoice and ask again with a pasted link, or tell Muhammed.") from None
+            raise
+        except whop.WhopRefused as e:
+            raise Problem(f"{e} Tell Muhammed before trying again.") from None
+        self.supa.progress(inv["id"], {"whopPlanId": plan["id"], "checkoutUrl": url})
+        inv["whop_plan_id"], inv["checkout_url"] = plan["id"], url
 
     # 2 ---------------------------------------------------------------------
     def folder(self, inv: dict[str, Any]) -> str:
@@ -142,6 +176,7 @@ class Desk:
         http.current_invoice = inv["id"]
         try:
             number = self.number(inv)
+            self.link(inv, number)
             folder_id = self.folder(inv)
             pdf = self.render(build.fill(inv, number, self.template))
             problems = build.pdf_problems(pdf)
@@ -177,9 +212,12 @@ class Ledger:
     def __call__(self, method: str, url: str, status: Optional[int], ok: bool, detail: str) -> None:
         parts = urlsplit(url)
         host = parts.netloc
-        if "googleapis.com" not in host:
+        if host == "api.whop.com":
+            provider = "whop"
+        elif "googleapis.com" in host:
+            provider = "google_sheets" if host.startswith("sheets.") else "google_drive"
+        else:
             return
-        provider = "google_sheets" if host.startswith("sheets.") else "google_drive"
         resource = "/".join(p for p in parts.path.split("/")[:4] if p)
         self.rows.append({"invoice_id": http.current_invoice, "provider": provider, "method": method,
                           "resource": resource, "http_status": status, "ok": ok, "detail": detail or None})
