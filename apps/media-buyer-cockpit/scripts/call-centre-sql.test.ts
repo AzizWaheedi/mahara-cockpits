@@ -27,6 +27,10 @@ import {
 
 const FILE = "20261013180000_cockpit_client_calls.sql";
 const SQL = migration(FILE);
+/** The function as it runs now: WhatsApp chats are not leads (2026-10-15). */
+const CHATS_SQL = migration(
+  "20261015200000_cockpit_client_calls_whatsapp_chats.sql",
+);
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
 const CSM_A = "00000000-0000-4000-8000-0000000000a1";
@@ -596,6 +600,7 @@ beforeAll(async () => {
     JSON.stringify(report()),
   ]);
   await db.exec(SQL);
+  await db.exec(CHATS_SQL);
 }, 60_000);
 afterAll(async () => {
   await db?.close();
@@ -910,6 +915,72 @@ describe("one client's call centre", () => {
     expect(REACHED_GATE).toBe(35);
   });
 
+  test("a WhatsApp chat with no ad is left out, named in a note, and added back before comparing with the report", async () => {
+    await owner(db);
+    const created = at("12:45");
+    await db.query(
+      "INSERT INTO public.client_leads(ghl_contact_id,location_id,created_at,channel,contact_phone) VALUES('w1',$1,$2,'Other','+96550000021')",
+      [LOC_A, created],
+    );
+    // w1 wrote on WhatsApp and came from no ad; a9 came from an ad and wrote later, so it stays.
+    await db.query(
+      "INSERT INTO mahara_reporting.facts(namespace,source,kind,external_id,data) VALUES ('production','ghl','contact',$1,$2::jsonb),('production','ghl','contact',$3,$4::jsonb)",
+      [
+        `${LOC_A}:w1`,
+        JSON.stringify({
+          id: "w1",
+          locationId: LOC_A,
+          createdAt: created,
+          phone: "+96550000021",
+          tags: ["inbound whatsapp", "wa: +96550000000"],
+        }),
+        `${LOC_A}:a9`,
+        JSON.stringify({
+          id: "a9",
+          locationId: LOC_A,
+          createdAt: at("16:00"),
+          phone: "+96550000009",
+          tags: ["facebook ads lead", "Inbound WhatsApp"],
+        }),
+      ],
+    );
+    // The dialer's report counts the chat as a lead.
+    await db.query(
+      "UPDATE public.test_report SET body=$1::jsonb WHERE location_id=$2",
+      [JSON.stringify(report({ leads: 11 })), LOC_A],
+    );
+    try {
+      await actor(db, CSM_A);
+      const raw = (await calls("CU_A")) as {
+        coverage: { whatsappChats: number; whatsappChatsCalled: number };
+      };
+      await owner(db);
+      const data = parseCallCentre(raw);
+      expect(data.cohort.leads).toBe(10);
+      expect(data.clientAverage?.leads).toBe(10);
+      expect(data.waiting.callable).toBe(8);
+      expect(data.waiting.untouched.count).toBe(1);
+      expect(data.notCalled.total).toBe(5);
+      expect(raw.coverage.whatsappChats).toBe(1);
+      expect(raw.coverage.whatsappChatsCalled).toBe(0);
+      expect(data.notes).toContain(
+        "1 WhatsApp chat contact is left out of the figures worked out here: tagged \"inbound whatsapp\" in GoHighLevel, with no ad. The dialer's headline still counts them.",
+      );
+      expect(data.notes.some(n => n.includes("differ from the dialer"))).toBe(
+        false,
+      );
+    } finally {
+      await owner(db);
+      await db.exec(
+        "DELETE FROM public.client_leads WHERE ghl_contact_id='w1'; DELETE FROM mahara_reporting.facts WHERE source='ghl' AND kind='contact';",
+      );
+      await db.query(
+        "UPDATE public.test_report SET body=$1::jsonb WHERE location_id=$2",
+        [JSON.stringify(report()), LOC_A],
+      );
+    }
+  });
+
   test("a report that disagrees is named; a missing report row is missing, never zero", async () => {
     await owner(db);
     await db.query(
@@ -1082,5 +1153,20 @@ describe("the migration text", () => {
   });
   test("its five-minute line is the gate in kpi.ts", () => {
     expect(SQL).toContain(`interval '${FIRST_CALL_MINUTES} minutes'`);
+    expect(CHATS_SQL).toContain(`interval '${FIRST_CALL_MINUTES} minutes'`);
+  });
+  test("the WhatsApp chat migration replaces one function and keeps its grant", () => {
+    const fns =
+      CHATS_SQL.match(
+        /CREATE OR REPLACE FUNCTION public\.[a-z_]+\([^)]*\)[^$]*?AS \$\$/g,
+      ) ?? [];
+    expect(fns.length).toBe(1);
+    expect(fns[0]).toContain("public.cockpit_client_calls(");
+    expect(fns[0]).toContain("SET search_path=''");
+    expect(CHATS_SQL).toContain(
+      "GRANT EXECUTE ON FUNCTION public.cockpit_client_calls(text,date,date) TO authenticated;",
+    );
+    expect(CHATS_SQL).not.toMatch(/GRANT [^;]* TO (anon|PUBLIC|service_role)/);
+    expect(CHATS_SQL).not.toMatch(/[—]/);
   });
 });
