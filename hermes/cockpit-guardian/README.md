@@ -119,6 +119,14 @@ Composio deploy of sales-api read as "deployed without its live-calls modules"
 
 ## Alerts
 
+Since 2026-10-13 (Muhammed) every message is Slack formatting: a coloured dot and a bold headline ("Broken:",
+"Warning:", "Worse:", "Better:", "Resolved:"), what it reads, a `*Guardian:*` line only when the guardian did or
+will do something, `*Do:*` with the action, then a grey line with the owner, since when and the check id. Owners in
+`OWNER_MENTIONS` (`guard/alerts.py`; the systems manager) are tagged, in the owner line and wherever the action names
+them. A "Better" post follows when a broken incident drops back to a warning, under the same 6-hour hold as any
+repeat, so the last word in the channel is no longer a stale "Worse". The 09:00 summary has bold section names and
+bullets.
+
 One message per new incident and one when it resolves, to
 `SLACK_HEALTH_CHANNEL` with `SLACK_BOT_TOKEN` (both in
 `/opt/data/bibi/api-keys.env`). Each says what broke, since when, what the

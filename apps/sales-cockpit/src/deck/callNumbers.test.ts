@@ -35,7 +35,7 @@ describe("the deck's numbers: the call's, or typed on the slide", () => {
     const src = readFileSync(new URL("./slides.tsx", import.meta.url), "utf8");
     const users = [
       ...src.matchAll(
-        /^function (\w+)\([^)]*\) \{\n {2}const \{[^}]*\bnumbers\b[^}]*\} = ctx;/gm,
+        /^function (\w+)\([^)]*\) \{\r?\n {2}const \{[^}]*\bnumbers\b[^}]*\} = ctx;/gm,
       ),
     ].map(m => m[1]);
     expect(users.sort()).toEqual(["closingGain", "numbersSlide"]);

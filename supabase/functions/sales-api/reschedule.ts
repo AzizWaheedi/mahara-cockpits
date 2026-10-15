@@ -485,6 +485,34 @@ export function holdsByCall(rows: Row[]): Map<string, Hold[]> {
 /** How many days of free times book.slots asks HighLevel for; each calendar still opens only what it opens. */
 export const SLOT_DAYS = 14;
 
+/** A custom time is typed to the 5-minute mark (book.check, book.create and book.move with custom). */
+export const CUSTOM_STEP_MIN = 5;
+
+/** The sub-account's own domain for HighLevel's public pages (GET /locations/{id} → domain). */
+export const BOOKING_DOMAIN = "https://link.maharamedia.com";
+
+/**
+ * The lead's own link to pick another time for this call (D17, verified 2026-10-11):
+ *   https://link.maharamedia.com/widget/booking/<calendarId>?event_id=<appointmentId>
+ * Evidence: on test appointment hAl3lnR1WDbwru7wiSKw (calendar cFeDl0FY8iaXll61lus8, contact
+ * VjPfR4Cc1Y0OFvaqeor5) the page's payload carried the appointment (calendarEvent.id, start, host), and
+ * pressing Select sent PUT backend.leadconnectorhq.com/calendars/events/appointments/widget/hAl3lnR1WDbwru7wiSKw
+ * {eventId, selectedSlot, calendarId, source: "booking_widget"}: a move of that appointment, no contact form.
+ * Without event_id the same page asks for name, email and phone (a new booking). link.maharamedia.com is the
+ * sub-account's own domain (GET /locations → domain). Only where HighLevel lets the lead reschedule
+ * (allowReschedule: intros and Follow up call; demos are false). The lead sees only the booking page's own days.
+ * The calendar id, never its slug: a slug changes when a calendar is renamed. The test appointment was
+ * cancelled (never deleted) at 16:06 UTC the same day.
+ */
+export function rescheduleLink(calendarId: unknown, cal: Row | null | undefined, appointmentId: unknown): string | null {
+  if (!cal || cal.isActive === false || cal.allowReschedule !== true) return null;
+  const c = String(calendarId ?? "").trim();
+  const a = String(appointmentId ?? "").trim();
+  const ok = /^[A-Za-z0-9_-]{1,80}$/;
+  if (!ok.test(c) || !ok.test(a)) return null;
+  return `${BOOKING_DOMAIN}/widget/booking/${c}?event_id=${a}`;
+}
+
 /**
  * The last day a calendar opens, "2026-10-14": from its own "book up to N
  * days out", or the last day that has a free time, whichever is later

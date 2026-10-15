@@ -2,7 +2,13 @@
 
 ## Status and boundaries
 
-Install paused. Do not add an active cron until the parent has run the isolated tests, reviewed a fresh private dry-run plan, and checked source coverage. This task does not activate, import, deploy, or call providers.
+The native feed is live. It runs every 15 minutes under `flock` from `/home/hermes/cockpit-native-current`, not a checkout. The live cron line is:
+
+```cron
+*/15 * * * * /usr/bin/flock -n /home/hermes/.cockpit-native-state/native-source-ceo.lock /usr/bin/python3 /home/hermes/.cockpit-native-state/run-source-ceo-cycle.py >> /home/hermes/.cockpit-native-state/native-cron.log 2>&1
+```
+
+The CSM calls worker is separate (`hermes/csm-calls/RUNBOOK.md`) and does not add provider reads to this feed.
 
 `worker.ts` is a finite process, not a daemon. It calculates media, CSM, creative, market, winner archive and still-image results without a Convex server import. Only `--apply` claims a lease, uploads images, or publishes. It never sends customer messages or changes campaigns.
 
@@ -72,25 +78,11 @@ python scripts/import-cockpit-runtime-sources.py --manifest /private/runtime-man
 
 Review `blockers`, classifications, counts, files, client scope, expected target rows and operations. A scoped plan never claims full migration coverage. Only after that review, explicit `--apply --plan /private/runtime-plan.json --plan-sha256 <printed-file-sha256>` may use the service key. The exact original claim is saved beside the plan before publication. Repeating the same reviewed plan and receipt retries that run; it cannot acquire a new fence to bypass a conflict. A failed/expired run requires a new inventory and newly reviewed plan.
 
-## Dry run and paused deployment
+## Dry run and live release
 
 Fathom reads start 24 hours before the last successful full native publication. The worker reads that checkpoint from `cockpit_native_media_runs` through its read-only transport. Failed runs and dry runs cannot advance it. Original CSM `syncRuns` remain unchanged.
 
-Before the first native publication, set `FATHOM_CREATED_AFTER` to a reviewed ISO timestamp covered by the protected source export, with an overlap for recent changes. The worker rejects missing, malformed, and future seeds when no verified checkpoint exists. It never caps a valid older checkpoint after downtime. Keep imported calls and human annotations when recent reads return fewer calls.
-
-```sh
-bun hermes/cockpit-sync/worker.ts --report /private/cockpit-sync/dry-run.json
-```
-
-A dry run reads providers and may download still bytes into memory, but does not claim, upload, release, write health rows, or publish. The report excludes still binary content. Store it outside Git with restricted file and directory access.
-
-After parent verification and explicit deployment approval, the command to place in a **disabled** cron entry is:
-
-```sh
-flock -n /var/lock/cockpit-sync.lock bun /srv/mahara-cockpits/hermes/cockpit-sync/worker.ts --apply --report /private/cockpit-sync/run-$(date +%s).json
-```
-
-Activation is a separate action. Keep the previous scheduler paused rather than running two writers. The SQL lease remains authoritative even when `flock` is absent or two hosts race.
+Run doctor and a dry run from a new immutable `/home/hermes/.cockpit-native-releases/<sha>` folder, not from `~/mahara-cockpits`. The run wrapper is `/home/hermes/.cockpit-native-state/run-source-ceo-cycle.py`; it writes reports under `/home/hermes/.cockpit-native-state/`. Stage via `scripts/prepare-native-worker-package.py` and include every new runtime file in its REQUIRED list. Keep the prior symlink target for rollback. The live cron line is above and in `hermes/cockpit-guardian/crontab.manifest`. Muhammed owns the native cutover.
 
 ## Preservation and failure behavior
 

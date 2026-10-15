@@ -1,0 +1,162 @@
+/*
+ * Hubstaff watch, the shift line: the card's one signature element. No new
+ * palette: tracked time is the cockpit's teal (--ceo-emphasis) at an opacity
+ * that follows keyboard and mouse, idle time is the same teal hatched, a gap
+ * past the grace is the warning orange, a screenshot off work is a critical
+ * tick above the bar, and time outside the shift or on part-day leave is
+ * de-emphasised. Phone time has no activity level and draws at the middle
+ * shade. Meaning is carried by pattern and position too, and the bar reads
+ * itself aloud.
+ */
+
+.ceo-root .hw-bar {
+  position: relative;
+  height: 14px;
+}
+
+.ceo-root .hw-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+/* The shift's own track. */
+.ceo-root .hw-shift {
+  border-radius: 4px;
+  background: var(--ceo-grid);
+}
+
+/* Outside the shift: a thin baseline, quieter than the shift's track. */
+.ceo-root .hw-outside {
+  top: 6px;
+  bottom: 6px;
+  border-radius: 1px;
+  background: var(--ceo-deemphasis);
+  opacity: 0.6;
+}
+
+/* Part-day leave: off time, the de-emphasised fill across the bar's height,
+   never a gap and never "not in yet". */
+.ceo-root .hw-leave {
+  background: var(--ceo-deemphasis);
+  opacity: 0.45;
+}
+
+.ceo-root .hw-tracked {
+  background: var(--ceo-emphasis);
+  opacity: var(--hw-a, 1);
+}
+.ceo-root .hw-tracked[data-outside="true"],
+.ceo-root .hw-idle[data-outside="true"] {
+  background: var(--ceo-deemphasis);
+  opacity: 1;
+}
+
+/* Timer on, nobody at the keys: the teal, hatched. */
+.ceo-root .hw-idle {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--ceo-emphasis) 70%, transparent) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+/* Untracked past the grace: orange, with a top edge so it is not only a colour. */
+.ceo-root .hw-gap {
+  background: color-mix(in srgb, var(--ceo-warning) 55%, transparent);
+  box-shadow: inset 0 2px 0 var(--ceo-warning);
+}
+
+/* Not in from Hubstaff yet, or Hubstaff cannot be read: hollow, never empty. */
+.ceo-root .hw-unread {
+  outline: 1px dashed var(--ceo-crosshair);
+  outline-offset: -1px;
+}
+
+/* The one live element: the shift being worked glows teal on dark. */
+.dark .ceo-root .hw-shift[data-live="true"] {
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--mahara-teal) 35%, transparent),
+    0 6px 18px -10px color-mix(in oklch, var(--mahara-teal) 60%, transparent);
+}
+
+/* Now: a thin needle through the bar. */
+.ceo-root .hw-now {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--foreground);
+  transition: left 600ms ease-out;
+}
+
+/* A screenshot off work: a small critical tick above the bar that opens it. */
+.ceo-root .hw-ticks {
+  position: relative;
+  height: 10px;
+  margin-bottom: 2px;
+}
+.ceo-root .hw-tick {
+  position: absolute;
+  top: 0;
+  width: 4px;
+  height: 10px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--ceo-critical);
+}
+.ceo-root .hw-tick::after {
+  content: "";
+  position: absolute;
+  inset: -8px -9px;
+}
+/* Several screenshots too close to tap apart: one wider tick, one button. */
+.ceo-root .hw-tick[data-count] {
+  min-width: 6px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--background) 45%, transparent);
+}
+.ceo-root .hw-tick:hover,
+.ceo-root .hw-tick:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.ceo-root .hw-hours {
+  position: relative;
+  height: 14px;
+  margin-top: 4px;
+}
+.ceo-root .hw-hour {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+.ceo-root .hw-hour[data-edge="start"] {
+  transform: none;
+}
+.ceo-root .hw-hour[data-edge="end"] {
+  transform: translateX(-100%);
+}
+
+/* The legend's swatches reuse the segments at a fixed size. */
+.ceo-root .hw-swatch {
+  position: relative;
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ceo-root .hw-now {
+    transition: none;
+  }
+}

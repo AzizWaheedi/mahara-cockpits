@@ -3,7 +3,10 @@
    inside the Mahara gradient. Geist for words and figures, Geist Mono for
    eyebrows and sources, IBM Plex Sans Arabic for Arabic (Geist has no
    Arabic glyphs). */
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@500;600;700&display=swap");
+/* Fonts load from a <link> in index.html, not @import here: when Google
+   Fonts is blocked (extension, school/office network) an @import makes this
+   whole file fail, and Vite then refuses to open the deck ("Unable to
+   preload CSS", 2026-10-13). */
 
 .dk-root {
   --dk-space: #091333;

@@ -68,6 +68,10 @@ describe("the write gate", () => {
     expect(limited.mode).toBe("apply_limited");
     expect([limited.live("t1"), limited.live("t2"), limited.live(null)]).toEqual([true, false, false]);
   });
+  it("the client success ticket switch opens only on exactly 'true' and does not open the rest", () => {
+    for (const v of [undefined, "", "TRUE", "1"]) expect(gate(k => (k === "CLICKUP_WRITEBACK_APPLY_CSM_TICKETS" ? v : undefined)).csmTickets).toBe(false);
+    expect(gate(k => (k === "CLICKUP_WRITEBACK_APPLY_CSM_TICKETS" ? "true" : undefined))).toMatchObject({ csmTickets: true, apply: false, mode: "dry_run" });
+  });
 });
 
 describe("kpi job", () => {
@@ -181,6 +185,34 @@ describe("log job", () => {
     const out = await runLog(h.deps);
     expect(out).toMatchObject({ ok: true, note: "The ClickUp log queue is empty." });
     expect(h.rpcs.map(r => r.name)).toEqual(["cockpit_clickup_writeback_sweep", "cockpit_clickup_writeback_claim", "cockpit_clickup_writeback_idle"]);
+  });
+
+  const csmTicket = (over: any = {}) =>
+    change({
+      kind: "decision",
+      payload: { role: "csm", subject: "City Wood", action: "New scripts needed", kind: "ticket", reroutedTo: "creative", clientTaskId: "86eyt1d33", note: "Faces on camera" },
+      ...over,
+    });
+
+  it("a client success ticket stays a dry run while its switch is off", async () => {
+    const h = harness({ CLICKUP_API_TOKEN: "x" }, { items: [csmTicket()] });
+    const out = await runLog(h.deps);
+    expect(h.writes()).toEqual([]);
+    expect(out.note).toContain("Nothing was written to ClickUp");
+    expect(h.saves()[0]).toMatchObject({ state: "dry_run", task_id: "86eyt1d33" });
+  });
+
+  it("its own switch sends client success tickets while the rest of the log stays a dry run", async () => {
+    const h = harness(
+      { CLICKUP_API_TOKEN: "x", CLICKUP_WRITEBACK_APPLY_CSM_TICKETS: "true" },
+      { items: [csmTicket(), change({ id: "aaaaaaaa-0000-0000-0000-000000000000" })], route: c => (c.method === "POST" && c.path.startsWith("list/") ? { id: "tk1", url: "https://app.clickup.com/t/tk1" } : undefined) },
+    );
+    const out = await runLog(h.deps);
+    expect(h.writes().map(c => c.path)).toEqual(["list/901818016338/task", "task/86eyt1d33/comment"]);
+    expect(h.writes()[1].body.comment_text).toContain("https://app.clickup.com/t/tk1");
+    expect(h.saves().filter(s => s.state).map(s => s.state)).toEqual(["delivered", "dry_run"]);
+    expect(h.rpcs.find(r => r.name === "cockpit_clickup_writeback_begin")?.params.p_mode).toBe("apply_limited");
+    expect(out.note).toContain("Client success tickets are live: 1 delivered");
   });
 
   it("the weekly backlog task stays a dry run on a limited live run", async () => {

@@ -12,11 +12,12 @@ export function providerTools(token:string,health:(row:Record<string,unknown>)=>
  }};
 }
 
-/** Client check-in appointments only. No automatic retries after any response. */
+/** Client check-in appointments, and the CEO's read-only WhatsApp probe. No automatic retries after any response. */
 export function ghlTools(token:string,health:(row:Record<string,unknown>)=>Promise<void>,request:typeof fetch=fetch):{call:(method:'GET'|'POST',path:string,body?:Record<string,unknown>)=>Promise<unknown>}{
  if(!token)throw Error('GHL_MAHARA_PIT is not configured');
  return {async call(method,path,body){
-  if((!path.startsWith('calendars/')&&!(method==='POST'&&path==='contacts/search'))||path.includes('://')||path.includes('..'))throw Error('Invalid GoHighLevel resource');
+  const conversationRead=method==='GET'&&(/^conversations\/search\?[^/]*$/.test(path)||/^conversations\/[A-Za-z0-9_-]{1,64}\/messages(\?[^/]*)?$/.test(path));
+  if((!path.startsWith('calendars/')&&!(method==='POST'&&path==='contacts/search')&&!conversationRead)||path.includes('://')||path.includes('..'))throw Error('Invalid GoHighLevel resource');
   const row={provider:'ghl',method,resource:path.split('?')[0]};await health({...row,phase:'intent'});
   let response:Response;
   try{response=await request('https://services.leadconnectorhq.com/'+path,{method,headers:{Authorization:'Bearer '+token,Version:'2021-04-15',Accept:'application/json','Content-Type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(25000)});}

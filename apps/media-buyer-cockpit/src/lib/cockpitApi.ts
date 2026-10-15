@@ -60,6 +60,7 @@ import {
   isMediaNativeWrite,
 } from "./mediaNativeClient";
 import { readMediaStats } from "./mediaStatsClient";
+import { markStale, retryDelay, toError } from "./readHealth";
 import { supabase } from "./supabase";
 import { api as swipeApi } from "./swipe";
 import {
@@ -180,6 +181,12 @@ const READ_VERBS: Record<string, true> = {
   month: true,
   status: true,
   costs: true,
+  // api.ceo.hours.nudge: the morning note's switch and last run.
+  nudge: true,
+  // api.ceo.hours.watchBoard: Hubstaff watch, polled every 30 seconds; and
+  // watchShotUrl, which only signs a screenshot link and changes nothing.
+  watchBoard: true,
+  watchShotUrl: true,
 };
 function refreshAfter<T extends (...args: any[]) => any>(fn: T): T {
   const prior = refreshWrappers.get(fn);
@@ -212,8 +219,22 @@ export type Id<_T extends string = string> = string;
 export type FunctionReturnType<F extends (...args: any) => any = any> =
   F extends (...args: any) => infer R ? Awaited<R> : any;
 
+/**
+ * The query runner without the throw: `{ data, error }`, with the same
+ * polling and refresh-after-write as `useQuery`. For a card that must say
+ * its own error and let the rest of the tab render (the Money tab's LTV card
+ * since 2026-10-11, whose server refusal used to take the whole tab down).
+ *
+ * Once a read has data, a failed refresh keeps it on screen, marks it stale
+ * for the shell's one-line notice and tries again; `error` is only for a read
+ * that never loaded. A first read that fails for a passing reason (no answer,
+ * a restarting database) is retried a few times before it reports the error.
+ */
 // biome-ignore lint/suspicious/noExplicitAny: universal query runner
-export function useQuery<T = any>(queryFn: any, args?: any): T {
+export function useQueryState<T = any>(
+  queryFn: any,
+  args?: any,
+): { data: T | undefined; error: Error | null } {
   const [data, setData] = useState<any>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const { session } = useCockpitAuth();
@@ -223,6 +244,8 @@ export function useQuery<T = any>(queryFn: any, args?: any): T {
     args: string | undefined;
     owner: string | null;
   } | null>(null);
+  const hasData = useRef(false);
+  const read = useRef({}).current;
 
   const argsJson = JSON.stringify(args);
 
@@ -235,23 +258,35 @@ export function useQuery<T = any>(queryFn: any, args?: any): T {
     if (changed) {
       setError(null);
       setData(undefined);
+      hasData.current = false;
     }
     if (args === "skip" || !queryFn || !owner) return;
     let active = true;
     let generation = 0;
+    let failures = 0;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     const load = () => {
       const run = ++generation;
+      clearTimeout(retry);
       Promise.resolve()
         .then(() => (typeof queryFn === "function" ? queryFn(args) : queryFn))
         .then(res => {
           if (active && run === generation) {
+            failures = 0;
+            hasData.current = true;
+            markStale(read, false);
             setData(res);
             setError(null);
           }
         })
         .catch(err => {
-          if (active && run === generation)
-            setError(err instanceof Error ? err : new Error(String(err)));
+          if (!active || run !== generation) return;
+          failures += 1;
+          console.error("A cockpit read failed:", err);
+          if (hasData.current) markStale(read, true);
+          const wait = retryDelay(err, failures);
+          if (wait !== null) retry = setTimeout(load, wait);
+          else if (!hasData.current) setError(toError(err));
         });
     };
     load();
@@ -263,11 +298,19 @@ export function useQuery<T = any>(queryFn: any, args?: any): T {
     return () => {
       active = false;
       clearInterval(poll);
+      clearTimeout(retry);
+      markStale(read, false);
       if (typeof window !== "undefined")
         window.removeEventListener(DATA_CHANGED, load);
     };
-  }, [queryFn, argsJson, owner]);
+  }, [queryFn, argsJson, owner, read]);
 
+  return { data: data as T | undefined, error };
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: universal query runner
+export function useQuery<T = any>(queryFn: any, args?: any): T {
+  const { data, error } = useQueryState<T>(queryFn, args);
   if (error) throw error;
   return data as T;
 }

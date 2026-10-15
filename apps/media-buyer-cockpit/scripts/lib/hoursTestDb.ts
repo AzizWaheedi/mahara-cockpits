@@ -1,7 +1,7 @@
 /**
- * A PGlite database with the roster, the audit log, the CEO gate and the
- * hours migration, with Supabase's default privileges emulated, for the
- * hours RPC tests. Made-up people and figures only.
+ * A PGlite database with the roster, the audit log, the CEO gate, the
+ * hours migration and the Hubstaff watch, with Supabase's default privileges
+ * emulated, for the hours RPC tests. Made-up people and figures only.
  */
 import type { PGlite } from "@electric-sql/pglite";
 import { actor, cockpitTestDb, member, migration, owner } from "./cockpitTestDb";
@@ -43,6 +43,9 @@ export async function hoursTestDb(): Promise<PGlite> {
     /CREATE OR REPLACE FUNCTION public\.cockpit_ceo_verified_actor_email\(p_actor_id uuid\)[\s\S]*?\n\$\$;/, "verified_actor_email"));
   await db.exec("REVOKE ALL ON FUNCTION public.cockpit_ceo_verified_actor_email(uuid) FROM PUBLIC, anon, authenticated, service_role;");
   await db.exec(migration("20261009a_cockpit_team_hours.sql"));
+  // Hubstaff watch (2026-10-13): the settings table it seeds, then the watch itself.
+  await db.exec(migration("20260921a_cockpit_settings.sql"));
+  await db.exec(migration("20261013d_cockpit_hours_watch.sql"));
   await member(db, CEO, "aziz@maharamedia.com", []);
   await member(db, ADMIN, "admin@tests.invalid", ["admin", "ceo"]);
   await member(db, MEMBER, "member@tests.invalid", ["media"]);
@@ -66,7 +69,7 @@ export async function call(db: PGlite, fn: string, p: unknown): Promise<Record<s
   return r.rows[0].r;
 }
 
-const ARG_TYPES: Record<string, string> = { p: "jsonb", p_provider: "text", p_month: "date", p_person: "bigint", p_actor_id: "uuid" };
+const ARG_TYPES: Record<string, string> = { p: "jsonb", p_provider: "text", p_month: "date", p_person: "bigint", p_actor_id: "uuid", p_now: "timestamptz" };
 
 /** The Edge Functions' service-role RPC door, played against PGlite. */
 export function pgRpc(db: PGlite) {

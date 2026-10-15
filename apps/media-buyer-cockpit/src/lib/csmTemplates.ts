@@ -64,7 +64,9 @@ export function cadence(c: Client): {
   label: string;
   callEvery: number;
   callLabel: string;
+  messageDue: boolean;
   messageOverdue: boolean;
+  callDue: boolean;
   callOverdue: boolean;
   daysLate: number;
 } {
@@ -96,8 +98,11 @@ export function cadence(c: Client): {
           : "3× a week",
     callEvery: CALL_EVERY,
     callLabel: CALL_EVERY === 7 ? "weekly" : "every 2 weeks",
-    messageOverdue: silent >= everyDays,
-    callOverdue: called >= CALL_EVERY,
+    // Due on the day the cadence comes round; overdue (red) only after it.
+    messageDue: silent >= everyDays,
+    messageOverdue: silent > everyDays,
+    callDue: called >= CALL_EVERY,
+    callOverdue: called > CALL_EVERY,
     daysLate: Math.max(0, silent - everyDays),
   };
 }
@@ -204,9 +209,9 @@ const TEMPLATES: Template[] = [
   },
   {
     id: "call_due",
-    title: "No call in 2+ weeks",
+    title: "Check-in call due",
     short: "asked for the check-in call",
-    when: c => cadence(c).callOverdue,
+    when: c => cadence(c).callDue,
     why: c =>
       `${c.callDays ?? "?"} days since the last check-in call, the cadence is ${cadence(c).callLabel}`,
     en: c =>

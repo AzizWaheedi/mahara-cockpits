@@ -11,11 +11,12 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 class FakeApi:
     def __init__(self):
-        self.tables={t:[] for t in m.TABLES.values()};self.writes=[];self.states={};self.corrupt=False
+        self.tables={t:[] for t in m.TABLES.values()};self.writes=[];self.states={};self.corrupt=False;self.native=set()
     def rows(self,t):return copy.deepcopy(sorted(self.tables[t],key=lambda r:r['source_id']))
     def insert(self,t,rows):
         self.writes.append((t,len(rows)));self.tables[t].extend(copy.deepcopy(rows))
         if self.corrupt:self.tables[t][-1]['data']['spend']=999
+    def has_native(self,t):return t in self.native
     def state(self,feed,ready,count,snapshot_at):self.states[feed]=ready
     def verify(self,t,rows):
         return {'matched':sum(r in self.tables[t] for r in rows),'total':len(self.tables[t])}
@@ -65,5 +66,10 @@ class ImportTests(unittest.TestCase):
         self.api.tables[m.TABLES['dailyStats']][0]['data']['spend']=99;self.api.states={}
         with self.assertRaises(ValueError):m.finalize(self.planpath,h,self.api)
         self.assertEqual(self.api.states,{})
+    def test_retired_once_the_native_sync_owns_a_feed(self):
+        h=self.save();self.api.native={m.TABLES['bookingEvents']}
+        for run in (lambda:m.plan(self.snapshot,self.api,'2026-09-01T00:00:00Z'),lambda:m.apply(self.planpath,h,self.api),lambda:m.finalize(self.planpath,h,self.api)):
+            with self.assertRaisesRegex(ValueError,'native sync'):run()
+        self.assertEqual(self.api.writes,[]);self.assertEqual(self.api.states,{})
 
 if __name__=='__main__':unittest.main()

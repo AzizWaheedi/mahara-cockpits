@@ -7,6 +7,12 @@ import { api, useQuery } from "@/lib/cockpitApi";
  *
  * Deliberately quiet: one line unless she opens it. It is a standing hygiene
  * problem, not something that needs to shout over the day's decisions.
+ *
+ * The list comes from the daily tracking audit
+ * (supabase/functions/tracking-audit). Its ClickUp task is written only once
+ * ClickUp posting is on (it was a dry run on 13 October 2026), so the copy
+ * points at Show, not at ClickUp. Each row is one gap on one ad, and an ad
+ * can have two.
  */
 export function TrackingIssues() {
   const rows = useQuery(api.tracking.issues, {});
@@ -21,10 +27,10 @@ export function TrackingIssues() {
         <div className="min-w-0 max-w-2xl">
           <h2 className="text-[15px] font-semibold">Tracking backlog</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {total} ad{total === 1 ? "" : "s"} across {rows.length} client
-            {rows.length === 1 ? "" : "s"} without UTM strings or a lead form.
-            Backlog, not today's work: a ClickUp task on the ads board carries
-            the list, refreshed weekly.
+            {total} tracking gap{total === 1 ? "" : "s"} on live ads across{" "}
+            {rows.length} client{rows.length === 1 ? "" : "s"}: no UTM string,
+            or no lead form. A daily check against Meta finds them. Backlog, not
+            today's work: Show lists them by client.
           </p>
         </div>
         <Button

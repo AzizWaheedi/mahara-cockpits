@@ -72,6 +72,12 @@ const B2B =
 const TRIAGE = "Creative Triage Supabase (bldgtotkfmhoxmlzowdx)";
 const CLICKUP = "ClickUp, the Clients - Mahara list, synced into the cockpit";
 /**
+ * Client Meta spend and leads since 2026-10-11 (R2): the media buyer's sync,
+ * tied to a client through the campaign's ad account; the old snapshot table
+ * stopped on 2026-10-02 and is read only before the live table's first day.
+ */
+const MEDIA = `${TRIAGE} cockpit_media_daily_stats (the media buyer's Meta sync, USD), tied to the client through cockpit_campaigns and the ad account; ads_daily_snapshots (frozen on 2026-10-02) for the ad-days the live table lacks, matched by Meta ad id`;
+/**
  * B2B keeps a voided deal in closed_deals and marks it in record_voids; every
  * deal figure here leaves it out (./voids.ts), the B2B dashboard does not.
  */
@@ -270,6 +276,7 @@ export const DEFINITIONS: MetricDefinition[] = [
   d("money.attribution.unattributedMtd", "money", "Unattributed collections this month", "Month-to-date cash without a front-end or back-end attribution.", B2B, "usd"),
   d("money.book.projected", "money", "Projected monthly client book", "Projected monthly revenue from the money adapter's current client book.", CLICKUP, "usd", "This is a projection, not collected cash."),
   d("money.book.collected", "money", "Collected monthly client book", "Cash collected for the money adapter's current monthly client book.", `${B2B}; ${TRIAGE} manual payments`, "usd"),
+  d("money.ltv.card", "money", "Client card LTV field", "The LTV field typed on each client's ClickUp card, kept per card per day. The earliest point per card is the LTV baseline the cockpit adds logged payments to.", `${CLICKUP} (cockpit_client_billing_days)`, "usd", "Cards with a blank LTV field. Baselines before 2026-10-11 were imported from the Convex copy of 2026-09-19."),
   d("expenses.total", "expenses", "Statement outflows", "Classified monthly expense, fee and excluded outflows plus identified own-transfer unloads.", `${TRIAGE} canonical bank statements`, "usd", "Unclassified transactions and other banks."),
   d("expenses.spend", "expenses", "Statement expenses", "Classified monthly expense and fee outflows after saved human exclusions.", `${TRIAGE} canonical bank statements and exclusions`, "usd", "Own-transfer unloads, excluded lines and other banks."),
   d("expenses.unloads", "expenses", "Statement unloads", "Monthly own-transfer outflows whose reference identifies an unload.", `${TRIAGE} canonical bank statements`, "usd", "Other transfers and other banks."),
@@ -277,7 +284,7 @@ export const DEFINITIONS: MetricDefinition[] = [
   d("expenses.overhead", "expenses", "Overhead expenses", "Matched rent, utilities, phone, insurance and accounting outflows for the latest statement month.", `${TRIAGE} canonical bank statements and exclusions`, "usd", "Missing groups remain missing. Unclassified transactions are excluded."),
   d("expenses.labour", "expenses", "Labour expenses", "Classified salary expense amount for the latest statement month.", `${TRIAGE} canonical bank statements and exclusions`, "usd", "Missing groups remain missing. Unclassified transactions are excluded."),
   d("expenses.ownAdSpend", "expenses", "Mahara advertising expenses", "Classified Mahara advertising outflows for the latest statement month.", `${TRIAGE} canonical bank statements and exclusions`, "usd", "Client advertising spend."),
-  d("expenses.clientAdSpend", "expenses", "Client advertising spend", "Client ad snapshot spend excluding Mahara's own client record for the statement month.", `${TRIAGE} ads_daily_snapshots`, "usd", "Mahara's own advertising spend."),
+  d("expenses.clientAdSpend", "expenses", "Client advertising spend", "Client Meta ad spend in USD for the statement month, from campaigns on our ads board, excluding Mahara's own ad accounts.", MEDIA, "usd", "Mahara's own advertising spend; campaigns that tie to no client ad account; ad accounts with no campaign in the media sync."),
   d("expenses.revenue", "expenses", "Whop statement-month cash", "Paid USD Whop net amounts for the latest statement month.", B2B, "usd", "Other payment rails. This is not complete company revenue."),
   // --- growth (Mahara's own funnel) ---
   d(
@@ -540,10 +547,10 @@ export const DEFINITIONS: MetricDefinition[] = [
     "growth.front_end_cash",
     "growth",
     "Front-end cash",
-    "The deposit typed on the closer form for deals signed in the window, plus kickoff cash once the kickoff form is read.",
+    "The deposit typed on the closer form for deals signed in the window, plus the kickoff cash the CSM types on the kickoff form (Payment Amount), dated by the day the form was submitted and read as USD.",
     B2B,
     "usd",
-    `Kickoff cash is not read yet, so this is the deposit alone. ${VOIDED_OUT}`,
+    `Kickoff cash before 2026-10-04, when the form first carried the amount. ${VOIDED_OUT}`,
   ),
   d(
     "growth.front_end_cash_confirmed_share",
@@ -729,17 +736,17 @@ export const DEFINITIONS: MetricDefinition[] = [
     "delivery.spend",
     "delivery",
     "Client ad spend",
-    "Every client Meta account's spend by reporting day, converted with the fixed rate table.",
-    TRIAGE,
+    "Client Meta spend by the ad account's reporting day, in USD, for every campaign in the media buyer's sync that ties to a client ad account.",
+    MEDIA,
     "usd",
-    "Mahara's own accounts; currencies with no rate.",
+    "Mahara's own accounts; campaigns that tie to no client; for frozen days, currencies with no rate.",
   ),
   d(
     "delivery.leads",
     "delivery",
     "Client platform leads",
-    "Leads Meta reports per client account per day.",
-    TRIAGE,
+    "Leads Meta reports per client campaign per day.",
+    MEDIA,
     "count",
   ),
   d(
@@ -762,10 +769,10 @@ export const DEFINITIONS: MetricDefinition[] = [
     "delivery.bookings_provisional",
     "delivery",
     "Provisional bookings",
-    "Appointments on the provisional calendar.",
-    TRIAGE,
+    "Appointments on the provisional (Not Confirmed Appointments) calendar only, by the day the meeting is for, future ones excluded.",
+    `${TRIAGE} mahara_reporting (the call-centre report's appointment store: the dialer's GoHighLevel appointment facts and verified bookings), tied to the client by location`,
     "count",
-    "That calendar has produced no rows yet.",
+    "Appointments on the main calendar still in status new, which the call-centre report calls provisional; conflicting and deleted rows.",
   ),
   d(
     "delivery.cpl",

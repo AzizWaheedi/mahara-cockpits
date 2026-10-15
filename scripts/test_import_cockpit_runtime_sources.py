@@ -255,15 +255,21 @@ class RuntimeImportTests(unittest.TestCase):
         self.assertEqual(imp.client_names('media-buyer','decisions',row,{}),[])
         self.assertEqual(row['subject'],'Review the weekly plan')
 
-    def test_legacy_booking_records_with_no_provider_id_remain_distinct(self):
+    def test_booking_key_matches_the_live_grain_function(self):
+        # Rows with no provider id get no per-row identity: two Convex copies collide.
         first={'_id':'original-first','campaignName':'Campaign','date':'2026-10-01'}
         second={**first,'_id':'original-second'}
-        self.assertNotEqual(imp.statistics_key('bookingEvents',first),imp.statistics_key('bookingEvents',second))
-        self.assertEqual(imp.statistics_key('bookingEvents',first),('legacy-source-row','original-first'))
+        self.assertEqual(imp.statistics_key('bookingEvents',first),('Campaign','',None,'2026-10-01'))
+        self.assertEqual(imp.statistics_key('bookingEvents',first),imp.statistics_key('bookingEvents',second))
         provider={**first,'eventId':'event-one','locationId':'location-one','startTime':'2026-10-01T09:00:00Z'}
         self.assertEqual(imp.statistics_key('bookingEvents',provider),('Campaign','location-one','event-one','2026-10-01T09:00:00Z'))
-        with self.assertRaisesRegex(ValueError,'identity'):
-            imp.statistics_key('bookingEvents',{'campaignName':'Campaign','date':'2026-10-01'})
+        nulls={**first,'eventId':None,'contactId':'contact-one','locationId':None,'startTime':None}
+        self.assertEqual(imp.statistics_key('bookingEvents',nulls),('Campaign','','contact-one','2026-10-01'))
+
+    def test_statistics_import_refuses_once_the_native_sync_owns_the_feed(self):
+        imp.require_convex_era('bookingEvents',[{'source_deployment':'adorable-seahorse-418'}])
+        with self.assertRaisesRegex(ValueError,'native sync'):
+            imp.require_convex_era('bookingEvents',[{'source_deployment':'adorable-seahorse-418'},{'source_deployment':'native:media'}])
 
     def test_historical_brief_retains_its_original_client_without_inventing_assignment(self):
         row={'_id':'brief-original','clientName':'Former client'}

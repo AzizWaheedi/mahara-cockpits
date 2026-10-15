@@ -61,6 +61,10 @@ same adAsIdea "$CD/convex/adAsIdea.ts" "$ED/src/lib/adAsIdea.ts"
 # did in their words) reads the same from the media buyer and from the CSM.
 same clientUpdate "$MB/src/lib/clientUpdate.ts" "apps/client-success-cockpit/src/lib/clientUpdate.ts"
 
+# A lost lead's note shows what the agent typed, never the power dialer's
+# system lines, the same way for the media buyer and for the CSM.
+same lostNotes "$MB/convex/lostNotes.ts" "apps/client-success-cockpit/src/lib/lostNotes.ts"
+
 # The Projections screen: the client success cockpit owns the data and its
 # own tab, and the Sunday meeting's page in the media buyer shows the same
 # parts. One set of words and shapes, one set of parts.
@@ -103,6 +107,48 @@ same convex/foreplay.ts "$CD/convex/foreplay.ts" "$MB/convex/foreplay.ts"
 # and the client success cockpit. The two differ only in how each app's
 # actions are wired to the screen (ceo/BillingTab.tsx, pages/BillingPage.tsx).
 CS=apps/client-success-cockpit
+
+# The official KPI gates: $15 a lead, $60 a booking, the client show rate
+# line and its aim. The client success cockpit judges on the same numbers
+# (Aziz, 2026-10-13) and holds its own copy, since an app cannot import from
+# another. Neither copy may import anything, so the whole file is compared:
+# the cockpit-ceo-api and cockpit-csm-api Edge Functions bundle them.
+same kpi.ts "$MB/src/lib/kpi.ts" "$CS/src/lib/kpi.ts"
+for f in "$MB/src/lib/kpi.ts" "$CS/src/lib/kpi.ts"; do
+  if [ -f "$f" ] && grep -qE '^(import |export .* from )' "$f"; then
+    echo "IMPORTS  $f must stay import-free: two Edge Functions bundle it"
+    fails=$((fails + 1))
+  fi
+done
+
+# One client's call centre: the contract of cockpit_client_calls, the verdict
+# ("is this a call centre issue or not?") and how its numbers read, the same
+# for client success and the media buyer (Aziz, 2026-10-13). Byte for byte,
+# imports included: it may import only zod and the gates in ./kpi.ts.
+same callCentre.ts "$MB/src/lib/callCentre.ts" "$CS/src/lib/callCentre.ts"
+if [ -f "$MB/src/lib/callCentre.ts" ] && [ -f "$CS/src/lib/callCentre.ts" ] \
+  && ! cmp -s "$MB/src/lib/callCentre.ts" "$CS/src/lib/callCentre.ts"; then
+  echo "DRIFTED  callCentre.ts imports: the two copies must be byte for byte"
+  fails=$((fails + 1))
+fi
+for f in "$MB/src/lib/callCentre.ts" "$CS/src/lib/callCentre.ts"; do
+  if [ -f "$f" ] && grep -oE "(from|import) +[\"'][^\"']+[\"']" "$f" \
+    | grep -vE "[\"'](zod|\./kpi\.ts)[\"']$" >/dev/null; then
+    echo "IMPORTS  $f may import only zod and ./kpi.ts"
+    fails=$((fails + 1))
+  fi
+done
+
+# Playing a call centre recording through cockpit-call-recording: the same
+# file in both cockpits, with no imports.
+same callRecording.ts "$MB/src/lib/callRecording.ts" "$CS/src/lib/callRecording.ts"
+for f in "$MB/src/lib/callRecording.ts" "$CS/src/lib/callRecording.ts"; do
+  if [ -f "$f" ] && grep -qE "^import " "$f"; then
+    echo "IMPORTS  $f may import nothing"
+    fails=$((fails + 1))
+  fi
+done
+
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
 same personalEod.ts "$MB/src/lib/personalEod.ts" "$CS/src/lib/personalEod.ts"

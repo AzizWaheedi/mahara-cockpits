@@ -31,6 +31,10 @@ EXPECTED = {
     # JWT check is off; the CEO's Hiring tab calls hiring-api signed in, so its JWT check is on.
     "hiring-sync": False,
     "hiring-api": True,
+    "onboarding-sync": False,
+    "comment-watch": False,
+    "cockpit-csm-api": True,
+    "clickup-writeback": False,
 }
 
 

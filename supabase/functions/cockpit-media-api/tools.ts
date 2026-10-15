@@ -10,13 +10,15 @@ export function providerTools(env:(name:string)=>string|undefined,health:(row:Ro
   const token=provider==='meta'&&as?.token?as.token:system;
   if(path.includes('://')||path.includes('..')||path.startsWith('/')) throw new Error('Invalid provider resource');
   const base=provider==='meta'?`https://graph.facebook.com/${env('META_GRAPH_VERSION')??'v21.0'}/`:provider==='slack'?'https://slack.com/api/':provider==='ghl'?'https://services.leadconnectorhq.com/':'https://api.clickup.com/api/v2/';
-  if(provider==='ghl'&&!(method==='POST'&&path==='conversations/messages'))throw new Error('Unsupported custom WhatsApp provider resource');
+  // GoHighLevel: the WhatsApp reply itself, and the contact read that checks do-not-disturb before it.
+  const ghlContact=provider==='ghl'&&method==='GET'&&/^contacts\/[A-Za-z0-9_-]{1,64}$/.test(path);
+  if(provider==='ghl'&&!(method==='POST'&&path==='conversations/messages')&&!ghlContact)throw new Error('Unsupported custom WhatsApp provider resource');
   const receipt={provider,method,resource:path.split('?')[0]};
   await health({...receipt,phase:'intent'});
   let response:Response;
   try {
    const encoded=body?(provider==='meta'?new URLSearchParams(Object.fromEntries(Object.entries(body).filter(([,v])=>v!==undefined).map(([k,v])=>[k,typeof v==='object'?JSON.stringify(v):String(v)]))).toString():JSON.stringify(body)):undefined;
-   response=await request(base+path,{method,headers:{Authorization:provider==='clickup'?token:`Bearer ${token}`,'Content-Type':provider==='meta'?'application/x-www-form-urlencoded':'application/json',...(provider==='ghl'?{Version:'2023-02-21'}:{})},body:encoded,signal:AbortSignal.timeout(25000)});
+   response=await request(base+path,{method,headers:{Authorization:provider==='clickup'?token:`Bearer ${token}`,'Content-Type':provider==='meta'?'application/x-www-form-urlencoded':'application/json',...(provider==='ghl'?{Version:ghlContact?'2021-07-28':'2023-02-21'}:{})},body:encoded,signal:AbortSignal.timeout(25000)});
   } catch {
    await health({...receipt,phase:'unknown'});
    throw new Error('Provider response is unknown. Reconcile before retrying.');

@@ -1,8 +1,9 @@
 // Generated from the original calculator. Source SHA256: 47158039b37ab1cb814f1102b7599e9377ae107cc75b28529821f04caebe81d6
 // Regenerate with node hermes/cockpit-sync/extract.cjs; no service runtime dependency.
 import {type ActionCtx,internal,graph,allAdAccounts,callTool,supabaseQuery,unwrap,providerFetch,recordLog,MAHARA_BUSINESS_ID} from './runtime';
-import {CPL_GATE,CPB_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';
+import {CPL_GATE,CPB_GATE,CPB_BAD,BOOKING_RATE_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';
 import {withoutExcludedAds} from './excludedAds';
+import {cleanLostNote} from './lostNotes';
 import {hasPicture,isMetaId,metaImageExpiry,metaImageUsable,sameStoredRow,stillCaptureDue,stillKeyFor} from './metaMedia';
 const TRACKER = "1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro";
 
@@ -315,8 +316,17 @@ export function diagnose(c: {
   const fixes: Finding[] = [];
   const opts: Finding[] = [];
   const cplGood = (c.cpl ?? 99) <= GOOD_CPL;
-  const cplBad = (c.cpl ?? 0) > CPL_GATE;
-  const cpbBad = (c.costPerBooking ?? 0) > CPB_GATE;
+  // Both numbers count (Muhammed, 2026-10-13): leads over the gate that book
+  // inside it are not a problem, and spend past the booking gate with no
+  // booking at all is one, however cheap the leads.
+  const tracked = c.bookings !== undefined;
+  const cpbGood =
+    tracked &&
+    (c.bookings ?? 0) > 0 &&
+    (c.costPerBooking ?? Number.POSITIVE_INFINITY) <= CPB_GATE;
+  const noBooking = tracked && c.bookings === 0 && c.spend > CPB_GATE;
+  const cplBad = (c.cpl ?? 0) > CPL_GATE && !cpbGood;
+  const cpbBad = noBooking || (c.costPerBooking ?? 0) > CPB_GATE;
 
   // 1. Fatigue — the first of the two things that always force a change.
   if ((c.frequency ?? 0) >= 2.5) {
@@ -346,9 +356,11 @@ export function diagnose(c: {
     fixes.push({
       severity: "fix",
       constraint: "Cost per booking",
-      evidence: `${money(c.costPerBooking ?? 0)} per booking against the $${CPB_GATE} gate${cplGood ? ` — the leads are cheap (${money(c.cpl ?? 0)}) but they are not booking` : ""}.`,
+      evidence: noBooking
+        ? `${money(c.spend)} spent and no booking in 7 days${cplGood ? `: the leads are cheap (${money(c.cpl ?? 0)}) but they are not booking` : ""}.`
+        : `${money(c.costPerBooking ?? 0)} per booking against the $${CPB_GATE} gate${cplGood ? ` — the leads are cheap (${money(c.cpl ?? 0)}) but they are not booking` : ""}.`,
       fixes: [
-        "Judge the ads on bookings, not CPL — cut the ad with the worst cost per booking, not the worst CPL.",
+        "Judge the ads on both numbers: cut the ad with the worst cost per booking, not the one with the worst CPL.",
         "Add one qualification question rather than cutting spend.",
         "Check speed to lead with the CSM before changing anything in the account.",
       ],
@@ -357,11 +369,11 @@ export function diagnose(c: {
 
   // Nothing is broken: cheap leads that book. Stop here — no manufactured problems.
   if (!cplBad && !cpbBad) {
-    if (c.dayRate < BUDGET_FLOOR && cplGood) {
+    if (c.dayRate < BUDGET_FLOOR && (cpbGood || (!tracked && cplGood))) {
       opts.push({
         severity: "optimization",
         constraint: "Room to scale",
-        evidence: `${money(c.dayRate)}/day at ${money(c.cpl ?? 0)} CPL — a working account being starved under the $${BUDGET_FLOOR} floor.`,
+        evidence: `${money(c.dayRate)}/day at ${cpbGood ? `${money(c.costPerBooking ?? 0)} a booking` : `${money(c.cpl ?? 0)} CPL`} — a working account being starved under the $${BUDGET_FLOOR} floor.`,
         fixes: [
           "Raise the budget; this is the cheapest win on the board today.",
           "Duplicate the winning ad set rather than editing the live one.",
@@ -406,11 +418,17 @@ export function diagnose(c: {
       ],
     });
   }
-  if ((c.leads ?? 0) >= 5 && (c.bookingRate ?? 1) < 0.6) {
+  // bookingRate is a percent. It was compared with 0.6 until 2026-10-13, so
+  // this fired only when no lead booked at all.
+  if (
+    (c.leads ?? 0) >= 5 &&
+    c.bookingRate !== undefined &&
+    c.bookingRate < BOOKING_RATE_GATE
+  ) {
     fixes.push({
       severity: "fix",
       constraint: "Lead to booking",
-      evidence: `Only ${Math.round((c.bookingRate ?? 0) * 100)}% of leads book — the SOP line is 60%.`,
+      evidence: `Only ${Math.round(c.bookingRate)}% of leads book; the line is ${BOOKING_RATE_GATE}%.`,
       fixes: [
         "This is not an ads problem. Check speed to lead and the nurture sequence with the CSM.",
         "Confirm the client's calendar has real availability this week.",
@@ -456,8 +474,15 @@ export async function ghlBookingEvents(
     Version: "2021-07-28",
     Accept: "application/json",
   };
-  const end = Date.now();
-  const start = end - 30 * 86400000;
+  // GHL filters events by meeting time. Asking only up to now hid every
+  // booking for a meeting still ahead until its day came, so the booked-call
+  // count ran short (Muhammed, 2026-10-12). Two asks per calendar: the
+  // meetings of the last 30 days, and those booked for the next 60.
+  const now = Date.now();
+  const windows: [number, number][] = [
+    [now - 30 * 86400000, now],
+    [now, now + 60 * 86400000],
+  ];
   try {
     const calRes = await providerFetch(
       `https://services.leadconnectorhq.com/calendars/?locationId=${loc}`,
@@ -468,6 +493,7 @@ export async function ghlBookingEvents(
     const cals: any[] = (await calRes.json())?.calendars ?? [];
     // biome-ignore lint/suspicious/noExplicitAny: GHL payload
     const events: any[] = [];
+    const seen = new Set<string>();
     for (const c of cals) {
       // "Not Confirmed Appointments" is the provisional calendar and the
       // callback / reschedule calendars are agent scheduling, not bookings.
@@ -478,12 +504,20 @@ export async function ghlBookingEvents(
         )
       )
         continue;
-      const evRes = await providerFetch(
-        `https://services.leadconnectorhq.com/calendars/events?locationId=${loc}&calendarId=${c.id}&startTime=${start}&endTime=${end}`,
-        { headers: calHeaders },
-      );
-      if (!evRes.ok) continue;
-      events.push(...((await evRes.json())?.events ?? []));
+      for (const [start, end] of windows) {
+        const evRes = await providerFetch(
+          `https://services.leadconnectorhq.com/calendars/events?locationId=${loc}&calendarId=${c.id}&startTime=${start}&endTime=${end}`,
+          { headers: calHeaders },
+        );
+        if (!evRes.ok) continue;
+        // biome-ignore lint/suspicious/noExplicitAny: GHL payload
+        for (const e of ((await evRes.json())?.events ?? []) as any[]) {
+          // A meeting starting exactly now comes back from both asks.
+          if (e?.id && seen.has(String(e.id))) continue;
+          if (e?.id) seen.add(String(e.id));
+          events.push(e);
+        }
+      }
     }
     if (events.length === 0) return [];
 
@@ -514,6 +548,12 @@ export async function ghlBookingEvents(
     for (const e of events) {
       const status = String(e.appointmentStatus ?? "").toLowerCase();
       if (status === "cancelled") continue;
+      // A client's own Google Calendar event that two-way sync copied into
+      // GHL is not a lead's booking (16 at Atlantis and 6 at Merge Studio in
+      // 30 days). GHL marks it createdBy.source "google_calendar". Deleted
+      // events are not bookings either. (Muhammed, 2026-10-12)
+      if (String(e.createdBy?.source ?? "").toLowerCase() === "google_calendar") continue;
+      if (e.deleted === true) continue;
       // The day the booking was MADE, not the day of the appointment. Cost per
       // booking divides spend in a window by the bookings that window bought;
       // dating by the appointment pushes next week's calls outside the window
@@ -558,6 +598,167 @@ export function bookingTotals(
 }
 
 /**
+ * Where each of one client's bookings is counted (Muhammed, 2026-10-12).
+ *
+ * Every booking the client's GHL holds counts once, on the day it was made,
+ * under the campaign whose ad bought it, even when that campaign has stopped
+ * or left the board. Until then a booking whose ad was not in a campaign that
+ * spent in the last 7 days was dropped, so stopped and replaced campaigns
+ * (Castello, Liwan, Marble and more) lost every booking they had bought.
+ *
+ * A booking whose ad is unknown, or whose lead has no ad at all, goes to the
+ * client's current campaign without an ad id, and says so in `attribution`:
+ * "ad" (placed by its ad), "unknown_ad" (the lead names an ad we never saw)
+ * or "none" (the lead has no ad).
+ */
+export function placeBookings(
+  client: string,
+  events: BookingEvent[],
+  adCampaign: Map<string, string>,
+  current: string | undefined,
+  syncedAt: number,
+) {
+  // biome-ignore lint/suspicious/noExplicitAny: rows for storage
+  const rows: any[] = [];
+  let unplaced = 0;
+  for (const e of events) {
+    const byAd = e.adId ? adCampaign.get(e.adId) : undefined;
+    const campaignName = byAd ?? current;
+    if (!campaignName) {
+      unplaced += 1;
+      continue;
+    }
+    rows.push({
+      campaignName,
+      client,
+      date: e.date,
+      appointmentDate: e.appointmentDate,
+      eventId: e.eventId,
+      locationId: e.locationId,
+      contactId: e.contactId,
+      startTime: e.startTime,
+      status: e.status,
+      // Only a placed ad carries its id, so an unknown ad never moves an
+      // ad-level number.
+      adId: byAd ? e.adId : undefined,
+      attribution: byAd ? "ad" : e.adId ? "unknown_ad" : "none",
+      syncedAt,
+    });
+  }
+  return { rows, unplaced };
+}
+
+/**
+ * Each campaign's and each ad's own bookings in the last 7 days, from the
+ * placed rows, and the verdicts that read them (Muhammed, 2026-10-13).
+ *
+ * A campaign carried its client's total until then, so a client with two
+ * campaigns counted every booking twice. An ad counts only the bookings its
+ * own Meta ids bought. A campaign not in `tracked` keeps no booking numbers
+ * and is judged on cost per lead, with `untracked` saying why. Rows are
+ * changed in place.
+ */
+export function judgeWithBookings(
+  // biome-ignore lint/suspicious/noExplicitAny: rows for storage
+  campaigns: any[],
+  // biome-ignore lint/suspicious/noExplicitAny: rows for storage
+  ads: any[],
+  // biome-ignore lint/suspicious/noExplicitAny: rows for storage
+  bookingRows: any[],
+  since7: string,
+  tracked: Set<string>,
+  untracked: Map<string, string>,
+  adIds: Map<object, string[]>,
+) {
+  const byCampaign = new Map<string, { booked: number; showed: number }>();
+  const byAd = new Map<string, number>();
+  for (const b of bookingRows) {
+    if (String(b.date ?? "") < since7) continue;
+    const c = byCampaign.get(b.campaignName) ?? { booked: 0, showed: 0 };
+    c.booked += 1;
+    if (b.status === "showed") c.showed += 1;
+    byCampaign.set(b.campaignName, c);
+    if (b.adId) byAd.set(String(b.adId), (byAd.get(String(b.adId)) ?? 0) + 1);
+  }
+  const why = (name: string) =>
+    untracked.get(name) ??
+    "Judged on cost per lead only: bookings are not tracked for this campaign.";
+
+  for (const c of campaigns) {
+    const placed = tracked.has(c.campaignName)
+      ? (byCampaign.get(c.campaignName) ?? { booked: 0, showed: 0 })
+      : undefined;
+    if (placed) {
+      c.bookings7d = placed.booked;
+      c.showed7d = placed.showed;
+      c.costPerBooking =
+        placed.booked > 0 ? c.spend7d / placed.booked : undefined;
+      c.bookingRate =
+        c.leads7d > 0 ? (placed.booked / c.leads7d) * 100 : undefined;
+      c.showRate =
+        placed.booked > 0 ? (placed.showed / placed.booked) * 100 : undefined;
+    }
+    c.findings = diagnose({
+      spend: c.spend7d,
+      leads: c.leads7d,
+      cpl: c.cpl,
+      linkCtr: c.linkCtr,
+      cpm: c.cpm,
+      optInRate: c.optInRate,
+      frequency: c.frequency,
+      dayRate: c.dayRate,
+      daysLive: c.daysLive,
+      bookings: c.bookings7d,
+      bookingRate: c.bookingRate,
+      costPerBooking: c.costPerBooking,
+    });
+    // Off the board keeps its own verdict and reason.
+    if (!c.onBoard && !c.internal) continue;
+    const j = judge(
+      c.spend7d,
+      c.leads7d,
+      c.cpl,
+      c.linkCtr,
+      c.optInRate,
+      c.frequency,
+      placed?.booked,
+      placed ? undefined : why(c.campaignName),
+    );
+    c.verdict = j.verdict;
+    c.reason = j.reason;
+    c.rank = c.internal ? 60 : j.rank;
+  }
+
+  for (const a of ads) {
+    const ids = adIds.get(a) ?? [];
+    const counted = tracked.has(a.campaignName) && ids.length > 0;
+    const booked = counted
+      ? ids.reduce((n, id) => n + (byAd.get(id) ?? 0), 0)
+      : undefined;
+    // The count only feeds the verdict. It is never written onto the ad: the
+    // database mirror (cockpit_native_mirrors) owns a fixed list of ad fields
+    // and refuses a publish that changes any other one ("Untracked raw
+    // annotation changed"), which stopped every publish on 2026-10-13.
+    const j = judge(
+      a.spend,
+      a.leads,
+      a.cpl,
+      a.linkCtr,
+      a.optInRate,
+      a.frequency,
+      booked,
+      counted
+        ? undefined
+        : tracked.has(a.campaignName)
+          ? "Judged on cost per lead only: this ad has no Meta id in the tracker, so its bookings cannot be counted."
+          : why(a.campaignName),
+    );
+    a.verdict = j.verdict;
+    a.reason = j.reason;
+  }
+}
+
+/**
  * Why leads died, from the client's own GHL sub-account.
  *
  * Mahara does not use GHL's `status: "lost"` — the reason is encoded as the STAGE
@@ -574,7 +775,13 @@ export async function ghlLostLeads(
   | {
       total: number;
       reasons: { reason: string; count: number }[];
-      notes: { note: string; reason: string; adId?: string; at: string }[];
+      notes: {
+        note: string;
+        reason: string;
+        adId?: string;
+        at: string;
+        unverified?: boolean;
+      }[];
       byAd: Record<string, number>;
     }
   | undefined
@@ -637,6 +844,7 @@ export async function ghlLostLeads(
       reason: string;
       adId?: string;
       at: string;
+      unverified?: boolean;
     }[] = [];
     for (let i = 0; i < recent.length; i += 8) {
       const batch = recent.slice(i, i + 8);
@@ -654,10 +862,8 @@ export async function ghlLostLeads(
               (a: { utmAdId?: string }) => a?.utmAdId,
             );
             for (const n of ns) {
-              const text = String(n.bodyText ?? "")
-                .replace(/<[^>]+>/g, " ")
-                .replace(/\s+/g, " ")
-                .trim();
+              const cleaned = cleanLostNote(String(n.body ?? n.bodyText ?? ""));
+              const text = cleaned?.note ?? "";
               // Skip everything GHL wrote for us. Two kinds, both useless here:
               // the knowledge-base / booking-calendar note, and the "📋 Form
               // Answers" dump, which is just the qualification form echoed back
@@ -676,6 +882,7 @@ export async function ghlLostLeads(
                 reason: stageName.get(o.pipelineStageId) ?? "Unlabelled",
                 adId: attr?.utmAdId as string | undefined,
                 at: String(n.dateAdded ?? ""),
+                ...(cleaned?.unverified ? { unverified: true } : {}),
               };
             }
             return null;
@@ -700,6 +907,30 @@ export async function ghlLostLeads(
   }
 }
 
+type Verdict = { verdict: string; reason: string; rank: number };
+
+/** Cost per lead over this is very high: half again over the gate. */
+const CPL_BAD = CPL_GATE * 1.5;
+
+/**
+ * How an ad or a campaign is judged (Muhammed, 2026-10-13). Cost per lead and
+ * cost per booking are read together, and neither one decides alone. Cheap
+ * leads that do not book are not a working ad; dearer leads that book cheaply
+ * are. `booked` is the 7-day bookings; leave it undefined when bookings are
+ * not tracked, and `untracked` says why in the reason.
+ *
+ *                         lead <= $15   $15 to $22.50   over $22.50
+ *   booking <= $60        scale         scale           hold
+ *   booking $60 to $80 *  hold          hold            kill
+ *   booking over $80 *    kill          kill            kill
+ *   no booking, <= $60    hold          hold            kill
+ *
+ * * Or no booking yet after that much spend: one booking now would still cost
+ * more than the line. Zero leads after spend is a kill. Frequency, link CTR
+ * and opt-in then say what to fix on an ad that is not a kill. Without
+ * booking data the cost per lead rule below stands. Keep in step with the
+ * media buyer site's src/lib/kpi.ts (adGrid), which shows this table.
+ */
 export function judge(
   spend: number,
   leads: number,
@@ -707,7 +938,9 @@ export function judge(
   linkCtr: number | undefined,
   optInRate: number | undefined,
   freq: number | undefined,
-): { verdict: string; reason: string; rank: number } {
+  booked?: number,
+  untracked?: string,
+): Verdict {
   if (spend < 1) {
     return {
       verdict: "no delivery",
@@ -716,12 +949,157 @@ export function judge(
     };
   }
   if (leads === 0) {
+    // Bookings from earlier leads still came in: judge them, but an ad that
+    // brings no new leads is never scaled (Muhammed, 2026-10-13).
+    if (booked !== undefined && booked > 0) {
+      const cpb = spend / booked;
+      const b = `$${cpb.toFixed(0)} a booking (${booked} booking${booked === 1 ? "" : "s"})`;
+      return cpb > CPB_BAD
+        ? {
+            verdict: "kill",
+            reason: `$${spend.toFixed(0)} spent, zero leads in 7 days, and ${b} is over the $${CPB_BAD} line.`,
+            rank: 6,
+          }
+        : {
+            verdict: "hold",
+            reason: `$${spend.toFixed(0)} spent and zero leads in 7 days, but earlier leads booked: ${b}. Watch whether leads come back. Do not scale.`,
+            rank: 15,
+          };
+    }
     return {
       verdict: "kill",
       reason: `$${spend.toFixed(0)} spent, zero leads in 7 days.`,
       rank: 5,
     };
   }
+  if (booked === undefined) {
+    const j = judgeOnLeads(spend, cpl, linkCtr, optInRate, freq);
+    return untracked ? { ...j, reason: `${j.reason} ${untracked}` } : j;
+  }
+  const grid = bookingGrid(spend, leads, cpl ?? spend / leads, booked);
+  if (grid.verdict === "kill") return grid;
+  if (freq !== undefined && freq >= 2.5) {
+    return {
+      verdict: "fatiguing",
+      reason: `Frequency ${freq.toFixed(2)}: the same people keep seeing it. Refresh it before the costs move. ${grid.reason}`,
+      rank: 20,
+    };
+  }
+  // Cheap bookings: a soft hook or a low opt-in is not costing anything.
+  if (grid.verdict === "scale") return grid;
+  if (
+    linkCtr !== undefined &&
+    linkCtr >= LINK_CTR_FLOOR &&
+    optInRate !== undefined &&
+    optInRate < 2
+  ) {
+    return {
+      verdict: "below KPI",
+      reason: `People click (${linkCtr.toFixed(2)}% link CTR) but only ${optInRate.toFixed(1)}% opt in: the ad works, the landing page does not. ${grid.reason}`,
+      rank: 12,
+    };
+  }
+  if (linkCtr !== undefined && linkCtr > 0 && linkCtr < LINK_CTR_FLOOR) {
+    return {
+      verdict: "fatiguing",
+      reason: `Link CTR ${linkCtr.toFixed(2)}% is under ${LINK_CTR_FLOOR}%: the hook has stopped working. ${grid.reason}`,
+      rank: 22,
+    };
+  }
+  return grid;
+}
+
+/** The grid in `judge`, for spend that has leads and tracked bookings. */
+export function bookingGrid(
+  spend: number,
+  leads: number,
+  cpl: number,
+  booked: number,
+): Verdict {
+  const lead = `$${cpl.toFixed(2)} a lead`;
+  const band = cpl <= CPL_GATE ? "good" : cpl <= CPL_BAD ? "high" : "very high";
+  const veryHigh = `leads cost ${lead}, over $${CPL_BAD.toFixed(2)}`;
+  if (booked > 0) {
+    const cpb = spend / booked;
+    const b = `$${cpb.toFixed(0)} a booking (${booked} booking${booked === 1 ? "" : "s"})`;
+    if (cpb <= CPB_GATE) {
+      if (band === "good")
+        return {
+          verdict: "scale",
+          reason: `${b} and ${lead}, both inside the gates.`,
+          rank: 30,
+        };
+      if (band === "high")
+        return {
+          verdict: "scale",
+          reason: `${b} is inside the $${CPB_GATE} gate. Leads cost ${lead}, over the $${CPL_GATE} gate, but they book.`,
+          rank: 30,
+        };
+      return {
+        verdict: "hold",
+        reason: `${b} is inside the $${CPB_GATE} gate, but ${veryHigh}. Cheap bookings on very dear leads can be luck. Watch it, do not scale.`,
+        rank: 15,
+      };
+    }
+    if (cpb <= CPB_BAD)
+      return band === "very high"
+        ? {
+            verdict: "kill",
+            reason: `${b} is over the $${CPB_GATE} gate, and ${veryHigh}.`,
+            rank: 8,
+          }
+        : {
+            verdict: "hold",
+            reason: `${b} is over the $${CPB_GATE} gate but within $${CPB_BAD}, at ${lead}. Watch it, do not scale.`,
+            rank: 15,
+          };
+    return {
+      verdict: "kill",
+      reason: `${b} is over the $${CPB_BAD} line.${band === "good" ? ` The leads are cheap (${lead}) but they do not book.` : ` Leads cost ${lead}.`}`,
+      rank: 6,
+    };
+  }
+  // No booking yet: what it has spent is already the least one booking costs.
+  const none = `$${spend.toFixed(0)} spent, ${leads} lead${leads === 1 ? "" : "s"} at ${lead}`;
+  if (spend > CPB_BAD)
+    return {
+      verdict: "kill",
+      reason: `${none}, and no booking in 7 days.${band === "good" ? " Cheap leads that do not book." : ""}`,
+      rank: 6,
+    };
+  if (spend > CPB_GATE)
+    return band === "very high"
+      ? {
+          verdict: "kill",
+          reason: `${none}, over $${CPL_BAD.toFixed(2)}, and no booking yet.`,
+          rank: 8,
+        }
+      : {
+          verdict: "hold",
+          reason: `${none}, and no booking yet. One booking now would still cost over $${CPB_GATE}. Watch it, do not scale.`,
+          rank: 15,
+        };
+  if (band === "very high")
+    return {
+      verdict: "kill",
+      reason: `${none}, over $${CPL_BAD.toFixed(2)}, and no booking yet.`,
+      rank: 10,
+    };
+  return {
+    verdict: "hold",
+    reason: `${none}, and no booking yet. Too early to judge on bookings: the full verdict comes at $${CPB_GATE} spent.`,
+    rank: 16,
+  };
+}
+
+/** The cost per lead rule, for spend whose bookings are not tracked. */
+function judgeOnLeads(
+  spend: number,
+  cpl: number | undefined,
+  linkCtr: number | undefined,
+  optInRate: number | undefined,
+  freq: number | undefined,
+): Verdict {
   if (cpl !== undefined && cpl > CPL_GATE * 1.5) {
     return {
       verdict: "kill",
@@ -1326,7 +1704,54 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // One row per booked appointment, tied to its ad.
   // biome-ignore lint/suspicious/noExplicitAny: rows for storage
   const bookingRows: any[] = [];
-  const unattributedTaken = new Set<string>();
+  // For the verdicts that read bookings (judgeWithBookings, after placement):
+  // the campaigns whose client bookings were read, why the others were not,
+  // and each ad row's Meta ids.
+  const trackedCampaigns = new Set<string>();
+  const untrackedWhy = new Map<string, string>();
+  const adIds = new Map<object, string[]>();
+  // Where each ad ran: the native state's older history (from mid August),
+  // then this run's 30 days, the latest day winning, so a booking from an ad
+  // that has since stopped still finds its campaign.
+  const adCampaign = new Map<string, string>();
+  {
+    const latest = new Map<string, string>();
+    const note = (adId: unknown, campaign: unknown, date: unknown) => {
+      if (!adId || !campaign) return;
+      const id = String(adId);
+      const day = String(date ?? "");
+      if ((latest.get(id) ?? "") > day) return;
+      latest.set(id, day);
+      adCampaign.set(id, String(campaign));
+    };
+    const history = (await ctx.runQuery(internal.sync.adHistory, {})) as {
+      metaAdId: string;
+      campaignName: string;
+      date: string;
+    }[];
+    for (const h of history) note(h.metaAdId, h.campaignName, h.date);
+    for (const [name, a] of byCampaign)
+      for (const d of a.daily.values()) note(d.metaAdId, name, d.date);
+  }
+  // Bookings for every client that spent in the last 30 days, not only those
+  // still spending this week: a stopped campaign still bought its bookings.
+  const clientNameByKey = new Map<string, string>();
+  for (const [, a] of byCampaign) {
+    if (a.spend30 < 0.5) continue;
+    if (INTERNAL_ACCOUNTS.includes(normalize(a.account))) continue;
+    const client = clientByAccount.get(normalize(a.account));
+    if (!client) continue;
+    const key = normalize(client);
+    if (modeByClient.get(key) === "DWY") continue;
+    if (!clientNameByKey.has(key)) clientNameByKey.set(key, client);
+    if (!eventsByClient.has(key)) {
+      const cred = ghlByClient.get(key);
+      eventsByClient.set(
+        key,
+        cred ? await ghlBookingEvents(cred.loc, cred.token) : undefined,
+      );
+    }
+  }
 
   for (const [name, a] of byCampaign) {
     if (a.spend < 0.5) continue;
@@ -1408,14 +1833,21 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         ? (bookings.showed / bookings.booked) * 100
         : undefined;
 
-    const cpbJudged =
-      costPerBooking !== undefined && costPerBooking > CPB_GATE
-        ? {
-            verdict: "hold",
-            reason: `Cost per booking is $${costPerBooking.toFixed(0)} against an ${CPB_GATE} KPI — ${bookings?.booked ?? 0} bookings off ${a.leads} leads. The leads are not converting to calls.`,
-            rank: 2,
-          }
-        : undefined;
+    // Bookings judge this campaign only when they were read; missing is never
+    // zero. judgeWithBookings sets the final verdict and booking numbers.
+    const untracked = isInternal
+      ? "Judged on cost per lead only: this is Mahara's own account."
+      : !client
+        ? "Judged on cost per lead only: this campaign is not matched to a client, so its bookings cannot be read."
+        : isDwy
+          ? "Judged on cost per lead only: Done With You clients have no bookings to count."
+          : !ghlByClient.has(normalize(client))
+            ? "Judged on cost per lead only: this client has no GHL connection in the cockpit."
+            : clientEvents === undefined
+              ? "Judged on cost per lead only: this client's GHL bookings could not be read this run."
+              : undefined;
+    if (untracked) untrackedWhy.set(name, untracked);
+    else trackedCampaigns.add(name);
     const { verdict, reason, rank } = judge(
       a.spend,
       a.leads,
@@ -1540,56 +1972,33 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         task?.date_updated !== undefined
           ? Math.floor((Date.now() - Number(task.date_updated)) / 86400000)
           : undefined,
-      verdict:
-        task || isInternal ? (cpbJudged?.verdict ?? verdict) : "off board",
+      verdict: task || isInternal ? verdict : "off board",
       reason:
         task || isInternal
-          ? (cpbJudged?.reason ?? reason)
+          ? reason
           : `Spending $${a.spend.toFixed(0)} in 7 days with no task on the Ads Managment board.`,
-      rank: isInternal ? 60 : task ? Math.min(cpbJudged?.rank ?? 99, rank) : 1,
+      rank: isInternal ? 60 : task ? rank : 1,
       syncedAt: now,
     });
 
-    // Raw daily grain for this campaign, and its bookings tied to ads.
-    const adIdsHere = new Set<string>();
+    // Raw daily grain for this campaign. Its bookings are placed after the
+    // loop (placeBookings), once per client.
     // The tracker's own ad id per ad name (latest day wins), so an ad that is
     // no longer in Meta's list can still get its picture and preview.
     const adIdByName = new Map<string, { id: string; date: string }>();
+    // Every id the ad name ran under in 30 days, for its own bookings.
+    const idsByAdName = new Map<string, Set<string>>();
     for (const d of a.daily.values()) {
       if (d.metaAdId) {
-        adIdsHere.add(d.metaAdId);
         const seen = adIdByName.get(d.adName);
         if (!seen || d.date > seen.date)
           adIdByName.set(d.adName, { id: d.metaAdId, date: d.date });
+        const ids = idsByAdName.get(d.adName) ?? new Set<string>();
+        ids.add(String(d.metaAdId));
+        idsByAdName.set(d.adName, ids);
       }
       daily.push({ campaignName: name, ...d });
     }
-    if (clientEvents) {
-      // Unattributed bookings land on the first campaign we see for the
-      // client, once only — never spread across their campaigns twice.
-      for (const e of clientEvents) {
-        // An event belongs to this campaign if the ad that bought it ran
-        // here. Unattributed bookings (about 5%) are attached to the
-        // client's campaign so the campaign total stays right, but they
-        // carry no adId and therefore never distort an ad-level number.
-        const mine = e.adId
-          ? adIdsHere.has(e.adId)
-          : Boolean(client) && !unattributedTaken.has(normalize(client ?? ""));
-        if (!mine) continue;
-        bookingRows.push({
-          campaignName: name,
-          client,
-          date: e.date,
-          appointmentDate: e.appointmentDate,
-          eventId: e.eventId, locationId: e.locationId, contactId: e.contactId, startTime: e.startTime,
-          status: e.status,
-          adId: e.adId,
-          syncedAt: now,
-        });
-      }
-    }
-
-    if (client && clientEvents) unattributedTaken.add(normalize(client));
 
     for (const [adName, ad] of a.ads) {
       const adCpl = ad.leads > 0 ? ad.spend / ad.leads : undefined;
@@ -1626,8 +2035,54 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         reason: j.reason,
         syncedAt: now,
       });
+      adIds.set(ads[ads.length - 1], [...(idsByAdName.get(adName) ?? [])]);
     }
   }
+
+  // Each client's bookings, placed once (placeBookings). The client's current
+  // campaign is its on-board campaign with the most spend this week, else
+  // its campaign with the most spend in 30 days.
+  const onBoardNow = new Set(
+    campaigns.filter(c => c.onBoard).map(c => c.campaignName),
+  );
+  for (const [key, events] of eventsByClient) {
+    const client = clientNameByKey.get(key);
+    if (!events || !client) continue;
+    let current: string | undefined;
+    let best: [number, number, number] = [-1, -1, -1];
+    for (const [name, a] of byCampaign) {
+      const owner = clientByAccount.get(normalize(a.account));
+      if (!owner || normalize(owner) !== key) continue;
+      const score: [number, number, number] = [
+        onBoardNow.has(name) ? 1 : 0,
+        a.spend,
+        a.spend30,
+      ];
+      const better =
+        score[0] - best[0] || score[1] - best[1] || score[2] - best[2];
+      if (better > 0) {
+        best = score;
+        current = name;
+      }
+    }
+    const placed = placeBookings(client, events, adCampaign, current, now);
+    bookingRows.push(...placed.rows);
+    if (placed.unplaced)
+      recordLog(
+        "error",
+        `${placed.unplaced} booking(s) for ${client} have no campaign to count under and are not in the feed.`,
+      );
+  }
+
+  judgeWithBookings(
+    campaigns,
+    ads,
+    bookingRows,
+    since7,
+    trackedCampaigns,
+    untrackedWhy,
+    adIds,
+  );
 
   campaigns.sort((x, y) => x.rank - y.rank || y.spend7d - x.spend7d);
 
@@ -2201,7 +2656,9 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     };
     // Bleeding badly enough that waiting costs more than acting: keep the findings.
     const bleeding =
-      (c.cpl ?? 0) > CPL_GATE * 2 || (c.costPerBooking ?? 0) > CPB_GATE * 1.5;
+      (c.cpl ?? 0) > CPL_GATE * 2 ||
+      (c.costPerBooking ?? 0) > CPB_GATE * 1.5 ||
+      (c.bookings7d === 0 && c.spend7d > CPB_GATE * 1.5);
     c.findings = bleeding
       ? [
           {
@@ -2242,10 +2699,26 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   const onBoardNames = new Set(
     campaigns.filter(c => c.onBoard).map(c => c.campaignName),
   );
-  const dailyScoped = daily.filter(d => onBoardNames.has(d.campaignName));
-  const bookingScoped = bookingRows.filter(b =>
-    onBoardNames.has(b.campaignName),
-  );
+  // Bookings stay with the campaign that bought them, on the board or not,
+  // and that campaign's spend for the same days comes with them, so its cost
+  // per booking stays honest (Muhammed, 2026-10-12). A campaign with no spend
+  // this week never reached the loop above, so its 30 days are added here.
+  const bookedNames = new Set(bookingRows.map(b => b.campaignName));
+  const withDaily = new Set(daily.map(d => d.campaignName));
+  // biome-ignore lint/suspicious/noExplicitAny: rows for storage
+  const bookedDaily: any[] = [];
+  for (const [name, a] of byCampaign) {
+    if (!bookedNames.has(name) || withDaily.has(name)) continue;
+    for (const d of a.daily.values())
+      bookedDaily.push({ campaignName: name, ...d });
+  }
+  const dailyScoped = [
+    ...daily.filter(
+      d => onBoardNames.has(d.campaignName) || bookedNames.has(d.campaignName),
+    ),
+    ...bookedDaily,
+  ];
+  const bookingScoped = bookingRows;
   await replaceGrainForSync(ctx, {
     campaignCount: campaigns.length,
     since: since30,

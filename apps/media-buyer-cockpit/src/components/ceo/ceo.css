@@ -126,11 +126,9 @@
   display: none;
 }
 
-/* Tables inside cards keep a thin, quiet scrollbar so wide rosters stay discoverable. */
-.ceo-root .ceo-table-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: var(--ceo-grid) transparent;
-}
+/* Tables inside cards keep the cockpit's thin, quiet scrollbar (index.css)
+   so wide rosters stay discoverable. Setting scrollbar-width or
+   scrollbar-color here would swap it back to the browser's own bar. */
 
 @media (prefers-reduced-motion: reduce) {
   .ceo-root .ceo-spin {

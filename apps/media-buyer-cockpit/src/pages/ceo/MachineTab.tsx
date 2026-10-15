@@ -35,6 +35,8 @@ import {
   jobName,
   jobState,
   type MachineState as State,
+  sectionsFailing,
+  sectionsFailingText,
   sourceLabel,
   syncEvery,
   syncState,
@@ -119,7 +121,7 @@ export function MachineTab({ sections, now }: CeoTabProps) {
         notes={warn}
         order={0}
       >
-        {p => <Status m={p} now={now} />}
+        {p => <Status m={p} now={now} failing={sectionsFailing(sections)} />}
       </SectionCard>
 
       {payload ? (
@@ -168,13 +170,24 @@ export function MachineTab({ sections, now }: CeoTabProps) {
 
 // --- Status ---
 
-function Status({ m, now }: { m: MachinePayload; now: number }) {
+function Status({
+  m,
+  now,
+  failing,
+}: {
+  m: MachinePayload;
+  now: number;
+  /** CEO sections whose last refresh failed (sectionsFailing). */
+  failing: { key: SectionKey; label: string }[];
+}) {
   const feedsBad = m.feeds.filter(f => !f.ok).length;
   const everyMin = syncEvery(m);
   const sync = syncState(m.syncAgeMin, everyMin);
   const ok: State = { tone: "good", label: "OK" };
 
   const problems: string[] = [];
+  const sectionsLine = sectionsFailingText(failing);
+  if (sectionsLine) problems.push(sectionsLine);
   if (m.failingJobs) problems.push(`${plural(m.failingJobs, "job")} failing`);
   if (m.staleJobs) problems.push(`${plural(m.staleJobs, "job")} overdue`);
   if (m.failingSources)

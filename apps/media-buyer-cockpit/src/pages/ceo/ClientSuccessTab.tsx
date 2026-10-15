@@ -8,7 +8,13 @@ import {
   ShieldCheck,
   UserMinus,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 import { BarList } from "@/components/ceo/BarList";
 import { type Column, DataTable } from "@/components/ceo/DataTable";
 import { EmptyState } from "@/components/ceo/EmptyState";
@@ -22,6 +28,7 @@ import {
   isNum,
   kuwaitDay,
   money,
+  month,
   pct,
   plural,
   relative,
@@ -43,6 +50,14 @@ import {
   StatusDot,
   type StatusTone,
 } from "@/components/ceo/StatusChip";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
+import {
+  addDays,
+  type TabWindow,
+  tabBounds,
+  tabWindow,
+} from "@/components/ceo/tabWindow";
+import { useTimeframe } from "@/components/ceo/timeframe";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import { CPL_GATE } from "@/lib/kpi";
@@ -61,6 +76,28 @@ import type {
   TermClient,
 } from "@/types/ceo/payloads";
 import type { CeoTabProps } from "./types";
+import {
+  clientNumbers,
+  extensionsIn,
+  registerIn,
+  seenIn,
+} from "./windowedNumbers";
+
+/**
+ * The window the tab's timeframe bar picked (A127/A170). Every number with a
+ * time dimension on this tab reads it; the rules that are not windows (silent
+ * over 7 days, payment due in 7 days, the 90 day term, portal session expiry)
+ * keep their own wording.
+ */
+type ClientWindowState = {
+  w: TabWindow | null;
+  dailyFrom: string | null | undefined;
+  today: string;
+  /** The newest complete day the bar counts to. */
+  last: string;
+};
+const ClientWindow = createContext<ClientWindowState | null>(null);
+const kuwaitDayStart = (day: string) => Date.parse(`${day}T00:00:00+03:00`);
 
 // --- Clients ---
 
@@ -359,6 +396,33 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
   const portal = sections.portal;
   const today = day ?? kuwaitDay(now);
   const routed = useMemo(() => routeNotes(payload?.notes), [payload]);
+  // One bar for the tab (A127/A170): days run to yesterday (this month to
+  // today), and the 7-day preset keeps the server's own 7-day columns.
+  const tf = useTimeframe("7d");
+  const last = addDays(today, -1);
+  const first = payload?.dailyFrom ?? null;
+  // "This month" is the server's own month to date, through today, so it
+  // lines up with the extension form's month (tabBounds).
+  const bounds = useMemo(() => tabBounds(tf, today, first), [tf, today, first]);
+  const w = useMemo(() => tabWindow(tf.range, bounds), [tf.range, bounds]);
+  const windowState = useMemo<ClientWindowState>(
+    () => ({ w, dailyFrom: payload?.dailyFrom, today, last }),
+    [w, payload?.dailyFrom, today, last],
+  );
+  const bar = (
+    <TimeframeBar
+      tf={tf}
+      bounds={bounds}
+      ariaLabel="Timeframe for every dated number on Client success"
+      first={first}
+      last={last}
+      note={
+        payload && payload.dailyFrom === undefined && tf.range !== "7d"
+          ? "Per-client numbers are not kept per day yet, so other windows show n/a until the next refresh."
+          : "Silent over 7 days, payments due in 7 days, the 90 day term and portal session expiry are rules, not windows, so they keep their wording."
+      }
+    />
+  );
 
   const portalCard = (
     <SectionCard
@@ -395,115 +459,121 @@ export function ClientSuccessTab({ sections, now, day }: CeoTabProps) {
   const churnHead = churnHeadline(payload);
 
   return (
-    <div className="grid gap-4 lg:gap-6">
-      <SectionCard
-        kicker="Right now"
-        title="Client book"
-        description={`${plural(payload.counts.total, "client")} on the roster`}
-        section={clients}
-        notes={cardNotes(routed, "book")}
-        order={0}
-      >
-        {p => <Book payload={p} high={high} medium={medium} />}
-      </SectionCard>
+    <ClientWindow.Provider value={windowState}>
+      <div className="grid gap-4 lg:gap-6">
+        {bar}
+        <SectionCard
+          kicker="Right now"
+          title="Client book"
+          description={`${plural(payload.counts.total, "client")} on the roster`}
+          section={clients}
+          notes={cardNotes(routed, "book")}
+          order={0}
+        >
+          {p => <Book payload={p} high={high} medium={medium} />}
+        </SectionCard>
 
-      <SectionCard
-        kicker="Right now"
-        title="Clients that need you"
-        section={clients}
-        notes={cardNotes(routed, "risk")}
-        order={1}
-      >
-        {p => <AtRisk rows={p.rows} />}
-      </SectionCard>
+        <SectionCard
+          kicker="Right now"
+          title="Clients that need you"
+          section={clients}
+          notes={cardNotes(routed, "risk")}
+          order={1}
+        >
+          {p => <AtRisk rows={p.rows} />}
+        </SectionCard>
 
-      <SectionCard
-        kicker="Counted to today"
-        title="Silence and last contact"
-        description="Active and onboarding clients"
-        section={clients}
-        notes={cardNotes(routed, "silence")}
-        order={2}
-      >
-        {p => <Silence payload={p} />}
-      </SectionCard>
+        <SectionCard
+          kicker="Counted to today"
+          title="Silence and last contact"
+          description="Active and onboarding clients"
+          section={clients}
+          notes={cardNotes(routed, "silence")}
+          order={2}
+        >
+          {p => <Silence payload={p} />}
+        </SectionCard>
 
-      <SectionCard
-        kicker="From today"
-        title="Payments on the card"
-        description="The next payment date on the card, not a payment record"
-        section={clients}
-        notes={cardNotes(routed, "payments")}
-        order={3}
-      >
-        {p => <Payments payload={p} today={today} />}
-      </SectionCard>
+        <SectionCard
+          kicker="From today"
+          title="Payments on the card"
+          description="The next payment date on the card, not a payment record"
+          section={clients}
+          notes={cardNotes(routed, "payments")}
+          order={3}
+        >
+          {p => <Payments payload={p} today={today} />}
+        </SectionCard>
 
-      <SectionCard
-        kicker="Right now"
-        title="Onboarding pipeline"
-        section={clients}
-        notes={cardNotes(routed, "onboarding")}
-        order={4}
-      >
-        {p => <Onboarding payload={p} />}
-      </SectionCard>
+        <SectionCard
+          kicker="Right now"
+          title="Onboarding pipeline"
+          section={clients}
+          notes={cardNotes(routed, "onboarding")}
+          order={4}
+        >
+          {p => <Onboarding payload={p} />}
+        </SectionCard>
 
-      <SectionCard
-        kicker="Month to date"
-        title="Extensions and launches"
-        description="From the Client Extension Form and the card's dates, first launch only"
-        section={clients}
-        notes={cardNotes(routed, "extensions")}
-        order={5}
-      >
-        {p => <ExtensionsLaunches payload={p} />}
-      </SectionCard>
+        <SectionCard
+          kicker={w ? w.label : "Month to date"}
+          title="Extensions and launches"
+          description="From the Client Extension Form and the card's dates, first launch only"
+          section={clients}
+          notes={cardNotes(routed, "extensions")}
+          order={5}
+        >
+          {p => <ExtensionsLaunches payload={p} />}
+        </SectionCard>
 
-      <SectionCard
-        kicker="Launched clients"
-        title="Churn and renewals"
-        description={`${churnHead.month ? `${churnHead.month} so far` : "This month"}, and each launched client's 90 day term`}
-        section={clients}
-        notes={[...(payload.churn?.notes ?? []), ...cardNotes(routed, "terms")]}
-        actions={
-          churnHead.churn && churnHead.partial ? (
-            <StatusChip
-              tone="warning"
-              label="Partial month"
-              hint="The cockpit's own daily history does not cover the whole month yet, so a client that stopped earlier in the month can be missing. The notes under this card say which days."
-            />
-          ) : undefined
-        }
-        order={5}
-      >
-        {p => <ChurnRenewals payload={p} today={today} />}
-      </SectionCard>
+        <SectionCard
+          kicker="Launched clients"
+          title="Churn and renewals"
+          description={`${churnHead.month ? `${churnHead.month} so far` : "This month"}, and each launched client's 90 day term`}
+          section={clients}
+          notes={[
+            ...(payload.churn?.notes ?? []),
+            ...cardNotes(routed, "terms"),
+          ]}
+          actions={
+            churnHead.churn && churnHead.partial ? (
+              <StatusChip
+                tone="warning"
+                label="Partial month"
+                hint="The cockpit's own daily history does not cover the whole month yet, so a client that stopped earlier in the month can be missing. The notes under this card say which days."
+              />
+            ) : undefined
+          }
+          order={5}
+        >
+          {p => <ChurnRenewals payload={p} today={today} />}
+        </SectionCard>
 
-      <SectionCard
-        kicker="Right now"
-        title="Stopped, paused and cancellation signals"
-        section={clients}
-        notes={cardNotes(routed, "churn")}
-        order={5}
-      >
-        {p => <Churn payload={p} />}
-      </SectionCard>
+        <SectionCard
+          kicker="Right now"
+          title="Stopped, paused and cancellation signals"
+          section={clients}
+          notes={cardNotes(routed, "churn")}
+          order={5}
+        >
+          {p => <Churn payload={p} />}
+        </SectionCard>
 
-      <SectionCard
-        kicker="Right now"
-        title="All clients"
-        section={clients}
-        notes={cardNotes(routed, "roster")}
-        order={6}
-      >
-        {p => <Roster payload={p} now={now} today={today} />}
-      </SectionCard>
+        <SectionCard
+          kicker="Right now"
+          title="All clients"
+          section={clients}
+          notes={cardNotes(routed, "roster")}
+          order={6}
+        >
+          {p => <Roster payload={p} now={now} today={today} />}
+        </SectionCard>
 
-      {portalCard}
+        {portalCard}
 
-      <NotMeasured order={8} />
-    </div>
+        <NotMeasured order={8} />
+      </div>
+    </ClientWindow.Provider>
   );
 }
 
@@ -661,7 +731,10 @@ function RiskCard({ row }: { row: ClientRow }) {
   const meta = [row.stage, row.service, row.csm ? `CSM ${row.csm}` : null]
     .filter(Boolean)
     .join(" · ");
-  const cplTone = exception(gateTone(row.cpl7d, CPL_GATE));
+  const win = useContext(ClientWindow);
+  const n = clientNumbers(row, win?.w ?? null, win?.dailyFrom, HINT.noCampaign);
+  const short = win?.w?.short ?? "7d";
+  const cplTone = exception(gateTone(n.cpl, CPL_GATE));
   return (
     <li className="flex min-w-0 flex-col rounded-xl bg-muted/40 p-4">
       <div className="flex min-w-0 items-start justify-between gap-3">
@@ -705,14 +778,14 @@ function RiskCard({ row }: { row: ClientRow }) {
           toneLabel="Long silence"
         />
         <Mini
-          label="Leads 7d"
-          value={isNum(row.leads7d) ? count(row.leads7d) : null}
-          naHint={HINT.noCampaign}
+          label={`Leads ${short}`}
+          value={isNum(n.leads) ? count(n.leads) : null}
+          naHint={n.why ?? HINT.noCampaign}
         />
         <Mini
-          label="CPL 7d"
-          value={isNum(row.cpl7d) ? money(row.cpl7d) : null}
-          naHint={cplHint(row)}
+          label={`CPL ${short}`}
+          value={isNum(n.cpl) ? money(n.cpl) : null}
+          naHint={n.from === "fixed7" ? cplHint(row) : (n.why ?? HINT.noLeads)}
           tone={cplTone}
           toneLabel={cplTone ? gateLabel(cplTone, CPL_GATE) : undefined}
         />
@@ -786,14 +859,21 @@ const LAUNCH_LIST_MAX = 10;
  * Weeks of extension granted on the Client Extension Form, who is covered
  * today, time from the card's creation to its Launch Date, and the average
  * retainer, with the one write this tab makes: the current extension onto
- * the ClickUp card, by hand.
+ * the ClickUp card. The hourly job (mahara-ceo-extensions-auto, :47) keeps
+ * the field current from the extension form when CEO_EXTENSIONS_APPLY is on
+ * (A120/A136); the button writes it now. The line beside the button is the
+ * worker's own sentence about that job, so it says when writes are off.
  */
 function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
   const ext = payload.extensions ?? null;
   const launch = payload.launch ?? null;
   const retainer = payload.retainer ?? null;
+  // Live cover is a state today, not a window: it reads the server's list.
   const live = useMemo(() => (ext?.perClient ?? []).filter(c => c.live), [ext]);
   const lastMonth = ext ? lastMonthOf(ext) : null;
+  const win = useContext(ClientWindow);
+  const inWin = extensionsIn(ext, win?.w ?? null, win?.today ?? "");
+  const windowWords = win?.w ? win.w.label : "this month";
   const nextToEnd = live.length
     ? [...live].sort((a, b) => a.until.localeCompare(b.until))[0].until
     : null;
@@ -813,15 +893,17 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
       <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-4">
         <StatTile
           variant="plain"
-          label="Weeks granted this month"
-          value={ext ? count(ext.totalWeeks) : null}
-          naHint="The Client Extension Form was not read this run"
-          sub={
-            ext
-              ? `${plural(ext.grants, "grant")}${lastMonth ? ` · last month ${plural(lastMonth.totalWeeks, "week")}` : ""}`
-              : undefined
+          label="Weeks granted"
+          value={isNum(inWin.totalWeeks) ? count(inWin.totalWeeks) : null}
+          naHint={
+            inWin.why ?? "The Client Extension Form was not read this run"
           }
-          hint="Weeks of billing extension granted on the Client Extension Form from the 1st of the month to today, dated by the day the form was submitted."
+          sub={
+            isNum(inWin.grants)
+              ? `${plural(inWin.grants, "grant")}, ${windowWords}${lastMonth && win?.w?.range === "mtd" ? ` · last month ${plural(lastMonth.totalWeeks, "week")}` : ""}`
+              : windowWords
+          }
+          hint="Weeks of billing extension granted on the Client Extension Form in the timeframe above, dated by the day the form was submitted."
         />
         <StatTile
           variant="plain"
@@ -880,14 +962,21 @@ function ExtensionsLaunches({ payload }: { payload: ClientsPayload }) {
           title="Extensions per client"
           sub={
             ext
-              ? `${date(ext.from)} to ${date(ext.to)}, plus any cover still running`
+              ? `${win?.w ? win.w.label : `${date(ext.from)} to ${date(ext.to)}`}, plus any cover still running`
               : "The form was not read this run"
           }
         >
-          {ext ? (
-            <ExtensionList rows={ext.perClient} />
-          ) : (
+          {!ext ? (
             <EmptyState icon={CalendarSync} title="Not read this run" compact />
+          ) : inWin.why ? (
+            <EmptyState
+              icon={CalendarSync}
+              title="Not kept per day yet"
+              text={`Each client's grants arrive per day with the next refresh. Until then the list covers only the form's own month, ${date(ext.from)} to ${date(ext.to)}: pick This month above.`}
+              compact
+            />
+          ) : (
+            <ExtensionList rows={inWin.perClient} />
           )}
         </ListBlock>
         <ListBlock
@@ -938,8 +1027,8 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
     return (
       <EmptyState
         icon={CalendarSync}
-        title="No extension this month and none running"
-        text="Nothing was granted on the Client Extension Form in the window."
+        title="No extension in these days and none running"
+        text="Nothing was granted on the Client Extension Form in the timeframe."
         compact
       />
     );
@@ -966,8 +1055,8 @@ function ExtensionList({ rows }: { rows: Extensions["perClient"] }) {
             <div className="flex flex-none items-center gap-3 text-xs tabular-nums">
               <span className="text-foreground">
                 {c.weeks > 0
-                  ? `${plural(c.weeks, "week")} this month`
-                  : "None this month"}
+                  ? `${plural(c.weeks, "week")} in these days`
+                  : "None in these days"}
               </span>
               <span className="text-muted-foreground">
                 Until {date(c.until)}
@@ -1081,7 +1170,11 @@ function Roster({
     if (filter === "risk") return atRisk;
     return payload.rows.filter(r => r.bucket === filter);
   }, [payload.rows, atRisk, filter]);
-  const columns = useMemo(() => rosterColumns(now, today), [now, today]);
+  const win = useContext(ClientWindow);
+  const columns = useMemo(
+    () => rosterColumns(now, today, win),
+    [now, today, win],
+  );
 
   // A chip with nothing behind it is noise; the chosen one stays so it can be undone.
   const options: FilterOption<RosterFilter>[] = (
@@ -1139,7 +1232,14 @@ function NumberWithDot({
   );
 }
 
-function rosterColumns(now: number, today: string): Column<ClientRow>[] {
+function rosterColumns(
+  now: number,
+  today: string,
+  win: ClientWindowState | null,
+): Column<ClientRow>[] {
+  const short = win?.w?.short ?? "7d";
+  const nOf = (r: ClientRow) =>
+    clientNumbers(r, win?.w ?? null, win?.dailyFrom, HINT.noCampaign);
   return [
     {
       key: "name",
@@ -1240,40 +1340,54 @@ function rosterColumns(now: number, today: string): Column<ClientRow>[] {
     },
     {
       key: "leads",
-      header: "Leads 7d",
+      header: `Leads ${short}`,
       numeric: true,
-      cell: r =>
-        isNum(r.leads7d) ? count(r.leads7d) : <Na hint={HINT.noCampaign} />,
-      sortValue: r => r.leads7d,
+      cell: r => {
+        const n = nOf(r);
+        return isNum(n.leads) ? (
+          count(n.leads)
+        ) : (
+          <Na hint={n.why ?? HINT.noCampaign} />
+        );
+      },
+      sortValue: r => nOf(r).leads,
     },
     {
       key: "cpl",
-      header: "CPL 7d",
+      header: `CPL ${short}`,
       numeric: true,
       cell: r => {
-        if (!isNum(r.cpl7d)) return <Na hint={cplHint(r)} />;
-        const tone = gateTone(r.cpl7d, CPL_GATE);
+        const n = nOf(r);
+        if (!isNum(n.cpl))
+          return (
+            <Na
+              hint={n.from === "fixed7" ? cplHint(r) : (n.why ?? HINT.noLeads)}
+            />
+          );
+        const tone = gateTone(n.cpl, CPL_GATE);
         return (
           <NumberWithDot
-            text={money(r.cpl7d)}
+            text={money(n.cpl)}
             tone={tone === "good" || tone === "neutral" ? null : tone}
             label={gateLabel(tone, CPL_GATE)}
           />
         );
       },
-      sortValue: r => r.cpl7d,
+      sortValue: r => nOf(r).cpl,
     },
     {
       key: "bookings",
-      header: "Bookings 7d",
+      header: `Bookings ${short}`,
       numeric: true,
-      cell: r =>
-        isNum(r.bookings7d) ? (
-          count(r.bookings7d)
+      cell: r => {
+        const n = nOf(r);
+        return isNum(n.bookings) ? (
+          count(n.bookings)
         ) : (
-          <Na hint={HINT.noCampaign} />
-        ),
-      sortValue: r => r.bookings7d,
+          <Na hint={n.why ?? HINT.noCampaign} />
+        );
+      },
+      sortValue: r => nOf(r).bookings,
     },
     {
       key: "pulse",
@@ -1364,6 +1478,34 @@ function Portal({
   now: number;
 }) {
   const { crm } = payload;
+  // Seen follows the tab's timeframe: the 7-day preset is the portal's own
+  // list; a longer window reads each client card's last visit (A127).
+  const win = useContext(ClientWindow);
+  const w = win?.w ?? null;
+  const own = !w || w.range === "7d";
+  const seenWindow =
+    !own && rows && win ? seenIn(rows, w, win.last, kuwaitDayStart) : null;
+  const seenList: PortalPayload["seen7d"] = own
+    ? payload.seen7d
+    : seenWindow && !seenWindow.why && rows && w
+      ? rows
+          .filter(
+            r =>
+              isNum(r.portalLastSeenAt) &&
+              r.portalLastSeenAt >= kuwaitDayStart(w.from),
+          )
+          .map(r => ({
+            client: r.name,
+            lastSeenAt: r.portalLastSeenAt as number,
+          }))
+          .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+      : [];
+  const seenWhy = own
+    ? null
+    : !rows
+      ? "The client roster was not read, so visits per client cannot be counted for this window."
+      : (seenWindow?.why ?? null);
+  const seenLabel = own ? "Seen in 7 days" : `Seen, ${w?.short ?? ""}`;
   return (
     <div className="@container">
       <div className="grid gap-6 @4xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] @4xl:gap-8">
@@ -1401,9 +1543,14 @@ function Portal({
             />
             <StatTile
               variant="plain"
-              label="Seen in 7 days"
-              value={count(payload.seen7d.length)}
-              sub="Clients with a recent visit"
+              label={seenLabel}
+              value={seenWhy ? null : count(seenList.length)}
+              naHint={seenWhy ?? undefined}
+              sub={
+                own
+                  ? "Clients with a recent visit"
+                  : `Clients whose last visit is on or after ${date(w?.from ?? "")}`
+              }
             />
             <StatTile
               variant="plain"
@@ -1420,7 +1567,12 @@ function Portal({
           </div>
           <PortalTrust payload={payload} now={now} />
         </div>
-        <SeenList seen={payload.seen7d} now={now} />
+        <SeenList
+          seen={seenList}
+          now={now}
+          title={own ? "Seen in the last 7 days" : `Seen, ${w?.label ?? ""}`}
+          why={seenWhy}
+        />
       </div>
       {rows ? <PortalRoster rows={rows} now={now} /> : null}
     </div>
@@ -1526,26 +1678,36 @@ const SEEN_START = 8;
 function SeenList({
   seen,
   now,
+  title,
+  why,
 }: {
   seen: PortalPayload["seen7d"];
   now: number;
+  title: string;
+  /** Why the window cannot be counted, when it cannot. */
+  why: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const rows = expanded ? seen : seen.slice(0, SEEN_START);
   return (
     <div className="min-w-0">
       <div className="mb-2 flex items-baseline justify-between gap-3">
-        <p className="text-sm font-medium text-foreground">
-          Seen in the last 7 days
-        </p>
+        <p className="text-sm font-medium text-foreground">{title}</p>
         <p className="text-xs tabular-nums text-muted-foreground">
-          {plural(seen.length, "client")}
+          {why ? "n/a" : plural(seen.length, "client")}
         </p>
       </div>
-      {seen.length === 0 ? (
+      {why ? (
         <EmptyState
           icon={MonitorSmartphone}
-          title="No client opened the portal in 7 days"
+          title="Not kept per day"
+          text={why}
+          compact
+        />
+      ) : seen.length === 0 ? (
+        <EmptyState
+          icon={MonitorSmartphone}
+          title="No client opened the portal in these days"
           compact
         />
       ) : (
@@ -2373,6 +2535,36 @@ function ChurnRenewals({
 }) {
   const head = churnHeadline(payload);
   const churn = head.churn;
+  // A078 + A127: the register's churn for every month the timeframe touches.
+  const win = useContext(ClientWindow);
+  const reg = registerIn(payload.churnRegister, win?.w ?? null);
+  const regMonths = reg
+    ? reg.months.length === 1
+      ? month(reg.months[0], { long: true })
+      : `${month(reg.months[0])} to ${month(reg.months[reg.months.length - 1])}`
+    : null;
+  const regTile = (
+    <StatTile
+      variant="plain"
+      label="Churn, register"
+      value={reg && reg.rate !== null ? pct(reg.rate) : null}
+      naHint={
+        !reg
+          ? payload.churnRegister === undefined
+            ? "The churn register is not on this refresh yet."
+            : "The churn register was not read this refresh."
+          : reg.starts === null
+            ? `${regMonths} has no start count in the churn register; type it on the client success Churn page.`
+            : undefined
+      }
+      sub={
+        reg
+          ? `${reg.starts !== null ? `${count(reg.churned)} lost of ${count(reg.starts)} at the start` : `${count(reg.lostNoStart)} lost`}, ${regMonths}${reg.starts !== null && reg.lostNoStart ? ` · ${count(reg.lostNoStart)} more lost in a month with no start count, not in the rate` : ""}${reg.missing.length ? ` · ${reg.missing.map(m => month(m)).join(", ")} not logged` : ""}`
+          : undefined
+      }
+      hint="From the churn register on the client success Churn page, by month: clients lost before day 90 from launch, over the clients active at the start of each month the timeframe touches that has a start count (the Churn page's own rolling rule). Losses in a month with no start count are said apart, not in the rate. The cards below are the roster's own history for this month."
+    />
+  );
   const churnCols = useMemo(() => churnColumns(today, true), [today]);
   const lostCols = useMemo(() => churnColumns(today, false), [today]);
   const dueCols = useMemo(() => termColumns(today, "due"), [today]);
@@ -2383,6 +2575,9 @@ function ChurnRenewals({
     return (
       <div className="space-y-4">
         <ChurnRule />
+        <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
+          {regTile}
+        </div>
         <EmptyState
           icon={UserMinus}
           title="No churn reading yet"
@@ -2406,7 +2601,8 @@ function ChurnRenewals({
     <div className="@container">
       <ChurnRule />
 
-      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3 @4xl:grid-cols-5">
+      <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
+        {regTile}
         <StatTile
           variant="plain"
           label={head.label}

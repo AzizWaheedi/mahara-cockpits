@@ -6,11 +6,23 @@
  * pipeline (not GHL's lost status), and the biggest stage by far is
  * "Other (write why in the notes section)" — so the stage breakdown alone hides
  * the real story. The notes are the story, which is why they are shown in full.
+ * The power dialer's system lines are stripped (convex/lostNotes.ts), so a note
+ * is only what the agent typed; the sync does it, and so does this view for
+ * notes stored before that. "No answer" on an unreachable lead is not a
+ * reason, so those are counted on one line instead of listed.
  */
+import { cleanLostNote } from "../../convex/lostNotes";
+
 type Lost = {
   total: number;
   reasons: { reason: string; count: number }[];
-  notes: { note: string; reason: string; adId?: string; at: string }[];
+  notes: {
+    note: string;
+    reason: string;
+    adId?: string;
+    at: string;
+    unverified?: boolean;
+  }[];
   byAd: Record<string, number>;
 };
 
@@ -25,6 +37,25 @@ export function LostLeads({
   const top = lost.reasons[0];
   const vague = /other|unsure|unlabelled/i.test(top?.reason ?? "");
   const worstAd = Object.entries(lost.byAd).sort((a, b) => b[1] - a[1])[0];
+  type Note = Lost["notes"][number];
+  const notes = lost.notes.flatMap((n): Note[] => {
+    const c = cleanLostNote(n.note);
+    return c
+      ? [{ ...n, note: c.note, unverified: n.unverified || c.unverified }]
+      : [];
+  });
+  const isUnreachable = (n: Note) => /unreachable/i.test(n.reason);
+  const said = notes.filter(n => !isUnreachable(n)).slice(0, 8);
+  const unreachable = notes.filter(isUnreachable);
+  const unreachableWords = [
+    ...unreachable
+      .reduce((m, n) => {
+        const k = n.note.length > 40 ? `${n.note.slice(0, 40)}…` : n.note;
+        return m.set(k, (m.get(k) ?? 0) + 1);
+      }, new Map<string, number>())
+      .entries(),
+  ].sort((a, b) => b[1] - a[1]);
+  const unverified = [...said, ...unreachable].filter(n => n.unverified).length;
 
   return (
     <div className="mt-4 rounded-xl bg-muted/40 p-3 sm:p-4">
@@ -62,12 +93,12 @@ export function LostLeads({
         </div>
       )}
 
-      {lost.notes.length > 0 && (
+      {said.length > 0 && (
         <div className="mt-3 space-y-1.5">
           <div className="text-xs font-semibold text-muted-foreground">
             What the team actually wrote
           </div>
-          {lost.notes.slice(0, 8).map(n => (
+          {said.map(n => (
             <div key={n.at + n.note} className="border-b pb-1.5 last:border-0">
               <div className="text-sm" dir="auto">
                 {n.note}
@@ -81,6 +112,28 @@ export function LostLeads({
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {unreachable.length > 0 && (
+        <div className="mt-2 text-xs text-muted-foreground">
+          <span className="font-semibold">
+            {unreachable.length} recent leads were unreachable.
+          </span>{" "}
+          The agents logged:{" "}
+          {unreachableWords.map(([w, c], i) => (
+            <span key={w}>
+              {i > 0 && " · "}
+              <span dir="auto">{w}</span> {c}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {unverified > 0 && (
+        <div className="mt-2 text-xs text-muted-foreground">
+          {unverified} of these notes were logged by the agent without a matched
+          Maqsam call.
         </div>
       )}
     </div>

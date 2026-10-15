@@ -330,7 +330,7 @@ class S4OneOutageOneMessage(unittest.TestCase):
             b.result = fail("late")
         h.scan()
         self.assertEqual(len(h.posted), 4)
-        self.assertIn("3 more problem(s)", h.posted[-1])
+        self.assertTrue(h.posted[-1].startswith("*3 more problems opened in the same scan:*"))
         self.assertTrue(all(i.get("alerted_at") for i in h.store.open.values()))
 
 

@@ -24,9 +24,9 @@ import { cn } from "@/lib/utils";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
-const SIDEBAR_WIDTH = "16rem";
+const SIDEBAR_WIDTH = "14rem";
 const SIDEBAR_WIDTH_MOBILE = "100vw";
-const SIDEBAR_WIDTH_ICON = "3rem";
+const SIDEBAR_WIDTH_ICON = "4rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 
 type SidebarContextProps = {
@@ -75,11 +75,28 @@ const SidebarProvider = React.forwardRef<
 
     // This is the internal state of the sidebar.
     // We use openProp and setOpenProp for control from outside the component.
-    const [_open, _setOpen] = React.useState(defaultOpen);
+    const [_open, _setOpen] = React.useState(() => {
+      try {
+        return (
+          localStorage.getItem("mahara-csm-sidebar") !== "collapsed" &&
+          defaultOpen
+        );
+      } catch {
+        return defaultOpen;
+      }
+    });
     const open = openProp ?? _open;
     const setOpen = React.useCallback(
       (value: boolean | ((value: boolean) => boolean)) => {
         const openState = typeof value === "function" ? value(open) : value;
+        try {
+          localStorage.setItem(
+            "mahara-csm-sidebar",
+            openState ? "expanded" : "collapsed",
+          );
+        } catch {
+          /* Storage may be disabled. */
+        }
         if (setOpenProp) {
           setOpenProp(openState);
         } else {
@@ -232,18 +249,29 @@ const Sidebar = React.forwardRef<
         {/* This is what handles the sidebar gap on desktop */}
         <div
           className={cn(
-            "relative bg-transparent transition-[width] duration-200 ease-linear",
+            "relative bg-transparent",
             "group-data-[collapsible=offcanvas]:w-0",
             "group-data-[side=right]:rotate-180",
             variant === "floating" || variant === "inset"
               ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_theme(spacing.4))]"
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon)",
           )}
-          style={{ width: "var(--sidebar-width)" }}
+          style={{
+            width:
+              state === "collapsed"
+                ? collapsible === "icon"
+                  ? variant === "floating" || variant === "inset"
+                    ? "calc(var(--sidebar-width-icon) + 1rem)"
+                    : "var(--sidebar-width-icon)"
+                  : 0
+                : variant === "floating" || variant === "inset"
+                  ? "calc(var(--sidebar-width) + 1rem)"
+                  : "var(--sidebar-width)",
+          }}
         />
         <div
           className={cn(
-            "fixed inset-y-0 z-10 hidden h-svh transition-[left,right,width] duration-200 ease-linear lg:flex",
+            "fixed inset-y-0 z-10 hidden h-svh transition-[left,right,width] duration-150 ease-[cubic-bezier(.4,0,.2,1)] motion-reduce:transition-none lg:flex",
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
               : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
@@ -252,12 +280,21 @@ const Sidebar = React.forwardRef<
               : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
             className,
           )}
-          style={{ width: "var(--sidebar-width)" }}
+          style={{
+            width:
+              state === "collapsed" && collapsible === "icon"
+                ? variant === "floating" || variant === "inset"
+                  ? "calc(var(--sidebar-width-icon) + 1rem)"
+                  : "var(--sidebar-width-icon)"
+                : variant === "floating" || variant === "inset"
+                  ? "calc(var(--sidebar-width) + 1rem)"
+                  : "var(--sidebar-width)",
+          }}
           {...props}
         >
           <div
             data-sidebar="sidebar"
-            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow"
+            className="flex h-full w-full flex-col bg-sidebar/95 group-data-[variant=floating]:rounded-2xl group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border/70 group-data-[variant=floating]:shadow-lg group-data-[variant=floating]:shadow-black/5 group-data-[variant=floating]:backdrop-blur-md overflow-hidden"
           >
             {children}
           </div>
@@ -323,15 +360,17 @@ const SidebarRail = React.forwardRef<
 });
 SidebarRail.displayName = "SidebarRail";
 
+// A div, not a <main>: the layout puts its own <main> inside, and one page
+// has one main (the touch rules in index.css key off it).
 const SidebarInset = React.forwardRef<
   HTMLDivElement,
-  React.ComponentProps<"main">
+  React.ComponentProps<"div">
 >(({ className, ...props }, ref) => {
   return (
-    <main
+    <div
       ref={ref}
       className={cn(
-        "relative flex w-full flex-1 flex-col bg-background",
+        "relative flex w-full min-w-0 flex-1 flex-col bg-background",
         "lg:peer-data-[variant=inset]:m-2 lg:peer-data-[state=collapsed]:peer-data-[variant=inset]:ml-2 lg:peer-data-[variant=inset]:ml-0 lg:peer-data-[variant=inset]:rounded-xl lg:peer-data-[variant=inset]:shadow",
         className,
       )}
@@ -430,8 +469,6 @@ const SidebarGroup = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="group"
-      // shrink-0: a group keeps its height; without it the groups squeeze into the
-      // column and their items draw over the next group (creative, 2026-09-21).
       className={cn(
         "relative flex w-full min-w-0 shrink-0 flex-col p-2",
         className,
@@ -534,12 +571,11 @@ const sidebarMenuButtonVariants = cva(
         outline:
           "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]",
       },
-      // The rail sits outside <main>, so the 40px touch rule does not reach
-      // it: rows are 40px while it is a sheet (below 1024px), 32px on the
-      // desktop rail.
       size: {
+        // 40px rows for a thumb in the sheet below 1024px; the desktop rail
+        // keeps the compact 32px.
         default: "h-10 text-sm lg:h-8",
-        sm: "h-9 text-xs lg:h-7",
+        sm: "h-7 text-xs",
         lg: "h-12 text-sm group-data-[collapsible=icon]:!p-0",
       },
     },
@@ -676,10 +712,7 @@ const SidebarMenuSkeleton = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="menu-skeleton"
-      className={cn(
-        "flex h-10 items-center gap-2 rounded-md px-2 lg:h-8",
-        className,
-      )}
+      className={cn("flex h-8 items-center gap-2 rounded-md px-2", className)}
       {...props}
     >
       {showIcon && (
@@ -689,7 +722,7 @@ const SidebarMenuSkeleton = React.forwardRef<
         />
       )}
       <Skeleton
-        className="h-4 max-w-[--skeleton-width] flex-1"
+        className="h-4 max-w-(--skeleton-width) flex-1"
         data-sidebar="menu-skeleton-text"
         style={
           {

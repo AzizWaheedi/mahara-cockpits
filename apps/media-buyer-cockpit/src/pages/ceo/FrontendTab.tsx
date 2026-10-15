@@ -17,7 +17,6 @@ import {
   money,
   month,
   NA,
-  pct,
   plural,
   shiftMonth,
   type Unit,
@@ -44,7 +43,11 @@ import { TabLink } from "@/components/ceo/TabLink";
 import { TargetMeter } from "@/components/ceo/TargetMeter";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
-import { useTimeframe } from "@/components/ceo/timeframe";
+import {
+  FRONT_END_CASH_HINT,
+  frontEndCashSub,
+  useTimeframe,
+} from "@/components/ceo/timeframe";
 import { range } from "@/components/ceo/windows";
 import { cn } from "@/lib/utils";
 import type {
@@ -658,11 +661,8 @@ function FunnelBody({
         change(w.frontEndCash.total, prev?.frontEndCash.total),
         "up",
       ),
-      sub:
-        w.frontEndCash.deposit > 0
-          ? `${pct(w.frontEndCash.confirmedShare)} confirmed on a rail · kickoff cash not read yet`
-          : "kickoff cash not read yet",
-      hint: "The deposit the closer typed at signing plus the kickoff cash collected on the onboarding call. The kickoff form is not read yet, so this is the deposit alone. Confirmed means a Whop payment or a bank transfer on record backs it. Do not add it to the cash won above: that is the same money arriving on the rails.",
+      sub: frontEndCashSub(w.frontEndCash, w.from),
+      hint: `${FRONT_END_CASH_HINT} Do not add it to the cash won above: that is the same money arriving on the rails.`,
     },
   ];
 

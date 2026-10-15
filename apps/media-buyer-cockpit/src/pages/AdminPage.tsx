@@ -264,9 +264,9 @@ export function AdminPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" asChild>
-            <a href="/data" target="_blank" rel="noopener">
+            <Link to="/data">
               <Table2 className="size-4" /> Open data view
-            </a>
+            </Link>
           </Button>
           <Button disabled={!overview} onClick={() => setEditing("new")}>
             <Plus className="size-4" /> Add a team member

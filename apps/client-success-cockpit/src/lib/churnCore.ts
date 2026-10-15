@@ -145,6 +145,15 @@ export type MonthRow = {
   retentionPct: number | null;
   netGrowth: number | null;
   rolling3Pct: number | null;
+  /** How many of the three months had a start figure, so the rate could count them. */
+  rolling3Months: number;
+  /** The month is `through` and still running: its figures are to date. */
+  running: boolean;
+  /**
+   * The old sheet counted more lost clients than the register holds for a
+   * month the register only partly covers: departures not logged yet.
+   */
+  registerShort: number;
   band: Band | null;
   note: string | null;
   /** Anything typed or logged: a month with nothing is left out of the list. */
@@ -186,6 +195,13 @@ export function rollUp(
     // so one client is never counted from both.
     const lostBefore = mine.length ? null : (input?.lostBeforeRegister ?? null);
     const churned = register.churn + (lostBefore ?? 0);
+    // The register still wins, but a shortfall against the sheet is shown,
+    // never silently dropped.
+    const sheetLost = input?.lostBeforeRegister ?? null;
+    const registerShort =
+      mine.length && sheetLost !== null && sheetLost > register.churn
+        ? sheetLost - register.churn
+        : 0;
     const typedStart = input?.activeAtStart ?? null;
     const start: number | null = typedStart ?? prevEnd;
     const fresh = input?.newClients ?? null;
@@ -208,6 +224,9 @@ export function rollUp(
       retentionPct: churnPct === null ? null : round1(100 - churnPct),
       netGrowth: fresh === null ? null : fresh - churned - register.completed,
       rolling3Pct: null,
+      rolling3Months: 0,
+      running: m === through,
+      registerShort,
       band: null,
       note: input?.note ?? null,
       hasData: Boolean(input) || mine.length > 0 || m === through,
@@ -222,6 +241,7 @@ export function rollUp(
     const starts = window.reduce((s, r) => s + (r.activeAtStart ?? 0), 0);
     const lost = window.reduce((s, r) => s + r.churned, 0);
     out[i].rolling3Pct = starts ? round1((lost / starts) * 100) : null;
+    out[i].rolling3Months = window.length;
     out[i].band =
       out[i].rolling3Pct === null ? null : bandOf(out[i].rolling3Pct as number);
   }

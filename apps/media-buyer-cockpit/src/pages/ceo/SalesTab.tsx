@@ -17,7 +17,6 @@ import {
   money,
   month,
   NA,
-  pct,
   plural,
   shiftMonth,
 } from "@/components/ceo/format";
@@ -46,7 +45,11 @@ import {
 } from "@/components/ceo/TargetMeter";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
-import { useTimeframe } from "@/components/ceo/timeframe";
+import {
+  FRONT_END_CASH_HINT,
+  frontEndCashSub,
+  useTimeframe,
+} from "@/components/ceo/timeframe";
 import { range } from "@/components/ceo/windows";
 import { cn } from "@/lib/utils";
 import type {
@@ -56,6 +59,7 @@ import type {
   MoneyPayload,
   Note,
 } from "@/types/ceo/payloads";
+import { ProposalsCard } from "./proposalsCard";
 import type { CeoTabProps } from "./types";
 
 /** a over b, null when b cannot carry a rate. A real zero stays 0. */
@@ -206,6 +210,9 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
           )}
         </SectionCard>
       </div>
+
+      {/* A234: proposals drafted by our own writer, after the closing card. */}
+      <ProposalsCard order={2} now={now} />
 
       <SectionCard
         kicker={month(monthKey, { long: true, year: true })}
@@ -403,6 +410,42 @@ function deltaFor(
 
 // --- Card 1: calls booked and shown ---
 
+/** The three cancel-rate tiles: intros, demos, and both together, by call day. */
+export function cancelTiles(
+  w: Pick<FunnelWindow, "cancel">,
+  prev: Pick<FunnelWindow, "cancel"> | null,
+  vs: string | null,
+): Tile[] {
+  const c = w.cancel;
+  const p = prev?.cancel;
+  return [
+    {
+      label: "Intro cancel rate",
+      value: CANCEL_RATE.format(c.intro),
+      delta: deltaFor(vs, diff(c.intro, p?.intro), "down", "points"),
+      sub: `${count(c.introsCancelled)} of ${plural(c.introsScheduled, "intro")} scheduled`,
+      hint: "Intro calls marked cancelled over intro calls scheduled in this window, by the day of the call (the B2B dashboard's intros_cancelled over intros_scheduled).",
+      naHint: "No intro calls were scheduled in this window.",
+    },
+    {
+      label: "Demo cancel rate",
+      value: CANCEL_RATE.format(c.demo),
+      delta: deltaFor(vs, diff(c.demo, p?.demo), "down", "points"),
+      sub: `${count(c.demosCancelled)} of ${plural(c.demosScheduled, "demo")} scheduled`,
+      hint: "Demos marked cancelled over demos scheduled in this window, by the day of the call (the B2B dashboard's demos_cancelled over demos_scheduled).",
+      naHint: "No demos were scheduled in this window.",
+    },
+    {
+      label: "Total cancel rate",
+      value: CANCEL_RATE.format(c.total),
+      delta: deltaFor(vs, diff(c.total, p?.total), "down", "points"),
+      sub: `${count(c.introsCancelled + c.demosCancelled)} of ${plural(c.introsScheduled + c.demosScheduled, "call")} scheduled`,
+      hint: CANCEL_RATE.hint,
+      naHint: CANCEL_RATE.naHint,
+    },
+  ];
+}
+
 function CallsBody({
   w,
   prev,
@@ -465,17 +508,16 @@ function CallsBody({
       hint: SHOW_RATE.hint,
       naHint: SHOW_RATE.naHint,
     },
+    // Aziz, 2026-09-21: "intro cancel rate = intros cancelled / intros
+    // scheduled; demo cancel rate = demos cancelled / demos scheduled; total
+    // over both … put them on tiles." Lower is better, so a fall reads green.
+    ...cancelTiles(w, prev, vs),
   ];
   return (
     <div className="min-w-0">
       <Tiles tiles={tiles} />
       <Facts
         items={[
-          {
-            label: "Cancel rate",
-            value: `${CANCEL_RATE.format(w.cancel.total)} (intros ${CANCEL_RATE.format(w.cancel.intro)}, demos ${CANCEL_RATE.format(w.cancel.demo)})`,
-            hint: CANCEL_RATE.hint,
-          },
           {
             label: "Intro to demo",
             value:
@@ -537,11 +579,8 @@ function ClosingBody({
       label: "Front-end cash",
       value: money(fe.total),
       delta: deltaFor(vs, change(fe.total, prev?.frontEndCash.total), "up"),
-      sub:
-        fe.deposit > 0
-          ? `${pct(fe.confirmedShare)} confirmed on Whop or by transfer · kickoff cash not read yet`
-          : "kickoff cash not read yet",
-      hint: "The deposit the closer typed at signing, for deals signed in this window, plus the kickoff cash the CSM collects on the onboarding call. The kickoff form is not read yet, so this is the deposit alone. Confirmed means a Whop payment or a bank transfer on record backs the deposit; Tap is not checked here.",
+      sub: frontEndCashSub(fe, w.from),
+      hint: FRONT_END_CASH_HINT,
     },
     {
       label: ROAS_CASH.label,

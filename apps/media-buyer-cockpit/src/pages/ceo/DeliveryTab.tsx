@@ -36,6 +36,7 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
+import { LeadSyncTable } from "@/components/LeadSync";
 import {
   BOOKING_RATE_GATE,
   CLOSE_RATE_GATE,
@@ -192,6 +193,7 @@ export function DeliveryTab({ sections, now, day }: CeoTabProps) {
 
   return (
     <div className="@container grid min-w-0 gap-4 lg:gap-6">
+      <LeadSyncTable />
       <SectionCard
         kicker="Last 7 days"
         title="Client ads"
@@ -710,9 +712,24 @@ function GateCell({
 type Filter = "all" | ClientStatus;
 
 /**
- * A funnel rate against its gate: green at the gate, amber down to the floor
- * (seven tenths of the gate unless `bad` says otherwise), red below. `detail`
- * opens a tooltip with the figures behind the rate.
+ * The tone of a rate in percent against its gate: good at the gate, warning
+ * down to the floor (seven tenths of the gate unless `bad` says otherwise),
+ * serious below. The client show rate passes `bad` 0: under its one line is
+ * watch, never serious (Aziz, 2026-09-21 and 2026-10-12).
+ */
+export function rateTone(
+  p: number,
+  gate: number,
+  bad?: number,
+): "good" | "warning" | "serious" {
+  const floor = bad ?? gate * 0.7;
+  return p >= gate ? "good" : p >= floor ? "warning" : "serious";
+}
+
+/**
+ * A funnel rate against its gate, toned by rateTone: green at the gate, amber
+ * down to the floor, red below. `detail` opens a tooltip with the figures
+ * behind the rate.
  */
 function RateCell({
   value,
@@ -720,10 +737,13 @@ function RateCell({
   bad,
   hint,
   detail,
+  under = "below the gate",
 }: {
   value: number | null;
   /** Percent at which the rate is good. */
   gate: number;
+  /** What a rate under the gate is called, read out after the figure. */
+  under?: string;
   /** Percent below which the rate is serious; default is 70% of the gate. */
   bad?: number;
   /** Why there is no rate. */
@@ -732,10 +752,7 @@ function RateCell({
   detail?: string;
 }) {
   if (!isNum(value)) return <Na hint={hint} />;
-  const p = value * 100;
-  const floor = bad ?? gate * 0.7;
-  const tone =
-    p >= gate ? "good" : p >= floor ? "warning" : ("serious" as const);
+  const tone = rateTone(value * 100, gate, bad);
   const inner = (
     <>
       <span
@@ -745,7 +762,7 @@ function RateCell({
       />
       {pct(value)}
       <span className="sr-only">
-        {tone === "good" ? ", at the gate" : ", below the gate"}
+        {tone === "good" ? ", at the gate" : `, ${under}`}
       </span>
     </>
   );
@@ -940,6 +957,8 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
         <RateCell
           value={r.rates30?.showRate ?? null}
           gate={SHOW_RATE_GOOD}
+          bad={0}
+          under={`under the ${SHOW_RATE_GOOD}% line, a watch`}
           hint="No past meeting with an attendance recorded in the last 30 days"
           detail={
             r.rates30

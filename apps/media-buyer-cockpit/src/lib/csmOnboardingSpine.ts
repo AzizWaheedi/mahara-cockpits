@@ -208,18 +208,22 @@ export function spineFor(
     c.signupDays != null
       ? c.signupDays
       : c.liveDays != null
-        ? c.liveDays + 7 // launch is day 8 of the spine, so signup was roughly a week before
+        ? c.liveDays + 8 // launch day is day 8 of the spine ("your ads are live"); liveDays is 0 that day
         : null;
   if (since == null || since > 14)
     return { day: null, dayIndex: null, missed: [] };
   const dayIndex = Math.max(0, Math.min(14, Math.round(since)));
   const day = SPINE.find(s => s.day === dayIndex) ?? null;
-  // Silence longer than a day means the daily spine broke; name the days that fell through.
+  // Silence longer than a day means the daily spine broke; name the days that
+  // fell through: after the last contact day, before today, at most five.
   const silent = c.silentDays ?? 0;
   const missed =
     silent > 1
       ? SPINE.filter(
-          s => s.day < dayIndex && s.day >= dayIndex - Math.min(silent, 5),
+          s =>
+            s.day < dayIndex &&
+            s.day > dayIndex - silent &&
+            s.day >= dayIndex - 5,
         )
       : [];
   return { day, dayIndex, missed };

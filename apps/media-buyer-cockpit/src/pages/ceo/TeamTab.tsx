@@ -33,6 +33,7 @@ import {
   COMMISSION_SHORT,
   type CommissionBasis,
   SHARE_BASES,
+  takesRate,
 } from "@/types/ceo/commission";
 import type { Person, Roster } from "@/types/ceo/people";
 import {
@@ -112,27 +113,37 @@ type Draft = {
   basis: CommissionBasis;
   /** Percent for the share bases (10 = 10%), an amount otherwise. */
   rate: string;
+  /** The second commission line (A074), "none" when there is none. */
+  basis2: CommissionBasis;
+  rate2: string;
   note: string;
   role: string;
 };
+
+/** A stored rate as the box shows it: a percent for a share, the amount otherwise. */
+const rateText = (basis: CommissionBasis, rate: number | null) =>
+  rate === null
+    ? ""
+    : String(SHARE_BASES.has(basis) ? Math.round(rate * 1000) / 10 : rate);
+
+/** The box's text as the rate the server stores, or undefined when empty. */
+const rateValue = (basis: CommissionBasis, text: string) =>
+  !takesRate(basis) || text.trim() === ""
+    ? undefined
+    : SHARE_BASES.has(basis)
+      ? Number(text) / 100
+      : Number(text);
 
 const draftOf = (p: Person): Draft => ({
   monthlyCost: p.monthlyCost === null ? "" : String(p.monthlyCost),
   currency: p.currency || "USD",
   basis: p.commission.basis,
-  rate:
-    p.commission.rate === null
-      ? ""
-      : String(
-          SHARE_BASES.has(p.commission.basis)
-            ? Math.round(p.commission.rate * 1000) / 10
-            : p.commission.rate,
-        ),
+  rate: rateText(p.commission.basis, p.commission.rate),
+  basis2: p.commission2?.basis ?? "none",
+  rate2: rateText(p.commission2?.basis ?? "none", p.commission2?.rate ?? null),
   note: p.commissionNote ?? "",
   role: p.role ?? "",
 });
-
-const takesRate = (b: CommissionBasis) => b !== "none" && b !== "other";
 
 const tabular = { fontVariantNumeric: "tabular-nums" } as const;
 
@@ -591,9 +602,11 @@ function Row({
   const base = draftOf(p);
   const payDirty =
     d.monthlyCost !== base.monthlyCost || d.currency !== base.currency;
+  const line2Dirty = d.basis2 !== base.basis2 || d.rate2 !== base.rate2;
   const otherDirty =
     d.basis !== base.basis ||
     d.rate !== base.rate ||
+    line2Dirty ||
     d.note !== base.note ||
     d.role !== base.role;
   const dirty = payDirty || otherDirty;
@@ -623,12 +636,15 @@ function Row({
     role: draft.role.trim() || undefined,
     engagement: p.engagement,
     commissionBasis: draft.basis,
-    commissionRate:
-      !takesRate(draft.basis) || draft.rate.trim() === ""
-        ? undefined
-        : SHARE_BASES.has(draft.basis)
-          ? Number(draft.rate) / 100
-          : Number(draft.rate),
+    commissionRate: rateValue(draft.basis, draft.rate),
+    // Line 2 is sent only when it changed, so a role or line-1 edit never
+    // depends on it (A074).
+    ...(line2Dirty
+      ? {
+          commission2Basis: draft.basis2,
+          commission2Rate: rateValue(draft.basis2, draft.rate2) ?? null,
+        }
+      : {}),
     commissionNote: draft.note.trim() || undefined,
     isSales: p.isSales,
     startedOn: p.startedOn ?? undefined,
@@ -650,8 +666,14 @@ function Row({
   };
 
   /** Pay through its history, the rest of the row through the roster save. */
-  const saveRow = () =>
-    act(async () => {
+  const saveRow = () => {
+    if (takesRate(d.basis2) && d.basis2 === d.basis) {
+      setMsg(
+        "The second commission line needs a different rule from the first.",
+      );
+      return;
+    }
+    return act(async () => {
       if (payDirty) {
         if (d.monthlyCost.trim() === "")
           await save({ id: p.id, name: p.name, monthlyCost: null });
@@ -668,6 +690,7 @@ function Row({
       setPayTypo(false);
       setPayFrom(firstOfThisMonth());
     });
+  };
 
   /** Pausing, unpausing, leaving and coming back each record the day it happened. */
   const pause = () =>
@@ -815,47 +838,96 @@ function Row({
               </span>
             ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-sm">
-            <AnimatedSelect
-              value={d.basis}
-              onChange={e =>
-                setD({ ...d, basis: e.target.value as CommissionBasis })
-              }
-              aria-label={`What ${p.name}'s commission is paid on`}
-              className={`${field} max-w-[12rem]`}
-            >
-              {COMMISSION_BASES.map(b => (
-                <option key={b} value={b}>
-                  {COMMISSION_SHORT[b]}
-                </option>
-              ))}
-            </AnimatedSelect>
-            {takesRate(d.basis) ? (
-              <span className="flex items-center gap-1">
-                <input
-                  inputMode="decimal"
-                  value={d.rate}
-                  onChange={e => setD({ ...d, rate: e.target.value })}
-                  placeholder={SHARE_BASES.has(d.basis) ? "10" : "50"}
-                  aria-label={`${p.name}'s commission rate`}
-                  className={`${field} w-16 text-right`}
-                  style={{ fontVariantNumeric: "tabular-nums" }}
-                />
-                <span className="text-xs text-muted-foreground">
-                  {SHARE_BASES.has(d.basis) ? "%" : d.currency}
+          <div className="grid gap-1.5 text-sm">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <AnimatedSelect
+                value={d.basis}
+                onChange={e =>
+                  setD({ ...d, basis: e.target.value as CommissionBasis })
+                }
+                aria-label={`What ${p.name}'s commission is paid on`}
+                className={`${field} max-w-[12rem]`}
+              >
+                {COMMISSION_BASES.map(b => (
+                  <option key={b} value={b}>
+                    {COMMISSION_SHORT[b]}
+                  </option>
+                ))}
+              </AnimatedSelect>
+              {takesRate(d.basis) ? (
+                <span className="flex items-center gap-1">
+                  <input
+                    inputMode="decimal"
+                    value={d.rate}
+                    onChange={e => setD({ ...d, rate: e.target.value })}
+                    placeholder={SHARE_BASES.has(d.basis) ? "10" : "50"}
+                    aria-label={`${p.name}'s commission rate`}
+                    className={`${field} w-16 text-right`}
+                    style={{ fontVariantNumeric: "tabular-nums" }}
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {SHARE_BASES.has(d.basis) ? "%" : d.currency}
+                  </span>
                 </span>
-              </span>
+              ) : null}
+              {d.basis === "other" || d.note ? (
+                <input
+                  value={d.note}
+                  onChange={e => setD({ ...d, note: e.target.value })}
+                  placeholder="How it works"
+                  aria-label={`${p.name}'s commission note`}
+                  className={`${field} w-36`}
+                />
+              ) : null}
+              {p.isSales ? <StatusChip tone="neutral" label="Sales" /> : null}
+            </div>
+            {/* A074: a second line, its own rule and rate ("$10 per showed
+              qualified appointment" and "$50 per closed deal" are two),
+              offered once there is a first line. */}
+            {d.basis !== "none" || d.basis2 !== "none" ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <AnimatedSelect
+                  value={d.basis2}
+                  onChange={e => {
+                    const basis2 = e.target.value as CommissionBasis;
+                    setD({
+                      ...d,
+                      basis2,
+                      rate2:
+                        SHARE_BASES.has(basis2) === SHARE_BASES.has(d.basis2)
+                          ? d.rate2
+                          : "",
+                    });
+                  }}
+                  aria-label={`What ${p.name}'s second commission line is paid on`}
+                  className={`${field} max-w-[12rem]`}
+                >
+                  {COMMISSION_BASES.map(b => (
+                    <option key={b} value={b}>
+                      {b === "none"
+                        ? "No second line"
+                        : `+ ${COMMISSION_SHORT[b]}`}
+                    </option>
+                  ))}
+                </AnimatedSelect>
+                {takesRate(d.basis2) ? (
+                  <span className="flex items-center gap-1">
+                    <input
+                      inputMode="decimal"
+                      value={d.rate2}
+                      onChange={e => setD({ ...d, rate2: e.target.value })}
+                      placeholder={SHARE_BASES.has(d.basis2) ? "10" : "50"}
+                      aria-label={`${p.name}'s second commission rate`}
+                      className={`${field} w-16 text-right`}
+                      style={{ fontVariantNumeric: "tabular-nums" }}
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {SHARE_BASES.has(d.basis2) ? "%" : d.currency}
+                    </span>
+                  </span>
+                ) : null}
+              </div>
             ) : null}
-            {d.basis === "other" || d.note ? (
-              <input
-                value={d.note}
-                onChange={e => setD({ ...d, note: e.target.value })}
-                placeholder="How it works"
-                aria-label={`${p.name}'s commission note`}
-                className={`${field} w-36`}
-              />
-            ) : null}
-            {p.isSales ? <StatusChip tone="neutral" label="Sales" /> : null}
           </div>
         </div>
       )}
@@ -1213,7 +1285,9 @@ export function TeamTab({ goTab }: CeoTabProps) {
   const uncosted = data?.missingCost.length ?? 0;
   const external = working.filter(p => p.engagement !== "staff").length;
   const onCommission = working.filter(
-    p => p.commission.basis !== "none",
+    p =>
+      p.commission.basis !== "none" ||
+      (p.commission2?.basis ?? "none") !== "none",
   ).length;
   // Until the roster loads the tiles say n/a, with the reason, never a dash.
   const notLoaded = error
@@ -1348,9 +1422,12 @@ export function TeamTab({ goTab }: CeoTabProps) {
                   </summary>
                   <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
                     Commission is a rule per person: what it is paid on, then
-                    the rate in that unit. A share is typed as a percent; a
-                    per-unit amount is in the person's currency. The payout
-                    itself is not worked out here yet.
+                    the rate in that unit, and a person can carry two lines (the
+                    setter: a fixed amount per qualified intro that shows, plus
+                    one per deal that fully closes). A share is typed as a
+                    percent; a per-unit amount is in the person's currency. A
+                    fully closed deal is a closer-form deal that is not voided.
+                    Next month's payout is priced on Costs.
                   </p>
                 </details>
               ) : null}

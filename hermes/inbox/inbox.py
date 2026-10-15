@@ -29,9 +29,11 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from tools import provider_json
 
@@ -141,12 +143,130 @@ SPEAKER = re.compile(r"^👤\s*(.+?)\s*(?:\(([^)]*)\))?\s*\n+", re.S)
 # Our own people posting into a group arrive as inbound, because the
 # bridge reports anything not sent through GoHighLevel as incoming. Left
 # alone, the desk decides the client is waiting and drafts a reply to a
-# colleague.
-OURS = re.compile(r"mahara", re.I)
+# colleague. They post from their own phones under their own names
+# ("Rasem Abdel all", "Nada | MaharaMedia", "DANIYA"), so the rule is the
+# cockpit's teamSpeaker in apps/client-success-cockpit/src/lib/clientBrief.ts.
+# Keep the two alike.
+OURS = re.compile(r"mahara|مهارة", re.I)
+
+# Consonant skeleton of a name, the same for عبد العزيز and Abdulaziz.
+AR_LATIN = {
+    "ا": "a", "أ": "a", "إ": "a", "آ": "a", "ب": "b", "ت": "t", "ث": "th",
+    "ج": "j", "ح": "h", "خ": "kh", "د": "d", "ذ": "z", "ر": "r", "ز": "z",
+    "س": "s", "ش": "sh", "ص": "s", "ض": "d", "ط": "t", "ظ": "z", "غ": "gh",
+    "ف": "f", "ق": "k", "ك": "k", "ک": "k", "ل": "l", "م": "m", "ن": "n",
+    "ه": "h", "و": "w", "ي": "y", "ی": "y", "ى": "y",
+}
 
 
-def ours(speaker: str | None) -> bool:
-    return bool(speaker and OURS.search(speaker))
+def skeleton(word: str) -> str:
+    text = re.sub(r"[\u064B-\u0652\u0640]", "", word.lower())
+    text = "".join(AR_LATIN.get(ch, ch) for ch in text)
+    text = re.sub(r"[^a-z]", "", text.replace("q", "k").replace("ph", "f"))
+    return re.sub(r"(.)\1+", r"\1", re.sub(r"[aeiouwy]", "", text))
+
+
+def clean_name(name: str) -> str:
+    """The name as the cockpit's clean() reads it: a markdown link becomes
+    its text, ** __ and backticks go, and spaces collapse. The rest of
+    clean() only touches marks that never decide who is the team."""
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", name)
+    return " ".join(re.sub(r"(\*\*|__|`)", "", text).split())
+
+
+def name_parts(name: str) -> list[str]:
+    """The skeleton of each word in a name; anything but letters splits words."""
+    letters = "".join(
+        ch if ch.isspace() or unicodedata.category(ch).startswith("L") else " "
+        for ch in clean_name(name)
+    )
+    return [part for part in map(skeleton, letters.split()) if part]
+
+
+def name_words(name: str) -> list[str]:
+    """The lowercase words of a name, letters only."""
+    letters = "".join(
+        ch if ch.isspace() or unicodedata.category(ch).startswith("L") else " "
+        for ch in clean_name(name).lower()
+    )
+    return letters.split()
+
+
+def team_speaker(speaker: str | None, team: Sequence[str] = ()) -> bool:
+    """Whether a group speaker is one of the team.
+
+    A name with Mahara in it is the team. A full name is when its first two
+    words are a team member's first two, so "Ahmed Salama" is not a team
+    "Ahmed Fathy"; a lone name is when it is, letter for letter, one of a
+    team member's names ("Sabry" for "Ahmed Sabry", "Aziz" for
+    "Abdulaziz"). Within one script a lone name is not matched by its
+    consonants ("Umar" and "Maria" share them); across scripts it is, so
+    "دانيا" is the team's Daniya.
+    """
+    text = clean_name(str(speaker or ""))
+    if not text:
+        return False
+    if OURS.search(text):
+        return True
+    said = name_parts(text)
+    if not said:
+        return False
+    if len(said) == 1:
+        word = name_words(text)[0] if name_words(text) else ""
+        if len(word) < 3:
+            return False
+        arabic = lambda x: bool(re.search(r"[\u0600-\u06FF]", x))
+        for name in team:
+            known = name_words(name)
+            if any(k == word or re.sub(r"^(abdul|abdel|abd|عبد|عبدال)", "", k) == word for k in known):
+                return True
+            # An Arabic spelling of an English first name, or the other way round.
+            first = known[0] if known else ""
+            if arabic(word) != arabic(first) and len(said[0]) >= 2 and said[0] == skeleton(first):
+                return True
+        return False
+    if len(said[0]) < 2:
+        return False
+    for name in team:
+        known = name_parts(name)
+        if len(known) >= 2 and said[:2] == known[:2]:
+            return True
+    return False
+
+
+def client_waiting(messages: list[dict], team: Sequence[str] = ()) -> dict | None:
+    """The client's newest message when nothing from us came after it.
+
+    From us is an outbound message, or a team member writing in the group.
+    """
+    client = client_at = ours_at = None
+    for m in messages:
+        at = datetime.fromisoformat(m["at"])
+        if m["direction"] == "inbound" and not team_speaker(m.get("speaker"), team):
+            if client is None or at > client_at:
+                client, client_at = m, at
+        elif ours_at is None or at > ours_at:
+            ours_at = at
+    return client if client is not None and (ours_at is None or client_at > ours_at) else None
+
+
+def team_names(sb: Store) -> list[str] | None:
+    """Everyone on the team, past and present. None when the read failed.
+
+    Someone who has left still wrote their old messages as one of us.
+    """
+    try:
+        rows = sb.get("cockpit_people?select=name&name=not.is.null")
+        rows += sb.get("cockpit_members?select=name&name=not.is.null")
+        names = (" ".join(str(row.get("name") or "").split()) for row in rows)
+        return list(dict.fromkeys(name for name in names if name))
+    except Exception as error:
+        note(
+            f"Team names could not be read ({type(error).__name__}). Only a Mahara "
+            "name counts as the team this run, so a team member posting under a "
+            "plain name may read as the client."
+        )
+        return None
 
 
 def is_group(name: str, phone: str) -> bool:
@@ -262,7 +382,7 @@ def only_json(text: str):
     return json.loads(text[start:])
 
 
-def scan(sb: Store, token: str, location: str, since: str) -> tuple[int, int]:
+def scan(sb: Store, token: str, location: str, since: str, team: Sequence[str] = ()) -> tuple[int, int]:
     """Pull conversations that moved since the watermark. Returns (threads, messages)."""
     try:
         cutoff = datetime.fromisoformat(since)
@@ -294,7 +414,7 @@ def scan(sb: Store, token: str, location: str, since: str) -> tuple[int, int]:
                 stop = True
                 break
             threads += 1
-            messages += pull_thread(sb, token, location, cv, cutoff)
+            messages += pull_thread(sb, token, location, cv, cutoff, team)
         if stop or len(convs) < 100:
             break
         page += 1
@@ -335,7 +455,7 @@ def messages_since(sb: Store, token: str, cid: str, cutoff) -> list[dict]:
     raise ValueError("The message scan reached its safety bound. Do not publish a healthy scan")
 
 
-def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff) -> int:
+def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff, team: Sequence[str] = ()) -> int:
     cid, contact = cv.get("id"), cv.get("contactId")
     if not isinstance(cid, str) or not cid or not isinstance(contact, str) or not contact:
         raise ValueError("The provider conversation or contact identity is missing")
@@ -363,7 +483,7 @@ def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff) -> int:
             "delivery_status": delivery_status,
         })
         newest = later(newest, at)
-        if direction == "inbound" and not ours(speaker):
+        if direction == "inbound" and not team_speaker(speaker, team):
             newest_in = later(newest_in, at)
         elif direction == "inbound" or delivery_status in ("delivered", "read"):
             newest_out = later(newest_out, at)
@@ -384,7 +504,8 @@ def pull_thread(sb: Store, token: str, location: str, cv: dict, cutoff) -> int:
         "last_inbound_at": newest_in,
         "last_outbound_at": newest_out,
         # They spoke last, so it is on us. GHL's unread count treats our
-        # own sends from the phone as reads and gets this wrong.
+        # own sends from the phone as reads and gets this wrong, and a team
+        # member writing in the group counts as us having spoken.
         "awaiting_us": bool(newest_in and (not newest_out or datetime.fromisoformat(newest_in) > datetime.fromisoformat(newest_out))),
         "updated_at": now(),
     }, rows)
@@ -441,23 +562,26 @@ def observe_submitted(sb: Store, token: str, location: str) -> int:
     return observed
 
 
-def draft_for(sb: Store, thread: dict) -> bool:
+def draft_for(sb: Store, thread: dict, team: Sequence[str] = ()) -> bool:
     """Write the reply for one thread. False when there is nothing to answer."""
     tid = thread["id"]
     previous = sb.get(f"wa_drafts?select=drafted_at&thread_id=eq.{urllib.parse.quote(tid)}")
     previous_drafted_at = previous[0]["drafted_at"] if previous else None
     msgs = sb.get(
-        f"wa_messages?select=direction,body,kind,speaker,at"
+        f"wa_messages?select=direction,body,kind,speaker,at,delivery_status"
         f"&thread_id=eq.{urllib.parse.quote(tid)}&order=at.desc&limit=14"
     )
     if not msgs:
         return False
     msgs = list(reversed(msgs))
 
-    last_in = next(
-        (m for m in reversed(msgs)
-         if m["direction"] == "inbound" and not ours(m.get("speaker"))),
-        None,
+    # Answer the client's people, never a team member's own message, and
+    # nothing once one of us spoke after them. A reply counts once it is
+    # delivered, the same as for awaiting_us.
+    last_in = client_waiting(
+        [m for m in msgs
+         if m["direction"] == "inbound" or m.get("delivery_status") in ("delivered", "read")],
+        team,
     )
     if not last_in:
         return False
@@ -474,7 +598,7 @@ def draft_for(sb: Store, thread: dict) -> bool:
     lines = []
     for m in msgs:
         who = "CLIENT" if m["direction"] == "inbound" else "US"
-        if ours(m.get("speaker")):
+        if team_speaker(m.get("speaker"), team):
             who = f"US ({m['speaker']})"
         elif m.get("speaker"):
             who = str(m["speaker"])
@@ -538,12 +662,19 @@ def main() -> int:
     if len(connection) != 1 or not connection[0]["enabled"] or connection[0]["location_id"] != location:
         note("The native CSM connection does not match this location. Do not use another desk inbox.")
         return 2
+    # A team member writing in a client group is us, not the client.
+    team = team_names(sb)
+    if team:
+        note(f"Team names: {len(team)} from cockpit_people and cockpit_members.")
+    elif team is not None:
+        note("No team names in cockpit_people or cockpit_members. Only a Mahara name counts as the team this run.")
+    team = team or []
     if args.doctor:
         note("Native inbox configuration, CSM connection, and switch-on watermark are valid. No scan or model call ran.")
         return 0
 
     begun_at = now()
-    threads, messages = scan(sb, token, location, state[0]["scan_since"])
+    threads, messages = scan(sb, token, location, state[0]["scan_since"], team)
     note(f"scanned: {threads} thread(s) moved, {messages} new message(s)")
     if not args.source_only:
         observed = observe_submitted(sb, token, location)
@@ -579,7 +710,7 @@ def main() -> int:
                     break
                 eligible_attempts += 1
                 try:
-                    if draft_for(sb, t):
+                    if draft_for(sb, t, team):
                         drafted += 1
                 except Exception as e:  # one bad thread must not stop the desk
                     failed += 1

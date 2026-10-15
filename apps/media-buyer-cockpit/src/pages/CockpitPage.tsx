@@ -6,10 +6,11 @@ import {
   MoonStar,
 } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AccountView } from "@/components/AccountView";
+import { AdBillingWatch } from "@/components/AdBillingWatch";
 import { BuildPanel } from "@/components/BuildPanel";
 import { CampaignRange } from "@/components/CampaignRange";
 import { CityPicker } from "@/components/CityPicker";
@@ -41,9 +42,15 @@ import {
 } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { VerdictPlaybook } from "@/components/VerdictPlaybook";
 import { ViktorStatus } from "@/components/ViktorStatus";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useContentTransition } from "@/hooks/use-content-transition";
+import {
+  accountIssueFlag,
+  hasPaymentProblem,
+  PAYMENT_FILTER,
+} from "@/lib/adBillingStrip";
 import { api, useAction } from "@/lib/board";
 import {
   howItIsGoing,
@@ -52,7 +59,20 @@ import {
   whatWeDidAll,
 } from "@/lib/clientUpdate";
 import { type Id, useQueries } from "@/lib/cockpitApi";
-import { CPB_GATE, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
+import {
+  COST_DOT,
+  type CostTone,
+  costText,
+  cpbTone,
+  cplTone,
+} from "@/lib/costTone";
+import {
+  belowKpi,
+  CPB_GATE,
+  CPL_BAD,
+  CPL_GATE,
+  LEARNING_DAYS,
+} from "@/lib/kpi";
 import {
   defaultRange,
   kuwaitDay as kuwaitToday,
@@ -65,6 +85,7 @@ import {
 import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
 import { CampaignChat } from "../components/CampaignChat";
+import { LeadSyncBadge, LeadSyncStrip } from "../components/LeadSync";
 import { RequestCreativeButton } from "../components/RequestCreativeButton";
 
 /** What one role can actually ask another for. Picking the request picks the board. */
@@ -125,7 +146,12 @@ const FILTERS: { label: string; test: (c: Campaign) => boolean }[] = [
       c.verdict === "off board" ||
       (c.leads7d === 0 && c.spend7d > 20),
   },
-  { label: "Below KPI", test: c => c.cpl !== undefined && c.cpl > CPL_GATE },
+  // Meta flags the ad account: unpaid, restricted, grace period or under
+  // review. The Payments strip's count chips turn this on (2026-10-13).
+  { label: PAYMENT_FILTER, test: c => hasPaymentProblem(c) },
+  // Both numbers (Muhammed, 2026-10-13): a hold or kill on the booking grid,
+  // or over the cost per lead gate where bookings are not tracked.
+  { label: "Below KPI", test: c => belowKpi(c) },
   {
     label: "Fatiguing",
     test: c => c.verdict === "fatiguing" || (c.daysLive ?? 0) >= 14,
@@ -431,12 +457,16 @@ function isExecutable(action: string): boolean {
 function actionsFor(c: Campaign): string[] {
   if (!c.onBoard && !c.internal)
     return ["Add to Ads Management board", "Confirm it should be running"];
+  // Cheap leads that do not book: the first look is the booking side, not
+  // the switch.
+  if (c.verdict === "kill" && (c.cpl ?? Number.POSITIVE_INFINITY) <= CPL_GATE)
+    return ["Cut the worst ad", "Check speed to lead with the CSM"];
   if (c.verdict === "kill") return ["Turn it off", "Cut the worst ad"];
   if (c.verdict === "fatiguing")
     return ["Queue replacement creative", "Cut the worst ad"];
-  // Only a campaign inside the $15 gate earns a one-click raise; the server's
-  // "hold" verdict starts just above it and says "watch, do not scale".
-  if (c.dayRate < 30 && c.cpl !== undefined && c.cpl <= CPL_GATE) {
+  // Only a campaign the grid calls Scale earns a one-click raise: cheap leads
+  // with no bookings do not.
+  if (c.dayRate < 30 && c.verdict === "scale") {
     const target =
       c.contractedBudget && c.contractedBudget > c.dayRate
         ? c.contractedBudget
@@ -527,6 +557,7 @@ function ClientHeader({
             {name}
           </span>
         )}
+        <LeadSyncBadge client={name} />
       </span>
       <ClientLinks
         links={links}
@@ -1023,6 +1054,7 @@ const TITLES: Record<View, string> = {
 
 function Cockpit({ view }: { view: View }) {
   const adsTransition = useContentTransition();
+  const navigate = useNavigate();
   const auth = useCockpitAuth();
   const sb = useMediaBuyerSnapshot(auth.client, auth.clients);
   const snap = sb.snap;
@@ -1163,7 +1195,22 @@ function Cockpit({ view }: { view: View }) {
   const [ask, setAsk] = useState<string | null>(null);
   const [askText, setAskText] = useState("");
   const [askWho, setAskWho] = useState<string>("");
-  const [filter, setFilter] = useState(FILTERS[0].label);
+  // The Payments strip on Today opens the board as /ads?filter=payment. The
+  // address is read once and cleared, so a reload does not pin the filter.
+  const [filter, setFilter] = useState(() =>
+    params.get("filter") === "payment" ? PAYMENT_FILTER : FILTERS[0].label,
+  );
+  useEffect(() => {
+    if (!params.has("filter")) return;
+    setParams(
+      prev => {
+        const next = new URLSearchParams(prev);
+        next.delete("filter");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [params, setParams]);
   // Ads management has two tabs: what is running, and what the board has off
   // with nothing running on Meta. [Aziz, 2026-09-14]
   const [adsTab, setAdsTab] = useState<"running" | "off">("running");
@@ -1366,8 +1413,11 @@ function Cockpit({ view }: { view: View }) {
    * two human answers; every number is already known.
    */
   /**
-   * The numbers the EOD form asks for. The form says "today", so these are
-   * today's, not the 7-day window the rest of the cockpit runs on.
+   * The numbers the EOD form asks for. The form says "today", so spend,
+   * leads and cost per lead are today's, not the 7-day window the rest of
+   * the cockpit runs on. "Any client over the gate" is judged on each
+   * campaign's 7-day cost per lead (one day is too few leads), and says so.
+   * No leads today reads "no leads", never $0.
    */
   const eodNumbers = useMemo(() => {
     const cs = ((snap?.campaigns ?? []) as Campaign[]).filter(c => !c.internal);
@@ -1377,9 +1427,9 @@ function Cockpit({ view }: { view: View }) {
     return {
       spend: Math.round(spend),
       leads,
-      cpl: leads > 0 ? (spend / leads).toFixed(0) : "0",
+      cpl: leads > 0 ? (spend / leads).toFixed(0) : "no leads",
       accounts: cs.length,
-      overGate: over.length ? "Yes" : "No",
+      overGate: over.length ? "Yes (7-day CPL)" : "No (7-day CPL)",
       overNames: over.map(c => c.clientName ?? c.campaignName),
       through: cs
         .map(c => c.dataThrough)
@@ -1403,20 +1453,16 @@ function Cockpit({ view }: { view: View }) {
     const leads = cs.reduce((t, c) => t + c.leads7d, 0);
     const bookings = cs.reduce((t, c) => t + (c.bookings7d ?? 0), 0);
     const overGate = cs.filter(c => (c.cpl ?? 0) > CPL_GATE);
-    const outOfKpi = cs.filter(
-      c =>
-        (c.cpl ?? 0) > CPL_GATE ||
-        (c.serviceMode !== "DWY" && (c.costPerBooking ?? 0) > CPB_GATE),
-    );
+    const outOfKpi = cs.filter(c => belowKpi(c));
     const lines: string[] = [
       `EOD - ${snap?.eodDay ? new Date(snap.eodDay + "T12:00:00+03:00").toLocaleDateString("en-GB", { timeZone: "Asia/Kuwait", weekday: "long", day: "numeric", month: "long" }) : "Date unavailable"}`,
       "",
       `Active client accounts managed: ${cs.length}`,
       `Total ad spend (7d): ${money(spend)}`,
       `Total leads (7d): ${leads}`,
-      `Average CPL: ${money(leads > 0 ? spend / leads : undefined, 2)}`,
+      `Average CPL (7d): ${leads > 0 ? money(spend / leads, 2) : "no leads"}`,
       `Bookings (7d): ${bookings}${bookings > 0 ? ` · cost per booking ${money(spend / bookings, 0)}` : ""}`,
-      `Any client with CPL above ${"$"}${CPL_GATE} today: ${overGate.length ? `Yes — ${overGate.map(c => c.clientName ?? c.campaignName).join(", ")}` : "No"}`,
+      `Any client with a 7-day CPL above ${"$"}${CPL_GATE}: ${overGate.length ? `Yes: ${overGate.map(c => c.clientName ?? c.campaignName).join(", ")}` : "No"}`,
       "",
       "ACCOUNT BY ACCOUNT — WHAT I CHANGED AND WHY",
       ...(ds.length
@@ -1433,9 +1479,11 @@ function Cockpit({ view }: { view: View }) {
             .map(
               c =>
                 `• ${c.clientName ?? c.campaignName} — ${
-                  c.serviceMode !== "DWY" && (c.costPerBooking ?? 0) > 80
-                    ? `cost per booking ${money(c.costPerBooking, 0)}`
-                    : `CPL ${money(c.cpl, 2)}`
+                  c.bookings7d === undefined || c.bookings7d === null
+                    ? `CPL ${money(c.cpl, 2)}`
+                    : c.bookings7d === 0
+                      ? `no booking on ${money(c.spend7d, 0)}, CPL ${money(c.cpl, 2)}`
+                      : `cost per booking ${money(c.costPerBooking, 0)}, CPL ${money(c.cpl, 2)}`
                 } → ${c.findings?.[0]?.fixes?.[0] ?? "watching it"}`,
             )
         : ["• None"]),
@@ -1667,12 +1715,12 @@ function Cockpit({ view }: { view: View }) {
   const flagFor = (
     c: Campaign,
   ): { label: string; tone: Tone; title?: string } | null => {
-    if (c.accountIssue)
+    // A grace period or a review still runs on Meta: a warning, not red.
+    const issue = accountIssueFlag(c.accountIssue);
+    if (issue)
       return {
-        label: /unsettled/i.test(c.accountIssue)
-          ? "Card declined"
-          : "Account blocked",
-        tone: "bad",
+        label: issue.label,
+        tone: issue.tone === "critical" ? "bad" : "warn",
         title: c.accountIssue,
       };
     if (adsTab === "running" && isOffOnBoard(c))
@@ -1704,16 +1752,21 @@ function Cockpit({ view }: { view: View }) {
 
   const now = new Date();
   const lastSync = snap.lastSyncAt ? new Date(snap.lastSyncAt) : null;
+  // Kuwait time, like every other time in the cockpit: the browser's own
+  // zone made the header disagree with the refresh line under it.
+  const kuwaitDate = (d: Date) =>
+    d.toLocaleDateString("en-CA", { timeZone: "Asia/Kuwait" });
   const synced = lastSync ? (
     <>
       synced{" "}
-      {lastSync.toDateString() === now.toDateString()
+      {kuwaitDate(lastSync) === kuwaitDate(now)
         ? ""
-        : `${lastSync.toLocaleDateString("en-GB", { weekday: "short" })} `}
+        : `${lastSync.toLocaleDateString("en-GB", { weekday: "short", timeZone: "Asia/Kuwait" })} `}
       <span className="font-mono">
         {lastSync.toLocaleTimeString("en-GB", {
           hour: "2-digit",
           minute: "2-digit",
+          timeZone: "Asia/Kuwait",
         })}
       </span>
     </>
@@ -1806,41 +1859,46 @@ function Cockpit({ view }: { view: View }) {
   const tiles = (
     <div className="@container">
       <div className="grid grid-cols-2 gap-4 @3xl:grid-cols-5">
-        {[
-          {
-            l: "Client spend, 7 days",
-            v: moneyOr(t.clientSpend),
-            d: `${snap.campaigns.length} campaigns delivering`,
-          },
-          {
-            l: "Client leads, 7 days",
-            v: String(t.clientLeads),
-          },
-          {
-            l: "Blended CPL",
-            v: moneyOr(t.blendedCpl, 2),
-            d:
-              t.blendedCpl == null
-                ? "no client leads yet"
-                : t.blendedCpl <= CPL_GATE
-                  ? `under the $${CPL_GATE} gate`
-                  : `over the $${CPL_GATE} gate`,
-            ok: t.blendedCpl != null && t.blendedCpl <= CPL_GATE,
-            bad: t.blendedCpl != null && t.blendedCpl > CPL_GATE,
-          },
-          {
-            l: "Under the $30/day floor",
-            v: String(t.underFloor),
-            d: "campaigns",
-            bad: t.underFloor > 0,
-          },
-          {
-            l: "Not on the board",
-            v: String(t.offBoard),
-            d: "campaigns with spend",
-            bad: t.offBoard > 0,
-          },
-        ].map((k, i) => (
+        {(
+          [
+            {
+              l: "Client spend, 7 days",
+              v: moneyOr(t.clientSpend),
+              d: `${snap.campaigns.length} campaigns delivering`,
+            },
+            {
+              l: "Client leads, 7 days",
+              v: String(t.clientLeads),
+            },
+            {
+              // Muhammed's grid (kpi.ts): good to $15, a warning to $22.50,
+              // bad above it.
+              l: "Blended CPL",
+              v: moneyOr(t.blendedCpl, 2),
+              d:
+                t.blendedCpl == null
+                  ? "no client leads yet"
+                  : t.blendedCpl <= CPL_GATE
+                    ? `within the $${CPL_GATE} gate`
+                    : t.blendedCpl <= CPL_BAD
+                      ? `over the $${CPL_GATE} gate`
+                      : `over $${CPL_BAD.toFixed(2)}, well over the gate`,
+              tone: cplTone(t.blendedCpl),
+            },
+            {
+              l: "Under the $30/day floor",
+              v: String(t.underFloor),
+              d: "campaigns",
+              tone: t.underFloor > 0 ? "bad" : undefined,
+            },
+            {
+              l: "Not on the board",
+              v: String(t.offBoard),
+              d: "campaigns with spend",
+              tone: t.offBoard > 0 ? "bad" : undefined,
+            },
+          ] as { l: string; v: string; d?: string; tone?: CostTone }[]
+        ).map((k, i) => (
           <div
             key={k.l}
             className={`min-w-0 rounded-2xl border bg-card p-4 ${i === 0 ? "col-span-2 @3xl:col-span-1" : ""}`}
@@ -1851,15 +1909,11 @@ function Cockpit({ view }: { view: View }) {
             </div>
             {k.d ? (
               <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                {k.bad || k.ok ? (
+                {k.tone ? (
                   <span
                     aria-hidden
                     className="size-1.5 shrink-0 rounded-full"
-                    style={{
-                      backgroundColor: k.bad
-                        ? "var(--destructive)"
-                        : "var(--success)",
-                    }}
+                    style={{ backgroundColor: COST_DOT[k.tone] }}
                   />
                 ) : null}
                 {k.d}
@@ -1874,10 +1928,13 @@ function Cockpit({ view }: { view: View }) {
   const changeLog = (
     <section className={CARD}>
       <h2 className="text-[15px] font-semibold">Change log</h2>
+      {/* ClickUp posting is the writeback switch CLICKUP_WRITEBACK_APPLY
+          (supabase/functions/clickup-writeback/run.ts). On 13 October it was
+          off and media buyer decisions sat in dry run; say so until it is on. */}
       <p className="mt-1 text-sm text-muted-foreground">
-        Every decision you take here is posted as a comment on that client's
-        campaign task in ClickUp, with the numbers behind it, so the CSM walks
-        into a check-in call with the full history.
+        Each decision you take here is saved in the cockpit with the numbers
+        behind it. Posting decisions to ClickUp is off for now, so the campaign
+        task does not get a comment.
       </p>
       {snap.decisions.length === 0 ? (
         <p className="mt-4 text-sm text-muted-foreground">
@@ -1891,8 +1948,6 @@ function Cockpit({ view }: { view: View }) {
               subject: string;
               action: string;
               reason?: string;
-              loggedAt?: number;
-              logError?: string;
               clickupTaskUrl?: string;
             }) => (
               <li key={d._id} className="py-3 text-sm first:pt-0 last:pb-0">
@@ -1903,13 +1958,12 @@ function Cockpit({ view }: { view: View }) {
                   ) : null}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                  {d.logError ? (
-                    <span className="txt-bad">
-                      Not logged to ClickUp: {d.logError}
-                    </span>
-                  ) : d.loggedAt ? (
+                  <span className="text-muted-foreground">
+                    Saved in the cockpit
+                  </span>
+                  {d.clickupTaskUrl ? (
                     <a
-                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                      className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
                       href={d.clickupTaskUrl}
                       target="_blank"
                       rel="noreferrer"
@@ -1917,11 +1971,7 @@ function Cockpit({ view }: { view: View }) {
                       ClickUp task
                       <ArrowUpRight className="size-3.5" aria-hidden />
                     </a>
-                  ) : (
-                    <span className="text-muted-foreground">
-                      Logging to ClickUp…
-                    </span>
-                  )}
+                  ) : null}
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-foreground hover:underline"
@@ -2401,7 +2451,10 @@ function Cockpit({ view }: { view: View }) {
             {[
               ["Spend today", `$${eodNumbers.spend}`],
               ["Leads today", String(eodNumbers.leads)],
-              ["CPL today", `$${eodNumbers.cpl}`],
+              [
+                "CPL today",
+                eodNumbers.leads > 0 ? `$${eodNumbers.cpl}` : "no leads",
+              ],
               ["Accounts", String(eodNumbers.accounts)],
             ].map(([label, value]) => (
               <div key={label}>
@@ -2411,8 +2464,10 @@ function Cockpit({ view }: { view: View }) {
             ))}
           </dl>
           <p className="mt-2 text-sm">
-            Any client over ${CPL_GATE} a lead:{" "}
-            <span className="font-semibold">{eodNumbers.overGate}</span>
+            Any client with a 7-day CPL over ${CPL_GATE}:{" "}
+            <span className="font-semibold">
+              {eodNumbers.overNames.length > 0 ? "Yes" : "No"}
+            </span>
             {eodNumbers.overNames.length > 0 && (
               <span className="text-muted-foreground">
                 {" "}
@@ -2728,7 +2783,14 @@ function Cockpit({ view }: { view: View }) {
                   aria-hidden
                   className="mt-1 size-1.5 shrink-0 rounded-full"
                   style={{
-                    backgroundColor: TONE_DOT.bad,
+                    // A grace period or a review is a warning, as on the
+                    // row chip above it; unpaid, disabled or closed is red.
+                    backgroundColor:
+                      TONE_DOT[
+                        accountIssueFlag(c.accountIssue)?.tone === "warning"
+                          ? "warn"
+                          : "bad"
+                      ],
                   }}
                 />
                 {c.accountIssue}
@@ -3042,6 +3104,28 @@ function Cockpit({ view }: { view: View }) {
                 )}
               />
             )}
+            {/* The client's calls live on its page (CallCentreSection); the
+                board reads nothing for them, it only links there. */}
+            {!where.inAccount && !c.internal && c.serviceMode !== "DWY" && (
+              <p className="text-xs">
+                <Link
+                  to={{
+                    pathname: "/ads",
+                    search: `?${new URLSearchParams({
+                      ...Object.fromEntries(
+                        [...params].filter(([k]) => k !== "campaign"),
+                      ),
+                      account: clientOf(c),
+                    })}`,
+                    hash: "#calls",
+                  }}
+                  className="inline-flex items-center gap-1 font-medium text-muted-foreground hover:text-foreground hover:underline"
+                >
+                  Calls for this client
+                  <ChevronRight className="size-3.5" aria-hidden />
+                </Link>
+              </p>
+            )}
             <BuildPanel
               key={`${c.clientTag ?? c.accountName}:${c.metaAccountId}`}
               clientTag={c.clientTag ?? c.accountName}
@@ -3176,8 +3260,26 @@ function Cockpit({ view }: { view: View }) {
   };
 
   const running = (snap.campaigns as Campaign[]).filter(c => !isParked(c));
+  /**
+   * The Payments strip's count chips: the board's own rows with a payment
+   * problem, instead of a second list above them. On Today they open Ads.
+   */
+  const showPaymentProblems = () => {
+    if (view !== "ads") {
+      navigate("/ads?filter=payment");
+      return;
+    }
+    adsTransition.change(() => {
+      setAdsTab("running");
+      setFilter(PAYMENT_FILTER);
+    });
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document
+      .getElementById("ads-board")
+      ?.scrollIntoView({ behavior: still ? "auto" : "smooth", block: "start" });
+  };
   const board = (
-    <section className={CARD}>
+    <section id="ads-board" className={`${CARD} scroll-mt-6`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div
           className="flex flex-wrap items-center gap-1.5"
@@ -3417,7 +3519,7 @@ function Cockpit({ view }: { view: View }) {
                         {cell(ok?.leads ?? "n/a")}
                       </td>
                       <td
-                        className={`px-2 tabular-nums font-semibold ${ok?.cpl === undefined ? "" : ok.cpl > CPL_GATE ? "txt-bad" : "txt-good"}`}
+                        className={`px-2 tabular-nums font-semibold ${costText(cplTone(ok?.cpl))}`}
                       >
                         {cell(moneyOr(ok?.cpl, 2))}
                       </td>
@@ -3440,13 +3542,7 @@ function Cockpit({ view }: { view: View }) {
                         )}
                       </td>
                       <td
-                        className={`px-2 tabular-nums font-semibold ${
-                          ok?.costPerBooking === undefined
-                            ? ""
-                            : ok.costPerBooking > 80
-                              ? "txt-bad"
-                              : "txt-good"
-                        }`}
+                        className={`px-2 tabular-nums font-semibold ${costText(cpbTone(ok?.costPerBooking))}`}
                       >
                         {cell(moneyOr(ok?.costPerBooking, 0))}
                       </td>
@@ -3484,6 +3580,7 @@ function Cockpit({ view }: { view: View }) {
                         <div className="flex flex-wrap items-center gap-1.5">
                           <StatusChip
                             tone={VERDICT_TONE[c.verdict] ?? "neutral"}
+                            title={c.reason}
                           >
                             {sentence(c.verdict)}
                           </StatusChip>
@@ -3588,12 +3685,30 @@ function Cockpit({ view }: { view: View }) {
               </Link>
             </Button>
           ) : null}
+          {view === "ads" ? <VerdictPlaybook /> : null}
           {reportProblem}
         </div>
       </header>
 
       {/* Only when the data is stale or the last refresh had problems. */}
       <ViktorStatus />
+      {/* Not on one client's page (Muhammed, 2026-10-13): there it listed
+          every other client's billing problem above the one you opened.
+          One quiet row, folded, and nothing when all is well (Aziz,
+          2026-10-13: "so we can focus on the ads"). */}
+      {(view === "sod" || (view === "ads" && !accountView)) && (
+        <AdBillingWatch
+          campaigns={(snap.campaigns as Campaign[]).map(c => ({
+            metaAccountId: c.metaAccountId,
+            dataThrough: c.dataThrough,
+            internal: c.internal,
+            accountIssue: c.accountIssue,
+            // On the Off tab, so the Payment problem filter never shows it.
+            parked: isParked(c),
+          }))}
+          onShowOnBoard={showPaymentProblems}
+        />
+      )}
 
       {/* Clients who wrote on WhatsApp, with the reply already drafted.
           Above the numbers: an unanswered client costs more than a
@@ -3643,6 +3758,7 @@ function Cockpit({ view }: { view: View }) {
       {view === "ads" && (
         <>
           {!accountView && tiles}
+          {!accountView && <LeadSyncStrip />}
           {!accountView && <TrackingIssues />}
           {accountView && (
             <AccountView

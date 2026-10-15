@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from .model import FAIL, NOT_DEPLOYED, OK, PAUSED, UNKNOWN, WARN, ago, kuwait, parse_time
+from .alerts import owner_tag
 from .redact import clean
 
 ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -41,7 +42,7 @@ def build(state: dict[str, Any], checks: dict[str, Any], now: datetime, *, for_s
     def inc_line(i: dict[str, Any]) -> str:
         since = parse_time(i.get("first_seen_at"))
         if for_slack:
-            return clean(f"- {i.get('title')} (since {kuwait(since)}): {i.get('action')} ({i.get('owner')})", 300)
+            return owner_tag(f"- {i.get('title')} (since {kuwait(since)}): {i.get('action')} ({i.get('owner')})", 300)
         s = f"- {i.get('title')}: {i.get('detail')} Since {kuwait(since)}."
         attempts = [a for a in i.get("fix_attempts") or [] if not a.get("planned")]
         if attempts:
@@ -114,8 +115,52 @@ def build(state: dict[str, Any], checks: dict[str, Any], now: datetime, *, for_s
     lines.append(f"Healthy: {healthy} of {len(results)} checks.")
     for n in scan.get("notes") or []:
         lines.append(clean(f"Note: {n}", 300))
+    if for_slack:
+        lines = slack_layout(lines)
+        return slack_fit(lines)
+    return "\n".join(lines)
+
+
+SLACK_MAX = 3800   # Slack.send cuts the text here too, so the summary must fit inside it whole
+
+
+def slack_fit(lines: list[str]) -> str:
+    """The summary within SLACK_MAX: whole lines only, the Healthy footer kept, and a grey note saying it was cut."""
     text = "\n".join(lines)
-    return text[:3800] + ("\n(cut short; run guardian.py report on the VPS for the rest)" if for_slack and len(text) > 3800 else "")
+    if len(text) <= SLACK_MAX:
+        return text
+    last_blank = max((i for i, line in enumerate(lines) if not line), default=len(lines))
+    body, footer = lines[:last_blank], lines[last_blank:]
+    note = "_Cut short. Run guardian.py report on the VPS for the rest._"
+    room = SLACK_MAX - len("\n".join(footer)) - len(note) - 2
+    keep: list[str] = []
+    for line in body:
+        if len("\n".join(keep + [line])) > room:
+            break
+        keep.append(line)
+    return "\n".join(keep + [note] + footer)[:SLACK_MAX]
+
+
+def slack_layout(lines: list[str]) -> list[str]:
+    """The 09:00 post in the shape guard/blocks.py turns into Block Kit (13 Oct 2026): a title, the scan line small
+    and grey under it, one section per group with its name in bold, bullets, and the totals small at the end."""
+    head = next((l for l in lines if l.startswith("Cockpit guardian, ")), "")
+    title, _, rest = head.rstrip(".").partition(". ")
+    out = [f"*{title.replace('Cockpit guardian, ', 'Cockpit guardian · ')}*"]
+    if rest:
+        out.append(f"_{rest}._")
+    out += [f"_⚠️ {l}_" for l in lines if l.startswith("The guardian has not scanned")]
+    for line in lines:
+        if line == head or line.startswith("The guardian has not scanned"):
+            continue
+        if line.startswith("- "):
+            line = "• " + line[2:]
+        elif line.startswith(("Healthy: ", "Note: ")):
+            line = f"_{line}_"
+        elif line and (line.endswith(":") or line.startswith("Broken now: nothing")):
+            line = f"*{line.rstrip(':')}*"
+        out.append(line)
+    return out
 
 
 def daily_due(state: dict[str, Any], now: datetime) -> bool:

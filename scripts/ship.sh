@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Ship one native Supabase cockpit (or all): lint, typecheck, build and deploy
-# the site, then verify release evidence. Native SQL and workers are released
+# the site after the readiness checks pass. Native SQL and workers are released
 # through the coordinated cutover procedure, never by deploying Convex.
 #
 #   scripts/ship.sh media-buyer | client-success | creative | video-editor | sales | all
 #
 # The coordinated cutover must prepare native schema and workers first.
+# On Windows a person runs scripts/ship.ps1 <app>, which loads the token and
+# build values. A fresh worktree first needs scripts/prepare-worktree.sh --apply.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -13,9 +15,15 @@ cd "$(dirname "$0")/.."
 py_bin="python"
 command -v python >/dev/null 2>&1 || py_bin="python3"
 
+# Everything this script needs, checked in seconds and listed at once before
+# minutes of tests (2026-10-11: a fresh worktree failed five runs in a row,
+# one missing piece at a time).
+scripts/ship-preflight.sh "${1:-all}" || exit 1
+
 # Authentication is shared by all five apps. Check live settings before publishing.
 "$py_bin" -m unittest discover -s scripts -p test_check_cockpit_auth_config.py
 "$py_bin" -m unittest discover -s scripts -p test_vercel_project_guard.py
+"$py_bin" -m unittest discover -s scripts -p test_ship_preflight.py
 (cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-flow.test.ts scripts/cockpit-auth-sql.test.ts)
 (cd apps/media-buyer-cockpit && bun test scripts/cockpit-rpc-restore.test.ts scripts/creative-check.test.ts)
 (cd apps/media-buyer-cockpit && bun test scripts/cockpit-auth-sdk.test.ts)
@@ -127,10 +135,11 @@ ship() {
   fi
 
   # The CLI upload stamps local HEAD and does not check GitHub. Refuse a
-  # commit main does not have, a dirty app directory, or a production SHA
-  # this clone cannot see (2026-09-22, cockpit.maharamedia.com on 7efca15f).
+  # commit main does not have, a dirty app directory, or a production this
+  # commit does not contain (2026-09-22, cockpit.maharamedia.com on 7efca15f;
+  # 2026-10-13, the production comparison had been skipped on every ship).
   echo "== $app: source is on GitHub main"
-  scripts/require-github-main.sh "$dir" "$SITE"
+  scripts/require-github-main.sh "$dir"
   # So the Composio path, which ship calls only after this, does not fetch
   # and decide again. A direct run of that script still checks.
   export GITHUB_MAIN_OK=1
@@ -262,6 +271,14 @@ ship() {
   fi
 }
 
+# The readiness checks (structure, imports, shared files, typechecks and
+# builds of all five apps, the offline test suites) run before anything is
+# uploaded, so a failure stops the deploy. Until 2026-10-12 they ran after
+# it, in release mode, where the missing cutover evidence failed every
+# routine ship once production had already changed.
+echo "== readiness (local checks)"
+"$py_bin" scripts/verify-cutover-readiness.py --mode local
+
 case "${1:-all}" in
   all) ship client-success; ship creative; ship media-buyer; ship video-editor; ship sales ;;
   *)   ship "$1" ;;
@@ -273,5 +290,11 @@ if [ "${1:-all}" = "sales" ]; then
   curl -fsS -m 30 -o /dev/null https://cockpit.maharamedia.com/sales/
   echo "sales origin and portal route respond."
 fi
-"$py_bin" scripts/verify-cutover-readiness.py
+# Release evidence binds one commit and comes only from the coordinated
+# cutover procedure (docs/CUTOVER-ACCEPTANCE.md). Check it when it exists.
+if [ -f evidence/cutover-acceptance.json ]; then
+  "$py_bin" scripts/verify-cutover-readiness.py --mode release
+else
+  echo "no cutover evidence recorded (evidence/cutover-acceptance.json); the local readiness checks passed before the deploy"
+fi
 echo "shipped."

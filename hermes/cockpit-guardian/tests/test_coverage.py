@@ -110,7 +110,7 @@ class C2WorseIsAlertedAgain(unittest.TestCase):
         b.result = fail("every section is old: the CEO refresh worker stopped")
         h.scan(KUWAIT_NIGHT)
         self.assertEqual(len(h.posted), 2)
-        self.assertTrue(h.posted[1].startswith("[guardian] Worse: Demo job"))
+        self.assertTrue(h.posted[1].startswith("🔴 *Worse: Demo job*"))
         self.assertIn("from warning to broken", h.posted[1])
 
     def test_a_rise_on_a_plain_check_waits_for_the_hold(self):
@@ -431,7 +431,7 @@ class C16SummaryFromTheScan(unittest.TestCase):
             guardian._after_scan(cfg, None, store, [], args, guardian.Log(None, True), morning + timedelta(minutes=10), False)
             guardian._after_scan(cfg, None, store, [], args, guardian.Log(None, True), morning + timedelta(minutes=15), False)
         self.assertEqual(len(sent), 1)
-        self.assertTrue(sent[0].startswith("Cockpit guardian"))
+        self.assertTrue(sent[0].startswith("*Cockpit guardian"))
 
 
 class C17ConvexIsNotProbed(unittest.TestCase):

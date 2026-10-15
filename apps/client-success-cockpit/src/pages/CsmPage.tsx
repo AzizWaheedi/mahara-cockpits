@@ -18,7 +18,23 @@ import {
 } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { AdBillingDailyTask } from "@/components/AdBillingReview";
+import {
+  ClientCallerChip,
+  ClientCallerLine,
+} from "@/components/CallCentreSection";
+import { ClientAdsTab } from "@/components/ClientAds";
+import { ClientBrief, useCardNotes } from "@/components/ClientBrief";
+import {
+  CallsTimeline,
+  FormsHistory,
+  NextCallLine,
+  TeamEods,
+  UnmatchedQueue,
+  useClientTimeline,
+} from "@/components/ClientCalls";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
+import { ClientWhatsApp } from "@/components/ClientWhatsApp";
 import {
   Chip,
   Dot,
@@ -39,8 +55,11 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
+import { type Caller, useClientCallers } from "@/lib/callCentreClient";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
+import { useClientWhatsApp } from "@/lib/clientWhatsApp";
+import { kuwaitDayOf, logCall } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
@@ -61,7 +80,6 @@ import {
   humanise,
   isChurned,
   type Lang,
-  LINKS,
   nextCall,
   nextPocState,
   serviceModel,
@@ -77,12 +95,21 @@ import {
   readOnboardingKits,
   refreshOnboardingKits,
 } from "@/lib/onboardingClient";
-import type { KitsPage, OnboardingRow } from "@/lib/onboardingCore";
+import {
+  checkinFormLink,
+  type KitsPage,
+  type OnboardingRow,
+} from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
 import { portalUrl } from "@/lib/portal";
+import { kuwaitDay, periodOf } from "@/lib/reportPeriod";
 import { fold, matchScore } from "@/lib/search";
-import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
+import {
+  CLICKUP_ACT_KINDS,
+  kuwaitToday,
+  useCsmSnapshot,
+} from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
 import { BacklogPage } from "./BacklogPage";
 import {
@@ -90,11 +117,21 @@ import {
   ClientLinks,
   ClientPerformancePage,
   ClientProfile,
+  firstDate,
+  hasLostLeads,
   LINK_LABELS,
+  LostLeadsList,
+  lostLeadsLede,
+  monthsAvailable,
+  PeriodBar,
 } from "./ClientPerformancePage";
 import { MeetingsPage } from "./MeetingsPage";
 
 /** Tickets the CSM raises. Picking the request picks the board — she never picks a team. */
+/** A ticket's team as people say it: "Media buyer", not media_buyer. */
+const teamName = (dept?: string) =>
+  TICKETS.find(t => t.dept === dept)?.deptLabel ?? dept ?? "another team";
+
 const TICKETS: { label: string; dept: string; deptLabel: string }[] = [
   {
     label: "Switch this campaign to a landing page",
@@ -584,7 +621,7 @@ function TemplatePicker({
         {c.noteMissing && (
           <a
             className="inline-flex items-center gap-1.5 font-medium txt-bad underline-offset-4 hover:underline"
-            href={LINKS.callSummaryForm}
+            href={checkinFormLink(c.taskId)}
             target="_blank"
             rel="noreferrer"
           >
@@ -872,7 +909,7 @@ function HotSheet({
                             className={`h-8 w-full rounded-lg border border-transparent bg-transparent px-2 hover:border-input focus:border-input focus:bg-background ${
                               field === "nextFu" &&
                               r.nextFu &&
-                              r.nextFu < new Date().toISOString().slice(0, 10)
+                              r.nextFu < kuwaitToday()
                                 ? "tone-bad"
                                 : ""
                             }`}
@@ -968,31 +1005,80 @@ function HotSheet({
   );
 }
 
-/**
- * The media buyer's changes since the last logged call, or the last two weeks
- * when no call is logged: the newest eight. The card carries 90 days of them
- * (the Client performance page shows any period).
- */
-function sinceLastCall(c: Client): Client[] {
-  const since = c.lastCall
-    ? String(c.lastCall).slice(0, 10)
-    : new Date(Date.now() + 3 * 3_600_000 - 14 * 86_400_000)
-        .toISOString()
-        .slice(0, 10);
-  return ((c.changes ?? []) as Client[])
-    .filter(ch => String(ch.day) >= since)
-    .sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
-    .slice(0, 8);
-}
-
 /** The client page's tabs, in the order a CSM reaches for them. */
 const CLIENT_TABS = [
   { key: "overview", label: "Overview" },
   { key: "results", label: "Results" },
+  { key: "ads", label: "Ads" },
   { key: "onboarding", label: "Onboarding & files" },
   { key: "money", label: "Money" },
 ] as const;
 type ClientTab = (typeof CLIENT_TABS)[number]["key"];
+
+/**
+ * The Ads tab (Aziz, 2026-10-13: the CSM looks at the ads "the same way it
+ * is on the media buyer cockpit"), read only, under the reporting period
+ * Results uses: the address carries it, so it follows from one tab to the
+ * other. `profile` is undefined while it loads and null when it could not be
+ * read.
+ */
+function AdsTab({
+  client: c,
+  profile,
+  period,
+  onPeriod,
+}: {
+  client: Client;
+  profile?: Client | null;
+  period: string;
+  onPeriod: (k: string) => void;
+}) {
+  const earliest = useMemo(
+    () => (profile ? firstDate(profile) : undefined),
+    [profile],
+  );
+  const months = useMemo(
+    () => (profile ? monthsAvailable(profile) : []),
+    [profile],
+  );
+  const per = useMemo(
+    () => periodOf(period, kuwaitDay(), earliest),
+    [period, earliest],
+  );
+  // The whole lost pipeline from the profile; missing is not zero.
+  const total = Number(profile?.lost?.total);
+  const lost = profile?.lost;
+  return (
+    <ClientAdsTab
+      taskId={c.taskId ? String(c.taskId) : undefined}
+      clientName={String(c.name)}
+      per={per}
+      dwy={serviceModel(profile?.service ?? c.service).dwy}
+      lostTotal={
+        profile?.lost?.total != null && Number.isFinite(total)
+          ? total
+          : undefined
+      }
+      lostLeads={
+        hasLostLeads(lost)
+          ? { lede: lostLeadsLede(lost), list: <LostLeadsList lost={lost} /> }
+          : undefined
+      }
+      // All time starts on the profile's first day: read once it is known
+      // (or the profile failed), not once without it and again with it.
+      hold={per.key === "all" && profile === undefined}
+      periodBar={
+        <PeriodBar
+          per={per}
+          value={period}
+          onChange={onPeriod}
+          months={months}
+          earliest={earliest}
+        />
+      }
+    />
+  );
+}
 
 /**
  * What you do to a client, one panel each. Booking is not here: it is the
@@ -1027,11 +1113,14 @@ function ClientRow({
   today,
   handled,
   kit,
+  callers,
 }: {
   c: Client;
   today: string;
   handled: boolean;
   kit?: OnboardingRow | null;
+  /** The client's callers in the dialer; undefined until they are read. */
+  callers?: Caller[];
 }) {
   const poc = nextPocState(c, today);
   const sm = serviceModel(c.service);
@@ -1058,6 +1147,10 @@ function ClientRow({
               {sm.label}
             </Chip>
           )}
+          <ClientCallerChip
+            callers={callers}
+            expected={c.bucket === "management" && !sm.dwy}
+          />
           {handled && (
             <span className="inline-flex items-center gap-1 text-xs font-medium txt-good">
               <Check aria-hidden className="size-3.5" />
@@ -1076,6 +1169,9 @@ function ClientRow({
           {c.lastCall
             ? ` · last call ${shortDay(c.lastCall)}`
             : " · no call logged"}
+          {c.nextCallAt
+            ? ` · next call ${shortDay(kuwaitDayOf(c.nextCallAt))}`
+            : ""}
           {c.liveDays !== undefined ? ` · live ${c.liveDays}d` : ""}
           {c.happiness ? ` · ${displayLabel(c.happiness)}` : ""}
           {sm.code ? ` · ${sm.code}` : ""}
@@ -1157,8 +1253,26 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     publishOpenClient(openName);
     return () => publishOpenClient(null);
   }, [openName]);
+  /** Every client's assigned callers in the dialer, for the list and the header. */
+  const callerRead = useClientCallers(auth.client, auth.session?.user.id ?? "");
+  /** The client's calls, forms and media buyer changes from the call store. */
+  const calls = useClientTimeline(
+    auth.client,
+    clientRow ? String(clientRow.taskId) : undefined,
+  );
+  /** The client's WhatsApp for the day, for its card and the brief. */
+  /** The card notes and the team's names, for the brief and the WhatsApp card. */
+  const cardNotes = useCardNotes(
+    auth.client,
+    clientRow ? String(clientRow.taskId) : "",
+  );
+  const whatsapp = useClientWhatsApp(
+    auth.client,
+    clientRow ? String(clientRow.taskId) : undefined,
+  );
   /** The client's profile: their links in the header (the tabs read it too). */
-  const [profile, setProfile] = useState<Client | undefined>(undefined);
+  // Undefined while it loads, null when it could not be read.
+  const [profile, setProfile] = useState<Client | null | undefined>(undefined);
   useEffect(() => {
     setProfile(undefined);
     if (!auth.client || !clientRow) return;
@@ -1168,12 +1282,13 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         if (live) setProfile(value);
       })
       .catch(error => {
-        if (live)
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : "The client profile could not be read.",
-          );
+        if (!live) return;
+        setProfile(null);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "The client profile could not be read.",
+        );
       });
     return () => {
       live = false;
@@ -1371,8 +1486,13 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   const hotToday = ds.filter(d =>
     /upsell|referral|review/i.test(d.action),
   ).length;
-  const ticketsToday = ds.filter(d => d.kind === "rerouted").length;
+  // "ticket" is what the native page saves; "rerouted" is the Convex history.
+  // A ticket counts once ClickUp has it, the same rule as the list below.
+  const ticketsToday = ds.filter(
+    d => (d.kind === "ticket" || d.kind === "rerouted") && d.clickupTaskUrl,
+  ).length;
   const clients: Client[] = snap.clients;
+  const clientNames = clients.map(x => String(x.name ?? ""));
   // Who needs you = the combined priority list across both motions.
   const needsAction = (c: Client) => c.rank < 40 && c.level !== "green";
   const todayList = clients.filter(needsAction);
@@ -1390,7 +1510,9 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       .flatMap((c: Client) => opportunitiesFor(c)),
   );
   const looseList = clients.filter(c => c.loose.length > 0);
-  const ticketRows = ds.filter(d => d.kind === "rerouted");
+  const ticketRows = ds.filter(
+    d => d.kind === "ticket" || d.kind === "rerouted",
+  );
   // A commitment counts as outstanding until the CSM turns it into a task or says done.
   const handledText = new Set(ds.map(d => d.action));
   const commitmentRows = clients.flatMap((c: Client) =>
@@ -1423,9 +1545,10 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     extra: Record<string, unknown> = {},
   ) => {
     try {
-      // The ClickUp id survives the sync replacing every row; the document id may not.
+      // The name is what "Handled today" and the hot list match on; the
+      // ClickUp id, kept in metadata, survives a rename.
       await act({
-        clientId: c._id as string,
+        clientName: String(c.name),
         taskId: c.taskId,
         action,
         kind,
@@ -1439,12 +1562,17 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     setTicketNote("");
     // The message panel stays open: it asks for the next call once logged.
     if (panel !== "message" && panel !== "update") setPanel(null);
+    // Stage and happiness are on the client's ClickUp card once act returns.
+    // A ticket reaches its team through the ClickUp log: the ticket list shows
+    // when it lands. Everything else stays in the cockpit.
     toast.success(
-      kind === "ticket"
-        ? "Ticket created on the right board"
-        : kind === "left"
-          ? "Left, with a reason logged"
-          : "Logged to ClickUp",
+      CLICKUP_ACT_KINDS.has(kind)
+        ? "Saved, ClickUp updated"
+        : kind === "ticket"
+          ? "Request saved. It shows as landed once it is on the team's board."
+          : kind === "left"
+            ? "Left, with a reason logged"
+            : "Saved in the cockpit",
     );
   };
 
@@ -1469,6 +1597,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       today={snap.day}
       handled={done.has(c.name)}
       kit={kitOf(c)}
+      callers={
+        callerRead.byTask
+          ? (callerRead.byTask.get(String(c.taskId)) ?? [])
+          : undefined
+      }
     />
   );
 
@@ -1572,7 +1705,6 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       ...((profile?.links ?? {}) as Record<string, string>),
     };
     const mine = commitmentRows.filter(r => r.client.taskId === c.taskId);
-    const changes = sinceLastCall(c);
     const nc = nextCall(c, langOf(c));
     const reportUrl: string | undefined = (
       (profile?.reports ?? []) as { builtAt?: number; docUrl?: string }[]
@@ -1663,13 +1795,26 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               {c.lastPoc
                 ? `${shortDay(c.lastPoc)} (${c.silentDays}d ago)`
                 : "never"}
-              {cad.daysLate > 0 ? `, ${cad.daysLate}d late` : ""}
+              {cad.daysLate > 0
+                ? `, ${cad.daysLate}d late`
+                : cad.messageDue
+                  ? ", due today"
+                  : ""}
             </span>
             {" · "}
             <span className={cad.callOverdue ? "font-semibold txt-bad" : ""}>
               last call {c.lastCall ? shortDay(c.lastCall) : "never"} (
-              {cad.callLabel}){cad.callOverdue ? ", due" : ""}
+              {cad.callLabel})
+              {cad.callOverdue ? ", overdue" : cad.callDue ? ", due" : ""}
             </span>
+            {c.nextCallAt ? (
+              <>
+                {" · "}
+                <NextCallLine at={c.nextCallAt} kind={c.nextCallKind} />
+              </>
+            ) : (
+              " · no call booked"
+            )}
             {" · 1-1 notes "}
             {c.lastNoteOn ? shortDay(c.lastNoteOn) : "none"}
             {sm.dwy ? "" : " · report "}
@@ -1683,6 +1828,13 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </span>
             )}
           </p>
+          {/* The call centre caller, easy to see (Aziz, 2026-10-13), just
+              above the client's main contact. */}
+          <ClientCallerLine
+            read={callerRead}
+            taskId={String(c.taskId)}
+            dwy={sm.dwy}
+          />
           {/* One links row, one name per link, the same names as Results. */}
           <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-sm">
             {LINK_LABELS.filter(l => links[l.key]).map(l => (
@@ -1755,7 +1907,30 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
-                  onClick={() => run(c, "Held a call", "call", { note })}
+                  onClick={async () => {
+                    if (!auth.client) return;
+                    try {
+                      const said = await logCall(
+                        auth.client,
+                        {
+                          taskId: String(c.taskId),
+                          _id: c._id,
+                          name: String(c.name),
+                        },
+                        note,
+                      );
+                      setNote("");
+                      setPanel(null);
+                      if (said.startsWith("Saved")) toast.success(said);
+                      else toast.warning(said);
+                      calls.reload();
+                      void sb.refetch();
+                    } catch (e) {
+                      toast.error(
+                        `Not saved: ${String((e as Error).message ?? e)}`,
+                      );
+                    }
+                  }}
                 >
                   Log the call and summary
                 </Button>
@@ -1781,7 +1956,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               </div>
               <p className="text-xs text-muted-foreground">
                 The call summary form is still the record of the call:{" "}
-                <ExtLink href={LINKS.callSummaryForm}>
+                <ExtLink href={checkinFormLink(c.taskId)}>
                   1-1 call summary form
                 </ExtLink>
                 .
@@ -2075,85 +2250,84 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         </nav>
 
         {clientTab === "overview" && (
-          <ClientProfile
-            name={String(c.name)}
-            part="overview"
-            embedded
-            period={period}
-            onPeriod={k => setParam("period", k)}
-            afterPrep={
-              <>
-                <SectionCard
-                  title="What the media buyer changed since your last call"
-                  count={changes.length}
-                  sub={
-                    <>
-                      Since{" "}
-                      {c.lastCall
-                        ? `your call on ${shortDay(c.lastCall)}`
-                        : "two weeks ago, no call is logged"}
-                      .{" "}
-                      <button
-                        type="button"
-                        className="text-primary underline-offset-4 hover:underline"
-                        onClick={() => setParam("tab", "results")}
-                      >
-                        Any period on Results
-                      </button>
-                    </>
-                  }
-                  flush
-                >
-                  {changes.length === 0 ? (
-                    <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">
-                      No campaign changes since then.
-                    </p>
-                  ) : (
-                    changes.map(
-                      (
-                        ch: { action: string; day: string; evidence: string },
-                        i: number,
-                      ) => (
-                        <div
-                          key={`${ch.day}-${i}`}
-                          className="px-4 py-3 text-sm sm:px-6"
-                        >
-                          <span className="font-medium">
-                            {shortDay(ch.day)}
-                          </span>
-                          , {ch.action}
-                          {ch.evidence ? (
-                            <span className="text-muted-foreground">
-                              . {ch.evidence}
-                            </span>
-                          ) : null}
-                        </div>
-                      ),
-                    )
-                  )}
-                </SectionCard>
-                {mine.length ? (
-                  <SectionCard
-                    title="What you said you would do"
-                    count={mine.length}
-                    sub="From your 1-1 call notes. Make each one a task, or close it."
-                    flush
+          <>
+            <ClientBrief
+              client={auth.client}
+              row={c}
+              timeline={calls.timeline}
+              profile={profile ?? null}
+              error={calls.error}
+              otherClients={clientNames}
+              whatsapp={whatsapp.data}
+              notes={cardNotes}
+              notesFromParent
+              onOpenCalls={() =>
+                document
+                  .getElementById("client-calls")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }
+            />
+            <ClientWhatsApp
+              team={cardNotes?.teamActors ?? []}
+              client={auth.client}
+              taskId={String(c.taskId)}
+              clientName={String(c.name)}
+              data={whatsapp.data}
+              error={whatsapp.error}
+              loading={whatsapp.loading}
+              reload={() => void whatsapp.reload()}
+            />
+            <ClientProfile
+              name={String(c.name)}
+              part="overview"
+              embedded
+              withBrief
+              period={period}
+              onPeriod={k => setParam("period", k)}
+              afterPrep={
+                <>
+                  <UnmatchedQueue
+                    client={auth.client}
+                    taskId={String(c.taskId)}
+                    clientName={String(c.name)}
+                    onMatched={calls.reload}
+                  />
+                  <div id="client-calls" className="scroll-mt-20">
+                    {calls.error ? (
+                      <p className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
+                        The call history could not be read: {calls.error}
+                      </p>
+                    ) : (
+                      <CallsTimeline
+                        timeline={calls.timeline}
+                        client={auth.client}
+                      />
+                    )}
+                  </div>
+                  {mine.length ? (
+                    <Fold
+                      title="Your 1-1 notes to act on"
+                      hint="Make each one a task, or close it"
+                    >
+                      {commitmentsBlock(mine, false)}
+                    </Fold>
+                  ) : null}
+                  <Fold
+                    title="Everything the team wrote"
+                    hint="EOD lines that name this client, 90 days"
                   >
-                    {commitmentsBlock(mine, false)}
-                  </SectionCard>
-                ) : null}
-                {c.loose.length ? (
-                  <SectionCard title="Loose ends" count={c.loose.length} flush>
-                    {c.loose.map((l: string) => (
-                      <div key={l} className="px-4 py-3 text-sm sm:px-6">
-                        {plainText(l)}
-                      </div>
-                    ))}
-                  </SectionCard>
-                ) : null}
-              </>
-            }
-          />
+                    <TeamEods timeline={calls.timeline} />
+                  </Fold>
+                  <Fold
+                    title="Every form"
+                    hint="1-1, onboarding, kickoff, Blueprint"
+                  >
+                    <FormsHistory timeline={calls.timeline} />
+                  </Fold>
+                </>
+              }
+            />
+          </>
         )}
 
         {clientTab === "results" && (
@@ -2161,6 +2335,15 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
             name={String(c.name)}
             part="results"
             embedded
+            period={period}
+            onPeriod={k => setParam("period", k)}
+          />
+        )}
+
+        {clientTab === "ads" && (
+          <AdsTab
+            client={c}
+            profile={profile}
             period={period}
             onPeriod={k => setParam("period", k)}
           />
@@ -2321,10 +2504,15 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   };
   const todayLine = (
     <>
-      {new Date().toLocaleDateString("en-GB", {
+      {/* The day the numbers are for, in Kuwait, not the browser's clock. */}
+      {(snap?.day
+        ? new Date(`${snap.day}T12:00:00Z`)
+        : new Date()
+      ).toLocaleDateString("en-GB", {
         weekday: "long",
         day: "numeric",
         month: "long",
+        timeZone: snap?.day ? "UTC" : "Asia/Kuwait",
       })}{" "}
       ·{" "}
       {snap.lastSyncAt
@@ -2420,6 +2608,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
         </div>
       )}
 
+      {section === "today" && <AdBillingDailyTask />}
+
       {section === "today" && <TodaysCalls snap={snap} />}
 
       {section === "today" && (
@@ -2461,7 +2651,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           <SectionCard
             title="Tickets raised today"
             count={ticketRows.length}
-            sub="Verified against ClickUp: a ticket only counts once it exists on the other team's board."
+            sub="Verified against ClickUp: a ticket counts as landed once it exists on the other team's board."
             flush
           >
             {ticketRows.length === 0 ? (
@@ -2484,7 +2674,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                     meta={
                       <>
                         <span className="text-xs text-muted-foreground">
-                          to {d.reroutedTo ?? "an unknown team"}
+                          to {teamName(d.reroutedTo)}
                         </span>
                         <Chip
                           tone={
@@ -2499,16 +2689,16 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                             ? "Landed"
                             : d.logError
                               ? "Failed"
-                              : "Sending"}
+                              : "Waiting"}
                         </Chip>
                       </>
                     }
                     why={
                       d.clickupTaskUrl
-                        ? `Created on the ${d.reroutedTo} board.`
+                        ? `Created on the ${teamName(d.reroutedTo)} board.`
                         : d.logError
                           ? `ClickUp rejected it: ${d.logError}. Raise it again.`
-                          : "Still being created, refresh in a moment."
+                          : `Not on the ${teamName(d.reroutedTo)} board yet. If it is urgent, tell the team directly.`
                     }
                     action={
                       d.clickupTaskUrl ? (
@@ -3262,7 +3452,9 @@ function MoneySection({
     <div className="space-y-6">
       <section className="rounded-2xl border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-4 sm:px-6 sm:pt-6">
-          <h2 className="text-[15px] font-semibold">Churn this month</h2>
+          <h2 className="text-[15px] font-semibold">
+            Churn this month to date
+          </h2>
           {churn === null ? null : churn <= CHURN_TARGET ? (
             <Chip tone="good">Under target</Chip>
           ) : (
@@ -3364,7 +3556,8 @@ function MoneySection({
             <div>
               Retention bonus at this rate:{" "}
               <span className="font-semibold tabular-nums">
-                {usd(pay.retention)}
+                {/* Unknown churn is not a $0 bonus. */}
+                {churn === null ? "Measuring" : usd(pay.retention)}
               </span>
             </div>
             <div className="text-xs text-muted-foreground">
@@ -3539,14 +3732,23 @@ function MoneySection({
           <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-5">
             {[
               ["Base", pay.base],
-              ["Retention", pay.retention],
+              ["Retention", churn === null ? null : pay.retention],
               ["Commission", pay.commission],
               ["Penalties", pay.penalties],
             ].map(([k, val]) => (
-              <StatTile key={k} plain label={k} value={usd(Number(val))} />
+              <StatTile
+                key={k}
+                plain
+                label={k}
+                value={val === null ? "Measuring" : usd(Number(val))}
+              />
             ))}
             <StatTile
-              label="On track this month"
+              label={
+                churn === null
+                  ? "On track, before retention"
+                  : "On track this month"
+              }
               value={usd(pay.total)}
               className="col-span-2 rounded-xl border-primary/40 bg-primary/10 @2xl:col-span-1"
             />

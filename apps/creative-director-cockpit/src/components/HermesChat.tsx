@@ -52,6 +52,10 @@ function Typed({
   onDone: () => void;
 }) {
   const [n, setN] = useState(animate ? 0 : text.length);
+  // The parent re-renders on every 1.5 s poll and hands a fresh onDone each
+  // time. Keep it in a ref so a poll does not restart the typing from zero.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   useEffect(() => {
     if (!animate) return;
     const reduced = window.matchMedia?.(
@@ -59,7 +63,7 @@ function Typed({
     ).matches;
     if (reduced) {
       setN(text.length);
-      onDone();
+      onDoneRef.current();
       return;
     }
     let i = 0;
@@ -68,11 +72,11 @@ function Typed({
       i = Math.min(text.length, i + 2 + Math.floor(Math.random() * 3));
       setN(i);
       if (i < text.length) timer = window.setTimeout(step, 18);
-      else onDone();
+      else onDoneRef.current();
     };
     timer = window.setTimeout(step, 120);
     return () => window.clearTimeout(timer);
-  }, [animate, text, onDone]);
+  }, [animate, text]);
   return (
     <p className="whitespace-pre-wrap">
       {text.slice(0, n)}

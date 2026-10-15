@@ -31,7 +31,7 @@ Now it has the real numbers:
 | Cost per booking | under $60 |
 | Lead to booking | 25% or more |
 | Pickup rate | 35% or more |
-| Show rate on confirmed | 75% or more |
+| Show rate on confirmed | aim for 70%; 60% is the line, under it is a watch, never the main constraint |
 | Close rate | 20% to 30% |
 
 Show rate, since 2026-09-18: shows divided by the appointments that came due,

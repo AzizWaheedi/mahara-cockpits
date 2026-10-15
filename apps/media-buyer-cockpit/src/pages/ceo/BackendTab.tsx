@@ -8,6 +8,7 @@ import {
 import { type ReactNode, useMemo } from "react";
 import { Delta } from "@/components/ceo/Delta";
 import { EmptyState } from "@/components/ceo/EmptyState";
+import { Facts } from "@/components/ceo/Facts";
 import {
   capitalize,
   change,
@@ -20,6 +21,7 @@ import {
   money,
   month,
   pct,
+  pct1,
   plural,
 } from "@/components/ceo/format";
 import { churnHeadline, highRiskCount } from "@/components/ceo/metrics";
@@ -43,6 +45,7 @@ import type {
   DeliveryPayload,
   Note,
 } from "@/types/ceo/payloads";
+import { CHURN_PAGE, churnView } from "./churnRegister";
 import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
@@ -144,6 +147,7 @@ export function BackendTab({ sections, now, day, goTab }: CeoTabProps) {
       <BookCard
         money={sections.money}
         clients={sections.clients}
+        today={today}
         goTab={goTab}
       />
 
@@ -202,15 +206,24 @@ const BOOK_NOTES: Note[] = [
 function BookCard({
   money: moneySection,
   clients,
+  today,
   goTab,
 }: {
   money: CeoSections["money"];
   clients: CeoSections["clients"];
+  /** Kuwait day, YYYY-MM-DD. */
+  today: string;
   goTab: GoTab;
 }) {
   const m = moneySection?.payload?.mrr ?? null;
   const book = moneySection?.payload?.book ?? null;
   const churn = clients?.payload?.churn ?? null;
+  // Churn reads the register the client success Churn page keeps (A078,
+  // 2026-10-11); the roster-history figure stays below as a cross-check.
+  const register = churnView(
+    clients?.payload?.churnRegister,
+    today.slice(0, 7),
+  );
   const retainer = clients?.payload?.retainer ?? null;
   const active = m?.groups.find(g => g.group === "active") ?? null;
   const paused = m?.groups.find(g => g.group === "paused") ?? null;
@@ -310,21 +323,66 @@ function BookCard({
         <StatTile
           variant="plain"
           label="Churn this month"
-          value={churn && churn.rate !== null ? pct(churn.rate) : null}
+          value={
+            register && register.rate !== null ? pct1(register.rate) : null
+          }
           naHint={
-            churn
-              ? (churn.rateWhy ?? "The churn rate is not known yet.")
-              : "The clients section was not read yet."
+            register
+              ? (register.naHint ?? "The churn rate is not known yet.")
+              : clients?.payload
+                ? "The churn register was not read this refresh."
+                : "The clients section was not read yet."
           }
           sub={
-            churn
-              ? churn.rate === null
-                ? `${plural(churn.churnedThisMonth.length, "launched client")} lost so far`
-                : `${count(churn.churnedThisMonth.length)} of ${count(churn.launchedAtMonthStart ?? 0)} launched clients${churn.complete ? "" : ", partial month"}`
-              : "Clients not read yet"
+            register ? (
+              register.rate === null ? (
+                <a
+                  href={CHURN_PAGE}
+                  className="underline decoration-dotted underline-offset-4 hover:text-foreground"
+                >
+                  {register.sub}
+                </a>
+              ) : (
+                register.sub
+              )
+            ) : (
+              "Churn register not read yet"
+            )
           }
-          hint="Launched clients lost this month over launched clients at the start of the month. A pause is not churn, and a client that stops before its launch date is lost before launch, not churn."
+          hint="From the churn register on the client success Churn page: clients lost before day 90 from launch, over clients active at the start of the month. A client who finishes the term is never churn, and a pause is not churn."
         />
+      </div>
+      <div className="mt-2">
+        <Facts
+          items={[
+            {
+              label: register ? `${register.lastName}` : "Last month",
+              value: register?.last ?? null,
+              hint: "Last month in the churn register: lost before day 90, of the clients active at the start.",
+            },
+            {
+              label: "Rolling three months",
+              value: register?.rolling ?? null,
+              hint: "Churned over the starts of the last three months that have a start, with the CSM contract's band. The number to manage against: at 20 clients one departure is 5%.",
+            },
+            {
+              label: "Roster history, this month",
+              value: churn
+                ? churn.rate === null
+                  ? `${plural(churn.churnedThisMonth.length, "launched client")} lost so far`
+                  : `${count(churn.churnedThisMonth.length)} of ${count(churn.launchedAtMonthStart ?? 0)} (${pct(churn.rate)})${churn.complete ? "" : ", partial month"}`
+                : null,
+              hint: "A cross-check, not the churn number: launched clients the cockpit's daily card history saw leave this month, over launched clients at the start of the month.",
+            },
+          ]}
+        />
+        <a
+          href={CHURN_PAGE}
+          className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground underline decoration-dotted underline-offset-4 hover:text-foreground"
+        >
+          Open the churn register
+          <ArrowUpRight className="size-3" aria-hidden />
+        </a>
       </div>
     </SectionCard>
   );

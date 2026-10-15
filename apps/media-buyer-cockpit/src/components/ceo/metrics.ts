@@ -402,7 +402,7 @@ export const CANCEL_RATE = {
 /** Front-end ROAS, the main one: front-end cash over lead-gen spend. */
 export const ROAS_CASH = {
   label: "Front-end ROAS",
-  hint: `Front-end cash over lead-gen ad spend in the same window. Front-end cash is the deposit the closer typed at signing plus the kickoff cash the CSM collects on the onboarding call; the kickoff form is not read yet, so this is the deposit alone and reads low. ${VOIDED_OUT}`,
+  hint: `Front-end cash over lead-gen ad spend in the same window. Front-end cash is the deposit the closer typed at signing plus the kickoff cash the CSM collects on the onboarding call (the kickoff form's Payment Amount, read from 4 Oct 2026; before that day the deposit alone, which reads low). ${VOIDED_OUT}`,
   naHint: "No lead-gen spend in this window.",
 } as const;
 

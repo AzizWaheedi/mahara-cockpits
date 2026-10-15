@@ -64,7 +64,7 @@ export const LINK_GROUPS: LinkGroup[] = [
       {
         label: "Brand Blueprint form (client fills it before the call)",
         url: "https://maharamedia.typeform.com/to/oYZKtogO",
-        note: "Read their answers as part of the prep, not on the call",
+        note: "Do not send this bare link: an answer sent from it cannot be matched to a client. Send the client's own link from the Brand Blueprint Form Link field on their ClickUp card. Read their answers as part of the prep, not on the call",
       },
     ],
   },

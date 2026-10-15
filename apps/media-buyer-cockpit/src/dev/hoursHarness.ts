@@ -126,6 +126,15 @@ function people() {
       paused_why: "Between projects",
     }),
     row(110, "Dina Samir", "", null),
+    // Two commission lines (A074): $10 per qualified intro shown, $50 per
+    // fully closed deal, on a $500 base.
+    row(111, "Lina Haddad", "B2B setter", 500, "USD", {
+      commission_basis: "per_qualified_intro_shown",
+      commission_rate: 10,
+      commission2_basis: "per_closed_deal",
+      commission2_rate: 50,
+      is_sales: true,
+    }),
     row(2, "Shared inbox", "Bot", null, "USD", { engagement: "bot" }),
     row(109, "Rana Saeed", "Call centre agent", 910, "USD", {
       active: false,
@@ -197,6 +206,8 @@ function costsContext() {
     targets: [
       { plan_id: 1, metric_key: "newCash", target: 40000 },
       { plan_id: 1, metric_key: "spend", target: 6000 },
+      { plan_id: 1, metric_key: "introsShown", target: 60 },
+      { plan_id: 1, metric_key: "closes", target: 8 },
     ],
     bank: null,
     today: "2026-10-08",

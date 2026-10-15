@@ -122,12 +122,14 @@ function localTransport(db: TestDb, options: { failMarker?: string } = {}): Fetc
       "money.attribution.deals": [{ response_id: "fixture-deal-1", day, email: null, business: "Client A", contact: null, closer: "Closer", csm: "CSM", cash_collected: 100, payment_structure: "Monthly" }],
       "money.attribution.logins": [],
       "money.attribution.expenses": [{ id: "fixture-expense-1", day, amount_usd: 32.6, category: "software", vendor: "Software vendor" }],
-      "money.client_ads": [{ spend: 50, clients: 1, synced_ms: now }],
+      "money.media_feed": [{ ready: true, source_rows: 1, actual_rows: 1, snapshot_ms: now, first_day: day, last_day: day }],
+      "money.client_ads": [{ client_id: "fixture-client", day, spend_usd: 50, leads: 1, campaigns: ["Fixture campaign"], currency: "USD", source: "media" }],
       "money.recent_deals": [{ day, business: "Client A", closer: "Closer", contracted: 500, cash: 100, plan: "Monthly" }],
       "money.tap_state": [{ ok: true, rows_seen: 0, run_ms: now, ok_ms: now, note: "Synthetic configured-empty Tap source" }],
       "money.tap_charges": [],
       "expenses.revenue": [{ revenue: 100, synced_ms: now }],
-      "expenses.client_ads": [{ spend: 50, clients: 1, own_spend: 0, own_clients: 0, synced_ms: now }],
+      "expenses.client_ads": [{ spend: 50, clients: 1, own_spend: 0, own_clients: 0, unknown_days: 0, frozen_days: 0 }],
+      "expenses.media_feed": [{ ready: true, source_rows: 1, actual_rows: 1, snapshot_ms: now, first_day: day, last_day: day }],
       "expenses.eods": [{ people: 1 }],
     };
     if (!(marker in fixtures)) throw new Error(`No provider fixture for ${project}/${marker}`);

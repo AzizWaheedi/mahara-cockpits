@@ -10,6 +10,15 @@ import { clockCountry, leadClock } from "./leadClock";
  * TellThem. The contract with sales-api is the plan's section 3.3: the
  * types below are the app's copies of it.
  *
+ * Booking further out (2026-10-11, the CEO, verbatim: "book people carther
+ * out ... I don't want the front end calendar links to have far out
+ * availability"):
+ * Another day reaches past the calendar's own booking page, a week at a
+ * time, on the same calendars; the edge between the two is drawn once in
+ * the week strip. Custom time takes a day and a time the rep types,
+ * checked against the host's calendar (book.check) before it is pressed.
+ * The far-out plan's section 4 is the contract.
+ *
  * Every time is said on Kuwait's clock, 12-hour ("4:30 pm"), and the lead's
  * own clock beside it when it reads differently ("5:30 pm UAE").
  */
@@ -30,6 +39,27 @@ export interface ApptOut {
   meet_url: string | null;
 }
 
+/**
+ * Where a time sits (2026-10-11, booking further out): on the calendar's own
+ * booking page, past it on the calendar's grid (the host's working hours
+ * and calendar, read by the cockpit), or a time the rep typed.
+ */
+export type Placement = "window" | "far_out" | "custom";
+
+export interface Person {
+  user_id: string;
+  name: string | null;
+}
+
+/** A day of free times; `far` past the calendar's own booking page. */
+export interface SlotDay {
+  day: string;
+  slots: string[];
+  far?: boolean;
+}
+
+export type WeekKey = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+
 /** book.slots, for a new booking or a reschedule. */
 export interface Slots {
   kind: CallKind;
@@ -44,11 +74,40 @@ export interface Slots {
   host?: { user_id: string | null; name: string | null } | null;
   /** The calendar's limits in words. */
   notice: string;
-  /** "2026-10-14": the last day this calendar opens. */
+  /** "2026-12-09": the last day offered (the reach when far-out times were read, else the booking page's). */
   until?: string | null;
-  days: { day: string; slots: string[] }[];
-  /** Reschedule with "anyone": who takes each time, keyed by the slot's ISO. */
-  slot_hosts?: Record<string, { user_id: string; name: string | null }>;
+  /** The last day the calendar's own booking page offers (HighLevel's window). */
+  window_until?: string | null;
+  /** The last day the cockpit books to (today + the reach setting − 1). */
+  reach_until?: string | null;
+  /** The days this answer covers; `from` asks for a later page. */
+  page?: {
+    from: string;
+    to: string;
+    prev: string | null;
+    next: string | null;
+  } | null;
+  days: SlotDay[];
+  /** Who takes each time, keyed by the slot's ISO (anyone free, and far-out times). */
+  slot_hosts?: Record<string, Person>;
+  /** Past the booking page: read (ok), the host has no hours there (none), or not read just now (unread). */
+  far?: {
+    state: "ok" | "none" | "unread";
+    agreed: boolean | null;
+    note: string | null;
+  } | null;
+  /** The named host's working hours on this calendar, for Custom time's words. */
+  host_hours?: {
+    user_id: string;
+    name: string | null;
+    week: Record<WeekKey, [string, string][]>;
+  } | null;
+  /** Custom time: who takes it (null: pick from `hosts`), on a step of `step_min` minutes. */
+  custom?: {
+    host: Person | null;
+    hosts: Person[];
+    step_min: number;
+  } | null;
   /** Booking only: the call of this kind already booked. */
   existing: {
     id: string;
@@ -66,8 +125,28 @@ export interface Slots {
     after_start?: boolean;
   } | null;
   booking_url?: string | null;
-  /** The lead's own link to pick another time (D17); null until its format is confirmed. */
+  /**
+   * The lead's own link to pick another time (D17, its format verified on
+   * 2026-10-11): reschedule only, on calendars that let the lead reschedule
+   * (intros and Follow up call; demos do not).
+   */
   reschedule_link?: string | null;
+}
+
+/** book.check: a custom time, checked against the host's calendar and hours (read-only). */
+export interface TimeCheck {
+  start: string;
+  words: string;
+  host: Person | null;
+  placement: Placement;
+  clash: { start: string; end: string; what: "call" | "busy" } | null;
+  outside_hours: boolean;
+  hours_words: string | null;
+  beyond_reach: boolean;
+  past: boolean;
+  step: boolean;
+  /** The one sentence to show. */
+  line: string;
 }
 
 export interface MoveResult {
@@ -78,18 +157,42 @@ export interface MoveResult {
   host_changed: boolean;
   appointment: ApptOut | null;
   words: string;
+  placement?: Placement;
+  /** The lead's own link to pick another time for this call (D17), where its calendar allows it. */
+  reschedule_link?: string | null;
 }
 
 export interface CheckResult {
   result: "moved" | "not_moved" | "checking" | "unverified";
   start: string | null;
   appointment: ApptOut | null;
+  /** Once moved: the lead's own link to pick another time (D17), where the calendar allows it. */
+  reschedule_link?: string | null;
 }
 
 export interface BookResult {
   verified: boolean;
   words: string;
   appointment?: ApptOut | null;
+  placement?: Placement;
+  /** The new call's own link for the lead to pick another time (D17), where the calendar allows it. */
+  reschedule_link?: string | null;
+}
+
+/**
+ * The lead's own link Tell them offers after a booking or a move: the one
+ * sales-api answered with (book.create, book.move, book.move.check), else,
+ * for a move, the one the calendar read gave (the call keeps its id, so it
+ * still opens this call; sales-api answers null when it could not read the
+ * calendar just then). Null where HighLevel does not let the lead
+ * reschedule (demos: both are null), and for a booking without an answer.
+ */
+export function doneLink(
+  mode: "reschedule" | "book",
+  answered: string | null | undefined,
+  read: string | null | undefined,
+): string | null {
+  return answered || (mode === "reschedule" ? read || null : null);
 }
 
 /** The refusal codes the picker answers in place (plan 3.3). */
@@ -114,7 +217,14 @@ export type RefusalCode =
   | "host"
   | "moving"
   | "dnd"
-  | "unread";
+  | "unread"
+  // Booking further out and custom times (2026-10-11, plan 4.3):
+  | "outside_hours"
+  | "host_busy"
+  | "beyond_reach"
+  | "host_needed"
+  | "step"
+  | "far_unread";
 
 const MIN = 60_000;
 const KUWAIT_MS = 3 * 3_600_000;
@@ -195,6 +305,26 @@ function kw(ms: number): Wall {
     minute: d.getUTCMinutes(),
     ymd: d.toISOString().slice(0, 10),
   };
+}
+
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_MS = 86_400_000;
+
+/** Kuwait's day, "2026-10-13", for a time (ISO or ms). */
+export function kwDay(at: string | number): string {
+  return kw(typeof at === "number" ? at : Date.parse(at)).ymd;
+}
+
+/** A Kuwait day `n` days on ("2026-10-13" + 2 → "2026-10-15"). */
+export function addDays(day: string, n: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY_MS)
+    .toISOString()
+    .slice(0, 10);
+}
+
+/** Noon on a Kuwait day, as ISO: a safe time to name the day by. */
+function noonOf(day: string): string {
+  return `${day}T12:00:00+03:00`;
 }
 
 const zoneFormats = new Map<string, Intl.DateTimeFormat>();
@@ -639,6 +769,8 @@ export interface Tile {
   /** Who takes it, for a reschedule offered with anyone free. */
   host: string | null;
   hostId: string | null;
+  /** Past the calendar's own booking page (the cockpit books it with HighLevel's date range lifted). */
+  far: boolean;
 }
 
 export function tileOf(
@@ -646,6 +778,7 @@ export function tileOf(
   lead: LeadLike,
   now = Date.now(),
   hosts?: Slots["slot_hosts"],
+  far = false,
 ): Tile {
   const p = timeParts(iso);
   const h = hosts?.[iso] ?? null;
@@ -657,18 +790,29 @@ export function tileOf(
     theirs: theirTime(iso, lead),
     host: h ? h.name?.split(/\s+/)[0] || h.name || null : null,
     hostId: h?.user_id ?? null,
+    far,
   };
+}
+
+/** Whether a Kuwait day is past the booking page: marked so, or after `window_until`. */
+export function isFarDay(
+  day: string,
+  slots: Pick<Slots, "days" | "window_until"> | null | undefined,
+): boolean {
+  if (slots?.days?.some(d => d.day === day && d.far)) return true;
+  const w = slots?.window_until;
+  return Boolean(w && YMD.test(w) && day > w);
 }
 
 /** The soonest `n` free times as tiles. */
 export function tiles(
-  slots: Pick<Slots, "days" | "slot_hosts"> | null | undefined,
+  slots: Pick<Slots, "days" | "slot_hosts" | "window_until"> | null | undefined,
   lead: LeadLike,
   n = 4,
   now = Date.now(),
 ): Tile[] {
   return nextSlots(slots?.days, n, now).map(iso =>
-    tileOf(iso, lead, now, slots?.slot_hosts),
+    tileOf(iso, lead, now, slots?.slot_hosts, isFarDay(kwDay(iso), slots)),
   );
 }
 
@@ -699,8 +843,314 @@ export function untilWords(
     slots?.until ||
     [...(slots?.days ?? [])].reverse().find(d => d.slots?.length)?.day ||
     null;
-  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
-  return `up to ${dateWords(`${day}T12:00:00+03:00`)}`;
+  if (!day || !YMD.test(day)) return null;
+  return `up to ${dateWords(noonOf(day))}`;
+}
+
+// ------------------------------------------------------------ Another day, a week at a time
+
+/**
+ * The free times the picker has read: the first answer (from today) and any
+ * later pages Another day asked for, by day. A later page wins for the days
+ * it covers. `read` is null when the server does not page (an answer
+ * without `page`): then what it sent is all there is.
+ */
+export interface DayBook {
+  days: SlotDay[];
+  slot_hosts: Record<string, Person>;
+  read: [string, string][] | null;
+  window_until: string | null;
+  until: string | null;
+}
+
+export function dayBook(
+  first: Slots | null | undefined,
+  pages: readonly Slots[] = [],
+): DayBook {
+  const byDay = new Map<string, SlotDay>();
+  const hosts: Record<string, Person> = {};
+  let read: [string, string][] | null = first?.page
+    ? [[first.page.from, first.page.to]]
+    : null;
+  for (const s of [first, ...pages]) {
+    if (!s) continue;
+    if (s !== first && s.page && read) read.push([s.page.from, s.page.to]);
+    else if (s !== first && !s.page) read = null;
+    // A page answers for every day it covers: a day it leaves out has no time.
+    if (s !== first && s.page)
+      for (const d of [...byDay.keys()])
+        if (d >= s.page.from && d <= s.page.to) byDay.delete(d);
+    for (const d of s.days ?? []) byDay.set(d.day, d);
+    Object.assign(hosts, s.slot_hosts ?? {});
+  }
+  return {
+    days: [...byDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
+    slot_hosts: hosts,
+    read,
+    window_until: first?.window_until ?? null,
+    until: first?.until ?? null,
+  };
+}
+
+/** The Sunday on or before a Kuwait day (the Gulf's week starts on Sunday). */
+export function weekStartOf(day: string): string {
+  const wd = new Date(`${day}T00:00:00Z`).getUTCDay();
+  return addDays(day, -wd);
+}
+
+export interface WeekCell {
+  day: string;
+  /** "Sun". */
+  wd: string;
+  /** 11. */
+  num: number;
+  /** "Sun 11 Oct", for a screen reader and a line. */
+  label: string;
+  /** Free times still ahead; null when the day is not read yet or not offered. */
+  count: number | null;
+  slots: string[];
+  far: boolean;
+  /** The first day past the booking page: the edge is drawn before it. */
+  edgeBefore: boolean;
+  /** Not this day: gone, past the reach, not read yet, or no free time. */
+  disabled: boolean;
+  /** Read, but its page has not come back yet. */
+  reading: boolean;
+  today: boolean;
+}
+
+/** The seven days of a week, Sunday first, each with its count of free times. */
+export function weekOf(
+  book: DayBook,
+  weekStart: string,
+  now = Date.now(),
+): WeekCell[] {
+  const today = kwDay(now);
+  const until = book.until && YMD.test(book.until) ? book.until : null;
+  const last =
+    until ?? [...book.days].reverse().find(d => d.slots?.length)?.day ?? null;
+  const w =
+    book.window_until && YMD.test(book.window_until) ? book.window_until : null;
+  const edge = w ? addDays(w, 1) : null;
+  const byDay = new Map(book.days.map(d => [d.day, d]));
+  return Array.from({ length: 7 }, (_, i) => {
+    const day = addDays(weekStart, i);
+    const words = dateWords(noonOf(day));
+    const [wd, num] = words.split(" ");
+    const offered = day >= today && (!last || day <= last);
+    const covered =
+      !book.read || book.read.some(([a, b]) => day >= a && day <= b);
+    const d = byDay.get(day);
+    const ahead = (d?.slots ?? []).filter(s => Date.parse(s) > now);
+    const count = offered && covered ? ahead.length : null;
+    return {
+      day,
+      wd,
+      num: Number(num),
+      label: words,
+      count,
+      slots: count === null ? [] : ahead,
+      far: Boolean(d?.far) || Boolean(w && day > w),
+      edgeBefore: Boolean(edge && day === edge && offered),
+      disabled: !count,
+      reading: offered && !covered,
+      today: day === today,
+    };
+  });
+}
+
+/** The first day of a week the picker still has to ask for (Another day's `from`), or null. */
+export function weekToRead(
+  book: DayBook,
+  weekStart: string,
+  now = Date.now(),
+): string | null {
+  return weekOf(book, weekStart, now).find(c => c.reading)?.day ?? null;
+}
+
+/** "This week", "Next week", or "Week of 25 Oct". */
+export function weekTitle(weekStart: string, now = Date.now()): string {
+  const first = weekStartOf(kwDay(now));
+  if (weekStart === first) return "This week";
+  if (weekStart === addDays(first, 7)) return "Next week";
+  const [, d, m] = dateWords(noonOf(weekStart)).split(" ");
+  return `Week of ${d} ${m}`;
+}
+
+/** "11–17 Oct", or "25 Oct – 1 Nov" across a month. */
+export function weekRange(weekStart: string): string {
+  const [, d1, m1] = dateWords(noonOf(weekStart)).split(" ");
+  const [, d2, m2] = dateWords(noonOf(addDays(weekStart, 6))).split(" ");
+  return m1 === m2 ? `${d1}–${d2} ${m1}` : `${d1} ${m1} – ${d2} ${m2}`;
+}
+
+/** The weeks Another day can show: this one to the week of the last day offered. */
+export function weekSpan(
+  book: Pick<DayBook, "days" | "until">,
+  now = Date.now(),
+): { first: string; last: string } {
+  const first = weekStartOf(kwDay(now));
+  const lastDay =
+    (book.until && YMD.test(book.until) ? book.until : null) ??
+    [...book.days].reverse().find(d => d.slots?.length)?.day ??
+    kwDay(now);
+  const last = weekStartOf(lastDay);
+  return { first, last: last < first ? first : last };
+}
+
+/**
+ * Under a week that shows far-out times: where the lead's own booking page
+ * stops, and where the later times come from.
+ */
+export function farLine(o: {
+  windowUntil: string | null | undefined;
+  /** Whose hours: "Ahmed" for one host, "you" for my own, null for each person's. */
+  who: string | null;
+}): string | null {
+  if (!o.windowUntil || !YMD.test(o.windowUntil)) return null;
+  const whose =
+    o.who === "you" ? "your" : o.who ? `${o.who}'s` : "each person's";
+  return `The lead's booking page stops at ${dateWords(noonOf(o.windowUntil))}. Later times come from ${whose} working hours and calendar.`;
+}
+
+/**
+ * With the lead's link to pick a time: what they will see when they open it
+ * (only the booking page's own days), and that a later day is picked here.
+ * Review 2026-10-11: after a call is booked or moved past the booking page,
+ * the link offers only days before that call, and Tell them did not say so.
+ * Without `windowUntil` (a call row, where the calendar was not read), the
+ * same without the date.
+ */
+export function linkLine(windowUntil: string | null | undefined): string {
+  return windowUntil && YMD.test(windowUntil)
+    ? `They'll see only the booking page's days, up to ${dateWords(noonOf(windowUntil))}. For a later day, pick it here.`
+    : "They'll see only the booking page's days, the next few. For a later day, pick it here.";
+}
+
+/**
+ * How far "no free time" really reaches: the page read when far-out times
+ * were read, else the booking page's last day.
+ */
+export function spanUntil(
+  slots:
+    | Pick<Slots, "days" | "until" | "window_until" | "page" | "far">
+    | null
+    | undefined,
+): string | null {
+  if (!slots) return null;
+  if (slots.far?.state === "ok" && slots.page?.to)
+    return untilWords({ days: slots.days, until: slots.page.to });
+  return untilWords({
+    days: slots.days,
+    until: slots.window_until ?? slots.until,
+  });
+}
+
+// ------------------------------------------------------------ Custom time
+
+/** A day and a time typed in Kuwait time, as ISO; null until both are whole. */
+export function customIso(date: string, time: string): string | null {
+  if (!YMD.test(date) || !/^\d{2}:\d{2}$/.test(time)) return null;
+  const [h, m] = time.split(":").map(Number);
+  if (h > 23 || m > 59) return null;
+  const t = Date.parse(`${date}T${time}:00+03:00`);
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+/**
+ * What the picker can say before asking the server: a day and a time are
+ * both needed, the time is ahead, inside the reach, on the step. Null when
+ * it is worth asking book.check.
+ */
+export function customPrecheck(
+  date: string,
+  time: string,
+  o: { now?: number; reachUntil?: string | null; stepMin?: number | null },
+): { line: string; tone: "muted" | "warn" } | null {
+  const iso = customIso(date, time);
+  if (!iso)
+    return { line: "Pick a day and a time (Kuwait time).", tone: "muted" };
+  const now = o.now ?? Date.now();
+  if (Date.parse(iso) <= now + 5 * MIN)
+    return {
+      line: "That time has passed or starts in under 5 minutes. Pick a later one.",
+      tone: "warn",
+    };
+  if (o.reachUntil && YMD.test(o.reachUntil) && date > o.reachUntil)
+    return {
+      line: `Pick a day up to ${dateWords(noonOf(o.reachUntil))}.`,
+      tone: "warn",
+    };
+  const step = o.stepMin && o.stepMin > 0 ? o.stepMin : 5;
+  if (Number(time.slice(3)) % step)
+    return {
+      line: `Pick a time on the ${step}-minute mark.`,
+      tone: "warn",
+    };
+  return null;
+}
+
+/**
+ * What the custom row shows for book.check's answer: the time to press,
+ * "Book anyway" outside the host's working hours, or nothing (a clash, a
+ * time gone, past the reach or off the step), with its one line.
+ */
+export function checkView(c: TimeCheck | null | undefined): {
+  tile: "book" | "anyway" | null;
+  tone: "muted" | "warn";
+  line: string;
+} | null {
+  if (!c) return null;
+  const line = c.line?.trim() || "";
+  // Nobody named to take it: the server's line asks who; nothing to press.
+  if (!c.host?.user_id)
+    return {
+      tile: null,
+      tone: c.past || c.beyond_reach || c.step ? "warn" : "muted",
+      line: line || "Pick who takes the call.",
+    };
+  if (c.past || c.beyond_reach || c.step || c.clash)
+    return {
+      tile: null,
+      tone: "warn",
+      line: line || "That time can't be booked. Pick another.",
+    };
+  if (c.outside_hours)
+    return {
+      tile: "anyway",
+      tone: "warn",
+      line: line || "That's outside the host's working hours.",
+    };
+  return { tile: "book", tone: "muted", line };
+}
+
+/** The custom time as a tile, with who takes it. */
+export function customTile(
+  iso: string,
+  lead: LeadLike,
+  host: Person | null,
+  now = Date.now(),
+  far = false,
+): Tile {
+  const t = tileOf(iso, lead, now, undefined, far);
+  return {
+    ...t,
+    host: host ? firstOf(host.name) || host.name || null : null,
+    hostId: host?.user_id ?? null,
+  };
+}
+
+/** What a press adds to book.create or book.move: who takes it, and a custom time's flags. */
+export function pressExtras(p: {
+  userId?: string | null;
+  custom?: boolean;
+  outsideOk?: boolean;
+}): { user_id?: string; custom?: true; outside_hours_ok?: true } {
+  return {
+    ...(p.userId ? { user_id: p.userId } : {}),
+    ...(p.custom ? { custom: true as const } : {}),
+    ...(p.custom && p.outsideOk ? { outside_hours_ok: true as const } : {}),
+  };
 }
 
 /** The first name a line gives the host. */
@@ -730,16 +1180,27 @@ export function pickerLine(o: {
   return `${when}${host ? `, with ${host} (the same person)` : ""}. Kuwait time${mins}.`;
 }
 
-/** The hold strip's words: "Rescheduling to Tue 13 Oct, 5:00 pm". */
+/**
+ * The hold strip's words: "Rescheduling to Tue 13 Oct, 5:00 pm", and what
+ * is different about the time: " · past the booking page", or " · outside
+ * Ahmed's hours" for a custom time booked anyway.
+ */
 export function holdWords(
   mode: "reschedule" | "book",
   kind: CallKind,
   iso: string,
   now = Date.now(),
+  how: { far?: boolean; outside?: boolean; host?: string | null } = {},
 ): string {
-  return mode === "reschedule"
-    ? `Rescheduling to ${whenWords(iso, now)}`
-    : `Booking the ${kindNoun(kind)} for ${whenWords(iso, now)}`;
+  const head =
+    mode === "reschedule"
+      ? `Rescheduling to ${whenWords(iso, now)}`
+      : `Booking the ${kindNoun(kind)} for ${whenWords(iso, now)}`;
+  if (how.outside) {
+    const h = firstOf(how.host);
+    return `${head} · outside ${h ? `${h}'s` : "working"} hours`;
+  }
+  return how.far ? `${head} · past the booking page` : head;
 }
 
 /** The done state's title, and the toast's words. */
@@ -763,6 +1224,8 @@ export function doneSub(o: {
   /** The host before a move, when it changed. */
   wasHost?: string | null;
   missed?: boolean;
+  /** A custom time booked outside the host's working hours. */
+  outside?: boolean;
 }): string {
   const host = firstOf(o.host);
   const was = firstOf(o.wasHost);
@@ -774,13 +1237,16 @@ export function doneSub(o: {
   const c = theirClock(o.iso, o.lead);
   const name = leadFirst(o.lead) || "them";
   const clock = c ? `; ${c.time} for ${name} in ${c.place.the}` : "";
+  const outside = o.outside
+    ? ` Outside ${host ? `${host}'s` : "the host's"} working hours.`
+    : "";
   const tail =
     o.mode === "reschedule"
       ? "HighLevel's reminders now follow the new time."
       : o.missed
         ? "The missed call is marked, and HighLevel sends them its confirmation."
         : "HighLevel sends them its confirmation.";
-  return `Kuwait time${withWho}${clock}. ${tail}`;
+  return `Kuwait time${withWho}${clock}.${outside} ${tail}`;
 }
 
 /** The line a booking made after a missed call starts with. */
@@ -825,6 +1291,8 @@ export interface RefusalAnswer {
   reread: boolean;
   /** The call cannot be rescheduled from here: the times go away. */
   blocked: boolean;
+  /** A custom time outside the host's working hours: offer Book anyway. */
+  anyway?: true;
 }
 
 /** A refusal's code, read into what the picker does with it; the server's sentence is kept. */
@@ -834,12 +1302,23 @@ export function refusalLine(
 ): RefusalAnswer {
   const text = message.trim() || "HighLevel refused it. Try again.";
   switch (code) {
+    case "outside_hours":
+      return {
+        text,
+        tone: "warn",
+        reread: false,
+        blocked: false,
+        anyway: true,
+      };
     case "taken":
     case "past":
     // The time could not be read, or its host is not on the calendar: the
     // times are read again so the next press is one the calendar offers.
     case "time":
     case "host":
+    // The host's calendar filled, or could not be read just now: read again.
+    case "host_busy":
+    case "far_unread":
       return { text, tone: "warn", reread: true, blocked: false };
     case "not_yours":
     case "client":

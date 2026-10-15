@@ -81,7 +81,90 @@ export type Projection = {
   demosShown: number | null;
   closes: number | null;
   mrrDue: number | null;
+  /**
+   * Of the intros shown, the share that qualified (B2B intros_qualified
+   * over intros_shown), 0..1. A plan does not say it, so it is read from
+   * recent months and the qualified intros are an estimate.
+   */
+  qualifiedIntroShare?: number | null;
+  /** Qualified intros shown, when given; otherwise intros shown × qualifiedIntroShare. */
+  introsQualifiedShown?: number | null;
+  /** Deals that fully close; a plan's closes when not given (a plan cannot plan a void). */
+  fullCloses?: number | null;
 };
+
+/**
+ * The share of intros shown that qualified, over the growth windows given
+ * (the server's last month and month to date: B2B intros_qualified over
+ * intros_shown). The plan has no qualified intros, so the setter's line is
+ * priced on the plan's intros held times this share, and says it is an
+ * estimate. Windows that repeat the same days are counted once.
+ */
+export function qualifiedIntroShare(
+  windows: (
+    | { from: string; to: string; raw: Record<string, number | null> }
+    | null
+    | undefined
+  )[],
+): {
+  share: number | null;
+  qualified: number;
+  shown: number;
+  from: string | null;
+  to: string | null;
+} | null {
+  const seen = new Set<string>();
+  let qualified = 0;
+  let shown = 0;
+  let from: string | null = null;
+  let to: string | null = null;
+  for (const w of windows) {
+    if (!w?.raw) continue;
+    const key = `${w.from}|${w.to}`;
+    if (seen.has(key)) continue;
+    const q = w.raw.intros_qualified;
+    const n = w.raw.intros_shown;
+    if (typeof q !== "number" || typeof n !== "number") continue;
+    seen.add(key);
+    qualified += q;
+    shown += n;
+    if (from === null || w.from < from) from = w.from;
+    if (to === null || w.to > to) to = w.to;
+  }
+  if (!seen.size) return null;
+  return {
+    share: shown > 0 ? Math.round((qualified / shown) * 1000) / 1000 : null,
+    qualified,
+    shown,
+    from,
+    to,
+  };
+}
+
+/** The plan number a basis is priced on, filling the two estimated ones. */
+export function planAmount(
+  p: Projection,
+  key: keyof Projection,
+): number | null {
+  if (key === "introsQualifiedShown") {
+    if (p.introsQualifiedShown !== undefined && p.introsQualifiedShown !== null)
+      return p.introsQualifiedShown;
+    if (
+      p.introsShown === null ||
+      p.qualifiedIntroShare === undefined ||
+      p.qualifiedIntroShare === null
+    )
+      return null;
+    // Whole intros, so "$10 × 53" is the figure the commission is priced on.
+    return Math.round(p.introsShown * p.qualifiedIntroShare);
+  }
+  if (key === "fullCloses")
+    return p.fullCloses !== undefined && p.fullCloses !== null
+      ? p.fullCloses
+      : p.closes;
+  const v = p[key];
+  return typeof v === "number" ? v : null;
+}
 
 /** What each commission basis is paid on, in the plan's words. */
 export const BASIS_ON: Record<CommissionBasis, keyof Projection | null> = {
@@ -95,6 +178,17 @@ export const BASIS_ON: Record<CommissionBasis, keyof Projection | null> = {
   per_signed: "closes",
   mrr_managed: "mrrDue",
   other: null,
+  per_qualified_intro_shown: "introsQualifiedShown",
+  per_closed_deal: "fullCloses",
+};
+
+/** The unit a per-event basis counts, for "$10 × 34 qualified intros". */
+const UNIT: Partial<Record<CommissionBasis, string>> = {
+  per_intro_shown: "intros held",
+  per_demo_shown: "demos held",
+  per_signed: "deals signed",
+  per_qualified_intro_shown: "qualified intros held (estimate)",
+  per_closed_deal: "deals fully closed",
 };
 
 const SHARE = new Set<CommissionBasis>([
@@ -114,6 +208,9 @@ export type Payee = {
   basis: CommissionBasis;
   /** A fraction for the share bases; an amount in `currency` per unit otherwise. */
   rate: number | null;
+  /** The second commission line (A074); absent or "none" when there is none. */
+  basis2?: CommissionBasis;
+  rate2?: number | null;
   /**
    * Last month's approved pay from Hours and pay, when there is one. Only a
    * closed month reads it; next month's plan stays on roster pay, so a
@@ -182,17 +279,25 @@ export type PayLine = {
   id: number;
   name: string;
   base: number | null;
-  /** The projected commission in USD; 0 with no commission; null when it cannot be priced. */
+  /** The projected commission in USD, both lines; 0 with no commission; null when a line cannot be priced. */
   commission: number | null;
-  /** What the commission was priced on, in words. */
+  /** What the commission was priced on, in words, both lines joined with " + ". */
   on: string | null;
   total: number | null;
+  /** Each commission line on its own (one or two), for a screen that shows them apart. */
+  parts?: {
+    basis: CommissionBasis;
+    commission: number | null;
+    on: string | null;
+  }[];
 };
 
 /**
  * Next month's pay, person by person. People on the same basis split what it
  * is paid on equally: two closers on 10% of the cash they close are, between
- * them, 10% of the new cash, each on half of it.
+ * them, 10% of the new cash, each on half of it. A person's second line
+ * (A074) is priced the same way and added; if either line cannot be priced
+ * the person's commission is no number rather than a part of one.
  */
 export function payroll(
   people: Payee[],
@@ -209,14 +314,44 @@ export function payroll(
   /** Commissions that cannot be priced on the plan. */
   unpriced: string[];
 } {
+  const linesOf = (x: Payee) =>
+    [
+      { basis: x.basis, rate: x.rate },
+      ...(x.basis2 && x.basis2 !== "none"
+        ? [{ basis: x.basis2, rate: x.rate2 ?? null }]
+        : []),
+    ].filter(l => l.basis !== "none");
   const sharers = new Map<CommissionBasis, number>();
   for (const x of people)
-    if (x.basis !== "none" && x.basis !== "other")
-      sharers.set(x.basis, (sharers.get(x.basis) ?? 0) + 1);
+    for (const l of linesOf(x))
+      if (l.basis !== "other")
+        sharers.set(l.basis, (sharers.get(l.basis) ?? 0) + 1);
+  const price = (
+    x: Payee,
+    l: { basis: CommissionBasis; rate: number | null },
+  ): { commission: number | null; on: string | null } => {
+    const of = BASIS_ON[l.basis];
+    const amount = of ? planAmount(p, of) : null;
+    const share = 1 / (sharers.get(l.basis) ?? 1);
+    if (l.rate === null || amount === null || !of)
+      return { commission: null, on: null };
+    if (SHARE.has(l.basis))
+      return {
+        commission: Math.round(l.rate * amount * share * 100) / 100,
+        on: `${Math.round(l.rate * 1000) / 10}% of ${say.money(amount * share)}`,
+      };
+    const rate = usdPer[x.currency.toUpperCase()];
+    if (rate === undefined) return { commission: null, on: null };
+    const unit = UNIT[l.basis];
+    return {
+      commission: Math.round(l.rate * rate * amount * share * 100) / 100,
+      on: `${say.money(l.rate * rate)} × ${say.count(amount * share)}${unit ? ` ${unit}` : ""}`,
+    };
+  };
   const lines: PayLine[] = people.map(x => {
-    const of = BASIS_ON[x.basis];
     const base = x.monthlyUsd;
-    if (x.basis === "none")
+    const mine = linesOf(x);
+    if (!mine.length)
       return {
         id: x.id,
         name: x.name,
@@ -224,33 +359,24 @@ export function payroll(
         commission: 0,
         on: null,
         total: base,
+        parts: [],
       };
-    const amount = of ? p[of] : null;
-    const share = 1 / (sharers.get(x.basis) ?? 1);
-    let commission: number | null = null;
-    let on: string | null = null;
-    if (x.rate !== null && amount !== null && of) {
-      if (SHARE.has(x.basis)) {
-        commission = x.rate * amount * share;
-        on = `${Math.round(x.rate * 1000) / 10}% of ${say.money(amount * share)}`;
-      } else {
-        const rate = usdPer[x.currency.toUpperCase()];
-        if (rate !== undefined) {
-          commission = x.rate * rate * amount * share;
-          on = `${say.money(x.rate * rate)} × ${say.count(amount * share)}`;
-        }
-      }
-    }
-    const rounded =
-      commission === null ? null : Math.round(commission * 100) / 100;
+    const parts = mine.map(l => ({ basis: l.basis, ...price(x, l) }));
+    const unpriced = parts.some(q => q.commission === null);
+    const rounded = unpriced
+      ? null
+      : Math.round(parts.reduce((n, q) => n + (q.commission ?? 0), 0) * 100) /
+        100;
+    const said = parts.map(q => q.on).filter((t): t is string => Boolean(t));
     return {
       id: x.id,
       name: x.name,
       base,
       commission: rounded,
-      on,
+      on: said.length ? said.join(" + ") : null,
       total:
         base === null && rounded === null ? null : (base ?? 0) + (rounded ?? 0),
+      parts,
     };
   });
   const sum = (xs: (number | null)[]) =>

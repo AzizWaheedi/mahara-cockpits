@@ -150,3 +150,96 @@ describe("approveMany", () => {
     expect((await s.send({ op: "approveMany", month: "2026-10", items: Array.from({ length: 51 }, () => it) })).status).toBe(400);
   });
 });
+
+describe("Hubstaff watch", () => {
+  const GOOGLE_KEY = "AIzaPastedKeyNotReal7Qx2";
+  /** keys: what cockpit_hours_watch_key_get answers per provider (after the save), for the next-run provider. */
+  function watch(opts: { secret?: string; answer?: (url: URL, init?: RequestInit) => Response; keys?: Record<string, unknown> } = {}) {
+    const calls: Rec[] = [];
+    const receipts: unknown[] = [];
+    const sent: { url: URL; init?: RequestInit }[] = [];
+    const handler = makeHoursApi({
+      verifyUser: async jwt => (jwt === "good-jwt" ? CEO_ID : null),
+      rpc: async (name, args) => {
+        calls.push({ name, args });
+        if (name === "cockpit_hours_watch_key_get") return opts.keys?.[String(args.p_provider)] ?? null;
+        return name === "cockpit_hours_actor" ? "ceo@example.test" : { ok: true };
+      },
+      insertReceipt: async () => {},
+      insertWatchReceipt: async r => { receipts.push(r); },
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        sent.push({ url, init });
+        return opts.answer ? opts.answer(url, init) : new Response("{}", { status: 599 });
+      }) as typeof fetch,
+      sleep: async () => {}, now: () => new Date("2026-10-13T08:00:00Z"), waitUntil: () => {},
+      cronSecret: () => opts.secret ?? "cron-secret-fixture", watchUrl: "https://project.supabase.test/functions/v1/cockpit-hours-watch",
+    });
+    const send = (body: unknown) => handler(new Request("https://x.test/", { method: "POST", headers: { Authorization: "Bearer good-jwt", "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+    return { calls, receipts, sent, send };
+  }
+  test("watchNow posts the watch job with the cron secret, as the CEO", async () => {
+    const s = watch({ answer: () => new Response(JSON.stringify({ ok: true, runId: 44 }), { status: 202 }) });
+    const out = await (await s.send({ op: "watchNow" })).json();
+    expect(out).toEqual({ ok: true, runId: 44, text: "Checking now. The card updates in about a minute." });
+    expect(s.sent[0].url.toString()).toBe("https://project.supabase.test/functions/v1/cockpit-hours-watch");
+    expect((s.sent[0].init?.headers as Record<string, string>)["x-cron-secret"]).toBe("cron-secret-fixture");
+    expect(JSON.parse(String(s.sent[0].init?.body))).toEqual({ job: "watch", requestedBy: "ceo@example.test" });
+  });
+  test("watchNow says when a check is already running, and what to do without the secret", async () => {
+    const busy = watch({ answer: () => new Response(JSON.stringify({ ok: false, busy: true, since: "2026-10-13T07:58:00Z" }), { status: 200 }) });
+    expect(await (await busy.send({ op: "watchNow" })).json()).toMatchObject({ ok: false, busy: true, since: "2026-10-13T07:58:00Z" });
+    const unset = watch({ secret: "" });
+    const res = await unset.send({ op: "watchNow" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("CRON_SECRET is not set");
+    expect(unset.sent).toEqual([]);
+  });
+  test("watchKey tests the key with one model list call, saves it, and never echoes it", async () => {
+    const s = watch({ answer: () => new Response('{"models":[]}', { status: 200 }) });
+    const out = await (await s.send({ op: "watchKey", provider: "google_ai", key: GOOGLE_KEY })).json();
+    expect(out).toEqual({ ok: true, state: "connected", text: "Connected. The screenshot check uses Google AI from the next run.", last4: "7Qx2" });
+    expect(s.sent.map(x => `${x.init?.method} ${x.url.host}${x.url.pathname}`)).toEqual(["GET generativelanguage.googleapis.com/v1beta/models"]);
+    expect(s.calls.find(c => c.name === "cockpit_hours_watch_key_put")?.args).toEqual({ p: { provider: "google_ai", secret: GOOGLE_KEY, savedBy: "ceo@example.test", state: "connected", stateNote: "Google AI answered: the key works." } });
+    expect(JSON.stringify(out)).not.toContain(GOOGLE_KEY);
+    expect(JSON.stringify(s.receipts)).not.toContain(GOOGLE_KEY);
+    expect(s.receipts).toEqual([
+      expect.objectContaining({ provider: "google-ai", method: "GET", resource: "generativelanguage.googleapis.com/v1beta/models", phase: "intent" }),
+      expect.objectContaining({ provider: "google-ai", phase: "response", http_status: 200 }),
+    ]);
+  });
+  test("a refused key stores nothing; an unreachable provider stores it unchecked; a bad shape sends nothing", async () => {
+    const refused = watch({ answer: () => new Response('{"error":{"code":401,"type":"invalid_request_error"}}', { status: 401 }) });
+    expect(await (await refused.send({ op: "watchKey", provider: "openai", key: "sk-pastedKeyNotReal01" })).json()).toEqual({ ok: false, state: "refused", text: "OpenAI refused this key. Nothing was changed." });
+    expect(refused.calls.some(c => c.name === "cockpit_hours_watch_key_put")).toBe(false);
+    const down = watch({ answer: () => { throw new Error("offline"); } });
+    expect(await (await down.send({ op: "watchKey", provider: "openai", key: "sk-pastedKeyNotReal01" })).json()).toMatchObject({ ok: true, state: "unchecked", last4: "al01" });
+    expect(down.calls.find(c => c.name === "cockpit_hours_watch_key_put")?.args.p).toMatchObject({ state: "unchecked" });
+    const shape = watch();
+    expect(await (await shape.send({ op: "watchKey", provider: "google_ai", key: "two words" })).json()).toMatchObject({ ok: false, state: "missing_key" });
+    expect((await shape.send({ op: "watchKey", provider: "anthropic", key: GOOGLE_KEY })).status).toBe(400);
+    expect(shape.sent).toEqual([]);
+  });
+  test("final round: the save message names the provider the next run will actually use", async () => {
+    const works = () => new Response('{"models":[]}', { status: 200 });
+    const saved = (state: string) => ({ secret: "saved-secret-not-real", state, savedAt: "2026-10-13T07:00:00+00:00" });
+    // The reviewers' recheck_4 A: OpenAI refused, a Google AI key pasted: the next run uses Google AI.
+    const refusedFirst = watch({ answer: works, keys: { openai: saved("refused"), google_ai: saved("connected") } });
+    expect((await (await refusedFirst.send({ op: "watchKey", provider: "google_ai", key: GOOGLE_KEY })).json()).text)
+      .toBe("Connected. The screenshot check uses Google AI from the next run.");
+    // A working OpenAI key comes first: the pasted Google AI key is saved but not used.
+    const openaiFirst = watch({ answer: works, keys: { openai: saved("connected"), google_ai: saved("connected") } });
+    expect(await (await openaiFirst.send({ op: "watchKey", provider: "google_ai", key: GOOGLE_KEY })).json()).toEqual({
+      ok: true, state: "connected", last4: "7Qx2",
+      text: "Connected. The screenshot check keeps using OpenAI, which comes first; this key is used only if that one is refused or removed.",
+    });
+    const unchecked = watch({ answer: () => { throw new Error("offline"); }, keys: { openai: saved("unchecked"), google_ai: saved("unchecked") } });
+    expect((await (await unchecked.send({ op: "watchKey", provider: "google_ai", key: GOOGLE_KEY })).json()).text)
+      .toBe("The key is saved, but Google AI couldn't be reached to check it. The screenshot check keeps using OpenAI, which comes first; this key is used only if that one is refused or removed.");
+    // An OpenAI key pasted is always the one used.
+    const openai = watch({ answer: works, keys: { openai: saved("connected") } });
+    expect((await (await openai.send({ op: "watchKey", provider: "openai", key: "sk-pastedKeyNotReal01" })).json()).text).toBe("Connected. The screenshot check uses OpenAI from the next run.");
+    // The key read back never reaches the answer.
+    expect(JSON.stringify(await (await openaiFirst.send({ op: "watchKey", provider: "google_ai", key: GOOGLE_KEY })).json())).not.toContain("saved-secret");
+  });
+});

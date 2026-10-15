@@ -79,3 +79,8 @@ Examples:
 - The client portal, dialer and shared context are separate projects. Do not
   place their code or branches in this repository.
 - Production deployment is a separate action from commit, push and PR merge.
+
+## Decisions and plans
+
+- Before you decide a design, stack, data rule or scope, search `context/DECISIONS.md` in the shared `mahara-context` repository (local: `D:/MaharaMedia/mahara-context`). Log each new durable decision there in the same session.
+- Every build plan includes two fields: "Not in scope" and "How we know it works".

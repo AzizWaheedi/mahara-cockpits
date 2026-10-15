@@ -31,6 +31,7 @@ from typing import Any, Callable, Optional
 
 from . import http
 from .errors import NotNow
+from .call_scope import purpose_of, visible_notes
 from . import model as model_mod
 from .supabase import set_aside
 
@@ -41,6 +42,15 @@ JOB = "notes"
 DIGEST_NOTES = 400
 
 NOTES_SYSTEM = """You take notes on one sales call for Mahara Media, a Gulf growth agency that wins its clients (mostly B2B companies: contracting, construction, design, real estate, services) qualified projects and meetings through ads and a sales system. A setter runs a 15-minute intro call; a closer runs a 45-minute demo.
+
+First identify this call's purpose, independently of its title or the person's current CRM status:
+- sales: a prospect evaluating Mahara, including an intro or demo before becoming a client.
+- client_service: an existing Mahara client discussing delivery, campaign results, onboarding, support, billing, retention or renewal.
+- internal: a Mahara team meeting or coaching session with no prospect evaluating a purchase.
+- unknown: the transcript does not establish the relationship or purpose.
+A prospect discussing a previous agency, past ad spend, or their own clients is not evidence of client_service.
+For client_service or internal, copy one exact transcript quote of at least 15 characters into call_purpose_evidence that establishes that purpose.
+Never infer the purpose from a name, generic title, or an unrelated client mention.
 
 Write the notes the next person needs, the way Mahara's closer briefs are written. Rules:
 - Only what was said on this call. Never invent a number, a name, a date or a promise. Leave a field empty ("" or []) when it did not come up; "unknown" is an answer, not a weakness.
@@ -60,7 +70,7 @@ assessment: readiness and authority from 0 to 10 (null when the call does not sh
 for_closer: for an intro, what the closer must know before the demo: their situation, the real problem, what they want, who decides, what will convince them, what to avoid. For a demo, what whoever follows up must know.
 
 Answer with one JSON object and nothing else:
-{"summary": "", "real_problem": "", "pains": [], "goals": [], "current_state": "", "budget": "", "timeline": "", "decision_maker": "",
+{"call_purpose": "unknown", "call_purpose_evidence": "", "summary": "", "real_problem": "", "pains": [], "goals": [], "current_state": "", "budget": "", "timeline": "", "decision_maker": "",
  "questions": [], "objections": [{"objection": "", "handled": true, "how": ""}], "expectations": [], "trusts": [],
  "buying_signals": [], "caution": "", "convince_with": "", "next_steps": [], "for_closer": "",
  "gate": {"industry_fit": "unknown", "revenue_500k": "unknown", "decision_maker": "unknown", "pain_in_words": "unknown", "budget_5k": "unknown"},
@@ -223,11 +233,11 @@ def run_notes(sb: Any, p: Any, log: Callable[[str], None], *, since: datetime, l
                 temperature=None, attempts=attempts, timeout=timeout,
                 expect=lambda d: isinstance(d, dict) and ("summary" in d or "verdict" in d),
                 log=log, what=f"notes {rid}")
-            notes = clean_notes(value)
+            notes = {**clean_notes(value), **purpose_of(value, transcript)}
             sb.upsert("cockpit_sales_call_notes", [{
                 "recording_id": rid,
                 "contact_id": rec.get("contact_id"),
-                "call_type": kind,
+                "call_type": "other" if notes["call_purpose"] in ("client_service", "internal") else kind,
                 "call_at": rec.get("started_at"),
                 "rep": (rep or {}).get("display_name") or rec.get("recorded_by"),
                 "notes": notes,
@@ -309,8 +319,8 @@ def coverage(sb: Any, *, start: datetime, now: datetime, min_chars: int) -> dict
     that nobody has marked yet (each counts as held until it is marked, and
     may have happened with no recording)."""
     since, until = http.quote(start.isoformat()), http.quote(now.isoformat())
-    noted = {str(r["recording_id"]) for r in sb.select_all(
-        "cockpit_sales_call_notes", f"select=recording_id&call_at=gte.{since}", order="recording_id")}
+    noted = {str(r["recording_id"]) for r in visible_notes(sb, sb.select_all(
+        "cockpit_sales_call_notes", f"select=recording_id,notes&call_at=gte.{since}&call_at=lte.{until}", order="recording_id"))}
     recorded = {str(r["recording_id"]) for r in sb.select_all(
         "cockpit_sales_recordings", f"select=recording_id&started_at=gte.{since}&started_at=lte.{until}"
                                     f"&transcript_path=not.is.null&transcript_chars=gte.{int(min_chars)}"
@@ -324,9 +334,10 @@ def run_digest(sb: Any, p: Any, log: Callable[[str], None], *, days: int, now: O
                attempts: int = 2, timeout: float = 600, min_chars: int = 0) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     start = now - timedelta(days=days)
-    rows = sb.select("cockpit_sales_call_notes",
-                     f"select=recording_id,call_type,call_at,verdict,notes&call_at=gte.{http.quote(start.isoformat())}"
-                     f"&order=call_at.desc&limit={DIGEST_NOTES}")
+    rows = visible_notes(sb, sb.select_all(
+        "cockpit_sales_call_notes",
+        f"select=recording_id,call_type,call_at,verdict,notes&call_at=gte.{http.quote(start.isoformat())}"
+        f"&call_at=lte.{http.quote(now.isoformat())}", order="call_at.desc,recording_id"))[:DIGEST_NOTES]
     # Read from every call in the window, or only some: a digest from 3 of
     # 69 calls said "from 3 calls" on 2026-09-26 while notes were catching up.
     held = coverage(sb, start=start, now=now, min_chars=min_chars)
@@ -341,7 +352,8 @@ def run_digest(sb: Any, p: Any, log: Callable[[str], None], *, days: int, now: O
             expect=lambda d: isinstance(d, dict) and any(k in d for k in empty), log=log, what=f"digest {days}d")
         digest, model = clean_digest(value), getattr(p, "model", None)
     # The table has one count (calls_used); the rest rides in the digest itself.
-    digest.update({"calls_total": total, "partial": partial, "calls_unmarked": held["unmarked"]})
+    digest.update({"calls_total": total, "partial": partial, "calls_unmarked": held["unmarked"],
+                   "source_recording_ids": [str(r["recording_id"]) for r in rows], "scope_version": 1})
     sb.upsert("cockpit_sales_digests", [{
         "days": days,
         "from_at": start.isoformat(),

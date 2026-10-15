@@ -420,7 +420,11 @@ function AttributionBody({ p }: { p: MoneyPayload }) {
           label="Front-end cash"
           value={money(a.mtd.frontEnd)}
           sub={`${money(a.mtd.deposit)} deposits · ${money(a.mtd.kickoff)} rest of the cash · ${money(a.lastMonth.frontEnd)} in all of ${lastMonthName}`}
-          hint="Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Judged from the rails, because the kickoff form is not read yet."
+          hint={
+            a.kickoffRead
+              ? "Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Money that reached a rail; the kickoff form's own amount (read from 4 Oct 2026) is on the Sales and Frontend tabs, confirmed against these payments."
+              : "Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Judged from the rails, because the kickoff form is not read yet."
+          }
         />
         <StatTile
           variant="plain"
@@ -546,6 +550,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 type RailRow = { key: string; rail: CashRail };
 
 function railNaHint(rail: CashRail, what: string): string {
+  if (rail.connected && rail.coveredTo)
+    return `The newest bank statement ends ${date(rail.coveredTo)}, so the ${rail.label} rail has nothing for ${what} yet. Upload a newer CBK statement on this tab.`;
   return rail.connected
     ? `The ${rail.label} rail cannot give ${what} yet.`
     : `${rail.label} is not connected yet, so ${what} is not read at all.`;
@@ -701,7 +707,12 @@ function RailsBody({
             date: d.date,
             whop: d.value,
           };
-          for (const [key, m] of maps) row[key] = m.get(d.date) ?? 0;
+          // A day a rail has no point for (the bank after its newest
+          // statement) is a gap in its line, not $0.
+          for (const [key, m] of maps) {
+            const v = m.get(d.date);
+            if (v !== undefined) row[key] = v;
+          }
           return row;
         }),
       series: [

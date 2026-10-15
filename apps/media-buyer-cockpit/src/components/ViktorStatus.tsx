@@ -1,3 +1,4 @@
+import { dateTime } from "@/components/ceo/format";
 import { api, useQuery } from "@/lib/cockpitApi";
 
 /**
@@ -7,11 +8,16 @@ import { api, useQuery } from "@/lib/cockpitApi";
  * yesterday's numbers believing they are today's. [aziz, 2026-09-07]
  *
  * One callout, and only when something is wrong: the data has not refreshed
- * for five hours, or the last refresh reported problems. On a normal day the
+ * for five hours, or the last refresh did not finish. On a normal day the
  * page header's "synced 10:40" says it all, so nothing shows here. This is
  * also the one place for the older "these numbers are not today's" and "part
  * of this screen is missing" warnings, which used to repeat it in two more
  * boxes.
+ *
+ * 2026-10-13: a refresh that fails after a good one leaves the whole screen
+ * on the good one, so the callout says exactly that in one sentence. It used
+ * to add "part of this screen is not showing everything", which the line
+ * under it contradicted.
  */
 
 function ago(t: number) {
@@ -25,6 +31,13 @@ function ago(t: number) {
 
 const HOUR = 3600 * 1000;
 
+/**
+ * The native feed's own problem line (cockpit_media_latest_sync): "The
+ * refresh that started 16:00 Kuwait did not finish. These numbers are from
+ * the refresh before it." The headline says it, so the list leaves it out.
+ */
+const UNFINISHED = /did not finish/i;
+
 export function ViktorStatus() {
   const a = useQuery(api.chat.activity, { limit: 6 });
   const jobs = useQuery(api.assist.queueDepth, {});
@@ -37,6 +50,9 @@ export function ViktorStatus() {
   const notToday = a.lastSyncAt ? age > 20 * HOUR : false;
   const problems: string[] = a.problems ?? [];
   if (!stale && problems.length === 0 && a.lastSyncOk !== false) return null;
+  const unfinished =
+    a.lastSyncOk === false || problems.some(p => UNFINISHED.test(p));
+  const others = problems.filter(p => !UNFINISHED.test(p));
 
   const busy = [
     a.queued > 0
@@ -63,7 +79,9 @@ export function ViktorStatus() {
               })}, not today.`
             : stale
               ? `The data last refreshed ${ago(a.lastSyncAt)}.`
-              : "The last refresh had problems."}
+              : unfinished
+                ? `The last refresh did not finish. These numbers are from ${dateTime(a.lastSyncAt)}.`
+                : "Part of the last refresh did not come through."}
       </p>
       {notToday ? (
         <p className="mt-1 text-xs">
@@ -71,14 +89,14 @@ export function ViktorStatus() {
           until it has; ask with Report a problem instead.
         </p>
       ) : null}
-      {problems.length > 0 ? (
+      {others.length > 0 ? (
         <>
           <p className="mt-1 text-xs">
-            Part of this screen is not showing everything it should. Aziz is
-            alerted; a blank section does not mean there is no work.
+            These parts may be incomplete. A blank section does not mean there
+            is no work.
           </p>
           <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">
-            {problems.map(p => (
+            {others.map(p => (
               <li key={p}>{p}</li>
             ))}
           </ul>

@@ -198,19 +198,59 @@ class Sections(unittest.TestCase):
         return {"cockpit_sections": [{"key": "machine", "ok": True, "error": None, "computed_at": fakes.ago(3), "payload": payload}]}
 
     def test_jobs(self):
-        now_ms = fakes.NOW.timestamp() * 1000
-        ok_job = {"job": "sync", "ok": True, "at": now_ms - 60_000, "everyMin": 10}
-        self.assertEqual(sections.run_jobs(make(self.machine(jobs=[ok_job]))).status, OK)
-        late = dict(ok_job, at=now_ms - 50 * 60_000)
-        self.assertEqual(sections.run_jobs(make(self.machine(jobs=[late]))).status, FAIL)
-        watch = {"job": "sales watch", "ok": False, "at": now_ms, "everyMin": 15, "error": SIGNED_OUT}
-        r = sections.run_jobs(make(self.machine(jobs=[ok_job, watch])))
-        self.assertEqual(r.caused_by, "claude-signin")
+        from checks.sections import run_jobs
+        keys = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log",
+                "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
+                "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync",
+                "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
+                "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile",
+                "lead-sync-watch")
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
+        rows[0]["last_ok_at"] = fakes.ago(60)
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, FAIL)
+        rows[0]["last_ok_at"] = fakes.ago(1)
+        rows[1]["ok"] = False
+        self.assertIn("billing-sync", run_jobs(make({"cockpit_sync_state": rows})).items)
+
+    def test_hours_watch_is_watched_at_15_minutes(self):
+        # The Hubstaff watch runs every 5 minutes; its freshness row is late after 15.
+        from checks.sections import run_jobs
+        keys = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log",
+                "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
+                "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hubstaff-sync", "onboarding-sync",
+                "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
+                "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile",
+                "lead-sync-watch")
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
+        missing = run_jobs(make({"cockpit_sync_state": rows}))
+        self.assertEqual(missing.status, FAIL)
+        self.assertEqual(missing.items, ["hours-watch"])
+        rows.append({"key": "hours-watch", "ok": True, "last_ok_at": fakes.ago(14)})
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
+        rows[-1]["last_ok_at"] = fakes.ago(16)
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["hours-watch"])
+        rows[-1].update(last_ok_at=fakes.ago(1), ok=False)
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["hours-watch"])
+
+    def test_lead_sync_watch_is_watched_at_45_minutes(self):
+        # The Facebook-vs-CRM watch runs every 15 minutes; three missed runs is late.
+        from checks.sections import run_jobs
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in (
+            "ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log",
+            "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
+            "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync",
+            "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
+            "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile")]
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["lead-sync-watch"])
+        rows.append({"key": "lead-sync-watch", "ok": True, "last_ok_at": fakes.ago(44)})
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
+        rows[-1]["last_ok_at"] = fakes.ago(46)
+        self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["lead-sync-watch"])
 
     def test_old_machine_section_cannot_vouch(self):
         t = {"cockpit_sections": [{"key": "machine", "computed_at": fakes.ago(90), "payload": {"jobs": []}}]}
-        with self.assertRaises(SourceError):
-            sections.run_jobs(make(t))
+        self.assertEqual(sections.run_jobs(make(t)).status, FAIL)
 
     def test_sources(self):
         p = self.machine(sources=[{"source": "sheets", "ok": False, "lastError": "HTTP 404"}, {"source": "meta", "ok": True}])
@@ -224,6 +264,67 @@ class Sections(unittest.TestCase):
         self.assertEqual(r.status, WARN)
         stuck = self.machine(hermes={"queued": 3, "failed": 1, "lastDoneAt": fakes.NOW.timestamp() * 1000 - 30 * 60_000})
         self.assertEqual(sections.run_ask_ai_queue(make(stuck, state={})).status, FAIL)
+
+
+REPO = Path(__file__).resolve().parents[3]
+
+
+def _between(text, start, end):
+    i = text.index(start)
+    return text[i:text.index(end, i + len(start))]
+
+
+@unittest.skipUnless((REPO / "docs/hours-watch/SPEC.md").exists(), "needs the cockpit repository, not a VPS copy")
+class HubstaffWatchDocs(unittest.TestCase):
+    """The runbook and the sources map say what the Hubstaff watch really does (SPEC final round)."""
+
+    def setUp(self):
+        self.runbook = _between((REPO / "RUNBOOK.md").read_text(), "## Hubstaff watch\n", "\n## Hiring")
+        sources = (REPO / "apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md").read_text()
+        self.row = next(l for l in sources.splitlines() if l.startswith("| **Hubstaff watch**"))
+        self.migration = (REPO / "supabase/migrations/20261013d_cockpit_hours_watch.sql").read_text()
+
+    def test_lease_matches_the_migration(self):
+        self.assertIn("interval '6 minutes'", _between(self.migration, "cockpit_hours_watch_lease_claim", "$$;"))
+        self.assertIn("6-minute lease", self.runbook)
+        self.assertNotIn("4-minute", self.runbook)
+
+    def test_review_note_is_not_in_the_audit_log(self):
+        self.assertIn("'hasNote'", self.migration)
+        self.assertIn("(`hasNote`), never its text", self.runbook)
+        self.assertNotIn("in the audit log (`hours.watch.review`)", self.runbook)
+
+    def test_openai_key_first_through_the_repo_script(self):
+        cmd = "ssh -i ~/.ssh/faris-key hermes@187.77.156.166 'python3 - openai' < scripts/dev/hours_watch_key.py"
+        self.assertIn(cmd, (REPO / "scripts/dev/hours_watch_key.py").read_text())
+        self.assertIn(cmd, self.runbook)
+        self.assertIn("must show `openai` `connected`", self.runbook)
+        self.assertNotIn("put_ai_key.py", self.runbook)
+        self.assertNotIn("Google AI, else OpenAI", self.runbook)
+        self.assertIn("OpenAI first", self.row)
+        self.assertNotIn("Google AI else OpenAI", self.row)
+
+    def test_ceo_mention_and_channel_membership(self):
+        self.assertIn("<@U09305KE2KS>", self.runbook)
+        self.assertIn("is a member of #team-management", self.runbook)
+        self.assertIn("Add the CEO to #team-management", self.runbook)
+        self.assertIn("Mention me in each alert", self.runbook)
+        self.assertIn("mentioning the CEO", self.row)
+
+    def test_false_alarm_row_covers_break_leave_and_schedule(self):
+        row = next(l for l in self.runbook.splitlines() if l.startswith("| A false alarm"))
+        for words in ("**Lunch break**", "On a break since 13:00", "60 + 15 minutes", "Part-day leave",
+                      "Morning = shift start to its midpoint", "**No schedule**", "No schedule set",
+                      "before the shift starts"):
+            self.assertIn(words, row)
+        for words in ("lunch break", "Part-day leave", "before the shift starts", "no schedule is not watched"):
+            self.assertIn(words, self.row)
+
+    def test_guardian_cap_is_the_one_the_runbook_names(self):
+        import inspect
+        self.assertIn('"hours-watch": 15', inspect.getsource(sections.run_jobs))
+        self.assertIn('`"hours-watch": 15`', self.runbook)
+        self.assertNotIn("Add `hours-watch` to the guardian", self.runbook)
 
 
 class PgCron(unittest.TestCase):

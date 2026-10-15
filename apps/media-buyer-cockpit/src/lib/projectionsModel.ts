@@ -114,12 +114,19 @@ function sourceFor(
   metric: Metric,
   weekStart: string,
   wins: Record<Metric, number> | null,
+  covered: boolean,
 ): Source {
   if (metric === "cash") return cashSource(s, weekStart);
   if (metric === "renewal" && !s.tracked)
     return {
       ok: false,
       note: `No contract end dates yet: the ClickUp field "${RENEWAL_FIELD.name}" (${RENEWAL_FIELD.type}) is missing on ${RENEWAL_FIELD.list}.`,
+    };
+  // A week with nothing logged in the cockpit is unknown, not zero wins.
+  if (!covered)
+    return {
+      ok: false,
+      note: "Nothing was logged in the cockpit this week, so its wins are unknown.",
     };
   const note: Record<Metric, string> = {
     resell:
@@ -233,14 +240,25 @@ export function buildProjections(data: ProjectionSource): ProjectionsPage {
     const weekEnd = addDays(ws, 6);
     const over = weekEnd < today;
     const wins = winsInWeek(countable, ws);
+    const covered = countable.some(d => d.day >= ws && d.day <= weekEnd);
     return {
       weekStart: ws,
       weekEnd,
       over,
       rows: METRICS.map((m): StripRow => {
         const p = mine.get(`${ws}|${m}`);
-        const src = sourceFor(sources, m, ws, wins);
-        const a = actualOf(src, p?.actual);
+        const src = sourceFor(sources, m, ws, wins, covered);
+        // A logged zero can still be typed over: a win closed outside the
+        // cockpit is real, and the hand-typed number says so.
+        const typedOverZero =
+          src.ok && src.value === 0 && typeof p?.actual === "number";
+        const a = typedOverZero
+          ? {
+              value: p?.actual as number,
+              from: "manual" as const,
+              note: `Entered by hand. ${src.note}`,
+            }
+          : actualOf(src, p?.actual);
         return {
           metric: m,
           label: METRIC_LABEL[m],
@@ -250,7 +268,7 @@ export function buildProjections(data: ProjectionSource): ProjectionsPage {
           actual: a.value,
           actualFrom: a.from,
           note: a.note,
-          manualAllowed: !src.ok,
+          manualAllowed: !src.ok || (m !== "cash" && src.value === 0),
           missReason: p?.missReason ?? null,
           verdict: verdictOf(
             { blood: p?.blood, stretch: p?.stretch },

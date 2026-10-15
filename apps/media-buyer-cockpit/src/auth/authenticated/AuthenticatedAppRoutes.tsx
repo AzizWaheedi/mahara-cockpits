@@ -70,17 +70,14 @@ export function AuthenticatedRoutes() {
             page here was replaced by the client success cockpit. */}
         <Route path="/template" element={<Moved to="/dashboard" />} />
         <Route path="/csm" element={<Navigate to="/go/csm" replace />} />
-        {/* The data view: every lead and appointment, admin only, full width
-            without the cockpit shell (2026-10-11). */}
-        {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
-        <Route element={<RoleRoute role="admin" />}>
-          <Route path="/data" element={<DataViewPage />} />
-        </Route>
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="admin" />}>
             <Route path="/admin" element={<AdminPage />} />
             <Route path="/ceo" element={<CeoPage />} />
+            {/* Every lead and appointment, admin only (2026-10-11). Inside the
+                shell since 2026-10-12, so it moves like every other page. */}
+            <Route path="/data" element={<DataViewPage />} />
           </Route>
           {/* Media buyer's cockpit — her link only. Three places (the
               simplification audit, approved 2026-10-06): Today, Ads and the

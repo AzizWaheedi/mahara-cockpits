@@ -19,6 +19,10 @@ export const COCKPIT_STATES = [
   "other_booking",
   "not_tracked",
   "not_ad",
+  // Cancelled, a Google Calendar copy, or on a provisional, callback,
+  // reschedule or personal calendar: the media sync skips these on purpose
+  // (migration 20261013d).
+  "left_out",
 ] as const;
 export type CockpitState = (typeof COCKPIT_STATES)[number];
 
@@ -82,6 +86,18 @@ export const apptRowSchema = z.object({
   outcome_at: str,
   cockpit: z.enum(COCKPIT_STATES),
   cockpit_at: str,
+  // How the media sync attributed a counted booking (2026-10-12): "ad",
+  // "unknown_ad" or "none". Absent before migration 20261012h.
+  cockpit_attribution: str.optional(),
+  // The booking's notes and call agent (2026-10-13), from
+  // portal_data.appointments; the number is the Agent Data tab's code for
+  // that agent. Absent before migration 20261013a.
+  notes: str.optional(),
+  agent: str.optional(),
+  agent_number: str.optional(),
+  // "showed" or "noshow": GHL's status, else the sheet's attended
+  // (2026-10-13). Absent before migration 20261013d.
+  result: str.optional(),
 });
 export type ApptRow = z.infer<typeof apptRowSchema>;
 
@@ -134,6 +150,39 @@ export const perClientSchema = z.object({
   won: z.number(),
 });
 export type PerClient = z.infer<typeof perClientSchema>;
+
+/**
+ * Bookings at clients the cockpit counts bookings for, step by step. Each
+ * step adds up to the one before: appts = counted + cancelled + calendar +
+ * provisional + other_booking + not_counted; counted = ahead + passed;
+ * passed = showed + noshow + no result. `outside` lists the accounts left
+ * out of the line.
+ */
+export const bookingLineSchema = z.object({
+  appts: z.number(),
+  clients: z.number(),
+  counted: z.number(),
+  twice: z.number(),
+  cancelled: z.number(),
+  calendar: z.number(),
+  provisional: z.number(),
+  other_booking: z.number(),
+  not_counted: z.number(),
+  ahead: z.number(),
+  passed: z.number(),
+  showed: z.number(),
+  noshow: z.number(),
+  outside: z.array(
+    z.object({
+      location_id: z.string(),
+      client: z.string(),
+      n: z.number(),
+      meta: z.number(),
+    }),
+  ),
+  old_not_ad: z.number(),
+});
+export type BookingLine = z.infer<typeof bookingLineSchema>;
 
 export const summarySchema = z.object({
   location_id: str,
@@ -192,6 +241,9 @@ export const summarySchema = z.object({
     passed: z.number(),
     recorded: z.number(),
     compare_to: z.string(),
+    // The booking line over clients the cockpit tracks. Absent before
+    // migration 20261013d.
+    bookings: bookingLineSchema.optional(),
   }),
   per_client: z.array(perClientSchema),
   gap_days: z.array(
@@ -331,15 +383,21 @@ export function plainMade(source: string | null): string {
 
 export type Tone = "ok" | "warn" | "bad" | "info" | "grey";
 
+/** Showed or no-show: GHL's status first, then the sheet's attended. */
+export function outcome(a: Pick<ApptRow, "status" | "result">) {
+  if (a.status === "showed" || a.status === "noshow") return a.status;
+  return a.result === "showed" || a.result === "noshow" ? a.result : null;
+}
+
 /** What happened at the meeting, in words, with its tone. */
 export function result(
-  a: Pick<ApptRow, "status" | "start_at">,
+  a: Pick<ApptRow, "status" | "start_at" | "result">,
   now: number,
 ): [string, Tone] {
   const start = ms(a.start_at) ?? 0;
   if (a.status === "cancelled") return ["Cancelled", "grey"];
-  if (a.status === "showed") return ["Showed up", "ok"];
-  if (a.status === "noshow") return ["No-show", "bad"];
+  if (outcome(a) === "showed") return ["Showed up", "ok"];
+  if (outcome(a) === "noshow") return ["No-show", "bad"];
   if (start >= now) return ["Upcoming", "grey"];
   if (a.status === "confirmed") return ["Result not recorded", "warn"];
   return [a.status ? `Status: ${a.status}` : "No status", "grey"];
@@ -373,6 +431,7 @@ export function isNoResult(a: ApptRow, now: number) {
   return (
     (ms(a.start_at) ?? 0) < now &&
     a.status === "confirmed" &&
+    !outcome(a) &&
     a.ghl_source !== "google_calendar"
   );
 }
@@ -392,13 +451,26 @@ export function apptIssues(a: ApptRow, now: number): Issue[] {
     out.push({
       tone: "bad",
       label: "Cockpit did not count it",
-      why: "This Facebook lead booked in GHL, but the cockpit bookings card has no booking with this appointment id.",
+      why: "This booking is in GHL, but the cockpit bookings card has no booking with this appointment id.",
     });
   if (a.cockpit === "missing_old")
     out.push({
       tone: "bad",
       label: "Cockpit did not count it",
       why: "Before 8 Sep the cockpit stored bookings without ids. It has no booking for this client on this day.",
+    });
+  // Muhammed, 2026-10-12: a booking counted without an ad must say so.
+  if (counted && a.cockpit_attribution === "none")
+    out.push({
+      tone: "warn",
+      label: "Counted, no ad on the lead",
+      why: "GHL has no ad for this lead, so the cockpit counts the booking under the client's current campaign without an ad.",
+    });
+  if (counted && a.cockpit_attribution === "unknown_ad")
+    out.push({
+      tone: "warn",
+      label: "Counted, ad not found",
+      why: "The lead names an ad the cockpit has no record of, so the booking counts under the client's current campaign without an ad.",
     });
   if (a.cockpit === "twice")
     out.push({
@@ -410,13 +482,24 @@ export function apptIssues(a: ApptRow, now: number): Issue[] {
     out.push({
       tone: "warn",
       label: "Result not recorded",
-      why: 'The meeting time passed, and nobody marked "showed" or "no-show" in GHL.',
+      why: 'The meeting time passed, and nobody marked "showed" or "no-show" in GHL or the sheet.',
     });
   if (a.cockpit === "not_tracked")
     out.push({
       tone: "grey",
       label: "Client not in the cockpit",
       why: "This client has no campaign and no bookings in the media buyer cockpit, so nothing there counts it.",
+    });
+  // A Google Calendar copy already says so above; cancelled shows as the result.
+  if (
+    a.cockpit === "left_out" &&
+    a.status !== "cancelled" &&
+    a.ghl_source !== "google_calendar"
+  )
+    out.push({
+      tone: "grey",
+      label: "Provisional or callback calendar",
+      why: `This booking is on the ${a.calendar ? `"${a.calendar}"` : "unnamed"} calendar. The cockpit leaves out the provisional, callback and reschedule calendars.`,
     });
   if (a.cockpit === "other_booking")
     out.push({
@@ -443,8 +526,14 @@ export function cockpitWords(a: ApptRow): string {
       return "Not counted itself; their other booking was";
     case "not_tracked":
       return "Client not in the cockpit";
+    case "left_out":
+      return a.status === "cancelled"
+        ? "Not counted: cancelled"
+        : a.ghl_source === "google_calendar"
+          ? "Not counted: a Google Calendar copy"
+          : "Not counted: provisional or callback calendar";
     default:
-      return "Not a Facebook lead, so the cockpit does not count it";
+      return "Not counted: before 8 Sep the cockpit counted only bookings from ads";
   }
 }
 
@@ -457,8 +546,21 @@ export type SheetColumn<T> = {
   /** null: the field is not synced to the database yet. */
   get: ((row: T) => string | null) | null;
   source: string;
+  /** For a column that is not synced: where the value lives and why the
+   *  database does not have it. */
+  why?: string;
+  /** What a — means here, when it is not "GHL has no value". */
+  empty?: string;
   cls?: "m" | "id" | "num";
 };
+
+// The portal keeps CRM bookings only, so a Google Calendar copy never has
+// a portal row (checked 2026-10-13: 26 of the 72 missing rows in 30 days).
+const PORTAL_EMPTY =
+  "— means the booking has none, or the client portal does not have this booking. The portal skips Google Calendar copies.";
+
+const LAST_TOUCH_WHY =
+  "GHL keeps the last touch on the contact. The lead sync stores only the first touch, so this column is empty here.";
 
 const v = (s: string | null | undefined) =>
   s === null || s === undefined || s === "" ? null : s;
@@ -488,7 +590,7 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
   {
     group: "Lead",
     label: "Created Date & Time",
-    width: 170,
+    width: 180,
     get: r => t(r.created_at, fmtFull),
     source: "client_leads.created_at",
     cls: "m",
@@ -506,7 +608,8 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
     label: "Client Name",
     width: 170,
     get: r => r.client,
-    source: "ghl_clients.client_name, by GHL location",
+    source:
+      "ghl_clients.client_name, else the cockpit's client list, else the GHL account name",
   },
   {
     group: "Lead",
@@ -571,7 +674,7 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
   {
     group: "First touch",
     label: "FIRST_UTM_SOURCE",
-    width: 160,
+    width: 190,
     get: r => v(r.utm_source),
     source: "client_leads.attribution_raw.utmSource",
   },
@@ -592,23 +695,26 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
   {
     group: "Last touch",
     label: "LAST_UTM_SOURCE",
-    width: 160,
+    width: 180,
     get: null,
     source: "Not synced",
+    why: LAST_TOUCH_WHY,
   },
   {
     group: "Last touch",
     label: "LAST_UTM_CONTENT",
-    width: 170,
+    width: 190,
     get: null,
     source: "Not synced",
+    why: LAST_TOUCH_WHY,
   },
   {
     group: "Last touch",
     label: "LAST_UTM_MEDIUM",
-    width: 170,
+    width: 180,
     get: null,
     source: "Not synced",
+    why: LAST_TOUCH_WHY,
   },
   {
     group: "Pages",
@@ -624,6 +730,7 @@ export const LEAD_ALL: SheetColumn<LeadRow>[] = [
     width: 130,
     get: null,
     source: "Not synced",
+    why: LAST_TOUCH_WHY,
   },
   {
     group: "Pages",
@@ -650,7 +757,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Appointment",
     label: "Date Appointment Created",
-    width: 190,
+    width: 220,
     get: r => t(r.booked_at, fmtFull),
     source: "appointments.booked_at",
     cls: "m",
@@ -658,7 +765,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Appointment",
     label: "Date Of Appointment",
-    width: 160,
+    width: 190,
     get: r => t(r.start_at, ymd),
     source: "appointments.start_at, as a Riyadh day",
     cls: "m",
@@ -668,19 +775,21 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
     label: "Project Name",
     width: 170,
     get: r => r.client,
-    source: "ghl_clients.client_name, by GHL location",
+    source:
+      "ghl_clients.client_name, else the cockpit's client list, else the GHL account name",
   },
   {
     group: "Appointment",
     label: "Additional Notes",
-    width: 150,
-    get: null,
-    source: "Not synced",
+    width: 260,
+    get: r => v(r.notes),
+    source: "portal_data.appointments.notes",
+    empty: PORTAL_EMPTY,
   },
   {
     group: "Appointment",
     label: "Lead Phone Number",
-    width: 160,
+    width: 180,
     get: r => v(r.phone),
     source: "appointments.contact_phone",
     cls: "m",
@@ -695,7 +804,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Appointment",
     label: "Requested Time",
-    width: 130,
+    width: 160,
     get: r => t(r.start_at, fmtTime),
     source: "appointments.start_at",
     cls: "m",
@@ -703,16 +812,20 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Stage Booked",
-    width: 130,
+    width: 150,
     get: r => v(r.status),
     source: "appointments.status",
   },
   {
     group: "Status",
     label: "Agent Number",
-    width: 130,
-    get: null,
-    source: "Not synced",
+    width: 150,
+    get: r => v(r.agent_number),
+    source:
+      "The Agent Data tab's code for the agent, kept in cockpit_call_agents",
+    empty:
+      "— means there is no agent, or the agent is not in cockpit_call_agents yet. Add them there.",
+    cls: "num",
   },
   {
     group: "Status",
@@ -726,22 +839,26 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Showed?",
-    width: 100,
+    width: 120,
     get: r =>
-      r.status === "showed" ? "TRUE" : r.status === "noshow" ? "FALSE" : null,
-    source: "appointments.status",
+      outcome(r) === "showed"
+        ? "TRUE"
+        : outcome(r) === "noshow"
+          ? "FALSE"
+          : null,
+    source: "appointments.status, then attended",
   },
   {
     group: "Status",
     label: "Confirmed?",
-    width: 110,
+    width: 130,
     get: r => (r.status === "cancelled" ? "FALSE" : "TRUE"),
     source: "appointments.status",
   },
   {
     group: "Status",
     label: "Closed?",
-    width: 100,
+    width: 110,
     get: r => (r.deal ? (r.deal === "won" ? "TRUE" : "FALSE") : null),
     source: "appointment_outcomes.deal",
   },
@@ -766,6 +883,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
     width: 110,
     get: null,
     source: "Not synced",
+    why: "A GHL contact field. The appointment sync does not store it, so this column is empty here.",
   },
   {
     group: "Status",
@@ -778,9 +896,10 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Agent",
-    width: 100,
-    get: null,
-    source: "Not synced",
+    width: 170,
+    get: r => v(r.agent),
+    source: "portal_data.appointments.assigned_agent",
+    empty: PORTAL_EMPTY,
   },
   {
     group: "Status",
@@ -799,7 +918,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Status",
     label: "Cancelled?",
-    width: 110,
+    width: 130,
     get: r => (r.status === "cancelled" ? "Y" : null),
     source: "appointments.status",
   },
@@ -831,7 +950,7 @@ export const APPT_ALL: SheetColumn<ApptRow>[] = [
   {
     group: "Portal",
     label: "Quotation Given (Portal)",
-    width: 190,
+    width: 200,
     get: r => (r.quotation === null ? null : r.quotation ? "Yes" : "No"),
     source: "appointment_outcomes.quotation",
   },

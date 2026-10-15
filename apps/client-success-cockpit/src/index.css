@@ -58,9 +58,6 @@
 }
 
 :root {
-  --sidebar-width: 16rem;
-  --sidebar-width-icon: 3rem;
-
   --mahara-teal: #00cfc8;
   --deep-space: #091333;
   --royal-blue: #2e5bd6;
@@ -368,5 +365,101 @@
 @media (prefers-reduced-motion: reduce) {
   .cockpit-nav-link {
     transition: none;
+  }
+}
+
+/*
+ * Results tab: each ad hangs off its ad set on a hairline, so the tree reads
+ * campaign, then ad set, then ad (Muhammed, 2026-10-12). The branch meets the
+ * middle of the 56px picture: 12px row padding plus 28px.
+ */
+.ads-tree {
+  list-style: none;
+  margin: 0 0 0 8px;
+  padding: 0 0 0 18px;
+}
+.ads-tree > li {
+  position: relative;
+}
+.ads-tree > li::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid color-mix(in oklch, var(--foreground) 22%, transparent);
+}
+.ads-tree > li:last-child::before {
+  bottom: auto;
+  height: 30px;
+}
+.ads-tree > li::after {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 30px;
+  width: 12px;
+  border-top: 1px solid color-mix(in oklch, var(--foreground) 22%, transparent);
+}
+@container (min-width: 36rem) {
+  .ads-tree {
+    margin-left: 12px;
+    padding-left: 22px;
+  }
+  .ads-tree > li::before,
+  .ads-tree > li::after {
+    left: -22px;
+  }
+  .ads-tree > li::after {
+    width: 16px;
+  }
+}
+
+/* One scrollbar for every cockpit (2026-10-13): a slim rounded thumb in the
+   page's own ink, no track and no arrows, teal while it is dragged. Only on
+   a mouse or trackpad: phones keep their own overlay bars, which take no
+   room. The hide utilities (no-scrollbar, [scrollbar-width:none]) sit in a
+   later layer and still win. Same block in all five cockpits. */
+@layer base {
+  :root {
+    --scrollbar: oklch(0.2 0.045 270 / 18%);
+    --scrollbar-hover: oklch(0.2 0.045 270 / 34%);
+  }
+  .dark {
+    --scrollbar: oklch(1 0 0 / 16%);
+    --scrollbar-hover: oklch(1 0 0 / 30%);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      border: 2px solid transparent;
+      border-radius: 999px;
+      background: var(--scrollbar) padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background-color: var(--scrollbar-hover);
+    }
+    ::-webkit-scrollbar-thumb:active {
+      background-color: color-mix(in oklch, var(--mahara-teal) 70%, transparent);
+    }
+    ::-webkit-scrollbar-button {
+      display: none;
+    }
+    /* Firefox has no ::-webkit-scrollbar; it gets the same colours, thin. */
+    @supports not selector(::-webkit-scrollbar) {
+      :root {
+        scrollbar-color: var(--scrollbar) transparent;
+      }
+      * {
+        scrollbar-width: thin;
+      }
+    }
   }
 }

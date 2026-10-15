@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { executeCsmAction } from "./csmActionClient";
+import { readCallsSummary, withCallSummary } from "./csmCalls";
 import { buildCsmReadModel, readCsmSources } from "./csmReadModel";
 import {
   type CsmMoneyPatch,
@@ -312,6 +313,9 @@ export async function executeAct(
   const metadata: Record<string, any> = {
     ...(args.metadata ?? {}),
   };
+  // The ClickUp id finds the client after a rename, and the ClickUp log uses it
+  // to link a ticket on the client's own task.
+  if (args.taskId && !metadata.taskId) metadata.taskId = String(args.taskId);
   if (reroutedTo !== undefined && reroutedTo !== null) {
     metadata.reroutedTo = reroutedTo;
   }
@@ -364,6 +368,32 @@ export async function executeAct(
   return data;
 }
 
+/**
+ * The kinds that change the client's card on the ClickUp Clients board. They
+ * go through cockpit-csm-api, which sets the field, reads it back, comments on
+ * the client's task and records the decision itself. Every other kind is saved
+ * in the cockpit; a ticket reaches its team through the ClickUp log.
+ */
+export const CLICKUP_ACT_KINDS = new Set(["stage", "happiness"]);
+
+export async function performAct(
+  client: SupabaseClient | null,
+  args: Parameters<typeof executeAct>[1],
+) {
+  if (!args.kind || !CLICKUP_ACT_KINDS.has(args.kind))
+    return executeAct(client, args);
+  if (!args.taskId)
+    throw new Error(
+      "This client has no ClickUp card, so the change cannot be saved",
+    );
+  return executeCsmAction(client, "act", {
+    taskId: String(args.taskId),
+    kind: args.kind,
+    action: args.action.trim(),
+    value: String(args.value ?? ""),
+  });
+}
+
 export function useCsmSnapshot(
   client: SupabaseClient | null,
   allowedClients?: string[] | null,
@@ -383,9 +413,13 @@ export function useCsmSnapshot(
     try {
       setLoading(true);
 
-      const [staffState, source] = await Promise.all([
+      const [staffState, source, callSummary] = await Promise.all([
         readCsmState(client),
         readCsmSources(client),
+        // The call store's next and last call. A failed read is shown, never zero.
+        readCallsSummary(client).catch(
+          e => ({ error: String(e?.message ?? e) }) as const,
+        ),
       ]);
       const day = staffState.day;
 
@@ -441,6 +475,14 @@ export function useCsmSnapshot(
         eodDay: eodContext.day,
       });
 
+      if ("clients" in callSummary && callSummary.clients) {
+        const summary = callSummary.clients;
+        builtSnap.clients = builtSnap.clients.map(c =>
+          withCallSummary(c, summary[String(c.taskId)], day),
+        );
+        (builtSnap as Any).callHealth = (callSummary as Any).health;
+      } else (builtSnap as Any).callStoreError = (callSummary as Any).error;
+
       setSnap(builtSnap);
       setError(null);
     } catch (err: unknown) {
@@ -453,6 +495,25 @@ export function useCsmSnapshot(
 
   useEffect(() => {
     void fetchSnapshot();
+  }, [fetchSnapshot]);
+
+  // A page left open overnight moves to the new Kuwait day by itself: checked
+  // every minute and whenever the tab comes back into view.
+  const loadedDay = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    loadedDay.current = snap?.day;
+  }, [snap]);
+  useEffect(() => {
+    const check = () => {
+      if (loadedDay.current && kuwaitToday() !== loadedDay.current)
+        void fetchSnapshot();
+    };
+    const timer = setInterval(check, 60_000);
+    document.addEventListener("visibilitychange", check);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", check);
+    };
   }, [fetchSnapshot]);
 
   const toggleCheck = useCallback(
@@ -486,7 +547,7 @@ export function useCsmSnapshot(
       metadata?: Record<string, any>;
       [key: string]: any;
     }) => {
-      await executeAct(client, args);
+      await performAct(client, args);
       await fetchSnapshot();
     },
     [client, fetchSnapshot],

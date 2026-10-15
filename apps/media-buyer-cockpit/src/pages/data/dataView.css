@@ -3,6 +3,9 @@
  * docs/superpowers/plans/2026-10-11-data-layers-demo.html. Every color is a
  * cockpit token from src/index.css; the status tones follow ceo.css.
  * Everything is scoped under .dv-root so nothing leaks into the cockpit.
+ * Since 2026-10-12 the page sits in the cockpit shell and uses its tabs and
+ * filter chips (CeoTabs, FilterChips); only the sheet, cards and side panel
+ * are styled here.
  */
 .dv-root {
   --dv-teal: var(--mahara-teal);
@@ -17,8 +20,9 @@
   --dv-info: var(--royal-blue);
   --dv-info-bg: oklch(0.96 0.02 265);
   --dv-shadow: 0 1px 2px oklch(0.2 0.045 270 / 6%), 0 8px 24px oklch(0.2 0.045 270 / 5%);
-  min-height: 100vh;
-  background: var(--background);
+  /* One window height for the sheet whatever the row count, so a short
+     filter never shortens the page and pulls the scroll up (2026-10-12). */
+  --dv-sheet-h: max(320px, calc(100vh - 150px));
   color: var(--foreground);
   font-size: 14px;
   line-height: 1.5;
@@ -47,31 +51,12 @@
 .dv-btn:disabled { opacity: 0.55; cursor: default; border-color: var(--border); }
 .dv-btn.small { height: 28px; font-size: 12.5px; padding: 0 10px; }
 .dv-link { border: 0; background: none; padding: 0; color: var(--dv-teal-ink); font-weight: 500; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; font-size: inherit; }
-.dv-select, .dv-seg, .dv-iconbtn, .dv-search { height: 34px; border: 1px solid var(--border); background: var(--card); border-radius: 9px; color: inherit; font: inherit; font-size: 13px; }
-.dv-select { padding: 0 30px 0 10px; appearance: none; cursor: pointer; max-width: 220px;
-  background-image: linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%), linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
-  background-position: calc(100% - 15px) 15px, calc(100% - 10px) 15px; background-size: 5px 5px; background-repeat: no-repeat; }
-.dv-seg { display: inline-flex; padding: 3px; gap: 2px; }
-.dv-seg button { border: 0; background: transparent; padding: 0 10px; border-radius: 6px; cursor: pointer; color: var(--muted-foreground); font-size: 13px; white-space: nowrap; }
-.dv-seg button[aria-pressed="true"] { background: var(--accent); color: var(--foreground); font-weight: 500; }
-.dv-iconbtn { width: 34px; display: grid; place-items: center; cursor: pointer; flex: none; }
-.dv-search { padding: 0 10px 0 32px; width: 240px; background-image: radial-gradient(circle at 15px 15px, transparent 5px, var(--muted-foreground) 5.5px, var(--muted-foreground) 6.5px, transparent 7px); }
-.dv-search::placeholder { color: var(--muted-foreground); }
+.dv-iconbtn { height: 34px; width: 34px; border: 1px solid var(--border); background: var(--card); border-radius: 9px; color: inherit; display: grid; place-items: center; cursor: pointer; flex: none; }
 .dv-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dv-ok); flex: none; display: inline-block; }
 .dv-dot.warn { background: var(--dv-warn); }
 .dv-dot.bad { background: var(--dv-bad); }
 .dv-dot.info { background: var(--dv-info); }
 .dv-dot.grey { background: var(--muted-foreground); }
-
-/* Top bar */
-.dv-topbar { position: sticky; top: 0; z-index: 30; background: color-mix(in oklch, var(--background) 90%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
-.dv-topbar-in { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 16px; }
-.dv-back { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: var(--muted-foreground); font-size: 13px; padding: 6px 8px; border-radius: 8px; }
-.dv-back:hover { background: var(--muted); color: var(--foreground); }
-.dv-title { display: flex; flex-direction: column; margin-right: auto; padding-left: 10px; border-left: 1px solid var(--border); }
-.dv-title b { font-size: 16px; letter-spacing: -0.01em; font-weight: 600; line-height: 1.2; }
-.dv-ctrls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.dv-content { padding: 18px 16px 48px; max-width: 1400px; margin: 0 auto; }
 
 /* Overview: sentences first, then the problems as cards */
 .dv-overview { display: grid; gap: 14px; }
@@ -100,30 +85,37 @@
 .dv-alert { border: 1px solid color-mix(in oklch, var(--dv-bad) 45%, var(--border)); background: var(--dv-bad-bg); color: var(--foreground); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .dv-skel { height: 14px; border-radius: 6px; background: var(--muted); animation: dv-pulse 1.4s ease-in-out infinite; }
 @keyframes dv-pulse { 50% { opacity: 0.5; } }
+/* An endless animation makes the browser redraw every frame, even when it is
+   hidden (2026-10-12: the page kept the laptop busy while idle). Animate only
+   what can be seen: the closed side panel's placeholders stay still. */
+.dv-panel:not(.open) .dv-skel { animation: none; }
 
-/* Tabs and filters */
-.dv-tabs { display: flex; gap: 2px; margin-top: 24px; border-bottom: 1px solid var(--border); align-items: end; overflow-x: auto; }
-.dv-tab { border: 0; background: transparent; padding: 8px 12px 10px; cursor: pointer; color: var(--muted-foreground); border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 500; white-space: nowrap; display: inline-flex; gap: 6px; align-items: center; font-size: 14px; }
-.dv-tab[aria-selected="true"] { color: var(--foreground); border-bottom-color: var(--dv-teal); }
-.dv-tab .c { font: 500 11.5px var(--font-mono); color: var(--muted-foreground); }
-.dv-toolrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 12px 0; }
-.dv-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.dv-qf { border: 1px solid var(--border); background: var(--card); border-radius: 999px; padding: 4px 11px; font-size: 13px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; color: inherit; }
-.dv-qf .n { font: 500 11.5px var(--font-mono); color: var(--muted-foreground); }
-.dv-qf[aria-pressed="true"] { background: var(--accent); border-color: color-mix(in oklch, var(--dv-teal) 50%, var(--border)); font-weight: 500; }
-.dv-qf .dv-dot { width: 6px; height: 6px; }
+/* Filters (FilterChips) and the view controls above the sheet */
+.dv-toolrow { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding-bottom: 12px; }
 .dv-viewctl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .dv-active-filter { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border-radius: 10px; background: var(--accent); font-size: 13px; margin-bottom: 10px; }
 .dv-active-filter b { font-weight: 600; }
 
 /* The sheet */
-.dv-sheet { border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; box-shadow: var(--dv-shadow); }
-.dv-gridwrap { overflow: auto; max-height: calc(100vh - 150px); min-height: 320px; }
+.dv-sheet { position: relative; border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; box-shadow: var(--dv-shadow); }
+/* A switch keeps the last answer on screen, dimmed, until the next one is
+   in: the page keeps its height and its scroll, like the cockpit's tabs. */
+.dv-overview, .dv-gridwrap { transition: opacity 0.15s ease; }
+.dv-overview[data-busy], .dv-sheet[data-busy] .dv-gridwrap { opacity: 0.55; pointer-events: none; }
+.dv-busybar { position: absolute; top: 0; left: 0; right: 0; height: 2px; z-index: 6; overflow: hidden; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+.dv-sheet[aria-busy="true"] .dv-busybar { opacity: 1; }
+.dv-busybar::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; background: var(--dv-teal); }
+.dv-sheet[aria-busy="true"] .dv-busybar::before { animation: dv-slide 1.1s ease-in-out infinite; }
+@keyframes dv-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+.dv-sheet-wait { height: var(--dv-sheet-h); padding: 4px 18px 18px; }
+.dv-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; }
+.dv-empty b { color: var(--foreground); }
+.dv-gridwrap { overflow: auto; height: var(--dv-sheet-h); }
 .dv-gridwrap table { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 13.5px; }
 .dv-gridwrap th, .dv-gridwrap td { border-bottom: 1px solid var(--dv-grid); padding: 0 14px; text-align: left; background: var(--card); vertical-align: middle; }
 .dv-gridwrap.allcols th, .dv-gridwrap.allcols td { border-right: 1px solid var(--dv-grid); }
 .dv-gridwrap thead th { position: sticky; top: 0; z-index: 3; height: 42px; font-size: 12.5px; font-weight: 600; color: var(--muted-foreground); white-space: nowrap; box-shadow: 0 1px 0 var(--border); }
-.dv-gridwrap thead tr.grp th { height: 28px; font: 600 10.5px/28px var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; background: var(--muted); }
+.dv-gridwrap thead tr.grp th { height: 28px; font: 600 10.5px/28px var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; background: linear-gradient(var(--muted), var(--muted)), var(--card); }
 .dv-gridwrap.allcols thead tr.cols th { top: 28px; }
 .dv-th { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .dv-th span { overflow: hidden; text-overflow: ellipsis; }
@@ -140,8 +132,15 @@
 .dv-gridwrap td.id { font-family: var(--font-mono); font-size: 12px; color: var(--muted-foreground); }
 .dv-gridwrap td.num { text-align: right; font-family: var(--font-mono); }
 .dv-gridwrap tbody tr { cursor: pointer; }
-.dv-gridwrap tbody tr:hover td { background: color-mix(in oklch, var(--muted) 70%, var(--card)); }
-.dv-gridwrap tbody tr.sel td { background: var(--accent); }
+/* --muted and --accent are see-through in dark mode, so each tint is laid
+   over the card: the frozen column and the sticky rows stay solid while the
+   sheet scrolls under them. */
+.dv-gridwrap tbody tr:hover td { background: linear-gradient(var(--muted), var(--muted)), var(--card); }
+.dv-gridwrap tbody tr.sel td { background: linear-gradient(var(--accent), var(--accent)), var(--card); }
+/* Stand-ins for the rows outside the sheet window (SheetGrid draws only the
+   rows in view), so the scrollbar keeps the full length. */
+.dv-gridwrap tbody tr.dv-spacer { cursor: default; }
+.dv-gridwrap tbody tr.dv-spacer td, .dv-gridwrap tbody tr.dv-spacer:hover td { padding: 0; border: 0; background: transparent; }
 .dv-gridwrap .fz { position: sticky; left: 0; z-index: 2; box-shadow: 1px 0 0 var(--border), 8px 0 12px -8px oklch(0 0 0 / 18%); }
 .dv-gridwrap thead .fz { z-index: 5; }
 .dv-root .na { color: var(--muted-foreground); }
@@ -173,32 +172,109 @@
 .dv-pop code { font-family: var(--font-mono); font-size: 12px; background: var(--muted); padding: 1px 5px; border-radius: 5px; }
 
 /* Compare tab: the lineage strip is the page's signature */
-.dv-compare { display: grid; gap: 16px; padding-top: 16px; }
+.dv-compare { display: grid; gap: 16px; }
 .dv-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--dv-shadow); min-width: 0; }
 .dv-card-h { padding: 16px 18px 0; }
 .dv-card-h h2 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
 .dv-card-h p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 13px; max-width: 84ch; }
-.dv-lineage { padding: 6px 18px 8px; }
-.dv-pipe { display: grid; grid-template-columns: 120px 1fr; gap: 14px; align-items: center; padding: 14px 0; }
+/*
+ * The lineage card (2026-10-13). Each count sits on a raised step: a surface
+ * one shade above the card, lit from the top edge, with a meter on the
+ * line's own scale (the CEO funnel strip's bars) so the eye sees where the
+ * count shrinks. The first step of a line wears the brand gradient ring.
+ * Between steps, a signed delta and one chip per reason; the colour is on
+ * the dot, never on the words.
+ */
+.dv-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted-foreground); }
+.dv-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.dv-legend .dot, .dv-reason .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--muted-foreground); }
+.dv-legend .dot.warn, .dv-reason.warn .dot { background: var(--dv-warn); }
+.dv-legend .dot.bad, .dv-reason.bad .dot { background: var(--dv-bad); box-shadow: 0 0 0 3px var(--dv-bad-bg); }
+.dv-lineage { padding: 4px 18px 6px; container-type: inline-size; }
+.dv-pipe { padding: 16px 0 18px; }
 .dv-pipe + .dv-pipe { border-top: 1px solid var(--border); }
-.dv-pipe-name { font-weight: 600; font-size: 13.5px; }
-.dv-pipe-name small { display: block; font-weight: 400; font-size: 12px; color: var(--muted-foreground); margin-top: 2px; }
+.dv-pipe-name { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.dv-pipe-name small { font-weight: 400; font-size: 12.5px; color: var(--muted-foreground); }
 .dv-hops { display: flex; align-items: stretch; min-width: 0; }
-.dv-hop { flex: 1 1 0; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--background); }
-.dv-hop .n { font: 600 26px/1.05 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
-.dv-hop .l { font-size: 13px; margin-top: 4px; font-weight: 500; }
-.dv-hop .t { font-size: 12px; color: var(--muted-foreground); margin-top: 2px; line-height: 1.35; }
-.dv-hop.first { border-color: color-mix(in oklch, var(--dv-teal) 45%, var(--border)); background: var(--accent); }
-.dv-flow { flex: 0 0 clamp(96px, 10vw, 136px); position: relative; display: grid; place-items: center; }
-.dv-flow::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 2px; background: linear-gradient(90deg, var(--dv-teal), color-mix(in oklch, var(--dv-teal) 35%, transparent)); }
-.dv-flow::after { content: ""; position: absolute; right: 0; top: calc(50% - 5px); border: 5px solid transparent; border-left: 6px solid color-mix(in oklch, var(--dv-teal) 60%, transparent); border-right: 0; }
-.dv-leak { position: relative; z-index: 1; max-width: 124px; text-align: center; font: 500 12px/1.25 var(--font-sans); padding: 5px 9px; border-radius: 8px; background: var(--card); border: 1px solid var(--border); color: var(--muted-foreground); }
-button.dv-leak { cursor: pointer; }
-.dv-leak.warn { color: var(--dv-warn); border-color: color-mix(in oklch, var(--dv-warn) 45%, var(--border)); }
-.dv-leak.bad { color: var(--dv-bad); border-color: color-mix(in oklch, var(--dv-bad) 50%, var(--border)); background: var(--dv-bad-bg); }
-.dv-why { margin: 0 18px 16px; padding: 12px 14px; border-radius: 10px; background: var(--muted); font-size: 13px; }
-.dv-why ul { margin: 6px 0 0; padding-left: 18px; list-style: disc; }
-.dv-why li { margin: 3px 0; }
+.dv-step {
+  /* Light: a white step, a hairline that fades down, a whisper of lift. */
+  --dv-step-top: var(--card);
+  --dv-step-bottom: color-mix(in oklch, var(--background) 65%, var(--card));
+  --dv-step-edge: linear-gradient(180deg, color-mix(in oklch, var(--foreground) 13%, transparent), color-mix(in oklch, var(--foreground) 7%, transparent));
+  --dv-step-light: inset 0 1px 0 oklch(1 0 0 / 80%);
+  --dv-step-lift: 0 1px 2px oklch(0.2 0.045 270 / 6%), 0 8px 18px -10px oklch(0.2 0.045 270 / 16%);
+  flex: 1 1 0;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px 14px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: linear-gradient(180deg, var(--dv-step-top), var(--dv-step-bottom)) padding-box, var(--dv-step-edge) border-box;
+  box-shadow: var(--dv-step-light), var(--dv-step-lift);
+}
+/* Dark: one shade above the card, lit along the top edge; no grey shadow. */
+.dark .dv-step {
+  --dv-step-top: color-mix(in oklch, var(--card) 86%, var(--foreground));
+  --dv-step-bottom: color-mix(in oklch, var(--card) 94%, var(--foreground));
+  --dv-step-edge: linear-gradient(180deg, color-mix(in oklch, var(--foreground) 12%, transparent), color-mix(in oklch, var(--foreground) 4%, transparent));
+  --dv-step-light: inset 0 1px 0 color-mix(in oklch, var(--foreground) 7%, transparent);
+  --dv-step-lift: 0 0 0 0 transparent;
+}
+/* The first step of a line: the brand gradient ring and a low teal glow. */
+.dv-step.source {
+  --dv-step-edge: linear-gradient(135deg, var(--royal-blue), var(--mahara-teal) 65%);
+  box-shadow: var(--dv-step-light), 0 10px 28px -14px color-mix(in oklch, var(--mahara-teal) 55%, transparent);
+}
+.dv-step-sys { display: inline-flex; align-items: center; gap: 6px; font: 500 10.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted-foreground); }
+.dv-step-sys::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.dv-step-sys.meta::before { background: var(--dv-info); }
+.dv-step-sys.ghl::before { background: color-mix(in oklch, var(--foreground) 70%, transparent); }
+.dv-step-sys.cockpit::before { background: var(--dv-teal); }
+.dv-step-n { font: 600 28px/1.1 var(--font-sans); letter-spacing: -0.025em; font-variant-numeric: tabular-nums; margin-top: 10px; white-space: nowrap; }
+.dv-step-l { font-size: 13px; font-weight: 500; margin-top: 4px; }
+.dv-step-t { font-size: 12px; color: var(--muted-foreground); margin-top: 2px; line-height: 1.35; flex: 1; }
+.dv-step-bar { height: 4px; border-radius: 4px; margin-top: 12px; background: var(--ceo-emphasis-track); overflow: hidden; }
+.dv-step-bar i { display: block; height: 100%; border-radius: inherit; background: var(--ceo-emphasis); }
+.dv-step-wait { flex: 1; padding: 14px; border-radius: 14px; background: var(--muted); font-size: 13px; color: var(--muted-foreground); }
+.dv-gap { flex: 0 0 auto; min-width: 104px; max-width: 220px; position: relative; padding: 0 12px; display: flex; flex-direction: column; align-items: center; }
+.dv-gap-delta { height: 22px; margin-top: 18px; font: 500 11.5px/22px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+.dv-gap-line { align-self: stretch; position: relative; height: 2px; margin: 0 -12px; background: linear-gradient(90deg, color-mix(in oklch, var(--dv-teal) 70%, transparent), color-mix(in oklch, var(--dv-teal) 25%, transparent)); }
+.dv-gap-line::after { content: ""; position: absolute; right: -1px; top: -4px; border: 5px solid transparent; border-left: 6px solid color-mix(in oklch, var(--dv-teal) 55%, transparent); border-right: 0; }
+.dv-gap-why { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; justify-items: center; width: 100%; }
+.dv-reason { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; white-space: nowrap; padding: 4px 9px; border-radius: 999px; font: 500 12px/1.3 var(--font-sans); color: var(--foreground); background: var(--card); border: 1px solid var(--border); text-align: left; }
+.dv-reason.grey { color: var(--muted-foreground); }
+.dv-reason.quiet { color: var(--muted-foreground); border-style: dashed; background: transparent; }
+button.dv-reason { cursor: pointer; transition: border-color 0.15s, background-color 0.15s; }
+button.dv-reason:hover { border-color: color-mix(in oklch, var(--dv-teal) 60%, var(--border)); background: color-mix(in oklch, var(--dv-teal) 8%, var(--card)); }
+.dv-reason.bad { border-color: color-mix(in oklch, var(--dv-bad) 40%, var(--border)); }
+.dv-reason.warn { border-color: color-mix(in oklch, var(--dv-warn) 35%, var(--border)); }
+.dv-reason .chev { width: 13px; height: 13px; margin-right: -3px; color: var(--muted-foreground); flex: none; }
+/* A narrow card stacks the steps; the line runs down the left. */
+@container (max-width: 760px) {
+  .dv-hops { flex-direction: column; }
+  .dv-step { display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr); column-gap: 16px; }
+  .dv-step-sys { grid-column: 1 / -1; }
+  .dv-step-n { grid-row: 2 / 4; align-self: center; margin-top: 8px; }
+  .dv-step-l, .dv-step-t { grid-column: 2; }
+  .dv-step-l { margin-top: 10px; }
+  .dv-step-bar { grid-column: 1 / -1; }
+  .dv-gap { width: auto; max-width: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 0 8px 22px; min-height: 48px; }
+  .dv-gap-line { position: absolute; left: 22px; top: 0; bottom: 0; width: 2px; height: auto; margin: 0; background: linear-gradient(180deg, color-mix(in oklch, var(--dv-teal) 70%, transparent), color-mix(in oklch, var(--dv-teal) 25%, transparent)); }
+  .dv-gap-line::after { right: auto; left: -4px; top: auto; bottom: -1px; border: 5px solid transparent; border-top: 6px solid color-mix(in oklch, var(--dv-teal) 55%, transparent); border-bottom: 0; }
+  .dv-gap-delta { margin: 0 0 0 18px; }
+  .dv-gap-why { display: flex; flex-wrap: wrap; margin: 0; width: auto; justify-items: start; }
+}
+.dv-notes { display: grid; gap: 8px; margin: 2px 18px 18px; }
+.dv-note { display: flex; gap: 10px; padding: 12px 14px; border-radius: 12px; background: color-mix(in oklch, var(--muted) 70%, transparent); font-size: 13px; line-height: 1.5; }
+.dv-note b { font-weight: 600; display: block; }
+.dv-note-icon { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--muted-foreground); }
+.dv-note.warn .dv-note-icon { color: var(--dv-warn); }
+.dv-note-body { color: var(--muted-foreground); margin-top: 2px; }
+.dv-note-body ul { margin: 4px 0 6px; padding-left: 18px; list-style: disc; color: var(--foreground); }
+.dv-note-body li { margin: 2px 0; }
+.dv-note-do { margin-top: 4px; color: var(--foreground); }
 .dv-plain { overflow-x: auto; }
 .dv-plain table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .dv-plain th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted-foreground); padding: 12px 14px 8px; white-space: nowrap; }
@@ -238,27 +314,12 @@ button.dv-leak { cursor: pointer; }
 .dv-tech summary { cursor: pointer; padding: 10px 12px; font-weight: 500; font-size: 13px; }
 .dv-tech .tin { padding: 0 12px 12px; }
 .dv-tech pre { margin: 10px 0 0; padding: 12px; font: 11.5px/1.5 var(--font-mono); overflow: auto; max-height: 360px; background: var(--background); border-radius: 8px; border: 1px solid var(--border); }
-.dv-toast { position: fixed; bottom: 18px; left: 50%; transform: translate(-50%, 20px); opacity: 0; background: var(--foreground); color: var(--background); padding: 8px 14px; border-radius: 9px; font-size: 13px; transition: 0.2s; z-index: 70; pointer-events: none; }
-.dv-toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (max-width: 1200px) { .dv-root.panel-open { padding-right: 0; } }
 @media (max-width: 860px) {
-  .dv-search { width: 100%; }
-  .dv-ctrls { width: 100%; }
-  .dv-title { border-left: 0; padding-left: 0; }
-  .dv-topbar { position: static; }
-  .dv-gridwrap { max-height: 70vh; }
+  .dv-root { --dv-sheet-h: 70vh; }
   .dv-headline { font-size: 17px; }
 }
-@media (max-width: 720px) {
-  .dv-content { padding: 14px 8px 40px; }
-  .dv-pipe { grid-template-columns: 1fr; gap: 8px; }
-  .dv-hops { flex-direction: column; }
-  .dv-flow { flex-basis: 54px; }
-  .dv-flow::before { left: 50%; right: auto; top: 0; bottom: 0; width: 2px; height: auto; background: linear-gradient(180deg, var(--dv-teal), color-mix(in oklch, var(--dv-teal) 35%, transparent)); }
-  .dv-flow::after { right: auto; left: calc(50% - 5px); top: auto; bottom: 0; border: 5px solid transparent; border-top: 6px solid color-mix(in oklch, var(--dv-teal) 60%, transparent); border-bottom: 0; }
-  .dv-leak { max-width: none; }
-}
 @media (prefers-reduced-motion: reduce) {
-  .dv-root, .dv-root *, .dv-panel, .dv-toast { animation: none !important; transition: none !important; }
+  .dv-root, .dv-root *, .dv-panel { animation: none !important; transition: none !important; }
 }

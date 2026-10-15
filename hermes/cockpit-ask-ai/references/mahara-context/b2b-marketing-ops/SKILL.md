@@ -196,7 +196,7 @@ Point-in-time P&L numbers live in his own planning docs — **Month in Review** 
 - Never surface any of this to the team (see his user skill).
 
 ### Client fulfillment KPI standard [aziz, 2026-09-01]
-CPL **$10 stretch, $15 max** · lead→booking 30% · booking→show 75% · show→close 20% · tracking 100%. Daily ads brief reports pace against the monthly plan and names which number broke.
+CPL **$10 stretch, $15 max** · lead→booking 30% · booking→show: aim for 70%; 60% is the line, under it is a watch, never the main constraint · show→close 20% · tracking 100%. Daily ads brief reports pace against the monthly plan and names which number broke.
 
 ### Comp & docs
 CSM Pay Structure `1CjwrBd6OFMI3j1fRYq1mJt83jeSQT76nF6U5ntspkZI` · Upsell Menu `1F04he2nna-1rljmlu-XxcAygWWZY0l4CC46__AcHOXI`. Branded docs: `MD=body.md TITLE="..." [DOC=id] uv run python skills/integrations/google_docs/scripts/branded_doc_tables.py` (real tables, ~4 API roundtrips each — background it for 15+ tables).

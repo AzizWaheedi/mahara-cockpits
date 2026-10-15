@@ -198,8 +198,23 @@ export function periodNumbers(
   const shows = rows.filter(r => r.show === "y").length;
   const noshows = rows.filter(r => r.show === "n").length;
   const closes = rows.filter(r => r.closed === "y").length;
+  // Close rate is of the people who came: a close logged without a show
+  // still counts as a close, but not in the rate, so it never passes 100%.
+  const closesShown = rows.filter(
+    r => r.closed === "y" && r.show === "y",
+  ).length;
   const decided = shows + noshows;
-  const fromAds = adDays.length > 0;
+  // Ads count once the ad history reaches this period. A period entirely
+  // before the first ad day has no ad record at all, so the sheet's count
+  // stands instead of a zero.
+  const firstAdDay = adDays.reduce<string | undefined>(
+    (min, d) =>
+      d.date && (!min || String(d.date).slice(0, 10) < min)
+        ? String(d.date).slice(0, 10)
+        : min,
+    undefined,
+  );
+  const fromAds = firstAdDay !== undefined && firstAdDay <= to;
   return {
     leads: fromAds ? leads : rows.length,
     leadsFrom: fromAds ? "ads" : "sheet",
@@ -213,8 +228,51 @@ export function periodNumbers(
     closes,
     unknownOutcome: rows.filter(r => r.booked && unfilled(r, today)).length,
     showRate: decided ? Math.round((100 * shows) / decided) : null,
-    closeRate: shows ? Math.round((100 * closes) / shows) : null,
+    closeRate: shows ? Math.round((100 * closesShown) / shows) : null,
   };
+}
+
+/** The sheet's own month tab: outcome counts only, never the lead count. */
+const SHEET_KEYS = [
+  "booked",
+  "shows",
+  "noshows",
+  "quotes",
+  "deposits",
+  "closes",
+  "unknownOutcome",
+  "upcoming",
+  "showRate",
+  "closeRate",
+  "csat",
+] as const;
+
+/**
+ * "This month" reads the outcomes off the sheet's month tab, but leads,
+ * spend and cost per lead stay from the ads, the same as every other
+ * period. Spreading the whole tab replaced ad leads with the sheet's row
+ * count, so cost per lead divided Meta spend by the sheet (2026-10-11).
+ */
+export function withSheetMonth<T extends Record<string, unknown>>(
+  adBased: T | null | undefined,
+  sheet: Record<string, unknown> | null | undefined,
+): (T & Record<string, unknown>) | null {
+  if (!sheet) return adBased ? { ...adBased } : null;
+  const out: Record<string, unknown> = { ...(adBased ?? {}) };
+  for (const k of SHEET_KEYS) if (k in sheet) out[k] = sheet[k];
+  out.sheetLeads = sheet.leads;
+  if (!adBased) {
+    out.leads = sheet.leads;
+    out.leadsFrom = "sheet";
+  }
+  if (
+    typeof out.closeRate === "number" &&
+    typeof out.closes === "number" &&
+    typeof out.shows === "number" &&
+    out.shows > 0
+  )
+    out.closeRate = Math.min(out.closeRate, 100);
+  return out as T & Record<string, unknown>;
 }
 
 export type AdOutcome = {
@@ -229,14 +287,18 @@ export type AdOutcome = {
   closeRate?: number;
 };
 
+/** How many ads byAdIn returns at most; the table says when there are more. */
+export const AD_TABLE_LIMIT = 12;
+
 /** Which ad brought the leads that turned up and bought, in the period. Best first, twelve at most. */
 export function byAdIn(
   appts: Appt[],
   from: string,
   to: string,
   today = kuwaitDay(),
+  limit = AD_TABLE_LIMIT,
 ): AdOutcome[] {
-  const seen = new Map<string, AdOutcome>();
+  const seen = new Map<string, AdOutcome & { closesShown: number }>();
   for (const r of appts) {
     if (!inPeriod(r.added, from, to)) continue;
     const key = r.ad || "not tagged";
@@ -247,6 +309,7 @@ export function byAdIn(
       shows: 0,
       noshows: 0,
       closes: 0,
+      closesShown: 0,
       unknown: 0,
     };
     a.leads++;
@@ -254,22 +317,26 @@ export function byAdIn(
     if (r.show === "y") a.shows++;
     if (r.show === "n") a.noshows++;
     if (r.closed === "y") a.closes++;
-    if (unfilled(r, today)) a.unknown++;
+    if (r.closed === "y" && r.show === "y") a.closesShown++;
+    // Same rule as the totals: only a booked appointment can lack an outcome.
+    if (r.booked && unfilled(r, today)) a.unknown++;
     seen.set(key, a);
   }
   return [...seen.values()]
-    .map(a => {
+    .map(({ closesShown, ...a }) => {
       const decided = a.shows + a.noshows;
       return {
         ...a,
         showRate: decided ? Math.round((100 * a.shows) / decided) : undefined,
-        closeRate: a.shows ? Math.round((100 * a.closes) / a.shows) : undefined,
+        closeRate: a.shows
+          ? Math.round((100 * closesShown) / a.shows)
+          : undefined,
       };
     })
     .sort(
       (a, b) => b.closes - a.closes || b.shows - a.shows || b.leads - a.leads,
     )
-    .slice(0, 12);
+    .slice(0, limit);
 }
 
 /** A media buyer change or decision, as the client's card carries it. */

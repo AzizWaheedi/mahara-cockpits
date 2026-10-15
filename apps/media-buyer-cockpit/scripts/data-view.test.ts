@@ -5,12 +5,14 @@ import {
   apptIssues,
   apptRowSchema,
   buildStory,
+  cockpitWords,
   csvCell,
   debugBundle,
   LEAD_ALL,
   type LeadRow,
   leadIssues,
   leadRowSchema,
+  outcome,
   plainMade,
   type RecordData,
   result,
@@ -78,6 +80,9 @@ const appt: ApptRow = apptRowSchema.parse({
   outcome_at: null,
   cockpit: "counted",
   cockpit_at: "2026-10-10T10:12:00+03:00",
+  notes: "Wants a quote for the kitchen",
+  agent: "Daniya Ziad",
+  agent_number: "7",
 });
 
 describe("columns follow the Master Dashboard", () => {
@@ -90,12 +95,11 @@ describe("columns follow the Master Dashboard", () => {
       "LAST_UTM_MEDIUM",
       "LAST_URL",
     ]);
-    expect(APPT_ALL.filter(c => !c.get).map(c => c.label)).toEqual([
-      "Additional Notes",
-      "Agent Number",
-      "PRE-PAY",
-      "Agent",
-    ]);
+    expect(APPT_ALL.filter(c => !c.get).map(c => c.label)).toEqual(["PRE-PAY"]);
+  });
+  test("every unsynced column says why it is empty", () => {
+    for (const c of [...LEAD_ALL, ...APPT_ALL].filter(c => !c.get))
+      expect(c.why ?? "").not.toBe("");
   });
   test("sheet values use Riyadh time and plain sheet words", () => {
     const get = (label: string) =>
@@ -110,6 +114,21 @@ describe("columns follow the Master Dashboard", () => {
     );
     expect(aget("Showed?")).toBeNull();
     expect(aget("Confirmed?")).toBe("TRUE");
+    expect(aget("Additional Notes")).toBe("Wants a quote for the kitchen");
+    expect(aget("Agent")).toBe("Daniya Ziad");
+    expect(aget("Agent Number")).toBe("7");
+  });
+  test("rows from before the agent columns still parse, as empty cells", () => {
+    const old = apptRowSchema.parse({
+      ...appt,
+      notes: undefined,
+      agent: undefined,
+      agent_number: undefined,
+    });
+    const aget = (label: string) =>
+      APPT_ALL.find(c => c.label === label)?.get?.(old);
+    expect(aget("Additional Notes")).toBeNull();
+    expect(aget("Agent Number")).toBeNull();
   });
 });
 
@@ -163,6 +182,24 @@ describe("one verdict per row", () => {
     expect(cal.map(i => i.label)).toEqual(["Calendar event, not a lead"]);
     expect(cal[0].why).toContain("counts it");
   });
+  test("a booking counted without an ad says so (2026-10-12)", () => {
+    const upcoming = { ...appt, start_at: "2026-10-12T09:30:00+03:00" };
+    expect(apptIssues({ ...upcoming, cockpit_attribution: "ad" }, NOW)).toEqual(
+      [],
+    );
+    expect(
+      apptIssues({ ...upcoming, cockpit_attribution: "none" }, NOW).map(
+        i => i.label,
+      ),
+    ).toEqual(["Counted, no ad on the lead"]);
+    expect(
+      apptIssues({ ...upcoming, cockpit_attribution: "unknown_ad" }, NOW)[0]
+        .label,
+    ).toBe("Counted, ad not found");
+    // Rows from before migration 20261012h carry no attribution at all.
+    const { cockpit_attribution: _, ...old } = upcoming;
+    expect(apptRowSchema.parse(old).cockpit_attribution).toBeUndefined();
+  });
   test("results and booking methods in words", () => {
     expect(result({ status: "showed", start_at: appt.start_at }, NOW)).toEqual([
       "Showed up",
@@ -177,6 +214,42 @@ describe("one verdict per row", () => {
     expect(plainMade("booking_widget")).toBe("Booked on the booking page");
     expect(plainMade(null)).toBe("Booking method not recorded");
     expect(plainMade("something_new")).toBe("something_new");
+  });
+  test("a result in the sheet counts when GHL still says confirmed (2026-10-13)", () => {
+    const sheet = { ...appt, result: "noshow" };
+    expect(outcome(sheet)).toBe("noshow");
+    expect(result(sheet, NOW)).toEqual(["No-show", "bad"]);
+    expect(apptIssues(sheet, NOW)).toEqual([]);
+    // GHL's own status wins over the sheet.
+    expect(outcome({ status: "showed", result: "noshow" })).toBe("showed");
+    // Rows from before migration 20261013d carry no result at all.
+    const { result: _, ...old } = sheet;
+    expect(outcome(apptRowSchema.parse(old))).toBeNull();
+  });
+  test("bookings the sync skips on purpose say why (2026-10-13)", () => {
+    const left = { ...appt, cockpit: "left_out" as const };
+    expect(cockpitWords({ ...left, status: "cancelled" })).toBe(
+      "Not counted: cancelled",
+    );
+    expect(cockpitWords({ ...left, ghl_source: "google_calendar" })).toBe(
+      "Not counted: a Google Calendar copy",
+    );
+    const provisional = {
+      ...left,
+      calendar: "Not Confirmed Appointments",
+      start_at: "2026-10-12T09:30:00+03:00",
+    };
+    expect(cockpitWords(provisional)).toBe(
+      "Not counted: provisional or callback calendar",
+    );
+    expect(apptIssues(provisional, NOW).map(i => i.label)).toEqual([
+      "Provisional or callback calendar",
+    ]);
+    // A miss is any booking the sync should have counted, Facebook or not.
+    expect(
+      apptIssues({ ...appt, cockpit: "missing", lead_channel: "Other" }, NOW)[0]
+        .why,
+    ).toContain("This booking is in GHL");
   });
 });
 

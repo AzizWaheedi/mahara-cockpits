@@ -1,5 +1,6 @@
 import { withoutWebinar } from "../webinarAttribution.js";
-import { B2B, num, sql } from "../sb.js";
+import { B2B, num, sql, TRIAGE } from "../sb.js";
+import { amountGap, dayGap, MATCH_DAYS, MATCH_GAP } from "../manualMatch.js";
 import { marketingAdLink } from "../linkCtr.js";
 import { workingHoursForAdapters } from "../settings.js";
 import { addDays, daysInMonth, kuwaitDay, monthStart } from "../time.js";
@@ -812,6 +813,111 @@ export function voidedNote(days, windows) {
         text: `Voided deals are left out of every close, contracted and cash figure here, and of the close rates, cost to win and ROAS built on them. B2B keeps a voided closed-deal form in its table and its own dashboard still counts it.${which ? ` In the last 365 days: ${which}.` : ""}${lower.length ? ` So this reads lower than the B2B dashboard for ${lower.join("; ")}.` : ""}`,
     };
 }
+/**
+ * Kickoff cash (A087; Aziz, 2026-09-21: "At the end of the kickoff form, the
+ * CSM also fills in if they collected the rest of the cash, and then you can
+ * add it up there. And then we can use Tap Payments and WAP, or the bank
+ * transfer, just to confirm.").
+ *
+ * The amount is the kickoff Typeform's (tG7dnxBn) "Payment Amount" field
+ * (ref 75e97e7d-4c19-437a-b4b8-67570c29344f), which the onboarding sync
+ * copies to cockpit_client_onboarding.forms.kickoff.payment. It is dated by
+ * the day the form was submitted (Kuwait) and read as USD: the field carries
+ * no currency and every cockpit money figure is USD. The form carries the
+ * amount from 4 Oct 2026 (the first response with it), so a day before that
+ * reads as not read, never zero.
+ *
+ * Confirmed: a payment the Money section attributed to the same client card
+ * on Whop, Tap or a bank transfer (a transfer row or a bank statement line),
+ * within MATCH_DAYS days and MATCH_GAP of the amount (./manualMatch.js), one
+ * payment per kickoff. A payment only logged by hand is not a rail. An
+ * unconfirmed kickoff still counts, with the confirmed share beside it, the
+ * same as the deposit.
+ */
+export const KICKOFF_FORM = "tG7dnxBn";
+export const KICKOFF_READ_FROM = "2026-10-04";
+const KICKOFF_RAILS = new Set(["whop", "tap", "transfer"]);
+export const KICKOFF_SQL = `select clickup_task_id, client_name,
+    to_char(((forms->'kickoff'->>'submitted_at')::timestamptz at time zone 'Asia/Kuwait')::date, 'YYYY-MM-DD') as day,
+    forms->'kickoff'->>'payment' as payment,
+    floor(extract(epoch from synced_at) * 1000)::bigint as synced_ms
+  from public.cockpit_client_onboarding
+  where forms->'kickoff'->>'form_id' = '${KICKOFF_FORM}' and forms->'kickoff'->>'submitted_at' is not null`;
+/** A typed amount as a number: "1500", "1,500", "$1500.50". Null when blank or not a number. */
+export function kickoffAmount(raw) {
+    if (raw === null || raw === undefined)
+        return null;
+    const text = String(raw).replace(/[,$\s]/g, "").replace(/usd$/i, "");
+    if (!text || !/^\d+(\.\d+)?$/.test(text))
+        return null;
+    const n = Number(text);
+    return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+/**
+ * The kickoff forms from KICKOFF_READ_FROM with an amount, each with what
+ * confirms it, plus the forms that left the amount blank (named, not zero).
+ * Pure, for the tests.
+ */
+export function readKickoffs(formRows, paymentRows) {
+    const kickoffs = [];
+    const blank = [];
+    const used = new Set();
+    const rails = paymentRows
+        .filter(p => KICKOFF_RAILS.has(String(p.rail)) && num(p.usd) > 0 && /^\d{4}-\d{2}-\d{2}$/.test(String(p.day)))
+        .map(p => ({ id: String(p.payment_id), taskId: String(p.clickup_task_id), day: String(p.day), usd: num(p.usd), rail: String(p.rail) }));
+    const forms = formRows
+        .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(String(r.day)) && String(r.day) >= KICKOFF_READ_FROM)
+        .sort((a, b) => String(a.day).localeCompare(String(b.day)) || String(a.clickup_task_id).localeCompare(String(b.clickup_task_id)));
+    for (const r of forms) {
+        const amount = kickoffAmount(r.payment);
+        const taskId = String(r.clickup_task_id ?? "");
+        const client = String(r.client_name ?? "a client");
+        if (amount === null) {
+            blank.push({ day: String(r.day), client });
+            continue;
+        }
+        let match = null;
+        if (amount > 0)
+            match = rails
+                .filter(p => !used.has(p.id) && p.taskId === taskId && dayGap(p.day, String(r.day)) <= MATCH_DAYS && amountGap(p.usd, amount) <= MATCH_GAP)
+                .sort((a, b) => dayGap(a.day, String(r.day)) - dayGap(b.day, String(r.day)) || amountGap(a.usd, amount) - amountGap(b.usd, amount))[0] ?? null;
+        if (match)
+            used.add(match.id);
+        kickoffs.push({ day: String(r.day), taskId, client, amount, confirmed: match ? amount : 0, rail: match?.rail ?? null });
+    }
+    return { kickoffs, blank, railPayments: rails.length };
+}
+/** Kickoff money in an inclusive window: null when no day of it is read. */
+export function kickoffIn(kickoffs, from, to) {
+    if (!kickoffs || to < KICKOFF_READ_FROM)
+        return null;
+    const start = from > KICKOFF_READ_FROM ? from : KICKOFF_READ_FROM;
+    const mine = kickoffs.filter(k => k.day >= start && k.day <= to);
+    const amount = round2(mine.reduce((sum, k) => sum + k.amount, 0));
+    const confirmed = round2(mine.reduce((sum, k) => sum + k.confirmed, 0));
+    return { amount, confirmed, forms: mine.length, from: start, partial: from < KICKOFF_READ_FROM };
+}
+/** Front-end cash with the kickoff added: total = deposit + kickoff, and front-end ROAS on that total. */
+export function withKickoff(window, kickoffs) {
+    const k = kickoffIn(kickoffs, window.from, window.to);
+    const ratio = (a, b, places = 2) => b > 0 ? Math.round((a / b) * 10 ** places) / 10 ** places : null;
+    if (!k)
+        return { ...window, frontEndCash: { ...window.frontEndCash, kickoff: null, kickoffConfirmedShare: null } };
+    const total = round2(window.frontEndCash.deposit + k.amount);
+    return {
+        ...window,
+        frontEndCash: {
+            ...window.frontEndCash,
+            kickoff: k.amount,
+            total,
+            kickoffConfirmed: k.confirmed,
+            kickoffConfirmedShare: ratio(k.confirmed, k.amount, 3),
+            kickoffForms: k.forms,
+            kickoffFrom: k.from,
+        },
+        roasCash: ratio(total, window.spend),
+    };
+}
 /** Run a secondary read; on failure keep going with a fallback and a warning. */
 async function attempt(what, notes, fallback, run) {
     try {
@@ -844,13 +950,25 @@ export const growth = {
                 throw new Error(`growth: no ${k} window returned`);
             return r;
         };
+        // Kickoff cash from the CSM's kickoff form, confirmed on the rails
+        // (A087). A failed read leaves kickoff as not read in every window.
+        const kickoffRead = await attempt("The kickoff form's cash", notes, null, async () => {
+            const [formRows, paymentRows] = await Promise.all([
+                sql(TRIAGE, KICKOFF_SQL),
+                sql(TRIAGE, `select payment_id, clickup_task_id, to_char(day, 'YYYY-MM-DD') as day, usd::float8 as usd, rail
+           from public.cockpit_client_payments
+           where active and day >= ${day(addDays(KICKOFF_READ_FROM, -MATCH_DAYS))}`),
+            ]);
+            return { ...readKickoffs(formRows, paymentRows), syncedAt: Math.max(0, ...formRows.map(r => num(r.synced_ms))) || undefined };
+        });
+        const kickoffs = kickoffRead?.kickoffs ?? null;
         const windows = {
-            yesterday: toWindow(rowOf("yesterday")),
-            last7: toWindow(rowOf("last7")),
-            prevLast7: toWindow(rowOf("prevLast7")),
-            mtd: toWindow(rowOf("mtd")),
-            lastMonthToDate: toWindow(rowOf("lastMonthToDate")),
-            lastMonth: toWindow(rowOf("lastMonth")),
+            yesterday: withKickoff(toWindow(rowOf("yesterday")), kickoffs),
+            last7: withKickoff(toWindow(rowOf("last7")), kickoffs),
+            prevLast7: withKickoff(toWindow(rowOf("prevLast7")), kickoffs),
+            mtd: withKickoff(toWindow(rowOf("mtd")), kickoffs),
+            lastMonthToDate: withKickoff(toWindow(rowOf("lastMonthToDate")), kickoffs),
+            lastMonth: withKickoff(toWindow(rowOf("lastMonth")), kickoffs),
         };
         const mtd = windows.mtd;
         // How much of this month's leads carry any first-touch attribution at all
@@ -896,6 +1014,12 @@ export const growth = {
             closes: num(r.closes),
             contracted: num(r.contracted),
             deposit: num(r.deposit),
+            // Kickoff cash by the day its form was submitted; null before the
+            // form was read (KICKOFF_READ_FROM) or when the read failed.
+            ...(() => {
+                const k = kickoffs ? kickoffIn(kickoffs, String(r.date), String(r.date)) : null;
+                return k ? { kickoff: k.amount, kickoffConfirmed: k.confirmed } : { kickoff: null };
+            })(),
         })));
         const reps = await attempt("The rep scorecard", notes, [], async () => (await sql(B2B, repsSql(ranges.mtd[0], ranges.mtd[1]))).map(r => ({
             name: String(r.name ?? "Unknown"),
@@ -956,7 +1080,9 @@ export const growth = {
             text: `Speed to lead runs from the lead's creation to the first Maqsam call with it by a sales rep on the roster (setter, closer or both), never a call-centre agent. The median is over the leads that were called; the never-called are counted beside it. The working-hours figure starts the clock at the later of the lead's creation and the next working window and counts working minutes only (${describeWorkingHours(wh.hours)}${wh.ready ? "" : ", the default"}).`,
         }, {
             level: "info",
-            text: "Contracted comes from the closed-deal form. Front-end cash is the deposit the closer typed on that form, plus the kickoff cash the CSM collects on the onboarding call once the kickoff form is read: it is not read yet, so front-end cash is the deposit alone and reads low. The share confirmed is what a Whop payment or a bank transfer on record backs; Tap is not checked here.",
+            text: `Contracted comes from the closed-deal form. Front-end cash is the deposit the closer typed on that form plus the kickoff cash the CSM types as Payment Amount at the end of the kickoff form, dated by the day the form was submitted and read as USD (the form has no currency field). The kickoff form carries the amount from ${KICKOFF_READ_FROM}, so a window before that shows kickoff as not read and front-end cash as the deposit alone. The deposit's confirmed share is what a Whop payment or a bank transfer on record backs (Tap is not checked for the deposit). A kickoff is confirmed by a Whop, Tap or bank transfer payment the Money tab attributed to the same client card within ${MATCH_DAYS} days and ${Math.round(MATCH_GAP * 100)}% of the amount; a payment only logged by hand does not confirm it, and an unconfirmed kickoff still counts.${kickoffRead
+                ? ` Since ${KICKOFF_READ_FROM}: ${kickoffRead.kickoffs.length} kickoff ${kickoffRead.kickoffs.length === 1 ? "form" : "forms"} with an amount, ${usd(kickoffRead.kickoffs.reduce((n, k) => n + k.amount, 0))} in all, ${usd(kickoffRead.kickoffs.reduce((n, k) => n + k.confirmed, 0))} of it confirmed on a rail${kickoffRead.blank.length ? `; ${kickoffRead.blank.length} ${kickoffRead.blank.length === 1 ? "form leaves" : "forms leave"} the amount blank (${kickoffRead.blank.map(b => b.client).slice(0, 4).join(", ")}), missing rather than zero` : ""}. Rail payments are the Money tab's last published attribution.`
+                : ""}`,
         }, {
             level: "info",
             text: `Reps: booked and shown are calls on each person's GHL calendar by call day. A close goes to the closer named on the form.${repVoids > 0
@@ -997,6 +1123,13 @@ export const growth = {
                 note: status === "success" ? newest : `${status}, ${newest}`,
             };
         });
+        if (kickoffRead)
+            sources.push({
+                name: "Kickoff form cash (client onboarding, Typeform tG7dnxBn)",
+                freshestAt: kickoffRead.syncedAt,
+                ok: true,
+                note: `${kickoffRead.kickoffs.length} kickoff amounts since ${KICKOFF_READ_FROM}, checked against ${kickoffRead.railPayments} Whop, Tap and transfer payments the Money tab attributed to a card`,
+            });
         const meta = feedRows?.find(x => x.source === "meta");
         if (meta) {
             const lastSpend = meta.last_spend_day

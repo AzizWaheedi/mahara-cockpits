@@ -330,6 +330,7 @@ copy run and the writer's status.
 | The dialer says "Away in Maqsam" or "Maqsam seat off" | The rep opens the Maqsam softphone and sets Available; a seat that is off or cannot call out is switched on in Maqsam. The seat's Maqsam address comes from B2B's rep list unless the Team page sets one | The rep, or Aziz |
 | A call in the dialer stays on "Ringing you in Maqsam" after it ended | The dialer reads Maqsam's call history every 4 to 8 seconds and matches the call by number, seat and time. No record means Maqsam has not written one yet, or its history API is down (the band then says Maqsam's record could not be read). The rep saves how it went by hand; nothing is lost. Only a call Maqsam records as not answered, with 0 seconds, saves itself (`dial.auto_save` in the audit log) | The rep |
 | "Book a time" shows no times, or says "That time was just taken" | The free times are HighLevel's own for that calendar (intro: two hours' notice, three days out; demo: one hour, three days). A rep with no free time of their own sees the team's. If a booking says HighLevel took it but reading it back did not match, find the row in `cockpit_sales_bookings` (state `unverified`) and check the lead's calendar in HighLevel before booking again | The rep, or Aziz |
+| Booking past the booking page: "Another day" shows no far days, says "Times past … could not be checked just now", or a custom time says "calendar could not be read" (`far_unread`) | Since 2026-10-11 the picker books up to `booking.reach_days` days out (setting `cockpit_sales_settings` key `booking`, a whole number 15 to 120; no row means 60; migration 20261011f_sales_booking_reach seeds it) on the same HighLevel calendars, with the public windows untouched (intros 2 days, demos 3). Past the window sales-api works the free times out from the host's HighLevel "Work Hours" schedule (or the calendar's open hours when no schedule lists the calendar), the call's length, step and buffers, and the host's calls and blocked time, and keeps only the times HighLevel's own extended answer (`free-slots` with `ignoreDateRange=true`) also has. "Could not be checked" means one of those reads failed: the sales-api function's logs (Supabase, Edge Functions, sales-api, Logs) say "schedules unread", "host's calendar unread", "booking setting unread" or "extended free slots unread" with HighLevel's own answer for `/calendars/schedules/search`, `/calendars/events`, `/calendars/blocked-slots` or `free-slots`; a 401 means `SALES_GHL_TOKEN`. The booking page's own days keep working meanwhile. "<name> has no working hours on this calendar" means that person's schedule is not linked to the calendar in HighLevel (Calendars, Availability): link it there. Aziz gets no far-out times while his Google calendar sends its free "Bookable" windows and all-day reminders to HighLevel as events (the API cannot tell them from busy time). Every far-out or custom booking and move says how it was placed in its `book.create` / `book.move` row in `cockpit_audit_log` (`metadata.placement`, `flags`, `window_until`, `reach_days`, `agreed_by_highlevel`, `outside_hours`, `host_checked_at`). The lead's own reschedule link is `https://link.maharamedia.com/widget/booking/<calendarId>?event_id=<appointmentId>` (verified 2026-10-11), shown only where the calendar has "allow reschedule" on (intros and Follow up call; demos have it off in HighLevel) | Hermes, or Aziz for the schedules |
 | A message says "WhatsApp only takes a free message within 24 hours" | Meta's rule, not the cockpit's. Outside the window the box becomes a WhatsApp template with one line for the lead, once a template is live in Follow-ups â†’ WhatsApp library; until then, email | The rep |
 | The WhatsApp library says a template is "Waiting for its workflow" | Its approved template and the one-step HighLevel workflow that sends it are not set up yet: the steps are on that page (the two contact fields, Cockpit WhatsApp line and Cockpit rep name, already exist). Pick the workflow, tick Live, Save | Aziz |
 | A template send says "The workflow did not send it within half an hour" | In HighLevel the workflow must be published and allow re-entry, and the template still approved at Meta. The send is marked failed; send again once fixed | Aziz |
@@ -601,6 +602,171 @@ approval as changed. In order:
    through Composio too), then open Team & payroll on production as the CEO:
    both connections say Connected.
 
+## Hubstaff watch
+
+CEO cockpit, Management tab: the "Hubstaff watch" card. Every 5 minutes the
+pg_cron job `mahara-hours-watch` posts `{"job":"watch"}` to the Edge Function
+`cockpit-hours-watch` (JWT check off, `x-cron-secret` from the vault's
+`cockpit_sync_secret`). For each person who must track time and is on shift
+now, it reads Hubstaff (`last_activities`, `activities`, `screenshots`,
+`tool_usages`, `screenshot_settings`) with the key from Hours and pay, has each
+new screenshot taken inside the shift judged once by a vision model (OpenAI
+first, Google AI only when no usable OpenAI key is saved), and keeps at most one
+open alert per person and kind in `cockpit_hours_watch_incidents`:
+`not_tracking`, `not_work`, `idle`, and `source` (no person) when Hubstaff
+cannot be read. Each alert is posted once to Slack #team-management
+(`C0B5TL9H370`) and answered once in its thread when it clears. The opening
+post starts with a mention of the CEO (`<@U09305KE2KS>`, settings `mention`
+and `mentionUser`; the card's "Mention me in each alert" switch) so his phone
+gets a push; thread replies never mention anyone. Screenshots never go to
+Slack; a not-work one is copied into the private bucket
+`cockpit-hours-watch`, which only the CEO can read. The model key is pasted in
+the card's Settings and kept in `cockpit_hours_watch_keys`, which no role can
+read. Each run is a row in `cockpit_hours_watch_runs` and writes the freshness
+row `hours-watch` in `cockpit_sync_state` (the kick has its own row,
+`hours-watch-kick`); every Hubstaff, model, Slack and storage call is receipted
+in `cockpit_hours_provider_health`. The settings are the `cockpit_settings` row
+`hours.watch`. Nothing here messages the person watched. The contract is
+`docs/hours-watch/SPEC.md`.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| No alerts arrive in #team-management, or they arrive but the CEO's phone gets no push | A push needs two things: the CEO is a member of #team-management (the bot posts there without joining, and nobody else is in it, so an alert in a channel he has not joined reaches no one; a mention of a non-member notifies nobody), and Settings, "Mention me in each alert" is on. Join the channel in Slack, then check the switch. For no alerts at all, first the card's header: the Slack alerts switch must be on. An alert that opened while it was off is recorded as muted and is never posted later; it is still on the card. With the switch on, the card says when the last check ran: "not scheduled" or "more than 15 minutes ago" is the run-stopped row below. Nobody on shift, or nobody past a threshold, also means no alert: Check now shows each person's state. | CEO, then Systems manager |
+| Slack refused an alert ("Slack refused: ..." under the alert, "Slack refused the last alert" on the card) | The code says which. `not_in_channel` or `channel_not_found`: the channel id in Settings is wrong, or the channel is private and the bot must be invited (`chat:write.public` covers public channels only). `missing_scope`: the bot needs `chat:write.public`, and `channels:read` for the doctor's channel check. `invalid_auth`, `token_revoked` or `account_inactive`: `SLACK_BOT_TOKEN` was rotated; set it again as a function secret. Run the doctor (step 6 below) to confirm. A refused post, or one Slack never answered ("Slack did not answer"), is never sent again because it may have arrived; the alert stays on the card. | Systems manager (token, scopes), CEO (channel) |
+| "Hubstaff cannot be read: ..." | One `source` alert opens and nobody is watched until Hubstaff can be read: no person's alert opens or closes on missing data (only the end of a shift closes one). The fix is the Hours, leave and pay one: paste a new key in Team & payroll, Connections, when it was refused; "Firewall blocked" is the Cloudflare row above. On the next good read the alert closes and replies "Hubstaff can be read again."; Check now runs one at once. `tool_usages` and `screenshot_settings` need an owner or manager key: when they are refused, the run carries on without app names or settings and says so in its notes. | CEO (key), Systems manager |
+| "The screenshot check needs an AI key", "The saved ... key was refused", "The screenshot check is failing: ..." or "The screenshot check is off" | Settings on the card, Screenshot check key: paste an OpenAI key (the box preselects OpenAI; OpenAI does not train on API data, and the screenshots show leads' details). A Google AI key works too, only from a billed project. The key is tested with one model list call before it saves and is never shown again; the save message names the provider the next run will use. The run uses the first saved key that is not refused, OpenAI first, then Google AI. A key the model refuses mid-run (401, OpenAI 403 that is not about a model, Google `API_KEY_INVALID` or `PERMISSION_DENIED`) is marked refused, and the rest of that run's screenshots are `skipped`; a key pasted during the run is never marked by the old key's failure. Without a key, screenshots are recorded as `skipped`; when the model fails, the screenshot is marked `error` and tried again on later runs, up to 3 attempts; neither ever counts as not work. "Failing" means the last 3 model checks in the last hour all failed: paste a new key. A screenshot that could not be downloaded (an expired Hubstaff link) is an error too, but never makes the check read failing. "The screenshot check is off" is the Screenshot check switch in Settings. The systems manager can store the key from the VPS instead (step 5 below). | CEO, or Systems manager |
+| A false alarm | Open the alert on the card, look at its screenshots and press Mark reviewed. A note is optional and is kept on the alert only: the audit row (`hours.watch.review`) records whether there was one (`hasNote`), never its text. Reviewing neither closes the alert nor recalls the Slack post: the alert closes itself when the condition clears. If one kind keeps misfiring, raise its threshold in Settings, When to alert. Not work: "Only when the check is at least" (50 to 99%), "Screenshots off work" (1 to 6) and "Screenshots looked at over" (20 to 120 minutes). Not tracking: "Alert after Hubstaff is off for" (10 to 240 minutes) and "Grace after the shift starts" (0 to 120). Idle: "Keyboard and mouse below" (1 to 50%) and "Keyboard and mouse measured over" (20 to 240 minutes). Each save is one `hours.watch.set` audit row with the values before and after, and the next check uses it. An alert outside the person's real hours means their schedule is wrong: fix it in Team & payroll. What the watch already allows for, so an alert in these cases is a real one or a wrong record: **Lunch break**: when the shift is longer than the Hours rules' "break when longer than" (6 hours by default), the first stop of the day after the person has tracked waits the break plus the grace (60 + 15 minutes by default, never less than "Alert after Hubstaff is off for") before it alerts, and the card shows "On a break since 13:00" meanwhile, not needing a look; every later stop waits "Alert after Hubstaff is off for". With that setting under 30 minutes, Hubstaff's 20-minute delay can give a stop soon after the break the long wait again. **Leave**: Timetastic leave, approved or pending, that covers the whole shift takes the person off all day ("On leave"). Part-day leave (Morning = shift start to its midpoint, Afternoon = midpoint to shift end, an hours booking = its times on the schedule's clock) is off time only inside its window: no not-tracking alert opens while it lasts, the off time counts from its end, and the idle and not-work checks skip it; the shift line draws it as off time. **No schedule**: someone paid by the hour with no schedule at all is not watched ("No schedule set", set one in Team & payroll); someone on fixed pay with no schedule is watched on the default Saturday to Thursday 10:00 to 18:00. **Screenshots** taken before the shift starts or after it ends are not checked, stored or shown. | CEO |
+| The run stopped (guardian: `hours-watch` late or failing; card: "more than 15 minutes ago" or "not scheduled") | Read the `cockpit_sync_state` rows `hours-watch` (its note says why the last run failed) and `hours-watch-kick` (it names a missing vault `cockpit_sync_secret` or a missing pg_net). Check that `mahara-hours-watch` is in `cron.job` and active, that `cockpit-hours-watch` is deployed with the JWT check OFF (a POST with no `x-cron-secret` must answer 401), and that `CRON_SECRET` equals the vault's `cockpit_sync_secret`. In the newest `cockpit_hours_watch_runs` rows, `abandoned` means a run outlived its 6-minute lease (a cron tick that lands while a run holds it simply finds it busy); the next one starts normally. A run that cannot read Hubstaff ends `failed` on purpose, so fix that row first. Check now runs one at once. | Systems manager |
+| A person is missing from the watch | The watch looks at people who are active, not a bot, and required to track: their Tracking in Team & payroll, Hours and pay, People and rules, else the role default (call centre agents and the media buyer). Set their Tracking to Required. Listed as "Not on the team": no employment period covers today, or their end date has passed; "Paused": a pause covers today; "Off today": today is not a working day on their schedule; "No schedule set": paid by the hour with no schedule (set one in Team & payroll). "Not in Hubstaff": link their account in Link accounts (an invite not yet accepted counts as no account). That alert is posted once and stays open across shifts until the account is linked, or the person is no longer watched, not employed or paused (it then closes as no longer watched). Settings, Who is watched, lists everyone the watch sees. | CEO |
+
+Deploying (the lead session, never a builder). As for Hours, leave and pay:
+SQL goes through the CEO's Composio Supabase connection
+(`SUPABASE_BETA_RUN_SQL_QUERY`, as `postgres`), and each function goes as one
+bun bundle through `scripts/dev/deploy_composio.py`, run from a throwaway
+worktree at merged main (it deploys a git revision, never the working tree).
+`20261009a`, `20261009b` and `20261011e` must already be applied. The function
+secrets `CRON_SECRET` (equal to the vault's `cockpit_sync_secret`) and
+`SLACK_BOT_TOKEN` are project-wide and already set for the hours functions; the
+Slack bot needs `chat:write.public` and `channels:read`. In order:
+
+1. Apply `20261013d_cockpit_hours_watch.sql` with Composio
+   `SUPABASE_APPLY_A_MIGRATION`, its BEGIN and COMMIT lines stripped:
+
+   ```sh
+   python3 - <<'PY' > /tmp/hours-watch-migration.json
+   import json, re
+   sql = open("supabase/migrations/20261013d_cockpit_hours_watch.sql").read()
+   sql = re.sub(r"(?im)^\s*begin;\s*$", "", sql); sql = re.sub(r"(?im)^\s*commit;\s*$", "", sql)
+   print(json.dumps({"ref": "bldgtotkfmhoxmlzowdx", "name": "20261013d_cockpit_hours_watch", "query": sql}))
+   PY
+   composio execute SUPABASE_APPLY_A_MIGRATION -d @/tmp/hours-watch-migration.json < /dev/null | head -c 400; rm -f /tmp/hours-watch-migration.json
+   ```
+
+   Check: six `cockpit_hours_watch_*` tables with row security,
+   `cockpit_hours_watch_keys` with no grant at all, the three
+   `cockpit_ceo_hours_watch_*` functions and `cockpit_hours_watch_object_allowed`
+   granted to authenticated only, and `mahara-hours-watch` in `cron.job`. The
+   job starts at once; until step 3 each kick gets a 404, which does no harm.
+2. Switch the Slack alerts off before anything can run: the migration seeds
+   them on. As the CEO, that is `cockpit_ceo_hours_watch_set('{"on":false}')`
+   (the card's Slack alerts switch, once the cockpit is shipped). Before that,
+   directly in `cockpit_settings`, with the audit row the function would write:
+
+   ```sql
+   with b as (select value from public.cockpit_settings where key = 'hours.watch'),
+        a as (update public.cockpit_settings set value = value || '{"on":false}'::jsonb,
+                updated_by = 'aziz@maharamedia.com', updated_at = now()
+              where key = 'hours.watch' returning value)
+   insert into public.cockpit_audit_log(action, entity_type, entity_id, actor_email, source_app, source_system, "before", "after")
+   select 'hours.watch.set', 'cockpit_settings', 'hours.watch', 'aziz@maharamedia.com', 'ceo', 'supabase', b.value, a.value from b, a;
+   ```
+
+   `select value->'on' from public.cockpit_settings where key = 'hours.watch'`
+   must read `false`.
+3. Deploy `cockpit-hours-watch` with the JWT check OFF:
+
+   ```sh
+   python3 scripts/dev/deploy_composio.py cockpit-hours-watch --extra supabase/functions/cockpit-ceo-api/tools.ts supabase/functions/cockpit-hours-sync/db.ts supabase/functions/cockpit-hours-sync/keys.ts supabase/functions/cockpit-hours-sync/normalise.ts --verify-jwt off
+   ```
+
+   Read `verify_jwt` back as false. A POST with no `x-cron-secret` must answer
+   401.
+4. Deploy `cockpit-hours-api` with the JWT check ON (it gains the ops
+   `watchNow`, which uses `CRON_SECRET`, and `watchKey`):
+
+   ```sh
+   python3 scripts/dev/deploy_composio.py cockpit-hours-api --extra apps/media-buyer-cockpit/src/types/ceo/hoursContract.ts apps/media-buyer-cockpit/src/types/ceo/hoursModel.ts apps/media-buyer-cockpit/src/types/ceo/schedule.ts supabase/functions/cockpit-ceo-api/tools.ts supabase/functions/cockpit-hours-sync/db.ts supabase/functions/cockpit-hours-sync/keys.ts supabase/functions/cockpit-hours-sync/lease.ts supabase/functions/cockpit-hours-sync/normalise.ts supabase/functions/cockpit-hours-sync/sync.ts supabase/functions/cockpit-hours-watch/classify.ts supabase/functions/cockpit-hours-watch/inputs.ts supabase/functions/cockpit-hours-watch/keys.ts supabase/functions/cockpit-hours-watch/ledger.ts --verify-jwt on
+   ```
+
+   Read `verify_jwt` back as true. Build it from the same commit as the web
+   app (Hours and pay approval compares `hoursModel.ts`).
+5. Store the OpenAI key first (OpenAI does not train on API data; the
+   screenshots show leads' details). From the repository root, run
+   `scripts/dev/hours_watch_key.py` on the VPS:
+
+   ```sh
+   ssh -i ~/.ssh/faris-key hermes@187.77.156.166 'python3 - openai' < scripts/dev/hours_watch_key.py
+   ```
+
+   It reads `OPENAI_API_KEY` from `/opt/data/bibi/api-keys.env` and the
+   service key from the native runtime file, tests the key with one model list
+   call, saves it through `cockpit_hours_watch_key_put` and prints no secret.
+   `'python3 - google_ai'` stores `GOOGLE_AI_API_KEY` the same way; use it only
+   with a billed Google project, and only as a second key (OpenAI is used
+   whenever its key is saved and not refused). Or, once the cockpit is shipped,
+   the CEO pastes it in the card's Settings, Screenshot check key.
+   `select provider, state, saved_at from public.cockpit_hours_watch_keys`
+   must show `openai` `connected`, and one `hours.watch.keySaved` audit row is
+   written (never the key).
+6. Run the doctor. It writes nothing but receipts, and the secret stays in the
+   vault:
+
+   ```sql
+   select net.http_post(url := 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-hours-watch',
+     headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',(select decrypted_secret from vault.decrypted_secrets where name='cockpit_sync_secret')),
+     body := '{"job":"doctor"}'::jsonb, timeout_milliseconds := 60000);
+   -- a few seconds later, with the id it returned:
+   select status_code, left(content::text, 2000) from net._http_response where id = <id>;
+   ```
+
+   It must answer 200 with `"ok": true`: secrets set, Hubstaff connected
+   ("screenshots are on for N people"), the AI key connected, the Slack
+   channel ok. Anything else is named in its `note`: fix it from the table
+   above before going on.
+7. A dry run: the same call with body `'{"job":"watch","dryRun":true}'::jsonb`
+   and `timeout_milliseconds := 120000`. It reads Hubstaff and answers the plan
+   ("Dry run: nothing written."): `onShift`, each person's status, and the
+   alerts it would open or close. It checks no screenshots, writes, posts,
+   stores or prunes nothing, and leaves no freshness row. The people and
+   states must match who is really on shift.
+8. Add the CEO to #team-management in Slack (nobody else is in it, and the
+   bot posts without joining, so until he is a member no alert reaches anyone)
+   and check that `select value->'mention', value->'mentionUser' from
+   public.cockpit_settings where key = 'hours.watch'` reads `true` and
+   `"U09305KE2KS"`. Then switch the Slack alerts on: the card's switch if the
+   cockpit is shipped, else the SQL of step 2 with `'{"on":true}'`. Alerts that
+   opened while they were off stay muted; only new ones are posted. The first
+   real alert must push to the CEO's phone.
+9. The guardian already watches `hours-watch` (`"hours-watch": 15` in the
+   `run_jobs` keys of `hermes/cockpit-guardian/checks/sections.py`, tested in
+   `tests/test_checks_data.py`; `python3.11 -m unittest` there). Update the
+   guardian on the VPS only once a real run has written the `hours-watch` row
+   (any run since step 3 that was not a dry run), or it reports it late.
+10. Set `hours_watch.state` to `deployed` in
+    `docs/preserve/supabase-manifest.json` and run
+    `scripts/verify-preserved.py --via composio --problems`, so a lost object
+    is MISSING from then on.
+11. Ship the cockpit (`scripts/ship.sh media-buyer`, its auth preflight
+    through Composio; it refuses until step 1 is live), then open the
+    Management tab on production as the CEO: the card lists each watched
+    person, Hubstaff and the screenshot check read connected, and Slack alerts
+    are on.
+
+To stop it: switch the alerts off (step 2) to stop the Slack posts while the
+card keeps working; to stop the runs too,
+`select cron.unschedule(jobid) from cron.job where jobname = 'mahara-hours-watch';`
+and take `hours-watch` out of the guardian's keys. The alerts are kept.
+
 ## Hiring
 
 The careers Typeforms into the MaharaMedia Hiring boards, the boards into the
@@ -637,11 +803,44 @@ Functions `hiring-sync` (pg_cron `mahara-hiring-mirror` every 10 minutes,
 
 ## Shipping a fix
 
-`scripts/ship.sh <app>` lints, typechecks, deploys the backend, builds and
-deploys the site, then runs the smoke check. It stops at the first failure,
-so a broken change never replaces a working deployment. Ship the receiving
-cockpits before the media buyer when a bridge payload gains a field
-(`scripts/ship.sh all` does this in the right order).
+`scripts/ship.sh <app>` checks its setup first (`scripts/ship-preflight.sh`
+lists everything missing at once, in seconds), runs the guard tests and the
+local readiness checks, then lints, typechecks, builds and deploys the site,
+then runs the smoke check. It stops at the first failure, so a broken change
+never replaces a working deployment. Ship the receiving cockpits before the
+media buyer when a bridge payload gains a field (`scripts/ship.sh all` does
+this in the right order).
+
+### From a fresh worktree (Windows)
+
+A new worktree has none of the git-ignored files a ship needs. This adds
+them: dependencies in the root, the five apps and `hermes/media-native`,
+`convex/_generated` for the media buyer and creative director apps (copied
+from the main checkout), and each `.vercel/project.json` (written from
+`config/vercel-projects.json`). Without `--apply` it only reports.
+
+```bash
+scripts/prepare-worktree.sh --apply
+```
+
+Then a person ships from PowerShell, because loading a secret into a deploy
+is a person's step. `ship.ps1` reads `supabase_token` from the main
+checkout's `.env.local` and `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`
+from an app `.env.local`, by name and without printing them, and runs
+`ship.sh` in Git Bash. `-CheckOnly` runs only the preflight.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\ship.ps1 client-success
+```
+
+On a Mac with the existing authorized Composio Supabase connection, set
+`COCKPIT_AUTH_USE_COMPOSIO=1` instead of supplying a management token. The same
+live authentication/RPC verification still runs before deployment; this selects
+the already-supported connection and does not skip any check.
+
+The cutover evidence check (`evidence/cutover-acceptance.json`) runs after
+the deploy only when that file exists. Only the coordinated cutover
+procedure writes it (`docs/CUTOVER-ACCEPTANCE.md`).
 
 Production is a CLI upload (`vercel deploy --prod`, or the Composio path when
 the CLI is logged out). The CLI stamps the local commit and does not ask
@@ -651,11 +850,22 @@ first and refuses the ship unless all three are true:
 1. `HEAD` is already on `origin/main` (fetched during the check).
 2. The app directory matches that commit. A dirty tree is uploaded under the
    last commit's name.
-3. The commit named in the live page's bundle is in this clone and is an
-   ancestor of `HEAD`. If production is a commit this clone does not have,
-   shipping main would replace it with an older tree.
+3. The commit production serves, read from Vercel's record of the live
+   deployment (`scripts/check-vercel-project.py <app dir>
+   --production-in-head`), is in this clone and in `HEAD`, by name or as the
+   same patch after a rebase. If production is a commit this clone does not
+   have, or has commits `HEAD` lacks, shipping would take it backwards.
+   `scripts/ship-preflight.sh` runs the same check, so a stale worktree stops
+   in seconds. Until 2026-10-13 this read a commit stamp in the live bundle.
+   No cockpit bundle carries that stamp any more, so the comparison was
+   skipped on every ship with only a note.
 
 `ALLOW_UNPUSHED_SHIP=yes` skips the refusal and says so. That is the hole.
+If production's commit cannot be read (CLI signed out, no commit on the
+deployment), the ship stops. `ALLOW_UNKNOWN_PRODUCTION=yes` lets it continue
+after someone has checked production another way. It never covers a
+production that has commits `HEAD` lacks. To go back on purpose, promote an
+earlier deployment in Vercel.
 
 On 2026-09-22 the media buyer project (`mahara-media-buyer`, source `cli`,
 user `aziz-6097`) promoted two commits that GitHub has never had. There was

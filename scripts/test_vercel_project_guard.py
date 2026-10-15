@@ -1,4 +1,8 @@
 import importlib.util
+import json
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -115,6 +119,109 @@ class ProjectGuardTest(unittest.TestCase):
         fresh = '<script src="/client-success/assets/index-newer.js"></script>'
         with patch.object(guard, "api", side_effect=[candidate, origin, origin] + [candidate, newer] * 6), patch.object(guard.subprocess, "run", return_value=SimpleNamespace(returncode=0)), patch.object(guard, "vercel"), patch.object(guard, "html", return_value=fresh), patch.object(guard.time, "sleep"), self.assertRaisesRegex(ValueError, "Production verification failed"):
             guard.release_candidate("https://candidate.vercel.app", expected, "a" * 40, True)
+
+
+def run_git(cwd, *args):
+    return subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args],
+                          cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class ProductionInHeadTest(unittest.TestCase):
+    """2026-10-13: a ship from an older worktree could replace a newer production."""
+
+    expected = {"projectId": "real", "orgId": "our-team", "scope": "our-scope", "origin": "cockpit.example", "domain": "cockpit.example"}
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        run_git(self.tmp, "init", "-q", "-b", "main")
+        self.commit("start.txt", "start")
+        self.start = run_git(self.tmp, "rev-parse", "HEAD")
+        self.root = patch.object(guard, "ROOT", self.tmp)
+        self.root.start()
+
+    def tearDown(self):
+        self.root.stop()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def commit(self, name, text):
+        (self.tmp / name).write_text(text + "\n")
+        run_git(self.tmp, "add", name)
+        run_git(self.tmp, "commit", "-q", "-m", text)
+        return run_git(self.tmp, "rev-parse", "HEAD")
+
+    def production(self, sha):
+        return {"id": "dpl_live", "projectId": "real", "ownerId": "our-team", "meta": {"gitCommitSha": sha} if sha else {}}
+
+    def check(self, production_sha, head):
+        with patch.object(guard, "api", return_value=self.production(production_sha)):
+            return guard.production_in_head(self.expected, head)
+
+    def test_production_older_than_head_ships(self):
+        head = self.commit("fix.txt", "screens survive a blip")
+        self.assertIn("is contained in", self.check(self.start, head))
+
+    def test_older_head_than_production_is_refused_and_names_the_commit(self):
+        newer = self.commit("fix.txt", "screens survive a blip")
+        with self.assertRaisesRegex(ValueError, "1 commit\\(s\\)") as caught:
+            self.check(newer, self.start)
+        self.assertIn("screens survive a blip", str(caught.exception))
+        self.assertNotIsInstance(caught.exception, guard.UnknownProduction)
+
+    def test_sideways_head_is_refused(self):
+        live = self.commit("fix.txt", "screens survive a blip")
+        run_git(self.tmp, "checkout", "-q", "-b", "other", self.start)
+        head = self.commit("other.txt", "data view scan")
+        with self.assertRaisesRegex(ValueError, "screens survive a blip"):
+            self.check(live, head)
+
+    def test_rebased_copy_of_production_ships(self):
+        run_git(self.tmp, "checkout", "-q", "-b", "old", self.start)
+        live = self.commit("fix.txt", "screens survive a blip")
+        run_git(self.tmp, "checkout", "-q", "main")
+        self.commit("other.txt", "data view scan")
+        run_git(self.tmp, "cherry-pick", live)
+        head = run_git(self.tmp, "rev-parse", "HEAD")
+        self.assertIn("rebased names", self.check(live, head))
+
+    def test_production_commit_missing_from_clone_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "does not have that commit") as caught:
+            self.check("f" * 40, self.start)
+        self.assertNotIsInstance(caught.exception, guard.UnknownProduction)
+
+    def test_unknown_production_fails_closed(self):
+        with self.assertRaises(guard.UnknownProduction):
+            self.check(None, self.start)
+        with patch.object(guard, "api", side_effect=ValueError("signed out")), self.assertRaises(guard.UnknownProduction):
+            guard.production_in_head(self.expected, self.start)
+        with patch.object(guard, "api", return_value=dict(self.production(self.start), ownerId="another")), self.assertRaises(guard.UnknownProduction):
+            guard.production_in_head(self.expected, self.start)
+        with patch.object(guard, "api") as read, self.assertRaises(guard.UnknownProduction):
+            guard.production_in_head(None, self.start)
+        read.assert_not_called()
+
+    def run_main(self, env):
+        argv = ["check-vercel-project.py", "apps/media-buyer-cockpit", "--production-in-head"]
+        (self.tmp / "config").mkdir(exist_ok=True)
+        (self.tmp / "config" / "vercel-projects.json").write_text(json.dumps({"apps/media-buyer-cockpit": self.expected}))
+        with patch.object(guard.sys, "argv", argv), patch.dict(guard.os.environ, env), patch.object(guard, "api", side_effect=ValueError("signed out")), patch("builtins.print") as printed:
+            guard.main()
+        return " ".join(str(call.args[0]) for call in printed.call_args_list)
+
+    def test_unknown_production_stops_the_ship_unless_overridden(self):
+        with patch.dict(guard.os.environ, {}, clear=False):
+            guard.os.environ.pop("ALLOW_UNKNOWN_PRODUCTION", None)
+            with self.assertRaisesRegex(ValueError, "Refusing to ship without knowing"):
+                self.run_main({})
+        self.assertIn("without comparing it with production", self.run_main({"ALLOW_UNKNOWN_PRODUCTION": "yes"}))
+
+    def test_override_never_covers_a_production_head_lacks(self):
+        newer = self.commit("fix.txt", "screens survive a blip")
+        run_git(self.tmp, "checkout", "-q", self.start)
+        (self.tmp / "config").mkdir(exist_ok=True)
+        (self.tmp / "config" / "vercel-projects.json").write_text(json.dumps({"apps/media-buyer-cockpit": self.expected}))
+        argv = ["check-vercel-project.py", "apps/media-buyer-cockpit", "--production-in-head"]
+        with patch.object(guard.sys, "argv", argv), patch.dict(guard.os.environ, {"ALLOW_UNKNOWN_PRODUCTION": "yes"}), patch.object(guard, "api", return_value=self.production(newer)), self.assertRaisesRegex(ValueError, "would take production backwards"):
+            guard.main()
 
 
 if __name__ == "__main__":

@@ -6,7 +6,9 @@
 import type { HoursReceipt } from "../cockpit-ceo-api/tools.ts";
 
 export type Rpc = (name: string, args: Record<string, unknown>) => Promise<unknown>;
-export type ReceiptRow = HoursReceipt & { run_id: number | null; receipt_index: number | null };
+/** A Slack call made by the morning hours note (nudge.ts), receipted in the same ledger. */
+export type SlackReceipt = Omit<HoursReceipt, "provider"> & { provider: "slack" };
+export type ReceiptRow = (HoursReceipt | SlackReceipt) & { run_id: number | null; receipt_index: number | null };
 export type InsertReceipt = (row: ReceiptRow) => Promise<void>;
 
 export class RpcError extends Error {

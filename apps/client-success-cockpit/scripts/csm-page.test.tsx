@@ -7,6 +7,8 @@
  */
 
 import { afterAll, expect, mock, test } from "bun:test";
+import { callCentreFixture } from "../src/dev/callCentreFixture";
+import { forgetCallReads } from "../src/lib/callCentreClient";
 
 const snapshot = await Bun.file(
   new URL("./fixtures/csm-snapshot.json", import.meta.url),
@@ -14,7 +16,6 @@ const snapshot = await Bun.file(
 const perfFixture = await Bun.file(
   new URL("./fixtures/csm-profiles.json", import.meta.url),
 ).json();
-
 
 const KITS = {
   rows: [
@@ -68,6 +69,93 @@ function createDeferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+/** cockpit_csm_client_ads v3 for Greystone: one live campaign, one ad. */
+const ADS_READ = {
+  taskId: "86exnk0v4",
+  clientName: "Greystone Contracting",
+  start: "2026-09-01",
+  end: "2026-09-30",
+  at: "2026-10-13T09:00:00Z",
+  statsAt: "2026-10-13T03:00:00Z",
+  bookingsReady: true,
+  bookingsAt: "2026-10-13T03:00:00Z",
+  coverage: { first: "2026-09-01", last: "2026-10-12" },
+  feedFirst: "2026-08-13",
+  feedLast: "2026-10-12",
+  campaigns: [
+    {
+      name: "Greystone | Leads",
+      metaCampaignId: "111",
+      accountId: "999",
+      accountName: "greystone ads",
+      currency: "USD",
+      budgetDaily: 30,
+      budgetLevel: "campaign",
+      ended: false,
+      verdict: "kill",
+      reason: "$162 a booking (1 booking) is over the $80 line.",
+      findings: [
+        {
+          constraint: "Cost per booking",
+          severity: "fix",
+          evidence: "$161.58 per booking against the $60 gate.",
+          fixes: ["Cut the ad with the worst cost per booking."],
+        },
+      ],
+      boardAdStatus: "Live",
+      daysLive: 12,
+      lostByAd: { "7001": 2 },
+    },
+  ],
+  adsets: [
+    {
+      id: "5001",
+      name: "Villas",
+      campaignName: "Greystone | Leads",
+      status: "ACTIVE",
+      effectiveStatus: "ACTIVE",
+    },
+  ],
+  ads: [
+    {
+      id: "7001",
+      name: "Villa reel",
+      adsetId: "5001",
+      campaignName: "Greystone | Leads",
+      status: "ACTIVE",
+      effectiveStatus: "ACTIVE",
+      accountId: "999",
+    },
+  ],
+  rows: [
+    {
+      date: "2026-09-10",
+      campaignName: "Greystone | Leads",
+      adSetName: "Villas",
+      adName: "Villa reel",
+      adId: "7001",
+      spend: 40,
+      leads: 3,
+      impressions: 2000,
+      linkClicks: 20,
+      frequency: 1.1,
+    },
+  ],
+  history: [],
+  bookings: [],
+  verdicts: [],
+  stills: {},
+  changes: [],
+};
+const adsReads: any[] = [];
+const callReads: any[] = [];
+// The call read's answer; a test swaps it to see the page without it.
+const onTrackCalls = () => ({
+  data: callCentreFixture("on_track"),
+  error: null,
+});
+let callAnswer: () => any = onTrackCalls;
+
 let overviewDeferred: Deferred<any> | null = null;
 let profileDeferred: Deferred<any> | null = null;
 let selectedClientForProfile: string | null = null;
@@ -89,9 +177,89 @@ const mockClient: any = {
     }),
     signOut: async () => ({ error: null }),
   },
-  rpc: async (name: string, _args: any) => {
+  rpc: (name: string, _args: any) => {
+    if (name === "cockpit_ad_billing_review_panel") {
+      return {
+        abortSignal: async () => ({
+          data: { apply: true, clients: [], dailyReviewedAt: null },
+          error: null,
+        }),
+      };
+    }
     if (name === "cockpit_csm_onboarding_read") {
-      return { data: KITS, error: null };
+      return Promise.resolve({ data: KITS, error: null });
+    }
+    if (name === "cockpit_csm_client_ads") {
+      adsReads.push(_args);
+      return Promise.resolve({ data: ADS_READ, error: null });
+    }
+    // The call centre (2026-10-13): one client's calls, every client's caller.
+    if (name === "cockpit_client_calls") {
+      callReads.push(_args);
+      return Promise.resolve(callAnswer());
+    }
+    if (name === "cockpit_client_callers") {
+      return Promise.resolve({
+        data: {
+          clients: [
+            {
+              taskId: "86exnk0v4",
+              locationId: "loc-greystone",
+              clientName: "Greystone Contracting",
+              callers: [
+                { email: "caller@example.test", name: "Example Caller" },
+              ],
+            },
+          ],
+          source: "The dialer's client assignments",
+          generatedAt: "2026-10-13T09:00:00Z",
+        },
+        error: null,
+      });
+    }
+    if (name === "cockpit_csm_client_whatsapp") {
+      const at = Date.now() - 30 * 60_000;
+      return Promise.resolve({
+        data: {
+          configured: true,
+          ready: true,
+          stale: false,
+          syncedAt: Date.now() - 5 * 60_000,
+          note: null,
+          dayStart: Date.now() - 60 * 60_000,
+          taskId: _args.p_task_id,
+          clientName: "Greystone Contracting",
+          threads: [
+            {
+              threadId: "wa-1",
+              name: "Omar Greystone",
+              isGroup: false,
+              archived: false,
+              awaitingUs: true,
+              lastInboundAt: at,
+              lastAt: at,
+              today: { inbound: 1, outbound: 0 },
+              messages: [
+                {
+                  id: "m1",
+                  direction: "inbound",
+                  body: "Can we move the shoot to Thursday?",
+                  kind: "text",
+                  speaker: null,
+                  at,
+                  status: null,
+                  today: true,
+                },
+              ],
+              draft: null,
+              contextKey: "0123456789abcdef0123456789abcdef",
+              sendSupported: true,
+              replyState: null,
+            },
+          ],
+        },
+        error: null,
+      });
     }
     throw new Error(`Unexpected RPC call: ${name}`);
   },
@@ -150,7 +318,9 @@ mock.module("@/lib/useCsmSnapshot", () => ({
     error: snapshotError,
     refetch: async () => {},
     toggleCheck: async () => {},
-    act: async (args: Record<string, unknown>) => { sent.push(["act", args]); },
+    act: async (args: Record<string, unknown>) => {
+      sent.push(["act", args]);
+    },
     submitEod: async () => {},
     addPlanItems: async () => {},
     updateProfile: async () => {},
@@ -161,6 +331,7 @@ mock.module("@/lib/useCsmSnapshot", () => ({
     saveMoneyGoals: async () => {},
   }),
   kuwaitToday: () => "2026-10-06",
+  CLICKUP_ACT_KINDS: new Set(["stage", "happiness"]),
   fetchDailyChecksRpc: async () => [],
   executeToggleCheck: async () => {},
   executeSubmitEod: async () => {},
@@ -231,17 +402,38 @@ mock.module("@/lib/nativeStillClient", () => ({
 }));
 
 mock.module("@/lib/checkInClient", () => ({
-  readClientContact: async () => ({id:"contact-1",name:"Example Owner",phone:null,email:null,url:"https://example.com/contact"}),
-  prepareClientCheckIn: async () => { throw new Error("Choose a booking day in the booking test."); },
-  bookClientCheckIn: async () => { throw new Error("Booking is not exercised by page rendering."); },
+  readClientContact: async () => ({
+    id: "contact-1",
+    name: "Example Owner",
+    phone: null,
+    email: null,
+    url: "https://example.com/contact",
+  }),
+  prepareClientCheckIn: async () => {
+    throw new Error("Choose a booking day in the booking test.");
+  },
+  bookClientCheckIn: async () => {
+    throw new Error("Booking is not exercised by page rendering.");
+  },
 }));
 mock.module("@/lib/backlog", () => ({
-  fetchBacklog: async () => ({rows:[],counts:{},activeClients:snapshot.clients.length}),
-  queueGap: async () => { throw new Error("Gap queueing is not exercised by page rendering."); },
+  fetchBacklog: async () => ({
+    rows: [],
+    counts: {},
+    activeClients: snapshot.clients.length,
+  }),
+  queueGap: async () => {
+    throw new Error("Gap queueing is not exercised by page rendering.");
+  },
 }));
 
 mock.module("sonner", () => ({
-  toast: { success: () => {}, error: () => {}, info: () => {}, warning: () => {} },
+  toast: {
+    success: () => {},
+    error: () => {},
+    info: () => {},
+    warning: () => {},
+  },
 }));
 
 const { CsmPage } = await import("../src/pages/CsmPage");
@@ -283,7 +475,9 @@ g.Node = win.Node;
 
 for (const key of Object.getOwnPropertyNames(win)) {
   if (
-    /^(HTML\w*Element|SVG\w*Element|\w*Event|DocumentFragment|Text)$/.test(key) &&
+    /^(HTML\w*Element|SVG\w*Element|\w*Event|DocumentFragment|Text)$/.test(
+      key,
+    ) &&
     g[key] == null
   ) {
     if (!(key in originalGlobalProps)) originalGlobalProps[key] = g[key];
@@ -410,8 +604,6 @@ test("the hot list and the message drafts render real client copy", async () => 
   await reactAct(async () => root.unmount());
 });
 
-
-
 test("client performance renders loading, resolves overview, selects client, and copies taskId", async () => {
   const host = win.document.createElement("div");
   win.document.body.appendChild(host);
@@ -428,7 +620,14 @@ test("client performance renders loading, resolves overview, selects client, and
 
   try {
     await reactAct(async () => {
-      root.render(createElement(ClientPerformancePage, {}));
+      // A client's Results links to its Ads tab, so it renders in a router.
+      root.render(
+        createElement(
+          MemoryRouter,
+          null,
+          createElement(ClientPerformancePage, {}),
+        ),
+      );
     });
     expect(host.innerHTML).toContain("Loading client results");
 
@@ -542,8 +741,10 @@ test("diagnosis identifies top constraint and healthy branch correctly", async (
       },
     ],
   });
+  // A show rate under the one client line is a watch, never a constraint.
   const ids = [leak.top, ...leak.rest].map(c => c?.id);
-  expect(ids).toContain("show_rate");
+  expect(ids).not.toContain("show_rate");
+  expect(leak.watch.map(c => c.id)).toEqual(["show_rate"]);
 
   const blind = diagnose({
     clientName: "No Sheet",
@@ -552,6 +753,367 @@ test("diagnosis identifies top constraint and healthy branch correctly", async (
     performance: {},
   });
   expect(blind.top?.id).toBe("no_sheet");
+});
+
+/**
+ * The one client show rate line. Aziz, 2026-10-12: "the show rate metric is
+ * 60%, so anything around that is fine, not 70%". Under it is a quiet watch
+ * line beside the diagnosis: never the first fix, never counted, never bad.
+ */
+function lineClient(
+  shows: number,
+  noshows: number,
+  extra: {
+    leads?: number;
+    booked?: number;
+    closes?: number;
+    service?: string;
+  } = {},
+) {
+  return {
+    clientName: "Line Client",
+    stage: "Active",
+    service: extra.service ?? "DFY",
+    links: { sheet: "https://sheet" },
+    performance: {
+      staleCount: 0,
+      month: {
+        leads: extra.leads ?? 40,
+        booked: extra.booked ?? 20,
+        shows,
+        noshows,
+        closes: extra.closes ?? shows,
+      },
+      lastMonth: {},
+      allTime: { closes: extra.closes ?? 9 },
+    },
+    ads: [
+      {
+        campaign: "c",
+        spend7d: 300,
+        leads7d: 30,
+        adsets: [{ ads: [{ status: "ACTIVE" }] }],
+      },
+    ],
+  };
+}
+
+test("the client show rate line is 60, and under it is a watch, never a fix", async () => {
+  const { diagnose, GATES } = await import("../src/lib/csmDiagnosis");
+  const { SHOW_RATE_GOOD } = await import("../src/lib/kpi");
+  expect(SHOW_RATE_GOOD).toBe(60);
+  expect(GATES.showRate).toBe(SHOW_RATE_GOOD);
+  const counted = (d: ReturnType<typeof diagnose>) =>
+    [d.top, ...d.rest].map(c => c?.id);
+
+  // 60% on 8 or more decided: on the line, nothing to watch or fix.
+  for (const [shows, noshows] of [
+    [6, 4],
+    [9, 6],
+    [48, 32],
+  ]) {
+    const d = diagnose(lineClient(shows, noshows));
+    expect(d.healthy).toBe(true);
+    expect(d.top).toBeUndefined();
+    expect(d.watch).toEqual([]);
+  }
+
+  // 59%: a watch item, never top, never in rest.
+  const under = diagnose(lineClient(13, 9));
+  expect(under.healthy).toBe(true);
+  expect(under.top).toBeUndefined();
+  expect(under.rest).toEqual([]);
+  expect(under.watch.map(c => c.id)).toEqual(["show_rate"]);
+  expect(under.watch[0].title).toBe("Show rate is 59%, under the 60% line");
+  expect(under.watch[0].diagnosis).toContain("confirmation discipline");
+  expect(under.watch[0].fixes[0]).toMatch(/Confirm every appointment twice/);
+
+  // Only a 50% show rate: nothing needs fixing, plus the watch line.
+  const half = diagnose(lineClient(5, 5));
+  expect(half.healthy).toBe(true);
+  expect(half.top).toBeUndefined();
+  expect(half.headline).toBe(
+    "Nothing needs fixing first. Keep an eye on the show rate below, and ask for a review, a referral or more budget.",
+  );
+  expect(under.headline).toBe(half.headline);
+  expect(half.watch[0].title).toBe("Show rate is 50%, under the 60% line");
+  expect(half.watch[0].diagnosis).toBe(
+    "50% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.",
+  );
+
+  // Under 8 decided is noise: no watch either.
+  expect(diagnose(lineClient(3, 4)).watch).toEqual([]);
+
+  // Beside a real constraint, the show rate still never joins the ranking.
+  const both = diagnose(lineClient(4, 6, { leads: 40, booked: 6 }));
+  expect(both.top?.id).toBe("booking_rate");
+  expect(counted(both)).not.toContain("show_rate");
+  expect(both.watch.map(c => c.id)).toEqual(["show_rate"]);
+
+  // Done with you: they book their own, so there is nothing to watch.
+  expect(diagnose(lineClient(2, 8, { service: "DWY" })).watch).toEqual([]);
+
+  // The show rate never decides the macro check: booking and closing both
+  // under their gates and nothing ever closed is macro at any show rate.
+  const macro = diagnose(lineClient(5, 5, { leads: 40, booked: 6, closes: 0 }));
+  expect(macro.top?.id).toBe("macro_offer");
+  for (const [shows, noshows] of [
+    [6, 4],
+    [9, 1],
+  ])
+    expect(
+      diagnose(lineClient(shows, noshows, { leads: 40, booked: 6, closes: 0 }))
+        .top?.id,
+    ).toBe("macro_offer");
+  // Booking under its gate and the show rate under the line, with too few
+  // shows to judge the close rate: one leak plus a watch, never macro.
+  const notMacro = diagnose(
+    lineClient(4, 6, { leads: 40, booked: 6, closes: 0 }),
+  );
+  expect(counted(notMacro)).toEqual(["booking_rate"]);
+  expect(notMacro.watch.map(c => c.id)).toEqual(["show_rate"]);
+
+  // No title, diagnosis or line anywhere says 70% or 75%.
+  for (const d of [under, half, both, macro, diagnose(perfFixture.profile)])
+    expect(JSON.stringify(d)).not.toMatch(/7[05]%/);
+});
+
+/**
+ * The official gates for clients (Aziz, 2026-10-13: "The CSM: make it $15
+ * cost per lead and $60 cost per booking") and the golden rule: cost per
+ * booking decides. A client on the show rate line, so only cost is judged.
+ */
+function costClient(
+  campaigns: { spend7d: number; leads7d: number; bookings7d?: number }[],
+  service = "DFY",
+) {
+  return {
+    ...lineClient(6, 4, { service }),
+    ads: campaigns.map((c, i) => ({
+      campaign: `c${i}`,
+      ...c,
+      adsets: [{ ads: [{ status: "ACTIVE" }] }],
+    })),
+  };
+}
+
+test("the client gates are $15 a lead and $60 a booking, and cost per booking decides", async () => {
+  const { diagnose, GATES } = await import("../src/lib/csmDiagnosis");
+  const { CPB_GATE, CPL_GATE } = await import("../src/lib/kpi");
+  expect(CPL_GATE).toBe(15);
+  expect(CPB_GATE).toBe(60);
+  expect(GATES.cpl).toBe(CPL_GATE);
+  expect(GATES.costPerBooking).toBe(CPB_GATE);
+  const counted = (d: ReturnType<typeof diagnose>) =>
+    [d.top, ...d.rest].map(c => c?.id);
+
+  // $16 to $19.99 a lead with no cost per booking known: a constraint now.
+  for (const [spend7d, title] of [
+    [160, "Cost per lead is $16.00 against a $15 gate"],
+    [175, "Cost per lead is $17.50 against a $15 gate"],
+    [199.9, "Cost per lead is $19.99 against a $15 gate"],
+  ] as const) {
+    const d = diagnose(costClient([{ spend7d, leads7d: 10 }]));
+    expect(d.top?.id).toBe("cpl_high");
+    expect(d.top?.title).toBe(title);
+    expect(d.top?.evidence).toContain(
+      "No cost per booking to weigh it against",
+    );
+    expect(d.top?.say).toBeUndefined();
+    expect(d.watch).toEqual([]);
+  }
+  // On the gate is inside it.
+  expect(diagnose(costClient([{ spend7d: 150, leads7d: 10 }])).healthy).toBe(
+    true,
+  );
+  // Too few leads to judge a cost per lead.
+  expect(diagnose(costClient([{ spend7d: 80, leads7d: 4 }])).healthy).toBe(
+    true,
+  );
+  // GoHighLevel read and no bookings in the week is data, not a gap: past
+  // $60 spent, bookings cost over the gate, and the dearer leads are too.
+  const none = diagnose(
+    costClient([{ spend7d: 175, leads7d: 10, bookings7d: 0 }]),
+  );
+  expect(counted(none)).toEqual(["cpb_high", "cpl_high"]);
+  expect(none.top?.title).toBe(
+    "No bookings from $175 spent in the last 7 days, against a $60 gate",
+  );
+  expect(none.top?.evidence).toBe(
+    "$175 spent in the last 7 days for 0 bookings from 10 leads.",
+  );
+  expect(none.rest[0].evidence).toBe(
+    "$175 spent in the last 7 days for 10 leads, and no bookings in those 7 days.",
+  );
+  // Cheap leads and nothing booked is never healthy. Done for you, our call
+  // centre calls the leads, so its calls come first, since the brief shows
+  // only the first fix (the call centre review, 2026-10-13).
+  const unbooked = diagnose(
+    costClient([{ spend7d: 140, leads7d: 10, bookings7d: 0 }]),
+  );
+  expect(unbooked.healthy).toBe(false);
+  expect(counted(unbooked)).toEqual(["cpb_high"]);
+  expect(unbooked.top?.title).toBe(
+    "No bookings from $140 spent in the last 7 days, against a $60 gate",
+  );
+  expect(unbooked.top?.owner).toBe("Call centre");
+  expect(unbooked.top?.diagnosis).toContain("none of them booked");
+  expect(unbooked.top?.diagnosis).toContain("our call centre calls the leads");
+  expect(unbooked.top?.fixes[0]).toBe(
+    "Check the client's Calls section: first call time, dials per lead and why leads were lost.",
+  );
+  expect(unbooked.headline).not.toContain("Every gate");
+  // Not yet a booking's worth spent where bookings are read: nothing known.
+  const early = diagnose(
+    costClient([
+      { spend7d: 50, leads7d: 2, bookings7d: 0 },
+      { spend7d: 110, leads7d: 4 },
+    ]),
+  );
+  expect(counted(early)).toEqual(["cpl_high"]);
+  expect(early.top?.evidence).toBe(
+    "$160 spent in the last 7 days for 6 leads. No bookings yet in those 7 days, so the cost per lead decides.",
+  );
+
+  // Bookings within $60: the dearer leads are a watch, never a constraint.
+  const within = diagnose(
+    costClient([{ spend7d: 175, leads7d: 10, bookings7d: 4 }]),
+  );
+  expect(within.healthy).toBe(true);
+  expect(within.top).toBeUndefined();
+  expect(within.rest).toEqual([]);
+  expect(within.watch.map(c => c.id)).toEqual(["cpl_watch"]);
+  expect(within.watch[0].title).toBe(
+    "Cost per lead is $17.50, over the $15 gate, but bookings still cost $43.75, under the $60 gate",
+  );
+  expect(within.watch[0].fixes[0]).toBe(
+    "Bookings still cost under $60, so leave the ads alone. Look again if cost per booking passes the gate.",
+  );
+  expect(within.watch[0].say).toBeUndefined();
+  expect(within.headline).toBe(
+    "Nothing needs fixing first. Keep an eye on the cost per lead below, and ask for a review, a referral or more budget.",
+  );
+  // Bookings are counted per campaign (Muhammed, 2026-10-13), so they add up:
+  // $175 for 2 + 1 bookings is $58.33.
+  const twoCampaigns = diagnose(
+    costClient([
+      { spend7d: 100, leads7d: 5, bookings7d: 2 },
+      { spend7d: 75, leads7d: 5, bookings7d: 1 },
+    ]),
+  );
+  expect(twoCampaigns.watch[0].title).toContain("bookings still cost $58.33");
+  // Under $15 a lead and within $60 a booking: nothing at all.
+  const fine = diagnose(
+    costClient([{ spend7d: 140, leads7d: 10, bookings7d: 4 }]),
+  );
+  expect(fine.healthy).toBe(true);
+  expect(fine.watch).toEqual([]);
+
+  // Bookings over $60: a constraint of its own, and the cost per lead too.
+  const over = diagnose(
+    costClient([{ spend7d: 175, leads7d: 10, bookings7d: 2 }]),
+  );
+  expect(counted(over)).toEqual(["cpb_high", "cpl_high"]);
+  expect(over.top?.title).toBe("Cost per booking is $87.50 against a $60 gate");
+  expect(over.top?.evidence).toBe(
+    "$175 spent in the last 7 days for 2 bookings from 10 leads.",
+  );
+  expect(over.rest[0].evidence).toContain("each booking costs $87.50");
+  expect(over.watch).toEqual([]);
+  // Cheap leads that do not book: the booking cost alone, on our call
+  // centre, never "speed to lead on the client's side".
+  const cheap = diagnose(
+    costClient([{ spend7d: 130, leads7d: 10, bookings7d: 2 }]),
+  );
+  expect(counted(cheap)).toEqual(["cpb_high"]);
+  expect(cheap.top?.title).toBe(
+    "Cost per booking is $65.00 against a $60 gate",
+  );
+  expect(cheap.top?.owner).toBe("Call centre");
+  expect(cheap.top?.diagnosis).toBe(
+    "The leads are cheap enough, but too few of them book, so every appointment costs more than it should. That is usually how fast and how often our call centre calls the leads, not the ads.",
+  );
+  expect(cheap.top?.diagnosis).not.toContain("client's side");
+  expect(cheap.top?.fixes[0]).toBe(
+    "Check the client's Calls section: first call time, dials per lead and why leads were lost.",
+  );
+  // Dear leads that do not book: the media buyer's ticket comes first.
+  expect(over.top?.owner).toBe("Media buyer");
+  expect(over.top?.fixes[0]).toContain("Raise a ticket to the media buyer");
+
+  // Done with you: they book their own, so the cost per lead alone decides.
+  const dwy = diagnose(
+    costClient([{ spend7d: 175, leads7d: 10, bookings7d: 2 }], "DWY"),
+  );
+  expect(counted(dwy)).toEqual(["cpl_high"]);
+  expect(dwy.watch).toEqual([]);
+  // Their bookings are not ours to judge, so none booked is no constraint.
+  expect(
+    diagnose(costClient([{ spend7d: 140, leads7d: 10, bookings7d: 0 }], "DWY"))
+      .healthy,
+  ).toBe(true);
+
+  // Nothing here tells the client a cost, and nothing says 70% or 75%.
+  for (const d of [within, over, cheap, none, unbooked, early, dwy]) {
+    for (const c of [d.top, ...d.rest, ...d.watch])
+      expect(c?.say).toBeUndefined();
+    expect(JSON.stringify(d)).not.toMatch(/7[05]%/);
+  }
+});
+
+test("the diagnosis footer says the gates and the 60% line, and the watch line renders quietly", async () => {
+  const { SHOW_RATE_GOOD } = await import("../src/lib/kpi");
+  // The aim is said in the footer and nowhere else; 75% is said nowhere.
+  const AIM = "we aim for 70%";
+  const diagnosisText = (text: string) =>
+    text.slice(
+      text.indexOf("What is holding this client back"),
+      text.indexOf("Constraints, one leak at a time.") + 32,
+    );
+  profileDeferred = null;
+  try {
+    const page = diagnosisText(
+      await renderSection("client", `/clients/${GREYSTONE}`),
+    );
+    expect(page).toContain(
+      `Lines: cost per lead under $15 · cost per booking under $60 · a quarter of leads booked · show rate (${AIM}; ${SHOW_RATE_GOOD}% is the line, under it is a watch, not a fix) · a fifth of attended closed. Fixes come from Diagnosing & Fixing Acquisition Constraints, one leak at a time.`,
+    );
+    expect(page).not.toContain("$20");
+    expect(page).not.toContain("$80");
+    expect(page.split(AIM)).toHaveLength(2);
+    expect(page.replace(AIM, "")).not.toMatch(/7[05]%/);
+    // The fixture sits on the line (9 of 15), so there is nothing to watch.
+    expect(page).not.toContain("Watch:");
+
+    const base = perfFixture.profile;
+    profileDeferred = createDeferred<any>();
+    profileDeferred.resolve({
+      ...base,
+      performance: {
+        ...base.performance,
+        staleCount: 0,
+        lastMonth: {
+          ...base.performance.lastMonth,
+          shows: 5,
+          noshows: 5,
+          closes: 2,
+        },
+      },
+    });
+    const watched = diagnosisText(
+      await renderSection("client", `/clients/${GREYSTONE}`),
+    );
+    expect(watched).toContain(
+      "Watch: Show rate is 50%, under the 60% line. 50% of appointments with an outcome were no-shows; confirmation discipline fixes it, not more leads.",
+    );
+    expect(watched).toContain(
+      "Nothing needs fixing first. Keep an eye on the show rate below",
+    );
+    expect(watched).not.toContain("Fix this first");
+    expect(watched.replace(AIM, "")).not.toMatch(/7[05]%/);
+  } finally {
+    profileDeferred = null;
+  }
 });
 
 test("the onboarding spine maps days and handles out-of-range boundaries", () => {
@@ -698,12 +1260,30 @@ test("a client's page has one booking button, the actions and four tabs", async 
       "Leave it",
     ])
       expect(text).toContain(action);
-    for (const tab of ["Overview", "Results", "Onboarding & files", "Money"])
+    for (const tab of [
+      "Overview",
+      "Results",
+      "Ads",
+      "Onboarding & files",
+      "Money",
+    ])
       expect(text).toContain(tab);
-    // Overview: one "Before the call" block, the diagnosis inside it.
+    // Overview (2026-10-12): the "Before the call" brief first, then the
+    // numbers with the diagnosis inside; the old scattered cards are gone.
+    expect(text.match(/Before the call/g)?.length).toBe(1);
+    expect(text).toContain("The numbers");
     expect(text).toContain("What is holding this client back");
-    expect(text).toContain("What the media buyer changed since your last call");
+    expect(text).not.toContain(
+      "What the media buyer changed since your last call",
+    );
     expect(text).not.toContain("Prep for this call");
+    // This fake cannot read the call history: the brief says so, never "no calls".
+    expect(text).toContain("The call history could not be read");
+    // The client's WhatsApp for the day, with the reply box under it.
+    expect(text).toContain("Can we move the shoot to Thursday?");
+    expect(text).toContain("Waiting on us");
+    expect(text).toContain("Send to Omar Greystone");
+    expect(text).toContain("Today: 1 from them, 0 from us");
     // Results: the period and the report at the top.
     const results = await renderSection(
       "client",
@@ -741,6 +1321,18 @@ test("closing a commitment is not contact with the client", async () => {
         ),
       );
     });
+    // Since 2026-10-12 the notes to act on sit in a fold under the calls
+    // (the brief above already shows them); open it.
+    const fold = [...host.querySelectorAll("details")].find(d =>
+      (d.textContent ?? "").includes("Your 1-1 notes to act on"),
+    );
+    expect(fold).toBeDefined();
+    await reactAct(async () => {
+      if (fold) {
+        fold.open = true;
+        fold.dispatchEvent(new win.Event("toggle"));
+      }
+    });
     const call = [...host.querySelectorAll("button")].find(b =>
       (b.textContent ?? "").startsWith("Your call on"),
     );
@@ -763,3 +1355,229 @@ test("closing a commitment is not contact with the client", async () => {
   }
 });
 
+/**
+ * The Ads tab (Aziz, 2026-10-13: the CSM looks at the ads "the same way it is
+ * on the media buyer cockpit"), read only: the ads, the client's lost leads
+ * (why, the team's notes, and how many per ad) and the board's notes. Results
+ * links to it instead of drawing the ads twice, and its lost notes show only
+ * what the agent wrote, saying so when no Maqsam call backs the outcome.
+ */
+test("the Ads tab shows the ads read only, and Results links to it", async () => {
+  const lostNote = [
+    "LOST: Other",
+    "Outcome recorded by the agent; this does not establish a verified Maqsam call.",
+    "He's not Arab, not serious.",
+    "[mahara:8a03189f-5850-467c-9e20-06d7117e0b09]",
+  ].join("\n");
+  const withLost = {
+    ...perfFixture.profile,
+    lost: {
+      total: 3,
+      pipeline: "Lost Leads",
+      reasons: [{ reason: "Other (Write why in the notes section)", count: 3 }],
+      leads: [
+        {
+          name: "Lead One",
+          reason: "Other (Write why in the notes section)",
+          note: `${lostNote} · Called twice, no answer`,
+          movedAt: "2026-09-26",
+        },
+      ],
+    },
+  };
+  profileDeferred = createDeferred();
+  profileDeferred.resolve(withLost);
+  adsReads.length = 0;
+  const host = win.document.createElement("div");
+  win.document.body.appendChild(host);
+  // biome-ignore lint/suspicious/noExplicitAny: happy-dom element into React DOM
+  const root = createRoot(host as any);
+  currentSnapshot = snapshot;
+  isSnapshotLoading = false;
+  snapshotError = null;
+  const settle = () =>
+    reactAct(async () => {
+      await new Promise(r => setTimeout(r, 0));
+    });
+  // The chart measures its width; happy-dom has no ResizeObserver.
+  const g = globalThis as any;
+  const hadObserver = "ResizeObserver" in g;
+  g.ResizeObserver ??= class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  const show = async (url: string) => {
+    await reactAct(async () => {
+      root.render(
+        createElement(
+          MemoryRouter,
+          { key: url, initialEntries: [url] },
+          pageFor("client"),
+        ),
+      );
+    });
+    await settle();
+    return (host.textContent ?? "").replace(/\s+/g, " ");
+  };
+  try {
+    const ads = await show(`/clients/${GREYSTONE}?tab=ads&period=lastMonth`);
+    expect(adsReads.at(-1)).toMatchObject({ p_task_id: GREYSTONE });
+    // Said once, in muted text: the media buyer makes the changes.
+    expect(
+      ads.match(/Read only: the media buyer makes every change/g)?.length,
+    ).toBe(1);
+    expect(ads).toContain("Reporting period");
+    // The call centre caller, in the header beside the main contact.
+    expect(ads).toContain("Caller: Example Caller");
+    expect(ads).toContain("Campaigns, ad sets and ads");
+    expect(ads).toContain("Villa reel");
+    // Lost leads: why, in the team's words, then the board's count per ad.
+    expect(ads).toContain("3 leads sit in Lost Leads.");
+    expect(ads).toContain("Other3");
+    expect(ads).toContain("Lead One");
+    expect(ads).toContain(
+      "He's not Arab, not serious. · Called twice, no answer",
+    );
+    expect(ads).toContain("Logged by the agent without a matched Maqsam call.");
+    expect(ads).not.toContain("[mahara:");
+    expect(ads).not.toContain("LOST: Other");
+    expect(ads).not.toContain("Outcome recorded by the agent");
+    expect(ads).toContain("By ad");
+    expect(ads).toContain(
+      "All time, not only this period: 3 leads in their lost pipeline, 2 of them from the ads below.",
+    );
+    expect(ads).toContain("2 lost");
+    expect(ads).not.toContain("Read why each lead was lost on Results");
+    // What the media buyer sees: the call, the reason and the fix.
+    expect(ads).toContain("What the media buyer sees");
+    expect(ads).toContain("Board says Live · 12 days since its first spend");
+    expect(ads).toContain("Kill");
+    expect(ads).toContain("$162 a booking (1 booking) is over the $80 line.");
+    expect(ads).toContain("Fix this first");
+    expect(ads).toContain("Cut the ad with the worst cost per booking.");
+    // Nothing on the tab changes an ad.
+    const writes = [...host.querySelectorAll("button")]
+      .map(b => `${b.textContent ?? ""} ${b.getAttribute("aria-label") ?? ""}`)
+      .filter(t =>
+        /pause|resume|turn (on|off)|budget|duplicate|winner|publish|request a creative/i.test(
+          t,
+        ),
+      );
+    expect(writes).toEqual([]);
+    // Ads Manager links stay.
+    expect(
+      [...host.querySelectorAll("a")].some(a =>
+        (a.getAttribute("href") ?? "").startsWith(
+          "https://adsmanager.facebook.com/",
+        ),
+      ),
+    ).toBe(true);
+
+    // Results: one line to the Ads tab, and the notes without system lines.
+    const results = await show(
+      `/clients/${GREYSTONE}?tab=results&period=lastMonth`,
+    );
+    expect(results).toContain("on the Ads tab");
+    expect(results).not.toContain("Campaigns, ad sets and ads");
+    const link = [...host.querySelectorAll("a")].find(a =>
+      (a.textContent ?? "").includes("on the Ads tab"),
+    );
+    // The profile's own card: the fixture's profile is another client's.
+    expect(link?.getAttribute("href")).toBe(
+      `/clients/${withLost.taskId}?tab=ads&period=lastMonth`,
+    );
+    // Lost reasons show once (2026-10-13): the dialer's under Calls, right
+    // after Numbers, read for the profile's card and the period's dates;
+    // the GoHighLevel list (its cleaned notes checked above) stays on Ads.
+    expect(callReads.at(-1)).toEqual({
+      p_key: withLost.taskId,
+      p_from: "2026-09-01",
+      p_to: "2026-09-30",
+    });
+    expect(results).toContain("On track");
+    expect(results).toContain("Why leads were lost");
+    expect(results).not.toContain("He's not Arab, not serious.");
+    expect(results).not.toContain("3 leads sit in Lost Leads.");
+    expect(results).not.toContain("[mahara:");
+    expect(results).not.toContain("LOST: Other");
+    expect(
+      [...host.querySelectorAll("a")]
+        .find(a =>
+          (a.textContent ?? "").includes("Leads marked lost in GoHighLevel"),
+        )
+        ?.getAttribute("href"),
+    ).toBe(`/clients/${withLost.taskId}?tab=ads&period=lastMonth`);
+    const parts = [
+      ...host.querySelectorAll('nav[aria-label="On this tab"] a'),
+    ].map(a => a.getAttribute("href"));
+    expect(parts.slice(0, 3)).toEqual([
+      "#results-numbers",
+      "#results-calls",
+      "#results-ads",
+    ]);
+    expect(parts).not.toContain("#results-lost");
+
+    // When Calls shows no lost reasons (here the read times out), Results
+    // keeps the GoHighLevel list, so lost reasons never vanish from the tab.
+    forgetCallReads();
+    callAnswer = () => ({
+      data: null,
+      error: { code: "57014", message: "statement timeout" },
+    });
+    try {
+      // The same address in another order: a fresh page, not a re-render.
+      const failed = await show(
+        `/clients/${GREYSTONE}?period=lastMonth&tab=results`,
+      );
+      await settle();
+      const now = (host.textContent ?? "").replace(/\s+/g, " ");
+      expect(failed + now).toContain("The dialer took too long to answer.");
+      expect(now).toContain(
+        "He's not Arab, not serious. · Called twice, no answer",
+      );
+      expect(now).toContain(
+        "Logged by the agent without a matched Maqsam call.",
+      );
+      expect(now).not.toContain("Leads marked lost in GoHighLevel");
+      expect(
+        [...host.querySelectorAll('nav[aria-label="On this tab"] a')].map(a =>
+          a.getAttribute("href"),
+        ),
+      ).toContain("#results-lost");
+    } finally {
+      callAnswer = onTrackCalls;
+      forgetCallReads();
+    }
+
+    // All time starts on the profile's first day: the ads are read once,
+    // after the profile, not once without it and again with it.
+    profileDeferred = createDeferred();
+    adsReads.length = 0;
+    const waiting = await show(`/clients/${GREYSTONE}?tab=ads&period=all`);
+    expect(adsReads).toHaveLength(0);
+    expect(waiting).toContain("Loading the ads…");
+    await reactAct(async () => profileDeferred?.resolve(withLost));
+    await settle();
+    await settle();
+    expect(adsReads).toHaveLength(1);
+    expect(host.textContent).toContain("Villa reel");
+    // A profile that cannot be read does not hold the ads back for ever.
+    // (The same address in another order: a fresh page, not a re-render.)
+    profileDeferred = createDeferred();
+    adsReads.length = 0;
+    await show(`/clients/${GREYSTONE}?period=all&tab=ads`);
+    expect(adsReads).toHaveLength(0);
+    await reactAct(async () =>
+      profileDeferred?.reject(new Error("The profile could not be read.")),
+    );
+    await settle();
+    await settle();
+    expect(adsReads).toHaveLength(1);
+  } finally {
+    profileDeferred = null;
+    await reactAct(async () => root.unmount());
+    host.remove();
+    if (!hadObserver) delete g.ResizeObserver;
+  }
+});

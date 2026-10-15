@@ -98,7 +98,15 @@ export default function RecordingPage({ me }: { me: Me }) {
       </header>
 
       <SectionCard title="Vince's review">
-        {reviews.error ? (
+        {r.hidden_reason === "client service" ||
+        r.hidden_reason === "internal" ? (
+          <p className="muted text-sm">
+            {r.hidden_reason === "internal"
+              ? "Internal meeting."
+              : "Client-service call."}{" "}
+            Excluded from sales reviews and Intelligence.
+          </p>
+        ) : reviews.error ? (
           <Failed
             what="The review"
             error={reviews.error}

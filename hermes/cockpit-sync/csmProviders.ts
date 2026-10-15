@@ -2,9 +2,18 @@ import {type Row, callTool, providerFetch, unwrap} from './runtime';
 import {appointmentRows,summarise,staleRows,byAd,toDate,MONTHS,parseAdded,parseAppt,daysBetween,type Day,type Call,type GhlAccount} from './csmProfileCalculations';
 import type {Extension,CallNote} from './csmCadence';
 
+// The 1-1 form's client: the card id the client page's link carries (hidden task_id), else the typed Client ID.
+// Given the client cards, the same order as the csm-calls worker's checkinClient: a hidden id that is not a
+// card gives way to the typed one. Without them there is no roster check, so any non-blank hidden id wins.
+export function checkinTaskId(item:Row,cards?:ReadonlySet<string>){
+ const hidden=String(item?.hidden?.task_id??'').trim();
+ const typed=String((item?.answers??[]).find((a:Row)=>a.field?.ref==='c484f390-9695-4ffa-9693-9cc219592713')?.text??'').trim();
+ return hidden&&(!cards||cards.has(hidden)||!typed)?hidden:typed;
+}
+
 // Provider contracts from media-buyer/convex/csmSync.ts and csmProfiles.ts.
 // Any failed authoritative read aborts the plan, rather than substituting zero.
-export async function cadenceInputs(){
+export async function cadenceInputs(cards?:ReadonlySet<string>){
  const notes:CallNote[]=[],exts:Extension[]=[];
  const weeksByLabel:Record<string,number>={'1 WEEK':1,'2 WEEKS':2,'4 WEEKS':4};
  for(const form of ['fRokTITH','gqBcyK6g']){
@@ -20,7 +29,7 @@ export async function cadenceInputs(){
     const weeks=weeksByLabel[String(duration?.choice?.label??duration?.text??'').trim().toUpperCase()];
     if(client&&weeks)exts.push({client,until:new Date(granted+weeks*7*86400000+10800000).toISOString().slice(0,10)});
    }else{
-    const taskId=String(find('c484f390-9695-4ffa-9693-9cc219592713')?.text??'').trim();if(!taskId)continue;
+    const taskId=checkinTaskId(item,cards);if(!taskId)continue;
     const status=/^(done|sent|ok|okay|n\/a|na|none|nothing|fine|good|no|yes|waiting|pending|follow up|followup|noted)\b/i;
     const commitments=[...new Set([find('82a6b434-15d9-4a14-8496-c20c94628536')?.text,find('5d071906-da6a-4413-a729-0c76d0188d91')?.text].filter(Boolean).flatMap(t=>String(t).split(/\n|\u2022|(?: - )/).map(s=>s.replace(/^[-*\d.\s]+/,'').trim()).filter(s=>s.length>=20&&!status.test(s))))].slice(0,4);
     notes.push({taskId,submitted:new Date(granted+10800000).toISOString().slice(0,10),notes:commitments,defcon:find('ff7970f7-9fad-4fa5-b12b-4d719dfb7587')?.choice?.label,priority:find('c9f99fb1-fec9-47e7-9baa-c5554733723d')?.choice?.label});

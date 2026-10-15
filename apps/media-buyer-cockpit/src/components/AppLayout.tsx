@@ -42,7 +42,9 @@ function LayoutContent() {
         const { error } = await client.rpc("cockpit_submit_issue_report", {
           p_app: "media-buyer",
           p_page: location.pathname,
-          p_text: typeof r === "string" ? r : (r?.message ?? "App error"),
+          // The boundary sends { title, detail }; reading `message` filed
+          // every crash as "App error" with no page or stack (2026-10-13).
+          p_text: `${r?.title ?? ""}\n${r?.detail ?? ""}`.trim() || "App error",
           p_role: "media_buyer",
         });
         if (error) throw error;

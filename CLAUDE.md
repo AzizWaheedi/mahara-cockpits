@@ -54,3 +54,8 @@ and a change-triggered fixer (the unattended fixer opens PRs; agents working wit
   clear failure line so the monitor can tell them apart.
 - A new route, cron or worker that matters to users needs a freshness signal (last success timestamp and a stuck/failed count).
 - Never let a health route call providers, write data, or be cached.
+
+## Decisions and plans
+
+- Before you decide a design, stack, data rule or scope, search `context/DECISIONS.md` in the shared `mahara-context` repository (local: `D:/MaharaMedia/mahara-context`). Log each new durable decision there in the same session.
+- Every build plan includes two fields: "Not in scope" and "How we know it works".

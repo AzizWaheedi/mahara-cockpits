@@ -280,7 +280,8 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
   const parsed = parseClientData(sheet.values);
   // Missing credentials/identity columns cannot be converted to empty account collections.
   if (parsed.omissions.length) throw new Error(`Client Data columns missing: ${parsed.omissions.join(', ')}`);
-  const {notes,exts} = await cadenceInputs();
+  // A 1-1 form's hidden task_id counts only when it is a client card, as in csm-calls.
+  const {notes,exts} = await cadenceInputs(new Set(clientTasks.map((t:Row)=>String(t.id))));
   const fieldResponse = unwrap(await callTool('pd_clickup_proxy_get',{url:`https://api.clickup.com/api/v2/list/${CLIENTS_LIST}/field`}));
   if (!Array.isArray(fieldResponse.fields)) throw new Error('Client custom-field collection missing');
   const reportFieldId = fieldResponse.fields.find((f:Row)=>String(f.name).toLowerCase()==='last report sent')?.id;

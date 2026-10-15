@@ -453,7 +453,7 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(out["done"], 1)
         self.assertEqual(self.cu.fields, [("86abc", "edited_video",
                                            "https://drive.google.com/file/d/1FinalCutAAAAAAAAAAAAAAAAAAA/view")])
-        self.assertEqual(self.cu.statuses, [("86abc", "client review")])
+        self.assertEqual(self.cu.statuses, [("86abc", "internal review")])
         self.assertEqual(self.sb.job("86abc")["state"], "delivered")
         self.assertEqual(self.sb.requests_rows["r1"]["status"], "done")
         # The comment names the person who pressed the button.

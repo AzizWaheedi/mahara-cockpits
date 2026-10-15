@@ -363,6 +363,10 @@ const HUBSTAFF_PATHS:{test:RegExp;template:string}[]=[
  {test:/^organizations\/\d{1,12}\/activities$/,template:'organizations/{org}/activities'},
  {test:/^organizations\/\d{1,12}\/activities\/daily$/,template:'organizations/{org}/activities/daily'},
  {test:/^organizations\/\d{1,12}\/last_activities$/,template:'organizations/{org}/last_activities'},
+ {test:/^organizations\/\d{1,12}\/screenshots$/,template:'organizations/{org}/screenshots'},
+ {test:/^organizations\/\d{1,12}\/tool_usages$/,template:'organizations/{org}/tool_usages'},
+ {test:/^organizations\/\d{1,12}\/screenshot_settings$/,template:'organizations/{org}/screenshot_settings'},
+ {test:/^organizations\/\d{1,12}\/tracking_states$/,template:'organizations/{org}/tracking_states'},
 ];
 
 /**

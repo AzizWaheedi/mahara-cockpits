@@ -1,7 +1,17 @@
-import { ChevronLeft, Download, Moon, RefreshCw, Sun } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { Download, RefreshCw, Search } from "lucide-react";
+import {
+  type ReactNode,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useSearchParams } from "react-router";
+import { toast as notify } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { CeoTabs, panelId, tabId } from "@/components/ceo/CeoTabs";
+import { FilterChips } from "@/components/ceo/FilterChips";
+import type { StatusTone } from "@/components/ceo/StatusChip";
 import { CompareTab } from "@/components/data/LineageStrip";
 import { RecordDrawer } from "@/components/data/RecordDrawer";
 import {
@@ -9,7 +19,8 @@ import {
   notSyncedCount,
   SheetGrid,
 } from "@/components/data/SheetGrid";
-import { useTheme } from "@/contexts/ThemeContext";
+import { AnimatedSelect } from "@/components/ui/animated-select";
+import { Button } from "@/components/ui/button";
 import {
   APPT_ALL,
   type ApptRow,
@@ -25,8 +36,16 @@ import {
   toCsv,
   ymd,
 } from "@/lib/dataView";
-import { fetchExport, useRows, useSummary } from "@/lib/dataViewClient";
+import {
+  fetchExport,
+  prefetchRows,
+  type RowQuery,
+  useRows,
+  useSummary,
+} from "@/lib/dataViewClient";
 import { useNow } from "@/lib/useNow";
+// The CEO kit (tabs, chips, status colours) reads its tokens from .ceo-root.
+import "@/components/ceo/ceo.css";
 import "./dataView.css";
 
 type Tab = Kind | "compare";
@@ -35,10 +54,20 @@ type Filter = {
   label: string;
   tone?: "warn" | "bad" | "info";
   count: (s: Summary) => number;
-  hideAtZero?: boolean;
+  /** Opened from the Compare tab only: a chip while it is the filter. */
+  hidden?: boolean;
+};
+/** The cockpit's status colours for the filter dots (StatusChip). */
+const TONE: Record<NonNullable<Filter["tone"]>, StatusTone> = {
+  warn: "warning",
+  bad: "critical",
+  info: "neutral",
 };
 
-/* Filters, named the way you would ask the question. Counts come from the summary. */
+/*
+ * Filters, named the way you would ask the question. Counts come from the
+ * summary; a chip with nothing behind it hides (FilterChips).
+ */
 const FILTERS: Record<Kind, Filter[]> = {
   leads: [
     { key: "all", label: "All leads", count: s => s.leads.all },
@@ -68,7 +97,6 @@ const FILTERS: Record<Kind, Filter[]> = {
       label: "Counted twice",
       tone: "bad",
       count: s => s.appointments.twice,
-      hideAtZero: true,
     },
     {
       key: "no_result",
@@ -81,6 +109,16 @@ const FILTERS: Record<Kind, Filter[]> = {
       label: "Calendar events",
       tone: "warn",
       count: s => s.appointments.calendar,
+    },
+    {
+      key: "counted_no_result",
+      label: "Counted, no result",
+      tone: "warn",
+      hidden: true,
+      count: s => {
+        const b = s.lineage.bookings;
+        return b ? b.passed - b.showed - b.noshow : 0;
+      },
     },
   ],
 };
@@ -176,7 +214,7 @@ function problemsFor(
     P.push({
       tone: "bad",
       title: `${fmtN(s.appointments.not_counted)} bookings are missing from the cockpit`,
-      why: "These Facebook leads booked in GHL, but the cockpit bookings card does not count them, so it shows too few.",
+      why: "These bookings are in GHL, but the cockpit bookings card does not count them, so it shows too few.",
       where: whereSentence(per, c => c.not_counted),
       cta: "Show these bookings",
       go: () => go("appointments", "not_counted"),
@@ -225,7 +263,7 @@ function problemsFor(
     P.push({
       tone: "info",
       title: `${fmtN(s.appointments.no_result)} meetings have no result`,
-      why: 'The meeting time passed, but nobody marked "showed" or "no-show" in GHL. Show-up rates stay uncertain until someone does.',
+      why: 'The meeting time passed, but nobody marked "showed" or "no-show" in GHL or the sheet. Show-up rates stay uncertain until someone does.',
       where: whereSentence(per, c => c.no_result),
       cta: "Show these meetings",
       go: () => go("appointments", "no_result"),
@@ -252,7 +290,6 @@ export function DataViewPage() {
   const auth = useCockpitAuth();
   const client = auth.client;
   const actor = auth.session?.user.id ?? null;
-  const { theme, toggleTheme } = useTheme();
   const now = useNow(60_000);
   const [params, setParams] = useSearchParams();
 
@@ -267,6 +304,8 @@ export function DataViewPage() {
   const filter = FILTERS[kind].some(f => f.key === filterParam)
     ? filterParam
     : "all";
+  // Like the cockpit's own tabs (useTabParam): the address bar follows the
+  // view, and the page never scrolls because of it.
   const set = (next: Record<string, string | null>) =>
     setParams(
       prior => {
@@ -277,7 +316,7 @@ export function DataViewPage() {
         }
         return p;
       },
-      { replace: true },
+      { replace: true, preventScrollReset: true },
     );
 
   // Search stays out of the address bar: it often holds a phone number.
@@ -292,14 +331,11 @@ export function DataViewPage() {
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
   );
+  // The pill moves at once; the sheet redraws in the background, like the
+  // CEO kit's DataTable search, so the click never waits for the cells.
+  const gridView = useDeferredValue(view);
+  const gridDensity = useDeferredValue(density);
   const [selected, setSelected] = useState<string | null>(null);
-  const [toastText, setToastText] = useState<string | null>(null);
-  const toastTimer = useRef(0);
-  const toast = (text: string) => {
-    setToastText(text);
-    window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToastText(null), 2200);
-  };
 
   const summary = useSummary(client, actor, { location, days });
   const rowQuery = useMemo(
@@ -327,10 +363,34 @@ export function DataViewPage() {
         if (match) p.set("client", match.location_id);
         return p;
       },
-      { replace: true },
+      { replace: true, preventScrollReset: true },
     );
     setTaskMissing(!match);
   }, [task, clientList, setParams]);
+
+  // The other tab's "All" first, then the other chips of this tab, fetched
+  // once the table on screen has its rows, so the next click swaps in place.
+  const settled = !rows.loading && !summary.stale;
+  useEffect(() => {
+    if (!client || !actor || !s || !settled || tab === "compare" || query)
+      return;
+    const other: Kind = kind === "leads" ? "appointments" : "leads";
+    const ahead: RowQuery[] = [
+      { kind: other, location, days, filter: "all", search: "" },
+      ...FILTERS[kind]
+        .filter(f => !f.hidden && f.key !== filter && f.count(s) > 0)
+        .map(f => ({ kind, location, days, filter: f.key, search: "" })),
+    ];
+    let stop = false;
+    const t = window.setTimeout(
+      () => void prefetchRows(client, actor, ahead, () => stop),
+      300,
+    );
+    return () => {
+      stop = true;
+      window.clearTimeout(t);
+    };
+  }, [client, actor, s, settled, tab, query, kind, location, days, filter]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -355,13 +415,14 @@ export function DataViewPage() {
     );
   };
   const problems = s ? problemsFor(s, go) : [];
-  const scopeName = location
-    ? (s?.clients.find(c => c.location_id === location)?.name ?? "this client")
+  // The numbers on screen can be the last scope's while a new one loads.
+  const scopeName = summary.location
+    ? (s?.clients.find(c => c.location_id === summary.location)?.name ??
+      "this client")
     : "all clients";
 
   const [exporting, setExporting] = useState(false);
   const exportCsv = async () => {
-    if (tab === "compare") return toast("Open Leads or Appointments to export");
     if (!client || !actor || !rowQuery) return;
     setExporting(true);
     try {
@@ -374,13 +435,13 @@ export function DataViewPage() {
         `${kind}-${location ? scopeName.replace(/[^\w]+/g, "-") : "all-clients"}-${days}d-${ymd(Date.now())}.csv`,
         csv,
       );
-      toast(
+      notify(
         out.truncated
           ? `Exported the newest ${fmtN(out.rows.length)} of ${fmtN(out.total)} rows. Narrow the filter for the rest.`
           : `Exported ${fmtN(out.rows.length)} rows with all sheet columns`,
       );
     } catch (error) {
-      toast(
+      notify(
         error instanceof Error
           ? error.message
           : "The export failed. Try again.",
@@ -401,243 +462,234 @@ export function DataViewPage() {
   const activeFilter = FILTERS[kind].find(f => f.key === filter);
   const allCount = s ? FILTERS[kind][0].count(s) : null;
   const ns = notSyncedCount(kind, view);
+  const rowsBusy = rows.stale && rows.rows.length > 0;
 
   return (
-    <div className={`dv-root${selected ? " panel-open" : ""}`}>
-      <div className="dv-topbar">
-        <div className="dv-topbar-in">
-          <a className="dv-back" href={auth.home ?? "/admin"}>
-            <ChevronLeft className="size-4" />
-            Cockpit
-          </a>
-          <div className="dv-title">
-            <span className="dv-eyebrow">Admin only</span>
-            <b>Leads and appointments data</b>
-          </div>
-          <div className="dv-ctrls">
-            <select
-              className="dv-select"
-              aria-label="Client"
-              value={location ?? ""}
-              onChange={e => set({ client: e.target.value || null })}
-            >
-              <option value="">All clients</option>
-              {location && !s?.clients.some(c => c.location_id === location) ? (
-                <option value={location}>Loading client</option>
-              ) : null}
-              {s?.clients.map(c => (
-                <option key={c.location_id} value={c.location_id}>
-                  {c.name}
-                  {c.status && !["Active", "Launching"].includes(c.status)
-                    ? ` (${c.status})`
-                    : ""}
-                </option>
-              ))}
-            </select>
-            <div className="dv-seg" role="group" aria-label="Date range">
-              {DAYS.map(d => (
-                <button
-                  key={d}
-                  type="button"
-                  aria-pressed={days === d}
-                  onClick={() => set({ days: d === 30 ? null : String(d) })}
-                >
-                  {d} days
-                </button>
-              ))}
-            </div>
-            <input
-              className="dv-search"
-              type="search"
-              placeholder="Find a name, phone or campaign"
-              aria-label="Search"
-              value={search}
-              onChange={e => {
-                setSearch(e.target.value);
-                if (tab === "compare") set({ tab: null, filter: null });
-              }}
-            />
-            <button
-              type="button"
-              className="dv-btn"
-              onClick={exportCsv}
-              disabled={exporting || tab === "compare"}
-            >
-              <Download className="size-3.5" />
-              {exporting ? "Exporting" : "Export CSV"}
-            </button>
-            <button
-              type="button"
-              className="dv-iconbtn"
-              onClick={toggleTheme}
-              aria-label={
-                theme === "light"
-                  ? "Switch to dark mode"
-                  : "Switch to light mode"
-              }
-            >
-              {theme === "light" ? (
-                <Moon className="size-4" />
-              ) : (
-                <Sun className="size-4" />
-              )}
-            </button>
-          </div>
+    <div
+      className={`ceo-root dv-root mx-auto w-full min-w-0 max-w-[1440px] space-y-6 pb-10${selected ? " panel-open" : ""}`}
+    >
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs text-muted-foreground sm:text-sm">
+            Admin only. Times are Riyadh time.
+          </p>
+          <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-foreground sm:text-[28px] sm:leading-9">
+            Leads and appointments
+          </h1>
         </div>
+        <Button
+          variant="outline"
+          onClick={exportCsv}
+          disabled={exporting || tab === "compare"}
+          title={
+            tab === "compare"
+              ? "Open Leads or Appointments to export"
+              : undefined
+          }
+        >
+          <Download className="size-4" />
+          {exporting ? "Exporting" : "Export CSV"}
+        </Button>
+      </header>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <AnimatedSelect
+          aria-label="Client"
+          value={location ?? ""}
+          onChange={e => set({ client: e.target.value || null })}
+          className="w-full text-sm sm:w-64"
+        >
+          <option value="">All clients</option>
+          {location && !s?.clients.some(c => c.location_id === location) ? (
+            <option value={location}>Loading client</option>
+          ) : null}
+          {s?.clients.map(c => (
+            <option key={c.location_id} value={c.location_id}>
+              {c.name}
+              {c.status && !["Active", "Launching"].includes(c.status)
+                ? ` (${c.status})`
+                : ""}
+            </option>
+          ))}
+        </AnimatedSelect>
+        <FilterChips
+          ariaLabel="Date range"
+          className="w-auto"
+          value={String(days)}
+          onChange={d => set({ days: d === "30" ? null : d })}
+          options={DAYS.map(d => ({ key: String(d), label: `${d} days` }))}
+        />
+        <label className="relative flex min-w-0 flex-1 items-center sm:max-w-72">
+          <span className="sr-only">Search</span>
+          <Search
+            className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground"
+            aria-hidden
+          />
+          <input
+            type="search"
+            value={search}
+            placeholder="Find a name, phone or campaign"
+            onChange={e => {
+              setSearch(e.target.value);
+              if (tab === "compare") set({ tab: null, filter: null });
+            }}
+            className="h-9 w-full rounded-md border bg-background pl-8 pr-2.5 text-base placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
+          />
+        </label>
       </div>
 
-      <div className="dv-content">
-        <div className="dv-overview">
-          {summary.error ? (
-            <div className="dv-alert">
-              <span>{summary.error}</span>
-              <button
-                type="button"
-                className="dv-btn small"
-                onClick={() => void summary.refetch()}
-              >
-                <RefreshCw className="size-3.5" /> Try again
-              </button>
-            </div>
-          ) : !s ? (
-            <div aria-busy="true">
-              <div className="dv-skel" style={{ width: "60%", height: 22 }} />
-              <div
-                className="dv-skel"
-                style={{ width: "40%", marginTop: 12 }}
-              />
-            </div>
-          ) : (
-            <>
-              {taskMissing ? (
-                <div className="dv-alert">
-                  This client has no GHL location in our data yet, so the page
-                  shows all clients. Pick the client from the list if it has
-                  another name.
-                </div>
-              ) : null}
-              <p className="dv-headline">
-                In the last {s.days} days, for {scopeName}:{" "}
-                <b>{fmtN(s.leads.all)} leads</b> came in and{" "}
-                <b>{fmtN(s.appointments.all)} appointments</b> were booked.{" "}
-                {problems.length ? (
-                  <span className="need">
-                    {problems.length} thing{problems.length > 1 ? "s" : ""} need
-                    {problems.length > 1 ? "" : "s"} a look.
-                  </span>
-                ) : (
-                  "Nothing needs a look."
-                )}
-              </p>
-              <div className="dv-freshline">
-                <span className={`dv-dot${stale ? " warn" : ""}`} />
-                <span>
-                  {leadsAt
-                    ? `Leads were copied from GHL ${rel(leadsAt, now)}`
-                    : "Leads have no copy record"}
-                  {apptsAt
-                    ? ` and appointments ${rel(apptsAt, now)}.`
-                    : ". Appointments have no copy record."}{" "}
-                  {fresh?.meta_last_day
-                    ? `Meta numbers run up to ${fmtDayString(fresh.meta_last_day)}`
-                    : "Meta numbers are not available"}
-                  {fresh?.bookings_last_day
-                    ? `, cockpit bookings up to ${fmtDayString(fresh.bookings_last_day)}.`
-                    : "."}
-                </span>
-              </div>
-              <details className="dv-howto">
-                <summary>How to read this page</summary>
-                <ol>
-                  <li>
-                    <b>Start with the cards below.</b> Each card names a
-                    problem, says why it matters, and has a button that shows
-                    the exact rows.
-                  </li>
-                  <li>
-                    <b>Click any row</b> to see that person's story, from the
-                    first message to the meeting result.
-                  </li>
-                  <li>
-                    <b>Click the i next to a column name</b> to see what it
-                    means, where it comes from, and what an empty cell means.
-                  </li>
-                  <li>
-                    <b>"Compare with Meta and the cockpit"</b> shows where the
-                    counts stop matching between systems.
-                  </li>
-                  <li>
-                    <b>"—" means GHL has no value.</b> Striped cells mean the
-                    field is not copied to our database yet.
-                  </li>
-                </ol>
-              </details>
-              {problems.length ? (
-                <div className="dv-problems">
-                  {problems.map(p => (
-                    <article key={p.title} className={`dv-problem ${p.tone}`}>
-                      <div className="pt">{p.title}</div>
-                      <div className="pd">{p.why}</div>
-                      {p.where ? <div className="pw">{p.where}</div> : null}
-                      <button type="button" className="dv-link" onClick={p.go}>
-                        {p.cta}
-                      </button>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-              <div className="dv-okline">
-                <span className="dv-dot" />
-                <span>
-                  Checked and fine:{" "}
-                  {[
-                    !s.freshness.leads.failing.length &&
-                    !s.freshness.appointments.failing.length
-                      ? `every GHL location copied without errors (${s.freshness.leads.ok} of ${s.freshness.leads.locations})`
-                      : null,
-                    !s.appointments.not_counted
-                      ? "every Facebook booking is in the cockpit"
-                      : null,
-                    !s.lineage.never_reached
-                      ? "no day lost leads between Meta and GHL"
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(", ") || "nothing else to report"}
-                  .
-                  {s.leads.deleted
-                    ? ` ${fmtN(s.leads.deleted)} lead${s.leads.deleted > 1 ? "s were" : " was"} deleted in GHL and left out of the counts.`
-                    : ""}
-                </span>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="dv-tabs" role="tablist" id="dv-tabs">
-          {(
-            [
-              ["leads", "Leads", s?.leads.all],
-              ["appointments", "Appointments", s?.appointments.all],
-              ["compare", "Compare with Meta and the cockpit", undefined],
-            ] as const
-          ).map(([key, label, n]) => (
+      <div
+        className="dv-overview"
+        data-busy={summary.stale && s ? "" : undefined}
+      >
+        {summary.error ? (
+          <div className="dv-alert">
+            <span>{summary.error}</span>
             <button
-              key={key}
               type="button"
-              role="tab"
-              className="dv-tab"
-              aria-selected={tab === key}
-              onClick={() =>
-                set({ tab: key === "leads" ? null : key, filter: null })
-              }
+              className="dv-btn small"
+              onClick={() => void summary.refetch()}
             >
-              {label}
-              {n !== undefined ? <span className="c">{fmtN(n)}</span> : null}
+              <RefreshCw className="size-3.5" /> Try again
             </button>
-          ))}
-        </div>
+          </div>
+        ) : !s ? (
+          <div aria-busy="true">
+            <div className="dv-skel" style={{ width: "60%", height: 22 }} />
+            <div className="dv-skel" style={{ width: "40%", marginTop: 12 }} />
+          </div>
+        ) : (
+          <>
+            {taskMissing ? (
+              <div className="dv-alert">
+                This client has no GHL location in our data yet, so the page
+                shows all clients. Pick the client from the list if it has
+                another name.
+              </div>
+            ) : null}
+            <p className="dv-headline">
+              In the last {s.days} days, for <bdi>{scopeName}</bdi>:{" "}
+              <b>{fmtN(s.leads.all)} leads</b> came in and{" "}
+              <b>{fmtN(s.appointments.all)} appointments</b> were booked.{" "}
+              {problems.length ? (
+                <span className="need">
+                  {problems.length} thing{problems.length > 1 ? "s" : ""} need
+                  {problems.length > 1 ? "" : "s"} a look.
+                </span>
+              ) : (
+                "Nothing needs a look."
+              )}
+            </p>
+            <div className="dv-freshline">
+              <span className={`dv-dot${stale ? " warn" : ""}`} />
+              <span>
+                {leadsAt
+                  ? `Leads were copied from GHL ${rel(leadsAt, now)}`
+                  : "Leads have no copy record"}
+                {apptsAt
+                  ? ` and appointments ${rel(apptsAt, now)}.`
+                  : ". Appointments have no copy record."}{" "}
+                {fresh?.meta_last_day
+                  ? `Meta numbers run up to ${fmtDayString(fresh.meta_last_day)}`
+                  : "Meta numbers are not available"}
+                {fresh?.bookings_last_day
+                  ? `, cockpit bookings up to ${fmtDayString(fresh.bookings_last_day)}.`
+                  : "."}
+              </span>
+            </div>
+            <details className="dv-howto">
+              <summary>How to read this page</summary>
+              <ol>
+                <li>
+                  <b>Start with the cards below.</b> Each card names a problem,
+                  says why it matters, and has a button that shows the exact
+                  rows.
+                </li>
+                <li>
+                  <b>Click any row</b> to see that person's story, from the
+                  first message to the meeting result.
+                </li>
+                <li>
+                  <b>Click the i next to a column name</b> to see what it means,
+                  where it comes from, and what an empty cell means.
+                </li>
+                <li>
+                  <b>"Compare with Meta and the cockpit"</b> shows where the
+                  counts stop matching between systems.
+                </li>
+                <li>
+                  <b>"—" means GHL has no value.</b> Striped cells mean the
+                  field is not copied to our database yet.
+                </li>
+              </ol>
+            </details>
+            {problems.length ? (
+              <div className="dv-problems">
+                {problems.map(p => (
+                  <article key={p.title} className={`dv-problem ${p.tone}`}>
+                    <div className="pt">{p.title}</div>
+                    <div className="pd">{p.why}</div>
+                    {p.where ? <div className="pw">{p.where}</div> : null}
+                    <button type="button" className="dv-link" onClick={p.go}>
+                      {p.cta}
+                    </button>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+            <div className="dv-okline">
+              <span className="dv-dot" />
+              <span>
+                Checked and fine:{" "}
+                {[
+                  !s.freshness.leads.failing.length &&
+                  !s.freshness.appointments.failing.length
+                    ? `every GHL location copied without errors (${s.freshness.leads.ok} of ${s.freshness.leads.locations})`
+                    : null,
+                  !s.appointments.not_counted
+                    ? "every Facebook booking is in the cockpit"
+                    : null,
+                  !s.lineage.never_reached
+                    ? "no day lost leads between Meta and GHL"
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(", ") || "nothing else to report"}
+                .
+                {s.leads.deleted
+                  ? ` ${fmtN(s.leads.deleted)} lead${s.leads.deleted > 1 ? "s were" : " was"} deleted in GHL and left out of the counts.`
+                  : ""}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
 
+      <div id="dv-tabs" className="scroll-mt-4">
+        <CeoTabs
+          ariaLabel="Data"
+          value={tab}
+          onChange={key =>
+            set({ tab: key === "leads" ? null : key, filter: null })
+          }
+          tabs={[
+            { key: "leads", label: "Leads", count: s?.leads.all },
+            {
+              key: "appointments",
+              label: "Appointments",
+              count: s?.appointments.all,
+            },
+            { key: "compare", label: "Compare with Meta and the cockpit" },
+          ]}
+        />
+      </div>
+
+      <div
+        role="tabpanel"
+        id={panelId(tab)}
+        aria-labelledby={tabId(tab)}
+        className="min-w-0"
+      >
         {tab === "compare" ? (
           s ? (
             <CompareTab
@@ -649,99 +701,92 @@ export function DataViewPage() {
               }}
             />
           ) : (
-            <div className="dv-skel" style={{ marginTop: 16, height: 200 }} />
+            <div className="dv-skel" style={{ height: 200 }} />
           )
         ) : (
           <>
             <div className="dv-toolrow">
-              <div className="dv-chips" role="group" aria-label="Show">
-                {FILTERS[kind]
-                  .filter(
-                    f =>
-                      !f.hideAtZero ||
-                      (s && f.count(s) > 0) ||
-                      f.key === filter,
-                  )
-                  .map(f => (
-                    <button
-                      key={f.key}
-                      type="button"
-                      className="dv-qf"
-                      aria-pressed={filter === f.key}
-                      onClick={() =>
-                        set({ filter: f.key === "all" ? null : f.key })
-                      }
-                    >
-                      {f.tone ? <span className={`dv-dot ${f.tone}`} /> : null}
-                      {f.label}
-                      {s ? <span className="n">{fmtN(f.count(s))}</span> : null}
-                    </button>
-                  ))}
-              </div>
+              <FilterChips
+                ariaLabel="Show"
+                value={filter}
+                onChange={key => set({ filter: key === "all" ? null : key })}
+                options={FILTERS[kind]
+                  .filter(f => !f.hidden || f.key === filter)
+                  .map(f => ({
+                    key: f.key,
+                    label: f.label,
+                    count: s ? f.count(s) : undefined,
+                    tone: f.tone ? TONE[f.tone] : undefined,
+                  }))}
+              />
               <div className="dv-viewctl">
-                <div className="dv-seg" role="group" aria-label="Columns">
-                  <button
-                    type="button"
-                    aria-pressed={view === "key"}
-                    onClick={() => setView("key")}
-                  >
-                    Key columns
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={view === "all"}
-                    onClick={() => setView("all")}
-                  >
-                    All {ALL_COUNT[kind]} sheet columns
-                  </button>
-                </div>
-                <div className="dv-seg" role="group" aria-label="Row size">
-                  <button
-                    type="button"
-                    aria-pressed={density === "comfortable"}
-                    onClick={() => setDensity("comfortable")}
-                  >
-                    Roomy
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={density === "compact"}
-                    onClick={() => setDensity("compact")}
-                  >
-                    Compact
-                  </button>
-                </div>
+                <FilterChips
+                  ariaLabel="Columns"
+                  className="w-auto"
+                  value={view}
+                  onChange={setView}
+                  options={[
+                    { key: "key", label: "Key columns" },
+                    {
+                      key: "all",
+                      label: `All ${ALL_COUNT[kind]} sheet columns`,
+                    },
+                  ]}
+                />
+                <FilterChips
+                  ariaLabel="Row size"
+                  className="w-auto"
+                  value={density}
+                  onChange={setDensity}
+                  options={[
+                    { key: "comfortable", label: "Roomy" },
+                    { key: "compact", label: "Compact" },
+                  ]}
+                />
               </div>
             </div>
-            {filter !== "all" || query.trim() ? (
-              <div className="dv-active-filter">
+            {/* Always one line, so changing the filter never moves the table. */}
+            <div className="dv-active-filter">
+              {filter !== "all" || query.trim() ? (
+                <>
+                  <span>
+                    Filtered to <b>{activeFilter?.label}</b>
+                    {query.trim() ? (
+                      <>
+                        {" "}
+                        and "<b>{query.trim()}</b>"
+                      </>
+                    ) : null}
+                    .{" "}
+                    {rows.total !== null
+                      ? `${fmtN(rows.total)}${allCount !== null ? ` of ${fmtN(allCount)}` : ""} rows.`
+                      : ""}
+                  </span>
+                  <button
+                    type="button"
+                    className="dv-link"
+                    onClick={() => {
+                      setSearch("");
+                      setQuery("");
+                      set({ filter: null });
+                    }}
+                  >
+                    Show all
+                  </button>
+                </>
+              ) : (
                 <span>
-                  Filtered to <b>{activeFilter?.label}</b>
-                  {query.trim() ? (
-                    <>
-                      {" "}
-                      and "<b>{query.trim()}</b>"
-                    </>
-                  ) : null}
-                  .{" "}
-                  {rows.total !== null
-                    ? `${fmtN(rows.total)}${allCount !== null ? ` of ${fmtN(allCount)}` : ""} rows.`
-                    : ""}
+                  Every {kind === "leads" ? "lead" : "appointment"} in the
+                  range, newest first.
                 </span>
-                <button
-                  type="button"
-                  className="dv-link"
-                  onClick={() => {
-                    setSearch("");
-                    setQuery("");
-                    set({ filter: null });
-                  }}
-                >
-                  Show all
-                </button>
-              </div>
-            ) : null}
-            <div className="dv-sheet">
+              )}
+            </div>
+            <div
+              className="dv-sheet"
+              data-busy={rowsBusy ? "" : undefined}
+              aria-busy={rows.loading}
+            >
+              <div className="dv-busybar" aria-hidden />
               {rows.error ? (
                 <div className="dv-alert" style={{ margin: 14 }}>
                   <span>{rows.error}</span>
@@ -755,38 +800,28 @@ export function DataViewPage() {
                 </div>
               ) : rows.rows.length ? (
                 <SheetGrid
-                  kind={kind}
-                  view={view}
-                  density={density}
+                  key={rows.key ?? "none"}
+                  kind={rows.kind}
+                  view={gridView}
+                  density={gridDensity}
                   rows={rows.rows}
                   now={now}
                   selected={selected}
                   onSelect={setSelected}
                 />
               ) : rows.loading ? (
-                <div style={{ padding: 18 }} aria-busy="true">
-                  {[70, 55, 62, 48].map(w => (
+                <div className="dv-sheet-wait">
+                  {[70, 55, 62, 48, 66, 52].map(w => (
                     <div
                       key={w}
                       className="dv-skel"
-                      style={{ width: `${w}%`, marginTop: 12 }}
+                      style={{ width: `${w}%`, marginTop: 14 }}
                     />
                   ))}
                 </div>
               ) : (
-                <div
-                  style={{ padding: "48px 18px", textAlign: "center" }}
-                  className="muted"
-                >
-                  <b
-                    style={{
-                      display: "block",
-                      color: "var(--foreground)",
-                      marginBottom: 4,
-                    }}
-                  >
-                    Nothing matches.
-                  </b>
+                <div className="dv-sheet-wait dv-empty muted">
+                  <b>Nothing matches.</b>
                   Clear the search or pick another filter. You can also choose a
                   longer date range.
                 </div>
@@ -794,7 +829,7 @@ export function DataViewPage() {
               <div className="dv-sheet-foot">
                 <span>
                   {rows.total !== null
-                    ? `Showing ${fmtN(rows.rows.length)} of ${fmtN(rows.total)}. Newest first. Times are Riyadh time.`
+                    ? `Showing ${fmtN(rows.rows.length)} of ${fmtN(rows.total)}.`
                     : "Loading rows."}
                 </span>
                 <span className="dv-legend">
@@ -802,7 +837,8 @@ export function DataViewPage() {
                   {ns ? (
                     <span>
                       <i className="ns-cell" />
-                      Not copied to the database yet ({ns} columns)
+                      Not copied to the database yet ({ns}{" "}
+                      {ns === 1 ? "column" : "columns"})
                     </span>
                   ) : null}
                 </span>
@@ -830,15 +866,8 @@ export function DataViewPage() {
         actor={actor}
         now={now}
         onClose={() => setSelected(null)}
-        toast={toast}
+        toast={text => notify(text)}
       />
-      <div
-        className={`dv-toast${toastText ? " show" : ""}`}
-        role="status"
-        aria-live="polite"
-      >
-        {toastText}
-      </div>
     </div>
   );
 }

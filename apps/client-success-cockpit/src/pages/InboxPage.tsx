@@ -4,6 +4,7 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Fold, PageHeader } from "@/components/kit";
 import { ReportIssue } from "@/components/ReportIssue";
 import { SendForReview } from "@/components/SendForReview";
+import { VideoTaskReview } from "@/components/VideoTaskReview";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useCsmSnapshot } from "@/lib/useCsmSnapshot";
 import { MeetingsPage } from "./MeetingsPage";
@@ -34,6 +35,7 @@ export function InboxPage() {
         actions={<ReportIssue page="inbox" />}
       />
 
+      <VideoTaskReview />
       {/* Client groups first; the rest folds under them, never dropped. */}
       <WhatsAppDesk desk="csm" clients={snap ? clientNames : undefined} />
 

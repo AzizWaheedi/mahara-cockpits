@@ -8,7 +8,10 @@ import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
-import { commissionText } from "@/types/ceo/commission";
+import { commissionLines } from "@/types/ceo/commission";
+
+const NO_LINE = { basis: "none" as const, rate: null };
+
 import type { Note } from "@/types/ceo/payloads";
 import type { Person, Roster } from "@/types/ceo/people";
 import { usePersonParam } from "./personPage";
@@ -268,16 +271,17 @@ export function PeopleCard({ order }: { order?: number }) {
                         )}
                       </td>
                       <td className="px-3 py-3">
-                        {commissionText(
-                          p.commission,
+                        {/* Both commission lines (A074). */}
+                        {commissionLines(
+                          [p.commission, p.commission2 ?? NO_LINE],
                           p.currency,
                           p.commissionNote,
                         ) === null ? (
                           <span className="text-muted-foreground">None</span>
                         ) : (
                           <>
-                            {commissionText(
-                              p.commission,
+                            {commissionLines(
+                              [p.commission, p.commission2 ?? NO_LINE],
                               p.currency,
                               p.commissionNote,
                             )}

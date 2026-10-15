@@ -35,6 +35,9 @@ The brand itself is Mahara Media Brand Guidelines v1.0.
   other cockpits sit at the foot of the rail.
 - The active rail row is the teal lamp (`.cockpit-nav-link`,
   `.cockpit-nav-lamp`).
+- From 1024px the media buyer and client success rails fold to their icons
+  (the button at the top of the rail, or Ctrl/Cmd + B); a folded row names
+  itself on hover, search keeps its icon, and the choice is remembered.
 - Floating things never cover content on a phone: Ask Hermes is a round
   button below `sm`; "Report a problem" lives in page headers.
 
@@ -47,6 +50,13 @@ The brand itself is Mahara Media Brand Guidelines v1.0.
   says when numbers were computed; a card speaks up only when its own
   numbers are stale.
 - Sections `space-y-6`; grids `gap-4 lg:gap-6`; the 8px grid.
+- A tab longer than about three screens gets parts and a contents bar
+  (client-success `ResultsLayout.tsx`): each part has an 18px heading with
+  its count, one 13px grey lede 4px under it, content 16px below, and 48px
+  plus a hairline between parts. The bar sticks under the shell's top bar,
+  scrolls to a part on a tap and lights the part being read. Inside a part,
+  text stays at 12, 13 or 14px; long lists show the first 3 to 5 and "Show
+  the other N".
 
 ## Cards and numbers
 
@@ -77,6 +87,14 @@ The brand itself is Mahara Media Brand Guidelines v1.0.
 - Disclosures: `<summary>` gets one CSS chevron in every browser (the
   "Disclosures" block in index.css); a summary that draws its own chevron
   uses `no-marker`.
+- Scrollbars: one slim rounded thumb in every cockpit (the scrollbar block at
+  the end of each index.css, tokens `--scrollbar` and `--scrollbar-hover`),
+  only for a mouse or trackpad. Do not set `scrollbar-width` or
+  `scrollbar-color` on a scroller: Chrome then draws its own bar instead. To
+  hide a bar, use `no-scrollbar`.
+- Sticky cells (frozen columns, sticky headers) need an opaque background.
+  `--muted` and `--accent` are see-through in dark mode, so lay a tint over
+  the card: `linear-gradient(var(--accent), var(--accent)), var(--card)`.
 
 ## Arrows and repetition
 

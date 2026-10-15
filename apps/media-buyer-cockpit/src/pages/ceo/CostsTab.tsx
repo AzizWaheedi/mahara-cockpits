@@ -14,6 +14,7 @@ import {
   COMMISSION_SHORT,
   type CommissionBasis,
   SHARE_BASES,
+  takesRate,
 } from "@/types/ceo/commission";
 import type { Sheet } from "@/types/ceo/costs";
 import {
@@ -22,6 +23,7 @@ import {
   type CostLine,
   monthlyUsd,
   payroll,
+  qualifiedIntroShare,
   totalOf,
 } from "@/types/ceo/costsModel";
 import { planName } from "./goalsKit";
@@ -96,7 +98,7 @@ const KIND_WORDS: Record<
 
 let draftId = -1;
 
-export function CostsTab({ goTab }: CeoTabProps) {
+export function CostsTab({ sections, goTab }: CeoTabProps) {
   const read = useAction(api.ceo.costs.sheet);
   const saveLine = useAction(api.ceo.costs.save);
   const removeLine = useAction(api.ceo.costs.remove);
@@ -136,9 +138,32 @@ export function CostsTab({ goTab }: CeoTabProps) {
   const software = useMemo(() => totalOf(lines, "software", fx), [lines, fx]);
   const overhead = useMemo(() => totalOf(lines, "overhead", fx), [lines, fx]);
   const marketing = useMemo(() => totalOf(lines, "marketing", fx), [lines, fx]);
+  // The setter's "$10 per showed qualified appointment" (A074) is priced on
+  // the plan's intros held times the share that qualified lately.
+  const growth = sections.growth?.payload ?? null;
+  const qualified = useMemo(
+    () => qualifiedIntroShare([growth?.windows.lastMonth, growth?.windows.mtd]),
+    [growth],
+  );
   const pay = useMemo(
-    () => (sheet ? payroll(people, sheet.projection, fx, say) : null),
-    [sheet, people, fx],
+    () =>
+      sheet
+        ? payroll(
+            people,
+            {
+              ...sheet.projection,
+              qualifiedIntroShare: qualified?.share ?? null,
+            },
+            fx,
+            say,
+          )
+        : null,
+    [sheet, people, fx, qualified],
+  );
+  const onQualified = people.some(
+    p =>
+      p.basis === "per_qualified_intro_shown" ||
+      p.basis2 === "per_qualified_intro_shown",
   );
 
   if (busy && !sheet)
@@ -244,6 +269,8 @@ export function CostsTab({ goTab }: CeoTabProps) {
       monthlyCost?: number | null;
       commissionBasis?: CommissionBasis;
       commissionRate?: number | null;
+      commission2Basis?: CommissionBasis;
+      commission2Rate?: number | null;
     },
   ) {
     setSaveError(null);
@@ -356,7 +383,7 @@ export function CostsTab({ goTab }: CeoTabProps) {
         }
       >
         {people.length ? (
-          <div className="ceo-table-scroll -mx-1 overflow-x-auto px-1">
+          <div className="ceo-table-scroll relative -mx-1 overflow-x-auto px-1">
             <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b text-xs text-muted-foreground">
@@ -364,7 +391,7 @@ export function CostsTab({ goTab }: CeoTabProps) {
                   <th className="w-32 py-2 text-right font-medium">
                     Pay a month
                   </th>
-                  <th className="w-64 py-2 pl-3 text-left font-medium">
+                  <th className="w-72 py-2 pl-3 text-left font-medium">
                     Commission
                   </th>
                   <th className="py-2 text-right font-medium">On the plan</th>
@@ -374,7 +401,6 @@ export function CostsTab({ goTab }: CeoTabProps) {
               <tbody>
                 {people.map(person => {
                   const line = pay.lines.find(l => l.id === person.id);
-                  const share = SHARE_BASES.has(person.basis);
                   return (
                     <tr key={person.id} className="border-b last:border-b-0">
                       <td className="py-1.5 pr-3">
@@ -404,58 +430,56 @@ export function CostsTab({ goTab }: CeoTabProps) {
                         />
                       </td>
                       <td className="py-1.5 pl-3">
-                        <span className="flex items-center gap-1">
-                          <AnimatedSelect
-                            aria-label={`${person.name}'s commission`}
-                            className="ceo-select-sm min-w-0 flex-1"
-                            value={person.basis}
-                            onChange={e => {
-                              const basis = e.target.value as CommissionBasis;
-                              // A share and an amount per unit are different
-                              // units: 10% is not $0.10 a demo.
-                              const rate =
-                                basis === "none" ||
-                                basis === "other" ||
-                                SHARE_BASES.has(basis) !==
-                                  SHARE_BASES.has(person.basis)
-                                  ? null
-                                  : person.rate;
+                        {/* A074: two lines, each its own rule and rate. */}
+                        <span className="grid gap-1">
+                          <CommissionLine
+                            name={person.name}
+                            which={1}
+                            basis={person.basis}
+                            rate={person.rate}
+                            currency={person.currency}
+                            onLocal={(basis, rate) =>
                               setPeople(cur =>
                                 cur.map(x =>
                                   x.id === person.id
                                     ? { ...x, basis, rate }
                                     : x,
                                 ),
-                              );
+                              )
+                            }
+                            onCommit={patch =>
                               void changePay(person.id, {
-                                commissionBasis: basis,
-                                commissionRate: rate,
-                              });
-                            }}
-                          >
-                            {COMMISSION_BASES.map(b => (
-                              <option key={b} value={b}>
-                                {COMMISSION_SHORT[b]}
-                              </option>
-                            ))}
-                          </AnimatedSelect>
-                          {person.basis !== "none" &&
-                          person.basis !== "other" ? (
-                            <RateCell
-                              share={share}
+                                ...(patch.basis !== undefined
+                                  ? { commissionBasis: patch.basis }
+                                  : {}),
+                                commissionRate: patch.rate,
+                              })
+                            }
+                          />
+                          {/* A second line only once there is a first. */}
+                          {person.basis !== "none" ||
+                          (person.basis2 ?? "none") !== "none" ? (
+                            <CommissionLine
+                              name={person.name}
+                              which={2}
+                              basis={person.basis2 ?? "none"}
+                              rate={person.rate2 ?? null}
                               currency={person.currency}
-                              rate={person.rate}
-                              label={`${person.name}'s commission rate`}
-                              onChange={rate =>
+                              onLocal={(basis, rate) =>
                                 setPeople(cur =>
                                   cur.map(x =>
-                                    x.id === person.id ? { ...x, rate } : x,
+                                    x.id === person.id
+                                      ? { ...x, basis2: basis, rate2: rate }
+                                      : x,
                                   ),
                                 )
                               }
-                              onCommit={rate =>
+                              onCommit={patch =>
                                 void changePay(person.id, {
-                                  commissionRate: rate,
+                                  ...(patch.basis !== undefined
+                                    ? { commission2Basis: patch.basis }
+                                    : {}),
+                                  commission2Rate: patch.rate,
                                 })
                               }
                             />
@@ -463,10 +487,13 @@ export function CostsTab({ goTab }: CeoTabProps) {
                         </span>
                       </td>
                       <td className="py-1.5 text-right text-xs text-muted-foreground">
-                        {person.basis === "other"
+                        {person.basis === "other" || person.basis2 === "other"
                           ? "Not priced: pick a rule"
-                          : (line?.on ??
-                            (person.basis === "none" ? "" : "No plan number"))}
+                          : line?.commission === null
+                            ? line?.on
+                              ? `${line.on}; a line has no plan number`
+                              : "No plan number"
+                            : (line?.on ?? "")}
                       </td>
                       <td className="py-1.5 text-right font-medium">
                         <Moving value={money(line?.total ?? null)} />
@@ -512,7 +539,16 @@ export function CostsTab({ goTab }: CeoTabProps) {
             <p>{`No pay set for ${pay.noPay.join(", ")}: the total is a floor until there is.`}</p>
           ) : null}
           {pay.unpriced.length ? (
-            <p>{`Commission not priced for ${pay.unpriced.join(", ")}: give each a rule and a rate.`}</p>
+            <p>{`Commission not priced for ${pay.unpriced.join(", ")}: give each a rule and a rate, and put the numbers it is paid on in the plan.`}</p>
+          ) : null}
+          {onQualified ? (
+            <p>
+              {qualified?.share != null && qualified.from && qualified.to
+                ? `Qualified intros are an estimate: the plan's intros held × the share that qualified from ${shortDate(qualified.from)} to ${shortDate(qualified.to)} (${count(qualified.qualified)} of ${count(qualified.shown)}, ${Math.round(qualified.share * 100)}%).`
+                : "Qualified intros cannot be estimated: the share of intros that qualified was not read, so that line is not priced."}{" "}
+              A fully closed deal is a closer-form deal that is not voided; the
+              plan's clients signed stand in for it.
+            </p>
           ) : null}
           {sheet.planned.labour !== null ? (
             <p>{`The plan typed ${money(sheet.planned.labour)} of payroll.`}</p>
@@ -680,6 +716,81 @@ function PayCell({
   );
 }
 
+/**
+ * One commission line on the payroll sheet: what it is paid on, then the
+ * rate in that unit. Line 2 reads "No second line" when it is off. A share
+ * and an amount per unit are different units (10% is not $0.10 a demo), so
+ * changing between them clears the rate.
+ */
+function CommissionLine({
+  name,
+  which,
+  basis,
+  rate,
+  currency,
+  onLocal,
+  onCommit,
+}: {
+  name: string;
+  which: 1 | 2;
+  basis: CommissionBasis;
+  rate: number | null;
+  currency: string;
+  onLocal: (basis: CommissionBasis, rate: number | null) => void;
+  onCommit: (patch: { basis?: CommissionBasis; rate: number | null }) => void;
+}) {
+  const share = SHARE_BASES.has(basis);
+  return (
+    <span className="flex items-center gap-1">
+      <AnimatedSelect
+        aria-label={
+          which === 1
+            ? `${name}'s commission`
+            : `${name}'s second commission line`
+        }
+        className="ceo-select-sm min-w-0 flex-1"
+        value={basis}
+        onChange={e => {
+          const next = e.target.value as CommissionBasis;
+          const kept =
+            next === "none" ||
+            next === "other" ||
+            SHARE_BASES.has(next) !== SHARE_BASES.has(basis)
+              ? null
+              : rate;
+          onLocal(next, kept);
+          onCommit({ basis: next, rate: kept });
+        }}
+      >
+        {COMMISSION_BASES.map(b => (
+          <option key={b} value={b}>
+            {which === 2 && b === "none"
+              ? "No second line"
+              : which === 2
+                ? `+ ${COMMISSION_SHORT[b]}`
+                : COMMISSION_SHORT[b]}
+          </option>
+        ))}
+      </AnimatedSelect>
+      {takesRate(basis) ? (
+        <RateCell
+          key={`${which}-${basis}`}
+          share={share}
+          currency={currency}
+          rate={rate}
+          label={
+            which === 1
+              ? `${name}'s commission rate`
+              : `${name}'s second commission rate`
+          }
+          onChange={r => onLocal(basis, r)}
+          onCommit={r => onCommit({ rate: r })}
+        />
+      ) : null}
+    </span>
+  );
+}
+
 /** A commission rate: a percent for the share rules, an amount per unit otherwise. */
 function RateCell({
   share,
@@ -814,7 +925,7 @@ function CostSheet({
         </div>
       ) : null}
       {shown.length ? (
-        <div className="ceo-table-scroll -mx-1 overflow-x-auto px-1">
+        <div className="ceo-table-scroll relative -mx-1 overflow-x-auto px-1">
           <table className="w-full min-w-[880px] text-sm">
             <thead>
               <tr className="border-b text-xs text-muted-foreground">

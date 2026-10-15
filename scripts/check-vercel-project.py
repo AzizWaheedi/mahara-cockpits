@@ -12,6 +12,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
+ROOT = Path(__file__).resolve().parent.parent
+
 
 def verify(link, expected):
     if any(link.get(key) != expected[key] for key in ("projectId", "orgId")):
@@ -72,6 +74,65 @@ def api(endpoint, expected):
     return json.loads(vercel(["api", endpoint, "--raw"], expected))
 
 
+class UnknownProduction(ValueError):
+    """Production's commit could not be read. Missing is never "nothing to compare"."""
+
+
+def commit_of(deployment):
+    meta = deployment.get("meta") or {}
+    sha = meta.get("gitCommitSha") or meta.get("githubCommitSha")
+    return sha if isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
+def git(*args):
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+
+def production_in_head(expected, head):
+    """Refuse an upload that would take production backwards or sideways.
+
+    Asked before anything is uploaded. The live bundle used to name its
+    commit, but no cockpit bundle does any more, so require-github-main.sh
+    skipped this comparison on every ship, and release_candidate runs after
+    `vercel deploy --prod` has already made the upload live (2026-10-13: both
+    ships compared the new deployment with itself). Vercel's own record of the
+    production deployment names the commit it was built from.
+    """
+    if not expected or not expected.get("origin") or not expected.get("scope"):
+        raise UnknownProduction("No production origin and team scope are configured for this directory, so its live commit cannot be read.")
+    try:
+        current = api("/v13/deployments/" + expected["origin"], expected)
+        verify_owner(current, expected)
+    except ValueError as error:
+        raise UnknownProduction(f"Could not read which commit production serves at {expected['origin']}: {error}") from None
+    sha = commit_of(current)
+    if not sha:
+        raise UnknownProduction(f"Production {current['id']} at {expected['origin']} does not name the commit it was built from.")
+    short = sha[:8]
+    if git("cat-file", "-e", sha + "^{commit}").returncode:
+        raise ValueError(
+            f"Production is {short} ({current['id']}), and this clone does not have that commit. "
+            "It was uploaded from a commit GitHub main does not have. Push it from the checkout that shipped it before deploying again: "
+            "deploying from here would replace that production with a tree that lacks it."
+        )
+    if not git("merge-base", "--is-ancestor", sha, head).returncode:
+        return f"production {current['id']} at {short} is contained in {head[:8]}"
+    # A rebase gives the same commits new names. Production built from the old
+    # name is still in HEAD when every commit it has beyond the fork point is
+    # in HEAD as the same patch: git cherry marks those "-", a missing one "+".
+    # 2026-09-23: production was 7efca15, rebased onto main as 7a7668e.
+    base = git("merge-base", sha, head).stdout.strip()
+    lacking = [line[2:] for line in git("cherry", "-v", head, sha, base).stdout.splitlines() if line.startswith("+ ")]
+    if lacking:
+        listed = "\n".join("  " + line for line in lacking)
+        raise ValueError(
+            f"Production is {short} ({current['id']}), which has {len(lacking)} commit(s) {head[:8]} does not have:\n{listed}\n"
+            "This deploy would take production backwards. Ship from current main (git fetch, then rebase onto origin/main). "
+            "To roll back on purpose, promote an earlier deployment in Vercel instead."
+        )
+    return f"production {current['id']} at {short} is in {head[:8]} under rebased names (every patch the same)"
+
+
 def html(url):
     request = Request(url + "?cockpit_release_check=" + str(time.time_ns()), headers={"Cache-Control": "no-cache"})
     with urlopen(request, timeout=30) as response:
@@ -127,10 +188,22 @@ def main():
     parser.add_argument("directory")
     parser.add_argument("--deployment")
     parser.add_argument("--promote", action="store_true", help="Apply the verified production plan; otherwise read-only")
+    parser.add_argument("--production-in-head", action="store_true", help="Read-only: refuse when production has commits HEAD lacks")
     args = parser.parse_args()
-    root = Path(__file__).resolve().parent.parent
+    root = ROOT
     directory = args.directory
     expected = json.loads((root / "config/vercel-projects.json").read_text()).get(directory)
+    if args.production_in_head:
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+        try:
+            print("Production check: " + production_in_head(expected, head))
+        except UnknownProduction as error:
+            # B: an unread production commit stops the ship; only a person
+            # who has checked production another way waves it through.
+            if os.environ.get("ALLOW_UNKNOWN_PRODUCTION") != "yes":
+                raise ValueError(f"{error}\nRefusing to ship without knowing what production serves. Check the Vercel CLI sign-in, or set ALLOW_UNKNOWN_PRODUCTION=yes once you have confirmed production is contained in {head[:8]}.") from None
+            print(f"ALLOW_UNKNOWN_PRODUCTION=yes: shipping {head[:8]} without comparing it with production. {error}")
+        return
     if expected is None:
         if args.deployment or args.promote:
             raise ValueError("No verified production project is configured for this directory.")

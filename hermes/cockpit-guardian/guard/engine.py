@@ -249,25 +249,29 @@ def _due(inc: dict[str, Any], check: Check, results: dict[str, Result], now: dat
     return True, ""
 
 
-def _worse(inc: dict[str, Any]) -> tuple[list[str], bool]:
-    """What got worse since the last message about this incident: (changes, level rose)."""
+def _worse(inc: dict[str, Any]) -> tuple[list[str], bool, bool]:
+    """What changed since the last message about this incident: (changes, level rose, broken became a warning)."""
     if "alerted_level" not in inc:
         # Alerted before the guardian kept these: start from what it reads now.
         inc["alerted_level"] = inc.get("level")
         inc["alerted_keys"] = list(inc.get("items") or [])
-        return [], False
-    changes, rose = [], False
+        return [], False, False
+    changes, rose, fell = [], False, False
     was, now_level = inc.get("alerted_level") or UNKNOWN, inc.get("level") or UNKNOWN
+    words = alerts_mod.LEVEL_WORDS
     if LEVEL_RANK.get(now_level, 0) > LEVEL_RANK.get(was, 0):
-        words = alerts_mod.LEVEL_WORDS
         changes.append(f"it went from {words.get(was, was).lower()} to {words.get(now_level, now_level).lower()}")
         rose = True
+    elif was == FAIL and now_level == WARN:
+        # Not "could not be checked": a reading that stopped answering is not better.
+        changes.append("it went from broken to warning")
+        fell = True
     new = sorted(set(inc.get("items") or []) - set(inc.get("alerted_keys") or []))
     if new:
         changes.append("newly failing: " + ", ".join(new[:8]))
     if inc.get("fix_capped") and not inc.get("alerted_cap"):
         changes.append(clean(inc.get("fix_note"), 200))
-    return changes, rose
+    return changes, rose, fell
 
 
 def _mark(inc: dict[str, Any], check: Check, state: dict[str, Any], now: datetime, *, opening: bool) -> dict[str, Any]:
@@ -320,7 +324,7 @@ def post_alerts(store: Store, checks: dict[str, Check], results: dict[str, Resul
         return False
 
     openings: list[tuple[dict[str, Any], Check]] = []
-    worse: list[tuple[dict[str, Any], Check, list[str]]] = []
+    worse: list[tuple[dict[str, Any], Check, list[str], bool]] = []
     for inc in sorted(store.open.values(), key=lambda i: SEVERITY_ORDER.get(i.get("severity"), 9)):
         check = checks.get(inc["check_id"])
         if check is None:
@@ -331,14 +335,14 @@ def post_alerts(store: Store, checks: dict[str, Check], results: dict[str, Resul
             if ok_:
                 openings.append((inc, check))
             continue
-        changes, rose = _worse(inc)
+        changes, rose, fell = _worse(inc)
         if not changes:
             continue
         urgent = (check.urgent or bool(inc.get("urgent"))) and inc.get("level") == FAIL
         ok_, why = _due(inc, check, results, now, state, skip_throttle=rose and urgent)
         inc["alert_note"] = why or None
         if ok_:
-            worse.append((inc, check, changes))
+            worse.append((inc, check, changes, fell and len(changes) == 1))
 
     singles, rest = openings[:alerts_mod.MAX_OPENINGS], openings[alerts_mod.MAX_OPENINGS:]
     for inc, check in singles:
@@ -363,8 +367,8 @@ def post_alerts(store: Store, checks: dict[str, Check], results: dict[str, Resul
                 inc["alerted_via"] = "digest"
                 marks.append((inc, check, before))
             send(text, marks, [i["id"] for i, _ in rest])
-    for inc, check, changes in worse:
-        text = alerts_mod.worse_text(inc, check, now, mode, changes)
+    for inc, check, changes, better in worse:
+        text = (alerts_mod.better_text if better else alerts_mod.worse_text)(inc, check, now, mode, changes)
         if outbox.dry_run:
             out.would_post.append(text)
             continue

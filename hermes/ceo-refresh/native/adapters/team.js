@@ -81,6 +81,29 @@ function boardText(text) {
         return "Added a card to the ads board";
     return text.replace(/ from the cockpit$/i, "");
 }
+/**
+ * How far back EOD filings are read: 180 days, so the Management tab can
+ * rebuild its EOD counts for any window the timeframe bar picks (A127,
+ * 2026-10-11). Everything else on this section still works on the last
+ * month, as before.
+ */
+export const EOD_HISTORY_DAYS = 180;
+const FILINGS_LIMIT = 5000;
+/**
+ * One person's EOD record per working day from `from` to `to`: due (not a
+ * Friday, on or after the person's first filing or seat, not paused or left),
+ * filed and late. Pure, for the tests.
+ */
+export function eodDaysOf(p, from, to, offOn) {
+    const start = p.since && p.since > from ? p.since : from;
+    const out = [];
+    for (let d = start; d <= to; d = addDays(d, 1)) {
+        const f = (p.history ?? p.days).get(d);
+        const due = !isFriday(d) && (!p.since || d >= p.since) && !offOn(p.key, d);
+        out.push({ date: d, due, filed: Boolean(f), late: Boolean(f) && !f.onTime });
+    }
+    return out;
+}
 /** Team: EOD discipline over 14 working days, activity today and a live feed. */
 export const team = {
     key: "team",
@@ -122,10 +145,12 @@ export const team = {
         bool_or(d.local_at <= d.day + time '22:00') as on_time,
         (array_agg(d.energy order by d.submitted_at desc) filter (where d.energy is not null))[1] as energy
       from d join s using (role, first), b
-      where d.day between b.today - 31 and b.today and d.first <> ''
+      where d.day between b.today - ${EOD_HISTORY_DAYS} and b.today and d.first <> ''
       group by d.role, d.first, s.since, d.day
       order by d.day desc
-      limit 1000`);
+      limit ${FILINGS_LIMIT + 1}`);
+        if (filings.length > FILINGS_LIMIT)
+            throw new Error(`EOD filings for the last ${EOD_HISTORY_DAYS} days exceed the verified read limit of ${FILINGS_LIMIT}`);
         const data = await ctx.repository.team();
         const people = new Map();
         const personFor = (role, first) => {
@@ -137,7 +162,10 @@ export const team = {
                     role,
                     first,
                     since: null,
+                    // The last month, which every live count reads; and the
+                    // whole read, which only the per-day history reads.
                     days: new Map(),
+                    history: new Map(),
                     energy: null,
                     lastAt: null,
                 };
@@ -145,15 +173,19 @@ export const team = {
             }
             return p;
         };
+        const monthFrom = addDays(today, -31);
         const addFiling = (p, f, lastAt, energy) => {
-            const prev = p.days.get(f.day);
-            p.days.set(f.day, prev
+            const prev = p.history.get(f.day);
+            const merged = prev
                 ? {
                     day: f.day,
                     at: Math.min(prev.at, f.at),
                     onTime: prev.onTime || f.onTime,
                 }
-                : f);
+                : f;
+            p.history.set(f.day, merged);
+            if (f.day >= monthFrom)
+                p.days.set(f.day, merged);
             if (!p.since || f.day < p.since)
                 p.since = f.day;
             p.lastAt = Math.max(p.lastAt ?? 0, lastAt);
@@ -522,6 +554,7 @@ export const team = {
             if (!isFriday(d))
                 workDays.push(d);
         }
+        const historyFrom = addDays(today, -(EOD_HISTORY_DAYS - 1));
         const rows = [...people.values()].map((p) => {
             // Due: working days from the person's first filing or seat, minus the
             // days they were paused or had left.
@@ -551,6 +584,9 @@ export const team = {
                     late,
                     missed: due.length - filed.length,
                 },
+                // Every day from the person's first filing or seat (at most 180
+                // days back) to yesterday, for any window the tab picks.
+                eodDays: eodDaysOf(p, historyFrom, yesterday, offOn),
                 lastActiveAt: lastActiveAt || null,
                 actionsToday: actionsToday.get(p.key) ?? 0,
                 energy: p.energy?.value ?? null,
@@ -657,6 +693,8 @@ export const team = {
         const payload = {
             people: activeRows,
             inactive: inactiveRows,
+            // The first day `eodDays` can cover; a window starting earlier counts from here.
+            eodFrom: historyFrom,
             feed: unique
                 .slice(0, 60)
                 .map(({ personKey: _personKey, ...item }) => item),

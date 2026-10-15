@@ -1,4 +1,13 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  type ReactNode,
+  type RefObject,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { flushSync } from "react-dom";
 import {
   APPT_ALL,
   type ApptRow,
@@ -29,7 +38,8 @@ type Col = {
   group?: string;
   cls?: string;
   frozen?: boolean;
-  notSynced?: boolean;
+  /** Set for a column the database does not have: why it is empty. */
+  notSynced?: string;
   help: Help;
   render: (row: Row, now: number) => ReactNode;
 };
@@ -106,8 +116,8 @@ const LEAD_KEY: Col[] = [
     width: 160,
     help: [
       "The Mahara client this lead belongs to.",
-      "ghl_clients.client_name, matched by GHL location",
-      "Never empty. A location that is not a client shows its id.",
+      "ghl_clients.client_name, else the cockpit's client list, else the GHL account name",
+      "Never empty. An account with no name anywhere shows as Unknown GHL account and its id.",
     ],
     render: r => <Two a={r.client} />,
   },
@@ -241,8 +251,8 @@ const APPT_KEY: Col[] = [
     width: 160,
     help: [
       "The Mahara client.",
-      "ghl_clients.client_name, matched by GHL location",
-      "Never empty.",
+      "ghl_clients.client_name, else the cockpit's client list, else the GHL account name",
+      "Never empty. An account with no name anywhere shows as Unknown GHL account and its id.",
     ],
     render: r => <Two a={r.client} />,
   },
@@ -329,22 +339,32 @@ function sheetCols<T>(list: SheetColumn<T>[]): Col[] {
     group: c.group,
     cls: c.cls,
     frozen: i === 0,
-    notSynced: !c.get,
+    notSynced: c.get
+      ? undefined
+      : (c.why ??
+        "Not stored in the database. It may still have a value in GHL."),
     help: c.get
       ? [
           `The Master Dashboard column "${c.label}".`,
           c.source,
-          "— means GHL has no value for this row.",
+          c.empty ?? "— means GHL has no value for this row.",
         ]
       : [
           `The Master Dashboard column "${c.label}".`,
-          "Not stored in the database yet",
-          "Striped cells mean the field is not synced. It may still have a value in GHL.",
+          "Not stored in the database",
+          `Always striped. ${c.why ?? "It may still have a value in GHL."}`,
         ],
     render: (row: Row) => {
       if (!c.get) return null;
       const value = c.get(row as T);
-      return value === null ? NA : value;
+      if (value !== null) return value;
+      return c.empty ? (
+        <span className="na" title={c.empty}>
+          —
+        </span>
+      ) : (
+        NA
+      );
     },
   }));
 }
@@ -355,7 +375,140 @@ export const ALL_COUNT = {
   appointments: APPT_ALL.length,
 };
 
-export function SheetGrid({
+// Only the rows in the sheet window are drawn, plus a margin above and below
+// (Muhammed, 2026-10-12: switching columns froze the laptop). 150 rows of 22
+// columns were 3,300 cells for 14 visible rows. The window moves in steps of
+// STEP rows, so scrolling re-renders only when a new step comes into view.
+const OVERSCAN = 10;
+const STEP = 5;
+const ROW_H = { comfortable: 57, compact: 39 } as const;
+
+function useRowWindow(
+  ref: RefObject<HTMLDivElement | null>,
+  count: number,
+  density: "comfortable" | "compact",
+  view: "key" | "all",
+) {
+  const [win, setWin] = useState<{
+    first: number;
+    rowH: number;
+    viewH: number;
+  }>({
+    first: 0,
+    rowH: ROW_H[density],
+    viewH: 900,
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: density and view change the row and header heights
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Heights are read once per size change; a scroll only reads scrollTop,
+    // so it can place the window at once, even after a jump to the end.
+    let rowH: number = ROW_H[density];
+    let head = 0;
+    const place = () => {
+      const top = Math.max(0, el.scrollTop - head);
+      const first = Math.floor(top / rowH / STEP) * STEP;
+      const viewH = el.clientHeight;
+      setWin(w =>
+        w.first === first && w.rowH === rowH && w.viewH === viewH
+          ? w
+          : { first, rowH, viewH },
+      );
+    };
+    const measure = () => {
+      const row = el.querySelector<HTMLElement>("tbody tr[aria-rowindex]");
+      rowH = row?.getBoundingClientRect().height || ROW_H[density];
+      head = el.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+      place();
+    };
+    measure();
+    // The new rows are drawn before the frame that shows the scroll, so a
+    // fast scroll never shows a blank strip (TanStack Virtual does the same).
+    const onScroll = () => flushSync(place);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const size = new ResizeObserver(measure);
+    size.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      size.disconnect();
+    };
+  }, [ref, density, view]);
+  // Never start past the last screenful: switching to Compact at the end of
+  // the sheet leaves a scroll position the shorter rows do not reach.
+  const fit = Math.ceil(win.viewH / win.rowH);
+  const first = Math.min(
+    win.first,
+    Math.floor(Math.max(0, count - fit) / STEP) * STEP,
+  );
+  const start = Math.max(0, first - OVERSCAN);
+  const end = Math.min(count, first + fit + STEP + OVERSCAN);
+  return {
+    start,
+    end,
+    above: start * win.rowH,
+    below: Math.max(0, count - end) * win.rowH,
+  };
+}
+
+const SheetRow = memo(function SheetRow({
+  row,
+  index,
+  cols,
+  now,
+  selected,
+  onSelect,
+}: {
+  row: Row;
+  index: number;
+  cols: Col[];
+  now: number;
+  selected: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <tr
+      aria-rowindex={index}
+      className={selected ? "sel" : undefined}
+      onClick={() => onSelect(row.id)}
+      onKeyDown={e => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(row.id);
+        }
+      }}
+      tabIndex={0}
+      aria-selected={selected}
+    >
+      {cols.map(c => (
+        <td
+          key={c.label}
+          className={
+            [c.frozen ? "fz" : "", c.cls ?? "", c.notSynced ? "ns-cell" : ""]
+              .join(" ")
+              .trim() || undefined
+          }
+          title={c.notSynced}
+        >
+          {c.notSynced ? null : c.render(row, now)}
+        </td>
+      ))}
+    </tr>
+  );
+});
+
+function Spacer({ height, span }: { height: number; span: number }) {
+  if (height <= 0) return null;
+  return (
+    <tr className="dv-spacer" aria-hidden>
+      <td colSpan={span} style={{ height }} />
+    </tr>
+  );
+}
+
+// Memoized: a change elsewhere on the page (the summary, the side panel, the
+// pill moving) does not redraw the sheet.
+export const SheetGrid = memo(function SheetGrid({
   kind,
   view,
   density,
@@ -428,9 +581,24 @@ export function SheetGrid({
   };
   const helpCol = help ? cols[help.i] : null;
 
+  const wrap = useRef<HTMLDivElement>(null);
+  const { start, end, above, below } = useRowWindow(
+    wrap,
+    rows.length,
+    density,
+    view,
+  );
+  const headRows = all ? 2 : 1;
+
   return (
-    <div className={`dv-gridwrap ${all ? "allcols" : ""} ${density}`}>
-      <table style={{ width: `max(${width}px, 100%)` }}>
+    <div
+      ref={wrap}
+      className={`dv-gridwrap ${all ? "allcols" : ""} ${density}`}
+    >
+      <table
+        style={{ width: `max(${width}px, 100%)` }}
+        aria-rowcount={rows.length + headRows}
+      >
         <colgroup>
           {cols.map(c => (
             <col key={c.label} style={{ width: c.width }} />
@@ -438,7 +606,7 @@ export function SheetGrid({
         </colgroup>
         <thead>
           {all ? (
-            <tr className="grp">
+            <tr className="grp" aria-rowindex={1}>
               {groups.map((g, gi) =>
                 gi === 0 ? (
                   [
@@ -457,11 +625,11 @@ export function SheetGrid({
               )}
             </tr>
           ) : null}
-          <tr className="cols">
+          <tr className="cols" aria-rowindex={headRows}>
             {cols.map((c, i) => (
               <th key={c.label} className={c.frozen ? "fz" : undefined}>
                 <span className="dv-th">
-                  <span>{c.label}</span>
+                  <span title={c.label}>{c.label}</span>
                   <button
                     type="button"
                     className="dv-colhelp"
@@ -480,38 +648,19 @@ export function SheetGrid({
           </tr>
         </thead>
         <tbody>
-          {rows.map(r => (
-            <tr
+          <Spacer height={above} span={cols.length} />
+          {rows.slice(start, end).map((r, i) => (
+            <SheetRow
               key={r.id}
-              className={selected === r.id ? "sel" : undefined}
-              onClick={() => onSelect(r.id)}
-              onKeyDown={e => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  onSelect(r.id);
-                }
-              }}
-              tabIndex={0}
-              aria-selected={selected === r.id}
-            >
-              {cols.map(c => (
-                <td
-                  key={c.label}
-                  className={
-                    [
-                      c.frozen ? "fz" : "",
-                      c.cls ?? "",
-                      c.notSynced ? "ns-cell" : "",
-                    ]
-                      .join(" ")
-                      .trim() || undefined
-                  }
-                >
-                  {c.notSynced ? null : c.render(r, now)}
-                </td>
-              ))}
-            </tr>
+              row={r}
+              index={headRows + start + i + 1}
+              cols={cols}
+              now={now}
+              selected={selected === r.id}
+              onSelect={onSelect}
+            />
           ))}
+          <Spacer height={below} span={cols.length} />
         </tbody>
       </table>
       {help && helpCol ? (
@@ -543,7 +692,7 @@ export function SheetGrid({
       ) : null}
     </div>
   );
-}
+});
 
 /** How many sheet columns are not synced, for the legend. */
 export const notSyncedCount = (kind: Kind, view: "key" | "all") =>

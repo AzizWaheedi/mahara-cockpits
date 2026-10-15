@@ -16,6 +16,31 @@ import type {
   Ymd,
 } from "../types/ceo/hoursContract";
 import { computeMonth, hashMonth } from "../types/ceo/hoursModel";
+import {
+  type ShotVerdict,
+  type SlackState,
+  WATCH_BOUNDS,
+  WATCH_CHANNEL,
+  WATCH_DEFAULTS,
+  WATCH_FIELDS,
+  WATCH_MENTION_USER,
+  type WatchAiProvider,
+  type WatchBoard,
+  type WatchIncident,
+  type WatchKeyResult,
+  type WatchKind,
+  type WatchLeave,
+  type WatchNowResult,
+  type WatchNumberKey,
+  type WatchOffReason,
+  type WatchPerson,
+  type WatchRecent,
+  type WatchSettings,
+  type WatchShot,
+  type WatchSlot,
+  type WatchSources,
+  type WatchState,
+} from "../types/ceo/hoursWatch";
 
 /**
  * Hours, leave and pay: every CEO action in design section 6, behind
@@ -123,7 +148,7 @@ async function edgeError(
 /** cockpit-hours-api: JWT on, the CEO verified on the server. Body `{op, ...args}`. */
 async function edge(
   client: SupabaseClient | null,
-  op: "saveKey" | "syncNow" | "approveMany",
+  op: "saveKey" | "syncNow" | "approveMany" | "watchNow" | "watchKey",
   args: Row,
   fallback: string,
 ): Promise<Row> {
@@ -587,6 +612,583 @@ export function markHoursPaid(
   );
 }
 
+/**
+ * The morning Slack note to the CEO (A372, 2026-10-11): who is required to
+ * track and did not, yesterday. It ships off; this is the switch and its
+ * last run (cockpit_ceo_hours_nudge_get / _set, CEO-gated, the set audited).
+ */
+export type NudgeState = {
+  on: boolean;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  last: {
+    runAt: string | null;
+    okAt: string | null;
+    ok: boolean | null;
+    note: string | null;
+    listed: number | null;
+  } | null;
+};
+
+export function parseNudge(raw: unknown): NudgeState {
+  if (!isObject(raw) || typeof raw.on !== "boolean")
+    throw new Error("The morning note setting was not confirmed.");
+  const last = isObject(raw.last) ? raw.last : null;
+  const text = (v: unknown) => (typeof v === "string" && v ? v : null);
+  return {
+    on: raw.on,
+    updatedAt: text(raw.updatedAt),
+    updatedBy: text(raw.updatedBy),
+    last: last
+      ? {
+          runAt: text(last.runAt),
+          okAt: text(last.okAt),
+          ok: typeof last.ok === "boolean" ? last.ok : null,
+          note: text(last.note),
+          // A run with no count (rows_seen null) is not "0 listed".
+          listed:
+            last.listed !== null &&
+            last.listed !== undefined &&
+            last.listed !== "" &&
+            Number.isFinite(Number(last.listed))
+              ? Number(last.listed)
+              : null,
+        }
+      : null,
+  };
+}
+
+export async function readNudge(
+  client: SupabaseClient | null,
+): Promise<NudgeState> {
+  return parseNudge(
+    await rpc(
+      client,
+      "cockpit_ceo_hours_nudge_get",
+      {},
+      "The morning note setting could not be read.",
+    ),
+  );
+}
+
+export async function setNudge(
+  client: SupabaseClient | null,
+  args: { on: boolean },
+): Promise<NudgeState> {
+  if (typeof args?.on !== "boolean") throw new Error("Choose on or off.");
+  return parseNudge(
+    await rpc(
+      client,
+      "cockpit_ceo_hours_nudge_set",
+      { p_on: args.on },
+      "The morning note was not switched.",
+    ),
+  );
+}
+
+// --- Hubstaff watch (docs/hours-watch/SPEC.md, the CEO 2026-10-13) ---
+
+const WATCH_STATES: WatchState[] = [
+  "tracking",
+  "not_tracking",
+  "on_break",
+  "idle",
+  "not_work",
+  "off_shift",
+  "on_leave",
+  "holiday",
+  "no_account",
+  "cant_tell",
+];
+const WATCH_KINDS: WatchKind[] = ["not_tracking", "not_work", "idle", "source"];
+const OFF_REASONS: WatchOffReason[] = [
+  "day_off",
+  "holiday",
+  "leave",
+  "not_employed",
+  "paused",
+  "no_schedule",
+];
+const VERDICTS: ShotVerdict[] = [
+  "pending",
+  "work",
+  "not_work",
+  "unclear",
+  "error",
+  "skipped",
+];
+const SLACK_STATES: SlackState[] = [
+  "pending",
+  "sending",
+  "posted",
+  "failed",
+  "unknown",
+  "muted",
+];
+const AI_STATES = ["connected", "missing", "refused", "failing"] as const;
+const AI_PROVIDERS: WatchAiProvider[] = ["google_ai", "openai"];
+const WATCH_BUCKET = "cockpit-hours-watch";
+const WATCH_UNREAD =
+  "Hubstaff watch was not confirmed by the server. Open the page again in a minute.";
+
+const strOrNull = (v: unknown) => (typeof v === "string" && v ? v : null);
+const numOrNull = (v: unknown) =>
+  v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v))
+    ? Number(v)
+    : null;
+/** A time the screen can place; anything else is no time, never "now". */
+const isoOrNull = (v: unknown) =>
+  typeof v === "string" && Number.isFinite(Date.parse(v)) ? v : null;
+const nameOrNull = (v: unknown) =>
+  typeof v === "string" && v.trim() ? v.trim() : null;
+const boolOrNull = (v: unknown) => (typeof v === "boolean" ? v : null);
+const posId = (v: unknown) =>
+  Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : null;
+const objectOf = (v: unknown): Row => (isObject(v) ? v : {});
+
+export function parseWatchSettings(raw: unknown): WatchSettings {
+  if (
+    !isObject(raw) ||
+    typeof raw.on !== "boolean" ||
+    typeof raw.shots !== "boolean" ||
+    typeof raw.channel !== "string"
+  )
+    throw new Error("The watch settings were not confirmed by the server.");
+  const out = {
+    on: raw.on,
+    shots: raw.shots,
+    channel: raw.channel,
+    channelName: typeof raw.channelName === "string" ? raw.channelName : "",
+    // Added in the final round: a row saved before it keeps the seeded default.
+    mention:
+      typeof raw.mention === "boolean" ? raw.mention : WATCH_DEFAULTS.mention,
+    mentionUser:
+      typeof raw.mentionUser === "string" &&
+      WATCH_MENTION_USER.test(raw.mentionUser)
+        ? raw.mentionUser
+        : WATCH_DEFAULTS.mentionUser,
+  } as WatchSettings;
+  for (const key of Object.keys(WATCH_BOUNDS) as WatchNumberKey[]) {
+    const v = numOrNull(raw[key]);
+    if (v === null)
+      throw new Error("The watch settings were not confirmed by the server.");
+    out[key] = v;
+  }
+  return out;
+}
+
+function parseSources(raw: unknown): WatchSources {
+  const hub = isObject(raw) ? raw.hubstaff : null;
+  const ai = isObject(raw) ? raw.ai : null;
+  const slack = isObject(raw) ? raw.slack : null;
+  if (
+    !isObject(hub) ||
+    typeof hub.state !== "string" ||
+    !isObject(ai) ||
+    !AI_STATES.includes(ai.state as never) ||
+    !isObject(slack) ||
+    !["ok", "failing", "unknown"].includes(String(slack.state))
+  )
+    throw new Error(WATCH_UNREAD);
+  return {
+    hubstaff: { state: hub.state, note: strOrNull(hub.note) },
+    ai: {
+      state: ai.state as WatchSources["ai"]["state"],
+      provider: AI_PROVIDERS.includes(ai.provider as WatchAiProvider)
+        ? (ai.provider as WatchAiProvider)
+        : null,
+      note: strOrNull(ai.note),
+    },
+    slack: {
+      state: slack.state as WatchSources["slack"]["state"],
+      note: strOrNull(slack.note),
+    },
+  };
+}
+
+function parseSlot(raw: unknown): WatchSlot | null {
+  if (!isObject(raw) || typeof raw.start !== "string") return null;
+  const trackedS = numOrNull(raw.trackedS);
+  if (trackedS === null || Number.isNaN(Date.parse(raw.start))) return null;
+  return {
+    start: raw.start,
+    trackedS,
+    overallS: numOrNull(raw.overallS) ?? 0,
+    inputTrackedS: numOrNull(raw.inputTrackedS),
+    idle: raw.idle === true,
+  };
+}
+
+function parseShot(raw: unknown): WatchShot | null {
+  if (!isObject(raw) || typeof raw.at !== "string") return null;
+  const shotId = posId(raw.id);
+  if (shotId === null || !VERDICTS.includes(raw.verdict as ShotVerdict))
+    return null;
+  return {
+    id: shotId,
+    at: raw.at,
+    verdict: raw.verdict as ShotVerdict,
+    label: strOrNull(raw.label),
+    confidence: numOrNull(raw.confidence),
+    thumbPath: strOrNull(raw.thumbPath),
+    fullPath: strOrNull(raw.fullPath),
+  };
+}
+
+/** A part-day leave window; one the screen cannot place is dropped. */
+function parseLeave(raw: unknown): WatchLeave | null {
+  if (!isObject(raw)) return null;
+  const start = isoOrNull(raw.start);
+  const end = isoOrNull(raw.end);
+  if (!start || !end || Date.parse(end) <= Date.parse(start)) return null;
+  return { start, end };
+}
+
+function parsePerson(raw: unknown): WatchPerson {
+  const personId = isObject(raw) ? posId(raw.personId) : null;
+  if (
+    !isObject(raw) ||
+    personId === null ||
+    typeof raw.name !== "string" ||
+    !WATCH_STATES.includes(raw.state as WatchState)
+  )
+    throw new Error(WATCH_UNREAD);
+  return {
+    personId,
+    name: raw.name,
+    role: strOrNull(raw.role),
+    state: raw.state as WatchState,
+    since: strOrNull(raw.since),
+    shiftStart: strOrNull(raw.shiftStart),
+    shiftEnd: strOrNull(raw.shiftEnd),
+    online: boolOrNull(raw.online),
+    lastActivityAt: strOrNull(raw.lastActivityAt),
+    trackedTodayS: numOrNull(raw.trackedTodayS),
+    activePct30m: numOrNull(raw.activePct30m),
+    screenshotsOn: boolOrNull(raw.screenshotsOn),
+    offReason: OFF_REASONS.includes(raw.offReason as WatchOffReason)
+      ? (raw.offReason as WatchOffReason)
+      : null,
+    readAt: isoOrNull(raw.readAt),
+    onBreak: raw.onBreak === true || raw.state === "on_break",
+    leave: (Array.isArray(raw.leave) ? raw.leave : [])
+      .map(parseLeave)
+      .filter((l): l is WatchLeave => l !== null),
+    slots: (Array.isArray(raw.slots) ? raw.slots : [])
+      .map(parseSlot)
+      .filter((s): s is WatchSlot => s !== null),
+    shots: (Array.isArray(raw.shots) ? raw.shots : [])
+      .map(parseShot)
+      .filter((s): s is WatchShot => s !== null),
+  };
+}
+
+function parseIncident(raw: unknown): WatchIncident {
+  const incidentId = isObject(raw) ? posId(raw.id) : null;
+  if (
+    !isObject(raw) ||
+    incidentId === null ||
+    !WATCH_KINDS.includes(raw.kind as WatchKind) ||
+    typeof raw.openedAt !== "string" ||
+    !SLACK_STATES.includes(raw.slackState as SlackState)
+  )
+    throw new Error(WATCH_UNREAD);
+  return {
+    id: incidentId,
+    personId: posId(raw.personId),
+    name: nameOrNull(raw.name),
+    kind: raw.kind as WatchKind,
+    openedAt: raw.openedAt,
+    lastSeenAt: strOrNull(raw.lastSeenAt),
+    detail: objectOf(raw.detail),
+    slackState: raw.slackState as SlackState,
+    slackError: strOrNull(raw.slackError),
+    reviewedAt: strOrNull(raw.reviewedAt),
+  };
+}
+
+function parseRecent(raw: unknown): WatchRecent {
+  const incidentId = isObject(raw) ? posId(raw.id) : null;
+  if (
+    !isObject(raw) ||
+    incidentId === null ||
+    !WATCH_KINDS.includes(raw.kind as WatchKind) ||
+    typeof raw.openedAt !== "string" ||
+    typeof raw.closedAt !== "string"
+  )
+    throw new Error(WATCH_UNREAD);
+  return {
+    id: incidentId,
+    personId: posId(raw.personId),
+    name: nameOrNull(raw.name),
+    kind: raw.kind as WatchKind,
+    openedAt: raw.openedAt,
+    closedAt: raw.closedAt,
+    closeReason: strOrNull(raw.closeReason),
+    detail: objectOf(raw.detail),
+    reviewedAt: strOrNull(raw.reviewedAt),
+  };
+}
+
+/** The whole card's payload. A shape the screen cannot trust is refused, never guessed. */
+export function parseWatchBoard(raw: unknown): WatchBoard {
+  if (
+    !isObject(raw) ||
+    typeof raw.now !== "string" ||
+    typeof raw.cronOn !== "boolean" ||
+    !Array.isArray(raw.people) ||
+    !Array.isArray(raw.open) ||
+    !Array.isArray(raw.recent)
+  )
+    throw new Error(WATCH_UNREAD);
+  // A run row without a time or an outcome is no run to show, not a failure.
+  const last =
+    isObject(raw.lastRun) &&
+    typeof raw.lastRun.at === "string" &&
+    typeof raw.lastRun.ok === "boolean"
+      ? raw.lastRun
+      : null;
+  return {
+    settings: parseWatchSettings(raw.settings),
+    sources: parseSources(raw.sources),
+    lastRun: last
+      ? {
+          at: String(last.at),
+          ok: last.ok === true,
+          note: strOrNull(last.note),
+        }
+      : null,
+    cronOn: raw.cronOn,
+    now: raw.now,
+    people: raw.people.map(parsePerson),
+    open: raw.open.map(parseIncident),
+    recent: raw.recent.map(parseRecent),
+  };
+}
+
+/** The answer to a settings change: `{ok: true, settings?}` or the settings themselves. */
+export function parseWatchSet(raw: unknown): {
+  ok: true;
+  settings: WatchSettings | null;
+} {
+  if (isObject(raw) && raw.ok === true)
+    return {
+      ok: true,
+      settings: isObject(raw.settings)
+        ? parseWatchSettings(raw.settings)
+        : null,
+    };
+  if (isObject(raw) && typeof raw.on === "boolean")
+    return { ok: true, settings: parseWatchSettings(raw) };
+  throw new Error("The change was not confirmed by the server.");
+}
+
+/** The answer to Mark reviewed: `{ok: true}`, with the time when the server sends it. */
+export function parseWatchReview(raw: unknown): {
+  ok: true;
+  reviewedAt: string | null;
+} {
+  if (isObject(raw) && (raw.ok === true || typeof raw.reviewedAt === "string"))
+    return { ok: true, reviewedAt: strOrNull(raw.reviewedAt) };
+  throw new Error("The review was not confirmed by the server.");
+}
+
+export function parseWatchNow(raw: unknown): WatchNowResult {
+  if (isObject(raw) && raw.ok === true) return { ok: true };
+  if (isObject(raw) && raw.busy === true)
+    return { ok: false, busy: true, since: strOrNull(raw.since) };
+  throw new Error("The check was not confirmed by the server.");
+}
+
+export function parseWatchKey(raw: unknown): WatchKeyResult {
+  if (!isObject(raw) || typeof raw.ok !== "boolean")
+    throw new Error("The key was not confirmed by the server.");
+  const state = AI_STATES.includes(raw.state as never)
+    ? (raw.state as WatchSources["ai"]["state"])
+    : null;
+  const said = strOrNull(raw.text);
+  if (raw.ok === true)
+    return {
+      ok: true,
+      state: state ?? "connected",
+      text: said ?? "Saved and connected. The screenshot check is on.",
+    };
+  return {
+    ok: false,
+    state,
+    text: said ?? "The key was refused. Nothing was changed.",
+  };
+}
+
+/** A settings patch, checked against the server's bounds before it is sent. */
+export function checkWatchPatch(patch: unknown): Partial<WatchSettings> {
+  if (!isObject(patch)) throw new Error("Change a setting first.");
+  const out: Row = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    if (key === "on" || key === "shots" || key === "mention") {
+      if (typeof value !== "boolean") throw new Error("Choose on or off.");
+      out[key] = value;
+    } else if (key === "channel") {
+      const v = String(value ?? "").trim();
+      if (!WATCH_CHANNEL.test(v))
+        throw new Error(
+          "The Slack channel id starts with C or G and has 9 to 13 capitals and digits, like C0B5TL9H370.",
+        );
+      out[key] = v;
+    } else if (key === "mentionUser") {
+      const v = String(value ?? "").trim();
+      if (!WATCH_MENTION_USER.test(v))
+        throw new Error(
+          "The Slack user id starts with U or W and has 9 to 13 capitals and digits, like U09305KE2KS.",
+        );
+      out[key] = v;
+    } else if (key === "channelName") {
+      const v = String(value ?? "")
+        .trim()
+        .replace(/^#/, "");
+      if (!/^[a-z0-9][a-z0-9_-]{0,79}$/.test(v))
+        throw new Error(
+          "The channel name is lower case, without spaces, like team-management.",
+        );
+      out[key] = v;
+    } else if (key in WATCH_BOUNDS) {
+      const k = key as WatchNumberKey;
+      const { min, max } = WATCH_BOUNDS[k];
+      const v = Number(value);
+      if (
+        typeof value !== "number" ||
+        !Number.isFinite(v) ||
+        v < min ||
+        v > max
+      )
+        throw new Error(watchBoundsText(k));
+      out[k] = v;
+    } else {
+      throw new Error("That is not a watch setting. Nothing was changed.");
+    }
+  }
+  if (!Object.keys(out).length) throw new Error("Change a setting first.");
+  return out as Partial<WatchSettings>;
+}
+
+/** "Grace after the shift starts: choose 0 to 120 minutes." */
+export function watchBoundsText(key: WatchNumberKey): string {
+  const { min, max } = WATCH_BOUNDS[key];
+  const { label, unit } = WATCH_FIELDS[key];
+  if (key === "minConfidence")
+    return `${label}: choose ${Math.round(min * 100)}% to ${Math.round(max * 100)}%.`;
+  if (unit === "percent") return `${label}: choose ${min}% to ${max}%.`;
+  return `${label}: choose ${min} to ${max} ${unit}.`;
+}
+
+export async function readWatchBoard(
+  client: SupabaseClient | null,
+): Promise<WatchBoard> {
+  return parseWatchBoard(
+    await rpc(
+      client,
+      "cockpit_ceo_hours_watch_board",
+      {},
+      "Hubstaff watch could not be read.",
+    ),
+  );
+}
+
+export async function setWatch(
+  client: SupabaseClient | null,
+  args: Partial<WatchSettings>,
+): Promise<{ ok: true; settings: WatchSettings | null }> {
+  const p = checkWatchPatch(args);
+  return parseWatchSet(
+    await rpc(
+      client,
+      "cockpit_ceo_hours_watch_set",
+      { p },
+      "The watch settings were not saved.",
+    ),
+  );
+}
+
+export async function reviewWatch(
+  client: SupabaseClient | null,
+  args: { incidentId: number; note?: string },
+): Promise<{ ok: true; reviewedAt: string | null }> {
+  if (posId(args?.incidentId) === null)
+    throw new Error("Choose an alert first.");
+  const note = String(args.note ?? "").trim();
+  if (note.length > 300) throw new Error("Keep the note to 300 characters.");
+  return parseWatchReview(
+    await rpc(
+      client,
+      "cockpit_ceo_hours_watch_review",
+      {
+        p: note
+          ? { incidentId: args.incidentId, note }
+          : { incidentId: args.incidentId },
+      },
+      "The alert was not marked reviewed.",
+    ),
+  );
+}
+
+export async function watchNow(
+  client: SupabaseClient | null,
+): Promise<WatchNowResult> {
+  return parseWatchNow(
+    await edge(
+      client,
+      "watchNow",
+      {},
+      "The check did not start. Try again in a minute.",
+    ),
+  );
+}
+
+export async function saveWatchKey(
+  client: SupabaseClient | null,
+  args: { provider: WatchAiProvider; key: string },
+): Promise<WatchKeyResult> {
+  if (!AI_PROVIDERS.includes(args?.provider))
+    throw new Error("Choose Google AI or OpenAI.");
+  const key = String(args.key ?? "").trim();
+  if (key.length < 10 || key.length > 400 || /\s/.test(key))
+    throw new Error(
+      "That doesn't look like a key: it should be one line, 10 to 400 characters, with no spaces.",
+    );
+  return parseWatchKey(
+    await edge(
+      client,
+      "watchKey",
+      { provider: args.provider, key },
+      "The key was not saved. Nothing was changed.",
+    ),
+  );
+}
+
+/**
+ * A 10-minute link to one stored screenshot. The bucket is private and its
+ * read policy checks the CEO and that the path belongs to a screenshot row,
+ * so a path from anywhere else signs nothing.
+ */
+export async function watchShotUrl(
+  client: SupabaseClient | null,
+  args: { path: string },
+): Promise<{ url: string }> {
+  if (!client) throw new Error("Sign in before reading or changing hours.");
+  const path = String(args?.path ?? "");
+  if (!path || path.length > 300 || path.includes("..") || path.startsWith("/"))
+    throw new Error("That screenshot is not one the cockpit keeps.");
+  const { data, error } = await client.storage
+    .from(WATCH_BUCKET)
+    .createSignedUrl(path, 600);
+  if (error || !data?.signedUrl)
+    throw new Error(
+      "The screenshot could not be opened. Stored screenshots are kept 90 days.",
+    );
+  return { url: data.signedUrl };
+}
+
 /** The router for `api.ceo.hours.<op>` (cockpitApi.ts). Refusals come back as rejections. */
 export async function ceoHoursAction(
   client: SupabaseClient | null,
@@ -632,6 +1234,22 @@ export async function ceoHoursAction(
       return withdrawHoursApproval(client, args);
     case "markPaid":
       return markHoursPaid(client, args);
+    case "nudge":
+      return readNudge(client);
+    case "setNudge":
+      return setNudge(client, args);
+    case "watchBoard":
+      return readWatchBoard(client);
+    case "watchSet":
+      return setWatch(client, args);
+    case "watchReview":
+      return reviewWatch(client, args);
+    case "watchNow":
+      return watchNow(client);
+    case "watchKey":
+      return saveWatchKey(client, args);
+    case "watchShotUrl":
+      return watchShotUrl(client, args);
     default:
       throw new Error(`Unknown hours operation: ${op}`);
   }

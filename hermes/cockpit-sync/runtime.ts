@@ -27,5 +27,5 @@ export async function allAdAccounts(){
  return [...accounts.values()];
 }
 // Explicit route names, not a remote generated API proxy. Unknown contracts fail closed.
-const sync=['stagedInput','onboardingClients','preLaunchClients','recentManualChanges','resolveOnboardingAccounts','storeLaunchWatch','storeOnboardings','appendLaunchWatch','store','syncDailyCampaign','pruneDaily','clearBookings','storeGrain'];
+const sync=['stagedInput','onboardingClients','preLaunchClients','recentManualChanges','adHistory','resolveOnboardingAccounts','storeLaunchWatch','storeOnboardings','appendLaunchWatch','store','syncDailyCampaign','pruneDaily','clearBookings','storeGrain'];
 export const internal:any={sync:Object.fromEntries(sync.map(n=>[n,`sync.${n}`])),board:{storeBoardCards:'board.storeBoardCards'},market:{archiveWinners:'market.archiveWinners'},fanout:{runFanout:'fanout.runFanout'},previews:{captureStills:'previews.captureStills'}};

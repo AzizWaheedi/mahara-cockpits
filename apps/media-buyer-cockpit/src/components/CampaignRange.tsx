@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import { bookingCostCell, bookingCostTone } from "@/lib/booking-cost";
+import { bookingCostCell } from "@/lib/booking-cost";
 import { api, useQuery } from "@/lib/cockpitApi";
-import { CPB_GATE, CPL_GATE } from "@/lib/kpi";
+import { costText, cpbTone, cplTone } from "@/lib/costTone";
 import type { Range } from "@/lib/range";
 import { kuwaitDay, rangeDays } from "@/lib/range";
 import { RangePicker } from "./RangePicker";
@@ -200,13 +200,7 @@ export function CampaignRange({
             <span>
               <span className="text-muted-foreground">CPL </span>
               <span
-                className={`font-semibold tabular-nums ${
-                  data.total.cpl === undefined
-                    ? ""
-                    : data.total.cpl > CPL_GATE
-                      ? "txt-bad"
-                      : "txt-good"
-                }`}
+                className={`font-semibold tabular-nums ${costText(cplTone(data.total.cpl))}`}
               >
                 {money(data.total.cpl, 2)}
               </span>
@@ -226,13 +220,7 @@ export function CampaignRange({
                 <span>
                   <span className="text-muted-foreground">Cost/booking </span>
                   <span
-                    className={`font-semibold tabular-nums ${
-                      data.total.costPerBooking === undefined
-                        ? ""
-                        : data.total.costPerBooking > CPB_GATE
-                          ? "txt-bad"
-                          : "txt-good"
-                    }`}
+                    className={`font-semibold tabular-nums ${costText(cpbTone(data.total.costPerBooking))}`}
                   >
                     {money(data.total.costPerBooking, 0)}
                   </span>
@@ -403,15 +391,7 @@ function Table({
               </td>
               <td className="tabular-nums">{money(r.spend, 2)}</td>
               <td className="tabular-nums">{r.leads}</td>
-              <td
-                className={`tabular-nums ${
-                  r.cpl === undefined
-                    ? ""
-                    : r.cpl > CPL_GATE
-                      ? "txt-bad"
-                      : "txt-good"
-                }`}
-              >
+              <td className={`tabular-nums ${costText(cplTone(r.cpl))}`}>
                 {money(r.cpl, 2)}
               </td>
               {!leadsOnly && (
@@ -436,7 +416,7 @@ function Table({
                     )}
                   </td>
                   <td
-                    className={`tabular-nums ${bookingCostTone(cost(r).value, CPB_GATE)}`}
+                    className={`tabular-nums ${costText(cpbTone(cost(r).value))}`}
                     title={
                       cost(r).label === "30d"
                         ? `30-day spend / 30-day bookings for this exact ad. Selected window: ${selectedWindow ?? "current range"}.`

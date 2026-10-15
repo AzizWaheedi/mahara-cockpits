@@ -37,6 +37,9 @@ import {
   StatusDot,
   type StatusTone,
 } from "@/components/ceo/StatusChip";
+import { TimeframeBar } from "@/components/ceo/TimeframeBar";
+import { addDays, tabWindow } from "@/components/ceo/tabWindow";
+import { useTimeframe } from "@/components/ceo/timeframe";
 import { useRefresh } from "@/components/ceo/useCeo";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
@@ -60,6 +63,7 @@ import type {
   TeamStatus,
 } from "@/types/ceo/payloads";
 import type { Roster } from "@/types/ceo/people";
+import { HubstaffWatch } from "./hours/HubstaffWatch";
 import { PeopleCard } from "./peopleCard";
 import { PersonPage, usePersonParam } from "./personPage";
 import { ScorecardTemplates } from "./scorecardTemplates";
@@ -70,6 +74,7 @@ import {
   useLiveStatuses,
 } from "./teamRoster";
 import type { CeoTabProps } from "./types";
+import { teamInWindow } from "./windowedNumbers";
 
 type EodDay = TeamPerson["eodYesterday"];
 type Eod14 = TeamPerson["eod14"];
@@ -186,7 +191,7 @@ type Dept = {
 
 const zeroEod14 = (): Eod14 => ({ due: 0, filed: 0, late: 0, missed: 0 });
 
-/** Share of the last 14 working days filed on time; null when none were due. */
+/** Share of the due EODs in the window filed on time; null when none were due. */
 const onTimeRate = (eod: Eod14): number | null =>
   eod.due ? (eod.filed - eod.late) / eod.due : null;
 
@@ -334,6 +339,16 @@ function routeNotes(notes: Note[] | null | undefined) {
  */
 const PeopleIndex = createContext<Map<string, number>>(new Map());
 
+/**
+ * The EOD window the tab's timeframe bar picked (A127/A170), in the words
+ * every EOD count says: "1 to 30 Sep" when the per-day EODs are kept, the
+ * server's own "last 14 working days" until they are.
+ */
+const EodWindow = createContext<{ words: string; short: string }>({
+  words: "the last 14 working days",
+  short: "14 days",
+});
+
 function PersonName({ name }: { name: string }) {
   const index = useContext(PeopleIndex);
   const [, setPerson] = usePersonParam();
@@ -351,7 +366,7 @@ function PersonName({ name }: { name: string }) {
   );
 }
 
-export function ManagementTab({ sections, now, day }: CeoTabProps) {
+export function ManagementTab({ sections, now, day, goTab }: CeoTabProps) {
   const [personId, setPerson] = usePersonParam();
   const loadRoster = useAction(api.ceo.people.list);
   const [index, setIndex] = useState<Map<string, number>>(new Map());
@@ -375,10 +390,33 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
   }, [loadRoster]);
   const team = sections.team;
   const payload = team?.payload ?? null;
-  const people = payload?.people ?? NO_PEOPLE;
-  const inactive = payload?.inactive ?? NO_PEOPLE;
   const feed = payload?.feed ?? NO_FEED;
   const today = day ?? kuwaitDay(now);
+  // One bar for the tab (A127/A170): EOD counts are rebuilt from each
+  // person's days, to yesterday. Yesterday's EOD and today's actions are
+  // days, not windows; the live feed keeps only the last 7 days.
+  const tf = useTimeframe("30d");
+  const last = addDays(today, -1);
+  const first = payload?.eodFrom ?? null;
+  const bounds = useMemo(() => tf.bounds(last, first), [tf, last, first]);
+  const w = useMemo(() => tabWindow(tf.range, bounds), [tf.range, bounds]);
+  const windowedActive = useMemo(
+    () => teamInWindow(payload?.people ?? NO_PEOPLE, w),
+    [payload, w],
+  );
+  const windowedInactive = useMemo(
+    () => teamInWindow(payload?.inactive ?? NO_PEOPLE, w),
+    [payload, w],
+  );
+  const people = windowedActive.people;
+  const inactive = windowedInactive.people;
+  const eodWords = useMemo(
+    () =>
+      windowedActive.kept && w
+        ? { words: w.label, short: w.short }
+        : { words: "the last 14 working days", short: "14 days" },
+    [windowedActive.kept, w],
+  );
 
   const live = useLiveStatuses();
   const switcher = useStatusSwitch(today);
@@ -416,6 +454,7 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
   if (!payload)
     return (
       <div className="grid gap-4 lg:gap-6">
+        <HubstaffWatch order={0} goTab={goTab} />
         <PeopleCard order={0} />
         <SectionCard title="Departments" section={team}>
           {() => null}
@@ -430,152 +469,169 @@ export function ManagementTab({ sections, now, day }: CeoTabProps) {
   return (
     <StatusUiContext.Provider value={ui}>
       <PeopleIndex.Provider value={index}>
-        <div className="grid gap-4 lg:gap-6">
-          <PeopleCard order={0} />
+        <EodWindow.Provider value={eodWords}>
+          <div className="grid gap-4 lg:gap-6">
+            {/* Who is working right now (Hubstaff watch, 2026-10-13): live,
+                so above the timeframe bar, which only moves the EOD counts. */}
+            <HubstaffWatch order={0} goTab={goTab} />
+            <TimeframeBar
+              tf={tf}
+              bounds={bounds}
+              ariaLabel="Timeframe for the EOD counts on Management"
+              first={first}
+              last={last}
+              note={
+                windowedActive.kept
+                  ? "EOD counts follow these days. Yesterday's EOD and today's actions are single days; the live feed keeps the last 7 days only."
+                  : "EODs are not kept per day yet, so the counts show the last 14 working days until the next refresh."
+              }
+            />
+            <PeopleCard order={0} />
 
-          <SectionCard
-            title={
-              <>
-                Departments
-                <span className="ml-2 font-normal text-muted-foreground">
-                  {plural(departments.length, "department")},{" "}
-                  {plural(
-                    roster.active.length,
-                    "active person",
-                    "active people",
-                  )}
-                  {roster.inactive.length
-                    ? `, ${count(roster.inactive.length)} not active`
-                    : ""}
-                </span>
-              </>
-            }
-            section={team}
-            notes={[...(routed.departments ?? []), DERIVED_NOTE, ROSTER_NOTE]}
-            order={0}
-          >
-            <div className="space-y-6">
-              <CompanySummary people={roster.active} />
-              {updatingNames.length ? (
-                <p
-                  role="status"
-                  className="flex items-start gap-2 text-xs text-muted-foreground"
-                >
-                  <LoaderCircle
-                    className="ceo-spin mt-0.5 size-3.5 shrink-0 animate-spin text-[color:var(--ceo-emphasis)]"
-                    aria-hidden
-                  />
-                  <span>
-                    Status saved for {updatingNames.join(", ")}. The counts
-                    above already leave out everyone paused or left; their own
-                    EOD figures are being recomputed.
-                  </span>
-                </p>
-              ) : null}
-              <div className="border-t border-[color:var(--ceo-grid)] pt-6">
-                <p className="mb-3 text-xs text-muted-foreground">
-                  Every department side by side: EOD discipline, activity today
-                  and output over the last 7 days
-                </p>
-                <DepartmentTable departments={departments} now={now} />
-              </div>
-            </div>
-          </SectionCard>
-
-          <SectionCard
-            title="People by department"
-            section={team}
-            notes={routed.people}
-            order={1}
-          >
-            <PeopleByDept departments={departments} now={now} />
-          </SectionCard>
-
-          <SectionCard
-            kicker="Set by hand"
-            title={
-              <>
-                Not active
-                <span className="ml-2 font-normal text-muted-foreground">
-                  {plural(roster.inactive.length, "person", "people")}
-                </span>
-              </>
-            }
-            section={team}
-            notes={[
-              ...(live.error
-                ? [
-                    {
-                      level: "warn" as const,
-                      text: `Statuses could not be loaded, so the switch is off and this list is the one from the last refresh: ${live.error}`,
-                    },
-                  ]
-                : []),
-              ...(payload.inactive === undefined
-                ? [
-                    {
-                      level: "info" as const,
-                      text: "The stored team numbers predate the switch. The list fills in fully after the next refresh.",
-                    },
-                  ]
-                : []),
-              ...(routed.inactive ?? []),
-              SWITCH_NOTE,
-            ]}
-            order={2}
-          >
-            <NotActive people={roster.inactive} />
-          </SectionCard>
-
-          <div className="grid gap-4 lg:grid-cols-3 lg:items-start lg:gap-6">
             <SectionCard
-              kicker="Last 7 days"
-              title="Live feed"
+              title={
+                <>
+                  Departments
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    {plural(departments.length, "department")},{" "}
+                    {plural(
+                      roster.active.length,
+                      "active person",
+                      "active people",
+                    )}
+                    {roster.inactive.length
+                      ? `, ${count(roster.inactive.length)} not active`
+                      : ""}
+                  </span>
+                </>
+              }
               section={team}
-              order={3}
-              className="lg:col-span-2"
+              notes={[...(routed.departments ?? []), DERIVED_NOTE, ROSTER_NOTE]}
+              order={0}
             >
-              <Feed feed={feed} now={now} />
+              <div className="space-y-6">
+                <CompanySummary people={roster.active} />
+                {updatingNames.length ? (
+                  <p
+                    role="status"
+                    className="flex items-start gap-2 text-xs text-muted-foreground"
+                  >
+                    <LoaderCircle
+                      className="ceo-spin mt-0.5 size-3.5 shrink-0 animate-spin text-[color:var(--ceo-emphasis)]"
+                      aria-hidden
+                    />
+                    <span>
+                      Status saved for {updatingNames.join(", ")}. The counts
+                      above already leave out everyone paused or left; their own
+                      EOD figures are being recomputed.
+                    </span>
+                  </p>
+                ) : null}
+                <div className="border-t border-[color:var(--ceo-grid)] pt-6">
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    Every department side by side: EOD discipline, activity
+                    today and output over the last 7 days
+                  </p>
+                  <DepartmentTable departments={departments} now={now} />
+                </div>
+              </div>
             </SectionCard>
-            <div className="grid min-w-0 gap-4 lg:gap-6">
-              <SectionCard
-                title="Actions today"
-                section={team}
-                notes={routed.activity}
-                order={4}
-              >
-                <ActionsToday
-                  people={roster.active}
-                  inactive={roster.inactive}
-                />
-              </SectionCard>
+
+            <SectionCard
+              title="People by department"
+              section={team}
+              notes={routed.people}
+              order={1}
+            >
+              <PeopleByDept departments={departments} now={now} />
+            </SectionCard>
+
+            <SectionCard
+              kicker="Set by hand"
+              title={
+                <>
+                  Not active
+                  <span className="ml-2 font-normal text-muted-foreground">
+                    {plural(roster.inactive.length, "person", "people")}
+                  </span>
+                </>
+              }
+              section={team}
+              notes={[
+                ...(live.error
+                  ? [
+                      {
+                        level: "warn" as const,
+                        text: `Statuses could not be loaded, so the switch is off and this list is the one from the last refresh: ${live.error}`,
+                      },
+                    ]
+                  : []),
+                ...(payload.inactive === undefined
+                  ? [
+                      {
+                        level: "info" as const,
+                        text: "The stored team numbers predate the switch. The list fills in fully after the next refresh.",
+                      },
+                    ]
+                  : []),
+                ...(routed.inactive ?? []),
+                SWITCH_NOTE,
+              ]}
+              order={2}
+            >
+              <NotActive people={roster.inactive} />
+            </SectionCard>
+
+            <div className="grid gap-4 lg:grid-cols-3 lg:items-start lg:gap-6">
               <SectionCard
                 kicker="Last 7 days"
-                title="Activity by department"
+                title="Live feed"
                 section={team}
-                notes={[ACTIVITY_NOTE]}
-                order={5}
+                order={3}
+                className="lg:col-span-2"
               >
-                <ActivityByDept
-                  departments={departments}
-                  unattributed={unattributed}
-                />
+                <Feed feed={feed} now={now} />
               </SectionCard>
+              <div className="grid min-w-0 gap-4 lg:gap-6">
+                <SectionCard
+                  title="Actions today"
+                  section={team}
+                  notes={routed.activity}
+                  order={4}
+                >
+                  <ActionsToday
+                    people={roster.active}
+                    inactive={roster.inactive}
+                  />
+                </SectionCard>
+                <SectionCard
+                  kicker="Last 7 days"
+                  title="Activity by department"
+                  section={team}
+                  notes={[ACTIVITY_NOTE]}
+                  order={5}
+                >
+                  <ActivityByDept
+                    departments={departments}
+                    unattributed={unattributed}
+                  />
+                </SectionCard>
+              </div>
             </div>
+
+            <SectionCard title="Not in any source yet" section={team} order={6}>
+              <Gaps />
+            </SectionCard>
+
+            <ScorecardTemplates order={7} />
           </div>
-
-          <SectionCard title="Not in any source yet" section={team} order={6}>
-            <Gaps />
-          </SectionCard>
-
-          <ScorecardTemplates order={7} />
-        </div>
-        <StatusDialog
-          target={switcher.editing}
-          today={today}
-          onClose={switcher.close}
-          onConfirm={switcher.confirm}
-        />
+          <StatusDialog
+            target={switcher.editing}
+            today={today}
+            onClose={switcher.close}
+            onConfirm={switcher.confirm}
+          />
+        </EodWindow.Provider>
       </PeopleIndex.Provider>
     </StatusUiContext.Provider>
   );
@@ -1203,6 +1259,7 @@ function InactiveCard({ person }: { person: TeamPerson }) {
         : `${date(since)}, ${days === 0 ? "today" : `${plural(days ?? 0, "day")} ago`}`;
   const { due, filed, late } = person.eod14;
   const before = status === "left" ? "before leaving" : "before the pause";
+  const eodWin = useContext(EodWindow);
 
   return (
     <li className="flex min-w-0 flex-col rounded-xl bg-muted/40 p-4">
@@ -1275,7 +1332,7 @@ function InactiveCard({ person }: { person: TeamPerson }) {
           <dd className="mt-0.5 text-sm font-medium tabular-nums text-foreground">
             {due > 0 ? (
               <Hint
-                content={`Of the last 14 working days, only the ones ${before} count. ${count(late)} late.`}
+                content={`Of ${eodWin.words}, only the working days ${before} count. ${count(late)} late.`}
               >
                 <button
                   type="button"
@@ -1323,6 +1380,7 @@ function InactiveCard({ person }: { person: TeamPerson }) {
 // --- Company summary ---
 
 function CompanySummary({ people }: { people: TeamPerson[] }) {
+  const eodWin = useContext(EodWindow);
   const named = (state: EodDay) =>
     people.filter(p => p.eodYesterday === state).map(p => p.name);
   const due = people.filter(p => p.eodYesterday !== "not due").length;
@@ -1372,9 +1430,9 @@ function CompanySummary({ people }: { people: TeamPerson[] }) {
       />
       <StatTile
         variant="plain"
-        label="On time, 14 working days"
+        label={`On time, ${eodWin.short}`}
         value={pct(onTimeRate(total))}
-        naHint="No EODs were due in the last 14 working days"
+        naHint={`No EODs were due in ${eodWin.words}`}
         sub={
           total.due
             ? `${pct(total.filed / total.due)} filed, ${count(total.missed)} of ${count(total.due)} missed`
@@ -1411,6 +1469,7 @@ function DepartmentTable({
   departments: Dept[];
   now: number;
 }) {
+  const eodWin = useContext(EodWindow);
   const columns: Column<Dept>[] = [
     {
       key: "department",
@@ -1469,12 +1528,12 @@ function DepartmentTable({
     },
     {
       key: "ontime14",
-      header: "On time, 14 days",
+      header: `On time, ${eodWin.short}`,
       numeric: true,
       cell: d => (
         <Value
           value={pct(onTimeRate(d.eod14))}
-          hint="No EODs were due in this department in the last 14 working days"
+          hint={`No EODs were due in this department in ${eodWin.words}`}
         />
       ),
       sortValue: d => onTimeRate(d.eod14),
@@ -1555,6 +1614,7 @@ function PeopleByDept({
   now: number;
 }) {
   const [filter, setFilter] = useState<string>("all");
+  const eodWin = useContext(EodWindow);
   const withPeople = departments.filter(d => d.people.length > 0);
   const total = withPeople.reduce((t, d) => t + d.people.length, 0);
 
@@ -1597,7 +1657,7 @@ function PeopleByDept({
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <p className="text-xs text-muted-foreground">
-          EODs over the last 14 working days, Fridays off
+          {`EODs over ${eodWin.words}, Fridays off`}
         </p>
         <EodLegend />
       </div>
@@ -1611,6 +1671,7 @@ function PeopleByDept({
 }
 
 function DeptGroup({ dept, now }: { dept: Dept; now: number }) {
+  const eodWin = useContext(EodWindow);
   return (
     <section className="border-t border-[color:var(--ceo-grid)] pt-4 first:border-0 first:pt-0">
       <header className="mb-3 flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
@@ -1627,9 +1688,9 @@ function DeptGroup({ dept, now }: { dept: Dept; now: number }) {
         </div>
         <dl className="flex flex-wrap items-baseline gap-x-5 gap-y-1">
           <Fact
-            label="On time, 14 days"
+            label={`On time, ${eodWin.short}`}
             value={pct(onTimeRate(dept.eod14))}
-            hint="No EODs were due in this department in the last 14 working days"
+            hint={`No EODs were due in this department in ${eodWin.words}`}
           />
           <Fact
             label="Active today"
@@ -1773,6 +1834,37 @@ function PersonCard({ person, now }: { person: TeamPerson; now: number }) {
  */
 function EodStrip({ eod, className }: { eod: Eod14; className?: string }) {
   const onTime = Math.max(0, eod.filed - eod.late);
+  // A long window would draw a wall of squares: past a month of due days the
+  // same three outcomes are one bar, in proportion.
+  if (eod.due > 31) {
+    const part = (n: number) => `${(Math.max(0, n) / eod.due) * 100}%`;
+    return (
+      <div
+        role="img"
+        aria-label={`${count(eod.due)} due: ${count(onTime)} on time, ${count(eod.late)} late, ${count(eod.missed)} missed`}
+        className={cn(
+          "flex h-2.5 w-full overflow-hidden rounded-[2px] bg-muted",
+          className,
+        )}
+      >
+        <span
+          style={{ width: part(onTime), backgroundColor: "var(--ceo-good)" }}
+        />
+        <span
+          style={{
+            width: part(eod.late),
+            backgroundColor: "var(--ceo-warning)",
+          }}
+        />
+        <span
+          style={{
+            width: part(eod.missed),
+            boxShadow: "inset 0 0 0 1.5px var(--ceo-serious)",
+          }}
+        />
+      </div>
+    );
+  }
   const cells: Cell[] = [
     ...Array.from({ length: onTime }, () => "on time" as const),
     ...Array.from({ length: Math.max(0, eod.late) }, () => "late" as const),

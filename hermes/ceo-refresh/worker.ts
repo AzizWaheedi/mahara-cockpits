@@ -108,7 +108,7 @@ export function doctor(env: Environment, only: string[] = [...SECTION_KEYS]): Do
   const missing = required.filter(name => !env[name]?.trim());
   const config = configErrors(env);
   const financePrerequisites = selected.includes("money")
-    ? ["manual payment history must be reconciled", "finance aliases must be reconciled", "manual_ready and history_ready must already be true", "a recent bank statement and confirmed read-only provider inputs are required"]
+    ? ["manual payment history must be reconciled", "finance aliases must be reconciled", "manual_ready and history_ready must already be true", "a bank statement (past 7 days it publishes with a warning; a statement dated after today fails) and confirmed read-only provider inputs are required"]
     : [];
   return { ok: missing.length === 0 && config.length === 0, dryRunDefault: true, required, missing, config, financePrerequisites };
 }

@@ -7,6 +7,7 @@
  */
 import type { InsertReceipt, Rpc } from "./db.ts";
 import { claimLease, type Mode } from "./lease.ts";
+import type { NudgeResult } from "./nudge.ts";
 import { runSync } from "./sync.ts";
 
 export type DoorDeps = {
@@ -17,6 +18,8 @@ export type DoorDeps = {
   sleep: (ms: number) => Promise<void>;
   now: () => Date;
   waitUntil: (work: Promise<unknown>) => void;
+  /** The morning hours note (nudge.ts), wired in index.ts. */
+  nudge?: (opts: { dryRun?: boolean }) => Promise<NudgeResult>;
 };
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -41,6 +44,15 @@ export function makeSyncDoor(deps: DoorDeps) {
       const parsed: unknown = await req.json();
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) body = parsed as Record<string, unknown>;
     } catch { /* an empty body is a recent read */ }
+    if (body.op === "nudge") {
+      if (!deps.nudge) return json({ ok: false, note: "The morning hours note is not wired into this function." }, 501);
+      if (body.dryRun === true) {
+        try { return json(await deps.nudge({ dryRun: true })); }
+        catch (e) { return json({ ok: false, note: e instanceof Error ? e.message.slice(0, 240) : "The dry run failed" }, 500); }
+      }
+      deps.waitUntil(deps.nudge({}).catch(() => undefined));
+      return json({ ok: true, op: "nudge" }, 202);
+    }
     const mode = (["recent", "deep", "doctor"].includes(String(body.mode)) ? body.mode : "recent") as Mode;
     const dryRun = body.dryRun === true;
     const claim = await claimLease(deps.rpc, { mode, requestedBy: "cron", dryRun });

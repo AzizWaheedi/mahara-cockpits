@@ -36,7 +36,7 @@ Mahara's KPIs, not generic ones:
 | Leads to bookings | Lead to booking rate | 25% or more |
 | | Cost per booking | under $60 |
 | | Pickup rate | 35% or more |
-| Bookings to shows | Show rate on confirmed | 75% or more |
+| Bookings to shows | Show rate on confirmed | aim for 70%; 60% is the line, under it is a watch, never the main constraint |
 | Shows to closes | Close rate | 20% to 30% |
 
 Find the first step that is below target. That is where the leak is. Do not
@@ -44,7 +44,11 @@ start at the end.
 
 ## CPL above $15
 
-Work down this list in order. The cheap fixes are first on purpose.
+Cost per booking decides first. While bookings cost $60 or less, a CPL over $15
+is a watch, not the constraint: leave the ads alone. When the cost per booking
+is unknown or over $60 (no bookings at all after more than $60 spent is over
+$60), work down this list in order. The cheap fixes are first
+on purpose.
 
 **The offer itself.** Run it through the value equation: dream outcome times
 perceived likelihood, divided by time delay times effort. If the offer scores
@@ -105,7 +109,9 @@ Not before.
 
 ## Booking but not showing
 
-Show rate under 75%.
+Show rate under 60%. We aim for 70% (the October KPI), but 60% is the line:
+anything around 60% is fine, and under it is a watch, never the main
+constraint. Bad is cost per booking or cost per lead.
 
 Booking window is the big one. **48 to 72 hours.** Past 72 hours show rates fall
 off a cliff. Confirm every appointment, use the provisional calendar for

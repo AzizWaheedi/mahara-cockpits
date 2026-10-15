@@ -19,6 +19,8 @@ EXPECTED_JOBS = (
     "mahara-appointment-outcomes-sync", "mahara-ghl-leads-reconcile", "mahara-tap-charges-sync", "mahara-sales-mirror",
     # hiring-sync (migration 20261009c): the board mirror and the engine every 10 min, the careers-form intake at :08 and :38.
     "mahara-hiring-mirror", "mahara-hiring-intake", "mahara-hiring-engine",
+    "mahara-onboarding-sync", "mahara-comment-watch", "mahara-ai-watch-tick",
+    "mahara-clickup-writeback-log", "mahara-clickup-writeback-kpi", "mahara-clickup-writeback-dosdonts",
 )
 
 
