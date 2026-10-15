@@ -21,7 +21,11 @@
 --   has "• " on every item: no missing first bullet, no blank or "-----"
 --   lines between. Other answers keep their lines as typed, trimmed.
 -- * An answer left blank reads "Not answered" ("None" where the form says
---   blank means none). A number the cockpit did not send reads "n/a", never 0.
+--   blank means none), and so does one of only dashes or marks ("-", "--",
+--   "----": how the media buyer writes "nothing", and the old builder's own
+--   blank marker). A number the cockpit did not send reads "n/a", never 0.
+-- * A one-line answer after an answer of several lines has a blank line
+--   before it, so it does not read as the last item of that list.
 -- * Money reads as the CEO kit's money() in components/ceo/format.ts: "$1,234",
 --   cents only under $100 when there are any ("$84.50"). Counts as count():
 --   "1,234". Text that is not a number ("no leads") stays as it is.
@@ -59,8 +63,8 @@ RETURNS text LANGUAGE sql IMMUTABLE SET search_path='' AS $$
  SELECT replace(replace(replace(coalesce(p,''),'&','&amp;'),'<','&lt;'),'>','&gt;');
 $$;
 
--- One typed answer, tidied for Slack. '' when nothing was typed.
--- Spaces at line ends, carriage returns and blank lines at either end go;
+-- One typed answer, tidied for Slack. '' when nothing was typed, or only
+-- dashes or marks were. Spaces at line ends, carriage returns and blank lines at either end go;
 -- blank lines inside collapse to one. One line loses a lone bullet mark.
 -- A list (p_list) becomes one "• item" a line, whatever marks it was typed
 -- with (pasted from the cockpit's preview, the first line often has none).
@@ -76,6 +80,9 @@ BEGIN
  t:=regexp_replace(t,E'\n{3,}',E'\n\n','g');
  t:=btrim(t,E' \t\n');
  IF t='' THEN RETURN ''; END IF;
+ -- Only dashes, dots or marks ("-", "--", "----", "—") is how a person writes
+ -- "nothing", and was the old builder's own blank marker: not an answer.
+ IF t ~ '^[-–—_=*•·▪◦‣●.~[:space:]]+$' THEN RETURN ''; END IF;
  lines:=regexp_split_to_array(t,E'\n');
  FOREACH x IN ARRAY lines LOOP
   IF btrim(x)<>'' THEN n:=n+1; END IF;
@@ -160,7 +167,9 @@ DECLARE
  v_channel text;
  v_tab text;
  v_body text[];
+ v_lines text[]:='{}';
  v_values jsonb;
+ i integer;
 BEGIN
  v_energy:=public.cockpit_eod_pick(a,'energy');
  IF v_energy='' THEN v_energy:=coalesce(r.energy::text,''); END IF;
@@ -273,7 +282,15 @@ BEGIN
  ELSE
   RAISE EXCEPTION 'No EOD channel is set for the % role',r.role;
  END IF;
- RETURN jsonb_build_object('channel',v_channel,'tab',v_tab,'body',array_to_string(v_body,E'\n'),'row_values',v_values);
+ -- A one-line answer right after an answer of several lines gets a blank
+ -- line first, or it reads as the last item of that answer's list.
+ FOR i IN 1..cardinality(v_body) LOOP
+  IF i>1 AND v_body[i]<>'' AND strpos(v_body[i],E'\n')=0 AND strpos(v_body[i-1],E'\n')>0 THEN
+   v_lines:=v_lines||''::text;
+  END IF;
+  v_lines:=v_lines||v_body[i];
+ END LOOP;
+ RETURN jsonb_build_object('channel',v_channel,'tab',v_tab,'body',array_to_string(v_lines,E'\n'),'row_values',v_values);
 END;
 $$;
 

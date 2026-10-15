@@ -1,9 +1,10 @@
 // The EOD Slack message reads cleanly (20261015a) and the outbox is retried,
 // written back and told to the person truthfully (20261015b). In-memory PGlite
 // only: no live database, Slack or Google call is made. The answers below have
-// the shape of the media buyer's 2026-10-11 and 2026-10-13 reports (a pasted
-// list with a leading blank line, a pasted list missing its first bullet, a
-// summary with separator lines, blank health scores), with made-up names.
+// the shape of the media buyer's 2026-10-07, 2026-10-11 and 2026-10-13 reports
+// (a pasted list with a leading blank line, a pasted list missing its first
+// bullet, a summary with separator lines, blank health scores), with made-up
+// names; the dash-only answers ("-", "--", "----") are her real ones.
 import {expect,test} from "bun:test";
 import type {SupabaseClient} from "@supabase/supabase-js";
 import type {PGlite} from "@electric-sql/pglite";
@@ -18,9 +19,18 @@ const OCT_13={...TASKS,focus:"",energy:"",biology:"",
  accountSummary:"\n*Marble & More* launched a new campaign. \nCity Wood relaunched with the new card. \n---------\nAcme needs the payment code. \n------\nCastello waits on the card.",
  outOfKpi:"City Wood — no booking on $135, CPL $19.33 → Queue a refresh.\n• Safad — cost per booking $117, CPL $9.79 → Judge the ads on both numbers.",
  one_percent_better:"----"};
-const OCT_11={...TASKS,focus:"3",energy:"9",biology:"3",accountSummary:"",
+const OCT_11={...TASKS,focus:"3",energy:"9",biology:"3",accountSummary:"--",
  outOfKpi:"\n• Alpha — cost per booking $87 → Judge the ads on bookings.\n• Beta Contracting — CPL $69.93 → Queue a refresh.\n",
  one_percent_better:""};
+const OCT_07={...TASKS,focus:"8",energy:"7",biology:"5",
+ accountSummary:"\nActive client accounts managed: 17\nTotal ad spend (7d): $2,955\nAverage CPL: $15.31\n"
+  +"Any client with CPL above $15 today: Yes — Alpha, Beta Contracting\n\nACCOUNT BY ACCOUNT — WHAT I CHANGED AND WHY\n"
+  +"• No changes logged today\n\nCLIENTS OUT OF KPI — METRIC AND NEXT ACTION\n• Alpha — cost per booking $157 → Queue a refresh.\n"
+  +"• Beta Contracting — CPL $18.24 → Do not touch this until 30 Sept. ",
+ outOfKpi:"-",
+ one_percent_better:"--"};
+/** A line whose answer is only dashes: the old builder's blank marker, or the person's "nothing". */
+const DANGLING=/ - [-–—_]+$/m;
 
 async function db(names:string[]):Promise<PGlite>{
  const db=await cockpitTestDb();
@@ -96,7 +106,7 @@ test("the 10-13 shape: closed bold, answers on their lines, one bullet per item,
    "*Actions to get back into KPI*",
    "• City Wood — no booking on $135, CPL $19.33 → Queue a refresh.",
    "• Safad — cost per booking $117, CPL $9.79 → Judge the ads on both numbers.","",
-   "*ADDITIONAL NOTES*","1% improvement - ----"].join("\n"));
+   "*ADDITIONAL NOTES*","1% improvement - Not answered"].join("\n"));
   // Every bold opened on a line is closed on it.
   for(const line of r.body.split("\n")) expect((line.replace(/\*Marble &amp; More\*/,"").match(/\*/g)??[]).length%2).toBe(0);
  }finally{await d.close();}
@@ -112,6 +122,32 @@ test("the 10-11 shape: a pasted list with a leading blank line has no stray line
    +"• Alpha — cost per booking $87 → Judge the ads on bookings.\n• Beta Contracting — CPL $69.93 → Queue a refresh.\n\n*ADDITIONAL NOTES*");
   expect(body).toContain("1% improvement - Not answered");
   expect(body).not.toMatch(/ - \n|\n\n\n/);
+ }finally{await d.close();}
+});
+
+test("dash-only answers read Not answered, and a one-line answer after a list stands apart (10-07, 10-11, 10-13)",async()=>{
+ const d=await db([NATIVE,MESSAGE,TRUTH]);try{
+  const oct07=(await row(d,(await filed(d,"2026-10-07",OCT_07,{spend:559,leads:30,cpl:"19",accounts:17,overGate:"Yes"},7)).outbox)).body as string;
+  const oct11=(await row(d,(await filed(d,"2026-10-11",OCT_11,{spend:429,leads:27,cpl:"16",accounts:15,overGate:"Yes"},9)).outbox)).body as string;
+  const oct13=(await row(d,(await filed(d,"2026-10-13",OCT_13,{spend:445,leads:39,cpl:"11",accounts:15,overGate:"Yes (7-day CPL)"})).outbox)).body as string;
+  for(const body of [oct07,oct11,oct13]){
+   expect(body).not.toMatch(DANGLING);
+   expect(body).not.toMatch(/ - \n|\n\n\n/);
+  }
+  expect(oct07).toContain("\n• Beta Contracting — CPL $18.24 → Do not touch this until 30 Sept.\n\nActions to get back into KPI - Not answered\n\n*ADDITIONAL NOTES*\n1% improvement - Not answered");
+  expect(oct07).toContain("*Account Summary*\nActive client accounts managed: 17\n");
+  expect(oct11).toContain("Account Summary - Not answered");
+  expect(oct13).toContain("1% improvement - Not answered");
+  const tidy=async(v:string,list=false)=>(await sql(d,"select cockpit_eod_tidy($1,$2) as v",[v,list])).v;
+  for(const v of ["-","--","----","—"," – ","-\n--","•","..."]){
+   expect(await tidy(v)).toBe("");
+   expect(await tidy(v,true)).toBe("");
+   expect((await sql(d,"select cockpit_eod_answer('Account Summary',$1) as v",[v])).v).toBe("Account Summary - Not answered");
+   expect((await sql(d,"select cockpit_eod_block($1,true,'None') as v",[v])).v).toBe("None");
+  }
+  // A dash with words after it is an answer, and a negative number is a number.
+  expect(await tidy("- paused two ads")).toBe("paused two ads");
+  expect(await tidy("-5")).toBe("-5");
  }finally{await d.close();}
 });
 
