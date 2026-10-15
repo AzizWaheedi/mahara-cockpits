@@ -51,6 +51,7 @@ import {
   listCreativeRequests,
   reviewCreativeRequest,
 } from "./creativeActionsClient";
+import { readEodRadar } from "./eodRadarClient";
 import { hiringAction } from "./hiringActionsClient";
 import { api as ideationApi } from "./ideation";
 import { mediaAction } from "./mediaActionsClient";
@@ -461,6 +462,8 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   // 6. CEO Features
   if (domain === "ceo") {
     if (sub === "hours") return ceoHoursAction(supabase, rest.join("."), args);
+    if (sub === "eodRadar" && rest.join(".") === "read")
+      return readEodRadar(supabase, args ?? {});
     if (sub === "costs") {
       switch (rest.join(".")) {
         case "sheet":

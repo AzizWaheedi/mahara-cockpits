@@ -63,6 +63,7 @@ import type {
   TeamStatus,
 } from "@/types/ceo/payloads";
 import type { Roster } from "@/types/ceo/people";
+import { EodRadar } from "./eodRadar";
 import { HubstaffWatch } from "./hours/HubstaffWatch";
 import { PeopleCard } from "./peopleCard";
 import { PersonPage, usePersonParam } from "./personPage";
@@ -455,6 +456,7 @@ export function ManagementTab({ sections, now, day, goTab }: CeoTabProps) {
     return (
       <div className="grid gap-4 lg:gap-6">
         <HubstaffWatch order={0} goTab={goTab} />
+        <EodRadar order={0} />
         <PeopleCard order={0} />
         <SectionCard title="Departments" section={team}>
           {() => null}
@@ -474,6 +476,9 @@ export function ManagementTab({ sections, now, day, goTab }: CeoTabProps) {
             {/* Who is working right now (Hubstaff watch, 2026-10-13): live,
                 so above the timeframe bar, which only moves the EOD counts. */}
             <HubstaffWatch order={0} goTab={goTab} />
+            {/* EOD Radar (2026-10-15): read from Slack every 30 minutes,
+                its own 15 working days, so above the bar as well. */}
+            <EodRadar order={0} />
             <TimeframeBar
               tf={tf}
               bounds={bounds}

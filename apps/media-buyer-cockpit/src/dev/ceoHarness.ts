@@ -8,6 +8,7 @@
  * by the production app.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { eodRadarFixture } from "./eodRadarFixture";
 import {
   watchBoardFixture,
   watchReviewed,
@@ -233,6 +234,9 @@ export function installCeoHarness(client: SupabaseClient): void {
         nudge.updatedAt = new Date().toISOString();
         nudge.updatedBy = "ceo@example.test";
         return ok(nudge);
+      // EOD Radar (eodRadarFixture.ts, ?radar=full|unread|never|empty).
+      case "cockpit_eod_radar_read":
+        return ok(eodRadarFixture());
       // Hubstaff watch (watchFixture.ts, ?watch=full|none|source|noai|aifail|offshift|slack).
       case "cockpit_ceo_hours_watch_board":
         return ok(watchBoardFixture());
