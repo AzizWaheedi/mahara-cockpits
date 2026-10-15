@@ -104,19 +104,53 @@ cd apps/media-buyer-cockpit && bun test scripts/eod-delivery-supabase.test.ts sc
 
 Order: apply `20261015a` and `20261015b` first (from the Mac, through Composio), then the guardian, then the token pin. Nothing below posts to Slack or writes the sheet.
 
-1. **Guardian** (`hermes/cockpit-guardian`, copied by hand like the rest). The VPS copy of `checks/queues.py` was byte for byte origin/main's on 10-13 (snapshot branch), but its `tests/test_coverage.py` is older than main's, so copy two files and edit two test lines rather than copying that test file:
+1. **Guardian** (`hermes/cockpit-guardian`, copied by hand like the rest). Only after `20261015b` is applied: from the Mac, `select jobname, active from cron.job where jobname = 'mahara-eod-retry';` (read-only, through Composio) must return one active row, or the `pg-cron-jobs` check fails until it does.
+
+   Four files are replaced or added, and three lines of one test are edited. On the 10-13 VPS snapshot (`origin/vps-snapshot-2026-10-13`) `checks/queues.py`, `checks/pg_cron.py` and `tests/test_hiring_sync.py` were byte for byte origin/main `2a208acb`'s, but `tests/test_coverage.py` is older than main's, so that file is edited rather than copied. Nothing is copied unless every file still matches; if one does not, the block stops and says which, and that file is merged by hand.
    ```bash
    cd ~/mahara-cockpits/hermes/cockpit-guardian
-   cp -a checks/queues.py checks/queues.py.bak-20261015 && cp -a tests/test_coverage.py tests/test_coverage.py.bak-20261015
-   # copy in from this commit: checks/queues.py and tests/test_eod_outbox.py (new)
-   # in tests/test_coverage.py, class C8FailedQueueRows:
-   #   r = queues.queue_check(self.q("queue-eod-outbox"))(make(rows))  ->  r = queues.run_eod_outbox(make(rows))
-   #   self.assertEqual(r.status, WARN)  (the line after it)          ->  self.assertEqual(r.status, FAIL)
-   #   self.assertEqual(self.q("queue-eod-outbox").limit_min, 15)     ->  self.assertEqual(queues.EOD_WAIT_MIN, 15)
+   # a. Guard: the files to replace are still origin/main 2a208acb's, the new test is not there yet,
+   #    and each test_coverage.py line to edit is there exactly once. Runs in its own shell; changes nothing.
+   bash -eu <<'SH'
+   check() { test "$(sha256sum "$1" | cut -d' ' -f1)" = "$2" || { echo "STOP: $1 differs from origin/main 2a208acb: merge by hand"; exit 1; }; }
+   check checks/queues.py         2a6561c17b3001e9bab2f698ee76aed88790f016c85f08a2adcc99de0d4074cd
+   check checks/pg_cron.py        a7111a4ecf2736286034ceb85939646fb1e0d9b00f30691eaa01831c98e0a7f1
+   check tests/test_hiring_sync.py d23be873126eddd1268e75410ab2ecc1c7152f865446cca9eb38e1b850614bd5
+   test ! -e tests/test_eod_outbox.py || { echo "STOP: tests/test_eod_outbox.py already exists: compare by hand"; exit 1; }
+   for line in '        r = queues.queue_check(self.q("queue-eod-outbox"))(make(rows))' \
+               '        self.assertEqual(r.status, WARN)' \
+               '        self.assertEqual(self.q("queue-eod-outbox").limit_min, 15)'; do
+     n=$(grep -cxF -- "$line" tests/test_coverage.py || true)
+     [ "$n" = 1 ] || [ "$line" = '        self.assertEqual(r.status, WARN)' ] || { echo "STOP: tests/test_coverage.py has '$line' $n times: edit by hand"; exit 1; }
+   done
+   echo "guard passed"
+   SH
+   # b. Only after "guard passed": back up, then copy in from this commit checks/queues.py, checks/pg_cron.py,
+   #    tests/test_hiring_sync.py and tests/test_eod_outbox.py (new).
+   for f in checks/queues.py checks/pg_cron.py tests/test_hiring_sync.py tests/test_coverage.py; do cp -a "$f" "$f.bak-20261015"; done
+   # c. The three test_coverage.py lines (class C8FailedQueueRows); refuses unless each edit matches exactly once.
+   python3 - <<'PY'
+   from pathlib import Path
+   p = Path("tests/test_coverage.py")
+   s = p.read_text()
+   edits = [
+       ('        r = queues.queue_check(self.q("queue-eod-outbox"))(make(rows))\n        self.assertEqual(r.status, WARN)\n',
+        '        r = queues.run_eod_outbox(make(rows))\n        self.assertEqual(r.status, FAIL)\n'),
+       ('        self.assertEqual(self.q("queue-eod-outbox").limit_min, 15)\n',
+        '        self.assertEqual(queues.EOD_WAIT_MIN, 15)\n'),
+   ]
+   for old, _ in edits:
+       if s.count(old) != 1:
+           raise SystemExit(f"STOP: tests/test_coverage.py has {s.count(old)} of {old.strip()!r}: edit by hand")
+   for old, new in edits:
+       s = s.replace(old, new)
+   p.write_text(s)
+   print("test_coverage.py: 3 lines edited")
+   PY
    python3 -m unittest discover -s tests -t .            # all pass, no network
-   python3 guardian.py scan --only queue-eod-outbox --dry-run   # reads only: expect ok while nothing is failed
+   python3 guardian.py scan --only queue-eod-outbox,pg-cron-jobs --dry-run   # reads only: expect ok for both while nothing is failed
    ```
-   The next cron run (every 5 minutes, under `~/.cockpit-guardian/run.lock`) uses it. To roll back, copy the `.bak-20261015` files back and delete `tests/test_eod_outbox.py`.
+   The next cron run (every 5 minutes, under `~/.cockpit-guardian/run.lock`) uses it. To roll back, copy the four `.bak-20261015` files back and delete `tests/test_eod_outbox.py`.
 2. **The eod-out token** (stops the 10-12 failure coming back when someone edits the shared key file): put mahara-club-bot's token in its own file and source it last on the eod-out cron line.
    ```bash
    install -m 600 /dev/null ~/.eod-out.env && nano ~/.eod-out.env   # one line, pasted by hand: SLACK_BOT_TOKEN=<mahara-club-bot token>

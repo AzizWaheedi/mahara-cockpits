@@ -142,7 +142,7 @@ class Registered(unittest.TestCase):
     def test_the_hiring_jobs_and_functions_are_expected(self):
         for job in ("mahara-hiring-mirror", "mahara-hiring-intake", "mahara-hiring-engine"):
             self.assertIn(job, pg_cron.EXPECTED_JOBS)
-        self.assertEqual(len(pg_cron.EXPECTED_JOBS), 21)
+        self.assertEqual(len(pg_cron.EXPECTED_JOBS), 22)  # 21 + mahara-eod-retry (20261015b)
         self.assertIs(edge_functions.EXPECTED["hiring-sync"], False)
         self.assertIs(edge_functions.EXPECTED["hiring-api"], True)
 

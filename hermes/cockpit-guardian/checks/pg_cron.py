@@ -21,6 +21,8 @@ EXPECTED_JOBS = (
     "mahara-hiring-mirror", "mahara-hiring-intake", "mahara-hiring-engine",
     "mahara-onboarding-sync", "mahara-comment-watch", "mahara-ai-watch-tick",
     "mahara-clickup-writeback-log", "mahara-clickup-writeback-kpi", "mahara-clickup-writeback-dosdonts",
+    # 20261015b: queues an EOD again hourly after a fixable Slack refusal (queues.EOD_RETRY_JOB).
+    "mahara-eod-retry",
 )
 
 

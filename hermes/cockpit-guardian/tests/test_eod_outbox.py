@@ -13,7 +13,7 @@ from pathlib import Path
 from tests import fakes
 from tests.test_engine import Box, Harness, KUWAIT_NIGHT
 import checks as checks_mod
-from checks import queues
+from checks import pg_cron, queues
 from guard.model import FAIL, OK, WARN
 
 JOBS = {"cron_jobs": [{"jobname": "mahara-eod-retry", "active": True}]}
@@ -105,6 +105,21 @@ class EodOutbox(unittest.TestCase):
         r = queues.run_eod_outbox(make([row()], probe={"cron_jobs": [{"jobname": "mahara-sales-mirror", "active": True}]}))
         self.assertIn("is not scheduled: apply 20261015b", r.action)
         self.assertNotIn("tried again hourly", r.summary)
+
+    def test_the_pg_cron_jobs_check_fails_when_the_hourly_retry_is_missing_or_off(self):
+        self.assertIn(queues.EOD_RETRY_JOB, pg_cron.EXPECTED_JOBS)
+        every = [{"jobid": i, "jobname": n, "schedule": "* * * * *", "active": True}
+                 for i, n in enumerate(pg_cron.EXPECTED_JOBS)]
+
+        def jobs(rows):
+            db = fakes.FakeDb(probe={"cron_jobs": rows, "cron_runs": [], "http_1h": {}})
+            return pg_cron.run_jobs(fakes.ctx(Path(tempfile.mkdtemp()), db=db))
+
+        self.assertEqual(jobs(every).status, OK)
+        gone = jobs([j for j in every if j["jobname"] != queues.EOD_RETRY_JOB])
+        self.assertEqual((gone.status, gone.items), (FAIL, [queues.EOD_RETRY_JOB]))
+        off = jobs([dict(j, active=False) if j["jobname"] == queues.EOD_RETRY_JOB else j for j in every])
+        self.assertEqual((off.status, off.items), (FAIL, [queues.EOD_RETRY_JOB]))
 
     def test_the_check_is_medium_and_an_urgent_reading_posts_at_night(self):
         check = checks_mod.by_id()["queue-eod-outbox"]
