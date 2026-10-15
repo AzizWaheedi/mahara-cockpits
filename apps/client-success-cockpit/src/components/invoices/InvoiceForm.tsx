@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -313,7 +314,7 @@ export function InvoiceForm({
       <section className="space-y-4">
         <Kicker>Billed to</Kicker>
         <Field id="inv-client" label="Client">
-          <select
+          <AnimatedSelect
             id="inv-client"
             value={s.taskId}
             onChange={e => chooseClient(e.target.value)}
@@ -325,7 +326,7 @@ export function InvoiceForm({
                 {c.name}
               </option>
             ))}
-          </select>
+          </AnimatedSelect>
         </Field>
         {s.taskId ? (
           <div className="space-y-2 text-xs text-muted-foreground">
