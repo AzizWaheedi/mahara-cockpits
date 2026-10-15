@@ -1,5 +1,6 @@
-// Native EOD submits queue exactly one eod_outbox row (20261009g). In-memory
-// PGlite only: no live database, Slack or Google call is made.
+// Native EOD submits queue exactly one eod_outbox row (20261009g), in the
+// Slack and sheet shape of 20261015a. In-memory PGlite only: no live
+// database, Slack or Google call is made.
 import {expect,test} from "bun:test";
 import type {SupabaseClient} from "@supabase/supabase-js";
 import type {PGlite} from "@electric-sql/pglite";
@@ -10,6 +11,7 @@ const NADA="00000000-0000-4000-8000-000000000011",MAYA="00000000-0000-4000-8000-
 const SALEH="00000000-0000-4000-8000-000000000013",SABRI="00000000-0000-4000-8000-000000000014";
 const LINA="00000000-0000-4000-8000-000000000015",TWIN="00000000-0000-4000-8000-000000000016";
 const MIGRATION="20261009g_eod_outbox_native.sql";
+const MESSAGE="20261015a_eod_slack_message.sql",TRUTH="20261015b_eod_delivery_truth.sql";
 
 const MEDIA_ANSWERS={focus:"8",energy:"7",biology:"Slept 7h",dashboard:"Yes",onBudget:"Yes",flagged:"No",
  videoRequests:"Yes",creativesUploaded:"No",launchedPaused:"Yes",accountSummary:"All four accounts on target",
@@ -40,6 +42,7 @@ async function fixture(){
  await db.exec(migration("20260927b_eod_delivery_claims.sql"));
  await db.exec(migration(MIGRATION));
  await db.exec(migration(MIGRATION));
+ for(const name of [MESSAGE,TRUTH,MESSAGE,TRUTH]) await db.exec(migration(name));
  await person(db,NADA,"nada@tests.invalid",["media_buyer"],"Nada Example","UNADA");
  await person(db,MAYA,"maya@tests.invalid",["media_buyer"],"Maya Example");
  await person(db,SALEH,"saleh@tests.invalid",["csm"],"Saleh Example","USALEH");
@@ -73,17 +76,20 @@ test("a draft queues nothing; a submit queues one row in the media buyer's form 
   await actor(db,NADA);
   const saved:any=await savePersonalEod(client,"media_buyer",ctx,{energy:"7",answers:MEDIA_ANSWERS,computed:MEDIA_COMPUTED,submit:true});
   expect(saved.delivery).toBe("not_configured");
-  expect(saved.outbox).toMatchObject({status:"queued",attempts:0,slack_posted:false,sheet_filed:false});
+  expect(saved.outbox).toMatchObject({status:"queued",attempts:0,slackPosted:false,sheetFiled:false,retries:0,retrying:false});
+  expect(saved.report.delivery).toEqual(saved.outbox);
   const rows=await outbox(db);
   expect(rows).toHaveLength(1);
   const row=rows[0];
   expect(row).toMatchObject({role:"media_buyer",day:ctx.day,person:"Nada Example",slack_id:"UNADA",
    channel:"C0AQ2LD0PL1",tab:"Media Buyer",status:"queued",attempts:0,report_id:Number(saved.report.id)});
   const lines=row.body.split("\n");
-  expect(lines.slice(0,5)).toEqual(["*MEDIA BUYER EOD*",`*Date - ${asDate(ctx.day)}`,"","*Name - Nada Example*","Submitted by: <@UNADA>"]);
-  expect(row.body).toContain("Food, Sleep, Water - \nSlept 7h");
-  expect(row.body).toContain("Leads Generated - 0");
-  expect(row.body).toContain("Actions to get back into KPI - --");
+  expect(lines.slice(0,5)).toEqual(["*MEDIA BUYER EOD*",`*Date - ${asDate(ctx.day)}*`,"","*Name - Nada Example*","Submitted by: <@UNADA>"]);
+  expect(lines).toContain("Food, Sleep, Water - Slept 7h");
+  expect(lines).toContain("Total Ad Spend Today - $120");
+  expect(lines).toContain("Leads Generated - 0");
+  expect(lines).toContain("Average CPL - $0");
+  expect(lines).toContain("Actions to get back into KPI - Not answered");
   expect(row.body).not.toContain("USPOOFED");
   expect(row.body).not.toContain("Somebody Else");
   expect(row.row_values).toHaveLength(21);
@@ -114,7 +120,7 @@ test("a repeated submit never queues or posts twice, before or after the worker 
   await db.query("select cockpit_record_eod_receipt($1,'worker',$2::uuid,p_slack_ts=>'1700000000.1',p_status=>'sent')",[row.id,token]);
   await actor(db,NADA);
   const again:any=await savePersonalEod(client,"media_buyer",ctx,{submit:true});
-  expect(again.outbox).toMatchObject({status:"sent",slack_posted:true,sheet_filed:true});
+  expect(again.outbox).toMatchObject({status:"sent",slackPosted:true,sheetFiled:true});
   await expect(savePersonalEod(client,"media_buyer",ctx,{answers:{accountSummary:"Changed"},submit:true})).rejects.toThrow(/cannot be overwritten/);
   const rows=await outbox(db);
   expect(rows).toHaveLength(1);
@@ -156,17 +162,23 @@ test("the CSM and creative director forms keep their channels, tabs and native a
   await savePersonalEod(client,"creative",ctx,{submit:true,answers:{summary:"First day"}});
   const [csm,creative,lina]=await outbox(db);
   expect(csm).toMatchObject({role:"csm",channel:"#eods-csms",tab:"Account Manager",slack_id:"USALEH"});
-  expect(csm.body.split("\n").slice(0,5)).toEqual(["*CSM EOD*",`*Date - ${asDate(ctx.day)}`,"","*Name - Saleh Example*","Submitted by: <@USALEH>"]);
-  for(const text of ["Energy - 6","Stress - 3","Clients handled today - 3","Signups or onboarding steps - 0","*CALLS*\nCalled Acme about renewal","*1% BETTER*\nShorter calls","*DAY SUMMARY*\nQuiet day","*PAUSED*\n--"])
+  expect(csm.body.split("\n").slice(0,5)).toEqual(["*CSM EOD*",`*Date - ${asDate(ctx.day)}*`,"","*Name - Saleh Example*","Submitted by: <@USALEH>"]);
+  for(const text of ["Energy - 6","Stress - 3","Clients handled today - 3","Signups or onboarding steps - 0","*CALLS*\nCalled Acme about renewal","*1% BETTER*\nShorter calls","*DAY SUMMARY*\nQuiet day","*PAUSED*\nNone","Fathom summaries sent - Not answered"])
    expect(csm.body).toContain(text);
-  expect(csm.row_values).toHaveLength(10);
-  expect(csm.row_values.slice(4)).toEqual(["6","","","","","Quiet day"]);
+  // The 'Account Manager' tab header: Submitted At, Name, Response ID, Date For, Stress, Energy, Call Summary, ...
+  expect(csm.row_values).toHaveLength(17);
+  expect(csm.row_values[3]).toBe(ctx.day);
+  expect(csm.row_values.slice(4)).toEqual(["3","6","Called Acme about renewal","Finished","Yes","","","","No","","","Shorter calls","Quiet day"]);
   expect(creative).toMatchObject({role:"creative",channel:"C0AQ2LD0PL1",tab:"Creative Director",slack_id:"U0B2SHGS1JA"});
-  for(const text of ["*CREATIVE DIRECTOR EOD*","Submitted by: <@U0B2SHGS1JA>","Scripts completed today - 2 for Acme","Checks done - 4 of 5","Scripts open - 3 (1 stale)","*BLOCKERS*\n--","*TOMORROW*\nHooks for Beta"])
+  for(const text of ["*CREATIVE DIRECTOR EOD*","Submitted by: <@U0B2SHGS1JA>","Energy - 9","Stress - Not answered","Scripts completed today - 2 for Acme","Checks done - 4 of 5","Scripts open - 3 (1 stale)","Videos late - n/a","*BLOCKERS*\nNot answered","*TOMORROW*\nHooks for Beta"])
    expect(creative.body).toContain(text);
-  expect(creative.row_values.slice(4)).toEqual(["9","","","","Hooks for Beta","Good day"]);
+  // The 'Creative Director' tab header: Submitted At, Name, Response ID, Date For, Scripts Completed, ...
+  expect(creative.row_values).toHaveLength(13);
+  expect(creative.row_values.slice(4)).toEqual(["2 for Acme","","Yes","","","","","Hooks for Beta","Good day"]);
   expect(lina).toMatchObject({person:"Lina",slack_id:null});
   expect(lina.body).toContain("Submitted by: Lina");
+  // His form asks no health questions: no empty HEALTH section.
+  expect(lina.body).not.toContain("*HEALTH*");
  }finally{await db.close();}
 });
 
