@@ -33,6 +33,11 @@ DEFAULT_LEASE_SECONDS = 300
 SHEETS_EPOCH = date(1899, 12, 30)
 UTC_PLUS_3 = timezone(timedelta(hours=3))
 DATE_HEADERS = {"date", "date for", "_date_for", "day", "report date", "timestamp", "submitted at", "_submitted_at"}
+# The EOD channels the cockpits and the sales desk post to, by id (the CSM's goes by name, #eods-csms).
+EOD_CHANNELS = {"C0AQ2LD0PL1": "#media-eods", "C0AF5PJEAUX": "#eods-salesreps", "C09RQS2TFST": "#eods-csms"}
+# The bot every EOD channel has as a member: eod-out posted as it from 2026-10-14 12:36. On 10-12 to 10-14
+# the worker's token was another bot's, outside #media-eods, and Slack answered channel_not_found.
+EXPECTED_SLACK_BOT = "U0C0MJZNS2Y"
 
 
 class KnownNotSent(RuntimeError):
@@ -339,7 +344,51 @@ def file_row(tab: str, values: Any, header_fn: Optional[Callable] = None, append
         raise AmbiguousExternalOutcome("Google Sheets delivery response is uncertain") from e
 
 
-def run_doctor() -> int:
+def slack_api(method: str, token: str, params: Dict[str, str]) -> Dict[str, Any]:
+    """One read-only Slack Web API call (auth.test, conversations.info). Never posts."""
+    req = urllib.request.Request(
+        f"https://slack.com/api/{method}?{urllib.parse.urlencode(params)}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, timeout=20) as r:
+        out = json.loads(r.read().decode())
+    return out if isinstance(out, dict) else {"ok": False, "error": "unreadable_answer"}
+
+
+def slack_identity(token: str, call: Callable[[str, str, Dict[str, str]], Dict[str, Any]] = slack_api) -> tuple:
+    """Who the token posts as, and whether that bot is in every EOD channel. Returns (ok, lines)."""
+    expected = os.environ.get("EOD_SLACK_BOT_USER", "").strip() or EXPECTED_SLACK_BOT
+    try:
+        me = call("auth.test", token, {})
+    except Exception as e:
+        return False, [f"  Slack: could not ask who the token is ({type(e).__name__})"]
+    if not me.get("ok"):
+        return False, [f"  Slack: the token was refused ({me.get('error')})"]
+    who = str(me.get("user_id") or "")
+    lines = [f"  Slack: the token posts as {me.get('user') or 'an unnamed bot'} ({who})"]
+    ok = who == expected
+    if not ok:
+        lines.append(f"  Slack: expected {expected}, the bot that is in every EOD channel; posts would be refused")
+    for channel, name in EOD_CHANNELS.items():
+        try:
+            info = call("conversations.info", token, {"channel": channel})
+        except Exception as e:
+            lines.append(f"  Slack: {name} could not be checked ({type(e).__name__})")
+            continue
+        if info.get("ok") and (info.get("channel") or {}).get("is_member"):
+            lines.append(f"  Slack: {name} member")
+        elif info.get("ok"):
+            ok = False
+            lines.append(f"  Slack: {name} the bot is not a member; invite it")
+        elif info.get("error") in ("missing_scope", "ratelimited"):
+            lines.append(f"  Slack: {name} could not be checked ({info.get('error')})")
+        else:
+            ok = False
+            lines.append(f"  Slack: {name} {info.get('error')} (a private channel the bot is not in reads as not found)")
+    return ok, lines
+
+
+def run_doctor(slack_call: Optional[Callable[[str, str, Dict[str, str]], Dict[str, Any]]] = None) -> int:
     """Check configuration without revealing secrets or credential fragments."""
     note("--- EOD Delivery Worker Doctor ---")
     sb_url = bool(os.environ.get("DESK_SUPABASE_URL", "").strip())
@@ -358,6 +407,11 @@ def run_doctor() -> int:
     note(f"  SLACK_BOT_TOKEN: {'configured' if slack_token else 'missing'}")
     if not slack_token:
         ok = False
+    else:
+        bot_ok, lines = slack_identity(os.environ["SLACK_BOT_TOKEN"].strip(), slack_call or slack_api)
+        for line in lines:
+            note(line)
+        ok = ok and bot_ok
 
     account_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
     account_ok = bool(account_path and os.path.isfile(account_path))

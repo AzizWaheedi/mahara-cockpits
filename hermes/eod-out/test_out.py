@@ -40,6 +40,19 @@ from out import (
 )
 
 
+def fake_slack(user: str = "U0C0MJZNS2Y", hidden=frozenset(), refused: bool = False):
+    """auth.test and conversations.info as Slack answers them, offline."""
+    def call(method: str, token: str, params: Dict[str, str]) -> Dict[str, Any]:
+        if refused:
+            return {"ok": False, "error": "invalid_auth"}
+        if method == "auth.test":
+            return {"ok": True, "user_id": user, "user": "fixture-bot"}
+        if params.get("channel") in hidden:
+            return {"ok": False, "error": "channel_not_found"}
+        return {"ok": True, "channel": {"id": params.get("channel"), "is_member": True}}
+    return call
+
+
 class FakeStore:
     def __init__(self, rows: Optional[List[Dict[str, Any]]] = None) -> None:
         self.rows: Dict[int, Dict[str, Any]] = {
@@ -343,7 +356,7 @@ class EodWorkerTests(unittest.TestCase):
 
         buf = io.StringIO()
         with redirect_stdout(buf), patch.dict(os.environ, {"GOOGLE_APPLICATION_CREDENTIALS": "fixture.json"}), patch("os.path.isfile", return_value=True):
-            code = run_doctor()
+            code = run_doctor(slack_call=fake_slack())
 
         output = buf.getvalue()
         self.assertEqual(code, 0)
@@ -354,6 +367,20 @@ class EodWorkerTests(unittest.TestCase):
         self.assertNotIn("bldgtotkfmhoxmlzowdx", output)
         self.assertIn("DESK_SUPABASE_URL: configured", output)
         self.assertIn("SLACK_BOT_TOKEN: configured", output)
+
+    def test_doctor_names_the_bot_and_each_eod_channel_it_cannot_see(self):
+        """2026-10-12: the token was another bot's, outside #media-eods; Slack said channel_not_found."""
+        ok, lines = worker.slack_identity("fixture", fake_slack())
+        self.assertTrue(ok)
+        self.assertIn("  Slack: #media-eods member", lines)
+        ok, lines = worker.slack_identity("fixture", fake_slack(user="U0BTL0GH79N", hidden={"C0AQ2LD0PL1"}))
+        self.assertFalse(ok)
+        self.assertTrue(any("expected U0C0MJZNS2Y" in l for l in lines))
+        self.assertTrue(any("#media-eods channel_not_found" in l for l in lines))
+        ok, lines = worker.slack_identity("fixture", fake_slack(refused=True))
+        self.assertEqual((ok, lines), (False, ["  Slack: the token was refused (invalid_auth)"]))
+        with patch.dict(os.environ, {"EOD_SLACK_BOT_USER": "UOTHER"}):
+            self.assertTrue(worker.slack_identity("fixture", fake_slack(user="UOTHER"))[0])
 
     def test_bounds_validation(self):
         """Validates bounds on limit and lease."""
