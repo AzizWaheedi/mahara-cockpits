@@ -278,6 +278,38 @@ test("a person's requeue: only a failed row that was certainly not posted, full 
  }finally{await d.close();}
 });
 
+test("Slack has it but the sheet never took the row: a person's requeue sends only the sheet; the hourly retry never does",async()=>{
+ const d=await db([NATIVE,MESSAGE,TRUTH]);try{
+  const {id,outbox}=await filed(d,"2026-10-11",OCT_11,{});
+  // The live worker files the sheet first: five refusals, Slack took the post on the first run.
+  await vps(d,outbox,{slack_ts:"1791970613.646759",sent_at:new Date().toISOString(),error:null,
+   sheet_error:"HttpError 403: The caller does not have permission",attempts:5,status:"failed"});
+  expect((await sql(d,"select cockpit_retry_eod_outbox(now()+interval '2 hours') as n")).n).toBe(0);
+  expect((await row(d,outbox)).status).toBe("failed");
+  expect((await readAs(d,"2026-10-11")).outbox).toMatchObject({status:"failed",slackPosted:true,sheetFiled:false,retrying:false});
+  await owner(d);await d.exec("set role service_role");
+  const r=(await d.query<any>("select * from cockpit_requeue_eod_outbox($1)",[outbox])).rows[0];
+  expect(r).toMatchObject({status:"queued",attempts:0,slack_ts:"1791970613.646759",sheet_at:null});
+  expect((await sql(d,`select count(*)::int as n from cockpit_audit_log where entity_type='eod_outbox' and entity_id=$1
+   and actor_email='eod-requeue' and after->>'status'='queued' and after->>'slack_ts'='1791970613.646759'`,[String(outbox)])).n).toBe(1);
+  // The worker skips Slack (slack_ts is set) and files the row.
+  await vps(d,outbox,{sheet_at:new Date().toISOString(),sheet_error:null,status:"sent"});
+  expect((await row(d,outbox)).status).toBe("sent");
+  expect((await sql(d,"select slack_ts from cockpit_eod_reports where id=$1",[id])).slack_ts).toBe("1791970613.646759");
+  await owner(d);await d.exec("set role service_role");
+  await expect(d.query("select cockpit_requeue_eod_outbox($1)",[outbox])).rejects.toThrow(/it is sent/);
+  // An append the claiming worker started without a receipt, or one flagged for a person: look first, never requeue.
+  await owner(d);
+  const mk=async(cols:string)=>Number((await d.query<any>(`insert into eod_outbox(role,day,person,channel,tab,row_values,body,status,attempts,slack_ts,${cols})
+   values('sales_closer','2026-10-14','${cols}','C1','Closer','["a"]','x','failed',5,'1.2',${cols.split(",").map(c=>c==="reconciliation_needed"?"true":"now()").join(",")}) returning id`)).rows[0].id);
+  const started=await mk("sheet_started_at");
+  const flagged=await mk("reconciliation_needed");
+  await d.exec("set role service_role");
+  for(const rid of [started,flagged])
+   await expect(d.query("select cockpit_requeue_eod_outbox($1)",[rid])).rejects.toThrow(/reconcile it first/);
+ }finally{await d.close();}
+});
+
 test("reports posted before the trigger get their Slack timestamp when 20261015b applies",async()=>{
  const d=await db([NATIVE,MESSAGE]);try{
   const {id,outbox}=await filed(d,"2026-10-13",OCT_13,{});

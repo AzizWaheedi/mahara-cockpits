@@ -26,7 +26,7 @@ def make(rows, probe=JOBS):
 
 def row(**kw):
     base = {"id": 3, "role": "media_buyer", "day": "2026-10-11", "person": "Somebody Private", "channel": "C0AQ2LD0PL1",
-            "status": "failed", "attempts": 5, "error": "RuntimeError: slack: channel_not_found", "sheet_error": None,
+            "tab": "Media Buyer", "sheet_started_at": None, "status": "failed", "attempts": 5, "error": "RuntimeError: slack: channel_not_found", "sheet_error": None,
             "slack_ts": None, "sheet_at": fakes.ago(30), "reconciliation_needed": False, "reconcile_reason": None,
             "created_at": fakes.ago(30)}
     base.update(kw)
@@ -80,7 +80,14 @@ class EodOutbox(unittest.TestCase):
         self.assertEqual(r.status, FAIL)
         self.assertFalse(r.urgent)
         self.assertIn("is not in the EOD sheet", r.summary)
+        # Look before sending again: the live worker cannot tell a timed-out append from a refused one.
+        self.assertIn("Look for it in the 'Media Buyer' tab first", r.action)
+        self.assertIn("If it is missing", r.action)
         self.assertIn("cockpit_requeue_eod_outbox(3)", r.action)
+        self.assertLess(r.action.index("Look for it"), r.action.index("cockpit_requeue_eod_outbox"))
+        started = queues.run_eod_outbox(make([row(slack_ts="1.2", sheet_at=None, error=None, sheet_started_at=fakes.ago(20))]))
+        self.assertIn("look in the 'Media Buyer' tab", started.action)
+        self.assertNotIn("cockpit_requeue_eod_outbox", started.action)
 
     def test_the_action_follows_slacks_answer(self):
         auth = queues.run_eod_outbox(make([row(error="KnownNotSent: slack: invalid_auth")]))

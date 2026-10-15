@@ -23,7 +23,12 @@
 --   person to reconcile (20260927b), and so does anything already posted.
 -- * cockpit_requeue_eod_outbox(id) is the supported version of the 10-14 hand
 --   reset, for the service role, once a person has fixed the cause: the same
---   guards, a full 5 tries, after the 48 hours as well.
+--   guards, a full 5 tries, after the 48 hours as well. It also queues a row
+--   Slack has but the EOD sheet never took (the live worker files the sheet
+--   first and gives up after 5 refusals even when Slack took the post): both
+--   workers skip Slack when slack_ts is set, so only the sheet row goes again.
+--   The hourly retry never does this: the live worker cannot tell a timed-out
+--   append from a refused one, so a person looks at the tab first.
 -- * Each change to an outbox row by these two is in the audit log as
 --   eod-retry or eod-requeue, through the existing outbox audit trigger.
 -- * When the outbox records a Slack timestamp, the report gets it too
@@ -101,17 +106,27 @@ BEGIN
 END;
 $$;
 
--- After a person fixed the cause (invited the bot, set the token): queue one
--- failed row again with a full 5 tries. Service role only.
+-- Slack has it, the sheet never took the row, and no append was started
+-- without a receipt (the claiming worker's marker): only the sheet goes again.
+CREATE OR REPLACE FUNCTION public.cockpit_eod_outbox_sheet_requeueable(o public.eod_outbox)
+RETURNS boolean LANGUAGE sql IMMUTABLE SET search_path='' AS $$
+ SELECT o.status='failed' AND NOT o.reconciliation_needed AND nullif(btrim(o.slack_ts),'') IS NOT NULL
+  AND o.sheet_at IS NULL AND o.sheet_started_at IS NULL;
+$$;
+
+-- After a person fixed the cause (invited the bot, set the token, shared the
+-- sheet and found the row missing from its tab): queue one failed row again
+-- with a full 5 tries. Service role only.
 CREATE OR REPLACE FUNCTION public.cockpit_requeue_eod_outbox(p_id bigint)
 RETURNS public.eod_outbox LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE o public.eod_outbox;
 BEGIN
  SELECT * INTO o FROM public.eod_outbox WHERE id=p_id FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'EOD outbox row % does not exist',p_id; END IF;
- IF NOT public.cockpit_eod_outbox_requeueable(o) THEN
-  RAISE EXCEPTION 'Only a failed EOD that was certainly not posted can be queued again (row %: %)',p_id,
-   CASE WHEN o.status<>'failed' THEN 'it is '||o.status WHEN o.slack_ts IS NOT NULL THEN 'it is already in Slack'
+ IF NOT (public.cockpit_eod_outbox_requeueable(o) OR public.cockpit_eod_outbox_sheet_requeueable(o)) THEN
+  RAISE EXCEPTION 'Only a failed EOD that was certainly not posted, or not filed in the sheet, can be queued again (row %: %)',p_id,
+   CASE WHEN o.status<>'failed' THEN 'it is '||o.status
+    WHEN o.slack_ts IS NOT NULL AND o.sheet_at IS NOT NULL THEN 'it is already in Slack and the sheet'
     ELSE 'a send was started without a receipt; reconcile it first (hermes/eod-out/RUNBOOK.md)' END;
  END IF;
  PERFORM set_config('mahara.eod_actor','eod-requeue',true);
@@ -199,6 +214,7 @@ END $$;
 REVOKE ALL ON FUNCTION public.cockpit_audit_eod_outbox(),public.cockpit_eod_outbox_to_report(),
  public.cockpit_personal_eod_audit() FROM PUBLIC,anon,authenticated;
 REVOKE ALL ON FUNCTION public.cockpit_eod_retryable(text),public.cockpit_eod_outbox_requeueable(public.eod_outbox),
+ public.cockpit_eod_outbox_sheet_requeueable(public.eod_outbox),
  public.cockpit_retry_eod_outbox(timestamptz),public.cockpit_requeue_eod_outbox(bigint)
  FROM PUBLIC,anon,authenticated,service_role;
 -- For a person who fixed the cause (hermes/eod-out/RUNBOOK.md); pg_cron runs the retry as its owner.

@@ -130,8 +130,8 @@ _EOD_RATE_ERR = re.compile(r"ratelimited|rate_limited|HTTP( Error)? 429")
 # The same list as public.cockpit_eod_retryable (20261015b).
 _EOD_RETRYABLE = re.compile(_EOD_CHANNEL_ERR.pattern + "|" + _EOD_AUTH_ERR.pattern + "|" + _EOD_RATE_ERR.pattern, re.I)
 # Never a name column: who filed it is told by role and day only.
-EOD_COLUMNS = ("id,role,day,status,channel,error,sheet_error,slack_ts,sheet_at,reconciliation_needed,reconcile_reason,"
-               "created_at")
+EOD_COLUMNS = ("id,role,day,status,channel,tab,error,sheet_error,slack_ts,sheet_at,sheet_started_at,"
+               "reconciliation_needed,reconcile_reason,created_at")
 # A person's own report: while it is missing from Slack, EOD Radar counts them MISSED.
 EOD_PERSON_ROLES = ("media_buyer", "csm", "creative", "sales_setter", "sales_closer", "editor")
 
@@ -150,12 +150,16 @@ def eod_action(r: dict[str, Any], retry_job: Optional[bool] = True) -> str:
     chan = EOD_CHANNELS.get(str(r.get("channel") or ""), str(r.get("channel") or "its channel"))
     rid = r.get("id")
     requeue = f"select public.cockpit_requeue_eod_outbox({rid}); as the service role"
-    if r.get("reconciliation_needed"):
-        return (f"A send was cut off: look in {chan} for the post first, then follow the reconciliation steps in "
+    tab = f"'{r.get('tab')}' tab" if r.get("tab") else "EOD sheet tab"
+    if r.get("reconciliation_needed") or (r.get("slack_ts") and not r.get("sheet_at") and r.get("sheet_started_at")):
+        where = f"the {tab}" if r.get("slack_ts") else chan
+        return (f"A send was cut off: look in {where} for it first, then follow the reconciliation steps in "
                 "hermes/eod-out/RUNBOOK.md. Never send it again without looking.")
     if r.get("slack_ts") and not r.get("sheet_at"):
-        return ("Slack has it; the EOD sheet refused the row. Check that the sheet is shared with the eod-out Google "
-                f"account, then run {requeue}.")
+        # 20261015b: the requeue takes a row Slack has; both workers skip Slack when slack_ts is set.
+        return (f"Slack has it; the EOD sheet did not take the row. Look for it in the {tab} first: eod-out cannot "
+                "tell a timed-out append from a refused one. If it is missing, check that the sheet is shared with "
+                f"the Google account eod-out files through, then run {requeue} (only the sheet row goes again).")
     if _EOD_CHANNEL_ERR.search(err):
         what = (f"Invite {EOD_BOT} to {chan}, or point eod-out's SLACK_BOT_TOKEN at that bot (Slack answers "
                 "channel_not_found to a bot that is not in a private channel)")
