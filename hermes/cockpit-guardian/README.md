@@ -497,7 +497,7 @@ Generated with `python3 guardian.py checks --json`.
 | `queue-ideation-requests` | W14 | Any row waiting over 60 min, or any row failed in 24 h: warn. |  |
 | `queue-post-jobs` | M4 | Any row waiting over 60 min, or any row failed in 24 h: warn. |  |
 | `queue-ask-ai` | H12 | Any row waiting over 30 min: warn. |  |
-| `queue-eod-outbox` | W8 | Any row waiting over 15 min, or any row failed in 24 h: warn. |  |
+| `queue-eod-outbox` | W8 | An EOD failed, cut off or refused and not posted (last 7 days, however old within them): fail, at any hour while a person's EOD is missing from Slack; the action names its channel and Slack's answer. A row waiting over 15 min with no answer from the worker: warn. |  |
 | `queue-team-calendar` | W12 | Any row waiting over 30 min: warn. |  |
 | `queue-feedback` | X3 | Any row waiting over 24.0 h: warn. |  |
 | `issue-reports` |  | Any open: warn (summary only). |  |

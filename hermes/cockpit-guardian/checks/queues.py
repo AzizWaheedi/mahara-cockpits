@@ -5,18 +5,27 @@ ended failed in the last 24 hours (a worker gives up after its tries, so a
 queue can look empty while every item in it failed: eod-out marks a row
 failed after 5 tries, about 20 minutes in, before any "waiting" limit).
 
+The end of day outbox has its own reading (run_eod_outbox): an EOD that is
+not in Slack is broken, at any hour, for as long as it stays unposted (up to
+7 days), and the action names its channel and what Slack said. On 2026-10-12
+the old reading warned about the media buyer's EOD at 09:00, told a person to
+invite the bot to #eods-salesreps for a not_in_channel error it did not have,
+and closed itself 24 hours after the row was created while the EOD was
+still not posted.
+
 The guardian never edits a queue row: each worker's own reaper owns its
 rows, and a retry can spend a picture or reach a lead. It only says how long
 something has waited, what failed and what a person can do.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
-from guard.context import Context
-from guard.model import Check, Result, age_min, ago, ok, parse_time, warn
+from guard.context import Context, SourceError
+from guard.model import Check, Result, age_min, ago, fail, kuwait, ok, parse_time, warn
 from guard.redact import clean
 
 
@@ -53,8 +62,6 @@ QUEUES = (
           "signed in again on the VPS.", "M4", failed_col="updated_at"),
     Queue("queue-ask-ai", "cockpit_ask_ai_jobs", "Hermes Ask AI job", ("queued", "claimed", "running"), "created_at", 30, "Hermes",
           "Check Hermes's Ask AI job and its provider's credit.", "H12"),
-    Queue("queue-eod-outbox", "eod_outbox", "end of day post", ("queued",), "created_at", 15, "the CEO",
-          "If the error is not_in_channel, invite the cockpit's Slack bot to #eods-salesreps.", "W8", failed_col="created_at"),
     Queue("queue-team-calendar", "team_calendar_ops", "meeting change bound for Google Calendar", ("pending", "failed"),
           "at", 30, "the CEO", "Set the calendar sign-in (GOOGLE_CAL_* in ~/.team-sync/env) or fix the refused series.", "W12"),
     Queue("queue-feedback", "cockpit_feedback", "cockpit change request", ("queued",), "created_at", 1440, "the CEO",
@@ -106,6 +113,113 @@ def queue_check(q: Queue) -> Callable[[Context], Result]:
     return run
 
 
+# ---- the end of day outbox (W8) ----------------------------------------------
+
+EOD_WAIT_MIN = 15          # the worker runs every 5 minutes
+EOD_LOOKBACK_DAYS = 7      # an unposted EOD older than this is history, not an incident
+EOD_RETRY_HOURS = 48       # 20261015b: mahara-eod-retry queues a fixable refusal hourly for 48 hours
+EOD_RETRY_JOB = "mahara-eod-retry"
+# The bot eod-out posted as when it worked (2026-10-14 12:36 onwards): a member of every EOD channel.
+EOD_BOT = "mahara-club-bot (U0C0MJZNS2Y)"
+EOD_CHANNELS = {"C0AQ2LD0PL1": "#media-eods", "C0AF5PJEAUX": "#eods-salesreps", "C09RQS2TFST": "#eods-csms"}
+EOD_ROLES = {"media_buyer": "media buyer", "csm": "CSM", "creative": "creative director",
+             "sales_setter": "setter", "sales_closer": "closer", "csm-win": "client success win"}
+_EOD_CHANNEL_ERR = re.compile(r"channel_not_found|not_in_channel|is_archived|restricted_action|missing_scope|no_permission")
+_EOD_AUTH_ERR = re.compile(r"invalid_auth|not_authed|token_revoked|token_expired|account_inactive|SLACK_BOT_TOKEN is not set")
+_EOD_RATE_ERR = re.compile(r"ratelimited|rate_limited|HTTP( Error)? 429")
+# The same list as public.cockpit_eod_retryable (20261015b).
+_EOD_RETRYABLE = re.compile(_EOD_CHANNEL_ERR.pattern + "|" + _EOD_AUTH_ERR.pattern + "|" + _EOD_RATE_ERR.pattern, re.I)
+# Never a name column: who filed it is told by role and day only.
+EOD_COLUMNS = ("id,role,day,status,channel,error,sheet_error,slack_ts,sheet_at,reconciliation_needed,reconcile_reason,"
+               "created_at")
+# A person's own report: while it is missing from Slack, EOD Radar counts them MISSED.
+EOD_PERSON_ROLES = ("media_buyer", "csm", "creative", "sales_setter", "sales_closer", "editor")
+
+
+def _eod_unposted(r: dict[str, Any]) -> bool:
+    """Not delivered and not simply waiting its turn: failed, cut off, or refused and being tried again."""
+    return r.get("status") == "failed" or bool(r.get("reconciliation_needed")) or bool(r.get("error"))
+
+
+def eod_action(r: dict[str, Any], retry_job: Optional[bool] = True) -> str:
+    """What a person does for this row, from its own channel and Slack's answer."""
+    err = str(r.get("error") or "")
+    chan = EOD_CHANNELS.get(str(r.get("channel") or ""), str(r.get("channel") or "its channel"))
+    rid = r.get("id")
+    requeue = f"select public.cockpit_requeue_eod_outbox({rid}); as the service role"
+    if r.get("reconciliation_needed"):
+        return (f"A send was cut off: look in {chan} for the post first, then follow the reconciliation steps in "
+                "hermes/eod-out/RUNBOOK.md. Never send it again without looking.")
+    if r.get("slack_ts") and not r.get("sheet_at"):
+        return ("Slack has it; the EOD sheet refused the row. Check that the sheet is shared with the eod-out Google "
+                f"account, then run {requeue}.")
+    if _EOD_CHANNEL_ERR.search(err):
+        what = (f"Invite {EOD_BOT} to {chan}, or point eod-out's SLACK_BOT_TOKEN at that bot (Slack answers "
+                "channel_not_found to a bot that is not in a private channel)")
+    elif _EOD_AUTH_ERR.search(err):
+        what = f"Set eod-out's SLACK_BOT_TOKEN on the VPS to the token of {EOD_BOT}; Slack refused the one it has"
+    elif _EOD_RATE_ERR.search(err):
+        return "Slack asked eod-out to slow down; the hourly retry posts it. Nothing to do unless it is still here in 2 hours."
+    else:
+        return f"Read ~/.eodout.log on the VPS for row {rid}; once the cause is fixed, run {requeue}."
+    if retry_job is False:
+        return f"{what}. The hourly retry ({EOD_RETRY_JOB}) is not scheduled: apply 20261015b, or run {requeue}."
+    return f"{what}. The hourly retry posts it within the hour after that, or run {requeue}."
+
+
+def run_eod_outbox(ctx: Context) -> Result:
+    since = (ctx.now - timedelta(days=EOD_LOOKBACK_DAYS)).isoformat()
+    rows = ctx.rows("eod_outbox", EOD_COLUMNS, where=[("status", "in", ["queued", "processing", "failed"]),
+                                                      ("created_at", "gt", since)],
+                    order="created_at.asc", limit=100)
+    bad = [r for r in rows if _eod_unposted(r)]
+    waiting = [r for r in rows if not _eod_unposted(r)
+               and (age_min(r.get("created_at"), ctx.now) or 0) > EOD_WAIT_MIN]
+    ev: dict[str, Any] = {"open": len(rows), "not_posted": len(bad), "waiting_over_limit": len(waiting)}
+    if not bad and not waiting:
+        return ok(f"Every end of day post went out: none failed in {EOD_LOOKBACK_DAYS} days and none has waited over "
+                  f"{ago(EOD_WAIT_MIN)} ({len(rows)} open).", evidence=ev)
+    if not bad:
+        r = waiting[0]
+        age = age_min(r.get("created_at"), ctx.now)
+        ev["oldest"] = {"id": r.get("id"), "minutes": int(age or 0)}
+        return warn(f"{len(waiting)} end of day post(s) waited past {ago(EOD_WAIT_MIN)} with no answer from the worker; "
+                    f"the oldest for {ago(age)}. eod-out runs every 5 minutes on the VPS.",
+                    since=parse_time(r.get("created_at")), evidence=ev,
+                    action="Read ~/.eodout.log on the VPS: the cron line or its env files may have stopped it.",
+                    items=["waiting"])
+    retry_job: Optional[bool] = None
+    if any(_EOD_RETRYABLE.search(str(r.get("error") or "")) for r in bad):
+        try:
+            jobs = {j.get("jobname"): j for j in ctx.probe().get("cron_jobs") or []}
+            retry_job = bool(jobs.get(EOD_RETRY_JOB, {}).get("active"))
+        except SourceError:
+            retry_job = None
+    parts, items = [], []
+    for r in bad[:5]:
+        who = EOD_ROLES.get(str(r.get("role") or ""), str(r.get("role") or "an"))
+        chan = EOD_CHANNELS.get(str(r.get("channel") or ""), str(r.get("channel") or "its channel"))
+        where = "the EOD sheet" if r.get("slack_ts") else chan
+        why = clean(r.get("error") or r.get("sheet_error") or r.get("reconcile_reason") or "no error recorded", 120)
+        made = parse_time(r.get("created_at"))
+        state = str(r.get("status"))
+        if (state == "failed" and not r.get("reconciliation_needed") and not r.get("slack_ts")
+                and _EOD_RETRYABLE.search(str(r.get("error") or "")) and made
+                and ctx.now < made + timedelta(hours=EOD_RETRY_HOURS) and retry_job is not False):
+            state = f"failed, tried again hourly until {kuwait(made + timedelta(hours=EOD_RETRY_HOURS))}"
+        parts.append(f"the {who} EOD for {r.get('day')} is not in {where} ({why}; row {r.get('id')}, {state})")
+        items.append(f"{r.get('role')} {r.get('day')} (row {r.get('id')})")
+    more = f" and {len(bad) - 5} more" if len(bad) > 5 else ""
+    first = bad[0]
+    ev["rows"] = [{"id": r.get("id"), "role": r.get("role"), "day": r.get("day"), "status": r.get("status"),
+                   "error": clean(r.get("error"), 120)} for r in bad[:10]]
+    # A person's EOD missing from Slack goes at any hour: the radar marks them MISSED meanwhile.
+    urgent = any(not r.get("slack_ts") and r.get("role") in EOD_PERSON_ROLES for r in bad)
+    return fail(f"{len(bad)} end of day post(s) not delivered: " + "; ".join(parts) + more + ".",
+                since=parse_time(first.get("created_at")), evidence=ev, action=eod_action(first, retry_job),
+                urgent=urgent, items=items)
+
+
 def run_issue_reports(ctx: Context) -> Result:
     rows = ctx.rows("cockpit_issue_reports", "id,status,created_at,app", where=[("status", "eq", "open")], limit=50)
     if rows:
@@ -123,6 +237,15 @@ CHECKS = [
                     + ": warn.", run=queue_check(q), owner=q.owner, action=q.action)
     for q in QUEUES
 ] + [
+    Check(id="queue-eod-outbox", area="queues", name="End of day posts", catalogue="W8",
+          means="Every end of day report filed in a cockpit or a sales desk is in its Slack channel and the EOD sheet.",
+          severity="medium",
+          reads=f"eod_outbox rows of the last {EOD_LOOKBACK_DAYS} days that are queued, processing or failed "
+                "(never the person column); the pg_cron job list when a refusal is one the hourly retry handles",
+          threshold=f"An EOD failed, cut off or refused and not yet posted: fail, at any hour while Slack lacks it. "
+                    f"A row waiting over {EOD_WAIT_MIN} min with no answer from the worker: warn.",
+          run=run_eod_outbox, owner="the CEO",
+          action=f"Invite {EOD_BOT} to the EOD channel, or point eod-out's SLACK_BOT_TOKEN at that bot."),
     Check(id="issue-reports", area="queues", name="Open issue reports", means="Issue reports from the cockpits get an answer.",
           severity="low", reads="cockpit_issue_reports where status is open", threshold="Any open: warn (summary only).",
           run=run_issue_reports, alert=False, action="Read them on the Machine tab."),

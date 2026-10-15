@@ -223,8 +223,8 @@ class C8FailedQueueRows(unittest.TestCase):
 
     def test_failed_rows_in_24_hours_warn_with_the_first_error(self):
         rows = {"eod_outbox": [{"id": 1, "status": "failed", "error": "not_in_channel", "created_at": fakes.ago(40)}]}
-        r = queues.queue_check(self.q("queue-eod-outbox"))(make(rows))
-        self.assertEqual(r.status, WARN)
+        r = queues.run_eod_outbox(make(rows))
+        self.assertEqual(r.status, FAIL)
         self.assertIn("not_in_channel", r.summary)
         posts = {"cockpit_post_jobs": [{"id": 9, "status": "failed", "error": "Session expired", "updated_at": fakes.ago(60)}]}
         self.assertIn("Session expired", queues.queue_check(self.q("queue-post-jobs"))(make(posts)).summary)
@@ -232,7 +232,7 @@ class C8FailedQueueRows(unittest.TestCase):
             self.assertTrue(self.q(qid).failed_col, qid)
 
     def test_end_of_day_waits_15_minutes_and_waiting_sales_requests_are_read(self):
-        self.assertEqual(self.q("queue-eod-outbox").limit_min, 15)
+        self.assertEqual(queues.EOD_WAIT_MIN, 15)
         sr = self.q("queue-sales-requests-waiting")
         self.assertEqual((sr.states, sr.time_col), (("queued",), "requested_at"))
         rows = {"cockpit_sales_requests": [{"id": "a", "status": "queued", "requested_at": fakes.ago(20)}]}
