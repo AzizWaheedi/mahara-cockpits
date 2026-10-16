@@ -1595,6 +1595,69 @@ describe("the corrections after the 2026-10-16 check", () => {
     }
   });
 
+  test("the registry's own ad account field ties last: a known account id written in it, or a name equal to one Meta account's", async () => {
+    const LOCS = {
+      H: "locBoardClientH00009",
+      I: "locBoardClientI00010",
+      J: "locBoardClientJ00011",
+      K: "locBoardClientK00012",
+      L: "locBoardClientL00013",
+    };
+    await owner(db);
+    // The ad-day store, as far as the spine reads it.
+    await db.exec(`CREATE TABLE public.cockpit_meta_ad_days (account_id text, account_name text, day date, ad_id text);
+      INSERT INTO public.cockpit_meta_ad_days VALUES
+        ('9876543210123', '9876543210123', current_date, '1'),
+        ('5432109876543', 'Shades Store', current_date, '2'),
+        ('1212121212121', 'Twin', current_date, '3'),
+        ('3434343434343', 'Twin', current_date, '4');`);
+    await q(
+      `INSERT INTO public.ghl_clients(location_id,client_name,status,clickup_id,meta_ad_account,country) VALUES
+       ($1,'Client H','Active','CU_H','9876543210123, KWD','KW'),
+       ($2,'Client I','Launching','CU_I','Shades Store','KW'),
+       ($3,'Client J','Active','CU_J','Twin','KW'),
+       ($4,'Client K','Cancelled','CU_K','Shades Store','KW'),
+       ($5,'Client L','Active','CU_L','call 96550001234567','KW')`,
+      [LOCS.H, LOCS.I, LOCS.J, LOCS.K, LOCS.L],
+    );
+    try {
+      await refresh();
+      const ties = async (loc: string) =>
+        (
+          await q<Row>(
+            "SELECT ad_account_ids, ad_account_ties FROM public.cockpit_board_clients WHERE location_id=$1",
+            [loc],
+          )
+        )[0];
+      // An account id written in the field (Ardon's "718146936708597, SAR").
+      const h = await ties(LOCS.H);
+      expect(h.ad_account_ids).toEqual(["9876543210123"]);
+      expect((h.ad_account_ties as Row[])[0].matchedBy).toBe(
+        "ghl_clients.meta_ad_account",
+      );
+      // A name equal to one Meta account's name ("Shades"); the cancelled
+      // client with the same name does not count.
+      expect((await ties(LOCS.I)).ad_account_ids).toEqual(["5432109876543"]);
+      // Two Meta accounts share the name: no tie.
+      expect((await ties(LOCS.J)).ad_account_ids).toEqual([]);
+      // A number that is no known account: no tie.
+      expect((await ties(LOCS.L)).ad_account_ids).toEqual([]);
+      // Ties that existed keep their order.
+      expect((await ties(LOC_A)).ad_account_ids).toEqual(["111111", "333333"]);
+    } finally {
+      await owner(db);
+      await db.exec("DROP TABLE public.cockpit_meta_ad_days");
+      await q("DELETE FROM public.ghl_clients WHERE location_id = ANY($1)", [
+        Object.values(LOCS),
+      ]);
+      await q(
+        "DELETE FROM public.cockpit_board_clients WHERE location_id = ANY($1)",
+        [Object.values(LOCS)],
+      );
+      await refresh();
+    }
+  });
+
   test("the hand-tie migration applies twice, each tie with its evidence", async () => {
     await owner(db);
     await db.exec(TIES);

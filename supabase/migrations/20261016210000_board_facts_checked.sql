@@ -28,6 +28,9 @@
 --      account, and for the history Pidco and AEA Designs) get a cockpit-owned
 --      tie table, public.cockpit_board_account_ties, read first by the spine.
 --      Its rows, each with its evidence, are in 20261016210200_board_account_ties.sql.
+--      The registry's own ad account field (ghl_clients.meta_ad_account) was
+--      never read; it is now the last tie: an account id written in it, or a
+--      name equal to one Meta account's name (Shades would have tied itself).
 --      The TikTok flag also takes the card's Ads Platform.
 --   4. A booking the contact or the call centre replaced before its time was
 --      still due: GoHighLevel leaves the old one "confirmed" (Alkhalil 8 meetings
@@ -120,7 +123,7 @@ COMMENT ON COLUMN public.cockpit_board_clients.card_stage IS 'The ClickUp card''
 COMMENT ON COLUMN public.cockpit_board_clients.service_mode IS 'DFY or DWY from the ClickUp card''s service, the registry''s service_mode where the card has none.';
 COMMENT ON COLUMN public.cockpit_board_clients.tiktok IS 'The client may run TikTok: a stored TikTok advertiser or account, or Tiktok in the card''s Ads Platform. No TikTok spend is read anywhere, so its ad numbers are Meta only.';
 COMMENT ON COLUMN public.cockpit_board_clients.ad_account_ties IS
-  'How each ad account was tied: [{account, matchedBy, name}], matchedBy cockpit_board_account_ties, clients.ghl_location_id, ghl_client_ad_accounts or ghl_clients name.';
+  'How each ad account was tied: [{account, matchedBy, name}], matchedBy cockpit_board_account_ties, clients.ghl_location_id, ghl_client_ad_accounts, ghl_clients name or ghl_clients.meta_ad_account (the registry''s own field: an account id in it, or a name equal to one Meta account''s name).';
 
 ALTER TABLE public.cockpit_client_days
   ADD COLUMN IF NOT EXISTS crm_dm_contacts integer CHECK (coalesce(crm_dm_contacts, 0) >= 0),
@@ -249,7 +252,8 @@ BEGIN
   DROP TABLE IF EXISTS pg_temp._bf_loc, pg_temp._bf_grid, pg_temp._bf_src, pg_temp._bf_v, pg_temp._bf_out,
     pg_temp._bf_ap, pg_temp._bf_sc, pg_temp._bf_pw, pg_temp._bf_dl, pg_temp._bf_sch, pg_temp._bf_ccl,
     pg_temp._bf_calls, pg_temp._bf_coh, pg_temp._bf_att, pg_temp._bf_st, pg_temp._bf_fin, pg_temp._bf_rm,
-    pg_temp._bf_cj, pg_temp._bf_cs, pg_temp._bf_rmd, pg_temp._bf_rs, pg_temp._bf_dm, pg_temp._bf_bulk, pg_temp._bf_rl;
+    pg_temp._bf_cj, pg_temp._bf_cs, pg_temp._bf_rmd, pg_temp._bf_rs, pg_temp._bf_dm, pg_temp._bf_bulk, pg_temp._bf_rl,
+    pg_temp._bf_regtie;
   -- fills: whether the client fills the source's column at all (the sheet's
   -- Closed marks, the sheet copy's Quotation Y); a source it does not fill
   -- gives nothing, never a 0.
@@ -288,9 +292,49 @@ BEGIN
   CREATE TEMP TABLE _bf_cs (location_id text, last_success timestamptz, error text, jobs integer, state text) ON COMMIT DROP;
 
   -- 3.1 The client spine ------------------------------------------------------
+  -- The client registry's own ad account field (ghl_clients.meta_ad_account),
+  -- read last: an account id written in it ("718146936708597, SAR"), or a name
+  -- equal to one Meta account's name in the ad-day store ("Shades"). Clients
+  -- that are not cancelled, and a name only when it is unique on both sides.
+  -- Before 2026-10-16 the field was never read, so Shades spent with no tie.
+  -- An id counts only when it is a known ad account: on a clients row, a
+  -- board card, or in the ad-day store.
+  CREATE TEMP TABLE _bf_regtie (acct text, loc text) ON COMMIT DROP;
+  INSERT INTO pg_temp._bf_regtie (acct, loc)
+  SELECT DISTINCT m[1], btrim(g.location_id)
+  FROM public.ghl_clients g CROSS JOIN LATERAL regexp_matches(coalesce(g.meta_ad_account, ''), '([0-9]{10,20})', 'g') m
+  WHERE coalesce(g.status, '') NOT IN ('Cancelled', 'Removed from sheet') AND nullif(btrim(g.location_id), '') IS NOT NULL
+    AND (EXISTS (SELECT 1 FROM public.clients c WHERE regexp_replace(lower(btrim(c.meta_ad_account_id)), '^act_', '') = m[1])
+         OR EXISTS (SELECT 1 FROM public.cockpit_campaigns k WHERE regexp_replace(lower(btrim(k.meta_account_id)), '^act_', '') = m[1]));
+  IF to_regclass('public.cockpit_meta_ad_days') IS NOT NULL THEN
+    EXECUTE $q$
+      INSERT INTO pg_temp._bf_regtie (acct, loc)
+      SELECT DISTINCT m[1], btrim(g.location_id)
+      FROM public.ghl_clients g CROSS JOIN LATERAL regexp_matches(coalesce(g.meta_ad_account, ''), '([0-9]{10,20})', 'g') m
+      WHERE coalesce(g.status, '') NOT IN ('Cancelled', 'Removed from sheet') AND nullif(btrim(g.location_id), '') IS NOT NULL
+        AND EXISTS (SELECT 1 FROM public.cockpit_meta_ad_days d WHERE d.account_id = m[1])
+        AND NOT EXISTS (SELECT 1 FROM pg_temp._bf_regtie t WHERE t.acct = m[1] AND t.loc = btrim(g.location_id))
+    $q$;
+    EXECUTE $q$
+      INSERT INTO pg_temp._bf_regtie (acct, loc)
+      SELECT d.account_id, r.loc
+      FROM (SELECT x.account_id, public.cockpit_board_norm(max(x.account_name)) AS n
+            FROM public.cockpit_meta_ad_days x GROUP BY 1) d
+      JOIN (SELECT public.cockpit_board_norm(g.meta_ad_account) AS n, min(btrim(g.location_id)) AS loc, count(DISTINCT btrim(g.location_id)) AS k
+            FROM public.ghl_clients g
+            WHERE coalesce(g.status, '') NOT IN ('Cancelled', 'Removed from sheet') AND nullif(btrim(g.location_id), '') IS NOT NULL
+              AND public.cockpit_board_norm(g.meta_ad_account) IS NOT NULL AND g.meta_ad_account !~ '[0-9]{10,20}'
+            GROUP BY 1) r ON r.n = d.n AND r.k = 1
+      WHERE d.n IS NOT NULL
+        AND (SELECT count(DISTINCT y.account_id) FROM public.cockpit_meta_ad_days y WHERE public.cockpit_board_norm(y.account_name) = d.n) = 1
+        AND NOT EXISTS (SELECT 1 FROM pg_temp._bf_regtie t WHERE t.acct = d.account_id)
+    $q$;
+  END IF;
+
   -- Ties: an account tied by hand (cockpit_board_account_ties, with its
-  -- evidence) first, then lead-sync-watch's order. A hand tie holds even for an
-  -- account hidden from the dashboards; Mahara's own accounts are never tied.
+  -- evidence) first, then lead-sync-watch's order, then the registry's field.
+  -- A hand tie holds even for an account hidden from the dashboards; Mahara's
+  -- own accounts are never tied.
   -- Status and service come from the ClickUp card (the CSM roster), the client
   -- registry where there is no card; the registry's status is kept beside it.
   WITH acc AS (
@@ -306,7 +350,7 @@ BEGIN
     SELECT regexp_replace(lower(btrim(m.account_id)), '^act_', '') AS acct, btrim(m.location_id) AS loc
     FROM public.cockpit_board_account_ties m
   ), accounts AS (
-    SELECT acct FROM acc UNION SELECT acct FROM cards UNION SELECT acct FROM manual
+    SELECT acct FROM acc UNION SELECT acct FROM cards UNION SELECT acct FROM manual UNION SELECT acct FROM pg_temp._bf_regtie
   ), gnames AS (
     SELECT public.cockpit_board_norm(g.client_name) AS n, min(g.location_id) AS loc, count(*) AS k
     FROM public.ghl_clients g
@@ -330,6 +374,8 @@ BEGIN
         UNION ALL
         SELECT gn.loc, 'ghl_clients name', c.name, 4
         FROM acc c JOIN gnames gn ON gn.n = public.cockpit_board_norm(c.name) AND gn.k = 1 WHERE c.acct = a.acct
+        UNION ALL
+        SELECT r.loc, 'ghl_clients.meta_ad_account', NULL, 5 FROM pg_temp._bf_regtie r WHERE r.acct = a.acct
       ) x ORDER BY x.o, x.loc LIMIT 1
     ) t
     WHERE a.acct ~ '^[0-9]{5,20}$'

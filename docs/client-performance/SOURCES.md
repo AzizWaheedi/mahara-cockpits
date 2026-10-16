@@ -93,8 +93,14 @@ board's read functions and screen).
   row with its evidence, added only in a migration) first; then
   `clients.ghl_location_id`, `ghl_client_ad_accounts`, and the client name
   (the board card's name, then the account's name) matched to one registry
-  client that is not cancelled. Accounts hidden on purpose (a hidden clients
-  row) and Mahara's own two accounts are left out, unless tied by hand.
+  client that is not cancelled; last (since 16 Oct) the registry's own ad
+  account field `ghl_clients.meta_ad_account`: a known account id written in
+  it, or a name equal to exactly one Meta account's name. Accounts hidden on
+  purpose (a hidden clients row) and Mahara's own two accounts are left out,
+  unless tied by hand.
+- **The registry field, checked on live data:** it gives 19 ties; 18 agree
+  with the tie already made, and the 19th is Shades, which no other step
+  reached.
 - **Checked against:** Meta, each account's owning business and promoted Page
   (GET only); the CRM, `client_leads.ad_id` at each location joined to
   `cockpit_meta_ad_days.ad_id` (no ad id of one client was found at
@@ -505,7 +511,7 @@ On 16 Oct at 16:30 Kuwait every source was fresh: lead sync 15:35, appointments
 | --- | --- | --- |
 | DMs counted as CRM ad leads | `20261016210000_board_facts_checked.sql` | Ocean Home 139 to 115, Alkhalil 75 to 57, City Wood 52 to 48; DMs in `crm_dm_contacts` |
 | Status and service from the registry, not ClickUp | same | Shades Active; three lost clients Stopped; doctor lists disagreements |
-| Spending accounts no tie reached | same, and `20261016210200_board_account_ties.sql` | Shades, Alkhalil's SAR account, Ardon, Pidco, AEA tied with evidence |
+| Spending accounts no tie reached | same, and `20261016210200_board_account_ties.sql` | Shades, Alkhalil's SAR account, Ardon, Pidco, AEA tied with evidence; the registry's own ad account field read as the last tie |
 | Bookings replaced before their time still due | same | Alkhalil 8 to 7, Atlantis 12 to 10 meetings due |
 | RESCHEDULE and CALLBACK bookings counted as bookings | same | Alkhalil 8 to 7, Arcturus 29 to 28 confirmed |
 | A sheet mark lost when the CRM moved the meeting | same | Atlantis shows 5 to 6 |
@@ -557,7 +563,7 @@ To make it live, in order (systems manager, the lead session):
 | Confirm نهوض نجد's ad platform (its card says Tiktok) and Joe and Sera's (flagged TikTok, card says Meta). | Client success |
 | One caller's leads are "touched" by saved outcomes with no Maqsam call. | Call-centre lead |
 | Whether Instagram and Messenger DMs should leave CRM leads like WhatsApp chats. | CEO, systems manager |
-| The dialer: RESCHEDULE should cancel the old GoHighLevel appointment; its appointment facts should learn when GoHighLevel drops a booking; its sheet reader could keep column K as a second quotation source. | Systems manager (dialer) |
+| The dialer: RESCHEDULE should cancel the old GoHighLevel appointment; its appointment facts should learn when GoHighLevel drops a booking; its sheet reader could keep column K as a second quotation source; the copy of sheet marks onto `appointments.attended` should take the same moved-time fallback as the facts. | Systems manager (dialer) |
 | The board: read `cockpit_client_days`, `cockpit_client_now`, `cockpit_meta_ad_days`, `cockpit_meta_reach` and `cockpit_meta_ad_days_status()` with these rules: NULL as unknown; "so far" on partial days; full-day windows by default; the 90% line on `verified_called_30d`; close rate on `closes_answered`; cost per lead from Meta's leads; a "Spent but not active" line from `cancelledDelivering`; the billing reason from `billingStopped`; Atlantis's Los Angeles clock; "Meta leads not in the CRM" from `cockpit_meta_leads_not_in_crm`; a dash for DWY call-centre figures. | Board team |
 | Flag a client whose "Meta leads not in the CRM" is above 0 for two days. | Systems manager (cockpit guardian) |
 | The SAR and QAR pegs in the fixed rates (about $0.50 in 30 days). | Systems manager, optional |
