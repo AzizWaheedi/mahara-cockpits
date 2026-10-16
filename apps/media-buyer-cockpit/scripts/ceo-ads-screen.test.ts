@@ -361,10 +361,11 @@ describe("SOURCES.md says the new rules", () => {
 });
 
 describe("small display fixes after the live check (2026-10-16)", () => {
-  const src = (f: string) => readFileSync(join(import.meta.dir, "..", "src/pages/ceo", f), "utf8");
+  const src = (f: string) =>
+    readFileSync(join(import.meta.dir, "..", "src/pages/ceo", f), "utf8");
   test("the Launch card says 1 close, not 1 closes", () => {
     expect(src("LaunchCard.tsx")).toContain('plural(a.w30.closes, "close")');
-    expect(src("LaunchCard.tsx")).not.toContain("${a.w30.closes} closes");
+    expect(src("LaunchCard.tsx")).not.toContain("w30.closes} closes");
   });
   test("ROAS rounds half up: 19.45 reads 19.5x", () => {
     expect(src("AdsTab.tsx")).toContain("(Math.round(v * 10) / 10).toFixed(1)");
