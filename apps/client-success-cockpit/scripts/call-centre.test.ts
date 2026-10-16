@@ -9,6 +9,7 @@ import {
   assignedCallers,
   CALL_RULES,
   callCentreVerdict,
+  calledLines,
   formatCallLength,
   formatDuration,
   formatPerLead,
@@ -149,6 +150,8 @@ function healthy(): Raw {
     waiting: {
       callable: 90,
       touched: 88,
+      called: 86,
+      outcomeOnly: 2,
       untouched: {
         count: 2,
         oldestAt: "2026-10-13T08:00:00Z",
@@ -258,6 +261,23 @@ describe("parseCallCentre", () => {
     expect(formatRate(s.reachedPerDial)).toBe(NOT_MEASURED);
   });
 
+  test("a read from before the called count parses with it missing, never zero", () => {
+    const data = read(r => {
+      delete r.waiting.called;
+      delete r.waiting.outcomeOnly;
+    });
+    expect(data.waiting.called).toBeNull();
+    expect(data.waiting.outcomeOnly).toBeNull();
+    const s = summarize(data);
+    expect(s.callableCalledRate).toBeNull();
+    expect(s.outcomeOnly).toBeNull();
+    expect(s.touchedRate).toBeCloseTo(97.78, 1);
+    expect(calledLines(data)).toBeNull();
+    // A called count that is not a count still fails the read.
+    expect(() => read(r => (r.waiting.called = -1))).toThrow();
+    expect(() => read(r => (r.waiting.outcomeOnly = 1.5))).toThrow();
+  });
+
   test("a client the report does not know has no official numbers, never zeros", () => {
     const data = read(r => {
       r.official = null;
@@ -284,6 +304,8 @@ describe("summarize", () => {
     expect(s.bookedRate).toBe(30);
     expect(s.showRate).toBe(80);
     expect(s.touchedRate).toBeCloseTo(97.78, 1);
+    expect(s.callableCalledRate).toBeCloseTo(95.56, 1);
+    expect(s.outcomeOnly).toBe(2);
     expect(s.followUpCalls).toBe(10);
     expect(s.withinFiveRate).toBe(60);
     expect(s.outcomesWithoutCall).toBe(7);
@@ -354,13 +376,96 @@ describe("callCentreVerdict", () => {
       booking10(r => {
         r.waiting.callable = 40;
         r.waiting.touched = 30;
+        r.waiting.called = 30;
+        r.waiting.outcomeOnly = 0;
         r.waiting.untouched.count = 10;
       }),
     );
     expect(v.kind).toBe("call_centre");
     expect(v.tone).toBe("bad");
     expect(v.why).toBe(
+      "Only 75% of leads older than a working hour have a call on Maqsam (the line is 90%); 10 leads still wait.",
+    );
+  });
+
+  /** City Wood on 16 Oct: 42 of 44 touched (95%), 25 with a Maqsam call. */
+  const cityWood = (edit: (r: Raw) => void = () => {}) =>
+    booking10(r => {
+      r.waiting.callable = 44;
+      r.waiting.touched = 42;
+      r.waiting.called = 25;
+      r.waiting.outcomeOnly = 17;
+      r.waiting.untouched.count = 2;
+      edit(r);
+    });
+
+  test("call centre: the 90% line is a Maqsam call; a saved outcome alone is said beside it", () => {
+    const data = cityWood();
+    const s = summarize(data);
+    // The touched share alone would pass the line.
+    expect(s.touchedRate).toBeGreaterThan(CALL_RULES.touchedShare);
+    expect(s.callableCalledRate).toBeCloseTo(56.82, 1);
+    expect(s.outcomeOnly).toBe(17);
+    const v = callCentreVerdict(data);
+    expect(v.kind).toBe("call_centre");
+    expect(v.why).toBe(
+      "Only 57% of leads older than a working hour have a call on Maqsam (the line is 90%); 17 more have a saved outcome but no call, and 2 leads still wait.",
+    );
+  });
+
+  test("the called sentence says only what holds, one or many", () => {
+    const why = (called: number, outcomeOnly: number, untouched: number) =>
+      callCentreVerdict(
+        cityWood(r => {
+          r.waiting.callable = called + outcomeOnly + untouched;
+          r.waiting.touched = called + outcomeOnly;
+          r.waiting.called = called;
+          r.waiting.outcomeOnly = outcomeOnly;
+          r.waiting.untouched.count = untouched;
+        }),
+      ).why;
+    expect(why(8, 1, 1)).toBe(
+      "Only 80% of leads older than a working hour have a call on Maqsam (the line is 90%); 1 more has a saved outcome but no call, and 1 lead still waits.",
+    );
+    expect(why(8, 2, 0)).toBe(
+      "Only 80% of leads older than a working hour have a call on Maqsam (the line is 90%); 2 more have a saved outcome but no call.",
+    );
+  });
+
+  test("over the line on Maqsam calls: no waiting reason, though a few only have a saved outcome", () => {
+    const v = callCentreVerdict(
+      cityWood(r => {
+        r.waiting.touched = 44;
+        r.waiting.called = 41;
+        r.waiting.outcomeOnly = 3;
+        r.waiting.untouched.count = 0;
+      }),
+    );
+    expect(v.kind).toBe("lead_quality");
+    expect(v.reasons.join(" ")).not.toContain("working hour");
+  });
+
+  test("a read without the called count judges the touched share, in its own words", () => {
+    const old = (edit: (r: Raw) => void = () => {}) =>
+      booking10(r => {
+        delete r.waiting.called;
+        delete r.waiting.outcomeOnly;
+        edit(r);
+      });
+    const v = callCentreVerdict(
+      old(r => {
+        r.waiting.callable = 40;
+        r.waiting.touched = 30;
+        r.waiting.untouched.count = 10;
+      }),
+    );
+    expect(v.kind).toBe("call_centre");
+    expect(v.why).toBe(
       "Only 75% of leads older than a working hour were called or messaged (the line is 90%); 10 leads still wait.",
+    );
+    // 88 of 90 touched: over the line, so no waiting reason.
+    expect(callCentreVerdict(old()).reasons.join(" ")).not.toContain(
+      "working hour",
     );
   });
 
@@ -460,6 +565,7 @@ describe("callCentreVerdict", () => {
     const v = callCentreVerdict(
       booking10(r => {
         r.waiting.touched = 60;
+        r.waiting.called = 60;
         r.official.medianSpeedSeconds = 7200;
         r.followUp = { leads: 10, calls: 10, threePlus: 0 };
       }),
@@ -523,11 +629,80 @@ describe("callCentreVerdict", () => {
       read(r => (r.official.leads = 3)),
       read(r => (r.official.connectionRate = 0.1)),
       read(r => (r.official.confirmedBookings = 1)),
+      cityWood(),
+      booking10(r => {
+        delete r.waiting.called;
+        r.waiting.touched = 30;
+      }),
     ].flatMap(d => callCentreVerdict(d).reasons);
     for (const line of all) {
       expect(line).not.toMatch(/[—]/);
       expect(line).not.toMatch(/\p{Extended_Pictographic}/u);
     }
+  });
+});
+
+describe("calledLines", () => {
+  test("the callable leads with a Maqsam call against the line, and the outcome-only leads apart", () => {
+    const data = read(r => {
+      r.waiting.callable = 44;
+      r.waiting.touched = 42;
+      r.waiting.called = 25;
+      r.waiting.outcomeOnly = 17;
+      r.waiting.untouched.count = 2;
+    });
+    expect(calledLines(data)).toEqual({
+      called:
+        "25 of 44 callable leads have a call on Maqsam (57%, the line is 90%).",
+      outcomeOnly:
+        "17 more have a saved outcome but no Maqsam call, so they do not count.",
+      under: true,
+    });
+  });
+
+  test("one outcome-only lead, none, nothing callable yet, and thousands", () => {
+    expect(
+      calledLines(
+        read(r => {
+          r.waiting.called = 87;
+          r.waiting.outcomeOnly = 1;
+        }),
+      ),
+    ).toEqual({
+      called:
+        "87 of 90 callable leads have a call on Maqsam (97%, the line is 90%).",
+      outcomeOnly:
+        "1 more has a saved outcome but no Maqsam call, so it does not count.",
+      under: false,
+    });
+    expect(
+      calledLines(read(r => (r.waiting.outcomeOnly = 0)))?.outcomeOnly,
+    ).toBeNull();
+    expect(
+      calledLines(
+        read(r => {
+          r.waiting.callable = 0;
+          r.waiting.touched = 0;
+          r.waiting.called = 0;
+          r.waiting.outcomeOnly = 0;
+        }),
+      ),
+    ).toEqual({
+      called:
+        "0 of 0 callable leads have a call on Maqsam (Not measured, the line is 90%).",
+      outcomeOnly: null,
+      under: false,
+    });
+    expect(
+      calledLines(
+        read(r => {
+          r.waiting.callable = 1250;
+          r.waiting.called = 1200;
+        }),
+      )?.called,
+    ).toBe(
+      "1,200 of 1,250 callable leads have a call on Maqsam (96%, the line is 90%).",
+    );
   });
 });
 

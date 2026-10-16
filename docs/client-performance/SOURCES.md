@@ -514,8 +514,12 @@ board's read functions and screen).
   verified / callable, judged against the 90% line; the touched share and the
   outcome-only count stay in the cell and its note ("38 more have a saved
   outcome but no Maqsam call, so they are not counted (95% if they were)").
-  The client success and media buyer client pages keep the touched rule and
-  say "called or messaged". DWY clients store no waiting figures.
+  Since `20261016230000_client_calls_maqsam_line.sql` the client success and
+  media buyer client pages judge the line the same way: `cockpit_client_calls`
+  waiting `called` / `callable`, with `outcomeOnly` said beside it ("17 more
+  have a saved outcome but no Maqsam call, so they do not count"). Their
+  waiting list keeps the touched rule: a lead with a saved outcome is not
+  listed as waiting. DWY clients store no waiting figures.
 - **Checked against:** Maqsam outbound calls with saved attempts left out:
   City Wood 95% touched against 57% called, شركة العلا 95% against 80%,
   Marble 100% against 76%, Arcturus 99% against 89%, Khalida 100% against

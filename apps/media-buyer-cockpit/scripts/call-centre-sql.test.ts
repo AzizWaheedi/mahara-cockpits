@@ -16,7 +16,12 @@ import {
   FIRST_CALL_MINUTES,
   REACHED_GATE,
 } from "../../client-success-cockpit/src/lib/kpi";
-import { callCentreVerdict, parseCallCentre } from "../src/lib/callCentre";
+import {
+  callCentreVerdict,
+  calledLines,
+  parseCallCentre,
+  summarize,
+} from "../src/lib/callCentre";
 import {
   actor,
   cockpitTestDb,
@@ -27,10 +32,12 @@ import {
 
 const FILE = "20261013180000_cockpit_client_calls.sql";
 const SQL = migration(FILE);
-/** The function as it runs now: WhatsApp chats are not leads (2026-10-15). */
+/** WhatsApp chats are not leads (2026-10-15). */
 const CHATS_SQL = migration(
   "20261015200000_cockpit_client_calls_whatsapp_chats.sql",
 );
+/** The function as it runs now: the 90% line is a Maqsam call (2026-10-16). */
+const MAQSAM_SQL = migration("20261016230000_client_calls_maqsam_line.sql");
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
 const CSM_A = "00000000-0000-4000-8000-0000000000a1";
@@ -601,6 +608,7 @@ beforeAll(async () => {
   ]);
   await db.exec(SQL);
   await db.exec(CHATS_SQL);
+  await db.exec(MAQSAM_SQL);
 }, 60_000);
 afterAll(async () => {
   await db?.close();
@@ -818,6 +826,10 @@ describe("one client's call centre", () => {
     // Eight leads have a phone the dialer can call; a10's only attempt is a test.
     expect(data.waiting.callable).toBe(8);
     expect(data.waiting.touched).toBe(7);
+    // a1, a2, a7, a8 and a9 dialled, a6 dialled under client B's lead; a3
+    // has only its saved no-answer.
+    expect(data.waiting.called).toBe(6);
+    expect(data.waiting.outcomeOnly).toBe(1);
     expect(data.waiting.untouched.count).toBe(1);
     expect(data.waiting.untouched.oldestAt).not.toBeNull();
     expect(data.waiting.untouched.oldestWorkSeconds).toBeGreaterThan(3600);
@@ -839,6 +851,119 @@ describe("one client's call centre", () => {
       callers: 1,
       never: 1,
       withinDay: 0,
+    });
+  });
+
+  test("called is a Maqsam call, also one under another lead; a saved outcome alone is counted apart", async () => {
+    await owner(db);
+    // m1 has a Maqsam call. m2's phone was dialled under client B's lead m2x
+    // (the call is linked to m2x by its saved attempt). m3 has a saved
+    // no-answer and only a call from before it arrived. m4 has nothing.
+    const leads: [string, string, string, string][] = [
+      ["m1", LOC_A, "+96550000031", at("10:30")],
+      ["m2", LOC_A, "+96550000032", at("10:40")],
+      ["m2x", LOC_B, "+96550000032", at("10:00")],
+      ["m3", LOC_A, "+96550000033", at("11:15")],
+      ["m4", LOC_A, "+96550000034", at("11:45")],
+    ];
+    const extraCalls: [string, string, string][] = [
+      ["4001", "+96550000031", at("10:30", 20)],
+      ["4002", "+96550000032", at("10:40", 30)],
+      ["4003", "+96550000033", at("11:15", -60)],
+    ];
+    const attempt = (
+      id: string,
+      loc: string,
+      contact: string,
+      savedAt: string,
+      callId: string | null,
+    ) =>
+      db.query(
+        "INSERT INTO mahara_console.attempts VALUES('production',$1,$2,$3,'closed',$4::jsonb,$5)",
+        [
+          id,
+          `${loc}:${contact}`,
+          AGENT,
+          JSON.stringify({
+            locationId: loc,
+            contactId: contact,
+            callId,
+            mode: "outcome",
+            dispositionSavedAt: Date.parse(savedAt),
+            disposition: {
+              outcome: "NO ANSWER",
+              reason: null,
+              note: "No answer",
+            },
+          }),
+          Date.parse(savedAt),
+        ],
+      );
+    try {
+      for (const [id, loc, phone, created] of leads)
+        await db.query(
+          "INSERT INTO public.client_leads(ghl_contact_id,location_id,created_at,channel,ad_id,campaign_id,contact_phone) VALUES($1,$2,$3,'Meta','AD1','CMP1',$4)",
+          [id, loc, created, phone],
+        );
+      for (const [id, phone, startedAt] of extraCalls)
+        await db.query(
+          "INSERT INTO mahara_reporting.facts(namespace,source,kind,external_id,data) VALUES('production','maqsam','call',$1,$2::jsonb)",
+          [
+            id,
+            JSON.stringify({
+              id,
+              type: "outbound",
+              phone,
+              state: "no_answer",
+              duration: 0,
+              ringingTime: 5,
+              timestamp: startedAt,
+              agents: [{ name: "Agent One", email: AGENT }],
+            }),
+          ],
+        );
+      await attempt("t2x", LOC_B, "m2x", at("10:40", 31), "4002");
+      await attempt("t33", LOC_A, "m3", at("11:15", 90), null);
+
+      await actor(db, CSM_A);
+      const data = parseCallCentre(await calls("CU_A"));
+      await owner(db);
+      // Before: 8 callable, 7 touched, 6 called, 1 outcome only, 1 waiting.
+      expect(data.waiting.callable).toBe(12);
+      expect(data.waiting.touched).toBe(10);
+      expect(data.waiting.called).toBe(8);
+      expect(data.waiting.outcomeOnly).toBe(1 + 1);
+      expect(data.waiting.untouched.count).toBe(2);
+      expect(data.waiting.touched).toBe(
+        (data.waiting.called ?? 0) + (data.waiting.outcomeOnly ?? 0),
+      );
+      const s = summarize(data);
+      expect(s.callableCalledRate).toBeCloseTo((8 / 12) * 100, 5);
+      expect(s.touchedRate).toBeCloseTo((10 / 12) * 100, 5);
+      expect(calledLines(data)).toEqual({
+        called:
+          "8 of 12 callable leads have a call on Maqsam (67%, the line is 90%).",
+        outcomeOnly:
+          "2 more have a saved outcome but no Maqsam call, so they do not count.",
+        under: true,
+      });
+    } finally {
+      await owner(db);
+      await db.exec(`
+        DELETE FROM public.client_leads WHERE ghl_contact_id IN ('m1','m2','m2x','m3','m4');
+        DELETE FROM mahara_reporting.facts WHERE source='maqsam' AND external_id IN ('4001','4002','4003');
+        DELETE FROM mahara_console.attempts WHERE id IN ('t2x','t33');
+      `);
+    }
+    // Back as it was.
+    await actor(db, CSM_A);
+    const after = parseCallCentre(await calls("CU_A"));
+    await owner(db);
+    expect(after.waiting).toMatchObject({
+      callable: 8,
+      touched: 7,
+      called: 6,
+      outcomeOnly: 1,
     });
   });
 
@@ -964,7 +1089,7 @@ describe("one client's call centre", () => {
       expect(raw.coverage.whatsappChats).toBe(1);
       expect(raw.coverage.whatsappChatsCalled).toBe(0);
       expect(data.notes).toContain(
-        "1 WhatsApp chat contact is left out of the figures worked out here: tagged \"inbound whatsapp\" in GoHighLevel, with no ad. The dialer's headline still counts them.",
+        '1 WhatsApp chat contact is left out of the figures worked out here: tagged "inbound whatsapp" in GoHighLevel, with no ad. The dialer\'s headline still counts them.',
       );
       expect(data.notes.some(n => n.includes("differ from the dialer"))).toBe(
         false,
@@ -1155,6 +1280,39 @@ describe("the migration text", () => {
     expect(SQL).toContain(`interval '${FIRST_CALL_MINUTES} minutes'`);
     expect(CHATS_SQL).toContain(`interval '${FIRST_CALL_MINUTES} minutes'`);
   });
+  test("the Maqsam line migration replaces the same function, adds two counts and restates its grant", () => {
+    const fns =
+      MAQSAM_SQL.match(
+        /CREATE OR REPLACE FUNCTION public\.[a-z_]+\([^)]*\)[^$]*?AS \$\$/g,
+      ) ?? [];
+    expect(fns.length).toBe(1);
+    expect(fns[0]).toContain("public.cockpit_client_calls(");
+    expect(fns[0]).toContain("SET search_path=''");
+    expect(MAQSAM_SQL).toContain(
+      "REVOKE ALL ON FUNCTION public.cockpit_client_calls(text,date,date) FROM PUBLIC,anon,service_role;",
+    );
+    expect(MAQSAM_SQL).toContain(
+      "GRANT EXECUTE ON FUNCTION public.cockpit_client_calls(text,date,date) TO authenticated;",
+    );
+    expect(MAQSAM_SQL).not.toMatch(/GRANT [^;]* TO (anon|PUBLIC|service_role)/);
+    expect(MAQSAM_SQL).not.toMatch(/[—]/);
+    expect(MAQSAM_SQL).toMatch(/^BEGIN;$/m);
+    expect(MAQSAM_SQL.trimEnd()).toMatch(
+      /NOTIFY pgrst,'reload schema';\nCOMMIT;$/,
+    );
+    // The body is the WhatsApp chat migration's, plus the two counts.
+    const body = (sql: string) =>
+      sql.slice(
+        sql.indexOf("CREATE OR REPLACE FUNCTION"),
+        sql.indexOf("END $$;") + "END $$;".length,
+      );
+    const added = [
+      "    'called',(SELECT count(*) FROM leads WHERE dialable AND aged AND (dials>0 OR elsewhere)),\n",
+      "    'outcomeOnly',(SELECT count(*) FROM leads WHERE dialable AND aged AND NOT (dials>0 OR elsewhere) AND attempted),\n",
+    ];
+    expect(body(MAQSAM_SQL).replace(added.join(""), "")).toBe(body(CHATS_SQL));
+  });
+
   test("the WhatsApp chat migration replaces one function and keeps its grant", () => {
     const fns =
       CHATS_SQL.match(

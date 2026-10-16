@@ -35,6 +35,7 @@ import {
   type CallCentreVerdict,
   type CallRow,
   callCentreVerdict,
+  calledLines,
   formatCallLength,
   formatDuration,
   formatPerLead,
@@ -1115,6 +1116,9 @@ function WaitingPart({ data }: { data: CallCentre }) {
     stuck,
   });
   const waits = headline.length > 0;
+  // The 90% line is a Maqsam call (2026-10-16): said under the first line,
+  // which warns under it. A read without the called count shows neither.
+  const line = calledLines(data);
   const stages = [...w.stages].sort(
     (a, b) => (a.position ?? 99) - (b.position ?? 99),
   );
@@ -1131,7 +1135,12 @@ function WaitingPart({ data }: { data: CallCentre }) {
         </span>
       </summary>
       <ul className="mt-3 space-y-2.5 text-[13px] leading-5">
-        <WaitLine tone={u.count > 0 ? "warning" : "good"}>
+        <WaitLine
+          tone={u.count > 0 || line?.under ? "warning" : "good"}
+          label={
+            u.count === 0 && line?.under ? "Under the 90% line" : undefined
+          }
+        >
           {u.count > 0 ? (
             <>
               {count(u.count)} lead{u.count === 1 ? " was" : "s were"} not
@@ -1152,6 +1161,14 @@ function WaitingPart({ data }: { data: CallCentre }) {
           ) : (
             <>No lead in these dates is old enough to be waiting.</>
           )}
+          {line && w.callable > 0 ? (
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              {line.called}
+              {line.outcomeOnly ? (
+                <span className="block">{line.outcomeOnly}</span>
+              ) : null}
+            </span>
+          ) : null}
         </WaitLine>
         {cb.count > 0 ? (
           <WaitLine tone={cb.overdue > 0 ? "warning" : "neutral"}>
@@ -1212,9 +1229,12 @@ const daysToSeconds = (d: number | null) => (d === null ? null : d * 86400);
 
 function WaitLine({
   tone,
+  label,
   children,
 }: {
   tone: StatusTone;
+  /** What the dot says, when the tone's own words do not fit. */
+  label?: string;
   children: ReactNode;
 }) {
   return (
@@ -1223,11 +1243,12 @@ function WaitLine({
         <StatusDot
           tone={tone}
           label={
-            tone === "warning"
+            label ??
+            (tone === "warning"
               ? "Waiting too long"
               : tone === "good"
                 ? "On time"
-                : "For information"
+                : "For information")
           }
         />
       </span>

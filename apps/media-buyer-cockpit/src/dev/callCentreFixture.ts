@@ -2,8 +2,9 @@
  * Made-up answers from public.cockpit_client_calls, one per verdict, for the
  * Calls part's harness (callCentreHarness.ts) and its render tests
  * (scripts/call-centre-section.test.tsx). Every name, number and note is
- * invented; the shape follows migration 20261013180000. Never imported by
- * the production app.
+ * invented; the shape follows migration 20261013180000, with waiting's
+ * called and outcomeOnly from 20261016230000. Never imported by the
+ * production app.
  */
 
 type Raw = Record<string, any>;
@@ -261,6 +262,8 @@ function base(from: string, to: string): Raw {
     waiting: {
       callable: 110,
       touched: 92,
+      called: 74,
+      outcomeOnly: 18,
       untouched: {
         count: 6,
         oldestAt: `${addDays(to, -2)}T07:20:00Z`,
@@ -494,6 +497,8 @@ export function callCentreScenario(
     // Fast, repeated calls that are answered and talked through; few book.
     r.official.medianSpeedSeconds = 540;
     r.waiting.touched = 105;
+    r.waiting.called = 101;
+    r.waiting.outcomeOnly = 4;
     r.waiting.untouched = { count: 0, oldestAt: null, oldestWorkSeconds: null };
     r.waiting.callbacks.overdue = 0;
     r.waiting.missedInbound.never = 0;
@@ -510,7 +515,11 @@ export function callCentreScenario(
     r.official.medianSpeedSeconds = 2700;
     r.window.talked120 = 140;
     r.followUp = { leads: 30, calls: 126, threePlus: 24 };
-    r.waiting.touched = 93;
+    // Like City Wood on 16 Oct: 95% touched, but only 57% with a Maqsam call;
+    // the rest have a saved outcome and no call.
+    r.waiting.touched = 104;
+    r.waiting.called = 63;
+    r.waiting.outcomeOnly = 41;
     return r;
   }
   if (kind === "not_enough") {

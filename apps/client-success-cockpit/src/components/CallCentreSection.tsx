@@ -22,6 +22,7 @@ import {
   type CallCentreVerdict,
   type CallRow,
   callCentreVerdict,
+  calledLines,
   formatCallLength,
   formatDuration,
   formatPerLead,
@@ -1180,6 +1181,9 @@ function WaitingNow({ data }: { data: CallCentre }) {
   const cb = w.callbacks;
   const mi = w.missedInbound;
   const touched = rate(w.touched, w.callable);
+  // The 90% line is a Maqsam call (2026-10-16); a read without the called
+  // count keeps the touched share.
+  const line = calledLines(data);
   const hint = [
     u.count ? `${NUMBER.format(u.count)} with no call yet` : null,
     cb.count ? `${plural(cb.count, "callback")} asked for` : null,
@@ -1193,7 +1197,7 @@ function WaitingNow({ data }: { data: CallCentre }) {
     >
       <ul className="divide-y divide-border/60">
         <WaitRow
-          tone={u.count ? "warn" : "good"}
+          tone={u.count || line?.under ? "warn" : "good"}
           title={
             u.count
               ? `${plural(u.count, "lead")} with no call or message yet`
@@ -1206,11 +1210,18 @@ function WaitingNow({ data }: { data: CallCentre }) {
               working time, since {kuwaitDayLabel(u.oldestAt)}.
             </p>
           ) : null}
-          <p>
-            {NUMBER.format(w.touched)} of {NUMBER.format(w.callable)} callable
-            leads reached out to ({formatRate(touched)}, the line is{" "}
-            {CALL_RULES.touchedShare}%).
-          </p>
+          {line ? (
+            <>
+              <p>{line.called}</p>
+              {line.outcomeOnly ? <p>{line.outcomeOnly}</p> : null}
+            </>
+          ) : (
+            <p>
+              {NUMBER.format(w.touched)} of {NUMBER.format(w.callable)} callable
+              leads reached out to ({formatRate(touched)}, the line is{" "}
+              {CALL_RULES.touchedShare}%).
+            </p>
+          )}
         </WaitRow>
         {w.stages.length ? (
           <WaitRow

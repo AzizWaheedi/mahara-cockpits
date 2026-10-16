@@ -541,7 +541,7 @@ describe("each verdict", () => {
     await show();
     expect(text()).toContain("Call centre");
     expect(text()).toContain(
-      "Only 84% of leads older than a working hour were called or messaged (the line is 90%); 6 leads still wait.",
+      "Only 67% of leads older than a working hour have a call on Maqsam (the line is 90%); 18 more have a saved outcome but no call, and 6 leads still wait.",
     );
     expect(text()).toContain("Also: The first call takes 2 h 10 min");
     const more = button("and 2 more");
@@ -600,7 +600,10 @@ describe("each verdict", () => {
     await show();
     expect(text()).toContain("On track");
     expect(text()).toContain("28% of leads booked a confirmed appointment");
-    expect(text()).toContain("Worth fixing: Only 85% of leads");
+    // Like City Wood: 95% touched, 57% with a Maqsam call.
+    expect(text()).toContain(
+      "Worth fixing: Only 57% of leads older than a working hour have a call on Maqsam (the line is 90%); 41 more have a saved outcome but no call, and 6 leads still wait.",
+    );
     const more = button("and 1 more");
     const list = controlled(more);
     expect(list?.textContent).toContain("The first call takes 45 min");
@@ -891,12 +894,28 @@ describe("the lead bar, the waiting and the sources", () => {
     );
   const headline = () => waiting()?.querySelector("summary")?.textContent;
 
+  /** The first line under Waiting now, and what its dot says. */
+  const firstLine = () => {
+    const li = waiting()?.querySelector("li");
+    return {
+      text: li?.textContent ?? "",
+      dot: li?.querySelector('[role="img"]')?.getAttribute("aria-label"),
+    };
+  };
+
   test("waiting is open when something waits, and the headline names it all", async () => {
     await show();
     expect(waiting()?.hasAttribute("open")).toBe(true);
     expect(waiting()?.textContent).toContain(
       "6 leads were not called or messaged after a working hour",
     );
+    expect(firstLine().text).toContain(
+      "74 of 110 callable leads have a call on Maqsam (67%, the line is 90%).",
+    );
+    expect(firstLine().text).toContain(
+      "18 more have a saved outcome but no Maqsam call, so they do not count.",
+    );
+    expect(firstLine().dot).toBe("Waiting too long");
     expect(headline()).toBe(
       "Waiting now 6 untouched after a working hour · 4 callbacks waiting, 2 overdue · 2 missed calls not returned · 10 stuck over a week",
     );
@@ -913,6 +932,82 @@ describe("the lead bar, the waiting and the sources", () => {
       "4 callbacks waiting: 0 overdue, 2 untouched for over 3 days.",
     );
     expect(headline()).not.toContain("nothing");
+  });
+
+  test("the 90% line is a Maqsam call: the first line warns under it, though nobody waits", async () => {
+    answerWith("lead_quality", raw => {
+      raw.waiting.called = 60;
+      raw.waiting.outcomeOnly = 45;
+    });
+    await show();
+    expect(firstLine().text).toContain(
+      "Every lead older than a working hour was called or messaged (105 of 110).",
+    );
+    expect(firstLine().text).toContain(
+      "60 of 110 callable leads have a call on Maqsam (55%, the line is 90%).",
+    );
+    expect(firstLine().text).toContain(
+      "45 more have a saved outcome but no Maqsam call, so they do not count.",
+    );
+    expect(firstLine().dot).toBe("Under the 90% line");
+    // The fold stays as quiet as before: a headline, no new line in it.
+    expect(headline()).toBe(
+      "Waiting now 4 callbacks waiting, none overdue · 10 stuck over a week",
+    );
+  });
+
+  test("over the line the first line is on time; one outcome-only lead is said once", async () => {
+    answer("lead_quality");
+    await show();
+    expect(firstLine().text).toContain(
+      "101 of 110 callable leads have a call on Maqsam (92%, the line is 90%).",
+    );
+    expect(firstLine().text).toContain(
+      "4 more have a saved outcome but no Maqsam call, so they do not count.",
+    );
+    expect(firstLine().dot).toBe("On time");
+    client.resetCallCentreCache();
+    answerWith("lead_quality", raw => {
+      raw.waiting.called = 104;
+      raw.waiting.outcomeOnly = 1;
+    });
+    await show();
+    expect(firstLine().text).toContain(
+      "1 more has a saved outcome but no Maqsam call, so it does not count.",
+    );
+    client.resetCallCentreCache();
+    answerWith("lead_quality", raw => {
+      raw.waiting.called = 105;
+      raw.waiting.outcomeOnly = 0;
+    });
+    await show();
+    expect(firstLine().text).toContain("105 of 110 callable leads");
+    expect(firstLine().text).not.toContain("saved outcome");
+  });
+
+  test("a read without the called count says nothing new, and nothing callable says no line", async () => {
+    answerWith("lead_quality", raw => {
+      delete raw.waiting.called;
+      delete raw.waiting.outcomeOnly;
+    });
+    await show();
+    expect(firstLine().text).toBe(
+      "Every lead older than a working hour was called or messaged (105 of 110).",
+    );
+    expect(firstLine().dot).toBe("On time");
+    client.resetCallCentreCache();
+    answerWith("lead_quality", raw => {
+      Object.assign(raw.waiting, {
+        callable: 0,
+        touched: 0,
+        called: 0,
+        outcomeOnly: 0,
+      });
+    });
+    await show();
+    expect(firstLine().text).toBe(
+      "No lead in these dates is old enough to be waiting.",
+    );
   });
 
   test("folded when nothing waits: nothing overdue, or nothing at all", async () => {

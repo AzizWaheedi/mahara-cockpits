@@ -7,6 +7,8 @@
  * The numbers come from public.cockpit_client_calls (migration
  * 20261013180000): the dialer's own report for the headline, then campaigns,
  * ads, waiting leads and lost reasons worked out with the dialer's link rule.
+ * Since 20261016230000 the 90% line is judged on leads with a Maqsam call, as
+ * on the Client Performance board; a saved outcome alone is said beside it.
  * This file holds the shape of that answer, the one verdict both cockpits
  * show, and how its numbers read.
  *
@@ -31,6 +33,11 @@ import {
 // The read.
 
 const count = z.number().int().nonnegative();
+/** A count an older read does not send: null, never zero. */
+const maybeCount = count
+  .nullable()
+  .optional()
+  .transform(v => v ?? null);
 const maybeNumber = z
   .number()
   .nullable()
@@ -170,8 +177,18 @@ export const CallCentreSchema = z.object({
   byCampaign: z.array(RowSchema),
   clientAverage: RowSchema.nullable(),
   waiting: z.object({
+    /** Dialable leads older than one working hour. */
     callable: count,
+    /** Callable leads with a Maqsam call, a call under another lead, or a saved outcome. */
     touched: count,
+    /**
+     * Callable leads with an outbound Maqsam call after they arrived, or one
+     * to the same phone under another lead (20261016230000). Null on an
+     * older read.
+     */
+    called: maybeCount,
+    /** Callable leads touched only by a saved outcome, with no such call. */
+    outcomeOnly: maybeCount,
     untouched: z.object({
       count,
       oldestAt: maybeText,
@@ -311,6 +328,13 @@ export type CallCentreSummary = {
   withinFiveRate: number | null;
   /** Share of callable leads older than one working hour that were touched. */
   touchedRate: number | null;
+  /**
+   * Share of callable leads older than one working hour with a Maqsam call:
+   * the 90% line. Null when nothing is callable or the read has no called.
+   */
+  callableCalledRate: number | null;
+  /** Callable leads with a saved outcome but no Maqsam call; null when not sent. */
+  outcomeOnly: number | null;
   untouched: number;
   /** Verified calls in 72 hours, per lead called and not reached. */
   followUpCalls: number | null;
@@ -343,6 +367,8 @@ export function summarize(data: CallCentre): CallCentreSummary {
     firstCallClockSeconds: data.speed.medianClockSeconds,
     withinFiveRate: rate(data.speed.withinFiveMinutes, data.speed.leads),
     touchedRate: rate(data.waiting.touched, data.waiting.callable),
+    callableCalledRate: rate(data.waiting.called, data.waiting.callable),
+    outcomeOnly: data.waiting.outcomeOnly,
     untouched: data.waiting.untouched.count,
     followUpCalls: ratio(data.followUp.calls, data.followUp.leads),
     followUpLeads: data.followUp.leads,
@@ -359,7 +385,10 @@ export function summarize(data: CallCentre): CallCentreSummary {
 export const CALL_RULES = {
   /** Under this many leads in the period there is no verdict. */
   minLeads: 20,
-  /** Callable leads older than one working hour that must be touched, in %. */
+  /**
+   * Callable leads older than one working hour that must have a Maqsam call,
+   * in % (the touched share on a read without the called count).
+   */
   touchedShare: 90,
   /** Median first call in working time, in minutes. Pickup drops after 30. */
   firstCallWorkMinutes: 30,
@@ -470,7 +499,27 @@ export function callCentreVerdict(data: CallCentre): CallCentreVerdict {
     reasons.push(
       `No verified call was made for this client in these dates, with ${plural(leads, "lead")} in.`,
     );
-  if (s.touchedRate !== null && s.touchedRate < CALL_RULES.touchedShare)
+  if (
+    s.callableCalledRate !== null &&
+    s.callableCalledRate < CALL_RULES.touchedShare
+  ) {
+    const after = [
+      s.outcomeOnly
+        ? `${s.outcomeOnly} more ${s.outcomeOnly === 1 ? "has" : "have"} a saved outcome but no call`
+        : null,
+      s.untouched
+        ? `${plural(s.untouched, "lead")} still ${s.untouched === 1 ? "waits" : "wait"}`
+        : null,
+    ].filter(Boolean);
+    reasons.push(
+      `Only ${formatRate(s.callableCalledRate)} of leads older than a working hour have a call on Maqsam (the line is ${CALL_RULES.touchedShare}%)${after.length ? `; ${after.join(", and ")}` : ""}.`,
+    );
+  } else if (
+    data.waiting.called === null &&
+    s.touchedRate !== null &&
+    s.touchedRate < CALL_RULES.touchedShare
+  )
+    // A read from before 20261016230000 has no called count: the touched share.
     reasons.push(
       `Only ${formatRate(s.touchedRate)} of leads older than a working hour were called or messaged (the line is ${CALL_RULES.touchedShare}%); ${plural(s.untouched, "lead")} still ${s.untouched === 1 ? "waits" : "wait"}.`,
     );
@@ -536,6 +585,38 @@ export function callCentreVerdict(data: CallCentre): CallCentreVerdict {
       `${formatRate(share)} of leads lost for a stated reason were too far, short of money or not a fit (over ${CALL_RULES.targetingShare}% points at targeting).`,
     );
   return verdict("lead_quality", quality);
+}
+
+// ---------------------------------------------------------------------------
+// The 90% line under "Waiting now", worded the same in both cockpits.
+
+const NUMBER = new Intl.NumberFormat("en-US");
+
+export type CalledLines = {
+  /** "25 of 44 callable leads have a call on Maqsam (57%, the line is 90%)." */
+  called: string;
+  /** "17 more have a saved outcome but no Maqsam call, so they do not count." */
+  outcomeOnly: string | null;
+  /** Under the line: the row warns. */
+  under: boolean;
+};
+
+/**
+ * The callable leads with a Maqsam call against the 90% line, and those
+ * touched only by a saved outcome. Null on a read without the called count.
+ */
+export function calledLines(data: CallCentre): CalledLines | null {
+  const w = data.waiting;
+  if (w.called === null) return null;
+  const share = rate(w.called, w.callable);
+  const only = w.outcomeOnly ?? 0;
+  return {
+    called: `${NUMBER.format(w.called)} of ${NUMBER.format(w.callable)} callable leads have a call on Maqsam (${formatRate(share)}, the line is ${CALL_RULES.touchedShare}%).`,
+    outcomeOnly: only
+      ? `${NUMBER.format(only)} more ${only === 1 ? "has" : "have"} a saved outcome but no Maqsam call, so ${only === 1 ? "it does" : "they do"} not count.`
+      : null,
+    under: share !== null && share < CALL_RULES.touchedShare,
+  };
 }
 
 // ---------------------------------------------------------------------------

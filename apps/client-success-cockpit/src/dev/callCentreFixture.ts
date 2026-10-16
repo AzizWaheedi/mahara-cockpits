@@ -2,7 +2,8 @@
  * Invented answers from public.cockpit_client_calls, one per verdict, for the
  * calls harness (src/dev/callsHarness.tsx) and the render tests
  * (scripts/call-centre-section.test.tsx). Every name, number and note here is
- * made up; the shape is the migration's (20261013180000).
+ * made up; the shape is the migration's (20261013180000), with waiting's
+ * called and outcomeOnly from 20261016230000.
  */
 
 export type CallsKind =
@@ -361,6 +362,8 @@ function base(): Raw {
     waiting: {
       callable: 100,
       touched: 88,
+      called: 70,
+      outcomeOnly: 18,
       untouched: {
         count: 12,
         oldestAt: "2026-10-09T08:12:00Z",
@@ -453,6 +456,12 @@ export function callCentreFixture(kind: CallsKind = "call_centre"): Raw {
   if (kind === "on_track") {
     r.official.confirmedBookings = 34;
     r.cohort.confirmed = 34;
+    // Like City Wood on 16 Oct: 95% touched, but only 57% with a Maqsam call;
+    // the rest have a saved outcome and no call.
+    r.waiting.touched = 95;
+    r.waiting.called = 57;
+    r.waiting.outcomeOnly = 38;
+    r.waiting.untouched.count = 5;
   }
   if (kind === "lead_quality") {
     r.official.medianSpeedSeconds = 540;
@@ -461,6 +470,8 @@ export function callCentreFixture(kind: CallsKind = "call_centre"): Raw {
     r.window.talked120 = 120;
     r.cohort.talked120 = 61;
     r.waiting.touched = 99;
+    r.waiting.called = 96;
+    r.waiting.outcomeOnly = 3;
     r.waiting.untouched = { count: 0, oldestAt: null, oldestWorkSeconds: null };
     r.waiting.callbacks = {
       count: 2,
@@ -591,6 +602,8 @@ export function callCentreFixture(kind: CallsKind = "call_centre"): Raw {
       ...r.waiting,
       callable: 10,
       touched: 9,
+      called: 8,
+      outcomeOnly: 1,
       untouched: {
         count: 1,
         oldestAt: "2026-10-12T21:30:00Z",

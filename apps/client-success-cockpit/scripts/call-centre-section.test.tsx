@@ -187,7 +187,7 @@ describe("the verdict, one per kind", () => {
     const chip = host.querySelector("#results-calls")?.textContent ?? "";
     expect(chip).toContain("Call centre");
     expect(text()).toContain(
-      "Only 88% of leads older than a working hour were called or messaged (the line is 90%); 12 leads still wait.",
+      "Only 70% of leads older than a working hour have a call on Maqsam (the line is 90%); 18 more have a saved outcome but no call, and 12 leads still wait.",
     );
     expect(text()).toContain("Caller: Noor Saleh");
     expect(text()).toContain("and 3 more reasons");
@@ -223,8 +223,9 @@ describe("the verdict, one per kind", () => {
     expect(text()).toContain(
       "28% of leads booked a confirmed appointment (the line is 25%).",
     );
+    // Like City Wood: 95% touched, 57% with a Maqsam call.
     expect(text()).toContain(
-      "Worth fixing: Only 88% of leads older than a working hour",
+      "Worth fixing: Only 57% of leads older than a working hour have a call on Maqsam (the line is 90%); 38 more have a saved outcome but no call, and 5 leads still wait.",
     );
     expect(text()).toContain("and 3 more");
     expect(text()).not.toContain("The first call takes 3 h 12 min");
@@ -493,6 +494,13 @@ describe("the first screen", () => {
       "The oldest has waited 1 d 2 h of working time, since 9 Oct.",
     );
     expect(text()).toContain(
+      "70 of 100 callable leads have a call on Maqsam (70%, the line is 90%).",
+    );
+    expect(text()).toContain(
+      "18 more have a saved outcome but no Maqsam call, so they do not count.",
+    );
+    expect(text()).not.toContain("reached out to");
+    expect(text()).toContain(
       "Day 1 AM - Follow Up: 14 leads, median 3 d, oldest 13 d, 4 over a week",
     );
     expect(text()).toContain("Where these numbers come from");
@@ -507,6 +515,89 @@ describe("the first screen", () => {
     await show(null);
     expect(text()).toContain("of working time, since 9 Oct.");
     expect(text()).toContain("3 never called back, the oldest since 7 Oct.");
+  });
+
+  /** The first row under Waiting now and its dot, the fold opened first. */
+  const firstWaitRow = async () => {
+    const fold = () =>
+      Array.from(host.querySelectorAll("details")).find(d =>
+        d.textContent?.includes("Waiting now"),
+      );
+    if (!fold()?.hasAttribute("open")) {
+      await act(async () => {
+        const d = fold() as unknown as HTMLDetailsElement;
+        d.open = true;
+        d.dispatchEvent(new win.Event("toggle") as unknown as Event);
+      });
+      await flush();
+    }
+    const li = fold()?.querySelector("li");
+    return {
+      text: li?.textContent ?? "",
+      dot: li?.querySelector("span > span")?.className ?? "",
+    };
+  };
+
+  test("the 90% line is a Maqsam call: the row warns under it, though nobody waits", async () => {
+    // Every lead was touched, but only 60 of 100 have a Maqsam call.
+    const raw = callCentreFixture("lead_quality");
+    raw.waiting.called = 60;
+    raw.waiting.outcomeOnly = 39;
+    answers.cockpit_client_calls = () => ({ data: raw });
+    await show(null);
+    const row = await firstWaitRow();
+    expect(row.text).toContain(
+      "Every lead older than a working hour was called or messaged",
+    );
+    expect(row.text).toContain(
+      "60 of 100 callable leads have a call on Maqsam (60%, the line is 90%).",
+    );
+    expect(row.text).toContain(
+      "39 more have a saved outcome but no Maqsam call, so they do not count.",
+    );
+    expect(row.dot).toContain("bg-warning");
+  });
+
+  test("over the line with nobody waiting the row is good, and one outcome-only lead is said once", async () => {
+    await show("lead_quality");
+    const row = await firstWaitRow();
+    expect(row.text).toContain(
+      "96 of 100 callable leads have a call on Maqsam (96%, the line is 90%).",
+    );
+    expect(row.text).toContain(
+      "3 more have a saved outcome but no Maqsam call, so they do not count.",
+    );
+    expect(row.dot).toContain("bg-success");
+    const raw = callCentreFixture("lead_quality");
+    raw.waiting.called = 98;
+    raw.waiting.outcomeOnly = 1;
+    answers.cockpit_client_calls = () => ({ data: raw });
+    forgetCallReads();
+    await show(null);
+    expect((await firstWaitRow()).text).toContain(
+      "1 more has a saved outcome but no Maqsam call, so it does not count.",
+    );
+    raw.waiting.called = 99;
+    raw.waiting.outcomeOnly = 0;
+    forgetCallReads();
+    await show(null);
+    const last = await firstWaitRow();
+    expect(last.text).toContain("99 of 100 callable leads");
+    expect(last.text).not.toContain("saved outcome");
+  });
+
+  test("a read without the called count keeps the touched line", async () => {
+    const raw = callCentreFixture("lead_quality");
+    delete raw.waiting.called;
+    delete raw.waiting.outcomeOnly;
+    answers.cockpit_client_calls = () => ({ data: raw });
+    await show(null);
+    const row = await firstWaitRow();
+    expect(row.text).toContain(
+      "99 of 100 callable leads reached out to (99%, the line is 90%).",
+    );
+    expect(row.text).not.toContain("Maqsam");
+    expect(row.dot).toContain("bg-success");
   });
 
   test("nothing waits: the fold stays shut and says so", async () => {

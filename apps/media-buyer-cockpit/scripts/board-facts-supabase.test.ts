@@ -932,6 +932,7 @@ beforeAll(async () => {
   await db.exec(
     migration("20261015200000_cockpit_client_calls_whatsapp_chats.sql"),
   );
+  await db.exec(migration("20261016230000_client_calls_maqsam_line.sql"));
   await db.exec(SQL);
   await db.exec(CHECKED);
 }, 120_000);
@@ -1127,14 +1128,22 @@ describe("quotations, closes, revenue and lead quality", () => {
     // Answered deals count a sheet win where closes does: R3, the contact's
     // second closed meeting, is in neither. Client A marks P, so the
     // breakdown is known.
-    expect(d1).toMatchObject({ closes_answered: 1, closes_pending: 0, closes_lost: 0 });
+    expect(d1).toMatchObject({
+      closes_answered: 1,
+      closes_pending: 0,
+      closes_lost: 0,
+    });
     // Client B reports only in the portal, and marks wins only: lost and
     // pending are not known, so the breakdown is NULL (answered = won would
     // read 100%).
     const b1 = await dayRow(LOC_B, kd(1));
     expect(b1.closes).toBe(1);
     expect(b1.revenue).toBe(1000);
-    expect(b1).toMatchObject({ closes_answered: null, closes_pending: null, closes_lost: null });
+    expect(b1).toMatchObject({
+      closes_answered: null,
+      closes_pending: null,
+      closes_lost: null,
+    });
   });
 
   test("lead quality: the latest revision, 1 to 10 only", async () => {
@@ -1368,20 +1377,25 @@ describe("the dialer", () => {
     // The dials are read live by the refresh: yesterday is complete and today
     // is so far, whenever the last dial was saved; the newest saved attempt
     // is kept apart as activity.
-    const dialer1 = ((await dayRow(LOC_A, kd(1))).sources as Record<string, Row>).dialer;
+    const dialer1 = (
+      (await dayRow(LOC_A, kd(1))).sources as Record<string, Row>
+    ).dialer;
     expect(dialer1.partial).toBe(false);
     expect(dialer1.lastAttemptAt).toBeTruthy();
     expect(new Date(String(dialer1.as_of)).getTime()).toBeGreaterThan(
       new Date(String(dialer1.lastAttemptAt)).getTime(),
     );
     expect(
-      ((await dayRow(LOC_A, today)).sources as Record<string, Row>).dialer.partial,
+      ((await dayRow(LOC_A, today)).sources as Record<string, Row>).dialer
+        .partial,
     ).toBe(true);
     // Client B is done with you, and the dialer lists it: the call centre
     // does not call its leads, so dials and leads called do not apply (NULL),
     // never a 0 that reads as no work done.
     expect(
-      await q("SELECT 1 FROM mahara_reporting.cc_clients WHERE id = $1", [LOC_B]),
+      await q("SELECT 1 FROM mahara_reporting.cc_clients WHERE id = $1", [
+        LOC_B,
+      ]),
     ).toHaveLength(1);
     for (const n of [1, 2, 3]) {
       const b = await dayRow(LOC_B, kd(n));
@@ -1413,6 +1427,8 @@ describe("the dialer", () => {
             waiting: {
               callable: number;
               touched: number;
+              called: number;
+              outcomeOnly: number;
               untouched: { count: number; oldestAt: string | null };
             };
           };
@@ -1440,6 +1456,9 @@ describe("the dialer", () => {
       } else {
         expect(row.callable_30d).toBe(Number(calls.waiting.callable));
         expect(row.touched_30d).toBe(Number(calls.waiting.touched));
+        // The board's 90% line and the client page's are the same count.
+        expect(row.verified_called_30d).toBe(Number(calls.waiting.called));
+        expect(row.outcome_only_30d).toBe(Number(calls.waiting.outcomeOnly));
         expect(row.untouched_leads).toBe(Number(calls.waiting.untouched.count));
         expect(
           row.oldest_untouched_at
