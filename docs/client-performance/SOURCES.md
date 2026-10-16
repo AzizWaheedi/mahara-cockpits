@@ -440,13 +440,21 @@ board's read functions and screen).
   through the dialer's `cc_results` (the first closed meeting per contact, no
   conflict), and the portal's won deals, one deal counted once.
 - **Rule:** by meeting day; USD only at the fixed rates, an unknown currency
-  left out and counted (`sources.sheet.unpricedCloses`). New on 16 Oct:
-  `closes_pending` and `closes_lost` (meetings marked pending or lost, one per
-  contact, not a contact closed that day) and `closes_answered` (meetings with
-  a deal answer), so close rate = closes / closes_answered and the board can
-  show "won 0, pending 25, lost 1" (Arcturus). A day whose due meetings have no
-  deal answer is NULL, not 0 (31 client-days read 0 before; Ocean Home's
-  October rows are blank).
+  left out and counted (`sources.sheet.unpricedCloses`). A day whose due
+  meetings have no deal answer is NULL, not 0 (31 client-days read 0 before;
+  Ocean Home's October rows are blank).
+- **Close rate (the gate):** closes / shows, as `reportPeriod.ts` computes it,
+  judged against `CLOSE_RATE_GATE` = 20% in `kpi.ts` (the checklist's 20% of
+  shown appointments). Never color closes / closes_answered against that gate.
+- **Won, pending, lost (new on 16 Oct):** `closes_pending` and `closes_lost`
+  (meetings marked pending or lost, one per contact, not a contact closed that
+  day) and `closes_answered` (meetings with a deal answer; a sheet win counts
+  on the contact's first closed meeting only, as closes does). The board shows
+  them as a breakdown beside closes: "won 0, pending 25, lost 1" (Arcturus).
+  All three are NULL on a day whose closes are NULL, and NULL for a client
+  whose sheet and portal never mark a deal lost or pending. A client who marks
+  wins only (Ocean Home's single Y) would otherwise read answered = won, a
+  100% rate by construction.
 - **Checked against:** the sheets read live and the portal: 1 close in 30 days
   (Ocean Home, USD 67,000 on both), equal.
 - **Gaps:** seven clients fill no closes source: client success.
@@ -544,7 +552,7 @@ On 16 Oct at 16:30 Kuwait every source was fresh: lead sync 15:35, appointments
 | Bookings replaced before their time still due | same | Alkhalil 8 to 7, Atlantis 12 to 10 meetings due |
 | RESCHEDULE and CALLBACK bookings counted as bookings | same | Alkhalil 8 to 7, Arcturus 29 to 28 confirmed |
 | A sheet mark lost when the CRM moved the meeting | same | Atlantis shows 5 to 6 |
-| Pending and lost deals not kept | same | `closes_pending`, `closes_lost`, `closes_answered` |
+| Pending and lost deals not kept | same | `closes_pending`, `closes_lost`, `closes_answered` as a breakdown; NULL for a client who marks wins only; the gate's close rate stays closes / shows |
 | 0 closes and quotations on unreported days | same | NULL on those days |
 | Quotation N dropped | same, and `hermes/cockpit-sync/csmProviders.ts` | answers known after the native feed release |
 | Dials 0 for clients the dialer does not list | same | NULL with a note |
@@ -594,7 +602,7 @@ To make it live, in order (systems manager, the lead session):
 | One caller's leads are "touched" by saved outcomes with no Maqsam call. | Call-centre lead |
 | Whether Instagram and Messenger DMs should leave CRM leads like WhatsApp chats. | CEO, systems manager |
 | The dialer: RESCHEDULE should cancel the old GoHighLevel appointment; its appointment facts should learn when GoHighLevel drops a booking; its sheet reader could keep column K as a second quotation source; the copy of sheet marks onto `appointments.attended` should take the same moved-time fallback as the facts. | Systems manager (dialer) |
-| The board: read `cockpit_client_days`, `cockpit_client_now`, `cockpit_meta_ad_days`, `cockpit_meta_reach` and `cockpit_meta_ad_days_status()` with these rules: NULL as unknown; "so far" on partial days; full-day windows by default; the 90% line on `verified_called_30d`; close rate on `closes_answered`; cost per lead from Meta's leads; a "Spent but not active" line from `cancelledDelivering`; the billing reason from `billingStopped`; Atlantis's Los Angeles clock; "Meta leads not in the CRM" from `cockpit_meta_leads_not_in_crm`; a dash for DWY call-centre figures. | Board team |
+| The board: read `cockpit_client_days`, `cockpit_client_now`, `cockpit_meta_ad_days`, `cockpit_meta_reach` and `cockpit_meta_ad_days_status()` with these rules: NULL as unknown; "so far" on partial days; full-day windows by default; the 90% line on `verified_called_30d`; close rate = closes / shows against the 20% gate, with won, pending and lost (`closes_pending`, `closes_lost`) as a breakdown; cost per lead from Meta's leads; a "Spent but not active" line from `cancelledDelivering`; the billing reason from `billingStopped`; Atlantis's Los Angeles clock; "Meta leads not in the CRM" from `cockpit_meta_leads_not_in_crm`; a dash for DWY call-centre figures. | Board team |
 | Flag a client whose "Meta leads not in the CRM" is above 0 for two days. | Systems manager (cockpit guardian) |
 | The SAR and QAR pegs in the fixed rates (about $0.50 in 30 days). | Systems manager, optional |
 | Hook and hold targets from Mahara's own spread; one KPI set (`kpi.ts` or the October plan). | Media buyer, CEO |

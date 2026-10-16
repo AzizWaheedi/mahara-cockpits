@@ -1124,10 +1124,17 @@ describe("quotations, closes, revenue and lead quality", () => {
       "no known currency",
     );
     expect(await sum(LOC_A, "closes")).toBe(2);
-    // Client B reports only in the portal.
+    // Answered deals count a sheet win where closes does: R3, the contact's
+    // second closed meeting, is in neither. Client A marks P, so the
+    // breakdown is known.
+    expect(d1).toMatchObject({ closes_answered: 1, closes_pending: 0, closes_lost: 0 });
+    // Client B reports only in the portal, and marks wins only: lost and
+    // pending are not known, so the breakdown is NULL (answered = won would
+    // read 100%).
     const b1 = await dayRow(LOC_B, kd(1));
     expect(b1.closes).toBe(1);
     expect(b1.revenue).toBe(1000);
+    expect(b1).toMatchObject({ closes_answered: null, closes_pending: null, closes_lost: null });
   });
 
   test("lead quality: the latest revision, 1 to 10 only", async () => {
@@ -1908,10 +1915,13 @@ describe("the corrections after the 2026-10-16 check", () => {
         closes_lost: 1,
         closes_answered: 2,
       });
-      // Day 6 had a meeting due and no deal or quotation answer: unknown.
+      // Day 6 had a meeting due and no deal or quotation answer: unknown,
+      // closes and its breakdown alike.
       expect(d6.closes).toBeNull();
       expect(d6.revenue_usd).toBeNull();
-      expect(d6.closes_answered).toBe(0);
+      expect(d6.closes_answered).toBeNull();
+      expect(d6.closes_pending).toBeNull();
+      expect(d6.closes_lost).toBeNull();
       expect(d6.quotations).toBeNull();
       // Quotation Y and N from the copy: answers known.
       expect(d3).toMatchObject({ quotations: 1, quotation_answers: 1 });

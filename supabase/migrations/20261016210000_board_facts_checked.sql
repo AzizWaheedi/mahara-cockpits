@@ -49,9 +49,13 @@
 --      first; then the same contact's only meeting that day takes the sheet's
 --      only mark that day.
 --   7. Pending and lost deals were not kept, so a client with 25 deals pending
---      read 0% closed (Arcturus). closes_pending, closes_lost and
+--      showed only "0 closed" (Arcturus). closes_pending, closes_lost and
 --      closes_answered (meetings whose deal is answered: won, lost or pending)
---      are new; close rate on answered meetings is closes / closes_answered.
+--      are new, a breakdown beside closes. The close rate the KPI gate judges
+--      stays closes / shows (reportPeriod.ts, kpi.ts CLOSE_RATE_GATE 20%). The
+--      three are NULL for a client whose sheet and portal never mark a deal
+--      lost or pending (wins only: answered would equal won), and on a day
+--      whose closes are NULL.
 --   8. Closes and quotations read 0 on a day whose due meetings nobody answered
 --      (31 client-days; Ocean Home's October rows are blank). Such a day is now
 --      NULL, the rule shows already follow.
@@ -151,9 +155,9 @@ COMMENT ON COLUMN public.cockpit_client_days.quotation_answers IS
   'Meetings whose quotation was answered either way: the larger per day of the sheet copy''s Y plus N (once the copy keeps N, performance.quoteKeepsN) and the portal''s answers. NULL while the copy keeps only Y. Quotation rate = quotations / quotation_answers.';
 COMMENT ON COLUMN public.cockpit_client_days.closes IS
   'Closed deals by meeting day: the sheet''s first closed meeting per contact and the portal''s won deals, one deal counted once. NULL when the client fills neither the sheet''s Closed column nor the portal''s deal, or when meetings were due this day and none has a deal answer.';
-COMMENT ON COLUMN public.cockpit_client_days.closes_pending IS 'Meetings this day whose deal is marked pending: the sheet''s Closed P or the portal''s pending, one per contact, not a contact closed this day. NULL as closes.';
-COMMENT ON COLUMN public.cockpit_client_days.closes_lost IS 'Meetings this day whose deal is marked lost: the sheet''s Closed N or the portal''s lost, one per contact, not a contact closed this day. NULL as closes.';
-COMMENT ON COLUMN public.cockpit_client_days.closes_answered IS 'Meetings this day whose deal is answered (won, lost or pending in the sheet or the portal), one per contact: the close-rate denominator (closes / closes_answered). NULL as closes.';
+COMMENT ON COLUMN public.cockpit_client_days.closes_pending IS 'Meetings this day whose deal is marked pending: the sheet''s Closed P or the portal''s pending, one per contact, not a contact closed this day. NULL whenever closes is NULL, and for a client whose sheet and portal never mark a deal lost or pending (only wins are marked, so pending is not known).';
+COMMENT ON COLUMN public.cockpit_client_days.closes_lost IS 'Meetings this day whose deal is marked lost: the sheet''s Closed N or the portal''s lost, one per contact, not a contact closed this day. NULL whenever closes is NULL, and for a client whose sheet and portal never mark a deal lost or pending.';
+COMMENT ON COLUMN public.cockpit_client_days.closes_answered IS 'Meetings this day whose deal is answered (won, lost or pending in the sheet or the portal), one per contact; a sheet win counts on the contact''s first closed meeting only, as closes does. A breakdown (won / pending / lost of answered), not the gate''s close rate: that stays closes / shows (reportPeriod.ts, kpi.ts CLOSE_RATE_GATE 20%). NULL whenever closes is NULL, and for a client whose sheet and portal never mark a deal lost or pending (wins only: answered would equal won and read 100%).';
 COMMENT ON COLUMN public.cockpit_client_days.dials IS 'The dialer''s official dials: outcomes saved with a note, by the Kuwait day saved. NULL for a client the dialer does not list.';
 COMMENT ON TABLE public.cockpit_client_days IS
   'One row per client location per Kuwait day for the Client Performance board, written only by cockpit_board_facts_refresh. NULL means the source could not be read or the client does not fill it; 0 means it was read and has nothing. sources holds {ok, state, as_of, note, from, partial} per source: leads, appointments, outcomes, sheet_marks, provisional, sheet, sheet_copy, dialer, dialer_leads; partial is true while the source''s last read is before the day ended (the day is "so far"); sheet also has unpricedCloses on a day with closes whose value is in no known currency, leads has bulkImport on a day 10 or more contacts arrived within one hour. state is ok (a complete read), stale (partial: a closed day is never lowered; as_of NULL means no record of a read, so it covers no day), failed or none (the stored figure is kept).';
@@ -883,7 +887,7 @@ BEGIN
 
   -- 3.7 The client sheets (the dialer's cc_results): closes and values -------
   BEGIN
-    INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note, cov_from, cov_months, fills)
+    INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note, cov_from, cov_months, fills, keeps_n)
     SELECT 'sheet', l.location_id, x.state, s.checked_at,
       CASE WHEN x.state = 'none' THEN 'The dialer reads no sheet for this client.'
            ELSE nullif(concat_ws(' ',
@@ -904,7 +908,7 @@ BEGIN
                     CASE WHEN date_trunc('month', v_today::timestamp)::date <> ALL (x.months)
                          THEN format('Its %s tab has no rows yet, so %s is not covered until the client fills it.',
                            to_char(v_today, 'Mon YY'), to_char(v_today, 'FMMonth')) END) END), '') END,
-      x.months[1], x.months, x.state <> 'none' AND x.fills
+      x.months[1], x.months, x.state <> 'none' AND x.fills, x.state <> 'none' AND x.fills AND x.marks_np
     FROM pg_temp._bf_loc l
     LEFT JOIN mahara_reporting.sheet_snapshots s ON s.namespace = 'production' AND s.id = l.location_id
     CROSS JOIN LATERAL (
@@ -925,7 +929,12 @@ BEGIN
              -- column is blank on every row gives no closes, never 0.
              s.id IS NOT NULL AND s.data IS NOT NULL AND (s.data->>'sheetId') IS NOT DISTINCT FROM s.sheet_id
                AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.data->'rows') = 'array' THEN s.data->'rows' ELSE '[]'::jsonb END) r
-                           WHERE nullif(btrim(coalesce(r->>'closed', '')), '') IS NOT NULL) AS fills
+                           WHERE nullif(btrim(coalesce(r->>'closed', '')), '') IS NOT NULL) AS fills,
+             -- The client marks a deal lost or pending somewhere (N or P), so
+             -- answered deals are known; a sheet with wins only says nothing
+             -- of the deals not won.
+             EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.data->'rows') = 'array' THEN s.data->'rows' ELSE '[]'::jsonb END) r
+                     WHERE upper(btrim(coalesce(r->>'closed', ''))) IN ('N', 'P')) AS marks_np
     ) x;
 
     PERFORM pg_catalog.set_config('enable_nestloop', 'off', true);
@@ -940,7 +949,9 @@ BEGIN
       AND r.project_rank = 1 AND NOT r.project_conflict
       AND r.meeting >= v_start AND r.meeting < v_end;
     -- Every Closed answer on the sheet (Y, N, P), per contact and meeting day,
-    -- for closes answered, pending and lost.
+    -- for closes answered, pending and lost. A Y counts on the rows closes
+    -- counts (the contact's first closed meeting), so answered never holds a
+    -- win closes left out.
     INSERT INTO pg_temp._bf_dm (location_id, day, who, mark)
     SELECT r.location_id, (r.meeting AT TIME ZONE 'Asia/Kuwait')::date,
       coalesce(r.contact_id, 'p:' || nullif(right(regexp_replace(coalesce(r.phone, ''), '[^0-9]', '', 'g'), 8), '')),
@@ -948,6 +959,9 @@ BEGIN
     FROM mahara_reporting.cc_results r
     JOIN pg_temp._bf_loc l ON l.location_id = r.location_id
     WHERE NOT r.conflict AND upper(btrim(coalesce(r.closed, ''))) IN ('Y', 'N', 'P')
+      AND (upper(btrim(r.closed)) <> 'Y'
+           OR (NOT (coalesce(r.confirmed, '') = 'C' AND coalesce(r.attendance, '') = 'Y')
+               AND r.project_rank = 1 AND NOT r.project_conflict))
       AND r.meeting >= v_start AND r.meeting < v_end;
     PERFORM pg_catalog.set_config('enable_nestloop', v_nestloop, true);
   EXCEPTION WHEN OTHERS THEN
@@ -1278,11 +1292,13 @@ BEGIN
     coalesce(bool_or(s.fills) FILTER (WHERE s.source = 'sheet'), false) AS sheet_fills_closed,
     coalesce(bool_or(s.fills) FILTER (WHERE s.source = 'sheet_copy'), false) AS copy_fills_quote,
     coalesce(bool_or(s.keeps_n) FILTER (WHERE s.source = 'sheet_copy'), false) AS copy_keeps_n,
+    -- The sheet marks a deal lost or pending somewhere (N or P).
+    coalesce(bool_or(s.keeps_n) FILTER (WHERE s.source = 'sheet'), false) AS sheet_marks_np,
     jsonb_object_agg(s.source, jsonb_build_object('ok', s.state = 'ok', 'state', s.state, 'as_of', s.as_of, 'note', s.note)
       || CASE WHEN s.cov_from IS NOT NULL THEN jsonb_build_object('from', s.cov_from) ELSE '{}'::jsonb END) AS sources
   FROM pg_temp._bf_src s GROUP BY 1;
   ALTER TABLE pg_temp._bf_st ADD COLUMN portal_none boolean, ADD COLUMN lq_none boolean, ADD COLUMN sheet_months date[],
-    ADD COLUMN portal_fills_deal boolean, ADD COLUMN portal_fills_quote boolean;
+    ADD COLUMN portal_fills_deal boolean, ADD COLUMN portal_fills_quote boolean, ADD COLUMN portal_marks_np boolean;
   UPDATE pg_temp._bf_st st SET
     sheet_months = (SELECT s.cov_months FROM pg_temp._bf_src s WHERE s.source = 'sheet' AND s.location_id = st.location_id LIMIT 1),
     portal_none = NOT EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id),
@@ -1290,7 +1306,9 @@ BEGIN
     -- The portal fills deals when any report marks one won, lost or pending
     -- ("unknown" is the form's blank), and quotations when any answers yes or no.
     portal_fills_deal = EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id AND coalesce(o.deal, 'unknown') <> 'unknown'),
-    portal_fills_quote = EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id AND o.quotation IS NOT NULL);
+    portal_fills_quote = EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id AND o.quotation IS NOT NULL),
+    -- The portal marks a deal lost or pending somewhere.
+    portal_marks_np = EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id AND o.deal IN ('lost', 'pending'));
 
   CREATE TEMP TABLE _bf_fin ON COMMIT DROP AS
   WITH piv AS (
@@ -1328,6 +1346,10 @@ BEGIN
     SELECT p.*, st.sources, st.copy, st.portal_none, st.lq_none,
       st.sheet_fills_closed, st.copy_fills_quote, st.copy_keeps_n, coalesce(st.portal_fills_deal, false) AS portal_fills_deal,
       coalesce(st.portal_fills_quote, false) AS portal_fills_quote,
+      -- Deals not won are known only where the client marks them somewhere:
+      -- a client who marks wins only would read answered = won.
+      ((coalesce(st.sheet, 'failed') IN ('ok', 'stale') AND st.sheet_marks_np)
+        OR (NOT coalesce(st.portal_none, true) AND coalesce(st.portal_marks_np, false))) AS deals_np_known,
       coalesce(st.leads, 'failed') AS leads, coalesce(st.appts, 'failed') AS appts, coalesce(st.outcomes, 'failed') AS outcomes,
       coalesce(st.prov, 'failed') AS prov, coalesce(st.sheet, 'failed') AS sheet, coalesce(st.copy, 'failed') AS copy_state,
       coalesce(st.dialer, 'failed') AS dialer, coalesce(st.dialer_leads, 'failed') AS dialer_leads,
@@ -1441,9 +1463,14 @@ BEGIN
     public.cockpit_board_facts_pick(e.s_close, e.day, v_today, o.closes_with_value,
       CASE WHEN e.c_unanswered THEN NULL ELSE e.closes_with_value END)::int AS closes_with_value,
     public.cockpit_board_facts_pick(e.s_close, e.day, v_today, o.revenue_usd, CASE WHEN e.c_unanswered THEN NULL ELSE e.revenue_usd END) AS revenue_usd,
-    public.cockpit_board_facts_pick(e.s_close, e.day, v_today, o.closes_pending, e.closes_pending)::int AS closes_pending,
-    public.cockpit_board_facts_pick(e.s_close, e.day, v_today, o.closes_lost, e.closes_lost)::int AS closes_lost,
-    public.cockpit_board_facts_pick(e.s_close, e.day, v_today, o.closes_answered, e.closes_answered)::int AS closes_answered,
+    -- Pending, lost and answered: NULL whenever closes is NULL, and for a
+    -- client who never marks a deal lost or pending (even over a stored 0).
+    CASE WHEN e.deals_np_known THEN public.cockpit_board_facts_pick(e.s_close, e.day, v_today, o.closes_pending,
+      CASE WHEN e.c_unanswered THEN NULL ELSE e.closes_pending END) END::int AS closes_pending,
+    CASE WHEN e.deals_np_known THEN public.cockpit_board_facts_pick(e.s_close, e.day, v_today, o.closes_lost,
+      CASE WHEN e.c_unanswered THEN NULL ELSE e.closes_lost END) END::int AS closes_lost,
+    CASE WHEN e.deals_np_known THEN public.cockpit_board_facts_pick(e.s_close, e.day, v_today, o.closes_answered,
+      CASE WHEN e.c_unanswered THEN NULL ELSE e.closes_answered END) END::int AS closes_answered,
     public.cockpit_board_facts_pick(e.s_lq, e.day, v_today, o.lead_quality_sum, e.lq_sum) AS lead_quality_sum,
     public.cockpit_board_facts_pick(e.s_lq, e.day, v_today, o.lead_quality_count, e.lq_count)::int AS lead_quality_count,
     -- A client the dialer does not list: dials unknown, even over a stored 0.
