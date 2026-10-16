@@ -244,6 +244,7 @@ beforeAll(async () => {
 
   await db.exec(migration("20261016133300_board_api.sql"));
   await db.exec(migration("20261016220000_board_read_checked.sql"));
+  await db.exec(migration("20261016220100_board_read_notes.sql"));
   read = await as(
     VIEWER,
     "SELECT public.cockpit_board_read($1::date,$2::date) AS r",

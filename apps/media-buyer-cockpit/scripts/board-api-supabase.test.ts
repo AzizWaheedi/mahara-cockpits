@@ -31,7 +31,11 @@ const FIXES = [
   "20261016210000_board_facts_checked.sql",
   "20261016210100_meta_ad_days_checked.sql",
 ];
-const READ_CHECKED = "20261016220000_board_read_checked.sql";
+/** The read that takes them, then its notes said once. */
+const READ_CHECKED = [
+  "20261016220000_board_read_checked.sql",
+  "20261016220100_board_read_notes.sql",
+];
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
 const ADMIN = "00000000-0000-4000-8000-0000000000a1";
@@ -661,7 +665,7 @@ beforeAll(async () => {
 
   await db.exec(migration(FILE));
   for (const f of FIXES) await db.exec(migration(f));
-  await db.exec(migration(READ_CHECKED));
+  for (const f of READ_CHECKED) await db.exec(migration(f));
 }, 180_000);
 
 afterAll(async () => {
@@ -2300,11 +2304,11 @@ describe("the read takes the 16 October corrections", () => {
   const now = (row: Row) =>
     q(
       `INSERT INTO public.cockpit_client_now(location_id,untouched_leads,touched_share_30d,callable_30d,touched_30d,
-         verified_called_30d,outcome_only_30d,first_call_median_work_seconds_30d,computed_at)
-       VALUES($1,3,$2::numeric,$3,$4,$5,$6,600,'2026-10-16 10:30:00+00')
+         verified_called_30d,outcome_only_30d,first_call_median_work_seconds_30d,computed_at,note)
+       VALUES($1,3,$2::numeric,$3,$4,$5,$6,600,'2026-10-16 10:30:00+00',$7)
        ON CONFLICT (location_id) DO UPDATE SET touched_share_30d = EXCLUDED.touched_share_30d, callable_30d = EXCLUDED.callable_30d,
          touched_30d = EXCLUDED.touched_30d, verified_called_30d = EXCLUDED.verified_called_30d,
-         outcome_only_30d = EXCLUDED.outcome_only_30d, computed_at = EXCLUDED.computed_at, note = NULL`,
+         outcome_only_30d = EXCLUDED.outcome_only_30d, computed_at = EXCLUDED.computed_at, note = EXCLUDED.note`,
       [
         LOC_D,
         row.share,
@@ -2312,6 +2316,7 @@ describe("the read takes the 16 October corrections", () => {
         row.touched,
         row.verified,
         row.outcomeOnly,
+        row.note ?? null,
       ],
     );
   const clearNow = async () => {
@@ -2331,6 +2336,8 @@ describe("the read takes the 16 October corrections", () => {
         touched: 95,
         verified: 57,
         outcomeOnly: 38,
+        // The facts say the outcome-only touches too: said once, the rest kept.
+        note: "38 of the 95 touched leads had a dialer outcome saved but no Maqsam call to the number. 3 WhatsApp chat contacts are left out (tagged inbound whatsapp, no ad).",
       });
       let v = rowOf(await board(CREATIVE), LOC_D).values;
       expect(v.leadsTouched).toMatchObject({
@@ -2344,7 +2351,8 @@ describe("the read takes the 16 October corrections", () => {
       });
       expect(v.leadsTouched.note).toBe(
         "57 of the 100 callable leads from the last 30 days have a Maqsam call, as of 16 Oct 13:30 Kuwait time. " +
-          "38 more have a saved outcome but no Maqsam call, so they are not counted (95% if they were).",
+          "38 more have a saved outcome but no Maqsam call, so they are not counted (95% if they were). " +
+          "3 WhatsApp chat contacts are left out (tagged inbound whatsapp, no ad).",
       );
       await owner(db);
       await now({
@@ -2435,8 +2443,30 @@ describe("the read takes the 16 October corrections", () => {
       );
     }
     // A client who marks only wins has nothing more to say.
-    const v = rowOf(await board(CREATIVE), LOC_D).values;
+    let v = rowOf(await board(CREATIVE), LOC_D).values;
     expect(v.closes).toEqual({ v: 2, status: null, withValue: 2 });
+    // Nothing pending or lost: the figures are kept, the note stays quiet.
+    await owner(db);
+    try {
+      await q(
+        "UPDATE public.cockpit_client_days SET closes_pending = 0, closes_lost = 0 WHERE location_id = $1",
+        [LOC_D],
+      );
+      v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.closes).toEqual({
+        v: 2,
+        status: null,
+        withValue: 2,
+        pending: 0,
+        lost: 0,
+      });
+    } finally {
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_client_days SET closes_pending = NULL, closes_lost = NULL WHERE location_id = $1",
+        [LOC_D],
+      );
+    }
   });
 
   test("CRM leads say how many are Instagram or Messenger chats with no ad", async () => {
@@ -2601,8 +2631,8 @@ describe("the migration", () => {
     await owner(db);
     await db.exec(migration(FILE));
     for (const f of FIXES) await db.exec(migration(f));
-    await db.exec(migration(READ_CHECKED));
-    await db.exec(migration(READ_CHECKED));
+    for (const f of READ_CHECKED) await db.exec(migration(f));
+    for (const f of READ_CHECKED) await db.exec(migration(f));
     const b = await board(CEO);
     expect(b.clients.length).toBe(4);
     expect(b).toHaveProperty("offBoard");
