@@ -1,8 +1,14 @@
 import type { ReactNode } from "react";
+import { capitalize, count, pct } from "@/components/ceo/format";
 import { Hint } from "@/components/ceo/Hint";
 import { Na } from "@/components/ceo/Na";
+import type { StatusTone } from "@/components/ceo/StatusChip";
 import { range as rangeText } from "@/components/ceo/windows";
-import type { B2bAdsPayload, B2bAdWindow } from "@/types/ceo/payloads";
+import type {
+  B2bAdsPayload,
+  B2bAdWindow,
+  B2bVerdict,
+} from "@/types/ceo/payloads";
 
 /**
  * The small pieces of the Ads tab's funnel lines: a "label value" fact, the
@@ -105,4 +111,100 @@ export function frequencyFact(w: B2bAdWindow, hint: string): StageFact[] {
   return w.frequency !== null
     ? [{ label: "Freq", v: w.frequency, f: frequency, hint }]
     : [];
+}
+
+// ---- verdicts and the words around the funnel -------------------------------
+
+/**
+ * The tone of each verdict. "not_judged" is an ad in a campaign that is not
+ * lead gen (retargeting, hiring): it is never held to the $15 cost per lead
+ * gate, so it reads neutral and never joins scale, fatiguing or kill (the
+ * audit of 2026-10-16 found 17 retargeting ads under "Scale").
+ */
+export const TONE: Record<B2bVerdict["verdict"], StatusTone> = {
+  scale: "good",
+  hold: "warning",
+  kill: "critical",
+  fatiguing: "warning",
+  "no delivery": "neutral",
+  not_judged: "neutral",
+  off: "neutral",
+  "leads do not book": "serious",
+  "intros do not convert": "serious",
+  "demos do not close": "serious",
+};
+
+/** "not_judged" reads "not judged"; every other key is already words. */
+export const verdictWords = (v: string) => v.replaceAll("_", " ");
+
+/** The verdict as a chip label: "Not judged", "Scale". */
+export const verdictLabel = (v: string) => capitalize(verdictWords(v));
+
+/**
+ * The header's verdict counts, biggest first, each under its own key: an ad
+ * that is not judged is counted there and never inside scale, fatiguing or
+ * kill. A key the screen has no tone for reads neutral.
+ */
+export function verdictChips(
+  verdicts: B2bAdsPayload["verdicts"],
+): { key: string; label: string; tone: StatusTone; n: number }[] {
+  return Object.entries(verdicts)
+    .filter(([, n]) => typeof n === "number" && n > 0)
+    .sort((a, b) => (b[1] ?? 0) - (a[1] ?? 0))
+    .map(([key, n]) => ({
+      key,
+      label: verdictWords(key),
+      tone: TONE[key as B2bVerdict["verdict"]] ?? "neutral",
+      n: n ?? 0,
+    }));
+}
+
+/** Fit, the setters' own call on each lead (the ROAS tags), never a stage. */
+export const FIT_HINT =
+  "The share of leads the setters tagged roas-qualified, out of qualified plus unqualified.";
+
+export const LEADS_HINT = `Leads that reached the CRM, by the ROAS tags. Fit is the share of leads the setters tagged roas-qualified, out of qualified plus unqualified. Meta is Meta's own count.`;
+
+/** Per lead, so a rebooked intro is one lead, never two. */
+export const LEAD_TO_INTRO_HINT =
+  "Leads that came in during the window with an intro booked at or after they came in, over those leads. Per lead, so a rebooked intro counts once.";
+
+export const INTROS_BOOKED_HINT =
+  "Intro appointments booked in the window, rebookings included. Lead to intro counts each lead once.";
+
+/** The same formula as the campaign constraint's intro stage. */
+export const INTRO_TO_DEMO_HINT =
+  "Intros shown that went on to a demo booked for the same contact, over intros shown.";
+
+/** Confirmed, showed or invalid counts as shown: the B2B dashboard's rule. */
+export const INTROS_SHOWN_HINT =
+  "Intros shown over intros whose time has passed. Confirmed, showed or invalid counts as shown, the B2B dashboard's rule.";
+
+export const DEMOS_BOOKED_HINT =
+  "Demos booked in the window. Intro to demo is intros shown that went on to a demo booked for the same contact, over intros shown.";
+
+export const DEMOS_SHOWN_HINT =
+  "Demos shown over demos due. Confirmed, showed or invalid counts as shown. Cost is spend over demos shown.";
+
+/** What the "carry an ad" line counts, and whose ad a call or deal is. */
+export const COVERAGE_HINT =
+  "Every lead and signed deal in the CRM for the window against the ones whose ad id is an ad on this account, paused ads included. The rest came in organically, by WhatsApp or by hand. Calls and deals are credited to the ad on the call or deal record, which can differ from the ad on the lead.";
+
+/** The coverage line: how much of the CRM carries one of this account's ads. */
+export function coverageLine(c: B2bAdsPayload["coverage"]["w7"]): string {
+  return `${count(c.adLeads)} of ${count(c.leads)} leads and ${count(c.adCloses)} of ${count(c.closes)} signed deals carry an ad from this account`;
+}
+
+/**
+ * A campaign's weakest stage, said with the days it is worked out on: the
+ * stored payload judges it on thirty days even in the seven-day view; a
+ * custom range judges it on the chosen days (`from7` equals `from30` there).
+ */
+export function constraintText(
+  c: { stage: string; mine: number; account: number },
+  windows: B2bAdsPayload["windows"],
+): string {
+  const days =
+    windows.from7 === windows.from30 ? "the chosen days" : "thirty days";
+  return `Over ${days}, ${c.stage} runs at ${pct(c.mine)} against ${pct(c.account)} across the account.`;
 }

@@ -13,7 +13,6 @@ import { type ReactNode, useCallback, useMemo, useState } from "react";
 import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import {
-  capitalize,
   count,
   countCompact,
   humanize,
@@ -30,7 +29,6 @@ import {
   gateTone,
   StatusChip,
   StatusDot,
-  type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { useServerWindow } from "@/components/ceo/serverWindow";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
@@ -47,12 +45,26 @@ import type {
   B2bVerdict,
 } from "@/types/ceo/payloads";
 import {
+  COVERAGE_HINT,
+  constraintText,
+  coverageLine,
+  DEMOS_BOOKED_HINT,
+  DEMOS_SHOWN_HINT,
   Fact,
+  FIT_HINT,
   frequencyFact,
   frequencyHint,
+  INTRO_TO_DEMO_HINT,
+  INTROS_BOOKED_HINT,
+  INTROS_SHOWN_HINT,
+  LEAD_TO_INTRO_HINT,
+  LEADS_HINT,
   NA_ZERO,
   Num,
   type StageFact,
+  TONE,
+  verdictChips,
+  verdictLabel,
 } from "./adsFacts";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
 import { LaunchCard } from "./LaunchCard";
@@ -75,18 +87,6 @@ import type { CeoTabProps } from "./types";
 type Win = "w7" | "w30";
 type View = "funnel" | "table";
 
-const TONE: Record<B2bVerdict["verdict"], StatusTone> = {
-  scale: "good",
-  hold: "warning",
-  kill: "critical",
-  fatiguing: "warning",
-  "no delivery": "neutral",
-  off: "neutral",
-  "leads do not book": "serious",
-  "intros do not convert": "serious",
-  "demos do not close": "serious",
-};
-
 /** Whose problem a verdict is, as a plain label beside it. */
 const OWNER: Record<NonNullable<B2bVerdict["owner"]>, string> = {
   ads: "Ad to fix",
@@ -106,6 +106,8 @@ const CONSTRAINT_STAGE: Record<string, string> = {
   "impressions to link clicks": "clicks",
   "clicks to leads": "leads",
   "leads to intros booked": "booked",
+  "intros due to shown": "shown",
+  // The label before 2026-10-16, on a payload stored before then.
   "intros booked to shown": "shown",
   "intros shown to demos booked": "demos",
   "demos shown to closes": "signed",
@@ -180,21 +182,29 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
           f: pct,
         },
         { label: "CPL", v: w.cpl, f: money },
-        ...(w.leads ? [{ label: "Fit", v: w.qualifiedPct, f: pct }] : []),
+        ...(w.leads
+          ? [{ label: "Fit", v: w.qualifiedPct, f: pct, hint: FIT_HINT }]
+          : []),
         ...(w.metaLeads !== w.leads
           ? [{ label: "Meta", v: w.metaLeads, f: count }]
           : []),
       ],
-      hint: "Leads that reached the CRM. Fit is the share whose stage reached demo booked, confirmed, closed or hot lead. Meta is Meta's own count.",
+      hint: LEADS_HINT,
     },
     {
       key: "booked",
       label: "Intros booked",
       value: count(w.introsBooked),
       facts: [
-        { label: "Lead to intro", v: w.bookRate, f: pct },
+        {
+          label: "Lead to intro",
+          v: w.bookRate,
+          f: pct,
+          hint: LEAD_TO_INTRO_HINT,
+        },
         { label: "Cost", v: w.costPerIntroBooked, f: money },
       ],
+      hint: INTROS_BOOKED_HINT,
     },
     {
       key: "shown",
@@ -204,16 +214,22 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
         { label: "Show rate", v: w.introShowRate, f: pct },
         { label: "Cost", v: w.costPerIntroShown, f: money },
       ],
-      hint: "Intros shown over intros whose time has passed. Confirmed or showed counts as shown.",
+      hint: INTROS_SHOWN_HINT,
     },
     {
       key: "demos",
       label: "Demos booked",
       value: count(w.demosBooked),
       facts: [
-        { label: "Intro to demo", v: w.introToDemo, f: pct },
+        {
+          label: "Intro to demo",
+          v: w.introToDemo,
+          f: pct,
+          hint: INTRO_TO_DEMO_HINT,
+        },
         { label: "Cost", v: w.costPerDemoBooked, f: money },
       ],
+      hint: DEMOS_BOOKED_HINT,
     },
     {
       key: "demoshown",
@@ -223,7 +239,7 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
         { label: "Show rate", v: w.demoShowRate, f: pct },
         { label: "Cost", v: w.costPerDemo, f: money },
       ],
-      hint: "Demos shown over demos due. Cost is spend over demos shown.",
+      hint: DEMOS_SHOWN_HINT,
     },
     {
       key: "signed",
@@ -519,7 +535,7 @@ function AdRow({ ad, ...r }: RowProps & { ad: B2bAdNode }) {
           <CompactLine w={w}>
             <StatusChip
               tone={TONE[ad.verdict.verdict]}
-              label={capitalize(ad.verdict.verdict)}
+              label={verdictLabel(ad.verdict.verdict)}
             />
             {owner ? <span>{owner}</span> : null}
           </CompactLine>
@@ -664,7 +680,7 @@ function CampaignRow({
                 {`Stuck at ${CONSTRAINT_OWNER[c.constraint.owner]}: `}
               </span>
               <span className="text-muted-foreground">
-                {`${c.constraint.stage} runs at ${pct(c.constraint.mine)} against ${pct(c.constraint.account)} across the account.`}
+                {constraintText(c.constraint, r.payload.windows)}
               </span>
             </span>
           </p>
@@ -758,8 +774,7 @@ const COLS: Col[] = [
   {
     key: "qualifiedPct",
     label: "Fit",
-    title:
-      "Leads whose stage reached demo booked, confirmed, closed or hot lead",
+    title: FIT_HINT,
     get: w => w.qualifiedPct,
     fmt: pct,
   },
@@ -773,7 +788,8 @@ const COLS: Col[] = [
   {
     key: "introShowRate",
     label: "Show",
-    title: "Intros shown over intros due",
+    title:
+      "Intros shown over intros due. Confirmed, showed or invalid counts as shown.",
     get: w => w.introShowRate,
     fmt: pct,
   },
@@ -795,7 +811,8 @@ const COLS: Col[] = [
   {
     key: "demoShowRate",
     label: "Show",
-    title: "Demos shown over demos due",
+    title:
+      "Demos shown over demos due. Confirmed, showed or invalid counts as shown.",
     get: w => w.demoShowRate,
     fmt: pct,
   },
@@ -960,7 +977,7 @@ function AdTable({
                 <td className="px-2 py-2 text-right">
                   <StatusChip
                     tone={TONE[a.verdict.verdict]}
-                    label={capitalize(a.verdict.verdict)}
+                    label={verdictLabel(a.verdict.verdict)}
                   />
                 </td>
                 <td className="px-2 py-2 text-right">
@@ -1067,12 +1084,7 @@ export function AdsTab({ sections }: CeoTabProps) {
 
   const p = shown.data?.p ?? null;
   const win: Win = shown.data?.win ?? "w7";
-  const verdictChips = useMemo(() => {
-    if (!p) return [];
-    return Object.entries(p.verdicts)
-      .sort((a, b) => b[1] - a[1])
-      .map(([k, n]) => ({ key: k as B2bVerdict["verdict"], n }));
-  }, [p]);
+  const chips = useMemo(() => (p ? verdictChips(p.verdicts) : []), [p]);
 
   if (!stored)
     return (
@@ -1231,16 +1243,14 @@ export function AdsTab({ sections }: CeoTabProps) {
             ) : null}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>{`${count(p.running)} of ${count(p.total)} ads running`}</span>
-              <span title="Everything in the CRM for the window against what carries an ad id. The rest is organic, WhatsApp or typed in by hand.">
-                {`${count(p.coverage[win].adLeads)} of ${count(p.coverage[win].leads)} leads and ${count(p.coverage[win].adCloses)} of ${count(p.coverage[win].closes)} signed deals carry an ad`}
-              </span>
-              {verdictChips.map(v => (
+              <span title={COVERAGE_HINT}>{coverageLine(p.coverage[win])}</span>
+              {chips.map(v => (
                 <span
                   key={v.key}
                   className="inline-flex items-center gap-1.5 whitespace-nowrap"
                 >
-                  <StatusDot tone={TONE[v.key]} label={`${v.key} verdict`} />
-                  {`${count(v.n)} ${v.key}`}
+                  <StatusDot tone={v.tone} label={`${v.label} verdict`} />
+                  {`${count(v.n)} ${v.label}`}
                 </span>
               ))}
             </div>

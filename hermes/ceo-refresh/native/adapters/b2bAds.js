@@ -72,6 +72,10 @@ function day(d) {
     return `date '${d}'`;
 }
 const usd = (x) => Math.round(x * 100) / 100;
+/** Seven days at this spend with no lead is a kill; under it, too early to say. */
+const KILL_FLOOR = 30;
+/** The account needs this many closes before a campaign's close rate is held against it. */
+const CLOSE_BENCHMARK = 3;
 // A count that is not known (null link clicks) gives no rate, never 0.
 const rate = (a, b) => (a !== null && b > 0 ? a / b : null);
 /**
@@ -80,7 +84,9 @@ const rate = (a, b) => (a !== null && b > 0 ? a / b : null);
  * rows beneath it. Frequency is the exception and is not read here: it is
  * Meta's own at each level (readWindowFrequency).
  */
-function treeSql(from7, from30, to) {
+export function treeSql(from7, from30, to) {
+    const ROAS_LEAD = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
+    const leadsBooked = (type, as) => `count(*) filter (where ${ROAS_LEAD} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)})) as ${as}`;
     const funnel = (from, alias) => `
   ${alias}_ads as (
     select campaign_id, adset_id, ad_id,
@@ -96,7 +102,11 @@ function treeSql(from7, from30, to) {
     select l.ad_id,
       count(*) filter (where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))) as leads,
       count(*) filter (where 'roas-qualified' = any(coalesce(l.tags, '{}'::text[]))) as qualified_leads,
-      count(*) filter (where 'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))) as not_ready_leads
+      count(*) filter (where 'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))) as not_ready_leads,
+      -- Per lead, never per appointment: a lead with a no-show and a rebooked
+      -- intro is one lead that booked. Booked at or after the lead arrived, by the window's last day.
+      ${leadsBooked("intro", "leads_to_intro")},
+      ${leadsBooked("demo", "leads_to_demo")}
     from public.leads l
     where l.ad_id is not null
       and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)}
@@ -117,6 +127,9 @@ function treeSql(from7, from30, to) {
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.start_at <= now()) as demos_due,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as demos_qualified,
+      -- Shown at least seven days before the window's last day: old enough for
+      -- a close to have happened, so "demos do not close" can judge it.
+      count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} - 7 and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown_mature,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.status='cancelled') as demos_cancelled
     from public.calls c
     where c.ad_id is not null
@@ -143,6 +156,8 @@ function treeSql(from7, from30, to) {
     coalesce(${a}_leads.leads,0) as ${a}_leads,
     coalesce(${a}_leads.qualified_leads,0) as ${a}_qualified_leads,
     coalesce(${a}_leads.not_ready_leads,0) as ${a}_not_ready_leads,
+    coalesce(${a}_leads.leads_to_intro,0) as ${a}_leads_to_intro,
+    coalesce(${a}_leads.leads_to_demo,0) as ${a}_leads_to_demo,
     coalesce(${a}_calls.intros_booked,0) as ${a}_intros_booked,
     coalesce(${a}_calls.intros_due,0) as ${a}_intros_due,
     coalesce(${a}_calls.intros_shown,0) as ${a}_intros_shown,
@@ -153,19 +168,28 @@ function treeSql(from7, from30, to) {
     coalesce(${a}_calls.demos_due,0) as ${a}_demos_due,
     coalesce(${a}_calls.demos_shown,0) as ${a}_demos_shown,
     coalesce(${a}_calls.demos_qualified,0) as ${a}_demos_qualified,
+    coalesce(${a}_calls.demos_shown_mature,0) as ${a}_demos_shown_mature,
     coalesce(${a}_calls.demos_cancelled,0) as ${a}_demos_cancelled,
     coalesce(${a}_deals.closes,0) as ${a}_closes,
     coalesce(${a}_deals.contracted,0) as ${a}_contracted,
     coalesce(${a}_deals.cash,0) as ${a}_cash`;
+    // The tree is every ad with anything in the thirty days: spend, a lead, a
+    // call or a signed deal. An ad paused before the window still carries the
+    // calls and deals it produced (the CEO, 2026-10-16: a $6,000 deal on an ad
+    // last spent in August was missing). Its names and status are its newest
+    // snapshot on or before the last day. The seven days sit inside the thirty.
     return `with
-  ident as (
-    select distinct on (ad_id) ad_id, adset_id, campaign_id,
-           ad_name, adset_name, campaign_name, campaign_status, effective_status, thumbnail_url
-    from public.meta_ad_snapshots
-    where date between ${day(from30)} and ${day(to)}
-    order by ad_id, date desc),
   ${funnel(from7, "w7")},
   ${funnel(from30, "w30")},
+  ident as (
+    select distinct on (s.ad_id) s.ad_id, s.adset_id, s.campaign_id,
+           s.ad_name, s.adset_name, s.campaign_name, s.campaign_status, s.effective_status, s.thumbnail_url,
+           to_char(s.date, 'YYYY-MM-DD') as last_seen
+    from public.meta_ad_snapshots s
+    where s.date <= ${day(to)}
+      and s.ad_id in (select ad_id from w30_ads union select ad_id from w30_leads
+                      union select ad_id from w30_calls union select ad_id from w30_deals)
+    order by s.ad_id, s.date desc),
   setters as (
     select distinct on (c.ad_id) c.ad_id,
       coalesce(sr.display_name, 'Unknown setter') as setter_name,
@@ -215,6 +239,8 @@ const COUNTS = [
     "leads",
     "qualifiedLeads",
     "notReadyLeads",
+    "leadsToIntro",
+    "leadsToDemo",
     "introsBooked",
     "introsDue",
     "introsShown",
@@ -225,6 +251,7 @@ const COUNTS = [
     "demosDue",
     "demosShown",
     "demosQualified",
+    "demosShownMature",
     "demosCancelled",
     "closes",
 ];
@@ -235,6 +262,8 @@ const COLUMN = {
     leads: "leads",
     qualifiedLeads: "qualified_leads",
     notReadyLeads: "not_ready_leads",
+    leadsToIntro: "leads_to_intro",
+    leadsToDemo: "leads_to_demo",
     introsBooked: "intros_booked",
     introsDue: "intros_due",
     introsShown: "intros_shown",
@@ -245,6 +274,7 @@ const COLUMN = {
     demosDue: "demos_due",
     demosShown: "demos_shown",
     demosQualified: "demos_qualified",
+    demosShownMature: "demos_shown_mature",
     demosCancelled: "demos_cancelled",
     closes: "closes",
 };
@@ -317,7 +347,9 @@ function finish(w) {
     w.cpl = per(w.spend, w.leads);
     w.qualifiedPct = ratio(w.qualifiedLeads, w.leads);
     w.costPerQualified = per(w.spend, w.qualifiedLeads);
-    w.bookRate = ratio(w.introsBooked, w.leads);
+    // Per lead (SOURCES.md): the leads that booked an intro, out of the leads.
+    // Appointments (introsBooked) can outnumber leads; this never can.
+    w.bookRate = ratio(w.leadsToIntro, w.leads);
     w.costPerIntroBooked = per(w.spend, w.introsBooked);
     w.introShowRate = ratio(w.introsShown, w.introsDue);
     w.costPerIntroShown = per(w.spend, w.introsShown);
@@ -331,10 +363,32 @@ function finish(w) {
     w.roas =
         w.spend > 0 ? Math.round((w.contracted / w.spend) * 100) / 100 : null;
     w.cashRoas = w.spend > 0 ? Math.round((w.cash / w.spend) * 100) / 100 : null;
-    w.leadToDemo = ratio(w.demosBooked, w.leads);
+    w.leadToDemo = ratio(w.leadsToDemo, w.leads);
     return w;
 }
 const noPeople = () => ({ setter: null, closer: null });
+/**
+ * The tree against the CRM: leads and deals on this account's ads that no ad
+ * row holds. Empty when every record landed on an ad.
+ */
+export function unplacedNote(coverage, all7, all30) {
+    const gaps = [];
+    for (const [label, crm, tree] of [
+        ["thirty days", coverage.w30, all30],
+        ["seven days", coverage.w7, all7],
+    ]) {
+        const leads = crm.adLeads - tree.leads;
+        const closes = crm.adCloses - tree.closes;
+        const money = usd(crm.adContracted - tree.contracted);
+        if (leads === 0 && closes === 0 && money === 0)
+            continue;
+        gaps.push(`in the last ${label} the CRM holds ${crm.adLeads} ${crm.adLeads === 1 ? "lead" : "leads"} and ${crm.adCloses} signed ${crm.adCloses === 1 ? "deal" : "deals"} ($${crm.adContracted.toLocaleString("en-US")}) on this account's ads, and the ad rows add up to ${tree.leads} and ${tree.closes} ($${tree.contracted.toLocaleString("en-US")})`);
+    }
+    if (!gaps.length)
+        return null;
+    const text = gaps.join("; ");
+    return `${text[0].toUpperCase()}${text.slice(1)}. The difference is records the cockpit could not place on an ad, usually an ad with no Meta snapshot on or before the last day. The coverage figures count them; the rows do not.`;
+}
 /** The setter with the most intros shown and the closer with the most closes across a group of ads. */
 function peopleOf(ads) {
     const setters = new Map();
@@ -365,7 +419,7 @@ function peopleOf(ads) {
  * calendar with intros nobody converts is a setter problem, and switching the
  * ad off would be the one thing that makes it worse.
  */
-function judge(running, w7, w30, staleSince) {
+function judge(running, w7, w30, staleSince, kind) {
     if (!running)
         return {
             verdict: "off",
@@ -373,28 +427,51 @@ function judge(running, w7, w30, staleSince) {
             owner: null,
         };
     // A stale snapshot is not the same as an ad that stopped. Say which.
-    if (staleSince && w7.spend < 1)
+    if (staleSince && w7.spend === 0)
         return {
             verdict: "no delivery",
             reason: `Meta has reported no delivery since ${staleSince}. Either it has been off since then or Meta is late; this week cannot be judged yet.`,
             owner: "ads",
         };
-    if (w7.spend < 1)
+    if (w7.spend === 0)
         return {
             verdict: "no delivery",
             reason: "On, but nothing spent in seven days.",
             owner: "ads",
         };
-    if (w7.leads === 0 && w7.spend >= 30)
+    // The $15 gate is a lead-gen gate. Retargeting warms people who already
+    // know Mahara, and the account row and the constraint leave it out too.
+    if (kind !== "lead_gen")
+        return {
+            verdict: "not_judged",
+            reason: kind === "retargeting"
+                ? "Retargeting is not judged on cost per lead."
+                : "Not a lead-gen campaign, so it is not judged on cost per lead.",
+            owner: null,
+        };
+    if (w7.spend < 1)
+        return {
+            verdict: "hold",
+            reason: `Delivering, but only $${w7.spend.toFixed(2)} and ${w7.impressions} ${w7.impressions === 1 ? "impression" : "impressions"} in seven days: too little to judge.`,
+            owner: "ads",
+        };
+    if (w7.leads === 0 && w7.spend >= KILL_FLOOR)
         return {
             verdict: "kill",
             reason: `$${w7.spend.toFixed(0)} in seven days and not one lead reached the CRM${w7.metaLeads > 0 ? `, though Meta counts ${w7.metaLeads}` : ""}.`,
             owner: "ads",
         };
-    if (w7.cpl !== null && w7.cpl > CPL_GATE * 1.5)
+    // No lead yet on less than the kill floor: no cost per lead exists to judge.
+    if (w7.leads === 0 || w7.cpl === null)
+        return {
+            verdict: "hold",
+            reason: `$${w7.spend.toFixed(2)} in seven days and no lead yet: too early to judge against the $${CPL_GATE} gate.`,
+            owner: "ads",
+        };
+    if (w7.cpl > CPL_GATE * 1.5)
         return {
             verdict: "kill",
-            reason: `$${w7.cpl.toFixed(2)} a lead, more than half again over the $${CPL_GATE} gate.`,
+            reason: `$${w7.cpl.toFixed(2)} a lead in seven days, more than half again over the $${CPL_GATE} gate.`,
             owner: "ads",
         };
     if (w7.frequency !== null && w7.frequency >= 2.5)
@@ -415,21 +492,22 @@ function judge(running, w7, w30, staleSince) {
             reason: `${w30.introsShown} intros shown and no demo booked. That is the intro call, not the ad.`,
             owner: "setter",
         };
-    if (w30.demosShown >= 3 && w30.closes === 0)
+    // Only demos old enough to have closed: a demo a week before the last day.
+    if (w30.demosShownMature >= 3 && w30.closes === 0)
         return {
             verdict: "demos do not close",
-            reason: `${w30.demosShown} demos shown and nothing signed. That is the closing call, not the ad.`,
+            reason: `${w30.demosShownMature} demos shown at least a week ago and nothing signed. That is the closing call, not the ad.`,
             owner: "closer",
         };
-    if (w7.cpl !== null && w7.cpl > CPL_GATE)
+    if (w7.cpl > CPL_GATE)
         return {
             verdict: "hold",
-            reason: `$${w7.cpl.toFixed(2)} a lead is over the $${CPL_GATE} gate but within half again. Watch it; do not scale it.`,
+            reason: `$${w7.cpl.toFixed(2)} a lead in seven days is over the $${CPL_GATE} gate but within half again. Watch it; do not scale it.`,
             owner: "ads",
         };
     return {
         verdict: "scale",
-        reason: `$${(w7.cpl ?? 0).toFixed(2)} a lead under the $${CPL_GATE} gate on $${w7.spend.toFixed(0)}${w30.closes ? `, and ${w30.closes} ${w30.closes === 1 ? "close" : "closes"} in thirty days` : ""}.`,
+        reason: `$${w7.cpl.toFixed(2)} a lead in seven days, under the $${CPL_GATE} gate, on $${w7.spend.toFixed(0)}${w30.closes ? `, and ${w30.closes} ${w30.closes === 1 ? "close" : "closes"} in thirty days` : ""}.`,
         owner: "ads",
     };
 }
@@ -439,53 +517,61 @@ function judge(running, w7, w30, staleSince) {
  * or closer.
  */
 function constraintOf(c, account) {
+    // Every stage is a share of the stage before it, so it can never pass 100%:
+    // leads that booked (not appointments), intros due that showed, and intros
+    // shown that went on to a demo (the ribbon's intro to demo). Closes are not
+    // tied to a demo, so that one is capped.
+    const share = (a, b) => {
+        const r = rate(a, b);
+        return r === null ? null : Math.min(1, r);
+    };
     const stages = [
         {
             key: "click",
             label: "impressions to link clicks",
             owner: "ads",
-            mine: rate(c.linkClicks, c.impressions),
-            all: rate(account.linkClicks, account.impressions),
+            mine: share(c.linkClicks, c.impressions),
+            all: share(account.linkClicks, account.impressions),
             floor: 500,
         },
         {
             key: "optin",
             label: "clicks to leads",
             owner: "landing",
-            mine: rate(c.leads, c.linkClicks),
-            all: rate(account.leads, account.linkClicks),
+            mine: share(c.leads, c.linkClicks),
+            all: share(account.leads, account.linkClicks),
             floor: 30,
         },
         {
             key: "book",
             label: "leads to intros booked",
             owner: "setter",
-            mine: rate(c.introsBooked, c.leads),
-            all: rate(account.introsBooked, account.leads),
+            mine: share(c.leadsToIntro, c.leads),
+            all: share(account.leadsToIntro, account.leads),
             floor: 8,
         },
         {
             key: "show",
-            label: "intros booked to shown",
+            label: "intros due to shown",
             owner: "setter",
-            mine: rate(c.introsShown, c.introsBooked),
-            all: rate(account.introsShown, account.introsBooked),
+            mine: share(c.introsShown, c.introsDue),
+            all: share(account.introsShown, account.introsDue),
             floor: 5,
         },
         {
             key: "demo",
             label: "intros shown to demos booked",
             owner: "setter",
-            mine: rate(c.demosBooked, c.introsShown),
-            all: rate(account.demosBooked, account.introsShown),
+            mine: share(c.introsAdvanced, c.introsShown),
+            all: share(account.introsAdvanced, account.introsShown),
             floor: 5,
         },
         {
             key: "close",
             label: "demos shown to closes",
             owner: "closer",
-            mine: rate(c.closes, c.demosShown),
-            all: rate(account.closes, account.demosShown),
+            mine: share(c.closes, c.demosShown),
+            all: share(account.closes, account.demosShown),
             floor: 3,
         },
     ];
@@ -493,14 +579,12 @@ function constraintOf(c, account) {
         click: c.impressions,
         optin: c.linkClicks,
         book: c.leads,
-        show: c.introsBooked,
+        show: c.introsDue,
         demo: c.introsShown,
         close: c.demosShown,
     };
-    // Calls carry their ad id more reliably than leads do (88% against 68% on
-    // 2026-09-19), so a campaign can show more intros booked than leads. When
-    // that happens the lead count is provably incomplete and "clicks to leads"
-    // would blame a landing page for an attribution gap. Skip it.
+    // Fewer than three closes on the whole account is no benchmark for a closer.
+    const closeBenchmark = account.closes >= CLOSE_BENCHMARK;
     const leadsUnderCounted = c.introsBooked > c.leads;
     let worst = null;
     let worstGap = 0;
@@ -510,6 +594,8 @@ function constraintOf(c, account) {
         if (denom[s.key] < s.floor)
             continue; // too few to judge
         if (leadsUnderCounted && (s.key === "optin" || s.key === "book"))
+            continue;
+        if (s.key === "close" && !closeBenchmark)
             continue;
         const gap = (s.all - s.mine) / s.all;
         if (gap > worstGap) {
@@ -589,6 +675,12 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
         // thirty days to 2026-09-20 against 224 and 2 with an ad on them.
         // Voided deals are left out, and counted apart for the note.
         const inWindow = (from) => `(d.submitted_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(today)}`;
+        // Straight from the CRM: every record whose ad is one of this account's
+        // ads (Meta has a snapshot of it), whether or not the tree placed it.
+        const ours = (alias) => `exists (select 1 from public.meta_ad_snapshots s where s.ad_id = ${alias}.ad_id)`;
+        const adCoverage = (w, from) => `(select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(today)} and ${ours("l")}) as ${w}_ad_leads,
+        (select count(*) from public.closed_deals d where ${inWindow(from)} and ${NOT_VOIDED("d")} and ${ours("d")}) as ${w}_ad_closes,
+        (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where ${inWindow(from)} and ${NOT_VOIDED("d")} and ${ours("d")}) as ${w}_ad_contracted`;
         const totals = await sql(B2B, `select
         (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from7)} and ${day(today)}) as w7_leads,
         (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(today)}) as w30_leads,
@@ -596,7 +688,9 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
         (select count(*) from public.closed_deals d where ${inWindow(from30)} and ${NOT_VOIDED("d")}) as w30_closes,
         (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where ${inWindow(from7)} and ${NOT_VOIDED("d")}) as w7_contracted,
         (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where ${inWindow(from30)} and ${NOT_VOIDED("d")}) as w30_contracted,
-        (select count(*) from public.closed_deals d where ${inWindow(from30)} and ${VOIDED("d")}) as w30_voided`);
+        (select count(*) from public.closed_deals d where ${inWindow(from30)} and ${VOIDED("d")}) as w30_voided,
+        ${adCoverage("w7", from7)},
+        ${adCoverage("w30", from30)}`);
         const t = totals[0] ?? {};
         // Frequency is Meta's, per level, for each whole window, ending on the
         // newest day Meta has started in the account's time zone.
@@ -622,7 +716,14 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
             w7.frequency = metaFrequency(meta7.ad, String(r.ad_id));
             w30.frequency = metaFrequency(meta30.ad, String(r.ad_id));
             const status = String(r.effective_status ?? "");
-            const running = status === "ACTIVE";
+            // Snapshots stop when an ad stops delivering, so an old snapshot's
+            // status can be stale: an ad counts as running only with Meta
+            // delivery in the thirty days (one that joined the tab through a
+            // call or deal on an old click is off, with its last delivery day).
+            const lastSeen = r.last_seen ? String(r.last_seen).slice(0, 10) : null;
+            const delivered = lastSeen !== null && lastSeen >= from30;
+            const running = status === "ACTIVE" && delivered;
+            const kind = String(r.campaign_type ?? "unknown");
             const ad = {
                 id: String(r.ad_id),
                 name: String(r.ad_name ?? `Ad ${r.ad_id}`),
@@ -631,7 +732,13 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
                 thumbnail: r.thumbnail_url ? String(r.thumbnail_url) : null,
                 w7,
                 w30,
-                verdict: judge(running, w7, w30, staleSince),
+                verdict: delivered
+                    ? judge(running, w7, w30, staleSince, kind)
+                    : {
+                        verdict: "off",
+                        reason: `No Meta delivery since ${lastSeen ?? "before the thirty days"}.`,
+                        owner: null,
+                    },
                 people: {
                     setter: r.setter_name
                         ? {
@@ -647,7 +754,6 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
             };
             addWin(all7, w7);
             addWin(all30, w30);
-            const kind = String(r.campaign_type ?? "unknown");
             // The account row is lead gen only, as the B2B dashboard defines it:
             // retargeting warms an audience it never gets credit for, and hiring
             // is not sales at all.
@@ -706,19 +812,19 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
         const coverage = {
             w7: {
                 leads: num(t.w7_leads),
-                adLeads: all7.leads,
+                adLeads: num(t.w7_ad_leads),
                 closes: num(t.w7_closes),
-                adCloses: all7.closes,
+                adCloses: num(t.w7_ad_closes),
                 contracted: usd(num(t.w7_contracted)),
-                adContracted: all7.contracted,
+                adContracted: usd(num(t.w7_ad_contracted)),
             },
             w30: {
                 leads: num(t.w30_leads),
-                adLeads: all30.leads,
+                adLeads: num(t.w30_ad_leads),
                 closes: num(t.w30_closes),
-                adCloses: all30.closes,
+                adCloses: num(t.w30_ad_closes),
                 contracted: usd(num(t.w30_contracted)),
-                adContracted: all30.contracted,
+                adContracted: usd(num(t.w30_ad_contracted)),
             },
         };
         const list = [...campaigns.values()];
@@ -775,21 +881,24 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
                 level: "warn",
                 text: `On ${gapAds.length} ${gapAds.length === 1 ? "ad" : "ads"} the CRM received fewer than half the leads Meta counts. Meta counts a form fill; the CRM counts a contact that arrived with its attribution. The gap is either forms that never became contacts or contacts that lost the ad on the way in, and it is the first thing to check before believing any cost per lead here.`,
             });
+        const unplaced = unplacedNote(coverage, all7, all30);
+        if (unplaced)
+            notes.push({ level: "warn", text: unplaced });
         const cov = coverage.w30;
         const voided30 = num(t.w30_voided);
         notes.push({
             level: "info",
-            text: `In the last thirty days the CRM holds ${cov.leads} leads and ${cov.closes} signed deals worth $${cov.contracted.toLocaleString("en-US")}; ${cov.adLeads} leads and ${cov.adCloses} deals ($${cov.adContracted.toLocaleString("en-US")}) carry an ad id and are what this screen attributes. The rest came in organically, on WhatsApp or by hand.${voided30 > 0
+            text: `In the last thirty days the CRM holds ${cov.leads} leads and ${cov.closes} signed deals worth $${cov.contracted.toLocaleString("en-US")}; ${cov.adLeads} leads and ${cov.adCloses} deals ($${cov.adContracted.toLocaleString("en-US")}) carry one of this account's ads and are what this screen attributes. The rest came in organically, on WhatsApp or by hand.${voided30 > 0
                 ? ` ${voidedDeals(voided30)} in these days ${voided30 === 1 ? "is" : "are"} left out of every count here, though B2B keeps ${voided30 === 1 ? "it" : "them"} in its table.`
                 : ""} The account row is lead-gen campaigns only, the way the B2B dashboard reads it; retargeting spend is shown beside it and never inside a cost per lead.`,
         });
         notes.push({
             level: "info",
-            text: `Every row follows an ad from the first impression to the signed contract, through leads, intro calls, demos and closes that carry the ad's id. Seven days judges cost and freshness; thirty days judges the funnel, because a demo takes a week to happen. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
+            text: `Every row follows an ad from the first impression to the signed contract, through leads, intro calls, demos and closes that carry the ad's id. Calls and deals are credited to the ad on the call or deal record, which can differ from the ad on the lead. An ad switched off before these thirty days still shows here, at $0 spend, when its leads, calls or deals fall inside them. Seven days judges cost and freshness; thirty days judges the funnel, because a demo takes a week to happen. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
         });
         notes.push({
             level: "info",
-            text: `A verdict names whose problem it is. "Kill", "hold", "scale" and "fatiguing" are the ad. "Leads do not book" and "intros do not convert" are the setter. "Demos do not close" is the closer. Switching an ad off never fixes the last three; it just stops the calendar filling.`,
+            text: `A verdict names whose problem it is. "Kill", "hold", "scale" and "fatiguing" are the ad. "Leads do not book" and "intros do not convert" are the setter. "Demos do not close" is the closer. Switching an ad off never fixes the last three; it just stops the calendar filling. Retargeting and other campaigns that are not lead gen are not judged on cost per lead.`,
         });
         if (staleSince) {
             const ranAt = freshestAt

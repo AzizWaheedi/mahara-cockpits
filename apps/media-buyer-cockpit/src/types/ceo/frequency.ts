@@ -1,5 +1,8 @@
 export type FrequencyFigure = {
+  /** Campaigns of the kind that delivered (impressions above 0) in the window. */
   campaigns?: number;
+  /** Every campaign of the kind on the account, delivered or not. */
+  listed?: number;
   impressions?: number;
   reach?: number;
   frequency?: number | null;

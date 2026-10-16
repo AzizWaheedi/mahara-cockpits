@@ -11,19 +11,50 @@ test('frequency reads use whole-window account reach and exclude webinar and hir
       { id: '103', name: 'Recruiting' },
       { id: '104', name: 'Webinar September' },
     ], paging: {} };
+    if (params.level === 'campaign') return { data: [
+      { campaign_id: '101', impressions: '180', reach: '120' },
+      { campaign_id: '102', impressions: '70', reach: '20' },
+    ], paging: {} };
     const ids = JSON.parse(String(params.filtering))[0].value;
     return { data: [{ impressions: ids[0] === '101' ? '180' : '70', reach: ids[0] === '101' ? '120' : '20', frequency: ids[0] === '101' ? '1.5' : null, spend: ids[0] === '101' ? '27.45' : '8.10' }] };
   }, () => Date.parse('2026-10-01T00:00:00Z'));
 
-  expect(result.leadGen).toEqual({ campaigns: 1, impressions: 180, reach: 120, frequency: 1.5, spend: 27.45 });
-  expect(result.retargeting).toEqual({ campaigns: 1, impressions: 70, reach: 20, frequency: 3.5, spend: 8.1 });
-  expect(calls).toHaveLength(3);
-  for (const call of calls.slice(1)) {
-    expect(call.params.level).toBe('account');
-    expect(JSON.parse(String(call.params.time_range))).toEqual({ since: '2026-09-01', until: '2026-09-30' });
-  }
-  expect(JSON.parse(String(calls[1].params.filtering))[0].value).toEqual(['101']);
-  expect(JSON.parse(String(calls[2].params.filtering))[0].value).toEqual(['102']);
+  expect(result.leadGen).toEqual({ campaigns: 1, listed: 1, impressions: 180, reach: 120, frequency: 1.5, spend: 27.45 });
+  expect(result.retargeting).toEqual({ campaigns: 1, listed: 1, impressions: 70, reach: 20, frequency: 3.5, spend: 8.1 });
+  expect(calls).toHaveLength(4);
+  expect(calls[1].params.level).toBe('campaign');
+  for (const call of calls.slice(1)) expect(JSON.parse(String(call.params.time_range))).toEqual({ since: '2026-09-01', until: '2026-09-30' });
+  for (const call of calls.slice(2)) expect(call.params.level).toBe('account');
+  expect(JSON.parse(String(calls[2].params.filtering))[0].value).toEqual(['101']);
+  expect(JSON.parse(String(calls[3].params.filtering))[0].value).toEqual(['102']);
+});
+
+// Audit 2026-10-16: the Marketing card read "10 campaigns" where 4 delivered.
+test('the campaign count is the campaigns that delivered in the window; the totals are unchanged', async () => {
+  const result = await readFrequencyWindow('2026-07-18', '2026-10-15', async (path, params = {}) => {
+    if (path.endsWith('/campaigns')) return { data: [
+      { id: '1', name: 'MaharaMedia | Lead Gen | 4-12-25' },
+      { id: '2', name: 'MaharaMedia | Lead Gen | 8-9-26 | CBO' },
+      { id: '3', name: 'MaharaMedia | Lead Gen | 7-8-26 | CBO' },
+      { id: '4', name: 'MaharaMedia | Lead Gen | 19-9-26 | TEST' },
+      { id: '5', name: '[MhM] Hammer Them Strategy [SFC] | 24-5-26' },
+      { id: '6', name: '[MhM] Hammer Them Strategy [LFC] | 24-5-26' },
+    ], paging: {} };
+    // Meta returns delivered campaigns, and can return one at 0 impressions.
+    if (params.level === 'campaign') return { data: [
+      { campaign_id: '1', impressions: '16983', reach: '8379' },
+      { campaign_id: '2', impressions: '4100', reach: '2000' },
+      { campaign_id: '3', impressions: '0', reach: '0' },
+      { campaign_id: '5', impressions: '1272', reach: '151' },
+    ], paging: {} };
+    const ids = JSON.parse(String(params.filtering))[0].value as string[];
+    return { data: [ids.includes('1')
+      ? { impressions: '21083', reach: '9000', frequency: '2.3426', spend: '612.5' }
+      : { impressions: '1272', reach: '151', frequency: '8.4238', spend: '54.71' }] };
+  }, () => Date.parse('2026-10-16T05:00:00Z'));
+  expect(result.leadGen).toEqual({ campaigns: 2, listed: 4, impressions: 21083, reach: 9000, frequency: 2.34, spend: 612.5 });
+  expect(result.retargeting).toEqual({ campaigns: 1, listed: 2, impressions: 1272, reach: 151, frequency: 8.42, spend: 54.71 });
+  expect(result.note).toContain('2 of 4 lead-gen and 1 of 2 retargeting campaigns on the account delivered');
 });
 
 test('frequency rejects a future window before making a Meta request', async () => {
@@ -36,9 +67,11 @@ test('frequency rejects a future window before making a Meta request', async () 
 });
 
 test('malformed persisted frequency payloads are rejected instead of reusing zero-filled cache rows', () => {
-  const valid = { from: '2026-09-01', to: '2026-09-30', computedAt: 1790800000000, leadGen: { campaigns: 1, impressions: 180, reach: 120, frequency: 1.5, spend: 27.45 }, retargeting: null, note: 'whole-window source' };
+  const valid = { from: '2026-09-01', to: '2026-09-30', computedAt: 1790800000000, leadGen: { campaigns: 1, listed: 3, impressions: 180, reach: 120, frequency: 1.5, spend: 27.45 }, retargeting: null, note: 'whole-window source' };
   expect(parseFrequencyRead(valid)).toEqual(valid);
-  expect(parseFrequencyRead({ ...valid, leadGen: { campaigns: 1, impressions: 180, frequency: null, spend: 27.45 } })).toBeNull();
+  expect(parseFrequencyRead({ ...valid, leadGen: { campaigns: 1, listed: 3, impressions: 180, frequency: null, spend: 27.45 } })).toBeNull();
+  // A read cached before the delivered count (no `listed`) counted every campaign: it is read again.
+  expect(parseFrequencyRead({ ...valid, leadGen: { campaigns: 10, impressions: 180, reach: 120, frequency: 1.5, spend: 27.45 } })).toBeNull();
 });
 
 // The CEO, 2026-10-16: the Ads tab's frequency is Meta's own, per level, for

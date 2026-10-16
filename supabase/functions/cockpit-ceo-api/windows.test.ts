@@ -13,20 +13,20 @@ const NOW = () => Date.parse('2026-10-16T12:00:00Z');
 
 const ad = (type: string, id: string, spend: number) => ({
   ad_id: id, ad_name: `${type} creative`, campaign_id: `${id}-campaign`, campaign_name: type,
-  campaign_type: type, campaign_status: 'ACTIVE', effective_status: 'ACTIVE', thumbnail_url: null,
+  campaign_type: type, campaign_status: 'ACTIVE', effective_status: 'ACTIVE', thumbnail_url: null, last_seen: '2026-10-16',
   adset_id: `${id}-set`, adset_name: `${type} set`, setter_name: null, setter_shown: 0,
   setter_due: 0, closer_name: null, closer_closes: 0,
   w7_spend: spend, w7_impressions: 1000, w7_clicks: 100, w7_link_clicks: 80,
-  w7_meta_leads: 4, w7_leads: 3, w7_qualified_leads: 2, w7_not_ready_leads: 0,
+  w7_meta_leads: 4, w7_leads: 3, w7_qualified_leads: 2, w7_not_ready_leads: 0, w7_leads_to_intro: 2, w7_leads_to_demo: 1,
   w7_intros_booked: 2, w7_intros_due: 1, w7_intros_shown: 1, w7_intros_qualified: 1,
   w7_intros_cancelled: 0, w7_intros_advanced: 1, w7_demos_booked: 1, w7_demos_due: 1,
-  w7_demos_shown: 1, w7_demos_qualified: 1, w7_demos_cancelled: 0,
+  w7_demos_shown: 1, w7_demos_qualified: 1, w7_demos_shown_mature: 0, w7_demos_cancelled: 0,
   w7_closes: 1, w7_contracted: 250, w7_cash: 100,
   w30_spend: spend, w30_impressions: 1000, w30_clicks: 100, w30_link_clicks: 80,
-  w30_meta_leads: 4, w30_leads: 3, w30_qualified_leads: 2, w30_not_ready_leads: 0,
+  w30_meta_leads: 4, w30_leads: 3, w30_qualified_leads: 2, w30_not_ready_leads: 0, w30_leads_to_intro: 2, w30_leads_to_demo: 1,
   w30_intros_booked: 2, w30_intros_due: 1, w30_intros_shown: 1, w30_intros_qualified: 1,
   w30_intros_cancelled: 0, w30_intros_advanced: 1, w30_demos_booked: 1, w30_demos_due: 1,
-  w30_demos_shown: 1, w30_demos_qualified: 1, w30_demos_cancelled: 0,
+  w30_demos_shown: 1, w30_demos_qualified: 1, w30_demos_shown_mature: 0, w30_demos_cancelled: 0,
   w30_closes: 1, w30_contracted: 250, w30_cash: 100,
 });
 
@@ -34,7 +34,7 @@ test('custom ads window keeps webinar campaigns out of lead-gen account totals a
   const sqlResults: Record<string, unknown>[][] = [
     [{ ms: 1790800000000, last_day: '2026-10-03', first_day: '2025-01-01' }],
     [ad('lead_gen', 'ad-1', 100), ad('webinar', 'ad-2', 900)],
-    [{ w7_leads: 8, w30_leads: 12, w7_closes: 2, w30_closes: 3, w7_contracted: 500, w30_contracted: 750, w30_voided: 1 }],
+    [{ w7_leads: 8, w30_leads: 12, w7_closes: 2, w30_closes: 3, w7_contracted: 500, w30_contracted: 750, w30_voided: 1, ad_leads: 6, ad_closes: 2, ad_contracted: 500 }],
   ];
   const queries: { project: string; query: string }[] = [];
   const result = await readAdsWindow('2026-09-28', '2026-10-04', {
@@ -86,7 +86,7 @@ test('custom ads window shows link CTR, never CTR (all), and keeps unknown link 
   const sqlResults: Record<string, unknown>[][] = [
     [{ ms: 1790800000000, last_day: '2026-10-03', first_day: '2025-01-01' }],
     [ad('lead_gen', 'ad-1', 100), unknown],
-    [{ w7_leads: 8, w30_leads: 12, w7_closes: 2, w30_closes: 3, w7_contracted: 500, w30_contracted: 750, w30_voided: 0 }],
+    [{ w7_leads: 8, w30_leads: 12, w7_closes: 2, w30_closes: 3, w7_contracted: 500, w30_contracted: 750, w30_voided: 0, ad_leads: 6, ad_closes: 2, ad_contracted: 500 }],
   ];
   const queries: string[] = [];
   const result = await readAdsWindow('2026-09-28', '2026-10-04', {
@@ -124,8 +124,8 @@ test('custom range frequency comes from Meta per level, ends on Meta\'s day, and
   const sfc = (n: number) => ({ ...ad('retargeting', `sfc-${n}`, 20), campaign_id: 'sfc', campaign_name: '[MhM] Hammer Them [SFC]', adset_id: `sfc-set-${n}`, adset_name: `SFC set ${n}` });
   const sqlResults: Record<string, unknown>[][] = [
     [{ ms: 1790800000000, last_day: '2026-10-15', first_day: '2025-01-01' }],
-    [sfc(1), sfc(2), sfc(3), ad('lead_gen', 'lg', 100)],
-    [{ w7_leads: 8, w30_leads: 8, w7_closes: 0, w30_closes: 0, w7_contracted: 0, w30_contracted: 0, w30_voided: 0 }],
+    [sfc(1), sfc(2), sfc(3), ad('lead_gen', 'lg', 20)],
+    [{ w7_leads: 8, w30_leads: 8, w7_closes: 0, w30_closes: 0, w7_contracted: 0, w30_contracted: 0, w30_voided: 0, ad_leads: 12, ad_closes: 4, ad_contracted: 1000 }],
   ];
   const calls: { path: string; params: MetaParams }[] = [];
   let query = 0;
@@ -136,7 +136,7 @@ test('custom range frequency comes from Meta per level, ends on Meta\'s day, and
         { ad_id: 'sfc-1', impressions: '400', reach: '210', frequency: '1.9' },
         { ad_id: 'sfc-2', impressions: '420', reach: '210', frequency: '2.0' },
         { ad_id: 'sfc-3', impressions: '452', reach: '220', frequency: '2.75' },
-        { ad_id: 'lg', impressions: '16983', reach: '11000', frequency: '1.54' },
+        { ad_id: 'lg', impressions: '16983', reach: '6175', frequency: '2.7502' },
       ],
       adset: [{ adset_id: 'sfc-set-1', impressions: '400', reach: '210', frequency: '1.9' }],
       campaign: [
@@ -166,7 +166,11 @@ test('custom range frequency comes from Meta per level, ends on Meta\'s day, and
   expect(campaign.adsets.find(set => set.id === 'sfc-set-2')!.w7.frequency).toBeNull();
   const tired = campaign.adsets.find(set => set.id === 'sfc-set-3')!.ads[0];
   expect(tired.w7.frequency).toBe(2.75);
-  expect(tired.verdict.verdict).toBe('fatiguing');
+  // Retargeting is never held to the lead gate, fatigue included.
+  expect(tired.verdict.verdict).toBe('not_judged');
+  const leadGen = result.campaigns.find(item => item.id === 'lg-campaign')!.adsets[0].ads[0];
+  expect(leadGen.w7.frequency).toBe(2.75);
+  expect(leadGen.verdict.verdict).toBe('fatiguing');
   expect(result.account.w7.frequency).toBe(2.03);
   expect(result.campaigns.find(item => item.id === 'lg-campaign')!.w7.frequency).toBe(2.03);
   expect(result.notes.some(note => note.text.includes("Frequency is Meta's own") && note.text.includes('through 2026-10-15'))).toBe(true);
@@ -177,7 +181,7 @@ test('custom range that has not started on Meta\'s days reads no frequency, and 
   const sqlResults: Record<string, unknown>[][] = [
     [{ ms: 1790800000000, last_day: '2026-10-15', first_day: '2025-01-01' }],
     [ad('lead_gen', 'lg', 100)],
-    [{ w7_leads: 3, w30_leads: 3, w7_closes: 0, w30_closes: 0, w7_contracted: 0, w30_contracted: 0, w30_voided: 0 }],
+    [{ w7_leads: 3, w30_leads: 3, w7_closes: 0, w30_closes: 0, w7_contracted: 0, w30_contracted: 0, w30_voided: 0, ad_leads: 3, ad_closes: 1, ad_contracted: 250 }],
   ];
   const calls: { path: string; params: MetaParams }[] = [];
   let query = 0;
@@ -197,7 +201,7 @@ test('custom range fails rather than falling back when Meta refuses a frequency 
   const sqlResults: Record<string, unknown>[][] = [
     [{ ms: 1790800000000, last_day: '2026-10-15', first_day: '2025-01-01' }],
     [ad('lead_gen', 'lg', 100)],
-    [{ w7_leads: 3, w30_leads: 3, w7_closes: 0, w30_closes: 0, w7_contracted: 0, w30_contracted: 0, w30_voided: 0 }],
+    [{ w7_leads: 3, w30_leads: 3, w7_closes: 0, w30_closes: 0, w7_contracted: 0, w30_contracted: 0, w30_voided: 0, ad_leads: 3, ad_closes: 1, ad_contracted: 250 }],
   ];
   let query = 0;
   await expect(readAdsWindow('2026-10-10', '2026-10-15', {
@@ -215,4 +219,72 @@ test('the custom range no longer works frequency out of daily snapshots or the c
   expect(source).not.toContain('max(frequency)');
   expect(source).not.toContain('Math.max(target.frequency');
   expect(source).not.toContain('_freq');
+});
+
+// Audit 2026-10-16: the custom range runs the same rules as the scheduled tab.
+const adRow = (id: string, type: string, counts: Record<string, number>) => {
+  const row: Record<string, unknown> = { ...ad(type, id, 0) };
+  for (const key of Object.keys(row)) if (/^w(7|30)_/.test(key)) row[key] = 0;
+  for (const [key, value] of Object.entries(counts)) { row[`w7_${key}`] = value; row[`w30_${key}`] = value; }
+  return row;
+};
+const runRows = async (rows: Record<string, unknown>[], totals: Record<string, unknown> = { ad_leads: 0, ad_closes: 0, ad_contracted: 0 }) => {
+  const sqlResults: Record<string, unknown>[][] = [
+    [{ ms: 1790800000000, last_day: '2026-10-15', first_day: '2025-01-01' }],
+    rows,
+    [{ w7_leads: 0, w30_leads: 0, w7_closes: 0, w30_closes: 0, w7_contracted: 0, w30_contracted: 0, w30_voided: 0, ...totals }],
+  ];
+  let query = 0;
+  return readAdsWindow('2026-10-10', '2026-10-16', { readSql: async () => sqlResults[query++], readMeta: meta(), now: NOW });
+};
+const adIn = (result: Awaited<ReturnType<typeof readAdsWindow>>, id: string) => result.campaigns.flatMap(c => c.adsets.flatMap(s => s.ads)).find(item => item.id === id)!;
+
+test('custom range verdicts: retargeting is not judged, no lead is too early, a few cents is not "nothing spent"', async () => {
+  const result = await runRows([
+    adRow('margin-tax', 'lead_gen', { spend: 22.8, impressions: 900 }),
+    adRow('hidden-tax', 'retargeting', { spend: 1.43, impressions: 300 }),
+    adRow('lg-small', 'lead_gen', { spend: 0.77, impressions: 41 }),
+    adRow('lg-none', 'lead_gen', { spend: 0 }),
+    adRow('dear', 'lead_gen', { spend: 34.53, leads: 1 }),
+    adRow('good', 'lead_gen', { spend: 20, leads: 2 }),
+    adRow('young-demos', 'lead_gen', { spend: 20, leads: 2, demos_shown: 4, demos_shown_mature: 2 }),
+    adRow('old-demos', 'lead_gen', { spend: 20, leads: 2, demos_shown: 4, demos_shown_mature: 3 }),
+  ]);
+  const range = '2026-10-10 to 2026-10-16';
+  expect(adIn(result, 'margin-tax').verdict).toEqual({ verdict: 'hold', reason: `$22.80 from ${range} and no lead yet: too early to judge against the $15 gate.`, owner: 'ads' });
+  expect(adIn(result, 'hidden-tax').verdict).toEqual({ verdict: 'not_judged', reason: 'Retargeting is not judged on cost per lead.', owner: null });
+  expect(adIn(result, 'lg-small').verdict).toEqual({ verdict: 'hold', reason: `Delivering, but only $0.77 and 41 impressions from ${range}: too little to judge.`, owner: 'ads' });
+  expect(adIn(result, 'lg-none').verdict.verdict).toBe('no delivery');
+  expect(adIn(result, 'dear').verdict.reason).toBe(`$34.53 a lead from ${range}, more than half again over the $15 gate.`);
+  expect(adIn(result, 'good').verdict.verdict).toBe('scale');
+  expect(adIn(result, 'young-demos').verdict.verdict).toBe('scale');
+  expect(adIn(result, 'old-demos').verdict.verdict).toBe('demos do not close');
+  for (const item of result.campaigns.flatMap(c => c.adsets.flatMap(s => s.ads))) expect(item.verdict.reason).not.toContain('$0.00');
+  expect(result.verdicts).toEqual({ hold: 2, not_judged: 1, 'no delivery': 1, kill: 1, scale: 2, 'demos do not close': 1 });
+});
+
+test('custom range: lead to intro is per lead, intro to demo is the ribbon\'s, and the closer needs three account closes', async () => {
+  const quiet = { impressions: 400, link_clicks: 10, leads: 3, leads_to_intro: 1 };
+  const result = await runRows([
+    // One lead, a no-show and its rebooking: two appointments, one lead that booked.
+    adRow('rebooked', 'lead_gen', { spend: 10, leads: 1, leads_to_intro: 1, intros_booked: 2, leads_to_demo: 1, demos_booked: 2, demos_shown: 3, closes: 2 }),
+    { ...adRow('weak', 'lead_gen', { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 2, demos_booked: 15 }), campaign_id: 'weak' },
+    { ...adRow('strong', 'lead_gen', { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 8, demos_booked: 8, demos_shown: 5 }), campaign_id: 'strong' },
+  ]);
+  const rebooked = adIn(result, 'rebooked').w7;
+  expect(rebooked.bookRate).toBe(1);
+  expect(rebooked.leadToDemo).toBe(1);
+  const weak = result.campaigns.find(c => c.id === 'weak')!;
+  expect(weak.constraint).toEqual({ stage: 'intros shown to demos booked', owner: 'setter', mine: 0.2, account: 0.5 });
+  expect(weak.constraint!.mine).toBe(weak.w30.introToDemo!);
+  // Five demos and no close, against an account rate of 2 in 8; but two account closes are no benchmark.
+  expect(result.account.w30.closes).toBe(2);
+  expect(result.campaigns.find(c => c.id === 'strong')!.constraint).toBeNull();
+});
+
+test('custom range coverage comes straight from the CRM and warns about records no ad row holds', async () => {
+  const result = await runRows([adRow('one', 'lead_gen', { spend: 10, leads: 1, closes: 1, contracted: 6000 })], { ad_leads: 1, ad_closes: 2, ad_contracted: 9000 });
+  expect(result.coverage.w30).toMatchObject({ adLeads: 1, adCloses: 2, adContracted: 9000 });
+  const warn = result.notes.find(note => note.level === 'warn' && note.text.includes('could not place'));
+  expect(warn?.text).toContain('the CRM holds 1 lead and 2 signed deals ($9,000) on this account\'s ads, and the ad rows add up to 1 and 1 ($6,000)');
 });

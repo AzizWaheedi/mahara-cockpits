@@ -8,7 +8,10 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 type Row = Record<string, unknown>;
 export type FrequencyFigure = {
+  /** Campaigns of this kind that delivered (impressions above 0) in the window. */
   campaigns: number;
+  /** Campaigns of this kind on the account, delivered or not. */
+  listed: number;
   impressions: number;
   reach: number;
   frequency: number | null;
@@ -83,7 +86,12 @@ async function listCampaigns(readMeta: MetaRead): Promise<{ id: string; name: st
   throw new Error('Meta campaign list was not confirmed.');
 }
 
-export async function readInsights(readMeta: MetaRead, ids: string[], from: string, to: string): Promise<FrequencyFigure | null> {
+/**
+ * One whole-window read over a set of campaigns. `delivered`, when given,
+ * counts the campaigns that delivered in the window; without it `campaigns`
+ * is every campaign in the set.
+ */
+export async function readInsights(readMeta: MetaRead, ids: string[], from: string, to: string, delivered?: (ids: string[]) => number): Promise<FrequencyFigure | null> {
   if (ids.length === 0) return null;
   const result = await readMeta(`act_${ACCOUNT}/insights`, {
     fields: 'impressions,reach,frequency,spend',
@@ -93,7 +101,7 @@ export async function readInsights(readMeta: MetaRead, ids: string[], from: stri
   });
   if (!Array.isArray(result.data)) throw new Error('Meta did not confirm the frequency insights.');
   const first = result.data[0];
-  if (first === undefined) return { campaigns: ids.length, impressions: 0, reach: 0, frequency: null, spend: 0 };
+  if (first === undefined) return { campaigns: delivered ? delivered(ids) : ids.length, listed: ids.length, impressions: 0, reach: 0, frequency: null, spend: 0 };
   if (!isRow(first)) throw new Error('Meta returned an invalid frequency row.');
   const row = first;
   const impressions = numeric(row.impressions, 'impressions');
@@ -103,7 +111,7 @@ export async function readInsights(readMeta: MetaRead, ids: string[], from: stri
   const frequency = reportedFrequency === undefined || reportedFrequency === null
     ? reach > 0 ? Math.round((impressions / reach) * 100) / 100 : null
     : Math.round(numeric(reportedFrequency, 'frequency') * 100) / 100;
-  return { campaigns: ids.length, impressions, reach, frequency, spend: Math.round(spend * 100) / 100 };
+  return { campaigns: delivered ? delivered(ids) : ids.length, listed: ids.length, impressions, reach, frequency, spend: Math.round(spend * 100) / 100 };
 }
 
 /**
@@ -198,9 +206,14 @@ export async function readFrequencyWindow(
   const leadGenIds = classified.filter(campaign => campaign.kind === 'lead_gen').map(campaign => campaign.id);
   const retargetingIds = classified.filter(campaign => campaign.kind === 'retargeting').map(campaign => campaign.id);
   const excluded = campaigns.length - leadGenIds.length - retargetingIds.length;
+  // The card counts the campaigns that delivered in the window (impressions
+  // above 0), not every campaign whose name sorts it there; the totals are
+  // unchanged. Meta leaves a campaign with no delivery out of its rows.
+  const byCampaign = await readLevelFrequency(readMeta, 'campaign', from, to);
+  const delivered = (ids: string[]) => ids.filter(id => (byCampaign.get(id)?.impressions ?? 0) > 0).length;
   const [leadGen, retargeting] = await Promise.all([
-    readInsights(readMeta, leadGenIds, from, to),
-    readInsights(readMeta, retargetingIds, from, to),
+    readInsights(readMeta, leadGenIds, from, to, delivered),
+    readInsights(readMeta, retargetingIds, from, to, delivered),
   ]);
   return {
     from,
@@ -208,7 +221,7 @@ export async function readFrequencyWindow(
     computedAt,
     leadGen,
     retargeting,
-    note: `Read from Meta over ${from} to ${to}: ${leadGenIds.length} lead-gen and ${retargetingIds.length} retargeting campaigns on the account${excluded > 0 ? `, ${excluded} hiring or webinar campaigns left out` : ''}. Reach is distinct people for the whole window, never a sum of days.`,
+    note: `Read from Meta over ${from} to ${to}: ${delivered(leadGenIds)} of ${leadGenIds.length} lead-gen and ${delivered(retargetingIds)} of ${retargetingIds.length} retargeting campaigns on the account delivered${excluded > 0 ? `, ${excluded} hiring or webinar campaigns left out` : ''}. Reach is distinct people for the whole window, never a sum of days.`,
   };
 }
 function isRow(value: unknown): value is Row {
@@ -219,16 +232,19 @@ function parseFigure(value: unknown): FrequencyFigure | null | undefined {
   if (value === null) return null;
   if (!isRow(value)) return undefined;
   const campaigns = value.campaigns;
+  const listed = value.listed;
   const impressions = value.impressions;
   const reach = value.reach;
   const spend = value.spend;
   const frequency = value.frequency;
+  // A read saved before `listed` counted every campaign, not the delivered ones: read again.
   if (typeof campaigns !== 'number' || !Number.isSafeInteger(campaigns) || campaigns < 0
+    || typeof listed !== 'number' || !Number.isSafeInteger(listed) || listed < campaigns
     || typeof impressions !== 'number' || !Number.isFinite(impressions) || impressions < 0
     || typeof reach !== 'number' || !Number.isFinite(reach) || reach < 0
     || typeof spend !== 'number' || !Number.isFinite(spend) || spend < 0
     || (frequency !== null && (typeof frequency !== 'number' || !Number.isFinite(frequency) || frequency < 0))) return undefined;
-  return { campaigns, impressions, reach, frequency, spend };
+  return { campaigns, listed, impressions, reach, frequency, spend };
 }
 
 export function parseFrequencyRead(value: unknown): FrequencyRead | null {

@@ -25,7 +25,7 @@ const window = (a: string, spend: number) => ({
 });
 const adRow = (adId: string, adsetId: string, campaignId: string, campaignName: string, type: string) => ({
   ad_id: adId, adset_id: adsetId, campaign_id: campaignId, ad_name: `Ad ${adId}`, adset_name: `Set ${adsetId}`,
-  campaign_name: campaignName, campaign_status: "ACTIVE", effective_status: "ACTIVE", thumbnail_url: null,
+  campaign_name: campaignName, campaign_status: "ACTIVE", effective_status: "ACTIVE", thumbnail_url: null, last_seen: "2026-10-16",
   campaign_type: type, setter_name: null, setter_shown: 0, setter_due: 0, closer_name: null, closer_closes: 0,
   ...window("w7", 20), ...window("w30", 20),
 });

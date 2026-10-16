@@ -1691,9 +1691,18 @@ export type B2bAdWindow = {
   introsCancelled: number;
   /** Intros shown that went on to a demo booked for the same contact. */
   introsAdvanced: number;
+  /**
+   * Leads created in the window (the ROAS tags) with an intro, or a demo,
+   * booked at or after they were created: bookRate's and leadToDemo's
+   * numerators. Absent on a payload stored before 2026-10-16.
+   */
+  leadsToIntro?: number;
+  leadsToDemo?: number;
   demosBooked: number;
   demosDue: number;
   demosShown: number;
+  /** Demos shown at least seven days before `to`, the floor for "demos do not close". Absent before 2026-10-16. */
+  demosShownMature?: number;
   demosQualified: number;
   demosCancelled: number;
   closes: number;
@@ -1717,9 +1726,13 @@ export type B2bAdWindow = {
   cpc: number | null;
   /** spend / CRM leads. */
   cpl: number | null;
+  /** Leads the setters tagged roas-qualified over qualified plus unqualified. */
   qualifiedPct: number | null;
   costPerQualified: number | null;
-  /** intros booked / leads. */
+  /**
+   * Per lead: leads created in the window (the ROAS tags) with an intro
+   * booked at or after the lead was created, over those leads. Never above 1.
+   */
   bookRate: number | null;
   costPerIntroBooked: number | null;
   /** intros shown / intros due. */
@@ -1740,7 +1753,7 @@ export type B2bAdWindow = {
   /** contracted / spend, and cash / spend. */
   roas: number | null;
   cashRoas: number | null;
-  /** demos booked / leads. */
+  /** Per lead, as bookRate: leads with a demo booked at or after they were created, over leads. */
   leadToDemo: number | null;
 };
 
@@ -1754,6 +1767,8 @@ export type B2bVerdict = {
   verdict:
     | "off"
     | "no delivery"
+    /** An ad in a campaign that is not lead gen: never held to the cost per lead gate. */
+    | "not_judged"
     | "kill"
     | "hold"
     | "scale"
@@ -1804,9 +1819,10 @@ export type B2bAdsPayload = {
   account: { w7: B2bAdWindow; w30: B2bAdWindow };
   retargetingSpend: { w7: number; w30: number };
   /**
-   * How much of the CRM carries an ad id in the window: every lead and
-   * signed deal against the ones this screen can attribute. The rest are
-   * organic, WhatsApp or typed in by hand and are not on this screen.
+   * How much of the CRM carries one of this account's ads in the window:
+   * every lead and signed deal against the CRM records whose ad id is in
+   * meta_ad_snapshots, counted straight from the CRM (paused ads included).
+   * The rest are organic, WhatsApp or typed in by hand.
    */
   coverage: {
     w7: {
@@ -1828,8 +1844,11 @@ export type B2bAdsPayload = {
   };
   running: number;
   total: number;
-  /** Running ads by verdict. */
-  verdicts: Record<string, number>;
+  /**
+   * Running ads by verdict. Ads in campaigns that are not lead gen count
+   * under not_judged, never under scale, fatiguing or kill.
+   */
+  verdicts: Record<string, number> & { not_judged?: number };
   campaigns: {
     id: string;
     name: string;

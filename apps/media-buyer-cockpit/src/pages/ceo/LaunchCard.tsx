@@ -9,6 +9,12 @@ import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
 import type { B2bAdsPayload } from "@/types/ceo/payloads";
+import {
+  launchWinners,
+  noWinnersText,
+  WINNERS_HEADING,
+  winnersPrompt,
+} from "./launchWinners";
 
 /**
  * Launch a campaign on Mahara's own account, the way the launch skill says:
@@ -116,19 +122,10 @@ export function LaunchCard({
     setBusy(false);
   }
 
-  // Winners of the chosen kind, so a retargeting draft can only clone
-  // retargeting ads and a lead-gen draft only lead-gen ones.
-  const winners = (ads?.campaigns ?? [])
-    .filter(c => c.type === kind)
-    .flatMap(c => c.adsets.flatMap(s => s.ads))
-    .filter(a => a.w30.spend > 0)
-    .sort(
-      (a, b) =>
-        b.w30.closes - a.w30.closes ||
-        b.w30.demosShown - a.w30.demosShown ||
-        b.w30.leads - a.w30.leads,
-    )
-    .slice(0, 8);
+  // Ads of the chosen kind with results in thirty days and no kill verdict,
+  // so a retargeting draft can only clone retargeting ads and a lead-gen
+  // draft only lead-gen ones.
+  const winners = launchWinners(ads, kind);
 
   const field =
     "rounded-md border bg-background px-2 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -148,9 +145,10 @@ export function LaunchCard({
               How it works
             </summary>
             <p className="mt-1 max-w-prose">
-              Choose the kind, write what the campaign is for, pick the winners
-              whose creatives it should reuse, and build. You get a draft to
-              read and edit; everything it creates on Meta starts paused.
+              Choose the kind, write what the campaign is for, pick the ads with
+              results whose creatives it should reuse, and build. You get a
+              draft to read and edit; everything it creates on Meta starts
+              paused.
             </p>
           </details>
 
@@ -235,8 +233,11 @@ export function LaunchCard({
             </div>
             {winners.length ? (
               <div>
-                <p className="mb-2 text-xs font-medium text-muted-foreground">
-                  {`Reuse the creatives of these ${kind === "lead_gen" ? "lead-gen" : "retargeting"} winners`}
+                <p className="text-xs font-medium text-foreground">
+                  {WINNERS_HEADING}
+                </p>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  {winnersPrompt(kind)}
                 </p>
                 <div className="grid gap-x-6 gap-y-2 @2xl:grid-cols-2">
                   {winners.map(a => (
@@ -279,7 +280,7 @@ export function LaunchCard({
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">
-                {`No ${kind === "lead_gen" ? "lead-gen" : "retargeting"} ad spent in the last 30 days, so there is no winner to copy from. The draft will still copy settings from the best ${kind === "lead_gen" ? "lead-gen" : "retargeting"} ad set on record.`}
+                {noWinnersText(kind)}
               </p>
             )}
             <div>

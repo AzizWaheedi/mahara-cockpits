@@ -24,6 +24,7 @@ import {
   plural,
   type Unit,
 } from "@/components/ceo/format";
+import { deliveredLine, SPEND_HINT } from "@/components/ceo/frequencyFigure";
 import { DERIVED_NOTE, useGrowthWindow } from "@/components/ceo/growthWindow";
 import { Kicker } from "@/components/ceo/Kicker";
 import { LINK_CTR, LINK_CTR_HINT } from "@/components/ceo/linkCtr";
@@ -709,7 +710,7 @@ function DailyBody({
 const FREQUENCY_NOTES: Note[] = [
   {
     level: "info",
-    text: "Frequency is impressions over the distinct people reached in the whole timeframe, read from Meta for that timeframe. It cannot be added up from daily rows, because the same person on two days is one person. Lead-gen and retargeting campaigns are sorted by name the way the B2B dashboard sorts them; hiring campaigns are left out.",
+    text: "Frequency is impressions over the distinct people reached in the whole timeframe, read from Meta for that timeframe. It cannot be added up from daily rows, because the same person on two days is one person. Lead-gen and retargeting campaigns are sorted by name the way the B2B dashboard sorts them; hiring campaigns are left out. The campaign count under the spend is the ones that delivered in the timeframe.",
   },
   {
     level: "info",
@@ -829,7 +830,8 @@ function FrequencyFigureTiles({
           variant="plain"
           label="Spend"
           value={figure ? money(figure.spend) : NA}
-          sub={figure ? plural(figure.campaigns ?? 0, "campaign") : undefined}
+          sub={figure ? deliveredLine(figure) : undefined}
+          hint={SPEND_HINT}
           naHint={na}
         />
       </div>
