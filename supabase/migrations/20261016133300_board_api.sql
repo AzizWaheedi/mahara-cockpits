@@ -49,8 +49,10 @@
 --     client's override, else the board's override, else the official
 --     default): good, watch, off, not_measured (no source), not_filled_in (the
 --     client does not record it), too_few (under the minimum sample), or null
---     (a plain count with nothing to judge). A rule with no watch line calls
---     anything short of good a watch; the show rate is never off.
+--     (a plain count with nothing to judge). A rule with no watch line (AOV)
+--     calls anything short of good a watch; the show rate is never off. Leads
+--     touched and first call have the watch line on the good line, so any miss
+--     is off, as callCentre.ts callCentreVerdict judges them.
 --   - Ad numbers (cockpit_meta_ad_days) end yesterday on each ad account's own
 --     clock; the read says so. Cost per booking and ROAS divide by the same
 --     days (bookings and revenue to yesterday). Cost per lead is lead-campaign
@@ -241,7 +243,9 @@ CREATE TRIGGER cockpit_board_levers_audit AFTER INSERT OR UPDATE OR DELETE ON pu
  * cockpit_board_targets, never a second set of numbers. strict_good: good
  * means strictly under (frequency under 2.5); never_off: short of the watch
  * line is still a watch (the show rate). min_sample: below it a rate is shown
- * and called too few.
+ * and called too few. Leads touched and first call put the watch line on the
+ * good line: callCentreVerdict calls any miss of CALL_RULES the call centre's
+ * problem, so the board calls it off, never a watch.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_board_default_targets()
 RETURNS TABLE(metric text, value_key text, label text, unit text, direction text, good numeric, watch numeric,
@@ -284,10 +288,10 @@ LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
         'creative', '3-second plays / impressions; approved 2026-10-16'),
     (17, 'hold_rate', 'holdRate', 'Hold rate', 'percent', 'higher', 30, 15, false, false, 1000, 'video impressions',
         'creative', 'ThruPlays / 3-second plays; approved 2026-10-16'),
-    (18, 'leads_touched', 'leadsTouched', 'Leads touched', 'percent', 'higher', 90, NULL, false, false, 20, 'callable leads',
-        'call_center', 'callCentre.ts CALL_RULES.touchedShare and minLeads'),
-    (19, 'first_call', 'firstCall', 'First call', 'minutes', 'lower', 30, NULL, false, false, NULL, NULL,
-        'call_center', 'callCentre.ts CALL_RULES.firstCallWorkMinutes, in working minutes')
+    (18, 'leads_touched', 'leadsTouched', 'Leads touched', 'percent', 'higher', 90, 90, false, false, 20, 'callable leads',
+        'call_center', 'callCentre.ts CALL_RULES.touchedShare and minLeads; any miss is off, as in callCentreVerdict'),
+    (19, 'first_call', 'firstCall', 'First call', 'minutes', 'lower', 30, 30, false, false, NULL, NULL,
+        'call_center', 'callCentre.ts CALL_RULES.firstCallWorkMinutes, in working minutes; any miss is off, as in callCentreVerdict')
   ) AS v(n, metric, value_key, label, unit, direction, good, watch, strict_good, never_off, min_sample, sample, owner_department, basis)
   ORDER BY v.n
 $$;

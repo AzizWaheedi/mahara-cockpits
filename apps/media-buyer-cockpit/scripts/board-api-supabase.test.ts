@@ -856,14 +856,15 @@ describe("the default targets", () => {
       watch: kpi.LINK_CTR_FLOOR,
       min: 1000,
     });
+    // callCentreVerdict calls any miss of CALL_RULES the call centre's problem: the watch line is the good line.
     expect(t.leads_touched).toMatchObject({
       good: CALL_RULES.touchedShare,
-      watch: null,
+      watch: CALL_RULES.touchedShare,
       min: CALL_RULES.minLeads,
     });
     expect(t.first_call).toMatchObject({
       good: CALL_RULES.firstCallWorkMinutes,
-      watch: null,
+      watch: CALL_RULES.firstCallWorkMinutes,
       direction: "lower",
     });
     expect(t.frequency).toMatchObject({
@@ -1059,6 +1060,59 @@ describe("the formulas, on Formula Co's ten known days", () => {
     expect(one.closeRate).toMatchObject({ v: 100, status: "too_few" });
     // 125 link clicks is over the 50 the opt-in rate needs: judged.
     expect(one.optIn).toMatchObject({ v: 4, status: "watch", sample: 125 });
+  });
+
+  test("leads touched and first call: any miss of CALL_RULES is off, as callCentreVerdict calls it", async () => {
+    await owner(db);
+    const before = await q<Row>(
+      "SELECT * FROM public.cockpit_client_now WHERE location_id = $1",
+      [LOC_D],
+    );
+    const set = (share: number, firstSeconds: number) =>
+      q(
+        `INSERT INTO public.cockpit_client_now(location_id,untouched_leads,touched_share_30d,callable_30d,touched_30d,first_call_median_work_seconds_30d,computed_at)
+         VALUES($1,3,$2::numeric,100,round($2::numeric * 100),$3::numeric,now())
+         ON CONFLICT (location_id) DO UPDATE SET touched_share_30d = EXCLUDED.touched_share_30d, callable_30d = 100,
+           touched_30d = EXCLUDED.touched_30d, first_call_median_work_seconds_30d = EXCLUDED.first_call_median_work_seconds_30d, note = NULL`,
+        [LOC_D, share, firstSeconds],
+      );
+    try {
+      await set(0.4, 3 * 3600);
+      let v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.leadsTouched).toMatchObject({ v: 40, status: "off" });
+      expect(v.firstCall).toMatchObject({ v: 180, status: "off" });
+      await owner(db);
+      await set(0.89, 31 * 60);
+      v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.leadsTouched).toMatchObject({ v: 89, status: "off" });
+      expect(v.firstCall).toMatchObject({ v: 31, status: "off" });
+      await owner(db);
+      await set(0.9, 30 * 60);
+      v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.leadsTouched).toMatchObject({ v: 90, status: "good" });
+      expect(v.firstCall).toMatchObject({ v: 30, status: "good" });
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.cockpit_client_now WHERE location_id = $1", [
+        LOC_D,
+      ]);
+      for (const r of before)
+        await q(
+          `INSERT INTO public.cockpit_client_now(location_id,untouched_leads,oldest_untouched_at,touched_share_30d,callable_30d,touched_30d,
+             first_call_median_work_seconds_30d,computed_at,note) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            r.location_id,
+            r.untouched_leads,
+            r.oldest_untouched_at,
+            r.touched_share_30d,
+            r.callable_30d,
+            r.touched_30d,
+            r.first_call_median_work_seconds_30d,
+            r.computed_at,
+            r.note,
+          ],
+        );
+    }
   });
 });
 
