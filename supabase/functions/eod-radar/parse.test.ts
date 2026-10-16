@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  ahmedOnly, CH, join, makeContinuation, makeCsr, makeNextDay, makeTest, makeUnclosedDate, makeWrongSubmitter, mention,
-  outboxClub, outboxNoId, PEOPLE, person, selfPosted,
+  ahmedOnly, CH, eodLater, join, makeContinuation, makeCsr, makeNextDay, makeTest, makeUnclosedDate, makeWrongSubmitter, managerNote, mention,
+  outboxClub, outboxNoId, PEOPLE, person, selfPosted, shortOwnEod,
 } from "./fixtures.ts";
 import { fits, headerFits, matchName, nameWords } from "./match.ts";
 import { dateCandidates, hasWinsBlockersOrPlan, parsePost, qualityNote } from "./parse.ts";
@@ -54,6 +54,25 @@ describe("reading a post", () => {
     expect(parse(mention).eodLike).toBe(false);
     expect(parsePost(CH.media, join)).toBeNull();
     expect(parsePost(CH.media, { ...makeNextDay, thread_ts: "1791900000.000100" })).toBeNull();
+  });
+
+  test("chat that says EOD is not an EOD: a note opening with a mention, a promise to send one later", () => {
+    expect(parse(managerNote)).toMatchObject({ form: false, eodLike: false });
+    expect(parse(eodLater)).toMatchObject({ form: false, eodLike: false });
+    // Long enough, but it opens with a mention: still chat.
+    expect(parse({ ...selfPosted, text: `<@U0C69400F1U> ${String(selfPosted.text)}` }).eodLike).toBe(false);
+  });
+
+  test("a short EOD of one's own reads as one: an EOD first line with three lines under it, or 20 words", () => {
+    expect(parse(shortOwnEod)).toMatchObject({ form: false, eodLike: true });
+    const oneLine = "EOD: finished the Madan cut, sent City Wood its first draft with the new logo, colour pass on Shades, three thumbnails approved and the brief for tomorrow ready";
+    expect(parse({ ...eodLater, text: oneLine }).eodLike).toBe(true);
+  });
+
+  test("a form is a form whoever posts it", () => {
+    expect(parse(makeNextDay).form).toBe(true);
+    expect(parse(outboxNoId, CH.sales).form).toBe(true);
+    expect(parse(selfPosted).form).toBe(false);
   });
 
   test("Make's second half of a long EOD names nobody", () => {

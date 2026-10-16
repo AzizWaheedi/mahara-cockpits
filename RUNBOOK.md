@@ -779,7 +779,10 @@ the pg_cron job `mahara-eod-radar` posts `{"job":"run"}` to the Edge Function
 mahara-club-bot with `SLACK_BOT_TOKEN`, credits each post to a person (the
 cockpit outbox row Slack has under that ts, else "Submitted by: <@id>", else
 the "*Name - X*" line, else who posted it; a name that fits two people credits
-nobody and is listed as unmatched; "[TEST SUBMISSION]" posts are skipped) and
+nobody and is listed as unmatched; "[TEST SUBMISSION]" posts are skipped; a
+message with no Date, Name or Submitted by line counts only in the poster's own
+EOD channel, only with 40 words, or an "EOD" first line and 20 words or 3 lines
+under it, and never when it opens with an @mention) and
 writes one row per person per working day to `cockpit_eod_radar`: on time
 (by 22:00 Kuwait on the EOD day), late (with the minutes), missed (only after
 23:00 and only when every channel was read), pending, leave (a full-day
@@ -802,7 +805,7 @@ in `cockpit_eod_radar_receipts` (30 days). The settings are the single row of
 | --- | --- | --- |
 | "Could not read #x: the Slack app needs the groups:history scope" | The five EOD channels are private. In api.slack.com/apps, mahara-club-bot, OAuth & Permissions, add the bot scope `groups:history` (and `users:read`, `users:read.email` for the email lookup), reinstall the app, and keep `SLACK_BOT_TOKEN` (reinstalling does not change a bot token; if Slack issues a new one, set it as a function secret). The people of that channel read "not read" until then, never missed. | CEO (Slack admin) |
 | "Could not read #x: the bot is not in it" | Invite @mahara-club-bot to the channel (`/invite @mahara-club-bot`). A new EOD channel also needs a row in `cockpit_eod_channels`. | CEO or Systems manager |
-| Someone reads missed but filed | Open the person on the card: the day says what was looked for. Their post named someone else or nobody (the card's "named nobody on the radar" line), or it was posted with a Date line more than 14 days back or in the future (counted for the day it was posted). A Make form whose "Submitted by" carries a person who has left still credits the Name line. A post that only lives in the EOD sheet or Typeform is not read: the radar reads Slack and the cockpit's sent EODs. Run a backfill once the cause is fixed. | Systems manager |
+| Someone reads missed but filed | Open the person on the card: the day says what was looked for. Their post named someone else or nobody (the card's "named nobody on the radar" line), or it was posted with a Date line more than 14 days back or in the future (counted for the day it was posted). A Make form whose "Submitted by" carries a person who has left still credits the Name line. A plain message (no Date, Name or Submitted by line) counts only in their own EOD channel and only when it reads like an EOD (40 words, or an "EOD" first line with 20 words or 3 lines under it, not opening with an @mention): a one-line "EOD done" or a reply in another team's channel is not credited. A post that only lives in the EOD sheet or Typeform is not read: the radar reads Slack and the cockpit's sent EODs. Run a backfill once the cause is fixed. | Systems manager |
 | "No Slack id for X" | The roster has no email for them, or Slack has no member with it. Add their work email on Team & payroll; the next run looks it up. Until then only posts that carry their Name line credit them, and a day with none reads "not read". | CEO |
 | "Not on the radar: X (role)" | Their role matches no row of `cockpit_eod_channels`. Add a row (`role_pattern` regex, `channel_id`, `channel_name`) if the role files EODs. | Systems manager |
 | The closeout post did not arrive | `select * from cockpit_eod_radar_digests order by day desc limit 3`. `failed` names Slack's refusal (it is tried again up to 3 times while the day is current); `unknown` may have arrived and is never sent again; no row means the digest is off, nobody owed an EOD, or no run reached 23:00. | Systems manager |

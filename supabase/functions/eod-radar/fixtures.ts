@@ -86,6 +86,12 @@ export const selfPosted: SlackMessage = {
 
 /** A mention in an EOD channel, not an EOD. */
 export const mention: SlackMessage = { user: "U0AS90SHMH8", ts: tsAt("2026-10-14 12:34"), text: "<@U0C69400F1U>" };
+/** A manager's note in another team's EOD channel (Muhammed in #media-eods, 14 Oct 12:34): chat, not his EOD. */
+export const managerNote: SlackMessage = { user: "U0AS90SHMH8", ts: tsAt("2026-10-14 12:34", "300000"), text: "<@U0C69400F1U> please post your EOD in this channel, not in DM" };
+/** A promise in one's own EOD channel: says "EOD", is not one. */
+export const eodLater: SlackMessage = { user: "U0B19NM24AD", ts: tsAt("2026-10-14 21:00"), text: "Will send my EOD later tonight, still exporting" };
+/** A short EOD of one's own: an "EOD" first line and three lines under it. */
+export const shortOwnEod: SlackMessage = { user: "U0B19NM24AD", ts: tsAt("2026-10-14 21:30"), text: "EOD 14 Oct\n- Madan cut sent\n- City Wood colour pass\n- Shades thumbnails" };
 export const join: SlackMessage = { user: "U0C69400F1U", subtype: "channel_join", ts: tsAt("2026-10-14 12:34", "200000"), text: "<@U0C69400F1U> has joined the channel" };
 
 /** A video editor's EOD signed with a first name three people share. */

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
-  ahmedOnly, CH, makeContinuation, makeCsr, makeNextDay, makeTest, makeUnclosedDate, makeWrongSubmitter, mention,
-  outboxClub, outboxCsm, outboxNoId, PEOPLE, person, selfPosted, tsAt,
+  ahmedOnly, CH, eodLater, makeContinuation, makeCsr, makeNextDay, makeTest, makeUnclosedDate, makeWrongSubmitter, managerNote, mention,
+  outboxClub, outboxCsm, outboxNoId, PEOPLE, person, selfPosted, shortOwnEod, tsAt,
 } from "./fixtures.ts";
 import { parsePost, type Post, type SlackMessage } from "./parse.ts";
 import {
@@ -92,6 +92,23 @@ describe("who a post credits", () => {
     const { credits } = run([post(selfPosted), post(mention)].filter(p => p.eodLike));
     expect(credits.get("19:2026-10-14")).toMatchObject({ by: "poster" });
     expect(credits.has("18:2026-10-14")).toBe(false);
+  });
+
+  test("chat in an EOD channel credits nobody (14 Oct): Muhammed stays late, Karim stays open", () => {
+    const posts = [post(managerNote), post(makeUnclosedDate, CH.tech), post(eodLater)].filter(p => p.eodLike);
+    const { credits } = run(posts);
+    expect(credits.get("18:2026-10-14")).toMatchObject({ at: kw("2026-10-14 22:27"), ts: makeUnclosedDate.ts, posts: 1 });
+    expect(credits.has("11:2026-10-14")).toBe(false);
+    expect(decideDay({ person: person(18), info: info("2026-10-14"), credit: credits.get("18:2026-10-14"), now: kw("2026-10-14 23:05"), settings: SETTINGS, unread: [] })).toMatchObject({ status: "late", lateMinutes: 27 });
+  });
+
+  test("a plain message credits its poster only in their own EOD channel; a form credits them anywhere", () => {
+    expect(run([post(shortOwnEod, CH.media)]).credits.get("11:2026-10-14")).toMatchObject({ by: "poster" });
+    expect(run([post(shortOwnEod, CH.tech)]).credits.has("11:2026-10-14")).toBe(false);
+    expect(run([post(selfPosted, CH.csms)]).credits.has("19:2026-10-14")).toBe(false);
+    // Nada's own form with a Name line that fits nobody, posted in #tech-eods: still hers.
+    const form = { ...selfPosted, text: `*MEDIA BUYER EOD*\n*Date - 14-10-2026*\n*Name - N.*\n${String(selfPosted.text)}` };
+    expect(run([post(form, CH.tech)]).credits.get("19:2026-10-14")).toMatchObject({ by: "poster" });
   });
 
   test("a test submission and a continuation credit nobody", () => {

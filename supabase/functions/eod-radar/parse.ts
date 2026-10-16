@@ -11,6 +11,11 @@
  *   A person's own message:    poster = their Slack id, no bot_id
  * Make splits a long EOD into two messages; the second has no header and no
  * name, so it credits nobody and is not counted.
+ *
+ * A message with no form lines (no Date, Name or Submitted by line) is an EOD
+ * only when it reads like one: 40 words or more, or a first line with "EOD" in
+ * it and 20 words or 3 lines under it. One that opens with a mention is chat
+ * ("<@U..> please post your EOD here"), and so is "Will send my EOD later".
  */
 
 /** One message as conversations.history returns it: only the fields the radar reads. */
@@ -41,7 +46,9 @@ export type Post = {
   /** "Submitted by: Ahmed Abushaiba (...)" with no id: the name, or null. */
   submittedByText: string | null;
   test: boolean;
-  /** Looks like an EOD (a header, a Date, Name or Submitted by line, or 40 words or more). */
+  /** Carries a Date, Name or Submitted by line: a form (Make, the cockpit outbox). */
+  form: boolean;
+  /** Looks like an EOD: a form, or a message that reads like one (see the file comment). */
   eodLike: boolean;
   words: number;
   /** The old radar's "lazy" rule as a note (never a strike), or null. */
@@ -128,6 +135,24 @@ export function qualityNote(lines: string[], words: number): string | null {
   return notes.length ? notes.join("; ") : null;
 }
 
+const MENTION_FIRST = /^[*_~\s]*<[@!]/;
+const HAS_WORD = /[\p{L}\p{N}]/u;
+
+/**
+ * A message with no form lines that still reads like an EOD: not opening with
+ * a mention, and 40 words or more, or an "EOD" first line (`afterEod`, the rest
+ * of that line) with 20 words or 3 lines under it.
+ */
+function readsLikeEod(lines: string[], words: number, afterEod: string | null): boolean {
+  const start = lines.findIndex(l => bare(l).length > 0);
+  if (start < 0 || MENTION_FIRST.test(lines[start])) return false;
+  if (words >= 40) return true;
+  if (afterEod === null) return false;
+  const lead = words + countWords([afterEod]);
+  const under = lines.slice(start + 1).filter(l => HAS_WORD.test(bare(l))).length;
+  return lead >= 20 || under >= 3;
+}
+
 /** One message read; null when it is not a message a person or an app wrote (a join, a pin, a thread reply). */
 export function parsePost(channel: string, m: SlackMessage): Post | null {
   const ts = typeof m.ts === "string" && TS.test(m.ts) ? m.ts : null;
@@ -163,7 +188,8 @@ export function parsePost(channel: string, m: SlackMessage): Post | null {
   const submittedBy = SUBMITTED_ID.exec(text)?.[1] ?? null;
   if (submittedBy) submittedByText = null;
   const words = countWords(lines);
-  const eodLike = Boolean(header || dateLine || nameLine || submittedBy || submittedByText) || words >= 40;
+  const form = Boolean(dateLine || nameLine || submittedBy || submittedByText);
+  const eodLike = form || readsLikeEod(lines, words, h ? first.slice(h.index + h[0].length) : null);
   return {
     channel,
     ts,
@@ -175,6 +201,7 @@ export function parsePost(channel: string, m: SlackMessage): Post | null {
     submittedBy,
     submittedByText,
     test: TEST.test(text),
+    form,
     eodLike,
     words,
     quality: eodLike ? qualityNote(lines, words) : null,

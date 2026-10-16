@@ -19,7 +19,9 @@
  *      Submitted by from the name, and its fallback id can be a person who
  *      has left: Rasem's 10 Oct EOD carries Saleh's id);
  *   3. the Name line (name_line), see match.ts;
- *   4. the person who posted it themselves (poster).
+ *   4. the person who posted it themselves (poster): a form (a Date, Name or
+ *      Submitted by line) in any EOD channel, a plain message only in their
+ *      own (a manager's note in another team's channel is not their EOD).
  * Test submissions credit nobody.
  */
 import { type Person, matchName } from "./match.ts";
@@ -214,7 +216,7 @@ export function creditPosts(input: { posts: Post[]; people: Person[]; outbox: Ou
     } else if (nl.kind === "one") {
       person = nl.person;
       by = "name_line";
-    } else if (po && (nl.kind === "none" || nl.people.some(p => p.personId === po.personId))) {
+    } else if (po && (post.form || post.channel === po.channel) && (nl.kind === "none" || nl.people.some(p => p.personId === po.personId))) {
       // Their own message: a name that fits nobody, or fits them among others, is still theirs.
       person = po;
       by = "poster";
