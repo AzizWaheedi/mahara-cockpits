@@ -170,7 +170,7 @@ function TargetRow({
     isNum(typedGood) && parseNumber(watch) === null
       ? blankWatch(target, unit, typedGood, inherited)
       : null;
-  const impliedWatch = implied && !implied.problem ? implied : null;
+  const impliedWatch = implied && "watch" in implied ? implied : null;
   const watchHint = impliedWatch
     ? isNum(impliedWatch.watch)
       ? formatValue(impliedWatch.watch, unit).replace(/[$%x]|\smin/g, "")
