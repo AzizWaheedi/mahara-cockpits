@@ -2,11 +2,12 @@ import { CPL_GATE } from '../../../apps/media-buyer-cockpit/src/lib/kpi.ts';
 import { B2B } from './finance/sb.ts';
 import { num } from './finance/numbers.ts';
 import { NOT_VOIDED, VOIDED, voidedDeals } from './finance/voids.ts';
+import { ACCOUNT_TIME_ZONE_FALLBACK, type LevelFrequency, metaUntil, readInsights, readLevelFrequency } from './frequency.ts';
 
 type Row = Record<string, unknown>;
 type SqlRead = (project: string, query: string) => Promise<Row[]>;
 type GraphRead = (path: string, params?: Record<string, string | number>) => Promise<Row>;
-type WindowSources = { readSql: SqlRead; readMeta: GraphRead };
+type WindowSources = { readSql: SqlRead; readMeta: GraphRead; now?: () => number };
 const ACCOUNT = '746108264865897';
 const EARLIEST = '2025-01-01';
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -44,7 +45,10 @@ export type B2bAdWindow = {
   qualifiedLeads: number; notReadyLeads: number; introsBooked: number; introsDue: number; introsShown: number;
   introsQualified: number; introsCancelled: number; introsAdvanced: number; demosBooked: number; demosDue: number;
   demosShown: number; demosQualified: number; demosCancelled: number; closes: number; contracted: number; cash: number;
-  /** `ctr` is CTR (all), every click, never shown. `ctrLink` is the Link CTR the screen shows (the CEO, 2026-10-08). */
+  /**
+   * `ctr` is CTR (all), every click, never shown. `ctrLink` is the Link CTR the screen shows (the CEO, 2026-10-08).
+   * `frequency` is Meta's own at this level over the window (impressions over people reached), never the highest child.
+   */
   frequency: number | null; cpm: number | null; ctr: number | null; ctrLink: number | null; cpc: number | null;
   cpl: number | null; qualifiedPct: number | null; costPerQualified: number | null; bookRate: number | null;
   costPerIntroBooked: number | null; introShowRate: number | null; costPerIntroShown: number | null;
@@ -64,7 +68,8 @@ export type B2bAdNode = {
 };
 export type B2bAdsPayload = {
   accountId: string;
-  windows: { from7: string; from30: string; to: string };
+  /** `metaUntil` is the last day Meta's figures cover, on the account's days in `metaTimeZone`. */
+  windows: { from7: string; from30: string; to: string; metaUntil: string; metaTimeZone: string };
   account: { w7: B2bAdWindow; w30: B2bAdWindow };
   retargetingSpend: { w7: number; w30: number };
   coverage: { w7: CoverageWindow; w30: CoverageWindow };
@@ -175,7 +180,6 @@ function emptyWindow(): B2bAdWindow {
 
 function windowOf(row: Row, prefix: 'w7' | 'w30'): B2bAdWindow {
   const get = (field: string) => requiredNumber(row[`${prefix}_${field}`], `${prefix} ${field}`);
-  const frequency = optionalNumber(row[`${prefix}_freq`], `${prefix} frequency`);
   const window = {
     spend: roundUsd(get('spend')),
     impressions: get('impressions'), clicks: get('clicks'),
@@ -186,7 +190,8 @@ function windowOf(row: Row, prefix: 'w7' | 'w30'): B2bAdWindow {
     demosBooked: get('demos_booked'), demosDue: get('demos_due'), demosShown: get('demos_shown'),
     demosQualified: get('demos_qualified'), demosCancelled: get('demos_cancelled'), closes: get('closes'),
     contracted: roundUsd(get('contracted')), cash: roundUsd(get('cash')),
-    frequency: frequency === null ? null : Math.round(frequency * 100) / 100,
+    // Meta's own, read per level for the whole window (readRangeFrequency).
+    frequency: null,
     cpm: null, ctr: null, ctrLink: null, cpc: null, cpl: null, qualifiedPct: null, costPerQualified: null,
     bookRate: null, costPerIntroBooked: null, introShowRate: null, costPerIntroShown: null, introToDemo: null,
     demoShowRate: null, costPerDemoBooked: null, costPerDemo: null, closeRate: null, closeRateQualified: null,
@@ -201,8 +206,30 @@ function addWindow(target: B2bAdWindow, source: B2bAdWindow): void {
   target.cash = roundUsd(target.cash + source.cash);
   for (const key of COUNTS) target[key] += source[key];
   target.linkClicks = target.linkClicks === null || source.linkClicks === null ? null : target.linkClicks + source.linkClicks;
-  if (source.frequency !== null) target.frequency = target.frequency === null ? source.frequency : Math.max(target.frequency, source.frequency);
+  // Frequency is never added up or taken from the children: each level reads Meta's own.
 }
+
+type RangeFrequency = {
+  ad: Map<string, LevelFrequency>; adset: Map<string, LevelFrequency>; campaign: Map<string, LevelFrequency>;
+  account: number | null;
+};
+
+/**
+ * Meta's own frequency for the range at every level the screen shows:
+ * impressions divided by the distinct people reached over the whole range,
+ * the number Ads Manager shows for those dates (the CEO, 2026-10-16). Daily
+ * snapshots cannot give it. Any failed read fails the window; no fallback.
+ */
+async function readRangeFrequency(readMeta: GraphRead, from: string, until: string, leadGenIds: string[]): Promise<RangeFrequency> {
+  if (until < from) return { ad: new Map(), adset: new Map(), campaign: new Map(), account: null };
+  const ad = await readLevelFrequency(readMeta, 'ad', from, until);
+  const adset = await readLevelFrequency(readMeta, 'adset', from, until);
+  const campaign = await readLevelFrequency(readMeta, 'campaign', from, until);
+  const account = await readInsights(readMeta, leadGenIds, from, until);
+  return { ad, adset, campaign, account: account?.frequency ?? null };
+}
+
+const metaFrequency = (level: Map<string, LevelFrequency>, id: string): number | null => level.get(id)?.frequency ?? null;
 
 function treeSql(from7: string, from30: string, to: string): string {
   const funnel = (from: string, alias: 'w7' | 'w30') => `
@@ -210,8 +237,7 @@ function treeSql(from7: string, from30: string, to: string): string {
     select campaign_id, adset_id, ad_id,
            sum(spend) as spend, sum(impressions) as impressions,
            sum(clicks) as clicks,
-           case when bool_and(inline_link_clicks is not null) then sum(inline_link_clicks) end as link_clicks, sum(leads) as meta_leads,
-           max(frequency) as freq
+           case when bool_and(inline_link_clicks is not null) then sum(inline_link_clicks) end as link_clicks, sum(leads) as meta_leads
     from public.meta_ad_snapshots
     where date between ${dateLiteral(from)} and ${dateLiteral(to)}
     group by 1,2,3),
@@ -258,7 +284,6 @@ function treeSql(from7: string, from30: string, to: string): string {
     coalesce(${prefix}_ads.clicks,0) as ${prefix}_clicks,
     case when ${prefix}_ads.ad_id is null then 0 else ${prefix}_ads.link_clicks end as ${prefix}_link_clicks,
     coalesce(${prefix}_ads.meta_leads,0) as ${prefix}_meta_leads,
-    ${prefix}_ads.freq as ${prefix}_freq,
     coalesce(${prefix}_leads.leads,0) as ${prefix}_leads,
     coalesce(${prefix}_leads.qualified_leads,0) as ${prefix}_qualified_leads,
     coalesce(${prefix}_leads.not_ready_leads,0) as ${prefix}_not_ready_leads,
@@ -440,7 +465,7 @@ function buildAdsNotes(payload: B2bAdsPayload, staleSince: string | null, freshn
   });
   payload.notes.push({
     level: 'info',
-    text: `Every row follows an ad from the first impression to the signed contract, through leads, intro calls, demos and closes that carry the ad's id. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency on a parent is the highest of its ads, never a sum.`,
+    text: `Every row follows an ad from the first impression to the signed contract, through leads, intro calls, demos and closes that carry the ad's id. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
   });
   payload.notes.push({
     level: 'info',
@@ -465,7 +490,10 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
   const staleSince = lastDay && lastDay < new Date(Date.parse(`${to}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10)
     ? lastDay
     : null;
-  const account = await sources.readMeta(`act_${ACCOUNT}`, { fields: 'account_status,disable_reason,balance,currency,amount_spent,spend_cap' });
+  const account = await sources.readMeta(`act_${ACCOUNT}`, { fields: 'account_status,disable_reason,balance,currency,amount_spent,spend_cap,timezone_name' });
+  // Meta dates every insight by the account's own days.
+  const timeZone = typeof account.timezone_name === 'string' && account.timezone_name ? account.timezone_name : ACCOUNT_TIME_ZONE_FALLBACK;
+  const until = metaUntil(to, (sources.now ?? Date.now)(), timeZone);
   const code = requiredNumber(account.account_status, 'Meta account status');
   const disableReason = optionalNumber(account.disable_reason, 'Meta disable reason') ?? 0;
   const balance = optionalNumber(account.balance, 'Meta account balance');
@@ -478,6 +506,8 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
   };
   const rows = await sources.readSql(B2B, treeSql(from, from, to));
   const totalsRow = sqlRow(await sources.readSql(B2B, windowRowsSql(from, to)), 'window totals');
+  const leadGenIds = [...new Set(rows.map(raw => record(raw, 'ad row')).filter(row => row.campaign_type === 'lead_gen').map(row => text(row.campaign_id, 'campaign ID')))];
+  const meta = await readRangeFrequency(sources.readMeta, from, until, leadGenIds);
   const account7 = emptyWindow();
   const account30 = emptyWindow();
   const all7 = emptyWindow();
@@ -493,6 +523,9 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
     adIds.add(adId);
     const seven = windowOf(row, 'w7');
     const thirty = windowOf(row, 'w30');
+    // Before judge(): "fatiguing" reads the ad's real frequency for the range.
+    seven.frequency = metaFrequency(meta.ad, adId);
+    thirty.frequency = metaFrequency(meta.ad, adId);
     const status = text(row.effective_status, 'effective ad status', '');
     const running = status === 'ACTIVE';
     const ad: B2bAdNode = {
@@ -549,6 +582,8 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
     addWindow(campaign.w30, thirty);
     if (running) { adset.running = true; campaign.running = true; }
   }
+  account7.frequency = meta.account;
+  account30.frequency = meta.account;
   finish(account7); finish(account30); finish(all7); finish(all30);
   const totals = {
     w7Leads: requiredNumber(totalsRow.w7_leads, '7-day CRM leads'),
@@ -565,8 +600,12 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
   };
   const list = [...campaigns.values()];
   for (const campaign of list) {
+    campaign.w7.frequency = metaFrequency(meta.campaign, campaign.id);
+    campaign.w30.frequency = campaign.w7.frequency;
     finish(campaign.w7); finish(campaign.w30);
     for (const adset of campaign.adsets) {
+      adset.w7.frequency = metaFrequency(meta.adset, adset.id);
+      adset.w30.frequency = adset.w7.frequency;
       finish(adset.w7); finish(adset.w30);
       adset.ads.sort((left, right) => right.w30.spend - left.w30.spend);
       adset.people = peopleOf(adset.ads);
@@ -582,7 +621,7 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
   for (const ad of ads) if (ad.running) verdicts[ad.verdict.verdict] = (verdicts[ad.verdict.verdict] ?? 0) + 1;
   const payload: B2bAdsPayload = {
     accountId: ACCOUNT,
-    windows: { from7: from, from30: from, to },
+    windows: { from7: from, from30: from, to, metaUntil: until, metaTimeZone: timeZone },
     account: { w7: account7, w30: account30 },
     retargetingSpend: { w7: retargeting7, w30: retargeting30 },
     coverage,

@@ -46,6 +46,14 @@ import type {
   B2bPeople,
   B2bVerdict,
 } from "@/types/ceo/payloads";
+import {
+  Fact,
+  frequencyFact,
+  frequencyHint,
+  NA_ZERO,
+  Num,
+  type StageFact,
+} from "./adsFacts";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";
@@ -126,24 +134,6 @@ const dash = (v: number | null, f: (x: number) => string) =>
 const times = (v: number) => `${v.toFixed(1)}×`;
 const x = (v: number | null) => (v === null ? null : times(v));
 
-const NA_ZERO = "Nothing to divide by in this window, so there is no figure.";
-
-/** A number, or the explained n/a when there is nothing to divide by. */
-function Num({ v, f }: { v: number | null; f: (x: number) => string }) {
-  return v === null ? <Na hint={NA_ZERO} /> : f(v);
-}
-
-/** One "label value" fact in a quiet line: the label muted, the value in the text colour. */
-function Fact({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <span className="whitespace-nowrap">
-      {label} <span className="font-medium text-foreground">{children}</span>
-    </span>
-  );
-}
-
-type StageFact = { label: string; v: number | null; f: (x: number) => string };
-
 type Stage = {
   key: string;
   label: string;
@@ -154,7 +144,8 @@ type Stage = {
   hint?: string;
 };
 
-function stagesOf(w: B2bAdWindow): Stage[] {
+/** `freqHint` names whose frequency it is and the days it covers (`frequencyHint`). */
+function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
   return [
     {
       key: "impressions",
@@ -162,9 +153,7 @@ function stagesOf(w: B2bAdWindow): Stage[] {
       value: countCompact(w.impressions),
       facts: [
         { label: "CPM", v: w.cpm, f: money },
-        ...(w.frequency !== null
-          ? [{ label: "Freq", v: w.frequency, f: (n: number) => n.toFixed(1) }]
-          : []),
+        ...frequencyFact(w, freqHint),
       ],
     },
     {
@@ -268,10 +257,13 @@ function stagesOf(w: B2bAdWindow): Stage[] {
  */
 function FunnelRibbon({
   w,
+  freqHint,
   spend,
   constraint,
 }: {
   w: B2bAdWindow;
+  /** The frequency fact's hint, from `frequencyHint` for this window. */
+  freqHint: string;
   spend?: number;
   constraint?: string | null;
 }) {
@@ -280,7 +272,7 @@ function FunnelRibbon({
     ...(spend === undefined
       ? []
       : [{ key: "spend", label: "Spend", value: money(spend), facts: [] }]),
-    ...stagesOf(w),
+    ...stagesOf(w, freqHint),
   ];
   return (
     <ol
@@ -311,7 +303,7 @@ function FunnelRibbon({
             {s.facts.length ? (
               <span className="flex flex-wrap gap-x-3 text-xs leading-5 text-muted-foreground">
                 {s.facts.map(f => (
-                  <Fact key={f.label} label={f.label}>
+                  <Fact key={f.label} label={f.label} hint={f.hint}>
                     <Num v={f.v} f={f.f} />
                   </Fact>
                 ))}
@@ -681,6 +673,7 @@ function CampaignRow({
         {w.spend > 0 ? (
           <FunnelRibbon
             w={w}
+            freqHint={frequencyHint(r.payload.windows, r.win)}
             spend={w.spend}
             constraint={c.constraint?.stage ?? null}
           />
@@ -1230,7 +1223,12 @@ export function AdsTab({ sections }: CeoTabProps) {
               />
             </div>
             {/* A window with nothing in it would draw nine zeros; the tiles already say so. */}
-            {hasActivity(a) ? <FunnelRibbon w={a} /> : null}
+            {hasActivity(a) ? (
+              <FunnelRibbon
+                w={a}
+                freqHint={frequencyHint(p.windows, win, "lead gen")}
+              />
+            ) : null}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>{`${count(p.running)} of ${count(p.total)} ads running`}</span>
               <span title="Everything in the CRM for the window against what carries an ad id. The rest is organic, WhatsApp or typed in by hand.">

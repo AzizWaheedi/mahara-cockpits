@@ -1699,7 +1699,13 @@ export type B2bAdWindow = {
   closes: number;
   contracted: number;
   cash: number;
-  /** Highest of the children on a parent, never a sum. */
+  /**
+   * Meta's own frequency at this level (ad, ad set, campaign; the account row
+   * over its lead-gen campaigns): impressions over the people reached across
+   * the whole window, on Meta's account days, the number Ads Manager shows for
+   * those dates. Never the highest of the children and never a sum. Null when
+   * Meta has no row for it in the window.
+   */
   frequency: number | null;
   // Derived; null when the denominator is zero. Rates are fractions.
   cpm: number | null;
@@ -1776,7 +1782,24 @@ export type B2bAdNode = {
 
 export type B2bAdsPayload = {
   accountId: string;
-  windows: { from7: string; from30: string; to: string };
+  /**
+   * Kuwait days: seven and thirty days to `to`. A custom range from
+   * `ceo.windows.ads` comes back in the same shape with `from7` and `from30`
+   * both its first day.
+   */
+  windows: {
+    from7: string;
+    from30: string;
+    to: string;
+    /**
+     * The last day Meta's figures cover (YYYY-MM-DD): `to`, or the account's
+     * today when `to` has not started in its time zone. Absent on a payload
+     * written before 2026-10-16.
+     */
+    metaUntil?: string;
+    /** The ad account's IANA time zone, e.g. America/Los_Angeles. Absent on an older payload. */
+    metaTimeZone?: string;
+  };
   /** Lead-gen campaigns only, the way the B2B dashboard reads the account; retargeting and hiring sit beside it. */
   account: { w7: B2bAdWindow; w30: B2bAdWindow };
   retargetingSpend: { w7: number; w30: number };

@@ -91,11 +91,11 @@ Two funnels, never mixed. `hermes/ceo-refresh/native/webinarSql.js` is the one r
 
 | Number | Where it comes from | What it leaves out |
 |---|---|---|
-| **Per ad: spend, impressions, clicks, link clicks, frequency** | Meta snapshots summed per ad for 7 and 30 days; frequency is the worst child, never summed. | — |
+| **Per ad: spend, impressions, clicks, link clicks, frequency** | Meta snapshots summed per ad for 7 and 30 days. Frequency is Meta's own, read per level (ad, ad set, campaign; the account row over its lead-gen campaigns) from `act_746108264865897/insights` for the whole window: impressions ÷ people reached, on Meta's account days (America/Los_Angeles) up to `windows.metaUntil`, the number Ads Manager shows for those dates. Never the highest child and never a sum (`frequency.ts` `readLevelFrequency`; a custom range reads the same in `cockpit-ceo-api/windows.ts`). | A day that has not started in the account's time zone, so Kuwait's today is left out for its first hours. |
 | **Link CTR and CPC** | Link CTR = link clicks ÷ impressions; CPC = spend ÷ link clicks. The same for ad sets, campaigns, the account and a custom range (`cockpit-ceo-api/windows.ts`). | A link-click count that is not known makes them n/a, never 0. Retargeting clicks are mostly not link clicks, so retargeting link CTR reads near 0. |
 | **Per ad: leads, fit, not ready** | CRM contacts attributed to the ad, by the ROAS rule. Meta's own lead count beside it. | A contact with no attribution is not on this tab. |
 | **Per ad: the funnel** | `calls` and `closed_deals` filtered to the ad. | Voided deals. |
-| **Verdict** | Rules on the last 7 days for money (kill over $22.50 per lead, hold over $15, fatiguing at frequency 2.5) and the last 30 for the funnel. | — |
+| **Verdict** | Rules on the last 7 days for money (kill over $22.50 per lead, hold over $15, fatiguing at frequency 2.5) and the last 30 for the funnel. The 2.5 gate reads the ad's own 7-day Meta frequency. | — |
 | **Account status, balance** | Meta Graph API on `act_746108264865897`. | — |
 
 ## Money tab

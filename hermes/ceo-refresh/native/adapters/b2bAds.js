@@ -1,3 +1,4 @@
+import { ACCOUNT_TIME_ZONE_FALLBACK, metaUntil, readInsights, readLevelFrequency, } from "../../../../supabase/functions/cockpit-ceo-api/frequency.ts";
 import { CPL_GATE } from "../constants.js";
 import { addKnown, knownCount, LINK_CLICKS_SQL, linkCtr } from "../linkCtr.js";
 import { graph } from "../tools.js";
@@ -76,7 +77,8 @@ const rate = (a, b) => (a !== null && b > 0 ? a / b : null);
 /**
  * One row per ad with both windows side by side. Ads are the grain; ad sets
  * and campaigns are sums of their ads, so a number never disagrees with the
- * rows beneath it.
+ * rows beneath it. Frequency is the exception and is not read here: it is
+ * Meta's own at each level (readWindowFrequency).
  */
 function treeSql(from7, from30, to) {
     const funnel = (from, alias) => `
@@ -84,8 +86,7 @@ function treeSql(from7, from30, to) {
     select campaign_id, adset_id, ad_id,
            sum(spend) as spend, sum(impressions) as impressions,
            sum(clicks) as clicks,
-           ${LINK_CLICKS_SQL()} as link_clicks, sum(leads) as meta_leads,
-           max(frequency) as freq
+           ${LINK_CLICKS_SQL()} as link_clicks, sum(leads) as meta_leads
     from public.meta_ad_snapshots
     where date between ${day(from)} and ${day(to)}
     group by 1,2,3),
@@ -139,7 +140,6 @@ function treeSql(from7, from30, to) {
     -- No delivery is 0 link clicks; delivery without a count stays null.
     case when ${a}_ads.ad_id is null then 0 else ${a}_ads.link_clicks end as ${a}_link_clicks,
     coalesce(${a}_ads.meta_leads,0) as ${a}_meta_leads,
-    ${a}_ads.freq as ${a}_freq,
     coalesce(${a}_leads.leads,0) as ${a}_leads,
     coalesce(${a}_leads.qualified_leads,0) as ${a}_qualified_leads,
     coalesce(${a}_leads.not_ready_leads,0) as ${a}_not_ready_leads,
@@ -266,9 +266,8 @@ function winOf(r, a) {
         spend: usd(g("spend")),
         contracted: usd(g("contracted")),
         cash: usd(g("cash")),
-        frequency: r[`${a}_freq`] === null || r[`${a}_freq`] === undefined
-            ? null
-            : Math.round(num(r[`${a}_freq`]) * 100) / 100,
+        // Meta's own, read per level for the whole window (metaFrequency).
+        frequency: null,
         linkClicks: knownCount(r[`${a}_link_clicks`]),
     };
     for (const k of COUNTS)
@@ -282,14 +281,28 @@ function addWin(into, w) {
     for (const k of COUNTS)
         into[k] += w[k];
     into.linkClicks = addKnown(into.linkClicks, w.linkClicks);
-    // Frequency does not sum: a person reached by two ads is one person. The
-    // parent shows the highest of its children, which is the ad most at risk.
-    if (w.frequency !== null)
-        into.frequency =
-            into.frequency === null
-                ? w.frequency
-                : Math.max(into.frequency, w.frequency);
+    // Frequency is never added up or taken from the children: a person reached
+    // by two ads, or on two days, is one person. Each level reads Meta's own.
 }
+/**
+ * Meta's own frequency for one window at every level the screen shows:
+ * impressions divided by the distinct people reached over the whole window,
+ * the number Ads Manager shows for those dates (the CEO, 2026-10-16). The
+ * daily snapshots cannot give it: a person seen on two days, or by two ads,
+ * is one person. Any failed read fails the section; there is no fallback.
+ */
+async function readWindowFrequency(from, until, leadGenIds) {
+    // A window whose first day has not started on Meta's clock has no rows.
+    if (until < from)
+        return { ad: new Map(), adset: new Map(), campaign: new Map(), account: null };
+    const ad = await readLevelFrequency(graph, "ad", from, until);
+    const adset = await readLevelFrequency(graph, "adset", from, until);
+    const campaign = await readLevelFrequency(graph, "campaign", from, until);
+    // The account row is lead gen only, so its people are counted over those campaigns.
+    const account = await readInsights(graph, leadGenIds, from, until);
+    return { ad, adset, campaign, account };
+}
+const metaFrequency = (level, id) => level.get(id)?.frequency ?? null;
 const per = (a, b) => (b > 0 ? usd(a / b) : null);
 const ratio = (a, b) => b > 0 ? Math.round((a / b) * 10000) / 10000 : null;
 /** The derived numbers, exactly as the B2B dashboard defines them. */
@@ -522,7 +535,7 @@ function constraintOf(c, account) {
  * twice, so the screen reads one window and every verdict judges it against
  * itself. One query, one set of rules, no second definition of a number.
  */
-export async function adsPayload(from7, from30, today) {
+export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
     {
         const notes = [];
         // Freshness first, because every verdict below needs to know it.
@@ -544,10 +557,14 @@ export async function adsPayload(from7, from30, today) {
         // on it until it is fixed.
         let accountStatus = null;
         let accountNote;
+        // Meta dates every insight by the account's own days.
+        let timeZone = ACCOUNT_TIME_ZONE_FALLBACK;
         try {
             const acct = await graph(`act_${ACCOUNT}`, {
-                fields: "account_status,disable_reason,balance,currency,amount_spent,spend_cap",
+                fields: "account_status,disable_reason,balance,currency,amount_spent,spend_cap,timezone_name",
             });
+            if (typeof acct.timezone_name === "string" && acct.timezone_name)
+                timeZone = acct.timezone_name;
             const code = num(acct.account_status);
             const reason = num(acct.disable_reason);
             accountStatus = {
@@ -581,6 +598,16 @@ export async function adsPayload(from7, from30, today) {
         (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where ${inWindow(from30)} and ${NOT_VOIDED("d")}) as w30_contracted,
         (select count(*) from public.closed_deals d where ${inWindow(from30)} and ${VOIDED("d")}) as w30_voided`);
         const t = totals[0] ?? {};
+        // Frequency is Meta's, per level, for each whole window, ending on the
+        // newest day Meta has started in the account's time zone.
+        const until = metaUntil(today, nowMs, timeZone);
+        const leadGenIds = [
+            ...new Set(rows
+                .filter(r => String(r.campaign_type ?? "") === "lead_gen")
+                .map(r => String(r.campaign_id))),
+        ];
+        const meta7 = await readWindowFrequency(from7, until, leadGenIds);
+        const meta30 = await readWindowFrequency(from30, until, leadGenIds);
         const account7 = emptyWin();
         const account30 = emptyWin();
         const all7 = emptyWin();
@@ -591,6 +618,9 @@ export async function adsPayload(from7, from30, today) {
         for (const r of rows) {
             const w7 = winOf(r, "w7");
             const w30 = winOf(r, "w30");
+            // Before judge(): "fatiguing" reads the ad's real seven-day frequency.
+            w7.frequency = metaFrequency(meta7.ad, String(r.ad_id));
+            w30.frequency = metaFrequency(meta30.ad, String(r.ad_id));
             const status = String(r.effective_status ?? "");
             const running = status === "ACTIVE";
             const ad = {
@@ -667,6 +697,8 @@ export async function adsPayload(from7, from30, today) {
                 campaign.running = true;
             }
         }
+        account7.frequency = meta7.account?.frequency ?? null;
+        account30.frequency = meta30.account?.frequency ?? null;
         finish(account7);
         finish(account30);
         finish(all7);
@@ -691,9 +723,13 @@ export async function adsPayload(from7, from30, today) {
         };
         const list = [...campaigns.values()];
         for (const c of list) {
+            c.w7.frequency = metaFrequency(meta7.campaign, c.id);
+            c.w30.frequency = metaFrequency(meta30.campaign, c.id);
             finish(c.w7);
             finish(c.w30);
             for (const a of c.adsets) {
+                a.w7.frequency = metaFrequency(meta7.adset, a.id);
+                a.w30.frequency = metaFrequency(meta30.adset, a.id);
                 finish(a.w7);
                 finish(a.w30);
                 a.ads.sort((x, y) => y.w30.spend - x.w30.spend);
@@ -749,7 +785,7 @@ export async function adsPayload(from7, from30, today) {
         });
         notes.push({
             level: "info",
-            text: `Every row follows an ad from the first impression to the signed contract, through leads, intro calls, demos and closes that carry the ad's id. Seven days judges cost and freshness; thirty days judges the funnel, because a demo takes a week to happen. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency on a parent is the highest of its ads, never a sum.`,
+            text: `Every row follows an ad from the first impression to the signed contract, through leads, intro calls, demos and closes that carry the ad's id. Seven days judges cost and freshness; thirty days judges the funnel, because a demo takes a week to happen. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
         });
         notes.push({
             level: "info",
@@ -771,7 +807,7 @@ export async function adsPayload(from7, from30, today) {
         }
         const payload = {
             accountId: ACCOUNT,
-            windows: { from7, from30, to: today },
+            windows: { from7, from30, to: today, metaUntil: until, metaTimeZone: timeZone },
             account: { w7: account7, w30: account30 },
             retargetingSpend: { w7: retargeting7, w30: retargeting30 },
             coverage,
@@ -787,6 +823,7 @@ export async function adsPayload(from7, from30, today) {
         const sources = [
             { name: "B2B Meta ad snapshots", freshestAt, ok: true },
             { name: "B2B leads, calls and closed deals (ad attribution)", ok: true },
+            { name: "Meta frequency by level (Graph API insights)", ok: true, freshestAt: nowMs },
             accountStatus
                 ? {
                     name: "Meta ad account (Graph API)",
@@ -803,8 +840,9 @@ export const b2bAds = {
     label: "Our ads",
     compute: async (ctx) => {
         void ctx;
-        const today = kuwaitDay(Date.now());
-        const { payload, sources } = await adsPayload(addDays(today, -6), addDays(today, -29), today);
+        const now = Date.now();
+        const today = kuwaitDay(now);
+        const { payload, sources } = await adsPayload(addDays(today, -6), addDays(today, -29), today, now);
         const a7 = payload.account.w7;
         const daily = [
             {

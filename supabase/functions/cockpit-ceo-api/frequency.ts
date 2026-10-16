@@ -1,6 +1,7 @@
 const ACCOUNT = '746108264865897';
 const MAX_SPAN_DAYS = 400;
 const MAX_CAMPAIGN_PAGES = 10;
+const MAX_LEVEL_PAGES = 20;
 const KUWAIT_OFFSET_MS = 3 * 60 * 60_000;
 const WEBINAR_NAME = /(webinar|webby|live[ _-]?training|training|تدريب|ويبينار|ويبنار)/i;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -103,6 +104,85 @@ export async function readInsights(readMeta: MetaRead, ids: string[], from: stri
     ? reach > 0 ? Math.round((impressions / reach) * 100) / 100 : null
     : Math.round(numeric(reportedFrequency, 'frequency') * 100) / 100;
   return { campaigns: ids.length, impressions, reach, frequency, spend: Math.round(spend * 100) / 100 };
+}
+
+/**
+ * Meta's own frequency for one level over a whole window: impressions divided
+ * by the distinct people reached across every day of it, the number Ads
+ * Manager shows for those dates. It cannot be rebuilt from daily rows or from
+ * the children of a row, because the same person seen on two days, or by two
+ * ads, is one person.
+ */
+export type LevelFrequency = { impressions: number; reach: number; frequency: number | null };
+export type FrequencyLevel = 'campaign' | 'adset' | 'ad';
+
+export async function readLevelFrequency(
+  readMeta: MetaRead,
+  level: FrequencyLevel,
+  from: string,
+  to: string,
+): Promise<Map<string, LevelFrequency>> {
+  if (level !== 'campaign' && level !== 'adset' && level !== 'ad') throw new Error('frequency: unknown level');
+  if (!validDay(from) || !validDay(to)) throw new Error('frequency: days must be YYYY-MM-DD');
+  if (from > to) throw new Error('frequency: the window ends before it starts');
+  const idField = `${level}_id`;
+  const figures = new Map<string, LevelFrequency>();
+  let after: string | undefined;
+  for (let page = 0; page < MAX_LEVEL_PAGES; page += 1) {
+    const result = await readMeta(`act_${ACCOUNT}/insights`, {
+      level,
+      fields: `${idField},impressions,reach,frequency`,
+      time_range: JSON.stringify({ since: from, until: to }),
+      limit: 500,
+      ...(after ? { after } : {}),
+    });
+    if (!Array.isArray(result.data)) throw new Error(`Meta did not confirm the ${level} frequency insights.`);
+    for (const item of result.data) {
+      if (!isRow(item)) throw new Error(`Meta returned an invalid ${level} frequency row.`);
+      const rawId = item[idField];
+      if ((typeof rawId !== 'string' && typeof rawId !== 'number') || !String(rawId).trim()) throw new Error(`Meta returned a ${level} frequency row without an ID.`);
+      const id = String(rawId);
+      if (figures.has(id)) throw new Error(`Meta returned the same ${level} twice; no partial frequency result was accepted.`);
+      const impressions = numeric(item.impressions, `${level} impressions`);
+      const reach = numeric(item.reach, `${level} reach`);
+      const reported = item.frequency;
+      const frequency = reach === 0
+        ? null
+        : reported === undefined || reported === null
+          ? Math.round((impressions / reach) * 100) / 100
+          : Math.round(numeric(reported, `${level} frequency`) * 100) / 100;
+      figures.set(id, { impressions, reach, frequency });
+    }
+    const paging = result.paging;
+    if (!isRow(paging) || !paging.next) return figures;
+    const cursors = paging.cursors;
+    const next = isRow(cursors) ? cursors.after : null;
+    if (typeof next !== 'string' || !next) throw new Error(`Meta returned an incomplete ${level} frequency page.`);
+    if (page === MAX_LEVEL_PAGES - 1) throw new Error(`Meta ${level} frequency exceeds the safe page limit.`);
+    after = next;
+  }
+  throw new Error(`Meta ${level} frequency was not confirmed.`);
+}
+
+/** The ad account's time zone when Meta does not say (Mahara's account runs on Pacific time). */
+export const ACCOUNT_TIME_ZONE_FALLBACK = 'America/Los_Angeles';
+
+/** The calendar day (YYYY-MM-DD) at `nowMs` in an IANA time zone. */
+export function accountDay(nowMs: number, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(nowMs));
+  const part = (type: string) => parts.find(item => item.type === type)?.value ?? '';
+  const day = `${part('year')}-${part('month')}-${part('day')}`;
+  if (!validDay(day)) throw new Error(`frequency: could not read the day in ${timeZone}`);
+  return day;
+}
+
+/**
+ * The last day Meta can report for a window ending `to`: Meta's days are the
+ * account's days, and a day that has not started there has no rows yet.
+ */
+export function metaUntil(to: string, nowMs: number, timeZone: string): string {
+  const today = accountDay(nowMs, timeZone);
+  return to < today ? to : today;
 }
 
 export async function readFrequencyWindow(
