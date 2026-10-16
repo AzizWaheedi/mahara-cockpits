@@ -615,6 +615,58 @@ describe("the grid", () => {
     expect(line.getAttribute("aria-pressed")).toBe("true");
   });
 
+  test("the no-outcome dot is explained: its share of the meetings due, the target and the status", async () => {
+    const board = boardFixture(client.shiftDay(today, -29), today, today);
+    const row = board.clients.find(
+      (c: any) => c.locationId === "locFixDune0002",
+    );
+    expect(columns.noOutcomeWords(row)).toBe(
+      "4 of 10 meetings due (40%), off target. The oldest is 11 days old.",
+    );
+    // No meeting due: the share's own note, no made-up 0%.
+    const pearl = board.clients.find(
+      (c: any) => c.locationId === "locFixPearl008",
+    );
+    expect(columns.noOutcomeWords(pearl)).toBe(
+      "No meeting was due in this time frame.",
+    );
+    // The help as the grid builds it.
+    const { CellHelp } = await import("../src/pages/performance/cells");
+    const { clientTarget } = await import("../src/pages/performance/BoardGrid");
+    const column = columns.columnOf("noOutcome") as any;
+    const box = win.document.createElement("div");
+    win.document.body.append(box);
+    const helpRoot = createRoot(box as any);
+    await act(async () => {
+      helpRoot.render(
+        createElement(CellHelp, {
+          column,
+          cell: row.values.noOutcome,
+          target: clientTarget(row, column.metric, board.targets),
+          extra: columns.noOutcomeWords(row),
+          status: columns.statusOf(row.values.noOutcomeShare),
+        }),
+      );
+    });
+    expect(text(box)).toContain("Appointments with no outcome: 4 (off target)");
+    expect(text(box)).toContain("Good at or under 0%, watch to 10%.");
+    expect(text(box)).toContain("4 of 10 meetings due (40%), off target.");
+    await act(async () => helpRoot.unmount());
+    box.remove();
+    // The panel's Numbers row gives the same target, as a share.
+    await show();
+    await click(button("Open Dune Interiors"));
+    const item = Array.from(
+      sheet().querySelectorAll("li") as ArrayLike<any>,
+    ).find(li => text(li).startsWith("Appointments with no outcome"));
+    expect(text(item)).toContain(
+      "As a share of meetings due: good at or under 0%, watch to 10%.",
+    );
+    expect(item.querySelector('[role="img"]')?.getAttribute("aria-label")).toBe(
+      "Off target",
+    );
+  });
+
   test("no client has a missing appointment count: the line says every appointment has an outcome", async () => {
     answer({
       edit: b => {

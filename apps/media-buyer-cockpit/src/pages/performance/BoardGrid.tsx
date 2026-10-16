@@ -12,6 +12,7 @@ import {
   firstBreak,
   GROUPS,
   type GroupKey,
+  noOutcomeWords,
   percent,
   sortNumber,
   statusOf,
@@ -166,7 +167,13 @@ function GridValue({
     <HelpCell
       label={`${column.name}: ${cellWords(cell, column)}`}
       help={
-        <CellHelp column={column} cell={cell} target={target} extra={extra} />
+        <CellHelp
+          column={column}
+          cell={cell}
+          target={target}
+          extra={extra}
+          status={dot}
+        />
       }
     >
       <CellContent cell={cell} unit={column.unit} dot={dot} />
@@ -195,12 +202,7 @@ function noOutcomeCell(row: ClientRow): Cell {
 }
 
 function extraLine(row: ClientRow, key: string): string | null {
-  if (
-    key === "noOutcome" &&
-    isNum(row.noOutcomeOldestDays) &&
-    (row.noOutcome ?? 0) > 0
-  )
-    return `The oldest is ${row.noOutcomeOldestDays === 1 ? "1 day" : `${row.noOutcomeOldestDays} days`} old.`;
+  if (key === "noOutcome") return noOutcomeWords(row);
   if (key === "leadsTouched") {
     const u = row.values.untouchedLeads;
     if (u && isNum(u.v))

@@ -51,7 +51,11 @@ export type BoardColumn = {
   parts?: [{ label: string; unit: Unit }, { label: string; unit: Unit }];
   /** A column drawn by hand: the caller's name, the retention bars. */
   special?: "caller" | "retention";
-  /** The cell whose status dot this column carries, when not its own. */
+  /**
+   * The cell whose status dot this column carries, when not its own: the
+   * count of appointments with no outcome is judged by its share of the
+   * meetings due (`metric` is that share's target).
+   */
   dotFrom?: string;
 };
 
@@ -389,6 +393,7 @@ export const COLUMNS: BoardColumn[] = [
     name: "Appointments with no outcome",
     group: "outcomes",
     unit: "count",
+    metric: "no_outcome_share",
     key10: true,
     dotFrom: "noOutcomeShare",
     how: "Appointments due in this time frame with no outcome yet: no showed or no-show mark in the CRM, the client sheet or the portal.",
@@ -710,10 +715,29 @@ export function targetList(
 
 /** The board column for a target metric. */
 export function columnForMetric(metric: string): BoardColumn | undefined {
-  return (
-    COLUMNS.find(c => c.metric === metric) ??
-    (metric === "no_outcome_share" ? columnOf("noOutcome") : undefined)
-  );
+  return COLUMNS.find(c => c.metric === metric);
+}
+
+/**
+ * The no-outcome count in words for its help: its share of the meetings
+ * due (what the dot judges) and the oldest one's age.
+ */
+export function noOutcomeWords(
+  row: Pick<ClientRow, "values" | "noOutcome" | "noOutcomeOldestDays">,
+): string | null {
+  const share = row.values.noOutcomeShare;
+  const words: string[] = [];
+  if (share && isNum(share.v) && isNum(share.num) && isNum(share.den)) {
+    const s = statusOf(share);
+    words.push(
+      `${count(share.num)} of ${count(share.den)} ${share.den === 1 ? "meeting" : "meetings"} due (${percent(share.v)})${s === "good" || s === "watch" || s === "off" ? `, ${STATUS_WORDS[s].toLowerCase()}` : ""}.`,
+    );
+  } else if (share?.note) words.push(share.note);
+  if (isNum(row.noOutcomeOldestDays) && (row.noOutcome ?? 0) > 0)
+    words.push(
+      `The oldest is ${row.noOutcomeOldestDays === 1 ? "1 day" : `${row.noOutcomeOldestDays} days`} old.`,
+    );
+  return words.length ? words.join(" ") : null;
 }
 
 /** The unit a target is written in. */

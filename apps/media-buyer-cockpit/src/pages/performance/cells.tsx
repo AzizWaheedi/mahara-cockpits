@@ -117,14 +117,17 @@ export function CellHelp({
   cell,
   target,
   extra,
+  status: own,
 }: {
   column: BoardColumn;
   cell: Cell | null | undefined;
   target?: Target | null;
   /** A line of its own, e.g. the oldest appointment's age. */
   extra?: string | null;
+  /** The status the dot shows, when it is not the cell's own (`dotFrom`). */
+  status?: CellStatus | null;
 }) {
-  const status = statusOf(cell);
+  const status = own === undefined ? statusOf(cell) : own;
   const floor = floorOf(cell);
   const unit = column.unit;
   const value = isNum(cell?.v)
@@ -151,7 +154,7 @@ export function CellHelp({
           {targetText(target, targetUnit(target))}{" "}
           <span className="text-muted-foreground">
             {targetSource(target)}
-            {isNum(target.minSample) && target.sample
+            {isNum(target.minSample) && target.minSample > 1 && target.sample
               ? `, judged from ${formatValue(target.minSample, "count")} ${target.sample}`
               : ""}
             .

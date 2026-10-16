@@ -42,6 +42,7 @@ import {
   firstBreak,
   formatValue,
   GROUPS,
+  noOutcomeWords,
   statusOf,
   targetText,
   targetUnit,
@@ -144,7 +145,10 @@ function NumberRow({
         <span className="block text-[13px] text-foreground">{column.name}</span>
         {target && isNum(target.good) ? (
           <span className="block text-[11px] leading-4 text-muted-foreground">
-            {targetText(target, targetUnit(target))}
+            {column.dotFrom ? "As a share of meetings due: " : ""}
+            {column.dotFrom
+              ? targetText(target, targetUnit(target)).replace(/^G/, "g")
+              : targetText(target, targetUnit(target))}
             {target.source === "client" ? " This client's own." : ""}
           </span>
         ) : null}
@@ -152,7 +156,15 @@ function NumberRow({
       <HelpCell
         label={`${column.name}`}
         className="shrink-0 text-[13px]"
-        help={<CellHelp column={column} cell={cell} target={target} />}
+        help={
+          <CellHelp
+            column={column}
+            cell={cell}
+            target={target}
+            status={dot}
+            extra={column.key === "noOutcome" ? noOutcomeWords(row) : null}
+          />
+        }
       >
         <CellContent cell={cell} unit={column.unit} dot={dot} />
       </HelpCell>
