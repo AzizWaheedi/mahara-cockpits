@@ -1574,7 +1574,12 @@ describe("client reach after Kuwait midnight", () => {
 
   test("an account the hourly run did not re-read makes the client's reach wait, never shrink to the other account", async () => {
     await owner(db);
+    // The client spine as the board's facts migration shapes it (also when this test runs alone).
     await db.exec(`DELETE FROM cockpit_meta_reach;
+      CREATE TABLE IF NOT EXISTS public.cockpit_board_clients (location_id text PRIMARY KEY, clickup_id text, client_name text, status text,
+        service_mode text, ad_account_ids text[], tiktok boolean, updated_at timestamptz);
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_ONE','c1','Client One','Active','DFY',ARRAY['act_${A1}','${A2}'],false,now())
+        ON CONFLICT (location_id) DO NOTHING;
       INSERT INTO public.cockpit_board_clients VALUES ('LOC_TWO','c2','Client Two','Active','DFY',ARRAY['${A3}','${A5}'],false,now());`);
     // Day D (31 Oct), the nightly run at 03:20 Kuwait: A1 and A2 for Client One; A3 and A5 for Client Two.
     await reachPass("2026-10-31T03:20:00+03:00", "nightly", {
