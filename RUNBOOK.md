@@ -856,33 +856,35 @@ day at a time (`time_increment=1`, `use_unified_attribution_setting=true`)
 in pieces of up to 7 days. Rows go to `cockpit_meta_ad_days`, one per ad per
 ad-account day, upserted by (ad_id, day): a later read replaces a row, an
 earlier one never does, and nothing is deleted because an ad stopped. Days
-are each ad account's own calendar (`account_timezone`); the CRM is on Kuwait
-time. NULL means Meta did not return it, never 0: an image ad has no video
-numbers, and `leads` (lead-form leads) is filled only on lead campaigns
-(`OUTCOME_LEADS`, `LEAD_GENERATION`), and never on a lead ad set whose
-destination is a chat (WhatsApp, Messenger, Instagram Direct). Those report
-Meta's `lead` for leads marked in the chat (`onsite_conversion.lead`), which
-are not form leads, so their `leads` is NULL and their spend stays out of
-cost per lead (Pidco's two WhatsApp lead ad sets, 2026-10-16). Each days read
-looks up its lead ad sets' destination (`act_<id>/adsets`, one call per 50,
-none for an account without a lead campaign) into `destination_type`; a
-deleted ad set Meta no longer lists keeps NULL there, its messaging leads are
-taken out by action type, and the task's note names it. `lead_actions` keeps
-Meta's `lead` action on every objective, messaging leads included, so it
-matches the account-level count. Spend is kept in the account currency and in USD at the
-cockpit's fixed rates (`cockpit_meta_ad_days_usd_per`, the same table as
-`tap.js` USD_PER and `calculator.ts` FX); a currency without a rate leaves
-`spend_usd` NULL and the run's note names it. Reach over the five windows
-(last 7, 14 and 30 days, this month, last month, on Kuwait's calendar) is in
+are each ad account's own calendar (`account_timezone`); the CRM is on
+Kuwait time. NULL means Meta did not return it, never 0: an image ad has no
+video numbers, and `leads` (lead-form leads) is filled only on lead
+campaigns (`OUTCOME_LEADS`, `LEAD_GENERATION`), and never on a lead ad set
+whose destination is a chat (WhatsApp, Messenger, Instagram Direct). Those
+report Meta's `lead` for leads marked in the chat
+(`onsite_conversion.lead`), which are not form leads, so their `leads` is
+NULL and their spend stays out of cost per lead (Pidco's two WhatsApp lead
+ad sets, 2026-10-16). Each days read looks up its lead ad sets' destination
+(`act_<id>/adsets`, one call per 50, none for an account without a lead
+campaign) into `destination_type`; a deleted ad set Meta no longer lists
+keeps NULL there, its messaging leads are taken out by action type, and the
+task's note names it. `lead_actions` keeps Meta's `lead` action on every
+objective, messaging leads included, so it matches the account-level count.
+Spend is kept in the account currency and in USD at the cockpit's fixed
+rates (`cockpit_meta_ad_days_usd_per`, the same table as `tap.js` USD_PER
+and `calculator.ts` FX); a currency without a rate leaves `spend_usd` NULL
+and the run's note names it. Reach over the five windows (last 7, 14 and 30
+days, this month, last month, on Kuwait's calendar) is in
 `cockpit_meta_reach` per account, campaign, ad set and ad, read from Meta's
 own `time_ranges`, and per client (GoHighLevel location) as the sum of its
 accounts through `cockpit_board_clients`; frequency over a window is that
-row's impressions / reach. A client's reach is empty, with the account named,
-while one of its accounts could not be read or still holds an earlier day's
-windows: after Kuwait midnight the hourly run re-reads only the accounts that
-spent in the last two days, so until the nightly run an account that spent
-earlier in the window would otherwise drop out of the client's sum. While the client spine is missing or empty, reach
-stays at account level and the note says so.
+row's impressions / reach. A client's reach is empty, with the account
+named, while one of its accounts could not be read or still holds an earlier
+day's windows: after Kuwait midnight the hourly run re-reads only the
+accounts that spent in the last two days, so until the nightly run an
+account that spent earlier in the window would otherwise drop out of the
+client's sum. While the client spine is missing or empty, reach stays at
+account level and the note says so.
 
 The jobs (pg_cron, migration `20261016121700_meta_ad_days.sql`):
 `mahara-meta-ad-days-hourly` at minute 7 (yesterday and today of every
@@ -958,7 +960,14 @@ Deploying (the lead session). In order:
    from cockpit_meta_ad_days where day between current_date - 30 and current_date - 1 group by 1, 2, 3 order by 4 desc;
    ```
 
-   On 2026-10-16 five accounts read this way matched Meta to the cent.
+   On 2026-10-16, after the WhatsApp fix, all 27 spending client accounts
+   read this way over 30 days (16 Sep to 15 Oct) matched Meta: spend to the
+   cent, impressions, link clicks, Meta's leads, and form leads (841) and form
+   spend from Meta's ad set rows by destination. Pidco: 12 Meta leads = 8 form
+   leads + 4 WhatsApp leads, so $60.31 / 8 = $7.54 a lead, not $553.00 / 12.
+   One account's impressions moved between two reads nine minutes apart (Meta
+   still settling; equal on the re-read), which is why the nightly run reads
+   the last 28 days again.
 
 To stop the runs: `select cron.unschedule(jobid) from cron.job where jobname like 'mahara-meta-ad-days-%';`.
 The stored rows stay, and `cockpit_meta_ad_days_status()` gives each account's last day and last read.
