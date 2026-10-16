@@ -496,8 +496,9 @@ export function callCentreScenario(
   if (kind === "lead_quality") {
     // Fast, repeated calls that are answered and talked through; few book.
     r.official.medianSpeedSeconds = 540;
-    r.waiting.touched = 105;
-    r.waiting.called = 101;
+    // Nobody waits, so every callable lead is touched, as on a real read.
+    r.waiting.touched = 110;
+    r.waiting.called = 106;
     r.waiting.outcomeOnly = 4;
     r.waiting.untouched = { count: 0, oldestAt: null, oldestWorkSeconds: null };
     r.waiting.callbacks.overdue = 0;

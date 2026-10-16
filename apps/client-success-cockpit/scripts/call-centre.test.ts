@@ -14,6 +14,7 @@ import {
   formatDuration,
   formatPerLead,
   formatRate,
+  formatRateUnder,
   LOST_LABELS,
   lostLabel,
   NOT_MEASURED,
@@ -430,6 +431,10 @@ describe("callCentreVerdict", () => {
     expect(why(8, 2, 0)).toBe(
       "Only 80% of leads older than a working hour have a call on Maqsam (the line is 90%); 2 more have a saved outcome but no call.",
     );
+    // Under the line never reads as the line: 179 of 200 is 89.5%, not 90%.
+    expect(why(179, 21, 0)).toBe(
+      "Only 89.5% of leads older than a working hour have a call on Maqsam (the line is 90%); 21 more have a saved outcome but no call.",
+    );
   });
 
   test("over the line on Maqsam calls: no waiting reason, though a few only have a saved outcome", () => {
@@ -466,6 +471,18 @@ describe("callCentreVerdict", () => {
     // 88 of 90 touched: over the line, so no waiting reason.
     expect(callCentreVerdict(old()).reasons.join(" ")).not.toContain(
       "working hour",
+    );
+    // Under the line never reads as the line.
+    expect(
+      callCentreVerdict(
+        old(r => {
+          r.waiting.callable = 200;
+          r.waiting.touched = 179;
+          r.waiting.untouched.count = 21;
+        }),
+      ).why,
+    ).toBe(
+      "Only 89.5% of leads older than a working hour were called or messaged (the line is 90%); 21 leads still wait.",
     );
   });
 
@@ -704,6 +721,55 @@ describe("calledLines", () => {
       "1,200 of 1,250 callable leads have a call on Maqsam (96%, the line is 90%).",
     );
   });
+
+  test("one called lead, or one callable lead, reads in the singular", () => {
+    const called = (n: number, of: number) =>
+      calledLines(
+        read(r => {
+          r.waiting.callable = of;
+          r.waiting.called = n;
+          r.waiting.outcomeOnly = 0;
+        }),
+      )?.called;
+    expect(called(1, 44)).toBe(
+      "1 of 44 callable leads has a call on Maqsam (2%, the line is 90%).",
+    );
+    expect(called(0, 1)).toBe(
+      "0 of 1 callable lead has a call on Maqsam (0%, the line is 90%).",
+    );
+    expect(called(1, 1)).toBe(
+      "1 of 1 callable lead has a call on Maqsam (100%, the line is 90%).",
+    );
+    expect(called(2, 44)).toBe(
+      "2 of 44 callable leads have a call on Maqsam (5%, the line is 90%).",
+    );
+  });
+
+  test("a share under the line never reads as the line", () => {
+    const data = read(r => {
+      r.waiting.callable = 200;
+      r.waiting.touched = 200;
+      r.waiting.called = 179;
+      r.waiting.outcomeOnly = 21;
+      r.waiting.untouched.count = 0;
+    });
+    expect(calledLines(data)).toEqual({
+      called:
+        "179 of 200 callable leads have a call on Maqsam (89.5%, the line is 90%).",
+      outcomeOnly:
+        "21 more have a saved outcome but no Maqsam call, so they do not count.",
+      under: true,
+    });
+    // 180 of 200 is the line itself: not under, and it says 90%.
+    const at = calledLines(
+      read(r => {
+        r.waiting.callable = 200;
+        r.waiting.called = 180;
+      }),
+    );
+    expect(at?.called).toContain("(90%, the line is 90%)");
+    expect(at?.under).toBe(false);
+  });
 });
 
 describe("targetingShare", () => {
@@ -799,6 +865,13 @@ describe("wording", () => {
     expect(formatRate(0.4)).toBe("0.4%");
     expect(formatRate(0)).toBe("0%");
     expect(formatRate(null)).toBe("Not measured");
+    // Judged against a line: under it never rounds up to it.
+    expect(formatRateUnder(89.5, 90)).toBe("89.5%");
+    expect(formatRateUnder(89.99, 90)).toBe("89.9%");
+    expect(formatRateUnder(89.4, 90)).toBe("89%");
+    expect(formatRateUnder(90, 90)).toBe("90%");
+    expect(formatRateUnder(96.4, 90)).toBe("96%");
+    expect(formatRateUnder(null, 90)).toBe("Not measured");
     expect(formatPerLead(1.44)).toBe("1.4");
     expect(formatPerLead(null)).toBe("Not measured");
   });

@@ -539,21 +539,23 @@ describe("the first screen", () => {
   };
 
   test("the 90% line is a Maqsam call: the row warns under it, though nobody waits", async () => {
-    // Every lead was touched, but only 60 of 100 have a Maqsam call.
+    // Every lead was touched, but only 60 of 100 have a Maqsam call. A saved
+    // outcome is not contact: the title says what the waiting list counts.
     const raw = callCentreFixture("lead_quality");
     raw.waiting.called = 60;
-    raw.waiting.outcomeOnly = 39;
+    raw.waiting.outcomeOnly = 40;
     answers.cockpit_client_calls = () => ({ data: raw });
     await show(null);
     const row = await firstWaitRow();
     expect(row.text).toContain(
-      "Every lead older than a working hour was called or messaged",
+      "Every lead older than a working hour has a Maqsam call or a saved outcome",
     );
+    expect(row.text).not.toContain("called or messaged");
     expect(row.text).toContain(
       "60 of 100 callable leads have a call on Maqsam (60%, the line is 90%).",
     );
     expect(row.text).toContain(
-      "39 more have a saved outcome but no Maqsam call, so they do not count.",
+      "40 more have a saved outcome but no Maqsam call, so they do not count.",
     );
     expect(row.dot).toContain("bg-warning");
   });
@@ -562,14 +564,14 @@ describe("the first screen", () => {
     await show("lead_quality");
     const row = await firstWaitRow();
     expect(row.text).toContain(
-      "96 of 100 callable leads have a call on Maqsam (96%, the line is 90%).",
+      "97 of 100 callable leads have a call on Maqsam (97%, the line is 90%).",
     );
     expect(row.text).toContain(
       "3 more have a saved outcome but no Maqsam call, so they do not count.",
     );
     expect(row.dot).toContain("bg-success");
     const raw = callCentreFixture("lead_quality");
-    raw.waiting.called = 98;
+    raw.waiting.called = 99;
     raw.waiting.outcomeOnly = 1;
     answers.cockpit_client_calls = () => ({ data: raw });
     forgetCallReads();
@@ -577,12 +579,15 @@ describe("the first screen", () => {
     expect((await firstWaitRow()).text).toContain(
       "1 more has a saved outcome but no Maqsam call, so it does not count.",
     );
-    raw.waiting.called = 99;
+    raw.waiting.called = 100;
     raw.waiting.outcomeOnly = 0;
     forgetCallReads();
     await show(null);
     const last = await firstWaitRow();
-    expect(last.text).toContain("99 of 100 callable leads");
+    expect(last.text).toContain(
+      "Every lead older than a working hour has a call on Maqsam",
+    );
+    expect(last.text).toContain("100 of 100 callable leads");
     expect(last.text).not.toContain("saved outcome");
   });
 
@@ -594,10 +599,45 @@ describe("the first screen", () => {
     await show(null);
     const row = await firstWaitRow();
     expect(row.text).toContain(
-      "99 of 100 callable leads reached out to (99%, the line is 90%).",
+      "Every lead older than a working hour was called or messaged",
+    );
+    expect(row.text).toContain(
+      "100 of 100 callable leads reached out to (100%, the line is 90%).",
     );
     expect(row.text).not.toContain("Maqsam");
     expect(row.dot).toContain("bg-success");
+  });
+
+  test("the fold's hint says what the waiting list counts: no call or outcome", async () => {
+    const hint = () =>
+      Array.from(host.querySelectorAll("details"))
+        .find(d => d.textContent?.includes("Waiting now"))
+        ?.querySelector("summary")?.textContent ?? "";
+    // Like City Wood: 5 wait with neither, while 43 have no Maqsam call.
+    await show("on_track");
+    expect(hint()).toContain("5 with no call or outcome yet");
+    const quiet = callCentreFixture("lead_quality");
+    quiet.waiting.callbacks.count = 0;
+    quiet.waiting.missedInbound.never = 0;
+    answers.cockpit_client_calls = () => ({ data: quiet });
+    forgetCallReads();
+    await show(null);
+    expect(hint()).toContain("Nobody waits for a call or an outcome");
+    // A read without the called count keeps its own words.
+    const old = callCentreFixture("on_track");
+    delete old.waiting.called;
+    delete old.waiting.outcomeOnly;
+    answers.cockpit_client_calls = () => ({ data: old });
+    forgetCallReads();
+    await show(null);
+    expect(hint()).toContain("5 with no call yet");
+    expect(hint()).not.toContain("outcome");
+    delete quiet.waiting.called;
+    delete quiet.waiting.outcomeOnly;
+    answers.cockpit_client_calls = () => ({ data: quiet });
+    forgetCallReads();
+    await show(null);
+    expect(hint()).toContain("Nobody waits for a first call");
   });
 
   test("nothing waits: the fold stays shut and says so", async () => {

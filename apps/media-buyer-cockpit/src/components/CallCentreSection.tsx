@@ -1118,6 +1118,8 @@ function WaitingPart({ data }: { data: CallCentre }) {
   const waits = headline.length > 0;
   // The 90% line is a Maqsam call (2026-10-16): said under the first line,
   // which warns under it. A read without the called count shows neither.
+  // The waiting list stays the touched rule, so on the new read it is worded
+  // as a call or a saved outcome, never as contact.
   const line = calledLines(data);
   const stages = [...w.stages].sort(
     (a, b) => (a.position ?? 99) - (b.position ?? 99),
@@ -1155,8 +1157,13 @@ function WaitingPart({ data }: { data: CallCentre }) {
             </>
           ) : w.callable > 0 ? (
             <>
-              Every lead older than a working hour was called or messaged (
-              {count(w.touched)} of {count(w.callable)}).
+              Every lead older than a working hour{" "}
+              {!line
+                ? "was called or messaged"
+                : line.outcomeOnly
+                  ? "has a Maqsam call or a saved outcome"
+                  : "has a call on Maqsam"}{" "}
+              ({count(w.touched)} of {count(w.callable)}).
             </>
           ) : (
             <>No lead in these dates is old enough to be waiting.</>

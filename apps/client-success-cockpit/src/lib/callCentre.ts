@@ -512,7 +512,7 @@ export function callCentreVerdict(data: CallCentre): CallCentreVerdict {
         : null,
     ].filter(Boolean);
     reasons.push(
-      `Only ${formatRate(s.callableCalledRate)} of leads older than a working hour have a call on Maqsam (the line is ${CALL_RULES.touchedShare}%)${after.length ? `; ${after.join(", and ")}` : ""}.`,
+      `Only ${formatRateUnder(s.callableCalledRate, CALL_RULES.touchedShare)} of leads older than a working hour have a call on Maqsam (the line is ${CALL_RULES.touchedShare}%)${after.length ? `; ${after.join(", and ")}` : ""}.`,
     );
   } else if (
     data.waiting.called === null &&
@@ -521,7 +521,7 @@ export function callCentreVerdict(data: CallCentre): CallCentreVerdict {
   )
     // A read from before 20261016230000 has no called count: the touched share.
     reasons.push(
-      `Only ${formatRate(s.touchedRate)} of leads older than a working hour were called or messaged (the line is ${CALL_RULES.touchedShare}%); ${plural(s.untouched, "lead")} still ${s.untouched === 1 ? "waits" : "wait"}.`,
+      `Only ${formatRateUnder(s.touchedRate, CALL_RULES.touchedShare)} of leads older than a working hour were called or messaged (the line is ${CALL_RULES.touchedShare}%); ${plural(s.untouched, "lead")} still ${s.untouched === 1 ? "waits" : "wait"}.`,
     );
   const slowLine = CALL_RULES.firstCallWorkMinutes * 60;
   if (s.firstCallWorkSeconds !== null && s.firstCallWorkSeconds > slowLine)
@@ -593,7 +593,10 @@ export function callCentreVerdict(data: CallCentre): CallCentreVerdict {
 const NUMBER = new Intl.NumberFormat("en-US");
 
 export type CalledLines = {
-  /** "25 of 44 callable leads have a call on Maqsam (57%, the line is 90%)." */
+  /**
+   * "25 of 44 callable leads have a call on Maqsam (57%, the line is 90%).",
+   * "1 of 44 callable leads has a call ...", "0 of 1 callable lead has ...".
+   */
   called: string;
   /** "17 more have a saved outcome but no Maqsam call, so they do not count." */
   outcomeOnly: string | null;
@@ -610,8 +613,9 @@ export function calledLines(data: CallCentre): CalledLines | null {
   if (w.called === null) return null;
   const share = rate(w.called, w.callable);
   const only = w.outcomeOnly ?? 0;
+  const one = w.called === 1 || w.callable === 1;
   return {
-    called: `${NUMBER.format(w.called)} of ${NUMBER.format(w.callable)} callable leads have a call on Maqsam (${formatRate(share)}, the line is ${CALL_RULES.touchedShare}%).`,
+    called: `${NUMBER.format(w.called)} of ${NUMBER.format(w.callable)} callable ${w.callable === 1 ? "lead" : "leads"} ${one ? "has" : "have"} a call on Maqsam (${formatRateUnder(share, CALL_RULES.touchedShare)}, the line is ${CALL_RULES.touchedShare}%).`,
     outcomeOnly: only
       ? `${NUMBER.format(only)} more ${only === 1 ? "has" : "have"} a saved outcome but no Maqsam call, so ${only === 1 ? "it does" : "they do"} not count.`
       : null,
@@ -788,6 +792,25 @@ export function formatRate(percent: number | null | undefined): string {
     return NOT_MEASURED;
   if (percent > 0 && percent < 1) return `${percent.toFixed(1)}%`;
   return `${Math.round(percent)}%`;
+}
+
+/**
+ * A share judged against a line, never shown as the line while it is under
+ * it: 179 of 200 reads "89.5%", not "90%". Otherwise as formatRate.
+ */
+export function formatRateUnder(
+  percent: number | null | undefined,
+  line: number,
+): string {
+  if (
+    percent !== null &&
+    percent !== undefined &&
+    Number.isFinite(percent) &&
+    percent < line &&
+    Math.round(percent) >= line
+  )
+    return `${(Math.floor(percent * 10) / 10).toFixed(1)}%`;
+  return formatRate(percent);
 }
 
 /** Calls per lead, one decimal: "1.4". */

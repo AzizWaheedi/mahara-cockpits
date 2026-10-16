@@ -506,10 +506,13 @@ board's read functions and screen).
 
 - **Source of truth:** `cockpit_client_now`, the last 30 Kuwait days,
   dialable GCC leads older than one working hour.
-- **Rule:** `touched_30d` keeps the client page's rule (a Maqsam call by
-  contact, a call to the phone under another lead, or a saved attempt). New
-  on 16 Oct: `verified_called_30d` (a Maqsam call only) and
-  `outcome_only_30d` (touched by a saved outcome alone). Since
+- **Rule:** `touched_30d` is `cockpit_client_calls` waiting `touched` (a
+  Maqsam call by contact, a call to the phone under another lead, or a saved
+  attempt): the rule of the waiting list, no longer the 90% line on the board
+  or on the client pages. New on 16 Oct: `verified_called_30d` (a Maqsam call
+  only, the client pages' waiting `called`) and `outcome_only_30d` (touched by
+  a saved outcome alone, their `outcomeOnly`); `board-facts-supabase.test.ts`
+  asserts both equal over the same days. Since
   `20261016220000_board_read_checked.sql` the board's Leads contacted is
   verified / callable, judged against the 90% line; the touched share and the
   outcome-only count stay in the cell and its note ("38 more have a saved
@@ -519,7 +522,15 @@ board's read functions and screen).
   waiting `called` / `callable`, with `outcomeOnly` said beside it ("17 more
   have a saved outcome but no Maqsam call, so they do not count"). Their
   waiting list keeps the touched rule: a lead with a saved outcome is not
-  listed as waiting. DWY clients store no waiting figures.
+  listed as waiting, and the first Waiting now row words it by what it counts
+  ("has a Maqsam call or a saved outcome"), never as "called or messaged".
+  DWY clients store no waiting figures.
+- **Dates:** the rule is the same, the dates are not. The board counts the
+  last 30 Kuwait days; a client page counts the dates picked on it (client
+  success opens on this month to date, the media buyer on the account page's
+  range). The page's share equals the board's Leads contacted only on "30
+  days" (today and the 29 days before). The board's figure is also as of its
+  last 30-minute run, while the page reads live.
 - **Checked against:** Maqsam outbound calls with saved attempts left out:
   City Wood 95% touched against 57% called, شركة العلا 95% against 80%,
   Marble 100% against 76%, Arcturus 99% against 89%, Khalida 100% against
@@ -602,6 +613,7 @@ On 16 Oct at 16:30 Kuwait every source was fresh: lead sync 15:35, appointments
 | The doctor's "not linked" list always empty | same, and `run.ts` | the accounts are sent with their names |
 | Reach windows on the same days refused or 0 | `meta-ad-days` `parse.ts`, `run.ts` | each span read once, written to both |
 | Lead ids never kept | `20261016210100_meta_ad_days_checked.sql`, `run.ts` | `cockpit_meta_lead_ids`, `cockpit_meta_leads_not_in_crm` |
+| The client pages judged the 90% line on saved outcomes as well as Maqsam calls (City Wood 57% on the board, 95% on its page) | `20261016230000_client_calls_maqsam_line.sql`, `callCentre.ts` and `CallCentreSection.tsx` in client success and media buyer | waiting `called` / `callable` on the 90% line, `outcomeOnly` said beside it; touched, callable and the waiting list unchanged |
 
 To make it live, in order (systems manager, the lead session):
 1. Apply `20261016210000_board_facts_checked.sql`.
@@ -616,6 +628,9 @@ To make it live, in order (systems manager, the lead session):
 6. Release the native feed (`hermes/cockpit-sync`) so the CSM copy keeps
    quotation N and the media sync drops the call centre's RESCHEDULE and
    CALLBACK bookings by id.
+7. Apply `20261016230000_client_calls_maqsam_line.sql` (it replaces only
+   `cockpit_client_calls`) and ship client success and media buyer, in either
+   order: a page on a read without `called` keeps the touched share.
 
 ## What is left, and who does it
 

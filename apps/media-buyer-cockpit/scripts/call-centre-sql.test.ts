@@ -857,19 +857,31 @@ describe("one client's call centre", () => {
   test("called is a Maqsam call, also one under another lead; a saved outcome alone is counted apart", async () => {
     await owner(db);
     // m1 has a Maqsam call. m2's phone was dialled under client B's lead m2x
-    // (the call is linked to m2x by its saved attempt). m3 has a saved
-    // no-answer and only a call from before it arrived. m4 has nothing.
+    // (the call is linked to m2x by its saved attempt), and m2 has a saved
+    // outcome of its own: still called. m3 has a saved no-answer and only a
+    // call from before it arrived. m4 has nothing. The edges count in
+    // neither: m5 (a call and a saved outcome) and m6 (a saved outcome) came
+    // in minutes ago, under a working hour; m7 (a call and a saved outcome)
+    // and m8 (a saved outcome) have Bahrain numbers the dialer does not call.
+    const fresh = (minutesAgo: number) =>
+      new Date(Date.now() - minutesAgo * 60_000).toISOString();
     const leads: [string, string, string, string][] = [
       ["m1", LOC_A, "+96550000031", at("10:30")],
       ["m2", LOC_A, "+96550000032", at("10:40")],
       ["m2x", LOC_B, "+96550000032", at("10:00")],
       ["m3", LOC_A, "+96550000033", at("11:15")],
       ["m4", LOC_A, "+96550000034", at("11:45")],
+      ["m5", LOC_A, "+96550000035", fresh(10)],
+      ["m6", LOC_A, "+96550000036", fresh(10)],
+      ["m7", LOC_A, "+97333000037", at("12:15")],
+      ["m8", LOC_A, "+97333000038", at("12:45")],
     ];
     const extraCalls: [string, string, string][] = [
       ["4001", "+96550000031", at("10:30", 20)],
       ["4002", "+96550000032", at("10:40", 30)],
       ["4003", "+96550000033", at("11:15", -60)],
+      ["4005", "+96550000035", fresh(5)],
+      ["4007", "+97333000037", at("12:15", 20)],
     ];
     const attempt = (
       id: string,
@@ -923,15 +935,23 @@ describe("one client's call centre", () => {
           ],
         );
       await attempt("t2x", LOC_B, "m2x", at("10:40", 31), "4002");
+      await attempt("t2a", LOC_A, "m2", at("10:40", 45), null);
       await attempt("t33", LOC_A, "m3", at("11:15", 90), null);
+      await attempt("t55", LOC_A, "m5", fresh(3), null);
+      await attempt("t66", LOC_A, "m6", fresh(3), null);
+      await attempt("t77", LOC_A, "m7", at("12:15", 25), null);
+      await attempt("t88", LOC_A, "m8", at("12:45", 25), null);
 
       await actor(db, CSM_A);
       const data = parseCallCentre(await calls("CU_A"));
       await owner(db);
       // Before: 8 callable, 7 touched, 6 called, 1 outcome only, 1 waiting.
+      // m1 to m4 are callable; m5 to m8 are not, so they are in no count.
       expect(data.waiting.callable).toBe(12);
       expect(data.waiting.touched).toBe(10);
+      // 6 as before, m1, and m2 though it also has a saved outcome.
       expect(data.waiting.called).toBe(8);
+      // a3 as before, and m3.
       expect(data.waiting.outcomeOnly).toBe(1 + 1);
       expect(data.waiting.untouched.count).toBe(2);
       expect(data.waiting.touched).toBe(
@@ -950,9 +970,9 @@ describe("one client's call centre", () => {
     } finally {
       await owner(db);
       await db.exec(`
-        DELETE FROM public.client_leads WHERE ghl_contact_id IN ('m1','m2','m2x','m3','m4');
-        DELETE FROM mahara_reporting.facts WHERE source='maqsam' AND external_id IN ('4001','4002','4003');
-        DELETE FROM mahara_console.attempts WHERE id IN ('t2x','t33');
+        DELETE FROM public.client_leads WHERE ghl_contact_id IN ('m1','m2','m2x','m3','m4','m5','m6','m7','m8');
+        DELETE FROM mahara_reporting.facts WHERE source='maqsam' AND external_id IN ('4001','4002','4003','4005','4007');
+        DELETE FROM mahara_console.attempts WHERE id IN ('t2x','t2a','t33','t55','t66','t77','t88');
       `);
     }
     // Back as it was.

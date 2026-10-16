@@ -937,17 +937,20 @@ describe("the lead bar, the waiting and the sources", () => {
   test("the 90% line is a Maqsam call: the first line warns under it, though nobody waits", async () => {
     answerWith("lead_quality", raw => {
       raw.waiting.called = 60;
-      raw.waiting.outcomeOnly = 45;
+      raw.waiting.outcomeOnly = 50;
     });
     await show();
+    // Nobody waits, but a saved outcome is not contact: the line says what
+    // the waiting list counts, never that every lead was called.
     expect(firstLine().text).toContain(
-      "Every lead older than a working hour was called or messaged (105 of 110).",
+      "Every lead older than a working hour has a Maqsam call or a saved outcome (110 of 110).",
     );
+    expect(firstLine().text).not.toContain("called or messaged");
     expect(firstLine().text).toContain(
       "60 of 110 callable leads have a call on Maqsam (55%, the line is 90%).",
     );
     expect(firstLine().text).toContain(
-      "45 more have a saved outcome but no Maqsam call, so they do not count.",
+      "50 more have a saved outcome but no Maqsam call, so they do not count.",
     );
     expect(firstLine().dot).toBe("Under the 90% line");
     // The fold stays as quiet as before: a headline, no new line in it.
@@ -960,7 +963,10 @@ describe("the lead bar, the waiting and the sources", () => {
     answer("lead_quality");
     await show();
     expect(firstLine().text).toContain(
-      "101 of 110 callable leads have a call on Maqsam (92%, the line is 90%).",
+      "Every lead older than a working hour has a Maqsam call or a saved outcome (110 of 110).",
+    );
+    expect(firstLine().text).toContain(
+      "106 of 110 callable leads have a call on Maqsam (96%, the line is 90%).",
     );
     expect(firstLine().text).toContain(
       "4 more have a saved outcome but no Maqsam call, so they do not count.",
@@ -968,7 +974,7 @@ describe("the lead bar, the waiting and the sources", () => {
     expect(firstLine().dot).toBe("On time");
     client.resetCallCentreCache();
     answerWith("lead_quality", raw => {
-      raw.waiting.called = 104;
+      raw.waiting.called = 109;
       raw.waiting.outcomeOnly = 1;
     });
     await show();
@@ -977,11 +983,14 @@ describe("the lead bar, the waiting and the sources", () => {
     );
     client.resetCallCentreCache();
     answerWith("lead_quality", raw => {
-      raw.waiting.called = 105;
+      raw.waiting.called = 110;
       raw.waiting.outcomeOnly = 0;
     });
     await show();
-    expect(firstLine().text).toContain("105 of 110 callable leads");
+    expect(firstLine().text).toContain(
+      "Every lead older than a working hour has a call on Maqsam (110 of 110).",
+    );
+    expect(firstLine().text).toContain("110 of 110 callable leads");
     expect(firstLine().text).not.toContain("saved outcome");
   });
 
@@ -992,7 +1001,7 @@ describe("the lead bar, the waiting and the sources", () => {
     });
     await show();
     expect(firstLine().text).toBe(
-      "Every lead older than a working hour was called or messaged (105 of 110).",
+      "Every lead older than a working hour was called or messaged (110 of 110).",
     );
     expect(firstLine().dot).toBe("On time");
     client.resetCallCentreCache();

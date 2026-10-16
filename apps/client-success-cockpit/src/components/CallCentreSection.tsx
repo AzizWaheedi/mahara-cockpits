@@ -1182,17 +1182,27 @@ function WaitingNow({ data }: { data: CallCentre }) {
   const mi = w.missedInbound;
   const touched = rate(w.touched, w.callable);
   // The 90% line is a Maqsam call (2026-10-16); a read without the called
-  // count keeps the touched share.
+  // count keeps the touched share. The waiting list stays the touched rule,
+  // so on the new read it is worded as a call or a saved outcome, never as
+  // contact.
   const line = calledLines(data);
   const hint = [
-    u.count ? `${NUMBER.format(u.count)} with no call yet` : null,
+    u.count
+      ? `${NUMBER.format(u.count)} with no call ${line ? "or outcome " : ""}yet`
+      : null,
     cb.count ? `${plural(cb.count, "callback")} asked for` : null,
     mi.never ? `${plural(mi.never, "missed call")} not returned` : null,
   ].filter(Boolean);
   return (
     <Folded
       title="Waiting now"
-      hint={hint.length ? hint.join(", ") : "Nobody waits for a first call"}
+      hint={
+        hint.length
+          ? hint.join(", ")
+          : line
+            ? "Nobody waits for a call or an outcome"
+            : "Nobody waits for a first call"
+      }
       defaultOpen={waits}
     >
       <ul className="divide-y divide-border/60">
@@ -1201,7 +1211,11 @@ function WaitingNow({ data }: { data: CallCentre }) {
           title={
             u.count
               ? `${plural(u.count, "lead")} with no call or message yet`
-              : "Every lead older than a working hour was called or messaged"
+              : !line
+                ? "Every lead older than a working hour was called or messaged"
+                : line.outcomeOnly
+                  ? "Every lead older than a working hour has a Maqsam call or a saved outcome"
+                  : "Every lead older than a working hour has a call on Maqsam"
           }
         >
           {u.count ? (

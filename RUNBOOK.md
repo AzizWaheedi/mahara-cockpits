@@ -1016,9 +1016,11 @@ readable by a browser (the board's own read functions are the only door):
   or one quotation answered. A client who fills none of them has those
   columns empty, never 0, and the day's notes say which column is blank.
 - `cockpit_client_now`: per client, leads waiting for a first touch, the
-  oldest of them, the share of the last 30 days' leads touched (0.9 is 90%),
-  and the median first call in working seconds, the same rules as the client
-  page's call centre (`cockpit_client_calls`).
+  oldest of them, the share of the last 30 days' leads touched
+  (`touched_share_30d`, 0.9 is 90%: the waiting-list rule), the leads with a
+  Maqsam call (`verified_called_30d`: the 90% line), and the median first
+  call in working seconds, the same rules as the client page's call centre
+  (`cockpit_client_calls` waiting `touched` and `called`).
 
 Every day row carries `sources`: per source `{ok, state, as_of, note, from}`;
 on a day with closed deals whose value is in no known currency,
@@ -1058,7 +1060,7 @@ hours, a source it could not read, or a stop since its last good run.
 | A day's appointments note: "N bookings the contact replaced before their time, with no mark, are left out of meetings due" | The contact (or the call centre) booked again before the first meeting's time and nothing marks the first one: GoHighLevel left it confirmed. If the client says it did happen, mark it on the sheet; it then counts. | Client success |
 | A day's leads note: "N contacts arrived within one hour this day: an upload in bulk" | Leads were uploaded to GoHighLevel in a batch (Ardon on 28 Sep and 13 Oct), so their creation day is the upload's. Use Meta's form leads for that day's cost per lead. | Media buyer |
 | The sheet note: "Its Oct 26 tab has no rows yet" | The client has not filled the month's tab, so the month's shows, quotations and closes are not covered. Ask the client to fill it. | Client success |
-| `cockpit_client_now.outcome_only_30d` above 0, or the note "... had a dialer outcome saved but no Maqsam call to the number" | Leads counted as touched only by a saved outcome. The 90% line should read `verified_called_30d / callable_30d`. Ask the caller whether they dial from a line Maqsam does not see. | Call-centre lead |
+| `cockpit_client_now.outcome_only_30d` above 0, or the note "... had a dialer outcome saved but no Maqsam call to the number" | Leads counted as touched only by a saved outcome. The 90% line reads `verified_called_30d / callable_30d` on the board and `called / callable` on the client pages (since `20261016230000_client_calls_maqsam_line.sql`); the outcome-only count is said beside it. Ask the caller whether they dial from a line Maqsam does not see. | Call-centre lead |
 
 Deploying (the lead session). In order:
 
@@ -1094,6 +1096,8 @@ Deploying (the lead session). In order:
 Corrections of 2026-10-16 (after the second-source check, `docs/client-performance/SOURCES.md`): apply
 `20261016210000_board_facts_checked.sql`, then `20261016210200_board_account_ties.sql`, then run
 `select public.cockpit_board_facts_run('nightly');` once and `select public.cockpit_board_facts_doctor();`.
+Then apply `20261016230000_client_calls_maqsam_line.sql` and ship client success and media buyer, so the
+client pages judge the 90% line on Maqsam calls as the board does.
 The CSM sheet copy keeps quotation N after the next native feed release (`hermes/cockpit-sync`); until
 then `quotation_answers` stays empty where the copy is the source.
 

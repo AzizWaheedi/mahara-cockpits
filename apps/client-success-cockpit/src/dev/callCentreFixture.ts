@@ -469,8 +469,9 @@ export function callCentreFixture(kind: CallsKind = "call_centre"): Raw {
     r.official.leadsContacted = 82;
     r.window.talked120 = 120;
     r.cohort.talked120 = 61;
-    r.waiting.touched = 99;
-    r.waiting.called = 96;
+    // Nobody waits, so every callable lead is touched, as on a real read.
+    r.waiting.touched = 100;
+    r.waiting.called = 97;
     r.waiting.outcomeOnly = 3;
     r.waiting.untouched = { count: 0, oldestAt: null, oldestWorkSeconds: null };
     r.waiting.callbacks = {
