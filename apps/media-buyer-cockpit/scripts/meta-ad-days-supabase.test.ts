@@ -41,6 +41,8 @@ import {
 } from "./lib/cockpitTestDb";
 
 const FILE = "20261016121700_meta_ad_days.sql";
+/** The corrections after the second-source check of 2026-10-16, on top. */
+const CHECKED = "20261016210100_meta_ad_days_checked.sql";
 const CEO = "00000000-0000-4000-8000-0000000000c1";
 const MEMBER = "00000000-0000-4000-8000-0000000000b1";
 const A1 = "1111111111111"; // a USD account, tied to Client One
@@ -82,6 +84,9 @@ const INTERNAL = [
   "cockpit_meta_ad_days_finish(uuid)",
   "cockpit_meta_ad_days_expire()",
   "cockpit_meta_ad_days_kick(text)",
+  "cockpit_meta_ad_days_status_label(integer)",
+  "cockpit_meta_ad_days_hidden()",
+  "cockpit_meta_ad_days_is_hidden(jsonb,text,text)",
 ];
 
 async function at(iso: string) {
@@ -222,6 +227,7 @@ beforeAll(async () => {
   await member(db, MEMBER, "member@tests.invalid", ["media_buyer"]);
   await owner(db);
   await db.exec(migration(FILE));
+  await db.exec(migration(CHECKED));
   // The clock seam: the tests stand at a fixed moment.
   await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz LANGUAGE sql STABLE SET search_path='' AS
     $$ SELECT current_setting('test.now')::timestamptz $$;
@@ -340,6 +346,7 @@ describe("tables and privileges", () => {
   test("the file applies twice without an error", async () => {
     await owner(db);
     await db.exec(migration(FILE));
+    await db.exec(migration(CHECKED));
     await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz LANGUAGE sql STABLE SET search_path='' AS
       $$ SELECT current_setting('test.now')::timestamptz $$;
       REVOKE ALL ON FUNCTION public.cockpit_meta_ad_days_now() FROM PUBLIC, anon, authenticated, service_role;`);
@@ -399,7 +406,7 @@ describe("rates and windows", () => {
     }
   });
 
-  test("the five windows end today on Kuwait's calendar", async () => {
+  test("five windows end today on Kuwait's calendar, two end yesterday", async () => {
     const rows = await q<{ k: string; f: string; t: string }>(
       "SELECT window_key k, to_char(from_day,'YYYY-MM-DD') f, to_char(to_day,'YYYY-MM-DD') t FROM public.cockpit_meta_reach_windows('2026-10-16')",
     );
@@ -409,6 +416,9 @@ describe("rates and windows", () => {
       { k: "last_30", f: "2026-09-17", t: "2026-10-16" },
       { k: "this_month", f: "2026-10-01", t: "2026-10-16" },
       { k: "last_month", f: "2026-09-01", t: "2026-09-30" },
+      // Full days only, for a board whose spend and leads end yesterday.
+      { k: "last_7_full", f: "2026-10-09", t: "2026-10-15" },
+      { k: "last_30_full", f: "2026-09-16", t: "2026-10-15" },
     ]);
     const [march] = await q<{ f: string; t: string }>(
       "SELECT to_char(from_day,'YYYY-MM-DD') f, to_char(to_day,'YYYY-MM-DD') t FROM public.cockpit_meta_reach_windows('2026-03-02') WHERE window_key='last_month'",
@@ -1027,7 +1037,15 @@ describe("reach", () => {
     const claimed = await svc("cockpit_meta_ad_days_claim", { limit: 5 });
     return { begun, claimed: claimed as any[] };
   }
-  const windows = ["last_7", "last_14", "last_30", "this_month", "last_month"];
+  const windows = [
+    "last_7",
+    "last_14",
+    "last_30",
+    "this_month",
+    "last_month",
+    "last_7_full",
+    "last_30_full",
+  ];
 
   test("account rows per window, the client row from its two accounts, and a failed account makes the client's reach unknown", async () => {
     await closeOpenRuns();
@@ -1082,7 +1100,7 @@ describe("reach", () => {
     const client = await q<any>(
       "SELECT window_key, reach::int, impressions::int, note FROM cockpit_meta_reach WHERE level='client' AND key='LOC_ONE' ORDER BY reach",
     );
-    expect(client.length).toBe(5);
+    expect(client.length).toBe(7);
     expect(client[0]).toEqual({
       window_key: "last_7",
       reach: 150,
@@ -1236,7 +1254,7 @@ describe("status, record and the kicks", () => {
     });
     const a3 = s.accounts.find((a: any) => a.accountId === A3);
     expect(a3.linked).toBe(false);
-    expect(s.reach.client.rows).toBe(5);
+    expect(s.reach.client.rows).toBe(7);
     // The board's definer functions call it as the owner.
     await owner(db);
     const [own] = await q<{ r: any }>(
@@ -1472,7 +1490,10 @@ describe("the Edge Function's run against this database", () => {
       "SELECT key, window_key, reach::int FROM cockpit_meta_reach WHERE level='account' AND key=$1 ORDER BY reach",
       [KUWAIT_ACCOUNT],
     );
-    expect(reach.map(x => x.reach)).toEqual([700, 1400, 2100, 2800, 3500]);
+    // Seven windows: five ending today, two ending yesterday.
+    expect(reach.map(x => x.reach)).toEqual([
+      700, 1400, 2100, 2800, 3500, 4200, 4900,
+    ]);
     const [run] = await q<{ state: string; note: string }>(
       "SELECT state, note FROM cockpit_meta_ad_day_runs WHERE id = $1",
       [r.runId],
@@ -1651,5 +1672,217 @@ describe("client reach after Kuwait midnight", () => {
       "DELETE FROM public.cockpit_board_clients WHERE location_id='LOC_TWO'",
     );
     await at(NOW);
+  });
+});
+
+describe("the corrections after the 2026-10-16 check", () => {
+  const A6 = "6666666666661"; // read for reach
+  const A7 = "7777777777771"; // delivered in September, never read for reach
+  const A8 = "8888888888881"; // the only account of a client, never read for reach
+  const A9 = "9999999999991"; // hidden on purpose by a clients row
+  const A10 = "1010101010101"; // Mahara's own Mass Design account
+  const A11 = "1111111111119"; // still spending for a cancelled client
+  const adDay = (
+    accountId: string,
+    day: string,
+    impressions: number,
+    spend = 1,
+  ) =>
+    q(
+      `INSERT INTO public.cockpit_meta_ad_days(account_id, account_name, account_currency, day, ad_id, spend, spend_usd, usd_rate, impressions, fetched_at)
+       VALUES ($1, 'Account', 'USD', $2::date, $3, $4, $4, 1, $5, $6::timestamptz)`,
+      [
+        accountId,
+        day,
+        `${accountId.slice(0, 6)}${day.replaceAll("-", "")}`,
+        spend,
+        impressions,
+        NOW,
+      ],
+    );
+
+  test("a client's reach waits while an account that delivered in the window has not been read for it; a client with no account row still gets one", async () => {
+    await at(NOW);
+    await closeOpenRuns();
+    await owner(db);
+    await db.exec(`DELETE FROM cockpit_meta_reach;
+      CREATE TABLE IF NOT EXISTS public.cockpit_board_clients (location_id text PRIMARY KEY, clickup_id text, client_name text, status text,
+        service_mode text, ad_account_ids text[], tiktok boolean, updated_at timestamptz);
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_THREE','c3','Client Three','Active','DFY',ARRAY['${A6}','${A7}'],false,now()),
+        ('LOC_FOUR','c4','Client Four','Active','DFY',ARRAY['${A8}'],false,now());`);
+    await adDay(A7, "2026-09-20", 500);
+    await adDay(A8, "2026-10-09", 300);
+    try {
+      const begun = await svc("cockpit_meta_ad_days_begin", {
+        job: "hourly",
+        accounts: [account(A6, "USD")],
+        tasks: [],
+        reach: "account",
+      });
+      const [t] = await svc("cockpit_meta_ad_days_claim", { limit: 5 });
+      await svc("cockpit_meta_reach_apply", {
+        taskId: t.id,
+        leaseToken: t.leaseToken,
+        level: "account",
+        computedAt: NOW,
+        final: true,
+        rows: t.windows.map((w: any) => ({
+          key: A6,
+          window_key: w.key,
+          reach: 100,
+          impressions: 150,
+        })),
+      });
+      const [run] = await q<{ state: string }>(
+        "SELECT state FROM cockpit_meta_ad_day_runs WHERE id=$1",
+        [begun.runId],
+      );
+      expect(run.state).toBe("ok");
+      const row = async (loc: string, w: string) =>
+        (
+          await q<any>(
+            "SELECT reach::int, impressions::int, note FROM cockpit_meta_reach WHERE level='client' AND key=$1 AND window_key=$2",
+            [loc, w],
+          )
+        )[0];
+      // A7 delivered on 20 Sep, inside the last 30 days, and was never read:
+      // the client's 30-day reach is unknown, not A6 alone (Marble and more).
+      expect(await row("LOC_THREE", "last_30")).toEqual({
+        reach: null,
+        impressions: null,
+        note: `Ad account ${A7} has not been read for this window yet; this client's reach waits for the nightly run.`,
+      });
+      // In the last 7 days only A6 delivered: its reach is the client's.
+      expect(await row("LOC_THREE", "last_7")).toEqual({
+        reach: 100,
+        impressions: 150,
+        note: null,
+      });
+      // A client whose only account was never read still has a row that says
+      // so (ARCWANI, Liwan before the first nightly run).
+      expect(await row("LOC_FOUR", "last_30")).toMatchObject({
+        reach: null,
+        note: expect.stringContaining(A8),
+      });
+      expect(await row("LOC_FOUR", "last_7_full")).toMatchObject({
+        reach: null,
+      });
+      expect(await row("LOC_FOUR", "last_7")).toBeUndefined();
+    } finally {
+      await owner(db);
+      await db.exec(`DELETE FROM public.cockpit_board_clients WHERE location_id IN ('LOC_THREE','LOC_FOUR');
+        DELETE FROM public.cockpit_meta_ad_days WHERE account_id IN ('${A7}','${A8}');`);
+    }
+  });
+
+  test("hidden accounts are named apart, a cancelled client's spend and an account Meta stops are named, and inputs takes ids alone", async () => {
+    // After every other run in this file (the midnight test stands on 1 Nov),
+    // so this run is the latest the status reads.
+    await at("2026-11-02T09:05:00+03:00");
+    await closeOpenRuns();
+    await owner(db);
+    await db.exec(`CREATE TABLE IF NOT EXISTS public.clients (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, meta_ad_account_id text,
+        ghl_location_id text, hidden_from_dashboard boolean);
+      INSERT INTO public.clients(name, meta_ad_account_id, hidden_from_dashboard) VALUES ('ORB', 'act_${A9}', true);
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_GONE','cg','Gone Client','Cancelled','DFY',ARRAY['${A11}'],false,now());`);
+    await adDay(A11, "2026-11-01", 900, 20);
+    try {
+      const accounts = [
+        account(A3, "USD", { name: "Loose Account" }),
+        account(A9, "USD", { name: "ORB" }),
+        account(A10, "USD", { name: "Mahara Mass Design" }),
+        account(A11, "USD", { name: "Gone Ads" }),
+        account(A2, "SAR", { name: "Riyadh Client", status: 3 }),
+      ];
+      const inputs = await svc("cockpit_meta_ad_days_inputs", { accounts });
+      expect(inputs.notLinked.map((a: any) => a.accountId)).toEqual([A3]);
+      expect(inputs.hidden.map((a: any) => a.accountId).sort()).toEqual(
+        [A10, A9].sort(),
+      );
+      expect(inputs.cancelled).toEqual([
+        {
+          accountId: A11,
+          name: "Gone Ads",
+          clientName: "Gone Client",
+          status: "Cancelled",
+        },
+      ]);
+      // Ids alone (the doctor's and the dry run's call before this fix).
+      const ids = await svc("cockpit_meta_ad_days_inputs", {
+        accountIds: [A3, A1],
+      });
+      expect(ids.ties.linked).toBe(1);
+      expect(ids.notLinked).toEqual([
+        { accountId: A3, name: null, currency: null, spend: null },
+      ]);
+
+      const begun = await svc("cockpit_meta_ad_days_begin", {
+        job: "hourly",
+        accounts,
+        tasks: [],
+        reach: null,
+      });
+      expect(begun.state).toBe("ok");
+      expect(begun.notLinked).toEqual([
+        { accountId: A3, name: "Loose Account" },
+      ]);
+      const [run] = await q<{ note: string }>(
+        "SELECT note FROM cockpit_meta_ad_day_runs WHERE id=$1",
+        [begun.runId],
+      );
+      expect(run.note).toContain(
+        `Not linked to a client: Loose Account (${A3}, USD 100).`,
+      );
+      expect(run.note).toContain("Hidden on purpose: ");
+      expect(run.note).toContain(`ORB (${A9}, USD 100)`);
+      expect(run.note).toContain(
+        `Spent for a cancelled or stopped client: Gone Ads (${A11}, Gone Client is Cancelled, USD 100).`,
+      );
+
+      await service();
+      const s = (
+        await db.query<{ r: any }>(
+          "SELECT public.cockpit_meta_ad_days_status() r",
+        )
+      ).rows[0].r;
+      expect(s.notLinked.map((a: any) => a.accountId)).toEqual([A3]);
+      expect(s.hidden.map((a: any) => a.accountId).sort()).toEqual(
+        [A10, A9].sort(),
+      );
+      expect(s.cancelledDelivering).toEqual([
+        {
+          accountId: A11,
+          name: "Account",
+          clientName: "Gone Client",
+          clientStatus: "Cancelled",
+          currency: "USD",
+          spend2d: 20,
+        },
+      ]);
+      // Riyadh Client is tied to Client One and Meta says its billing is unsettled.
+      expect(s.billingStopped).toEqual([
+        {
+          accountId: A2,
+          name: expect.any(String),
+          locationId: "LOC_ONE",
+          clientName: "Client One",
+          status: 3,
+          statusLabel: "unsettled",
+          lastSpendDay: expect.anything(),
+        },
+      ]);
+      const a2 = s.accounts.find((a: any) => a.accountId === A2);
+      expect(a2).toMatchObject({
+        status: 3,
+        statusLabel: "unsettled",
+        clientStatus: "Active",
+      });
+    } finally {
+      await owner(db);
+      await db.exec(`DELETE FROM public.clients WHERE meta_ad_account_id = 'act_${A9}';
+        DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_GONE';
+        DELETE FROM public.cockpit_meta_ad_days WHERE account_id = '${A11}';`);
+      await at(NOW);
+    }
   });
 });
