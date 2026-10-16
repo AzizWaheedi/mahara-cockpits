@@ -236,17 +236,37 @@ board's read functions and screen).
 - **Source of truth (new):** `cockpit_meta_lead_ids` (the nightly run reads
   each lead ad's lead ids and times, never a name, phone or answer) and
   `cockpit_meta_leads_not_in_crm(from, to)`.
-- **Rule:** per ad, Meta's leads created in the Kuwait days against the CRM
-  contacts on that ad created from 10 minutes before the first day to one day
-  after the last; a client's "not in the CRM" is the sum over its ads of the
-  leads no contact matches.
+- **Rule:** one lead to one contact, per ad, over the Kuwait days. Meta's
+  leads and the ad's CRM contacts (not deleted) go in time order. First each
+  lead takes the earliest free contact created within 10 minutes of it. Then
+  each lead still alone takes the earliest free contact from 10 minutes before
+  it to a day after it (a late sync). The leads of the two days before the
+  window and of the day after it take part, so a contact of the next day's
+  lead pairs with that lead and never covers a lead of the window that did not
+  arrive. A client's "not in the CRM" is its window leads left without a
+  contact.
+- **Unknown, never 0:** the function returns metaLeads, inCrm and notInCrm
+  NULL with a note when an account with form leads in the window has never
+  been read, when the window starts before the lead ids held for an account
+  (`cockpit_meta_lead_id_cover.covered_from`: 31 days before the first nightly
+  read), or when Meta shows none of the client's lead ads (no lead access on
+  the Page: Ardon). With some ads unread, or a window that runs past the last
+  nightly read (today), the numbers stand with a note.
+- **Kept:** each nightly run reads the last 31 days and adds to what is held,
+  so the history grows from the first nightly run. Lead ids older than 180
+  days are deleted.
 - **Checked against:** the check's lead-by-lead match on 16 Oct: about 19
   form leads in 30 days never became contacts (Arcturus 5 of 83, Atlantis 3
   of 38, Liwan 3 of 19, SAFAD 3 of 49, Castello 2 of 69, City Wood 2 of 48,
-  Khalida 1 of 10).
-- **Gaps:** an ad whose Page gives no lead access is skipped and named in the
-  run's note (Ardon). The guardian should flag a client above 0 for two days:
-  systems manager.
+  Khalida 1 of 10). On 16 Oct the rule was re-run on Arcturus's Meta lead
+  ids and contact times. It gives 5 of 83 over 16 Sep to 15 Oct (2 on 7 Oct,
+  2 on 8 Oct, 1 on 9 Oct) and 1 of 23 over 9 to 15 Oct, equal to the check.
+  The first version counted contacts up to a day after the window and gave
+  1 and 0.
+- **Gaps:** website (pixel) leads are not in Meta's Leads API, so metaLeads
+  can be under the ad-days leads (Atlantis 4). A bulk upload more than a day
+  late counts as not in the CRM (Ardon, نهوض نجد). The guardian should flag a
+  client above 0 for two days: systems manager.
 
 ### Landing page views and opt-in rate
 

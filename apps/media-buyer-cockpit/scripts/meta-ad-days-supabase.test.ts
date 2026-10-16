@@ -60,6 +60,7 @@ const TABLES = [
   "cockpit_meta_ad_day_tasks",
   "cockpit_meta_ad_day_receipts",
   "cockpit_meta_lead_ids",
+  "cockpit_meta_lead_id_cover",
 ];
 const SERVICE = [
   "cockpit_meta_ad_days_inputs(jsonb)",
@@ -1889,8 +1890,9 @@ describe("the corrections after the 2026-10-16 check", () => {
     }
   });
 
-  test("a nightly run plans one lead-ids task per account with form leads; the leads land by id and are matched to the CRM by ad", async () => {
+  test("a nightly run plans one lead-ids task per account with form leads; the leads land by id and are matched to the CRM one to one by ad", async () => {
     const A13 = "1313131313131";
+    const A14 = "1414141414141";
     const [AD1, AD2, AD3] = [
       "131300000000001",
       "131300000000002",
@@ -1901,10 +1903,15 @@ describe("the corrections after the 2026-10-16 check", () => {
     await owner(db);
     await db.exec(`CREATE TABLE IF NOT EXISTS public.client_leads (ghl_contact_id text PRIMARY KEY, location_id text, created_at timestamptz,
         ad_id text, deleted boolean);
-      INSERT INTO public.cockpit_board_clients VALUES ('LOC_LEAD','cl','Lead Client','Active','DFY',ARRAY['${A13}'],false,now());
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_LEAD','cl','Lead Client','Active','DFY',ARRAY['${A13}'],false,now()),
+        ('LOC_NOREAD','cl2','Unread Client','Active','DFY',ARRAY['${A14}'],false,now());
       INSERT INTO public.client_leads VALUES ('c1','LOC_LEAD','2026-11-01T10:01:00+03:00','${AD1}',false),
         ('c2','LOC_LEAD','2026-11-01T10:06:00+03:00','${AD1}',false),
-        ('c3','LOC_LEAD','2026-11-01T10:07:00+03:00','${AD1}',true);`);
+        ('c3','LOC_LEAD','2026-11-01T10:07:00+03:00','${AD1}',true),
+        ('c4','LOC_LEAD','2026-11-02T12:00:00+03:00','${AD1}',false),
+        ('c5','LOC_LEAD','2026-11-03T01:02:00+03:00','${AD1}',false);
+      -- A lead older than 180 days: the final call deletes it.
+      INSERT INTO public.cockpit_meta_lead_ids VALUES ('990000000000099','${AD1}','${A13}','2026-04-01T00:00:00Z','2026-04-02T00:00:00Z');`);
     const leadDay = (ad: string, leads: number) =>
       q(
         `INSERT INTO public.cockpit_meta_ad_days(account_id, day, ad_id, leads, lead_actions, impressions, fetched_at)
@@ -1914,6 +1921,12 @@ describe("the corrections after the 2026-10-16 check", () => {
     await leadDay(AD1, 3);
     await leadDay(AD2, 1);
     await leadDay(AD3, 0);
+    // A client with form leads on an account no nightly run has read.
+    await q(
+      `INSERT INTO public.cockpit_meta_ad_days(account_id, day, ad_id, leads, lead_actions, impressions, fetched_at)
+       VALUES ($1, '2026-11-01', '141400000000001', 2, 2, 100, $2::timestamptz)`,
+      [A14, NOW],
+    );
     try {
       const begun = await svc("cockpit_meta_ad_days_begin", {
         job: "nightly",
@@ -1970,9 +1983,22 @@ describe("the corrections after the 2026-10-16 check", () => {
             ad_id: AD2,
             created_time: "2026-11-01T08:00:00Z",
           },
+          // 23:00 Kuwait on the window's last day: never reached the CRM.
+          {
+            lead_id: "990000000000005",
+            ad_id: AD1,
+            created_time: "2026-11-02T20:00:00Z",
+          },
+          // 01:00 Kuwait the day after the window: its contact (c5) came at 01:02.
+          {
+            lead_id: "990000000000006",
+            ad_id: AD1,
+            created_time: "2026-11-02T22:00:00Z",
+          },
         ],
         final: true,
         note: "Meta gives no lead access for 1 of 3 ads (the Page has not given Mahara lead access).",
+        adsUnread: 0,
       });
       const [run] = await q<{ state: string; note: string }>(
         "SELECT state, note FROM cockpit_meta_ad_day_runs WHERE id=$1",
@@ -1982,22 +2008,64 @@ describe("the corrections after the 2026-10-16 check", () => {
       expect(run.note).toContain(
         "Lead ids read for 1 account (Lead Account: Meta gives no lead access for 1 of 3 ads",
       );
-      // AD1: 3 Meta leads, 2 contacts (the deleted one does not count); AD2: 1 lead, no contact.
+      // AD1 in the window: 10:00 and 10:05 pair with c1 and c2 within minutes
+      // (the deleted c3 does not count); 2 Nov 09:00 pairs with c4, three hours
+      // late; 2 Nov 23:00 has no contact. c5 at 01:02 the next day is the 01:00
+      // lead's own contact, so it does not cover the 23:00 lead (a count of
+      // contacts up to a day after the window said 1 missing). AD2: 1 lead, no
+      // contact.
       await service();
-      const [rec] = (
-        await db.query<{ r: any }>(
-          "SELECT public.cockpit_meta_leads_not_in_crm('2026-11-01','2026-11-02') r",
-        )
-      ).rows;
-      expect(rec.r).toEqual([
-        { locationId: "LOC_LEAD", metaLeads: 4, inCrm: 2, notInCrm: 2 },
+      const notInCrm = async (from: string, to: string) =>
+        (
+          await db.query<{ r: any }>(
+            "SELECT public.cockpit_meta_leads_not_in_crm($1::date, $2::date) r",
+            [from, to],
+          )
+        ).rows[0].r;
+      const covered = {
+        coveredFrom: "2026-10-03T00:20:00+00:00",
+        readTo: "2026-11-03T00:20:00+00:00",
+      };
+      expect(await notInCrm("2026-11-01", "2026-11-02")).toEqual([
+        { locationId: "LOC_LEAD", metaLeads: 5, inCrm: 3, notInCrm: 2, ...covered, note: null },
+        {
+          locationId: "LOC_NOREAD",
+          metaLeads: null,
+          inCrm: null,
+          notInCrm: null,
+          coveredFrom: null,
+          readTo: null,
+          note: `Meta's lead ids for act_${A14} have not been read yet (the nightly run reads them), so leads not in the CRM are not known.`,
+        },
       ]);
+      // A window that starts before the ids held is unknown, never 0.
+      const [early] = await notInCrm("2026-10-01", "2026-11-02");
+      expect(early).toMatchObject({ locationId: "LOC_LEAD", metaLeads: null, notInCrm: null });
+      expect(early.note).toBe(
+        "Meta's lead ids are held from 2026-10-03 03:20 Kuwait time; this window starts earlier, so leads not in the CRM are not known for it.",
+      );
+      // A window past the last read says so.
+      const [late] = await notInCrm("2026-11-01", "2026-11-03");
+      expect(late).toMatchObject({ locationId: "LOC_LEAD", metaLeads: 6, inCrm: 4, notInCrm: 2 });
+      expect(late.note).toBe(
+        "Meta's leads are read to 2026-11-03 03:20 Kuwait time; later leads wait for the next nightly run.",
+      );
       const s = (
         await db.query<{ r: any }>(
           "SELECT public.cockpit_meta_ad_days_status() r",
         )
       ).rows[0].r;
-      expect(s.leadIds.rows).toBe(4);
+      // The 180-day-old lead is gone.
+      expect(s.leadIds.rows).toBe(6);
+      expect(s.leadIds).toMatchObject({ accounts: 1, noLeadAccess: [] });
+      // Every lead ad of a client unread (no lead access on the Page): unknown.
+      await owner(db);
+      await db.exec(`INSERT INTO public.cockpit_meta_lead_id_cover(account_id, covered_from, read_to, ads, ads_unread)
+        VALUES ('${A14}', '2026-10-03T00:20:00Z', '2026-11-03T00:20:00Z', 1, 1)`);
+      await service();
+      const [, noAccess] = await notInCrm("2026-11-01", "2026-11-02");
+      expect(noAccess).toMatchObject({ locationId: "LOC_NOREAD", metaLeads: null, notInCrm: null });
+      expect(noAccess.note).toContain("the Page has not given Mahara's business lead access");
       await owner(db);
       await expect(
         q(
@@ -2006,9 +2074,10 @@ describe("the corrections after the 2026-10-16 check", () => {
       ).rejects.toThrow("Choose up to 93 days");
     } finally {
       await owner(db);
-      await db.exec(`DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_LEAD';
-        DELETE FROM public.cockpit_meta_ad_days WHERE account_id = '${A13}';
-        DELETE FROM public.cockpit_meta_lead_ids;`);
+      await db.exec(`DELETE FROM public.cockpit_board_clients WHERE location_id IN ('LOC_LEAD', 'LOC_NOREAD');
+        DELETE FROM public.cockpit_meta_ad_days WHERE account_id IN ('${A13}', '${A14}');
+        DELETE FROM public.cockpit_meta_lead_ids;
+        DELETE FROM public.cockpit_meta_lead_id_cover;`);
       await at(NOW);
     }
   });

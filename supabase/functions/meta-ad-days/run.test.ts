@@ -306,6 +306,7 @@ describe("an hourly run", () => {
         { lead_id: "990000000000002", ad_id: AD_OPEN, created_time: "2026-10-16T06:00:00.000Z" },
       ]);
       expect(applied.note).toBe("Meta gives no lead access for 1 of 2 ads (the Page has not given Mahara lead access).");
+      expect(applied.adsUnread).toBe(1);
       expect(t.db.tasks.find(x => x.kind === "lead_ids").state).toBe("done");
     } finally {
       delete LEAD_ADS[KUWAIT_ACCOUNT];

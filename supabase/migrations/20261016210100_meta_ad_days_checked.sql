@@ -38,7 +38,11 @@
 --      (lead-sync-watch compares daily counts for 7 days). A nightly run that
 --      asks now reads every lead ad's lead ids and times (never field_data)
 --      into cockpit_meta_lead_ids, and cockpit_meta_leads_not_in_crm(from, to)
---      counts, per client, the Meta leads no CRM contact on the same ad matches.
+--      counts, per client, the Meta leads no CRM contact on the same ad matches,
+--      one lead to one contact (a contact of the next day's lead never covers a
+--      lead of the window that did not arrive). cockpit_meta_lead_id_cover
+--      keeps, per account, the span the held lead ids cover, so a window before
+--      it, or a client whose lead ads Meta will not show, reads unknown, not 0.
 --
 -- The Edge Function meta-ad-days changes with this file and can be deployed
 -- before or after it: reach windows with the same days (last_7 and this_month
@@ -639,9 +643,14 @@ BEGIN
                           AND jsonb_typeof(x->'status') = 'number' AND (x->>'status')::int <> 1), '[]'::jsonb),
     'reach', coalesce((SELECT jsonb_object_agg(x.level, jsonb_build_object('rows', x.n, 'oldest', x.oldest, 'newest', x.newest))
                FROM (SELECT level, count(*) AS n, min(computed_at) AS oldest, max(computed_at) AS newest FROM public.cockpit_meta_reach GROUP BY level) x), '{}'::jsonb),
-    -- Meta's lead ids, read nightly: how many, the newest lead, the last read.
+    -- Meta's lead ids, read nightly: how many, the newest lead, the last read,
+    -- the accounts covered and from when, and the accounts whose lead ads Meta
+    -- will not show (no lead access on the Page).
     'leadIds', (SELECT jsonb_build_object('rows', count(*), 'newestLead', max(l.created_time), 'lastReadAt', max(l.fetched_at))
-                FROM public.cockpit_meta_lead_ids l));
+                FROM public.cockpit_meta_lead_ids l)
+               || (SELECT jsonb_build_object('accounts', count(*), 'coveredFrom', min(v.covered_from),
+                     'noLeadAccess', coalesce(jsonb_agg('act_' || v.account_id ORDER BY v.account_id) FILTER (WHERE v.ads > 0 AND v.ads_unread >= v.ads), '[]'::jsonb))
+                   FROM public.cockpit_meta_lead_id_cover v));
 END;
 $$;
 
@@ -658,12 +667,26 @@ CREATE TABLE IF NOT EXISTS public.cockpit_meta_lead_ids (
   fetched_at timestamptz NOT NULL
 );
 COMMENT ON TABLE public.cockpit_meta_lead_ids IS
-  'Every Meta lead-form lead of the last 31 days on the ads with form leads, read nightly by meta-ad-days (GET <ad>/leads?fields=id,created_time): the lead''s id, its ad and when Meta took it. Never a name, phone, email or answer (field_data is not read). For matching against the CRM''s contacts by ad: cockpit_meta_leads_not_in_crm.';
+  'Meta''s lead-form leads on the ads with form leads: each nightly meta-ad-days run reads the last 31 days (GET <ad>/leads?fields=id,created_time) and adds them here, so the history grows from the first nightly run; leads older than 180 days are deleted. The lead''s id, its ad and when Meta took it. Never a name, phone, email or answer (field_data is not read). The span each account''s ids cover is in cockpit_meta_lead_id_cover. For matching against the CRM''s contacts by ad: cockpit_meta_leads_not_in_crm.';
 CREATE INDEX IF NOT EXISTS cockpit_meta_lead_ids_ad_idx ON public.cockpit_meta_lead_ids(ad_id, created_time);
 CREATE INDEX IF NOT EXISTS cockpit_meta_lead_ids_account_idx ON public.cockpit_meta_lead_ids(account_id, created_time);
 ALTER TABLE public.cockpit_meta_lead_ids ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.cockpit_meta_lead_ids FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.cockpit_meta_lead_ids TO service_role;
+
+CREATE TABLE IF NOT EXISTS public.cockpit_meta_lead_id_cover (
+  account_id text PRIMARY KEY CHECK (account_id ~ '^[0-9]{5,25}$'),
+  covered_from timestamptz NOT NULL,
+  read_to timestamptz NOT NULL CHECK (read_to >= covered_from),
+  ads int NOT NULL CHECK (ads >= 0),
+  ads_unread int NOT NULL CHECK (ads_unread >= 0 AND ads_unread <= ads),
+  updated_at timestamptz NOT NULL DEFAULT pg_catalog.now()
+);
+COMMENT ON TABLE public.cockpit_meta_lead_id_cover IS
+  'Per ad account, the span its lead ids in cockpit_meta_lead_ids cover without a gap: covered_from (31 days before the first nightly read, or before the read after a gap longer than 31 days; never more than 180 days back) to read_to (the last read). ads and ads_unread are the last read''s lead ads and those Meta would not show (no lead access on the Page, or an error). Written by cockpit_meta_lead_ids_apply on a lead_ids task''s last call.';
+ALTER TABLE public.cockpit_meta_lead_id_cover ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.cockpit_meta_lead_id_cover FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.cockpit_meta_lead_id_cover TO service_role;
 
 ALTER TABLE public.cockpit_meta_ad_day_tasks ADD COLUMN IF NOT EXISTS ad_ids jsonb
   CHECK (ad_ids IS NULL OR jsonb_typeof(ad_ids) = 'array');
@@ -738,17 +761,22 @@ $$;
 
 /**
  * Write one account's lead ids for a leased lead_ids task: p = {taskId,
- * leaseToken, fetchedAt, rows [{lead_id, ad_id, created_time}], final, note}.
- * Up to 5,000 rows a call, every one on an ad of the task. Upserted by lead id.
+ * leaseToken, fetchedAt, rows [{lead_id, ad_id, created_time}], final, note,
+ * adsUnread}. Up to 5,000 rows a call, every one on an ad of the task.
+ * Upserted by lead id. The last call (final) also records the span the
+ * account's ids cover (cockpit_meta_lead_id_cover: 31 days before fetchedAt,
+ * joined to the span held when the last read is no older than that) and
+ * deletes the account's ids older than 180 days.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_lead_ids_apply(p jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE
   t public.cockpit_meta_ad_day_tasks; v_rows jsonb := p->'rows'; v_fetched timestamptz; v_bad text; v_n int;
-  v_final boolean := coalesce((p->>'final')::boolean, false); v_state text;
+  v_final boolean := coalesce((p->>'final')::boolean, false); v_state text; v_ads int;
 BEGIN
   PERFORM public.cockpit_meta_ad_days_require_service();
   t := public.cockpit_meta_ad_days_leased(p, ARRAY['lead_ids']);
+  v_ads := jsonb_array_length(coalesce(t.ad_ids, '[]'::jsonb));
   IF jsonb_typeof(v_rows) IS DISTINCT FROM 'array' OR jsonb_array_length(v_rows) > 5000 THEN
     RAISE EXCEPTION 'Send rows as a list of at most 5000' USING ERRCODE='22023';
   END IF;
@@ -786,26 +814,64 @@ BEGIN
     lease_until = CASE WHEN v_final THEN NULL ELSE public.cockpit_meta_ad_days_now() + interval '5 minutes' END,
     updated_at = pg_catalog.now()
   WHERE id = t.id;
-  IF v_final THEN v_state := public.cockpit_meta_ad_days_finish(t.run_id); END IF;
+  IF v_final THEN
+    -- The read asked Meta for the leads after (start of the read - 31 days),
+    -- so fetchedAt - 31 days is covered. A last read older than that leaves a
+    -- gap, and the span starts again.
+    INSERT INTO public.cockpit_meta_lead_id_cover AS x (account_id, covered_from, read_to, ads, ads_unread, updated_at)
+    VALUES (t.account_id, v_fetched - interval '31 days', v_fetched, v_ads,
+      least(CASE WHEN p->>'adsUnread' ~ '^[0-9]{1,6}$' THEN (p->>'adsUnread')::int ELSE 0 END, v_ads), pg_catalog.now())
+    ON CONFLICT (account_id) DO UPDATE SET
+      covered_from = CASE WHEN x.read_to < EXCLUDED.covered_from THEN EXCLUDED.covered_from
+                          ELSE least(x.covered_from, EXCLUDED.covered_from) END,
+      read_to = greatest(x.read_to, EXCLUDED.read_to), ads = EXCLUDED.ads, ads_unread = EXCLUDED.ads_unread,
+      updated_at = pg_catalog.now();
+    DELETE FROM public.cockpit_meta_lead_ids
+    WHERE account_id = t.account_id AND created_time < public.cockpit_meta_ad_days_now() - interval '180 days';
+    UPDATE public.cockpit_meta_lead_id_cover SET covered_from = public.cockpit_meta_ad_days_now() - interval '180 days'
+    WHERE account_id = t.account_id AND covered_from < public.cockpit_meta_ad_days_now() - interval '180 days';
+    v_state := public.cockpit_meta_ad_days_finish(t.run_id);
+  END IF;
   RETURN jsonb_build_object('ok', true, 'written', v_n, 'final', v_final, 'run', v_state);
 END;
 $$;
 
 /**
  * Meta's form leads that did not become a CRM contact, per client, for the
- * Kuwait days p_from..p_to (at most 93): per ad, Meta's leads created in the
- * days against the contacts on that ad created from 10 minutes before the
- * first day to one day after the last (a lead reaches GoHighLevel within
- * minutes; a day's slack for a late sync), counted once each. A client's
- * notInCrm is the sum over its ads of the leads with no contact to match.
- * Bulk uploads (Ardon, نهوض نجد) land on the upload's day, so a lead whose
- * contact was uploaded more than a day late counts as not in the CRM until the
- * window holds the upload. Only leads Meta lets Mahara read are here (Ardon's
- * Page gives no lead access). [{locationId, metaLeads, inCrm, notInCrm}].
+ * Kuwait days p_from..p_to (at most 93). One lead to one contact, per ad:
+ * Meta's leads and the CRM contacts on the ad (not deleted) in time order.
+ * First each lead takes the earliest free contact created within 10 minutes
+ * of it (a lead reaches GoHighLevel within minutes); then each lead still
+ * alone takes the earliest free contact from 10 minutes before it to a day
+ * after it (a late sync). The leads of the two days before the window and of
+ * the day after it take part, so the next day's contacts pair with the next
+ * day's leads and never cover a lead of the window that did not arrive (the
+ * 2026-10-16 review: a count of contacts up to a day after the window gave
+ * Arcturus 1 missing lead over 30 days where the lead-by-lead check found 5).
+ * notInCrm = the window's leads left without a contact.
+ *
+ * Known only where Meta's lead ids are held. The clients are those with form
+ * leads in the days (cockpit_meta_ad_days); per account the ids cover
+ * cockpit_meta_lead_id_cover.covered_from to read_to. A client with an account
+ * never read, an account whose ids start after the window's first moment, or
+ * every lead ad unread (no lead access on the Page: Ardon) gets metaLeads,
+ * inCrm and notInCrm NULL with a note, never 0. Some ads unread: the numbers
+ * stand for the ads read, with a note. A window running past the last read
+ * (today) counts the leads to it, and the note says when. Website (pixel)
+ * leads are not in Meta's Leads API, so metaLeads can be under
+ * cockpit_meta_ad_days.leads (Atlantis 4). Bulk uploads (Ardon, نهوض نجد) land
+ * on the upload's day, so a lead uploaded more than a day late counts as not in
+ * the CRM.
+ * [{locationId, metaLeads, inCrm, notInCrm, coveredFrom, readTo, note}].
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_leads_not_in_crm(p_from date, p_to date)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE v jsonb;
+DECLARE
+  v_from timestamptz; v_to timestamptz; g record; r record;
+  v_l timestamptz[]; v_c timestamptz[]; v_lm boolean[]; v_cu boolean[];
+  v_nl int; v_nc int; v_hi interval; v_pass int; i int; j int;
+  v_meta int; v_miss int; v_note text; v_known boolean;
+  v_out jsonb := '[]'::jsonb;
 BEGIN
   IF p_from IS NULL OR p_to IS NULL OR p_from > p_to OR p_to - p_from > 92 THEN
     RAISE EXCEPTION 'Choose up to 93 days' USING ERRCODE='22023';
@@ -813,28 +879,101 @@ BEGIN
   IF to_regclass('public.cockpit_board_clients') IS NULL OR to_regclass('public.client_leads') IS NULL THEN
     RETURN '[]'::jsonb;
   END IF;
-  EXECUTE $q$
+  v_from := p_from::timestamp AT TIME ZONE 'Asia/Kuwait';
+  v_to := (p_to + 1)::timestamp AT TIME ZONE 'Asia/Kuwait';
+  FOR g IN EXECUTE $q$
     WITH c AS (
       SELECT DISTINCT b.location_id, regexp_replace(btrim(x), '^act_', '') AS account_id
       FROM public.cockpit_board_clients b CROSS JOIN LATERAL unnest(coalesce(b.ad_account_ids, '{}'::text[])) x
-    ), m AS (
-      SELECT c.location_id, l.ad_id, count(*) AS n
-      FROM public.cockpit_meta_lead_ids l JOIN c ON c.account_id = l.account_id
-      WHERE l.created_time >= ($1::timestamp AT TIME ZONE 'Asia/Kuwait') AND l.created_time < (($2 + 1)::timestamp AT TIME ZONE 'Asia/Kuwait')
-      GROUP BY 1, 2
-    ), k AS (
-      SELECT m.location_id, m.ad_id, m.n,
-        (SELECT count(*) FROM public.client_leads cl
-         WHERE cl.location_id = m.location_id AND cl.ad_id = m.ad_id AND NOT coalesce(cl.deleted, false)
-           AND cl.created_at >= ($1::timestamp AT TIME ZONE 'Asia/Kuwait') - interval '10 minutes'
-           AND cl.created_at < (($2 + 1)::timestamp AT TIME ZONE 'Asia/Kuwait') + interval '1 day') AS crm
-      FROM m
+    ), f AS (
+      SELECT DISTINCT c.location_id, c.account_id
+      FROM c JOIN public.cockpit_meta_ad_days d ON d.account_id = c.account_id
+      WHERE d.day BETWEEN $1 AND $2 AND d.leads > 0
     )
-    SELECT coalesce(jsonb_agg(jsonb_build_object('locationId', z.location_id, 'metaLeads', z.meta, 'inCrm', z.meta - z.missing,
-             'notInCrm', z.missing) ORDER BY z.location_id), '[]'::jsonb)
-    FROM (SELECT k.location_id, sum(k.n)::int AS meta, sum(greatest(k.n - k.crm, 0))::int AS missing FROM k GROUP BY 1) z
-  $q$ INTO v USING p_from, p_to;
-  RETURN v;
+    SELECT f.location_id,
+      string_agg('act_' || f.account_id, ', ' ORDER BY f.account_id) FILTER (WHERE v.account_id IS NULL) AS never_read,
+      max(v.covered_from) AS covered_from, min(v.read_to) AS read_to,
+      coalesce(sum(v.ads), 0)::int AS ads, coalesce(sum(v.ads_unread), 0)::int AS ads_unread
+    FROM f LEFT JOIN public.cockpit_meta_lead_id_cover v ON v.account_id = f.account_id
+    GROUP BY f.location_id
+    ORDER BY f.location_id
+  $q$ USING p_from, p_to
+  LOOP
+    v_known := true;
+    v_note := NULL;
+    IF g.never_read IS NOT NULL THEN
+      v_known := false;
+      v_note := format('Meta''s lead ids for %s have not been read yet (the nightly run reads them), so leads not in the CRM are not known.', g.never_read);
+    ELSIF g.covered_from > v_from THEN
+      v_known := false;
+      v_note := format('Meta''s lead ids are held from %s Kuwait time; this window starts earlier, so leads not in the CRM are not known for it.',
+        to_char(g.covered_from AT TIME ZONE 'Asia/Kuwait', 'YYYY-MM-DD HH24:MI'));
+    ELSIF g.ads > 0 AND g.ads_unread >= g.ads THEN
+      v_known := false;
+      v_note := 'Meta does not show this client''s form leads to Mahara (the Page has not given Mahara''s business lead access), so leads not in the CRM are not known.';
+    END IF;
+    IF NOT v_known THEN
+      v_out := v_out || jsonb_build_array(jsonb_build_object('locationId', g.location_id, 'metaLeads', NULL, 'inCrm', NULL,
+        'notInCrm', NULL, 'coveredFrom', g.covered_from, 'readTo', g.read_to, 'note', v_note));
+      CONTINUE;
+    END IF;
+    v_meta := 0;
+    v_miss := 0;
+    FOR r IN EXECUTE $q$
+      WITH a AS (
+        SELECT DISTINCT regexp_replace(btrim(x), '^act_', '') AS account_id
+        FROM public.cockpit_board_clients b CROSS JOIN LATERAL unnest(coalesce(b.ad_account_ids, '{}'::text[])) x
+        WHERE b.location_id = $1
+      ), ads AS (
+        SELECT DISTINCT l.ad_id FROM public.cockpit_meta_lead_ids l JOIN a ON a.account_id = l.account_id
+        WHERE l.created_time >= $2 AND l.created_time < $3
+      )
+      SELECT ads.ad_id,
+        ARRAY(SELECT l.created_time FROM public.cockpit_meta_lead_ids l
+              WHERE l.ad_id = ads.ad_id AND l.created_time >= $2 - interval '2 days' AND l.created_time < $3 + interval '1 day'
+              ORDER BY l.created_time, l.lead_id) AS leads,
+        ARRAY(SELECT cl.created_at FROM public.client_leads cl
+              WHERE cl.location_id = $1 AND cl.ad_id = ads.ad_id AND NOT coalesce(cl.deleted, false)
+                AND cl.created_at >= $2 - interval '2 days 10 minutes' AND cl.created_at < $3 + interval '2 days'
+              ORDER BY cl.created_at) AS crm
+      FROM ads
+    $q$ USING g.location_id, v_from, v_to
+    LOOP
+      v_l := r.leads;
+      v_c := r.crm;
+      v_nl := coalesce(array_length(v_l, 1), 0);
+      v_nc := coalesce(array_length(v_c, 1), 0);
+      v_lm := array_fill(false, ARRAY[greatest(v_nl, 1)]);
+      v_cu := array_fill(false, ARRAY[greatest(v_nc, 1)]);
+      FOR v_pass IN 1..2 LOOP
+        v_hi := CASE v_pass WHEN 1 THEN interval '10 minutes' ELSE interval '1 day' END;
+        FOR i IN 1..v_nl LOOP
+          CONTINUE WHEN v_lm[i];
+          FOR j IN 1..v_nc LOOP
+            EXIT WHEN v_c[j] > v_l[i] + v_hi;
+            IF NOT v_cu[j] AND v_c[j] >= v_l[i] - interval '10 minutes' THEN
+              v_lm[i] := true;
+              v_cu[j] := true;
+              EXIT;
+            END IF;
+          END LOOP;
+        END LOOP;
+      END LOOP;
+      FOR i IN 1..v_nl LOOP
+        IF v_l[i] >= v_from AND v_l[i] < v_to THEN
+          v_meta := v_meta + 1;
+          IF NOT v_lm[i] THEN v_miss := v_miss + 1; END IF;
+        END IF;
+      END LOOP;
+    END LOOP;
+    v_note := nullif(concat_ws(' ',
+      CASE WHEN g.ads_unread > 0 THEN format('Meta did not show the leads of %s of %s lead ads (no lead access on the Page, or an error); their leads are not counted.', g.ads_unread, g.ads) END,
+      CASE WHEN g.read_to < v_to THEN format('Meta''s leads are read to %s Kuwait time; later leads wait for the next nightly run.',
+        to_char(g.read_to AT TIME ZONE 'Asia/Kuwait', 'YYYY-MM-DD HH24:MI')) END), '');
+    v_out := v_out || jsonb_build_array(jsonb_build_object('locationId', g.location_id, 'metaLeads', v_meta, 'inCrm', v_meta - v_miss,
+      'notInCrm', v_miss, 'coveredFrom', g.covered_from, 'readTo', g.read_to, 'note', v_note));
+  END LOOP;
+  RETURN v_out;
 END;
 $$;
 

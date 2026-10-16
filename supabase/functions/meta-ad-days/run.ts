@@ -491,7 +491,9 @@ async function workLeadIds(deps: RunDeps, graph: GraphDeps, task: Task): Promise
   const chunks = rows.length ? Array.from({ length: Math.ceil(rows.length / LEAD_CHUNK) }, (_, i) => rows.slice(i * LEAD_CHUNK, (i + 1) * LEAD_CHUNK)) : [[]];
   for (let i = 0; i < chunks.length; i++) {
     await deps.rpc("cockpit_meta_lead_ids_apply", {
-      p: { taskId: task.id, leaseToken: task.leaseToken, fetchedAt, rows: chunks[i], final: i === chunks.length - 1, note },
+      // adsUnread: the ads whose leads are not held, so the database knows a
+      // client whose every lead ad is unread is unknown, never "0 not in the CRM".
+      p: { taskId: task.id, leaseToken: task.leaseToken, fetchedAt, rows: chunks[i], final: i === chunks.length - 1, note, adsUnread: closed + unread },
     });
   }
   return rows.length;
