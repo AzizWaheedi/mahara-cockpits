@@ -1521,3 +1521,130 @@ describe("the Edge Function's run against this database", () => {
     await at(NOW);
   });
 });
+
+describe("client reach after Kuwait midnight", () => {
+  const W = ["last_7", "last_14", "last_30", "this_month", "last_month"];
+  const A5 = "5555555555555"; // Client Two's second account: it delivered in September only
+  /** One reach run of `job` at `iso`: each account's account-level rows (one reach for every window, or per window). */
+  async function reachPass(
+    iso: string,
+    job: "hourly" | "nightly",
+    reach: Record<string, number | Record<string, number>>,
+  ) {
+    await at(iso);
+    await closeOpenRuns();
+    const begun = await svc("cockpit_meta_ad_days_begin", {
+      job,
+      accounts: Object.keys(reach).map(id => account(id, "USD")),
+      tasks: [],
+      reach: job === "hourly" ? "account" : "all",
+    });
+    expect(begun.started).toBe(true);
+    const claimed = await svc("cockpit_meta_ad_days_claim", { limit: 5 });
+    for (const t of claimed) {
+      const r = reach[t.accountId];
+      const of = (w: string) => (typeof r === "number" ? r : (r[w] ?? 0));
+      await svc("cockpit_meta_reach_apply", {
+        taskId: t.id,
+        leaseToken: t.leaseToken,
+        level: "account",
+        computedAt: iso,
+        final: true,
+        rows: W.map(w => ({
+          key: t.accountId,
+          window_key: w,
+          reach: of(w),
+          impressions: of(w) * 2,
+        })),
+      });
+    }
+    const [run] = await q<{ state: string }>(
+      "SELECT state FROM cockpit_meta_ad_day_runs WHERE id=$1",
+      [begun.runId],
+    );
+    expect(run.state).toBe("ok");
+  }
+  const client = async (loc: string, window = "last_7") =>
+    (
+      await q<any>(
+        "SELECT reach::int, impressions::int, note, to_char(to_day,'YYYY-MM-DD') to_day FROM cockpit_meta_reach WHERE level='client' AND key=$1 AND window_key=$2",
+        [loc, window],
+      )
+    )[0];
+
+  test("an account the hourly run did not re-read makes the client's reach wait, never shrink to the other account", async () => {
+    await owner(db);
+    await db.exec(`DELETE FROM cockpit_meta_reach;
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_TWO','c2','Client Two','Active','DFY',ARRAY['${A3}','${A5}'],false,now());`);
+    // Day D (31 Oct), the nightly run at 03:20 Kuwait: A1 and A2 for Client One; A3 and A5 for Client Two.
+    await reachPass("2026-10-31T03:20:00+03:00", "nightly", {
+      [A1]: 1000,
+      [A2]: 400,
+      [A3]: 300,
+      [A5]: { last_month: 50 },
+    });
+    expect(await client("LOC_ONE")).toEqual({
+      reach: 1400,
+      impressions: 2800,
+      note: "The sum of 2 ad accounts: a person reached by two of them counts twice.",
+      to_day: "2026-10-31",
+    });
+    expect((await client("LOC_TWO", "last_month")).reach).toBe(350);
+
+    // D+1 00:07 Kuwait, the hourly run: only A1 and A3 spent in the last two days, so only they are re-read.
+    // Before this fix Client One showed A1's 1,100 alone, with no note.
+    await reachPass("2026-11-01T00:07:00+03:00", "hourly", {
+      [A1]: 1100,
+      [A3]: 320,
+    });
+    expect(await client("LOC_ONE")).toEqual({
+      reach: null,
+      impressions: null,
+      note: `Ad account ${A2} not re-read since 2026-10-31; this client's reach waits for the nightly run.`,
+      to_day: "2026-11-01",
+    });
+    expect(await client("LOC_TWO", "last_month")).toEqual({
+      reach: null,
+      impressions: null,
+      note: `Ad account ${A5} not re-read since 2026-09-30; this client's reach waits for the nightly run.`,
+      to_day: "2026-10-31",
+    });
+    // A2's own row is kept, on its own days, for the board to read as stale.
+    const [a2] = await q<any>(
+      "SELECT reach::int, to_char(to_day,'YYYY-MM-DD') to_day FROM cockpit_meta_reach WHERE level='account' AND key=$1 AND window_key='last_7'",
+      [A2],
+    );
+    expect(a2).toEqual({ reach: 400, to_day: "2026-10-31" });
+
+    // D+1 03:20, the nightly run re-reads every account that delivered in any of today's windows: Client One is
+    // whole again. A5 delivered in none (September only), so it is not re-read, and its old rows go before the
+    // client rows are built: Client Two is A3 alone, which is the whole of it.
+    await reachPass("2026-11-01T03:20:00+03:00", "nightly", {
+      [A1]: 1150,
+      [A2]: 450,
+      [A3]: 330,
+    });
+    expect(await client("LOC_ONE")).toEqual({
+      reach: 1600,
+      impressions: 3200,
+      note: "The sum of 2 ad accounts: a person reached by two of them counts twice.",
+      to_day: "2026-11-01",
+    });
+    expect(await client("LOC_TWO", "last_month")).toEqual({
+      reach: 330,
+      impressions: 660,
+      note: null,
+      to_day: "2026-10-31",
+    });
+    const [left] = await q<{ n: number }>(
+      "SELECT count(*)::int n FROM cockpit_meta_reach WHERE key=$1",
+      [A5],
+    );
+    expect(left.n).toBe(0);
+    await owner(db);
+    await db.exec(
+      "DELETE FROM public.cockpit_board_clients WHERE location_id='LOC_TWO'",
+    );
+    await at(NOW);
+  });
+});

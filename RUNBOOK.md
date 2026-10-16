@@ -877,7 +877,11 @@ cockpit's fixed rates (`cockpit_meta_ad_days_usd_per`, the same table as
 `cockpit_meta_reach` per account, campaign, ad set and ad, read from Meta's
 own `time_ranges`, and per client (GoHighLevel location) as the sum of its
 accounts through `cockpit_board_clients`; frequency over a window is that
-row's impressions / reach. While the client spine is missing or empty, reach
+row's impressions / reach. A client's reach is empty, with the account named,
+while one of its accounts could not be read or still holds an earlier day's
+windows: after Kuwait midnight the hourly run re-reads only the accounts that
+spent in the last two days, so until the nightly run an account that spent
+earlier in the window would otherwise drop out of the client's sum. While the client spine is missing or empty, reach
 stays at account level and the note says so.
 
 The jobs (pg_cron, migration `20261016121700_meta_ad_days.sql`):
@@ -905,6 +909,7 @@ every run leaves one audit row (`meta_ad_days.run`). One look at all of it:
 | Note: "Not linked to a client: X (id, currency, spend)" | The account spends but no client row carries it. Add the tie (`clients.meta_ad_account_id` / `ghl_location_id`, or a `ghl_client_ad_accounts` row); the board's facts refresh picks it up and the next run ties it. The account's ad-days are kept meanwhile. | Client success or systems manager |
 | Note: "No USD rate for EUR on X" | Add the currency to `USD_PER` in `hermes/ceo-refresh/native/data/tap.js`, `FX` in `hermes/cockpit-sync/calculator.ts` and `cockpit_meta_ad_days_usd_per` in a new migration (the migration test pins the three together). The nightly rewrite fills the last 28 days; run a backfill for older ones. | Systems manager |
 | The board says the ad numbers are behind | Read `meta-ad-days-hourly` and `meta-ad-days-kick` in `cockpit_sync_state`. Check the three `mahara-meta-ad-days-*` jobs are in `cron.job` and active, `meta-ad-days` is deployed with the JWT check OFF (a POST without `x-cron-secret` answers 401), and `CRON_SECRET` equals the vault's `cockpit_sync_secret`. A run stuck "running" is closed by itself after 50 minutes (hourly), 6 hours (nightly) or 12 hours (backfill). | Systems manager |
+| A client's reach and frequency are empty with "Ad account X not re-read since <day>; this client's reach waits for the nightly run" | Normal between Kuwait midnight and the end of the nightly run (03:20 Kuwait and a few minutes): the account delivered earlier in the window but not in the last two days, so the hourly run did not re-read it. If it is still there after 04:00 Kuwait, read `meta-ad-days-nightly` in `cockpit_sync_state`. | Nobody, or the systems manager after 04:00 |
 | Frequency over a window is empty for a campaign, ad set or ad | Those rows are written by the nightly run only (03:20 Kuwait); account and client rows are refreshed hourly. Before the first nightly there are none. | Nobody |
 
 Deploying (the lead session). In order:

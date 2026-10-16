@@ -375,9 +375,16 @@ $$;
  * Rebuild the client rows of cockpit_meta_reach from today's account rows:
  * per client (cockpit_board_clients location) and window, the sum of its ad
  * accounts' reach. One account: Meta's own number. Two or more: a sum, and
- * the note says a person reached by two accounts counts twice. An account of
- * the client whose latest reach read failed makes the client's reach NULL,
- * with the account named. Without the client spine there are no client rows.
+ * the note says a person reached by two accounts counts twice. The client's
+ * reach is NULL, with the account named, when an account of the client
+ *   - failed its latest reach read, or
+ *   - still holds that window as of an earlier day: it was not re-read since
+ *     the windows moved on (after Kuwait midnight the hourly run re-reads only
+ *     the accounts that spent in the last two days; the nightly run re-reads
+ *     every account that delivered in any window, and drops the rows of the
+ *     ones that did not before this rebuild). Summing without it would show
+ *     part of the client as the whole.
+ * Without the client spine there are no client rows.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_reach_rebuild_clients()
 RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
@@ -395,6 +402,10 @@ BEGIN
       SELECT r.key, r.window_key, r.reach, r.impressions, r.computed_at
       FROM public.cockpit_meta_reach r JOIN w ON w.window_key = r.window_key AND w.from_day = r.from_day AND w.to_day = r.to_day
       WHERE r.level = 'account'
+    ), stale AS (
+      SELECT r.key, r.window_key, r.to_day
+      FROM public.cockpit_meta_reach r JOIN w ON w.window_key = r.window_key
+      WHERE r.level = 'account' AND (r.from_day, r.to_day) IS DISTINCT FROM (w.from_day, w.to_day)
     ), last_read AS (
       SELECT DISTINCT ON (t.account_id) t.account_id, t.state
       FROM public.cockpit_meta_ad_day_tasks t
@@ -403,18 +414,22 @@ BEGIN
     ), ins AS (
       INSERT INTO public.cockpit_meta_reach(level, key, window_key, from_day, to_day, reach, impressions, computed_at, account_id, note)
       SELECT 'client', c.location_id, w.window_key, w.from_day, w.to_day,
-        CASE WHEN f.failed IS NULL THEN a.reach END,
-        CASE WHEN f.failed IS NULL THEN a.impressions END,
+        CASE WHEN f.failed IS NULL AND s.stale IS NULL THEN a.reach END,
+        CASE WHEN f.failed IS NULL AND s.stale IS NULL THEN a.impressions END,
         coalesce(a.computed_at, pg_catalog.now()), NULL,
-        nullif(concat_ws(' ',
+        left(nullif(concat_ws(' ',
           CASE WHEN f.failed IS NOT NULL THEN 'Could not read ad account ' || f.failed || ', so this client''s reach is unknown.' END,
-          CASE WHEN f.failed IS NULL AND a.n > 1 THEN 'The sum of ' || a.n || ' ad accounts: a person reached by two of them counts twice.' END), '')
+          CASE WHEN f.failed IS NULL AND s.stale IS NOT NULL THEN CASE WHEN s.n > 1 THEN 'Ad accounts ' ELSE 'Ad account ' END || s.stale
+            || '; this client''s reach waits for the nightly run.' END,
+          CASE WHEN f.failed IS NULL AND s.stale IS NULL AND a.n > 1 THEN 'The sum of ' || a.n || ' ad accounts: a person reached by two of them counts twice.' END), ''), 500)
       FROM clients c CROSS JOIN w
       CROSS JOIN LATERAL (SELECT count(*)::int AS n, sum(r.reach)::bigint AS reach, sum(r.impressions)::bigint AS impressions, min(r.computed_at) AS computed_at
                           FROM acc r WHERE r.key = ANY(c.accounts) AND r.window_key = w.window_key) a
       CROSS JOIN LATERAL (SELECT string_agg(l.account_id, ', ' ORDER BY l.account_id) AS failed
                           FROM last_read l WHERE l.account_id = ANY(c.accounts) AND l.state = 'failed') f
-      WHERE a.n > 0 OR f.failed IS NOT NULL
+      CROSS JOIN LATERAL (SELECT count(*)::int AS n, string_agg(x.key || ' not re-read since ' || to_char(x.to_day, 'YYYY-MM-DD'), ', ' ORDER BY x.key) AS stale
+                          FROM stale x WHERE x.key = ANY(c.accounts) AND x.window_key = w.window_key) s
+      WHERE a.n > 0 OR f.failed IS NOT NULL OR s.stale IS NOT NULL
       RETURNING 1
     )
     SELECT count(*)::int FROM ins
@@ -470,13 +485,15 @@ BEGIN
     CASE WHEN v_no_rate IS NOT NULL THEN 'No USD rate for ' || v_no_rate || ', so its spend_usd is empty.' END), 2000);
 
   IF v_reach > 0 THEN
-    v_clients := public.cockpit_meta_reach_rebuild_clients();
     IF r.job = 'nightly' THEN
-      -- Rows of windows that have moved on are no longer last_7 and its kin.
+      -- Rows of windows that have moved on are no longer last_7 and its kin. The nightly run re-read every
+      -- account that delivered in any of today's windows, so an account row still on an earlier day had no
+      -- delivery in that window (or its read failed, which the rebuild names); dropped before the rebuild.
       DELETE FROM public.cockpit_meta_reach x WHERE x.level <> 'client'
         AND NOT EXISTS (SELECT 1 FROM public.cockpit_meta_reach_windows(public.cockpit_meta_ad_days_today()) w
                         WHERE w.window_key = x.window_key AND w.from_day = x.from_day AND w.to_day = x.to_day);
     END IF;
+    v_clients := public.cockpit_meta_reach_rebuild_clients();
   END IF;
 
   UPDATE public.cockpit_meta_ad_day_runs SET state = v_state, finished_at = pg_catalog.now(), note = v_note,
