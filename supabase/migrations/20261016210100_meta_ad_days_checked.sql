@@ -33,11 +33,19 @@
 --      doctor's "Not linked" list is no longer always empty.
 --   6. The leads column says what the check showed: leads from lead campaigns,
 --      instant form or website (Atlantis: 38 form + 4 website), chat leads out.
+--   7. About 19 Meta form leads in 30 days never became GoHighLevel contacts
+--      (Arcturus 5 in three days), and nothing kept Meta's lead ids to see it
+--      (lead-sync-watch compares daily counts for 7 days). A nightly run that
+--      asks now reads every lead ad's lead ids and times (never field_data)
+--      into cockpit_meta_lead_ids, and cockpit_meta_leads_not_in_crm(from, to)
+--      counts, per client, the Meta leads no CRM contact on the same ad matches.
 --
--- The Edge Function meta-ad-days changes with this file (deploy it after
--- applying): reach windows with the same days (last_7 and this_month on the
--- 7th of a month) are read once and written under both keys, where before the
--- read was refused as "two reach rows" or the second window wrote 0.
+-- The Edge Function meta-ad-days changes with this file and can be deployed
+-- before or after it: reach windows with the same days (last_7 and this_month
+-- on the 7th of a month) are read once and written under both keys, where
+-- before the read was refused as "two reach rows" or the second window wrote
+-- 0; the nightly run asks for lead ids (an older database ignores the ask);
+-- the doctor sends the accounts with their names.
 --
 -- How we know it works: apps/media-buyer-cockpit/scripts/meta-ad-days-supabase.test.ts
 -- loads 20261016121700 and this file on PGlite. Safe to apply twice; loads
@@ -270,15 +278,17 @@ RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
 DECLARE
   r public.cockpit_meta_ad_day_runs; v_open int; v_done int; v_failed int; v_rows int; v_changed int; v_accounts int;
   v_state text; v_note text; v_failing text; v_not_linked text; v_no_rate text; v_reach int; v_clients int := 0;
-  v_hidden text; v_gone text;
+  v_hidden text; v_gone text; v_leadids int; v_lead_notes text;
 BEGIN
   SELECT * INTO r FROM public.cockpit_meta_ad_day_runs WHERE id = p_run FOR UPDATE;
   IF r.id IS NULL THEN RETURN NULL; END IF;
   IF r.state <> 'running' THEN RETURN r.state; END IF;
   SELECT count(*) FILTER (WHERE state IN ('pending','running')), count(*) FILTER (WHERE state = 'done'), count(*) FILTER (WHERE state = 'failed'),
          coalesce(sum(rows_read) FILTER (WHERE kind = 'days' AND state = 'done'), 0), coalesce(sum(changed) FILTER (WHERE kind = 'days' AND state = 'done'), 0),
-         count(DISTINCT account_id), count(*) FILTER (WHERE kind <> 'days' AND state = 'done')
-    INTO v_open, v_done, v_failed, v_rows, v_changed, v_accounts, v_reach
+         count(DISTINCT account_id), count(*) FILTER (WHERE kind IN ('reach_account','reach_all') AND state = 'done'),
+         count(*) FILTER (WHERE kind = 'lead_ids' AND state = 'done'),
+         string_agg(coalesce(account_name, account_id) || ': ' || note, '; ' ORDER BY account_id) FILTER (WHERE kind = 'lead_ids' AND note IS NOT NULL)
+    INTO v_open, v_done, v_failed, v_rows, v_changed, v_accounts, v_reach, v_leadids, v_lead_notes
   FROM public.cockpit_meta_ad_day_tasks WHERE run_id = p_run;
   IF v_open > 0 THEN RETURN 'running'; END IF;
   v_state := CASE WHEN v_failed = 0 THEN 'ok' WHEN v_done = 0 THEN 'failed' ELSE 'partial' END;
@@ -311,6 +321,8 @@ BEGIN
                 WHERE t.run_id = p_run AND t.state = 'failed'), 0)) || ' of ' || jsonb_array_length(r.accounts) || ' ad accounts: '
               || v_rows || ' ad-days written, ' || v_changed || ' new or changed.' END,
     CASE WHEN v_reach > 0 THEN 'Reach read for ' || v_reach || ' accounts.' END,
+    CASE WHEN v_leadids > 0 THEN 'Lead ids read for ' || v_leadids || CASE WHEN v_leadids = 1 THEN ' account' ELSE ' accounts' END
+      || coalesce(' (' || v_lead_notes || ')', '') || '.' END,
     CASE WHEN v_failing IS NOT NULL THEN 'Could not read ' || v_failing || '.' END,
     CASE WHEN r.detail->>'tieSource' = 'board_clients' AND v_gone IS NOT NULL THEN 'Spent for a cancelled or stopped client: ' || v_gone || '.' END,
     CASE WHEN r.detail->>'tieSource' = 'board_clients' AND v_hidden IS NOT NULL THEN 'Hidden on purpose: ' || v_hidden || '.' END,
@@ -403,7 +415,7 @@ $$;
  * Start a run: p = {job, requestedBy, graphVersion, window {since, until},
  * accounts [{accountId, name, currency, timezone, status, spend, edge}],
  * internal [ids], unreadable [ids], tasks [{kind: 'days', accountId, since,
- * until}], reach: 'account' | 'all' | null}. Each account is tied to a client
+ * until}], reach: 'account' | 'all' | null, leadIds: boolean (nightly only)}. Each account is tied to a client
  * (or listed as not linked) here. One reach task per account is added with
  * today's windows. A run of the same job still working answers busy.
  */
@@ -498,6 +510,19 @@ BEGIN
     SELECT v_run, CASE v_reach WHEN 'account' THEN 'reach_account' ELSE 'reach_all' END, a->>'accountId', left(a->>'name', 200),
       a->>'currency', a->>'timezone', public.cockpit_meta_reach_windows_json(v_today)
     FROM jsonb_array_elements(p->'accounts') a
+    ON CONFLICT DO NOTHING;
+  END IF;
+  -- A nightly run that asks (p.leadIds, the function since 2026-10-16) also
+  -- reads the lead ids of every ad with form leads in the last 31 days, one
+  -- task per account (cockpit_meta_lead_ids). An older function does not ask,
+  -- so the two can be deployed in either order.
+  IF v_job = 'nightly' AND coalesce((p->>'leadIds')::boolean, false) THEN
+    INSERT INTO public.cockpit_meta_ad_day_tasks(run_id, kind, account_id, account_name, account_currency, account_timezone, windows, ad_ids)
+    SELECT v_run, 'lead_ids', a->>'accountId', left(a->>'name', 200), a->>'currency', a->>'timezone', '[]'::jsonb, x.ads
+    FROM jsonb_array_elements(p->'accounts') a
+    CROSS JOIN LATERAL (SELECT jsonb_agg(DISTINCT d.ad_id) AS ads FROM public.cockpit_meta_ad_days d
+                        WHERE d.account_id = a->>'accountId' AND d.leads > 0 AND d.day >= v_today - 31) x
+    WHERE x.ads IS NOT NULL
     ON CONFLICT DO NOTHING;
   END IF;
   SELECT count(*) INTO v_tasks FROM public.cockpit_meta_ad_day_tasks WHERE run_id = v_run;
@@ -613,9 +638,206 @@ BEGIN
                         WHERE (x->>'linked')::boolean AND coalesce(x->>'clientStatus', '') NOT IN ('Cancelled', 'Stopped', 'Removed from sheet')
                           AND jsonb_typeof(x->'status') = 'number' AND (x->>'status')::int <> 1), '[]'::jsonb),
     'reach', coalesce((SELECT jsonb_object_agg(x.level, jsonb_build_object('rows', x.n, 'oldest', x.oldest, 'newest', x.newest))
-               FROM (SELECT level, count(*) AS n, min(computed_at) AS oldest, max(computed_at) AS newest FROM public.cockpit_meta_reach GROUP BY level) x), '{}'::jsonb));
+               FROM (SELECT level, count(*) AS n, min(computed_at) AS oldest, max(computed_at) AS newest FROM public.cockpit_meta_reach GROUP BY level) x), '{}'::jsonb),
+    -- Meta's lead ids, read nightly: how many, the newest lead, the last read.
+    'leadIds', (SELECT jsonb_build_object('rows', count(*), 'newestLead', max(l.created_time), 'lastReadAt', max(l.fetched_at))
+                FROM public.cockpit_meta_lead_ids l));
 END;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Meta's lead ids, for "Meta leads not in the CRM" (2026-10-16 check: about
+-- 19 form leads in 30 days never became GoHighLevel contacts, Arcturus 5 in
+-- three days; lead-sync-watch compares daily counts for 7 days only)
+
+CREATE TABLE IF NOT EXISTS public.cockpit_meta_lead_ids (
+  lead_id text PRIMARY KEY CHECK (lead_id ~ '^[0-9]{5,25}$'),
+  ad_id text NOT NULL CHECK (ad_id ~ '^[0-9]{5,25}$'),
+  account_id text NOT NULL CHECK (account_id ~ '^[0-9]{5,25}$'),
+  created_time timestamptz NOT NULL,
+  fetched_at timestamptz NOT NULL
+);
+COMMENT ON TABLE public.cockpit_meta_lead_ids IS
+  'Every Meta lead-form lead of the last 31 days on the ads with form leads, read nightly by meta-ad-days (GET <ad>/leads?fields=id,created_time): the lead''s id, its ad and when Meta took it. Never a name, phone, email or answer (field_data is not read). For matching against the CRM''s contacts by ad: cockpit_meta_leads_not_in_crm.';
+CREATE INDEX IF NOT EXISTS cockpit_meta_lead_ids_ad_idx ON public.cockpit_meta_lead_ids(ad_id, created_time);
+CREATE INDEX IF NOT EXISTS cockpit_meta_lead_ids_account_idx ON public.cockpit_meta_lead_ids(account_id, created_time);
+ALTER TABLE public.cockpit_meta_lead_ids ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.cockpit_meta_lead_ids FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.cockpit_meta_lead_ids TO service_role;
+
+ALTER TABLE public.cockpit_meta_ad_day_tasks ADD COLUMN IF NOT EXISTS ad_ids jsonb
+  CHECK (ad_ids IS NULL OR jsonb_typeof(ad_ids) = 'array');
+ALTER TABLE public.cockpit_meta_ad_day_tasks DROP CONSTRAINT IF EXISTS cockpit_meta_ad_day_tasks_kind_check;
+ALTER TABLE public.cockpit_meta_ad_day_tasks ADD CONSTRAINT cockpit_meta_ad_day_tasks_kind_check
+  CHECK (kind IN ('days','reach_account','reach_all','lead_ids'));
+COMMENT ON COLUMN public.cockpit_meta_ad_day_tasks.ad_ids IS 'A lead_ids task''s ads: the account''s ads with form leads in the last 31 days.';
+
+/**
+ * Lease up to p.limit (1 to 5) open tasks for p.leaseSeconds (60 to 900):
+ * pending ones, or running ones whose lease ran out (4 tries in all). Hourly
+ * work first, then nightly, then backfill; days before reach and lead ids. A
+ * claim starts the task's counts again, so a retried read is counted once. A
+ * lead-ids task carries its ads (adIds).
+ */
+CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_claim(p jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE
+  v_limit int := least(greatest(coalesce(nullif(p->>'limit','')::int, 1), 1), 5);
+  v_lease interval := make_interval(secs => least(greatest(coalesce(nullif(p->>'leaseSeconds','')::int, 300), 60), 900));
+  v_out jsonb;
+BEGIN
+  PERFORM public.cockpit_meta_ad_days_require_service();
+  PERFORM public.cockpit_meta_ad_days_expire();
+  WITH picked AS (
+    SELECT t.id FROM public.cockpit_meta_ad_day_tasks t JOIN public.cockpit_meta_ad_day_runs r ON r.id = t.run_id
+    WHERE r.state = 'running' AND t.attempts < 4
+      AND ((t.state = 'pending' AND (t.retry_at IS NULL OR t.retry_at <= public.cockpit_meta_ad_days_now()))
+           OR (t.state = 'running' AND t.lease_until < public.cockpit_meta_ad_days_now()))
+    ORDER BY CASE r.job WHEN 'hourly' THEN 0 WHEN 'nightly' THEN 1 ELSE 2 END, CASE t.kind WHEN 'days' THEN 0 ELSE 1 END, t.id
+    LIMIT v_limit
+    FOR UPDATE OF t SKIP LOCKED
+  ), claimed AS (
+    UPDATE public.cockpit_meta_ad_day_tasks t SET state = 'running', attempts = t.attempts + 1, lease_token = gen_random_uuid(),
+      lease_until = public.cockpit_meta_ad_days_now() + v_lease, retry_at = NULL, rows_read = 0, changed = 0, spend = NULL, leads = NULL, updated_at = pg_catalog.now()
+    FROM picked WHERE t.id = picked.id
+    RETURNING t.*
+  )
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+      'id', c.id, 'runId', c.run_id, 'job', r.job, 'kind', c.kind, 'accountId', c.account_id, 'accountName', c.account_name,
+      'currency', c.account_currency, 'timezone', c.account_timezone,
+      'since', to_char(c.since,'YYYY-MM-DD'), 'until', to_char(c.until,'YYYY-MM-DD'), 'windows', c.windows,
+      'adIds', c.ad_ids, 'leaseToken', c.lease_token, 'attempt', c.attempts) ORDER BY c.id), '[]'::jsonb)
+    INTO v_out
+  FROM claimed c JOIN public.cockpit_meta_ad_day_runs r ON r.id = c.run_id;
+  RETURN v_out;
+END;
+$$;
+
+/**
+ * A leased task that could not be read: p = {taskId, leaseToken, error,
+ * retry}. With retry (Meta's limits, Meta too slow, the database not
+ * answering) and tries left it goes back to the queue, not before 3 minutes
+ * times the tries so far; otherwise it is failed with the sentence, and the
+ * run closes when it was the last.
+ */
+CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_fail(p jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE t public.cockpit_meta_ad_day_tasks; v_retry boolean := coalesce((p->>'retry')::boolean, false); v_state text; v_run text;
+BEGIN
+  PERFORM public.cockpit_meta_ad_days_require_service();
+  t := public.cockpit_meta_ad_days_leased(p, ARRAY['days','reach_account','reach_all','lead_ids']);
+  v_state := CASE WHEN v_retry AND t.attempts < 4 THEN 'pending' ELSE 'failed' END;
+  UPDATE public.cockpit_meta_ad_day_tasks SET state = v_state, lease_token = NULL, lease_until = NULL,
+    retry_at = CASE WHEN v_state = 'pending' THEN public.cockpit_meta_ad_days_now() + make_interval(mins => 3 * t.attempts) END,
+    error = left(coalesce(nullif(btrim(p->>'error'), ''), 'The read failed without a reason.'), 500), updated_at = pg_catalog.now()
+  WHERE id = t.id;
+  IF v_state = 'failed' THEN v_run := public.cockpit_meta_ad_days_finish(t.run_id); END IF;
+  RETURN jsonb_build_object('ok', true, 'state', v_state, 'attempts', t.attempts, 'run', v_run);
+END;
+$$;
+
+/**
+ * Write one account's lead ids for a leased lead_ids task: p = {taskId,
+ * leaseToken, fetchedAt, rows [{lead_id, ad_id, created_time}], final, note}.
+ * Up to 5,000 rows a call, every one on an ad of the task. Upserted by lead id.
+ */
+CREATE OR REPLACE FUNCTION public.cockpit_meta_lead_ids_apply(p jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
+DECLARE
+  t public.cockpit_meta_ad_day_tasks; v_rows jsonb := p->'rows'; v_fetched timestamptz; v_bad text; v_n int;
+  v_final boolean := coalesce((p->>'final')::boolean, false); v_state text;
+BEGIN
+  PERFORM public.cockpit_meta_ad_days_require_service();
+  t := public.cockpit_meta_ad_days_leased(p, ARRAY['lead_ids']);
+  IF jsonb_typeof(v_rows) IS DISTINCT FROM 'array' OR jsonb_array_length(v_rows) > 5000 THEN
+    RAISE EXCEPTION 'Send rows as a list of at most 5000' USING ERRCODE='22023';
+  END IF;
+  BEGIN
+    v_fetched := (p->>'fetchedAt')::timestamptz;
+  EXCEPTION WHEN others THEN v_fetched := NULL;
+  END;
+  IF v_fetched IS NULL OR v_fetched > public.cockpit_meta_ad_days_now() + interval '5 minutes'
+     OR v_fetched < public.cockpit_meta_ad_days_now() - interval '1 hour' THEN
+    RAISE EXCEPTION 'fetchedAt must be when Meta answered, within the last hour' USING ERRCODE='22023';
+  END IF;
+  SELECT x.why INTO v_bad FROM (
+    SELECT CASE
+        WHEN r.lead_id IS NULL OR r.lead_id !~ '^[0-9]{5,25}$' THEN 'a lead without a valid id'
+        WHEN r.ad_id IS NULL OR NOT (coalesce(t.ad_ids, '[]'::jsonb) ? r.ad_id) THEN 'a lead on an ad the task did not ask for'
+        WHEN r.created_time IS NULL OR r.created_time > public.cockpit_meta_ad_days_now() + interval '1 hour' THEN 'a lead without its time'
+      END AS why
+    FROM jsonb_to_recordset(v_rows) AS r(lead_id text, ad_id text, created_time timestamptz)
+  ) x WHERE x.why IS NOT NULL LIMIT 1;
+  IF v_bad IS NOT NULL THEN RAISE EXCEPTION 'Meta''s leads for act_% held %; nothing was written', t.account_id, v_bad USING ERRCODE='22023'; END IF;
+  INSERT INTO public.cockpit_meta_lead_ids AS x (lead_id, ad_id, account_id, created_time, fetched_at)
+  SELECT DISTINCT ON (r.lead_id) r.lead_id, r.ad_id, t.account_id, r.created_time, v_fetched
+  FROM jsonb_to_recordset(v_rows) AS r(lead_id text, ad_id text, created_time timestamptz)
+  ORDER BY r.lead_id
+  ON CONFLICT (lead_id) DO UPDATE SET ad_id = EXCLUDED.ad_id, account_id = EXCLUDED.account_id,
+    created_time = EXCLUDED.created_time, fetched_at = EXCLUDED.fetched_at
+  WHERE x.fetched_at <= EXCLUDED.fetched_at;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  UPDATE public.cockpit_meta_ad_day_tasks SET rows_read = rows_read + v_n,
+    leads = coalesce(leads, 0) + jsonb_array_length(v_rows),
+    note = coalesce(left(nullif(btrim(p->>'note'), ''), 300), note),
+    state = CASE WHEN v_final THEN 'done' ELSE state END,
+    error = CASE WHEN v_final THEN NULL ELSE error END,
+    lease_token = CASE WHEN v_final THEN NULL ELSE lease_token END,
+    lease_until = CASE WHEN v_final THEN NULL ELSE public.cockpit_meta_ad_days_now() + interval '5 minutes' END,
+    updated_at = pg_catalog.now()
+  WHERE id = t.id;
+  IF v_final THEN v_state := public.cockpit_meta_ad_days_finish(t.run_id); END IF;
+  RETURN jsonb_build_object('ok', true, 'written', v_n, 'final', v_final, 'run', v_state);
+END;
+$$;
+
+/**
+ * Meta's form leads that did not become a CRM contact, per client, for the
+ * Kuwait days p_from..p_to (at most 93): per ad, Meta's leads created in the
+ * days against the contacts on that ad created from 10 minutes before the
+ * first day to one day after the last (a lead reaches GoHighLevel within
+ * minutes; a day's slack for a late sync), counted once each. A client's
+ * notInCrm is the sum over its ads of the leads with no contact to match.
+ * Bulk uploads (Ardon, نهوض نجد) land on the upload's day, so a lead whose
+ * contact was uploaded more than a day late counts as not in the CRM until the
+ * window holds the upload. Only leads Meta lets Mahara read are here (Ardon's
+ * Page gives no lead access). [{locationId, metaLeads, inCrm, notInCrm}].
+ */
+CREATE OR REPLACE FUNCTION public.cockpit_meta_leads_not_in_crm(p_from date, p_to date)
+RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
+DECLARE v jsonb;
+BEGIN
+  IF p_from IS NULL OR p_to IS NULL OR p_from > p_to OR p_to - p_from > 92 THEN
+    RAISE EXCEPTION 'Choose up to 93 days' USING ERRCODE='22023';
+  END IF;
+  IF to_regclass('public.cockpit_board_clients') IS NULL OR to_regclass('public.client_leads') IS NULL THEN
+    RETURN '[]'::jsonb;
+  END IF;
+  EXECUTE $q$
+    WITH c AS (
+      SELECT DISTINCT b.location_id, regexp_replace(btrim(x), '^act_', '') AS account_id
+      FROM public.cockpit_board_clients b CROSS JOIN LATERAL unnest(coalesce(b.ad_account_ids, '{}'::text[])) x
+    ), m AS (
+      SELECT c.location_id, l.ad_id, count(*) AS n
+      FROM public.cockpit_meta_lead_ids l JOIN c ON c.account_id = l.account_id
+      WHERE l.created_time >= ($1::timestamp AT TIME ZONE 'Asia/Kuwait') AND l.created_time < (($2 + 1)::timestamp AT TIME ZONE 'Asia/Kuwait')
+      GROUP BY 1, 2
+    ), k AS (
+      SELECT m.location_id, m.ad_id, m.n,
+        (SELECT count(*) FROM public.client_leads cl
+         WHERE cl.location_id = m.location_id AND cl.ad_id = m.ad_id AND NOT coalesce(cl.deleted, false)
+           AND cl.created_at >= ($1::timestamp AT TIME ZONE 'Asia/Kuwait') - interval '10 minutes'
+           AND cl.created_at < (($2 + 1)::timestamp AT TIME ZONE 'Asia/Kuwait') + interval '1 day') AS crm
+      FROM m
+    )
+    SELECT coalesce(jsonb_agg(jsonb_build_object('locationId', z.location_id, 'metaLeads', z.meta, 'inCrm', z.meta - z.missing,
+             'notInCrm', z.missing) ORDER BY z.location_id), '[]'::jsonb)
+    FROM (SELECT k.location_id, sum(k.n)::int AS meta, sum(greatest(k.n - k.crm, 0))::int AS missing FROM k GROUP BY 1) z
+  $q$ INTO v USING p_from, p_to;
+  RETURN v;
+END;
+$$;
+
 
 -- ---------------------------------------------------------------------------
 -- Function privileges: the new helpers for nobody (definer functions and the
@@ -629,7 +851,9 @@ BEGIN
     'cockpit_meta_reach_rebuild_clients()', 'cockpit_meta_ad_days_finish(uuid)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);
   END LOOP;
-  FOREACH f IN ARRAY ARRAY['cockpit_meta_ad_days_inputs(jsonb)', 'cockpit_meta_ad_days_begin(jsonb)', 'cockpit_meta_ad_days_status()'] LOOP
+  FOREACH f IN ARRAY ARRAY['cockpit_meta_ad_days_inputs(jsonb)', 'cockpit_meta_ad_days_begin(jsonb)', 'cockpit_meta_ad_days_status()',
+    'cockpit_meta_ad_days_claim(jsonb)', 'cockpit_meta_ad_days_fail(jsonb)', 'cockpit_meta_lead_ids_apply(jsonb)',
+    'cockpit_meta_leads_not_in_crm(date,date)'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);
     EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO service_role', f);
   END LOOP;

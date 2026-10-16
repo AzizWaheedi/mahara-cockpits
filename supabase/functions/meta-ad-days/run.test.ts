@@ -23,6 +23,9 @@ import { adsetsRoute, eachDay, fakeFetch, graphPath, insightsRoute, metaError, o
 
 type Rec = { name: string; p: any };
 
+/** The ads with form leads per account, as the database finds them for a nightly run's lead_ids tasks. */
+const LEAD_ADS: Record<string, string[]> = {};
+
 /**
  * The service RPCs, played in memory: begin keeps the tasks, claim leases
  * them in order, apply and reach apply keep what they were sent, fail puts a
@@ -34,6 +37,7 @@ function fakeDb(now: () => number) {
   const tasks: any[] = [];
   const applied: any[] = [];
   const reach: any[] = [];
+  const leadIds: any[] = [];
   let runs = 0;
   const rpc = async (name: string, args: Record<string, unknown>) => {
     const p = (args as any).p;
@@ -51,6 +55,13 @@ function fakeDb(now: () => number) {
       runs += 1;
       const runId = `00000000-0000-4000-8000-00000000000${runs}`;
       for (const t of p.tasks) tasks.push({ ...t, id: tasks.length + 1, runId, job: p.job, state: "pending", attempt: 0 });
+      if (p.job === "nightly" && p.leadIds) {
+        for (const a of p.accounts) {
+          if (LEAD_ADS[a.accountId]) {
+            tasks.push({ kind: "lead_ids", accountId: a.accountId, adIds: LEAD_ADS[a.accountId], id: tasks.length + 1, runId, job: p.job, state: "pending", attempt: 0 });
+          }
+        }
+      }
       if (p.reach) {
         for (const a of p.accounts) {
           tasks.push({
@@ -68,11 +79,17 @@ function fakeDb(now: () => number) {
         t.attempt += 1;
         t.leaseToken = `lease-${t.id}-${t.attempt}`;
       }
-      return open.map(t => ({ id: t.id, runId: t.runId, job: t.job, kind: t.kind, accountId: t.accountId, accountName: null, since: t.since ?? null, until: t.until ?? null, windows: t.windows ?? null, leaseToken: t.leaseToken, attempt: t.attempt }));
+      return open.map(t => ({ id: t.id, runId: t.runId, job: t.job, kind: t.kind, accountId: t.accountId, accountName: null, since: t.since ?? null, until: t.until ?? null, windows: t.windows ?? null, adIds: t.adIds ?? null, leaseToken: t.leaseToken, attempt: t.attempt }));
     }
     if (name === "cockpit_meta_ad_days_apply") {
       const t = tasks.find(x => x.id === p.taskId);
       applied.push({ ...p, accountId: t.accountId });
+      if (p.final) t.state = "done";
+      return { ok: true, written: p.rows.length };
+    }
+    if (name === "cockpit_meta_lead_ids_apply") {
+      const t = tasks.find(x => x.id === p.taskId);
+      leadIds.push({ ...p, accountId: t.accountId });
       if (p.final) t.state = "done";
       return { ok: true, written: p.rows.length };
     }
@@ -99,7 +116,7 @@ function fakeDb(now: () => number) {
     }
     throw new Error(`unexpected rpc ${name}`);
   };
-  return { rpc, calls, tasks, applied, reach };
+  return { rpc, calls, tasks, applied, reach, leadIds };
 }
 
 function edges(extra: Record<string, unknown>[] = []): Route {
@@ -250,6 +267,49 @@ describe("an hourly run", () => {
       { since: "2026-10-10", until: "2026-10-16" },
       { since: "2026-09-01", until: "2026-09-30" },
     ]);
+  });
+
+  test("a nightly run reads each lead ad's lead ids (ids and times only); an ad whose Page gives no lead access is counted, not fatal", async () => {
+    const AD_OPEN = "120000000000103";
+    const AD_CLOSED = "120000000000777";
+    LEAD_ADS[KUWAIT_ACCOUNT] = [AD_OPEN, AD_CLOSED];
+    try {
+      const leads: Route = c => {
+        if (graphPath(c) === `${AD_OPEN}/leads`) {
+          return ok({
+            data: [
+              { id: "990000000000001", created_time: "2026-10-15T10:21:33+0000" },
+              { id: "990000000000002", created_time: "2026-10-16T06:00:00+0000" },
+            ],
+            paging: { cursors: {} },
+          });
+        }
+        if (graphPath(c) === `${AD_CLOSED}/leads`) return metaError(200, "Requires pages_manage_ads permission to manage the object");
+        return null;
+      };
+      const t = deps([edges(), daysRoute(KUWAIT_ACCOUNT, () => []), daysRoute(SAR_ACCOUNT, () => []), daysRoute(LA_ACCOUNT, () => []), adsetsRoute(DESTINATIONS), reachRoute, leads]);
+      await startJob(t.d, { job: "nightly", dryRun: false, requestedBy: "cron" });
+      const leadCalls = t.calls.filter(c => graphPath(c).endsWith("/leads"));
+      expect(leadCalls.map(c => graphPath(c))).toEqual([`${AD_OPEN}/leads`, `${AD_CLOSED}/leads`]);
+      for (const c of leadCalls) {
+        // Ids and times only: never field_data, so no name, phone or answer leaves Meta.
+        expect(c.url.searchParams.get("fields")).toBe("id,created_time");
+        const filter = JSON.parse(c.url.searchParams.get("filtering")!);
+        expect(filter[0]).toMatchObject({ field: "time_created", operator: "GREATER_THAN" });
+        expect(filter[0].value).toBe(Math.floor(NOW / 1000) - 31 * 86_400);
+      }
+      expect(t.db.calls.find(c => c.name === "cockpit_meta_ad_days_begin")!.p.leadIds).toBe(true);
+      const applied = t.db.leadIds.find(x => x.accountId === KUWAIT_ACCOUNT);
+      expect(applied.final).toBe(true);
+      expect(applied.rows).toEqual([
+        { lead_id: "990000000000001", ad_id: AD_OPEN, created_time: "2026-10-15T10:21:33.000Z" },
+        { lead_id: "990000000000002", ad_id: AD_OPEN, created_time: "2026-10-16T06:00:00.000Z" },
+      ]);
+      expect(applied.note).toBe("Meta gives no lead access for 1 of 2 ads (the Page has not given Mahara lead access).");
+      expect(t.db.tasks.find(x => x.kind === "lead_ids").state).toBe("done");
+    } finally {
+      delete LEAD_ADS[KUWAIT_ACCOUNT];
+    }
   });
 
   test("a span Meta cannot build is read in halves, down to one day", async () => {

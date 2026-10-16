@@ -19,6 +19,11 @@
  *     reads only: the token, the pinned Graph version, the edges, the ties
  *     and the last runs, in plain sentences.
  *
+ * The nightly run also reads, per account, the lead ids of its ads with form
+ * leads in the last 31 days (GET <ad>/leads?fields=id,created_time: ids and
+ * times only, never a name, phone or answer), so the board can say how many
+ * Meta leads never became a CRM contact (cockpit_meta_leads_not_in_crm).
+ *
  * A days task also looks up the destination of its lead-campaign ad sets
  * (one act_<id>/adsets read per 50 of them; none when the account has no lead
  * campaign), so a WhatsApp or Messenger lead ad set's messaging leads never
@@ -52,6 +57,8 @@ import {
   parseReach,
   REACH_LEVELS,
   toApplyRow,
+  parseLeadIds,
+  type LeadIdRow,
   type Window,
   windowSpans,
   withDestinations,
@@ -82,12 +89,14 @@ export type Task = {
   id: number;
   runId: string;
   job: JobKind;
-  kind: "days" | "reach_account" | "reach_all";
+  kind: "days" | "reach_account" | "reach_all" | "lead_ids";
   accountId: string;
   accountName: string | null;
   since: string | null;
   until: string | null;
   windows: Window[];
+  /** A lead_ids task's ads. */
+  adIds: string[];
   leaseToken: string;
   attempt: number;
 };
@@ -201,6 +210,8 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
       unreadable: found.unreadable,
       tasks,
       reach,
+      // The nightly run also reads the lead ids of the ads with form leads.
+      leadIds: kind === "nightly",
     },
   })) as Row | null;
   if (!isRow(begun) || begun.started !== true) {
@@ -231,6 +242,7 @@ export function readTasks(raw: unknown): Task[] {
       since: typeof x.since === "string" ? x.since : null,
       until: typeof x.until === "string" ? x.until : null,
       windows,
+      adIds: Array.isArray(x.adIds) ? x.adIds.filter((a): a is string => typeof a === "string" && /^[0-9]{5,25}$/.test(a)) : [],
       leaseToken: x.leaseToken,
       attempt: typeof x.attempt === "number" ? x.attempt : 1,
     };
@@ -265,6 +277,7 @@ async function work(deps: RunDeps, task: Task): Promise<WorkResult> {
   const graph = graphFor(deps, task.runId);
   try {
     if (task.kind === "days") return { state: "done", rows: await workDays(deps, graph, task) };
+    if (task.kind === "lead_ids") return { state: "done", rows: await workLeadIds(deps, graph, task) };
     return { state: "done", rows: await workReach(deps, graph, task) };
   } catch (e) {
     const retry = retryable(e);
@@ -425,6 +438,63 @@ async function workReach(deps: RunDeps, graph: GraphDeps, task: Task): Promise<n
     });
   }
   return total;
+}
+
+/** How far back an ad's leads are read: the 30-day window and a day's slack. */
+export const LEAD_DAYS = 31;
+const LEAD_CHUNK = 2000;
+
+/**
+ * One account's lead ids: every ad of the task, leads created in the last 31
+ * days, ids and times only. An ad Meta will not show the leads of (the Page has
+ * not given Mahara lead access, or the ad is gone) is counted in the task's
+ * note and the rest go on; Meta's limits, Meta being slow or a refused token
+ * stop the task so a later call tries again.
+ */
+async function workLeadIds(deps: RunDeps, graph: GraphDeps, task: Task): Promise<number> {
+  const since = Math.floor(deps.now() / 1000) - LEAD_DAYS * 86_400;
+  const rows: LeadIdRow[] = [];
+  let closed = 0;
+  let unread = 0;
+  let firstUnread = "";
+  for (const adId of task.adIds) {
+    let raw: Row[];
+    try {
+      raw = await metaPages(graph, `${adId}/leads`, {
+        fields: "id,created_time",
+        filtering: JSON.stringify([{ field: "time_created", operator: "GREATER_THAN", value: since }]),
+        limit: 500,
+      });
+    } catch (e) {
+      if (e instanceof MetaError && e.kind === "permission") {
+        closed += 1;
+        continue;
+      }
+      if (e instanceof MetaError && e.kind === "other") {
+        unread += 1;
+        firstUnread ||= e.message.slice(0, 120);
+        continue;
+      }
+      throw e;
+    }
+    rows.push(...parseLeadIds(raw, adId));
+  }
+  const note =
+    [
+      closed ? `Meta gives no lead access for ${closed} of ${task.adIds.length} ads (the Page has not given Mahara lead access).` : "",
+      unread ? `${unread} ads could not be read: ${firstUnread}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .slice(0, 300) || null;
+  const fetchedAt = new Date(deps.now()).toISOString();
+  const chunks = rows.length ? Array.from({ length: Math.ceil(rows.length / LEAD_CHUNK) }, (_, i) => rows.slice(i * LEAD_CHUNK, (i + 1) * LEAD_CHUNK)) : [[]];
+  for (let i = 0; i < chunks.length; i++) {
+    await deps.rpc("cockpit_meta_lead_ids_apply", {
+      p: { taskId: task.id, leaseToken: task.leaseToken, fetchedAt, rows: chunks[i], final: i === chunks.length - 1, note },
+    });
+  }
+  return rows.length;
 }
 
 // ---------------------------------------------------------------- doctor

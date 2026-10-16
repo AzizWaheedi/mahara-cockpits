@@ -372,3 +372,22 @@ export function parseReach(rows: Row[], level: Level, windows: Window[], account
   }
   return out;
 }
+
+// ---------------------------------------------------------------- lead ids
+
+export type LeadIdRow = { lead_id: string; ad_id: string; created_time: string };
+
+/**
+ * One ad's leads as ids and times: never a name, phone or answer (the read
+ * asks for id and created_time only, and nothing else is kept). Meta writes
+ * times as 2026-10-15T10:21:33+0000.
+ */
+export function parseLeadIds(rows: Row[], adId: string): LeadIdRow[] {
+  return rows.map(raw => {
+    const leadId = id(raw.id, "a lead id", true) as string;
+    const t = (text(raw.created_time) ?? "").replace(/([+-]\d{2})(\d{2})$/, "$1:$2");
+    const ms = Date.parse(t);
+    if (!t || !Number.isFinite(ms)) throw new ParseError(`Meta returned lead ${leadId} on ad ${adId} without a time.`);
+    return { lead_id: leadId, ad_id: adId, created_time: new Date(ms).toISOString() };
+  });
+}

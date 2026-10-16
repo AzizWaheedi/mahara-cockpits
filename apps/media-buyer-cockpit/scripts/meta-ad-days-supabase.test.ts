@@ -59,6 +59,7 @@ const TABLES = [
   "cockpit_meta_ad_day_runs",
   "cockpit_meta_ad_day_tasks",
   "cockpit_meta_ad_day_receipts",
+  "cockpit_meta_lead_ids",
 ];
 const SERVICE = [
   "cockpit_meta_ad_days_inputs(jsonb)",
@@ -69,6 +70,8 @@ const SERVICE = [
   "cockpit_meta_ad_days_fail(jsonb)",
   "cockpit_meta_ad_days_record(jsonb)",
   "cockpit_meta_ad_days_status()",
+  "cockpit_meta_lead_ids_apply(jsonb)",
+  "cockpit_meta_leads_not_in_crm(date,date)",
 ];
 const INTERNAL = [
   "cockpit_meta_ad_days_require_service()",
@@ -1882,6 +1885,130 @@ describe("the corrections after the 2026-10-16 check", () => {
       await db.exec(`DELETE FROM public.clients WHERE meta_ad_account_id = 'act_${A9}';
         DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_GONE';
         DELETE FROM public.cockpit_meta_ad_days WHERE account_id = '${A11}';`);
+      await at(NOW);
+    }
+  });
+
+  test("a nightly run plans one lead-ids task per account with form leads; the leads land by id and are matched to the CRM by ad", async () => {
+    const A13 = "1313131313131";
+    const [AD1, AD2, AD3] = [
+      "131300000000001",
+      "131300000000002",
+      "131300000000003",
+    ];
+    await at("2026-11-03T03:20:00+03:00");
+    await closeOpenRuns();
+    await owner(db);
+    await db.exec(`CREATE TABLE IF NOT EXISTS public.client_leads (ghl_contact_id text PRIMARY KEY, location_id text, created_at timestamptz,
+        ad_id text, deleted boolean);
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_LEAD','cl','Lead Client','Active','DFY',ARRAY['${A13}'],false,now());
+      INSERT INTO public.client_leads VALUES ('c1','LOC_LEAD','2026-11-01T10:01:00+03:00','${AD1}',false),
+        ('c2','LOC_LEAD','2026-11-01T10:06:00+03:00','${AD1}',false),
+        ('c3','LOC_LEAD','2026-11-01T10:07:00+03:00','${AD1}',true);`);
+    const leadDay = (ad: string, leads: number) =>
+      q(
+        `INSERT INTO public.cockpit_meta_ad_days(account_id, day, ad_id, leads, lead_actions, impressions, fetched_at)
+         VALUES ($1, '2026-11-01', $2, $3, $3, 100, $4::timestamptz)`,
+        [A13, ad, leads, NOW],
+      );
+    await leadDay(AD1, 3);
+    await leadDay(AD2, 1);
+    await leadDay(AD3, 0);
+    try {
+      const begun = await svc("cockpit_meta_ad_days_begin", {
+        job: "nightly",
+        accounts: [account(A13, "USD", { name: "Lead Account" })],
+        tasks: [],
+        reach: null,
+        leadIds: true,
+      });
+      expect(begun.tasks).toBe(1);
+      const [t] = await svc("cockpit_meta_ad_days_claim", { limit: 5 });
+      expect(t.kind).toBe("lead_ids");
+      // Only the ads with form leads in the last 31 days.
+      expect([...t.adIds].sort()).toEqual([AD1, AD2]);
+      const msg = await refused(
+        () =>
+          svc("cockpit_meta_lead_ids_apply", {
+            taskId: t.id,
+            leaseToken: t.leaseToken,
+            fetchedAt: "2026-11-03T03:20:00+03:00",
+            rows: [
+              {
+                lead_id: "990000000000009",
+                ad_id: AD3,
+                created_time: "2026-11-01T08:00:00Z",
+              },
+            ],
+            final: false,
+          }),
+        "22023",
+      );
+      expect(msg).toContain("an ad the task did not ask for");
+      await svc("cockpit_meta_lead_ids_apply", {
+        taskId: t.id,
+        leaseToken: t.leaseToken,
+        fetchedAt: "2026-11-03T03:20:00+03:00",
+        rows: [
+          {
+            lead_id: "990000000000001",
+            ad_id: AD1,
+            created_time: "2026-11-01T07:00:00Z",
+          },
+          {
+            lead_id: "990000000000002",
+            ad_id: AD1,
+            created_time: "2026-11-01T07:05:00Z",
+          },
+          {
+            lead_id: "990000000000003",
+            ad_id: AD1,
+            created_time: "2026-11-02T06:00:00Z",
+          },
+          {
+            lead_id: "990000000000004",
+            ad_id: AD2,
+            created_time: "2026-11-01T08:00:00Z",
+          },
+        ],
+        final: true,
+        note: "Meta gives no lead access for 1 of 3 ads (the Page has not given Mahara lead access).",
+      });
+      const [run] = await q<{ state: string; note: string }>(
+        "SELECT state, note FROM cockpit_meta_ad_day_runs WHERE id=$1",
+        [begun.runId],
+      );
+      expect(run.state).toBe("ok");
+      expect(run.note).toContain(
+        "Lead ids read for 1 account (Lead Account: Meta gives no lead access for 1 of 3 ads",
+      );
+      // AD1: 3 Meta leads, 2 contacts (the deleted one does not count); AD2: 1 lead, no contact.
+      await service();
+      const [rec] = (
+        await db.query<{ r: any }>(
+          "SELECT public.cockpit_meta_leads_not_in_crm('2026-11-01','2026-11-02') r",
+        )
+      ).rows;
+      expect(rec.r).toEqual([
+        { locationId: "LOC_LEAD", metaLeads: 4, inCrm: 2, notInCrm: 2 },
+      ]);
+      const s = (
+        await db.query<{ r: any }>(
+          "SELECT public.cockpit_meta_ad_days_status() r",
+        )
+      ).rows[0].r;
+      expect(s.leadIds.rows).toBe(4);
+      await owner(db);
+      await expect(
+        q(
+          "SELECT public.cockpit_meta_leads_not_in_crm('2026-08-01','2026-11-02')",
+        ),
+      ).rejects.toThrow("Choose up to 93 days");
+    } finally {
+      await owner(db);
+      await db.exec(`DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_LEAD';
+        DELETE FROM public.cockpit_meta_ad_days WHERE account_id = '${A13}';
+        DELETE FROM public.cockpit_meta_lead_ids;`);
       await at(NOW);
     }
   });

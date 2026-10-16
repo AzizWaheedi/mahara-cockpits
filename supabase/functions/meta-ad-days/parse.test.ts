@@ -15,6 +15,7 @@ import {
   ParseError,
   parseAdDay,
   parseDestinations,
+  parseLeadIds,
   parseReach,
   toApplyRow,
   type Window,
@@ -283,5 +284,18 @@ describe("reach over windows", () => {
     ]);
     const ads = parseReach([{ ad_id: "120000000000103", impressions: "30", reach: "20", date_start: "2026-11-01", date_stop: "2026-11-07" }], "ad", seventh, ACC);
     expect(ads.map(r => r.windowKey)).toEqual(["last_7", "this_month"]);
+  });
+});
+
+describe("lead ids", () => {
+  test("ids and times only, Meta's +0000 times read as UTC", () => {
+    expect(parseLeadIds([{ id: "990000000000001", created_time: "2026-10-15T10:21:33+0000", field_data: [{ name: "phone" }] }], "120000000000103")).toEqual([
+      { lead_id: "990000000000001", ad_id: "120000000000103", created_time: "2026-10-15T10:21:33.000Z" },
+    ]);
+  });
+
+  test("a lead without an id or a time stops the read", () => {
+    expect(() => parseLeadIds([{ created_time: "2026-10-15T10:21:33+0000" }], "120000000000103")).toThrow("without a lead id");
+    expect(() => parseLeadIds([{ id: "990000000000001" }], "120000000000103")).toThrow("without a time");
   });
 });
