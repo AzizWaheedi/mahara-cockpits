@@ -869,6 +869,27 @@ describe("the client panel", () => {
     );
   });
 
+  test("a refused client read says so once, with Try again, and no spinner left turning", async () => {
+    await show("/performance?client=locNotOnBoard99");
+    const panel = sheet();
+    expect(text(panel)).toContain("This client is not on your board.");
+    expect(buttons("Try again", panel).length).toBe(1);
+    expect(text(panel)).not.toContain("Reading the appointments");
+    // While it is read again, the spinner shows; refused again, it goes.
+    let release: (a: Answer) => void = () => {};
+    rpcAnswer = () => new Promise<Answer>(r => (release = r));
+    await click(button("Try again", panel));
+    expect(text(sheet())).toContain("Reading the appointments");
+    await act(async () =>
+      release({
+        data: null,
+        error: { code: "42501", message: "This client is not on your board." },
+      }),
+    );
+    await flush();
+    expect(text(sheet())).not.toContain("Reading the appointments");
+  });
+
   test("a client with no ad account says so instead of an empty tree", async () => {
     await show();
     await click(button("Open Nova Landscapes"));

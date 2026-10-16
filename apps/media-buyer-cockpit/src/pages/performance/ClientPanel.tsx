@@ -819,10 +819,13 @@ export function ClientPanel({
         ) : null}
 
         {!data ? (
-          <p className="flex items-center gap-2 border-t px-5 py-6 text-sm text-muted-foreground sm:px-6">
-            <Loader2 aria-hidden className="size-4 animate-spin" />
-            Reading the appointments, the ads and the levers
-          </p>
+          // A failed read with nothing kept says so above, with Try again.
+          page.status === "loading" || page.status === "idle" ? (
+            <p className="flex items-center gap-2 border-t px-5 py-6 text-sm text-muted-foreground sm:px-6">
+              <Loader2 aria-hidden className="size-4 animate-spin" />
+              Reading the appointments, the ads and the levers
+            </p>
+          ) : null
         ) : (
           <>
             <Part
