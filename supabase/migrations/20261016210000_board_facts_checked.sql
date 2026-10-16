@@ -160,7 +160,7 @@ COMMENT ON COLUMN public.cockpit_client_days.closes_lost IS 'Meetings this day w
 COMMENT ON COLUMN public.cockpit_client_days.closes_answered IS 'Meetings this day whose deal is answered (won, lost or pending in the sheet or the portal), one per contact; a sheet win counts on the contact''s first closed meeting only, as closes does. A breakdown (won / pending / lost of answered), not the gate''s close rate: that stays closes / shows (reportPeriod.ts, kpi.ts CLOSE_RATE_GATE 20%). NULL whenever closes is NULL, and for a client whose sheet and portal never mark a deal lost or pending (wins only: answered would equal won and read 100%).';
 COMMENT ON COLUMN public.cockpit_client_days.dials IS 'The dialer''s official dials: outcomes saved with a note, by the Kuwait day saved. NULL for a client the dialer does not list, and for a done-with-you (DWY) client, whom the call centre does not call (as leads_called).';
 COMMENT ON TABLE public.cockpit_client_days IS
-  'One row per client location per Kuwait day for the Client Performance board, written only by cockpit_board_facts_refresh. NULL means the source could not be read or the client does not fill it; 0 means it was read and has nothing. sources holds {ok, state, as_of, note, from, partial} per source: leads, appointments, outcomes, sheet_marks, provisional, sheet, sheet_copy, dialer, dialer_leads; partial is true while the source''s last read is before the day ended (the day is "so far"); sheet also has unpricedCloses on a day with closes whose value is in no known currency, leads has bulkImport on a day 10 or more contacts arrived within one hour. state is ok (a complete read), stale (partial: a closed day is never lowered; as_of NULL means no record of a read, so it covers no day), failed or none (the stored figure is kept).';
+  'One row per client location per Kuwait day for the Client Performance board, written only by cockpit_board_facts_refresh. NULL means the source could not be read or the client does not fill it; 0 means it was read and has nothing. sources holds {ok, state, as_of, note, from, partial} per source: leads, appointments, outcomes, sheet_marks, provisional, sheet, sheet_copy, dialer, dialer_leads; partial is true while the source''s last read is before the day ended (the day is "so far"); sheet also has unpricedCloses on a day with closes whose value is in no known currency, leads has bulkImport on a day 10 or more contacts arrived within one hour, dialer has lastAttemptAt (the newest saved attempt, which is activity; the dialer''s as_of is the refresh''s own live read). state is ok (a complete read), stale (partial: a closed day is never lowered; as_of NULL means no record of a read, so it covers no day), failed or none (the stored figure is kept).';
 
 ALTER TABLE public.cockpit_client_now
   ADD COLUMN IF NOT EXISTS verified_called_30d integer CHECK (coalesce(verified_called_30d, 0) >= 0),
@@ -268,8 +268,10 @@ BEGIN
   -- fills: whether the client fills the source's column at all (the sheet's
   -- Closed marks, the sheet copy's Quotation Y); a source it does not fill
   -- gives nothing, never a 0.
+  -- last_activity: the dialer's newest saved attempt, which is activity, not
+  -- a read (its as_of is the refresh's own read of the live dials).
   CREATE TEMP TABLE _bf_src (source text, location_id text, state text, as_of timestamptz, note text, cov_from date,
-    cov_months date[], fills boolean, keeps_n boolean) ON COMMIT DROP;
+    cov_months date[], fills boolean, keeps_n boolean, last_activity timestamptz) ON COMMIT DROP;
   CREATE TEMP TABLE _bf_v (location_id text, day date, metric text, value numeric) ON COMMIT DROP;
   CREATE TEMP TABLE _bf_out (location_id text, appointment_id text, attendance text, deal text, quotation boolean,
     project_value numeric, currency text, lead_quality numeric, captured_at timestamptz) ON COMMIT DROP;
@@ -1073,7 +1075,7 @@ BEGIN
       ) y WHERE y.n > 0 ORDER BY y.o LIMIT 1
     ) j ON true;
 
-    INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note)
+    INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note, last_activity)
     SELECT x.source, l.location_id,
       -- A client the dialer does not list has no dials and no leads called
       -- to count: both are unknown (NULL), never 0. A done-with-you client is
@@ -1082,8 +1084,10 @@ BEGIN
       CASE WHEN NOT EXISTS (SELECT 1 FROM mahara_reporting.cc_clients c WHERE c.id = l.location_id) THEN 'none'
            WHEN l.service_mode = 'DWY' THEN 'none'
            WHEN x.source = 'dialer_leads' THEN cs.state ELSE 'ok' END,
-      CASE WHEN x.source = 'dialer' THEN (SELECT to_timestamp(max(a.updated) / 1000.0) FROM mahara_console.attempts a WHERE a.namespace = 'production')
-           ELSE cs.last_success END,
+      -- The dials are read live by this refresh, so the dialer source is
+      -- read as of now; the newest saved attempt is activity, not a read, and
+      -- would leave yesterday "so far" until the first dial of the next day.
+      CASE WHEN x.source = 'dialer' THEN v_now ELSE cs.last_success END,
       nullif(concat_ws(' ',
         CASE WHEN x.source = 'dialer' AND NOT EXISTS (SELECT 1 FROM mahara_reporting.cc_clients c WHERE c.id = l.location_id)
              THEN 'The dialer does not list this client, so its dials are not known.'
@@ -1102,7 +1106,8 @@ BEGIN
              THEN 'Done with you: the call centre does not call this client''s leads, so dials do not apply.'
              WHEN l.service_mode = 'DWY' THEN 'Done with you: the call centre does not call this client''s leads, so leads called do not apply.' END,
         CASE WHEN EXISTS (SELECT 1 FROM mahara_console.metadata m WHERE m.namespace = 'production' AND m.id = 'access:client:' || l.location_id
-                          AND m.data->>'active' = 'false') THEN 'This client is switched off in the dialer.' END), '')
+                          AND m.data->>'active' = 'false') THEN 'This client is switched off in the dialer.' END), ''),
+      CASE WHEN x.source = 'dialer' THEN (SELECT to_timestamp(max(a.updated) / 1000.0) FROM mahara_console.attempts a WHERE a.namespace = 'production') END
     FROM pg_temp._bf_loc l CROSS JOIN (VALUES ('dialer'), ('dialer_leads')) x(source)
     JOIN pg_temp._bf_cs cs ON cs.location_id = l.location_id
     CROSS JOIN LATERAL (
@@ -1300,7 +1305,8 @@ BEGIN
     -- The sheet marks a deal lost or pending somewhere (N or P).
     coalesce(bool_or(s.keeps_n) FILTER (WHERE s.source = 'sheet'), false) AS sheet_marks_np,
     jsonb_object_agg(s.source, jsonb_build_object('ok', s.state = 'ok', 'state', s.state, 'as_of', s.as_of, 'note', s.note)
-      || CASE WHEN s.cov_from IS NOT NULL THEN jsonb_build_object('from', s.cov_from) ELSE '{}'::jsonb END) AS sources
+      || CASE WHEN s.cov_from IS NOT NULL THEN jsonb_build_object('from', s.cov_from) ELSE '{}'::jsonb END
+      || CASE WHEN s.last_activity IS NOT NULL THEN jsonb_build_object('lastAttemptAt', s.last_activity) ELSE '{}'::jsonb END) AS sources
   FROM pg_temp._bf_src s GROUP BY 1;
   ALTER TABLE pg_temp._bf_st ADD COLUMN portal_none boolean, ADD COLUMN lq_none boolean, ADD COLUMN sheet_months date[],
     ADD COLUMN portal_fills_deal boolean, ADD COLUMN portal_fills_quote boolean, ADD COLUMN portal_marks_np boolean;

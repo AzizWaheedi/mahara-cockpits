@@ -1365,6 +1365,18 @@ describe("the dialer", () => {
     expect((await dayRow(LOC_A, kd(2))).dials).toBe(2);
     expect((await dayRow(LOC_A, kd(1))).dials).toBe(1);
     expect((await dayRow(LOC_A, kd(3))).leads_called).toBe(1);
+    // The dials are read live by the refresh: yesterday is complete and today
+    // is so far, whenever the last dial was saved; the newest saved attempt
+    // is kept apart as activity.
+    const dialer1 = ((await dayRow(LOC_A, kd(1))).sources as Record<string, Row>).dialer;
+    expect(dialer1.partial).toBe(false);
+    expect(dialer1.lastAttemptAt).toBeTruthy();
+    expect(new Date(String(dialer1.as_of)).getTime()).toBeGreaterThan(
+      new Date(String(dialer1.lastAttemptAt)).getTime(),
+    );
+    expect(
+      ((await dayRow(LOC_A, today)).sources as Record<string, Row>).dialer.partial,
+    ).toBe(true);
     // Client B is done with you, and the dialer lists it: the call centre
     // does not call its leads, so dials and leads called do not apply (NULL),
     // never a 0 that reads as no work done.

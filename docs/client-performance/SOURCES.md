@@ -46,7 +46,11 @@ board's read functions and screen).
   as the reach row it shows.
 - **Today is "so far".** Every source on a day carries `partial: true` while
   its last read is before the day ended. Show "so far, as of HH:MM Kuwait"
-  and no rates or target colours on a partial day.
+  and no rates or target colours on a partial day. The dialer's dials are
+  read live by each refresh, so its `as_of` is the refresh's read, and the
+  newest saved attempt is kept apart as `lastAttemptAt` (activity, not a
+  read). The portal's outcomes carry no `partial`: their `as_of` is the
+  client's latest report.
 - **Ratios are ratios of sums** over the same rows, never averages of daily
   or per-account ratios.
 - **A stale source never lowers a closed day**; a complete read may, and the
