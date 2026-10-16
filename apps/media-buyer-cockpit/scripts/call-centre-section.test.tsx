@@ -907,7 +907,7 @@ describe("the lead bar, the waiting and the sources", () => {
     await show();
     expect(waiting()?.hasAttribute("open")).toBe(true);
     expect(waiting()?.textContent).toContain(
-      "6 leads were not called or messaged after a working hour",
+      "6 leads have no call or saved outcome after a working hour",
     );
     expect(firstLine().text).toContain(
       "74 of 110 callable leads have a call on Maqsam (67%, the line is 90%).",

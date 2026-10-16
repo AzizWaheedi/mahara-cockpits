@@ -1145,8 +1145,9 @@ function WaitingPart({ data }: { data: CallCentre }) {
         >
           {u.count > 0 ? (
             <>
-              {count(u.count)} lead{u.count === 1 ? " was" : "s were"} not
-              called or messaged after a working hour
+              {line
+                ? `${count(u.count)} lead${u.count === 1 ? " has" : "s have"} no call or saved outcome after a working hour`
+                : `${count(u.count)} lead${u.count === 1 ? " was" : "s were"} not called or messaged after a working hour`}
               {u.oldestWorkSeconds !== null
                 ? `; the oldest has waited ${formatDuration(u.oldestWorkSeconds)} of working time`
                 : ""}

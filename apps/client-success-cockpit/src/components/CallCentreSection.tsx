@@ -1210,7 +1210,7 @@ function WaitingNow({ data }: { data: CallCentre }) {
           tone={u.count || line?.under ? "warn" : "good"}
           title={
             u.count
-              ? `${plural(u.count, "lead")} with no call or message yet`
+              ? `${plural(u.count, "lead")} with no call or ${line ? "outcome" : "message"} yet`
               : !line
                 ? "Every lead older than a working hour was called or messaged"
                 : line.outcomeOnly

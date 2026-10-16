@@ -489,7 +489,7 @@ describe("the first screen", () => {
 
   test("waiting opens when someone waits, and the sources stay folded", async () => {
     await show("call_centre");
-    expect(text()).toContain("12 leads with no call or message yet");
+    expect(text()).toContain("12 leads with no call or outcome yet");
     expect(text()).toContain(
       "The oldest has waited 1 d 2 h of working time, since 9 Oct.",
     );
@@ -643,7 +643,7 @@ describe("the first screen", () => {
   test("nothing waits: the fold stays shut and says so", async () => {
     await show("lead_quality");
     expect(text()).toContain("Waiting now");
-    expect(text()).not.toContain("with no call or message yet");
+    expect(text()).not.toMatch(/with no call or (message|outcome) yet/);
     const waiting = Array.from(host.querySelectorAll("details")).find(d =>
       d.textContent?.includes("Waiting now"),
     );
