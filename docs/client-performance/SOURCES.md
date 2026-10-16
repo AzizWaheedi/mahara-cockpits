@@ -471,7 +471,9 @@ board's read functions and screen).
   (`call_center_events` kind outcome), by the Kuwait day saved.
 - **Checked against:** `mahara_call_center_report` dials (equal for all 17).
 - **Rule (fixed 16 Oct):** NULL for a client the dialer does not list (15
-  such clients read 0 on every day).
+  such clients read 0 on every day), and NULL for a done-with-you client the
+  dialer lists (نهوض نجد read 0 on all 120 days); the day's `sources.dialer`
+  says which, with state `none`.
 - **Gaps:** a dial is a saved outcome, not a Maqsam call: one caller saved 798
   outcomes against 530 provider calls in 30 days. See "Leads contacted".
 
@@ -480,6 +482,8 @@ board's read functions and screen).
 - **Source of truth:** `call_center_events` leads with a verified Maqsam first
   dial, by lead creation day, WhatsApp chats left out.
 - **Checked against:** the dialer's report `leadsDialed` (equal for all 17).
+- **Rule:** NULL, never 0, for a client the dialer does not list and for a
+  done-with-you client, as dials.
 - **Freshness:** as current as the oldest Maqsam call job of the client's
   assigned callers (behind after 3 hours or an error).
 

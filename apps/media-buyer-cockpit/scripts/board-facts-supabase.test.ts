@@ -1365,6 +1365,20 @@ describe("the dialer", () => {
     expect((await dayRow(LOC_A, kd(2))).dials).toBe(2);
     expect((await dayRow(LOC_A, kd(1))).dials).toBe(1);
     expect((await dayRow(LOC_A, kd(3))).leads_called).toBe(1);
+    // Client B is done with you, and the dialer lists it: the call centre
+    // does not call its leads, so dials and leads called do not apply (NULL),
+    // never a 0 that reads as no work done.
+    expect(
+      await q("SELECT 1 FROM mahara_reporting.cc_clients WHERE id = $1", [LOC_B]),
+    ).toHaveLength(1);
+    for (const n of [1, 2, 3]) {
+      const b = await dayRow(LOC_B, kd(n));
+      expect(b.dials).toBeNull();
+      expect(b.leads_called).toBeNull();
+    }
+    const b1 = (await dayRow(LOC_B, kd(1))).sources as Record<string, Row>;
+    expect(b1.dialer).toMatchObject({ state: "none" });
+    expect(String(b1.dialer.note)).toContain("Done with you");
   });
 
   test("waiting now equals cockpit_client_calls for every client, and the median first call equals the report's", async () => {

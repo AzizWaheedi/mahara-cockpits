@@ -158,7 +158,7 @@ COMMENT ON COLUMN public.cockpit_client_days.closes IS
 COMMENT ON COLUMN public.cockpit_client_days.closes_pending IS 'Meetings this day whose deal is marked pending: the sheet''s Closed P or the portal''s pending, one per contact, not a contact closed this day. NULL whenever closes is NULL, and for a client whose sheet and portal never mark a deal lost or pending (only wins are marked, so pending is not known).';
 COMMENT ON COLUMN public.cockpit_client_days.closes_lost IS 'Meetings this day whose deal is marked lost: the sheet''s Closed N or the portal''s lost, one per contact, not a contact closed this day. NULL whenever closes is NULL, and for a client whose sheet and portal never mark a deal lost or pending.';
 COMMENT ON COLUMN public.cockpit_client_days.closes_answered IS 'Meetings this day whose deal is answered (won, lost or pending in the sheet or the portal), one per contact; a sheet win counts on the contact''s first closed meeting only, as closes does. A breakdown (won / pending / lost of answered), not the gate''s close rate: that stays closes / shows (reportPeriod.ts, kpi.ts CLOSE_RATE_GATE 20%). NULL whenever closes is NULL, and for a client whose sheet and portal never mark a deal lost or pending (wins only: answered would equal won and read 100%).';
-COMMENT ON COLUMN public.cockpit_client_days.dials IS 'The dialer''s official dials: outcomes saved with a note, by the Kuwait day saved. NULL for a client the dialer does not list.';
+COMMENT ON COLUMN public.cockpit_client_days.dials IS 'The dialer''s official dials: outcomes saved with a note, by the Kuwait day saved. NULL for a client the dialer does not list, and for a done-with-you (DWY) client, whom the call centre does not call (as leads_called).';
 COMMENT ON TABLE public.cockpit_client_days IS
   'One row per client location per Kuwait day for the Client Performance board, written only by cockpit_board_facts_refresh. NULL means the source could not be read or the client does not fill it; 0 means it was read and has nothing. sources holds {ok, state, as_of, note, from, partial} per source: leads, appointments, outcomes, sheet_marks, provisional, sheet, sheet_copy, dialer, dialer_leads; partial is true while the source''s last read is before the day ended (the day is "so far"); sheet also has unpricedCloses on a day with closes whose value is in no known currency, leads has bulkImport on a day 10 or more contacts arrived within one hour. state is ok (a complete read), stale (partial: a closed day is never lowered; as_of NULL means no record of a read, so it covers no day), failed or none (the stored figure is kept).';
 
@@ -1076,8 +1076,11 @@ BEGIN
     INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note)
     SELECT x.source, l.location_id,
       -- A client the dialer does not list has no dials and no leads called
-      -- to count: both are unknown (NULL), never 0.
+      -- to count: both are unknown (NULL), never 0. A done-with-you client is
+      -- not called by the call centre: both are not applicable (NULL), never
+      -- a 0 that reads as no work done.
       CASE WHEN NOT EXISTS (SELECT 1 FROM mahara_reporting.cc_clients c WHERE c.id = l.location_id) THEN 'none'
+           WHEN l.service_mode = 'DWY' THEN 'none'
            WHEN x.source = 'dialer_leads' THEN cs.state ELSE 'ok' END,
       CASE WHEN x.source = 'dialer' THEN (SELECT to_timestamp(max(a.updated) / 1000.0) FROM mahara_console.attempts a WHERE a.namespace = 'production')
            ELSE cs.last_success END,
@@ -1095,7 +1098,9 @@ BEGIN
         CASE WHEN x.source = 'dialer_leads' AND ch.n > 0
              THEN format('%s WhatsApp chat contact%s the dialer called in these days %s left out, as in CRM leads.',
                ch.n, CASE WHEN ch.n = 1 THEN '' ELSE 's' END, CASE WHEN ch.n = 1 THEN 'is' ELSE 'are' END) END,
-        CASE WHEN l.service_mode = 'DWY' THEN 'Done with you: the call centre does not call this client''s leads.' END,
+        CASE WHEN l.service_mode = 'DWY' AND x.source = 'dialer'
+             THEN 'Done with you: the call centre does not call this client''s leads, so dials do not apply.'
+             WHEN l.service_mode = 'DWY' THEN 'Done with you: the call centre does not call this client''s leads, so leads called do not apply.' END,
         CASE WHEN EXISTS (SELECT 1 FROM mahara_console.metadata m WHERE m.namespace = 'production' AND m.id = 'access:client:' || l.location_id
                           AND m.data->>'active' = 'false') THEN 'This client is switched off in the dialer.' END), '')
     FROM pg_temp._bf_loc l CROSS JOIN (VALUES ('dialer'), ('dialer_leads')) x(source)
@@ -1473,9 +1478,11 @@ BEGIN
       CASE WHEN e.c_unanswered THEN NULL ELSE e.closes_answered END) END::int AS closes_answered,
     public.cockpit_board_facts_pick(e.s_lq, e.day, v_today, o.lead_quality_sum, e.lq_sum) AS lead_quality_sum,
     public.cockpit_board_facts_pick(e.s_lq, e.day, v_today, o.lead_quality_count, e.lq_count)::int AS lead_quality_count,
-    -- A client the dialer does not list: dials unknown, even over a stored 0.
+    -- A client the dialer does not list, or a done-with-you client: dials and
+    -- leads called unknown or not applicable (NULL), even over a stored 0.
     CASE WHEN e.s_dials = 'none' THEN NULL ELSE public.cockpit_board_facts_pick(e.s_dials, e.day, v_today, o.dials, e.dials) END::int AS dials,
-    public.cockpit_board_facts_pick(e.s_called, e.day, v_today, o.leads_called, e.leads_called)::int AS leads_called
+    CASE WHEN e.s_called = 'none' THEN NULL
+         ELSE public.cockpit_board_facts_pick(e.s_called, e.day, v_today, o.leads_called, e.leads_called) END::int AS leads_called
   FROM ef2 e
   LEFT JOIN public.cockpit_client_days o ON o.location_id = e.location_id AND o.day = e.day
   LEFT JOIN pg_temp._bf_bulk bk ON bk.location_id = e.location_id AND bk.day = e.day;
