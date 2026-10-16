@@ -945,6 +945,92 @@ Deploying (the lead session). In order:
 To stop the runs: `select cron.unschedule(jobid) from cron.job where jobname like 'mahara-meta-ad-days-%';`.
 The stored rows stay, and `cockpit_meta_ad_days_status()` gives each account's last day and last read.
 
+## Client facts (the Client Performance board's business numbers)
+
+Built 2026-10-16 for the shared Client Performance board. The plpgsql
+function `cockpit_board_facts_refresh(from, to)` (migration
+`20261016111157_board_facts.sql`) runs inside the database as `postgres`, by
+pg_cron: `mahara-board-facts` at minutes 10 and 40 rebuilds today and the two
+days before, `mahara-board-facts-nightly` at 00:50 UTC (03:50 Kuwait) the last
+120 days. It calls nothing outside the database. It writes three tables, none
+readable by a browser (the board's own read functions are the only door):
+
+- `cockpit_board_clients`: one row per GoHighLevel location with its ClickUp
+  card, status, service mode, TikTok flag and every Meta ad account tied to it
+  (digits only), tied the way the lead sync watch ties them:
+  `clients.ghl_location_id`, then `ghl_client_ad_accounts`, then the client
+  name. `ad_account_ties` says how each one was tied.
+- `cockpit_client_days`: one row per client per Kuwait day. CRM leads by
+  creation day (WhatsApp chats tagged "inbound whatsapp" with no ad left out);
+  confirmed bookings by the day they were made (main and online calendars,
+  cancelled, invalid and Google Calendar copies left out); provisional
+  bookings (the not-confirmed calendar, the dialer's way, less Google copies by
+  id or by contact and start time); meetings due, shows, no-shows and no
+  outcome by meeting day (CRM status, then the client sheet's mark, then the
+  portal; unmarked is never a no-show); quotations (the sheet copy's Y or the
+  portal's yes, the larger per day); closes and revenue (the sheet's first
+  closed meeting per contact, the portal's won deals, one deal counted once,
+  USD only); lead quality (the portal's latest score, 1 to 10); the dialer's
+  official dials; leads called (WhatsApp chats left out).
+- `cockpit_client_now`: per client, leads waiting for a first touch, the
+  oldest of them, the share of the last 30 days' leads touched (0.9 is 90%),
+  and the median first call in working seconds, the same rules as the client
+  page's call centre (`cockpit_client_calls`).
+
+Every day row carries `sources`: per source `{ok, state, as_of, note, from}`.
+NULL means no source covered the figure (a failed read, a client who does not
+fill it, a day after a stale sync's last read, a month the sheet has no tab
+for, a day before the client's first portal report); 0 means a source read
+the day and found nothing. A stale source never lowers a closed day; a
+complete read may, and the run's audit row (`board_facts.refresh`) lists each
+drop. Each run writes the state row `board-facts` in `cockpit_sync_state`
+(`detail`: clients, rows, each source's states, failures, drops, the last
+120-day fill). One look at all of it, with the problems in plain words:
+`select public.cockpit_board_facts_doctor();` (service key or SQL editor).
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| A note on a day: "The lead sync last ran ..." or "The appointments sync last ran ..." | The GoHighLevel sync for that client is behind (`lead_sync_state`, `appointment_sync_state`). Fix the sync (`mahara-ghl-leads` at :35, `mahara-ghl-appointments` at :20); the next refresh fills the days. | Systems manager |
+| "The client sheet copy ... last read" or "The sheet was last read ..." | The CSM profile sync or the dialer's sheet reader is behind or the sheet errored (`mahara_reporting.sheet_snapshots.error`). Shows, quotations and closes for later days stay empty until it reads again. | Systems manager |
+| Quotations or closes are empty for a client | The client has no sheet copy and no portal reports, or the day is before its first portal report or in a month its sheet has no tab for. Ask the client success manager to get the sheet filled; nothing to fix in the database. | Client success |
+| A client is missing an ad account | `select public.cockpit_board_facts_doctor()->'spine';` lists active clients with none. Add the tie (`clients.ghl_location_id` or a `ghl_client_ad_accounts` row); the next refresh picks it up. Today Professional Touch has none (its account is not shared with Mahara's business). | Client success or systems manager |
+| The state row `board-facts` says a source "could not be read" | Its figures stored before are kept. Run `select public.cockpit_board_facts_refresh(current_date - 2, current_date);` in the SQL editor to see the error, fix the view it names, and the next run fills the days. | Systems manager |
+| The refresh stopped (doctor: "last ran ...") | Check both jobs are in `cron.job` and active: `select jobname, schedule, active from cron.job where jobname like 'mahara-board-facts%';`. Re-apply the migration to schedule them again. | Systems manager |
+
+Deploying (the lead session). In order:
+
+1. Apply `20261016111157_board_facts.sql` (`scripts/dev/apply_migration.py`,
+   or Composio `SUPABASE_APPLY_A_MIGRATION` with BEGIN and COMMIT stripped).
+   It needs the cockpit core, the dialer's reporting views, and
+   `20261013180000_cockpit_client_calls.sql`. The 30-minute job starts at once.
+2. Fill the 120 days once: `select public.cockpit_board_facts_run('nightly');`.
+3. Doctor: `select public.cockpit_board_facts_doctor();` should list no
+   problems.
+4. Second source, the 30 full days before today, three clients:
+
+   ```sql
+   select b.client_name, sum(d.confirmed_bookings) confirmed, sum(d.shows) shows, sum(d.no_shows) no_shows,
+          sum(d.no_outcome) no_outcome, sum(d.dials) dials
+   from cockpit_client_days d join cockpit_board_clients b using (location_id)
+   where d.day between current_date - 30 and current_date - 1
+     and b.client_name in ('Atlantis Contracting', 'Arcturus Construction', 'Ocean Home')
+   group by 1;
+   ```
+
+   Compare with the CEO Delivery card (`cockpit_sections` key `delivery`,
+   `rates30`) and the dialer's report (key `calls`, `report.clients`). On
+   2026-10-16 (16 Sep to 15 Oct) the same rules read live gave: Atlantis 11
+   confirmed by booking day (Delivery 28 by meeting day: 16 of them Google
+   Calendar copies), 5 shows, 3 no-shows, 4 no outcome (Delivery 20: the same
+   16 copies); Arcturus 29 (Delivery 30: one cancelled meeting it counts), 17
+   shows (Delivery 16: one meeting the sheet marked that the CRM copy missed),
+   9 no-shows; Ocean Home 30 (Delivery 31 by meeting day), 1 show, 30 with no
+   outcome. Dials, 17 Sep to 16 Oct, equal the dialer's report exactly:
+   Atlantis 62, Arcturus 165, Ocean Home 203.
+
+To stop the refresh: `select cron.unschedule(jobid) from cron.job where jobname like 'mahara-board-facts%';`.
+The stored days stay, and the board shows them with the time of the last run.
+
 ## Hiring
 
 The careers Typeforms into the MaharaMedia Hiring boards, the boards into the
