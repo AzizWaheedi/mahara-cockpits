@@ -558,8 +558,9 @@ CREATE OR REPLACE FUNCTION public.cockpit_eod_radar_read(p_from date,p_to date)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
 DECLARE w record;
 BEGIN
-  IF NOT (public.cockpit_is_ceo() OR public.cockpit_has_role('admin')) THEN
-    RAISE EXCEPTION 'EOD Radar is for the CEO and admins' USING ERRCODE='42501';
+  -- The CEO cockpit is the CEO's alone: an admin seat does not open it.
+  IF NOT public.cockpit_is_ceo() THEN
+    RAISE EXCEPTION 'EOD Radar is for the CEO' USING ERRCODE='42501';
   END IF;
   SELECT * INTO w FROM public.cockpit_eod_radar_window(to_char(p_from,'YYYY-MM-DD'), to_char(p_to,'YYYY-MM-DD'), 62);
   RETURN jsonb_build_object(

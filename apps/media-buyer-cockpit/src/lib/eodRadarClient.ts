@@ -10,7 +10,7 @@ import type {
 
 /**
  * EOD Radar for the Management tab: `cockpit_eod_radar_read` with the CEO's
- * session (the function lets the CEO and admins in), read into the board the
+ * session (the function lets only the CEO in), read into the board the
  * card trusts. A shape this does not know is an error, never an empty board.
  */
 

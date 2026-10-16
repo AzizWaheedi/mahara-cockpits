@@ -297,7 +297,7 @@ describe("tables and grants", () => {
 });
 
 describe("the CEO's read", () => {
-  test("refused to signed-out and ordinary members, open to the CEO and admins", async () => {
+  test("refused to signed-out members, ordinary members and admins; open to the CEO", async () => {
     await refused(() => read(null as unknown as string), "42501");
     await refused(() => read(MEMBER), "42501");
     expect((await read(CEO)).settings).toMatchObject({
@@ -305,7 +305,7 @@ describe("the CEO's read", () => {
       strikesOn: false,
       digestOn: true,
     });
-    expect((await read(ADMIN)).people.length).toBeGreaterThan(0);
+    await refused(() => read(ADMIN), "42501");
   });
 
   test("who is on the radar, and who has no EOD channel", async () => {
