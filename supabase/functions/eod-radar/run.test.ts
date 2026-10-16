@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { fakeFetch, ok, type Route } from "../cockpit-hours-watch/testkit.ts";
 import { makeDoor, readJob } from "./door.ts";
-import { CH, makeCsr, makeNextDay, makeUnclosedDate, PEOPLE } from "./fixtures.ts";
+import { CH, makeCsr, makeNextDay, makeUnclosedDate, outboxCsm, PEOPLE } from "./fixtures.ts";
 import type { SlackMessage } from "./parse.ts";
 import { daysBetween, isFriday } from "./rules.ts";
 import { type ReceiptRow, type RunDeps, runRadar } from "./run.ts";
@@ -180,6 +180,22 @@ describe("a run", () => {
     await runRadar(t.deps, job());
     expect(t.calls[1].args.p.slackIds).toEqual([{ personId: 7, slackUserId: null, state: "refused", note: "Slack refused the lookup (missing_scope)" }]);
     expect(t.calls[1].args.p.note).toContain("the Slack app needs users:read.email");
+  });
+
+  test("a CSM EOD from the cockpit (outbox channel #eods-csms) is one credit under the channel's id, and the run writes", async () => {
+    const base = inputs("2026-10-12", "2026-10-14", "2026-10-14");
+    const rasem = PEOPLE.find(p => p.personId === 28)!;
+    const people = [...base.people, { ...base.people[0], ...rasem, slackSource: "lookup", slackState: "ok", slackCheckedAt: NOW.toISOString() }];
+    // The database names the channel's id; an older shape (or a row it could not resolve) still says #eods-csms.
+    const outbox = [{ id: 9, role: "csm", day: "2026-10-14", person: "Rasem Abdel All", slackId: "U0C5JHUCTPG", channel: "#eods-csms", slackTs: outboxCsm.ts, createdAt: "2026-10-14T16:58:00Z" }];
+    const s = setup({ now: kw("2026-10-14 23:05"), history: { ...HISTORY, [CH.csms]: [outboxCsm] }, inputs: { people, outbox } });
+    const r = await runRadar(s.deps, job());
+    const apply = s.calls[1].args.p;
+    expect(apply.rows.find((x: any) => x.personId === 28 && x.day === "2026-10-14")).toMatchObject({
+      status: "on_time", creditedBy: "cockpit_outbox", postedChannel: CH.csms, slackTs: outboxCsm.ts, posts: 1,
+    });
+    for (const x of apply.rows) if (x.postedChannel !== null) expect(x.postedChannel).toMatch(/^[CG][A-Z0-9]{8,12}$/);
+    expect(r.digest?.state).toBe("posted");
   });
 
   test("every Slack call is receipted, with no token, email or channel in the ledger", async () => {

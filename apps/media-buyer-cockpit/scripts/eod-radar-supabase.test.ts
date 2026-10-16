@@ -385,6 +385,27 @@ describe("a run's inputs", () => {
   });
 });
 
+describe("a run's inputs: the CSM's outbox channel", () => {
+  test("a row that names its channel (#eods-csms) comes back as the channel's id", async () => {
+    await owner(db);
+    await db.query(`insert into eod_outbox(role,day,person,slack_id,channel,body,status,slack_ts,sent_at) values
+      ('csm','2026-10-12','Rasem Abdel All','U0C5JHUCTPG','#eods-csms','x','sent','1791826200.000100',now())`);
+    const i = await svc("cockpit_eod_radar_inputs", {
+      from: "2026-10-12",
+      to: "2026-10-12",
+    });
+    expect(i.outbox).toEqual([
+      expect.objectContaining({
+        role: "csm",
+        channel: "C09RQS2TFST",
+        slackTs: "1791826200.000100",
+      }),
+    ]);
+    await owner(db);
+    await db.query("delete from eod_outbox where role='csm'");
+  });
+});
+
 describe("writing a run", () => {
   test("rows are upserted once; a second identical run changes nothing; each run leaves one audit row", async () => {
     const before = await auditCount("eod_radar.run");

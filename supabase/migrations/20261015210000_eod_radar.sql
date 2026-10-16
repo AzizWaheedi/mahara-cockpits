@@ -356,8 +356,14 @@ BEGIN
     'channels', coalesce((SELECT jsonb_agg(DISTINCT jsonb_build_object('id', c.channel_id, 'name', c.channel_name))
                            FROM public.cockpit_eod_channels c WHERE c.files_eod), '[]'::jsonb),
     'people', public.cockpit_eod_radar_people(w.from_day, w.to_day),
+    -- The CSM's outbox rows name their channel ('#eods-csms', 20261015190000), the others carry its id: always the id here.
     'outbox', coalesce((SELECT jsonb_agg(jsonb_build_object('id', o.id, 'role', o.role, 'day', o.day, 'person', o.person,
-                  'slackId', o.slack_id, 'channel', o.channel, 'slackTs', o.slack_ts, 'createdAt', o.created_at) ORDER BY o.id)
+                  'slackId', o.slack_id,
+                  'channel', coalesce(CASE WHEN o.channel ~ '^[CG][A-Z0-9]{8,12}$' THEN o.channel END,
+                    (SELECT c.channel_id FROM public.cockpit_eod_channels c
+                      WHERE c.files_eod AND c.channel_name = lower(ltrim(btrim(o.channel),'#')) ORDER BY c.priority, c.id LIMIT 1),
+                    o.channel),
+                  'slackTs', o.slack_ts, 'createdAt', o.created_at) ORDER BY o.id)
                 FROM public.eod_outbox o
                 WHERE o.status = 'sent' AND public.cockpit_eod_radar_try_date(o.day) BETWEEN w.from_day AND w.to_day), '[]'::jsonb),
     'digests', coalesce((SELECT jsonb_agg(jsonb_build_object('day', to_char(g.day,'YYYY-MM-DD'), 'state', g.state, 'attempts', g.attempts) ORDER BY g.day)

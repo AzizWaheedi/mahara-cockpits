@@ -11,7 +11,9 @@
  *
  * Who a post credits, in order:
  *   1. the cockpit outbox row Slack has under that ts (cockpit_outbox): its
- *      person, its day, and the earlier of filing and posting;
+ *      person, its day, and the earlier of filing and posting. Matched by the
+ *      ts alone: the CSM's outbox rows name their channel ("#eods-csms"), not
+ *      its id, so a channel check would miss them;
  *   2. the "Submitted by: <@id>" line (submitted_by), unless the Name line
  *      names someone else on the radar, when the Name line wins (Make fills
  *      Submitted by from the name, and its fallback id can be a person who
@@ -125,6 +127,13 @@ export type Unmatched = { channel: string; ts: string; name: string | null; reas
 
 const key = (personId: number, day: string) => `${personId}:${day}`;
 
+const CHANNEL_ID = /^[CG][A-Z0-9]{8,12}$/;
+const SLACK_TS = /^[0-9]{9,11}\.[0-9]{6}$/;
+/** A Slack channel id, or null for anything else ("#eods-csms" is a name): the table takes ids only. */
+export const channelIdOrNull = (c: string | null | undefined): string | null => (c && CHANNEL_ID.test(c) ? c : null);
+/** A Slack ts, or null. */
+const tsOrNull = (t: string | null | undefined): string | null => (t && SLACK_TS.test(t) ? t : null);
+
 /** "media_buyer" -> "MEDIA BUYER", "sales_closer" -> "SALES CLOSER": the outbox role as a form header. */
 const outboxHeader = (role: string) => role.replace(/_/g, " ").toUpperCase();
 
@@ -159,8 +168,9 @@ export function creditPosts(input: { posts: Post[]; people: Person[]; outbox: Ou
   const { posts, people, outbox, from, to } = input;
   const bySlack = new Map<string, Person>();
   for (const p of people) if (p.slackUserId) bySlack.set(p.slackUserId, p);
+  // By ts alone; a row that names a channel id must name the post's channel too.
   const outboxByTs = new Map<string, OutboxRow>();
-  for (const o of outbox) if (o.slackTs) outboxByTs.set(`${o.channel}:${o.slackTs}`, o);
+  for (const o of outbox) if (o.slackTs && !outboxByTs.has(o.slackTs)) outboxByTs.set(o.slackTs, o);
   const credits = new Map<string, Credit>();
   const unmatched: Unmatched[] = [];
   const usedOutbox = new Set<number>();
@@ -172,7 +182,8 @@ export function creditPosts(input: { posts: Post[]; people: Person[]; outbox: Ou
       tests++;
       continue;
     }
-    const row = outboxByTs.get(`${post.channel}:${post.ts}`);
+    const byTs = outboxByTs.get(post.ts);
+    const row = byTs && (!channelIdOrNull(byTs.channel) || byTs.channel === post.channel) ? byTs : undefined;
     if (row) {
       usedOutbox.add(row.id);
       const person = outboxPerson(row, people, bySlack);
@@ -230,7 +241,7 @@ export function creditPosts(input: { posts: Post[]; people: Person[]; outbox: Ou
     const filed = Date.parse(row.createdAt);
     if (!person || !Number.isFinite(filed)) continue;
     merge(credits, {
-      personId: person.personId, day: row.day, at: filed, ts: row.slackTs, channel: row.channel, by: "cockpit_outbox",
+      personId: person.personId, day: row.day, at: filed, ts: tsOrNull(row.slackTs), channel: channelIdOrNull(row.channel), by: "cockpit_outbox",
       words: null, quality: null, posts: 1, note: "From the cockpit's sent EODs; the post itself was not read in Slack",
     });
   }
@@ -285,7 +296,7 @@ const channels = (unread: Unread[]) => unread.map(u => `#${u.name}`).join(", ");
 export function decideDay(a: { person: Person; info: DayInfo; credit: Credit | undefined; now: number; settings: Settings; unread: Unread[] }): Row {
   const { person, info, credit, now, settings, unread } = a;
   const base = {
-    personId: person.personId, day: info.day, channel: person.channel, postedAt: null, slackTs: null, postedChannel: null,
+    personId: person.personId, day: info.day, channel: channelIdOrNull(person.channel), postedAt: null, slackTs: null, postedChannel: null,
     lateMinutes: null, creditedBy: null, words: null, quality: null, posts: 0,
   };
   if (credit) {
@@ -293,8 +304,8 @@ export function decideDay(a: { person: Person; info: DayInfo; credit: Credit | u
     const late = credit.at > cutoff;
     const away = info.off ? `Filed on a day off (${OFF_TEXT[info.off].toLowerCase()})` : info.leave ? "Filed while on leave" : null;
     return {
-      ...base, status: late ? "late" : "on_time", postedAt: new Date(credit.at).toISOString(), slackTs: credit.ts,
-      postedChannel: credit.channel, lateMinutes: late ? Math.max(1, Math.ceil((credit.at - cutoff) / 60_000)) : null,
+      ...base, status: late ? "late" : "on_time", postedAt: new Date(credit.at).toISOString(), slackTs: tsOrNull(credit.ts),
+      postedChannel: channelIdOrNull(credit.channel), lateMinutes: late ? Math.max(1, Math.ceil((credit.at - cutoff) / 60_000)) : null,
       creditedBy: credit.by, words: credit.words, quality: credit.quality, posts: credit.posts,
       note: [credit.note, away].filter(Boolean).join(". ").slice(0, 300) || null,
     };

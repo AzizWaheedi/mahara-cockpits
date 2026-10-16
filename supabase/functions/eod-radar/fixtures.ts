@@ -72,6 +72,12 @@ export const outboxNoId: SlackMessage = {
   text: "*SALES REP EOD*\n*Date - 2026-10-08*\n\n*Name - Ahmed Abushaiba*\nSubmitted by: Ahmed Abushaiba (no Slack id on their cockpit seat)\n\n*Today's Numbers*\nSlots available - 0\nDemos showed - 1",
 };
 
+/** The cockpit outbox, CSM form: the row names its channel "#eods-csms"; Slack has the post in its id. */
+export const outboxCsm: SlackMessage = {
+  ...CLUB, ts: tsAt("2026-10-14 20:05", "412233"),
+  text: "*CSM EOD*\n*Date - 2026-10-14*\n\n*Name - Rasem Abdel All*\nSubmitted by: <@U0C5JHUCTPG>\n\n*HEALTH*\nEnergy - 8\nStress - 3\n\n*CALLS*\nThree onboarding calls held.",
+};
+
 /** A person's own message: no bot, no form. */
 export const selfPosted: SlackMessage = {
   user: "U0AJQ8P1ACF", ts: tsAt("2026-10-14 21:40"),

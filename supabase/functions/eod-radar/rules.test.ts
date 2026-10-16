@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   ahmedOnly, CH, makeContinuation, makeCsr, makeNextDay, makeTest, makeUnclosedDate, makeWrongSubmitter, mention,
-  outboxClub, outboxNoId, PEOPLE, person, selfPosted, tsAt,
+  outboxClub, outboxCsm, outboxNoId, PEOPLE, person, selfPosted, tsAt,
 } from "./fixtures.ts";
 import { parsePost, type Post, type SlackMessage } from "./parse.ts";
 import {
@@ -71,6 +71,21 @@ describe("who a post credits", () => {
   test("a sent outbox EOD in a channel that was not read still credits, from the outbox", () => {
     const { credits } = run([], outbox);
     expect(credits.get("4:2026-10-13")).toMatchObject({ by: "cockpit_outbox", words: null, note: "From the cockpit's sent EODs; the post itself was not read in Slack" });
+  });
+
+  test("an outbox row that names its channel (#eods-csms) still matches its Slack post, once, under the channel's id", () => {
+    const csm: OutboxRow = { id: 9, role: "csm", day: "2026-10-14", person: "Rasem Abdel All", slackId: "U0C5JHUCTPG", channel: "#eods-csms", slackTs: outboxCsm.ts as string, createdAt: "2026-10-14T16:58:00Z" };
+    const { credits } = run([post(outboxCsm, CH.csms)], [csm]);
+    const c = credits.get("28:2026-10-14")!;
+    expect(c).toMatchObject({ by: "cockpit_outbox", channel: CH.csms, ts: outboxCsm.ts, posts: 1, at: Date.parse("2026-10-14T16:58:00Z") });
+    const r = decideDay({ person: person(28), info: info("2026-10-14"), credit: c, now: kw("2026-10-14 23:05"), settings: SETTINGS, unread: [] });
+    expect(r).toMatchObject({ status: "on_time", postedChannel: CH.csms, creditedBy: "cockpit_outbox", posts: 1 });
+    // Not read in Slack: credited from the outbox, with no channel rather than a name the table refuses.
+    const unread = run([], [csm]).credits.get("28:2026-10-14")!;
+    expect(unread).toMatchObject({ by: "cockpit_outbox", channel: null, ts: outboxCsm.ts });
+    expect(decideDay({ person: person(28), info: info("2026-10-14"), credit: unread, now: kw("2026-10-14 23:05"), settings: SETTINGS, unread: [] }).postedChannel).toBeNull();
+    // A row that names another channel's id is not that post: the post and the row are two filings.
+    expect(run([post(outboxCsm, CH.csms)], [{ ...csm, channel: CH.sales }]).credits.get("28:2026-10-14")).toMatchObject({ channel: CH.sales, posts: 2 });
   });
 
   test("a person's own message credits them; a mention does not", () => {

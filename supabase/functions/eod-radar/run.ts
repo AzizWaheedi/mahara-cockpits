@@ -20,6 +20,7 @@ import type { Person } from "./match.ts";
 import { parsePost, type Post } from "./parse.ts";
 import {
   addDays,
+  channelIdOrNull,
   creditPosts,
   type DayInfo,
   daysBetween,
@@ -129,16 +130,19 @@ export function parseInputs(raw: unknown): Inputs {
       })),
     };
   });
-  const outbox = (Array.isArray(r.outbox) ? r.outbox : []).filter(isObj).flatMap(o => {
-    const day = str(o.day);
-    const channel = str(o.channel);
-    if (typeof o.id !== "number" || !day || !DAY.test(day) || !channel) return [];
-    return [{ id: o.id, role: str(o.role) ?? "", day, person: str(o.person) ?? "", slackId: str(o.slackId), channel, slackTs: str(o.slackTs), createdAt: str(o.createdAt) ?? "" }];
-  });
   const channels = (Array.isArray(r.channels) ? r.channels : []).filter(isObj).flatMap(c => {
     const id = str(c.id);
     const name = str(c.name);
     return id && name ? [{ id, name }] : [];
+  });
+  // The CSM's outbox rows name their channel ("#eods-csms"): read as its id, as the database does.
+  const idByName = new Map(channels.map(c => [c.name.toLowerCase(), c.id]));
+  const outbox = (Array.isArray(r.outbox) ? r.outbox : []).filter(isObj).flatMap(o => {
+    const day = str(o.day);
+    const named = str(o.channel);
+    if (typeof o.id !== "number" || !day || !DAY.test(day) || !named) return [];
+    const channel = channelIdOrNull(named) ?? idByName.get(named.replace(/^#/, "").toLowerCase()) ?? named;
+    return [{ id: o.id, role: str(o.role) ?? "", day, person: str(o.person) ?? "", slackId: str(o.slackId), channel, slackTs: str(o.slackTs), createdAt: str(o.createdAt) ?? "" }];
   });
   const digests = (Array.isArray(r.digests) ? r.digests : []).filter(isObj).map(g => ({ day: String(g.day), state: String(g.state), attempts: Number(g.attempts) || 0 }));
   return {
