@@ -66,6 +66,7 @@
 --   - Show rate = shows / (shows + no-shows), judged from 5 marked meetings;
 --     quotation and close rates are of shows, judged from 5 shows; the
 --     quotation rate only when the client recorded a quotation in the window;
+--     quotation answers (given or not) only where the source can tell them;
 --     AOV = revenue / closes with a value; ROAS = revenue / spend; revenue with
 --     a close of no known value is "at least".
 --   - Missing is never zero: a source that could not be read, a client who
@@ -638,6 +639,7 @@ BEGIN
         sum(d.no_outcome) AS f_no_out, count(d.no_outcome) AS f_no_out_d,
         min(d.day) FILTER (WHERE d.no_outcome > 0) AS f_no_out_first,
         sum(d.quotations) AS f_quotes, count(d.quotations) AS f_quotes_d,
+        sum(d.quotation_answers) AS f_qa, count(d.quotation_answers) AS f_qa_d,
         sum(d.closes) AS f_closes, count(d.closes) AS f_closes_d,
         sum(d.closes_with_value) AS f_valued,
         sum(d.revenue_usd) AS f_revenue,
@@ -832,6 +834,9 @@ BEGIN
       'quotations', CASE WHEN quotes IS NULL THEN jsonb_build_object('v', NULL, 'status', v_quotes_status,
                            'note', coalesce(nullif(concat_ws(' ', v_src->'sheet_copy'->>'note', v_src->'outcomes'->>'note'), ''), 'The client does not record quotations.'))
                          ELSE public.cockpit_board_count(r.f_quotes, r.f_quotes_d, v_days) END,
+      -- Meetings whose quotation was answered either way (given or not): known only where the source can tell.
+      'quotationAnswers', public.cockpit_board_count(r.f_qa, r.f_qa_d, v_days, 'not_measured',
+        CASE WHEN r.f_days IS NULL THEN NULL ELSE 'The client sheet copy keeps only Y, so answers cannot be counted.' END),
       'quotationRate', CASE
         WHEN quotes IS NULL OR quotes = 0 THEN public.cockpit_board_cell('quotation_rate', NULL, t, shows, quotes, shows, CASE WHEN quotes IS NULL THEN v_quotes_status ELSE 'not_filled_in' END,
           'No quotation is recorded in this time frame, so the rate is not known.')

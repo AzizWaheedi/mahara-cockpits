@@ -937,6 +937,12 @@ describe("the formulas, on Formula Co's ten known days", () => {
     expect(v.meetingsDue.v).toBe(10);
     expect(v.shows).toMatchObject({ v: 7, noShows: 2, marked: 9, due: 10 });
     expect(v.quotations.v).toBe(4);
+    // Formula Co's sheet copy keeps only Y: answers cannot be told, never 0.
+    expect(v.quotationAnswers).toEqual({
+      v: null,
+      status: "not_measured",
+      note: "The client sheet copy keeps only Y, so answers cannot be counted.",
+    });
     expect(v.closes).toMatchObject({ v: 2, withValue: 2 });
     expect(v.revenue.v).toBe(20000);
     expect(v.dials.v).toBe(100);
@@ -1060,6 +1066,33 @@ describe("the formulas, on Formula Co's ten known days", () => {
     expect(one.closeRate).toMatchObject({ v: 100, status: "too_few" });
     // 125 link clicks is over the 50 the opt-in rate needs: judged.
     expect(one.optIn).toMatchObject({ v: 4, status: "watch", sample: 125 });
+  });
+
+  test("quotation answers are summed where the source can tell them", async () => {
+    await owner(db);
+    await q(
+      "UPDATE public.cockpit_client_days SET quotation_answers = 2 WHERE location_id = $1 AND day BETWEEN $2 AND $3",
+      [LOC_D, F_FROM, kd(37)],
+    );
+    try {
+      const v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.quotationAnswers).toMatchObject({
+        v: 8,
+        status: null,
+        atLeast: true,
+      });
+      expect(v.quotationAnswers.note).toMatch(
+        /6 of the 10 days have no figure/,
+      );
+      const known = rowOf(await board(CREATIVE, F_FROM, kd(37)), LOC_D).values;
+      expect(known.quotationAnswers).toEqual({ v: 8, status: null });
+    } finally {
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_client_days SET quotation_answers = NULL WHERE location_id = $1",
+        [LOC_D],
+      );
+    }
   });
 
   test("leads touched and first call: any miss of CALL_RULES is off, as callCentreVerdict calls it", async () => {
