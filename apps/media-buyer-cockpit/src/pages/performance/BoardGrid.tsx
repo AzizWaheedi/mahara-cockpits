@@ -117,7 +117,7 @@ function GridValue({
     return (
       <HelpCell
         label={`Caller: ${c.text}`}
-        className="max-w-[124px] justify-start sm:max-w-[180px]"
+        className="max-w-[124px] justify-start sm:max-w-[132px]"
         help={
           <div className="space-y-1">
             <p className="font-medium">Assigned caller: {c.text}</p>
@@ -137,7 +137,7 @@ function GridValue({
             c.none && "text-xs text-muted-foreground",
           )}
         >
-          {c.text}
+          {c.short}
         </span>
       </HelpCell>
     );
@@ -286,8 +286,10 @@ export function BoardGrid({
         title={hint}
         aria-label={`Sort by ${label}`}
         className={cn(
-          "no-touch group relative inline-flex items-center gap-1 whitespace-nowrap rounded-sm after:absolute after:-inset-x-1.5 after:-inset-y-2 after:content-[''] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          numeric && "flex-row-reverse",
+          // A long label wraps to two lines, so the key columns fit at 1440
+          // with the rail open.
+          "no-touch group relative inline-flex items-center gap-1 rounded-sm text-left leading-tight after:absolute after:-inset-x-1.5 after:-inset-y-2 after:content-[''] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          numeric && "flex-row-reverse text-right",
           active && "text-foreground",
         )}
       >
@@ -322,7 +324,9 @@ export function BoardGrid({
     >
       <table
         className={cn(
-          "w-max min-w-full border-separate border-spacing-0",
+          // Auto width: the table takes the card's width and wraps the
+          // headers before it scrolls sideways.
+          "min-w-full border-separate border-spacing-0",
           meeting ? "text-[15px]" : "text-[13px]",
         )}
       >
@@ -358,7 +362,7 @@ export function BoardGrid({
             <th
               scope="col"
               aria-sort={ariaSort("client")}
-              className="sticky top-7 left-0 z-[4] h-9 w-[148px] min-w-[148px] border-b bg-card pl-4 pr-3 text-left text-xs font-medium text-muted-foreground sm:w-[224px] sm:min-w-[224px] sm:pl-6"
+              className="sticky top-7 left-0 z-[4] h-9 w-[148px] min-w-[148px] border-b bg-card pl-4 pr-3 text-left text-xs font-medium text-muted-foreground sm:w-[200px] sm:min-w-[200px] sm:pl-6"
             >
               {header("client", "Client", false)}
             </th>
@@ -372,8 +376,8 @@ export function BoardGrid({
                   className={cn(
                     "sticky top-7 z-[2] h-9 border-b bg-card px-3 text-xs font-medium text-muted-foreground",
                     numeric
-                      ? "min-w-[84px] text-right"
-                      : "min-w-[112px] text-left sm:min-w-[136px]",
+                      ? "min-w-[76px] text-right"
+                      : "min-w-[112px] text-left",
                     groupStart.has(c.key) &&
                       c.group !== "client" &&
                       "border-l border-l-[color:var(--ceo-grid)]",
@@ -408,7 +412,7 @@ export function BoardGrid({
                     aria-label={`Open ${row.clientName}`}
                     aria-expanded={open}
                     className={cn(
-                      "relative flex w-[148px] items-center gap-2 pl-4 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:w-[224px] sm:pl-6",
+                      "relative flex w-[148px] items-center gap-2 pl-4 pr-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:w-[200px] sm:pl-6",
                       pad,
                     )}
                   >

@@ -258,7 +258,6 @@ export const COLUMNS: BoardColumn[] = [
     group: "funnel",
     unit: "usd",
     metric: "cost_per_booking",
-    key10: true,
     how: "Spend / confirmed bookings over the same days, to yesterday.",
     parts: [
       { label: "spend", unit: "usd" },

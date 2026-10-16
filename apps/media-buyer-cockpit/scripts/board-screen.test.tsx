@@ -448,15 +448,18 @@ describe("the grid", () => {
       "CPL",
       "Bookings",
       "Booking rate",
-      "Cost per booking",
       "Show rate",
       "Close rate",
       "ROAS",
       "No outcome",
     ]);
-    expect(text(cellOf("locFixLiwan003", "caller"))).toBe(
-      "Rana Saleh, Dana Yousef",
-    );
+    // Two callers: the first and "+1" in the grid, both names in its label.
+    expect(text(cellOf("locFixLiwan003", "caller"))).toBe("Rana Saleh +1");
+    expect(
+      cellOf("locFixLiwan003", "caller")
+        .querySelector("button")
+        .getAttribute("aria-label"),
+    ).toBe("Caller: Rana Saleh, Dana Yousef");
     expect(text(cellOf("locFixReem0004", "caller"))).toBe("No caller assigned");
     expect(text(cellOf("locFixOrbit006", "caller"))).toBe("Client calls");
     expect(text(cellOf("locFixDune0002", "noOutcome"))).toBe("4");

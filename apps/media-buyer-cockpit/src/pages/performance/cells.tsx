@@ -88,7 +88,7 @@ export function CellContent({
   const floor = floorOf(cell);
   if (!cell || (!isNum(cell.v) && floor === null))
     return (
-      <span className="text-xs font-normal text-muted-foreground">
+      <span className="whitespace-nowrap text-xs font-normal text-muted-foreground">
         {emptyWords(cell)}
       </span>
     );
@@ -187,7 +187,7 @@ export function RetentionBars({
   const first = marks[0];
   if (!marks.every(m => m && isNum(m.v)))
     return (
-      <span className="text-xs font-normal text-muted-foreground">
+      <span className="whitespace-nowrap text-xs font-normal text-muted-foreground">
         {first?.notVideo ? "Not a video" : "n/a"}
       </span>
     );
@@ -231,15 +231,30 @@ export function retentionWords(
   return `Watched to 25%: ${percent(marks[0])} · 50%: ${percent(marks[1])} · 75%: ${percent(marks[2])} · 100%: ${percent(marks[3])}`;
 }
 
-/** The caller's names in one line, or the muted words when the dialer assigns nobody. */
+/**
+ * The caller's names in one line (`text`), the grid's short form (`short`:
+ * the first name and "+1" for the others), or the muted words when the
+ * dialer assigns nobody.
+ */
 export function callerLine(row: Pick<ClientRow, "callers" | "clientCalls">): {
   text: string;
+  short: string;
   none: boolean;
 } {
-  if (row.clientCalls) return { text: "Client calls", none: true };
+  if (row.clientCalls)
+    return { text: "Client calls", short: "Client calls", none: true };
   const names = (row.callers ?? []).map(c => c.name).filter(Boolean);
-  if (!names.length) return { text: "No caller assigned", none: true };
-  return { text: names.join(", "), none: false };
+  if (!names.length)
+    return {
+      text: "No caller assigned",
+      short: "No caller assigned",
+      none: true,
+    };
+  return {
+    text: names.join(", "),
+    short: names.length > 1 ? `${names[0]} +${names.length - 1}` : names[0],
+    none: false,
+  };
 }
 
 /** A grid or list cell with its help: hover with a mouse, tap on a touch screen. */
