@@ -70,21 +70,33 @@
 --     quotation = true, by meeting day. The two sources share no appointment
 --     id, so a day counts the larger of the two, never their sum.
 --     quotation_answers is NULL while the sheet copy cannot tell N from blank;
---     for a client with no sheet copy it is the portal's answered count.
+--     for a client with no sheet copy it is the portal's answered count. A
+--     source counts only for a client who fills it: a sheet copy with at
+--     least one Y, a portal with at least one quotation answered.
 --   Closes and revenue. The client sheet (the dialer's cc_results: closed Y,
 --     the first closed meeting per contact, no conflict, DECISIONS 2026-09-27
 --     the sheet is authoritative) and the portal's deal = won, matched on
 --     location, meeting day and contact or phone so one deal counts once.
 --     Revenue is USD only: KWD, AED, SAR and QAR at the cockpit's fixed rates
 --     (hermes/ceo-refresh/native/data/tap.js USD_PER, pinned by the test); a
---     value in no currency or another one stays out and is named in the note.
+--     value in no currency or another one stays out, and the day names how
+--     many (sources.sheet.unpricedCloses). A source counts only for a client
+--     who fills it: a sheet with at least one Closed mark (Y, N, P or other),
+--     a portal with at least one deal marked won, lost or pending ("unknown"
+--     is the form's blank). A client who fills neither has closes, revenue
+--     and quotations NULL with a note, never 0 (read live 2026-10-16: 7 of 17
+--     active clients fill neither closes source and would otherwise show 0).
 --   Lead quality. The portal's latest revision per appointment, 1 to 10 only.
 --   Dials and leads called. The dialer's own events
 --     (mahara_reporting.call_center_events): dials are saved outcomes with a
 --     note, by save day, equal to mahara_call_center_report's dials; leads
 --     called are leads, by creation day, with a verified Maqsam dial so far,
 --     WhatsApp chats left out as in CRM leads, so the report's leadsDialed is
---     leads called plus the chats it called (the note counts them).
+--     leads called plus the chats it called (the note counts them). Leads
+--     called rest on the Maqsam call sync, one sync_jobs row (kind calls) per
+--     caller: a client's are as current as the oldest job of the active
+--     callers assigned to it, and that is its freshness (3 hours, an error is
+--     behind too).
 --   Now. The waiting / touched rule inside cockpit_client_calls, re-done here
 --     for every client at once over the last 30 Kuwait days, and the report's
 --     median first call in working seconds, read up to now whatever the
@@ -95,9 +107,12 @@
 -- read, covers the day and has nothing. A source that is behind (its sync older
 -- than 3 hours, a sheet read that errored) never lowers a closed day; a
 -- complete read may, and the run's audit row lists the drops. A day no source
--- covers (after a stale source last read, in a month the client sheet has no
--- tab for, before the first meeting the client reported in the portal) is
--- never 0: what a source does hold for it still counts, as a floor.
+-- covers (after a stale source last read, any day of a source with no record
+-- of a read at all, in a month the client sheet has no tab for, before the
+-- first meeting the client reported in the portal) is never 0: what a source
+-- does hold for it still counts, as a floor. The doctor checks the 120-day
+-- fill on its own (age, last read, last stop), since a 30-minute run after a
+-- failed fill sets the state row's ok again.
 --
 -- Not in scope: ad spend, Meta leads and every ad metric
 -- (cockpit_meta_ad_days); the board reads, targets and levers; any screen; the
@@ -205,7 +220,7 @@ CREATE TABLE IF NOT EXISTS public.cockpit_client_days (
 );
 CREATE INDEX IF NOT EXISTS cockpit_client_days_day_idx ON public.cockpit_client_days (day);
 COMMENT ON TABLE public.cockpit_client_days IS
-  'One row per client location per Kuwait day for the Client Performance board, written only by cockpit_board_facts_refresh. NULL means the source could not be read or the client does not fill it; 0 means it was read and has nothing. sources holds {ok, state, as_of, note, from} per source: leads, appointments, outcomes, sheet_marks, provisional, sheet, sheet_copy, dialer, dialer_leads. state is ok (a complete read), stale (partial: a closed day is never lowered), failed or none (the stored figure is kept).';
+  'One row per client location per Kuwait day for the Client Performance board, written only by cockpit_board_facts_refresh. NULL means the source could not be read or the client does not fill it; 0 means it was read and has nothing. sources holds {ok, state, as_of, note, from} per source: leads, appointments, outcomes, sheet_marks, provisional, sheet, sheet_copy, dialer, dialer_leads; sheet also has unpricedCloses on a day with closes whose value is in no known currency. state is ok (a complete read), stale (partial: a closed day is never lowered; as_of NULL means no record of a read, so it covers no day), failed or none (the stored figure is kept).';
 COMMENT ON COLUMN public.cockpit_client_days.crm_leads IS 'Contacts created this Kuwait day, not deleted, WhatsApp chats (no ad, tagged inbound whatsapp) left out.';
 COMMENT ON COLUMN public.cockpit_client_days.crm_ad_leads IS 'The part of crm_leads with an ad id or the Meta channel.';
 COMMENT ON COLUMN public.cockpit_client_days.confirmed_bookings IS 'Main and online calendar bookings made this day, minus cancelled, invalid and Google Calendar copies.';
@@ -214,11 +229,12 @@ COMMENT ON COLUMN public.cockpit_client_days.meetings_due IS 'Booked meetings on
 COMMENT ON COLUMN public.cockpit_client_days.shows IS 'Due meetings marked showed (CRM status, sheet, portal). NULL when meetings were due and none was marked.';
 COMMENT ON COLUMN public.cockpit_client_days.no_shows IS 'Due meetings marked no-show. Unmarked is never a no-show. NULL when meetings were due and none was marked.';
 COMMENT ON COLUMN public.cockpit_client_days.no_outcome IS 'Due meetings with no portal outcome at any revision and no sheet mark (triage.js hasNoOutcome).';
-COMMENT ON COLUMN public.cockpit_client_days.quotations IS 'Meetings this day with a quotation given: the larger of the sheet copy''s Y count and the portal''s true count.';
+COMMENT ON COLUMN public.cockpit_client_days.quotations IS 'Meetings this day with a quotation given: the larger of the sheet copy''s Y count and the portal''s true count. NULL when the client fills neither (no Y in the copy, no quotation answered in the portal).';
+COMMENT ON COLUMN public.cockpit_client_days.closes IS 'Closed deals by meeting day: the sheet''s first closed meeting per contact and the portal''s won deals, one deal counted once. NULL when the client fills neither the sheet''s Closed column nor the portal''s deal.';
 COMMENT ON COLUMN public.cockpit_client_days.quotation_answers IS 'Meetings whose quotation was answered either way; NULL while the sheet copy keeps only Y.';
-COMMENT ON COLUMN public.cockpit_client_days.revenue_usd IS 'Closed deal values in USD (fixed rates for KWD, AED, SAR, QAR); values in no or another currency are left out and named in sources.';
+COMMENT ON COLUMN public.cockpit_client_days.revenue_usd IS 'Closed deal values in USD (fixed rates for KWD, AED, SAR, QAR); values in no or another currency are left out and counted in sources.sheet.unpricedCloses. closes above closes_with_value means the revenue is incomplete.';
 COMMENT ON COLUMN public.cockpit_client_days.dials IS 'The dialer''s official dials: outcomes saved with a note, by the Kuwait day saved.';
-COMMENT ON COLUMN public.cockpit_client_days.leads_called IS 'Leads created this day with a verified Maqsam dial so far (the dialer''s count less WhatsApp chats, as in crm_leads).';
+COMMENT ON COLUMN public.cockpit_client_days.leads_called IS 'Leads created this day with a verified Maqsam dial so far (the dialer''s count less WhatsApp chats, as in crm_leads). Days after the Maqsam call sync last ran keep only what was found.';
 
 CREATE TABLE IF NOT EXISTS public.cockpit_client_now (
   location_id text PRIMARY KEY REFERENCES public.cockpit_board_clients(location_id) ON DELETE CASCADE,
@@ -333,9 +349,13 @@ BEGIN
   -- source that fails leaves them empty rather than missing.
   DROP TABLE IF EXISTS pg_temp._bf_loc, pg_temp._bf_grid, pg_temp._bf_src, pg_temp._bf_v, pg_temp._bf_out,
     pg_temp._bf_ap, pg_temp._bf_sc, pg_temp._bf_pw, pg_temp._bf_dl, pg_temp._bf_sch, pg_temp._bf_ccl,
-    pg_temp._bf_calls, pg_temp._bf_coh, pg_temp._bf_att, pg_temp._bf_st, pg_temp._bf_fin, pg_temp._bf_rm;
+    pg_temp._bf_calls, pg_temp._bf_coh, pg_temp._bf_att, pg_temp._bf_st, pg_temp._bf_fin, pg_temp._bf_rm,
+    pg_temp._bf_cj, pg_temp._bf_cs;
+  -- fills: whether the client fills the source's column at all (the sheet's
+  -- Closed marks, the sheet copy's Quotation Y); a source it does not fill
+  -- gives nothing, never a 0.
   CREATE TEMP TABLE _bf_src (source text, location_id text, state text, as_of timestamptz, note text, cov_from date,
-    cov_months date[]) ON COMMIT DROP;
+    cov_months date[], fills boolean) ON COMMIT DROP;
   CREATE TEMP TABLE _bf_v (location_id text, day date, metric text, value numeric) ON COMMIT DROP;
   CREATE TEMP TABLE _bf_out (location_id text, appointment_id text, attendance text, deal text, quotation boolean,
     project_value numeric, currency text, lead_quality numeric, captured_at timestamptz) ON COMMIT DROP;
@@ -354,6 +374,8 @@ BEGIN
   CREATE TEMP TABLE _bf_calls (id text, started_at timestamptz, agent text, type text, conflict boolean,
     location_id text, contact_id text, phone text) ON COMMIT DROP;
   CREATE TEMP TABLE _bf_coh (location_id text, contact_id text, created_at timestamptz, phone text, chat boolean) ON COMMIT DROP;
+  CREATE TEMP TABLE _bf_cj (email text, last_success timestamptz, error text, active boolean, locs text[]) ON COMMIT DROP;
+  CREATE TEMP TABLE _bf_cs (location_id text, last_success timestamptz, error text, jobs integer, state text) ON COMMIT DROP;
 
   -- 3.1 The client spine ------------------------------------------------------
   WITH acc AS (
@@ -437,7 +459,7 @@ BEGIN
     SELECT 'leads', l.location_id,
       CASE WHEN s.last_status = 'success' AND s.last_synced_at >= v_now - v_fresh THEN 'ok' ELSE 'stale' END,
       s.last_synced_at,
-      CASE WHEN s.location_id IS NULL THEN 'The lead sync has no record of a run for this client, so a closed day is never lowered.'
+      CASE WHEN s.location_id IS NULL THEN 'The lead sync has no record of a run for this client, so only the leads found count and a day with none stays empty.'
            WHEN s.last_status IS DISTINCT FROM 'success' THEN format('The lead sync''s last run ended "%s"%s, so a closed day is never lowered and later days stay empty until it runs again.',
              coalesce(s.last_status, 'without a status'), coalesce(': ' || left(s.last_error, 160), ''))
            WHEN s.last_synced_at < v_now - v_fresh THEN format('The lead sync last ran %s Kuwait time, so a closed day is never lowered and later days stay empty until it runs again.',
@@ -481,12 +503,20 @@ BEGIN
     SELECT 'outcomes', l.location_id, 'ok', x.latest,
       nullif(concat_ws(' ',
         CASE WHEN x.n = 0 THEN 'The client has not reported any appointment in the portal.' END,
+        -- A client who reports in the portal but never marks a deal (won,
+        -- lost or pending; "unknown" is the form's blank) or a quotation does
+        -- not fill those fields: the portal gives none of them, so it never
+        -- turns a day's closes or quotations into 0.
+        CASE WHEN x.n > 0 AND x.deals = 0 AND x.quotes = 0 THEN 'The client''s portal reports mark no deal and no quotation yet, so the portal gives no closes and no quotations.'
+             WHEN x.n > 0 AND x.deals = 0 THEN 'The client''s portal reports mark no deal yet, so the portal gives no closes.'
+             WHEN x.n > 0 AND x.quotes = 0 THEN 'The client''s portal reports answer no quotation yet, so the portal gives no quotations.' END,
         CASE WHEN x.undated > 0 THEN format('%s portal outcome%s on an appointment this database does not hold %s left out.',
           x.undated, CASE WHEN x.undated = 1 THEN '' ELSE 's' END, CASE WHEN x.undated = 1 THEN 'is' ELSE 'are' END) END,
         CASE WHEN x.bad_lq > 0 THEN format('%s lead quality score%s outside 1 to 10 left out.', x.bad_lq, CASE WHEN x.bad_lq = 1 THEN '' ELSE 's' END) END), '')
     FROM pg_temp._bf_loc l
     CROSS JOIN LATERAL (
       SELECT count(*) AS n, max(o.captured_at) AS latest,
+        count(*) FILTER (WHERE coalesce(o.deal, 'unknown') <> 'unknown') AS deals, count(*) FILTER (WHERE o.quotation IS NOT NULL) AS quotes,
         count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM public.appointments a WHERE a.ghl_appointment_id = o.appointment_id)) AS undated,
         count(*) FILTER (WHERE o.lead_quality IS NOT NULL AND o.lead_quality NOT BETWEEN 1 AND 10) AS bad_lq
       FROM pg_temp._bf_out o WHERE o.location_id = l.location_id
@@ -531,7 +561,7 @@ BEGIN
       CASE WHEN s.last_status = 'success' AND s.last_synced_at >= v_now - v_fresh THEN 'ok' ELSE 'stale' END,
       s.last_synced_at,
       nullif(concat_ws(' ',
-        CASE WHEN s.location_id IS NULL THEN 'The appointments sync has no record of a run for this client, so a closed day is never lowered.'
+        CASE WHEN s.location_id IS NULL THEN 'The appointments sync has no record of a run for this client, so only the bookings and meetings found count and a day with none stays empty.'
              WHEN s.last_status IS DISTINCT FROM 'success' THEN format('The appointments sync''s last run ended "%s", so a closed day is never lowered and later days stay empty until it runs again.', coalesce(s.last_status, 'without a status'))
              WHEN s.last_synced_at < v_now - v_fresh THEN format('The appointments sync last ran %s Kuwait time, so a closed day is never lowered and later days stay empty until it runs again.',
                to_char(s.last_synced_at AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI')) END,
@@ -623,7 +653,7 @@ BEGIN
     SELECT 'provisional', l.location_id,
       CASE WHEN j.last_success >= v_now - v_fresh AND j.error IS NULL THEN 'ok' ELSE 'stale' END,
       j.last_success,
-      CASE WHEN j.last_success IS NULL THEN 'The dialer has no appointment sync for this client, so a closed day is never lowered.'
+      CASE WHEN j.last_success IS NULL THEN 'The dialer has no appointment sync for this client, so only the provisional bookings found count and a day with none stays empty.'
            WHEN j.error IS NOT NULL THEN 'The dialer''s appointment sync reports an error, so a closed day is never lowered and later days stay empty until it succeeds: ' || left(j.error, 160)
            WHEN j.last_success < v_now - v_fresh THEN format('The dialer''s appointment sync last succeeded %s Kuwait time, so a closed day is never lowered and later days stay empty until it runs again.',
              to_char(j.last_success AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI')) END
@@ -706,18 +736,24 @@ BEGIN
              WHEN p.synced_at IS NULL OR p.synced_at < v_now - v_fresh THEN 'stale' ELSE 'ok' END AS state,
         CASE WHEN p.perf IS NULL OR jsonb_typeof(p.perf) <> 'object' THEN NULL
              WHEN coalesce(p.perf->>'source', '') ~* '^appointments tab' THEN NULL
-             ELSE (date_trunc('month', coalesce(p.synced_at, v_now) AT TIME ZONE 'Asia/Kuwait') - interval '1 month')::date END AS cov_from
+             ELSE (date_trunc('month', coalesce(p.synced_at, v_now) AT TIME ZONE 'Asia/Kuwait') - interval '1 month')::date END AS cov_from,
+        -- The client fills the Quotation column when any row the copy holds
+        -- says Y (the copy drops N, so a client who writes only N cannot be
+        -- told from one who writes nothing).
+        EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.perf->'appointments') = 'array' THEN p.perf->'appointments' ELSE '[]'::jsonb END) r
+                WHERE lower(btrim(coalesce(r->>'quote', ''))) = 'y') AS fills
       FROM pg_temp._bf_loc l LEFT JOIN prof p ON p.task_id = l.clickup_id
     ), ins_src AS (
-      INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note, cov_from)
+      INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note, cov_from, fills)
       SELECT 'sheet_copy', j.location_id, j.state, j.synced_at,
         CASE WHEN j.state = 'none' THEN 'No client sheet copy for this client (the CSM profile has no sheet read).'
              ELSE concat_ws(' ',
                CASE WHEN j.state = 'stale' THEN format('The client sheet was last read %s Kuwait time, so a closed day is never lowered and later days wait for the next read.',
                  coalesce(to_char(j.synced_at AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'), 'at an unknown time')) END,
                CASE WHEN j.cov_from IS NOT NULL THEN format('The sheet copy holds month tabs from %s; earlier days keep the figures stored before.', to_char(j.cov_from, 'DD Mon YYYY')) END,
-               'The copy keeps only Y in the Quotation column, so answered quotations are not known.') END,
-        j.cov_from
+               CASE WHEN NOT j.fills THEN 'The client''s sheet has no Y in the Quotation column yet, so the sheet gives no quotations.'
+                    ELSE 'The copy keeps only Y in the Quotation column, so answered quotations are not known.' END) END,
+        j.cov_from, j.state <> 'none' AND j.fills
       FROM joined j
       RETURNING 1
     )
@@ -738,10 +774,12 @@ BEGIN
 
   -- 3.7 The client sheets (the dialer's cc_results): closes and values -------
   BEGIN
-    INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note, cov_from, cov_months)
+    INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note, cov_from, cov_months, fills)
     SELECT 'sheet', l.location_id, x.state, s.checked_at,
       CASE WHEN x.state = 'none' THEN 'The dialer reads no sheet for this client.'
            ELSE nullif(concat_ws(' ',
+             CASE WHEN NOT x.fills AND s.data IS NOT NULL AND (s.data->>'sheetId') IS NOT DISTINCT FROM s.sheet_id
+                  THEN 'The client''s sheet has no Closed marks yet, so the sheet gives no closes or revenue.' END,
              CASE WHEN s.data IS NULL OR (s.data->>'sheetId') IS DISTINCT FROM s.sheet_id THEN 'The stored sheet rows belong to another sheet, so a closed day is never lowered.'
                   WHEN s.error IS NOT NULL THEN 'The last sheet read failed and its earlier rows are used, so a closed day is never lowered and later days wait for the next read: ' || left(s.error, 120)
                   WHEN NOT coalesce(s.active, false) THEN 'The sheet is switched off in the dialer, so a closed day is never lowered.'
@@ -751,7 +789,7 @@ BEGIN
                   ELSE format('The sheet holds the month tab%s %s; days in other months keep the figures stored before.',
                     CASE WHEN cardinality(x.months) = 1 THEN '' ELSE 's' END,
                     (SELECT string_agg(to_char(m, 'Mon YYYY'), ', ' ORDER BY m) FROM unnest(x.months) m)) END), '') END,
-      x.months[1], x.months
+      x.months[1], x.months, x.state <> 'none' AND x.fills
     FROM pg_temp._bf_loc l
     LEFT JOIN mahara_reporting.sheet_snapshots s ON s.namespace = 'production' AND s.id = l.location_id
     CROSS JOIN LATERAL (
@@ -766,7 +804,13 @@ BEGIN
                     SELECT array_agg(t.m ORDER BY t.m) FROM (
                       SELECT DISTINCT to_date('01 ' || (r->>'tab'), 'DD Mon YY') AS m
                       FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.data->'rows') = 'array' THEN s.data->'rows' ELSE '[]'::jsonb END) r
-                      WHERE coalesce(r->>'tab', '') ~ '^[A-Z][a-z]{2} [0-9]{2}$') t), '{}'::date[]) END AS months
+                      WHERE coalesce(r->>'tab', '') ~ '^[A-Z][a-z]{2} [0-9]{2}$') t), '{}'::date[]) END AS months,
+             -- The client fills the Closed column when any row it holds has a
+             -- mark there (Y, N, P or anything else); a sheet whose Closed
+             -- column is blank on every row gives no closes, never 0.
+             s.id IS NOT NULL AND s.data IS NOT NULL AND (s.data->>'sheetId') IS NOT DISTINCT FROM s.sheet_id
+               AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.data->'rows') = 'array' THEN s.data->'rows' ELSE '[]'::jsonb END) r
+                           WHERE nullif(btrim(coalesce(r->>'closed', '')), '') IS NOT NULL) AS fills
     ) x;
 
     PERFORM pg_catalog.set_config('enable_nestloop', 'off', true);
@@ -845,14 +889,53 @@ BEGIN
                       WHERE cl.ghl_contact_id = d.contact_id AND cl.location_id = d.location_id
                         AND (nullif(cl.ad_id, '') IS NOT NULL OR nullif(cl.campaign_id, '') IS NOT NULL));
 
+    -- How current the Maqsam calls are. The dialer syncs them with one job
+    -- per caller (sync_jobs kind calls, its location_id the caller's email),
+    -- so a client's leads called are only as current as the oldest job of the
+    -- active callers assigned to it; with none assigned, of every active
+    -- caller; with no active caller, of every calls job. Leads called and who
+    -- is waiting both rest on these calls.
+    INSERT INTO pg_temp._bf_cj (email, last_success, error, active, locs)
+    SELECT lower(btrim(s.location_id)), s.last_success, nullif(btrim(s.error), ''),
+      EXISTS (SELECT 1 FROM mahara_console.metadata m WHERE m.namespace = 'production' AND m.id LIKE 'access:agent:%'
+              AND m.data->>'active' = 'true' AND lower(btrim(m.data->>'email')) = lower(btrim(s.location_id))),
+      ARRAY(SELECT DISTINCT x.loc FROM mahara_console.metadata m
+            CROSS JOIN LATERAL jsonb_array_elements_text(CASE WHEN jsonb_typeof(m.data->'locationIds') = 'array'
+                                                              THEN m.data->'locationIds' ELSE '[]'::jsonb END) x(loc)
+            WHERE m.namespace = 'production' AND m.id LIKE 'access:agent:%' AND m.data->>'active' = 'true'
+              AND lower(btrim(m.data->>'email')) = lower(btrim(s.location_id)))
+    FROM mahara_reporting.sync_jobs s
+    WHERE s.namespace = 'production' AND s.kind = 'calls';
+    INSERT INTO pg_temp._bf_cs (location_id, last_success, error, jobs, state)
+    SELECT l.location_id, j.last_success, j.error, coalesce(j.n, 0),
+      CASE WHEN j.n IS NULL OR j.last_success IS NULL OR j.error IS NOT NULL OR j.last_success < v_now - v_fresh THEN 'stale' ELSE 'ok' END
+    FROM pg_temp._bf_loc l
+    LEFT JOIN LATERAL (
+      SELECT y.last_success, y.error, y.n FROM (
+        SELECT 1 AS o, min(c.last_success) AS last_success, max(c.error) AS error, count(*) AS n
+        FROM pg_temp._bf_cj c WHERE c.active AND l.location_id = ANY(c.locs)
+        UNION ALL
+        SELECT 2, min(c.last_success), max(c.error), count(*) FROM pg_temp._bf_cj c WHERE c.active
+        UNION ALL
+        SELECT 3, min(c.last_success), max(c.error), count(*) FROM pg_temp._bf_cj c
+      ) y WHERE y.n > 0 ORDER BY y.o LIMIT 1
+    ) j ON true;
+
     INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note)
     SELECT x.source, l.location_id,
-      CASE WHEN x.source = 'dialer_leads' AND NOT EXISTS (SELECT 1 FROM mahara_reporting.cc_clients c WHERE c.id = l.location_id) THEN 'none' ELSE 'ok' END,
+      CASE WHEN x.source = 'dialer_leads' AND NOT EXISTS (SELECT 1 FROM mahara_reporting.cc_clients c WHERE c.id = l.location_id) THEN 'none'
+           WHEN x.source = 'dialer_leads' THEN cs.state ELSE 'ok' END,
       CASE WHEN x.source = 'dialer' THEN (SELECT to_timestamp(max(a.updated) / 1000.0) FROM mahara_console.attempts a WHERE a.namespace = 'production')
-           ELSE (SELECT max(f.captured_at) FROM mahara_reporting.facts f WHERE f.namespace = 'production' AND f.source = 'maqsam' AND f.kind = 'call') END,
+           ELSE cs.last_success END,
       nullif(concat_ws(' ',
         CASE WHEN x.source = 'dialer_leads' AND NOT EXISTS (SELECT 1 FROM mahara_reporting.cc_clients c WHERE c.id = l.location_id)
-             THEN 'The dialer does not list this client, so its leads called are not known.' END,
+             THEN 'The dialer does not list this client, so its leads called are not known.'
+             WHEN x.source = 'dialer_leads' AND cs.state = 'stale' THEN
+               CASE WHEN cs.jobs = 0 OR cs.last_success IS NULL THEN 'The dialer has no record of a Maqsam call sync, so only the leads found called count and a day with none stays empty.'
+                    WHEN cs.error IS NOT NULL THEN format('The Maqsam call sync reports an error (last success %s Kuwait time), so a closed day is never lowered and later days stay empty until it succeeds: %s',
+                      to_char(cs.last_success AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'), left(cs.error, 160))
+                    ELSE format('The Maqsam call sync last ran %s Kuwait time, so a closed day is never lowered and later days stay empty until it runs again.',
+                      to_char(cs.last_success AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI')) END END,
         CASE WHEN x.source = 'dialer_leads' AND ch.n > 0
              THEN format('%s WhatsApp chat contact%s the dialer called in these days %s left out, as in CRM leads.',
                ch.n, CASE WHEN ch.n = 1 THEN '' ELSE 's' END, CASE WHEN ch.n = 1 THEN 'is' ELSE 'are' END) END,
@@ -860,6 +943,7 @@ BEGIN
         CASE WHEN EXISTS (SELECT 1 FROM mahara_console.metadata m WHERE m.namespace = 'production' AND m.id = 'access:client:' || l.location_id
                           AND m.data->>'active' = 'false') THEN 'This client is switched off in the dialer.' END), '')
     FROM pg_temp._bf_loc l CROSS JOIN (VALUES ('dialer'), ('dialer_leads')) x(source)
+    JOIN pg_temp._bf_cs cs ON cs.location_id = l.location_id
     CROSS JOIN LATERAL (
       SELECT count(*) AS n FROM pg_temp._bf_dl d
       WHERE d.location_id = l.location_id AND d.kind = 'lead' AND d.chat AND d.first_dial AND d.event_at >= v_start AND d.event_at < v_end
@@ -955,6 +1039,12 @@ BEGIN
         CASE WHEN EXISTS (SELECT 1 FROM pg_temp._bf_sch s WHERE s.location_id = l.location_id AND s.is_default)
              THEN 'No assigned caller has hours on Team & Payroll, so working time is 10:00 to 18:00 Kuwait time, Friday off.' END,
         CASE WHEN w.chats > 0 THEN format('%s WhatsApp chat contact%s left out (tagged inbound whatsapp, no ad).', w.chats, CASE WHEN w.chats = 1 THEN ' is' ELSE 's are' END) END,
+        CASE WHEN cs.state = 'stale' AND l.service_mode IS DISTINCT FROM 'DWY' THEN
+          CASE WHEN cs.last_success IS NULL THEN 'The dialer has no record of a Maqsam call sync, so leads already called may still show as waiting.'
+               WHEN cs.error IS NOT NULL THEN format('The Maqsam call sync reports an error (last success %s Kuwait time), so leads called since then may still show as waiting.',
+                 to_char(cs.last_success AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'))
+               ELSE format('The Maqsam call sync last ran %s Kuwait time, so leads called since then may still show as waiting.',
+                 to_char(cs.last_success AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI')) END END,
         CASE WHEN NOT v_dialer_ok THEN 'The dialer''s report could not be read, so the median first call is the one stored before.' END), '')
     FROM pg_temp._bf_loc l
     LEFT JOIN LATERAL (
@@ -982,6 +1072,7 @@ BEGIN
       FROM pg_temp._bf_dl d
       WHERE d.location_id = l.location_id AND d.kind = 'lead' AND d.event_at >= v_30_start AND d.speed IS NOT NULL
     ) sp ON true
+    LEFT JOIN pg_temp._bf_cs cs ON cs.location_id = l.location_id
     ON CONFLICT (location_id) DO UPDATE SET untouched_leads = EXCLUDED.untouched_leads,
       oldest_untouched_at = EXCLUDED.oldest_untouched_at, touched_share_30d = EXCLUDED.touched_share_30d,
       callable_30d = EXCLUDED.callable_30d, touched_30d = EXCLUDED.touched_30d,
@@ -1010,27 +1101,32 @@ BEGIN
     max(s.state) FILTER (WHERE s.source = 'dialer_leads') AS dialer_leads,
     max(s.state) FILTER (WHERE s.source = 'sheet_marks') AS marks,
     -- The last Kuwait day each source read; a source that is behind says
-    -- nothing about the days after it.
+    -- nothing about the days after it, and one with no record of a read says
+    -- nothing about any day.
     max((s.as_of AT TIME ZONE 'Asia/Kuwait')::date) FILTER (WHERE s.source = 'leads') AS leads_asof,
     max((s.as_of AT TIME ZONE 'Asia/Kuwait')::date) FILTER (WHERE s.source = 'appointments') AS appts_asof,
     max((s.as_of AT TIME ZONE 'Asia/Kuwait')::date) FILTER (WHERE s.source = 'provisional') AS prov_asof,
     max((s.as_of AT TIME ZONE 'Asia/Kuwait')::date) FILTER (WHERE s.source = 'sheet') AS sheet_asof,
     max((s.as_of AT TIME ZONE 'Asia/Kuwait')::date) FILTER (WHERE s.source = 'sheet_copy') AS copy_asof,
+    max((s.as_of AT TIME ZONE 'Asia/Kuwait')::date) FILTER (WHERE s.source = 'dialer_leads') AS called_asof,
     max(s.cov_from) FILTER (WHERE s.source = 'outcomes') AS portal_cov,
+    -- Whether the client fills the column at all: the sheet's Closed marks,
+    -- the sheet copy's Quotation Y.
+    coalesce(bool_or(s.fills) FILTER (WHERE s.source = 'sheet'), false) AS sheet_fills_closed,
+    coalesce(bool_or(s.fills) FILTER (WHERE s.source = 'sheet_copy'), false) AS copy_fills_quote,
     jsonb_object_agg(s.source, jsonb_build_object('ok', s.state = 'ok', 'state', s.state, 'as_of', s.as_of, 'note', s.note)
       || CASE WHEN s.cov_from IS NOT NULL THEN jsonb_build_object('from', s.cov_from) ELSE '{}'::jsonb END) AS sources
   FROM pg_temp._bf_src s GROUP BY 1;
-  ALTER TABLE pg_temp._bf_st ADD COLUMN portal_none boolean, ADD COLUMN lq_none boolean, ADD COLUMN sheet_months date[];
+  ALTER TABLE pg_temp._bf_st ADD COLUMN portal_none boolean, ADD COLUMN lq_none boolean, ADD COLUMN sheet_months date[],
+    ADD COLUMN portal_fills_deal boolean, ADD COLUMN portal_fills_quote boolean;
   UPDATE pg_temp._bf_st st SET
     sheet_months = (SELECT s.cov_months FROM pg_temp._bf_src s WHERE s.source = 'sheet' AND s.location_id = st.location_id LIMIT 1),
     portal_none = NOT EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id),
-    lq_none = NOT EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id AND o.lead_quality BETWEEN 1 AND 10);
-  -- Name the deal values left out of revenue on the sheet's note.
-  UPDATE pg_temp._bf_st st SET sources = jsonb_set(st.sources, '{sheet,note}', to_jsonb(concat_ws(' ', st.sources->'sheet'->>'note',
-      format('%s closed deal%s in these days carr%s a value in no known currency, left out of revenue.', u.n,
-        CASE WHEN u.n = 1 THEN '' ELSE 's' END, CASE WHEN u.n = 1 THEN 'ies' ELSE 'y' END))))
-  FROM (SELECT v.location_id, sum(v.value)::int AS n FROM pg_temp._bf_v v WHERE v.metric = 'unknown_currency' GROUP BY 1 HAVING sum(v.value) > 0) u
-  WHERE u.location_id = st.location_id AND st.sources ? 'sheet';
+    lq_none = NOT EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id AND o.lead_quality BETWEEN 1 AND 10),
+    -- The portal fills deals when any report marks one won, lost or pending
+    -- ("unknown" is the form's blank), and quotations when any answers yes or no.
+    portal_fills_deal = EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id AND coalesce(o.deal, 'unknown') <> 'unknown'),
+    portal_fills_quote = EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = st.location_id AND o.quotation IS NOT NULL);
 
   CREATE TEMP TABLE _bf_fin ON COMMIT DROP AS
   WITH piv AS (
@@ -1049,6 +1145,7 @@ BEGIN
       coalesce(sum(v.value) FILTER (WHERE v.metric = 'closes'), 0) AS closes,
       coalesce(sum(v.value) FILTER (WHERE v.metric = 'closes_with_value'), 0) AS closes_with_value,
       coalesce(sum(v.value) FILTER (WHERE v.metric = 'revenue_usd'), 0) AS revenue_usd,
+      coalesce(sum(v.value) FILTER (WHERE v.metric = 'unknown_currency'), 0)::int AS unpriced,
       coalesce(sum(v.value) FILTER (WHERE v.metric = 'lq_sum'), 0) AS lq_sum,
       coalesce(sum(v.value) FILTER (WHERE v.metric = 'lq_count'), 0) AS lq_count,
       coalesce(sum(v.value) FILTER (WHERE v.metric = 'dials'), 0) AS dials,
@@ -1056,33 +1153,48 @@ BEGIN
     FROM pg_temp._bf_grid g
     LEFT JOIN pg_temp._bf_v v ON v.location_id = g.location_id AND v.day = g.day
     GROUP BY 1, 2
-  ), cov AS (
-    -- What covers each day. A stale source covers no day after the one it
-    -- last read; a sheet covers the month tabs it holds; the portal covers
-    -- the days from the first meeting the client reported.
+  ), gaps AS (
+    -- A stale source covers no day after the one it last read, and with no
+    -- record of a read (as_of NULL) no day at all.
     SELECT p.*, st.sources, st.copy, st.portal_none, st.lq_none,
+      st.sheet_fills_closed, st.copy_fills_quote, coalesce(st.portal_fills_deal, false) AS portal_fills_deal,
+      coalesce(st.portal_fills_quote, false) AS portal_fills_quote,
       coalesce(st.leads, 'failed') AS leads, coalesce(st.appts, 'failed') AS appts, coalesce(st.outcomes, 'failed') AS outcomes,
       coalesce(st.prov, 'failed') AS prov, coalesce(st.sheet, 'failed') AS sheet, coalesce(st.copy, 'failed') AS copy_state,
       coalesce(st.dialer, 'failed') AS dialer, coalesce(st.dialer_leads, 'failed') AS dialer_leads,
       coalesce(st.marks, 'failed') AS marks,
-      (st.leads = 'stale' AND p.day > st.leads_asof) AS leads_gap,
-      (st.appts = 'stale' AND p.day > st.appts_asof) AS appts_gap,
-      (st.prov = 'stale' AND p.day > st.prov_asof) AS prov_gap,
-      (st.sheet IN ('ok', 'stale')) AS sheet_has,
-      (st.sheet IN ('ok', 'stale') AND date_trunc('month', p.day::timestamp)::date = ANY(coalesce(st.sheet_months, '{}'::date[]))
-        AND NOT coalesce(st.sheet = 'stale' AND p.day > st.sheet_asof, false)) AS sheet_covers,
-      (st.copy IN ('ok', 'stale')) AS copy_has,
-      (st.copy IN ('ok', 'stale') AND (st.copy_cov IS NULL OR p.day >= st.copy_cov)
-        AND NOT coalesce(st.copy = 'stale' AND p.day > st.copy_asof, false)) AS copy_covers,
-      (NOT st.portal_none) AS portal_has,
-      (NOT st.portal_none AND p.day >= st.portal_cov AND st.appts IN ('ok', 'stale')
-        AND NOT coalesce(st.appts = 'stale' AND p.day > st.appts_asof, false)) AS portal_covers
+      (st.leads = 'stale' AND (st.leads_asof IS NULL OR p.day > st.leads_asof)) AS leads_gap,
+      (st.appts = 'stale' AND (st.appts_asof IS NULL OR p.day > st.appts_asof)) AS appts_gap,
+      (st.prov = 'stale' AND (st.prov_asof IS NULL OR p.day > st.prov_asof)) AS prov_gap,
+      (st.dialer_leads = 'stale' AND (st.called_asof IS NULL OR p.day > st.called_asof)) AS called_gap,
+      (st.sheet = 'stale' AND (st.sheet_asof IS NULL OR p.day > st.sheet_asof)) AS sheet_gap,
+      (st.copy = 'stale' AND (st.copy_asof IS NULL OR p.day > st.copy_asof)) AS copy_gap,
+      st.sheet_months, st.copy_cov, st.portal_cov
     FROM piv p JOIN pg_temp._bf_st st ON st.location_id = p.location_id
+  ), cov AS (
+    -- What covers each day's closes and quotations: a sheet the client fills
+    -- covers the month tabs it holds; a sheet copy the client fills covers
+    -- its tabs; the portal covers the days from the first meeting the client
+    -- reported, for the fields the client marks there.
+    SELECT g.*,
+      (g.sheet IN ('ok', 'stale') AND g.sheet_fills_closed) AS sheet_has,
+      (g.sheet IN ('ok', 'stale') AND g.sheet_fills_closed
+        AND date_trunc('month', g.day::timestamp)::date = ANY(coalesce(g.sheet_months, '{}'::date[]))
+        AND NOT coalesce(g.sheet_gap, false)) AS sheet_covers,
+      (g.copy IN ('ok', 'stale') AND g.copy_fills_quote) AS copy_has,
+      (g.copy IN ('ok', 'stale') AND g.copy_fills_quote AND (g.copy_cov IS NULL OR g.day >= g.copy_cov)
+        AND NOT coalesce(g.copy_gap, false)) AS copy_covers,
+      (NOT g.portal_none AND g.portal_fills_deal) AS portal_deal_has,
+      (NOT g.portal_none AND g.portal_fills_quote) AS portal_quote_has,
+      (NOT g.portal_none AND g.day >= g.portal_cov AND g.appts IN ('ok', 'stale')
+        AND NOT coalesce(g.appts_gap, false)) AS portal_covers
+    FROM gaps g
   ), eff AS (
     -- Each column's state for the day: ok (a complete read: the new figure),
     -- stale (a partial read: the new figure, but a closed day is never
-    -- lowered), or failed, none, gap (nothing read: the stored figure, NULL on
-    -- a new row).
+    -- lowered), gap (what was found counts, but a zero is never claimed), or
+    -- failed and none (nothing read, or the client does not fill it: the
+    -- stored figure, NULL on a new row).
     SELECT c.*,
       CASE WHEN coalesce(c.leads_gap, false) THEN 'gap' ELSE c.leads END AS s_leads,
       CASE WHEN coalesce(c.appts_gap, false) THEN 'gap' ELSE c.appts END AS s_book,
@@ -1093,22 +1205,31 @@ BEGIN
            WHEN c.lq_none THEN 'none' WHEN NOT coalesce(c.portal_covers, false) THEN 'gap'
            WHEN c.appts = 'stale' THEN 'stale' ELSE 'ok' END AS s_lq,
       CASE WHEN c.copy_state = 'failed' OR c.outcomes = 'failed' OR c.appts = 'failed' THEN 'failed'
-           WHEN NOT c.copy_has AND NOT c.portal_has THEN 'none'
-           WHEN NOT c.copy_covers AND NOT coalesce(c.portal_covers, false) THEN 'gap'
+           WHEN NOT c.copy_has AND NOT c.portal_quote_has THEN 'none'
+           WHEN NOT c.copy_covers AND NOT (c.portal_quote_has AND coalesce(c.portal_covers, false)) THEN 'gap'
            WHEN (c.copy_has AND NOT (c.copy_covers AND c.copy_state = 'ok'))
-             OR (c.portal_has AND NOT (coalesce(c.portal_covers, false) AND c.appts = 'ok')) THEN 'stale'
+             OR (c.portal_quote_has AND NOT (coalesce(c.portal_covers, false) AND c.appts = 'ok')) THEN 'stale'
            ELSE 'ok' END AS s_quote,
       CASE WHEN c.sheet = 'failed' OR c.outcomes = 'failed' OR c.appts = 'failed' THEN 'failed'
-           WHEN NOT c.sheet_has AND NOT c.portal_has THEN 'none'
-           WHEN NOT c.sheet_covers AND NOT coalesce(c.portal_covers, false) THEN 'gap'
+           WHEN NOT c.sheet_has AND NOT c.portal_deal_has THEN 'none'
+           WHEN NOT c.sheet_covers AND NOT (c.portal_deal_has AND coalesce(c.portal_covers, false)) THEN 'gap'
            WHEN (c.sheet_has AND NOT (c.sheet_covers AND c.sheet = 'ok'))
-             OR (c.portal_has AND NOT (coalesce(c.portal_covers, false) AND c.appts = 'ok')) THEN 'stale'
+             OR (c.portal_deal_has AND NOT (coalesce(c.portal_covers, false) AND c.appts = 'ok')) THEN 'stale'
            ELSE 'ok' END AS s_close,
       c.dialer AS s_dials,
-      c.dialer_leads AS s_called
+      CASE WHEN coalesce(c.called_gap, false) THEN 'gap' ELSE c.dialer_leads END AS s_called
     FROM cov c
   )
-  SELECT e.location_id, e.day, e.sources,
+  SELECT e.location_id, e.day,
+    -- A closed deal whose value is in no known currency is left out of that
+    -- day's revenue; the day says how many (sources.sheet.unpricedCloses), so
+    -- a read can mark its revenue incomplete.
+    CASE WHEN e.unpriced > 0 AND e.s_close NOT IN ('failed', 'none') AND e.sources ? 'sheet'
+         THEN jsonb_set(jsonb_set(e.sources, '{sheet,unpricedCloses}', to_jsonb(e.unpriced)), '{sheet,note}',
+           to_jsonb(concat_ws(' ', e.sources->'sheet'->>'note',
+             format('%s closed deal%s this day carr%s a value in no known currency, left out of revenue.', e.unpriced,
+               CASE WHEN e.unpriced = 1 THEN '' ELSE 's' END, CASE WHEN e.unpriced = 1 THEN 'ies' ELSE 'y' END))))
+         ELSE e.sources END AS sources,
     o.crm_leads AS o_crm_leads, o.crm_ad_leads AS o_crm_ad_leads, o.confirmed_bookings AS o_confirmed_bookings,
     o.provisional_bookings AS o_provisional_bookings, o.meetings_due AS o_meetings_due, o.shows AS o_shows,
     o.no_shows AS o_no_shows, o.no_outcome AS o_no_outcome, o.quotations AS o_quotations, o.closes AS o_closes,

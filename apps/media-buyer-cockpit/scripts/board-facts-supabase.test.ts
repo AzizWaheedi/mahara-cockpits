@@ -638,7 +638,9 @@ beforeAll(async () => {
     INSERT INTO public.appointment_sync_state VALUES ('${LOC_A}',now(),'success'),('${LOC_B}',now(),'success');
     INSERT INTO mahara_reporting.sync_jobs VALUES
      ('production','j1','ghl','${LOC_A}','appointments_recent',now(),NULL),
-     ('production','j2','ghl','${LOC_B}','appointments_recent',now(),NULL);
+     ('production','j2','ghl','${LOC_B}','appointments_recent',now(),NULL),
+     ('production','maqsam:${AGENT}','maqsam','${AGENT}','calls',now(),NULL),
+     ('production','maqsam:gone@maharamedia.com','maqsam','gone@maharamedia.com','calls',now() - interval '30 days',NULL);
     INSERT INTO mahara_reporting.facts(namespace,source,kind,external_id,data) VALUES
      ('production','ghl','location','${LOC_B}','{"locationId":"${LOC_B}"}');
   `);
@@ -1144,22 +1146,166 @@ describe("quotations, closes, revenue and lead quality", () => {
 
   test("a client who fills nothing: NULL for quotations, closes and lead quality; 0 where the source was read", async () => {
     const c3 = await dayRow(LOC_C, kd(3));
-    expect(c3.crm_leads).toBe(1);
-    expect(c3.confirmed_bookings).toBe(0);
-    expect(c3.meetings_due).toBe(0);
     expect(c3.quotations).toBeNull();
     expect(c3.quotation_answers).toBeNull();
     expect(c3.closes).toBeNull();
     expect(c3.revenue_usd).toBeNull();
     expect(c3.lead_quality_count).toBeNull();
+    // The dialer's saved outcomes are its own table: read, and none.
     expect(c3.dials).toBe(0);
     // Not in the dialer's client list: leads called are not known.
     expect(c3.leads_called).toBeNull();
     const sources = c3.sources as Record<string, Row>;
     expect(sources.sheet.state).toBe("none");
     expect(sources.dialer_leads.state).toBe("none");
-    // No lead sync record: still written, but a closed day is never lowered.
+  });
+
+  test("a client no sync has ever read: what is found counts, a day with nothing found stays empty, never 0", async () => {
+    // Client C has no lead sync, appointments sync or dialer appointment
+    // sync record at all.
+    const c3 = await dayRow(LOC_C, kd(3));
+    // C1 is in the table, so 1 is at least true.
+    expect(c3.crm_leads).toBe(1);
+    expect(c3.crm_ad_leads).toBe(1);
+    expect(c3.confirmed_bookings).toBeNull();
+    expect(c3.provisional_bookings).toBeNull();
+    expect(c3.meetings_due).toBeNull();
+    expect(c3.shows).toBeNull();
+    expect(c3.no_outcome).toBeNull();
+    const c5 = await dayRow(LOC_C, kd(5));
+    expect(c5.crm_leads).toBeNull();
+    const sources = c3.sources as Record<string, Row>;
     expect(sources.leads.state).toBe("stale");
+    expect(sources.leads.as_of).toBeNull();
+    expect(String(sources.leads.note)).toContain("no record of a run");
+    expect(String(sources.appointments.note)).toContain("no record of a run");
+    expect(String(sources.provisional.note)).toContain("no appointment sync");
+  });
+
+  test("a sheet whose Closed column is blank and a copy with no quotation Y give NULL, not 0; one N gives 0", async () => {
+    const LOC_D = "locBoardClientD00005";
+    await owner(db);
+    await q(
+      "INSERT INTO public.ghl_clients(location_id,client_name,status,clickup_id,country,service_mode) VALUES($1,'Client D','Launching','CU_D','KW','DFY')",
+      [LOC_D],
+    );
+    await q(
+      "INSERT INTO public.cockpit_csm_sources(table_name,source_id,data) VALUES('clientProfiles','pD',$1::jsonb)",
+      [
+        JSON.stringify({
+          taskId: "CU_D",
+          performanceSyncedAt: Date.now(),
+          performance: {
+            source: "Appointments tab",
+            appointments: [
+              { added: kd(4), appAt: kd(3), quote: "", show: "y" },
+              { added: kd(4), appAt: kd(2), quote: "", show: "n" },
+            ],
+          },
+        }),
+      ],
+    );
+    const rows = [
+      {
+        tab: TAB,
+        phone: "+96550000041",
+        meeting: ms(kt(9, "12:00")),
+        show: "Y",
+        closed: "",
+        value: null,
+      },
+      {
+        tab: TAB,
+        phone: "+96550000042",
+        meeting: ms(kt(9, "13:00")),
+        show: "N",
+        closed: " ",
+        value: null,
+      },
+    ];
+    await q(
+      "INSERT INTO mahara_reporting.sheet_snapshots VALUES('production',$1,'Client D','S_D',true,$2::jsonb,now(),NULL)",
+      [LOC_D, JSON.stringify({ sheetId: "S_D", currency: "KWD", rows })],
+    );
+    // A portal report with the deal and the quotation left blank.
+    await appt("DAP1", LOC_D, {
+      contact: "D1",
+      calendar: "calMainD",
+      start: kt(9, "15:00"),
+      booked: kt(10, "10:00"),
+    });
+    await q(
+      "INSERT INTO public.ghl_calendars(location_id,calendar_id,name) VALUES($1,'calMainD','Main Appointment Calendar')",
+      [LOC_D],
+    );
+    await outcome(LOC_D, "DAP1", 1, { attendance: "showed", deal: "unknown" });
+    try {
+      await refresh();
+      let d9 = await dayRow(LOC_D, kd(9));
+      expect(d9.closes).toBeNull();
+      expect(d9.closes_with_value).toBeNull();
+      expect(d9.revenue_usd).toBeNull();
+      expect(d9.quotations).toBeNull();
+      const sources = d9.sources as Record<string, Row>;
+      expect(String(sources.sheet.note)).toContain("no Closed marks");
+      expect(String(sources.sheet_copy.note)).toContain(
+        "no Y in the Quotation column",
+      );
+      expect(String(sources.outcomes.note)).toContain("mark no deal");
+
+      // One N in the Closed column, one Y in the copy: the client fills
+      // both, so a day the sheet covers with nothing closed is 0.
+      rows[1].closed = "N";
+      await q(
+        "UPDATE mahara_reporting.sheet_snapshots SET data=$2::jsonb WHERE id=$1",
+        [LOC_D, JSON.stringify({ sheetId: "S_D", currency: "KWD", rows })],
+      );
+      await q(
+        `UPDATE public.cockpit_csm_sources SET data = jsonb_set(data, '{performance,appointments,0,quote}', '"y"') WHERE source_id='pD'`,
+      );
+      await refresh();
+      d9 = await dayRow(LOC_D, kd(9));
+      expect(d9.closes).toBe(0);
+      expect(d9.closes_with_value).toBe(0);
+      expect(d9.revenue).toBe(0);
+      expect(d9.quotations).toBe(0);
+      expect((await dayRow(LOC_D, kd(3))).quotations).toBe(1);
+      expect(
+        String((d9.sources as Record<string, Row>).sheet.note),
+      ).not.toContain("no Closed marks");
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.ghl_clients WHERE location_id=$1", [LOC_D]);
+      await q("DELETE FROM public.cockpit_board_clients WHERE location_id=$1", [
+        LOC_D,
+      ]);
+      await q("DELETE FROM public.cockpit_csm_sources WHERE source_id='pD'");
+      await q("DELETE FROM mahara_reporting.sheet_snapshots WHERE id=$1", [
+        LOC_D,
+      ]);
+      await q(
+        "DELETE FROM portal_data.appointment_outcomes WHERE location_id=$1",
+        [LOC_D],
+      );
+      await q("DELETE FROM public.appointments WHERE ghl_location_id=$1", [
+        LOC_D,
+      ]);
+      await q("DELETE FROM public.ghl_calendars WHERE location_id=$1", [LOC_D]);
+    }
+  });
+
+  test("a deal in no known currency is named on its own day only, as unpricedCloses", async () => {
+    await owner(db);
+    await refresh();
+    // R2 (kd 2) has a value and no currency; kd 1's close is priced.
+    const d2 = (await dayRow(LOC_A, kd(2))).sources as Record<string, Row>;
+    expect(d2.sheet.unpricedCloses).toBe(1);
+    expect(String(d2.sheet.note)).toContain(
+      "1 closed deal this day carries a value in no known currency",
+    );
+    const d1 = (await dayRow(LOC_A, kd(1))).sources as Record<string, Row>;
+    expect(d1.sheet.unpricedCloses).toBeUndefined();
+    expect(String(d1.sheet.note)).not.toContain("no known currency");
   });
 });
 
@@ -1438,6 +1584,76 @@ describe("the closed-day rule", () => {
     }
     await refresh();
     expect((await dayRow(LOC_A, kd(1))).crm_leads).toBe(0);
+  });
+
+  test("a Maqsam call sync that is behind: leads called after its last run stay empty, and who is waiting says so", async () => {
+    await owner(db);
+    await refresh();
+    const calledBefore = (await dayRow(LOC_A, kd(3))).leads_called;
+    expect(calledBefore).toBe(1);
+    // The assigned caller's job is current; a retired caller's 30-day-old
+    // job (no active dialer access) does not hold the client back.
+    expect(
+      ((await dayRow(LOC_A, kd(1))).sources as Record<string, Row>).dialer_leads
+        .state,
+    ).toBe("ok");
+    await q(
+      "UPDATE mahara_reporting.sync_jobs SET last_success=$2 WHERE kind='calls' AND location_id=$1",
+      [AGENT, kt(2, "18:00")],
+    );
+    await q(
+      "DELETE FROM public.cockpit_client_days WHERE location_id=$1 AND day IN ($2, $3)",
+      [LOC_A, kd(1), today],
+    );
+    try {
+      await refresh();
+      const d1 = await dayRow(LOC_A, kd(1));
+      // No lead called found, and the calls after the sync's last run are
+      // not read yet: empty, not 0.
+      expect(d1.leads_called).toBeNull();
+      // Dials are the dialer's own saved outcomes, not the call sync.
+      expect(d1.dials).toBe(1);
+      const src = (d1.sources as Record<string, Row>).dialer_leads;
+      expect(src.state).toBe("stale");
+      expect(String(src.note)).toContain("Maqsam call sync last ran");
+      // A closed day the sync did read is never lowered.
+      expect((await dayRow(LOC_A, kd(3))).leads_called).toBe(calledBefore);
+      const now = (
+        await q<Row>(
+          "SELECT note FROM public.cockpit_client_now WHERE location_id=$1",
+          [LOC_A],
+        )
+      )[0];
+      expect(String(now.note)).toContain(
+        "leads called since then may still show as waiting",
+      );
+      // An error on the job is behind too, whatever its time.
+      await q(
+        "UPDATE mahara_reporting.sync_jobs SET last_success=now(), error='Maqsam answered 500' WHERE kind='calls' AND location_id=$1",
+        [AGENT],
+      );
+      await refresh();
+      expect(
+        String(
+          ((await dayRow(LOC_A, kd(1))).sources as Record<string, Row>)
+            .dialer_leads.note,
+        ),
+      ).toContain("reports an error");
+    } finally {
+      await q(
+        "UPDATE mahara_reporting.sync_jobs SET last_success=now(), error=NULL WHERE kind='calls' AND location_id=$1",
+        [AGENT],
+      );
+    }
+    await refresh();
+    expect((await dayRow(LOC_A, kd(1))).leads_called).toBe(0);
+    const now = (
+      await q<Row>(
+        "SELECT note FROM public.cockpit_client_now WHERE location_id=$1",
+        [LOC_A],
+      )
+    )[0];
+    expect(String(now.note)).not.toContain("Maqsam call sync");
   });
 
   test("running twice gives the same days", async () => {
