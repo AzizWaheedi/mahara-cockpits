@@ -87,7 +87,8 @@
 --     leads called plus the chats it called (the note counts them).
 --   Now. The waiting / touched rule inside cockpit_client_calls, re-done here
 --     for every client at once over the last 30 Kuwait days, and the report's
---     median first call in working seconds. The test proves both match.
+--     median first call in working seconds, read up to now whatever the
+--     window. The test proves both match.
 --
 -- Missing is never zero. A source that cannot be read leaves the stored figure
 -- as it was (NULL on a new row) and says why in sources; 0 means the source was
@@ -819,13 +820,16 @@ BEGIN
 
   -- 3.8 The dialer: official dials, leads called, first call in working time -
   BEGIN
+    -- The events are read up to now, whatever the window: the last 30 days'
+    -- median first call is taken from them, and a refresh of past days must
+    -- not leave it short. The day facts below keep to the window.
     PERFORM pg_catalog.set_config('enable_nestloop', 'off', true);
     EXECUTE 'INSERT INTO pg_temp._bf_dl (location_id, contact_id, kind, event_at, first_dial, speed)
       SELECT e.location_id, e.contact_id, e.kind, e.event_at, (e.data->>''firstDialAt'') IS NOT NULL,
              CASE WHEN e.kind = ''lead'' THEN (e.data->>''speedSeconds'')::numeric END
       FROM mahara_reporting.call_center_events e
       WHERE e.kind IN (''lead'', ''outcome'') AND e.event_at >= $1 AND e.event_at < $2 AND e.location_id = ANY($3)'
-    USING v_ev_start, least(v_end, v_now), (SELECT coalesce(array_agg(location_id), '{}'::text[]) FROM pg_temp._bf_loc);
+    USING v_ev_start, v_now, (SELECT coalesce(array_agg(location_id), '{}'::text[]) FROM pg_temp._bf_loc);
     PERFORM pg_catalog.set_config('enable_nestloop', v_nestloop, true);
     -- A WhatsApp chat (tagged inbound whatsapp, no ad, no campaign) is not a
     -- lead, as in CRM leads and cockpit_client_calls, so leads called leave it
@@ -858,13 +862,13 @@ BEGIN
     FROM pg_temp._bf_loc l CROSS JOIN (VALUES ('dialer'), ('dialer_leads')) x(source)
     CROSS JOIN LATERAL (
       SELECT count(*) AS n FROM pg_temp._bf_dl d
-      WHERE d.location_id = l.location_id AND d.kind = 'lead' AND d.chat AND d.first_dial AND d.event_at >= v_start
+      WHERE d.location_id = l.location_id AND d.kind = 'lead' AND d.chat AND d.first_dial AND d.event_at >= v_start AND d.event_at < v_end
     ) ch;
 
     INSERT INTO pg_temp._bf_v (location_id, day, metric, value)
     SELECT d.location_id, (d.event_at AT TIME ZONE 'Asia/Kuwait')::date, CASE WHEN d.kind = 'outcome' THEN 'dials' ELSE 'leads_called' END, count(*)
     FROM pg_temp._bf_dl d
-    WHERE d.event_at >= v_start AND (d.kind = 'outcome' OR (d.first_dial AND NOT d.chat))
+    WHERE d.event_at >= v_start AND d.event_at < v_end AND (d.kind = 'outcome' OR (d.first_dial AND NOT d.chat))
     GROUP BY 1, 2, 3;
     v_dialer_ok := true;
   EXCEPTION WHEN OTHERS THEN

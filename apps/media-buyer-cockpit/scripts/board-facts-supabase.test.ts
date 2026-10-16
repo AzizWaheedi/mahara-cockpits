@@ -1341,7 +1341,18 @@ describe("the closed-day rule", () => {
   test("a day in a month the sheet holds no tab for, before the portal's first report: never 0, never lowered", async () => {
     await owner(db);
     const old = kd(40);
+    const median = async () =>
+      (
+        await q<Row>(
+          "SELECT first_call_median_work_seconds_30d::float AS m FROM public.cockpit_client_now WHERE location_id=$1",
+          [LOC_A],
+        )
+      )[0].m;
+    const medianBefore = await median();
+    expect(medianBefore).not.toBeNull();
     await refresh(old, old);
+    // A refresh of past days still reads the last 30 days' first calls.
+    expect(await median()).toBe(medianBefore);
     let row = await dayRow(LOC_A, old);
     // No source covers the day's closes, so it stays empty rather than 0.
     expect(row.closes).toBeNull();
