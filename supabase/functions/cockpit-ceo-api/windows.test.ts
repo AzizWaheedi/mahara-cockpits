@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readAdsWindow, readContentWindow } from './windows.ts';
+import { readAdsWindow, readContentWindow, treeSql } from './windows.ts';
 
 // Meta: the account read, then whole-window insights per level. No row means no frequency.
 type MetaParams = Record<string, string | number>;
@@ -287,4 +287,56 @@ test('custom range coverage comes straight from the CRM and warns about records 
   expect(result.coverage.w30).toMatchObject({ adLeads: 1, adCloses: 2, adContracted: 9000 });
   const warn = result.notes.find(note => note.level === 'warn' && note.text.includes('could not place'));
   expect(warn?.text).toContain('the CRM holds 1 lead and 2 signed deals ($9,000) on this account\'s ads, and the ad rows add up to 1 and 1 ($6,000)');
+});
+
+// The CEO, 2026-10-16, on the $6,000 Makers deal: "put it in seen first". Calls
+// and deals are credited to the ad that brought in the lead, when it is one of
+// this account's ads; otherwise to the ad on the call or deal itself.
+test('custom range credits calls and deals to the lead\'s ad, with the same SQL as the scheduled tab', async () => {
+  const { treeSql: scheduled } = await import('../../../hermes/ceo-refresh/native/adapters/b2bAds.js');
+  const strip = (sql: string) => sql.split('\n').map(line => line.replace(/--.*$/, '').trim()).filter(Boolean).join('\n');
+  expect(strip(treeSql('2026-10-10', '2026-09-17', '2026-10-16'))).toBe(strip(scheduled('2026-10-10', '2026-09-17', '2026-10-16')));
+
+  const { PGlite } = await import('../../../apps/media-buyer-cockpit/node_modules/@electric-sql/pglite');
+  const db = new PGlite();
+  const snap = (day: string, id: string, name: string, status: string, spend: number) =>
+    `('${day}', '${id}', 'set', 'lg', '${name}', 'Set', 'MaharaMedia | Lead Gen', 'ACTIVE', '${status}', null, ${spend}, ${spend * 20}, ${spend}, ${spend / 2}, 0, '2026-10-16 09:00+00')`;
+  await db.exec(`
+    create table public.meta_ad_snapshots (date date, ad_id text, adset_id text, campaign_id text, ad_name text, adset_name text,
+      campaign_name text, campaign_status text, effective_status text, thumbnail_url text,
+      spend numeric, impressions numeric, clicks numeric, inline_link_clicks numeric, leads numeric, last_synced_at timestamptz);
+    create table public.leads (contact_id text primary key, ad_id text, tags text[], lead_created_at timestamptz);
+    create table public.calls (contact_id text, ad_id text, call_type text, booked_at timestamptz, start_at timestamptz, status text, assigned_user_id text);
+    create table public.sales_reps (ghl_user_id text, display_name text);
+    create table public.closed_deals (response_id text, contact_id text, ad_id text, submitted_at timestamptz,
+      contracted_revenue numeric, cash_collected numeric, closer text);
+    create table public.record_voids (entity text, record_id text);
+    create function public.b2b_campaign_type(name text) returns text language sql immutable as $$ select 'lead_gen' $$;
+    insert into public.meta_ad_snapshots values
+      ${snap('2026-09-07', 'old', 'Lea Team sitting video | 20-2-26', 'PAUSED', 3)},
+      ${['2026-10-10', '2026-10-11', '2026-10-12', '2026-10-13', '2026-10-14', '2026-10-15', '2026-10-16'].map(d => snap(d, 'live', 'Seen First | Hook 3', 'ACTIVE', 5)).join(',')};
+    insert into public.leads values ('makers', 'live', '{roas-qualified}', '2026-10-11 05:00+00'), ('away', 'gone', '{roas-qualified}', '2026-10-11 05:00+00');
+    insert into public.calls values
+      ('makers', 'old', 'intro', '2026-10-11 07:00+00', '2026-10-12 08:00+00', 'showed', 'u1'),
+      ('away', 'live', 'intro', '2026-10-12 07:00+00', '2026-10-13 08:00+00', 'showed', 'u1'),
+      ('walkin', 'old', 'intro', '2026-10-12 07:00+00', '2026-10-13 08:00+00', 'showed', 'u1');
+    insert into public.sales_reps values ('u1', 'Setter One');
+    insert into public.closed_deals values
+      ('makers-deal', 'makers', 'old', '2026-10-13 08:25+00', 6000, 500, 'Closer Two'),
+      ('typed-in', 'makers', null, '2026-10-14 08:25+00', 1000, 100, 'Closer Two');
+  `);
+  const result = await readAdsWindow('2026-10-10', '2026-10-16', {
+    readSql: async (_project, query) => (await db.query(query)).rows as Record<string, unknown>[],
+    readMeta: meta(),
+    now: NOW,
+  });
+  // The Makers call and deal (and a deal typed in with no ad) land on the lead's ad, "Seen First".
+  expect(adIn(result, 'live').w7).toMatchObject({ introsBooked: 2, closes: 2, contracted: 7000, cash: 600 });
+  // "gone" is not one of this account's ads, so the call keeps its own ad; a contact with no lead row keeps its own.
+  expect(adIn(result, 'old').w7).toMatchObject({ spend: 0, introsBooked: 1, closes: 0 });
+  expect(result.account.w7).toMatchObject({ introsBooked: 3, closes: 2, contracted: 7000 });
+  expect(result.coverage.w7).toMatchObject({ closes: 2, adCloses: 2, adContracted: 7000 });
+  const text = result.notes.map(note => note.text).join(' ');
+  expect(text).not.toContain('could not place');
+  expect(text).toContain('Calls and deals are credited to the ad on the contact\'s lead record when it is one of this account\'s ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal.');
 });

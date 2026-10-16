@@ -210,7 +210,10 @@ describe("the funnel's hints", () => {
     );
     expect(COVERAGE_HINT).toContain("paused ads included");
     expect(COVERAGE_HINT).toContain(
-      "Calls and deals are credited to the ad on the call or deal record, which can differ from the ad on the lead.",
+      "Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal.",
+    );
+    expect(COVERAGE_HINT).not.toContain(
+      "which can differ from the ad on the lead",
     );
     expect(read("src/pages/ceo/AdsTab.tsx")).toContain(
       "<span title={COVERAGE_HINT}>",
@@ -354,7 +357,9 @@ describe("SOURCES.md says the new rules", () => {
       '"not judged"',
       "the setters tagged `roas-qualified`, out of qualified plus unqualified",
       "the campaigns that delivered (impressions above 0)",
-      "credited to the ad on the call or deal row",
+      "credited to the ad on the contact's lead",
+      "had already delivered by the day the call was booked or the deal signed",
+      "otherwise the ad on the call or deal row itself",
     ])
       expect(md).toContain(s);
   });

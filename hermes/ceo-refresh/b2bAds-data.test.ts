@@ -41,11 +41,11 @@ const SCHEMA = `
     campaign_name text, campaign_status text, effective_status text, thumbnail_url text,
     spend numeric, impressions numeric, clicks numeric, inline_link_clicks numeric, leads numeric,
     last_synced_at timestamptz);
-  create table public.leads (contact_id text, ad_id text, tags text[], lead_created_at timestamptz);
+  create table public.leads (contact_id text primary key, ad_id text, tags text[], lead_created_at timestamptz);
   create table public.calls (contact_id text, ad_id text, call_type text, booked_at timestamptz,
     start_at timestamptz, status text, assigned_user_id text);
   create table public.sales_reps (ghl_user_id text, display_name text);
-  create table public.closed_deals (response_id text, ad_id text, submitted_at timestamptz,
+  create table public.closed_deals (response_id text, contact_id text, ad_id text, submitted_at timestamptz,
     contracted_revenue numeric, cash_collected numeric, closer text);
   create table public.record_voids (entity text, record_id text);
   create function public.b2b_campaign_type(name text) returns text language sql immutable as $$
@@ -93,7 +93,7 @@ async function fixture(extra = "") {
       ('c5', 'demo', '{roas-qualified}', '2026-09-20 05:00+00'),
       ('nobody', null, '{roas-qualified}', '2026-10-12 05:00+00');
     insert into public.calls values
-      -- The Makers calls carry the old ad, the lead carries the live one (decision B: each table's own ad).
+      -- The Makers calls carry the old ad and the lead the live one: they are credited to the lead's ad.
       ('makers', 'old', 'intro', '2026-10-11 07:00+00', '2026-10-12 08:00+00', 'showed', 'u1'),
       ('makers', 'old', 'intro', '2026-09-20 07:00+00', '2026-09-22 08:00+00', 'cancelled', 'u1'),
       ('c2', 'live', 'intro', '2026-10-12 06:00+00', '2026-10-13 08:00+00', 'showed', 'u1'),
@@ -107,11 +107,12 @@ async function fixture(extra = "") {
       ('c6', 'demo', 'demo', '2026-10-10 06:00+00', '2026-10-14 08:00+00', 'showed', 'u2');
     insert into public.sales_reps values ('u1', 'Setter One'), ('u2', 'Closer Two');
     insert into public.closed_deals values
-      ('makers-deal', 'old', '2026-10-13 08:25+00', 6000, 500, 'Closer Two'),
-      ('voided-deal', 'old', '2026-10-13 09:00+00', 8000, 1500, 'Closer Two'),
-      ('earlier-deal', 'live', '2026-09-25 08:00+00', 6000, 500, 'Closer Two'),
-      ('organic-deal', null, '2026-10-14 08:00+00', 4000, 1000, 'Closer Two'),
-      ('other-account', 'not-ours', '2026-10-14 08:00+00', 2000, 0, 'Closer Two');
+      -- The Makers deal, like its calls, carries the old ad; its lead the live one.
+      ('makers-deal', 'makers', 'old', '2026-10-13 08:25+00', 6000, 500, 'Closer Two'),
+      ('voided-deal', 'v1', 'old', '2026-10-13 09:00+00', 8000, 1500, 'Closer Two'),
+      ('earlier-deal', 'c3', 'live', '2026-09-25 08:00+00', 6000, 500, 'Closer Two'),
+      ('organic-deal', 'o1', null, '2026-10-14 08:00+00', 4000, 1000, 'Closer Two'),
+      ('other-account', 'x1', 'not-ours', '2026-10-14 08:00+00', 2000, 0, 'Closer Two');
     insert into public.record_voids values ('closed_deal', 'voided-deal');
     ${extra}
   `);
@@ -127,6 +128,12 @@ async function fixture(extra = "") {
 describe("Our ads: every ad with activity in the window is on the tree (audit A)", () => {
   test("the tree query starts from the window's activity, not from snapshots inside it", () => {
     const sql = treeSql(FROM7, FROM30, TODAY);
+    // Calls and deals are read through the lead's ad, bounded to the thirty days.
+    // The lead's ad counts only from its first delivery (min(s.date)) up to the record's own day.
+    expect(sql).toContain("coalesce(case when lead_ad.first_day <= (c.booked_at at time zone 'Asia/Riyadh')::date then lead_ad.ad_id end, c.ad_id) as ad_id");
+    expect(sql).toContain("coalesce(case when lead_ad.first_day <= (d.submitted_at at time zone 'Asia/Riyadh')::date then lead_ad.ad_id end, d.ad_id) as ad_id");
+    expect(sql).not.toMatch(/from public\.(calls c|closed_deals d)\s+where c?d?\.?ad_id is not null/);
+    expect(() => treeSql(FROM7, "2026-9-17", TODAY)).toThrow("bad day");
     // ident comes after the funnel CTEs and reads the newest snapshot on or before the last day.
     expect(sql.indexOf("ident as (")).toBeGreaterThan(sql.indexOf("w30_deals as ("));
     expect(sql).toContain("where s.date <= date '2026-10-16'");
@@ -135,20 +142,18 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     expect(sql).not.toContain("where date between date '2026-09-17' and date '2026-10-16'\n    order by ad_id");
   });
 
-  test("an ad last spent before the thirty days still carries its calls and its deal", async () => {
+  test("calls and deals are credited to the ad that brought in the lead (the CEO: \"put it in seen first\")", async () => {
     const { payload } = await fixture();
-    const old = adOf(payload, "old");
-    // Its newest snapshot on or before the last day names it.
-    expect(old.name).toBe("Lea Team sitting video | 20-2-26");
-    expect(old.running).toBe(false);
-    expect(old.verdict.verdict).toBe("off");
-    expect(old.w7).toMatchObject({ spend: 0, introsBooked: 1, introsShown: 1, closes: 1, contracted: 6000, cash: 500 });
-    expect(old.w30).toMatchObject({ spend: 0, introsBooked: 2, introsCancelled: 1, closes: 1, contracted: 6000 });
-    // $0 spent in the window: no cost per anything, never $0 (the live check found "CAC $0").
-    expect([old.w7.cac, old.w7.costPerIntroBooked, old.w7.costPerIntroShown, old.w7.cpl]).toEqual([null, null, null, null]);
-    expect(old.w7.roas).toBeNull();
+    // The Makers lead came in on "Seen First | Hook 3"; its calls and its $6,000
+    // deal carry "Lea Team sitting video". They land on the lead's ad.
+    const live = adOf(payload, "live");
+    expect(live.name).toBe("Seen First | Hook 3");
+    expect(live.w7).toMatchObject({ introsBooked: 2, introsShown: 2, closes: 1, contracted: 6000, cash: 500 });
+    expect(live.w30).toMatchObject({ introsBooked: 3, introsCancelled: 1, closes: 2, contracted: 12000 });
+    // The old ad had nothing else in the window (its other deal is voided), so it leaves the tab.
+    expect(adsOf(payload).some(a => a.id === "old")).toBe(false);
 
-    // The lead-gen account row and the campaign count the deal.
+    // The account row and the campaign are unchanged: the deal moved inside them.
     expect(payload.account.w7).toMatchObject({ closes: 1, contracted: 6000, cash: 500 });
     expect(payload.account.w7.roas).toBe(Math.round((6000 / payload.account.w7.spend) * 100) / 100);
     expect(payload.account.w30).toMatchObject({ closes: 2, contracted: 12000 });
@@ -156,10 +161,75 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     expect(lg.w7.closes).toBe(1);
     expect(lg.w30.closes).toBe(2);
 
-    // A campaign paused before the window is on the tab with its demo.
+    // A campaign paused before the window is on the tab with its demo (no lead row: its own ad).
     const paused = campaignOf(payload, "pc");
     expect(paused).toBeDefined();
     expect(adOf(payload, "hook1").w7).toMatchObject({ spend: 0, demosBooked: 1, demosShown: 1 });
+  });
+
+  test("a contact with no lead row keeps the ad on its call or deal, and a paused ad still carries them", async () => {
+    const { payload } = await fixture(`
+      insert into public.calls values ('walkin', 'old', 'intro', '2026-10-11 07:00+00', '2026-10-12 08:00+00', 'showed', 'u1');
+      insert into public.closed_deals values ('walkin-deal', 'walkin', 'old', '2026-10-13 08:25+00', 6000, 500, 'Closer Two');
+    `);
+    const old = adOf(payload, "old");
+    // Its newest snapshot on or before the last day names it.
+    expect(old.name).toBe("Lea Team sitting video | 20-2-26");
+    expect(old.running).toBe(false);
+    expect(old.verdict.verdict).toBe("off");
+    expect(old.w7).toMatchObject({ spend: 0, introsBooked: 1, introsShown: 1, closes: 1, contracted: 6000, cash: 500 });
+    // $0 spent in the window: no cost per anything, never $0 (the live check found "CAC $0").
+    expect([old.w7.cac, old.w7.costPerIntroBooked, old.w7.costPerIntroShown, old.w7.cpl]).toEqual([null, null, null, null]);
+    expect(old.w7.roas).toBeNull();
+    expect((old as unknown as { people: { closer: unknown } }).people.closer).toEqual({ name: "Closer Two", closes: 1 });
+    // The Makers records stay on the lead's ad.
+    expect(adOf(payload, "live").w7).toMatchObject({ introsBooked: 2, closes: 1 });
+    expect(payload.account.w7).toMatchObject({ closes: 2, contracted: 12000 });
+  });
+
+  test("a lead's ad counts only from its first delivery: an older call keeps its own ad, a later deal moves", async () => {
+    // Review of the rule: the lead row holds the contact's NEWEST opt-in ad. Makers became a lead in April
+    // and Seen First first ran in September, so a June call credited to it would fall off a June range.
+    const { payload } = await fixture(`
+      insert into public.meta_ad_snapshots values ${snapshot("2026-10-14", "newer", "Opt-in ad first run on 10-14", LG, "ACTIVE", 2)}, ${snapshot("2026-10-15", "newer", "Opt-in ad first run on 10-14", LG, "ACTIVE", 2)};
+      insert into public.leads values ('late', 'newer', '{roas-qualified}', '2026-10-14 06:00+00');
+      insert into public.calls values ('late', 'ref', 'intro', '2026-10-12 06:00+00', '2026-10-13 08:00+00', 'showed', 'u1');
+      insert into public.closed_deals values ('late-deal', 'late', 'ref', '2026-10-15 08:00+00', 2500, 250, 'Closer Two');
+    `);
+    // Booked 10-12, before "newer" first delivered on 10-14: the call stays on its own ad.
+    expect(adOf(payload, "ref").w7).toMatchObject({ introsBooked: 3, closes: 0 });
+    // Signed 10-15, after: the deal goes to the lead's ad.
+    expect(adOf(payload, "newer").w7).toMatchObject({ introsBooked: 0, closes: 1, contracted: 2500, cash: 250 });
+    // Totals are the same either way, and coverage agrees with the rows.
+    expect(payload.coverage.w7).toMatchObject({ adCloses: 2, adContracted: 8500 });
+    const text = payload.notes.map((n: { text: string }) => n.text).join(" ");
+    expect(text).not.toContain("could not place");
+    expect(text).toContain("was already running when the call was booked or the deal signed");
+  });
+
+  test("a lead whose ad is not one of this account's leaves the call and the deal on their own ad", async () => {
+    const { payload } = await fixture(`
+      insert into public.leads values ('elsewhere', 'gone', '{roas-qualified}', '2026-10-11 05:00+00');
+      insert into public.calls values ('elsewhere', 'ref', 'intro', '2026-10-13 06:00+00', '2026-10-14 08:00+00', 'showed', 'u1');
+      insert into public.closed_deals values ('elsewhere-deal', 'elsewhere', 'ref', '2026-10-15 08:00+00', 3000, 300, 'Closer Two');
+    `);
+    // "gone" has no Meta snapshot, so it is not on the tab and takes nothing.
+    expect(adsOf(payload).some(a => a.id === "gone")).toBe(false);
+    expect(adOf(payload, "ref").w7).toMatchObject({ introsBooked: 3, closes: 1, contracted: 3000, cash: 300 });
+    expect(payload.coverage.w7).toMatchObject({ adCloses: 2, adContracted: 9000 });
+    const text = payload.notes.map((n: { text: string }) => n.text).join(" ");
+    expect(text).not.toContain("could not place");
+  });
+
+  test("a deal with no ad of its own on a contact whose lead came from our ad is that ad's, and coverage counts it", async () => {
+    const { payload } = await fixture(`
+      insert into public.closed_deals values ('typed-in', 'c4', null, '2026-10-15 08:00+00', 5000, 1000, 'Closer Two');
+    `);
+    expect(adOf(payload, "ref").w7).toMatchObject({ closes: 1, contracted: 5000, cash: 1000 });
+    expect(payload.coverage.w7).toMatchObject({ closes: 4, adCloses: 2, adContracted: 11000 });
+    expect(payload.account.w7).toMatchObject({ closes: 2, contracted: 11000 });
+    const text = payload.notes.map((n: { text: string }) => n.text).join(" ");
+    expect(text).not.toContain("could not place");
   });
 
   test("an ad whose last snapshot still says ACTIVE but has not delivered in thirty days is off, not running", async () => {
@@ -187,14 +257,15 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     expect(payload.coverage.w30).toEqual({ leads: 6, adLeads: 5, closes: 4, adCloses: 2, contracted: 18000, adContracted: 12000 });
     const text = payload.notes.map((n: { text: string }) => n.text).join(" ");
     expect(text).not.toContain("could not place");
-    expect(text).toContain("Calls and deals are credited to the ad on the call or deal record, which can differ from the ad on the lead.");
+    expect(text).toContain("Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal.");
+    expect(text).not.toContain("which can differ from the ad on the lead");
   });
 
   test("a deal on one of our ads that the tree cannot place is counted and named in a warning", async () => {
     // Meta's only snapshot of this ad is after the last day, so no ad row can hold it.
     const { payload } = await fixture(`
       insert into public.meta_ad_snapshots values ${snapshot("2026-10-20", "later", "Later", LG, "ACTIVE", 1)};
-      insert into public.closed_deals values ('later-deal', 'later', '2026-10-15 08:00+00', 3000, 300, 'Closer Two');
+      insert into public.closed_deals values ('later-deal', 'l1', 'later', '2026-10-15 08:00+00', 3000, 300, 'Closer Two');
     `);
     expect(payload.coverage.w7.adCloses).toBe(2);
     expect(payload.coverage.w7.adContracted).toBe(9000);
@@ -210,9 +281,9 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     expect(ref.w7.leads).toBe(1);
     expect(ref.w7.leadsToIntro).toBe(1);
     expect(ref.w7.bookRate).toBe(1);
-    // The Makers lead booked on the old ad's call: still a lead that booked, on its own lead's ad.
+    // The Makers lead booked an intro that carries the old ad: one lead that booked, and its intro, on the lead's ad.
     const live = adOf(payload, "live");
-    expect(live.w7).toMatchObject({ leads: 3, leadsToIntro: 2, introsBooked: 1 });
+    expect(live.w7).toMatchObject({ leads: 3, leadsToIntro: 2, introsBooked: 2 });
     expect(live.w7.bookRate).toBe(0.6667);
     for (const ad of adsOf(payload)) {
       for (const w of [ad.w7, ad.w30]) {

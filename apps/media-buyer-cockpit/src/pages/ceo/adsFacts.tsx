@@ -188,7 +188,7 @@ export const DEMOS_SHOWN_HINT =
 
 /** What the "carry an ad" line counts, and whose ad a call or deal is. */
 export const COVERAGE_HINT =
-  "Every lead and signed deal in the CRM for the window against the ones whose ad id is an ad on this account, paused ads included. The rest came in organically, by WhatsApp or by hand. Calls and deals are credited to the ad on the call or deal record, which can differ from the ad on the lead.";
+  "Every lead and signed deal in the CRM for the window against the ones on an ad from this account, paused ads included. The rest came in organically, by WhatsApp or by hand. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal.";
 
 /** The coverage line: how much of the CRM carries one of this account's ads. */
 export function coverageLine(c: B2bAdsPayload["coverage"]["w7"]): string {

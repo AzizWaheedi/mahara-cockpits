@@ -281,7 +281,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as demos_qualified,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and (c.start_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)} - 7 and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown_mature,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)} and c.status='cancelled') as demos_cancelled
-    from public.calls c
+    from credited_calls c
     where c.ad_id is not null
       and ((c.booked_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)}
         or (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)})
@@ -290,7 +290,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
     select d.ad_id, count(*) as closes,
            coalesce(sum(d.contracted_revenue),0) as contracted,
            coalesce(sum(d.cash_collected),0) as cash
-    from public.closed_deals d
+    from credited_deals d
     where d.ad_id is not null
       and (d.submitted_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from)} and ${dateLiteral(to)}
       and ${NOT_VOIDED('d')}
@@ -324,7 +324,36 @@ export function treeSql(from7: string, from30: string, to: string): string {
   // Every ad with spend, a lead, a call or a deal in the window, named from its
   // newest snapshot on or before the last day: an ad paused before the window
   // still carries its calls and deals. The first window sits inside the second.
+  //
+  // Calls and deals are credited to the ad on the contact's lead (the CEO,
+  // 2026-10-16, on the $6,000 Makers deal: "put it in seen first"): the ad on
+  // the contact's lead (one row per contact) when it is one of this account's
+  // ads; otherwise the ad on the call or deal itself. Leads keep their own ad.
+  // The same SQL as hermes/ceo-refresh/native/adapters/b2bAds.js treeSql.
+  const first = from7 < from30 ? from7 : from30;
   return `with
+  lead_ad as (
+    -- The lead row holds the contact's newest opt-in ad, which can be newer
+    -- than an older call or deal: it is used only from the ad's first delivery.
+    select l.contact_id, l.ad_id, f.first_day
+    from public.leads l
+    join (select s.ad_id, min(s.date) as first_day from public.meta_ad_snapshots s group by s.ad_id) f
+      on f.ad_id = l.ad_id),
+  credited_calls as (
+    select c.contact_id,
+           coalesce(case when lead_ad.first_day <= (c.booked_at at time zone 'Asia/Riyadh')::date then lead_ad.ad_id end, c.ad_id) as ad_id,
+           c.call_type, c.booked_at, c.start_at, c.status, c.assigned_user_id
+    from public.calls c
+    left join lead_ad on lead_ad.contact_id = c.contact_id
+    where (c.booked_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(first)} and ${dateLiteral(to)}
+       or (c.start_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(first)} and ${dateLiteral(to)}),
+  credited_deals as (
+    select d.response_id,
+           coalesce(case when lead_ad.first_day <= (d.submitted_at at time zone 'Asia/Riyadh')::date then lead_ad.ad_id end, d.ad_id) as ad_id,
+           d.submitted_at, d.contracted_revenue, d.cash_collected, d.closer
+    from public.closed_deals d
+    left join lead_ad on lead_ad.contact_id = d.contact_id
+    where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(first)} and ${dateLiteral(to)}),
   ${funnel(from7, 'w7')},
   ${funnel(from30, 'w30')},
   ident as (
@@ -341,7 +370,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
       coalesce(sr.display_name, 'Unknown setter') as setter_name,
       count(*) filter (where c.status in ('showed','confirmed','invalid') and c.start_at < now()) as setter_shown,
       count(*) filter (where c.start_at < now()) as setter_due
-    from public.calls c
+    from credited_calls c
     left join public.sales_reps sr on sr.ghl_user_id = c.assigned_user_id
     where c.ad_id is not null and c.call_type = 'intro' and c.assigned_user_id is not null
       and (c.booked_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from30)} and ${dateLiteral(to)}
@@ -349,7 +378,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
     order by c.ad_id, count(*) desc),
   closers as (
     select distinct on (d.ad_id) d.ad_id, d.closer as closer_name, count(*) as closer_closes
-    from public.closed_deals d
+    from credited_deals d
     where d.ad_id is not null and d.closer is not null and btrim(d.closer) <> ''
       and (d.submitted_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from30)} and ${dateLiteral(to)}
       and ${NOT_VOIDED('d')}
@@ -497,12 +526,14 @@ function windowRowsSql(from: string, to: string): string {
         (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${first} and ${last} and ${NOT_VOIDED('d')}) as w30_contracted,
         (select count(*) from public.closed_deals d where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${first} and ${last} and ${VOIDED('d')}) as w30_voided,
         (select count(*) from public.leads l where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[]))) and (l.lead_created_at at time zone 'Asia/Riyadh')::date between ${first} and ${last} and ${ours('l')}) as ad_leads,
-        (select count(*) from public.closed_deals d where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${first} and ${last} and ${NOT_VOIDED('d')} and ${ours('d')}) as ad_closes,
-        (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${first} and ${last} and ${NOT_VOIDED('d')} and ${ours('d')}) as ad_contracted`;
+        (select count(*) from public.closed_deals d where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${first} and ${last} and ${NOT_VOIDED('d')} and ${oursDeal}) as ad_closes,
+        (select coalesce(sum(d.contracted_revenue),0) from public.closed_deals d where (d.submitted_at at time zone 'Asia/Riyadh')::date between ${first} and ${last} and ${NOT_VOIDED('d')} and ${oursDeal}) as ad_contracted`;
 }
 
 /** A CRM record on one of this account's ads: Meta has a snapshot of its ad. */
-const ours = (alias: 'l' | 'd') => `exists (select 1 from public.meta_ad_snapshots s where s.ad_id = ${alias}.ad_id)`;
+const ours = (alias: 'l' | 'd' | 'la') => `exists (select 1 from public.meta_ad_snapshots s where s.ad_id = ${alias}.ad_id)`;
+/** A deal on one of this account's ads, by treeSql's credit: its lead's ad when ours, else its own. */
+const oursDeal = `(${ours('d')} or exists (select 1 from public.leads la where la.contact_id = d.contact_id and (select min(s.date) from public.meta_ad_snapshots s where s.ad_id = la.ad_id) <= (d.submitted_at at time zone 'Asia/Riyadh')::date))`;
 
 /** The rows against the CRM: leads and deals on this account's ads that no ad row holds. */
 export function unplacedNote(crm: CoverageWindow, rows: B2bAdWindow): string | null {
@@ -535,7 +566,7 @@ function buildAdsNotes(payload: B2bAdsPayload, staleSince: string | null, freshn
   });
   payload.notes.push({
     level: 'info',
-    text: `Every row follows an ad from the first impression to the signed contract, through leads, intro calls, demos and closes that carry the ad's id. Calls and deals are credited to the ad on the call or deal record, which can differ from the ad on the lead. An ad switched off before the window still shows here, at $0 spend, when its leads, calls or deals fall inside it. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
+    text: `Every row follows an ad from the first impression to the signed contract, through the leads, intro calls, demos and closes credited to it. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before the window still shows here, at $0 spend, when its leads, calls or deals fall inside it. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
   });
   payload.notes.push({
     level: 'info',
