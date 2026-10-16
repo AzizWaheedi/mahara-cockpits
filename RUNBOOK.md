@@ -913,6 +913,11 @@ every run leaves one audit row (`meta_ad_days.run`). One look at all of it:
 | The board says the ad numbers are behind | Read `meta-ad-days-hourly` and `meta-ad-days-kick` in `cockpit_sync_state`. Check the three `mahara-meta-ad-days-*` jobs are in `cron.job` and active, `meta-ad-days` is deployed with the JWT check OFF (a POST without `x-cron-secret` answers 401), and `CRON_SECRET` equals the vault's `cockpit_sync_secret`. A run stuck "running" is closed by itself after 50 minutes (hourly), 6 hours (nightly) or 12 hours (backfill). | Systems manager |
 | A client's reach and frequency are empty with "Ad account X not re-read since <day>; this client's reach waits for the nightly run" | Normal between Kuwait midnight and the end of the nightly run (03:20 Kuwait and a few minutes): the account delivered earlier in the window but not in the last two days, so the hourly run did not re-read it. If it is still there after 04:00 Kuwait, read `meta-ad-days-nightly` in `cockpit_sync_state`. | Nobody, or the systems manager after 04:00 |
 | Frequency over a window is empty for a campaign, ad set or ad | Those rows are written by the nightly run only (03:20 Kuwait); account and client rows are refreshed hourly. Before the first nightly there are none. | Nobody |
+| A client's reach is empty with "Ad account X has not been read for this window yet" | The account delivered inside the window but has no reach row for it (the backfill reads no reach; the hourly run reads only accounts that spent in the last two days). The nightly run reads it. Before 2026-10-16 such an account was left out of the client's sum with no note (Marble and more). | Nobody, or the systems manager after 04:00 |
+| Note: "Hidden on purpose: X" | A clients row hides the account (`hidden_from_dashboard`) or it is Mahara's own (Mass Design). Its ad-days are kept. If it belongs on a client, add a hand tie (`cockpit_board_account_ties`, in a migration with the evidence). | Client success |
+| Note: "Spent for a cancelled or stopped client: X", or `status()->'cancelledDelivering'` | The account delivered in the last two days for a client whose card says Stopped or the registry Cancelled (Pidco, AEA, Ideal Elite on 16 Oct). Switch its ads off, or fix the client's card if the client is back. | Media buyer, client success |
+| Doctor: "Meta stops delivery on: X (unsettled, last spend ...)", or `status()->'billingStopped'` | Meta's `account_status` is not active for an account tied to a live client (3 = unsettled billing: ARCWANI since 9 Oct, Liwan since 12 Oct). Ask the client to settle billing; `mahara-ad-billing-watchdog` already alerts. | Client success |
+| Note: "Lead ids read for N accounts (X: Meta gives no lead access for N of M ads ...)" | The nightly run reads each lead ad's lead ids and times (never `field_data`) for `cockpit_meta_leads_not_in_crm`. An ad whose Page gives Mahara no lead access is skipped (Ardon on 16 Oct). Ask the client to give Mahara's business lead access on the Page (Page settings, Leads access). | CEO |
 
 Deploying (the lead session). In order:
 
@@ -968,6 +973,11 @@ Deploying (the lead session). In order:
    One account's impressions moved between two reads nine minutes apart (Meta
    still settling; equal on the re-read), which is why the nightly run reads
    the last 28 days again.
+
+Corrections of 2026-10-16 (after the second-source check, `docs/client-performance/SOURCES.md`):
+apply `20261016210100_meta_ad_days_checked.sql` and deploy `meta-ad-days` (either order: an older function
+sends no lead-ids ask and reads only the five windows' spans; a newer function on an older database gets
+no lead-ids tasks). The next hourly run reads the seven windows; the next nightly run reads the lead ids.
 
 To stop the runs: `select cron.unschedule(jobid) from cron.job where jobname like 'mahara-meta-ad-days-%';`.
 The stored rows stay, and `cockpit_meta_ad_days_status()` gives each account's last day and last read.
@@ -1041,7 +1051,13 @@ hours, a source it could not read, or a stop since its last good run.
 | A client is missing an ad account | `select public.cockpit_board_facts_doctor()->'spine';` lists active clients with none. Add the tie (`clients.ghl_location_id` or a `ghl_client_ad_accounts` row); the next refresh picks it up. Today Professional Touch has none (its account is not shared with Mahara's business). | Client success or systems manager |
 | The state row `board-facts` says a source "could not be read" | Its figures stored before are kept. Run `select public.cockpit_board_facts_refresh(current_date - 2, current_date);` in the SQL editor to see the error, fix the view it names, and the next run fills the days. | Systems manager |
 | The refresh stopped (doctor: "last ran ...") | Check both jobs are in `cron.job` and active: `select jobname, schedule, active from cron.job where jobname like 'mahara-board-facts%';`. Re-apply the migration to schedule them again. | Systems manager |
-| Doctor: "The 120-day fill stopped at ..." or "could not read ..." | The nightly run failed (its `board_facts.refresh_failed` or `board_facts.refresh` audit row has the error). Fix what it names and run `select public.cockpit_board_facts_run('nightly');` once. | Systems manager |
+| Doctor: "The 120-day fill stopped at ..." or "could not read ..." | The nightly run failed (its `board_facts.refresh_failed` or `board_facts.refresh` audit row has the error). Fix what it names and run `select public.cockpit_board_facts_run('nightly');` once. A 30-minute run that finds a source reading again that the last fill wrote while it was behind fills the 120 days again by itself (at most every 3 hours; `detail.lastHealAt`, `detail.healed`). | Systems manager |
+| `doctor()->'spine'->'registryDisagrees'` lists a client | Status and service come from the ClickUp card since 2026-10-16; the client registry (`ghl_clients`) says otherwise. Fix whichever is wrong (a card left Active, a registry row not updated after a client was lost). `noCard` lists clients that use the registry because no card has their task id. | Client success |
+| Doctor: "A hand tie in cockpit_board_account_ties names a location the client registry does not hold" | A hand tie points at no client. Fix the location id in a new migration (ties are added only in migrations, each with its evidence). | Systems manager |
+| A day's appointments note: "N bookings the contact replaced before their time, with no mark, are left out of meetings due" | The contact (or the call centre) booked again before the first meeting's time and nothing marks the first one: GoHighLevel left it confirmed. If the client says it did happen, mark it on the sheet; it then counts. | Client success |
+| A day's leads note: "N contacts arrived within one hour this day: an upload in bulk" | Leads were uploaded to GoHighLevel in a batch (Ardon on 28 Sep and 13 Oct), so their creation day is the upload's. Use Meta's form leads for that day's cost per lead. | Media buyer |
+| The sheet note: "Its Oct 26 tab has no rows yet" | The client has not filled the month's tab, so the month's shows, quotations and closes are not covered. Ask the client to fill it. | Client success |
+| `cockpit_client_now.outcome_only_30d` above 0, or the note "... had a dialer outcome saved but no Maqsam call to the number" | Leads counted as touched only by a saved outcome. The 90% line should read `verified_called_30d / callable_30d`. Ask the caller whether they dial from a line Maqsam does not see. | Call-centre lead |
 
 Deploying (the lead session). In order:
 
@@ -1073,6 +1089,12 @@ Deploying (the lead session). In order:
    9 no-shows; Ocean Home 30 (Delivery 31 by meeting day), 1 show, 30 with no
    outcome. Dials, 17 Sep to 16 Oct, equal the dialer's report exactly:
    Atlantis 62, Arcturus 165, Ocean Home 203.
+
+Corrections of 2026-10-16 (after the second-source check, `docs/client-performance/SOURCES.md`): apply
+`20261016210000_board_facts_checked.sql`, then `20261016210200_board_account_ties.sql`, then run
+`select public.cockpit_board_facts_run('nightly');` once and `select public.cockpit_board_facts_doctor();`.
+The CSM sheet copy keeps quotation N after the next native feed release (`hermes/cockpit-sync`); until
+then `quotation_answers` stays empty where the copy is the source.
 
 To stop the refresh: `select cron.unschedule(jobid) from cron.job where jobname like 'mahara-board-facts%';`.
 The stored days stay, and the board shows them with the time of the last run.
