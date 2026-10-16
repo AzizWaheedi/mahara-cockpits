@@ -828,6 +828,9 @@ describe("the client panel", () => {
     for (const a of page.noOutcomeAppointments)
       expect(text(panel)).toContain(a.firstName);
     expect(text(panel)).toContain("Booked by Dana Yousef");
+    // Not a person: lower case mid-sentence.
+    expect(text(panel)).toContain("Booked by the lead");
+    expect(text(panel)).not.toContain("Booked by The");
   });
 
   test("the campaign, ad set and ad tree; retention bars only for a video", async () => {
@@ -856,7 +859,12 @@ describe("the client panel", () => {
       panel.querySelectorAll('tr[data-level="adset"]') as ArrayLike<any>,
     ).find(r => text(r).includes("WhatsApp"));
     expect(text(chat)).toContain("n/a");
-    expect(text(panel)).toContain("Ad 120999, not in the Meta store");
+    expect(text(panel)).toContain(
+      "Ad 120999, not in the Meta store: 3 leads, 1 booking, 1 show",
+    );
+    expect(text(panel)).toContain(
+      "No ad on the lead: 2 leads, 0 bookings, 0 shows",
+    );
     // The levers part lists the filed one with its task.
     expect(text(panel)).toContain(
       "Send the WhatsApp reminder an hour before every meeting",

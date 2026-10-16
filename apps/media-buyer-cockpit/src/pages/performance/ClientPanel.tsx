@@ -234,6 +234,29 @@ function NoOutcomeList({ page, today }: { page: ClientPage; today: string }) {
   );
 }
 
+/**
+ * "Booked by Dana Yousef", "Booked by the lead": a person's name as it is,
+ * the database's "The lead", "The AI assistant" and "Someone in GoHighLevel"
+ * in lower case mid-sentence.
+ */
+function bookedByWords(b: { name: string; how?: string | null }): string {
+  const person = b.how === "The call centre";
+  const name = person
+    ? b.name
+    : b.name.charAt(0).toLowerCase() + b.name.slice(1);
+  return `Booked by ${name}`;
+}
+
+/** "1 lead", "3 leads"; words, never a number, when it was not measured. */
+function countWords(
+  v: number | null | undefined,
+  one: string,
+  many: string,
+): string {
+  if (!isNum(v)) return `${many} not measured`;
+  return `${formatValue(v, "count")} ${v === 1 ? one : many}`;
+}
+
 function NoOutcomeItem({
   a,
   today,
@@ -268,7 +291,7 @@ function NoOutcomeItem({
             a.calendar
               ? (CALENDAR[a.calendar] ?? a.calendarName)
               : a.calendarName,
-            a.bookedBy ? `Booked by ${a.bookedBy.name}` : null,
+            a.bookedBy ? bookedByWords(a.bookedBy) : null,
           ]
             .filter(Boolean)
             .join(" · ")}
@@ -648,15 +671,15 @@ function Tree({ page }: { page: ClientPage }) {
             {notInStore.map(x => (
               <li key={x.adId} className="tabular-nums">
                 Ad {x.adId}, not in the Meta store:{" "}
-                {formatValue(x.crmLeads, "count")} leads,{" "}
-                {formatValue(x.confirmedBookings, "count")} bookings,{" "}
+                {countWords(x.crmLeads, "lead", "leads")},{" "}
+                {countWords(x.confirmedBookings, "booking", "bookings")},{" "}
                 {showsWords(x.shows)}
               </li>
             ))}
             {hasNoAd && noAd ? (
               <li className="tabular-nums">
-                No ad on the lead: {formatValue(noAd.crmLeads, "count")} leads,{" "}
-                {formatValue(noAd.confirmedBookings, "count")} bookings,{" "}
+                No ad on the lead: {countWords(noAd.crmLeads, "lead", "leads")},{" "}
+                {countWords(noAd.confirmedBookings, "booking", "bookings")},{" "}
                 {showsWords(noAd.shows)}
               </li>
             ) : null}
