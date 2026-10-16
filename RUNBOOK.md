@@ -843,6 +843,108 @@ To stop the runs: `select cron.unschedule(jobid) from cron.job where jobname = '
 The old daemon on the VPS is separate: stop it there (both copies) so
 #team-management does not get its false lines.
 
+## Meta ad-days (the Client Performance board's ad numbers)
+
+Built 2026-10-16 for the shared Client Performance board. The Edge Function
+`meta-ad-days` (JWT check off, `x-cron-secret` from the vault's
+`cockpit_sync_secret`) reads Meta, GET only, Graph v25.0 pinned in
+`graph.ts`, with `META_SYSTEM_TOKEN`. Each run first asks Mahara's business
+(767701513092162, `owned_ad_accounts` and `client_ad_accounts`, one call
+each) which ad accounts spent, leaves out Mahara's own account
+(746108264865897), then reads every spending account's ad-level insights a
+day at a time (`time_increment=1`, `use_unified_attribution_setting=true`)
+in pieces of up to 7 days. Rows go to `cockpit_meta_ad_days`, one per ad per
+ad-account day, upserted by (ad_id, day): a later read replaces a row, an
+earlier one never does, and nothing is deleted because an ad stopped. Days
+are each ad account's own calendar (`account_timezone`); the CRM is on Kuwait
+time. NULL means Meta did not return it, never 0: an image ad has no video
+numbers, and `leads` (lead-form leads) is filled only on lead campaigns
+(`OUTCOME_LEADS`, `LEAD_GENERATION`); `lead_actions` keeps Meta's `lead`
+action on every objective, messaging leads included, so it matches the
+account-level count. Spend is kept in the account currency and in USD at the
+cockpit's fixed rates (`cockpit_meta_ad_days_usd_per`, the same table as
+`tap.js` USD_PER and `calculator.ts` FX); a currency without a rate leaves
+`spend_usd` NULL and the run's note names it. Reach over the five windows
+(last 7, 14 and 30 days, this month, last month, on Kuwait's calendar) is in
+`cockpit_meta_reach` per account, campaign, ad set and ad, read from Meta's
+own `time_ranges`, and per client (GoHighLevel location) as the sum of its
+accounts through `cockpit_board_clients`; frequency over a window is that
+row's impressions / reach. While the client spine is missing or empty, reach
+stays at account level and the note says so.
+
+The jobs (pg_cron, migration `20261016121700_meta_ad_days.sql`):
+`mahara-meta-ad-days-hourly` at minute 7 (yesterday and today of every
+spending account, and account-level reach), `mahara-meta-ad-days-nightly` at
+00:20 UTC, 03:20 Kuwait (the 28 days before today again, because attribution
+settles, and reach at every level), and `mahara-meta-ad-days-drain` every 2
+minutes, which posts `{"job":"continue"}` only while a task waits. A backfill
+of up to 90 days runs only on request. Each run is a row in
+`cockpit_meta_ad_day_runs` with a plain note (accounts read, ad-days written,
+accounts that could not be read and why, accounts "not linked to a client",
+currencies without a rate); its work is `cockpit_meta_ad_day_tasks` (leased 5
+minutes, 4 tries, a rate limit waits 3, 6, 9 minutes). Freshness rows in
+`cockpit_sync_state`: `meta-ad-days-hourly`, `-nightly`, `-backfill`,
+`-doctor` and `-kick` (a missing vault secret or pg_net is named there).
+Every Graph call is receipted in `cockpit_meta_ad_day_receipts` (30 days),
+every run leaves one audit row (`meta_ad_days.run`). One look at all of it:
+`select public.cockpit_meta_ad_days_status();` in the SQL editor.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Note: "META_SYSTEM_TOKEN is not set" or "Meta refused ... (code 190 ...)" | Make a new system-user token in Business Settings (ads_read on the client accounts) and set it as the function secret `META_SYSTEM_TOKEN`. The other cockpit functions read the same secret. | CEO |
+| Note: "Could not read <account>: ... not shared with Mahara's business" (code 10, 200s or 100/33) | In Business Settings, share the ad account with the business and give the system user access to it. Until then that account's rows stop at the last good day, and `cockpit_meta_ad_days_status()` names it as failing with Meta's reason. | CEO |
+| Note: "Meta's rate limit; a later run reads it again" | Nothing, unless it repeats for hours: then read the receipts (`select * from cockpit_meta_ad_day_receipts where error is not null order by id desc limit 20`). | Systems manager |
+| Note: "Not linked to a client: X (id, currency, spend)" | The account spends but no client row carries it. Add the tie (`clients.meta_ad_account_id` / `ghl_location_id`, or a `ghl_client_ad_accounts` row); the board's facts refresh picks it up and the next run ties it. The account's ad-days are kept meanwhile. | Client success or systems manager |
+| Note: "No USD rate for EUR on X" | Add the currency to `USD_PER` in `hermes/ceo-refresh/native/data/tap.js`, `FX` in `hermes/cockpit-sync/calculator.ts` and `cockpit_meta_ad_days_usd_per` in a new migration (the migration test pins the three together). The nightly rewrite fills the last 28 days; run a backfill for older ones. | Systems manager |
+| The board says the ad numbers are behind | Read `meta-ad-days-hourly` and `meta-ad-days-kick` in `cockpit_sync_state`. Check the three `mahara-meta-ad-days-*` jobs are in `cron.job` and active, `meta-ad-days` is deployed with the JWT check OFF (a POST without `x-cron-secret` answers 401), and `CRON_SECRET` equals the vault's `cockpit_sync_secret`. A run stuck "running" is closed by itself after 50 minutes (hourly), 6 hours (nightly) or 12 hours (backfill). | Systems manager |
+| Frequency over a window is empty for a campaign, ad set or ad | Those rows are written by the nightly run only (03:20 Kuwait); account and client rows are refreshed hourly. Before the first nightly there are none. | Nobody |
+
+Deploying (the lead session). In order:
+
+1. Deploy `meta-ad-days` with the JWT check OFF, from a throwaway worktree at
+   merged main (it imports nothing outside its folder):
+
+   ```sh
+   python3 scripts/dev/deploy_composio.py meta-ad-days --verify-jwt off
+   ```
+
+   Secrets by name, already set project-wide: `META_SYSTEM_TOKEN`,
+   `CRON_SECRET` (the platform gives `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY`).
+2. Apply `20261016121700_meta_ad_days.sql` (`scripts/dev/apply_migration.py`,
+   or Composio `SUPABASE_APPLY_A_MIGRATION` with BEGIN and COMMIT stripped).
+   It needs the cockpit core (`cockpit_sync_state`, `cockpit_audit_log`); it
+   loads before or after the board's facts migration. The hourly job starts at
+   once.
+3. Doctor, reads only:
+
+   ```sql
+   select net.http_post(url := 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/meta-ad-days',
+     body := '{"job":"doctor"}'::jsonb,
+     headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',
+       (select decrypted_secret from vault.decrypted_secrets where name = 'cockpit_sync_secret')));
+   -- then: select status_code, content from net._http_response order by id desc limit 1;
+   ```
+
+   It names a missing secret, the system user, the accounts that spend and
+   the ones not linked to a client.
+4. A dry run of the backfill (same call, body
+   `'{"job":"backfill","days":90,"dryRun":true}'::jsonb`) lists the accounts
+   and the reads; then the real one without `dryRun`. The drain finishes it
+   over a few minutes.
+5. Second source: compare 30 days of the store with Meta's account-level
+   numbers (Ads Manager, account row, same days, unified attribution):
+
+   ```sql
+   select account_id, account_name, account_currency, sum(spend) spend, sum(lead_actions) meta_leads, sum(leads) form_leads
+   from cockpit_meta_ad_days where day between current_date - 30 and current_date - 1 group by 1, 2, 3 order by 4 desc;
+   ```
+
+   On 2026-10-16 five accounts read this way matched Meta to the cent.
+
+To stop the runs: `select cron.unschedule(jobid) from cron.job where jobname like 'mahara-meta-ad-days-%';`.
+The stored rows stay, and `cockpit_meta_ad_days_status()` gives each account's last day and last read.
+
 ## Hiring
 
 The careers Typeforms into the MaharaMedia Hiring boards, the boards into the
