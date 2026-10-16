@@ -452,11 +452,24 @@ function trim(s: string): string {
   return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
 }
 
-/** 0.75%, 4.5%, 25%, 69.6%: two decimals under 1%, one above, so a rate never rounds across its line. */
+/**
+ * 0.75%, 4.5%, 25%, 69.6%: two decimals under 1%, one above, unless one
+ * decimal would land on a whole or half number the rate is not. Every
+ * official line is a whole or half number (70, 17.5, 10), so 69.96 reads
+ * 69.96%, never 70% beside "good at or above 70%", and 17.46 reads 17.46%,
+ * never 17.5%. The database rounds every rate to two decimals, so two
+ * decimals are the exact figure; a longer one is cut, never rounded, onto
+ * the line.
+ */
 export function percent(v: number | null | undefined): string {
   if (!isNum(v)) return "n/a";
-  const abs = Math.abs(v);
-  return `${trim(abs < 1 ? v.toFixed(2) : v.toFixed(1))}%`;
+  if (Math.abs(v) < 1) return `${trim(v.toFixed(2))}%`;
+  const one = v.toFixed(1);
+  const n = Number(one);
+  if (n === v || n * 2 !== Math.round(n * 2)) return `${trim(one)}%`;
+  const two = v.toFixed(2);
+  if (Number(two) !== n) return `${trim(two)}%`;
+  return `${trim((Math.trunc(v * 100) / 100).toFixed(2))}%`;
 }
 
 export function formatValue(v: number | null | undefined, unit: Unit): string {

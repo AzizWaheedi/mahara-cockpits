@@ -388,8 +388,20 @@ describe("the time frame", () => {
 describe("formats", () => {
   test("a rate never rounds across its line", () => {
     expect(columns.percent(0.75)).toBe("0.75%");
-    expect(columns.percent(69.96)).toBe("70%");
+    // Just under a whole-number line: never rounded onto it.
+    expect(columns.percent(69.96)).toBe("69.96%");
+    expect(columns.percent(24.96)).toBe("24.96%");
+    expect(columns.percent(29.96)).toBe("29.96%");
+    // Under the 17.5% booking-rate watch line, and just over the 10% no-outcome one.
+    expect(columns.percent(17.46)).toBe("17.46%");
+    expect(columns.percent(10.04)).toBe("10.04%");
+    // Anything else keeps one decimal.
     expect(columns.percent(69.6)).toBe("69.6%");
+    expect(columns.percent(33.33)).toBe("33.3%");
+    expect(columns.percent(70)).toBe("70%");
+    expect(columns.percent(17.5)).toBe("17.5%");
+    // A longer figure is cut, never rounded, onto the line.
+    expect(columns.percent(69.999)).toBe("69.99%");
     expect(columns.formatValue(12.5, "times")).toBe("12.5x");
     expect(columns.formatValue(2.456, "ratio")).toBe("2.46");
     expect(columns.formatValue(null, "usd")).toBe("n/a");
