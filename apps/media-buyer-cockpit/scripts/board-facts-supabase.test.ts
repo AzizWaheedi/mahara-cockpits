@@ -1637,4 +1637,61 @@ describe("the gate and the jobs", () => {
     expect(doctor.problems).toEqual([]);
     expect((doctor.spine as Row).activeWithoutAdAccount).toEqual([]);
   });
+
+  test("the doctor sees a 120-day fill that failed, stopped or is too old, even after a good 30-minute run", async () => {
+    await owner(db);
+    const problems = async () =>
+      (
+        (
+          await q<{ r: Row }>("SELECT public.cockpit_board_facts_doctor() AS r")
+        )[0].r.problems as string[]
+      ).join(" | ");
+
+    // A fill that could not read a source, then a good 30-minute run.
+    await db.exec(
+      "ALTER TABLE portal_data.appointment_outcomes RENAME TO appointment_outcomes_off",
+    );
+    try {
+      const r = (
+        await q<{ r: Row }>(
+          "SELECT public.cockpit_board_facts_run('nightly') AS r",
+        )
+      )[0].r;
+      expect(r.ok).toBe(false);
+    } finally {
+      await owner(db);
+      await db.exec(
+        "ALTER TABLE portal_data.appointment_outcomes_off RENAME TO appointment_outcomes",
+      );
+    }
+    await q("SELECT public.cockpit_board_facts_run('recent')");
+    expect(await problems()).toContain("The 120-day fill of");
+    expect(await problems()).toContain("could not read outcomes");
+
+    // A fill that stopped altogether.
+    await db.exec("ALTER TABLE public.ghl_clients RENAME TO ghl_clients_off");
+    try {
+      const r = (
+        await q<{ r: Row }>(
+          "SELECT public.cockpit_board_facts_run('nightly') AS r",
+        )
+      )[0].r;
+      expect(r.ok).toBe(false);
+    } finally {
+      await owner(db);
+      await db.exec("ALTER TABLE public.ghl_clients_off RENAME TO ghl_clients");
+    }
+    await q("SELECT public.cockpit_board_facts_run('recent')");
+    expect(await problems()).toContain("The 120-day fill stopped at");
+
+    // A good fill clears both; one more than 26 hours old is named.
+    await q("SELECT public.cockpit_board_facts_run('nightly')");
+    expect(await problems()).toBe("");
+    await q(
+      "UPDATE public.cockpit_sync_state SET detail = jsonb_set(detail, '{lastDeepAt}', to_jsonb(now() - interval '30 hours')) WHERE key='board-facts'",
+    );
+    expect(await problems()).toContain("The 120-day fill last ran");
+    await q("SELECT public.cockpit_board_facts_run('nightly')");
+    expect(await problems()).toBe("");
+  });
 });

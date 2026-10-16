@@ -1182,7 +1182,13 @@ BEGIN
     'clients', v_clients, 'rows', v_rows, 'sources', coalesce(v_summary, '{}'::jsonb), 'failures', v_failures,
     'drops', v_drop_count,
     'lastDeepAt', CASE WHEN p_to - p_from >= 60 THEN to_jsonb(v_now) ELSE coalesce(v_prev->'lastDeepAt', 'null'::jsonb) END,
-    'lastDeepFrom', CASE WHEN p_to - p_from >= 60 THEN to_jsonb(p_from) ELSE coalesce(v_prev->'lastDeepFrom', 'null'::jsonb) END);
+    'lastDeepFrom', CASE WHEN p_to - p_from >= 60 THEN to_jsonb(p_from) ELSE coalesce(v_prev->'lastDeepFrom', 'null'::jsonb) END,
+    -- Whether the last 120-day fill read every source, and which it could
+    -- not: a 30-minute run after it must not hide a failed fill.
+    'lastDeepOk', CASE WHEN p_to - p_from >= 60 THEN to_jsonb(v_ok) ELSE coalesce(v_prev->'lastDeepOk', 'null'::jsonb) END,
+    'lastDeepFailed', CASE WHEN p_to - p_from >= 60
+      THEN coalesce((SELECT jsonb_agg(DISTINCT f->>'source') FROM jsonb_array_elements(v_failures) f), '[]'::jsonb)
+      ELSE coalesce(v_prev->'lastDeepFailed', 'null'::jsonb) END);
 
   INSERT INTO public.cockpit_sync_state (key, last_run_at, last_ok_at, ok, note, rows_seen, detail, updated_at)
   VALUES ('board-facts', v_now, CASE WHEN v_ok THEN v_now END, v_ok, v_note, v_rows, v_detail, v_now)
@@ -1238,6 +1244,8 @@ DECLARE
   v_state record;
   v_problems text[] := '{}';
   v_days jsonb;
+  v_deep_at timestamptz;
+  v_fail record;
 BEGIN
   IF to_regclass('cron.job') IS NOT NULL THEN
     EXECUTE 'SELECT coalesce(jsonb_agg(jsonb_build_object(''name'', j.jobname, ''schedule'', j.schedule, ''active'', j.active) ORDER BY j.jobname), ''[]''::jsonb)
@@ -1255,8 +1263,29 @@ BEGIN
     v_problems := v_problems || format('The board facts last ran %s Kuwait time.', to_char(v_state.last_run_at AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'));
   END IF;
   IF v_state.ok IS FALSE THEN v_problems := v_problems || coalesce(v_state.note, 'The last run failed.'); END IF;
-  IF v_state.detail IS NOT NULL AND (v_state.detail->>'lastDeepAt') IS NULL THEN
+  -- The 120-day fill keeps leads called and late sheet closes current on
+  -- days older than 3. A 30-minute run after a failed fill sets ok again, so
+  -- the fill is checked on its own: its age, its last read, its last stop.
+  v_deep_at := (v_state.detail->>'lastDeepAt')::timestamptz;
+  IF v_state.detail IS NOT NULL AND v_deep_at IS NULL THEN
     v_problems := v_problems || 'The 120-day fill has not run yet: select public.cockpit_board_facts_run(''nightly'');';
+  ELSIF v_deep_at < now() - interval '26 hours' THEN
+    v_problems := v_problems || format('The 120-day fill last ran %s Kuwait time, so days older than 3 days (leads called, late sheet closes) have stopped refreshing.',
+      to_char(v_deep_at AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'));
+  END IF;
+  IF v_deep_at IS NOT NULL AND (v_state.detail->>'lastDeepOk') = 'false' THEN
+    v_problems := v_problems || format('The 120-day fill of %s Kuwait time could not read %s, so those figures are the ones stored before.',
+      to_char(v_deep_at AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'),
+      coalesce((SELECT string_agg(x, ', ') FROM jsonb_array_elements_text(v_state.detail->'lastDeepFailed') x), 'every source'));
+  END IF;
+  SELECT a.created_at, a."after"->>'error' AS error INTO v_fail
+  FROM public.cockpit_audit_log a
+  WHERE a.action = 'board_facts.refresh_failed' AND a."after"->>'mode' = 'nightly'
+    AND a.created_at > coalesce(v_deep_at, '-infinity'::timestamptz)
+  ORDER BY a.created_at DESC LIMIT 1;
+  IF v_fail.created_at IS NOT NULL THEN
+    v_problems := v_problems || format('The 120-day fill stopped at %s Kuwait time: %s',
+      to_char(v_fail.created_at AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'), left(coalesce(v_fail.error, 'no error recorded'), 300));
   END IF;
   SELECT jsonb_build_object('rows', count(*), 'clients', count(DISTINCT location_id), 'from', min(day), 'to', max(day))
   INTO v_days FROM public.cockpit_client_days;
