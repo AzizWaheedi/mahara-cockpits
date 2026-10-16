@@ -28,6 +28,7 @@ const FILE = "20261016111157_board_facts.sql";
 const SQL = migration(FILE);
 /** The corrections after the second-source check of 2026-10-16, applied on top. */
 const CHECKED = migration("20261016210000_board_facts_checked.sql");
+const TIES = migration("20261016210200_board_account_ties.sql");
 
 const BUYER = "00000000-0000-4000-8000-0000000000b1";
 const LOC_A = "locBoardClientA00001";
@@ -1592,6 +1593,27 @@ describe("the corrections after the 2026-10-16 check", () => {
       await q("DELETE FROM public.cockpit_board_account_ties");
       await refresh();
     }
+  });
+
+  test("the hand-tie migration applies twice, each tie with its evidence", async () => {
+    await owner(db);
+    await db.exec(TIES);
+    await db.exec(TIES);
+    const rows = await q<Row>(
+      "SELECT account_id, location_id, evidence FROM public.cockpit_board_account_ties ORDER BY account_id",
+    );
+    expect(rows.map(r => r.account_id)).toEqual([
+      "134992869555229",
+      "640644143620696",
+      "718146936708597",
+      "762687672022667",
+      "854779610674376",
+    ]);
+    for (const r of rows) {
+      expect(String(r.location_id)).toMatch(/^[A-Za-z0-9]{20}$/);
+      expect(String(r.evidence)).toContain("Checked 2026-10-16");
+    }
+    await q("DELETE FROM public.cockpit_board_account_ties");
   });
 
   test("meetings: a booking replaced before its time, a reschedule, a moved time, deal answers, quotation N, bulk uploads, a day so far", async () => {
