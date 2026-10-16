@@ -177,6 +177,7 @@ function Portfolio({ rows }: { rows: ClientRow[] }) {
               {t.covered === t.of
                 ? `All ${t.of} clients`
                 : `${t.covered} of ${t.of} clients`}
+              {t.partial ? `, ${t.partial} with days missing` : ""}
             </dd>
           </div>
         ))}

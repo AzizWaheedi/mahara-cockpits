@@ -582,7 +582,14 @@ export type Total = {
   /** Clients whose figure is in it, of all clients shown. */
   covered: number;
   of: number;
+  /** A floor: a sum with days missing, or a rate over spend not yet priced. */
   atLeast: boolean;
+  /**
+   * Clients whose rate covers only part of the days (an ad account not read
+   * for a day). Missing days take the spend and the leads out together, so
+   * the rate is no floor: it is said in words, never with a +.
+   */
+  partial: number;
 };
 
 function sumOf(rows: ClientRow[], key: string) {
@@ -596,7 +603,7 @@ function sumOf(rows: ClientRow[], key: string) {
     covered += 1;
     if (c.atLeast === true || c.partial) atLeast = true;
   }
-  return { value: covered ? value : null, covered, atLeast };
+  return { value: covered ? value : null, covered, atLeast, partial: 0 };
 }
 
 /** A rate over every client: the sums of each cell's own two figures. */
@@ -605,6 +612,7 @@ function ratioOf(rows: ClientRow[], key: string, scale: number) {
   let d = 0;
   let covered = 0;
   let atLeast = false;
+  let partial = 0;
   for (const r of rows) {
     const c = r.values[key];
     const s = statusOf(c);
@@ -614,11 +622,17 @@ function ratioOf(rows: ClientRow[], key: string, scale: number) {
     d += c.den;
     covered += 1;
     // A cost with no lead yet is a floor for that client, but its spend and
-    // its zero are exact in the sums; only unpriced spend or missing days
-    // make the total a floor.
-    if (c.atLeast === true || c.partial) atLeast = true;
+    // its zero are exact in the sums; only unpriced spend makes the total a
+    // floor. Missing days drop both figures at once: said, not a floor.
+    if (c.atLeast === true) atLeast = true;
+    if (c.partial) partial += 1;
   }
-  return { value: covered && d > 0 ? (n / d) * scale : null, covered, atLeast };
+  return {
+    value: covered && d > 0 ? (n / d) * scale : null,
+    covered,
+    atLeast,
+    partial,
+  };
 }
 
 export function portfolio(rows: ClientRow[]): Total[] {

@@ -576,6 +576,49 @@ describe("the grid", () => {
     expect(text(strip)).toContain("All 8 clients");
   });
 
+  test("missing ad days make a sum a floor, but a rate is said in words, never a +", async () => {
+    answer({
+      edit: b => {
+        const harbor = b.clients.find(
+          (c: any) => c.locationId === "locFixHarbor01",
+        );
+        harbor.values.cpl = { ...harbor.values.cpl, partial: true };
+        harbor.values.spend = {
+          ...harbor.values.spend,
+          atLeast: true,
+          partial: true,
+        };
+      },
+    });
+    await show();
+    const strip = host.querySelector('[aria-label="Every client together"]');
+    const figure = (label: string) =>
+      Array.from(strip.querySelectorAll("dl > div") as ArrayLike<any>).find(d =>
+        text(d).startsWith(label),
+      );
+    expect(text(figure("Cost per lead"))).not.toContain("+");
+    expect(text(figure("Cost per lead"))).toContain("1 with days missing");
+    expect(text(figure("Spend"))).toContain("+");
+    // Unpriced spend is a true floor, on a rate too.
+    answer({
+      edit: b => {
+        const harbor = b.clients.find(
+          (c: any) => c.locationId === "locFixHarbor01",
+        );
+        harbor.values.cpl = { ...harbor.values.cpl, atLeast: true };
+      },
+    });
+    client.resetBoardCache();
+    await act(async () => root.render(null));
+    await show();
+    const again = host.querySelector('[aria-label="Every client together"]');
+    const cpl = Array.from(
+      again.querySelectorAll("dl > div") as ArrayLike<any>,
+    ).find(d => text(d).startsWith("Cost per lead"));
+    expect(text(cpl)).toContain("+");
+    expect(text(cpl)).not.toContain("days missing");
+  });
+
   test("a figure no client has is n/a in the portfolio, never $0", async () => {
     answer({
       edit: b => {
