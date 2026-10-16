@@ -562,11 +562,20 @@ describe("writing a run", () => {
       to: "2026-10-14",
       ok: false,
       channels: [
-        { id: "C09R4QJCZ5Y", name: "eods-csr", ok: false, error: "ratelimited" },
+        {
+          id: "C09R4QJCZ5Y",
+          name: "eods-csr",
+          ok: false,
+          error: "ratelimited",
+        },
       ],
       rows: [
-        row(lama, "2026-10-13", "not_read", { note: "Could not read #eods-csr" }),
-        row(lama, "2026-10-14", "not_read", { note: "Could not read #eods-csr" }),
+        row(lama, "2026-10-13", "not_read", {
+          note: "Could not read #eods-csr",
+        }),
+        row(lama, "2026-10-14", "not_read", {
+          note: "Could not read #eods-csr",
+        }),
       ],
     };
     // 13 Oct was late: kept, and handed back. 14 Oct was missed: not read may replace that.
