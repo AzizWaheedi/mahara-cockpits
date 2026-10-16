@@ -989,31 +989,50 @@ readable by a browser (the board's own read functions are the only door):
   portal's yes, the larger per day); closes and revenue (the sheet's first
   closed meeting per contact, the portal's won deals, one deal counted once,
   USD only); lead quality (the portal's latest score, 1 to 10); the dialer's
-  official dials; leads called (WhatsApp chats left out).
+  official dials; leads called (WhatsApp chats left out). Quotations and
+  closes count a source only when the client fills it: a sheet with at least
+  one Closed mark, a sheet copy with at least one quotation Y, a portal with
+  at least one deal marked won, lost or pending (its "unknown" is a blank)
+  or one quotation answered. A client who fills none of them has those
+  columns empty, never 0, and the day's notes say which column is blank.
 - `cockpit_client_now`: per client, leads waiting for a first touch, the
   oldest of them, the share of the last 30 days' leads touched (0.9 is 90%),
   and the median first call in working seconds, the same rules as the client
   page's call centre (`cockpit_client_calls`).
 
-Every day row carries `sources`: per source `{ok, state, as_of, note, from}`.
+Every day row carries `sources`: per source `{ok, state, as_of, note, from}`;
+on a day with closed deals whose value is in no known currency,
+`sources.sheet.unpricedCloses` says how many (and `closes` is above
+`closes_with_value`): the board should call that day's revenue incomplete.
 NULL means no source covered the figure (a failed read, a client who does not
-fill it, a day after a stale sync's last read, a month the sheet has no tab
-for, a day before the client's first portal report); 0 means a source read
-the day and found nothing. A stale source never lowers a closed day; a
-complete read may, and the run's audit row (`board_facts.refresh`) lists each
-drop. Each run writes the state row `board-facts` in `cockpit_sync_state`
-(`detail`: clients, rows, each source's states, failures, drops, the last
-120-day fill). One look at all of it, with the problems in plain words:
-`select public.cockpit_board_facts_doctor();` (service key or SQL editor).
+fill it, a day after a stale sync's last read, any day of a sync with no
+record of a run for the client, a month the sheet has no tab for, a day
+before the client's first portal report); 0 means a source read the day and
+found nothing. What a source does hold for an uncovered day still counts. A
+stale source never lowers a closed day; a complete read may, and the run's
+audit row (`board_facts.refresh`) lists each drop. Leads called (and who is
+waiting on `cockpit_client_now`) rest on the dialer's Maqsam call sync, one
+`mahara_reporting.sync_jobs` row of kind `calls` per caller: a client is as
+current as the oldest job of the active callers assigned to it, behind after
+3 hours or on an error. Each run writes the state row `board-facts` in
+`cockpit_sync_state` (`detail`: clients, rows, each source's states,
+failures, drops, and the last 120-day fill: when, whether it read every
+source, which it could not). One look at all of it, with the problems in
+plain words: `select public.cockpit_board_facts_doctor();` (service key or
+SQL editor). The doctor checks the 120-day fill on its own: older than 26
+hours, a source it could not read, or a stop since its last good run.
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
 | A note on a day: "The lead sync last ran ..." or "The appointments sync last ran ..." | The GoHighLevel sync for that client is behind (`lead_sync_state`, `appointment_sync_state`). Fix the sync (`mahara-ghl-leads` at :35, `mahara-ghl-appointments` at :20); the next refresh fills the days. | Systems manager |
 | "The client sheet copy ... last read" or "The sheet was last read ..." | The CSM profile sync or the dialer's sheet reader is behind or the sheet errored (`mahara_reporting.sheet_snapshots.error`). Shows, quotations and closes for later days stay empty until it reads again. | Systems manager |
-| Quotations or closes are empty for a client | The client has no sheet copy and no portal reports, or the day is before its first portal report or in a month its sheet has no tab for. Ask the client success manager to get the sheet filled; nothing to fix in the database. | Client success |
+| Quotations or closes are empty for a client | The client does not fill them: no Closed mark in its sheet, no quotation Y in the sheet copy, no deal or quotation marked in the portal (the day's `sources` notes say which), or the day is before its first portal report or in a month its sheet has no tab for. Ask the client success manager to get the sheet or the portal filled; nothing to fix in the database. Read live on 16 Oct: 7 of 17 active clients fill neither closes source (Ardon, Castello Industries, Marble and more, mergestudio.kw, Professional Touch Company, شركة العلا, نهوض نجد), and 6 fill no quotation source (the same less شركة العلا, whose portal answers one). | Client success |
+| Leads called are empty on recent days, or `cockpit_client_now.note` says "The Maqsam call sync last ran ..." | The dialer's call sync for a caller assigned to the client is behind or erroring (`select id, last_success, error from mahara_reporting.sync_jobs where kind = 'calls';`). Fix it in the dialer; the next refresh fills the days. A caller who left keeps an old job harmlessly once their dialer access is switched off. | Systems manager |
+| A day says "has no record of a run for this client" | The GoHighLevel lead or appointments sync, or the dialer's appointment sync, has never read that client (no `lead_sync_state`, `appointment_sync_state` or `sync_jobs` `appointments_recent` row). Only what was found counts; add the client to that sync. | Systems manager |
 | A client is missing an ad account | `select public.cockpit_board_facts_doctor()->'spine';` lists active clients with none. Add the tie (`clients.ghl_location_id` or a `ghl_client_ad_accounts` row); the next refresh picks it up. Today Professional Touch has none (its account is not shared with Mahara's business). | Client success or systems manager |
 | The state row `board-facts` says a source "could not be read" | Its figures stored before are kept. Run `select public.cockpit_board_facts_refresh(current_date - 2, current_date);` in the SQL editor to see the error, fix the view it names, and the next run fills the days. | Systems manager |
 | The refresh stopped (doctor: "last ran ...") | Check both jobs are in `cron.job` and active: `select jobname, schedule, active from cron.job where jobname like 'mahara-board-facts%';`. Re-apply the migration to schedule them again. | Systems manager |
+| Doctor: "The 120-day fill stopped at ..." or "could not read ..." | The nightly run failed (its `board_facts.refresh_failed` or `board_facts.refresh` audit row has the error). Fix what it names and run `select public.cockpit_board_facts_run('nightly');` once. | Systems manager |
 
 Deploying (the lead session). In order:
 
