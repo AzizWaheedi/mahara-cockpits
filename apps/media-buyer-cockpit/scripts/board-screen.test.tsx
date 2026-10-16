@@ -969,6 +969,55 @@ describe("targets", () => {
     );
   });
 
+  test("after a save, every time frame and client read earlier is read again", async () => {
+    await show("/performance?tf=last_7");
+    // A client opened in Last 7, then closed.
+    await click(button("Open Dune Interiors"));
+    await act(async () => {
+      win.document.dispatchEvent(
+        new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await flush();
+    await click(host.querySelector('[data-chip="last_30"]'));
+    const last7 = { p_from: client.shiftDay(today, -6), p_to: today };
+    const reads = (name: string) =>
+      rpcCalls.filter(
+        c =>
+          c.name === name &&
+          c.args.p_from === last7.p_from &&
+          c.args.p_to === last7.p_to,
+      ).length;
+    expect(reads("cockpit_board_read")).toBe(1);
+    expect(reads("cockpit_board_client")).toBe(1);
+    await click(button("Edit targets", host));
+    const dialog = sheet();
+    await type(
+      dialog.querySelector('input[aria-label="Cost per lead good line"]'),
+      "12",
+    );
+    await click(button("Save", dialog));
+    // The board in view is read again at once.
+    expect(
+      rpcCalls.filter(
+        c =>
+          c.name === "cockpit_board_read" &&
+          c.args.p_from === client.shiftDay(today, -29),
+      ).length,
+    ).toBe(2);
+    await act(async () => {
+      win.document.dispatchEvent(
+        new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    await flush();
+    // Back to Last 7: its board and the client opened in it are read again.
+    await click(host.querySelector('[data-chip="last_7"]'));
+    expect(reads("cockpit_board_read")).toBe(2);
+    await click(button("Open Dune Interiors"));
+    expect(reads("cockpit_board_client")).toBe(2);
+  });
+
   test("a board override shows beside the official line and can go back", async () => {
     const saves: any[] = [];
     answer({

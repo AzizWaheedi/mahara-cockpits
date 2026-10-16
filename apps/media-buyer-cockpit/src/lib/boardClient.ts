@@ -514,12 +514,11 @@ function load<T>(id: string, run: () => Promise<T>, again: boolean): void {
       : current?.status === "error"
         ? current.data
         : undefined;
-  cache.set(
-    id,
+  const pending: ReadState<T> =
     keep !== undefined
       ? { status: "ready", data: keep, refreshing: true, readAt: Date.now() }
-      : { status: "loading" },
-  );
+      : { status: "loading" };
+  cache.set(id, pending);
   emit();
   void (async () => {
     let next: ReadState<T>;
@@ -533,6 +532,8 @@ function load<T>(id: string, run: () => Promise<T>, again: boolean): void {
     } catch (e) {
       next = { status: "error", message: boardProblem(e), data: keep };
     }
+    // Forgotten or started again meanwhile (a target saved): this answer is out of date.
+    if (cache.get(id) !== pending) return;
     cache.set(id, next as ReadState<unknown>);
     emit();
   })();
@@ -580,12 +581,49 @@ export function loadClientPage(
   );
 }
 
-/** Every read of this time frame again: after a target or a lever changed. */
+/** Every read of this time frame again: after a lever changed. */
 export function reloadBoard(
   from: string,
   to: string,
   loc?: string | null,
 ): void {
+  loadBoard(from, to, true);
+  if (loc) loadClientPage(loc, from, to, true);
+}
+
+/**
+ * After a target changed: every read of the session is out of date, every
+ * time frame's board and every client's page, since each carries the lines
+ * and the dots. The board in view (and the client open, if any) keep their
+ * numbers on screen while they are read again; every other read starts
+ * afresh when it is next shown.
+ */
+export function reloadEveryRead(
+  from: string,
+  to: string,
+  loc?: string | null,
+): void {
+  const keep = (id: string) => {
+    const s = cache.get(id);
+    const data =
+      s?.status === "ready" || s?.status === "error" ? s.data : undefined;
+    return data !== undefined
+      ? ({
+          status: "ready",
+          data,
+          refreshing: false,
+          readAt: Date.now(),
+        } as ReadState<unknown>)
+      : null;
+  };
+  const board = boardId(from, to);
+  const page = loc ? clientId(loc, from, to) : null;
+  const shown = [board, page]
+    .filter((id): id is string => Boolean(id))
+    .map(id => [id, keep(id)] as const);
+  cache.clear();
+  for (const [id, state] of shown) if (state) cache.set(id, state);
+  emit();
   loadBoard(from, to, true);
   if (loc) loadClientPage(loc, from, to, true);
 }

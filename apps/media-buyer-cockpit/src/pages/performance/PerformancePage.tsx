@@ -35,6 +35,7 @@ import {
   kuwaitToday,
   rangeLabel,
   reloadBoard,
+  reloadEveryRead,
   useBoard,
 } from "@/lib/boardClient";
 import {
@@ -723,7 +724,7 @@ export function PerformancePage() {
           onOpenChange={setEditing}
           targets={data.targets}
           clients={data.clients}
-          onSaved={() => reloadBoard(frame.from, frame.to, selected)}
+          onSaved={() => reloadEveryRead(frame.from, frame.to, selected)}
         />
       ) : null}
     </div>
