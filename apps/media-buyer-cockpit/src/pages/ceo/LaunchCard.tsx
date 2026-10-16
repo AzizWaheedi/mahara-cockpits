@@ -271,7 +271,7 @@ export function LaunchCard({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate">{a.name}</span>
                         <span className="block text-xs tabular-nums text-muted-foreground">
-                          {`${a.w30.leads} leads · ${a.w30.demosShown} demos · ${a.w30.closes} closes`}
+                          {`${plural(a.w30.leads, "lead")} · ${plural(a.w30.demosShown, "demo")} · ${plural(a.w30.closes, "close")}`}
                         </span>
                       </span>
                     </label>

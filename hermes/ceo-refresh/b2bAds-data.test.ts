@@ -144,6 +144,9 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     expect(old.verdict.verdict).toBe("off");
     expect(old.w7).toMatchObject({ spend: 0, introsBooked: 1, introsShown: 1, closes: 1, contracted: 6000, cash: 500 });
     expect(old.w30).toMatchObject({ spend: 0, introsBooked: 2, introsCancelled: 1, closes: 1, contracted: 6000 });
+    // $0 spent in the window: no cost per anything, never $0 (the live check found "CAC $0").
+    expect([old.w7.cac, old.w7.costPerIntroBooked, old.w7.costPerIntroShown, old.w7.cpl]).toEqual([null, null, null, null]);
+    expect(old.w7.roas).toBeNull();
 
     // The lead-gen account row and the campaign count the deal.
     expect(payload.account.w7).toMatchObject({ closes: 1, contracted: 6000, cash: 500 });

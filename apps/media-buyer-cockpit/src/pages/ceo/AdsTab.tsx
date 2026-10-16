@@ -133,7 +133,8 @@ function adsManagerUrl(
 /** A rate or unit cost, or null when its denominator is zero, which the screen shows as the explained n/a. */
 const dash = (v: number | null, f: (x: number) => string) =>
   v === null ? null : f(v);
-const times = (v: number) => `${v.toFixed(1)}×`;
+// Round half up first: toFixed(1) alone shows 19.45 as 19.4 (binary floats).
+const times = (v: number) => `${(Math.round(v * 10) / 10).toFixed(1)}×`;
 const x = (v: number | null) => (v === null ? null : times(v));
 
 type Stage = {

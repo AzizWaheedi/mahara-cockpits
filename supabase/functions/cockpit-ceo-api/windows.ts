@@ -144,7 +144,8 @@ function sqlRow(rows: Row[], field: string): Row {
 
 // A count that is not known (null link clicks) gives no rate and no cost, never 0.
 const ratio = (numerator: number | null, denominator: number | null): number | null => numerator !== null && denominator !== null && denominator > 0 ? Math.round((numerator / denominator) * 10_000) / 10_000 : null;
-const per = (numerator: number, denominator: number | null): number | null => denominator !== null && denominator > 0 ? roundUsd(numerator / denominator) : null;
+// A cost needs money spent: $0 in the window has no cost per anything, never $0.
+const per = (numerator: number, denominator: number | null): number | null => numerator > 0 && denominator !== null && denominator > 0 ? roundUsd(numerator / denominator) : null;
 const rate = (numerator: number | null, denominator: number | null): number | null => numerator !== null && denominator !== null && denominator > 0 ? numerator / denominator : null;
 
 function finish(window: B2bAdWindow): B2bAdWindow {

@@ -333,7 +333,9 @@ async function readWindowFrequency(from, until, leadGenIds) {
     return { ad, adset, campaign, account };
 }
 const metaFrequency = (level, id) => level.get(id)?.frequency ?? null;
-const per = (a, b) => (b > 0 ? usd(a / b) : null);
+// A cost needs money spent: an ad with $0 in the window (one that joined the
+// tab through a call or deal) has no cost per anything, never $0.
+const per = (a, b) => (a > 0 && b > 0 ? usd(a / b) : null);
 const ratio = (a, b) => b > 0 ? Math.round((a / b) * 10000) / 10000 : null;
 /** The derived numbers, exactly as the B2B dashboard defines them. */
 function finish(w) {
