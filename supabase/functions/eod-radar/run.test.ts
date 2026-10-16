@@ -8,6 +8,8 @@ import { type ReceiptRow, type RunDeps, runRadar } from "./run.ts";
 
 const TOKEN = "xoxb-fixture-not-real";
 const kw = (s: string) => new Date(Date.parse(`${s.replace(" ", "T")}:00Z`) - 3 * 3600_000);
+/** The tests' fixed clock: every run below stands on 14 Oct, never on the wall clock. */
+const NOW = kw("2026-10-14 21:00");
 const CHANNELS = [
   { id: CH.tech, name: "tech-eods" }, { id: CH.media, name: "media-eods" }, { id: CH.csms, name: "eods-csms" },
   { id: CH.sales, name: "eods-salesreps" }, { id: CH.csr, name: "eods-csr" },
@@ -17,11 +19,11 @@ type Call = { name: string; args: Record<string, any> };
 
 function inputs(from: string, to: string, today: string, over: Record<string, unknown> = {}) {
   return {
-    now: new Date().toISOString(), today, from, to,
+    now: NOW.toISOString(), today, from, to,
     settings: { digestOn: true, remindersOn: false, strikesOn: false, lateAt: "22:00", closeoutAt: "23:00", digestChannel: "C0B5TL9H370", digestChannelName: "team-management", lookbackDays: 2 },
     channels: CHANNELS,
     people: PEOPLE.filter(p => [7, 18, 26].includes(p.personId)).map(p => ({
-      ...p, slackSource: "lookup", slackState: "ok", slackCheckedAt: new Date().toISOString(),
+      ...p, slackSource: "lookup", slackState: "ok", slackCheckedAt: NOW.toISOString(),
       days: daysBetween(from, to).map(day => ({ day, off: isFriday(day) ? "friday" : null, offNote: null, leave: null })),
     })),
     outbox: [], digests: [], ...over,
@@ -164,7 +166,7 @@ describe("a run", () => {
   });
 
   test("Slack ids: looked up when a week old; a missing scope stops the lookups and keeps the saved ids", async () => {
-    const old = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    const old = new Date(NOW.getTime() - 8 * 86_400_000).toISOString();
     const stale = (p: any) => ({ ...p, slackCheckedAt: old });
     const base = inputs("2026-10-12", "2026-10-14", "2026-10-14");
     const s = setup({ now: kw("2026-10-14 21:00"), history: HISTORY, inputs: { people: base.people.map(stale) } });
