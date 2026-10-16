@@ -497,9 +497,11 @@ export async function ghlBookingEvents(
     for (const c of cals) {
       // "Not Confirmed Appointments" is the provisional calendar and the
       // callback / reschedule calendars are agent scheduling, not bookings.
-      // Counting them inflated bookings7d until 2026-09-12.
+      // Counting them inflated bookings7d until 2026-09-12. "Project Review &
+      // Qualification Call" is a callback calendar too (Atlantis, 2026-10-16:
+      // 3 CALLBACK bookings counted as bookings).
       if (
-        /not confirmed|callback|reschedule|personal calendar/i.test(
+        /not confirmed|callback|reschedule|personal calendar|qualification|project review|مراجعة/i.test(
           String(c.name ?? ""),
         )
       )
