@@ -26,6 +26,8 @@ import {
 
 const FILE = "20261016111157_board_facts.sql";
 const SQL = migration(FILE);
+/** The corrections after the second-source check of 2026-10-16, applied on top. */
+const CHECKED = migration("20261016210000_board_facts_checked.sql");
 
 const BUYER = "00000000-0000-4000-8000-0000000000b1";
 const LOC_A = "locBoardClientA00001";
@@ -77,7 +79,7 @@ CREATE TABLE public.ghl_client_ad_accounts(location_id text, client_id uuid, mat
 CREATE TABLE public.cockpit_campaigns(id bigserial PRIMARY KEY, meta_account_id text, meta_campaign_id text, client_name text,
  source_deleted boolean DEFAULT false);
 CREATE TABLE public.client_leads(ghl_contact_id text PRIMARY KEY, location_id text, created_at timestamptz, channel text,
- ad_id text, campaign_id text, contact_name text, contact_phone text, deleted boolean, synced_at timestamptz DEFAULT now());
+ ad_id text, campaign_id text, contact_name text, contact_phone text, deleted boolean, attribution_raw jsonb, synced_at timestamptz DEFAULT now());
 CREATE TABLE public.cockpit_people(id bigserial PRIMARY KEY, name text, email text, role text, active boolean, schedule jsonb);
 CREATE TABLE public.cockpit_media_daily_stats(source_deployment text, source_id text, campaign_name text, day date, data jsonb);
 CREATE TABLE public.client_opportunities(opportunity_id text PRIMARY KEY, location_id text, contact_id text, stage_id text,
@@ -438,7 +440,7 @@ async function sum(loc: string, column: string) {
 
 async function lead(id: string, loc: string, created: string, extra: Row = {}) {
   await q(
-    "INSERT INTO public.client_leads(ghl_contact_id,location_id,created_at,channel,ad_id,campaign_id,contact_phone,deleted) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+    "INSERT INTO public.client_leads(ghl_contact_id,location_id,created_at,channel,ad_id,campaign_id,contact_phone,deleted,attribution_raw) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)",
     [
       id,
       loc,
@@ -448,6 +450,7 @@ async function lead(id: string, loc: string, created: string, extra: Row = {}) {
       extra.campaign ?? null,
       extra.phone ?? null,
       extra.deleted ?? false,
+      extra.attribution ? JSON.stringify(extra.attribution) : null,
     ],
   );
   if (extra.tags)
@@ -673,7 +676,11 @@ beforeAll(async () => {
     ad: "AD2",
     phone: "+971500000006",
   });
-  await lead("L7", LOC_A, kt(2, "11:00"), { phone: "+201000000007" });
+  // L7 came from an ad with no ad id on the contact, only Meta's click id.
+  await lead("L7", LOC_A, kt(2, "11:00"), {
+    phone: "+201000000007",
+    attribution: { medium: "facebook", utmFbclid: "fbclid-L7" },
+  });
   // L8 came in minutes ago (and always today in Kuwait, even just after midnight).
   await lead(
     "L8",
@@ -925,6 +932,7 @@ beforeAll(async () => {
     migration("20261015200000_cockpit_client_calls_whatsapp_chats.sql"),
   );
   await db.exec(SQL);
+  await db.exec(CHECKED);
 }, 120_000);
 afterAll(async () => {
   await db?.close();
@@ -1021,11 +1029,19 @@ describe("CRM leads", () => {
     const d3 = await dayRow(LOC_A, kd(3));
     // L1, L2 and L4 (another WhatsApp tag is kept); L3 is a chat, L5 deleted.
     expect(d3.crm_leads).toBe(3);
-    expect(d3.crm_ad_leads).toBe(2);
+    // L1 has an ad id. L2 is on the Meta channel with no ad id, no Facebook
+    // Ads source and no click id: an Instagram or Messenger DM, kept in CRM
+    // leads and counted apart, never an ad lead (2026-10-16 check: 98 such
+    // contacts made Ocean Home read 139 ad leads against Meta's 115).
+    expect(d3.crm_ad_leads).toBe(1);
+    expect(d3.crm_dm_contacts).toBe(1);
     const d2 = await dayRow(LOC_A, kd(2));
     expect(d2.crm_leads).toBe(2);
+    // L6 by its ad id (channel Other), L7 by Meta's click id alone.
     expect(d2.crm_ad_leads).toBe(2);
+    expect(d2.crm_dm_contacts).toBe(0);
     expect((await dayRow(LOC_A, kd(6))).crm_leads).toBe(0);
+    expect((await dayRow(LOC_A, kd(6))).crm_dm_contacts).toBe(0);
   });
 });
 
@@ -1151,13 +1167,15 @@ describe("quotations, closes, revenue and lead quality", () => {
     expect(c3.closes).toBeNull();
     expect(c3.revenue_usd).toBeNull();
     expect(c3.lead_quality_count).toBeNull();
-    // The dialer's saved outcomes are its own table: read, and none.
-    expect(c3.dials).toBe(0);
-    // Not in the dialer's client list: leads called are not known.
+    // Not in the dialer's client list: neither dials nor leads called are
+    // known (2026-10-16: 15 such clients read 0 dials on every day).
+    expect(c3.dials).toBeNull();
     expect(c3.leads_called).toBeNull();
     const sources = c3.sources as Record<string, Row>;
     expect(sources.sheet.state).toBe("none");
     expect(sources.dialer_leads.state).toBe("none");
+    expect(sources.dialer.state).toBe("none");
+    expect(String(sources.dialer.note)).toContain("does not list this client");
   });
 
   test("a client no sync has ever read: what is found counts, a day with nothing found stays empty, never 0", async () => {
@@ -1268,7 +1286,11 @@ describe("quotations, closes, revenue and lead quality", () => {
       expect(d9.closes).toBe(0);
       expect(d9.closes_with_value).toBe(0);
       expect(d9.revenue).toBe(0);
-      expect(d9.quotations).toBe(0);
+      expect(d9.closes_lost).toBe(1);
+      expect(d9.closes_answered).toBe(1);
+      // The client fills the Quotation column now, but the copy holds no row
+      // for DAP1, the meeting due that day: nothing answered, so unknown.
+      expect(d9.quotations).toBeNull();
       expect((await dayRow(LOC_D, kd(3))).quotations).toBe(1);
       expect(
         String((d9.sources as Record<string, Row>).sheet.note),
@@ -1368,18 +1390,33 @@ describe("the dialer", () => {
       )[0].r;
       await owner(db);
       const row = now.find(r => r.location_id === loc)!;
-      expect(row.callable_30d).toBe(Number(calls.waiting.callable));
-      expect(row.touched_30d).toBe(Number(calls.waiting.touched));
-      expect(row.untouched_leads).toBe(Number(calls.waiting.untouched.count));
-      expect(
-        row.oldest_untouched_at
-          ? (row.oldest_untouched_at as Date).getTime()
-          : null,
-      ).toBe(
-        calls.waiting.untouched.oldestAt
-          ? Date.parse(calls.waiting.untouched.oldestAt)
-          : null,
-      );
+      if (loc === LOC_B) {
+        // Done with you: the call centre does not call this client's leads,
+        // so no waiting figures are stored (they read as a failing 0% before).
+        for (const k of [
+          "callable_30d",
+          "touched_30d",
+          "untouched_leads",
+          "oldest_untouched_at",
+          "touched_share_30d",
+          "verified_called_30d",
+          "outcome_only_30d",
+        ])
+          expect(row[k]).toBeNull();
+      } else {
+        expect(row.callable_30d).toBe(Number(calls.waiting.callable));
+        expect(row.touched_30d).toBe(Number(calls.waiting.touched));
+        expect(row.untouched_leads).toBe(Number(calls.waiting.untouched.count));
+        expect(
+          row.oldest_untouched_at
+            ? (row.oldest_untouched_at as Date).getTime()
+            : null,
+        ).toBe(
+          calls.waiting.untouched.oldestAt
+            ? Date.parse(calls.waiting.untouched.oldestAt)
+            : null,
+        );
+      }
       const report = (
         await q<{ r: { clients: Row[] } }>(
           "SELECT public.mahara_call_center_report($1,$2,NULL,$3) AS r",
@@ -1407,9 +1444,403 @@ describe("the dialer", () => {
     );
     expect(a.first_call_median_work_seconds_30d).not.toBeNull();
     expect(String(a.note)).toContain("WhatsApp chat contact");
+    // Touched = a Maqsam call or a saved outcome. L4 has only the saved NO
+    // ANSWER T1 and no call to its number: touched, not verified.
+    expect(Number(a.verified_called_30d) + Number(a.outcome_only_30d)).toBe(
+      Number(a.touched_30d),
+    );
+    expect(Number(a.outcome_only_30d)).toBeGreaterThanOrEqual(1);
+    expect(String(a.note)).toContain("no Maqsam call to the number");
     expect(String(now.find(r => r.location_id === LOC_B)!.note)).toContain(
       "Done with you",
     );
+  });
+});
+
+/** The month tab a Kuwait day falls in, as the client sheets name it ("Oct 26"). */
+const tabOf = (day: string) => {
+  const d = new Date(`${day}T12:00:00Z`);
+  return `${d.toLocaleString("en-US", { month: "short", timeZone: "UTC" })} ${String(d.getUTCFullYear()).slice(2)}`;
+};
+
+describe("the corrections after the 2026-10-16 check", () => {
+  test("status and service come from the ClickUp card, the registry only without one; a Stopped client gets no new days", async () => {
+    const LOC_E = "locBoardClientE00006";
+    const LOC_F = "locBoardClientF00007";
+    await owner(db);
+    await q(
+      `INSERT INTO public.ghl_clients(location_id,client_name,status,clickup_id,country,service_mode) VALUES
+       ($1,'Client E','Paused','CU_E','KW','DFY'), ($2,'Client F','Launching','CU_F','KW',NULL)`,
+      [LOC_E, LOC_F],
+    );
+    await q(
+      `INSERT INTO public.cockpit_csm_sources(table_name,source_id,data) VALUES
+       ('clients','cE',$1::jsonb), ('clients','cF',$2::jsonb), ('clients','cX',$3::jsonb), ('clientProfiles','pF',$4::jsonb)`,
+      [
+        JSON.stringify({ taskId: "CU_E", stage: "Stopped", service: "DFY" }),
+        JSON.stringify({ taskId: "CU_F", stage: "Active", service: "DWY" }),
+        JSON.stringify({ taskId: "CU_X", stage: "Stopped", service: "DFY" }),
+        JSON.stringify({ taskId: "CU_F", adsPlatform: "Tiktok" }),
+      ],
+    );
+    try {
+      await refresh();
+      const rows = await q<Row>(
+        "SELECT location_id, status, registry_status, card_stage, service_mode, tiktok FROM public.cockpit_board_clients WHERE location_id = ANY($1)",
+        [[LOC_E, LOC_F, LOC_X, LOC_A]],
+      );
+      const by = Object.fromEntries(rows.map(r => [r.location_id, r]));
+      // Lost on the card, Paused in the registry: Stopped (2026-10-16:
+      // three clients lost on 20 Sep still read Paused or Ghosting).
+      expect(by[LOC_E]).toMatchObject({
+        status: "Stopped",
+        registry_status: "Paused",
+        card_stage: "Stopped",
+      });
+      // Active on the card, Launching in the registry (Shades on 16 Oct);
+      // the card's service and Ads Platform count.
+      expect(by[LOC_F]).toMatchObject({
+        status: "Active",
+        registry_status: "Launching",
+        service_mode: "DWY",
+        tiktok: true,
+      });
+      // A Stopped card on a client the registry calls Cancelled keeps the
+      // registry's word; with no card the registry's status stands.
+      expect(by[LOC_X].status).toBe("Cancelled");
+      expect(by[LOC_A]).toMatchObject({ status: "Active", card_stage: null });
+      const days = async (loc: string) =>
+        (
+          await q<{ n: number }>(
+            "SELECT count(*)::int AS n FROM public.cockpit_client_days WHERE location_id=$1",
+            [loc],
+          )
+        )[0].n;
+      expect(await days(LOC_E)).toBe(0);
+      expect(await days(LOC_F)).toBe(10);
+      const doctor = (
+        await q<{ r: Row }>("SELECT public.cockpit_board_facts_doctor() AS r")
+      )[0].r;
+      // No 120-day fill has run in this file yet: the doctor says so in plain
+      // words (its text[] append needs a typed literal).
+      expect((doctor.problems as string[]).join(" ")).toContain(
+        "The 120-day fill has not run yet",
+      );
+      const spine = doctor.spine as Row;
+      const disagree = JSON.stringify(spine.registryDisagrees);
+      expect(disagree).toContain("Client E");
+      expect(disagree).toContain("Client F");
+      expect(disagree).not.toContain("Old client");
+      expect(spine.noCard as string[]).toContain("Client A");
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.ghl_clients WHERE location_id = ANY($1)", [
+        [LOC_E, LOC_F],
+      ]);
+      await q(
+        "DELETE FROM public.cockpit_board_clients WHERE location_id = ANY($1)",
+        [[LOC_E, LOC_F]],
+      );
+      await q(
+        "DELETE FROM public.cockpit_csm_sources WHERE source_id IN ('cE','cF','cX','pF')",
+      );
+      await refresh();
+    }
+  });
+
+  test("a hand tie comes first, holds even for a hidden account, never for Mahara's own, and the doctor names a tie to no client", async () => {
+    await owner(db);
+    await q(
+      `INSERT INTO public.cockpit_board_account_ties(account_id,location_id,evidence,added_by) VALUES
+       ('888888',$1,'Owned by the client''s Meta business, checked by hand','test'),
+       ('555555',$1,'The hidden account is this client''s, checked by hand','test'),
+       ('666666',$1,'Mahara''s own account, which is never tied','test')`,
+      [LOC_C],
+    );
+    try {
+      await refresh();
+      const c = (
+        await q<Row>(
+          "SELECT ad_account_ids, ad_account_ties FROM public.cockpit_board_clients WHERE location_id=$1",
+          [LOC_C],
+        )
+      )[0];
+      expect(c.ad_account_ids).toEqual(["555555", "888888"]);
+      expect(
+        (c.ad_account_ties as Row[]).every(
+          t => t.matchedBy === "cockpit_board_account_ties",
+        ),
+      ).toBe(true);
+      const a = (
+        await q<Row>(
+          "SELECT ad_account_ids FROM public.cockpit_board_clients WHERE location_id=$1",
+          [LOC_A],
+        )
+      )[0];
+      expect(a.ad_account_ids).toEqual(["111111", "333333"]);
+      await q(
+        "INSERT INTO public.cockpit_board_account_ties(account_id,location_id,evidence,added_by) VALUES ('999999','locNowhere0000000000','A location that is not in the registry','test')",
+      );
+      const problems = (
+        (
+          await q<{ r: Row }>("SELECT public.cockpit_board_facts_doctor() AS r")
+        )[0].r.problems as string[]
+      ).join(" ");
+      expect(problems).toContain("999999 to locNowhere0000000000");
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.cockpit_board_account_ties");
+      await refresh();
+    }
+  });
+
+  test("meetings: a booking replaced before its time, a reschedule, a moved time, deal answers, quotation N, bulk uploads, a day so far", async () => {
+    const LOC_G = "locBoardClientG00008";
+    const phone = (n: number) => `+9655000006${n}`;
+    await owner(db);
+    await q(
+      "INSERT INTO public.ghl_clients(location_id,client_name,status,clickup_id,country,service_mode) VALUES($1,'Client G','Active','CU_G','KW','DFY')",
+      [LOC_G],
+    );
+    await q(
+      `INSERT INTO public.ghl_calendars(location_id,calendar_id,name) VALUES
+       ($1,'calMainG','Main Appointment Calendar'),
+       ($1,'calQualG','مكالمة مراجعة المشروع وتنسيق الاستشارة | Project Review & Qualification Call')`,
+      [LOC_G],
+    );
+    await q(
+      "INSERT INTO public.lead_sync_state VALUES ($1,now(),'success',NULL)",
+      [LOC_G],
+    );
+    await q(
+      "INSERT INTO public.appointment_sync_state VALUES ($1,now(),'success')",
+      [LOC_G],
+    );
+    await q(
+      "INSERT INTO mahara_reporting.sync_jobs VALUES ('production','jG','ghl',$1,'appointments_recent',now(),NULL)",
+      [LOC_G],
+    );
+    for (let i = 1; i <= 7; i++)
+      await lead(`G${i}`, LOC_G, kt(9, "09:00"), {
+        phone: phone(i),
+        ad: `ADG${i}`,
+      });
+    // Ten contacts within one hour: an upload in bulk.
+    for (let i = 0; i < 10; i++)
+      await lead(
+        `GB${i}`,
+        LOC_G,
+        kt(6, `10:${String(i * 5).padStart(2, "0")}`),
+        {
+          phone: `+9655100000${i}`,
+          ad: "ADGB",
+        },
+      );
+    const main = { calendar: "calMainG" };
+    // G1 booked a meeting, then booked another before the first one's time.
+    await appt("G_old", LOC_G, {
+      ...main,
+      contact: "G1",
+      booked: kt(6, "09:00"),
+      start: kt(4, "12:00"),
+    });
+    await appt("G_new", LOC_G, {
+      ...main,
+      contact: "G1",
+      booked: kt(5, "10:00"),
+      start: kt(3, "12:00"),
+    });
+    // G2 booked again only after the first meeting's time: a likely no-show, kept.
+    await appt("G_late", LOC_G, {
+      ...main,
+      contact: "G2",
+      booked: kt(8, "10:00"),
+      start: kt(6, "12:00"),
+    });
+    await appt("G_late2", LOC_G, {
+      ...main,
+      contact: "G2",
+      booked: kt(5, "11:00"),
+      start: kt(2, "12:00"),
+    });
+    // The call centre moved G4's meeting: a RESCHEDULE booking.
+    await appt("G_rs", LOC_G, {
+      ...main,
+      contact: "G4",
+      booked: kt(5, "12:00"),
+      start: kt(2, "10:00"),
+    });
+    await attempt(
+      "GR1",
+      LOC_G,
+      "G4",
+      "RESCHEDULE",
+      "Moved to another day",
+      kt(5, "12:00"),
+      {
+        booking: {
+          id: "G_rs",
+          calendarId: "calMainG",
+          startTime: kt(2, "10:00"),
+          verifiedAt: kt(5, "12:00"),
+          appointmentStatus: "confirmed",
+        },
+      },
+    );
+    // A callback on the qualification calendar: not a booking, not a meeting.
+    await appt("G_cb", LOC_G, {
+      calendar: "calQualG",
+      contact: "G3",
+      booked: kt(5, "14:00"),
+      start: kt(1, "10:00"),
+    });
+    // The CRM holds G5's meeting at 15:15; the sheet marks it at 13:00.
+    await appt("G_moved", LOC_G, {
+      ...main,
+      contact: "G5",
+      phone: phone(5),
+      booked: kt(5, "13:00"),
+      start: kt(3, "15:15"),
+    });
+    const rows = [
+      {
+        tab: tabOf(kd(3)),
+        phone: phone(5),
+        meeting: ms(kt(3, "13:00")),
+        show: "Y",
+        closed: "",
+      },
+      {
+        tab: tabOf(kd(4)),
+        phone: phone(6),
+        meeting: ms(kt(4, "11:00")),
+        show: "Y",
+        closed: "P",
+      },
+      {
+        tab: tabOf(kd(4)),
+        phone: phone(7),
+        meeting: ms(kt(4, "12:30")),
+        show: "N",
+        closed: "N",
+      },
+      {
+        tab: tabOf(kd(6)),
+        phone: phone(2),
+        meeting: ms(kt(6, "12:00")),
+        show: "",
+        closed: "",
+      },
+    ];
+    await q(
+      "INSERT INTO mahara_reporting.sheet_snapshots VALUES('production',$1,'Client G','S_G',true,$2::jsonb,now(),NULL)",
+      [LOC_G, JSON.stringify({ sheetId: "S_G", currency: "KWD", rows })],
+    );
+    // The CSM copy keeps N once its worker says so (quoteKeepsN).
+    await q(
+      "INSERT INTO public.cockpit_csm_sources(table_name,source_id,data) VALUES('clientProfiles','pG',$1::jsonb)",
+      [
+        JSON.stringify({
+          taskId: "CU_G",
+          performanceSyncedAt: Date.now(),
+          performance: {
+            source: "Appointments tab",
+            quoteKeepsN: true,
+            appointments: [
+              { added: kd(6), appAt: kd(3), quote: "y", show: "y" },
+              { added: kd(6), appAt: kd(2), quote: "n", show: "" },
+            ],
+          },
+        }),
+      ],
+    );
+    try {
+      await refresh();
+      const g = (n: number) => dayRow(LOC_G, kd(n));
+      // G_old: replaced before its time with no mark, so not a meeting due;
+      // the day's note counts it.
+      const d4 = await g(4);
+      expect(d4.meetings_due).toBe(0);
+      expect(d4.no_outcome).toBe(0);
+      expect(
+        String((d4.sources as Record<string, Row>).appointments.note),
+      ).toContain("1 booking the contact replaced before its time");
+      // G_late stays due: the contact booked again after its time.
+      const d6 = await g(6);
+      expect(d6.meetings_due).toBe(1);
+      expect(d6.no_outcome).toBe(1);
+      // G_moved takes the sheet's 13:00 mark: G5's only meeting and only
+      // sheet row that day. G_new (G1) has no mark.
+      const d3 = await g(3);
+      expect(d3.meetings_due).toBe(2);
+      expect(d3.shows).toBe(1);
+      expect(d3.no_shows).toBe(0);
+      expect(d3.no_outcome).toBe(1);
+      // G_rs is due as a meeting, but the reschedule is not a new booking;
+      // the callback is neither.
+      expect((await g(2)).meetings_due).toBe(2);
+      expect((await g(5)).confirmed_bookings).toBe(3);
+      expect((await g(1)).meetings_due).toBe(0);
+      // Deal answers: P and N on day 4 (no meeting due there in the CRM).
+      expect(d4).toMatchObject({
+        closes: 0,
+        closes_pending: 1,
+        closes_lost: 1,
+        closes_answered: 2,
+      });
+      // Day 6 had a meeting due and no deal or quotation answer: unknown.
+      expect(d6.closes).toBeNull();
+      expect(d6.revenue_usd).toBeNull();
+      expect(d6.closes_answered).toBe(0);
+      expect(d6.quotations).toBeNull();
+      // Quotation Y and N from the copy: answers known.
+      expect(d3).toMatchObject({ quotations: 1, quotation_answers: 1 });
+      const d2 = await g(2);
+      expect(d2).toMatchObject({ quotations: 0, quotation_answers: 1 });
+      expect(
+        String((d2.sources as Record<string, Row>).sheet_copy.note ?? ""),
+      ).not.toContain("only Y");
+      // Ten contacts within one hour on day 6.
+      const leads6 = (d6.sources as Record<string, Row>).leads;
+      expect(leads6.bulkImport).toBe(10);
+      expect(String(leads6.note)).toContain(
+        "10 contacts arrived within one hour",
+      );
+      expect(d6.crm_leads).toBe(10);
+      // Today is so far; day 3 is complete.
+      expect(
+        ((await dayRow(LOC_G, today)).sources as Record<string, Row>).leads
+          .partial,
+      ).toBe(true);
+      expect((d3.sources as Record<string, Row>).leads.partial).toBe(false);
+      expect(
+        (d3.sources as Record<string, Row>).outcomes.partial,
+      ).toBeUndefined();
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.ghl_clients WHERE location_id=$1", [LOC_G]);
+      await q("DELETE FROM public.cockpit_board_clients WHERE location_id=$1", [
+        LOC_G,
+      ]);
+      await q("DELETE FROM public.ghl_calendars WHERE location_id=$1", [LOC_G]);
+      await q("DELETE FROM public.client_leads WHERE location_id=$1", [LOC_G]);
+      await q("DELETE FROM public.appointments WHERE ghl_location_id=$1", [
+        LOC_G,
+      ]);
+      await q("DELETE FROM public.lead_sync_state WHERE location_id=$1", [
+        LOC_G,
+      ]);
+      await q(
+        "DELETE FROM public.appointment_sync_state WHERE location_id=$1",
+        [LOC_G],
+      );
+      await q("DELETE FROM mahara_reporting.sync_jobs WHERE id='jG'");
+      await q("DELETE FROM mahara_reporting.sheet_snapshots WHERE id=$1", [
+        LOC_G,
+      ]);
+      await q("DELETE FROM public.cockpit_csm_sources WHERE source_id='pG'");
+      await q("DELETE FROM mahara_console.attempts WHERE id='GR1'");
+    }
   });
 });
 
@@ -1707,6 +2138,9 @@ describe("the rules are the code's own", () => {
       "",
       "Team meeting",
       "Tentative main appointment",
+      // The call centre's callback calendar at Atlantis (CALLBACK bookings only).
+      "مكالمة مراجعة المشروع وتنسيق الاستشارة | Project Review & Qualification Call",
+      "A. Appointment Calendar (In Office)",
     ]) {
       const r = (
         await q<{ r: string }>(
@@ -1841,8 +2275,9 @@ describe("the gate and the jobs", () => {
     )[0];
     expect(rows.n).toBe(120);
 
-    // Apply the file again: still one job each.
+    // Apply the files again: still one job each.
     await db.exec(SQL);
+    await db.exec(CHECKED);
     const jobs = await q<Row>(
       "SELECT jobname, schedule, command FROM cron.job ORDER BY jobname",
     );
@@ -1891,9 +2326,38 @@ describe("the gate and the jobs", () => {
         "ALTER TABLE portal_data.appointment_outcomes_off RENAME TO appointment_outcomes",
       );
     }
+    // A 30-minute run within 3 hours of the last refill leaves it: the
+    // doctor still sees the fill that failed.
+    await q(
+      "UPDATE public.cockpit_sync_state SET detail = jsonb_set(detail, '{lastHealAt}', to_jsonb(now())) WHERE key='board-facts'",
+    );
     await q("SELECT public.cockpit_board_facts_run('recent')");
     expect(await problems()).toContain("The 120-day fill of");
     expect(await problems()).toContain("could not read outcomes");
+    // Later, the next 30-minute run finds the portal reading again and fills
+    // the 120 days again, so no old day keeps the failed read's note.
+    await q(
+      "UPDATE public.cockpit_sync_state SET detail = jsonb_set(detail, '{lastHealAt}', to_jsonb(now() - interval '4 hours')) WHERE key='board-facts'",
+    );
+    const healed = (
+      await q<{ r: Row }>(
+        "SELECT public.cockpit_board_facts_run('recent') AS r",
+      )
+    )[0].r;
+    expect(healed.healed as string[]).toContain(`outcomes:${LOC_A}`);
+    expect(healed.healOk).toBe(true);
+    expect(await problems()).toBe("");
+    expect(
+      ((await dayRow(LOC_A, kd(60))).sources as Record<string, Row>).outcomes
+        .state,
+    ).toBe("ok");
+    // Nothing more to heal: the next run does not fill again.
+    const quiet = (
+      await q<{ r: Row }>(
+        "SELECT public.cockpit_board_facts_run('recent') AS r",
+      )
+    )[0].r;
+    expect(quiet.healed).toBeUndefined();
 
     // A fill that stopped altogether.
     await db.exec("ALTER TABLE public.ghl_clients RENAME TO ghl_clients_off");

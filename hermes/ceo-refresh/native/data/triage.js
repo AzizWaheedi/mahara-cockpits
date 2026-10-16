@@ -42,7 +42,9 @@ export function calendarKind(name) {
     const n = String(name ?? "").toLowerCase();
     if (!n)
         return "other";
-    if (/callback|call-back|معاودة/.test(n))
+    // "Project Review & Qualification Call" is the call centre's callback
+    // calendar (CALLBACK bookings only, 2026-10-16 check at Atlantis).
+    if (/callback|call-back|معاودة|qualification|project review|مراجعة/.test(n))
         return "callback";
     if (PROVISIONAL.test(n))
         return "provisional";
