@@ -61,12 +61,58 @@ const parseNumber = (s: string): number | null | "bad" => {
   return Number.isFinite(n) && n >= 0 ? n : "bad";
 };
 
+/** The lines that apply without this override: the official ones, or the board's for one client. */
+export type Inherited = {
+  good: number | null;
+  watch: number | null;
+  from: string;
+};
+
+/**
+ * What a blank Watch field stands for when the good line is set. The
+ * database stores a blank watch as "short of good is a watch, never off", so
+ * the screen never sends one by accident: it carries the inherited watch
+ * line, or asks for one.
+ *   - The inherited target has no watch line (AOV): none, as before.
+ *   - The inherited lines are equal ("any miss is off"): the new good line.
+ *   - The inherited watch line still sits on the worse side of the new good
+ *     line: that line.
+ *   - Otherwise there is no line to carry: set one.
+ */
+export function blankWatch(
+  t: Pick<Target, "direction">,
+  unit: Unit,
+  good: number,
+  inherited: Inherited,
+):
+  | { watch: number | null; words: string; problem?: undefined }
+  | { problem: string } {
+  const w = inherited.watch;
+  if (!isNum(w))
+    return { watch: null, words: "No watch line: short of good is a watch." };
+  if (isNum(inherited.good) && w === inherited.good)
+    return {
+      watch: good,
+      words: "Watch stays on the good line: any miss is off.",
+    };
+  const worse = t.direction === "lower" ? w >= good : w <= good;
+  if (worse)
+    return {
+      watch: w,
+      words: `Watch stays at ${formatValue(w, unit)}, ${inherited.from === "the official target" ? "the official" : "the board's"} watch line.`,
+    };
+  return {
+    problem: `Set the watch line too: ${inherited.from === "the official target" ? "the official" : "the board's"} one, ${formatValue(w, unit)}, is ${t.direction === "lower" ? "under" : "over"} this good line.`,
+  };
+}
+
 /** Why these two lines cannot be saved, or null when they can. */
 export function lineProblem(
   t: Pick<Target, "direction" | "label">,
   unit: Unit,
   good: string,
   watch: string,
+  inherited?: Inherited,
 ): string | null {
   const g = parseNumber(good);
   const w = parseNumber(watch);
@@ -80,6 +126,10 @@ export function lineProblem(
       return `${t.label}: higher is better, so the watch line must be at or below the good line.`;
     if (t.direction === "lower" && w < g)
       return `${t.label}: lower is better, so the watch line must be at or above the good line.`;
+  }
+  if (g !== null && w === null && inherited) {
+    const b = blankWatch(t, unit, g, inherited);
+    if (b.problem) return b.problem;
   }
   return null;
 }
@@ -98,7 +148,7 @@ function TargetRow({
   /** This scope's override, if any. */
   own: Line | null;
   /** What applies without it: the official line, or the board's for a client. */
-  inherited: { good: number | null; watch: number | null; from: string };
+  inherited: Inherited;
   onSaved: () => void;
 }) {
   const unit = targetUnit(target);
@@ -110,16 +160,35 @@ function TargetRow({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const problem = lineProblem(target, unit, good, watch);
+  const problem = lineProblem(target, unit, good, watch, inherited);
   const changed =
     good !== (own && isNum(own.good) ? String(own.good) : "") ||
     watch !== (own && isNum(own.watch) ? String(own.watch) : "");
+  // A blank watch with a good line typed: the line it stands for.
+  const typedGood = parseNumber(good);
+  const implied =
+    isNum(typedGood) && parseNumber(watch) === null
+      ? blankWatch(target, unit, typedGood, inherited)
+      : null;
+  const impliedWatch = implied && !implied.problem ? implied : null;
+  const watchHint = impliedWatch
+    ? isNum(impliedWatch.watch)
+      ? formatValue(impliedWatch.watch, unit).replace(/[$%x]|\smin/g, "")
+      : "none"
+    : isNum(inherited.watch)
+      ? formatValue(inherited.watch, unit).replace(/[$%x]|\smin/g, "")
+      : "none";
   const save = async (clear: boolean) => {
     setBusy(true);
     setError(null);
     try {
       const g = clear ? null : (parseNumber(good) as number | null);
-      const w = clear ? null : (parseNumber(watch) as number | null);
+      const typed = clear ? null : (parseNumber(watch) as number | null);
+      // Never a blank watch by accident: the line the field stood for.
+      const w =
+        g !== null && typed === null && impliedWatch
+          ? impliedWatch.watch
+          : typed;
       await saveTarget({ scope, metric, good: g, watch: w });
       toast.success(
         g === null && w === null
@@ -187,6 +256,10 @@ function TargetRow({
           <Problem className="mt-1">{error}</Problem>
         ) : problem && changed ? (
           <p className="mt-1 text-xs text-muted-foreground">{problem}</p>
+        ) : impliedWatch && changed ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {impliedWatch.words}
+          </p>
         ) : null}
       </div>
       <div className="flex flex-wrap items-end gap-2 @2xl:w-[19rem] @2xl:flex-nowrap">
@@ -217,11 +290,7 @@ function TargetRow({
             aria-describedby={id}
             inputMode="decimal"
             value={watch}
-            placeholder={
-              isNum(inherited.watch)
-                ? formatValue(inherited.watch, unit).replace(/[$%x]|\smin/g, "")
-                : ""
-            }
+            placeholder={watchHint}
             onChange={e => setWatch(e.target.value)}
             className="h-8 w-20 rounded-lg border bg-background px-2 text-base tabular-nums placeholder:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
           />
@@ -288,8 +357,9 @@ export function TargetsDialog({
           <DialogTitle>Edit targets</DialogTitle>
           <DialogDescription>
             Every number on the board is judged against these lines: good, then
-            watch; past the watch line is off. A blank override uses the
-            official target.
+            watch; past the watch line is off. A blank watch line keeps the one
+            in grey. Clear both lines to go back to the official target (for one
+            client, the board's).
           </DialogDescription>
         </DialogHeader>
         <div className="block max-w-sm space-y-1.5">

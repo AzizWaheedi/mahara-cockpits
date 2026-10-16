@@ -145,7 +145,9 @@ const { PerformancePage, MEETING_COLUMNS } = await import(
 );
 const client = await import("../src/lib/boardClient");
 const columns = await import("../src/lib/boardColumns");
-const { lineProblem } = await import("../src/pages/performance/TargetsDialog");
+const { blankWatch, lineProblem } = await import(
+  "../src/pages/performance/TargetsDialog"
+);
 const { boardFixture, clientFixture } = await import("../src/dev/boardFixture");
 
 const today = client.kuwaitToday();
@@ -947,6 +949,10 @@ describe("targets", () => {
       'input[aria-label="Cost per lead good line"]',
     );
     await type(good, "12");
+    // A blank watch keeps the official $22.50: a $40 CPL stays off, not a watch.
+    expect(text(dialog)).toContain(
+      "Watch stays at $22.50, the official watch line.",
+    );
     const reads = rpcCalls.filter(c => c.name === "cockpit_board_read").length;
     await click(button("Save", dialog));
     expect(saves).toEqual([
@@ -954,7 +960,7 @@ describe("targets", () => {
         p_scope: "defaults",
         p_metric: "cpl",
         p_good: 12,
-        p_watch: null,
+        p_watch: 22.5,
         p_note: null,
       },
     ]);
@@ -1029,5 +1035,61 @@ describe("targets", () => {
       "Set the good line, or clear both to go back.",
     );
     expect(lineProblem(cpl, "usd", "$12.50", "18")).toBeNull();
+  });
+
+  test("a blank watch line is never sent by accident", () => {
+    const official = (good: number | null, watch: number | null) => ({
+      good,
+      watch,
+      from: "the official target",
+    });
+    const cpl = { direction: "lower" as const, label: "Cost per lead" };
+    const touched = { direction: "higher" as const, label: "Leads touched" };
+    const aov = { direction: "higher" as const, label: "Average order value" };
+    // The official watch line still sits on the worse side: it is carried.
+    expect(blankWatch(cpl, "usd", 12, official(15, 22.5))).toMatchObject({
+      watch: 22.5,
+    });
+    // A good line past the official watch line: a watch line must be set.
+    expect(lineProblem(cpl, "usd", "25", "", official(15, 22.5))).toBe(
+      "Set the watch line too: the official one, $22.50, is under this good line.",
+    );
+    // "Any miss is off" stays so: the watch line moves with the good line.
+    expect(blankWatch(touched, "percent", 85, official(90, 90))).toMatchObject({
+      watch: 85,
+    });
+    // No watch line officially: none, as the official target says.
+    expect(blankWatch(aov, "usd", 15000, official(10000, null))).toMatchObject({
+      watch: null,
+      words: "No watch line: short of good is a watch.",
+    });
+  });
+
+  test("a good line past the inherited watch line cannot be saved without one", async () => {
+    const saves: any[] = [];
+    answer({
+      save: args => {
+        saves.push(args);
+        return { data: { ok: true }, error: null };
+      },
+    });
+    await show();
+    await click(button("Edit targets", host));
+    const dialog = sheet();
+    await type(
+      dialog.querySelector('input[aria-label="Cost per lead good line"]'),
+      "25",
+    );
+    const row = dialog
+      .querySelector('input[aria-label="Cost per lead good line"]')
+      .closest("li");
+    expect(text(row)).toContain("Set the watch line too");
+    expect(button("Save", row).disabled).toBe(true);
+    await type(
+      dialog.querySelector('input[aria-label="Cost per lead watch line"]'),
+      "30",
+    );
+    await click(button("Save", row));
+    expect(saves.map(s => [s.p_good, s.p_watch])).toEqual([[25, 30]]);
   });
 });
