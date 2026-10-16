@@ -395,6 +395,23 @@ RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
     || coalesce(p_extra, '{}'::jsonb)
 $$;
 
+/**
+ * Shows as the board shows them, for a client row, a campaign, an ad set or
+ * an ad: unmarked is never a no-show, so meetings due with none marked are
+ * not filled in, never 0 shows. p_due NULL: no figure.
+ */
+CREATE OR REPLACE FUNCTION public.cockpit_board_shows(p_shows numeric, p_no_shows numeric, p_due numeric, p_null_note text DEFAULT NULL)
+RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+  SELECT CASE
+    WHEN p_due IS NULL THEN jsonb_build_object('v', NULL, 'status', 'not_measured', 'note', coalesce(p_null_note, 'No figure is stored for these days.'))
+    WHEN p_due > 0 AND coalesce(p_shows, 0) + coalesce(p_no_shows, 0) = 0 THEN jsonb_build_object('v', NULL, 'status', 'not_filled_in',
+      'due', p_due, 'note', format('None of the %s meeting%s due is marked showed or no-show.', p_due, CASE WHEN p_due = 1 THEN '' ELSE 's' END))
+    ELSE jsonb_build_object('v', coalesce(p_shows, 0), 'status', NULL, 'noShows', coalesce(p_no_shows, 0),
+      'marked', coalesce(p_shows, 0) + coalesce(p_no_shows, 0), 'due', p_due)
+      || CASE WHEN p_due > 0 THEN jsonb_build_object('note', format('%s of %s meetings due are marked.',
+           coalesce(p_shows, 0) + coalesce(p_no_shows, 0), p_due)) ELSE '{}'::jsonb END END
+$$;
+
 /** Every ad column with one status and one sentence: no ad account, nothing read yet. */
 CREATE OR REPLACE FUNCTION public.cockpit_board_ad_unmeasured(p_status text, p_note text)
 RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
@@ -813,12 +830,7 @@ BEGIN
 
     -- Shows and the show rate: shows / (shows + no-shows), unmarked never a no-show.
     v_vals := v_vals || jsonb_build_object(
-      'shows', CASE
-        WHEN due IS NULL THEN jsonb_build_object('v', NULL, 'status', 'not_measured', 'note', coalesce(v_src->'appointments'->>'note', 'No figure is stored for these days.'))
-        WHEN due > 0 AND marked = 0 THEN jsonb_build_object('v', NULL, 'status', 'not_filled_in',
-          'note', format('None of the %s meeting%s due is marked showed or no-show.', due, CASE WHEN due = 1 THEN '' ELSE 's' END))
-        ELSE jsonb_build_object('v', coalesce(shows, 0), 'status', NULL, 'noShows', coalesce(no_shows, 0), 'marked', marked, 'due', due,
-          'note', CASE WHEN due > 0 THEN format('%s of %s meetings due are marked.', marked, due) END) END,
+      'shows', public.cockpit_board_shows(shows, no_shows, due, v_src->'appointments'->>'note'),
       'noShows', CASE WHEN due IS NULL OR (due > 0 AND marked = 0) THEN jsonb_build_object('v', NULL, 'status', CASE WHEN due IS NULL THEN 'not_measured' ELSE 'not_filled_in' END)
                       ELSE jsonb_build_object('v', coalesce(no_shows, 0), 'status', NULL) END,
       'showRate', CASE
@@ -1093,9 +1105,10 @@ BEGIN
   ), ap AS (
     SELECT * FROM public.cockpit_board_appointments(p_location, p_from, p_to, p_marks)
   ), crm AS (
-    SELECT k.ad_id, sum(k.leads) AS leads, sum(k.bookings) AS bookings, sum(k.bookings_ad) AS bookings_ad, sum(k.shows) AS shows
+    SELECT k.ad_id, sum(k.leads) AS leads, sum(k.bookings) AS bookings, sum(k.bookings_ad) AS bookings_ad, sum(k.shows) AS shows,
+      sum(k.no_shows) AS no_shows, sum(k.due) AS due
     FROM (
-      SELECT nullif(btrim(l.ad_id), '') AS ad_id, 1 AS leads, 0 AS bookings, 0 AS bookings_ad, 0 AS shows
+      SELECT nullif(btrim(l.ad_id), '') AS ad_id, 1 AS leads, 0 AS bookings, 0 AS bookings_ad, 0 AS shows, 0 AS no_shows, 0 AS due
       FROM public.client_leads l
       LEFT JOIN mahara_reporting.facts f ON f.namespace = 'production' AND f.source = 'ghl' AND f.kind = 'contact'
         AND f.external_id = l.location_id || ':' || l.ghl_contact_id
@@ -1105,11 +1118,12 @@ BEGIN
                  AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(f.data->'tags') = 'array'
                               THEN f.data->'tags' ELSE '[]'::jsonb END) tg(x) WHERE lower(btrim(tg.x)) = 'inbound whatsapp'))
       UNION ALL
-      SELECT a.ad_id, 0, 1, CASE WHEN a.booked_at < v_ad_end THEN 1 ELSE 0 END, 0 FROM ap a
+      SELECT a.ad_id, 0, 1, CASE WHEN a.booked_at < v_ad_end THEN 1 ELSE 0 END, 0, 0, 0 FROM ap a
       WHERE a.kind IN ('main', 'online') AND coalesce(a.status, '') NOT IN ('cancelled', 'invalid')
         AND a.booked_at >= v_start AND a.booked_at < v_end
       UNION ALL
-      SELECT a.ad_id, 0, 0, 0, 1 FROM ap a WHERE a.due AND a.attendance = 'showed'
+      -- Every meeting due, and its mark: unmarked is never a no-show.
+      SELECT a.ad_id, 0, 0, 0, (a.attendance = 'showed')::int, (a.attendance = 'noshow')::int, 1 FROM ap a WHERE a.due
     ) k
     GROUP BY k.ad_id
   ), per_ad AS (
@@ -1125,12 +1139,12 @@ BEGIN
       sum(m.video_p100) FILTER (WHERE m.video_plays IS NOT NULL) AS p100,
       sum(m.impressions * m.frequency) FILTER (WHERE m.frequency > 0) AS freq_w, sum(m.impressions) FILTER (WHERE m.frequency > 0) AS freq_imp,
       coalesce(c.leads, 0) AS crm_leads, coalesce(c.bookings, 0) AS crm_bookings, coalesce(c.bookings_ad, 0) AS crm_bookings_ad,
-      coalesce(c.shows, 0) AS crm_shows
+      coalesce(c.shows, 0) AS crm_shows, coalesce(c.no_shows, 0) AS crm_no_shows, coalesce(c.due, 0) AS crm_due
     FROM names n
     LEFT JOIN m ON m.ad_id = n.ad_id
     LEFT JOIN crm c ON c.ad_id = n.ad_id
     WHERE EXISTS (SELECT 1 FROM m m2 WHERE m2.ad_id = n.ad_id) OR c.ad_id IS NOT NULL
-    GROUP BY n.ad_id, n.adset_id, n.campaign_id, c.leads, c.bookings, c.bookings_ad, c.shows
+    GROUP BY n.ad_id, n.adset_id, n.campaign_id, c.leads, c.bookings, c.bookings_ad, c.shows, c.no_shows, c.due
   ), lvl AS (
     SELECT 'ad'::text AS level, a.ad_id AS key, a.adset_id, a.campaign_id, to_jsonb(a) - 'ad_id' - 'adset_id' - 'campaign_id' AS s
     FROM per_ad a
@@ -1141,7 +1155,8 @@ BEGIN
             sum(a.lead_clicks) AS lead_clicks, sum(a.video_rows) AS video_rows, sum(a.video_imp) AS video_imp, sum(a.v3) AS v3, sum(a.thru) AS thru,
             sum(a.plays) AS plays, sum(a.p25) AS p25, sum(a.p50) AS p50, sum(a.p75) AS p75, sum(a.p100) AS p100,
             sum(a.freq_w) AS freq_w, sum(a.freq_imp) AS freq_imp, sum(a.crm_leads) AS crm_leads, sum(a.crm_bookings) AS crm_bookings,
-            sum(a.crm_bookings_ad) AS crm_bookings_ad, sum(a.crm_shows) AS crm_shows
+            sum(a.crm_bookings_ad) AS crm_bookings_ad, sum(a.crm_shows) AS crm_shows, sum(a.crm_no_shows) AS crm_no_shows,
+            sum(a.crm_due) AS crm_due
           FROM per_ad a GROUP BY a.adset_id) x
     UNION ALL
     SELECT 'campaign', x.campaign_id, NULL, x.campaign_id, to_jsonb(x) - 'campaign_id'
@@ -1150,7 +1165,8 @@ BEGIN
             sum(a.lead_clicks) AS lead_clicks, sum(a.video_rows) AS video_rows, sum(a.video_imp) AS video_imp, sum(a.v3) AS v3, sum(a.thru) AS thru,
             sum(a.plays) AS plays, sum(a.p25) AS p25, sum(a.p50) AS p50, sum(a.p75) AS p75, sum(a.p100) AS p100,
             sum(a.freq_w) AS freq_w, sum(a.freq_imp) AS freq_imp, sum(a.crm_leads) AS crm_leads, sum(a.crm_bookings) AS crm_bookings,
-            sum(a.crm_bookings_ad) AS crm_bookings_ad, sum(a.crm_shows) AS crm_shows
+            sum(a.crm_bookings_ad) AS crm_bookings_ad, sum(a.crm_shows) AS crm_shows, sum(a.crm_no_shows) AS crm_no_shows,
+            sum(a.crm_due) AS crm_due
           FROM per_ad a GROUP BY a.campaign_id) x
   ), reach AS (
     SELECT DISTINCT ON (x.level, x.key) x.level, x.key, jsonb_build_object('reach', x.reach, 'impressions', x.impressions, 'note', x.note) AS j
@@ -1164,7 +1180,7 @@ BEGIN
       || jsonb_build_object(
         'crmLeads', jsonb_build_object('v', (l.s->>'crm_leads')::numeric, 'status', NULL),
         'confirmedBookings', jsonb_build_object('v', (l.s->>'crm_bookings')::numeric, 'status', NULL),
-        'shows', jsonb_build_object('v', (l.s->>'crm_shows')::numeric, 'status', NULL),
+        'shows', public.cockpit_board_shows((l.s->>'crm_shows')::numeric, (l.s->>'crm_no_shows')::numeric, (l.s->>'crm_due')::numeric),
         'costPerBooking', CASE
           WHEN (l.s->>'crm_bookings_ad')::numeric > 0 AND (l.s->>'spend') IS NOT NULL THEN
             public.cockpit_board_cell('cost_per_booking', round((l.s->>'spend')::numeric / (l.s->>'crm_bookings_ad')::numeric, 2), p_targets,
@@ -1196,12 +1212,14 @@ BEGIN
     WHERE n.level = 'campaign'
   ), stray AS (
     SELECT
-      coalesce(jsonb_agg(jsonb_build_object('adId', c.ad_id, 'crmLeads', c.leads, 'confirmedBookings', c.bookings, 'shows', c.shows)
+      coalesce(jsonb_agg(jsonb_build_object('adId', c.ad_id, 'crmLeads', c.leads, 'confirmedBookings', c.bookings,
+          'shows', public.cockpit_board_shows(c.shows, c.no_shows, c.due))
         ORDER BY c.leads DESC, c.ad_id) FILTER (WHERE c.ad_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM names n WHERE n.ad_id = c.ad_id))
         , '[]'::jsonb) AS not_in_store,
       jsonb_build_object('crmLeads', coalesce(sum(c.leads) FILTER (WHERE c.ad_id IS NULL), 0),
         'confirmedBookings', coalesce(sum(c.bookings) FILTER (WHERE c.ad_id IS NULL), 0),
-        'shows', coalesce(sum(c.shows) FILTER (WHERE c.ad_id IS NULL), 0)) AS no_ad
+        'shows', public.cockpit_board_shows(coalesce(sum(c.shows) FILTER (WHERE c.ad_id IS NULL), 0),
+          coalesce(sum(c.no_shows) FILTER (WHERE c.ad_id IS NULL), 0), coalesce(sum(c.due) FILTER (WHERE c.ad_id IS NULL), 0))) AS no_ad
     FROM crm c
   )
   SELECT jsonb_build_object('campaigns', camps.j, 'notInStore', stray.not_in_store, 'noAd', stray.no_ad)
@@ -1603,6 +1621,7 @@ BEGIN
     'cockpit_board_judge(numeric,text,numeric,numeric,boolean,boolean)', 'cockpit_board_targets_map(text)',
     'cockpit_board_cell(text,numeric,jsonb,numeric,numeric,numeric,text,text,jsonb)',
     'cockpit_board_floor_status(text,numeric,jsonb)', 'cockpit_board_count(numeric,bigint,integer,text,text,jsonb)',
+    'cockpit_board_shows(numeric,numeric,numeric,text)',
     'cockpit_board_ad_unmeasured(text,text)', 'cockpit_board_ad_cells(jsonb,jsonb,jsonb)', 'cockpit_client_caller_rows()',
     'cockpit_board_check_window(date,date)', 'cockpit_board_fmt(numeric,text)', 'cockpit_board_rows(date,date,text,jsonb)',
     'cockpit_board_sheet_marks(text,timestamptz,timestamptz)', 'cockpit_board_appointments(text,date,date,jsonb)',

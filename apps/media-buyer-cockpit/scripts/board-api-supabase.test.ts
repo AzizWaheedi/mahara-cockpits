@@ -849,6 +849,7 @@ describe("who may read the board", () => {
       cockpit_board_read: "authenticated",
       cockpit_board_rows: "",
       cockpit_board_sheet_marks: "",
+      cockpit_board_shows: "",
       cockpit_board_targets_map: "",
       cockpit_board_targets_save: "authenticated",
       cockpit_board_tree: "",
@@ -1408,19 +1409,83 @@ describe("Client A: real facts, Meta's reach, the tree", () => {
     expect(ad1.name).toBe("Sara video");
     expect(ad1.metrics.crmLeads.v).toBe(2);
     expect(ad1.metrics.confirmedBookings.v).toBe(2);
-    expect(ad1.metrics.shows.v).toBe(1);
+    // AP1 showed (sheet), AP2 a no-show: both due meetings marked.
+    expect(ad1.metrics.shows).toEqual({
+      v: 1,
+      status: null,
+      noShows: 1,
+      marked: 2,
+      due: 2,
+      note: "2 of 2 meetings due are marked.",
+    });
     expect(ad1.metrics.hookRate).toMatchObject({ v: 30, num: 1800, den: 6000 });
     const ad2 = form.ads.find((a: Row) => a.id === "70002");
     expect(ad2.metrics.crmLeads.v).toBe(2);
     // AP6 (sheet mark only), AP11 and AP12 carry AD2; AP6 showed by the sheet.
     expect(ad2.metrics.confirmedBookings.v).toBe(3);
-    expect(ad2.metrics.shows.v).toBe(1);
+    expect(ad2.metrics.shows).toMatchObject({
+      v: 1,
+      marked: 1,
+      due: 3,
+      note: "1 of 3 meetings due are marked.",
+    });
     const chat = camp.adsets[1];
     expect(chat.metrics.cpl).toMatchObject({ status: "not_measured" });
     expect(c.notInStore).toEqual([
-      { adId: "70009", crmLeads: 1, confirmedBookings: 1, shows: 1 },
+      {
+        adId: "70009",
+        crmLeads: 1,
+        confirmedBookings: 1,
+        shows: {
+          v: 1,
+          status: null,
+          noShows: 0,
+          marked: 1,
+          due: 1,
+          note: "1 of 1 meetings due are marked.",
+        },
+      },
     ]);
-    expect(c.noAd).toMatchObject({ crmLeads: 1 });
+    // AP4 and AP7 carry no ad and nobody marked them: not filled in, never 0 shows.
+    expect(c.noAd).toMatchObject({
+      crmLeads: 1,
+      shows: {
+        v: null,
+        status: "not_filled_in",
+        due: 2,
+        note: "None of the 2 meetings due is marked showed or no-show.",
+      },
+    });
+  });
+
+  test("the tree: an ad whose due meetings are all unmarked has shows not filled in, never 0", async () => {
+    // AP12 (kd 5) and AP11 (kd 4) carry ad 70002; neither is marked.
+    const c = await client(CEO, LOC_A, kd(5), kd(4));
+    const camp = c.campaigns.find((x: Row) => x.id === "80001");
+    const form = camp.adsets.find((s: Row) => s.id === "81001");
+    const ad2 = form.ads.find((a: Row) => a.id === "70002");
+    expect(ad2.metrics.shows).toEqual({
+      v: null,
+      status: "not_filled_in",
+      due: 2,
+      note: "None of the 2 meetings due is marked showed or no-show.",
+    });
+    // An ad with no meeting due shows 0, plainly.
+    const ad1 = form.ads.find((a: Row) => a.id === "70001");
+    expect(ad1.metrics.shows).toEqual({
+      v: 0,
+      status: null,
+      noShows: 0,
+      marked: 0,
+      due: 0,
+    });
+    // The ad set and the campaign add the same meetings up.
+    expect(form.metrics.shows).toMatchObject({
+      v: null,
+      status: "not_filled_in",
+      due: 2,
+    });
+    expect(camp.metrics.shows.status).toBe("not_filled_in");
   });
 
   test("the row names the assigned callers; an admin who holds assignments is left out", async () => {
