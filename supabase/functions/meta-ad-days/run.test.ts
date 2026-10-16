@@ -39,7 +39,13 @@ function fakeDb(now: () => number) {
     const p = (args as any).p;
     calls.push({ name, p });
     if (name === "cockpit_meta_ad_days_inputs") {
-      return { today: "2026-10-16", windows: [], ties: { source: "board_clients", clients: 1, linked: 1 }, notLinked: [{ accountId: LA_ACCOUNT, name: "LA Account" }] };
+      return {
+        today: "2026-10-16",
+        windows: [],
+        ties: { source: "board_clients", clients: 1, linked: 1 },
+        notLinked: [{ accountId: LA_ACCOUNT, name: "LA Account" }],
+        hidden: [{ accountId: "6666666666666", name: "Mass Design" }],
+      };
     }
     if (name === "cockpit_meta_ad_days_begin") {
       runs += 1;
@@ -84,7 +90,13 @@ function fakeDb(now: () => number) {
       return { ok: true, state: t.state };
     }
     if (name === "cockpit_meta_ad_days_record") return { ok: true };
-    if (name === "cockpit_meta_ad_days_status") return { jobs: {} };
+    if (name === "cockpit_meta_ad_days_status") {
+      return {
+        jobs: {},
+        cancelledDelivering: [{ accountId: "7777777777777", name: "Old Client Ads", clientName: "Old Client", clientStatus: "Cancelled" }],
+        billingStopped: [{ accountId: SAR_ACCOUNT, name: "Riyadh Client", clientName: "Riyadh", status: 3, statusLabel: "unsettled", lastSpendDay: "2026-10-09" }],
+      };
+    }
     throw new Error(`unexpected rpc ${name}`);
   };
   return { rpc, calls, tasks, applied, reach };
@@ -378,6 +390,13 @@ describe("the doctor", () => {
     expect(r.note).toContain("Missing function secrets: CRON_SECRET.");
     expect(r.note).toContain("Graph v25.0 answers as Mahara System User");
     expect(r.note).toContain("Not linked to a client: LA Account (5555555555555).");
+    expect(r.note).toContain("Hidden on purpose: Mass Design (6666666666666).");
+    expect(r.note).toContain("Spent in the last 2 days for a cancelled or stopped client: Old Client Ads (Old Client, Cancelled).");
+    expect(r.note).toContain("Meta stops delivery on: Riyadh Client (Riyadh, unsettled, last spend 2026-10-09).");
+    // The accounts go to the database with their names, so it can name the loose ones.
+    const sent = t.db.calls.find(c => c.name === "cockpit_meta_ad_days_inputs")!.p;
+    expect(sent.accounts.map((a: any) => a.accountId)).toContain(LA_ACCOUNT);
+    expect(sent.accounts.find((a: any) => a.accountId === LA_ACCOUNT).name).toBe("LA Account");
     expect(t.calls.every(c => c.method === "GET")).toBe(true);
     expect(t.db.calls.map(c => c.name)).toEqual(["cockpit_meta_ad_days_inputs", "cockpit_meta_ad_days_status", "cockpit_meta_ad_days_record"]);
   });

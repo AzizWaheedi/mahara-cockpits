@@ -53,6 +53,7 @@ import {
   REACH_LEVELS,
   toApplyRow,
   type Window,
+  windowSpans,
   withDestinations,
 } from "./parse.ts";
 
@@ -170,7 +171,8 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
   const reach = kind === "hourly" ? "account" : kind === "nightly" ? "all" : null;
   const accounts = found.accounts.map(accountRow);
   if (job.dryRun) {
-    const inputs = (await deps.rpc("cockpit_meta_ad_days_inputs", { p: { accountIds: found.accounts.map(a => a.accountId) } })) as Row | null;
+    // The accounts with their names, so the dry run's "Not linked" list can name them.
+    const inputs = (await deps.rpc("cockpit_meta_ad_days_inputs", { p: { accounts } })) as Row | null;
     return {
       ok: true,
       dryRun: true,
@@ -382,19 +384,21 @@ async function workDays(deps: RunDeps, graph: GraphDeps, task: Task): Promise<nu
 
 async function readReachLevel(graph: GraphDeps, accountId: string, level: Level, windows: Window[]): Promise<Row[]> {
   const fields = `${level}_id,impressions,reach`;
+  // Each span once: two windows can hold the same days (parse.ts windowSpans).
+  const spans = windowSpans(windows);
   try {
     return await metaPages(graph, `act_${accountId}/insights`, {
       level,
-      time_ranges: JSON.stringify(windows.map(w => ({ since: w.from, until: w.to }))),
+      time_ranges: JSON.stringify(spans),
       fields,
       limit: 500,
     });
   } catch (e) {
-    if (!(e instanceof MetaError && e.kind === "heavy") || windows.length < 2) throw e;
-    // One window at a time when the five together are too heavy.
+    if (!(e instanceof MetaError && e.kind === "heavy") || spans.length < 2) throw e;
+    // One span at a time when the windows together are too heavy.
     const out: Row[] = [];
-    for (const w of windows) {
-      out.push(...(await metaPages(graph, `act_${accountId}/insights`, { level, time_range: JSON.stringify({ since: w.from, until: w.to }), fields, limit: 500 })));
+    for (const span of spans) {
+      out.push(...(await metaPages(graph, `act_${accountId}/insights`, { level, time_range: JSON.stringify(span), fields, limit: 500 })));
     }
     return out;
   }
@@ -456,7 +460,8 @@ export async function runDoctor(deps: RunDeps): Promise<Record<string, unknown>>
   let inputs: Row | null = null;
   let status: Row | null = null;
   try {
-    inputs = (await deps.rpc("cockpit_meta_ad_days_inputs", { p: { accountIds: spending.map(a => a.accountId) } })) as Row | null;
+    // The accounts with their names: with ids alone the "Not linked" list was always empty (2026-10-16).
+    inputs = (await deps.rpc("cockpit_meta_ad_days_inputs", { p: { accounts: spending.map(accountRow) } })) as Row | null;
     status = (await deps.rpc("cockpit_meta_ad_days_status", {})) as Row | null;
   } catch (e) {
     ok = false;
@@ -473,6 +478,27 @@ export async function runDoctor(deps: RunDeps): Promise<Record<string, unknown>>
   const notLinked = Array.isArray(inputs?.notLinked) ? (inputs?.notLinked as Row[]) : [];
   if (ties?.source === "board_clients" && notLinked.length) {
     notes.push(`Not linked to a client: ${notLinked.map(a => `${a.name ?? a.accountId} (${a.accountId})`).join(", ")}.`);
+  }
+  const list = (v: unknown) => (Array.isArray(v) ? (v.filter(isRow) as Row[]) : []);
+  const hidden = list(inputs?.hidden);
+  if (hidden.length) notes.push(`Hidden on purpose: ${hidden.map(a => `${a.name ?? a.accountId} (${a.accountId})`).join(", ")}.`);
+  // Read by the board too (cockpit_meta_ad_days_status): spend for a client that
+  // is gone, and tied accounts Meta does not let deliver (billing, disabled).
+  const cancelled = list(status?.cancelledDelivering);
+  if (cancelled.length) {
+    notes.push(
+      `Spent in the last 2 days for a cancelled or stopped client: ${cancelled
+        .map(a => `${a.name ?? a.accountId} (${a.clientName ?? "?"}, ${a.clientStatus ?? "?"})`)
+        .join(", ")}. Switch its ads off or confirm the client is back.`,
+    );
+  }
+  const stopped = list(status?.billingStopped);
+  if (stopped.length) {
+    notes.push(
+      `Meta stops delivery on: ${stopped
+        .map(a => `${a.name ?? a.accountId} (${a.clientName ?? "?"}, ${a.statusLabel ?? a.status}${a.lastSpendDay ? `, last spend ${a.lastSpendDay}` : ""})`)
+        .join(", ")}. Client success asks the client to settle billing.`,
+    );
   }
   const result = {
     ok,

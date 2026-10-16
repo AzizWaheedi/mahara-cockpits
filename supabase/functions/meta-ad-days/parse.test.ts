@@ -18,6 +18,7 @@ import {
   parseReach,
   toApplyRow,
   type Window,
+  windowSpans,
   withDestinations,
 } from "./parse.ts";
 
@@ -262,5 +263,25 @@ describe("reach over windows", () => {
     );
     const dup = { campaign_id: "120000000000101", reach: "1", impressions: "1", date_start: "2026-10-10", date_stop: "2026-10-16" };
     expect(() => parseReach([dup, dup], "campaign", W, ACC)).toThrow("two reach rows");
+  });
+
+  test("two windows on the same days (the 7th of a month) are asked once and both get the row", () => {
+    const seventh: Window[] = [
+      { key: "last_7", from: "2026-11-01", to: "2026-11-07" },
+      { key: "this_month", from: "2026-11-01", to: "2026-11-07" },
+      { key: "last_month", from: "2026-10-01", to: "2026-10-31" },
+    ];
+    expect(windowSpans(seventh)).toEqual([
+      { since: "2026-11-01", until: "2026-11-07" },
+      { since: "2026-10-01", until: "2026-10-31" },
+    ]);
+    const account = parseReach([{ account_id: ACC, impressions: "300", reach: "200", date_start: "2026-11-01", date_stop: "2026-11-07" }], "account", seventh, ACC);
+    expect(account).toEqual([
+      { key: ACC, windowKey: "last_7", reach: 200, impressions: 300 },
+      { key: ACC, windowKey: "this_month", reach: 200, impressions: 300 },
+      { key: ACC, windowKey: "last_month", reach: 0, impressions: 0 },
+    ]);
+    const ads = parseReach([{ ad_id: "120000000000103", impressions: "30", reach: "20", date_start: "2026-11-01", date_stop: "2026-11-07" }], "ad", seventh, ACC);
+    expect(ads.map(r => r.windowKey)).toEqual(["last_7", "this_month"]);
   });
 });

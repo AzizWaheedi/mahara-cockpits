@@ -330,21 +330,39 @@ export type ReachRow = { key: string; windowKey: string; reach: number | null; i
 
 export const REACH_LEVELS: Level[] = ["account", "campaign", "adset", "ad"];
 
-/** Reach and impressions per window for one level, from one time_ranges read. */
+/**
+ * The distinct spans of the windows, in order: two windows can hold the same
+ * days (last_7 and this_month on the 7th of a month, last_30 and this_month on
+ * the 30th), and Meta is asked for each span once.
+ */
+export function windowSpans(windows: Window[]): { since: string; until: string }[] {
+  const out = new Map<string, { since: string; until: string }>();
+  for (const w of windows) out.set(`${w.from}|${w.to}`, { since: w.from, until: w.to });
+  return [...out.values()];
+}
+
+/**
+ * Reach and impressions per window for one level, from one time_ranges read.
+ * A span shared by two windows gives the same row to both (before 2026-10-16
+ * the second window's row was refused as a repeat, or written as 0).
+ */
 export function parseReach(rows: Row[], level: Level, windows: Window[], accountId: string): ReachRow[] {
-  const byRange = new Map(windows.map(w => [`${w.from}|${w.to}`, w.key]));
+  const byRange = new Map<string, string[]>();
+  for (const w of windows) byRange.set(`${w.from}|${w.to}`, [...(byRange.get(`${w.from}|${w.to}`) ?? []), w.key]);
   const idField = `${level}_id`;
   const out: ReachRow[] = [];
   const seen = new Set<string>();
   for (const raw of rows) {
-    const windowKey = byRange.get(`${text(raw.date_start)}|${text(raw.date_stop)}`);
-    if (!windowKey) throw new ParseError(`Meta returned reach for ${String(raw.date_start)} to ${String(raw.date_stop)}, a span that was not asked for.`);
+    const windowKeys = byRange.get(`${text(raw.date_start)}|${text(raw.date_stop)}`);
+    if (!windowKeys) throw new ParseError(`Meta returned reach for ${String(raw.date_start)} to ${String(raw.date_stop)}, a span that was not asked for.`);
     const key = level === "account" ? (id(raw.account_id, "an account id", false) ?? accountId) : (id(raw[idField], `a ${level} id`, true) as string);
     if (level === "account" && key !== accountId) throw new ParseError(`Meta returned reach for ad account ${key} inside ${accountId}.`);
-    const k = `${key}|${windowKey}`;
-    if (seen.has(k)) throw new ParseError(`Meta returned two reach rows for ${level} ${key} over ${windowKey}.`);
-    seen.add(k);
-    out.push({ key, windowKey, reach: count(raw.reach, "reach"), impressions: count(raw.impressions, "impressions") });
+    for (const windowKey of windowKeys) {
+      const k = `${key}|${windowKey}`;
+      if (seen.has(k)) throw new ParseError(`Meta returned two reach rows for ${level} ${key} over ${windowKey}.`);
+      seen.add(k);
+      out.push({ key, windowKey, reach: count(raw.reach, "reach"), impressions: count(raw.impressions, "impressions") });
+    }
   }
   // The account was read: a window with no row had no delivery, which is a true zero.
   if (level === "account") {
