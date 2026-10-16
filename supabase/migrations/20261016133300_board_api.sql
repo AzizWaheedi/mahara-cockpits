@@ -1238,11 +1238,19 @@ DECLARE
   v_facts record;
   v_notes text[] := '{}';
   v_hourly jsonb;
+  v_whole boolean;
 BEGIN
   IF NOT coalesce(public.cockpit_has_active_seat(), false) THEN
     RAISE EXCEPTION 'Sign in with an active cockpit seat to see the Client Performance board.' USING ERRCODE = '42501';
   END IF;
   PERFORM public.cockpit_board_check_window(p_from, p_to);
+  -- Ad accounts tied to no client, and the Meta jobs' own notes, name other
+  -- clients' accounts: only the CEO, admins and seats not limited to some
+  -- clients see them (cockpit_client_allowed's rule for the whole board).
+  v_whole := coalesce(public.cockpit_is_ceo(), false) OR coalesce(public.cockpit_has_role('admin'), false)
+    OR EXISTS (SELECT 1 FROM public.cockpit_members cm JOIN auth.users au ON au.id = cm.auth_user_id
+               WHERE cm.auth_user_id = auth.uid() AND cm.active AND au.email_confirmed_at IS NOT NULL
+                 AND cm.email = lower(btrim(au.email)) AND cardinality(coalesce(cm.clients, '{}'::text[])) = 0);
   v_meta := public.cockpit_meta_ad_days_status();
   SELECT coalesce(jsonb_agg(x ORDER BY x->>'clientName', x->>'locationId'), '[]'::jsonb) INTO v_rows
   FROM jsonb_array_elements(public.cockpit_board_rows(p_from, p_to, NULL, v_meta)) x
@@ -1265,7 +1273,8 @@ BEGIN
     v_notes := v_notes || format('Meta was last read %s Kuwait time; it is read every hour.',
       coalesce(to_char((v_meta->'store'->>'lastFetchedAt')::timestamptz AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'), 'at an unknown time'));
   ELSIF v_hourly->>'state' IN ('failed', 'partial') THEN
-    v_notes := v_notes || coalesce(v_hourly->>'note', 'The last Meta read did not finish every ad account.');
+    v_notes := v_notes || CASE WHEN v_whole THEN coalesce(v_hourly->>'note', 'The last Meta read did not finish every ad account.')
+                               ELSE 'The last Meta read did not finish every ad account.' END;
   END IF;
 
   RETURN jsonb_build_object(
@@ -1277,11 +1286,15 @@ BEGIN
     'targets', public.cockpit_board_targets_map(NULL),
     'canEditTargets', coalesce(public.cockpit_is_ceo(), false) OR coalesce(public.cockpit_has_role('admin'), false),
     'clients', v_rows,
-    'notLinked', coalesce(v_meta->'notLinked', '[]'::jsonb),
+    'notLinked', CASE WHEN v_whole THEN coalesce(v_meta->'notLinked', '[]'::jsonb) ELSE '[]'::jsonb END,
     'freshness', jsonb_build_object(
       'facts', jsonb_build_object('lastRunAt', v_facts.last_run_at, 'lastOkAt', v_facts.last_ok_at, 'ok', v_facts.ok, 'note', v_facts.note),
       'meta', jsonb_build_object('lastFetchedAt', v_meta->'store'->'lastFetchedAt', 'firstDay', v_meta->'store'->'firstDay',
-        'lastDay', v_meta->'store'->'lastDay', 'hourly', v_hourly, 'nightly', v_meta->'jobs'->'nightly')),
+        'lastDay', v_meta->'store'->'lastDay',
+        'hourly', CASE WHEN v_whole THEN v_hourly ELSE v_hourly - 'note' END,
+        'nightly', CASE WHEN v_whole THEN v_meta->'jobs'->'nightly' ELSE (v_meta->'jobs'->'nightly') - 'note' END,
+        'note', CASE WHEN NOT v_whole AND (v_hourly->>'state' IN ('failed', 'partial') OR v_meta->'jobs'->'nightly'->>'state' IN ('failed', 'partial'))
+                     THEN 'The last Meta read did not finish every ad account.' END)),
     'notes', to_jsonb(v_notes));
 END $$;
 

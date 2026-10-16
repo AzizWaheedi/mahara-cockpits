@@ -709,6 +709,59 @@ describe("who may read the board", () => {
     );
   });
 
+  test("unlinked ad accounts and the Meta jobs' notes reach only the CEO, admins and unlimited seats", async () => {
+    await owner(db);
+    const note =
+      "1 of 3 ad accounts could not be read. Not linked to a client: Pidco Test 9999999999.";
+    await q(
+      `INSERT INTO public.cockpit_meta_ad_day_runs(job,state,requested_by,accounts,detail,note,started_at,finished_at)
+       VALUES('hourly','partial','cron',$1::jsonb,'{"tieSource":"board_clients"}'::jsonb,$2,now(),now())`,
+      [
+        JSON.stringify([
+          {
+            accountId: "9999999999",
+            name: "Pidco Test",
+            currency: "USD",
+            spend: 12,
+            linked: false,
+          },
+        ]),
+        note,
+      ],
+    );
+    try {
+      for (const who of [CEO, ADMIN, CREATIVE]) {
+        const b = await board(who);
+        expect(b.notLinked).toEqual([
+          {
+            accountId: "9999999999",
+            name: "Pidco Test",
+            currency: "USD",
+            spend: 12,
+          },
+        ]);
+        expect(b.notes).toContain(note);
+        expect(b.freshness.meta.hourly.note).toBe(note);
+      }
+      const limited = await board(LIMITED);
+      expect(limited.notLinked).toEqual([]);
+      expect(limited.freshness.meta.hourly.state).toBe("partial");
+      expect(limited.freshness.meta.hourly.note).toBeUndefined();
+      expect(limited.freshness.meta.note).toBe(
+        "The last Meta read did not finish every ad account.",
+      );
+      expect(limited.notes).toContain(
+        "The last Meta read did not finish every ad account.",
+      );
+      expect(JSON.stringify(limited)).not.toMatch(/Pidco|9999999999/);
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.cockpit_meta_ad_day_runs WHERE note = $1", [
+        note,
+      ]);
+    }
+  });
+
   test("an unknown or cancelled client reads the same as one outside the seat", async () => {
     expect(
       await refused(
