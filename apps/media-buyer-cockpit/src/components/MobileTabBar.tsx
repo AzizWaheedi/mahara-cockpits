@@ -35,7 +35,7 @@ type Item = {
  * and "More" for the rest of the rail. Which four depends on where you are:
  * the CEO cockpit's own sections on /ceo, the media buyer's day for a media
  * buyer (Today, Ads, Library and Search, since 2026-10-06), otherwise the
- * CEO, Admin and Team meetings doors a seat has. Hidden from 1024px up, where
+ * CEO, Admin, Team meetings and Client performance doors a seat has. Hidden from 1024px up, where
  * the rail is on the left. The labels are the rail's own words.
  */
 export function MobileTabBar() {
@@ -149,6 +149,13 @@ export function MobileTabBar() {
             icon: COCKPIT_ICON.team,
             to: "/team",
             active: path.startsWith("/team"),
+          },
+          {
+            key: "performance",
+            label: "Clients",
+            icon: COCKPIT_ICON.performance,
+            to: "/performance",
+            active: path === "/performance",
           },
         ];
   const cell =

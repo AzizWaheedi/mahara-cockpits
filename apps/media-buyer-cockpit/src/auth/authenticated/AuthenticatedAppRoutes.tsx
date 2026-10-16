@@ -22,6 +22,7 @@ import {
   TodayPage,
 } from "@/pages";
 import { DataViewPage } from "@/pages/data/DataViewPage";
+import { PerformancePage } from "@/pages/performance/PerformancePage";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 
@@ -114,6 +115,10 @@ export function AuthenticatedRoutes() {
           </Route>
           {/* Team meetings: everybody with a seat in the portal. */}
           <Route path="/team" element={<TeamPage />} />
+          {/* Client performance: every seat (Aziz, 2026-10-16). The database
+              gates the read: any active seat, each client through
+              cockpit_client_allowed. */}
+          <Route path="/performance" element={<PerformancePage />} />
           <Route path="/team/:id" element={<MeetingPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>

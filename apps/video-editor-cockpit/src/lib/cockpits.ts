@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  ChartNoAxesCombined,
   Clapperboard,
   Gauge,
   Handshake,
@@ -25,6 +26,8 @@ export const COCKPIT_ICON: Record<string, LucideIcon> = {
   sales: Handshake,
   admin: ShieldCheck,
   team: UsersRound,
+  /** Client performance, the portal's board for every seat (2026-10-16). */
+  performance: ChartNoAxesCombined,
   sop: BookOpen,
 };
 

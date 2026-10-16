@@ -102,6 +102,12 @@ const PAGES: (Hit & { role?: "media_buyer" | "admin" | "ceo" })[] = [
     old: "meetings team agenda",
   },
   {
+    href: "/performance",
+    label: "Client performance",
+    sub: "Every client against its targets, and the levers",
+    old: "board clients performance kpi targets levers spend cpl roas show rate no outcome caller meeting",
+  },
+  {
     href: "/settings",
     label: "Settings",
     sub: "Your account",

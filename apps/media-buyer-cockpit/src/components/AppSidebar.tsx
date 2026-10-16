@@ -169,6 +169,12 @@ function CeoRail() {
       href: "/team",
       icon: COCKPIT_ICON.team,
     },
+    {
+      key: "performance",
+      label: "Client performance",
+      href: "/performance",
+      icon: COCKPIT_ICON.performance,
+    },
     ...(auth.isAdmin
       ? [
           {
@@ -335,6 +341,15 @@ function SidebarNav() {
                 label="Team meetings"
                 icon={COCKPIT_ICON.team}
                 isActive={location.pathname.startsWith("/team")}
+              />
+            ) : null}
+            {/* Everybody's: every client against its targets (2026-10-16). */}
+            {auth.isAuthenticated ? (
+              <NavLink
+                href="/performance"
+                label="Client performance"
+                icon={COCKPIT_ICON.performance}
+                isActive={location.pathname === "/performance"}
               />
             ) : null}
             {/* The media buyer's SOP, in ClickUp, in a new tab. */}
