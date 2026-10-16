@@ -13,8 +13,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
-import * as csKpi from "../../client-success-cockpit/src/lib/kpi";
 import { CALL_RULES as CS_CALL_RULES } from "../../client-success-cockpit/src/lib/callCentre";
+import * as csKpi from "../../client-success-cockpit/src/lib/kpi";
 import { CALL_RULES } from "../src/lib/callCentre";
 import * as kpi from "../src/lib/kpi";
 import {
