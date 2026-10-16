@@ -26,6 +26,12 @@ import {
 } from "./lib/cockpitTestDb";
 
 const FILE = "20261016133300_board_api.sql";
+/** The 16 October corrections: the facts, the Meta store, then the read that takes them. */
+const FIXES = [
+  "20261016210000_board_facts_checked.sql",
+  "20261016210100_meta_ad_days_checked.sql",
+];
+const READ_CHECKED = "20261016220000_board_read_checked.sql";
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
 const ADMIN = "00000000-0000-4000-8000-0000000000a1";
@@ -654,6 +660,8 @@ beforeAll(async () => {
   );
 
   await db.exec(migration(FILE));
+  for (const f of FIXES) await db.exec(migration(f));
+  await db.exec(migration(READ_CHECKED));
 }, 180_000);
 
 afterAll(async () => {
@@ -831,8 +839,10 @@ describe("who may read the board", () => {
       cockpit_board_ad_cells: "",
       cockpit_board_ad_cover: "",
       cockpit_board_ad_unmeasured: "",
+      cockpit_board_add_note: "",
       cockpit_board_appointments: "",
       cockpit_board_audit: "",
+      cockpit_board_card_status: "",
       cockpit_board_cell: "",
       cockpit_board_check_window: "",
       cockpit_board_client: "authenticated",
@@ -2286,10 +2296,315 @@ describe("levers: the gate, the row and its audit", () => {
   });
 });
 
+describe("the read takes the 16 October corrections", () => {
+  const now = (row: Row) =>
+    q(
+      `INSERT INTO public.cockpit_client_now(location_id,untouched_leads,touched_share_30d,callable_30d,touched_30d,
+         verified_called_30d,outcome_only_30d,first_call_median_work_seconds_30d,computed_at)
+       VALUES($1,3,$2::numeric,$3,$4,$5,$6,600,'2026-10-16 10:30:00+00')
+       ON CONFLICT (location_id) DO UPDATE SET touched_share_30d = EXCLUDED.touched_share_30d, callable_30d = EXCLUDED.callable_30d,
+         touched_30d = EXCLUDED.touched_30d, verified_called_30d = EXCLUDED.verified_called_30d,
+         outcome_only_30d = EXCLUDED.outcome_only_30d, computed_at = EXCLUDED.computed_at, note = NULL`,
+      [
+        LOC_D,
+        row.share,
+        row.callable,
+        row.touched,
+        row.verified,
+        row.outcomeOnly,
+      ],
+    );
+  const clearNow = async () => {
+    await owner(db);
+    await q("DELETE FROM public.cockpit_client_now WHERE location_id = $1", [
+      LOC_D,
+    ]);
+  };
+
+  test("leads contacted counts a lead once it has a Maqsam call; a saved outcome alone is said, not counted", async () => {
+    await owner(db);
+    try {
+      // City Wood's shape on 16 Oct: 95% touched, 57% with a Maqsam call.
+      await now({
+        share: 0.95,
+        callable: 100,
+        touched: 95,
+        verified: 57,
+        outcomeOnly: 38,
+      });
+      let v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.leadsTouched).toMatchObject({
+        v: 57,
+        status: "off",
+        num: 57,
+        den: 100,
+        sample: 100,
+        outcomeOnly: 38,
+        touchedShare: 95,
+      });
+      expect(v.leadsTouched.note).toBe(
+        "57 of the 100 callable leads from the last 30 days have a Maqsam call, as of 16 Oct 13:30 Kuwait time. " +
+          "38 more have a saved outcome but no Maqsam call, so they are not counted (95% if they were).",
+      );
+      await owner(db);
+      await now({
+        share: 0.92,
+        callable: 100,
+        touched: 92,
+        verified: 91,
+        outcomeOnly: 1,
+      });
+      v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.leadsTouched).toMatchObject({ v: 91, status: "good" });
+      expect(v.leadsTouched.note).toContain(
+        "1 more has a saved outcome but no Maqsam call, so it is not counted (92% if it were).",
+      );
+      await owner(db);
+      await now({
+        share: 0.9,
+        callable: 100,
+        touched: 90,
+        verified: 90,
+        outcomeOnly: 0,
+      });
+      v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.leadsTouched).toMatchObject({ v: 90, status: "good" });
+      expect(v.leadsTouched.note).not.toMatch(/saved outcome/);
+      // Under the minimum sample the rate is shown and called too few, counted on Maqsam calls.
+      await owner(db);
+      await now({
+        share: 1,
+        callable: 7,
+        touched: 7,
+        verified: 4,
+        outcomeOnly: 3,
+      });
+      v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.leadsTouched).toMatchObject({
+        v: r2((4 / 7) * 100),
+        status: "too_few",
+        num: 4,
+        den: 7,
+      });
+      // Facts from before the Maqsam split keep the looser share, and say so.
+      await owner(db);
+      await now({
+        share: 0.95,
+        callable: 100,
+        touched: 95,
+        verified: null,
+        outcomeOnly: null,
+      });
+      v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.leadsTouched).toMatchObject({ v: 95, status: "good", num: 95 });
+      expect(v.leadsTouched.note).toContain(
+        "This still counts a saved outcome with no Maqsam call; the next refresh counts Maqsam calls only.",
+      );
+    } finally {
+      await clearNow();
+    }
+  });
+
+  test("closes says won, pending and lost; the close rate stays closes / shows", async () => {
+    await owner(db);
+    const before = rowOf(await board(CREATIVE), LOC_D).values;
+    await owner(db);
+    try {
+      // Formula Co's ten days: 2 won (days 0 and 1), 3 pending, 1 lost.
+      await q(
+        `UPDATE public.cockpit_client_days SET closes_pending = CASE WHEN day BETWEEN $2::date AND $3::date THEN 1 ELSE 0 END,
+           closes_lost = CASE WHEN day = $4::date THEN 1 ELSE 0 END, closes_answered = 0
+         WHERE location_id = $1 AND day BETWEEN $5::date AND $6::date`,
+        [LOC_D, kd(38), kd(36), kd(35), F_FROM, F_TO],
+      );
+      const v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.closes).toEqual({
+        v: 2,
+        status: null,
+        withValue: 2,
+        pending: 3,
+        lost: 1,
+        note: "Won 2, still pending 3, lost 1.",
+      });
+      expect(v.closeRate).toEqual(before.closeRate);
+    } finally {
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_client_days SET closes_pending = NULL, closes_lost = NULL, closes_answered = NULL WHERE location_id = $1",
+        [LOC_D],
+      );
+    }
+    // A client who marks only wins has nothing more to say.
+    const v = rowOf(await board(CREATIVE), LOC_D).values;
+    expect(v.closes).toEqual({ v: 2, status: null, withValue: 2 });
+  });
+
+  test("CRM leads say how many are Instagram or Messenger chats with no ad", async () => {
+    await owner(db);
+    try {
+      await q(
+        `UPDATE public.cockpit_client_days SET crm_dm_contacts = CASE WHEN day BETWEEN $2::date AND $3::date THEN 1 ELSE 0 END
+         WHERE location_id = $1 AND day BETWEEN $4::date AND $5::date`,
+        [LOC_D, kd(40), kd(38), F_FROM, F_TO],
+      );
+      let v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.crmLeads).toEqual({
+        v: 40,
+        status: null,
+        dms: 3,
+        note: "3 of these are an Instagram or Messenger chat with no ad behind it; WhatsApp chats are left out.",
+      });
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_client_days SET crm_dm_contacts = 0 WHERE location_id = $1",
+        [LOC_D],
+      );
+      v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.crmLeads).toEqual({ v: 40, status: null, dms: 0 });
+    } finally {
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_client_days SET crm_dm_contacts = NULL WHERE location_id = $1",
+        [LOC_D],
+      );
+    }
+    const v = rowOf(await board(CREATIVE), LOC_D).values;
+    expect(v.crmLeads).toEqual({ v: 40, status: null });
+  });
+
+  test("spend no client row carries is named for whole-board seats, and kept out of every row", async () => {
+    await owner(db);
+    const spendBefore = rowOf(await board(CEO), LOC_D).values.spend;
+    await owner(db);
+    const OLD = "3333333333";
+    const LOOSE = "4444444444";
+    const KEPT = "5555555555";
+    const base = (account: string, accountName: string, spend: number) => ({
+      account,
+      accountName,
+      day: kd(35),
+      campaign: `1${account}`,
+      adset: `2${account}`,
+      ad: `3${account}`,
+      spend,
+      imp: 1000,
+      clicks: 10,
+    });
+    try {
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = ARRAY[$2] WHERE location_id = $1",
+        [LOC_X, OLD],
+      );
+      await q(
+        `INSERT INTO public.cockpit_board_account_ties(account_id,location_id,evidence,added_by,kept_out)
+         VALUES($1,$2,'The client''s own post boosts, tested.','tests',true)`,
+        [KEPT, LOC_A],
+      );
+      await adDay(base(OLD, "Old client ads", 30.5));
+      await adDay(base(LOOSE, "Nobody's ads", 12.25));
+      await adDay(base(KEPT, "Client A boosts", 7));
+      for (const who of [CEO, ADMIN, CREATIVE]) {
+        const b = await board(who);
+        expect(b.offBoard).toEqual({
+          spend: 49.75,
+          unpriced: false,
+          accounts: [
+            {
+              accountId: OLD,
+              name: "Old client ads",
+              spend: 30.5,
+              client: "Old client",
+              reason: "cancelled",
+            },
+            {
+              accountId: LOOSE,
+              name: "Nobody's ads",
+              spend: 12.25,
+              reason: "not_tied",
+            },
+            {
+              accountId: KEPT,
+              name: "Client A boosts",
+              spend: 7,
+              client: "Client A",
+              reason: "kept_out",
+            },
+          ],
+        });
+        expect(rowOf(b, LOC_D).values.spend).toEqual(spendBefore);
+      }
+      // Outside the time frame, nothing.
+      const later = await board(CEO, kd(20), kd(10));
+      expect(later.offBoard).toEqual({
+        spend: 0,
+        unpriced: false,
+        accounts: [],
+      });
+      const limited = await board(LIMITED);
+      expect(limited.offBoard).toBeNull();
+      expect(JSON.stringify(limited)).not.toMatch(/Old client|3333333333/);
+    } finally {
+      await owner(db);
+      await q(
+        "DELETE FROM public.cockpit_meta_ad_days WHERE account_id = ANY($1)",
+        [[OLD, LOOSE, KEPT]],
+      );
+      await q(
+        "DELETE FROM public.cockpit_board_account_ties WHERE account_id = $1",
+        [KEPT],
+      );
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = '{}' WHERE location_id = $1",
+        [LOC_X],
+      );
+    }
+  });
+
+  test("the leads-contacted target is labelled for what it counts", async () => {
+    const t = await service<Row>(
+      "SELECT jsonb_object_agg(metric, label) AS r FROM public.cockpit_board_default_targets()",
+    );
+    expect(t.leads_touched).toBe("Leads contacted");
+  });
+
+  test("only the read and the defaults are doors; the note helper is internal", async () => {
+    await owner(db);
+    const rows = await q<Row>(
+      `SELECT p.proname, has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth,
+              has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+              has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc
+       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname IN ('cockpit_board_add_note','cockpit_board_rows','cockpit_board_read','cockpit_board_default_targets')
+       ORDER BY p.proname`,
+    );
+    expect(rows).toEqual([
+      {
+        proname: "cockpit_board_add_note",
+        auth: false,
+        anon: false,
+        svc: false,
+      },
+      {
+        proname: "cockpit_board_default_targets",
+        auth: false,
+        anon: false,
+        svc: true,
+      },
+      { proname: "cockpit_board_read", auth: true, anon: false, svc: false },
+      { proname: "cockpit_board_rows", auth: false, anon: false, svc: false },
+    ]);
+  });
+});
+
 describe("the migration", () => {
-  test("applies twice", async () => {
+  test("applies twice, in production's order", async () => {
     await owner(db);
     await db.exec(migration(FILE));
-    expect((await board(CEO)).clients.length).toBe(4);
+    for (const f of FIXES) await db.exec(migration(f));
+    await db.exec(migration(READ_CHECKED));
+    await db.exec(migration(READ_CHECKED));
+    const b = await board(CEO);
+    expect(b.clients.length).toBe(4);
+    expect(b).toHaveProperty("offBoard");
   });
 });

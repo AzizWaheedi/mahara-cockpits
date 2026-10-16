@@ -178,11 +178,70 @@ function Portfolio({ rows }: { rows: ClientRow[] }) {
                 ? `All ${t.of} clients`
                 : `${t.covered} of ${t.of} clients`}
               {t.partial ? `, ${t.partial} with days missing` : ""}
+              {t.aside ? ` · ${t.aside}` : ""}
             </dd>
           </div>
         ))}
       </dl>
     </section>
+  );
+}
+
+const OFF_BOARD_REASON: Record<string, string> = {
+  cancelled: "cancelled client",
+  not_tied: "not tied to a client",
+  kept_out: "kept out: the client's own boosting",
+};
+
+/**
+ * Spend no client row carries, said under the totals so the board never
+ * looks like all of Meta's spend. Whole-board seats only (offBoard is null
+ * for the rest).
+ */
+function OffBoardLine({ off }: { off: NonNullable<Board["offBoard"]> }) {
+  if (!off.accounts.length) return null;
+  const n = off.accounts.length;
+  return (
+    <details className="rounded-xl border bg-card px-4 py-3 text-sm sm:px-5">
+      <summary className="flex items-baseline select-none">
+        <span className="min-w-0 flex-1">
+          <span className="font-medium tabular-nums">
+            Not in these totals: {formatValue(off.spend, "usd")}
+            {off.unpriced ? "+" : ""}
+          </span>{" "}
+          <span className="text-muted-foreground tabular-nums">
+            spent on {n === 1 ? "1 ad account" : `${n} ad accounts`} no client
+            on the board carries.
+          </span>
+        </span>
+      </summary>
+      <ul className="mt-3 divide-y border-t text-xs">
+        {off.accounts.map(a => (
+          <li
+            key={a.accountId}
+            className="flex items-baseline justify-between gap-3 py-2"
+          >
+            <span className="min-w-0">
+              <span className="block truncate font-medium text-foreground">
+                {a.name ?? `act_${a.accountId}`}
+              </span>
+              <span className="block truncate text-muted-foreground">
+                {[a.client, OFF_BOARD_REASON[a.reason ?? ""] ?? a.reason]
+                  .filter(Boolean)
+                  .join(", ")}
+              </span>
+            </span>
+            <span className="shrink-0 tabular-nums">
+              {formatValue(a.spend ?? null, "usd")}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-muted-foreground">
+        Switch off delivery where the client is gone, or tie the account to its
+        client so its row counts it.
+      </p>
+    </details>
   );
 }
 
@@ -546,6 +605,7 @@ export function PerformancePage() {
               onPress={sortByNoOutcome}
             />
           ) : null}
+          {data.offBoard ? <OffBoardLine off={data.offBoard} /> : null}
         </>
       ) : null}
 
@@ -686,7 +746,7 @@ export function PerformancePage() {
         ) : null}
       </section>
 
-      {data?.notLinked?.length ? (
+      {data && data.offBoard === undefined && data.notLinked?.length ? (
         <details className="rounded-2xl border bg-card px-4 py-3 text-sm sm:px-6">
           <summary className="cursor-pointer select-none text-[13px] font-medium">
             {data.notLinked.length === 1

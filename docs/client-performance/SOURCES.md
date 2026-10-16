@@ -434,11 +434,14 @@ board's read functions and screen).
 
 - **Source of truth:** the client sheet's Quotation column (column K) through
   the CSM copy, and the portal's quotation; the larger per day.
-- **Rule:** by meeting day. Quotation rate = quotations / quotation_answers
-  (Y / (Y + N)); target 50% (the constraints checklist). NULL when the client
-  fills neither source, and (since 16 Oct) on a day whose due meetings have no
-  quotation answer. `quotation_answers` is known once the copy keeps N
-  (`quoteKeepsN`, the native feed release after 16 Oct).
+- **Rule:** by meeting day. The board's quotation rate = quotations / shows,
+  summed over the days both are known; target 50% of shows (the constraints
+  checklist). NULL when the client fills neither source, and (since 16 Oct) on
+  a day whose due meetings have no quotation answer. `quotation_answers`
+  (Y + N) tells a "no" from a blank and is known once the copy keeps N
+  (`quoteKeepsN`, the native feed release after 16 Oct); the board's read
+  carries it as its own figure (`quotationAnswers`), never as the rate's
+  denominator, so a client who marks only Y does not read 100%.
 - **Checked against:** the client sheets read live (Arcturus 12 Y and 14 N: a
   46% rate the board could not show).
 - **Gaps:** six clients leave Quotation blank on every row (Ardon, Castello,
@@ -506,8 +509,13 @@ board's read functions and screen).
 - **Rule:** `touched_30d` keeps the client page's rule (a Maqsam call by
   contact, a call to the phone under another lead, or a saved attempt). New
   on 16 Oct: `verified_called_30d` (a Maqsam call only) and
-  `outcome_only_30d` (touched by a saved outcome alone). The 90% line should
-  use verified / callable: board team. DWY clients store no waiting figures.
+  `outcome_only_30d` (touched by a saved outcome alone). Since
+  `20261016220000_board_read_checked.sql` the board's Leads contacted is
+  verified / callable, judged against the 90% line; the touched share and the
+  outcome-only count stay in the cell and its note ("38 more have a saved
+  outcome but no Maqsam call, so they are not counted (95% if they were)").
+  The client success and media buyer client pages keep the touched rule and
+  say "called or messaged". DWY clients store no waiting figures.
 - **Checked against:** Maqsam outbound calls with saved attempts left out:
   City Wood 95% touched against 57% called, شركة العلا 95% against 80%,
   Marble 100% against 76%, Arcturus 99% against 89%, Khalida 100% against
@@ -562,6 +570,10 @@ On 16 Oct at 16:30 Kuwait every source was fresh: lead sync 15:35, appointments
 
 | Found | Fixed in | Effect |
 | --- | --- | --- |
+| The board judged Leads contacted on saved outcomes as well as Maqsam calls | `20261016220000_board_read_checked.sql` | verified / callable on the 90% line: City Wood 95% to 57%, Marble and more 100% to 76%, شركة العلا 95% to 80%, mergestudio 94% to 81%, Arcturus 99% to 89%, Khalida 100% to 57% |
+| Spend on accounts no client row carries was silently outside the totals | same | `offBoard` on the read and a "Not in these totals" line under the totals (whole-board seats): $1,712 on 10 accounts over 16 Sep to 15 Oct |
+| Won, pending and lost not on the board | same | the Closes cell and its note ("Won 0, still pending 23, lost 1"), the totals' "N pending" |
+| DMs inside CRM leads not said | same | the CRM leads cell counts them (`dms`) and says so |
 | DMs counted as CRM ad leads | `20261016210000_board_facts_checked.sql` | Ocean Home 139 to 115, Alkhalil 75 to 57, City Wood 52 to 48; DMs in `crm_dm_contacts` |
 | Status and service from the registry, not ClickUp | same | Shades Active; three lost clients Stopped; doctor lists disagreements |
 | Spending accounts no tie reached | same, and `20261016210200_board_account_ties.sql` | Shades, Ardon, Pidco, AEA tied with evidence; Alkhalil's SAR account (the client's own post boosts) kept out and named; the registry's own ad account field read as the last tie |
@@ -619,7 +631,7 @@ To make it live, in order (systems manager, the lead session):
 | One caller's leads are "touched" by saved outcomes with no Maqsam call. | Call-centre lead |
 | Whether Instagram and Messenger DMs should leave CRM leads like WhatsApp chats. | CEO, systems manager |
 | The dialer: RESCHEDULE should cancel the old GoHighLevel appointment; its appointment facts should learn when GoHighLevel drops a booking; its sheet reader could keep column K as a second quotation source; the copy of sheet marks onto `appointments.attended` should take the same moved-time fallback as the facts. | Systems manager (dialer) |
-| The board: read `cockpit_client_days`, `cockpit_client_now`, `cockpit_meta_ad_days`, `cockpit_meta_reach` and `cockpit_meta_ad_days_status()` with these rules: NULL as unknown; "so far" on partial days; full-day windows by default; the 90% line on `verified_called_30d`; close rate = closes / shows against the 20% gate, with won, pending and lost (`closes_pending`, `closes_lost`) as a breakdown; cost per lead from Meta's leads; a "Spent but not active" line from `cancelledDelivering`; the billing reason from `billingStopped`; Atlantis's Los Angeles clock; "Meta leads not in the CRM" from `cockpit_meta_leads_not_in_crm`; a dash for DWY call-centre figures. | Board team |
+| The board, still to read (done on 16 Oct: NULL as unknown, the 90% line on `verified_called_30d`, close rate = closes / shows with won, pending and lost beside it, cost per lead from Meta's leads, spend outside the rows as "Not in these totals", each account's own clock, a dash for DWY call-centre figures): "so far, as of" on a partial today; full-day windows by default; the billing reason from `billingStopped`; "Meta leads not in the CRM" from `cockpit_meta_leads_not_in_crm` on the client page, once the first nightly run (03:20 Kuwait) has stored Meta's lead ids. | Board team |
 | Flag a client whose "Meta leads not in the CRM" is above 0 for two days. | Systems manager (cockpit guardian) |
 | The SAR and QAR pegs in the fixed rates (about $0.50 in 30 days). | Systems manager, optional |
 | Hook and hold targets from Mahara's own spread; one KPI set (`kpi.ts` or the October plan). | Media buyer, CEO |

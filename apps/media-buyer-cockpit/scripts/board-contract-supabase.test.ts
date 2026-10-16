@@ -128,6 +128,9 @@ beforeAll(async () => {
   await db.exec(migration("20261013180200_cockpit_client_callers.sql"));
   await db.exec(migration("20261016111157_board_facts.sql"));
   await db.exec(migration("20261016121700_meta_ad_days.sql"));
+  // The 16 October corrections, in production's order.
+  await db.exec(migration("20261016210000_board_facts_checked.sql"));
+  await db.exec(migration("20261016210100_meta_ad_days_checked.sql"));
 
   // The client spine and ten days of facts, written by hand.
   await q(
@@ -179,9 +182,17 @@ beforeAll(async () => {
      VALUES($1,$2,3,3,0,0,0,'{}'::jsonb)`,
     [C, kd(1)],
   );
+  // A's won, pending and lost deals, and its Instagram or Messenger chats.
   await q(
-    `INSERT INTO public.cockpit_client_now(location_id,untouched_leads,oldest_untouched_at,touched_share_30d,callable_30d,touched_30d,first_call_median_work_seconds_30d,note)
-     VALUES($1,2,now() - interval '3 hours',0.95,40,38,900,NULL)`,
+    `UPDATE public.cockpit_client_days SET crm_dm_contacts = CASE WHEN day = $2::date THEN 1 ELSE 0 END,
+       closes_pending = CASE WHEN day = $3::date THEN 1 ELSE 0 END, closes_lost = CASE WHEN day = $4::date THEN 1 ELSE 0 END
+     WHERE location_id = $1`,
+    [A, kd(1), kd(2), kd(3)],
+  );
+  await q(
+    `INSERT INTO public.cockpit_client_now(location_id,untouched_leads,oldest_untouched_at,touched_share_30d,callable_30d,touched_30d,
+       first_call_median_work_seconds_30d,note,verified_called_30d,outcome_only_30d)
+     VALUES($1,2,now() - interval '3 hours',0.95,40,38,900,NULL,35,3)`,
     [A],
   );
   await q(
@@ -232,6 +243,7 @@ beforeAll(async () => {
   );
 
   await db.exec(migration("20261016133300_board_api.sql"));
+  await db.exec(migration("20261016220000_board_read_checked.sql"));
   read = await as(
     VIEWER,
     "SELECT public.cockpit_board_read($1::date,$2::date) AS r",

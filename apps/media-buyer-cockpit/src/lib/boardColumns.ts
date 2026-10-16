@@ -413,9 +413,9 @@ export const COLUMNS: BoardColumn[] = [
     group: "calls",
     unit: "percent",
     metric: "leads_touched",
-    how: "Share of the last 30 days' callable leads the call centre has dialled, whatever the time frame.",
+    how: "Share of the last 30 days' callable leads with a Maqsam call, whatever the time frame. A saved outcome with no Maqsam call does not count.",
     parts: [
-      { label: "leads contacted", unit: "count" },
+      { label: "leads with a Maqsam call", unit: "count" },
       { label: "callable leads", unit: "count" },
     ],
   },
@@ -602,6 +602,8 @@ export type Total = {
    * the rate is no floor: it is said in words, never with a +.
    */
   partial: number;
+  /** A short aside under the figure: the closes still pending. */
+  aside?: string;
 };
 
 function sumOf(rows: ClientRow[], key: string) {
@@ -673,9 +675,22 @@ export function portfolio(rows: ClientRow[]): Total[] {
       sumOf(rows, "confirmedBookings"),
     ),
     t("showRate", "Show rate", "percent", ratioOf(rows, "showRate", 100)),
-    t("closes", "Closes", "count", sumOf(rows, "closes")),
+    {
+      ...t("closes", "Closes", "count", sumOf(rows, "closes")),
+      aside: pendingAside(rows),
+    },
     t("revenue", "Revenue", "usd", sumOf(rows, "revenue")),
   ];
+}
+
+/** The deals still pending across the clients that mark them, or nothing. */
+function pendingAside(rows: ClientRow[]): string | undefined {
+  let pending: number | null = null;
+  for (const r of rows) {
+    const p = r.values.closes?.pending;
+    if (isNum(p)) pending = (pending ?? 0) + p;
+  }
+  return pending ? `${pending} pending` : undefined;
 }
 
 /** The appointments with no outcome across the clients shown. */

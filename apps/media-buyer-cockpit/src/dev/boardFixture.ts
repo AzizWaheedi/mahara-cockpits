@@ -628,7 +628,14 @@ function clientRow(c: ClientSpec, days: number, board: Json): Json {
     note: `The client does not record ${what}.`,
   });
   Object.assign(v, {
-    crmLeads: count(b.crm),
+    crmLeads:
+      b.crm === null
+        ? count(null)
+        : {
+            ...count(b.crm),
+            dms: 2,
+            note: "2 of these are an Instagram or Messenger chat with no ad behind it; WhatsApp chats are left out.",
+          },
     crmAdLeads: count(b.crm === null ? null : Math.round(b.crm * 0.85)),
     confirmedBookings: count(b.booked),
     provisionalBookings: count(b.prov),
@@ -747,7 +754,13 @@ function clientRow(c: ClientSpec, days: number, board: Json): Json {
     closes:
       b.closes === null
         ? notFilled("closed deals")
-        : { ...count(b.closes), withValue: b.valued ?? b.closes },
+        : {
+            ...count(b.closes),
+            withValue: b.valued ?? b.closes,
+            pending: 2,
+            lost: 1,
+            note: `Won ${b.closes}, still pending 2, lost 1.`,
+          },
     closeRate:
       b.closes === null
         ? cell("close_rate", null, T, {
@@ -838,7 +851,11 @@ function clientRow(c: ClientSpec, days: number, board: Json): Json {
             sample: b.touched[1],
             num: b.touched[0],
             den: b.touched[1],
-            note: "Last 30 days, as of 16 Oct 13:30 Kuwait time.",
+            note: `${b.touched[0]} of the ${b.touched[1]} callable leads from the last 30 days have a Maqsam call, as of 16 Oct 13:30 Kuwait time.`,
+            extra: {
+              outcomeOnly: 0,
+              touchedShare: r2((b.touched[0] / b.touched[1]) * 100),
+            },
           })
         : cell("leads_touched", null, T, {
             status: "not_measured",
@@ -1240,6 +1257,25 @@ export function boardFixture(
         spend: 12.5,
       },
     ],
+    offBoard: {
+      spend: 1012.5,
+      unpriced: false,
+      accounts: [
+        {
+          accountId: "99000222",
+          name: "Gone Client ads",
+          spend: 1000,
+          client: "Gone Client",
+          reason: "cancelled",
+        },
+        {
+          accountId: "99000111",
+          name: "Old test account",
+          spend: 12.5,
+          reason: "not_tied",
+        },
+      ],
+    },
     freshness: {
       facts: {
         lastRunAt: `${today}T10:30:00Z`,

@@ -56,6 +56,14 @@ export const CellSchema = z
     sharePartial: z.boolean().nullable().optional(),
     shareNote: text,
     withValue: num,
+    /** Closes: meetings marked pending or lost (20261016220000). */
+    pending: num,
+    lost: num,
+    /** CRM leads: Instagram or Messenger chats with no ad among them. */
+    dms: num,
+    /** Leads contacted: callable leads with a saved outcome but no Maqsam call, and the share counting them. */
+    outcomeOnly: num,
+    touchedShare: num,
     due: num,
     marked: num,
     noShows: num,
@@ -153,6 +161,30 @@ export const BoardSchema = z
           .object({ accountId: z.string(), name: text, currency: text })
           .passthrough(),
       )
+      .nullable()
+      .optional(),
+    /**
+     * Spend in the time frame on ad accounts no client row carries: a
+     * cancelled client's account still delivering, one tied to no client, one
+     * kept out on purpose. Whole-board seats only; null for the rest.
+     */
+    offBoard: z
+      .object({
+        spend: z.number(),
+        unpriced: z.boolean().nullable().optional(),
+        accounts: z.array(
+          z
+            .object({
+              accountId: z.string(),
+              name: text,
+              spend: num,
+              client: text,
+              reason: text,
+            })
+            .passthrough(),
+        ),
+      })
+      .passthrough()
       .nullable()
       .optional(),
     freshness: z
