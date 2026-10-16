@@ -155,6 +155,15 @@ function Results({ onClose }: { onClose: () => void }) {
       external: true,
       text: "team meetings schedule agenda portal",
     };
+    const performance: Hit = {
+      key: "page:performance",
+      label: "Client performance",
+      sub: "Every client against its targets, in the portal",
+      kind: "Page",
+      href: `${portalUrl()}/performance`,
+      external: true,
+      text: "client performance board clients targets kpi cpl roas show rate no outcome caller portal",
+    };
     const sop: Hit = {
       key: "page:sop",
       label: "How to use this desk",
@@ -165,8 +174,9 @@ function Results({ onClose }: { onClose: () => void }) {
       newTab: true,
       text: "how to use this desk sop guide help the day steps",
     };
-    const all = [...jobHits, ...clipHits, ...PAGES, team, sop];
-    if (!typed) return [...jobHits.slice(0, 6), ...PAGES, team, sop];
+    const all = [...jobHits, ...clipHits, ...PAGES, team, performance, sop];
+    if (!typed)
+      return [...jobHits.slice(0, 6), ...PAGES, team, performance, sop];
     return all
       .map(h => ({ h, s: matchScore(h.text, q) }))
       .filter(x => x.s > 0)

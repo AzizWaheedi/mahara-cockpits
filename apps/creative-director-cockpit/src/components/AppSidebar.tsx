@@ -158,7 +158,8 @@ function PortalGroup() {
       show: isAdmin || roles.includes("sales"),
     },
   ].filter(d => d.show);
-  // This cockpit's SOP, then team meetings (everybody's), then the doors.
+  // This cockpit's SOP, then team meetings and the Client Performance
+  // board (everybody's), then the doors.
   const rows: { key: string; label: string; href: string; newTab?: boolean }[] =
     [
       {
@@ -168,6 +169,11 @@ function PortalGroup() {
         newTab: true,
       },
       { key: "team", label: "Team meetings", href: `${portal}/team` },
+      {
+        key: "performance",
+        label: "Client performance",
+        href: `${portal}/performance`,
+      },
       ...doors,
     ];
   return (

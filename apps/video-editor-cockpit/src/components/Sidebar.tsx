@@ -140,7 +140,8 @@ export default function Sidebar({
   const { pathname } = useLocation();
   // The other cockpits. The team's schedule opens from Meetings, so the
   // sidebar has one Meetings, not two.
-  // The desk's SOP first (ClickUp, a new tab), then the other cockpits.
+  // The desk's SOP first (ClickUp, a new tab), then the Client Performance
+  // board (everybody's), then the other cockpits.
   const foot: { key: string; label: string; href: string; newTab?: boolean }[] =
     [
       {
@@ -148,6 +149,11 @@ export default function Sidebar({
         label: "How to use this desk",
         href: COCKPIT_SOP.editor,
         newTab: true,
+      },
+      {
+        key: "performance",
+        label: "Client performance",
+        href: `${portalUrl()}/performance`,
       },
       ...otherCockpits(cockpits, isAdmin),
     ];
