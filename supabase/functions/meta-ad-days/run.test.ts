@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ReceiptRow } from "./db.ts";
 import { makeDoor, readJob, sameSecret } from "./door.ts";
 import {
+  DESTINATIONS,
   edgeAccount,
   engagementRow,
   imageLeadRow,
@@ -12,12 +13,13 @@ import {
   SAR_ACCOUNT,
   TOKEN,
   videoLeadRow,
+  whatsappLeadRow,
 } from "./fixtures.ts";
 import { type Job, type RunDeps, retryable, sentence, startJob } from "./run.ts";
 import { MetaError } from "./graph.ts";
 import { ParseError } from "./parse.ts";
 import { RpcError } from "./db.ts";
-import { eachDay, fakeFetch, graphPath, insightsRoute, metaError, ok, type Route } from "./testkit.ts";
+import { adsetsRoute, eachDay, fakeFetch, graphPath, insightsRoute, metaError, ok, type Route } from "./testkit.ts";
 
 type Rec = { name: string; p: any };
 
@@ -140,7 +142,14 @@ const reachRoute: Route = c => {
 
 describe("an hourly run", () => {
   test("finds the accounts that spent, leaves out Mahara's own, and reads each account's yesterday and today on its own clock", async () => {
-    const t = deps([edges(), daysRoute(KUWAIT_ACCOUNT, d => [videoLeadRow(d), imageLeadRow(d)]), daysRoute(SAR_ACCOUNT, d => [engagementRow(d)]), daysRoute(LA_ACCOUNT, () => []), reachRoute]);
+    const t = deps([
+      edges(),
+      daysRoute(KUWAIT_ACCOUNT, d => [videoLeadRow(d), imageLeadRow(d)]),
+      daysRoute(SAR_ACCOUNT, d => [engagementRow(d)]),
+      daysRoute(LA_ACCOUNT, () => []),
+      adsetsRoute(DESTINATIONS),
+      reachRoute,
+    ]);
     const r = await startJob(t.d, { job: "hourly", dryRun: false, requestedBy: "cron" });
     expect(r).toMatchObject({ ok: true, started: true });
     const begin = t.db.calls.find(c => c.name === "cockpit_meta_ad_days_begin")!.p;
@@ -170,9 +179,25 @@ describe("an hourly run", () => {
     expect(kuwait.rows.length).toBe(4);
     const image = kuwait.rows.find((x: any) => x.ad_id === "120000000000104");
     expect([image.video_plays, image.video_3s, image.thruplays]).toEqual([null, null, null]);
+    expect(kuwait.rows.map((x: any) => [x.destination_type, x.leads])).toEqual([
+      ["ON_AD", 2],
+      ["ON_AD", 1],
+      ["ON_AD", 2],
+      ["ON_AD", 1],
+    ]);
     const sar = t.db.applied.find(a => a.accountId === SAR_ACCOUNT);
-    expect(sar.rows.map((x: any) => [x.leads, x.lead_actions])).toEqual([[null, 4], [null, 4]]);
+    expect(sar.rows.map((x: any) => [x.leads, x.lead_actions, x.destination_type])).toEqual([
+      [null, 4, null],
+      [null, 4, null],
+    ]);
     expect(t.db.applied.find(a => a.accountId === LA_ACCOUNT).rows).toEqual([]);
+    // One ad set read, for the one account with a lead campaign, asking for its one lead ad set.
+    const adsetReads = t.calls.filter(c => graphPath(c).endsWith("/adsets"));
+    expect(adsetReads.map(c => graphPath(c))).toEqual([`act_${KUWAIT_ACCOUNT}/adsets`]);
+    expect(JSON.parse(adsetReads[0].url.searchParams.get("filtering")!)).toEqual([{ field: "id", operator: "IN", value: ["120000000000102"] }]);
+    expect(adsetReads[0].url.searchParams.get("fields")).toBe("id,destination_type");
+    expect(JSON.parse(adsetReads[0].url.searchParams.get("effective_status")!)).toContain("ARCHIVED");
+    expect(JSON.parse(adsetReads[0].url.searchParams.get("effective_status")!)).not.toContain("DELETED");
     // Account-level reach for each account, over the task's windows.
     expect(t.db.reach.map(x => [x.accountId, x.level, x.final])).toEqual([
       [KUWAIT_ACCOUNT, "account", true],
@@ -191,7 +216,14 @@ describe("an hourly run", () => {
   });
 
   test("a nightly run reads 28 days in pieces and every level of reach", async () => {
-    const t = deps([edges(), daysRoute(KUWAIT_ACCOUNT, d => [videoLeadRow(d)]), daysRoute(SAR_ACCOUNT, () => []), daysRoute(LA_ACCOUNT, () => []), reachRoute]);
+    const t = deps([
+      edges(),
+      daysRoute(KUWAIT_ACCOUNT, d => [videoLeadRow(d)]),
+      daysRoute(SAR_ACCOUNT, () => []),
+      daysRoute(LA_ACCOUNT, () => []),
+      adsetsRoute(DESTINATIONS),
+      reachRoute,
+    ]);
     await startJob(t.d, { job: "nightly", dryRun: false, requestedBy: "cron" });
     const begin = t.db.calls.find(c => c.name === "cockpit_meta_ad_days_begin")!.p;
     expect(begin.reach).toBe("all");
@@ -217,12 +249,56 @@ describe("an hourly run", () => {
       }
       return [videoLeadRow(since)];
     });
-    const t = deps([edges(), heavy, daysRoute(SAR_ACCOUNT, () => []), daysRoute(LA_ACCOUNT, () => []), reachRoute]);
+    const t = deps([edges(), heavy, daysRoute(SAR_ACCOUNT, () => []), daysRoute(LA_ACCOUNT, () => []), adsetsRoute(DESTINATIONS), reachRoute]);
     await startJob(t.d, { job: "hourly", dryRun: false, requestedBy: "cron" });
     expect(refusals).toBe(1);
     const applied = t.db.applied.find(a => a.accountId === KUWAIT_ACCOUNT);
     expect(applied.rows.map((r: any) => r.day)).toEqual(["2026-10-15", "2026-10-16"]);
     expect(applied.note).toContain("Read in 2 pieces");
+  });
+
+  test("a WhatsApp lead ad set's messaging leads are not form leads; a deleted lead ad set is named; a rate-limited ad set read waits", async () => {
+    let limited = true;
+    const adsets = adsetsRoute(DESTINATIONS);
+    const t = deps([
+      edges(),
+      daysRoute(KUWAIT_ACCOUNT, d => [videoLeadRow(d), whatsappLeadRow(d), imageLeadRow(d, { ad_id: "120000000000998", adset_id: "120000000000999" })]),
+      daysRoute(SAR_ACCOUNT, () => []),
+      daysRoute(LA_ACCOUNT, () => []),
+      c => {
+        if (graphPath(c) !== `act_${KUWAIT_ACCOUNT}/adsets` || !limited) return null;
+        limited = false;
+        return metaError(17, "User request limit reached", 400, 2446079);
+      },
+      adsets,
+      reachRoute,
+    ]);
+    await startJob(t.d, { job: "hourly", dryRun: false, requestedBy: "cron" });
+    // The first ad set read hit Meta's limit: nothing was written for the task, and it waits in the queue.
+    expect(t.db.applied.find(a => a.accountId === KUWAIT_ACCOUNT)).toBeUndefined();
+    const task = t.db.tasks.find(x => x.accountId === KUWAIT_ACCOUNT && x.kind === "days");
+    expect(task.state).toBe("pending");
+    expect(task.error).toContain("rate limit");
+    t.tick(200_000);
+    await startJob(t.d, { job: "continue", dryRun: false, requestedBy: "cron" });
+    const kuwait = t.db.applied.find(a => a.accountId === KUWAIT_ACCOUNT);
+    const byAd = (ad: string) => kuwait.rows.filter((x: any) => x.ad_id === ad).map((x: any) => [x.destination_type, x.leads, x.lead_actions]);
+    expect(byAd("120000000000103")).toEqual([
+      ["ON_AD", 2, 2],
+      ["ON_AD", 2, 2],
+    ]);
+    expect(byAd("120000000000403")).toEqual([
+      ["WHATSAPP", null, 3],
+      ["WHATSAPP", null, 3],
+    ]);
+    expect(byAd("120000000000998")).toEqual([
+      [null, 1, 1],
+      [null, 1, 1],
+    ]);
+    expect(kuwait.note).toBe("Meta no longer lists lead ad set 120000000000999 (deleted), so its destination is unknown; messaging leads are left out by action type.");
+    // Form leads over the task: the instant form's only.
+    const formLeads = kuwait.rows.reduce((n: number, x: any) => n + (x.leads ?? 0), 0);
+    expect(formLeads).toBe(2 * 2 + 2 * 1);
   });
 
   test("an account Meta will not show is failed with the fix; a rate limit goes back to the queue", async () => {

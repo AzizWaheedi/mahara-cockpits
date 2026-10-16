@@ -1,7 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { engagementRow, imageLeadRow, shortVideoRow, videoLeadRow, websiteRow } from "./fixtures.ts";
-import { actionValue, amount, count, DAY_FIELDS, dedupe, leadActions, ParseError, parseAdDay, parseReach, toApplyRow, type Window } from "./parse.ts";
+import { engagementRow, imageLeadRow, shortVideoRow, videoLeadRow, websiteRow, whatsappLeadRow } from "./fixtures.ts";
+import {
+  actionValue,
+  amount,
+  count,
+  DAY_FIELDS,
+  dedupe,
+  formLeads,
+  isMessagingDestination,
+  leadActions,
+  leadAdsetIds,
+  MESSAGING_DESTINATIONS,
+  ParseError,
+  parseAdDay,
+  parseDestinations,
+  parseReach,
+  toApplyRow,
+  type Window,
+  withDestinations,
+} from "./parse.ts";
 
 const ACC = "1111111111111";
 const DAY = "2026-10-15";
@@ -34,6 +52,7 @@ describe("an ad-day row", () => {
       videoP75: 2,
       videoP100: 1,
       thruplays: 3,
+      destinationType: null,
     });
     // The hook is 3-second plays, never every start: 33 of 199, not 188.
     expect(r.video3s).not.toBe(r.videoPlays);
@@ -73,6 +92,76 @@ describe("an ad-day row", () => {
     expect(leadActions([{ action_type: "onsite_conversion.lead_grouped", value: "3" }, { action_type: "offsite_conversion.fb_pixel_lead", value: "2" }])).toBe(5);
     expect(leadActions([{ action_type: "lead", value: "4" }, { action_type: "onsite_conversion.lead_grouped", value: "3" }])).toBe(4);
     expect(leadActions(undefined)).toBe(0);
+  });
+
+  test("a WhatsApp lead ad set on a lead campaign (Pidco's shape): its lead actions are messaging leads, not form leads", () => {
+    // OUTCOME_LEADS; lead 3, onsite_conversion.lead 3, onsite_web_lead 3, lead_grouped 3, conversations started 83.
+    const r = parseAdDay(whatsappLeadRow(DAY), ACC);
+    expect(r.leadActions).toBe(3);
+    // By action type alone: Meta's lead count less the leads marked in a chat.
+    expect(r.leads).toBe(0);
+    // With the ad set's destination: a chat, so no form leads at all and its spend is not spent on a form.
+    const { rows, unknown } = withDestinations([r], new Map([["120000000000402", "WHATSAPP"]]));
+    expect(rows[0].leads).toBeNull();
+    expect(rows[0].leadActions).toBe(3);
+    expect(rows[0].destinationType).toBe("WHATSAPP");
+    expect(unknown).toEqual([]);
+    expect(toApplyRow(rows[0])).toMatchObject({ leads: null, lead_actions: 3, destination_type: "WHATSAPP" });
+  });
+
+  test("form leads by action type: a mixed row keeps its form leads, and never goes below 0", () => {
+    expect(formLeads([{ action_type: "lead", value: "5" }, { action_type: "onsite_conversion.lead", value: "2" }])).toBe(3);
+    expect(formLeads([{ action_type: "onsite_conversion.lead", value: "2" }])).toBe(0);
+    expect(formLeads([{ action_type: "lead", value: "4" }, { action_type: "onsite_conversion.lead_grouped", value: "4" }])).toBe(4);
+    expect(formLeads(undefined)).toBe(0);
+  });
+
+  test("destinations: an instant form keeps its leads, a deleted ad set is named, other objectives are not looked up", () => {
+    const form = parseAdDay(videoLeadRow(DAY), ACC);
+    const wa = parseAdDay(whatsappLeadRow(DAY), ACC);
+    const gone = parseAdDay(imageLeadRow(DAY, { adset_id: "120000000000999" }), ACC);
+    const engagement = parseAdDay(engagementRow(DAY), ACC);
+    expect(leadAdsetIds([form, wa, gone, engagement])).toEqual(["120000000000102", "120000000000402", "120000000000999"]);
+    const { rows, unknown } = withDestinations(
+      [form, wa, gone, engagement],
+      new Map([
+        ["120000000000102", "ON_AD"],
+        ["120000000000402", "WHATSAPP"],
+      ]),
+    );
+    expect(rows.map(x => [x.destinationType, x.leads])).toEqual([
+      ["ON_AD", 2],
+      ["WHATSAPP", null],
+      [null, 1],
+      [null, null],
+    ]);
+    expect(unknown).toEqual(["120000000000999"]);
+    // Every chat destination Meta has, and only those.
+    for (const d of ["WHATSAPP", "MESSENGER", "INSTAGRAM_DIRECT", "MESSAGING_INSTAGRAM_DIRECT_WHATSAPP", "MESSAGING_MESSENGER_WHATSAPP", "LEAD_FROM_MESSENGER"]) {
+      expect(isMessagingDestination(d)).toBe(true);
+    }
+    for (const d of ["ON_AD", "WEBSITE", "UNDEFINED", "WEBSITE_AND_PHONE_CALL", "ON_POST", null]) expect(isMessagingDestination(d)).toBe(false);
+  });
+
+  test("Meta's ad set list is read strictly", () => {
+    const asked = ["120000000000102", "120000000000402"];
+    expect(parseDestinations([{ id: "120000000000102", destination_type: "ON_AD" }, { id: "120000000000402" }], asked)).toEqual(
+      new Map([
+        ["120000000000102", "ON_AD"],
+        ["120000000000402", null],
+      ]),
+    );
+    expect(() => parseDestinations([{ id: "120000000000777", destination_type: "ON_AD" }], asked)).toThrow("not asked for");
+    expect(() => parseDestinations([{ id: "120000000000102" }, { id: "120000000000102" }], asked)).toThrow("twice");
+    expect(() => parseDestinations([{ id: "120000000000102", destination_type: "on ad" }], asked)).toThrow("not one of its names");
+  });
+
+  test("the chat destinations are the same list in parse.ts and in the table's CHECK and the apply RPC", () => {
+    const sql = readFileSync(new URL("../../migrations/20261016121700_meta_ad_days.sql", import.meta.url), "utf8");
+    const lists = [...sql.matchAll(/destination_type IN \(([^)]*)\)/g)].map(m => m[1].split(",").map(x => x.trim().replace(/'/g, "")));
+    expect(lists.length).toBe(2);
+    for (const l of lists) expect(l).toEqual(MESSAGING_DESTINATIONS);
+    expect(sql.split("LIKE 'MESSAGING\\_%'").length - 1).toBe(2);
   });
 
   test("landing page views only where Meta lists them", () => {

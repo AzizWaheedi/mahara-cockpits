@@ -10,7 +10,8 @@
 -- was 13% short of Meta's client spend over 30 days (5 accounts short, 7 absent).
 -- This file is the store that has all of it:
 --
---   cockpit_meta_ad_days          one row per Meta ad per ad-account day, PK (ad_id, day)
+--   cockpit_meta_ad_days          one row per Meta ad per ad-account day, PK (ad_id, day); leads are
+--                                 lead-form leads only (a WhatsApp or Messenger lead ad set's are not)
 --   cockpit_meta_reach            reach and impressions over five windows for each client,
 --                                 account, campaign, ad set and ad. Frequency over a window
 --                                 is impressions / reach of that window, never an average
@@ -100,9 +101,13 @@ CREATE TABLE IF NOT EXISTS public.cockpit_meta_ad_days (
   video_p75 bigint CHECK (video_p75 IS NULL OR video_p75 >= 0),
   video_p100 bigint CHECK (video_p100 IS NULL OR video_p100 >= 0),
   thruplays bigint CHECK (thruplays IS NULL OR thruplays >= 0),
+  destination_type text CHECK (destination_type IS NULL OR destination_type ~ '^[A-Z_]{1,60}$'),
   fetched_at timestamptz NOT NULL,
   PRIMARY KEY (ad_id, day),
-  CHECK (spend_usd IS NULL OR usd_rate IS NOT NULL)
+  CHECK (spend_usd IS NULL OR usd_rate IS NOT NULL),
+  -- A chat destination has messaging leads, never form leads (parse.ts MESSAGING_DESTINATIONS, pinned by parse.test.ts).
+  CONSTRAINT cockpit_meta_ad_days_no_form_leads_in_chats CHECK (leads IS NULL OR destination_type IS NULL OR NOT (
+    destination_type IN ('WHATSAPP','MESSENGER','INSTAGRAM_DIRECT','LEAD_FROM_MESSENGER','LEAD_FROM_IG_DIRECT') OR destination_type LIKE 'MESSAGING\_%'))
 );
 COMMENT ON TABLE public.cockpit_meta_ad_days IS
   'Every Meta ad of every spending ad account of Mahara''s business (767701513092162), one row per ad per ad-account day, written by the Edge Function meta-ad-days (Graph v25.0, ad level, time_increment=1, use_unified_attribution_setting=true). NULL means Meta did not return it, never 0. Days are the ad account''s own calendar. Upserted by (ad_id, day); never deleted because an ad stopped.';
@@ -113,8 +118,9 @@ COMMENT ON COLUMN public.cockpit_meta_ad_days.usd_rate IS 'USD per unit of accou
 COMMENT ON COLUMN public.cockpit_meta_ad_days.reach IS 'Meta''s reach for this ad on this day. Not additive across days or ads: reach over a window is in cockpit_meta_reach.';
 COMMENT ON COLUMN public.cockpit_meta_ad_days.frequency IS 'Meta''s frequency for this ad on this day. Never average it: frequency over a window is impressions / reach in cockpit_meta_reach.';
 COMMENT ON COLUMN public.cockpit_meta_ad_days.link_clicks IS 'inline_link_clicks: clicks on the ad''s link (the tap that opens an instant form counts). Link CTR = link_clicks / impressions.';
-COMMENT ON COLUMN public.cockpit_meta_ad_days.leads IS 'Lead-form leads: Meta''s lead action on a lead campaign (objective OUTCOME_LEADS or LEAD_GENERATION), 0 when Meta lists none. NULL on every other objective: engagement and messaging campaigns report a lead action for messaging leads, which are not form leads. CPL = spend over the rows where leads is not NULL / their leads.';
+COMMENT ON COLUMN public.cockpit_meta_ad_days.leads IS 'Lead-form leads: on a lead campaign (objective OUTCOME_LEADS or LEAD_GENERATION), Meta''s lead action less its messaging leads (onsite_conversion.lead), 0 when Meta lists none. NULL on every other objective, and NULL on a lead ad set whose destination_type is a chat (WhatsApp, Messenger, Instagram Direct): those report a lead action for leads marked in a chat, which are not form leads. CPL = spend over the rows where leads is not NULL / their leads, so a chat ad set''s spend stays out of it.';
 COMMENT ON COLUMN public.cockpit_meta_ad_days.lead_actions IS 'Meta''s lead action on any objective (lead, else onsite_conversion.lead_grouped + offsite_conversion.fb_pixel_lead, as hermes/lead-sync-watch counts it), 0 when none. Matches Meta''s account-level lead count; includes messaging leads.';
+COMMENT ON COLUMN public.cockpit_meta_ad_days.destination_type IS 'The ad set''s destination as Meta lists it (ON_AD = instant form, WEBSITE, WHATSAPP, MESSAGING_...), looked up for lead-campaign ad sets only. NULL on other objectives and on a deleted ad set Meta no longer lists (the task''s note names it).';
 COMMENT ON COLUMN public.cockpit_meta_ad_days.landing_page_views IS 'actions[landing_page_view]; NULL when Meta lists none (instant-form ads have no landing page). Opt-in rate for a website funnel = leads / landing_page_views.';
 COMMENT ON COLUMN public.cockpit_meta_ad_days.video_plays IS 'video_play_actions: every start of the video (90 to 94% of impressions), not 3-second plays. NULL on a row that is not a video. Retention at p25..p100 = video_pXX / video_plays.';
 COMMENT ON COLUMN public.cockpit_meta_ad_days.video_3s IS '3-second plays, actions[video_view]. Hook (stop) rate = video_3s / impressions over video rows; hold rate = thruplays / video_3s. 0 on a video row with none; NULL on a row that is not a video.';
@@ -741,10 +747,13 @@ BEGIN
         WHEN least(r.spend, r.frequency) < 0 OR least(r.impressions, r.reach, r.link_clicks, r.leads, r.lead_actions, r.landing_page_views,
                r.video_plays, r.video_3s, r.video_p25, r.video_p50, r.video_p75, r.video_p100, r.thruplays) < 0 THEN 'a negative number'
         WHEN r.leads > r.lead_actions THEN 'more leads than lead actions'
+        WHEN r.destination_type IS NOT NULL AND r.destination_type !~ '^[A-Z_]{1,60}$' THEN 'a destination that is not one of Meta''s names'
+        WHEN r.leads IS NOT NULL AND (r.destination_type IN ('WHATSAPP','MESSENGER','INSTAGRAM_DIRECT','LEAD_FROM_MESSENGER','LEAD_FROM_IG_DIRECT')
+               OR r.destination_type LIKE 'MESSAGING\_%') THEN 'form leads on a chat ad set'
       END AS why
     FROM jsonb_to_recordset(v_rows) AS r(account_id text, day date, campaign_id text, adset_id text, ad_id text, spend numeric, frequency numeric,
       impressions bigint, reach bigint, link_clicks bigint, leads bigint, lead_actions bigint, landing_page_views bigint, video_plays bigint,
-      video_3s bigint, video_p25 bigint, video_p50 bigint, video_p75 bigint, video_p100 bigint, thruplays bigint)
+      video_3s bigint, video_p25 bigint, video_p50 bigint, video_p75 bigint, video_p100 bigint, thruplays bigint, destination_type text)
   ) x WHERE x.why IS NOT NULL LIMIT 1;
   IF v_bad IS NOT NULL THEN RAISE EXCEPTION 'Meta''s rows for act_% held %; nothing was written', t.account_id, v_bad USING ERRCODE='22023'; END IF;
   IF (SELECT count(*) <> count(DISTINCT (r->>'ad_id') || '|' || (r->>'day')) FROM jsonb_array_elements(v_rows) r) THEN
@@ -755,33 +764,33 @@ BEGIN
          count(*) FILTER (WHERE x.ad_id IS NOT NULL AND x.fetched_at <= v_fetched AND
            (x.account_id, x.campaign_id, x.campaign_name, x.objective, x.adset_id, x.adset_name, x.ad_name, x.spend, x.impressions, x.reach,
             x.frequency, x.link_clicks, x.leads, x.lead_actions, x.landing_page_views, x.video_plays, x.video_3s, x.video_p25, x.video_p50,
-            x.video_p75, x.video_p100, x.thruplays)
+            x.video_p75, x.video_p100, x.thruplays, x.destination_type)
            IS DISTINCT FROM
            (r.account_id, r.campaign_id, r.campaign_name, r.objective, r.adset_id, r.adset_name, r.ad_name, r.spend, r.impressions, r.reach,
             r.frequency, r.link_clicks, r.leads, r.lead_actions, r.landing_page_views, r.video_plays, r.video_3s, r.video_p25, r.video_p50,
-            r.video_p75, r.video_p100, r.thruplays))::int,
+            r.video_p75, r.video_p100, r.thruplays, r.destination_type))::int,
          count(*) FILTER (WHERE x.fetched_at > v_fetched)::int,
          sum(r.spend), sum(r.leads)
     INTO v_n, v_new, v_changed, v_older, v_spend, v_leads
   FROM jsonb_to_recordset(v_rows) AS r(account_id text, day date, campaign_id text, campaign_name text, objective text, adset_id text,
       adset_name text, ad_id text, ad_name text, spend numeric, impressions bigint, reach bigint, frequency numeric, link_clicks bigint,
       leads bigint, lead_actions bigint, landing_page_views bigint, video_plays bigint, video_3s bigint, video_p25 bigint, video_p50 bigint,
-      video_p75 bigint, video_p100 bigint, thruplays bigint)
+      video_p75 bigint, video_p100 bigint, thruplays bigint, destination_type text)
   LEFT JOIN public.cockpit_meta_ad_days x ON x.ad_id = r.ad_id AND x.day = r.day;
 
   INSERT INTO public.cockpit_meta_ad_days AS x(account_id, account_name, account_timezone, account_currency, day, campaign_id, campaign_name,
     objective, adset_id, adset_name, ad_id, ad_name, spend, spend_usd, usd_rate, impressions, reach, frequency, link_clicks, leads, lead_actions,
-    landing_page_views, video_plays, video_3s, video_p25, video_p50, video_p75, video_p100, thruplays, fetched_at)
+    landing_page_views, video_plays, video_3s, video_p25, video_p50, video_p75, video_p100, thruplays, destination_type, fetched_at)
   SELECT t.account_id, t.account_name, t.account_timezone, t.account_currency, r.day, r.campaign_id, left(r.campaign_name, 400), left(r.objective, 60),
     r.adset_id, left(r.adset_name, 400), r.ad_id, left(r.ad_name, 400), r.spend,
     CASE WHEN r.spend IS NOT NULL AND v_rate IS NOT NULL THEN round(r.spend * v_rate, 6) END,
     CASE WHEN r.spend IS NOT NULL AND v_rate IS NOT NULL THEN v_rate END,
     r.impressions, r.reach, r.frequency, r.link_clicks, r.leads, r.lead_actions, r.landing_page_views, r.video_plays, r.video_3s,
-    r.video_p25, r.video_p50, r.video_p75, r.video_p100, r.thruplays, v_fetched
+    r.video_p25, r.video_p50, r.video_p75, r.video_p100, r.thruplays, r.destination_type, v_fetched
   FROM jsonb_to_recordset(v_rows) AS r(day date, campaign_id text, campaign_name text, objective text, adset_id text, adset_name text,
       ad_id text, ad_name text, spend numeric, impressions bigint, reach bigint, frequency numeric, link_clicks bigint, leads bigint,
       lead_actions bigint, landing_page_views bigint, video_plays bigint, video_3s bigint, video_p25 bigint, video_p50 bigint, video_p75 bigint,
-      video_p100 bigint, thruplays bigint)
+      video_p100 bigint, thruplays bigint, destination_type text)
   ON CONFLICT (ad_id, day) DO UPDATE SET
     account_id = EXCLUDED.account_id, account_name = EXCLUDED.account_name, account_timezone = EXCLUDED.account_timezone,
     account_currency = EXCLUDED.account_currency, campaign_id = EXCLUDED.campaign_id, campaign_name = EXCLUDED.campaign_name,
@@ -790,7 +799,8 @@ BEGIN
     reach = EXCLUDED.reach, frequency = EXCLUDED.frequency, link_clicks = EXCLUDED.link_clicks, leads = EXCLUDED.leads,
     lead_actions = EXCLUDED.lead_actions, landing_page_views = EXCLUDED.landing_page_views, video_plays = EXCLUDED.video_plays,
     video_3s = EXCLUDED.video_3s, video_p25 = EXCLUDED.video_p25, video_p50 = EXCLUDED.video_p50, video_p75 = EXCLUDED.video_p75,
-    video_p100 = EXCLUDED.video_p100, thruplays = EXCLUDED.thruplays, fetched_at = EXCLUDED.fetched_at
+    video_p100 = EXCLUDED.video_p100, thruplays = EXCLUDED.thruplays, destination_type = EXCLUDED.destination_type,
+    fetched_at = EXCLUDED.fetched_at
   WHERE x.fetched_at <= EXCLUDED.fetched_at;
 
   UPDATE public.cockpit_meta_ad_day_tasks SET rows_read = rows_read + v_n, changed = changed + v_new + v_changed,

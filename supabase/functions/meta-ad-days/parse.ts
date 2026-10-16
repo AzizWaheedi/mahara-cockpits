@@ -5,15 +5,24 @@
  *   - A field Meta did not return is NULL, never 0. Meta leaves out an action
  *     type that has no actions, so a zero is written only where the absence
  *     itself means zero:
- *       leads         on a lead campaign (objective OUTCOME_LEADS or the old
- *                     LEAD_GENERATION) the `lead` action, 0 when Meta lists
- *                     none; on any other objective NULL, because those
- *                     campaigns have no lead form. Engagement and messaging
- *                     campaigns report `lead` too (messaging leads: 38 on one
- *                     account in October, none in the CRM), so they never
- *                     count as leads.
+ *       leads         lead-form leads. On a lead campaign (objective
+ *                     OUTCOME_LEADS or the old LEAD_GENERATION) Meta's `lead`
+ *                     count less its messaging leads
+ *                     (onsite_conversion.lead), 0 when Meta lists none. NULL
+ *                     on any other objective, and NULL on an ad set whose
+ *                     destination is a chat (WhatsApp, Messenger, Instagram
+ *                     Direct: withDestinations below), because neither has a
+ *                     lead form. Engagement campaigns and WhatsApp lead ad
+ *                     sets report `lead` for messaging leads too (Pidco's
+ *                     WhatsApp lead ad sets: 4 in 30 days, 2026-10-16), so
+ *                     they never count as leads, and their spend stays out
+ *                     of cost per lead.
  *       lead_actions  Meta's `lead` action on any objective, 0 when none, so
  *                     the account-level lead count can be checked against it.
+ *       destination_type  the ad set's destination as Meta lists it (ON_AD
+ *                     for an instant form, WEBSITE, WHATSAPP...), looked up
+ *                     for lead-campaign ad sets only; NULL elsewhere and on a
+ *                     deleted ad set Meta no longer lists.
  *       video fields  a row with video_play_actions is a video row: its
  *                     3-second plays (actions[video_view]), p25 to p100 and
  *                     ThruPlays are the value or 0 (Meta drops a quartile
@@ -25,6 +34,10 @@
  *   - `lead` when present, else onsite_conversion.lead_grouped plus
  *     offsite_conversion.fb_pixel_lead: the rule of
  *     hermes/lead-sync-watch/rules.ts leadsOf, so both read Meta's leads alike.
+ *   - Messaging leads are onsite_conversion.lead. Read-only, 2026-10-16, 28
+ *     spending accounts over 30 days: it was on WhatsApp ad sets only (49 on
+ *     lead and engagement campaigns, plus 22 on a deleted engagement ad set),
+ *     never on an instant-form (835 leads), website or older lead ad set.
  *   - landing_page_views is actions[landing_page_view], NULL when Meta lists
  *     none (an instant-form ad has no landing page).
  *   - A number that is not a finite, non-negative number stops the account's
@@ -33,6 +46,21 @@
 import type { Row } from "./graph.ts";
 
 export const LEAD_OBJECTIVES = new Set(["OUTCOME_LEADS", "LEAD_GENERATION"]);
+
+/** Meta's action type for a lead marked in a chat (WhatsApp, Messenger, Instagram Direct). */
+export const MESSAGING_LEAD = "onsite_conversion.lead";
+
+/**
+ * Ad set destinations where the lead happens in a chat, not on a form. The
+ * table's CHECK holds the same list (parse.test.ts pins the two together).
+ * LEAD_FROM_MESSENGER and LEAD_FROM_IG_DIRECT are Meta's chat lead flows; none
+ * was in use on 2026-10-16.
+ */
+export const MESSAGING_DESTINATIONS = ["WHATSAPP", "MESSENGER", "INSTAGRAM_DIRECT", "LEAD_FROM_MESSENGER", "LEAD_FROM_IG_DIRECT"];
+
+export function isMessagingDestination(d: string | null | undefined): boolean {
+  return typeof d === "string" && (MESSAGING_DESTINATIONS.includes(d) || d.startsWith("MESSAGING_"));
+}
 
 /** The fields of one ad-level, one-day insights read. */
 export const DAY_FIELDS = [
@@ -84,6 +112,7 @@ export type AdDayRow = {
   videoP75: number | null;
   videoP100: number | null;
   thruplays: number | null;
+  destinationType: string | null;
 };
 
 export class ParseError extends Error {
@@ -153,6 +182,11 @@ export function leadActions(actions: unknown): number {
   return (actionValue(actions, "onsite_conversion.lead_grouped", "actions") ?? 0) + (actionValue(actions, "offsite_conversion.fb_pixel_lead", "actions") ?? 0);
 }
 
+/** Lead-form leads in an action list: Meta's lead count less the leads marked in a chat, never below 0. */
+export function formLeads(actions: unknown): number {
+  return Math.max(0, leadActions(actions) - (actionValue(actions, MESSAGING_LEAD, "actions") ?? 0));
+}
+
 /** One ad-level, one-day insights row for the ad account `accountId`. */
 export function parseAdDay(raw: Row, accountId: string): AdDayRow {
   const day = text(raw.date_start);
@@ -179,7 +213,7 @@ export function parseAdDay(raw: Row, accountId: string): AdDayRow {
     reach: count(raw.reach, "reach"),
     frequency: amount(raw.frequency, "frequency"),
     linkClicks: count(raw.inline_link_clicks, "link clicks"),
-    leads: objective !== null && LEAD_OBJECTIVES.has(objective) ? leadActions(actions) : null,
+    leads: objective !== null && LEAD_OBJECTIVES.has(objective) ? formLeads(actions) : null,
     leadActions: leadActions(actions),
     landingPageViews: actionValue(actions, "landing_page_view", "actions"),
     videoPlays: isVideo ? (watched(raw.video_play_actions, "video plays") ?? 0) : null,
@@ -189,7 +223,54 @@ export function parseAdDay(raw: Row, accountId: string): AdDayRow {
     videoP75: zeroIfVideo(watched(raw.video_p75_watched_actions, "75% views")),
     videoP100: zeroIfVideo(watched(raw.video_p100_watched_actions, "100% views")),
     thruplays: zeroIfVideo(watched(raw.video_thruplay_watched_actions, "ThruPlays")),
+    destinationType: null,
   };
+}
+
+/** The ad sets whose destination decides their leads: those of lead-campaign rows. */
+export function leadAdsetIds(rows: AdDayRow[]): string[] {
+  const ids = new Set<string>();
+  for (const r of rows) if (r.adsetId && r.objective !== null && LEAD_OBJECTIVES.has(r.objective)) ids.add(r.adsetId);
+  return [...ids].sort();
+}
+
+/**
+ * Meta's answer to act_<id>/adsets?fields=id,destination_type for the ids
+ * asked: id to destination. An ad set not asked for, listed twice, or with a
+ * destination that is not Meta's kind of name stops the read.
+ */
+export function parseDestinations(rows: Row[], asked: string[]): Map<string, string | null> {
+  const want = new Set(asked);
+  const out = new Map<string, string | null>();
+  for (const raw of rows) {
+    const adset = id(raw.id, "an ad set id", true) as string;
+    if (!want.has(adset)) throw new ParseError(`Meta listed ad set ${adset}, which was not asked for.`);
+    if (out.has(adset)) throw new ParseError(`Meta listed ad set ${adset} twice.`);
+    const d = raw.destination_type === undefined || raw.destination_type === null ? null : text(raw.destination_type);
+    if (d !== null && !/^[A-Z_]{1,60}$/.test(d)) throw new ParseError(`Meta gave ad set ${adset} the destination "${d.slice(0, 30)}", which is not one of its names.`);
+    out.set(adset, d);
+  }
+  return out;
+}
+
+/**
+ * Each lead-campaign row with its ad set's destination; a chat destination
+ * makes its leads NULL (they are messaging leads, and its spend is not spent
+ * on a form). `unknown` counts the lead ad sets Meta no longer lists (deleted):
+ * their destination stays NULL and their leads keep the action-type rule.
+ */
+export function withDestinations(rows: AdDayRow[], destinations: Map<string, string | null>): { rows: AdDayRow[]; unknown: string[] } {
+  const unknown = new Set<string>();
+  const out = rows.map(r => {
+    if (!r.adsetId || r.objective === null || !LEAD_OBJECTIVES.has(r.objective)) return r;
+    if (!destinations.has(r.adsetId)) {
+      unknown.add(r.adsetId);
+      return r;
+    }
+    const destinationType = destinations.get(r.adsetId) ?? null;
+    return { ...r, destinationType, leads: isMessagingDestination(destinationType) ? null : r.leads };
+  });
+  return { rows: out, unknown: [...unknown].sort() };
 }
 
 /** The rows the apply RPC takes (snake case, the table's own names). */
@@ -219,6 +300,7 @@ export function toApplyRow(r: AdDayRow): Record<string, unknown> {
     video_p75: r.videoP75,
     video_p100: r.videoP100,
     thruplays: r.thruplays,
+    destination_type: r.destinationType,
   };
 }
 

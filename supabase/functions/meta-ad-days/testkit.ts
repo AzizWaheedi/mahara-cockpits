@@ -58,3 +58,17 @@ export function eachDay(since: string, until: string): string[] {
   for (let d = since; d <= until; d = new Date(Date.parse(`${d}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10)) out.push(d);
   return out;
 }
+
+/**
+ * Meta's act_<id>/adsets read filtered by id: each asked ad set Meta still
+ * lists, with its destination. An id missing from `destinations` is a deleted
+ * ad set (the edge leaves it out).
+ */
+export function adsetsRoute(destinations: Record<string, string>): Route {
+  return call => {
+    if (!/^act_\d+\/adsets$/.test(graphPath(call))) return null;
+    const filtering = JSON.parse(call.url.searchParams.get("filtering") ?? "[]");
+    const ids: string[] = filtering.find((f: Row) => f.field === "id")?.value ?? [];
+    return ok({ data: ids.filter(id => id in destinations).map(id => ({ id, destination_type: destinations[id] })), paging: { cursors: {} } });
+  };
+}

@@ -49,10 +49,21 @@ describe("one Graph read", () => {
 
   test("only the reads this function makes", async () => {
     const g = graph([() => ok({})]);
-    for (const path of ["act_1111111111111/ads", "123/owned_ad_accounts", "../act_1", "act_1111111111111/insights?x=1", "https://evil.example/x"]) {
+    for (const path of [
+      "act_1111111111111/ads",
+      "act_1111111111111/adsets/x",
+      "120000000000102",
+      "123/owned_ad_accounts",
+      "../act_1",
+      "act_1111111111111/insights?x=1",
+      "https://evil.example/x",
+    ]) {
       expect((await caught(metaGet(g.deps, path, {}))).kind).toBe("config");
     }
     expect(g.calls.length).toBe(0);
+    // The ad set list (for each lead ad set's destination) is one of them.
+    await metaGet(g.deps, "act_1111111111111/adsets", { fields: "id,destination_type" });
+    expect(g.calls.length).toBe(1);
   });
 
   test("Meta's refusals are sorted into what the run does about them", async () => {

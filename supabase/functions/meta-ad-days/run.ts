@@ -19,6 +19,11 @@
  *     reads only: the token, the pinned Graph version, the edges, the ties
  *     and the last runs, in plain sentences.
  *
+ * A days task also looks up the destination of its lead-campaign ad sets
+ * (one act_<id>/adsets read per 50 of them; none when the account has no lead
+ * campaign), so a WhatsApp or Messenger lead ad set's messaging leads never
+ * count as form leads (parse.ts withDestinations).
+ *
  * The drain claims up to 3 tasks at a time (leased 5 minutes, 4 tries), reads
  * Meta, and hands the rows to cockpit_meta_ad_days_apply or
  * cockpit_meta_reach_apply, which upsert by (ad_id, day) and (level, key,
@@ -35,7 +40,21 @@ import { type Account, discoverAccounts } from "./accounts.ts";
 import { type InsertReceipt, type Rpc, RpcError } from "./db.ts";
 import { discoveryWindow, halves, type JobKind, knownZone, MAX_BACKFILL_DAYS, type Span, spansFor, zonedDay } from "./days.ts";
 import { GRAPH_VERSION, type GraphDeps, MAHARA_BUSINESS_ID, MetaError, metaGet, metaPages, type Row } from "./graph.ts";
-import { DAY_FIELDS, dedupe, type Level, ParseError, parseAdDay, parseReach, REACH_LEVELS, toApplyRow, type Window } from "./parse.ts";
+import {
+  type AdDayRow,
+  DAY_FIELDS,
+  dedupe,
+  leadAdsetIds,
+  type Level,
+  ParseError,
+  parseAdDay,
+  parseDestinations,
+  parseReach,
+  REACH_LEVELS,
+  toApplyRow,
+  type Window,
+  withDestinations,
+} from "./parse.ts";
 
 export type Job =
   | { job: "hourly" | "nightly"; dryRun: boolean; requestedBy: string }
@@ -300,15 +319,59 @@ export async function readDays(graph: GraphDeps, deps: Pick<RunDeps, "sleep">, a
   return { rows: dedupe(rows), splits };
 }
 
+/** Every ad set status Meta lets the edge list (a deleted one it refuses to list at all: code 100/1815001). */
+const ADSET_STATUSES = [
+  "ACTIVE",
+  "PAUSED",
+  "PENDING_REVIEW",
+  "DISAPPROVED",
+  "PREAPPROVED",
+  "PENDING_BILLING_INFO",
+  "CAMPAIGN_PAUSED",
+  "ARCHIVED",
+  "ADSET_PAUSED",
+  "IN_PROCESS",
+  "WITH_ISSUES",
+];
+const ADSETS_PER_READ = 50;
+
+/** The destination of each lead-campaign ad set in `rows`, 50 ids a read; no read when there is none. */
+export async function readDestinations(graph: GraphDeps, accountId: string, rows: AdDayRow[]): Promise<Map<string, string | null>> {
+  const ids = leadAdsetIds(rows);
+  const out = new Map<string, string | null>();
+  for (let i = 0; i < ids.length; i += ADSETS_PER_READ) {
+    const chunk = ids.slice(i, i + ADSETS_PER_READ);
+    const raw = await metaPages(graph, `act_${accountId}/adsets`, {
+      fields: "id,destination_type",
+      filtering: JSON.stringify([{ field: "id", operator: "IN", value: chunk }]),
+      effective_status: JSON.stringify(ADSET_STATUSES),
+      limit: 500,
+    });
+    for (const [k, v] of parseDestinations(raw, chunk)) out.set(k, v);
+  }
+  return out;
+}
+
 async function workDays(deps: RunDeps, graph: GraphDeps, task: Task): Promise<number> {
   if (!task.since || !task.until) throw new Error("A day task came without its days.");
-  const { rows, splits } = await readDays(graph, deps, task.accountId, { since: task.since, until: task.until });
+  const read = await readDays(graph, deps, task.accountId, { since: task.since, until: task.until });
+  const { rows, unknown } = withDestinations(read.rows, await readDestinations(graph, task.accountId, read.rows));
+  const splits = read.splits;
   const fetchedAt = new Date(deps.now()).toISOString();
   const payload = rows.map(toApplyRow);
   const chunks: Record<string, unknown>[][] = [];
   for (let i = 0; i < payload.length; i += APPLY_CHUNK) chunks.push(payload.slice(i, i + APPLY_CHUNK));
   if (!chunks.length) chunks.push([]);
-  const note = splits ? `Read in ${splits + 1} pieces: Meta could not build ${task.since} to ${task.until} in one go.` : null;
+  const note =
+    [
+      splits ? `Read in ${splits + 1} pieces: Meta could not build ${task.since} to ${task.until} in one go.` : null,
+      unknown.length
+        ? `Meta no longer lists lead ad set${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")} (deleted), so ${unknown.length > 1 ? "their" : "its"} destination is unknown; messaging leads are left out by action type.`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .slice(0, 300) || null;
   for (let i = 0; i < chunks.length; i++) {
     await deps.rpc("cockpit_meta_ad_days_apply", {
       p: { taskId: task.id, leaseToken: task.leaseToken, fetchedAt, rows: chunks[i], final: i === chunks.length - 1, note },

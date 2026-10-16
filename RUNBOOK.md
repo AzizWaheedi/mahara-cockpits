@@ -859,9 +859,17 @@ earlier one never does, and nothing is deleted because an ad stopped. Days
 are each ad account's own calendar (`account_timezone`); the CRM is on Kuwait
 time. NULL means Meta did not return it, never 0: an image ad has no video
 numbers, and `leads` (lead-form leads) is filled only on lead campaigns
-(`OUTCOME_LEADS`, `LEAD_GENERATION`); `lead_actions` keeps Meta's `lead`
-action on every objective, messaging leads included, so it matches the
-account-level count. Spend is kept in the account currency and in USD at the
+(`OUTCOME_LEADS`, `LEAD_GENERATION`), and never on a lead ad set whose
+destination is a chat (WhatsApp, Messenger, Instagram Direct). Those report
+Meta's `lead` for leads marked in the chat (`onsite_conversion.lead`), which
+are not form leads, so their `leads` is NULL and their spend stays out of
+cost per lead (Pidco's two WhatsApp lead ad sets, 2026-10-16). Each days read
+looks up its lead ad sets' destination (`act_<id>/adsets`, one call per 50,
+none for an account without a lead campaign) into `destination_type`; a
+deleted ad set Meta no longer lists keeps NULL there, its messaging leads are
+taken out by action type, and the task's note names it. `lead_actions` keeps
+Meta's `lead` action on every objective, messaging leads included, so it
+matches the account-level count. Spend is kept in the account currency and in USD at the
 cockpit's fixed rates (`cockpit_meta_ad_days_usd_per`, the same table as
 `tap.js` USD_PER and `calculator.ts` FX); a currency without a rate leaves
 `spend_usd` NULL and the run's note names it. Reach over the five windows
@@ -932,11 +940,16 @@ Deploying (the lead session). In order:
    `'{"job":"backfill","days":90,"dryRun":true}'::jsonb`) lists the accounts
    and the reads; then the real one without `dryRun`. The drain finishes it
    over a few minutes.
-5. Second source: compare 30 days of the store with Meta's account-level
-   numbers (Ads Manager, account row, same days, unified attribution):
+5. Second source: compare 30 days of the store with Meta's own numbers
+   (Ads Manager, same days, unified attribution): spend and Meta's leads at
+   the account row; form leads at the ad set rows of lead campaigns whose
+   conversion location is an instant form or a website, not WhatsApp,
+   Messenger or Instagram Direct:
 
    ```sql
-   select account_id, account_name, account_currency, sum(spend) spend, sum(lead_actions) meta_leads, sum(leads) form_leads
+   select account_id, account_name, account_currency, sum(spend) spend, sum(lead_actions) meta_leads, sum(leads) form_leads,
+          sum(spend) filter (where leads is not null) form_spend,
+          sum(lead_actions) filter (where destination_type ~ '^(WHATSAPP|MESSENGER|INSTAGRAM_DIRECT|LEAD_FROM_|MESSAGING_)') chat_leads
    from cockpit_meta_ad_days where day between current_date - 30 and current_date - 1 group by 1, 2, 3 order by 4 desc;
    ```
 

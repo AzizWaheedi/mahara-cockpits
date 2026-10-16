@@ -3,7 +3,8 @@
  * Graph v25.0 reads of 2026-10-16 (ad level, time_increment=1): a video ad on a
  * lead campaign, an image ad, a messaging (engagement) campaign that reports
  * `lead` actions, a website (sales) campaign with landing page views, and a
- * video row where Meta drops the quartiles nobody reached. No real ids, names
+ * video row where Meta drops the quartiles nobody reached, and a WhatsApp lead
+ * ad set on a lead campaign. No real ids, names
  * or numbers. Test-only: index.ts never imports it.
  */
 import type { Row } from "./graph.ts";
@@ -101,6 +102,45 @@ export function engagementRow(day: string, over: Row = {}): Row {
     ...over,
   };
 }
+
+/**
+ * A WhatsApp lead ad set on a lead campaign (OUTCOME_LEADS, destination
+ * WHATSAPP, optimised for conversations): the shape of Pidco's rows read on
+ * 2026-10-16. Meta's `lead` here is leads marked in WhatsApp chats
+ * (onsite_conversion.lead), not form leads.
+ */
+export function whatsappLeadRow(day: string, over: Row = {}): Row {
+  return {
+    campaign_id: "120000000000401",
+    campaign_name: "CBO - lead - Contracting",
+    objective: "OUTCOME_LEADS",
+    adset_id: "120000000000402",
+    adset_name: "Contracting mix",
+    ad_id: "120000000000403",
+    ad_name: "whatsapp-1",
+    date_start: day,
+    date_stop: day,
+    spend: "50.58",
+    impressions: "4100",
+    reach: "3300",
+    frequency: "1.242424",
+    inline_link_clicks: "95",
+    actions: [
+      { action_type: "lead", value: "3" },
+      { action_type: "onsite_conversion.lead", value: "3" },
+      { action_type: "onsite_web_lead", value: "3" },
+      { action_type: "onsite_conversion.lead_grouped", value: "3" },
+      { action_type: "onsite_conversion.messaging_conversation_started_7d", value: "83" },
+    ],
+    ...over,
+  };
+}
+
+/** The ad sets above and where each leads: an instant form (ON_AD) or a WhatsApp chat. */
+export const DESTINATIONS: Record<string, string> = {
+  "120000000000102": "ON_AD",
+  "120000000000402": "WHATSAPP",
+};
 
 /** A website (sales) campaign: landing page views, no lead form. */
 export function websiteRow(day: string, over: Row = {}): Row {

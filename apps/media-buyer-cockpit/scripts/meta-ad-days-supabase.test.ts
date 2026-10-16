@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
 import type { ReceiptRow } from "../../../supabase/functions/meta-ad-days/db.ts";
 import {
+  DESTINATIONS,
   edgeAccount,
   engagementRow,
   imageLeadRow,
@@ -16,12 +17,14 @@ import {
   SAR_ACCOUNT,
   TOKEN,
   videoLeadRow,
+  whatsappLeadRow,
 } from "../../../supabase/functions/meta-ad-days/fixtures.ts";
 import {
   type RunDeps,
   startJob,
 } from "../../../supabase/functions/meta-ad-days/run.ts";
 import {
+  adsetsRoute,
   eachDay,
   fakeFetch,
   graphPath,
@@ -714,6 +717,52 @@ describe("a run, end to end", () => {
     expect(
       await refused(() => send([adRow(A1, "abc", "2026-10-15")]), "22023"),
     ).toContain("valid ad id");
+    expect(
+      await refused(
+        () =>
+          send([
+            adRow(A1, "900000000000101", "2026-10-15", {
+              destination_type: "WHATSAPP",
+              leads: 3,
+              lead_actions: 3,
+            }),
+          ]),
+        "22023",
+      ),
+    ).toContain("form leads on a chat ad set");
+    expect(
+      await refused(
+        () =>
+          send([
+            adRow(A1, "900000000000101", "2026-10-15", {
+              destination_type: "MESSAGING_INSTAGRAM_DIRECT_WHATSAPP",
+              leads: 0,
+            }),
+          ]),
+        "22023",
+      ),
+    ).toContain("form leads on a chat ad set");
+    expect(
+      await refused(
+        () =>
+          send([
+            adRow(A1, "900000000000101", "2026-10-15", {
+              destination_type: "on ad",
+            }),
+          ]),
+        "22023",
+      ),
+    ).toContain("not one of Meta's names");
+    // The table holds the rule too, whoever writes.
+    await owner(db);
+    await refused(
+      () =>
+        db.query(
+          `INSERT INTO cockpit_meta_ad_days(account_id, day, ad_id, leads, destination_type, fetched_at)
+           VALUES ('${A1}', '2026-10-15', '900000000000102', 1, 'WHATSAPP', now())`,
+        ),
+      "23514",
+    );
     await refused(
       () =>
         svc("cockpit_meta_ad_days_apply", {
@@ -1346,8 +1395,12 @@ describe("the Edge Function's run against this database", () => {
         ]),
       ),
       insightsRoute(SAR_ACCOUNT, (since, until) =>
-        eachDay(since, until).map(d => engagementRow(d)),
+        eachDay(since, until).flatMap(d => [
+          engagementRow(d),
+          whatsappLeadRow(d),
+        ]),
       ),
+      adsetsRoute(DESTINATIONS),
       reachRoute,
     ]);
     const deps: RunDeps = {
@@ -1376,22 +1429,37 @@ describe("the Edge Function's run against this database", () => {
     });
     expect(r).toMatchObject({ ok: true, started: true, done: 4, failed: 0 });
     const rows = await q<any>(
-      "SELECT account_id, to_char(day,'YYYY-MM-DD') d, ad_id, spend::text, spend_usd::text, leads, lead_actions::int, video_3s, account_timezone FROM cockpit_meta_ad_days ORDER BY account_id, day, ad_id",
+      "SELECT account_id, to_char(day,'YYYY-MM-DD') d, ad_id, spend::text, spend_usd::text, leads, lead_actions::int, video_3s, account_timezone, destination_type FROM cockpit_meta_ad_days ORDER BY account_id, day, ad_id",
     );
-    expect(rows.length).toBe(6);
+    expect(rows.length).toBe(8);
     const sar = rows.filter(x => x.account_id === SAR_ACCOUNT);
     expect(
       sar.map(x => [
         x.d,
+        x.ad_id,
         Number(x.spend),
         Number(x.spend_usd),
         x.leads,
         x.lead_actions,
+        x.destination_type,
       ]),
     ).toEqual([
-      ["2026-10-15", 14, 3.7324, null, 4],
-      ["2026-10-16", 14, 3.7324, null, 4],
+      ["2026-10-15", "120000000000203", 14, 3.7324, null, 4, null],
+      ["2026-10-15", "120000000000403", 50.58, 13.484628, null, 3, "WHATSAPP"],
+      ["2026-10-16", "120000000000203", 14, 3.7324, null, 4, null],
+      ["2026-10-16", "120000000000403", 50.58, 13.484628, null, 3, "WHATSAPP"],
     ]);
+    // Form leads and the spend behind them: the instant form's only; the WhatsApp lead ad set's spend stays out.
+    const [cpl] = await q<{ leads: number; spend: string }>(
+      "SELECT sum(leads)::int leads, sum(spend) FILTER (WHERE leads IS NOT NULL)::text spend FROM cockpit_meta_ad_days",
+    );
+    expect(cpl.leads).toBe(2 * (2 + 1));
+    expect(Number(cpl.spend)).toBeCloseTo(2 * (6.87 + 12.1), 6);
+    expect(
+      rows
+        .filter(x => x.account_id === KUWAIT_ACCOUNT)
+        .every(x => x.destination_type === "ON_AD"),
+    ).toBe(true);
     const image = rows.find(x => x.ad_id === "120000000000104");
     expect(image.video_3s).toBeNull();
     // The second source inside the test: what Meta sent is what was stored.
@@ -1411,7 +1479,7 @@ describe("the Edge Function's run against this database", () => {
     );
     expect(run.state).toBe("ok");
     expect(run.note).toContain(
-      "Read 2 of 2 ad accounts: 6 ad-days written, 6 new or changed. Reach read for 2 accounts.",
+      "Read 2 of 2 ad accounts: 8 ad-days written, 8 new or changed. Reach read for 2 accounts.",
     );
     // Both accounts are Client One's (the spine ties them), so nothing is listed as not linked,
     // and the client's reach is the sum of its two accounts.
@@ -1443,7 +1511,7 @@ describe("the Edge Function's run against this database", () => {
       "SELECT note FROM cockpit_meta_ad_day_runs WHERE id = $1",
       [r.runId],
     );
-    expect(run.note).toContain("6 ad-days written, 2 new or changed.");
+    expect(run.note).toContain("8 ad-days written, 2 new or changed.");
     const [n] = await q<{ n: number; s: string }>(
       "SELECT count(*)::int n, sum(spend)::text s FROM cockpit_meta_ad_days WHERE account_id = $1",
       [KUWAIT_ACCOUNT],
