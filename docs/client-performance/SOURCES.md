@@ -782,7 +782,7 @@ data (blank where nothing changes).
 | Ardon | shows / no-shows | 1/2 | same | yes | |
 | Ardon | quotations / closes | NULL / NULL | columns blank | yes | |
 | Ardon | dials / leads called / contacted | 100 / 50 / 52 of 63 | same | yes | |
-| Atlantis Contracting | CRM leads / confirmed | 50 / 11 | 50 / dialer 11, media 14 | yes | media counted 3 callbacks (fixed in the media sync) |
+| Atlantis Contracting | CRM leads / confirmed | 50 / 11 | 50 / dialer 11, media 14 | yes | media counted the qualification calendar: 2 CALLBACK bookings (now dropped by id) and 3 leads' own bookings, which the board does not count (main and online calendars only) |
 | Atlantis Contracting | provisional | 1 | dialer 17 | no | the dialer counts 16 Google copies: correct |
 | Atlantis Contracting | meetings due | 12 | 10 sheet rows | no | two replaced bookings. After: 10 |
 | Atlantis Contracting | shows / no-shows | 5/3 | 6/3 | no | the CRM moved one meeting's time. After: 6/3 |
