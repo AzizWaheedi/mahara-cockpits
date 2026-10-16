@@ -97,7 +97,9 @@ board's read functions and screen).
   account field `ghl_clients.meta_ad_account`: a known account id written in
   it, or a name equal to exactly one Meta account's name. Accounts hidden on
   purpose (a hidden clients row) and Mahara's own two accounts are left out,
-  unless tied by hand.
+  unless tied by hand. A hand row marked `kept_out` names an account that is
+  the client's but stays out of its figures: no rule ties it, and
+  `meta-ad-days` lists it as "Hidden on purpose", not "Not linked".
 - **The registry field, checked on live data:** it gives 19 ties; 18 agree
   with the tie already made, and the 19th is Shades, which no other step
   reached.
@@ -110,10 +112,17 @@ board's read functions and screen).
   Mahara's business.
 - **Hand ties added on 16 Oct** (`20261016210200_board_account_ties.sql`):
   Shades 762687672022667 (account and campaign names, registry account name);
-  Alkhalil's SAR account 640644143620696 (owned by the same Meta business as
-  its tied account); Ardon 718146936708597 (was tied by the card name only);
-  Pidco 134992869555229 and AEA Designs 854779610674376, both cancelled, for
-  the history.
+  Ardon 718146936708597 (was tied by the card name only); Pidco
+  134992869555229 and AEA Designs 854779610674376, both cancelled, for the
+  history.
+- **Kept out on purpose:** Alkhalil's SAR account 640644143620696. It sits in
+  the client's own Meta business, but all 13 of its campaigns are the
+  client's Instagram post boosts (2021 to the one since 12 Oct), none
+  Mahara's; Mahara's Alkhalil work runs on 1649852845764859. Tied, it would
+  have moved Alkhalil's 9 to 15 Oct spend from $94.30 to $174.06, impressions
+  from 5,890 to 28,590, link CTR from 1.73% to 0.48% and CPM from $16.01 to
+  $6.09. Its row is `kept_out`; set it to tied only if the media buyer
+  confirms Mahara manages the account.
 - **Left out on purpose (unsure):** Triple Edge 2002793296961811 (no
   GoHighLevel location), Art Vision 750052678056652 (no client record),
   ريبالو/ORB 827972432407411 (hidden; probably the Ocean Home owner's other
@@ -531,7 +540,7 @@ On 16 Oct at 16:30 Kuwait every source was fresh: lead sync 15:35, appointments
 | --- | --- | --- |
 | DMs counted as CRM ad leads | `20261016210000_board_facts_checked.sql` | Ocean Home 139 to 115, Alkhalil 75 to 57, City Wood 52 to 48; DMs in `crm_dm_contacts` |
 | Status and service from the registry, not ClickUp | same | Shades Active; three lost clients Stopped; doctor lists disagreements |
-| Spending accounts no tie reached | same, and `20261016210200_board_account_ties.sql` | Shades, Alkhalil's SAR account, Ardon, Pidco, AEA tied with evidence; the registry's own ad account field read as the last tie |
+| Spending accounts no tie reached | same, and `20261016210200_board_account_ties.sql` | Shades, Ardon, Pidco, AEA tied with evidence; Alkhalil's SAR account (the client's own post boosts) kept out and named; the registry's own ad account field read as the last tie |
 | Bookings replaced before their time still due | same | Alkhalil 8 to 7, Atlantis 12 to 10 meetings due |
 | RESCHEDULE and CALLBACK bookings counted as bookings | same | Alkhalil 8 to 7, Arcturus 29 to 28 confirmed |
 | A sheet mark lost when the CRM moved the meeting | same | Atlantis shows 5 to 6 |
@@ -575,6 +584,7 @@ To make it live, in order (systems manager, the lead session):
 | Shades's lead form "Shades\|mahara\|14\10" is not connected to its GoHighLevel location (newest contact 8 Oct; 3 to 4 form leads since 14 Oct never arrived). Connect it, send one test lead, re-send the missing ones. | Media buyer |
 | Professional Touch's ad account is not shared with Mahara's business 767701513092162: ask the client to share it and give the system user ads_read; then add a hand tie and run a backfill for that account. Until then spend is "unknown", never $0. | CEO, then systems manager |
 | Cancelled clients' accounts spent $1,507 in 30 days (Ideal Elite $578.62 on a Mahara campaign, Pidco $553.00 still delivering, AEA, Rm decor, حول العمران, MOFAG). Confirm each client's status; switch delivery off where the client is gone; decide whether to remove Pidco's account from Mahara's business. | Client success, media buyer, CEO |
+| Alkhalil's SAR account 640644143620696 is kept out of Alkhalil's figures (only the client's own Instagram post boosts). If Mahara does manage it, set its `kept_out` to false in a migration with the evidence. | Media buyer, then systems manager |
 | Triple Edge (spending, a clients row, no GoHighLevel location): a client or not? If yes, create its location and tie it; if no, hide it. | Client success |
 | Art Vision (spent $25.67, no client record) and ريبالو/ORB (hidden; Ocean Home's owner's other brand?): name, hide or remove. | Client success, CEO |
 | Ardon's Page gives Mahara no lead access, so its leads cannot be matched lead by lead. | CEO asks the client |
@@ -705,7 +715,7 @@ data (blank where nothing changes).
 | حول العمران (cancelled) | form leads, video | 6 / 6; 1,139 / 7,734 / 202 / 693 / 338 / 197 / 121 | same | yes | |
 | AEA Designs (cancelled) | spend / impressions / link clicks, 30d | 109.04 / 3,041 / 31 | same | yes | After: tied by hand for the history |
 | Art Vision (no client) | spend / impressions / link clicks, 30d; lead action | 25.67 / 11,531 / 79; 6 | same | yes | WhatsApp Engagement only |
-| Alkhalil SAR account 640644143620696 | spend / impressions / link clicks, 30d, 7d | 79.76 / 22,700 / 35 | same | yes | After: tied to Alkhalil by hand |
+| Alkhalil SAR account 640644143620696 | spend / impressions / link clicks, 30d, 7d | 79.76 / 22,700 / 35 | same | yes | After: kept out of Alkhalil's figures (the client's own post boosts), named "Hidden on purpose" |
 | Shades | spend / impressions / link clicks, 30d, 7d | 446.84 / 80,612 / 544; 46.70 / 15,401 / 74 | 446.85 / 80,614 / 544; 46.71 / 15,403 / 74 | no | 2 impressions still settling. After: tied to Shades by hand |
 | Shades | form leads / lead action, 30d, 7d | 3 / 3; 3 / 3 | same | yes | none reached GoHighLevel |
 | Pidco (cancelled) | spend / impressions / link clicks, 30d, 7d | 553.00 / 55,151 / 473; 198.39 / 27,352 / 195 | same | yes | After: tied for the history; named as delivering for a cancelled client |
@@ -818,7 +828,7 @@ data (blank where nothing changes).
 | Six non-active clients | service mode | blank | DFY on the cards | no | After: DFY |
 | Shades | ad accounts | none | act 762687672022667, lead campaign since 14 Oct | no | After: tied by hand |
 | Shades | CRM leads 14 to 16 Oct | 0, 0, 0 | Meta form leads 1, 2, 1 | no | the lead form is not connected to GoHighLevel |
-| Alkhalil | ad accounts | 1 | 2 (same Meta business) | no | After: 2 |
+| Alkhalil | ad accounts | 1 | 2 (same Meta business) | no | After: 1 tied; the SAR account holds only the client's own post boosts, so it is kept out and named |
 | Marble, City Wood, Castello, Ardon | two-account clients | 2 each | lead sync watch agrees (15 of 15) | yes | |
 | Professional Touch Company | ad accounts | none | not shared with Mahara's business | yes | spend must read unknown |
 | Joe and Sera; نهوض نجد | TikTok flag | true; false | cards say Meta; Tiktok | no | After: نهوض نجد flagged from its card; Joe and Sera to confirm |

@@ -91,29 +91,36 @@ $$;
 /**
  * The ad accounts hidden on purpose: a clients row with hidden_from_dashboard,
  * or one named for Mahara itself (MaharaMedia, Mahara Mass Design), the
- * spine's rule. An account tied to a client by hand
- * (cockpit_board_account_ties) is never hidden. A jsonb array of ids; empty
- * without the clients table.
+ * spine's rule; and an account kept out of its client's figures by hand
+ * (cockpit_board_account_ties.kept_out: Alkhalil's own post-boost account).
+ * An account tied to a client by hand is never hidden. A jsonb array of ids.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_hidden()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
-DECLARE v jsonb;
+DECLARE v jsonb := '[]'::jsonb;
 BEGIN
-  IF to_regclass('public.clients') IS NULL THEN RETURN '[]'::jsonb; END IF;
-  EXECUTE $q$
-    SELECT coalesce(jsonb_agg(DISTINCT x.id), '[]'::jsonb) FROM (
-      SELECT regexp_replace(lower(btrim(c.meta_ad_account_id)), '^act_', '') AS id
-      FROM public.clients c
-      WHERE coalesce(c.meta_ad_account_id, '') <> ''
-        AND (coalesce(c.hidden_from_dashboard, false)
-             OR regexp_replace(lower(coalesce(c.name, '')), '[^[:alnum:]]+', '', 'g') IN ('maharamedia', 'maharamassdesign'))
-    ) x
-    WHERE x.id ~ '^[0-9]{5,25}$'
-  $q$ INTO v;
-  IF to_regclass('public.cockpit_board_account_ties') IS NOT NULL THEN
+  IF to_regclass('public.clients') IS NOT NULL THEN
     EXECUTE $q$
-      SELECT coalesce(jsonb_agg(h.id), '[]'::jsonb) FROM jsonb_array_elements_text($1) h(id)
-      WHERE NOT EXISTS (SELECT 1 FROM public.cockpit_board_account_ties t WHERE t.account_id = h.id)
+      SELECT coalesce(jsonb_agg(DISTINCT x.id), '[]'::jsonb) FROM (
+        SELECT regexp_replace(lower(btrim(c.meta_ad_account_id)), '^act_', '') AS id
+        FROM public.clients c
+        WHERE coalesce(c.meta_ad_account_id, '') <> ''
+          AND (coalesce(c.hidden_from_dashboard, false)
+               OR regexp_replace(lower(coalesce(c.name, '')), '[^[:alnum:]]+', '', 'g') IN ('maharamedia', 'maharamassdesign'))
+      ) x
+      WHERE x.id ~ '^[0-9]{5,25}$'
+    $q$ INTO v;
+  END IF;
+  IF to_regclass('public.cockpit_board_account_ties') IS NOT NULL THEN
+    -- A hand tie unhides an account; a hand row kept out (kept_out) hides it.
+    EXECUTE $q$
+      SELECT coalesce(jsonb_agg(DISTINCT x.id), '[]'::jsonb) FROM (
+        SELECT h.id FROM jsonb_array_elements_text($1) h(id)
+        WHERE NOT EXISTS (SELECT 1 FROM public.cockpit_board_account_ties t
+                          WHERE t.account_id = h.id AND (to_jsonb(t)->>'kept_out')::boolean IS NOT TRUE)
+        UNION
+        SELECT t.account_id FROM public.cockpit_board_account_ties t WHERE (to_jsonb(t)->>'kept_out')::boolean IS TRUE
+      ) x
     $q$ INTO v USING v;
   END IF;
   RETURN v;

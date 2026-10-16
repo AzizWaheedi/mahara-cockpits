@@ -1549,14 +1549,15 @@ describe("the corrections after the 2026-10-16 check", () => {
     }
   });
 
-  test("a hand tie comes first, holds even for a hidden account, never for Mahara's own, and the doctor names a tie to no client", async () => {
+  test("a hand tie comes first, holds even for a hidden account, never for Mahara's own; a kept-out row ties nothing; the doctor names a tie to no client", async () => {
     await owner(db);
     await q(
-      `INSERT INTO public.cockpit_board_account_ties(account_id,location_id,evidence,added_by) VALUES
-       ('888888',$1,'Owned by the client''s Meta business, checked by hand','test'),
-       ('555555',$1,'The hidden account is this client''s, checked by hand','test'),
-       ('666666',$1,'Mahara''s own account, which is never tied','test')`,
-      [LOC_C],
+      `INSERT INTO public.cockpit_board_account_ties(account_id,location_id,evidence,added_by,kept_out) VALUES
+       ('888888',$1,'Owned by the client''s Meta business, checked by hand','test',false),
+       ('555555',$1,'The hidden account is this client''s, checked by hand','test',false),
+       ('666666',$1,'Mahara''s own account, which is never tied','test',false),
+       ('333333',$2,'The client''s own boosts, kept out of its figures','test',true)`,
+      [LOC_C, LOC_A],
     );
     try {
       await refresh();
@@ -1578,16 +1579,20 @@ describe("the corrections after the 2026-10-16 check", () => {
           [LOC_A],
         )
       )[0];
-      expect(a.ad_account_ids).toEqual(["111111", "333333"]);
+      // 333333 would tie to client A through its clients row; kept out by
+      // hand, it ties to nobody.
+      expect(a.ad_account_ids).toEqual(["111111"]);
       await q(
         "INSERT INTO public.cockpit_board_account_ties(account_id,location_id,evidence,added_by) VALUES ('999999','locNowhere0000000000','A location that is not in the registry','test')",
       );
-      const problems = (
-        (
-          await q<{ r: Row }>("SELECT public.cockpit_board_facts_doctor() AS r")
-        )[0].r.problems as string[]
-      ).join(" ");
+      const doctor = (
+        await q<{ r: Row }>("SELECT public.cockpit_board_facts_doctor() AS r")
+      )[0].r;
+      const problems = (doctor.problems as string[]).join(" ");
       expect(problems).toContain("999999 to locNowhere0000000000");
+      expect(doctor.handTies.keptOut).toEqual([
+        { account: "333333", client: expect.any(String) },
+      ]);
     } finally {
       await owner(db);
       await q("DELETE FROM public.cockpit_board_account_ties");
@@ -1663,8 +1668,13 @@ describe("the corrections after the 2026-10-16 check", () => {
     await db.exec(TIES);
     await db.exec(TIES);
     const rows = await q<Row>(
-      "SELECT account_id, location_id, evidence FROM public.cockpit_board_account_ties ORDER BY account_id",
+      "SELECT account_id, location_id, evidence, kept_out FROM public.cockpit_board_account_ties ORDER BY account_id",
     );
+    // Alkhalil's SAR account holds only the client's own post boosts: named,
+    // kept out of its figures.
+    expect(rows.filter(r => r.kept_out).map(r => r.account_id)).toEqual([
+      "640644143620696",
+    ]);
     expect(rows.map(r => r.account_id)).toEqual([
       "134992869555229",
       "640644143620696",

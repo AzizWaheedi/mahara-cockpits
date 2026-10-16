@@ -1881,9 +1881,22 @@ describe("the corrections after the 2026-10-16 check", () => {
         statusLabel: "unsettled",
         clientStatus: "Active",
       });
+      // A hand row kept out of its client's figures (Alkhalil's own boost
+      // account) is hidden on purpose, not "not linked".
+      await owner(db);
+      await db.exec(`CREATE TABLE public.cockpit_board_account_ties (account_id text PRIMARY KEY, location_id text, evidence text,
+          added_by text, added_at timestamptz DEFAULT now(), kept_out boolean NOT NULL DEFAULT false);
+        INSERT INTO public.cockpit_board_account_ties(account_id, location_id, evidence, added_by, kept_out)
+          VALUES ('${A3}', 'LOC_ONE', 'The client''s own boosts', 'test', true);`);
+      const kept = await svc("cockpit_meta_ad_days_inputs", { accounts });
+      expect(kept.notLinked).toEqual([]);
+      expect(kept.hidden.map((a: any) => a.accountId).sort()).toEqual(
+        [A10, A3, A9].sort(),
+      );
     } finally {
       await owner(db);
-      await db.exec(`DELETE FROM public.clients WHERE meta_ad_account_id = 'act_${A9}';
+      await db.exec(`DROP TABLE IF EXISTS public.cockpit_board_account_ties;
+        DELETE FROM public.clients WHERE meta_ad_account_id = 'act_${A9}';
         DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_GONE';
         DELETE FROM public.cockpit_meta_ad_days WHERE account_id = '${A11}';`);
       await at(NOW);

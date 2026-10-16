@@ -24,10 +24,13 @@
 --      roster, cockpit_csm_sources 'clients'), the registry only where there is
 --      no card. A Stopped client gets no new days, like a cancelled one. The
 --      registry's word is kept in registry_status.
---   3. Spending ad accounts no tie could reach (Shades, Alkhalil's SAR boost
---      account, and for the history Pidco and AEA Designs) get a cockpit-owned
---      tie table, public.cockpit_board_account_ties, read first by the spine.
---      Its rows, each with its evidence, are in 20261016210200_board_account_ties.sql.
+--   3. Spending ad accounts no tie could reach (Shades, and for the history
+--      Pidco and AEA Designs) get a cockpit-owned tie table,
+--      public.cockpit_board_account_ties, read first by the spine. A row with
+--      kept_out names an account that is the client's but stays out of its
+--      figures (Alkhalil's SAR account: the client's own Instagram post boosts
+--      since 2021, not Mahara's work). Its rows, each with its evidence, are in
+--      20261016210200_board_account_ties.sql.
 --      The registry's own ad account field (ghl_clients.meta_ad_account) was
 --      never read; it is now the last tie: an account id written in it, or a
 --      name equal to one Meta account's name (Shades would have tied itself).
@@ -105,10 +108,14 @@ CREATE TABLE IF NOT EXISTS public.cockpit_board_account_ties (
   location_id text NOT NULL CHECK (location_id <> ''),
   evidence text NOT NULL CHECK (length(evidence) BETWEEN 10 AND 1000),
   added_by text NOT NULL CHECK (length(added_by) BETWEEN 1 AND 254),
-  added_at timestamptz NOT NULL DEFAULT now()
+  added_at timestamptz NOT NULL DEFAULT now(),
+  kept_out boolean NOT NULL DEFAULT false
 );
+ALTER TABLE public.cockpit_board_account_ties ADD COLUMN IF NOT EXISTS kept_out boolean NOT NULL DEFAULT false;
 COMMENT ON TABLE public.cockpit_board_account_ties IS
   'Meta ad accounts tied to a client (GoHighLevel location) by hand, with the evidence. Read first by cockpit_board_facts_refresh''s spine, ahead of clients, ghl_client_ad_accounts and the name match, and even for an account hidden from the dashboards; Mahara''s own accounts are never tied. Cockpit-owned, so no other team''s table is written. Digits only, no act_.';
+COMMENT ON COLUMN public.cockpit_board_account_ties.kept_out IS
+  'true: the account is the client''s, but kept out of the client''s figures on purpose (the client''s own boosting on an account Mahara does not run). The spine ties nothing to it, by any rule, and meta-ad-days names it "Hidden on purpose" instead of "Not linked". Set it back to false only when the media buyer confirms Mahara manages the account.';
 ALTER TABLE public.cockpit_board_account_ties ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.cockpit_board_account_ties FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.cockpit_board_account_ties TO service_role;
@@ -334,7 +341,7 @@ BEGIN
   -- Ties: an account tied by hand (cockpit_board_account_ties, with its
   -- evidence) first, then lead-sync-watch's order, then the registry's field.
   -- A hand tie holds even for an account hidden from the dashboards; Mahara's
-  -- own accounts are never tied.
+  -- own accounts are never tied, nor is an account kept out by hand.
   -- Status and service come from the ClickUp card (the CSM roster), the client
   -- registry where there is no card; the registry's status is kept beside it.
   WITH acc AS (
@@ -347,7 +354,7 @@ BEGIN
     FROM public.cockpit_campaigns k
     WHERE coalesce(k.meta_account_id, '') <> '' AND public.cockpit_board_norm(k.client_name) IS NOT NULL
   ), manual AS (
-    SELECT regexp_replace(lower(btrim(m.account_id)), '^act_', '') AS acct, btrim(m.location_id) AS loc
+    SELECT regexp_replace(lower(btrim(m.account_id)), '^act_', '') AS acct, btrim(m.location_id) AS loc, m.kept_out
     FROM public.cockpit_board_account_ties m
   ), accounts AS (
     SELECT acct FROM acc UNION SELECT acct FROM cards UNION SELECT acct FROM manual UNION SELECT acct FROM pg_temp._bf_regtie
@@ -361,7 +368,7 @@ BEGIN
     FROM accounts a
     CROSS JOIN LATERAL (
       SELECT x.loc, x.how, x.name FROM (
-        SELECT m.loc, 'cockpit_board_account_ties' AS how, NULL::text AS name, 0::numeric AS o FROM manual m WHERE m.acct = a.acct
+        SELECT m.loc, 'cockpit_board_account_ties' AS how, NULL::text AS name, 0::numeric AS o FROM manual m WHERE m.acct = a.acct AND NOT m.kept_out
         UNION ALL
         SELECT c.loc, 'clients.ghl_location_id', c.name, 1 FROM acc c WHERE c.acct = a.acct AND c.loc IS NOT NULL
         UNION ALL
@@ -381,7 +388,9 @@ BEGIN
     WHERE a.acct ~ '^[0-9]{5,20}$'
       AND NOT EXISTS (SELECT 1 FROM acc h WHERE h.acct = a.acct
                       AND replace(coalesce(public.cockpit_board_norm(h.name), ''), ' ', '') IN ('maharamedia', 'maharamassdesign'))
-      AND (EXISTS (SELECT 1 FROM manual m WHERE m.acct = a.acct)
+      -- An account kept out by hand is tied to nobody, by any rule.
+      AND NOT EXISTS (SELECT 1 FROM manual m WHERE m.acct = a.acct AND m.kept_out)
+      AND (EXISTS (SELECT 1 FROM manual m WHERE m.acct = a.acct AND NOT m.kept_out)
            OR NOT EXISTS (SELECT 1 FROM acc h WHERE h.acct = a.acct AND h.hidden))
   ), tt AS (
     SELECT DISTINCT coalesce(nullif(btrim(c.ghl_location_id), ''), m.location_id) AS loc
@@ -1659,7 +1668,9 @@ BEGIN
         FILTER (WHERE card_stage IS NULL AND coalesce(status, '') NOT IN ('Cancelled', 'Removed from sheet')), '[]'::jsonb))
       FROM public.cockpit_board_clients),
     'handTies', (SELECT jsonb_build_object('rows', count(*),
-      'unknownLocation', coalesce(jsonb_agg(t.account_id ORDER BY t.account_id) FILTER (WHERE b.location_id IS NULL), '[]'::jsonb))
+      'unknownLocation', coalesce(jsonb_agg(t.account_id ORDER BY t.account_id) FILTER (WHERE b.location_id IS NULL), '[]'::jsonb),
+      'keptOut', coalesce(jsonb_agg(jsonb_build_object('account', t.account_id, 'client', b.client_name) ORDER BY t.account_id)
+        FILTER (WHERE t.kept_out), '[]'::jsonb))
       FROM public.cockpit_board_account_ties t LEFT JOIN public.cockpit_board_clients b ON b.location_id = t.location_id));
 END;
 $$;
