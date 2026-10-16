@@ -463,6 +463,7 @@ type BookingEvent = {
 export async function ghlBookingEvents(
   loc: string,
   token: string,
+  replaced?: ReadonlySet<string>,
 ): Promise<BookingEvent[] | undefined> {
   const calHeaders = {
     Authorization: `Bearer ${token}`,
@@ -497,11 +498,9 @@ export async function ghlBookingEvents(
     for (const c of cals) {
       // "Not Confirmed Appointments" is the provisional calendar and the
       // callback / reschedule calendars are agent scheduling, not bookings.
-      // Counting them inflated bookings7d until 2026-09-12. "Project Review &
-      // Qualification Call" is a callback calendar too (Atlantis, 2026-10-16:
-      // 3 CALLBACK bookings counted as bookings).
+      // Counting them inflated bookings7d until 2026-09-12.
       if (
-        /not confirmed|callback|reschedule|personal calendar|qualification|project review|مراجعة/i.test(
+        /not confirmed|callback|reschedule|personal calendar/i.test(
           String(c.name ?? ""),
         )
       )
@@ -556,6 +555,11 @@ export async function ghlBookingEvents(
       // events are not bookings either. (Muhammed, 2026-10-12)
       if (String(e.createdBy?.source ?? "").toLowerCase() === "google_calendar") continue;
       if (e.deleted === true) continue;
+      // A booking the call centre made as a RESCHEDULE or a CALLBACK is not a
+      // new booking (dialerReplacedBookingIds). Dropped by its id, not by its
+      // calendar: Atlantis's "Project Review & Qualification Call" holds the
+      // call centre's callbacks and a lead's own widget booking (2026-10-16).
+      if (e.id && replaced?.has(String(e.id))) continue;
       // The day the booking was MADE, not the day of the appointment. Cost per
       // booking divides spend in a window by the bookings that window bought;
       // dating by the appointment pushes next week's calls outside the window
@@ -576,6 +580,31 @@ export async function ghlBookingEvents(
       });
     }
     return out;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The GHL appointment ids the call centre booked as a RESCHEDULE or a
+ * CALLBACK: the dialer's verified booking with that disposition, and the old
+ * appointment a reschedule replaces. A reschedule moves a booking already
+ * counted and a callback is the call centre's own follow-up, so neither is a
+ * new booking; the board's facts drop the same ids (cockpit_board_facts_refresh,
+ * _bf_rs). Undefined when the dialer cannot be read: bookings then count as
+ * before, never fewer.
+ */
+export async function dialerReplacedBookingIds(): Promise<Set<string> | undefined> {
+  try {
+    const rows = await supabaseQuery(`
+      select distinct k.id
+      from mahara_reporting.cc_attempts a
+      cross join lateral (values (a.data->'bookingVerification'->>'id'),
+        (case when a.data->'disposition'->>'outcome' = 'RESCHEDULE' and nullif(a.data->>'originalAppointmentId', '') is not null
+              then a.appointment_id end)) k(id)
+      where a.data->'disposition'->>'outcome' in ('RESCHEDULE', 'CALLBACK') and nullif(k.id, '') is not null
+    `);
+    return new Set(rows.map((r) => String(r.id)).filter(Boolean));
   } catch {
     return undefined;
   }
@@ -1690,6 +1719,8 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
 
   // One GHL call per client, not per campaign.
   const eventsByClient = new Map<string, BookingEvent[] | undefined>();
+  // The call centre's RESCHEDULE and CALLBACK bookings, read once a run.
+  const replacedBookings = await dialerReplacedBookingIds();
   // Why leads died, per client. Same one-call-per-client rule.
   const lostByClient = new Map<
     string,
@@ -1750,7 +1781,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       const cred = ghlByClient.get(key);
       eventsByClient.set(
         key,
-        cred ? await ghlBookingEvents(cred.loc, cred.token) : undefined,
+        cred ? await ghlBookingEvents(cred.loc, cred.token, replacedBookings) : undefined,
       );
     }
   }
@@ -1811,7 +1842,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           const cred = ghlByClient.get(key);
           eventsByClient.set(
             key,
-            cred ? await ghlBookingEvents(cred.loc, cred.token) : undefined,
+            cred ? await ghlBookingEvents(cred.loc, cred.token, replacedBookings) : undefined,
           );
         }
         clientEvents = eventsByClient.get(key);

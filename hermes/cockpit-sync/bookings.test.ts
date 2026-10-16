@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {withNativeContext} from './runtime';
-import {ghlBookingEvents, placeBookings} from './calculator';
+import {dialerReplacedBookingIds, ghlBookingEvents, placeBookings} from './calculator';
 import {capture} from './capture';
 
 // Muhammed, 2026-10-12: bookings for a meeting still ahead were invisible
@@ -71,6 +71,47 @@ test('GHL is asked for past and future meetings, each booking once, dated by whe
   ['edge', '2026-10-11', undefined],
   ['past', '2026-10-09', undefined],
  ]);
+});
+
+test('the call centre\'s RESCHEDULE and CALLBACK bookings are dropped by id; a lead\'s own booking on the same calendar counts', async () => {
+ // Atlantis, 2026-10-16: "Project Review & Qualification Call" holds the call
+ // centre's callbacks and a lead's own widget booking. The calendar is asked;
+ // only the ids the dialer marks are left out.
+ const now = Date.now();
+ const asked: string[] = [];
+ const fetch = async (url: string) => {
+  const u = new URL(url);
+  if (u.pathname === '/calendars/') return Response.json({calendars: [{id: 'qual', name: 'Project Review & Qualification Call'}]});
+  if (u.pathname === '/calendars/events') {
+   asked.push(String(u.searchParams.get('calendarId')));
+   if (Number(u.searchParams.get('startTime')) >= now) return Response.json({events: []});
+   return Response.json({events: [
+    {id: 'cb1', contactId: 'c1', startTime: new Date(now - 86400000).toISOString(), dateAdded: '2026-10-10T09:00:00Z', appointmentStatus: 'confirmed'},
+    {id: 'widget', contactId: 'c2', startTime: new Date(now - 86400000).toISOString(), dateAdded: '2026-10-12T09:00:00Z', appointmentStatus: 'confirmed', createdBy: {source: 'booking_widget'}},
+   ]});
+  }
+  if (u.pathname === '/opportunities/search') return Response.json({opportunities: []});
+  return new Response('', {status: 404});
+ };
+ const reads = {graph: async () => ({}), tool: async () => null, fetch, log: () => {}};
+ const events = await withNativeContext(reads as any, {} as any, () => ghlBookingEvents('loc', 'pit-test', new Set(['cb1'])));
+ assert.ok(asked.includes('qual'), 'the calendar is not skipped by its name');
+ assert.deepEqual(events?.map(e => e.eventId), ['widget']);
+ // Without the dialer's ids (it could not be read) every booking counts, as before.
+ const all = await withNativeContext(reads as any, {} as any, () => ghlBookingEvents('loc', 'pit-test'));
+ assert.deepEqual(all?.map(e => e.eventId).sort(), ['cb1', 'widget']);
+});
+
+test('the dialer\'s replaced booking ids come from its RESCHEDULE and CALLBACK dispositions; a failed read gives none', async () => {
+ const queries: string[] = [];
+ const ok = {graph: async () => ({}), fetch: async () => new Response(''), log: () => {},
+  tool: async (_name: string, args: {query: string}) => { queries.push(args.query); return {result: JSON.stringify([{id: 'a1'}, {id: 'a2'}, {id: ''}])}; }};
+ const ids = await withNativeContext(ok as any, {} as any, () => dialerReplacedBookingIds());
+ assert.deepEqual([...(ids ?? [])].sort(), ['a1', 'a2']);
+ assert.match(queries[0], /'RESCHEDULE', 'CALLBACK'/);
+ assert.match(queries[0], /bookingVerification/);
+ const down = {...ok, tool: async () => { throw new Error('Supabase is down'); }};
+ assert.equal(await withNativeContext(down as any, {} as any, () => dialerReplacedBookingIds()), undefined);
 });
 
 const state = (over: Record<string, unknown> = {}) => ({

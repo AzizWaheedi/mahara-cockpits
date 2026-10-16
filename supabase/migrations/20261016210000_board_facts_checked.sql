@@ -78,9 +78,11 @@
 --      hours) when a source that was behind in the last fill reads again.
 --  14. Leads uploaded in bulk (Ardon: 18 contacts in one hour on 13 Oct) are
 --      named on their day: their creation day is not their form day.
---  15. The calendar "Project Review & Qualification Call" is the call centre's
---      callback calendar (3 CALLBACK bookings at Atlantis): kind callback,
---      as in triage.js calendarKind.
+--  15. Atlantis's "Project Review & Qualification Call" calendar holds the
+--      call centre's CALLBACK bookings and a lead's own widget booking. The
+--      calendar's kind is left alone (cockpit_board_calendar_kind as in
+--      20261016111157, triage.js calendarKind as it was): the callbacks are
+--      dropped by their ids (item 5), not by the calendar's name.
 --  16. The sheet note named the tabs that have rows, so an empty October tab read
 --      as a missing tab; it now says the month's tab has no rows yet.
 --
@@ -173,20 +175,6 @@ COMMENT ON COLUMN public.cockpit_client_now.touched_share_30d IS 'touched_30d / 
 
 -- ---------------------------------------------------------------------------
 -- 2. Small rules
-
--- triage.js calendarKind: main, online, provisional, callback, reschedule, other.
--- The call centre's "Project Review & Qualification Call" calendar holds its
--- callbacks (CALLBACK dispositions only), so it is a callback calendar.
-CREATE OR REPLACE FUNCTION public.cockpit_board_calendar_kind(p_name text) RETURNS text
-LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
-  SELECT CASE
-    WHEN coalesce(p_name, '') = '' THEN 'other'
-    WHEN lower(p_name) ~ 'callback|call-back|معاودة|qualification|project review|مراجعة' THEN 'callback'
-    WHEN lower(p_name) ~ 'not confirmed|provisional|tentative' THEN 'provisional'
-    WHEN lower(p_name) ~ 'reschedul' THEN 'reschedule'
-    WHEN lower(p_name) ~ 'appointment calendar|main appointment' THEN CASE WHEN lower(p_name) ~ 'online' THEN 'online' ELSE 'main' END
-    ELSE 'other' END;
-$$;
 
 -- A ClickUp card stage as the board's status; NULL when the stage is not one
 -- the board knows (the registry's status is used then).
@@ -1721,7 +1709,7 @@ $$;
 DO $$
 DECLARE f text;
 BEGIN
-  FOREACH f IN ARRAY ARRAY['cockpit_board_calendar_kind(text)', 'cockpit_board_card_status(text)',
+  FOREACH f IN ARRAY ARRAY['cockpit_board_card_status(text)',
     'cockpit_board_facts_partial(jsonb,date)', 'cockpit_board_facts_refresh(date,date)',
     'cockpit_board_facts_run(text)', 'cockpit_board_facts_doctor()'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated, service_role', f);

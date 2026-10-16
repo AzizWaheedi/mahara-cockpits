@@ -365,12 +365,20 @@ board's read functions and screen).
   `confirmed_bookings`.
 - **Rule:** main and online calendars, by the Kuwait day the booking was made,
   minus cancelled, invalid, Google Calendar copies, and (since 16 Oct) the
-  call centre's RESCHEDULE and CALLBACK bookings (a meeting moved is not a new
-  booking). "Project Review & Qualification Call" is a callback calendar.
+  call centre's RESCHEDULE and CALLBACK bookings, dropped by their ids (a
+  meeting moved is not a new booking). No calendar is dropped by its name for
+  this: Atlantis's "Project Review & Qualification Call" holds 2 CALLBACK
+  bookings and a lead's own widget booking among its 5.
 - **Checked against:** the dialer's report (board 170 against the dialer's 176
   over 30 days, every difference traced: the dialer keeps bookings cancelled
   later and 4 bookings GoHighLevel no longer holds) and the media sync's
-  booking events (it counted Atlantis's callback calendar; fixed).
+  booking events. The media sync counted the call centre's CALLBACK bookings
+  on Atlantis's qualification calendar; it now drops the call centre's
+  RESCHEDULE and CALLBACK booking ids as the facts do, read from the dialer
+  once a run (122 ids on 16 Oct; 2 of that calendar's 5 appointments), and
+  counts as before when the dialer cannot be read. The other 3 on that
+  calendar (a widget booking, a booking page booking, one with no source) stay
+  in the media sync, while the board counts main and online calendars only.
 - **Gaps:** the dialer's appointment facts never learn that GoHighLevel
   dropped a booking: systems manager (dialer).
 
@@ -568,7 +576,7 @@ On 16 Oct at 16:30 Kuwait every source was fresh: lead sync 15:35, appointments
 | Today read as complete | same | `partial` on every source of a day not yet over |
 | Stale notes on old days after one failed read | same | the 30-minute run fills the 120 days again when the source reads again |
 | Bulk uploads unnamed | same | the day's leads note and `bulkImport` |
-| The callback calendar counted | same, `triage.js`, `calculator.ts` | callback everywhere |
+| The call centre's CALLBACK bookings counted by the media sync | `calculator.ts` | dropped by their ids, as the facts do; no calendar dropped by its name |
 | An empty month tab called missing | same | "Its Oct 26 tab has no rows yet" |
 | The doctor's plain-word problems could not be added | same | typed as text |
 | A client's reach summed part of its accounts | `20261016210100_meta_ad_days_checked.sql` | Marble, ARCWANI, Liwan read "unknown" until the nightly run |
@@ -590,8 +598,8 @@ To make it live, in order (systems manager, the lead session):
    accounts, and the nightly run (03:20 Kuwait) reads every account's reach
    and the lead ids.
 6. Release the native feed (`hermes/cockpit-sync`) so the CSM copy keeps
-   quotation N and the media sync skips the callback calendar; release the CEO
-   native worker for `triage.js`.
+   quotation N and the media sync drops the call centre's RESCHEDULE and
+   CALLBACK bookings by id.
 
 ## What is left, and who does it
 
@@ -601,6 +609,7 @@ To make it live, in order (systems manager, the lead session):
 | Professional Touch's ad account is not shared with Mahara's business 767701513092162: ask the client to share it and give the system user ads_read; then add a hand tie and run a backfill for that account. Until then spend is "unknown", never $0. | CEO, then systems manager |
 | Cancelled clients' accounts spent $1,507 in 30 days (Ideal Elite $578.62 on a Mahara campaign, Pidco $553.00 still delivering, AEA, Rm decor, حول العمران, MOFAG). Confirm each client's status; switch delivery off where the client is gone; decide whether to remove Pidco's account from Mahara's business. | Client success, media buyer, CEO |
 | Alkhalil's SAR account 640644143620696 is kept out of Alkhalil's figures (only the client's own Instagram post boosts). If Mahara does manage it, set its `kept_out` to false in a migration with the evidence. | Media buyer, then systems manager |
+| Atlantis's "Project Review & Qualification Call" calendar also takes leads' own bookings (3 of 5). Say whether it is a booking calendar: if yes, the board's calendar rule should count it (by its calendar id); if no, the booking page should not offer it. | Client success, then systems manager |
 | Triple Edge (spending, a clients row, no GoHighLevel location): a client or not? If yes, create its location and tie it; if no, hide it. | Client success |
 | Art Vision (spent $25.67, no client record) and ريبالو/ORB (hidden; Ocean Home's owner's other brand?): name, hide or remove. | Client success, CEO |
 | Ardon's Page gives Mahara no lead access, so its leads cannot be matched lead by lead. | CEO asks the client |
