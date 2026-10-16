@@ -18,7 +18,8 @@
  *   fixtures.json - any other function's result, keyed by its Convex name
  * The media buyer's own screens (/dashboard, /ads, /eod, /playbook) and /admin and /settings read the stand-in data in
  * portalFixtures.ts. A client's Calls part reads callCentreHarness.ts
- * (`&calls=` picks the answer).
+ * (`&calls=` picks the answer). The Client Performance board
+ * (?path=/performance) reads boardHarness.ts (`&board=` picks the answer).
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -35,11 +36,13 @@ import { AdsPage, EndOfDayPage, TodayPage } from "@/pages/CockpitPage";
 import { DataViewPage } from "@/pages/data/DataViewPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PlaybookPage } from "@/pages/PlaybookPage";
+import { PerformancePage } from "@/pages/performance/PerformancePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
 import { getCockpitSupabaseClient } from "@/auth/SupabaseAuthProvider";
+import { installBoardHarness } from "./boardHarness";
 import { installCallCentreHarness } from "./callCentreHarness";
 import { CallsHarnessPage } from "./callsHarnessPage";
 import { installCeoHarness } from "./ceoHarness";
@@ -65,6 +68,8 @@ async function main() {
   installDataViewHarness(getCockpitSupabaseClient());
   // A client's Calls part (?path=/calls?account=...&calls=on_track).
   installCallCentreHarness(getCockpitSupabaseClient());
+  // The Client Performance board (?path=/performance&board=...).
+  installBoardHarness(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
     // Optional since the cutover: the CEO tabs that still read them show
     // their empty states without.
@@ -109,6 +114,7 @@ async function main() {
               <Route element={<AppLayout />}>
                 <Route path="/ceo" element={<CeoPage />} />
                 <Route path="/team" element={<TeamPage />} />
+                <Route path="/performance" element={<PerformancePage />} />
                 <Route path="/team/:id" element={<MeetingPage />} />
                 <Route path="/dashboard" element={<TodayPage />} />
                 <Route path="/ads" element={<AdsPage />} />
