@@ -249,7 +249,7 @@ BEGIN
   DROP TABLE IF EXISTS pg_temp._bf_loc, pg_temp._bf_grid, pg_temp._bf_src, pg_temp._bf_v, pg_temp._bf_out,
     pg_temp._bf_ap, pg_temp._bf_sc, pg_temp._bf_pw, pg_temp._bf_dl, pg_temp._bf_sch, pg_temp._bf_ccl,
     pg_temp._bf_calls, pg_temp._bf_coh, pg_temp._bf_att, pg_temp._bf_st, pg_temp._bf_fin, pg_temp._bf_rm,
-    pg_temp._bf_cj, pg_temp._bf_cs, pg_temp._bf_rmd, pg_temp._bf_rs, pg_temp._bf_dm, pg_temp._bf_bulk;
+    pg_temp._bf_cj, pg_temp._bf_cs, pg_temp._bf_rmd, pg_temp._bf_rs, pg_temp._bf_dm, pg_temp._bf_bulk, pg_temp._bf_rl;
   -- fills: whether the client fills the source's column at all (the sheet's
   -- Closed marks, the sheet copy's Quotation Y); a source it does not fill
   -- gives nothing, never a 0.
@@ -265,6 +265,9 @@ BEGIN
   -- deal answer (sheet Closed Y/N/P, portal won/lost/pending) per contact and
   -- meeting day; the hours in which one location got 10 or more contacts.
   CREATE TEMP TABLE _bf_rmd (location_id text, contact_id text, day date, mark boolean) ON COMMIT DROP;
+  -- Every meeting the client's sheet lists (a row at that contact and time,
+  -- marked or not): a booking the sheet lists is never a replaced one.
+  CREATE TEMP TABLE _bf_rl (location_id text, contact_id text, meeting timestamptz) ON COMMIT DROP;
   CREATE TEMP TABLE _bf_rs (id text PRIMARY KEY) ON COMMIT DROP;
   CREATE TEMP TABLE _bf_dm (location_id text, day date, who text, mark text) ON COMMIT DROP;
   CREATE TEMP TABLE _bf_bulk (location_id text, day date, n integer) ON COMMIT DROP;
@@ -518,6 +521,10 @@ BEGIN
     WHERE NOT r.conflict AND r.contact_id IS NOT NULL AND r.meeting >= v_start AND r.meeting < v_end
     GROUP BY 1, 2, 3
     HAVING count(*) = 1 AND bool_and(coalesce(r.attendance, '') IN ('Y', 'N'));
+    INSERT INTO pg_temp._bf_rl
+    SELECT DISTINCT r.location_id, r.contact_id, r.meeting
+    FROM mahara_reporting.cc_results r JOIN pg_temp._bf_loc l ON l.location_id = r.location_id
+    WHERE NOT r.conflict AND r.contact_id IS NOT NULL AND r.meeting >= v_start AND r.meeting < v_end;
     PERFORM pg_catalog.set_config('enable_nestloop', v_nestloop, true);
     INSERT INTO pg_temp._bf_src (source, location_id, state, as_of, note)
     SELECT 'sheet_marks', l.location_id, 'ok', NULL, NULL FROM pg_temp._bf_loc l;
@@ -574,15 +581,17 @@ BEGIN
 
     -- A booking the contact or the call centre replaced before its time:
     -- GoHighLevel leaves the old one confirmed (Alkhalil, Atlantis). With no
-    -- mark anywhere (CRM status, the sheet's mark at its time, the portal) it
-    -- is not a meeting due: the same contact booked another main or online
-    -- meeting after it was booked and before its time. A booking replaced
-    -- after its time stays (a likely no-show), and so does one with a mark.
+    -- mark anywhere (CRM status, a sheet row at its time, marked or not, the
+    -- portal) it is not a meeting due: the same contact booked another main
+    -- or online meeting after it was booked and before its time. A booking
+    -- replaced after its time stays (a likely no-show), and so does one with
+    -- a mark or a row on the client's sheet (both meetings were real).
     UPDATE pg_temp._bf_ap a SET superseded = true
     WHERE a.kind IN ('main', 'online') AND coalesce(a.status, '') NOT IN ('cancelled', 'invalid', 'showed', 'noshow')
       AND a.attended IS NULL AND a.contact_id IS NOT NULL AND a.booked_at IS NOT NULL AND a.start_at IS NOT NULL
       AND NOT EXISTS (SELECT 1 FROM pg_temp._bf_out o WHERE o.location_id = a.location_id AND o.appointment_id = a.id)
       AND NOT EXISTS (SELECT 1 FROM pg_temp._bf_rm r WHERE r.location_id = a.location_id AND r.contact_id = a.contact_id AND r.meeting = a.start_at)
+      AND NOT EXISTS (SELECT 1 FROM pg_temp._bf_rl r WHERE r.location_id = a.location_id AND r.contact_id = a.contact_id AND r.meeting = a.start_at)
       AND EXISTS (
         SELECT 1 FROM public.appointments b
         LEFT JOIN LATERAL (

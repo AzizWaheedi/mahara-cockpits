@@ -1672,6 +1672,22 @@ describe("the corrections after the 2026-10-16 check", () => {
       booked: kt(5, "10:00"),
       start: kt(3, "12:00"),
     });
+    // G3 booked again before the first meeting, but the client's sheet lists
+    // the first one (a row at its time, not marked yet): both are real.
+    await appt("G3_a", LOC_G, {
+      ...main,
+      contact: "G3",
+      phone: phone(3),
+      booked: kt(9, "10:00"),
+      start: kt(7, "12:00"),
+    });
+    await appt("G3_b", LOC_G, {
+      ...main,
+      contact: "G3",
+      phone: phone(3),
+      booked: kt(8, "10:00"),
+      start: kt(-2, "12:00"),
+    });
     // G2 booked again only after the first meeting's time: a likely no-show, kept.
     await appt("G_late", LOC_G, {
       ...main,
@@ -1753,6 +1769,13 @@ describe("the corrections after the 2026-10-16 check", () => {
         show: "",
         closed: "",
       },
+      {
+        tab: tabOf(kd(7)),
+        phone: phone(3),
+        meeting: ms(kt(7, "12:00")),
+        show: "",
+        closed: "",
+      },
     ];
     await q(
       "INSERT INTO mahara_reporting.sheet_snapshots VALUES('production',$1,'Client G','S_G',true,$2::jsonb,now(),NULL)",
@@ -1787,6 +1810,8 @@ describe("the corrections after the 2026-10-16 check", () => {
       expect(
         String((d4.sources as Record<string, Row>).appointments.note),
       ).toContain("1 booking the contact replaced before its time");
+      // G3_a stays due: the sheet lists it.
+      expect((await g(7)).meetings_due).toBe(1);
       // G_late stays due: the contact booked again after its time.
       const d6 = await g(6);
       expect(d6.meetings_due).toBe(1);
