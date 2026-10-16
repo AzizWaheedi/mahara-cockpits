@@ -829,6 +829,7 @@ describe("who may read the board", () => {
     const open = Object.fromEntries(grants.map(g => [g.fn, g.roles]));
     expect(open).toEqual({
       cockpit_board_ad_cells: "",
+      cockpit_board_ad_cover: "",
       cockpit_board_ad_unmeasured: "",
       cockpit_board_appointments: "",
       cockpit_board_audit: "",
@@ -1439,6 +1440,231 @@ describe("missing is never zero", () => {
   });
 });
 
+describe("ad numbers only for the days the Meta store holds", () => {
+  const MON = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  /** A day as the sentences write it: to_char 'DD Mon YYYY' and 'DD Mon'. */
+  const dmy = (d: string) =>
+    `${d.slice(8, 10)} ${MON[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}`;
+  const dm = (d: string) => dmy(d).slice(0, 6);
+  const NO_DELIVERY = "No delivery on the linked ad accounts in these days.";
+
+  test("a time frame before the store's first day: every ad column is not measured, never $0", async () => {
+    // Formula Co's days are the store's first: kd(40).
+    const row = rowOf(await board(CREATIVE, kd(60), kd(50)), LOC_D);
+    const note = `Meta ad numbers are stored from ${dmy(F_FROM)}; this time frame is before that.`;
+    for (const k of [
+      "spend",
+      "impressions",
+      "linkClicks",
+      "metaLeads",
+      "cpl",
+      "cpm",
+      "cpc",
+      "linkCtr",
+    ])
+      expect(row.values[k]).toEqual({ v: null, status: "not_measured", note });
+    expect(row.values.costPerBooking).toMatchObject({
+      v: null,
+      status: "not_measured",
+      note,
+    });
+    expect(row.adCover).toEqual({ state: "before", note });
+    expect(row.notes).not.toContain(NO_DELIVERY);
+
+    // The tree: an ad with a CRM lead in those days is listed, its ad columns not measured.
+    await owner(db);
+    await lead("LD1", LOC_D, kt(55, "10:00"), {
+      ad: "92001",
+      campaign: "90001",
+      name: "Test Lead",
+    });
+    try {
+      const c = await client(CEO, LOC_D, kd(60), kd(50));
+      const ad = c.campaigns[0].adsets[0].ads[0];
+      expect(ad.id).toBe("92001");
+      expect(ad.metrics.spend).toEqual({
+        v: null,
+        status: "not_measured",
+        note,
+      });
+      expect(ad.metrics.crmLeads.v).toBe(1);
+      expect(ad.metrics.costPerBooking).toMatchObject({
+        v: null,
+        status: "not_measured",
+      });
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.client_leads WHERE ghl_contact_id = 'LD1'");
+    }
+  });
+
+  test("a time frame that straddles the store's first day: at least these, costs not called good, cost per booking and ROAS over the stored days", async () => {
+    const row = rowOf(await board(CREATIVE, kd(45), F_TO), LOC_D);
+    const v = row.values;
+    const note = `Meta ad numbers are stored from ${dmy(F_FROM)}; the days before are left out, so the ad numbers are at least these.`;
+    expect(v.spend).toEqual({
+      v: 1000,
+      status: null,
+      atLeast: true,
+      partial: true,
+      note,
+    });
+    expect(v.impressions).toMatchObject({ v: 200000, atLeast: true, note });
+    expect(v.linkClicks).toMatchObject({ v: 1350, atLeast: true });
+    expect(v.metaLeads).toMatchObject({ v: 50, atLeast: true });
+    // A cost over part of the days is called only when already past its lines.
+    expect(v.cpm).toMatchObject({ v: 5, status: "too_few", partial: true });
+    expect(v.cpm.atLeast).toBeUndefined();
+    expect(v.cpc).toMatchObject({ v: r2(1000 / 1350), status: "too_few" });
+    expect(v.cpl).toMatchObject({ v: 16, status: "watch", partial: true });
+    // Spend and the facts over the same ten stored days: exact for them, and it says so.
+    expect(v.costPerBooking).toMatchObject({
+      v: 100,
+      status: "off",
+      num: 1000,
+      den: 10,
+      partial: true,
+      pairedDays: 10,
+    });
+    expect(v.costPerBooking.note).toMatch(
+      /Over the 10 of 15 days where both are known\.$/,
+    );
+    expect(v.roas).toMatchObject({
+      v: 20,
+      status: "good",
+      num: 20000,
+      den: 1000,
+      partial: true,
+    });
+    expect(row.adCover).toMatchObject({
+      state: "partial",
+      pairFrom: F_FROM,
+      pairTo: F_TO,
+      adDays: 15,
+    });
+    expect(row.notes).toContain(note);
+    expect(row.notes).not.toContain(NO_DELIVERY);
+    // The tree carries the same floor.
+    const c = await client(CEO, LOC_D, kd(45), F_TO);
+    const camp = c.campaigns.find((x: Row) => x.id === "90001");
+    expect(camp.metrics.spend).toMatchObject({
+      v: 800,
+      atLeast: true,
+      partial: true,
+    });
+    expect(c.adCover.state).toBe("partial");
+  });
+
+  test("an ad account behind Kuwait's clock: its unfinished day is left out, never a $0 day", async () => {
+    const LA = "3333333333";
+    await owner(db);
+    for (const n of [1, 2, 3])
+      await adDay({
+        account: LA,
+        accountName: "Atlantis LA",
+        tz: "America/Los_Angeles",
+        day: kd(n),
+        campaign: "83001",
+        adset: "84001",
+        ad: "73001",
+        spend: 40,
+        imp: 4000,
+        clicks: 40,
+        leads: 2,
+        destination: "ON_AD",
+      });
+    await db.exec(
+      "CREATE TEMP TABLE _board_accounts AS SELECT location_id, ad_account_ids FROM public.cockpit_board_clients",
+    );
+    // 05:00 Kuwait time today: Los Angeles is still on Kuwait's yesterday.
+    await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz
+      LANGUAGE sql STABLE SET search_path = '' AS $$ SELECT '${kt(0, "05:00")}'::timestamptz $$`);
+    await q(
+      "UPDATE public.cockpit_board_clients SET ad_account_ids = ARRAY[$1] WHERE location_id = $2",
+      [LA, LOC_B],
+    );
+    await q(
+      "UPDATE public.cockpit_board_clients SET ad_account_ids = ARRAY[$1, $2] WHERE location_id = $3",
+      [ACCT_A, LA, LOC_A],
+    );
+    try {
+      const lag = `Ad numbers end yesterday on each ad account's own clock: Atlantis LA keeps America/Los_Angeles time, so its numbers end ${dm(kd(2))}`;
+      // Yesterday, on a client whose only account is in Los Angeles: not over there yet.
+      const y = rowOf(await board(CEO, kd(1), kd(1)), LOC_B);
+      expect(y.values.spend).toEqual({
+        v: null,
+        status: "not_measured",
+        note: `${lag}, so these days are not over there yet.`,
+      });
+      expect(y.values.costPerBooking.status).toBe("not_measured");
+      expect(y.adCover.state).toBe("not_over");
+      expect(y.notes).not.toContain(NO_DELIVERY);
+      // Three days: the two Los Angeles has finished, as at least.
+      const three = rowOf(await board(CEO, kd(3), kd(1)), LOC_B).values;
+      expect(three.spend).toMatchObject({
+        v: 80,
+        atLeast: true,
+        partial: true,
+        note: `${lag}, so the ad numbers are at least these.`,
+      });
+      expect(three.impressions).toMatchObject({ v: 8000, atLeast: true });
+      expect(three.cpl).toMatchObject({
+        v: 20,
+        status: "watch",
+        partial: true,
+      });
+      // Client A has a Kuwait account and the Los Angeles one: yesterday is in for one only.
+      const a = rowOf(await board(CEO, kd(1), kd(1)), LOC_A);
+      expect(a.values.spend).toMatchObject({ v: 22, atLeast: true });
+      expect(a.values.costPerBooking).toMatchObject({
+        v: null,
+        status: "not_measured",
+        note: "No day of this time frame is over on every linked ad account's clock yet.",
+      });
+      expect(a.notes).toContain(
+        `${lag}, so the ad numbers are at least these.`,
+      );
+      const c = await client(CEO, LOC_A, kd(1), kd(1));
+      expect(c.adCover).toMatchObject({
+        state: "partial",
+        pairFrom: kd(1),
+        pairTo: kd(2),
+      });
+      const camp = c.campaigns.find((x: Row) => x.id === "80001");
+      expect(camp.metrics.spend).toMatchObject({
+        v: 22,
+        atLeast: true,
+        partial: true,
+      });
+      expect(camp.metrics.costPerBooking.status).toBe("not_measured");
+      // The Los Angeles ad's unfinished day is not in the tree.
+      expect(c.campaigns.map((x: Row) => x.id)).not.toContain("83001");
+    } finally {
+      await owner(db);
+      await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz
+        LANGUAGE sql STABLE SET search_path = '' AS $$ SELECT pg_catalog.now() $$`);
+      await db.exec(`UPDATE public.cockpit_board_clients b SET ad_account_ids = x.ad_account_ids
+        FROM _board_accounts x WHERE x.location_id = b.location_id; DROP TABLE _board_accounts;`);
+      await q("DELETE FROM public.cockpit_meta_ad_days WHERE account_id = $1", [
+        LA,
+      ]);
+    }
+  });
+});
+
 describe("Client A: real facts, Meta's reach, the tree", () => {
   test("ad numbers end yesterday; chat lead ad sets stay out of cost per lead", async () => {
     const b = await board(CEO, kd(6), today);
@@ -1484,6 +1710,13 @@ describe("Client A: real facts, Meta's reach, the tree", () => {
       marked: 2,
       due: 2,
       note: "2 of 2 meetings due are marked.",
+    });
+    // AP1 and AP2 were booked from it in these days: $60 of spend over 2 bookings.
+    expect(ad1.metrics.costPerBooking).toMatchObject({
+      v: 30,
+      status: "good",
+      num: 60,
+      den: 2,
     });
     expect(ad1.metrics.hookRate).toMatchObject({ v: 30, num: 1800, den: 6000 });
     const ad2 = form.ads.find((a: Row) => a.id === "70002");

@@ -46,20 +46,26 @@
 --   - Rates are worked out at read time from the summed facts: the sum of the
 --     numerators over the sum of the denominators, never an average of daily
 --     rates. A rate whose two figures come from different sources (lead to
---     booking, quotation and close rates, leads called) sums both over the
---     days where both are known, and says so when those are fewer than the
---     time frame's days. Each value comes with a status against the effective target (the
---     client's override, else the board's override, else the official
---     default): good, watch, off, not_measured (no source), not_filled_in (the
---     client does not record it), too_few (under the minimum sample), or null
---     (a plain count with nothing to judge). A rule with no watch line (AOV)
---     calls anything short of good a watch; the show rate is never off. Leads
---     touched and first call have the watch line on the good line, so any miss
---     is off, as callCentre.ts callCentreVerdict judges them.
+--     booking, quotation and close rates, leads called, cost per booking,
+--     ROAS) sums both over the days where both are known, and says so when
+--     those are fewer than the time frame's days. Each value comes with a
+--     status against the effective target (the client's override, else the
+--     board's override, else the official default): good, watch, off,
+--     not_measured (no source), not_filled_in (the client does not record
+--     it), too_few (under the minimum sample), or null (a plain count with
+--     nothing to judge). A rule with no watch line (AOV) calls anything
+--     short of good a watch; the show rate is never off. Leads touched and
+--     first call have the watch line on the good line, so any miss is off,
+--     as callCentre.ts callCentreVerdict judges them.
 --   - Ad numbers (cockpit_meta_ad_days) end yesterday on each ad account's own
---     clock; the read says so. Cost per booking and ROAS divide by the same
---     days (bookings and revenue to yesterday). Cost per lead is lead-campaign
---     spend over form leads, so chat lead ad sets stay out (leads is NULL there).
+--     clock and start at the store's first day (cockpit_board_ad_cover). A
+--     time frame wholly outside them is not measured, never $0; one partly
+--     outside gives spend, impressions, link clicks and form leads as at
+--     least these, and a cost is called only when already past its lines.
+--     Cost per booking and ROAS divide spend and the facts over the same
+--     days: those every linked account has stored and the facts know. Cost
+--     per lead is lead-campaign spend over form leads, so chat lead ad sets
+--     stay out (leads is NULL there).
 --   - Frequency is Meta's own over the time frame (cockpit_meta_reach) when the
 --     time frame is one of the five standard windows; otherwise it is the
 --     impressions-weighted daily frequency, labelled "average daily".
@@ -441,6 +447,10 @@ $$;
  * lead_rows, leads, lead_spend, lead_clicks, video_rows, video_imp, v3, thru,
  * plays, p25, p50, p75, p100, freq_w, freq_imp) and, when the time frame is a
  * standard window, Meta's reach for it (p_reach: reach, impressions, note).
+ * p.partial (with p.partial_note): some days of the time frame have no ad
+ * numbers stored (before the store's first day, or not over yet on an ad
+ * account's clock), so spend, impressions, link clicks and form leads are at
+ * least these, and a cost is only called when it is already past its lines.
  * The same rules for a client, a campaign, an ad set and an ad.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_board_ad_cells(p jsonb, p_targets jsonb, p_reach jsonb DEFAULT NULL)
@@ -463,12 +473,18 @@ DECLARE
   freq_imp numeric := (p->>'freq_imp')::numeric;
   r_reach numeric := (p_reach->>'reach')::numeric;
   r_imp numeric := (p_reach->>'impressions')::numeric;
-  v_spend_note text := CASE WHEN unpriced > 0 THEN format('%s ad-day%s in a currency with no fixed USD rate %s left out, so spend is at least this.',
-    unpriced, CASE WHEN unpriced = 1 THEN '' ELSE 's' END, CASE WHEN unpriced = 1 THEN 'is' ELSE 'are' END) END;
+  v_partial boolean := coalesce((p->>'partial')::boolean, false);
+  v_partial_note text := CASE WHEN coalesce((p->>'partial')::boolean, false) THEN coalesce(nullif(p->>'partial_note', ''),
+    'Some days of this time frame have no ad numbers stored, so these are at least what is shown.') END;
+  v_spend_note text := nullif(concat_ws(' ', CASE WHEN unpriced > 0 THEN format('%s ad-day%s in a currency with no fixed USD rate %s left out, so spend is at least this.',
+    unpriced, CASE WHEN unpriced = 1 THEN '' ELSE 's' END, CASE WHEN unpriced = 1 THEN 'is' ELSE 'are' END) END, v_partial_note), '');
   v_no_lead constant text := 'No lead-form campaign ran in this time frame.';
   v_no_video constant text := 'Not a video: no video ad ran in this time frame.';
-  v_floor boolean := unpriced > 0;
-  v_at_least jsonb := CASE WHEN unpriced > 0 THEN jsonb_build_object('atLeast', true) END;
+  v_floor boolean := unpriced > 0 OR v_partial;
+  -- A cost on unpriced spend is at least this; a cost over partial days is a part of the time frame.
+  v_at_least jsonb := jsonb_strip_nulls(jsonb_build_object('atLeast', CASE WHEN unpriced > 0 THEN true END,
+    'partial', CASE WHEN v_partial THEN true END));
+  v_count jsonb := CASE WHEN v_partial THEN jsonb_build_object('atLeast', true, 'partial', true) END;
   v_freq jsonb;
   v_ret jsonb := '{}'::jsonb;
   k text;
@@ -496,19 +512,20 @@ BEGIN
   END LOOP;
   RETURN jsonb_build_object(
     'spend', public.cockpit_board_cell(NULL, round(spend, 2), p_targets, NULL, NULL, NULL, NULL, v_spend_note,
-      CASE WHEN unpriced > 0 THEN jsonb_build_object('atLeast', true) END),
-    'impressions', public.cockpit_board_cell(NULL, imp, p_targets),
-    'linkClicks', public.cockpit_board_cell(NULL, clicks, p_targets),
-    'metaLeads', CASE WHEN lead_rows = 0 THEN public.cockpit_board_cell(NULL, NULL, p_targets, NULL, NULL, NULL, 'not_measured', v_no_lead)
-                      ELSE public.cockpit_board_cell(NULL, leads, p_targets) END,
+      CASE WHEN unpriced > 0 OR v_partial THEN jsonb_build_object('atLeast', true) || coalesce(v_count, '{}'::jsonb) END),
+    'impressions', public.cockpit_board_cell(NULL, imp, p_targets, NULL, NULL, NULL, NULL, v_partial_note, v_count),
+    'linkClicks', public.cockpit_board_cell(NULL, clicks, p_targets, NULL, NULL, NULL, NULL, v_partial_note, v_count),
+    'metaLeads', CASE WHEN lead_rows = 0 THEN public.cockpit_board_cell(NULL, NULL, p_targets, NULL, NULL, NULL, 'not_measured',
+                        concat_ws(' ', v_no_lead, v_partial_note))
+                      ELSE public.cockpit_board_cell(NULL, leads, p_targets, NULL, NULL, NULL, NULL, v_partial_note, v_count) END,
     'cpl', CASE
       WHEN lead_rows = 0 THEN public.cockpit_board_cell('cpl', NULL, p_targets, NULL, NULL, NULL, 'not_measured', v_no_lead)
       WHEN leads > 0 THEN public.cockpit_board_cell('cpl', round(lead_spend / leads, 2), p_targets, leads, round(lead_spend, 2), leads,
         CASE WHEN v_floor THEN public.cockpit_board_floor_status('cpl', round(lead_spend / leads, 2), p_targets) END, v_spend_note, v_at_least)
       ELSE public.cockpit_board_cell('cpl', NULL, p_targets, 0, round(lead_spend, 2), 0,
         public.cockpit_board_floor_status('cpl', round(lead_spend, 2), p_targets),
-        format('No form lead yet for $%s of lead-campaign spend.', to_char(round(lead_spend, 2), 'FM999,999,990.00')),
-        jsonb_build_object('atLeast', round(lead_spend, 2))) END,
+        concat_ws(' ', format('No form lead yet for $%s of lead-campaign spend.', to_char(round(lead_spend, 2), 'FM999,999,990.00')), v_partial_note),
+        jsonb_build_object('atLeast', round(lead_spend, 2)) || CASE WHEN v_partial THEN jsonb_build_object('partial', true) ELSE '{}'::jsonb END) END,
     'cpm', CASE WHEN spend IS NULL THEN public.cockpit_board_cell('cpm', NULL, p_targets, imp, NULL, NULL, 'not_measured', v_spend_note)
                 WHEN imp > 0 THEN public.cockpit_board_cell('cpm', round(spend / imp * 1000, 2), p_targets, imp, round(spend, 2), imp,
                   CASE WHEN v_floor THEN public.cockpit_board_floor_status('cpm', round(spend / imp * 1000, 2), p_targets) END, v_spend_note, v_at_least)
@@ -605,6 +622,76 @@ BEGIN
   END IF;
 END $$;
 
+/**
+ * Which days of a time frame the Meta store holds for a client's linked ad
+ * accounts (p_meta is cockpit_meta_ad_days_status()). Ad days end yesterday
+ * on Kuwait's calendar and on each ad account's own clock (an account behind
+ * Kuwait, say Los Angeles, has not finished Kuwait's yesterday until 10:00
+ * Kuwait time), and start at the store's first day.
+ *   state  no_account | not_in (today only) | empty (no rows yet) | before (the
+ *          time frame ends before the store's first day) | not_over (no
+ *          linked account has finished a day of it) | full | partial
+ *   winTo  the last ad day (Kuwait's yesterday at most)
+ *   pairFrom..pairTo  the days every linked account has stored: cost per
+ *          booking and ROAS divide over these days only
+ *   note   what is left out, in a sentence
+ * The clock is cockpit_meta_ad_days_now(), the Meta store's own.
+ */
+CREATE OR REPLACE FUNCTION public.cockpit_board_ad_cover(p_accounts text[], p_from date, p_to date, p_meta jsonb)
+RETURNS jsonb LANGUAGE plpgsql STABLE SET search_path = '' AS $$
+DECLARE
+  v_now timestamptz := public.cockpit_meta_ad_days_now();
+  v_win_to date := least(p_to, (public.cockpit_meta_ad_days_now() AT TIME ZONE 'Asia/Kuwait')::date - 1);
+  v_first date := (p_meta->'store'->>'firstDay')::date;
+  v_min date;
+  v_max date;
+  v_lag text;
+  v_notes text[] := '{}';
+BEGIN
+  IF cardinality(coalesce(p_accounts, '{}'::text[])) = 0 THEN
+    RETURN jsonb_build_object('state', 'no_account');
+  END IF;
+  IF p_from > v_win_to THEN
+    RETURN jsonb_build_object('state', 'not_in', 'note', 'Ad numbers end yesterday on each ad account''s clock, so today is not in yet.');
+  END IF;
+  IF coalesce((p_meta->'store'->>'rows')::bigint, 0) = 0 OR v_first IS NULL THEN
+    RETURN jsonb_build_object('state', 'empty', 'note', 'The Meta ad store has no rows yet.');
+  END IF;
+  IF v_win_to < v_first THEN
+    RETURN jsonb_build_object('state', 'before', 'note',
+      format('Meta ad numbers are stored from %s; this time frame is before that.', to_char(v_first, 'DD Mon YYYY')));
+  END IF;
+  -- Each linked account's last finished day on its own clock (Kuwait's when the store has no time zone for it).
+  SELECT min(x.last_day), max(x.last_day),
+         string_agg(format('%s keeps %s time, so its numbers end %s', x.label, x.tz, to_char(x.last_day, 'DD Mon')), '; '
+           ORDER BY x.label) FILTER (WHERE x.last_day < v_win_to)
+    INTO v_min, v_max, v_lag
+  FROM (
+    SELECT coalesce(nullif(btrim(j.a->>'name'), ''), 'ad account ' || acc) AS label, coalesce(nullif(j.a->>'timezone', ''), 'Asia/Kuwait') AS tz,
+           (v_now AT TIME ZONE coalesce(nullif(j.a->>'timezone', ''), 'Asia/Kuwait'))::date - 1 AS last_day
+    FROM unnest(p_accounts) acc
+    LEFT JOIN LATERAL (SELECT e AS a FROM jsonb_array_elements(coalesce(p_meta->'accounts', '[]'::jsonb)) e
+                       WHERE e->>'accountId' = acc LIMIT 1) j ON true
+  ) x;
+  IF v_max < p_from THEN
+    RETURN jsonb_build_object('state', 'not_over', 'note',
+      format('Ad numbers end yesterday on each ad account''s own clock: %s, so these days are not over there yet.', v_lag));
+  END IF;
+  IF p_from < v_first THEN
+    v_notes := v_notes || format('Meta ad numbers are stored from %s; the days before are left out, so the ad numbers are at least these.',
+      to_char(v_first, 'DD Mon YYYY'));
+  END IF;
+  IF v_min < v_win_to THEN
+    v_notes := v_notes || format('Ad numbers end yesterday on each ad account''s own clock: %s, so the ad numbers are at least these.', v_lag);
+  END IF;
+  RETURN jsonb_build_object(
+    'state', CASE WHEN cardinality(v_notes) > 0 THEN 'partial' ELSE 'full' END,
+    'partial', cardinality(v_notes) > 0,
+    'winTo', v_win_to, 'adDays', v_win_to - p_from + 1,
+    'pairFrom', greatest(p_from, v_first), 'pairTo', least(v_win_to, v_min),
+    'note', nullif(array_to_string(v_notes, ' '), ''));
+END $$;
+
 /** A plain money, percent or count for a sentence. */
 CREATE OR REPLACE FUNCTION public.cockpit_board_fmt(p_value numeric, p_unit text)
 RETURNS text LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
@@ -627,10 +714,10 @@ CREATE OR REPLACE FUNCTION public.cockpit_board_rows(p_from date, p_to date, p_l
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_today date := (now() AT TIME ZONE 'Asia/Kuwait')::date;
+  v_now timestamptz := public.cockpit_meta_ad_days_now();
   v_days integer := p_to - p_from + 1;
-  v_ad_to date := least(p_to, ((now() AT TIME ZONE 'Asia/Kuwait')::date) - 1);
-  v_store_rows bigint := coalesce((p_meta->'store'->>'rows')::bigint, 0);
-  v_store_first date := (p_meta->'store'->>'firstDay')::date;
+  v_cover jsonb;
+  v_ad_days integer;
   v_out jsonb := '[]'::jsonb;
   r record;
   t jsonb;
@@ -641,11 +728,9 @@ DECLARE
   v_ad jsonb;
   v_ad_ok boolean;
   v_fail text;
-  v_spend numeric;
-  v_unpriced_spend boolean;
   -- the facts, NULL when no day has a figure
-  crm numeric; booked numeric; booked_ad numeric; due numeric; shows numeric; no_shows numeric; marked numeric;
-  no_out numeric; quotes numeric; closes numeric; valued numeric; revenue numeric; revenue_ad numeric; lq_n numeric;
+  crm numeric; booked numeric; due numeric; shows numeric; no_shows numeric; marked numeric;
+  no_out numeric; quotes numeric; closes numeric; valued numeric; revenue numeric; lq_n numeric;
   v_rev_incomplete boolean;
   v_closes_status text; v_quotes_status text; v_lq_status text;
   v_calls_note constant text := 'The client calls: Done With You.';
@@ -655,18 +740,22 @@ DECLARE
 BEGIN
   FOR r IN
     WITH cl AS (
-      SELECT b.location_id, b.clickup_id, b.client_name, b.status, b.service_mode, b.ad_account_ids, b.tiktok
+      SELECT b.location_id, b.clickup_id, b.client_name, b.status, b.service_mode, b.ad_account_ids, b.tiktok,
+        public.cockpit_board_ad_cover(b.ad_account_ids, p_from, p_to, p_meta) AS cover
       FROM public.cockpit_board_clients b
       WHERE coalesce(b.status, '') NOT IN ('Cancelled', 'Removed from sheet')
         AND (p_location IS NULL OR b.location_id = p_location)
+    ), clp AS (
+      -- The clients whose ad days the store holds, with their ad window and the days every linked account has.
+      SELECT cl.location_id, cl.ad_account_ids, (cl.cover->>'winTo')::date AS win_to,
+        (cl.cover->>'pairFrom')::date AS pair_from, (cl.cover->>'pairTo')::date AS pair_to
+      FROM cl WHERE cl.cover->>'state' IN ('full', 'partial')
     ), fx AS (
       SELECT d.location_id AS fx_loc,
         count(*) AS f_days, max(d.computed_at) AS f_computed,
         sum(d.crm_leads) AS f_crm, count(d.crm_leads) AS f_crm_d,
         sum(d.crm_ad_leads) AS f_crm_ad, count(d.crm_ad_leads) AS f_crm_ad_d,
         sum(d.confirmed_bookings) AS f_booked, count(d.confirmed_bookings) AS f_booked_d,
-        sum(d.confirmed_bookings) FILTER (WHERE d.day <= v_ad_to) AS f_booked_ad,
-        count(d.confirmed_bookings) FILTER (WHERE d.day <= v_ad_to) AS f_booked_ad_d,
         sum(d.provisional_bookings) AS f_prov, count(d.provisional_bookings) AS f_prov_d,
         sum(d.meetings_due) AS f_due, count(d.meetings_due) AS f_due_d,
         sum(d.shows) AS f_shows, sum(d.no_shows) AS f_no_shows, count(d.shows) AS f_shows_d,
@@ -677,11 +766,7 @@ BEGIN
         sum(d.closes) AS f_closes, count(d.closes) AS f_closes_d,
         sum(d.closes_with_value) AS f_valued,
         sum(d.revenue_usd) AS f_revenue,
-        sum(d.revenue_usd) FILTER (WHERE d.day <= v_ad_to) AS f_revenue_ad,
-        sum(d.closes) FILTER (WHERE d.day <= v_ad_to) AS f_closes_ad,
-        sum(d.closes_with_value) FILTER (WHERE d.day <= v_ad_to) AS f_valued_ad,
         coalesce(sum((d.sources->'sheet'->>'unpricedCloses')::integer), 0) AS f_unpriced,
-        coalesce(sum((d.sources->'sheet'->>'unpricedCloses')::integer) FILTER (WHERE d.day <= v_ad_to), 0) AS f_unpriced_ad,
         sum(d.lead_quality_sum) AS f_lq_sum, sum(d.lead_quality_count) AS f_lq_n, count(d.lead_quality_count) AS f_lq_d,
         sum(d.dials) AS f_dials, count(d.dials) AS f_dials_d,
         sum(d.leads_called) AS f_called, count(d.leads_called) AS f_called_d,
@@ -706,8 +791,14 @@ BEGIN
       FROM public.cockpit_client_days d JOIN cl ON cl.location_id = d.location_id
       WHERE d.day BETWEEN p_from AND p_to
       ORDER BY d.location_id, d.day DESC
+    ), mx AS (
+      -- Ad days in the client's ad window, each finished on its own account's clock.
+      SELECT clp.location_id, clp.pair_from, clp.pair_to, m.*
+      FROM clp JOIN public.cockpit_meta_ad_days m ON m.account_id = ANY(clp.ad_account_ids)
+      WHERE m.day BETWEEN p_from AND clp.win_to
+        AND m.day < (v_now AT TIME ZONE coalesce(m.account_timezone, 'Asia/Kuwait'))::date
     ), ad AS (
-      SELECT cl.location_id, jsonb_build_object(
+      SELECT m.location_id, jsonb_build_object(
           'rows', count(*), 'spend', sum(m.spend_usd), 'unpriced', count(*) FILTER (WHERE m.spend IS NOT NULL AND m.spend_usd IS NULL),
           'imp', sum(m.impressions), 'clicks', sum(m.link_clicks),
           'lead_rows', count(*) FILTER (WHERE m.leads IS NOT NULL), 'leads', sum(m.leads),
@@ -719,10 +810,32 @@ BEGIN
           'p100', sum(m.video_p100) FILTER (WHERE m.video_plays IS NOT NULL),
           'freq_w', sum(m.impressions * m.frequency) FILTER (WHERE m.frequency > 0), 'freq_imp', sum(m.impressions) FILTER (WHERE m.frequency > 0)
         ) AS a_sums, max(m.fetched_at) AS a_fetched
-      FROM cl JOIN public.cockpit_meta_ad_days m ON m.account_id = ANY(cl.ad_account_ids)
-      WHERE m.day BETWEEN p_from AND p_to
-        AND m.day < (now() AT TIME ZONE coalesce(m.account_timezone, 'Asia/Kuwait'))::date
-      GROUP BY cl.location_id
+      FROM mx m
+      GROUP BY m.location_id
+    ), ad_day AS (
+      -- Spend per day on the days every linked account has stored.
+      SELECT m.location_id, m.day, sum(m.spend_usd) AS spend, count(*) FILTER (WHERE m.spend IS NOT NULL AND m.spend_usd IS NULL) AS unpriced
+      FROM mx m WHERE m.day BETWEEN m.pair_from AND m.pair_to
+      GROUP BY m.location_id, m.day
+    ), pr AS (
+      -- Cost per booking and ROAS: spend and the facts summed over the same days, those
+      -- every linked account has stored and the facts know (bookings, closed deals).
+      SELECT d.location_id AS pr_loc,
+        count(d.confirmed_bookings) AS p_b_d,
+        sum(d.confirmed_bookings) AS p_b_booked,
+        coalesce(sum(s.spend) FILTER (WHERE d.confirmed_bookings IS NOT NULL), 0) AS p_b_spend,
+        coalesce(sum(s.unpriced) FILTER (WHERE d.confirmed_bookings IS NOT NULL), 0) AS p_b_unpriced,
+        count(d.closes) AS p_r_d,
+        coalesce(sum(d.revenue_usd) FILTER (WHERE d.closes IS NOT NULL), 0) AS p_r_rev,
+        coalesce(sum(d.closes), 0) AS p_r_closes,
+        coalesce(sum(d.closes_with_value) FILTER (WHERE d.closes IS NOT NULL), 0) AS p_r_valued,
+        coalesce(sum((d.sources->'sheet'->>'unpricedCloses')::integer) FILTER (WHERE d.closes IS NOT NULL), 0) AS p_r_unpriced_closes,
+        coalesce(sum(s.spend) FILTER (WHERE d.closes IS NOT NULL), 0) AS p_r_spend,
+        coalesce(sum(s.unpriced) FILTER (WHERE d.closes IS NOT NULL), 0) AS p_r_unpriced
+      FROM public.cockpit_client_days d JOIN clp ON clp.location_id = d.location_id
+      LEFT JOIN ad_day s ON s.location_id = d.location_id AND s.day = d.day
+      WHERE d.day BETWEEN clp.pair_from AND clp.pair_to
+      GROUP BY d.location_id
     ), rc AS (
       SELECT DISTINCT ON (x.key) x.key AS location_id,
         jsonb_build_object('reach', x.reach, 'impressions', x.impressions, 'note', x.note) AS a_reach
@@ -738,14 +851,15 @@ BEGIN
         count(*) FILTER (WHERE l.status = 'reconcile') AS l_reconcile, max(l.created_at) AS l_last
       FROM public.cockpit_board_levers l GROUP BY l.location_id
     )
-    SELECT cl.location_id, cl.clickup_id, cl.client_name, cl.status, cl.service_mode, cl.ad_account_ids, cl.tiktok,
-      fx.*, src.sources AS s_sources, ad.a_sums, ad.a_fetched, rc.a_reach, coalesce(cr.callers, '[]'::jsonb) AS c_callers,
+    SELECT cl.location_id, cl.clickup_id, cl.client_name, cl.status, cl.service_mode, cl.ad_account_ids, cl.tiktok, cl.cover AS c_cover,
+      fx.*, pr.*, src.sources AS s_sources, ad.a_sums, ad.a_fetched, rc.a_reach, coalesce(cr.callers, '[]'::jsonb) AS c_callers,
       n.untouched_leads AS n_untouched, n.oldest_untouched_at AS n_oldest, n.touched_share_30d AS n_share,
       n.callable_30d AS n_callable, n.touched_30d AS n_touched, n.first_call_median_work_seconds_30d AS n_first,
       n.computed_at AS n_computed, n.note AS n_note, n.location_id IS NOT NULL AS n_has,
       coalesce(lv.l_open, 0) AS l_open, coalesce(lv.l_reconcile, 0) AS l_reconcile, lv.l_last
     FROM cl
     LEFT JOIN fx ON fx.fx_loc = cl.location_id
+    LEFT JOIN pr ON pr.pr_loc = cl.location_id
     LEFT JOIN src ON src.location_id = cl.location_id
     LEFT JOIN ad ON ad.location_id = cl.location_id
     LEFT JOIN rc ON rc.location_id = cl.location_id
@@ -761,7 +875,6 @@ BEGIN
 
     crm := CASE WHEN r.f_crm_d > 0 THEN r.f_crm END;
     booked := CASE WHEN r.f_booked_d > 0 THEN r.f_booked END;
-    booked_ad := CASE WHEN r.f_booked_ad_d > 0 THEN r.f_booked_ad END;
     due := CASE WHEN r.f_due_d > 0 THEN r.f_due END;
     shows := CASE WHEN r.f_shows_d > 0 THEN r.f_shows END;
     no_shows := CASE WHEN r.f_shows_d > 0 THEN r.f_no_shows END;
@@ -771,7 +884,6 @@ BEGIN
     closes := CASE WHEN r.f_closes_d > 0 THEN r.f_closes END;
     valued := CASE WHEN r.f_closes_d > 0 THEN r.f_valued END;
     revenue := CASE WHEN r.f_closes_d > 0 THEN r.f_revenue END;
-    revenue_ad := CASE WHEN r.f_closes_d > 0 THEN coalesce(r.f_revenue_ad, 0) END;
     lq_n := CASE WHEN r.f_lq_d > 0 THEN r.f_lq_n END;
     v_rev_incomplete := coalesce(r.f_closes, 0) > coalesce(r.f_valued, 0) OR coalesce(r.f_unpriced, 0) > 0;
 
@@ -786,26 +898,25 @@ BEGIN
     v_lq_status := CASE WHEN v_src->'outcomes'->>'state' = 'failed' OR v_src->'appointments'->>'state' = 'failed'
                           OR r.f_days IS NULL THEN 'not_measured' ELSE 'not_filled_in' END;
 
-    -- The ad half.
-    v_ad_ok := false;
-    v_spend := NULL;
-    IF cardinality(coalesce(r.ad_account_ids, '{}'::text[])) = 0 THEN
+    -- The ad half: only the days the Meta store holds for every linked account (cockpit_board_ad_cover).
+    v_cover := r.c_cover;
+    v_ad_ok := v_cover->>'state' IN ('full', 'partial');
+    v_ad_days := CASE WHEN v_ad_ok THEN (v_cover->>'adDays')::integer END;
+    IF v_cover->>'state' = 'no_account' THEN
       v_ad := public.cockpit_board_ad_unmeasured('not_measured', CASE WHEN r.tiktok
         THEN 'No Meta ad account is linked to this client, and TikTok spend is not stored.'
         ELSE 'No Meta ad account is linked to this client.' END);
-    ELSIF p_from > v_ad_to THEN
-      v_ad := public.cockpit_board_ad_unmeasured('not_measured', 'Ad numbers end yesterday on each ad account''s clock, so today is not in yet.');
-    ELSIF v_store_rows = 0 THEN
-      v_ad := public.cockpit_board_ad_unmeasured('not_measured', 'The Meta ad store has no rows yet.');
+    ELSIF NOT v_ad_ok THEN
+      -- Before the store's first day, today only, or not over yet on the accounts' clocks: not measured, never $0.
+      v_ad := public.cockpit_board_ad_unmeasured('not_measured', v_cover->>'note');
     ELSE
-      v_ad := public.cockpit_board_ad_cells(coalesce(r.a_sums, jsonb_build_object('rows', 0, 'spend', 0)), t, r.a_reach);
-      v_ad_ok := true;
-      v_spend := (v_ad->'spend'->>'v')::numeric;
-      IF r.a_sums IS NULL THEN
+      v_ad := public.cockpit_board_ad_cells(coalesce(r.a_sums, jsonb_build_object('rows', 0, 'spend', 0))
+          || CASE WHEN (v_cover->>'partial')::boolean THEN jsonb_build_object('partial', true, 'partial_note', v_cover->>'note') ELSE '{}'::jsonb END,
+        t, r.a_reach);
+      IF (v_cover->>'partial')::boolean THEN
+        v_notes := v_notes || (v_cover->>'note');
+      ELSIF r.a_sums IS NULL THEN
         v_notes := v_notes || 'No delivery on the linked ad accounts in these days.'::text;
-      END IF;
-      IF v_store_first IS NOT NULL AND p_from < v_store_first THEN
-        v_notes := v_notes || format('Meta ad numbers are stored from %s; earlier days are left out.', to_char(v_store_first, 'DD Mon YYYY'));
       END IF;
       SELECT string_agg(format('%s%s since %s', a->>'accountId', coalesce(' (' || (a->>'name') || ')', ''),
                coalesce(to_char((a->>'failingSince')::timestamptz AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'), 'its last read')), ', ')
@@ -819,7 +930,6 @@ BEGIN
         v_notes := v_notes || 'Meta only: TikTok spend is not stored.'::text;
       END IF;
     END IF;
-    v_unpriced_spend := coalesce((v_ad->'spend'->>'atLeast')::boolean, false);
 
     v_vals := v_ad
       || jsonb_build_object(
@@ -852,19 +962,31 @@ BEGIN
       ELSE public.cockpit_board_cell('lead_to_booking', round(r.f_lb_booked::numeric / r.f_lb_leads * 100, 2), t, r.f_lb_leads, r.f_lb_booked, r.f_lb_leads,
         NULL, v_pair->>'note', v_pair - 'note') END);
 
-    -- Cost per booking: spend / confirmed bookings over the same days (to yesterday).
+    -- Cost per booking: spend / confirmed bookings over the same days: those to
+    -- yesterday that every linked account has stored and the facts know.
+    v_pair := CASE WHEN v_ad_ok THEN public.cockpit_board_paired(r.p_b_d, v_ad_days) ELSE '{}'::jsonb END;
     v_vals := v_vals || jsonb_build_object('costPerBooking', CASE
       WHEN NOT v_ad_ok THEN public.cockpit_board_cell('cost_per_booking', NULL, t, NULL, NULL, NULL, 'not_measured', v_ad->'spend'->>'note')
-      WHEN booked_ad IS NULL OR v_spend IS NULL THEN public.cockpit_board_cell('cost_per_booking', NULL, t, NULL, NULL, NULL, 'not_measured',
-        coalesce(v_src->'appointments'->>'note', v_ad->'spend'->>'note'))
-      WHEN booked_ad > 0 THEN public.cockpit_board_cell('cost_per_booking', round(v_spend / booked_ad, 2), t, booked_ad, v_spend, booked_ad,
-        CASE WHEN v_unpriced_spend THEN public.cockpit_board_floor_status('cost_per_booking', round(v_spend / booked_ad, 2), t) END,
-        concat_ws(' ', 'Confirmed bookings to yesterday, the same days as spend.', v_ad->'spend'->>'note'),
-        CASE WHEN v_unpriced_spend THEN jsonb_build_object('atLeast', true) END)
-      WHEN v_spend > 0 THEN public.cockpit_board_cell('cost_per_booking', NULL, t, 0, v_spend, 0,
-        public.cockpit_board_floor_status('cost_per_booking', v_spend, t),
-        format('No confirmed booking yet for %s of spend.', public.cockpit_board_fmt(v_spend, 'usd')), jsonb_build_object('atLeast', v_spend))
-      ELSE public.cockpit_board_cell('cost_per_booking', NULL, t, 0, 0, 0, 'too_few', 'No spend and no confirmed booking in these days.') END);
+      WHEN booked IS NULL THEN public.cockpit_board_cell('cost_per_booking', NULL, t, NULL, NULL, NULL, 'not_measured',
+        coalesce(v_src->'appointments'->>'note', 'No confirmed bookings are stored for these days.'))
+      WHEN (v_cover->>'pairTo')::date < (v_cover->>'pairFrom')::date THEN public.cockpit_board_cell('cost_per_booking', NULL, t, NULL, NULL, NULL,
+        'not_measured', 'No day of this time frame is over on every linked ad account''s clock yet.')
+      WHEN coalesce(r.p_b_d, 0) = 0 THEN public.cockpit_board_cell('cost_per_booking', NULL, t, NULL, NULL, NULL, 'not_measured',
+        'No day in this time frame has both ad numbers and confirmed bookings stored.')
+      WHEN r.p_b_unpriced > 0 AND r.p_b_spend = 0 THEN public.cockpit_board_cell('cost_per_booking', NULL, t, NULL, NULL, NULL, 'not_measured',
+        'The spend is in a currency with no fixed USD rate.')
+      WHEN r.p_b_booked > 0 THEN public.cockpit_board_cell('cost_per_booking', round(r.p_b_spend / r.p_b_booked, 2), t, r.p_b_booked,
+        round(r.p_b_spend, 2), r.p_b_booked,
+        CASE WHEN r.p_b_unpriced > 0 THEN public.cockpit_board_floor_status('cost_per_booking', round(r.p_b_spend / r.p_b_booked, 2), t) END,
+        concat_ws(' ', 'Spend and confirmed bookings over the same days, to yesterday.',
+          CASE WHEN r.p_b_unpriced > 0 THEN 'Some spend is in a currency with no fixed USD rate, so the cost is at least this.' END, v_pair->>'note'),
+        (v_pair - 'note') || CASE WHEN r.p_b_unpriced > 0 THEN jsonb_build_object('atLeast', true) ELSE '{}'::jsonb END)
+      WHEN r.p_b_spend > 0 THEN public.cockpit_board_cell('cost_per_booking', NULL, t, 0, round(r.p_b_spend, 2), 0,
+        public.cockpit_board_floor_status('cost_per_booking', round(r.p_b_spend, 2), t),
+        concat_ws(' ', format('No confirmed booking yet for %s of spend.', public.cockpit_board_fmt(r.p_b_spend, 'usd')), v_pair->>'note'),
+        (v_pair - 'note') || jsonb_build_object('atLeast', round(r.p_b_spend, 2)))
+      ELSE public.cockpit_board_cell('cost_per_booking', NULL, t, 0, 0, 0, 'too_few',
+        concat_ws(' ', 'No spend and no confirmed booking in these days.', v_pair->>'note'), v_pair - 'note') END);
 
     -- Shows and the show rate: shows / (shows + no-shows), unmarked never a no-show.
     v_vals := v_vals || jsonb_build_object(
@@ -928,17 +1050,25 @@ BEGIN
         WHEN closes > 0 THEN public.cockpit_board_cell('aov', NULL, t, 0, NULL, NULL, 'not_measured', 'No closed deal carries a value in a known currency.')
         ELSE public.cockpit_board_cell('aov', NULL, t, 0, NULL, NULL, 'too_few', 'No closed deal in this time frame.') END);
 
-    v_x := CASE WHEN v_spend > 0 AND revenue_ad IS NOT NULL THEN round(revenue_ad / v_spend, 2) END;
+    -- ROAS: revenue by meeting day / spend, over the same days as cost per booking, those the facts know closed deals for.
+    v_pair := CASE WHEN v_ad_ok THEN public.cockpit_board_paired(r.p_r_d, v_ad_days) ELSE '{}'::jsonb END;
+    v_x := CASE WHEN r.p_r_spend > 0 THEN round(r.p_r_rev / r.p_r_spend, 2) END;
     v_vals := v_vals || jsonb_build_object('roas', CASE
       WHEN closes IS NULL THEN public.cockpit_board_cell('roas', NULL, t, NULL, NULL, NULL, v_closes_status, 'The client does not record closed deals.')
       WHEN NOT v_ad_ok THEN public.cockpit_board_cell('roas', NULL, t, NULL, NULL, NULL, 'not_measured', v_ad->'spend'->>'note')
-      WHEN v_spend IS NULL OR v_spend = 0 THEN public.cockpit_board_cell('roas', NULL, t, NULL, revenue_ad, v_spend, 'not_measured', 'No ad spend in these days.')
-      WHEN v_unpriced_spend THEN public.cockpit_board_cell('roas', NULL, t, NULL, revenue_ad, v_spend, 'not_measured',
+      WHEN (v_cover->>'pairTo')::date < (v_cover->>'pairFrom')::date THEN public.cockpit_board_cell('roas', NULL, t, NULL, NULL, NULL,
+        'not_measured', 'No day of this time frame is over on every linked ad account''s clock yet.')
+      WHEN coalesce(r.p_r_d, 0) = 0 THEN public.cockpit_board_cell('roas', NULL, t, NULL, NULL, NULL, 'not_measured',
+        'No day in this time frame has both ad numbers and closed deals stored.')
+      WHEN r.p_r_unpriced > 0 THEN public.cockpit_board_cell('roas', NULL, t, NULL, round(r.p_r_rev, 2), round(r.p_r_spend, 2), 'not_measured',
         'Some spend is in a currency with no fixed USD rate, so ROAS is not known.')
-      WHEN r.f_closes_ad > coalesce(r.f_valued_ad, 0) OR r.f_unpriced_ad > 0 THEN
-        public.cockpit_board_cell('roas', v_x, t, NULL, revenue_ad, v_spend, public.cockpit_board_floor_status('roas', v_x, t),
-          'A closed deal has no value in a known currency, so ROAS is at least this.', jsonb_build_object('atLeast', true))
-      ELSE public.cockpit_board_cell('roas', v_x, t, NULL, revenue_ad, v_spend, NULL, 'Revenue by meeting day to yesterday, over the same days'' spend.') END);
+      WHEN r.p_r_spend = 0 THEN public.cockpit_board_cell('roas', NULL, t, NULL, round(r.p_r_rev, 2), 0, 'not_measured', 'No ad spend in these days.')
+      WHEN r.p_r_closes > r.p_r_valued OR r.p_r_unpriced_closes > 0 THEN
+        public.cockpit_board_cell('roas', v_x, t, NULL, round(r.p_r_rev, 2), round(r.p_r_spend, 2), public.cockpit_board_floor_status('roas', v_x, t),
+          concat_ws(' ', 'A closed deal has no value in a known currency, so ROAS is at least this.', v_pair->>'note'),
+          (v_pair - 'note') || jsonb_build_object('atLeast', true))
+      ELSE public.cockpit_board_cell('roas', v_x, t, NULL, round(r.p_r_rev, 2), round(r.p_r_spend, 2), NULL,
+        concat_ws(' ', 'Revenue by meeting day to yesterday, over the same days'' spend.', v_pair->>'note'), v_pair - 'note') END);
 
     -- Lead quality: the portal's score, 1 to 10, averaged over rated meetings.
     v_vals := v_vals || jsonb_build_object('leadQuality', CASE
@@ -981,6 +1111,7 @@ BEGIN
       'locationId', r.location_id, 'clickupId', r.clickup_id, 'clientName', r.client_name, 'status', r.status,
       'serviceMode', r.service_mode, 'clientCalls', v_dwy, 'tiktok', r.tiktok,
       'adAccounts', to_jsonb(coalesce(r.ad_account_ids, '{}'::text[])),
+      'adCover', v_cover,
       'callers', r.c_callers,
       'noOutcome', (v_vals->'noOutcome'->>'v')::numeric,
       'noOutcomeOldestDays', (v_vals->'noOutcome'->>'oldestDays')::integer,
@@ -1124,26 +1255,43 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
 $$;
 
 /**
- * One client's campaigns > ad sets > ads in the time frame (ad days to
- * yesterday on the account's clock), each with the ad columns and the CRM
- * leads, confirmed bookings and shows that carry its ad id; ads with CRM rows
- * but no spend in the time frame are listed too. CRM rows whose ad is not in
- * the Meta store, and those with no ad at all, are counted apart.
+ * One client's campaigns > ad sets > ads in the time frame, each with the ad
+ * columns and the CRM leads, confirmed bookings and shows that carry its ad
+ * id; ads with CRM rows but no spend in the time frame are listed too. CRM
+ * rows whose ad is not in the Meta store, and those with no ad at all, are
+ * counted apart. p_cover is cockpit_board_ad_cover for the client: ad days
+ * only where the store holds them (to yesterday on each account's clock,
+ * from the store's first day); outside that the ad columns are not measured,
+ * never $0, and cost per booking divides over the days every linked account
+ * has stored.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_board_tree(p_location text, p_accounts text[], p_from date, p_to date,
-  p_targets jsonb, p_marks jsonb)
+  p_targets jsonb, p_marks jsonb, p_cover jsonb)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
 DECLARE
   v_today date := (now() AT TIME ZONE 'Asia/Kuwait')::date;
+  v_now timestamptz := public.cockpit_meta_ad_days_now();
   v_start timestamptz := p_from::timestamp AT TIME ZONE 'Asia/Kuwait';
   v_end timestamptz := (p_to + 1)::timestamp AT TIME ZONE 'Asia/Kuwait';
-  v_ad_end timestamptz := least(p_to + 1, v_today)::timestamp AT TIME ZONE 'Asia/Kuwait';
+  v_ad_ok boolean := coalesce(p_cover->>'state' IN ('full', 'partial'), false);
+  v_win_to date := (p_cover->>'winTo')::date;
+  v_pair_from date := (p_cover->>'pairFrom')::date;
+  v_pair_to date := (p_cover->>'pairTo')::date;
+  v_pair_start timestamptz := (p_cover->>'pairFrom')::date::timestamp AT TIME ZONE 'Asia/Kuwait';
+  v_pair_end timestamptz := ((p_cover->>'pairTo')::date + 1)::timestamp AT TIME ZONE 'Asia/Kuwait';
+  v_partial jsonb := CASE WHEN coalesce((p_cover->>'partial')::boolean, false)
+    THEN jsonb_build_object('partial', true, 'partial_note', p_cover->>'note') ELSE '{}'::jsonb END;
+  v_unmeasured jsonb := public.cockpit_board_ad_unmeasured('not_measured',
+    coalesce(p_cover->>'note', 'No Meta ad account is linked to this client.'));
+  v_pair_days text := CASE WHEN (p_cover->>'pairTo')::date >= (p_cover->>'pairFrom')::date
+    THEN format('%s to %s', to_char((p_cover->>'pairFrom')::date, 'DD Mon'), to_char((p_cover->>'pairTo')::date, 'DD Mon')) END;
   v_out jsonb;
 BEGIN
   WITH m AS (
+    -- Ad days the store holds: to yesterday, each finished on its own account's clock.
     SELECT x.* FROM public.cockpit_meta_ad_days x
-    WHERE x.account_id = ANY(coalesce(p_accounts, '{}'::text[])) AND x.day BETWEEN p_from AND p_to
-      AND x.day < (now() AT TIME ZONE coalesce(x.account_timezone, 'Asia/Kuwait'))::date
+    WHERE v_ad_ok AND x.account_id = ANY(coalesce(p_accounts, '{}'::text[])) AND x.day BETWEEN p_from AND v_win_to
+      AND x.day < (v_now AT TIME ZONE coalesce(x.account_timezone, 'Asia/Kuwait'))::date
   ), names AS (
     SELECT DISTINCT ON (x.ad_id) x.ad_id, x.ad_name, x.adset_id, x.adset_name, x.campaign_id, x.campaign_name, x.objective,
       x.destination_type, x.account_id
@@ -1166,7 +1314,8 @@ BEGIN
                  AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(f.data->'tags') = 'array'
                               THEN f.data->'tags' ELSE '[]'::jsonb END) tg(x) WHERE lower(btrim(tg.x)) = 'inbound whatsapp'))
       UNION ALL
-      SELECT a.ad_id, 0, 1, CASE WHEN a.booked_at < v_ad_end THEN 1 ELSE 0 END, 0, 0, 0 FROM ap a
+      -- bookings_ad: made on the days cost per booking divides over (every linked account stored).
+      SELECT a.ad_id, 0, 1, CASE WHEN a.booked_at >= v_pair_start AND a.booked_at < v_pair_end THEN 1 ELSE 0 END, 0, 0, 0 FROM ap a
       WHERE a.kind IN ('main', 'online') AND coalesce(a.status, '') NOT IN ('cancelled', 'invalid')
         AND a.booked_at >= v_start AND a.booked_at < v_end
       UNION ALL
@@ -1186,6 +1335,8 @@ BEGIN
       sum(m.video_p50) FILTER (WHERE m.video_plays IS NOT NULL) AS p50, sum(m.video_p75) FILTER (WHERE m.video_plays IS NOT NULL) AS p75,
       sum(m.video_p100) FILTER (WHERE m.video_plays IS NOT NULL) AS p100,
       sum(m.impressions * m.frequency) FILTER (WHERE m.frequency > 0) AS freq_w, sum(m.impressions) FILTER (WHERE m.frequency > 0) AS freq_imp,
+      sum(m.spend_usd) FILTER (WHERE m.day BETWEEN v_pair_from AND v_pair_to) AS pair_spend,
+      count(*) FILTER (WHERE m.day BETWEEN v_pair_from AND v_pair_to AND m.spend IS NOT NULL AND m.spend_usd IS NULL) AS pair_unpriced,
       coalesce(c.leads, 0) AS crm_leads, coalesce(c.bookings, 0) AS crm_bookings, coalesce(c.bookings_ad, 0) AS crm_bookings_ad,
       coalesce(c.shows, 0) AS crm_shows, coalesce(c.no_shows, 0) AS crm_no_shows, coalesce(c.due, 0) AS crm_due
     FROM names n
@@ -1202,7 +1353,8 @@ BEGIN
             sum(a.imp) AS imp, sum(a.clicks) AS clicks, sum(a.lead_rows) AS lead_rows, sum(a.leads) AS leads, sum(a.lead_spend) AS lead_spend,
             sum(a.lead_clicks) AS lead_clicks, sum(a.video_rows) AS video_rows, sum(a.video_imp) AS video_imp, sum(a.v3) AS v3, sum(a.thru) AS thru,
             sum(a.plays) AS plays, sum(a.p25) AS p25, sum(a.p50) AS p50, sum(a.p75) AS p75, sum(a.p100) AS p100,
-            sum(a.freq_w) AS freq_w, sum(a.freq_imp) AS freq_imp, sum(a.crm_leads) AS crm_leads, sum(a.crm_bookings) AS crm_bookings,
+            sum(a.freq_w) AS freq_w, sum(a.freq_imp) AS freq_imp, sum(a.pair_spend) AS pair_spend, sum(a.pair_unpriced) AS pair_unpriced,
+            sum(a.crm_leads) AS crm_leads, sum(a.crm_bookings) AS crm_bookings,
             sum(a.crm_bookings_ad) AS crm_bookings_ad, sum(a.crm_shows) AS crm_shows, sum(a.crm_no_shows) AS crm_no_shows,
             sum(a.crm_due) AS crm_due
           FROM per_ad a GROUP BY a.adset_id) x
@@ -1212,7 +1364,8 @@ BEGIN
             sum(a.imp) AS imp, sum(a.clicks) AS clicks, sum(a.lead_rows) AS lead_rows, sum(a.leads) AS leads, sum(a.lead_spend) AS lead_spend,
             sum(a.lead_clicks) AS lead_clicks, sum(a.video_rows) AS video_rows, sum(a.video_imp) AS video_imp, sum(a.v3) AS v3, sum(a.thru) AS thru,
             sum(a.plays) AS plays, sum(a.p25) AS p25, sum(a.p50) AS p50, sum(a.p75) AS p75, sum(a.p100) AS p100,
-            sum(a.freq_w) AS freq_w, sum(a.freq_imp) AS freq_imp, sum(a.crm_leads) AS crm_leads, sum(a.crm_bookings) AS crm_bookings,
+            sum(a.freq_w) AS freq_w, sum(a.freq_imp) AS freq_imp, sum(a.pair_spend) AS pair_spend, sum(a.pair_unpriced) AS pair_unpriced,
+            sum(a.crm_leads) AS crm_leads, sum(a.crm_bookings) AS crm_bookings,
             sum(a.crm_bookings_ad) AS crm_bookings_ad, sum(a.crm_shows) AS crm_shows, sum(a.crm_no_shows) AS crm_no_shows,
             sum(a.crm_due) AS crm_due
           FROM per_ad a GROUP BY a.campaign_id) x
@@ -1224,20 +1377,28 @@ BEGIN
     ORDER BY x.level, x.key, (x.reach IS NOT NULL) DESC
   ), node AS (
     SELECT l.level, l.key, l.adset_id, l.campaign_id, (l.s->>'spend')::numeric AS spend,
-      public.cockpit_board_ad_cells(l.s, p_targets, rr.j)
+      CASE WHEN v_ad_ok THEN public.cockpit_board_ad_cells(l.s || v_partial, p_targets, rr.j) ELSE v_unmeasured END
       || jsonb_build_object(
         'crmLeads', jsonb_build_object('v', (l.s->>'crm_leads')::numeric, 'status', NULL),
         'confirmedBookings', jsonb_build_object('v', (l.s->>'crm_bookings')::numeric, 'status', NULL),
         'shows', public.cockpit_board_shows((l.s->>'crm_shows')::numeric, (l.s->>'crm_no_shows')::numeric, (l.s->>'crm_due')::numeric),
         'costPerBooking', CASE
-          WHEN (l.s->>'crm_bookings_ad')::numeric > 0 AND (l.s->>'spend') IS NOT NULL THEN
-            public.cockpit_board_cell('cost_per_booking', round((l.s->>'spend')::numeric / (l.s->>'crm_bookings_ad')::numeric, 2), p_targets,
-              (l.s->>'crm_bookings_ad')::numeric, round((l.s->>'spend')::numeric, 2), (l.s->>'crm_bookings_ad')::numeric, NULL,
-              'Confirmed bookings with this ad id to yesterday, the same days as spend.')
-          WHEN coalesce((l.s->>'spend')::numeric, 0) > 0 THEN
-            public.cockpit_board_cell('cost_per_booking', NULL, p_targets, 0, round((l.s->>'spend')::numeric, 2), 0,
-              public.cockpit_board_floor_status('cost_per_booking', round((l.s->>'spend')::numeric, 2), p_targets),
-              'No confirmed booking with this ad id yet.', jsonb_build_object('atLeast', round((l.s->>'spend')::numeric, 2)))
+          WHEN NOT v_ad_ok THEN public.cockpit_board_cell('cost_per_booking', NULL, p_targets, NULL, NULL, NULL, 'not_measured', p_cover->>'note')
+          WHEN v_pair_days IS NULL THEN public.cockpit_board_cell('cost_per_booking', NULL, p_targets, NULL, NULL, NULL, 'not_measured',
+            'No day of this time frame is over on every linked ad account''s clock yet.')
+          WHEN coalesce((l.s->>'pair_unpriced')::numeric, 0) > 0 AND coalesce((l.s->>'pair_spend')::numeric, 0) = 0 THEN
+            public.cockpit_board_cell('cost_per_booking', NULL, p_targets, NULL, NULL, NULL, 'not_measured', 'The spend is in a currency with no fixed USD rate.')
+          WHEN (l.s->>'crm_bookings_ad')::numeric > 0 AND (l.s->>'pair_spend') IS NOT NULL THEN
+            public.cockpit_board_cell('cost_per_booking', round((l.s->>'pair_spend')::numeric / (l.s->>'crm_bookings_ad')::numeric, 2), p_targets,
+              (l.s->>'crm_bookings_ad')::numeric, round((l.s->>'pair_spend')::numeric, 2), (l.s->>'crm_bookings_ad')::numeric,
+              CASE WHEN (l.s->>'pair_unpriced')::numeric > 0 THEN public.cockpit_board_floor_status('cost_per_booking',
+                round((l.s->>'pair_spend')::numeric / (l.s->>'crm_bookings_ad')::numeric, 2), p_targets) END,
+              format('Confirmed bookings with this ad id and spend over the same days, %s.', v_pair_days),
+              CASE WHEN (l.s->>'pair_unpriced')::numeric > 0 THEN jsonb_build_object('atLeast', true) END)
+          WHEN coalesce((l.s->>'pair_spend')::numeric, 0) > 0 THEN
+            public.cockpit_board_cell('cost_per_booking', NULL, p_targets, 0, round((l.s->>'pair_spend')::numeric, 2), 0,
+              public.cockpit_board_floor_status('cost_per_booking', round((l.s->>'pair_spend')::numeric, 2), p_targets),
+              format('No confirmed booking with this ad id yet, %s.', v_pair_days), jsonb_build_object('atLeast', round((l.s->>'pair_spend')::numeric, 2)))
           ELSE public.cockpit_board_cell('cost_per_booking', NULL, p_targets, 0, NULL, NULL, 'too_few', 'No spend in these days.') END) AS metrics
     FROM lvl l LEFT JOIN reach rr ON rr.level = l.level AND rr.key = l.key
   ), ads AS (
@@ -1379,6 +1540,7 @@ DECLARE
   t jsonb;
   v_marks jsonb;
   v_tree jsonb;
+  v_cover jsonb;
   v_list jsonb;
   v_levers jsonb;
   v_board numeric;
@@ -1398,7 +1560,8 @@ BEGIN
   v_row := public.cockpit_board_rows(p_from, p_to, c.location_id, v_meta)->0;
   t := public.cockpit_board_targets_map(c.clickup_id);
   v_marks := public.cockpit_board_marks_json(c.location_id, p_from, p_to);
-  v_tree := public.cockpit_board_tree(c.location_id, c.ad_account_ids, p_from, p_to, t, v_marks);
+  v_cover := public.cockpit_board_ad_cover(c.ad_account_ids, p_from, p_to, v_meta);
+  v_tree := public.cockpit_board_tree(c.location_id, c.ad_account_ids, p_from, p_to, t, v_marks, v_cover);
   v_list := public.cockpit_board_no_outcome_list(c.location_id, p_from, p_to, v_marks);
   SELECT coalesce(jsonb_agg(public.cockpit_board_lever_json(l) ORDER BY l.created_at DESC), '[]'::jsonb) INTO v_levers
   FROM (SELECT * FROM public.cockpit_board_levers x WHERE x.location_id = c.location_id ORDER BY x.created_at DESC LIMIT 50) l;
@@ -1417,7 +1580,9 @@ BEGIN
     'version', 1,
     'from', p_from, 'to', p_to, 'today', v_today,
     'adWindow', jsonb_build_object('from', p_from, 'to', least(p_to, v_today - 1),
-      'note', 'Ad numbers end yesterday on each ad account''s own clock; CRM leads, bookings and shows per ad run to the end of the time frame.'),
+      'note', concat_ws(' ', 'Ad numbers end yesterday on each ad account''s own clock; CRM leads, bookings and shows per ad run to the end of the time frame.',
+        v_cover->>'note')),
+    'adCover', v_cover,
     'generatedAt', now(),
     'client', v_row,
     'clientName', c.client_name, 'locationId', c.location_id, 'clickupId', c.clickup_id, 'status', c.status,
@@ -1674,7 +1839,7 @@ BEGIN
     'cockpit_board_check_window(date,date)', 'cockpit_board_fmt(numeric,text)', 'cockpit_board_rows(date,date,text,jsonb)',
     'cockpit_board_sheet_marks(text,timestamptz,timestamptz)', 'cockpit_board_appointments(text,date,date,jsonb)',
     'cockpit_board_marks_json(text,date,date)', 'cockpit_board_no_outcome_list(text,date,date,jsonb)',
-    'cockpit_board_tree(text,text[],date,date,jsonb,jsonb)', 'cockpit_board_lever_json(public.cockpit_board_levers)',
+    'cockpit_board_tree(text,text[],date,date,jsonb,jsonb,jsonb)', 'cockpit_board_ad_cover(text[],date,date,jsonb)', 'cockpit_board_lever_json(public.cockpit_board_levers)',
     'cockpit_board_read(date,date)', 'cockpit_board_client(text,date,date)',
     'cockpit_board_targets_save(text,text,numeric,numeric,text)', 'cockpit_board_lever_context(jsonb)',
     'cockpit_board_lever_begin(uuid,jsonb,jsonb)', 'cockpit_board_lever_finish(uuid,jsonb,text)'] LOOP
