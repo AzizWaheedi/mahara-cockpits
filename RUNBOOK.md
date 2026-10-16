@@ -793,6 +793,11 @@ time minus 4 hours. The window is today's working day and the `lookback_days`
 before it (2), so a post that arrives late is credited. After 23:00 it posts
 one closeout line in #team-management ("EOD Radar, Wed 14 Oct: 6 on time, 1
 late, 2 missed (...), 1 on leave."), once per day (`cockpit_eod_radar_digests`).
+While a channel cannot be read the post waits for the next runs, until 03:00
+Kuwait the next morning, and then goes with a "Could not read" line. A run that
+cannot read a channel never undoes a credit already written: an on-time or late
+row stays until a new credit, or a missed day once every channel was read,
+replaces it (`cockpit_eod_radar_apply`, `kept` in the run's detail).
 Nobody is ever messaged directly; reminders and strikes are not built and the
 settings row cannot switch them on. Who files where is `cockpit_eod_channels`
 (a regex on the roster role). Slack ids are `cockpit_eod_radar_slack_ids`,
@@ -808,7 +813,7 @@ in `cockpit_eod_radar_receipts` (30 days). The settings are the single row of
 | Someone reads missed but filed | Open the person on the card: the day says what was looked for. Their post named someone else or nobody (the card's "named nobody on the radar" line), or it was posted with a Date line more than 14 days back or in the future (counted for the day it was posted). A Make form whose "Submitted by" carries a person who has left still credits the Name line. A plain message (no Date, Name or Submitted by line) counts only in their own EOD channel and only when it reads like an EOD (40 words, or an "EOD" first line with 20 words or 3 lines under it, not opening with an @mention): a one-line "EOD done" or a reply in another team's channel is not credited. A post that only lives in the EOD sheet or Typeform is not read: the radar reads Slack and the cockpit's sent EODs. Run a backfill once the cause is fixed. | Systems manager |
 | "No Slack id for X" | The roster has no email for them, or Slack has no member with it. Add their work email on Team & payroll; the next run looks it up. Until then only posts that carry their Name line credit them, and a day with none reads "not read". | CEO |
 | "Not on the radar: X (role)" | Their role matches no row of `cockpit_eod_channels`. Add a row (`role_pattern` regex, `channel_id`, `channel_name`) if the role files EODs. | Systems manager |
-| The closeout post did not arrive | `select * from cockpit_eod_radar_digests order by day desc limit 3`. `failed` names Slack's refusal (it is tried again up to 3 times while the day is current); `unknown` may have arrived and is never sent again; no row means the digest is off, nobody owed an EOD, or no run reached 23:00. | Systems manager |
+| The closeout post did not arrive | `select * from cockpit_eod_radar_digests order by day desc limit 3`. `failed` names Slack's refusal (it is tried again up to 3 times while the day is current); `unknown` may have arrived and is never sent again; no row means the digest is off, nobody owed an EOD, no run reached 23:00, or a channel could not be read and the post is waiting for the 03:01 and 03:31 runs. | Systems manager |
 | The run stopped (card: "The last run was ...") | Read the `cockpit_sync_state` rows `eod-radar` and `eod-radar-kick` (a missing vault secret or pg_net is named there). Check `mahara-eod-radar` is in `cron.job` and active, `eod-radar` is deployed with the JWT check OFF (a POST with no `x-cron-secret` answers 401), and `CRON_SECRET` equals the vault's `cockpit_sync_secret`. | Systems manager |
 
 Deploying (the lead session). In order:

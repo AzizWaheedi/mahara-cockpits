@@ -12,6 +12,10 @@
  *      eod-radar and one audit row;
  *   6. after today's closeout, with the digest on: claim, post and record
  *      the one closeout message in the digest channel. Nobody is messaged.
+ *      While a channel cannot be read the post waits, run after run, until
+ *      03:00 Kuwait the next morning (the last runs of that working day), and
+ *      then goes with its "Could not read" line. It counts the credits the
+ *      database kept from earlier reads (apply's `kept`).
  *
  * A dry run does 1 to 4 and returns the rows and the digest text: nothing is
  * written but the call receipts, and nothing is posted.
@@ -69,6 +73,8 @@ export type RunResult = {
 
 const LOOKUP_EVERY_MS = 7 * 86_400_000;
 const MAX_LOOKUPS = 30;
+/** While a channel is unread, the closeout post waits until this Kuwait time the next morning (the working day ends at 04:00). */
+const HOLD_UNREAD_UNTIL = "03:00";
 
 type InputPerson = Person & {
   slackSource: string | null;
@@ -269,10 +275,11 @@ export async function runRadar(deps: RunDeps, job: Job): Promise<RunResult> {
     ...problems,
   ].filter(Boolean).join(". ");
 
-  // 6 (planned). The closeout post for today.
+  // 6 (planned). The closeout post for today; held while a channel is unread and the morning's runs may still read it.
   const today = inputs.today;
   const closed = !isFriday(today) && today >= from && today <= to && now >= kuwaitAt(today, settings.closeoutAt);
-  const text = closed ? digestText(today, rows, inputs.people, unread) : null;
+  const held = closed && unread.length > 0 && now < kuwaitAt(addDays(today, 1), HOLD_UNREAD_UNTIL);
+  const heldNote = `Waiting to read ${unread.map(u => `#${u.name}`).join(", ")}; posted from ${HOLD_UNREAD_UNTIL} if it stays unread`;
 
   const result: RunResult = {
     ok, dryRun: job.dryRun, from, to, note, counts, channels, unmatched, digest: null,
@@ -281,12 +288,15 @@ export async function runRadar(deps: RunDeps, job: Job): Promise<RunResult> {
   if (job.dryRun) {
     result.rows = rows;
     result.people = inputs.people.map(p => ({ personId: p.personId, name: p.name }));
-    result.digest = closed ? { day: today, state: settings.digestOn ? "would_post" : "off", text } : null;
+    const text = closed ? digestText(today, rows, inputs.people, unread) : null;
+    result.digest = closed
+      ? { day: today, state: !settings.digestOn ? "off" : held ? "held" : "would_post", text, ...(held && settings.digestOn ? { note: heldNote } : {}) }
+      : null;
     return result;
   }
 
   // 5. Write.
-  await deps.rpc("cockpit_eod_radar_apply", {
+  const applied = await deps.rpc("cockpit_eod_radar_apply", {
     p: {
       from, to, mode: job.job, rows, slackIds, ok, note: note.slice(0, 500), requestedBy: job.requestedBy,
       channels: channels.map(c => ({ id: c.id, name: c.name, ok: c.ok, error: c.error, posts: c.posts })),
@@ -296,11 +306,29 @@ export async function runRadar(deps: RunDeps, job: Job): Promise<RunResult> {
   });
 
   // 6. Post the closeout message once (a day already posted, unknown or out of tries is not asked again).
+  if (!closed) return result;
+  const text = digestText(today, withKept(rows, applied), inputs.people, unread);
   const done = inputs.digests.find(g => g.day === today && (g.state !== "failed" || g.attempts >= 3));
-  if (closed && done) result.digest = { day: today, state: `already ${done.state}`, text };
-  else if (closed && settings.digestOn && text) result.digest = await sendDigest(deps, slack, token, today, text);
-  else if (closed) result.digest = { day: today, state: settings.digestOn ? "nothing_owed" : "off", text };
+  if (done) result.digest = { day: today, state: `already ${done.state}`, text };
+  else if (!settings.digestOn) result.digest = { day: today, state: "off", text };
+  else if (!text) result.digest = { day: today, state: "nothing_owed", text };
+  else if (held) result.digest = { day: today, state: "held", text, note: heldNote };
+  else result.digest = await sendDigest(deps, slack, token, today, text);
   return result;
+}
+
+/** The run's rows with the credits the database kept (a not_read or pending row it did not write over an on-time or late one). */
+export function withKept(rows: Row[], applied: unknown): Row[] {
+  const kept = new Map<string, Row["status"]>();
+  if (isObj(applied) && Array.isArray(applied.kept))
+    for (const k of applied.kept)
+      if (isObj(k) && typeof k.personId === "number" && typeof k.day === "string" && (k.status === "on_time" || k.status === "late"))
+        kept.set(`${k.personId}:${k.day}`, k.status);
+  if (!kept.size) return rows;
+  return rows.map(r => {
+    const status = kept.get(`${r.personId}:${r.day}`);
+    return status ? { ...r, status } : r;
+  });
 }
 
 /** Claim, send, record. A claim the database refuses (already posted, off, too early) sends nothing. */

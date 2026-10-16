@@ -46,7 +46,7 @@ function slackRoutes(history: Record<string, SlackMessage[]>, opts: { refuse?: R
   ];
 }
 
-function setup(o: { now: Date; history?: Record<string, SlackMessage[]>; inputs?: Record<string, unknown>; claim?: unknown; slack?: Parameters<typeof slackRoutes>[1]; token?: string; from?: string; to?: string; today?: string }) {
+function setup(o: { now: Date; history?: Record<string, SlackMessage[]>; inputs?: Record<string, unknown>; claim?: unknown; applied?: unknown; slack?: Parameters<typeof slackRoutes>[1]; token?: string; from?: string; to?: string; today?: string }) {
   const calls: Call[] = [];
   const receipts: ReceiptRow[] = [];
   const from = o.from ?? "2026-10-12";
@@ -57,7 +57,7 @@ function setup(o: { now: Date; history?: Record<string, SlackMessage[]>; inputs?
     rpc: async (name, args) => {
       calls.push({ name, args: args as Record<string, any> });
       if (name === "cockpit_eod_radar_inputs") return inputs(from, to, today, o.inputs);
-      if (name === "cockpit_eod_radar_apply") return { ok: true };
+      if (name === "cockpit_eod_radar_apply") return o.applied ?? { ok: true };
       if (name === "cockpit_eod_radar_digest_claim") return o.claim ?? { claimed: true, day: today, channel: "C0B5TL9H370", text: (args as any).p.text, attempt: 1 };
       if (name === "cockpit_eod_radar_digest_result") return { ok: true };
       throw new Error(`unexpected ${name}`);
@@ -148,6 +148,38 @@ describe("a run", () => {
     expect(apply.rows.find((x: any) => x.personId === 26 && x.day === "2026-10-14").status).toBe("not_read");
     expect(apply.note).toContain("Could not read #eods-csr (missing_scope)");
     expect(r.digest?.text).toBe("EOD Radar, Wed 14 Oct: 0 on time, 1 late, 0 missed, 0 on leave.\nCould not read #eods-csr (the Slack app needs the groups:history scope), so 2 people are not counted.");
+  });
+
+  test("a channel unread at the closeout: the post waits for the morning's runs, then goes with its Could not read line", async () => {
+    const refuse = { refuse: { [CH.csr]: "ratelimited" } };
+    const late = setup({ now: kw("2026-10-14 23:05"), history: HISTORY, slack: refuse });
+    const r = await runRadar(late.deps, job());
+    expect(late.calls.map(c => c.name)).toEqual(["cockpit_eod_radar_inputs", "cockpit_eod_radar_apply"]);
+    expect(r.digest).toMatchObject({ day: "2026-10-14", state: "held", note: "Waiting to read #eods-csr; posted from 03:00 if it stays unread" });
+    const dry = await runRadar(setup({ now: kw("2026-10-15 02:31"), history: HISTORY, slack: refuse }).deps, job({ dryRun: true }));
+    expect(dry.digest?.state).toBe("held");
+    // Read again before 03:00: posted at once, with nobody left out.
+    const readAgain = setup({ now: kw("2026-10-15 00:01"), history: HISTORY });
+    expect((await runRadar(readAgain.deps, job())).digest?.state).toBe("posted");
+    // Still unread at 03:01: posted, saying what was not read.
+    const morning = setup({ now: kw("2026-10-15 03:01"), history: HISTORY, slack: refuse });
+    expect((await runRadar(morning.deps, job())).digest?.state).toBe("posted");
+    const sent = morning.f.calls.filter(c => c.url.pathname === "/api/chat.postMessage");
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0].body!).text).toContain("Could not read #eods-csr (Slack asked the radar to slow down)");
+  });
+
+  test("the closeout post counts a credit the database kept from an earlier read", async () => {
+    const s = setup({
+      now: kw("2026-10-15 03:01"), history: HISTORY, slack: { refuse: { [CH.csr]: "no_answer" } },
+      applied: { ok: true, kept: [{ personId: 7, day: "2026-10-14", status: "on_time" }, { personId: 7, day: "2026-10-13", status: "late" }] },
+    });
+    const r = await runRadar(s.deps, job());
+    // Daniya's 18:28 EOD was read and written at 21:31; this run could not read #eods-csr, and the database kept her row.
+    expect(s.calls[1].args.p.rows.find((x: any) => x.personId === 7 && x.day === "2026-10-14").status).toBe("not_read");
+    expect(r.digest?.text).toBe(
+      "EOD Radar, Wed 14 Oct: 1 on time, 1 late, 0 missed, 0 on leave.\nCould not read #eods-csr (Slack did not answer), so 1 person is not counted.",
+    );
   });
 
   test("no token: nothing read, nobody missed, the note says what to set", async () => {

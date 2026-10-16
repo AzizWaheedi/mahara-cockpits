@@ -541,6 +541,92 @@ describe("writing a run", () => {
     );
   });
 
+  test("a credit stays a credit: a run that could not read a channel, or a pending row, never writes over it", async () => {
+    await at("2026-10-14 23:30");
+    const lama = ids["Lama Harb"];
+    const status = async (day: string) => {
+      await owner(db);
+      return (
+        await db.query<{ status: string; credited_by: string | null }>(
+          "select status, credited_by from cockpit_eod_radar where person_id=$1 and day=$2",
+          [lama, day],
+        )
+      ).rows[0];
+    };
+    expect(await status("2026-10-13")).toEqual({
+      status: "late",
+      credited_by: "submitted_by",
+    });
+    const unread = {
+      from: "2026-10-13",
+      to: "2026-10-14",
+      ok: false,
+      channels: [
+        { id: "C09R4QJCZ5Y", name: "eods-csr", ok: false, error: "ratelimited" },
+      ],
+      rows: [
+        row(lama, "2026-10-13", "not_read", { note: "Could not read #eods-csr" }),
+        row(lama, "2026-10-14", "not_read", { note: "Could not read #eods-csr" }),
+      ],
+    };
+    // 13 Oct was late: kept, and handed back. 14 Oct was missed: not read may replace that.
+    expect(await svc("cockpit_eod_radar_apply", unread)).toMatchObject({
+      ok: true,
+      rows: 2,
+      changed: 1,
+      kept: [{ personId: lama, day: "2026-10-13", status: "late" }],
+    });
+    expect(await status("2026-10-13")).toEqual({
+      status: "late",
+      credited_by: "submitted_by",
+    });
+    expect((await status("2026-10-14")).status).toBe("not_read");
+    await owner(db);
+    const detail = (
+      await db.query<{ detail: Record<string, any> }>(
+        "select detail from cockpit_sync_state where key='eod-radar'",
+      )
+    ).rows[0].detail;
+    expect(detail).toMatchObject({ counts: { late: 1, not_read: 1 }, kept: 1 });
+    // A pending row (a run before the closeout) does not write over it either.
+    expect(
+      await svc("cockpit_eod_radar_apply", {
+        ...unread,
+        ok: true,
+        channels: [],
+        rows: [row(lama, "2026-10-13", "pending")],
+      }),
+    ).toMatchObject({ changed: 0, kept: [{ status: "late" }] });
+    // A new credit does, and so does a missed day once every channel was read.
+    expect(
+      await svc("cockpit_eod_radar_apply", {
+        ...unread,
+        ok: true,
+        channels: [],
+        rows: [
+          row(lama, "2026-10-13", "on_time", {
+            postedAt: "2026-10-13T17:00:00Z",
+            creditedBy: "poster",
+          }),
+        ],
+      }),
+    ).toMatchObject({ changed: 1, kept: [] });
+    expect(await status("2026-10-13")).toEqual({
+      status: "on_time",
+      credited_by: "poster",
+    });
+    expect(
+      await svc("cockpit_eod_radar_apply", {
+        ...unread,
+        ok: true,
+        channels: [],
+        rows: [row(lama, "2026-10-13", "missed")],
+      }),
+    ).toMatchObject({ changed: 1, kept: [] });
+    expect((await status("2026-10-13")).status).toBe("missed");
+    await at("2026-10-14 21:00");
+  });
+
   test("a found Slack id replaces the old one; a refused lookup keeps it", async () => {
     await svc("cockpit_eod_radar_apply", {
       from: "2026-10-14",

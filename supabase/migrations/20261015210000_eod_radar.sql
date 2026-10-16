@@ -28,7 +28,8 @@
 --
 -- Rules (the old radar's, kept): Saturday to Thursday, Friday off; late after
 -- 22:00 Kuwait on the EOD day; missed only after 23:00 and only when every EOD
--- channel was read; a channel Slack refused is "not read", never missed. The
+-- channel was read; a channel Slack refused is "not read", never missed, and
+-- a run that could not read a channel never undoes a credit already written. The
 -- EOD day of a post with no Date line is Kuwait time minus 4 hours, the same
 -- rule as cockpit_eod_working_day. Leave is a full-day Timetastic booking,
 -- approved or pending, that the CEO has not marked not taken. "Lazy" (under 50
@@ -375,7 +376,11 @@ $$;
  * Write one run: every person-day of the window (upserted, unchanged rows left
  * alone), the Slack ids looked up, the sync-state row eod-radar and one audit
  * row. Refuses a missed day while a channel was not read, and a missed day
- * before its closeout. Receipts older than 30 days go.
+ * before its closeout. A credit stays a credit: a run that could not read a
+ * channel (not_read) or ran before the closeout (pending) never replaces an
+ * on-time or late row; a new credit, a missed day, leave or off can. Those
+ * kept rows come back as `kept`, so the closeout post counts them. Receipts
+ * older than 30 days go.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_eod_radar_apply(p jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
@@ -383,7 +388,7 @@ DECLARE
   w record; s public.cockpit_eod_radar_settings; r jsonb; v_day date; v_person bigint; v_status text;
   v_written int := 0; v_changed int := 0; v_transitions jsonb := '[]'::jsonb; v_old text;
   v_unread boolean; v_today date := public.cockpit_eod_radar_day(public.cockpit_eod_radar_now()); v_ok boolean; v_note text; v_by text;
-  v_seen jsonb := '{}'::jsonb; v_key text; v_counts jsonb := '{}'::jsonb;
+  v_seen jsonb := '{}'::jsonb; v_key text; v_counts jsonb := '{}'::jsonb; v_kept jsonb := '[]'::jsonb;
 BEGIN
   PERFORM public.cockpit_eod_radar_require_service();
   IF p IS NULL OR jsonb_typeof(p) <> 'object' OR jsonb_typeof(p->'rows') IS DISTINCT FROM 'array' THEN
@@ -417,6 +422,12 @@ BEGIN
       RAISE EXCEPTION 'Nobody is missed before the closeout' USING ERRCODE='22023';
     END IF;
     SELECT x.status INTO v_old FROM public.cockpit_eod_radar x WHERE x.person_id = v_person AND x.day = v_day;
+    IF v_old IN ('on_time','late') AND v_status IN ('not_read','pending') THEN
+      v_kept := v_kept || jsonb_build_array(jsonb_build_object('personId', v_person, 'day', to_char(v_day,'YYYY-MM-DD'), 'status', v_old));
+      v_written := v_written + 1;
+      v_counts := jsonb_set(v_counts, ARRAY[v_old], to_jsonb(coalesce((v_counts->>v_old)::int,0) + 1));
+      CONTINUE;
+    END IF;
     INSERT INTO public.cockpit_eod_radar AS x(person_id,day,channel,status,posted_at,slack_ts,posted_channel,late_minutes,credited_by,words,quality,note,posts,updated_at)
     VALUES (v_person, v_day, nullif(r->>'channel',''), v_status, (r->>'postedAt')::timestamptz, nullif(r->>'slackTs',''),
       nullif(r->>'postedChannel',''), (r->>'lateMinutes')::int, nullif(r->>'creditedBy',''), (r->>'words')::int,
@@ -425,7 +436,8 @@ BEGIN
       channel = EXCLUDED.channel, status = EXCLUDED.status, posted_at = EXCLUDED.posted_at, slack_ts = EXCLUDED.slack_ts,
       posted_channel = EXCLUDED.posted_channel, late_minutes = EXCLUDED.late_minutes, credited_by = EXCLUDED.credited_by,
       words = EXCLUDED.words, quality = EXCLUDED.quality, note = EXCLUDED.note, posts = EXCLUDED.posts, updated_at = now()
-    WHERE (x.channel, x.status, x.posted_at, x.slack_ts, x.posted_channel, x.late_minutes, x.credited_by, x.words, x.quality, x.note, x.posts)
+    WHERE NOT (x.status IN ('on_time','late') AND EXCLUDED.status IN ('not_read','pending'))
+      AND (x.channel, x.status, x.posted_at, x.slack_ts, x.posted_channel, x.late_minutes, x.credited_by, x.words, x.quality, x.note, x.posts)
       IS DISTINCT FROM (EXCLUDED.channel, EXCLUDED.status, EXCLUDED.posted_at, EXCLUDED.slack_ts, EXCLUDED.posted_channel,
         EXCLUDED.late_minutes, EXCLUDED.credited_by, EXCLUDED.words, EXCLUDED.quality, EXCLUDED.note, EXCLUDED.posts);
     IF FOUND THEN v_changed := v_changed + 1; END IF;
@@ -451,7 +463,7 @@ BEGIN
   INSERT INTO public.cockpit_sync_state(key,last_run_at,last_ok_at,ok,note,rows_seen,detail,updated_at)
   VALUES ('eod-radar', now(), CASE WHEN v_ok THEN now() END, v_ok, v_note, v_written,
     jsonb_build_object('from', to_char(w.from_day,'YYYY-MM-DD'), 'to', to_char(w.to_day,'YYYY-MM-DD'), 'mode', coalesce(p->>'mode','run'),
-      'counts', v_counts, 'changed', v_changed, 'channels', coalesce(p->'channels','[]'::jsonb),
+      'counts', v_counts, 'changed', v_changed, 'kept', jsonb_array_length(v_kept), 'channels', coalesce(p->'channels','[]'::jsonb),
       'unmatched', coalesce(p->'unmatched','[]'::jsonb), 'scopes', p->'scopes', 'lookups', coalesce(p->'lookups','{}'::jsonb)), now())
   ON CONFLICT (key) DO UPDATE SET last_run_at = now(), last_ok_at = CASE WHEN v_ok THEN now() ELSE public.cockpit_sync_state.last_ok_at END,
     ok = v_ok, note = EXCLUDED.note, rows_seen = EXCLUDED.rows_seen, detail = EXCLUDED.detail, updated_at = now();
@@ -459,11 +471,11 @@ BEGIN
   INSERT INTO public.cockpit_audit_log(action,entity_type,entity_id,actor_email,source_app,source_system,"before","after")
   VALUES ('eod_radar.run', 'eod_radar', to_char(w.from_day,'YYYY-MM-DD') || '..' || to_char(w.to_day,'YYYY-MM-DD'), v_by, 'ceo', 'eod-radar', NULL,
     jsonb_build_object('mode', coalesce(p->>'mode','run'), 'ok', v_ok, 'rows', v_written, 'changed', v_changed, 'counts', v_counts,
-      'transitions', v_transitions,
+      'kept', jsonb_array_length(v_kept), 'transitions', v_transitions,
       'unread', coalesce((SELECT jsonb_agg(c->>'name') FROM jsonb_array_elements(coalesce(p->'channels','[]'::jsonb)) c WHERE (c->>'ok')::boolean IS NOT TRUE), '[]'::jsonb)));
 
   DELETE FROM public.cockpit_eod_radar_receipts WHERE created_at < now() - interval '30 days';
-  RETURN jsonb_build_object('ok', true, 'rows', v_written, 'changed', v_changed, 'today', to_char(v_today,'YYYY-MM-DD'));
+  RETURN jsonb_build_object('ok', true, 'rows', v_written, 'changed', v_changed, 'kept', v_kept, 'today', to_char(v_today,'YYYY-MM-DD'));
 END;
 $$;
 
