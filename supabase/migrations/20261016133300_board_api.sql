@@ -45,7 +45,10 @@
 -- Read rules:
 --   - Rates are worked out at read time from the summed facts: the sum of the
 --     numerators over the sum of the denominators, never an average of daily
---     rates. Each value comes with a status against the effective target (the
+--     rates. A rate whose two figures come from different sources (lead to
+--     booking, quotation and close rates, leads called) sums both over the
+--     days where both are known, and says so when those are fewer than the
+--     time frame's days. Each value comes with a status against the effective target (the
 --     client's override, else the board's override, else the official
 --     default): good, watch, off, not_measured (no source), not_filled_in (the
 --     client does not record it), too_few (under the minimum sample), or null
@@ -396,6 +399,19 @@ RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
 $$;
 
 /**
+ * A rate whose two figures come from different sources is worked out over the
+ * days where both are known. When those are fewer than the time frame's
+ * days: partial, how many, and a sentence.
+ */
+CREATE OR REPLACE FUNCTION public.cockpit_board_paired(p_days bigint, p_window integer)
+RETURNS jsonb LANGUAGE sql IMMUTABLE SET search_path = '' AS $$
+  SELECT CASE WHEN coalesce(p_days, 0) < p_window THEN jsonb_build_object('partial', true, 'pairedDays', coalesce(p_days, 0),
+    'note', CASE WHEN p_days = 1 THEN format('Over the one day of %s where both are known.', p_window)
+                 ELSE format('Over the %s of %s days where both are known.', coalesce(p_days, 0), p_window) END)
+    ELSE '{}'::jsonb END
+$$;
+
+/**
  * Shows as the board shows them, for a client row, a campaign, an ad set or
  * an ad: unmarked is never a no-show, so meetings due with none marked are
  * not filled in, never 0 shows. p_due NULL: no figure.
@@ -635,6 +651,7 @@ DECLARE
   v_calls_note constant text := 'The client calls: Done With You.';
   v_cell jsonb;
   v_x numeric;
+  v_pair jsonb;
 BEGIN
   FOR r IN
     WITH cl AS (
@@ -667,7 +684,20 @@ BEGIN
         coalesce(sum((d.sources->'sheet'->>'unpricedCloses')::integer) FILTER (WHERE d.day <= v_ad_to), 0) AS f_unpriced_ad,
         sum(d.lead_quality_sum) AS f_lq_sum, sum(d.lead_quality_count) AS f_lq_n, count(d.lead_quality_count) AS f_lq_d,
         sum(d.dials) AS f_dials, count(d.dials) AS f_dials_d,
-        sum(d.leads_called) AS f_called, count(d.leads_called) AS f_called_d
+        sum(d.leads_called) AS f_called, count(d.leads_called) AS f_called_d,
+        -- Rates over two sources: each side summed over the days where both are known.
+        sum(d.confirmed_bookings) FILTER (WHERE d.crm_leads IS NOT NULL) AS f_lb_booked,
+        sum(d.crm_leads) FILTER (WHERE d.confirmed_bookings IS NOT NULL) AS f_lb_leads,
+        count(*) FILTER (WHERE d.crm_leads IS NOT NULL AND d.confirmed_bookings IS NOT NULL) AS f_lb_d,
+        sum(d.closes) FILTER (WHERE d.shows IS NOT NULL) AS f_cr_closes,
+        sum(d.shows) FILTER (WHERE d.closes IS NOT NULL) AS f_cr_shows,
+        count(*) FILTER (WHERE d.closes IS NOT NULL AND d.shows IS NOT NULL) AS f_cr_d,
+        sum(d.quotations) FILTER (WHERE d.shows IS NOT NULL) AS f_qr_quotes,
+        sum(d.shows) FILTER (WHERE d.quotations IS NOT NULL) AS f_qr_shows,
+        count(*) FILTER (WHERE d.quotations IS NOT NULL AND d.shows IS NOT NULL) AS f_qr_d,
+        sum(d.leads_called) FILTER (WHERE d.crm_leads IS NOT NULL) AS f_lc_called,
+        sum(d.crm_leads) FILTER (WHERE d.leads_called IS NOT NULL) AS f_lc_leads,
+        count(*) FILTER (WHERE d.crm_leads IS NOT NULL AND d.leads_called IS NOT NULL) AS f_lc_d
       FROM public.cockpit_client_days d JOIN cl ON cl.location_id = d.location_id
       WHERE d.day BETWEEN p_from AND p_to
       GROUP BY d.location_id
@@ -804,15 +834,23 @@ BEGIN
                       ELSE public.cockpit_board_count(r.f_dials, r.f_dials_d, v_days, 'not_measured', v_src->'dialer'->>'note') END,
         'leadsCalled', CASE WHEN v_dwy THEN jsonb_build_object('v', NULL, 'status', 'not_measured', 'note', v_calls_note, 'clientCalls', true)
                             ELSE public.cockpit_board_count(r.f_called, r.f_called_d, v_days, 'not_measured', v_src->'dialer_leads'->>'note',
-                              CASE WHEN r.f_called_d > 0 AND crm > 0 THEN jsonb_build_object('share', round(r.f_called / crm * 100, 2)) END) END
+                              CASE WHEN r.f_lc_d > 0 AND r.f_lc_leads > 0 THEN jsonb_build_object('share', round(r.f_lc_called::numeric / r.f_lc_leads * 100, 2))
+                                || CASE WHEN r.f_lc_d < v_days THEN jsonb_build_object('sharePartial', true,
+                                     'shareNote', public.cockpit_board_paired(r.f_lc_d, v_days)->>'note') ELSE '{}'::jsonb END END) END
       );
 
-    -- Lead to booking: confirmed bookings / CRM leads, both by the day made.
+    -- Lead to booking: confirmed bookings / CRM leads, both by the day made,
+    -- over the days where both are known (a lead-sync outage is not a 0).
+    v_pair := public.cockpit_board_paired(r.f_lb_d, v_days);
     v_vals := v_vals || jsonb_build_object('leadToBooking', CASE
       WHEN crm IS NULL OR booked IS NULL THEN public.cockpit_board_cell('lead_to_booking', NULL, t, NULL, NULL, NULL, 'not_measured',
         coalesce(v_src->'leads'->>'note', v_src->'appointments'->>'note'))
-      WHEN crm = 0 THEN public.cockpit_board_cell('lead_to_booking', NULL, t, 0, booked, 0, 'too_few', 'No CRM lead in this time frame.')
-      ELSE public.cockpit_board_cell('lead_to_booking', round(booked / crm * 100, 2), t, crm, booked, crm) END);
+      WHEN r.f_lb_d = 0 THEN public.cockpit_board_cell('lead_to_booking', NULL, t, NULL, NULL, NULL, 'not_measured',
+        'No day in this time frame has both CRM leads and bookings known.')
+      WHEN r.f_lb_leads = 0 THEN public.cockpit_board_cell('lead_to_booking', NULL, t, 0, r.f_lb_booked, 0, 'too_few',
+        concat_ws(' ', 'No CRM lead in this time frame.', v_pair->>'note'), v_pair - 'note')
+      ELSE public.cockpit_board_cell('lead_to_booking', round(r.f_lb_booked::numeric / r.f_lb_leads * 100, 2), t, r.f_lb_leads, r.f_lb_booked, r.f_lb_leads,
+        NULL, v_pair->>'note', v_pair - 'note') END);
 
     -- Cost per booking: spend / confirmed bookings over the same days (to yesterday).
     v_vals := v_vals || jsonb_build_object('costPerBooking', CASE
@@ -842,6 +880,7 @@ BEGIN
           format('%s of %s meetings due are marked.', marked, due)) END);
 
     -- Quotations and the quotation rate (of shows, only when the client recorded one).
+    v_pair := public.cockpit_board_paired(r.f_qr_d, v_days);
     v_vals := v_vals || jsonb_build_object(
       'quotations', CASE WHEN quotes IS NULL THEN jsonb_build_object('v', NULL, 'status', v_quotes_status,
                            'note', coalesce(nullif(concat_ws(' ', v_src->'sheet_copy'->>'note', v_src->'outcomes'->>'note'), ''), 'The client does not record quotations.'))
@@ -853,10 +892,15 @@ BEGIN
         WHEN quotes IS NULL OR quotes = 0 THEN public.cockpit_board_cell('quotation_rate', NULL, t, shows, quotes, shows, CASE WHEN quotes IS NULL THEN v_quotes_status ELSE 'not_filled_in' END,
           'No quotation is recorded in this time frame, so the rate is not known.')
         WHEN shows IS NULL THEN public.cockpit_board_cell('quotation_rate', NULL, t, NULL, quotes, NULL, 'not_filled_in', 'No meeting is marked showed, so the rate is not known.')
-        WHEN shows = 0 THEN public.cockpit_board_cell('quotation_rate', NULL, t, 0, quotes, 0, 'too_few', 'No show in this time frame.')
-        ELSE public.cockpit_board_cell('quotation_rate', round(quotes / shows * 100, 2), t, shows, quotes, shows) END);
+        WHEN r.f_qr_d = 0 THEN public.cockpit_board_cell('quotation_rate', NULL, t, NULL, NULL, NULL, 'not_measured',
+          'No day in this time frame has both quotations and shows known.')
+        WHEN r.f_qr_shows = 0 THEN public.cockpit_board_cell('quotation_rate', NULL, t, 0, r.f_qr_quotes, 0, 'too_few',
+          concat_ws(' ', 'No show in this time frame.', v_pair->>'note'), v_pair - 'note')
+        ELSE public.cockpit_board_cell('quotation_rate', round(r.f_qr_quotes::numeric / r.f_qr_shows * 100, 2), t, r.f_qr_shows, r.f_qr_quotes, r.f_qr_shows,
+          NULL, v_pair->>'note', v_pair - 'note') END);
 
     -- Closes, close rate, revenue, AOV, ROAS.
+    v_pair := public.cockpit_board_paired(r.f_cr_d, v_days);
     v_vals := v_vals || jsonb_build_object(
       'closes', CASE WHEN closes IS NULL THEN jsonb_build_object('v', NULL, 'status', v_closes_status,
                        'note', coalesce(nullif(concat_ws(' ', v_src->'sheet'->>'note', v_src->'outcomes'->>'note'), ''), 'The client does not record closed deals.'))
@@ -864,8 +908,12 @@ BEGIN
       'closeRate', CASE
         WHEN closes IS NULL THEN public.cockpit_board_cell('close_rate', NULL, t, NULL, NULL, NULL, v_closes_status, 'The client does not record closed deals.')
         WHEN shows IS NULL THEN public.cockpit_board_cell('close_rate', NULL, t, NULL, closes, NULL, 'not_filled_in', 'No meeting is marked showed, so the rate is not known.')
-        WHEN shows = 0 THEN public.cockpit_board_cell('close_rate', NULL, t, 0, closes, 0, 'too_few', 'No show in this time frame.')
-        ELSE public.cockpit_board_cell('close_rate', round(closes / shows * 100, 2), t, shows, closes, shows) END,
+        WHEN r.f_cr_d = 0 THEN public.cockpit_board_cell('close_rate', NULL, t, NULL, NULL, NULL, 'not_measured',
+          'No day in this time frame has both closed deals and shows known.')
+        WHEN r.f_cr_shows = 0 THEN public.cockpit_board_cell('close_rate', NULL, t, 0, r.f_cr_closes, 0, 'too_few',
+          concat_ws(' ', 'No show in this time frame.', v_pair->>'note'), v_pair - 'note')
+        ELSE public.cockpit_board_cell('close_rate', round(r.f_cr_closes::numeric / r.f_cr_shows * 100, 2), t, r.f_cr_shows, r.f_cr_closes, r.f_cr_shows,
+          NULL, v_pair->>'note', v_pair - 'note') END,
       'revenue', CASE WHEN closes IS NULL THEN jsonb_build_object('v', NULL, 'status', v_closes_status, 'note', 'The client does not record closed deals.')
                       ELSE jsonb_build_object('v', round(revenue, 2), 'status', NULL)
                         || CASE WHEN v_rev_incomplete THEN jsonb_build_object('atLeast', true, 'note',
@@ -1621,7 +1669,7 @@ BEGIN
     'cockpit_board_judge(numeric,text,numeric,numeric,boolean,boolean)', 'cockpit_board_targets_map(text)',
     'cockpit_board_cell(text,numeric,jsonb,numeric,numeric,numeric,text,text,jsonb)',
     'cockpit_board_floor_status(text,numeric,jsonb)', 'cockpit_board_count(numeric,bigint,integer,text,text,jsonb)',
-    'cockpit_board_shows(numeric,numeric,numeric,text)',
+    'cockpit_board_shows(numeric,numeric,numeric,text)', 'cockpit_board_paired(bigint,integer)',
     'cockpit_board_ad_unmeasured(text,text)', 'cockpit_board_ad_cells(jsonb,jsonb,jsonb)', 'cockpit_client_caller_rows()',
     'cockpit_board_check_window(date,date)', 'cockpit_board_fmt(numeric,text)', 'cockpit_board_rows(date,date,text,jsonb)',
     'cockpit_board_sheet_marks(text,timestamptz,timestamptz)', 'cockpit_board_appointments(text,date,date,jsonb)',

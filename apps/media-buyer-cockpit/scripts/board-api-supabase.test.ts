@@ -846,6 +846,7 @@ describe("who may read the board", () => {
       cockpit_board_lever_json: "",
       cockpit_board_marks_json: "",
       cockpit_board_no_outcome_list: "",
+      cockpit_board_paired: "",
       cockpit_board_read: "authenticated",
       cockpit_board_rows: "",
       cockpit_board_sheet_marks: "",
@@ -1011,6 +1012,9 @@ describe("the formulas, on Formula Co's ten known days", () => {
       num: 10,
       den: 40,
     });
+    // Leads and bookings are known on all ten days: nothing partial.
+    expect(v.leadToBooking.partial).toBeUndefined();
+    expect(v.leadToBooking.note).toBeUndefined();
     expect(v.showRate).toMatchObject({
       v: r2((7 / 9) * 100),
       status: "good",
@@ -1023,9 +1027,12 @@ describe("the formulas, on Formula Co's ten known days", () => {
       num: 4,
       den: 7,
     });
+    // The last day's meeting is unmarked (shows NULL): the rates of shows are over the other nine.
     expect(v.closeRate).toMatchObject({
       v: r2((2 / 7) * 100),
       status: "watch",
+      partial: true,
+      note: "Over the 9 of 10 days where both are known.",
     });
     expect(v.aov).toMatchObject({
       v: 10000,
@@ -1238,6 +1245,66 @@ describe("missing is never zero", () => {
             i < 3 ? 1 : 0,
           ],
         );
+    }
+  });
+
+  test("a source missing on some days does not inflate a rate: both sides are summed over the days both are known", async () => {
+    await owner(db);
+    // A lead-sync outage on Formula Co's first five days; a close on the day whose meeting nobody marked.
+    await q(
+      "UPDATE public.cockpit_client_days SET crm_leads = NULL WHERE location_id = $1 AND day BETWEEN $2 AND $3",
+      [LOC_D, F_FROM, kd(36)],
+    );
+    await q(
+      "UPDATE public.cockpit_client_days SET closes = 1, closes_with_value = 1, revenue_usd = 1000 WHERE location_id = $1 AND day = $2",
+      [LOC_D, F_TO],
+    );
+    try {
+      const v = rowOf(await board(CREATIVE), LOC_D).values;
+      expect(v.crmLeads).toMatchObject({ v: 20, atLeast: true });
+      // 5 bookings over the 20 leads of the same five days: 25%, never 10 / 20.
+      expect(v.leadToBooking).toEqual({
+        v: 25,
+        status: "good",
+        num: 5,
+        den: 20,
+        sample: 20,
+        target: "lead_to_booking",
+        partial: true,
+        pairedDays: 5,
+        note: "Over the 5 of 10 days where both are known.",
+      });
+      // Leads called: 20 of the same days' 20 leads, never 40 of 20.
+      expect(v.leadsCalled).toMatchObject({
+        v: 40,
+        share: 100,
+        sharePartial: true,
+        shareNote: "Over the 5 of 10 days where both are known.",
+      });
+      // The unmarked day's close stays out of the close rate: 2 of 7 shows, never 3 of 7.
+      expect(v.closes.v).toBe(3);
+      expect(v.closeRate).toMatchObject({
+        v: r2((2 / 7) * 100),
+        num: 2,
+        den: 7,
+        partial: true,
+        note: "Over the 9 of 10 days where both are known.",
+      });
+      expect(v.quotationRate).toMatchObject({
+        v: r2((4 / 7) * 100),
+        partial: true,
+        pairedDays: 9,
+      });
+    } finally {
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_client_days SET crm_leads = 4 WHERE location_id = $1 AND day BETWEEN $2 AND $3",
+        [LOC_D, F_FROM, F_TO],
+      );
+      await q(
+        "UPDATE public.cockpit_client_days SET closes = 0, closes_with_value = 0, revenue_usd = 0 WHERE location_id = $1 AND day = $2",
+        [LOC_D, F_TO],
+      );
     }
   });
 
