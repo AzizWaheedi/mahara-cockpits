@@ -81,6 +81,22 @@ test('creative monthly outcomes reuse the CSM sheet batch and exclude future sho
  assert.deepEqual(result?.creativeStats,{tab:'Oct 26',booked:2,due:1,shows:1,quotes:1,closes:0});
 });
 
+test('the sheet copy keeps quotation N apart from a blank, and says so',async()=>{
+ const yes=Array<string>(16).fill(''),no=Array<string>(16).fill(''),blank=Array<string>(16).fill('');
+ Object.assign(yes,{0:'Alpha lead',1:'10/1/2026',2:'10/2/2026',9:'Yes',10:'Yes'});
+ Object.assign(no,{0:'Beta lead',1:'10/1/2026',2:'10/3/2026',9:'Yes',10:'No'});
+ Object.assign(blank,{0:'Gamma lead',1:'10/1/2026',2:'10/3/2026',9:'No'});
+ const reads:Reads={
+  async tool(){return {valueRanges:[{range:'Appointments!A1:P600',values:[yes,no,blank]},{range:'Oct 26!A1:P600',values:[]},{range:'Sep 26!A1:P600',values:[]}]};},
+  async graph(){throw new Error('No Meta read expected');},
+  async fetch(){throw new Error('No raw HTTP read expected');},
+  log(){},
+ };
+ const result=await withNativeContext(reads,{receipts:[]},()=>sheetPerformance('https://docs.google.com/spreadsheets/d/aaaaaaaaaaaaaaaaaaaa/edit',{y:2026,m:10,d:4}));
+ assert.equal(result?.quoteKeepsN,true);
+ assert.deepEqual(result?.appointments.map(a=>a.quote),['y','n','']);
+});
+
 test('native client call history retains a real call sixty days old',async()=>{
  const at=new Date(Date.now()-60*86400000).toISOString();
  const meeting={title:'Alpha client review',scheduled_start_time:at,recorded_by:{name:'Team'},

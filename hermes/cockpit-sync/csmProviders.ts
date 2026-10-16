@@ -69,7 +69,11 @@ export async function sheetPerformance(url:unknown,today:Day){
   allTime:summarise(rows),undated:rows.filter(r=>!r.month).length,stale:stale.slice(0,40),staleCount:stale.length,
   byAd:byAd(rows.filter(r=>r.month===month||r.month===lastMonth)),byAdAllTime:byAd(rows),recent:rows.slice(-60).reverse(),
   creativeStats:booked?{tab:thisTab,booked,due,shows,quotes,closes}:undefined,
-  appointments:rows.filter(r=>r.added).map(r=>({added:r.added,appAt:r.appAt,booked:Boolean(r.appDate),show:/^y/i.test(r.show)?'y':/^n/i.test(r.show)?'n':'',quote:/^y/i.test(r.quote)?'y':'',closed:/^y/i.test(r.closed)?'y':'',ad:r.ad||r.source||''})),
+  // Quotation N is kept (2026-10-16): the Client Performance board needs Y and
+  // N to tell "no quotation" from "not answered". quoteKeepsN tells the board's
+  // facts that this copy keeps N, so a copy from before still reads as Y only.
+  quoteKeepsN:true,
+  appointments:rows.filter(r=>r.added).map(r=>({added:r.added,appAt:r.appAt,booked:Boolean(r.appDate),show:/^y/i.test(r.show)?'y':/^n/i.test(r.show)?'n':'',quote:/^y/i.test(r.quote)?'y':/^n/i.test(r.quote)?'n':'',closed:/^y/i.test(r.closed)?'y':'',ad:r.ad||r.source||''})),
  };
 }
 
