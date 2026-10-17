@@ -407,6 +407,13 @@ function BudgetLine({
                 {g.names.map(listName).join(", ")}
               </span>
             </span>
+            {g.key === "budgetHigh" ? (
+              <span className="col-start-2 row-start-2 text-xs text-muted-foreground">
+                Meta could spend this much as soon as the account can deliver.
+                It refuses edits while an account owes a payment, so lower it
+                right after paying.
+              </span>
+            ) : null}
             <span className="text-xs tabular-nums text-muted-foreground">
               {g.names.length}
             </span>

@@ -845,6 +845,7 @@ describe("budgets", () => {
       notDelivering: [],
       under: [],
       issues: {},
+      budgetHigh: [],
       off: true,
       ...over,
     });
@@ -959,6 +960,41 @@ describe("budgets", () => {
       "true",
     );
     expect(text(line())).toContain("Sorted by budget used");
+  });
+
+  test("a budget far above the usual spend is named first, whatever else names the client, with what to do", () => {
+    const row = (name: string, daily: number | null, perDay: number | null) =>
+      ({
+        clientName: name,
+        values: {
+          dailyBudget: { v: daily, status: null },
+          spendPerDay: { v: perDay, status: null },
+          budgetUsed: { v: null, status: "not_measured" },
+        },
+      }) as any;
+    const f = columns.budgetFacts([
+      // Liwan's case: $7,260 a day switched on, about $34 a day spent.
+      row("Liwan", 7260, 34.21),
+      // Five times or less, or under $100: not flagged.
+      row("Ardon", 46.66, 48.55),
+      row("Joe and Sera", 40, 0),
+      row("Safad", 650, 130),
+      // Spend per day not known: never flagged.
+      row("Nova", 900, null),
+    ]);
+    expect(f.budgetHigh).toEqual(["Liwan ($7,260 a day)"]);
+    const groups = columns.budgetGroups({
+      ...f,
+      issues: { billing: ["Liwan"] },
+    });
+    expect(groups.map(g => [g.key, g.names])).toEqual([
+      ["budgetHigh", ["Liwan ($7,260 a day)"]],
+      ["billing", ["Liwan"]],
+    ]);
+    expect(groups[0].label).toBe("Budget far above its usual spend");
+    expect(columns.budgetSentence({ ...f, issues: {}, off: true })).toBe(
+      "Liwan ($7,260 a day) has a daily budget far above its usual spend.",
+    );
   });
 
   test("the budget line is not there when nothing needs action", async () => {

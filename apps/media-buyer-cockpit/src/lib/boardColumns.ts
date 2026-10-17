@@ -992,6 +992,10 @@ export const STOPPING_ISSUES = new Set([
   "balance_out",
 ]);
 
+/** A daily budget this far above the spend per day, and at least this many dollars, is flagged. */
+export const BUDGET_HIGH_TIMES = 5;
+export const BUDGET_HIGH_FLOOR = 100;
+
 /** What the board's budget line says: who needs action, by issue. */
 export type BudgetFacts = {
   /** Clients with a campaign switched on with a daily budget that spent nothing yesterday. */
@@ -1002,6 +1006,14 @@ export type BudgetFacts = {
   under: string[];
   /** Clients by their ad accounts' issue (billing, account, limit_near...). */
   issues: Record<string, string[]>;
+  /**
+   * Clients whose daily budget switched on now is far above what they spend
+   * a day: at least $100 and more than 5 times their spend per day in the
+   * time frame ("Liwan ($7,260 a day)"). Meta can spend up to 75% over a
+   * daily budget, so a payment or a fixed account can let it spend that
+   * much at once.
+   */
+  budgetHigh: string[];
   /** Something needs action now (an account, a campaign not spending, an off figure), not only a watch. */
   off: boolean;
 };
@@ -1012,6 +1024,7 @@ export function budgetFacts(rows: ClientRow[]): BudgetFacts {
     notDelivering: [],
     under: [],
     issues: {},
+    budgetHigh: [],
     off: false,
   };
   const add = (list: string[], name: string) => {
@@ -1028,6 +1041,16 @@ export function budgetFacts(rows: ClientRow[]): BudgetFacts {
       add(f.notDelivering, r.clientName);
     const s = statusOf(used);
     if (s === "off" || s === "watch") add(f.under, r.clientName);
+    const perDay = r.values.spendPerDay?.v;
+    if (
+      isNum(daily?.v) &&
+      daily.v >= BUDGET_HIGH_FLOOR &&
+      isNum(perDay) &&
+      daily.v > BUDGET_HIGH_TIMES * perDay
+    ) {
+      add(f.budgetHigh, `${r.clientName} (${money(daily.v)} a day)`);
+      f.off = true;
+    }
     if (s === "off") f.off = true;
     for (const i of daily?.accountIssues ?? []) {
       f.issues[i.issue] ??= [];
@@ -1119,6 +1142,7 @@ const GROUP_LABEL: Record<string, string> = {
   billing_due: "Payment due on the ad account",
   limit_near: "Under a day of spending limit left",
   balance_low: "Under a day of prepaid balance left",
+  budgetHigh: "Budget far above its usual spend",
   notSpending: "Spent nothing yesterday",
   notDelivering: "Budget switched on, not delivering",
   under: "Spent under budget in these dates",
@@ -1134,6 +1158,17 @@ const GROUP_LABEL: Record<string, string> = {
 export function budgetGroups(f: BudgetFacts): BudgetGroup[] {
   const seen = new Set<string>();
   const out: BudgetGroup[] = [];
+  // First, and whatever else names the client: a payment or a fixed account
+  // would let Meta spend that budget at once (2026-10-17: Liwan had $7,260 a
+  // day switched on while its account owed a payment; Meta refuses edits
+  // until it is paid, so it has to be lowered right after).
+  if (f.budgetHigh.length)
+    out.push({
+      key: "budgetHigh",
+      label: GROUP_LABEL.budgetHigh,
+      stops: true,
+      names: f.budgetHigh,
+    });
   const push = (key: string, names: string[] | undefined, stops: boolean) => {
     const fresh = (names ?? []).filter(n => !seen.has(n));
     for (const n of fresh) seen.add(n);
@@ -1179,6 +1214,11 @@ export function budgetSentence(f: BudgetFacts): string | null {
       ? one(f.notDelivering)
         ? `${nameList(f.notDelivering)} has a budget switched on that is not delivering`
         : `${nameList(f.notDelivering)} have budgets switched on that are not delivering`
+      : null,
+    f.budgetHigh.length
+      ? one(f.budgetHigh)
+        ? `${nameList(f.budgetHigh)} has a daily budget far above its usual spend`
+        : `${nameList(f.budgetHigh)} have daily budgets far above their usual spend`
       : null,
     f.under.length
       ? one(f.under)
