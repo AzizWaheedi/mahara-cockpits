@@ -1258,7 +1258,7 @@ export function boardFixture(
       },
     ],
     offBoard: {
-      spend: 1012.5,
+      spend: 1052.5,
       unpriced: false,
       accounts: [
         {
@@ -1267,6 +1267,14 @@ export function boardFixture(
           spend: 1000,
           client: "Gone Client",
           reason: "cancelled",
+        },
+        {
+          accountId: "99000333",
+          name: "Paused Client ads",
+          spend: 40,
+          client: "Paused Client",
+          clientStatus: "Paused",
+          reason: "not_active",
         },
         {
           accountId: "99000111",

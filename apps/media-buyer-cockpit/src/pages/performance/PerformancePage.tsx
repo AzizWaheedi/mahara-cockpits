@@ -189,9 +189,20 @@ function Portfolio({ rows }: { rows: ClientRow[] }) {
 
 const OFF_BOARD_REASON: Record<string, string> = {
   cancelled: "cancelled client",
+  not_active: "client not active",
   not_tied: "not tied to a client",
   kept_out: "kept out: the client's own boosting",
 };
+
+/** Why an account's spend is outside the rows, in a few plain words. */
+function offBoardReason(a: {
+  reason?: string | null;
+  clientStatus?: string | null;
+}): string | undefined {
+  if (a.reason === "not_active" && a.clientStatus)
+    return `${a.clientStatus.toLowerCase()} client, not on the board`;
+  return OFF_BOARD_REASON[a.reason ?? ""] ?? a.reason ?? undefined;
+}
 
 /**
  * Spend no client row carries, said under the totals so the board never
@@ -226,9 +237,7 @@ function OffBoardLine({ off }: { off: NonNullable<Board["offBoard"]> }) {
                 {a.name ?? `act_${a.accountId}`}
               </span>
               <span className="block truncate text-muted-foreground">
-                {[a.client, OFF_BOARD_REASON[a.reason ?? ""] ?? a.reason]
-                  .filter(Boolean)
-                  .join(", ")}
+                {[a.client, offBoardReason(a)].filter(Boolean).join(", ")}
               </span>
             </span>
             <span className="shrink-0 tabular-nums">
@@ -513,8 +522,8 @@ export function PerformancePage() {
             Client performance
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Every client against its targets. Open a client for its ads and to
-            add a lever.
+            Every active client against its targets. Open a client for its ads
+            and to add a lever.
           </p>
         </div>
         <div className="flex items-center gap-2">

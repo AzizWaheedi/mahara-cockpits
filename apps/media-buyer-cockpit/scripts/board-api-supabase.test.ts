@@ -35,6 +35,7 @@ const FIXES = [
 const READ_CHECKED = [
   "20261016220000_board_read_checked.sql",
   "20261016220100_board_read_notes.sql",
+  "20261017090000_board_active_only.sql",
 ];
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
@@ -699,11 +700,14 @@ describe("who may read the board", () => {
     }
   });
 
-  test("the CEO, admins and unlimited seats see every client that is not cancelled", async () => {
+  test("the CEO, admins and unlimited seats see every Active client; a launching one is off the board, its page still opens", async () => {
     for (const id of [CEO, ADMIN, CREATIVE, SALES]) {
       const names = (await board(id)).clients.map((c: Row) => c.clientName);
-      expect(names).toEqual(["Client A", "Client B", "Client C", "Formula Co"]);
+      expect(names).toEqual(["Client A", "Client B", "Formula Co"]);
     }
+    const page = await client(CEO, LOC_C);
+    expect(page.client.clientName).toBe("Client C");
+    expect(page.client.status).toBe("Launching");
   });
 
   test("a seat limited to some clients sees those only, and the client page refuses the rest", async () => {
@@ -1392,7 +1396,7 @@ describe("missing is never zero", () => {
   });
 
   test("no ad account: every ad column is not measured with the reason; TikTok is said", async () => {
-    const row = rowOf(await board(CEO, kd(6), today), LOC_C);
+    const row = (await client(CEO, LOC_C, kd(6), today)).client;
     for (const k of [
       "spend",
       "impressions",
@@ -1808,7 +1812,7 @@ describe("Client A: real facts, Meta's reach, the tree", () => {
       { email: AGENT, name: "Agent One" },
       { email: AGENT2, name: "Agent Two" },
     ]);
-    expect(rowOf(await board(CEO, kd(6), today), LOC_C).callers).toEqual([
+    expect((await client(CEO, LOC_C, kd(6), today)).client.callers).toEqual([
       { email: AGENT, name: "Agent One" },
     ]);
   });
@@ -2509,6 +2513,11 @@ describe("the read takes the 16 October corrections", () => {
     const OLD = "3333333333";
     const LOOSE = "4444444444";
     const KEPT = "5555555555";
+    const LAUNCH = "6666666666";
+    const [{ ids: cBefore }] = await q<{ ids: string[] }>(
+      "SELECT ad_account_ids AS ids FROM public.cockpit_board_clients WHERE location_id = $1",
+      [LOC_C],
+    );
     const base = (account: string, accountName: string, spend: number) => ({
       account,
       accountName,
@@ -2525,6 +2534,11 @@ describe("the read takes the 16 October corrections", () => {
         "UPDATE public.cockpit_board_clients SET ad_account_ids = ARRAY[$2] WHERE location_id = $1",
         [LOC_X, OLD],
       );
+      // Client C is Launching: off the board, so its spend is outside the rows too.
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = ARRAY[$2] WHERE location_id = $1",
+        [LOC_C, LAUNCH],
+      );
       await q(
         `INSERT INTO public.cockpit_board_account_ties(account_id,location_id,evidence,added_by,kept_out)
          VALUES($1,$2,'The client''s own post boosts, tested.','tests',true)`,
@@ -2533,10 +2547,11 @@ describe("the read takes the 16 October corrections", () => {
       await adDay(base(OLD, "Old client ads", 30.5));
       await adDay(base(LOOSE, "Nobody's ads", 12.25));
       await adDay(base(KEPT, "Client A boosts", 7));
+      await adDay(base(LAUNCH, "Client C ads", 20));
       for (const who of [CEO, ADMIN, CREATIVE]) {
         const b = await board(who);
         expect(b.offBoard).toEqual({
-          spend: 49.75,
+          spend: 69.75,
           unpriced: false,
           accounts: [
             {
@@ -2545,6 +2560,14 @@ describe("the read takes the 16 October corrections", () => {
               spend: 30.5,
               client: "Old client",
               reason: "cancelled",
+            },
+            {
+              accountId: LAUNCH,
+              name: "Client C ads",
+              spend: 20,
+              client: "Client C",
+              clientStatus: "Launching",
+              reason: "not_active",
             },
             {
               accountId: LOOSE,
@@ -2577,7 +2600,7 @@ describe("the read takes the 16 October corrections", () => {
       await owner(db);
       await q(
         "DELETE FROM public.cockpit_meta_ad_days WHERE account_id = ANY($1)",
-        [[OLD, LOOSE, KEPT]],
+        [[OLD, LOOSE, KEPT, LAUNCH]],
       );
       await q(
         "DELETE FROM public.cockpit_board_account_ties WHERE account_id = $1",
@@ -2586,6 +2609,10 @@ describe("the read takes the 16 October corrections", () => {
       await q(
         "UPDATE public.cockpit_board_clients SET ad_account_ids = '{}' WHERE location_id = $1",
         [LOC_X],
+      );
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = $2 WHERE location_id = $1",
+        [LOC_C, cBefore],
       );
     }
   });
@@ -2634,7 +2661,7 @@ describe("the migration", () => {
     for (const f of READ_CHECKED) await db.exec(migration(f));
     for (const f of READ_CHECKED) await db.exec(migration(f));
     const b = await board(CEO);
-    expect(b.clients.length).toBe(4);
+    expect(b.clients.length).toBe(3);
     expect(b).toHaveProperty("offBoard");
   });
 });

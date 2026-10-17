@@ -104,7 +104,7 @@ const PAGES: (Hit & { role?: "media_buyer" | "admin" | "ceo" })[] = [
   {
     href: "/performance",
     label: "Client performance",
-    sub: "Every client against its targets, and the levers",
+    sub: "Every active client against its targets, and the levers",
     old: "board clients performance kpi targets levers spend cpl roas show rate no outcome caller meeting",
   },
   {

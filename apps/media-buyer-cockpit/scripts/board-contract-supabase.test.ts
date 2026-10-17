@@ -245,6 +245,7 @@ beforeAll(async () => {
   await db.exec(migration("20261016133300_board_api.sql"));
   await db.exec(migration("20261016220000_board_read_checked.sql"));
   await db.exec(migration("20261016220100_board_read_notes.sql"));
+  await db.exec(migration("20261017090000_board_active_only.sql"));
   read = await as(
     VIEWER,
     "SELECT public.cockpit_board_read($1::date,$2::date) AS r",
@@ -280,10 +281,10 @@ const cellKeys = (cells: Record<string, any>[]) =>
 describe("the screen reads what the database returns", () => {
   test("both reads parse with the screen's own parser", () => {
     const board = parseBoard(read);
+    // Contract C is Launching: off the board, its page still opens.
     expect(board.clients.map(c => c.clientName)).toEqual([
       "Contract A",
       "Contract B",
-      "Contract C",
     ]);
     expect(board.canEditTargets).toBe(false);
     const p = parseClientPage(page);
@@ -352,7 +353,10 @@ describe("the screen reads what the database returns", () => {
   });
 
   test("the grid drawn from the real read shows no 0 where the database says NULL", () => {
-    const board = parseBoard(read);
+    // Contract C (Launching) is off the board; its row from its own page keeps
+    // the sparse client in this check.
+    const all = { ...read, clients: [...read.clients, pageC.client] };
+    const board = parseBoard(all);
     const html = renderToStaticMarkup(
       createElement(BoardGrid, {
         rows: board.clients,
@@ -375,7 +379,7 @@ describe("the screen reads what the database returns", () => {
         .trim();
     };
     let checked = 0;
-    for (const row of read.clients) {
+    for (const row of all.clients) {
       for (const c of COLUMNS) {
         if (c.special) continue;
         const cell =

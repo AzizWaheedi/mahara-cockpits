@@ -71,6 +71,11 @@ board's read functions and screen).
   which is kept. A location with no card uses the registry's status.
 - **Freshness:** the roster every 15 minutes; the spine on every facts
   refresh (minutes 10 and 40).
+- **On the board (since 17 Oct, `20261017090000_board_active_only.sql`):** only
+  clients whose card says Active (18 on 17 Oct). Launching, Paused, Stopped
+  and Ghosting clients are off the board; their spend is named under "Not in
+  these totals" (reason not_active, with the status). One client's page,
+  opened by its link, still reads any client not cancelled.
 - **Coverage on 16 Oct:** 54 cards, 18 Active (17 in the registry: Shades was
   Launching there).
 - **Gaps:** the registry disagreed with the card on 7 clients (Shades,

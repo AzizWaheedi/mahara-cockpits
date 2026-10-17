@@ -179,6 +179,8 @@ export const BoardSchema = z
               name: text,
               spend: num,
               client: text,
+              /** A client not Active: its card's status (Paused, Stopped, Launching, Ghosting). */
+              clientStatus: text,
               reason: text,
             })
             .passthrough(),
