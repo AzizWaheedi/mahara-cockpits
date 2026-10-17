@@ -75,7 +75,7 @@ function fakeDb(now: () => number) {
           }
         }
       }
-      const state = (a: any) => ({ status: a.status, disableReason: a.disableReason, spendCap: a.spendCap, amountSpent: a.amountSpent, readAt: a.readAt });
+      const state = (a: any) => ({ status: a.status, disableReason: a.disableReason, spendCap: a.spendCap, amountSpent: a.amountSpent, prepay: a.prepay, readAt: a.readAt });
       for (const a of p.budgetAccounts ?? []) {
         tasks.push({
           kind: "budgets", accountId: a.accountId, currency: a.currency, timezone: a.timezone, accountState: state(a), id: tasks.length + 1, runId,
@@ -523,7 +523,7 @@ describe("budgets and their history", () => {
       if (path !== "767701513092162/client_ad_accounts") return null;
       return ok({
         data: [
-          { ...edgeAccount(KUWAIT_ACCOUNT, "Kuwait Client", "USD", "Asia/Kuwait", 300), spend_cap: "0", amount_spent: "611277", disable_reason: 0 },
+          { ...edgeAccount(KUWAIT_ACCOUNT, "Kuwait Client", "USD", "Asia/Kuwait", 300), spend_cap: "0", amount_spent: "611277", disable_reason: 0, is_prepay_account: false },
           // Ardon's shape: a 3,000 SAR limit, now reached.
           { ...edgeAccount(SAR_ACCOUNT, "Riyadh Client", "SAR", "Asia/Riyadh", 1200), spend_cap: "300000", amount_spent: "300000", disable_reason: 0 },
           edgeAccount(LA_ACCOUNT, "LA Account", "USD", "America/Los_Angeles", 55),
@@ -555,10 +555,13 @@ describe("budgets and their history", () => {
       // The ad-days stay on the accounts that spent; the budgets add the tied one that did not.
       expect(begin.accounts.map((a: any) => a.accountId)).toEqual([KUWAIT_ACCOUNT, SAR_ACCOUNT, LA_ACCOUNT]);
       expect(begin.budgetAccounts.map((a: any) => a.accountId)).toEqual([KUWAIT_ACCOUNT, SAR_ACCOUNT, LA_ACCOUNT, "4444444444444"]);
-      expect(begin.budgetAccounts[1]).toMatchObject({ currency: "SAR", status: 1, spendCap: "300000", amountSpent: "300000", disableReason: 0 });
+      expect(begin.budgetAccounts[1]).toMatchObject({ currency: "SAR", status: 1, spendCap: "300000", amountSpent: "300000", disableReason: 0, prepay: null });
+      expect(begin.budgetAccounts[0]).toMatchObject({ prepay: false });
       expect(begin.budgetAccounts[1].readAt).toBe(new Date(NOW).toISOString());
       expect(begin.activityAccounts).toEqual([]);
       expect(begin.budgetUnlisted).toEqual(["9999999999999"]);
+      // Listed with no spend over the window: a known $0 on each day that had ended when the listing was asked.
+      expect(begin.zeroSpend).toEqual({ listedAt: new Date(NOW).toISOString(), accounts: ["3333333333333", "4444444444444"] });
       expect(t.calls.some(c => graphPath(c).endsWith("/campaigns"))).toBe(false);
 
       t.tick(301_000);
@@ -573,7 +576,7 @@ describe("budgets and their history", () => {
       }
       const kuwait = t.db.budgets.find(b => b.accountId === KUWAIT_ACCOUNT);
       expect(kuwait).toMatchObject({ currency: "USD", currencyOffset: 100, note: "1 of 1 campaigns switched on, 1 delivering." });
-      expect(kuwait.account).toEqual({ status: 1, disableReason: 0, spendCap: null, amountSpent: 6112.77, readAt: new Date(NOW).toISOString() });
+      expect(kuwait.account).toEqual({ status: 1, disableReason: 0, spendCap: null, amountSpent: 6112.77, prepay: false, readAt: new Date(NOW).toISOString() });
       expect(kuwait.rows[0]).toMatchObject({ level: "campaign", object_id: "120000000000501", account_id: KUWAIT_ACCOUNT, daily_budget: 30, delivering: true });
       // The limit reached stops delivery, and says so; the budget stays, in SAR.
       const sar = t.db.budgets.find(b => b.accountId === SAR_ACCOUNT);
@@ -652,6 +655,9 @@ describe("budgets and their history", () => {
       const h = t.db.histories.find(x => x.accountId === KUWAIT_ACCOUNT);
       expect(h).toMatchObject({ currency: "USD", currencyOffset: 100, note: null });
       expect(h.days.length).toBe(14);
+      // Every row names its account, which the database checks.
+      expect(h.rows.every((r: any) => r.account_id === KUWAIT_ACCOUNT)).toBe(true);
+      expect(h.rows[0]).toMatchObject({ switched_on: true, switched_on_any: true, max_budget: 20, why_not: null });
       expect(h.rows.map((r: any) => [r.day, r.daily_budget, r.changed_during_day, r.verified])).toEqual([
         ["2026-10-05", 20, false, true],
         ["2026-10-06", 20, false, true],

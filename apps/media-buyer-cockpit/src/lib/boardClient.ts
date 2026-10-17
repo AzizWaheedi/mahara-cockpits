@@ -37,7 +37,12 @@ const YesterdaySchema = z
   })
   .passthrough();
 
-/** Budget/day: an ad account that needs action (billing, its spending limit). */
+/**
+ * Budget/day: an ad account that needs action. issue: billing (a payment:
+ * Meta status 3, 8, 9), account (it cannot run: disabled, closing, closed,
+ * under risk review), limit_reached, limit_near, balance_out, balance_low (a
+ * prepaid balance); words in Meta's capitals.
+ */
 const AccountIssueSchema = z
   .object({
     accountId: z.string(),
@@ -90,20 +95,23 @@ export const CellSchema = z
     marked: num,
     noShows: num,
     /**
-     * Budget/day (2026-10-17): campaigns delivering now on a daily budget,
-     * those on a lifetime budget left out, when the budgets were read, those
-     * switched on but not delivering and their budgets, and the ad accounts
-     * that need action.
+     * Budget/day (2026-10-17): campaigns switched on now with a daily budget
+     * (blocked ones too), those on a lifetime budget left out, when the
+     * budgets were read, those of them not delivering and their budgets, those
+     * waiting for their start (not counted), and the ad accounts that need
+     * action.
      */
     campaigns: num,
     lifetime: num,
     asOf: text,
     notDelivering: num,
     heldBudget: num,
+    starting: num,
     accountIssues: z.array(AccountIssueSchema).nullable().optional(),
     /**
-     * Budget used: the days with a budget, yesterday, the campaigns that
-     * spent nothing yesterday, and above 110% (a note, never a status).
+     * Budget used: the days with a budget, yesterday, the campaigns switched
+     * on with a daily budget that spent nothing yesterday, and above 110% (a
+     * note, never a status).
      */
     budgetDays: num,
     yesterday: YesterdaySchema.nullable().optional(),
@@ -295,7 +303,7 @@ const CampaignSchema = z
   .passthrough();
 export type TreeCampaign = z.output<typeof CampaignSchema>;
 
-/** One campaign switched on now (or spent on an account never read), on the client's page. */
+/** One campaign switched on now, or waiting for its start, or spent on an account never read, on the client's page. */
 const BudgetCampaignSchema = z
   .object({
     id: z.string(),
@@ -306,14 +314,16 @@ const BudgetCampaignSchema = z
     adsets: num,
     delivering: z.boolean().nullable().optional(),
     whyNot: text,
+    /** Waiting for its start: when (not counted until then). */
+    startsAt: text,
     lifetime: z
       .object({ budget: num, remaining: num, currency: text, endsOn: text })
       .passthrough()
       .nullable()
       .optional(),
-    /** Why it needs a look, in words: off or watch. */
+    /** Why it needs a look, in words: off or watch; a start to come has no status. */
     flag: z
-      .object({ status: z.string(), words: text })
+      .object({ status: z.string().nullable().optional(), words: text })
       .passthrough()
       .nullable()
       .optional(),
@@ -333,13 +343,24 @@ const BudgetsSchema = z
           accountId: z.string(),
           name: text,
           currency: text,
+          /** Meta's status in words; null when active. */
           status: text,
+          /** A prepaid account: its "limit" is the funds added, what is left the balance. */
+          prepaid: z.boolean().nullable().optional(),
           asOf: text,
           spendingLimit: z
-            .object({ cap: num, spent: num, left: num, daysLeft: num })
+            .object({
+              cap: num,
+              spent: num,
+              left: num,
+              daysLeft: num,
+              prepaid: z.boolean().nullable().optional(),
+            })
             .passthrough()
             .nullable()
             .optional(),
+          /** What the page says about the account, in a sentence or two; null when nothing needs saying. */
+          words: text,
         })
         .passthrough(),
     ),

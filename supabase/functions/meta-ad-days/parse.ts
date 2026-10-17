@@ -401,16 +401,17 @@ export function parseLeadIds(rows: Row[], adId: string): LeadIdRow[] {
  * the activity log) is a whole number of the currency's smallest unit as Meta
  * counts it: divide by the offset. 100 for USD, SAR, QAR, AED and most others
  * (BHD too, though ISO gives it 3 decimals: Meta's 1000 is 10.00 BHD); 1 for
- * the currencies Meta counts without minor units. KWD and OMR are not in
- * Meta's table. An account in a currency this table does not hold is refused
- * with a sentence, never assumed to be 100. Insights spend, by contrast, is
- * already in major units.
+ * the currencies Meta counts without minor units. Exactly Meta's table (its
+ * rows, read again 2026-10-17): KWD, OMR, LKR and MAD are not in it, VES is.
+ * An account in a currency this table does not hold is refused with a
+ * sentence, never assumed to be 100. Insights spend, by contrast, is already
+ * in major units.
  */
 const OFFSET_ONE = ["CLP", "COP", "CRC", "HUF", "IDR", "ISK", "JPY", "KRW", "PYG", "TWD", "VND"];
 const OFFSET_HUNDRED = [
   "AED", "ARS", "AUD", "BDT", "BGN", "BHD", "BOB", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "DZD", "EGP", "EUR", "GBP", "GTQ", "HKD", "HNL",
-  "HRK", "ILS", "INR", "JOD", "KES", "LKR", "MAD", "MOP", "MXN", "MYR", "NGN", "NIO", "NOK", "NZD", "PEN", "PHP", "PKR", "PLN", "QAR", "RON",
-  "RSD", "RUB", "SAR", "SEK", "SGD", "THB", "TRY", "UAH", "USD", "UYU", "VEF", "ZAR",
+  "HRK", "ILS", "INR", "JOD", "KES", "MOP", "MXN", "MYR", "NGN", "NIO", "NOK", "NZD", "PEN", "PHP", "PKR", "PLN", "QAR", "RON", "RSD",
+  "RUB", "SAR", "SEK", "SGD", "THB", "TRY", "UAH", "USD", "UYU", "VEF", "VES", "ZAR",
 ];
 export const CURRENCY_OFFSETS: Readonly<Record<string, number>> = Object.freeze({
   ...Object.fromEntries(OFFSET_HUNDRED.map(c => [c, 100])),
@@ -452,8 +453,20 @@ export const BUDGET_FIELDS = [
 /** Meta's campaign effective statuses but ARCHIVED and DELETED. */
 export const CAMPAIGN_STATUSES = ["ACTIVE", "PAUSED", "IN_PROCESS", "WITH_ISSUES"];
 
-/** The account as the business listing gave it, Meta's minor units. */
-export type AccountSnapshot = { status: number | null; disableReason: number | null; spendCap: number | null; amountSpent: number | null };
+/**
+ * The account as the business listing gave it, Meta's minor units. On a
+ * prepaid account (prepay, Meta's is_prepay_account) spend_cap is the funds
+ * added, not a limit: what is left under it is the prepaid balance
+ * (mergestudio.kw, 17 Oct: 351.77 - 340.96 = "Available balance ($10.81
+ * USD)"), and the fix is to add funds, never to raise a limit.
+ */
+export type AccountSnapshot = {
+  status: number | null;
+  disableReason: number | null;
+  spendCap: number | null;
+  amountSpent: number | null;
+  prepay?: boolean | null;
+};
 
 export type LiveAdset = {
   id: string;
@@ -506,6 +519,8 @@ export type BudgetRow = {
   adsWithIssues: number;
   issues: { level: string | null; code: number | null; summary: string | null }[] | null;
   switchedOn: boolean;
+  /** Switched on but waiting for its start (the campaign's, or every ad set switched on starts later): when. */
+  startsAt: string | null;
   delivering: boolean;
   whyNot: string | null;
 };
@@ -587,8 +602,9 @@ export function readLiveCampaigns(rows: Row[]): LiveCampaign[] {
       effectiveStatus: status(raw.effective_status, `campaign ${id}'s effective status`),
       dailyMinor,
       lifetimeMinor,
-      // budget_remaining is a sum on an ABO campaign too; NULL only when nothing has a budget.
-      remainingMinor: minorUnits(raw.budget_remaining, `campaign ${id}'s budget remaining`, false),
+      // Read on a CBO campaign only: on an ABO one Meta's campaign-level figure is not
+      // its ad sets' (Khalda, 17 Oct: "110400" over two ad sets at "0"); budgetRows adds the ad sets' own.
+      remainingMinor: dailyMinor !== null || lifetimeMinor !== null ? minorUnits(raw.budget_remaining, `campaign ${id}'s budget remaining`, false) : null,
       start: metaTime(raw.start_time, `campaign ${id}'s start`),
       end: metaTime(raw.stop_time, `campaign ${id}'s stop`),
       issues,
@@ -604,17 +620,46 @@ function idOf(v: unknown, what: string): string {
 
 const words = (s: string) => s.toLowerCase().replace(/_/g, " ");
 
-/** Why an account cannot deliver, in plain words; null when it can (Meta status 1 active, 9 grace period). */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-20" as the cockpit writes a day (format.ts shortDate): "20 Oct". */
+export function dayWords(day: string | null | undefined): string {
+  const m = typeof day === "string" ? day.match(/^\d{4}-(\d{2})-(\d{2})/) : null;
+  return m ? `${Number(m[2])} ${MONTHS[Number(m[1]) - 1]}` : "later";
+}
+
+/**
+ * Meta's ad account status in a few words (cockpit_board_account_words in
+ * 20261017100100_board_budgets.sql says the same): null for 1, active.
+ */
+export function accountWords(statusCode: number | null): string | null {
+  switch (statusCode) {
+    case 1:
+      return null;
+    case 2:
+    case 201:
+      return "Account disabled";
+    case 3:
+      return "Account unsettled: payment needed";
+    case 7:
+      return "Account under risk review";
+    case 8:
+      return "Payment being settled";
+    case 9:
+      return "In grace period: payment due";
+    case 100:
+      return "Account closing";
+    case 101:
+      return "Account closed";
+    case null:
+      return "Account status not known";
+    default:
+      return `Meta account status ${statusCode}`;
+  }
+}
+
+/** Why an account cannot deliver, in those words; null when it can (Meta status 1 active, 9 grace period). */
 export function accountWhyNot(statusCode: number | null): string | null {
-  if (statusCode === 1 || statusCode === 9) return null;
-  if (statusCode === 2) return "Account disabled";
-  if (statusCode === 3) return "Account unsettled: payment needed";
-  if (statusCode === 7) return "Account under Meta's risk review";
-  if (statusCode === 8) return "Account pending settlement";
-  if (statusCode === 100) return "Account pending closure";
-  if (statusCode === 101) return "Account closed";
-  if (statusCode === null) return "Account status unknown";
-  return `Account not active (Meta status ${statusCode})`;
+  return statusCode === 9 ? null : accountWords(statusCode);
 }
 
 function adsWhyNot(ads: string[]): string {
@@ -626,26 +671,35 @@ function adsWhyNot(ads: string[]): string {
 }
 
 /** The order a campaign names its ad sets' reasons in, most telling first. */
-const ADSET_REASONS = ["Ads with issues", "Ads not approved yet", "Ads waiting for payment details", "Ad set", "Starts", "No ads", "Ads paused"];
+const ADSET_REASONS = ["Ads with issues", "Ads not approved yet", "Ads waiting for payment details", "Ad set", "No ads", "Ads paused"];
 
 /**
- * Every campaign and ad set as cockpit_meta_budgets rows, judged at `nowMs`:
- *   - delivering: the account is active or in its grace period and its
- *     spending limit not reached, the campaign and the ad set are ACTIVE, the
- *     start has passed and the end has not, and at least one ad is ACTIVE;
- *   - otherwise why_not says why, in plain words, and the budget is kept;
- *   - CBO: the campaign's budget. ABO: the sum of the delivering ad sets'
- *     budgets; when none delivers, the sum of the ad sets switched on (status
- *     ACTIVE, not ended), so a blocked campaign still shows what it is set to
- *     spend. A paused or ended ad set never counts (hermes/cockpit-sync
- *     calculator.ts sums every ad set when none is active: not here).
- *   - lifetime budgets stay lifetime: no daily figure.
+ * Every campaign and ad set as cockpit_meta_budgets rows, judged at `nowMs`.
+ *
+ * Switched on (the board's budgets count these, 2026-10-17): the buyer has
+ * it set to spend. An ad set: status ACTIVE, its start passed and its end
+ * not. A campaign: status ACTIVE, its start passed and its end not, and at
+ * least one ad set switched on. A campaign waiting for its start (its own,
+ * or every ad set switched on starts later) is not switched on yet: startsAt
+ * says when, and why_not "Starts 20 Oct".
+ *
+ * The budget: CBO the campaign's own; ABO the sum of the ad sets switched
+ * on, delivering or not, so a campaign blocked by its ads, its account or a
+ * spending limit shows the budget it is set to spend. A paused or ended ad
+ * set never counts (hermes/cockpit-sync calculator.ts sums every ad set when
+ * none is active: not here). Lifetime budgets stay lifetime: no daily figure.
+ *
+ * Delivering (an explanation, not a filter): the account is active or in
+ * its grace period and its spending limit (or prepaid balance) not used up,
+ * the campaign and the ad set are ACTIVE and running, and at least one ad is
+ * ACTIVE. Otherwise why_not says why, in plain words.
  */
 export function budgetRows(live: LiveCampaign[], account: AccountSnapshot, offset: number, nowMs: number): BudgetRow[] {
   const major = (n: number | null) => (n === null ? null : n / offset);
   const accountNo = accountWhyNot(account.status);
   const capReached = account.spendCap !== null && account.spendCap > 0 && account.amountSpent !== null && account.amountSpent >= account.spendCap;
-  const blocked = accountNo ?? (capReached ? "Spending limit reached" : null);
+  // On a prepaid account the "limit" is the funds added: the fix is to add funds.
+  const blocked = accountNo ?? (capReached ? (account.prepay === true ? "Prepaid balance used up: add funds" : "Spending limit reached") : null);
   const ended = (t: MetaTime | null) => t !== null && t.ms <= nowMs;
   const started = (t: MetaTime | null) => t === null || t.ms <= nowMs;
   const out: BudgetRow[] = [];
@@ -656,7 +710,7 @@ export function budgetRows(live: LiveCampaign[], account: AccountSnapshot, offse
         : ended(c.end)
           ? "Ended"
           : !started(c.start)
-            ? `Starts ${c.start?.day}`
+            ? `Starts ${dayWords(c.start?.day)}`
             : c.effectiveStatus !== "ACTIVE"
               ? c.effectiveStatus === "PAUSED"
                 ? "Paused"
@@ -674,26 +728,39 @@ export function budgetRows(live: LiveCampaign[], account: AccountSnapshot, offse
           : ended(a.end)
             ? "Ended"
             : !started(a.start)
-              ? `Starts ${a.start?.day}`
+              ? `Starts ${dayWords(a.start?.day)}`
               : a.effectiveStatus !== "ACTIVE" && a.effectiveStatus !== "CAMPAIGN_PAUSED"
                 ? a.effectiveStatus === "ADSET_PAUSED" ? "Paused" : `Ad set ${words(a.effectiveStatus ?? "unknown")}`
                 : !a.ads.includes("ACTIVE")
                   ? adsWhyNot(a.ads)
                   : null;
-      const switchedOn = a.status === "ACTIVE" && !ended(a.end);
+      const switchedOn = a.status === "ACTIVE" && started(a.start) && !ended(a.end);
+      const waiting = a.status === "ACTIVE" && !started(a.start) && !ended(a.end);
       const delivering = campaignOk && own === null && a.effectiveStatus === "ACTIVE";
       const whyNot = delivering
         ? null
         : (blocked ?? (c.effectiveStatus === "PAUSED" || c.status === "PAUSED" ? "Campaign paused" : campaignOwn) ?? own ?? "Not delivering");
-      return { a, own, switchedOn, delivering, whyNot };
+      return { a, own, switchedOn, waiting, delivering, whyNot };
     });
-    const campaignSwitchedOn = c.status === "ACTIVE" && !ended(c.end) && (sets.length === 0 || sets.some(s => !ended(s.a.end)));
+    const on = sets.filter(s => s.switchedOn);
+    const campaignLive = c.status === "ACTIVE" && started(c.start) && !ended(c.end);
+    const campaignSwitchedOn = campaignLive && on.length > 0;
+    // Waiting for its start: the campaign's own, or (running) every ad set switched on starts later.
+    const firstWait = sets
+      .filter(s => s.waiting)
+      .map(s => s.a.start as MetaTime)
+      .sort((x, y) => x.ms - y.ms)[0];
+    const startsAt =
+      c.status === "ACTIVE" && !ended(c.end) && !started(c.start)
+        ? (c.start as MetaTime)
+        : campaignLive && !on.length && firstWait
+          ? firstWait
+          : null;
     const delivering = campaignOk && sets.some(s => s.delivering);
     let whyNot: string | null = null;
     if (!delivering) {
-      whyNot = blocked ?? campaignOwn;
+      whyNot = startsAt ? `Starts ${dayWords(startsAt.day)}` : (blocked ?? campaignOwn);
       if (whyNot === null) {
-        const on = sets.filter(s => s.switchedOn);
         if (!sets.length) whyNot = "No ad sets";
         else if (!on.length) whyNot = sets.every(s => ended(s.a.end)) ? "Ended" : "Ad sets paused";
         else {
@@ -705,19 +772,25 @@ export function budgetRows(live: LiveCampaign[], account: AccountSnapshot, offse
     let budgetType: "daily" | "lifetime" | null;
     let dailyMinor: number | null;
     let lifetimeMinor: number | null;
+    let remainingMinor: number | null;
     if (c.budgetLevel === "campaign") {
       dailyMinor = c.dailyMinor;
       lifetimeMinor = dailyMinor === null ? c.lifetimeMinor : null;
       budgetType = dailyMinor !== null ? "daily" : "lifetime";
+      remainingMinor = c.remainingMinor;
     } else {
-      const deliveringSets = sets.filter(s => s.delivering);
-      const counted = (deliveringSets.length ? deliveringSets : sets.filter(s => s.switchedOn)).map(s => s.a);
+      // The ad sets switched on, delivering or not (a paused ABO campaign keeps
+      // what its ad sets are set to, like a paused CBO one keeps its budget).
+      const counted = on.map(s => s.a);
       const daily = counted.filter(a => a.dailyMinor !== null);
       const lifetime = counted.filter(a => a.lifetimeMinor !== null);
       dailyMinor = daily.length ? daily.reduce((n, a) => n + (a.dailyMinor ?? 0), 0) : null;
       lifetimeMinor = lifetime.length ? lifetime.reduce((n, a) => n + (a.lifetimeMinor ?? 0), 0) : null;
       budgetType = dailyMinor !== null ? "daily" : lifetimeMinor !== null ? "lifetime" : null;
       if (budgetType === "lifetime") dailyMinor = null;
+      // What is left today is the counted ad sets' own: Meta's campaign-level figure is not their sum.
+      const holding = (budgetType === "daily" ? daily : budgetType === "lifetime" ? lifetime : []).filter(a => a.remainingMinor !== null);
+      remainingMinor = holding.length ? holding.reduce((n, a) => n + (a.remainingMinor ?? 0), 0) : null;
     }
     const allAds = c.adsets.flatMap(a => a.ads);
     out.push({
@@ -732,13 +805,14 @@ export function budgetRows(live: LiveCampaign[], account: AccountSnapshot, offse
       budgetType,
       dailyBudget: major(dailyMinor),
       lifetimeBudget: major(lifetimeMinor),
-      budgetRemaining: budgetType === null ? null : major(c.remainingMinor),
+      budgetRemaining: budgetType === null ? null : major(remainingMinor),
       startTime: c.start?.iso ?? null,
       endTime: c.end?.iso ?? null,
       adsActive: allAds.filter(s => s === "ACTIVE").length,
       adsWithIssues: allAds.filter(s => s === "WITH_ISSUES" || s === "DISAPPROVED").length,
       issues: c.issues.length ? c.issues : null,
       switchedOn: campaignSwitchedOn,
+      startsAt: startsAt?.iso ?? null,
       delivering,
       whyNot,
     });
@@ -764,6 +838,7 @@ export function budgetRows(live: LiveCampaign[], account: AccountSnapshot, offse
         adsWithIssues: a.ads.filter(x => x === "WITH_ISSUES" || x === "DISAPPROVED").length,
         issues: null,
         switchedOn: s.switchedOn,
+        startsAt: s.waiting ? (a.start?.iso ?? null) : null,
         delivering: s.delivering,
         whyNot: s.whyNot,
       });
@@ -800,6 +875,7 @@ export function toBudgetApplyRow(r: BudgetRow, accountId: string): Record<string
     ads_with_issues: r.adsWithIssues,
     issues: r.issues,
     switched_on: r.switchedOn,
+    starts_at: r.startsAt,
     delivering: r.delivering,
     why_not: r.whyNot,
   };

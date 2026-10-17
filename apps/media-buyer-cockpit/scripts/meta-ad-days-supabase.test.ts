@@ -71,6 +71,7 @@ const TABLES = [
   "cockpit_meta_budget_days",
   "cockpit_meta_budget_account_days",
   "cockpit_meta_account_state",
+  "cockpit_meta_spend_reads",
 ];
 const SERVICE = [
   "cockpit_meta_ad_days_inputs(jsonb)",
@@ -2546,6 +2547,43 @@ describe("budgets (2026-10-17)", () => {
   test("inputs names the accounts tied to an Active client, hidden ones left out", async () => {
     const r = await svc("cockpit_meta_ad_days_inputs", { accounts: [] });
     expect(r.activeAccounts).toEqual([A1, TIED, A2].sort());
+    // Tied to an Active client but hidden on purpose: a hidden clients row, or a hand row kept out.
+    const HIDDEN = "2020202020201";
+    const KEPT = "2020202020202";
+    await owner(db);
+    await db.exec(`CREATE TABLE IF NOT EXISTS public.clients (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, meta_ad_account_id text,
+        ghl_location_id text, hidden_from_dashboard boolean);
+      INSERT INTO public.clients(name, meta_ad_account_id, hidden_from_dashboard) VALUES ('Hidden Co', 'act_${HIDDEN}', true);
+      CREATE TABLE IF NOT EXISTS public.cockpit_board_account_ties (account_id text PRIMARY KEY, location_id text, evidence text,
+        added_by text, added_at timestamptz DEFAULT now(), kept_out boolean NOT NULL DEFAULT false);
+      INSERT INTO public.cockpit_board_account_ties(account_id, location_id, evidence, added_by, kept_out)
+        VALUES ('${KEPT}', 'LOC_HIDDEN', 'Its own boosts', 'test', true);
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_HIDDEN','ch','Hidden Client','Active','DFY',ARRAY['${HIDDEN}','${KEPT}'],false,now());`);
+    try {
+      const hidden = await svc("cockpit_meta_ad_days_inputs", { accounts: [] });
+      expect(hidden.activeAccounts).toEqual([A1, TIED, A2].sort());
+    } finally {
+      await owner(db);
+      await db.exec(`DROP TABLE IF EXISTS public.cockpit_board_account_ties;
+        DELETE FROM public.clients WHERE meta_ad_account_id = 'act_${HIDDEN}';
+        DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_HIDDEN';`);
+    }
+    // Shown again once the hand row is gone, so the filter is what left it out.
+    await owner(db);
+    await db.exec(
+      `INSERT INTO public.cockpit_board_clients VALUES ('LOC_HIDDEN','ch','Hidden Client','Active','DFY',ARRAY['${KEPT}'],false,now());`,
+    );
+    try {
+      expect(
+        (await svc("cockpit_meta_ad_days_inputs", { accounts: [] }))
+          .activeAccounts,
+      ).toContain(KEPT);
+    } finally {
+      await owner(db);
+      await db.exec(
+        "DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_HIDDEN'",
+      );
+    }
   });
 
   test("begin plans one budgets task per account 5 minutes on (hourly) and one history task per account over its days; an older caller plans none", async () => {
@@ -2560,16 +2598,26 @@ describe("budgets (2026-10-17)", () => {
       reach: null,
       budgetAccounts: [
         listed(account(A1, "USD"), NOW),
-        listed(laAccount, NOW, { spendCap: "0", status: 3 }),
+        listed(laAccount, NOW, { spendCap: "0", status: 3, prepay: true }),
       ],
       budgetUnlisted: [TIED],
+      zeroSpend: { listedAt: NOW, accounts: [LA] },
     });
     expect(begun).toMatchObject({
       started: true,
       tasks: 3,
       budgetTasks: 2,
       historyTasks: 0,
+      zeroSpend: 1,
     });
+    // The listing found no spend on LA over the window: a known $0 on each day that had ended by then.
+    const zero = await q<any>(
+      "SELECT source, to_char(since,'YYYY-MM-DD') s, to_char(until,'YYYY-MM-DD') u, read_at::text r FROM cockpit_meta_spend_reads WHERE account_id = $1",
+      [LA],
+    );
+    expect(zero.map(z => [z.source, z.s, z.u, Date.parse(z.r)])).toEqual([
+      ["discovery", "2026-10-14", "2026-10-17", Date.parse(NOW)],
+    ]);
     const tasks = await q<any>(
       "SELECT kind, account_id, account_state, retry_at::text retry_at, account_timezone FROM cockpit_meta_ad_day_tasks WHERE run_id = $1 ORDER BY id",
       [begun.runId],
@@ -2585,6 +2633,7 @@ describe("budgets (2026-10-17)", () => {
       disableReason: 0,
       spendCap: "0",
       amountSpent: "100000",
+      prepay: true,
       readAt: NOW,
     });
     expect(tasks[2].account_timezone).toBe("America/Los_Angeles");
@@ -2660,6 +2709,25 @@ describe("budgets (2026-10-17)", () => {
         "a budget history without its days",
       ],
       [{ budgetUnlisted: ["abc"] }, "a budget account that is not an id"],
+      [
+        { budgetAccounts: [listed(laAccount, NOW, { prepay: "yes" })] },
+        "a prepaid flag that is not true or false",
+      ],
+      [
+        { zeroSpend: { listedAt: NOW, accounts: ["act_1"] } },
+        "an account with no spend that is not an id",
+      ],
+      [
+        {
+          window: { since: "2026-10-14", until: "2026-10-17" },
+          zeroSpend: { listedAt: "2026-10-15T00:00:00Z", accounts: [LA] },
+        },
+        "within the last hour",
+      ],
+      [
+        { zeroSpend: { listedAt: NOW, accounts: [LA] } },
+        "needs the run's window",
+      ],
     ];
     for (const [extra, words] of cases) {
       const message = await refused(
@@ -2843,7 +2911,7 @@ describe("budgets (2026-10-17)", () => {
     expect(begun.started).toBe(true);
   });
 
-  test("each read replaces the account's budgets; today's row on the account's clock: the last read wins, the highest delivering budget is kept", async () => {
+  test("each read replaces the account's budgets; today's row on the account's clock: the last read wins, the highest budget it was switched on with is kept", async () => {
     // Read 1, 23:06 in Los Angeles on 15 Oct: K1 delivers at $30; K2 is switched on but its ads have issues; K3 is paused.
     const r1 = await hourlyBudgets(0, [laAccount]);
     expect(r1.early).toEqual([]);
@@ -2916,7 +2984,8 @@ describe("budgets (2026-10-17)", () => {
     );
     expect(now.map(x => x.object_id)).toEqual([K1, K3]);
     const days = await q<any>(
-      `SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, daily_budget::text d_b, max_budget_usd::text m, delivering, delivering_any, why_not, changed_during_day,
+      `SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, daily_budget::text d_b, max_switched_on_budget::text m, max_switched_on_budget_usd::text mu,
+              switched_on, switched_on_any, delivering, delivering_any, why_not, changed_during_day,
               first_seen::text f, last_seen::text l, source, verified
        FROM cockpit_meta_budget_days WHERE account_id = $1 ORDER BY campaign_id, day`,
       [LA],
@@ -2927,16 +2996,34 @@ describe("budgets (2026-10-17)", () => {
         x.d,
         Number(x.d_b),
         x.m === null ? null : Number(x.m),
+        x.mu === null ? null : Number(x.mu),
+        x.switched_on,
+        x.switched_on_any,
         x.delivering,
         x.delivering_any,
         x.why_not,
         x.changed_during_day,
       ]),
     ).toEqual([
-      [K1, "2026-10-15", 50, 50, false, true, "Paused", true],
-      // K2 was not in the later reads: its row stands as the first read saw it.
-      [K2, "2026-10-15", 1104, null, false, false, "Ads with issues", false],
-      [K3, "2026-10-15", 25, 25, true, true, null, false],
+      // Raised from $30 to $50, then paused: the day keeps the $50 it was switched on with.
+      [K1, "2026-10-15", 50, 50, 50, false, true, false, true, "Paused", true],
+      // Blocked by its ads but switched on: its budget counts, never delivering. Not in the later
+      // reads: its row stands as the first read saw it.
+      [
+        K2,
+        "2026-10-15",
+        1104,
+        1104,
+        1104,
+        true,
+        true,
+        false,
+        false,
+        "Ads with issues",
+        false,
+      ],
+      // Paused at the first read (no row), switched on from the second.
+      [K3, "2026-10-15", 25, 25, 25, true, true, true, true, null, false],
     ]);
     expect(Date.parse(days[0].f)).toBe(Date.parse(minutes(6)));
     expect(Date.parse(days[0].l)).toBe(Date.parse(minutes(56)));
@@ -3018,13 +3105,14 @@ describe("budgets (2026-10-17)", () => {
     }));
     const hrow = (day: string, over: Record<string, unknown> = {}) => ({
       campaign_id: K1,
+      account_id: LA,
       day,
       budget_level: "campaign",
       budget_type: "daily",
       daily_budget: 20,
       max_budget: 20,
-      delivering: true,
-      delivering_any: true,
+      switched_on: true,
+      switched_on_any: true,
       why_not: null,
       changed_during_day: false,
       verified: day !== "2026-10-12",
@@ -3070,10 +3158,40 @@ describe("budgets (2026-10-17)", () => {
     ).toContain("a day twice");
     expect(
       await refused(
-        () => write(t, [hrow("2026-10-13", { delivering: false })]),
+        () => write(t, [hrow("2026-10-13", { switched_on: false })]),
         "22023",
       ),
     ).toContain("without the reason");
+    // Every row is the task's account's, and a campaign another account holds is refused.
+    expect(
+      await refused(
+        () => write(t, [hrow("2026-10-13", { account_id: SA })]),
+        "22023",
+      ),
+    ).toContain("a row from another ad account");
+    const [other] = await q<{ c: string }>(
+      "SELECT campaign_id c FROM cockpit_meta_ad_days WHERE account_id <> $1 ORDER BY campaign_id LIMIT 1",
+      [LA],
+    );
+    expect(
+      await refused(
+        () => write(t, [hrow("2026-10-13", { campaign_id: other.c })]),
+        "22023",
+      ),
+    ).toContain("a campaign another ad account holds");
+    // The log does not follow the ads: a row that says it delivered is refused.
+    expect(
+      await refused(
+        () => write(t, [hrow("2026-10-13", { delivering: true })]),
+        "22023",
+      ),
+    ).toContain("which the log cannot show");
+    expect(
+      await refused(
+        () => write(t, [hrow("2026-10-13", { switched_on_any: false })]),
+        "22023",
+      ),
+    ).toContain("never switched on");
     const rows = dayList.map(d => hrow(d.day));
     // A campaign the reads of 15 Oct did not see: the history does not add it to a day the reads cover.
     rows.push(hrow("2026-10-15", { campaign_id: "120000000017901" }));
@@ -3086,19 +3204,28 @@ describe("budgets (2026-10-17)", () => {
       run: "ok",
     });
     const held = await q<any>(
-      "SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, daily_budget::text b, max_budget_usd::text m, source, verified FROM cockpit_meta_budget_days WHERE account_id = $1 AND day <= '2026-10-15' ORDER BY day, campaign_id",
+      "SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, daily_budget::text b, max_switched_on_budget_usd::text m, delivering, source, verified FROM cockpit_meta_budget_days WHERE account_id = $1 AND day <= '2026-10-15' ORDER BY day, campaign_id",
       [LA],
     );
     expect(
-      held.map(x => [x.campaign_id, x.d, Number(x.b), x.source, x.verified]),
+      held.map(x => [
+        x.campaign_id,
+        x.d,
+        Number(x.b),
+        Number(x.m),
+        x.delivering,
+        x.source,
+        x.verified,
+      ]),
     ).toEqual([
-      [K1, "2026-10-12", 20, "activity", false],
-      [K1, "2026-10-13", 20, "activity", true],
-      [K1, "2026-10-14", 20, "activity", true],
+      // The history says nothing about delivery: the log does not follow the ads.
+      [K1, "2026-10-12", 20, 20, null, "activity", false],
+      [K1, "2026-10-13", 20, 20, null, "activity", true],
+      [K1, "2026-10-14", 20, 20, null, "activity", true],
       // 15 Oct was read three times: its snapshot rows stand.
-      [K1, "2026-10-15", 50, "snapshot", true],
-      [K2, "2026-10-15", 1104, "snapshot", true],
-      [K3, "2026-10-15", 25, "snapshot", true],
+      [K1, "2026-10-15", 50, 50, false, "snapshot", true],
+      [K2, "2026-10-15", 1104, 1104, false, "snapshot", true],
+      [K3, "2026-10-15", 25, 25, true, "snapshot", true],
     ]);
     const cover = await q<any>(
       "SELECT to_char(day,'YYYY-MM-DD') d, source, verified FROM cockpit_meta_budget_account_days WHERE account_id = $1 ORDER BY day",
@@ -3157,7 +3284,8 @@ describe("budgets (2026-10-17)", () => {
   });
 
   test("the run's note: ad-day reads counted on their own, budgets and their gaps on lines of their own; status gives the budgets block", async () => {
-    await at(NOW);
+    // After the other runs of this block, so this run is the latest the status reads.
+    await at(minutes(120));
     const begun = await svc("cockpit_meta_ad_days_begin", {
       job: "hourly",
       requestedBy: "cron",
@@ -3166,7 +3294,10 @@ describe("budgets (2026-10-17)", () => {
         dayTask(A1, "2026-10-15", "2026-10-16"),
         dayTask(SA, "2026-10-15", "2026-10-16"),
       ],
-      budgetAccounts: [listed(account(A1, "USD"), NOW), listed(saAccount, NOW)],
+      budgetAccounts: [
+        listed(account(A1, "USD"), minutes(120)),
+        listed(saAccount, minutes(120)),
+      ],
       budgetUnlisted: [TIED],
     });
     for (const t of (await svc("cockpit_meta_ad_days_claim", {
@@ -3176,19 +3307,21 @@ describe("budgets (2026-10-17)", () => {
       await svc("cockpit_meta_ad_days_apply", {
         taskId: t.id,
         leaseToken: t.leaseToken,
-        fetchedAt: NOW,
+        fetchedAt: minutes(120),
         rows: [],
         final: true,
       });
     }
-    await at(minutes(6));
+    await at(minutes(126));
     const claimed = (await svc("cockpit_meta_ad_days_claim", {
       limit: 5,
       leaseSeconds: 300,
     })) as any[];
     const a1 = claimed.find(t => t.accountId === A1);
     const sa = claimed.find(t => t.accountId === SA);
-    await apply(a1, minutes(6), [camp(A1, "120000000017401")]);
+    await apply(a1, minutes(126), [camp(A1, "120000000017401")], {
+      account: state(minutes(120)),
+    });
     await svc("cockpit_meta_ad_days_fail", {
       taskId: sa.id,
       leaseToken: sa.leaseToken,
@@ -3200,7 +3333,8 @@ describe("budgets (2026-10-17)", () => {
       "SELECT state, note, detail FROM cockpit_meta_ad_day_runs WHERE id = $1",
       [begun.runId],
     );
-    expect(run.state).toBe("partial");
+    // A budgets read that failed never makes the run partial: the ad numbers were all read.
+    expect(run.state).toBe("ok");
     // Both accounts' ad-days were read: "Read 2 of 2", whatever the budgets did.
     expect(run.note).toContain(
       "Read 2 of 2 ad accounts: 0 ad-days written, 0 new or changed.",
@@ -3216,8 +3350,21 @@ describe("budgets (2026-10-17)", () => {
     const [sync] = await q<any>(
       "SELECT ok, detail FROM cockpit_sync_state WHERE key = 'meta-ad-days-hourly'",
     );
-    expect(sync.ok).toBe(false);
-    expect(sync.detail).toMatchObject({ budgetsRead: 1, budgetsFailed: 1 });
+    expect(sync.ok).toBe(true);
+    expect(sync.detail).toMatchObject({
+      state: "ok",
+      budgetsRead: 1,
+      budgetsFailed: 1,
+    });
+    // The day reads that finished are kept, after their tasks are gone.
+    const reads = await q<any>(
+      "SELECT account_id a, source, to_char(since,'YYYY-MM-DD') s, to_char(until,'YYYY-MM-DD') u FROM cockpit_meta_spend_reads WHERE run_id = $1 ORDER BY account_id",
+      [begun.runId],
+    );
+    expect(reads.map(r => [r.a, r.source, r.s, r.u])).toEqual([
+      [A1, "days", "2026-10-15", "2026-10-16"],
+      [SA, "days", "2026-10-15", "2026-10-16"],
+    ]);
     await service();
     const s = (
       await db.query<{ r: any }>(
@@ -3237,10 +3384,100 @@ describe("budgets (2026-10-17)", () => {
       [SA, "Riyadh Budgets"],
     ]);
     expect(s.budgets.failing[0].error).toContain("code 17");
+    // The budgets have a state of their own.
+    expect(s.budgets.lastRun).toMatchObject({
+      runId: begun.runId,
+      read: 1,
+      failed: 1,
+      state: "partial",
+    });
+    expect(s.budgets.unlisted).toEqual([
+      { accountId: TIED, clientName: "Budget Client" },
+    ]);
     // LA's history failed once (the claim test), then was read: not failing.
     expect(s.budgets.historyFailing).toEqual([]);
-    expect(Date.parse(s.budgets.newestFetchedAt)).toBe(Date.parse(minutes(96)));
+    expect(Date.parse(s.budgets.newestFetchedAt)).toBe(
+      Date.parse(minutes(126)),
+    );
     await at(NOW);
+  });
+
+  test("Read X of Y counts the day reads: a lead-ids or reach task that failed names its account, which still counts as read", async () => {
+    await at(minutes(140));
+    await closeOpenRuns();
+    const LEAD_AD = "111100000000777";
+    // A1's form leads in the last 31 days: the nightly plans its lead ids.
+    await q(
+      `INSERT INTO public.cockpit_meta_ad_days(account_id, day, ad_id, leads, lead_actions, impressions, fetched_at)
+       VALUES ($1, '2026-10-14', $2, 2, 2, 100, $3::timestamptz)`,
+      [A1, LEAD_AD, NOW],
+    );
+    try {
+      const begun = await svc("cockpit_meta_ad_days_begin", {
+        job: "nightly",
+        requestedBy: "cron",
+        window: { since: "2026-09-01", until: "2026-10-17" },
+        accounts: [account(A1, "USD"), saAccount],
+        tasks: [
+          dayTask(A1, "2026-10-08", "2026-10-14"),
+          dayTask(SA, "2026-10-08", "2026-10-14"),
+        ],
+        reach: "account",
+        leadIds: true,
+      });
+      const claimed: any[] = [];
+      for (;;) {
+        const got = (await svc("cockpit_meta_ad_days_claim", {
+          limit: 5,
+          leaseSeconds: 300,
+        })) as any[];
+        if (!got.length) break;
+        claimed.push(...got);
+      }
+      expect(claimed.map(t => t.kind).sort()).toEqual(
+        ["days", "days", "lead_ids", "reach_account", "reach_account"].sort(),
+      );
+      for (const t of claimed) {
+        if (t.kind === "days") {
+          await svc("cockpit_meta_ad_days_apply", {
+            taskId: t.id,
+            leaseToken: t.leaseToken,
+            fetchedAt: minutes(140),
+            rows: [],
+            final: true,
+          });
+        } else {
+          await svc("cockpit_meta_ad_days_fail", {
+            taskId: t.id,
+            leaseToken: t.leaseToken,
+            error: `Meta refused the ${t.kind === "lead_ids" ? "leads" : "reach"} read (code 100).`,
+            retry: false,
+          });
+        }
+      }
+      const [run] = await q<any>(
+        "SELECT state, note FROM cockpit_meta_ad_day_runs WHERE id = $1",
+        [begun.runId],
+      );
+      // Every day was read: "Read 2 of 2", and the failed reads are named with their accounts.
+      expect(run.note).toContain(
+        "Read 2 of 2 ad accounts: 0 ad-days written, 0 new or changed.",
+      );
+      expect(run.note).toContain(
+        `Could not read Account 11 (${A1}): Meta refused the`,
+      );
+      expect(run.note).toContain(
+        `Riyadh Budgets (${SA}): Meta refused the reach read (code 100).`,
+      );
+      // Reach and lead ids are ad numbers: their failure makes the run partial (budgets never do).
+      expect(run.state).toBe("partial");
+    } finally {
+      await closeOpenRuns();
+      await q("DELETE FROM public.cockpit_meta_ad_days WHERE ad_id = $1", [
+        LEAD_AD,
+      ]);
+      await at(NOW);
+    }
   });
 
   test("nobody but the service role reads or writes budgets", async () => {
@@ -3252,6 +3489,7 @@ describe("budgets (2026-10-17)", () => {
         "SELECT * FROM public.cockpit_meta_budget_days",
         "SELECT * FROM public.cockpit_meta_budget_account_days",
         "SELECT * FROM public.cockpit_meta_account_state",
+        "SELECT * FROM public.cockpit_meta_spend_reads",
       ]) {
         await actor(db, who);
         await refused(() => db.query(sql), "42501");

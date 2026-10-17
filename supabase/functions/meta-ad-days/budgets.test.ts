@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { adsetRow, campaignRow } from "./fixtures.ts";
 import {
   accountWhyNot,
+  accountWords,
   type AccountSnapshot,
   BUDGET_FIELDS,
   type BudgetRow,
@@ -37,10 +38,10 @@ function caught(fn: () => unknown): ParseError {
 
 describe("currency offsets", () => {
   test("Meta's table: 100 for the currencies stored, 1 for the ones without minor units, nothing assumed", () => {
-    for (const c of ["USD", "SAR", "QAR", "AED", "BHD", "EGP", "JOD", "EUR"]) expect({ c, o: currencyOffset(c) }).toEqual({ c, o: 100 });
+    for (const c of ["USD", "SAR", "QAR", "AED", "BHD", "EGP", "JOD", "EUR", "VES"]) expect({ c, o: currencyOffset(c) }).toEqual({ c, o: 100 });
     for (const c of ["CLP", "COP", "CRC", "HUF", "ISK", "IDR", "JPY", "KRW", "PYG", "TWD", "VND"]) expect({ c, o: currencyOffset(c) }).toEqual({ c, o: 1 });
-    // KWD and OMR are not in Meta's table: refused, never 100.
-    for (const c of ["KWD", "OMR", "XYZ", "", null, undefined, "toString"]) expect(currencyOffset(c as string)).toBeNull();
+    // KWD, OMR, LKR and MAD are not in Meta's table (read 2026-10-17): refused, never 100.
+    for (const c of ["KWD", "OMR", "LKR", "MAD", "XYZ", "", null, undefined, "toString"]) expect(currencyOffset(c as string)).toBeNull();
     expect(Object.values(CURRENCY_OFFSETS).every(o => o === 1 || o === 100)).toBe(true);
     expect(noOffsetSentence("1111111111111", "KWD")).toContain("act_1111111111111 is in KWD");
     expect(noOffsetSentence("1111111111111", null)).toContain("no currency");
@@ -90,15 +91,24 @@ describe("the budgets read", () => {
     expect(adset(out, "120000000000502")).toMatchObject({ budgetLevel: "campaign", budgetType: null, dailyBudget: null, budgetRemaining: null, delivering: true });
   });
 
-  test("ABO: the delivering ad sets only, never a paused one, and an ad set with no live ad does not count while another delivers", () => {
+  test("ABO: the ad sets switched on, delivering or not, never a paused one", () => {
     const out = rows([
       campaignRow("120000000000701", {}, [
-        adsetRow("120000000000702", ["ACTIVE"], { daily_budget: "10000", lifetime_budget: "0" }),
-        adsetRow("120000000000703", ["DISAPPROVED"], { daily_budget: "5000", lifetime_budget: "0" }),
+        adsetRow("120000000000702", ["ACTIVE"], { daily_budget: "10000", lifetime_budget: "0", budget_remaining: "4000" }),
+        adsetRow("120000000000703", ["DISAPPROVED"], { daily_budget: "5000", lifetime_budget: "0", budget_remaining: "5000" }),
         adsetRow("120000000000704", ["ACTIVE"], { status: "PAUSED", effective_status: "PAUSED", daily_budget: "90000", lifetime_budget: "0" }),
       ]),
     ]);
-    expect(campaign(out, "120000000000701")).toMatchObject({ budgetLevel: "adset", budgetType: "daily", dailyBudget: 100, delivering: true, adsWithIssues: 1 });
+    // The ad set blocked by its ads is set to spend too: its budget counts, and Budget used shows it unspent.
+    expect(campaign(out, "120000000000701")).toMatchObject({
+      budgetLevel: "adset",
+      budgetType: "daily",
+      dailyBudget: 150,
+      budgetRemaining: 90,
+      switchedOn: true,
+      delivering: true,
+      adsWithIssues: 1,
+    });
     expect(adset(out, "120000000000703")).toMatchObject({ dailyBudget: 50, delivering: false, whyNot: "Ads with issues", switchedOn: true });
     expect(adset(out, "120000000000704")).toMatchObject({ dailyBudget: 900, delivering: false, whyNot: "Paused", switchedOn: false });
   });
@@ -179,9 +189,60 @@ describe("the budgets read", () => {
     // Ardon: a 3,000 SAR limit; spent 2,851.66 delivers, 3,000 does not.
     expect(campaign(rows(c, { ...ACTIVE, spendCap: 300000, amountSpent: 285166 }), "120000000000501").delivering).toBe(true);
     expect(campaign(rows(c, { ...ACTIVE, spendCap: 300000, amountSpent: 300000 }), "120000000000501").whyNot).toBe("Spending limit reached");
-    expect(accountWhyNot(2)).toBe("Account disabled");
+    // Meta's statuses in the cockpit's words; Meta's capitals kept, one colon at most.
+    expect([1, 2, 3, 7, 8, 9, 100, 101, 201, 4, null].map(accountWords)).toEqual([
+      null,
+      "Account disabled",
+      "Account unsettled: payment needed",
+      "Account under risk review",
+      "Payment being settled",
+      "In grace period: payment due",
+      "Account closing",
+      "Account closed",
+      "Account disabled",
+      "Meta account status 4",
+      "Account status not known",
+    ]);
+    expect(accountWhyNot(9)).toBeNull();
     expect(accountWhyNot(101)).toBe("Account closed");
-    expect(accountWhyNot(null)).toBe("Account status unknown");
+  });
+
+  test("a prepaid account whose funds are used up says to add funds, never that a limit was reached", () => {
+    const c = [campaignRow("120248695393070532", {}, [adsetRow("120248695460420532", ["ACTIVE"], { daily_budget: "3000", lifetime_budget: "0" })])];
+    // mergestudio.kw, 17 Oct: funds added 351.77, spent 340.96: $10.81 left, still delivering.
+    expect(campaign(rows(c, { ...ACTIVE, spendCap: 35177, amountSpent: 34096, prepay: true }), "120248695393070532").delivering).toBe(true);
+    expect(campaign(rows(c, { ...ACTIVE, spendCap: 35177, amountSpent: 35177, prepay: true }), "120248695393070532")).toMatchObject({
+      switchedOn: true,
+      delivering: false,
+      dailyBudget: 30,
+      whyNot: "Prepaid balance used up: add funds",
+    });
+    // Not known whether it is prepaid: the limit's words.
+    expect(campaign(rows(c, { ...ACTIVE, spendCap: 35177, amountSpent: 35177 }), "120248695393070532").whyNot).toBe("Spending limit reached");
+  });
+
+  test("what is left today on an ABO campaign is its counted ad sets' own, not Meta's campaign-level figure", () => {
+    const out = rows([
+      // Safad, 17 Oct: the campaign says "0", its only ad set "62000".
+      campaignRow("120254791600340066", { budget_remaining: "0" }, [
+        adsetRow("120254791600350066", ["ACTIVE"], { daily_budget: "62000", lifetime_budget: "0", budget_remaining: "62000" }),
+      ]),
+      // Khalda, 17 Oct: the campaign says "110400", its two ad sets "0".
+      campaignRow("120246911751090088", { budget_remaining: "110400" }, [
+        adsetRow("120246911853470088", ["WITH_ISSUES"], { daily_budget: "55200", lifetime_budget: "0", budget_remaining: "0" }),
+        adsetRow("120246911751070088", ["WITH_ISSUES"], { daily_budget: "55200", lifetime_budget: "0", budget_remaining: "0" }),
+      ]),
+      // Shades, 17 Oct: a lifetime ABO, the campaign "0", the ad set "14775".
+      campaignRow("120227354657630703", { budget_remaining: "0" }, [
+        adsetRow("120227354657640703", ["ACTIVE"], { daily_budget: "0", lifetime_budget: "50000", budget_remaining: "14775", end_time: "2026-10-30T00:00:00+0300" }),
+      ]),
+      // An ABO campaign whose ad sets hold no budget at all: nothing left to say.
+      campaignRow("120000000001501", { budget_remaining: "500" }, [adsetRow("120000000001502", ["ACTIVE"], { budget_remaining: "500" })]),
+    ]);
+    expect(campaign(out, "120254791600340066")).toMatchObject({ budgetType: "daily", dailyBudget: 620, budgetRemaining: 620 });
+    expect(campaign(out, "120246911751090088")).toMatchObject({ dailyBudget: 1104, budgetRemaining: 0 });
+    expect(campaign(out, "120227354657630703")).toMatchObject({ budgetType: "lifetime", lifetimeBudget: 500, budgetRemaining: 147.75 });
+    expect(campaign(out, "120000000001501")).toMatchObject({ budgetType: null, budgetRemaining: null });
   });
 
   test("why not, in plain words: ads not approved yet, not started, no ads, ad sets paused, campaign issues", () => {
@@ -198,15 +259,21 @@ describe("the budgets read", () => {
       }, [adsetRow("120000000001302", ["ACTIVE"])]),
       campaignRow("120000000001401", { daily_budget: "3000" }, []),
     ]);
-    expect(campaign(out, "120250793408940703").whyNot).toBe("Ads not approved yet");
-    expect(campaign(out, "120000000001001")).toMatchObject({ whyNot: "Starts 2026-10-20", switchedOn: true });
-    expect(campaign(out, "120000000001101").whyNot).toBe("No ads");
-    expect(campaign(out, "120000000001201")).toMatchObject({ whyNot: "Ad sets paused", switchedOn: true, dailyBudget: null, budgetType: null });
+    expect(campaign(out, "120250793408940703")).toMatchObject({ whyNot: "Ads not approved yet", switchedOn: true, dailyBudget: 120 });
+    // Not started: not switched on yet, the day as the cockpit writes one, and when.
+    expect(campaign(out, "120000000001001")).toMatchObject({
+      whyNot: "Starts 20 Oct",
+      switchedOn: false,
+      startsAt: "2026-10-20T06:00:00.000Z",
+    });
+    expect(campaign(out, "120000000001101")).toMatchObject({ whyNot: "No ads", switchedOn: true });
+    // Every ad set paused: nothing is set to spend, so it is not switched on.
+    expect(campaign(out, "120000000001201")).toMatchObject({ whyNot: "Ad sets paused", switchedOn: false, dailyBudget: null, budgetType: null });
     expect(campaign(out, "120000000001301")).toMatchObject({
       whyNot: "Campaign has issues: Your ad was rejected",
       issues: [{ level: "CAMPAIGN", code: 1815694, summary: "Your ad was rejected" }],
     });
-    expect(campaign(out, "120000000001401").whyNot).toBe("No ad sets");
+    expect(campaign(out, "120000000001401")).toMatchObject({ whyNot: "No ad sets", switchedOn: false });
     // Every row not delivering says why; every delivering row is switched on.
     for (const r of out) {
       if (!r.delivering) expect(r.whyNot).toBeTruthy();
@@ -249,8 +316,28 @@ describe("the budgets read", () => {
       ads_with_issues: 0,
       issues: null,
       switched_on: true,
+      starts_at: null,
       delivering: true,
       why_not: null,
     });
+  });
+
+  test("a running campaign whose every ad set switched on starts later waits for them", () => {
+    const out = rows([
+      campaignRow("120000000001601", { daily_budget: "3000" }, [
+        adsetRow("120000000001602", ["ACTIVE"], { start_time: "2026-10-21T09:00:00+0300" }),
+        adsetRow("120000000001603", ["ACTIVE"], { start_time: "2026-10-19T09:00:00+0300" }),
+        adsetRow("120000000001604", ["ACTIVE"], { status: "PAUSED", effective_status: "PAUSED" }),
+      ]),
+    ]);
+    expect(campaign(out, "120000000001601")).toMatchObject({
+      switchedOn: false,
+      delivering: false,
+      startsAt: "2026-10-19T06:00:00.000Z",
+      whyNot: "Starts 19 Oct",
+      dailyBudget: 30,
+    });
+    expect(adset(out, "120000000001603")).toMatchObject({ switchedOn: false, startsAt: "2026-10-19T06:00:00.000Z", whyNot: "Starts 19 Oct" });
+    expect(adset(out, "120000000001604").startsAt).toBeNull();
   });
 });

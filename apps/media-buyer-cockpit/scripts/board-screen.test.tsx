@@ -791,7 +791,18 @@ describe("budgets", () => {
         yesterday: { day: "2026-10-16", spend: 0, budget: 0 },
         notSpending: 0,
       }),
-    ).toBe("Yesterday (16 Oct): no campaign was delivering on a daily budget.");
+    ).toBe(
+      "Yesterday (16 Oct): no campaign was switched on with a daily budget.",
+    );
+    // No budget counted because its spend is not known yet: never "nothing spent".
+    expect(
+      columns.budgetYesterdayWords({
+        v: null,
+        status: "not_measured",
+        yesterday: { day: "2026-10-16", spend: 0, budget: 0, partial: true },
+        notSpending: 0,
+      }),
+    ).toBe("Yesterday (16 Oct): the spend is not known yet.");
     // Two clocks: each account's own yesterday.
     expect(
       columns.budgetYesterdayWords({
@@ -821,22 +832,77 @@ describe("budgets", () => {
     ).toBeNull();
   });
 
-  test("the budget line says what needs action and sorts by budget used, lowest first", async () => {
+  test("the budget line's words: who, up to three names per issue, one and many said right", () => {
+    const facts = (over: Partial<ReturnType<typeof columns.budgetFacts>>) => ({
+      notSpending: [],
+      notDelivering: [],
+      under: [],
+      issues: {},
+      off: true,
+      ...over,
+    });
+    expect(
+      columns.budgetSentence(
+        facts({
+          notSpending: ["Khalda", "Shades"],
+          issues: { limit_near: ["Ardon"] },
+        }),
+      ),
+    ).toBe(
+      "Khalda and Shades spent nothing yesterday on a running budget; Ardon's account has less than a day of spending limit left.",
+    );
+    expect(
+      columns.budgetSentence(
+        facts({
+          notSpending: ["A", "B", "C", "D", "E"],
+          notDelivering: ["F"],
+          under: ["G"],
+          issues: { billing: ["H", "I"], account: ["Harbor Kitchens"] },
+        }),
+      ),
+    ).toBe(
+      "A, B, C and 2 more spent nothing yesterday on a running budget; F has a budget switched on that is not delivering; G spent under its budget in this time frame; H and I need a payment on their ad accounts; Harbor Kitchens' ad account is not active.",
+    );
+    expect(columns.budgetSentence(facts({ off: false }))).toBeNull();
+    // An Arabic name is kept apart from the English around it.
+    expect(columns.nameList(["مطابخ الريم"])).toBe("\u2068مطابخ الريم\u2069");
+  });
+
+  test("the budget line names who needs action, flags the account on its client's row, and sorts by budget used, lowest first", async () => {
     await show();
+    const reem = "\u2068مطابخ الريم\u2069";
     expect(text(line())).toContain(
-      "1 campaign spent nothing yesterday, 2 campaigns are on but not delivering, 2 clients spent under their budget in this time frame, 1 ad account is at or within a day of its spending limit and 1 ad account needs a payment.",
+      `Harbor Kitchens, Liwan Limited and ${reem} spent nothing yesterday on a running budget; Dune Interiors and ${reem} spent under their budgets in this time frame; ${reem}'s ad account needs a payment; Harbor Kitchens' account has less than a day of spending limit left; Dune Interiors' prepaid balance has less than a day of budget left.`,
     );
     expect(
       line().querySelector('[role="img"]').getAttribute("aria-label"),
     ).toBe("Off target");
+    // The account's issue on its client's row: a flag beside Budget used, its words in the help.
+    expect(
+      cellOf("locFixReem0004", "budgetUsed").querySelector(
+        "[data-account-flag]",
+      ),
+    ).toBeTruthy();
+    expect(
+      cellOf("locFixReem0004", "budgetUsed")
+        .querySelector("[data-account-flag]")
+        .getAttribute("data-account-flag"),
+    ).toBe("stops");
+    expect(
+      cellOf("locFixHarbor01", "budgetUsed")
+        .querySelector("[data-account-flag]")
+        .getAttribute("data-account-flag"),
+    ).toBe("soon");
+    expect(
+      cellOf("locFixLiwan003", "budgetUsed").querySelector(
+        "[data-account-flag]",
+      ),
+    ).toBeNull();
     await click(line());
     // Lowest first; a client with no figure last, by name.
-    expect(rowsShown()).toEqual([
-      "locFixReem0004",
-      "locFixDune0002",
-      "locFixAtlas005",
-      "locFixLiwan003",
-      "locFixHarbor01",
+    const order = rowsShown();
+    expect(order.slice(0, 2)).toEqual(["locFixReem0004", "locFixDune0002"]);
+    expect(order.slice(-3)).toEqual([
       "locFixNova0007",
       "locFixOrbit006",
       "locFixPearl008",
@@ -863,7 +929,7 @@ describe("budgets", () => {
     expect(line()).toBeNull();
   });
 
-  test("a saved pick that is the old key columns gets Budget used; any other pick is kept", async () => {
+  test("a pick saved before Budget used gets it once; after the viewer takes it out, it stays out", async () => {
     win.localStorage.setItem(
       "cockpit.board.columns.v1",
       JSON.stringify(OLD_KEYS),
@@ -871,14 +937,33 @@ describe("budgets", () => {
     await show();
     expect(headers()).toContain("Budget used");
     expect(headers().length).toBe(columns.KEY_COLUMNS.length + 1);
+    expect(win.localStorage.getItem("cockpit.board.columns.version")).toBe("2");
     await act(async () => root.render(null));
+    // Any pick saved before it: offered once, in its place.
+    win.localStorage.removeItem("cockpit.board.columns.version");
     win.localStorage.setItem(
       "cockpit.board.columns.v1",
       JSON.stringify(["caller", "spend", "cpl"]),
     );
     await show();
+    expect(headers()).toEqual([
+      "Client",
+      "Caller",
+      "Spend",
+      "Budget used",
+      "CPL",
+    ]);
+    // The viewer takes it out: saved, and it stays out on the next visit.
+    await click(button("Columns"));
+    const box = Array.from(
+      body().querySelectorAll("#board-columns label") as ArrayLike<any>,
+    ).find(l => text(l).trim() === "Share of budget spent");
+    await click(box.querySelector("input"));
     expect(headers()).toEqual(["Client", "Caller", "Spend", "CPL"]);
-    // The line's sort shows Budget used for the viewer who left it out.
+    await act(async () => root.render(null));
+    await show();
+    expect(headers()).toEqual(["Client", "Caller", "Spend", "CPL"]);
+    // The line's sort shows Budget used for this visit, without saving it.
     await click(line());
     expect(headers()).toEqual([
       "Client",
@@ -887,9 +972,12 @@ describe("budgets", () => {
       "Budget used",
       "CPL",
     ]);
+    expect(
+      JSON.parse(win.localStorage.getItem("cockpit.board.columns.v1") ?? "[]"),
+    ).toEqual(["caller", "spend", "cpl"]);
   });
 
-  test("the panel's Budget and spend: every campaign switched on, a $0 one too, the spending limit, lifetime apart, paused summed", async () => {
+  test("the panel's Budget and spend: every campaign switched on, a $0 one and a blocked one too, the spending limit, lifetime apart, paused summed", async () => {
     await show();
     await click(button("Open Harbor Kitchens"));
     const panel = sheet();
@@ -897,8 +985,9 @@ describe("budgets", () => {
       .querySelector("#board-panel-budgets")
       .closest("section") as any;
     expect(text(part.querySelector("h3"))).toBe("Budget and spend4");
+    // The account in the database's words: its name beside, never a second colon or a lowercased phrase.
     expect(text(part)).toContain(
-      "Harbor Kitchens ads: active; 140 SAR left of its spending limit, under one day of budget.",
+      "Harbor Kitchens ads · Spending limit: 140.00 SAR left (under a day of budget).",
     );
     const rows = Array.from(
       part.querySelectorAll("tr[data-budget-row]") as ArrayLike<any>,
@@ -933,7 +1022,13 @@ describe("budgets", () => {
       td => text(td).trim(),
     );
     expect(cells.slice(0, 3)).toEqual(["$30", "$0", "0%"]);
+    // Blocked by its ads: its budget counts and it spent nothing.
     expect(text(rows[1])).toContain("Ads with issues");
+    expect(
+      Array.from(rows[1].querySelectorAll("td") as ArrayLike<any>)
+        .slice(0, 3)
+        .map(td => text(td).trim()),
+    ).toEqual(["$30", "$0", "0%"]);
     expect(text(rows[2])).toContain("Campaign budget");
     // The tree's rows are still the tree's own.
     expect(panel.querySelectorAll('tr[data-level="campaign"]').length).toBe(2);
@@ -951,13 +1046,37 @@ describe("budgets", () => {
     expect(buttons("Add a lever for budget used", panel).length).toBe(0);
   });
 
+  test("a prepaid balance is said as a balance, and a campaign waiting for its start is listed without a problem", async () => {
+    await show();
+    await click(button("Open Dune Interiors"));
+    const part = sheet()
+      .querySelector("#board-panel-budgets")
+      .closest("section") as any;
+    expect(text(part)).toContain(
+      "Dune Interiors ads · Prepaid balance: $35.00 left (under a day of budget).",
+    );
+    expect(text(part)).not.toContain("spending limit");
+    const waiting = part.querySelector('tr[data-budget-row="120393"]');
+    expect(text(waiting)).toContain("Starts 20 Oct");
+    const flag = waiting.querySelector("[data-budget-flag]");
+    expect(flag.getAttribute("data-budget-flag")).toBe("none");
+    expect(flag.querySelector('[role="img"]')).toBeNull();
+    // Listed last: after the campaigns switched on.
+    const ids = Array.from(
+      part.querySelectorAll("tr[data-budget-row]") as ArrayLike<any>,
+    ).map(r => r.getAttribute("data-budget-row"));
+    expect(ids.at(-1)).toBe("120393");
+  });
+
   test("a client whose budgets were never read says so; one with no ad account has no budget part", async () => {
     await show();
     await click(button("Open Orbit Glass"));
     const part = sheet()
       .querySelector("#board-panel-budgets")
       .closest("section") as any;
-    expect(text(part)).toContain("Orbit Glass ads: budgets not read yet.");
+    expect(text(part)).toMatch(
+      /Orbit Glass ads · Budgets for act_99\w+ have not been read\./,
+    );
     expect(text(part)).toContain("Budget not read yet");
     expect(text(part.querySelector("tr[data-budget-row]"))).toContain("n/a");
     await click(button("Open Nova Landscapes"));

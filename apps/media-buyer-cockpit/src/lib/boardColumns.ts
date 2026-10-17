@@ -93,7 +93,7 @@ export const COLUMNS: BoardColumn[] = [
     name: "Daily budget now",
     group: "ads",
     unit: "usd",
-    how: "The daily budgets of the campaigns delivering now, in US dollars: a campaign's own budget, or its ad sets' budgets added up. Lifetime budgets are left out. The budget now, whatever the time frame.",
+    how: "The daily budgets of the campaigns switched on now, in US dollars, delivering or not: a campaign's own budget, or its switched-on ad sets' budgets added up. Lifetime budgets and campaigns waiting for their start are left out. The budget now, whatever the time frame.",
   },
   {
     key: "spendPerDay",
@@ -101,7 +101,7 @@ export const COLUMNS: BoardColumn[] = [
     name: "Spend per day",
     group: "ads",
     unit: "usd",
-    how: "Ad spend / the days of the time frame, to yesterday.",
+    how: "Ad spend / the days that spend covers, to yesterday.",
     parts: [
       { label: "spend", unit: "usd" },
       { label: "days", unit: "count" },
@@ -115,7 +115,7 @@ export const COLUMNS: BoardColumn[] = [
     unit: "percent",
     metric: "budget_used",
     key10: true,
-    how: "Spend / daily budgets, over the days each campaign had a daily budget and was delivering. Meta paces a daily budget over the week, so the time frame is judged, never one day.",
+    how: "Spend / daily budgets, over the days each campaign was switched on with a daily budget (blocked or not), at the highest budget it had that day. A day whose spend was not read is left out. Meta paces a daily budget over the week, so the time frame is judged, never one day.",
     parts: [
       { label: "spend on budgeted days", unit: "usd" },
       { label: "daily budgets", unit: "usd" },
@@ -849,7 +849,7 @@ export const BUDGET_COLUMNS: BoardColumn[] = [
     name: "Daily budget now",
     group: "ads",
     unit: "usd",
-    how: "The campaign's daily budget now, in US dollars: its own, or its ad sets' added up.",
+    how: "The campaign's daily budget now, in US dollars: its own, or its switched-on ad sets' added up.",
   },
   {
     key: "spentYesterday",
@@ -877,7 +877,7 @@ export const BUDGET_COLUMNS: BoardColumn[] = [
     name: "Spend per day in this time frame",
     group: "ads",
     unit: "usd",
-    how: "The campaign's spend / the days of the time frame, to yesterday.",
+    how: "The campaign's spend / the days that spend covers, to yesterday.",
     parts: [
       { label: "spend", unit: "usd" },
       { label: "days", unit: "count" },
@@ -890,7 +890,7 @@ export const BUDGET_COLUMNS: BoardColumn[] = [
     group: "ads",
     unit: "percent",
     metric: "budget_used",
-    how: "Spend / daily budgets, over the days the campaign had a daily budget and was delivering.",
+    how: "Spend / daily budgets, over the days the campaign was switched on with a daily budget, at the highest budget it had that day.",
     parts: [
       { label: "spend on budgeted days", unit: "usd" },
       { label: "daily budgets", unit: "usd" },
@@ -916,90 +916,187 @@ export function budgetYesterdayWords(
   const when = y.days?.length
     ? `Yesterday (${days}, each ad account's own)`
     : `Yesterday (${days})`;
+  // No budget counted: none was switched on, or its spend is not known yet (never "nothing spent").
   const head =
     isNum(y.budget) && y.budget > 0
       ? `${when}: ${money(y.spend ?? 0)} of ${money(y.budget)}, ${percent(((y.spend ?? 0) / y.budget) * 100)}.`
-      : `${when}: no campaign was delivering on a daily budget.`;
+      : y.partial
+        ? `${when}: the spend is not known yet.`
+        : `${when}: no campaign was switched on with a daily budget.`;
   const n = cell.notSpending ?? 0;
   return [
     head,
     n > 0
       ? `${n === 1 ? "1 campaign" : `${n} campaigns`} spent nothing yesterday.`
       : null,
-    y.partial ? "Some of yesterday is not known yet." : null,
+    y.partial && isNum(y.budget) && y.budget > 0
+      ? "Some of yesterday is not known yet."
+      : null,
   ]
     .filter(Boolean)
     .join(" ");
 }
 
-/** What the board's budget line says: only what needs action. */
+/** The ad accounts that need action, in Meta's words, for a client's Budget used and Budget/day help. */
+export function accountIssueWords(row: ClientRow): string | null {
+  const issues = row.values.dailyBudget?.accountIssues ?? [];
+  if (!issues.length) return null;
+  return issues
+    .map(i => `${i.words} (${i.name ?? `act_${i.accountId}`}).`)
+    .join(" ");
+}
+
+/** An account issue that stops spend now (not only a warning of one coming). */
+export const STOPPING_ISSUES = new Set([
+  "billing",
+  "account",
+  "limit_reached",
+  "balance_out",
+]);
+
+/** What the board's budget line says: who needs action, by issue. */
 export type BudgetFacts = {
-  /** Campaigns delivering on a daily budget that spent nothing yesterday, and on how many clients. */
-  notSpending: number;
-  notSpendingClients: number;
-  /** Campaigns switched on but not delivering now. */
-  notDelivering: number;
+  /** Clients with a campaign switched on with a daily budget that spent nothing yesterday. */
+  notSpending: string[];
+  /** Clients with a campaign switched on now but not delivering (not already named above). */
+  notDelivering: string[];
   /** Clients whose budget used is watch or off in the time frame. */
-  under: number;
-  /** Ad accounts at or under a day from their spending limit, and ones with a billing problem. */
-  limit: number;
-  billing: number;
+  under: string[];
+  /** Clients by their ad accounts' issue (billing, account, limit_near...). */
+  issues: Record<string, string[]>;
+  /** Something needs action now (an account, a campaign not spending, an off figure), not only a watch. */
+  off: boolean;
 };
 
 export function budgetFacts(rows: ClientRow[]): BudgetFacts {
   const f: BudgetFacts = {
-    notSpending: 0,
-    notSpendingClients: 0,
-    notDelivering: 0,
-    under: 0,
-    limit: 0,
-    billing: 0,
+    notSpending: [],
+    notDelivering: [],
+    under: [],
+    issues: {},
+    off: false,
   };
-  const seen = new Set<string>();
+  const add = (list: string[], name: string) => {
+    if (!list.includes(name)) list.push(name);
+  };
   for (const r of rows) {
     const used = r.values.budgetUsed;
     const daily = r.values.dailyBudget;
-    const n = used?.notSpending ?? 0;
-    if (n > 0) {
-      f.notSpending += n;
-      f.notSpendingClients += 1;
-    }
-    f.notDelivering += daily?.notDelivering ?? 0;
+    if ((used?.notSpending ?? 0) > 0) add(f.notSpending, r.clientName);
+    if (
+      (daily?.notDelivering ?? 0) > 0 &&
+      !f.notSpending.includes(r.clientName)
+    )
+      add(f.notDelivering, r.clientName);
     const s = statusOf(used);
-    if (s === "off" || s === "watch") f.under += 1;
+    if (s === "off" || s === "watch") add(f.under, r.clientName);
+    if (s === "off") f.off = true;
     for (const i of daily?.accountIssues ?? []) {
-      if (seen.has(i.accountId)) continue;
-      seen.add(i.accountId);
-      if (i.issue === "billing") f.billing += 1;
-      else f.limit += 1;
+      f.issues[i.issue] ??= [];
+      add(f.issues[i.issue], r.clientName);
+      f.off = true;
     }
   }
+  if (f.notSpending.length || f.notDelivering.length) f.off = true;
   return f;
 }
 
-/** The budget line's sentence, or null when nothing needs action. */
+/** A name kept apart from the sentence around it when it is written right to left (Arabic). */
+function isolate(name: string): string {
+  return /[\u0590-\u08ff]/.test(name) ? `\u2068${name}\u2069` : name;
+}
+
+/** Up to three names, then "and N more": "Khalda", "Khalda and Shades", "A, B, C and 2 more". */
+export function nameList(names: string[]): string {
+  const shown = names.slice(0, 3).map(isolate);
+  const more = names.length - shown.length;
+  if (more > 0) return `${shown.join(", ")} and ${more} more`;
+  if (shown.length < 2) return shown.join("");
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
+/** "Ardon's", "Harbor Kitchens'". */
+function owns(name: string): string {
+  return /s\u2069?$/.test(name) ? `${name}'` : `${name}'s`;
+}
+
+/** Each issue's words, for one client (its name owns the account) and for several. */
+const ISSUE_WORDS: Record<
+  string,
+  [(n: string) => string, (n: string) => string]
+> = {
+  billing: [
+    n => `${owns(n)} ad account needs a payment`,
+    n => `${n} need a payment on their ad accounts`,
+  ],
+  account: [
+    n => `${owns(n)} ad account is not active`,
+    n => `${n} have ad accounts that are not active`,
+  ],
+  limit_reached: [
+    n => `${owns(n)} account reached its spending limit`,
+    n => `${n} reached their spending limits`,
+  ],
+  limit_near: [
+    n => `${owns(n)} account has less than a day of spending limit left`,
+    n => `${n} have less than a day of spending limit left`,
+  ],
+  balance_out: [
+    n => `${owns(n)} prepaid balance is used up`,
+    n => `${n} have used up their prepaid balances`,
+  ],
+  balance_low: [
+    n => `${owns(n)} prepaid balance has less than a day of budget left`,
+    n => `${n} have less than a day of prepaid balance left`,
+  ],
+};
+const ISSUE_ORDER = [
+  "billing",
+  "account",
+  "limit_reached",
+  "balance_out",
+  "limit_near",
+  "balance_low",
+];
+
+/**
+ * The budget line's sentence, naming who (up to three clients per issue),
+ * or null when nothing needs action: "Khalda and Shades spent nothing
+ * yesterday on a running budget; Ardon's account has less than a day of
+ * spending limit left."
+ */
 export function budgetSentence(f: BudgetFacts): string | null {
-  const plural = (n: number, one: string, many: string) =>
-    `${n} ${n === 1 ? one : many}`;
+  const one = (list: string[]) => list.length === 1;
   const parts = [
-    f.notSpending
-      ? `${plural(f.notSpending, "campaign", "campaigns")} spent nothing yesterday`
+    f.notSpending.length
+      ? `${nameList(f.notSpending)} spent nothing yesterday on a running budget`
       : null,
-    f.notDelivering
-      ? `${plural(f.notDelivering, "campaign is", "campaigns are")} on but not delivering`
+    f.notDelivering.length
+      ? one(f.notDelivering)
+        ? `${nameList(f.notDelivering)} has a budget switched on that is not delivering`
+        : `${nameList(f.notDelivering)} have budgets switched on that are not delivering`
       : null,
-    f.under
-      ? `${plural(f.under, "client", "clients")} spent under ${f.under === 1 ? "its" : "their"} budget in this time frame`
+    f.under.length
+      ? one(f.under)
+        ? `${nameList(f.under)} spent under its budget in this time frame`
+        : `${nameList(f.under)} spent under their budgets in this time frame`
       : null,
-    f.limit
-      ? `${plural(f.limit, "ad account is", "ad accounts are")} at or within a day of ${f.limit === 1 ? "its" : "their"} spending limit`
-      : null,
-    f.billing
-      ? `${plural(f.billing, "ad account needs", "ad accounts need")} a payment`
-      : null,
+    ...[
+      ...ISSUE_ORDER,
+      ...Object.keys(f.issues)
+        .filter(k => !ISSUE_ORDER.includes(k))
+        .sort(),
+    ].map(k => {
+      const list = f.issues[k];
+      if (!list?.length) return null;
+      const words = ISSUE_WORDS[k] ?? [
+        (n: string) => `${n}'s ad account needs a look`,
+        (n: string) => `${n} have ad accounts that need a look`,
+      ];
+      return (one(list) ? words[0] : words[1])(nameList(list));
+    }),
   ].filter((x): x is string => Boolean(x));
   if (!parts.length) return null;
-  const last = parts.pop() as string;
-  const text = parts.length ? `${parts.join(", ")} and ${last}` : last;
+  const text = parts.join("; ");
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }

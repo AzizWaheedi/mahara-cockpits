@@ -3,11 +3,18 @@
  * Funnel, Outcomes, Calls), sort by any column, each value with its status
  * dot and its help. A client's name opens its panel.
  */
-import { ArrowDown, ArrowUp, ChevronRight, ChevronsUpDown } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronRight,
+  ChevronsUpDown,
+  CircleAlert,
+} from "lucide-react";
 import { Fragment } from "react";
 import { isNum } from "@/components/ceo/format";
 import type { Cell, ClientRow, Target, Targets } from "@/lib/boardClient";
 import {
+  accountIssueWords,
   type BoardColumn,
   budgetYesterdayWords,
   firstBreak,
@@ -15,6 +22,7 @@ import {
   type GroupKey,
   noOutcomeWords,
   percent,
+  STOPPING_ISSUES,
   sortNumber,
   statusOf,
 } from "@/lib/boardColumns";
@@ -164,9 +172,13 @@ function GridValue({
     column.key === "noOutcome" ? noOutcomeCell(row) : row.values[column.key];
   const dot = column.dotFrom ? statusOf(row.values[column.dotFrom]) : undefined;
   const extra = extraLine(row, column.key);
+  const flag =
+    column.key === "budgetUsed" || column.key === "dailyBudget"
+      ? accountFlag(row)
+      : null;
   return (
     <HelpCell
-      label={`${column.name}: ${cellWords(cell, column)}`}
+      label={`${column.name}: ${cellWords(cell, column)}${flag ? `. ${flag.label}` : ""}`}
       help={
         <CellHelp
           column={column}
@@ -177,9 +189,40 @@ function GridValue({
         />
       }
     >
-      <CellContent cell={cell} unit={column.unit} dot={dot} />
+      {flag ? (
+        <span className="inline-flex items-center justify-end gap-1">
+          <CircleAlert
+            aria-hidden
+            data-account-flag={flag.stops ? "stops" : "soon"}
+            className="size-3 shrink-0"
+            style={{
+              color: flag.stops ? "var(--ceo-critical)" : "var(--ceo-warning)",
+            }}
+          />
+          <CellContent cell={cell} unit={column.unit} dot={dot} />
+        </span>
+      ) : (
+        <CellContent cell={cell} unit={column.unit} dot={dot} />
+      )}
     </HelpCell>
   );
+}
+
+/**
+ * A small flag beside a client's budget cells when one of its ad accounts
+ * needs action (a payment, an account that cannot run, a spending limit or
+ * prepaid balance used up or under a day away); its words are in the help.
+ */
+function accountFlag(row: ClientRow): { stops: boolean; label: string } | null {
+  const issues = row.values.dailyBudget?.accountIssues ?? [];
+  if (!issues.length) return null;
+  return {
+    stops: issues.some(i => STOPPING_ISSUES.has(i.issue)),
+    label:
+      issues.length === 1
+        ? "An ad account needs action"
+        : `${issues.length} ad accounts need action`,
+  };
 }
 
 /** The target that judged this client's cell: its own override, else the board's. */
@@ -204,7 +247,12 @@ function noOutcomeCell(row: ClientRow): Cell {
 
 function extraLine(row: ClientRow, key: string): string | null {
   if (key === "noOutcome") return noOutcomeWords(row);
-  if (key === "budgetUsed") return budgetYesterdayWords(row.values.budgetUsed);
+  if (key === "budgetUsed")
+    return (
+      [budgetYesterdayWords(row.values.budgetUsed), accountIssueWords(row)]
+        .filter(Boolean)
+        .join(" ") || null
+    );
   if (key === "leadsTouched") {
     const u = row.values.untouchedLeads;
     if (u && isNum(u.v))
@@ -288,9 +336,10 @@ export function BoardGrid({
         title={hint}
         aria-label={`Sort by ${label}`}
         className={cn(
-          // A long label wraps to two lines, and the sort arrow sits outside
-          // the label's width, so the 11 key columns fit at 1440 with the
-          // rail open (2026-10-17: 1,098 of 1,124 px in the harness).
+          // A long label wraps to two lines, and the sort arrow sits beside
+          // the label in the header's own padding (never across into the
+          // next column or the group divider), so the 11 key columns fit at
+          // 1440 with the rail open.
           "no-touch group relative inline-flex items-center rounded-sm text-left leading-tight after:absolute after:-inset-x-1.5 after:-inset-y-2 after:content-[''] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           numeric && "text-right",
           active && "text-foreground",
@@ -300,7 +349,7 @@ export function BoardGrid({
         <Icon
           aria-hidden
           className={cn(
-            "absolute top-1/2 size-3 shrink-0 -translate-y-1/2",
+            "absolute top-1/2 size-2.5 shrink-0 -translate-y-1/2",
             numeric ? "right-full mr-0.5" : "left-full ml-0.5",
             active
               ? "opacity-100"
@@ -378,10 +427,11 @@ export function BoardGrid({
                   scope="col"
                   aria-sort={ariaSort(c.key)}
                   className={cn(
-                    "sticky top-7 z-[2] h-9 border-b bg-card px-2.5 text-xs font-medium text-muted-foreground",
+                    // The side the sort arrow sits on has 12px: the arrow (10px) and its gap stay inside.
+                    "sticky top-7 z-[2] h-9 border-b bg-card text-xs font-medium text-muted-foreground",
                     numeric
-                      ? "min-w-[72px] text-right"
-                      : "min-w-[112px] text-left",
+                      ? "min-w-[72px] pl-3 pr-2.5 text-right"
+                      : "min-w-[112px] pl-2.5 pr-3 text-left",
                     groupStart.has(c.key) &&
                       c.group !== "client" &&
                       "border-l border-l-[color:var(--ceo-grid)]",

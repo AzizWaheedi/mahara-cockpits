@@ -625,30 +625,33 @@ type ClientSpec = {
  */
 type BudgetSpec = {
   read?: false;
-  /** Daily budgets delivering now, USD, and how many campaigns hold them. */
+  /** Daily budgets switched on now (blocked ones too), USD, and how many campaigns hold them. */
   now: number;
   cbo: number;
   abo: number;
-  /** Delivering on a lifetime budget: left out. */
+  /** Switched on with a lifetime budget: left out. */
   lifetime?: number;
-  /** Switched on but not delivering: how many, their budgets a day, why. */
+  /** Of `now`, switched on but not delivering: how many, their budgets a day, why. */
   held?: [number, number, string];
-  /** Spend / daily budgets over the time frame (1 is 100%); null: no daily budget delivered. */
+  /** Waiting for its start: how many, and the words ("Starts 20 Oct"). */
+  starting?: [number, string];
+  /** Spend / daily budgets over the time frame (1 is 100%); null: no daily budget switched on. */
   used: number | null;
   /** Days with a budget, when fewer than the time frame's. */
   days?: number;
   /** Yesterday: spend and daily budgets. */
   yesterday: [number, number];
-  /** Campaigns delivering on a daily budget that spent nothing yesterday. */
+  /** Campaigns switched on with a daily budget that spent nothing yesterday. */
   notSpending?: number;
-  /** Accounts that need action (billing, the spending limit). */
+  /** Accounts that need action (a payment, the account, the spending limit or prepaid balance). */
   issues?: { issue: string; words: string }[];
 };
 
 const BUDGETS_AS_OF = "2026-10-16T10:12:00Z";
 const NO_ACCOUNT = "No Meta ad account is linked to this client.";
-const BUDGETS_UNREAD =
-  "Meta budgets have not been read for the linked ad account yet; they are read every hour.";
+/** The words for an account whose budgets were never read (cockpit_board_budget_cells). */
+const budgetsUnread = (accountId: string, name: string) =>
+  `Budgets for act_${accountId} (${name} ads) have not been read.`;
 const OVER =
   "Above its daily budgets: Meta may spend up to 75% over a daily budget on one day, and at most 7 times it in a week.";
 
@@ -682,7 +685,7 @@ function usedCell(
       den: 0,
       status: "too_few",
       note: [
-        "No campaign was delivering on a daily budget in these days.",
+        "No campaign was switched on with a daily budget in these days.",
         ...notes,
       ].join(" "),
       extra: x,
@@ -731,35 +734,40 @@ function budgetCells(
     den: days,
   });
   const b = c.budget;
+  const accountId = `99${c.loc.slice(-6)}`;
   if (!b || b.read === false)
     return {
       dailyBudget: cell(null, null, T, {
         status: "not_measured",
-        note: BUDGETS_UNREAD,
+        note: budgetsUnread(accountId, c.name),
       }),
       spendPerDay,
       budgetUsed: cell("budget_used", null, T, {
         status: "not_measured",
-        note: BUDGETS_UNREAD,
+        note: budgetsUnread(accountId, c.name),
         extra: { budgetDays: null, yesterday: null, notSpending: null },
       }),
     };
   const n = b.cbo + b.abo;
   const said = [
     n === 0
-      ? "No campaign is delivering on a daily budget now."
-      : `${n === 1 ? "1 campaign" : `${n} campaigns`} delivering now: ${[
+      ? "No campaign is switched on with a daily budget now."
+      : `${n === 1 ? "1 campaign" : `${n} campaigns`} switched on now: ${[
           b.cbo ? `${b.cbo} on a campaign budget` : null,
           b.abo ? `${b.abo} on ad set budgets` : null,
         ]
           .filter(Boolean)
           .join(", ")}.`,
+    b.held
+      ? `${b.held[0]} of them ${b.held[0] === 1 ? "is" : "are"} not delivering ($${b.held[1]}.00 a day): ${b.held[2]}.`
+      : null,
     b.lifetime
       ? `${b.lifetime === 1 ? "1 campaign" : `${b.lifetime} campaigns`} on a lifetime budget ${b.lifetime === 1 ? "is" : "are"} left out.`
       : null,
-    b.held
-      ? `${b.held[0] === 1 ? "1 more campaign is" : `${b.held[0]} more campaigns are`} on but not delivering ($${b.held[1]} a day): ${b.held[2]}.`
+    b.starting
+      ? `${b.starting[0] === 1 ? "1 campaign is" : `${b.starting[0]} campaigns are`} waiting for ${b.starting[0] === 1 ? "its" : "their"} start, not counted yet: ${b.starting[1]}.`
       : null,
+    ...(b.issues ?? []).map(i => `${i.words} (${c.name} ads).`),
     "Read 16 Oct 13:12 Kuwait time: the budget now, whatever the time frame.",
   ].filter(Boolean);
   const dailyBudget = cell(null, r2(b.now), T, {
@@ -770,10 +778,11 @@ function budgetCells(
       asOf: BUDGETS_AS_OF,
       notDelivering: b.held?.[0] ?? 0,
       ...(b.held ? { heldBudget: b.held[1] } : {}),
+      ...(b.starting ? { starting: b.starting[0] } : {}),
       ...(b.issues
         ? {
             accountIssues: b.issues.map(i => ({
-              accountId: `99${c.loc.slice(-6)}`,
+              accountId,
               name: `${c.name} ads`,
               ...i,
             })),
@@ -1164,22 +1173,23 @@ export function clientSpecs(days: number): ClientSpec[] {
     {
       loc: "locFixHarbor01",
       // Good and over: the campaign budget spent past it while one ad set
-      // campaign spent nothing yesterday, one is blocked, and the account is
-      // under a day of budget from its spending limit.
+      // campaign spent nothing yesterday and another is blocked by its ads
+      // (its $30 counts), and the account is under a day of budget from its
+      // spending limit.
       budget: {
-        now: 85,
+        now: 115,
         cbo: 1,
-        abo: 1,
+        abo: 2,
         lifetime: 1,
         held: [1, 30, "Ads with issues"],
         used: 1.12,
-        yesterday: [44, 85],
-        notSpending: 1,
+        yesterday: [44, 115],
+        notSpending: 2,
         issues: [
           {
             issue: "limit_near",
             words:
-              "Spending limit nearly used: 140.00 SAR left, under one day of budget",
+              "Spending limit nearly used: 140.00 SAR left, under a day of budget",
           },
         ],
       },
@@ -1218,7 +1228,21 @@ export function clientSpecs(days: number): ClientSpec[] {
     },
     {
       loc: "locFixDune0002",
-      budget: { now: 60, cbo: 2, abo: 0, used: 0.8, yesterday: [48, 60] },
+      // Watch; a prepaid balance under a day of budget, and a campaign waiting for its start.
+      budget: {
+        now: 60,
+        cbo: 2,
+        abo: 0,
+        used: 0.8,
+        yesterday: [48, 60],
+        starting: [1, "Starts 20 Oct"],
+        issues: [
+          {
+            issue: "balance_low",
+            words: "Prepaid balance: $35.00 left, under a day of budget",
+          },
+        ],
+      },
       clickup: "86fixdun2",
       name: "Dune Interiors",
       mode: "DFY",
@@ -1253,7 +1277,16 @@ export function clientSpecs(days: number): ClientSpec[] {
     },
     {
       loc: "locFixLiwan003",
-      budget: { now: 70, cbo: 1, abo: 1, used: 0.97, yesterday: [66, 70] },
+      // Good, with one campaign switched on but blocked by its ads: its $30 counts.
+      budget: {
+        now: 100,
+        cbo: 2,
+        abo: 1,
+        held: [1, 30, "Ads with issues"],
+        used: 0.91,
+        yesterday: [66, 100],
+        notSpending: 1,
+      },
       clickup: "86fixliw3",
       name: "Liwan Limited",
       mode: "DFY",
@@ -1288,15 +1321,18 @@ export function clientSpecs(days: number): ClientSpec[] {
     },
     {
       loc: "locFixReem0004",
-      // Off: under its budgets, and the account is unsettled now.
+      // Off: the account is unsettled now, so its budget spent nothing yesterday.
       budget: {
-        now: 0,
-        cbo: 0,
+        now: 40,
+        cbo: 1,
         abo: 0,
         held: [1, 40, "Account unsettled: payment needed"],
         used: 0.55,
-        yesterday: [0, 0],
-        issues: [{ issue: "billing", words: "Unsettled: payment needed" }],
+        yesterday: [0, 40],
+        notSpending: 1,
+        issues: [
+          { issue: "billing", words: "Account unsettled: payment needed" },
+        ],
       },
       clickup: "86fixree4",
       name: "مطابخ الريم",
@@ -1588,6 +1624,8 @@ type BudgetCampaign = {
   yesterday: [number, number];
   zeroSince?: string;
   lifetime?: { budget: number; remaining: number; endsOn: string };
+  /** Waiting for its start: when, and the words ("Starts 20 Oct"). */
+  startsAt?: string;
 };
 
 /** One campaign of a client page's budgets, as cockpit_board_budget_list builds it. */
@@ -1607,8 +1645,10 @@ function budgetCampaign(
     });
   const unread = o.delivering === null;
   const lifetime = o.type === "lifetime";
+  const waiting = Boolean(o.startsAt);
+  const unreadWords = budgetsUnread(accountId, o.name.split(" | ")[0]);
   const dailyBudget = unread
-    ? cell(null, null, T, { status: "not_measured", note: BUDGETS_UNREAD })
+    ? cell(null, null, T, { status: "not_measured", note: unreadWords })
     : lifetime
       ? cell(null, null, T, {
           status: "not_measured",
@@ -1619,7 +1659,11 @@ function budgetCampaign(
             o.level === "campaign"
               ? "The campaign's own budget."
               : "Its ad sets' budgets, added up.",
-            o.delivering ? null : `Not delivering now: ${o.whyNot}.`,
+            waiting
+              ? `${o.whyNot}: not counted until then.`
+              : o.delivering
+                ? null
+                : `Not delivering now: ${o.whyNot}.`,
             "Read 16 Oct 13:12 Kuwait time.",
           ]
             .filter(Boolean)
@@ -1632,14 +1676,14 @@ function budgetCampaign(
       : { day: yday, spend: o.yesterday[0], budget: o.yesterday[1] },
     notSpending: unread
       ? null
-      : o.yesterday[1] > 0 && o.yesterday[0] === 0 && o.delivering
+      : o.yesterday[1] > 0 && o.yesterday[0] === 0
         ? 1
         : 0,
   };
   const budgetUsed = unread
     ? cell("budget_used", null, T, {
         status: "not_measured",
-        note: BUDGETS_UNREAD,
+        note: unreadWords,
         extra,
       })
     : lifetime
@@ -1662,10 +1706,11 @@ function budgetCampaign(
             ? "Yesterday's budget was not read."
             : lifetime
               ? "A lifetime budget: no daily figure."
-              : "Not delivering on a daily budget yesterday.",
+              : "Not switched on with a daily budget yesterday.",
         });
-  const flag =
-    o.delivering === false
+  const flag = waiting
+    ? { status: null, words: o.whyNot }
+    : o.delivering === false
       ? { status: "off", words: o.whyNot }
       : o.delivering === null
         ? null
@@ -1692,6 +1737,7 @@ function budgetCampaign(
     adsets: o.adsets,
     delivering: o.delivering,
     whyNot: o.delivering ? null : (o.whyNot ?? null),
+    startsAt: o.startsAt ?? null,
     lifetime: o.lifetime ? { ...o.lifetime, currency: "USD" } : null,
     flag,
     metrics: {
@@ -1730,23 +1776,41 @@ function budgetsFixture(
       paused: { campaigns: 0, spend: null },
     };
   const spend = spec.ad.spend;
-  const account = (status: string, read: boolean) => ({
+  // Each account as the page says it: Meta's status in words (none when
+  // active), a spending limit (Harbor, in SAR) or a prepaid balance (Dune).
+  const harbor = spec.loc === "locFixHarbor01";
+  const dune = spec.loc === "locFixDune0002";
+  const account = (status: string | null, read: boolean) => ({
     accountId,
     name: `${spec.name} ads`,
-    currency: spec.loc === "locFixHarbor01" ? "SAR" : "USD",
+    currency: harbor ? "SAR" : "USD",
     status,
+    prepaid: read ? dune : null,
     asOf: read ? BUDGETS_AS_OF : null,
-    spendingLimit:
-      spec.loc === "locFixHarbor01"
-        ? { cap: 3000, spent: 2860, left: 140, daysLeft: 0.4 }
+    spendingLimit: harbor
+      ? { cap: 3000, spent: 2860, left: 140, daysLeft: 0.4, prepaid: false }
+      : dune
+        ? { cap: 500, spent: 465, left: 35, daysLeft: 0.6, prepaid: true }
         : null,
+    words: !read
+      ? `Budgets for act_${accountId} have not been read.`
+      : [
+          status ? `${status}.` : null,
+          harbor
+            ? "Spending limit: 140.00 SAR left (under a day of budget)."
+            : dune
+              ? "Prepaid balance: $35.00 left (under a day of budget)."
+              : null,
+        ]
+          .filter(Boolean)
+          .join(" ") || null,
   });
   const make = (c: BudgetCampaign) =>
     budgetCampaign(c, accountId, T, days, today);
   if (!b || b.read === false)
     return {
       asOf: null,
-      note: `${BUDGETS_UNREAD} One day is not judged: Meta may spend up to 75% over a daily budget on a day, and at most 7 times it in a week.`,
+      note: "Meta budgets have not been read for the linked ad account yet; they are read every hour. One day is not judged: Meta may spend up to 75% over a daily budget on a day, and at most 7 times it in a week.",
       account: [account("Budgets not read yet", false)],
       campaigns: [
         make({
@@ -1804,7 +1868,8 @@ function budgetsFixture(
         usd: 30,
         spend: r2(spend * 0.1),
         ratio: 0.6,
-        yesterday: [0, 0],
+        yesterday: [0, 30],
+        zeroSince: dayBefore(today, 2),
       }),
       make({
         id: "120005",
@@ -1825,7 +1890,10 @@ function budgetsFixture(
       }),
     );
   } else {
-    const n = b.cbo + b.abo;
+    // The campaigns switched on and delivering share what the blocked ones do not hold.
+    const held = b.held?.[0] ?? 0;
+    const n = b.cbo + b.abo - held;
+    const heldUsd = b.held?.[1] ?? 0;
     for (let i = 0; i < n; i++)
       campaigns.push(
         make({
@@ -1835,10 +1903,13 @@ function budgetsFixture(
           type: "daily",
           adsets: i < b.cbo ? 1 : 2,
           delivering: true,
-          usd: r2(b.now / n),
+          usd: r2((b.now - heldUsd) / n),
           spend: r2((spend * 0.9) / n),
           ratio: b.used,
-          yesterday: [r2(b.yesterday[0] / n), r2(b.yesterday[1] / n)],
+          yesterday: [
+            r2(b.yesterday[0] / n),
+            r2((b.yesterday[1] - heldUsd) / n),
+          ],
         }),
       );
     if (b.held)
@@ -1852,9 +1923,27 @@ function budgetsFixture(
           delivering: false,
           whyNot: b.held[2],
           usd: b.held[1],
-          spend: r2(spend * 0.9),
-          ratio: b.used,
+          spend: n ? 0 : r2(spend * 0.9),
+          ratio: n ? 0 : b.used,
+          yesterday: [0, b.held[1]],
+          zeroSince: dayBefore(today, 2),
+        }),
+      );
+    if (b.starting)
+      campaigns.push(
+        make({
+          id: "120393",
+          name: `${spec.name} | Eid offer`,
+          level: "campaign",
+          type: "daily",
+          adsets: 0,
+          delivering: false,
+          whyNot: b.starting[1],
+          usd: 15,
+          spend: 0,
+          ratio: null,
           yesterday: [0, 0],
+          startsAt: `${dayBefore(today, -3)}T06:00:00.000Z`,
         }),
       );
     if (b.lifetime)
@@ -1878,9 +1967,12 @@ function budgetsFixture(
         }),
       );
   }
+  // Flagged first, then the biggest daily budget, those waiting for their start last.
+  const flagged = (x: Json) => Boolean(x.flag?.status);
   campaigns.sort(
     (x, y) =>
-      Number(Boolean(y.flag)) - Number(Boolean(x.flag)) ||
+      Number(flagged(y)) - Number(flagged(x)) ||
+      Number(Boolean(x.startsAt)) - Number(Boolean(y.startsAt)) ||
       (y.metrics.dailyBudget.v ?? -1) - (x.metrics.dailyBudget.v ?? -1),
   );
   return {
@@ -1888,7 +1980,9 @@ function budgetsFixture(
     note,
     account: [
       account(
-        spec.loc === "locFixReem0004" ? "Unsettled: payment needed" : "Active",
+        spec.loc === "locFixReem0004"
+          ? "Account unsettled: payment needed"
+          : null,
         true,
       ),
     ],

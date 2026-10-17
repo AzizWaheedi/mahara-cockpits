@@ -340,31 +340,25 @@ function NoOutcomeItem({
 // only campaigns with ad numbers), and each account's billing and spending
 // limit. The figures and the words are the database's.
 
-/** An amount in the account's own currency: "$140", "140 SAR". */
-function amount(
-  v: number | null | undefined,
-  currency: string | null | undefined,
-): string {
-  if (!isNum(v)) return "not known";
-  if (!currency || currency === "USD") return money(v);
-  return `${Math.round(v).toLocaleString("en")} ${currency}`;
-}
-
-/** Each account in a sentence: its Meta status, and its spending limit when one is set. */
-function accountWords(b: Budgets): string | null {
-  const said = b.account.map(a => {
-    const name = a.name ?? `Ad account ${a.accountId}`;
-    const limit = a.spendingLimit;
-    const status = (a.status ?? "Status not known").toLowerCase();
-    if (!limit || !isNum(limit.left)) return `${name}: ${status}.`;
-    const days = isNum(limit.daysLeft)
-      ? limit.daysLeft < 1
-        ? ", under one day of budget"
-        : `, about ${limit.daysLeft === 1 ? "1 day" : `${limit.daysLeft} days`} of budget`
-      : "";
-    return `${name}: ${status}; ${amount(limit.left, a.currency)} left of its spending limit${days}.`;
-  });
-  return said.length ? said.join(" ") : null;
+/**
+ * What needs saying about each ad account, in the database's words (Meta's
+ * status, its spending limit or prepaid balance): "Ardon ads · Account
+ * unsettled: payment needed." Its name beside, never a second colon; an
+ * account with nothing to say is left out.
+ */
+function accountWords(b: Budgets): ReactNode {
+  const said = b.account.filter(a => a.words);
+  if (!said.length) return null;
+  return said.map((a, i) => (
+    <span key={a.accountId} data-budget-account={a.accountId}>
+      {i > 0 ? " " : null}
+      <span className="font-medium text-foreground" dir="auto">
+        {a.name ?? `act_${a.accountId}`}
+      </span>
+      {" · "}
+      {a.words}
+    </span>
+  ));
 }
 
 /** "Campaign budget", "Ad set budgets, 2 on". */
@@ -385,6 +379,7 @@ function BudgetRow({
   targets: Targets;
 }) {
   const flag = campaign.flag;
+  // A start to come has words and no status: no dot, never a problem.
   const flagStatus =
     flag?.status === "off" || flag?.status === "watch" ? flag.status : null;
   return (
@@ -401,7 +396,13 @@ function BudgetRow({
             {budgetLevelWords(campaign)}
           </span>
           {flag?.words ? (
-            <span className="mt-0.5 flex items-center gap-1.5 text-[11px] leading-4">
+            <span
+              className={cn(
+                "mt-0.5 flex items-center gap-1.5 text-[11px] leading-4",
+                !flagStatus && "text-muted-foreground",
+              )}
+              data-budget-flag={flagStatus ?? "none"}
+            >
               <BoardDot status={flagStatus} />
               <span className="min-w-0">{flag.words}</span>
             </span>

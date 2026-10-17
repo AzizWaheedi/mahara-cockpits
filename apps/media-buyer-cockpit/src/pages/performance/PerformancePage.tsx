@@ -48,7 +48,6 @@ import {
   KEY_COLUMNS,
   noOutcomeTotal,
   portfolio,
-  statusOf,
 } from "@/lib/boardColumns";
 import { matchScore } from "@/lib/search";
 import { useNow } from "@/lib/useNow";
@@ -62,6 +61,13 @@ import { TargetsDialog } from "./TargetsDialog";
 // The columns each viewer picked, remembered in this browser only.
 
 const COLUMNS_KEY = "cockpit.board.columns.v1";
+/**
+ * Which column offers a saved pick has had: 2 since Budget used joined the key
+ * columns (2026-10-17). A pick saved before it gets Budget used once; after
+ * that the pick is the viewer's own, and one without Budget used stays so.
+ */
+const COLUMNS_VERSION_KEY = "cockpit.board.columns.version";
+const COLUMNS_VERSION = 2;
 const MEETING_KEY = "cockpit.board.meeting.v1";
 /** The meeting view: bigger type, the columns the room reads. */
 export const MEETING_COLUMNS = [
@@ -93,31 +99,31 @@ function store(key: string, value: unknown): void {
   }
 }
 const known = new Set(COLUMNS.map(c => c.key));
-/** The key columns before Budget used joined them (2026-10-17). */
-const KEY_COLUMNS_BEFORE_BUDGETS = [
-  "caller",
-  "spend",
-  "crmLeads",
-  "cpl",
-  "confirmedBookings",
-  "leadToBooking",
-  "showRate",
-  "closeRate",
-  "roas",
-  "noOutcome",
-];
+/** A saved pick of columns, as the viewer saved it. */
+function savePick(keys: string[]): void {
+  store(COLUMNS_KEY, keys);
+  store(COLUMNS_VERSION_KEY, COLUMNS_VERSION);
+}
 function storedColumns(): string[] | null {
-  return readStored(COLUMNS_KEY, v => {
-    if (!Array.isArray(v) || !v.every(x => typeof x === "string")) return null;
-    // A saved pick that is exactly the old key columns gets the new ones; any
-    // other pick is the viewer's own and is kept.
-    if (
-      v.length === KEY_COLUMNS_BEFORE_BUDGETS.length &&
-      v.every((k, i) => k === KEY_COLUMNS_BEFORE_BUDGETS[i])
-    )
-      return KEY_COLUMNS;
-    return (v as string[]).filter(k => known.has(k));
-  });
+  const pick = readStored(COLUMNS_KEY, v =>
+    Array.isArray(v) && v.every(x => typeof x === "string")
+      ? (v as string[]).filter(k => known.has(k))
+      : null,
+  );
+  if (!pick) return null;
+  const version = readStored(COLUMNS_VERSION_KEY, v =>
+    typeof v === "number" ? v : null,
+  );
+  if (version !== null && version >= COLUMNS_VERSION) return pick;
+  // Saved before Budget used was a key column: it is offered once, in its
+  // place, and the pick is saved with the version so it is never added again.
+  const upgraded = pick.includes("budgetUsed")
+    ? pick
+    : COLUMNS.map(c => c.key).filter(
+        k => k === "budgetUsed" || pick.includes(k),
+      );
+  savePick(upgraded);
+  return upgraded;
 }
 
 // ---------------------------------------------------------------------------
@@ -342,11 +348,13 @@ function NoOutcomeLine({
 }
 
 /**
- * The budgets in one sentence, only when something needs action: campaigns
- * that spent nothing yesterday or are on but not delivering, clients under
- * their budget in the time frame, an account at its spending limit or in
- * need of a payment. Nothing when all is well. It sorts the clients by
- * budget used, lowest first.
+ * The budgets in one sentence, naming who, only when something needs action:
+ * campaigns that spent nothing yesterday on a running budget or are switched
+ * on but not delivering, clients under their budget in the time frame, an ad
+ * account that needs a payment, cannot run, or is at or near its spending
+ * limit or the end of its prepaid balance. Nothing when all is well. It sorts
+ * the clients by budget used, lowest first; an account's issue is flagged on
+ * its client's row too.
  */
 function BudgetLine({
   rows,
@@ -360,12 +368,7 @@ function BudgetLine({
   const facts = budgetFacts(rows);
   const sentence = budgetSentence(facts);
   if (!sentence) return null;
-  const off =
-    facts.notSpending > 0 ||
-    facts.notDelivering > 0 ||
-    facts.billing > 0 ||
-    facts.limit > 0 ||
-    rows.some(r => statusOf(r.values.budgetUsed) === "off");
+  const off = facts.off;
   const action = active ? "Sorted by budget used" : "Sort by budget used";
   return (
     <button
@@ -585,7 +588,7 @@ export function PerformancePage() {
 
   const pickColumns = (keys: string[]) => {
     setShownKeys(keys);
-    store(COLUMNS_KEY, keys);
+    savePick(keys);
   };
   const toggleMeeting = () => {
     setMeeting(m => {

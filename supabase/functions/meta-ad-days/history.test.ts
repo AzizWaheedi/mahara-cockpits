@@ -88,7 +88,14 @@ describe("Meta's activity log", () => {
 describe("budget history, rebuilt backwards from the live budgets", () => {
   test("a CBO budget change: the old budget before it, both on the day it changed, verified (the chain ends at the live budget)", () => {
     const h = rebuild();
-    expect(row(h.rows, C1, "2026-10-16")).toMatchObject({ budgetType: "daily", dailyBudget: 120, delivering: true, changedDuringDay: false, verified: true });
+    expect(row(h.rows, C1, "2026-10-16")).toMatchObject({
+      budgetType: "daily",
+      dailyBudget: 120,
+      switchedOn: true,
+      whyNot: null,
+      changedDuringDay: false,
+      verified: true,
+    });
     expect(row(h.rows, C1, "2026-10-15")).toMatchObject({ dailyBudget: 120, maxBudget: 120, changedDuringDay: true, verified: true });
     expect(row(h.rows, C1, "2026-10-14")).toMatchObject({ dailyBudget: 100, maxBudget: 100, changedDuringDay: false });
     expect(row(h.rows, C1, SINCE)).toMatchObject({ dailyBudget: 100, verified: true });
@@ -98,31 +105,33 @@ describe("budget history, rebuilt backwards from the live budgets", () => {
     expect(h.note).toBeNull();
   });
 
-  test("the account's billing stop: the day it stopped delivered in the morning; the days after did not; the day it came back delivers", () => {
+  test("the account's billing stop: the budget stays switched on (the board shows it unspent), and the log's reason is said", () => {
     const h = rebuild();
-    expect(row(h.rows, C1, "2026-10-08")).toMatchObject({
-      delivering: false,
-      deliveringAny: true,
-      maxBudget: 100,
-      whyNot: "Account unsettled: payment needed",
-    });
-    for (const day of ["2026-10-09", "2026-10-10"]) {
-      expect(row(h.rows, C1, day)).toMatchObject({ delivering: false, deliveringAny: false, maxBudget: null, dailyBudget: 100 });
+    for (const day of ["2026-10-08", "2026-10-09", "2026-10-10"]) {
+      expect(row(h.rows, C1, day)).toMatchObject({
+        switchedOn: true,
+        switchedOnAny: true,
+        maxBudget: 100,
+        dailyBudget: 100,
+        whyNot: "Account unsettled: payment needed",
+      });
     }
-    expect(row(h.rows, C1, "2026-10-11")).toMatchObject({ delivering: true, deliveringAny: true, whyNot: null });
+    expect(row(h.rows, C1, "2026-10-11")).toMatchObject({ switchedOn: true, maxBudget: 100, whyNot: null });
+    // Nothing in a row says the campaign delivered: the log does not show the ads.
+    expect(Object.keys(row(h.rows, C1, "2026-10-11") as HistoryRow)).not.toContain("delivering");
   });
 
   test("a campaign made on a day has rows from that day; before it, none", () => {
     const h = rebuild();
     expect(row(h.rows, C2, "2026-10-10")).toBeUndefined();
-    expect(row(h.rows, C2, "2026-10-11")).toMatchObject({ dailyBudget: 50, delivering: true, changedDuringDay: false, verified: true });
+    expect(row(h.rows, C2, "2026-10-11")).toMatchObject({ dailyBudget: 50, switchedOn: true, maxBudget: 50, changedDuringDay: false, verified: true });
     expect(h.rows.filter(r => r.campaignId === C2).length).toBe(6);
   });
 
-  test("a campaign paused in the afternoon keeps that day's row, not delivering at the end, delivering earlier", () => {
+  test("a campaign paused in the afternoon keeps that day's row and the budget it was on with, off at the end", () => {
     const h = rebuild();
-    expect(row(h.rows, C3, "2026-10-16")).toMatchObject({ delivering: false, deliveringAny: true, whyNot: "Paused", dailyBudget: 20, maxBudget: 20 });
-    expect(row(h.rows, C3, "2026-10-15")).toMatchObject({ delivering: true, dailyBudget: 20 });
+    expect(row(h.rows, C3, "2026-10-16")).toMatchObject({ switchedOn: false, switchedOnAny: true, whyNot: "Paused", dailyBudget: 20, maxBudget: 20 });
+    expect(row(h.rows, C3, "2026-10-15")).toMatchObject({ switchedOn: true, dailyBudget: 20, maxBudget: 20 });
   });
 
   test("ABO: the ad sets' budgets summed per day, through Khalda's chain 300 -> 55300 -> 95300", () => {
@@ -133,14 +142,16 @@ describe("budget history, rebuilt backwards from the live budgets", () => {
       budgetLevel: "adset",
       dailyBudget: 1106,
       changedDuringDay: true,
-      delivering: false,
-      deliveringAny: false,
-      maxBudget: null,
+      switchedOn: true,
+      maxBudget: 1106,
+      whyNot: "Account unsettled: payment needed",
       verified: true,
     });
-    expect(row(h.rows, C4, "2026-10-09")).toMatchObject({ dailyBudget: 1506, changedDuringDay: true, delivering: false });
-    expect(row(h.rows, C4, "2026-10-11")).toMatchObject({ dailyBudget: 1506, changedDuringDay: false, delivering: true, maxBudget: 1506 });
-    expect(row(h.rows, C4, "2026-10-16")).toMatchObject({ dailyBudget: 1506, verified: true });
+    // Raised again at 05:40 the next morning: the day counts its highest budget.
+    expect(row(h.rows, C4, "2026-10-09")).toMatchObject({ dailyBudget: 1506, maxBudget: 1506, changedDuringDay: true });
+    expect(row(h.rows, C4, "2026-10-11")).toMatchObject({ dailyBudget: 1506, changedDuringDay: false, switchedOn: true, maxBudget: 1506 });
+    // Its ads have had issues since 14 Oct: still a budget switched on, which Budget used shows unspent.
+    expect(row(h.rows, C4, "2026-10-16")).toMatchObject({ dailyBudget: 1506, maxBudget: 1506, switchedOn: true, verified: true });
   });
 
   test("one row a day per account: the days, each verified, counted", () => {
@@ -149,15 +160,16 @@ describe("budget history, rebuilt backwards from the live budgets", () => {
     expect(h.days.every(d => d.verified && d.note === null)).toBe(true);
     expect(h.days.find(d => d.day === "2026-10-11")?.campaigns).toBe(4);
     expect(h.days.find(d => d.day === "2026-10-07")?.campaigns).toBe(2);
-    expect(toHistoryApplyRow(row(h.rows, C1, "2026-10-15") as HistoryRow)).toEqual({
+    expect(toHistoryApplyRow(row(h.rows, C1, "2026-10-15") as HistoryRow, "134992869555229")).toEqual({
       campaign_id: C1,
+      account_id: "134992869555229",
       day: "2026-10-15",
       budget_level: "campaign",
       budget_type: "daily",
       daily_budget: 120,
       max_budget: 120,
-      delivering: true,
-      delivering_any: true,
+      switched_on: true,
+      switched_on_any: true,
       why_not: null,
       changed_during_day: true,
       verified: true,
@@ -189,6 +201,9 @@ describe("budget history, rebuilt backwards from the live budgets", () => {
     expect(row(h.rows, C4, "2026-10-11")?.verified).toBe(true);
     expect(row(h.rows, C1, "2026-10-10")?.verified).toBe(true);
     expect(h.days.find(d => d.day === "2026-10-10")?.note).toContain("An ad set Meta no longer lists");
+    // C4 is unverified for the stray ad set, not for its own chain: the note does not name it.
+    expect(h.days.find(d => d.day === "2026-10-10")?.note).not.toContain("does not lead to");
+    expect(h.broken).toEqual([]);
     const gone = rebuild([activityRow("update_campaign_budget", "2026-10-12T08:00:00+0000", "CAMPAIGN_GROUP", "120000000008888", budgetChange(1, 2)), ...LOG]);
     expect(gone.unlisted).toEqual(["120000000008888"]);
     expect(row(gone.rows, C1, "2026-10-12")?.verified).toBe(true);
@@ -218,5 +233,62 @@ describe("budget history, rebuilt backwards from the live budgets", () => {
       ["2026-10-15", "lifetime", null, null],
       ["2026-10-16", "lifetime", null, null],
     ]);
+  });
+});
+
+describe("the edges of a day and of a change", () => {
+  const C = "120000000005001";
+  /** One CBO campaign of 30/day on a Riyadh account, its ad set live, rebuilt over 10 to 16 Oct. */
+  const history = (log: Row[], over: Row = {}, status: number | null = 1) => {
+    const parsed = parseActivities(log);
+    return rebuildBudgetHistory({
+      live: readLiveCampaigns([campaignRow(C, { daily_budget: "3000", ...over }, [adsetRow("120000000005002", ["ACTIVE"])])]),
+      accountStatus: status,
+      events: parsed.events,
+      unreadable: parsed.unreadable,
+      timezone: "Asia/Riyadh",
+      offset: 100,
+      since: "2026-10-10",
+      until: "2026-10-16",
+    });
+  };
+
+  test("an end at midnight ends the day before (Arcturus' 1 Sep stops), on the account's clock", () => {
+    const h = history([], { stop_time: "2026-10-13T00:00:00+0300" });
+    expect(row(h.rows, C, "2026-10-12")).toMatchObject({ switchedOn: true, maxBudget: 30 });
+    expect(row(h.rows, C, "2026-10-13")).toBeUndefined();
+    // An end in the afternoon keeps its day.
+    expect(row(history([], { stop_time: "2026-10-13T15:00:00+0300" }).rows, C, "2026-10-13")).toMatchObject({ maxBudget: 30 });
+  });
+
+  test("a budget of 0 before a change is unknown: no daily figure, never a $0 budget, and not verified", () => {
+    const zero = {
+      old_value: { type: "payment_amount", currency: "USD", old_value: 0, additional_type: "status_string", additional_value: "" },
+      new_value: { type: "payment_amount", currency: "USD", new_value: 3000, additional_type: "status_string", additional_value: "Per day" },
+      type: "composite_data",
+    };
+    const h = history([activityRow("update_campaign_budget", "2026-10-15T09:00:00+0000", "CAMPAIGN_GROUP", C, zero)]);
+    expect(row(h.rows, C, "2026-10-16")).toMatchObject({ budgetType: "daily", dailyBudget: 30, maxBudget: 30, verified: true });
+    // The day of the change started at the unknown budget: its highest known budget, not verified.
+    expect(row(h.rows, C, "2026-10-15")).toMatchObject({ dailyBudget: 30, maxBudget: 30, verified: false });
+    expect(row(h.rows, C, "2026-10-14")).toMatchObject({ budgetType: null, dailyBudget: null, maxBudget: null, verified: false });
+    expect(h.broken).toEqual([C]);
+    // An old side that is not a daily budget is unknown too.
+    const lifetime = { ...zero, old_value: { ...zero.old_value, old_value: 90000, additional_value: "Lifetime" } };
+    expect(row(history([activityRow("update_campaign_budget", "2026-10-15T09:00:00+0000", "CAMPAIGN_GROUP", C, lifetime)]).rows, C, "2026-10-14")).toMatchObject({
+      dailyBudget: null,
+      maxBudget: null,
+      verified: false,
+    });
+  });
+
+  test("the account's own words from the log, Meta's capitals kept", () => {
+    const h = history([
+      activityRow("ad_account_update_status", "2026-10-14T09:00:00+0000", "ACCOUNT", "1", accountStatus("Pending Risk Review", "Active")),
+      activityRow("ad_account_update_status", "2026-10-12T09:00:00+0000", "ACCOUNT", "1", accountStatus("Some New State", "Pending Risk Review")),
+    ]);
+    expect(row(h.rows, C, "2026-10-13")?.whyNot).toBe("Account under risk review");
+    expect(row(h.rows, C, "2026-10-11")?.whyNot).toBe('Meta account status "Some New State"');
+    expect(row(h.rows, C, "2026-10-15")?.whyNot).toBeNull();
   });
 });

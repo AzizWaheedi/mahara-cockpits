@@ -335,8 +335,9 @@ beforeAll(async () => {
     ] as [string, string, number][])
       await q(
         `INSERT INTO public.cockpit_meta_budget_days(campaign_id,day,account_id,budget_level,budget_type,daily_budget,daily_budget_usd,
-           max_budget_usd,currency,usd_rate,delivering,delivering_any,source,verified,first_seen,last_seen)
-         VALUES($1,$2,$3,$4,'daily',$5,$5,$5,'USD',1,true,true,'snapshot',true,now(),now())`,
+           max_switched_on_budget,max_switched_on_budget_usd,currency,usd_rate,switched_on,switched_on_any,delivering,delivering_any,
+           source,verified,first_seen,last_seen)
+         VALUES($1,$2,$3,$4,'daily',$5,$5,$5,$5,'USD',1,true,true,true,true,'snapshot',true,now(),now())`,
         [campaign, kd(i), ACCT, level, usd],
       );
   }

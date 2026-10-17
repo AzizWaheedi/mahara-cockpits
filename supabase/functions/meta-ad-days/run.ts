@@ -30,12 +30,17 @@
  * database answers which, cockpit_meta_ad_days_inputs activeAccounts), which
  * waits 5 minutes so it lands after the :07 burst of other readers. It reads
  * GET act_<id>/campaigns once, with the ad sets and their ads' statuses
- * nested (parse.ts parseBudgets), and hands the rows to
- * cockpit_meta_budgets_apply. The nightly run (14 days) and a backfill (its
- * days) add one activities task per such account: the same campaigns read
- * for the live state, then GET act_<id>/activities over the days and up to
- * now, rebuilt backwards into each day's budget (history.ts) for
- * cockpit_meta_budget_history_apply.
+ * nested (parse.ts parseBudgets: what is switched on, its daily budget, and
+ * why it does not deliver), and hands the rows to cockpit_meta_budgets_apply.
+ * The nightly run (14 days) and a backfill (its days) add one activities task
+ * per such account: the same campaigns read for the live state, then GET
+ * act_<id>/activities over the days and up to now, rebuilt backwards into
+ * each day's switched-on budget (history.ts) for
+ * cockpit_meta_budget_history_apply. Every run also hands begin the listed
+ * accounts that spent nothing over its window (zeroSpend): their days are a
+ * known $0, so a budget that spent nothing reads 0% used, never a day not
+ * read. A budgets or history read that fails is said on its own line and
+ * never makes the run partial for the ad numbers.
  *
  * A days task also looks up the destination of its lead-campaign ad sets
  * (one act_<id>/adsets read per 50 of them; none when the account has no lead
@@ -122,7 +127,14 @@ export type Task = {
   /** A lead_ids task's ads. */
   adIds: string[];
   /** A budgets or activities task's account as the business listing gave it (Meta's minor units). */
-  accountState: { status: number | null; disableReason: number | null; spendCap: string | null; amountSpent: string | null; readAt: string | null } | null;
+  accountState: {
+    status: number | null;
+    disableReason: number | null;
+    spendCap: string | null;
+    amountSpent: string | null;
+    prepay: boolean | null;
+    readAt: string | null;
+  } | null;
   leaseToken: string;
   attempt: number;
 };
@@ -179,7 +191,7 @@ function accountRow(a: Account) {
 
 /** An account whose budgets a run reads: as the business listing gave it, when. */
 function budgetAccountRow(a: Account, readAt: string) {
-  return { ...accountRow(a), disableReason: a.disableReason, spendCap: a.spendCap, amountSpent: a.amountSpent, readAt };
+  return { ...accountRow(a), disableReason: a.disableReason, spendCap: a.spendCap, amountSpent: a.amountSpent, prepay: a.prepay, readAt };
 }
 
 /** The ad accounts tied to an Active client (cockpit_meta_ad_days_inputs); empty when an older database does not say. */
@@ -198,6 +210,8 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
   const days = job.job === "backfill" ? job.days : MAX_BACKFILL_DAYS;
   const only = job.job === "backfill" && job.accounts?.length ? new Set(job.accounts) : undefined;
   const window = discoveryWindow(kind, startedAt, days);
+  // Before the listing is asked: a day that ended by then and shows no spend is a known $0.
+  const listedAt = new Date(deps.now()).toISOString();
   let found: Awaited<ReturnType<typeof discoverAccounts>>;
   try {
     found = await discoverAccounts(graphFor(deps, null), window, only);
@@ -235,6 +249,10 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
     .filter(id => !listedIds.has(id) && !found.internal.includes(id) && !INTERNAL_ACCOUNT_IDS.has(id) && (!only || only.has(id)))
     .sort();
   const budgetAccounts = kind === "hourly" ? wanted.map(a => budgetAccountRow(a, readAt)) : [];
+  // Listed with no spend over the window: each of its days that had ended when
+  // the listing answered is a known $0 (cockpit_meta_spend_reads), so a budget
+  // that spent nothing there reads as $0 spent, never as a day not read.
+  const zeroSpend = found.all.filter(a => a.spendKnown && a.spend === 0).map(a => a.accountId);
   const activityAccounts =
     kind === "hourly"
       ? []
@@ -257,6 +275,7 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
       budgetAccounts: budgetAccounts.length,
       historyAccounts: activityAccounts.length,
       budgetUnlisted,
+      zeroSpend: zeroSpend.length,
       note: `${accounts.length} ad accounts spent between ${window.since} and ${window.until}; ${tasks.length} reads of up to 7 days are planned.${
         budgetAccounts.length ? ` Budgets are read for ${budgetAccounts.length} accounts.` : ""
       }${activityAccounts.length ? ` Budget history is rebuilt for ${activityAccounts.length} accounts.` : ""}`,
@@ -279,6 +298,8 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
       budgetAccounts,
       activityAccounts,
       budgetUnlisted,
+      // The listed accounts with no spend over the window, and when the listing was asked.
+      zeroSpend: { listedAt, accounts: zeroSpend },
     },
   })) as Row | null;
   if (!isRow(begun) || begun.started !== true) {
@@ -316,6 +337,7 @@ export function readTasks(raw: unknown): Task[] {
             disableReason: typeof state.disableReason === "number" ? state.disableReason : null,
             spendCap: digitsOf(state.spendCap),
             amountSpent: digitsOf(state.amountSpent),
+            prepay: typeof state.prepay === "boolean" ? state.prepay : null,
             readAt: typeof state.readAt === "string" ? state.readAt : null,
           }
         : null,
@@ -609,6 +631,7 @@ function accountSnapshot(task: Task): AccountSnapshot {
     disableReason: s?.disableReason ?? null,
     spendCap: minorUnits(s?.spendCap ?? null, "the spending limit"),
     amountSpent: minorUnits(s?.amountSpent ?? null, "the amount spent", false),
+    prepay: s?.prepay ?? null,
   };
 }
 
@@ -635,6 +658,7 @@ async function workBudgets(deps: RunDeps, graph: GraphDeps, task: Task): Promise
         disableReason: account.disableReason,
         spendCap: account.spendCap === null ? null : account.spendCap / offset,
         amountSpent: account.amountSpent === null ? null : account.amountSpent / offset,
+        prepay: account.prepay ?? null,
         readAt: task.accountState?.readAt ?? fetchedAt,
       },
       rows: rows.map(r => toBudgetApplyRow(r, task.accountId)),
@@ -688,7 +712,7 @@ async function workActivities(deps: RunDeps, graph: GraphDeps, task: Task): Prom
       currency: task.currency,
       currencyOffset: offset,
       days: history.days,
-      rows: history.rows.map(toHistoryApplyRow),
+      rows: history.rows.map(r => toHistoryApplyRow(r, task.accountId)),
       note: history.note,
     },
   });

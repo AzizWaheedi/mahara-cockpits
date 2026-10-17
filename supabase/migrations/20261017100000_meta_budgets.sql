@@ -23,7 +23,12 @@
 --                                     read) or activity (the history). An account day with no row was
 --                                     not read: its budgets are unknown, never 0.
 --   cockpit_meta_account_state        the account's Meta status, spending limit and amount spent
---                                     (major units; NULL when there is no limit) at the last read.
+--                                     (major units; NULL when there is no limit) at the last read;
+--                                     on a prepaid account (is_prepay) the "limit" is the funds added.
+--   cockpit_meta_spend_reads          the account days whose spend Meta answered: a finished day
+--                                     read (days), or the business listing finding no spend over its
+--                                     window (discovery). A budget day with no ad-day rows is $0 spent
+--                                     only on such a day; otherwise it was not read.
 --   two task kinds                    budgets (hourly, one per account that spent or is tied to an
 --                                     Active client, 5 minutes after the run starts so it lands after
 --                                     the :07 burst that rate-limits Arcturus) and activities (nightly
@@ -34,21 +39,30 @@
 -- Also: "Read X of Y ad accounts" counts the ad-day reads only (the nightly of
 -- 17 Oct said "Read 8 of 29" although all 116 day reads were done: every lead
 -- ids task had failed, see db.ts), and budgets and their history get their own
--- lines in the run's note.
+-- lines in the run's note and their own state (status().budgets): a budgets
+-- or history read that fails never makes the run partial for the ad numbers.
 --
 -- Rules:
 --   - Missing is never zero. A campaign day with no row on an account day that
 --     was read means the campaign was switched off at every read of that day
 --     (or did not exist); on an account day that was not read it means nothing.
+--   - Switched on (what the board's budgets count, the CEO's "budget set, not
+--     spending" included): the campaign's status is ACTIVE, its start has passed
+--     and its end has not, and at least one of its ad sets is the same. A
+--     campaign waiting for its start is not switched on yet (starts_at).
 --   - CBO (budget_level campaign): the campaign's own budget. ABO (budget_level
---     adset): the sum of the ad sets that deliver; when none delivers, the sum
---     of the ad sets switched on, so a blocked campaign still shows the budget
---     it is set to spend. A paused or ended ad set never counts.
---   - Delivering: the account is active or in its grace period (Meta status 1
---     or 9), its spending limit is not reached, the campaign and the ad set are
---     ACTIVE, the start has passed and the end has not, and at least one ad
---     under it is ACTIVE. Otherwise the budget is kept and why_not says why in
---     plain words.
+--     adset): the sum of the ad sets switched on, delivering or not, so a
+--     campaign blocked by its ads, its account or a spending limit shows the
+--     budget it is set to spend. A paused or ended ad set never counts.
+--   - Delivering is the explanation, never the filter: the account is active
+--     or in its grace period (Meta status 1 or 9), its spending limit (or
+--     prepaid balance) is not used up, the campaign and the ad set are ACTIVE
+--     and running, and at least one ad under it is ACTIVE. Otherwise why_not
+--     says why in plain words. The activity history does not follow the ads,
+--     so its rows say nothing about delivery (delivering NULL).
+--   - A day's budget: the highest daily budget the campaign was switched on
+--     with at any read (snapshot) or moment (activity) of that day, so a
+--     campaign paused at noon keeps the budget it spent that morning against.
 --   - Lifetime budgets stay lifetime: no daily figure.
 --
 -- The Edge Function changes with this file and either can go first: an older
@@ -60,7 +74,7 @@
 -- loads 20261016121700, 20261016210100 and this file on PGlite. Safe to apply
 -- twice.
 --
--- Rollback: drop the four tables and the five new functions
+-- Rollback: drop the five tables and the five new functions
 -- (cockpit_meta_budgets_apply, cockpit_meta_budget_history_apply,
 -- cockpit_meta_budget_day, cockpit_meta_budget_try_ts,
 -- cockpit_meta_budget_accounts_bad), delete the budgets and activities tasks,
@@ -105,11 +119,13 @@ CREATE TABLE IF NOT EXISTS public.cockpit_meta_budgets (
   ads_with_issues integer NOT NULL CHECK (ads_with_issues >= 0),
   issues jsonb CHECK (issues IS NULL OR (jsonb_typeof(issues) = 'array' AND length(issues::text) <= 2000)),
   switched_on boolean NOT NULL,
+  starts_at timestamptz,
   delivering boolean NOT NULL,
   why_not text CHECK (why_not IS NULL OR length(why_not) <= 300),
   fetched_at timestamptz NOT NULL,
   run_id uuid,
   PRIMARY KEY (level, object_id),
+  CONSTRAINT cockpit_meta_budgets_waiting_is_off CHECK (starts_at IS NULL OR NOT switched_on),
   CONSTRAINT cockpit_meta_budgets_campaign_is_itself CHECK (level = 'adset' OR campaign_id = object_id),
   CONSTRAINT cockpit_meta_budgets_usd_has_rate CHECK (daily_budget_usd IS NULL OR usd_rate IS NOT NULL),
   CONSTRAINT cockpit_meta_budgets_says_why CHECK (delivering OR why_not IS NOT NULL),
@@ -121,12 +137,13 @@ CREATE TABLE IF NOT EXISTS public.cockpit_meta_budgets (
 COMMENT ON TABLE public.cockpit_meta_budgets IS
   'Meta budgets now: one row per campaign and per ad set of every ad account meta-ad-days read (hourly: the accounts that spent in the last two days and the accounts tied to an Active client; act_<id>/campaigns with its ad sets and their ads'' statuses, archived and deleted campaigns left out). Each read replaces the account''s rows, so an object no longer listed is gone. Amounts are the account currency''s major units (Meta''s minor units / currency_offset), NULL when Meta returned none; the string "0" is no budget. History per day is in cockpit_meta_budget_days.';
 COMMENT ON COLUMN public.cockpit_meta_budgets.budget_level IS 'campaign = CBO (the campaign has its own daily or lifetime budget); adset = ABO (the ad sets hold the budgets). The campaign''s level, on its ad set rows too.';
-COMMENT ON COLUMN public.cockpit_meta_budgets.daily_budget IS 'Major units of the account currency. Campaign rows: CBO the campaign''s budget; ABO the sum of the delivering ad sets'' daily budgets, or, when none delivers, of the ad sets switched on (status ACTIVE, not ended), so a blocked campaign shows the budget it is set to spend; paused and ended ad sets never count. Ad set rows: the ad set''s own budget, NULL under a CBO campaign. NULL on a lifetime budget.';
+COMMENT ON COLUMN public.cockpit_meta_budgets.daily_budget IS 'Major units of the account currency. Campaign rows: CBO the campaign''s budget; ABO the sum of the daily budgets of the ad sets switched on (status ACTIVE, started, not ended), delivering or not, so a blocked campaign shows the budget it is set to spend; paused and ended ad sets never count. Ad set rows: the ad set''s own budget, NULL under a CBO campaign. NULL on a lifetime budget.';
 COMMENT ON COLUMN public.cockpit_meta_budgets.daily_budget_usd IS 'daily_budget x usd_rate (cockpit_meta_ad_days_usd_per). NULL when the currency has no fixed rate, never one to one.';
-COMMENT ON COLUMN public.cockpit_meta_budgets.budget_remaining IS 'Meta''s budget_remaining in major units: on a daily budget, the budget less today''s spend (today''s pacing, on the account''s clock). NULL on an object without its own budget.';
-COMMENT ON COLUMN public.cockpit_meta_budgets.switched_on IS 'The buyer has it on: status ACTIVE and not ended (a campaign whose every ad set ended is ended). Off: paused, or a schedule that ran out.';
-COMMENT ON COLUMN public.cockpit_meta_budgets.delivering IS 'Meta can spend it now: account status 1 or 9 and its spending limit not reached, campaign and ad set effective_status ACTIVE, started and not ended, and at least one ad under it ACTIVE. Campaign rows: at least one ad set delivers.';
-COMMENT ON COLUMN public.cockpit_meta_budgets.why_not IS 'Why it is not delivering, in plain words (Account unsettled: payment needed; Spending limit reached; Paused; Ended; Ads with issues; Ads not approved yet...). NULL while delivering.';
+COMMENT ON COLUMN public.cockpit_meta_budgets.budget_remaining IS 'Meta''s budget_remaining in major units: on a daily budget, the budget less today''s spend (today''s pacing, on the account''s clock). A CBO campaign''s own; an ABO campaign''s is the sum of its counted ad sets'' own (Meta''s campaign-level figure is not their sum). NULL on an object without its own budget.';
+COMMENT ON COLUMN public.cockpit_meta_budgets.switched_on IS 'The buyer has it set to spend: status ACTIVE, its start passed and its end not; a campaign also needs at least one ad set switched on. Blocked or not (its ads, its account, a spending limit): delivering says that. Off: paused, ended, every ad set paused, or waiting for its start (starts_at).';
+COMMENT ON COLUMN public.cockpit_meta_budgets.starts_at IS 'On, but waiting for its start: the campaign''s own start, or the earliest start of its ad sets when every ad set switched on starts later. NULL otherwise. Not switched on yet, and not a problem.';
+COMMENT ON COLUMN public.cockpit_meta_budgets.delivering IS 'The explanation, not the filter: Meta can spend it now (account status 1 or 9 and its spending limit or prepaid balance not used up, campaign and ad set effective_status ACTIVE, started and not ended, and at least one ad under it ACTIVE). Campaign rows: at least one ad set delivers.';
+COMMENT ON COLUMN public.cockpit_meta_budgets.why_not IS 'Why it is not delivering, in plain words (Account unsettled: payment needed; Spending limit reached; Prepaid balance used up: add funds; Paused; Ended; Starts 20 Oct; Ads with issues; Ads not approved yet...). NULL while delivering.';
 COMMENT ON COLUMN public.cockpit_meta_budgets.ads_with_issues IS 'Ads whose effective_status is WITH_ISSUES or DISAPPROVED.';
 COMMENT ON COLUMN public.cockpit_meta_budgets.issues IS 'Meta''s issues_info on a campaign, short: [{level, code, summary}], at most 5.';
 CREATE INDEX IF NOT EXISTS cockpit_meta_budgets_account_idx ON public.cockpit_meta_budgets(account_id, level);
@@ -140,11 +157,14 @@ CREATE TABLE IF NOT EXISTS public.cockpit_meta_budget_days (
   budget_type text CHECK (budget_type IS NULL OR budget_type IN ('daily','lifetime')),
   daily_budget numeric CHECK (daily_budget IS NULL OR daily_budget >= 0),
   daily_budget_usd numeric CHECK (daily_budget_usd IS NULL OR daily_budget_usd >= 0),
-  max_budget_usd numeric CHECK (max_budget_usd IS NULL OR max_budget_usd >= 0),
+  max_switched_on_budget numeric CHECK (max_switched_on_budget IS NULL OR max_switched_on_budget > 0),
+  max_switched_on_budget_usd numeric CHECK (max_switched_on_budget_usd IS NULL OR max_switched_on_budget_usd > 0),
   currency text NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
   usd_rate numeric CHECK (usd_rate IS NULL OR usd_rate > 0),
-  delivering boolean NOT NULL,
-  delivering_any boolean NOT NULL,
+  switched_on boolean NOT NULL,
+  switched_on_any boolean NOT NULL,
+  delivering boolean,
+  delivering_any boolean,
   why_not text CHECK (why_not IS NULL OR length(why_not) <= 300),
   changed_during_day boolean NOT NULL DEFAULT false,
   source text NOT NULL CHECK (source IN ('snapshot','activity')),
@@ -155,20 +175,30 @@ CREATE TABLE IF NOT EXISTS public.cockpit_meta_budget_days (
   PRIMARY KEY (campaign_id, day),
   CONSTRAINT cockpit_meta_budget_days_seen CHECK (last_seen >= first_seen),
   CONSTRAINT cockpit_meta_budget_days_daily_only CHECK ((budget_type = 'daily') = (daily_budget IS NOT NULL)),
-  CONSTRAINT cockpit_meta_budget_days_usd_has_rate CHECK (daily_budget_usd IS NULL OR usd_rate IS NOT NULL),
-  CONSTRAINT cockpit_meta_budget_days_says_why CHECK (delivering OR why_not IS NOT NULL),
-  CONSTRAINT cockpit_meta_budget_days_any CHECK (NOT delivering OR delivering_any),
+  CONSTRAINT cockpit_meta_budget_days_usd_has_rate CHECK ((daily_budget_usd IS NULL AND max_switched_on_budget_usd IS NULL) OR usd_rate IS NOT NULL),
+  CONSTRAINT cockpit_meta_budget_days_says_why CHECK (delivering IS DISTINCT FROM false OR why_not IS NOT NULL),
+  CONSTRAINT cockpit_meta_budget_days_any CHECK (delivering IS NOT TRUE OR delivering_any IS TRUE),
+  CONSTRAINT cockpit_meta_budget_days_on_any CHECK (NOT switched_on OR switched_on_any),
+  CONSTRAINT cockpit_meta_budget_days_max_on CHECK (max_switched_on_budget IS NULL OR switched_on_any),
+  CONSTRAINT cockpit_meta_budget_days_max_usd CHECK (max_switched_on_budget_usd IS NULL OR max_switched_on_budget IS NOT NULL),
+  -- A read knows whether it delivered; the activity log does not follow the ads, so it never says.
+  CONSTRAINT cockpit_meta_budget_days_delivery_known CHECK (CASE WHEN source = 'snapshot' THEN delivering IS NOT NULL AND delivering_any IS NOT NULL
+                                                             ELSE delivering IS NULL AND delivering_any IS NULL END),
   CONSTRAINT cockpit_meta_budget_days_snapshot_read CHECK (source = 'activity' OR verified)
 );
 COMMENT ON TABLE public.cockpit_meta_budget_days IS
-  'Each campaign''s effective daily budget per day on the ACCOUNT''s clock (as Meta counts spend in cockpit_meta_ad_days). A campaign gets a row on a day it was switched on at some read (snapshot) or at some moment (activity). source snapshot: every hourly read upserts today''s row, the last read of the day wins, max_budget_usd keeps the highest budget it delivered at. source activity: rebuilt from Meta''s activity log for a day no read covers (cockpit_meta_budget_account_days), never over a snapshot row; verified when the log''s chain of changes ends at the live budget. Whether an account day was read at all: cockpit_meta_budget_account_days.';
+  'Each campaign''s daily budget per day on the ACCOUNT''s clock (as Meta counts spend in cockpit_meta_ad_days). A campaign gets a row on a day it was switched on at some read (snapshot) or at some moment (activity). source snapshot: every hourly read upserts today''s row, the last read of the day wins, max_switched_on_budget keeps the highest daily budget it was switched on with. source activity: rebuilt from Meta''s activity log for a day no read covers (cockpit_meta_budget_account_days), never over a snapshot row; verified when the log''s chain of changes ends at the live budget; it says nothing about delivery. The board counts a campaign day at max_switched_on_budget_usd. Whether an account day was read at all: cockpit_meta_budget_account_days.';
 COMMENT ON COLUMN public.cockpit_meta_budget_days.day IS 'The ad account''s own day (account timezone), the same calendar as cockpit_meta_ad_days.day.';
-COMMENT ON COLUMN public.cockpit_meta_budget_days.daily_budget IS 'The campaign''s effective daily budget in the account currency''s major units: CBO the campaign budget; ABO the sum of its delivering ad sets (none delivering: the ad sets switched on). Snapshot: at the last read of the day; activity: at the end of the day. NULL on a lifetime budget (budget_type lifetime) or none (budget_type NULL).';
-COMMENT ON COLUMN public.cockpit_meta_budget_days.max_budget_usd IS 'The highest daily_budget_usd the campaign was delivering at during the day (a budget raised in the evening reads its old value here too). NULL when it never delivered at a read (snapshot) or a moment (activity) of the day.';
-COMMENT ON COLUMN public.cockpit_meta_budget_days.delivering IS 'Delivering at the last read of the day (snapshot) or at the end of the day (activity). The activity history follows the account, campaign and ad set statuses, not the ads.';
-COMMENT ON COLUMN public.cockpit_meta_budget_days.delivering_any IS 'Delivering at any read (snapshot) or moment (activity) of the day: a campaign paused at noon still spent that morning.';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.daily_budget IS 'The campaign''s daily budget in the account currency''s major units: CBO the campaign budget; ABO the sum of its ad sets switched on. Snapshot: at the last read of the day; activity: at the end of the day. NULL on a lifetime budget (budget_type lifetime) or none (budget_type NULL).';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.max_switched_on_budget IS 'The day''s budget for the board: the highest daily budget the campaign was switched on with at any read (snapshot) or moment (activity) of the day, so a campaign paused at noon keeps the budget it spent that morning against. NULL when it was never switched on with a daily budget that day.';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.max_switched_on_budget_usd IS 'max_switched_on_budget x usd_rate; NULL when the currency has no fixed USD rate, never one to one.';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.switched_on IS 'Switched on at the last read of the day (snapshot) or at the end of the day (activity).';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.switched_on_any IS 'Switched on at any read (snapshot) or moment (activity) of the day.';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.delivering IS 'Snapshot rows: delivering at the last read of the day (an explanation, never the board''s filter). Activity rows: NULL, since the activity log does not follow the ads.';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.delivering_any IS 'Snapshot rows: delivering at any read of the day. Activity rows: NULL.';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.why_not IS 'Snapshot rows: why it was not delivering at the last read (NULL while delivering). Activity rows: only what the log shows at the end of the day (the account''s status, Paused, Ended); NULL never means it delivered.';
 COMMENT ON COLUMN public.cockpit_meta_budget_days.changed_during_day IS 'The budget (its amount or type) changed between the reads (snapshot) or during the day (activity).';
-COMMENT ON COLUMN public.cockpit_meta_budget_days.verified IS 'Snapshot rows: true (read from Meta). Activity rows: true only when the activity log''s chain of changes for the campaign (and its ad sets) ends at the live budget and status.';
+COMMENT ON COLUMN public.cockpit_meta_budget_days.verified IS 'Snapshot rows: true (read from Meta). Activity rows: true only when the activity log''s chain of budget and status changes for the campaign (and its ad sets) ends at the live budget and status.';
 COMMENT ON COLUMN public.cockpit_meta_budget_days.first_seen IS 'Snapshot: the first read of the day. Activity: when the history was read.';
 CREATE INDEX IF NOT EXISTS cockpit_meta_budget_days_account_day_idx ON public.cockpit_meta_budget_days(account_id, day);
 CREATE INDEX IF NOT EXISTS cockpit_meta_budget_days_day_idx ON public.cockpit_meta_budget_days(day);
@@ -198,6 +228,7 @@ CREATE TABLE IF NOT EXISTS public.cockpit_meta_account_state (
   disable_reason integer,
   spend_cap numeric CHECK (spend_cap IS NULL OR spend_cap > 0),
   amount_spent numeric CHECK (amount_spent IS NULL OR amount_spent >= 0),
+  is_prepay boolean,
   currency text CHECK (currency IS NULL OR currency ~ '^[A-Z]{3}$'),
   currency_offset integer CHECK (currency_offset IS NULL OR currency_offset IN (1, 100)),
   usd_rate numeric CHECK (usd_rate IS NULL OR usd_rate > 0),
@@ -205,17 +236,40 @@ CREATE TABLE IF NOT EXISTS public.cockpit_meta_account_state (
   run_id uuid
 );
 COMMENT ON TABLE public.cockpit_meta_account_state IS
-  'Each ad account''s Meta state at the last budgets read: account_status (1 active, 3 unsettled, 9 grace period...: cockpit_meta_ad_days_status_label), disable_reason, spend_cap (the account spending limit) and amount_spent in the account currency''s major units. spend_cap NULL means no limit (Meta''s "0"). amount_spent moves within minutes; compare it with spend_cap only from the same row. fetched_at is when the business listing that carried it answered.';
+  'Each ad account''s Meta state at the last budgets read: account_status (1 active, 3 unsettled, 9 grace period...: cockpit_board_account_words), disable_reason, spend_cap (the account spending limit) and amount_spent in the account currency''s major units. spend_cap NULL means no limit (Meta''s "0"). On a prepaid account (is_prepay, Meta''s is_prepay_account) spend_cap is the funds added, so spend_cap - amount_spent is the prepaid balance left, not a limit (mergestudio.kw, 17 Oct: 351.77 - 340.96 = "Available balance ($10.81 USD)"). amount_spent NULL with a cap set is unknown, never 0. amount_spent moves within minutes; compare it with spend_cap only from the same row. fetched_at is when the business listing that carried it answered.';
+
+CREATE TABLE IF NOT EXISTS public.cockpit_meta_spend_reads (
+  account_id text NOT NULL CHECK (account_id ~ '^[0-9]{5,25}$'),
+  source text NOT NULL CHECK (source IN ('days','discovery')),
+  since date NOT NULL,
+  until date NOT NULL,
+  read_at timestamptz NOT NULL,
+  run_id uuid,
+  PRIMARY KEY (account_id, source, since, until),
+  CONSTRAINT cockpit_meta_spend_reads_span CHECK (until >= since AND until - since <= 400)
+);
+COMMENT ON TABLE public.cockpit_meta_spend_reads IS
+  'The account days whose spend Meta answered, on the account''s clock: a day read that finished (days: since..until of a done days task, written when its run closes) or the business listing that found no spend on the account over its window (discovery: written by begin). A day counts as read only when it had ended on the account''s clock by read_at (the latest read of that span). The board counts a budget day with no ad-day rows as $0 spent only on such a day (or one with ad-day rows); otherwise the day was not read and is left out, never $0. Kept 400 days.';
 
 DO $$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['cockpit_meta_budgets','cockpit_meta_budget_days','cockpit_meta_budget_account_days','cockpit_meta_account_state'] LOOP
+  FOREACH t IN ARRAY ARRAY['cockpit_meta_budgets','cockpit_meta_budget_days','cockpit_meta_budget_account_days','cockpit_meta_account_state',
+                           'cockpit_meta_spend_reads'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated, service_role', t);
     EXECUTE format('GRANT SELECT ON public.%I TO service_role', t);
   END LOOP;
 END $$;
+
+-- The day reads already finished (tasks are kept 14 days), so their days stay
+-- known once the tasks are gone.
+INSERT INTO public.cockpit_meta_spend_reads AS x (account_id, source, since, until, read_at, run_id)
+SELECT t.account_id, 'days', t.since, t.until, max(t.updated_at), NULL
+FROM public.cockpit_meta_ad_day_tasks t
+WHERE t.kind = 'days' AND t.state = 'done' AND t.since IS NOT NULL AND t.until IS NOT NULL AND t.account_id ~ '^[0-9]{5,25}$'
+GROUP BY t.account_id, t.since, t.until
+ON CONFLICT (account_id, source, since, until) DO UPDATE SET read_at = greatest(x.read_at, EXCLUDED.read_at);
 
 -- ---------------------------------------------------------------------------
 -- 2. Two more task kinds, and the account state a budgets task carries
@@ -223,7 +277,7 @@ END $$;
 ALTER TABLE public.cockpit_meta_ad_day_tasks ADD COLUMN IF NOT EXISTS account_state jsonb
   CHECK (account_state IS NULL OR jsonb_typeof(account_state) = 'object');
 COMMENT ON COLUMN public.cockpit_meta_ad_day_tasks.account_state IS
-  'A budgets or activities task''s account as the business listing gave it: {status, disableReason, spendCap, amountSpent (minor units, as Meta writes them), readAt}.';
+  'A budgets or activities task''s account as the business listing gave it: {status, disableReason, spendCap, amountSpent (minor units, as Meta writes them), prepay, readAt}.';
 ALTER TABLE public.cockpit_meta_ad_day_tasks DROP CONSTRAINT IF EXISTS cockpit_meta_ad_day_tasks_kind_check;
 ALTER TABLE public.cockpit_meta_ad_day_tasks ADD CONSTRAINT cockpit_meta_ad_day_tasks_kind_check
   CHECK (kind IN ('days','reach_account','reach_all','lead_ids','budgets','activities'));
@@ -272,8 +326,8 @@ $$;
  * The first thing wrong with a run's budgetAccounts or activityAccounts
  * (p_spans: each carries since and until on its own clock), or NULL.
  * [{accountId, name, currency, timezone, status, disableReason, spendCap,
- * amountSpent, readAt, since?, until?}]; spendCap and amountSpent are Meta's
- * minor units as digits.
+ * amountSpent, prepay, readAt, since?, until?}]; spendCap and amountSpent are
+ * Meta's minor units as digits; prepay true, false or null.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_budget_accounts_bad(p_list jsonb, p_spans boolean, p_today date)
 RETURNS text LANGUAGE plpgsql STABLE SET search_path='' AS $$
@@ -289,6 +343,7 @@ BEGIN
         WHEN coalesce(jsonb_typeof(a->'status'),'null') NOT IN ('number','null') OR coalesce(jsonb_typeof(a->'disableReason'),'null') NOT IN ('number','null')
           OR coalesce(a->>'status','0') !~ '^[0-9]{1,4}$' OR coalesce(a->>'disableReason','0') !~ '^[0-9]{1,4}$' THEN 'a budget account status that is not Meta''s number'
         WHEN coalesce(a->>'spendCap','0') !~ '^[0-9]{1,18}$' OR coalesce(a->>'amountSpent','0') !~ '^[0-9]{1,18}$' THEN 'a spending limit that is not an amount'
+        WHEN coalesce(jsonb_typeof(a->'prepay'),'null') NOT IN ('boolean','null') THEN 'a prepaid flag that is not true or false'
         WHEN a->>'readAt' IS NOT NULL AND public.cockpit_meta_budget_try_ts(a->>'readAt') IS NULL THEN 'a budget account read without its time'
         WHEN p_spans AND (public.cockpit_meta_ad_days_try_date(a->>'since') IS NULL OR public.cockpit_meta_ad_days_try_date(a->>'until') IS NULL) THEN 'a budget history without its days'
         WHEN p_spans AND public.cockpit_meta_ad_days_try_date(a->>'until') < public.cockpit_meta_ad_days_try_date(a->>'since') THEN 'a budget history that ends before it starts'
@@ -361,7 +416,9 @@ $$;
  * internal [ids], unreadable [ids], tasks [{kind: 'days', accountId, since,
  * until}], reach: 'account' | 'all' | null, leadIds: boolean (nightly only),
  * budgetAccounts [...] (hourly), activityAccounts [... with since, until]
- * (nightly, backfill), budgetUnlisted [ids]}. Each account is tied to a client
+ * (nightly, backfill), budgetUnlisted [ids], zeroSpend {listedAt, accounts
+ * [ids]}: the listed accounts that spent nothing over the window, kept in
+ * cockpit_meta_spend_reads as known $0 days}. Each account is tied to a client
  * (or listed as not linked) here. One reach task per account is added with
  * today's windows; one budgets task per budgetAccounts entry, waiting 5
  * minutes on an hourly run (the :07 burst of other readers rate-limits
@@ -376,6 +433,7 @@ DECLARE
   v_job text := p->>'job'; v_by text; v_busy public.cockpit_meta_ad_day_runs; v_run uuid; v_today date; v_ties jsonb;
   v_accounts jsonb; v_bad text; v_tasks int; v_reach text := nullif(p->>'reach',''); v_state text; v_hidden jsonb;
   v_budget jsonb; v_history jsonb; v_unlisted jsonb; v_budget_n int; v_history_n int;
+  v_zero jsonb; v_listed_at timestamptz; v_win_from date; v_win_to date;
 BEGIN
   PERFORM public.cockpit_meta_ad_days_require_service();
   IF p IS NULL OR jsonb_typeof(p) <> 'object' OR v_job IS NULL OR v_job NOT IN ('hourly','nightly','backfill')
@@ -438,6 +496,24 @@ BEGIN
                                                      WHERE jsonb_typeof(u) <> 'string' OR u #>> '{}' !~ '^[0-9]{5,25}$') THEN
     RAISE EXCEPTION 'The run named a budget account that is not an id' USING ERRCODE='22023';
   END IF;
+  -- The accounts the listing found with no spend over the window (2026-10-17): unknown to an older function.
+  v_zero := CASE WHEN jsonb_typeof(p->'zeroSpend'->'accounts') = 'array' THEN p->'zeroSpend'->'accounts' ELSE '[]'::jsonb END;
+  IF jsonb_array_length(v_zero) > 300 OR EXISTS (SELECT 1 FROM jsonb_array_elements(v_zero) u
+                                                 WHERE jsonb_typeof(u) <> 'string' OR u #>> '{}' !~ '^[0-9]{5,25}$') THEN
+    RAISE EXCEPTION 'The run named an account with no spend that is not an id' USING ERRCODE='22023';
+  END IF;
+  v_win_from := public.cockpit_meta_ad_days_try_date(p->'window'->>'since');
+  v_win_to := public.cockpit_meta_ad_days_try_date(p->'window'->>'until');
+  IF jsonb_array_length(v_zero) > 0 THEN
+    v_listed_at := public.cockpit_meta_budget_try_ts(p->'zeroSpend'->>'listedAt');
+    IF v_listed_at IS NULL OR v_listed_at > public.cockpit_meta_ad_days_now() + interval '5 minutes'
+       OR v_listed_at < public.cockpit_meta_ad_days_now() - interval '1 hour' THEN
+      RAISE EXCEPTION 'zeroSpend.listedAt must be when the listing was asked, within the last hour' USING ERRCODE='22023';
+    END IF;
+    IF v_win_from IS NULL OR v_win_to IS NULL OR v_win_to < v_win_from OR v_win_to - v_win_from > 400 OR v_win_from < v_today - 400 THEN
+      RAISE EXCEPTION 'An account with no spend needs the run''s window' USING ERRCODE='22023';
+    END IF;
+  END IF;
 
   v_ties := public.cockpit_meta_ad_days_ties();
   v_hidden := public.cockpit_meta_ad_days_hidden();
@@ -469,6 +545,13 @@ BEGIN
     public.cockpit_meta_ad_days_now())
   RETURNING id INTO v_run;
 
+  -- No spend over the window: a known $0 on each of its days that had ended when the listing was asked.
+  INSERT INTO public.cockpit_meta_spend_reads AS x (account_id, source, since, until, read_at, run_id)
+  SELECT DISTINCT u #>> '{}', 'discovery', v_win_from, v_win_to, v_listed_at, v_run
+  FROM jsonb_array_elements(v_zero) u
+  ON CONFLICT (account_id, source, since, until) DO UPDATE SET read_at = greatest(x.read_at, EXCLUDED.read_at),
+    run_id = CASE WHEN EXCLUDED.read_at >= x.read_at THEN EXCLUDED.run_id ELSE x.run_id END;
+
   INSERT INTO public.cockpit_meta_ad_day_tasks(run_id, kind, account_id, account_name, account_currency, account_timezone, since, until)
   SELECT v_run, 'days', a->>'accountId', left(a->>'name', 200), a->>'currency', a->>'timezone', (t->>'since')::date, (t->>'until')::date
   FROM jsonb_array_elements(p->'tasks') t JOIN jsonb_array_elements(p->'accounts') a ON a->>'accountId' = t->>'accountId'
@@ -498,7 +581,7 @@ BEGIN
     account_state, retry_at)
   SELECT v_run, 'budgets', a->>'accountId', left(a->>'name', 200), a->>'currency', a->>'timezone', '[]'::jsonb,
     jsonb_build_object('status', a->'status', 'disableReason', a->'disableReason', 'spendCap', a->'spendCap',
-      'amountSpent', a->'amountSpent', 'readAt', a->'readAt'),
+      'amountSpent', a->'amountSpent', 'prepay', a->'prepay', 'readAt', a->'readAt'),
     CASE WHEN v_job = 'hourly' THEN public.cockpit_meta_ad_days_now() + interval '5 minutes' END
   FROM jsonb_array_elements(v_budget) a
   ON CONFLICT DO NOTHING;
@@ -508,7 +591,7 @@ BEGIN
     windows, account_state)
   SELECT v_run, 'activities', a->>'accountId', left(a->>'name', 200), a->>'currency', a->>'timezone', (a->>'since')::date, (a->>'until')::date,
     '[]'::jsonb, jsonb_build_object('status', a->'status', 'disableReason', a->'disableReason', 'spendCap', a->'spendCap',
-      'amountSpent', a->'amountSpent', 'readAt', a->'readAt')
+      'amountSpent', a->'amountSpent', 'prepay', a->'prepay', 'readAt', a->'readAt')
   FROM jsonb_array_elements(v_history) a
   ON CONFLICT DO NOTHING;
   GET DIAGNOSTICS v_history_n = ROW_COUNT;
@@ -516,6 +599,7 @@ BEGIN
   UPDATE public.cockpit_meta_ad_day_runs SET tasks_total = v_tasks WHERE id = v_run;
   IF v_tasks = 0 THEN v_state := public.cockpit_meta_ad_days_finish(v_run); END IF;
   RETURN jsonb_build_object('started', true, 'runId', v_run, 'tasks', v_tasks, 'budgetTasks', v_budget_n, 'historyTasks', v_history_n,
+    'zeroSpend', jsonb_array_length(v_zero),
     'tieSource', v_ties->>'source',
     'notLinked', coalesce((SELECT jsonb_agg(jsonb_build_object('accountId', a->>'accountId', 'name', a->>'name'))
                            FROM jsonb_array_elements(v_accounts) a
@@ -592,13 +676,17 @@ $$;
 
 /**
  * Close a run once every task is done or failed: its state (ok, partial or
- * failed, over every task), its note, the sync-state row meta-ad-days-<job>,
- * one audit row, the client reach rows, and the retention of receipts, tasks,
- * runs and budget days. The run row is locked first, so two tasks finishing
- * at once close it once. "Read X of Y ad accounts" counts the ad-day reads
- * only (before 2026-10-17 a failed lead-ids task counted its account as not
- * read: "Read 8 of 29" with every day read); budgets and their history have
- * lines of their own.
+ * failed, over the ad-day, reach and lead-id tasks: the ad numbers), its
+ * note, the sync-state row meta-ad-days-<job>, one audit row, the client
+ * reach rows, the finished day reads (cockpit_meta_spend_reads), and the
+ * retention of receipts, tasks, runs and budget days. The run row is locked
+ * first, so two tasks finishing at once close it once. "Read X of Y ad
+ * accounts" counts the ad-day reads only (before 2026-10-17 a failed lead-ids
+ * task counted its account as not read: "Read 8 of 29" with every day read).
+ * Budgets and their history have lines of their own and their own counts
+ * (detail budgetsRead/budgetsFailed and historyRead/historyFailed,
+ * status().budgets): a budgets read that fails hour after hour (Arcturus'
+ * rate limit) never makes the ad numbers look partial.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_finish(p_run uuid)
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
@@ -607,7 +695,7 @@ DECLARE
   v_state text; v_note text; v_failing text; v_not_linked text; v_no_rate text; v_reach int; v_clients int := 0;
   v_hidden text; v_gone text; v_leadids int; v_lead_notes text; v_days_failed int;
   v_bud_total int; v_bud_done int; v_bud_failing text; v_hist_total int; v_hist_done int; v_hist_notes text; v_hist_failing text;
-  v_unlisted text; v_bud_rate text;
+  v_unlisted text; v_bud_rate text; v_core_done int; v_core_failed int;
 BEGIN
   SELECT * INTO r FROM public.cockpit_meta_ad_day_runs WHERE id = p_run FOR UPDATE;
   IF r.id IS NULL THEN RETURN NULL; END IF;
@@ -620,12 +708,24 @@ BEGIN
          count(DISTINCT account_id) FILTER (WHERE kind = 'days' AND state = 'failed'),
          count(*) FILTER (WHERE kind = 'budgets'), count(*) FILTER (WHERE kind = 'budgets' AND state = 'done'),
          count(*) FILTER (WHERE kind = 'activities'), count(*) FILTER (WHERE kind = 'activities' AND state = 'done'),
-         string_agg(coalesce(account_name, account_id) || ': ' || rtrim(note, '. '), '; ' ORDER BY account_id) FILTER (WHERE kind = 'activities' AND state = 'done' AND note IS NOT NULL)
+         string_agg(coalesce(account_name, account_id) || ': ' || rtrim(note, '. '), '; ' ORDER BY account_id) FILTER (WHERE kind = 'activities' AND state = 'done' AND note IS NOT NULL),
+         count(*) FILTER (WHERE kind NOT IN ('budgets','activities') AND state = 'done'),
+         count(*) FILTER (WHERE kind NOT IN ('budgets','activities') AND state = 'failed')
     INTO v_open, v_done, v_failed, v_rows, v_changed, v_accounts, v_reach, v_leadids, v_lead_notes, v_days_failed,
-         v_bud_total, v_bud_done, v_hist_total, v_hist_done, v_hist_notes
+         v_bud_total, v_bud_done, v_hist_total, v_hist_done, v_hist_notes, v_core_done, v_core_failed
   FROM public.cockpit_meta_ad_day_tasks WHERE run_id = p_run;
   IF v_open > 0 THEN RETURN 'running'; END IF;
-  v_state := CASE WHEN v_failed = 0 THEN 'ok' WHEN v_done = 0 THEN 'failed' ELSE 'partial' END;
+  -- The run's state is the ad numbers' (days, reach, lead ids); budgets and their history are said apart.
+  v_state := CASE WHEN v_core_failed = 0 THEN 'ok' WHEN v_core_done = 0 THEN 'failed' ELSE 'partial' END;
+
+  -- The day reads that finished: their days' spend is known, kept after the tasks are gone.
+  INSERT INTO public.cockpit_meta_spend_reads AS x (account_id, source, since, until, read_at, run_id)
+  SELECT t.account_id, 'days', t.since, t.until, max(t.updated_at), p_run
+  FROM public.cockpit_meta_ad_day_tasks t
+  WHERE t.run_id = p_run AND t.kind = 'days' AND t.state = 'done' AND t.since IS NOT NULL AND t.until IS NOT NULL
+  GROUP BY t.account_id, t.since, t.until
+  ON CONFLICT (account_id, source, since, until) DO UPDATE SET read_at = greatest(x.read_at, EXCLUDED.read_at),
+    run_id = CASE WHEN EXCLUDED.read_at >= x.read_at THEN EXCLUDED.run_id ELSE x.run_id END;
 
   -- Reads that failed, per account: ad-days, reach and lead ids here; budgets and their history apart.
   SELECT string_agg(coalesce(f.account_name, f.account_id) || ' (' || f.account_id || '): ' || coalesce(f.error, 'not read'), '; ' ORDER BY f.account_id)
@@ -728,6 +828,7 @@ BEGIN
   DELETE FROM public.cockpit_meta_ad_day_runs WHERE state <> 'running' AND finished_at < pg_catalog.now() - interval '90 days';
   DELETE FROM public.cockpit_meta_budget_days WHERE day < public.cockpit_meta_ad_days_today() - 400;
   DELETE FROM public.cockpit_meta_budget_account_days WHERE day < public.cockpit_meta_ad_days_today() - 400;
+  DELETE FROM public.cockpit_meta_spend_reads WHERE until < public.cockpit_meta_ad_days_today() - 400;
   RETURN v_state;
 END;
 $$;
@@ -748,11 +849,17 @@ $$;
  *                        and Meta says the account is not active (unsettled
  *                        billing, disabled, closed): the board says why
  *                        delivery stopped, with the last day it spent.
- * Since 2026-10-17 also budgets: the accounts and campaigns read, how many
- * deliver, the newest and oldest read, the accounts whose latest budgets read
- * failed (failing) or whose latest history read failed (historyFailing), and
- * the days held: historyFrom (the first account day with budgets),
- * snapshotFrom (the first hourly read), activityDays and unverifiedDays.
+ * Since 2026-10-17 also budgets, with their own state (a budgets read never
+ * makes the run partial): the accounts and campaigns read, how many are
+ * switched on and how many deliver, the newest and oldest read, the latest
+ * hourly run that read budgets (lastRun {runId, at, read, failed, state}) and
+ * the latest that rebuilt their history (historyLastRun), the accounts whose
+ * latest budgets read failed (failing) or whose latest history read failed
+ * (historyFailing), the accounts tied to an Active client that Mahara's
+ * business does not list, so no budget can be read (unlisted, from the last
+ * hourly run), and the days held: historyFrom (the first account day with
+ * budgets), snapshotFrom (the first hourly read), activityDays and
+ * unverifiedDays.
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_status()
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path='' AS $$
@@ -850,9 +957,29 @@ BEGIN
                    FROM public.cockpit_meta_lead_id_cover v),
     -- Budgets (2026-10-17): read hourly, their history nightly.
     'budgets', (SELECT jsonb_build_object('accounts', count(DISTINCT b.account_id), 'campaigns', count(*) FILTER (WHERE b.level = 'campaign'),
+                  'switchedOn', count(*) FILTER (WHERE b.level = 'campaign' AND b.switched_on),
                   'delivering', count(*) FILTER (WHERE b.level = 'campaign' AND b.delivering),
                   'newestFetchedAt', max(b.fetched_at), 'oldestFetchedAt', min(b.fetched_at))
                 FROM public.cockpit_meta_budgets b)
+               || jsonb_build_object(
+                  'lastRun', (SELECT jsonb_build_object('runId', x.id, 'at', x.finished_at, 'read', (x.detail->>'budgetsRead')::int,
+                                'failed', (x.detail->>'budgetsFailed')::int,
+                                'state', CASE WHEN coalesce((x.detail->>'budgetsFailed')::int, 0) = 0 THEN 'ok'
+                                              WHEN coalesce((x.detail->>'budgetsRead')::int, 0) = 0 THEN 'failed' ELSE 'partial' END)
+                              FROM public.cockpit_meta_ad_day_runs x
+                              WHERE x.job = 'hourly' AND x.state <> 'running' AND coalesce((x.detail->>'budgetAccounts')::int, 0) > 0
+                              ORDER BY x.started_at DESC LIMIT 1),
+                  'historyLastRun', (SELECT jsonb_build_object('runId', x.id, 'job', x.job, 'at', x.finished_at, 'read', (x.detail->>'historyRead')::int,
+                                'failed', (x.detail->>'historyFailed')::int,
+                                'state', CASE WHEN coalesce((x.detail->>'historyFailed')::int, 0) = 0 THEN 'ok'
+                                              WHEN coalesce((x.detail->>'historyRead')::int, 0) = 0 THEN 'failed' ELSE 'partial' END)
+                              FROM public.cockpit_meta_ad_day_runs x
+                              WHERE x.job IN ('nightly','backfill') AND x.state <> 'running' AND coalesce((x.detail->>'historyAccounts')::int, 0) > 0
+                              ORDER BY x.started_at DESC LIMIT 1),
+                  'unlisted', coalesce((SELECT x.detail->'budgetUnlisted' FROM public.cockpit_meta_ad_day_runs x
+                                        WHERE x.job = 'hourly' AND x.state <> 'running' AND jsonb_typeof(x.detail->'budgetUnlisted') = 'array'
+                                          AND coalesce((x.detail->>'budgetAccounts')::int, 0) > 0
+                                        ORDER BY x.started_at DESC LIMIT 1), '[]'::jsonb))
                || jsonb_build_object(
                   'failing', coalesce((SELECT jsonb_agg(jsonb_build_object('accountId', f.account_id, 'name', f.account_name, 'error', f.error,
                                          'at', f.updated_at) ORDER BY f.account_id)
@@ -877,21 +1004,21 @@ $$;
 /**
  * One account's budgets for a leased budgets task: p = {taskId, leaseToken,
  * fetchedAt, currency, currencyOffset, account {status, disableReason,
- * spendCap, amountSpent, readAt}, rows [{level, object_id, account_id,
- * campaign_id, name, objective, status, effective_status, budget_level,
- * budget_type, daily_budget, lifetime_budget, budget_remaining, start_time,
- * end_time, ads_active, ads_with_issues, issues, switched_on, delivering,
- * why_not}], note}. Amounts in the currency's major units. At most 3,000 rows,
- * every one of the task's account; an ad set's campaign must be in the rows.
- * Then:
+ * spendCap, amountSpent, prepay, readAt}, rows [{level, object_id,
+ * account_id, campaign_id, name, objective, status, effective_status,
+ * budget_level, budget_type, daily_budget, lifetime_budget, budget_remaining,
+ * start_time, end_time, ads_active, ads_with_issues, issues, switched_on,
+ * starts_at, delivering, why_not}], note}. Amounts in the currency's major
+ * units. At most 3,000 rows, every one of the task's account; an ad set's
+ * campaign must be in the rows. Then:
  *   - the account's rows in cockpit_meta_budgets are replaced (an object no
  *     longer listed is gone);
  *   - cockpit_meta_account_state is upserted (spend_cap NULL when no limit);
  *   - each campaign switched on (or already holding today's row) gets today's
  *     row in cockpit_meta_budget_days, today on the account's clock: the last
- *     read wins, max_budget_usd keeps the highest budget it delivered at,
- *     delivering_any and changed_during_day accumulate, and a snapshot replaces
- *     an activity row;
+ *     read wins, max_switched_on_budget keeps the highest daily budget it was
+ *     switched on with, switched_on_any, delivering_any and changed_during_day
+ *     accumulate, and a snapshot replaces an activity row;
  *   - today's cockpit_meta_budget_account_days row counts the read.
  * One call closes the task (and the run when it was the last).
  */
@@ -925,8 +1052,9 @@ BEGIN
           WHEN coalesce(jsonb_typeof(v_acc->'spendCap'), 'null') NOT IN ('number','null') OR coalesce(jsonb_typeof(v_acc->'amountSpent'), 'null') NOT IN ('number','null') THEN true
           WHEN jsonb_typeof(v_acc->'spendCap') = 'number' AND (v_acc->>'spendCap')::numeric <= 0 THEN true
           WHEN jsonb_typeof(v_acc->'amountSpent') = 'number' AND (v_acc->>'amountSpent')::numeric < 0 THEN true
+          WHEN coalesce(jsonb_typeof(v_acc->'prepay'), 'null') NOT IN ('boolean','null') THEN true
           ELSE false END) THEN
-    RAISE EXCEPTION 'Send the account as {status, disableReason, spendCap (NULL when no limit), amountSpent, readAt}' USING ERRCODE='22023';
+    RAISE EXCEPTION 'Send the account as {status, disableReason, spendCap (NULL when no limit), amountSpent, prepay, readAt}' USING ERRCODE='22023';
   END IF;
   v_read := public.cockpit_meta_budget_try_ts(v_acc->>'readAt');
   IF v_read IS NULL OR v_read > v_now + interval '5 minutes' OR v_read < v_now - interval '2 hours' THEN
@@ -958,7 +1086,9 @@ BEGIN
         WHEN NOT (e->>'delivering')::boolean AND nullif(btrim(coalesce(e->>'why_not', '')), '') IS NULL THEN 'a row not delivering without the reason'
         WHEN length(coalesce(e->>'why_not', '')) > 300 OR length(coalesce(e->>'name', '')) > 400 OR length(coalesce(e->>'objective', '')) > 60 THEN 'a name or reason that is too long'
         WHEN (e->>'start_time' IS NOT NULL AND public.cockpit_meta_budget_try_ts(e->>'start_time') IS NULL)
-          OR (e->>'end_time' IS NOT NULL AND public.cockpit_meta_budget_try_ts(e->>'end_time') IS NULL) THEN 'a time that is not one'
+          OR (e->>'end_time' IS NOT NULL AND public.cockpit_meta_budget_try_ts(e->>'end_time') IS NULL)
+          OR (e->>'starts_at' IS NOT NULL AND public.cockpit_meta_budget_try_ts(e->>'starts_at') IS NULL) THEN 'a time that is not one'
+        WHEN e->>'starts_at' IS NOT NULL AND (e->>'switched_on')::boolean THEN 'a row switched on while waiting for its start'
         WHEN e->'issues' IS NOT NULL AND jsonb_typeof(e->'issues') <> 'null'
           AND (jsonb_typeof(e->'issues') <> 'array' OR jsonb_array_length(e->'issues') > 5 OR length((e->'issues')::text) > 2000) THEN 'issues that are not a short list'
       END AS why
@@ -975,50 +1105,61 @@ BEGIN
   DELETE FROM public.cockpit_meta_budgets WHERE account_id = t.account_id;
   INSERT INTO public.cockpit_meta_budgets AS x (level, object_id, account_id, campaign_id, name, objective, status, effective_status,
     budget_level, budget_type, daily_budget, lifetime_budget, budget_remaining, currency, currency_offset, usd_rate, daily_budget_usd,
-    start_time, end_time, ads_active, ads_with_issues, issues, switched_on, delivering, why_not, fetched_at, run_id)
+    start_time, end_time, ads_active, ads_with_issues, issues, switched_on, starts_at, delivering, why_not, fetched_at, run_id)
   SELECT r.level, r.object_id, t.account_id, r.campaign_id, left(r.name, 400), left(r.objective, 60), r.status, r.effective_status,
     r.budget_level, r.budget_type, r.daily_budget, r.lifetime_budget, r.budget_remaining, v_currency, v_offset,
     CASE WHEN r.daily_budget IS NOT NULL AND v_rate IS NOT NULL THEN v_rate END,
     CASE WHEN r.daily_budget IS NOT NULL AND v_rate IS NOT NULL THEN round(r.daily_budget * v_rate, 6) END,
     public.cockpit_meta_budget_try_ts(r.start_time), public.cockpit_meta_budget_try_ts(r.end_time), r.ads_active, r.ads_with_issues,
     CASE WHEN jsonb_typeof(r.issues) = 'array' AND jsonb_array_length(r.issues) > 0 THEN r.issues END,
-    r.switched_on, r.delivering, CASE WHEN r.delivering THEN NULL ELSE left(btrim(r.why_not), 300) END, v_fetched, t.run_id
+    r.switched_on, public.cockpit_meta_budget_try_ts(r.starts_at), r.delivering,
+    CASE WHEN r.delivering THEN NULL ELSE left(btrim(r.why_not), 300) END, v_fetched, t.run_id
   FROM jsonb_to_recordset(v_rows) AS r(level text, object_id text, campaign_id text, name text, objective text, status text, effective_status text,
     budget_level text, budget_type text, daily_budget numeric, lifetime_budget numeric, budget_remaining numeric, start_time text, end_time text,
-    ads_active int, ads_with_issues int, issues jsonb, switched_on boolean, delivering boolean, why_not text)
+    ads_active int, ads_with_issues int, issues jsonb, switched_on boolean, starts_at text, delivering boolean, why_not text)
   ON CONFLICT (level, object_id) DO UPDATE SET account_id = EXCLUDED.account_id, campaign_id = EXCLUDED.campaign_id, name = EXCLUDED.name,
     objective = EXCLUDED.objective, status = EXCLUDED.status, effective_status = EXCLUDED.effective_status, budget_level = EXCLUDED.budget_level,
     budget_type = EXCLUDED.budget_type, daily_budget = EXCLUDED.daily_budget, lifetime_budget = EXCLUDED.lifetime_budget,
     budget_remaining = EXCLUDED.budget_remaining, currency = EXCLUDED.currency, currency_offset = EXCLUDED.currency_offset,
     usd_rate = EXCLUDED.usd_rate, daily_budget_usd = EXCLUDED.daily_budget_usd, start_time = EXCLUDED.start_time, end_time = EXCLUDED.end_time,
     ads_active = EXCLUDED.ads_active, ads_with_issues = EXCLUDED.ads_with_issues, issues = EXCLUDED.issues, switched_on = EXCLUDED.switched_on,
-    delivering = EXCLUDED.delivering, why_not = EXCLUDED.why_not, fetched_at = EXCLUDED.fetched_at, run_id = EXCLUDED.run_id;
+    starts_at = EXCLUDED.starts_at, delivering = EXCLUDED.delivering, why_not = EXCLUDED.why_not, fetched_at = EXCLUDED.fetched_at,
+    run_id = EXCLUDED.run_id;
   GET DIAGNOSTICS v_n = ROW_COUNT;
 
-  INSERT INTO public.cockpit_meta_account_state AS x (account_id, account_status, disable_reason, spend_cap, amount_spent, currency,
+  INSERT INTO public.cockpit_meta_account_state AS x (account_id, account_status, disable_reason, spend_cap, amount_spent, is_prepay, currency,
     currency_offset, usd_rate, fetched_at, run_id)
   VALUES (t.account_id, (v_acc->>'status')::int, (v_acc->>'disableReason')::int, (v_acc->>'spendCap')::numeric, (v_acc->>'amountSpent')::numeric,
-    v_currency, v_offset, v_rate, v_read, t.run_id)
+    (v_acc->>'prepay')::boolean, v_currency, v_offset, v_rate, v_read, t.run_id)
   ON CONFLICT (account_id) DO UPDATE SET account_status = EXCLUDED.account_status, disable_reason = EXCLUDED.disable_reason,
-    spend_cap = EXCLUDED.spend_cap, amount_spent = EXCLUDED.amount_spent, currency = EXCLUDED.currency, currency_offset = EXCLUDED.currency_offset,
+    spend_cap = EXCLUDED.spend_cap, amount_spent = EXCLUDED.amount_spent, is_prepay = EXCLUDED.is_prepay, currency = EXCLUDED.currency,
+    currency_offset = EXCLUDED.currency_offset,
     usd_rate = EXCLUDED.usd_rate, fetched_at = EXCLUDED.fetched_at, run_id = EXCLUDED.run_id
   WHERE x.fetched_at <= EXCLUDED.fetched_at;
 
   -- Today's row per campaign switched on, or already holding a row today (a
-  -- campaign paused since the morning keeps its row, now not delivering).
+  -- campaign paused since the morning keeps its row and the budget it was on
+  -- with, now switched off).
   INSERT INTO public.cockpit_meta_budget_days AS x (campaign_id, day, account_id, budget_level, budget_type, daily_budget, daily_budget_usd,
-    max_budget_usd, currency, usd_rate, delivering, delivering_any, why_not, changed_during_day, source, verified, first_seen, last_seen, run_id)
+    max_switched_on_budget, max_switched_on_budget_usd, currency, usd_rate, switched_on, switched_on_any, delivering, delivering_any, why_not,
+    changed_during_day, source, verified, first_seen, last_seen, run_id)
   SELECT b.object_id, v_day, t.account_id, b.budget_level, b.budget_type,
     CASE WHEN b.budget_type = 'daily' THEN b.daily_budget END, CASE WHEN b.budget_type = 'daily' THEN b.daily_budget_usd END,
-    CASE WHEN b.delivering AND b.budget_type = 'daily' THEN b.daily_budget_usd END,
-    v_currency, v_rate, b.delivering, b.delivering, b.why_not, false, 'snapshot', true, v_fetched, v_fetched, t.run_id
+    CASE WHEN b.switched_on AND b.budget_type = 'daily' AND b.daily_budget > 0 THEN b.daily_budget END,
+    CASE WHEN b.switched_on AND b.budget_type = 'daily' AND b.daily_budget_usd > 0 THEN b.daily_budget_usd END,
+    v_currency, v_rate, b.switched_on, b.switched_on, b.delivering, b.delivering, b.why_not, false, 'snapshot', true, v_fetched, v_fetched, t.run_id
   FROM public.cockpit_meta_budgets b
   WHERE b.account_id = t.account_id AND b.level = 'campaign'
     AND (b.switched_on OR EXISTS (SELECT 1 FROM public.cockpit_meta_budget_days d WHERE d.campaign_id = b.object_id AND d.day = v_day))
   ON CONFLICT (campaign_id, day) DO UPDATE SET account_id = EXCLUDED.account_id, budget_level = EXCLUDED.budget_level,
     budget_type = EXCLUDED.budget_type, daily_budget = EXCLUDED.daily_budget, daily_budget_usd = EXCLUDED.daily_budget_usd,
-    max_budget_usd = CASE WHEN x.source = 'activity' THEN EXCLUDED.max_budget_usd ELSE greatest(x.max_budget_usd, EXCLUDED.max_budget_usd) END,
-    currency = EXCLUDED.currency, usd_rate = EXCLUDED.usd_rate, delivering = EXCLUDED.delivering,
+    max_switched_on_budget = CASE WHEN x.source = 'activity' THEN EXCLUDED.max_switched_on_budget
+                                  ELSE greatest(x.max_switched_on_budget, EXCLUDED.max_switched_on_budget) END,
+    max_switched_on_budget_usd = CASE WHEN x.source = 'activity' THEN EXCLUDED.max_switched_on_budget_usd
+                                      ELSE greatest(x.max_switched_on_budget_usd, EXCLUDED.max_switched_on_budget_usd) END,
+    currency = EXCLUDED.currency, usd_rate = EXCLUDED.usd_rate, switched_on = EXCLUDED.switched_on,
+    switched_on_any = CASE WHEN x.source = 'activity' THEN EXCLUDED.switched_on_any ELSE x.switched_on_any OR EXCLUDED.switched_on_any END,
+    delivering = EXCLUDED.delivering,
     delivering_any = CASE WHEN x.source = 'activity' THEN EXCLUDED.delivering_any ELSE x.delivering_any OR EXCLUDED.delivering_any END,
     why_not = EXCLUDED.why_not,
     changed_during_day = CASE WHEN x.source = 'activity' THEN false
@@ -1049,13 +1190,18 @@ $$;
  * One account's budget history for a leased activities task, rebuilt by the
  * function from Meta's activity log backwards from the live budgets: p =
  * {taskId, leaseToken, fetchedAt, currency, currencyOffset, days [{day,
- * campaigns, verified, note}], rows [{campaign_id, day, budget_level,
- * budget_type, daily_budget, max_budget, delivering, delivering_any, why_not,
- * changed_during_day, verified}], note}. Every day inside the task's since..until
- * and listed in days; at most 10,000 rows. Only account days no hourly read
- * covers are written (cockpit_meta_budget_account_days source snapshot): their
- * earlier activity rows are replaced, and a snapshot row is never touched.
- * One call closes the task (and the run when it was the last).
+ * campaigns, verified, note}], rows [{campaign_id, account_id, day,
+ * budget_level, budget_type, daily_budget, max_budget, switched_on,
+ * switched_on_any, why_not, changed_during_day, verified}], note}. Every row
+ * of the task's account (a campaign the store already holds under another
+ * account is refused), every day inside the task's since..until and listed
+ * in days; at most 10,000 rows. max_budget is the highest daily budget the
+ * campaign was switched on with that day. The log does not follow the ads,
+ * so the rows say nothing about delivery (delivering NULL). Only account
+ * days no hourly read covers are written (cockpit_meta_budget_account_days
+ * source snapshot): their earlier activity rows are replaced, and a snapshot
+ * row is never touched. One call closes the task (and the run when it was
+ * the last).
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_budget_history_apply(p jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
@@ -1097,17 +1243,25 @@ BEGIN
     SELECT x.why INTO v_bad FROM (
       SELECT CASE
           WHEN jsonb_typeof(e) <> 'object' OR coalesce(e->>'campaign_id', '') !~ '^[0-9]{5,25}$' THEN 'a row without a valid campaign id'
+          WHEN e->>'account_id' IS DISTINCT FROM t.account_id THEN 'a row from another ad account'
+          WHEN EXISTS (SELECT 1 FROM public.cockpit_meta_budgets b
+                       WHERE b.level = 'campaign' AND b.object_id = e->>'campaign_id' AND b.account_id <> t.account_id)
+            OR EXISTS (SELECT 1 FROM public.cockpit_meta_budget_days b
+                       WHERE b.campaign_id = e->>'campaign_id' AND b.account_id <> t.account_id)
+            OR EXISTS (SELECT 1 FROM public.cockpit_meta_ad_days m
+                       WHERE m.campaign_id = e->>'campaign_id' AND m.account_id <> t.account_id) THEN 'a campaign another ad account holds'
           WHEN public.cockpit_meta_ad_days_try_date(e->>'day') IS NULL
             OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_days) d WHERE d->>'day' = e->>'day') THEN 'a row for a day the history did not cover'
           WHEN coalesce(e->>'budget_level', '') NOT IN ('campaign','adset') THEN 'a row without its budget level'
           WHEN e->>'budget_type' IS NOT NULL AND e->>'budget_type' NOT IN ('daily','lifetime') THEN 'a budget that is neither daily nor lifetime'
           WHEN EXISTS (SELECT 1 FROM jsonb_each(e) k WHERE k.key IN ('daily_budget','max_budget') AND jsonb_typeof(k.value) NOT IN ('number','null')) THEN 'an amount that is not a number'
-          WHEN least((e->>'daily_budget')::numeric, (e->>'max_budget')::numeric) < 0 THEN 'a negative amount'
+          WHEN least((e->>'daily_budget')::numeric, (e->>'max_budget')::numeric) < 0 OR (e->>'max_budget')::numeric = 0 THEN 'a negative or zero amount'
           WHEN (e->>'budget_type' = 'daily') <> (e->>'daily_budget' IS NOT NULL) OR (e->>'budget_type' IS NULL AND e->>'daily_budget' IS NOT NULL) THEN 'a budget that does not match its type'
-          WHEN jsonb_typeof(e->'delivering') IS DISTINCT FROM 'boolean' OR jsonb_typeof(e->'delivering_any') IS DISTINCT FROM 'boolean'
+          WHEN jsonb_typeof(e->'switched_on') IS DISTINCT FROM 'boolean' OR jsonb_typeof(e->'switched_on_any') IS DISTINCT FROM 'boolean'
             OR jsonb_typeof(e->'changed_during_day') IS DISTINCT FROM 'boolean' OR jsonb_typeof(e->'verified') IS DISTINCT FROM 'boolean' THEN 'a row without its flags'
-          WHEN (e->>'delivering')::boolean AND NOT (e->>'delivering_any')::boolean THEN 'a row delivering at the end of a day it never delivered'
-          WHEN NOT (e->>'delivering')::boolean AND nullif(btrim(coalesce(e->>'why_not', '')), '') IS NULL THEN 'a row not delivering without the reason'
+          WHEN NOT (e->>'switched_on_any')::boolean THEN 'a row for a day it was never switched on'
+          WHEN e ? 'delivering' OR e ? 'delivering_any' THEN 'a row that says whether it delivered, which the log cannot show'
+          WHEN NOT (e->>'switched_on')::boolean AND nullif(btrim(coalesce(e->>'why_not', '')), '') IS NULL THEN 'a row switched off without the reason'
           WHEN length(coalesce(e->>'why_not', '')) > 300 THEN 'a reason that is too long'
         END AS why
       FROM jsonb_array_elements(v_rows) e
@@ -1124,14 +1278,16 @@ BEGIN
   WHERE x.account_id = t.account_id AND x.source = 'activity' AND x.day BETWEEN t.since AND t.until
     AND NOT EXISTS (SELECT 1 FROM public.cockpit_meta_budget_account_days a WHERE a.account_id = t.account_id AND a.day = x.day AND a.source = 'snapshot');
   INSERT INTO public.cockpit_meta_budget_days AS x (campaign_id, day, account_id, budget_level, budget_type, daily_budget, daily_budget_usd,
-    max_budget_usd, currency, usd_rate, delivering, delivering_any, why_not, changed_during_day, source, verified, first_seen, last_seen, run_id)
+    max_switched_on_budget, max_switched_on_budget_usd, currency, usd_rate, switched_on, switched_on_any, delivering, delivering_any, why_not,
+    changed_during_day, source, verified, first_seen, last_seen, run_id)
   SELECT r.campaign_id, r.day, t.account_id, r.budget_level, r.budget_type, r.daily_budget,
     CASE WHEN r.daily_budget IS NOT NULL AND v_rate IS NOT NULL THEN round(r.daily_budget * v_rate, 6) END,
+    r.max_budget,
     CASE WHEN r.max_budget IS NOT NULL AND v_rate IS NOT NULL THEN round(r.max_budget * v_rate, 6) END,
-    v_currency, v_rate, r.delivering, r.delivering_any, CASE WHEN r.delivering THEN NULL ELSE left(btrim(r.why_not), 300) END,
+    v_currency, v_rate, r.switched_on, r.switched_on_any, NULL, NULL, left(nullif(btrim(r.why_not), ''), 300),
     r.changed_during_day, 'activity', r.verified, v_fetched, v_fetched, t.run_id
   FROM jsonb_to_recordset(v_rows) AS r(campaign_id text, day date, budget_level text, budget_type text, daily_budget numeric, max_budget numeric,
-    delivering boolean, delivering_any boolean, why_not text, changed_during_day boolean, verified boolean)
+    switched_on boolean, switched_on_any boolean, why_not text, changed_during_day boolean, verified boolean)
   WHERE NOT EXISTS (SELECT 1 FROM public.cockpit_meta_budget_account_days a WHERE a.account_id = t.account_id AND a.day = r.day AND a.source = 'snapshot')
   ON CONFLICT (campaign_id, day) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT;

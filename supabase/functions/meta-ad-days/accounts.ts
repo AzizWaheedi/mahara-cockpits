@@ -11,12 +11,16 @@
  * that account on its own.
  *
  * Since 2026-10-17 the same two calls also bring each account's spending
- * limit, amount spent and disable reason, and the discovery returns every
- * listed account (`all`, with its Meta status) beside the ones that spent:
- * the budgets are read for the accounts that spent and for those tied to an
- * Active client, so a budget set and spending nothing shows (the spend-only
- * list can never show it). The ad-day and reach reads stay on the accounts
- * that spent.
+ * limit, amount spent, disable reason and whether it is prepaid (then the
+ * "limit" is the funds added and what is left the prepaid balance), and the
+ * discovery returns every listed account (`all`, with its Meta status)
+ * beside the ones that spent: the budgets are read for the accounts that
+ * spent and for those tied to an Active client, so a budget set and spending
+ * nothing shows (the spend-only list can never show it). The ad-day and reach
+ * reads stay on the accounts that spent; an account the listing found with no
+ * spend over the window is a known $0 over those days (spendKnown), which the
+ * run hands to the database (cockpit_meta_spend_reads), so its budget days
+ * count as $0 spent rather than as days not read.
  */
 import { MAHARA_BUSINESS_ID, metaPages, type GraphDeps, type Row } from "./graph.ts";
 import type { Span } from "./days.ts";
@@ -38,6 +42,10 @@ export type Account = {
   /** The account spending limit and the amount spent against it, Meta's minor units as digits ("0": no limit). */
   spendCap: string | null;
   amountSpent: string | null;
+  /** Meta's is_prepay_account: spend_cap is then the funds added, and what is left under it the prepaid balance. */
+  prepay: boolean | null;
+  /** Meta answered the spend over the window: a number, or no insights row (no delivery). False when the spend could not be read. */
+  spendKnown: boolean;
 };
 
 /** accounts: the ones that spent (as before); all: every listed account but Mahara's own, each once. */
@@ -47,7 +55,7 @@ const isRow = (v: unknown): v is Row => typeof v === "object" && v !== null && !
 const normal = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
 export function accountFields(span: Span): string {
-  return `id,name,currency,timezone_name,account_status,disable_reason,spend_cap,amount_spent,insights.time_range(${JSON.stringify({ since: span.since, until: span.until })}){spend}`;
+  return `id,name,currency,timezone_name,account_status,disable_reason,spend_cap,amount_spent,is_prepay_account,insights.time_range(${JSON.stringify({ since: span.since, until: span.until })}){spend}`;
 }
 
 /** One edge row as an account; null when it is not one. */
@@ -58,6 +66,8 @@ export function readAccount(row: Row, edge: "owned" | "client"): Account | null 
   const insights = isRow(row.insights) && Array.isArray(row.insights.data) ? row.insights.data : [];
   const first = insights.find(isRow);
   const spend = first ? Number(first.spend) : 0;
+  // No insights block, or an empty one, is Meta's answer for no delivery; anything else must hold a number.
+  const spendKnown = row.insights === undefined || (isRow(row.insights) && Array.isArray(row.insights.data)) ? Number.isFinite(spend) : false;
   const currency = typeof row.currency === "string" && /^[A-Z]{3}$/.test(row.currency) ? row.currency : null;
   return {
     accountId,
@@ -70,6 +80,8 @@ export function readAccount(row: Row, edge: "owned" | "client"): Account | null 
     disableReason: typeof row.disable_reason === "number" ? row.disable_reason : null,
     spendCap: digits(row.spend_cap),
     amountSpent: digits(row.amount_spent),
+    prepay: typeof row.is_prepay_account === "boolean" ? row.is_prepay_account : null,
+    spendKnown,
   };
 }
 

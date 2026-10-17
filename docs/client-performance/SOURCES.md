@@ -22,7 +22,7 @@ board's read functions and screen).
 | Source | Read by | Stored in |
 | --- | --- | --- |
 | Meta Marketing API (Graph v25.0, Mahara's business 767701513092162, the system-user token) | Edge Function `meta-ad-days`: hourly at minute 7, nightly at 03:20 Kuwait | `cockpit_meta_ad_days` (one row per ad per ad-account day), `cockpit_meta_reach` (reach over windows), `cockpit_meta_lead_ids` (lead ids and times only) |
-| Meta budgets (`act_<id>/campaigns` with its ad sets and ads' statuses; `act_<id>/activities` for the days before) | the same `meta-ad-days`: budgets every hour, 5 minutes after the run starts, for the accounts that spent and every account tied to an Active client; the history nightly (14 days) and on a backfill | `cockpit_meta_budgets` (now), `cockpit_meta_budget_days` (per campaign per account day), `cockpit_meta_budget_account_days` (which account days were read), `cockpit_meta_account_state` (status, spending limit); on the board through `cockpit_board_budget_cells` and `cockpit_board_budget_list` (2026-10-17) |
+| Meta budgets (`act_<id>/campaigns` with its ad sets and ads' statuses; `act_<id>/activities` for the days before) | the same `meta-ad-days`: budgets every hour, 5 minutes after the run starts, for the accounts that spent and every account tied to an Active client; the history nightly (14 days) and on a backfill; every run's listing of the accounts with no spend | `cockpit_meta_budgets` (now), `cockpit_meta_budget_days` (per campaign per account day, switched on), `cockpit_meta_budget_account_days` (which account days were read), `cockpit_meta_account_state` (status, spending limit or prepaid balance), `cockpit_meta_spend_reads` (the account days whose spend Meta answered, $0 included); on the board through `cockpit_board_budget_cells` and `cockpit_board_budget_list` (2026-10-17) |
 | GoHighLevel contacts and appointments | `mahara-ghl-leads` (:35) and `mahara-ghl-appointments` (:20) | `client_leads`, `appointments`, `ghl_calendars` |
 | The dialer (call-centre console and Maqsam) | its own syncs | `mahara_reporting` views (`call_center_events`, `cc_results`, `cc_attempts`, `sheet_snapshots`), `mahara_console` |
 | Each client's tracking sheet | the dialer's sheet reader (about every 4 minutes) and the CSM copy (native feed, every 15 minutes) | `mahara_reporting.sheet_snapshots`, `cockpit_csm_sources` clientProfiles |
@@ -173,10 +173,11 @@ board's read functions and screen).
 ### Daily budget and budget used
 
 The CEO, 17 October 2026: "the daily budget of all the campaigns in the
-account and then how much is actually being spent". Three Ads columns sit
-after Spend: **Budget/day** and **Spend/day** (in the column picker) and
-**Budget used** (a key column, judged). Each client's page has a "Budget and
-spend" part between No outcome and the campaign tree.
+account and then how much is actually being spent. Sometimes the campaign
+isnt spending as much as the budget, or its not spending enough." Three Ads
+columns sit after Spend: **Budget/day** and **Spend/day** (in the column
+picker) and **Budget used** (a key column, judged). Each client's page has a
+"Budget and spend" part between No outcome and the campaign tree.
 
 - **Source of truth:** Meta's own budgets, read by `meta-ad-days` with the
   system-user token (GET only, Graph v25.0, a receipt per call):
@@ -185,8 +186,10 @@ spend" part between No outcome and the campaign tree.
   and `cockpit_meta_budget_days` (one row per campaign per day on the ad
   account's own clock, the same calendar as `cockpit_meta_ad_days.day`). Meta
   writes budgets in the currency's minor units: they are divided by Meta's
-  currency offset (100 for USD, SAR, QAR, AED, BHD; an unknown currency is
-  refused, never assumed) and turned into USD at the cockpit's fixed rates
+  currency offset, exactly Meta's table (100 for USD, SAR, QAR, AED, BHD,
+  VES...; 1 for JPY, KRW and the other currencies without minor units; KWD,
+  OMR, LKR and MAD are not in Meta's table and are refused with a sentence,
+  never assumed) and turned into USD at the cockpit's fixed rates
   (`cockpit_meta_ad_days_usd_per`; no rate: NULL, never 1 to 1). Spend is the
   Spend column's own, `cockpit_meta_ad_days.spend_usd`.
 - **Checked against:** Ads Manager on Khalda, Shades and Pidco on 17 Oct
@@ -196,46 +199,69 @@ spend" part between No outcome and the campaign tree.
   board's formulas are pinned on invented days in
   `board-api-supabase.test.ts`. Not yet checked on production: the budget
   tables are not applied (see "To make it live" below).
+- **What counts as a budget (switched on):** a campaign whose status is
+  ACTIVE, whose start has passed and end has not, and with at least one ad
+  set the same (status ACTIVE, inside its schedule). Blocked or not: a
+  campaign held back by its ads (with issues, not approved yet), by an
+  unsettled or disabled account, by a spending limit or a prepaid balance
+  used up is the CEO's "budget set, not spending", so it counts and shows a
+  low Budget used with the reason. A campaign waiting for its start (its
+  own, or every ad set switched on starts later) is not switched on yet: it
+  is listed as "Starts 20 Oct", with no dot and not as a problem.
 - **Which budget:** CBO (a campaign budget) is the campaign's own budget.
-  ABO (ad set budgets) is the sum of the ad sets that deliver; when none
-  delivers, the sum of the ad sets switched on, so a blocked campaign still
-  shows what it is set to spend. A paused or ended ad set never counts (the
-  media sync in `calculator.ts` sums every ad set when none is active: not
-  here). Meta's string "0" is no budget.
-- **Delivering (now):** the account's Meta status is 1 (active) or 9 (grace
-  period) and its spending limit is not reached, the campaign and the ad set
-  are ACTIVE, the start has passed and the end has not, and at least one ad
-  under it is ACTIVE. Otherwise the budget is kept and the reason is said:
-  "Account unsettled: payment needed", "Spending limit reached", "Ads with
-  issues", "Ads not approved yet", "Ended", "Paused" and the like.
-- **Rule, Budget/day:** the daily budgets of the campaigns delivering now on
-  the client's linked accounts, in USD; the budget now, whatever the time
-  frame. Not judged. Lifetime budgets are left out and counted; campaigns
-  switched on but not delivering are left out and said with their budgets
-  and reasons ("1 more campaign is on but not delivering ($1,104.00 a day):
-  Ads with issues"). No campaign delivering is $0 with that sentence; an
-  account whose budgets were never read is not measured, never $0.
-- **Rule, Spend/day:** the Spend cell / the days of the time frame the ad
-  numbers cover (to yesterday), with Spend's own floor (+) and partial note.
-  Not judged.
+  ABO (ad set budgets) is the sum of the ad sets switched on, delivering or
+  not. A paused or ended ad set never counts (the media sync in
+  `calculator.ts` sums every ad set when none is active: not here). Meta's
+  string "0" is no budget. What is left today (`budget_remaining`) is the
+  campaign's own on CBO and its counted ad sets' own on ABO (Meta's
+  campaign-level figure is not their sum).
+- **Delivering (the reason, never the filter):** the account's Meta status
+  is 1 (active) or 9 (grace period), its spending limit or prepaid balance
+  is not used up, the campaign and the ad set are ACTIVE and running, and
+  at least one ad under it is ACTIVE. Otherwise the reason is said:
+  "Account unsettled: payment needed", "Spending limit reached", "Prepaid
+  balance used up: add funds", "Ads with issues", "Ads not approved yet",
+  "Ended", "Paused" and the like.
+- **Rule, Budget/day:** the daily budgets of the campaigns switched on now
+  on the client's linked accounts, in USD; the budget now, whatever the time
+  frame. Not judged. The note says how many of them are not delivering and
+  why ("1 of them is not delivering ($1,104.00 a day): Ads with issues"),
+  the lifetime budgets left out, the campaigns waiting for their start, and
+  the ad accounts that need action in Meta's words. No campaign switched on
+  is $0 with that sentence; an account whose budgets were never read is
+  named ("Budgets for act_X (name) have not been read", with why when the
+  last run knows: Mahara's business does not list it, or its read failed),
+  never $0; one read more than 3 hours ago is named with the time.
+- **Rule, Spend/day:** the Spend cell / the days that Spend covers (from the
+  first day the Meta store holds, or the time frame's first day if later,
+  to yesterday), with Spend's own floor (+) and partial note. Not judged.
 - **Rule, Budget used:** the sum of spend / the sum of daily budgets over the
   (campaign, account day) pairs of the ad window, each day before its
-  account's own today, where the campaign had a stored daily budget and was
-  delivering at some read that day (`delivering_any`; a campaign paused at
-  noon still spent that morning). A pair with no ad-day rows is $0 only when
-  the account's ad numbers were read that day (rows that day for any of its
-  campaigns, or a finished `days` read covering it); otherwise it is left out
-  and said ("1 campaign-day with a daily budget is left out: the ad numbers
-  of X were not read those days"). Each day uses its budget at the last read
-  of the day; a day whose budget changed is said. Judged against
+  account's own today, where the campaign was switched on with a daily
+  budget at any read (or moment, for the history) of that day. The day's
+  budget is the highest daily budget it was switched on with that day
+  (`max_switched_on_budget_usd`), so a campaign paused at noon keeps the
+  budget it spent that morning against, CBO and ABO alike; a budget changed
+  during the day is said. A pair with no ad-day rows is $0 only when the
+  account's spend that day is known: ad-day rows that day for any of its
+  campaigns, a finished `days` read covering it, or the business listing
+  that found no spend on the account over a window covering it, read after
+  the day had ended on the account's clock (`cockpit_meta_spend_reads`). So
+  a new or blocked account that spent nothing shows 0%, off. Otherwise the
+  pair is left out and said ("1 campaign-day with a daily budget is left
+  out: the spend of X was not read those days"). Judged against
   `budget_used`: good at 90% and above, watch to 70%, off under 70%, judged
   from 3 days with a budget (set 2026-10-17 as a starting aim; the CEO or an
-  admin can change it in Edit targets). Above 110% is a note, never a status.
+  admin can change it in Edit targets). Above 110% is a note, never a
+  status. A linked account whose budgets were never read is named apart
+  and makes the figure partial; the known days are counted over the
+  accounts that were read, never "0 of N days".
 - **Yesterday:** each account's own yesterday (the Los Angeles account's
   lags Kuwait's until about 10:00 Kuwait time), whatever the time frame:
-  spend and budget of the delivering campaign-days, and the campaigns
-  delivering on a daily budget that spent nothing ("1 campaign spent nothing
-  yesterday"). One day is shown, never judged.
+  spend and budget of the campaign-days switched on with a daily budget,
+  and the campaigns that spent nothing on a running budget ("1 campaign
+  spent nothing yesterday"). A budget whose spend is not known yet is said
+  so, never "nothing spent". One day is shown, never judged.
 - **Meta's pacing rule:** Meta may spend up to 75% over a daily budget on one
   day, and no more than 7 times the daily budget in a week (Meta's pricing
   page, https://www.facebook.com/business/ads/pricing, read 17 Oct 2026; Jon
@@ -248,38 +274,64 @@ spend" part between No outcome and the campaign tree.
   was read (`source snapshot`, verified). The days before, and any whole day
   no read covers, are rebuilt from Meta's activity log
   (`act_<id>/activities`: budget changes, campaign and ad set run status,
-  account status) backwards from the live budgets (`source activity`,
-  `verified` when the log's chain ends at the live budget). The activity
-  history follows statuses, not the ads, and does not rebuild the spending
-  limit. A day with no row in `cockpit_meta_budget_account_days` was not
-  read: its budgets are unknown, and Budget used is partial ("Over the 6 of 9
-  days whose budgets are known. Budgets are stored from ...").
+  account status) backwards from the live budgets (`source activity`), with
+  the same switched-on rule. The log does not follow the ads, so these rows
+  say nothing about delivery (`delivering` NULL). A row is `verified` only
+  when the campaign's own chain of changes ends at its live budget and
+  status; a budget whose earlier value Meta logs as 0 (or not a daily
+  budget) is unknown on the days before, never $0, and not verified; an end
+  time at midnight ends the day before. Budget used names the unverified
+  campaign-days it counts. A day with no row in
+  `cockpit_meta_budget_account_days` was not read: its budgets are unknown,
+  and Budget used is partial ("Over the 6 of 9 days whose budgets are
+  known. Budgets are stored from ...").
+- **Accounts:** Meta's status in its own words, capitals kept: 2 and 201
+  "Account disabled", 3 "Account unsettled: payment needed", 7 "Account
+  under risk review", 8 "Payment being settled", 9 "In grace period: payment
+  due", 100 "Account closing", 101 "Account closed", anything else "Meta
+  account status N". On a postpaid account the spending limit and what is
+  left of it; on a prepaid account (`is_prepay_account`) the same two fields
+  are the funds added and the balance left, so the page says "Prepaid
+  balance: $10.81 left (under a day of budget)" and never "Spending limit
+  reached". An amount spent that Meta did not give, with a limit set, is
+  unknown, never $0 spent.
 - **The page:** every campaign switched on now, delivering or not, including
   one that spent $0 (the tree lists only campaigns with ad numbers), with
   Budget/day, Spent yesterday, Used yesterday, Spend/day and Budget used for
   the time frame, flagged first in words with a dot ("Spent nothing since 15
   Oct", "Under its budget in these days", "Ads with issues", "Account
-  unsettled: payment needed"); lifetime budgets listed apart with what is
-  left and the end date, no percentage; campaigns switched off now that spent
-  in the time frame summed; each account's Meta status and, when a spending
-  limit is set, what is left of it and how many days of the budgets
-  delivering now that is.
+  unsettled: payment needed"), those waiting for their start last with no
+  dot; lifetime budgets listed apart with what is left and the end date, no
+  percentage; campaigns switched off now that spent in the time frame
+  summed; each account's status and its spending limit or prepaid balance,
+  with how many days of the budgets switched on now that is.
 - **The board's line:** under the no-outcome line, only when something needs
-  action: campaigns that spent nothing yesterday or are on but not
-  delivering, clients under their budget in the time frame, an account at or
-  within a day of its spending limit, an account that needs a payment. It
-  sorts the clients by Budget used, lowest first.
-- **Freshness:** hourly. The board says so when the newest budget read is
-  over 3 hours old, or when no budget was ever read.
+  action, naming who (up to three clients per issue, then "and N more"):
+  clients whose campaigns spent nothing yesterday on a running budget or
+  are switched on but not delivering, clients under their budget in the
+  time frame, an account that needs a payment or cannot run, an account at
+  or within a day of its spending limit or the end of its prepaid balance.
+  "Khalda and Shades spent nothing yesterday on a running budget; Ardon's
+  account has less than a day of spending limit left." It sorts the clients
+  by Budget used, lowest first; an account's issue is also flagged beside
+  its client's Budget used and Budget/day, with the words in their help.
+- **Columns:** Budget used joined the key columns on 2026-10-17. A pick of
+  columns saved before then gets it once (a version is stored with the
+  pick); after the viewer takes it out, it stays out.
+- **Freshness:** hourly, with a state of its own: a budgets or history read
+  that fails is said in the run's note and in `status().budgets` (lastRun,
+  failing, unlisted) and never makes the run partial for the ad numbers.
+  The board says "Budgets were last read at HH:MM Kuwait time" when the
+  newest budget read is over 3 hours old, and says so when no budget was
+  ever read.
 - **Leaves out:** lifetime budgets (no daily figure; listed apart), a
   campaign's ad set minimum and maximum spend under a campaign budget, bid
   caps, and budgets in a currency with no fixed USD rate (left out and
   said). An account tied to an Active client that Mahara's business does
-  not list cannot be read (the run's note names it). A campaign delivering
-  on an account that spent nothing at all in the hourly read's window has
-  no ad-day read for those days, so its days are left out and said rather
-  than counted as $0: worth a days read for budget accounts too (systems
-  manager). TikTok is not read.
+  not list cannot be read (named on the board and in the run's note).
+  Before the first listing that covers a day, a campaign on an account that
+  spent nothing has no known spend for that day, so the day is left out and
+  said. TikTok is not read.
 
 ### Impressions
 
@@ -754,7 +806,13 @@ Budgets on the board (2026-10-17), in order (systems manager):
    (either order), then post `{"job":"doctor"}` and `{"job":"backfill","days":45}`.
 2. Apply `20261017100100_board_budgets.sql` (it needs the first), then ship
    the media buyer cockpit. Until the first hourly budgets read, the board
-   says the budgets have not been read and the three columns read n/a.
+   says the budgets have not been read and the three columns name the
+   accounts not read yet (n/a, never $0).
+3. After a day of hourly reads, check on production: Khalda's ABO blocked by
+   its ads counts its $1,104 a day at 0% with "Ads with issues"; a prepaid
+   account (mergestudio.kw) reads "Prepaid balance"; City Wood, Ardon and
+   Castello (no ad-day rows) read a Budget used from the listing's $0 days,
+   not n/a.
 
 ## What is left, and who does it
 

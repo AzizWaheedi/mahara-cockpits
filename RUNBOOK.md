@@ -912,33 +912,49 @@ not: a budget set and spending nothing is half the question). The tasks wait
 and `mahara-meta-ad-days-drain` picks them up. Each is one GET
 `act_<id>/campaigns` with the ad sets and their ads' statuses nested
 (archived and deleted campaigns left out); an account in a currency missing
-from Meta's offset table (`CURRENCY_OFFSETS` in `parse.ts`; KWD and OMR are
-not in Meta's table) or a campaign with more than 200 ad sets is refused with
-a sentence, never guessed or cut short. Amounts are the account currency's
-major units (Meta's minor units / the offset), plus USD at the fixed rates.
-They land in `cockpit_meta_budgets` (now: one row per campaign and ad set,
-replaced at each read), `cockpit_meta_account_state` (status, spending limit,
-amount spent), and today's row per campaign switched on in
-`cockpit_meta_budget_days` on the account's own clock (the last read of the
-day wins; `max_budget_usd` keeps the highest budget it delivered at), with
+from Meta's offset table (`CURRENCY_OFFSETS` in `parse.ts`, exactly Meta's
+table: KWD, OMR, LKR and MAD are not in it) or a campaign with more than 200
+ad sets is refused with a sentence, never guessed or cut short. Amounts are
+the account currency's major units (Meta's minor units / the offset), plus
+USD at the fixed rates. They land in `cockpit_meta_budgets` (now: one row
+per campaign and ad set, replaced at each read), `cockpit_meta_account_state`
+(status, spending limit or prepaid funds, amount spent, `is_prepay`), and
+today's row per campaign switched on in `cockpit_meta_budget_days` on the
+account's own clock (the last read of the day wins;
+`max_switched_on_budget_usd` keeps the highest daily budget it was switched
+on with, which is the day's budget on the board), with
 `cockpit_meta_budget_account_days` counting the reads of that account day.
-CBO is the campaign's budget; ABO the sum of the delivering ad sets (none
-delivering: the ones switched on); a paused or ended ad set never counts.
-Delivering means account status 1 or 9 with its spending limit not reached,
-campaign and ad set ACTIVE, started and not ended, and at least one ACTIVE ad;
+Switched on: the campaign and at least one of its ad sets ACTIVE and inside
+their schedules; blocked or not (ads with issues, an unsettled account, a
+spending limit reached all count: the CEO's "budget set, not spending").
+CBO is the campaign's budget; ABO the sum of the ad sets switched on; a
+paused or ended ad set never counts; a campaign waiting for its start is not
+switched on yet (`starts_at`). Delivering is the reason, not the filter:
+account status 1 or 9 with its spending limit (or prepaid balance) not used
+up, campaign and ad set ACTIVE and running, and at least one ACTIVE ad;
 otherwise `why_not` says why ("Account unsettled: payment needed", "Spending
-limit reached", "Paused", "Ended", "Ads with issues", "Ads not approved
-yet"). The nightly run (14 days) and a backfill (its days) add one
-`activities` task per such account: the same campaigns read, then
-`act_<id>/activities` over the days and up to now, undone change by change
-back to each day (`history.ts`). History rows go only to account days no
-hourly read covers, never over a read, and are `verified` when the log's
-chain of changes ends at the live budget. An account day with no row in
-`cockpit_meta_budget_account_days` was not read: unknown, never 0. Each run's
-note has its own lines ("Budgets read for N accounts; not read for X
-(reason).", "Budget history read for N accounts"), and
-`cockpit_meta_ad_days_status()->'budgets'` gives the accounts read, the
-newest read, the accounts failing and the first day held.
+limit reached", "Prepaid balance used up: add funds", "Paused", "Ended",
+"Ads with issues", "Ads not approved yet", "Starts 20 Oct"). The nightly run
+(14 days) and a backfill (its days) add one `activities` task per such
+account: the same campaigns read, then `act_<id>/activities` over the days
+and up to now, undone change by change back to each day (`history.ts`), with
+the same switched-on rule; the log does not follow the ads, so these rows
+leave `delivering` NULL. History rows go only to account days no hourly read
+covers, never over a read, each checked to be the task's own account, and
+are `verified` when the campaign's own chain of changes ends at the live
+budget. An account day with no row in `cockpit_meta_budget_account_days` was
+not read: unknown, never 0. Every run also records, in
+`cockpit_meta_spend_reads`, the account days whose spend Meta answered: its
+finished day reads (when the run closes) and the listed accounts that spent
+nothing over its window (from `begin`). The board counts a budget day with
+no ad-day rows as $0 only on such a day. Each run's note has its own lines
+("Budgets read for N accounts; not read for X (reason).", "Budget history
+read for N accounts"); a budgets or history read that fails never makes the
+run partial (the run's state and "Read X of Y ad accounts" are the ad-day,
+reach and lead-id reads'). `cockpit_meta_ad_days_status()->'budgets'` gives
+the accounts read, the newest read, the last budgets run (`lastRun`, with
+its own state), the accounts failing, the accounts not listed under
+Mahara's business (`unlisted`) and the first day held.
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
@@ -961,7 +977,11 @@ newest read, the accounts failing and the first day held.
 | Note: "Tied to an Active client but not listed under Mahara's business, so no budget could be read: X (id)" | The client's card is Active and names this account, but Meta does not list it on Mahara's business edges. Share the account with the business (Business Settings, Ad accounts), or fix the tie. | Client success, CEO |
 | Doctor: "Budgets cannot be read with META_SYSTEM_TOKEN on X" | The system user cannot read the account's campaigns: give it access to the account (Business Settings, System users, Assign assets). No budget is read anywhere until it can. | CEO |
 | Doctor: "The budget history (Meta's activity log) cannot be read with META_SYSTEM_TOKEN on X" | The token reads budgets but not the activity log (`act_<id>/activities`). The history then starts the day budgets were first read; the hourly reads are unaffected. Give the system user the account's full access or ads_management, then run a backfill (below). Note: "Budget history read for 0 accounts; not read for X" says the same per run. | CEO |
-| Note: "Budget history read for N accounts (X: 2 of 14 days not verified: the log does not lead to the live budget for 1 campaign)" | The activity log's chain of changes did not end at the live budget (a change Meta did not log, or a campaign or ad set gone since). Those days keep their rows with `verified` false; read them as "about". Nothing to fix unless it is every night. | Nobody |
+| Note: "Budget history read for N accounts (X: 2 of 14 days not verified: the log does not lead to the live budget for 1 campaign)" | The activity log's chain of changes did not end at the live budget (a change Meta did not log, a budget Meta logs as 0 before a change, or a campaign or ad set gone since). Those days keep their rows with `verified` false and the board names them in Budget used's note; read them as "about". Nothing to fix unless it is every night. | Nobody |
+| Board: "Budgets for act_X (name) have not been read" on a client's Budget/day or Budget used | The client's card names an account no budgets read has reached. With ": Mahara's business does not list the account": share it with the business (Business Settings, Ad accounts). With ": the last read failed": read `status()->'budgets'->'failing'` for Meta's reason. Neither: the account is new; the next hourly run reads it. The other linked accounts are still shown, marked partial. | CEO, client success, or nobody |
+| Board: "Budgets were last read at HH:MM Kuwait time" | No hourly budgets read has landed for 3 hours. The ad numbers are not affected. Read `meta-ad-days-hourly` in `cockpit_sync_state` and `status()->'budgets'->'lastRun'`; the fixes above (rate limit, token, access) apply. | Systems manager |
+| Board: Budget used left out "N campaign-days with a daily budget ... the spend of X was not read those days" | Neither a day read nor the business listing has answered for that account day yet (a day before the first listing that covered it, or an account the listing could not price). It fills on the next hourly run for the last two days; for older days run a backfill of that account. Never counted as $0 meanwhile. | Nobody, or the systems manager |
+| Board or page: "Prepaid balance: $X left (under a day of budget)" or "Prepaid balance used up: add funds" | The account is prepaid (`is_prepay`): Meta stops it when the funds added run out. Ask the client to add funds (Billing, Add funds); raising a spending limit does nothing here. | Client success |
 | The board says a campaign's budget is unknown for days before 17 Oct | The hourly reads start on the ship day; the nightly history covers the 14 days before, if the token can read the activity log. For longer, run a backfill: `{"job":"backfill","days":45}` rebuilds 45 days of budget history (and re-reads those days' ad-days, which upserts the same rows). Only account days no hourly read covers are written. | Systems manager |
 | "Meta leads not in the CRM" is empty for a client, with "Meta's lead ids ... have not been read yet", "... are held from <day>" or "Meta does not show this client's form leads" | `cockpit_meta_leads_not_in_crm` gives NULL, never 0, when it cannot know: an account no nightly run has read yet, a window before the lead ids held (`cockpit_meta_lead_id_cover`), or no lead access on the Page. The first two fill by themselves after the nightly run; the third needs the client to give Mahara's business lead access on the Page. | Nobody, or the CEO for lead access |
 
@@ -1026,7 +1046,8 @@ sends no lead-ids ask and reads only the five windows' spans; a newer function o
 no lead-ids tasks). The next hourly run reads the seven windows; the next nightly run reads the lead ids.
 
 Budgets of 2026-10-17: apply `20261017100000_meta_budgets.sql` and deploy `meta-ad-days` (either order: an
-older function sends no budget accounts, an older database ignores them). The same deploy fixes two things:
+older function sends no budget accounts or zero-spend list, an older database ignores them). The same deploy
+fixes two things:
 `cockpit_meta_lead_ids_apply` was missing from the function's RPC list (`db.ts`), so every nightly lead-ids
 task was refused and retried 4 times (292 wasted lead reads on 17 Oct), and a refusal from that list is no
 longer retried; "Read X of Y ad accounts" counts the ad-day reads only (the nightly of 17 Oct said "Read 8 of
