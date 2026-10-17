@@ -18,6 +18,8 @@ const HOME: Record<string, string> = {
   creative: "/go/creative",
   editor: "/go/editor",
   sales: "/go/sales",
+  // A seat on its own with no cockpit: Team meetings and Client performance.
+  call_center: "/team",
 };
 
 export interface SupabaseMember {

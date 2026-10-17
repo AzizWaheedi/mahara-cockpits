@@ -84,7 +84,44 @@ const ROLE_META: { key: string; label: string; hint: string }[] = [
     label: "Sales",
     hint: "Calls, leads, scripts, follow-ups, pay.",
   },
+  {
+    key: "call_center",
+    label: "Call center",
+    hint: "Team meetings and the client performance table, for their own clients.",
+  },
 ];
+
+/**
+ * The call center seat (Aziz, 2026-10-17): no cockpit, only Team meetings
+ * and Client performance for the clients ticked here. It stands alone, so
+ * choosing it clears the cockpit seats and choosing a cockpit clears it; the
+ * server refuses the mix too. Its client list is required: for this seat an
+ * empty list means no clients, never all of them.
+ */
+export const TEAM_ONLY_ROLE = "call_center";
+
+export function pickSeat(roles: string[], key: string): string[] {
+  if (roles.includes(key)) return roles.filter(r => r !== key);
+  if (key === TEAM_ONLY_ROLE) return [TEAM_ONLY_ROLE];
+  return [...roles.filter(r => r !== TEAM_ONLY_ROLE), key];
+}
+
+/** The arguments of cockpit_admin_upsert_member, from what the form holds. */
+export function memberPayload(form: {
+  email: string;
+  name: string;
+  roles: string[];
+  allClients: boolean;
+  clients: string[];
+}) {
+  const teamOnly = form.roles.includes(TEAM_ONLY_ROLE);
+  return {
+    p_email: form.email.trim().toLowerCase(),
+    p_name: form.name.trim(),
+    p_roles: teamOnly ? [TEAM_ONLY_ROLE] : form.roles,
+    p_clients: form.allClients && !teamOnly ? [] : form.clients,
+  };
+}
 
 type SalesRole = "setter" | "closer" | "both" | "manager";
 
@@ -390,8 +427,11 @@ export function AdminPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {(m.roles ?? []).includes("admin") ||
+                      {(m.roles ?? []).includes(TEAM_ONLY_ROLE) &&
                       (m.clients ?? []).length === 0 ? (
+                        <span className="text-destructive">No clients</span>
+                      ) : (m.roles ?? []).includes("admin") ||
+                        (m.clients ?? []).length === 0 ? (
                         <span className="text-muted-foreground">
                           All clients
                         </span>
@@ -822,7 +862,7 @@ function Stat({
   );
 }
 
-function MemberDialog({
+export function MemberDialog({
   member,
   clientNames,
   clientError,
@@ -857,6 +897,9 @@ function MemberDialog({
   const [filter, setFilter] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const teamOnly = roles.includes(TEAM_ONLY_ROLE);
+  // A call center seat always picks its clients: there is no "all" for it.
+  const everyClient = allClients && !teamOnly;
 
   const toggle = (list: string[], v: string) =>
     list.includes(v) ? list.filter(x => x !== v) : [...list, v];
@@ -907,7 +950,7 @@ function MemberDialog({
                   type="button"
                   key={r.key}
                   aria-pressed={roles.includes(r.key)}
-                  onClick={() => setRoles(toggle(roles, r.key))}
+                  onClick={() => setRoles(pickSeat(roles, r.key))}
                   className={`flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 text-left ${roles.includes(r.key) ? "border-primary/40 bg-primary/15" : ""}`}
                 >
                   <Checkbox
@@ -953,23 +996,31 @@ function MemberDialog({
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label>Client access</Label>
-              <span className="flex items-center gap-2 text-sm">
-                <Switch
-                  checked={allClients}
-                  onCheckedChange={setAllClients}
-                  aria-label="All clients"
-                />
-                All clients
-              </span>
+              <Label>{teamOnly ? "Clients (required)" : "Client access"}</Label>
+              {teamOnly ? null : (
+                <span className="flex items-center gap-2 text-sm">
+                  <Switch
+                    checked={allClients}
+                    onCheckedChange={setAllClients}
+                    aria-label="All clients"
+                  />
+                  All clients
+                </span>
+              )}
             </div>
+            {teamOnly ? (
+              <p className="text-xs text-muted-foreground">
+                Tick the clients whose numbers they see on the client
+                performance table. Tick at least one to save.
+              </p>
+            ) : null}
             {clientError ? (
               <p className="text-sm text-destructive">
                 Client options are unavailable: {clientError} Existing
                 selections are preserved.
               </p>
             ) : null}
-            {!allClients ? (
+            {!everyClient ? (
               <div className="rounded-md border">
                 <div className="border-b p-2">
                   <Input
@@ -1030,24 +1081,21 @@ function MemberDialog({
             Cancel
           </Button>
           <Button
-            disabled={saving || !email.includes("@") || roles.length === 0}
+            disabled={
+              saving ||
+              !email.includes("@") ||
+              roles.length === 0 ||
+              (teamOnly && clients.length === 0)
+            }
             onClick={async () => {
               setSaving(true);
               setError("");
-              const cleanEmail = email.trim().toLowerCase();
-              const cleanRoles = roles;
-              const cleanClients = allClients ? [] : clients;
 
               if (supabase) {
                 try {
                   const { error: rpcErr } = await supabase.rpc(
                     "cockpit_admin_upsert_member",
-                    {
-                      p_email: cleanEmail,
-                      p_name: name.trim(),
-                      p_roles: cleanRoles,
-                      p_clients: cleanClients,
-                    },
+                    memberPayload({ email, name, roles, allClients, clients }),
                   );
                   if (rpcErr) {
                     setError(rpcErr.message);

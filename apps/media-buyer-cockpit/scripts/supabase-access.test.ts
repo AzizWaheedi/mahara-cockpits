@@ -72,6 +72,22 @@ describe("Supabase cockpit access", () => {
     expect(access?.home).toBe("/ceo");
   });
 
+  test("a call center seat has no cockpit and lands on Team meetings", () => {
+    const access = accessFromSupabaseMember(user, {
+      ...member,
+      roles: ["call_center"],
+    });
+    expect(access?.cockpits).toEqual([]);
+    expect(access?.home).toBe("/team");
+    expect(access?.isAdmin).toBe(false);
+    expect(access?.isCeo).toBe(false);
+  });
+
+  test("a seat with no known role still has no home", () => {
+    const access = accessFromSupabaseMember(user, { ...member, roles: [] });
+    expect(access?.cockpits).toEqual([]);
+    expect(access?.home).toBeNull();
+  });
 });
 
 const SALES = "11111111-1111-4111-8111-111111111111";

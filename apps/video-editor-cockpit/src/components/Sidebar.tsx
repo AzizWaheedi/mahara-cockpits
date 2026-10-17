@@ -17,8 +17,8 @@ import { Wordmark } from "./Wordmark";
 
 /**
  * The same shape as the other cockpits: an icon and a label per row, the
- * desk's own screens first, then Team meetings and the other cockpits at
- * the foot of the rail, the person at the bottom.
+ * desk's own screens first, then the SOP, Team meetings, Client performance
+ * and the other cockpits at the foot of the rail, the person at the bottom.
  *
  * The shared sections keep the names they have elsewhere. "Ideation" and
  * "What works" are literally the same rows the creative director sees, so
@@ -43,8 +43,9 @@ interface Item {
  * Five places (the simplification audit, approved by Aziz on 2026-10-06):
  * Jobs is home and a job's page is part of it (the board is its second
  * view, End of day a button on it); the three library pages are one
- * Library with tabs; Meetings is one place, with the team schedule linked
- * from it.
+ * Library with tabs; Meetings is the desk's own recordings. The team's
+ * meetings, their agendas and the shared doc are the portal's Team meetings,
+ * at the foot of the rail (Aziz, 2026-10-17).
  */
 const GROUPS: { label: string; items: Item[] }[] = [
   {
@@ -125,6 +126,32 @@ function Mark({ kind, n }: { kind: "ready" | "eod"; n: number }) {
   );
 }
 
+/**
+ * The foot of the rail: the desk's SOP first (ClickUp, a new tab), then Team
+ * meetings and the Client Performance board (the portal's, everybody's),
+ * then the other cockpits this person may open.
+ */
+export function footLinks(
+  cockpits: string[],
+  isAdmin: boolean,
+): { key: string; label: string; href: string; newTab?: boolean }[] {
+  return [
+    {
+      key: "sop",
+      label: "How to use this desk",
+      href: COCKPIT_SOP.editor,
+      newTab: true,
+    },
+    { key: "team", label: "Team meetings", href: `${portalUrl()}/team` },
+    {
+      key: "performance",
+      label: "Client performance",
+      href: `${portalUrl()}/performance`,
+    },
+    ...otherCockpits(cockpits, isAdmin),
+  ];
+}
+
 export default function Sidebar({
   name,
   isAdmin,
@@ -138,25 +165,7 @@ export default function Sidebar({
 }) {
   const { cockpits, signOut } = useWho();
   const { pathname } = useLocation();
-  // The other cockpits. The team's schedule opens from Meetings, so the
-  // sidebar has one Meetings, not two.
-  // The desk's SOP first (ClickUp, a new tab), then the Client Performance
-  // board (everybody's), then the other cockpits.
-  const foot: { key: string; label: string; href: string; newTab?: boolean }[] =
-    [
-      {
-        key: "sop",
-        label: "How to use this desk",
-        href: COCKPIT_SOP.editor,
-        newTab: true,
-      },
-      {
-        key: "performance",
-        label: "Client performance",
-        href: `${portalUrl()}/performance`,
-      },
-      ...otherCockpits(cockpits, isAdmin),
-    ];
+  const foot = footLinks(cockpits, isAdmin);
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto px-3 py-4">

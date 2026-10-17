@@ -71,7 +71,8 @@ export function PortalHome() {
 }
 
 function Chooser() {
-  const { isCeo, isAdmin, cockpits, email, name, ready } = useCockpitAuth();
+  const { isCeo, isAdmin, cockpits, home, email, name, ready } =
+    useCockpitAuth();
 
   if (!ready)
     return (
@@ -85,6 +86,12 @@ function Chooser() {
 
   if (cockpits.length === 1 && COCKPIT_META[cockpits[0]]) {
     return <Navigate to={COCKPIT_META[cockpits[0]].to} replace />;
+  }
+
+  // A seat with no cockpit but a home of its own (call center: Team
+  // meetings, 2026-10-17) goes there, never to "No cockpit".
+  if (cockpits.length === 0 && home) {
+    return <Navigate to={home} replace />;
   }
 
   if (cockpits.length === 0) {
