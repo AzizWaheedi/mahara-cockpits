@@ -342,6 +342,7 @@ beforeAll(async () => {
       );
   }
   await db.exec(migration("20261017100100_board_budgets.sql"));
+  await db.exec(migration("20261017120000_board_budget_issue_scope.sql"));
   read = await as(
     VIEWER,
     "SELECT public.cockpit_board_read($1::date,$2::date) AS r",

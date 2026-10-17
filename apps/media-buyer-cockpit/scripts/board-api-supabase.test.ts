@@ -44,6 +44,7 @@ const READ_CHECKED = [
   "20261017090000_board_active_only.sql",
   // The budgets on the board (2026-10-17).
   "20261017100100_board_budgets.sql",
+  "20261017120000_board_budget_issue_scope.sql",
 ];
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
@@ -3472,8 +3473,7 @@ describe("daily budgets and budget used (2026-10-17)", () => {
            NULL,NULL,1,0,NULL,true,NULL,true,NULL,now() - interval '15 minutes')`,
         [BHD],
       );
-      const d = rowOf(await board(CEO, kd(3), kd(1)), LOC_B).values
-        .dailyBudget;
+      const d = rowOf(await board(CEO, kd(3), kd(1)), LOC_B).values.dailyBudget;
       expect(d).toMatchObject({
         v: null,
         status: "not_measured",
@@ -3746,6 +3746,54 @@ describe("daily budgets and budget used (2026-10-17)", () => {
     }
   });
 
+  test("an account not in use (nothing switched on, no spend in the time frame) needs no action, closed or not", async () => {
+    await seed();
+    await owner(db);
+    const OLD = "7777777777";
+    const [{ ids }] = await q<{ ids: string[] }>(
+      "SELECT ad_account_ids AS ids FROM public.cockpit_board_clients WHERE location_id = $1",
+      [LOC_A],
+    );
+    try {
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = ad_account_ids || ARRAY[$2] WHERE location_id = $1",
+        [LOC_A, OLD],
+      );
+      // An old closed account the client no longer runs (City Wood's "City Old").
+      await state(OLD, { status: 101 });
+      const d = rowOf(await board(CEO, kd(3), kd(1)), LOC_A).values.dailyBudget;
+      expect(
+        (d.accountIssues ?? []).map((i: Row) => i.accountId),
+      ).not.toContain(OLD);
+      expect(d.note).not.toMatch(/Account closed/);
+      // Switched on again, it needs action and is named.
+      await q(
+        `INSERT INTO public.cockpit_meta_budgets(level,object_id,account_id,campaign_id,name,status,effective_status,budget_level,budget_type,
+           daily_budget,currency,currency_offset,usd_rate,daily_budget_usd,ads_active,ads_with_issues,switched_on,delivering,why_not,fetched_at)
+         VALUES('campaign','8999901',$1,'8999901','Old campaign','ACTIVE','ACTIVE','campaign','daily',10,'USD',100,1,10,1,0,true,false,'Account closed',now())`,
+        [OLD],
+      );
+      const again = rowOf(await board(CEO, kd(3), kd(1)), LOC_A).values
+        .dailyBudget;
+      expect(
+        (again.accountIssues ?? []).find((i: Row) => i.accountId === OLD),
+      ).toMatchObject({ issue: "account", words: "Account closed" });
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.cockpit_meta_budgets WHERE account_id = $1", [
+        OLD,
+      ]);
+      await q(
+        "DELETE FROM public.cockpit_meta_account_state WHERE account_id = $1",
+        [OLD],
+      );
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = $2 WHERE location_id = $1",
+        [LOC_A, ids],
+      );
+    }
+  });
+
   test("the account's status, its spending limit and a prepaid balance, in Meta's words: for the board's line and the page", async () => {
     await seed();
     await owner(db);
@@ -3784,8 +3832,8 @@ describe("daily budgets and budget used (2026-10-17)", () => {
       expect(held.note.split("Account unsettled").length).toBe(2);
       const campNote = (
         await client(CEO, LOC_A, kd(3), kd(1))
-      ).budgets.campaigns.find((c: Row) => c.id === "80004").metrics
-        .dailyBudget.note;
+      ).budgets.campaigns.find((c: Row) => c.id === "80004").metrics.dailyBudget
+        .note;
       expect(campNote).toContain(
         "Not delivering now (Account unsettled: payment needed).",
       );
