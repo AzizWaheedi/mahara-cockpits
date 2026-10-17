@@ -1102,6 +1102,67 @@ const ISSUE_ORDER = [
   "balance_low",
 ];
 
+/** One row of the budget line: a reason, and the clients it is the first reason for. */
+export type BudgetGroup = {
+  key: string;
+  label: string;
+  /** Spend has stopped or is stopping (an off dot), not only a watch. */
+  stops: boolean;
+  names: string[];
+};
+
+const GROUP_LABEL: Record<string, string> = {
+  billing: "Ad account needs a payment",
+  account: "Ad account not active",
+  limit_reached: "Spending limit reached",
+  balance_out: "Prepaid balance used up",
+  billing_due: "Payment due on the ad account",
+  limit_near: "Under a day of spending limit left",
+  balance_low: "Under a day of prepaid balance left",
+  notSpending: "Spent nothing yesterday",
+  notDelivering: "Budget switched on, not delivering",
+  under: "Spent under budget in these dates",
+};
+
+/**
+ * The budget line as rows, most urgent first: the ad account's blocks, then
+ * what will stop soon, then campaigns that spent nothing, then budgets not
+ * spent. Each client is named once, under its most urgent reason, so the
+ * line stays short (2026-10-17: one sentence named the same clients three
+ * times).
+ */
+export function budgetGroups(f: BudgetFacts): BudgetGroup[] {
+  const seen = new Set<string>();
+  const out: BudgetGroup[] = [];
+  const push = (key: string, names: string[] | undefined, stops: boolean) => {
+    const fresh = (names ?? []).filter(n => !seen.has(n));
+    for (const n of fresh) seen.add(n);
+    if (fresh.length)
+      out.push({
+        key,
+        label: GROUP_LABEL[key] ?? "Ad account needs a look",
+        stops,
+        names: fresh,
+      });
+  };
+  for (const k of [
+    ...ISSUE_ORDER,
+    ...Object.keys(f.issues)
+      .filter(k => !ISSUE_ORDER.includes(k))
+      .sort(),
+  ])
+    push(k, f.issues[k], STOPPING_ISSUES.has(k) || !ISSUE_ORDER.includes(k));
+  push("notSpending", f.notSpending, true);
+  push("notDelivering", f.notDelivering, true);
+  push("under", f.under, false);
+  return out;
+}
+
+/** A client's name for a list, kept apart from the text around it when it is Arabic. */
+export function listName(name: string): string {
+  return isolate(name);
+}
+
 /**
  * The budget line's sentence, naming who (up to three clients per issue),
  * or null when nothing needs action: "Khalda and Shades spent nothing

@@ -905,12 +905,26 @@ describe("budgets", () => {
   test("the budget line names who needs action, flags the account on its client's row, and sorts by budget used, lowest first", async () => {
     await show();
     const reem = "\u2068مطابخ الريم\u2069";
-    expect(text(line())).toContain(
-      `Harbor Kitchens, Liwan Limited and ${reem} spent nothing yesterday on a running budget; Dune Interiors and ${reem} spent under their budgets in this time frame; ${reem}'s ad account needs a payment; Harbor Kitchens' account has less than a day of spending limit left; Dune Interiors' prepaid balance has less than a day of budget left.`,
-    );
+    // One row per reason, most urgent first; each client named once, under its first reason.
+    const groups = Array.from(
+      line().querySelectorAll("[data-budget-group]"),
+    ).map((li: any) => [li.getAttribute("data-budget-group"), text(li)]);
+    expect(groups).toEqual([
+      ["billing", `Ad account needs a payment${reem}1`],
+      ["limit_near", "Under a day of spending limit leftHarbor Kitchens1"],
+      ["balance_low", "Under a day of prepaid balance leftDune Interiors1"],
+      ["notSpending", "Spent nothing yesterdayLiwan Limited1"],
+    ]);
     expect(
-      line().querySelector('[role="img"]').getAttribute("aria-label"),
+      line()
+        .querySelector('[data-budget-group="billing"] [role="img"]')
+        .getAttribute("aria-label"),
     ).toBe("Off target");
+    expect(
+      line()
+        .querySelector('[data-budget-group="limit_near"] [role="img"]')
+        .getAttribute("aria-label"),
+    ).toBe("Watch");
     // The account's issue on its client's row: a flag beside Budget used, its words in the help.
     expect(
       cellOf("locFixReem0004", "budgetUsed").querySelector(
@@ -932,7 +946,7 @@ describe("budgets", () => {
         "[data-account-flag]",
       ),
     ).toBeNull();
-    await click(line());
+    await click(line().querySelector("button"));
     // Lowest first; a client with no figure last, by name.
     const order = rowsShown();
     expect(order.slice(0, 2)).toEqual(["locFixReem0004", "locFixDune0002"]);
@@ -941,7 +955,9 @@ describe("budgets", () => {
       "locFixOrbit006",
       "locFixPearl008",
     ]);
-    expect(line().getAttribute("aria-pressed")).toBe("true");
+    expect(line().querySelector("button").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
     expect(text(line())).toContain("Sorted by budget used");
   });
 
@@ -998,7 +1014,7 @@ describe("budgets", () => {
     await show();
     expect(headers()).toEqual(["Client", "Caller", "Spend", "CPL"]);
     // The line's sort shows Budget used for this visit, without saving it.
-    await click(line());
+    await click(line().querySelector("button"));
     expect(headers()).toEqual([
       "Client",
       "Caller",

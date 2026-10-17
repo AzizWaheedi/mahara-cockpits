@@ -41,11 +41,13 @@ import {
 import {
   type BoardColumn,
   budgetFacts,
+  budgetGroups,
   budgetSentence,
   COLUMNS,
   formatValue,
   GROUPS,
   KEY_COLUMNS,
+  listName,
   noOutcomeTotal,
   portfolio,
 } from "@/lib/boardColumns";
@@ -366,32 +368,52 @@ function BudgetLine({
   onPress: () => void;
 }) {
   const facts = budgetFacts(rows);
-  const sentence = budgetSentence(facts);
-  if (!sentence) return null;
-  const off = facts.off;
-  const action = active ? "Sorted by budget used" : "Sort by budget used";
+  const groups = budgetGroups(facts);
+  if (!groups.length) return null;
   return (
-    <button
-      type="button"
-      onClick={onPress}
-      aria-pressed={active}
+    <section
+      aria-label="Budgets to act on"
+      aria-description={budgetSentence(facts) ?? undefined}
       data-budget-line=""
-      className={cn(
-        "group flex w-full items-start gap-2.5 rounded-xl border px-4 py-3 text-left text-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:items-center sm:px-5",
-        active ? "border-primary/40 bg-primary/5" : "bg-card",
-      )}
+      className="rounded-xl border bg-card px-4 py-3 text-sm sm:px-5"
     >
-      <BoardDot status={off ? "off" : "watch"} className="mt-[7px] sm:mt-0" />
-      <span className="min-w-0 flex-1">
-        <span className="tabular-nums">{sentence}</span>
-        <span className="mt-1 block text-xs font-medium text-muted-foreground group-hover:text-foreground sm:hidden">
-          {action}
-        </span>
-      </span>
-      <span className="hidden shrink-0 text-xs font-medium text-muted-foreground group-hover:text-foreground sm:inline">
-        {action}
-      </span>
-    </button>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-[13px] font-medium">Budgets to act on</h2>
+        <Button
+          size="sm"
+          variant={active ? "teal" : "ghost"}
+          aria-pressed={active}
+          onClick={onPress}
+        >
+          {active ? "Sorted by budget used" : "Sort by budget used"}
+        </Button>
+      </div>
+      <ul className="mt-1.5 space-y-1.5">
+        {groups.map(g => (
+          <li
+            key={g.key}
+            data-budget-group={g.key}
+            className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-2.5"
+          >
+            <BoardDot status={g.stops ? "off" : "watch"} />
+            <span className="min-w-0 sm:flex sm:items-baseline sm:gap-2">
+              <span className="block shrink-0 font-medium sm:inline">
+                {g.label}
+              </span>
+              <span
+                className="block min-w-0 truncate text-muted-foreground"
+                title={g.names.join(", ")}
+              >
+                {g.names.map(listName).join(", ")}
+              </span>
+            </span>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {g.names.length}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
