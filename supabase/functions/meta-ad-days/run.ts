@@ -24,6 +24,19 @@
  * times only, never a name, phone or answer), so the board can say how many
  * Meta leads never became a CRM contact (cockpit_meta_leads_not_in_crm).
  *
+ * Budgets (2026-10-17, the CEO: "the daily budget of all the campaigns in the
+ * account and then how much is actually being spent"): the hourly run adds one
+ * budgets task per account that spent or is tied to an Active client (the
+ * database answers which, cockpit_meta_ad_days_inputs activeAccounts), which
+ * waits 5 minutes so it lands after the :07 burst of other readers. It reads
+ * GET act_<id>/campaigns once, with the ad sets and their ads' statuses
+ * nested (parse.ts parseBudgets), and hands the rows to
+ * cockpit_meta_budgets_apply. The nightly run (14 days) and a backfill (its
+ * days) add one activities task per such account: the same campaigns read
+ * for the live state, then GET act_<id>/activities over the days and up to
+ * now, rebuilt backwards into each day's budget (history.ts) for
+ * cockpit_meta_budget_history_apply.
+ *
  * A days task also looks up the destination of its lead-campaign ad sets
  * (one act_<id>/adsets read per 50 of them; none when the account has no lead
  * campaign), so a WhatsApp or Messenger lead ad set's messaging leads never
@@ -41,9 +54,10 @@
  * A dry run does 1 and 2 and returns the plan with the ties: nothing is
  * written but the call receipts.
  */
-import { type Account, discoverAccounts } from "./accounts.ts";
-import { type InsertReceipt, type Rpc, RpcError } from "./db.ts";
-import { discoveryWindow, halves, type JobKind, knownZone, MAX_BACKFILL_DAYS, type Span, spansFor, zonedDay } from "./days.ts";
+import { type Account, discoverAccounts, INTERNAL_ACCOUNT_IDS } from "./accounts.ts";
+import { type InsertReceipt, NOT_RETRIED, type Rpc, RpcError } from "./db.ts";
+import { discoveryWindow, halves, historySpan, type JobKind, knownZone, MAX_BACKFILL_DAYS, type Span, spansFor, zonedDay } from "./days.ts";
+import { ACTIVITY_FIELDS, parseActivities, rebuildBudgetHistory, toHistoryApplyRow } from "./history.ts";
 import { GRAPH_VERSION, type GraphDeps, MAHARA_BUSINESS_ID, MetaError, metaGet, metaPages, type Row } from "./graph.ts";
 import {
   type AdDayRow,
@@ -62,6 +76,14 @@ import {
   type Window,
   windowSpans,
   withDestinations,
+  type AccountSnapshot,
+  BUDGET_FIELDS,
+  CAMPAIGN_STATUSES,
+  currencyOffset,
+  minorUnits,
+  noOffsetSentence,
+  parseBudgets,
+  toBudgetApplyRow,
 } from "./parse.ts";
 
 export type Job =
@@ -89,14 +111,18 @@ export type Task = {
   id: number;
   runId: string;
   job: JobKind;
-  kind: "days" | "reach_account" | "reach_all" | "lead_ids";
+  kind: "days" | "reach_account" | "reach_all" | "lead_ids" | "budgets" | "activities";
   accountId: string;
   accountName: string | null;
+  currency: string | null;
+  timezone: string | null;
   since: string | null;
   until: string | null;
   windows: Window[];
   /** A lead_ids task's ads. */
   adIds: string[];
+  /** A budgets or activities task's account as the business listing gave it (Meta's minor units). */
+  accountState: { status: number | null; disableReason: number | null; spendCap: string | null; amountSpent: string | null; readAt: string | null } | null;
   leaseToken: string;
   attempt: number;
 };
@@ -139,7 +165,7 @@ export function sentence(e: unknown): string {
 /** Worth another try later: Meta's limits, Meta being slow, or the database not answering (not the database refusing the rows). */
 export function retryable(e: unknown): boolean {
   if (e instanceof MetaError) return e.kind === "rate" || e.kind === "heavy";
-  if (e instanceof RpcError) return e.code !== "22023" && e.code !== "42501";
+  if (e instanceof RpcError) return e.code !== "22023" && e.code !== "42501" && !NOT_RETRIED.has(e.code ?? "");
   return !(e instanceof ParseError);
 }
 
@@ -149,6 +175,17 @@ async function record(deps: RunDeps, job: string, ok: boolean, note: string, req
 
 function accountRow(a: Account) {
   return { accountId: a.accountId, name: a.name, currency: a.currency, timezone: a.timezone, status: a.status, spend: Math.round(a.spend * 100) / 100, edge: a.edge };
+}
+
+/** An account whose budgets a run reads: as the business listing gave it, when. */
+function budgetAccountRow(a: Account, readAt: string) {
+  return { ...accountRow(a), disableReason: a.disableReason, spendCap: a.spendCap, amountSpent: a.amountSpent, readAt };
+}
+
+/** The ad accounts tied to an Active client (cockpit_meta_ad_days_inputs); empty when an older database does not say. */
+function activeAccounts(inputs: Row | null): Set<string> {
+  const list = Array.isArray(inputs?.activeAccounts) ? (inputs?.activeAccounts as unknown[]) : [];
+  return new Set(list.filter((x): x is string => typeof x === "string" && /^[0-9]{5,25}$/.test(x)));
 }
 
 // ---------------------------------------------------------------- start
@@ -179,9 +216,30 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
   );
   const reach = kind === "hourly" ? "account" : kind === "nightly" ? "all" : null;
   const accounts = found.accounts.map(accountRow);
+  // The accounts with their names, so the "Not linked" list can name them; and
+  // which accounts are tied to an Active client, whose budgets are read even
+  // when they spent nothing. A database that does not answer leaves the
+  // budgets to the accounts that spent; the run itself goes on.
+  let inputs: Row | null = null;
+  try {
+    inputs = (await deps.rpc("cockpit_meta_ad_days_inputs", { p: { accounts } })) as Row | null;
+  } catch (e) {
+    if (job.dryRun) throw e;
+  }
+  const active = activeAccounts(inputs);
+  const readAt = new Date(deps.now()).toISOString();
+  const wanted = found.all.filter(a => a.spend > 0 || active.has(a.accountId));
+  const listedIds = new Set(found.all.map(a => a.accountId));
+  // Tied to an Active client but not on Mahara's business edges: named in the run's note, never read.
+  const budgetUnlisted = [...active]
+    .filter(id => !listedIds.has(id) && !found.internal.includes(id) && !INTERNAL_ACCOUNT_IDS.has(id) && (!only || only.has(id)))
+    .sort();
+  const budgetAccounts = kind === "hourly" ? wanted.map(a => budgetAccountRow(a, readAt)) : [];
+  const activityAccounts =
+    kind === "hourly"
+      ? []
+      : wanted.map(a => ({ ...budgetAccountRow(a, readAt), ...historySpan(kind, startedAt, a.timezone && knownZone(a.timezone) ? a.timezone : "Asia/Kuwait", days) }));
   if (job.dryRun) {
-    // The accounts with their names, so the dry run's "Not linked" list can name them.
-    const inputs = (await deps.rpc("cockpit_meta_ad_days_inputs", { p: { accounts } })) as Row | null;
     return {
       ok: true,
       dryRun: true,
@@ -196,7 +254,12 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
       ties: inputs?.ties ?? null,
       notLinked: inputs?.notLinked ?? null,
       windows: inputs?.windows ?? null,
-      note: `${accounts.length} ad accounts spent between ${window.since} and ${window.until}; ${tasks.length} reads of up to 7 days are planned.`,
+      budgetAccounts: budgetAccounts.length,
+      historyAccounts: activityAccounts.length,
+      budgetUnlisted,
+      note: `${accounts.length} ad accounts spent between ${window.since} and ${window.until}; ${tasks.length} reads of up to 7 days are planned.${
+        budgetAccounts.length ? ` Budgets are read for ${budgetAccounts.length} accounts.` : ""
+      }${activityAccounts.length ? ` Budget history is rebuilt for ${activityAccounts.length} accounts.` : ""}`,
     };
   }
   const begun = (await deps.rpc("cockpit_meta_ad_days_begin", {
@@ -212,6 +275,10 @@ export async function startJob(deps: RunDeps, job: Job): Promise<Record<string, 
       reach,
       // The nightly run also reads the lead ids of the ads with form leads.
       leadIds: kind === "nightly",
+      // Budgets now (hourly) and their history (nightly, backfill); an older database ignores them.
+      budgetAccounts,
+      activityAccounts,
+      budgetUnlisted,
     },
   })) as Row | null;
   if (!isRow(begun) || begun.started !== true) {
@@ -232,6 +299,8 @@ export function readTasks(raw: unknown): Task[] {
     const windows = Array.isArray(x.windows)
       ? x.windows.filter(isRow).map(w => ({ key: String(w.key), from: String(w.from), to: String(w.to) }))
       : [];
+    const state = isRow(x.accountState) ? x.accountState : null;
+    const digitsOf = (v: unknown) => (typeof v === "string" && /^[0-9]{1,18}$/.test(v) ? v : null);
     return {
       id: x.id,
       runId: x.runId,
@@ -239,6 +308,17 @@ export function readTasks(raw: unknown): Task[] {
       kind: x.kind as Task["kind"],
       accountId: x.accountId,
       accountName: typeof x.accountName === "string" ? x.accountName : null,
+      currency: typeof x.currency === "string" ? x.currency : null,
+      timezone: typeof x.timezone === "string" ? x.timezone : null,
+      accountState: state
+        ? {
+            status: typeof state.status === "number" ? state.status : null,
+            disableReason: typeof state.disableReason === "number" ? state.disableReason : null,
+            spendCap: digitsOf(state.spendCap),
+            amountSpent: digitsOf(state.amountSpent),
+            readAt: typeof state.readAt === "string" ? state.readAt : null,
+          }
+        : null,
       since: typeof x.since === "string" ? x.since : null,
       until: typeof x.until === "string" ? x.until : null,
       windows,
@@ -278,6 +358,8 @@ async function work(deps: RunDeps, task: Task): Promise<WorkResult> {
   try {
     if (task.kind === "days") return { state: "done", rows: await workDays(deps, graph, task) };
     if (task.kind === "lead_ids") return { state: "done", rows: await workLeadIds(deps, graph, task) };
+    if (task.kind === "budgets") return { state: "done", rows: await workBudgets(deps, graph, task) };
+    if (task.kind === "activities") return { state: "done", rows: await workActivities(deps, graph, task) };
     return { state: "done", rows: await workReach(deps, graph, task) };
   } catch (e) {
     const retry = retryable(e);
@@ -499,9 +581,130 @@ async function workLeadIds(deps: RunDeps, graph: GraphDeps, task: Task): Promise
   return rows.length;
 }
 
+// ---------------------------------------------------------------- budgets
+
+/** Every campaign of an account with its ad sets and their ads' statuses, one read (smaller pages when Meta finds it heavy). */
+export async function readCampaigns(graph: GraphDeps, accountId: string): Promise<Row[]> {
+  const params = { fields: BUDGET_FIELDS, effective_status: JSON.stringify(CAMPAIGN_STATUSES) };
+  try {
+    return await metaPages(graph, `act_${accountId}/campaigns`, { ...params, limit: 100 });
+  } catch (e) {
+    if (!(e instanceof MetaError && e.kind === "heavy")) throw e;
+    return await metaPages(graph, `act_${accountId}/campaigns`, { ...params, limit: 20 });
+  }
+}
+
+/** The task's currency offset, or the sentence that refuses the account (never 100 by default). */
+function offsetFor(task: Task): number {
+  const offset = currencyOffset(task.currency);
+  if (offset === null) throw new ParseError(noOffsetSentence(task.accountId, task.currency));
+  return offset;
+}
+
+/** The account as the business listing gave it: spend_cap "0" is no limit. */
+function accountSnapshot(task: Task): AccountSnapshot {
+  const s = task.accountState;
+  return {
+    status: s?.status ?? null,
+    disableReason: s?.disableReason ?? null,
+    spendCap: minorUnits(s?.spendCap ?? null, "the spending limit"),
+    amountSpent: minorUnits(s?.amountSpent ?? null, "the amount spent", false),
+  };
+}
+
+/** One account's budgets now: one read, one write (cockpit_meta_budgets_apply). */
+async function workBudgets(deps: RunDeps, graph: GraphDeps, task: Task): Promise<number> {
+  const offset = offsetFor(task);
+  const account = accountSnapshot(task);
+  const raw = await readCampaigns(graph, task.accountId);
+  const nowMs = deps.now();
+  const fetchedAt = new Date(nowMs).toISOString();
+  const { rows } = parseBudgets(raw, { account, offset, nowMs });
+  const campaigns = rows.filter(r => r.level === "campaign");
+  const on = campaigns.filter(r => r.switchedOn);
+  const note = `${on.length} of ${campaigns.length} campaigns switched on, ${campaigns.filter(r => r.delivering).length} delivering.`;
+  await deps.rpc("cockpit_meta_budgets_apply", {
+    p: {
+      taskId: task.id,
+      leaseToken: task.leaseToken,
+      fetchedAt,
+      currency: task.currency,
+      currencyOffset: offset,
+      account: {
+        status: account.status,
+        disableReason: account.disableReason,
+        spendCap: account.spendCap === null ? null : account.spendCap / offset,
+        amountSpent: account.amountSpent === null ? null : account.amountSpent / offset,
+        readAt: task.accountState?.readAt ?? fetchedAt,
+      },
+      rows: rows.map(r => toBudgetApplyRow(r, task.accountId)),
+      note,
+    },
+  });
+  return rows.length;
+}
+
+/** The most rows one history write takes (cockpit_meta_budget_history_apply). */
+const HISTORY_ROWS = 10_000;
+
+/**
+ * One account's budget history over the task's days: the live budgets (the
+ * same campaigns read), then Meta's activity log from the first day (14 hours
+ * early, the earliest midnight of any clock) to now, undone back to each day.
+ */
+async function workActivities(deps: RunDeps, graph: GraphDeps, task: Task): Promise<number> {
+  if (!task.since || !task.until) throw new Error("A budget history task came without its days.");
+  const offset = offsetFor(task);
+  const account = accountSnapshot(task);
+  const raw = await readCampaigns(graph, task.accountId);
+  const nowMs = deps.now();
+  const { live } = parseBudgets(raw, { account, offset, nowMs });
+  const events = await metaPages(graph, `act_${task.accountId}/activities`, {
+    fields: ACTIVITY_FIELDS,
+    since: Math.floor(Date.parse(`${task.since}T00:00:00Z`) / 1000) - 14 * 3600,
+    until: Math.ceil(deps.now() / 1000),
+    limit: 200,
+  });
+  const fetchedAt = new Date(deps.now()).toISOString();
+  const parsed = parseActivities(events);
+  const history = rebuildBudgetHistory({
+    live,
+    accountStatus: account.status,
+    events: parsed.events,
+    unreadable: parsed.unreadable,
+    timezone: task.timezone && knownZone(task.timezone) ? task.timezone : "Asia/Kuwait",
+    offset,
+    since: task.since,
+    until: task.until,
+  });
+  if (history.rows.length > HISTORY_ROWS) {
+    throw new ParseError(`The budget history of act_${task.accountId} from ${task.since} to ${task.until} holds ${history.rows.length} campaign days; ask for fewer days.`);
+  }
+  await deps.rpc("cockpit_meta_budget_history_apply", {
+    p: {
+      taskId: task.id,
+      leaseToken: task.leaseToken,
+      fetchedAt,
+      currency: task.currency,
+      currencyOffset: offset,
+      days: history.days,
+      rows: history.rows.map(toHistoryApplyRow),
+      note: history.note,
+    },
+  });
+  return history.rows.length;
+}
+
 // ---------------------------------------------------------------- doctor
 
-/** Reads only (and its call receipts): the secrets by name, the token, the version, the edges, the ties, the last runs. */
+/**
+ * Reads only (and its call receipts): the secrets by name, the token, the
+ * version, the edges, the ties, the last runs; since 2026-10-17 whether
+ * budgets (act_<id>/campaigns) and their history (act_<id>/activities) can be
+ * read with META_SYSTEM_TOKEN on one account tied to an Active client, the
+ * accounts whose budgets or history could not be read on the last run, and
+ * listed accounts in a currency without Meta's offset.
+ */
 export async function runDoctor(deps: RunDeps): Promise<Record<string, unknown>> {
   const graph = graphFor(deps, null);
   const secrets = deps.secrets ? deps.secrets() : {};
@@ -511,6 +714,7 @@ export async function runDoctor(deps: RunDeps): Promise<Record<string, unknown>>
   if (missing.length) notes.push(`Missing function secrets: ${missing.join(", ")}.`);
   let who: string | null = null;
   let spending: Account[] = [];
+  let all: Account[] = [];
   let listed = 0;
   if (deps.token().trim()) {
     try {
@@ -519,6 +723,7 @@ export async function runDoctor(deps: RunDeps): Promise<Record<string, unknown>>
       const today = zonedDay(deps.now(), "Asia/Kuwait");
       const found = await discoverAccounts(graph, discoveryWindow("hourly", deps.now()));
       spending = found.accounts;
+      all = found.all;
       listed = found.listed;
       notes.push(`Graph ${GRAPH_VERSION} answers as ${who ?? "the system user"}; ${listed} ad accounts are listed under business ${MAHARA_BUSINESS_ID} and ${spending.length} spent around ${today}.`);
     } catch (e) {
@@ -572,6 +777,43 @@ export async function runDoctor(deps: RunDeps): Promise<Record<string, unknown>>
         .join(", ")}. Client success asks the client to settle billing.`,
     );
   }
+  // Budgets and their history, with the function's own token, on one account tied to an Active client.
+  const active = activeAccounts(inputs);
+  const probe = who === null ? null : (all.find(a => active.has(a.accountId)) ?? spending[0] ?? all[0] ?? null);
+  let budgetsReadable: boolean | null = null;
+  let historyReadable: boolean | null = null;
+  if (probe) {
+    const label = `${probe.name ?? probe.accountId} (${probe.accountId})`;
+    try {
+      await metaGet(graph, `act_${probe.accountId}/campaigns`, { fields: "id,daily_budget", limit: 1 });
+      budgetsReadable = true;
+    } catch (e) {
+      budgetsReadable = false;
+      ok = false;
+      notes.push(`Budgets cannot be read with META_SYSTEM_TOKEN on ${label}: ${sentence(e)}`);
+    }
+    const nowSec = Math.floor(deps.now() / 1000);
+    try {
+      await metaGet(graph, `act_${probe.accountId}/activities`, { fields: "event_type,event_time", since: nowSec - 7 * 86_400, until: nowSec, limit: 1 });
+      historyReadable = true;
+    } catch (e) {
+      historyReadable = false;
+      notes.push(`The budget history (Meta's activity log) cannot be read with META_SYSTEM_TOKEN on ${label}: ${sentence(e)} The history then starts the day budgets were first read.`);
+    }
+    if (budgetsReadable && historyReadable) notes.push(`Budgets and their history can be read with META_SYSTEM_TOKEN (checked on ${label}).`);
+  }
+  const budgets = isRow(status?.budgets) ? (status?.budgets as Row) : null;
+  const named = (rows: Row[]) => rows.map(a => `${a.name ?? a.accountId} (${a.accountId}): ${String(a.error ?? "not read").slice(0, 160)}`).join("; ");
+  const budgetsFailing = list(budgets?.failing);
+  if (budgetsFailing.length) notes.push(`Budgets could not be read on the last run for ${named(budgetsFailing)}.`);
+  const historyFailing = list(budgets?.historyFailing);
+  if (historyFailing.length) notes.push(`The budget history could not be read on the last run for ${named(historyFailing)}.`);
+  const noOffset = all.filter(a => (a.spend > 0 || active.has(a.accountId)) && currencyOffset(a.currency) === null);
+  if (noOffset.length) {
+    notes.push(
+      `No Meta currency offset for ${noOffset.map(a => `${a.name ?? a.accountId} (${a.currency ?? "no currency"})`).join(", ")}, so their budgets are not read; add the currency to CURRENCY_OFFSETS in parse.ts.`,
+    );
+  }
   const result = {
     ok,
     job: "doctor",
@@ -582,11 +824,20 @@ export async function runDoctor(deps: RunDeps): Promise<Record<string, unknown>>
     accountsSpending: spending.map(accountRow),
     ties,
     notLinked,
+    budgetsReadable,
+    historyReadable,
+    budgetsCheckedOn: probe?.accountId ?? null,
     status,
     note: notes.join(" ") || "Ready.",
   };
   try {
-    await record(deps, "doctor", ok, result.note, "doctor", { accountsSpending: spending.length, notLinked: notLinked.length });
+    await record(deps, "doctor", ok, result.note, "doctor", {
+      accountsSpending: spending.length,
+      notLinked: notLinked.length,
+      budgetsReadable,
+      historyReadable,
+      budgetsFailing: budgetsFailing.length,
+    });
   } catch {
     // The answer itself says what the doctor found; the database line is a convenience.
   }

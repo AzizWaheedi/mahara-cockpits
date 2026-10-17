@@ -391,3 +391,416 @@ export function parseLeadIds(rows: Row[], adId: string): LeadIdRow[] {
     return { lead_id: leadId, ad_id: adId, created_time: new Date(ms).toISOString() };
   });
 }
+
+// ---------------------------------------------------------------- budgets
+
+/**
+ * Meta's currency offsets (developers.facebook.com/docs/marketing-api/currencies,
+ * read 2026-10-17). Every budget Meta writes (daily_budget, lifetime_budget,
+ * budget_remaining, the account's spend_cap and amount_spent, every amount in
+ * the activity log) is a whole number of the currency's smallest unit as Meta
+ * counts it: divide by the offset. 100 for USD, SAR, QAR, AED and most others
+ * (BHD too, though ISO gives it 3 decimals: Meta's 1000 is 10.00 BHD); 1 for
+ * the currencies Meta counts without minor units. KWD and OMR are not in
+ * Meta's table. An account in a currency this table does not hold is refused
+ * with a sentence, never assumed to be 100. Insights spend, by contrast, is
+ * already in major units.
+ */
+const OFFSET_ONE = ["CLP", "COP", "CRC", "HUF", "IDR", "ISK", "JPY", "KRW", "PYG", "TWD", "VND"];
+const OFFSET_HUNDRED = [
+  "AED", "ARS", "AUD", "BDT", "BGN", "BHD", "BOB", "BRL", "CAD", "CHF", "CNY", "CZK", "DKK", "DZD", "EGP", "EUR", "GBP", "GTQ", "HKD", "HNL",
+  "HRK", "ILS", "INR", "JOD", "KES", "LKR", "MAD", "MOP", "MXN", "MYR", "NGN", "NIO", "NOK", "NZD", "PEN", "PHP", "PKR", "PLN", "QAR", "RON",
+  "RSD", "RUB", "SAR", "SEK", "SGD", "THB", "TRY", "UAH", "USD", "UYU", "VEF", "ZAR",
+];
+export const CURRENCY_OFFSETS: Readonly<Record<string, number>> = Object.freeze({
+  ...Object.fromEntries(OFFSET_HUNDRED.map(c => [c, 100])),
+  ...Object.fromEntries(OFFSET_ONE.map(c => [c, 1])),
+});
+
+/** Meta's offset for a currency code; null when the table does not hold it. */
+export function currencyOffset(code: string | null | undefined): number | null {
+  return typeof code === "string" && Object.hasOwn(CURRENCY_OFFSETS, code) ? CURRENCY_OFFSETS[code] : null;
+}
+
+/** The sentence for an account whose budgets cannot be converted. */
+export function noOffsetSentence(accountId: string, currency: string | null): string {
+  return currency
+    ? `act_${accountId} is in ${currency}, which is not in Meta's currency table the cockpit holds (parse.ts CURRENCY_OFFSETS), so its budgets were not read. Add the currency with Meta's offset.`
+    : `Meta's listing gave act_${accountId} no currency, so its budgets were not read.`;
+}
+
+/**
+ * One read per account: its campaigns (archived and deleted left out, by
+ * Meta's own filter), each with its ad sets and their ads' statuses nested.
+ * At most 200 ad sets per campaign and 200 ads per ad set: a block with more
+ * carries paging.next and the account is refused, never cut short.
+ */
+export const BUDGET_FIELDS = [
+  "id",
+  "name",
+  "objective",
+  "status",
+  "effective_status",
+  "daily_budget",
+  "lifetime_budget",
+  "budget_remaining",
+  "start_time",
+  "stop_time",
+  "issues_info",
+  "adsets.limit(200){id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,start_time,end_time,ads.limit(200){effective_status}}",
+].join(",");
+/** Meta's campaign effective statuses but ARCHIVED and DELETED. */
+export const CAMPAIGN_STATUSES = ["ACTIVE", "PAUSED", "IN_PROCESS", "WITH_ISSUES"];
+
+/** The account as the business listing gave it, Meta's minor units. */
+export type AccountSnapshot = { status: number | null; disableReason: number | null; spendCap: number | null; amountSpent: number | null };
+
+export type LiveAdset = {
+  id: string;
+  name: string | null;
+  status: string | null;
+  effectiveStatus: string | null;
+  dailyMinor: number | null;
+  lifetimeMinor: number | null;
+  remainingMinor: number | null;
+  start: MetaTime | null;
+  end: MetaTime | null;
+  ads: string[];
+};
+export type LiveCampaign = {
+  id: string;
+  name: string | null;
+  objective: string | null;
+  status: string | null;
+  effectiveStatus: string | null;
+  dailyMinor: number | null;
+  lifetimeMinor: number | null;
+  remainingMinor: number | null;
+  start: MetaTime | null;
+  end: MetaTime | null;
+  issues: { level: string | null; code: number | null; summary: string | null }[];
+  adsets: LiveAdset[];
+  /** campaign = CBO (its own budget); adset = ABO. */
+  budgetLevel: "campaign" | "adset";
+};
+/** A Meta time: the moment, and the day as Meta wrote it (the account's own clock). */
+export type MetaTime = { ms: number; iso: string; day: string };
+
+export type BudgetRow = {
+  level: "campaign" | "adset";
+  objectId: string;
+  campaignId: string;
+  name: string | null;
+  objective: string | null;
+  status: string | null;
+  effectiveStatus: string | null;
+  budgetLevel: "campaign" | "adset";
+  budgetType: "daily" | "lifetime" | null;
+  /** Major units of the account currency. */
+  dailyBudget: number | null;
+  lifetimeBudget: number | null;
+  budgetRemaining: number | null;
+  startTime: string | null;
+  endTime: string | null;
+  adsActive: number;
+  adsWithIssues: number;
+  issues: { level: string | null; code: number | null; summary: string | null }[] | null;
+  switchedOn: boolean;
+  delivering: boolean;
+  whyNot: string | null;
+};
+
+const isObj = (v: unknown): v is Row => typeof v === "object" && v !== null && !Array.isArray(v);
+const STATUS = /^[A-Z_]{1,40}$/;
+
+/** Meta's minor units ("12000"): the number, NULL when absent or "0" (no budget). */
+export function minorUnits(v: unknown, what: string, zeroIsNone = true): number | null {
+  if (v === undefined || v === null || v === "") return null;
+  const s = typeof v === "number" ? String(v) : typeof v === "string" ? v.trim() : "";
+  if (!/^[0-9]{1,15}$/.test(s)) throw new ParseError(`Meta returned ${what} "${String(v).slice(0, 30)}", which is not an amount in minor units.`);
+  const n = Number(s);
+  return n === 0 && zeroIsNone ? null : n;
+}
+
+function metaTime(v: unknown, what: string): MetaTime | null {
+  const t = text(v);
+  if (!t) return null;
+  const ms = Date.parse(t.replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
+  if (!Number.isFinite(ms) || !/^\d{4}-\d{2}-\d{2}/.test(t)) throw new ParseError(`Meta returned ${what} "${t.slice(0, 30)}", which is not a time.`);
+  return { ms, iso: new Date(ms).toISOString(), day: t.slice(0, 10) };
+}
+
+function status(v: unknown, what: string): string | null {
+  const s = text(v);
+  if (s !== null && !STATUS.test(s)) throw new ParseError(`Meta returned ${what} "${s.slice(0, 30)}", which is not one of its statuses.`);
+  return s;
+}
+
+/** A nested list (adsets, ads): its rows; [] when Meta left it out; refused when it has another page. */
+function nested(v: unknown, what: string): Row[] {
+  if (v === undefined || v === null) return [];
+  if (!isObj(v) || !Array.isArray(v.data)) throw new ParseError(`Meta returned ${what} without a data list.`);
+  if (isObj(v.paging) && v.paging.next) throw new ParseError(`${what} has more than 200 on one page; nothing was kept for the account rather than a part of it.`);
+  return v.data.map(x => {
+    if (!isObj(x)) throw new ParseError(`Meta returned ${what} with a row that is not an object.`);
+    return x;
+  });
+}
+
+/** Meta's act_<id>/campaigns answer, read and checked. */
+export function readLiveCampaigns(rows: Row[]): LiveCampaign[] {
+  const seen = new Set<string>();
+  return rows.map(raw => {
+    const id = idOf(raw.id, "a campaign id");
+    if (seen.has(id)) throw new ParseError(`Meta listed campaign ${id} twice.`);
+    seen.add(id);
+    const dailyMinor = minorUnits(raw.daily_budget, `campaign ${id}'s daily budget`);
+    const lifetimeMinor = minorUnits(raw.lifetime_budget, `campaign ${id}'s lifetime budget`);
+    const adsets = nested(raw.adsets, `Campaign ${id}'s ad sets`).map(a => {
+      const adsetId = idOf(a.id, "an ad set id");
+      const own = minorUnits(a.daily_budget, `ad set ${adsetId}'s daily budget`) !== null || minorUnits(a.lifetime_budget, `ad set ${adsetId}'s lifetime budget`) !== null;
+      return {
+        id: adsetId,
+        name: text(a.name),
+        status: status(a.status, `ad set ${adsetId}'s status`),
+        effectiveStatus: status(a.effective_status, `ad set ${adsetId}'s effective status`),
+        dailyMinor: minorUnits(a.daily_budget, `ad set ${adsetId}'s daily budget`),
+        lifetimeMinor: minorUnits(a.lifetime_budget, `ad set ${adsetId}'s lifetime budget`),
+        remainingMinor: own ? minorUnits(a.budget_remaining, `ad set ${adsetId}'s budget remaining`, false) : null,
+        start: metaTime(a.start_time, `ad set ${adsetId}'s start`),
+        end: metaTime(a.end_time, `ad set ${adsetId}'s end`),
+        ads: nested(a.ads, `Ad set ${adsetId}'s ads`).map((ad, i) => status(ad.effective_status, `ad ${i + 1} of ad set ${adsetId}`) ?? "UNKNOWN"),
+      };
+    });
+    const issues = Array.isArray(raw.issues_info)
+      ? raw.issues_info.filter(isObj).slice(0, 5).map(x => ({
+          level: text(x.level)?.slice(0, 40) ?? null,
+          code: typeof x.error_code === "number" ? x.error_code : null,
+          summary: text(x.error_summary)?.slice(0, 200) ?? null,
+        }))
+      : [];
+    return {
+      id,
+      name: text(raw.name),
+      objective: text(raw.objective)?.slice(0, 60) ?? null,
+      status: status(raw.status, `campaign ${id}'s status`),
+      effectiveStatus: status(raw.effective_status, `campaign ${id}'s effective status`),
+      dailyMinor,
+      lifetimeMinor,
+      // budget_remaining is a sum on an ABO campaign too; NULL only when nothing has a budget.
+      remainingMinor: minorUnits(raw.budget_remaining, `campaign ${id}'s budget remaining`, false),
+      start: metaTime(raw.start_time, `campaign ${id}'s start`),
+      end: metaTime(raw.stop_time, `campaign ${id}'s stop`),
+      issues,
+      adsets,
+      budgetLevel: dailyMinor !== null || lifetimeMinor !== null ? "campaign" : "adset",
+    };
+  });
+}
+
+function idOf(v: unknown, what: string): string {
+  return id(v, what, true) as string;
+}
+
+const words = (s: string) => s.toLowerCase().replace(/_/g, " ");
+
+/** Why an account cannot deliver, in plain words; null when it can (Meta status 1 active, 9 grace period). */
+export function accountWhyNot(statusCode: number | null): string | null {
+  if (statusCode === 1 || statusCode === 9) return null;
+  if (statusCode === 2) return "Account disabled";
+  if (statusCode === 3) return "Account unsettled: payment needed";
+  if (statusCode === 7) return "Account under Meta's risk review";
+  if (statusCode === 8) return "Account pending settlement";
+  if (statusCode === 100) return "Account pending closure";
+  if (statusCode === 101) return "Account closed";
+  if (statusCode === null) return "Account status unknown";
+  return `Account not active (Meta status ${statusCode})`;
+}
+
+function adsWhyNot(ads: string[]): string {
+  if (!ads.length) return "No ads";
+  if (ads.some(s => s === "WITH_ISSUES" || s === "DISAPPROVED")) return "Ads with issues";
+  if (ads.some(s => s === "PENDING_REVIEW" || s === "IN_PROCESS" || s === "PREAPPROVED")) return "Ads not approved yet";
+  if (ads.some(s => s === "PENDING_BILLING_INFO")) return "Ads waiting for payment details";
+  return "Ads paused";
+}
+
+/** The order a campaign names its ad sets' reasons in, most telling first. */
+const ADSET_REASONS = ["Ads with issues", "Ads not approved yet", "Ads waiting for payment details", "Ad set", "Starts", "No ads", "Ads paused"];
+
+/**
+ * Every campaign and ad set as cockpit_meta_budgets rows, judged at `nowMs`:
+ *   - delivering: the account is active or in its grace period and its
+ *     spending limit not reached, the campaign and the ad set are ACTIVE, the
+ *     start has passed and the end has not, and at least one ad is ACTIVE;
+ *   - otherwise why_not says why, in plain words, and the budget is kept;
+ *   - CBO: the campaign's budget. ABO: the sum of the delivering ad sets'
+ *     budgets; when none delivers, the sum of the ad sets switched on (status
+ *     ACTIVE, not ended), so a blocked campaign still shows what it is set to
+ *     spend. A paused or ended ad set never counts (hermes/cockpit-sync
+ *     calculator.ts sums every ad set when none is active: not here).
+ *   - lifetime budgets stay lifetime: no daily figure.
+ */
+export function budgetRows(live: LiveCampaign[], account: AccountSnapshot, offset: number, nowMs: number): BudgetRow[] {
+  const major = (n: number | null) => (n === null ? null : n / offset);
+  const accountNo = accountWhyNot(account.status);
+  const capReached = account.spendCap !== null && account.spendCap > 0 && account.amountSpent !== null && account.amountSpent >= account.spendCap;
+  const blocked = accountNo ?? (capReached ? "Spending limit reached" : null);
+  const ended = (t: MetaTime | null) => t !== null && t.ms <= nowMs;
+  const started = (t: MetaTime | null) => t === null || t.ms <= nowMs;
+  const out: BudgetRow[] = [];
+  for (const c of live) {
+    const campaignOwn =
+      c.status !== "ACTIVE"
+        ? c.status === "PAUSED" ? "Paused" : `Campaign ${words(c.status ?? "unknown")}`
+        : ended(c.end)
+          ? "Ended"
+          : !started(c.start)
+            ? `Starts ${c.start?.day}`
+            : c.effectiveStatus !== "ACTIVE"
+              ? c.effectiveStatus === "PAUSED"
+                ? "Paused"
+                : c.effectiveStatus === "IN_PROCESS"
+                  ? "Meta is processing a change"
+                  : c.effectiveStatus === "WITH_ISSUES"
+                    ? `Campaign has issues${c.issues[0]?.summary ? `: ${c.issues[0].summary}` : ""}`
+                    : `Campaign ${words(c.effectiveStatus ?? "unknown")}`
+              : null;
+    const campaignOk = blocked === null && campaignOwn === null;
+    const sets = c.adsets.map(a => {
+      const own =
+        a.status !== "ACTIVE"
+          ? a.status === "PAUSED" ? "Paused" : `Ad set ${words(a.status ?? "unknown")}`
+          : ended(a.end)
+            ? "Ended"
+            : !started(a.start)
+              ? `Starts ${a.start?.day}`
+              : a.effectiveStatus !== "ACTIVE" && a.effectiveStatus !== "CAMPAIGN_PAUSED"
+                ? a.effectiveStatus === "ADSET_PAUSED" ? "Paused" : `Ad set ${words(a.effectiveStatus ?? "unknown")}`
+                : !a.ads.includes("ACTIVE")
+                  ? adsWhyNot(a.ads)
+                  : null;
+      const switchedOn = a.status === "ACTIVE" && !ended(a.end);
+      const delivering = campaignOk && own === null && a.effectiveStatus === "ACTIVE";
+      const whyNot = delivering
+        ? null
+        : (blocked ?? (c.effectiveStatus === "PAUSED" || c.status === "PAUSED" ? "Campaign paused" : campaignOwn) ?? own ?? "Not delivering");
+      return { a, own, switchedOn, delivering, whyNot };
+    });
+    const campaignSwitchedOn = c.status === "ACTIVE" && !ended(c.end) && (sets.length === 0 || sets.some(s => !ended(s.a.end)));
+    const delivering = campaignOk && sets.some(s => s.delivering);
+    let whyNot: string | null = null;
+    if (!delivering) {
+      whyNot = blocked ?? campaignOwn;
+      if (whyNot === null) {
+        const on = sets.filter(s => s.switchedOn);
+        if (!sets.length) whyNot = "No ad sets";
+        else if (!on.length) whyNot = sets.every(s => ended(s.a.end)) ? "Ended" : "Ad sets paused";
+        else {
+          const reasons = on.map(s => s.own ?? "Not delivering");
+          whyNot = ADSET_REASONS.map(r => reasons.find(x => x.startsWith(r))).find(Boolean) ?? reasons[0];
+        }
+      }
+    }
+    let budgetType: "daily" | "lifetime" | null;
+    let dailyMinor: number | null;
+    let lifetimeMinor: number | null;
+    if (c.budgetLevel === "campaign") {
+      dailyMinor = c.dailyMinor;
+      lifetimeMinor = dailyMinor === null ? c.lifetimeMinor : null;
+      budgetType = dailyMinor !== null ? "daily" : "lifetime";
+    } else {
+      const deliveringSets = sets.filter(s => s.delivering);
+      const counted = (deliveringSets.length ? deliveringSets : sets.filter(s => s.switchedOn)).map(s => s.a);
+      const daily = counted.filter(a => a.dailyMinor !== null);
+      const lifetime = counted.filter(a => a.lifetimeMinor !== null);
+      dailyMinor = daily.length ? daily.reduce((n, a) => n + (a.dailyMinor ?? 0), 0) : null;
+      lifetimeMinor = lifetime.length ? lifetime.reduce((n, a) => n + (a.lifetimeMinor ?? 0), 0) : null;
+      budgetType = dailyMinor !== null ? "daily" : lifetimeMinor !== null ? "lifetime" : null;
+      if (budgetType === "lifetime") dailyMinor = null;
+    }
+    const allAds = c.adsets.flatMap(a => a.ads);
+    out.push({
+      level: "campaign",
+      objectId: c.id,
+      campaignId: c.id,
+      name: c.name,
+      objective: c.objective,
+      status: c.status,
+      effectiveStatus: c.effectiveStatus,
+      budgetLevel: c.budgetLevel,
+      budgetType,
+      dailyBudget: major(dailyMinor),
+      lifetimeBudget: major(lifetimeMinor),
+      budgetRemaining: budgetType === null ? null : major(c.remainingMinor),
+      startTime: c.start?.iso ?? null,
+      endTime: c.end?.iso ?? null,
+      adsActive: allAds.filter(s => s === "ACTIVE").length,
+      adsWithIssues: allAds.filter(s => s === "WITH_ISSUES" || s === "DISAPPROVED").length,
+      issues: c.issues.length ? c.issues : null,
+      switchedOn: campaignSwitchedOn,
+      delivering,
+      whyNot,
+    });
+    for (const s of sets) {
+      const a = s.a;
+      const type = a.dailyMinor !== null ? "daily" : a.lifetimeMinor !== null ? "lifetime" : null;
+      out.push({
+        level: "adset",
+        objectId: a.id,
+        campaignId: c.id,
+        name: a.name,
+        objective: c.objective,
+        status: a.status,
+        effectiveStatus: a.effectiveStatus,
+        budgetLevel: c.budgetLevel,
+        budgetType: type,
+        dailyBudget: type === "daily" ? major(a.dailyMinor) : null,
+        lifetimeBudget: major(a.lifetimeMinor),
+        budgetRemaining: type === null ? null : major(a.remainingMinor),
+        startTime: a.start?.iso ?? null,
+        endTime: a.end?.iso ?? null,
+        adsActive: a.ads.filter(x => x === "ACTIVE").length,
+        adsWithIssues: a.ads.filter(x => x === "WITH_ISSUES" || x === "DISAPPROVED").length,
+        issues: null,
+        switchedOn: s.switchedOn,
+        delivering: s.delivering,
+        whyNot: s.whyNot,
+      });
+    }
+  }
+  return out;
+}
+
+/** The read and the rows: what workBudgets and the history both start from. */
+export function parseBudgets(raw: Row[], ctx: { account: AccountSnapshot; offset: number; nowMs: number }): { live: LiveCampaign[]; rows: BudgetRow[] } {
+  const live = readLiveCampaigns(raw);
+  return { live, rows: budgetRows(live, ctx.account, ctx.offset, ctx.nowMs) };
+}
+
+/** A budgets row as cockpit_meta_budgets_apply takes it (the table's own names). */
+export function toBudgetApplyRow(r: BudgetRow, accountId: string): Record<string, unknown> {
+  return {
+    level: r.level,
+    object_id: r.objectId,
+    account_id: accountId,
+    campaign_id: r.campaignId,
+    name: r.name,
+    objective: r.objective,
+    status: r.status,
+    effective_status: r.effectiveStatus,
+    budget_level: r.budgetLevel,
+    budget_type: r.budgetType,
+    daily_budget: r.dailyBudget,
+    lifetime_budget: r.lifetimeBudget,
+    budget_remaining: r.budgetRemaining,
+    start_time: r.startTime,
+    end_time: r.endTime,
+    ads_active: r.adsActive,
+    ads_with_issues: r.adsWithIssues,
+    issues: r.issues,
+    switched_on: r.switchedOn,
+    delivering: r.delivering,
+    why_not: r.whyNot,
+  };
+}

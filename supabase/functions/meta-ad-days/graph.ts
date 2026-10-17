@@ -75,8 +75,15 @@ export class MetaError extends Error {
 
 const isRow = (v: unknown): v is Row => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** The reads this function makes, and nothing else (an ad's leads: ids and times only, see run.ts workLeadIds). */
-const ALLOWED_PATH = new RegExp(`^(?:me|act_[0-9]{5,25}(?:/insights|/adsets)?|[0-9]{5,25}/leads|${MAHARA_BUSINESS_ID}/(?:owned_ad_accounts|client_ad_accounts))$`);
+/**
+ * The reads this function makes, and nothing else: an account, its insights,
+ * ad sets, campaigns (budgets, with ad sets and ads' statuses nested) and
+ * activity log (budget history); an ad's leads (ids and times only, see run.ts
+ * workLeadIds); the business's account lists.
+ */
+const ALLOWED_PATH = new RegExp(
+  `^(?:me|act_[0-9]{5,25}(?:/insights|/adsets|/campaigns|/activities)?|[0-9]{5,25}/leads|${MAHARA_BUSINESS_ID}/(?:owned_ad_accounts|client_ad_accounts))$`,
+);
 
 export function classify(code: number | null, subcode: number | null, status: number | null, message: string): MetaErrorKind {
   if (code === 190 || code === 102 || code === 463 || code === 467) return "token";
@@ -98,7 +105,7 @@ export async function metaGet(deps: GraphDeps, path: string, params: Record<stri
   const receipt = { provider: "meta" as const, method: "GET" as const, resource: path };
   const token = deps.token().trim();
   if (!ALLOWED_PATH.test(path)) {
-    throw new MetaError("config", "meta-ad-days only reads ad accounts, their insights and ad sets, an ad's lead ids, and the business's account lists.");
+    throw new MetaError("config", "meta-ad-days only reads ad accounts, their insights, ad sets, campaigns and activity log, an ad's lead ids, and the business's account lists.");
   }
   // Nothing is sent without a token, so there is no receipt: the run's note says it.
   if (!token) throw new MetaError("config", "META_SYSTEM_TOKEN is not set on meta-ad-days. Set Mahara's Meta system-user token as a function secret.");

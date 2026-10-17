@@ -5,7 +5,10 @@
 // while tasks wait. It reads Mahara's business edges for the ad accounts that
 // spent, then each account's ad-level insights a day at a time, and writes
 // public.cockpit_meta_ad_days and public.cockpit_meta_reach through service
-// RPCs. Reads Meta only, GET only, Graph v25.0.
+// RPCs. Since 2026-10-17 it also reads every campaign's budget hourly
+// (act_<id>/campaigns, into public.cockpit_meta_budgets and
+// cockpit_meta_budget_days) and rebuilds the days before from Meta's activity
+// log nightly (act_<id>/activities). Reads Meta only, GET only, Graph v25.0.
 //
 // Deployed with the JWT check OFF: pg_cron reaches it with the shared cron
 // secret (vault cockpit_sync_secret = function secret CRON_SECRET), and the

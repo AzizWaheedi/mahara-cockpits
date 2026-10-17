@@ -2,6 +2,10 @@ import { describe, expect, test } from "bun:test";
 import type { ReceiptRow } from "./db.ts";
 import { makeDoor, readJob, sameSecret } from "./door.ts";
 import {
+  activityRow,
+  adsetRow,
+  budgetChange,
+  campaignRow,
   DESTINATIONS,
   edgeAccount,
   engagementRow,
@@ -20,11 +24,17 @@ import { MetaError } from "./graph.ts";
 import { ParseError } from "./parse.ts";
 import { RpcError } from "./db.ts";
 import { adsetsRoute, eachDay, fakeFetch, graphPath, insightsRoute, metaError, ok, type Route } from "./testkit.ts";
+import { BUDGET_FIELDS } from "./parse.ts";
+import { ACTIVITY_FIELDS } from "./history.ts";
 
 type Rec = { name: string; p: any };
 
 /** The ads with form leads per account, as the database finds them for a nightly run's lead_ids tasks. */
 const LEAD_ADS: Record<string, string[]> = {};
+/** The accounts tied to an Active client, as cockpit_meta_ad_days_inputs answers activeAccounts. */
+const ACTIVE_TIED: string[] = [];
+/** What the fake status() says about budgets (the doctor names the failing ones). */
+const BUDGET_STATUS: Record<string, unknown> = {};
 
 /**
  * The service RPCs, played in memory: begin keeps the tasks, claim leases
@@ -38,6 +48,8 @@ function fakeDb(now: () => number) {
   const applied: any[] = [];
   const reach: any[] = [];
   const leadIds: any[] = [];
+  const budgets: any[] = [];
+  const histories: any[] = [];
   let runs = 0;
   const rpc = async (name: string, args: Record<string, unknown>) => {
     const p = (args as any).p;
@@ -49,6 +61,7 @@ function fakeDb(now: () => number) {
         ties: { source: "board_clients", clients: 1, linked: 1 },
         notLinked: [{ accountId: LA_ACCOUNT, name: "LA Account" }],
         hidden: [{ accountId: "6666666666666", name: "Mass Design" }],
+        activeAccounts: [...ACTIVE_TIED],
       };
     }
     if (name === "cockpit_meta_ad_days_begin") {
@@ -61,6 +74,19 @@ function fakeDb(now: () => number) {
             tasks.push({ kind: "lead_ids", accountId: a.accountId, adIds: LEAD_ADS[a.accountId], id: tasks.length + 1, runId, job: p.job, state: "pending", attempt: 0 });
           }
         }
+      }
+      const state = (a: any) => ({ status: a.status, disableReason: a.disableReason, spendCap: a.spendCap, amountSpent: a.amountSpent, readAt: a.readAt });
+      for (const a of p.budgetAccounts ?? []) {
+        tasks.push({
+          kind: "budgets", accountId: a.accountId, currency: a.currency, timezone: a.timezone, accountState: state(a), id: tasks.length + 1, runId,
+          job: p.job, state: "pending", attempt: 0, retryAt: p.job === "hourly" ? now() + 300_000 : 0,
+        });
+      }
+      for (const a of p.activityAccounts ?? []) {
+        tasks.push({
+          kind: "activities", accountId: a.accountId, currency: a.currency, timezone: a.timezone, accountState: state(a), since: a.since, until: a.until,
+          id: tasks.length + 1, runId, job: p.job, state: "pending", attempt: 0,
+        });
       }
       if (p.reach) {
         for (const a of p.accounts) {
@@ -79,7 +105,11 @@ function fakeDb(now: () => number) {
         t.attempt += 1;
         t.leaseToken = `lease-${t.id}-${t.attempt}`;
       }
-      return open.map(t => ({ id: t.id, runId: t.runId, job: t.job, kind: t.kind, accountId: t.accountId, accountName: null, since: t.since ?? null, until: t.until ?? null, windows: t.windows ?? null, adIds: t.adIds ?? null, leaseToken: t.leaseToken, attempt: t.attempt }));
+      return open.map(t => ({
+        id: t.id, runId: t.runId, job: t.job, kind: t.kind, accountId: t.accountId, accountName: null, currency: t.currency ?? null, timezone: t.timezone ?? null,
+        since: t.since ?? null, until: t.until ?? null, windows: t.windows ?? null, adIds: t.adIds ?? null, accountState: t.accountState ?? null,
+        leaseToken: t.leaseToken, attempt: t.attempt,
+      }));
     }
     if (name === "cockpit_meta_ad_days_apply") {
       const t = tasks.find(x => x.id === p.taskId);
@@ -92,6 +122,12 @@ function fakeDb(now: () => number) {
       leadIds.push({ ...p, accountId: t.accountId });
       if (p.final) t.state = "done";
       return { ok: true, written: p.rows.length };
+    }
+    if (name === "cockpit_meta_budgets_apply" || name === "cockpit_meta_budget_history_apply") {
+      const t = tasks.find(x => x.id === p.taskId);
+      (name === "cockpit_meta_budgets_apply" ? budgets : histories).push({ ...p, accountId: t.accountId });
+      t.state = "done";
+      return { ok: true };
     }
     if (name === "cockpit_meta_reach_apply") {
       const t = tasks.find(x => x.id === p.taskId);
@@ -112,11 +148,12 @@ function fakeDb(now: () => number) {
         jobs: {},
         cancelledDelivering: [{ accountId: "7777777777777", name: "Old Client Ads", clientName: "Old Client", clientStatus: "Cancelled" }],
         billingStopped: [{ accountId: SAR_ACCOUNT, name: "Riyadh Client", clientName: "Riyadh", status: 3, statusLabel: "unsettled", lastSpendDay: "2026-10-09" }],
+        budgets: { ...BUDGET_STATUS },
       };
     }
     throw new Error(`unexpected rpc ${name}`);
   };
-  return { rpc, calls, tasks, applied, reach, leadIds };
+  return { rpc, calls, tasks, applied, reach, leadIds, budgets, histories };
 }
 
 function edges(extra: Record<string, unknown>[] = []): Route {
@@ -237,7 +274,14 @@ describe("an hourly run", () => {
       { key: KUWAIT_ACCOUNT, window_key: "last_7", reach: 80, impressions: 100 },
       { key: KUWAIT_ACCOUNT, window_key: "last_month", reach: 0, impressions: 0 },
     ]);
-    expect(t.db.tasks.every(x => x.state === "done")).toBe(true);
+    // The budgets wait 5 minutes (after the :07 burst); everything else is done.
+    expect(t.db.tasks.filter(x => x.kind !== "budgets").every(x => x.state === "done")).toBe(true);
+    expect(t.db.tasks.filter(x => x.kind === "budgets").map(x => [x.state, x.retryAt - NOW])).toEqual([
+      ["pending", 300_000],
+      ["pending", 300_000],
+      ["pending", 300_000],
+    ]);
+    expect(t.calls.some(c => graphPath(c).endsWith("/campaigns"))).toBe(false);
     // Every Graph call left a receipt pair, and none carries the token.
     expect(t.receipts.length).toBe(t.calls.length * 2);
     expect(JSON.stringify(t.receipts)).not.toContain(TOKEN);
@@ -460,6 +504,205 @@ describe("the doctor", () => {
     expect(sent.accounts.find((a: any) => a.accountId === LA_ACCOUNT).name).toBe("LA Account");
     expect(t.calls.every(c => c.method === "GET")).toBe(true);
     expect(t.db.calls.map(c => c.name)).toEqual(["cockpit_meta_ad_days_inputs", "cockpit_meta_ad_days_status", "cockpit_meta_ad_days_record"]);
+  });
+});
+
+describe("budgets and their history", () => {
+  /** act_<id>/campaigns per account; an account not listed answers no campaigns. */
+  const campaignsRoute = (byAccount: Record<string, Record<string, unknown>[]>): Route => c => {
+    const m = graphPath(c).match(/^act_(\d+)\/campaigns$/);
+    if (!m) return null;
+    return ok({ data: byAccount[m[1]] ?? [], paging: { cursors: { before: "b", after: "a" } } });
+  };
+  const CBO = (id: string, budget: string) => campaignRow(id, { daily_budget: budget }, [adsetRow(`${id.slice(0, -1)}9`, ["ACTIVE"])]);
+  /** The business edges, with the spending limit and amount spent of 2026-10-17's listing. */
+  function listing(extra: Record<string, unknown>[] = []): Route {
+    return c => {
+      const path = graphPath(c);
+      if (path === "767701513092162/owned_ad_accounts") return ok({ data: [edgeAccount("3333333333333", "Owned, idle", "USD", "Asia/Kuwait", null)] });
+      if (path !== "767701513092162/client_ad_accounts") return null;
+      return ok({
+        data: [
+          { ...edgeAccount(KUWAIT_ACCOUNT, "Kuwait Client", "USD", "Asia/Kuwait", 300), spend_cap: "0", amount_spent: "611277", disable_reason: 0 },
+          // Ardon's shape: a 3,000 SAR limit, now reached.
+          { ...edgeAccount(SAR_ACCOUNT, "Riyadh Client", "SAR", "Asia/Riyadh", 1200), spend_cap: "300000", amount_spent: "300000", disable_reason: 0 },
+          edgeAccount(LA_ACCOUNT, "LA Account", "USD", "America/Los_Angeles", 55),
+          // Tied to an Active client, nothing spent: its budget is read all the same.
+          edgeAccount("4444444444444", "Set, not spending", "USD", "Asia/Riyadh", 0),
+          ...extra,
+        ],
+      });
+    };
+  }
+  const quiet = [daysRoute(KUWAIT_ACCOUNT, () => []), daysRoute(SAR_ACCOUNT, () => []), daysRoute(LA_ACCOUNT, () => []), reachRoute];
+
+  test("an hourly run reads, 5 minutes later, the budgets of the accounts that spent and of those tied to an Active client: one read each", async () => {
+    ACTIVE_TIED.splice(0, ACTIVE_TIED.length, KUWAIT_ACCOUNT, "4444444444444", "9999999999999");
+    try {
+      const t = deps([
+        listing(),
+        ...quiet,
+        campaignsRoute({
+          [KUWAIT_ACCOUNT]: [CBO("120000000000501", "3000")],
+          [SAR_ACCOUNT]: [CBO("120000000000511", "17500")],
+          "4444444444444": [
+            campaignRow("120000000000521", {}, [adsetRow("120000000000522", ["WITH_ISSUES"], { daily_budget: "55200", lifetime_budget: "0" })]),
+          ],
+        }),
+      ]);
+      await startJob(t.d, { job: "hourly", dryRun: false, requestedBy: "cron" });
+      const begin = t.db.calls.find(c => c.name === "cockpit_meta_ad_days_begin")!.p;
+      // The ad-days stay on the accounts that spent; the budgets add the tied one that did not.
+      expect(begin.accounts.map((a: any) => a.accountId)).toEqual([KUWAIT_ACCOUNT, SAR_ACCOUNT, LA_ACCOUNT]);
+      expect(begin.budgetAccounts.map((a: any) => a.accountId)).toEqual([KUWAIT_ACCOUNT, SAR_ACCOUNT, LA_ACCOUNT, "4444444444444"]);
+      expect(begin.budgetAccounts[1]).toMatchObject({ currency: "SAR", status: 1, spendCap: "300000", amountSpent: "300000", disableReason: 0 });
+      expect(begin.budgetAccounts[1].readAt).toBe(new Date(NOW).toISOString());
+      expect(begin.activityAccounts).toEqual([]);
+      expect(begin.budgetUnlisted).toEqual(["9999999999999"]);
+      expect(t.calls.some(c => graphPath(c).endsWith("/campaigns"))).toBe(false);
+
+      t.tick(301_000);
+      await startJob(t.d, { job: "continue", dryRun: false, requestedBy: "cron" });
+      const reads = t.calls.filter(c => graphPath(c).endsWith("/campaigns"));
+      expect(reads.map(c => graphPath(c))).toEqual([KUWAIT_ACCOUNT, SAR_ACCOUNT, LA_ACCOUNT, "4444444444444"].map(id => `act_${id}/campaigns`));
+      for (const c of reads) {
+        expect(c.method).toBe("GET");
+        expect(c.url.searchParams.get("fields")).toBe(BUDGET_FIELDS);
+        expect(JSON.parse(c.url.searchParams.get("effective_status")!)).toEqual(["ACTIVE", "PAUSED", "IN_PROCESS", "WITH_ISSUES"]);
+        expect(c.url.searchParams.get("limit")).toBe("100");
+      }
+      const kuwait = t.db.budgets.find(b => b.accountId === KUWAIT_ACCOUNT);
+      expect(kuwait).toMatchObject({ currency: "USD", currencyOffset: 100, note: "1 of 1 campaigns switched on, 1 delivering." });
+      expect(kuwait.account).toEqual({ status: 1, disableReason: 0, spendCap: null, amountSpent: 6112.77, readAt: new Date(NOW).toISOString() });
+      expect(kuwait.rows[0]).toMatchObject({ level: "campaign", object_id: "120000000000501", account_id: KUWAIT_ACCOUNT, daily_budget: 30, delivering: true });
+      // The limit reached stops delivery, and says so; the budget stays, in SAR.
+      const sar = t.db.budgets.find(b => b.accountId === SAR_ACCOUNT);
+      expect(sar.account).toMatchObject({ spendCap: 3000, amountSpent: 3000 });
+      expect(sar.rows[0]).toMatchObject({ daily_budget: 175, delivering: false, why_not: "Spending limit reached" });
+      // No campaign at all is a read of nothing, not a failure.
+      expect(t.db.budgets.find(b => b.accountId === LA_ACCOUNT).rows).toEqual([]);
+      // Set and not spending: the CEO's other half.
+      const idle = t.db.budgets.find(b => b.accountId === "4444444444444");
+      expect(idle.rows[0]).toMatchObject({ budget_level: "adset", daily_budget: 552, switched_on: true, delivering: false, why_not: "Ads with issues" });
+      expect(t.db.tasks.filter(x => x.kind === "budgets").every(x => x.state === "done")).toBe(true);
+      expect(t.receipts.length).toBe(t.calls.length * 2);
+    } finally {
+      ACTIVE_TIED.splice(0, ACTIVE_TIED.length);
+    }
+  });
+
+  test("refused, never guessed or cut short: a currency without Meta's offset is not read at all; a nested page is not kept; neither is tried again", async () => {
+    const paged = CBO("120000000000501", "3000");
+    (paged.adsets as Record<string, unknown>).paging = { cursors: { after: "x" }, next: "https://graph.facebook.com/v25.0/next" };
+    const t = deps([listing([edgeAccount("7777777777777", "Kuwaiti Dinar Client", "KWD", "Asia/Kuwait", 90)]), ...quiet, daysRoute("7777777777777", () => []),
+      campaignsRoute({ [KUWAIT_ACCOUNT]: [paged] })]);
+    await startJob(t.d, { job: "hourly", dryRun: false, requestedBy: "cron" });
+    t.tick(301_000);
+    await startJob(t.d, { job: "continue", dryRun: false, requestedBy: "cron" });
+    const fails = t.db.calls.filter(c => c.name === "cockpit_meta_ad_days_fail").map(c => ({ ...c.p, task: t.db.tasks.find(x => x.id === c.p.taskId) }));
+    const kwd = fails.find(f => f.task.accountId === "7777777777777");
+    expect(kwd).toMatchObject({ retry: false });
+    expect(kwd.error).toContain("act_7777777777777 is in KWD");
+    expect(t.calls.some(c => graphPath(c) === "act_7777777777777/campaigns")).toBe(false);
+    const kuwait = fails.find(f => f.task.accountId === KUWAIT_ACCOUNT && f.task.kind === "budgets");
+    expect(kuwait).toMatchObject({ retry: false });
+    expect(kuwait.error).toContain("more than 200");
+    expect(t.db.budgets.find(b => b.accountId === KUWAIT_ACCOUNT)).toBeUndefined();
+  });
+
+  test("a nightly run rebuilds 14 days of budget history per account on its own clock, the activity log read from the first day to now, page by page", async () => {
+    ACTIVE_TIED.splice(0, ACTIVE_TIED.length, KUWAIT_ACCOUNT);
+    try {
+      const C = "120000000000501";
+      const log = [
+        activityRow("update_campaign_budget", "2026-10-10T09:00:00+0000", "CAMPAIGN_GROUP", C, budgetChange(2000, 3000)),
+        activityRow("create_audience", "2026-10-09T09:00:00+0000", "CAMPAIGN", "120000000000502", { type: 4 }),
+        activityRow("create_campaign_group", "2026-10-05T09:00:00+0000", "CAMPAIGN_GROUP", C, { new_value: { type: "payment_amount", currency: "USD", new_value: 2000, additional_value: "Per day" }, type: "composite_data" }),
+      ];
+      const activities: Route = c => {
+        const m = graphPath(c).match(/^act_(\d+)\/activities$/);
+        if (!m) return null;
+        if (m[1] !== KUWAIT_ACCOUNT) return ok({ data: [] });
+        const after = c.url.searchParams.get("after");
+        // Two pages, by the cursor; Meta's next link is never followed.
+        return after === "p2"
+          ? ok({ data: log.slice(2), paging: { cursors: { after: "end" } } })
+          : ok({ data: log.slice(0, 2), paging: { cursors: { after: "p2" }, next: "https://graph.facebook.com/v25.0/x?access_token=LEAK" } });
+      };
+      const t = deps([listing(), ...quiet, adsetsRoute(DESTINATIONS), campaignsRoute({ [KUWAIT_ACCOUNT]: [CBO(C, "3000")] }), activities]);
+      await startJob(t.d, { job: "nightly", dryRun: false, requestedBy: "cron" });
+      const begin = t.db.calls.find(c => c.name === "cockpit_meta_ad_days_begin")!.p;
+      expect(begin.budgetAccounts).toEqual([]);
+      const spans = Object.fromEntries(begin.activityAccounts.map((a: any) => [a.accountId, [a.since, a.until]]));
+      // 16 Oct 01:30 in Kuwait is still 15 Oct in Los Angeles.
+      expect(spans).toEqual({
+        [KUWAIT_ACCOUNT]: ["2026-10-02", "2026-10-15"],
+        [SAR_ACCOUNT]: ["2026-10-02", "2026-10-15"],
+        [LA_ACCOUNT]: ["2026-10-01", "2026-10-14"],
+      });
+      const reads = t.calls.filter(c => graphPath(c) === `act_${KUWAIT_ACCOUNT}/activities`);
+      expect(reads.map(c => c.url.searchParams.get("after"))).toEqual([null, "p2"]);
+      for (const c of reads) {
+        expect(c.method).toBe("GET");
+        expect(c.url.searchParams.get("fields")).toBe(ACTIVITY_FIELDS);
+        expect(Number(c.url.searchParams.get("since"))).toBe(Date.parse("2026-10-02T00:00:00Z") / 1000 - 14 * 3600);
+        expect(Number(c.url.searchParams.get("until"))).toBeGreaterThanOrEqual(Math.floor(NOW / 1000));
+      }
+      expect(t.calls.some(c => c.url.toString().includes("LEAK"))).toBe(false);
+      const h = t.db.histories.find(x => x.accountId === KUWAIT_ACCOUNT);
+      expect(h).toMatchObject({ currency: "USD", currencyOffset: 100, note: null });
+      expect(h.days.length).toBe(14);
+      expect(h.rows.map((r: any) => [r.day, r.daily_budget, r.changed_during_day, r.verified])).toEqual([
+        ["2026-10-05", 20, false, true],
+        ["2026-10-06", 20, false, true],
+        ["2026-10-07", 20, false, true],
+        ["2026-10-08", 20, false, true],
+        ["2026-10-09", 20, false, true],
+        ["2026-10-10", 30, true, true],
+        ["2026-10-11", 30, false, true],
+        ["2026-10-12", 30, false, true],
+        ["2026-10-13", 30, false, true],
+        ["2026-10-14", 30, false, true],
+        ["2026-10-15", 30, false, true],
+      ]);
+      expect(t.db.tasks.filter(x => x.kind === "activities").every(x => x.state === "done")).toBe(true);
+    } finally {
+      ACTIVE_TIED.splice(0, ACTIVE_TIED.length);
+    }
+  });
+
+  test("the doctor says whether budgets and their history can be read with the function's token, and names what the last run could not read", async () => {
+    ACTIVE_TIED.splice(0, ACTIVE_TIED.length, SAR_ACCOUNT);
+    BUDGET_STATUS.failing = [{ accountId: LA_ACCOUNT, name: "LA Account", error: "Meta refused act_5555555555555/campaigns (code 17). Meta's rate limit; a later run reads it again." }];
+    BUDGET_STATUS.historyFailing = [];
+    try {
+      const t = deps(
+        [
+          c => (graphPath(c) === "me" ? ok({ id: "1", name: "Mahara System User" }) : null),
+          listing([edgeAccount("7777777777777", "Kuwaiti Dinar Client", "KWD", "Asia/Kuwait", 90)]),
+          campaignsRoute({ [SAR_ACCOUNT]: [CBO("120000000000511", "17500")] }),
+          c => (graphPath(c) === `act_${SAR_ACCOUNT}/activities` ? metaError(200, "Requires ads_management permission to manage the object") : null),
+        ],
+        { secrets: () => ({ META_SYSTEM_TOKEN: true, CRON_SECRET: true, SUPABASE_URL: true, SUPABASE_SERVICE_ROLE_KEY: true }) },
+      );
+      const r = await startJob(t.d, { job: "doctor", dryRun: false, requestedBy: "cron" });
+      expect(r).toMatchObject({ budgetsReadable: true, historyReadable: false, budgetsCheckedOn: SAR_ACCOUNT });
+      expect(r.note).toContain(
+        `The budget history (Meta's activity log) cannot be read with META_SYSTEM_TOKEN on Riyadh Client (${SAR_ACCOUNT}): Meta refused act_${SAR_ACCOUNT}/activities (code 200)`,
+      );
+      expect(r.note).toContain("The history then starts the day budgets were first read.");
+      expect(r.note).toContain(`Budgets could not be read on the last run for LA Account (${LA_ACCOUNT}): Meta refused`);
+      expect(r.note).toContain("No Meta currency offset for Kuwaiti Dinar Client (KWD), so their budgets are not read");
+      expect(t.calls.every(c => c.method === "GET")).toBe(true);
+      const probes = t.calls.filter(c => /\/(campaigns|activities)$/.test(graphPath(c))).map(c => graphPath(c));
+      expect(probes).toEqual([`act_${SAR_ACCOUNT}/campaigns`, `act_${SAR_ACCOUNT}/activities`]);
+      const rec = t.db.calls.find(c => c.name === "cockpit_meta_ad_days_record")!.p;
+      expect(rec.detail).toMatchObject({ budgetsReadable: true, historyReadable: false, budgetsFailing: 1 });
+    } finally {
+      ACTIVE_TIED.splice(0, ACTIVE_TIED.length);
+      delete BUDGET_STATUS.failing;
+      delete BUDGET_STATUS.historyFailing;
+    }
   });
 });
 

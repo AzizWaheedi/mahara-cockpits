@@ -8,6 +8,10 @@ import { readFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
 import type { ReceiptRow } from "../../../supabase/functions/meta-ad-days/db.ts";
 import {
+  activityRow,
+  adsetRow,
+  budgetChange,
+  campaignRow,
   DESTINATIONS,
   edgeAccount,
   engagementRow,
@@ -43,6 +47,8 @@ import {
 const FILE = "20261016121700_meta_ad_days.sql";
 /** The corrections after the second-source check of 2026-10-16, on top. */
 const CHECKED = "20261016210100_meta_ad_days_checked.sql";
+/** Budgets (2026-10-17), on top of both. */
+const BUDGETS = "20261017100000_meta_budgets.sql";
 const CEO = "00000000-0000-4000-8000-0000000000c1";
 const MEMBER = "00000000-0000-4000-8000-0000000000b1";
 const A1 = "1111111111111"; // a USD account, tied to Client One
@@ -61,6 +67,10 @@ const TABLES = [
   "cockpit_meta_ad_day_receipts",
   "cockpit_meta_lead_ids",
   "cockpit_meta_lead_id_cover",
+  "cockpit_meta_budgets",
+  "cockpit_meta_budget_days",
+  "cockpit_meta_budget_account_days",
+  "cockpit_meta_account_state",
 ];
 const SERVICE = [
   "cockpit_meta_ad_days_inputs(jsonb)",
@@ -73,6 +83,8 @@ const SERVICE = [
   "cockpit_meta_ad_days_status()",
   "cockpit_meta_lead_ids_apply(jsonb)",
   "cockpit_meta_leads_not_in_crm(date,date)",
+  "cockpit_meta_budgets_apply(jsonb)",
+  "cockpit_meta_budget_history_apply(jsonb)",
 ];
 const INTERNAL = [
   "cockpit_meta_ad_days_require_service()",
@@ -91,6 +103,9 @@ const INTERNAL = [
   "cockpit_meta_ad_days_status_label(integer)",
   "cockpit_meta_ad_days_hidden()",
   "cockpit_meta_ad_days_is_hidden(jsonb,text,text)",
+  "cockpit_meta_budget_day(timestamptz,text)",
+  "cockpit_meta_budget_try_ts(text)",
+  "cockpit_meta_budget_accounts_bad(jsonb,boolean,date)",
 ];
 
 async function at(iso: string) {
@@ -232,6 +247,7 @@ beforeAll(async () => {
   await owner(db);
   await db.exec(migration(FILE));
   await db.exec(migration(CHECKED));
+  await db.exec(migration(BUDGETS));
   // The clock seam: the tests stand at a fixed moment.
   await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz LANGUAGE sql STABLE SET search_path='' AS
     $$ SELECT current_setting('test.now')::timestamptz $$;
@@ -317,9 +333,10 @@ describe("tables and privileges", () => {
   test("every definer function pins an empty search_path", async () => {
     const rows = await q<{ name: string; cfg: string[] | null }>(
       `SELECT p.proname name, p.proconfig cfg FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname = 'public' AND (p.proname LIKE 'cockpit_meta_ad_days%' OR p.proname LIKE 'cockpit_meta_reach%')`,
+       WHERE n.nspname = 'public' AND (p.proname LIKE 'cockpit_meta_ad_days%' OR p.proname LIKE 'cockpit_meta_reach%'
+         OR p.proname LIKE 'cockpit_meta_budget%')`,
     );
-    expect(rows.length).toBeGreaterThanOrEqual(20);
+    expect(rows.length).toBeGreaterThanOrEqual(25);
     for (const r of rows)
       expect({ name: r.name, cfg: r.cfg }).toEqual({
         name: r.name,
@@ -351,6 +368,7 @@ describe("tables and privileges", () => {
     await owner(db);
     await db.exec(migration(FILE));
     await db.exec(migration(CHECKED));
+    await db.exec(migration(BUDGETS));
     await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz LANGUAGE sql STABLE SET search_path='' AS
       $$ SELECT current_setting('test.now')::timestamptz $$;
       REVOKE ALL ON FUNCTION public.cockpit_meta_ad_days_now() FROM PUBLIC, anon, authenticated, service_role;`);
@@ -1407,6 +1425,48 @@ describe("the Edge Function's run against this database", () => {
       })),
     });
   };
+  /** The budgets read: a CBO campaign on the Kuwait account, an ABO one on the SAR account. */
+  const campaignsRoute: Route = c => {
+    const m = graphPath(c).match(/^act_(\d+)\/campaigns$/);
+    if (!m) return null;
+    return ok({
+      data:
+        m[1] === KUWAIT_ACCOUNT
+          ? [
+              campaignRow("120000000000101", { daily_budget: "3000" }, [
+                adsetRow("120000000000102", ["ACTIVE"]),
+              ]),
+            ]
+          : [
+              campaignRow("120000000000201", {}, [
+                adsetRow("120000000000202", ["ACTIVE"], {
+                  daily_budget: "17500",
+                  lifetime_budget: "0",
+                }),
+              ]),
+            ],
+      paging: { cursors: {} },
+    });
+  };
+  /** The activity log: the Kuwait campaign's budget raised from $20 to $30 at noon on 14 Oct (Kuwait). */
+  const activitiesRoute: Route = c => {
+    const m = graphPath(c).match(/^act_(\d+)\/activities$/);
+    if (!m) return null;
+    return ok({
+      data:
+        m[1] === KUWAIT_ACCOUNT
+          ? [
+              activityRow(
+                "update_campaign_budget",
+                "2026-10-14T09:00:00+0000",
+                "CAMPAIGN_GROUP",
+                "120000000000101",
+                budgetChange(2000, 3000),
+              ),
+            ]
+          : [],
+    });
+  };
   function harness(spendKuwait: string) {
     const f = fakeFetch([
       edges,
@@ -1424,6 +1484,8 @@ describe("the Edge Function's run against this database", () => {
       ),
       adsetsRoute(DESTINATIONS),
       reachRoute,
+      campaignsRoute,
+      activitiesRoute,
     ]);
     const deps: RunDeps = {
       rpc: pgRpc,
@@ -1450,6 +1512,58 @@ describe("the Edge Function's run against this database", () => {
       requestedBy: "cron",
     });
     expect(r).toMatchObject({ ok: true, started: true, done: 4, failed: 0 });
+    // The budgets of the two accounts wait 5 minutes (after the :07 burst), for
+    // pg_cron's continue: the run is still open until they are read.
+    const waiting = await q<{ n: number }>(
+      `SELECT count(*)::int n FROM cockpit_meta_ad_day_tasks WHERE run_id = $1 AND kind = 'budgets' AND state = 'pending'
+         AND retry_at = $2::timestamptz + interval '5 minutes'`,
+      [r.runId, new Date(RUN_NOW).toISOString()],
+    );
+    expect(waiting[0].n).toBe(2);
+    await at(new Date(RUN_NOW + 360_000).toISOString());
+    const more = await startJob(
+      { ...h.deps, now: () => RUN_NOW + 360_000 },
+      { job: "continue", dryRun: false, requestedBy: "cron" },
+    );
+    expect(more).toMatchObject({ claimed: 2, done: 2, failed: 0 });
+    const budgets = await q<any>(
+      "SELECT account_id, level, object_id, budget_level, daily_budget::text, currency, daily_budget_usd::text, delivering FROM cockpit_meta_budgets ORDER BY account_id, level",
+    );
+    const n = (v: string | null) => (v === null ? null : Number(v));
+    expect(
+      budgets.map(b => [
+        b.account_id,
+        b.level,
+        b.budget_level,
+        n(b.daily_budget),
+        b.currency,
+        n(b.daily_budget_usd),
+        b.delivering,
+      ]),
+    ).toEqual([
+      // The ad set of a CBO campaign holds no budget of its own: NULL, never 0.
+      [KUWAIT_ACCOUNT, "adset", "campaign", null, "USD", null, true],
+      [KUWAIT_ACCOUNT, "campaign", "campaign", 30, "USD", 30, true],
+      [SAR_ACCOUNT, "adset", "adset", 175, "SAR", 46.655, true],
+      [SAR_ACCOUNT, "campaign", "adset", 175, "SAR", 46.655, true],
+    ]);
+    const budgetDays = await q<any>(
+      "SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, source, verified FROM cockpit_meta_budget_days ORDER BY campaign_id",
+    );
+    expect(budgetDays).toEqual([
+      {
+        campaign_id: "120000000000101",
+        d: "2026-10-16",
+        source: "snapshot",
+        verified: true,
+      },
+      {
+        campaign_id: "120000000000201",
+        d: "2026-10-16",
+        source: "snapshot",
+        verified: true,
+      },
+    ]);
     const rows = await q<any>(
       "SELECT account_id, to_char(day,'YYYY-MM-DD') d, ad_id, spend::text, spend_usd::text, leads, lead_actions::int, video_3s, account_timezone, destination_type FROM cockpit_meta_ad_days ORDER BY account_id, day, ad_id",
     );
@@ -1504,7 +1618,7 @@ describe("the Edge Function's run against this database", () => {
     );
     expect(run.state).toBe("ok");
     expect(run.note).toContain(
-      "Read 2 of 2 ad accounts: 8 ad-days written, 8 new or changed. Reach read for 2 accounts.",
+      "Read 2 of 2 ad accounts: 8 ad-days written, 8 new or changed. Reach read for 2 accounts. Budgets read for 2 accounts.",
     );
     // Both accounts are Client One's (the spine ties them), so nothing is listed as not linked,
     // and the client's reach is the sum of its two accounts.
@@ -1532,6 +1646,18 @@ describe("the Edge Function's run against this database", () => {
       requestedBy: "cron",
     });
     expect(r).toMatchObject({ started: true, failed: 0 });
+    await at(new Date(RUN_NOW + 3960_000).toISOString());
+    await startJob(
+      { ...later.deps, now: () => RUN_NOW + 3960_000 },
+      { job: "continue", dryRun: false, requestedBy: "cron" },
+    );
+    // The second read of the day: the same row, read twice.
+    const [day] = await q<{ reads: number; first: string; last: string }>(
+      "SELECT reads, first_read::text first, last_read::text last FROM cockpit_meta_budget_account_days WHERE account_id = $1 AND day = '2026-10-16'",
+      [KUWAIT_ACCOUNT],
+    );
+    expect(day.reads).toBe(2);
+    expect(Date.parse(day.last) - Date.parse(day.first)).toBe(3600_000);
     const [run] = await q<{ note: string }>(
       "SELECT note FROM cockpit_meta_ad_day_runs WHERE id = $1",
       [r.runId],
@@ -1543,6 +1669,158 @@ describe("the Edge Function's run against this database", () => {
     );
     expect(n.n).toBe(4);
     expect(Number(n.s)).toBeCloseTo(2 * (7.1 + 12.1), 6);
+    await at(NOW);
+  });
+});
+
+describe("budget history against this database", () => {
+  test("a backfill rebuilds each account's budgets over its days from the activity log, verified against the live budgets", async () => {
+    await closeOpenRuns();
+    const later = RUN_NOW + 2 * 3600_000; // 16 Oct 03:30 Kuwait
+    await at(new Date(later).toISOString());
+    const pgRpc = async (name: string, args: Record<string, unknown>) => {
+      await service();
+      const r =
+        "p" in args
+          ? await db.query<{ r: unknown }>(
+              `SELECT public.${name}($1::jsonb) AS r`,
+              [JSON.stringify((args as any).p)],
+            )
+          : await db.query<{ r: unknown }>(`SELECT public.${name}() AS r`);
+      return r.rows[0]?.r ?? null;
+    };
+    const edges: Route = c => {
+      const path = graphPath(c);
+      if (path === "767701513092162/owned_ad_accounts") return ok({ data: [] });
+      if (path === "767701513092162/client_ad_accounts") {
+        return ok({
+          data: [
+            edgeAccount(
+              KUWAIT_ACCOUNT,
+              "Kuwait Client",
+              "USD",
+              "Asia/Kuwait",
+              300,
+            ),
+            edgeAccount(
+              SAR_ACCOUNT,
+              "Riyadh Client",
+              "SAR",
+              "Asia/Riyadh",
+              1200,
+            ),
+          ],
+        });
+      }
+      return null;
+    };
+    const campaigns: Route = c => {
+      const m = graphPath(c).match(/^act_(\d+)\/campaigns$/);
+      if (!m) return null;
+      return ok({
+        data:
+          m[1] === KUWAIT_ACCOUNT
+            ? [
+                campaignRow("120000000000101", { daily_budget: "3000" }, [
+                  adsetRow("120000000000102", ["ACTIVE"]),
+                ]),
+              ]
+            : [
+                campaignRow("120000000000201", {}, [
+                  adsetRow("120000000000202", ["ACTIVE"], {
+                    daily_budget: "17500",
+                    lifetime_budget: "0",
+                  }),
+                ]),
+              ],
+      });
+    };
+    const log: Route = c => {
+      const m = graphPath(c).match(/^act_(\d+)\/activities$/);
+      if (!m) return null;
+      return ok({
+        data:
+          m[1] === KUWAIT_ACCOUNT
+            ? [
+                activityRow(
+                  "update_campaign_budget",
+                  "2026-10-14T09:00:00+0000",
+                  "CAMPAIGN_GROUP",
+                  "120000000000101",
+                  budgetChange(2000, 3000),
+                ),
+              ]
+            : [],
+      });
+    };
+    const f = fakeFetch([
+      edges,
+      insightsRoute(KUWAIT_ACCOUNT, () => []),
+      insightsRoute(SAR_ACCOUNT, () => []),
+      campaigns,
+      log,
+    ]);
+    const deps: RunDeps = {
+      rpc: pgRpc,
+      insertReceipt: async row => {
+        await service();
+        await db.query(
+          "INSERT INTO public.cockpit_meta_ad_day_receipts(provider,method,resource,phase,http_status,error,run_id,receipt_index) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+          [
+            row.provider,
+            row.method,
+            row.resource,
+            row.phase,
+            row.http_status ?? null,
+            row.error ?? null,
+            row.run_id,
+            row.receipt_index,
+          ],
+        );
+      },
+      fetch: f.request,
+      token: () => TOKEN,
+      now: () => later,
+      sleep: async () => undefined,
+    };
+    const r = await startJob(deps, {
+      job: "backfill",
+      days: 3,
+      dryRun: false,
+      requestedBy: "aziz@maharamedia.com",
+    });
+    expect(r).toMatchObject({ started: true, failed: 0 });
+    const rows = await q<any>(
+      `SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, daily_budget::text b, daily_budget_usd::text u, changed_during_day c, source, verified
+       FROM cockpit_meta_budget_days WHERE source = 'activity' AND day BETWEEN '2026-10-13' AND '2026-10-15' ORDER BY campaign_id, day`,
+    );
+    expect(
+      rows.map(x => [
+        x.campaign_id,
+        x.d,
+        Number(x.b),
+        Number(x.u),
+        x.c,
+        x.verified,
+      ]),
+    ).toEqual([
+      ["120000000000101", "2026-10-13", 20, 20, false, true],
+      ["120000000000101", "2026-10-14", 30, 30, true, true],
+      ["120000000000101", "2026-10-15", 30, 30, false, true],
+      ["120000000000201", "2026-10-13", 175, 46.655, false, true],
+      ["120000000000201", "2026-10-14", 175, 46.655, false, true],
+      ["120000000000201", "2026-10-15", 175, 46.655, false, true],
+    ]);
+    const [run] = await q<{ state: string; note: string }>(
+      "SELECT state, note FROM cockpit_meta_ad_day_runs WHERE id = $1",
+      [r.runId],
+    );
+    expect(run.state).toBe("ok");
+    expect(run.note).toContain("Budget history read for 2 accounts.");
+    await owner(db);
+    await db.exec(
+      "DELETE FROM cockpit_meta_budget_days WHERE source = 'activity'; DELETE FROM cockpit_meta_budget_account_days WHERE source = 'activity';",
+    );
     await at(NOW);
   });
 });
@@ -2040,7 +2318,14 @@ describe("the corrections after the 2026-10-16 check", () => {
         readTo: "2026-11-03T00:20:00+00:00",
       };
       expect(await notInCrm("2026-11-01", "2026-11-02")).toEqual([
-        { locationId: "LOC_LEAD", metaLeads: 5, inCrm: 3, notInCrm: 2, ...covered, note: null },
+        {
+          locationId: "LOC_LEAD",
+          metaLeads: 5,
+          inCrm: 3,
+          notInCrm: 2,
+          ...covered,
+          note: null,
+        },
         {
           locationId: "LOC_NOREAD",
           metaLeads: null,
@@ -2053,13 +2338,22 @@ describe("the corrections after the 2026-10-16 check", () => {
       ]);
       // A window that starts before the ids held is unknown, never 0.
       const [early] = await notInCrm("2026-10-01", "2026-11-02");
-      expect(early).toMatchObject({ locationId: "LOC_LEAD", metaLeads: null, notInCrm: null });
+      expect(early).toMatchObject({
+        locationId: "LOC_LEAD",
+        metaLeads: null,
+        notInCrm: null,
+      });
       expect(early.note).toBe(
         "Meta's lead ids are held from 2026-10-03 03:20 Kuwait time; this window starts earlier, so leads not in the CRM are not known for it.",
       );
       // A window past the last read says so.
       const [late] = await notInCrm("2026-11-01", "2026-11-03");
-      expect(late).toMatchObject({ locationId: "LOC_LEAD", metaLeads: 6, inCrm: 4, notInCrm: 2 });
+      expect(late).toMatchObject({
+        locationId: "LOC_LEAD",
+        metaLeads: 6,
+        inCrm: 4,
+        notInCrm: 2,
+      });
       expect(late.note).toBe(
         "Meta's leads are read to 2026-11-03 03:20 Kuwait time; later leads wait for the next nightly run.",
       );
@@ -2077,8 +2371,14 @@ describe("the corrections after the 2026-10-16 check", () => {
         VALUES ('${A14}', '2026-10-03T00:20:00Z', '2026-11-03T00:20:00Z', 1, 1)`);
       await service();
       const [, noAccess] = await notInCrm("2026-11-01", "2026-11-02");
-      expect(noAccess).toMatchObject({ locationId: "LOC_NOREAD", metaLeads: null, notInCrm: null });
-      expect(noAccess.note).toContain("the Page has not given Mahara's business lead access");
+      expect(noAccess).toMatchObject({
+        locationId: "LOC_NOREAD",
+        metaLeads: null,
+        notInCrm: null,
+      });
+      expect(noAccess.note).toContain(
+        "the Page has not given Mahara's business lead access",
+      );
       await owner(db);
       await expect(
         q(
@@ -2093,5 +2393,870 @@ describe("the corrections after the 2026-10-16 check", () => {
         DELETE FROM public.cockpit_meta_lead_id_cover;`);
       await at(NOW);
     }
+  });
+});
+
+describe("budgets (2026-10-17)", () => {
+  const LA = "1717171717171"; // a USD account on Los Angeles time: its day is 15 Oct until 10:00 Kuwait
+  const SA = "1818181818181"; // a SAR account on Riyadh time
+  const TIED = "1919191919191"; // tied to an Active client, not listed under the business
+  const K1 = "120000000017101";
+  const K2 = "120000000017201";
+  const K3 = "120000000017301";
+  const minutes = (n: number) =>
+    new Date(Date.parse(NOW) + n * 60_000).toISOString();
+  const laAccount = account(LA, "USD", {
+    name: "LA Budgets",
+    timezone: "America/Los_Angeles",
+    spend: 0,
+  });
+  const saAccount = account(SA, "SAR", {
+    name: "Riyadh Budgets",
+    timezone: "Asia/Riyadh",
+  });
+  const listed = (
+    a: Record<string, unknown>,
+    readAt: string,
+    over: Record<string, unknown> = {},
+  ) => ({
+    ...a,
+    disableReason: 0,
+    spendCap: "300000",
+    amountSpent: "100000",
+    readAt,
+    ...over,
+  });
+  const camp = (
+    accountId: string,
+    id: string,
+    over: Record<string, unknown> = {},
+  ) => ({
+    level: "campaign",
+    object_id: id,
+    account_id: accountId,
+    campaign_id: id,
+    name: `Campaign ${id.slice(-3)}`,
+    objective: "OUTCOME_LEADS",
+    status: "ACTIVE",
+    effective_status: "ACTIVE",
+    budget_level: "campaign",
+    budget_type: "daily",
+    daily_budget: 30,
+    lifetime_budget: null,
+    budget_remaining: 10,
+    start_time: "2026-10-01T07:00:00.000Z",
+    end_time: null,
+    ads_active: 1,
+    ads_with_issues: 0,
+    issues: null,
+    switched_on: true,
+    delivering: true,
+    why_not: null,
+    ...over,
+  });
+  const adset = (
+    accountId: string,
+    id: string,
+    campaignId: string,
+    over: Record<string, unknown> = {},
+  ) =>
+    camp(accountId, id, {
+      level: "adset",
+      campaign_id: campaignId,
+      budget_type: null,
+      daily_budget: null,
+      budget_remaining: null,
+      ...over,
+    });
+  const state = (readAt: string, over: Record<string, unknown> = {}) => ({
+    status: 1,
+    disableReason: 0,
+    spendCap: 3000,
+    amountSpent: 1000,
+    readAt,
+    ...over,
+  });
+
+  /** An hourly run that reads only budgets, claimed after its 5 minutes. */
+  async function hourlyBudgets(
+    atMinute: number,
+    accounts: Record<string, unknown>[],
+    extra: Record<string, unknown> = {},
+  ) {
+    await at(minutes(atMinute));
+    const begun = await svc("cockpit_meta_ad_days_begin", {
+      job: "hourly",
+      requestedBy: "cron",
+      graphVersion: "v25.0",
+      window: { since: "2026-10-14", until: "2026-10-17" },
+      accounts: [],
+      tasks: [],
+      reach: null,
+      budgetAccounts: accounts.map(a => listed(a, minutes(atMinute))),
+      ...extra,
+    });
+    const early = await svc("cockpit_meta_ad_days_claim", {
+      limit: 5,
+      leaseSeconds: 300,
+    });
+    await at(minutes(atMinute + 6));
+    const claimed = (await svc("cockpit_meta_ad_days_claim", {
+      limit: 5,
+      leaseSeconds: 300,
+    })) as any[];
+    return { begun, early, claimed };
+  }
+  const apply = (
+    t: any,
+    fetchedAt: string,
+    rows: unknown[],
+    over: Record<string, unknown> = {},
+  ) =>
+    svc("cockpit_meta_budgets_apply", {
+      taskId: t.id,
+      leaseToken: t.leaseToken,
+      fetchedAt,
+      currency: t.currency,
+      currencyOffset: 100,
+      account: state(fetchedAt),
+      rows,
+      ...over,
+    });
+
+  beforeAll(async () => {
+    await closeOpenRuns();
+    await owner(db);
+    await db.exec(`CREATE TABLE IF NOT EXISTS public.cockpit_board_clients (location_id text PRIMARY KEY, clickup_id text, client_name text, status text,
+        service_mode text, ad_account_ids text[], tiktok boolean, updated_at timestamptz);
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_ONE','c1','Client One','Active','DFY',ARRAY['act_${A1}','${A2}'],false,now())
+        ON CONFLICT (location_id) DO NOTHING;
+      INSERT INTO public.cockpit_board_clients VALUES ('LOC_BUDGET','cb','Budget Client','Active','DFY',ARRAY['${TIED}'],false,now())
+        ON CONFLICT (location_id) DO NOTHING`);
+    await at(NOW);
+  });
+  afterAll(async () => {
+    await owner(db);
+    await db.exec(
+      "DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_BUDGET'",
+    );
+    await closeOpenRuns();
+    await at(NOW);
+  });
+
+  test("inputs names the accounts tied to an Active client, hidden ones left out", async () => {
+    const r = await svc("cockpit_meta_ad_days_inputs", { accounts: [] });
+    expect(r.activeAccounts).toEqual([A1, TIED, A2].sort());
+  });
+
+  test("begin plans one budgets task per account 5 minutes on (hourly) and one history task per account over its days; an older caller plans none", async () => {
+    await at(NOW);
+    const begun = await svc("cockpit_meta_ad_days_begin", {
+      job: "hourly",
+      requestedBy: "cron",
+      graphVersion: "v25.0",
+      window: { since: "2026-10-14", until: "2026-10-17" },
+      accounts: [account(A1, "USD")],
+      tasks: [dayTask(A1, "2026-10-15", "2026-10-16")],
+      reach: null,
+      budgetAccounts: [
+        listed(account(A1, "USD"), NOW),
+        listed(laAccount, NOW, { spendCap: "0", status: 3 }),
+      ],
+      budgetUnlisted: [TIED],
+    });
+    expect(begun).toMatchObject({
+      started: true,
+      tasks: 3,
+      budgetTasks: 2,
+      historyTasks: 0,
+    });
+    const tasks = await q<any>(
+      "SELECT kind, account_id, account_state, retry_at::text retry_at, account_timezone FROM cockpit_meta_ad_day_tasks WHERE run_id = $1 ORDER BY id",
+      [begun.runId],
+    );
+    expect(tasks.map(t => [t.kind, t.account_id])).toEqual([
+      ["days", A1],
+      ["budgets", A1],
+      ["budgets", LA],
+    ]);
+    expect(Date.parse(tasks[1].retry_at) - Date.parse(NOW)).toBe(5 * 60_000);
+    expect(tasks[2].account_state).toEqual({
+      status: 3,
+      disableReason: 0,
+      spendCap: "0",
+      amountSpent: "100000",
+      readAt: NOW,
+    });
+    expect(tasks[2].account_timezone).toBe("America/Los_Angeles");
+    const [run] = await q<{ detail: any }>(
+      "SELECT detail FROM cockpit_meta_ad_day_runs WHERE id = $1",
+      [begun.runId],
+    );
+    expect(run.detail).toMatchObject({
+      budgetAccounts: 2,
+      historyAccounts: 0,
+      budgetUnlisted: [{ accountId: TIED, clientName: "Budget Client" }],
+    });
+    // Only the ad-days now; the budgets after the :07 burst.
+    const now = await svc("cockpit_meta_ad_days_claim", {
+      limit: 5,
+      leaseSeconds: 300,
+    });
+    expect(now.map((t: any) => t.kind)).toEqual(["days"]);
+    await closeOpenRuns();
+    // An older function sends none of the new keys: no budget task.
+    const old = await svc("cockpit_meta_ad_days_begin", {
+      job: "hourly",
+      requestedBy: "cron",
+      accounts: [account(A1, "USD")],
+      tasks: [dayTask(A1, "2026-10-15", "2026-10-16")],
+    });
+    expect(old).toMatchObject({ tasks: 1, budgetTasks: 0, historyTasks: 0 });
+    await closeOpenRuns();
+  });
+
+  test("begin refuses budget accounts and history spans it cannot trust", async () => {
+    const base = {
+      job: "nightly",
+      requestedBy: "cron",
+      accounts: [],
+      tasks: [],
+    };
+    const cases: [Record<string, unknown>, string][] = [
+      [
+        { budgetAccounts: [{ accountId: "act_x" }] },
+        "a budget account without a valid id",
+      ],
+      [
+        { budgetAccounts: [listed(laAccount, NOW, { spendCap: "3.5" })] },
+        "a spending limit that is not an amount",
+      ],
+      [
+        { budgetAccounts: [listed(laAccount, NOW, { status: "1" })] },
+        "status that is not Meta's number",
+      ],
+      [
+        { budgetAccounts: [listed(laAccount, NOW), listed(laAccount, NOW)] },
+        "a budget account twice",
+      ],
+      [
+        {
+          activityAccounts: [
+            {
+              ...listed(laAccount, NOW),
+              since: "2026-07-01",
+              until: "2026-10-15",
+            },
+          ],
+        },
+        "longer than 93 days",
+      ],
+      [
+        {
+          activityAccounts: [
+            { ...listed(laAccount, NOW), since: "2026-10-15" },
+          ],
+        },
+        "a budget history without its days",
+      ],
+      [{ budgetUnlisted: ["abc"] }, "a budget account that is not an id"],
+    ];
+    for (const [extra, words] of cases) {
+      const message = await refused(
+        () => svc("cockpit_meta_ad_days_begin", { ...base, ...extra }),
+        "22023",
+      );
+      expect({ words, message: message.includes(words) }).toEqual({
+        words,
+        message: true,
+      });
+    }
+    const [n] = await q<{ n: number }>(
+      "SELECT count(*)::int n FROM cockpit_meta_ad_day_runs WHERE state = 'running'",
+    );
+    expect(n.n).toBe(0);
+  });
+
+  test("claim order: ad-days, then reach and lead ids, then budgets, then their history; fail takes the new kinds", async () => {
+    await at(NOW);
+    const begun = await svc("cockpit_meta_ad_days_begin", {
+      job: "nightly",
+      requestedBy: "cron",
+      accounts: [account(A1, "USD")],
+      tasks: [dayTask(A1, "2026-10-08", "2026-10-14")],
+      reach: "all",
+      budgetAccounts: [listed(laAccount, NOW)],
+      activityAccounts: [
+        { ...listed(laAccount, NOW), since: "2026-10-01", until: "2026-10-14" },
+      ],
+    });
+    // A day read added after the others still comes first.
+    await owner(db);
+    await db.query(
+      "INSERT INTO cockpit_meta_ad_day_tasks(run_id, kind, account_id, since, until) VALUES ($1, 'days', $2, '2026-10-01', '2026-10-07')",
+      [begun.runId, A1],
+    );
+    const kinds: string[] = [];
+    const leases: Record<string, any> = {};
+    for (let i = 0; i < 5; i++) {
+      const [t] = await svc("cockpit_meta_ad_days_claim", {
+        limit: 1,
+        leaseSeconds: 300,
+      });
+      kinds.push(`${t.kind}${t.since ? ` ${t.since}` : ""}`);
+      leases[t.kind] = t;
+    }
+    expect(kinds).toEqual([
+      "days 2026-10-08",
+      "days 2026-10-01",
+      "reach_all",
+      "budgets",
+      "activities 2026-10-01",
+    ]);
+    expect(leases.activities).toMatchObject({
+      until: "2026-10-14",
+      timezone: "America/Los_Angeles",
+      accountState: { status: 1, spendCap: "300000" },
+    });
+    expect(
+      await svc("cockpit_meta_ad_days_fail", {
+        taskId: leases.budgets.id,
+        leaseToken: leases.budgets.leaseToken,
+        error: "Meta's rate limit.",
+        retry: true,
+      }),
+    ).toMatchObject({ state: "pending" });
+    expect(
+      await svc("cockpit_meta_ad_days_fail", {
+        taskId: leases.activities.id,
+        leaseToken: leases.activities.leaseToken,
+        error: "No access.",
+        retry: false,
+      }),
+    ).toMatchObject({ state: "failed" });
+    await closeOpenRuns();
+  });
+
+  test("the budgets write refuses what it cannot trust, and keeps the lease", async () => {
+    await at(NOW);
+    const begun = await svc("cockpit_meta_ad_days_begin", {
+      job: "hourly",
+      requestedBy: "cron",
+      accounts: [saAccount],
+      tasks: [dayTask(SA, "2026-10-15", "2026-10-16")],
+      budgetAccounts: [listed(saAccount, NOW)],
+    });
+    await at(minutes(6));
+    const claimed = (await svc("cockpit_meta_ad_days_claim", {
+      limit: 5,
+      leaseSeconds: 300,
+    })) as any[];
+    const days = claimed.find(t => t.kind === "days");
+    const t = claimed.find(t => t.kind === "budgets");
+    expect(t).toMatchObject({ currency: "SAR", timezone: "Asia/Riyadh" });
+    const ok1 = [camp(SA, K1)];
+    expect(
+      await refused(() => apply(days, minutes(6), ok1), "22023"),
+    ).toContain("not a budgets task");
+    const cases: [unknown, Record<string, unknown>, string][] = [
+      [ok1, { fetchedAt: minutes(-120) }, "within the last hour"],
+      [ok1, { currency: "USD" }, "not in its currency"],
+      [ok1, { currencyOffset: 10 }, "1 or 100"],
+      [ok1, { account: null }, "Send the account"],
+      [
+        ok1,
+        { account: state(minutes(6), { spendCap: 0 }) },
+        "Send the account",
+      ],
+      [ok1, { account: state(minutes(-200)) }, "within the last 2 hours"],
+      [[camp(A1, K1)], {}, "a row from another ad account"],
+      [
+        [adset(SA, "120000000017102", K2)],
+        {},
+        "an ad set whose campaign was not read",
+      ],
+      [[camp(SA, K1, { daily_budget: -1 })], {}, "a negative amount"],
+      [
+        [camp(SA, K1, { daily_budget: "30" })],
+        {},
+        "an amount that is not a number",
+      ],
+      [[camp(SA, K1, { delivering: false })], {}, "without the reason"],
+      [
+        [camp(SA, K1, { switched_on: false })],
+        {},
+        "delivering while switched off",
+      ],
+      [[camp(SA, K1, { daily_budget: null })], {}, "does not match its type"],
+      [
+        [camp(SA, K1, { budget_type: "lifetime" })],
+        {},
+        "does not match its type",
+      ],
+      [[camp(SA, K1, { status: "active" })], {}, "not one of Meta's names"],
+      [[camp(SA, K1, { start_time: "soon" })], {}, "a time that is not one"],
+      [[camp(SA, K1), camp(SA, K1)], {}, "one object twice"],
+      [[{ ...camp(SA, K1), object_id: "x1" }], {}, "an id that is not one"],
+    ];
+    for (const [rows, over, words] of cases) {
+      const message = await refused(
+        () => apply(t, minutes(6), rows as unknown[], over),
+        "22023",
+      );
+      expect({ words, message: message.includes(words) }).toEqual({
+        words,
+        message: true,
+      });
+    }
+    // Still leased: a good write goes through, rows in SAR with their USD.
+    const r = await apply(t, minutes(6), [camp(SA, K1, { daily_budget: 175 })]);
+    expect(r).toMatchObject({
+      ok: true,
+      written: 1,
+      day: "2026-10-16",
+      dayRows: 1,
+    });
+    const [b] = await q<any>(
+      "SELECT currency, currency_offset, daily_budget::text d, daily_budget_usd::text u, usd_rate::text r FROM cockpit_meta_budgets WHERE object_id = $1",
+      [K1],
+    );
+    expect([
+      b.currency,
+      b.currency_offset,
+      Number(b.d),
+      Number(b.u),
+      Number(b.r),
+    ]).toEqual(["SAR", 100, 175, 46.655, 0.2666]);
+    await closeOpenRuns();
+    await owner(db);
+    await db.query("DELETE FROM cockpit_meta_budgets WHERE account_id = $1; ", [
+      SA,
+    ]);
+    await db.query(
+      "DELETE FROM cockpit_meta_budget_days WHERE account_id = $1",
+      [SA],
+    );
+    await db.query(
+      "DELETE FROM cockpit_meta_budget_account_days WHERE account_id = $1",
+      [SA],
+    );
+    expect(begun.started).toBe(true);
+  });
+
+  test("each read replaces the account's budgets; today's row on the account's clock: the last read wins, the highest delivering budget is kept", async () => {
+    // Read 1, 23:06 in Los Angeles on 15 Oct: K1 delivers at $30; K2 is switched on but its ads have issues; K3 is paused.
+    const r1 = await hourlyBudgets(0, [laAccount]);
+    expect(r1.early).toEqual([]);
+    const t1 = r1.claimed[0];
+    const read1 = await apply(
+      t1,
+      minutes(6),
+      [
+        camp(LA, K1),
+        camp(LA, K2, {
+          budget_level: "adset",
+          daily_budget: 1104,
+          delivering: false,
+          why_not: "Ads with issues",
+          ads_active: 0,
+          ads_with_issues: 2,
+        }),
+        adset(LA, "120000000017202", K2, {
+          budget_level: "adset",
+          budget_type: "daily",
+          daily_budget: 552,
+          delivering: false,
+          why_not: "Ads with issues",
+        }),
+        camp(LA, K3, {
+          status: "PAUSED",
+          effective_status: "PAUSED",
+          daily_budget: 25,
+          switched_on: false,
+          delivering: false,
+          why_not: "Paused",
+        }),
+      ],
+      { account: state(minutes(0), { spendCap: null, amountSpent: 6112.77 }) },
+    );
+    expect(read1).toMatchObject({ day: "2026-10-15", dayRows: 2, run: "ok" });
+    const [acc] = await q<any>(
+      "SELECT account_status, spend_cap, amount_spent::text a, fetched_at::text f FROM cockpit_meta_account_state WHERE account_id = $1",
+      [LA],
+    );
+    expect([
+      acc.account_status,
+      acc.spend_cap,
+      Number(acc.a),
+      Date.parse(acc.f),
+    ]).toEqual([1, null, 6112.77, Date.parse(minutes(0))]);
+
+    // Read 2, half an hour later: K1 raised to $50, K2 gone (deleted), K3 switched on.
+    const r2 = await hourlyBudgets(30, [laAccount]);
+    await apply(r2.claimed[0], minutes(36), [
+      camp(LA, K1, { daily_budget: 50 }),
+      camp(LA, K3, { daily_budget: 25 }),
+    ]);
+    // Read 3, 23:56: K1 paused since. Still 15 Oct in Los Angeles.
+    const r3 = await hourlyBudgets(50, [laAccount]);
+    await apply(r3.claimed[0], minutes(56), [
+      camp(LA, K1, {
+        status: "PAUSED",
+        effective_status: "PAUSED",
+        daily_budget: 50,
+        switched_on: false,
+        delivering: false,
+        why_not: "Paused",
+      }),
+      camp(LA, K3, { daily_budget: 25 }),
+    ]);
+    const now = await q<any>(
+      "SELECT level, object_id FROM cockpit_meta_budgets WHERE account_id = $1 ORDER BY object_id, level",
+      [LA],
+    );
+    expect(now.map(x => x.object_id)).toEqual([K1, K3]);
+    const days = await q<any>(
+      `SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, daily_budget::text d_b, max_budget_usd::text m, delivering, delivering_any, why_not, changed_during_day,
+              first_seen::text f, last_seen::text l, source, verified
+       FROM cockpit_meta_budget_days WHERE account_id = $1 ORDER BY campaign_id, day`,
+      [LA],
+    );
+    expect(
+      days.map(x => [
+        x.campaign_id,
+        x.d,
+        Number(x.d_b),
+        x.m === null ? null : Number(x.m),
+        x.delivering,
+        x.delivering_any,
+        x.why_not,
+        x.changed_during_day,
+      ]),
+    ).toEqual([
+      [K1, "2026-10-15", 50, 50, false, true, "Paused", true],
+      // K2 was not in the later reads: its row stands as the first read saw it.
+      [K2, "2026-10-15", 1104, null, false, false, "Ads with issues", false],
+      [K3, "2026-10-15", 25, 25, true, true, null, false],
+    ]);
+    expect(Date.parse(days[0].f)).toBe(Date.parse(minutes(6)));
+    expect(Date.parse(days[0].l)).toBe(Date.parse(minutes(56)));
+    expect(days.every(x => x.source === "snapshot" && x.verified)).toBe(true);
+    const [cover] = await q<any>(
+      "SELECT source, reads, campaigns, verified FROM cockpit_meta_budget_account_days WHERE account_id = $1 AND day = '2026-10-15'",
+      [LA],
+    );
+    expect(cover).toEqual({
+      source: "snapshot",
+      reads: 3,
+      campaigns: 3,
+      verified: true,
+    });
+
+    // Read 4, 00:36 on 16 Oct in Los Angeles: K1 still paused, so it has no row on the new day.
+    const r4 = await hourlyBudgets(90, [laAccount]);
+    expect(
+      await apply(r4.claimed[0], minutes(96), [
+        camp(LA, K1, {
+          status: "PAUSED",
+          effective_status: "PAUSED",
+          daily_budget: 50,
+          switched_on: false,
+          delivering: false,
+          why_not: "Paused",
+        }),
+        camp(LA, K3, { daily_budget: 25 }),
+      ]),
+    ).toMatchObject({ day: "2026-10-16", dayRows: 1 });
+    const runs = await q<any>(
+      "SELECT note FROM cockpit_meta_ad_day_runs WHERE id = $1",
+      [r4.begun.runId],
+    );
+    expect(runs[0].note).toBe(
+      "No ad account of the business spent in the window. Budgets read for 1 account.",
+    );
+    await at(NOW);
+  });
+
+  test("the history fills only the days no read covers, never over a snapshot row, and a later rebuild replaces it", async () => {
+    await at(minutes(100));
+    const begin = (rows?: unknown) =>
+      svc("cockpit_meta_ad_days_begin", {
+        job: "nightly",
+        requestedBy: "cron",
+        accounts: [],
+        tasks: [],
+        activityAccounts: [
+          {
+            ...listed(laAccount, minutes(100)),
+            since: "2026-10-12",
+            until: "2026-10-15",
+          },
+        ],
+        ...(rows ? {} : {}),
+      });
+    const b1 = await begin();
+    expect(b1).toMatchObject({ historyTasks: 1 });
+    const [t] = await svc("cockpit_meta_ad_days_claim", {
+      limit: 5,
+      leaseSeconds: 300,
+    });
+    expect(t).toMatchObject({
+      kind: "activities",
+      since: "2026-10-12",
+      until: "2026-10-15",
+    });
+    const dayList = [
+      "2026-10-12",
+      "2026-10-13",
+      "2026-10-14",
+      "2026-10-15",
+    ].map(day => ({
+      day,
+      campaigns: 1,
+      verified: day !== "2026-10-12",
+      note: null,
+    }));
+    const hrow = (day: string, over: Record<string, unknown> = {}) => ({
+      campaign_id: K1,
+      day,
+      budget_level: "campaign",
+      budget_type: "daily",
+      daily_budget: 20,
+      max_budget: 20,
+      delivering: true,
+      delivering_any: true,
+      why_not: null,
+      changed_during_day: false,
+      verified: day !== "2026-10-12",
+      ...over,
+    });
+    const write = (
+      task: any,
+      rows: unknown[],
+      over: Record<string, unknown> = {},
+    ) =>
+      svc("cockpit_meta_budget_history_apply", {
+        taskId: task.id,
+        leaseToken: task.leaseToken,
+        fetchedAt: minutes(100),
+        currency: "USD",
+        currencyOffset: 100,
+        days: dayList,
+        rows,
+        note: "1 of 4 days not verified.",
+        ...over,
+      });
+    // Refused: a day outside the task, a row on a day the history did not list, a day twice.
+    expect(
+      await refused(() => write(t, [hrow("2026-10-11")]), "22023"),
+    ).toContain("a day the history did not cover");
+    expect(
+      await refused(
+        () =>
+          write(t, [], {
+            days: [
+              ...dayList,
+              { day: "2026-10-16", campaigns: 0, verified: true },
+            ],
+          }),
+        "22023",
+      ),
+    ).toContain("outside the task's days");
+    expect(
+      await refused(
+        () => write(t, [], { days: [dayList[0], dayList[0]] }),
+        "22023",
+      ),
+    ).toContain("a day twice");
+    expect(
+      await refused(
+        () => write(t, [hrow("2026-10-13", { delivering: false })]),
+        "22023",
+      ),
+    ).toContain("without the reason");
+    const rows = dayList.map(d => hrow(d.day));
+    // A campaign the reads of 15 Oct did not see: the history does not add it to a day the reads cover.
+    rows.push(hrow("2026-10-15", { campaign_id: "120000000017901" }));
+    const r = await write(t, rows);
+    expect(r).toMatchObject({
+      ok: true,
+      written: 3,
+      days: 3,
+      coveredByReads: 1,
+      run: "ok",
+    });
+    const held = await q<any>(
+      "SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, daily_budget::text b, max_budget_usd::text m, source, verified FROM cockpit_meta_budget_days WHERE account_id = $1 AND day <= '2026-10-15' ORDER BY day, campaign_id",
+      [LA],
+    );
+    expect(
+      held.map(x => [x.campaign_id, x.d, Number(x.b), x.source, x.verified]),
+    ).toEqual([
+      [K1, "2026-10-12", 20, "activity", false],
+      [K1, "2026-10-13", 20, "activity", true],
+      [K1, "2026-10-14", 20, "activity", true],
+      // 15 Oct was read three times: its snapshot rows stand.
+      [K1, "2026-10-15", 50, "snapshot", true],
+      [K2, "2026-10-15", 1104, "snapshot", true],
+      [K3, "2026-10-15", 25, "snapshot", true],
+    ]);
+    const cover = await q<any>(
+      "SELECT to_char(day,'YYYY-MM-DD') d, source, verified FROM cockpit_meta_budget_account_days WHERE account_id = $1 ORDER BY day",
+      [LA],
+    );
+    expect(cover.map(x => [x.d, x.source, x.verified])).toEqual([
+      ["2026-10-12", "activity", false],
+      ["2026-10-13", "activity", true],
+      ["2026-10-14", "activity", true],
+      ["2026-10-15", "snapshot", true],
+      ["2026-10-16", "snapshot", true],
+    ]);
+    const [run] = await q<any>(
+      "SELECT note FROM cockpit_meta_ad_day_runs WHERE id = $1",
+      [b1.runId],
+    );
+    expect(run.note).toContain(
+      "Budget history read for 1 account (LA Budgets: 1 of 4 days not verified).",
+    );
+
+    // The next rebuild replaces its own rows: 12 Oct now verified at $25, 14 Oct now off.
+    const b2 = await begin();
+    const [t2] = await svc("cockpit_meta_ad_days_claim", {
+      limit: 5,
+      leaseSeconds: 300,
+    });
+    await write(
+      t2,
+      [
+        hrow("2026-10-12", {
+          daily_budget: 25,
+          max_budget: 25,
+          verified: true,
+        }),
+        hrow("2026-10-13"),
+      ],
+      {
+        days: dayList.map(d => ({
+          ...d,
+          verified: true,
+          campaigns: d.day <= "2026-10-13" ? 1 : 0,
+        })),
+        note: null,
+      },
+    );
+    const again = await q<any>(
+      "SELECT to_char(day,'YYYY-MM-DD') d, daily_budget::text b, verified FROM cockpit_meta_budget_days WHERE campaign_id = $1 AND source = 'activity' ORDER BY day",
+      [K1],
+    );
+    expect(again.map(x => [x.d, Number(x.b), x.verified])).toEqual([
+      ["2026-10-12", 25, true],
+      ["2026-10-13", 20, true],
+    ]);
+    expect(b2.started).toBe(true);
+    await at(NOW);
+  });
+
+  test("the run's note: ad-day reads counted on their own, budgets and their gaps on lines of their own; status gives the budgets block", async () => {
+    await at(NOW);
+    const begun = await svc("cockpit_meta_ad_days_begin", {
+      job: "hourly",
+      requestedBy: "cron",
+      accounts: [account(A1, "USD"), saAccount],
+      tasks: [
+        dayTask(A1, "2026-10-15", "2026-10-16"),
+        dayTask(SA, "2026-10-15", "2026-10-16"),
+      ],
+      budgetAccounts: [listed(account(A1, "USD"), NOW), listed(saAccount, NOW)],
+      budgetUnlisted: [TIED],
+    });
+    for (const t of (await svc("cockpit_meta_ad_days_claim", {
+      limit: 5,
+      leaseSeconds: 300,
+    })) as any[]) {
+      await svc("cockpit_meta_ad_days_apply", {
+        taskId: t.id,
+        leaseToken: t.leaseToken,
+        fetchedAt: NOW,
+        rows: [],
+        final: true,
+      });
+    }
+    await at(minutes(6));
+    const claimed = (await svc("cockpit_meta_ad_days_claim", {
+      limit: 5,
+      leaseSeconds: 300,
+    })) as any[];
+    const a1 = claimed.find(t => t.accountId === A1);
+    const sa = claimed.find(t => t.accountId === SA);
+    await apply(a1, minutes(6), [camp(A1, "120000000017401")]);
+    await svc("cockpit_meta_ad_days_fail", {
+      taskId: sa.id,
+      leaseToken: sa.leaseToken,
+      error:
+        "Meta refused act_1818181818181/campaigns (code 17/2446079). Meta's rate limit; a later run reads it again.",
+      retry: false,
+    });
+    const [run] = await q<any>(
+      "SELECT state, note, detail FROM cockpit_meta_ad_day_runs WHERE id = $1",
+      [begun.runId],
+    );
+    expect(run.state).toBe("partial");
+    // Both accounts' ad-days were read: "Read 2 of 2", whatever the budgets did.
+    expect(run.note).toContain(
+      "Read 2 of 2 ad accounts: 0 ad-days written, 0 new or changed.",
+    );
+    expect(run.note).toContain(
+      "Budgets read for 1 account; not read for Riyadh Budgets (1818181818181): Meta refused act_1818181818181/campaigns (code 17/2446079). Meta's rate limit; a later run reads it again.",
+    );
+    expect(run.note).toContain(
+      `Tied to an Active client but not listed under Mahara's business, so no budget could be read: Budget Client (${TIED}).`,
+    );
+    expect(run.note).not.toContain("Could not read");
+    expect(run.detail).toMatchObject({ budgetsRead: 1, budgetsFailed: 1 });
+    const [sync] = await q<any>(
+      "SELECT ok, detail FROM cockpit_sync_state WHERE key = 'meta-ad-days-hourly'",
+    );
+    expect(sync.ok).toBe(false);
+    expect(sync.detail).toMatchObject({ budgetsRead: 1, budgetsFailed: 1 });
+    await service();
+    const s = (
+      await db.query<{ r: any }>(
+        "SELECT public.cockpit_meta_ad_days_status() r",
+      )
+    ).rows[0].r;
+    // The LA account, A1 (read again here) and the end-to-end run's SAR account.
+    expect(s.budgets).toMatchObject({
+      accounts: 3,
+      historyFrom: "2026-10-12",
+      snapshotFrom: "2026-10-15",
+      lastDay: "2026-10-16",
+      activityDays: 3,
+      unverifiedDays: 0,
+    });
+    expect(s.budgets.failing.map((f: any) => [f.accountId, f.name])).toEqual([
+      [SA, "Riyadh Budgets"],
+    ]);
+    expect(s.budgets.failing[0].error).toContain("code 17");
+    // LA's history failed once (the claim test), then was read: not failing.
+    expect(s.budgets.historyFailing).toEqual([]);
+    expect(Date.parse(s.budgets.newestFetchedAt)).toBe(Date.parse(minutes(96)));
+    await at(NOW);
+  });
+
+  test("nobody but the service role reads or writes budgets", async () => {
+    for (const who of [CEO, MEMBER, null]) {
+      for (const sql of [
+        "SELECT public.cockpit_meta_budgets_apply('{}'::jsonb)",
+        "SELECT public.cockpit_meta_budget_history_apply('{}'::jsonb)",
+        "SELECT * FROM public.cockpit_meta_budgets",
+        "SELECT * FROM public.cockpit_meta_budget_days",
+        "SELECT * FROM public.cockpit_meta_budget_account_days",
+        "SELECT * FROM public.cockpit_meta_account_state",
+      ]) {
+        await actor(db, who);
+        await refused(() => db.query(sql), "42501");
+      }
+    }
+    await owner(db);
   });
 });

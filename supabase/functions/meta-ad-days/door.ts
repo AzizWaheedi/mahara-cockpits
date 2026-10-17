@@ -4,9 +4,9 @@
  * CRON_SECRET) gets past it, compared in constant time before the body is
  * read. The body is exactly one of:
  *
- *   {"job": "hourly"}                       yesterday and today, every spending account (202, in the background)
- *   {"job": "nightly"}                      the 28 days before today, and reach over the five windows at every level
- *   {"job": "backfill", "days": 90}         the N days before today (1 to 90); "accounts": ["123…"] for some only
+ *   {"job": "hourly"}                       yesterday and today, every spending account, and budgets (202, in the background)
+ *   {"job": "nightly"}                      the 28 days before today, reach over the windows at every level, 14 days of budget history
+ *   {"job": "backfill", "days": 90}         the N days before today (1 to 90) and their budget history; "accounts": ["123…"] for some only
  *   {"job": "continue"}                     work the queued tasks (pg_cron, every 2 minutes while some wait)
  *   {"job": "doctor"}                       reads only; the answer names what is missing (200)
  *

@@ -190,3 +190,58 @@ export function edgeAccount(id: string, name: string, currency: string, tz: stri
     ...(spend === null ? {} : { insights: { data: [{ spend: String(spend), date_start: "2026-10-14", date_stop: "2026-10-17" }] } }),
   };
 }
+
+// ---------------------------------------------------------------- budgets
+
+/**
+ * act_<id>/campaigns rows shaped like the read-only v25.0 reads of 2026-10-17
+ * (Khalda, Shades, Pidco): budgets as minor-unit strings, an ad set's unused
+ * budget field as "0", ads' effective statuses nested. Made-up ids.
+ */
+export function campaignRow(id: string, over: Row = {}, adsets: Row[] = []): Row {
+  return {
+    id,
+    name: `Campaign ${id.slice(-3)}`,
+    objective: "OUTCOME_LEADS",
+    status: "ACTIVE",
+    effective_status: "ACTIVE",
+    start_time: "2026-10-01T10:00:00+0300",
+    adsets: { data: adsets, paging: { cursors: { before: "b", after: "a" } } },
+    ...over,
+  };
+}
+
+export function adsetRow(id: string, ads: string[], over: Row = {}): Row {
+  return {
+    id,
+    name: `Ad set ${id.slice(-3)}`,
+    status: "ACTIVE",
+    effective_status: "ACTIVE",
+    start_time: "2026-10-01T10:00:00+0300",
+    budget_remaining: "0",
+    ads: { data: ads.map(effective_status => ({ effective_status })), paging: { cursors: { before: "b", after: "a" } } },
+    ...over,
+  };
+}
+
+/** Meta's activity log row: extra_data is a JSON string, object_type the legacy name. */
+export function activityRow(type: string, time: string, objectType: string, objectId: string, extra: Row): Row {
+  return { event_type: type, event_time: time, object_id: objectId, object_type: objectType, extra_data: JSON.stringify(extra) };
+}
+
+export const budgetChange = (from: number, to: number, currency = "USD") => ({
+  old_value: { type: "payment_amount", currency, old_value: from, additional_type: "status_string", additional_value: "" },
+  new_value: { type: "payment_amount", currency, new_value: to, additional_type: "status_string", additional_value: "Per day" },
+  type: "composite_data",
+});
+export const created = (budget: number | null, currency = "USD") =>
+  budget === null
+    ? { type: "composite_data" }
+    : { new_value: { type: "payment_amount", currency, new_value: budget, additional_type: "status_string", additional_value: "Per day" }, type: "composite_data" };
+export const runStatus = (from: number, to: number) => ({
+  run_status: { old_value: from, new_value: to },
+  old_value: from === 1 ? "Active" : from === 17 ? "Pending process" : "Inactive",
+  new_value: to === 1 ? "Active" : to === 17 ? "Pending process" : "Inactive",
+  type: "run_status",
+});
+export const accountStatus = (from: string, to: string) => ({ old_value: from, new_value: to, type: "status" });

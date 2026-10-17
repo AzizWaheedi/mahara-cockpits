@@ -99,3 +99,17 @@ export function discoveryWindow(job: JobKind, nowMs: number, backfillDays = MAX_
   const n = Math.min(Math.max(1, Math.floor(backfillDays)), MAX_BACKFILL_DAYS);
   return { since: addDays(today, -(n + 1)), until: addDays(today, 1) };
 }
+
+/** Days of budget history the nightly run rebuilds from Meta's activity log. */
+export const HISTORY_NIGHTLY_DAYS = 14;
+
+/**
+ * The account days a budget history task rebuilds, on the account's own
+ * clock: the 14 days before today on a nightly run, the N days before today
+ * on a backfill. Today is left to the hourly reads.
+ */
+export function historySpan(job: JobKind, nowMs: number, tz: string, backfillDays = MAX_BACKFILL_DAYS): Span {
+  const today = zonedDay(nowMs, tz);
+  const n = job === "backfill" ? Math.min(Math.max(1, Math.floor(backfillDays)), MAX_BACKFILL_DAYS) : HISTORY_NIGHTLY_DAYS;
+  return { since: addDays(today, -n), until: addDays(today, -1) };
+}

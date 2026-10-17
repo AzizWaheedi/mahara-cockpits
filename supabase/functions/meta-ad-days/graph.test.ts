@@ -52,6 +52,10 @@ describe("one Graph read", () => {
     for (const path of [
       "act_1111111111111/ads",
       "act_1111111111111/adsets/x",
+      "act_1111111111111/campaigns/x",
+      "act_1111111111111/activities/1",
+      "120000000000101/campaigns",
+      "act_1111111111111/adcreatives",
       "120000000000102",
       "123/owned_ad_accounts",
       "../act_1",
@@ -61,9 +65,16 @@ describe("one Graph read", () => {
       expect((await caught(metaGet(g.deps, path, {}))).kind).toBe("config");
     }
     expect(g.calls.length).toBe(0);
-    // The ad set list (for each lead ad set's destination) is one of them.
+    // The ad set list (for each lead ad set's destination) is one of them; so are the
+    // budgets (campaigns, ad sets nested) and their history (the activity log), GET only.
     await metaGet(g.deps, "act_1111111111111/adsets", { fields: "id,destination_type" });
-    expect(g.calls.length).toBe(1);
+    await metaGet(g.deps, "act_1111111111111/campaigns", { fields: "id,daily_budget" });
+    await metaGet(g.deps, "act_1111111111111/activities", { fields: "event_type", since: 1, until: 2 });
+    expect(g.calls.map(c => [c.method, graphPath(c)])).toEqual([
+      ["GET", "act_1111111111111/adsets"],
+      ["GET", "act_1111111111111/campaigns"],
+      ["GET", "act_1111111111111/activities"],
+    ]);
   });
 
   test("Meta's refusals are sorted into what the run does about them", async () => {

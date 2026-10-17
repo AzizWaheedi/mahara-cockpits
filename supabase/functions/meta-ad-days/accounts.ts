@@ -9,6 +9,14 @@
  * Mahara's own ad account (MaharaMedia) is left out like the calculator's
  * INTERNAL_ACCOUNTS: the board is about clients, and the CEO cockpit reads
  * that account on its own.
+ *
+ * Since 2026-10-17 the same two calls also bring each account's spending
+ * limit, amount spent and disable reason, and the discovery returns every
+ * listed account (`all`, with its Meta status) beside the ones that spent:
+ * the budgets are read for the accounts that spent and for those tied to an
+ * Active client, so a budget set and spending nothing shows (the spend-only
+ * list can never show it). The ad-day and reach reads stay on the accounts
+ * that spent.
  */
 import { MAHARA_BUSINESS_ID, metaPages, type GraphDeps, type Row } from "./graph.ts";
 import type { Span } from "./days.ts";
@@ -25,15 +33,21 @@ export type Account = {
   /** Spend over the discovery window, in the account's currency. */
   spend: number;
   edge: "owned" | "client";
+  /** Meta's disable_reason (0 none). */
+  disableReason: number | null;
+  /** The account spending limit and the amount spent against it, Meta's minor units as digits ("0": no limit). */
+  spendCap: string | null;
+  amountSpent: string | null;
 };
 
-export type Discovery = { accounts: Account[]; listed: number; internal: string[]; unreadable: string[] };
+/** accounts: the ones that spent (as before); all: every listed account but Mahara's own, each once. */
+export type Discovery = { accounts: Account[]; all: Account[]; listed: number; internal: string[]; unreadable: string[] };
 
 const isRow = (v: unknown): v is Row => typeof v === "object" && v !== null && !Array.isArray(v);
 const normal = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
 export function accountFields(span: Span): string {
-  return `id,name,currency,timezone_name,account_status,insights.time_range(${JSON.stringify({ since: span.since, until: span.until })}){spend}`;
+  return `id,name,currency,timezone_name,account_status,disable_reason,spend_cap,amount_spent,insights.time_range(${JSON.stringify({ since: span.since, until: span.until })}){spend}`;
 }
 
 /** One edge row as an account; null when it is not one. */
@@ -53,12 +67,23 @@ export function readAccount(row: Row, edge: "owned" | "client"): Account | null 
     status: typeof row.account_status === "number" ? row.account_status : null,
     spend: Number.isFinite(spend) && spend > 0 ? spend : 0,
     edge,
+    disableReason: typeof row.disable_reason === "number" ? row.disable_reason : null,
+    spendCap: digits(row.spend_cap),
+    amountSpent: digits(row.amount_spent),
   };
 }
 
-/** The accounts with spend in `span`, owned first, each once. */
+/** Meta's minor units as digits ("300000", or a number), else null. */
+function digits(v: unknown): string | null {
+  const s = typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? String(v) : typeof v === "string" ? v.trim() : "";
+  return /^[0-9]{1,18}$/.test(s) ? s : null;
+}
+
+/** The accounts with spend in `span`, owned first, each once; and every listed account. */
 export async function discoverAccounts(graph: GraphDeps, span: Span, only?: Set<string>): Promise<Discovery> {
   const byId = new Map<string, Account>();
+  const all = new Map<string, Account>();
+  const seen = new Set<string>();
   const internal: string[] = [];
   const unreadable: string[] = [];
   let listed = 0;
@@ -71,14 +96,16 @@ export async function discoverAccounts(graph: GraphDeps, span: Span, only?: Set<
         continue;
       }
       listed += 1;
-      if (byId.has(a.accountId)) continue;
+      if (seen.has(a.accountId)) continue;
+      seen.add(a.accountId);
       if (INTERNAL_ACCOUNT_IDS.has(a.accountId) || (a.name && INTERNAL_NAMES.has(normal(a.name)))) {
         if (a.spend > 0) internal.push(a.accountId);
         continue;
       }
       if (only && !only.has(a.accountId)) continue;
+      all.set(a.accountId, a);
       if (a.spend > 0) byId.set(a.accountId, a);
     }
   }
-  return { accounts: [...byId.values()], listed, internal, unreadable };
+  return { accounts: [...byId.values()], all: [...all.values()], listed, internal, unreadable };
 }
