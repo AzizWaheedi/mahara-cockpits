@@ -340,4 +340,31 @@ describe("the budgets read", () => {
     expect(adset(out, "120000000001603")).toMatchObject({ switchedOn: false, startsAt: "2026-10-19T06:00:00.000Z", whyNot: "Starts 19 Oct" });
     expect(adset(out, "120000000001604").startsAt).toBeNull();
   });
+
+  test("a waiting campaign on ad set budgets shows the ad sets that will run at its start, as a waiting CBO one shows its own; neither is switched on", () => {
+    const out = rows([
+      campaignRow("120000000001701", {}, [
+        adsetRow("120000000001702", ["ACTIVE"], { daily_budget: "2000", lifetime_budget: "0", budget_remaining: "2000", start_time: "2026-10-20T09:00:00+0300" }),
+        adsetRow("120000000001703", ["ACTIVE"], { daily_budget: "1500", lifetime_budget: "0", start_time: "2026-10-21T09:00:00+0300" }),
+        adsetRow("120000000001704", ["ACTIVE"], { status: "PAUSED", effective_status: "PAUSED", daily_budget: "9000", lifetime_budget: "0" }),
+      ]),
+    ]);
+    expect(campaign(out, "120000000001701")).toMatchObject({
+      budgetLevel: "adset",
+      budgetType: "daily",
+      dailyBudget: 35,
+      switchedOn: false,
+      delivering: false,
+      startsAt: "2026-10-20T06:00:00.000Z",
+      whyNot: "Starts 20 Oct",
+    });
+    // A running ABO campaign counts only the ad sets switched on: a waiting one is not added.
+    const running = rows([
+      campaignRow("120000000001801", {}, [
+        adsetRow("120000000001802", ["ACTIVE"], { daily_budget: "1000", lifetime_budget: "0" }),
+        adsetRow("120000000001803", ["ACTIVE"], { daily_budget: "1500", lifetime_budget: "0", start_time: "2026-10-21T09:00:00+0300" }),
+      ]),
+    ]);
+    expect(campaign(running, "120000000001801")).toMatchObject({ dailyBudget: 10, switchedOn: true, startsAt: null });
+  });
 });

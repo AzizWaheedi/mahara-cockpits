@@ -749,6 +749,11 @@ function budgetCells(
       }),
     };
   const n = b.cbo + b.abo;
+  // Why the ones not delivering are not, each its own sentence; an account's own reason is said once, with its name.
+  const heldWhy =
+    b.held && !(b.issues ?? []).some(i => i.words === b.held?.[2])
+      ? [b.held[2]]
+      : [];
   const said = [
     n === 0
       ? "No campaign is switched on with a daily budget now."
@@ -759,8 +764,9 @@ function budgetCells(
           .filter(Boolean)
           .join(", ")}.`,
     b.held
-      ? `${b.held[0]} of them ${b.held[0] === 1 ? "is" : "are"} not delivering ($${b.held[1]}.00 a day): ${b.held[2]}.`
+      ? `${b.held[0]} of them ${b.held[0] === 1 ? "is" : "are"} not delivering ($${b.held[1]}.00 a day).`
       : null,
+    ...heldWhy.map(w => `${w}.`),
     b.lifetime
       ? `${b.lifetime === 1 ? "1 campaign" : `${b.lifetime} campaigns`} on a lifetime budget ${b.lifetime === 1 ? "is" : "are"} left out.`
       : null,
@@ -778,6 +784,7 @@ function budgetCells(
       asOf: BUDGETS_AS_OF,
       notDelivering: b.held?.[0] ?? 0,
       ...(b.held ? { heldBudget: b.held[1] } : {}),
+      ...(heldWhy.length ? { notDeliveringWhy: heldWhy } : {}),
       ...(b.starting ? { starting: b.starting[0] } : {}),
       ...(b.issues
         ? {
@@ -1663,7 +1670,7 @@ function budgetCampaign(
               ? `${o.whyNot}: not counted until then.`
               : o.delivering
                 ? null
-                : `Not delivering now: ${o.whyNot}.`,
+                : `Not delivering now (${o.whyNot}).`,
             "Read 16 Oct 13:12 Kuwait time.",
           ]
             .filter(Boolean)

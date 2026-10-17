@@ -685,7 +685,8 @@ const ADSET_REASONS = ["Ads with issues", "Ads not approved yet", "Ads waiting f
  *
  * The budget: CBO the campaign's own; ABO the sum of the ad sets switched
  * on, delivering or not, so a campaign blocked by its ads, its account or a
- * spending limit shows the budget it is set to spend. A paused or ended ad
+ * spending limit shows the budget it is set to spend (a campaign waiting for
+ * its start: the ad sets that will run then, shown, not counted). A paused or ended ad
  * set never counts (hermes/cockpit-sync calculator.ts sums every ad set when
  * none is active: not here). Lifetime budgets stay lifetime: no daily figure.
  *
@@ -781,7 +782,10 @@ export function budgetRows(live: LiveCampaign[], account: AccountSnapshot, offse
     } else {
       // The ad sets switched on, delivering or not (a paused ABO campaign keeps
       // what its ad sets are set to, like a paused CBO one keeps its budget).
-      const counted = on.map(s => s.a);
+      // A campaign waiting for its start shows the ad sets that will run then
+      // (switched on or waiting), as a waiting CBO one shows its own budget;
+      // not switched on, so it counts only from its start.
+      const counted = (startsAt ? sets.filter(s => s.switchedOn || s.waiting) : on).map(s => s.a);
       const daily = counted.filter(a => a.dailyMinor !== null);
       const lifetime = counted.filter(a => a.lifetimeMinor !== null);
       dailyMinor = daily.length ? daily.reduce((n, a) => n + (a.dailyMinor ?? 0), 0) : null;

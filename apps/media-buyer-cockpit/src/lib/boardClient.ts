@@ -39,7 +39,8 @@ const YesterdaySchema = z
 
 /**
  * Budget/day: an ad account that needs action. issue: billing (a payment:
- * Meta status 3, 8, 9), account (it cannot run: disabled, closing, closed,
+ * Meta status 3, 8), billing_due (a payment due in the grace period, 9:
+ * still delivering), account (it cannot run: disabled, closing, closed,
  * under risk review), limit_reached, limit_near, balance_out, balance_low (a
  * prepaid balance); words in Meta's capitals.
  */
@@ -106,6 +107,8 @@ export const CellSchema = z
     asOf: text,
     notDelivering: num,
     heldBudget: num,
+    /** Why those not delivering are not, an account's own reason left out (accountIssues says it). */
+    notDeliveringWhy: z.array(z.string()).nullable().optional(),
     starting: num,
     accountIssues: z.array(AccountIssueSchema).nullable().optional(),
     /**

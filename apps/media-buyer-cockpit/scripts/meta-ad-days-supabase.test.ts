@@ -2404,6 +2404,7 @@ describe("budgets (2026-10-17)", () => {
   const K1 = "120000000017101";
   const K2 = "120000000017201";
   const K3 = "120000000017301";
+  const K4 = "120000000017401";
   const minutes = (n: number) =>
     new Date(Date.parse(NOW) + n * 60_000).toISOString();
   const laAccount = account(LA, "USD", {
@@ -2959,13 +2960,14 @@ describe("budgets (2026-10-17)", () => {
       Date.parse(acc.f),
     ]).toEqual([1, null, 6112.77, Date.parse(minutes(0))]);
 
-    // Read 2, half an hour later: K1 raised to $50, K2 gone (deleted), K3 switched on.
+    // Read 2, half an hour later: K1 raised to $50, K2 gone (deleted), K3 switched on, K4 on ad set budgets ($40).
     const r2 = await hourlyBudgets(30, [laAccount]);
     await apply(r2.claimed[0], minutes(36), [
       camp(LA, K1, { daily_budget: 50 }),
       camp(LA, K3, { daily_budget: 25 }),
+      camp(LA, K4, { budget_level: "adset", daily_budget: 40 }),
     ]);
-    // Read 3, 23:56: K1 paused since. Still 15 Oct in Los Angeles.
+    // Read 3, 23:56: K1 paused since, and every ad set of K4 (no budget switched on: none changed). Still 15 Oct in Los Angeles.
     const r3 = await hourlyBudgets(50, [laAccount]);
     await apply(r3.claimed[0], minutes(56), [
       camp(LA, K1, {
@@ -2977,12 +2979,21 @@ describe("budgets (2026-10-17)", () => {
         why_not: "Paused",
       }),
       camp(LA, K3, { daily_budget: 25 }),
+      camp(LA, K4, {
+        budget_level: "adset",
+        budget_type: null,
+        daily_budget: null,
+        budget_remaining: null,
+        switched_on: false,
+        delivering: false,
+        why_not: "Ad sets paused",
+      }),
     ]);
     const now = await q<any>(
       "SELECT level, object_id FROM cockpit_meta_budgets WHERE account_id = $1 ORDER BY object_id, level",
       [LA],
     );
-    expect(now.map(x => x.object_id)).toEqual([K1, K3]);
+    expect(now.map(x => x.object_id)).toEqual([K1, K3, K4]);
     const days = await q<any>(
       `SELECT campaign_id, to_char(day,'YYYY-MM-DD') d, daily_budget::text d_b, max_switched_on_budget::text m, max_switched_on_budget_usd::text mu,
               switched_on, switched_on_any, delivering, delivering_any, why_not, changed_during_day,
@@ -2994,7 +3005,7 @@ describe("budgets (2026-10-17)", () => {
       days.map(x => [
         x.campaign_id,
         x.d,
-        Number(x.d_b),
+        x.d_b === null ? null : Number(x.d_b),
         x.m === null ? null : Number(x.m),
         x.mu === null ? null : Number(x.mu),
         x.switched_on,
@@ -3024,6 +3035,20 @@ describe("budgets (2026-10-17)", () => {
       ],
       // Paused at the first read (no row), switched on from the second.
       [K3, "2026-10-15", 25, 25, 25, true, true, true, true, null, false],
+      // Every ad set paused by the last read: the $40 it was switched on with, and no budget change.
+      [
+        K4,
+        "2026-10-15",
+        null,
+        40,
+        40,
+        false,
+        true,
+        false,
+        true,
+        "Ad sets paused",
+        false,
+      ],
     ]);
     expect(Date.parse(days[0].f)).toBe(Date.parse(minutes(6)));
     expect(Date.parse(days[0].l)).toBe(Date.parse(minutes(56)));
@@ -3035,7 +3060,7 @@ describe("budgets (2026-10-17)", () => {
     expect(cover).toEqual({
       source: "snapshot",
       reads: 3,
-      campaigns: 3,
+      campaigns: 4,
       verified: true,
     });
 
@@ -3064,7 +3089,7 @@ describe("budgets (2026-10-17)", () => {
     await at(NOW);
   });
 
-  test("the history fills only the days no read covers, never over a snapshot row, and a later rebuild replaces it", async () => {
+  test("the history fills the days no read covers, and on a day a read covers only a campaign no read saw; never over a snapshot row, and a later rebuild replaces it", async () => {
     await at(minutes(100));
     const begin = (rows?: unknown) =>
       svc("cockpit_meta_ad_days_begin", {
@@ -3193,12 +3218,13 @@ describe("budgets (2026-10-17)", () => {
       ),
     ).toContain("never switched on");
     const rows = dayList.map(d => hrow(d.day));
-    // A campaign the reads of 15 Oct did not see: the history does not add it to a day the reads cover.
+    // A campaign the reads of 15 Oct never saw switched on (paused before the day's first read): the
+    // history adds it to that day, and the day's snapshot rows (K1's too) stand.
     rows.push(hrow("2026-10-15", { campaign_id: "120000000017901" }));
     const r = await write(t, rows);
     expect(r).toMatchObject({
       ok: true,
-      written: 3,
+      written: 4,
       days: 3,
       coveredByReads: 1,
       run: "ok",
@@ -3211,7 +3237,7 @@ describe("budgets (2026-10-17)", () => {
       held.map(x => [
         x.campaign_id,
         x.d,
-        Number(x.b),
+        x.b === null ? null : Number(x.b),
         Number(x.m),
         x.delivering,
         x.source,
@@ -3226,6 +3252,8 @@ describe("budgets (2026-10-17)", () => {
       [K1, "2026-10-15", 50, 50, false, "snapshot", true],
       [K2, "2026-10-15", 1104, 1104, false, "snapshot", true],
       [K3, "2026-10-15", 25, 25, true, "snapshot", true],
+      [K4, "2026-10-15", null, 40, false, "snapshot", true],
+      ["120000000017901", "2026-10-15", 20, 20, null, "activity", true],
     ]);
     const cover = await q<any>(
       "SELECT to_char(day,'YYYY-MM-DD') d, source, verified FROM cockpit_meta_budget_account_days WHERE account_id = $1 ORDER BY day",
@@ -3279,6 +3307,12 @@ describe("budgets (2026-10-17)", () => {
       ["2026-10-12", 25, true],
       ["2026-10-13", 20, true],
     ]);
+    // Its own row on the day the reads cover is replaced too: this rebuild did not hold it.
+    expect(
+      await q(
+        "SELECT 1 FROM cockpit_meta_budget_days WHERE campaign_id = '120000000017901'",
+      ),
+    ).toEqual([]);
     expect(b2.started).toBe(true);
     await at(NOW);
   });

@@ -937,6 +937,23 @@ export function budgetYesterdayWords(
     .join(" ");
 }
 
+/**
+ * The campaigns switched on but not delivering, their budgets and why, for a
+ * client's Budget used help: "1 campaign switched on is not delivering
+ * ($1,104 a day). Ads with issues." An account's own reason is said by
+ * accountIssueWords, with its name.
+ */
+export function notDeliveringWords(row: ClientRow): string | null {
+  const d = row.values.dailyBudget;
+  const n = d?.notDelivering ?? 0;
+  if (!d || !isNum(n) || n <= 0) return null;
+  const held = isNum(d.heldBudget) ? ` (${money(d.heldBudget)} a day)` : "";
+  return [
+    `${n === 1 ? "1 campaign switched on is" : `${n} campaigns switched on are`} not delivering${held}.`,
+    ...(d.notDeliveringWhy ?? []).map(w => `${w.replace(/\.+$/, "")}.`),
+  ].join(" ");
+}
+
 /** The ad accounts that need action, in Meta's words, for a client's Budget used and Budget/day help. */
 export function accountIssueWords(row: ClientRow): string | null {
   const issues = row.values.dailyBudget?.accountIssues ?? [];
@@ -946,7 +963,28 @@ export function accountIssueWords(row: ClientRow): string | null {
     .join(" ");
 }
 
-/** An account issue that stops spend now (not only a warning of one coming). */
+/**
+ * Budget used's help on the board: yesterday, the campaigns switched on that
+ * are not delivering and why, and the ad accounts that need action, so the
+ * reason a budget is not spent is there without opening Budget/day.
+ */
+export function budgetUsedWords(row: ClientRow): string | null {
+  return (
+    [
+      budgetYesterdayWords(row.values.budgetUsed),
+      notDeliveringWords(row),
+      accountIssueWords(row),
+    ]
+      .filter(Boolean)
+      .join(" ") || null
+  );
+}
+
+/**
+ * An account issue that stops spend now (not only a warning of one coming):
+ * a payment due in the grace period (billing_due, Meta status 9) still
+ * delivers.
+ */
 export const STOPPING_ISSUES = new Set([
   "billing",
   "account",
@@ -1029,6 +1067,10 @@ const ISSUE_WORDS: Record<
     n => `${owns(n)} ad account needs a payment`,
     n => `${n} need a payment on their ad accounts`,
   ],
+  billing_due: [
+    n => `${owns(n)} ad account has a payment due`,
+    n => `${n} have a payment due on their ad accounts`,
+  ],
   account: [
     n => `${owns(n)} ad account is not active`,
     n => `${n} have ad accounts that are not active`,
@@ -1055,6 +1097,7 @@ const ISSUE_ORDER = [
   "account",
   "limit_reached",
   "balance_out",
+  "billing_due",
   "limit_near",
   "balance_low",
 ];

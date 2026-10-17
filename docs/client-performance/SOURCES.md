@@ -214,7 +214,9 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
   `calculator.ts` sums every ad set when none is active: not here). Meta's
   string "0" is no budget. What is left today (`budget_remaining`) is the
   campaign's own on CBO and its counted ad sets' own on ABO (Meta's
-  campaign-level figure is not their sum).
+  campaign-level figure is not their sum). A campaign waiting for its start
+  shows the budget it will run on then (on ABO, its ad sets switched on or
+  waiting), counted only from its start.
 - **Delivering (the reason, never the filter):** the account's Meta status
   is 1 (active) or 9 (grace period), its spending limit or prepaid balance
   is not used up, the campaign and the ad set are ACTIVE and running, and
@@ -225,10 +227,13 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 - **Rule, Budget/day:** the daily budgets of the campaigns switched on now
   on the client's linked accounts, in USD; the budget now, whatever the time
   frame. Not judged. The note says how many of them are not delivering and
-  why ("1 of them is not delivering ($1,104.00 a day): Ads with issues"),
-  the lifetime budgets left out, the campaigns waiting for their start, and
-  the ad accounts that need action in Meta's words. No campaign switched on
-  is $0 with that sentence; an account whose budgets were never read is
+  why, each reason its own sentence ("1 of them is not delivering ($1,104.00
+  a day). Ads with issues."; an account's own reason is said once, with the
+  account's name), the lifetime budgets left out, the campaigns waiting for
+  their start, and the ad accounts that need action in Meta's words. No
+  campaign switched on is $0 with that sentence; budgets switched on only in
+  a currency with no fixed USD rate are not measured, with the amount in
+  their currency, never $0; an account whose budgets were never read is
   named ("Budgets for act_X (name) have not been read", with why when the
   last run knows: Mahara's business does not list it, or its read failed),
   never $0; one read more than 3 hours ago is named with the time.
@@ -255,7 +260,15 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
   admin can change it in Edit targets). Above 110% is a note, never a
   status. A linked account whose budgets were never read is named apart
   and makes the figure partial; the known days are counted over the
-  accounts that were read, never "0 of N days".
+  accounts that were read, never "0 of N days". An account whose budgets
+  start after the others' (added later, or its history not read) is said in
+  its own sentence ("Budgets for act_X are known from 17 Oct 2026") and
+  makes the figure partial; a day is known when every account whose budgets
+  had started by then has it. A history day switched on whose budget the
+  activity log does not show is left out and said. The help names the
+  campaigns switched on but not delivering, their budgets and why, and the
+  account that needs action, so the reason a budget is not spent is there
+  without opening Budget/day.
 - **Yesterday:** each account's own yesterday (the Los Angeles account's
   lags Kuwait's until about 10:00 Kuwait time), whatever the time frame:
   spend and budget of the campaign-days switched on with a daily budget,
@@ -271,8 +284,9 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
   is a third-party claim only. This is why the time frame is judged and a
   single day is not.
 - **History:** from the first hourly read, every read day is stored as it
-  was read (`source snapshot`, verified). The days before, and any whole day
-  no read covers, are rebuilt from Meta's activity log
+  was read (`source snapshot`, verified). The days before, any whole day no
+  read covers, and on a read day the campaigns no read saw switched on (one
+  paused before the day's first read), are rebuilt from Meta's activity log
   (`act_<id>/activities`: budget changes, campaign and ad set run status,
   account status) backwards from the live budgets (`source activity`), with
   the same switched-on rule. The log does not follow the ads, so these rows
@@ -280,7 +294,9 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
   when the campaign's own chain of changes ends at its live budget and
   status; a budget whose earlier value Meta logs as 0 (or not a daily
   budget) is unknown on the days before, never $0, and not verified; an end
-  time at midnight ends the day before. Budget used names the unverified
+  time at midnight ends the day before. Pausing a campaign, or every ad set
+  of an ABO one, is not a budget change; a change is a switched-on budget
+  unlike another the day was switched on with. Budget used names the unverified
   campaign-days it counts. A day with no row in
   `cockpit_meta_budget_account_days` was not read: its budgets are unknown,
   and Budget used is partial ("Over the 6 of 9 days whose budgets are
@@ -304,13 +320,18 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
   dot; lifetime budgets listed apart with what is left and the end date, no
   percentage; campaigns switched off now that spent in the time frame
   summed; each account's status and its spending limit or prepaid balance,
-  with how many days of the budgets switched on now that is.
+  with how many days of the budgets switched on now that is. An account
+  never read says why when the last run knows (Mahara's business does not
+  list it, or its read failed), and the page says the budgets are read
+  every hour only when nothing stops that.
 - **The board's line:** under the no-outcome line, only when something needs
   action, naming who (up to three clients per issue, then "and N more"):
   clients whose campaigns spent nothing yesterday on a running budget or
   are switched on but not delivering, clients under their budget in the
   time frame, an account that needs a payment or cannot run, an account at
-  or within a day of its spending limit or the end of its prepaid balance.
+  or within a day of its spending limit or the end of its prepaid balance,
+  and one with a payment due in its grace period (Meta status 9: it still
+  delivers, so its flag is a warning, not a stop).
   "Khalda and Shades spent nothing yesterday on a running budget; Ardon's
   account has less than a day of spending limit left." It sorts the clients
   by Budget used, lowest first; an account's issue is also flagged beside

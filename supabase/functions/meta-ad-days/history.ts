@@ -2,9 +2,10 @@
  * Budget history from Meta's activity log (GET act_<id>/activities, explicit
  * since and until, cursor-paged), for the days no hourly read covers: the
  * nightly run rebuilds the 14 days before today, a backfill its days. The
- * database writes only the account days no hourly read holds
- * (cockpit_meta_budget_history_apply), so the history mostly fills the days
- * before budgets were first read.
+ * database never writes over a read's row (cockpit_meta_budget_history_apply):
+ * the history fills the days before budgets were first read, and on a day
+ * the reads cover only the campaigns no read saw switched on (one paused
+ * before the day's first read).
  *
  * How (read-only check of 2026-10-17, 5 accounts, 14 days): the log names
  * every budget and status change with its old and new value, newest first.
@@ -350,7 +351,9 @@ export function rebuildBudgetHistory(input: HistoryInput): History {
       if (!states.some(s => s.switchedOn)) continue;
       const end = states[0];
       const onDaily = states.filter(s => s.switchedOn && s.budgetType === "daily" && s.daily !== null);
-      const budgets = new Set(states.map(s => `${s.budgetType}|${s.daily}`));
+      // A change is a switched-on budget unlike another the day was switched on with: pausing the
+      // campaign, or every ad set of an ABO one, changes no budget (the hourly read's rule).
+      const budgets = new Set(states.filter(s => s.switchedOn).map(s => `${s.budgetType}|${s.daily}`));
       const broken = c.brokenThrough !== null && D <= c.brokenThrough;
       if (broken) brokenToday.push(c.id);
       dayRows.push({

@@ -18,12 +18,15 @@
 --                     switched-on ad sets'), delivering or not: a campaign
 --                     blocked by its ads, its account or a spending limit is
 --                     the CEO's "budget set, not spending" and counts, with
---                     why in the note; one waiting for its start does not.
---                     The budget now, whatever the time frame; not judged.
---                     The accounts that need action (accountIssues: a
---                     payment, an account that cannot run, a spending limit
---                     or a prepaid balance used up or under a day away) are
---                     said in its note too.
+--                     why in the note (notDeliveringWhy, an account's own
+--                     reason said once with its name); one waiting for its
+--                     start does not. Budgets only in a currency with no
+--                     fixed USD rate: not measured, never $0. The budget
+--                     now, whatever the time frame; not judged. The accounts
+--                     that need action (accountIssues: a payment, a payment
+--                     due in the grace period, an account that cannot run,
+--                     a spending limit or a prepaid balance used up or under
+--                     a day away) are said in its note too.
 --       spendPerDay   the Spend cell / the ad days that cell covers (from the
 --                     first day the Meta store holds), with its floor and
 --                     partial; not judged
@@ -39,7 +42,10 @@
 --                     out and said. Partial when fewer days have budgets than
 --                     the ad window (before the history starts); a linked
 --                     account whose budgets were never read is named, never
---                     "0 of N days". Lifetime budgets are left out and said.
+--                     "0 of N days", and one whose budgets start after the
+--                     others' is said apart. A history day switched on whose
+--                     budget the log does not show is left out and said.
+--                     Lifetime budgets are left out and said.
 --                     Above 110% is a note (Meta may spend up to 75% over a
 --                     daily budget on one day, at most 7 times it in a week),
 --                     never a status. Extras: budgetDays, yesterday {day on
@@ -255,8 +261,8 @@ DECLARE
   w record;
   cb public.cockpit_meta_budgets;
   v_read_n integer; v_unread_n integer; v_unread text; v_as_of timestamptz; v_stale text;
-  v_issues jsonb; v_issue_words text;
-  v_hist_n integer; v_known integer := 0; v_any_read boolean := false; v_first date; v_hist_from date; v_lag text;
+  v_issues jsonb; v_issue_words text; v_why text[]; v_why_words text; v_all_unpriced boolean; v_local text;
+  v_reads jsonb; v_hist_n integer; v_known integer := 0; v_any_read boolean := false; v_first date; v_lag text; v_late text;
   v_y_read integer; v_y_accounts integer; v_y_min date; v_y_max date;
   v_ys numeric; v_ys_unpriced integer; v_ys_read boolean;
   v_zero date;
@@ -305,18 +311,19 @@ BEGIN
            count(*) FILTER (WHERE b.switched_on AND b.budget_type = 'lifetime')::int AS l_n,
            count(*) FILTER (WHERE b.switched_on AND NOT b.delivering AND b.budget_type = 'daily')::int AS h_n,
            sum(b.daily_budget_usd) FILTER (WHERE b.switched_on AND NOT b.delivering AND b.budget_type = 'daily') AS h_usd,
-           string_agg(DISTINCT b.why_not, '; ' ORDER BY b.why_not)
-             FILTER (WHERE b.switched_on AND NOT b.delivering AND b.budget_type = 'daily') AS h_why,
+           array_agg(DISTINCT b.why_not ORDER BY b.why_not)
+             FILTER (WHERE b.switched_on AND NOT b.delivering AND b.budget_type = 'daily' AND b.why_not IS NOT NULL) AS h_whys,
            count(*) FILTER (WHERE b.starts_at IS NOT NULL)::int AS s_n,
            string_agg(DISTINCT b.why_not, '; ' ORDER BY b.why_not) FILTER (WHERE b.starts_at IS NOT NULL) AS s_why
       INTO n
     FROM public.cockpit_meta_budgets b
     WHERE b.level = 'campaign' AND b.account_id = ANY(v_accounts);
 
-    -- The accounts that need action (one issue each, the account's status first): a payment (3, 8, 9),
-    -- an account that cannot run (2, 7, 100, 101, 201...), a spending limit reached or under a day of
-    -- budget away, or on a prepaid account its balance used up or under a day away. A spending limit
-    -- whose amount spent Meta did not give is not known: no issue, never $0 spent.
+    -- The accounts that need action (one issue each, the account's status first): a payment (3, 8),
+    -- a payment due in the grace period (9, still delivering: billing_due), an account that cannot run
+    -- (2, 7, 100, 101, 201...), a spending limit reached or under a day of budget away, or on a prepaid
+    -- account its balance used up or under a day away. A spending limit whose amount spent Meta did not
+    -- give is not known: no issue, never $0 spent.
     SELECT jsonb_agg(jsonb_build_object('accountId', c.account_id, 'name', c.name, 'issue', i.issue, 'words', i.words) ORDER BY c.account_id),
            string_agg(format('%s (%s).', i.words, coalesce(c.name, 'act_' || c.account_id)), ' ' ORDER BY c.account_id)
       INTO v_issues, v_issue_words
@@ -327,13 +334,15 @@ BEGIN
     CROSS JOIN LATERAL (SELECT CASE WHEN s.spend_cap IS NOT NULL AND s.amount_spent IS NOT NULL
                                     THEN greatest(s.spend_cap - s.amount_spent, 0) END AS amt) l
     CROSS JOIN LATERAL (SELECT CASE
-        WHEN s.account_status IN (3, 8, 9) THEN 'billing'
+        WHEN s.account_status IN (3, 8) THEN 'billing'
+        WHEN s.account_status = 9 THEN 'billing_due'
         WHEN s.account_status IS NOT NULL AND s.account_status <> 1 THEN 'account'
         WHEN l.amt IS NOT NULL AND l.amt <= 0 THEN CASE WHEN s.is_prepay THEN 'balance_out' ELSE 'limit_reached' END
         WHEN l.amt IS NOT NULL AND d.daily > 0 AND l.amt < d.daily THEN CASE WHEN s.is_prepay THEN 'balance_low' ELSE 'limit_near' END
       END AS issue) k
     CROSS JOIN LATERAL (SELECT k.issue, CASE k.issue
         WHEN 'billing' THEN public.cockpit_board_account_words(s.account_status)
+        WHEN 'billing_due' THEN public.cockpit_board_account_words(s.account_status)
         WHEN 'account' THEN public.cockpit_board_account_words(s.account_status)
         WHEN 'limit_reached' THEN 'Spending limit reached'
         WHEN 'limit_near' THEN format('Spending limit nearly used: %s left, under a day of budget', public.cockpit_board_money(l.amt, s.currency))
@@ -342,32 +351,54 @@ BEGIN
       END AS words) i
     WHERE k.issue IS NOT NULL;
 
+    -- Why the ones not delivering are not, each its own sentence (never after a second colon). An
+    -- account's own words are left out here: v_issue_words says them once, with the account's name.
+    SELECT array_agg(x ORDER BY x),
+           string_agg(rtrim(btrim(x), '.') || '.', ' ' ORDER BY x)
+      INTO v_why, v_why_words
+    FROM unnest(n.h_whys) x
+    WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(v_issues, '[]'::jsonb)) i WHERE i->>'words' = x);
+
+    -- Every daily budget switched on in a currency with no fixed USD rate: not measured, never $0.
+    v_all_unpriced := n.d_n > 0 AND n.d_usd IS NULL;
+    IF v_all_unpriced THEN
+      SELECT string_agg(public.cockpit_board_money(s.amt, s.currency), ' and ' ORDER BY s.currency) INTO v_local
+      FROM (SELECT b.currency, sum(b.daily_budget) AS amt FROM public.cockpit_meta_budgets b
+            WHERE b.level = 'campaign' AND b.account_id = ANY(v_accounts) AND b.switched_on AND b.budget_type = 'daily'
+            GROUP BY b.currency) s;
+    END IF;
+
     IF v_read_n = 0 THEN
       v_daily := public.cockpit_board_cell(NULL, NULL, p_targets, NULL, NULL, NULL, 'not_measured', v_unread);
     ELSE
-      v_daily := public.cockpit_board_cell(NULL, round(coalesce(n.d_usd, 0), 2), p_targets, NULL, NULL, NULL, NULL,
+      v_daily := public.cockpit_board_cell(NULL, CASE WHEN NOT v_all_unpriced THEN round(coalesce(n.d_usd, 0), 2) END, p_targets,
+        NULL, NULL, NULL, CASE WHEN v_all_unpriced THEN 'not_measured' END,
         concat_ws(' ',
           CASE WHEN n.d_n = 0 THEN 'No campaign is switched on with a daily budget now.'
                ELSE format('%s switched on now: %s.', CASE WHEN n.d_n = 1 THEN '1 campaign' ELSE n.d_n || ' campaigns' END,
                  concat_ws(', ', CASE WHEN n.d_cbo > 0 THEN n.d_cbo || ' on a campaign budget' END,
                                  CASE WHEN n.d_abo > 0 THEN n.d_abo || ' on ad set budgets' END)) END,
-          CASE WHEN n.h_n > 0 THEN format('%s of them %s not delivering%s: %s.',
+          CASE WHEN v_all_unpriced THEN format('%s %s a day, in a currency with no fixed USD rate.',
+            CASE WHEN n.d_n = 1 THEN 'Its budget is' ELSE 'Their budgets add up to' END, v_local) END,
+          CASE WHEN n.h_n > 0 THEN format('%s of them %s not delivering%s.',
             n.h_n, CASE WHEN n.h_n = 1 THEN 'is' ELSE 'are' END,
-            CASE WHEN n.h_usd IS NOT NULL THEN format(' (%s a day)', public.cockpit_board_fmt(n.h_usd, 'usd')) ELSE '' END, n.h_why) END,
+            CASE WHEN n.h_usd IS NOT NULL THEN format(' (%s a day)', public.cockpit_board_fmt(n.h_usd, 'usd')) ELSE '' END) END,
+          CASE WHEN n.h_n > 0 THEN v_why_words END,
           CASE WHEN n.l_n > 0 THEN format('%s on a lifetime budget %s left out.',
             CASE WHEN n.l_n = 1 THEN '1 campaign' ELSE n.l_n || ' campaigns' END, CASE WHEN n.l_n = 1 THEN 'is' ELSE 'are' END) END,
           CASE WHEN n.s_n > 0 THEN format('%s waiting for %s start, not counted yet: %s.',
             CASE WHEN n.s_n = 1 THEN '1 campaign is' ELSE n.s_n || ' campaigns are' END, CASE WHEN n.s_n = 1 THEN 'its' ELSE 'their' END, n.s_why) END,
-          CASE WHEN n.d_unpriced > 0 THEN format('%s of them %s in a currency with no fixed USD rate, so this is at least the budget.',
+          CASE WHEN n.d_unpriced > 0 AND NOT v_all_unpriced THEN format('%s of them %s in a currency with no fixed USD rate, so this is at least the budget.',
             n.d_unpriced, CASE WHEN n.d_unpriced = 1 THEN 'is' ELSE 'are' END) END,
-          CASE WHEN v_unread_n > 0 THEN v_unread || ' So this is at least the budget.' END,
+          CASE WHEN v_unread_n > 0 THEN v_unread || CASE WHEN v_all_unpriced THEN '' ELSE ' So this is at least the budget.' END END,
           v_issue_words,
           v_stale,
           format('Read %s Kuwait time: the budget now, whatever the time frame.', to_char(v_as_of AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'))),
         jsonb_build_object('campaigns', n.d_n, 'lifetime', n.l_n, 'asOf', v_as_of, 'notDelivering', n.h_n)
           || CASE WHEN n.h_n > 0 THEN jsonb_build_object('heldBudget', round(n.h_usd, 2)) ELSE '{}'::jsonb END
+          || CASE WHEN n.h_n > 0 AND v_why IS NOT NULL THEN jsonb_build_object('notDeliveringWhy', to_jsonb(v_why)) ELSE '{}'::jsonb END
           || CASE WHEN n.s_n > 0 THEN jsonb_build_object('starting', n.s_n) ELSE '{}'::jsonb END
-          || CASE WHEN n.d_unpriced > 0 OR v_unread_n > 0 THEN jsonb_build_object('atLeast', true) ELSE '{}'::jsonb END
+          || CASE WHEN NOT v_all_unpriced AND (n.d_unpriced > 0 OR v_unread_n > 0) THEN jsonb_build_object('atLeast', true) ELSE '{}'::jsonb END
           || CASE WHEN v_issues IS NOT NULL THEN jsonb_build_object('accountIssues', v_issues) ELSE '{}'::jsonb END);
     END IF;
   ELSE
@@ -387,7 +418,7 @@ BEGIN
           CASE WHEN cb.budget_level = 'campaign' THEN 'The campaign''s own budget.' ELSE 'Its ad sets'' budgets, added up.' END,
           CASE WHEN cb.currency <> 'USD' THEN format('%s a day.', public.cockpit_board_money(cb.daily_budget, cb.currency)) END,
           CASE WHEN cb.starts_at IS NOT NULL THEN format('%s: not counted until then.', cb.why_not)
-               WHEN NOT cb.delivering THEN format('Not delivering now: %s.', cb.why_not) END,
+               WHEN NOT cb.delivering THEN format('Not delivering now (%s).', rtrim(btrim(cb.why_not), '.')) END,
           format('Read %s Kuwait time.', to_char(cb.fetched_at AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI'))))
     END;
   END IF;
@@ -397,7 +428,9 @@ BEGIN
   -- campaign-day counts when the campaign was switched on with a daily budget
   -- at any read (or moment, for the history) of the day, at the highest daily
   -- budget it was switched on with (2026-10-17: a campaign paused at noon
-  -- keeps the budget it spent that morning against, CBO and ABO alike).
+  -- keeps the budget it spent that morning against, CBO and ABO alike). A
+  -- history day switched on whose budget the activity log cannot give (the
+  -- day before a change whose old side is 0) is left out and said.
   WITH c AS (
     SELECT * FROM jsonb_to_recordset(v_clocks) AS c(account_id text, name text, tz text, today date)
   ), bd AS (
@@ -406,7 +439,7 @@ BEGIN
       (v_ad_ok AND d.day BETWEEN p_from AND v_win_to AND d.day < c.today) AS in_win
     FROM public.cockpit_meta_budget_days d JOIN c ON c.account_id = d.account_id
     WHERE (p_campaign IS NULL OR d.campaign_id = p_campaign)
-      AND d.switched_on_any AND (d.max_switched_on_budget IS NOT NULL OR d.budget_type = 'lifetime')
+      AND d.switched_on_any AND (d.max_switched_on_budget IS NOT NULL OR d.budget_type = 'lifetime' OR d.source = 'activity')
       AND (d.day = c.today - 1 OR (v_ad_ok AND d.day BETWEEN p_from AND v_win_to AND d.day < c.today))
   ), pr AS (
     SELECT bd.*, coalesce(s.spend, 0) AS spend, s.unpriced,
@@ -418,7 +451,8 @@ BEGIN
                         FROM public.cockpit_meta_ad_days m
                         WHERE m.campaign_id = bd.campaign_id AND m.day = bd.day AND m.account_id = bd.account_id) s
   ), ok AS (
-    SELECT pr.*, pr.max_b IS NOT NULL AS daily, (pr.max_usd IS NOT NULL AND pr.unpriced = 0 AND pr.ad_read) AS counted
+    SELECT pr.*, pr.max_b IS NOT NULL AS daily, (pr.max_b IS NULL AND pr.budget_type IS DISTINCT FROM 'lifetime') AS no_budget,
+      (pr.max_usd IS NOT NULL AND pr.unpriced = 0 AND pr.ad_read) AS counted
     FROM pr
   )
   SELECT
@@ -430,7 +464,8 @@ BEGIN
     string_agg(DISTINCT coalesce(ok.account_name, 'ad account ' || ok.account_id), ', ')
       FILTER (WHERE ok.in_win AND ok.daily AND NOT ok.ad_read) AS unread_names,
     count(*) FILTER (WHERE ok.in_win AND ok.daily AND ok.ad_read AND NOT ok.counted)::int AS unpriced,
-    count(DISTINCT ok.campaign_id) FILTER (WHERE ok.in_win AND NOT ok.daily)::int AS lifetime,
+    count(DISTINCT ok.campaign_id) FILTER (WHERE ok.in_win AND NOT ok.daily AND NOT ok.no_budget)::int AS lifetime,
+    count(*) FILTER (WHERE ok.in_win AND ok.no_budget)::int AS no_budget,
     count(*) FILTER (WHERE ok.in_win AND ok.counted AND ok.changed_during_day)::int AS changed,
     count(*) FILTER (WHERE ok.in_win AND ok.counted AND ok.source = 'activity' AND NOT ok.verified)::int AS unverified,
     sum(ok.spend) FILTER (WHERE ok.is_y AND ok.counted) AS y_spend,
@@ -440,29 +475,37 @@ BEGIN
     INTO w
   FROM ok;
 
-  -- The days whose budgets are known for every linked account that has been read (one never read is named
-  -- apart, never a "0 of N days"), and why not the others.
+  -- The linked accounts that have been read (one never read is named apart, never a "0 of N days"), each
+  -- with the first day its budgets are stored. A day is known when at least one of them had started by
+  -- then and every one that had has that day; an account whose budgets start after the others' (added
+  -- later, or its history not read) is said in its own sentence, never as "0 of N days".
+  SELECT coalesce(jsonb_agg(jsonb_build_object('account_id', c.account_id, 'name', c.name, 'tz', c.tz, 'today', c.today,
+           'first', f.first)), '[]'::jsonb)
+    INTO v_reads
+  FROM jsonb_to_recordset(v_clocks) AS c(account_id text, name text, tz text, today date)
+  LEFT JOIN LATERAL (SELECT min(x.day) AS first FROM public.cockpit_meta_budget_account_days x WHERE x.account_id = c.account_id) f ON true
+  WHERE f.first IS NOT NULL OR EXISTS (SELECT 1 FROM public.cockpit_meta_account_state s WHERE s.account_id = c.account_id);
   WITH c AS (
-    SELECT c.* FROM jsonb_to_recordset(v_clocks) AS c(account_id text, name text, tz text, today date)
-    WHERE EXISTS (SELECT 1 FROM public.cockpit_meta_account_state s WHERE s.account_id = c.account_id)
-       OR EXISTS (SELECT 1 FROM public.cockpit_meta_budget_account_days x WHERE x.account_id = c.account_id)
+    SELECT r.*, min(r.first) OVER () AS first_any
+    FROM jsonb_to_recordset(v_reads) AS r(account_id text, name text, tz text, today date, first date)
   )
-  SELECT count(*)::int,
-         bool_or(f.first IS NOT NULL AND f.first <= v_win_to), max(f.first), min(f.first),
+  SELECT count(*)::int, min(c.first),
          string_agg(format('%s keeps %s time, so %s is not over there yet', coalesce(c.name, 'ad account ' || c.account_id), c.tz,
-           to_char(v_win_to, 'DD Mon')), '; ' ORDER BY c.account_id) FILTER (WHERE v_ad_ok AND v_win_to >= c.today)
-    INTO v_hist_n, v_any_read, v_hist_from, v_first, v_lag
-  FROM c
-  LEFT JOIN LATERAL (SELECT min(x.day) AS first FROM public.cockpit_meta_budget_account_days x WHERE x.account_id = c.account_id) f ON true;
+           to_char(v_win_to, 'DD Mon')), '; ' ORDER BY c.account_id) FILTER (WHERE v_ad_ok AND v_win_to >= c.today),
+         string_agg(format('Budgets for act_%s%s are known from %s.', c.account_id, coalesce(' (' || c.name || ')', ''),
+           to_char(c.first, 'DD Mon YYYY')), ' ' ORDER BY c.account_id)
+           FILTER (WHERE v_ad_ok AND c.first > c.first_any AND c.first > p_from)
+    INTO v_hist_n, v_first, v_lag, v_late
+  FROM c;
   IF v_ad_ok AND v_hist_n > 0 THEN
     SELECT count(*)::int INTO v_known
     FROM generate_series(0, v_win_to - p_from) g(i)
-    WHERE NOT EXISTS (
-      SELECT 1 FROM jsonb_to_recordset(v_clocks) AS c(account_id text, name text, tz text, today date)
-      WHERE (EXISTS (SELECT 1 FROM public.cockpit_meta_account_state s WHERE s.account_id = c.account_id)
-             OR EXISTS (SELECT 1 FROM public.cockpit_meta_budget_account_days x WHERE x.account_id = c.account_id))
-        AND NOT (p_from + g.i < c.today AND EXISTS (SELECT 1 FROM public.cockpit_meta_budget_account_days x
-                                                    WHERE x.account_id = c.account_id AND x.day = p_from + g.i)));
+    WHERE EXISTS (SELECT 1 FROM jsonb_to_recordset(v_reads) AS c(account_id text, first date) WHERE c.first <= p_from + g.i)
+      AND NOT EXISTS (
+        SELECT 1 FROM jsonb_to_recordset(v_reads) AS c(account_id text, today date, first date)
+        WHERE c.first <= p_from + g.i
+          AND NOT (p_from + g.i < c.today AND EXISTS (SELECT 1 FROM public.cockpit_meta_budget_account_days x
+                                                      WHERE x.account_id = c.account_id AND x.day = p_from + g.i)));
     SELECT EXISTS (SELECT 1 FROM jsonb_to_recordset(v_clocks) AS c(account_id text, name text, tz text, today date)
                    JOIN public.cockpit_meta_budget_account_days x ON x.account_id = c.account_id
                    WHERE x.day BETWEEN p_from AND v_win_to AND x.day < c.today)
@@ -527,18 +570,23 @@ BEGIN
         CASE WHEN v_unread_n > 0 THEN v_unread END), v_extra);
   ELSE
     v_pair := public.cockpit_board_paired(v_known, v_ad_days) - 'note';
-    IF w.unread > 0 OR w.unpriced > 0 OR v_unread_n > 0 THEN v_pair := v_pair || jsonb_build_object('partial', true); END IF;
+    IF w.unread > 0 OR w.unpriced > 0 OR w.no_budget > 0 OR v_unread_n > 0 OR v_late IS NOT NULL THEN
+      v_pair := v_pair || jsonb_build_object('partial', true);
+    END IF;
     v_note := nullif(concat_ws(' ',
       CASE WHEN v_unread_n > 0 THEN v_unread END,
       CASE WHEN v_known < v_ad_days THEN concat_ws(' ',
         CASE WHEN v_known = 1 THEN format('Over the one day of %s whose budgets are known.', v_ad_days)
              ELSE format('Over the %s of %s days whose budgets are known.', v_known, v_ad_days) END,
-        CASE WHEN p_from < v_hist_from THEN format('Budgets are stored from %s.', to_char(v_hist_from, 'DD Mon YYYY')) END,
+        CASE WHEN p_from < v_first THEN format('Budgets are stored from %s.', to_char(v_first, 'DD Mon YYYY')) END,
         CASE WHEN v_lag IS NOT NULL THEN v_lag || '.' END) END,
+      v_late,
       CASE WHEN w.unread > 0 THEN format('%s campaign-day%s with a daily budget %s left out: the spend of %s was not read those days.',
         w.unread, CASE WHEN w.unread = 1 THEN '' ELSE 's' END, CASE WHEN w.unread = 1 THEN 'is' ELSE 'are' END, w.unread_names) END,
       CASE WHEN w.unpriced > 0 THEN format('%s campaign-day%s in a currency with no fixed USD rate %s left out.',
         w.unpriced, CASE WHEN w.unpriced = 1 THEN '' ELSE 's' END, CASE WHEN w.unpriced = 1 THEN 'is' ELSE 'are' END) END,
+      CASE WHEN w.no_budget > 0 THEN format('%s campaign-day%s switched on with a budget Meta''s activity log does not show %s left out.',
+        w.no_budget, CASE WHEN w.no_budget = 1 THEN '' ELSE 's' END, CASE WHEN w.no_budget = 1 THEN 'is' ELSE 'are' END) END,
       CASE WHEN w.lifetime > 0 THEN format('%s on a lifetime budget %s left out.',
         CASE WHEN w.lifetime = 1 THEN '1 campaign' ELSE w.lifetime || ' campaigns' END, CASE WHEN w.lifetime = 1 THEN 'is' ELSE 'are' END) END,
       CASE WHEN w.changed > 0 THEN format('A budget changed during %s of these campaign-days; each day counts the highest budget it was switched on with.',
@@ -549,7 +597,7 @@ BEGIN
       v_used := CASE
         WHEN p_campaign IS NOT NULL AND cb.budget_type = 'lifetime' THEN public.cockpit_board_cell('budget_used', NULL, p_targets, NULL,
           NULL, NULL, 'not_measured', 'A lifetime budget: no daily figure.', v_extra || v_pair)
-        WHEN w.unread > 0 OR w.unpriced > 0
+        WHEN w.unread > 0 OR w.unpriced > 0 OR w.no_budget > 0
         THEN public.cockpit_board_cell('budget_used', NULL, p_targets, NULL, NULL, NULL, 'not_measured', v_note, v_extra || v_pair)
         ELSE public.cockpit_board_cell('budget_used', NULL, p_targets, 0, 0, 0, 'too_few',
           concat_ws(' ', 'No campaign was switched on with a daily budget in these days.', v_note), v_extra || v_pair) END;
@@ -633,6 +681,8 @@ DECLARE
   v_win_to date := (p_cover->>'winTo')::date;
   v_clocks jsonb;
   v_as_of timestamptz;
+  v_why_all boolean;
+  v_unlisted boolean;
   v_account jsonb;
   v_campaigns jsonb;
   v_paused jsonb;
@@ -653,7 +703,7 @@ BEGIN
           'daysLeft', CASE WHEN d.daily > 0 AND l.amt IS NOT NULL THEN round(l.amt / d.daily, 1) END,
           'prepaid', coalesce(s.is_prepay, false)) END,
       'words', nullif(concat_ws(' ',
-          CASE WHEN s.account_id IS NULL THEN format('Budgets for act_%s have not been read.', c.account_id)
+          CASE WHEN s.account_id IS NULL THEN format('Budgets for act_%s have not been read%s.', c.account_id, coalesce(u.why, ''))
                ELSE public.cockpit_board_account_words(s.account_status) || '.' END,
           CASE
             WHEN s.account_id IS NULL THEN NULL
@@ -669,10 +719,22 @@ BEGIN
                         WHEN l.amt < d.daily THEN ' (under a day of budget)'
                         WHEN round(l.amt / d.daily, 1) = 1 THEN ' (about 1 day of budget)'
                         ELSE format(' (about %s days of budget)', to_char(round(l.amt / d.daily, 1), 'FM999,990.9')) END) END), ''))
-      ORDER BY c.account_id)
-    INTO v_as_of, v_account
+      ORDER BY c.account_id),
+      bool_and(u.why IS NOT NULL) FILTER (WHERE s.account_id IS NULL),
+      coalesce(bool_or(u.why LIKE '%does not list%'), false)
+    INTO v_as_of, v_account, v_why_all, v_unlisted
   FROM jsonb_to_recordset(v_clocks) AS c(account_id text, name text, tz text, today date)
   LEFT JOIN public.cockpit_meta_account_state s ON s.account_id = c.account_id
+  -- Why an account was never read, when the last run knows (as cockpit_board_budget_cells says it).
+  CROSS JOIN LATERAL (SELECT CASE
+      WHEN s.account_id IS NOT NULL THEN NULL
+      WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(p_meta->'budgets'->'unlisted', '[]'::jsonb)) x
+                   WHERE coalesce(x->>'accountId', x #>> '{}') = c.account_id)
+        THEN ': Mahara''s business does not list the account'
+      WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(p_meta->'budgets'->'failing', '[]'::jsonb)) x
+                   WHERE x->>'accountId' = c.account_id)
+        THEN ': the last read failed'
+    END AS why) u
   LEFT JOIN LATERAL (SELECT e->>'currency' AS currency FROM jsonb_array_elements(coalesce(p_meta->'accounts', '[]'::jsonb)) e
                      WHERE e->>'accountId' = c.account_id LIMIT 1) j ON true
   LEFT JOIN LATERAL (SELECT sum(b.daily_budget) AS daily FROM public.cockpit_meta_budgets b
@@ -752,7 +814,10 @@ BEGIN
   RETURN jsonb_build_object(
     'asOf', v_as_of,
     'note', concat_ws(' ',
-      CASE WHEN v_as_of IS NULL THEN 'Meta budgets have not been read for the linked ad account yet; they are read every hour.'
+      -- Read every hour, unless the last run knows why it was not (the account's words say why).
+      CASE WHEN v_as_of IS NULL AND coalesce(v_why_all, false) THEN concat_ws(' ', 'Meta budgets have not been read for the linked ad account.',
+             CASE WHEN v_unlisted THEN 'Ask the client to share the ad account with Mahara''s business in Meta; it is read every hour after that.' END)
+           WHEN v_as_of IS NULL THEN 'Meta budgets have not been read for the linked ad account yet; they are read every hour.'
            ELSE format('Budgets as Meta had them at %s Kuwait time; spend runs to yesterday on each ad account''s own clock.',
              to_char(v_as_of AT TIME ZONE 'Asia/Kuwait', 'DD Mon HH24:MI')) END,
       'One day is not judged: Meta may spend up to 75% over a daily budget on a day, and at most 7 times it in a week.'),

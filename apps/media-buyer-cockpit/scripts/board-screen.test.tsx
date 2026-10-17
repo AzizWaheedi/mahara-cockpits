@@ -536,6 +536,13 @@ describe("the grid", () => {
         .closest("table")
         .querySelector('th[aria-sort="ascending"]'),
     ).toBeTruthy();
+    // The arrow hangs off the label's own first word, so a label wrapped to
+    // two lines keeps it beside its text, never at the far side of the cell.
+    await click(button("Sort by Budget used"));
+    const arrow = button("Sort by Budget used").querySelector("svg");
+    expect(text(arrow.parentElement)).toBe("Budget");
+    expect(arrow.parentElement.className).toContain("relative");
+    expect(text(button("Sort by Budget used"))).toBe("Budget used");
   });
 
   test("the column picker shows a column, and the choice is remembered", async () => {
@@ -864,8 +871,35 @@ describe("budgets", () => {
       "A, B, C and 2 more spent nothing yesterday on a running budget; F has a budget switched on that is not delivering; G spent under its budget in this time frame; H and I need a payment on their ad accounts; Harbor Kitchens' ad account is not active.",
     );
     expect(columns.budgetSentence(facts({ off: false }))).toBeNull();
+    // A payment due in the grace period: said, and never a flag that spend has stopped.
+    expect(
+      columns.budgetSentence(facts({ issues: { billing_due: ["Ardon"] } })),
+    ).toBe("Ardon's ad account has a payment due.");
+    expect(columns.STOPPING_ISSUES.has("billing_due")).toBe(false);
+    expect(columns.STOPPING_ISSUES.has("billing")).toBe(true);
     // An Arabic name is kept apart from the English around it.
     expect(columns.nameList(["مطابخ الريم"])).toBe("\u2068مطابخ الريم\u2069");
+  });
+
+  test("Budget used's help says why a budget is not spent: the campaigns not delivering and the account, each reason once", () => {
+    const board = boardFixture(client.shiftDay(today, -29), today, today);
+    const rowFor = (loc: string) =>
+      board.clients.find((c: any) => c.locationId === loc);
+    // Blocked by its ads: the reason is on Budget used, not only on Budget/day.
+    expect(columns.notDeliveringWords(rowFor("locFixHarbor01"))).toBe(
+      "1 campaign switched on is not delivering ($30 a day). Ads with issues.",
+    );
+    expect(columns.budgetUsedWords(rowFor("locFixHarbor01"))).toContain(
+      "1 campaign switched on is not delivering ($30 a day). Ads with issues. Spending limit nearly used: 140.00 SAR left, under a day of budget (Harbor Kitchens ads).",
+    );
+    // Stopped by its account: the account's words once, with its name.
+    const reem = columns.budgetUsedWords(rowFor("locFixReem0004")) as string;
+    expect(reem).toContain(
+      "1 campaign switched on is not delivering ($40 a day). Account unsettled: payment needed (مطابخ الريم ads).",
+    );
+    expect(reem.split("Account unsettled").length).toBe(2);
+    // Nothing held: nothing said.
+    expect(columns.notDeliveringWords(rowFor("locFixPearl008"))).toBeNull();
   });
 
   test("the budget line names who needs action, flags the account on its client's row, and sorts by budget used, lowest first", async () => {

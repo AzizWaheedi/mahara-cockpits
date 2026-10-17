@@ -14,9 +14,8 @@ import { Fragment } from "react";
 import { isNum } from "@/components/ceo/format";
 import type { Cell, ClientRow, Target, Targets } from "@/lib/boardClient";
 import {
-  accountIssueWords,
   type BoardColumn,
-  budgetYesterdayWords,
+  budgetUsedWords,
   firstBreak,
   GROUPS,
   type GroupKey,
@@ -247,12 +246,7 @@ function noOutcomeCell(row: ClientRow): Cell {
 
 function extraLine(row: ClientRow, key: string): string | null {
   if (key === "noOutcome") return noOutcomeWords(row);
-  if (key === "budgetUsed")
-    return (
-      [budgetYesterdayWords(row.values.budgetUsed), accountIssueWords(row)]
-        .filter(Boolean)
-        .join(" ") || null
-    );
+  if (key === "budgetUsed") return budgetUsedWords(row);
   if (key === "leadsTouched") {
     const u = row.values.untouchedLeads;
     if (u && isNum(u.v))
@@ -329,6 +323,22 @@ export function BoardGrid({
         ? ArrowUp
         : ArrowDown
       : ChevronsUpDown;
+    const icon = (
+      <Icon
+        aria-hidden
+        className={cn(
+          "absolute top-1/2 size-2.5 shrink-0 -translate-y-1/2",
+          numeric ? "right-full mr-0.5" : "left-full ml-0.5",
+          active
+            ? "opacity-100"
+            : "opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60",
+        )}
+      />
+    );
+    // The arrow hangs off the label's first word (numbers, right-aligned: it
+    // sits just before it) or its last (after it), never off the button,
+    // which a label wrapped to two lines stretches to the cell's full width.
+    const words = label.split(" ");
     return (
       <button
         type="button"
@@ -345,17 +355,25 @@ export function BoardGrid({
           active && "text-foreground",
         )}
       >
-        {label}
-        <Icon
-          aria-hidden
-          className={cn(
-            "absolute top-1/2 size-2.5 shrink-0 -translate-y-1/2",
-            numeric ? "right-full mr-0.5" : "left-full ml-0.5",
-            active
-              ? "opacity-100"
-              : "opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60",
+        <span>
+          {numeric ? (
+            <>
+              <span className="relative whitespace-nowrap">
+                {icon}
+                {words[0]}
+              </span>
+              {words.length > 1 ? ` ${words.slice(1).join(" ")}` : null}
+            </>
+          ) : (
+            <>
+              {words.length > 1 ? `${words.slice(0, -1).join(" ")} ` : null}
+              <span className="relative whitespace-nowrap">
+                {words[words.length - 1]}
+                {icon}
+              </span>
+            </>
           )}
-        />
+        </span>
       </button>
     );
   };

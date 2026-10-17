@@ -34,7 +34,8 @@
 --                                     the :07 burst that rate-limits Arcturus) and activities (nightly
 --                                     14 days, a backfill its days).
 --   cockpit_meta_budgets_apply        the hourly read: current rows, today's day rows, account state
---   cockpit_meta_budget_history_apply the activity history: day rows for days no read covers
+--   cockpit_meta_budget_history_apply the activity history: day rows for days no read covers, and on
+--                                     a day a read covers the campaigns no read saw switched on
 --
 -- Also: "Read X of Y ad accounts" counts the ad-day reads only (the nightly of
 -- 17 Oct said "Read 8 of 29" although all 116 day reads were done: every lead
@@ -1162,8 +1163,11 @@ BEGIN
     delivering = EXCLUDED.delivering,
     delivering_any = CASE WHEN x.source = 'activity' THEN EXCLUDED.delivering_any ELSE x.delivering_any OR EXCLUDED.delivering_any END,
     why_not = EXCLUDED.why_not,
+    -- A change is a switched-on budget unlike one it was switched on with before that day (the highest so far
+    -- holds it): pausing a campaign, or every ad set of an ABO one, changes no budget.
     changed_during_day = CASE WHEN x.source = 'activity' THEN false
-                              ELSE x.changed_during_day OR (x.budget_type, x.daily_budget) IS DISTINCT FROM (EXCLUDED.budget_type, EXCLUDED.daily_budget) END,
+                              ELSE x.changed_during_day OR (EXCLUDED.switched_on AND x.switched_on_any
+                                AND x.max_switched_on_budget IS DISTINCT FROM EXCLUDED.max_switched_on_budget) END,
     source = 'snapshot', verified = true,
     first_seen = CASE WHEN x.source = 'activity' THEN EXCLUDED.first_seen ELSE least(x.first_seen, EXCLUDED.first_seen) END,
     last_seen = EXCLUDED.last_seen, run_id = EXCLUDED.run_id
@@ -1197,11 +1201,13 @@ $$;
  * account is refused), every day inside the task's since..until and listed
  * in days; at most 10,000 rows. max_budget is the highest daily budget the
  * campaign was switched on with that day. The log does not follow the ads,
- * so the rows say nothing about delivery (delivering NULL). Only account
- * days no hourly read covers are written (cockpit_meta_budget_account_days
- * source snapshot): their earlier activity rows are replaced, and a snapshot
- * row is never touched. One call closes the task (and the run when it was
- * the last).
+ * so the rows say nothing about delivery (delivering NULL). The task's
+ * earlier activity rows are replaced, and a snapshot row is never touched:
+ * on an account day an hourly read covers (cockpit_meta_budget_account_days
+ * source snapshot) the history adds only the campaigns no read saw switched
+ * on, such as one paused before the day's first read, and the account day
+ * stays the reads'. One call closes the task (and the run when it was the
+ * last).
  */
 CREATE OR REPLACE FUNCTION public.cockpit_meta_budget_history_apply(p jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$
@@ -1273,10 +1279,10 @@ BEGIN
   END IF;
 
   v_rate := public.cockpit_meta_ad_days_usd_per(v_currency);
-  -- A day an hourly read covers keeps its snapshot rows: the history fills only the others.
+  -- A snapshot row is never touched. On a day an hourly read covers, the history adds only the campaigns
+  -- no read saw switched on (one paused before the day's first read, the day reads began or after a gap).
   DELETE FROM public.cockpit_meta_budget_days x
-  WHERE x.account_id = t.account_id AND x.source = 'activity' AND x.day BETWEEN t.since AND t.until
-    AND NOT EXISTS (SELECT 1 FROM public.cockpit_meta_budget_account_days a WHERE a.account_id = t.account_id AND a.day = x.day AND a.source = 'snapshot');
+  WHERE x.account_id = t.account_id AND x.source = 'activity' AND x.day BETWEEN t.since AND t.until;
   INSERT INTO public.cockpit_meta_budget_days AS x (campaign_id, day, account_id, budget_level, budget_type, daily_budget, daily_budget_usd,
     max_switched_on_budget, max_switched_on_budget_usd, currency, usd_rate, switched_on, switched_on_any, delivering, delivering_any, why_not,
     changed_during_day, source, verified, first_seen, last_seen, run_id)
@@ -1288,7 +1294,6 @@ BEGIN
     r.changed_during_day, 'activity', r.verified, v_fetched, v_fetched, t.run_id
   FROM jsonb_to_recordset(v_rows) AS r(campaign_id text, day date, budget_level text, budget_type text, daily_budget numeric, max_budget numeric,
     switched_on boolean, switched_on_any boolean, why_not text, changed_during_day boolean, verified boolean)
-  WHERE NOT EXISTS (SELECT 1 FROM public.cockpit_meta_budget_account_days a WHERE a.account_id = t.account_id AND a.day = r.day AND a.source = 'snapshot')
   ON CONFLICT (campaign_id, day) DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT;
 

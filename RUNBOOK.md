@@ -939,8 +939,10 @@ limit reached", "Prepaid balance used up: add funds", "Paused", "Ended",
 account: the same campaigns read, then `act_<id>/activities` over the days
 and up to now, undone change by change back to each day (`history.ts`), with
 the same switched-on rule; the log does not follow the ads, so these rows
-leave `delivering` NULL. History rows go only to account days no hourly read
-covers, never over a read, each checked to be the task's own account, and
+leave `delivering` NULL. History rows fill the account days no hourly read
+covers and, on a day a read covers, only the campaigns no read saw switched
+on (one paused before the day's first read); never over a read's row, each
+checked to be the task's own account, and
 are `verified` when the campaign's own chain of changes ends at the live
 budget. An account day with no row in `cockpit_meta_budget_account_days` was
 not read: unknown, never 0. Every run also records, in
@@ -982,7 +984,7 @@ Mahara's business (`unlisted`) and the first day held.
 | Board: "Budgets were last read at HH:MM Kuwait time" | No hourly budgets read has landed for 3 hours. The ad numbers are not affected. Read `meta-ad-days-hourly` in `cockpit_sync_state` and `status()->'budgets'->'lastRun'`; the fixes above (rate limit, token, access) apply. | Systems manager |
 | Board: Budget used left out "N campaign-days with a daily budget ... the spend of X was not read those days" | Neither a day read nor the business listing has answered for that account day yet (a day before the first listing that covered it, or an account the listing could not price). It fills on the next hourly run for the last two days; for older days run a backfill of that account. Never counted as $0 meanwhile. | Nobody, or the systems manager |
 | Board or page: "Prepaid balance: $X left (under a day of budget)" or "Prepaid balance used up: add funds" | The account is prepaid (`is_prepay`): Meta stops it when the funds added run out. Ask the client to add funds (Billing, Add funds); raising a spending limit does nothing here. | Client success |
-| The board says a campaign's budget is unknown for days before 17 Oct | The hourly reads start on the ship day; the nightly history covers the 14 days before, if the token can read the activity log. For longer, run a backfill: `{"job":"backfill","days":45}` rebuilds 45 days of budget history (and re-reads those days' ad-days, which upserts the same rows). Only account days no hourly read covers are written. | Systems manager |
+| The board says a campaign's budget is unknown for days before 17 Oct | The hourly reads start on the ship day; the nightly history covers the 14 days before, if the token can read the activity log. For longer, run a backfill: `{"job":"backfill","days":45}` rebuilds 45 days of budget history (and re-reads those days' ad-days, which upserts the same rows). A read's row is never replaced: on a day an hourly read covers, only the campaigns no read saw switched on are added. | Systems manager |
 | "Meta leads not in the CRM" is empty for a client, with "Meta's lead ids ... have not been read yet", "... are held from <day>" or "Meta does not show this client's form leads" | `cockpit_meta_leads_not_in_crm` gives NULL, never 0, when it cannot know: an account no nightly run has read yet, a window before the lead ids held (`cockpit_meta_lead_id_cover`), or no lead access on the Page. The first two fill by themselves after the nightly run; the third needs the client to give Mahara's business lead access on the Page. | Nobody, or the CEO for lead access |
 
 Deploying (the lead session). In order:

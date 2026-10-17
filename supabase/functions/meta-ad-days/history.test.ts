@@ -282,6 +282,33 @@ describe("the edges of a day and of a change", () => {
     });
   });
 
+  test("pausing every ad set of an ABO campaign changes no budget, as pausing a CBO one does not", () => {
+    const A = "120000000005101";
+    const S = "120000000005102";
+    const parsed = parseActivities([
+      activityRow("update_ad_set_run_status", "2026-10-15T09:00:00+0000", "CAMPAIGN", S, runStatus(1, 15)),
+      activityRow("update_campaign_run_status", "2026-10-15T09:00:00+0000", "CAMPAIGN_GROUP", C, runStatus(1, 15)),
+    ]);
+    const h = rebuildBudgetHistory({
+      live: readLiveCampaigns([
+        campaignRow(A, {}, [adsetRow(S, ["ACTIVE"], { status: "PAUSED", effective_status: "PAUSED", daily_budget: "4000", lifetime_budget: "0" })]),
+        campaignRow(C, { daily_budget: "3000", status: "PAUSED", effective_status: "PAUSED" }, [adsetRow("120000000005002", ["ACTIVE"])]),
+      ]),
+      accountStatus: 1,
+      events: parsed.events,
+      unreadable: parsed.unreadable,
+      timezone: "Asia/Riyadh",
+      offset: 100,
+      since: "2026-10-13",
+      until: "2026-10-16",
+    });
+    // Paused at noon: switched on in the morning at its budget, off by the end, and no budget changed.
+    expect(row(h.rows, A, "2026-10-15")).toMatchObject({ switchedOn: false, switchedOnAny: true, maxBudget: 40, changedDuringDay: false, whyNot: "Ad sets paused" });
+    expect(row(h.rows, C, "2026-10-15")).toMatchObject({ switchedOn: false, switchedOnAny: true, maxBudget: 30, changedDuringDay: false, whyNot: "Paused" });
+    expect(row(h.rows, A, "2026-10-14")).toMatchObject({ switchedOn: true, maxBudget: 40, changedDuringDay: false });
+    expect(row(h.rows, A, "2026-10-16")).toBeUndefined();
+  });
+
   test("the account's own words from the log, Meta's capitals kept", () => {
     const h = history([
       activityRow("ad_account_update_status", "2026-10-14T09:00:00+0000", "ACCOUNT", "1", accountStatus("Pending Risk Review", "Active")),
