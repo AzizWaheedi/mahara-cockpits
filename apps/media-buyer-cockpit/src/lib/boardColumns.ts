@@ -4,7 +4,13 @@
  * value and status is the database's (boardClient.ts); nothing here judges a
  * number against a target or turns a missing value into 0.
  */
-import { count, decimal, isNum, money } from "@/components/ceo/format";
+import {
+  count,
+  decimal,
+  isNum,
+  money,
+  shortDate,
+} from "@/components/ceo/format";
 import {
   CELL_STATUSES,
   type Cell,
@@ -79,6 +85,41 @@ export const COLUMNS: BoardColumn[] = [
     unit: "usd",
     key10: true,
     how: "Meta ad spend in US dollars, at the cockpit's fixed rates.",
+  },
+  // Budgets (2026-10-17): the budget now, spend per day, the share spent.
+  {
+    key: "dailyBudget",
+    label: "Budget/day",
+    name: "Daily budget now",
+    group: "ads",
+    unit: "usd",
+    how: "The daily budgets of the campaigns delivering now, in US dollars: a campaign's own budget, or its ad sets' budgets added up. Lifetime budgets are left out. The budget now, whatever the time frame.",
+  },
+  {
+    key: "spendPerDay",
+    label: "Spend/day",
+    name: "Spend per day",
+    group: "ads",
+    unit: "usd",
+    how: "Ad spend / the days of the time frame, to yesterday.",
+    parts: [
+      { label: "spend", unit: "usd" },
+      { label: "days", unit: "count" },
+    ],
+  },
+  {
+    key: "budgetUsed",
+    label: "Budget used",
+    name: "Share of budget spent",
+    group: "ads",
+    unit: "percent",
+    metric: "budget_used",
+    key10: true,
+    how: "Spend / daily budgets, over the days each campaign had a daily budget and was delivering. Meta paces a daily budget over the week, so the time frame is judged, never one day.",
+    parts: [
+      { label: "spend on budgeted days", unit: "usd" },
+      { label: "daily budgets", unit: "usd" },
+    ],
   },
   {
     key: "impressions",
@@ -732,6 +773,7 @@ export const TARGET_ORDER = [
   "roas",
   "lead_quality",
   "no_outcome_share",
+  "budget_used",
   "cpm",
   "frequency",
   "link_ctr",
@@ -792,4 +834,172 @@ export function targetUnit(t: Target): Unit {
     u === "minutes"
     ? u
     : "count";
+}
+
+// ---------------------------------------------------------------------------
+// Budgets (2026-10-17): the client page's columns and the words the board
+// says about them. The figures are the database's
+// (20261017100100_board_budgets.sql); nothing here judges them again.
+
+/** The budget table's columns on a client's page: not board columns. */
+export const BUDGET_COLUMNS: BoardColumn[] = [
+  {
+    key: "dailyBudget",
+    label: "Budget/day",
+    name: "Daily budget now",
+    group: "ads",
+    unit: "usd",
+    how: "The campaign's daily budget now, in US dollars: its own, or its ad sets' added up.",
+  },
+  {
+    key: "spentYesterday",
+    label: "Spent yesterday",
+    name: "Spent yesterday",
+    group: "ads",
+    unit: "usd",
+    how: "Spend yesterday, on the ad account's own clock.",
+  },
+  {
+    key: "usedYesterday",
+    label: "Used yesterday",
+    name: "Share of yesterday's budget spent",
+    group: "ads",
+    unit: "percent",
+    how: "Yesterday's spend / yesterday's daily budget. One day is not judged: Meta may spend up to 75% over a daily budget on a day.",
+    parts: [
+      { label: "spent", unit: "usd" },
+      { label: "daily budget", unit: "usd" },
+    ],
+  },
+  {
+    key: "spendPerDay",
+    label: "Spend/day here",
+    name: "Spend per day in this time frame",
+    group: "ads",
+    unit: "usd",
+    how: "The campaign's spend / the days of the time frame, to yesterday.",
+    parts: [
+      { label: "spend", unit: "usd" },
+      { label: "days", unit: "count" },
+    ],
+  },
+  {
+    key: "budgetUsed",
+    label: "Budget used here",
+    name: "Share of budget spent in this time frame",
+    group: "ads",
+    unit: "percent",
+    metric: "budget_used",
+    how: "Spend / daily budgets, over the days the campaign had a daily budget and was delivering.",
+    parts: [
+      { label: "spend on budgeted days", unit: "usd" },
+      { label: "daily budgets", unit: "usd" },
+    ],
+  },
+];
+
+/**
+ * Budget used's help line: yesterday in plain words, "Yesterday (16 Oct):
+ * $96 of $150, 64%. 1 campaign spent nothing yesterday."
+ */
+export function budgetYesterdayWords(
+  cell: Cell | null | undefined,
+): string | null {
+  if (!cell) return null;
+  const y = cell.yesterday;
+  // No key: no ad account. Null: the budgets were not read yesterday.
+  if (y === undefined) return null;
+  if (y === null) return "Yesterday's budgets have not been read yet.";
+  const days = y.days?.length
+    ? y.days.map(d => shortDate(d)).join(" and ")
+    : shortDate(y.day);
+  const when = y.days?.length
+    ? `Yesterday (${days}, each ad account's own)`
+    : `Yesterday (${days})`;
+  const head =
+    isNum(y.budget) && y.budget > 0
+      ? `${when}: ${money(y.spend ?? 0)} of ${money(y.budget)}, ${percent(((y.spend ?? 0) / y.budget) * 100)}.`
+      : `${when}: no campaign was delivering on a daily budget.`;
+  const n = cell.notSpending ?? 0;
+  return [
+    head,
+    n > 0
+      ? `${n === 1 ? "1 campaign" : `${n} campaigns`} spent nothing yesterday.`
+      : null,
+    y.partial ? "Some of yesterday is not known yet." : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** What the board's budget line says: only what needs action. */
+export type BudgetFacts = {
+  /** Campaigns delivering on a daily budget that spent nothing yesterday, and on how many clients. */
+  notSpending: number;
+  notSpendingClients: number;
+  /** Campaigns switched on but not delivering now. */
+  notDelivering: number;
+  /** Clients whose budget used is watch or off in the time frame. */
+  under: number;
+  /** Ad accounts at or under a day from their spending limit, and ones with a billing problem. */
+  limit: number;
+  billing: number;
+};
+
+export function budgetFacts(rows: ClientRow[]): BudgetFacts {
+  const f: BudgetFacts = {
+    notSpending: 0,
+    notSpendingClients: 0,
+    notDelivering: 0,
+    under: 0,
+    limit: 0,
+    billing: 0,
+  };
+  const seen = new Set<string>();
+  for (const r of rows) {
+    const used = r.values.budgetUsed;
+    const daily = r.values.dailyBudget;
+    const n = used?.notSpending ?? 0;
+    if (n > 0) {
+      f.notSpending += n;
+      f.notSpendingClients += 1;
+    }
+    f.notDelivering += daily?.notDelivering ?? 0;
+    const s = statusOf(used);
+    if (s === "off" || s === "watch") f.under += 1;
+    for (const i of daily?.accountIssues ?? []) {
+      if (seen.has(i.accountId)) continue;
+      seen.add(i.accountId);
+      if (i.issue === "billing") f.billing += 1;
+      else f.limit += 1;
+    }
+  }
+  return f;
+}
+
+/** The budget line's sentence, or null when nothing needs action. */
+export function budgetSentence(f: BudgetFacts): string | null {
+  const plural = (n: number, one: string, many: string) =>
+    `${n} ${n === 1 ? one : many}`;
+  const parts = [
+    f.notSpending
+      ? `${plural(f.notSpending, "campaign", "campaigns")} spent nothing yesterday`
+      : null,
+    f.notDelivering
+      ? `${plural(f.notDelivering, "campaign is", "campaigns are")} on but not delivering`
+      : null,
+    f.under
+      ? `${plural(f.under, "client", "clients")} spent under ${f.under === 1 ? "its" : "their"} budget in this time frame`
+      : null,
+    f.limit
+      ? `${plural(f.limit, "ad account is", "ad accounts are")} at or within a day of ${f.limit === 1 ? "its" : "their"} spending limit`
+      : null,
+    f.billing
+      ? `${plural(f.billing, "ad account needs", "ad accounts need")} a payment`
+      : null,
+  ].filter((x): x is string => Boolean(x));
+  if (!parts.length) return null;
+  const last = parts.pop() as string;
+  const text = parts.length ? `${parts.join(", ")} and ${last}` : last;
+  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }

@@ -40,12 +40,15 @@ import {
 } from "@/lib/boardClient";
 import {
   type BoardColumn,
+  budgetFacts,
+  budgetSentence,
   COLUMNS,
   formatValue,
   GROUPS,
   KEY_COLUMNS,
   noOutcomeTotal,
   portfolio,
+  statusOf,
 } from "@/lib/boardColumns";
 import { matchScore } from "@/lib/search";
 import { useNow } from "@/lib/useNow";
@@ -64,6 +67,7 @@ const MEETING_KEY = "cockpit.board.meeting.v1";
 export const MEETING_COLUMNS = [
   "caller",
   "spend",
+  "budgetUsed",
   "cpl",
   "confirmedBookings",
   "leadToBooking",
@@ -89,12 +93,31 @@ function store(key: string, value: unknown): void {
   }
 }
 const known = new Set(COLUMNS.map(c => c.key));
+/** The key columns before Budget used joined them (2026-10-17). */
+const KEY_COLUMNS_BEFORE_BUDGETS = [
+  "caller",
+  "spend",
+  "crmLeads",
+  "cpl",
+  "confirmedBookings",
+  "leadToBooking",
+  "showRate",
+  "closeRate",
+  "roas",
+  "noOutcome",
+];
 function storedColumns(): string[] | null {
-  return readStored(COLUMNS_KEY, v =>
-    Array.isArray(v) && v.every(x => typeof x === "string")
-      ? (v as string[]).filter(k => known.has(k))
-      : null,
-  );
+  return readStored(COLUMNS_KEY, v => {
+    if (!Array.isArray(v) || !v.every(x => typeof x === "string")) return null;
+    // A saved pick that is exactly the old key columns gets the new ones; any
+    // other pick is the viewer's own and is kept.
+    if (
+      v.length === KEY_COLUMNS_BEFORE_BUDGETS.length &&
+      v.every((k, i) => k === KEY_COLUMNS_BEFORE_BUDGETS[i])
+    )
+      return KEY_COLUMNS;
+    return (v as string[]).filter(k => known.has(k));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +341,57 @@ function NoOutcomeLine({
   );
 }
 
+/**
+ * The budgets in one sentence, only when something needs action: campaigns
+ * that spent nothing yesterday or are on but not delivering, clients under
+ * their budget in the time frame, an account at its spending limit or in
+ * need of a payment. Nothing when all is well. It sorts the clients by
+ * budget used, lowest first.
+ */
+function BudgetLine({
+  rows,
+  active,
+  onPress,
+}: {
+  rows: ClientRow[];
+  active: boolean;
+  onPress: () => void;
+}) {
+  const facts = budgetFacts(rows);
+  const sentence = budgetSentence(facts);
+  if (!sentence) return null;
+  const off =
+    facts.notSpending > 0 ||
+    facts.notDelivering > 0 ||
+    facts.billing > 0 ||
+    facts.limit > 0 ||
+    rows.some(r => statusOf(r.values.budgetUsed) === "off");
+  const action = active ? "Sorted by budget used" : "Sort by budget used";
+  return (
+    <button
+      type="button"
+      onClick={onPress}
+      aria-pressed={active}
+      data-budget-line=""
+      className={cn(
+        "group flex w-full items-start gap-2.5 rounded-xl border px-4 py-3 text-left text-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:items-center sm:px-5",
+        active ? "border-primary/40 bg-primary/5" : "bg-card",
+      )}
+    >
+      <BoardDot status={off ? "off" : "watch"} className="mt-[7px] sm:mt-0" />
+      <span className="min-w-0 flex-1">
+        <span className="tabular-nums">{sentence}</span>
+        <span className="mt-1 block text-xs font-medium text-muted-foreground group-hover:text-foreground sm:hidden">
+          {action}
+        </span>
+      </span>
+      <span className="hidden shrink-0 text-xs font-medium text-muted-foreground group-hover:text-foreground sm:inline">
+        {action}
+      </span>
+    </button>
+  );
+}
+
 function ColumnPicker({
   shown,
   onChange,
@@ -498,6 +572,16 @@ export function PerformancePage() {
     setSort({ key: "noOutcome", dir: "desc" });
     gridRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
   };
+  const sortByBudgetUsed = () => {
+    if (!columns.some(c => c.key === "budgetUsed") && !meeting)
+      setShownKeys(k =>
+        COLUMNS.map(c => c.key).filter(
+          x => x === "budgetUsed" || k.includes(x),
+        ),
+      );
+    setSort({ key: "budgetUsed", dir: "asc" });
+    gridRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  };
 
   const pickColumns = (keys: string[]) => {
     setShownKeys(keys);
@@ -612,6 +696,13 @@ export function PerformancePage() {
               rows={data.clients}
               active={sort.key === "noOutcome"}
               onPress={sortByNoOutcome}
+            />
+          ) : null}
+          {data.clients.length ? (
+            <BudgetLine
+              rows={data.clients}
+              active={sort.key === "budgetUsed" && sort.dir === "asc"}
+              onPress={sortByBudgetUsed}
             />
           ) : null}
           {data.offBoard ? <OffBoardLine off={data.offBoard} /> : null}

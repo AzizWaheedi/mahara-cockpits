@@ -1,7 +1,8 @@
 /**
  * One client, opened from the board: where its funnel breaks first, its
  * numbers against its targets, the appointments still waiting for an
- * outcome, every campaign, ad set and ad, and its levers.
+ * outcome, every campaign's daily budget against what it spent, every
+ * campaign, ad set and ad, and its levers.
  */
 import {
   ArrowUpRight,
@@ -13,7 +14,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { date, isNum } from "@/components/ceo/format";
+import { date, isNum, money, shortDate } from "@/components/ceo/format";
 import { KICKER, Kicker } from "@/components/ceo/Kicker";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,6 +24,8 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
+  type BudgetCampaign,
+  type Budgets,
   type Cell,
   type ClientPage,
   type ClientRow,
@@ -37,6 +40,8 @@ import {
 } from "@/lib/boardClient";
 import {
   type BoardColumn,
+  BUDGET_COLUMNS,
+  budgetYesterdayWords,
   COLUMNS,
   columnOf,
   firstBreak,
@@ -50,6 +55,7 @@ import {
 import { cn } from "@/lib/utils";
 import { clientTarget, FirstBreakLine } from "./BoardGrid";
 import {
+  BoardDot,
   CellContent,
   CellHelp,
   callerLine,
@@ -162,7 +168,13 @@ function NumberRow({
             cell={cell}
             target={target}
             status={dot}
-            extra={column.key === "noOutcome" ? noOutcomeWords(row) : null}
+            extra={
+              column.key === "noOutcome"
+                ? noOutcomeWords(row)
+                : column.key === "budgetUsed"
+                  ? budgetYesterdayWords(cell)
+                  : null
+            }
           />
         }
       >
@@ -319,6 +331,219 @@ function NoOutcomeItem({
         ) : null}
       </div>
     </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Budget and spend (2026-10-17): every campaign switched on now, its daily
+// budget against what it spent (one that spent nothing too: the tree lists
+// only campaigns with ad numbers), and each account's billing and spending
+// limit. The figures and the words are the database's.
+
+/** An amount in the account's own currency: "$140", "140 SAR". */
+function amount(
+  v: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (!isNum(v)) return "not known";
+  if (!currency || currency === "USD") return money(v);
+  return `${Math.round(v).toLocaleString("en")} ${currency}`;
+}
+
+/** Each account in a sentence: its Meta status, and its spending limit when one is set. */
+function accountWords(b: Budgets): string | null {
+  const said = b.account.map(a => {
+    const name = a.name ?? `Ad account ${a.accountId}`;
+    const limit = a.spendingLimit;
+    const status = (a.status ?? "Status not known").toLowerCase();
+    if (!limit || !isNum(limit.left)) return `${name}: ${status}.`;
+    const days = isNum(limit.daysLeft)
+      ? limit.daysLeft < 1
+        ? ", under one day of budget"
+        : `, about ${limit.daysLeft === 1 ? "1 day" : `${limit.daysLeft} days`} of budget`
+      : "";
+    return `${name}: ${status}; ${amount(limit.left, a.currency)} left of its spending limit${days}.`;
+  });
+  return said.length ? said.join(" ") : null;
+}
+
+/** "Campaign budget", "Ad set budgets, 2 on". */
+function budgetLevelWords(c: BudgetCampaign): string {
+  if (c.budgetLevel === "campaign") return "Campaign budget";
+  if (c.budgetLevel === "adset")
+    return isNum(c.adsets) && c.adsets > 0
+      ? `Ad set budgets, ${c.adsets} on`
+      : "Ad set budgets";
+  return c.whyNot ?? "Budget not read yet";
+}
+
+function BudgetRow({
+  campaign,
+  targets,
+}: {
+  campaign: BudgetCampaign;
+  targets: Targets;
+}) {
+  const flag = campaign.flag;
+  const flagStatus =
+    flag?.status === "off" || flag?.status === "watch" ? flag.status : null;
+  return (
+    <tr data-budget-row={campaign.id}>
+      <th
+        scope="row"
+        className="sticky left-0 z-[1] border-b border-[color:var(--ceo-grid)] bg-background py-2 pr-3 pl-5 text-left align-top font-normal sm:pl-6"
+      >
+        <span className="block w-[184px] sm:w-[244px]">
+          <span className="block truncate font-medium" dir="auto">
+            {campaign.name ?? `Campaign ${campaign.id}`}
+          </span>
+          <span className="block truncate text-[11px] text-muted-foreground">
+            {budgetLevelWords(campaign)}
+          </span>
+          {flag?.words ? (
+            <span className="mt-0.5 flex items-center gap-1.5 text-[11px] leading-4">
+              <BoardDot status={flagStatus} />
+              <span className="min-w-0">{flag.words}</span>
+            </span>
+          ) : null}
+        </span>
+      </th>
+      {BUDGET_COLUMNS.map(c => {
+        const cell = campaign.metrics[c.key];
+        const target = c.metric ? targets[c.metric] : null;
+        return (
+          <td
+            key={c.key}
+            className="border-b border-[color:var(--ceo-grid)] px-3 py-2 text-right align-top"
+          >
+            <HelpCell
+              label={c.name}
+              help={<CellHelp column={c} cell={cell} target={target} />}
+            >
+              <CellContent cell={cell} unit={c.unit} />
+            </HelpCell>
+          </td>
+        );
+      })}
+    </tr>
+  );
+}
+
+function BudgetPart({
+  budgets,
+  row,
+  targets,
+  canLever,
+  onLever,
+}: {
+  budgets: Budgets;
+  row: ClientRow | null;
+  targets: Targets;
+  canLever: boolean;
+  onLever: () => void;
+}) {
+  const daily = budgets.campaigns.filter(c => c.budgetType !== "lifetime");
+  const lifetime = budgets.campaigns.filter(c => c.budgetType === "lifetime");
+  const paused = budgets.paused;
+  const off = statusOf(row?.values.budgetUsed) === "off";
+  return (
+    <div className="space-y-4">
+      {off && canLever ? (
+        <div className="flex justify-end">
+          <Button size="sm" variant="teal" onClick={onLever}>
+            Add a lever for budget used
+          </Button>
+        </div>
+      ) : null}
+      {!budgets.campaigns.length ? (
+        <EmptyState
+          compact
+          icon={CircleDashed}
+          title={
+            budgets.asOf
+              ? "No campaign is switched on now"
+              : "The budgets have not been read yet"
+          }
+          text={
+            budgets.asOf
+              ? "Nothing is set to spend on the linked ad accounts. Switch a campaign on in Ads Manager to see its budget here."
+              : (budgets.note ??
+                "Meta budgets are read every hour. Check again after the next read.")
+          }
+        />
+      ) : null}
+      {daily.length ? (
+        <div className="-mx-5 overflow-x-auto sm:-mx-6">
+          <table className="w-max min-w-full border-separate border-spacing-0 text-[13px]">
+            <caption className="sr-only">
+              Every campaign switched on now: its daily budget and what it spent
+            </caption>
+            <thead>
+              <tr>
+                <th
+                  scope="col"
+                  className="sticky left-0 z-[2] h-9 border-b bg-background pl-5 pr-3 text-left text-xs font-medium text-muted-foreground sm:pl-6"
+                >
+                  Campaign
+                </th>
+                {BUDGET_COLUMNS.map(c => (
+                  <th
+                    key={c.key}
+                    scope="col"
+                    title={c.name}
+                    className="h-9 min-w-[84px] whitespace-nowrap border-b px-3 text-right text-xs font-medium text-muted-foreground last:pr-5 sm:last:pr-6"
+                  >
+                    {c.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {daily.map(c => (
+                <BudgetRow key={c.id} campaign={c} targets={targets} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {lifetime.length ? (
+        <div className="rounded-xl bg-muted/40 p-4 text-[13px]">
+          <p className="font-medium">On a lifetime budget</p>
+          <ul className="mt-2 space-y-1 text-muted-foreground">
+            {lifetime.map(c => (
+              <li
+                key={c.id}
+                className="tabular-nums"
+                data-budget-lifetime={c.id}
+              >
+                <span className="text-foreground" dir="auto">
+                  {c.name ?? `Campaign ${c.id}`}
+                </span>
+                {c.lifetime
+                  ? `: ${money(c.lifetime.remaining)} left of ${money(c.lifetime.budget)}${c.lifetime.endsOn ? `, ends ${shortDate(c.lifetime.endsOn)}` : ""}`
+                  : ""}
+                {c.delivering === false && c.whyNot ? `. ${c.whyNot}` : ""}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-muted-foreground">
+            A lifetime budget has no daily figure, so it is left out of
+            Budget/day and Budget used.
+          </p>
+        </div>
+      ) : null}
+      {paused && isNum(paused.campaigns) && paused.campaigns > 0 ? (
+        <p className="text-[13px] text-muted-foreground tabular-nums">
+          {paused.campaigns === 1
+            ? "1 campaign switched off now"
+            : `${paused.campaigns} campaigns switched off now`}{" "}
+          spent {money(paused.spend)} in these days.
+        </p>
+      ) : null}
+      {budgets.note && budgets.campaigns.length ? (
+        <p className="text-xs text-muted-foreground">{budgets.note}</p>
+      ) : null}
+    </div>
   );
 }
 
@@ -859,6 +1084,26 @@ export function ClientPanel({
             >
               <NoOutcomeList page={data} today={today} />
             </Part>
+            {/* No ad account: the tree below says so once. */}
+            {data.budgets?.account.length ? (
+              <Part
+                id="board-panel-budgets"
+                title="Budget and spend"
+                count={data.budgets.campaigns.length}
+                lede={
+                  accountWords(data.budgets) ??
+                  "Every campaign switched on now, its daily budget against what it spent."
+                }
+              >
+                <BudgetPart
+                  budgets={data.budgets}
+                  row={live}
+                  targets={data.targets}
+                  canLever={Boolean(clickup)}
+                  onLever={() => setLeverMetric("budget_used")}
+                />
+              </Part>
+            ) : null}
             <Part
               id="board-panel-tree"
               title="Campaigns, ad sets and ads"

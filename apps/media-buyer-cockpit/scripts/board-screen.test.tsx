@@ -7,7 +7,10 @@
  * sorting, the no-outcome line, the caller column, the side panel's tree and
  * no-outcome list, the lever flow (preview, then file once with one request
  * id), the targets editor's gate, the time frame, and the empty and error
- * states. Nothing here reaches the network: every fetch is refused.
+ * states. Since 2026-10-17 also the budgets: Budget used as a key column,
+ * the budget line (only when something needs action), and the panel's
+ * Budget and spend part. Nothing here reaches the network: every fetch is
+ * refused.
  */
 import {
   afterAll,
@@ -444,6 +447,7 @@ describe("the grid", () => {
       "Client",
       "Caller",
       "Spend",
+      "Budget used",
       "CRM leads",
       "CPL",
       "Bookings",
@@ -738,6 +742,229 @@ describe("the grid", () => {
   });
 });
 
+describe("budgets", () => {
+  const MON = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  const fm = (d: string) =>
+    `${Number(d.slice(8, 10))} ${MON[Number(d.slice(5, 7)) - 1]}`;
+  const OLD_KEYS = [
+    "caller",
+    "spend",
+    "crmLeads",
+    "cpl",
+    "confirmedBookings",
+    "leadToBooking",
+    "showRate",
+    "closeRate",
+    "roas",
+    "noOutcome",
+  ];
+  const line = () => host.querySelector("[data-budget-line]") as any;
+
+  test("Budget used's help says yesterday plainly", () => {
+    expect(
+      columns.budgetYesterdayWords({
+        v: 64,
+        status: "off",
+        yesterday: { day: "2026-10-16", spend: 96, budget: 150 },
+        notSpending: 1,
+      }),
+    ).toBe(
+      "Yesterday (16 Oct): $96 of $150, 64%. 1 campaign spent nothing yesterday.",
+    );
+    expect(
+      columns.budgetYesterdayWords({
+        v: null,
+        status: "too_few",
+        yesterday: { day: "2026-10-16", spend: 0, budget: 0 },
+        notSpending: 0,
+      }),
+    ).toBe("Yesterday (16 Oct): no campaign was delivering on a daily budget.");
+    // Two clocks: each account's own yesterday.
+    expect(
+      columns.budgetYesterdayWords({
+        v: 80,
+        status: "watch",
+        yesterday: {
+          day: "2026-10-16",
+          days: ["2026-10-15", "2026-10-16"],
+          spend: 62,
+          budget: 112,
+        },
+        notSpending: 0,
+      }),
+    ).toBe(
+      "Yesterday (15 Oct and 16 Oct, each ad account's own): $62 of $112, 55.4%.",
+    );
+    expect(
+      columns.budgetYesterdayWords({
+        v: null,
+        status: "not_measured",
+        yesterday: null,
+      }),
+    ).toBe("Yesterday's budgets have not been read yet.");
+    // No ad account: nothing to say.
+    expect(
+      columns.budgetYesterdayWords({ v: null, status: "not_measured" }),
+    ).toBeNull();
+  });
+
+  test("the budget line says what needs action and sorts by budget used, lowest first", async () => {
+    await show();
+    expect(text(line())).toContain(
+      "1 campaign spent nothing yesterday, 2 campaigns are on but not delivering, 2 clients spent under their budget in this time frame, 1 ad account is at or within a day of its spending limit and 1 ad account needs a payment.",
+    );
+    expect(
+      line().querySelector('[role="img"]').getAttribute("aria-label"),
+    ).toBe("Off target");
+    await click(line());
+    // Lowest first; a client with no figure last, by name.
+    expect(rowsShown()).toEqual([
+      "locFixReem0004",
+      "locFixDune0002",
+      "locFixAtlas005",
+      "locFixLiwan003",
+      "locFixHarbor01",
+      "locFixNova0007",
+      "locFixOrbit006",
+      "locFixPearl008",
+    ]);
+    expect(line().getAttribute("aria-pressed")).toBe("true");
+    expect(text(line())).toContain("Sorted by budget used");
+  });
+
+  test("the budget line is not there when nothing needs action", async () => {
+    answer({
+      edit: b => {
+        for (const c of b.clients) {
+          const u = c.values.budgetUsed;
+          if (u.status === "off" || u.status === "watch") u.status = "good";
+          u.notSpending = 0;
+          const d = c.values.dailyBudget;
+          d.notDelivering = 0;
+          delete d.accountIssues;
+        }
+      },
+    });
+    await show();
+    expect(rowsShown().length).toBe(8);
+    expect(line()).toBeNull();
+  });
+
+  test("a saved pick that is the old key columns gets Budget used; any other pick is kept", async () => {
+    win.localStorage.setItem(
+      "cockpit.board.columns.v1",
+      JSON.stringify(OLD_KEYS),
+    );
+    await show();
+    expect(headers()).toContain("Budget used");
+    expect(headers().length).toBe(columns.KEY_COLUMNS.length + 1);
+    await act(async () => root.render(null));
+    win.localStorage.setItem(
+      "cockpit.board.columns.v1",
+      JSON.stringify(["caller", "spend", "cpl"]),
+    );
+    await show();
+    expect(headers()).toEqual(["Client", "Caller", "Spend", "CPL"]);
+    // The line's sort shows Budget used for the viewer who left it out.
+    await click(line());
+    expect(headers()).toEqual([
+      "Client",
+      "Caller",
+      "Spend",
+      "Budget used",
+      "CPL",
+    ]);
+  });
+
+  test("the panel's Budget and spend: every campaign switched on, a $0 one too, the spending limit, lifetime apart, paused summed", async () => {
+    await show();
+    await click(button("Open Harbor Kitchens"));
+    const panel = sheet();
+    const part = panel
+      .querySelector("#board-panel-budgets")
+      .closest("section") as any;
+    expect(text(part.querySelector("h3"))).toBe("Budget and spend4");
+    expect(text(part)).toContain(
+      "Harbor Kitchens ads: active; 140 SAR left of its spending limit, under one day of budget.",
+    );
+    const rows = Array.from(
+      part.querySelectorAll("tr[data-budget-row]") as ArrayLike<any>,
+    );
+    // Flagged first, then the biggest budget; the lifetime one is apart.
+    expect(rows.map(r => r.getAttribute("data-budget-row"))).toEqual([
+      "120003",
+      "120004",
+      "120001",
+    ]);
+    expect(
+      Array.from(part.querySelectorAll("thead th") as ArrayLike<any>).map(th =>
+        text(th).trim(),
+      ),
+    ).toEqual([
+      "Campaign",
+      "Budget/day",
+      "Spent yesterday",
+      "Used yesterday",
+      "Spend/day here",
+      "Budget used here",
+    ]);
+    const zero = rows[0];
+    expect(text(zero)).toContain("Ad set budgets, 2 on");
+    expect(text(zero)).toContain(
+      `Spent nothing since ${fm(client.shiftDay(today, -3))}`,
+    );
+    expect(
+      zero.querySelector("th [role='img']").getAttribute("aria-label"),
+    ).toBe("Off target");
+    const cells = Array.from(zero.querySelectorAll("td") as ArrayLike<any>).map(
+      td => text(td).trim(),
+    );
+    expect(cells.slice(0, 3)).toEqual(["$30", "$0", "0%"]);
+    expect(text(rows[1])).toContain("Ads with issues");
+    expect(text(rows[2])).toContain("Campaign budget");
+    // The tree's rows are still the tree's own.
+    expect(panel.querySelectorAll('tr[data-level="campaign"]').length).toBe(2);
+    expect(text(part)).toContain("On a lifetime budget");
+    expect(text(part)).toContain(
+      "Harbor Kitchens | Spring launch: $400 left of $900, ends",
+    );
+    expect(text(part)).toMatch(
+      /1 campaign switched off now spent \$[\d,]+ in these days\./,
+    );
+    expect(text(part)).toContain(
+      "Meta may spend up to 75% over a daily budget",
+    );
+    // Its budget used is good: no lever offered here.
+    expect(buttons("Add a lever for budget used", panel).length).toBe(0);
+  });
+
+  test("a client whose budgets were never read says so; one with no ad account has no budget part", async () => {
+    await show();
+    await click(button("Open Orbit Glass"));
+    const part = sheet()
+      .querySelector("#board-panel-budgets")
+      .closest("section") as any;
+    expect(text(part)).toContain("Orbit Glass ads: budgets not read yet.");
+    expect(text(part)).toContain("Budget not read yet");
+    expect(text(part.querySelector("tr[data-budget-row]"))).toContain("n/a");
+    await click(button("Open Nova Landscapes"));
+    expect(sheet().querySelector("#board-panel-budgets")).toBeNull();
+  });
+});
+
 describe("empty, loading and error states", () => {
   test("a refused seat reads the database's sentence, with Try again", async () => {
     answer({
@@ -1005,6 +1232,24 @@ describe("a lever", () => {
     const after = rpcCalls.slice(readsBefore).map(c => c.name);
     expect(after).toContain("cockpit_board_client");
     expect(after).toContain("cockpit_board_read");
+  });
+
+  test("a client under its budget offers a lever for budget used, owned by the media buyer", async () => {
+    invokeAnswer = async () => ({ data: preview, error: null });
+    await show();
+    await click(button("Open مطابخ الريم"));
+    const panel = sheet();
+    await click(button("Add a lever for budget used", panel));
+    await type(
+      panel.querySelector('input[name="lever"]'),
+      "Settle the account and widen the audience",
+    );
+    await click(button("Preview the task", panel));
+    expect(invokes[0].body.args).toMatchObject({
+      locationId: "locFixReem0004",
+      metric: "budget_used",
+      department: "media_buyer",
+    });
   });
 
   test("a changed lever needs a new preview before it can be filed", async () => {

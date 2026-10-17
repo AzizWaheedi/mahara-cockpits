@@ -7,7 +7,8 @@
  *   cockpit_board_read(from, to)            every client row, the targets, the stamps
  *   cockpit_board_client(location, from, to)  one client: its row, the campaign >
  *                                             ad set > ad tree, the appointments
- *                                             with no outcome, its levers
+ *                                             with no outcome, its levers, and its
+ *                                             budgets (20261017100100_board_budgets.sql)
  *   cockpit_board_targets_save(...)          the CEO and admins
  *   cockpit-board-api {operation: "lever"}   a lever filed as a ClickUp task
  * Each cell arrives as {v, status, note, num, den, ...}: this file only reads
@@ -24,6 +25,27 @@ import { supabase } from "./supabase";
 
 const num = z.number().nullable().optional();
 const text = z.string().nullable().optional();
+
+/** Budget used: yesterday on each ad account's own clock (several days when the clocks differ). */
+const YesterdaySchema = z
+  .object({
+    day: z.string(),
+    spend: num,
+    budget: num,
+    days: z.array(z.string()).nullable().optional(),
+    partial: z.boolean().nullable().optional(),
+  })
+  .passthrough();
+
+/** Budget/day: an ad account that needs action (billing, its spending limit). */
+const AccountIssueSchema = z
+  .object({
+    accountId: z.string(),
+    name: text,
+    issue: z.string(),
+    words: z.string(),
+  })
+  .passthrough();
 
 export const CELL_STATUSES = [
   "good",
@@ -67,9 +89,33 @@ export const CellSchema = z
     due: num,
     marked: num,
     noShows: num,
+    /**
+     * Budget/day (2026-10-17): campaigns delivering now on a daily budget,
+     * those on a lifetime budget left out, when the budgets were read, those
+     * switched on but not delivering and their budgets, and the ad accounts
+     * that need action.
+     */
+    campaigns: num,
+    lifetime: num,
+    asOf: text,
+    notDelivering: num,
+    heldBudget: num,
+    accountIssues: z.array(AccountIssueSchema).nullable().optional(),
+    /**
+     * Budget used: the days with a budget, yesterday, the campaigns that
+     * spent nothing yesterday, and above 110% (a note, never a status).
+     */
+    budgetDays: num,
+    yesterday: YesterdaySchema.nullable().optional(),
+    notSpending: num,
+    over: z.boolean().nullable().optional(),
+    /** A campaign's spend yesterday: the first day of its run of days with a budget and nothing spent. */
+    zeroSince: text,
   })
   .passthrough();
 export type Cell = z.output<typeof CellSchema>;
+export type Yesterday = z.output<typeof YesterdaySchema>;
+export type AccountIssue = z.output<typeof AccountIssueSchema>;
 
 const Line = z
   .object({ good: num, watch: num, by: text, at: text, note: text })
@@ -248,6 +294,64 @@ const CampaignSchema = z
   })
   .passthrough();
 export type TreeCampaign = z.output<typeof CampaignSchema>;
+
+/** One campaign switched on now (or spent on an account never read), on the client's page. */
+const BudgetCampaignSchema = z
+  .object({
+    id: z.string(),
+    name: text,
+    accountId: text,
+    budgetLevel: text,
+    budgetType: text,
+    adsets: num,
+    delivering: z.boolean().nullable().optional(),
+    whyNot: text,
+    lifetime: z
+      .object({ budget: num, remaining: num, currency: text, endsOn: text })
+      .passthrough()
+      .nullable()
+      .optional(),
+    /** Why it needs a look, in words: off or watch. */
+    flag: z
+      .object({ status: z.string(), words: text })
+      .passthrough()
+      .nullable()
+      .optional(),
+    metrics: MetricsSchema,
+  })
+  .passthrough();
+export type BudgetCampaign = z.output<typeof BudgetCampaignSchema>;
+
+/** The client's budgets (cockpit_board_budget_list). */
+const BudgetsSchema = z
+  .object({
+    asOf: text,
+    note: text,
+    account: z.array(
+      z
+        .object({
+          accountId: z.string(),
+          name: text,
+          currency: text,
+          status: text,
+          asOf: text,
+          spendingLimit: z
+            .object({ cap: num, spent: num, left: num, daysLeft: num })
+            .passthrough()
+            .nullable()
+            .optional(),
+        })
+        .passthrough(),
+    ),
+    campaigns: z.array(BudgetCampaignSchema),
+    paused: z
+      .object({ campaigns: num, spend: num })
+      .passthrough()
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
+export type Budgets = z.output<typeof BudgetsSchema>;
 export type TreeAdSet = z.output<typeof AdSetSchema>;
 export type TreeAd = z.output<typeof AdSchema>;
 
@@ -343,6 +447,8 @@ export const ClientPageSchema = z
       .nullable()
       .optional(),
     levers: z.array(LeverSchema),
+    /** Its Meta budgets (2026-10-17); absent before the database has them. */
+    budgets: BudgetsSchema.nullable().optional(),
     canEditTargets: z.boolean(),
   })
   .passthrough();

@@ -10,6 +10,11 @@
  *     targets, so the screen tests cannot drift from the database;
  *   - the grid, rendered from the real read, shows no 0 where the database
  *     says NULL ("n/a", "Not filled in", "Client calls" instead).
+ * Since 2026-10-17 the budget store (20261017100000_meta_budgets.sql) and the
+ * board's budgets (20261017100100_board_budgets.sql) run too, with Contract
+ * A's account holding a campaign budget, ad set budgets that spend nothing,
+ * a lifetime budget and a spending limit, so the budget cells and the page's
+ * budgets are compared key by key as well.
  * Every client, person, ad and number here is invented.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -131,6 +136,8 @@ beforeAll(async () => {
   // The 16 October corrections, in production's order.
   await db.exec(migration("20261016210000_board_facts_checked.sql"));
   await db.exec(migration("20261016210100_meta_ad_days_checked.sql"));
+  // The budget store (2026-10-17), before the board read that shows it.
+  await db.exec(migration("20261017100000_meta_budgets.sql"));
 
   // The client spine and ten days of facts, written by hand.
   await q(
@@ -246,6 +253,94 @@ beforeAll(async () => {
   await db.exec(migration("20261016220000_board_read_checked.sql"));
   await db.exec(migration("20261016220100_board_read_notes.sql"));
   await db.exec(migration("20261017090000_board_active_only.sql"));
+  // A's budgets: a campaign budget that spends, ad set budgets that spend
+  // nothing, a lifetime budget, and a spending limit on the account.
+  await q(
+    `INSERT INTO public.cockpit_meta_account_state(account_id,account_status,disable_reason,spend_cap,amount_spent,currency,currency_offset,usd_rate,fetched_at)
+     VALUES($1,1,0,5000,4950,'USD',100,1,now() - interval '20 minutes')`,
+    [ACCT],
+  );
+  const budgetNow = `INSERT INTO public.cockpit_meta_budgets(level,object_id,account_id,campaign_id,name,objective,status,effective_status,budget_level,
+       budget_type,daily_budget,lifetime_budget,budget_remaining,currency,currency_offset,usd_rate,daily_budget_usd,start_time,end_time,ads_active,
+       ads_with_issues,issues,switched_on,delivering,why_not,fetched_at)
+     VALUES($1,$2,$3,$4,$5,'OUTCOME_LEADS','ACTIVE','ACTIVE',$6,$7,$8,$9,$10,'USD',100,$11,$12,NULL,$13,1,0,NULL,true,true,NULL,now() - interval '20 minutes')`;
+  for (const b of [
+    [
+      "campaign",
+      "75001",
+      "75001",
+      "Contract leads",
+      "campaign",
+      "daily",
+      70,
+      null,
+      10,
+      1,
+      70,
+      null,
+    ],
+    [
+      "campaign",
+      "75002",
+      "75002",
+      "Contract chats",
+      "adset",
+      "daily",
+      40,
+      null,
+      null,
+      1,
+      40,
+      null,
+    ],
+    [
+      "adset",
+      "76101",
+      "75002",
+      "Chats one",
+      "adset",
+      "daily",
+      40,
+      null,
+      40,
+      1,
+      40,
+      null,
+    ],
+    [
+      "campaign",
+      "75003",
+      "75003",
+      "Contract launch",
+      "campaign",
+      "lifetime",
+      null,
+      900,
+      400,
+      null,
+      null,
+      new Date(Date.now() + 9 * 86400e3).toISOString(),
+    ],
+  ])
+    await q(budgetNow, [b[0], b[1], ACCT, ...b.slice(2)]);
+  for (let i = 0; i <= 9; i++) {
+    await q(
+      `INSERT INTO public.cockpit_meta_budget_account_days(account_id,day,source,reads,first_read,last_read,campaigns,verified)
+       VALUES($1,$2,'snapshot',24,now(),now(),2,true)`,
+      [ACCT, kd(i)],
+    );
+    for (const [campaign, level, usd] of [
+      ["75001", "campaign", 70],
+      ...(i <= 3 ? [["75002", "adset", 40]] : []),
+    ] as [string, string, number][])
+      await q(
+        `INSERT INTO public.cockpit_meta_budget_days(campaign_id,day,account_id,budget_level,budget_type,daily_budget,daily_budget_usd,
+           max_budget_usd,currency,usd_rate,delivering,delivering_any,source,verified,first_seen,last_seen)
+         VALUES($1,$2,$3,$4,'daily',$5,$5,$5,'USD',1,true,true,'snapshot',true,now(),now())`,
+        [campaign, kd(i), ACCT, level, usd],
+      );
+  }
+  await db.exec(migration("20261017100100_board_budgets.sql"));
   read = await as(
     VIEWER,
     "SELECT public.cockpit_board_read($1::date,$2::date) AS r",
@@ -350,6 +445,39 @@ describe("the screen reads what the database returns", () => {
     );
     for (const k of realCells)
       expect([k, fxCells.includes(k)]).toEqual([k, true]);
+  });
+
+  test("the budgets on the client page: the fixture has the real keys, down to a campaign's cells", () => {
+    const fxPage = clientFixture("locFixHarbor01", FROM, TO, today) as any;
+    const real = page.budgets;
+    const fx = fxPage.budgets;
+    expect(keys(fx)).toEqual(keys(real));
+    expect(keys(fx.account[0])).toEqual(keys(real.account[0]));
+    expect(keys(fx.account[0].spendingLimit)).toEqual(
+      keys(real.account[0].spendingLimit),
+    );
+    expect(keys(fx.paused)).toEqual(keys(real.paused));
+    expect(keys(fx.campaigns[0])).toEqual(keys(real.campaigns[0]));
+    expect(keys(fx.campaigns[0].metrics)).toEqual(
+      keys(real.campaigns[0].metrics),
+    );
+    expect(keys(fx.campaigns[0].flag)).toEqual(keys(real.campaigns[0].flag));
+    const life = (b: any) =>
+      b.campaigns.find((c: any) => c.lifetime !== null)?.lifetime;
+    expect(keys(life(fx))).toEqual(keys(life(real)));
+    // Every key a budget cell carries in the real page, the fixture's cells carry too.
+    const cellsOf = (b: any) =>
+      b.campaigns.flatMap((c: any) => Object.values(c.metrics) as any[]);
+    const fxCells = cellKeys(cellsOf(fx));
+    for (const k of cellKeys(cellsOf(real)))
+      expect([k, fxCells.includes(k)]).toEqual([k, true]);
+    for (const k of ["day", "spend", "budget"])
+      expect(k in real.campaigns[0].metrics.budgetUsed.yesterday).toBe(true);
+    // A client with no ad account: the same keys, nothing listed.
+    const fxNova = clientFixture("locFixNova0007", FROM, TO, today) as any;
+    expect(keys(fxNova.budgets)).toEqual(keys(pageC.budgets));
+    expect(pageC.budgets.campaigns).toEqual([]);
+    expect(fxNova.budgets.paused).toEqual(pageC.budgets.paused);
   });
 
   test("the grid drawn from the real read shows no 0 where the database says NULL", () => {

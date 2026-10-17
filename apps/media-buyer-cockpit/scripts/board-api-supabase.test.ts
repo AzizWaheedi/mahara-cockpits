@@ -8,7 +8,11 @@
  * file so the two never drift). Client A's facts come from a real facts
  * refresh over invented leads, appointments, sheet rows and portal outcomes;
  * Formula Co's days and ad-days are written by hand so every formula has a
- * known answer. Every person, client, ad and number is invented.
+ * known answer. Since 2026-10-17 the budget store (20261017100000_meta_budgets)
+ * and the board's budgets (20261017100100_board_budgets) run too: Client A's
+ * account gets hand-written budgets now and per day, so Budget/day, Spend/day
+ * and Budget used have known answers. Every person, client, ad and number is
+ * invented.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -30,12 +34,16 @@ const FILE = "20261016133300_board_api.sql";
 const FIXES = [
   "20261016210000_board_facts_checked.sql",
   "20261016210100_meta_ad_days_checked.sql",
+  // The budget store (2026-10-17).
+  "20261017100000_meta_budgets.sql",
 ];
 /** The read that takes them, then its notes said once. */
 const READ_CHECKED = [
   "20261016220000_board_read_checked.sql",
   "20261016220100_board_read_notes.sql",
   "20261017090000_board_active_only.sql",
+  // The budgets on the board (2026-10-17).
+  "20261017100100_board_budgets.sql",
 ];
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
@@ -844,12 +852,16 @@ describe("who may read the board", () => {
     );
     const open = Object.fromEntries(grants.map(g => [g.fn, g.roles]));
     expect(open).toEqual({
+      cockpit_board_account_words: "",
       cockpit_board_ad_cells: "",
       cockpit_board_ad_cover: "",
       cockpit_board_ad_unmeasured: "",
       cockpit_board_add_note: "",
       cockpit_board_appointments: "",
       cockpit_board_audit: "",
+      cockpit_board_budget_cells: "",
+      cockpit_board_budget_clocks: "",
+      cockpit_board_budget_list: "",
       cockpit_board_card_status: "",
       cockpit_board_cell: "",
       cockpit_board_check_window: "",
@@ -962,7 +974,35 @@ describe("the default targets", () => {
     ];
     for (const [m, good, watch] of rest)
       expect(t[m]).toMatchObject({ good, watch });
-    expect(rows).toHaveLength(19);
+    // Budget used (2026-10-17): a starting aim, judged from 3 days with a budget, before CPM.
+    expect(t.budget_used).toMatchObject({
+      good: 90,
+      watch: 70,
+      direction: "higher",
+      strict_good: false,
+      never_off: false,
+      min: 3,
+    });
+    const order = rows.map(r => r.metric);
+    expect(order.indexOf("budget_used")).toBe(order.indexOf("cpm") - 1);
+    expect(order.indexOf("budget_used")).toBe(
+      order.indexOf("no_outcome_share") + 1,
+    );
+    const pinned = await q<Row>(
+      "SELECT value_key, label, unit, sample, owner_department, basis FROM public.cockpit_board_default_targets() WHERE metric = 'budget_used'",
+    );
+    expect(pinned).toEqual([
+      {
+        value_key: "budgetUsed",
+        label: "Budget used",
+        unit: "percent",
+        sample: "days with a budget",
+        owner_department: "media_buyer",
+        basis:
+          "set 2026-10-17 as a starting aim; Meta paces a daily budget over a week (up to 75% over on one day, at most 7 times it in a week), so the time frame is judged, never one day",
+      },
+    ]);
+    expect(rows).toHaveLength(20);
   });
 
   test("the judge: lines are inclusive, frequency's good is strict, the show rate is never off", async () => {
@@ -2650,6 +2690,739 @@ describe("the read takes the 16 October corrections", () => {
       { proname: "cockpit_board_read", auth: true, anon: false, svc: false },
       { proname: "cockpit_board_rows", auth: false, anon: false, svc: false },
     ]);
+  });
+});
+
+describe("daily budgets and budget used (2026-10-17)", () => {
+  const MON = [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ];
+  /** A day as the sentences write it: to_char 'DD Mon YYYY', 'DD Mon' and 'FMDD Mon'. */
+  const dmy = (d: string) =>
+    `${d.slice(8, 10)} ${MON[Number(d.slice(5, 7)) - 1]} ${d.slice(0, 4)}`;
+  const dm = (d: string) => dmy(d).slice(0, 6);
+  const fm = (d: string) =>
+    `${Number(d.slice(8, 10))} ${MON[Number(d.slice(5, 7)) - 1]}`;
+  const UNREAD =
+    "Meta budgets have not been read for the linked ad account yet; they are read every hour.";
+  const LIFETIME_OUT = "1 campaign on a lifetime budget is left out.";
+  const NOW_SQL = `INSERT INTO public.cockpit_meta_budgets(level,object_id,account_id,campaign_id,name,objective,status,effective_status,
+      budget_level,budget_type,daily_budget,lifetime_budget,budget_remaining,currency,currency_offset,usd_rate,daily_budget_usd,
+      start_time,end_time,ads_active,ads_with_issues,issues,switched_on,delivering,why_not,fetched_at)
+    VALUES($1,$2,$3,$4,$5,'OUTCOME_LEADS',$6,$7,$8,$9,$10,$11,$12,'USD',100,$13,$14,NULL,$15,1,0,NULL,$16,$17,$18,
+      now() - interval '15 minutes')`;
+  type Now = {
+    level?: "campaign" | "adset";
+    id: string;
+    campaign?: string;
+    name: string;
+    budgetLevel: "campaign" | "adset";
+    type: "daily" | "lifetime" | null;
+    daily?: number | null;
+    lifetime?: number | null;
+    remaining?: number | null;
+    on?: boolean;
+    delivering?: boolean;
+    whyNot?: string;
+    end?: string | null;
+    account?: string;
+  };
+  const budgetNow = (b: Now) =>
+    q(NOW_SQL, [
+      b.level ?? "campaign",
+      b.id,
+      b.account ?? ACCT_A,
+      b.campaign ?? b.id,
+      b.name,
+      b.on === false ? "PAUSED" : "ACTIVE",
+      b.on === false ? "PAUSED" : "ACTIVE",
+      b.budgetLevel,
+      b.type,
+      b.daily ?? null,
+      b.lifetime ?? null,
+      b.remaining ?? null,
+      b.daily != null ? 1 : null,
+      b.daily ?? null,
+      b.end ?? null,
+      b.on ?? true,
+      b.delivering ?? true,
+      b.delivering === false ? (b.whyNot ?? "Paused") : null,
+    ]);
+  /** One campaign's budget on one day of its account's clock. */
+  const budgetDay = (
+    campaign: string,
+    n: number,
+    usd: number | null,
+    o: {
+      type?: "daily" | "lifetime";
+      level?: "campaign" | "adset";
+      delivering?: boolean;
+      account?: string;
+    } = {},
+  ) =>
+    q(
+      `INSERT INTO public.cockpit_meta_budget_days(campaign_id,day,account_id,budget_level,budget_type,daily_budget,daily_budget_usd,
+         max_budget_usd,currency,usd_rate,delivering,delivering_any,why_not,changed_during_day,source,verified,first_seen,last_seen)
+       VALUES($1,$2,$3,$4,$5,$6,$6,$7,'USD',1,$8,$8,$9,false,'snapshot',true,now(),now())
+       ON CONFLICT (campaign_id, day) DO UPDATE SET daily_budget = EXCLUDED.daily_budget,
+         daily_budget_usd = EXCLUDED.daily_budget_usd, max_budget_usd = EXCLUDED.max_budget_usd`,
+      [
+        campaign,
+        kd(n),
+        o.account ?? ACCT_A,
+        o.level ?? "campaign",
+        o.type ?? "daily",
+        usd,
+        o.delivering === false ? null : usd,
+        o.delivering ?? true,
+        o.delivering === false ? "Ads with issues" : null,
+      ],
+    );
+  /** An account day whose budgets were read. */
+  const readDay = (n: number, account = ACCT_A) =>
+    q(
+      `INSERT INTO public.cockpit_meta_budget_account_days(account_id,day,source,reads,first_read,last_read,campaigns,verified)
+       VALUES($1,$2,'snapshot',24,now(),now(),3,true) ON CONFLICT DO NOTHING`,
+      [account, kd(n)],
+    );
+  const state = (
+    account: string,
+    o: { status?: number; cap?: number | null; spent?: number | null } = {},
+  ) =>
+    q(
+      `INSERT INTO public.cockpit_meta_account_state(account_id,account_status,disable_reason,spend_cap,amount_spent,currency,
+         currency_offset,usd_rate,fetched_at)
+       VALUES($1,$2,0,$3,$4,'USD',100,1,now() - interval '15 minutes')
+       ON CONFLICT (account_id) DO UPDATE SET account_status = EXCLUDED.account_status, spend_cap = EXCLUDED.spend_cap,
+         amount_spent = EXCLUDED.amount_spent, fetched_at = EXCLUDED.fetched_at`,
+      [account, o.status ?? 1, o.cap ?? null, o.spent ?? null],
+    );
+
+  /**
+   * Client A's account (Kuwait, USD), whose ads spend $22 a day on campaign
+   * 80001 from kd(6) to kd(1): budgets read from kd(6). 80001 a campaign
+   * budget, $25 then $22; 80002 ad set budgets ($15 + $25, one more ad set
+   * paused) from kd(3), never spending; 80003 a lifetime budget; 80004 on but
+   * blocked; 80005 paused. A spending limit of $1,000 with $960 spent.
+   */
+  let seeded = false;
+  async function seed() {
+    if (seeded) return;
+    seeded = true;
+    await owner(db);
+    await state(ACCT_A, { cap: 1000, spent: 960 });
+    await budgetNow({
+      id: "80001",
+      name: "Kitchens leads",
+      budgetLevel: "campaign",
+      type: "daily",
+      daily: 22,
+    });
+    await budgetNow({
+      id: "80002",
+      name: "Chats",
+      budgetLevel: "adset",
+      type: "daily",
+      daily: 40,
+    });
+    await budgetNow({
+      level: "adset",
+      id: "81101",
+      campaign: "80002",
+      name: "Chats A",
+      budgetLevel: "adset",
+      type: "daily",
+      daily: 15,
+    });
+    await budgetNow({
+      level: "adset",
+      id: "81102",
+      campaign: "80002",
+      name: "Chats B",
+      budgetLevel: "adset",
+      type: "daily",
+      daily: 25,
+    });
+    await budgetNow({
+      level: "adset",
+      id: "81103",
+      campaign: "80002",
+      name: "Chats old",
+      budgetLevel: "adset",
+      type: "daily",
+      daily: 50,
+      on: false,
+      delivering: false,
+    });
+    await budgetNow({
+      id: "80003",
+      name: "Spring launch",
+      budgetLevel: "campaign",
+      type: "lifetime",
+      lifetime: 500,
+      remaining: 200,
+      end: `${dayShift(today, 10)}T20:00:00Z`,
+    });
+    await budgetNow({
+      id: "80004",
+      name: "Retargeting",
+      budgetLevel: "campaign",
+      type: "daily",
+      daily: 30,
+      delivering: false,
+      whyNot: "Ads with issues",
+    });
+    await budgetNow({
+      id: "80005",
+      name: "Old offer",
+      budgetLevel: "campaign",
+      type: "daily",
+      daily: 50,
+      on: false,
+      delivering: false,
+    });
+    for (let n = 0; n <= 6; n++) {
+      await readDay(n);
+      await budgetDay("80001", n, n >= 4 ? 25 : 22);
+    }
+    for (let n = 0; n <= 3; n++) {
+      await budgetDay("80002", n, 40, { level: "adset" });
+      await budgetDay("80003", n, null, { type: "lifetime" });
+    }
+    await budgetDay("80004", 1, 30, { delivering: false });
+  }
+
+  afterAll(async () => {
+    await owner(db);
+    await db.exec(`DELETE FROM public.cockpit_meta_budgets; DELETE FROM public.cockpit_meta_budget_days;
+      DELETE FROM public.cockpit_meta_budget_account_days; DELETE FROM public.cockpit_meta_account_state;`);
+  });
+
+  test("before any budget is read: Budget/day and Budget used are not measured and said, never $0", async () => {
+    const b = await board(CEO, kd(6), kd(4));
+    const a = rowOf(b, LOC_A).values;
+    expect(a.dailyBudget).toEqual({
+      v: null,
+      status: "not_measured",
+      note: UNREAD,
+    });
+    expect(a.budgetUsed).toMatchObject({
+      v: null,
+      status: "not_measured",
+      note: UNREAD,
+      target: "budget_used",
+    });
+    expect(a.spendPerDay).toEqual({ v: 22, status: null, num: 66, den: 3 });
+    expect(b.notes).toContain(
+      "Meta budgets have not been read yet, so Budget/day and Budget used are empty.",
+    );
+    // No ad account at all: said so, in all three.
+    const none = rowOf(b, LOC_B).values;
+    for (const k of ["dailyBudget", "spendPerDay", "budgetUsed"])
+      expect(none[k]).toMatchObject({
+        v: null,
+        status: "not_measured",
+        note: "No Meta ad account is linked to this client.",
+      });
+  });
+
+  test("Budget/day: campaign and ad set budgets delivering now, in dollars; lifetime, blocked and paused ones left out and said", async () => {
+    await seed();
+    const b = await board(CEO, kd(6), kd(4));
+    const d = rowOf(b, LOC_A).values.dailyBudget;
+    expect(d).toMatchObject({
+      v: 62,
+      status: null,
+      campaigns: 2,
+      lifetime: 1,
+      notDelivering: 1,
+      heldBudget: 30,
+      accountIssues: [
+        {
+          accountId: ACCT_A,
+          name: "Ads",
+          issue: "limit_near",
+          words:
+            "Spending limit nearly used: 40.00 USD left, under one day of budget",
+        },
+      ],
+    });
+    expect(d.note).toMatch(
+      /^2 campaigns delivering now: 1 on a campaign budget, 1 on ad set budgets\. 1 campaign on a lifetime budget is left out\. 1 more campaign is on but not delivering \(\$30\.00 a day\): Ads with issues\. Read \d\d \w{3} \d\d:\d\d Kuwait time: the budget now, whatever the time frame\.$/,
+    );
+    expect(b.notes).not.toContain(
+      "Meta budgets have not been read yet, so Budget/day and Budget used are empty.",
+    );
+    // The budget now, whatever the time frame.
+    const old = await board(CEO, F_FROM, F_TO);
+    expect(rowOf(old, LOC_A).values.dailyBudget.v).toBe(62);
+    // Formula Co's account was never read: not measured, never $0.
+    expect(rowOf(old, LOC_D).values.dailyBudget).toEqual({
+      v: null,
+      status: "not_measured",
+      note: UNREAD,
+    });
+    expect(rowOf(old, LOC_D).values.budgetUsed).toMatchObject({
+      v: null,
+      status: "not_measured",
+      note: UNREAD,
+    });
+  });
+
+  test("Budget used: spend over the daily budgets of the campaign-days that were delivering, judged watch, off and good", async () => {
+    await seed();
+    const used = async (from: number, to: number) =>
+      rowOf(await board(CEO, kd(from), kd(to)), LOC_A).values.budgetUsed;
+    const yesterday = { day: kd(1), spend: 22, budget: 62 };
+    // 66 of 75: the campaign budget alone, before the ad set campaign began.
+    expect(await used(6, 4)).toEqual({
+      v: 88,
+      status: "watch",
+      num: 66,
+      den: 75,
+      sample: 3,
+      target: "budget_used",
+      budgetDays: 3,
+      yesterday,
+      notSpending: 1,
+    });
+    // The ad set campaign's $120 with nothing spent on days its account was read: $0, never left out.
+    expect(await used(3, 1)).toEqual({
+      v: 35.48,
+      status: "off",
+      num: 66,
+      den: 186,
+      sample: 3,
+      target: "budget_used",
+      note: LIFETIME_OUT,
+      budgetDays: 3,
+      yesterday,
+      notSpending: 1,
+    });
+    await owner(db);
+    try {
+      for (const n of [6, 5, 4]) await budgetDay("80001", n, 22);
+      expect(await used(6, 4)).toMatchObject({ v: 100, status: "good" });
+      // Above 110%: a note, never a status.
+      for (const n of [6, 5, 4]) await budgetDay("80001", n, 18);
+      const over = await used(6, 4);
+      expect(over).toMatchObject({ v: 122.22, status: "good", over: true });
+      expect(over.note).toBe(
+        "Above its daily budgets: Meta may spend up to 75% over a daily budget on one day, and at most 7 times it in a week.",
+      );
+    } finally {
+      await owner(db);
+      for (const n of [6, 5, 4]) await budgetDay("80001", n, 25);
+    }
+    expect((await used(6, 4)).status).toBe("watch");
+  });
+
+  test("under 3 days with a budget is too few; before the history starts the days are partial and said", async () => {
+    await seed();
+    const used = async (from: string, to: string) =>
+      rowOf(await board(CEO, from, to), LOC_A).values.budgetUsed;
+    expect(await used(kd(2), kd(1))).toMatchObject({
+      v: 35.48,
+      status: "too_few",
+      sample: 2,
+    });
+    const nine = await used(kd(9), kd(1));
+    expect(nine).toMatchObject({
+      v: 50.57,
+      status: "off",
+      num: 132,
+      den: 261,
+      partial: true,
+      pairedDays: 6,
+    });
+    expect(nine.note).toBe(
+      `Over the 6 of 9 days whose budgets are known. Budgets are stored from ${dmy(kd(6))}. ${LIFETIME_OUT}`,
+    );
+    // A time frame before the history: not measured, never 0%.
+    expect(await used(F_FROM, F_TO)).toMatchObject({
+      v: null,
+      status: "not_measured",
+      note: `Meta budgets are stored from ${dmy(kd(6))}; this time frame is before that.`,
+      yesterday: { day: kd(1), spend: 22, budget: 62 },
+    });
+  });
+
+  test("a day whose ad numbers were not read is left out and said; once read, a budget that spent nothing there is $0", async () => {
+    await seed();
+    await owner(db);
+    let run: string | null = null;
+    try {
+      await readDay(8);
+      await budgetDay("80001", 8, 25);
+      const left = rowOf(await board(CEO, kd(9), kd(1)), LOC_A).values
+        .budgetUsed;
+      expect(left).toMatchObject({
+        v: 50.57,
+        num: 132,
+        den: 261,
+        partial: true,
+        pairedDays: 7,
+      });
+      expect(left.note).toContain(
+        "1 campaign-day with a daily budget is left out: the ad numbers of Ads were not read those days.",
+      );
+      // The day's read finished after the day ended on the account's clock: no rows is $0.
+      [{ id: run }] = await q<{ id: string }>(
+        `INSERT INTO public.cockpit_meta_ad_day_runs(job,state,requested_by,started_at,finished_at)
+         VALUES('backfill','ok','tests',now() - interval '1 hour',now()) RETURNING id`,
+      );
+      await q(
+        `INSERT INTO public.cockpit_meta_ad_day_tasks(run_id,kind,account_id,account_name,account_currency,account_timezone,since,until,state,updated_at)
+         VALUES($1,'days',$2,'Ads','USD','Asia/Kuwait',$3,$4,'done',now())`,
+        [run, ACCT_A, kd(9), kd(8)],
+      );
+      const read = rowOf(await board(CEO, kd(9), kd(1)), LOC_A).values
+        .budgetUsed;
+      expect(read).toMatchObject({
+        v: 46.15,
+        num: 132,
+        den: 286,
+        partial: true,
+        pairedDays: 7,
+      });
+      expect(read.note).not.toContain("left out: the ad numbers");
+    } finally {
+      await owner(db);
+      if (run)
+        await q("DELETE FROM public.cockpit_meta_ad_day_runs WHERE id = $1", [
+          run,
+        ]);
+      await q(
+        "DELETE FROM public.cockpit_meta_budget_days WHERE campaign_id = '80001' AND day = $1",
+        [kd(8)],
+      );
+      await q(
+        "DELETE FROM public.cockpit_meta_budget_account_days WHERE account_id = $1 AND day = $2",
+        [ACCT_A, kd(8)],
+      );
+    }
+  });
+
+  test("spend per day: the Spend cell over the ad days it covers, with its floor", async () => {
+    await seed();
+    expect(
+      rowOf(await board(CEO, kd(6), kd(4)), LOC_A).values.spendPerDay,
+    ).toEqual({
+      v: 22,
+      status: null,
+      num: 66,
+      den: 3,
+    });
+    const part = rowOf(await board(CREATIVE, kd(45), F_TO), LOC_D).values;
+    expect(part.spendPerDay).toEqual({
+      v: 66.67,
+      status: null,
+      num: 1000,
+      den: 15,
+      atLeast: true,
+      partial: true,
+      note: part.spend.note,
+    });
+    const before = rowOf(await board(CREATIVE, kd(60), kd(50)), LOC_D).values;
+    expect(before.spendPerDay).toEqual({
+      v: null,
+      status: "not_measured",
+      note: before.spend.note,
+    });
+  });
+
+  test("the client page lists every campaign switched on, a $0 one the tree cannot show too, with its account and the paused spend", async () => {
+    await seed();
+    const page = await client(CEO, LOC_A, kd(3), kd(1));
+    const b = page.budgets;
+    expect(b.account).toEqual([
+      {
+        accountId: ACCT_A,
+        name: "Ads",
+        currency: "USD",
+        status: "Active",
+        asOf: b.asOf,
+        spendingLimit: { cap: 1000, spent: 960, left: 40, daysLeft: 0.6 },
+      },
+    ]);
+    // Flagged first, then the biggest daily budget; the paused one is not listed.
+    expect(b.campaigns.map((c: Row) => c.id)).toEqual([
+      "80002",
+      "80004",
+      "80001",
+      "80003",
+    ]);
+    const camp = (id: string) => b.campaigns.find((c: Row) => c.id === id);
+    expect(camp("80002")).toMatchObject({
+      name: "Chats",
+      budgetLevel: "adset",
+      budgetType: "daily",
+      adsets: 2,
+      delivering: true,
+      whyNot: null,
+      lifetime: null,
+      flag: { status: "off", words: `Spent nothing since ${fm(kd(3))}` },
+    });
+    expect(camp("80002").metrics.budgetUsed).toMatchObject({
+      v: 0,
+      status: "off",
+      num: 0,
+      den: 120,
+      sample: 3,
+    });
+    expect(camp("80002").metrics.spentYesterday).toMatchObject({
+      v: 0,
+      zeroSince: kd(3),
+    });
+    expect(camp("80002").metrics.dailyBudget).toMatchObject({
+      v: 40,
+      status: null,
+    });
+    // The tree has no row for a campaign with no ad numbers.
+    expect(page.campaigns.map((c: Row) => c.id)).not.toContain("80002");
+    expect(camp("80001").flag).toBeNull();
+    expect(camp("80001").metrics).toMatchObject({
+      dailyBudget: { v: 22 },
+      spentYesterday: { v: 22 },
+      usedYesterday: { v: 100, num: 22, den: 22, status: null },
+      spendPerDay: { v: 22, num: 66, den: 3 },
+      budgetUsed: { v: 100, status: "good" },
+    });
+    expect(camp("80004")).toMatchObject({
+      delivering: false,
+      whyNot: "Ads with issues",
+      flag: { status: "off", words: "Ads with issues" },
+    });
+    expect(camp("80004").metrics.dailyBudget.v).toBe(30);
+    expect(camp("80004").metrics.dailyBudget.note).toContain(
+      "Not delivering now: Ads with issues.",
+    );
+    expect(camp("80003")).toMatchObject({
+      budgetType: "lifetime",
+      flag: null,
+      lifetime: {
+        budget: 500,
+        remaining: 200,
+        currency: "USD",
+        endsOn: dayShift(today, 10),
+      },
+    });
+    expect(camp("80003").metrics.budgetUsed).toMatchObject({
+      v: null,
+      status: "not_measured",
+      note: "A lifetime budget: no daily figure.",
+    });
+    expect(b.paused).toEqual({ campaigns: 0, spend: 0 });
+    // A campaign paused now that spent in these days is summed, not listed.
+    await owner(db);
+    try {
+      await adDay({
+        account: ACCT_A,
+        day: kd(2),
+        campaign: "80005",
+        adset: "81005",
+        ad: "70005",
+        spend: 9,
+        imp: 900,
+        clicks: 9,
+      });
+      const again = (await client(CEO, LOC_A, kd(3), kd(1))).budgets;
+      expect(again.paused).toEqual({ campaigns: 1, spend: 9 });
+      expect(again.campaigns.map((c: Row) => c.id)).not.toContain("80005");
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.cockpit_meta_ad_days WHERE ad_id = '70005'");
+    }
+    // No ad account: said, nothing listed.
+    const none = (await client(CEO, LOC_B, kd(3), kd(1))).budgets;
+    expect(none).toEqual({
+      asOf: null,
+      note: "No Meta ad account is linked to this client.",
+      account: [],
+      campaigns: [],
+      paused: { campaigns: 0, spend: null },
+    });
+  });
+
+  test("the Los Angeles account's yesterday is its own", async () => {
+    await seed();
+    const LA = "3333333333";
+    await owner(db);
+    await db.exec(
+      "CREATE TEMP TABLE _budget_accounts AS SELECT location_id, ad_account_ids FROM public.cockpit_board_clients",
+    );
+    try {
+      for (const n of [4, 3, 2, 1]) {
+        await adDay({
+          account: LA,
+          accountName: "Atlantis LA",
+          tz: "America/Los_Angeles",
+          day: kd(n),
+          campaign: "83001",
+          adset: "84001",
+          ad: "73001",
+          spend: 40,
+          imp: 4000,
+          clicks: 40,
+          leads: 2,
+        });
+        await readDay(n, LA);
+        await budgetDay("83001", n, 50, { account: LA });
+      }
+      await state(LA);
+      await budgetNow({
+        id: "83001",
+        account: LA,
+        name: "LA leads",
+        budgetLevel: "campaign",
+        type: "daily",
+        daily: 50,
+      });
+      // 05:00 Kuwait time today: Los Angeles is still on Kuwait's yesterday.
+      await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz
+        LANGUAGE sql STABLE SET search_path = '' AS $$ SELECT '${kt(0, "05:00")}'::timestamptz $$`);
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = ARRAY[$1] WHERE location_id = $2",
+        [LA, LOC_B],
+      );
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = ARRAY[$1, $2] WHERE location_id = $3",
+        [ACCT_A, LA, LOC_A],
+      );
+      const b = await board(CEO, kd(4), kd(1));
+      const la = rowOf(b, LOC_B).values.budgetUsed;
+      expect(la).toMatchObject({
+        v: 80,
+        status: "watch",
+        num: 120,
+        den: 150,
+        sample: 3,
+        partial: true,
+        pairedDays: 3,
+        yesterday: { day: kd(2), spend: 40, budget: 50 },
+        notSpending: 0,
+      });
+      expect(la.note).toBe(
+        `Over the 3 of 4 days whose budgets are known. Atlantis LA keeps America/Los_Angeles time, so ${dm(kd(1))} is not over there yet.`,
+      );
+      // Client A on both clocks: each account's own yesterday.
+      expect(rowOf(b, LOC_A).values.budgetUsed.yesterday).toEqual({
+        day: kd(1),
+        days: [kd(2), kd(1)],
+        spend: 62,
+        budget: 112,
+      });
+    } finally {
+      await owner(db);
+      await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz
+        LANGUAGE sql STABLE SET search_path = '' AS $$ SELECT pg_catalog.now() $$`);
+      await db.exec(`UPDATE public.cockpit_board_clients b SET ad_account_ids = x.ad_account_ids
+        FROM _budget_accounts x WHERE x.location_id = b.location_id; DROP TABLE _budget_accounts;`);
+      await q("DELETE FROM public.cockpit_meta_ad_days WHERE account_id = $1", [
+        LA,
+      ]);
+      for (const t of [
+        "cockpit_meta_budgets",
+        "cockpit_meta_budget_days",
+        "cockpit_meta_budget_account_days",
+        "cockpit_meta_account_state",
+      ])
+        await q(`DELETE FROM public.${t} WHERE account_id = $1`, [LA]);
+    }
+  });
+
+  test("an unsettled account or a spending limit reached: words for the board's line and the page", async () => {
+    await seed();
+    await owner(db);
+    try {
+      await state(ACCT_A, { status: 3, cap: 1000, spent: 960 });
+      const b = await board(CEO, kd(3), kd(1));
+      expect(rowOf(b, LOC_A).values.dailyBudget.accountIssues).toEqual([
+        {
+          accountId: ACCT_A,
+          name: "Ads",
+          issue: "billing",
+          words: "Unsettled: payment needed",
+        },
+      ]);
+      expect(
+        (await client(CEO, LOC_A, kd(3), kd(1))).budgets.account[0].status,
+      ).toBe("Unsettled: payment needed");
+      await state(ACCT_A, { cap: 1000, spent: 1000 });
+      expect(
+        rowOf(await board(CEO, kd(3), kd(1)), LOC_A).values.dailyBudget
+          .accountIssues,
+      ).toEqual([
+        {
+          accountId: ACCT_A,
+          name: "Ads",
+          issue: "limit_reached",
+          words: "Spending limit reached",
+        },
+      ]);
+    } finally {
+      await owner(db);
+      await state(ACCT_A, { cap: 1000, spent: 960 });
+    }
+  });
+
+  test("the board says when the budgets were last read hours ago", async () => {
+    await seed();
+    await owner(db);
+    try {
+      await q(
+        "UPDATE public.cockpit_meta_budgets SET fetched_at = now() - interval '4 hours'",
+      );
+      const b = await board(CEO, kd(3), kd(1));
+      expect(
+        b.notes.filter((n: string) => n.startsWith("Meta budgets")),
+      ).toEqual([
+        expect.stringMatching(
+          /^Meta budgets were last read \d\d \w{3} \d\d:\d\d Kuwait time; they are read every hour\.$/,
+        ),
+      ]);
+    } finally {
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_meta_budgets SET fetched_at = now() - interval '15 minutes'",
+      );
+    }
+  });
+
+  test("a lever for budget used carries the board's value as its evidence", async () => {
+    await seed();
+    const ctx = await as(
+      CSM,
+      "SELECT public.cockpit_board_lever_context($1::jsonb) AS r",
+      [
+        JSON.stringify({
+          locationId: LOC_A,
+          metric: "budget_used",
+          lever: "Widen the ad set audience",
+          department: "media_buyer",
+          from: kd(3),
+          to: kd(1),
+        }),
+      ],
+    );
+    expect(ctx).toMatchObject({
+      metric: "budget_used",
+      metricLabel: "Budget used",
+    });
+    expect(ctx.evidence).toBe(
+      `Client A Budget used, ${dm(kd(3))} to ${dm(kd(1))}: 35.48% against a good line of 90.0% (off target).`,
+    );
   });
 });
 

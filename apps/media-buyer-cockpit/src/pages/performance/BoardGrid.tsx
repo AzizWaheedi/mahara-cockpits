@@ -9,6 +9,7 @@ import { isNum } from "@/components/ceo/format";
 import type { Cell, ClientRow, Target, Targets } from "@/lib/boardClient";
 import {
   type BoardColumn,
+  budgetYesterdayWords,
   firstBreak,
   GROUPS,
   type GroupKey,
@@ -203,6 +204,7 @@ function noOutcomeCell(row: ClientRow): Cell {
 
 function extraLine(row: ClientRow, key: string): string | null {
   if (key === "noOutcome") return noOutcomeWords(row);
+  if (key === "budgetUsed") return budgetYesterdayWords(row.values.budgetUsed);
   if (key === "leadsTouched") {
     const u = row.values.untouchedLeads;
     if (u && isNum(u.v))
@@ -286,10 +288,11 @@ export function BoardGrid({
         title={hint}
         aria-label={`Sort by ${label}`}
         className={cn(
-          // A long label wraps to two lines, so the key columns fit at 1440
-          // with the rail open.
-          "no-touch group relative inline-flex items-center gap-1 rounded-sm text-left leading-tight after:absolute after:-inset-x-1.5 after:-inset-y-2 after:content-[''] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          numeric && "flex-row-reverse text-right",
+          // A long label wraps to two lines, and the sort arrow sits outside
+          // the label's width, so the 11 key columns fit at 1440 with the
+          // rail open (2026-10-17: 1,098 of 1,124 px in the harness).
+          "no-touch group relative inline-flex items-center rounded-sm text-left leading-tight after:absolute after:-inset-x-1.5 after:-inset-y-2 after:content-[''] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          numeric && "text-right",
           active && "text-foreground",
         )}
       >
@@ -297,7 +300,8 @@ export function BoardGrid({
         <Icon
           aria-hidden
           className={cn(
-            "size-3 shrink-0",
+            "absolute top-1/2 size-3 shrink-0 -translate-y-1/2",
+            numeric ? "right-full mr-0.5" : "left-full ml-0.5",
             active
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-60 group-focus-visible:opacity-60",
@@ -374,9 +378,9 @@ export function BoardGrid({
                   scope="col"
                   aria-sort={ariaSort(c.key)}
                   className={cn(
-                    "sticky top-7 z-[2] h-9 border-b bg-card px-3 text-xs font-medium text-muted-foreground",
+                    "sticky top-7 z-[2] h-9 border-b bg-card px-2.5 text-xs font-medium text-muted-foreground",
                     numeric
-                      ? "min-w-[76px] text-right"
+                      ? "min-w-[72px] text-right"
                       : "min-w-[112px] text-left",
                     groupStart.has(c.key) &&
                       c.group !== "client" &&
@@ -447,7 +451,7 @@ export function BoardGrid({
                   <td
                     key={c.key}
                     className={cn(
-                      "border-b border-[color:var(--ceo-grid)] px-3 align-middle group-hover/row:bg-[var(--ceo-hover)]",
+                      "border-b border-[color:var(--ceo-grid)] px-2.5 align-middle group-hover/row:bg-[var(--ceo-hover)]",
                       pad,
                       c.special === "caller" ? "text-left" : "text-right",
                       groupStart.has(c.key) &&
