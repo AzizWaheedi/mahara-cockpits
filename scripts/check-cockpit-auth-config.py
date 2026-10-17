@@ -12,6 +12,16 @@ import urllib.request
 PROJECT = "bldgtotkfmhoxmlzowdx"
 PORTAL = "https://cockpit.maharamedia.com/"
 
+# The tested source of each live access and write function. A migration that
+# replaces one on purpose points its row here in the same commit; anything else
+# that changes them live fails the ship.
+CONTRACT_SOURCES = {
+    "cockpit_get_my_access": "20261017b_team_only_seats.sql",
+    "cockpit_has_active_seat": "20261007d_cockpit_team_rpc_restore.sql",
+    "cockpit_team_guard_write": "20261017b_team_only_seats.sql",
+    "cockpit_log_decision": "20261007f_cockpit_write_contract.sql",
+}
+
 
 def check_config(config):
     failures = []
@@ -42,6 +52,16 @@ def body(sql):
     if not match:
         raise ValueError("Access function body missing")
     return " ".join(re.sub(r"--[^\n]*", "", match[2]).split())
+
+
+def contract_definition(root, name):
+    """The CREATE OR REPLACE block for one contract function in the migration
+    CONTRACT_SOURCES names, whatever its dollar-quote tag."""
+    source = (root / "supabase/migrations" / CONTRACT_SOURCES[name]).read_text(encoding="utf-8")
+    match = re.search(r"create or replace function public\." + name + r"\([\s\S]*?\bAS\s+(\$[A-Za-z0-9_]*\$)[\s\S]*?\1", source, re.I)
+    if not match:
+        raise ValueError("Contract definition missing: " + name)
+    return match[0]
 
 
 def token_from_env(env_file):
@@ -159,12 +179,11 @@ def main():
             read = Reader(args.env_file)
             failures = check_config(read("config/auth"))
             rows = read("database/query", {"read_only": True, "query": "select pg_get_functiondef(p.oid) as definition,p.prosecdef as secure,has_function_privilege('anon',p.oid,'EXECUTE') as anon_allowed,has_function_privilege('authenticated',p.oid,'EXECUTE') as authenticated_allowed,(select relrowsecurity from pg_class where oid='public.cockpit_members'::regclass) as directory_rls from pg_proc p where p.oid='public.cockpit_get_my_access()'::regprocedure"})
-            expected = pathlib.Path(__file__).resolve().parents[1] / "supabase/migrations/20261007b_cockpit_auth_contract.sql"
-            if len(rows) != 1 or body(rows[0]["definition"]) != body(expected.read_text(encoding="utf-8")):
+            root = pathlib.Path(__file__).resolve().parents[1]
+            if len(rows) != 1 or body(rows[0]["definition"]) != body(contract_definition(root, "cockpit_get_my_access")):
                 failures.append("Live directory access function differs from the tested five-cockpit contract")
             if rows and (not rows[0]["secure"] or rows[0]["anon_allowed"] or not rows[0]["authenticated_allowed"] or not rows[0]["directory_rls"]):
                 failures.append("Directory access security or grants changed")
-            root = pathlib.Path(__file__).resolve().parents[1]
             catalog = read("database/query", {"read_only": True, "query": "select coalesce(jsonb_agg(distinct p.proname),'[]'::jsonb) as functions from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname like 'cockpit_%'"})
             if len(catalog) != 1:
                 raise ValueError("Backend function catalog missing")
@@ -173,12 +192,9 @@ def main():
                 failures.append("Missing production cockpit RPCs: " + ", ".join(missing))
             if not missing:
                 contracts = read("database/query", {"read_only": True, "query": "select p.proname,pg_get_functiondef(p.oid) as definition,has_function_privilege('anon',p.oid,'EXECUTE') as anon_allowed from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname in ('cockpit_has_active_seat','cockpit_team_guard_write','cockpit_log_decision')"})
-                expected_files = {"cockpit_has_active_seat": "20261007d_cockpit_team_rpc_restore.sql", "cockpit_team_guard_write": "20261007g_cockpit_team_role_guard.sql", "cockpit_log_decision": "20261007f_cockpit_write_contract.sql"}
-                for name, file in expected_files.items():
+                for name in ("cockpit_has_active_seat", "cockpit_team_guard_write", "cockpit_log_decision"):
                     actual = [row for row in contracts if row["proname"] == name]
-                    source = (root / "supabase/migrations" / file).read_text(encoding="utf-8")
-                    definition = re.search(r"create or replace function public\." + name + r"\([\s\S]*?\$\$;", source, re.I)
-                    if not definition or len(actual) != 1 or body(actual[0]["definition"]) != body(definition[0]) or actual[0]["anon_allowed"]:
+                    if len(actual) != 1 or body(actual[0]["definition"]) != body(contract_definition(root, name)) or actual[0]["anon_allowed"]:
                         failures.append("Live access or write contract changed: " + name)
         print(json.dumps({"status": "failed" if failures else "ok", "production_verified": not args.config_file and not failures, "failures": failures}))
         return int(bool(failures))

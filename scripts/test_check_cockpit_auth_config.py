@@ -56,6 +56,35 @@ class AuthConfigurationTests(unittest.TestCase):
             (worker / "node_modules/fake.ts").write_text('rpc(env,"cockpit_dependency",{});')
             self.assertEqual(MODULE.production_rpc_names(root), {"cockpit_server", "cockpit_worker", "cockpit_sync", "cockpit_python"})
 
+    def test_each_contract_source_holds_its_own_definition(self):
+        root = SCRIPT.resolve().parents[1]
+        for name in MODULE.CONTRACT_SOURCES:
+            with self.subTest(name=name):
+                definition = MODULE.contract_definition(root, name)
+                self.assertRegex(definition, r"(?i)^create or replace function public\." + name + r"\(")
+                self.assertEqual(definition.lower().count("create or replace function"), 1)
+                self.assertTrue(MODULE.body(definition))
+
+    def test_contract_definition_reads_any_dollar_tag(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            (root / "supabase/migrations").mkdir(parents=True)
+            (root / "supabase/migrations/fixture.sql").write_text(
+                "CREATE OR REPLACE FUNCTION public.cockpit_first()\n RETURNS jsonb\nAS $function$ select 1 $function$;\n"
+                "create or replace function public.cockpit_second() returns int as $$ select 2 $$;\n")
+            with mock.patch.dict(MODULE.CONTRACT_SOURCES, {"cockpit_first": "fixture.sql", "cockpit_second": "fixture.sql"}):
+                self.assertEqual(MODULE.body(MODULE.contract_definition(root, "cockpit_first")), "select 1")
+                self.assertEqual(MODULE.body(MODULE.contract_definition(root, "cockpit_second")), "select 2")
+            with mock.patch.dict(MODULE.CONTRACT_SOURCES, {"cockpit_absent": "fixture.sql"}):
+                with self.assertRaises(ValueError):
+                    MODULE.contract_definition(root, "cockpit_absent")
+
+    def test_team_only_seats_is_the_access_contract(self):
+        self.assertEqual(MODULE.CONTRACT_SOURCES["cockpit_get_my_access"], "20261017b_team_only_seats.sql")
+        self.assertEqual(MODULE.CONTRACT_SOURCES["cockpit_team_guard_write"], "20261017b_team_only_seats.sql")
+        access = MODULE.contract_definition(SCRIPT.resolve().parents[1], "cockpit_get_my_access")
+        self.assertIn("cockpit_is_team_only", access)
+
     def test_valid_configuration_passes(self):
         self.assertEqual(MODULE.check_config(good_config()), [])
 
