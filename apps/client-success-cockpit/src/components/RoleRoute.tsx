@@ -47,12 +47,15 @@ export function RoleRoute({
   );
 }
 
-/** Shared review shell avoids CSM-only data providers for media buyers. */
-export function BillingReviewLayout() {
+/**
+ * Shared review shell avoids CSM-only data providers for media buyers. Sales
+ * seats open the invoice page in it too (`wide`, the invoice page's width).
+ */
+export function BillingReviewLayout({ wide = false }: { wide?: boolean }) {
   const { access } = useCockpitAuth();
   return (
     <main className="min-h-screen bg-background px-4 py-8 sm:px-6">
-      <div className="mx-auto mb-5 max-w-4xl">
+      <div className={`mx-auto mb-5 ${wide ? "max-w-6xl" : "max-w-4xl"}`}>
         <a
           className="text-sm text-muted-foreground underline"
           href={`${portalUrl()}${access?.home || "/"}`}

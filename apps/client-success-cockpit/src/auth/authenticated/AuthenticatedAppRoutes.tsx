@@ -20,6 +20,7 @@ import {
   SignupPage,
   TodayPage,
 } from "@/pages";
+import { InvoicesPage } from "@/pages/InvoicesPage";
 
 /** An old address, sent on to where its page lives now, with its query string. */
 function Moved({ to }: { to: string }) {
@@ -49,6 +50,14 @@ export function AuthenticatedRoutes() {
         <Route element={<RoleRoute anyOf={["csm", "media_buyer"]} />}>
           <Route element={<BillingReviewLayout />}>
             <Route path="/ad-billing" element={<AdBillingReviewPage />} />
+          </Route>
+        </Route>
+        {/* Sales seats make invoices too (Muhammed, 18 Oct 2026): the same
+            page as Money, Invoices, without the CSM sidebar. The sales
+            cockpit's Invoices link opens it. */}
+        <Route element={<RoleRoute anyOf={["csm", "sales"]} />}>
+          <Route element={<BillingReviewLayout wide />}>
+            <Route path="/invoices" element={<InvoicesPage />} />
           </Route>
         </Route>
         <Route element={<AppLayout />}>

@@ -3,6 +3,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  ReceiptText,
   Search,
   Sun,
 } from "lucide-react";
@@ -190,6 +191,13 @@ export default function Sidebar({
       label: "Client performance",
       href: `${portalUrl()}/performance`,
     },
+    // Invoices for any client on the billing sheet: the client success
+    // cockpit's invoice page, opened to sales seats (18 Oct 2026).
+    {
+      key: "invoices",
+      label: "Invoices",
+      href: `${portalUrl()}/client-success/invoices`,
+    },
     ...otherCockpits(cockpits, isAdmin),
   ];
 
@@ -338,7 +346,8 @@ export default function Sidebar({
       <div className="mt-auto w-full space-y-3">
         <ul className="space-y-0.5 border-t hairline pt-3" aria-label="Portal">
           {doors.map(d => {
-            const Icon = COCKPIT_ICON[d.key];
+            const Icon =
+              d.key === "invoices" ? ReceiptText : COCKPIT_ICON[d.key];
             return (
               <li key={d.key}>
                 <a
