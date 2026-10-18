@@ -69,6 +69,21 @@
       "port": 5179
     },
     {
+      "name": "dv-scan-harness",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": [
+        "run",
+        "--cwd",
+        "D:/MaharaMedia/worktrees/mahara-cockpits-dv-scan/apps/media-buyer-cockpit",
+        "harness",
+        "--",
+        "--port",
+        "5420",
+        "--strictPort"
+      ],
+      "port": 5420
+    },
+    {
       "name": "social-harness",
       "runtimeExecutable": "bun",
       "runtimeArgs": [
