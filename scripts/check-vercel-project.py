@@ -183,16 +183,57 @@ def release_candidate(url, expected, sha, promote=False):
     raise ValueError(f"Production verification failed: {failure}")
 
 
+def current_production(expected):
+    """Read-only: the deployment production serves now, so scripts/release.ps1
+    can return to it if the release fails after the upload."""
+    if not expected or not expected.get("origin") or not expected.get("scope"):
+        raise ValueError("No production origin and team scope are configured for this directory.")
+    current = api("/v13/deployments/" + expected["origin"], expected)
+    verify_owner(current, expected)
+    return {"id": current["id"], "url": "https://" + current["url"], "sha": commit_of(current)}
+
+
+def rollback(url, expected):
+    """Promote an earlier READY production deployment of this same project and
+    wait until the production origin serves it. Used by scripts/release.ps1 when
+    a release fails after production changed."""
+    if not expected or not expected.get("origin") or not expected.get("scope"):
+        raise ValueError("Rollback requires a configured origin, project and team scope.")
+    if not re.fullmatch(r"https://[a-z0-9-]+\.vercel\.app/?", url):
+        raise ValueError("Use the exact deployment URL recorded before the release.")
+    target = api("/v13/deployments/" + urlparse(url).hostname, expected)
+    verify_owner(target, expected)
+    if target.get("readyState") != "READY" or target.get("target") != "production":
+        raise ValueError("Roll back only to a READY production deployment of this project.")
+    origin_endpoint = "/v13/deployments/" + expected["origin"]
+    if api(origin_endpoint, expected).get("id") == target["id"]:
+        print(f"Rollback not needed: {expected['origin']} already serves {target['id']}")
+        return
+    vercel(["promote", target["url"], "--yes"], expected)
+    for attempt in range(6):
+        if api(origin_endpoint, expected).get("id") == target["id"]:
+            print(f"Rolled back: {expected['origin']} serves {target['id']} again")
+            return
+        if attempt < 5:
+            time.sleep(5)
+    raise ValueError(f"Rollback did not take effect: {expected['origin']} does not serve {target['id']}. Promote it in Vercel by hand.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory")
     parser.add_argument("--deployment")
     parser.add_argument("--promote", action="store_true", help="Apply the verified production plan; otherwise read-only")
     parser.add_argument("--production-in-head", action="store_true", help="Read-only: refuse when production has commits HEAD lacks")
+    parser.add_argument("--current", action="store_true", help="Read-only: print the production deployment as JSON")
+    parser.add_argument("--rollback-to", metavar="URL", help="Promote this earlier production deployment of the same project")
     args = parser.parse_args()
     root = ROOT
     directory = args.directory
     expected = json.loads((root / "config/vercel-projects.json").read_text()).get(directory)
+    if args.current:
+        print(json.dumps(current_production(expected)))
+        return
     if args.production_in_head:
         head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
         try:
@@ -205,7 +246,7 @@ def main():
             print(f"ALLOW_UNKNOWN_PRODUCTION=yes: shipping {head[:8]} without comparing it with production. {error}")
         return
     if expected is None:
-        if args.deployment or args.promote:
+        if args.deployment or args.promote or args.rollback_to:
             raise ValueError("No verified production project is configured for this directory.")
         return  # Do not invent ownership for unverified projects.
     link_path = root / directory / ".vercel/project.json"
@@ -213,6 +254,9 @@ def main():
         raise ValueError("Missing Vercel link; use config/vercel-projects.json after verifying the live alias.")
     verify(json.loads(link_path.read_text()), expected)
     print(f"Vercel project verified for {expected['domain']}: {expected['projectName']}")
+    if args.rollback_to:
+        rollback(args.rollback_to, expected)
+        return
     if args.promote and not args.deployment:
         raise ValueError("Promotion requires the exact candidate deployment URL.")
     if args.deployment:
