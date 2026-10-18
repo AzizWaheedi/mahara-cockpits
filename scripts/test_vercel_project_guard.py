@@ -121,6 +121,47 @@ class ProjectGuardTest(unittest.TestCase):
             guard.release_candidate("https://candidate.vercel.app", expected, "a" * 40, True)
 
 
+class RollbackTest(unittest.TestCase):
+    """scripts/release.ps1 returns production to the deployment it recorded before a failed release."""
+    expected = {"projectId": "real", "orgId": "our-team", "scope": "our-scope", "origin": "origin.vercel.app", "domain": "cockpit.example/sales"}
+
+    def deployment(self, id_, **extra):
+        return dict({"id": id_, "url": f"{id_}.vercel.app", "projectId": "real", "ownerId": "our-team", "readyState": "READY", "target": "production", "meta": {"gitCommitSha": "a" * 40}}, **extra)
+
+    def test_current_reads_production_without_writing(self):
+        with patch.object(guard, "api", return_value=self.deployment("dpl-now")), patch.object(guard, "vercel") as cli:
+            self.assertEqual(guard.current_production(self.expected), {"id": "dpl-now", "url": "https://dpl-now.vercel.app", "sha": "a" * 40})
+            cli.assert_not_called()
+
+    def test_rollback_promotes_the_recorded_deployment_and_waits_for_it(self):
+        old, new = self.deployment("dpl-old"), self.deployment("dpl-new")
+        with patch.object(guard, "api", side_effect=[old, new, new, old]), patch.object(guard, "vercel") as cli, patch.object(guard.time, "sleep"):
+            guard.rollback("https://dpl-old.vercel.app", self.expected)
+            cli.assert_called_once_with(["promote", "dpl-old.vercel.app", "--yes"], self.expected)
+
+    def test_rollback_not_needed_when_production_already_serves_it(self):
+        old = self.deployment("dpl-old")
+        with patch.object(guard, "api", side_effect=[old, old]), patch.object(guard, "vercel") as cli:
+            guard.rollback("https://dpl-old.vercel.app", self.expected)
+            cli.assert_not_called()
+
+    def test_rollback_refuses_another_project_or_a_preview(self):
+        for bad in (self.deployment("dpl-x", projectId="duplicate"), self.deployment("dpl-x", ownerId="another"), self.deployment("dpl-x", target="preview"), self.deployment("dpl-x", readyState="ERROR")):
+            with self.subTest(bad=bad), patch.object(guard, "api", return_value=bad), patch.object(guard, "vercel") as cli, self.assertRaises(ValueError):
+                guard.rollback("https://dpl-x.vercel.app", self.expected)
+            cli.assert_not_called()
+
+    def test_rollback_that_does_not_take_effect_fails(self):
+        old, new = self.deployment("dpl-old"), self.deployment("dpl-new")
+        with patch.object(guard, "api", side_effect=[old, new] + [new] * 6), patch.object(guard, "vercel"), patch.object(guard.time, "sleep"), self.assertRaisesRegex(ValueError, "did not take effect"):
+            guard.rollback("https://dpl-old.vercel.app", self.expected)
+
+    def test_rollback_needs_an_exact_deployment_url(self):
+        with patch.object(guard, "api") as read, self.assertRaises(ValueError):
+            guard.rollback("https://cockpit.maharamedia.com", self.expected)
+        read.assert_not_called()
+
+
 def run_git(cwd, *args):
     return subprocess.run(["git", "-c", "user.name=test", "-c", "user.email=test@example.com", *args],
                           cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()

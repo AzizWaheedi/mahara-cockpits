@@ -1251,6 +1251,25 @@ from an app `.env.local`, by name and without printing them, and runs
 powershell -ExecutionPolicy Bypass -File scripts\ship.ps1 client-success
 ```
 
+### One command: merge, ship, check, roll back (Windows)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 sales -Pr 54
+```
+
+`release.ps1` merges the PR once every check has passed (`--squash`, never
+`--admin`), makes a clean worktree of the new `origin/main` under
+`..\worktrees\release-<sha>` and prepares it, records the deployment each app's
+production serves (`check-vercel-project.py --current`), and runs `ship.ps1`
+there. Then each app's production must serve the release commit and its page
+must answer. If ship or that check fails after production changed to this
+release, it promotes the recorded deployment back
+(`check-vercel-project.py --rollback-to`). Production that another release
+changed in the meantime is never rolled back. It ends with one `RELEASE:` line
+that says what shipped or where it stopped, and keeps the worktree after a
+failure. Without `-Pr` it releases current `origin/main`. `-CheckOnly` reads
+the PR and production and runs the preflight, and merges and deploys nothing.
+
 On a Mac with the existing authorized Composio Supabase connection, set
 `COCKPIT_AUTH_USE_COMPOSIO=1` instead of supplying a management token. The same
 live authentication/RPC verification still runs before deployment; this selects
