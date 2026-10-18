@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { engagementRow, imageLeadRow, shortVideoRow, videoLeadRow, websiteRow, whatsappLeadRow } from "./fixtures.ts";
 import {
   actionValue,
@@ -43,6 +43,7 @@ describe("an ad-day row", () => {
       impressions: 199,
       reach: 184,
       frequency: 1.081522,
+      clicks: null,
       linkClicks: 4,
       leads: 2,
       leadActions: 2,
@@ -197,6 +198,16 @@ describe("an ad-day row", () => {
     expect(actionValue([], "lead", "x")).toBeNull();
   });
 
+  test("clicks are Meta's clicks (all clicks), apart from link clicks; NULL when Meta did not return them", () => {
+    const row = parseAdDay({ ...videoLeadRow(DAY), clicks: "41" }, ACC);
+    expect(row.clicks).toBe(41);
+    expect(row.linkClicks).toBe(4);
+    expect(toApplyRow(row).clicks).toBe(41);
+    expect(parseAdDay(videoLeadRow(DAY), ACC).clicks).toBeNull();
+    expect(() => parseAdDay({ ...videoLeadRow(DAY), clicks: "-1" }, ACC)).toThrow("clicks");
+    expect(DAY_FIELDS.split(",")).toContain("clicks");
+  });
+
   test("dedupe keeps one copy of the same row and refuses two different rows for one ad and day", () => {
     const a = parseAdDay(videoLeadRow(DAY), ACC);
     expect(dedupe([a, { ...a }]).length).toBe(1);
@@ -212,8 +223,14 @@ describe("an ad-day row", () => {
   });
 
   test("the rows sent to the database carry exactly the columns the apply RPC reads", () => {
-    const sql = readFileSync(new URL("../../migrations/20261016121700_meta_ad_days.sql", import.meta.url), "utf8");
-    const body = sql.slice(sql.indexOf("CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_apply"), sql.indexOf("CREATE OR REPLACE FUNCTION public.cockpit_meta_reach_apply"));
+    // The newest migration that defines the apply RPC (20261018120000 added clicks).
+    const dir = new URL("../../migrations/", import.meta.url);
+    const START = "CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_apply";
+    const file = readdirSync(dir).filter(f => f.endsWith(".sql") && readFileSync(new URL(f, dir), "utf8").includes(START)).sort().at(-1) as string;
+    expect(file).toBe("20261018120000_meta_dashboard_feed.sql");
+    const sql = readFileSync(new URL(file, dir), "utf8").replace(/\r\n/g, "\n");
+    const from = sql.indexOf(START);
+    const body = sql.slice(from, sql.indexOf("\n$$;", from));
     // The record definition of the INSERT's jsonb_to_recordset.
     const insert = body.slice(body.indexOf("INSERT INTO public.cockpit_meta_ad_days"));
     const def = insert.match(/jsonb_to_recordset\(v_rows\) AS r\(([\s\S]*?)\)\n/)?.[1] ?? "";

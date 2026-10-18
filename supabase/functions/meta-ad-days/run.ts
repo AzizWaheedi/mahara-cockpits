@@ -47,6 +47,13 @@
  * campaign), so a WhatsApp or Messenger lead ad set's messaging leads never
  * count as form leads (parse.ts withDestinations).
  *
+ * The days task that reaches the account's yesterday or today also reads the
+ * account's ads (ads.ts: status, campaign status, thumbnail) for the creative
+ * dashboard and hands them to cockpit_meta_ads_apply before its own rows
+ * (2026-10-18). A failed ads read or write is a line in the task's note; the
+ * ad numbers still land. The database feeds both into ads_daily_snapshots
+ * (cockpit_meta_feed_run, pg_cron every 10 minutes).
+ *
  * The drain claims up to 3 tasks at a time (leased 5 minutes, 4 tries), reads
  * Meta, and hands the rows to cockpit_meta_ad_days_apply or
  * cockpit_meta_reach_apply, which upsert by (ad_id, day) and (level, key,
@@ -60,8 +67,9 @@
  * written but the call receipts.
  */
 import { type Account, discoverAccounts, INTERNAL_ACCOUNT_IDS } from "./accounts.ts";
+import { type AdMetaRow, readAds, toAdsApplyRow } from "./ads.ts";
 import { type InsertReceipt, NOT_RETRIED, type Rpc, RpcError } from "./db.ts";
-import { discoveryWindow, halves, historySpan, type JobKind, knownZone, MAX_BACKFILL_DAYS, type Span, spansFor, zonedDay } from "./days.ts";
+import { addDays, discoveryWindow, halves, historySpan, type JobKind, knownZone, MAX_BACKFILL_DAYS, type Span, spansFor, zonedDay } from "./days.ts";
 import { ACTIVITY_FIELDS, parseActivities, rebuildBudgetHistory, toHistoryApplyRow } from "./history.ts";
 import { GRAPH_VERSION, type GraphDeps, MAHARA_BUSINESS_ID, MetaError, metaGet, metaPages, type Row } from "./graph.ts";
 import {
@@ -471,10 +479,45 @@ export async function readDestinations(graph: GraphDeps, accountId: string, rows
   return out;
 }
 
+/**
+ * The days task that reaches the account's yesterday or today reads the
+ * account's ads: the hourly task, and the last piece of a nightly run or a
+ * backfill. One ads read per account a run.
+ */
+export function readsAds(task: Pick<Task, "until" | "timezone">, nowMs: number): boolean {
+  const tz = task.timezone && knownZone(task.timezone) ? task.timezone : "Asia/Kuwait";
+  return task.until !== null && task.until >= addDays(zonedDay(nowMs, tz), -1);
+}
+
+/**
+ * The account's ads (status, campaign status, thumbnail) into cockpit_meta_ads
+ * for the creative dashboard. A read or a write that fails is the task's note,
+ * never its failure: the ad numbers still land, and the next run reads the ads
+ * again.
+ */
+async function storeAds(deps: RunDeps, graph: GraphDeps, task: Task): Promise<string | null> {
+  const complete = task.job !== "hourly";
+  let ads: AdMetaRow[];
+  try {
+    ads = await readAds(graph, task.accountId, complete);
+  } catch (e) {
+    return `Ad statuses and thumbnails were not read: ${sentence(e)}`;
+  }
+  try {
+    await deps.rpc("cockpit_meta_ads_apply", {
+      p: { taskId: task.id, leaseToken: task.leaseToken, fetchedAt: new Date(deps.now()).toISOString(), complete, rows: ads.map(toAdsApplyRow) },
+    });
+  } catch (e) {
+    return `Ad statuses and thumbnails were not stored: ${sentence(e)}`;
+  }
+  return null;
+}
+
 async function workDays(deps: RunDeps, graph: GraphDeps, task: Task): Promise<number> {
   if (!task.since || !task.until) throw new Error("A day task came without its days.");
   const read = await readDays(graph, deps, task.accountId, { since: task.since, until: task.until });
   const { rows, unknown } = withDestinations(read.rows, await readDestinations(graph, task.accountId, read.rows));
+  const adsNote = readsAds(task, deps.now()) ? await storeAds(deps, graph, task) : null;
   const splits = read.splits;
   const fetchedAt = new Date(deps.now()).toISOString();
   const payload = rows.map(toApplyRow);
@@ -487,6 +530,7 @@ async function workDays(deps: RunDeps, graph: GraphDeps, task: Task): Promise<nu
       unknown.length
         ? `Meta no longer lists lead ad set${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")} (deleted), so ${unknown.length > 1 ? "their" : "its"} destination is unknown; messaging leads are left out by action type.`
         : null,
+      adsNote,
     ]
       .filter(Boolean)
       .join(" ")

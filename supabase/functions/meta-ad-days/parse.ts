@@ -77,6 +77,7 @@ export const DAY_FIELDS = [
   "impressions",
   "reach",
   "frequency",
+  "clicks",
   "inline_link_clicks",
   "actions",
   "video_play_actions",
@@ -101,6 +102,8 @@ export type AdDayRow = {
   impressions: number | null;
   reach: number | null;
   frequency: number | null;
+  /** Meta's clicks: all clicks (the creative dashboard's clicks), not link clicks. */
+  clicks: number | null;
   linkClicks: number | null;
   leads: number | null;
   leadActions: number | null;
@@ -212,6 +215,7 @@ export function parseAdDay(raw: Row, accountId: string): AdDayRow {
     impressions: count(raw.impressions, "impressions"),
     reach: count(raw.reach, "reach"),
     frequency: amount(raw.frequency, "frequency"),
+    clicks: count(raw.clicks, "clicks"),
     linkClicks: count(raw.inline_link_clicks, "link clicks"),
     leads: objective !== null && LEAD_OBJECTIVES.has(objective) ? formLeads(actions) : null,
     leadActions: leadActions(actions),
@@ -289,6 +293,7 @@ export function toApplyRow(r: AdDayRow): Record<string, unknown> {
     impressions: r.impressions,
     reach: r.reach,
     frequency: r.frequency,
+    clicks: r.clicks,
     link_clicks: r.linkClicks,
     leads: r.leads,
     lead_actions: r.leadActions,

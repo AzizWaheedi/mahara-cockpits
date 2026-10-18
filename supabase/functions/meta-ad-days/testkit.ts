@@ -60,6 +60,34 @@ export function eachDay(since: string, until: string): string[] {
 }
 
 /**
+ * Meta's act_<id>/ads read: the account's ads from `ads` (none when it is not
+ * listed), filtered by the asked statuses, paged by the asked limit with
+ * cursors. A Response, or a function of the asked limit that returns one,
+ * answers instead (a refusal, an answer too big for that page size).
+ */
+export function adsRoute(ads: Record<string, Row[] | Response | ((limit: number) => Response | null)>): Route {
+  return call => {
+    const m = graphPath(call).match(/^act_(\d+)\/ads$/);
+    if (!m) return null;
+    const limit = Number(call.url.searchParams.get("limit") ?? "25");
+    const entry = ads[m[1]] ?? [];
+    if (entry instanceof Response) return entry;
+    if (typeof entry === "function") {
+      const answer = entry(limit);
+      if (answer) return answer;
+    }
+    const statuses: string[] = JSON.parse(call.url.searchParams.get("effective_status") ?? "[]");
+    const all = (Array.isArray(entry) ? entry : []).filter(a => statuses.includes(String(a.effective_status)));
+    const start = Number(call.url.searchParams.get("after") ?? "0");
+    const more = start + limit < all.length;
+    return ok({
+      data: all.slice(start, start + limit),
+      paging: { cursors: { before: String(start), after: String(start + limit) }, ...(more ? { next: "https://graph.facebook.com/v25.0/next" } : {}) },
+    });
+  };
+}
+
+/**
  * Meta's act_<id>/adsets read filtered by id: each asked ad set Meta still
  * lists, with its destination. An id missing from `destinations` is a deleted
  * ad set (the edge leaves it out).

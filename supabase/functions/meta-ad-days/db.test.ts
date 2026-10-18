@@ -12,7 +12,7 @@ describe("the RPC door", () => {
     }
     expect(called.size).toBeGreaterThanOrEqual(11);
     for (const name of called) expect({ name, listed: RPCS.has(name) }).toEqual({ name, listed: true });
-    for (const name of ["cockpit_meta_lead_ids_apply", "cockpit_meta_budgets_apply", "cockpit_meta_budget_history_apply"]) {
+    for (const name of ["cockpit_meta_lead_ids_apply", "cockpit_meta_budgets_apply", "cockpit_meta_budget_history_apply", "cockpit_meta_ads_apply"]) {
       expect(called.has(name)).toBe(true);
     }
   });

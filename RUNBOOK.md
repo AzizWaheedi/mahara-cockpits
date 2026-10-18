@@ -1061,8 +1061,34 @@ one SAR account, and with `cockpit_campaigns.raw_data` budgetDaily/budgetLevel w
 (that copy sums every ad set when none is active; this one never sums a paused one). To fill the days before
 the ship day: `{"job":"backfill","days":45}` (step 4's call).
 
+Creative dashboard feed of 2026-10-18 (Muhammed: meta-ad-days is the one Meta ad reader; the creative
+dashboard's own Meta sync was refused from 2 Oct, "API access blocked"). Apply
+`20261018120000_meta_dashboard_feed.sql` and deploy `meta-ad-days` (either order: an older function sends no
+clicks and no ads; a newer function on an older database notes that ad statuses and thumbnails were not
+stored). Then deploy the creative dashboard (its `/api/sync` syncs TikTok only). To fill the gap since 2 Oct:
+run `{"job":"backfill","days":16}` (step 4's call) so the days are read again with all clicks and the ads'
+statuses and thumbnails, wait for its drain, then feed the window for one account first, then all:
+
+```sql
+select public.cockpit_meta_feed_run('{"since":"2026-10-03","until":"2026-10-18","accounts":["act_2140901837311419"],"requestedBy":"backfill"}');
+select public.cockpit_meta_feed_run('{"since":"2026-10-03","until":"2026-10-18","requestedBy":"backfill"}');
+```
+
+Add `"dryRun":true` to see what a call would do and keep nothing. pg_cron `mahara-meta-dashboard-feed` then
+runs a tick every 10 minutes from minute 4. Second source: per account and day, `ads_daily_snapshots`
+(platform meta) equals `cockpit_meta_ad_days` for spend, impressions, link clicks and leads, less the excluded ads.
+
+| The feed says | What it means | What to do | Who |
+| --- | --- | --- | --- |
+| `cockpit_sync_state` `meta-dashboard-feed` ok = false, or last_ok_at older than 30 minutes | The feed failed (its note says why) or pg_cron stopped calling it. Nothing was half written: a failed call undoes itself, and the next tick reads from the same watermark. | Read the newest `cockpit_meta_feed_runs` row's note and `detail->>'error'`; check `mahara-meta-dashboard-feed` is in `cron.job` and active. | Systems manager |
+| A dashboard client's sync_jobs: "the meta-ad-days worker has not finished an hourly run since ..." | No Meta numbers are coming in for anyone: the worker is down. | The worker's rows above (token, rate limit, deploy). | Systems manager |
+| A dashboard client's sync_jobs: "Mahara's business does not list act_X to meta-ad-days" | The worker's token cannot see that ad account, so its numbers stop at its last read. | Share the ad account with Mahara's business (767701513092162), or set the client inactive if it left. | Client success |
+| A dashboard client's sync_jobs: "act_X is hidden on purpose" | Mahara's own account, a client hidden from the dashboard, or an account kept out on the board. | Nothing, unless it should show: unhide it. | Nobody |
+| A new client appeared on the creative dashboard by itself | An ad account on Mahara's business spent and no dashboard client held it: the feed added it (the dashboard's old discovery). | Rename it or set it inactive in `clients` if it is not a client. | Client success |
+
 To stop the runs: `select cron.unschedule(jobid) from cron.job where jobname like 'mahara-meta-ad-days-%';`.
 The stored rows stay, and `cockpit_meta_ad_days_status()` gives each account's last day and last read.
+To stop the feed: `select cron.unschedule(jobid) from cron.job where jobname = 'mahara-meta-dashboard-feed';`.
 
 ## Client facts (the Client Performance board's business numbers)
 

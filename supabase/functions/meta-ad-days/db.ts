@@ -20,6 +20,7 @@ export const RPCS = new Set([
   "cockpit_meta_ad_days_begin",
   "cockpit_meta_ad_days_claim",
   "cockpit_meta_ad_days_apply",
+  "cockpit_meta_ads_apply",
   "cockpit_meta_reach_apply",
   "cockpit_meta_lead_ids_apply",
   "cockpit_meta_budgets_apply",

@@ -50,7 +50,7 @@ describe("one Graph read", () => {
   test("only the reads this function makes", async () => {
     const g = graph([() => ok({})]);
     for (const path of [
-      "act_1111111111111/ads",
+      "act_1111111111111/ads/x",
       "act_1111111111111/adsets/x",
       "act_1111111111111/campaigns/x",
       "act_1111111111111/activities/1",

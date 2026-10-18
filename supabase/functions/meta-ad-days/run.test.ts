@@ -23,7 +23,8 @@ import { type Job, type RunDeps, retryable, sentence, startJob } from "./run.ts"
 import { MetaError } from "./graph.ts";
 import { ParseError } from "./parse.ts";
 import { RpcError } from "./db.ts";
-import { adsetsRoute, eachDay, fakeFetch, graphPath, insightsRoute, metaError, ok, type Route } from "./testkit.ts";
+import { adsRoute, adsetsRoute, eachDay, fakeFetch, graphPath, insightsRoute, metaError, ok, type Route } from "./testkit.ts";
+import { AD_FIELDS, LISTED_STATUSES, SHOWN_STATUSES } from "./ads.ts";
 import { BUDGET_FIELDS } from "./parse.ts";
 import { ACTIVITY_FIELDS } from "./history.ts";
 
@@ -50,6 +51,7 @@ function fakeDb(now: () => number) {
   const leadIds: any[] = [];
   const budgets: any[] = [];
   const histories: any[] = [];
+  const ads: any[] = [];
   let runs = 0;
   const rpc = async (name: string, args: Record<string, unknown>) => {
     const p = (args as any).p;
@@ -129,6 +131,11 @@ function fakeDb(now: () => number) {
       t.state = "done";
       return { ok: true };
     }
+    if (name === "cockpit_meta_ads_apply") {
+      const t = tasks.find(x => x.id === p.taskId);
+      ads.push({ ...p, accountId: t.accountId });
+      return { ok: true, written: p.rows.length };
+    }
     if (name === "cockpit_meta_reach_apply") {
       const t = tasks.find(x => x.id === p.taskId);
       reach.push({ ...p, accountId: t.accountId });
@@ -153,7 +160,7 @@ function fakeDb(now: () => number) {
     }
     throw new Error(`unexpected rpc ${name}`);
   };
-  return { rpc, calls, tasks, applied, reach, leadIds, budgets, histories };
+  return { rpc, calls, tasks, applied, reach, leadIds, budgets, histories, ads };
 }
 
 function edges(extra: Record<string, unknown>[] = []): Route {
@@ -178,7 +185,7 @@ function edges(extra: Record<string, unknown>[] = []): Route {
 }
 
 function deps(routes: Route[], over: Partial<RunDeps> = {}) {
-  const f = fakeFetch(routes);
+  const f = fakeFetch([...routes, adsRoute({})]);
   let clock = NOW;
   const db = fakeDb(() => clock);
   const receipts: ReceiptRow[] = [];
@@ -482,6 +489,119 @@ describe("an hourly run", () => {
     expect(begin.accounts.map((a: any) => a.accountId)).toEqual([SAR_ACCOUNT]);
     expect(begin.reach).toBeNull();
     expect(begin.requestedBy).toBe("aziz@maharamedia.com");
+  });
+});
+
+/** One ad as Meta's act_<id>/ads lists it, with the dashboard's creative fields. */
+function adMeta(id: string, status: string, creative: Record<string, unknown> = {}, campaign = { id: "120000000000101", name: "Leads | Kuwait", effective_status: "ACTIVE" }) {
+  return { id, name: `Ad ${id.slice(-3)}`, effective_status: status, campaign, creative };
+}
+
+describe("the ads for the creative dashboard", () => {
+  const KUWAIT_ADS = [
+    // The sharpest image is an /ads/ link an ad blocker drops: the next one is kept.
+    adMeta("120000000000103", "ACTIVE", {
+      thumbnail_url: "https://scontent.xx.fbcdn.net/thumb-103.jpg",
+      object_story_spec: { video_data: { image_url: "https://www.facebook.com/ads/image/?d=103" } },
+      image_url: "https://scontent.xx.fbcdn.net/image-103.jpg",
+    }),
+    adMeta("120000000000104", "PAUSED", { thumbnail_url: "https://scontent.xx.fbcdn.net/thumb-104.jpg" }),
+    adMeta("120000000000199", "ARCHIVED", {}),
+  ];
+
+  test("the hourly task reads its account's ads once, the statuses the dashboard shows, and stores them before its ad-days", async () => {
+    const t = deps([
+      edges(),
+      daysRoute(KUWAIT_ACCOUNT, d => [videoLeadRow(d), imageLeadRow(d)]),
+      daysRoute(SAR_ACCOUNT, () => []),
+      daysRoute(LA_ACCOUNT, () => []),
+      adsetsRoute(DESTINATIONS),
+      reachRoute,
+      adsRoute({ [KUWAIT_ACCOUNT]: KUWAIT_ADS }),
+    ]);
+    await startJob(t.d, { job: "hourly", dryRun: false, requestedBy: "cron" });
+    const reads = t.calls.filter(c => /^act_\d+\/ads$/.test(graphPath(c)));
+    expect(reads.map(c => graphPath(c)).sort()).toEqual([`act_${KUWAIT_ACCOUNT}/ads`, `act_${SAR_ACCOUNT}/ads`, `act_${LA_ACCOUNT}/ads`].sort());
+    for (const c of reads) {
+      expect(c.url.searchParams.get("fields")).toBe(AD_FIELDS);
+      expect(JSON.parse(c.url.searchParams.get("effective_status")!)).toEqual(SHOWN_STATUSES);
+      expect(c.url.searchParams.get("limit")).toBe("50");
+    }
+    const kuwait = t.db.ads.find(a => a.accountId === KUWAIT_ACCOUNT);
+    expect(kuwait.complete).toBe(false);
+    expect(kuwait.rows).toEqual([
+      {
+        ad_id: "120000000000103", ad_name: "Ad 103", effective_status: "ACTIVE", campaign_id: "120000000000101", campaign_name: "Leads | Kuwait",
+        campaign_status: "ACTIVE", thumbnail_url: "https://scontent.xx.fbcdn.net/image-103.jpg",
+      },
+      {
+        ad_id: "120000000000104", ad_name: "Ad 104", effective_status: "PAUSED", campaign_id: "120000000000101", campaign_name: "Leads | Kuwait",
+        campaign_status: "ACTIVE", thumbnail_url: "https://scontent.xx.fbcdn.net/thumb-104.jpg",
+      },
+    ]);
+    // Lease-checked like the ad-days, and written before the ad-days close the task.
+    const order = t.db.calls
+      .filter(c => (c.name === "cockpit_meta_ads_apply" || c.name === "cockpit_meta_ad_days_apply") && c.p.taskId === kuwait.taskId)
+      .map(c => c.name);
+    expect(order).toEqual(["cockpit_meta_ads_apply", "cockpit_meta_ad_days_apply"]);
+    expect(kuwait.leaseToken).toMatch(/^lease-/);
+    expect(t.db.applied.find(a => a.accountId === KUWAIT_ACCOUNT).note).toBeNull();
+  });
+
+  test("a nightly run reads the ads on its last piece only, every status Meta lists, so the database can mark the deleted", async () => {
+    const t = deps([
+      edges(),
+      daysRoute(KUWAIT_ACCOUNT, d => [videoLeadRow(d)]),
+      daysRoute(SAR_ACCOUNT, () => []),
+      daysRoute(LA_ACCOUNT, () => []),
+      adsetsRoute(DESTINATIONS),
+      reachRoute,
+      adsRoute({ [KUWAIT_ACCOUNT]: KUWAIT_ADS }),
+    ]);
+    await startJob(t.d, { job: "nightly", dryRun: false, requestedBy: "cron" });
+    const kuwaitDays = t.db.tasks.filter(x => x.kind === "days" && x.accountId === KUWAIT_ACCOUNT);
+    expect(kuwaitDays.length).toBeGreaterThan(1);
+    const kuwait = t.db.ads.filter(a => a.accountId === KUWAIT_ACCOUNT);
+    expect(kuwait.length).toBe(1);
+    expect(kuwait[0].complete).toBe(true);
+    expect(kuwait[0].rows.map((r: any) => [r.ad_id, r.effective_status, r.thumbnail_url])).toEqual([
+      ["120000000000103", "ACTIVE", "https://scontent.xx.fbcdn.net/image-103.jpg"],
+      ["120000000000104", "PAUSED", "https://scontent.xx.fbcdn.net/thumb-104.jpg"],
+      ["120000000000199", "ARCHIVED", null],
+    ]);
+    // The task that read them is the one that reaches yesterday.
+    const reader = t.db.tasks.find(x => x.id === kuwait[0].taskId);
+    expect(reader.until).toBe(kuwaitDays.map(x => x.until).sort().at(-1));
+    const read = t.calls.find(c => graphPath(c) === `act_${KUWAIT_ACCOUNT}/ads`)!;
+    const statuses = JSON.parse(read.url.searchParams.get("effective_status")!);
+    expect(statuses).toEqual(LISTED_STATUSES);
+    expect(statuses).toContain("ARCHIVED");
+    expect(statuses).not.toContain("DELETED");
+  });
+
+  test("an answer too big is asked again in smaller pages; an ads read Meta refuses is a note and the ad numbers still land", async () => {
+    const t = deps([
+      edges(),
+      daysRoute(KUWAIT_ACCOUNT, d => [videoLeadRow(d)]),
+      daysRoute(SAR_ACCOUNT, d => [engagementRow(d)]),
+      daysRoute(LA_ACCOUNT, () => []),
+      adsetsRoute(DESTINATIONS),
+      reachRoute,
+      adsRoute({
+        [KUWAIT_ACCOUNT]: limit => (limit > 10 ? metaError(1, "Please reduce the amount of data you're asking for, then retry your request", 500) : null),
+        [SAR_ACCOUNT]: metaError(200, "Ad account owner has NOT grant ads_management or ads_read permission"),
+      }),
+    ]);
+    await startJob(t.d, { job: "hourly", dryRun: false, requestedBy: "cron" });
+    const limits = t.calls.filter(c => graphPath(c) === `act_${KUWAIT_ACCOUNT}/ads`).map(c => c.url.searchParams.get("limit"));
+    expect(limits).toEqual(["50", "25", "10"]);
+    expect(t.db.ads.find(a => a.accountId === KUWAIT_ACCOUNT).rows).toEqual([]);
+    expect(t.db.ads.some(a => a.accountId === SAR_ACCOUNT)).toBe(false);
+    const sar = t.db.applied.find(a => a.accountId === SAR_ACCOUNT);
+    expect(sar.final).toBe(true);
+    expect(sar.rows.length).toBe(2);
+    expect(sar.note).toStartWith("Ad statuses and thumbnails were not read: Meta refused act_2222222222222/ads (code 200)");
+    expect(t.db.tasks.filter(x => x.kind === "days").every(x => x.state === "done")).toBe(true);
   });
 });
 
