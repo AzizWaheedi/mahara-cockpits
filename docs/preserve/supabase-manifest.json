@@ -10485,7 +10485,7 @@
  },
  "pay_plans": {
   "note": "Pay plans: commission and bonuses on Team & payroll (2026-10-18, docs/pay/PAY-PLANS.md). The CEO's role and own pay plans, the counts and confirmations he types, the approved person-months, and the dated history of each person's commission lines and role, computed by cockpit_ceo_pay_month over the four facts functions (call centre, ads, clients, sales). state pending_deploy: absent objects are reported ok as not deployed yet. After the lead session applies 20261018c, then 20261018a, then 20261018b (PAY-PLANS.md section 11; RUNBOOK.md, Hours, leave and pay, 'Pay plans (commission and bonuses)') and reads them back, set state to deployed: from then on a missing object is MISSING. internal_functions have no grant to any role; ceo_functions are granted to authenticated only and gated on the CEO's seat (cockpit_hours_ceo_email, kept in team_hours with cockpit_hours_refuse_delete and cockpit_hours_audit, which these reuse). There is no job and no Edge Function: the month is computed when the CEO opens it. Not checked here: the two commission bases per_client_appt_shown and per_client_deal_closed in cockpit_people's two CHECK constraints, the seeded role plans and the CSM's ramp_start confirmation (docs/pay/seed-2026-10.sql), the 2026-01-01 history seed rows, and the update guards' rules (scripts/ceo-pay-plans-supabase.test.ts holds those).",
-  "state": "pending_deploy",
+  "state": "deployed",
   "migrations": [
    "supabase/migrations/20261018a_ceo_pay_plans.sql",
    "supabase/migrations/20261018b_ceo_pay_facts.sql"
@@ -10621,7 +10621,7 @@
  },
  "money_ties": {
   "note": "Money ties and the deal ledger (2026-10-18, docs/money/MONEY-ATTRIBUTION.md): the CEO's ties of a payment, a payer email or a full payer name to a signed deal, a client card or 'not client money' (cockpit_payment_ties, append-only), and the deal ledger every money refresh writes (cockpit_deal_payments: each front-end payment credited to a deal's closer), read by the closer's pay (cockpit_pay_facts_sales, in pay_plans) and the Sales tab's front-end cash. state pending_deploy: absent objects are reported ok as not deployed yet. After the lead session applies 20261018c (before any native release that reads the snapshot's 'ties' key; RUNBOOK.md 'Money attribution and the deal ledger') and one money refresh has written the ledger, set state to deployed. cockpit_ceo_refresh_finance_snapshot and cockpit_finish_finance_refresh existed before this section and are replaced by 20261018c from their live definitions: here only their presence and grants are checked (the snapshot has no grant; the finish is the service role's only), not their bodies (the 'ties' key, the dealPayments block). The freshness line fails when no refresh has written the ledger for 2 hours, which is also when the Sales tile says its figure may be behind: either the money refresh is not running or it is not passing dealPayments. The Edge copy (cockpit-ceo-api, 'Refresh now') is in the core edge_functions list; the native copy is on the VPS (vps-manifest). Not checked here: the partial unique indexes (one live tie per scope).",
-  "state": "pending_deploy",
+  "state": "deployed",
   "migrations": [
    "supabase/migrations/20261018c_money_ties_deal_payments.sql"
   ],
