@@ -14,6 +14,8 @@ const NO_LINE = { basis: "none" as const, rate: null };
 
 import type { Note } from "@/types/ceo/payloads";
 import type { Person, Roster } from "@/types/ceo/people";
+import { usePayPlans } from "./pay/PayPlansCard";
+import { personPlanLine, thisMonth } from "./pay/payCopy";
 import { usePersonParam } from "./personPage";
 
 /**
@@ -75,6 +77,8 @@ export function PeopleCard({ order }: { order?: number }) {
   const [editing, setEditing] = useState<number | null>(null);
   const [showGone, setShowGone] = useState(false);
   const [imported, setImported] = useState<string | null>(null);
+  // The pay plan each person follows, in one sentence (PAY-PLANS.md 8.4).
+  const pay = usePayPlans();
 
   const refresh = useCallback(async () => {
     try {
@@ -293,6 +297,13 @@ export function PeopleCard({ order }: { order?: number }) {
                             ) : null}
                           </>
                         )}
+                        {pay.plans &&
+                        personPlanLine(pay.plans, p, thisMonth()).source !==
+                          "none" ? (
+                          <span className="block text-xs text-muted-foreground">
+                            {personPlanLine(pay.plans, p, thisMonth()).words}
+                          </span>
+                        ) : null}
                       </td>
                       <td className="whitespace-nowrap py-3 pl-3 text-right">
                         <Button
@@ -326,6 +337,11 @@ export function PeopleCard({ order }: { order?: number }) {
                   ))}
                 </tbody>
               </table>
+              {pay.error ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {`Pay plans are not shown: ${pay.error}`}
+                </p>
+              ) : null}
             </div>
           ) : (
             <EmptyState

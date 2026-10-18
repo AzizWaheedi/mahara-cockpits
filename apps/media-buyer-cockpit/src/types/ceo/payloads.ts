@@ -490,8 +490,67 @@ export type MoneyPayload = {
   notes: Note[];
 };
 
-export type AttributionSide = "front_end" | "back_end" | "unattributed";
-export type AttributionKind = "deposit" | "kickoff" | "client" | "none";
+/**
+ * not_client (since 2026-10-18): the CEO tied the payment as not client
+ * money, so it is on no side and credits nobody. Kept in step with the Edge
+ * copy, supabase/functions/cockpit-ceo-api/finance/payloads.ts.
+ */
+export type AttributionSide =
+  | "front_end"
+  | "back_end"
+  | "unattributed"
+  | "not_client";
+/**
+ * remainder (since 2026-10-18): the rest of a deal after its deposit. The
+ * same money is "kickoff" on a payload stored before; the publisher no
+ * longer sends that.
+ */
+export type AttributionKind =
+  | "deposit"
+  | "remainder"
+  | "kickoff"
+  | "client"
+  | "none";
+
+/** The CEO's tie a row rests on (cockpit_payment_ties), as the money refresh publishes it since 2026-10-18. */
+export type TieRef = {
+  id: number;
+  scope: "payment" | "payer";
+  note: string;
+  setBy: string | null;
+  setAt: string | null;
+};
+
+/** What became of the CEO's ties in one money refresh (MoneyAttribution.ties). */
+export type TieSummary = {
+  /** Live ties in the snapshot. */
+  live: number;
+  /** Ties that credited at least one payment this run. */
+  applied: number;
+  /** Payments a tie credited. */
+  payments: number;
+  notApplied: {
+    id: number;
+    scope: TieRef["scope"];
+    why:
+      | "deal_not_in_run"
+      | "card_not_in_run"
+      | "payer_key_too_short"
+      | "before_deal"
+      | "no_payment_in_run";
+  }[];
+  /**
+   * Payments a payer tie left to the automatic rules: made more than 7 days
+   * before its deal's form. Absent on a payload stored before the fix of
+   * 2026-10-18.
+   */
+  beforeDeal?: {
+    id: number;
+    scope: TieRef["scope"];
+    payments: number;
+    usd: number;
+  }[];
+};
 
 /** One line on the Transactions tab: a payment in, or money out. */
 export type Transaction = {
@@ -507,14 +566,33 @@ export type Transaction = {
   payerName: string | null;
   side: AttributionSide | "out";
   kind: AttributionKind | "refund" | "expense";
-  /** A first name: the closer for a deposit, the CSM for the rest. */
+  /**
+   * Money in, since 2026-10-18: the part of a front-end payment up to the
+   * deal's typed deposit; the rest of it is the remainder. Absent on a
+   * payload stored before, where the whole payment's kind says it.
+   */
+  depositUsd?: number | null;
+  /**
+   * As written: the deal's closer for front-end money, the card's CSM for
+   * back end (a first name on a payload stored before 2026-10-18).
+   */
   person: string | null;
   personRole: "closer" | "csm" | null;
+  /**
+   * Money in, since 2026-10-18: the closer-form deal the payment is credited
+   * against. Absent on a payload stored before.
+   */
+  dealResponseId?: string | null;
   dealBusiness: string | null;
   clientName: string | null;
   clientTaskId: string | null;
-  /** How the payment was tied: deal_id, deal_email, deal_name, card_email, card_payer, card_name, card_typed or none. */
+  /** How the payment was tied: ceo (the CEO's tie, since 2026-10-18), deal_id, deal_email, deal_name, card_email, card_payer, card_name, card_typed or none. */
   matchedBy: string;
+  /**
+   * Money in, since 2026-10-18: the CEO's tie the row rests on, with its
+   * note. Absent on a payload stored before.
+   */
+  tie?: TieRef | null;
   /** Whop's billing reason, a manual rail, an expense category, or a refund note. */
   detail: string | null;
   /** For a statement line: the kind the cockpit gave it (client_payment, whop_payout, excluded, ...). */
@@ -528,16 +606,25 @@ export type AttributionTotals = {
   count: number;
   frontEnd: number;
   deposit: number;
+  /** The rest of the deals after their deposits, since 2026-10-18. Absent on a payload stored before, where `kickoff` holds it. */
+  remainder?: number;
+  /** The remainder under its old name, kept for screens that still read it. */
   kickoff: number;
   backEnd: number;
   unattributed: number;
   unattributedCount: number;
+  /** Payments the CEO tied as not client money, since 2026-10-18. Absent on a payload stored before. */
+  notClient?: number;
+  notClientCount?: number;
 };
 
 export type MoneyAttribution = {
   from: string;
   to: string;
-  /** False until the CSM's kickoff form is loaded; kickoff cash is then judged from the rails. */
+  /**
+   * Since 2026-10-18: the kickoff form's typed amount is read (shown on the
+   * Sales tab as typed, not money). Before, false until the form was loaded.
+   */
   kickoffRead: boolean;
   /** False when Tap could not be read this run, so Tap money is not in it. */
   tapRead: boolean;
@@ -551,6 +638,14 @@ export type MoneyAttribution = {
     backEnd: number;
     payments: number;
   }[];
+  /** What became of the CEO's ties this run. Absent on a payload stored before 2026-10-18. */
+  ties?: TieSummary;
+  /**
+   * What this run wrote to cockpit_deal_payments (front-end payments since
+   * `from`), so a reader of the ledger can check it against this section.
+   * Absent on a payload stored before 2026-10-18.
+   */
+  dealLedger?: { rows: number; usd: number; from: string };
   /** Newest first, capped. */
   transactions: Transaction[];
 };
@@ -731,14 +826,23 @@ export type FunnelWindow = {
    * on the kickoff form (Typeform tG7dnxBn, read from
    * cockpit_client_onboarding), dated by the day the form was submitted and
    * read as USD (the form has no currency); null when no day of the window
-   * is read (the form carries the amount from 4 Oct 2026). `total` is
-   * deposit plus kickoff. `confirmed` is the deposit money a Whop payment or
-   * a bank transfer on record backs.
+   * is read (the form carries the amount from 4 Oct 2026). `confirmed` is
+   * the deposit money a Whop payment or a bank transfer on record backs.
+   *
+   * Since 2026-10-18 (docs/money/MONEY-ATTRIBUTION.md rule 6,
+   * hermes/ceo-refresh/native/adapters/growth.js withPaid) front-end cash is
+   * the money paid on signed deals, by the day it arrived: `total` and `paid`
+   * are that money, null when the deal ledger was not read (never zero), and
+   * the deposit and kickoff above are typed, not money, shown beside it and
+   * never added. On a payload stored before, `total` was deposit plus
+   * kickoff and none of the paid keys is there, so read the money through
+   * `paid` (timeframe.ts paidFrontEnd), never `total`.
    */
   frontEndCash: {
     deposit: number;
     kickoff: number | null;
-    total: number;
+    /** The paid money since 2026-10-18 (null when not read); the typed sum before. */
+    total: number | null;
     deals: number;
     dealsConfirmed: number;
     confirmed: number;
@@ -746,11 +850,48 @@ export type FunnelWindow = {
     /**
      * Kickoff money an attributed payment for the same card backs on any
      * rail (Tap, Whop, a bank line or a transfer in cockpit_client_payments)
-     * within the match window. An unconfirmed kickoff still counts in
-     * `total`. Absent on payloads stored before 2026-10-11.
+     * within the match window. Absent on payloads stored before 2026-10-11.
      */
     kickoffConfirmed?: number;
     kickoffConfirmedShare?: number | null;
+    // The keys below are absent on a payload stored before 2026-10-18, and
+    // null when the deal ledger was not read this run.
+    /** Paid front-end money in the window, every rail. */
+    paid?: number | null;
+    /** The part of `paid` up to each deal's typed deposit; the rest is `paidRemainder`. */
+    paidDeposit?: number | null;
+    paidRemainder?: number | null;
+    /** Front-end payments in the window, and the deals they are on. */
+    payments?: number | null;
+    paidDeals?: number | null;
+    /** `paid` by rail; a bank transfer and a statement line are both bank. */
+    byRail?: Record<"whop" | "tap" | "bank" | "manual", number> | null;
+    /** `paid` by the deal's closer, biggest first. */
+    byCloser?: { name: string; usd: number; payments: number }[] | null;
+    /** What the forms say, shown beside the money and never added. */
+    typed?: { deposit: number; kickoff: number | null };
+    /** Typed amounts in the window that no money matches: listed, never added. */
+    typedNotSeen?: {
+      usd: number;
+      count: number;
+      /** At most 20. */
+      items: {
+        kind: "deposit" | "kickoff";
+        day: string;
+        business: string | null;
+        typed: number;
+        seen: number;
+        usd: number;
+      }[];
+    } | null;
+    /** When the Money section that wrote the deal ledger published, epoch ms. */
+    attributedAt?: number | null;
+    /**
+     * Never published: set on a window the screen rebuilds from days
+     * (timeframe.ts) that starts before the deal ledger, the first day it
+     * counts.
+     */
+    paidFrom?: string | null;
   };
   cac: number | null;
   /** The dashboard's `roas`: contracted over lead-gen spend. Same as `roasContracted`. */
@@ -819,6 +960,12 @@ export type GrowthDay = {
   kickoff?: number | null;
   /** Of that kickoff cash, what a rail payment for the same card backs. */
   kickoffConfirmed?: number;
+  /**
+   * Paid front-end money by the day it arrived (growth.js, since
+   * 2026-10-18); null before the deal ledger's first day or when it was not
+   * read, and absent on a payload stored before.
+   */
+  frontEndPaid?: number | null;
 };
 
 export type GrowthPayload = {
@@ -1692,11 +1839,22 @@ export type B2bAdWindow = {
   /** Intros shown that went on to a demo booked for the same contact. */
   introsAdvanced: number;
   /**
-   * Leads created in the window (the ROAS tags) with an intro, or a demo,
-   * booked at or after they were created: bookRate's and leadToDemo's
-   * numerators. Absent on a payload stored before 2026-10-16.
+   * Leads created in the window (the ROAS tags), on their own ad, with an
+   * intro, or a demo, booked at or after they were created: bookRate's and
+   * leadToDemo's numerators. Each lead once, however often it was rebooked.
+   * Since 2026-10-18 an intro leaves out a lead whose every intro was
+   * cancelled (one marked invalid was held and counts); this is the Ads
+   * tab's "Intros". Absent on a payload stored before 2026-10-16.
    */
   leadsToIntro?: number;
+  /**
+   * Of `leadsToIntro`, the leads with an intro that showed, or is still
+   * marked confirmed after its time (the CEO's rule; B2B's intros_qualified):
+   * the Ads tab's "Confirmed intros", each lead once. Absent on a payload
+   * stored before 2026-10-18, which the screen shows as n/a until the next
+   * refresh.
+   */
+  leadsToConfirmedIntro?: number;
   leadsToDemo?: number;
   demosBooked: number;
   demosDue: number;
@@ -1755,6 +1913,15 @@ export type B2bAdWindow = {
   cashRoas: number | null;
   /** Per lead, as bookRate: leads with a demo booked at or after they were created, over leads. */
   leadToDemo: number | null;
+  /**
+   * spend / leadsToIntro, spend / leadsToConfirmedIntro, and
+   * leadsToConfirmedIntro / leadsToIntro: the Ads tab's intro costs and
+   * confirmed share, each lead once (the CEO, 2026-10-18). Null when either
+   * side is 0; absent before 2026-10-18.
+   */
+  costPerIntro?: number | null;
+  costPerConfirmedIntro?: number | null;
+  confirmedIntroRate?: number | null;
 };
 
 /** Who worked the ad's leads in the last thirty days: the setter with the most intro calls and the closer with the most signed deals. */
@@ -1774,6 +1941,9 @@ export type B2bVerdict = {
     | "scale"
     | "fatiguing"
     | "leads do not book"
+    /** Five or more leads booked an intro in thirty days and none was confirmed (since 2026-10-18). */
+    | "intros do not confirm"
+    /** On a payload stored before 2026-10-18 only: the Ads tab no longer judges an ad on demos. */
     | "intros do not convert"
     | "demos do not close";
   reason: string;

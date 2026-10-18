@@ -1,5 +1,5 @@
 import { UserSearch } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { money, pct, plural } from "@/components/ceo/format";
 import { SectionCard } from "@/components/ceo/SectionCard";
@@ -8,6 +8,17 @@ import { StatusChip } from "@/components/ceo/StatusChip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { api, useAction, useQuery } from "@/lib/cockpitApi";
+import { AttributeSheet } from "./money/AttributeSheet";
+import {
+  freshPending,
+  linesForPayer,
+  type MoneyLine,
+  type PendingTie,
+  payerScope,
+  payerTieOf,
+  pendingForPayer,
+  pendingWords,
+} from "./money/credit";
 
 // The kit's table look: sentence-case headers in muted 12px, hairline rows.
 const TH =
@@ -24,8 +35,23 @@ import type { PayerList, UnmappedPayer } from "@/types/ceo/payers";
  * cockpit suggests a card only where the names plainly agree, which on the
  * first live run was 3 payers out of 50. The other 47 are a short list of
  * decisions only somebody who was there can make.
+ *
+ * Since 2026-10-18 a payer can also be tied to a signed deal (MONEY-
+ * ATTRIBUTION.md section 2): "A signed deal" opens the Attribute sheet on
+ * that payer, which writes a payer tie (by email, or the full payer name),
+ * so their money is the deal's and its closer's from the next refresh.
  */
-export function PayerMappingCard({ order }: { order?: number }) {
+export function PayerMappingCard({
+  order,
+  lines = [],
+  lastRefreshAt = null,
+}: {
+  order?: number;
+  /** The Money section's published payments, for what each payer is tied to now. */
+  lines?: MoneyLine[];
+  /** When the Money section last published, epoch ms. */
+  lastRefreshAt?: number | null;
+}) {
   const load = useAction(api.ceo.payers.list);
   const assign = useAction(api.ceo.payers.assign);
   const cards = useQuery(api.ceo.manualPayments.clientOptions, {}) ?? [];
@@ -35,6 +61,13 @@ export function PayerMappingCard({ order }: { order?: number }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [showAll, setShowAll] = useState(false);
+  const [toDeal, setToDeal] = useState<string | null>(null);
+  // Payer ties saved here since the section last published: each row says its own at once.
+  const [saved, setSaved] = useState<PendingTie[]>([]);
+  const pending = useMemo(
+    () => freshPending(saved, lastRefreshAt),
+    [saved, lastRefreshAt],
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -77,6 +110,7 @@ export function PayerMappingCard({ order }: { order?: number }) {
   if (!data || !Array.isArray(data.payers)) return null;
 
   const rows = showAll ? data.payers : data.payers.slice(0, 15);
+  const dealTies = dealTiesOf(rows, lines);
   const share =
     Number(data.totalUsd) > 0
       ? Number(data.mappedUsd) / Number(data.totalUsd)
@@ -186,7 +220,17 @@ export function PayerMappingCard({ order }: { order?: number }) {
                             </option>
                           ))}
                         </AnimatedSelect>
-                        {p.mapped ? (
+                        {pendingForPayer(p.payer, pending) ? (
+                          <span className="mt-1 block text-xs font-medium text-[var(--ceo-emphasis)]">
+                            {pendingWords(
+                              pendingForPayer(p.payer, pending) as PendingTie,
+                            )}
+                          </span>
+                        ) : dealTies.get(p.payer) ? (
+                          <span className="mt-1 block text-xs text-[var(--ceo-emphasis)]">
+                            {`Tied to ${dealTies.get(p.payer)} · your tie`}
+                          </span>
+                        ) : p.mapped ? (
                           <span className="mt-1 block text-xs text-muted-foreground">
                             Saved
                           </span>
@@ -195,6 +239,19 @@ export function PayerMappingCard({ order }: { order?: number }) {
                             {`Suggested: ${p.suggestion.why}`}
                           </span>
                         ) : null}
+                        {/* Beside the card: the payer's money is a signed deal's, its closer's (a payer tie). */}
+                        <button
+                          type="button"
+                          onClick={() => setToDeal(p.payer)}
+                          aria-label={`Tie every payment from ${p.payer} to a signed deal`}
+                          className="mt-1 block text-xs font-medium text-[var(--ceo-emphasis)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {dealTies.get(p.payer) ||
+                          (pendingForPayer(p.payer, pending) &&
+                            !pendingForPayer(p.payer, pending)?.removed)
+                            ? "Change the deal"
+                            : "A signed deal"}
+                        </button>
                       </td>
                       <td className={TD}>
                         <span className="flex flex-wrap gap-1.5">
@@ -246,8 +303,34 @@ export function PayerMappingCard({ order }: { order?: number }) {
           {error ? (
             <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
           ) : null}
+          <AttributeSheet
+            subject={toDeal === null ? null : { kind: "payer", payer: toDeal }}
+            lines={lines}
+            lastRefreshAt={lastRefreshAt}
+            startWith="deal"
+            pending={pending}
+            onTied={t => setSaved(v => [...v, t])}
+            onClose={() => setToDeal(null)}
+          />
         </div>
       )}
     </SectionCard>
   );
+}
+
+/** Each payer's live payer tie to a deal, as the last money refresh applied it: payer → the deal's business. */
+function dealTiesOf(
+  payers: UnmappedPayer[],
+  lines: MoneyLine[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const p of payers) {
+    const scope = p.payer.includes("@")
+      ? payerScope(p.payer, null)
+      : payerScope(null, p.payer);
+    const hit = payerTieOf(linesForPayer(lines, scope));
+    if (hit?.line.dealResponseId)
+      out.set(p.payer, hit.line.dealBusiness ?? "a signed deal");
+  }
+  return out;
 }

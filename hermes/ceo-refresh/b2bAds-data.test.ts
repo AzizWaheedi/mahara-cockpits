@@ -280,18 +280,77 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
     expect(ref.w7.introsBooked).toBe(2);
     expect(ref.w7.leads).toBe(1);
     expect(ref.w7.leadsToIntro).toBe(1);
+    expect(ref.w7.leadsToConfirmedIntro).toBe(1);
     expect(ref.w7.bookRate).toBe(1);
     // The Makers lead booked an intro that carries the old ad: one lead that booked, and its intro, on the lead's ad.
     const live = adOf(payload, "live");
-    expect(live.w7).toMatchObject({ leads: 3, leadsToIntro: 2, introsBooked: 2 });
+    expect(live.w7).toMatchObject({ leads: 3, leadsToIntro: 2, leadsToConfirmedIntro: 2, introsBooked: 2 });
     expect(live.w7.bookRate).toBe(0.6667);
     for (const ad of adsOf(payload)) {
       for (const w of [ad.w7, ad.w30]) {
         if (w.bookRate !== null) expect(w.bookRate).toBeLessThanOrEqual(1);
         if (w.leadToDemo !== null) expect(w.leadToDemo).toBeLessThanOrEqual(1);
+        if (w.confirmedIntroRate !== null) expect(w.confirmedIntroRate).toBeLessThanOrEqual(1);
       }
     }
     expect(payload.account.w7.bookRate).toBeLessThanOrEqual(1);
+  });
+
+  test("intros and confirmed intros count each lead once, on the lead's own ad (the CEO, 2026-10-18)", async () => {
+    // "For intros, it shouldn't count re-scheduled either. It should just count once."
+    const { payload } = await fixture(`
+      insert into public.meta_ad_snapshots values ${days(FROM7, TODAY).map(d => snapshot(d, "intros", "Open House | Hook 2", LG, "ACTIVE", 3)).join(",")};
+      insert into public.leads values
+        ('rebook', 'intros', '{roas-qualified}', '2026-10-10 05:00+00'),
+        ('cancel', 'intros', '{roas-qualified}', '2026-10-10 05:00+00'),
+        ('invalid', 'intros', '{roas-unqualified}', '2026-10-11 05:00+00'),
+        ('upcoming', 'intros', '{roas-qualified}', '2026-10-12 05:00+00'),
+        ('held', 'intros', '{roas-qualified}', '2026-10-12 05:00+00'),
+        ('straight', 'intros', '{roas-qualified}', '2026-10-13 05:00+00'),
+        ('veteran', 'intros', '{roas-qualified}', '2025-09-06 05:00+00'),
+        ('untagged', 'intros', '{}', '2026-10-13 05:00+00');
+      insert into public.calls values
+        -- A no-show, its rebooking that showed, and a second showed intro: one intro, one confirmed.
+        ('rebook', 'intros', 'intro', '2026-10-10 06:00+00', '2026-10-11 08:00+00', 'noshow', 'u1'),
+        ('rebook', 'intros', 'intro', '2026-10-11 09:00+00', '2026-10-13 08:00+00', 'showed', 'u1'),
+        ('rebook', 'intros', 'intro', '2026-10-13 09:00+00', '2026-10-14 08:00+00', 'showed', 'u1'),
+        -- Cancelled only: not an intro.
+        ('cancel', 'intros', 'intro', '2026-10-10 06:00+00', '2026-10-12 08:00+00', 'cancelled', 'u1'),
+        -- Held and marked invalid: an intro (B2B's show rule counts invalid as shown), never a confirmed one.
+        ('invalid', 'intros', 'intro', '2026-10-11 06:00+00', '2026-10-12 08:00+00', 'invalid', 'u1'),
+        -- Confirmed for a day still ahead: an intro, not yet confirmed.
+        ('upcoming', 'intros', 'intro', '2026-10-12 06:00+00', '2030-01-07 08:00+00', 'confirmed', 'u1'),
+        -- Cancelled, then rebooked and still confirmed after its time: one intro, confirmed.
+        ('held', 'intros', 'intro', '2026-10-12 06:00+00', '2026-10-13 08:00+00', 'cancelled', 'u1'),
+        ('held', 'intros', 'intro', '2026-10-13 06:00+00', '2026-10-14 08:00+00', 'confirmed', 'u1'),
+        -- Straight to a demo with no intro: not an intro.
+        ('straight', 'intros', 'demo', '2026-10-13 06:00+00', '2026-10-15 08:00+00', 'showed', 'u2'),
+        -- A lead from last year, and a contact with no ROAS tag, rebooking this week: neither is this window's lead.
+        ('veteran', 'intros', 'intro', '2026-10-12 06:00+00', '2026-10-13 08:00+00', 'showed', 'u1'),
+        ('untagged', 'intros', 'intro', '2026-10-13 06:00+00', '2026-10-14 08:00+00', 'showed', 'u1');
+    `);
+    const ad = adOf(payload, "intros");
+    for (const w of [ad.w7, ad.w30]) {
+      expect(w).toMatchObject({ spend: 21, leads: 6, leadsToIntro: 4, leadsToConfirmedIntro: 2 });
+      expect(w).toMatchObject({ bookRate: 0.6667, costPerIntro: 5.25, costPerConfirmedIntro: 10.5, confirmedIntroRate: 0.5 });
+      // The appointments the tab used to show: ten, rebookings, cancels and older leads included.
+      expect(w.introsBooked).toBe(10);
+    }
+    // The setter line counts each lead once too: six leads whose intro was due, five of them shown. It reads
+    // thirty days and every intro booked (the veteran and untagged leads, invalid shown by the B2B rule), so
+    // the screen says its days and rule beside it (adsFacts.tsx People).
+    expect((ad as unknown as { people: { setter: unknown } }).people.setter).toEqual({ name: "Setter One", shown: 5, due: 6 });
+    // The account row and the campaign add the ads' leads up, never the appointments.
+    // This ad, "Seen First | Hook 3" (Makers and c2) and "Referrals Are Not A System" (c4).
+    expect(payload.account.w7).toMatchObject({ leadsToIntro: 4 + 2 + 1, leadsToConfirmedIntro: 2 + 2 + 1 });
+    const lg = campaignOf(payload, "lg")!.w7;
+    expect(lg.costPerConfirmedIntro).toBe(Math.round(((lg.spend ?? 0) / 5) * 100) / 100);
+    const text = payload.notes.map((n: { text: string }) => n.text).join(" ");
+    expect(text).toContain("Intros are counted once per lead, however often the intro was rebooked");
+    expect(text).toContain("A lead that went straight to a demo is not an intro.");
+    expect(text).toContain("that was not cancelled. An intro marked invalid was held, so it counts.");
+    expect(text).not.toContain("cancelled or marked invalid");
+    expect(text).not.toMatch(/cost per demo/i);
   });
 
   test("only demos shown a week before the last day count as old enough to close (audit C5)", async () => {
@@ -309,7 +368,7 @@ describe("Our ads: every ad with activity in the window is on the tree (audit A)
 type Counts = Partial<Record<string, number | null>>;
 const WINDOW_KEYS = [
   "spend", "impressions", "clicks", "link_clicks", "meta_leads", "leads", "qualified_leads", "not_ready_leads",
-  "leads_to_intro", "leads_to_demo", "intros_booked", "intros_due", "intros_shown", "intros_qualified",
+  "leads_to_intro", "leads_to_confirmed_intro", "leads_to_demo", "intros_booked", "intros_due", "intros_shown", "intros_qualified",
   "intros_cancelled", "intros_advanced", "demos_booked", "demos_due", "demos_shown", "demos_qualified",
   "demos_shown_mature", "demos_cancelled", "closes", "contracted", "cash",
 ];
@@ -369,9 +428,13 @@ describe("Our ads: verdicts (audit C)", () => {
     row("watch", "lg", "lead_gen", { spend: 36, leads: 2, impressions: 1000 }),
     // A real scale: $10 a lead.
     row("good", "lg", "lead_gen", { spend: 20, leads: 2, impressions: 1000 }),
-    // C5: four demos shown, two of them a week old, nothing signed.
-    row("young-demos", "lg", "lead_gen", { spend: 20, leads: 2 }, { spend: 80, leads: 6, demos_shown: 4, demos_shown_mature: 2 }),
+    // Demos shown a week ago with nothing signed: the Sales tab's to judge, never an ad's (the CEO, 2026-10-18).
     row("old-demos", "lg", "lead_gen", { spend: 20, leads: 2 }, { spend: 80, leads: 6, demos_shown: 4, demos_shown_mature: 3 }),
+    // Eight leads in thirty days and none booked, though older leads' appointments sit on the ad.
+    row("no-book", "lg", "lead_gen", { spend: 20, leads: 2 }, { spend: 80, leads: 8, intros_booked: 3 }),
+    // Five leads booked an intro and none showed or stayed confirmed.
+    row("unconfirmed", "lg", "lead_gen", { spend: 20, leads: 2 }, { spend: 80, leads: 6, leads_to_intro: 5, intros_booked: 7 }),
+    row("one-confirmed", "lg", "lead_gen", { spend: 20, leads: 2 }, { spend: 80, leads: 6, leads_to_intro: 5, leads_to_confirmed_intro: 1 }),
   ];
 
   test("each verdict says what the money did in its window and never prints a cost per lead that does not exist", async () => {
@@ -387,18 +450,23 @@ describe("Our ads: verdicts (audit C)", () => {
     expect(v("watch").verdict).toBe("hold");
     expect(v("watch").reason).toBe("$18.00 a lead in seven days is over the $15 gate but within half again. Watch it; do not scale it.");
     expect(v("good")).toEqual({ verdict: "scale", reason: "$10.00 a lead in seven days, under the $15 gate, on $20.", owner: "ads" });
-    expect(v("young-demos").verdict).toBe("scale");
-    expect(v("old-demos").verdict).toBe("demos do not close");
-    expect(v("old-demos").reason).toBe("3 demos shown at least a week ago and nothing signed. That is the closing call, not the ad.");
+    expect(v("old-demos").verdict).toBe("scale");
+    expect(v("no-book")).toEqual({ verdict: "leads do not book", reason: "8 leads in thirty days and no intro booked. The ad is doing its job; the follow-up is not.", owner: "setter" });
+    expect(v("unconfirmed")).toEqual({ verdict: "intros do not confirm", reason: "5 leads booked an intro in thirty days and none of them showed or stayed confirmed. That is the setter's confirming, not the ad.", owner: "setter" });
+    expect(v("one-confirmed").verdict).toBe("scale");
 
     for (const ad of adsOf(payload)) {
       expect(ad.verdict.reason).not.toContain("$0.00");
+      expect(ad.verdict.reason).not.toContain("demo");
       if (ad.w7.spend !== 0) expect(ad.verdict.reason).not.toContain("nothing spent");
     }
     // A scale is only ever a lead-gen ad with a lead at or under the gate.
     const scale = adsOf(payload).filter(a => a.verdict.verdict === "scale");
     expect(scale.every(a => (a.w7.leads ?? 0) >= 1 && (a.w7.cpl ?? Infinity) <= 15)).toBe(true);
-    expect(payload.verdicts).toEqual({ hold: 3, not_judged: 2, "no delivery": 1, kill: 1, scale: 2, "demos do not close": 1 });
+    expect(payload.verdicts).toEqual({ hold: 3, not_judged: 2, "no delivery": 1, kill: 1, scale: 3, "leads do not book": 1, "intros do not confirm": 1 });
+    const text = payload.notes.map((n: { text: string }) => n.text).join(" ");
+    expect(text).toContain('"Leads do not book" and "intros do not confirm" are the setter.');
+    expect(text).not.toMatch(/demos do not close|cost per demo/i);
     expect(payload.verdicts.fatiguing).toBeUndefined();
   });
 
@@ -408,18 +476,19 @@ describe("Our ads: verdicts (audit C)", () => {
   });
 });
 
-describe("Our ads: the campaign constraint (audit C5 and D)", () => {
+describe("Our ads: the campaign constraint stops at the confirmed intro (the CEO, 2026-10-18)", () => {
   // Below every other stage's floor, so only the stage under test can fire.
   const quiet = { impressions: 400, link_clicks: 10, leads: 3, leads_to_intro: 1 };
 
-  test("intro to demo is the ribbon's introsAdvanced over introsShown and never passes 100%", async () => {
-    const weak = { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 2, demos_booked: 15 };
-    const strong = { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 8, demos_booked: 8 };
+  test("intros to confirmed intros is per lead and never passes 100%", async () => {
+    const weak = { ...quiet, leads: 6, leads_to_intro: 5, leads_to_confirmed_intro: 1, intros_booked: 9 };
+    const strong = { ...quiet, leads: 6, leads_to_intro: 5, leads_to_confirmed_intro: 4 };
     const { payload } = await rowsRun([row("a", "weak", "lead_gen", weak), row("b", "strong", "lead_gen", strong)]);
     const c = campaignOf(payload, "weak")!;
-    expect(c.constraint).toEqual({ stage: "intros shown to demos booked", owner: "setter", mine: 0.2, account: 0.5 });
-    expect(c.constraint!.mine).toBe(c.w30.introToDemo);
-    expect(payload.account.w30.introToDemo).toBe(0.5);
+    expect(c.constraint).toEqual({ stage: "intros to confirmed intros", owner: "setter", mine: 0.2, account: 0.5 });
+    expect(c.constraint!.mine).toBe(c.w30.confirmedIntroRate);
+    expect(payload.account.w30.confirmedIntroRate).toBe(0.5);
+    expect(campaignOf(payload, "strong")!.constraint).toBeNull();
     for (const campaign of payload.campaigns as Campaign[]) {
       if (!campaign.constraint) continue;
       expect(campaign.constraint.mine).toBeLessThanOrEqual(1);
@@ -427,15 +496,19 @@ describe("Our ads: the campaign constraint (audit C5 and D)", () => {
     }
   });
 
-  test("the closer is not blamed until the account has three closes to compare against", async () => {
-    const noClose = { ...quiet, demos_shown: 5 };
-    const twoCloses = { ...quiet, demos_shown: 3, closes: 2 };
-    const thin = await rowsRun([row("a", "a", "lead_gen", noClose), row("b", "b", "lead_gen", twoCloses)]);
-    expect(thin.payload.account.w30.closes).toBe(2);
-    expect(campaignOf(thin.payload, "a")!.constraint).toBeNull();
+  test("demos and closes are never a campaign's stage: no intro-to-demo, no closer", async () => {
+    // Under the old stages these blamed the setter for intros shown that booked no demo, and the closer for five demos and no close.
+    const noDemo = { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 2, demos_booked: 15, demos_shown: 5 };
+    const closes = { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 8, demos_shown: 3, closes: 3 };
+    const { payload } = await rowsRun([row("a", "a", "lead_gen", noDemo), row("b", "b", "lead_gen", closes)]);
+    expect(payload.account.w30.closes).toBe(3);
+    for (const campaign of payload.campaigns as Campaign[]) expect(campaign.constraint).toBeNull();
+  });
 
-    const threeCloses = { ...quiet, demos_shown: 3, closes: 3 };
-    const enough = await rowsRun([row("a", "a", "lead_gen", noClose), row("b", "b", "lead_gen", threeCloses)]);
-    expect(campaignOf(enough.payload, "a")!.constraint).toEqual({ stage: "demos shown to closes", owner: "closer", mine: 0, account: 0.375 });
+  test("a campaign with fewer than five intros is too few to judge on confirming", async () => {
+    const thin = { ...quiet, leads: 6, leads_to_intro: 4, leads_to_confirmed_intro: 0 };
+    const full = { ...quiet, leads: 6, leads_to_intro: 5, leads_to_confirmed_intro: 5 };
+    const { payload } = await rowsRun([row("a", "thin", "lead_gen", thin), row("b", "full", "lead_gen", full)]);
+    expect(campaignOf(payload, "thin")!.constraint).toBeNull();
   });
 });

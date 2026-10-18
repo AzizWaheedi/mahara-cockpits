@@ -12,6 +12,7 @@ import type { B2bAdsPayload } from "@/types/ceo/payloads";
 import {
   launchWinners,
   noWinnersText,
+  resultsLine,
   WINNERS_HEADING,
   winnersPrompt,
 } from "./launchWinners";
@@ -271,7 +272,7 @@ export function LaunchCard({
                       <span className="min-w-0 flex-1">
                         <span className="block truncate">{a.name}</span>
                         <span className="block text-xs tabular-nums text-muted-foreground">
-                          {`${plural(a.w30.leads, "lead")} · ${plural(a.w30.demosShown, "demo")} · ${plural(a.w30.closes, "close")}`}
+                          {resultsLine(a)}
                         </span>
                       </span>
                     </label>

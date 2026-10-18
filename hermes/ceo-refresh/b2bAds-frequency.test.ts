@@ -18,6 +18,7 @@ const NOW = Date.parse("2026-10-16T05:00:00Z");
 const window = (a: string, spend: number) => ({
   [`${a}_spend`]: spend, [`${a}_impressions`]: 400, [`${a}_clicks`]: 20, [`${a}_link_clicks`]: 10,
   [`${a}_meta_leads`]: 3, [`${a}_leads`]: 3, [`${a}_qualified_leads`]: 2, [`${a}_not_ready_leads`]: 0,
+  [`${a}_leads_to_intro`]: 1, [`${a}_leads_to_confirmed_intro`]: 1, [`${a}_leads_to_demo`]: 1,
   [`${a}_intros_booked`]: 1, [`${a}_intros_due`]: 1, [`${a}_intros_shown`]: 1, [`${a}_intros_qualified`]: 1,
   [`${a}_intros_cancelled`]: 0, [`${a}_intros_advanced`]: 1, [`${a}_demos_booked`]: 1, [`${a}_demos_due`]: 1,
   [`${a}_demos_shown`]: 1, [`${a}_demos_qualified`]: 1, [`${a}_demos_cancelled`]: 0,

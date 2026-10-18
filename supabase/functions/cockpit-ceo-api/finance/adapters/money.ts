@@ -1,13 +1,19 @@
 import {
   type Attributed,
   attribute,
+  attributionRuleText,
   totals as attributionTotals,
   byPerson,
+  cardRefs as buildCardRefs,
   type CardRef,
+  cleanText,
+  DEAL_TERM_DAYS,
   type DealRef,
-  FRONT_END_DAYS,
-  FRONT_END_DAYS_MONTHLY,
+  dealLedgerRows,
   type PaymentIn,
+  type TieRow,
+  tieNoteText,
+  tieSummary,
 } from "../attribution.ts";
 import { KIND_LABEL, type LineKind, matchPayouts } from "../bank.ts";
 import {
@@ -196,6 +202,10 @@ export const money: Adapter = {
     const from90 = addDays(today, -89);
     const from30 = addDays(today, -29);
     const firstMonthStart = `${shiftMonth(month, -11)}-01`;
+    // A deal signed up to DEAL_TERM_DAYS before the 12 months can still be in
+    // its term inside them, so the money paid on it before them is read too:
+    // it counts toward the deal's contract and is never published.
+    const seedFrom = addDays(firstMonthStart, -DEAL_TERM_DAYS);
     const notes: Note[] = [];
 
     // --- Core: Whop cash per day. paid_on is already the Kuwait (+03) day and
@@ -716,6 +726,8 @@ export const money: Adapter = {
     // 15 minutes by the tap-charges-sync Edge Function, which holds the Tap
     // key as a Supabase secret; nothing on Convex touches Tap any more.
     let tapCharges: TapCharge[] | null = null;
+    /** Tap charges older than the 180 days, for the attribution alone (the 12 months and the contracts' seed). */
+    let tapOlder: TapCharge[] = [];
     try {
       const [stateRows, chargeRows] = await Promise.all([
         sql(
@@ -731,7 +743,7 @@ export const money: Adapter = {
                   floor(extract(epoch from at) * 1000) as at_ms,
                   currency, amount, usd, email, name
            from public.cockpit_tap_charges
-           where live and status = 'CAPTURED' and day between ${day(from180)} and ${day(today)}
+           where live and status = 'CAPTURED' and day between ${day(seedFrom)} and ${day(today)}
            order by at`,
         ),
       ]);
@@ -759,16 +771,20 @@ export const money: Adapter = {
           note: String(st.note ?? "no successful run").slice(0, 160),
         });
       } else {
-        tapCharges = chargeRows.map(r => ({
+        const tapRead: TapCharge[] = chargeRows.map(r => ({
           id: String(r.id),
           day: String(r.day),
           at: num(r.at_ms),
           currency: String(r.currency ?? "USD"),
           amount: num(r.amount),
           usd: r.usd === null || r.usd === undefined ? null : usd(num(r.usd)),
-          email: r.email ? String(r.email) : null,
-          name: r.name ? String(r.name) : null,
+          // Lower-case email and cleaned name, as native reads them (money.js tapRead).
+          email: r.email ? String(r.email).toLowerCase() : null,
+          name: r.name ? cleanText(r.name, 100) : null,
         }));
+        // The Tap rail, settlements and hand-logged matching read the last 180 days.
+        tapCharges = tapRead.filter(c => c.day >= from180);
+        tapOlder = tapRead.filter(c => c.day < from180 && c.usd !== null);
         const byTapDay = new Map<string, number>();
         for (const c of tapCharges)
           if (c.usd !== null)
@@ -871,11 +887,12 @@ export const money: Adapter = {
         usd: usd(num(r.usd)),
         amount: num(r.amount),
         currency: String(r.currency ?? "KWD"),
-        reference: String(r.reference ?? ""),
-        account: String(r.account ?? ""),
+        // Cleaned as native normalizeBankLine cleans them (money.js cleanText).
+        reference: cleanText(r.reference ?? "", 160),
+        account: cleanText(r.account ?? "", 80),
         kind: String(r.kind ?? "unknown") as LineKind,
         category: r.category ? String(r.category) : null,
-        note: r.note ? String(r.note) : null,
+        note: r.note ? cleanText(r.note, 240) : null,
       }));
       bankStatements = stmtRows.map(r => ({
         id: String(r.id),
@@ -1068,7 +1085,7 @@ export const money: Adapter = {
       // A bank transfer, cheque or cash payment logged by hand drops out once
       // a statement line shows the same money: it counts once, on the Bank rail.
       const bankClientLines = bankLines.filter(
-        l => l.kind === "client_payment",
+        l => l.kind === "client_payment" && l.usd > 0,
       );
       const usedBankLine = new Set<number>();
       for (const e of entries) {
@@ -1717,16 +1734,18 @@ export const money: Adapter = {
     }
 
     // --- Every payment in, given a side, a person and a deal or a client --
-    // (Aziz, 2026-09-21). The rules live in ../attribution; this loads the
+    // (Aziz, 2026-10-18). The rules live in ../attribution; this loads the
     // rows: Whop and bank transfers from the B2B database, Tap from the read
-    // above, hand-logged entries from the Convex table, the closer-form deals,
-    // the client cards with their portal logins and hand-kept payer mapping,
-    // and the money out the database holds (Whop refunds, the bank expenses).
+    // above, hand-logged entries from the finance snapshot, the closer-form
+    // deals, the client cards with their portal logins and hand-kept payer
+    // mapping, the CEO's ties, and the money out the database holds (Whop
+    // refunds, the bank expenses).
     let attribution: MoneyPayload["attribution"];
+    let attributedRows: Attributed[] | null = null;
     const attributionDaily: DailyPoint[] = [];
     try {
       const from12 = firstMonthStart;
-      const [whopRows, transferRows, dealRows, loginRows, expenseRows] =
+      const [whopRead, transferRows, dealRows, loginRows, expenseRows] =
         await Promise.all([
           sql(
             B2B,
@@ -1738,7 +1757,7 @@ export const money: Adapter = {
                     nullif(btrim(user_username), '') as username,
                     deal_response_id, billing_reason
              from public.whop_payments
-             where status = 'paid' and currency = 'usd' and paid_on >= ${day(from12)}
+             where status = 'paid' and currency = 'usd' and paid_on >= ${day(seedFrom)}
              order by paid_on`,
           ),
           sql(
@@ -1746,7 +1765,8 @@ export const money: Adapter = {
             `select id, to_char(received_at, 'YYYY-MM-DD') as day, amount_usd, method,
                     nullif(btrim(client_name), '') as client, reference, deal_response_id
              from public.transfers
-             where received_at >= ${day(from12)}`,
+             where received_at >= ${day(seedFrom)}
+             order by received_at`,
           ),
           sql(
             B2B,
@@ -1755,10 +1775,12 @@ export const money: Adapter = {
                     nullif(lower(btrim(email)), '') as email,
                     nullif(btrim(business_name), '') as business,
                     nullif(btrim(concat_ws(' ', client_first_name, client_last_name)), '') as contact,
-                    closer, csm, cash_collected, payment_structure
+                    closer, csm, cash_collected, payment_structure,
+                    contracted_revenue as contracted
              from public.closed_deals d
-             where submitted_at >= ${day(addDays(from12, -90))}
-               and ${NOT_VOIDED("d")}`,
+             where submitted_at >= ${day(addDays(from12, -DEAL_TERM_DAYS))}
+               and ${NOT_VOIDED("d")}
+             order by submitted_at`,
           ),
           sql(
             B2B,
@@ -1791,13 +1813,14 @@ export const money: Adapter = {
              limit 600`,
           ),
         ]);
+      // The hand-kept payer mapping and the CEO's ties come through the same
+      // fenced finance snapshot the native worker reads (2026-10-18). A
+      // snapshot without ties fails the attribution: run the migration first.
+      const tieRows: TieRow[] = await ctx.runQuery("ties", {});
       let payerRows: Row[] = [];
       try {
-        payerRows = await sql(
-          TRIAGE,
-          `select payer, payer_key, clickup_task_id
-           from public.cockpit_payer_clients
-           where cleared_at is null and coalesce(clickup_task_id, '') <> ''`,
+        payerRows = (await ctx.runQuery("payers", {})).filter(
+          r => !r.cleared_at && String(r.clickup_task_id ?? "") !== "",
         );
       } catch (e) {
         notes.push({
@@ -1806,9 +1829,11 @@ export const money: Adapter = {
         });
       }
 
+      // Whop payments of the 12 months: refunds read these; the earlier ones only seed contracts.
+      const whopRows = whopRead.filter(r => String(r.day) >= from12);
       const detailOf = new Map<string, string | null>();
       const paymentsIn: PaymentIn[] = [];
-      for (const r of whopRows) {
+      for (const r of whopRead) {
         // A payment refunded in full is not money in; its refund is listed below.
         if (num(r.net_amount) <= 0) continue;
         const id = `whop:${r.payment_id}`;
@@ -1821,10 +1846,11 @@ export const money: Adapter = {
           currency: "USD",
           amount: usd(num(r.final_amount)),
           payerEmail: r.email ? String(r.email) : null,
+          // Cleaned as native cleans them, so the ledger's payer reads the same from either copy.
           payerName: r.billing
-            ? String(r.billing)
+            ? cleanText(r.billing, 120)
             : r.username
-              ? String(r.username)
+              ? cleanText(r.username, 120)
               : null,
           dealResponseId: r.deal_response_id
             ? String(r.deal_response_id)
@@ -1833,7 +1859,7 @@ export const money: Adapter = {
           billingReason: r.billing_reason ? String(r.billing_reason) : null,
         });
       }
-      for (const c of tapCharges ?? []) {
+      for (const c of [...tapOlder, ...(tapCharges ?? [])]) {
         if (c.usd === null) continue;
         const id = `tap:${c.id}`;
         detailOf.set(id, null);
@@ -1862,7 +1888,7 @@ export const money: Adapter = {
           currency: "USD",
           amount: usd(num(r.amount_usd)),
           payerEmail: null,
-          payerName: r.client ? String(r.client) : null,
+          payerName: r.client ? cleanText(r.client, 120) : null,
           dealResponseId: r.deal_response_id
             ? String(r.deal_response_id)
             : null,
@@ -1871,7 +1897,8 @@ export const money: Adapter = {
         });
       }
       for (const l of bankLines) {
-        if (l.kind !== "client_payment") continue;
+        // Money in only, as native: a debit classed as a client payment is no payment in.
+        if (l.kind !== "client_payment" || l.usd <= 0) continue;
         const id = `bank:${l.id}`;
         detailOf.set(id, l.reference.slice(0, 80) || null);
         paymentsIn.push({
@@ -1888,7 +1915,11 @@ export const money: Adapter = {
           billingReason: null,
         });
       }
+      // A Tap payment logged by hand before the 180 days counts once in attribution, as the older Tap charge it matches.
+      const olderTapCovered = coverWithTap(manualCounted, tapOlder, from12);
       for (const e of manualCounted) {
+        // An entry dated after today is not money in yet (native reads up to today).
+        if (olderTapCovered.has(e.id) || e.day > today) continue;
         const id = `manual:${e.id}`;
         detailOf.set(id, e.rail);
         paymentsIn.push({
@@ -1906,43 +1937,42 @@ export const money: Adapter = {
         });
       }
 
+      // Names cleaned as native normalizeDeal cleans them, so the closer
+      // credited and the business shown read the same from either copy.
       const dealRefs: DealRef[] = dealRows
-        .filter(r => r.response_id && r.business)
         .map(r => ({
-          responseId: String(r.response_id),
+          responseId: String(r.response_id ?? ""),
           day: String(r.day),
           email: r.email ? String(r.email) : null,
-          business: String(r.business),
-          contactName: r.contact ? String(r.contact) : null,
-          closer: r.closer ? String(r.closer) : null,
-          csm: r.csm ? String(r.csm) : null,
+          business: cleanText(r.business, 80),
+          contactName: cleanText(r.contact, 120) || null,
+          closer: cleanText(r.closer, 80) || null,
+          csm: cleanText(r.csm, 80) || null,
           deposit: usd(num(r.cash_collected)),
           paymentStructure: r.payment_structure
             ? String(r.payment_structure)
             : null,
-        }));
-      const emailsByCard = new Map<string, string[]>();
-      for (const r of loginRows)
-        if (r.email && r.clickup_id)
-          emailsByCard.set(String(r.clickup_id), [
-            ...(emailsByCard.get(String(r.clickup_id)) ?? []),
-            String(r.email),
-          ]);
-      const payersByCard = new Map<string, string[]>();
-      for (const r of payerRows)
-        payersByCard.set(String(r.clickup_task_id), [
-          ...(payersByCard.get(String(r.clickup_task_id)) ?? []),
-          ...[r.payer_key, r.payer].filter(Boolean).map(String),
-        ]);
-      const cardRefs: CardRef[] = (manual?.cards ?? []).map(c => ({
-        taskId: c.taskId,
-        names: c.names,
-        csm: c.csm,
-        emails: emailsByCard.get(c.taskId) ?? [],
-        payerKeys: payersByCard.get(c.taskId) ?? [],
-      }));
+          contracted:
+            r.contracted === null || r.contracted === undefined
+              ? null
+              : usd(num(r.contracted)),
+        }))
+        .filter(d => d.responseId && d.business);
+      // Billing cards and alias names (finance/context.ts), with logins and
+      // hand-kept payers, built as the native worker builds them.
+      const cardRefs: CardRef[] = buildCardRefs(
+        manual?.cards ?? [],
+        loginRows,
+        payerRows,
+      );
 
-      const rows = attribute(paymentsIn, dealRefs, cardRefs);
+      // Every payment read decides each deal's contract; only the 12 months are published (the ledger rewrite covers them).
+      const rows = attribute(paymentsIn, dealRefs, cardRefs, tieRows).filter(
+        r => r.day >= from12,
+      );
+      attributedRows = rows;
+      const ties = tieSummary(tieRows, rows, dealRefs, cardRefs);
+      const ledger = dealLedgerRows(rows);
       const toTx = (r: Attributed): Transaction => ({
         id: r.id,
         day: r.day,
@@ -1955,12 +1985,15 @@ export const money: Adapter = {
         payerName: r.payerName,
         side: r.side,
         kind: r.kind,
+        depositUsd: r.depositUsd,
         person: r.person,
         personRole: r.personRole,
+        dealResponseId: r.dealResponseId,
         dealBusiness: r.dealBusiness,
         clientName: r.clientName,
         clientTaskId: r.clientTaskId,
         matchedBy: r.matchedBy,
+        tie: r.tie,
         detail: detailOf.get(r.id) ?? null,
       });
       const outRows: Transaction[] = [];
@@ -1975,7 +2008,7 @@ export const money: Adapter = {
           currency: "USD",
           amount: usd(num(r.refunded_amount)),
           payerEmail: r.email ? String(r.email) : null,
-          payerName: r.billing ? String(r.billing) : null,
+          payerName: r.billing ? cleanText(r.billing, 120) : null,
           side: "out",
           kind: "refund",
           person: null,
@@ -2078,23 +2111,30 @@ export const money: Adapter = {
       attribution = {
         from: from12,
         to: today,
-        kickoffRead: false,
+        // The kickoff form's typed amount is read by the Marketing section and
+        // shown beside front-end cash as typed, not money (as native).
+        kickoffRead: true,
         tapRead: tapCharges !== null,
         totals: { ...all, out, outCount: outRows.length },
         mtd: attributionTotals(inMonth(month)),
         lastMonth: attributionTotals(inMonth(lastMonth)),
         byPerson: byPerson(rows),
+        ties,
+        // What this run writes to cockpit_deal_payments, so a reader of the ledger can check it against this section.
+        dealLedger: {
+          rows: ledger.length,
+          usd: usd(ledger.reduce((t, r) => t + r.usd, 0)),
+          from: from12,
+        },
         transactions,
       };
 
       notes.push({
         level: "info",
-        text: `Every payment in over the last 12 months is given a side. Front end is the deposit at signing (the closer's) and the rest of the cash inside ${FRONT_END_DAYS} days of the deal (${FRONT_END_DAYS_MONTHLY} on a monthly plan, the CSM's); back end is a payment matched to an existing client (that client's CSM's). A payment is tied to a deal by Whop's own link, the payer's email or the business name, and to a client by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry. ${payments(all.unattributedCount)} (${usdWords(all.unattributed)}) match no deal and no client; the Transactions tab lists every payment in and out.`,
+        text: attributionRuleText(all.unattributedCount, all.unattributed),
       });
-      notes.push({
-        level: "warn",
-        text: "Kickoff cash is not read: the CSM's kickoff form (Typeform BbJy6xg4) has no field for the remaining cash and is not loaded into the database. Until it has two fields (remaining cash collected, and the amount) and Muhammed's Typeform sync loads it, the rest of the cash is judged from the rails alone.",
-      });
+      if (ties.notApplied.length || ties.beforeDeal.length)
+        notes.push({ level: "warn", text: tieNoteText(ties) });
       if (tapCharges === null)
         notes.push({
           level: "info",
@@ -2352,11 +2392,14 @@ export const money: Adapter = {
     }
 
     // --- The client's LTV table: every payment attributed to a card, mirrored
-    // to cockpit_client_payments in Creative Triage, one row per payment.
-    if (attribution && sbWritable())
+    // to cockpit_client_payments in Creative Triage, one row per payment; and
+    // the deal ledger (cockpit_deal_payments), every front-end payment. Both
+    // come from every attributed payment, not the capped transaction list, as
+    // native does.
+    if (attribution && attributedRows && sbWritable())
       try {
-        const rows = attribution.transactions
-          .filter(t => t.direction === "in" && t.clientTaskId)
+        const rows = attributedRows
+          .filter(t => t.clientTaskId)
           .map(t => ({
             payment_id: t.id,
             clickup_task_id: t.clientTaskId,
@@ -2367,6 +2410,7 @@ export const money: Adapter = {
             side: t.side,
             kind: t.kind,
             person: t.person,
+            deal_response_id: t.dealResponseId ?? null,
             recorded_at: new Date().toISOString(),
           }));
         for (let i = 0; i < rows.length; i += 200)
@@ -2375,10 +2419,19 @@ export const money: Adapter = {
             rows.slice(i, i + 200),
             "payment_id",
           );
+        const ledger = dealLedgerRows(attributedRows);
+        // Staged even when empty, so the output always carries the ledger key.
+        await upsertMerge("cockpit_deal_payments", [], "payment_id");
+        for (let i = 0; i < ledger.length; i += 200)
+          await upsertMerge(
+            "cockpit_deal_payments",
+            ledger.slice(i, i + 200),
+            "payment_id",
+          );
         sources.push({
           name: "Client payments mirror",
           ok: true,
-          note: `${rows.length} attributed payments written to cockpit_client_payments`,
+          note: `${rows.length} attributed payments written to cockpit_client_payments, ${ledger.length} front-end payments to cockpit_deal_payments`,
         });
       } catch (e) {
         sources.push({

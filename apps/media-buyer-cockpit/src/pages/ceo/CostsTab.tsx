@@ -10,23 +10,26 @@ import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
 import {
-  COMMISSION_BASES,
   COMMISSION_SHORT,
   type CommissionBasis,
   SHARE_BASES,
   takesRate,
+  unknownRuleText,
 } from "@/types/ceo/commission";
 import type { Sheet } from "@/types/ceo/costs";
 import {
   type ClosedMonthPay,
   type CostKind,
   type CostLine,
+  MEASURED_ON_TEAM,
   monthlyUsd,
   payroll,
   qualifiedIntroShare,
   totalOf,
+  unpricedToFix,
 } from "@/types/ceo/costsModel";
 import { planName } from "./goalsKit";
+import { commissionOptions } from "./pay/fields";
 import type { CeoTabProps } from "./types";
 
 /**
@@ -51,6 +54,8 @@ import type { CeoTabProps } from "./types";
 const cell =
   "w-full min-w-0 rounded bg-transparent px-2 py-1.5 tabular-nums outline-none transition-colors hover:bg-muted/50 focus:bg-background focus:ring-2 focus:ring-ring";
 const say = { money, count };
+/** The call centre's client lines (PAY-PLANS.md decision 2): measured on Team & payroll, never projected. */
+const MEASURED_CLIENT = MEASURED_ON_TEAM;
 
 /** A number that washes teal once when it changes, like next month's plan. */
 function Moving({ value, className }: { value: string; className?: string }) {
@@ -165,6 +170,18 @@ export function CostsTab({ sections, goTab }: CeoTabProps) {
       p.basis === "per_qualified_intro_shown" ||
       p.basis2 === "per_qualified_intro_shown",
   );
+  // "Give each a rule and a rate" only for what Costs can fix: never the
+  // client lines Team & payroll counts, nor a rule this build cannot read.
+  const toFix = pay ? unpricedToFix(people, pay.lines) : [];
+  const unknownRules = people
+    .filter(p => p.unknown || p.unknown2)
+    .map(
+      p =>
+        `${p.name} (${[p.unknown, p.unknown2]
+          .filter((x): x is string => Boolean(x))
+          .map(unknownRuleText)
+          .join(", ")})`,
+    );
 
   if (busy && !sheet)
     return (
@@ -323,7 +340,7 @@ export function CostsTab({ sections, goTab }: CeoTabProps) {
             variant="plain"
             label="Labour"
             value={<Moving value={money(labour)} />}
-            sub={`${money(pay.base)} pay + ${money(pay.commission)} commission`}
+            sub={`${money(pay.base)} pay + ${money(pay.commission)} commission${pay.parts ? ` + ${money(pay.parts)} pay-plan parts` : ""}`}
           />
           <StatTile
             variant="plain"
@@ -436,6 +453,7 @@ export function CostsTab({ sections, goTab }: CeoTabProps) {
                             name={person.name}
                             which={1}
                             basis={person.basis}
+                            unknown={person.unknown}
                             rate={person.rate}
                             currency={person.currency}
                             onLocal={(basis, rate) =>
@@ -463,6 +481,7 @@ export function CostsTab({ sections, goTab }: CeoTabProps) {
                               name={person.name}
                               which={2}
                               basis={person.basis2 ?? "none"}
+                              unknown={person.unknown2}
                               rate={person.rate2 ?? null}
                               currency={person.currency}
                               onLocal={(basis, rate) =>
@@ -487,13 +506,27 @@ export function CostsTab({ sections, goTab }: CeoTabProps) {
                         </span>
                       </td>
                       <td className="py-1.5 text-right text-xs text-muted-foreground">
-                        {person.basis === "other" || person.basis2 === "other"
-                          ? "Not priced: pick a rule"
-                          : line?.commission === null
-                            ? line?.on
-                              ? `${line.on}; a line has no plan number`
-                              : "No plan number"
-                            : (line?.on ?? "")}
+                        {person.unknown || person.unknown2
+                          ? "Not priced: a rule this cockpit does not know"
+                          : person.basis === "other" ||
+                              person.basis2 === "other"
+                            ? "Not priced: pick a rule"
+                            : line?.commission === null
+                              ? !toFix.includes(person.name)
+                                ? `${line.on ? `${line.on}; ` : ""}client lines counted each month on Team & payroll`
+                                : line?.on
+                                  ? `${line.on}; a line has no plan number`
+                                  : "No plan number"
+                              : (line?.on ?? "")}
+                        {/* Pay-plan parts (PAY-PLANS.md 8.7): the latest approved month's, as an estimate. */}
+                        {line?.planParts ? (
+                          <span className="block">
+                            {line.planParts.usd === null ||
+                            line.planParts.month === null
+                              ? "Pay plan: no approved month yet, its bonuses are not in"
+                              : `+ ${money(line.planParts.usd)} pay-plan parts, as approved for ${monthWord(line.planParts.month)}`}
+                          </span>
+                        ) : null}
                       </td>
                       <td className="py-1.5 text-right font-medium">
                         <Moving value={money(line?.total ?? null)} />
@@ -508,7 +541,7 @@ export function CostsTab({ sections, goTab }: CeoTabProps) {
                     className="pt-2 text-xs text-muted-foreground"
                     colSpan={4}
                   >
-                    {`${count(people.length)} working: ${money(pay.base)} pay, ${money(pay.commission)} commission`}
+                    {`${count(people.length)} working: ${money(pay.base)} pay, ${money(pay.commission)} commission${pay.parts ? `, ${money(pay.parts)} pay-plan parts` : ""}`}
                   </td>
                   <td className="pt-2 text-right font-semibold">
                     <Moving value={money(pay.total)} />
@@ -538,8 +571,32 @@ export function CostsTab({ sections, goTab }: CeoTabProps) {
           {pay.noPay.length ? (
             <p>{`No pay set for ${pay.noPay.join(", ")}: the total is a floor until there is.`}</p>
           ) : null}
-          {pay.unpriced.length ? (
-            <p>{`Commission not priced for ${pay.unpriced.join(", ")}: give each a rule and a rate, and put the numbers it is paid on in the plan.`}</p>
+          {toFix.length ? (
+            <p>{`Commission not priced for ${toFix.join(", ")}: give each a rule and a rate, and put the numbers it is paid on in the plan.`}</p>
+          ) : null}
+          {unknownRules.length ? (
+            <p>{`A rule this cockpit does not know, kept as stored and not priced: ${unknownRules.join(", ")}. Reload the app to price it.`}</p>
+          ) : null}
+          {people.some(
+            p =>
+              MEASURED_CLIENT.has(p.basis) ||
+              MEASURED_CLIENT.has(p.basis2 ?? "none"),
+          ) ? (
+            <p>
+              Client appointments shown and client deals closed are counted each
+              month on Team & payroll, not projected here: those lines are
+              named, never priced at $0.
+            </p>
+          ) : null}
+          {pay.lines.some(l => l.planParts?.month) ? (
+            <p>
+              Pay-plan parts (bonuses, typed counts, guarantees) are each
+              person's latest month approved on Team & payroll, carried as an
+              estimate: next month's bonus is not known until it is earned.
+            </p>
+          ) : null}
+          {pay.noPlanMonth.length ? (
+            <p>{`On a pay plan with no approved month yet: ${pay.noPlanMonth.join(", ")}. Their bonuses are not in the total; approve a month on Team & payroll and it is carried here.`}</p>
           ) : null}
           {onQualified ? (
             <p>
@@ -653,14 +710,46 @@ function ClosedMonthLine({
   const left = pay.noPay.length
     ? ` It leaves out ${pay.noPay.join(", ")}, with no pay in dollars on the roster, so it is a floor.`
     : "";
+  const plans = pay.plans;
   return (
     <>
       <p>{`${total}${left} The month above stays on roster pay.`}</p>
       {pay.noRate.length ? (
         <p>{`No dollar rate for ${pay.noRate.join(", ")}'s approved currency: counted at roster pay.`}</p>
       ) : null}
+      {/* Commission and pay-plan parts approved on Team & payroll (PAY-PLANS.md 8.7). */}
+      {plans === null ? (
+        <p>{`${month}'s approved commission and bonuses could not be read, so they are not added: base pay is not the month's whole pay.`}</p>
+      ) : plans ? (
+        <>
+          {plans.approved ? (
+            <p>{`Approved on Team & payroll for ${month}: ${money(plans.commission)} commission and ${money(plans.parts)} pay-plan parts for ${plural(plans.approved, "person", "people")}, so ${month} came to ${money(plans.total)} with base pay.`}</p>
+          ) : plans.notApproved?.length ? (
+            <p>{`Nothing is approved on Team & payroll for ${month} yet, so its commission and bonuses are not in ${money(pay.total)}.`}</p>
+          ) : null}
+          {plans.notPriced.length ? (
+            <p>{`Left out of those approvals, priced only from the plan: ${plans.notPriced
+              .map(
+                n =>
+                  `${n.name} (${n.bases.map(b => COMMISSION_SHORT[b as CommissionBasis] ?? b).join(", ")})`,
+              )
+              .join("; ")}.`}</p>
+          ) : null}
+          {plans.notApproved?.length ? (
+            <p>{`On a pay plan or a measured commission line with ${month} not approved: ${plans.notApproved.join(", ")}. Their commission and bonuses are not in it.`}</p>
+          ) : null}
+        </>
+      ) : null}
     </>
   );
+}
+
+/** "September", from "YYYY-MM". */
+function monthWord(ym: string): string {
+  return new Date(`${ym.slice(0, 7)}-01T00:00:00Z`).toLocaleString("en", {
+    month: "long",
+    timeZone: "UTC",
+  });
 }
 
 /** A person's pay a month, typed in their own currency, shown beside its dollars. */
@@ -726,6 +815,7 @@ function CommissionLine({
   name,
   which,
   basis,
+  unknown,
   rate,
   currency,
   onLocal,
@@ -734,12 +824,25 @@ function CommissionLine({
   name: string;
   which: 1 | 2;
   basis: CommissionBasis;
+  /** The stored basis this build does not know: named, with no select to overwrite it. */
+  unknown?: string;
   rate: number | null;
   currency: string;
   onLocal: (basis: CommissionBasis, rate: number | null) => void;
   onCommit: (patch: { basis?: CommissionBasis; rate: number | null }) => void;
 }) {
   const share = SHARE_BASES.has(basis);
+  if (unknown)
+    return (
+      <span
+        className="text-xs text-muted-foreground"
+        title="This cockpit does not know this rule yet. It is kept as it is; reload the app to edit it."
+      >
+        {which === 2
+          ? `+ ${unknownRuleText(unknown)}`
+          : unknownRuleText(unknown)}
+      </span>
+    );
   return (
     <span className="flex items-center gap-1">
       <AnimatedSelect
@@ -762,15 +865,12 @@ function CommissionLine({
           onCommit({ basis: next, rate: kept });
         }}
       >
-        {COMMISSION_BASES.map(b => (
-          <option key={b} value={b}>
-            {which === 2 && b === "none"
-              ? "No second line"
-              : which === 2
-                ? `+ ${COMMISSION_SHORT[b]}`
-                : COMMISSION_SHORT[b]}
-          </option>
-        ))}
+        {/* Grouped, so our own deals and our clients' never read alike. */}
+        {commissionOptions({
+          none: which === 2 ? "No second line" : "No commission",
+          other: true,
+          plus: which === 2,
+        })}
       </AnimatedSelect>
       {takesRate(basis) ? (
         <RateCell

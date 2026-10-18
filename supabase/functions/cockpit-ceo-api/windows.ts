@@ -25,7 +25,7 @@ const DISABLE_REASON: Record<number, string> = {
 // Link clicks are kept out of COUNTS: a day Meta sent without them makes them
 // not known (null), and the sums and rates over them have to carry that.
 const COUNTS = [
-  'impressions', 'clicks', 'metaLeads', 'leads', 'qualifiedLeads', 'notReadyLeads', 'leadsToIntro', 'leadsToDemo',
+  'impressions', 'clicks', 'metaLeads', 'leads', 'qualifiedLeads', 'notReadyLeads', 'leadsToIntro', 'leadsToConfirmedIntro', 'leadsToDemo',
   'introsBooked', 'introsDue', 'introsShown', 'introsQualified', 'introsCancelled', 'introsAdvanced',
   'demosBooked', 'demosDue', 'demosShown', 'demosQualified', 'demosShownMature', 'demosCancelled', 'closes',
 ] as const;
@@ -33,7 +33,7 @@ type CountKey = (typeof COUNTS)[number];
 const COLUMN: Record<CountKey, string> = {
   impressions: 'impressions', clicks: 'clicks', metaLeads: 'meta_leads',
   leads: 'leads', qualifiedLeads: 'qualified_leads', notReadyLeads: 'not_ready_leads',
-  leadsToIntro: 'leads_to_intro', leadsToDemo: 'leads_to_demo',
+  leadsToIntro: 'leads_to_intro', leadsToConfirmedIntro: 'leads_to_confirmed_intro', leadsToDemo: 'leads_to_demo',
   introsBooked: 'intros_booked', introsDue: 'intros_due', introsShown: 'intros_shown',
   introsQualified: 'intros_qualified', introsCancelled: 'intros_cancelled', introsAdvanced: 'intros_advanced',
   demosBooked: 'demos_booked', demosDue: 'demos_due', demosShown: 'demos_shown',
@@ -44,8 +44,11 @@ export type B2bAdWindow = {
   /** `linkClicks` is null when Meta sent a delivered day without a link-click count: not known, never 0. */
   spend: number; impressions: number; clicks: number; linkClicks: number | null; metaLeads: number; leads: number;
   qualifiedLeads: number; notReadyLeads: number;
-  /** Leads in the window that booked an intro (or a demo) at or after they arrived: per lead, never per appointment. */
-  leadsToIntro: number; leadsToDemo: number;
+  /**
+   * Leads in the window that booked an intro (not cancelled; invalid was held and counts), or a demo, at or after they arrived: per lead,
+   * never per appointment. `leadsToConfirmedIntro`: of those intros, one that showed or is still confirmed after its time.
+   */
+  leadsToIntro: number; leadsToConfirmedIntro: number; leadsToDemo: number;
   introsBooked: number; introsDue: number; introsShown: number;
   introsQualified: number; introsCancelled: number; introsAdvanced: number; demosBooked: number; demosDue: number;
   demosShown: number; demosQualified: number;
@@ -62,11 +65,13 @@ export type B2bAdWindow = {
   introToDemo: number | null; demoShowRate: number | null; costPerDemoBooked: number | null; costPerDemo: number | null;
   closeRate: number | null; closeRateQualified: number | null; cac: number | null; roas: number | null;
   cashRoas: number | null; leadToDemo: number | null;
+  /** Spend over intros and over confirmed intros, and confirmed over intros: each lead once (the CEO, 2026-10-18). */
+  costPerIntro: number | null; costPerConfirmedIntro: number | null; confirmedIntroRate: number | null;
 };
 export type B2bPeople = { setter: { name: string; shown: number; due: number } | null; closer: { name: string; closes: number } | null };
 export type B2bVerdict = {
   /** `not_judged`: a campaign that is not lead gen (retargeting, hiring), never held to the cost per lead gate. */
-  verdict: 'off' | 'no delivery' | 'not_judged' | 'kill' | 'hold' | 'scale' | 'fatiguing' | 'leads do not book' | 'intros do not convert' | 'demos do not close';
+  verdict: 'off' | 'no delivery' | 'not_judged' | 'kill' | 'hold' | 'scale' | 'fatiguing' | 'leads do not book' | 'intros do not confirm';
   reason: string;
   owner: 'ads' | 'setter' | 'closer' | null;
 };
@@ -159,6 +164,10 @@ function finish(window: B2bAdWindow): B2bAdWindow {
   window.costPerQualified = per(window.spend, window.qualifiedLeads);
   // Per lead: the leads that booked an intro, out of the leads. Never above 1.
   window.bookRate = ratio(window.leadsToIntro, window.leads);
+  // Intros and confirmed intros, each lead once (the CEO, 2026-10-18): what the Ads tab shows.
+  window.costPerIntro = per(window.spend, window.leadsToIntro);
+  window.costPerConfirmedIntro = per(window.spend, window.leadsToConfirmedIntro);
+  window.confirmedIntroRate = ratio(window.leadsToConfirmedIntro, window.leadsToIntro);
   window.costPerIntroBooked = per(window.spend, window.introsBooked);
   window.introShowRate = ratio(window.introsShown, window.introsDue);
   window.costPerIntroShown = per(window.spend, window.introsShown);
@@ -178,13 +187,14 @@ function finish(window: B2bAdWindow): B2bAdWindow {
 function emptyWindow(): B2bAdWindow {
   const window = {
     spend: 0, impressions: 0, clicks: 0, linkClicks: 0, metaLeads: 0, leads: 0, qualifiedLeads: 0, notReadyLeads: 0,
-    leadsToIntro: 0, leadsToDemo: 0,
+    leadsToIntro: 0, leadsToConfirmedIntro: 0, leadsToDemo: 0,
     introsBooked: 0, introsDue: 0, introsShown: 0, introsQualified: 0, introsCancelled: 0, introsAdvanced: 0,
     demosBooked: 0, demosDue: 0, demosShown: 0, demosQualified: 0, demosShownMature: 0, demosCancelled: 0, closes: 0, contracted: 0, cash: 0,
     frequency: null, cpm: null, ctr: null, ctrLink: null, cpc: null, cpl: null, qualifiedPct: null, costPerQualified: null,
     bookRate: null, costPerIntroBooked: null, introShowRate: null, costPerIntroShown: null, introToDemo: null,
     demoShowRate: null, costPerDemoBooked: null, costPerDemo: null, closeRate: null, closeRateQualified: null,
     cac: null, roas: null, cashRoas: null, leadToDemo: null,
+    costPerIntro: null, costPerConfirmedIntro: null, confirmedIntroRate: null,
   } satisfies B2bAdWindow;
   return finish(window);
 }
@@ -196,7 +206,7 @@ function windowOf(row: Row, prefix: 'w7' | 'w30'): B2bAdWindow {
     impressions: get('impressions'), clicks: get('clicks'),
     linkClicks: optionalNumber(row[`${prefix}_link_clicks`], `${prefix} link clicks`), metaLeads: get('meta_leads'),
     leads: get('leads'), qualifiedLeads: get('qualified_leads'), notReadyLeads: get('not_ready_leads'),
-    leadsToIntro: get('leads_to_intro'), leadsToDemo: get('leads_to_demo'),
+    leadsToIntro: get('leads_to_intro'), leadsToConfirmedIntro: get('leads_to_confirmed_intro'), leadsToDemo: get('leads_to_demo'),
     introsBooked: get('intros_booked'), introsDue: get('intros_due'), introsShown: get('intros_shown'),
     introsQualified: get('intros_qualified'), introsCancelled: get('intros_cancelled'), introsAdvanced: get('intros_advanced'),
     demosBooked: get('demos_booked'), demosDue: get('demos_due'), demosShown: get('demos_shown'),
@@ -208,6 +218,7 @@ function windowOf(row: Row, prefix: 'w7' | 'w30'): B2bAdWindow {
     bookRate: null, costPerIntroBooked: null, introShowRate: null, costPerIntroShown: null, introToDemo: null,
     demoShowRate: null, costPerDemoBooked: null, costPerDemo: null, closeRate: null, closeRateQualified: null,
     cac: null, roas: null, cashRoas: null, leadToDemo: null,
+    costPerIntro: null, costPerConfirmedIntro: null, confirmedIntroRate: null,
   } satisfies B2bAdWindow;
   return finish(window);
 }
@@ -245,7 +256,8 @@ const metaFrequency = (level: Map<string, LevelFrequency>, id: string): number |
 
 export function treeSql(from7: string, from30: string, to: string): string {
   const roasLead = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
-  const leadsBooked = (type: 'intro' | 'demo', as: string) => `count(*) filter (where ${roasLead} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)})) as ${as}`;
+  // `status` narrows which of the lead's calls count; null counts every call.
+  const leadsBooked = (type: 'intro' | 'demo', as: string, status: string | null = null) => `count(*) filter (where ${roasLead} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}'${status ? ` and ${status}` : ''} and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${dateLiteral(to)})) as ${as}`;
   const funnel = (from: string, alias: 'w7' | 'w30') => `
   ${alias}_ads as (
     select campaign_id, adset_id, ad_id,
@@ -260,7 +272,14 @@ export function treeSql(from7: string, from30: string, to: string): string {
       count(*) filter (where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))) as leads,
       count(*) filter (where 'roas-qualified' = any(coalesce(l.tags, '{}'::text[]))) as qualified_leads,
       count(*) filter (where 'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))) as not_ready_leads,
-      ${leadsBooked('intro', 'leads_to_intro')},
+      -- Per lead, never per appointment (the CEO, 2026-10-18: "it should just
+      -- count once"): a lead with a no-show and a rebooked intro is one intro.
+      -- An intro leaves out a lead whose every intro was cancelled; one marked
+      -- invalid was held, so it stays (B2B's show rule counts invalid as
+      -- shown). A confirmed intro showed, or is still confirmed once its time
+      -- has passed (the CEO's rule, B2B's intros_qualified).
+      ${leadsBooked('intro', 'leads_to_intro', "coalesce(b.status, '') <> 'cancelled'")},
+      ${leadsBooked('intro', 'leads_to_confirmed_intro', "(b.status = 'showed' or (b.status = 'confirmed' and b.start_at <= now()))")},
       ${leadsBooked('demo', 'leads_to_demo')}
     from public.leads l
     where l.ad_id is not null
@@ -305,6 +324,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
     coalesce(${prefix}_leads.qualified_leads,0) as ${prefix}_qualified_leads,
     coalesce(${prefix}_leads.not_ready_leads,0) as ${prefix}_not_ready_leads,
     coalesce(${prefix}_leads.leads_to_intro,0) as ${prefix}_leads_to_intro,
+    coalesce(${prefix}_leads.leads_to_confirmed_intro,0) as ${prefix}_leads_to_confirmed_intro,
     coalesce(${prefix}_leads.leads_to_demo,0) as ${prefix}_leads_to_demo,
     coalesce(${prefix}_calls.intros_booked,0) as ${prefix}_intros_booked,
     coalesce(${prefix}_calls.intros_due,0) as ${prefix}_intros_due,
@@ -366,16 +386,17 @@ export function treeSql(from7: string, from30: string, to: string): string {
                       union select ad_id from w30_calls union select ad_id from w30_deals)
     order by s.ad_id, s.date desc),
   setters as (
+    -- Each lead once (the CEO, 2026-10-18): a no-show and its rebooking are one lead, shown if either showed.
     select distinct on (c.ad_id) c.ad_id,
       coalesce(sr.display_name, 'Unknown setter') as setter_name,
-      count(*) filter (where c.status in ('showed','confirmed','invalid') and c.start_at < now()) as setter_shown,
-      count(*) filter (where c.start_at < now()) as setter_due
+      count(distinct c.contact_id) filter (where c.status in ('showed','confirmed','invalid') and c.start_at < now()) as setter_shown,
+      count(distinct c.contact_id) filter (where c.start_at < now()) as setter_due
     from credited_calls c
     left join public.sales_reps sr on sr.ghl_user_id = c.assigned_user_id
     where c.ad_id is not null and c.call_type = 'intro' and c.assigned_user_id is not null
       and (c.booked_at at time zone 'Asia/Riyadh')::date between ${dateLiteral(from30)} and ${dateLiteral(to)}
     group by c.ad_id, c.assigned_user_id, sr.display_name
-    order by c.ad_id, count(*) desc),
+    order by c.ad_id, count(distinct c.contact_id) desc),
   closers as (
     select distinct on (d.ad_id) d.ad_id, d.closer as closer_name, count(*) as closer_closes
     from credited_deals d
@@ -429,8 +450,6 @@ function peopleOf(ads: B2bAdNode[]): B2bPeople {
 
 /** Seven days at this spend with no lead is a kill; under it, too early to say. */
 const KILL_FLOOR = 30;
-/** The account needs this many closes before a campaign's close rate is held against it. */
-const CLOSE_BENCHMARK = 3;
 
 function judge(running: boolean, seven: B2bAdWindow, thirty: B2bAdWindow, staleSince: string | null, from: string, to: string, kind: string): B2bVerdict {
   const range = `${from} to ${to}`;
@@ -461,15 +480,12 @@ function judge(running: boolean, seven: B2bAdWindow, thirty: B2bAdWindow, staleS
   if (seven.frequency !== null && seven.frequency >= 2.5) return {
     verdict: 'fatiguing', reason: `Frequency ${seven.frequency.toFixed(2)}: the same people keep seeing it. Refresh the creative before the cost moves.`, owner: 'ads',
   };
-  if (thirty.leads >= 8 && thirty.introsBooked === 0) return {
+  // Per lead, as the screen counts intros (the CEO, 2026-10-18): demos and closes are the Sales tab's to judge.
+  if (thirty.leads >= 8 && thirty.leadsToIntro === 0) return {
     verdict: 'leads do not book', reason: `${thirty.leads} leads from ${range} and no intro booked. The ad is doing its job; the follow-up is not.`, owner: 'setter',
   };
-  if (thirty.introsShown >= 5 && thirty.demosBooked === 0) return {
-    verdict: 'intros do not convert', reason: `${thirty.introsShown} intros shown from ${range} and no demo booked. That is the intro call, not the ad.`, owner: 'setter',
-  };
-  // Only demos old enough to have closed: shown a week or more before the last day.
-  if (thirty.demosShownMature >= 3 && thirty.closes === 0) return {
-    verdict: 'demos do not close', reason: `${thirty.demosShownMature} demos shown from ${range}, each at least a week before its end, and nothing signed. That is the closing call, not the ad.`, owner: 'closer',
+  if (thirty.leadsToIntro >= 5 && thirty.leadsToConfirmedIntro === 0) return {
+    verdict: 'intros do not confirm', reason: `${thirty.leadsToIntro} leads booked an intro from ${range} and none of them showed or stayed confirmed. That is the setter's confirming, not the ad.`, owner: 'setter',
   };
   if (seven.cpl > CPL_GATE) return {
     verdict: 'hold', reason: `$${seven.cpl.toFixed(2)} a lead from ${range} is over the $${CPL_GATE} gate but within half again. Watch it; do not scale it.`, owner: 'ads',
@@ -480,33 +496,29 @@ function judge(running: boolean, seven: B2bAdWindow, thirty: B2bAdWindow, staleS
 }
 
 function constraintOf(window: B2bAdWindow, account: B2bAdWindow): B2bAdsPayload['campaigns'][number]['constraint'] {
-  // Every stage is a share of the one before it and never passes 100%: leads that booked
-  // (not appointments), intros due that showed, intros shown that went on to a demo (the
-  // ribbon's intro to demo). Closes are not tied to a demo, so that one is capped.
+  // Every stage is a share of the one before it and never passes 100%: leads that booked an
+  // intro, and of those the ones whose intro was confirmed, each lead once (the CEO, 2026-10-18).
+  // Demos and closes are not an ad's stages; the Sales tab judges them.
   const share = (numerator: number | null, denominator: number | null): number | null => {
     const value = rate(numerator, denominator);
     return value === null ? null : Math.min(1, value);
   };
-  const stages: { key: string; label: string; owner: 'ads' | 'landing' | 'setter' | 'closer'; mine: number | null; all: number | null; floor: number }[] = [
+  const stages: { key: string; label: string; owner: 'ads' | 'landing' | 'setter'; mine: number | null; all: number | null; floor: number }[] = [
     { key: 'click', label: 'impressions to link clicks', owner: 'ads', mine: share(window.linkClicks, window.impressions), all: share(account.linkClicks, account.impressions), floor: 500 },
     { key: 'optin', label: 'clicks to leads', owner: 'landing', mine: share(window.leads, window.linkClicks), all: share(account.leads, account.linkClicks), floor: 30 },
-    { key: 'book', label: 'leads to intros booked', owner: 'setter', mine: share(window.leadsToIntro, window.leads), all: share(account.leadsToIntro, account.leads), floor: 8 },
-    { key: 'show', label: 'intros due to shown', owner: 'setter', mine: share(window.introsShown, window.introsDue), all: share(account.introsShown, account.introsDue), floor: 5 },
-    { key: 'demo', label: 'intros shown to demos booked', owner: 'setter', mine: share(window.introsAdvanced, window.introsShown), all: share(account.introsAdvanced, account.introsShown), floor: 5 },
-    { key: 'close', label: 'demos shown to closes', owner: 'closer', mine: share(window.closes, window.demosShown), all: share(account.closes, account.demosShown), floor: 3 },
+    { key: 'book', label: 'leads to intros', owner: 'setter', mine: share(window.leadsToIntro, window.leads), all: share(account.leadsToIntro, account.leads), floor: 8 },
+    { key: 'confirm', label: 'intros to confirmed intros', owner: 'setter', mine: share(window.leadsToConfirmedIntro, window.leadsToIntro), all: share(account.leadsToConfirmedIntro, account.leadsToIntro), floor: 5 },
   ];
   const denominator: Record<string, number | null> = {
-    click: window.impressions, optin: window.linkClicks, book: window.leads, show: window.introsDue, demo: window.introsShown, close: window.demosShown,
+    click: window.impressions, optin: window.linkClicks, book: window.leads, confirm: window.leadsToIntro,
   };
-  // Fewer than three closes on the whole account is no benchmark for a closer.
-  const closeBenchmark = account.closes >= CLOSE_BENCHMARK;
+  // More intro appointments than leads means leads lost their ad on the way in.
   const leadsUnderCounted = window.introsBooked > window.leads;
   let worst: (typeof stages)[number] | null = null;
   let worstGap = 0;
   for (const stage of stages) {
     if (stage.mine === null || stage.all === null || stage.all === 0 || (denominator[stage.key] ?? 0) < stage.floor) continue;
     if (leadsUnderCounted && (stage.key === 'optin' || stage.key === 'book')) continue;
-    if (stage.key === 'close' && !closeBenchmark) continue;
     const gap = (stage.all - stage.mine) / stage.all;
     if (gap > worstGap) { worstGap = gap; worst = stage; }
   }
@@ -566,11 +578,11 @@ function buildAdsNotes(payload: B2bAdsPayload, staleSince: string | null, freshn
   });
   payload.notes.push({
     level: 'info',
-    text: `Every row follows an ad from the first impression to the signed contract, through the leads, intro calls, demos and closes credited to it. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before the window still shows here, at $0 spend, when its leads, calls or deals fall inside it. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
+    text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro booked at or after they came in that was not cancelled. An intro marked invalid was held, so it counts. A confirmed intro is one of those whose intro showed, or is still marked confirmed after its time. A lead that went straight to a demo is not an intro. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before the window still shows here, at $0 spend, when its leads, calls or deals fall inside it. Both comparison windows use exactly ${payload.windows.from7} to ${payload.windows.to}. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${payload.windows.metaTimeZone}, through ${payload.windows.metaUntil}).`,
   });
   payload.notes.push({
     level: 'info',
-    text: 'A verdict names whose problem it is. "Kill", "hold", "scale" and "fatiguing" are the ad. "Leads do not book" and "intros do not convert" are the setter. "Demos do not close" are the closer. Switching an ad off never fixes the last three; it just stops the calendar filling. Retargeting and other campaigns that are not lead gen are not judged on cost per lead.',
+    text: 'A verdict names whose problem it is. "Kill", "hold", "scale" and "fatiguing" are the ad. "Leads do not book" and "intros do not confirm" are the setter. Switching an ad off never fixes those two; it just stops the calendar filling. Demos and closes are judged on the Sales tab, not per ad. Retargeting and other campaigns that are not lead gen are not judged on cost per lead.',
   });
   if (staleSince) {
     const ranAt = freshnessAt ? new Date(freshnessAt + 3 * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') : null;

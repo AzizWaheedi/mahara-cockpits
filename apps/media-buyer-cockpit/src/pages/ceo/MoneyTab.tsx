@@ -89,7 +89,7 @@ const NOTE_ROUTES: readonly (readonly [RegExp, CardKey])[] = [
     "bank",
   ],
   [
-    /attribut|transactions tab|kickoff cash|payer mapping could not/i,
+    /attribut|transactions tab|kickoff cash|payer mapping could not|your ties?\b/i,
     "attribution",
   ],
   // The MRR card's own notes first: several of them name Whop, a target or a
@@ -335,7 +335,11 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
             {p => <CollectionBody p={p} />}
           </SectionCard>
 
-          <PayerMappingCard order={10} />
+          <PayerMappingCard
+            order={10}
+            lines={payload.attribution?.transactions ?? []}
+            lastRefreshAt={section?.lastOkAt ?? null}
+          />
           <LtvWriteCard order={11} />
 
           <div className="grid gap-4 lg:gap-6 xl:grid-cols-12">
@@ -412,6 +416,10 @@ function AttributionBody({ p }: { p: MoneyPayload }) {
       />
     );
   const lastMonthName = previousMonthName(p.month);
+  // Since 2026-10-18 the rest of a deal's cash is `remainder` and the closer's
+  // (MONEY-ATTRIBUTION.md rule 1); an older payload calls it `kickoff`.
+  const rest = (t: typeof a.mtd) => t.remainder ?? t.kickoff;
+  const notClient = a.totals.notClient;
   return (
     <div className="grid gap-5">
       <div className="grid grid-cols-2 gap-x-6 gap-y-6 @xl:grid-cols-3">
@@ -419,26 +427,22 @@ function AttributionBody({ p }: { p: MoneyPayload }) {
           variant="plain"
           label="Front-end cash"
           value={money(a.mtd.frontEnd)}
-          sub={`${money(a.mtd.deposit)} deposits · ${money(a.mtd.kickoff)} rest of the cash · ${money(a.lastMonth.frontEnd)} in all of ${lastMonthName}`}
-          hint={
-            a.kickoffRead
-              ? "Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Money that reached a rail; the kickoff form's own amount (read from 4 Oct 2026) is on the Sales and Frontend tabs, confirmed against these payments."
-              : "Deposits at signing, credited to the closer, plus the rest of the cash collected inside the front-end window, credited to the CSM on the deal. Judged from the rails, because the kickoff form is not read yet."
-          }
+          sub={`${money(a.mtd.deposit)} deposits · ${money(rest(a.mtd))} rest of the deals · ${money(a.lastMonth.frontEnd)} in all of ${lastMonthName}`}
+          hint="Money on signed deals, credited to the deal's closer: the deposit up to what the closer typed on the form, then the rest of the deal until its contract is paid, from 7 days before the form to 120 days after signing. Money that reached a rail; what the forms say is on the Sales and Frontend tabs, as typed, not money."
         />
         <StatTile
           variant="plain"
           label="Back-end cash"
           value={money(a.mtd.backEnd)}
           sub={`${money(a.lastMonth.backEnd)} in all of ${lastMonthName}`}
-          hint="Payments matched to an existing client after its front-end window, credited to that client's CSM."
+          hint="Payments matched to a client once its deal's contract is paid or 120 days after signing, or to a client with no deal in its term, credited to that client's CSM."
         />
         <StatTile
           variant="plain"
           label="Not attributed"
           value={money(a.mtd.unattributed)}
           sub={`${plural(a.mtd.unattributedCount, "payment")} this month · ${money(a.totals.unattributed)} over 12 months`}
-          hint="Payments in that match no deal and no client. The Transactions tab lists each one with its payer, so it can be mapped."
+          hint={`Payments in that match no deal and no client. Attribute each one on the Transactions tab, or say who a payer is below.${notClient ? ` ${money(notClient)} over 12 months is tied as not client money and is in none of these.` : ""}`}
         />
       </div>
       {a.byPerson.length ? (

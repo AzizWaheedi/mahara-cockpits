@@ -1,3 +1,5 @@
+import type { TieRef, TieSummary } from "./attribution.ts";
+
 export type Transaction = {
   id: string;
   /** Kuwait day. */
@@ -11,14 +13,20 @@ export type Transaction = {
   payerName: string | null;
   side: AttributionSide | "out";
   kind: AttributionKind | "refund" | "expense";
-  /** A first name: the closer for a deposit, the CSM for the rest. */
+  /** Money in only: the part of a front-end payment up to the deal's typed deposit (the rest of it is the remainder). */
+  depositUsd?: number;
+  /** As written: the deal's closer for front-end money, the card's CSM for back end. */
   person: string | null;
   personRole: "closer" | "csm" | null;
+  /** The closer-form deal the payment is credited against (money in only). */
+  dealResponseId?: string | null;
   dealBusiness: string | null;
   clientName: string | null;
   clientTaskId: string | null;
-  /** How the payment was tied: deal_id, deal_email, deal_name, card_email, card_payer, card_name, card_typed or none. */
+  /** How the payment was tied: ceo (the CEO's tie), deal_id, deal_email, deal_name, card_email, card_payer, card_name, card_typed or none. */
   matchedBy: string;
+  /** The CEO's tie the row rests on, with its note (money in only). */
+  tie?: TieRef | null;
   /** Whop's billing reason, a manual rail, an expense category, or a refund note. */
   detail: string | null;
   /** For a statement line: the kind the cockpit gave it (client_payment, whop_payout, excluded, ...). */
@@ -27,9 +35,14 @@ export type Transaction = {
   bankLineId?: number;
 };
 
-export type AttributionKind = "deposit" | "kickoff" | "client" | "none";
+export type AttributionKind = "deposit" | "remainder" | "client" | "none";
 
-export type AttributionSide = "front_end" | "back_end" | "unattributed";
+/** not_client: the CEO tied the payment as not client money. */
+export type AttributionSide =
+  | "front_end"
+  | "back_end"
+  | "unattributed"
+  | "not_client";
 
 export type PossibleDuplicate = {
   /** The manual entry's row id. */
@@ -534,7 +547,7 @@ export type MoneyPayload = {
 export type MoneyAttribution = {
   from: string;
   to: string;
-  /** False until the CSM's kickoff form is loaded; kickoff cash is then judged from the rails. */
+  /** The kickoff form's typed amount is read (shown on the Sales tab as typed, not money). */
   kickoffRead: boolean;
   /** False when Tap could not be read this run, so Tap money is not in it. */
   tapRead: boolean;
@@ -548,6 +561,10 @@ export type MoneyAttribution = {
     backEnd: number;
     payments: number;
   }[];
+  /** What became of the CEO's ties this run. */
+  ties?: TieSummary;
+  /** What this run writes to cockpit_deal_payments (front-end payments since `from`). */
+  dealLedger?: { rows: number; usd: number; from: string };
   /** Newest first, capped. */
   transactions: Transaction[];
 };
@@ -557,8 +574,12 @@ export type AttributionTotals = {
   count: number;
   frontEnd: number;
   deposit: number;
+  remainder: number;
+  /** The remainder under its old name, kept for screens that still read it. */
   kickoff: number;
   backEnd: number;
   unattributed: number;
   unattributedCount: number;
+  notClient: number;
+  notClientCount: number;
 };

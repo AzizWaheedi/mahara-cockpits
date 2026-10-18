@@ -105,7 +105,11 @@ function cashSource(s: Sources, weekStart: string): Source {
   return {
     ok: true,
     value: Math.round(value * 100) / 100,
-    note: "Back-end client payments in the billing ledger, by payment day.",
+    // Since 2026-10-18 a payment inside a deal's term is that deal's closer's
+    // front end (docs/money/MONEY-ATTRIBUTION.md rules 1 and 2), so past
+    // weeks hold less back end than before (the figures are in
+    // apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md, 2026-10-18).
+    note: "Back-end client payments in the billing ledger, by payment day. Since 18 Oct 2026 a payment made inside a deal's term (up to 120 days after signing, until its contract is paid) is the closer's front-end cash and is not counted here.",
   };
 }
 

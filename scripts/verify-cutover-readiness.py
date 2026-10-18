@@ -109,6 +109,16 @@ RELEVANT_TEST_FILES = [
     "apps/sales-cockpit/src/components/Prose.test.tsx",
     "apps/media-buyer-cockpit/scripts/team.test.ts",
     "apps/media-buyer-cockpit/scripts/team-supabase-access.test.ts",
+    # Pay plans and money attribution (docs/pay/PAY-PLANS.md section 9, docs/money/MONEY-ATTRIBUTION.md, 2026-10-18).
+    "apps/media-buyer-cockpit/scripts/ceo-pay-plans-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/ceo-pay-facts-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/pay-plan-model.test.ts",
+    "apps/media-buyer-cockpit/scripts/pay-screens.test.tsx",
+    "apps/media-buyer-cockpit/scripts/pay-e2e.test.tsx",
+    "apps/media-buyer-cockpit/scripts/money-ties-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/money-attribution-parity.test.ts",
+    "apps/media-buyer-cockpit/scripts/money-screens.test.tsx",
+    "apps/client-success-cockpit/scripts/csm-money.test.ts",
 ]
 
 MANDATORY_EVIDENCE_SUBCHECKS: Dict[str, List[str]] = {

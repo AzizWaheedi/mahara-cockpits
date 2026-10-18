@@ -63,12 +63,20 @@ import { kuwaitDayOf, logCall } from "@/lib/csmCalls";
 import { opportunitiesFor, rankOpportunities } from "@/lib/csmHotList";
 import { LINK_GROUPS } from "@/lib/csmLinks";
 import {
+  BASE_USD,
   CHURN_TARGET,
+  CONDITIONS,
   type Counts,
+  closeTheGap,
   computePay,
   EARNERS,
+  earned,
   FOUR_RS,
-  PENALTIES,
+  OVER_CLIENTS,
+  PER_CLIENT_OVER_USD,
+  qualifyingFrom,
+  rateLabel,
+  usd,
 } from "@/lib/csmMoney";
 import { spineFor } from "@/lib/csmOnboardingSpine";
 import { csmMoneyPatch } from "@/lib/csmStateClient";
@@ -3448,16 +3456,15 @@ function MoneySection({
 
   const target = Number(targetEdit ?? saved?.target ?? 0);
   const clients = Number(
-    clientsEdit ?? saved?.clients ?? (snap.clients ?? []).length,
+    clientsEdit ?? saved?.clients ?? qualifyingFrom(snap.clients ?? []),
   );
   const counts: Counts = { ...(saved?.counts ?? {}), ...countEdits };
   const pay = computePay(clients, churn, counts);
   const gap = target - pay.total;
+  const closes = closeTheGap(gap);
 
   const field =
     "h-9 w-24 rounded-lg border bg-background px-2 text-right text-sm tabular-nums";
-  /** A signed dollar amount: "-$50", never "$-50". */
-  const usd = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n)}`;
 
   return (
     <div className="space-y-6">
@@ -3622,7 +3629,7 @@ function MoneySection({
             />
           </label>
           <label className="flex items-center gap-2">
-            Clients you manage
+            Qualifying clients
             <input
               className={field}
               value={clientsEdit ?? String(saved?.clients ?? clients)}
@@ -3632,9 +3639,11 @@ function MoneySection({
           </label>
           <div>
             Base pay:{" "}
-            <span className="font-semibold tabular-nums">${pay.base}</span>
+            <span className="font-semibold tabular-nums">{usd(pay.base)}</span>
             <span className="ml-1.5 text-xs text-muted-foreground">
-              $1,200 up to 20 clients, then $50 each
+              {usd(BASE_USD)}, plus {usd(PER_CLIENT_OVER_USD)} for each
+              qualifying client over {OVER_CLIENTS} (active and paid up 30 days
+              running)
             </span>
           </div>
         </div>
@@ -3672,13 +3681,17 @@ function MoneySection({
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-muted-foreground">
-                  {usd(e.rate)} {e.unit}
+                  {rateLabel(e)}
                 </span>
                 <input
                   className={field}
                   value={String(n)}
-                  inputMode="numeric"
-                  aria-label={`${e.label}, how many`}
+                  inputMode={e.kind === "share" ? "decimal" : "numeric"}
+                  aria-label={
+                    e.kind === "share"
+                      ? `${e.label}, how much`
+                      : `${e.label}, how many`
+                  }
                   onChange={ev =>
                     setCountEdits({
                       ...countEdits,
@@ -3686,66 +3699,25 @@ function MoneySection({
                     })
                   }
                 />
-                <span className="w-16 text-right font-semibold tabular-nums">
-                  {usd(n * e.rate)}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </SectionCard>
-
-      <SectionCard title="What costs you money" flush>
-        {PENALTIES.map(e => {
-          const n = counts[e.id] ?? 0;
-          return (
-            <div
-              key={e.id}
-              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 text-sm sm:px-6"
-            >
-              <div className="min-w-0 flex-1 basis-56">{e.label}</div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground">
-                  {usd(e.rate)} {e.unit}
-                </span>
-                <input
-                  className={field}
-                  value={String(n)}
-                  inputMode="numeric"
-                  aria-label={`${e.label}, how many`}
-                  onChange={ev =>
-                    setCountEdits({
-                      ...countEdits,
-                      [e.id]: Number(ev.target.value) || 0,
-                    })
-                  }
-                />
-                <span
-                  className={cn(
-                    "w-16 text-right font-semibold tabular-nums",
-                    n * e.rate ? "txt-bad" : "",
-                  )}
-                >
-                  {usd(n * e.rate)}
+                <span className="w-20 text-right font-semibold tabular-nums">
+                  {usd(earned(e, n))}
                 </span>
               </div>
             </div>
           );
         })}
         <div className="px-4 py-3 text-xs text-muted-foreground sm:px-6">
-          Penalties stop at $500 a month. Upsells that cancel within 60 days
-          reverse the commission.
+          {CONDITIONS}
         </div>
       </SectionCard>
 
       <section className="rounded-2xl border bg-card">
         <div className="@container px-4 pt-4 sm:px-6 sm:pt-6">
-          <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-4">
             {[
               ["Base", pay.base],
               ["Retention", churn === null ? null : pay.retention],
               ["Commission", pay.commission],
-              ["Penalties", pay.penalties],
             ].map(([k, val]) => (
               <StatTile
                 key={k}
@@ -3761,7 +3733,7 @@ function MoneySection({
                   : "On track this month"
               }
               value={usd(pay.total)}
-              className="col-span-2 rounded-xl border-primary/40 bg-primary/10 @2xl:col-span-1"
+              className="rounded-xl border-primary/40 bg-primary/10"
             />
           </div>
         </div>
@@ -3770,14 +3742,16 @@ function MoneySection({
             {target > 0 ? (
               gap > 0 ? (
                 <>
-                  <span className="font-semibold txt-bad">${gap} short</span> of
-                  your ${target} target, that is {Math.ceil(gap / 250)}{" "}
-                  referrals, or {Math.ceil(gap / 350)} UGC packs, or{" "}
-                  {Math.ceil(gap / 150)} video testimonials.
+                  <span className="font-semibold txt-bad">
+                    {usd(gap)} short
+                  </span>{" "}
+                  of your {usd(target)} target, that is {closes.referrals}{" "}
+                  referrals, or {usd(closes.upsellCash)} of upsell cash, or{" "}
+                  {closes.testimonials} video testimonials.
                 </>
               ) : (
                 <span className="font-semibold txt-good">
-                  Target hit, ${-gap} over.
+                  Target hit, {usd(-gap)} over.
                 </span>
               )
             ) : (

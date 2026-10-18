@@ -17,13 +17,13 @@ const ad = (type: string, id: string, spend: number) => ({
   adset_id: `${id}-set`, adset_name: `${type} set`, setter_name: null, setter_shown: 0,
   setter_due: 0, closer_name: null, closer_closes: 0,
   w7_spend: spend, w7_impressions: 1000, w7_clicks: 100, w7_link_clicks: 80,
-  w7_meta_leads: 4, w7_leads: 3, w7_qualified_leads: 2, w7_not_ready_leads: 0, w7_leads_to_intro: 2, w7_leads_to_demo: 1,
+  w7_meta_leads: 4, w7_leads: 3, w7_qualified_leads: 2, w7_not_ready_leads: 0, w7_leads_to_intro: 2, w7_leads_to_confirmed_intro: 1, w7_leads_to_demo: 1,
   w7_intros_booked: 2, w7_intros_due: 1, w7_intros_shown: 1, w7_intros_qualified: 1,
   w7_intros_cancelled: 0, w7_intros_advanced: 1, w7_demos_booked: 1, w7_demos_due: 1,
   w7_demos_shown: 1, w7_demos_qualified: 1, w7_demos_shown_mature: 0, w7_demos_cancelled: 0,
   w7_closes: 1, w7_contracted: 250, w7_cash: 100,
   w30_spend: spend, w30_impressions: 1000, w30_clicks: 100, w30_link_clicks: 80,
-  w30_meta_leads: 4, w30_leads: 3, w30_qualified_leads: 2, w30_not_ready_leads: 0, w30_leads_to_intro: 2, w30_leads_to_demo: 1,
+  w30_meta_leads: 4, w30_leads: 3, w30_qualified_leads: 2, w30_not_ready_leads: 0, w30_leads_to_intro: 2, w30_leads_to_confirmed_intro: 1, w30_leads_to_demo: 1,
   w30_intros_booked: 2, w30_intros_due: 1, w30_intros_shown: 1, w30_intros_qualified: 1,
   w30_intros_cancelled: 0, w30_intros_advanced: 1, w30_demos_booked: 1, w30_demos_due: 1,
   w30_demos_shown: 1, w30_demos_qualified: 1, w30_demos_shown_mature: 0, w30_demos_cancelled: 0,
@@ -247,8 +247,13 @@ test('custom range verdicts: retargeting is not judged, no lead is too early, a 
     adRow('lg-none', 'lead_gen', { spend: 0 }),
     adRow('dear', 'lead_gen', { spend: 34.53, leads: 1 }),
     adRow('good', 'lead_gen', { spend: 20, leads: 2 }),
-    adRow('young-demos', 'lead_gen', { spend: 20, leads: 2, demos_shown: 4, demos_shown_mature: 2 }),
+    // The CEO, 2026-10-18: per ad the funnel stops at the intro. Demos shown with nothing signed are the Sales tab's.
     adRow('old-demos', 'lead_gen', { spend: 20, leads: 2, demos_shown: 4, demos_shown_mature: 3 }),
+    // Eight leads and none booked, though two older leads' appointments sit on the ad: per lead, it does not book.
+    adRow('no-book', 'lead_gen', { spend: 40, leads: 8, intros_booked: 2 }),
+    // Five leads booked an intro and none showed or stayed confirmed.
+    adRow('unconfirmed', 'lead_gen', { spend: 20, leads: 6, leads_to_intro: 5, intros_booked: 7 }),
+    adRow('few-intros', 'lead_gen', { spend: 20, leads: 6, leads_to_intro: 4 }),
   ]);
   const range = '2026-10-10 to 2026-10-16';
   expect(adIn(result, 'margin-tax').verdict).toEqual({ verdict: 'hold', reason: `$22.80 from ${range} and no lead yet: too early to judge against the $15 gate.`, owner: 'ads' });
@@ -257,29 +262,42 @@ test('custom range verdicts: retargeting is not judged, no lead is too early, a 
   expect(adIn(result, 'lg-none').verdict.verdict).toBe('no delivery');
   expect(adIn(result, 'dear').verdict.reason).toBe(`$34.53 a lead from ${range}, more than half again over the $15 gate.`);
   expect(adIn(result, 'good').verdict.verdict).toBe('scale');
-  expect(adIn(result, 'young-demos').verdict.verdict).toBe('scale');
-  expect(adIn(result, 'old-demos').verdict.verdict).toBe('demos do not close');
-  for (const item of result.campaigns.flatMap(c => c.adsets.flatMap(s => s.ads))) expect(item.verdict.reason).not.toContain('$0.00');
-  expect(result.verdicts).toEqual({ hold: 2, not_judged: 1, 'no delivery': 1, kill: 1, scale: 2, 'demos do not close': 1 });
+  expect(adIn(result, 'old-demos').verdict.verdict).toBe('scale');
+  expect(adIn(result, 'no-book').verdict).toEqual({ verdict: 'leads do not book', reason: `8 leads from ${range} and no intro booked. The ad is doing its job; the follow-up is not.`, owner: 'setter' });
+  expect(adIn(result, 'unconfirmed').verdict).toEqual({ verdict: 'intros do not confirm', reason: `5 leads booked an intro from ${range} and none of them showed or stayed confirmed. That is the setter's confirming, not the ad.`, owner: 'setter' });
+  expect(adIn(result, 'few-intros').verdict.verdict).toBe('scale');
+  for (const item of result.campaigns.flatMap(c => c.adsets.flatMap(s => s.ads))) {
+    expect(item.verdict.reason).not.toContain('$0.00');
+    expect(item.verdict.reason).not.toContain('demo');
+  }
+  expect(result.verdicts).toEqual({ hold: 2, not_judged: 1, 'no delivery': 1, kill: 1, scale: 3, 'leads do not book': 1, 'intros do not confirm': 1 });
+  const text = result.notes.map(note => note.text).join(' ');
+  expect(text).toContain('"Leads do not book" and "intros do not confirm" are the setter.');
+  expect(text).not.toMatch(/demos do not close|cost per demo/i);
 });
 
-test('custom range: lead to intro is per lead, intro to demo is the ribbon\'s, and the closer needs three account closes', async () => {
+test('custom range: intros and confirmed intros are per lead, and the constraint stops at the confirmed intro', async () => {
   const quiet = { impressions: 400, link_clicks: 10, leads: 3, leads_to_intro: 1 };
   const result = await runRows([
-    // One lead, a no-show and its rebooking: two appointments, one lead that booked.
-    adRow('rebooked', 'lead_gen', { spend: 10, leads: 1, leads_to_intro: 1, intros_booked: 2, leads_to_demo: 1, demos_booked: 2, demos_shown: 3, closes: 2 }),
-    { ...adRow('weak', 'lead_gen', { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 2, demos_booked: 15 }), campaign_id: 'weak' },
-    { ...adRow('strong', 'lead_gen', { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 8, demos_booked: 8, demos_shown: 5 }), campaign_id: 'strong' },
+    // One lead, a no-show and its rebooking that showed: two appointments, one intro, one confirmed.
+    adRow('rebooked', 'lead_gen', { spend: 10, leads: 1, leads_to_intro: 1, leads_to_confirmed_intro: 1, intros_booked: 2, leads_to_demo: 1, demos_booked: 2, demos_shown: 3, closes: 2 }),
+    { ...adRow('weak', 'lead_gen', { spend: 50, impressions: 400, link_clicks: 10, leads: 6, leads_to_intro: 5, leads_to_confirmed_intro: 1 }), campaign_id: 'weak' },
+    { ...adRow('strong', 'lead_gen', { spend: 50, impressions: 400, link_clicks: 10, leads: 6, leads_to_intro: 5, leads_to_confirmed_intro: 4, closes: 3 }), campaign_id: 'strong' },
+    // The old demo stages would have blamed the closer here: five demos shown, no close, five account closes.
+    { ...adRow('demos', 'lead_gen', { ...quiet, intros_due: 10, intros_shown: 10, intros_advanced: 2, demos_booked: 15, demos_shown: 5 }), campaign_id: 'demos' },
   ]);
   const rebooked = adIn(result, 'rebooked').w7;
-  expect(rebooked.bookRate).toBe(1);
+  expect(rebooked).toMatchObject({ leadsToIntro: 1, leadsToConfirmedIntro: 1, bookRate: 1, costPerIntro: 10, costPerConfirmedIntro: 10, confirmedIntroRate: 1 });
   expect(rebooked.leadToDemo).toBe(1);
   const weak = result.campaigns.find(c => c.id === 'weak')!;
-  expect(weak.constraint).toEqual({ stage: 'intros shown to demos booked', owner: 'setter', mine: 0.2, account: 0.5 });
-  expect(weak.constraint!.mine).toBe(weak.w30.introToDemo!);
-  // Five demos and no close, against an account rate of 2 in 8; but two account closes are no benchmark.
-  expect(result.account.w30.closes).toBe(2);
+  expect(weak.w30).toMatchObject({ costPerIntro: 10, costPerConfirmedIntro: 50, confirmedIntroRate: 0.2 });
+  // Confirmed over intros: 1 of 5 here against 6 of 12 across the account (rebooked, weak, strong, demos).
+  expect(weak.constraint).toEqual({ stage: 'intros to confirmed intros', owner: 'setter', mine: 0.2, account: 0.5 });
+  expect(weak.constraint!.mine).toBe(weak.w30.confirmedIntroRate!);
+  expect(result.account.w30.closes).toBe(5);
   expect(result.campaigns.find(c => c.id === 'strong')!.constraint).toBeNull();
+  expect(result.campaigns.find(c => c.id === 'demos')!.constraint).toBeNull();
+  for (const c of result.campaigns) expect(c.constraint?.stage ?? '').not.toMatch(/demo|close/);
 });
 
 test('custom range coverage comes straight from the CRM and warns about records no ad row holds', async () => {
@@ -332,6 +350,8 @@ test('custom range credits calls and deals to the lead\'s ad, with the same SQL 
   });
   // The Makers call and deal (and a deal typed in with no ad) land on the lead's ad, "Seen First".
   expect(adIn(result, 'live').w7).toMatchObject({ introsBooked: 2, closes: 2, contracted: 7000, cash: 600 });
+  // The Makers lead is on its own ad with a showed intro: one intro and one confirmed, at $35 each.
+  expect(adIn(result, 'live').w7).toMatchObject({ leads: 1, leadsToIntro: 1, leadsToConfirmedIntro: 1, costPerIntro: 35, costPerConfirmedIntro: 35 });
   // "gone" is not one of this account's ads, so the call keeps its own ad; a contact with no lead row keeps its own.
   expect(adIn(result, 'old').w7).toMatchObject({ spend: 0, introsBooked: 1, closes: 0 });
   expect(result.account.w7).toMatchObject({ introsBooked: 3, closes: 2, contracted: 7000 });

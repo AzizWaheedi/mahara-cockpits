@@ -54,6 +54,12 @@ async function prepareCanonicalDb(): Promise<TestDb> {
     "20261005b_cockpit_ceo_refresh_worker.sql",
     "20261004z_native_monitor.sql",
   ]) await db.exec(migration(name));
+  // The CEO's money ties and the deal ledger (MONEY-ATTRIBUTION.md section 3):
+  // the snapshot's 'ties' key native money reads, and cockpit_deal_payments.
+  // The migration's tie RPC names the hours guard and the sales deal mirror.
+  await db.exec(definition(migration("20261009a_cockpit_team_hours.sql"), /CREATE OR REPLACE FUNCTION public\.cockpit_hours_refuse_delete\(\)[\s\S]*?\n\$\$;/));
+  await db.exec(definition(migration("20260924a_sales_cockpit.sql"), /create table if not exists public\.cockpit_sales_deals \([\s\S]*?\n\);/i));
+  await db.exec(migration("20261018c_money_ties_deal_payments.sql"));
 
   const today = new Date(Date.now() + 3 * 60 * 60_000).toISOString().slice(0, 10);
   const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
@@ -75,6 +81,8 @@ async function prepareCanonicalDb(): Promise<TestDb> {
       VALUES('Client A','clienta','task-client-a','Client A','human mapping retained','smoke');
     INSERT INTO public.cockpit_client_billing_days(day,clickup_task_id,client_name,stage,mrr_usd,ltv_usd,payment_plan,captured_at)
       VALUES('${today}','task-client-a','Client A','Active',100,500,'Monthly',now());
+    INSERT INTO public.cockpit_payment_ties(payment_id,deal_response_id,note,set_by)
+      VALUES('whop:fixture-whop-1','fixture-deal-1','Smoke fixture: this payment is the fixture deal''s','smoke');
   `);
   return db;
 }
@@ -166,6 +174,7 @@ async function counts(db: TestDb): Promise<string> {
     'values',(SELECT count(*) FROM public.cockpit_metric_values),
     'days',(SELECT count(*) FROM public.cockpit_metric_days),
     'payments',(SELECT count(*) FROM public.cockpit_client_payments),
+    'dealPayments',(SELECT count(*) FROM public.cockpit_deal_payments),
     'runs',(SELECT count(*) FROM public.cockpit_ceo_refresh_runs),
     'finance',(SELECT count(*) FROM public.cockpit_finance_refreshes),
     'revision',(SELECT revision FROM public.cockpit_manual_payment_state WHERE id)
@@ -179,6 +188,7 @@ async function publishedState(db: TestDb): Promise<string> {
     'days',(SELECT jsonb_agg(jsonb_build_object('day',day,'metric',metric,'scope',scope,'value',value) ORDER BY day,metric,scope) FROM public.cockpit_metric_days),
     'values',(SELECT jsonb_agg(jsonb_build_object('day',day,'metric',metric,'scope',scope,'window',"window",'value',value) ORDER BY day,metric,scope,"window") FROM public.cockpit_metric_values),
     'payments',(SELECT count(*) FROM public.cockpit_client_payments),
+    'dealPayments',(SELECT jsonb_agg(jsonb_build_object('payment_id',payment_id,'deal_response_id',deal_response_id,'day',day,'usd',usd,'kind',kind,'matched_by',matched_by,'tie_id',tie_id,'active',active) ORDER BY payment_id) FROM public.cockpit_deal_payments),
     'revision',(SELECT revision FROM public.cockpit_manual_payment_state WHERE id)
   )::text AS snapshot`);
   return result.rows[0].snapshot;
@@ -216,6 +226,14 @@ export async function smoke(): Promise<void> {
       {metric:"expenses.software",value:32.6},{metric:"expenses.spend",value:32.6},
       {metric:"expenses.total",value:32.6},{metric:"money.failedCharges.count30d",value:0},
     ]), "published finance facts differ from independent source amounts");
+    // The CEO's tie reached native money through the snapshot, and the deal
+    // ledger was written in the same commit as the money section.
+    const moneyPayload = published.rows.find(row => row.key === "money")?.payload as { attribution?: { transactions?: { id: string; matchedBy?: string; side?: string; personRole?: string; tie?: { id?: number } | null }[]; dealLedger?: { rows: number } } };
+    const tied = moneyPayload?.attribution?.transactions?.find(row => row.id === "whop:fixture-whop-1");
+    assert(tied?.matchedBy === "ceo" && tied.side === "front_end" && tied.personRole === "closer" && Number(tied.tie?.id) > 0, `the CEO's tie did not credit the fixture payment to the closer: ${JSON.stringify(tied)}`);
+    const ledger = (await db.query<{ payment_id: string; kind: string; matched_by: string; tie_id: string | null; usd: string }>("SELECT payment_id,kind,matched_by,tie_id::text,usd::text FROM public.cockpit_deal_payments WHERE active ORDER BY payment_id")).rows;
+    assert(ledger.length === moneyPayload?.attribution?.dealLedger?.rows, `cockpit_deal_payments holds ${ledger.length} active rows but the money section published ${moneyPayload?.attribution?.dealLedger?.rows}; the worker must pass dealPayments in its finance publication`);
+    assert(ledger.some(row => row.payment_id === "whop:fixture-whop-1" && row.matched_by === "ceo" && row.tie_id !== null && Number(row.usd) === 100), `the deal ledger is missing the tied fixture payment: ${JSON.stringify(ledger)}`);
     const monitor = (await db.query<{snapshot:{checks:{key:string;ok:boolean}[]}}>("SELECT cockpit_native_monitor() snapshot")).rows[0].snapshot;
     assert(monitor.checks.find(check=>check.key==="worker:ceo-refresh")?.ok===true,"native monitor did not read the actual CEO worker ledger");
     assert(monitor.checks.find(check=>check.key==="source:finance-revision")?.ok===true,"native monitor rejected reconciled published finance");
@@ -402,7 +420,7 @@ select ident.* from ident left join w7_leads on w7_leads.ad_id = ident.ad_id;`;
       assert(receipt5.error === "Supabase read-only SQL returned HTTP 400", "Unknown shape did not return generic HTTP status");
     })();
 
-    console.info("CEO refresh smoke: canonical dry-run, atomic publish/readback, repeat, and failure checks passed.");
+    console.info("CEO refresh smoke: canonical dry-run, atomic publish/readback with the CEO's tie and the deal ledger, repeat, and failure checks passed.");
   } finally {
     await db.close();
   }

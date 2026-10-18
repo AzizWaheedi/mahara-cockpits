@@ -31,6 +31,8 @@ import {
   manualPaymentInfo,
   manualPaymentList,
 } from "./ceoManualPaymentsClient";
+import { ceoMoneyAction } from "./ceoMoneyClient";
+import { ceoPayAction } from "./ceoPayClient";
 import {
   readPeople,
   readPeopleRoles,
@@ -178,7 +180,8 @@ const READ_VERBS: Record<string, true> = {
   requestsList: true,
   watchlistList: true,
   projections: true,
-  // api.ceo.hours: reading a month, the connections and approved pay.
+  // api.ceo.hours: reading a month, the connections and approved pay; and
+  // api.ceo.pay (list, month, costs), whose writes refresh the screens.
   month: true,
   status: true,
   costs: true,
@@ -462,6 +465,10 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   // 6. CEO Features
   if (domain === "ceo") {
     if (sub === "hours") return ceoHoursAction(supabase, rest.join("."), args);
+    // Pay plans on Team & payroll (docs/pay/PAY-PLANS.md section 7).
+    if (sub === "pay") return ceoPayAction(supabase, rest.join("."), args);
+    // Money ties (docs/money/MONEY-ATTRIBUTION.md section 2): tie and untie.
+    if (sub === "money") return ceoMoneyAction(supabase, rest.join("."), args);
     if (sub === "eodRadar" && rest.join(".") === "read")
       return readEodRadar(supabase, args ?? {});
     if (sub === "costs") {

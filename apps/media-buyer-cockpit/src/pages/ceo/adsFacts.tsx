@@ -7,6 +7,7 @@ import { range as rangeText } from "@/components/ceo/windows";
 import type {
   B2bAdsPayload,
   B2bAdWindow,
+  B2bPeople,
   B2bVerdict,
 } from "@/types/ceo/payloads";
 
@@ -25,9 +26,25 @@ import type {
 export const NA_ZERO =
   "Nothing to divide by in this window, so there is no figure.";
 
-/** A number, or the explained n/a when there is nothing to divide by. */
-export function Num({ v, f }: { v: number | null; f: (x: number) => string }) {
-  return v === null ? <Na hint={NA_ZERO} /> : f(v);
+/**
+ * A payload stored before intros were counted once per lead (2026-10-18)
+ * has no confirmed count: its intro figures are n/a, never 0, until the
+ * worker's next refresh writes them.
+ */
+export const NA_REFRESH =
+  "Counted from the next refresh: these numbers were stored before intros were counted once per lead.";
+
+/** A number, or the explained n/a: nothing to divide by, or `na` when the reason is another. */
+export function Num({
+  v,
+  f,
+  na = NA_ZERO,
+}: {
+  v: number | null | undefined;
+  f: (x: number) => string;
+  na?: string;
+}) {
+  return v === null || v === undefined ? <Na hint={na} /> : f(v);
 }
 
 /**
@@ -38,14 +55,17 @@ export function Num({ v, f }: { v: number | null; f: (x: number) => string }) {
 export function Fact({
   label,
   hint,
+  wrap = false,
   children,
 }: {
   label: string;
   hint?: string;
+  /** Let a long value break onto a second line (a name on a phone). */
+  wrap?: boolean;
   children: ReactNode;
 }) {
   return (
-    <span className="whitespace-nowrap">
+    <span className={wrap ? undefined : "whitespace-nowrap"}>
       {hint ? (
         <Hint content={hint}>
           <button
@@ -70,7 +90,57 @@ export type StageFact = {
   f: (x: number) => string;
   /** What the fact counts, on its label. */
   hint?: string;
+  /** Why it is n/a when it is, if not "nothing to divide by". */
+  na?: string;
 };
+
+// ---- intros, each lead once ---------------------------------------------------
+
+/**
+ * The CEO, 2026-10-18: "For the demo entry on the ads, it needs fixing, so it
+ * should be just on intros or intros confirmed ... The link to intro, that's
+ * it. For intros, it shouldn't count re-scheduled either. It should just
+ * count once." Per ad the funnel stops at the intro, counted per lead.
+ */
+export type IntroFigures = {
+  /** False on a payload stored before 2026-10-18: every figure is null and reads n/a. */
+  known: boolean;
+  intros: number | null;
+  confirmed: number | null;
+  /** Intros over leads. */
+  leadToIntro: number | null;
+  /** Confirmed intros over intros. */
+  confirmedShare: number | null;
+  costPerIntro: number | null;
+  costPerConfirmed: number | null;
+  /** The n/a hint for these figures: nothing to divide by, or wait for the refresh. */
+  na: string;
+};
+
+/** A window's intro figures, or all n/a on a payload from before they were counted once per lead. */
+export function introFigures(w: B2bAdWindow): IntroFigures {
+  if (w.leadsToConfirmedIntro === undefined)
+    return {
+      known: false,
+      intros: null,
+      confirmed: null,
+      leadToIntro: null,
+      confirmedShare: null,
+      costPerIntro: null,
+      costPerConfirmed: null,
+      na: NA_REFRESH,
+    };
+  return {
+    known: true,
+    intros: w.leadsToIntro ?? null,
+    confirmed: w.leadsToConfirmedIntro,
+    leadToIntro: w.bookRate,
+    confirmedShare: w.confirmedIntroRate ?? null,
+    costPerIntro: w.costPerIntro ?? null,
+    costPerConfirmed: w.costPerConfirmedIntro ?? null,
+    na: NA_ZERO,
+  };
+}
 
 /** Frequency the way Ads Manager shows it: two decimals. */
 export const frequency = (n: number) => n.toFixed(2);
@@ -130,6 +200,8 @@ export const TONE: Record<B2bVerdict["verdict"], StatusTone> = {
   not_judged: "neutral",
   off: "neutral",
   "leads do not book": "serious",
+  "intros do not confirm": "serious",
+  // On a payload stored before 2026-10-18 only.
   "intros do not convert": "serious",
   "demos do not close": "serious",
 };
@@ -167,24 +239,85 @@ export const LEADS_HINT = `Leads that reached the CRM, by the ROAS tags. Fit is 
 
 /** Per lead, so a rebooked intro is one lead, never two. */
 export const LEAD_TO_INTRO_HINT =
-  "Leads that came in during the window with an intro booked at or after they came in, over those leads. Per lead, so a rebooked intro counts once.";
+  "Intros over the leads that came in during the window. Per lead, so a rebooked intro counts once.";
 
-export const INTROS_BOOKED_HINT =
-  "Intro appointments booked in the window, rebookings included. Lead to intro counts each lead once.";
+/** The Ads tab's intro: a lead, never an appointment. */
+export const INTROS_HINT =
+  "Leads from these days, on this ad, that booked an intro at or after they came in. Each lead counts once however often the intro was rebooked; a lead whose intros were all cancelled, or who went straight to a demo, is not an intro. An intro marked invalid was held, so it counts. Cost is spend over intros.";
 
-/** The same formula as the campaign constraint's intro stage. */
-export const INTRO_TO_DEMO_HINT =
-  "Intros shown that went on to a demo booked for the same contact, over intros shown.";
+/** The CEO's rule: confirmed or showed counts as shown. */
+export const CONFIRMED_INTROS_HINT =
+  "Of those intros, the leads whose intro showed, or is still marked confirmed after its time. No-shows, cancelled and invalid are left out, and an intro still ahead counts once its time passes. Cost is spend over confirmed intros.";
 
-/** Confirmed, showed or invalid counts as shown: the B2B dashboard's rule. */
-export const INTROS_SHOWN_HINT =
-  "Intros shown over intros whose time has passed. Confirmed, showed or invalid counts as shown, the B2B dashboard's rule.";
+/**
+ * Who worked an ad's calls is read over the payload's thirty days (the
+ * chosen days on a custom range), never the seven-day window the row shows.
+ */
+export function peopleDays(windows: B2bAdsPayload["windows"]): number {
+  return (
+    Math.round(
+      (Date.parse(windows.to) - Date.parse(windows.from30)) / 86_400_000,
+    ) + 1
+  );
+}
 
-export const DEMOS_BOOKED_HINT =
-  "Demos booked in the window. Intro to demo is intros shown that went on to a demo booked for the same contact, over intros shown.";
+/** Why the setter's count can differ from Intros and Confirmed on the same row. */
+export function setterHint(windows: B2bAdsPayload["windows"]): string {
+  return `Counted on its own rule, so it can differ from Intros and Confirmed: the setter with the most leads in intros booked on this ad from ${rangeText(windows.from30, windows.to)}, every lead, older ones and ones with no ROAS tag included. Of those leads whose intro was due, how many showed: showed, or confirmed or invalid once its time passed (the B2B show rule). Each lead once, however often it was rebooked.`;
+}
 
-export const DEMOS_SHOWN_HINT =
-  "Demos shown over demos due. Confirmed, showed or invalid counts as shown. Cost is spend over demos shown.";
+/** Why the closer's count can differ from Signed on the same row. */
+export function closerHint(windows: B2bAdsPayload["windows"]): string {
+  return `Counted over its own days, so it can differ from Signed: the closer with the most signed deals credited to this ad from ${rangeText(windows.from30, windows.to)}, voided deals left out.`;
+}
+
+/**
+ * The setter and closer under an ad or a campaign. Their counts use their own
+ * days and rule, so the line says both itself, where a phone can read it,
+ * never only in a hover title (2026-10-18: "Intros 3 · Confirmed 2" sat above
+ * "5 of 6 shown" with nothing on the screen to say why).
+ */
+export function People({
+  p,
+  windows,
+}: {
+  p: B2bPeople;
+  windows: B2bAdsPayload["windows"];
+}) {
+  if (!p.setter && !p.closer) return null;
+  const days = `${count(peopleDays(windows))} days`;
+  return (
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      {p.setter ? (
+        <span>
+          <Fact label="Setter" hint={setterHint(windows)} wrap>
+            {`${p.setter.name}: ${count(p.setter.shown)} of ${count(p.setter.due)} leads shown`}
+          </Fact>
+          {` · ${days}, every intro booked`}
+        </span>
+      ) : null}
+      {p.closer ? (
+        <span>
+          <Fact label="Closer" hint={closerHint(windows)} wrap>
+            {`${p.closer.name}: ${count(p.closer.closes)} signed`}
+          </Fact>
+          {` · ${days}`}
+        </span>
+      ) : null}
+    </p>
+  );
+}
+
+/**
+ * Constraint stages that read appointments or demos, retired on 2026-10-18.
+ * A payload stored before then can still carry one; the screen leaves it out.
+ */
+export const RETIRED_STAGES = new Set([
+  "intros due to shown",
+  "intros booked to shown",
+  "intros shown to demos booked",
+  "demos shown to closes",
+]);
 
 /** What the "carry an ad" line counts, and whose ad a call or deal is. */
 export const COVERAGE_HINT =

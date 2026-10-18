@@ -21,6 +21,12 @@ export const COMMISSION_BASES = [
   // ghosted)". A person may carry two lines (commission2 on the roster).
   "per_qualified_intro_shown",
   "per_closed_deal",
+  // The CEO, 2026-10-18, for the call centre agents: "$5 per sold client
+  // appointment and $20 per closed client appointment. Add to the other
+  // options, which is a closed client deal" (PAY-PLANS.md decision 2: "sold"
+  // is read as shown). Per unit, measured on Team & payroll each month.
+  "per_client_appt_shown",
+  "per_client_deal_closed",
 ] as const;
 export type CommissionBasis = (typeof COMMISSION_BASES)[number];
 
@@ -48,6 +54,8 @@ export const COMMISSION_LABEL: Record<CommissionBasis, string> = {
   per_qualified_intro_shown: "per qualified intro call that shows up",
   per_closed_deal:
     "per deal that fully closes (not a deposit and then gone: voided deals are left out)",
+  per_client_appt_shown: "per client appointment that shows up",
+  per_client_deal_closed: "per deal our client closes (confirmed)",
 };
 
 /** Short form, for a select. */
@@ -64,7 +72,31 @@ export const COMMISSION_SHORT: Record<CommissionBasis, string> = {
   other: "Other, see note",
   per_qualified_intro_shown: "Per qualified intro shown",
   per_closed_deal: "Per fully closed deal",
+  per_client_appt_shown: "Per client appointment shown",
+  per_client_deal_closed: "Per closed client deal",
 };
+
+/**
+ * A line as the roster holds it. `unknown` is a basis the database has and
+ * this code does not know yet (the database learns a basis before the
+ * installed app does): the line then reads as "other", so it is never priced
+ * and never counted as no commission, and the raw value is kept to say so.
+ * A screen shows it as "Unknown rule: <value>" and never saves it back.
+ */
+export type CommissionLine = {
+  basis: CommissionBasis;
+  rate: number | null;
+  unknown?: string;
+};
+
+/** The raw basis of a line this code cannot read, or null. */
+export const unknownBasis = (line: {
+  basis: CommissionBasis;
+  rate: number | null;
+}): string | null => (line as CommissionLine).unknown ?? null;
+
+/** "Unknown rule: per_client_appt_booked", for a line this code cannot read. */
+export const unknownRuleText = (raw: string) => `Unknown rule: ${raw}`;
 
 /** A basis that carries a rate (none and other do not). */
 export const takesRate = (b: CommissionBasis) => b !== "none" && b !== "other";
@@ -74,7 +106,7 @@ export const takesRate = (b: CommissionBasis) => b !== "none" && b !== "other";
  * plus $50 per deal that fully closes …", or null with no commission.
  */
 export function commissionLines(
-  lines: { basis: CommissionBasis; rate: number | null }[],
+  lines: CommissionLine[],
   currency: string,
   note: string | null,
 ): string | null {
@@ -84,12 +116,13 @@ export function commissionLines(
   return said.length ? said.join(", plus ") : null;
 }
 
-/** "10% of cash collected on deals they close", "KWD 50 per demo that shows up", "Other: ...", or null. */
+/** "10% of cash collected on deals they close", "KWD 50 per demo that shows up", "Other: ...", "Unknown rule: ...", or null. */
 export function commissionText(
-  c: { basis: CommissionBasis; rate: number | null },
+  c: CommissionLine,
   currency: string,
   note: string | null,
 ): string | null {
+  if (c.unknown) return unknownRuleText(c.unknown);
   if (c.basis === "none") return null;
   if (c.basis === "other") return note ? `Other: ${note}` : "Other";
   if (c.rate === null) return `Rate not set, ${COMMISSION_LABEL[c.basis]}`;

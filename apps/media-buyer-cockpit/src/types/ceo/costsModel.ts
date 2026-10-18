@@ -91,6 +91,14 @@ export type Projection = {
   introsQualifiedShown?: number | null;
   /** Deals that fully close; a plan's closes when not given (a plan cannot plan a void). */
   fullCloses?: number | null;
+  /**
+   * Our clients' appointments that show up, and the deals our clients close
+   * (PAY-PLANS.md decision 2): what the call centre agents' two lines are
+   * paid on. No plan carries them yet, so today they are null: the lines are
+   * not priced and the people are named, never a $0 commission.
+   */
+  clientApptsShown?: number | null;
+  clientDealsClosed?: number | null;
 };
 
 /**
@@ -180,6 +188,8 @@ export const BASIS_ON: Record<CommissionBasis, keyof Projection | null> = {
   other: null,
   per_qualified_intro_shown: "introsQualifiedShown",
   per_closed_deal: "fullCloses",
+  per_client_appt_shown: "clientApptsShown",
+  per_client_deal_closed: "clientDealsClosed",
 };
 
 /** The unit a per-event basis counts, for "$10 × 34 qualified intros". */
@@ -189,6 +199,8 @@ const UNIT: Partial<Record<CommissionBasis, string>> = {
   per_signed: "deals signed",
   per_qualified_intro_shown: "qualified intros held (estimate)",
   per_closed_deal: "deals fully closed",
+  per_client_appt_shown: "client appointments shown",
+  per_client_deal_closed: "client deals closed",
 };
 
 const SHARE = new Set<CommissionBasis>([
@@ -212,6 +224,12 @@ export type Payee = {
   basis2?: CommissionBasis;
   rate2?: number | null;
   /**
+   * A line's basis as stored when this build does not know it (`basis` /
+   * `basis2` read "other"): named "Unknown rule: <value>" and never saved back.
+   */
+  unknown?: string;
+  unknown2?: string;
+  /**
    * Last month's approved pay from Hours and pay, when there is one. Only a
    * closed month reads it; next month's plan stays on roster pay, so a
    * joiner's half month or a month of unpaid leave never sets next month's cost.
@@ -221,6 +239,52 @@ export type Payee = {
     amountUsd: number | null;
     shadow: boolean;
   } | null;
+  /**
+   * The person's pay-plan parts (bonuses, typed counts, the floor; PAY-PLANS.md
+   * 8.7), carried into next month as an estimate: the parts of their latest
+   * month approved on Team & payroll. Absent when they have no plan with
+   * parts. `month` and `usd` null: a plan with parts and no approved month
+   * yet, so nothing is added and the person is named, never $0.
+   */
+  planParts?: { month: string | null; usd: number | null };
+};
+
+/**
+ * A person-month approved on Team & payroll (`cockpit_ceo_pay_costs`): the
+ * measured commission and the pay-plan parts, in USD, on top of base pay.
+ */
+export type PayPlanApproval = {
+  personId: number;
+  /** The roster name, when the reader attached it (a leaver is named too). */
+  name?: string;
+  /** The earned month, YYYY-MM. */
+  month: string;
+  /** Measured commission approved; null when no line was measured. */
+  commissionUsd: number | null;
+  /** Bonuses, typed counts, the floor and adjustments, signed. */
+  partsUsd: number;
+  /** Commission bases the month did not work out (priced only from a plan): named, never counted. */
+  notPriced: string[];
+};
+
+/** Commission and pay-plan parts approved for a closed month (PAY-PLANS.md 8.7). */
+export type ClosedMonthPlans = {
+  /** Approved measured commission, USD. */
+  commission: number;
+  /** Approved pay-plan parts, USD, signed (a −$250 band or a clawback lowers it). */
+  parts: number;
+  /** People whose month is approved on Team & payroll. */
+  approved: number;
+  /** Base pay plus approved commission and parts. */
+  total: number;
+  /** Approved months that left a commission line out, by person: named, never counted. */
+  notPriced: { name: string; bases: string[] }[];
+  /**
+   * On a pay plan with parts or a measured commission line, with no approved
+   * month: their commission and bonuses are not in the total. Null when it
+   * could not be told (the plans could not be read).
+   */
+  notApproved: string[] | null;
 };
 
 /** A closed month's base pay: the approved figure where one exists, the roster's for the rest. */
@@ -236,6 +300,12 @@ export type ClosedMonthPay = {
   noRate: string[];
   /** Neither approved nor a roster figure: left out, and named. */
   noPay: string[];
+  /**
+   * Commission and pay-plan parts approved on Team & payroll, beside base
+   * pay. Absent when not asked for; null when they could not be read, which
+   * the page says rather than showing base pay as the month's pay.
+   */
+  plans?: ClosedMonthPlans | null;
 };
 
 /**
@@ -243,8 +313,16 @@ export type ClosedMonthPay = {
  * working roster, plus anyone approved for it who has left since.
  */
 export function closedMonthPay(
-  people: Pick<Payee, "id" | "name" | "monthlyUsd" | "approved">[],
+  people: (Pick<Payee, "id" | "name" | "monthlyUsd" | "approved"> & {
+    /**
+     * Expected on Team & payroll this month: a pay plan with parts, or a
+     * measured commission line. Undefined when that could not be told.
+     */
+    onPlan?: boolean;
+  })[],
   month: string,
+  /** Approved Team & payroll months; null when unreadable; omitted when not asked. */
+  plans?: PayPlanApproval[] | null,
 ): ClosedMonthPay {
   let total = 0;
   let approved = 0;
@@ -265,7 +343,7 @@ export function closedMonthPay(
       roster += 1;
     } else noPay.push(p.name);
   }
-  return {
+  const out: ClosedMonthPay = {
     month,
     total: Math.round(total * 100) / 100,
     approved,
@@ -273,6 +351,71 @@ export function closedMonthPay(
     noRate,
     noPay,
   };
+  if (plans === undefined) return out;
+  if (plans === null) return { ...out, plans: null };
+  // Everyone approved for the month counts, whether or not they are on the
+  // list of people paid base pay (a leaver's last bonus still costs).
+  const names = new Map(people.map(p => [p.id, p.name]));
+  const mine = plans.filter(a => a.month === month);
+  const seen = new Set<number>();
+  let commission = 0;
+  let parts = 0;
+  const notPriced: ClosedMonthPlans["notPriced"] = [];
+  for (const a of mine) {
+    if (seen.has(a.personId)) continue;
+    seen.add(a.personId);
+    commission += a.commissionUsd ?? 0;
+    parts += a.partsUsd;
+    if (a.notPriced.length)
+      notPriced.push({
+        name: a.name ?? names.get(a.personId) ?? `Person ${a.personId}`,
+        bases: [...a.notPriced],
+      });
+  }
+  const told = people.every(p => p.onPlan !== undefined);
+  const cents = (v: number) => Math.round(v * 100) / 100;
+  return {
+    ...out,
+    plans: {
+      commission: cents(commission),
+      parts: cents(parts),
+      approved: seen.size,
+      total: cents(total + commission + parts),
+      notPriced,
+      notApproved: told
+        ? people.filter(p => p.onPlan && !seen.has(p.id)).map(p => p.name)
+        : null,
+    },
+  };
+}
+
+/** The call centre's client lines (PAY-PLANS.md decision 2): counted each month on Team & payroll, never projected here. */
+export const MEASURED_ON_TEAM = new Set<CommissionBasis>([
+  "per_client_appt_shown",
+  "per_client_deal_closed",
+]);
+
+/**
+ * Whom "give each a rule and a rate" can help: a person whose commission is
+ * unpriced for a reason fixable on Costs (no rule, an "other" rule, no rate,
+ * no plan number). Never a person whose only unpriced lines are client lines
+ * with a rate (counted on Team & payroll) or a rule this build does not know
+ * (said apart, kept as stored).
+ */
+export function unpricedToFix(people: Payee[], lines: PayLine[]): string[] {
+  return lines
+    .filter(l => l.commission === null)
+    .filter(l => {
+      const x = people.find(p => p.id === l.id);
+      if (!x) return true;
+      if (x.unknown || x.unknown2) return false;
+      return (l.parts ?? []).some(q => {
+        if (q.commission !== null) return false;
+        const rate = q.basis === x.basis ? x.rate : (x.rate2 ?? null);
+        return !MEASURED_ON_TEAM.has(q.basis) || rate === null;
+      });
+    })
+    .map(l => l.name);
 }
 
 export type PayLine = {
@@ -290,6 +433,12 @@ export type PayLine = {
     commission: number | null;
     on: string | null;
   }[];
+  /**
+   * The pay-plan parts added as an estimate (the latest approved month's),
+   * or `usd` null for a plan with parts and no approved month yet (named in
+   * `noPlanMonth`). Absent with no plan parts.
+   */
+  planParts?: { month: string | null; usd: number | null };
 };
 
 /**
@@ -308,11 +457,19 @@ export function payroll(
   lines: PayLine[];
   base: number;
   commission: number;
+  /** Base + commission + pay-plan parts. */
   total: number;
   /** Working people with no pay set: the base is a floor until they have one. */
   noPay: string[];
   /** Commissions that cannot be priced on the plan. */
   unpriced: string[];
+  /**
+   * Pay-plan parts, each person's latest approved month as an estimate
+   * (PAY-PLANS.md 8.7). 0 when nobody has a plan with parts.
+   */
+  parts: number;
+  /** A pay plan with parts but no approved month yet: their bonuses are not in the total. */
+  noPlanMonth: string[];
 } {
   const linesOf = (x: Payee) =>
     [
@@ -351,6 +508,14 @@ export function payroll(
   const lines: PayLine[] = people.map(x => {
     const base = x.monthlyUsd;
     const mine = linesOf(x);
+    // Pay-plan parts: the latest approved month's, as an estimate. Never
+    // split between people (a bonus is on the person's own figures).
+    const plan = x.planParts ? { planParts: { ...x.planParts } } : {};
+    const extra = x.planParts?.usd ?? null;
+    const add = (v: number | null) =>
+      v === null && extra === null
+        ? null
+        : Math.round(((v ?? 0) + (extra ?? 0)) * 100) / 100;
     if (!mine.length)
       return {
         id: x.id,
@@ -358,8 +523,9 @@ export function payroll(
         base,
         commission: 0,
         on: null,
-        total: base,
+        total: add(base),
         parts: [],
+        ...plan,
       };
     const parts = mine.map(l => ({ basis: l.basis, ...price(x, l) }));
     const unpriced = parts.some(q => q.commission === null);
@@ -374,21 +540,28 @@ export function payroll(
       base,
       commission: rounded,
       on: said.length ? said.join(" + ") : null,
-      total:
+      total: add(
         base === null && rounded === null ? null : (base ?? 0) + (rounded ?? 0),
+      ),
       parts,
+      ...plan,
     };
   });
   const sum = (xs: (number | null)[]) =>
     Math.round(xs.reduce<number>((n, v) => n + (v ?? 0), 0) * 100) / 100;
   const base = sum(lines.map(l => l.base));
   const commission = sum(lines.map(l => l.commission));
+  const parts = sum(people.map(x => x.planParts?.usd ?? null));
   return {
     lines,
     base,
     commission,
-    total: Math.round((base + commission) * 100) / 100,
+    total: Math.round((base + commission + parts) * 100) / 100,
     noPay: people.filter(x => x.monthlyUsd === null).map(x => x.name),
     unpriced: lines.filter(l => l.commission === null).map(l => l.name),
+    parts,
+    noPlanMonth: people
+      .filter(x => x.planParts && x.planParts.usd === null)
+      .map(x => x.name),
   };
 }

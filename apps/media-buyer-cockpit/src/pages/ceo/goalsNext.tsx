@@ -337,7 +337,7 @@ export function NextMonth({
           costs && pay && t.key === "labour"
             ? {
                 ...t,
-                how: `From the Costs page: ${money(pay.base)} roster pay and ${money(pay.commission)} commission on this plan. Roster pay, not a month's approved figure, so a part month or unpaid leave never sets next month's cost.`,
+                how: `From the Costs page: ${money(pay.base)} roster pay and ${money(pay.commission)} commission on this plan${pay.parts ? `, plus ${money(pay.parts)} pay-plan parts (each person's latest month approved on Team & payroll, an estimate)` : ""}. Roster pay, not a month's approved figure, so a part month or unpaid leave never sets next month's cost.${pay.noPlanMonth.length ? ` On a pay plan with no approved month yet: ${pay.noPlanMonth.join(", ")}. Their bonuses are not in the total.` : ""}`,
               }
             : costs && t.key === "overhead"
               ? {
@@ -641,8 +641,13 @@ export function NextMonth({
                       <Worked value={pay.total} unit="usd" />
                     </Line>
                     <p className="text-xs text-muted-foreground">
-                      {`${money(pay.base)} pay and ${money(pay.commission)} commission on this plan's numbers${pay.noPay.length ? `; no pay set for ${pay.noPay.length}` : ""}${pay.unpriced.length ? `; ${pay.unpriced.length} commission${pay.unpriced.length === 1 ? "" : "s"} not priced` : ""}.`}
+                      {`${money(pay.base)} pay and ${money(pay.commission)} commission on this plan's numbers${pay.parts ? `, ${money(pay.parts)} pay-plan parts as last approved` : ""}${pay.noPay.length ? `; no pay set for ${pay.noPay.length}` : ""}${pay.unpriced.length ? `; ${pay.unpriced.length} commission${pay.unpriced.length === 1 ? "" : "s"} not priced` : ""}.`}
                     </p>
+                    {pay.noPlanMonth.length ? (
+                      <p className="text-xs text-muted-foreground">
+                        {`On a pay plan with no approved month yet: ${pay.noPlanMonth.join(", ")}. Their bonuses are not in the total; approve a month on Team & payroll and it is carried here.`}
+                      </p>
+                    ) : null}
                     <Line label="Software and overhead, from Costs">
                       <Worked
                         value={costs.softwareUsd + costs.overheadUsd}

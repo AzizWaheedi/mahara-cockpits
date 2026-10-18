@@ -44,8 +44,9 @@ import { TargetMeter } from "@/components/ceo/TargetMeter";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
 import {
-  FRONT_END_CASH_HINT,
-  frontEndCashSub,
+  attributedAtOf,
+  FRONT_END_CASH_NA,
+  paidFrontEnd,
   useTimeframe,
 } from "@/components/ceo/timeframe";
 import { range } from "@/components/ceo/windows";
@@ -56,6 +57,8 @@ import type {
   MoneyPayload,
   Note,
 } from "@/types/ceo/payloads";
+import type { MoneyLine } from "./money/credit";
+import { frontEndFacts, frontEndTile } from "./money/FrontEndCash";
 import type { CeoTabProps } from "./types";
 import { WebinarFunnel } from "./WebinarFunnel";
 
@@ -106,6 +109,8 @@ const GROWTH_ROUTES: readonly (readonly [RegExp, GrowthRoute])[] = [
 // - The cash rule is a list of what cash caveats talk about, not a fallback:
 //   a caveat no rule claims stays on the Money tab rather than landing here.
 const MONEY_ROUTES: readonly (readonly [RegExp, MoneyRoute])[] = [
+  // The attribution rule and the CEO's ties sit with the payments, on Money.
+  [/transactions tab|your ties?\b/i, "moneyTab"],
   [
     /expense|bank statement|card unload|failed charge|recent deals/i,
     "moneyTab",
@@ -167,7 +172,7 @@ function elsewhereNote(n: number, text: string): Note[] {
 /** Both kinds of cash sit on this tab, so the difference is spelled out every time. */
 const CASH_CLASH_NOTE: Note = {
   level: "warn",
-  text: "Cash typed on the closer form is not the cash collected at the top of this tab. One is what the closer typed at signing, the other is what actually landed. Never add the two together.",
+  text: "Front-end cash is money that landed on signed deals, so it is already inside the cash collected at the top of this tab: never add the two. What the closer typed on the form sits beside it as typed, not money.",
 };
 
 const COSTS_WINDOW_NOTE: Note = {
@@ -315,6 +320,10 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
     ? range(gw.bounds.from, gw.bounds.to)
     : "Timeframe";
   const monthKey = m?.month ?? today.slice(0, 7);
+  // Front-end cash is paid money (MONEY-ATTRIBUTION.md rule 6): when it was
+  // attributed, and the payments a custom range takes its closers from.
+  const attributedAt = attributedAtOf(g?.windows);
+  const lines: MoneyLine[] = m?.attribution?.transactions ?? [];
 
   // With neither section computed, one card says so instead of six empty states.
   if (!g && !m)
@@ -381,6 +390,9 @@ function CallFunnel({ sections, now, day, goTab }: CeoTabProps) {
             prev={previous}
             vs={vs}
             label={windowLabel}
+            attributedAt={attributedAt}
+            lines={lines}
+            now={now}
           />
         )}
       </SectionCard>
@@ -606,13 +618,22 @@ function FunnelBody({
   prev,
   vs,
   label,
+  attributedAt,
+  lines,
+  now,
 }: {
   w: FunnelWindow;
   prev: FunnelWindow | null;
   /** The comparison window, read to screen readers only. */
   vs?: string;
   label: string;
+  /** When the money behind front-end cash was attributed, epoch ms. */
+  attributedAt: number | null;
+  /** The Money tab's payments, for the closers of a custom range. */
+  lines: MoneyLine[];
+  now: number;
 }) {
+  const fe = frontEndTile(w, prev, attributedAt, now);
   const delta = (
     value: number | null,
     goodWhen: GoodWhen,
@@ -656,13 +677,11 @@ function FunnelBody({
     },
     {
       label: "Front-end cash",
-      value: money(w.frontEndCash.total),
-      delta: delta(
-        change(w.frontEndCash.total, prev?.frontEndCash.total),
-        "up",
-      ),
-      sub: frontEndCashSub(w.frontEndCash, w.from),
-      hint: `${FRONT_END_CASH_HINT} Do not add it to the cash won above: that is the same money arriving on the rails.`,
+      value: fe.value,
+      delta: delta(fe.change, "up"),
+      sub: fe.sub,
+      hint: `${fe.hint} Do not add it to the cash won above: it is part of that money.`,
+      naHint: fe.naHint,
     },
   ];
 
@@ -725,6 +744,7 @@ function FunnelBody({
             label: "Intros shown",
             value: `${count(w.introsShown)} of ${count(w.introsDue)} due`,
           },
+          ...frontEndFacts(w, lines),
         ]}
       />
     </div>
@@ -755,6 +775,8 @@ function CostsBody({
   // Decision 5: one rule for cost to win on every tab, with its caveat printed.
   const costToWin = COST_TO_WIN.of(w);
   const prevCostToWin = prev ? COST_TO_WIN.of(prev).value : null;
+  // Paid front-end cash (MONEY-ATTRIBUTION.md rule 6); null when not read.
+  const fe = paidFrontEnd(w);
 
   const windowTiles: Tile[] = [
     {
@@ -767,9 +789,13 @@ function CostsBody({
     },
     {
       label: ROAS_CASH.label,
-      value: ratio(w.roasCash),
-      delta: delta(change(w.roasCash, prev?.roasCash), "up"),
-      sub: `${money(w.frontEndCash.total)} front-end cash`,
+      // On paid money only: a payload from before 2026-10-18 divided the typed figure.
+      value: ratio(fe === null ? null : w.roasCash),
+      delta: delta(
+        fe === null ? null : change(w.roasCash, prev?.roasCash),
+        "up",
+      ),
+      sub: `${money(fe)} front-end cash`,
       hint: ROAS_CASH.hint,
       naHint: ROAS_CASH.naHint,
     },
@@ -789,8 +815,9 @@ function CostsBody({
   ];
 
   // What each call is worth: front-end cash over the calls that led to it.
-  const fe = w.frontEndCash.total;
-  const worth = (n: number) => (n > 0 ? fe / n : null);
+  const worth = (n: number) => (fe !== null && n > 0 ? fe / n : null);
+  const prevFe = paidFrontEnd(prev);
+  const naFor = (none: string) => (fe === null ? FRONT_END_CASH_NA : none);
   const worthTiles: Tile[] = [
     {
       label: "Front-end cash per intro booked",
@@ -798,34 +825,32 @@ function CostsBody({
       delta: delta(
         change(
           worth(w.introsBooked),
-          prev
-            ? prev.introsBooked > 0
-              ? prev.frontEndCash.total / prev.introsBooked
-              : null
+          prev && prevFe !== null && prev.introsBooked > 0
+            ? prevFe / prev.introsBooked
             : null,
         ),
         "up",
       ),
       sub: `${money(fe)} over ${plural(w.introsBooked, "intro")} booked`,
-      naHint: "No intro calls were booked in this window.",
+      naHint: naFor("No intro calls were booked in this window."),
     },
     {
       label: "Front-end cash per intro shown",
       value: money(worth(w.introsShown)),
       sub: `over ${plural(w.introsShown, "intro")} shown`,
-      naHint: "No intro calls were shown in this window.",
+      naHint: naFor("No intro calls were shown in this window."),
     },
     {
       label: "Front-end cash per demo booked",
       value: money(worth(w.demosBooked)),
       sub: `over ${plural(w.demosBooked, "demo")} booked`,
-      naHint: "No demos were booked in this window.",
+      naHint: naFor("No demos were booked in this window."),
     },
     {
       label: "Front-end cash per demo shown",
       value: money(worth(w.demosShown)),
       sub: `over ${plural(w.demosShown, "demo")} shown`,
-      naHint: "No demos were shown in this window.",
+      naHint: naFor("No demos were shown in this window."),
     },
   ];
 

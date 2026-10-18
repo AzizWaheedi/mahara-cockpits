@@ -20,7 +20,7 @@ function snapshot(statementEnds: string): Row {
   return {
     revision: 7, totals_revision: 0, history_ready: true, aliases_ready: true, manual_ready: true,
     updated_at: new Date(now).toISOString(),
-    manual: [], aliases: [], payers: [], exclusions: [],
+    manual: [], aliases: [], payers: [], exclusions: [], ties: [],
     billing: [
       { clickup_task_id: "task-a", client_name: "Client A", stage: "Active", mrr_usd: 1000, ltv_usd: 9000.5, payment_plan: "Monthly", captured_at: new Date(now).toISOString() },
       { clickup_task_id: "task-b", client_name: "Client B", stage: "Onboarding", mrr_usd: null, ltv_usd: null, payment_plan: null, captured_at: new Date(now).toISOString() },
@@ -37,8 +37,10 @@ function snapshot(statementEnds: string): Row {
   };
 }
 
-function reader(overrides: Record<string, Row[]> = {}) {
-  const fixtures: Record<string, Row[]> = {
+type Fixture = Row[] | ((query: string) => Row[]);
+
+function reader(overrides: Record<string, Fixture> = {}) {
+  const fixtures: Record<string, Fixture> = {
     "money.cash": [{ day: today, cash: 100 }],
     "money.summary": [{ whop_synced_ms: now, whop_last_paid_ms: now, deals_synced_ms: now, failed_count_30: 0, failed_amount_30: 0, refunds_mtd: 0, refunds_90: 0, avg_contract_90: 500, first_deal_day: today }],
     "money.monthly": [{ month: today.slice(0, 7), cash: 100, refunds: 0, deals: 1, contracted: 500 }],
@@ -65,7 +67,8 @@ function reader(overrides: Record<string, Row[]> = {}) {
   return async (_project: string, query: string): Promise<Row[]> => {
     const marker = /\/\*\s*ceo-refresh:([a-z0-9._-]+)\s*\*\//i.exec(query)?.[1];
     if (!marker || !(marker in fixtures)) throw new Error(`No fixture for ${marker ?? query.slice(0, 80)}`);
-    return fixtures[marker];
+    const fixture = fixtures[marker];
+    return typeof fixture === "function" ? fixture(query) : fixture;
   };
 }
 
@@ -73,7 +76,7 @@ function runtimeWith(read: Runtime["read"]): Runtime {
   return { env: () => undefined, read, repository: {} as Runtime["repository"], tools: {} as Runtime["tools"] };
 }
 
-async function computeBoth(statementEnds: string, overrides: Record<string, Row[]> = {}) {
+async function computeBoth(statementEnds: string, overrides: Record<string, Fixture> = {}) {
   const snap = snapshot(statementEnds);
   return withRuntime(runtimeWith(reader(overrides)), async () => {
     const money = await createMoneyAdapter(snap).compute({ repository: {} as Runtime["repository"] });
@@ -158,6 +161,66 @@ describe("Money keeps the LTV baseline and the book history (R4, A124)", () => {
     const book = (money.payload as Row & { book: { history: Row[] } }).book;
     expect(book.history).toEqual([{ month: addDays(today, -40).slice(0, 7), projected: 2000, collected: 1500, rate: 0.75 }]);
     expect((money.payload as Row & { attribution: Row }).attribution.kickoffRead).toBe(true);
+  });
+
+  test("a snapshot without the CEO's ties fails Money rather than attributing without them", async () => {
+    const snap = { ...snapshot(addDays(today, -2)) };
+    delete (snap as Row).ties;
+    await withRuntime(runtimeWith(reader()), async () => {
+      await expect(createMoneyAdapter(snap).compute({ repository: {} as Runtime["repository"] })).rejects.toThrow("missing ties");
+    });
+  });
+
+  test("the deal ledger rows come back beside the client payments, and the section counts them", async () => {
+    const { money } = await computeBoth(addDays(today, -2), {
+      "money.attribution.whop": [{ payment_id: "pay_a", day: today, net_amount: 500, final_amount: 500, refunded_amount: 0, refund_day: null, email: "owner@example.test", billing: "Owner One", username: null, deal_response_id: "deal-a", billing_reason: "one_time" }],
+      "money.attribution.deals": [{ response_id: "deal-a", day: today, email: "owner@example.test", business: "Northwind Studio", contact: "Owner One", closer: "Closer One", csm: "Csm One", cash_collected: 500, payment_structure: "Paid in full", contracted: 6000 }],
+    });
+    const extra = money as typeof money & { dealPayments: Row[]; clientPayments: Row[] };
+    expect(extra.dealPayments).toEqual([{ payment_id: "whop:pay_a", deal_response_id: "deal-a", day: today, usd: 500, rail: "whop", kind: "deposit", deposit_usd: 500, matched_by: "deal_id", tie_id: null, payer: "Owner One" }]);
+    const attribution = (money.payload as Row & { attribution: Row }).attribution;
+    expect(attribution.dealLedger).toEqual({ rows: 1, usd: 500, from: expect.any(String) });
+    expect(attribution.ties).toEqual({ live: 0, applied: 0, payments: 0, notApplied: [], beforeDeal: [] });
+    const tx = (attribution.transactions as Row[]).find(t => t.id === "whop:pay_a");
+    expect(tx).toMatchObject({ side: "front_end", kind: "deposit", person: "Closer One", personRole: "closer", dealResponseId: "deal-a", tie: null });
+  });
+});
+
+describe("Money paid before the 12 months seeds a deal's contract and is never published", () => {
+  const monthBack = (day: string, n: number) => {
+    const [y, m] = day.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1 - n, 1)).toISOString().slice(0, 10);
+  };
+  const from12 = monthBack(today, 11);
+  const from180 = addDays(today, -179);
+  const whop = (id: string, day: string, usd: number) => ({ payment_id: id, day, net_amount: usd, final_amount: usd, refunded_amount: 0, refund_day: null, email: "edge@example.test", billing: "Edge Payer", username: null, deal_response_id: null, billing_reason: "one_time" });
+  // The rows the query's own lower bound lets through, as the database would.
+  const since = (rows: Row[], pattern: RegExp) => (query: string) => {
+    const from = pattern.exec(query)?.[1];
+    if (!from) throw new Error(`No lower bound in ${query.slice(0, 80)}`);
+    return rows.filter(r => String(r.day) >= from);
+  };
+
+  test("a deal signed before the window, paid up before it, keeps a later payment back end; older Tap is attributed once", async () => {
+    const signed = addDays(from12, -15);
+    const tapDay = addDays(from180, -20);
+    const snap = snapshot(addDays(today, -2));
+    (snap as Row).manual = [{ id: "m-tap", day: tapDay, amount: 700, currency: "USD", amount_usd: 700, usd_per_unit: 1, client_name: "Old Tap Client", clickup_task_id: null, rail: "tap", kind: "payment", note: null, added_by: "ceo@example.test", added_at: new Date(now).toISOString(), deleted_at: null }];
+    const { money } = await withRuntime(runtimeWith(reader({
+      "money.attribution.whop": since([whop("pay_before", signed, 5000), whop("pay_after", addDays(from12, 30), 1500)], /paid_on>=date '(\d{4}-\d{2}-\d{2})'/),
+      "money.attribution.deals": [{ response_id: "deal-edge", day: signed, email: "edge@example.test", business: "Edge Studio", contact: "Edge Payer", closer: "Closer Edge", csm: "Csm Edge", cash_collected: 500, payment_structure: "Paid in full", contracted: 5000 }],
+      "money.tap_charges": since([{ id: "chg_old", day: tapDay, at_ms: Date.parse(`${tapDay}T09:00:00Z`), currency: "USD", amount: 700, usd: 700, email: null, name: "Old Tap Payer" }], /day BETWEEN date '(\d{4}-\d{2}-\d{2})'/),
+    })), async () => ({ money: await createMoneyAdapter(snap).compute({ repository: {} as Runtime["repository"] }) }));
+    const attribution = (money.payload as Row & { attribution: Row }).attribution;
+    const tx = attribution.transactions as Row[];
+    // The payment before the window is read for the contract only.
+    expect(tx.some(t => t.id === "whop:pay_before")).toBe(false);
+    expect(tx.find(t => t.id === "whop:pay_after")).toMatchObject({ side: "back_end", kind: "client", dealResponseId: "deal-edge" });
+    expect((money as typeof money & { dealPayments: Row[] }).dealPayments).toEqual([]);
+    // A Tap charge older than the rail's 180 days stays in the 12 months, and the hand-logged entry for it counts once.
+    expect(tx.find(t => t.id === "tap:chg_old")).toMatchObject({ rail: "tap", direction: "in", usd: 700 });
+    expect(tx.some(t => t.id === "manual:m-tap")).toBe(false);
+    expect(((money.payload as Row & { rails: { tap: { daily: { date: string }[] } } }).rails.tap.daily)[0].date).toBe(from180);
   });
 });
 

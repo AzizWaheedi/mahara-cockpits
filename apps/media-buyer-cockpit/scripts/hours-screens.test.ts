@@ -10,8 +10,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   buildCostsSheet,
   type CostContext,
+  type CostsPay,
   lastMonthPay,
 } from "../src/lib/ceoCostsClient";
+import { readGoalsBoard } from "../src/lib/ceoGoalsClient";
 import { ceoHoursAction, parseStatus } from "../src/lib/ceoHoursClient";
 import {
   approveItems,
@@ -40,6 +42,7 @@ import type {
   StatusKind,
 } from "../src/types/ceo/hoursContract";
 import { computeMonth } from "../src/types/ceo/hoursModel";
+import { ROLE_PLANS_2026_10 } from "../src/types/ceo/payPlan";
 import {
   fullDays,
   adj as fxAdj,
@@ -540,6 +543,20 @@ describe("the harness fixtures stay made up", () => {
       "../src/dev/hoursFixture.ts",
       "../src/dev/hoursHarness.ts",
       "../src/dev/authHarness.ts",
+      // Pay plans and money ties (PAY-PLANS.md, MONEY-ATTRIBUTION.md): the
+      // fixtures and every test of them.
+      "../src/dev/payFixture.ts",
+      "./pay-plan-model.test.ts",
+      "./ceo-pay-plans-supabase.test.ts",
+      "./ceo-pay-facts-supabase.test.ts",
+      "./money-ties-supabase.test.ts",
+      "./money-attribution-parity.test.ts",
+      "./costs-model.test.ts",
+      "./pay-screens.test.tsx",
+      "./pay-e2e.test.tsx",
+      "./money-screens.test.tsx",
+      "./attribution.test.ts",
+      "../../client-success-cockpit/scripts/csm-money.test.ts",
     ]) {
       const text = readFileSync(new URL(f, import.meta.url), "utf8");
       expect(text).not.toContain("@maharamedia.com");
@@ -689,5 +706,221 @@ describe("Costs: who counts in a closed month, and what the plan uses", () => {
 
   test("approved pay that could not be read leaves the closed month unknown, never $0", () => {
     expect(buildCostsSheet(context, undefined, null).lastMonthPay).toBeNull();
+  });
+});
+
+describe("Costs: a closed month with commission and parts, and the estimate (PAY-PLANS.md 8.7)", () => {
+  // Made-up roster on 10 Oct 2026; September is the closed month.
+  const row = (
+    id: number,
+    role: string,
+    over: Record<string, unknown> = {},
+  ) => ({
+    id,
+    name: `P${id}`,
+    role,
+    engagement: "staff",
+    active: true,
+    monthly_cost: 1000,
+    currency: "USD",
+    paused_on: null,
+    started_on: "2026-01-01",
+    ended_on: null,
+    commission_basis: "none",
+    commission2_basis: "none",
+    ...over,
+  });
+  const context: CostContext = {
+    lines: [],
+    plans: [],
+    targets: [],
+    bank: null,
+    today: "2026-10-10",
+    people: [
+      row(1, "Call centre agent", {
+        commission_basis: "per_client_appt_shown",
+        commission_rate: 5,
+        commission2_basis: "per_client_deal_closed",
+        commission2_rate: 20,
+      }),
+      row(2, "Closer", {
+        commission_basis: "closed_cash",
+        commission_rate: 0.1,
+      }),
+      row(3, "Media buyer"),
+      row(4, "Video editor"),
+      row(5, "Client success manager"),
+      row(6, "Creative strategist"),
+    ] as CostContext["people"],
+  };
+  const planRow = (id: number, role: string, fromMonth: string) => ({
+    id,
+    role,
+    personId: null,
+    fromMonth,
+    plan: ROLE_PLANS_2026_10[role] ?? null,
+    note: null,
+    setBy: "ceo@example.test",
+    setAt: "2026-09-01T00:00:00Z",
+  });
+  const pay: CostsPay = {
+    costs: [
+      {
+        personId: 1,
+        month: "2026-09",
+        commissionUsd: 135,
+        partsUsd: 0,
+        notPriced: [],
+      },
+      {
+        personId: 2,
+        month: "2026-09",
+        commissionUsd: 550,
+        partsUsd: 0,
+        notPriced: ["per_signed"],
+      },
+      {
+        personId: 6,
+        month: "2026-09",
+        commissionUsd: null,
+        partsUsd: 1200,
+        notPriced: [],
+      },
+    ],
+    plans: {
+      plans: [
+        planRow(1, "Media buyer", "2026-09-01"),
+        planRow(2, "Creative strategist", "2026-09-01"),
+        // From November: not on a plan in September, on one in the estimate.
+        planRow(3, "Client success manager", "2026-11-01"),
+      ],
+      roles: [],
+      people: [],
+      lastApproved: [],
+      approvedPlanIds: [],
+    },
+  };
+
+  test("a commission rule this build does not know reaches Costs as stored, never as Other", () => {
+    const sheet = buildCostsSheet(
+      {
+        ...context,
+        people: [
+          ...context.people,
+          row(7, "Call centre agent", {
+            commission_basis: "per_client_appt_booked",
+            commission_rate: 5,
+            commission2_basis: "per_client_deal_closed",
+            commission2_rate: 20,
+          }),
+        ] as CostContext["people"],
+      },
+      undefined,
+      [],
+    );
+    expect(sheet.people.find(p => p.id === 7)).toMatchObject({
+      basis: "other",
+      unknown: "per_client_appt_booked",
+      basis2: "per_client_deal_closed",
+    });
+    expect(sheet.people.find(p => p.id === 7)?.unknown2).toBeUndefined();
+    expect(sheet.people.find(p => p.id === 1)?.unknown).toBeUndefined();
+  });
+
+  test("September adds approved commission and parts beside base pay, and names who it leaves out", () => {
+    const out = lastMonthPay(context, [], "2026-09", pay);
+    expect(out.total).toBe(6000);
+    expect(out.plans).toEqual({
+      commission: 685,
+      parts: 1200,
+      approved: 3,
+      total: 6000 + 685 + 1200,
+      notPriced: [{ name: "P2", bases: ["per_signed"] }],
+      // On the media buyer plan in September, nothing approved; the editor has no plan.
+      notApproved: ["P3"],
+    });
+    // Asked before pay plans existed: base pay only, as before.
+    expect("plans" in lastMonthPay(context, [], "2026-09")).toBe(false);
+  });
+
+  test("next month's estimate adds each person's latest approved parts and names a plan with none", () => {
+    const sheet = buildCostsSheet(context, undefined, [], pay);
+    expect(sheet.lastMonthPay?.plans?.total).toBe(7885);
+    const parts = Object.fromEntries(
+      sheet.people.map(p => [p.name, p.planParts ?? "none"]),
+    );
+    expect(parts).toEqual({
+      P1: "none",
+      P2: "none",
+      P3: { month: null, usd: null },
+      P4: "none",
+      P5: { month: null, usd: null },
+      P6: { month: "2026-09", usd: 1200 },
+    });
+    const plan = payroll(sheet.people, sheet.projection, sheet.usdPer, {
+      money: String,
+      count: String,
+    });
+    expect(plan.parts).toBe(1200);
+    expect(plan.noPlanMonth).toEqual(["P3", "P5"]);
+    // The agents' client lines have no plan number yet: named, never $0.
+    expect(plan.unpriced).toContain("P1");
+  });
+
+  test("Goals' next-month payroll reads the same pay-plan parts as Costs", async () => {
+    // A made-up client answering the reads Goals makes: no plan, so only the costs and the pay plans.
+    const answers: Record<string, unknown> = {
+      cockpit_ceo_goals_context: {
+        plans: [],
+        targets: [],
+        payloads: {},
+        fingerprint: "0".repeat(32),
+        today: "2026-10-10",
+        scorecardsDone: null,
+        plan: null,
+      },
+      cockpit_ceo_costs_context: context,
+      cockpit_ceo_pay_costs: {
+        months: (pay.costs ?? []).map(m => ({ ...m, month: `${m.month}-01` })),
+      },
+      cockpit_ceo_pay_plans_list: pay.plans,
+    };
+    const client = {
+      rpc: async (name: string) =>
+        name in answers
+          ? { data: answers[name], error: null }
+          : { data: null, error: { message: `Unexpected RPC: ${name}` } },
+    } as unknown as SupabaseClient;
+    const board = await readGoalsBoard(client);
+    const sheet = buildCostsSheet(context, undefined, [], pay);
+    expect(board.costs?.people.map(p => [p.name, p.planParts ?? "none"])).toEqual(
+      sheet.people.map(p => [p.name, p.planParts ?? "none"]),
+    );
+    const money = { money: String, count: String };
+    const goals = payroll(board.costs!.people, sheet.projection, sheet.usdPer, money);
+    const costs = payroll(sheet.people, sheet.projection, sheet.usdPer, money);
+    expect(goals.total).toBe(costs.total);
+    expect(goals.parts).toBe(1200);
+    expect(goals.noPlanMonth).toEqual(["P3", "P5"]);
+    // Pay plans that cannot be read leave Goals' costs readable, with no parts added.
+    delete answers.cockpit_ceo_pay_plans_list;
+    const unread = await readGoalsBoard(client);
+    expect(unread.costs?.people.some(p => p.planParts)).toBe(false);
+  });
+
+  test("what could not be read is said, never counted as $0", () => {
+    const noCosts = buildCostsSheet(context, undefined, [], {
+      ...pay,
+      costs: null,
+    });
+    expect(noCosts.lastMonthPay?.plans).toBeNull();
+    expect(noCosts.people.some(p => p.planParts)).toBe(false);
+    const noPlans = buildCostsSheet(context, undefined, [], {
+      ...pay,
+      plans: null,
+    });
+    expect(noPlans.lastMonthPay?.plans?.commission).toBe(685);
+    expect(noPlans.lastMonthPay?.plans?.notApproved).toBeNull();
+    expect(noPlans.people.some(p => p.planParts)).toBe(false);
   });
 });

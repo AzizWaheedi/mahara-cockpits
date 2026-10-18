@@ -602,6 +602,120 @@ approval as changed. In order:
    through Composio too), then open Team & payroll on production as the CEO:
    both connections say Connected.
 
+### Pay plans (commission and bonuses)
+
+CEO cockpit, Team & payroll: the "Pay plans" card (one row per role plan) and
+the "Pay for [month]" card (a receipt per person). Bonuses and measured
+commission are added on top of base pay; base pay itself stays on the roster
+and on Hours and pay. Nothing here pays anyone, sends a message or writes to
+ClickUp: an approval freezes the figures for payroll. Everything is computed
+in Creative Triage when the card opens (`cockpit_ceo_pay_month`, migrations
+`20261018a` and `20261018b`); there is no job, no Edge Function and no key.
+Every change goes through a `cockpit_ceo_pay_*` function gated on the CEO's
+seat and leaves a `pay.*` audit row with ids, months and keys, never an
+amount. The contract is `docs/pay/PAY-PLANS.md`; where each number comes from
+is `apps/media-buyer-cockpit/src/pages/ceo/SOURCES.md`, "Pay plans".
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Approving a pay month: "Approve October from 3 November." | A month is earned in the month and paid with the next month's payroll. It can be approved from its settle day, the 3rd of the next month (`cockpit_pay_settle_day`), so late shows, closes and payments are in. Until then each person reads "In progress". | CEO |
+| A person stays "Waiting for you" or "In progress" after the settle day | The receipt lists what is missing. A typed part ("Waiting for your count"): Add a count, or "Nothing else for [month]" to set every count still waiting to none. A measure to confirm ("Needs your confirmation": churn, qualifying clients, owned creative, the CSM's contract start): Confirm, check the list behind the proposal, untick what does not belong. "Confirm close" or "Not a close" for a call centre close seen only on a client sheet; "Confirm setter" when the closer form and the last intro name different setters; paid in full at 90% to 99%. "No base set": set the person's pay on the roster. While anything is missing the total reads "at least $X", never a guess. | CEO |
+| "The figures changed since you opened the month. Reload and check again." | Approve sends each person's total and a hash of the paid inputs; the server works the month out again and refuses when they differ (a show was marked, a payment arrived, a count was typed). Reload the card, read the receipt again, approve. Approving twice is harmless: the second says the person was already approved. | CEO |
+| Something changed after a month was approved ("Changed since approval: +$20, 1 show marked 6 Nov") | An approved month never changes. Press "Add to [next month]": it pre-fills an **adjustment** in a later month (a signed amount, a note, and the month it corrects), which pays the difference with that month. A wrong approval can be withdrawn instead (Withdraw, with a reason), which is refused while a later approved month carries an adjustment for it ("Withdraw November first."). Typing straight into an approved month is refused ("October is approved. Add it to November as an adjustment."). | CEO |
+| A plan, a confirmation or a commission line cannot be changed ("October is approved for <name>. Plans can change from November.") | Plans, confirmations, commission lines and roles are dated by month, and nothing rewrites an approved month. Choose "Applies from" the month after the last approved one. "Fix a typo" replaces a plan of the same month only while no approval used it. | CEO |
+| Switching a bonus to cost per booking | Cost per booking is worked out every month beside cost per lead ("Also tracked: cost per booking $X this month, not paid on"). Open the role's plan (Pay plans, the role's row, or "Edit pay plan" on a person), then on the bonus's band ruler "Paid on" choose Cost per booking. The dialog suggests the bands × 4 (a booking costs about four leads at the $15 and $60 gates); check them, press "Switch to cost per booking", set "Applies from" to a month not yet approved, and "Save the pay plan". Nothing is saved before that last press. Switching back divides by 4. | CEO |
+| A cost-per-lead or cost-per-booking bonus reads missing, or a client is "left out" | The ads facts name each client left out of a pool and why: no board row for the card, no ad account linked, spend rows with no USD price (`cockpit_meta_ad_days.spend_usd` empty: the Meta ad-days section below), no lead-form campaign, bookings not stored for some days, or done with you (cost per booking only). Fix the source and reopen the month; a band part with no measured client stays missing, never $0. The creative strategist's guard ("rule not met") is a real $0 and says which clients fell under $500 or inside 14 days of their creative start. | Media buyer (accounts), Systems manager (rows) |
+| A call centre meeting is "credited to nobody" | Each meeting is credited to the agent who booked it: the dialer's BOOKED receipt, else the central Appointments sheet's caller, else the client sheet's caller. "Two agents claim it" or "not on the roster" are listed with why and paid to nobody: fix the dialer record or the sheet caller (a name must match one roster name). An unmarked meeting is neither a show nor a no-show until someone marks it. | Call centre lead, then CEO |
+| The closer's cash lines read "The money refresh last ran ..." or look short | Closed cash and set cash read the deal ledger (`cockpit_deal_payments`), which only the money refresh writes. See "Money attribution and the deal ledger" below. A payment missing from the ledger is not tied to his deal yet: tie it on the Transactions tab. | CEO, Systems manager |
+| The Costs tab names "on a pay plan, no approved month" | The closed month's payroll adds only approved commission and parts. Approve the month on Team & payroll; until then the estimate shows base pay and names the person. | CEO |
+
+Going live (the lead session, never a builder; in this order, contract
+section 11):
+
+1. Apply `20261018c_money_ties_deal_payments.sql` first (the money section
+   below), then `20261018a_ceo_pay_plans.sql`, then
+   `20261018b_ceo_pay_facts.sql`, each as one transaction through the CEO's
+   Composio Supabase connection; record each in
+   `supabase_migrations.schema_migrations` under its own name. Read back the
+   definitions and the grants: the six pay tables with row security and only
+   `SELECT` for service_role, the ten `cockpit_ceo_pay_*` functions executable
+   by authenticated only, every other `cockpit_pay_*` function by nobody.
+2. The native money release and the `cockpit-ceo-api` deploy (below).
+3. Seed: run `docs/pay/seed-2026-10.sql` as postgres. It acts as the CEO
+   through `cockpit_ceo_pay_plan_save` and `cockpit_ceo_pay_confirm`: the six
+   role plans from October 2026 and the CSM's contract start (2 Oct 2026).
+   Safe to run twice.
+4. Ship `scripts/ship.sh media-buyer` (and `client-success`, for the CSM's own
+   estimate), check the live bundle, reload the installed app.
+5. Only then move the two call centre agents' commission lines to "per client
+   appointment shown" ($5) and "per closed client deal" ($20) (the statement
+   at the end of the seed file): an older bundle cannot read the new bases.
+6. As the CEO on production: September and October compute, the reference
+   figures in `SOURCES.md` "Pay plans" match, nobody is approved.
+7. Set `pay_plans.state` to `deployed` in `docs/preserve/supabase-manifest.json`
+   and run `scripts/verify-preserved.py --via composio --problems`.
+
+## Money attribution and the deal ledger
+
+CEO cockpit, Money and Transactions tabs, and the Sales tab's front-end cash.
+Every payment in over 12 months (Whop, Tap, bank transfers and statement
+lines, hand-logged payments) is credited by one rule: a signed deal's money is
+its closer's until the deal's tied cash reaches its contract, at most 120 days
+after signing; the rest is the client card's CSM's. The CEO's ties
+(`cockpit_payment_ties`) are read before any automatic match. Every refresh
+writes the deal ledger (`cockpit_deal_payments`, one row per front-end
+payment) in the same transaction as the Money section; Sales front-end cash
+and the closer's pay read it. The contract is `docs/money/MONEY-ATTRIBUTION.md`.
+
+**Two copies of the rule must match.** The worker on the VPS
+(`hermes/ceo-refresh/native/adapters/money.js`, money every 15 minutes, and
+`native/adapters/growth.js` for Sales front-end cash) and the CEO API's copy
+(`supabase/functions/cockpit-ceo-api/finance/attribution.ts`,
+`finance/adapters/money.ts`, `finance/context.ts`), which "Refresh now"
+publishes. Change both in one commit and run
+`bun test scripts/money-attribution-parity.test.ts` and
+`bun test scripts/attribution.test.ts` in `apps/media-buyer-cockpit`, and
+`bun test` in `hermes/ceo-refresh`. Release them together: if only one is
+live, Money flips between two answers depending on who published last.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| Tying a payment to the right deal | Transactions tab, the payment's row, Attribute. Choose a signed deal (search by business, closer or day; it shows the contract and what is collected so far), a client card, or "Not client money"; choose this payment or every payment from this payer (by email, or the full payer name, never a first name); write why. The sheet shows what the tie will credit before you save. "Tied. It shows after the next money refresh (about 15 minutes)." The Money tab's "Who these payers are" offers "A signed deal" too. Each tie is one `money.tie` audit row with ids only. | CEO |
+| "That payment is not in the ledger yet; refresh Money first." | The tie only takes payments the last published Money section holds. Wait for the next refresh (or press Refresh now on Money), then tie. "Tie by email or the full payer name.": a payer tie needs an email or a name of two words and at least 6 letters. "That deal was voided": choose the signed deal that replaced it. | CEO |
+| A tie credits nothing ("1 of your ties credited no payment this run: tie 12 ...") | The note says why: its deal is not in the run (voided, or signed before the deals read), its card is gone, or no payment of the last 12 months is in its scope. The payments fall back to the automatic rules meanwhile. Remove the tie (Remove the tie, with a reason; the row is kept) and tie again to the right deal or card. | CEO |
+| A payment is credited to the CSM but the deal's closer earned it | The rule gives a deal's money to the closer only while the deal's tied cash is under its contract and within 120 days of signing; a tie does not lift that cap. Check the deal's contract and signing day on the closer form: money past the contract or the 120 days is back end by rule. If the form's contract is wrong, that record is what to correct; the next refresh credits again. A payment tied to no deal at all is credited by its card: tie it to the deal. | CEO |
+| Sales says "Front-end cash ... may be behind" (over 2 hours) or "is not read" | Front-end cash is the deal ledger as the last money refresh wrote it. Check the Money section's age on the Money tab and `cockpit_sections` key `money` `computed_at`. If Money is current but the ledger is not (`select max(recorded_at) from public.cockpit_deal_payments`), the worker is not passing `dealPayments` in its finance publication: the release is incomplete. "Not read" before the first refresh after go-live is expected. | Systems manager |
+| Sales says "The deal ledger holds N front-end payments ... but the Money section that wrote it counted M" | The ledger and the section were written by different refreshes, or a refresh wrote the section without the ledger. Run Refresh now on Money; the next growth run compares again. If it persists, compare `select count(*), sum(usd) from public.cockpit_deal_payments where active and day >= <the section's attribution.dealLedger.from>` with `attribution.dealLedger` in the money section. | Systems manager |
+| A typed deposit or kickoff amount is "typed, no payment seen" | Typed amounts are never money. Find the payment: upload the bank statement, wait for Whop or Tap, or log it by hand on Money; then tie it if no rule finds its deal. | CEO, client success |
+
+Going live (the lead session; contract `MONEY-ATTRIBUTION.md` section 4):
+
+1. Apply `20261018c_money_ties_deal_payments.sql` before any native release:
+   the new worker reads the finance snapshot's `ties` key and its money
+   section fails without it. Read back `cockpit_ceo_refresh_finance_snapshot()` (it returns `ties`)
+   and the grants (the two tables `SELECT` for service_role only; the tie and
+   untie functions executable by authenticated only; the snapshot by nobody;
+   the finish by service_role only).
+2. Native release of `hermes/ceo-refresh` (stage, doctors, dry run, canary
+   under the lock, link swap). Diff the live `money.js` and `growth.js` against
+   main before cutting it. The worker must send `dealPayments` with the money
+   output; after the canary, `cockpit_deal_payments` holds as many active rows
+   as the money section's `attribution.dealLedger.rows`.
+3. The Edge copy, from the same commit:
+   `python3 scripts/dev/deploy_composio.py cockpit-ceo-api --extra apps/media-buyer-cockpit/src/lib/kpi.ts --dry`,
+   then without `--dry`; read `verify_jwt` back as true.
+4. Ship `scripts/ship.sh media-buyer`.
+5. As the CEO, tie Turki AlDossary's payer email to the Madana deal, with the
+   note "The CEO, 2026-10-18: Turki who paid $500 and $1,500 is Madana; closer
+   Ahmed". Makers needs no tie: Whop links the $5,500 to its deal by email.
+6. After one refresh, on production: Makers' $5,500 is front end, the
+   closer's, remainder; Turki's $2,000 is front end on Madana, the closer's;
+   October's Sales front-end cash equals the deal ledger's October sum (with
+   the typed amounts beside it); the ledger rows match the published
+   transactions. Then set `money_ties.state` to `deployed` in
+   `docs/preserve/supabase-manifest.json` and run
+   `scripts/verify-preserved.py --via composio --problems`.
+
 ## Hubstaff watch
 
 CEO cockpit, Management tab: the "Hubstaff watch" card. Every 5 minutes the

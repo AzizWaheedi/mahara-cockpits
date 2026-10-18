@@ -27,12 +27,16 @@ import { NOT_VOIDED, VOIDED, voidedDeals } from "../voids.js";
  *
  * Verdicts go deeper than the client version because the data does. An ad can
  * be killed for cost, but it can also be told apart from a landing page that
- * loses the lead, a setter who cannot book the intro, and a closer who cannot
- * close the demo. Those are three different people's problems, and the worst
- * thing this screen could do is blame the creative for all of them.
+ * loses the lead and a setter who cannot book or confirm the intro. Those are
+ * different people's problems, and the worst thing this screen could do is
+ * blame the creative for all of them.
+ *
+ * Per ad, the funnel stops at the intro (the CEO, 2026-10-18: "the link to
+ * intro, that's it"): intros and confirmed intros, each lead once. Demos and
+ * closes per appointment stay in the payload and are judged on the Sales tab.
  *
  * Seven days judges freshness and cost. Thirty days judges the funnel, because
- * a demo takes a week to happen and a close takes longer.
+ * an intro takes days to be held.
  */
 const ACCOUNT = "746108264865897";
 /** Meta's account_status codes. Anything but 1 means the account is not delivering. */
@@ -74,8 +78,6 @@ function day(d) {
 const usd = (x) => Math.round(x * 100) / 100;
 /** Seven days at this spend with no lead is a kill; under it, too early to say. */
 const KILL_FLOOR = 30;
-/** The account needs this many closes before a campaign's close rate is held against it. */
-const CLOSE_BENCHMARK = 3;
 // A count that is not known (null link clicks) gives no rate, never 0.
 const rate = (a, b) => (a !== null && b > 0 ? a / b : null);
 /**
@@ -86,7 +88,8 @@ const rate = (a, b) => (a !== null && b > 0 ? a / b : null);
  */
 export function treeSql(from7, from30, to) {
     const ROAS_LEAD = `('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))`;
-    const leadsBooked = (type, as) => `count(*) filter (where ${ROAS_LEAD} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}' and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)})) as ${as}`;
+    // `status` narrows which of the lead's calls count; null counts every call.
+    const leadsBooked = (type, as, status = null) => `count(*) filter (where ${ROAS_LEAD} and exists (select 1 from public.calls b where b.contact_id = l.contact_id and b.call_type = '${type}'${status ? ` and ${status}` : ""} and b.booked_at >= l.lead_created_at and (b.booked_at at time zone 'Asia/Riyadh')::date <= ${day(to)})) as ${as}`;
     const funnel = (from, alias) => `
   ${alias}_ads as (
     select campaign_id, adset_id, ad_id,
@@ -103,9 +106,15 @@ export function treeSql(from7, from30, to) {
       count(*) filter (where ('roas-qualified' = any(coalesce(l.tags, '{}'::text[])) or 'roas-unqualified' = any(coalesce(l.tags, '{}'::text[])))) as leads,
       count(*) filter (where 'roas-qualified' = any(coalesce(l.tags, '{}'::text[]))) as qualified_leads,
       count(*) filter (where 'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))) as not_ready_leads,
-      -- Per lead, never per appointment: a lead with a no-show and a rebooked
-      -- intro is one lead that booked. Booked at or after the lead arrived, by the window's last day.
-      ${leadsBooked("intro", "leads_to_intro")},
+      -- Per lead, never per appointment (the CEO, 2026-10-18: "it should just
+      -- count once"): a lead with a no-show and a rebooked intro is one intro.
+      -- Booked at or after the lead arrived, by the window's last day, on the
+      -- lead's own ad. An intro leaves out a lead whose every intro was
+      -- cancelled; one marked invalid was held, so it stays (B2B's show rule
+      -- counts invalid as shown). A confirmed intro showed, or is still
+      -- confirmed once its time has passed (the CEO's rule, B2B's intros_qualified).
+      ${leadsBooked("intro", "leads_to_intro", "coalesce(b.status, '') <> 'cancelled'")},
+      ${leadsBooked("intro", "leads_to_confirmed_intro", "(b.status = 'showed' or (b.status = 'confirmed' and b.start_at <= now()))")},
       ${leadsBooked("demo", "leads_to_demo")}
     from public.leads l
     where l.ad_id is not null
@@ -128,7 +137,7 @@ export function treeSql(from7, from30, to) {
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.status='showed' or (c.status='confirmed' and c.start_at <= now()))) as demos_qualified,
       -- Shown at least seven days before the window's last day: old enough for
-      -- a close to have happened, so "demos do not close" can judge it.
+      -- a close to have happened. Kept in the payload; no verdict reads it since 2026-10-18.
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and (c.start_at at time zone 'Asia/Riyadh')::date <= ${day(to)} - 7 and (c.status='showed' or (c.status in ('confirmed','invalid') and c.start_at <= now()))) as demos_shown_mature,
       count(*) filter (where c.call_type='demo' and (c.start_at at time zone 'Asia/Riyadh')::date between ${day(from)} and ${day(to)} and c.status='cancelled') as demos_cancelled
     from credited_calls c
@@ -157,6 +166,7 @@ export function treeSql(from7, from30, to) {
     coalesce(${a}_leads.qualified_leads,0) as ${a}_qualified_leads,
     coalesce(${a}_leads.not_ready_leads,0) as ${a}_not_ready_leads,
     coalesce(${a}_leads.leads_to_intro,0) as ${a}_leads_to_intro,
+    coalesce(${a}_leads.leads_to_confirmed_intro,0) as ${a}_leads_to_confirmed_intro,
     coalesce(${a}_leads.leads_to_demo,0) as ${a}_leads_to_demo,
     coalesce(${a}_calls.intros_booked,0) as ${a}_intros_booked,
     coalesce(${a}_calls.intros_due,0) as ${a}_intros_due,
@@ -219,16 +229,17 @@ export function treeSql(from7, from30, to) {
                       union select ad_id from w30_calls union select ad_id from w30_deals)
     order by s.ad_id, s.date desc),
   setters as (
+    -- Each lead once (the CEO, 2026-10-18): a no-show and its rebooking are one lead, shown if either showed.
     select distinct on (c.ad_id) c.ad_id,
       coalesce(sr.display_name, 'Unknown setter') as setter_name,
-      count(*) filter (where c.status in ('showed','confirmed','invalid') and c.start_at < now()) as setter_shown,
-      count(*) filter (where c.start_at < now()) as setter_due
+      count(distinct c.contact_id) filter (where c.status in ('showed','confirmed','invalid') and c.start_at < now()) as setter_shown,
+      count(distinct c.contact_id) filter (where c.start_at < now()) as setter_due
     from credited_calls c
     left join public.sales_reps sr on sr.ghl_user_id = c.assigned_user_id
     where c.ad_id is not null and c.call_type = 'intro' and c.assigned_user_id is not null
       and (c.booked_at at time zone 'Asia/Riyadh')::date between ${day(from30)} and ${day(to)}
     group by c.ad_id, c.assigned_user_id, sr.display_name
-    order by c.ad_id, count(*) desc),
+    order by c.ad_id, count(distinct c.contact_id) desc),
   closers as (
     select distinct on (d.ad_id) d.ad_id, d.closer as closer_name, count(*) as closer_closes
     from credited_deals d
@@ -268,6 +279,7 @@ const COUNTS = [
     "qualifiedLeads",
     "notReadyLeads",
     "leadsToIntro",
+    "leadsToConfirmedIntro",
     "leadsToDemo",
     "introsBooked",
     "introsDue",
@@ -291,6 +303,7 @@ const COLUMN = {
     qualifiedLeads: "qualified_leads",
     notReadyLeads: "not_ready_leads",
     leadsToIntro: "leads_to_intro",
+    leadsToConfirmedIntro: "leads_to_confirmed_intro",
     leadsToDemo: "leads_to_demo",
     introsBooked: "intros_booked",
     introsDue: "intros_due",
@@ -380,6 +393,11 @@ function finish(w) {
     // Per lead (SOURCES.md): the leads that booked an intro, out of the leads.
     // Appointments (introsBooked) can outnumber leads; this never can.
     w.bookRate = ratio(w.leadsToIntro, w.leads);
+    // Intros and confirmed intros, each lead once (the CEO, 2026-10-18): what
+    // the Ads tab shows. The appointment counts below stay in the payload only.
+    w.costPerIntro = per(w.spend, w.leadsToIntro);
+    w.costPerConfirmedIntro = per(w.spend, w.leadsToConfirmedIntro);
+    w.confirmedIntroRate = ratio(w.leadsToConfirmedIntro, w.leadsToIntro);
     w.costPerIntroBooked = per(w.spend, w.introsBooked);
     w.introShowRate = ratio(w.introsShown, w.introsDue);
     w.costPerIntroShown = per(w.spend, w.introsShown);
@@ -444,9 +462,9 @@ function peopleOf(ads) {
  * What to do about this ad, and whose problem it is.
  *
  * Money is judged on seven days against Aziz's cost per lead gate. The funnel
- * is judged on thirty, because a demo takes a week to happen. And the funnel
+ * is judged on thirty, because an intro takes days to be held. And the funnel
  * verdicts name a stage rather than the ad, because an ad that fills the
- * calendar with intros nobody converts is a setter problem, and switching the
+ * calendar with intros nobody confirms is a setter problem, and switching the
  * ad off would be the one thing that makes it worse.
  */
 function judge(running, w7, w30, staleSince, kind) {
@@ -510,24 +528,19 @@ function judge(running, w7, w30, staleSince, kind) {
             reason: `Frequency ${w7.frequency.toFixed(2)}: the same people keep seeing it. Refresh the creative before the cost moves.`,
             owner: "ads",
         };
-    if (w30.leads >= 8 && w30.introsBooked === 0)
+    // Per lead, as the screen counts intros (the CEO, 2026-10-18): demos and
+    // closes are the Sales tab's to judge, never an ad's.
+    if (w30.leads >= 8 && w30.leadsToIntro === 0)
         return {
             verdict: "leads do not book",
             reason: `${w30.leads} leads in thirty days and no intro booked. The ad is doing its job; the follow-up is not.`,
             owner: "setter",
         };
-    if (w30.introsShown >= 5 && w30.demosBooked === 0)
+    if (w30.leadsToIntro >= 5 && w30.leadsToConfirmedIntro === 0)
         return {
-            verdict: "intros do not convert",
-            reason: `${w30.introsShown} intros shown and no demo booked. That is the intro call, not the ad.`,
+            verdict: "intros do not confirm",
+            reason: `${w30.leadsToIntro} leads booked an intro in thirty days and none of them showed or stayed confirmed. That is the setter's confirming, not the ad.`,
             owner: "setter",
-        };
-    // Only demos old enough to have closed: a demo a week before the last day.
-    if (w30.demosShownMature >= 3 && w30.closes === 0)
-        return {
-            verdict: "demos do not close",
-            reason: `${w30.demosShownMature} demos shown at least a week ago and nothing signed. That is the closing call, not the ad.`,
-            owner: "closer",
         };
     if (w7.cpl > CPL_GATE)
         return {
@@ -548,9 +561,9 @@ function judge(running, w7, w30, staleSince, kind) {
  */
 function constraintOf(c, account) {
     // Every stage is a share of the stage before it, so it can never pass 100%:
-    // leads that booked (not appointments), intros due that showed, and intros
-    // shown that went on to a demo (the ribbon's intro to demo). Closes are not
-    // tied to a demo, so that one is capped.
+    // leads that booked an intro, and of those the ones whose intro was
+    // confirmed, each lead once (the CEO, 2026-10-18). Demos and closes are
+    // not an ad's stages; the Sales tab judges them.
     const share = (a, b) => {
         const r = rate(a, b);
         return r === null ? null : Math.min(1, r);
@@ -574,47 +587,29 @@ function constraintOf(c, account) {
         },
         {
             key: "book",
-            label: "leads to intros booked",
+            label: "leads to intros",
             owner: "setter",
             mine: share(c.leadsToIntro, c.leads),
             all: share(account.leadsToIntro, account.leads),
             floor: 8,
         },
         {
-            key: "show",
-            label: "intros due to shown",
+            key: "confirm",
+            label: "intros to confirmed intros",
             owner: "setter",
-            mine: share(c.introsShown, c.introsDue),
-            all: share(account.introsShown, account.introsDue),
+            mine: share(c.leadsToConfirmedIntro, c.leadsToIntro),
+            all: share(account.leadsToConfirmedIntro, account.leadsToIntro),
             floor: 5,
-        },
-        {
-            key: "demo",
-            label: "intros shown to demos booked",
-            owner: "setter",
-            mine: share(c.introsAdvanced, c.introsShown),
-            all: share(account.introsAdvanced, account.introsShown),
-            floor: 5,
-        },
-        {
-            key: "close",
-            label: "demos shown to closes",
-            owner: "closer",
-            mine: share(c.closes, c.demosShown),
-            all: share(account.closes, account.demosShown),
-            floor: 3,
         },
     ];
     const denom = {
         click: c.impressions,
         optin: c.linkClicks,
         book: c.leads,
-        show: c.introsDue,
-        demo: c.introsShown,
-        close: c.demosShown,
+        confirm: c.leadsToIntro,
     };
-    // Fewer than three closes on the whole account is no benchmark for a closer.
-    const closeBenchmark = account.closes >= CLOSE_BENCHMARK;
+    // More intro appointments than leads means leads lost their ad on the way
+    // in, so the stages over leads would blame the wrong person.
     const leadsUnderCounted = c.introsBooked > c.leads;
     let worst = null;
     let worstGap = 0;
@@ -624,8 +619,6 @@ function constraintOf(c, account) {
         if (denom[s.key] < s.floor)
             continue; // too few to judge
         if (leadsUnderCounted && (s.key === "optin" || s.key === "book"))
-            continue;
-        if (s.key === "close" && !closeBenchmark)
             continue;
         const gap = (s.all - s.mine) / s.all;
         if (gap > worstGap) {
@@ -927,11 +920,11 @@ export async function adsPayload(from7, from30, today, nowMs = Date.now()) {
         });
         notes.push({
             level: "info",
-            text: `Every row follows an ad from the first impression to the signed contract, through the leads, intro calls, demos and closes credited to it. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before these thirty days still shows here, at $0 spend, when its leads, calls or deals fall inside them. Seven days judges cost and freshness; thirty days judges the funnel, because a demo takes a week to happen. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per demo has no gate set, so it is shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
+            text: `Every row follows an ad from the first impression to the signed contract, through its leads, their intros and the deals credited to it. Intros are counted once per lead, however often the intro was rebooked: the leads from these days, on their own ad, with an intro booked at or after they came in that was not cancelled. An intro marked invalid was held, so it counts. A confirmed intro is one of those whose intro showed, or is still marked confirmed after its time. A lead that went straight to a demo is not an intro. Calls and deals are credited to the ad on the contact's lead record when it is one of this account's ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal. An ad switched off before these thirty days still shows here, at $0 spend, when its leads, calls or deals fall inside them. Seven days judges cost and freshness; thirty days judges the funnel, because an intro takes days to be held. Meta leads are what Meta claims; leads are what reached the CRM. Cost per lead is against Aziz's $${CPL_GATE} gate. Cost per intro and per confirmed intro have no gate set, so they are shown and never judged. Frequency is Meta's own: impressions ÷ people reached over the window at each level, on Meta's account days (${timeZone}, through ${until}).`,
         });
         notes.push({
             level: "info",
-            text: `A verdict names whose problem it is. "Kill", "hold", "scale" and "fatiguing" are the ad. "Leads do not book" and "intros do not convert" are the setter. "Demos do not close" is the closer. Switching an ad off never fixes the last three; it just stops the calendar filling. Retargeting and other campaigns that are not lead gen are not judged on cost per lead.`,
+            text: `A verdict names whose problem it is. "Kill", "hold", "scale" and "fatiguing" are the ad. "Leads do not book" and "intros do not confirm" are the setter. Switching an ad off never fixes those two; it just stops the calendar filling. Demos and closes are judged on the Sales tab, not per ad. Retargeting and other campaigns that are not lead gen are not judged on cost per lead.`,
         });
         if (staleSince) {
             const ranAt = freshestAt

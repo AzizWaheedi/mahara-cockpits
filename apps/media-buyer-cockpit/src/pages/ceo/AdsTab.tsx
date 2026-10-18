@@ -41,26 +41,25 @@ import type {
   B2bAdNode,
   B2bAdsPayload,
   B2bAdWindow,
-  B2bPeople,
   B2bVerdict,
 } from "@/types/ceo/payloads";
 import {
+  CONFIRMED_INTROS_HINT,
   COVERAGE_HINT,
   constraintText,
   coverageLine,
-  DEMOS_BOOKED_HINT,
-  DEMOS_SHOWN_HINT,
   Fact,
   FIT_HINT,
   frequencyFact,
   frequencyHint,
-  INTRO_TO_DEMO_HINT,
-  INTROS_BOOKED_HINT,
-  INTROS_SHOWN_HINT,
+  INTROS_HINT,
+  introFigures,
   LEAD_TO_INTRO_HINT,
   LEADS_HINT,
   NA_ZERO,
   Num,
+  People,
+  RETIRED_STAGES,
   type StageFact,
   TONE,
   verdictChips,
@@ -72,10 +71,12 @@ import type { CeoTabProps } from "./types";
 
 /**
  * Mahara's own ad account, read the way the old B2B dashboard read it and
- * further: the whole funnel from the impression to the signed contract, with
- * the unit cost at each stage, the conversion between stages, the stage that
- * is holding a campaign back, and the people who worked its calls. A switch
- * on every row.
+ * further: the funnel from the impression to the signed contract, with the
+ * unit cost at each stage, the conversion between stages, the stage that is
+ * holding a campaign back, and the people who worked its calls. A switch on
+ * every row. Per ad the calls stop at the intro (the CEO, 2026-10-18: "the
+ * link to intro, that's it"): intros and confirmed intros, each lead once.
+ * Demos are read on the Sales tab.
  *
  * Two ways to look at it. The funnel view lists the campaigns: a campaign
  * that spent carries the full stage-by-stage ribbon, and its ad sets and ads
@@ -101,16 +102,17 @@ const CONSTRAINT_OWNER: Record<string, string> = {
   closer: "the closer",
 };
 
-/** Which ribbon stage a constraint points at. */
+/**
+ * Which ribbon stage a constraint points at. A stage that read appointments
+ * or demos (RETIRED_STAGES) is left off the screen until the next refresh.
+ */
 const CONSTRAINT_STAGE: Record<string, string> = {
   "impressions to link clicks": "clicks",
   "clicks to leads": "leads",
-  "leads to intros booked": "booked",
-  "intros due to shown": "shown",
-  // The label before 2026-10-16, on a payload stored before then.
-  "intros booked to shown": "shown",
-  "intros shown to demos booked": "demos",
-  "demos shown to closes": "signed",
+  "leads to intros": "intros",
+  // The label before 2026-10-18, on a payload stored before then.
+  "leads to intros booked": "intros",
+  "intros to confirmed intros": "confirmed",
 };
 
 /** The cost per lead gate every tab judges against. */
@@ -140,7 +142,8 @@ const x = (v: number | null) => (v === null ? null : times(v));
 type Stage = {
   key: string;
   label: string;
-  value: string;
+  /** The count; the explained n/a on a payload that does not carry it. */
+  value: ReactNode;
   /** Label-first rates and unit costs for this stage, e.g. "Show rate 60%", "Cost $40". */
   facts: StageFact[];
   /** What the stage counts, on hover. */
@@ -149,6 +152,7 @@ type Stage = {
 
 /** `freqHint` names whose frequency it is and the days it covers (`frequencyHint`). */
 function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
+  const i = introFigures(w);
   return [
     {
       key: "impressions",
@@ -193,64 +197,43 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
       hint: LEADS_HINT,
     },
     {
-      key: "booked",
-      label: "Intros booked",
-      value: count(w.introsBooked),
+      key: "intros",
+      label: "Intros",
+      value: i.intros === null ? <Na hint={i.na} /> : count(i.intros),
       facts: [
         {
           label: "Lead to intro",
-          v: w.bookRate,
+          v: i.leadToIntro,
           f: pct,
           hint: LEAD_TO_INTRO_HINT,
+          na: i.na,
         },
-        { label: "Cost", v: w.costPerIntroBooked, f: money },
+        { label: "Cost", v: i.costPerIntro, f: money, na: i.na },
       ],
-      hint: INTROS_BOOKED_HINT,
+      hint: INTROS_HINT,
     },
     {
-      key: "shown",
-      label: "Intros shown",
-      value: `${count(w.introsShown)}${w.introsDue ? ` of ${count(w.introsDue)}` : ""}`,
+      // Out of the intros above it, so the step reads at a glance: "2 of 9".
+      key: "confirmed",
+      label: "Confirmed intros",
+      value:
+        i.confirmed === null ? (
+          <Na hint={i.na} />
+        ) : (
+          `${count(i.confirmed)}${i.intros ? ` of ${count(i.intros)}` : ""}`
+        ),
       facts: [
-        { label: "Show rate", v: w.introShowRate, f: pct },
-        { label: "Cost", v: w.costPerIntroShown, f: money },
+        { label: "Of intros", v: i.confirmedShare, f: pct, na: i.na },
+        { label: "Cost", v: i.costPerConfirmed, f: money, na: i.na },
       ],
-      hint: INTROS_SHOWN_HINT,
-    },
-    {
-      key: "demos",
-      label: "Demos booked",
-      value: count(w.demosBooked),
-      facts: [
-        {
-          label: "Intro to demo",
-          v: w.introToDemo,
-          f: pct,
-          hint: INTRO_TO_DEMO_HINT,
-        },
-        { label: "Cost", v: w.costPerDemoBooked, f: money },
-      ],
-      hint: DEMOS_BOOKED_HINT,
-    },
-    {
-      key: "demoshown",
-      label: "Demos shown",
-      value: `${count(w.demosShown)}${w.demosDue ? ` of ${count(w.demosDue)}` : ""}`,
-      facts: [
-        { label: "Show rate", v: w.demoShowRate, f: pct },
-        { label: "Cost", v: w.costPerDemo, f: money },
-      ],
-      hint: DEMOS_SHOWN_HINT,
+      hint: CONFIRMED_INTROS_HINT,
     },
     {
       key: "signed",
       label: "Signed",
       value: count(w.closes),
-      facts: [
-        { label: "Close rate", v: w.closeRate, f: pct },
-        { label: "CAC", v: w.cac, f: money },
-      ],
-      hint: "Close rate is signed over demos shown. CAC is spend over signed.",
+      facts: [{ label: "CAC", v: w.cac, f: money }],
+      hint: "Signed deals credited to the ad. CAC is spend over signed.",
     },
     {
       key: "revenue",
@@ -269,8 +252,11 @@ function stagesOf(w: B2bAdWindow, freqHint: string): Stage[] {
  * The funnel as a grid of stages that wraps to the width it has: the stage,
  * its count, then its rates and unit costs, label first. Two across on a
  * phone, three on a tablet, five on a laptop, and the reading order never
- * changes. The stage a campaign is stuck on is outlined, so the eye lands on
- * the fix. The spend leads the ribbon unless a tile beside it already shows it.
+ * changes. A campaign's ribbon, which opens with its spend, is two rows of
+ * four on a laptop: what Meta delivered, then what the CRM made of it, so
+ * intros and confirmed intros always sit side by side. The stage a campaign
+ * is stuck on is outlined, so the eye lands on the fix. The spend leads the
+ * ribbon unless a tile beside it already shows it.
  */
 function FunnelRibbon({
   w,
@@ -294,7 +280,10 @@ function FunnelRibbon({
   return (
     <ol
       aria-label="The funnel, stage by stage"
-      className="-mx-2 grid grid-cols-2 gap-2 tabular-nums @md:grid-cols-3 @2xl:grid-cols-5"
+      className={cn(
+        "-mx-2 grid grid-cols-2 gap-2 tabular-nums @md:grid-cols-3",
+        cells.length === 8 ? "@2xl:grid-cols-4" : "@2xl:grid-cols-5",
+      )}
     >
       {cells.map(s => {
         const isStuck = stuck === s.key;
@@ -321,7 +310,7 @@ function FunnelRibbon({
               <span className="flex flex-wrap gap-x-3 text-xs leading-5 text-muted-foreground">
                 {s.facts.map(f => (
                   <Fact key={f.label} label={f.label} hint={f.hint}>
-                    <Num v={f.v} f={f.f} />
+                    <Num v={f.v} f={f.f} na={f.na} />
                   </Fact>
                 ))}
               </span>
@@ -333,21 +322,16 @@ function FunnelRibbon({
   );
 }
 
-/** Anything to read in a window: spend, or a lead, call or close it produced. */
+/** Anything to read in a window: spend, or a lead or close it produced. An intro is always a lead's. */
 function hasActivity(w: B2bAdWindow): boolean {
-  return (
-    w.spend > 0 ||
-    w.leads > 0 ||
-    w.introsBooked > 0 ||
-    w.demosBooked > 0 ||
-    w.closes > 0
-  );
+  return w.spend > 0 || w.leads > 0 || w.closes > 0;
 }
 
 /**
  * Spend, leads and cost per lead on one quiet line: what an ad set or an ad
- * needs at a glance. Signed deals join it when there are any, so a close is
- * never hidden behind the table view.
+ * needs at a glance. Intros and confirmed intros follow when there are leads
+ * (each lead once), and signed deals when there are any, so neither is
+ * hidden behind the table view.
  */
 function CompactLine({
   w,
@@ -356,6 +340,7 @@ function CompactLine({
   w: B2bAdWindow;
   children?: ReactNode;
 }) {
+  const i = introFigures(w);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
       <Fact label="Spend">{money(w.spend)}</Fact>
@@ -363,27 +348,19 @@ function CompactLine({
       <Fact label="CPL">
         <Num v={w.cpl} f={money} />
       </Fact>
+      {w.leads > 0 ? (
+        <>
+          <Fact label="Intros" hint={INTROS_HINT}>
+            <Num v={i.intros} f={count} na={i.na} />
+          </Fact>
+          <Fact label="Confirmed" hint={CONFIRMED_INTROS_HINT}>
+            <Num v={i.confirmed} f={count} na={i.na} />
+          </Fact>
+        </>
+      ) : null}
       {w.closes > 0 ? <Fact label="Signed">{count(w.closes)}</Fact> : null}
       {children}
     </div>
-  );
-}
-
-function People({ p }: { p: B2bPeople }) {
-  if (!p.setter && !p.closer) return null;
-  return (
-    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      {p.setter ? (
-        <span title="The setter with the most intro calls on this in thirty days, and their show rate on them">
-          {`Setter ${p.setter.name}: ${count(p.setter.shown)} of ${count(p.setter.due)} shown`}
-        </span>
-      ) : null}
-      {p.closer ? (
-        <span title="The closer with the most signed deals from this in thirty days">
-          {`Closer ${p.closer.name}: ${count(p.closer.closes)} signed`}
-        </span>
-      ) : null}
-    </p>
   );
 }
 
@@ -541,7 +518,7 @@ function AdRow({ ad, ...r }: RowProps & { ad: B2bAdNode }) {
             {owner ? <span>{owner}</span> : null}
           </CompactLine>
           <p className="text-xs text-muted-foreground">{ad.verdict.reason}</p>
-          <People p={ad.people} />
+          <People p={ad.people} windows={r.payload.windows} />
           <ManageBar
             level="ad"
             id={ad.id}
@@ -669,7 +646,7 @@ function CampaignRow({
         </RowControls>
       </div>
       <div className="@container mt-3 space-y-3 pl-6">
-        {c.constraint ? (
+        {c.constraint && !RETIRED_STAGES.has(c.constraint.stage) ? (
           <p className="flex items-start gap-1.5 text-xs">
             <TriangleAlert
               className="mt-0.5 size-3.5 shrink-0"
@@ -697,7 +674,7 @@ function CampaignRow({
         ) : (
           <CompactLine w={w} />
         )}
-        <People p={c.people} />
+        <People p={c.people} windows={r.payload.windows} />
         <ManageBar
           level="campaign"
           id={c.id}
@@ -745,6 +722,8 @@ type Col = {
   fmt: (v: number) => string;
   /** Lower is better, so the sort arrow and the tint read the right way. */
   low?: boolean;
+  /** An intro figure: n/a on a payload stored before intros were counted once per lead. */
+  intro?: boolean;
 };
 
 const COLS: Col[] = [
@@ -780,59 +759,48 @@ const COLS: Col[] = [
     fmt: pct,
   },
   {
-    key: "introsBooked",
+    key: "intros",
     label: "Intros",
-    title: "Intro calls booked",
-    get: w => w.introsBooked,
+    title: INTROS_HINT,
+    get: w => introFigures(w).intros,
     fmt: count,
+    intro: true,
   },
   {
-    key: "introShowRate",
-    label: "Show",
-    title:
-      "Intros shown over intros due. Confirmed, showed or invalid counts as shown.",
-    get: w => w.introShowRate,
-    fmt: pct,
-  },
-  {
-    key: "costPerIntroShown",
+    key: "costPerIntro",
     label: "$/intro",
-    title: "Spend over intros shown",
-    get: w => w.costPerIntroShown,
+    title: "Spend over intros, each lead once",
+    get: w => introFigures(w).costPerIntro,
     fmt: money,
     low: true,
+    intro: true,
   },
   {
-    key: "demosBooked",
-    label: "Demos",
-    title: "Demos booked",
-    get: w => w.demosBooked,
+    key: "confirmed",
+    label: "Confirmed",
+    title: CONFIRMED_INTROS_HINT,
+    get: w => introFigures(w).confirmed,
     fmt: count,
+    intro: true,
   },
   {
-    key: "demoShowRate",
-    label: "Show",
-    title:
-      "Demos shown over demos due. Confirmed, showed or invalid counts as shown.",
-    get: w => w.demoShowRate,
+    key: "confirmedShare",
+    label: "Of intros",
+    title: "Confirmed intros over intros, each lead once",
+    get: w => introFigures(w).confirmedShare,
     fmt: pct,
+    intro: true,
   },
   {
-    key: "costPerDemo",
-    label: "$/demo",
-    title: "Spend over demos shown",
-    get: w => w.costPerDemo,
+    key: "costPerConfirmed",
+    label: "$/confirmed",
+    title: "Spend over confirmed intros, each lead once",
+    get: w => introFigures(w).costPerConfirmed,
     fmt: money,
     low: true,
+    intro: true,
   },
   { key: "closes", label: "Signed", get: w => w.closes, fmt: count },
-  {
-    key: "closeRate",
-    label: "Close",
-    title: "Signed over demos shown",
-    get: w => w.closeRate,
-    fmt: pct,
-  },
   {
     key: "cac",
     label: "CAC",
@@ -967,7 +935,11 @@ function AdTable({
                     key={c.key}
                     className="whitespace-nowrap px-2 py-2 text-right"
                   >
-                    <Num v={c.get(w)} f={c.fmt} />
+                    <Num
+                      v={c.get(w)}
+                      f={c.fmt}
+                      na={c.intro ? introFigures(w).na : undefined}
+                    />
                   </td>
                 ))}
                 <td className="whitespace-nowrap px-2 py-2 text-right text-muted-foreground">
@@ -1148,6 +1120,7 @@ export function AdsTab({ sections }: CeoTabProps) {
       ? p.accountStatus.label
       : null;
   const cplTone = gateTone(a.cpl, CPL_GATE);
+  const ai = introFigures(a);
   const retargeting = p.retargetingSpend[win];
   const rows: RowProps = {
     win,
@@ -1217,10 +1190,15 @@ export function AdsTab({ sections }: CeoTabProps) {
               />
               <StatTile
                 variant="plain"
-                label="Close rate"
-                value={dash(a.closeRate, pct)}
-                naHint={NA_ZERO}
-                sub={`${count(a.closes)} signed`}
+                label="Cost per confirmed intro"
+                value={dash(ai.costPerConfirmed, money)}
+                naHint={ai.na}
+                sub={
+                  ai.intros === null || ai.confirmed === null
+                    ? undefined
+                    : `${count(ai.confirmed)} of ${plural(ai.intros, "intro")} confirmed`
+                }
+                hint="Lead-gen spend over the leads whose intro showed, or is still marked confirmed after its time. Each lead counts once, however often the intro was rebooked."
               />
               <StatTile
                 variant="plain"

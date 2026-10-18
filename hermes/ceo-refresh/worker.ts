@@ -67,6 +67,7 @@ type ComputedSection = {
   sources: Row[];
   daily: DailyPoint[];
   clientPayments?: Row[];
+  dealPayments?: Row[];
   financeRevision?: number;
   values: Row[];
 };
@@ -329,10 +330,12 @@ export async function runRefresh(options: RefreshOptions): Promise<RefreshReport
             const failedReceipt = driver.receipts.slice(started).find(receipt => receipt.section === key && (receipt.phase !== "response" || receipt.http_status === null || receipt.http_status < 200 || receipt.http_status >= 300));
             if (failedReceipt) throw new Error(`${failedReceipt.provider} provider did not confirm ${failedReceipt.resource}${failedReceipt.error ? `: ${failedReceipt.error}` : ""}`);
             const currentValues = extractCurrentValues(key, payload);
-            const extra = result as typeof result & { clientPayments?: unknown; financeRevision?: number };
+            const extra = result as typeof result & { clientPayments?: unknown; dealPayments?: unknown; financeRevision?: number };
             const clientPayments = key === "money" ? rows(extra.clientPayments, "money client payment snapshots") : undefined;
+            // The deal ledger (cockpit_deal_payments) is written from this, in the same transaction as client payments.
+            const dealPayments = key === "money" ? rows(extra.dealPayments, "money deal payments") : undefined;
             if (key === "money" && Number(extra.financeRevision) !== Number(financeSnapshot?.revision)) throw new Error("Money calculation used a different finance source revision");
-            results.set(key, { key, label: LABELS[key], payload, sources, daily, values: currentValues, clientPayments });
+            results.set(key, { key, label: LABELS[key], payload, sources, daily, values: currentValues, clientPayments, dealPayments });
             reports.set(key, { key, status: "computed", sourceCount: sources.length, dailyCount: daily.length, metricCount: currentValues.length });
           } catch (error) {
             const failure = asFailure(key, error);
@@ -394,6 +397,7 @@ export async function runRefresh(options: RefreshOptions): Promise<RefreshReport
   const financePayload = completeFinance ? {
     sections: financeSections.map(section => ({ key: section.key, label: section.label, payload: section.payload, sources: section.sources, daily: section.daily })),
     payments: financeSections.find(section => section.key === "money")!.clientPayments!,
+    dealPayments: financeSections.find(section => section.key === "money")!.dealPayments!,
   } : null;
   const publication = {
     sections: successful.filter(section => section.key !== "money" && section.key !== "expenses").map(section => ({ key: section.key, label: section.label, payload: section.payload, sources: section.sources, daily: section.daily })),

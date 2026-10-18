@@ -18,7 +18,10 @@ It compares docs/preserve/supabase-manifest.json and docs/preserve/vps-manifest.
   table with no grant, both jobs, cockpit-hours-sync with the JWT check off and cockpit-hours-api with it on),
   the hiring objects of 2026-10-11 (the seven cockpit_hiring_ tables, the CEO's read policy on candidates and
   applications, cockpit_hiring_claim_run, the three mahara-hiring-* jobs, hiring-sync with the JWT check off
-  and hiring-api with it on, the five secret names, a board copy under 30 minutes old), every recorded
+  and hiring-api with it on, the five secret names, a board copy under 30 minutes old), the pay-plans and
+  money-ties objects of 2026-10-18 (the pay plan, entry, confirmation, approval and history tables, the deal
+  ledger and the CEO's money ties, their guards, the CEO RPCs granted to authenticated only and everything
+  else to no browser role, a deal ledger written in the last 2 hours), every recorded
   table and view (columns, row security, grants,
   triggers, policies, indexes, constraints), every recorded function (md5 of its definition), every
   recorded pg_cron job, the settings switches, the WhatsApp template rows, the vault secret names, the
@@ -1170,10 +1173,11 @@ def check_edge(rep: Report, mg: Mgmt, man: Dict[str, Any]) -> None:
 
 
 # A section of the manifest added after the inventory (team_hours 2026-10-09, hiring 2026-10-11, hours_watch
-# 2026-10-13): what must exist once it is deployed. Before its first deploy (state pending_deploy) an absent
-# object is ok, not deployed yet; once deployed it is MISSING. A JWT check, row security, grant or schedule that
-# drifts is CHANGED either way.
-SECTIONS = (("team_hours", "team-hours"), ("hiring", "hiring"), ("hours_watch", "hours-watch"))
+# 2026-10-13, pay_plans and money_ties 2026-10-18): what must exist once it is deployed. Before its first deploy
+# (state pending_deploy) an absent object is ok, not deployed yet; once deployed it is MISSING. A JWT check, row
+# security, grant or schedule that drifts is CHANGED either way.
+SECTIONS = (("team_hours", "team-hours"), ("hiring", "hiring"), ("hours_watch", "hours-watch"),
+            ("pay_plans", "pay-plans"), ("money_ties", "money-ties"))
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
@@ -2445,6 +2449,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             ("team-hours", lambda: check_section(rep, mg, sman, "team_hours", "team-hours")),
             ("hiring", lambda: check_section(rep, mg, sman, "hiring", "hiring")),
             ("hours-watch", lambda: check_section(rep, mg, sman, "hours_watch", "hours-watch")),
+            ("pay-plans", lambda: check_section(rep, mg, sman, "pay_plans", "pay-plans")),
+            ("money-ties", lambda: check_section(rep, mg, sman, "money_ties", "money-ties")),
             ("Edge Function sources", lambda: check_function_sources(rep, mg, sman, args.ref, ref_ok)),
             ("function secret names", lambda: check_secrets(rep, mg, sman)),
             ("CRON_SECRET pairing", lambda: check_secret_pair(rep, mg)),

@@ -6,7 +6,7 @@ import {
   rangeEnd,
   rangeStart,
 } from "./chartKit";
-import { isNum, money, pct } from "./format";
+import { dateTime, isNum, money, shortDate } from "./format";
 
 /**
  * One timeframe for a whole tab (Aziz, 2026-09-21: "any number with a time
@@ -163,6 +163,7 @@ export function windowFromDaily(
   const demosCancelled = sum(d => d.demosCancelled);
   const closes = sum(d => d.closes);
   const contracted = r2(sum(d => d.contracted));
+  // Typed on the forms: shown beside front-end cash, never added to it.
   const deposit = r2(sum(d => d.deposit));
   // Kickoff cash is read only for days the worker read the form (from
   // 4 Oct 2026); a window with no such day says "not read", never $0.
@@ -170,7 +171,38 @@ export function windowFromDaily(
   const kickoff = kickoffDays.length ? r2(sum(d => d.kickoff ?? 0)) : null;
   const kickoffConfirmed =
     kickoff === null ? undefined : r2(sum(d => d.kickoffConfirmed ?? 0));
-  const frontEnd = r2(deposit + (kickoff ?? 0));
+  // Front-end cash is the money paid on signed deals by the day it arrived
+  // (MONEY-ATTRIBUTION.md rule 6). A day the deal ledger does not cover is
+  // null, so a window with no such day is not read, never $0; one that starts
+  // before the ledger says from which day it counts.
+  const paidDays = rows.filter(d => isNum(d.frontEndPaid));
+  const paid = paidDays.length ? r2(sum(d => d.frontEndPaid ?? 0)) : null;
+  const fe: FunnelWindow["frontEndCash"] = {
+    deposit,
+    kickoff,
+    total: paid,
+    deals: closes,
+    // Which deposit a rail backs needs the server's deal join; not kept per day.
+    dealsConfirmed: 0,
+    confirmed: 0,
+    confirmedShare: null,
+    kickoffConfirmed,
+    kickoffConfirmedShare:
+      kickoff === null || kickoffConfirmed === undefined
+        ? null
+        : share(kickoffConfirmed, kickoff),
+    paid,
+    // The split by kind, by rail and by closer is not kept per day.
+    paidDeposit: null,
+    paidRemainder: null,
+    byRail: null,
+    byCloser: null,
+    typed: { deposit, kickoff },
+    typedNotSeen: null,
+    attributedAt: null,
+    paidFrom:
+      paid !== null && paidDays.length < rows.length ? paidDays[0].date : null,
+  };
   return {
     from,
     to,
@@ -226,24 +258,10 @@ export function windowFromDaily(
     qualifiedCloseRate: share(closes, demosQualified),
     contracted,
     cash: deposit,
-    frontEndCash: {
-      deposit,
-      kickoff,
-      total: frontEnd,
-      deals: closes,
-      // Which deposit a rail backs needs the server's deal join; not kept per day.
-      dealsConfirmed: 0,
-      confirmed: 0,
-      confirmedShare: null,
-      kickoffConfirmed,
-      kickoffConfirmedShare:
-        kickoff === null || kickoffConfirmed === undefined
-          ? null
-          : share(kickoffConfirmed, kickoff),
-    },
+    frontEndCash: fe,
     cac: closes > 0 ? r2(spend / closes) : null,
     roas: spend > 0 ? r2(contracted / spend) : null,
-    roasCash: spend > 0 ? r2(frontEnd / spend) : null,
+    roasCash: paid !== null && spend > 0 ? r2(paid / spend) : null,
     roasContracted: spend > 0 ? r2(contracted / spend) : null,
     raw: {
       spend,
@@ -261,50 +279,122 @@ export function windowFromDaily(
   };
 }
 
+/**
+ * A window's front-end cash as the growth section publishes it since
+ * 2026-10-18 (docs/money/MONEY-ATTRIBUTION.md rule 6, growth.js withPaid):
+ * `paid` is the money, null when the deal ledger was not read (never zero);
+ * `typed` is what the forms say, shown beside it and never added. A payload
+ * stored before has none of the paid keys, so its money is not read.
+ */
+export function frontEndOf(
+  w: Pick<FunnelWindow, "frontEndCash">,
+): FunnelWindow["frontEndCash"] {
+  return w.frontEndCash;
+}
+
+/** Paid front-end cash, or null when it was not read (a payload from before 2026-10-18 included). */
+export function paidFrontEnd(
+  w: Pick<FunnelWindow, "frontEndCash"> | null | undefined,
+): number | null {
+  if (!w) return null;
+  const fe = frontEndOf(w);
+  return isNum(fe.paid) ? fe.paid : null;
+}
+
+/** When the money behind a growth payload was attributed: any window carries it. */
+export function attributedAtOf(
+  windows:
+    | Record<string, Pick<FunnelWindow, "frontEndCash">>
+    | null
+    | undefined,
+): number | null {
+  for (const w of Object.values(windows ?? {})) {
+    const at = w ? frontEndOf(w).attributedAt : null;
+    if (isNum(at)) return at;
+  }
+  return null;
+}
+
+/** Over this, the tile says front-end cash may be behind (the money refresh has not published since). */
+export const ATTRIBUTED_STALE_MS = 2 * 60 * 60_000;
+
+/** "attributed 09:40", or "attributed Sat 17 Oct, 06:10, over 2 hours ago: may be behind". */
+export function attributedLine(
+  at: number | null | undefined,
+  now: number,
+): { text: string; stale: boolean } | null {
+  if (!isNum(at)) return null;
+  const stale = now - at > ATTRIBUTED_STALE_MS;
+  return {
+    text: stale
+      ? `attributed ${dateTime(at, now)}, over 2 hours ago: may be behind`
+      : `attributed ${dateTime(at, now)}`,
+    stale,
+  };
+}
+
 /** The hint on every front-end cash tile. */
 export const FRONT_END_CASH_HINT =
-  "The deposit the closer typed at signing, for deals signed in this window, plus the kickoff cash the CSM collects on the onboarding call: the Payment Amount on the kickoff form, dated by the day the form was sent, read from 4 Oct 2026 and taken as USD because the form has no currency. Confirmed means a payment on a rail (Tap, Whop, a bank line or a transfer) attributed to the same deal or card backs it; an unconfirmed kickoff still counts.";
+  "Money paid on signed deals: every payment the Money tab credits to a deal's closer, from 7 days before the closer form until the deal's tied cash reaches its contract, at most 120 days after signing, on Whop, Tap, a bank transfer or logged by hand, counted on the day it arrived. Webinar deals are left out. The deposit the closer typed on the form and the Payment Amount on the kickoff form are shown beside it as typed, not money, and never added.";
+
+/** Why a tile reads n/a: the money has not been attributed into the deal ledger this run. */
+export const FRONT_END_CASH_NA =
+  "Not read yet: front-end cash is the money paid on signed deals, and it shows once the money refresh has published the deal ledger.";
 
 /** The first day the CSM's kickoff form carries "Payment Amount" (Typeform tG7dnxBn). */
 export const KICKOFF_READ_FROM = "2026-10-04";
 
 /**
- * The line under a front-end cash figure (Aziz, 2026-09-21: "deposit +
- * kickoff cash, confirmed against the rails"): "deposit $X + kickoff $Y,
- * Z% confirmed on a rail". The share is said only when both parts' backing
- * is known (a window rebuilt from days does not keep which deposit a rail
- * backs); a window that starts before the form carried the amount says so.
+ * The line beside a front-end cash figure (Aziz, 2026-10-18): what the forms
+ * say, as typed, not money: "typed, not money: deposit $6,000 · kickoff
+ * $1,500". The kickoff part says when the form was not read for the window.
  */
 export function frontEndCashSub(
   fe: FunnelWindow["frontEndCash"],
   from?: string | null,
 ): string {
-  const kickoffRead = isNum(fe.kickoff);
-  const head = kickoffRead
-    ? `deposit ${money(fe.deposit)} + kickoff ${money(fe.kickoff)}`
-    : `deposit ${money(fe.deposit)}`;
-  const depositKnown = fe.deposit === 0 || isNum(fe.confirmedShare);
-  const kickoffKnown =
-    !kickoffRead || fe.kickoff === 0 || isNum(fe.kickoffConfirmed);
-  const backed = fe.confirmed + (kickoffRead ? (fe.kickoffConfirmed ?? 0) : 0);
-  let confirmed: string | null = null;
-  if (fe.total > 0 && depositKnown && kickoffKnown)
-    confirmed = `${pct(backed / fe.total)} confirmed on a rail`;
-  else if (
-    kickoffRead &&
-    (fe.kickoff ?? 0) > 0 &&
-    isNum(fe.kickoffConfirmedShare)
-  )
-    confirmed = `${pct(fe.kickoffConfirmedShare)} of the kickoff confirmed on a rail`;
-  else if (fe.deposit > 0 && isNum(fe.confirmedShare))
-    confirmed = `${pct(fe.confirmedShare)} of the deposit confirmed on a rail`;
-  const before =
-    !kickoffRead || (from ? from < KICKOFF_READ_FROM : false)
-      ? "kickoff read from 4 Oct"
-      : null;
-  return [confirmed ? `${head}, ${confirmed}` : head, before]
-    .filter(Boolean)
-    .join(" · ");
+  const typed = fe.typed ?? {
+    deposit: fe.deposit,
+    kickoff: fe.kickoff,
+  };
+  const kickoff = isNum(typed.kickoff)
+    ? `kickoff ${money(typed.kickoff)}`
+    : `kickoff read from ${shortDate(KICKOFF_READ_FROM)}`;
+  const late =
+    isNum(typed.kickoff) && from && from < KICKOFF_READ_FROM
+      ? ` (read from ${shortDate(KICKOFF_READ_FROM)})`
+      : "";
+  return `typed, not money: deposit ${money(typed.deposit)} · ${kickoff}${late}`;
+}
+
+/** What the paid figure is made of: "deposits $4,000 · rest $10,358.80", or null when not split. */
+export function paidSplit(fe: FunnelWindow["frontEndCash"]): string | null {
+  if (!isNum(fe.paidDeposit) || !isNum(fe.paidRemainder)) return null;
+  return `deposits ${money(fe.paidDeposit)} · rest of the deals ${money(fe.paidRemainder)}`;
+}
+
+/** Typed amounts no payment matches, listed and never added: "$3,000 on 2 deals". */
+export function typedNotSeenText(fe: FunnelWindow["frontEndCash"]): {
+  value: string;
+  hint: string;
+} | null {
+  const t = fe.typedNotSeen;
+  if (!t) return null;
+  if (!t.count)
+    return {
+      value: "none",
+      hint: "Every typed deposit and kickoff amount in this window has money matched to it.",
+    };
+  const items = t.items
+    .slice(0, 5)
+    .map(
+      i =>
+        `${i.business ?? "a deal"}, ${i.kind === "kickoff" ? "kickoff" : "deposit"} typed ${money(i.typed)} on ${shortDate(i.day)}, ${money(i.seen)} seen`,
+    );
+  return {
+    value: `${money(t.usd)} on ${t.count === 1 ? "1 form" : `${t.count} forms`}`,
+    hint: `Typed on the forms with no payment seen for it yet: ${items.join("; ")}${t.count > items.length ? `; and ${t.count - items.length} more` : ""}. Listed, never added to front-end cash.`,
+  };
 }
 
 /** True when the daily rows carry the per-stage counts a timeframe window needs. */

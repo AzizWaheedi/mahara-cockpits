@@ -101,10 +101,11 @@ export const DEPOSIT_CONFIRMED = `(exists (
  * or demo booked against their contact, ever, over leads. Per lead, never
  * per booking, so it cannot pass 100%.
  *
- * Front-end cash: the deposit the closer typed on the form for deals signed
- * in the window, plus the kickoff cash the CSM collects on the onboarding
- * call once that form is read (it is not yet), with the share a Whop payment
- * or a bank transfer confirms.
+ * Front-end cash (`fe` here) is the deposit the closer typed on the form for
+ * deals signed in the window, with the share a Whop payment or a bank
+ * transfer confirms. Since 2026-10-18 that is the typed figure shown beside
+ * the money, never the money: withPaid sets front-end cash from the deal
+ * ledger (paid front-end money by payment day).
  *
  * Voided deals (../voids.ts): b2b_window_metrics counts them, so `vd` carries
  * the voided deals of each window, dated as the function dates a deal, for
@@ -686,8 +687,6 @@ function toWindow(r) {
     const bookedLeads = num(r.booked_leads);
     const deposit = round2(num(r.fe_deposit));
     const confirmed = round2(num(r.fe_confirmed));
-    // Kickoff cash joins the deposit once the CSM's kickoff form is read.
-    const frontEndCash = deposit;
     const contracted = num(m.revenue);
     const ratio = (a, b, places = 2) => b > 0 ? Math.round((a / b) * 10 ** places) / 10 ** places : null;
     return {
@@ -748,10 +747,12 @@ function toWindow(r) {
         qualifiedCloseRate: pct(m.close_rate),
         contracted,
         cash: num(m.cash_collected),
+        // Typed on the forms; withKickoff adds the kickoff form and withPaid
+        // the money (total, paid, roasCash), never the typed amounts.
         frontEndCash: {
             deposit,
             kickoff: null,
-            total: frontEndCash,
+            total: null,
             deals: num(r.fe_deals),
             dealsConfirmed: num(r.fe_deals_confirmed),
             confirmed,
@@ -759,7 +760,7 @@ function toWindow(r) {
         },
         cac: orNull(m.cac),
         roas: orNull(m.roas),
-        roasCash: ratio(frontEndCash, spend),
+        roasCash: null,
         roasContracted: ratio(contracted, spend),
         raw: rawNumbers(m),
         webinarOut: {
@@ -817,7 +818,9 @@ export function voidedNote(days, windows) {
  * Kickoff cash (A087; Aziz, 2026-09-21: "At the end of the kickoff form, the
  * CSM also fills in if they collected the rest of the cash, and then you can
  * add it up there. And then we can use Tap Payments and WAP, or the bank
- * transfer, just to confirm.").
+ * transfer, just to confirm."). Since 2026-10-18 (MONEY-ATTRIBUTION.md rule
+ * 6) the typed amount is shown beside front-end cash as typed, not money, and
+ * never added: front-end cash is the money itself (withPaid).
  *
  * The amount is the kickoff Typeform's (tG7dnxBn) "Payment Amount" field
  * (ref 75e97e7d-4c19-437a-b4b8-67570c29344f), which the onboarding sync
@@ -831,8 +834,7 @@ export function voidedNote(days, windows) {
  * on Whop, Tap or a bank transfer (a transfer row or a bank statement line),
  * within MATCH_DAYS days and MATCH_GAP of the amount (./manualMatch.js), one
  * payment per kickoff. A payment only logged by hand is not a rail. An
- * unconfirmed kickoff still counts, with the confirmed share beside it, the
- * same as the deposit.
+ * unconfirmed kickoff is listed under typedNotSeen.
  */
 export const KICKOFF_FORM = "tG7dnxBn";
 export const KICKOFF_READ_FROM = "2026-10-04";
@@ -897,25 +899,199 @@ export function kickoffIn(kickoffs, from, to) {
     const confirmed = round2(mine.reduce((sum, k) => sum + k.confirmed, 0));
     return { amount, confirmed, forms: mine.length, from: start, partial: from < KICKOFF_READ_FROM };
 }
-/** Front-end cash with the kickoff added: total = deposit + kickoff, and front-end ROAS on that total. */
+/** The kickoff form's typed amount beside the deposit: typed, not money, so total and front-end ROAS are left to withPaid. */
 export function withKickoff(window, kickoffs) {
     const k = kickoffIn(kickoffs, window.from, window.to);
     const ratio = (a, b, places = 2) => b > 0 ? Math.round((a / b) * 10 ** places) / 10 ** places : null;
     if (!k)
         return { ...window, frontEndCash: { ...window.frontEndCash, kickoff: null, kickoffConfirmedShare: null } };
-    const total = round2(window.frontEndCash.deposit + k.amount);
     return {
         ...window,
         frontEndCash: {
             ...window.frontEndCash,
             kickoff: k.amount,
-            total,
             kickoffConfirmed: k.confirmed,
             kickoffConfirmedShare: ratio(k.confirmed, k.amount, 3),
             kickoffForms: k.forms,
             kickoffFrom: k.from,
         },
-        roasCash: ratio(total, window.spend),
+    };
+}
+/**
+ * Front-end cash on the Sales tab (Aziz, 2026-10-18; contract
+ * docs/money/MONEY-ATTRIBUTION.md rule 6): paid front-end money (the
+ * closer's deal money, rule 1) by the day it arrived, from every rail, webinar
+ * and voided deals left out. The typed deposit and the kickoff form's amount
+ * stay beside it as typed, not money, and are never added.
+ *
+ * Source: the deal ledger, public.cockpit_deal_payments (active rows), which
+ * the finance refresh writes in the same transaction as the Money section
+ * from the same attribution. Chosen over the Money section's published
+ * transactions because the ledger is every front-end payment of the twelve
+ * months (the section's list is capped at 1,500 rows, money out included),
+ * it is what payroll reads, and it carries the deal for the webinar
+ * exclusion. Either way growth runs beside money, not after it, so the figure
+ * is the last published attribution: `attributedAt` says when, and a note says
+ * when that is over 2 hours old. A ledger not yet written is not read, never
+ * zero.
+ */
+export const LEDGER_STALE_MS = 2 * 60 * 60_000;
+/** A deal's money is the closer's this many days after signing (money.js DEAL_TERM_DAYS), so the ledger points at deals this far back. */
+const DEAL_TERM_DAYS = 120;
+/** The ledger's rail in the tile's words: a bank transfer (B2B transfers and statement lines) is bank. */
+const LEDGER_RAIL = { whop: "whop", tap: "tap", manual: "manual", transfer: "bank", bank: "bank" };
+/** The deal ledger and the Money section's own count of it, in one statement so both are one publish. */
+export function dealLedgerSql(from) {
+    return `with m as (
+  select floor(extract(epoch from computed_at) * 1000)::bigint as computed_ms,
+    payload->'attribution'->'dealLedger' as ledger
+  from public.cockpit_sections
+  where key = 'money'
+)
+select m.computed_ms, m.ledger::text as ledger, p.payment_id, p.deal_response_id,
+  to_char(p.day, 'YYYY-MM-DD') as day, p.usd::float8 as usd, p.rail, p.kind, p.deposit_usd::float8 as deposit_usd, p.matched_by
+from m
+left join public.cockpit_deal_payments p on p.active and p.day >= ${day(from)}
+order by p.day, p.payment_id`;
+}
+/** The deals the ledger can point at (signed up to DEAL_TERM_DAYS before its first day), with the webinar and void flags. */
+export function ledgerDealsSql(from) {
+    return `select d.response_id,
+    to_char((d.submitted_at at time zone 'Asia/Riyadh')::date, 'YYYY-MM-DD') as day,
+    left(nullif(btrim(d.business_name), ''), 80) as business,
+    nullif(btrim(d.closer), '') as closer,
+    coalesce(d.cash_collected, 0) as deposit,
+    ${webbyDeal("d")} as webinar,
+    ${VOIDED("d")} as voided
+  from public.closed_deals d
+  where d.submitted_at >= ${day(addDays(from, -DEAL_TERM_DAYS))}`;
+}
+/**
+ * The ledger rows as growth uses them: each payment with its deal's closer and
+ * business, webinar and voided deals set aside and counted. Not ready (with
+ * why) when the Money section has not published the ledger yet. `agree` says
+ * whether the ledger's active rows over the section's months match the count
+ * and sum the section published with it. Pure, for the tests.
+ */
+export function readDealLedger(sqlRows, dealRows) {
+    const head = sqlRows[0];
+    if (!head)
+        return { ready: false, why: "the Money section has not been published", attributedAt: null };
+    const attributedAt = num(head.computed_ms) || null;
+    let section = null;
+    try {
+        section = head.ledger ? JSON.parse(String(head.ledger)) : null;
+    }
+    catch {
+        section = null;
+    }
+    if (!section || typeof section.from !== "string")
+        return { ready: false, why: "the Money section was published before the deal ledger existed; it fills on the next money refresh", attributedAt };
+    const deals = new Map(dealRows.map(d => [String(d.response_id), d]));
+    const rows = [];
+    const set = { webinar: { payments: 0, usd: 0 }, voided: { payments: 0, usd: 0 }, unknownDeal: 0 };
+    let ledgerRows = 0;
+    let ledgerUsd = 0;
+    for (const r of sqlRows) {
+        if (!r.payment_id)
+            continue;
+        const usd = num(r.usd);
+        const dayText = String(r.day);
+        if (dayText >= section.from) {
+            ledgerRows += 1;
+            ledgerUsd += usd;
+        }
+        const deal = deals.get(String(r.deal_response_id));
+        if (!deal)
+            set.unknownDeal += 1;
+        const out = deal && String(deal.webinar) === "true" ? set.webinar : deal && String(deal.voided) === "true" ? set.voided : null;
+        if (out) {
+            out.payments += 1;
+            out.usd = round2(out.usd + usd);
+            continue;
+        }
+        // The part of the payment up to the deal's typed deposit; a row without it is all deposit or all remainder by its kind.
+        const depositUsd = r.deposit_usd === null || r.deposit_usd === undefined ? (String(r.kind) === "deposit" ? usd : 0) : num(r.deposit_usd);
+        rows.push({
+            paymentId: String(r.payment_id), dealId: String(r.deal_response_id), day: dayText, usd,
+            rail: LEDGER_RAIL[String(r.rail)] ?? "bank", kind: String(r.kind), depositUsd, matchedBy: r.matched_by ? String(r.matched_by) : null,
+            closer: deal?.closer ? String(deal.closer) : null, business: deal?.business ? String(deal.business) : null,
+        });
+    }
+    const agree = ledgerRows === num(section.rows) && Math.abs(round2(ledgerUsd) - num(section.usd)) < 0.01;
+    return { ready: true, attributedAt, from: section.from, rows, set, agree, ledgerRows, ledgerUsd: round2(ledgerUsd), sectionRows: num(section.rows), sectionUsd: num(section.usd) };
+}
+/** Paid front-end money in an inclusive window, from readDealLedger's rows. */
+export function paidIn(rows, from, to) {
+    const mine = rows.filter(r => r.day >= from && r.day <= to);
+    const sum = list => round2(list.reduce((n, r) => n + r.usd, 0));
+    const byRail = {};
+    for (const rail of ["whop", "tap", "bank", "manual"])
+        byRail[rail] = sum(mine.filter(r => r.rail === rail));
+    const closers = new Map();
+    for (const r of mine) {
+        const name = r.closer ?? "Closer not on the form";
+        const c = closers.get(name.toLowerCase()) ?? { name, usd: 0, payments: 0 };
+        c.usd += r.usd;
+        c.payments += 1;
+        closers.set(name.toLowerCase(), c);
+    }
+    // The deposit is the part of each payment up to the typed deposit (contract rule 1); the rest is the remainder.
+    const paidDeposit = round2(mine.reduce((n, r) => n + (r.depositUsd ?? (r.kind === "deposit" ? r.usd : 0)), 0));
+    return {
+        paid: sum(mine),
+        paidDeposit,
+        paidRemainder: round2(sum(mine) - paidDeposit),
+        payments: mine.length,
+        paidDeals: new Set(mine.map(r => r.dealId)).size,
+        byRail,
+        byCloser: [...closers.values()].map(c => ({ ...c, usd: round2(c.usd) })).sort((a, b) => b.usd - a.usd || a.name.localeCompare(b.name)),
+    };
+}
+/**
+ * Typed amounts in the window that no money matches, listed and never added:
+ * a deal signed in the window whose ledger money (any day) is short of the
+ * deposit typed on its form by more than MATCH_GAP, and a kickoff form with
+ * an amount no rail payment on its card confirmed.
+ */
+export function typedNotSeen(window, ledger, deals, kickoffs) {
+    const paidByDeal = new Map();
+    for (const r of ledger.rows)
+        paidByDeal.set(r.dealId, (paidByDeal.get(r.dealId) ?? 0) + r.usd);
+    const items = [];
+    for (const d of deals) {
+        const signed = String(d.day);
+        const typed = num(d.deposit);
+        if (signed < window.from || signed > window.to || typed <= 0 || String(d.webinar) === "true" || String(d.voided) === "true")
+            continue;
+        const seen = round2(paidByDeal.get(String(d.response_id)) ?? 0);
+        if (seen + 0.01 < typed * (1 - MATCH_GAP))
+            items.push({ kind: "deposit", day: signed, business: d.business ? String(d.business) : null, typed: round2(typed), seen, usd: round2(typed - seen) });
+    }
+    for (const k of kickoffs ?? []) {
+        if (k.day < window.from || k.day > window.to || k.amount <= 0 || k.confirmed > 0)
+            continue;
+        items.push({ kind: "kickoff", day: k.day, business: k.client, typed: k.amount, seen: 0, usd: k.amount });
+    }
+    items.sort((a, b) => a.day.localeCompare(b.day) || String(a.business).localeCompare(String(b.business)));
+    return { usd: round2(items.reduce((n, i) => n + i.usd, 0)), count: items.length, items: items.slice(0, 20) };
+}
+/** Front-end cash = paid front-end money (rule 6), with the typed amounts beside it. Not read leaves the money null, never zero. */
+export function withPaid(window, ledger, deals, kickoffs) {
+    const ratio = (a, b, places = 2) => b > 0 ? Math.round((a / b) * 10 ** places) / 10 ** places : null;
+    const fe = window.frontEndCash;
+    const typed = { deposit: fe.deposit, kickoff: fe.kickoff ?? null };
+    if (!ledger?.ready)
+        return {
+            ...window,
+            frontEndCash: { ...fe, total: null, paid: null, paidDeposit: null, paidRemainder: null, payments: null, paidDeals: null, byRail: null, byCloser: null, typed, typedNotSeen: null, attributedAt: ledger?.attributedAt ?? null },
+            roasCash: null,
+        };
+    const p = paidIn(ledger.rows, window.from, window.to);
+    return {
+        ...window,
+        frontEndCash: { ...fe, ...p, total: p.paid, typed, typedNotSeen: typedNotSeen(window, ledger, deals, kickoffs), attributedAt: ledger.attributedAt },
+        roasCash: ratio(p.paid, window.spend),
     };
 }
 /** Run a secondary read; on failure keep going with a fallback and a warning. */
@@ -962,13 +1138,29 @@ export const growth = {
             return { ...readKickoffs(formRows, paymentRows), syncedAt: Math.max(0, ...formRows.map(r => num(r.synced_ms))) || undefined };
         });
         const kickoffs = kickoffRead?.kickoffs ?? null;
+        // Front-end cash from the paid deal ledger (MONEY-ATTRIBUTION.md rule
+        // 6). A failed read leaves the money not read in every window.
+        const ledgerFrom = addDays(today, -364);
+        const ledgerRead = await attempt("Front-end cash from the deal ledger", notes, null, async () => {
+            const [ledgerRows, dealRows] = await Promise.all([
+                sql(TRIAGE, dealLedgerSql(ledgerFrom)),
+                sql(B2B, ledgerDealsSql(ledgerFrom)),
+            ]);
+            return { ledger: readDealLedger(ledgerRows, dealRows), deals: dealRows };
+        });
+        const ledger = ledgerRead?.ledger ?? null;
+        const ledgerDeals = ledgerRead?.deals ?? [];
+        const frontEnd = (k) => withPaid(withKickoff(toWindow(rowOf(k)), kickoffs), ledger, ledgerDeals, kickoffs);
+        const paidByDay = new Map();
+        for (const r of ledger?.ready ? ledger.rows : [])
+            paidByDay.set(r.day, (paidByDay.get(r.day) ?? 0) + r.usd);
         const windows = {
-            yesterday: withKickoff(toWindow(rowOf("yesterday")), kickoffs),
-            last7: withKickoff(toWindow(rowOf("last7")), kickoffs),
-            prevLast7: withKickoff(toWindow(rowOf("prevLast7")), kickoffs),
-            mtd: withKickoff(toWindow(rowOf("mtd")), kickoffs),
-            lastMonthToDate: withKickoff(toWindow(rowOf("lastMonthToDate")), kickoffs),
-            lastMonth: withKickoff(toWindow(rowOf("lastMonth")), kickoffs),
+            yesterday: frontEnd("yesterday"),
+            last7: frontEnd("last7"),
+            prevLast7: frontEnd("prevLast7"),
+            mtd: frontEnd("mtd"),
+            lastMonthToDate: frontEnd("lastMonthToDate"),
+            lastMonth: frontEnd("lastMonth"),
         };
         const mtd = windows.mtd;
         // How much of this month's leads carry any first-touch attribution at all
@@ -1020,6 +1212,9 @@ export const growth = {
                 const k = kickoffs ? kickoffIn(kickoffs, String(r.date), String(r.date)) : null;
                 return k ? { kickoff: k.amount, kickoffConfirmed: k.confirmed } : { kickoff: null };
             })(),
+            // Paid front-end money by the day it arrived; null before the
+            // ledger's first month or when the ledger is not read.
+            frontEndPaid: ledger?.ready && String(r.date) >= ledger.from ? round2(paidByDay.get(String(r.date)) ?? 0) : null,
         })));
         const reps = await attempt("The rep scorecard", notes, [], async () => (await sql(B2B, repsSql(ranges.mtd[0], ranges.mtd[1]))).map(r => ({
             name: String(r.name ?? "Unknown"),
@@ -1080,7 +1275,7 @@ export const growth = {
             text: `Speed to lead runs from the lead's creation to the first Maqsam call with it by a sales rep on the roster (setter, closer or both), never a call-centre agent. The median is over the leads that were called; the never-called are counted beside it. The working-hours figure starts the clock at the later of the lead's creation and the next working window and counts working minutes only (${describeWorkingHours(wh.hours)}${wh.ready ? "" : ", the default"}).`,
         }, {
             level: "info",
-            text: `Contracted comes from the closed-deal form. Front-end cash is the deposit the closer typed on that form plus the kickoff cash the CSM types as Payment Amount at the end of the kickoff form, dated by the day the form was submitted and read as USD (the form has no currency field). The kickoff form carries the amount from ${KICKOFF_READ_FROM}, so a window before that shows kickoff as not read and front-end cash as the deposit alone. The deposit's confirmed share is what a Whop payment or a bank transfer on record backs (Tap is not checked for the deposit). A kickoff is confirmed by a Whop, Tap or bank transfer payment the Money tab attributed to the same client card within ${MATCH_DAYS} days and ${Math.round(MATCH_GAP * 100)}% of the amount; a payment only logged by hand does not confirm it, and an unconfirmed kickoff still counts.${kickoffRead
+            text: `Contracted comes from the closed-deal form. Front-end cash is money paid: every payment the Money tab credited to a signed deal's closer (from 7 days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing), on Whop, Tap, a bank transfer or logged by hand, counted on the day it arrived, webinar deals left out. It is the last published money attribution, so it can be up to one refresh behind the Money tab. The deposit the closer typed on the form and the Payment Amount the CSM types on the kickoff form (read as USD, from ${KICKOFF_READ_FROM}) are shown beside it as typed, not money, and never added; a typed amount no payment matches is listed as typed, not seen. The deposit's confirmed share is what a Whop payment or a bank transfer on record backs (Tap is not checked for the deposit). A kickoff is confirmed by a Whop, Tap or bank transfer payment the Money tab attributed to the same client card within ${MATCH_DAYS} days and ${Math.round(MATCH_GAP * 100)}% of the amount; a payment only logged by hand does not confirm it.${kickoffRead
                 ? ` Since ${KICKOFF_READ_FROM}: ${kickoffRead.kickoffs.length} kickoff ${kickoffRead.kickoffs.length === 1 ? "form" : "forms"} with an amount, ${usd(kickoffRead.kickoffs.reduce((n, k) => n + k.amount, 0))} in all, ${usd(kickoffRead.kickoffs.reduce((n, k) => n + k.confirmed, 0))} of it confirmed on a rail${kickoffRead.blank.length ? `; ${kickoffRead.blank.length} ${kickoffRead.blank.length === 1 ? "form leaves" : "forms leave"} the amount blank (${kickoffRead.blank.map(b => b.client).slice(0, 4).join(", ")}), missing rather than zero` : ""}. Rail payments are the Money tab's last published attribution.`
                 : ""}`,
         }, {
@@ -1123,6 +1318,32 @@ export const growth = {
                 note: status === "success" ? newest : `${status}, ${newest}`,
             };
         });
+        if (ledger?.ready) {
+            sources.push({
+                name: "Front-end payments (deal ledger, cockpit_deal_payments)",
+                freshestAt: ledger.attributedAt ?? undefined,
+                ok: true,
+                note: `${ledger.ledgerRows} front-end payments, ${usd(ledger.ledgerUsd)} since ${ledger.from}, as the Money section attributed them${ledger.agree ? ", the same count and sum the section published" : ""}`,
+            });
+            if (!ledger.agree)
+                notes.push({
+                    level: "warn",
+                    text: `The deal ledger holds ${ledger.ledgerRows} front-end payments (${usd(ledger.ledgerUsd)}) since ${ledger.from}, but the Money section that wrote it counted ${ledger.sectionRows} (${usd(ledger.sectionUsd)}). Front-end cash reads the ledger; refresh Money and check the two agree.`,
+                });
+            if (ledger.attributedAt !== null && Date.now() - ledger.attributedAt > LEDGER_STALE_MS)
+                notes.push({
+                    level: "warn",
+                    text: `Front-end cash is the money attributed at ${new Date(ledger.attributedAt + 3 * 3600_000).toISOString().slice(0, 16).replace("T", " ")} Kuwait, over 2 hours ago, so it may be behind. The Money refresh has not published since.`,
+                });
+            const out = [ledger.set.webinar.payments ? `${ledger.set.webinar.payments} on webinar deals (${usd(ledger.set.webinar.usd)})` : null, ledger.set.voided.payments ? `${ledger.set.voided.payments} on deals voided since (${usd(ledger.set.voided.usd)})` : null].filter(Boolean);
+            if (out.length)
+                notes.push({ level: "info", text: `Front-end cash leaves out ${out.join(" and ")} of the deal ledger's payments.` });
+        }
+        else if (ledger)
+            notes.push({
+                level: "warn",
+                text: `Front-end cash is not read this run: ${ledger.why}. The typed deposit and kickoff are shown beside it, never in its place.`,
+            });
         if (kickoffRead)
             sources.push({
                 name: "Kickoff form cash (client onboarding, Typeform tG7dnxBn)",

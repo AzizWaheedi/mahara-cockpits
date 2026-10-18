@@ -399,11 +399,16 @@ export const CANCEL_RATE = {
   format: pct1,
 } as const;
 
-/** Front-end ROAS, the main one: front-end cash over lead-gen spend. */
+/**
+ * Front-end ROAS, the main one: front-end cash over lead-gen spend. Since
+ * 2026-10-18 front-end cash is money paid on signed deals (MONEY-ATTRIBUTION.md
+ * rule 6), never the amounts typed on the forms.
+ */
 export const ROAS_CASH = {
   label: "Front-end ROAS",
-  hint: `Front-end cash over lead-gen ad spend in the same window. Front-end cash is the deposit the closer typed at signing plus the kickoff cash the CSM collects on the onboarding call (the kickoff form's Payment Amount, read from 4 Oct 2026; before that day the deposit alone, which reads low). ${VOIDED_OUT}`,
-  naHint: "No lead-gen spend in this window.",
+  hint: `Front-end cash over lead-gen ad spend in the same window. Front-end cash is the money paid on signed deals, credited to their closers, on every rail, by the day it arrived; the deposit typed on the closer form and the kickoff form's amount are not in it. ${VOIDED_OUT}`,
+  naHint:
+    "No lead-gen spend in this window, or front-end cash is not read yet (it shows once the money refresh has published the deal ledger).",
 } as const;
 
 /** Contracted ROAS: contracted value over lead-gen spend. */

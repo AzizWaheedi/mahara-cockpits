@@ -45,11 +45,7 @@ import {
 } from "@/components/ceo/TargetMeter";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { TimeSeriesChart } from "@/components/ceo/TimeSeriesChart";
-import {
-  FRONT_END_CASH_HINT,
-  frontEndCashSub,
-  useTimeframe,
-} from "@/components/ceo/timeframe";
+import { attributedAtOf, useTimeframe } from "@/components/ceo/timeframe";
 import { range } from "@/components/ceo/windows";
 import { cn } from "@/lib/utils";
 import type {
@@ -59,6 +55,8 @@ import type {
   MoneyPayload,
   Note,
 } from "@/types/ceo/payloads";
+import type { MoneyLine } from "./money/credit";
+import { frontEndFacts, frontEndTile } from "./money/FrontEndCash";
 import { ProposalsCard } from "./proposalsCard";
 import type { CeoTabProps } from "./types";
 
@@ -88,8 +86,9 @@ const GROWTH_NOTE_ROUTES: readonly (readonly [RegExp, GrowthCard])[] = [
   [/rep scorecard|^reps:/i, "reps"],
   [/daily series/i, "daily"],
   [/demos due|show rate|still marked confirmed|GHL calls/i, "calls"],
+  // Front-end cash and the deal ledger it reads sit beside the closing tiles.
   [
-    /closed-deal form|contracted and cash|each stage is dated|close rate/i,
+    /closed-deal form|contracted and cash|each stage is dated|close rate|front-end cash|deal ledger/i,
     "closing",
   ],
   [
@@ -106,6 +105,9 @@ type MoneyCard = "deals" | "targets" | "otherTargets" | "money";
 // targets card leaves out, so that card points at them on Money.
 const MONEY_NOTE_ROUTES: readonly (readonly [RegExp, MoneyCard])[] = [
   [CTR_TARGET_NOTE, "otherTargets"],
+  // The attribution rule and the CEO's ties belong with the payments they
+  // describe (Money and Transactions), not beside the deals.
+  [/transactions tab|your ties?\b/i, "money"],
   [/target|actuals/i, "targets"],
   [/deal|closer form|contracted value/i, "deals"],
 ];
@@ -154,6 +156,10 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
   const lastMonthName = prevMonthKey
     ? month(prevMonthKey, { long: true })
     : "last month";
+  // Front-end cash is paid money (MONEY-ATTRIBUTION.md rule 6): when it was
+  // attributed, and the payments a custom range takes its closers from.
+  const attributedAt = attributedAtOf(g?.windows);
+  const lines: MoneyLine[] = m?.attribution?.transactions ?? [];
   const repsRefused = (gNotes.reps ?? []).some(
     n => n.level === "warn" && /rep scorecard could not be read/i.test(n.text),
   );
@@ -206,6 +212,9 @@ export function SalesTab({ sections, now, day, goTab }: CeoTabProps) {
               prev={previous}
               vs={vs}
               label={windowLabel}
+              attributedAt={attributedAt}
+              lines={lines}
+              now={now}
             />
           )}
         </SectionCard>
@@ -539,14 +548,22 @@ function ClosingBody({
   prev,
   vs,
   label,
+  attributedAt,
+  lines,
+  now,
 }: {
   w: FunnelWindow;
   prev: FunnelWindow | null;
   vs: string | null;
   label: string;
+  /** When the money behind front-end cash was attributed, epoch ms. */
+  attributedAt: number | null;
+  /** The Money tab's payments, for the closers of a custom range. */
+  lines: MoneyLine[];
+  now: number;
 }) {
   const avgContract = per(w.contracted, w.closes);
-  const fe = w.frontEndCash;
+  const fe = frontEndTile(w, prev, attributedAt, now);
   const tiles: Tile[] = [
     {
       label: "Closes",
@@ -577,15 +594,21 @@ function ClosingBody({
     },
     {
       label: "Front-end cash",
-      value: money(fe.total),
-      delta: deltaFor(vs, change(fe.total, prev?.frontEndCash.total), "up"),
-      sub: frontEndCashSub(fe, w.from),
-      hint: FRONT_END_CASH_HINT,
+      value: fe.value,
+      delta: deltaFor(vs, fe.change, "up"),
+      sub: fe.sub,
+      hint: fe.hint,
+      naHint: fe.naHint,
     },
     {
       label: ROAS_CASH.label,
-      value: ratio(w.roasCash),
-      delta: deltaFor(vs, change(w.roasCash, prev?.roasCash), "up"),
+      // On paid money only: a payload from before 2026-10-18 divided the typed figure.
+      value: ratio(fe.paid === null ? null : w.roasCash),
+      delta: deltaFor(
+        vs,
+        fe.paid === null ? null : change(w.roasCash, prev?.roasCash),
+        "up",
+      ),
       hint: ROAS_CASH.hint,
       naHint: ROAS_CASH.naHint,
     },
@@ -613,10 +636,7 @@ function ClosingBody({
             value: money(avgContract),
             hint: "Contracted over closes in this window.",
           },
-          {
-            label: "Deals confirmed on a rail",
-            value: `${count(fe.dealsConfirmed)} of ${count(fe.deals)}`,
-          },
+          ...frontEndFacts(w, lines),
         ]}
       />
       <div className="border-t pt-6">
@@ -794,9 +814,11 @@ const REP_COLUMNS: Column<Rep>[] = [
     sortValue: r => r.contracted,
     numeric: true,
   },
+  // The deposit typed on the closer form, not money: front-end cash on the
+  // closing card is the money (MONEY-ATTRIBUTION.md rule 6).
   {
     key: "cash",
-    header: "Cash",
+    header: "Typed cash",
     cell: r => money(r.cash),
     sortValue: r => r.cash,
     numeric: true,
@@ -827,7 +849,7 @@ function RepsBody({ reps, refused }: { reps: Rep[]; refused: boolean }) {
       columns={REP_COLUMNS}
       rowKey={(r, i) => `${r.name}-${i}`}
       initialSort={{ key: "contracted", dir: "desc" }}
-      caption="Reps this month: calls booked and shown, closes, close rate, contracted and cash"
+      caption="Reps this month: calls booked and shown, closes, close rate, contracted and the cash typed on the closer form"
       emptyText="No rep activity this month yet."
       stickyFirst
     />
@@ -893,9 +915,9 @@ const DEAL_COLUMNS: Column<Deal>[] = [
   },
   {
     key: "cash",
-    header: "Upfront cash",
+    header: "Typed deposit",
     cell: d => (
-      <Value value={money(d.cash)} hint="No upfront cash on the form." />
+      <Value value={money(d.cash)} hint="No deposit typed on the form." />
     ),
     sortValue: d => d.cash,
     numeric: true,
@@ -985,8 +1007,8 @@ const NOT_MEASURED: { label: string; why: string }[] = [
     why: "A deal carries only the day the form was submitted. There is no first touch date on it to measure from.",
   },
   {
-    label: "Cash collected against cash contracted",
-    why: "No payment is linked back to the deal that produced it, so a collection rate cannot be computed. The upfront share on the closing card is the closer's own two numbers on the same form.",
+    label: "Cash collected against cash contracted, per deal",
+    why: "Payments are now tied to the deal they paid for, and each one on the Transactions tab says which deal and which closer. This tab does not yet add them up per deal against the contract.",
   },
   {
     label: "Speed to first contact on a Mahara lead",

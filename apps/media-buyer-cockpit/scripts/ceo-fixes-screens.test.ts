@@ -2,8 +2,8 @@
  * The CEO screens built on 2026-10-11 from the CEO's open asks: the Money
  * tab's LTV card refusal (R3), the feedback queue gate (R6), the timeframe
  * bar on Client success, Today, Management and Recruiting (A127/A170),
- * kickoff cash in front-end cash (A087), two commission lines (A074), the
- * Proposals card (A234), churn from the register (A078), failed sections on
+ * kickoff cash beside front-end cash (A087; typed, not money since
+ * 2026-10-18), two commission lines (A074), the Proposals card (A234), churn from the register (A078), failed sections on
  * Machine (A081) and the morning Slack note switch (A372). Every figure here
  * is made up.
  */
@@ -555,51 +555,58 @@ describe("A127: Management EODs and Recruiting counts", () => {
   });
 });
 
-describe("A087: kickoff cash joins front-end cash", () => {
+// Since 2026-10-18 (docs/money/MONEY-ATTRIBUTION.md rule 6) front-end cash is
+// the money paid on signed deals; the deposit and the kickoff form's amount
+// stay beside it as typed, not money, and are never added.
+describe("A087: kickoff cash beside front-end cash, typed, not money", () => {
   const day = (
     date: string,
     deposit: number,
     kickoff?: number | null,
     kickoffConfirmed?: number,
-  ): GrowthDay => ({
-    date,
-    spend: 100,
-    leads: 1,
-    booked: 0,
-    closes: 1,
-    introsDue: 0,
-    deposit,
-    kickoff,
-    kickoffConfirmed,
-  });
-  test("a window after 4 Oct adds kickoff to deposit, and to ROAS", () => {
+    frontEndPaid?: number | null,
+  ): GrowthDay =>
+    ({
+      date,
+      spend: 100,
+      leads: 1,
+      booked: 0,
+      closes: 1,
+      introsDue: 0,
+      deposit,
+      kickoff,
+      kickoffConfirmed,
+      frontEndPaid,
+    }) as GrowthDay;
+  test("a window after 4 Oct keeps the kickoff typed beside the money paid", () => {
     const w = windowFromDaily(
-      [day("2026-10-04", 500, 1500, 0), day("2026-10-05", 0, 0, 0)],
+      [day("2026-10-04", 500, 1500, 0, 2000), day("2026-10-05", 0, 0, 0, 250)],
       "2026-10-04",
       "2026-10-05",
     );
     expect(w.frontEndCash).toMatchObject({
       deposit: 500,
       kickoff: 1500,
-      total: 2000,
+      total: 2250,
       kickoffConfirmed: 0,
       kickoffConfirmedShare: 0,
     });
-    expect(w.roasCash).toBe(10);
+    expect(w.roasCash).toBe(11.25);
   });
-  test("a window before the form carried the amount says kickoff is not read, never $0", () => {
+  test("days the deal ledger does not cover are not read, never $0 and never the typed sum", () => {
     const w = windowFromDaily(
       [day("2026-09-20", 500, null), day("2026-09-21", 0)],
       "2026-09-20",
       "2026-09-21",
     );
     expect(w.frontEndCash.kickoff).toBeNull();
-    expect(w.frontEndCash.total).toBe(500);
+    expect(w.frontEndCash.total).toBeNull();
+    expect(w.roasCash).toBeNull();
     expect(frontEndCashSub(w.frontEndCash, w.from)).toBe(
-      "deposit $500 · kickoff read from 4 Oct",
+      "typed, not money: deposit $500 · kickoff read from 4 Oct",
     );
   });
-  test("the line under the figure", () => {
+  test("the line beside the figure", () => {
     const fe: FunnelWindow["frontEndCash"] = {
       deposit: 1000,
       kickoff: 1500,
@@ -612,10 +619,10 @@ describe("A087: kickoff cash joins front-end cash", () => {
       kickoffConfirmedShare: 0.333,
     };
     expect(frontEndCashSub(fe, "2026-10-05")).toBe(
-      "deposit $1,000 + kickoff $1,500, 60% confirmed on a rail",
+      "typed, not money: deposit $1,000 · kickoff $1,500",
     );
     expect(frontEndCashSub(fe, "2026-10-01")).toBe(
-      "deposit $1,000 + kickoff $1,500, 60% confirmed on a rail · kickoff read from 4 Oct",
+      "typed, not money: deposit $1,000 · kickoff $1,500 (read from 4 Oct)",
     );
     expect(KICKOFF_READ_FROM).toBe("2026-10-04");
   });
@@ -630,6 +637,32 @@ describe("A074: two commission lines per person", () => {
     }
     expect(BASIS_ON.per_qualified_intro_shown).toBe("introsQualifiedShown");
     expect(BASIS_ON.per_closed_deal).toBe("fullCloses");
+    // The call centre's two client bases (PAY-PLANS.md decision 2), 2026-10-18.
+    for (const b of [
+      "per_client_appt_shown",
+      "per_client_deal_closed",
+    ] as const) {
+      expect(COMMISSION_BASES).toContain(b);
+      expect(COMMISSION_LABEL[b]).toBeTruthy();
+      expect(COMMISSION_SHORT[b]).toBeTruthy();
+    }
+    expect(COMMISSION_SHORT.per_client_appt_shown).toBe(
+      "Per client appointment shown",
+    );
+    expect(COMMISSION_SHORT.per_client_deal_closed).toBe(
+      "Per closed client deal",
+    );
+    expect(BASIS_ON.per_client_appt_shown).toBe("clientApptsShown");
+    expect(BASIS_ON.per_client_deal_closed).toBe("clientDealsClosed");
+    // The list is the database's: both CHECK constraints of 20261018a.
+    const sql = src(
+      "../../../supabase/migrations/20261018a_ceo_pay_plans.sql",
+    ).match(
+      /cockpit_people_commission_basis_check CHECK \(commission_basis = ANY \(ARRAY\[([\s\S]*?)\]/,
+    )?.[1];
+    expect([...(sql ?? "").matchAll(/'([a-z_0-9]+)'/g)].map(m => m[1])).toEqual(
+      [...COMMISSION_BASES],
+    );
     expect(
       commissionLines(
         [

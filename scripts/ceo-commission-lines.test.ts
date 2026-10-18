@@ -10,6 +10,11 @@ let db:PGlite;
 async function save(patch:Record<string,unknown>){return (await db.query<{r:any}>('select cockpit_ceo_people_save($1::jsonb) r',[JSON.stringify(patch)])).rows[0].r;}
 async function setPay(patch:Record<string,unknown>){return (await db.query<{r:any}>('select cockpit_ceo_people_set_pay($1::jsonb) r',[JSON.stringify(patch)])).rows[0].r;}
 async function list(){return (await db.query<{r:any[]}>('select cockpit_ceo_people_list() r')).rows[0].r;}
+// 20261018a: the two client bases join both CHECK constraints (PAY-PLANS.md decision 2). Only that block, so this suite needs no hours tables.
+function clientBases(){
+ const hit=migration('20261018a_ceo_pay_plans.sql').match(/ALTER TABLE public\.cockpit_people DROP CONSTRAINT IF EXISTS cockpit_people_commission_basis_check;[\s\S]*?cockpit_people_commission2_basis_check CHECK[\s\S]*?\]::text\[\]\)\);/);
+ if(!hit)throw Error('Missing the client bases block');return hit[0];
+}
 
 beforeAll(async()=>{
  db=await cockpitTestDb();
@@ -81,4 +86,29 @@ test('the migration runs twice without error',async()=>{
  await owner(db);await db.exec(migration('20261011d_ceo_commission_two_lines.sql'));
  const cols=(await db.query<{c:string}>("select column_name c from information_schema.columns where table_name='cockpit_people' and column_name like 'commission2%' order by 1")).rows.map(r=>r.c);
  expect(cols).toEqual(['commission2_basis','commission2_rate']);
+});
+
+// Last: re-running 20261011d (above) narrows the constraint again, which a row on a client basis would fail.
+test('the two client bases save on either line once 20261018a is applied, per unit and validated like the rest',async()=>{
+ await actor(db,CEO);const {id}=await save({name:'Agent line'});
+ await expect(save({id,commissionBasis:'per_client_appt_shown',commissionRate:5})).rejects.toThrow(/check constraint/);
+ await expect(save({id,commission2Basis:'per_client_deal_closed',commission2Rate:20})).rejects.toThrow(/check constraint/);
+ await owner(db);await db.exec(clientBases());await db.exec(clientBases());
+ await actor(db,CEO);
+ await save({id,commissionBasis:'per_client_appt_shown',commissionRate:5,commission2Basis:'per_client_deal_closed',commission2Rate:20});
+ let p=(await list()).find((r:any)=>r.id===id);
+ expect(p).toMatchObject({commission_basis:'per_client_appt_shown',commission2_basis:'per_client_deal_closed',commission_pct:null});
+ expect([Number(p.commission_rate),Number(p.commission2_rate)]).toEqual([5,20]);
+ // Either line, either order; a per-unit rate is an amount, so above 1 is fine.
+ await save({id,commissionBasis:'per_client_deal_closed',commissionRate:20,commission2Basis:'per_client_appt_shown',commission2Rate:5});
+ p=(await list()).find((r:any)=>r.id===id);
+ expect([p.commission_basis,Number(p.commission_rate),p.commission2_basis,Number(p.commission2_rate)]).toEqual(['per_client_deal_closed',20,'per_client_appt_shown',5]);
+ await expect(save({id,commission2Basis:'per_client_deal_closed',commission2Rate:20})).rejects.toThrow(/different basis/);
+ await expect(save({id,commission2Basis:'per_client_appt_shown',commission2Rate:-5})).rejects.toThrow(/permitted range/);
+ await setPay({id,commission2Basis:'per_client_appt_shown'});
+ expect(Number((await list()).find((r:any)=>r.id===id).commission2_rate)).toBe(5);
+ await expect(save({id,commissionBasis:'per_client_lunch'})).rejects.toThrow(/check constraint/);
+ const defs=(await db.query<{d:string}>("select pg_get_constraintdef(oid) d from pg_constraint where conrelid='public.cockpit_people'::regclass and conname in ('cockpit_people_commission_basis_check','cockpit_people_commission2_basis_check')")).rows;
+ expect(defs).toHaveLength(2);
+ for(const {d} of defs)for(const b of ['per_qualified_intro_shown','per_closed_deal','per_client_appt_shown','per_client_deal_closed'])expect(d).toContain(b);
 });

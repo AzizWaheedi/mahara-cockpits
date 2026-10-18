@@ -123,3 +123,24 @@ test("audit failure rolls back pay update; malformed receipts never succeed",asy
   await expect(readPeople(fake)).rejects.toThrow(/not confirmed/);
  }finally{await db.close();}
 });
+test("the two client bases (20261018a) save on both lines and come back from the server",async()=>{
+ const {db,client}=await fixture();try{
+  await owner(db);
+  await db.exec(migration("20261011d_ceo_commission_two_lines.sql"));
+  const bases=migration("20261018a_ceo_pay_plans.sql").match(/ALTER TABLE public\.cockpit_people DROP CONSTRAINT IF EXISTS cockpit_people_commission_basis_check;[\s\S]*?cockpit_people_commission2_basis_check CHECK[\s\S]*?\]::text\[\]\)\);/);
+  expect(bases).not.toBeNull();await db.exec(bases![0]);
+  await actor(db,F);
+  const a=await savePerson(client,{name:"Agent A",role:"Call centre agent",monthlyCost:650,
+   commissionBasis:"per_client_appt_shown",commissionRate:5,commission2Basis:"per_client_deal_closed",commission2Rate:20});
+  const b=await savePerson(client,{name:"Agent B",role:"Call centre agent",monthlyCost:650,
+   commissionBasis:"per_client_deal_closed",commissionRate:20,commission2Basis:"per_client_appt_shown",commission2Rate:5});
+  const rows=(await client.rpc("cockpit_ceo_people_list")).data as Record<string,unknown>[];
+  const row=(id:number)=>rows.find(r=>Number(r.id)===id)!;
+  expect([row(a.id).commission_basis,Number(row(a.id).commission_rate),row(a.id).commission2_basis,Number(row(a.id).commission2_rate)])
+   .toEqual(["per_client_appt_shown",5,"per_client_deal_closed",20]);
+  expect([row(b.id).commission_basis,row(b.id).commission2_basis]).toEqual(["per_client_deal_closed","per_client_appt_shown"]);
+  expect(row(a.id).commission_pct).toBeNull(); // per unit, not a share
+  await expect(savePerson(client,{id:a.id,commission2Basis:"per_client_appt_shown",commission2Rate:5})).rejects.toThrow(/different basis/);
+  expect((await readPeople(client)).activeCount).toBe(2);
+ }finally{await db.close();}
+});

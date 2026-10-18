@@ -13,7 +13,11 @@
  *   active at the end = start + new - churned - completed; churn rate =
  *   churned / start; the rolling three months is the number to manage
  *   against, because at 17 clients one departure is 5.9%.
- * - The bands match the CSM's retention bonus (src/lib/csmMoney.ts).
+ * - bandOf below grades a rate for the tracker; it is not pay. The CSM's
+ *   retention bonus reads its own bands (src/lib/csmMoney.ts CHURN_BANDS,
+ *   docs/pay/PAY-PLANS.md decision 4), where a band runs until the next one
+ *   starts: 4.55% pays $1,500 there while bandOf, edge-inclusive at 4, calls
+ *   it Good.
  */
 
 export const PROGRAMME_DAYS = 90;
@@ -110,7 +114,11 @@ export type Band = {
   tone: "good" | "warn" | "bad";
 };
 
-/** The CSM contract's bands: 0-4 Excellent, 5-8 Good, 9-10 On target, 11-12 Watch, 13-15 Bad, over 15 Critical. */
+/**
+ * The tracker's grade of a rate, each edge included: 0-4 Excellent, 5-8 Good,
+ * 9-10 On target, 11-12 Watch, 13-15 Bad, over 15 Critical. Pay does not read
+ * this; the retention bonus picks from csmMoney.ts CHURN_BANDS.
+ */
 export function bandOf(pct: number): Band {
   if (pct <= 4) return { label: "Excellent", tone: "good" };
   if (pct <= 8) return { label: "Good", tone: "good" };

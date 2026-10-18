@@ -13,6 +13,10 @@
  * returned in PGlite after the real sync read the fake providers
  * (`bun scripts/hours-harness-data.ts` writes tmp/hours-e2e/data.json),
  * and the month is worked out by the real rule (hoursModelHarness.ts).
+ *
+ * Pay plans and money ties (every `cockpit_ceo_pay_*` and
+ * `cockpit_ceo_payment_*` RPC) answer from payFixture.ts; `?pay=empty|broken`
+ * picks their scenario.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -21,6 +25,7 @@ import {
   hoursFixtureMonth,
   hoursFixtureStatus,
 } from "./hoursFixture";
+import { PAY_RPCS, payRpc } from "./payFixture";
 
 /** The hand-made scenarios, plus "e2e": real backend output from tmp/hours-e2e/data.json. */
 export type HarnessScenario = HoursScenario | "e2e";
@@ -107,25 +112,46 @@ function people() {
     source: "manual",
     ...extra,
   });
+  // The call centre's two client lines (PAY-PLANS.md decision 2): $5 per
+  // client appointment shown, $20 per closed client deal.
+  const agentLines = {
+    commission_basis: "per_client_appt_shown",
+    commission_rate: 5,
+    commission2_basis: "per_client_deal_closed",
+    commission2_rate: 20,
+  };
   return [
     row(1, "The CEO", "CEO", null),
-    row(101, "Hala Mansour", "Call centre agent", 910),
-    row(102, "Omar Fayed", "Call centre agent", 910),
+    row(101, "Hala Mansour", "Call centre agent", 910, "USD", agentLines),
+    row(102, "Omar Fayed", "Call centre agent", 910, "USD", agentLines),
     row(103, "Sara Kanaan", "Media buyer", 1200),
     row(104, "Yousef Darwish", "Closer", 1500, "USD", {
       commission_basis: "closed_cash",
       commission_rate: 0.1,
       commission_pct: 0.1,
+      commission2_basis: "set_cash",
+      commission2_rate: 0.05,
       is_sales: true,
     }),
     row(105, "Mona Haddad", "Client success manager", 300, "KWD"),
-    row(106, "Tala Odeh", "Call centre agent", 910),
+    // Lines that differ from the role plan's ("Apply the role's commission").
+    row(106, "Tala Odeh", "Call centre agent", 910, "USD", {
+      commission_basis: "per_client_appt_shown",
+      commission_rate: 5,
+      commission2_basis: "other",
+      commission_note: "Made-up note: closed client deals paid by hand",
+    }),
     row(107, "Fadi Nassar", "Systems manager", 1800),
     row(108, "Jad Salem", "Creative strategist", 1100, "USD", {
       paused_on: "2026-10-01",
       paused_why: "Between projects",
     }),
-    row(110, "Dina Samir", "", null),
+    // A basis the installed app does not know yet (the database is ahead):
+    // it shows as "Unknown rule: …" and is never saved back as none.
+    row(110, "Dina Samir", "", null, "USD", {
+      commission_basis: "per_client_appt_booked",
+      commission_rate: 5,
+    }),
     // Two commission lines (A074): $10 per qualified intro shown, $50 per
     // fully closed deal, on a $500 base.
     row(111, "Lina Haddad", "B2B setter", 500, "USD", {
@@ -227,6 +253,8 @@ export function installHoursHarness(client: SupabaseClient): HarnessScenario {
     };
   };
   c.rpc = async (name, args = {}) => {
+    if ((PAY_RPCS as readonly string[]).includes(name))
+      return payRpc(name, args);
     if (
       scenario === "e2e" &&
       /^cockpit_ceo_(hours_(inputs|status|costs)|people_list)$/.test(name)

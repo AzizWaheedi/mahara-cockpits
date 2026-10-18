@@ -1,6 +1,6 @@
 import { B2B, TRIAGE, num, sql } from "../sb.js";
 import { addDays, daysInMonth, KUWAIT_OFFSET_MS, kuwaitDay, monthStart } from "../time.js";
-import { bankCanBe, amountGap, coverWithTap, cashDuplicates, dealDuplicates, MATCH_DAYS, MATCH_GAP, nameBook } from "../manualMatch.js";
+import { bankCanBe, amountGap, coverWithTap, cashDuplicates, dealDuplicates, MATCH_DAYS, MATCH_GAP, nameBook, usdWords } from "../manualMatch.js";
 import { groupOf, isOneOffPlan, summariseBilling } from "../billing.js";
 import { linkCtrTargetNote, targetItems } from "../../../../supabase/functions/cockpit-ceo-api/finance/targets.ts";
 import { MEDIA_FEED_SQL, MEDIA_STALE_MS, mediaClientDaysSql, mediaFeedFresh } from "../data/triage.js";
@@ -42,7 +42,8 @@ function dayStart(day) {
   return new Date(`${day}T00:00:00Z`).getTime() - KUWAIT_OFFSET_MS;
 }
 
-function cleanText(value, max = 240) {
+/** Text cleaned for the cockpit: emails and long numbers masked, dashes to commas, spaces collapsed. The Edge copy is finance/attribution.ts cleanText. */
+export function cleanText(value, max = 240) {
   return String(value ?? "")
     .replace(/[^\s@]+@[^\s@]+\.[^\s@]+/g, "[email]")
     .replace(/\+?\d[\d\s-]{6,}\d/g, match => /^\d{4}-\d{1,2}-\d{1,2}$/.test(match) || match.replace(/\D/g, "").length < 8 ? match : "[number]")
@@ -130,17 +131,24 @@ function rowsFor(snapshot, name) {
   return value;
 }
 
-function cardReferences(snapshot, loginRows) {
+/**
+ * The client cards attribution matches against: every billing card first (a
+ * new client is on billing before it has an alias row), then the alias names,
+ * with portal logins and the hand-kept payer mapping. The Edge copy builds the
+ * same list (finance/context.ts, then attribution.ts cardRefs); the parity
+ * test runs both.
+ */
+export function cardReferences(snapshot, loginRows) {
   const byTask = new Map();
   const add = (taskId, name, aliases, csm) => {
     if (!taskId) return;
     const id = String(taskId);
-    const card = byTask.get(id) ?? { taskId: id, names: [], csm: csm ? String(csm).split(/\s+/)[0] : null, emails: [], payerKeys: [] };
+    const card = byTask.get(id) ?? { taskId: id, names: [], csm: null, emails: [], payerKeys: [] };
     for (const value of [name, ...(Array.isArray(aliases) ? aliases : [])]) {
       const text = cleanText(value, 120);
       if (text && !card.names.includes(text)) card.names.push(text);
     }
-    if (csm && !card.csm) card.csm = String(csm).split(/\s+/)[0];
+    if (csm && !card.csm) card.csm = String(csm).trim().split(/\s+/)[0] || null;
     byTask.set(id, card);
   };
   for (const row of rowsFor(snapshot, "billing")) {
@@ -180,26 +188,125 @@ function nameKey(value) {
   return String(value ?? "").normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 }
 
-function attributePayments(payments, deals, cards) {
+/*
+ * Who every payment in is credited to (Aziz, 2026-10-18; contract
+ * docs/money/MONEY-ATTRIBUTION.md section 1). The Edge copy is
+ * supabase/functions/cockpit-ceo-api/finance/attribution.ts; both change
+ * together and scripts/money-attribution-parity.test.ts runs them on the
+ * same fixtures.
+ *
+ * 1. A deal's money is the closer's: a payment tied to a signed deal counts
+ *    from 7 days before the form until the deal's running tied cash reaches
+ *    its contract, at most 120 days after signing. It is front end, the
+ *    deposit up to the typed cash collected and the remainder after, credited
+ *    to the deal's closer. Beyond the contract or the 120 days it is back
+ *    end, the card's CSM's. Renewals follow the same cap.
+ * 2. A card match inside a deal's term is that deal's money.
+ * 3. The CEO's tie is read first: a payment tie, then a payer tie, then
+ *    Whop's own deal link, the email, the name, the card.
+ * 4. A payer tie keys on the email or the exact payer key, never a short name.
+ */
+/** A payment this many days before the form can still be that deal's (the form is filled after the call). */
+export const BEFORE_FORM_DAYS = 7;
+/** A deal's money is the closer's for this many days after signing, up to its contract. */
+export const DEAL_TERM_DAYS = 120;
+/** Names this long or longer may match by one containing the other; a payer key must be this long. */
+const CONTAINS_MIN = 6;
+
+/** Whole days from one Kuwait day to another, negative when `to` is earlier. */
+function daysFrom(from, to) {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+}
+
+function lowerEmail(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  return text || null;
+}
+
+function oneLine(value, max) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+}
+
+/**
+ * The CEO's ties as the finance snapshot gives them (cockpit_payment_ties,
+ * live rows): one scope (a payment, a payer's email, a payer's exact key)
+ * and one target (a deal, a card, or not client money). A row without a
+ * scope or a target is left out, never guessed. Newest id wins a scope.
+ */
+export function normalizeTies(rows) {
+  const ties = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (field(row, "cleared_at", "clearedAt")) continue;
+    const text = value => (value === null || value === undefined || String(value).trim() === "" ? null : String(value).trim());
+    const paymentId = text(field(row, "payment_id", "paymentId"));
+    const payerEmail = lowerEmail(field(row, "payer_email", "payerEmail"));
+    const payerKey = nameKey(field(row, "payer_key", "payerKey")) || null;
+    const dealResponseId = text(field(row, "deal_response_id", "dealResponseId"));
+    const clickupTaskId = text(field(row, "clickup_task_id", "clickupTaskId"));
+    const notClient = field(row, "not_client", "notClient") === true;
+    const scope = paymentId ? "payment" : payerEmail || payerKey ? "payer" : null;
+    if (!scope || !(dealResponseId || clickupTaskId || notClient)) continue;
+    const setAt = field(row, "set_at", "setAt");
+    ties.push({
+      id: num(field(row, "id")), scope, paymentId, payerEmail: paymentId ? null : payerEmail, payerKey: paymentId || payerEmail ? null : payerKey,
+      dealResponseId, clickupTaskId: dealResponseId ? null : clickupTaskId, notClient: !dealResponseId && !clickupTaskId && notClient,
+      note: oneLine(field(row, "note"), 500), setBy: oneLine(field(row, "set_by", "setBy"), 120) || null, setAt: setAt === null || setAt === undefined ? null : String(setAt),
+    });
+  }
+  return ties.sort((a, b) => a.id - b.id);
+}
+
+/**
+ * The tie a payment's scope selects (rule 3): its own payment tie, then its
+ * payer's email, then its payer's full key. Newest id wins a scope.
+ */
+function tieLookup(ties) {
+  const byPayment = new Map();
+  const byEmail = new Map();
+  const byKey = new Map();
+  for (const tie of ties) {
+    if (tie.paymentId) byPayment.set(tie.paymentId, tie);
+    else if (tie.payerEmail) byEmail.set(tie.payerEmail, tie);
+    else if (tie.payerKey && tie.payerKey.length >= CONTAINS_MIN) byKey.set(tie.payerKey, tie);
+  }
+  return payment => {
+    const email = lowerEmail(payment.payerEmail);
+    const payer = nameKey(payment.payerName);
+    return byPayment.get(payment.id) ?? (email ? byEmail.get(email) : undefined) ?? (payer.length >= CONTAINS_MIN ? byKey.get(payer) : undefined) ?? null;
+  };
+}
+
+/**
+ * A payer tie to a deal covers that payer's money from BEFORE_FORM_DAYS
+ * before the deal's form (rule 1): a payment made earlier belongs to an
+ * earlier engagement and is left to the automatic match. A tie on the one
+ * payment is the CEO's word for that payment and always reaches it.
+ */
+function tieReaches(tie, deal, payment) {
+  return tie.scope === "payment" || daysFrom(deal.day, payment.day) >= -BEFORE_FORM_DAYS;
+}
+
+export function attributePayments(payments, deals, cards, tieRows = []) {
   const dealById = new Map();
   const dealsByEmail = new Map();
   const dealsByName = new Map();
   for (const deal of deals) {
     if (deal.responseId) dealById.set(deal.responseId, deal);
-    const email = String(deal.email ?? "").trim().toLowerCase();
+    const email = lowerEmail(deal.email);
     if (email) dealsByEmail.set(email, [...(dealsByEmail.get(email) ?? []), deal]);
-    for (const name of [deal.business, deal.contactName]) {
-      const key = nameKey(name);
-      if (key.length >= 4) dealsByName.set(key, [...(dealsByName.get(key) ?? []), deal]);
-    }
+    const business = nameKey(deal.business);
+    if (business.length >= 4) dealsByName.set(business, [...(dealsByName.get(business) ?? []), deal]);
+    // A contact's own name only when long enough to be more than a first name (the Edge rule).
+    const contact = nameKey(deal.contactName);
+    if (contact.length >= CONTAINS_MIN) dealsByName.set(contact, [...(dealsByName.get(contact) ?? []), deal]);
   }
   const cardById = new Map(cards.map(card => [card.taskId, card]));
   const cardByEmail = new Map();
   const cardByPayer = new Map();
   const cardByName = new Map();
   for (const card of cards) {
-    for (const email of card.emails) cardByEmail.set(email.toLowerCase(), card);
-    for (const payer of card.payerKeys) cardByPayer.set(nameKey(payer), card);
+    for (const email of card.emails) if (lowerEmail(email)) cardByEmail.set(lowerEmail(email), card);
+    for (const payer of card.payerKeys) if (nameKey(payer)) cardByPayer.set(nameKey(payer), card);
     for (const name of card.names) {
       const key = nameKey(name);
       if (key.length >= 4) cardByName.set(key, card);
@@ -208,28 +315,76 @@ function attributePayments(payments, deals, cards) {
   const lookup = (index, key) => {
     if (!key) return null;
     if (index.has(key)) return index.get(key);
-    if (key.length < 6) return null;
+    if (key.length < CONTAINS_MIN) return null;
     let best = null;
     let bestLength = 0;
     for (const [candidate, value] of index) {
-      if (candidate.length >= 6 && (key.includes(candidate) || candidate.includes(key)) && candidate.length > bestLength) {
+      if (candidate.length >= CONTAINS_MIN && (key.includes(candidate) || candidate.includes(key)) && candidate.length > bestLength) {
         best = value;
         bestLength = candidate.length;
       }
     }
     return best;
   };
+  // The deal whose form sits closest to the payment, a form on or before it
+  // preferred: gap = payment - deal, as the Edge copy (changed 2026-10-18).
   const nearest = (candidates, day) => candidates.reduce((best, deal) => {
-    const gap = Math.round((Date.parse(deal.day) - Date.parse(day)) / 86_400_000);
+    const gap = daysFrom(deal.day, day);
     const score = gap >= 0 ? gap : Math.abs(gap) * 10;
     return !best || score < best.score ? { deal, score } : best;
   }, null)?.deal ?? null;
+  const cardForDeal = deal => lookup(cardByName, nameKey(deal.business)) ?? (lowerEmail(deal.email) ? cardByEmail.get(lowerEmail(deal.email)) ?? null : null);
+  const dealsByCard = new Map();
+  for (const deal of deals) {
+    const card = cardForDeal(deal);
+    if (card) dealsByCard.set(card.taskId, [...(dealsByCard.get(card.taskId) ?? []), deal]);
+  }
+  const tieOf = tieLookup(normalizeTies(tieRows));
   const paidAgainst = new Map();
+  const contractOpen = deal => !(deal.contracted > 0) || (paidAgainst.get(deal.responseId) ?? 0) + 0.01 < deal.contracted;
+  const dealRow = (payment, deal, matchedBy, tie) => {
+    const age = daysFrom(deal.day, payment.day);
+    const open = contractOpen(deal);
+    const paid = paidAgainst.get(deal.responseId) ?? 0;
+    paidAgainst.set(deal.responseId, paid + payment.usd);
+    const card = cardForDeal(deal);
+    const frontEnd = open && age <= DEAL_TERM_DAYS;
+    // Deposit money is owed while what came before is under the typed deposit; with none typed, the first payment is it.
+    const depositOwed = deal.deposit > 0 ? paid + 0.01 < deal.deposit : paid === 0;
+    // Only the part up to the typed deposit is deposit: one paid-in-full payment is the deposit and the remainder (rule 1).
+    const depositUsd = !frontEnd || !depositOwed ? 0 : deal.deposit > 0 ? Math.min(payment.usd, ROUND2(deal.deposit - paid)) : payment.usd;
+    return {
+      ...payment, side: frontEnd ? "front_end" : "back_end", kind: !frontEnd ? "client" : depositOwed ? "deposit" : "remainder", depositUsd,
+      person: frontEnd ? deal.closer ?? null : card?.csm ?? deal.csm ?? null, personRole: frontEnd ? "closer" : "csm",
+      dealResponseId: deal.responseId, dealBusiness: deal.business, clientTaskId: card?.taskId ?? null, clientName: card?.names[0] ?? deal.business, matchedBy, tie,
+    };
+  };
+  const cardRow = (payment, card, matchedBy, tie) => {
+    const inTerm = (dealsByCard.get(card.taskId) ?? []).filter(deal => {
+      const age = daysFrom(deal.day, payment.day);
+      return age >= -BEFORE_FORM_DAYS && age <= DEAL_TERM_DAYS && contractOpen(deal);
+    });
+    const deal = nearest(inTerm, payment.day);
+    if (deal) return dealRow(payment, deal, matchedBy, tie);
+    return { ...payment, side: "back_end", kind: "client", depositUsd: 0, person: card.csm ?? null, personRole: "csm", dealResponseId: null, dealBusiness: null, clientTaskId: card.taskId, clientName: card.names[0] ?? null, matchedBy, tie };
+  };
   const output = [];
   const sorted = [...payments].sort((a, b) => a.day.localeCompare(b.day) || a.id.localeCompare(b.id));
   for (const payment of sorted) {
-    const email = String(payment.payerEmail ?? "").trim().toLowerCase();
+    const email = lowerEmail(payment.payerEmail);
     const payer = nameKey(payment.payerName);
+    const tie = tieOf(payment);
+    if (tie) {
+      const ref = { id: tie.id, scope: tie.scope, note: tie.note, setBy: tie.setBy, setAt: tie.setAt };
+      const tiedDeal = tie.dealResponseId ? dealById.get(tie.dealResponseId) : undefined;
+      if (tiedDeal && tieReaches(tie, tiedDeal, payment)) { output.push(dealRow(payment, tiedDeal, "ceo", ref)); continue; }
+      if (tie.clickupTaskId && cardById.has(tie.clickupTaskId)) { output.push(cardRow(payment, cardById.get(tie.clickupTaskId), "ceo", ref)); continue; }
+      if (tie.notClient) {
+        output.push({ ...payment, side: "not_client", kind: "none", depositUsd: 0, person: null, personRole: null, dealResponseId: null, dealBusiness: null, clientTaskId: null, clientName: null, matchedBy: "ceo", tie: ref });
+        continue;
+      }
+      // A tie to a deal or card this run does not hold, or a payer tie's payment from before its deal, falls back to the automatic match; tieSummary lists it.
+    }
     let deal = null;
     let matchedBy = "none";
     if (payment.dealResponseId && dealById.has(payment.dealResponseId)) {
@@ -242,21 +397,13 @@ function attributePayments(payments, deals, cards) {
       deal = nearest(lookup(dealsByName, payer), payment.day);
       matchedBy = "deal_name";
     }
-    if (deal && (Date.parse(payment.day) - Date.parse(deal.day)) / 86_400_000 < -7) {
+    // A payment well before the form belongs to an earlier engagement.
+    if (deal && daysFrom(deal.day, payment.day) < -BEFORE_FORM_DAYS) {
       deal = null;
       matchedBy = "none";
     }
     if (deal) {
-      const age = Math.round((Date.parse(payment.day) - Date.parse(deal.day)) / 86_400_000);
-      const windowDays = /monthly|month to month|months after|\/month/i.test(String(deal.paymentStructure ?? "")) ? 20 : 45;
-      const paid = paidAgainst.get(deal.responseId) ?? 0;
-      paidAgainst.set(deal.responseId, paid + payment.usd);
-      const card = lookup(cardByName, nameKey(deal.business)) ?? cardByEmail.get(String(deal.email ?? "").toLowerCase()) ?? null;
-      const renewal = payment.billingReason === "subscription_cycle";
-      const depositOwed = deal.deposit > 0 ? paid + 0.01 < deal.deposit : paid === 0;
-      const side = !renewal && age <= windowDays ? "front_end" : "back_end";
-      const kind = side === "back_end" ? "client" : depositOwed ? "deposit" : "kickoff";
-      output.push({ ...payment, side, kind, person: kind === "deposit" ? deal.closer : deal.csm ?? card?.csm ?? null, personRole: kind === "deposit" ? "closer" : "csm", dealResponseId: deal.responseId, dealBusiness: deal.business, clientTaskId: card?.taskId ?? null, clientName: card?.names[0] ?? deal.business, matchedBy });
+      output.push(dealRow(payment, deal, matchedBy, null));
       continue;
     }
     let card = email ? cardByEmail.get(email) ?? null : null;
@@ -265,28 +412,103 @@ function attributePayments(payments, deals, cards) {
     else if (payer.length >= 4 && lookup(cardByName, payer)) { card = lookup(cardByName, payer); matchedBy = "card_name"; }
     else if (payment.clickupTaskId && cardById.has(payment.clickupTaskId)) { card = cardById.get(payment.clickupTaskId); matchedBy = "card_typed"; }
     output.push(card
-      ? { ...payment, side: "back_end", kind: "client", person: card.csm, personRole: "csm", dealResponseId: null, dealBusiness: null, clientTaskId: card.taskId, clientName: card.names[0] ?? null, matchedBy }
-      : { ...payment, side: "unattributed", kind: "none", person: null, personRole: null, dealResponseId: null, dealBusiness: null, clientTaskId: null, clientName: null, matchedBy: "none" });
+      ? cardRow(payment, card, matchedBy, null)
+      : { ...payment, side: "unattributed", kind: "none", depositUsd: 0, person: null, personRole: null, dealResponseId: null, dealBusiness: null, clientTaskId: null, clientName: null, matchedBy: "none", tie: null });
   }
   return output;
 }
 
-function attributionTotals(rows) {
-  const totals = { in: 0, count: rows.length, frontEnd: 0, deposit: 0, kickoff: 0, backEnd: 0, unattributed: 0, unattributedCount: 0 };
+/**
+ * What became of the CEO's ties this run: how many credited a payment, and
+ * each one that did not, with why (its deal or card is not in this run, a
+ * payer key too short to be more than a first name, or no payment of this
+ * run is in its scope).
+ */
+export function tieSummary(tieRows, rows, deals, cards) {
+  const ties = normalizeTies(tieRows);
+  const used = new Map();
+  for (const row of rows) if (row.tie) used.set(row.tie.id, (used.get(row.tie.id) ?? 0) + 1);
+  const dealById = new Map(deals.map(deal => [deal.responseId, deal]));
+  const cardIds = new Set(cards.map(card => card.taskId));
+  // Payments a payer tie left to the automatic rules: made more than BEFORE_FORM_DAYS before its deal's form.
+  const tieOf = tieLookup(ties);
+  const early = new Map();
+  for (const row of rows) {
+    if (row.tie) continue;
+    const tie = tieOf(row);
+    const deal = tie?.dealResponseId ? dealById.get(tie.dealResponseId) : undefined;
+    if (!deal || tieReaches(tie, deal, row)) continue;
+    const item = early.get(tie.id) ?? { id: tie.id, scope: tie.scope, payments: 0, usd: 0 };
+    item.payments += 1;
+    item.usd += row.usd;
+    early.set(tie.id, item);
+  }
+  const notApplied = [];
+  for (const tie of ties) {
+    if (used.has(tie.id)) continue;
+    const why = tie.dealResponseId && !dealById.has(tie.dealResponseId) ? "deal_not_in_run"
+      : tie.clickupTaskId && !cardIds.has(tie.clickupTaskId) ? "card_not_in_run"
+        : tie.payerKey && tie.payerKey.length < CONTAINS_MIN ? "payer_key_too_short"
+          : early.has(tie.id) ? "before_deal"
+            : "no_payment_in_run";
+    notApplied.push({ id: tie.id, scope: tie.scope, why });
+  }
+  const beforeDeal = [...early.values()].sort((a, b) => a.id - b.id).map(item => ({ ...item, usd: ROUND2(item.usd) }));
+  return { live: ties.length, applied: used.size, payments: [...used.values()].reduce((sum, n) => sum + n, 0), notApplied, beforeDeal };
+}
+
+/** The deal ledger (cockpit_deal_payments): every front-end payment, one row per payment, for payroll and Sales front-end cash. */
+export function dealLedgerRows(rows) {
+  return rows.filter(row => row.side === "front_end" && row.dealResponseId).map(row => ({
+    payment_id: row.id, deal_response_id: row.dealResponseId, day: row.day, usd: row.usd, rail: row.rail, kind: row.kind,
+    deposit_usd: row.depositUsd ?? 0, matched_by: row.matchedBy, tie_id: row.tie?.id ?? null, payer: row.payerName ?? null,
+  }));
+}
+
+/** The attribution rule in words, said beside the figures (the Edge copy says the same). */
+export function attributionRuleText(unattributedCount, unattributedUsd) {
+  return `Every payment in over the last 12 months is given a side. A payment tied to a signed deal (by your tie, Whop's own link, the payer's email, the business name, or a client card whose deal is still in its term) is front end and the closer's, from ${BEFORE_FORM_DAYS} days before the form until the deal's tied cash reaches its contract, at most ${DEAL_TERM_DAYS} days after signing: the deposit up to what the closer typed, then the remainder. Beyond the contract or the ${DEAL_TERM_DAYS} days it is back end, the card's CSM's, and so is a payment matched only to a client (by a portal login, the hand-kept payer mapping, the card's names or the card typed on a hand-logged entry). Your ties are read before any automatic match. ${unattributedCount === 1 ? "1 payment" : `${unattributedCount} payments`} (${usdWords(unattributedUsd)}) match no deal and no client; the Transactions tab lists every payment in and out.`;
+}
+
+const TIE_WHY = {
+  deal_not_in_run: "its deal is not in this run (voided, or signed before the deals read)",
+  card_not_in_run: "its client card is not in this run",
+  payer_key_too_short: "its payer key is too short to be more than a first name",
+  before_deal: `every payment in its scope was made more than ${BEFORE_FORM_DAYS} days before its deal's form`,
+  no_payment_in_run: "no payment of the last 12 months is in its scope",
+};
+
+/** The ties that credited nothing, and the payments a payer tie left alone, this run, in words (the Edge copy says the same). */
+export function tieNoteText(summary) {
+  const parts = [];
+  const items = summary.notApplied.map(item => `tie ${item.id} (${TIE_WHY[item.why] ?? item.why})`);
+  if (items.length) parts.push(`${items.length === 1 ? "1 of your ties" : `${items.length} of your ties`} credited no payment this run: ${items.join("; ")}. The payments they meant are attributed by the automatic rules until the tie is changed or removed.`);
+  const early = (summary.beforeDeal ?? []).map(item => `tie ${item.id} leaves ${item.payments === 1 ? "1 payment" : `${item.payments} payments`} (${usdWords(item.usd)})`);
+  if (early.length) parts.push(`A payer tie covers that payer's money from ${BEFORE_FORM_DAYS} days before its deal's form; anything paid earlier belongs to an earlier engagement and stays with the automatic rules: ${early.join("; ")}. Tie such a payment on its own if it is that deal's money.`);
+  return parts.join(" ");
+}
+
+export function attributionTotals(rows) {
+  const totals = { in: 0, count: rows.length, frontEnd: 0, deposit: 0, remainder: 0, kickoff: 0, backEnd: 0, unattributed: 0, unattributedCount: 0, notClient: 0, notClientCount: 0 };
   for (const row of rows) {
     totals.in += row.usd;
     if (row.side === "front_end") {
+      // The deposit is the part of each payment up to the typed deposit; the rest of it is the remainder.
+      const deposit = row.depositUsd ?? 0;
       totals.frontEnd += row.usd;
-      if (row.kind === "deposit") totals.deposit += row.usd;
-      else totals.kickoff += row.usd;
+      totals.deposit += deposit;
+      totals.remainder += row.usd - deposit;
     } else if (row.side === "back_end") totals.backEnd += row.usd;
+    else if (row.side === "not_client") { totals.notClient += row.usd; totals.notClientCount += 1; }
     else { totals.unattributed += row.usd; totals.unattributedCount += 1; }
   }
-  for (const key of ["in", "frontEnd", "deposit", "kickoff", "backEnd", "unattributed"]) totals[key] = ROUND2(totals[key]);
+  // `kickoff` is the remainder under its old name, kept for screens that still read it.
+  totals.kickoff = totals.remainder;
+  for (const key of ["in", "frontEnd", "deposit", "remainder", "kickoff", "backEnd", "unattributed", "notClient"]) totals[key] = ROUND2(totals[key]);
   return totals;
 }
 
-function attributionByPerson(rows) {
+export function attributionByPerson(rows) {
   const people = new Map();
   for (const row of rows) {
     if (!row.person || !row.personRole) continue;
@@ -451,34 +673,43 @@ export function createMoneyAdapter(snapshot) {
         projectedMonth: ROUND2(cashBetween(monthStart(today), today) / dates.dayOfMonth * dates.dim), daily: cashDaily,
       };
 
-      const [recentDeals, targetRows, whopRows, transferRows, attributionDeals, loginRows, expenseRows] = await Promise.all([
+      // A deal signed up to DEAL_TERM_DAYS before the 12 months can still be in its term inside them, so the
+      // money paid on it before them is read too: it counts toward the deal's contract and is never published.
+      const seedFrom = addDays(dates.from12, -DEAL_TERM_DAYS);
+      const [recentDeals, targetRows, whopRead, transferRows, attributionDeals, loginRows, expenseRows] = await Promise.all([
         sql(B2B, `/* ceo-refresh:money.recent_deals */ SELECT to_char((submitted_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS day,left(nullif(btrim(business_name),''),80) AS business,nullif(split_part(btrim(coalesce(closer,'')),' ',1),'') AS closer,contracted_revenue AS contracted,cash_collected AS cash,left(nullif(btrim(payment_structure),''),60) AS plan FROM public.closed_deals d WHERE submitted_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM public.record_voids rv WHERE rv.entity='closed_deal' AND rv.record_id=d.response_id) ORDER BY submitted_at DESC LIMIT 10`),
         sql(B2B, `/* ceo-refresh:money.targets */ SELECT to_char(period_month,'YYYY-MM') AS month,metric,projection,floor(extract(epoch FROM updated_at)*1000)::bigint AS updated_ms FROM public.monthly_targets WHERE projection IS NOT NULL AND period_month=(SELECT max(period_month) FROM public.monthly_targets WHERE period_month<=date '${monthStart(today)}') ORDER BY metric`),
-        sql(B2B, `/* ceo-refresh:money.attribution.whop */ SELECT payment_id,to_char(paid_on,'YYYY-MM-DD') AS day,net_amount,final_amount,refunded_amount,to_char((refunded_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS refund_day,nullif(lower(btrim(user_email)),'') AS email,nullif(btrim(billing_name),'') AS billing,nullif(btrim(user_username),'') AS username,deal_response_id,billing_reason FROM public.whop_payments WHERE status='paid' AND currency='usd' AND paid_on>=date '${dates.from12}' ORDER BY paid_on`),
-        sql(B2B, `/* ceo-refresh:money.attribution.transfers */ SELECT id,to_char(received_at,'YYYY-MM-DD') AS day,amount_usd,method,nullif(btrim(client_name),'') AS client,reference,deal_response_id FROM public.transfers WHERE received_at>=date '${dates.from12}' ORDER BY received_at`),
-        sql(B2B, `/* ceo-refresh:money.attribution.deals */ SELECT response_id,to_char((submitted_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS day,nullif(lower(btrim(email)),'') AS email,nullif(btrim(business_name),'') AS business,nullif(btrim(concat_ws(' ',client_first_name,client_last_name)),'') AS contact,closer,csm,cash_collected,payment_structure,contracted_revenue AS contracted FROM public.closed_deals d WHERE submitted_at>=date '${addDays(dates.from12, -90)}' AND NOT EXISTS(SELECT 1 FROM public.record_voids rv WHERE rv.entity='closed_deal' AND rv.record_id=d.response_id) ORDER BY submitted_at`),
+        sql(B2B, `/* ceo-refresh:money.attribution.whop */ SELECT payment_id,to_char(paid_on,'YYYY-MM-DD') AS day,net_amount,final_amount,refunded_amount,to_char((refunded_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS refund_day,nullif(lower(btrim(user_email)),'') AS email,nullif(btrim(billing_name),'') AS billing,nullif(btrim(user_username),'') AS username,deal_response_id,billing_reason FROM public.whop_payments WHERE status='paid' AND currency='usd' AND paid_on>=date '${seedFrom}' ORDER BY paid_on`),
+        sql(B2B, `/* ceo-refresh:money.attribution.transfers */ SELECT id,to_char(received_at,'YYYY-MM-DD') AS day,amount_usd,method,nullif(btrim(client_name),'') AS client,reference,deal_response_id FROM public.transfers WHERE received_at>=date '${seedFrom}' ORDER BY received_at`),
+        sql(B2B, `/* ceo-refresh:money.attribution.deals */ SELECT response_id,to_char((submitted_at AT TIME ZONE 'Asia/Kuwait')::date,'YYYY-MM-DD') AS day,nullif(lower(btrim(email)),'') AS email,nullif(btrim(business_name),'') AS business,nullif(btrim(concat_ws(' ',client_first_name,client_last_name)),'') AS contact,closer,csm,cash_collected,payment_structure,contracted_revenue AS contracted FROM public.closed_deals d WHERE submitted_at>=date '${addDays(dates.from12, -DEAL_TERM_DAYS)}' AND NOT EXISTS(SELECT 1 FROM public.record_voids rv WHERE rv.entity='closed_deal' AND rv.record_id=d.response_id) ORDER BY submitted_at`),
         sql(B2B, `/* ceo-refresh:money.attribution.logins */ WITH docs AS (SELECT key,body FROM public.mahara_portal_documents WHERE key IN ('directory.json','client-access.json')),dir AS (SELECT e->>'id' AS client_id,e->>'clickupId' AS clickup_id FROM docs,jsonb_array_elements(CASE WHEN jsonb_typeof(body)='array' THEN body ELSE '[]'::jsonb END) e WHERE key='directory.json' AND coalesce(e->>'id','')<>'' AND coalesce(e->>'clickupId','')<>''),logins AS (SELECT lower(btrim(pr->>'email')) AS email,dir.clickup_id FROM docs CROSS JOIN LATERAL jsonb_each(CASE WHEN jsonb_typeof(body->'profiles')='object' THEN body->'profiles' ELSE '{}'::jsonb END) p CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.value->'principals')='array' THEN p.value->'principals' ELSE '[]'::jsonb END) pr JOIN dir ON dir.client_id=p.key WHERE docs.key='client-access.json' AND jsonb_typeof(pr)='object' AND coalesce(btrim(pr->>'email'),'')<>'') SELECT email,min(clickup_id) AS clickup_id FROM logins GROUP BY email HAVING count(DISTINCT clickup_id)=1`),
         sql(B2B, `/* ceo-refresh:money.attribution.expenses */ SELECT id,to_char(incurred_at,'YYYY-MM-DD') AS day,amount_usd,category,vendor FROM public.expenses WHERE incurred_at>=date '${dates.from12}' ORDER BY incurred_at DESC LIMIT 10000`),
       ]);
       if (expenseRows.length >= 10_000) failSource("Expense transactions", "read limit was reached");
+      // Whop payments of the 12 months: payouts, refunds and duplicates read these; the earlier ones only seed contracts.
+      const whopRows = whopRead.filter(row => dateText(row.day) >= dates.from12);
       const dealRefs = attributionDeals.filter(row => row.response_id && row.business).map(normalizeDeal);
       const recentDealRows = recentDeals.map(normalizeDeal);
       const dealsThisMonth = monthly.find(row => row.month === dates.month);
       const dealsLastMonth = monthly.find(row => row.month === dates.lastMonth);
       const [tapStateRows, tapRows] = await Promise.all([
         sql(TRIAGE, `/* ceo-refresh:money.tap_state */ SELECT ok,note,rows_seen,floor(extract(epoch FROM last_run_at)*1000)::bigint AS run_ms,floor(extract(epoch FROM last_ok_at)*1000)::bigint AS ok_ms FROM public.cockpit_sync_state WHERE key='tap-charges-sync'`),
-        sql(TRIAGE, `/* ceo-refresh:money.tap_charges */ SELECT id,to_char(day,'YYYY-MM-DD') AS day,floor(extract(epoch FROM at)*1000)::bigint AS at_ms,currency,amount,usd,email,name FROM public.cockpit_tap_charges WHERE live AND status='CAPTURED' AND day BETWEEN date '${dates.from180}' AND date '${today}' ORDER BY at`),
+        sql(TRIAGE, `/* ceo-refresh:money.tap_charges */ SELECT id,to_char(day,'YYYY-MM-DD') AS day,floor(extract(epoch FROM at)*1000)::bigint AS at_ms,currency,amount,usd,email,name FROM public.cockpit_tap_charges WHERE live AND status='CAPTURED' AND day BETWEEN date '${seedFrom}' AND date '${today}' ORDER BY at`),
       ]);
       const tapState = tapStateRows[0];
       const tapFreshAt = epoch(tapState?.ok_ms);
       if (!tapState || tapState.ok !== true || tapFreshAt === null || now - tapFreshAt > TAP_STALE_MS || now < tapFreshAt - 60_000) {
         failSource("Tap payment sync", tapState?.note ? cleanText(tapState.note, 120) : "no recent successful tap-charges-sync run");
       }
-      const tapCharges = tapRows.map(row => ({
+      const tapRead = tapRows.map(row => ({
         id: String(row.id), day: dateText(row.day), at: num(row.at_ms), currency: String(row.currency ?? "USD"),
         amount: num(row.amount), usd: row.usd === null || row.usd === undefined ? null : ROUND2(num(row.usd)),
         email: row.email ? String(row.email).toLowerCase() : null, name: row.name ? cleanText(row.name, 100) : null,
       }));
+      // The Tap rail, settlements and hand-logged matching read the last 180 days; the older charges are
+      // attribution's alone, so the 12 months keep every Tap payment and contracts are seeded.
+      const tapCharges = tapRead.filter(row => row.day >= dates.from180);
+      const tapOlder = tapRead.filter(row => row.day < dates.from180 && row.usd !== null);
       sources.push({ name: "Tap charges", freshestAt: tapFreshAt, ok: true });
 
       const statementRows = bankFacts.statements;
@@ -508,13 +739,15 @@ export function createMoneyAdapter(snapshot) {
       };
 
       const paymentRows = [];
-      for (const row of whopRows) if (num(row.net_amount) > 0) paymentRows.push({
+      for (const row of whopRead) if (num(row.net_amount) > 0) paymentRows.push({
         id: `whop:${row.payment_id}`, rail: "whop", day: dateText(row.day), usd: ROUND2(num(row.net_amount)), currency: "USD",
         amount: ROUND2(num(row.final_amount)), payerEmail: row.email ? String(row.email) : null,
         payerName: row.billing ? cleanText(row.billing, 120) : row.username ? cleanText(row.username, 120) : null,
         dealResponseId: row.deal_response_id ? String(row.deal_response_id) : null, clickupTaskId: null, billingReason: row.billing_reason ? String(row.billing_reason) : null,
       });
-      for (const charge of tapCharges) if (charge.usd !== null && !tapCovered.has(charge.id)) paymentRows.push({
+      // Every Tap charge is a payment in, a settlement line or not: the settlement credits nobody (it is not client money
+      // on the statement), so the charge carries the payer, as a Whop payment does beside its payout (as the Edge copy).
+      for (const charge of [...tapOlder, ...tapCharges]) if (charge.usd !== null) paymentRows.push({
         id: `tap:${charge.id}`, rail: "tap", day: charge.day, usd: charge.usd, currency: charge.currency, amount: charge.amount,
         payerEmail: charge.email, payerName: charge.name, dealResponseId: null, clickupTaskId: null, billingReason: null,
       });
@@ -541,19 +774,26 @@ export function createMoneyAdapter(snapshot) {
         if (candidates[0]) { usedBank.add(candidates[0].id); tapCoveredManual.set(entry.id, { chargeDay: candidates[0].day, chargeUsd: candidates[0].usd }); manualCoveredByBank += 1; }
       }
       const countedManual = livePayments.filter(row => !tapCoveredManual.has(row.id));
-      for (const row of countedManual) paymentRows.push({
+      // A Tap payment logged by hand before the 180 days counts once in attribution, as the older Tap charge it matches.
+      const olderTapCovered = coverWithTap(countedManual, tapOlder, dates.from12);
+      for (const row of countedManual) if (!olderTapCovered.has(row.id)) paymentRows.push({
         id: `manual:${row.id}`, rail: "manual", day: row.day, usd: row.amountUsd, currency: row.currency, amount: row.amount,
         payerEmail: null, payerName: row.client || null, dealResponseId: null, clickupTaskId: row.clickupTaskId, billingReason: null,
       });
 
       const deals = attributionDeals.map(normalizeDeal).filter(row => row.responseId && row.business);
-      const attributed = attributePayments(paymentRows, deals, cards);
+      // The CEO's ties come through the same fenced snapshot as the payer mapping (contract section 3).
+      const tieRows = rowsFor(snapshot, "ties");
+      // Every payment read decides each deal's contract; only the 12 months are published (the ledger rewrite covers them).
+      const attributed = attributePayments(paymentRows, deals, cards, tieRows).filter(row => row.day >= dates.from12);
+      const ties = tieSummary(tieRows, attributed, deals, cards);
+      const dealPayments = dealLedgerRows(attributed);
       const transactionRows = [];
       for (const row of attributed) transactionRows.push({
         id: row.id, day: row.day, rail: row.rail, direction: "in", usd: row.usd, currency: row.currency, amount: row.amount,
-        payerEmail: row.payerEmail, payerName: row.payerName, side: row.side, kind: row.kind, person: row.person,
-        personRole: row.personRole, dealBusiness: row.dealBusiness, clientName: row.clientName, clientTaskId: row.clientTaskId,
-        matchedBy: row.matchedBy, detail: row.billingReason,
+        payerEmail: row.payerEmail, payerName: row.payerName, side: row.side, kind: row.kind, depositUsd: row.depositUsd, person: row.person,
+        personRole: row.personRole, dealResponseId: row.dealResponseId, dealBusiness: row.dealBusiness, clientName: row.clientName, clientTaskId: row.clientTaskId,
+        matchedBy: row.matchedBy, tie: row.tie, detail: row.billingReason,
       });
       for (const row of whopRows) if (num(row.refunded_amount) > 0 && row.refund_day) transactionRows.push({
         id: `whop-refund:${row.payment_id}`, day: dateText(row.refund_day), rail: "whop", direction: "out", usd: ROUND2(num(row.refunded_amount)),
@@ -588,16 +828,19 @@ export function createMoneyAdapter(snapshot) {
       const monthTotals = attributionTotals(attributionInput.filter(row => row.day.slice(0, 7) === dates.month));
       const lastMonthTotals = attributionTotals(attributionInput.filter(row => row.day.slice(0, 7) === dates.lastMonth));
       const attribution = {
-        // The CSM's kickoff form is read since 2026-10-11 (A087): the Marketing
-        // section adds its Payment Amount to front-end cash and confirms it here.
+        // The CSM's kickoff form is read (A087): the Marketing section shows its
+        // Payment Amount beside front-end cash as typed, not money (2026-10-18).
         from: dates.from12, to: today, kickoffRead: true, tapRead: true,
         totals: { ...allTotals, out: ROUND2(outRows.reduce((sum, row) => sum + row.usd, 0)), outCount: outRows.length },
         mtd: monthTotals, lastMonth: lastMonthTotals, byPerson: attributionByPerson(attributionInput),
+        ties,
+        // What this run writes to cockpit_deal_payments, so a reader of the ledger can check it against this section.
+        dealLedger: { rows: dealPayments.length, usd: ROUND2(dealPayments.reduce((sum, row) => sum + row.usd, 0)), from: dates.from12 },
         transactions: transactionRows.slice(0, 1500),
       };
       const clientPayments = attributed.filter(row => row.clientTaskId).map(row => ({
         payment_id: row.id, clickup_task_id: row.clientTaskId, client_name: row.clientName ?? row.dealBusiness ?? null,
-        day: row.day, usd: row.usd, rail: row.rail, side: row.side, kind: row.kind, person: row.person,
+        day: row.day, usd: row.usd, rail: row.rail, side: row.side, kind: row.kind, person: row.person, deal_response_id: row.dealResponseId ?? null,
       }));
 
       // Client ad spend over the twelve months (R2): the live media table
@@ -837,6 +1080,8 @@ export function createMoneyAdapter(snapshot) {
         collection: { deals: deals.length, contracted: ROUND2(deals.reduce((sum, row) => sum + num(row.contracted), 0)), linkedCash: ROUND2(attributed.filter(row => row.dealResponseId).reduce((sum, row) => sum + row.usd, 0)), dealsWithCash: new Set(attributed.filter(row => row.dealResponseId).map(row => row.dealResponseId)).size, unlinkedCash: ROUND2(attributed.filter(row => !row.dealResponseId).reduce((sum, row) => sum + row.usd, 0)), unlinkedRows: attributed.filter(row => !row.dealResponseId).length, beforeFormCash: 0, formStarted: summary.first_deal_day ? String(summary.first_deal_day).slice(0, 7) : null, byMonth: monthly.map(row => ({ month: row.month, deals: row.deals, contracted: row.contracted, linked: ROUND2(attributed.filter(item => item.dealResponseId && item.day.slice(0, 7) === row.month).reduce((sum, item) => sum + item.usd, 0)) })), unmatched: [] },
         notes: [
           { level: "info", text: "Cash totals use source-confirmed Whop, Tap, manual, and uploaded bank statement rows. Bank payout and settlement lines are not counted as client cash." },
+          { level: "info", text: attributionRuleText(allTotals.unattributedCount, allTotals.unattributed) },
+          ...(ties.notApplied.length || ties.beforeDeal.length ? [{ level: "warn", text: tieNoteText(ties) }] : []),
           { level: "info", text: "Manual payments, human payer mappings, bank classifications, exclusions, and client billing snapshots came from the canonical Creative Triage finance revision." },
           ...(bankFresh ? [] : [{ level: "warn", text: `The newest bank statement ends ${bankFacts.latestStatementDay}, ${statementAge} days ago (past ${BANK_STALE_DAYS} days). Upload this week's CBK statement on this tab; until then the bank rail and the expense lines stop at that day: the bank's later days read n/a, not $0, and the all-rails total has no bank money after it.` }]),
           { level: "warn", text: `The newest bank statement ends ${bankFacts.latestStatementDay}; its classification revision is checked again before publication.` },
@@ -850,8 +1095,8 @@ export function createMoneyAdapter(snapshot) {
       sources.push({ name: "Manual payment history and finance revision", freshestAt: liveManualStamp ?? undefined, ok: true, note: `revision ${sourceRevision}` });
       sources.push({ name: "Bank classification and exclusions", freshestAt: Math.max(0, ...statementRows.map(row => epoch(field(row, "imported_at", "importedAt")) ?? 0)) || undefined, ok: true, note: `${bankLines.length} canonical bank lines, ${bankFacts.exclusions.length} human exclusion rules` });
       sources.push({ name: "Payer mappings and client billing snapshots", freshestAt: Math.max(0, ...billingRows.map(row => row.syncedAt)) || undefined, ok: true, note: `${rowsFor(snapshot, "payers").length} human payer mappings` });
-      sources.push({ name: "Whop and Tap transaction attribution", freshestAt: Math.max(epoch(summary.whop_synced_ms) ?? 0, tapFreshAt) || undefined, ok: true, note: `${clientPayments.length} client payment snapshots computed` });
-      return { payload, sources, daily, clientPayments, financeRevision: sourceRevision };
+      sources.push({ name: "Whop and Tap transaction attribution", freshestAt: Math.max(epoch(summary.whop_synced_ms) ?? 0, tapFreshAt) || undefined, ok: true, note: `${clientPayments.length} client payment snapshots and ${dealPayments.length} deal payments computed; ${ties.applied} of ${ties.live} ties applied` });
+      return { payload, sources, daily, clientPayments, dealPayments, financeRevision: sourceRevision };
     },
   };
 }

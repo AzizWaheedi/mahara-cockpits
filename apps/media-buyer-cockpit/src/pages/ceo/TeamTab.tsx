@@ -29,12 +29,18 @@ import { DateInput } from "@/components/ui/date-input";
 import { Switch } from "@/components/ui/switch";
 import { api, useAction } from "@/lib/cockpitApi";
 import {
-  COMMISSION_BASES,
-  COMMISSION_SHORT,
   type CommissionBasis,
   SHARE_BASES,
   takesRate,
+  unknownBasis,
+  unknownRuleText,
 } from "@/types/ceo/commission";
+import {
+  type PayMonth,
+  type PayPlansList,
+  type PlanCommission,
+  planFor,
+} from "@/types/ceo/payPlan";
 import type { Person, Roster } from "@/types/ceo/people";
 import {
   DAY_LABEL,
@@ -58,6 +64,11 @@ import {
   PayFrom,
   ScheduleFrom,
 } from "./hours/RosterDialogs";
+import { commissionOptions } from "./pay/fields";
+import { PayMonthCard } from "./pay/PayMonthCard";
+import { PayPlanSheet, type PlanScope } from "./pay/PayPlanSheet";
+import { PayPlansCard, PersonPlanLine, usePayPlans } from "./pay/PayPlansCard";
+import { addSomeoneLine, rolePrefill, thisMonth } from "./pay/payCopy";
 import { usePersonParam } from "./personPage";
 import type { CeoTabProps } from "./types";
 
@@ -144,6 +155,27 @@ const draftOf = (p: Person): Draft => ({
   note: p.commissionNote ?? "",
   role: p.role ?? "",
 });
+
+/**
+ * A role plan's commission lines as the row's draft (decision 3: picking a
+ * role pre-fills them). A line this code cannot read is left as it is: it is
+ * never replaced without being seen.
+ */
+const prefilled = (d: Draft, lines: PlanCommission[], p?: Person): Draft => {
+  const [l1, l2] = lines;
+  const keep1 = p ? unknownBasis(p.commission) !== null : false;
+  const keep2 = p ? unknownBasis(p.commission2) !== null : false;
+  return {
+    ...d,
+    ...(keep1 ? {} : { basis: l1.basis, rate: rateText(l1.basis, l1.rate) }),
+    ...(keep2
+      ? {}
+      : {
+          basis2: l2?.basis ?? "none",
+          rate2: l2 ? rateText(l2.basis, l2.rate) : "",
+        }),
+  };
+};
 
 const tabular = { fontVariantNumeric: "tabular-nums" } as const;
 
@@ -571,14 +603,22 @@ function HoursEditor({
 function Row({
   p,
   roles,
+  plans,
+  plansError,
   onChanged,
   onOpen,
+  onOpenPlan,
 }: {
   p: Person;
   roles: string[];
+  /** The pay plans, for the plan line and the role pre-fill; null while they load. */
+  plans: PayPlansList | null;
+  plansError: string | null;
   onChanged: () => Promise<void>;
   /** Open this person's file: goals, flags, CV and the monthly scorecard. */
   onOpen: (p: Person) => void;
+  /** Open this person's pay plan sheet. */
+  onOpenPlan: (p: Person) => void;
 }) {
   const save = useAction(api.ceo.people.save);
   const setActive = useAction(api.ceo.people.setActive);
@@ -600,6 +640,9 @@ function Row({
     null,
   );
   const base = draftOf(p);
+  // A line the database has and this code cannot read: shown, never sent.
+  const unknown1 = unknownBasis(p.commission);
+  const unknown2 = unknownBasis(p.commission2);
   const payDirty =
     d.monthlyCost !== base.monthlyCost || d.currency !== base.currency;
   const line2Dirty = d.basis2 !== base.basis2 || d.rate2 !== base.rate2;
@@ -635,11 +678,17 @@ function Row({
     email: p.email ?? undefined,
     role: draft.role.trim() || undefined,
     engagement: p.engagement,
-    commissionBasis: draft.basis,
-    commissionRate: rateValue(draft.basis, draft.rate),
+    // A line this code cannot read is never sent (PAY-PLANS.md section 7):
+    // sending it would overwrite the database's rule with "other".
+    ...(unknown1
+      ? {}
+      : {
+          commissionBasis: draft.basis,
+          commissionRate: rateValue(draft.basis, draft.rate),
+        }),
     // Line 2 is sent only when it changed, so a role or line-1 edit never
     // depends on it (A074).
-    ...(line2Dirty
+    ...(line2Dirty && !unknown2
       ? {
           commission2Basis: draft.basis2,
           commission2Rate: rateValue(draft.basis2, draft.rate2) ?? null,
@@ -760,7 +809,13 @@ function Row({
               label={`${p.name}'s role`}
               disabled={busy}
               className={`${fieldXs} w-40`}
-              onChange={role => setD({ ...d, role })}
+              onChange={role => {
+                // Picking a role fills in its plan's commission lines.
+                const lines = rolePrefill(plans, role, thisMonth());
+                setD(
+                  lines ? prefilled({ ...d, role }, lines, p) : { ...d, role },
+                );
+              }}
             />
             <span>
               {ENGAGEMENTS.find(e => e.value === p.engagement)?.label ??
@@ -840,21 +895,26 @@ function Row({
           </div>
           <div className="grid gap-1.5 text-sm">
             <div className="flex flex-wrap items-center gap-1.5">
-              <AnimatedSelect
-                value={d.basis}
-                onChange={e =>
-                  setD({ ...d, basis: e.target.value as CommissionBasis })
-                }
-                aria-label={`What ${p.name}'s commission is paid on`}
-                className={`${field} max-w-[12rem]`}
-              >
-                {COMMISSION_BASES.map(b => (
-                  <option key={b} value={b}>
-                    {COMMISSION_SHORT[b]}
-                  </option>
-                ))}
-              </AnimatedSelect>
-              {takesRate(d.basis) ? (
+              {unknown1 ? (
+                <span
+                  className="text-xs text-muted-foreground"
+                  title="This cockpit does not know this rule yet. It is kept as it is; reload the app to edit it."
+                >
+                  {unknownRuleText(unknown1)}
+                </span>
+              ) : (
+                <AnimatedSelect
+                  value={d.basis}
+                  onChange={e =>
+                    setD({ ...d, basis: e.target.value as CommissionBasis })
+                  }
+                  aria-label={`What ${p.name}'s commission is paid on`}
+                  className={`${field} max-w-[12rem]`}
+                >
+                  {commissionOptions({ none: "No commission", other: true })}
+                </AnimatedSelect>
+              )}
+              {!unknown1 && takesRate(d.basis) ? (
                 <span className="flex items-center gap-1">
                   <input
                     inputMode="decimal"
@@ -870,7 +930,7 @@ function Row({
                   </span>
                 </span>
               ) : null}
-              {d.basis === "other" || d.note ? (
+              {(d.basis === "other" && !unknown1) || d.note ? (
                 <input
                   value={d.note}
                   onChange={e => setD({ ...d, note: e.target.value })}
@@ -884,7 +944,14 @@ function Row({
             {/* A074: a second line, its own rule and rate ("$10 per showed
               qualified appointment" and "$50 per closed deal" are two),
               offered once there is a first line. */}
-            {d.basis !== "none" || d.basis2 !== "none" ? (
+            {unknown2 ? (
+              <span
+                className="text-xs text-muted-foreground"
+                title="This cockpit does not know this rule yet. It is kept as it is; reload the app to edit it."
+              >
+                {`+ ${unknownRuleText(unknown2)}`}
+              </span>
+            ) : d.basis !== "none" || d.basis2 !== "none" ? (
               <div className="flex flex-wrap items-center gap-1.5">
                 <AnimatedSelect
                   value={d.basis2}
@@ -902,13 +969,11 @@ function Row({
                   aria-label={`What ${p.name}'s second commission line is paid on`}
                   className={`${field} max-w-[12rem]`}
                 >
-                  {COMMISSION_BASES.map(b => (
-                    <option key={b} value={b}>
-                      {b === "none"
-                        ? "No second line"
-                        : `+ ${COMMISSION_SHORT[b]}`}
-                    </option>
-                  ))}
+                  {commissionOptions({
+                    none: "No second line",
+                    other: true,
+                    plus: true,
+                  })}
                 </AnimatedSelect>
                 {takesRate(d.basis2) ? (
                   <span className="flex items-center gap-1">
@@ -928,6 +993,13 @@ function Row({
                 ) : null}
               </div>
             ) : null}
+            {/* One line under the commission: the pay plan they follow (8.4). */}
+            <PersonPlanLine
+              plans={plans}
+              error={plansError}
+              person={p}
+              onOpen={() => onOpenPlan(p)}
+            />
           </div>
         </div>
       )}
@@ -1084,9 +1156,12 @@ function Row({
 
 function AddPerson({
   roles,
+  plans,
   onAdded,
 }: {
   roles: string[];
+  /** The pay plans: which one applies once a role is picked, and its commission lines. */
+  plans: PayPlansList | null;
   onAdded: () => Promise<void>;
 }) {
   const save = useAction(api.ceo.people.save);
@@ -1164,6 +1239,14 @@ function AddPerson({
             disabled={busy}
             onChange={setRole}
           />
+          {/* What they will be paid, before the pay is typed and Add is pressed:
+              right under the role on a phone, its own row under the fields on a
+              wide screen. */}
+          {engagement !== "bot" && role.trim() ? (
+            <p className="text-xs text-muted-foreground @md:col-span-2 @3xl:order-last @3xl:col-span-6">
+              {addSomeoneLine(plans, role, thisMonth())}
+            </p>
+          ) : null}
           <AnimatedSelect
             value={engagement}
             onChange={e =>
@@ -1211,6 +1294,11 @@ function AddPerson({
             disabled={busy || !name.trim()}
             onClick={() =>
               act(async () => {
+                // The role plan's commission lines come with the role.
+                const lines =
+                  engagement === "bot"
+                    ? null
+                    : rolePrefill(plans, role, thisMonth());
                 await save({
                   name: name.trim(),
                   role: role.trim() || undefined,
@@ -1220,6 +1308,14 @@ function AddPerson({
                       ? undefined
                       : Number(pay),
                   currency,
+                  ...(lines
+                    ? {
+                        commissionBasis: lines[0].basis,
+                        commissionRate: lines[0].rate,
+                        commission2Basis: lines[1]?.basis ?? "none",
+                        commission2Rate: lines[1]?.rate ?? null,
+                      }
+                    : {}),
                 });
                 setName("");
                 setRole("");
@@ -1246,6 +1342,11 @@ export function TeamTab({ goTab }: CeoTabProps) {
   // Opening somebody goes to their page under Management, which is where
   // their file lives; this list is about what they cost.
   const [, setPerson] = usePersonParam();
+  // Pay plans (PAY-PLANS.md section 8): the plans, the sheet, this month.
+  const pay = usePayPlans();
+  const [planScope, setPlanScope] = useState<PlanScope | null>(null);
+  const [current, setCurrent] = useState<PayMonth | null>(null);
+  const [payVersion, setPayVersion] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -1265,6 +1366,18 @@ export function TeamTab({ goTab }: CeoTabProps) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  /** After a roster edit: the roster, and the month (its lines may have moved). */
+  const changed = useCallback(async () => {
+    await refresh();
+    setPayVersion(v => v + 1);
+  }, [refresh]);
+  const openPlan = (p: Person) =>
+    setPlanScope({
+      kind: "person",
+      personId: p.id,
+      name: p.name,
+      role: p.role ?? null,
+    });
 
   // The accounts sit at the foot of the list, so "on the team" reads as people.
   const live = useMemo(
@@ -1284,10 +1397,17 @@ export function TeamTab({ goTab }: CeoTabProps) {
   const working = live.filter(p => p.working);
   const uncosted = data?.missingCost.length ?? 0;
   const external = working.filter(p => p.engagement !== "staff").length;
+  // Commission lines or a pay plan with parts (8.6).
+  const month0 = `${thisMonth()}-01`;
   const onCommission = working.filter(
     p =>
       p.commission.basis !== "none" ||
-      (p.commission2?.basis ?? "none") !== "none",
+      (p.commission2?.basis ?? "none") !== "none" ||
+      Boolean(
+        pay.plans &&
+          planFor(pay.plans.plans, { id: p.id, role: p.role ?? null }, month0)
+            .plan?.parts.length,
+      ),
   ).length;
   // Until the roster loads the tiles say n/a, with the reason, never a dash.
   const notLoaded = error
@@ -1349,6 +1469,7 @@ export function TeamTab({ goTab }: CeoTabProps) {
                   label="On commission"
                   value={data ? count(onCommission) : null}
                   naHint={notLoaded}
+                  hint="Everyone being paid with a commission line or a pay plan with parts this month."
                 />
                 <StatTile
                   variant="plain"
@@ -1368,7 +1489,7 @@ export function TeamTab({ goTab }: CeoTabProps) {
                 ]}
               />
             </div>
-            <AddPerson roles={roles} onAdded={refresh} />
+            <AddPerson roles={roles} plans={pay.plans} onAdded={changed} />
             {error ? (
               <p className="text-sm text-[var(--ceo-critical)]">{error}</p>
             ) : null}
@@ -1377,6 +1498,22 @@ export function TeamTab({ goTab }: CeoTabProps) {
       </SectionCard>
 
       <HoursAndPay order={1} />
+
+      <PayPlansCard
+        plans={pay.plans}
+        error={pay.error}
+        onRetry={() => void pay.reload()}
+        onOpenRole={role => setPlanScope({ kind: "role", role })}
+        onOpenPerson={p =>
+          setPlanScope({
+            kind: "person",
+            personId: p.id,
+            name: p.name,
+            role: p.role,
+          })
+        }
+        order={2}
+      />
 
       <SectionCard
         title="On the team"
@@ -1399,11 +1536,14 @@ export function TeamTab({ goTab }: CeoTabProps) {
                       key={p.id}
                       p={p}
                       roles={roles}
-                      onChanged={refresh}
+                      plans={pay.plans}
+                      plansError={pay.error}
+                      onChanged={changed}
                       onOpen={p => {
                         setPerson(p.id);
                         goTab("management");
                       }}
+                      onOpenPlan={openPlan}
                     />
                   ))}
                 </div>
@@ -1426,8 +1566,12 @@ export function TeamTab({ goTab }: CeoTabProps) {
                     setter: a fixed amount per qualified intro that shows, plus
                     one per deal that fully closes). A share is typed as a
                     percent; a per-unit amount is in the person's currency. A
-                    fully closed deal is a closer-form deal that is not voided.
-                    Next month's payout is priced on Costs.
+                    fully closed deal is a closer-form deal that is not voided;
+                    a closed client deal is a deal our client closes. Bonuses,
+                    typed counts and guarantees are parts of a pay plan (Pay
+                    plans above), and each month is worked out and approved in
+                    Pay for the month below. Next month's payout is priced on
+                    Costs.
                   </p>
                 </details>
               ) : null}
@@ -1436,11 +1580,20 @@ export function TeamTab({ goTab }: CeoTabProps) {
         }
       </SectionCard>
 
+      <PayMonthCard
+        plans={pay.plans}
+        reloadKey={payVersion}
+        onPlansChanged={pay.reload}
+        onRosterChanged={refresh}
+        onCurrent={setCurrent}
+        order={4}
+      />
+
       {gone.length ? (
         <SectionCard
           title="Off the team"
           kicker={`${plural(gone.length, "person", "people")}`}
-          order={4}
+          order={5}
           actions={
             <Button
               type="button"
@@ -1461,11 +1614,14 @@ export function TeamTab({ goTab }: CeoTabProps) {
                     key={p.id}
                     p={p}
                     roles={roles}
-                    onChanged={refresh}
+                    plans={pay.plans}
+                    plansError={pay.error}
+                    onChanged={changed}
                     onOpen={p => {
                       setPerson(p.id);
                       goTab("management");
                     }}
+                    onOpenPlan={openPlan}
                   />
                 ))}
               </div>
@@ -1473,6 +1629,28 @@ export function TeamTab({ goTab }: CeoTabProps) {
           }
         </SectionCard>
       ) : null}
+
+      <PayPlanSheet
+        scope={planScope}
+        plans={pay.plans}
+        month={current}
+        base={
+          planScope?.kind === "person"
+            ? (() => {
+                const who = data?.people.find(x => x.id === planScope.personId);
+                return who
+                  ? { usd: who.monthlyUsd, currency: who.currency }
+                  : null;
+              })()
+            : null
+        }
+        onClose={() => setPlanScope(null)}
+        onSaved={async () => {
+          await pay.reload();
+          setPayVersion(v => v + 1);
+        }}
+        onOpenRole={role => setPlanScope({ kind: "role", role })}
+      />
     </div>
   );
 }

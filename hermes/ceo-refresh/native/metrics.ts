@@ -40,7 +40,7 @@ export type MetricDefinition = {
 
 export type MetricValue = {
   metric: string;
-  /** "company", "client:<clickup task id>", "person:<first name>", "rail:<name>". */
+  /** "company", "client:<clickup task id>", "person:<name as credited>", "rail:<name>". */
   scope: string;
   /** today, yesterday, last7, mtd, lastMonth, last30, last90, 12m, all, snapshot. */
   window: string;
@@ -547,16 +547,16 @@ export const DEFINITIONS: MetricDefinition[] = [
     "growth.front_end_cash",
     "growth",
     "Front-end cash",
-    "The deposit typed on the closer form for deals signed in the window, plus the kickoff cash the CSM types on the kickoff form (Payment Amount), dated by the day the form was submitted and read as USD.",
-    B2B,
+    "Money paid on signed deals and credited to the deal's closer (from 7 days before the closer form until the deal's tied cash reaches its contract, at most 120 days after signing), on Whop, Tap, a bank transfer or logged by hand, by the day it arrived.",
+    `${TRIAGE} cockpit_deal_payments, the deal ledger the Money refresh writes from its attribution; closer-form deals from ${B2B}`,
     "usd",
-    `Kickoff cash before 2026-10-04, when the form first carried the amount. ${VOIDED_OUT}`,
+    `Webinar deals. The deposit and kickoff amounts typed on the forms, shown beside it as typed, not money, and never added. Money tied to no deal. It is the last published money attribution, so it can be one refresh behind. ${VOIDED_OUT}`,
   ),
   d(
     "growth.front_end_cash_confirmed_share",
     "growth",
-    "Front-end cash confirmed",
-    "Share of the deposits a Whop payment or a bank transfer on record backs.",
+    "Typed deposits confirmed",
+    "Share of the deposits typed on the closer form that a Whop payment or a bank transfer on record backs: a check on the form, not the money.",
     B2B,
     "share",
     "Tap is not checked here.",
@@ -565,8 +565,8 @@ export const DEFINITIONS: MetricDefinition[] = [
     "growth.roas_cash",
     "growth",
     "Front-end ROAS",
-    "Front-end cash over lead-gen spend.",
-    B2B,
+    "Front-end cash (money paid, credited to the closer) over lead-gen spend.",
+    `${TRIAGE} cockpit_deal_payments; spend from ${B2B}`,
     "ratio",
     VOIDED_OUT,
   ),
@@ -669,7 +669,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "money.front_end_cash",
     "money",
     "Front-end cash (rails)",
-    "Payments in tied to a deal inside its front-end window: the deposit (closer) and the rest of the cash (CSM).",
+    "Payments in tied to a signed deal until the deal's tied cash reaches its contract, at most 120 days after signing: the deposit and the remainder, both credited to the deal's closer.",
     "Attribution over every rail",
     "usd",
   ),
@@ -677,7 +677,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "money.back_end_cash",
     "money",
     "Back-end cash",
-    "Payments in matched to an existing client after its front-end window.",
+    "Payments in matched to an existing client, or on a deal past its contract or 120 days after signing, credited to the client card's CSM.",
     "Attribution over every rail",
     "usd",
   ),
@@ -688,6 +688,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Payments in that match no deal and no client.",
     "Attribution over every rail",
     "usd",
+    "Payments the CEO tied as not client money, counted apart.",
   ),
   d(
     "money.projected_mrr",

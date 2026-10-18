@@ -2,6 +2,7 @@
 import {
   COMMISSION_BASES,
   type CommissionBasis,
+  type CommissionLine,
 } from "../types/ceo/commission";
 import type { Person, Roster } from "../types/ceo/people";
 import { parseSchedule } from "../types/ceo/schedule";
@@ -30,13 +31,39 @@ export const TEAM_ROLES = [
 ] as const;
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
-function basisOf(v: unknown): CommissionBasis {
-  return (COMMISSION_BASES as readonly string[]).includes(String(v ?? ""))
-    ? (String(v) as CommissionBasis)
-    : "none";
+/**
+ * A basis as stored. Empty is no commission (a roster from before the
+ * two-line migration has no second line). A value this code does not know
+ * is kept as an explicit unknown, never read as "none": that would count a
+ * real commission as $0 and a save would wipe it (the database learns a
+ * basis before the installed app does). It reads as "other", which Costs
+ * never prices and always names, and carries the raw value for the screen's
+ * "Unknown rule: <value>".
+ */
+export function basisOf(v: unknown): {
+  basis: CommissionBasis;
+  unknown?: string;
+} {
+  const raw = String(v ?? "").trim();
+  if (!raw) return { basis: "none" };
+  return (COMMISSION_BASES as readonly string[]).includes(raw)
+    ? { basis: raw as CommissionBasis }
+    : { basis: "other", unknown: raw };
 }
 const rateOf = (v: unknown) =>
   v === null || v === undefined ? null : Number(v);
+/** A roster line: line 1 keeps its rate as stored; line 2 has none without a basis. */
+function lineOf(
+  basis: unknown,
+  rate: unknown,
+  second: boolean,
+): CommissionLine {
+  const b = basisOf(basis);
+  return {
+    ...b,
+    rate: second && b.basis === "none" ? null : rateOf(rate),
+  };
+}
 
 function shape(r: Row): Person {
   const cost = r.monthly_cost === null ? null : Number(r.monthly_cost);
@@ -59,18 +86,9 @@ function shape(r: Row): Person {
     currency,
     monthlyUsd:
       cost === null || rate === undefined ? null : round2(cost * rate),
-    commission: {
-      basis: basisOf(r.commission_basis),
-      rate: rateOf(r.commission_rate),
-    },
+    commission: lineOf(r.commission_basis, r.commission_rate, false),
     // Absent before the two-line migration (20261011d): no second line.
-    commission2: {
-      basis: basisOf(r.commission2_basis),
-      rate:
-        basisOf(r.commission2_basis) === "none"
-          ? null
-          : rateOf(r.commission2_rate),
-    },
+    commission2: lineOf(r.commission2_basis, r.commission2_rate, true),
     commissionPct:
       r.commission_pct === null || r.commission_pct === undefined
         ? null

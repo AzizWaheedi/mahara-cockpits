@@ -6,5 +6,6 @@ export async function computeFinance(runtime:Runtime){return withFinanceRuntime(
  const failed=[...runtime.failures,...moneyResult.sources.filter(s=>!s.ok).map(s=>s.name),...expenseResult.sources.filter(s=>!s.ok).map(s=>s.name)];
  if(failed.length)throw Error('Finance refresh incomplete: '+[...new Set(failed)].join('; ').slice(0,1200));
  if(!moneyResult.payload.attribution||!moneyResult.payload.rails?.manual)throw Error('Finance attribution or manual history was not confirmed');
- return {sections:[{key:'money',label:money.label,...moneyResult},{key:'expenses',label:expenses.label,...expenseResult}],payments:runtime.payments};
+ if(!Array.isArray(runtime.dealPayments))throw Error('Finance deal ledger was not computed');
+ return {sections:[{key:'money',label:money.label,...moneyResult},{key:'expenses',label:expenses.label,...expenseResult}],payments:runtime.payments,dealPayments:runtime.dealPayments};
 });}

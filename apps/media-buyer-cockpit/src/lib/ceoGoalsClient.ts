@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseCallCenterReport } from "../types/ceo/callCenterContract";
 import { GROUPS, METRICS, scoreboard } from "../types/ceo/scoreboard";
-import { costsSummary, getCostsContext } from "./ceoCostsClient";
+import { costsSummary, getCostsContext, payOrNull } from "./ceoCostsClient";
 import { buildGoalsBoard, type GoalContext } from "./ceoGoalsModel";
 
 function positiveId(id: unknown): asserts id is number {
@@ -69,8 +69,10 @@ export async function readGoalsBoard(
 ) {
   const context = await getGoalContext(client, args.planId);
   const initial = buildGoalsBoard(context);
-  const costs = getCostsContext(client)
-    .then(costsSummary)
+  // The same payroll the Costs page shows: the roster, commission and each
+  // person's latest approved pay-plan parts (PAY-PLANS.md 8.7).
+  const costs = Promise.all([getCostsContext(client), payOrNull(client)])
+    .then(([c, pay]) => costsSummary(c, pay))
     .catch(() => null);
   if (
     initial.plan &&
