@@ -354,9 +354,9 @@ export function summarySections(summary?: string | null): {
   return { takeaways, nextSteps };
 }
 
-type Answered = { answers?: { title?: string | null; value: unknown }[] };
+export type Answered = { answers?: { title?: string | null; value: unknown }[] };
 
-function formAnswer(form: Answered | undefined | null, re: RegExp) {
+export function formAnswer(form: Answered | undefined | null, re: RegExp) {
   if (!form) return "";
   for (const a of form.answers ?? [])
     if (re.test(String(a.title ?? ""))) return answerText(a.value).trim();
@@ -364,7 +364,7 @@ function formAnswer(form: Answered | undefined | null, re: RegExp) {
 }
 
 /** Every answer whose title matches: some forms repeat a title. */
-function formAnswers(form: Answered | undefined | null, re: RegExp) {
+export function formAnswers(form: Answered | undefined | null, re: RegExp) {
   if (!form) return [];
   return (form.answers ?? [])
     .filter(a => re.test(String(a.title ?? "")))
@@ -1068,7 +1068,7 @@ function heldMeeting(me: Matcher, s: string): boolean {
 
 // ---- Forms -----------------------------------------------------------------
 
-const GOALS: [RegExp, string][] = [
+export const GOALS: [RegExp, string][] = [
   [/#1 service/i, "Wants to grow"],
   [/ideal project/i, "Ideal project"],
   [/TOP 3 challenges/i, "Top challenges"],
@@ -1077,7 +1077,7 @@ const GOALS: [RegExp, string][] = [
   [/motivated you to join/i, "Why they joined"],
   [/additional information we should know/i, "Also told us"],
 ];
-const KICKOFF: [RegExp, string][] = [
+export const KICKOFF: [RegExp, string][] = [
   [/which service are we advertising/i, "Advertising"],
   [/platforms will we advertise/i, "Platforms"],
   [/daily budget/i, "Daily ad budget"],
@@ -1086,7 +1086,7 @@ const KICKOFF: [RegExp, string][] = [
   [/anything to add/i, "Kickoff notes"],
 ];
 /** Kickoff setup items that block a launch while they are not done. */
-const SETUP: { re: RegExp; label: string; topic: string; name?: boolean }[] = [
+export const SETUP: { re: RegExp; label: string; topic: string; name?: boolean }[] = [
   {
     re: /card linked to the account/i,
     label: "a card with funds on the ad account",
@@ -1124,10 +1124,10 @@ const SETUP: { re: RegExp; label: string; topic: string; name?: boolean }[] = [
   },
 ];
 /** A setup answer that says it is done; anything else is still open. */
-const SETUP_DONE =
+export const SETUP_DONE =
   /^(true|yes|done|integrated|confirmed|access confirmed|logged in|approved|signed|complete[d]?|connected|added|ready)\b/i;
 /** A name answer that is not a name yet. */
-const NAME_OPEN =
+export const NAME_OPEN =
   /^(pending|n\/?a|na|tbd|unknown|waiting|not yet|no|-|false)\b/i;
 /** Which setup item a client step is about. */
 const SETUP_TOPIC: [RegExp, string][] = [
