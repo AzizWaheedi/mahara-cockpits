@@ -99,6 +99,7 @@ export function InstantForm({
   focus,
   thanks,
   video,
+  cover,
 }: {
   who: Identity;
   pageName: string;
@@ -112,6 +113,12 @@ export function InstantForm({
   /** The thank-you words. */
   thanks: string;
   video?: boolean;
+  /**
+   * The intro's cover picture: Meta heads an instant form with the ad's
+   * own image unless another is chosen, so the client's creative, when
+   * there is one.
+   */
+  cover?: string | null;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const [shift, setShift] = useState(0);
@@ -138,8 +145,17 @@ export function InstantForm({
         <i className="dkc-battery" />
       </div>
       {screen === "intro" ? (
-        <div className="dkc-form-screen" data-screen="intro">
+        <div
+          className="dkc-form-screen"
+          data-screen="intro"
+          data-cover={cover ? "" : undefined}
+        >
           <Top />
+          {cover ? (
+            <div className="dkc-form-cover" aria-hidden>
+              <img src={cover} alt="" draggable={false} />
+            </div>
+          ) : null}
           <div className="dkc-form-intro">
             <Avatar who={who} size="calc(var(--u) * 64)" />
             <b dir="auto">{pageName}</b>

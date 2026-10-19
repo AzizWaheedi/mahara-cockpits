@@ -307,6 +307,8 @@ export function layout(focus: PhoneKey | null): Record<PhoneKey, Place> {
 interface Leader {
   key: string;
   label: string;
+  /** A second line under the label (the "Sponsored" mark, in the header). */
+  sub?: string;
   /** Your page and logo sits at the phone's start: its label goes that way. */
   side: "start" | "end";
   /** The part's anchor, in the area's logical coordinates. */
@@ -316,7 +318,12 @@ interface Leader {
   ly: number;
 }
 
-const PARTS = ["who", "sponsored", "media", "words", "cta"] as const;
+/**
+ * The parts the leaders name. The page's avatar and its "Sponsored" mark
+ * share the header's one row, so they share one leader and one dot, its
+ * label on two lines: two dots a few pixels apart merge on a share.
+ */
+const PARTS = ["who", "media", "words", "cta"] as const;
 
 export function PhoneRow({
   ctx,
@@ -364,8 +371,8 @@ export function PhoneRow({
       if (!node) continue;
       const r = node.getBoundingClientRect();
       // The page's avatar and "Sponsored" sit at the app's start: their
-      // labels go to that side, stacked; the rest to the other.
-      const atStart = part === "who" || part === "sponsored";
+      // label goes to that side; the rest to the other.
+      const atStart = part === "who";
       const side = atStart === (model.app === lang) ? "start" : "end";
       // Every dot sits just outside the frame, on the edge nearest its
       // label, level with the part it names: no dot and no line ever
@@ -375,31 +382,31 @@ export function PhoneRow({
       const label =
         part === "who"
           ? t(A.leaders.who, lang)
-          : part === "sponsored"
-            ? // The word as the phone shows it, in the phone's own language.
-              tf(A.leaders.sponsored, lang, {
-                word: t(APP.sponsored, model.app),
-              })
-            : part === "media"
-              ? t(cropped ? A.leaders.crop : A.leaders.media, lang)
-              : part === "words"
-                ? t(A.leaders.words, lang)
-                : tf(A.leaders.cta, lang, { cta: ctaText });
-      found.push({ key: part, label, side, ax, ay, ly: ay });
+          : part === "media"
+            ? t(cropped ? A.leaders.crop : A.leaders.media, lang)
+            : part === "words"
+              ? t(A.leaders.words, lang)
+              : tf(A.leaders.cta, lang, { cta: ctaText });
+      // The word as the phone shows it, in the phone's own language.
+      const sub =
+        part === "who" && el.querySelector('[data-part="sponsored"]')
+          ? tf(A.leaders.sponsored, lang, {
+              word: t(APP.sponsored, model.app),
+            })
+          : undefined;
+      found.push({ key: part, label, sub, side, ax, ay, ly: ay });
     }
-    // Spread each side's labels so none sits on another (60 px apart), and
-    // two parts on one row (the avatar and "Sponsored") get two dots.
+    // Spread each side's labels so none sits on another (60 px apart; a
+    // two-line label takes 90).
     for (const side of ["start", "end"] as const) {
       const list = found
         .filter(f => f.side === side)
         .sort((a, b) => a.ay - b.ay);
-      for (let i = 1; i < list.length; i++)
-        if (list[i].ay - list[i - 1].ay < 16) {
-          list[i].ay = list[i - 1].ay + 16;
-          list[i].ly = Math.max(list[i].ly, list[i].ay);
-        }
-      for (let i = 1; i < list.length; i++)
-        if (list[i].ly - list[i - 1].ly < 60) list[i].ly = list[i - 1].ly + 60;
+      for (let i = 1; i < list.length; i++) {
+        const room = list[i - 1].sub || list[i].sub ? 90 : 60;
+        if (list[i].ly - list[i - 1].ly < room)
+          list[i].ly = list[i - 1].ly + room;
+      }
       const last = list.at(-1);
       if (last && last.ly > AREA_H - 30) {
         const lift = last.ly - (AREA_H - 30);
@@ -568,6 +575,7 @@ export function PhoneRow({
           }
         >
           {l.label}
+          {l.sub ? <span className="dkc-leader-sub">{l.sub}</span> : null}
         </span>
       ))}
       {focus && focused?.starter ? (

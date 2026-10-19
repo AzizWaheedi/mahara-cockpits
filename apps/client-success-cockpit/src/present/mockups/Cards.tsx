@@ -1,13 +1,6 @@
-import {
-  Bell,
-  CalendarCheck,
-  MessageSquareText,
-  Phone as PhoneIcon,
-} from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { JOURNEY, type L, LAUNCH, type Lang, t, tf } from "../content";
 import { Node } from "../JourneyLanes";
-import { Logo } from "../platforms";
 import { Avatar, type Identity } from "./Identity";
 
 /**
@@ -149,35 +142,31 @@ export function CalendarEntry({
 }
 
 /**
- * Journey stop 4: the steps before the meeting as dots on a line, each
- * named in a word or two (the call slide's stop 7 timeline, the home of
- * these steps, in miniature). Done with you, its four steps. The names sit
- * below and above the line in turn, so each has two columns' room and none
- * wraps to leave one word on a line. A step with no time of its own (the
- * provisional bookings' calls) is named by its whole line.
+ * Journey stop 4: the steps before the meeting as dots down one line, each
+ * named in a word or two beside its dot (the call slide's stop 7 timeline,
+ * the home of these steps, in miniature). Done with you, its four steps. A
+ * step with no time of its own (the provisional bookings' calls) is named
+ * by its whole line. Every name starts at one x, on its dot's centre line.
  */
-export function FiveDots({
-  lang,
-  dwy,
-  width = 952,
-}: {
-  lang: Lang;
-  dwy: boolean;
-  width?: number;
-}) {
+const DOT_STEP = 58;
+
+/** The strip's height, to set it level with its row before it renders. */
+export const fiveDotsHeight = (dwy: boolean) =>
+  ((dwy ? LAUNCH.call.after.rowsDwy : LAUNCH.call.after.rows).length - 1) *
+    DOT_STEP +
+  28;
+
+export function FiveDots({ lang, dwy }: { lang: Lang; dwy: boolean }) {
   const A = LAUNCH.call.after;
   const rows = dwy ? A.rowsDwy : A.rows;
   const n = rows.length;
-  // Each label owns the column from its dot to the next one; the last
-  // column ends on the stage's edge.
-  const gap = width / n;
-  const col = gap;
-  const x = (i: number) => 8 + i * gap;
+  const y = (i: number) => 14 + i * DOT_STEP;
+  const h = y(n - 1) + 14;
   return (
-    <div className="dkc-fivedots" style={{ width }}>
-      <svg width={width} height={16} viewBox={`0 0 ${width} 16`} aria-hidden>
+    <div className="dkc-fivedots" style={{ height: h }}>
+      <svg width={28} height={h} viewBox={`0 0 28 ${h}`} aria-hidden>
         <path
-          d={`M ${x(0)} 8 L ${x(n - 1)} 8`}
+          d={`M 14 ${y(0)} L 14 ${y(n - 1)}`}
           stroke="var(--dk-line-strong)"
           strokeWidth={2}
           strokeLinecap="round"
@@ -186,9 +175,9 @@ export function FiveDots({
         {rows.map((r, i) => (
           <circle
             key={r.what.en}
-            cx={x(i)}
-            cy={8}
-            r={6}
+            cx={14}
+            cy={y(i)}
+            r={7}
             fill={i === 0 ? "var(--dk-teal)" : "var(--dk-space)"}
             stroke={i === 0 ? "var(--dk-teal)" : "var(--dk-line-strong)"}
             strokeWidth={2}
@@ -199,12 +188,8 @@ export function FiveDots({
         {rows.map((r, i) => (
           <li
             key={r.what.en}
-            style={{
-              insetInlineStart: x(i) - 8,
-              width: Math.min(col * 2 - 16, width - x(i) + 8),
-            }}
+            style={{ top: y(i) }}
             data-first={i === 0 ? "" : undefined}
-            data-up={i % 2 ? "" : undefined}
           >
             {r.plain && r.when
               ? `${t(r.when, lang)}: ${t(r.what, lang)}`
@@ -218,12 +203,11 @@ export function FiveDots({
 
 // ---------------------------------------- after the call (L6 stop 7, 8)
 
-const MARKS = [null, Bell, PhoneIcon, MessageSquareText, CalendarCheck];
-
 /**
  * "What we do before the meeting": the five steps joined by the journey's
- * line, lit top to bottom (400 ms a step), each with its time in Mono and
- * its channel's mark. Said as what we do, never "every"; no reply buttons.
+ * line, lit top to bottom (400 ms a step), each a dot and one line of words
+ * in the deck's one face: its time first in ink-2, then the step. Said as
+ * what we do, never "every"; no reply buttons, no channel icons.
  */
 export function Reminders({
   lang,
@@ -247,35 +231,26 @@ export function Reminders({
     >
       <h4>{t(dwy ? A.headingDwy : A.heading, lang)}</h4>
       <ol>
-        {rows.map((r, i) => {
-          const Mark = MARKS[dwy && i === 3 ? 4 : i];
-          return (
-            <li
-              key={r.what.en}
-              style={{ "--i": i } as CSSProperties}
-              data-last={i === rows.length - 1 ? "" : undefined}
-            >
-              <span className="dkc-rem-mark" aria-hidden>
-                {i === 0 ? (
-                  <Logo mark="whatsapp" size={30} />
-                ) : Mark ? (
-                  <Mark />
-                ) : null}
-              </span>
-              <span className="dkc-rem-text">
-                {r.when ? (
-                  <span
-                    className="dkc-rem-when"
-                    data-plain={r.plain ? "" : undefined}
-                  >
-                    {t(r.when, lang)}
-                  </span>
-                ) : null}
-                <span>{t(r.what, lang)}</span>
-              </span>
-            </li>
-          );
-        })}
+        {rows.map((r, i) => (
+          <li
+            key={r.what.en}
+            style={{ "--i": i } as CSSProperties}
+            data-last={i === rows.length - 1 ? "" : undefined}
+          >
+            <span className="dkc-rem-mark" aria-hidden>
+              <i />
+            </span>
+            <span className="dkc-rem-text">
+              {r.when ? (
+                <>
+                  <span className="dkc-rem-when">{t(r.when, lang)}</span>
+                  {r.plain ? (lang === "ar" ? "، " : ": ") : " · "}
+                </>
+              ) : null}
+              <span>{t(r.what, lang)}</span>
+            </span>
+          </li>
+        ))}
       </ol>
     </div>
   );
@@ -378,10 +353,12 @@ export function TestTiles({ still }: { still?: boolean }) {
 // ------------------------------------------- the CRM stages (DWY)
 
 /**
- * Their CRM's stages after a meeting, in the journey's line language: from
- * "You meet", the line runs on through Showed, Quote sent and Closed, and a
- * no-show is a side branch that ends there (it never becomes Showed). No
- * arrows and no stacked bars: a meeting takes one path or the other.
+ * Their CRM's stages after a meeting, in the journey's line language: the
+ * meeting has happened (passed, a check), the next stage to move it to is
+ * lit (Showed), the ones after it wait, and a no-show is a side branch that
+ * ends there (it never becomes Showed). The names sit above the main line,
+ * so the branch leaves the meeting's node downwards without crossing one.
+ * No arrows and no stacked bars: a meeting takes one path or the other.
  */
 export function CrmStages({
   lang,
@@ -395,11 +372,17 @@ export function CrmStages({
   const COL = 250;
   const gap = (width - COL) / 3;
   const x = (i: number) => R + i * gap;
-  const y = R + 6;
-  const yb = y + 176;
-  const steps: { label: L; i: number; state: "past" | "ahead" }[] = [
+  const NAME = 64;
+  const y = NAME + R + 6;
+  const yb = y + 150;
+  const H = yb + R + 6;
+  const steps: { label: L; i: number; state: "past" | "now" | "ahead" }[] = [
     { label: JOURNEY.rows[5].name, i: 0, state: "past" },
-    ...main.map((label, k) => ({ label, i: k + 1, state: "ahead" as const })),
+    ...main.map((label, k) => ({
+      label,
+      i: k + 1,
+      state: k === 0 ? ("now" as const) : ("ahead" as const),
+    })),
   ];
   const dotted = {
     fill: "none",
@@ -409,16 +392,18 @@ export function CrmStages({
     strokeDasharray: "2 8",
   };
   return (
-    <div className="dkc-crm" style={{ width, height: yb + 60 }}>
-      <svg
-        viewBox={`0 0 ${width} ${yb + 60}`}
-        width={width}
-        height={yb + 60}
-        aria-hidden
-      >
-        <path d={`M ${x(0)} ${y} L ${x(3)} ${y}`} {...dotted} />
+    <div className="dkc-crm" style={{ width, height: H }}>
+      <svg viewBox={`0 0 ${width} ${H}`} width={width} height={H} aria-hidden>
         <path
-          d={`M ${x(0)} ${y} C ${x(0) + gap * 0.55} ${y} ${x(1) - gap * 0.55} ${yb} ${x(1)} ${yb}`}
+          d={`M ${x(0)} ${y} L ${x(1)} ${y}`}
+          fill="none"
+          stroke="var(--dk-teal)"
+          strokeWidth={3}
+          strokeLinecap="round"
+        />
+        <path d={`M ${x(1)} ${y} L ${x(3)} ${y}`} {...dotted} />
+        <path
+          d={`M ${x(0)} ${y + R} C ${x(0)} ${yb - 30} ${x(1) - gap * 0.6} ${yb} ${x(1) - R} ${yb}`}
           {...dotted}
         />
         {steps.map(s => (
@@ -433,7 +418,7 @@ export function CrmStages({
             data-state={s.state}
             style={{
               insetInlineStart: x(s.i) - R,
-              top: y + 34,
+              bottom: H - y + R + 18,
               // A stage's name keeps clear of the next node's column; the
               // last one has the end column to itself.
               width: s.i === 3 ? COL : gap - 20,
@@ -444,7 +429,11 @@ export function CrmStages({
         ))}
         <li
           data-branch=""
-          style={{ insetInlineStart: x(1) + R + 18, top: yb - 20 }}
+          style={{
+            insetInlineStart: x(1) + R + 18,
+            top: yb,
+            transform: "translateY(-50%)",
+          }}
         >
           {t(noShow, lang)}
         </li>

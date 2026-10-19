@@ -3,25 +3,25 @@ import { Node } from "./JourneyLanes";
 
 /**
  * The road to the first appointments (DESIGN 9.5), drawn in the journey's
- * own marks rather than as a web stepper: nodes evenly spaced (this is an
- * order, not a calendar), the lit line in solid teal up to today and the
- * dotted line after it, each label starting at its node's inline-start
- * edge, as a drawing's callout does. The cover's road strip (7.9) is this
- * drawing at 40%, without its words.
+ * own marks and the journey's own direction: down the page, one row per
+ * step, the nodes on one line (solid teal up to today, dotted after it),
+ * today's row on the journey's row band. Each row reads across as a line
+ * of an itinerary: the step, its date (or "Today", or "After go-live"),
+ * and a note where a step has one. Rows are evenly spaced: this is an
+ * order, not a calendar. The cover's road strip (7.9) is the same order,
+ * drawn small and across.
  */
 
-/** The slide's content width (1920 less the 136 px margins). */
-export const ROAD_W = 1648;
-/** A stop's label column, from its node's inline-start edge. */
-export const STOP_W = 272;
-/** The road's box: the nodes on its top line, the labels under them. */
-export const ROAD_H = 260;
+/** One row's height. */
+export const ROAD_ROW = 96;
 const R = 14;
 
 export interface RoadStop {
   name: ReactNode;
-  /** Under the name: "Today", a date, a line. */
-  under?: ReactNode;
+  /** Its date, "Today" or "After go-live". */
+  when?: ReactNode;
+  /** A note beside it (the launch call's). */
+  line?: ReactNode;
 }
 
 export function Road({
@@ -38,18 +38,19 @@ export function Road({
   draw?: boolean;
 }) {
   const n = stops.length;
-  // Evenly spaced so the last label's column ends on the content's end
-  // edge, never past the margin.
-  const gap = (ROAD_W - STOP_W) / Math.max(1, n - 1);
-  const x = (i: number) => R + i * gap;
-  const y = R + 6;
-  const end = x(n - 1);
-  const lit = x(now);
+  const H = ROAD_ROW * n;
+  const x = R + 2;
+  const y = (i: number) => ROAD_ROW / 2 + i * ROAD_ROW;
   return (
-    <div className="dkc-road" style={{ width: ROAD_W, height: ROAD_H }}>
-      <svg viewBox={`0 0 ${ROAD_W} ${ROAD_H}`} aria-hidden>
+    <div className="dkc-road" style={{ height: H }}>
+      <i
+        className="dkc-road-band"
+        aria-hidden
+        style={{ top: now * ROAD_ROW, height: ROAD_ROW }}
+      />
+      <svg width={x * 2} height={H} viewBox={`0 0 ${x * 2} ${H}`} aria-hidden>
         <path
-          d={`M ${lit} ${y} L ${end} ${y}`}
+          d={`M ${x} ${y(now)} L ${x} ${y(n - 1)}`}
           fill="none"
           stroke="var(--dk-line-strong)"
           strokeWidth={2}
@@ -58,7 +59,7 @@ export function Road({
         />
         {now > 0 ? (
           <path
-            d={`M ${x(0)} ${y} L ${lit} ${y}`}
+            d={`M ${x} ${y(0)} L ${x} ${y(now)}`}
             fill="none"
             stroke="var(--dk-teal)"
             strokeWidth={3}
@@ -70,32 +71,27 @@ export function Road({
         {stops.map((_, i) => (
           <Node
             key={`road-${String(i)}`}
-            x={x(i)}
-            y={y}
+            x={x}
+            y={y(i)}
             r={R}
             state={i < now ? "past" : i === now ? "now" : "ahead"}
           />
         ))}
       </svg>
-      {/* One grid under the nodes: a shared row for the names and one for
-          what goes under them, so a name that wraps never pushes its own
-          date below the others. */}
-      <ol
-        className="dkc-road-stops"
-        style={{
-          gridTemplateColumns: `repeat(${Math.max(0, n - 1)}, ${gap}px) ${STOP_W}px`,
-        }}
-      >
+      <ol className="dkc-road-stops">
         {stops.map((s, i) => (
           <li
             key={`stop-${String(i)}`}
             className="dkc-road-stop"
             data-state={i < now ? "past" : i === now ? "now" : "ahead"}
             aria-current={i === now ? "step" : undefined}
-            style={{ gridColumn: i + 1 }}
+            style={{ height: ROAD_ROW }}
           >
             <span className="dkc-road-name">{s.name}</span>
-            <span className="dkc-road-under">{s.under}</span>
+            <span className="dkc-road-detail">
+              {s.when ? <span className="dkc-road-when">{s.when}</span> : null}
+              {s.line ? <span className="dkc-road-line">{s.line}</span> : null}
+            </span>
           </li>
         ))}
       </ol>

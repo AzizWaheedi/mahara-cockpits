@@ -2495,3 +2495,30 @@ disagree, this list wins.
 
 Copy rule 9 (plain quotes) stands: Hallmark's curly quotes were raised
 again and are not used, as `CONTENT.md` records.
+
+### 19.8 The third critic pass (2026-10-20)
+
+A critic scored 25 slides and stops under 4 on the six axes (the AI-made
+look, unfinished drawings, form fields on the client's screen, labels
+leaving their lanes). What changed, by section. Where this list and an
+earlier line disagree, this list wins.
+
+| Section | Change |
+|---|---|
+| 6.1, 6.2 | The lanes are as wide as their names need (244, 312 and 260, 12 apart; 840 in all) and a name wraps to two balanced lines inside its own lane, never running into the next one. A wrapped name grows upwards from the node's centre line, away from the line leaving the node. The lanes end on the content's foot. The leader leaves the lit row's band at the matrix's end edge on the row's centre line and runs straight to the picture (the picture, not its tag). The rebook node is named "Didn't come?" beside it. |
+| 6.3 | The stage is 756 wide. The phone stops set their words level with their own row. Stops 5 to 7 sit low in the stage, level with their rows. Stop 4's steps run down one dotted line under the words, every name at one x (no labels above and below in turn), the strip's middle on its row's centre line. Stop 6 draws the meeting's two outcomes as two cards with marks (the lanes' rebook mark on ours); the `meeting-table` render is dropped (a generic render read as AI-made, and was not the client's work). Stop 7's light screenshot is set in a dark bezel and taken down a step (brightness 0.92), as are the portal's. |
+| 7.1 to 7.4 | Before a creative exists, the picture slot carries the client's mark on its ground (a brand card), never "Your ad goes here". Facebook's feed starts with its own composer row and gap, so the post fills the screen. |
+| 8.3 | "Your page and logo" and "Marked Sponsored" share one leader and one dot, the label on two lines. Tray: teal only on the in-use edge; their pick's star in ink on a deep chip; the on-phone caption in ink-2; an empty tray says so in plain text, no dashed box. The foot sits under the phone labels. Platform logos stay in their own colours (Aziz, 2026-10-08: real logos, never recoloured). |
+| 8.4 | Stop 1 is the page alone: its words, and the feed phone at 660 with one leader on "Sponsored". Stops 2 and 3: three columns of one height (460, 600, 460); the red lines on our panel ground, each with an amber mark and the line hugging its words (an English line in the Arabic deck reads as one block); what we test as the same kind of list with ink rings (two columns in English, one in Arabic); the approval and "Prefer something different later?" as one paragraph on the shared foot. No red lines: the card is only as tall as its sentence and the input is drawn under the CSM's pointer only. |
+| 8.5 | The intro screen carries the ad's own picture as its cover (Meta's default), the avatar over its foot. The question rows are 76 tall. |
+| 8.6, 11.3 | A turn is one block on its track's start edge: speaker, the line in the other script hugging its words (balanced, `useHug`), its subtitle right under it on the same edge, so the eye never crosses the track between a line and its translation. Turns are 30 apart; their parts sit close. A slot still to give us is amber words with a dashed underline inside the sentence (no box). The footnote sits under a hairline. Done with you, the label ends as a sentence before the legend. |
+| 11.5 | The reminders are dots on the journey's line, one line each in the deck's face ("Booked · a WhatsApp confirmation"); no channel icons and no Mono. The block sits 60 px clear of the dimmed turn. |
+| 8.7 | The screens sit in the middle of their column in the dark bezel; the calls crop ends in a gap of the waveform. Done with you, the CRM's stages light as the journey does (You meet passed, Showed lit, the rest ahead), names above the line so the no-show branch leaves the node clear, and no second "number-one job" tag (the stop says it). |
+| 8.10 | Stop 1: the title on the start side, the things to know as ruled rows in the lead size beside it; the question is not shown greyed out ahead of time. Stop 2: the question and the road alone (the reminders are not repeated small above it). |
+| 9.1 | The cover draws the whole journey quiet at 80% (lanes, the seven steps named in ink-3, the unlit line), not empty outlined lanes. "Welcome," is the name's own ink at 400. With no first name on the seat, the role is the presenter's one line, set as a name is. |
+| 9.2 | Nothing from the form: the question is the slide (h1, in the middle of the page); the answer's line shows only under the CSM's pointer or once typed. No placeholder on the client's screen. |
+| 9.3 | No card: the group's head (avatar, name, the hours) and its members as ruled rows across the content width, role beside what they message about. No WhatsApp mark (the title names it; it was the only green on the slide). |
+| 9.4 | An unanswered test is a quiet ring in the line language, a yes the solid teal node with a check. The tests' heads sit on one line (264 each). The campaign card starts level with the first row. "Launch with this" is drawn only under the CSM's pointer. No services: the first row is the quiet "Add a service" control; the input's prompt shows only under the pointer. |
+| 9.5 | The road runs down the page as an itinerary: one row per step (step, its date or "Today" or "After go-live", and the launch call's note), the node line at the start edge, today on the journey's row band, the footer under it. |
+| 9.6 | The ticks sit under each row's words; the status column holds one chip on one line. Done is teal on its soft fill with a check (quieter than To do). The words run 820 wide. The Drive folder is a folder mark and its name in ink-2. |
+| 9.7 | What to expect on the start side (two statements, a hairline between), what's next as the card beside it (name, what it is, the date on its foot once booked), both from just under the title. No red lines yet: nothing is drawn; the input shows under the CSM's pointer. |

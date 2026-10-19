@@ -7,6 +7,7 @@ import {
   Ellipsis,
   Heart,
   House,
+  Image as ImageIcon,
   Menu,
   MessageCircle,
   MessageSquare,
@@ -20,7 +21,7 @@ import {
   Users,
 } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
-import { APP, CTA, type L, type Lang, t } from "../content";
+import { APP, CTA, type Lang, t } from "../content";
 import { type Creative, shapeOf } from "../creative";
 import { Logo, type PlatformMark } from "../platforms";
 import { Avatar, type Identity } from "./Identity";
@@ -95,13 +96,11 @@ export interface AdProps {
   pageName: string;
   /** The phone's app language (one per slide, DESIGN 7.1). */
   app: Lang;
-  /** The deck's language, for the "Your ad goes here" placeholder. */
+  /** The deck's language. */
   deck: Lang;
   /** Play a video (only the phone in focus does). */
   play?: boolean;
 }
-
-const EMPTY: L = { en: "Your ad goes here", ar: "إعلانكم هنا" };
 
 function StatusBar() {
   return (
@@ -112,20 +111,24 @@ function StatusBar() {
   );
 }
 
-/** The creative itself, or a quiet block where it will go. */
+/**
+ * The creative itself or, before there is one, the client's own mark on
+ * the picture's ground: a plain brand card, never a "your ad goes here"
+ * placeholder on the client's screen.
+ */
 function Media({
   c,
-  deck,
+  who,
   play,
 }: {
   c: Creative | null;
-  deck: Lang;
+  who: Identity;
   play?: boolean;
 }) {
   if (!c?.url)
     return (
-      <span className="dkc-media-empty" dir={deck === "ar" ? "rtl" : "ltr"}>
-        {t(EMPTY, deck)}
+      <span className="dkc-media-empty dkc-media-mark" aria-hidden>
+        <Avatar who={who} size="calc(var(--u) * 104)" />
       </span>
     );
   if (c.video && play)
@@ -198,7 +201,7 @@ function IgTabs() {
 }
 
 /** Instagram feed, dark (DESIGN 7.2). */
-export function IgFeed({ creative, who, pageName, app, deck, play }: AdProps) {
+export function IgFeed({ creative, who, pageName, app, play }: AdProps) {
   const square = shapeOf(creative?.ratio) === "1:1";
   return (
     <div className="dkc-app" data-app="ig" dir={app === "ar" ? "rtl" : "ltr"}>
@@ -218,7 +221,7 @@ export function IgFeed({ creative, who, pageName, app, deck, play }: AdProps) {
         data-part="media"
         style={{ aspectRatio: square ? "1 / 1" : "4 / 5" }}
       >
-        <Media c={creative} deck={deck} play={play} />
+        <Media c={creative} who={who} play={play} />
       </div>
       <div className="dkc-cta-bar" data-part="cta">
         <span>{ctaLabel(creative, app)}</span>
@@ -241,14 +244,7 @@ export function IgFeed({ creative, who, pageName, app, deck, play }: AdProps) {
 }
 
 /** Instagram Reels and Stories, one 9:16 frame (DESIGN 7.3). */
-export function ReelStory({
-  creative,
-  who,
-  pageName,
-  app,
-  deck,
-  play,
-}: AdProps) {
+export function ReelStory({ creative, who, pageName, app, play }: AdProps) {
   const tall = shapeOf(creative?.ratio) === "9:16" || !creative?.ratio;
   const still = creative
     ? creative.video
@@ -268,7 +264,7 @@ export function ReelStory({
               data-part="media"
               data-fit={tall ? "cover" : "contain"}
             >
-              <Media c={creative} deck={deck} play={play} />
+              <Media c={creative} who={who} play={play} />
             </div>
           </>
         ) : (
@@ -277,7 +273,7 @@ export function ReelStory({
             data-part="media"
             style={{ position: "absolute", inset: 0 }}
           >
-            <Media c={null} deck={deck} />
+            <Media c={null} who={who} />
           </div>
         )}
         <div className="dkc-reel-top">
@@ -317,11 +313,20 @@ export function ReelStory({
 }
 
 /** Facebook feed, dark (DESIGN 7.4). */
-export function FbFeed({ creative, who, pageName, app, deck, play }: AdProps) {
+export function FbFeed({ creative, who, pageName, app, play }: AdProps) {
   const square = shapeOf(creative?.ratio) === "1:1";
   return (
     <div className="dkc-app" data-app="fb" dir={app === "ar" ? "rtl" : "ltr"}>
       <StatusBar />
+      {/* Facebook's own first row of the feed (the viewer's composer, the
+          viewer drawn as a plain circle), then its gap: the ad is the post
+          under it, as the app shows one near the top of the feed. */}
+      <div className="dkc-fb-composer" aria-hidden>
+        <i className="dkc-fb-me" />
+        <span>{t(APP.composer, app)}</span>
+        <ImageIcon />
+      </div>
+      <i className="dkc-fb-gap" aria-hidden />
       <div className="dkc-ad-head" style={{ height: "calc(var(--u) * 60)" }}>
         <span data-part="who">
           <Avatar who={who} size="calc(var(--u) * 40)" />
@@ -341,7 +346,7 @@ export function FbFeed({ creative, who, pageName, app, deck, play }: AdProps) {
         data-part="media"
         style={{ aspectRatio: square ? "1 / 1" : "4 / 5" }}
       >
-        <Media c={creative} deck={deck} play={play} />
+        <Media c={creative} who={who} play={play} />
       </div>
       <div className="dkc-fb-link">
         {/* No headline, no slot: the button keeps its place at the end. */}

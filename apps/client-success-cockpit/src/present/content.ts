@@ -137,6 +137,8 @@ export const APP = {
   like: { en: "Like", ar: "أعجبني" },
   comment: { en: "Comment", ar: "تعليق" },
   share: { en: "Share", ar: "مشاركة" },
+  /** Facebook's own composer row, at the top of the feed. */
+  composer: { en: "What's on your mind?", ar: "بمَ تفكر؟" },
 } as const;
 
 export type Cta =
@@ -622,7 +624,7 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
     say: [
       "Most clients want to see the starter ads first (3 of 4 recent kickoffs). If they do, go to stop 2.",
       "Approval names the ads, the offer and the Page they run under. No answer is not approval.",
-      'Red lines: type them in their words ("never show prices"). They come back on the launch call.',
+      'Red lines: type them in their words ("never show prices"), just under the test\'s line. They come back on the launch call.',
       "Book the Blueprint before you hang up.",
     ],
     sayAr: [

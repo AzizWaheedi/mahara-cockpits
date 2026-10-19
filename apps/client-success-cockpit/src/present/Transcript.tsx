@@ -18,6 +18,7 @@ import {
   type turnsFor,
 } from "./callScript";
 import { LAUNCH, type Lang, t } from "./content";
+import { useHug } from "./hug";
 
 /**
  * The example call as a call record (DESIGN 11): speaker, then words; no
@@ -301,6 +302,42 @@ export function Line({
   return <>{out}</>;
 }
 
+/**
+ * A line in the other script than the deck's (the Arabic line in the
+ * English deck, a subtitle in the Arabic one), shrunk to its longest line
+ * (useHug) so it sits on the turn's start edge as one block: its last
+ * words end where its subtitle begins.
+ */
+function Hugged({
+  className,
+  dir,
+  lang,
+  hug,
+  text,
+  children,
+}: {
+  className: string;
+  dir: "rtl" | "ltr";
+  lang: Lang;
+  hug: boolean;
+  text: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useHug(ref, hug ? text : null);
+  return (
+    <span
+      ref={hug ? ref : undefined}
+      className={className}
+      dir={dir}
+      lang={lang}
+      data-hug={hug ? "" : undefined}
+    >
+      {children}
+    </span>
+  );
+}
+
 export function Transcript({
   turns,
   shown,
@@ -375,13 +412,25 @@ export function Transcript({
                   lang,
                 )}
               </span>
-              <span className="dkc-turn-ar" dir="rtl" lang="ar">
+              <Hugged
+                className="dkc-turn-ar"
+                dir="rtl"
+                lang="ar"
+                hug={lang !== "ar"}
+                text={turn.line[dialect]}
+              >
                 <Line line={turn.line[dialect]} lang="ar" slots={slots} />
-              </span>
+              </Hugged>
               {subtitles ? (
-                <span className="dkc-turn-en" dir="ltr" lang="en">
+                <Hugged
+                  className="dkc-turn-en"
+                  dir="ltr"
+                  lang="en"
+                  hug={lang === "ar"}
+                  text={turn.line.en}
+                >
                   <Line line={turn.line.en} lang="en" slots={slots} />
-                </span>
+                </Hugged>
               ) : null}
             </li>
           );

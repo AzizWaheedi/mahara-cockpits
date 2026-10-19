@@ -4,6 +4,7 @@ import {
   journeyOwners,
   type L,
   LANES,
+  LAUNCH,
   type LaneKey,
   type Lang,
   SHARED,
@@ -23,19 +24,34 @@ import {
  * HTML set with logical properties.
  */
 
-export const LANE_W = 200;
+/**
+ * Each lane is as wide as its longest name needs, so every name stays
+ * inside its own lane (on two balanced lines at most) and the matrix holds
+ * its own entries: the customer's lane, ours ("Booked, confirmed," is the
+ * widest line in either language) and the client's.
+ */
+export const LANE_WS: Record<LaneKey, number> = {
+  customer: 244,
+  us: 312,
+  you: 260,
+};
 export const LANE_GAP = 12;
 export const ROW_H = 92;
 export const HEAD_H = 48;
-export const LANES_W = LANE_W * 3 + LANE_GAP * 2;
+export const LANES_W =
+  LANE_WS.customer + LANE_WS.us + LANE_WS.you + LANE_GAP * 2;
 export const LANES_H = HEAD_H + ROW_H * 7;
-/** How far row names may run: x 800 on the canvas, 664 from the lanes. */
-export const NAME_END = 664;
+/** The node's centre from its lane's start edge, and the name's start. */
+const NODE_IN = 30;
+const NAME_IN = 56;
 
 const laneIndex = (k: LaneKey) => LANES.indexOf(k);
-export const laneX = (k: LaneKey) => laneIndex(k) * (LANE_W + LANE_GAP);
-export const nodeX = (k: LaneKey) => laneX(k) + 34;
+export const laneX = (k: LaneKey) =>
+  LANES.slice(0, laneIndex(k)).reduce((x, l) => x + LANE_WS[l] + LANE_GAP, 0);
+export const nodeX = (k: LaneKey) => laneX(k) + NODE_IN;
 export const rowY = (i: number) => HEAD_H + ROW_H / 2 + i * ROW_H;
+/** How wide a lane's names may run before they wrap. */
+const nameW = (k: LaneKey) => LANE_WS[k] - NAME_IN - 12;
 
 /** The rail's path between two steps (left to right): straight in a lane, an S across. */
 export function railPath(
@@ -152,10 +168,15 @@ export interface LanesProps {
   leaderTo?: { x: number; y: number } | null;
   /** A row was clicked: jump there. */
   onPick?: (i: number) => void;
+  /**
+   * Nothing lit and nothing to press: the whole journey drawn quietly, as
+   * the covers show it before anyone has walked it.
+   */
+  idle?: boolean;
   style?: CSSProperties;
 }
 
-/** The journey lanes, at full size (624 x 692 at the canvas's 1:1). */
+/** The journey lanes, at full size (840 x 692 at the canvas's 1:1). */
 export function JourneyLanes({
   lang,
   current,
@@ -164,16 +185,22 @@ export function JourneyLanes({
   fork,
   leaderTo,
   onPick,
+  idle = false,
   style,
 }: LanesProps) {
   const owners = journeyOwners(dwy);
   const pts = owners.map((o, i) => ({ x: nodeX(o), y: rowY(i) }));
   const prev = usePrevious(current);
-  const drawing = !still && prev !== undefined && current === prev + 1;
-  const at = pts[current];
+  const now = idle ? -1 : current;
+  const drawing = !still && prev !== undefined && now === prev + 1;
+  const at = pts[now];
+  // The leader leaves the lit row's band at the matrix's end edge, on the
+  // row's own centre line, and runs straight to the stage picture: it never
+  // crosses a name, and the band itself says which row it belongs to.
+  const bandEnd = LANES_W + 12;
   const leader =
     leaderTo && at
-      ? `M ${at.x} ${at.y + 14} L ${at.x} ${at.y + 22} L ${NAME_END} ${at.y + 22} L ${leaderTo.x} ${leaderTo.y}`
+      ? `M ${bandEnd} ${at.y} L ${bandEnd + 14} ${at.y} L ${leaderTo.x} ${leaderTo.y}`
       : null;
   const youX = nodeX("you");
   // The fork (DESIGN 6.2): a no-show goes back to our team's lane; done
@@ -184,10 +211,11 @@ export function JourneyLanes({
     : { x: nodeX("us"), y: rowY(6) };
   const forkPath = dwy
     ? `M ${youX - 10} ${rowY(5) + 9} C ${youX - 26} ${rowY(5) + 18} ${forkEnd.x - 8} ${forkEnd.y - 24} ${forkEnd.x} ${forkEnd.y - 11}`
-    : `M ${youX} ${rowY(5) + 14} C ${youX} ${rowY(5) + 70} ${forkEnd.x + 40} ${forkEnd.y - 30} ${forkEnd.x} ${forkEnd.y - 11}`;
+    : `M ${youX} ${rowY(5) + 14} C ${youX} ${rowY(5) + 70} ${forkEnd.x + 60} ${forkEnd.y - 30} ${forkEnd.x} ${forkEnd.y - 11}`;
   return (
     <div
       className="dkc-lanes"
+      data-idle={idle ? "" : undefined}
       style={{ width: LANES_W, height: LANES_H, ...style }}
     >
       <svg viewBox={`0 0 ${LANES_W} ${LANES_H}`} aria-hidden>
@@ -196,28 +224,30 @@ export function JourneyLanes({
             key={k}
             x={laneX(k)}
             y={40}
-            width={LANE_W}
+            width={LANE_WS[k]}
             height={LANES_H - 40}
             rx={12}
             fill="var(--dk-lane)"
           />
         ))}
-        {/* The current row's band runs past x 800 (NAME_END), so no name
-            (done with you's "Your team books" included) leaves it mid-word. */}
-        <rect
-          className="dkc-row-band"
-          x={-12}
-          y={0}
-          width={NAME_END + 28}
-          height={ROW_H}
-          rx={12}
-          fill="var(--dk-teal-faint)"
-          style={{ transform: `translateY(${rowY(current) - ROW_H / 2}px)` }}
-        />
+        {/* The current row's band runs the matrix's whole width, so every
+            name, wrapped or not, sits inside it. */}
+        {at ? (
+          <rect
+            className="dkc-row-band"
+            x={-12}
+            y={0}
+            width={bandEnd + 12}
+            height={ROW_H}
+            rx={12}
+            fill="var(--dk-teal-faint)"
+            style={{ transform: `translateY(${rowY(now) - ROW_H / 2}px)` }}
+          />
+        ) : null}
         {pts.slice(0, -1).map((a, i) => {
           const b = pts[i + 1];
           const d = segmentPath(a, b);
-          const lit = i < current;
+          const lit = i < now;
           const handover = a.x !== b.x;
           const mx = (a.x + b.x) / 2;
           const my = (a.y + b.y) / 2;
@@ -226,13 +256,11 @@ export function JourneyLanes({
               <path d={d} {...dotted} />
               {lit ? (
                 <path
-                  key={drawing && i === current - 1 ? `draw-${current}` : "lit"}
+                  key={drawing && i === now - 1 ? `draw-${now}` : "lit"}
                   d={d}
                   {...solid}
                   pathLength={1}
-                  className={
-                    drawing && i === current - 1 ? "dkc-draw" : undefined
-                  }
+                  className={drawing && i === now - 1 ? "dkc-draw" : undefined}
                 />
               ) : null}
               {handover ? (
@@ -248,7 +276,7 @@ export function JourneyLanes({
             </g>
           );
         })}
-        {fork ? (
+        {fork && !idle ? (
           <g>
             <path d={forkPath} {...dotted} stroke={TEAL} />
             <circle
@@ -277,6 +305,7 @@ export function JourneyLanes({
               stroke={STRONG}
               strokeWidth={2}
             />
+            <circle cx={bandEnd} cy={at?.y} r={4} fill={TEAL} />
             <circle cx={leaderTo?.x} cy={leaderTo?.y} r={3} fill={STRONG} />
           </g>
         ) : null}
@@ -286,12 +315,9 @@ export function JourneyLanes({
             x={p.x}
             y={p.y}
             r={14}
-            state={i < current ? "past" : i === current ? "now" : "ahead"}
+            state={i < now ? "past" : i === now ? "now" : "ahead"}
           />
         ))}
-        {at && leader ? (
-          <circle cx={at.x} cy={at.y + 22} r={3} fill={TEAL} />
-        ) : null}
       </svg>
       {LANES.map(k => (
         <span
@@ -303,22 +329,51 @@ export function JourneyLanes({
           {t(SHARED.lane[k], lang)}
         </span>
       ))}
+      {fork && !idle ? (
+        // The rebook node says what it is: the stage's "Didn't come?" card.
+        <span
+          className="dkc-fork-name"
+          style={
+            dwy
+              ? {
+                  insetInlineEnd: LANES_W - (forkEnd.x - 18),
+                  top: forkEnd.y,
+                }
+              : { insetInlineStart: forkEnd.x + 20, top: forkEnd.y }
+          }
+        >
+          {t(LAUNCH.journey.fork.noShow, lang)}
+        </span>
+      ) : null}
       {pts.map((p, i) => {
         const name: L = journeyName(i, dwy);
-        const left = p.x + 30;
+        const state = i < now ? "past" : i === now ? "now" : "ahead";
+        const place = {
+          insetInlineStart: p.x + NAME_IN - NODE_IN,
+          top: p.y,
+          maxWidth: nameW(owners[i]),
+        };
+        if (idle)
+          return (
+            <span
+              key={`name-${String(i)}`}
+              className="dkc-row-name"
+              data-lane={owners[i]}
+              data-state={state}
+              style={place}
+            >
+              {t(name, lang)}
+            </span>
+          );
         return (
           <button
             key={`name-${String(i)}`}
             type="button"
             className="dkc-row-name dkc-press"
             data-lane={owners[i]}
-            data-state={i < current ? "past" : i === current ? "now" : "ahead"}
-            aria-current={i === current ? "step" : undefined}
-            style={{
-              insetInlineStart: left,
-              top: p.y,
-              maxWidth: NAME_END - left,
-            }}
+            data-state={state}
+            aria-current={i === now ? "step" : undefined}
+            style={place}
             onClick={onPick ? () => onPick(i) : undefined}
             onPointerUp={e => e.currentTarget.blur()}
             tabIndex={onPick ? 0 : -1}
@@ -332,10 +387,10 @@ export function JourneyLanes({
 }
 
 /**
- * The lanes drawn large and faint behind a cover (DESIGN 9.1): the bands
- * and the unlit dotted line only, never lit, no nodes, in the end half,
- * running off the foot of the slide. The same drawing opens the launch
- * deck's journey a week later.
+ * The journey drawn whole and quiet behind a cover (DESIGN 9.1): the lanes,
+ * the seven steps and the unlit line, nothing lit, at 80% in the end half.
+ * The same drawing opens the launch deck's journey a week later, where the
+ * presenter walks it.
  */
 export function FaintLanes({
   dwy = false,
@@ -344,51 +399,9 @@ export function FaintLanes({
   dwy?: boolean;
   lang: Lang;
 }) {
-  const owners = journeyOwners(dwy);
-  const w = 220;
-  const gap = 14;
-  const top = 52;
-  const lx = (k: LaneKey) => laneIndex(k) * (w + gap) + 38;
-  const pts = owners.map((o, i) => ({ x: lx(o), y: top + 70 + i * 104 }));
-  // Each lane is its two edges, open at the foot (a drawing's lanes, not
-  // three filled panels), under the journey's own lane heads in ink-3.
   return (
     <div className="dkc-faint" aria-hidden>
-      <svg
-        viewBox="0 0 688 780"
-        preserveAspectRatio="xMinYMin meet"
-        aria-hidden
-      >
-        {LANES.map(k => {
-          const x = laneIndex(k) * (w + gap) + 0.5;
-          const r = 14;
-          return (
-            <path
-              key={k}
-              d={`M ${x} 900 L ${x} ${top + r} Q ${x} ${top} ${x + r} ${top} L ${x + w - 1 - r} ${top} Q ${x + w - 1} ${top} ${x + w - 1} ${top + r} L ${x + w - 1} 900`}
-              fill="none"
-              stroke="var(--dk-line-strong)"
-              strokeWidth={1}
-            />
-          );
-        })}
-        {pts.slice(0, -1).map((a, i) => (
-          <path
-            key={`f-${String(i)}`}
-            d={segmentPath(a, pts[i + 1], 52)}
-            {...dotted}
-          />
-        ))}
-      </svg>
-      {LANES.map(k => (
-        <span
-          key={k}
-          className="dkc-faint-head"
-          style={{ insetInlineStart: laneIndex(k) * (w + gap) + 20 }}
-        >
-          {t(SHARED.lane[k], lang)}
-        </span>
-      ))}
+      <JourneyLanes lang={lang} current={-1} dwy={dwy} idle />
     </div>
   );
 }
