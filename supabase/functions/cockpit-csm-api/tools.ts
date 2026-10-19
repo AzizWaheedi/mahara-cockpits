@@ -30,6 +30,32 @@ export function ghlTools(token:string,health:(row:Record<string,unknown>)=>Promi
  }};
 }
 
+/**
+ * Supabase Storage calls for the launch-ads bucket (signing an upload, reading
+ * an object's size and type, signing reads). Receipts carry a label, the
+ * upload's id and Storage's HTTP status only: never a signed URL, a token or a
+ * storage error text. `run` reports the status Storage answered with; a call
+ * that throws, or answers with no status, is a failed receipt, which the
+ * native monitor shows until the next good one.
+ */
+export function storageTools(health:(row:Record<string,unknown>)=>Promise<void>){
+ return {async call<T>(method:'GET'|'POST',resource:string,objectId:string|null,run:()=>Promise<{status:number|null;value:T}>):Promise<T>{
+  const receipt={provider:'supabase-storage',method,resource,object_id:objectId};
+  await health({...receipt,phase:'intent'});
+  let out:{status:number|null;value:T};
+  try{out=await run();}catch(error){await health({...receipt,phase:'failed'});throw error;}
+  await health(out.status===null?{...receipt,phase:'failed'}:{...receipt,phase:'response',http_status:out.status});
+  return out.value;
+ }};
+}
+/** The HTTP status a Storage error carries (its API code first), or null. */
+export function storageStatus(error:unknown):number|null{
+ if(!error||typeof error!=='object')return null;
+ const e=error as {statusCode?:unknown;status?:unknown};
+ for(const raw of [e.statusCode,e.status]){const n=Number(raw);if(Number.isInteger(n)&&n>=100&&n<600)return n;}
+ return null;
+}
+
 /** Onboarding forms are provider-owned reads, never browser writes. */
 export function typeformTools(token:string,health:(row:Record<string,unknown>)=>Promise<void>,request:typeof fetch=fetch):{get:(path:string)=>Promise<Record<string,unknown>>}{
  if(!token)throw Error('TYPEFORM_TOKEN is not configured');

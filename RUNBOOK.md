@@ -308,6 +308,50 @@ queues one line for `#eods-csms` in `eod_outbox` (role `csm-win`).
 | The gold-standard switch is missing for the CEO | The flag comes with the portal's pass: open the client success cockpit from the portal once | CEO |
 | Proving the rules on production | `cd apps/client-success-cockpit && bunx convex run --prod projections:selfTest` runs every rule on sentinel rows (week of 2000-01-02) in one transaction and deletes them before it returns | Anyone shipping |
 
+## CSM decks: prep and the ads tray
+
+The onboarding and launch decks a CSM presents from a client's page
+(`docs/csm-decks/`). Migration `20261019120000_csm_decks.sql`:
+`cockpit_csm_deck_prep` (one row per client per deck, saved through
+`cockpit_csm_deck_prep_save`), `cockpit_csm_launch_ads` (the tray's uploads)
+in the private bucket `cockpit-launch-ads`, and `cockpit_csm_deck_sources`
+(logo, country, offer, Do's & Don'ts, callers, kit links, next calls, this
+client's Meta ads, stills and forms; never leads, cost per lead, spend or
+budgets). Uploads go through `cockpit-csm-api` (`launchAds.*`, file
+`launchAds.ts`); every Storage call lands in `cockpit_csm_provider_health`
+(provider `supabase-storage`), every write in `cockpit_audit_log`
+(`deckPrep.save`, `launchAds.reserve|ready|update|remove`). Nothing here
+writes to Meta.
+
+| Symptom | Fix | Who |
+| --- | --- | --- |
+| "Shown, not saved" or the PUT fails with 413 on a big video | The bucket allows 150 MB; the project's global Storage upload limit must be at least that (Storage settings). Otherwise export a lighter copy | Systems manager, CSM |
+| "The file did not arrive. Add it again." | The browser's PUT did not finish (closed tab, network). Add the file again: a new reservation, nothing to clean up. A row left `uploading` is never shown and never readable | CSM |
+| "The uploaded file does not match what was reserved." | The PUT sent another size or Content-Type than the reservation (the browser must send exactly the reserved MIME type). Add it again | CSM, frontend |
+| "Only the person who started this upload can finish it." | A reservation belongs to the seat that made it. That seat finishes it, or anyone adds the file again | CSM |
+| The deck's form slide stays hidden, or "Tick a form from this client's own campaigns" | Forms come only from this client's own Meta ads (exact ad ids of campaigns carrying the client's name, or an ad account no other client uses). A form not matched there cannot be confirmed: type the questions in prep instead | CSM |
+| No Meta ads and `meta.match` is `ambiguous` | Another client's card has the same name key (for example "X Design" and "X Group"). Rename one card in ClickUp; nothing is matched until then, by design | CSM, CEO |
+| `meta.ads` or `meta.funnels` is null | The media read model (`metaTree`) or the creative one (`funnels`) is not ready: the media sync owns it, see Previews and Scheduled jobs | Systems manager |
+| Storage receipts fail on the health page (`supabase-storage`, `cockpit-launch-ads/...`) | The latest receipt for that label is a failure or a 4xx: a 404 on `verify-object` means an upload did not arrive; anything else, check Storage status. The next good call clears it | Systems manager |
+
+Going live:
+
+1. Apply `20261019120000_csm_decks.sql` (`composio execute SUPABASE_APPLY_A_MIGRATION`,
+   name `20261019120000_csm_decks`). It applies twice without harm. Read back:
+   the bucket private at 157286400 bytes with six MIME types; the policy
+   `cockpit_launch_ads_read` on `storage.objects`; both tables with row
+   security on and SELECT for service_role only; the ten browser functions
+   executable by authenticated only; the helpers by nobody.
+2. Check the project's global Storage upload limit is at least 150 MB.
+3. Deploy `cockpit-csm-api` from the same commit:
+   `python3 scripts/dev/deploy_composio.py cockpit-csm-api --extra $(python3 scripts/dev/fn_extras.py . cockpit-csm-api) --dry`,
+   then without `--dry`; read `verify_jwt` back as true.
+4. Ship the client success app (`scripts/ship.sh client-success`) only with the
+   deck screens that call these.
+5. On production, as a CSM seat on a test-safe client: `cockpit_csm_deck_sources`
+   returns the client and no other; a picture reserves, uploads, turns ready and
+   lists with a signed link; remove takes it off the tray.
+
 ## Sales cockpit
 
 cockpit.maharamedia.com/sales/, for the setters and closers (plan:
