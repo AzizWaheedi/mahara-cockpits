@@ -120,6 +120,7 @@ import {
   useCsmSnapshot,
 } from "@/lib/useCsmSnapshot";
 import { cn } from "@/lib/utils";
+import { PresentButton } from "@/present/PresentButton";
 import { BacklogPage } from "./BacklogPage";
 import {
   AddTask,
@@ -1787,6 +1788,11 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   See this client's data
                 </a>
               ) : null}
+              <PresentButton
+                taskId={String(c.taskId)}
+                stage={c.stage}
+                nextCallKind={c.nextCallKind}
+              />
               <ReportIssue page={`client: ${c.name}`} />
             </div>
           </div>

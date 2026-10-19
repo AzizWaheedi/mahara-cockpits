@@ -1,0 +1,132 @@
+import { ChevronDown, Presentation } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+/**
+ * The ways into the client decks, for the client page header and the
+ * onboarding panels. Light on purpose: nothing of the deck itself loads
+ * until a deck window opens (the deck route is lazy). Each deck opens in a
+ * window of its own, so the cockpit's client page (results, ads, money,
+ * notes) is never the tab that gets shared.
+ */
+
+export type DeckKind = "onboarding" | "launch";
+
+/** The app's base path; read when used (tests run without Vite's env). */
+const base = () =>
+  (import.meta.env?.BASE_URL ?? "/client-success/").replace(/\/$/, "");
+
+export function deckUrl(taskId: string, deck: DeckKind, prep = false) {
+  return `${base()}/clients/${encodeURIComponent(taskId)}/present/${deck}${prep ? "?view=prep" : ""}`;
+}
+
+export function openDeck(taskId: string, deck: DeckKind, prep = false) {
+  const w = window.open(
+    deckUrl(taskId, deck, prep),
+    `mahara-${prep ? "prep" : "deck"}-${taskId}-${deck}`,
+  );
+  w?.focus();
+}
+
+/** The deck the client is due for, by the board's stage and the next call. */
+export function deckFor(
+  stage?: string | null,
+  nextCallKind?: string | null,
+): DeckKind {
+  if (nextCallKind === "launch") return "launch";
+  if (/blueprint|launch booked|ready for launch/i.test(String(stage ?? "")))
+    return "launch";
+  return "onboarding";
+}
+
+const NAMES: Record<DeckKind, string> = {
+  onboarding: "onboarding deck",
+  launch: "launch deck",
+};
+
+/** "Present", with the other deck and both prep views a click away. */
+export function PresentButton({
+  taskId,
+  stage,
+  nextCallKind,
+}: {
+  taskId: string;
+  stage?: string | null;
+  nextCallKind?: string | null;
+}) {
+  const due = deckFor(stage, nextCallKind);
+  const other: DeckKind = due === "onboarding" ? "launch" : "onboarding";
+  return (
+    <div className="inline-flex items-center">
+      <Button
+        size="sm"
+        variant="outline"
+        className="rounded-r-none"
+        onClick={() => openDeck(taskId, due)}
+        title={`Opens the ${NAMES[due]} in its own window`}
+      >
+        <Presentation aria-hidden />
+        Present
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="sm"
+            variant="outline"
+            className="rounded-l-none border-l-0 px-2"
+            aria-label="More ways to present"
+          >
+            <ChevronDown aria-hidden />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => openDeck(taskId, due, true)}>
+            Prepare the {NAMES[due]}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openDeck(taskId, other)}>
+            Present the {NAMES[other]}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openDeck(taskId, other, true)}>
+            Prepare the {NAMES[other]}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+/** Present and prepare one deck, as a pair (the onboarding panels). */
+export function PresentDeckLinks({
+  taskId,
+  deck,
+  primary,
+}: {
+  taskId: string;
+  deck: DeckKind;
+  primary?: boolean;
+}) {
+  return (
+    <>
+      <Button
+        size="sm"
+        variant={primary ? "default" : "outline"}
+        onClick={() => openDeck(taskId, deck)}
+      >
+        <Presentation aria-hidden />
+        Present the {NAMES[deck]}
+      </Button>
+      <button
+        type="button"
+        className="text-xs text-primary underline-offset-4 hover:underline"
+        onClick={() => openDeck(taskId, deck, true)}
+      >
+        Prepare it
+      </button>
+    </>
+  );
+}

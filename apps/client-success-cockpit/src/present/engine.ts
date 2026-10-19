@@ -71,7 +71,8 @@ export function keyCommand(s: KeyState): Command {
   if (k === "l" || k === "L") return "lang";
   if (k === "o" || k === "O") return "overview";
   if (k === "n" || k === "N") return "notes";
-  if (k === "Escape" || k === "Esc") return s.panel || s.overview ? "close" : "none";
+  if (k === "Escape" || k === "Esc")
+    return s.panel || s.overview ? "close" : "none";
   return "none";
 }
 
@@ -96,7 +97,11 @@ export function visible<T extends Hideable>(
   prep: { hidden_slides?: unknown; shown_slides?: unknown },
 ): T[] {
   const ids = (v: unknown) =>
-    new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+    new Set(
+      Array.isArray(v)
+        ? v.filter((x): x is string => typeof x === "string")
+        : [],
+    );
   const hidden = ids(prep.hidden_slides);
   const shown = ids(prep.shown_slides);
   return slides.filter(s =>
@@ -105,7 +110,7 @@ export function visible<T extends Hideable>(
 }
 
 /** The slide a `#id` address points at, or -1. */
-export function slideAtHash(slides: Hideable[], hash: string): number {
+export function slideAtHash(slides: { id: string }[], hash: string): number {
   let id = hash.replace(/^#/, "");
   try {
     id = decodeURIComponent(id);

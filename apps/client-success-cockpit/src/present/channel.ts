@@ -39,7 +39,9 @@ export type DeckMessage =
   | { type: "prep"; deck: DeckKind; overrides: Overrides; revision: number }
   | { type: "live"; live: LiveState }
   | { type: "booked"; kind: CallKind; startTime: string }
-  | { type: "ads" };
+  | { type: "ads" }
+  /** The notes window's own keys pressed there (P, S, D, M, A on the launch deck). */
+  | { type: "key"; key: string };
 
 export const channelName = (taskId: string, deck: DeckKind) =>
   `mahara-deck:${taskId}:${deck}`;
@@ -70,4 +72,42 @@ export function openChannel(
     },
     close: () => ch.close(),
   };
+}
+
+/**
+ * One channel per window, shared by everything in it that listens: the
+ * shell (where the call is) and the model (prep, live state, bookings).
+ */
+export class DeckHub {
+  private readonly listeners = new Set<(m: DeckMessage) => void>();
+  private readonly ch: DeckChannel | null;
+
+  constructor(name: string | null) {
+    this.ch = name
+      ? openChannel(name, m => {
+          for (const l of this.listeners) l(m);
+        })
+      : null;
+  }
+
+  /** False when the browser has no BroadcastChannel: the deck works alone. */
+  get connected(): boolean {
+    return this.ch !== null;
+  }
+
+  post(m: DeckMessage): void {
+    this.ch?.post(m);
+  }
+
+  on(fn: (m: DeckMessage) => void): () => void {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
+  }
+
+  close(): void {
+    this.listeners.clear();
+    this.ch?.close();
+  }
 }

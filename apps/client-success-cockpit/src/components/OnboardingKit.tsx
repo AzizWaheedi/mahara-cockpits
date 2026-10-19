@@ -29,6 +29,7 @@ import {
   stepOf,
 } from "@/lib/onboardingCore";
 import { cn } from "@/lib/utils";
+import { PresentDeckLinks } from "@/present/PresentButton";
 
 /**
  * One client's onboarding, in the order it happens (Aziz, 2026-10-05: "the
@@ -490,6 +491,19 @@ export function OnboardingKit({
                 </BookCallButton>
               </Item>
             )}
+            {live ? null : (
+              <Item
+                tone="neutral"
+                label="The onboarding deck"
+                status="Seven slides for the call, in its own window. Share that window only."
+              >
+                <PresentDeckLinks
+                  taskId={client.taskId}
+                  deck="onboarding"
+                  primary={step === "call"}
+                />
+              </Item>
+            )}
             {links.onboarding_map ? (
               <Item
                 tone="neutral"
@@ -592,6 +606,13 @@ export function OnboardingKit({
                 </BookCallButton>
               </Item>
             )}
+            <Item
+              tone="neutral"
+              label="The launch deck"
+              status="For the launch call: what goes live and what happens next."
+            >
+              <PresentDeckLinks taskId={client.taskId} deck="launch" />
+            </Item>
             {links.brand_dna || links.offer_sheet ? (
               <Item tone="neutral" label="Brand DNA and offer">
                 {links.brand_dna ? (

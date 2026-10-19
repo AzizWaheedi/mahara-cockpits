@@ -45,7 +45,10 @@ export const t = (l: L, lang: Lang) => hold(isolate(l[lang], lang));
 
 /** `{name}` slots filled; a slot with no value is left out with its space. */
 export function fill(text: string, slots: Record<string, string>): string {
-  return text.replace(/\{([a-zA-Z0-9_.]+)\}/g, (_, k: string) => slots[k] ?? "");
+  return text.replace(
+    /\{([a-zA-Z0-9_.]+)\}/g,
+    (_, k: string) => slots[k] ?? "",
+  );
 }
 
 /** A line with its slots filled, in the language on screen. */
@@ -64,7 +67,9 @@ export function digits(value: number | string, lang: Lang): string {
  * lone ٠ (it reads as a dot at size).
  */
 export function stepNumeral(i: number, lang: Lang): string {
-  return lang === "ar" ? "١٢٣٤٥٦٧٨٩"[i] ?? digits(i + 1, lang) : String(i + 1);
+  return lang === "ar"
+    ? ("١٢٣٤٥٦٧٨٩"[i] ?? digits(i + 1, lang))
+    : String(i + 1);
 }
 
 // ---------------------------------------------------------------- shared
@@ -80,8 +85,11 @@ export const SHARED = {
   },
   tag: {
     preview: { en: "Preview", ar: "معاينة" },
-    starter: { en: "Starter, from our templates", ar: "إعلان بداية، من قوالبنا" },
-    yourForm: { en: "Your form", ar: "نموذج إعلانكم" },
+    starter: {
+      en: "Starter, from our templates",
+      ar: "إعلان بداية، من قوالبنا",
+    },
+    yourForm: { en: "Your form", ar: "نموذجكم" },
     exampleForm: { en: "Example form", ar: "نموذج للتوضيح" },
     example: { en: "Example", ar: "مثال" },
     exampleWording: { en: "Example wording", ar: "صياغة للتوضيح" },
@@ -101,7 +109,10 @@ export const SHARED = {
   },
   toGive: { en: "To give us", ar: "نحتاجه منكم" },
   adGoesHere: { en: "Your ad goes here", ar: "إعلانكم هنا" },
-  adsEmpty: { en: "We're finishing your first ads", ar: "نشتغل على أول إعلاناتكم الحين" },
+  adsEmpty: {
+    en: "We're finishing your first ads",
+    ar: "نشتغل على أول إعلاناتكم الحين",
+  },
   frame: {
     feed: { en: "Instagram feed", ar: "فيد إنستقرام" },
     reels: { en: "Instagram Stories and Reels", ar: "ستوري وريلز إنستقرام" },
@@ -144,7 +155,10 @@ export const CTA: Record<Cta, L> = {
   BOOK_NOW: { en: "Book now", ar: "احجز الآن" },
   CONTACT_US: { en: "Contact us", ar: "اتصل بنا" },
   SIGN_UP: { en: "Sign up", ar: "تسجيل" },
-  SEND_WHATSAPP_MESSAGE: { en: "Send WhatsApp message", ar: "إرسال رسالة واتساب" },
+  SEND_WHATSAPP_MESSAGE: {
+    en: "Send WhatsApp message",
+    ar: "إرسال رسالة واتساب",
+  },
   APPLY_NOW: { en: "Apply now", ar: "تقدّم الآن" },
 };
 
@@ -179,15 +193,24 @@ export const O = {
     title: { en: "Welcome, {name}", ar: "حياكم الله، {name}" },
     hello: { en: "Welcome,", ar: "حياكم الله،" },
     dateline: { en: "Onboarding call · {date}", ar: "مكالمة التعريف · {date}" },
-    agendaLead: { en: "Before we hang up, we'll:", ar: "قبل لا نسكر المكالمة:" },
+    agendaLead: {
+      en: "Before we hang up, we'll:",
+      ar: "قبل لا نسكر المكالمة:",
+    },
     agenda: [
       { en: "Choose your launch service", ar: "نختار خدمة الإطلاق" },
       { en: "Set up your access", ar: "نجهّز الصلاحيات" },
-      { en: "Book your Brand Blueprint call", ar: "نحجز مكالمة بناء الهوية والعرض" },
+      {
+        en: "Book your Brand Blueprint call",
+        ar: "نحجز مكالمة بناء الهوية والعرض",
+      },
     ],
   },
   goals: {
-    title: { en: "Your goals, as you wrote them", ar: "أهدافكم مثل ما كتبتوها" },
+    title: {
+      en: "Your goals, as you wrote them",
+      ar: "أهدافكم مثل ما كتبتوها",
+    },
     source: { en: "From your onboarding form", ar: "من نموذج التعريف بالنشاط" },
     goal90: { en: "In 90 days", ar: "خلال ٩٠ يوم" },
     goal12_24: { en: "In 12 to 24 months", ar: "خلال سنة إلى سنتين" },
@@ -207,7 +230,10 @@ export const O = {
     },
   },
   team: {
-    title: { en: "Your team, in your WhatsApp group", ar: "فريقكم، في قروب الواتساب" },
+    title: {
+      en: "Your team, in your WhatsApp group",
+      ar: "فريقكم، في قروب الواتساب",
+    },
     line: {
       en: "The people who run your ads and funnel, our call centre and your success manager are all in this one group.",
       ar: "اللي يشتغلون على إعلاناتكم ومسار العميل، وفريق الاتصال، ونجاح العملاء، كلهم معكم في قروب واحد.",
@@ -217,12 +243,18 @@ export const O = {
       {
         key: "csm",
         name: { en: "Your client success manager", ar: "نجاح العملاء" },
-        line: { en: "Your one point of contact, for anything.", ar: "نقطة تواصلكم معنا، لأي شي." },
+        line: {
+          en: "Your one point of contact, for anything.",
+          ar: "نقطة تواصلكم معنا، لأي شي.",
+        },
       },
       {
         key: "cd",
         name: { en: "The creative director", ar: "المدير الإبداعي" },
-        line: { en: "Your brand, your scripts and your ads.", ar: "هويتكم، وسكربتاتكم، وإعلاناتكم." },
+        line: {
+          en: "Your brand, your scripts and your ads.",
+          ar: "هويتكم، وسكربتاتكم، وإعلاناتكم.",
+        },
       },
       {
         key: "mb",
@@ -270,17 +302,29 @@ export const O = {
     tests: [
       { key: "sell", label: { en: "Easiest to sell", ar: "الأسهل بالبيع" } },
       { key: "profit", label: { en: "Most profit", ar: "الأكثر ربح" } },
-      { key: "deliver", label: { en: "Least painful to deliver", ar: "الأريح بالتنفيذ" } },
+      {
+        key: "deliver",
+        label: { en: "Least painful to deliver", ar: "الأريح بالتنفيذ" },
+      },
     ],
     first: { en: "Your first campaign", ar: "أول حملة" },
-    result: { en: "We'll launch with {service}", ar: "بنطلق أول حملة على {service}" },
-    small: { en: "Once it works, we can add the next one.", ar: "ولما تمشي زين، نضيف الخدمة اللي بعدها." },
+    result: {
+      en: "We'll launch with {service}",
+      ar: "بنطلق أول حملة على {service}",
+    },
+    small: {
+      en: "Once it works, we can add the next one.",
+      ar: "ولما تمشي زين، نضيف الخدمة اللي بعدها.",
+    },
     launch: { en: "Launch with this", ar: "نطلق فيها" },
-    add: { en: "Add a service", ar: "نضيف خدمة" },
+    add: { en: "Add a service", ar: "أضيفوا خدمة" },
     addInput: { en: "A service, in your words", ar: "الخدمة، بكلامكم" },
   },
   road: {
-    title: { en: "The road to your first appointments", ar: "الطريق لأول مواعيدكم" },
+    title: {
+      en: "The road to your first appointments",
+      ar: "الطريق لأول مواعيدكم",
+    },
     stops: [
       { en: "Contract signed", ar: "توقيع العقد" },
       { en: "Onboarding form", ar: "نموذج التعريف بالنشاط" },
@@ -301,8 +345,14 @@ export const O = {
     },
   },
   week: {
-    title: { en: "What we need from you this week", ar: "اللي نحتاجه منكم هالأسبوع" },
-    line: { en: "Most of it we'll do together, right now.", ar: "وأغلبه بنسويه مع بعض، الحين." },
+    title: {
+      en: "What we need from you this week",
+      ar: "اللي نحتاجه منكم هالأسبوع",
+    },
+    line: {
+      en: "Most of it we'll do together, right now.",
+      ar: "وأغلبه بنسويه مع بعض، الحين.",
+    },
     rows: {
       meta: {
         name: { en: "Meta access", ar: "صلاحيات ميتا" },
@@ -352,7 +402,12 @@ export const O = {
           en: "Have a list of old enquiries? Send it, and we'll agree whether to call them.",
           ar: "عندكم قائمة باستفسارات قديمة؟ أرسلوها، ونتفق إذا نتصل عليهم.",
         },
-        ticks: [{ key: "past", label: { en: "Past enquiries", ar: "الاستفسارات القديمة" } }],
+        ticks: [
+          {
+            key: "past",
+            label: { en: "Past enquiries", ar: "الاستفسارات القديمة" },
+          },
+        ],
       },
       academy: {
         name: { en: "The Academy", ar: "الأكاديمية" },
@@ -360,7 +415,9 @@ export const O = {
           en: "Courses for you and your team: your offer, closing your projects, your team and operations. Join, and start with the onboarding course.",
           ar: "كورسات لكم ولفريقكم: العرض، وتوقيع المشاريع، والفريق والتشغيل. انضموا، وابدوا بكورس Onboarding.",
         },
-        ticks: [{ key: "academy", label: { en: "The Academy", ar: "الأكاديمية" } }],
+        ticks: [
+          { key: "academy", label: { en: "The Academy", ar: "الأكاديمية" } },
+        ],
       },
       phones: {
         name: { en: "Your callers' phones", ar: "جوالات فريق الاتصال عندكم" },
@@ -368,12 +425,20 @@ export const O = {
           en: "Install the LeadConnector app, sign in and turn on alerts.",
           ar: "نزّلوا تطبيق LeadConnector، وسجلوا دخول، وفعّلوا التنبيهات.",
         },
-        ticks: [{ key: "phones", label: { en: "Callers' phones", ar: "جوالات فريق الاتصال" } }],
+        ticks: [
+          {
+            key: "phones",
+            label: { en: "Callers' phones", ar: "جوالات فريق الاتصال" },
+          },
+        ],
       },
     },
   },
   next: {
-    title: { en: "What to expect, and what's next", ar: "اللي تتوقعونه، والخطوة الجاية" },
+    title: {
+      en: "What to expect, and what's next",
+      ar: "اللي تتوقعونه، والخطوة الجاية",
+    },
     adsName: { en: "Your first ads", ar: "أول إعلاناتكم" },
     approved: {
       en: "Starter ads go live first, from our ready templates for {service}. Your own ads, made from your content, follow.",
@@ -399,13 +464,22 @@ export const O = {
       en: "Your first ads go live only once you've approved them.",
       ar: "أول إعلاناتكم ما تنزل إلا بعد موافقتكم.",
     },
-    testName: { en: "The first weeks are a test", ar: "أول الأسابيع نختبر فيها الإعلانات" },
+    testName: {
+      en: "The first weeks are a test",
+      ar: "أول الأسابيع نختبر فيها الإعلانات",
+    },
     testLine: {
       en: "Your red lines stay fixed. Tell us now what we must never say or show. Everything else, we test.",
       ar: "خطوطكم الحمراء ثابتة. قولوا لنا الحين اللي ما نقوله ولا نوريه أبد، والباقي نختبره.",
     },
-    input: { en: "Your red lines, in your words", ar: "خطوطكم الحمراء، بكلامكم" },
-    bandHead: { en: "Next: your Brand Blueprint call", ar: "الخطوة الجاية: مكالمة بناء الهوية والعرض" },
+    input: {
+      en: "Your red lines, in your words",
+      ar: "خطوطكم الحمراء، بكلامكم",
+    },
+    bandHead: {
+      en: "Next: your Brand Blueprint call",
+      ar: "الخطوة الجاية: مكالمة بناء الهوية والعرض",
+    },
     bandRest: {
       en: "45 minutes with our creative director: your brand, your offer, your first ad scripts.",
       ar: "٤٥ دقيقة مع المدير الإبداعي: هويتكم، وعرضكم، وسكربتات أول إعلاناتكم.",
@@ -458,11 +532,13 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
   goals: {
     say: [
       "Read their goals back. Don't re-ask anything they already answered.",
-      'If a goal is a number, don\'t endorse it and don\'t argue with it. "We\'ll set targets together once the first meetings come in."',
+      "If a goal is a number, don't endorse it and don't argue with it. \"We'll set targets together once the first meetings come in.\"",
       "Don't put a number on what's realistic (projects a month). It depends on the offer, the area and how they follow up.",
       "Remember the top challenge. It comes back when you choose the service on slide 4.",
     ],
-    sayAr: ["(If a goal is a number) بنحط الأهداف مع بعض أول ما توصل أول المواعيد."],
+    sayAr: [
+      "(If a goal is a number) بنحط الأهداف مع بعض أول ما توصل أول المواعيد.",
+    ],
     temp: {
       en: "Did we get that right? Anything to change?",
       ar: "فهمناكم صح؟ تبون تغيرون شي؟",
@@ -552,3 +628,62 @@ export const LINKS = {
   portal: "https://portal.maharamedia.com",
   portalInstall: "https://portal.maharamedia.com/install",
 } as const;
+
+// ------------------------------------------------------- the journey
+
+/** Who does a step: the journey's three lanes (DESIGN 6). */
+export type LaneKey = "customer" | "us" | "you";
+export const LANES: LaneKey[] = ["customer", "us", "you"];
+
+/**
+ * The journey's seven steps, by row name (CONTENT L2, CONTENT-AR L2). Done
+ * with you moves steps 3 and 4 into the client's lane and renames them.
+ */
+export const JOURNEY = {
+  title: { en: "Your customer's journey", ar: "رحلة عميلكم" },
+  line: {
+    en: "From your ad to your meeting, step by step.",
+    ar: "من إعلانكم لين موعدكم، خطوة بخطوة.",
+  },
+  rows: [
+    { key: "ad", name: { en: "Sees your ad", ar: "يشوف إعلانكم" } },
+    {
+      key: "form",
+      name: { en: "Answers your questions", ar: "يجاوب على أسئلتكم" },
+    },
+    {
+      key: "call",
+      name: { en: "We call", ar: "نتصل عليه" },
+      dwy: { en: "Your team calls", ar: "فريقكم يتصل" },
+    },
+    {
+      key: "booked",
+      name: { en: "Booked, confirmed, reminded", ar: "ينحجز ويتأكد ونذكّره" },
+      dwy: { en: "Your team books", ar: "فريقكم يحجز" },
+    },
+    { key: "lands", name: { en: "Lands with you", ar: "يوصلكم" } },
+    { key: "meet", name: { en: "You meet", ar: "تقابلونه" } },
+    { key: "mark", name: { en: "You mark it", ar: "تسجلون النتيجة" } },
+  ] as { key: string; name: L; dwy?: L }[],
+} as const;
+
+/** Each step's lane: done for you, or done with you (DESIGN 6.3, 6.8). */
+export function journeyOwners(dwy: boolean): LaneKey[] {
+  return dwy
+    ? ["customer", "customer", "you", "you", "you", "you", "you"]
+    : ["customer", "customer", "us", "us", "you", "you", "you"];
+}
+
+/** A step's row name in the deck's service model. */
+export const journeyName = (i: number, dwy: boolean): L => {
+  const row = JOURNEY.rows[i];
+  return (dwy && row.dwy) || row.name;
+};
+
+/** The two decks' names, for the chrome and the presenter's windows. */
+export const DECK_NAME: Record<"onboarding" | "launch", L> = {
+  onboarding: { en: "Onboarding", ar: "التعريف" },
+  launch: { en: "Launch", ar: "الإطلاق" },
+};
+
+export const CLOSED = { en: "Deck closed", ar: "انتهى العرض" } as const;

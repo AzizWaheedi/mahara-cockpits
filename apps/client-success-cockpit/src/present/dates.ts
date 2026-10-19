@@ -64,6 +64,16 @@ export function weekdayDate(
   return p ? `${p.weekday} ${p.day} ${p.month}` : "";
 }
 
+/** "Thu 22 October" · "الخميس ٢٢ أكتوبر" (Arabic keeps the full day name). */
+export function dayShort(value: unknown, lang: Lang, timeZone: string): string {
+  const p = parts(value, lang, timeZone, {
+    weekday: lang === "ar" ? "long" : "short",
+    day: "numeric",
+    month: "long",
+  });
+  return p ? `${p.weekday} ${p.day} ${p.month}` : "";
+}
+
 /** "4 pm", "10:30 am" · "٤ مساءً", "١٠:٣٠ صباحاً". */
 export function clock(value: unknown, lang: Lang, timeZone: string): string {
   const d = toDate(value);
@@ -78,7 +88,8 @@ export function clock(value: unknown, lang: Lang, timeZone: string): string {
   const min = p.minute ?? "00";
   const h12 = h24 % 12 || 12;
   const time = min === "00" ? `${h12}` : `${h12}:${min}`;
-  if (lang === "ar") return `${digits(time, "ar")} ${h24 < 12 ? "صباحاً" : "مساءً"}`;
+  if (lang === "ar")
+    return `${digits(time, "ar")} ${h24 < 12 ? "صباحاً" : "مساءً"}`;
   return `${time} ${h24 < 12 ? "am" : "pm"}`;
 }
 

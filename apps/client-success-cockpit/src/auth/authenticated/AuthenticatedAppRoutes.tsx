@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router";
 import { AdBillingReviewPage } from "@/components/AdBillingReview";
 import { AppLayout } from "@/components/AppLayout";
@@ -21,6 +22,9 @@ import {
   TodayPage,
 } from "@/pages";
 import { InvoicesPage } from "@/pages/InvoicesPage";
+
+/** The client decks, loaded only when a deck window opens. */
+const PresentPage = lazy(() => import("@/present/PresentPage"));
 
 /** An old address, sent on to where its page lives now, with its query string. */
 function Moved({ to }: { to: string }) {
@@ -59,6 +63,28 @@ export function AuthenticatedRoutes() {
           <Route element={<BillingReviewLayout wide />}>
             <Route path="/invoices" element={<InvoicesPage />} />
           </Route>
+        </Route>
+        {/* The client decks (CSM decks, 2026-10-19): the CSM seat only, and
+            outside AppLayout, so no sidebar, HermesChat or Cmd+K can take
+            focus while the deck is shared on a call. */}
+        {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
+        <Route element={<RoleRoute role="csm" />}>
+          <Route
+            path="/clients/:key/present/:deck"
+            element={
+              <Suspense fallback={null}>
+                <PresentPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/clients/:key/present/:deck/notes"
+            element={
+              <Suspense fallback={null}>
+                <PresentPage notes />
+              </Suspense>
+            }
+          />
         </Route>
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}

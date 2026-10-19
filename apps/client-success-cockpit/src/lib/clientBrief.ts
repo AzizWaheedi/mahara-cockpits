@@ -354,7 +354,9 @@ export function summarySections(summary?: string | null): {
   return { takeaways, nextSteps };
 }
 
-export type Answered = { answers?: { title?: string | null; value: unknown }[] };
+export type Answered = {
+  answers?: { title?: string | null; value: unknown }[];
+};
 
 export function formAnswer(form: Answered | undefined | null, re: RegExp) {
   if (!form) return "";
@@ -1086,7 +1088,12 @@ export const KICKOFF: [RegExp, string][] = [
   [/anything to add/i, "Kickoff notes"],
 ];
 /** Kickoff setup items that block a launch while they are not done. */
-export const SETUP: { re: RegExp; label: string; topic: string; name?: boolean }[] = [
+export const SETUP: {
+  re: RegExp;
+  label: string;
+  topic: string;
+  name?: boolean;
+}[] = [
   {
     re: /card linked to the account/i,
     label: "a card with funds on the ad account",

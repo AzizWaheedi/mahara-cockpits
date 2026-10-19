@@ -102,7 +102,11 @@ export interface DeckData {
   country: string | null;
   uae: boolean;
   timeZone: string;
-  mode: { dwy: boolean; known: boolean; from: "prep" | "card" | "highlevel" | "none" };
+  mode: {
+    dwy: boolean;
+    known: boolean;
+    from: "prep" | "card" | "highlevel" | "none";
+  };
   csmFirst: string | null;
   onboardingDay: string;
   onboardingDayFrom: "kit" | "today";
@@ -151,7 +155,9 @@ const pattern = (list: [RegExp, string][], label: string): RegExp => {
   return hit[0];
 };
 const setup = (topic: string, name = false) =>
-  SETUP.filter(s => s.topic === topic && Boolean(s.name) === name).map(s => s.re);
+  SETUP.filter(s => s.topic === topic && Boolean(s.name) === name).map(
+    s => s.re,
+  );
 
 /** The onboarding form's questions the decks read (KFRCXPFx). */
 export const FORM = {
@@ -176,13 +182,16 @@ export const KICK = {
   platforms: pattern(KICKOFF, "Platforms"),
   preExisting: pattern(KICKOFF, "Has leads from before"),
   pastNotes: /link or notes for those leads/i,
-  pageName: setup("facebook", true).find(re => re.test("name of the facebook page")) as RegExp,
+  pageName: setup("facebook", true).find(re =>
+    re.test("name of the facebook page"),
+  ) as RegExp,
   templated: setup("templated")[0],
   card: setup("card")[0],
   facebook: setup("facebook")[0],
   calendar: setup("calendar")[0],
   os: setup("os")[0],
-  whatsappSynced: SETUP.find(s => s.label === "WhatsApp sync to Mahara OS")?.re as RegExp,
+  whatsappSynced: SETUP.find(s => s.label === "WhatsApp sync to Mahara OS")
+    ?.re as RegExp,
   academy: /premium projects academy confirmed|training course access/i,
 };
 
@@ -196,9 +205,13 @@ const answer = (form: Answered | undefined | null, re: RegExp) => {
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
 const list = (v: unknown): string[] =>
-  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && Boolean(x.trim())) : [];
+  Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string" && Boolean(x.trim()))
+    : [];
 const record = (v: unknown): Record<string, unknown> =>
-  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  v && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : {};
 const ARABIC = /[؀-ۿ]/;
 
 /** Arabic first when the deck is Arabic and an Arabic twin was typed in prep. */
@@ -206,7 +219,8 @@ function twin(prep: Overrides, key: string, lang: Lang): string | null {
   return (lang === "ar" ? str(prep[`${key}_ar`]) : null) ?? str(prep[key]);
 }
 
-const GENERIC_EN = /^(the|co|co\.|company|group|est|est\.|llc|wll|w\.l\.l|and|&|for|of)$/i;
+const GENERIC_EN =
+  /^(the|co|co\.|company|group|est|est\.|llc|wll|w\.l\.l|and|&|for|of)$/i;
 const GENERIC_AR = /^(شركة|مؤسسة|مكتب|مجموعة|و)$/;
 
 /**
@@ -220,7 +234,8 @@ export function initials(name: string): string {
     .split(/\s+/)
     .filter(Boolean);
   if (ARABIC.test(name)) {
-    const w = words.find(x => ARABIC.test(x) && !GENERIC_AR.test(x)) ?? words[0] ?? "";
+    const w =
+      words.find(x => ARABIC.test(x) && !GENERIC_AR.test(x)) ?? words[0] ?? "";
     return w.replace(/^ال(?=\p{L}{2})/u, "").charAt(0);
   }
   const kept = words.filter(w => !GENERIC_EN.test(w));
@@ -232,9 +247,18 @@ export function initials(name: string): string {
 }
 
 const COUNTRY_WORDS: [RegExp, string][] = [
-  [/riyadh|jeddah|jedda|dammam|khobar|mecca|makkah|medina|madinah|qassim|abha|tabuk|saudi|ksa|الرياض|جدة|الدمام|الخبر|مكة|المدينة|القصيم|أبها|تبوك|السعودية/i, "SA"],
-  [/dubai|abu dhabi|sharjah|ajman|al ain|uae|emirates|دبي|أبوظبي|ابوظبي|الشارقة|عجمان|العين|الإمارات/i, "AE"],
-  [/kuwait|salmiya|hawalli|jahra|ahmadi|farwaniya|الكويت|السالمية|حولي|الجهراء|الأحمدي|الفروانية/i, "KW"],
+  [
+    /riyadh|jeddah|jedda|dammam|khobar|mecca|makkah|medina|madinah|qassim|abha|tabuk|saudi|ksa|الرياض|جدة|الدمام|الخبر|مكة|المدينة|القصيم|أبها|تبوك|السعودية/i,
+    "SA",
+  ],
+  [
+    /dubai|abu dhabi|sharjah|ajman|al ain|uae|emirates|دبي|أبوظبي|ابوظبي|الشارقة|عجمان|العين|الإمارات/i,
+    "AE",
+  ],
+  [
+    /kuwait|salmiya|hawalli|jahra|ahmadi|farwaniya|الكويت|السالمية|حولي|الجهراء|الأحمدي|الفروانية/i,
+    "KW",
+  ],
   [/doha|qatar|الدوحة|قطر/i, "QA"],
   [/manama|bahrain|المنامة|البحرين/i, "BH"],
   [/muscat|oman|مسقط|عمان/i, "OM"],
@@ -248,7 +272,7 @@ export function countryFromAreas(text: string): string | null {
 
 /** A setup answer read as a status: done, still to do, or not filed. */
 function setupStatus(value: string | null | undefined): AccessStatus {
-  if (!value || !value.trim()) return "unchecked";
+  if (!value?.trim()) return "unchecked";
   return SETUP_DONE.test(value.trim()) ? "done" : "todo";
 }
 
@@ -286,19 +310,24 @@ export function deckData(input: DeckInput): DeckData {
 
   // Name: the card's, else the form's business name.
   const nameEn =
-    str(s?.clientName) ?? str(kit?.client_name) ?? str(answer(form, FORM.businessName)) ?? "";
+    str(s?.clientName) ??
+    str(kit?.client_name) ??
+    str(answer(form, FORM.businessName)) ??
+    "";
   const ghlName = str(s?.ghl?.name);
   const nameAr = ghlName && ARABIC.test(ghlName) ? ghlName : null;
   const name = lang === "ar" && nameAr ? nameAr : nameEn;
 
   // Country: HighLevel, else the service areas answer.
   const country =
-    str(s?.ghl?.country)?.toUpperCase() ?? countryFromAreas(answer(form, FORM.areas));
+    str(s?.ghl?.country)?.toUpperCase() ??
+    countryFromAreas(answer(form, FORM.areas));
   const uae = country === "AE" || country === "OM";
   const timeZone = uae ? "Asia/Dubai" : "Asia/Riyadh";
 
   // Service model: prep, then the card, then HighLevel; unknown reads DFY.
-  const prepModel = str(prep.service_model) ?? str(onboardingPrep.service_model);
+  const prepModel =
+    str(prep.service_model) ?? str(onboardingPrep.service_model);
   const card = serviceModel(s?.client?.service ?? null);
   const ghlMode = str(s?.ghl?.serviceMode);
   const mode: DeckData["mode"] = prepModel
@@ -308,7 +337,8 @@ export function deckData(input: DeckInput): DeckData {
       : ghlMode && /^(DFY|DWY)$/.test(ghlMode)
         ? { dwy: ghlMode === "DWY", known: true, from: "highlevel" }
         : { dwy: false, known: false, from: "none" };
-  if (!mode.known) notes.push("Service mode not set on the card. The deck uses done for you.");
+  if (!mode.known)
+    notes.push("Service mode not set on the card. The deck uses done for you.");
 
   // The presenting CSM's first name (the covers only).
   const fromAuth = str(input.presenterName);
@@ -322,7 +352,10 @@ export function deckData(input: DeckInput): DeckData {
     .at(-1);
   const logo =
     s?.logo && input.publicUrl
-      ? { url: input.publicUrl(s.logo.bucket, s.logo.path), from: "verified" as const }
+      ? {
+          url: input.publicUrl(s.logo.bucket, s.logo.path),
+          from: "verified" as const,
+        }
       : uploadLogo?.url
         ? { url: uploadLogo.url, from: "upload" as const }
         : null;
@@ -330,7 +363,12 @@ export function deckData(input: DeckInput): DeckData {
   // Calls: booked here first, then what the calendar reads back.
   const next: Partial<Record<CallKind, string>> = {};
   const last: Partial<Record<CallKind, string>> = {};
-  for (const k of ["blueprint", "launch", "checkin", "onboarding"] as CallKind[]) {
+  for (const k of [
+    "blueprint",
+    "launch",
+    "checkin",
+    "onboarding",
+  ] as CallKind[]) {
     const n = input.booked?.[k] ?? s?.calls?.next?.[k]?.startsAt;
     if (n) next[k] = n;
     const l = s?.calls?.last?.[k]?.startsAt;
@@ -385,12 +423,15 @@ export function deckData(input: DeckInput): DeckData {
   const advertised = str(cleanAnswer(answer(kickoff, KICK.advertised)));
   const numberOneRaw = cleanAnswer(answer(form, FORM.numberOne));
   const numberOne =
-    numberOneRaw && numberOneRaw.length <= 44 && numberOneRaw.split(/\s+/).length <= 6
+    numberOneRaw &&
+    numberOneRaw.length <= 44 &&
+    numberOneRaw.split(/\s+/).length <= 6
       ? numberOneRaw
       : null;
   const prepServices =
-    (lang === "ar" && list(prep.services_ar).length ? list(prep.services_ar) : null) ??
-    (list(prep.services).length ? list(prep.services) : null);
+    (lang === "ar" && list(prep.services_ar).length
+      ? list(prep.services_ar)
+      : null) ?? (list(prep.services).length ? list(prep.services) : null);
   let services: string[];
   let servicesFrom: DeckData["servicesFrom"];
   if (prepServices) {
@@ -398,7 +439,10 @@ export function deckData(input: DeckInput): DeckData {
     servicesFrom = "prep";
   } else {
     const chips = serviceChips(answer(form, FORM.services));
-    if (numberOne && !chips.some(c => c.toLowerCase() === numberOne.toLowerCase()))
+    if (
+      numberOne &&
+      !chips.some(c => c.toLowerCase() === numberOne.toLowerCase())
+    )
       chips.unshift(numberOne);
     if (chips.length) {
       services = chips.slice(0, 6);
@@ -444,20 +488,35 @@ export function deckData(input: DeckInput): DeckData {
   // Access: the kickoff's setup answers, then the CSM's live ticks.
   const kickoffFiled = Boolean(kickoff);
   const access = record(onboardingPrep.access);
-  const tick = (key: string, label: L, fromKickoff: () => string | null): AccessTick => {
+  const tick = (
+    key: string,
+    label: L,
+    fromKickoff: () => string | null,
+  ): AccessTick => {
     const set = access[key];
     const a = kickoffFiled ? fromKickoff() : null;
     if (set === "done" || set === "todo" || set === "unchecked")
       return { key, label, status: set, from: "prep", answer: a };
-    if (!kickoffFiled) return { key, label, status: "unchecked", from: "none", answer: null };
-    return { key, label, status: setupStatus(a), from: a ? "kickoff" : "none", answer: a };
+    if (!kickoffFiled)
+      return { key, label, status: "unchecked", from: "none", answer: null };
+    return {
+      key,
+      label,
+      status: setupStatus(a),
+      from: a ? "kickoff" : "none",
+      answer: a,
+    };
   };
-  const kickAnswer = (re: RegExp | undefined) => () => (re ? str(answer(kickoff, re)) : null);
+  // A setup answer as filed: "No" is an answer here (not done), never empty.
+  const kickAnswer = (re: RegExp | undefined) => () =>
+    re ? str(formAnswer(kickoff, re)) : null;
   const pastAnswer = () => {
-    const has = str(answer(kickoff, KICK.preExisting));
+    const has = str(formAnswer(kickoff, KICK.preExisting));
     if (!has) return null;
     if (/^no\b/i.test(has)) return "Done (no list)";
-    return str(answer(kickoff, KICK.pastNotes)) ? "Done (sent)" : "Yes, not sent yet";
+    return str(answer(kickoff, KICK.pastNotes))
+      ? "Done (sent)"
+      : "Yes, not sent yet";
   };
   const calendarAnswer = () =>
     formAnswers(kickoff, KICK.calendar).find(v => SETUP_DONE.test(v.trim())) ??
@@ -481,9 +540,15 @@ export function deckData(input: DeckInput): DeckData {
   };
   const osApproved = onboardingPrep.dwy_os_approved === true;
   const rows: AccessRow[] = [
-    row("meta", W.meta, { meta_access: kickAnswer(KICK.facebook), meta_card: kickAnswer(KICK.card) }),
+    row("meta", W.meta, {
+      meta_access: kickAnswer(KICK.facebook),
+      meta_card: kickAnswer(KICK.card),
+    }),
     mode.dwy && !osApproved
-      ? row("crm", W.crm, { os_signin: kickAnswer(KICK.os), os_calendar: calendarAnswer })
+      ? row("crm", W.crm, {
+          os_signin: kickAnswer(KICK.os),
+          os_calendar: calendarAnswer,
+        })
       : row("os", W.os, {
           os_signin: kickAnswer(KICK.os),
           os_whatsapp: kickAnswer(KICK.whatsappSynced),
@@ -512,9 +577,12 @@ export function deckData(input: DeckInput): DeckData {
   ];
 
   const kickPage = str(answer(kickoff, KICK.pageName));
-  const pagePrep = twin(prep, "page_name", lang) ?? twin(onboardingPrep, "page_name", lang);
+  const pagePrep =
+    twin(prep, "page_name", lang) ?? twin(onboardingPrep, "page_name", lang);
   const pageName =
-    pagePrep ?? (kickPage && !NAME_OPEN.test(kickPage) ? kickPage : null) ?? name;
+    pagePrep ??
+    (kickPage && !NAME_OPEN.test(kickPage) ? kickPage : null) ??
+    name;
   const pageNameFrom: DeckData["pageNameFrom"] = pagePrep
     ? "prep"
     : kickPage && !NAME_OPEN.test(kickPage)
@@ -531,12 +599,24 @@ export function deckData(input: DeckInput): DeckData {
     str(s?.editor?.driveUrl);
 
   const callers = s?.callers
-    ? s.callers.map(c => str(c.firstName)).filter((x): x is string => Boolean(x))
+    ? s.callers
+        .map(c => str(c.firstName))
+        .filter((x): x is string => Boolean(x))
     : null;
-  if (callers) notes.push(callers.length ? `Callers on this account: ${callers.join(", ")}.` : "No caller is assigned to this account yet.");
-  if (templatedAnswer) notes.push(`Kickoff, templated ads: ${templatedAnswer}.`);
-  else if (kickoffFiled) notes.push("Kickoff filed without a templated ads answer.");
-  else notes.push("The kickoff form is not filed yet, so every access row reads Not checked yet.");
+  if (callers)
+    notes.push(
+      callers.length
+        ? `Callers on this account: ${callers.join(", ")}.`
+        : "No caller is assigned to this account yet.",
+    );
+  if (templatedAnswer)
+    notes.push(`Kickoff, templated ads: ${templatedAnswer}.`);
+  else if (kickoffFiled)
+    notes.push("Kickoff filed without a templated ads answer.");
+  else
+    notes.push(
+      "The kickoff form is not filed yet, so every access row reads Not checked yet.",
+    );
   for (const g of goals)
     if (g.held)
       notes.push(

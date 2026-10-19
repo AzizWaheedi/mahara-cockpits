@@ -237,10 +237,13 @@ export async function readDeckSources(
   const { data, error } = await client.rpc("cockpit_csm_deck_sources", {
     p_task_id: taskId,
   });
-  if (error) throw Error(problem(error, "The deck's sources could not be read."));
+  if (error)
+    throw Error(problem(error, "The deck's sources could not be read."));
   const parsed = sourcesSchema.safeParse(data);
   if (!parsed.success)
-    throw Error("The deck's sources came back in a shape this page does not read.");
+    throw Error(
+      "The deck's sources came back in a shape this page does not read.",
+    );
   return parsed.data;
 }
 
@@ -258,9 +261,11 @@ export async function savePrep(
     p_deck: deck,
     p_patch: patch,
   });
-  if (error) throw Error(problem(error, "This change was not saved. Try again."));
+  if (error)
+    throw Error(problem(error, "This change was not saved. Try again."));
   const parsed = saved.safeParse(data);
-  if (!parsed.success) throw Error("The server did not confirm the save. Try again.");
+  if (!parsed.success)
+    throw Error("The server did not confirm the save. Try again.");
   return parsed.data;
 }
 
@@ -280,13 +285,17 @@ async function invoke<T>(
     const ctx = (error as { context?: unknown }).context;
     if (ctx && typeof (ctx as Response).json === "function") {
       try {
-        const j = (await (ctx as Response).clone().json()) as { error?: string };
+        const j = (await (ctx as Response).clone().json()) as {
+          error?: string;
+        };
         said = j?.error ?? "";
       } catch {
         // not JSON
       }
     }
-    throw Error(said || problem(error, "The server did not answer. Try again."));
+    throw Error(
+      said || problem(error, "The server did not answer. Try again."),
+    );
   }
   const parsed = shape.safeParse(data);
   if (!parsed.success) throw Error("The server's answer could not be read.");
@@ -371,7 +380,9 @@ export async function readFileFacts(file: File): Promise<FileFacts> {
       const scale = Math.min(1, 1080 / Math.max(video.videoWidth, 1));
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
-      canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas
+        .getContext("2d")
+        ?.drawImage(video, 0, 0, canvas.width, canvas.height);
       facts.poster = await new Promise<Blob | undefined>(ok =>
         canvas.toBlob(b => ok(b ?? undefined), "image/jpeg", 0.82),
       );

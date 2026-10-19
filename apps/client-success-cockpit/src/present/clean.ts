@@ -20,7 +20,8 @@ const COUNTS = new RegExp(
   `${NUM}\\s*(?:[a-z\\u0600-\\u06FF]+\\s+){0,2}${COUNT_NOUN}`,
   "iu",
 );
-const GUARANTEE = /guarant|refund|money.?back|ضمان|نضمن|مضمون|استرجاع|استرداد|ترجيع الفلوس/i;
+const GUARANTEE =
+  /guarant|refund|money.?back|ضمان|نضمن|مضمون|استرجاع|استرداد|ترجيع الفلوس/i;
 
 export type Held = "count" | "guarantee";
 
@@ -64,7 +65,8 @@ export function cut(text: string, max: number): string {
 }
 
 /** Answers that mean "nothing to say". */
-export const EMPTY = /^(?:n\/?a|na|none|nothing|no|-+|\.+|لا|لا يوجد|ما في|مافي|ما فيه|لا شيء)$/i;
+export const EMPTY =
+  /^(?:n\/?a|na|none|nothing|no|-+|\.+|لا|لا يوجد|ما في|مافي|ما فيه|لا شيء)$/i;
 
 /**
  * Up to three challenges from one free-text answer: its own lines or
@@ -74,6 +76,9 @@ export function challengeLines(text: string): string[] {
   const raw = String(text ?? "");
   let parts = raw
     .split(/\r?\n|(?:^|\s)(?:\d+[.)-]|[-•▪*])\s+/)
+    // A numbered or bulleted line keeps no mark of its own (each part may
+    // start with one after a line break).
+    .map(p => p.replace(/^\s*(?:\d+[.)-]|[-•▪*])\s+/, ""))
     .map(cleanAnswer)
     .filter(p => p && !EMPTY.test(p));
   if (parts.length <= 1)
@@ -92,7 +97,10 @@ function serviceName(part: string): string {
   return cleanAnswer(part)
     .replace(PRICE, " ")
     .replace(/\((?:[^)]*)\)/g, " ")
-    .replace(/\b(?:from|starting at|starts at|around|approx\.?|per|up to)\b.*$/i, "")
+    .replace(
+      /\b(?:from|starting at|starts at|around|approx\.?|per|up to)\b.*$/i,
+      "",
+    )
     .replace(/(?:من|يبدأ من|تبدأ من|حوالي|تقريبا)\s*$/u, "")
     .replace(/^(?:services?|خدمات|الخدمات)\s*[:：]\s*/i, "")
     .replace(/\s*[-:–]\s*$/, "")
@@ -110,7 +118,15 @@ export function serviceChips(text: unknown, max = 6): string[] {
   const raw = String(text ?? "").trim();
   if (!raw || EMPTY.test(raw)) return [];
   const parts = raw
-    .split(/\r?\n|[,،;؛•▪]|\s[-–]\s|\s\/\s|\d+[.)]\s/)
+    // What sits in brackets is a note ("consultation 1,500 SAR"), not a service.
+    .replace(/\([^)]*\)/g, " ")
+    // A comma between digits is a thousands mark, not a list.
+    .split(/\r?\n|,(?!\d{3}\b)|[،;؛•▪]|\s[-–]\s|\s\/\s|\d+[.)]\s/)
+    // A sentence is not a service name, even once its prices are taken out.
+    .filter(part => {
+      const p = cleanAnswer(part);
+      return p.split(/\s+/).length <= 8 && !/[.؟?]$/.test(p);
+    })
     .map(serviceName)
     .filter(Boolean);
   const out: string[] = [];

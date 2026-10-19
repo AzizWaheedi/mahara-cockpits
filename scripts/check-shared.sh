@@ -149,6 +149,27 @@ for f in "$MB/src/lib/callRecording.ts" "$CS/src/lib/callRecording.ts"; do
   fi
 done
 
+# The client decks (CSM decks, 2026-10-19) copy the sales deck's generic
+# parts: the photo-book layout, the figure rules, the figure itself, the
+# platform marks and their artwork. The pitch deck is not refactored, so the
+# copies are pinned byte for byte, imports included; everything else in
+# src/present is the client success cockpit's own.
+for f in layout.ts figure.ts fig.tsx platforms.tsx; do
+  same "deck $f" "$SA/src/deck/$f" "$CS/src/present/$f"
+  if [ -f "$SA/src/deck/$f" ] && [ -f "$CS/src/present/$f" ] \
+    && ! cmp -s "$SA/src/deck/$f" "$CS/src/present/$f"; then
+    echo "DRIFTED  deck $f: the two copies must be byte for byte"
+    fails=$((fails + 1))
+  fi
+done
+for f in "$SA"/src/deck/assets/brands/*.webp; do
+  b=$(basename "$f")
+  if ! cmp -s "$f" "$CS/src/present/assets/brands/$b"; then
+    echo "DRIFTED  deck brand mark $b: copy $f to $CS/src/present/assets/brands/"
+    fails=$((fails + 1))
+  fi
+done
+
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
 same personalEod.ts "$MB/src/lib/personalEod.ts" "$CS/src/lib/personalEod.ts"

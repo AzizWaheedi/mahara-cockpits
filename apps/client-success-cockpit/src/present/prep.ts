@@ -9,7 +9,14 @@ import type { DeckKind, SavedPrep } from "./sources";
  * are the server's allow-list: anything else is refused before it is sent.
  */
 
-const TEXT = ["service_focus", "page_name", "project", "engineer", "selling_point", "thank_you"];
+const TEXT = [
+  "service_focus",
+  "page_name",
+  "project",
+  "engineer",
+  "selling_point",
+  "thank_you",
+];
 const TWINS = [
   ...TEXT,
   "goals",
@@ -52,7 +59,8 @@ export const PREP_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 const STAMPS = new Set(["creative_agreed_at", "onboarding_presented_at"]);
-const LISTS = /^(red_lines|services|dos_donts_hidden|platforms_planned|hidden_slides|shown_slides)(_ar)?$/;
+const LISTS =
+  /^(red_lines|services|dos_donts_hidden|platforms_planned|hidden_slides|shown_slides)(_ar)?$/;
 
 /** A key the server would refuse, said plainly; null when it is kept. */
 export function refusedKey(key: string): string | null {
@@ -76,7 +84,8 @@ export function applyPatch(
     if (Array.isArray(v) && LISTS.test(k)) {
       const seen: unknown[] = [];
       for (const x of v)
-        if (!(typeof x === "string" && !x.trim()) && !seen.includes(x)) seen.push(x);
+        if (!(typeof x === "string" && !x.trim()) && !seen.includes(x))
+          seen.push(x);
       v = seen.length ? seen : null;
     }
     if (STAMPS.has(k)) {
@@ -114,8 +123,10 @@ export class PrepSaver {
   private readonly delay: number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
   private readonly cancel: (handle: unknown) => void;
+  private readonly opts: SaverOptions;
 
-  constructor(private readonly opts: SaverOptions) {
+  constructor(opts: SaverOptions) {
+    this.opts = opts;
     this.delay = opts.delay ?? 600;
     this.schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
     this.cancel =
@@ -161,7 +172,8 @@ export class PrepSaver {
         this.opts.onSaved(row, sent);
       } catch (e) {
         // Put it back unless something newer replaced it, so a retry sends it.
-        for (const [k, v] of Object.entries(sent)) if (!(k in this.pending)) this.pending[k] = v;
+        for (const [k, v] of Object.entries(sent))
+          if (!(k in this.pending)) this.pending[k] = v;
         this.opts.onError(e instanceof Error ? e.message : String(e), sent);
       } finally {
         this.flight = null;
@@ -172,4 +184,7 @@ export class PrepSaver {
 }
 
 /** The two decks' prep, as the server last confirmed it. */
-export type PrepRows = Record<DeckKind, { overrides: Overrides; revision: number }>;
+export type PrepRows = Record<
+  DeckKind,
+  { overrides: Overrides; revision: number }
+>;
