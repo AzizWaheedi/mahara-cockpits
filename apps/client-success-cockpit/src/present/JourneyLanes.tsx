@@ -304,6 +304,7 @@ export function JourneyLanes({
             key={`name-${String(i)}`}
             type="button"
             className="dkc-row-name dkc-press"
+            data-lane={owners[i]}
             data-state={i < current ? "past" : i === current ? "now" : "ahead"}
             aria-current={i === current ? "step" : undefined}
             style={{
@@ -329,12 +330,21 @@ export function JourneyLanes({
  * running off the foot of the slide. The same drawing opens the launch
  * deck's journey a week later.
  */
-export function FaintLanes({ dwy = false }: { dwy?: boolean }) {
+export function FaintLanes({
+  dwy = false,
+  lang,
+}: {
+  dwy?: boolean;
+  lang: Lang;
+}) {
   const owners = journeyOwners(dwy);
   const w = 220;
   const gap = 14;
+  const top = 52;
   const lx = (k: LaneKey) => laneIndex(k) * (w + gap) + 38;
-  const pts = owners.map((o, i) => ({ x: lx(o), y: 70 + i * 104 }));
+  const pts = owners.map((o, i) => ({ x: lx(o), y: top + 70 + i * 104 }));
+  // Each lane is its two edges, open at the foot (a drawing's lanes, not
+  // three filled panels), under the journey's own lane heads in ink-3.
   return (
     <div className="dkc-faint" aria-hidden>
       <svg
@@ -342,17 +352,19 @@ export function FaintLanes({ dwy = false }: { dwy?: boolean }) {
         preserveAspectRatio="xMinYMin meet"
         aria-hidden
       >
-        {LANES.map(k => (
-          <rect
-            key={k}
-            x={laneIndex(k) * (w + gap)}
-            y={0}
-            width={w}
-            height={860}
-            rx={14}
-            fill="var(--dk-lane)"
-          />
-        ))}
+        {LANES.map(k => {
+          const x = laneIndex(k) * (w + gap) + 0.5;
+          const r = 14;
+          return (
+            <path
+              key={k}
+              d={`M ${x} 900 L ${x} ${top + r} Q ${x} ${top} ${x + r} ${top} L ${x + w - 1 - r} ${top} Q ${x + w - 1} ${top} ${x + w - 1} ${top + r} L ${x + w - 1} 900`}
+              fill="none"
+              stroke="var(--dk-line-strong)"
+              strokeWidth={1}
+            />
+          );
+        })}
         {pts.slice(0, -1).map((a, i) => (
           <path
             key={`f-${String(i)}`}
@@ -361,6 +373,15 @@ export function FaintLanes({ dwy = false }: { dwy?: boolean }) {
           />
         ))}
       </svg>
+      {LANES.map(k => (
+        <span
+          key={k}
+          className="dkc-faint-head"
+          style={{ insetInlineStart: laneIndex(k) * (w + gap) + 20 }}
+        >
+          {t(SHARED.lane[k], lang)}
+        </span>
+      ))}
     </div>
   );
 }
@@ -441,9 +462,11 @@ export function MiniRail({
         ))}
       </svg>
       {!all && at ? (
+        // Above the line, from the lit node's start edge: it never sits on
+        // the rail, so no node or dot after it is covered.
         <span
           className="dkc-rail-name"
-          style={{ insetInlineStart: at.x + 18, top: at.y }}
+          style={{ insetInlineStart: at.x - r, top: at.y - r - 6 }}
         >
           {t(journeyName(current, dwy), lang)}
         </span>

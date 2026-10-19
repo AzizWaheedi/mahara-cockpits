@@ -211,6 +211,8 @@ export const O = {
       en: "Your goals, as you wrote them",
       ar: "أهدافكم مثل ما كتبتوها",
     },
+    /** The title when nothing was written and the CSM types it live. */
+    titleAsk: { en: "Your goals, in your words", ar: "أهدافكم، بكلامكم" },
     source: { en: "From your onboarding form", ar: "من نموذج التعريف بالنشاط" },
     goal90: { en: "In 90 days", ar: "خلال ٩٠ يوم" },
     goal12_24: { en: "In 12 to 24 months", ar: "خلال سنة إلى سنتين" },
@@ -449,12 +451,12 @@ export const O = {
       ar: "أول شي تنزل إعلانات البداية، من قوالبنا الجاهزة. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم.",
     },
     pending: {
-      en: "If you approve them, starter ads can go live first, from our ready templates for {service}. Your own ads, made from your content, follow.",
-      ar: "إذا وافقتوا، نقدر ننزل أول شي إعلانات البداية، من قوالبنا الجاهزة لخدمة {service}. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم.",
+      en: "Starter ads can go live first, from our ready templates for {service}. Your own ads, made from your content, follow.",
+      ar: "نقدر ننزل أول شي إعلانات البداية، من قوالبنا الجاهزة لخدمة {service}. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم.",
     },
     pendingNoPack: {
-      en: "If you approve them, starter ads can go live first, from our ready templates. Your own ads, made from your content, follow.",
-      ar: "إذا وافقتوا، نقدر ننزل أول شي إعلانات البداية، من قوالبنا الجاهزة. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم.",
+      en: "Starter ads can go live first, from our ready templates. Your own ads, made from your content, follow.",
+      ar: "نقدر ننزل أول شي إعلانات البداية، من قوالبنا الجاهزة. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم.",
     },
     declined: {
       en: "Your own ads, made from your content, go live first.",
@@ -949,10 +951,6 @@ export const LAUNCH = {
         en: "The ones you'd pick run too, beside the ones you'd skip. The numbers tell us which work.",
         ar: "اللي تختارونها تنزل بعد، جنب اللي يمكن ما تختارونها. والأرقام هي اللي توضح لنا أي واحد يشتغل.",
       },
-      wait: {
-        en: "An ad waiting for the perfect version earns nothing while it waits.",
-        ar: "الإعلان اللي ينتظر النسخة المثالية، ما يجيب شي وهو ينتظر.",
-      },
       approve: {
         en: "You approve your ads in the group. Once you have, we test versions of them side by side.",
         ar: "توافقون على إعلاناتكم بالقروب، وبعد موافقتكم نختبر أكثر من نسخة منها مع بعض.",
@@ -986,7 +984,7 @@ export const LAUNCH = {
     stops: [
       { en: "Opening", ar: "البداية" },
       { en: "The questions", ar: "الأسئلة" },
-      { en: "Thank you", ar: "صفحة الشكر" },
+      { en: "The thank-you screen", ar: "صفحة الشكر" },
     ],
     thanksLine: {
       en: "Then your thank-you screen, and a welcome message.",
@@ -1001,8 +999,8 @@ export const LAUNCH = {
       ar: "شكراً لك. فريقنا بيتواصل معك خلال أوقات الدوام.",
     },
     fallback: {
-      en: "Example form. We're finishing yours.",
-      ar: "نموذج للتوضيح. نشتغل على نموذجكم.",
+      en: "We're finishing yours.",
+      ar: "نشتغل على نموذجكم.",
     },
     whatsapp: {
       en: "Your ad opens a WhatsApp chat.",
@@ -1072,8 +1070,8 @@ export const LAUNCH = {
     agentDwy: { en: "Your caller", ar: "فريق الاتصال" },
     lead: { en: "Customer", ar: "العميل" },
     legend: {
-      en: "Words in teal came from your files. Anything marked 'To give us', we'll fill in with you.",
-      ar: "الكلمات الملونة من ملفاتكم، واللي عليه نحتاجه منكم نكمله معكم.",
+      en: "Words in teal came from your files.",
+      ar: "الكلمات الملونة من ملفاتكم.",
     },
     guide: {
       en: "Your caller's facts come from your call guide in Mahara OS. Check it, and fill in anything marked 'To give us'.",
@@ -1268,12 +1266,12 @@ export const LAUNCH = {
       {
         key: "offer",
         job: {
-          en: "Keep the offer steady while we test. Want to change it? Ask in the group first.",
-          ar: "ثبّتوا العرض وإحنا نختبر. تبون تغيرونه؟ قولوا لنا بالقروب أول.",
+          en: "Keep the offer steady while we test",
+          ar: "ثبّتوا العرض وإحنا نختبر",
         },
         why: {
-          en: "A new offer mid-test starts the test again. If you ask first, we can plan it in.",
-          ar: "العرض الجديد بنص الاختبار يرجّعه من البداية. وإذا قلتوا لنا أول، نرتب له.",
+          en: "Want to change it? Ask in the group first. A new offer mid-test starts the test again. If you ask first, we can plan it in.",
+          ar: "تبون تغيرونه؟ قولوا لنا بالقروب أول. العرض الجديد بنص الاختبار يرجّعه من البداية. وإذا قلتوا لنا أول، نرتب له.",
         },
       },
       {
@@ -1303,6 +1301,8 @@ export const LAUNCH = {
     },
     finding: { en: "Finding what works", ar: "نكتشف اللي يشتغل" },
     weeks12: { en: "Weeks 1 and 2", ar: "أول أسبوعين" },
+    /** Under the dashed open end of the first window. */
+    open: { en: "Can run longer", ar: "ممكن تطوّل" },
     checkins: { en: "Check-ins", ar: "مكالمات المتابعة" },
     first: {
       en: "Your first check-in · a week or two in",
@@ -1431,11 +1431,13 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "Ask: \"Anything else we must never say or show?\" Add it to their card's Do's & Don'ts after the call.",
       "They ask for changes in the group, and we answer with the reason.",
       "A content plan for their page is a separate conversation. Don't promise it here.",
+      'If they want to hold an ad back until it\'s perfect: "An ad waiting for the perfect version earns nothing while it waits."',
     ],
     sayAr: [
       "أنتم جيتونا عشان الأداء، وإحنا نفضّل نحمي الأداء على إننا نحمي شكل معين.",
       "فيه شي ثاني ما تبونا نقوله أو نوريه أبد؟",
       "أي تغيير تبونه، اطلبوه بالقروب، ونرد عليكم بالسبب.",
+      "(If they want to wait for a perfect ad) الإعلان اللي ينتظر النسخة المثالية، ما يجيب شي وهو ينتظر.",
     ],
     temp: {
       en: "Can we agree to test this way? Record it only when they say yes.",

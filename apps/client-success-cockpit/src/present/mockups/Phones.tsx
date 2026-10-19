@@ -390,6 +390,15 @@ export function FbFeed({ creative, who, pageName, app, deck, play }: AdProps) {
           {t(APP.share, app)}
         </span>
       </div>
+      {/* The top of the next post, as the feed runs on under an ad: its
+          avatar and name as quiet bars, no words, no picture. */}
+      <div className="dkc-fb-next" aria-hidden>
+        <i className="dkc-fb-next-av" />
+        <div className="dkc-bars" style={{ padding: 0, flex: 1 }}>
+          <i style={{ width: "46%" }} />
+          <i style={{ width: "28%" }} />
+        </div>
+      </div>
       <div className="dkc-tabbar" aria-hidden>
         <House />
         <MonitorPlay />

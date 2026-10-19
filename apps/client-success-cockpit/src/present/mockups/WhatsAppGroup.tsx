@@ -13,19 +13,30 @@ export function WhatsAppGroup({
   who,
   lang,
   header,
+  about,
   rows,
 }: {
   who: Identity;
   lang: Lang;
   header: L;
+  /** The group's description line under its name (the hours). */
+  about: L;
   rows: { key: string; name: L; line: L }[];
 }) {
+  // Laid out as the group's own members, a roster across the content
+  // width: each role over what they message about, never a two-column
+  // table (DESIGN 9.3).
   return (
     <section className="dkc-group" aria-label={t(header, lang)}>
       <div className="dkc-group-head">
-        <ClientMark who={who} size={56} />
-        <Logo mark="whatsapp" size={34} />
-        <b>{t(header, lang)}</b>
+        <ClientMark who={who} size={64} />
+        <div className="dkc-group-name">
+          <b>
+            <Logo mark="whatsapp" size={30} />
+            {t(header, lang)}
+          </b>
+          <p>{t(about, lang)}</p>
+        </div>
       </div>
       <ul className="dkc-group-rows">
         {rows.map(r => (

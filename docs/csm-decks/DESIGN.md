@@ -1150,7 +1150,12 @@ the "You" lane's ink, 8.3).
   `scaleX` transform); the bracket, diamonds and rings appear together as it
   finishes (200 ms, opacity), not one after another. Reduced motion: drawn.
 - No rule between the chart and the milestones: the space does it.
-- **Fallback:** no go-live date: columns read "Week 1" to "Week 13".
+- **Fallback:** no go-live date: columns read 1 to 13 under the axis title
+  "Week" (13 "Week n" labels crowd each other at 104 px a column). Every
+  column's label sits the same 12 px after its line, the first included.
+- **Keys:** the two lines under the chart each start with the mark they
+  explain (the check-in diamond, the ringed diamond), and the dashed open end
+  is labelled where it is drawn: "Can run longer".
 - No rail.
 
 ### 8.10 Green light
@@ -2434,3 +2439,32 @@ line carries the stamp:
   The words stand; this file decides how they are drawn (see the top of the
   file). A later content pass could say "rows" and "owner line" so the two
   files read the same.
+
+### 19.6 The critic pass on the built slides (2026-10-19)
+
+A design critic scored the built slides on the six axes; seventeen came in
+under 4. What changed, by section. Where this list and an earlier line
+disagree, this list wins.
+
+| Section | Change |
+|---|---|
+| 9.1, 8.1 | Both covers anchor their stack 72 px under a fixed 76 px letterhead, so the plate sits at the same height for every client. The name steps display → h1 past 20 characters → 60 px past 30 (Arabic: 14 and 20). The faint lanes are drawn as lane edges (1 px `--dk-line-strong`, open at the foot) under the journey's lane heads in ink-3, not three filled panels. The launch cover's phone sits on the content's end edge; its lead is balanced. |
+| 9.2 | The provenance tag sits beside "In 90 days", not at the far end of a short line. Answers in the other script hug their own lines (`hug.ts`) against the label's edge, aligned to their own start. Nothing written: the title reads "Your goals, in your words". |
+| 9.3 | The group panel runs the content width: the group's name with the hours line as its description, a hairline, then the five roles as a roster three across (role over line), not a two-column table. |
+| 9.4 | "Launch with this" and "Add a service" are quiet text controls (ink-2 and ink-3, hairline or no underline), never a filled teal button. Confirmed: the result's lead-in as the label and the service alone in a `<bdi>`. The small line shows only beside a candidate. |
+| 9.5 | The road spans the content width exactly (gap = (1648 − 272) / 5); its date captions are in the sans with the other captions. |
+| 9.6 | Arabic rows close up (12 px, 7 px with six rows; reasons at 1.5) so the list ends level with the English; the Drive link is set as plain text. |
+| 9.7 | No placeholder on the client's canvas: before a red line exists the input is a ruled line; after, it is hidden until the CSM points at the panel. The waiting variant of the first-ads line no longer says the approval twice. Stop 2 says "Starter, from our templates" once, under the title; the approval anchors the column's foot; the pair sits on the end edge; a placement caption's mark sits on its first line. |
+| 6.2 | Row names in the "You" lane step down to the 24 px floor (Plex 26), so a 15-character done-with-you name ends clear of the stage. |
+| 6.3, 6.5 | Stop 4's dots carry their names under them (the call slide's timeline words; four in done with you). Stop 3's night line is hidden done with you, and the Arabic queue uses one script. Stop 7, done with you without Mahara OS, shows their CRM's stages. |
+| 6.7 | The mini rail's name sits above the line from the lit node's start edge, never on the rail. |
+| 8.3 | Leader dots sit just outside the frame on the edge nearest their label, so no line crosses the app's UI; two parts on one row get two dots. No "Preview" tag beside the title (the foot says it). One caption voice under the thumbnails; no count beside an empty tray. Facebook's screen runs on into the next post's head. |
+| 8.4 | Column one is 560, the panel 580, the open column 380. The page phone is 520 tall with the column's words beside it, under its leader's label. The card's "Never" lines join the told list when they say it themselves. "An ad waiting for the perfect version…" moved to the notes. |
+| 8.5 | Stop 3 is "The thank-you screen": the question list stays, dimmed, and the step lights under it on the list's row band. The example form's line is "We're finishing yours." beside its tag. |
+| 8.6, 11 | A "To give us" chip is one box. The legend is "Words in teal came from your files."; the one "To give us" sentence shows only when a slot is missing. The reminders' words start at one x, each time above its step as a Mono caption. Stop 8 keeps the call card and lays the appointment across the record's column (details, then the caller's notes beside them); the 60 % copy of stop 7 is gone. The call card's name may take three lines. |
+| 8.7 | The overview and calls screens are cropped to the part their stop names (the appointment updates card; the recorded call and its player) at 1104 px, with a margin of the screen's own ground. "What isn't marked can't be improved." sits under its stop. The phone stop's still and poster are frames from inside the app (`portal-phone-*.webp`). Done with you, the CRM's stages are drawn in the journey's line language: "You meet" runs on to Showed, Quote sent, Closed, and "Didn't show" is a side branch that ends. |
+| 8.8 | Row 4's job is "Keep the offer steady while we test"; the rest of its old wording leads its reason. No tile per row: the checklist (hairline rows, one column head) on the start side, and two large pictures on the end side, their creatives level with the first row (whole rows of three, or none) and a calendar day with a busy block level with the last. |
+| 8.9 | See its keys and fallback lines. |
+
+The pre-emit stamp at the top of `present.css` is unchanged: these fixes
+bring the built slides up to it rather than past it.

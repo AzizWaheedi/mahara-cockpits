@@ -1,5 +1,5 @@
 import { Check, Plus, X } from "lucide-react";
-import { type KeyboardEvent, useState } from "react";
+import { type KeyboardEvent, useRef, useState } from "react";
 import maharaLogo from "@/assets/mahara-logo-dark.png";
 import { O, O_NOTES, O_TITLES, SHARED, stepNumeral, t, tf } from "./content";
 import { appLanguage, type Creative, creativeOf, phoneFor } from "./creative";
@@ -7,6 +7,7 @@ import { dayMonth, dayShort, when } from "./dates";
 import type { SlideCtx, SlideDef } from "./deckContext";
 import type { AccessRow, AccessStatus, DeckData, Goal } from "./deckData";
 import { shownGoals } from "./deckData";
+import { useHug } from "./hug";
 import { FaintLanes } from "./JourneyLanes";
 import { ClientMark, type Identity } from "./mockups/Identity";
 import { IgFeed, PhoneFigure, ReelStory } from "./mockups/Phones";
@@ -40,13 +41,28 @@ const letGo = (e: { currentTarget: HTMLElement }) => e.currentTarget.blur();
 
 // ------------------------------------------------------------ O1 welcome
 
+/**
+ * A cover's name size, stepped by its length so the stack fits under the
+ * letterhead for every client: display, then h1 past about 20 characters,
+ * then the client's-words size (data-long) past about 30. Arabic glyphs set
+ * wider at these sizes, so the Arabic deck steps earlier.
+ */
+export function nameSize(name: string, lang: SlideCtx["lang"]) {
+  const [mid, long] = lang === "ar" ? [14, 20] : [20, 30];
+  const n = name.trim().length;
+  return {
+    className: n > mid ? "dk-h1" : "dk-display",
+    long: n > long ? "" : undefined,
+  };
+}
+
 function Welcome({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
   const date = dayMonth(d.onboardingDay, lang, d.timeZone);
-  const long = d.name.length > 24;
+  const size = nameSize(d.name, lang);
   return (
     <>
-      <FaintLanes dwy={d.mode.dwy} />
+      <FaintLanes dwy={d.mode.dwy} lang={lang} />
       <header className="dkc-letterhead">
         <img src={maharaLogo} alt="Mahara Media" draggable={false} />
         <p className="dk-dateline">{tf(O.welcome.dateline, lang, { date })}</p>
@@ -59,7 +75,10 @@ function Welcome({ ctx }: { ctx: SlideCtx }) {
       </header>
       <div className="dkc-welcome-main">
         <ClientMark who={who(d)} size={120} />
-        <h1 className={`${long ? "dk-h1" : "dk-display"} dkc-welcome-title`}>
+        <h1
+          className={`${size.className} dkc-welcome-title`}
+          data-long={size.long}
+        >
           <span className="dkc-hello">{t(O.welcome.hello, lang)}</span>
           <span dir="auto">{d.name}</span>
         </h1>
@@ -116,13 +135,20 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
   const shown = shownGoals(d);
   const by = new Map<Goal["key"], Goal>(shown.map(g => [g.key, g]));
+  const leadRef = useRef<HTMLParagraphElement>(null);
+  const laterRef = useRef<HTMLParagraphElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const said = shown.map(g => g.lines.join("|")).join("/");
+  useHug(leadRef, said);
+  useHug(laterRef, said);
+  useHug(listRef, said);
   // Nothing from the form (a goal typed live here does not count): the
   // question, and the CSM types the answer as the client says it.
   const ask = !shown.some(g => !(g.key === "goal90" && g.from === "prep"));
   if (ask)
     return (
       <>
-        <h2 className="dk-h2">{t(O.goals.title, lang)}</h2>
+        <h2 className="dk-h2">{t(O.goals.titleAsk, lang)}</h2>
         <GoalAsk ctx={ctx} />
         <p className="dk-small dkc-foot">{t(O.goals.foot, lang)}</p>
       </>
@@ -136,7 +162,12 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
       <h2 className="dk-h2">{t(O.goals.title, lang)}</h2>
       {lead ? (
         <div className="dkc-goal-block">
-          <p className="dk-words dkc-theirs" dir="auto">
+          <p
+            ref={leadRef}
+            className="dk-words dkc-theirs"
+            dir="auto"
+            data-hug=""
+          >
             {lead.lines[0]}
           </p>
           <div className="dkc-caption">
@@ -146,7 +177,6 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
         </div>
       ) : (
         <div className="dkc-caption" style={{ marginTop: 56 }}>
-          <span />
           <span className="dk-tag">{t(O.goals.source, lang)}</span>
         </div>
       )}
@@ -158,7 +188,12 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
           {later ? (
             <div>
               <span className="dk-label">{t(later.label, lang)}</span>
-              <p className="dk-body dkc-theirs" dir="auto">
+              <p
+                ref={laterRef}
+                className="dk-body dkc-theirs"
+                dir="auto"
+                data-hug=""
+              >
                 {later.lines[0]}
               </p>
             </div>
@@ -166,7 +201,7 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
           {challenges ? (
             <div>
               <span className="dk-label">{t(challenges.label, lang)}</span>
-              <ul>
+              <ul ref={listRef} data-hug="">
                 {challenges.lines.map(l => (
                   <li key={l} className="dk-body dkc-theirs" dir="auto">
                     {l}
@@ -205,11 +240,9 @@ function Team({ ctx }: { ctx: SlideCtx }) {
         who={who(d)}
         lang={lang}
         header={O.team.header}
+        about={d.uae ? O.team.footUae : O.team.foot}
         rows={rows}
       />
-      <p className="dk-body dkc-foot">
-        {t(d.uae ? O.team.footUae : O.team.foot, lang)}
-      </p>
     </>
   );
 }
@@ -285,7 +318,7 @@ function AddService({
           }}
           onPointerUp={letGo}
         >
-          <Plus aria-hidden style={{ width: 26, height: 26 }} />
+          <Plus aria-hidden style={{ width: 22, height: 22 }} />
           {t(O.one.add, lang)}
         </button>
       </div>
@@ -423,41 +456,44 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
             setFocus={setGrab}
           />
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          {candidate ? (
-            <div className="dkc-campaign">
-              <span className="dk-label">{t(O.one.first, lang)}</span>
-              {candidate && confirmed ? (
-                <div className="dkc-campaign-done">
+        {candidate ? (
+          <div className="dkc-campaign-col">
+            <div
+              className="dkc-campaign"
+              data-done={confirmed ? "" : undefined}
+            >
+              {confirmed ? (
+                // The result sentence, its lead-in as the label and the
+                // service alone on its own line, never split mid-name.
+                <span className="dk-label dkc-campaign-done">
                   <Check aria-hidden />
-                  <p className="dk-h3">
-                    {tf(O.one.result, lang, { service: candidate })}
-                  </p>
-                </div>
+                  {tf(O.one.result, lang, { service: "" }).trim()}
+                </span>
               ) : (
-                <>
-                  <p className="dk-h3 dkc-theirs" dir="auto">
-                    {candidate ?? ""}
-                  </p>
-                  {candidate ? (
-                    <button
-                      type="button"
-                      className="dkc-btn dkc-press"
-                      onClick={() => {
-                        save({ service_focus: candidate }, true);
-                        setLive(l => ({ ...l, candidate }));
-                      }}
-                      onPointerUp={letGo}
-                    >
-                      {t(O.one.launch, lang)}
-                    </button>
-                  ) : null}
-                </>
+                <span className="dk-label">{t(O.one.first, lang)}</span>
+              )}
+              <p className="dk-h3 dkc-campaign-name">
+                <bdi>{candidate}</bdi>
+              </p>
+              {confirmed ? null : (
+                // A quiet control, not a call to action: the client watches
+                // the choice, the CSM makes it (gone once confirmed).
+                <button
+                  type="button"
+                  className="dkc-launch dkc-press"
+                  onClick={() => {
+                    save({ service_focus: candidate }, true);
+                    setLive(l => ({ ...l, candidate }));
+                  }}
+                  onPointerUp={letGo}
+                >
+                  {t(O.one.launch, lang)}
+                </button>
               )}
             </div>
-          ) : null}
-          <p className="dk-small dk-ink2">{t(O.one.small, lang)}</p>
-        </div>
+            <p className="dk-small dk-ink2">{t(O.one.small, lang)}</p>
+          </div>
+        ) : null}
       </div>
     </>
   );
@@ -643,8 +679,11 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
     if (v) save({ [key]: [...lines, v] }, true);
     setValue("");
   };
+  // No lines yet: a ruled hairline, nothing else. Once a line is typed the
+  // amber panel holds them and the input goes quiet until the CSM points
+  // at it (no placeholder on the client's canvas either way).
   return (
-    <div className="dkc-redlines">
+    <div className="dkc-redlines" data-empty={lines.length ? undefined : ""}>
       {lines.length ? (
         <ul>
           {lines.map(l => (
@@ -691,30 +730,37 @@ function StarterAds({ ctx }: { ctx: SlideCtx }) {
   const feed =
     creatives.find(c => phoneFor(c) !== "reels") ?? creatives[0] ?? null;
   const reel = creatives.find(c => phoneFor(c) === "reels") ?? feed;
-  const tag = t(SHARED.tag.starter, lang);
   const props = { who: who(d), pageName: d.pageName, app, deck: lang };
+  // The title at the top, the approval line anchoring the foot of the
+  // column level with the phones' captions, the tag said once beside the
+  // title (not over each phone), the pair on the content's end edge.
   return (
     <div className="dkc-starter">
       <div className="dkc-starter-side">
-        <h2 className="dk-h2">{t(O.next.starterTitle, lang)}</h2>
-        <p className="dk-body dk-ink2">{t(O.next.approval, lang)}</p>
+        <div className="dkc-title-tag">
+          <h2 className="dk-h2">{t(O.next.starterTitle, lang)}</h2>
+          {feed || reel ? (
+            <span className="dk-tag">{t(SHARED.tag.starter, lang)}</span>
+          ) : null}
+        </div>
+        <p className="dk-lead dkc-starter-approval">
+          {t(O.next.approval, lang)}
+        </p>
       </div>
       <div className="dkc-starter-phones">
         <PhoneFigure
-          height={740}
+          height={760}
           mark="instagram"
           label={t(SHARED.frame.feed, lang)}
-          tag={feed ? tag : null}
-          wide
+          head={false}
         >
           <IgFeed creative={feed} {...props} />
         </PhoneFigure>
         <PhoneFigure
-          height={740}
+          height={760}
           mark="instagram"
           label={t(SHARED.frame.reels, lang)}
-          tag={reel ? tag : null}
-          wide
+          head={false}
         >
           <ReelStory creative={reel} {...props} />
         </PhoneFigure>

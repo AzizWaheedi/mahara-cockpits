@@ -16,6 +16,8 @@ import outcomeAr from "./assets/portal/portal-outcome-ar.webp";
 import outcomeEn from "./assets/portal/portal-outcome-en.webp";
 import overviewAr from "./assets/portal/portal-overview-ar.webp";
 import overviewEn from "./assets/portal/portal-overview-en.webp";
+import phoneAr from "./assets/portal/portal-phone-ar.webp";
+import phoneEn from "./assets/portal/portal-phone-en.webp";
 import {
   CONFIRMATION,
   LANDS_NOTES,
@@ -73,8 +75,7 @@ import {
 } from "./mockups/Form";
 import { ClientMark } from "./mockups/Identity";
 import { IgFeed, Phone, PhoneFigure } from "./mockups/Phones";
-import { who } from "./onboardingDeck";
-import { Logo } from "./platforms";
+import { nameSize, who } from "./onboardingDeck";
 import { RoadStrip } from "./Road";
 import {
   CALL_STAGES,
@@ -97,7 +98,14 @@ import {
 const letGo = (e: { currentTarget: HTMLElement }) => e.currentTarget.blur();
 const PORTAL_RATIO = 2384 / 1504;
 
-/** The portal's screens, cropped below their "lead" headings (CONTENT rule 3). */
+/**
+ * The portal's screens, cropped below their "lead" headings and above the
+ * demo call's summary (CONTENT rule 3), each to the part its stop names so
+ * the words read on a share: the appointment updates card ("anything
+ * waiting on you"), and the recorded call with its player. Each crop keeps
+ * a margin of the screen's own ground, so no word meets the figure's edge.
+ * The Arabic screens are mirrored, so their crops are too.
+ */
 const SHOTS: Record<
   "overview" | "calls" | "outcome",
   { src: Record<Lang, string>; crop: Record<Lang, CropBox> }
@@ -105,15 +113,15 @@ const SHOTS: Record<
   overview: {
     src: { en: overviewEn, ar: overviewAr },
     crop: {
-      en: { box: [0.035, 0.248, 0.965, 0.9], ratio: PORTAL_RATIO },
-      ar: { box: [0.035, 0.248, 0.965, 0.9], ratio: PORTAL_RATIO },
+      en: { box: [0.026, 0.4, 0.624, 0.91], ratio: PORTAL_RATIO },
+      ar: { box: [0.376, 0.4, 0.974, 0.91], ratio: PORTAL_RATIO },
     },
   },
   calls: {
     src: { en: callsEn, ar: callsAr },
     crop: {
-      en: { box: [0.056, 0.255, 0.944, 0.668], ratio: PORTAL_RATIO },
-      ar: { box: [0.056, 0.255, 0.944, 0.668], ratio: PORTAL_RATIO },
+      en: { box: [0.042, 0.245, 0.6, 0.668], ratio: PORTAL_RATIO },
+      ar: { box: [0.4, 0.245, 0.958, 0.668], ratio: PORTAL_RATIO },
     },
   },
   outcome: {
@@ -162,13 +170,13 @@ function Cover({ ctx }: { ctx: SlideCtx }) {
   const live = d.launch.live;
   const template = (live ? L1.titleLive : L1.title)[lang];
   const [before, after] = template.split("{name}");
-  const long = d.name.length > 22;
+  const size = nameSize(d.name, lang);
   const cover = d.launch.cover;
   const app = useCreatives(ctx).app;
   const props = { who: who(d), pageName: d.pageName, app, deck: lang };
   return (
     <>
-      {cover ? null : <FaintLanes dwy={d.mode.dwy} />}
+      {cover ? null : <FaintLanes dwy={d.mode.dwy} lang={lang} />}
       <header className="dkc-letterhead">
         <img src={maharaLogo} alt="Mahara Media" draggable={false} />
         <p className="dk-dateline">{tf(L1.dateline, lang, { date: today })}</p>
@@ -181,7 +189,10 @@ function Cover({ ctx }: { ctx: SlideCtx }) {
       </header>
       <div className="dkc-cover-main">
         <ClientMark who={who(d)} size={96} />
-        <h1 className={`${long ? "dk-h1" : "dk-display"} dkc-cover-title`}>
+        <h1
+          className={`${size.className} dkc-cover-title`}
+          data-long={size.long}
+        >
           {before.trim() ? (
             <span className="dk-teal">{before.trim()}</span>
           ) : null}
@@ -389,7 +400,13 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
             lang={lang}
             services={[
               ...(L.service[lang] ? [L.service[lang] as string] : []),
-              ...d.services.filter(s => s !== L.service[lang]),
+              // One script per card: in the Arabic deck only Arabic service
+              // names join the launch service (the rest fall back to it).
+              ...d.services.filter(
+                s =>
+                  s !== L.service[lang] &&
+                  (lang !== "ar" || /[\u0600-\u06ff]/.test(s)),
+              ),
             ]}
             dwy={dwy}
             still={still}
@@ -407,7 +424,7 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
       <div className="dkc-stage" data-kind="line">
         <StopWords lane={lane} line={line(text ?? stop.line)} lang={lang} />
         <div className="dkc-stage-pic dkc-dots-pic">
-          <FiveDots />
+          <FiveDots lang={lang} dwy={dwy} />
         </div>
       </div>
     );
@@ -464,6 +481,9 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
       </div>
     );
   }
+  // Done with you, outcomes are marked in their own CRM until Mahara OS is
+  // approved for them (as on the portal slide): its stages, not our form.
+  const crm = dwy && !L.dwyOs;
   return (
     <div className="dkc-stage" data-kind="card">
       <StopWords
@@ -471,13 +491,19 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
         line={line((dwy ? stop.dwy : stop.line) ?? stop.line)}
         lang={lang}
       />
-      <Tagged tag={t(SHARED.tag.demo, lang)} className="dkc-stage-pic">
-        <Crop
-          src={SHOTS.outcome.src[lang]}
-          crop={SHOTS.outcome.crop[lang]}
-          width={720}
-        />
-      </Tagged>
+      {crm ? (
+        <div className="dkc-stage-pic dkc-stage-crm">
+          <CrmStages lang={lang} width={900} />
+        </div>
+      ) : (
+        <Tagged tag={t(SHARED.tag.demo, lang)} className="dkc-stage-pic">
+          <Crop
+            src={SHOTS.outcome.src[lang]}
+            crop={SHOTS.outcome.crop[lang]}
+            width={720}
+          />
+        </Tagged>
+      )}
     </div>
   );
 }
@@ -545,10 +571,8 @@ function Ads({ ctx }: { ctx: SlideCtx }) {
     <div className="dkc-ads">
       <div className="dkc-ads-start">
         <Owner lane="customer" text={A.owner} lang={lang} />
-        <div className="dkc-title-tag">
-          <h2 className="dk-h2">{t(A.title, lang)}</h2>
-          <span className="dk-tag">{t(SHARED.tag.preview, lang)}</span>
-        </div>
+        {/* No "Preview" tag here: the foot under the phones says it. */}
+        <h2 className="dk-h2">{t(A.title, lang)}</h2>
         <p className="dk-body dk-ink2 dkc-ads-line">{t(A.line, lang)}</p>
         {planned.length ? (
           <p className="dk-small dk-ink2">
@@ -566,7 +590,13 @@ function Ads({ ctx }: { ctx: SlideCtx }) {
 
 // -------------------------------------------------- L4 creative freedom
 
-function SponsoredPhone({ ctx }: { ctx: SlideCtx }) {
+function SponsoredPhone({
+  ctx,
+  children,
+}: {
+  ctx: SlideCtx;
+  children: ReactNode;
+}) {
   const { d, lang } = ctx;
   const { feed, model } = useFeed(ctx);
   const ref = useRef<HTMLDivElement>(null);
@@ -591,7 +621,7 @@ function SponsoredPhone({ ctx }: { ctx: SlideCtx }) {
   }, [lang, feed?.id]);
   return (
     <div className="dkc-own-page" ref={ref}>
-      <Phone height={380} label={t(SHARED.frame.feed, lang)}>
+      <Phone height={520} label={t(SHARED.frame.feed, lang)}>
         <IgFeed
           creative={feed}
           who={who(d)}
@@ -617,6 +647,9 @@ function SponsoredPhone({ ctx }: { ctx: SlideCtx }) {
           </span>
         </>
       ) : null}
+      {/* The column's words beside the phone, under its leader's label, so
+          the phone can be drawn large enough to read on a share. */}
+      <p className="dk-small dkc-col-copy dkc-own-copy">{children}</p>
     </div>
   );
 }
@@ -656,6 +689,11 @@ function LineGroup({
   );
 }
 
+const NEVER = /^(never|no|don'?t|do not|avoid|لا|ما|أبد|بدون)\b|^(لا|ما|أبد)/i;
+/** Every line already says "never" itself, so it needs no lead. */
+const saysNever = (items: string[]) =>
+  items.length > 0 && items.every(x => NEVER.test(x.trim()));
+
 function RedLinesPanel({ ctx, lit }: { ctx: SlideCtx; lit: boolean }) {
   const { d, lang, prepOf, saveTo } = ctx;
   const T = LAUNCH.test.fixed;
@@ -682,10 +720,12 @@ function RedLinesPanel({ ctx, lit }: { ctx: SlideCtx; lit: boolean }) {
       {lit ? (
         <>
           {R.told.length ? (
+            // The card's "Never" lines that already say so join the told
+            // list: one list, one rhythm, under one lead.
             <div className="dkc-fixed-group">
               <span className="dkc-fixed-lead">{t(T.told, lang)}</span>
               <ul>
-                {R.told.map(l => (
+                {[...R.told, ...(saysNever(R.never) ? R.never : [])].map(l => (
                   <li key={l} dir="auto" className="dkc-theirs">
                     {l}
                   </li>
@@ -693,14 +733,14 @@ function RedLinesPanel({ ctx, lit }: { ctx: SlideCtx; lit: boolean }) {
               </ul>
             </div>
           ) : null}
-          <LineGroup
-            lead={T.never}
-            items={R.never}
-            says={
-              /^(never|no|don'?t|do not|avoid|لا|ما|أبد|بدون)\b|^(لا|ما|أبد)/i
-            }
-            lang={lang}
-          />
+          {R.told.length && saysNever(R.never) ? null : (
+            <LineGroup
+              lead={T.never}
+              items={R.never}
+              says={NEVER}
+              lang={lang}
+            />
+          )}
           <LineGroup
             lead={T.always}
             items={R.always}
@@ -760,8 +800,7 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
         <div className="dkc-freedom-cols">
           <section data-lit={tour >= 0 ? "" : undefined}>
             <h3 className="dkc-col-head">{t(T.page.name, lang)}</h3>
-            <SponsoredPhone ctx={ctx} />
-            <p className="dk-small dkc-col-copy">{t(T.page.copy, lang)}</p>
+            <SponsoredPhone ctx={ctx}>{t(T.page.copy, lang)}</SponsoredPhone>
           </section>
           <RedLinesPanel ctx={ctx} lit={tour >= 1} />
           <section data-lit={tour >= 2 ? "" : undefined}>
@@ -784,7 +823,6 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
                     {t(pick ? T.open.pick : T.open.pickNone, lang)}
                   </p>
                 </div>
-                <p className="dk-small dk-ink2">{t(T.open.wait, lang)}</p>
                 <p className="dk-small dk-ink2">{t(T.open.approve, lang)}</p>
               </>
             ) : null}
@@ -906,13 +944,14 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
           f.kind === "website" ? (
             <p className="dk-body">{t(F.page, lang)}</p>
           ) : null
-        ) : screen === "thanks" ? (
-          <div className="dkc-form-thanks-side">
-            <h3 className="dkc-col-head">{t(F.stops[2], lang)}</h3>
-            <p className="dk-body">{t(thanksLine, lang)}</p>
-          </div>
         ) : (
-          <div className="dkc-qlist">
+          // The thank-you stop keeps the list (every question passed, dimmed)
+          // and lights the step after it, so the column reads as the form's
+          // last screen, not two lines over empty ground.
+          <div
+            className="dkc-qlist"
+            data-thanks={screen === "thanks" ? "" : undefined}
+          >
             <span className="dk-label">{t(F.list, lang)}</span>
             <ol>
               {questions.map((q, i) => {
@@ -922,7 +961,11 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
                   <li
                     key={`${q.type}-${q.label}-${String(i)}`}
                     data-row-lit={isLit ? "" : undefined}
-                    data-dim={lit != null && !isLit ? "" : undefined}
+                    data-dim={
+                      (lit != null && !isLit) || screen === "thanks"
+                        ? ""
+                        : undefined
+                    }
                   >
                     <span className="dkc-q-n">
                       {n >= 0 ? stepNumeral(n, lang) : ""}
@@ -954,7 +997,14 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
                 );
               })}
             </ol>
-            <p className="dk-small dk-ink2">{t(F.thanksStep, lang)}</p>
+            {screen === "thanks" ? (
+              <div className="dkc-form-thanks-side">
+                <h3 className="dkc-col-head">{t(F.stops[2], lang)}</h3>
+                <p className="dk-body">{t(thanksLine, lang)}</p>
+              </div>
+            ) : (
+              <p className="dk-small dk-ink2">{t(F.thanksStep, lang)}</p>
+            )}
           </div>
         )}
       </div>
@@ -1033,6 +1083,8 @@ function CallSlide({ ctx }: { ctx: SlideCtx }) {
       : []),
     { text: t(CONFIRMATION.closing, lang) },
   ];
+  // A slot still to give us shows as a dashed chip in the transcript.
+  const asks = Object.values(call.slots).some(v => Boolean(v[lang].ask));
   const N = C.lands;
   const notes = [
     t(LANDS_NOTES.planning, lang),
@@ -1179,9 +1231,12 @@ function CallSlide({ ctx }: { ctx: SlideCtx }) {
         <p className="dk-small dk-ink2">
           {t(dwy ? C.labelDwy : C.label, lang)} {t(C.legend, lang)}
         </p>
-        <p className="dk-small dk-ink2">
-          {t(call.guideChecked ? C.guide : C.guideUnchecked, lang)}
-        </p>
+        {/* One sentence about the chips, and only when there is one. */}
+        {asks ? (
+          <p className="dk-small dk-ink2">
+            {t(call.guideChecked ? C.guide : C.guideUnchecked, lang)}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -1212,16 +1267,15 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
     screen = (
       <Tagged tag={t(SHARED.tag.demo, lang)} className="dkc-portal-film">
         <div className="dkc-film">
+          {/* Still, and before it plays: a frame from inside the app (its
+              overview), not the recording's splash. */}
           {still ? (
-            <img
-              src={`${LINKS.portal}/demos/mobile-poster-${lang}.jpg`}
-              alt=""
-            />
+            <img src={lang === "ar" ? phoneAr : phoneEn} alt="" />
           ) : (
             <video
               key={lang}
               src={`${LINKS.portal}/demos/mahara-mobile-${lang}.mp4`}
-              poster={`${LINKS.portal}/demos/mobile-poster-${lang}.jpg`}
+              poster={lang === "ar" ? phoneAr : phoneEn}
               muted
               playsInline
               autoPlay
@@ -1238,7 +1292,7 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
         <div className="dkc-shot-tags">
           <span className="dkc-job-tag">{t(P.jobTag, lang)}</span>
         </div>
-        <CrmStages lang={lang} />
+        <CrmStages lang={lang} width={820} />
       </div>
     );
   else {
@@ -1254,7 +1308,7 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
             <span className="dk-tag">{t(SHARED.tag.demo, lang)}</span>
           </div>
         ) : null}
-        <Crop src={shot.src[lang]} crop={shot.crop[lang]} width={1056} />
+        <Crop src={shot.src[lang]} crop={shot.crop[lang]} width={1104} />
       </Tagged>
     );
   }
@@ -1303,120 +1357,63 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
 
 // ---------------------------------------------------------- L8 your part
 
-function PartPicture({ ctx, k }: { ctx: SlideCtx; k: string }) {
-  const { d, lang } = ctx;
+/**
+ * The two pictures beside the list (DESIGN 8.8, after the Hallmark pass):
+ * not a tile per row, which is the icon-list template, but the two jobs a
+ * picture really shows, large: their creatives, level with the first row,
+ * and a calendar day with a busy block, level with the last.
+ */
+function PartPictures({ ctx }: { ctx: SlideCtx }) {
+  const { lang } = ctx;
   const model = useCreatives(ctx);
-  if (k === "ads")
-    return (
-      <span className="dkc-part-pic dkc-part-tray">
-        {Array.from({ length: 6 }, (_, i) => {
-          const c = model.tray[i] ?? model.meta[i - model.tray.length];
-          const src = c?.poster ?? c?.url;
-          return (
-            <i key={`t-${String(i)}`}>
-              {src ? <img src={src} alt="" /> : null}
-            </i>
-          );
-        })}
-      </span>
-    );
-  if (k === "mark")
-    return d.mode.dwy ? (
-      <span className="dkc-part-pic dkc-part-crm">
-        {LAUNCH.portal.crm.map(s => (
-          <i key={s.en}>{t(s, lang)}</i>
-        ))}
-      </span>
-    ) : (
-      <span className="dkc-part-pic">
-        <Crop
-          src={SHOTS.outcome.src[lang]}
-          crop={{
-            box:
-              lang === "ar"
-                ? [0.235, 0.425, 0.46, 0.555]
-                : [0.54, 0.425, 0.765, 0.555],
-            ratio: PORTAL_RATIO,
-          }}
-          width={192}
-          radius={10}
-        />
-      </span>
-    );
-  if (k === "drive")
-    return (
-      <span className="dkc-part-pic dkc-part-drive">
-        <svg width="44" height="36" viewBox="0 0 44 36" aria-hidden>
-          <path
-            d="M3 8a4 4 0 0 1 4-4h10l4 5h16a4 4 0 0 1 4 4v15a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"
-            fill="none"
-            stroke="var(--dk-ink-2)"
-            strokeWidth="2.5"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <span dir="auto">{d.nameEn}</span>
-      </span>
-    );
-  if (k === "offer")
-    return (
-      <span className="dkc-part-pic dkc-part-group">
-        <ClientMark who={who(d)} size={40} />
-        <Logo mark="whatsapp" size={26} />
-      </span>
-    );
+  // Whole rows of three, or none: one or two lone tiles read as gaps.
+  const all = [...model.tray, ...model.meta]
+    .map(c => c.poster ?? c.url)
+    .filter((x): x is string => Boolean(x));
+  const tiles = all.slice(0, all.length >= 6 ? 6 : all.length >= 3 ? 3 : 0);
   return (
-    <span className="dkc-part-pic dkc-part-cal" aria-hidden>
-      <svg width="192" height="108" viewBox="0 0 192 108" aria-hidden="true">
-        <defs>
-          <pattern
-            id="dkc-hatch"
-            width="10"
-            height="10"
-            patternUnits="userSpaceOnUse"
-            patternTransform="rotate(45)"
-          >
-            <line
-              x1="0"
-              y1="0"
-              x2="0"
-              y2="10"
-              stroke="var(--dk-ink-3)"
-              strokeWidth="3"
-            />
-          </pattern>
-        </defs>
-        {[22, 50, 78].map(y => (
-          <line
-            key={y}
-            x1="16"
-            x2="176"
-            y1={y}
-            y2={y}
-            stroke="var(--dk-line-strong)"
-            strokeWidth="1.5"
-          />
+    <div className="dkc-part-pics" aria-hidden>
+      {tiles.length ? (
+        <span className="dkc-part-tray" data-n={tiles.length}>
+          {tiles.map((src, i) => (
+            <i key={`t-${String(i)}`}>
+              <img src={src} alt="" draggable={false} />
+            </i>
+          ))}
+        </span>
+      ) : (
+        <span />
+      )}
+      <span className="dkc-part-cal">
+        {[0, 1, 2, 3].map(i => (
+          <i key={`h-${String(i)}`} className="dkc-part-hour" />
         ))}
-        <rect
-          x="16"
-          y="30"
-          width="160"
-          height="40"
-          rx="6"
-          fill="url(#dkc-hatch)"
-        />
-        <rect
-          x="16"
-          y="30"
-          width="160"
-          height="40"
-          rx="6"
-          fill="none"
-          stroke="var(--dk-ink-3)"
-          strokeWidth="1.5"
-        />
-      </svg>
-    </span>
+        <b className="dkc-part-busy">
+          <svg aria-hidden="true">
+            <defs>
+              <pattern
+                id="dkc-part-hatch"
+                width="10"
+                height="10"
+                patternUnits="userSpaceOnUse"
+                patternTransform="rotate(45)"
+              >
+                <line
+                  x1="0"
+                  y1="0"
+                  x2="0"
+                  y2="10"
+                  stroke="var(--dk-line-strong)"
+                  strokeWidth="3"
+                />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill="url(#dkc-part-hatch)" />
+          </svg>
+          <span>{t(LAUNCH.part.busy, lang)}</span>
+        </b>
+      </span>
+    </div>
   );
 }
 
@@ -1428,24 +1425,27 @@ function YourPart({ ctx }: { ctx: SlideCtx }) {
     <div className="dkc-part">
       <h2 className="dk-h2">{t(P.title, lang)}</h2>
       <p className="dk-lead dkc-part-line">{t(P.line, lang)}</p>
-      <div className="dkc-part-head">
-        <span />
-        <span />
-        <span className="dk-label">{t(P.why, lang)}</span>
+      <div className="dkc-part-body">
+        <div className="dkc-part-list">
+          <div className="dkc-part-head">
+            <span />
+            <span className="dk-label">{t(P.why, lang)}</span>
+          </div>
+          <ul className="dkc-part-rows">
+            {P.rows.map(r => (
+              <li key={r.key}>
+                <b className="dkc-part-job">
+                  {t(dwy && r.jobDwy ? r.jobDwy : r.job, lang)}
+                </b>
+                <span className="dkc-part-why">
+                  {t(dwy && r.whyDwy ? r.whyDwy : r.why, lang)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <PartPictures ctx={ctx} />
       </div>
-      <ul className="dkc-part-rows">
-        {P.rows.map(r => (
-          <li key={r.key}>
-            <PartPicture ctx={ctx} k={r.key} />
-            <b className="dkc-part-job">
-              {t(dwy && r.jobDwy ? r.jobDwy : r.job, lang)}
-            </b>
-            <span className="dkc-part-why">
-              {t(dwy && r.whyDwy ? r.whyDwy : r.why, lang)}
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -1480,11 +1480,8 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
   );
   // A programme's week heads: the day, with the month where it changes.
   const label = (i: number): { text: string; month: boolean } => {
-    if (!start)
-      return {
-        text: tf(D.week, lang, { n: digits(i + 1, lang) }),
-        month: false,
-      };
+    // No go-live date: bare week numbers under the axis title "Week".
+    if (!start) return { text: digits(i + 1, lang), month: false };
     const day = new Date(start + i * 7 * DAY);
     const prev = new Date(start + (i - 1) * 7 * DAY);
     const month = i === 0 || day.getUTCMonth() !== prev.getUTCMonth();
@@ -1503,7 +1500,13 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
         className="dkc-prog-grid"
         style={{ "--col": `${col}px` } as CSSProperties}
       >
-        <span />
+        {start ? (
+          <span />
+        ) : (
+          <span className="dkc-prog-axis">
+            {tf(D.week, lang, { n: "" }).trim()}
+          </span>
+        )}
         <div className="dkc-prog-weeks">
           {weeks.map(i => {
             const l = label(i);
@@ -1512,7 +1515,7 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
                 key={i}
                 className="dkc-prog-week"
                 data-month={l.month ? "" : undefined}
-                style={{ insetInlineStart: i * col + (i === 0 ? 14 : 0) }}
+                style={{ insetInlineStart: i * col + 12 }}
               >
                 {l.text}
               </span>
@@ -1528,8 +1531,14 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
             className="dkc-prog-float"
             style={{ insetInlineStart: x(14), width: x(35) - x(14) }}
           />
-          <span className="dkc-prog-note" style={{ insetInlineStart: 14 }}>
+          <span className="dkc-prog-note" style={{ insetInlineStart: 12 }}>
             {t(D.weeks12, lang)}
+          </span>
+          <span
+            className="dkc-prog-note dkc-prog-open"
+            style={{ insetInlineStart: x(14) + 12 }}
+          >
+            {t(D.open, lang)}
           </span>
         </div>
         <span className="dkc-prog-row-name">{t(D.checkins, lang)}</span>
@@ -1561,11 +1570,18 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
           </span>
         </div>
         <span />
+        {/* Each line under the chart starts with the mark it explains. */}
         <div className="dkc-prog-under">
           <p className="dk-small">
-            <b>{t(D.later, lang)}</b> · {t(D.laterLine, lang)}
+            <i className="dkc-prog-key" aria-hidden />
+            <span>
+              <b>{t(D.later, lang)}</b> · {t(D.laterLine, lang)}
+            </span>
           </p>
-          <p className="dk-small dk-ink2">{t(D.looksBack, lang)}</p>
+          <p className="dk-small dk-ink2">
+            <i className="dkc-prog-key" data-ring="" aria-hidden />
+            <span>{t(D.looksBack, lang)}</span>
+          </p>
         </div>
       </div>
     </div>

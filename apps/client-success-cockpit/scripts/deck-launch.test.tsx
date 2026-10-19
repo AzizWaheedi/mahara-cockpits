@@ -8,8 +8,8 @@ import {
   dialectFor,
   familyOf,
   handleOf,
-  plain,
   placesOf,
+  plain,
   TURNS,
   turnsFor,
 } from "../src/present/callScript";
@@ -18,13 +18,13 @@ import { journeyOwners, type Lang } from "../src/present/content";
 import type { SlideCtx } from "../src/present/deckContext";
 import { type DeckData, deckData } from "../src/present/deckData";
 import { shownSlides } from "../src/present/decks";
+import { defaultPhones, PROOF_ID } from "../src/present/launchData";
 import {
   formStops,
   launchSlides,
   placesLine,
   portalStops,
 } from "../src/present/launchDeck";
-import { defaultPhones, PROOF_ID } from "../src/present/launchData";
 import { CALL_STAGES, callRun, stageRange } from "../src/present/Transcript";
 
 /**
@@ -94,9 +94,11 @@ describe("the launch deck's order and stops", () => {
       expect(s.notes.say.length).toBeGreaterThan(0);
       expect(s.notes.sayAr.length).toBeGreaterThan(0);
     }
-    expect(launchSlides().filter(s => s.cover).map(s => s.id)).toEqual([
-      "cover",
-    ]);
+    expect(
+      launchSlides()
+        .filter(s => s.cover)
+        .map(s => s.id),
+    ).toEqual(["cover"]);
   });
 
   test("the stops a client walks", () => {
@@ -161,9 +163,9 @@ describe("the launch deck's order and stops", () => {
   test("the form slide hides itself until a form is confirmed or typed", () => {
     const sparse = data("sparse");
     expect(sparse.launch.formHidden).toBe(true);
-    expect(shownSlides(launchSlides(), sparse, {}).map(s => s.id)).not.toContain(
-      "form",
-    );
+    expect(
+      shownSlides(launchSlides(), sparse, {}).map(s => s.id),
+    ).not.toContain("form");
     const full = data("full");
     expect(full.launch.form.source).toBe("confirmed");
     expect(shownSlides(launchSlides(), full, {}).map(s => s.id)).toContain(
@@ -195,7 +197,11 @@ describe("done with you", () => {
     expect(d.launch.dwyOs).toBe(false);
     expect(portalStops(d).map(s => s.key)).toEqual(["outcome"]);
     const html = renderToStaticMarkup(
-      <>{launchSlides().find(s => s.id === "portal")?.render(ctx(d))}</>,
+      <>
+        {launchSlides()
+          .find(s => s.id === "portal")
+          ?.render(ctx(d))}
+      </>,
     );
     expect(html).toContain("Your CRM");
     expect(html).toContain("keep every stage true");
@@ -206,24 +212,38 @@ describe("done with you", () => {
     const d = data("dwy");
     const render = (id: string, tour = 0) =>
       renderToStaticMarkup(
-        <>{launchSlides().find(s => s.id === id)?.render(ctx(d, tour))}</>,
+        <>
+          {launchSlides()
+            .find(s => s.id === id)
+            ?.render(ctx(d, tour))}
+        </>,
       );
     expect(render("journey", 2)).toContain("Your team calls");
     expect(render("journey", 2)).toContain("Your team: call now");
     expect(render("journey", 2)).not.toContain("Top of the list");
-    expect(render("journey", 5)).toContain("The follow-up messages start by themselves.");
+    expect(render("journey", 5)).toContain(
+      "The follow-up messages start by themselves.",
+    );
     expect(render("call", 0)).toContain("How your team should call");
     expect(render("call", 0)).toContain("Our script, for your team");
     expect(render("call", CALL_STAGES)).toContain("Before the meeting");
     expect(render("call", CALL_STAGES)).toContain("Provisional bookings");
-    expect(render("call", CALL_STAGES + 1)).toContain("Your caller&#x27;s notes, in your CRM.");
-    expect(render("your-part")).toContain("Call fast, note every try, keep every stage true");
+    expect(render("call", CALL_STAGES + 1)).toContain(
+      "Your caller&#x27;s notes, in your CRM.",
+    );
+    expect(render("your-part")).toContain(
+      "Call fast, note every try, keep every stage true",
+    );
   });
 
   test("done for you keeps our team's words", () => {
     const d = data("full");
     const call = renderToStaticMarkup(
-      <>{launchSlides().find(s => s.id === "call")?.render(ctx(d, CALL_STAGES))}</>,
+      <>
+        {launchSlides()
+          .find(s => s.id === "call")
+          ?.render(ctx(d, CALL_STAGES))}
+      </>,
     );
     expect(call).toContain("What we do before the meeting");
     expect(call).toContain("A confirmation call");
@@ -239,7 +259,9 @@ describe("the launch deck's fallbacks", () => {
       <>{launchSlides()[0].render(ctx(data("starter")))}</>,
     );
     expect(html).toContain("is live");
-    expect(html).toContain("Everything your customers see, and what happens next.");
+    expect(html).toContain(
+      "Everything your customers see, and what happens next.",
+    );
   });
 
   test("the cover never uses a starter creative", () => {
@@ -276,7 +298,9 @@ describe("the launch deck's fallbacks", () => {
   });
 
   test("the meeting places join as the client says them", () => {
-    expect(placesLine([], "en")).toBe("at your office, at their home, or online");
+    expect(placesLine([], "en")).toBe(
+      "at your office, at their home, or online",
+    );
     expect(placesLine(["office", "online"], "ar")).toBe("في مكتبكم أو أونلاين");
     expect(placesOf("At our showroom, At the client's home")).toEqual([
       "office",
@@ -317,7 +341,9 @@ describe("the example call", () => {
     }
     expect(TURNS[0].at).toBe("0:00");
     expect(TURNS.at(-1)?.at).toBe("4:46");
-    expect(new Set(TURNS.map(t => t.stage))).toEqual(new Set([1, 2, 3, 4, 5, 6]));
+    expect(new Set(TURNS.map(t => t.stage))).toEqual(
+      new Set([1, 2, 3, 4, 5, 6]),
+    );
   });
 
   test("the pain variants change four lines, and a missing handle drops one turn", () => {
@@ -355,7 +381,9 @@ describe("the example call", () => {
     expect(c.slots.engineer.en.text).toBe("our engineer");
     expect(c.slots.engineer.en.ask).not.toBeNull();
     expect(c.slots.selling.ar.ask?.ar).toBe("اللي يميزكم، بسطر واحد");
-    expect(c.band.band.en).toBe("under 50 thousand, between 50 and 100, or more");
+    expect(c.band.band.en).toBe(
+      "under 50 thousand, between 50 and 100, or more",
+    );
     expect(c.missing.length).toBeGreaterThan(3);
   });
 
@@ -374,12 +402,16 @@ describe("the example call", () => {
     // Two days ahead of a Thursday is a Saturday: the slot moves to Sunday.
     expect(bookedSlot("2026-10-22").day.en).toBe("Sunday");
     expect(bookedSlot("2026-10-19", "9am to 2pm").spoken.en).toBe("1 pm");
-    expect(bandFor("KW", "works", "kw").note.en).toBe("5 to 10 thousand dinars");
+    expect(bandFor("KW", "works", "kw").note.en).toBe(
+      "5 to 10 thousand dinars",
+    );
     expect(bandFor("AE", "build", "kw").band.en).toContain("dirhams");
     expect(dialectFor(undefined, "SA", null).dialect).toBe("sa");
     expect(dialectFor(undefined, null, "Riyadh").dialect).toBe("sa");
     expect(dialectFor("kw", "SA", null).dialect).toBe("kw");
-    expect(handleOf("https://instagram.com/noorstudio.sa")).toBe("@noorstudio.sa");
+    expect(handleOf("https://instagram.com/noorstudio.sa")).toBe(
+      "@noorstudio.sa",
+    );
     expect(handleOf("")).toBeNull();
     expect(familyOf("Kitchens")?.key).toBe("kitchens");
     expect(familyOf("Villa construction")?.scale).toBe("build");

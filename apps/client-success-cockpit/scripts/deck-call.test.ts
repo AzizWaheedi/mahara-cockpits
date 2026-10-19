@@ -77,7 +77,10 @@ describe("the example call's copy", () => {
 
   test("no speed promise and no results promise", () => {
     expect(
-      bad(/\b5 minutes\b|within minutes|\binstantly\b|\bsame[- ]day\b|\bROI\b/i, "en"),
+      bad(
+        /\b5 minutes\b|within minutes|\binstantly\b|\bsame[- ]day\b|\bROI\b/i,
+        "en",
+      ),
     ).toEqual([]);
     expect(bad(/خمس دقايق|فوراً|بنفس اليوم/, "ar")).toEqual([]);
   });
@@ -143,7 +146,10 @@ describe("the example call's copy", () => {
 
 describe("the script is EXAMPLE-CALL.md's, word for word", () => {
   const doc = require("node:fs").readFileSync(
-    require("node:path").resolve(import.meta.dir, "../../../docs/csm-decks/EXAMPLE-CALL.md"),
+    require("node:path").resolve(
+      import.meta.dir,
+      "../../../docs/csm-decks/EXAMPLE-CALL.md",
+    ),
     "utf8",
   ) as string;
   /** The rows of the table under a heading: cells split on " | ". */
@@ -151,7 +157,8 @@ describe("the script is EXAMPLE-CALL.md's, word for word", () => {
     const at = doc.indexOf(heading);
     const rows: string[][] = [];
     for (const line of doc.slice(at).split("\n").slice(1)) {
-      if (line.startsWith("## ") || line.startsWith("**")) if (rows.length) break;
+      if (line.startsWith("## ") || line.startsWith("**"))
+        if (rows.length) break;
       if (!line.startsWith("| ")) continue;
       const cells = line.slice(2, -2).split(" | ");
       if (/^\d:\d\d$/.test(cells[0])) rows.push(cells);

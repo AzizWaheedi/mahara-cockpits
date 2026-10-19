@@ -8,7 +8,7 @@ import {
   heldReason,
   serviceChips,
 } from "../src/present/clean";
-import type { Lang } from "../src/present/content";
+import { type Lang, O } from "../src/present/content";
 import { dayMonth, dayShort, when } from "../src/present/dates";
 import type { SlideCtx } from "../src/present/deckContext";
 import {
@@ -102,9 +102,11 @@ describe("a client with nothing on file", () => {
   });
 
   test("first ads: no answer is not approval, and no pack names no service", () => {
+    // "can", not "go": the approval itself is the line under it (O7).
     expect(firstAdsLine(d).line.en).toBe(
-      "If you approve them, starter ads can go live first, from our ready templates. Your own ads, made from your content, follow.",
+      "Starter ads can go live first, from our ready templates. Your own ads, made from your content, follow.",
     );
+    expect(firstAdsLine(d).line.en).not.toBe(O.next.approvedNoPack.en);
   });
 });
 

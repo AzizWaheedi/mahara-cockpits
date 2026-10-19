@@ -146,7 +146,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 **Slots**
 - `form.goal90`, `form.goal12_24`, `form.challenges`, `form.why`, with `prep.goals` overriding any of them.
 - Each card holds at most about 120 characters. Money stays in the client's own currency, exactly as they wrote it. Copy rule 10 applies.
-- Fallback: a card with no answer is hidden. If all four are missing, the slide shows the title and "What would make the next 90 days a win for you?", and the CSM types the answer live; it saves to prep and goes into the kickoff form.
+- Fallback: a card with no answer is hidden. If all four are missing, the slide shows the title "Your goals, in your words" (nothing was written, so not "as you wrote them") and "What would make the next 90 days a win for you?", and the CSM types the answer live; it saves to prep and goes into the kickoff form.
 
 **Notes**
 - Read their goals back. Don't re-ask anything they already answered.
@@ -294,7 +294,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 - One row of two statements (DESIGN 9.7):
   1. "Your first ads"
      - Templates Approved: "Starter ads go live first, from our ready templates for {prep.service_focus}. Your own ads, made from your content, follow."
-     - Waiting On Client, Wants To See Them First, or no answer: "If you approve them, starter ads can go live first, from our ready templates for {prep.service_focus}. Your own ads, made from your content, follow."
+     - Waiting On Client, Wants To See Them First, or no answer: "Starter ads can go live first, from our ready templates for {prep.service_focus}. Your own ads, made from your content, follow." ("can", not "go": no answer is not approval. The condition itself is the line under all three, so it is not said twice.)
      - Declined: "Your own ads, made from your content, go live first."
      - Under all three: "Your first ads go live only once you've approved them."
      - Without `prep.starter_pack`, "for {prep.service_focus}" is left out of the first two variants: "Starter ads go live first, from our ready templates."
@@ -450,7 +450,7 @@ Stops 1, 2, 4 and 7 open up on later slides (L3, L5, L6 and L7), so their lines 
 |---|---|---|---|
 | 1 | Your page stays yours | "Paid ads show in the feed, marked Sponsored. They don't appear on your page. They're made for people who don't know you yet. The polished work belongs in your page's own posts." | The L3 feed phone, small, with a leader on "Sponsored" |
 | 2 | Fixed: your red lines | {dosDonts} as "Always…" and "Never…" lines. When a red line came from O7: "You told us: {red line}." Then: "We never cross these. You approve every fact, price and claim. Anything wrong or off-brand, we fix." | The amber panel. Fallback: "No red lines written yet. Tell us now and we'll add them to your card." |
-| 3 | Open: everything else we test | Chips: Angles · Hooks · Formats · Thumbnails · Who's on camera. Their L3 pick, starred: "Your pick runs too, beside the ones you'd skip. The numbers tell us which work." Then: "An ad waiting for the perfect version earns nothing while it waits." · "You approve your ads in the group. Once you have, we test versions of them side by side." | The panel, with their starred creative as a thumbnail |
+| 3 | Open: everything else we test | Chips: Angles · Hooks · Formats · Thumbnails · Who's on camera. Their L3 pick, starred: "Your pick runs too, beside the ones you'd skip. The numbers tell us which work." Then: "You approve your ads in the group. Once you have, we test versions of them side by side." ("An ad waiting for the perfect version earns nothing while it waits." is said, not shown: see Notes.) | The panel, with their starred creative as a thumbnail |
 | 4 (optional) | How a test runs | Caption: "One campaign, 20 versions side by side. Some stay on, some go off." | 20 neutral tiles with on/off toggles, 11 lit and 9 dimmed. No thumbnails, no columns, no money. Tagged "Illustration" |
 
 After stop 3:
@@ -465,6 +465,7 @@ After stop 3:
 - Ask: "Anything else we must never say or show?" Add it to their card's Do's & Don'ts after the call.
 - They ask for changes in the group, and we answer with the reason.
 - A content plan for their page is a separate conversation. Don't promise it here.
+- If they want to hold an ad back until it's perfect: "An ad waiting for the perfect version earns nothing while it waits." (Said, not on the slide: the open column already carries the chips, their pick and the approval.)
 - **Temp check:** "Can we agree to test this way?" Record it only when they say yes.
 
 **DWY:** same.
@@ -487,7 +488,7 @@ After stop 3:
 **Stops (the phone's screens)**
 1. Opening · {funnel.headline}
 2. The questions · each {label} with its options, gates tagged
-3. Thank you · "Then your thank-you screen, and a welcome message." With `prep.welcome_video`: "Then your thank-you screen, and a welcome message with a short video about you." The screen is their form's thank-you, or the default: "Thank you. Our team will call you during working hours." A video frame shows only when `welcome_video` is on.
+3. The thank-you screen · "Then your thank-you screen, and a welcome message." With `prep.welcome_video`: "Then your thank-you screen, and a welcome message with a short video about you." The screen is their form's thank-you, or the default: "Thank you. Our team will call you during working hours." A video frame shows only when `welcome_video` is on.
 
 **Slots**
 - `funnel.*` once `prep.form_confirmed`, with `prep` questions overriding.
@@ -516,12 +517,12 @@ After stop 3:
 - Stage rail: The opening · Their goal · The details · What sets you apart · The booking · Locking it in. Each stage lights as the call reaches it.
 - Call clock, 0:00 to 4:51.
 - Two-sided transcript. The Arabic line sits above its English subtitle. In the Arabic deck the subtitle can be switched off.
-- Legend: "Words in teal came from your files. Anything marked 'To give us', we'll fill in with you."
+- Legend: "Words in teal came from your files."
 - Stop 7, after the call:
   - The WhatsApp confirmation from {client.name}, labelled "Example wording" (EXAMPLE-CALL.md)
   - A heading, "What we do before the meeting", over the timeline: Booked: a WhatsApp confirmation · The day before: a reminder · A confirmation call · 2 hours before: an SMS · The meeting
 - Stop 8, what lands with you: the appointment as it reaches them, tagged Example: "New appointment" · Abu Fahad · {day}, {time} · {place} · {service}, then "Our caller's notes": "Planning it for six months, wants to start soon. Budget: {band.note}. {pain note}" Caption: "Our caller's notes come with it."
-- Small line under the transcript:
+- Small line under the transcript, only when a slot is marked "To give us" (one sentence about the chips, never two):
   - With `prep.call_guide_checked`: "Your caller's facts come from your call guide in Mahara OS. Check it, and fill in anything marked 'To give us'."
   - Without it: "Send us anything marked 'To give us' in the group, and we'll add it to your call guide."
 
@@ -601,7 +602,7 @@ The slide ends on stop 4.
 | 1 | The ad tray (L3) | Leave the ads running through the first weeks | Ads need time before we can tell which ones work. |
 | 2 | The outcome form (L7) | Mark every meeting, the same day | Your outcomes show which ads bring real projects. |
 | 3 | The Drive folder (O6) | Keep your Drive folder fed | Fresh projects keep your ads from tiring. |
-| 4 | The WhatsApp group (O3) | Keep the offer steady while we test. Want to change it? Ask in the group first. | A new offer mid-test starts the test again. If you ask first, we can plan it in. |
+| 4 | The WhatsApp group (O3) | Keep the offer steady while we test | Want to change it? Ask in the group first. A new offer mid-test starts the test again. If you ask first, we can plan it in. |
 | 5 | A blocked-out calendar slot | Block busy times and holidays in your calendar | Our callers book into the times you leave free. |
 
 **Slots:** none.
@@ -626,10 +627,10 @@ The slide ends on stop 4.
 - Title: "Your first 90 days"
 - Top line: "Your 90-day goal, in your words: {form.goal90}", with the footnote "A target, not a promise of results."
 - A timeline from {go_live}:
-  - "Weeks 1 and 2 · Finding what works" (a bar, no sentence)
+  - "Weeks 1 and 2 · Finding what works" (a bar, no sentence); its dashed open end is labelled "Can run longer"
   - "Your first check-in · a week or two in" · {next.checkin}
-  - "Then every two weeks" · "20 to 30 minutes on Zoom: what's working, and what we're changing."
-  - "At 30, 60 and 90 days, that check-in looks back over the month."
+  - "Then every two weeks" · "20 to 30 minutes on Zoom: what's working, and what we're changing." (keyed with the check-in diamond)
+  - "At 30, 60 and 90 days, that check-in looks back over the month." (keyed with the ringed diamond)
 - Milestones, unlit at launch and never dated: First booking · First attended appointment · First won project
 - Footer: "Dates depend on your market, your offer and your follow-up. We track them with you."
 

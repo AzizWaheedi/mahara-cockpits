@@ -139,9 +139,12 @@ export function AdTray({
     <section className="dkc-tray" aria-label={t(A.tray, lang)}>
       <div className="dkc-tray-head">
         <span className="dkc-tray-title">{t(A.tray, lang)}</span>
-        <span className="dkc-tray-count">
-          {digits(model.tray.length + model.meta.length, lang)}
-        </span>
+        {/* No count beside an empty tray: an empty tray says so itself. */}
+        {model.tray.length + model.meta.length ? (
+          <span className="dkc-tray-count">
+            {digits(model.tray.length + model.meta.length, lang)}
+          </span>
+        ) : null}
       </div>
       {model.meta.length ? (
         <div className="dkc-tray-tabs" role="tablist">
@@ -216,7 +219,7 @@ export function AdTray({
                         {t(A.onPhone[on], lang)}
                       </span>
                     ) : (
-                      <span className="dk-ltr">
+                      <span className="dk-ltr dkc-thumb-spec">
                         {shape}
                         {c.video && c.seconds
                           ? ` · ${duration(c.seconds)}`
@@ -342,15 +345,12 @@ export function PhoneRow({
       const node = el.querySelector<HTMLElement>(`[data-part="${part}"]`);
       if (!node) continue;
       const r = node.getBoundingClientRect();
-      const end = rtl ? (box.right - r.left) / k : (r.right - box.left) / k;
-      const start = rtl ? (box.right - r.right) / k : (r.left - box.left) / k;
-      const wide = end - start > NATIVE_W * 0.6;
       // The page's avatar sits at the app's start: its label goes to that side.
       const side = part === "who" && model.app === lang ? "start" : "end";
-      const ax =
-        side === "start"
-          ? P.x + start - 6
-          : P.x + (wide ? NATIVE_W - 34 : end + 6);
+      // Every dot sits just outside the frame, on the edge nearest its
+      // label, level with the part it names: no dot and no line ever
+      // crosses the app's own UI (a caption, the menu, a headline).
+      const ax = side === "start" ? P.x - 10 : P.x + NATIVE_W + 10;
       const ay = P.y + ((r.top + r.bottom) / 2 - box.top) / k;
       const label =
         part === "who"
@@ -364,11 +364,17 @@ export function PhoneRow({
                 : tf(A.leaders.cta, lang, { cta: ctaText });
       found.push({ key: part, label, side, ax, ay, ly: ay });
     }
-    // Spread each side's labels so none sits on another (60 px apart).
+    // Spread each side's labels so none sits on another (60 px apart), and
+    // two parts on one row (the avatar and "Sponsored") get two dots.
     for (const side of ["start", "end"] as const) {
       const list = found
         .filter(f => f.side === side)
         .sort((a, b) => a.ay - b.ay);
+      for (let i = 1; i < list.length; i++)
+        if (list[i].ay - list[i - 1].ay < 16) {
+          list[i].ay = list[i - 1].ay + 16;
+          list[i].ly = Math.max(list[i].ly, list[i].ay);
+        }
       for (let i = 1; i < list.length; i++)
         if (list[i].ly - list[i - 1].ly < 60) list[i].ly = list[i - 1].ly + 60;
       const last = list.at(-1);

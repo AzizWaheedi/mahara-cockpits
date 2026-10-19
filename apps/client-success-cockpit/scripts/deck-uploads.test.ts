@@ -99,38 +99,46 @@ describe("adding a file, with the save mocked", () => {
       type: "file",
       file: { id: "local-abc", phase: "saving", phone: "feed", width: 1080 },
     });
-    expect(said.filter(m => m.type === "upload").map(m => (m as { phase: string }).phase)).toEqual([
-      "saving",
-      "saving",
-      "saved",
-    ]);
+    expect(
+      said
+        .filter(m => m.type === "upload")
+        .map(m => (m as { phase: string }).phase),
+    ).toEqual(["saving", "saving", "saved"]);
     expect(said.at(-1)).toMatchObject({ savedId: "saved-1" });
   });
 
   test("a PDF never reaches the save or the windows", async () => {
     let saved = false;
     const said: DeckMessage[] = [];
-    const r = await addFile(file("x.pdf", "application/pdf"), { kind: "custom" }, {
-      facts,
-      emit: m => said.push(m),
-      save: async () => {
-        saved = true;
-        return ad("x");
+    const r = await addFile(
+      file("x.pdf", "application/pdf"),
+      { kind: "custom" },
+      {
+        facts,
+        emit: m => said.push(m),
+        save: async () => {
+          saved = true;
+          return ad("x");
+        },
       },
-    });
+    );
     expect(r.phase).toBe("refused");
     expect(saved).toBe(false);
     expect(said).toEqual([]);
   });
 
   test("a video the browser can't play changes nothing", async () => {
-    const r = await addFile(file("odd.mov", "video/quicktime"), { kind: "custom" }, {
-      facts: async () => {
-        throw Error("no");
+    const r = await addFile(
+      file("odd.mov", "video/quicktime"),
+      { kind: "custom" },
+      {
+        facts: async () => {
+          throw Error("no");
+        },
+        emit: () => {},
+        save: async () => ad("x"),
       },
-      emit: () => {},
-      save: async () => ad("x"),
-    });
+    );
     expect(r).toEqual({
       id: null,
       phase: "refused",
@@ -161,15 +169,21 @@ describe("adding a file, with the save mocked", () => {
 
   test("a save that stops says so in plain words; the preview stays", async () => {
     const said: DeckMessage[] = [];
-    const r = await addFile(file("a.jpg", "image/jpeg"), { kind: "custom" }, {
-      facts,
-      emit: m => said.push(m),
-      save: async () => {
-        throw Error("JWT expired");
+    const r = await addFile(
+      file("a.jpg", "image/jpeg"),
+      { kind: "custom" },
+      {
+        facts,
+        emit: m => said.push(m),
+        save: async () => {
+          throw Error("JWT expired");
+        },
       },
-    });
+    );
     expect(r.phase).toBe("failed");
-    expect(r.message).toBe("Saving needs your cockpit sign-in. The preview still works.");
+    expect(r.message).toBe(
+      "Saving needs your cockpit sign-in. The preview still works.",
+    );
     expect(said[0].type).toBe("file");
     expect(said.at(-1)).toMatchObject({ type: "upload", phase: "failed" });
     expect(saveProblem(Error("Not saved. Add it again to retry."))).toBe(
@@ -179,12 +193,17 @@ describe("adding a file, with the save mocked", () => {
 });
 
 describe("the save itself, against mocked launchAds operations", () => {
-  function client(calls: { operation: string; args: Record<string, unknown> }[]) {
+  function client(
+    calls: { operation: string; args: Record<string, unknown> }[],
+  ) {
     return {
       rpc: async () => ({ data: null, error: null }),
       auth: {},
       functions: {
-        invoke: async (_name: string, { body }: { body: Record<string, unknown> }) => {
+        invoke: async (
+          _name: string,
+          { body }: { body: Record<string, unknown> },
+        ) => {
           calls.push({
             operation: String(body.operation),
             args: body.args as Record<string, unknown>,
@@ -192,9 +211,20 @@ describe("the save itself, against mocked launchAds operations", () => {
           if (body.operation === "launchAds.reserve")
             return {
               data: {
-                ad: ad("new-1", { status: "uploading", posterPath: "t1/new-1.poster.jpg" }),
-                upload: { path: "t1/new-1.mp4", url: "https://put/file", token: "t" },
-                posterUpload: { path: "t1/new-1.poster.jpg", url: "https://put/poster", token: "t" },
+                ad: ad("new-1", {
+                  status: "uploading",
+                  posterPath: "t1/new-1.poster.jpg",
+                }),
+                upload: {
+                  path: "t1/new-1.mp4",
+                  url: "https://put/file",
+                  token: "t",
+                },
+                posterUpload: {
+                  path: "t1/new-1.poster.jpg",
+                  url: "https://put/poster",
+                  token: "t",
+                },
               },
               error: null,
             };
@@ -214,7 +244,12 @@ describe("the save itself, against mocked launchAds operations", () => {
       taskId: "t1",
       file: file("site.mp4", "video/mp4"),
       kind: "custom",
-      facts: { width: 1080, height: 1920, seconds: 24, poster: new Blob(["p"], { type: "image/jpeg" }) },
+      facts: {
+        width: 1080,
+        height: 1920,
+        seconds: 24,
+        poster: new Blob(["p"], { type: "image/jpeg" }),
+      },
       requestId: "11111111-1111-4111-8111-111111111111",
       onProgress: s => progress.push(s),
       put: async (url, _f, _t, onProgress) => {
@@ -223,7 +258,10 @@ describe("the save itself, against mocked launchAds operations", () => {
       },
     });
     expect(out.id).toBe("new-1");
-    expect(calls.map(c => c.operation)).toEqual(["launchAds.reserve", "launchAds.ready"]);
+    expect(calls.map(c => c.operation)).toEqual([
+      "launchAds.reserve",
+      "launchAds.ready",
+    ]);
     expect(calls[0].args).toMatchObject({
       taskId: "t1",
       kind: "custom",
@@ -246,9 +284,14 @@ describe("the save itself, against mocked launchAds operations", () => {
           data: null,
           error: {
             message: "Edge Function returned a non-2xx status code",
-            context: new Response(JSON.stringify({ error: "Choose a client and one of its files." }), {
-              status: 400,
-            }),
+            context: new Response(
+              JSON.stringify({
+                error: "Choose a client and one of its files.",
+              }),
+              {
+                status: 400,
+              },
+            ),
           },
         }),
       },
@@ -289,7 +332,13 @@ describe("what each window holds", () => {
       },
     });
     expect(store.list[0]).toMatchObject({ id: "local-1", url: "blob:1" });
-    store.apply({ type: "upload", id: "local-1", phase: "saved", savedId: "s-1", progress: 1 });
+    store.apply({
+      type: "upload",
+      id: "local-1",
+      phase: "saved",
+      savedId: "s-1",
+      progress: 1,
+    });
     expect(store.list[0]).toMatchObject({ phase: "saved", savedId: "s-1" });
     // The tray shows the saved copy in place of the local one.
     const saved = [{ id: "s-1" } as Creative];
@@ -300,7 +349,9 @@ describe("what each window holds", () => {
   });
 
   test("a phone that held the local copy points at the saved one", () => {
-    expect(remapPhones({ feed: "local-1", reels: "x" }, "local-1", "s-1")).toEqual({
+    expect(
+      remapPhones({ feed: "local-1", reels: "x" }, "local-1", "s-1"),
+    ).toEqual({
       feed: "s-1",
       reels: "x",
     });

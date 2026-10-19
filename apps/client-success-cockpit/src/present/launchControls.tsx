@@ -971,7 +971,7 @@ function partText(d: DeckData): string {
     t(P.title, lang),
     ...P.rows.map(
       r =>
-        `- ${t(d.mode.dwy && r.jobDwy ? r.jobDwy : r.job, lang)} ${t(d.mode.dwy && r.whyDwy ? r.whyDwy : r.why, lang)}`,
+        `- ${t(d.mode.dwy && r.jobDwy ? r.jobDwy : r.job, lang)}. ${t(d.mode.dwy && r.whyDwy ? r.whyDwy : r.why, lang)}`,
     ),
   ].join("\n");
 }

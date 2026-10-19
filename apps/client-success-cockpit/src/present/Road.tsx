@@ -10,9 +10,12 @@ import { Node } from "./JourneyLanes";
  * drawing at 40%, without its words.
  */
 
-export const ROAD_GAP = 300;
+/** The slide's content width (1920 less the 136 px margins). */
+export const ROAD_W = 1648;
+/** A stop's label column, from its node's inline-start edge. */
+export const STOP_W = 272;
 /** The road's box: the nodes on its top line, the labels under them. */
-export const ROAD_H = 300;
+export const ROAD_H = 260;
 const R = 14;
 
 export interface RoadStop {
@@ -35,13 +38,16 @@ export function Road({
   draw?: boolean;
 }) {
   const n = stops.length;
-  const x = (i: number) => R + i * ROAD_GAP;
+  // Evenly spaced so the last label's column ends on the content's end
+  // edge, never past the margin.
+  const gap = (ROAD_W - STOP_W) / Math.max(1, n - 1);
+  const x = (i: number) => R + i * gap;
   const y = R + 6;
   const end = x(n - 1);
   const lit = x(now);
   return (
-    <div className="dkc-road" style={{ width: end + 272 - R, height: ROAD_H }}>
-      <svg viewBox={`0 0 ${end + 272 - R} ${ROAD_H}`} aria-hidden>
+    <div className="dkc-road" style={{ width: ROAD_W, height: ROAD_H }}>
+      <svg viewBox={`0 0 ${ROAD_W} ${ROAD_H}`} aria-hidden>
         <path
           d={`M ${lit} ${y} L ${end} ${y}`}
           fill="none"
@@ -78,7 +84,7 @@ export function Road({
             className="dkc-road-stop"
             data-state={i < now ? "past" : i === now ? "now" : "ahead"}
             aria-current={i === now ? "step" : undefined}
-            style={{ insetInlineStart: x(i) - R }}
+            style={{ insetInlineStart: x(i) - R, width: STOP_W }}
           >
             <span className="dkc-road-name">{s.name}</span>
             {s.under}
@@ -91,7 +97,7 @@ export function Road({
 
 /** The road at 40%, no words: under the launch cover's date (DESIGN 7.9). */
 export function RoadStrip({ count = 6, now }: { count?: number; now: number }) {
-  const gap = ROAD_GAP * 0.4;
+  const gap = 120;
   const r = 6;
   const x = (i: number) => r + 2 + i * gap;
   const y = r + 2;

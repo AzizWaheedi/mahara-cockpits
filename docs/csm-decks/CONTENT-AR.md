@@ -115,6 +115,7 @@ Use these the same way in both decks, the notes and the prep view.
 |---|---|---|
 | `goals.eyebrow` | From your onboarding form | من نموذج التعريف بالنشاط |
 | `goals.title` | Your goals, as you wrote them | أهدافكم مثل ما كتبتوها |
+| `goals.titleAsk` | Your goals, in your words | أهدافكم، بكلامكم |
 | `goals.card.goal90` | In 90 days | خلال ٩٠ يوم |
 | `goals.card.goal12_24` | In 12 to 24 months | خلال سنة إلى سنتين |
 | `goals.card.challenges` | What's in the way | اللي واقف بطريقكم |
@@ -262,8 +263,8 @@ The onboarding course keeps its own name, isolated in Latin: «كورس البد
 | `next.ads.name` | Your first ads | أول إعلاناتكم |
 | `next.ads.approved` | Starter ads go live first, from our ready templates for {prep.service_focus}. Your own ads, made from your content, follow. | أول شي تنزل إعلانات البداية، من قوالبنا الجاهزة لخدمة {prep.service_focus}. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم. |
 | `next.ads.approved.nopack` | Starter ads go live first, from our ready templates. Your own ads, made from your content, follow. | أول شي تنزل إعلانات البداية، من قوالبنا الجاهزة. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم. |
-| `next.ads.pending` | If you approve them, starter ads can go live first, from our ready templates for {prep.service_focus}. Your own ads, made from your content, follow. | إذا وافقتوا، نقدر ننزل أول شي إعلانات البداية، من قوالبنا الجاهزة لخدمة {prep.service_focus}. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم. |
-| `next.ads.pending.nopack` | If you approve them, starter ads can go live first, from our ready templates. Your own ads, made from your content, follow. | إذا وافقتوا، نقدر ننزل أول شي إعلانات البداية، من قوالبنا الجاهزة. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم. |
+| `next.ads.pending` | Starter ads can go live first, from our ready templates for {prep.service_focus}. Your own ads, made from your content, follow. | نقدر ننزل أول شي إعلانات البداية، من قوالبنا الجاهزة لخدمة {prep.service_focus}. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم. |
+| `next.ads.pending.nopack` | Starter ads can go live first, from our ready templates. Your own ads, made from your content, follow. | نقدر ننزل أول شي إعلانات البداية، من قوالبنا الجاهزة. وبعدها إعلاناتكم الخاصة، اللي نسويها من محتواكم. |
 | `next.ads.declined` | Your own ads, made from your content, go live first. | أول شي تنزل إعلاناتكم الخاصة، اللي نسويها من محتواكم. |
 | `next.ads.approval` | Your first ads go live only once you've approved them. | أول إعلاناتكم ما تنزل إلا بعد موافقتكم. |
 | `next.test.name` | The first weeks are a test | أول الأسابيع نختبر فيها الإعلانات |
@@ -431,7 +432,6 @@ The three phones share one app language (DESIGN 7.1): the language most of the c
 | `test.open.chips` | Angles · Hooks · Formats · Thumbnails · Who's on camera | الزوايا · البداية اللي تشد · طرق العرض · صورة الغلاف · مين يطلع بالفيديو |
 | `test.open.pick` | Your pick runs too, beside the ones you'd skip. The numbers tell us which work. | اختياركم ينزل بعد، جنب اللي يمكن ما تختارونها. والأرقام هي اللي توضح لنا أي واحد يشتغل. |
 | `test.open.pick.none` | The ones you'd pick run too, beside the ones you'd skip. The numbers tell us which work. | اللي تختارونها تنزل بعد، جنب اللي يمكن ما تختارونها. والأرقام هي اللي توضح لنا أي واحد يشتغل. |
-| `test.open.wait` | An ad waiting for the perfect version earns nothing while it waits. | الإعلان اللي ينتظر النسخة المثالية، ما يجيب شي وهو ينتظر. |
 | `test.open.approve` | You approve your ads in the group. Once you have, we test versions of them side by side. | توافقون على إعلاناتكم بالقروب، وبعد موافقتكم نختبر أكثر من نسخة منها مع بعض. |
 | `test.footer` | Prefer something different later? Ask in the group, and we'll launch it too. | تبون شي ثاني بعدين؟ اطلبوه بالقروب، وننزله بعد. |
 | `test.proof.name` | How a test runs | بهالشكل يمشي الاختبار |
@@ -445,6 +445,7 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 - أنتم جيتونا عشان الأداء، وإحنا نفضّل نحمي الأداء على إننا نحمي شكل معين.
 - فيه شي ثاني ما تبونا نقوله أو نوريه أبد؟
 - أي تغيير تبونه، اطلبوه بالقروب، ونرد عليكم بالسبب.
+- (If they want to wait for a perfect ad) الإعلان اللي ينتظر النسخة المثالية، ما يجيب شي وهو ينتظر.
 - **Temp check:** متفقين نختبر بهالطريقة؟
 
 ## L5 · `form`
@@ -460,11 +461,11 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 | `form.label.page` | Your page | صفحتكم |
 | `form.stop.1` | Opening | البداية |
 | `form.stop.2` | The questions | الأسئلة |
-| `form.stop.3` | Thank you | صفحة الشكر |
+| `form.stop.3` | The thank-you screen | صفحة الشكر |
 | `form.stop.3.line` | Then your thank-you screen, and a welcome message. | وبعدها صفحة الشكر، ورسالة ترحيب. |
 | `form.stop.3.video` | Then your thank-you screen, and a welcome message with a short video about you. | وبعدها صفحة الشكر، ورسالة ترحيب فيها فيديو قصير يعرّف عنكم. |
 | `form.thanks.default` | Thank you. Our team will call you during working hours. | شكراً لك. فريقنا بيتواصل معك خلال أوقات الدوام. |
-| `form.fallback` | Example form. We're finishing yours. | نموذج للتوضيح. نشتغل على نموذجكم. |
+| `form.fallback` | We're finishing yours. (Beside the "Example form" tag, which already says what it is.) | نشتغل على نموذجكم. |
 | `form.whatsapp` | Your ad opens a WhatsApp chat. | إعلانكم يفتح محادثة واتساب. |
 
 **The example form** (drawn when no form is confirmed; it speaks to the customer, so it is singular)
@@ -508,7 +509,7 @@ The turns, slots, pain variants, budget bands and both dialects are in `EXAMPLE-
 | `call.clock.end` | Call ended | انتهت المكالمة |
 | `call.speaker.agent` | Our caller | فريقنا |
 | `call.speaker.lead` | Customer | العميل |
-| `call.legend` | Words in teal came from your files. Anything marked 'To give us', we'll fill in with you. | الكلمات الملونة من ملفاتكم، واللي عليه نحتاجه منكم نكمله معكم. |
+| `call.legend` | Words in teal came from your files. | الكلمات الملونة من ملفاتكم. |
 | `call.chip.missing` | To give us | نحتاجه منكم |
 | `call.after.label` | Example wording | صياغة للتوضيح |
 | `call.after.heading` | What we do before the meeting | اللي نسويه قبل الموعد |
@@ -598,7 +599,7 @@ The stage names follow the sales deck's `stages` (المقدمة، تحديد ا
 | 1 | Leave the ads running through the first weeks | خلوا الإعلانات شغالة أول الأسابيع | Ads need time before we can tell which ones work. | الإعلانات تحتاج وقت، قبل لا نعرف أي واحد فيها يشتغل. |
 | 2 | Mark every meeting, the same day | سجلوا نتيجة كل موعد، بنفس اليوم | Your outcomes show which ads bring real projects. | نتائجكم توضح أي إعلانات تجيب مشاريع حقيقية. |
 | 3 | Keep your Drive folder fed | خلوا مجلد الدرايف مليان | Fresh projects keep your ads from tiring. | المشاريع الجديدة تخلي إعلاناتكم ما تبهت. |
-| 4 | Keep the offer steady while we test. Want to change it? Ask in the group first. | ثبّتوا العرض وإحنا نختبر. تبون تغيرونه؟ قولوا لنا بالقروب أول. | A new offer mid-test starts the test again. If you ask first, we can plan it in. | العرض الجديد بنص الاختبار يرجّعه من البداية. وإذا قلتوا لنا أول، نرتب له. |
+| 4 | Keep the offer steady while we test | ثبّتوا العرض وإحنا نختبر | Want to change it? Ask in the group first. A new offer mid-test starts the test again. If you ask first, we can plan it in. | تبون تغيرونه؟ قولوا لنا بالقروب أول. العرض الجديد بنص الاختبار يرجّعه من البداية. وإذا قلتوا لنا أول، نرتب له. |
 | 5 | Block busy times and holidays in your calendar | سكروا أوقات انشغالكم وإجازاتكم بالتقويم | Our callers book into the times you leave free. | فريق الاتصال يحجز بالأوقات اللي تخلونها فاضية. |
 
 **DWY**
@@ -624,6 +625,7 @@ The stage names follow the sales deck's `stages` (المقدمة، تحديد ا
 | `days.goal` | Your 90-day goal, in your words: {form.goal90} | هدفكم خلال ٩٠ يوم، بكلامكم: {form.goal90} |
 | `days.goal.foot` | A target, not a promise of results. | هدف، مو وعد بنتائج. |
 | `days.1.when` | Weeks 1 and 2 · Finding what works | أول أسبوعين · نكتشف اللي يشتغل لكم |
+| `days.1.open` | Can run longer | ممكن تطوّل |
 | `days.2.when` | Your first check-in · a week or two in | أول مكالمة متابعة · بعد أسبوع أو أسبوعين |
 | `days.2.date` | {next.checkin} | {next.checkin} |
 | `days.3.when` | Then every two weeks | وبعدها كل أسبوعين |
