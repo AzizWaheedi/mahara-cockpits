@@ -28,7 +28,7 @@ board's read functions and screen).
 | Each client's tracking sheet | the dialer's sheet reader (about every 4 minutes) and the CSM copy (native feed, every 15 minutes) | `mahara_reporting.sheet_snapshots`, `cockpit_csm_sources` clientProfiles |
 | The client portal (outcomes the client types) | portal sync | `portal_data.appointment_outcomes` |
 | ClickUp client cards (the CSM roster) | native feed | `cockpit_csm_sources` table `clients` |
-| All of the business sources above | `cockpit_board_facts_refresh` inside the database, at minutes 10 and 40 (3 days) and 03:50 Kuwait (120 days) | `cockpit_board_clients` (the client spine), `cockpit_client_days` (per client per Kuwait day), `cockpit_client_now` (the call centre now) |
+| All of the business sources above | `cockpit_board_facts_refresh` inside the database, at minutes 2 and 32 (3 days, since 19 Oct `20261019141000_board_facts_schedule.sql`) and 03:50 Kuwait (120 days) | `cockpit_board_clients` (the client spine), `cockpit_client_days` (per client per Kuwait day), `cockpit_client_now` (the call centre now) |
 
 ## Rules every column follows
 
@@ -71,7 +71,7 @@ board's read functions and screen).
   Stopped (no new days), except where the registry already says Cancelled,
   which is kept. A location with no card uses the registry's status.
 - **Freshness:** the roster every 15 minutes; the spine on every facts
-  refresh (minutes 10 and 40).
+  refresh (minutes 2 and 32).
 - **On the board (since 17 Oct, `20261017090000_board_active_only.sql`):** only
   clients whose card says Active (18 on 17 Oct). Launching, Paused, Stopped
   and Ghosting clients are off the board; their spend is named under "Not in

@@ -9,10 +9,10 @@ export const calls = {
         const today = kuwaitDay();
         // Two bounded reads per 15-minute refresh. True period medians and distinct
         // lead counts come from the RPC, never a sum or average of daily results.
-        const [report, report7d] = await Promise.all([
-            readCallCenterReport(addDays(today, -29), today),
-            readCallCenterReport(addDays(today, -6), today),
-        ]);
+        // One after the other: run together, the two report scans and their
+        // retries overlapped on the Small database (2026-10-19 memory dips).
+        const report = await readCallCenterReport(addDays(today, -29), today);
+        const report7d = await readCallCenterReport(addDays(today, -6), today);
         const payload = projectCallCenterReports(report, report7d);
         return {
             payload,

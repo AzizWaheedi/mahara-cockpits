@@ -29,6 +29,8 @@ const SQL = migration(FILE);
 /** The corrections after the second-source check of 2026-10-16, applied on top. */
 const CHECKED = migration("20261016210000_board_facts_checked.sql");
 const TIES = migration("20261016210200_board_account_ties.sql");
+/** The 30-minute run moved to minutes 2 and 32, off the 2026-10-19 memory dips. */
+const CRON_MOVE = migration("20261019141000_board_facts_schedule.sql");
 
 const BUYER = "00000000-0000-4000-8000-0000000000b1";
 const LOC_A = "locBoardClientA00001";
@@ -2450,16 +2452,18 @@ describe("the gate and the jobs", () => {
     )[0];
     expect(rows.n).toBe(120);
 
-    // Apply the files again: still one job each.
+    // Apply the files again, the schedule move twice: still one job each.
     await db.exec(SQL);
     await db.exec(CHECKED);
+    await db.exec(CRON_MOVE);
+    await db.exec(CRON_MOVE);
     const jobs = await q<Row>(
       "SELECT jobname, schedule, command FROM cron.job ORDER BY jobname",
     );
     expect(jobs).toEqual([
       {
         jobname: "mahara-board-facts",
-        schedule: "10,40 * * * *",
+        schedule: "2,32 * * * *",
         command: "SELECT public.cockpit_board_facts_run('recent');",
       },
       {
