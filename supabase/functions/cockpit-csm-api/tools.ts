@@ -39,7 +39,7 @@ export function ghlTools(token:string,health:(row:Record<string,unknown>)=>Promi
  * native monitor shows until the next good one.
  */
 export function storageTools(health:(row:Record<string,unknown>)=>Promise<void>){
- return {async call<T>(method:'GET'|'POST',resource:string,objectId:string|null,run:()=>Promise<{status:number|null;value:T}>):Promise<T>{
+ return {async call<T>(method:'GET'|'POST'|'DELETE',resource:string,objectId:string|null,run:()=>Promise<{status:number|null;value:T}>):Promise<T>{
   const receipt={provider:'supabase-storage',method,resource,object_id:objectId};
   await health({...receipt,phase:'intent'});
   let out:{status:number|null;value:T};

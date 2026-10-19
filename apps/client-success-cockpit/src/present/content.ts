@@ -184,6 +184,11 @@ export const CHROME = {
     en: "→ ← move · F full screen · L language · O all slides · N notes · Esc closes this list",
     ar: "→ ← تنقل · F ملء الشاشة · L اللغة · O كل الشرائح · N الملاحظات · Esc يقفل القائمة",
   },
+  /** A slide that could not be drawn (its own error boundary), on the canvas. */
+  broken: {
+    en: "This slide could not be drawn.",
+    ar: "ما قدرنا نعرض هالشريحة.",
+  },
 } as const;
 
 // ------------------------------------------------------- onboarding deck
@@ -487,6 +492,15 @@ export const O = {
       ar: "٤٥ دقيقة مع المدير الإبداعي: هويتكم، وعرضكم، وسكربتات أول إعلاناتكم.",
     },
     starterTitle: { en: "Your starter ads", ar: "إعلانات البداية" },
+    /** Stop 2, under its tag: what the client is looking at (not stop 1's approval line again). */
+    starterLine: {
+      en: "Our ready templates for {service}, under your Page name and logo.",
+      ar: "قوالبنا الجاهزة لخدمة {service}، باسم صفحتكم وشعاركم.",
+    },
+    starterLineNoPack: {
+      en: "Our ready templates, under your Page name and logo.",
+      ar: "قوالبنا الجاهزة، باسم صفحتكم وشعاركم.",
+    },
   },
 } as const;
 
@@ -623,6 +637,29 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
   },
 };
 
+/**
+ * The lines the CSM pastes into the client's WhatsApp group, in the deck's
+ * language (CONTENT O6 and L7, CONTENT-AR). Filled without Arabic isolates:
+ * a link must stay one clickable run in WhatsApp.
+ */
+export const GROUP_LINKS = {
+  meta: {
+    en: "Meta access (one link): {url}",
+    ar: "صلاحيات ميتا (رابط واحد): {url}",
+  },
+  drive: { en: "Your Drive folder: {url}", ar: "مجلد الدرايف: {url}" },
+  academy: { en: "The Academy: {url}", ar: "الأكاديمية: {url}" },
+  portal: { en: "Mahara OS: {url}", ar: "Mahara OS: {url}" },
+  install: {
+    en: "Install Mahara OS on your phone: {url}",
+    ar: "نزّلوا Mahara OS على جوالكم مثل أي تطبيق: {url}",
+  },
+  installShort: {
+    en: "Install it on your phone: {url}",
+    ar: "نزّلوه على جوالكم مثل أي تطبيق: {url}",
+  },
+} as const;
+
 /** Static links the CSM copies into the client's group (CONTENT data map). */
 export const LINKS = {
   leadsie: "https://app.leadsie.com/connect/maharamedia/manage",
@@ -730,6 +767,11 @@ export const LAUNCH = {
           en: "A few short questions about their project, then your thank-you screen.",
           ar: "يجاوب على كم سؤال قصير عن مشروعه، وبعدها تطلع له صفحة الشكر.",
         },
+        /** When the ad opens a WhatsApp chat instead of a form. */
+        whatsapp: {
+          en: "They message you on WhatsApp. The chat opens with their first message ready to send.",
+          ar: "يراسلكم على الواتساب. المحادثة تفتح ورسالته الأولى جاهزة يرسلها.",
+        },
       },
       {
         line: {
@@ -785,7 +827,7 @@ export const LAUNCH = {
           ar: "فريقكم ينقله للمرحلة الصح في الـCRM، بنفس اليوم.",
         },
       },
-    ] as { line: L; lineUae?: L; video?: L; dwy?: L }[],
+    ] as { line: L; lineUae?: L; video?: L; dwy?: L; whatsapp?: L }[],
     tries: {
       en: "Up to 4 tries over 3 working days",
       ar: "لين ٤ محاولات خلال ٣ أيام دوام",
@@ -844,7 +886,6 @@ export const LAUNCH = {
         en: "Came in at night? Called from 10 the next working morning.",
         ar: "وصل بالليل؟ نتصل عليه من الساعة ١٠ صباح أول يوم دوام.",
       },
-      anyService: { en: "your service", ar: "خدمتكم" },
     },
     calendar: {
       block: { en: "Appointment · {place}", ar: "موعد · {place}" },
@@ -860,8 +901,8 @@ export const LAUNCH = {
     owner: { en: "Your customer sees this", ar: "هذا اللي يشوفه عميلكم" },
     title: { en: "Your ads", ar: "إعلاناتكم" },
     line: {
-      en: "How your ads look in the feed. We can show any of your creatives in the phones, right now.",
-      ar: "هذا شكل إعلاناتكم وهي تطلع بالفيد. ونقدر نوريكم أي تصميم من تصاميمكم على الجوالات، الحين.",
+      en: "We can show any of your creatives in the phones, right now.",
+      ar: "نقدر نوريكم أي تصميم من تصاميمكم على الجوالات، الحين.",
     },
     tray: { en: "Your creatives", ar: "تصاميم إعلاناتكم" },
     uploaded: { en: "Uploaded", ar: "المرفوعة" },
@@ -874,7 +915,8 @@ export const LAUNCH = {
       en: "Nothing built in Meta yet.",
       ar: "ما انبنى شي في ميتا للحين.",
     },
-    starterChip: { en: "Starter", ar: "بداية" },
+    /** The short form of "Starter, from our templates" on a tray thumbnail. */
+    starterChip: { en: "Template", ar: "قالب" },
     planned: {
       en: "Planned next: {platforms}",
       ar: "الخطوة الجاية: {platforms}",
@@ -883,14 +925,21 @@ export const LAUNCH = {
       en: "Previews. Meta fits each ad to the screen it shows on.",
       ar: "معاينات. ميتا تضبط كل إعلان على الشاشة اللي يطلع فيها.",
     },
+    /** The same foot when the phones show starter ads: the tag, said once. */
+    footStarter: {
+      en: "Previews of starter ads, from our templates. Meta fits each ad to the screen it shows on.",
+      ar: "معاينات لإعلانات البداية، من قوالبنا. ميتا تضبط كل إعلان على الشاشة اللي يطلع فيها.",
+    },
+    /** The phone a tray thumbnail is on (DESIGN 10.1). */
     onPhone: {
-      feed: { en: "On the feed", ar: "على الفيد" },
-      reels: { en: "On Reels", ar: "على الريلز" },
-      facebook: { en: "On Facebook feed", ar: "على فيد فيسبوك" },
+      feed: { en: "Feed", ar: "فيد" },
+      reels: { en: "Reels", ar: "ريلز" },
+      facebook: { en: "Facebook feed", ar: "فيد فيسبوك" },
     },
     leaders: {
       who: { en: "Your page and logo", ar: "صفحتكم وشعاركم" },
-      sponsored: { en: "Marked Sponsored", ar: "مكتوب عليه مُموَّل" },
+      /** {word} is the label as the phone shows it, in the phone's language. */
+      sponsored: { en: "Marked {word}", ar: "مكتوب عليه {word}" },
       media: { en: "Your picture or video", ar: "صورتكم أو الفيديو" },
       words: { en: "Your words", ar: "كلامكم" },
       cta: { en: "The button: {cta}", ar: "الزر: {cta}" },
@@ -1006,6 +1055,37 @@ export const LAUNCH = {
       en: "Your ad opens a WhatsApp chat.",
       ar: "إعلانكم يفتح محادثة واتساب.",
     },
+    /**
+     * The message a WhatsApp ad fills in for the customer, in the customer's
+     * words, tagged "Example wording" until the ad's own template is read.
+     */
+    waMessage: {
+      en: "Hi, I saw your ad. I'd like to know more about {service}.",
+      ar: "السلام عليكم، شفت إعلانكم وأبي أعرف أكثر عن {service}.",
+    },
+    waMessageAny: {
+      en: "Hi, I saw your ad and I'd like to know more.",
+      ar: "السلام عليكم، شفت إعلانكم وأبي أعرف أكثر.",
+    },
+    waNextHead: { en: "What happens next", ar: "اللي يصير بعدها" },
+    waNext: [
+      {
+        en: "Their first message is ready in the chat. They tap send.",
+        ar: "رسالته الأولى جاهزة بالمحادثة، ويضغط إرسال.",
+      },
+      {
+        en: "It arrives on your WhatsApp.",
+        ar: "توصل على الواتساب عندكم.",
+      },
+    ],
+    waNextUs: {
+      en: "Our team calls them during working hours.",
+      ar: "وفريقنا يتصل عليه خلال أوقات الدوام.",
+    },
+    waNextDwy: {
+      en: "Your team calls them.",
+      ar: "وفريقكم يتصل عليه.",
+    },
     list: { en: "The questions", ar: "الأسئلة" },
     choice: { en: "Choice", ar: "اختيار" },
     thanksStep: {
@@ -1048,8 +1128,8 @@ export const LAUNCH = {
     },
     tagDwy: { en: "Our script, for your team", ar: "سكربتنا، لفريقكم" },
     label: {
-      en: "Written from our call script. The names in it are not real.",
-      ar: "مكتوبة من سكربت مكالماتنا، والأسماء فيها مو حقيقية.",
+      en: "Written from our call script. The customer in it is made up.",
+      ar: "مكتوبة من سكربت مكالماتنا، والعميل فيها مو حقيقي.",
     },
     labelDwy: {
       en: "From the playbook we give you",
@@ -1270,7 +1350,7 @@ export const LAUNCH = {
           ar: "ثبّتوا العرض وإحنا نختبر",
         },
         why: {
-          en: "Want to change it? Ask in the group first. A new offer mid-test starts the test again. If you ask first, we can plan it in.",
+          en: "Want to change it? Ask in the group first. A new offer mid‑test starts the test again. If you ask first, we can plan it in.",
           ar: "تبون تغيرونه؟ قولوا لنا بالقروب أول. العرض الجديد بنص الاختبار يرجّعه من البداية. وإذا قلتوا لنا أول، نرتب له.",
         },
       },
@@ -1430,6 +1510,7 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       'The close, in your own words: "You came to us for performance. We\'d rather protect that than protect a look."',
       "Ask: \"Anything else we must never say or show?\" Add it to their card's Do's & Don'ts after the call.",
       "They ask for changes in the group, and we answer with the reason.",
+      "At the temp check, record the agreement only when they say yes.",
       "A content plan for their page is a separate conversation. Don't promise it here.",
       'If they want to hold an ad back until it\'s perfect: "An ad waiting for the perfect version earns nothing while it waits."',
     ],
@@ -1440,7 +1521,7 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "(If they want to wait for a perfect ad) الإعلان اللي ينتظر النسخة المثالية، ما يجيب شي وهو ينتظر.",
     ],
     temp: {
-      en: "Can we agree to test this way? Record it only when they say yes.",
+      en: "Can we agree to test this way?",
       ar: "متفقين نختبر بهالطريقة؟",
     },
   },

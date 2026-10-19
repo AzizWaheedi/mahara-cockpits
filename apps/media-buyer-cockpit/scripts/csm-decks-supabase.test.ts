@@ -26,6 +26,7 @@ const BUYER = "00000000-0000-4000-8000-0000000000c1"; // media buyer only
 const SALES = "00000000-0000-4000-8000-0000000000c2"; // sales only
 const CEO = "00000000-0000-4000-8000-0000000000c3";
 const GONE = "00000000-0000-4000-8000-0000000000c4"; // csm, deactivated
+const UNCONFIRMED = "00000000-0000-4000-8000-0000000000c5"; // csm, email never confirmed
 
 const A = "taskA1";
 const B = "taskB1";
@@ -155,6 +156,7 @@ beforeAll(async () => {
   await member(db, SALES, "sales@tests.invalid", ["sales"]);
   await member(db, CEO, "aziz@maharamedia.com", []);
   await member(db, GONE, "gone@tests.invalid", ["csm"], false);
+  await member(db, UNCONFIRMED, "unconfirmed@tests.invalid", ["csm"], true, false);
   await db.query("UPDATE public.cockpit_members SET clients=$1 WHERE auth_user_id = ANY($2::uuid[])", [["Acme Interiors"], [CSM_A, CSM_A2]]);
   await db.query("UPDATE public.cockpit_members SET clients=$1 WHERE auth_user_id=$2", [["Beta Build"], CSM_B]);
   await db.query("UPDATE public.cockpit_members SET name='Noura Al-Sabah' WHERE auth_user_id=$1", [CSM_A]);
@@ -249,13 +251,16 @@ beforeAll(async () => {
 afterAll(async () => { await db?.close(); });
 
 describe("tables, grants and the bucket", () => {
-  test("browser roles cannot touch either table; the service role can, and row security is on", async () => {
+  test("browser roles cannot touch either table; the service role reads, inserts and updates only, and row security is on", async () => {
     for (const table of ["cockpit_csm_deck_prep", "cockpit_csm_launch_ads"]) {
       for (const role of ["anon", "authenticated"])
         for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE"])
           expect((await db.query<{ ok: boolean }>(`SELECT has_table_privilege($1,$2,$3) ok`, [role, `public.${table}`, privilege])).rows[0].ok).toBe(false);
       for (const privilege of ["SELECT", "INSERT", "UPDATE"])
         expect((await db.query<{ ok: boolean }>(`SELECT has_table_privilege('service_role',$1,$2) ok`, [`public.${table}`, privilege])).rows[0].ok).toBe(true);
+      // Supabase's default grants are taken back: no delete, and no truncate that would skip the audit.
+      for (const privilege of ["DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"])
+        expect((await db.query<{ ok: boolean }>(`SELECT has_table_privilege('service_role',$1,$2) ok`, [`public.${table}`, privilege])).rows[0].ok).toBe(false);
       expect((await db.query<{ rls: boolean }>("SELECT relrowsecurity rls FROM pg_class WHERE oid=$1::regclass", [`public.${table}`])).rows[0].rls).toBe(true);
       expect(await refused(CSM_A, `SELECT * FROM public.${table}`)).toContain("permission denied");
     }
@@ -268,9 +273,9 @@ describe("tables, grants and the bucket", () => {
     const browser = [
       "cockpit_csm_launch_object_allowed", "cockpit_csm_deck_sources", "cockpit_csm_deck_prep_read", "cockpit_csm_launch_ads_read",
       "cockpit_csm_launch_ad_get", "cockpit_csm_deck_prep_save", "cockpit_csm_launch_ad_reserve", "cockpit_csm_launch_ad_accept",
-      "cockpit_csm_launch_ad_update", "cockpit_csm_launch_ad_remove",
+      "cockpit_csm_launch_ad_update", "cockpit_csm_launch_ad_remove", "cockpit_csm_launch_ad_stale", "cockpit_csm_launch_ad_purged",
     ];
-    expect(fns.length).toBe(19);
+    expect(fns.length).toBe(21);
     for (const fn of fns) {
       const name = fn.sig.split("(")[0].replace(/^public\./, "");
       expect(fn.config).toContain('search_path=""');
@@ -307,14 +312,26 @@ describe("the gate", () => {
       ["SELECT public.cockpit_csm_launch_ad_update($1,$2::uuid,'{\"hidden\":true}'::jsonb)", [B, uuid(901)]],
       ["SELECT public.cockpit_csm_launch_ad_remove($1,$2::uuid)", [B, uuid(901)]],
       ["SELECT public.cockpit_csm_launch_ad_get($1,$2::uuid)", [B, uuid(901)]],
+      ["SELECT public.cockpit_csm_launch_ad_stale($1)", [B]],
+      ["SELECT public.cockpit_csm_launch_ad_purged($1,$2::uuid[])", [B, [uuid(901)]]],
     ];
     for (const [sql, params] of calls) expect(await refused(CSM_A, sql, params)).toContain("not on your access list");
     expect((await audits("cockpit_csm_deck_prep")).length).toBe(0);
   });
 
-  test("seats without client success, and a deactivated seat, are refused before any read", async () => {
-    for (const who of [BUYER, SALES, GONE])
+  test("seats without client success, a deactivated seat and an unconfirmed one are refused before any read", async () => {
+    for (const who of [BUYER, SALES, GONE, UNCONFIRMED])
       expect(await refused(who, "SELECT public.cockpit_csm_deck_sources($1)", [A])).toContain("client-success access is required");
+    for (const who of [UNCONFIRMED, GONE]) {
+      expect(await refused(who, "SELECT public.cockpit_csm_deck_prep_save($1,'launch','{\"pain\":\"cost\"}'::jsonb)", [A])).toContain("client-success access is required");
+      expect(await refused(who, "SELECT public.cockpit_csm_launch_ad_reserve($2::uuid,$1,'custom','image/png',10)", [A, uuid(902)])).toContain("client-success access is required");
+    }
+    // Signed out, the write functions are not even callable.
+    expect(await refused(null, "SELECT public.cockpit_csm_deck_prep_save($1,'launch','{\"pain\":\"cost\"}'::jsonb)", [A])).toContain("permission denied");
+    expect(await refused(null, "SELECT public.cockpit_csm_launch_ad_reserve($2::uuid,$1,'custom','image/png',10)", [A, uuid(903)])).toContain("permission denied");
+    expect(await refused(null, "SELECT public.cockpit_csm_launch_ad_remove($1,$2::uuid)", [A, uuid(903)])).toContain("permission denied");
+    await asOwner();
+    expect((await db.query("SELECT 1 FROM public.cockpit_csm_launch_ads WHERE request_id = ANY($1::uuid[])", [[uuid(902), uuid(903)]])).rows.length).toBe(0);
     expect(await refused(BUYER, "SELECT public.cockpit_csm_deck_prep_save($1,'launch','{\"pain\":\"cost\"}'::jsonb)", [A])).toContain("client-success access is required");
     expect(await refused(CSM_A, "SELECT public.cockpit_csm_deck_sources('bad id!')")).toContain("valid ClickUp client ID");
   });
@@ -349,7 +366,9 @@ describe("deck sources", () => {
     expect(s.prep).toEqual({ onboarding: null, launch: null });
     expect(s.launchAds).toEqual([]);
     const text = JSON.stringify(s);
-    for (const leak of ["cpl", "\"leads", "leadsAllTime", "spend", "budget", "dailyBudget", "SECRET", "secret", "zoom.example", "fbcdn", "Beta", "60001", "8002", "8003", "8006", "Bilal", "slow payer\"}"])
+    // The card's Do's & Don'ts reach the CSM seat whole, as the card has them;
+    // the deck keeps DO and DON'T only (deck-launch.test.tsx, "never NOTES").
+    for (const leak of ["cpl", "\"leads", "leadsAllTime", "spend", "budget", "dailyBudget", "SECRET", "secret", "zoom.example", "fbcdn", "Beta", "60001", "8002", "8003", "8006", "Bilal"])
       expect(text.includes(leak)).toBe(false);
   });
 
@@ -381,6 +400,48 @@ describe("deck sources", () => {
     const meta = (await sources(CSM_B, B)).meta;
     expect(meta.ads.map((a: Row) => a.id)).toEqual(["60001"]);
     expect(meta.funnels.map((f: Row) => f.formId)).toEqual(["8002"]);
+  });
+
+  test("two clients each running a campaign with Meta's default name see only their own ads and forms", async () => {
+    await asOwner();
+    const added = { campaigns: [] as number[], tree: ["t-50009", "t-60009"], funnels: ["native:funnels:f8", "native:funnels:f9"] };
+    for (const [client, account, id] of [["Acme Interiors", "111111", "9008"], ["Beta Build", "222222", "9009"]]) {
+      const r = await db.query<{ id: number }>("INSERT INTO public.cockpit_campaigns(client_name,meta_account_id,raw_data) VALUES($1,$2,$3::jsonb) RETURNING id",
+        [client, account, JSON.stringify({ campaignName: "New Leads Campaign", clientName: client, metaAccountId: account, metaCampaignId: id })]);
+      added.campaigns.push(r.rows[0].id);
+    }
+    const snap = "2026-10-19T08:00:00Z";
+    for (const [id, account] of [["50009", "111111"], ["60009", "222222"]])
+      await db.query("INSERT INTO public.cockpit_media_sources(table_name,source_id,data,source_snapshot_at) VALUES('metaTree',$1,$2::jsonb,$3)",
+        [`t-${id}`, JSON.stringify({ _id: `t-${id}`, kind: "ad", metaId: id, name: id === "60009" ? "Beta villa reel" : "Acme kitchen reel",
+          campaignName: "New Leads Campaign", accountId: account, status: "ACTIVE", effectiveStatus: "ACTIVE" }), snap]);
+    // A board row under the shared name carries no account: it is nobody's.
+    await db.query("INSERT INTO public.cockpit_ads(campaign_name,ad_name,meta_ad_id) VALUES('New Leads Campaign','Whose?','50010')");
+    for (const [source, formId, name, adId] of [["native:funnels:f8", "8008", "Acme kitchens form", "50009"], ["native:funnels:f9", "8009", "Beta villas form", "60009"]])
+      await db.query("INSERT INTO public.cockpit_creative_sources(table_name,source_id,data,source_snapshot_at) VALUES('funnels',$1,$2::jsonb,$3)",
+        [source, JSON.stringify({ _id: source, kind: "Instant form", formId, formName: name, ads: [{ adId }], questions: [] }), snap]);
+    try {
+      const acme = (await sources(CSM_A, A)).meta;
+      const acmeText = JSON.stringify(acme);
+      expect(acme.ads.map((a: Row) => a.id)).toContain("50009");
+      expect(acme.funnels.map((f: Row) => f.formId)).toContain("8008");
+      for (const leak of ["60009", "Beta villa reel", "222222", "8009", "Beta villas form", "50010"]) expect(acmeText.includes(leak)).toBe(false);
+      const beta = (await sources(CSM_B, B)).meta;
+      const betaText = JSON.stringify(beta);
+      expect(beta.ads.map((a: Row) => a.id).sort()).toEqual(["60001", "60009"]);
+      expect(beta.funnels.map((f: Row) => f.formId).sort()).toEqual(["8002", "8009"]);
+      for (const leak of ["50009", "Acme kitchen reel", "8008", "50010"]) expect(betaText.includes(leak)).toBe(false);
+      for (const patch of [{ form_confirmed: "8009" }, { their_pick: "60009" }, { phones: { feed: "60009" } }])
+        expect(await refused(CSM_A, "SELECT public.cockpit_csm_deck_prep_save($1,'launch',$2::jsonb)", [A, JSON.stringify(patch)])).toMatch(/own campaigns|this client's creatives/);
+      for (const patch of [{ form_confirmed: "8008" }, { their_pick: "50009" }])
+        expect(await refused(CSM_B, "SELECT public.cockpit_csm_deck_prep_save($1,'launch',$2::jsonb)", [B, JSON.stringify(patch)])).toMatch(/own campaigns|this client's creatives/);
+    } finally {
+      await asOwner();
+      await db.query("DELETE FROM public.cockpit_campaigns WHERE id = ANY($1::bigint[])", [added.campaigns]);
+      await db.query("DELETE FROM public.cockpit_media_sources WHERE source_id = ANY($1::text[])", [added.tree]);
+      await db.query("DELETE FROM public.cockpit_ads WHERE meta_ad_id = '50010'");
+      await db.query("DELETE FROM public.cockpit_creative_sources WHERE source_id = ANY($1::text[])", [added.funnels]);
+    }
   });
 
   test("a duplicate card of the same client gets the same ads; two clients with one name key get none", async () => {
@@ -632,6 +693,109 @@ describe("launch ads", () => {
     // The policy function never raises, whatever it is given.
     for (const name of [null, "", "../x", `${A}/${uuid(50)}.jpg/../x`, `${B}/${ready.id}.jpg`])
       expect(await one(CSM_A, "SELECT public.cockpit_csm_launch_object_allowed($1) r", [name])).toBe(false);
+  });
+
+  test("another client's upload id is refused under one's own task id, and nothing changes", async () => {
+    const ad = await reserve(CSM_A, uuid(60), A, "custom", "image/png", 64, [100, 100, null, "acme.png", null, null]);
+    await putObject(ad.path, 64, "image/png");
+    await accept(CSM_A, A, ad.id);
+    const before = (await audits("cockpit_csm_launch_ads")).length;
+    for (const [sql, params] of [
+      ["SELECT public.cockpit_csm_launch_ad_get($1,$2::uuid)", [B, ad.id]],
+      ["SELECT public.cockpit_csm_launch_ad_update($1,$2::uuid,'{\"hidden\":true,\"headline\":\"Beta\"}'::jsonb)", [B, ad.id]],
+      ["SELECT public.cockpit_csm_launch_ad_remove($1,$2::uuid)", [B, ad.id]],
+      ["SELECT public.cockpit_csm_launch_ad_accept($1,$2::uuid)", [B, ad.id]],
+    ] as [string, unknown[]][])
+      expect(await refused(CSM_B, sql, params)).toContain("not one of this client's uploads");
+    const still = await one(CSM_A, "SELECT public.cockpit_csm_launch_ad_get($1,$2::uuid) r", [A, ad.id]);
+    expect(still).toMatchObject({ status: "ready", hidden: false, headline: null, taskId: A });
+    expect((await audits("cockpit_csm_launch_ads")).length).toBe(before);
+  });
+
+  test("accept refuses a file or a poster of the right size but another type", async () => {
+    const pic = await reserve(CSM_A, uuid(61), A, "custom", "image/png", 70);
+    await putObject(pic.path, 70, "image/jpeg");
+    expect(await refused(CSM_A, "SELECT public.cockpit_csm_launch_ad_accept($1,$2::uuid)", [A, pic.id])).toContain("does not match");
+    const video = await reserve(CSM_A, uuid(62), A, "custom", "video/mp4", 900, [720, 1280, 5, "v.mp4", "image/jpeg", 80]);
+    await putObject(video.path, 900, "video/mp4");
+    await putObject(video.posterPath, 80, "image/png");
+    expect(await refused(CSM_A, "SELECT public.cockpit_csm_launch_ad_accept($1,$2::uuid)", [A, video.id])).toContain("poster does not match");
+    expect((await one(CSM_A, "SELECT public.cockpit_csm_launch_ad_get($1,$2::uuid) r", [A, pic.id])).status).toBe("uploading");
+    expect((await one(CSM_A, "SELECT public.cockpit_csm_launch_ad_get($1,$2::uuid) r", [A, video.id])).status).toBe("uploading");
+  });
+
+  test("a request id replayed for another client the seat can open is refused", async () => {
+    await reserve(CSM_ALL, uuid(63), A, "custom", "image/webp", 55);
+    expect(await refused(CSM_ALL, "SELECT public.cockpit_csm_launch_ad_reserve($1::uuid,$2,'custom','image/webp',55)", [uuid(63), B])).toContain("different file");
+    await asOwner();
+    expect((await db.query("SELECT task_id FROM public.cockpit_csm_launch_ads WHERE request_id=$1", [uuid(63)])).rows).toEqual([{ task_id: A }]);
+  });
+
+  test("a seat's unfinished uploads and a client's files are capped", async () => {
+    await asOwner();
+    // 30 unfinished uploads by one seat in the last hour: the next is refused.
+    await db.query(`INSERT INTO public.cockpit_csm_launch_ads(id,request_id,task_id,kind,storage_path,mime,bytes,created_by,created_by_email,created_at)
+      SELECT x.id, gen_random_uuid(), $1, 'custom', $1 || '/' || x.id::text || '.png', 'image/png', 10, $2::uuid, 'csm-a2@tests.invalid', now() - interval '5 minutes'
+        FROM (SELECT gen_random_uuid() AS id FROM generate_series(1, 30)) x`, [A, CSM_A2]);
+    try {
+      expect(await refused(CSM_A2, "SELECT public.cockpit_csm_launch_ad_reserve($1::uuid,$2,'custom','image/png',10)", [uuid(64), A])).toContain("Too many unfinished uploads");
+      // Another seat is not held back by them.
+      expect((await reserve(CSM_A, uuid(65), A, "custom", "image/png", 10)).status).toBe("uploading");
+      // An hour on they stop counting: the cap clears itself.
+      await asOwner();
+      await db.query("UPDATE public.cockpit_csm_launch_ads SET created_at = now() - interval '61 minutes' WHERE created_by=$1 AND status='uploading'", [CSM_A2]);
+      expect((await reserve(CSM_A2, uuid(64), A, "custom", "image/png", 10)).status).toBe("uploading");
+    } finally {
+      await asOwner();
+      await db.query("DELETE FROM public.cockpit_csm_launch_ads WHERE created_by=$1 AND status='uploading'", [CSM_A2]);
+    }
+    // 200 files on one client: the next is refused, removed ones do not count.
+    await db.query(`INSERT INTO public.cockpit_csm_launch_ads(id,request_id,task_id,kind,status,storage_path,mime,bytes,created_by,created_by_email,ready_at)
+      SELECT x.id, gen_random_uuid(), 'twin2', 'custom', 'ready', 'twin2/' || x.id::text || '.png', 'image/png', 10, $1::uuid, 'csm-all@tests.invalid', now()
+        FROM (SELECT gen_random_uuid() AS id FROM generate_series(1, 200)) x`, [CSM_ALL]);
+    try {
+      expect(await refused(CSM_ALL, "SELECT public.cockpit_csm_launch_ad_reserve($1::uuid,'twin2','custom','image/png',10)", [uuid(66)])).toContain("200 files already");
+      await db.query("UPDATE public.cockpit_csm_launch_ads SET status='removed', removed_at=now() WHERE id = (SELECT id FROM public.cockpit_csm_launch_ads WHERE task_id='twin2' LIMIT 1)");
+      expect((await one(CSM_ALL, "SELECT public.cockpit_csm_launch_ad_reserve($1::uuid,'twin2','custom','image/png',10) r", [uuid(66)])).status).toBe("uploading");
+    } finally {
+      await asOwner();
+      await db.query("DELETE FROM public.cockpit_csm_launch_ads WHERE task_id='twin2'");
+    }
+  });
+
+  test("removed files and day-old unfinished uploads are listed for the sweep; purging marks only those of this client", async () => {
+    const gone = await reserve(CSM_A, uuid(70), A, "custom", "video/mp4", 400, [720, 1280, 4, "gone.mp4", "image/jpeg", 20]);
+    const fresh = await reserve(CSM_A, uuid(71), A, "custom", "image/png", 40);
+    const old = await reserve(CSM_A, uuid(72), A, "custom", "image/png", 41);
+    const kept = await reserve(CSM_A, uuid(73), A, "custom", "image/png", 42);
+    await putObject(kept.path, 42, "image/png");
+    await accept(CSM_A, A, kept.id);
+    await one(CSM_A2, "SELECT public.cockpit_csm_launch_ad_remove($1,$2::uuid) r", [A, gone.id]);
+    await asOwner();
+    await db.query("UPDATE public.cockpit_csm_launch_ads SET created_at = now() - interval '2 days' WHERE id=$1", [old.id]);
+    const stale = await one(CSM_A2, "SELECT public.cockpit_csm_launch_ad_stale($1) r", [A]);
+    const ids = stale.map((r: Row) => r.id);
+    expect(ids).toContain(gone.id);
+    expect(ids).toContain(old.id);
+    expect(ids).not.toContain(fresh.id);
+    expect(ids).not.toContain(kept.id);
+    expect(stale.find((r: Row) => r.id === gone.id)).toEqual({ id: gone.id, path: gone.path, posterPath: gone.posterPath });
+    const betaFile = (await one(CSM_B, "SELECT public.cockpit_csm_launch_ads_read($1) r", [B]))[0];
+    const before = (await audits("cockpit_csm_launch_ads")).length;
+    // Fresh, ready and another client's ids are left alone.
+    expect(await one(CSM_A2, "SELECT public.cockpit_csm_launch_ad_purged($1,$2::uuid[]) r", [A, [gone.id, old.id, fresh.id, kept.id, betaFile.id]])).toBe(2);
+    const after = (await audits("cockpit_csm_launch_ads")).slice(before);
+    expect(after.map(r => [r.action, r.entity_id]).sort()).toEqual([["launchAds.purge", gone.id], ["launchAds.purge", old.id]].sort());
+    const get = (id: string) => one(CSM_A, "SELECT public.cockpit_csm_launch_ad_get($1,$2::uuid) r", [A, id]);
+    expect(await get(old.id)).toMatchObject({ status: "removed", purgedAt: expect.any(String) });
+    expect(await get(gone.id)).toMatchObject({ status: "removed", purgedAt: expect.any(String) });
+    expect(await get(fresh.id)).toMatchObject({ status: "uploading", purgedAt: null });
+    expect(await get(kept.id)).toMatchObject({ status: "ready", purgedAt: null });
+    expect((await one(CSM_B, "SELECT public.cockpit_csm_launch_ad_get($1,$2::uuid) r", [B, betaFile.id])).status).toBe("ready");
+    expect((await one(CSM_A, "SELECT public.cockpit_csm_launch_ad_stale($1) r", [A])).map((r: Row) => r.id)).not.toContain(gone.id);
+    // A second purge changes nothing.
+    expect(await one(CSM_A2, "SELECT public.cockpit_csm_launch_ad_purged($1,$2::uuid[]) r", [A, [gone.id, old.id]])).toBe(0);
+    expect(await refused(CSM_A, "SELECT public.cockpit_csm_launch_ad_purged($1,$2::uuid[])", [A, Array.from({ length: 51 }, (_, i) => uuid(1000 + i))])).toContain("at most 50");
   });
 
   test("deck sources carry the ready uploads, hidden ones flagged", async () => {

@@ -12,7 +12,11 @@ import {storageStatus,storageTools} from './tools.ts';
  * Storage, and cockpit_csm_launch_ad_accept checks Storage's own metadata
  * again inside the transaction before the row turns ready (audited). Reads
  * are signed through the signed-in seat's own client, so the bucket's read
- * policy decides who sees what. Nothing here writes to Meta.
+ * policy decides who sees what. A read link stays valid for READ_SECONDS
+ * even after its file is removed: Storage does not recheck a signed link.
+ * Remove deletes the bytes with the service key; listing a client's tray
+ * also sweeps that client's removed files and day-old unfinished uploads.
+ * Nothing here writes to Meta.
  */
 export const LAUNCH_BUCKET = 'cockpit-launch-ads';
 export const LAUNCH_MAX_BYTES = 157286400;
@@ -34,6 +38,7 @@ export type LaunchBucket = {
   createSignedUploadUrl: (path: string, options?: {upsert: boolean}) => Promise<{data: {signedUrl: string; token: string; path?: string} | null; error: unknown}>;
   info: (path: string) => Promise<{data: unknown; error: unknown}>;
   createSignedUrls: (paths: string[], expiresIn: number) => Promise<{data: Signed[] | null; error: unknown}>;
+  remove: (paths: string[]) => Promise<{data: unknown; error: unknown}>;
 };
 export type LaunchClient = {
   rpc: (name: string, args: Record<string, unknown>) => PromiseLike<RpcResult>;
@@ -41,7 +46,7 @@ export type LaunchClient = {
 };
 export type LaunchAdmin = {
   from: (table: string) => {insert: (row: Record<string, unknown>) => PromiseLike<{error: unknown}>};
-  storage: {from: (bucket: string) => Pick<LaunchBucket, 'createSignedUploadUrl' | 'info'>};
+  storage: {from: (bucket: string) => Pick<LaunchBucket, 'createSignedUploadUrl' | 'info' | 'remove'>};
 };
 
 const taskId = z.string().regex(/^[A-Za-z0-9_-]{1,40}$/);
@@ -139,6 +144,39 @@ export async function runLaunchAds(client: LaunchClient, admin: LaunchAdmin, raw
     const meta = (typeof info.metadata === 'object' && info.metadata ? info.metadata : {}) as Record<string, unknown>;
     return {status: 200, value: {size: Number(info.size ?? meta.size), type: String(info.contentType ?? meta.mimetype ?? '').toLowerCase()}};
   });
+  /**
+   * Deletes the bytes of removed or stale files with the service key, then
+   * records it. A failure leaves the rows unpurged for the next sweep and is
+   * on the health page through its receipt; it never fails the caller.
+   */
+  const purge = async (task: string, files: {id: string; path: string; posterPath: string | null}[]) => {
+    if (!files.length) return false;
+    try {
+      const paths = files.flatMap(f => f.posterPath ? [f.path, f.posterPath] : [f.path]);
+      const ok = await store.call('DELETE', `${LAUNCH_BUCKET}/delete-object`, files.length === 1 ? files[0].id : null, async () => {
+        const {error} = await objects.remove(paths);
+        return error ? {status: storageStatus(error), value: false} : {status: 200, value: true};
+      });
+      if (!ok) return false;
+      await rpc('cockpit_csm_launch_ad_purged', {p_task_id: task, p_ids: files.map(f => f.id)});
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const staleSchema = z.array(z.object({id, path: z.string(), posterPath: z.string().nullable()}).passthrough());
+  /** This client's removed files and day-old unfinished uploads, swept on each tray read. */
+  const sweep = async (task: string) => {
+    try {
+      const stale = staleSchema.safeParse(await rpc('cockpit_csm_launch_ad_stale', {p_task_id: task}));
+      if (!stale.success) return;
+      // Only paths inside this client's folder, by the same rule as checkAd.
+      const own = stale.data.filter(f => f.path.startsWith(`${task}/${f.id}.`) && (!f.posterPath || f.posterPath.startsWith(`${task}/${f.id}-poster.`)));
+      await purge(task, own);
+    } catch {
+      // The tray still lists; the next read sweeps again.
+    }
+  };
   const verify = async (ad: LaunchAd, path: string, mime: string, bytes: number, label: string, missing: string) => {
     const found = await inspect(ad, path, label);
     if (!found) throw new LaunchAdsError(missing, 409);
@@ -211,7 +249,10 @@ export async function runLaunchAds(client: LaunchClient, admin: LaunchAdmin, raw
     if (!Array.isArray(data)) throw new LaunchAdsError('The server did not return this client\'s files. Try again.', 502);
     const ads = data.map(row => checkAd(row, task));
     if (ads.some(ad => ad.status !== 'ready')) throw new LaunchAdsError('The server returned a file that is not saved yet.', 502);
-    return {ads: await signReads(ads), expiresIn: READ_SECONDS, signedAt: new Date().toISOString()};
+    const signedAt = new Date().toISOString();
+    const out = {ads: await signReads(ads), expiresIn: READ_SECONDS, signedAt};
+    await sweep(task);
+    return out;
   }
 
   if (input.operation === 'launchAds.update') {
@@ -223,5 +264,9 @@ export async function runLaunchAds(client: LaunchClient, admin: LaunchAdmin, raw
   }
 
   const {taskId: task, id: adId} = input.args;
-  return {ad: checkAd(await rpc('cockpit_csm_launch_ad_remove', {p_task_id: task, p_id: adId}), task)};
+  const removed = checkAd(await rpc('cockpit_csm_launch_ad_remove', {p_task_id: task, p_id: adId}), task);
+  if (removed.status !== 'removed') throw new LaunchAdsError('The server did not confirm the removal. Try again.', 502);
+  // The row stays for the audit; the bytes go now (or on the next sweep).
+  const purged = (removed as Record<string, unknown>).purgedAt ? true : await purge(task, [removed]);
+  return {ad: removed, deleted: purged};
 }

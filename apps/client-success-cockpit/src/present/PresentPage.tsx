@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Navigate, useLocation, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton } from "@/components/ClientCheckIn";
+import { useDeckReport } from "./DeckBoundary";
 import { loadDeck } from "./load";
 import { PresentApp, type PresentUrls, type View } from "./PresentApp";
 import {
@@ -48,6 +49,7 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
   const { search } = useLocation();
   const auth = useCockpitAuth();
   const client = auth.client;
+  const report = useDeckReport();
   const lang = new URLSearchParams(search).get("lang") ?? undefined;
   const view: View = notes
     ? "notes"
@@ -106,6 +108,7 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
       deck={deck}
       view={view}
       io={io}
+      report={report}
       urls={presentUrls(key, deck, lang)}
       book={(d, kind, label, onBooked) => (
         <BookCallButton

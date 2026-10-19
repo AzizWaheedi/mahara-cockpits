@@ -77,17 +77,25 @@ export function Road({
           />
         ))}
       </svg>
-      <ol style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      {/* One grid under the nodes: a shared row for the names and one for
+          what goes under them, so a name that wraps never pushes its own
+          date below the others. */}
+      <ol
+        className="dkc-road-stops"
+        style={{
+          gridTemplateColumns: `repeat(${Math.max(0, n - 1)}, ${gap}px) ${STOP_W}px`,
+        }}
+      >
         {stops.map((s, i) => (
           <li
             key={`stop-${String(i)}`}
             className="dkc-road-stop"
             data-state={i < now ? "past" : i === now ? "now" : "ahead"}
             aria-current={i === now ? "step" : undefined}
-            style={{ insetInlineStart: x(i) - R, width: STOP_W }}
+            style={{ gridColumn: i + 1 }}
           >
             <span className="dkc-road-name">{s.name}</span>
-            {s.under}
+            <span className="dkc-road-under">{s.under}</span>
           </li>
         ))}
       </ol>

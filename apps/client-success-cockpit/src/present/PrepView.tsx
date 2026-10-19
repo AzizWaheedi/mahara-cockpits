@@ -411,7 +411,7 @@ export function PrepView({
             <div
               role="status"
               className={cn(
-                "text-xs",
+                "flex items-center justify-between gap-2 text-xs",
                 sl.tone === "bad"
                   ? "txt-bad"
                   : sl.tone === "good"
@@ -419,7 +419,17 @@ export function PrepView({
                     : "text-muted-foreground",
               )}
             >
-              {sl.text}
+              <span className="min-w-0">{sl.text}</span>
+              {sl.tone === "bad" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => void model.flush()}
+                >
+                  Save again
+                </Button>
+              ) : null}
             </div>
           </section>
         </aside>

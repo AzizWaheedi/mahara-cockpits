@@ -231,6 +231,7 @@ The six stop names are the Onboarding Map's own, exactly. Stop 4 carries only it
 | `week.4.line` | Have a list of old enquiries? Send it, and we'll agree whether to call them. | عندكم قائمة باستفسارات قديمة؟ أرسلوها، ونتفق إذا نتصل عليهم. |
 | `week.5.name` | The Academy | الأكاديمية |
 | `week.5.line` | Courses for you and your team: your offer, closing your projects, your team and operations. Join, and start with the onboarding course. | كورسات لكم ولفريقكم: العرض، وتوقيع المشاريع، والفريق والتشغيل. انضموا، وابدوا بكورس Onboarding. |
+| `week.links` (copied into the group) | Meta access (one link): {url} · Your Drive folder: {url} · The Academy: {url} · Mahara OS: {url} · Install Mahara OS on your phone: {url} | صلاحيات ميتا (رابط واحد): {url} · مجلد الدرايف: {url} · الأكاديمية: {url} · Mahara OS: {url} · نزّلوا Mahara OS على جوالكم مثل أي تطبيق: {url} |
 | `week.status.todo` | To do | باقي |
 | `week.status.done` | Done | تم |
 | `week.status.unknown` | Not checked yet | ما تأكدنا للحين |
@@ -274,6 +275,8 @@ The onboarding course keeps its own name, isolated in Latin: «كورس البد
 | `next.band.date` | {next.blueprint} | {next.blueprint} |
 | `next.starter.title` | Your starter ads | إعلانات البداية |
 | `next.starter.tag` | Starter, from our templates | إعلان بداية، من قوالبنا |
+| `next.starter.line` | Our ready templates for {prep.service_focus}, under your Page name and logo. | قوالبنا الجاهزة لخدمة {prep.service_focus}، باسم صفحتكم وشعاركم. |
+| `next.starter.line.nopack` | Our ready templates, under your Page name and logo. | قوالبنا الجاهزة، باسم صفحتكم وشعاركم. |
 
 **Spoken lines (Arabic)**
 - تبون تشوفون إعلانات البداية الحين؟
@@ -325,6 +328,7 @@ Both Arabic titles put the verb before the name, so a company name never forces 
 |---|---|---|---|---|---|
 | 1 | `journey.1` | Sees your ad | يشوف إعلانكم | They see your ad in their feed. | يشوف إعلانكم وهو يقلّب جواله. |
 | 2 | `journey.2` | Answers your questions | يجاوب على أسئلتكم | A few short questions about their project, then your thank-you screen. | يجاوب على كم سؤال قصير عن مشروعه، وبعدها تطلع له صفحة الشكر. |
+| 2 | `journey.2.whatsapp` | | | They message you on WhatsApp. The chat opens with their first message ready to send. | يراسلكم على الواتساب. المحادثة تفتح ورسالته الأولى جاهزة يرسلها. |
 | 3 | `journey.3` | We call | نتصل عليه | We call during working hours, 10 to 6, Saturday to Thursday. New enquiries go to the top of the list. Anything that comes in at night is called from 10 the next working morning. | نتصل خلال أوقات الدوام: من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس. الاستفسارات الجديدة تطلع أول القائمة. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام. |
 | 3 | `journey.3.chip` | | | Up to 4 tries over 3 working days | لين ٤ محاولات خلال ٣ أيام دوام |
 | 3 | `journey.3.notall` | | | Not every enquiry books. Some can't be reached, some aren't a fit. Our caller notes why, and we go through it with you at check-ins. | مو كل استفسار ينحجز له موعد. فيه ناس ما نقدر نوصل لهم، وفيه ناس ما يناسبونكم. وفريق الاتصال يكتب السبب، ونمر عليه معكم بمكالمات المتابعة. |
@@ -377,7 +381,7 @@ For stop 6, join two or three consultation types with أو (في مكتبكم أ
 | `ads.eyebrow` | Your customer sees this | هذا اللي يشوفه عميلكم |
 | `ads.title` | Your ads | إعلاناتكم |
 | `ads.tag` | Preview | معاينة |
-| `ads.line` | How your ads look in the feed. We can show any of your creatives in the phones, right now. | هذا شكل إعلاناتكم وهي تطلع بالفيد. ونقدر نوريكم أي تصميم من تصاميمكم على الجوالات، الحين. |
+| `ads.line` | We can show any of your creatives in the phones, right now. | نقدر نوريكم أي تصميم من تصاميمكم على الجوالات، الحين. |
 | `ads.frame.igfeed` | Instagram feed | فيد إنستقرام |
 | `ads.frame.igstory` | Instagram Stories and Reels | ستوري وريلز إنستقرام |
 | `ads.frame.fbfeed` | Facebook feed | فيد فيسبوك |
@@ -386,6 +390,8 @@ For stop 6, join two or three consultation types with أو (في مكتبكم أ
 | `ads.tray.uploaded` | Uploaded | المرفوعة |
 | `ads.tray.meta` | From your Meta ads | من إعلاناتكم في ميتا |
 | `ads.tag.starter` | Starter, from our templates | إعلان بداية، من قوالبنا |
+| `ads.tag.starter.short` (tray thumbnail) | Template | قالب |
+| `ads.foot.starter` | Previews of starter ads, from our templates. Meta fits each ad to the screen it shows on. | معاينات لإعلانات البداية، من قوالبنا. ميتا تضبط كل إعلان على الشاشة اللي يطلع فيها. |
 | `ads.planned` | Planned next: {platforms} | الخطوة الجاية: {platforms} |
 | `ads.empty` | We're finishing your first ads | نشتغل على أول إعلاناتكم الحين |
 | `ads.meta.empty` | Nothing built in Meta yet. | ما انبنى شي في ميتا للحين. |
@@ -467,6 +473,13 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 | `form.thanks.default` | Thank you. Our team will call you during working hours. | شكراً لك. فريقنا بيتواصل معك خلال أوقات الدوام. |
 | `form.fallback` | We're finishing yours. (Beside the "Example form" tag, which already says what it is.) | نشتغل على نموذجكم. |
 | `form.whatsapp` | Your ad opens a WhatsApp chat. | إعلانكم يفتح محادثة واتساب. |
+| `form.whatsapp.message` (Example wording) | Hi, I saw your ad. I'd like to know more about {service}. | السلام عليكم، شفت إعلانكم وأبي أعرف أكثر عن {service}. |
+| `form.whatsapp.message.any` | Hi, I saw your ad and I'd like to know more. | السلام عليكم، شفت إعلانكم وأبي أعرف أكثر. |
+| `form.whatsapp.next` | What happens next | اللي يصير بعدها |
+| `form.whatsapp.next.1` | Their first message is ready in the chat. They tap send. | رسالته الأولى جاهزة بالمحادثة، ويضغط إرسال. |
+| `form.whatsapp.next.2` | It arrives on your WhatsApp. | توصل على الواتساب عندكم. |
+| `form.whatsapp.next.3` | Our team calls them during working hours. | وفريقنا يتصل عليه خلال أوقات الدوام. |
+| `form.whatsapp.next.3.dwy` | Your team calls them. | وفريقكم يتصل عليه. |
 
 **The example form** (drawn when no form is confirmed; it speaks to the customer, so it is singular)
 
@@ -476,7 +489,7 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 | Question 1 | Which service do you need? · {service} · Something else | أي خدمة تحتاج؟ · {service} · غيرها |
 | Question 2 (Filters) | When would you like to start? · Within a month · In 1 to 3 months · Not sure yet | متى تبي تبدي؟ · خلال شهر · بعد شهر إلى ٣ شهور · للحين ما قررت |
 | Question 3 | Is the project a home or a business? · Home · Business | المشروع بيت ولا محل تجاري؟ · بيت · تجاري |
-| Contact fields | Full name · Phone number · Filled in by Meta · Next | الاسم الكامل · رقم الهاتف · تعبّيه ميتا تلقائياً · التالي |
+| Contact fields | Full name · Phone number · Email · City · Filled in by Meta · Next | الاسم الكامل · رقم الهاتف · البريد الإلكتروني · المدينة · تعبّيه ميتا تلقائياً · التالي |
 
 The headline, questions and options of a confirmed form are the client's own, in the form's language.
 
@@ -497,7 +510,9 @@ The turns, slots, pain variants, budget bands and both dialects are in `EXAMPLE-
 | `call.title` | How we'll speak to your customers | كيف نكلم عملاءكم |
 | `call.tag` | Example written from our script | مثال مكتوب من سكربتنا |
 | `call.line` | {client.name} · {prep.service_focus} | {client.name} · {prep.service_focus} |
-| `call.label` | Written from our call script. The names in it are not real. | مكتوبة من سكربت مكالماتنا، والأسماء فيها مو حقيقية. |
+| `call.label` | Written from our call script. The customer in it is made up. | مكتوبة من سكربت مكالماتنا، والعميل فيها مو حقيقي. |
+| `call.stop.7` | After the call | بعد المكالمة |
+| `call.stop.8` | What lands with you | اللي يوصلكم |
 | `call.stage.1` | The opening | المقدمة |
 | `call.stage.2` | Their goal | تحديد الهدف |
 | `call.stage.3` | The details | التفاصيل |
@@ -564,6 +579,7 @@ The stage names follow the sales deck's `stages` (المقدمة، تحديد ا
 | `portal.2.copy` | Listen back to the calls we make for you, in Mahara OS. | اسمعوا المكالمات اللي نسويها لكم في Mahara OS. |
 | `portal.3.name` | On your phone | على جوالكم |
 | `portal.3.copy` | Install it like an app. | نزّلوه مثل أي تطبيق. |
+| `portal.links` (copied into the group) | Mahara OS: {url} · Install it on your phone: {url} | Mahara OS: {url} · نزّلوه على جوالكم مثل أي تطبيق: {url} |
 | `portal.4.name` | Your number-one job: mark every meeting | أهم شغلة عليكم: سجلوا نتيجة كل موعد |
 | `portal.4.copy` | Did they come? Did you quote? Did you win? A few taps, the same day. | حضر؟ عطيتوه عرض سعر؟ وقّع معكم؟ كم ضغطة، بنفس اليوم. |
 | `portal.4.tag` | Your number-one job | أهم شغلة عليكم |
@@ -601,6 +617,8 @@ The stage names follow the sales deck's `stages` (المقدمة، تحديد ا
 | 3 | Keep your Drive folder fed | خلوا مجلد الدرايف مليان | Fresh projects keep your ads from tiring. | المشاريع الجديدة تخلي إعلاناتكم ما تبهت. |
 | 4 | Keep the offer steady while we test | ثبّتوا العرض وإحنا نختبر | Want to change it? Ask in the group first. A new offer mid-test starts the test again. If you ask first, we can plan it in. | تبون تغيرونه؟ قولوا لنا بالقروب أول. العرض الجديد بنص الاختبار يرجّعه من البداية. وإذا قلتوا لنا أول، نرتب له. |
 | 5 | Block busy times and holidays in your calendar | سكروا أوقات انشغالكم وإجازاتكم بالتقويم | Our callers book into the times you leave free. | فريق الاتصال يحجز بالأوقات اللي تخلونها فاضية. |
+
+The calendar day on row 5 names its blocked hour: Busy · مشغول.
 
 **DWY**
 
@@ -689,7 +707,8 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged.
 | 6.5 calendar entry | {day} · 4 pm · Appointment · {place} | {day} · ٤ مساءً · موعد · {place} |
 | 7.2 to 7.4 Meta chrome | See more · Like · Comment · Share | عرض المزيد · أعجبني · تعليق · مشاركة |
 | 7.3 label | Reels and Stories | ريلز وستوري |
-| 8.3 leaders | Your page and logo · Marked Sponsored · Your picture or video · Your words · The button: Learn more | صفحتكم وشعاركم · مكتوب عليه مُموَّل · صورتكم أو الفيديو · كلامكم · الزر: معرفة المزيد |
+| 8.3 leaders | Your page and logo · Marked {word} · Your picture or video · Your words · The button: Learn more | صفحتكم وشعاركم · مكتوب عليه {word} · صورتكم أو الفيديو · كلامكم · الزر: معرفة المزيد |
+| 8.3 leaders, {word} | The word as the phone shows it, in the phone's language: Sponsored, or مُموَّل | |
 | 8.3 crop leader | Meta crops this to 4:5 in the feed | ميتا تقص هذا على مقاس ٤:٥ في الفيد |
 | 8.3 phone fallback | Your ad goes here | إعلانكم هنا |
 | 8.3 foot | Previews. Meta fits each ad to the screen it shows on. | معاينات. ميتا تضبط كل إعلان على الشاشة اللي يطلع فيها. |
@@ -698,7 +717,8 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged.
 | 9.3 group header | Your WhatsApp group | قروب الواتساب |
 | 9.4 matrix | + Add a service · Your first campaign | + أضيفوا خدمة · أول حملة |
 | 9.7 label | Next | الخطوة الجاية |
-| 10.1 in-use chips | Feed · Reels · Facebook | فيد · ريلز · فيسبوك |
+| 10.1 in-use chips | Feed · Reels · Facebook feed | فيد · ريلز · فيد فيسبوك |
+| 12 a slide that could not be drawn | This slide could not be drawn. | ما قدرنا نعرض هالشريحة. |
 | 12.1 chrome | Back to {client} · Notes · All slides · Full screen | رجوع إلى {client} · الملاحظات · كل الشرائح · ملء الشاشة |
 | 12.1 closed screen | Deck closed | انتهى العرض |
 

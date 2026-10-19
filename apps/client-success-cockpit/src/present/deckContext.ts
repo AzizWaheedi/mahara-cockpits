@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { LiveState } from "./channel";
-import type { L, Lang, SlideNotes } from "./content";
+import { type L, type Lang, type SlideNotes, tf } from "./content";
 import type { DeckData, Overrides } from "./deckData";
 import type { DeckKind } from "./sources";
 
@@ -82,3 +82,11 @@ export function fillNotes(lines: string[], slots: Record<string, string>) {
     l.replace(/\{(\w+)\}/g, (_, k: string) => slots[k] ?? `{${k}}`),
   );
 }
+
+/**
+ * A slide's title as the overview, the slide's label and the live region
+ * say it: {name} filled before the Arabic isolates its Latin runs (filled
+ * after, the slot's own letters are isolated and the slot never matches).
+ */
+export const slideTitle = (title: L, lang: Lang, name: string) =>
+  tf(title, lang, { name });

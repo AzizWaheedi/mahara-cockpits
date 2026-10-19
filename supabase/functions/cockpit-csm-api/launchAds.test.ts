@@ -21,6 +21,7 @@ function fixture(options: {
   objects?: Record<string, {size: number; contentType: string}>;
   signUpload?: (path: string) => {data: unknown; error: unknown};
   signRead?: (paths: string[]) => {data: unknown; error: unknown};
+  removeError?: unknown;
   healthError?: boolean;
 } = {}) {
   const calls: {name: string; args: Record<string, unknown>}[] = [];
@@ -63,6 +64,10 @@ function fixture(options: {
             storage.push(`admin:info:${path}`);
             const found = objects[path];
             return found ? {data: {name: path, ...found}, error: null} : {data: null, error: {statusCode: '404', message: 'Object not found'}};
+          },
+          async remove(paths: string[]) {
+            storage.push(`admin:remove:${paths.join(',')}`);
+            return options.removeError ? {data: null, error: options.removeError} : {data: paths.map(name => ({name})), error: null};
           },
         };
       },
@@ -245,15 +250,19 @@ describe('launchAds.ready', () => {
   });
 });
 
+const noStale = () => ({data: [], error: null});
+
 describe('launchAds.list, update and remove', () => {
   test('list signs every saved file in one call and leaves an unsigned one null', async () => {
     const second = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
     const f = fixture({
-      rpc: {cockpit_csm_launch_ads_read: () => ({data: [picture({status: 'ready'}), picture({id: second, status: 'ready', path: `${TASK}/${second}.png`})], error: null})},
+      rpc: {cockpit_csm_launch_ads_read: () => ({data: [picture({status: 'ready'}), picture({id: second, status: 'ready', path: `${TASK}/${second}.png`})], error: null}),
+        cockpit_csm_launch_ad_stale: noStale},
       signRead: paths => ({data: paths.map(path => path.includes(second) ? {path, signedUrl: '', error: 'Object not found'} : {path, signedUrl: `https://storage.test/sign/${path}`, error: null}), error: null}),
     });
     const out = await runLaunchAds(f.client, f.admin, {operation: 'launchAds.list', args: {taskId: TASK, includeHidden: false}}) as Record<string, any>;
-    expect(f.calls).toEqual([{name: 'cockpit_csm_launch_ads_read', args: {p_task_id: TASK, p_include_hidden: false}}]);
+    expect(f.calls).toEqual([{name: 'cockpit_csm_launch_ads_read', args: {p_task_id: TASK, p_include_hidden: false}},
+      {name: 'cockpit_csm_launch_ad_stale', args: {p_task_id: TASK}}]);
     expect(out.ads.map((a: Record<string, unknown>) => [a.id, a.url, a.posterUrl])).toEqual([
       [AD, `https://storage.test/sign/${TASK}/${AD}.png`, null], [second, null, null],
     ]);
@@ -261,7 +270,7 @@ describe('launchAds.list, update and remove', () => {
   });
 
   test('an empty tray signs nothing', async () => {
-    const f = fixture({rpc: {cockpit_csm_launch_ads_read: () => ({data: [], error: null})}});
+    const f = fixture({rpc: {cockpit_csm_launch_ads_read: () => ({data: [], error: null}), cockpit_csm_launch_ad_stale: noStale}});
     expect(await runLaunchAds(f.client, f.admin, {operation: 'launchAds.list', args: {taskId: TASK}})).toMatchObject({ads: [], expiresIn: 3600});
     expect(f.storage).toEqual([]);
     expect(f.receipts).toEqual([]);
@@ -282,12 +291,53 @@ describe('launchAds.list, update and remove', () => {
     expect((await refusal(runLaunchAds(g.client, g.admin, {operation: 'launchAds.update', args: {taskId: TASK, id: AD, patch: {}}}))).message).toBe('Choose something to change.');
   });
 
-  test('remove goes through its gated function; a refusal keeps its status', async () => {
-    let f = fixture({rpc: {cockpit_csm_launch_ad_remove: () => ({data: picture({status: 'removed', removedAt: '2026-10-19T10:00:00Z'}), error: null})}});
-    expect(await runLaunchAds(f.client, f.admin, {operation: 'launchAds.remove', args: {taskId: TASK, id: AD}})).toMatchObject({ad: {status: 'removed'}});
+  test('remove goes through its gated function, then deletes the bytes and records it; a refusal keeps its status', async () => {
+    let f = fixture({rpc: {
+      cockpit_csm_launch_ad_remove: () => ({data: ad({status: 'removed', removedAt: '2026-10-19T10:00:00Z'}), error: null}),
+      cockpit_csm_launch_ad_purged: () => ({data: 1, error: null}),
+    }});
+    expect(await runLaunchAds(f.client, f.admin, {operation: 'launchAds.remove', args: {taskId: TASK, id: AD}})).toMatchObject({ad: {status: 'removed'}, deleted: true});
+    expect(f.storage).toEqual([`admin:remove:${TASK}/${AD}.mp4,${TASK}/${AD}-poster.jpg`]);
+    expect(f.calls.map(c => c.name)).toEqual(['cockpit_csm_launch_ad_remove', 'cockpit_csm_launch_ad_purged']);
+    expect(f.calls[1].args).toEqual({p_task_id: TASK, p_ids: [AD]});
+    expect(f.receipts.map(r => [r.method, r.resource, r.phase, r.http_status])).toEqual([
+      ['DELETE', 'cockpit-launch-ads/delete-object', 'intent', undefined], ['DELETE', 'cockpit-launch-ads/delete-object', 'response', 200],
+    ]);
+    // Already purged: nothing to delete again.
+    f = fixture({rpc: {cockpit_csm_launch_ad_remove: () => ({data: picture({status: 'removed', removedAt: '2026-10-19T10:00:00Z', purgedAt: '2026-10-19T10:00:01Z'}), error: null})}});
+    expect(await runLaunchAds(f.client, f.admin, {operation: 'launchAds.remove', args: {taskId: TASK, id: AD}})).toMatchObject({deleted: true});
     expect(f.storage).toEqual([]);
     f = fixture({rpc: {cockpit_csm_launch_ad_remove: () => ({data: null, error: {message: 'Current confirmed client-success access is required', code: '42501'}})}});
     expect((await refusal(runLaunchAds(f.client, f.admin, {operation: 'launchAds.remove', args: {taskId: TASK, id: AD}}))).status).toBe(403);
+    expect(f.storage).toEqual([]);
+  });
+
+  test('when Storage will not delete, the removal still stands, the receipt fails and the sweep tries again later', async () => {
+    const f = fixture({removeError: {statusCode: '503', message: 'down'}, rpc: {
+      cockpit_csm_launch_ad_remove: () => ({data: picture({status: 'removed', removedAt: '2026-10-19T10:00:00Z'}), error: null}),
+    }});
+    expect(await runLaunchAds(f.client, f.admin, {operation: 'launchAds.remove', args: {taskId: TASK, id: AD}})).toMatchObject({ad: {status: 'removed'}, deleted: false});
+    expect(f.calls.map(c => c.name)).toEqual(['cockpit_csm_launch_ad_remove']);
+    expect(f.receipts.filter(r => r.phase !== 'intent').map(r => [r.phase, r.http_status])).toEqual([['response', 503]]);
+  });
+
+  test('listing sweeps this client\'s removed and day-old unfinished files, inside its own folder only', async () => {
+    const stale = '7b6a5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d';
+    const f = fixture({rpc: {
+      cockpit_csm_launch_ads_read: () => ({data: [], error: null}),
+      cockpit_csm_launch_ad_stale: () => ({data: [
+        {id: AD, path: `${TASK}/${AD}.mp4`, posterPath: `${TASK}/${AD}-poster.jpg`},
+        {id: stale, path: `taskB1/${stale}.png`, posterPath: null},
+      ], error: null}),
+      cockpit_csm_launch_ad_purged: () => ({data: 1, error: null}),
+    }});
+    expect(await runLaunchAds(f.client, f.admin, {operation: 'launchAds.list', args: {taskId: TASK}})).toMatchObject({ads: []});
+    expect(f.storage).toEqual([`admin:remove:${TASK}/${AD}.mp4,${TASK}/${AD}-poster.jpg`]);
+    expect(f.calls.at(-1)).toEqual({name: 'cockpit_csm_launch_ad_purged', args: {p_task_id: TASK, p_ids: [AD]}});
+    // A sweep that fails never fails the tray.
+    const g = fixture({rpc: {cockpit_csm_launch_ads_read: () => ({data: [], error: null}), cockpit_csm_launch_ad_stale: () => ({data: null, error: {message: 'down'}})}});
+    expect(await runLaunchAds(g.client, g.admin, {operation: 'launchAds.list', args: {taskId: TASK}})).toMatchObject({ads: []});
+    expect(g.storage).toEqual([]);
   });
 
   test('an unknown operation is refused', async () => {

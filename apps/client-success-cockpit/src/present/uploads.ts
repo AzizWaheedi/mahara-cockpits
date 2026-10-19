@@ -74,7 +74,13 @@ export interface AddResult {
 
 /** The plain sentence for a save that stopped. */
 export function saveProblem(error: unknown): string {
-  const said = problem(error, "Not saved. Add it again to retry.");
+  const said = problem(
+    error,
+    "Not saved. Add it again to retry.",
+    "Not saved: no connection. Add it again once you are back online.",
+  );
+  if (/^Shown, not saved/.test(said)) return said;
+  if (/^Not saved: no connection/.test(said)) return said;
   if (/sign-in|sign in|JWT|401/i.test(said))
     return "Saving needs your cockpit sign-in. The preview still works.";
   if (/backend is not live/i.test(said))
@@ -158,14 +164,18 @@ export async function addFile(
 export interface LocalItem extends Omit<LocalFile, "blob" | "poster"> {
   url: string;
   posterUrl: string | null;
+  /** Its object URLs were freed: the saved copy draws it now. */
+  released?: boolean;
 }
 
 type Listener = () => void;
 
 /**
  * The files added during the call, in this window: each window makes its
- * own object URLs for the Blobs it was sent. A file stays here until the
- * tray's saved copy comes back (then the saved one stands in its place).
+ * own object URLs for the Blobs it was sent. Once the tray's saved copy
+ * comes back, the saved one stands in its place and this window's object
+ * URLs are freed (the row stays, so the notes window still says "Saved").
+ * Adding a file again drops its earlier failed try.
  */
 export class LocalAds {
   private items: LocalItem[] = [];
@@ -199,6 +209,11 @@ export class LocalAds {
 
   add(file: LocalFile) {
     if (this.items.some(i => i.id === file.id)) return;
+    for (const i of this.items)
+      if (i.phase === "failed" && i.name === file.name) this.free(i.id);
+    this.items = this.items.filter(
+      i => !(i.phase === "failed" && i.name === file.name),
+    );
     const url = this.makeUrl(file.blob);
     const posterUrl = file.poster ? this.makeUrl(file.poster) : null;
     this.urls.set(file.id, posterUrl ? [url, posterUrl] : [url]);
@@ -214,12 +229,32 @@ export class LocalAds {
     this.changed();
   }
 
+  private free(id: string) {
+    for (const u of this.urls.get(id) ?? []) this.freeUrl(u);
+    this.urls.delete(id);
+  }
+
   remove(id: string) {
     const before = this.items.length;
     this.items = this.items.filter(i => i.id !== id);
-    for (const u of this.urls.get(id) ?? []) this.freeUrl(u);
-    this.urls.delete(id);
+    this.free(id);
     if (this.items.length !== before) this.changed();
+  }
+
+  /**
+   * The tray read back these saved ids: their local copies' object URLs go
+   * (the saved copy draws them now); the rows stay for the notes window.
+   */
+  release(savedIds: Iterable<string>) {
+    const ids = new Set(savedIds);
+    let any = false;
+    this.items = this.items.map(i => {
+      if (!(i.savedId && ids.has(i.savedId) && this.urls.has(i.id))) return i;
+      this.free(i.id);
+      any = true;
+      return { ...i, released: true };
+    });
+    if (any) this.changed();
   }
 
   /** Apply a message from another window (or this one). */
@@ -279,7 +314,7 @@ export function trayCreatives(
   return [
     ...saved,
     ...local
-      .filter(i => !(i.savedId && ids.has(i.savedId)))
+      .filter(i => !i.released && !(i.savedId && ids.has(i.savedId)))
       .map(i => ({ ...localCreative(i), local: i })),
   ];
 }

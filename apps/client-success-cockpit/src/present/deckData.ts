@@ -623,7 +623,7 @@ export function deckData(input: DeckInput): DeckData {
   for (const g of goals)
     if (g.held)
       notes.push(
-        `Held back from slide 2: "${g.label.en}" ${g.held === "count" ? "counts leads or appointments" : "mentions a guarantee or a refund"}. Edit it in prep to show it.`,
+        `Held back from slide 2: "${g.label.en}" ${g.held === "count" ? "counts enquiries or appointments" : "mentions a guarantee or a refund"}. Edit it in prep to show it.`,
       );
 
   const base: Omit<DeckData, "launch"> = {

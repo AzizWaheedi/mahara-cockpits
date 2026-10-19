@@ -451,3 +451,56 @@ describe("the call's cursor", () => {
     expect(callRun.state.playing).toBe(false);
   });
 });
+
+describe("the ads slide with motion reduced (DESIGN 15.4)", () => {
+  const withVideo = (): DeckData => {
+    const f = FIXTURES.full("launch");
+    const ads = f.ads.map(a =>
+      a.id === "custom-tall"
+        ? {
+            ...a,
+            mime: "video/mp4",
+            path: "fixture/custom-tall.mp4",
+            posterPath: "fixture/custom-tall-poster.webp",
+            posterMime: "image/webp",
+            posterUrl: a.url,
+            seconds: 24,
+          }
+        : a,
+    );
+    return deckData({
+      taskId: "fixture-full",
+      deck: "launch",
+      lang: "en",
+      sources: f.sources,
+      kit: f.kit,
+      prep: f.prep,
+      ads,
+      presenterName: "Sara Al-Harbi",
+      publicUrl: (_b, p) => p,
+      now: NOW,
+    });
+  };
+  const ads = launchSlides().find(s => s.id === "ads")!;
+  const reels = (live = emptyLive()) =>
+    renderToStaticMarkup(
+      <>
+        {ads.render({
+          ...ctx(withVideo(), 2, true),
+          live: { ...live, phones: { reels: "custom-tall" } },
+        })}
+      </>,
+    );
+
+  test("a video waits on its poster with a play button; pressed, it plays", () => {
+    const waiting = reels();
+    expect(waiting).toContain("dkc-play");
+    expect(waiting).not.toContain("<video");
+    const playing = reels({
+      ...emptyLive(),
+      playing: { reels: "custom-tall" },
+    });
+    expect(playing).not.toContain("dkc-play");
+    expect(playing).toContain("<video");
+  });
+});

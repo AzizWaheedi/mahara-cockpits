@@ -8,6 +8,7 @@ import { baseCtx, DECKS, prefersStill, shownSlides } from "./decks";
 import type { Pos } from "./engine";
 import { NotesWindow } from "./NotesWindow";
 import { PrepView } from "./PrepView";
+import { openNamed } from "./PresentButton";
 import type { DeckKind } from "./sources";
 import { type DeckIO, useDeckModel } from "./useDeckModel";
 
@@ -28,10 +29,9 @@ export interface PresentUrls {
   other: string;
 }
 
-/** Opens (or brings back) a named window of its own. */
+/** Opens a named window of its own, or brings it forward without reloading it. */
 function openWindow(url: string, name: string, features?: string) {
-  const w = window.open(url, name, features);
-  w?.focus();
+  openNamed(url, name, features);
 }
 
 function Screen({ children }: { children: ReactNode }) {
@@ -50,6 +50,7 @@ export function PresentApp({
   urls,
   book,
   uploadLogo,
+  report,
 }: {
   taskId: string;
   deck: DeckKind;
@@ -64,6 +65,8 @@ export function PresentApp({
     onBooked: (startTime: string) => void,
   ) => ReactNode;
   uploadLogo?: (file: File) => Promise<void>;
+  /** Sends a slide's crash to the issue queue. */
+  report?: (r: { title: string; detail: string }) => Promise<unknown>;
 }) {
   const model = useDeckModel({
     taskId,
@@ -192,6 +195,7 @@ export function PresentApp({
       onNotes={openNotes}
       onPos={onPos}
       closed={closed}
+      report={report}
     />
   );
 }

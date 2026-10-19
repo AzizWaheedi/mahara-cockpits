@@ -183,6 +183,17 @@ export class PrepSaver {
   }
 }
 
+/**
+ * A window's prep after it reads the deck again. The first read takes the
+ * server's copy. After that the window keeps its own: every edit in any
+ * window of the deck reaches it over the hub at once, while the server's
+ * copy can lag a typed field by the save pause (or a save in flight), so
+ * taking it would put back what the CSM just typed.
+ */
+export function prepAfterLoad<T>(current: T, server: T, first: boolean): T {
+  return first ? server : current;
+}
+
 /** The two decks' prep, as the server last confirmed it. */
 export type PrepRows = Record<
   DeckKind,

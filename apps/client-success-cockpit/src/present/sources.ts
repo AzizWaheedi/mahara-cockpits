@@ -215,14 +215,24 @@ export const sourcesSchema = z
   .passthrough();
 export type DeckSources = z.infer<typeof sourcesSchema>;
 
+/** The browser could not reach the server at all (offline, a dropped Wi-Fi). */
+const OFFLINE =
+  /Failed to fetch|NetworkError|Load failed|FetchError|network request failed/i;
+
 /** A plain sentence from whatever the server or the network said. */
-export function problem(error: unknown, fallback: string): string {
+export function problem(
+  error: unknown,
+  fallback: string,
+  /** What to say when the browser is offline (a save says its change is kept). */
+  offline = "No connection. Check the internet, then try again.",
+): string {
   const m =
     error && typeof error === "object" && "message" in error
       ? String((error as { message: unknown }).message ?? "")
       : typeof error === "string"
         ? error
         : "";
+  if (OFFLINE.test(m)) return offline;
   if (/JWT|sign.?in|not authenticated|401/i.test(m))
     return "Saving needs your cockpit sign-in. The preview still works.";
   if (/could not find the function|PGRST202|does not exist/i.test(m))
@@ -262,7 +272,13 @@ export async function savePrep(
     p_patch: patch,
   });
   if (error)
-    throw Error(problem(error, "This change was not saved. Try again."));
+    throw Error(
+      problem(
+        error,
+        "This change was not saved. Try again.",
+        "No connection. Your change is kept here and saves when you are back online.",
+      ),
+    );
   const parsed = saved.safeParse(data);
   if (!parsed.success)
     throw Error("The server did not confirm the save. Try again.");
@@ -317,6 +333,52 @@ export async function listLaunchAds(
     z.object({ ads: z.array(launchAdSchema) }).passthrough(),
   );
   return out.ads;
+}
+
+/** How long a read link is used before it is signed again (it lasts an hour). */
+export const SIGN_FRESH_MS = 50 * 60_000;
+/** A Storage read link signed for one seat (never a public object URL). */
+export const SIGNED_LINK = /\/storage\/v1\/object\/sign\//;
+
+/**
+ * The tray read again while its links are still fresh: a file whose path is
+ * unchanged keeps the link it is drawn with, so a playing video does not
+ * restart and no picture flickers. New files take their new links.
+ */
+export function keepLinks(before: LaunchAd[], after: LaunchAd[]): LaunchAd[] {
+  const old = new Map(before.map(a => [a.id, a]));
+  return after.map(a => {
+    const o = old.get(a.id);
+    if (
+      !o ||
+      o.path !== a.path ||
+      (o.posterPath ?? null) !== (a.posterPath ?? null)
+    )
+      return a;
+    return { ...a, url: o.url ?? a.url, posterUrl: o.posterUrl ?? a.posterUrl };
+  });
+}
+
+/**
+ * Stills and posters fetched when the deck opens (DESIGN 10.6), so a slide
+ * mounting later never pops a creative in. Videos load poster-first.
+ */
+export function preloadMedia(
+  ads: LaunchAd[],
+  stills: (string | null | undefined)[] = [],
+): string[] {
+  const srcs = [
+    ...ads.map(a => (a.mime.startsWith("video/") ? a.posterUrl : a.url)),
+    ...stills,
+  ].filter((s): s is string => typeof s === "string" && s.length > 0);
+  if (typeof Image === "undefined") return srcs;
+  for (const src of srcs) {
+    const img = new Image();
+    img.decoding = "async";
+    img.src = src;
+    void img.decode?.().catch(() => undefined);
+  }
+  return srcs;
 }
 
 export const UPLOAD_TYPES = {
@@ -395,6 +457,17 @@ export async function readFileFacts(file: File): Promise<FileFacts> {
   }
 }
 
+/** Storage refused a PUT for its size (its own upload limit): a retry never passes. */
+export class TooLargeForStorage extends Error {}
+
+/** Storage's answer to a PUT over its upload limit. */
+export const tooLarge = (status: number, body: string) =>
+  status === 413 ||
+  (status === 400 &&
+    /maximum allowed size|payload too large|entity too large|exceeded/i.test(
+      body,
+    ));
+
 /** PUT a file to a signed upload URL, reporting progress (0 to 1). */
 export function putSigned(
   url: string,
@@ -413,7 +486,11 @@ export function putSigned(
     xhr.onload = () =>
       xhr.status >= 200 && xhr.status < 300
         ? ok()
-        : bad(Error("Not saved. Add it again to retry."));
+        : bad(
+            tooLarge(xhr.status, String(xhr.responseText ?? ""))
+              ? new TooLargeForStorage("too large")
+              : Error("Not saved. Add it again to retry."),
+          );
     xhr.onerror = () => bad(Error("Not saved. Add it again to retry."));
     xhr.send(file);
   });
@@ -480,14 +557,37 @@ export async function uploadLaunchAd(
       .passthrough(),
   );
   const parts = poster && reserved.posterUpload?.url ? 0.9 : 1;
-  if (reserved.upload?.url)
-    await put(reserved.upload.url, file, file.type, s =>
-      args.onProgress?.(s * parts),
-    );
-  if (poster && facts.poster && reserved.posterUpload?.url)
-    await put(reserved.posterUpload.url, facts.poster, "image/jpeg", s =>
-      args.onProgress?.(0.9 + s * 0.1),
-    );
+  try {
+    if (reserved.upload?.url)
+      await put(reserved.upload.url, file, file.type, s =>
+        args.onProgress?.(s * parts),
+      );
+    if (poster && facts.poster && reserved.posterUpload?.url)
+      await put(reserved.posterUpload.url, facts.poster, "image/jpeg", s =>
+        args.onProgress?.(0.9 + s * 0.1),
+      );
+  } catch (e) {
+    // The reservation goes with the failed PUT (and any bytes that arrived),
+    // so failed tries never pile up against the unfinished-uploads cap.
+    try {
+      await invoke(
+        client,
+        {
+          operation: "launchAds.remove",
+          requestId: crypto.randomUUID(),
+          args: { taskId, id: reserved.ad.id },
+        },
+        z.object({ ad: launchAdSchema }).passthrough(),
+      );
+    } catch {
+      // Swept with the client's stale uploads the next time the tray is read.
+    }
+    if (e instanceof TooLargeForStorage)
+      throw Error(
+        `Shown, not saved: ${file.name} is larger than storage accepts. Export a smaller copy to keep it.`,
+      );
+    throw e;
+  }
   const ready = await invoke(
     client,
     {

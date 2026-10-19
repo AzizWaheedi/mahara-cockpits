@@ -5,6 +5,9 @@ import {
   type DeckMessage,
   emptyLive,
   type LiveState,
+  newerLive,
+  readStoredLive,
+  storeLive,
 } from "./channel";
 import type { Lang } from "./content";
 import {
@@ -14,13 +17,17 @@ import {
   type Overrides,
 } from "./deckData";
 import { langParam } from "./engine";
-import { applyPatch, PrepSaver } from "./prep";
-import type {
-  DeckKind,
-  DeckSources,
-  FileFacts,
-  LaunchAd,
-  SavedPrep,
+import { applyPatch, PrepSaver, prepAfterLoad } from "./prep";
+import {
+  type DeckKind,
+  type DeckSources,
+  type FileFacts,
+  keepLinks,
+  type LaunchAd,
+  preloadMedia,
+  type SavedPrep,
+  SIGN_FRESH_MS,
+  SIGNED_LINK,
 } from "./sources";
 import { localAds } from "./uploads";
 
@@ -104,8 +111,17 @@ export function useDeckModel({
   });
   const prepRef = useRef(prep);
   prepRef.current = prep;
-  const [live, setLiveState] = useState<LiveState>(emptyLive);
+  // A reloaded tab keeps the call's state (sessionStorage); a new window
+  // takes it from the others when it joins (below).
+  const [live, setLiveState] = useState<LiveState>(
+    () => readStoredLive(hubName) ?? emptyLive(),
+  );
+  const liveRef = useRef(live);
+  liveRef.current = live;
+  useEffect(() => storeLive(hubName, live), [hubName, live]);
   const [booked, setBooked] = useState<Partial<Record<CallKind, string>>>({});
+  const bookedRef = useRef(booked);
+  bookedRef.current = booked;
   const asked = langParam(window.location.search);
   const [lang, setLangState] = useState<Lang>(
     () => asked ?? storedLang() ?? "en",
@@ -124,25 +140,80 @@ export function useDeckModel({
 
   const ioRef = useRef(io);
   ioRef.current = io;
-  const reload = useCallback(async () => {
-    try {
-      const out = await ioRef.current.load();
-      setLoaded(out);
-      setPrepState(out.prep);
-      setError(null);
-      // The client's own language, unless the address or the CSM chose one.
-      if (!langChosen.current) {
-        const own =
-          (out.prep[deck].language as Lang | undefined) ??
-          clientLang(out.sources);
-        if (own === "en" || own === "ar") setLangState(own);
+  const firstLoad = useRef(true);
+  const loadedRef = useRef<Loaded | null>(null);
+  /** When the tray's read links were signed (DESIGN 10.6). */
+  const signedAt = useRef(0);
+  const reload = useCallback(
+    async (opts?: { resign?: boolean }) => {
+      try {
+        const read = await ioRef.current.load();
+        // Fresh links stay as they are drawn; stale or broken ones are replaced.
+        const prev = loadedRef.current;
+        const fresh =
+          !opts?.resign &&
+          prev !== null &&
+          Date.now() - signedAt.current < SIGN_FRESH_MS;
+        const out = fresh
+          ? { ...read, ads: keepLinks(prev.ads, read.ads) }
+          : read;
+        if (!fresh) signedAt.current = Date.now();
+        loadedRef.current = out;
+        setLoaded(out);
+        preloadMedia(
+          out.ads,
+          (out.sources?.meta?.ads ?? []).map(a => a.still?.url),
+        );
+        // Files saved on the call now come back in the tray: free their local copies.
+        localAds.release(out.ads.map(a => a.id));
+        // Prep comes from the server on the first read only (prepAfterLoad).
+        const nextPrep = prepAfterLoad(
+          prepRef.current,
+          out.prep,
+          firstLoad.current,
+        );
+        firstLoad.current = false;
+        prepRef.current = nextPrep;
+        setPrepState(nextPrep);
+        setError(null);
+        // The client's own language, unless the address or the CSM chose one.
+        if (!langChosen.current) {
+          const own =
+            (out.prep[deck].language as Lang | undefined) ??
+            clientLang(out.sources);
+          if (own === "en" || own === "ar") setLangState(own);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [deck]);
+    },
+    [deck],
+  );
   useEffect(() => {
     void reload();
+  }, [reload]);
+  // Read links last an hour: signed again before they lapse, and at once
+  // when a picture or video fails to load (at most every 20 seconds).
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const ads = loadedRef.current?.ads ?? [];
+      if (ads.some(a => a.url) && Date.now() - signedAt.current > SIGN_FRESH_MS)
+        void reload({ resign: true });
+    }, 60_000);
+    let last = 0;
+    const onError = (e: Event) => {
+      const el = e.target as HTMLImageElement | HTMLVideoElement | null;
+      if (!el || (el.tagName !== "IMG" && el.tagName !== "VIDEO")) return;
+      if (!SIGNED_LINK.test(el.currentSrc || el.src || "")) return;
+      if (Date.now() - last < 20_000) return;
+      last = Date.now();
+      void reload({ resign: true });
+    };
+    document.addEventListener("error", onError, true);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("error", onError, true);
+    };
   }, [reload]);
 
   // One saver per deck: typed fields wait 600 ms, ticks go at once.
@@ -170,6 +241,15 @@ export function useDeckModel({
     },
     [savers],
   );
+  // A save that failed offline goes again when the connection comes back.
+  useEffect(() => {
+    const again = () => {
+      void savers.onboarding.flush();
+      void savers.launch.flush();
+    };
+    window.addEventListener("online", again);
+    return () => window.removeEventListener("online", again);
+  }, [savers]);
 
   const setPrep = useCallback(
     (k: DeckKind, patch: Overrides, now = false) => {
@@ -190,7 +270,8 @@ export function useDeckModel({
   const setLive = useCallback(
     (fn: (l: LiveState) => LiveState) => {
       setLiveState(l => {
-        const next = fn(l);
+        // Stamped, and never earlier than what it replaces.
+        const next = { ...fn(l), at: Math.max(Date.now(), (l.at ?? 0) + 1) };
         hub.post({ type: "live", live: next });
         return next;
       });
@@ -228,8 +309,16 @@ export function useDeckModel({
           const all = { ...prepRef.current, [m.deck]: m.overrides };
           prepRef.current = all;
           setPrepState(all);
-        } else if (m.type === "live") setLiveState(m.live);
-        else if (m.type === "booked")
+        } else if (m.type === "live" || m.type === "sync") {
+          setLiveState(cur => newerLive(cur, m.live));
+          if (m.type === "sync") setBooked(b => ({ ...m.booked, ...b }));
+        } else if (m.type === "join") {
+          // A window opened or reloaded mid-call: hand it the call's state.
+          const l = liveRef.current;
+          const b = bookedRef.current;
+          if (l.at || Object.keys(b).length)
+            hub.post({ type: "sync", live: l, booked: b });
+        } else if (m.type === "booked")
           setBooked(b => ({ ...b, [m.kind]: m.startTime }));
         else if (m.type === "lang") {
           langChosen.current = true;
@@ -239,6 +328,10 @@ export function useDeckModel({
       }),
     [hub, reload],
   );
+  // Ask the open windows for the call's state once this window listens.
+  useEffect(() => {
+    hub.post({ type: "join" });
+  }, [hub]);
 
   /** Tell every window, this one included. */
   const emit = useCallback(

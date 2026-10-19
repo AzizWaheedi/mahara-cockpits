@@ -144,33 +144,34 @@ function Media({
   return src ? <img key={c.id} src={src} alt="" draggable={false} /> : null;
 }
 
-/** A text the ad carries, in its own direction; grey bars when it has none. */
+/**
+ * A text the ad carries, in its own direction. With none, nothing is drawn
+ * and nothing is invented (DESIGN 8.3): the Instagram caption keeps only the
+ * Page name, as the app shows an ad with no primary text.
+ */
 function Words({
   text,
-  lines,
   className,
   lead,
 }: {
   text: string | null;
-  lines: number;
   className: string;
   lead?: ReactNode;
 }) {
   if (!text)
-    return (
-      <div className="dkc-bars" aria-hidden>
-        {Array.from({ length: lines }, (_, i) => (
-          <i
-            key={String(i)}
-            style={{ width: i === lines - 1 ? "58%" : "92%" }}
-          />
-        ))}
+    return lead ? (
+      <div className={className} dir="auto">
+        {lead}
       </div>
-    );
+    ) : null;
   // The caption runs in its own language's direction, the Page name first,
   // as the app sets a caption written in the other language.
   return (
-    <div className={className} dir={ARABIC.test(text) ? "rtl" : "ltr"}>
+    <div
+      className={className}
+      dir={ARABIC.test(text) ? "rtl" : "ltr"}
+      data-part="words"
+    >
       {lead}
       {lead ? " " : null}
       <span>{text}</span>
@@ -229,14 +230,11 @@ export function IgFeed({ creative, who, pageName, app, deck, play }: AdProps) {
         <Send />
         <Bookmark />
       </div>
-      <div data-part="words">
-        <Words
-          text={creative?.primaryText ?? null}
-          lines={2}
-          className="dkc-caption-text"
-          lead={<b>{pageName}</b>}
-        />
-      </div>
+      <Words
+        text={creative?.primaryText ?? null}
+        className="dkc-caption-text"
+        lead={<b>{pageName}</b>}
+      />
       <IgTabs />
     </div>
   );
@@ -306,16 +304,7 @@ export function ReelStory({
             <div className="dkc-reel-cap" dir="auto" data-part="words">
               {creative.primaryText}
             </div>
-          ) : (
-            <div
-              className="dkc-bars"
-              style={{ padding: 0 }}
-              aria-hidden
-              data-part="words"
-            >
-              <i style={{ width: "78%" }} />
-            </div>
-          )}
+          ) : null}
           <div className="dkc-reel-cta" data-part="cta">
             <span>{ctaLabel(creative, app)}</span>
             <ChevronRight />
@@ -346,13 +335,7 @@ export function FbFeed({ creative, who, pageName, app, deck, play }: AdProps) {
         </div>
         <Ellipsis />
       </div>
-      <div data-part="words">
-        <Words
-          text={creative?.primaryText ?? null}
-          lines={3}
-          className="dkc-fb-text"
-        />
-      </div>
+      <Words text={creative?.primaryText ?? null} className="dkc-fb-text" />
       <div
         className="dkc-media"
         data-part="media"
@@ -361,16 +344,9 @@ export function FbFeed({ creative, who, pageName, app, deck, play }: AdProps) {
         <Media c={creative} deck={deck} play={play} />
       </div>
       <div className="dkc-fb-link">
+        {/* No headline, no slot: the button keeps its place at the end. */}
         <div>
-          {creative?.headline ? (
-            <b dir="auto">{creative.headline}</b>
-          ) : creative?.primaryText ? null : (
-            // An ad with its words but no headline shows none, as on
-            // Facebook; the bars stand only for words still to come.
-            <div className="dkc-bars" style={{ padding: 0 }} aria-hidden>
-              <i style={{ width: "80%" }} />
-            </div>
-          )}
+          {creative?.headline ? <b dir="auto">{creative.headline}</b> : null}
         </div>
         <span className="dkc-fb-cta" data-part="cta">
           {ctaLabel(creative, app)}
@@ -390,15 +366,8 @@ export function FbFeed({ creative, who, pageName, app, deck, play }: AdProps) {
           {t(APP.share, app)}
         </span>
       </div>
-      {/* The top of the next post, as the feed runs on under an ad: its
-          avatar and name as quiet bars, no words, no picture. */}
-      <div className="dkc-fb-next" aria-hidden>
-        <i className="dkc-fb-next-av" />
-        <div className="dkc-bars" style={{ padding: 0, flex: 1 }}>
-          <i style={{ width: "46%" }} />
-          <i style={{ width: "28%" }} />
-        </div>
-      </div>
+      {/* Where the post ends: Facebook's gap between posts, nothing after it. */}
+      <i className="dkc-fb-gap" aria-hidden />
       <div className="dkc-tabbar" aria-hidden>
         <House />
         <MonitorPlay />

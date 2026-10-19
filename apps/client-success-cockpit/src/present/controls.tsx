@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { O, SHARED } from "./content";
+import { fill, GROUP_LINKS, type L, O, SHARED } from "./content";
 import type { AccessStatus, CallKind, DeckData, Overrides } from "./deckData";
 import type { DeckKind } from "./sources";
 
@@ -192,7 +192,7 @@ function GoalsControls({ d, prep, setPrep }: ControlsProps) {
               <span className="txt-warn">
                 Held back from the slide:{" "}
                 {g.held === "count"
-                  ? "it counts leads or appointments"
+                  ? "it counts enquiries or appointments"
                   : "it mentions a guarantee or a refund"}
                 . Write it here without that to show it.
               </span>
@@ -424,15 +424,17 @@ export function SlideControls(props: ControlsProps) {
   }
 }
 
-/** The group's links, as the CSM pastes them (CONTENT O6). */
+/** The group's links, as the CSM pastes them, in the deck's language (CONTENT O6). */
 export function groupLinks(d: DeckData): { text: string; missing: string[] } {
   const missing: string[] = [];
+  const G = GROUP_LINKS;
+  const line = (l: L, url: string) => fill(l[d.lang], { url });
   const lines = [
-    `Meta access (one link): ${d.links.leadsie}`,
-    d.links.drive ? `Your Drive folder: ${d.links.drive}` : null,
-    `The Academy: ${d.links.academy}`,
-    `Mahara OS: ${d.links.portal}`,
-    `Install Mahara OS on your phone: ${d.links.portalInstall}`,
+    line(G.meta, d.links.leadsie),
+    d.links.drive ? line(G.drive, d.links.drive) : null,
+    line(G.academy, d.links.academy),
+    line(G.portal, d.links.portal),
+    line(G.install, d.links.portalInstall),
   ].filter((x): x is string => Boolean(x));
   if (!d.links.drive)
     missing.push("No Drive folder link on the card, so it is left out.");

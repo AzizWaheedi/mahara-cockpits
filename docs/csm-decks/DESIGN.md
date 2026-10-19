@@ -1857,7 +1857,9 @@ slides, language, dialect, service focus, agreed-at), gated and audited.
 The clock runs at 72 px from 0:00. In Arabic-Indic digits it would open on
 `٠:٠٠`, the lone-zero trap at headline size (it reads as dots). The clock
 therefore uses Latin digits in both languages, as a phone's call timer reads.
-Every other number in the Arabic deck is Arabic-Indic.
+A video's length on a tray thumbnail (0:24) is a timer too, with the same
+trap, and keeps Latin digits for the same reason. Every other number in the
+Arabic deck is Arabic-Indic, the thumbnails' shapes included (٩:١٦, ٤:٥).
 
 ### 13.5 Register (for the copy pass)
 
@@ -2468,3 +2470,28 @@ disagree, this list wins.
 
 The pre-emit stamp at the top of `present.css` is unchanged: these fixes
 bring the built slides up to it rather than past it.
+
+### 19.7 The second critic pass (2026-10-19)
+
+Visual, copy, backend and code reviewers walked every fixture in both
+languages. What changed, by section. Where this list and an earlier line
+disagree, this list wins.
+
+| Section | Change |
+|---|---|
+| 7.2 to 7.5, 8.3 | No grey skeleton bars anywhere. With no primary text the Instagram caption keeps only the Page name; Reels and Facebook show no words; Facebook drops its empty headline slot. A Facebook screen ends at the action row and its gap between posts, never on a made-up next post. A form with no headline and no greeting shows the Page alone. |
+| 7.5, 6.3 | A WhatsApp destination is drawn as a new chat with the business: its picture and name at the top of the chat, and the message the ad fills in waiting in the compose field with the send button lit, tagged "Example wording" (the template is not read yet). Journey stop 2 says "They message you on WhatsApp. The chat opens with their first message ready to send." The form slide's free column lists what happens next, numbered like the questions a form would have shown. |
+| 8.3 | Leaders on "Your page and logo" and "Marked {word}" sit on the side where those parts are, stacked; the label quotes the word as the phone shows it, in the phone's language. "Starter, from our templates" is said once, in the foot under the phones, never per phone; in focus it is one line. The lead is one sentence ("We can show any of your creatives in the phones, right now."). Tray thumbnails: the short form "Template" (قالب) on starter creatives; the in-use chips read Feed · Reels · Facebook feed on one line; a shape in Arabic-Indic digits (13.4). |
+| 8.4 | Column one sets its words at the column's full 560 px, with the page phone (400 tall) under them and its leader's label beside it. Column heads balance their lines. |
+| 8.5 | The question list fades out above Next, so no label is cut through. The thank-you band carries the line alone (no repeated heading), and the thank-you screen sits in the middle of the form. |
+| 8.6 | Each transcript track has one measure (820 px), so every Arabic line in a track starts on one right edge and every English line on one left. A slot under Arabic is underlined whole, below the letters' tails. Stop 8 shows one tag (the appointment's). A service not known yet shows the call's "To give us" chip, never a placeholder. The label reads "Written from our call script. The customer in it is made up." |
+| 8.7 | The phone stop shows the app's own screen only: the still is cropped to the screen (586 x 1036) and the recording is cropped to the same box, so its title card and caption band never show. |
+| 8.8 | One checklist across the slide. A picture sits at the end of the row it shows: three creatives on the ads row (none when fewer than three), and a calendar day (the day, three hours, one blocked) on the calendar row. |
+| 6.2, 6.3 | The current row's band runs past x 800, so no name leaves it mid-word. Stop 4's names sit below and above the line in turn, each with two columns' room; the provisional bookings' dot carries its whole line. The strip sits under the lit row, never on its baseline. The queue card leaves a missing service out. |
+| 6.7, 9.1 | The current node on the mini rail and the cover's road strip is a solid teal fill (a centre dot only on nodes large enough to show one). |
+| 9.5 | The road's stops are one grid with a shared row for the names and one for what goes under them, so a wrapped name never pushes its date down. |
+| 9.7 | Before a red line is typed, the ruled line carries a quiet ink-3 name ("Your red lines, in your words"). Both statements' bodies are ink. Stop 2 says what the phones show under its tag ("Our ready templates for {service}, under your Page name and logo.") instead of repeating the approval. |
+| 12, 15 | The shared deck has its own error boundaries: a slide that throws shows "This slide could not be drawn." on the canvas and the deck goes on; a deck that cannot load at all shows a plain screen with a reload, never a stack trace. With motion reduced, a video waits on its poster with a play button (on the phone, and in the notes window). |
+
+Copy rule 9 (plain quotes) stands: Hallmark's curly quotes were raised
+again and are not used, as `CONTENT.md` records.

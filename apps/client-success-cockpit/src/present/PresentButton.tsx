@@ -25,12 +25,39 @@ export function deckUrl(taskId: string, deck: DeckKind, prep = false) {
   return `${base()}/clients/${encodeURIComponent(taskId)}/present/${deck}${prep ? "?view=prep" : ""}`;
 }
 
+type Opener = (url: string, name: string, features?: string) => Window | null;
+
+/**
+ * Opens a named window, or brings it forward as it is. window.open(url,
+ * name) would load the url again in a window that is already open: a second
+ * Present would reset the shared deck to its cover mid-call. So the window
+ * is asked for by name with a blank url first, and only a new (blank) one
+ * is sent to the url.
+ */
+export function openNamed(
+  url: string,
+  name: string,
+  features?: string,
+  open: Opener = (u, n, f) => window.open(u, n, f),
+): Window | null {
+  const w = open("", name, features);
+  if (!w) return null;
+  let blank = true;
+  try {
+    blank = w.location.href === "about:blank";
+  } catch {
+    // another origin's page in that window: send it to the deck
+  }
+  if (blank) w.location.replace(url);
+  w.focus();
+  return w;
+}
+
 export function openDeck(taskId: string, deck: DeckKind, prep = false) {
-  const w = window.open(
+  openNamed(
     deckUrl(taskId, deck, prep),
     `mahara-${prep ? "prep" : "deck"}-${taskId}-${deck}`,
   );
-  w?.focus();
 }
 
 /** The deck the client is due for, by the board's stage and the next call. */

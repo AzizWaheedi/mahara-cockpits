@@ -30,9 +30,51 @@ export interface LiveState {
     phones: Partial<Record<"feed" | "reels" | "facebook", string>>;
     at: number;
   } | null;
+  /**
+   * With motion reduced, a video shows its poster and a play button
+   * (DESIGN 15.4): the creative the CSM pressed play on, by phone.
+   */
+  playing?: Partial<Record<"feed" | "reels" | "facebook", string>>;
+  /** When this state last changed (ms), so a window joining mid-call keeps the newest. */
+  at?: number;
 }
 
 export const emptyLive = (): LiveState => ({ ticks: {}, candidate: null });
+
+/**
+ * The newer of two live states. Every change is stamped, so a window that
+ * opens or reloads mid-call takes the call's state from the others instead
+ * of wiping it with its own empty one.
+ */
+export function newerLive(current: LiveState, incoming: LiveState): LiveState {
+  return (incoming.at ?? 0) >= (current.at ?? 0) ? incoming : current;
+}
+
+/**
+ * The live state kept for this tab (sessionStorage survives a reload of the
+ * same tab, F5 from a clicker included, and nothing else). Never throws.
+ */
+export function readStoredLive(name: string | null): LiveState | null {
+  if (!name) return null;
+  try {
+    const raw = sessionStorage.getItem(`${name}:live`);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as LiveState | null;
+    return v && typeof v === "object" && typeof v.ticks === "object" && v.ticks
+      ? v
+      : null;
+  } catch {
+    return null;
+  }
+}
+export function storeLive(name: string | null, live: LiveState): void {
+  if (!name || !live.at) return;
+  try {
+    sessionStorage.setItem(`${name}:live`, JSON.stringify(live));
+  } catch {
+    // private window or storage full: the other windows still hand it over
+  }
+}
 
 export type DeckMessage =
   | { type: "hello"; from: "notes" | "deck" | "prep" }
@@ -51,6 +93,13 @@ export type DeckMessage =
   | { type: "lang"; lang: Lang }
   | { type: "prep"; deck: DeckKind; overrides: Overrides; revision: number }
   | { type: "live"; live: LiveState }
+  /** A window opened or reloaded: the others answer with the call's state. */
+  | { type: "join" }
+  | {
+      type: "sync";
+      live: LiveState;
+      booked: Partial<Record<CallKind, string>>;
+    }
   | { type: "booked"; kind: CallKind; startTime: string }
   | { type: "ads" }
   /** A file added from the notes window, shown at once from the local copy. */

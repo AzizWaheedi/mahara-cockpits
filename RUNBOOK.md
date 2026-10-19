@@ -325,11 +325,13 @@ writes to Meta.
 
 | Symptom | Fix | Who |
 | --- | --- | --- |
-| "Shown, not saved" or the PUT fails with 413 on a big video | The bucket allows 150 MB; the project's global Storage upload limit must be at least that (Storage settings). Otherwise export a lighter copy | Systems manager, CSM |
-| "The file did not arrive. Add it again." | The browser's PUT did not finish (closed tab, network). Add the file again: a new reservation, nothing to clean up. A row left `uploading` is never shown and never readable | CSM |
+| "Shown, not saved: … is larger than storage accepts" (the PUT got a 413) | The bucket allows 150 MB; the project's global Storage upload limit must be at least that (Storage settings). Otherwise export a lighter copy. The failed reservation is removed at once, so retries never fill the cap | Systems manager, CSM |
+| "Too many unfinished uploads in the last hour" | One seat started 30 uploads in an hour that never finished (closed tabs). They stop counting an hour after they started; add the file again then | CSM |
+| "The file did not arrive. Add it again." | The browser's PUT did not finish (closed tab, network). Add the file again: a new reservation. A row left `uploading` is never shown and never readable; the notes window removes a failed one at once, and a closed tab's is swept a day later (below) | CSM |
+| Removed files and unfinished uploads | Remove deletes the file and its poster from the bucket (receipt `cockpit-launch-ads/delete-object`) and keeps the row (`removed`, `purged_at`) for the audit. A read link signed before the removal still works until it expires (up to an hour). If Storage refused the delete, or a tab closed mid-upload, the next listing of that client's tray (opening its prep or deck) deletes the bytes of removed rows and of uploads left unfinished for a day (`cockpit_csm_launch_ad_stale`, then `cockpit_csm_launch_ad_purged`, audited `launchAds.purge`). Nothing to do by hand | Systems manager |
 | "The uploaded file does not match what was reserved." | The PUT sent another size or Content-Type than the reservation (the browser must send exactly the reserved MIME type). Add it again | CSM, frontend |
 | "Only the person who started this upload can finish it." | A reservation belongs to the seat that made it. That seat finishes it, or anyone adds the file again | CSM |
-| The deck's form slide stays hidden, or "Tick a form from this client's own campaigns" | Forms come only from this client's own Meta ads (exact ad ids of campaigns carrying the client's name, or an ad account no other client uses). A form not matched there cannot be confirmed: type the questions in prep instead | CSM |
+| The deck's form slide stays hidden, or "Tick a form from this client's own campaigns" | Forms come only from this client's own Meta ads (exact ad ids of campaigns carrying the client's name, matched by campaign name and ad account together, or an ad account no other client uses). Two clients may share Meta's default campaign names; their ads never cross. A form not matched there cannot be confirmed: type the questions in prep instead | CSM |
 | No Meta ads and `meta.match` is `ambiguous` | Another client's card has the same name key (for example "X Design" and "X Group"). Rename one card in ClickUp; nothing is matched until then, by design | CSM, CEO |
 | `meta.ads` or `meta.funnels` is null | The media read model (`metaTree`) or the creative one (`funnels`) is not ready: the media sync owns it, see Previews and Scheduled jobs | Systems manager |
 | Storage receipts fail on the health page (`supabase-storage`, `cockpit-launch-ads/...`) | The latest receipt for that label is a failure or a 4xx: a 404 on `verify-object` means an upload did not arrive; anything else, check Storage status. The next good call clears it | Systems manager |
@@ -340,8 +342,9 @@ Going live:
    name `20261019120000_csm_decks`). It applies twice without harm. Read back:
    the bucket private at 157286400 bytes with six MIME types; the policy
    `cockpit_launch_ads_read` on `storage.objects`; both tables with row
-   security on and SELECT for service_role only; the ten browser functions
-   executable by authenticated only; the helpers by nobody.
+   security on and SELECT, INSERT and UPDATE for service_role only (no DELETE
+   or TRUNCATE); the twelve browser functions executable by authenticated
+   only; the helpers by nobody.
 2. Check the project's global Storage upload limit is at least 150 MB.
 3. Deploy `cockpit-csm-api` from the same commit:
    `python3 scripts/dev/deploy_composio.py cockpit-csm-api --extra $(python3 scripts/dev/fn_extras.py . cockpit-csm-api) --dry`,

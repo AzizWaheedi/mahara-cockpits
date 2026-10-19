@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { CTA, digits, type L, LAUNCH, SHARED, t, tf } from "./content";
+import { APP, CTA, digits, type L, LAUNCH, SHARED, t, tf } from "./content";
 import { appLanguage, type Creative, phoneFor, shapeOf } from "./creative";
 import type { SlideCtx } from "./deckContext";
 import { defaultPhones, PHONES, type PhoneKey } from "./launchData";
@@ -53,12 +53,18 @@ export function useCreatives(ctx: SlideCtx) {
     const meta: TrayCreative[] = L.metaCreatives;
     const byId = new Map<string, TrayCreative>();
     for (const c of [...tray, ...meta]) byId.set(c.id, c);
-    // A file saved on the call: its local id still finds it.
-    for (const i of local)
+    // A file saved on the call: its local id still finds it, and until this
+    // window has read the tray back its saved id draws the local copy, so a
+    // phone pointed at the saved id never goes blank in between.
+    for (const i of local) {
+      const saved = i.savedId ? byId.get(i.savedId) : null;
+      const own = i.released ? null : { ...localCreative(i), local: i };
       if (!byId.has(i.id)) {
-        const saved = i.savedId ? byId.get(i.savedId) : null;
-        byId.set(i.id, saved ?? { ...localCreative(i), local: i });
+        const c = saved ?? own;
+        if (c) byId.set(i.id, c);
       }
+      if (i.savedId && !saved && own) byId.set(i.savedId, own);
+    }
     const base = defaultPhones([...tray, ...meta], L.phonesPrep);
     const placed = { ...base, ...(ctx.live.phones ?? {}) };
     const phones = Object.fromEntries(
@@ -109,6 +115,15 @@ export function placeCreative(
 }
 
 const letGo = (e: { currentTarget: HTMLElement }) => e.currentTarget.blur();
+
+/** Play a phone's video while motion is reduced (the canvas button, or the notes window). */
+export function playOn(
+  ctx: Pick<SlideCtx, "setLive">,
+  phone: PhoneKey,
+  id: string,
+) {
+  ctx.setLive(l => ({ ...l, playing: { ...(l.playing ?? {}), [phone]: id } }));
+}
 
 function duration(seconds: number | null) {
   if (!seconds) return null;
@@ -171,7 +186,10 @@ export function AdTray({
       {items.length ? (
         <ul className="dkc-tray-grid">
           {items.map(c => {
-            const on = onPhone.get(c.id);
+            // A file saved on the call may be on a phone by its saved id already.
+            const on =
+              onPhone.get(c.id) ??
+              (c.local?.savedId ? onPhone.get(c.local.savedId) : undefined);
             const shape = shapeOf(c.ratio);
             const failed = c.local?.phase === "failed";
             return (
@@ -220,7 +238,7 @@ export function AdTray({
                       </span>
                     ) : (
                       <span className="dk-ltr dkc-thumb-spec">
-                        {shape}
+                        {digits(shape, lang)}
                         {c.video && c.seconds
                           ? ` · ${duration(c.seconds)}`
                           : ""}
@@ -345,8 +363,10 @@ export function PhoneRow({
       const node = el.querySelector<HTMLElement>(`[data-part="${part}"]`);
       if (!node) continue;
       const r = node.getBoundingClientRect();
-      // The page's avatar sits at the app's start: its label goes to that side.
-      const side = part === "who" && model.app === lang ? "start" : "end";
+      // The page's avatar and "Sponsored" sit at the app's start: their
+      // labels go to that side, stacked; the rest to the other.
+      const atStart = part === "who" || part === "sponsored";
+      const side = atStart === (model.app === lang) ? "start" : "end";
       // Every dot sits just outside the frame, on the edge nearest its
       // label, level with the part it names: no dot and no line ever
       // crosses the app's own UI (a caption, the menu, a headline).
@@ -356,7 +376,10 @@ export function PhoneRow({
         part === "who"
           ? t(A.leaders.who, lang)
           : part === "sponsored"
-            ? t(A.leaders.sponsored, lang)
+            ? // The word as the phone shows it, in the phone's own language.
+              tf(A.leaders.sponsored, lang, {
+                word: t(APP.sponsored, model.app),
+              })
             : part === "media"
               ? t(cropped ? A.leaders.crop : A.leaders.media, lang)
               : part === "words"
@@ -414,8 +437,12 @@ export function PhoneRow({
       {PHONES.map(k => {
         const P = places[k];
         const c = model.phones[k];
-        const play =
-          !still && Boolean(c?.video) && (focus ? focus === k : k === "reels");
+        const playsHere =
+          Boolean(c?.video) && (focus ? focus === k : k === "reels");
+        // Reduced motion: the poster, until the CSM presses play (DESIGN 15.4).
+        const pressed = Boolean(c && ctx.live.playing?.[k] === c.id);
+        const play = playsHere && (!still || pressed);
+        const offerPlay = still && playsHere && !pressed && Boolean(c?.url);
         const progress =
           c?.local && (c.local.phase === "saving" || c.local.phase === "saved")
             ? c.local.phase === "saved"
@@ -461,17 +488,22 @@ export function PhoneRow({
             >
               {screen}
             </Phone>
+            {offerPlay && c ? (
+              <button
+                type="button"
+                className="dkc-press dkc-play"
+                aria-label={`Play ${c.name}`}
+                onClick={() => playOn(ctx, k, c.id)}
+                onPointerUp={letGo}
+              >
+                <Play aria-hidden />
+              </button>
+            ) : null}
           </div>
         );
       })}
       {focus ? null : (
-        <div
-          className="dkc-phone-labels"
-          aria-hidden
-          data-tagged={
-            PHONES.some(k => model.phones[k]?.starter) ? "" : undefined
-          }
-        >
+        <div className="dkc-phone-labels" aria-hidden>
           {PHONES.map(k => {
             const P = places[k];
             const w = NATIVE_W * P.s;
@@ -485,13 +517,18 @@ export function PhoneRow({
                   <Logo mark={MARK[k]} size={28} />
                   {t(FRAME[k], lang)}
                 </span>
-                {model.phones[k]?.starter ? (
-                  <span className="dk-tag">{t(SHARED.tag.starter, lang)}</span>
-                ) : null}
               </span>
             );
           })}
-          <p className="dk-small dk-ink2 dkc-phones-foot">{t(A.foot, lang)}</p>
+          {/* Starter ads: the tag said once, in the foot, never per phone. */}
+          <p className="dk-small dk-ink2 dkc-phones-foot">
+            {t(
+              PHONES.some(k => model.phones[k]?.starter)
+                ? A.footStarter
+                : A.foot,
+              lang,
+            )}
+          </p>
         </div>
       )}
       {leaders.length ? (

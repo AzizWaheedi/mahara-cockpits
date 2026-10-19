@@ -10,11 +10,12 @@ import {
 import { type ReactNode, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { focusOf, playOn } from "./AdsStage";
 import { PAIN_STORY, type Pain } from "./callScript";
-import { CTA, type Cta, LAUNCH, LINKS, t } from "./content";
+import { CTA, type Cta, fill, GROUP_LINKS, LAUNCH, LINKS, t } from "./content";
 import { Field, PrepText, Segmented, Toggle } from "./controls";
 import type { CallKind, DeckData, Overrides } from "./deckData";
-import { PROOF_ID } from "./launchData";
+import { defaultPhones, PROOF_ID } from "./launchData";
 import type { DeckKind } from "./sources";
 import { type LocalItem, useLocalAds } from "./uploads";
 import type { DeckModel } from "./useDeckModel";
@@ -46,6 +47,8 @@ export interface LaunchControlProps {
   /** The last results of adding a file, said plainly. */
   messages?: string[];
   now?: number;
+  /** Motion is reduced: videos wait for a press of play (DESIGN 15.4). */
+  still?: boolean;
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -244,6 +247,13 @@ function AdsControls(p: LaunchControlProps) {
   const live = model.live;
   const selected = live.selected ?? null;
   const all = [...d.launch.creatives, ...d.launch.metaCreatives];
+  // The phone that plays a video: the one in focus, else Reels.
+  const playPhone = focusOf(p.tour) ?? "reels";
+  const placed = {
+    ...defaultPhones(all, d.launch.phonesPrep),
+    ...(live.phones ?? {}),
+  };
+  const playing = all.find(c => c.id === placed[playPhone]) ?? null;
   const sel = all.find(c => c.id === selected) ?? null;
   const undo = live.undo && now - live.undo.at < 10_000 ? live.undo : null;
   const prep = model.prep.launch;
@@ -293,6 +303,17 @@ function AdsControls(p: LaunchControlProps) {
               ? "Their pick (marked)"
               : "Their pick"}
           </Button>
+          {p.still && playing?.video ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={live.playing?.[playPhone] === playing.id}
+              onClick={() => playOn(model, playPhone, playing.id)}
+            >
+              <Play aria-hidden />
+              Play the video
+            </Button>
+          ) : null}
           {p.updateAd && sel?.from === "upload" && saved ? (
             <Button
               size="sm"
@@ -1015,7 +1036,12 @@ export function LaunchControls(p: LaunchControlProps) {
       return (
         <div className="space-y-3">
           <CopyButton
-            text={`Mahara OS: ${LINKS.portal}\nInstall it on your phone: ${LINKS.portalInstall}`}
+            text={[
+              fill(GROUP_LINKS.portal[d.lang], { url: LINKS.portal }),
+              fill(GROUP_LINKS.installShort[d.lang], {
+                url: LINKS.portalInstall,
+              }),
+            ].join("\n")}
             label="Copy the portal links for the group"
           />
           {d.mode.dwy ? (

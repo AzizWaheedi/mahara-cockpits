@@ -33,7 +33,7 @@ Where `CONTENT.md` and `DESIGN.md` gave the same fact different homes, this tabl
 | Fact or piece | Its one home | Elsewhere, only as |
 |---|---|---|
 | Calling hours, the list, the tries, "not every enquiry books" | L2 stop 3, with the queue card | L6 plays a call; the mini rail lights stop 3 |
-| The WhatsApp confirmation and the reminders | L6 stop 7, after the call | L2 stop 4: one line and five unlabelled dots |
+| The WhatsApp confirmation and the reminders | L6 stop 7, after the call | L2 stop 4: one line and five dots, each named in a word or two from L6's timeline (four done with you; the provisional bookings' dot carries its whole line) |
 | It lands with the client: calendar, Mahara OS, the WhatsApp alert | L2 stop 5 | L6 stop 8 shows what it carries (the caller's notes) |
 | A no-show is ours, deciding is theirs | L2 stop 6, the fork, drawn | L7 stop 4 keeps only "mark it, the same day" |
 | The thank-you screen | L5 stop 3 | L2 stop 2 names it in its line |
@@ -269,7 +269,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 - Statuses: `kickoff` setup items (card, Facebook access, Mahara OS access, WhatsApp synced, Google Calendar), `kickoff.pre_existing`, and the Academy line, each judged by `SETUP_DONE`.
 - The CSM flips a status on the canvas as each step finishes; it writes `prep.access` with an audit row. The kickoff form stays the record.
 - Before the kickoff is filed, every row reads "Not checked yet". Content reads "Not checked yet" until the CSM ticks it.
-- Links: Leadsie, `links.portal`, `links.drive` and the Academy, copied from the notes window into the group.
+- Links: Leadsie, `links.portal`, `links.drive` and the Academy, copied from the notes window into the group, in the deck's language: "Meta access (one link): {url}" · "Your Drive folder: {url}" · "The Academy: {url}" · "Mahara OS: {url}" · "Install Mahara OS on your phone: {url}".
 
 **Notes**
 - Do rows 1 and 2 now, on this call, and tick each one as it finishes. Most clients leave the onboarding call with these still open, and that is what delays a launch.
@@ -301,7 +301,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
   2. "The first weeks are a test" · "Your red lines stay fixed. Tell us now what we must never say or show. Everything else, we test." Below it, the red lines the CSM types live as the client says them (two or three), in amber.
 - Next step band: "Next: your Brand Blueprint call · 45 minutes with our creative director: your brand, your offer, your first ad scripts." Then {next.blueprint} once booked.
 
-**On screen (stop 2, optional):** "Your starter ads". The L3 phone component (Instagram feed and Reels) with the starter ads under their Page name and logo, each tagged "Starter, from our templates". Shown only when `prep.starter_pack` is set and starter creatives exist for {prep.service_focus}. No upload or swap here; that is L3.
+**On screen (stop 2, optional):** "Your starter ads", tagged once "Starter, from our templates", then "Our ready templates for {prep.service_focus}, under your Page name and logo." (no pack: "Our ready templates, under your Page name and logo."). The L3 phone component (Instagram feed and Reels) with the starter ads under their Page name and logo. Shown only when `prep.starter_pack` is set and starter creatives exist for {prep.service_focus}. No upload or swap here; that is L3.
 
 **Slots:** `kickoff.templated` picks the variant. `prep.service_focus`, `prep.starter_pack`. `prep.red_lines` (typed live; the prep view reminds the CSM to copy them to the card's Do's & Don'ts). `next.blueprint` (Book button in the notes window). `ads.*` kind starter (stop 2).
 
@@ -364,9 +364,9 @@ Ten slides, about 22 minutes of a 30-minute slot, so there is room for questions
 | # | Row name | Owner | Line | Picture | Slots and fallback |
 |---|---|---|---|---|---|
 | 1 | Sees your ad | Your customer | "They see your ad in their feed." | Their first ad in an Instagram feed phone, with their Page name and logo | `ads.*` (first ready ad). Fallback: the frame with the logo and "Your ad goes here". |
-| 2 | Answers your questions | Your customer | "A few short questions about their project, then your thank-you screen." | Their form's question screen in a phone, or their landing page or WhatsApp chat when that is the destination | `funnel.*` once confirmed. Fallback: the drawn example form, tagged "Example form". |
+| 2 | Answers your questions | Your customer | "A few short questions about their project, then your thank-you screen." When the ad opens WhatsApp: "They message you on WhatsApp. The chat opens with their first message ready to send." | Their form's question screen in a phone, or their landing page, or (WhatsApp) the chat with their first message waiting to send, tagged "Example wording" | `funnel.*` once confirmed. Fallback: the drawn example form, tagged "Example form". |
 | 3 | We call | Our team | "We call during working hours, 10 to 6, Saturday to Thursday. New enquiries go to the top of the list. Anything that comes in at night is called from 10 the next working morning." Chip: "Up to 4 tries over 3 working days". Small line: "Not every enquiry books. Some can't be reached, some aren't a fit. Our caller notes why, and we go through it with you at check-ins." | The queue card (DESIGN 6.5), tagged Example | UAE zone note from the data map. |
-| 4 | Booked, confirmed, reminded | Our team | "The serious ones are booked in, confirmed on WhatsApp and reminded before the meeting." With `prep.booking_video`: "The serious ones are booked in, confirmed on WhatsApp with a short video about you, and reminded before the meeting." | Five dots on a short line, no words (the words are on L6) | `booking_video` defaults to off. |
+| 4 | Booked, confirmed, reminded | Our team | "The serious ones are booked in, confirmed on WhatsApp and reminded before the meeting." With `prep.booking_video`: "The serious ones are booked in, confirmed on WhatsApp with a short video about you, and reminded before the meeting." | Five dots on a short line, each named in a word or two from L6's timeline (the full timeline is on L6) | `booking_video` defaults to off. |
 | 5 | Lands with you | You | "Once it's confirmed, it lands in your calendar and in Mahara OS, and you get a WhatsApp alert." | The drawn calendar entry (DESIGN 6.5), tagged Example | If the kickoff says Google Calendar is not connected, an amber line: "Connect Google Calendar in Mahara OS so bookings land there." |
 | 6 | You meet | You | "You hold the meeting: {form.consult_types}." Then the fork: "Didn't come? Ours. We call to rebook." · "Came, and thinking it over? Yours. Follow up, then mark it." | The meeting render with the fork's two cards; a dotted line returns to the "Our team" lane | `form.consult_types` fallback: "at your office, at their home, or online". |
 | 7 | You mark it | You | "You mark how it went, in a few taps." | `portal-outcome` thumbnail, cropped to the form, Demo workspace | |
@@ -399,7 +399,7 @@ Stops 1, 2, 4 and 7 open up on later slides (L3, L5, L6 and L7), so their lines 
 **On screen**
 - Eyebrow: "Your customer sees this"
 - Title: "Your ads", with the tag "Preview"
-- Line: "How your ads look in the feed. We can show any of your creatives in the phones, right now."
+- Line: "We can show any of your creatives in the phones, right now."
 - Three phone frames, side by side:
   - Instagram feed
   - Instagram Stories and Reels
@@ -407,12 +407,14 @@ Stops 1, 2, 4 and 7 open up on later slides (L3, L5, L6 and L7), so their lines 
 
   Each frame shows {page name}, the avatar, "Sponsored", the primary text, the creative, the headline and the call to action.
 - Tray: "Your creatives", with two tabs: "Uploaded" · "From your Meta ads"
-- Starter ads carry the tag "Starter, from our templates", on the phone and on the tray thumbnail.
+- Starter ads are named once, in the foot under the phones: "Previews of starter ads, from our templates. Meta fits each ad to the screen it shows on." (in focus, the tag "Starter, from our templates" once). On a tray thumbnail, the short form "Template".
+- A tray thumbnail on a phone says which: "Feed" · "Reels" · "Facebook feed".
+- The leader on "Sponsored" quotes the word as the phone shows it: "Marked {word}".
 - Only with `prep.platforms_planned`: "Planned next: {platforms}".
 
 **Slots**
 - `ads.*`: placement comes from the aspect ratio and can be edited in prep. Primary text, headline, CTA and language come from the row or the Meta ad.
-- Missing text is drawn as grey bars, never invented.
+- Missing text is left out, never invented (an Instagram caption keeps only the Page name).
 - Page name: `prep.page_name`, then `kickoff.page_name`, then `client.name`.
 - CTA labels as Meta writes them: Learn more · Get quote · Book now · Contact us · Sign up · Send WhatsApp message · Apply now.
 - Frames follow Meta placements. `kickoff.platforms` records what was chosen, not what runs, so other platforms show only when the CSM ticks `platforms_planned`.
@@ -493,7 +495,7 @@ After stop 3:
 **Slots**
 - `funnel.*` once `prep.form_confirmed`, with `prep` questions overriding.
 - No confirmed form and no prep questions: the slide is hidden by default, and prep says why. If the CSM shows it anyway, the phone draws the example form (DESIGN 7.5), tagged "Example form", with the line "We're finishing yours."
-- When `funnel.kind` is WhatsApp, the line becomes: "Your ad opens a WhatsApp chat." Check the destination with the media buyer before the call.
+- When `funnel.kind` is WhatsApp, the line becomes: "Your ad opens a WhatsApp chat." Check the destination with the media buyer before the call. The phone shows the chat with the message the ad fills in, waiting to send, tagged "Example wording": "Hi, I saw your ad. I'd like to know more about {service}." (no service: "Hi, I saw your ad and I'd like to know more."). Beside it, "What happens next": 1. "Their first message is ready in the chat. They tap send." 2. "It arrives on your WhatsApp." 3. "Our team calls them during working hours." (DWY: "Your team calls them.")
 
 **Notes**
 - Read the filter questions out: "This is the first filter. The call is the second."
@@ -513,7 +515,7 @@ After stop 3:
 - Eyebrow: "Our team does this"
 - Title: "How we'll speak to your customers", with the tag "Example written from our script"
 - Line: "{client.name} · {prep.service_focus}"
-- Label, always visible: "Written from our call script. The names in it are not real."
+- Label, always visible: "Written from our call script. The customer in it is made up."
 - Stage rail: The opening · Their goal · The details · What sets you apart · The booking · Locking it in. Each stage lights as the call reaches it.
 - Call clock, 0:00 to 4:51.
 - Two-sided transcript. The Arabic line sits above its English subtitle. In the Arabic deck the subtitle can be switched off.
@@ -571,7 +573,7 @@ After stop 3:
 
 The slide ends on stop 4.
 
-**Slots:** static pictures. The install link and `links.portal` are copied from the notes window.
+**Slots:** static pictures. The install link and `links.portal` are copied from the notes window, in the deck's language: "Mahara OS: {url}" · "Install it on your phone: {url}".
 
 **Notes**
 - If they haven't signed in yet, do it now.
@@ -595,7 +597,7 @@ The slide ends on stop 4.
 **On screen**
 - Title: "Your part"
 - Line: "Your five jobs, in one place."
-- Five tiles. Each has a small picture of where it was shown, the job in one short line, and a teal "Why it matters" line:
+- One checklist of five rows: the job in one short line and its "Why it matters" line. Two rows carry a picture at their end (DESIGN 8.8): three of their creatives on row 1 (only with three or more), and a calendar day with one hour blocked, "Busy", on row 5:
 
 | # | Picture | Job | Why it matters |
 |---|---|---|---|

@@ -10,7 +10,8 @@ import {
 } from "react";
 import type { DeckHub } from "./channel";
 import { CHROME, CLOSED, digits, type Lang, t } from "./content";
-import type { SlideCtx, SlideDef } from "./deckContext";
+import { DeckBoundary } from "./DeckBoundary";
+import { type SlideCtx, type SlideDef, slideTitle } from "./deckContext";
 import { keyCommand, type Pos, slideAtHash, stepFrom } from "./engine";
 import { MiniRail } from "./JourneyLanes";
 
@@ -47,9 +48,18 @@ export interface ShellProps {
   closed?: boolean;
   /** Where the call is, after each move. */
   onPos?: (p: Pos, slideId: string) => void;
+  /** Sends a slide's crash to the issue queue (the slide itself shows a calm line). */
+  report?: (r: { title: string; detail: string }) => Promise<unknown>;
+}
+
+/** A slide's own render, inside its boundary (so a throw there is caught). */
+function SlideBody({ slide, ctx }: { slide: SlideDef; ctx: SlideCtx }) {
+  return <>{slide.render(ctx)}</>;
 }
 
 const noop = () => {};
+/** A clicked chrome button lets go of the keyboard, so Space moves the deck. */
+const letGo = (e: { currentTarget: HTMLElement }) => e.currentTarget.blur();
 
 export function DeckShell({
   slides,
@@ -65,6 +75,7 @@ export function DeckShell({
   startedAt,
   closed = false,
   onPos,
+  report,
 }: ShellProps) {
   const { lang } = base;
   const [own, setOwn] = useState<Pos>(() => {
@@ -311,8 +322,10 @@ export function DeckShell({
   const count = (i: number) =>
     lang === "ar" ? digits(i, lang) : String(i).padStart(2, "0");
   const stopName = slide?.stopName?.(tour, ctx);
+  const titleOf = (s: SlideDef) => slideTitle(s.title, lang, base.d.name);
+  const comma = lang === "ar" ? "، " : ", ";
   const announce = slide
-    ? `${t(CHROME.slide, lang)} ${digits(index + 1, lang)} ${t(CHROME.of, lang)} ${digits(n, lang)}, ${t(slide.title, lang).replace(/\{name\}/, base.d.name)}${stopName ? `, ${t(stopName, lang)}` : ""}`
+    ? `${t(CHROME.slide, lang)} ${digits(index + 1, lang)} ${t(CHROME.of, lang)} ${digits(n, lang)}${comma}${titleOf(slide)}${stopName ? `${comma}${t(stopName, lang)}` : ""}`
     : "";
 
   if (closed)
@@ -362,9 +375,19 @@ export function DeckShell({
               data-slide={slide.id}
               data-stop={tour}
               aria-roledescription="slide"
-              aria-label={t(slide.title, lang).replace(/\{name\}/, base.d.name)}
+              aria-label={titleOf(slide)}
             >
-              {slide.render(ctx)}
+              <DeckBoundary
+                where={slide.id}
+                report={report}
+                fallback={
+                  <div className="dk-closed" role="alert">
+                    <strong>{t(CHROME.broken, lang)}</strong>
+                  </div>
+                }
+              >
+                <SlideBody slide={slide} ctx={ctx} />
+              </DeckBoundary>
             </section>
           ) : null}
           {railAt != null ? (
@@ -389,7 +412,12 @@ export function DeckShell({
             dir={dir}
           >
             {onBack ? (
-              <button type="button" onClick={onBack} dir={dir}>
+              <button
+                type="button"
+                onClick={onBack}
+                onPointerUp={letGo}
+                dir={dir}
+              >
                 {t(CHROME.back, lang)} <bdi>{base.d.name}</bdi>
               </button>
             ) : null}
@@ -403,6 +431,7 @@ export function DeckShell({
               type="button"
               aria-pressed={lang === "ar"}
               onClick={() => lang !== "ar" && setLang("ar")}
+              onPointerUp={letGo}
             >
               ع
             </button>
@@ -410,11 +439,17 @@ export function DeckShell({
               type="button"
               aria-pressed={lang === "en"}
               onClick={() => lang !== "en" && setLang("en")}
+              onPointerUp={letGo}
             >
               EN
             </button>
             {onNotes ? (
-              <button type="button" onClick={onNotes} title="N">
+              <button
+                type="button"
+                onClick={onNotes}
+                onPointerUp={letGo}
+                title="N"
+              >
                 {t(CHROME.notes, lang)}
               </button>
             ) : null}
@@ -422,11 +457,17 @@ export function DeckShell({
               type="button"
               aria-pressed={overview}
               onClick={() => setOverview(v => !v)}
+              onPointerUp={letGo}
               title="O"
             >
               {t(CHROME.all, lang)}
             </button>
-            <button type="button" onClick={fullscreen} title="F">
+            <button
+              type="button"
+              onClick={fullscreen}
+              onPointerUp={letGo}
+              title="F"
+            >
               {t(CHROME.full, lang)}
             </button>
           </div>
@@ -434,6 +475,7 @@ export function DeckShell({
             <button
               type="button"
               onClick={() => step(lang === "ar" ? 1 : -1)}
+              onPointerUp={letGo}
               disabled={
                 lang === "ar"
                   ? !stepFrom({ index, tour }, 1, stops)
@@ -449,6 +491,7 @@ export function DeckShell({
             <button
               type="button"
               onClick={() => step(lang === "ar" ? -1 : 1)}
+              onPointerUp={letGo}
               disabled={
                 lang === "ar"
                   ? !stepFrom({ index, tour }, -1, stops)
@@ -477,13 +520,12 @@ export function DeckShell({
                       type="button"
                       aria-current={i === index}
                       onClick={() => go(i)}
+                      onPointerUp={letGo}
                     >
                       <span className="dk-overview-n">
                         {digits(i + 1, lang)}
                       </span>
-                      <span>
-                        {t(s.title, lang).replace(/\{name\}/, base.d.name)}
-                      </span>
+                      <span>{titleOf(s)}</span>
                     </button>
                   ))}
                 </div>

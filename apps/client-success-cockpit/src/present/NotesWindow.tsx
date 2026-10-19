@@ -111,6 +111,7 @@ export function NotesWindow({
       if (
         el &&
         (el.tagName === "INPUT" ||
+          el.tagName === "SELECT" ||
           el.tagName === "TEXTAREA" ||
           el.isContentEditable)
       )
@@ -230,6 +231,12 @@ export function NotesWindow({
 
         <Section title="Only you see this">
           <ul className="space-y-1 text-muted-foreground">
+            {model.error ? (
+              <li className="txt-bad">
+                The deck could not be read again just now: {model.error} The
+                slides keep what they had.
+              </li>
+            ) : null}
             {[...model.loaded!.problems, ...d.notes].map(n => (
               <li key={n}>{n}</li>
             ))}
@@ -279,6 +286,7 @@ export function NotesWindow({
             sendKey={key => hub.post({ type: "key", key })}
             messages={messages}
             now={now}
+            still={base.still}
           />
         ) : (
           <SlideControls
@@ -329,7 +337,7 @@ export function NotesWindow({
       <footer className="sticky bottom-0 border-t bg-background/95 px-4 py-3 backdrop-blur">
         <div
           className={cn(
-            "mb-2 text-xs",
+            "mb-2 flex items-center justify-between gap-2 text-xs",
             sl.tone === "bad"
               ? "txt-bad"
               : sl.tone === "good"
@@ -338,7 +346,17 @@ export function NotesWindow({
           )}
           role="status"
         >
-          {sl.text}
+          <span className="min-w-0">{sl.text}</span>
+          {sl.tone === "bad" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => void model.flush()}
+            >
+              Save again
+            </Button>
+          ) : null}
         </div>
         <div className="flex items-center justify-between gap-2">
           <Button

@@ -1,11 +1,11 @@
 import {
   ArrowLeft,
-  Camera,
   ChevronLeft,
-  Mic,
   Paperclip,
   Phone as PhoneIcon,
   Play,
+  SendHorizontal,
+  Smile,
   Video,
   X,
 } from "lucide-react";
@@ -143,14 +143,8 @@ export function InstantForm({
           <div className="dkc-form-intro">
             <Avatar who={who} size="calc(var(--u) * 64)" />
             <b dir="auto">{pageName}</b>
-            {form.headline ? (
-              <h4 dir="auto">{form.headline}</h4>
-            ) : greeting ? null : (
-              <div className="dkc-bars" aria-hidden>
-                <i style={{ width: "80%" }} />
-                <i style={{ width: "56%" }} />
-              </div>
-            )}
+            {/* No headline and no greeting: the Page alone, nothing invented. */}
+            {form.headline ? <h4 dir="auto">{form.headline}</h4> : null}
             {greeting ? <p dir="auto">{greeting}</p> : null}
           </div>
           <div className="dkc-form-next">{t(FORM_APP.next, app)}</div>
@@ -221,15 +215,23 @@ export function InstantForm({
   );
 }
 
-/** A WhatsApp chat opening from the ad, the message waiting to be sent. */
+/**
+ * A WhatsApp chat opening from the ad (DESIGN 7.5): the business at the top
+ * of a new chat, and the message the ad fills in, waiting in the compose
+ * field with the send button lit. The words are example wording, tagged on
+ * the slide, until the ad's own template is read.
+ */
 export function WhatsAppChat({
   who,
   pageName,
   app,
+  message,
 }: {
   who: Identity;
   pageName: string;
   app: Lang;
+  /** The prefilled message, in the customer's words. */
+  message: string;
 }) {
   return (
     <div className="dkc-app" data-app="wa" dir={app === "ar" ? "rtl" : "ltr"}>
@@ -244,14 +246,21 @@ export function WhatsAppChat({
         <Video aria-hidden />
         <PhoneIcon aria-hidden />
       </div>
-      <div className="dkc-wa-body" />
-      <div className="dkc-wa-compose" aria-hidden>
-        <Paperclip />
-        <div className="dkc-wa-input">
-          <i style={{ width: "72%" }} />
+      <div className="dkc-wa-body">
+        <div className="dkc-wa-profile">
+          <Avatar who={who} size="calc(var(--u) * 72)" />
+          <b dir="auto">{pageName}</b>
         </div>
-        <Camera />
-        <Mic />
+      </div>
+      <div className="dkc-wa-compose" data-part="message">
+        <div className="dkc-wa-input">
+          <Smile aria-hidden />
+          <span dir="auto">{message}</span>
+          <Paperclip aria-hidden />
+        </div>
+        <span className="dkc-wa-send" aria-hidden>
+          <SendHorizontal className="dkc-flip" />
+        </span>
       </div>
     </div>
   );

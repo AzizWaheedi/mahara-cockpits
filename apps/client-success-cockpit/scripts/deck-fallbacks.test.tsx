@@ -200,9 +200,9 @@ describe("a done-with-you client in the UAE", () => {
     const g = d.goals.find(x => x.key === "goal12_24");
     expect(g?.held).toBe("count");
     expect(shownGoals(d).map(x => x.key)).toEqual(["goal90", "challenges"]);
-    expect(d.notes.some(n => n.includes("counts leads or appointments"))).toBe(
-      true,
-    );
+    expect(
+      d.notes.some(n => n.includes("counts enquiries or appointments")),
+    ).toBe(true);
   });
 
   test("a kickoff No is an answer (to do), and prep's tick wins", () => {
@@ -241,6 +241,24 @@ describe("the small rules", () => {
     expect(heldReason("نبي ٣٠ موعد بالشهر")).toBe("count");
     expect(heldReason("We want a money-back guarantee")).toBe("guarantee");
     expect(heldReason("Two kitchen projects a month")).toBeNull();
+    // The count after the noun, and counts in words.
+    for (const goal of [
+      "Increase leads to 50 a month",
+      "Leads: 50 per month",
+      "appointments: 20",
+      "We want more appointments, at least 15 every month",
+      "زيادة الاستفسارات إلى ٥٠ شهرياً",
+      "Get thirty leads a month",
+      "ثلاثين موعد بالشهر",
+    ])
+      expect(heldReason(goal)).toBe("count");
+    // Plain words that only look like counts stay.
+    for (const fine of [
+      "No one calls them back, and the good ones go cold",
+      "Become the go-to kitchen studio in Riyadh",
+      "Fewer wasted meetings with people who can't afford us",
+    ])
+      expect(heldReason(fine)).toBeNull();
   });
 
   test("service chips: prices and notes out, sentences dropped", () => {

@@ -56,9 +56,22 @@ export function QueueCard({
   still?: boolean;
 }) {
   const Q = LAUNCH.journey.queue;
-  const any = t(Q.anyService, lang);
   // A service in the other script keeps its place in the row (an isolate).
-  const s = (i: number) => `\u2068${services[i] ?? services[0] ?? any}\u2069`;
+  // With no service known, the rows leave it out (no made-up placeholder).
+  const s = (i: number) => {
+    const name = services[i] ?? services[0];
+    return name ? `\u2068${name}\u2069` : "";
+  };
+  const row = (l: L, i: number) =>
+    s(i)
+      ? tf(l, lang, { service: s(i) })
+      : t(
+          {
+            en: l.en.replace(" · {service}", ""),
+            ar: l.ar.replace(" · {service}", ""),
+          },
+          lang,
+        );
   return (
     <div className="dkc-queue" data-still={still ? "" : undefined}>
       <ol>
@@ -67,7 +80,7 @@ export function QueueCard({
             <Node x={14} y={14} r={10} state="now" />
           </svg>
           <span className="dkc-queue-text">
-            <bdi>{tf(Q.fresh, lang, { service: s(0) })}</bdi>
+            <bdi>{row(Q.fresh, 0)}</bdi>
           </span>
           <span className="dkc-queue-chip">
             {t(dwy ? Q.topDwy : Q.top, lang)}
@@ -78,7 +91,7 @@ export function QueueCard({
             <Node x={14} y={14} r={10} state="ahead" />
           </svg>
           <span className="dkc-queue-text">
-            <bdi>{tf(Q.second, lang, { service: s(1) })}</bdi>
+            <bdi>{row(Q.second, 1)}</bdi>
           </span>
         </li>
         <li>
@@ -86,7 +99,7 @@ export function QueueCard({
             <Node x={14} y={14} r={10} state="ahead" />
           </svg>
           <span className="dkc-queue-text">
-            <bdi>{tf(Q.callback, lang, { service: s(2) })}</bdi>
+            <bdi>{row(Q.callback, 2)}</bdi>
           </span>
         </li>
         <li data-row="lost">
@@ -137,8 +150,11 @@ export function CalendarEntry({
 
 /**
  * Journey stop 4: the steps before the meeting as dots on a line, each
- * named in a word or two under it (the call slide's stop 7 timeline, the
- * home of these steps, in miniature). Done with you, its four steps.
+ * named in a word or two (the call slide's stop 7 timeline, the home of
+ * these steps, in miniature). Done with you, its four steps. The names sit
+ * below and above the line in turn, so each has two columns' room and none
+ * wraps to leave one word on a line. A step with no time of its own (the
+ * provisional bookings' calls) is named by its whole line.
  */
 export function FiveDots({
   lang,
@@ -183,10 +199,16 @@ export function FiveDots({
         {rows.map((r, i) => (
           <li
             key={r.what.en}
-            style={{ insetInlineStart: x(i) - 8, width: col - 16 }}
+            style={{
+              insetInlineStart: x(i) - 8,
+              width: Math.min(col * 2 - 16, width - x(i) + 8),
+            }}
             data-first={i === 0 ? "" : undefined}
+            data-up={i % 2 ? "" : undefined}
           >
-            {t(r.when ?? r.what, lang)}
+            {r.plain && r.when
+              ? `${t(r.when, lang)}: ${t(r.what, lang)}`
+              : t(r.when ?? r.what, lang)}
           </li>
         ))}
       </ol>

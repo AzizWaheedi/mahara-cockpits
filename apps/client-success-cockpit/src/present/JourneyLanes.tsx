@@ -74,11 +74,16 @@ export function Node({
   r: number;
   state: "past" | "now" | "ahead";
 }) {
+  // The current node is a solid fill. Small (the rail, the cover's strip),
+  // a centre dot would leave a thin ring that reads as the nodes ahead, so
+  // only a node large enough to show a dot inside a fill carries one.
   if (state === "now")
     return (
       <g>
         <circle cx={x} cy={y} r={r} fill={TEAL} />
-        <circle cx={x} cy={y} r={Math.max(2, r * 0.29)} fill={DEEP} />
+        {r >= 9 ? (
+          <circle cx={x} cy={y} r={Math.max(2, r * 0.29)} fill={DEEP} />
+        ) : null}
       </g>
     );
   const k = r / 14;
@@ -197,11 +202,13 @@ export function JourneyLanes({
             fill="var(--dk-lane)"
           />
         ))}
+        {/* The current row's band runs past x 800 (NAME_END), so no name
+            (done with you's "Your team books" included) leaves it mid-word. */}
         <rect
           className="dkc-row-band"
           x={-12}
           y={0}
-          width={LANES_W + 24}
+          width={NAME_END + 28}
           height={ROW_H}
           rx={12}
           fill="var(--dk-teal-faint)"
@@ -448,7 +455,8 @@ export function MiniRail({
             key={`rn-${String(i)}`}
             x={p.x}
             y={p.y}
-            r={r}
+            // "You are here" a touch larger than the steps around it.
+            r={i === current && !all ? r * 1.3 : r}
             state={
               all
                 ? i === pts.length - 1

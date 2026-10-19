@@ -22,6 +22,7 @@ import {
   TodayPage,
 } from "@/pages";
 import { InvoicesPage } from "@/pages/InvoicesPage";
+import { DeckRouteBoundary } from "@/present/DeckBoundary";
 
 /** The client decks, loaded only when a deck window opens. */
 const PresentPage = lazy(() => import("@/present/PresentPage"));
@@ -72,17 +73,21 @@ export function AuthenticatedRoutes() {
           <Route
             path="/clients/:key/present/:deck"
             element={
-              <Suspense fallback={null}>
-                <PresentPage />
-              </Suspense>
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <PresentPage />
+                </Suspense>
+              </DeckRouteBoundary>
             }
           />
           <Route
             path="/clients/:key/present/:deck/notes"
             element={
-              <Suspense fallback={null}>
-                <PresentPage notes />
-              </Suspense>
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <PresentPage notes />
+                </Suspense>
+              </DeckRouteBoundary>
             }
           />
         </Route>

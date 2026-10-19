@@ -684,6 +684,13 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
   // at it (no placeholder on the client's canvas either way).
   return (
     <div className="dkc-redlines" data-empty={lines.length ? undefined : ""}>
+      {/* Nothing typed yet: the ruled line carries a quiet name, so it reads
+          as a place to write, not a stray rule. */}
+      {lines.length ? null : (
+        <span className="dk-label dkc-redlines-cap">
+          {t(O.next.input, lang)}
+        </span>
+      )}
       {lines.length ? (
         <ul>
           {lines.map(l => (
@@ -708,7 +715,8 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
         className="dkc-redline-input"
         dir="auto"
         value={value}
-        placeholder={t(O.next.input, lang)}
+        // With no lines yet the caption above already names it.
+        placeholder={lines.length ? t(O.next.input, lang) : undefined}
         aria-label={t(O.next.input, lang)}
         onChange={e => setValue(e.target.value)}
         onKeyDown={e => {
@@ -731,9 +739,11 @@ function StarterAds({ ctx }: { ctx: SlideCtx }) {
     creatives.find(c => phoneFor(c) !== "reels") ?? creatives[0] ?? null;
   const reel = creatives.find(c => phoneFor(c) === "reels") ?? feed;
   const props = { who: who(d), pageName: d.pageName, app, deck: lang };
-  // The title at the top, the approval line anchoring the foot of the
-  // column level with the phones' captions, the tag said once beside the
-  // title (not over each phone), the pair on the content's end edge.
+  // The title at the top, the tag said once beside it (not over each
+  // phone), then what these are under the tag; stop 1 already said they go
+  // live only once approved, so that is not said again. The pair sits on
+  // the content's end edge.
+  const service = d.starterPack ? d.serviceFocus : null;
   return (
     <div className="dkc-starter">
       <div className="dkc-starter-side">
@@ -743,8 +753,10 @@ function StarterAds({ ctx }: { ctx: SlideCtx }) {
             <span className="dk-tag">{t(SHARED.tag.starter, lang)}</span>
           ) : null}
         </div>
-        <p className="dk-lead dkc-starter-approval">
-          {t(O.next.approval, lang)}
+        <p className="dk-body dk-ink2 dkc-starter-line">
+          {service
+            ? tf(O.next.starterLine, lang, { service })
+            : t(O.next.starterLineNoPack, lang)}
         </p>
       </div>
       <div className="dkc-starter-phones">
@@ -789,7 +801,8 @@ function Next({ ctx }: { ctx: SlideCtx }) {
         </div>
         <div>
           <h3 className="dk-h3">{t(O.next.testName, lang)}</h3>
-          <p className="dk-body dk-ink2">{t(O.next.testLine, lang)}</p>
+          {/* The same ink as the first ads' line: two parallel statements. */}
+          <p className="dk-body">{t(O.next.testLine, lang)}</p>
           <RedLines ctx={ctx} />
         </div>
       </div>
@@ -840,7 +853,7 @@ export function onboardingSlides(): SlideDef[] {
         for (const g of d.goals)
           if (g.held)
             out.push(
-              `"${g.label.en}" is held back: ${g.held === "count" ? "it counts leads or appointments" : "it mentions a guarantee or a refund"}. Edit it here to show it.`,
+              `"${g.label.en}" is held back: ${g.held === "count" ? "it counts enquiries or appointments" : "it mentions a guarantee or a refund"}. Edit it here to show it.`,
             );
         return out;
       },

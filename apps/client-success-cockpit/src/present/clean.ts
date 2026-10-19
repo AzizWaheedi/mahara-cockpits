@@ -15,9 +15,15 @@ const PHONE = /(?:\+|00)?[0-9٠-٩](?:[\s\-().]*[0-9٠-٩]){6,}/g;
 /** Words that count leads or appointments, in English and Arabic. */
 const COUNT_NOUN =
   "(?:leads?|enquir(?:y|ies)|inquir(?:y|ies)|prospects?|appointments?|bookings?|meetings?|consultations?|calls?|ليد|ليدز|عملاء محتملين|عميل محتمل|استفسارات?|مواعيد|موعد|حجوزات|حجز|اجتماعات|مكالمات)";
-const NUM = "(?:[0-9٠-٩]+(?:\\s*(?:-|to|إلى|الى|لـ|~)\\s*[0-9٠-٩]+)?\\+?)";
+/** A count in figures, or in words ("thirty", "ثلاثين"); never "one" ("no one calls"). */
+const NUM =
+  "(?:[0-9٠-٩]+(?:\\s*(?:-|to|إلى|الى|لـ|~)\\s*[0-9٠-٩]+)?\\+?|\\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred)\\b|(?:عشرين|ثلاثين|أربعين|اربعين|خمسين|ستين|سبعين|ثمانين|تسعين|مية|مئة|مائة))";
+/**
+ * The number before the noun ("20 appointments"), or after it in the same
+ * sentence ("leads: 50"), never a list's next number ("… a price. 2. …").
+ */
 const COUNTS = new RegExp(
-  `${NUM}\\s*(?:[a-z\\u0600-\\u06FF]+\\s+){0,2}${COUNT_NOUN}`,
+  `${NUM}\\s*(?:[a-z\\u0600-\\u06FF]+\\s+){0,2}${COUNT_NOUN}|${COUNT_NOUN}[^0-9٠-٩.!?؟\\n]{0,40}?(?:^|[\\s:،,])${NUM}(?![.)]\\s)`,
   "iu",
 );
 const GUARANTEE =
@@ -33,7 +39,7 @@ export function heldReason(text: string): Held | null {
 }
 
 export const HELD_WORDS: Record<Held, string> = {
-  count: "it counts leads or appointments",
+  count: "it counts enquiries or appointments",
   guarantee: "it mentions a guarantee or a refund",
 };
 

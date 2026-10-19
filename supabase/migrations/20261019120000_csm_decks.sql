@@ -10,7 +10,9 @@
 --    browser has no write policy: cockpit-csm-api reserves a row here, signs a
 --    non-upserting upload with the service key, checks the object, and this
 --    file's accept function checks Storage's own metadata again before the
---    row turns ready. Reads are signed URLs under one read policy.
+--    row turns ready. Reads are signed URLs under one read policy. Removing a
+--    file deletes its bytes (the row stays, for the audit), and the client's
+--    stale uploads are swept whenever its tray is listed (launchAds.ts).
 -- 3. cockpit_csm_deck_sources: everything the decks pull that a CSM seat cannot
 --    read directly (logo, country, offer and Do's & Don'ts, callers, kit links
 --    and dates, next calls, this client's Meta ads and stills, and its funnel
@@ -68,6 +70,8 @@ CREATE TABLE IF NOT EXISTS public.cockpit_csm_launch_ads (
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text,
   removed_at timestamptz,
+  -- When the stored bytes (file and poster) were deleted from the bucket.
+  purged_at timestamptz,
   CONSTRAINT cockpit_csm_launch_ads_path CHECK (storage_path = task_id || '/' || id::text || '.' ||
     CASE mime WHEN 'image/jpeg' THEN 'jpg' WHEN 'image/png' THEN 'png' WHEN 'image/webp' THEN 'webp'
               WHEN 'video/mp4' THEN 'mp4' WHEN 'video/quicktime' THEN 'mov' ELSE 'webm' END),
@@ -78,14 +82,17 @@ CREATE TABLE IF NOT EXISTS public.cockpit_csm_launch_ads (
        CASE poster_mime WHEN 'image/jpeg' THEN 'jpg' WHEN 'image/png' THEN 'png' ELSE 'webp' END)),
   CONSTRAINT cockpit_csm_launch_ads_still_kinds CHECK (kind NOT IN ('logo','page') OR mime LIKE 'image/%'),
   CONSTRAINT cockpit_csm_launch_ads_ready CHECK ((status = 'uploading') = (ready_at IS NULL) OR status = 'removed'),
-  CONSTRAINT cockpit_csm_launch_ads_removed CHECK ((status = 'removed') = (removed_at IS NOT NULL))
+  CONSTRAINT cockpit_csm_launch_ads_removed CHECK ((status = 'removed') = (removed_at IS NOT NULL)),
+  CONSTRAINT cockpit_csm_launch_ads_purged CHECK (purged_at IS NULL OR status = 'removed')
 );
 CREATE INDEX IF NOT EXISTS cockpit_csm_launch_ads_task_idx ON public.cockpit_csm_launch_ads (task_id, status, created_at);
 CREATE INDEX IF NOT EXISTS cockpit_csm_launch_ads_pending_idx ON public.cockpit_csm_launch_ads (created_by, created_at) WHERE status = 'uploading';
 
 ALTER TABLE public.cockpit_csm_deck_prep ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cockpit_csm_launch_ads ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON public.cockpit_csm_deck_prep, public.cockpit_csm_launch_ads FROM PUBLIC, anon, authenticated;
+-- The service key reads, inserts and updates; it never deletes or truncates
+-- (a TRUNCATE would skip the row audit), so Supabase's default grants go too.
+REVOKE ALL ON public.cockpit_csm_deck_prep, public.cockpit_csm_launch_ads FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE ON public.cockpit_csm_deck_prep, public.cockpit_csm_launch_ads TO service_role;
 
 -- One audit row per write, whoever writes. Prep rows record only the keys a
@@ -176,7 +183,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
     'posterPath', a.poster_path, 'posterMime', a.poster_mime, 'posterBytes', a.poster_bytes, 'fileName', a.file_name,
     'placement', a.placement, 'primaryText', a.primary_text, 'headline', a.headline, 'cta', a.cta,
     'language', a.language, 'hidden', a.hidden, 'createdAt', a.created_at, 'createdBy', a.created_by_email,
-    'readyAt', a.ready_at, 'updatedAt', a.updated_at, 'updatedBy', a.updated_by, 'removedAt', a.removed_at)
+    'readyAt', a.ready_at, 'updatedAt', a.updated_at, 'updatedBy', a.updated_by, 'removedAt', a.removed_at,
+    'purgedAt', a.purged_at)
 $$;
 
 CREATE OR REPLACE FUNCTION public.cockpit_csm_launch_ads_rows(p_task_id text, p_include_hidden boolean) RETURNS jsonb
@@ -202,6 +210,12 @@ $$;
 -- same name key as the card (the rule cockpit_csm_client_ads uses), never by
 -- the ad account's name; if another client's card shares the key, nothing is
 -- matched.
+-- A campaign is its (name, ad account) pair, never its name alone: Meta's
+-- default names ("New Leads Campaign") repeat across clients. A tree ad is
+-- this client's when its pair is one of this client's pairs, or its account
+-- is used by no other client. Board and daily rows carry no account, so they
+-- count only for a name no other client's campaign (or another account's
+-- tree ad) shares.
 -- A funnel row is this client's only when one of its ads is one of this
 -- client's ads (by exact Meta id) and none of its ads is another client's.
 CREATE OR REPLACE FUNCTION public.cockpit_csm_deck_meta(p_task_id text, p_client_name text) RETURNS jsonb
@@ -210,6 +224,8 @@ DECLARE
   v_key text := public.cockpit_csm_name_key(p_client_name);
   v_twins integer;
   v_names text[] := '{}'; v_accounts text[] := '{}'; v_ids text[] := '{}'; v_other text[] := '{}';
+  v_pairs text[] := '{}'; v_loose text[] := '{}'; v_unshared text[] := '{}'; v_tree text[] := '{}';
+  v_other_pairs text[] := '{}'; v_other_names text[] := '{}';
   v_campaigns jsonb := '[]'::jsonb; v_ads jsonb; v_funnels jsonb;
   v_tree_ready boolean; v_tree_at timestamptz; v_fun_ready boolean; v_fun_at timestamptz;
   v_match text := 'name'; v_note text;
@@ -230,23 +246,35 @@ BEGIN
     v_match := 'ambiguous'; v_note := 'Another client card has the same name key, so no Meta campaign is matched to either.';
   ELSE
     WITH matched AS (
-      SELECT DISTINCT ON (c.raw_data->>'campaignName') c.*
+      SELECT DISTINCT ON (c.raw_data->>'campaignName', coalesce(nullif(c.raw_data->>'metaAccountId', ''), c.meta_account_id, ''))
+             c.*, coalesce(nullif(c.raw_data->>'metaAccountId', ''), c.meta_account_id) AS acct
         FROM public.cockpit_campaigns c
        WHERE nullif(btrim(c.raw_data->>'campaignName'), '') IS NOT NULL
          AND (public.cockpit_csm_name_key(c.raw_data->>'clientName') = v_key
               OR public.cockpit_csm_name_key(c.client_name) = v_key)
-       ORDER BY c.raw_data->>'campaignName', c.source_deleted, c.updated_at DESC)
-    SELECT coalesce(array_agg(m.raw_data->>'campaignName'), '{}'),
-           coalesce(array_agg(DISTINCT coalesce(nullif(m.raw_data->>'metaAccountId', ''), m.meta_account_id))
-             FILTER (WHERE coalesce(nullif(m.raw_data->>'metaAccountId', ''), m.meta_account_id) ~ '^[0-9]{3,25}$'), '{}'),
+       ORDER BY c.raw_data->>'campaignName', coalesce(nullif(c.raw_data->>'metaAccountId', ''), c.meta_account_id, ''),
+                c.source_deleted, c.updated_at DESC)
+    SELECT coalesce(array_agg(DISTINCT m.raw_data->>'campaignName'), '{}'),
+           coalesce(array_agg(DISTINCT m.acct) FILTER (WHERE m.acct ~ '^[0-9]{3,25}$'), '{}'),
+           coalesce(array_agg(DISTINCT (m.raw_data->>'campaignName') || chr(31) || coalesce(m.acct, '')), '{}'),
+           coalesce(array_agg(DISTINCT m.raw_data->>'campaignName') FILTER (WHERE nullif(m.acct, '') IS NULL), '{}'),
            coalesce(jsonb_agg(jsonb_build_object(
              'id', m.raw_data->>'metaCampaignId', 'name', m.raw_data->>'campaignName',
-             'accountId', coalesce(nullif(m.raw_data->>'metaAccountId', ''), m.meta_account_id),
-             'ended', m.source_deleted) ORDER BY m.raw_data->>'campaignName'), '[]'::jsonb)
-      INTO v_names, v_accounts, v_campaigns
+             'accountId', m.acct, 'ended', m.source_deleted) ORDER BY m.raw_data->>'campaignName', m.acct), '[]'::jsonb)
+      INTO v_names, v_accounts, v_pairs, v_loose, v_campaigns
       FROM matched m;
     IF cardinality(v_names) = 0 THEN v_match := 'none'; v_note := 'No Meta campaign carries this client''s name yet.'; END IF;
   END IF;
+
+  -- Every other client's campaign, as (name, account) pairs.
+  SELECT coalesce(array_agg(DISTINCT (c.raw_data->>'campaignName') || chr(31) ||
+                    coalesce(nullif(c.raw_data->>'metaAccountId', ''), c.meta_account_id, '')), '{}'),
+         coalesce(array_agg(DISTINCT c.raw_data->>'campaignName'), '{}')
+    INTO v_other_pairs, v_other_names
+    FROM public.cockpit_campaigns c
+   WHERE nullif(btrim(c.raw_data->>'campaignName'), '') IS NOT NULL
+     AND (v_key = '' OR (public.cockpit_csm_name_key(c.raw_data->>'clientName') IS DISTINCT FROM v_key
+                         AND public.cockpit_csm_name_key(c.client_name) IS DISTINCT FROM v_key));
 
   -- An ad account counts only when no other client's campaign uses it.
   SELECT coalesce(array_agg(acct), '{}') INTO v_accounts FROM unnest(v_accounts) acct
@@ -255,26 +283,42 @@ BEGIN
                         AND public.cockpit_csm_name_key(c.raw_data->>'clientName') IS DISTINCT FROM v_key
                         AND public.cockpit_csm_name_key(c.client_name) IS DISTINCT FROM v_key);
 
+  -- Names only this client uses: no other client's campaign has it, and no
+  -- tree ad carries it on an account outside this client's pairs.
+  SELECT coalesce(array_agg(n), '{}') INTO v_unshared FROM unnest(v_names) n
+   WHERE NOT (n = ANY(v_other_names))
+     AND NOT EXISTS (SELECT 1 FROM public.cockpit_media_sources s
+                      WHERE s.table_name = 'metaTree' AND s.data->>'kind' = 'ad' AND s.data->>'campaignName' = n
+                        AND NOT ((n || chr(31) || coalesce(s.data->>'accountId', '')) = ANY(v_pairs))
+                        AND NOT (n = ANY(v_loose)));
+
+  -- This client's tree ads: its own pair, an account no other client uses,
+  -- or (for a campaign with no account on record) a name no one else uses.
+  SELECT coalesce(array_agg(DISTINCT s.data->>'metaId'), '{}') INTO v_tree
+    FROM public.cockpit_media_sources s
+   WHERE s.table_name = 'metaTree' AND s.data->>'kind' = 'ad' AND s.data->>'metaId' ~ '^[0-9]{5,25}$'
+     AND (((s.data->>'campaignName') || chr(31) || coalesce(s.data->>'accountId', '')) = ANY(v_pairs)
+          OR s.data->>'accountId' = ANY(v_accounts)
+          OR (s.data->>'campaignName' = ANY(v_loose) AND s.data->>'campaignName' = ANY(v_unshared)));
+
   SELECT coalesce(array_agg(DISTINCT x.id), '{}') INTO v_ids FROM (
-    SELECT s.data->>'metaId' AS id FROM public.cockpit_media_sources s
-     WHERE s.table_name = 'metaTree' AND s.data->>'kind' = 'ad'
-       AND (s.data->>'campaignName' = ANY(v_names) OR s.data->>'accountId' = ANY(v_accounts))
-    UNION SELECT a.meta_ad_id FROM public.cockpit_ads a WHERE a.campaign_name = ANY(v_names)
-    UNION SELECT d.data->>'metaAdId' FROM public.cockpit_media_daily_stats d WHERE d.campaign_name = ANY(v_names)
+    SELECT unnest(v_tree) AS id
+    UNION SELECT a.meta_ad_id FROM public.cockpit_ads a WHERE a.campaign_name = ANY(v_unshared)
+    UNION SELECT d.data->>'metaAdId' FROM public.cockpit_media_daily_stats d WHERE d.campaign_name = ANY(v_unshared)
   ) x WHERE x.id ~ '^[0-9]{5,25}$';
 
-  -- Every ad of every campaign that is not this client's.
-  WITH others AS (
-    SELECT DISTINCT c.raw_data->>'campaignName' AS name FROM public.cockpit_campaigns c
-     WHERE nullif(btrim(c.raw_data->>'campaignName'), '') IS NOT NULL
-       AND NOT (c.raw_data->>'campaignName' = ANY(v_names))
-       AND (v_key = '' OR (public.cockpit_csm_name_key(c.raw_data->>'clientName') IS DISTINCT FROM v_key
-                           AND public.cockpit_csm_name_key(c.client_name) IS DISTINCT FROM v_key)))
+  -- Every ad of every campaign that is not this client's: tree ads by pair
+  -- (by name when that campaign has no account), board and daily rows by name
+  -- unless the tree places that ad in one of this client's pairs.
   SELECT coalesce(array_agg(DISTINCT x.id), '{}') INTO v_other FROM (
-    SELECT s.data->>'metaId' AS id FROM public.cockpit_media_sources s JOIN others o ON o.name = s.data->>'campaignName'
+    SELECT s.data->>'metaId' AS id FROM public.cockpit_media_sources s
      WHERE s.table_name = 'metaTree' AND s.data->>'kind' = 'ad'
-    UNION SELECT a.meta_ad_id FROM public.cockpit_ads a JOIN others o ON o.name = a.campaign_name
-    UNION SELECT d.data->>'metaAdId' FROM public.cockpit_media_daily_stats d JOIN others o ON o.name = d.campaign_name
+       AND (((s.data->>'campaignName') || chr(31) || coalesce(s.data->>'accountId', '')) = ANY(v_other_pairs)
+            OR ((s.data->>'campaignName') || chr(31)) = ANY(v_other_pairs))
+    UNION SELECT a.meta_ad_id FROM public.cockpit_ads a
+     WHERE a.campaign_name = ANY(v_other_names) AND NOT (a.meta_ad_id = ANY(v_tree))
+    UNION SELECT d.data->>'metaAdId' FROM public.cockpit_media_daily_stats d
+     WHERE d.campaign_name = ANY(v_other_names) AND NOT ((d.data->>'metaAdId') = ANY(v_tree))
   ) x WHERE x.id ~ '^[0-9]{5,25}$';
   v_ids := ARRAY(SELECT i FROM unnest(v_ids) i WHERE NOT (i = ANY(v_other)));
 
@@ -298,7 +342,7 @@ BEGIN
          ORDER BY (n.key = 'c:' || (s.data->>'creativeId')) DESC, (n.key = 'a:' || (s.data->>'metaId')) DESC, n.updated_at DESC
          LIMIT 1) st ON true
      WHERE s.table_name = 'metaTree' AND s.data->>'kind' = 'ad' AND s.data->>'metaId' = ANY(v_ids)
-       AND (s.data->>'campaignName' = ANY(v_names) OR s.data->>'accountId' = ANY(v_accounts));
+       AND s.data->>'metaId' = ANY(v_tree);
   END IF;
 
   IF v_fun_ready IS TRUE THEN
@@ -745,9 +789,11 @@ BEGIN
     END IF;
     RETURN public.cockpit_csm_launch_ad_json(a);
   END IF;
+  -- A failed upload is removed by the page at once; one left by a closed tab
+  -- stops counting after an hour, so the cap clears itself.
   SELECT count(*) INTO v_pending FROM public.cockpit_csm_launch_ads x
-   WHERE x.created_by = auth.uid() AND x.status = 'uploading' AND x.created_at > now() - interval '1 day';
-  IF v_pending >= 30 THEN RAISE EXCEPTION 'Too many unfinished uploads today. Finish or remove some first'; END IF;
+   WHERE x.created_by = auth.uid() AND x.status = 'uploading' AND x.created_at > now() - interval '1 hour';
+  IF v_pending >= 30 THEN RAISE EXCEPTION 'Too many unfinished uploads in the last hour. Wait a few minutes, then add the file again'; END IF;
   SELECT count(*) INTO v_count FROM public.cockpit_csm_launch_ads x WHERE x.task_id = p_task_id AND x.status <> 'removed';
   IF v_count >= 200 THEN RAISE EXCEPTION 'This client has 200 files already. Remove some first'; END IF;
 
@@ -835,9 +881,12 @@ BEGIN
   RETURN public.cockpit_csm_launch_ad_json(cur);
 END $$;
 
--- Takes a file off the tray for good. The row stays (status removed) for the
--- audit; the object becomes unreadable at once because the read policy wants
--- a ready row. A second remove is a no-op.
+-- Takes a file off the tray for good, an unfinished upload included. The row
+-- stays (status removed) for the audit; no new read link can be signed for it
+-- because the read policy wants a ready row, but a link signed earlier works
+-- until it expires (READ_SECONDS in launchAds.ts). cockpit-csm-api then
+-- deletes the bytes and records it with cockpit_csm_launch_ad_purged. A
+-- second remove is a no-op.
 CREATE OR REPLACE FUNCTION public.cockpit_csm_launch_ad_remove(p_task_id text, p_id uuid) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE g jsonb; a public.cockpit_csm_launch_ads;
@@ -852,6 +901,38 @@ BEGIN
   RETURN public.cockpit_csm_launch_ad_json(a);
 END $$;
 
+-- This client's files whose bytes should go: removed and not yet purged, or
+-- an upload left unfinished for a day (a closed tab). At most 50 at a time.
+CREATE OR REPLACE FUNCTION public.cockpit_csm_launch_ad_stale(p_task_id text) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  PERFORM public.cockpit_csm_client_gate(p_task_id);
+  RETURN (SELECT coalesce(jsonb_agg(jsonb_build_object('id', x.id, 'path', x.storage_path, 'posterPath', x.poster_path) ORDER BY x.created_at), '[]'::jsonb)
+            FROM (SELECT a.id, a.storage_path, a.poster_path, a.created_at FROM public.cockpit_csm_launch_ads a
+                   WHERE a.task_id = p_task_id
+                     AND ((a.status = 'removed' AND a.purged_at IS NULL)
+                          OR (a.status = 'uploading' AND a.created_at < now() - interval '1 day'))
+                   ORDER BY a.created_at LIMIT 50) x);
+END $$;
+
+-- The bytes of these files were deleted from the bucket: each stale or
+-- removed row of this client turns removed with its purge time (audited).
+-- Ready rows, fresh uploads and other clients' ids are left alone.
+CREATE OR REPLACE FUNCTION public.cockpit_csm_launch_ad_purged(p_task_id text, p_ids uuid[]) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE g jsonb; n integer;
+BEGIN
+  g := public.cockpit_csm_client_gate(p_task_id);
+  IF p_ids IS NULL OR cardinality(p_ids) > 50 THEN RAISE EXCEPTION 'Send at most 50 files at once'; END IF;
+  PERFORM set_config('cockpit.deck_action', 'launchAds.purge', true);
+  UPDATE public.cockpit_csm_launch_ads x
+     SET status = 'removed', removed_at = coalesce(x.removed_at, now()), purged_at = now(), updated_at = now(), updated_by = g->>'email'
+   WHERE x.task_id = p_task_id AND x.id = ANY(p_ids) AND x.purged_at IS NULL
+     AND (x.status = 'removed' OR (x.status = 'uploading' AND x.created_at < now() - interval '1 day'));
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $$;
+
 REVOKE ALL ON FUNCTION
   public.cockpit_csm_launch_object_allowed(text),
   public.cockpit_csm_deck_sources(text),
@@ -862,7 +943,9 @@ REVOKE ALL ON FUNCTION
   public.cockpit_csm_launch_ad_reserve(uuid, text, text, text, bigint, integer, integer, numeric, text, text, bigint),
   public.cockpit_csm_launch_ad_accept(text, uuid),
   public.cockpit_csm_launch_ad_update(text, uuid, jsonb),
-  public.cockpit_csm_launch_ad_remove(text, uuid)
+  public.cockpit_csm_launch_ad_remove(text, uuid),
+  public.cockpit_csm_launch_ad_stale(text),
+  public.cockpit_csm_launch_ad_purged(text, uuid[])
 FROM PUBLIC, anon, service_role;
 GRANT EXECUTE ON FUNCTION
   public.cockpit_csm_launch_object_allowed(text),
@@ -874,7 +957,9 @@ GRANT EXECUTE ON FUNCTION
   public.cockpit_csm_launch_ad_reserve(uuid, text, text, text, bigint, integer, integer, numeric, text, text, bigint),
   public.cockpit_csm_launch_ad_accept(text, uuid),
   public.cockpit_csm_launch_ad_update(text, uuid, jsonb),
-  public.cockpit_csm_launch_ad_remove(text, uuid)
+  public.cockpit_csm_launch_ad_remove(text, uuid),
+  public.cockpit_csm_launch_ad_stale(text),
+  public.cockpit_csm_launch_ad_purged(text, uuid[])
 TO authenticated;
 
 COMMIT;
