@@ -15,6 +15,8 @@ export type ProviderDriverOptions = {
   env: Environment;
   fetcher: typeof fetch;
   apply: boolean;
+  /** Retry wait. Tests pass a recorder; production waits for real. */
+  sleep?: (milliseconds: number) => Promise<void>;
 };
 
 const TRIAGE = "bldgtotkfmhoxmlzowdx";
@@ -31,6 +33,12 @@ const WRITE_RPCS: Record<string, true> = {
 const READ_POST_RPCS: Record<string, true> = {
   mahara_call_center_report: true,
   cockpit_finance_refresh_input: true,
+};
+// Base retry wait for heavy report RPCs (waits 1x, then 2x). The default 500 ms
+// retry started a second heavy scan while the first was still running on the
+// Small database (2026-10-19 memory dips).
+const RETRY_DELAY_MS: Record<string, number> = {
+  mahara_call_center_report: 10_000,
 };
 const API_GET_HOSTS: Record<string, true> = {
   "api.clickup.com": true,
@@ -265,6 +273,7 @@ export function createProviderDriver(options: ProviderDriverOptions): {
   receipts: ProviderReceipt[];
 } {
   const { env, fetcher, apply } = options;
+  const sleep = options.sleep ?? delay;
   const receipts: ProviderReceipt[] = [];
   let googleToken: { value: string; expiresAt: number } | null = null;
 
@@ -283,7 +292,7 @@ export function createProviderDriver(options: ProviderDriverOptions): {
     provider: string,
     input: string | URL | Request,
     init: RequestInit | undefined,
-    allowedPost?: { host: string; path: string; retryable?: boolean },
+    allowedPost?: { host: string; path: string; retryable?: boolean; retryDelayMs?: number },
   ): Promise<Response> => {
     const requestUrl = input instanceof Request ? new URL(input.url) : new URL(String(input));
     const method = String(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
@@ -295,6 +304,7 @@ export function createProviderDriver(options: ProviderDriverOptions): {
     const retryable = method === "GET" || (postAllowed && allowedPost?.retryable === true);
     if (method !== "GET" && !postAllowed) throw new Error("CEO refresh provider tools allow reads only");
     if (!API_GET_HOSTS[requestUrl.hostname] && !postAllowed) throw new Error("Provider host is not on the CEO read allowlist");
+    const retryDelayMs = (postAllowed && allowedPost?.retryDelayMs) || 500;
     for (let attempt = 0; attempt < 3; attempt++) {
       let response: Response;
       try {
@@ -302,7 +312,7 @@ export function createProviderDriver(options: ProviderDriverOptions): {
       } catch (error) {
         const message = safeError(error);
         if (retryable && attempt < 2) {
-          await delay(500 * (attempt + 1));
+          await sleep(retryDelayMs * (attempt + 1));
           continue;
         }
         saveReceipt({ provider, method: method as "GET" | "POST", resource, phase: "failure", http_status: null, error: message });
@@ -313,7 +323,7 @@ export function createProviderDriver(options: ProviderDriverOptions): {
       const message = `${provider} returned HTTP ${response.status} for ${resource}`;
       if (retryable && attempt < 2 && (response.status === 429 || response.status >= 500)) {
         await response.body?.cancel().catch(() => undefined);
-        await delay(500 * (attempt + 1));
+        await sleep(retryDelayMs * (attempt + 1));
         continue;
       }
       await response.body?.cancel().catch(() => undefined);
@@ -512,7 +522,7 @@ export function createProviderDriver(options: ProviderDriverOptions): {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     };
-    const response = await send("supabase", url, init, method === "POST" ? { host: "bldgtotkfmhoxmlzowdx.supabase.co", path: new URL(url).pathname, retryable: true } : undefined);
+    const response = await send("supabase", url, init, method === "POST" ? { host: "bldgtotkfmhoxmlzowdx.supabase.co", path: new URL(url).pathname, retryable: true, retryDelayMs: RETRY_DELAY_MS[rpcName] } : undefined);
     return decodeJson(response, resource);
   };
 

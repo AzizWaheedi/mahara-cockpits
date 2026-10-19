@@ -1209,7 +1209,7 @@ To stop the feed: `select cron.unschedule(jobid) from cron.job where jobname = '
 Built 2026-10-16 for the shared Client Performance board. The plpgsql
 function `cockpit_board_facts_refresh(from, to)` (migration
 `20261016111157_board_facts.sql`) runs inside the database as `postgres`, by
-pg_cron: `mahara-board-facts` at minutes 10 and 40 rebuilds today and the two
+pg_cron: `mahara-board-facts` at minutes 2 and 32 (moved by `20261019141000_board_facts_schedule.sql`) rebuilds today and the two
 days before, `mahara-board-facts-nightly` at 00:50 UTC (03:50 Kuwait) the last
 120 days. It calls nothing outside the database. It writes three tables, none
 readable by a browser (the board's own read functions are the only door):
