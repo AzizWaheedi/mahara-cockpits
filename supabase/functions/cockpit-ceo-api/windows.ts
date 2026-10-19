@@ -2,7 +2,7 @@ import { CPL_GATE } from '../../../apps/media-buyer-cockpit/src/lib/kpi.ts';
 import { B2B } from './finance/sb.ts';
 import { num } from './finance/numbers.ts';
 import { NOT_VOIDED, VOIDED, voidedDeals } from './finance/voids.ts';
-import { ACCOUNT_TIME_ZONE_FALLBACK, type LevelFrequency, metaUntil, readInsights, readLevelFrequency } from './frequency.ts';
+import { ACCOUNT_TIME_ZONE_FALLBACK, campaignKind, type LevelFrequency, liveOnlyAds, liveState, type LiveStatus, metaUntil, offReason, readInsights, readLevelFrequency, readLiveStatus } from './frequency.ts';
 
 type Row = Record<string, unknown>;
 type SqlRead = (project: string, query: string) => Promise<Row[]>;
@@ -76,7 +76,14 @@ export type B2bVerdict = {
   owner: 'ads' | 'setter' | 'closer' | null;
 };
 export type B2bAdNode = {
-  id: string; name: string; status: string; running: boolean; thumbnail: string | null;
+  /**
+   * `status` and `running` are Meta's live effective_status when `statusFrom` is 'meta' (running: ACTIVE);
+   * on the snapshot fallback, the newest snapshot's status and ACTIVE with delivery in the window.
+   * `delivered`: a snapshot row in the window, the numbers' signal. `lastDelivery`: the newest snapshot day.
+   * `switchOn`: its own switch in Meta (configured_status ACTIVE), what the cockpit's switch shows and sets;
+   * only when `statusFrom` is 'meta'.
+   */
+  id: string; name: string; status: string; running: boolean; switchOn?: boolean; delivered: boolean; lastDelivery: string | null; thumbnail: string | null;
   w7: B2bAdWindow; w30: B2bAdWindow; verdict: B2bVerdict; people: B2bPeople;
 };
 export type B2bAdsPayload = {
@@ -88,13 +95,17 @@ export type B2bAdsPayload = {
   coverage: { w7: CoverageWindow; w30: CoverageWindow };
   running: number; total: number; verdicts: Record<string, number>;
   campaigns: {
-    id: string; name: string; type: string; status: string; running: boolean; w7: B2bAdWindow; w30: B2bAdWindow;
+    id: string; name: string; type: string; status: string; running: boolean; switchOn?: boolean; delivered: boolean; w7: B2bAdWindow; w30: B2bAdWindow;
     people: B2bPeople;
     constraint: { stage: string; owner: 'ads' | 'landing' | 'setter' | 'closer'; mine: number; account: number } | null;
-    adsets: { id: string; name: string; running: boolean; w7: B2bAdWindow; w30: B2bAdWindow; people: B2bPeople; ads: B2bAdNode[] }[];
+    adsets: { id: string; name: string; status?: string; running: boolean; switchOn?: boolean; delivered: boolean; w7: B2bAdWindow; w30: B2bAdWindow; people: B2bPeople; ads: B2bAdNode[] }[];
   }[];
   lastSnapshotDay: string | null; firstSnapshotDay: string | null;
   accountStatus: { code: number; label: string; disableReason: string | null; balance: number | null; currency: string | null } | null;
+  /** Where on and off came from: Meta's live status, or the snapshot rule when that read failed. */
+  statusFrom: 'meta' | 'snapshots';
+  /** When the live status read began (epoch ms); null on the fallback. */
+  statusReadAt: number | null;
   notes: { level: 'info' | 'warn'; text: string }[];
 };
 type CoverageWindow = { leads: number; adLeads: number; closes: number; adCloses: number; contracted: number; adContracted: number };
@@ -495,6 +506,28 @@ function judge(running: boolean, seven: B2bAdWindow, thirty: B2bAdWindow, staleS
   };
 }
 
+/**
+ * An ad's verdict, as hermes b2bAds.js adVerdict: with Meta's live status on and off is Meta's word and
+ * delivery only decides whether there are numbers to judge; on the snapshot fallback an ad with no
+ * delivery in the range is off, because its newest snapshot's status can be stale.
+ */
+function adVerdict(live: LiveStatus | null, running: boolean, status: string, delivered: boolean, lastSeen: string | null, seven: B2bAdWindow, thirty: B2bAdWindow, staleSince: string | null, from: string, to: string, kind: string): B2bVerdict {
+  const since = `No Meta delivery since ${lastSeen ?? 'before the range'}.`;
+  if (!live) return delivered ? judge(running, seven, thirty, staleSince, from, to, kind) : { verdict: 'off', reason: since, owner: null };
+  if (!running) return { verdict: 'off', reason: delivered ? offReason(status) : `${offReason(status)} ${since}`, owner: null };
+  if (!delivered) return {
+    verdict: 'no delivery',
+    reason: lastSeen ? `On in Meta, but no delivery since ${lastSeen}.` : `On in Meta, with no delivery from ${from} to ${to}: its numbers start when it spends.`,
+    owner: 'ads',
+  };
+  return judge(true, seven, thirty, staleSince, from, to, kind);
+}
+
+function newAdset(live: LiveStatus | null, id: string, name: string): B2bAdsPayload['campaigns'][number]['adsets'][number] {
+  const state = live ? liveState(live, 'adsets', id) : null;
+  return { id, name, ...(state ? { status: state.status, switchOn: state.switchOn } : {}), running: state ? state.running : false, delivered: false, w7: emptyWindow(), w30: emptyWindow(), people: emptyPeople(), ads: [] };
+}
+
 function constraintOf(window: B2bAdWindow, account: B2bAdWindow): B2bAdsPayload['campaigns'][number]['constraint'] {
   // Every stage is a share of the one before it and never passes 100%: leads that booked an
   // intro, and of those the ones whose intro was confirmed, each lead once (the CEO, 2026-10-18).
@@ -554,14 +587,23 @@ export function unplacedNote(crm: CoverageWindow, rows: B2bAdWindow): string | n
   return `In this window the CRM holds ${crm.adLeads} ${crm.adLeads === 1 ? 'lead' : 'leads'} and ${crm.adCloses} signed ${crm.adCloses === 1 ? 'deal' : 'deals'} ($${crm.adContracted.toLocaleString('en-US')}) on this account's ads, and the ad rows add up to ${rows.leads} and ${rows.closes} ($${rows.contracted.toLocaleString('en-US')}). The difference is records the cockpit could not place on an ad, usually an ad with no Meta snapshot on or before the last day. The coverage figures count them; the rows do not.`;
 }
 
-function buildAdsNotes(payload: B2bAdsPayload, staleSince: string | null, freshnessAt: number | undefined, voided: number, rows: B2bAdWindow): void {
+function buildAdsNotes(payload: B2bAdsPayload, staleSince: string | null, freshnessAt: number | undefined, voided: number, rows: B2bAdWindow, liveError: string | null, added: number): void {
   if (payload.accountStatus && payload.accountStatus.code !== 1) payload.notes.push({
     level: 'warn',
     text: `Meta reports the ad account as ${payload.accountStatus.label}${payload.accountStatus.disableReason ? ` (${payload.accountStatus.disableReason})` : ''}${payload.accountStatus.balance ? `, with a balance of ${payload.accountStatus.currency ?? ''} ${payload.accountStatus.balance.toFixed(2)} outstanding` : ''}. Nothing delivers and nothing can be created or edited on the account until that is resolved in Ads Manager. It is the first thing to fix; every verdict below is about the past.`,
   });
-  if (staleSince) payload.notes.push({
+  const live = payload.statusFrom === 'meta';
+  if (!live) payload.notes.push({
+    level: 'warn',
+    text: `Meta's own on and off could not be read (${liveError ?? 'no answer'}), so the switches show delivery, not Meta's setting: an ad counts as on only when its newest snapshot says active and it delivered in the range. A change made in Meta shows here once the ad delivers and the snapshot sync catches up.`,
+  });
+  if (staleSince && !live) payload.notes.push({
     level: 'warn',
     text: `"Running" here means switched on as of ${staleSince}, the newest day Meta has reported. Whether those ads are still on today is not known until the sync catches up.`,
+  });
+  if (added > 0) payload.notes.push({
+    level: 'info',
+    text: `${added} ${added === 1 ? 'ad is' : 'ads are'} on in Meta with no delivery in the range, so ${added === 1 ? 'it shows' : 'they show'} at $0 until ${added === 1 ? 'it spends' : 'they spend'}, and can be switched from here.`,
   });
   if (payload.running === 0) payload.notes.push({ level: 'warn', text: 'Nothing on the account is delivering. Every ad is switched off, so the figures read spend from before the pause and the verdicts are about what was running, not what is.' });
   const gapAds = payload.campaigns.flatMap(campaign => campaign.adsets.flatMap(adset => adset.ads)).filter(ad => ad.w30.metaLeads >= 5 && ad.w30.leads < ad.w30.metaLeads * 0.5);
@@ -583,6 +625,10 @@ function buildAdsNotes(payload: B2bAdsPayload, staleSince: string | null, freshn
   payload.notes.push({
     level: 'info',
     text: 'A verdict names whose problem it is. "Kill", "hold", "scale" and "fatiguing" are the ad. "Leads do not book" and "intros do not confirm" are the setter. Switching an ad off never fixes those two; it just stops the calendar filling. Demos and closes are judged on the Sales tab, not per ad. Retargeting and other campaigns that are not lead gen are not judged on cost per lead.',
+  });
+  if (live) payload.notes.push({
+    level: 'info',
+    text: 'On and off is Meta\'s own setting, read from the ad account when this range was read. Each switch shows that campaign\'s, ad set\'s or ad\'s own setting, the one it changes; an ad runs only when it, its ad set and its campaign are all on, so an ad switched on under a paused campaign shows on, is not counted as running, and its verdict says why. Spend and every other number still come from the snapshots, so an ad switched on shows $0 until it delivers.',
   });
   if (staleSince) {
     const ranAt = freshnessAt ? new Date(freshnessAt + 3 * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') : null;
@@ -618,6 +664,15 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
     currency: typeof account.currency === 'string' && account.currency ? account.currency : null,
   };
   const rows = await sources.readSql(B2B, treeSql(from, from, to));
+  // On and off is Meta's own, read live (the CEO, 2026-10-19), as in hermes b2bAds.js; the numbers stay
+  // the snapshots'. A failed read never fails the range: the snapshot rule and a note stand in.
+  let live: LiveStatus | null = null;
+  let liveError: string | null = null;
+  try {
+    live = await readLiveStatus(sources.readMeta, sources.now ?? Date.now);
+  } catch (error) {
+    liveError = String(error instanceof Error ? error.message : error).slice(0, 160);
+  }
   const totalsRow = sqlRow(await sources.readSql(B2B, windowRowsSql(from, to)), 'window totals');
   const leadGenIds = [...new Set(rows.map(raw => record(raw, 'ad row')).filter(row => row.campaign_type === 'lead_gen').map(row => text(row.campaign_id, 'campaign ID')))];
   const meta = await readRangeFrequency(sources.readMeta, from, until, leadGenIds);
@@ -639,22 +694,28 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
     // Before judge(): "fatiguing" reads the ad's real frequency for the range.
     seven.frequency = metaFrequency(meta.ad, adId);
     thirty.frequency = metaFrequency(meta.ad, adId);
-    const status = text(row.effective_status, 'effective ad status', '');
-    // An old snapshot's status can be stale: running needs Meta delivery in the range.
+    // Delivery, the numbers' signal: a snapshot row in the range.
     const lastSeen = typeof row.last_seen === 'string' && row.last_seen ? row.last_seen.slice(0, 10) : null;
     const delivered = lastSeen !== null && lastSeen >= from;
-    const running = status === 'ACTIVE' && delivered;
+    // On and off: Meta's live effective_status. On the fallback an old snapshot's status can be stale,
+    // so running needs Meta delivery in the range.
+    const snapshotStatus = text(row.effective_status, 'effective ad status', '');
+    const own = live ? liveState(live, 'ads', adId) : null;
+    const status = own ? own.status : snapshotStatus;
+    const running = own ? own.running : snapshotStatus === 'ACTIVE' && delivered;
     const ad: B2bAdNode = {
       id: adId,
       name: text(row.ad_name, 'ad name', `Ad ${adId}`),
       status,
       running,
+      // Its own switch in Meta, read live: what the cockpit's switch shows and sets. Absent on the fallback.
+      ...(own ? { switchOn: own.switchOn } : {}),
+      delivered,
+      lastDelivery: lastSeen,
       thumbnail: typeof row.thumbnail_url === 'string' && row.thumbnail_url ? row.thumbnail_url : null,
       w7: seven,
       w30: thirty,
-      verdict: delivered
-        ? judge(running, seven, thirty, staleSince, from, to, text(row.campaign_type, 'B2B campaign type', 'unknown'))
-        : { verdict: 'off', reason: `No Meta delivery since ${lastSeen ?? 'before the range'}.`, owner: null },
+      verdict: adVerdict(live, running, status, delivered, lastSeen, seven, thirty, staleSince, from, to, text(row.campaign_type, 'B2B campaign type', 'unknown')),
       people: {
         setter: row.setter_name ? { name: text(row.setter_name, 'setter name'), shown: requiredNumber(row.setter_shown, 'setter shown count'), due: requiredNumber(row.setter_due, 'setter due count') } : null,
         closer: row.closer_name ? { name: text(row.closer_name, 'closer name'), closes: requiredNumber(row.closer_closes, 'closer close count') } : null,
@@ -673,12 +734,16 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
     const campaignId = text(row.campaign_id, 'campaign ID');
     let campaign = campaigns.get(campaignId);
     if (!campaign) {
+      // Running is Meta's word when read live; on the fallback, set by its ads.
+      const state = live ? liveState(live, 'campaigns', campaignId) : null;
       campaign = {
         id: campaignId,
         name: text(row.campaign_name, 'campaign name', campaignId),
         type: kind,
-        status: text(row.campaign_status, 'campaign status', ''),
-        running: false,
+        status: state ? state.status : text(row.campaign_status, 'campaign status', ''),
+        running: state ? state.running : false,
+        ...(state ? { switchOn: state.switchOn } : {}),
+        delivered: false,
         w7: emptyWindow(),
         w30: emptyWindow(),
         people: emptyPeople(),
@@ -690,7 +755,7 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
     const adsetId = text(row.adset_id, 'ad set ID');
     let adset = campaign.adsets.find(item => item.id === adsetId);
     if (!adset) {
-      adset = { id: adsetId, name: text(row.adset_name, 'ad set name', adsetId), running: false, w7: emptyWindow(), w30: emptyWindow(), people: emptyPeople(), ads: [] };
+      adset = newAdset(live, adsetId, text(row.adset_name, 'ad set name', adsetId));
       campaign.adsets.push(adset);
     }
     adset.ads.push(ad);
@@ -698,7 +763,43 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
     addWindow(adset.w30, thirty);
     addWindow(campaign.w7, seven);
     addWindow(campaign.w30, thirty);
-    if (running) { adset.running = true; campaign.running = true; }
+    if (!live && running) { adset.running = true; campaign.running = true; }
+    if (delivered) { adset.delivered = true; campaign.delivered = true; }
+  }
+  // Ads Meta has running with no snapshot in the range (switched on, not delivered yet) join at $0,
+  // so they can be switched.
+  let added = 0;
+  if (live) {
+    for (const liveAd of liveOnlyAds(live, adIds)) {
+      const campaignId = String(liveAd.campaignId);
+      let campaign = campaigns.get(campaignId);
+      if (!campaign) {
+        const name = live.campaigns.get(campaignId)?.name || campaignId;
+        const state = liveState(live, 'campaigns', campaignId);
+        campaign = {
+          id: campaignId, name, type: campaignKind(name), status: state.status, running: state.running, switchOn: state.switchOn, delivered: false,
+          w7: emptyWindow(), w30: emptyWindow(), people: emptyPeople(), constraint: null, adsets: [],
+        };
+        campaigns.set(campaignId, campaign);
+      }
+      const adsetId = String(liveAd.adsetId);
+      let adset = campaign.adsets.find(item => item.id === adsetId);
+      if (!adset) {
+        adset = newAdset(live, adsetId, live.adsets.get(adsetId)?.name || adsetId);
+        campaign.adsets.push(adset);
+      }
+      const seven = emptyWindow();
+      const thirty = emptyWindow();
+      seven.frequency = metaFrequency(meta.ad, liveAd.id);
+      thirty.frequency = seven.frequency;
+      adset.ads.push({
+        id: liveAd.id, name: liveAd.name || `Ad ${liveAd.id}`, status: liveAd.effectiveStatus, running: true, switchOn: liveState(live, 'ads', liveAd.id).switchOn, delivered: false, lastDelivery: null,
+        thumbnail: null, w7: seven, w30: thirty,
+        verdict: adVerdict(live, true, liveAd.effectiveStatus, false, null, seven, thirty, staleSince, from, to, campaign.type),
+        people: emptyPeople(),
+      });
+      added += 1;
+    }
   }
   account7.frequency = meta.account;
   account30.frequency = meta.account;
@@ -754,9 +855,11 @@ export async function readAdsWindow(from: string, to: string, sources: WindowSou
     lastSnapshotDay: lastDay,
     firstSnapshotDay: firstDay,
     accountStatus,
+    statusFrom: live ? 'meta' : 'snapshots',
+    statusReadAt: live ? live.readAt : null,
     notes: [],
   };
-  buildAdsNotes(payload, staleSince, freshnessAt, totals.w30Voided, all30);
+  buildAdsNotes(payload, staleSince, freshnessAt, totals.w30Voided, all30, liveError, added);
   return payload;
 }
 

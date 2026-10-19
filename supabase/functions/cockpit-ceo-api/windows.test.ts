@@ -1,12 +1,19 @@
 import { expect, test } from 'bun:test';
 import { readAdsWindow, readContentWindow, treeSql } from './windows.ts';
 
-// Meta: the account read, then whole-window insights per level. No row means no frequency.
+// Meta: the account read, the live on/off lists, then whole-window insights per level. No row means no
+// frequency. Without `live` the status lists are refused, so a test stays on the snapshot rule (the fallback).
 type MetaParams = Record<string, string | number>;
-const meta = (levels: Partial<Record<'ad' | 'adset' | 'campaign' | 'account', Record<string, unknown>[]>> = {}, timezone_name: string | undefined = 'America/Los_Angeles', calls: { path: string; params: MetaParams }[] = []) =>
+type LiveLists = Partial<Record<'campaigns' | 'adsets' | 'ads', Record<string, unknown>[]>>;
+const meta = (levels: Partial<Record<'ad' | 'adset' | 'campaign' | 'account', Record<string, unknown>[]>> = {}, timezone_name: string | undefined = 'America/Los_Angeles', calls: { path: string; params: MetaParams }[] = [], live?: LiveLists) =>
   async (path: string, params: MetaParams = {}) => {
     calls.push({ path, params });
     if (path === 'act_746108264865897') return { account_status: 1, disable_reason: 0, balance: '0', currency: 'USD', ...(timezone_name ? { timezone_name } : {}) };
+    const edge = /^act_746108264865897\/(campaigns|adsets|ads)$/.exec(path)?.[1] as keyof LiveLists | undefined;
+    if (edge) {
+      if (!live) throw new Error('Meta Graph API error 17');
+      return { data: live[edge] ?? [], paging: {} };
+    }
     return { data: levels[String(params.level) as 'ad'] ?? [], paging: {} };
   };
 const NOW = () => Date.parse('2026-10-16T12:00:00Z');
@@ -359,4 +366,129 @@ test('custom range credits calls and deals to the lead\'s ad, with the same SQL 
   const text = result.notes.map(note => note.text).join(' ');
   expect(text).not.toContain('could not place');
   expect(text).toContain('Calls and deals are credited to the ad on the contact\'s lead record when it is one of this account\'s ads and was already running when the call was booked or the deal signed; otherwise they keep the ad on the call or deal.');
+});
+
+// The CEO, 2026-10-19: "Ads turning on and off in the CEO cockpit isn't working." On and off was read from
+// the snapshots, which hold a row only for a day an ad delivered. The custom range reads Meta's own status,
+// as the scheduled tab does (hermes b2bAds.js), and keeps the snapshots for the numbers.
+const statusRows = () => [
+  // Switched off in Meta today; its snapshots still say ACTIVE and it delivered all week.
+  ad('lead_gen', 'off-today', 20),
+  // Switched back on in Meta; its newest snapshot is from August, so it has not delivered since.
+  { ...ad('lead_gen', 'back-on', 0), last_seen: '2026-08-20' },
+];
+const LIVE: LiveLists = {
+  campaigns: [
+    { id: 'off-today-campaign', name: 'lead_gen', status: 'ACTIVE', configured_status: 'ACTIVE', effective_status: 'ACTIVE' },
+    { id: 'back-on-campaign', name: 'lead_gen', status: 'ACTIVE', configured_status: 'ACTIVE', effective_status: 'ACTIVE' },
+    { id: 'new-campaign', name: 'MaharaMedia | Lead Gen | 19-10-26', status: 'ACTIVE', configured_status: 'ACTIVE', effective_status: 'ACTIVE' },
+  ],
+  adsets: [
+    { id: 'off-today-set', name: 'lead_gen set', status: 'ACTIVE', effective_status: 'ACTIVE', campaign_id: 'off-today-campaign' },
+    { id: 'back-on-set', name: 'lead_gen set', status: 'ACTIVE', effective_status: 'ACTIVE', campaign_id: 'back-on-campaign' },
+    { id: 'new-set', name: 'Kuwait founders', status: 'ACTIVE', effective_status: 'ACTIVE', campaign_id: 'new-campaign' },
+  ],
+  ads: [
+    { id: 'off-today', name: 'lead_gen creative', status: 'PAUSED', configured_status: 'PAUSED', effective_status: 'PAUSED', adset_id: 'off-today-set', campaign_id: 'off-today-campaign' },
+    { id: 'back-on', name: 'lead_gen creative', status: 'ACTIVE', configured_status: 'ACTIVE', effective_status: 'ACTIVE', adset_id: 'back-on-set', campaign_id: 'back-on-campaign' },
+    // Switched on, never delivered, so no snapshot: it joins the range at $0 to be switched.
+    { id: 'just-on', name: 'Founder story | 19-10-26', status: 'ACTIVE', configured_status: 'ACTIVE', effective_status: 'ACTIVE', adset_id: 'new-set', campaign_id: 'new-campaign' },
+    // Off, archived or in a paused ad set with no snapshot: never added.
+    { id: 'never-on', name: 'Draft', status: 'PAUSED', effective_status: 'PAUSED', adset_id: 'new-set', campaign_id: 'new-campaign' },
+    { id: 'archived', name: 'Old', status: 'ARCHIVED', effective_status: 'ARCHIVED', adset_id: 'new-set', campaign_id: 'new-campaign' },
+    { id: 'set-off', name: 'Waiting', status: 'ACTIVE', effective_status: 'ADSET_PAUSED', adset_id: 'new-set', campaign_id: 'new-campaign' },
+  ],
+};
+const statusRun = (readMeta: (path: string, params?: MetaParams) => Promise<Record<string, unknown>>) => {
+  const sqlResults: Record<string, unknown>[][] = [
+    [{ ms: 1790800000000, last_day: '2026-10-16', first_day: '2025-01-01' }],
+    statusRows(),
+    [{ w7_leads: 6, w30_leads: 6, w7_closes: 2, w30_closes: 2, w7_contracted: 250, w30_contracted: 250, w30_voided: 0, ad_leads: 6, ad_closes: 2, ad_contracted: 250 }],
+  ];
+  let query = 0;
+  return readAdsWindow('2026-10-10', '2026-10-16', { readSql: async () => sqlResults[query++], readMeta, now: NOW });
+};
+
+test('custom range reads on and off from Meta live: a switch-off outranks a stale ACTIVE snapshot, a switch-on shows before it delivers', async () => {
+  const calls: { path: string; params: MetaParams }[] = [];
+  const result = await statusRun(meta({}, 'America/Los_Angeles', calls, LIVE));
+  expect(result.statusFrom).toBe('meta');
+  expect(result.statusReadAt).toBe(NOW());
+
+  const offToday = adIn(result, 'off-today');
+  expect(offToday).toMatchObject({ status: 'PAUSED', running: false, switchOn: false, delivered: true, lastDelivery: '2026-10-16' });
+  expect(offToday.verdict).toEqual({ verdict: 'off', reason: 'Switched off in Meta.', owner: null });
+  // Its numbers are the snapshots' still.
+  expect(offToday.w7.spend).toBe(20);
+  expect(result.account.w7.spend).toBe(20);
+
+  const backOn = adIn(result, 'back-on');
+  expect(backOn).toMatchObject({ status: 'ACTIVE', running: true, switchOn: true, delivered: false, lastDelivery: '2026-08-20' });
+  expect(backOn.verdict).toEqual({ verdict: 'no delivery', reason: 'On in Meta, but no delivery since 2026-08-20.', owner: 'ads' });
+
+  const justOn = adIn(result, 'just-on');
+  expect(justOn).toMatchObject({ name: 'Founder story | 19-10-26', status: 'ACTIVE', running: true, switchOn: true, delivered: false, lastDelivery: null, thumbnail: null });
+  expect(justOn.w7.spend).toBe(0);
+  expect(justOn.verdict).toEqual({ verdict: 'no delivery', reason: 'On in Meta, with no delivery from 2026-10-10 to 2026-10-16: its numbers start when it spends.', owner: 'ads' });
+  const newCampaign = result.campaigns.find(c => c.id === 'new-campaign')!;
+  expect(newCampaign).toMatchObject({ name: 'MaharaMedia | Lead Gen | 19-10-26', type: 'lead_gen', status: 'ACTIVE', running: true, switchOn: true, delivered: false });
+  expect(newCampaign.adsets.map(s => [s.id, s.name, s.status, s.running, s.switchOn])).toEqual([['new-set', 'Kuwait founders', 'ACTIVE', true, true]]);
+  const all = result.campaigns.flatMap(c => c.adsets.flatMap(s => s.ads)).map(a => a.id).sort();
+  expect(all).toEqual(['back-on', 'just-on', 'off-today']);
+
+  // A campaign is running when Meta says so, though its only ad is off.
+  expect(result.campaigns.find(c => c.id === 'off-today-campaign')).toMatchObject({ running: true, switchOn: true, delivered: true });
+  expect(result.running).toBe(2);
+  expect(result.total).toBe(3);
+
+  const reads = calls.filter(call => /\/(campaigns|adsets|ads)$/.test(call.path));
+  expect(reads.map(call => [call.path, call.params.limit])).toEqual([
+    ['act_746108264865897/campaigns', 500], ['act_746108264865897/adsets', 500], ['act_746108264865897/ads', 500],
+  ]);
+  expect(String(reads[2].params.fields)).toBe('id,name,status,effective_status,configured_status,adset_id,campaign_id');
+  const text = result.notes.map(note => note.text).join(' ');
+  expect(text).toContain("On and off is Meta's own setting");
+  expect(text).toContain('1 ad is on in Meta with no delivery in the range, so it shows at $0 until it spends, and can be switched from here.');
+  expect(text).not.toContain('could not be read');
+});
+
+test('custom range: an ad switched on under a paused campaign shows its own switch on, and is not running', async () => {
+  // The switch sets the object's own status (cockpit-media-api setStatus), so it shows that one (switchOn);
+  // running is Meta's effective status and counts what delivers.
+  const lists: LiveLists = {
+    ...LIVE,
+    campaigns: LIVE.campaigns.map(c => (c.id === 'off-today-campaign' ? { ...c, status: 'PAUSED', configured_status: 'PAUSED', effective_status: 'PAUSED' } : c)),
+    adsets: LIVE.adsets.map(a => (a.id === 'off-today-set' ? { ...a, effective_status: 'CAMPAIGN_PAUSED' } : a)),
+    ads: LIVE.ads.map(a => (a.id === 'off-today' ? { ...a, status: 'ACTIVE', configured_status: 'ACTIVE', effective_status: 'CAMPAIGN_PAUSED' } : a)),
+  };
+  const result = await statusRun(meta({}, 'America/Los_Angeles', [], lists));
+  const campaign = result.campaigns.find(c => c.id === 'off-today-campaign')!;
+  expect(campaign).toMatchObject({ status: 'PAUSED', running: false, switchOn: false });
+  expect(campaign.adsets[0]).toMatchObject({ status: 'CAMPAIGN_PAUSED', running: false, switchOn: true });
+  const offToday = adIn(result, 'off-today');
+  expect(offToday).toMatchObject({ status: 'CAMPAIGN_PAUSED', running: false, switchOn: true });
+  expect(offToday.verdict).toEqual({ verdict: 'off', reason: 'Its campaign is switched off in Meta.', owner: null });
+  expect(result.running).toBe(2);
+});
+
+test('custom range falls back to the snapshot rule with a note when Meta\'s status read fails, and never fails the range', async () => {
+  const result = await statusRun(meta());
+  expect(result.statusFrom).toBe('snapshots');
+  expect(result.statusReadAt).toBeNull();
+  expect(adIn(result, 'off-today')).toMatchObject({ status: 'ACTIVE', running: true, delivered: true });
+  expect(adIn(result, 'back-on')).toMatchObject({ running: false, delivered: false });
+  expect(adIn(result, 'back-on').verdict).toEqual({ verdict: 'off', reason: 'No Meta delivery since 2026-08-20.', owner: null });
+  // No own switch is known on the fallback: the cockpit's switch shows running.
+  expect(result.campaigns.some(c => 'switchOn' in c || c.adsets.some(s => 'switchOn' in s || s.ads.some(a => 'switchOn' in a)))).toBe(false);
+  expect(result.campaigns.flatMap(c => c.adsets.flatMap(s => s.ads)).some(a => a.id === 'just-on')).toBe(false);
+  const warn = result.notes.find(note => note.level === 'warn' && note.text.startsWith("Meta's own on and off could not be read"));
+  expect(warn?.text).toBe("Meta's own on and off could not be read (Meta Graph API error 17), so the switches show delivery, not Meta's setting: an ad counts as on only when its newest snapshot says active and it delivered in the range. A change made in Meta shows here once the ad delivers and the snapshot sync catches up.");
+
+  // An incomplete page is a failed read too: no partial list is mixed with the snapshots.
+  const partial = await statusRun(async (path, params) => {
+    if (path.endsWith('/ads')) return { data: LIVE.ads, paging: { next: 'https://graph.facebook.com/next' } };
+    return meta({}, 'America/Los_Angeles', [], LIVE)(path, params);
+  });
+  expect(partial.statusFrom).toBe('snapshots');
+  expect(partial.notes.some(note => note.text.includes('(Meta returned an incomplete ads page.)'))).toBe(true);
 });

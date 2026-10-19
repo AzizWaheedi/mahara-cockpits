@@ -82,7 +82,7 @@ export function ceoBadges(
  */
 export function CeoPage() {
   const { isCeo, ready: authReady } = useCockpitAuth();
-  const { sections, day, loading } = useCeo(isCeo);
+  const { sections, day, loading } = useCeo(isCeo, { reread: true });
   const now = useNow();
   const [tab, setTab] = useTabParam(CEO_TAB_KEYS, "today");
 

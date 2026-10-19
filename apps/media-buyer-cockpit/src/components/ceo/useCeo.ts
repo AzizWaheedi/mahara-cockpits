@@ -111,11 +111,25 @@ function normalize(raw: unknown): CeoSections {
 
 type TodayResult = { sections?: unknown; day?: string; now?: number };
 
+const REREAD = "ceo-sections-reread";
+
+/**
+ * Read the sections again without a reload, for a screen waiting on the next
+ * refresh (the Ads tab while a switch change is held). Only a `useCeo` that
+ * asked for it with `reread` answers, so the page reads once, not twice.
+ */
+export function rereadCeoSections(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event(REREAD));
+}
+
 /**
  * The CEO data in one subscription. Holds the previous result while Convex
  * refetches, so the screen never flashes back to a loading state.
  */
-export function useCeo(enabled = true): {
+export function useCeo(
+  enabled = true,
+  opts: { reread?: boolean } = {},
+): {
   loading: boolean;
   sections: CeoSections;
   day: string | null;
@@ -147,6 +161,16 @@ export function useCeo(enabled = true): {
   useEffect(() => {
     fetchCeo();
   }, [fetchCeo]);
+
+  const listen = opts.reread === true;
+  useEffect(() => {
+    if (!listen || typeof window === "undefined") return;
+    const again = () => {
+      void fetchCeo();
+    };
+    window.addEventListener(REREAD, again);
+    return () => window.removeEventListener(REREAD, again);
+  }, [fetchCeo, listen]);
 
   const raw = data?.sections;
   const sections = useMemo(() => normalize(raw), [raw]);

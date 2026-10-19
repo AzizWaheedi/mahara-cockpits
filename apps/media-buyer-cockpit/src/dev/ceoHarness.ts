@@ -8,6 +8,7 @@
  * by the production app.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { adsFixtureMode, adsSectionFixture } from "./adsFixture";
 import { eodRadarFixture } from "./eodRadarFixture";
 import {
   watchBoardFixture,
@@ -173,7 +174,15 @@ export function installCeoHarness(client: SupabaseClient): void {
   };
   // With ?reads=1 the shell's own reads run too: "who am I" answers "nobody
   // signed in" rather than throwing, as the real hook would with no session.
-  c.auth.getUser = async () => ({ data: { user: null }, error: null });
+  // With ?ads=demo the Ads tab's switch needs a made-up user, as the media
+  // actions client asks for one before it sends anything (adsFixture.ts).
+  const adsMode = adsFixtureMode();
+  c.auth.getUser = async () => ({
+    data: {
+      user: adsMode ? { id: "harness-ceo", email: "ceo@example.test" } : null,
+    },
+    error: null,
+  });
   // The proposals card reads two tables straight (A234); nothing else is answered here.
   const realFrom = c.from.bind(c);
   c.from = (table: string) => {
@@ -208,10 +217,21 @@ export function installCeoHarness(client: SupabaseClient): void {
   const hoursRpc = c.rpc;
   c.rpc = async (name, args = {}) => {
     switch (name) {
-      case "cockpit_get_ceo_sections":
+      case "cockpit_get_ceo_sections": {
+        const file = ((await harnessSections()) ?? {
+          sections: {},
+          day: "2026-10-09",
+        }) as { sections?: Record<string, unknown> };
+        // ?ads=demo: the made-up Ads section over whatever the file holds.
         return ok(
-          (await harnessSections()) ?? { sections: {}, day: "2026-10-09" },
+          adsMode
+            ? {
+                ...file,
+                sections: { ...file.sections, b2bAds: adsSectionFixture() },
+              }
+            : file,
         );
+      }
       case "cockpit_ceo_action":
         return ceoAction(
           String(args.p_action ?? ""),
@@ -264,6 +284,23 @@ export function installCeoHarness(client: SupabaseClient): void {
   });
   functions.invoke = async (name, opts = {}) => {
     const body = (opts.body ?? {}) as Record<string, unknown>;
+    // ?ads=demo: the Ads tab's switch and Launch list, made up. Nothing reaches Meta.
+    if (name === "cockpit-media-api" && adsMode) {
+      if (body.operation === "ceo.b2bLaunch.list") return ok([]);
+      if (body.operation === "ceo.b2bControl.setStatus") {
+        await new Promise(r => setTimeout(r, 900));
+        return adsMode === "refuse"
+          ? ok({
+              ok: false,
+              error:
+                "Meta refused it: the ad account is not in good standing (made up).",
+            })
+          : ok({ ok: true, receiptId: "harness-receipt" });
+      }
+      return refuse(
+        `The harness has no fixture for ${String(body.operation)}.`,
+      );
+    }
     if (name === "cockpit-hours-api" && body.op === "watchNow")
       return ok({ ok: true });
     // The answer names the provider the next run will use, as the server's does.

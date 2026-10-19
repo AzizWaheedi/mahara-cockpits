@@ -68,6 +68,13 @@ const INSIGHTS: Record<string, Record<string, Insight[]>> = {
   },
 };
 
+// Meta's live on and off (the CEO, 2026-10-19): everything on the account is switched on.
+const LIVE: Record<string, Row[]> = {
+  campaigns: [...new Map(ROWS.map(r => [r.campaign_id, { id: r.campaign_id, name: r.campaign_name, status: "ACTIVE", configured_status: "ACTIVE", effective_status: "ACTIVE" }])).values()],
+  adsets: ROWS.map(r => ({ id: r.adset_id, name: r.adset_name, status: "ACTIVE", configured_status: "ACTIVE", effective_status: "ACTIVE", campaign_id: r.campaign_id })),
+  ads: ROWS.map(r => ({ id: r.ad_id, name: r.ad_name, status: "ACTIVE", configured_status: "ACTIVE", effective_status: "ACTIVE", adset_id: r.adset_id, campaign_id: r.campaign_id })),
+};
+
 type Call = { resource: string; params: Record<string, string | number> };
 function fakeRuntime(calls: Call[], account: () => Row): Runtime {
   const read = async (_project: string, query: string): Promise<Row[]> => {
@@ -79,6 +86,8 @@ function fakeRuntime(calls: Call[], account: () => Row): Runtime {
   const graph = async (resource: string, params: Record<string, string | number> = {}): Promise<Row> => {
     calls.push({ resource, params });
     if (resource === ACT) return account();
+    const edge = resource.slice(ACT.length + 1);
+    if (edge in LIVE) return { data: LIVE[edge], paging: {} } as unknown as Row;
     if (resource !== `${ACT}/insights`) throw new Error(`unexpected Meta read ${resource}`);
     const since = JSON.parse(String(params.time_range)).since as string;
     return { data: INSIGHTS[since][String(params.level)] ?? [], paging: {} } as unknown as Row;
@@ -124,6 +133,12 @@ describe("Our ads: frequency is Meta's own, per level, for the window", () => {
     expect(payload.windows).toEqual({ from7: FROM7, from30: FROM30, to: TODAY, metaUntil: "2026-10-15", metaTimeZone: "America/Los_Angeles" });
     expect(calls[0].resource).toBe(ACT);
     expect(String(calls[0].params.fields)).toContain("timezone_name");
+    // On and off is read live, once per level, before any insight.
+    expect(calls.slice(1, 4).map(c => [c.resource, c.params.limit])).toEqual([
+      [`${ACT}/campaigns`, 500], [`${ACT}/adsets`, 500], [`${ACT}/ads`, 500],
+    ]);
+    expect(payload.statusFrom).toBe("meta");
+    expect(sources.find((s: { name: string }) => s.name.startsWith("Meta on and off"))).toMatchObject({ ok: true, freshestAt: payload.statusReadAt });
     const insights = calls.filter(c => c.resource.endsWith("/insights"));
     expect(insights.map(c => [c.params.level, JSON.parse(String(c.params.time_range))])).toEqual([
       ["ad", { since: FROM7, until: "2026-10-15" }],

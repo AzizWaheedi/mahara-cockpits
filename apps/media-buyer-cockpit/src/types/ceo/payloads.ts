@@ -1954,9 +1954,26 @@ export type B2bVerdict = {
 export type B2bAdNode = {
   id: string;
   name: string;
-  /** Meta's effective_status, e.g. ACTIVE, PAUSED, ADSET_PAUSED, CAMPAIGN_PAUSED, WITH_ISSUES. */
+  /**
+   * Meta's effective_status, e.g. ACTIVE, PAUSED, ADSET_PAUSED, CAMPAIGN_PAUSED, WITH_ISSUES:
+   * read live when the payload's `statusFrom` is "meta" (NOT_LISTED when Meta no longer lists it),
+   * else the newest snapshot's.
+   */
   status: string;
+  /**
+   * Live: Meta says ACTIVE (it and its ad set and campaign are on). Snapshot fallback: an ACTIVE
+   * snapshot with delivery in the window.
+   */
   running: boolean;
+  /**
+   * Its own switch in Meta (configured_status ACTIVE), read live: what the cockpit's switch shows
+   * and sets (an ad on under a paused campaign is on and not running). Only when `statusFrom` is "meta".
+   */
+  switchOn?: boolean;
+  /** A snapshot row in the thirty days (or the range): the numbers' signal. Absent before 2026-10-19. */
+  delivered?: boolean;
+  /** The newest snapshot day; null for an ad Meta has on that never delivered. Absent before 2026-10-19. */
+  lastDelivery?: string | null;
   /** Facebook CDN url with an expiring token. */
   thumbnail: string | null;
   w7: B2bAdWindow;
@@ -2025,7 +2042,12 @@ export type B2bAdsPayload = {
     /** lead_gen, retargeting, excluded, unknown: from b2b_campaign_type. */
     type: string;
     status: string;
+    /** Live: Meta says the campaign is ACTIVE. Snapshot fallback: one of its ads is running. */
     running: boolean;
+    /** Its own switch in Meta, read live; only when `statusFrom` is "meta". */
+    switchOn?: boolean;
+    /** One of its ads delivered in the window. Absent before 2026-10-19. */
+    delivered?: boolean;
     w7: B2bAdWindow;
     w30: B2bAdWindow;
     people: B2bPeople;
@@ -2043,13 +2065,29 @@ export type B2bAdsPayload = {
     adsets: {
       id: string;
       name: string;
+      /** Meta's live effective_status; only when `statusFrom` is "meta". */
+      status?: string;
+      /** Live: Meta says the ad set is ACTIVE. Snapshot fallback: one of its ads is running. */
       running: boolean;
+      /** Its own switch in Meta, read live; only when `statusFrom` is "meta". */
+      switchOn?: boolean;
+      /** One of its ads delivered in the window. Absent before 2026-10-19. */
+      delivered?: boolean;
       w7: B2bAdWindow;
       w30: B2bAdWindow;
       people: B2bPeople;
       ads: B2bAdNode[];
     }[];
   }[];
+  /**
+   * Where on and off came from (the CEO, 2026-10-19): "meta" is every
+   * campaign, ad set and ad read live from the ad account; "snapshots" is the
+   * fallback when that read failed (running then means delivering). Absent
+   * on a payload from before.
+   */
+  statusFrom?: "meta" | "snapshots";
+  /** When the live status read began (epoch ms); null on the fallback. */
+  statusReadAt?: number | null;
   /** The newest day Meta has a snapshot for. */
   lastSnapshotDay: string | null;
   /** The oldest day Meta has a snapshot for: how far back a timeframe can ask. */

@@ -228,6 +228,145 @@ function isRow(value: unknown): value is Row {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+// ---- Meta's own on and off ---------------------------------------------------
+//
+// The CEO, 2026-10-19: "Ads turning on and off in the CEO cockpit isn't
+// working." Meta took every change, but the Ads tab read on and off from the
+// B2B snapshots, which hold a row only for a day an ad delivered: an ad
+// switched on read off until it spent and the sync caught up, and a stale
+// ACTIVE row could outrank a switch-off. The Ads tab (hermes b2bAds.js and the
+// custom range in windows.ts) now reads every campaign, ad set and ad on the
+// account live, and keeps the snapshots for the numbers.
+// It lives here, beside the other Graph reads both callers share, because the
+// native worker package carries this file (scripts/prepare-native-worker-package.py).
+
+/** A campaign, ad set or ad as Meta has it at the moment of the read. */
+export type LiveObject = {
+  id: string;
+  name: string;
+  /** The object's own switch (configured_status, else status): ACTIVE, PAUSED, DELETED or ARCHIVED. */
+  status: string;
+  /** Meta's effective_status: ACTIVE only when it and every parent are on and nothing stops it. */
+  effectiveStatus: string;
+  campaignId: string | null;
+  adsetId: string | null;
+};
+export type LiveStatus = {
+  /** When the read began (epoch ms): a change Meta confirmed before this is in it. */
+  readAt: number;
+  campaigns: Map<string, LiveObject>;
+  adsets: Map<string, LiveObject>;
+  ads: Map<string, LiveObject>;
+};
+export type LiveLevel = 'campaigns' | 'adsets' | 'ads';
+const STATUS_FIELDS: Record<LiveLevel, string> = {
+  campaigns: 'id,name,status,effective_status,configured_status',
+  adsets: 'id,name,status,effective_status,configured_status,campaign_id',
+  ads: 'id,name,status,effective_status,configured_status,adset_id,campaign_id',
+};
+const MAX_STATUS_PAGES = 20;
+/** Never added to the tab as a new row (cockpit-media-api funnel.ts keeps them out the same way). */
+export const GONE_STATUSES: ReadonlySet<string> = new Set(['DELETED', 'ARCHIVED']);
+/** A row the tab holds that the live read did not list. */
+export const NOT_LISTED = 'NOT_LISTED';
+
+const idOrNull = (value: unknown): string | null =>
+  (typeof value === 'string' || typeof value === 'number') && String(value).trim() ? String(value) : null;
+
+async function listLevelStatus(readMeta: MetaRead, level: LiveLevel): Promise<Map<string, LiveObject>> {
+  const out = new Map<string, LiveObject>();
+  let after: string | undefined;
+  for (let page = 0; page < MAX_STATUS_PAGES; page += 1) {
+    const result = await readMeta(`act_${ACCOUNT}/${level}`, {
+      fields: STATUS_FIELDS[level],
+      limit: 500,
+      ...(after ? { after } : {}),
+    });
+    if (!Array.isArray(result.data)) throw new Error(`Meta did not confirm the ${level} list.`);
+    for (const item of result.data) {
+      if (!isRow(item)) throw new Error(`Meta returned an invalid row in the ${level} list.`);
+      const id = idOrNull(item.id);
+      if (!id) throw new Error(`Meta returned a row in the ${level} list without an ID.`);
+      if (out.has(id)) throw new Error(`Meta returned the same ID twice in the ${level} list; no partial status was accepted.`);
+      const effectiveStatus = typeof item.effective_status === 'string' ? item.effective_status : '';
+      if (!effectiveStatus) throw new Error(`Meta returned a row in the ${level} list without its effective status.`);
+      const configured = typeof item.configured_status === 'string' && item.configured_status
+        ? item.configured_status
+        : typeof item.status === 'string' ? item.status : '';
+      out.set(id, {
+        id,
+        name: typeof item.name === 'string' ? item.name : '',
+        status: configured,
+        effectiveStatus,
+        campaignId: idOrNull(item.campaign_id),
+        adsetId: idOrNull(item.adset_id),
+      });
+    }
+    const paging = result.paging;
+    if (!isRow(paging) || !paging.next) return out;
+    const cursors = paging.cursors;
+    const next = isRow(cursors) ? cursors.after : null;
+    if (typeof next !== 'string' || !next) throw new Error(`Meta returned an incomplete ${level} page.`);
+    if (page === MAX_STATUS_PAGES - 1) throw new Error(`Meta ${level} list exceeds the safe page limit.`);
+    after = next;
+  }
+  throw new Error(`Meta ${level} list was not confirmed.`);
+}
+
+/**
+ * Every campaign, ad set and ad on the account with Meta's own status, read
+ * live (three paged GETs). Any failed or incomplete page fails the whole read,
+ * so a caller never mixes a partial list with the snapshots.
+ */
+export async function readLiveStatus(readMeta: MetaRead, now: () => number = Date.now): Promise<LiveStatus> {
+  const readAt = now();
+  const campaigns = await listLevelStatus(readMeta, 'campaigns');
+  const adsets = await listLevelStatus(readMeta, 'adsets');
+  const ads = await listLevelStatus(readMeta, 'ads');
+  return { readAt, campaigns, adsets, ads };
+}
+
+/**
+ * One row's on and off from the live read: Meta's effective_status, and
+ * running only when that is ACTIVE (a paused ad set or campaign already reads
+ * ADSET_PAUSED or CAMPAIGN_PAUSED on its children). A row Meta did not list is
+ * not running.
+ *
+ * `switchOn` is the row's own switch (configured_status ACTIVE), what the
+ * cockpit's switch sets (cockpit-media-api setStatus) and so what it shows:
+ * an ad switched on under a paused campaign is on and not running, as in Ads
+ * Manager, and can be switched off from the cockpit. Running stays the count.
+ */
+export function liveState(live: LiveStatus, level: LiveLevel, id: string): { status: string; running: boolean; switchOn: boolean } {
+  const found = live[level].get(id);
+  if (!found) return { status: NOT_LISTED, running: false, switchOn: false };
+  const running = found.effectiveStatus === 'ACTIVE';
+  return { status: found.effectiveStatus, running, switchOn: found.status ? found.status === 'ACTIVE' : running };
+}
+
+/**
+ * Ads Meta has running that the tab does not hold yet (no delivery in the
+ * window, so no snapshot row): added so they can be switched. Deleted and
+ * archived never are; ACTIVE already rules them out.
+ */
+export function liveOnlyAds(live: LiveStatus, held: ReadonlySet<string>): LiveObject[] {
+  return [...live.ads.values()].filter(ad =>
+    ad.effectiveStatus === 'ACTIVE' && !GONE_STATUSES.has(ad.status) && !held.has(ad.id) && ad.adsetId !== null && ad.campaignId !== null);
+}
+
+/** Why a row is not running, in Meta's words. */
+export function offReason(status: string): string {
+  switch (status) {
+    case 'PAUSED': return 'Switched off in Meta.';
+    case 'ADSET_PAUSED': return 'Its ad set is switched off in Meta.';
+    case 'CAMPAIGN_PAUSED': return 'Its campaign is switched off in Meta.';
+    case 'DELETED': return 'Deleted in Meta.';
+    case 'ARCHIVED': return 'Archived in Meta.';
+    case NOT_LISTED: return 'Meta no longer lists it: deleted or archived.';
+    default: return `On in Meta but not delivering: Meta says ${status.toLowerCase().replace(/_/g, ' ') || 'nothing'}.`;
+  }
+}
+
 function parseFigure(value: unknown): FrequencyFigure | null | undefined {
   if (value === null) return null;
   if (!isRow(value)) return undefined;

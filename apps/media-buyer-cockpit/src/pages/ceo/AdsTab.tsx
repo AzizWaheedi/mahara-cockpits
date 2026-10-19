@@ -9,7 +9,13 @@ import {
   Table2,
   TriangleAlert,
 } from "lucide-react";
-import { type ReactNode, useCallback, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import {
@@ -33,8 +39,8 @@ import {
 import { useServerWindow } from "@/components/ceo/serverWindow";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
+import { rereadCeoSections, STALE_AFTER_MS } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
-import { Switch } from "@/components/ui/switch";
 import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
 import type {
@@ -66,6 +72,29 @@ import {
   verdictLabel,
 } from "./adsFacts";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
+import {
+  anyTurnedOn,
+  heldSentence,
+  heldWord,
+  isHeld,
+  liveHolds,
+  liveStatusAt,
+  metaReadAt,
+  newerSwitches,
+  nextRefreshAt,
+  OnNotRunning,
+  onIds,
+  REREAD_EVERY_MS,
+  RowSwitch,
+  rereadDelay,
+  type SetStatus,
+  type SwitchClock,
+  SwitchNote,
+  settleSwitches,
+  switchedOn,
+  UnlessHeld,
+  useSwitches,
+} from "./adsSwitch";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";
 
@@ -364,55 +393,6 @@ function CompactLine({
   );
 }
 
-function Toggle({
-  metaId,
-  level,
-  name,
-  running,
-  onDone,
-}: {
-  metaId: string;
-  level: "campaign" | "adset" | "ad";
-  name: string;
-  running: boolean;
-  onDone: (m: string) => void;
-}) {
-  const setStatus = useAction(api.ceo.b2bControl.setStatus);
-  const [busy, setBusy] = useState(false);
-  return (
-    <Switch
-      checked={running}
-      aria-label={`${running ? "Turn off" : "Turn on"} ${level} ${name}`}
-      disabled={busy}
-      onClick={e => e.stopPropagation()}
-      onCheckedChange={async () => {
-        setBusy(true);
-        try {
-          const res = await setStatus({
-            metaId,
-            level,
-            active: !running,
-            name,
-          });
-          onDone(
-            res.ok
-              ? `${running ? "Turned off" : "Turned on"} ${name}. The next refresh re-reads Meta.`
-              : (res.error ?? "Meta refused it."),
-          );
-        } catch (err) {
-          onDone(
-            String(err instanceof Error ? err.message : err).slice(0, 200),
-          );
-        } finally {
-          setBusy(false);
-        }
-      }}
-      // 24px tall; the invisible margin makes it a 40px target on touch.
-      className="relative after:absolute after:-inset-2 after:content-['']"
-    />
-  );
-}
-
 /** The one link out to Ads Manager a row carries, then its switch. */
 function RowControls({
   href,
@@ -472,11 +452,14 @@ function ExpandButton({
 type RowProps = {
   win: Win;
   account: string;
-  onDone: (m: string) => void;
+  onDone: (m: string | null) => void;
   payload: B2bAdsPayload;
   target: Target | null;
   onOpen: (t: Target | null) => void;
   frozen: string | null;
+  /** When the payload last read Meta, what it shows on, and the next refresh, for the switches. */
+  clock: SwitchClock;
+  setStatus: SetStatus;
 };
 
 function AdRow({ ad, ...r }: RowProps & { ad: B2bAdNode }) {
@@ -501,23 +484,32 @@ function AdRow({ ad, ...r }: RowProps & { ad: B2bAdNode }) {
               {ad.name}
             </p>
             <RowControls href={adsManagerUrl(r.account, "ad", ad.id)}>
-              <Toggle
+              <RowSwitch
                 metaId={ad.id}
                 level="ad"
                 name={ad.name}
-                running={ad.running}
+                running={switchedOn(ad)}
+                clock={r.clock}
+                setStatus={r.setStatus}
                 onDone={r.onDone}
               />
             </RowControls>
           </div>
+          <SwitchNote metaId={ad.id} clock={r.clock} />
+          {/* A change Meta confirmed since this read: the verdict is about the
+              state before it, so its chip and its sentence wait for the payload. */}
           <CompactLine w={w}>
-            <StatusChip
-              tone={TONE[ad.verdict.verdict]}
-              label={verdictLabel(ad.verdict.verdict)}
-            />
-            {owner ? <span>{owner}</span> : null}
+            <UnlessHeld metaId={ad.id} clock={r.clock}>
+              <StatusChip
+                tone={TONE[ad.verdict.verdict]}
+                label={verdictLabel(ad.verdict.verdict)}
+              />
+              {owner ? <span>{owner}</span> : null}
+            </UnlessHeld>
           </CompactLine>
-          <p className="text-xs text-muted-foreground">{ad.verdict.reason}</p>
+          <UnlessHeld metaId={ad.id} clock={r.clock}>
+            <p className="text-xs text-muted-foreground">{ad.verdict.reason}</p>
+          </UnlessHeld>
           <People p={ad.people} windows={r.payload.windows} />
           <ManageBar
             level="ad"
@@ -566,16 +558,20 @@ function AdsetRow({
           </span>
         </ExpandButton>
         <RowControls>
-          <Toggle
+          <RowSwitch
             metaId={s.id}
             level="adset"
             name={s.name}
-            running={s.running}
+            running={switchedOn(s)}
+            clock={r.clock}
+            setStatus={r.setStatus}
             onDone={r.onDone}
           />
         </RowControls>
       </div>
       <div className="mt-1.5 space-y-2 pl-6">
+        <SwitchNote metaId={s.id} clock={r.clock} />
+        <OnNotRunning node={s} clock={r.clock} />
         <CompactLine w={sw} />
         <ManageBar
           level="adset"
@@ -636,16 +632,20 @@ function CampaignRow({
           </span>
         </ExpandButton>
         <RowControls href={adsManagerUrl(r.account, "campaign", c.id)}>
-          <Toggle
+          <RowSwitch
             metaId={c.id}
             level="campaign"
             name={c.name}
-            running={c.running}
+            running={switchedOn(c)}
+            clock={r.clock}
+            setStatus={r.setStatus}
             onDone={r.onDone}
           />
         </RowControls>
       </div>
       <div className="@container mt-3 space-y-3 pl-6">
+        <SwitchNote metaId={c.id} clock={r.clock} />
+        <OnNotRunning node={c} clock={r.clock} />
         {c.constraint && !RETIRED_STAGES.has(c.constraint.stage) ? (
           <p className="flex items-start gap-1.5 text-xs">
             <TriangleAlert
@@ -823,11 +823,16 @@ function AdTable({
   p,
   win,
   onDone,
+  clock,
+  setStatus,
 }: {
   p: B2bAdsPayload;
   win: Win;
-  onDone: (m: string) => void;
+  onDone: (m: string | null) => void;
+  clock: SwitchClock;
+  setStatus: SetStatus;
 }) {
+  const { held } = useSwitches();
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({
     key: "spend",
     dir: -1,
@@ -948,17 +953,29 @@ function AdTable({
                   )}
                 </td>
                 <td className="px-2 py-2 text-right">
-                  <StatusChip
-                    tone={TONE[a.verdict.verdict]}
-                    label={verdictLabel(a.verdict.verdict)}
-                  />
+                  {/* No room for the note in a table: the chip carries the held change, its sentence on hover. */}
+                  {isHeld(a.id, held[a.id], clock) ? (
+                    <StatusChip
+                      tone={held[a.id].on ? "good" : "neutral"}
+                      label={heldWord(held[a.id].on)}
+                      hint={heldSentence(held[a.id], clock)}
+                    />
+                  ) : (
+                    <StatusChip
+                      tone={TONE[a.verdict.verdict]}
+                      label={verdictLabel(a.verdict.verdict)}
+                      hint={a.verdict.reason}
+                    />
+                  )}
                 </td>
                 <td className="px-2 py-2 text-right">
-                  <Toggle
+                  <RowSwitch
                     metaId={a.id}
                     level="ad"
                     name={a.name}
-                    running={a.running}
+                    running={switchedOn(a)}
+                    clock={clock}
+                    setStatus={setStatus}
                     onDone={onDone}
                   />
                 </td>
@@ -1017,7 +1034,10 @@ function ViewSwitch({
   );
 }
 
-export function AdsTab({ sections }: CeoTabProps) {
+/** How the adapter's note opens when no ad on the account is running (hermes/ceo-refresh b2bAds.js). */
+const NOTHING_DELIVERING = "Nothing on the account is delivering.";
+
+export function AdsTab({ sections, now }: CeoTabProps) {
   const section = sections.b2bAds;
   const stored = section?.payload ?? null;
   const tf = useTimeframe("7d");
@@ -1025,6 +1045,50 @@ export function AdsTab({ sections }: CeoTabProps) {
   const [msg, setMsg] = useState<string | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
   const readWindow = useAction(api.ceo.windows.ads);
+  const setStatus = useAction(api.ceo.b2bControl.setStatus) as SetStatus;
+
+  // The switches hold a change Meta confirmed until the payload has read
+  // Meta since it: the stored section's snapshot stamp, which travels with
+  // its payload (a failed run leaves both as they were). When it was
+  // published says nothing, as the snapshot sync keeps its own clock. The
+  // next refresh is 15 minutes after the last publish.
+  const lastRun = section?.computedAt || null;
+  const readAt = metaReadAt(section?.sources);
+  // Since 2026-10-19 the payload reads on and off from Meta itself and says
+  // when: a read after the change ends the hold, on or off.
+  const statusReadAt = liveStatusAt(stored);
+  const on = useMemo(() => onIds(stored), [stored]);
+  const clock: SwitchClock = useMemo(
+    () => ({
+      readAt,
+      statusReadAt,
+      on,
+      refreshAt: nextRefreshAt(lastRun, now, STALE_AFTER_MS),
+      now,
+    }),
+    [readAt, statusReadAt, on, lastRun, now],
+  );
+  const switches = useSwitches();
+  const holds = liveHolds(switches.held, clock);
+  // A change that turned something on outranks "nothing running".
+  const turnedOn = anyTurnedOn(switches.held, clock);
+  useEffect(() => {
+    settleSwitches(clock);
+  }, [clock]);
+  // The page reads the sections once; while a change is held it reads them
+  // again just after the next refresh, then every five minutes until the
+  // payload catches up or the hour runs out.
+  const waiting = holds > 0;
+  useEffect(() => {
+    if (!waiting) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const reread = () => {
+      rereadCeoSections();
+      timer = setTimeout(reread, REREAD_EVERY_MS);
+    };
+    timer = setTimeout(reread, rereadDelay(lastRun, Date.now()));
+    return () => clearTimeout(timer);
+  }, [waiting, lastRun]);
 
   // The stored payload already holds seven days and thirty. Any other run of
   // days is read live, with the same query and the same rules.
@@ -1058,6 +1122,15 @@ export function AdsTab({ sections }: CeoTabProps) {
   const p = shown.data?.p ?? null;
   const win: Win = shown.data?.win ?? "w7";
   const chips = useMemo(() => (p ? verdictChips(p.verdicts) : []), [p]);
+  // A picked range is read once; the stored payload reads Meta's own status
+  // again every refresh. When that read is the newer one, it places the
+  // switches, so a change made here does not snap back on a range once its
+  // hold gives way to the stored read (2026-10-19).
+  const newer = useMemo(() => newerSwitches(stored, p), [stored, p]);
+  const rowClock: SwitchClock = useMemo(
+    () => (newer ? { ...clock, newer } : clock),
+    [clock, newer],
+  );
 
   if (!stored)
     return (
@@ -1121,6 +1194,12 @@ export function AdsTab({ sections }: CeoTabProps) {
       : null;
   const cplTone = gateTone(a.cpl, CPL_GATE);
   const ai = introFigures(a);
+  // The adapter's "nothing is delivering" note is about the account before a
+  // change here turned something on; it comes back if the hold gives way.
+  const notes =
+    turnedOn && p.running === 0
+      ? p.notes.filter(n => !n.text.startsWith(NOTHING_DELIVERING))
+      : p.notes;
   const retargeting = p.retargetingSpend[win];
   const rows: RowProps = {
     win,
@@ -1130,6 +1209,8 @@ export function AdsTab({ sections }: CeoTabProps) {
     target,
     onOpen: setTarget,
     frozen,
+    clock: rowClock,
+    setStatus,
   };
 
   return (
@@ -1139,7 +1220,7 @@ export function AdsTab({ sections }: CeoTabProps) {
         kicker="Mahara's own account"
         title="Our ads"
         section={section}
-        notes={p.notes}
+        notes={notes}
         actions={
           <>
             {shown.loading ? (
@@ -1207,7 +1288,7 @@ export function AdsTab({ sections }: CeoTabProps) {
                 naHint={NA_ZERO}
                 sub={`${money(a.contracted)} contracted`}
                 status={
-                  p.running === 0 ? (
+                  p.running === 0 && !turnedOn ? (
                     <StatusChip tone="critical" label="Nothing running" />
                   ) : undefined
                 }
@@ -1222,6 +1303,11 @@ export function AdsTab({ sections }: CeoTabProps) {
             ) : null}
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>{`${count(p.running)} of ${count(p.total)} ads running`}</span>
+              {holds ? (
+                <span title="Switched on or off here since these numbers last read Meta. Meta has them; the count takes them in once a refresh reads them, and an ad switched on once it delivers.">
+                  {`${count(holds)} ${holds === 1 ? "change" : "changes"} made here not counted yet`}
+                </span>
+              ) : null}
               <span title={COVERAGE_HINT}>{coverageLine(p.coverage[win])}</span>
               {chips.map(v => (
                 <span
@@ -1269,7 +1355,13 @@ export function AdsTab({ sections }: CeoTabProps) {
                 </p>
               ) : null}
               {view === "table" ? (
-                <AdTable p={p} win={win} onDone={setMsg} />
+                <AdTable
+                  p={p}
+                  win={win}
+                  onDone={setMsg}
+                  clock={rowClock}
+                  setStatus={setStatus}
+                />
               ) : (
                 <div className="divide-y">
                   {p.campaigns.map(c => (

@@ -243,6 +243,21 @@ export function withProviderSection<T>(section: string, run: () => Promise<T>): 
   return sectionContext.run(section, run);
 }
 
+/**
+ * Reads a section can lose without failing: it falls back and says so in a
+ * note (the Ads tab's live on and off, 2026-10-19). Their receipts carry
+ * `<section>:optional`, never the section's own key, because the worker fails
+ * a section on any failed or non-2xx receipt under its key (a Meta rate limit
+ * is an HTTP 400, a retried 5xx leaves a 5xx receipt) and the publish function
+ * refuses a whole publication over one. They still reach
+ * cockpit_ceo_provider_health, a failure as a failure: write_receipts never
+ * reads the section. They never count as the section's confirmed evidence.
+ */
+export const OPTIONAL_SECTION_SUFFIX = ":optional";
+export function withOptionalReads<T>(run: () => Promise<T>): Promise<T> {
+  return sectionContext.run(`${sectionContext.getStore() ?? "none"}${OPTIONAL_SECTION_SUFFIX}`, run);
+}
+
 export function createProviderDriver(options: ProviderDriverOptions): {
   tools: ProviderTools;
   read: Runtime["read"];
