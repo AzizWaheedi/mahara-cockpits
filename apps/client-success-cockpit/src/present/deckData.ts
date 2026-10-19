@@ -22,6 +22,7 @@ import {
 } from "./clean";
 import { type L, type Lang, LINKS, O } from "./content";
 import { dayOf, gulfToday } from "./dates";
+import { type LaunchData, launchData } from "./launchData";
 import type { DeckKind, DeckSources, LaunchAd } from "./sources";
 
 /**
@@ -145,6 +146,8 @@ export interface DeckData {
   /** Facts only the CSM sees (the notes window and prep). */
   notes: string[];
   presentedAt: string | null;
+  /** The launch deck's own slots (launchData.ts). */
+  launch: LaunchData;
 }
 
 // ------------------------------------------------------------- the forms
@@ -623,7 +626,7 @@ export function deckData(input: DeckInput): DeckData {
         `Held back from slide 2: "${g.label.en}" ${g.held === "count" ? "counts leads or appointments" : "mentions a guarantee or a refund"}. Edit it in prep to show it.`,
       );
 
-  return {
+  const base: Omit<DeckData, "launch"> = {
     taskId: input.taskId,
     deck: input.deck,
     lang,
@@ -672,6 +675,35 @@ export function deckData(input: DeckInput): DeckData {
     stage,
     notes,
     presentedAt: str(onboardingPrep.onboarding_presented_at),
+  };
+  return {
+    ...base,
+    launch: launchData({
+      d: base,
+      launchPrep: input.prep.launch ?? {},
+      onboardingPrep,
+      ads: input.ads,
+      metaAds: s?.meta?.ads ?? [],
+      funnels: s?.meta?.funnels ?? [],
+      answers: {
+        engineers: answer(form, FORM.engineers),
+        // "No" is an answer here (the consultation is not free), never empty.
+        freeConsult: str(formAnswer(form, FORM.freeConsult)) ?? "",
+        consultTypes: answer(form, FORM.consultTypes),
+        instagram:
+          answer(form, FORM.instagram) || (str(s?.editor?.instagram) ?? ""),
+        hours: answer(form, FORM.hours),
+        areas: answer(form, FORM.areas),
+      },
+      advertised,
+      today,
+      refs: {
+        brandDna: str(s?.editor?.brandDnaUrl) ?? str(kit?.links?.brand_dna),
+        offer: str(s?.editor?.offerUrl) ?? str(kit?.links?.offer_sheet),
+        offerText: str(s?.editor?.offer),
+        clickup: str(kit?.links?.clickup),
+      },
+    }),
   };
 }
 

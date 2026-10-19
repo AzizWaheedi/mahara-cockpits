@@ -1,5 +1,6 @@
 import "./present.css";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { makeAddFiles } from "./adsActions";
 import { channelName } from "./channel";
 import { DeckShell } from "./DeckShell";
 import type { CallKind, DeckData } from "./deckData";
@@ -123,6 +124,11 @@ export function PresentApp({
     [book, d, model],
   );
 
+  const addFiles = useMemo(
+    () => makeAddFiles(model, io, () => null),
+    [model, io],
+  );
+
   if (model.error && !d) return <Screen>{model.error}</Screen>;
   if (!d) return <Screen>Reading the deck…</Screen>;
   if (!all.length)
@@ -130,7 +136,10 @@ export function PresentApp({
       <Screen>This deck is not built yet. The onboarding deck is ready.</Screen>
     );
 
-  const base = baseCtx(model, d, deck, still, view === "present");
+  const base = {
+    ...baseCtx(model, d, deck, still, view === "present"),
+    ads: { add: addFiles },
+  };
 
   if (view === "notes")
     return (
@@ -140,6 +149,7 @@ export function PresentApp({
         slides={shown}
         base={base}
         book={bookFor}
+        io={io}
       />
     );
   if (view === "prep")
@@ -151,6 +161,7 @@ export function PresentApp({
         shown={shown}
         base={base}
         book={bookFor}
+        io={io}
         uploadLogo={
           uploadLogo
             ? async file => {

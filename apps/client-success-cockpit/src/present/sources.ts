@@ -396,7 +396,7 @@ export async function readFileFacts(file: File): Promise<FileFacts> {
 }
 
 /** PUT a file to a signed upload URL, reporting progress (0 to 1). */
-function put(
+export function putSigned(
   url: string,
   file: Blob,
   type: string,
@@ -443,9 +443,12 @@ export async function uploadLaunchAd(
     facts: FileFacts;
     requestId?: string;
     onProgress?: (share: number) => void;
+    /** The PUT itself (a test hands in its own). */
+    put?: typeof putSigned;
   },
 ): Promise<LaunchAd> {
   const { taskId, file, kind, facts } = args;
+  const put = args.put ?? putSigned;
   const requestId = args.requestId ?? crypto.randomUUID();
   const poster =
     file.type.startsWith("video/") && facts.poster

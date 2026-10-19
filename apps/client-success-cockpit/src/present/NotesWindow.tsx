@@ -7,14 +7,17 @@ import {
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { focusOf } from "./AdsStage";
+import { makeAddFiles } from "./adsActions";
 import type { DeckMessage } from "./channel";
 import { DECK_NAME, t } from "./content";
 import { groupLinks, Segmented, SlideControls } from "./controls";
 import { fillNotes, type SlideCtx, type SlideDef } from "./deckContext";
 import type { CallKind } from "./deckData";
 import { TARGET_MINUTES } from "./decks";
+import { LaunchControls } from "./launchControls";
 import type { DeckKind } from "./sources";
-import type { DeckModel, SaveState } from "./useDeckModel";
+import type { DeckIO, DeckModel, SaveState } from "./useDeckModel";
 
 /**
  * The CSM's own window (DESIGN 12.2): opened with N, never shared. It
@@ -60,17 +63,35 @@ export function NotesWindow({
   slides,
   base,
   book,
+  io,
 }: {
   model: DeckModel;
   deck: DeckKind;
   slides: SlideDef[];
   base: Omit<SlideCtx, "tour" | "setTour">;
   book?: (kind: CallKind, label: string) => ReactNode;
+  io?: DeckIO;
 }) {
   const { hub, data: d } = model;
   const [at, setAt] = useState<DeckState | null>(null);
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
+  const [messages, setMessages] = useState<string[]>([]);
+  const addFiles = useMemo(
+    () =>
+      io
+        ? makeAddFiles(
+            model,
+            io,
+            () => (at?.slideId === "ads" ? focusOf(at.tour) : null),
+            r => {
+              if (r.phase === "refused" && r.message)
+                setMessages(m => [r.message as string, ...m].slice(0, 3));
+            },
+          )
+        : undefined,
+    [model, io, at],
+  );
 
   useEffect(() => {
     const off = hub.on(m => {
@@ -220,7 +241,10 @@ export function NotesWindow({
           </ul>
         </Section>
 
-        {slide.id === "team" || slide.id === "welcome" ? (
+        {slide.id === "team" ||
+        slide.id === "welcome" ||
+        slide.id === "cover" ||
+        slide.id === "journey" ? (
           <Section title="This client's service model">
             <Segmented
               label="Service model"
@@ -243,14 +267,29 @@ export function NotesWindow({
           </Section>
         ) : null}
 
-        <SlideControls
-          slideId={slide.id}
-          d={d}
-          deck={deck}
-          prep={model.prep}
-          setPrep={model.setPrep}
-          book={book}
-        />
+        {deck === "launch" ? (
+          <LaunchControls
+            slideId={slide.id}
+            d={d}
+            model={model}
+            tour={tour}
+            book={book}
+            addFiles={addFiles}
+            updateAd={io?.updateAd}
+            sendKey={key => hub.post({ type: "key", key })}
+            messages={messages}
+            now={now}
+          />
+        ) : (
+          <SlideControls
+            slideId={slide.id}
+            d={d}
+            deck={deck}
+            prep={model.prep}
+            setPrep={model.setPrep}
+            book={book}
+          />
+        )}
 
         {slide.id === "this-week" && links ? (
           <Section title="Links for the group">

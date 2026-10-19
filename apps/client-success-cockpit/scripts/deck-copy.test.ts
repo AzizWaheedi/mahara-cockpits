@@ -58,6 +58,22 @@ const AR = ALL.filter(l => l.lang === "ar");
 /** Lines allowed to name what a rule bans, because they tell the CSM not to. */
 const ALLOWED: Record<string, string[]> = {
   guarantee: ["Don't link this list to the contract or to any guarantee."],
+  // "The same day" is allowed for the client's own job, never for ours
+  // (CONTENT copy rule 1); "Calling for" names the call card, not a chip on
+  // a new enquiry.
+  speed: [
+    "Mark every meeting, the same day",
+    "Did they come? Did you quote? Did you win? A few taps, the same day.",
+    "Move each meeting to the right stage in the CRM the same day: didn't show, showed, quote sent, closed.",
+    "Your team moves it to the right stage in the CRM, the same day.",
+    "Calling for {name}",
+    "سجلوا نتيجة كل موعد، بنفس اليوم",
+    "حضر؟ عطيتوه عرض سعر؟ وقّع معكم؟ كم ضغطة، بنفس اليوم.",
+    "انقلوا كل موعد للمرحلة الصح في الـCRM بنفس اليوم: ما حضر، حضر، انرسل عرض السعر، وقّع.",
+    "فريقكم ينقله للمرحلة الصح في الـCRM، بنفس اليوم.",
+  ],
+  // "Always …" heads the client's own DO items on their red-lines panel.
+  always: ["دايماً …"],
 };
 
 function offenders(list: Leaf[], re: RegExp, rule?: string) {
@@ -80,12 +96,17 @@ describe("rule 1: no speed promise", () => {
       offenders(
         EN,
         /\b5 minutes\b|five minutes|within (?:a few |five |5 )?minutes|\binstantly\b|\bsame[- ]day\b|\bjust now\b|\bCalling\b|21\s?[x×]|100\s?[x×]/i,
+        "speed",
       ),
     ).toEqual([]);
   });
   test("Arabic", () => {
     expect(
-      offenders(AR, /خمس دقايق|خمس دقائق|٥ دقايق|٥ دقائق|فوراً|فورا|بنفس اليوم/),
+      offenders(
+        AR,
+        /خمس دقايق|خمس دقائق|٥ دقايق|٥ دقائق|فوراً|فورا|بنفس اليوم/,
+        "speed",
+      ),
     ).toEqual([]);
   });
 });
@@ -128,8 +149,11 @@ describe("rule 3: no leads, no cost per lead, no budgets in money", () => {
 
 describe("rules 4 and 5: no every or always for our steps, no weekly", () => {
   test("every and always only for the client's own job and the check-in rhythm", () => {
+    // Allowed: the client's own jobs, the check-in rhythm, the honest "not
+    // every enquiry books", the head of their own DO items, and a note on
+    // why each extra form question costs.
     const fine =
-      /mark every meeting|every two weeks|every stage true|every fact, price and claim|every try/i;
+      /mark every meeting|every two weeks|every stage true|every fact, price and claim|every try|not every enquiry books|^Always …$|every extra question/i;
     expect(
       EN.filter(
         l => /\bevery\b|\balways\b/i.test(l.text) && !fine.test(l.text),
@@ -139,7 +163,11 @@ describe("rules 4 and 5: no every or always for our steps, no weekly", () => {
       offenders(EN, /\bweekly\b|seven days a week|7 days a week/i),
     ).toEqual([]);
     expect(
-      offenders(AR, /أسبوعي|كل أسبوع|سبعة أيام|٧ أيام بالأسبوع|دايماً|دائماً/),
+      offenders(
+        AR,
+        /أسبوعي(?!ن)|كل أسبوع(?!ين)|سبعة أيام|٧ أيام بالأسبوع|دايماً|دائماً/,
+        "always",
+      ),
     ).toEqual([]);
   });
 });
@@ -182,13 +210,19 @@ describe("rule 9: form", () => {
         ),
     );
     expect(titles.length).toBeGreaterThan(10);
+    // Each sentence starts with a capital; nothing else does but names.
     const bad = titles.filter(l =>
       l.text
         .replace(/\{[^}]+\}/g, "")
-        .split(/\s+/)
-        .slice(1)
-        .some(
-          w => /^[A-Z]/.test(w) && !PROPER.test(w.replace(/[^A-Za-z]/g, "")),
+        .split(/(?<=[.?:])\s+/)
+        .some(sentence =>
+          sentence
+            .split(/\s+/)
+            .slice(1)
+            .some(
+              w =>
+                /^[A-Z]/.test(w) && !PROPER.test(w.replace(/[^A-Za-z]/g, "")),
+            ),
         ),
     );
     expect(bad.map(l => `${l.path}: ${l.text}`)).toEqual([]);

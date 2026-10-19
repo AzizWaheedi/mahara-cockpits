@@ -12,6 +12,7 @@ import type { DeckHub } from "./channel";
 import { CHROME, CLOSED, digits, type Lang, t } from "./content";
 import type { SlideCtx, SlideDef } from "./deckContext";
 import { keyCommand, type Pos, slideAtHash, stepFrom } from "./engine";
+import { MiniRail } from "./JourneyLanes";
 
 /**
  * The deck engine on screen (DESIGN 5, 12.1, 15): a 1920 x 1080 canvas
@@ -108,15 +109,19 @@ export function DeckShell({
     lastId.current = slides[Math.min(pos.index, slides.length - 1)]?.id;
   }, [idsKey, slides, pos, setPos]);
 
+  const ctxRef = useRef<SlideCtx | null>(null);
   const step = useCallback(
     (dir: 1 | -1) => {
+      // The slide may take the press first (the call finishes its stage).
+      const c = ctxRef.current;
+      if (c && slide?.intercept?.(dir, c)) return;
       const next = stepFrom({ index, tour }, dir, stops);
       if (next) {
         setPos(next);
         setOverview(false);
       }
     },
-    [index, tour, stops, setPos],
+    [index, tour, stops, setPos, slide],
   );
   const go = useCallback(
     (i: number, t0 = 0) => {
@@ -131,6 +136,8 @@ export function DeckShell({
   );
 
   const ctx: SlideCtx = { ...base, tour, setTour };
+  ctxRef.current = ctx;
+  const railAt = slide?.rail?.(ctx) ?? null;
   const slideId = slide?.id ?? "";
   useEffect(() => {
     if (slideId) onPos?.({ index, tour }, slideId);
@@ -195,7 +202,9 @@ export function DeckShell({
           lang,
           startedAt: started.current,
         });
-      else if (m.type === "key") onKey?.(m.key, ctx);
+      else if (m.type === "key") {
+        if (!slide?.onKey?.(m.key, ctx)) onKey?.(m.key, ctx);
+      }
     });
   });
 
@@ -269,7 +278,12 @@ export function DeckShell({
         overview,
       });
       if (cmd === "none") {
-        if (!e.metaKey && !e.ctrlKey && !e.altKey && onKey?.(e.key, ctx))
+        if (
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          (slide?.onKey?.(e.key, ctx) || onKey?.(e.key, ctx))
+        )
           e.preventDefault();
         else if (e.key === "Escape") e.preventDefault();
         return;
@@ -344,6 +358,7 @@ export function DeckShell({
               key={`${slide.id}-${lang}`}
               className="dk-slide"
               data-deep={slide.deep ? "" : undefined}
+              data-rail={railAt != null ? "" : undefined}
               data-slide={slide.id}
               data-stop={tour}
               aria-roledescription="slide"
@@ -351,6 +366,9 @@ export function DeckShell({
             >
               {slide.render(ctx)}
             </section>
+          ) : null}
+          {railAt != null ? (
+            <MiniRail lang={lang} current={railAt} dwy={base.d.mode.dwy} />
           ) : null}
           {slide && !slide.cover ? (
             <span className="dk-count" aria-hidden>

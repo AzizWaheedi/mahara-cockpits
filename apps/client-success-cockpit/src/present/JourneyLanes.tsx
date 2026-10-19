@@ -37,6 +37,16 @@ export const laneX = (k: LaneKey) => laneIndex(k) * (LANE_W + LANE_GAP);
 export const nodeX = (k: LaneKey) => laneX(k) + 34;
 export const rowY = (i: number) => HEAD_H + ROW_H / 2 + i * ROW_H;
 
+/** The rail's path between two steps (left to right): straight in a lane, an S across. */
+export function railPath(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+  bend: number,
+): string {
+  if (a.y === b.y) return `M ${a.x} ${a.y} L ${b.x} ${b.y}`;
+  return `M ${a.x} ${a.y} C ${a.x + bend} ${a.y} ${b.x - bend} ${b.y} ${b.x} ${b.y}`;
+}
+
 /** The path between two steps: straight in a lane, an S across lanes. */
 export function segmentPath(
   a: { x: number; y: number },
@@ -365,6 +375,9 @@ export function MiniRail({
   dwy,
   all = false,
   scale = 1,
+  col: colIn,
+  rowGap: rowGapIn,
+  end = 400,
   className = "dkc-rail",
   style,
 }: {
@@ -374,25 +387,30 @@ export function MiniRail({
   /** Every node and the line lit (the green light). */
   all?: boolean;
   scale?: number;
+  /** The step's width and the lanes' gap, when not the scale's. */
+  col?: number;
+  rowGap?: number;
+  /** Room after the last node (for the lit step's name). */
+  end?: number;
   className?: string;
   style?: CSSProperties;
 }) {
   const owners = journeyOwners(dwy);
-  const col = 182 * scale;
-  const rowGap = 18 * scale;
+  const col = colIn ?? 182 * scale;
+  const rowGap = rowGapIn ?? 14 * scale;
   const r = 5 * Math.max(1, scale * 0.8);
   const pts = owners.map((o, i) => ({
     x: 8 + i * col,
     y: 10 * scale + laneIndex(o) * rowGap,
   }));
   const at = pts[current];
-  const width = 8 + 6 * col + 400;
+  const width = 8 + 6 * col + end;
   const height = 20 * scale + rowGap * 2;
   return (
     <div className={className} style={{ width, height, ...style }} aria-hidden>
       <svg viewBox={`0 0 ${width} ${height}`} aria-hidden>
         {pts.slice(0, -1).map((a, i) => {
-          const d = segmentPath(a, pts[i + 1], rowGap / 2);
+          const d = railPath(a, pts[i + 1], col / 2);
           return all ? (
             <path
               key={`r-${String(i)}`}

@@ -1,17 +1,15 @@
 import type { SlideCtx, SlideDef } from "./deckContext";
 import type { DeckData, Overrides } from "./deckData";
 import { visible } from "./engine";
+import { launchSlides } from "./launchDeck";
 import { onboardingSlides } from "./onboardingDeck";
 import type { DeckKind } from "./sources";
 import type { DeckModel } from "./useDeckModel";
 
-/**
- * The two decks' slide lists. The launch deck is built separately; until
- * it is, its list is empty and the page says so.
- */
+/** The two decks' slide lists. */
 export const DECKS: Record<DeckKind, () => SlideDef[]> = {
   onboarding: onboardingSlides,
-  launch: () => [],
+  launch: launchSlides,
 };
 
 /** The call's length the notes window's timer counts against (DESIGN 12.2). */

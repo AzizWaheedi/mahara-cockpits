@@ -2,8 +2,9 @@
  * The client decks from fixtures, to see and screenshot every slide without
  * signing in. `bunx vite`, then open
  * /client-success/present-harness.html?fixture=full&deck=onboarding&lang=en
- * (fixture: full | sparse | dwy; view: present | notes | prep; still=1 for
- * no motion). Saves stay in memory; nothing is sent anywhere.
+ * (fixture: full | sparse | dwy | starter; view: present | notes | prep;
+ * still=1 for no motion). Saves and uploads stay in memory (an upload
+ * pretends to take a second and a half); nothing is sent anywhere.
  *
  * scripts/deck-shots.mjs drives it to capture every slide and stop.
  */
@@ -13,7 +14,7 @@ import { createRoot } from "react-dom/client";
 import type { Overrides } from "@/present/deckData";
 import { PresentApp, type View } from "@/present/PresentApp";
 import { applyPatch } from "@/present/prep";
-import type { DeckKind } from "@/present/sources";
+import type { DeckKind, LaunchAd } from "@/present/sources";
 import type { DeckIO } from "@/present/useDeckModel";
 import { FIXTURES, type FixtureKey } from "./deck/fixtures";
 import { PartsSheet } from "./deck/PartsSheet";
@@ -39,12 +40,45 @@ function at(change: Record<string, string | null>) {
 function Harness() {
   const io = useMemo<DeckIO>(() => {
     const store: Record<DeckKind, Overrides> = { onboarding: {}, launch: {} };
-    const loaded = FIXTURES[fixture]?.() ?? FIXTURES.full();
+    const loaded = FIXTURES[fixture]?.(deck) ?? FIXTURES.full(deck);
     store.onboarding = loaded.prep.onboarding;
     store.launch = loaded.prep.launch;
+    let ads: LaunchAd[] = [...loaded.ads];
     let revision = 1;
     return {
-      load: async () => ({ ...loaded, prep: { ...store } }),
+      load: async () => ({ ...loaded, ads: [...ads], prep: { ...store } }),
+      uploadAd: async ({ file, kind, facts, onProgress }) => {
+        for (let i = 1; i <= 10; i++) {
+          await new Promise(r => setTimeout(r, 150));
+          onProgress(i / 10);
+        }
+        const saved: LaunchAd = {
+          id: crypto.randomUUID(),
+          taskId: `fixture-${fixture}`,
+          kind,
+          status: "ready",
+          path: `fixture/${file.name}`,
+          mime: file.type,
+          bytes: file.size,
+          width: facts.width ?? null,
+          height: facts.height ?? null,
+          seconds: facts.seconds ?? null,
+          fileName: file.name,
+          hidden: false,
+          url: URL.createObjectURL(file),
+          posterUrl: facts.poster ? URL.createObjectURL(facts.poster) : null,
+        };
+        ads = [...ads, saved];
+        return saved;
+      },
+      updateAd: async (id, patch) => {
+        ads = ads.map(a =>
+          a.id === id ? ({ ...a, ...patch } as LaunchAd) : a,
+        );
+        const out = ads.find(a => a.id === id);
+        if (!out) throw Error("Not in this harness's tray.");
+        return out;
+      },
       savePrep: async (k, patch) => {
         store[k] = applyPatch(store[k], patch);
         revision += 1;

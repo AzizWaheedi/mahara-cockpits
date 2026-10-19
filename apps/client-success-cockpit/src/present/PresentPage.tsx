@@ -8,6 +8,7 @@ import {
   type DeckKind,
   readFileFacts,
   savePrep,
+  updateLaunchAd,
   uploadLaunchAd,
   uploadRefusal,
 } from "./sources";
@@ -70,6 +71,27 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
       presenterName: auth.name,
       publicUrl: (bucket, path) =>
         client?.storage.from(bucket).getPublicUrl(path).data.publicUrl ?? "",
+      fileFacts: readFileFacts,
+      uploadAd: ({ file, kind, facts, onProgress }) => {
+        if (!client)
+          throw Error(
+            "Saving needs your cockpit sign-in. The preview still works.",
+          );
+        return uploadLaunchAd(client, {
+          taskId: key,
+          file,
+          kind,
+          facts,
+          onProgress,
+        });
+      },
+      updateAd: (id, patch) => {
+        if (!client)
+          throw Error(
+            "Saving needs your cockpit sign-in. The preview still works.",
+          );
+        return updateLaunchAd(client, key, id, patch);
+      },
     }),
     [client, key, auth.name],
   );

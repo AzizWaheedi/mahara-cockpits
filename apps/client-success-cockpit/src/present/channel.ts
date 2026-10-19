@@ -17,6 +17,19 @@ export interface LiveState {
   ticks: Record<string, Record<string, boolean>>;
   /** The service the CSM pointed at on slide 4 before confirming it. */
   candidate: string | null;
+  /** The launch deck's phones: which creative each one shows (DESIGN 10.2). */
+  phones?: Partial<Record<"feed" | "reels" | "facebook", string>>;
+  /** The tray thumbnail last pressed (1, 2, 3 place it; M marks it). */
+  selected?: string | null;
+  /** The tray's tab. */
+  tray?: "uploaded" | "meta";
+  /** The call's English subtitles; null follows the deck's language. */
+  subtitles?: boolean | null;
+  /** The swap before the last one, for the notes window's Undo (10 s). */
+  undo?: {
+    phones: Partial<Record<"feed" | "reels" | "facebook", string>>;
+    at: number;
+  } | null;
 }
 
 export const emptyLive = (): LiveState => ({ ticks: {}, candidate: null });
@@ -40,8 +53,44 @@ export type DeckMessage =
   | { type: "live"; live: LiveState }
   | { type: "booked"; kind: CallKind; startTime: string }
   | { type: "ads" }
+  /** A file added from the notes window, shown at once from the local copy. */
+  | { type: "file"; file: LocalFile }
+  /** How a file's save is going (DESIGN 10.3, 10.4). */
+  | {
+      type: "upload";
+      id: string;
+      phase: UploadPhase;
+      progress?: number;
+      savedId?: string | null;
+      message?: string | null;
+    }
   /** The notes window's own keys pressed there (P, S, D, M, A on the launch deck). */
   | { type: "key"; key: string };
+
+export type UploadPhase = "shown" | "saving" | "saved" | "failed";
+
+/**
+ * A file the CSM added during the call, posted between windows as a Blob
+ * (structured clone): each window makes its own object URL for it.
+ */
+export interface LocalFile {
+  id: string;
+  name: string;
+  mime: string;
+  bytes: number;
+  blob: Blob;
+  poster?: Blob | null;
+  width?: number | null;
+  height?: number | null;
+  seconds?: number | null;
+  kind: "starter" | "custom";
+  /** The phone it goes on, when the notes window chose one. */
+  phone?: "feed" | "reels" | "facebook" | null;
+  phase: UploadPhase;
+  progress?: number;
+  message?: string | null;
+  savedId?: string | null;
+}
 
 export const channelName = (taskId: string, deck: DeckKind) =>
   `mahara-deck:${taskId}:${deck}`;

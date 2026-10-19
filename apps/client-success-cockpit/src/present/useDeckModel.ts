@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OnboardingRow } from "@/lib/onboardingCore";
-import { DeckHub, emptyLive, type LiveState } from "./channel";
+import {
+  DeckHub,
+  type DeckMessage,
+  emptyLive,
+  type LiveState,
+} from "./channel";
 import type { Lang } from "./content";
 import {
   type CallKind,
@@ -10,7 +15,14 @@ import {
 } from "./deckData";
 import { langParam } from "./engine";
 import { applyPatch, PrepSaver } from "./prep";
-import type { DeckKind, DeckSources, LaunchAd, SavedPrep } from "./sources";
+import type {
+  DeckKind,
+  DeckSources,
+  FileFacts,
+  LaunchAd,
+  SavedPrep,
+} from "./sources";
+import { localAds } from "./uploads";
 
 /**
  * One client's deck in one window: what was read, the prep as typed, the
@@ -34,6 +46,17 @@ export interface DeckIO {
   presenterName?: string | null;
   publicUrl?: (bucket: string, path: string) => string;
   now?: () => Date;
+  /** Save a creative to the client's ads tray (launchAds reserve, PUT, ready). */
+  uploadAd?: (args: {
+    file: File;
+    kind: "starter" | "custom" | "logo" | "page";
+    facts: FileFacts;
+    onProgress: (share: number) => void;
+  }) => Promise<LaunchAd>;
+  /** Change an upload's words, placement, kind or hidden flag. */
+  updateAd?: (id: string, patch: Record<string, unknown>) => Promise<LaunchAd>;
+  /** Read a file's size, length and first frame. */
+  fileFacts?: (file: File) => Promise<FileFacts>;
 }
 
 export type SaveState =
@@ -212,8 +235,18 @@ export function useDeckModel({
           langChosen.current = true;
           setLangState(m.lang);
         } else if (m.type === "ads") void reload();
+        else if (m.type === "file" || m.type === "upload") localAds.apply(m);
       }),
     [hub, reload],
+  );
+
+  /** Tell every window, this one included. */
+  const emit = useCallback(
+    (m: DeckMessage) => {
+      if (m.type === "file" || m.type === "upload") localAds.apply(m);
+      hub.post(m);
+    },
+    [hub],
   );
 
   const data: DeckData | null = useMemo(() => {
@@ -246,6 +279,7 @@ export function useDeckModel({
     lang,
     setLang,
     hub,
+    emit,
     save,
     reload,
     flush: () =>

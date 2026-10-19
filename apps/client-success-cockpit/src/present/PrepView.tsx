@@ -7,18 +7,21 @@ import {
   Presentation,
   Upload,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { focusOf } from "./AdsStage";
+import { makeAddFiles } from "./adsActions";
 import { DECK_NAME, t } from "./content";
 import { Field, Segmented, SlideControls, Toggle } from "./controls";
 import { DeckShell } from "./DeckShell";
 import type { SlideCtx, SlideDef } from "./deckContext";
 import type { CallKind } from "./deckData";
 import { type Pos, stepFrom } from "./engine";
+import { LaunchControls } from "./launchControls";
 import { saveLine } from "./NotesWindow";
 import type { DeckKind } from "./sources";
-import type { DeckModel } from "./useDeckModel";
+import type { DeckIO, DeckModel } from "./useDeckModel";
 
 /**
  * Before the call, never shared (DESIGN 12.3): the deck live in a box, a
@@ -44,6 +47,7 @@ export function PrepView({
   book,
   links,
   uploadLogo,
+  io,
 }: {
   model: DeckModel;
   deck: DeckKind;
@@ -54,9 +58,33 @@ export function PrepView({
   links: PrepLinks;
   /** Save a logo to the client's tray (left out where nothing can be saved). */
   uploadLogo?: (file: File) => Promise<void>;
+  io?: DeckIO;
 }) {
   const d = model.data;
   const [pos, setPos] = useState<Pos>({ index: 0, tour: 0 });
+  const [messages, setMessages] = useState<string[]>([]);
+  const posRef = useRef(pos);
+  posRef.current = pos;
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const addFiles = useMemo(
+    () =>
+      io
+        ? makeAddFiles(
+            model,
+            io,
+            () =>
+              shownRef.current[posRef.current.index]?.id === "ads"
+                ? focusOf(posRef.current.tour)
+                : null,
+            r => {
+              if (r.phase === "refused" && r.message)
+                setMessages(m => [r.message as string, ...m].slice(0, 3));
+            },
+          )
+        : undefined,
+    [model, io],
+  );
   const [picked, setPicked] = useState(all[0]?.id ?? "");
   const [logoNote, setLogoNote] = useState<string | null>(null);
   if (!d) return null;
@@ -267,7 +295,8 @@ export function PrepView({
               ) : (
                 <div className="text-xs txt-good">Ready.</div>
               )}
-              {slide.id === "welcome" && uploadLogo ? (
+              {(slide.id === "welcome" || slide.id === "cover") &&
+              uploadLogo ? (
                 <Field
                   label="Their logo"
                   hint={
@@ -303,15 +332,29 @@ export function PrepView({
                   </label>
                 </Field>
               ) : null}
-              <SlideControls
-                slideId={slide.id}
-                d={d}
-                deck={deck}
-                prep={model.prep}
-                setPrep={model.setPrep}
-                book={book}
-                full
-              />
+              {deck === "launch" ? (
+                <LaunchControls
+                  slideId={slide.id}
+                  d={d}
+                  model={model}
+                  tour={pos.tour}
+                  book={book}
+                  full
+                  addFiles={addFiles}
+                  updateAd={io?.updateAd}
+                  messages={messages}
+                />
+              ) : (
+                <SlideControls
+                  slideId={slide.id}
+                  d={d}
+                  deck={deck}
+                  prep={model.prep}
+                  setPrep={model.setPrep}
+                  book={book}
+                  full
+                />
+              )}
             </>
           ) : null}
 

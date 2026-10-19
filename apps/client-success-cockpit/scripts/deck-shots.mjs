@@ -4,8 +4,12 @@
  * harness's fixtures, at 1920 x 1080 and 1366 x 768 (and the notes window
  * and the prep view once each), so a person can look at them before a call.
  *
- *   node scripts/deck-shots.mjs [--deck onboarding] [--fixtures full,sparse,dwy]
- *     [--langs en,ar] [--out <dir>] [--url http://localhost:5199]
+ *   node scripts/deck-shots.mjs [--deck onboarding|launch] [--fixtures full,sparse,dwy]
+ *     [--langs en,ar] [--sizes 1920x1080,1366x768] [--still yes|no]
+ *     [--parts no] [--out <dir>] [--url http://localhost:5199]
+ *
+ * The launch deck is shot still by default (reduced motion: the call's
+ * stages whole, the lines drawn), so each stop is what it settles to.
  *
  * Without --url it starts the Vite dev server itself and stops it after.
  * Files land in <out>/<deck>/<fixture>-<lang>/<width>x<height>/NN-<slide>-<stop>.png.
@@ -26,13 +30,15 @@ const args = Object.fromEntries(
     .reduce((acc, a, i, all) => (a.startsWith("--") ? [...acc, [a.slice(2), all[i + 1]]] : acc), []),
 );
 const deck = args.deck ?? "onboarding";
-const fixtures = (args.fixtures ?? "full,sparse,dwy").split(",");
+const fixtures = (
+  args.fixtures ?? (deck === "launch" ? "full,sparse,dwy,starter" : "full,sparse,dwy")
+).split(",");
 const langs = (args.langs ?? "en,ar").split(",");
 const out = resolve(args.out ?? join(app, "tmp", "deck-shots"));
-const sizes = [
-  [1920, 1080],
-  [1366, 768],
-];
+const sizes = (args.sizes ?? "1920x1080,1366x768")
+  .split(",")
+  .map(x => x.split("x").map(Number));
+const still = (args.still ?? (deck === "launch" ? "yes" : "no")) === "yes";
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -73,16 +79,24 @@ async function walk(browser, base, fixture, lang, [w, h]) {
   page.on("console", m => {
     if (m.type() === "error") errors.push(m.text());
   });
-  await page.goto(`${base}/client-success/present-harness.html?fixture=${fixture}&deck=${deck}&lang=${lang}`);
+  await page.goto(
+    `${base}/client-success/present-harness.html?fixture=${fixture}&deck=${deck}&lang=${lang}${still ? "&still=1" : ""}`,
+  );
   await page.waitForSelector(".dk-slide");
   await page.evaluate(() => document.fonts.ready);
   // The chrome hides after 2.5 s without the mouse; the shots are taken idle.
   await sleep(2800);
   let n = 1;
   let last = "";
-  for (let guard = 0; guard < 60; guard++) {
-    const at = await where(page);
-    if (at === last) break;
+  for (let guard = 0; guard < 90; guard++) {
+    let at = await where(page);
+    if (at === last) {
+      // A slide may take one press first (the call finishes its stage).
+      await page.keyboard.press("ArrowRight");
+      await sleep(900);
+      at = await where(page);
+      if (at === last) break;
+    }
     const [id, stop] = at.split(":");
     await page.screenshot({ path: join(dir, `${String(n).padStart(2, "0")}-${id}-${stop}.png`) });
     n++;
@@ -121,7 +135,7 @@ async function views(browser, base, fixture, lang) {
   ]) {
     const page = await browser.newPage({ viewport: { width: w, height: h } });
     await page.goto(
-      `${base}/client-success/present-harness.html?fixture=${fixture}&deck=${deck}&lang=${lang}&view=${view}`,
+      `${base}/client-success/present-harness.html?fixture=${fixture}&deck=${deck}&lang=${lang}&view=${view}${still ? "&still=1" : ""}`,
     );
     await sleep(1800);
     await page.screenshot({ path: join(dir, `${view}.png`), fullPage: view === "notes" });

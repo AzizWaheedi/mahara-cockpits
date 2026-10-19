@@ -10,16 +10,26 @@
  *   nothing booked.
  * - dwy: done with you, in the UAE, answers written in Arabic, one goal
  *   held back (it counts appointments), templated ads declined.
+ * - starter (the launch deck): Kuwait, only starter ads, already live, the
+ *   ad opening a WhatsApp chat, no Instagram handle, no consultant's name,
+ *   no Do's & Don'ts.
+ *
+ * Asked for the launch deck, each client is a week further on: the launch
+ * call is booked, their creatives are in the tray, a form is confirmed.
  */
 
 import type { OnboardingRow } from "@/lib/onboardingCore";
 import type { Overrides } from "@/present/deckData";
+import type { DeckKind } from "@/present/sources";
 import { type LaunchAd, sourcesSchema } from "@/present/sources";
 import type { Loaded } from "@/present/useDeckModel";
+import siteFeed from "./custom-site.webp";
+import siteTall from "./custom-site-tall.webp";
+import square from "./custom-square.webp";
 import feedPic from "./starter-feed.webp";
 import reelPic from "./starter-reel.webp";
 
-export type FixtureKey = "full" | "sparse" | "dwy";
+export type FixtureKey = "full" | "sparse" | "dwy" | "starter";
 
 const LOGO = `data:image/svg+xml;utf8,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><rect width="200" height="200" fill="none"/><path d="M60 150V58l80 92V58" fill="none" stroke="#1d2a3a" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/><circle cx="140" cy="44" r="9" fill="#b8925a"/></svg>`,
@@ -87,11 +97,13 @@ function ad(
   };
 }
 
-function full(): Loaded {
+function full(deck: DeckKind = "onboarding"): Loaded {
   const taskId = "fixture-full";
+  const launch = deck === "launch";
   const kit = row(taskId, "Noor Studio Interiors", {
     signup_on: "2026-10-12",
     onboarding_call_on: "2026-10-19",
+    launch_on: launch ? "2026-10-26" : null,
     links: { drive_folder: "https://drive.google.com/drive/folders/fixture" },
     forms: {
       onboarding: {
@@ -130,6 +142,15 @@ function full(): Loaded {
             "What is your Instagram URL?",
             "https://instagram.com/noorstudio.sa",
           ),
+          answer("Who are the engineers or designers?", "Eng. Khalid"),
+          answer(
+            "Do you offer free consultations?",
+            "Yes, the first showroom visit is free",
+          ),
+          answer(
+            "What are your business hours?",
+            "Saturday to Thursday, 10am to 8pm",
+          ),
         ],
       },
       kickoff: {
@@ -160,7 +181,7 @@ function full(): Loaded {
     clientName: "Noor Studio Interiors",
     presenter: { email: "sara@example.com", firstName: "Sara" },
     client: {
-      stage: "Onboarding Booked",
+      stage: launch ? "Launch Booked" : "Onboarding Booked",
       service: "DFY",
       launchDate: null,
       bucket: "onboarding",
@@ -189,20 +210,116 @@ function full(): Loaded {
     },
     callers: [{ firstName: "Huda" }],
     calls: {
-      next: { blueprint: { startsAt: "2026-10-22T13:00:00Z" } },
-      last: {},
+      next: launch
+        ? { launch: { startsAt: "2026-10-22T13:00:00Z" } }
+        : { blueprint: { startsAt: "2026-10-22T13:00:00Z" } },
+      last: launch ? { blueprint: { startsAt: "2026-10-21T10:00:00Z" } } : {},
     },
+    meta: launch
+      ? {
+          campaigns: [],
+          funnels: [
+            {
+              sourceId: "native:fixture-form",
+              formId: "9100000001",
+              formName: "Kitchens, showroom visit",
+              kind: "Instant form",
+              headline: "Book a visit to our Riyadh showroom",
+              questions: [
+                {
+                  type: "CUSTOM",
+                  label: "Which do you need?",
+                  options: [
+                    "A new kitchen",
+                    "Renovating my kitchen",
+                    "Wardrobes",
+                  ],
+                  isGate: false,
+                },
+                {
+                  type: "CUSTOM",
+                  label: "When would you like to start?",
+                  options: ["Within a month", "In 1 to 3 months", "Later"],
+                  isGate: true,
+                },
+                {
+                  type: "CUSTOM",
+                  label: "Where is your home?",
+                  options: ["North Riyadh", "East Riyadh", "Outside Riyadh"],
+                  isGate: true,
+                },
+                { type: "FULL_NAME", label: "Full name" },
+                { type: "PHONE", label: "Phone number" },
+              ],
+              adIds: [],
+            },
+          ],
+          ads: [
+            {
+              id: "120200000000001",
+              name: "Kitchen site, square",
+              still: { url: square },
+            },
+          ],
+        }
+      : null,
     launchAds: [],
     notes: [],
   });
   const prep: { onboarding: Overrides; launch: Overrides } = {
-    onboarding: { starter_pack: true },
-    launch: {},
+    onboarding: launch
+      ? {
+          starter_pack: true,
+          service_focus: "Kitchens",
+          service_focus_ar: "المطابخ",
+          red_lines: ["No photos of the owner"],
+          red_lines_ar: ["لا تحطون صور المالك"],
+        }
+      : { starter_pack: true },
+    launch: launch
+      ? {
+          form_confirmed: "9100000001",
+          their_pick: "custom-site",
+          cover_creative: "custom-site",
+          pain: "design",
+          selling_point: "we draw your kitchen in 3D before any work starts",
+          selling_point_ar: "نرسم لك المطبخ ثلاثي الأبعاد قبل لا نبدي أي شغل",
+          engineer_ar: "المهندس خالد",
+          call_guide_checked: true,
+        }
+      : {},
   };
+  const custom = launch
+    ? [
+        ad("custom-site", "custom", siteFeed, 720, 900, {
+          primaryText:
+            "Built right, shown honestly: this is one of our sites in north Riyadh this week.",
+          headline: "See a site in progress",
+          cta: "GET_QUOTE",
+          language: "en",
+          fileName: "site-north-riyadh.webp",
+        }),
+        ad("custom-tall", "custom", siteTall, 540, 960, {
+          primaryText: "A minute on site with our team.",
+          cta: "LEARN_MORE",
+          language: "en",
+          fileName: "site-walk.webp",
+        }),
+        ad("custom-square", "custom", square, 800, 800, {
+          primaryText:
+            "مطبخك يتصمم على طريقة طبخ عائلتك. احجز زيارة لمعرضنا في الرياض.",
+          headline: "مطابخ نور ستوديو",
+          cta: "BOOK_NOW",
+          language: "ar",
+          fileName: "villa-ar.webp",
+        }),
+      ]
+    : [];
   return {
     sources,
     kit,
     ads: [
+      ...custom,
       ad("starter-feed", "starter", feedPic, 864, 1080, {
         primaryText:
           "Your kitchen, designed around how your family cooks. Book a visit to our Riyadh showroom.",
@@ -221,7 +338,7 @@ function full(): Loaded {
   };
 }
 
-function sparse(): Loaded {
+function sparse(_deck: DeckKind = "onboarding"): Loaded {
   const taskId = "fixture-sparse";
   const sources = sourcesSchema.parse({
     taskId,
@@ -253,8 +370,9 @@ function sparse(): Loaded {
   };
 }
 
-function dwy(): Loaded {
+function dwy(deck: DeckKind = "onboarding"): Loaded {
   const taskId = "fixture-dwy";
+  const launch = deck === "launch";
   const kit = row(taskId, "Saha Kitchens", {
     signup_on: "2026-10-09",
     links: {},
@@ -286,6 +404,11 @@ function dwy(): Loaded {
             "الاستفسارات كثيرة بس أغلبها أسعار. ما عندنا وقت نتابع كل واحد. المعرض بعيد عن أغلب العملاء.",
           ),
           answer("What are your service areas?", "Dubai, Sharjah"),
+          answer(
+            "What types of appointments do you offer?",
+            "في المعرض، أونلاين",
+          ),
+          answer("Do you offer free consultations?", "نعم"),
         ],
       },
       kickoff: {
@@ -306,7 +429,7 @@ function dwy(): Loaded {
     clientName: "Saha Kitchens",
     presenter: { email: "omar@example.com", firstName: "Omar" },
     client: {
-      stage: "Brand Blueprint Booked",
+      stage: launch ? "Launch Booked" : "Brand Blueprint Booked",
       service: "DWY",
       launchDate: null,
       bucket: "onboarding",
@@ -337,17 +460,148 @@ function dwy(): Loaded {
   return {
     sources,
     kit,
-    ads: [],
+    ads: launch
+      ? [
+          ad("dwy-square", "custom", square, 800, 800, {
+            primaryText: "مطبخك على مقاسك، من التصميم إلى التركيب.",
+            cta: "SEND_WHATSAPP_MESSAGE",
+            language: "ar",
+            fileName: "kitchen-ar.webp",
+          }),
+        ]
+      : [],
     prep: {
       onboarding: {
         service_focus: "مطابخ حسب الطلب",
         red_lines: ["لا تذكرون الأسعار في الإعلان"],
         access: { meta_access: "done" },
+        ...(launch ? { onboarding_presented_at: "2026-10-16T10:20:00Z" } : {}),
       },
-      launch: {},
+      launch: launch ? { shown_slides: ["form"], go_live: "2026-10-27" } : {},
     },
     problems: [],
   };
 }
 
-export const FIXTURES: Record<FixtureKey, () => Loaded> = { full, sparse, dwy };
+/** A client whose launch runs on starter ads alone, already live. */
+function starter(_deck: DeckKind = "launch"): Loaded {
+  const taskId = "fixture-starter";
+  const kit = row(taskId, "Al Reem Kitchens & Wardrobes Co.", {
+    signup_on: "2026-10-01",
+    onboarding_call_on: "2026-10-05",
+    launch_on: "2026-10-15",
+    forms: {
+      onboarding: {
+        form_id: "KFRCXPFx",
+        response_id: "r4",
+        submitted_at: "2026-10-03T09:00:00Z",
+        answers: [
+          answer("Business Name", "Al Reem Kitchens & Wardrobes Co."),
+          answer(
+            "What services do you offer, and their prices?",
+            "Kitchens, Wardrobes",
+          ),
+          answer("What is your #1 service you want to grow?", "Kitchens"),
+          answer(
+            "What are your service areas?",
+            "Kuwait City, Hawalli, Salmiya",
+          ),
+          answer(
+            "What types of appointments do you offer?",
+            "Online video call",
+          ),
+          answer("Do you offer free consultations?", "No"),
+          answer("What are your business hours?", "9am to 2pm"),
+        ],
+      },
+      kickoff: {
+        form_id: "tG7dnxBn",
+        response_id: "k4",
+        submitted_at: "2026-10-05T11:00:00Z",
+        answers: [
+          answer("Which service are we advertising?", "Kitchens"),
+          answer("Templated Ads Status", "Approved"),
+          answer("Card linked to the account?", "Yes"),
+          answer("Facebook access", "Access confirmed"),
+          answer("Google Calendar Integration", "Connected"),
+          answer("Mahara OS access", "Logged in"),
+        ],
+      },
+    },
+  });
+  const sources = sourcesSchema.parse({
+    taskId,
+    clientName: "Al Reem Kitchens & Wardrobes Co.",
+    presenter: { email: "sara@example.com", firstName: "Sara" },
+    client: {
+      stage: "Ready For Launch",
+      service: "DFY",
+      launchDate: "2026-10-15",
+      bucket: "launch",
+    },
+    logo: null,
+    ghl: {
+      name: "مطابخ الريم",
+      country: "KW",
+      city: "Kuwait City",
+      language: "ar",
+      serviceMode: "DFY",
+    },
+    dosDonts: { text: null, source: "card" },
+    kit: {
+      onboardingCallOn: "2026-10-05",
+      launchOn: "2026-10-15",
+      signupOn: "2026-10-01",
+      links: {},
+    },
+    callers: [{ firstName: "Huda" }],
+    calls: { next: {}, last: { launch: { startsAt: "2026-10-14T10:00:00Z" } } },
+    meta: {
+      campaigns: [],
+      funnels: [
+        {
+          sourceId: "native:fixture-wa",
+          formId: null,
+          formName: "WhatsApp, kitchens",
+          kind: "WhatsApp",
+          questions: [],
+          adIds: [],
+        },
+      ],
+      ads: [],
+    },
+    launchAds: [],
+    notes: [],
+  });
+  return {
+    sources,
+    kit,
+    ads: [
+      ad("starter-feed", "starter", feedPic, 864, 1080, {
+        primaryText: "مطبخك يتصمم على طريقة طبخ عائلتك.",
+        cta: "SEND_WHATSAPP_MESSAGE",
+        language: "ar",
+      }),
+      ad("starter-reel", "starter", reelPic, 608, 1080, {
+        primaryText: "من أول رسمة لآخر خزانة.",
+        cta: "SEND_WHATSAPP_MESSAGE",
+        language: "ar",
+      }),
+    ],
+    prep: {
+      onboarding: {
+        starter_pack: true,
+        onboarding_presented_at: "2026-10-05T11:30:00Z",
+      },
+      launch: { form_confirmed: "native:fixture-wa" },
+    },
+    problems: [],
+  };
+}
+
+export const FIXTURES: Record<FixtureKey, (deck?: DeckKind) => Loaded> = {
+  full,
+  sparse,
+  dwy,
+  starter,
+};

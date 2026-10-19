@@ -31,6 +31,16 @@ export interface SlideCtx {
   still: boolean;
   /** True on the shared deck; false in the prep view's preview. */
   presenting: boolean;
+  /**
+   * Add files to the ads tray (a file dropped on a phone): shown at once,
+   * saved behind it, the words said in the notes window (DESIGN 10.3).
+   */
+  ads?: {
+    add: (
+      files: File[],
+      phone?: "feed" | "reels" | "facebook" | null,
+    ) => Promise<void>;
+  };
 }
 
 export interface SlideDef {
@@ -51,6 +61,19 @@ export interface SlideDef {
   render: (ctx: SlideCtx) => ReactNode;
   /** Prep's readiness for this slide: what is missing, in plain words. */
   missing?: (d: DeckData) => string[];
+  /**
+   * The journey's mini rail at the foot (launch slides 3 to 7, DESIGN 6.7):
+   * the step this stop opens, from 0, or null for none. The shell draws it,
+   * so it stays still while the slide changes around it.
+   */
+  rail?: (ctx: SlideCtx) => number | null;
+  /**
+   * A press the slide takes before the deck moves (the example call: → in
+   * the middle of a stage finishes the stage). True when it was taken.
+   */
+  intercept?: (dir: 1 | -1, ctx: SlideCtx) => boolean;
+  /** The slide's own keys (P, S, D on the call; M, 1 to 3 on the ads; A). */
+  onKey?: (key: string, ctx: SlideCtx) => boolean;
 }
 
 /** The notes for one slide with its slots filled, for the notes window. */

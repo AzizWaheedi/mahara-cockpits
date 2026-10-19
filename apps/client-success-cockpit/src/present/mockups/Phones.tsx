@@ -45,11 +45,17 @@ export function Phone({
   height,
   children,
   label,
+  progress,
 }: {
   height: number;
   children: ReactNode;
   /** What the phone shows, for a screen reader. */
   label?: string;
+  /**
+   * A file saving behind the preview (DESIGN 10.3): a 4 px teal bar grows
+   * along the screen's foot, then fades. No words on the share.
+   */
+  progress?: number | null;
 }) {
   const screenH = height - PHONE_BEZEL * 2;
   const screenW = screenH * SCREEN_RATIO;
@@ -66,7 +72,17 @@ export function Phone({
         } as CSSProperties
       }
     >
-      <div className="dkc-phone-screen">{children}</div>
+      <div className="dkc-phone-screen">
+        {children}
+        {progress != null ? (
+          <i
+            className="dkc-phone-progress"
+            data-done={progress >= 1 ? "" : undefined}
+            style={{ transform: `scaleX(${Math.max(0.02, progress)})` }}
+            aria-hidden
+          />
+        ) : null}
+      </div>
       <i className="dkc-phone-island" aria-hidden />
     </div>
   );
@@ -187,20 +203,23 @@ export function IgFeed({ creative, who, pageName, app, deck, play }: AdProps) {
     <div className="dkc-app" data-app="ig" dir={app === "ar" ? "rtl" : "ltr"}>
       <StatusBar />
       <div className="dkc-ad-head">
-        <Avatar who={who} size="calc(var(--u) * 34)" />
+        <span data-part="who">
+          <Avatar who={who} size="calc(var(--u) * 34)" />
+        </span>
         <div className="dkc-ad-who">
           <b dir="auto">{pageName}</b>
-          <span>{t(APP.sponsored, app)}</span>
+          <span data-part="sponsored">{t(APP.sponsored, app)}</span>
         </div>
         <Ellipsis />
       </div>
       <div
         className="dkc-media"
+        data-part="media"
         style={{ aspectRatio: square ? "1 / 1" : "4 / 5" }}
       >
         <Media c={creative} deck={deck} play={play} />
       </div>
-      <div className="dkc-cta-bar">
+      <div className="dkc-cta-bar" data-part="cta">
         <span>{ctaLabel(creative, app)}</span>
         <ChevronRight />
       </div>
@@ -210,12 +229,14 @@ export function IgFeed({ creative, who, pageName, app, deck, play }: AdProps) {
         <Send />
         <Bookmark />
       </div>
-      <Words
-        text={creative?.primaryText ?? null}
-        lines={2}
-        className="dkc-caption-text"
-        lead={<b>{pageName}</b>}
-      />
+      <div data-part="words">
+        <Words
+          text={creative?.primaryText ?? null}
+          lines={2}
+          className="dkc-caption-text"
+          lead={<b>{pageName}</b>}
+        />
+      </div>
       <IgTabs />
     </div>
   );
@@ -246,13 +267,18 @@ export function ReelStory({
             ) : null}
             <div
               className="dkc-reel-media"
+              data-part="media"
               data-fit={tall ? "cover" : "contain"}
             >
               <Media c={creative} deck={deck} play={play} />
             </div>
           </>
         ) : (
-          <div className="dkc-media" style={{ position: "absolute", inset: 0 }}>
+          <div
+            className="dkc-media"
+            data-part="media"
+            style={{ position: "absolute", inset: 0 }}
+          >
             <Media c={null} deck={deck} />
           </div>
         )}
@@ -267,23 +293,30 @@ export function ReelStory({
         </div>
         <div className="dkc-reel-foot">
           <div className="dkc-reel-who">
-            <Avatar who={who} size="calc(var(--u) * 32)" />
+            <span data-part="who">
+              <Avatar who={who} size="calc(var(--u) * 32)" />
+            </span>
             <div>
               <b dir="auto">{pageName}</b>
               <br />
-              <span>{t(APP.sponsored, app)}</span>
+              <span data-part="sponsored">{t(APP.sponsored, app)}</span>
             </div>
           </div>
           {creative?.primaryText ? (
-            <div className="dkc-reel-cap" dir="auto">
+            <div className="dkc-reel-cap" dir="auto" data-part="words">
               {creative.primaryText}
             </div>
           ) : (
-            <div className="dkc-bars" style={{ padding: 0 }} aria-hidden>
+            <div
+              className="dkc-bars"
+              style={{ padding: 0 }}
+              aria-hidden
+              data-part="words"
+            >
               <i style={{ width: "78%" }} />
             </div>
           )}
-          <div className="dkc-reel-cta">
+          <div className="dkc-reel-cta" data-part="cta">
             <span>{ctaLabel(creative, app)}</span>
             <ChevronRight />
           </div>
@@ -301,25 +334,28 @@ export function FbFeed({ creative, who, pageName, app, deck, play }: AdProps) {
     <div className="dkc-app" data-app="fb" dir={app === "ar" ? "rtl" : "ltr"}>
       <StatusBar />
       <div className="dkc-ad-head" style={{ height: "calc(var(--u) * 60)" }}>
-        <Avatar who={who} size="calc(var(--u) * 40)" />
+        <span data-part="who">
+          <Avatar who={who} size="calc(var(--u) * 40)" />
+        </span>
         <div className="dkc-ad-who">
           <b dir="auto">{pageName}</b>
-          <span>
-            {t(APP.sponsored, app)} ·{" "}
-            <Earth
-              style={{ width: "1em", height: "1em", verticalAlign: "-0.1em" }}
-            />
+          <span className="dkc-fb-sponsored" data-part="sponsored">
+            {t(APP.sponsored, app)} ·
+            <Earth aria-hidden />
           </span>
         </div>
         <Ellipsis />
       </div>
-      <Words
-        text={creative?.primaryText ?? null}
-        lines={3}
-        className="dkc-fb-text"
-      />
+      <div data-part="words">
+        <Words
+          text={creative?.primaryText ?? null}
+          lines={3}
+          className="dkc-fb-text"
+        />
+      </div>
       <div
         className="dkc-media"
+        data-part="media"
         style={{ aspectRatio: square ? "1 / 1" : "4 / 5" }}
       >
         <Media c={creative} deck={deck} play={play} />
@@ -328,13 +364,17 @@ export function FbFeed({ creative, who, pageName, app, deck, play }: AdProps) {
         <div>
           {creative?.headline ? (
             <b dir="auto">{creative.headline}</b>
-          ) : (
+          ) : creative?.primaryText ? null : (
+            // An ad with its words but no headline shows none, as on
+            // Facebook; the bars stand only for words still to come.
             <div className="dkc-bars" style={{ padding: 0 }} aria-hidden>
               <i style={{ width: "80%" }} />
             </div>
           )}
         </div>
-        <span className="dkc-fb-cta">{ctaLabel(creative, app)}</span>
+        <span className="dkc-fb-cta" data-part="cta">
+          {ctaLabel(creative, app)}
+        </span>
       </div>
       <div className="dkc-fb-actions" aria-hidden>
         <span>
@@ -373,6 +413,9 @@ export function PhoneFigure({
   label,
   tag,
   wide = false,
+  head = true,
+  foot = true,
+  progress,
   children,
 }: {
   height: number;
@@ -381,6 +424,11 @@ export function PhoneFigure({
   tag?: string | null;
   /** The tag may run wider than the phone, toward the start (end-aligned). */
   wide?: boolean;
+  /** Leave room above for a tag (off where the slide tags the picture once). */
+  head?: boolean;
+  /** The platform mark and the placement's name under the phone. */
+  foot?: boolean;
+  progress?: number | null;
   children: ReactNode;
 }) {
   return (
@@ -388,19 +436,23 @@ export function PhoneFigure({
       className="dkc-figure"
       style={{ margin: 0, width: wide ? undefined : phoneWidth(height) }}
     >
-      <div className="dkc-figure-head">
-        {tag ? <span className="dk-tag">{tag}</span> : null}
-      </div>
-      <Phone height={height} label={label}>
+      {head ? (
+        <div className="dkc-figure-head">
+          {tag ? <span className="dk-tag">{tag}</span> : null}
+        </div>
+      ) : null}
+      <Phone height={height} label={label} progress={progress}>
         {children}
       </Phone>
-      <figcaption
-        className="dkc-figure-foot dk-label"
-        style={wide ? { width: phoneWidth(height) } : undefined}
-      >
-        <Logo mark={mark} size={30} />
-        {label}
-      </figcaption>
+      {foot ? (
+        <figcaption
+          className="dkc-figure-foot dk-label"
+          style={wide ? { width: phoneWidth(height) } : undefined}
+        >
+          <Logo mark={mark} size={30} />
+          {label}
+        </figcaption>
+      ) : null}
     </figure>
   );
 }

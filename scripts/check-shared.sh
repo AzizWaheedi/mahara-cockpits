@@ -169,6 +169,20 @@ for f in "$SA"/src/deck/assets/brands/*.webp; do
     fails=$((fails + 1))
   fi
 done
+# The launch deck reuses only these pictures from the sales deck (CONTENT.md
+# data map, DESIGN.md 16.1): the masked Mahara OS screens (Demo workspace)
+# and the meeting render. Byte for byte, so a re-masked screen reaches both.
+for b in portal-overview-en portal-overview-ar portal-calls-en portal-calls-ar \
+         portal-outcome-en portal-outcome-ar; do
+  if ! cmp -s "$SA/src/deck/assets/$b.webp" "$CS/src/present/assets/portal/$b.webp"; then
+    echo "DRIFTED  deck picture $b.webp: copy $SA/src/deck/assets/$b.webp to $CS/src/present/assets/portal/"
+    fails=$((fails + 1))
+  fi
+done
+if ! cmp -s "$SA/src/deck/assets/meeting-table.webp" "$CS/src/present/assets/meeting-table.webp"; then
+  echo "DRIFTED  deck picture meeting-table.webp: copy it to $CS/src/present/assets/"
+  fails=$((fails + 1))
+fi
 
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CS/src/lib/askAiClient.ts"
 same askAiClient.ts "$MB/src/lib/askAiClient.ts" "$CD/src/lib/askAiClient.ts"
