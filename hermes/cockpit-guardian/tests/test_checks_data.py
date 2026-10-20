@@ -172,6 +172,21 @@ class B2B(unittest.TestCase):
         v["sources"].append({"source": "maqsam_log", "last_sync_status": "error", "last_error": "403"})
         self.assertEqual(syncs.run_b2b(make({"cockpit_sales_settings": [{"key": "b2b_sources", "value": v}]})).status, WARN)
 
+    def run_meta_row(self, status, age_min):
+        v = {"read_at": fakes.ago(2), "sources": [
+            {"source": "meta", "last_sync_status": status, "last_synced_at": fakes.ago(age_min), "last_error": None}]}
+        return syncs.run_b2b(make({"cockpit_sales_settings": [{"key": "b2b_sources", "value": v}]}))
+
+    def test_running_is_a_sync_in_progress(self):
+        # The mirror reads B2B while meta-sync is mid-run: status running, last success 15 min ago.
+        self.assertEqual(self.run_meta_row("running", 15).status, OK)
+
+    def test_stuck_run_warns_by_age(self):
+        r = self.run_meta_row("running", 75)
+        self.assertEqual(r.status, WARN)
+        self.assertIn("meta (", r.summary)
+        self.assertEqual(self.run_meta_row("success", 75).status, WARN)
+
 
 class Sections(unittest.TestCase):
     def sections(self, minutes, n=14, broken=()):
