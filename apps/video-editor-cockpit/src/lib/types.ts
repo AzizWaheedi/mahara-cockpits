@@ -189,6 +189,7 @@ export interface WorkRequest {
   params: Record<string, unknown> | null;
   status: "queued" | "running" | "done" | "failed";
   requested_by: string | null;
+  requested_by_name?: string | null;
   created_at: string | null;
   finished_at: string | null;
   result: Record<string, unknown> | null;
@@ -228,6 +229,8 @@ export interface WinnerAd {
   file_path: string | null;
   file_bytes: number | null;
   file_error: string | null;
+  /** When the row last came in, by the old automatic copy or a save. */
+  mirrored_at?: string | null;
 }
 
 /** A post on the ideation board, shared with the creative director. */

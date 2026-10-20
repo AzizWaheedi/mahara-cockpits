@@ -67,10 +67,11 @@ export default function VideosPage() {
   }, [assets.data, clientOf]);
 
   const stills = useStills(shown.map(a => a.still_path));
+  const unread = (assets.data ?? []).filter(a => a.error).length;
   const totalSeconds = shown.reduce((n, a) => n + (a.seconds ?? 0), 0);
 
   return (
-    <Page wide>
+    <Page>
       <PageHeader
         title="Footage"
         sub={
@@ -91,7 +92,7 @@ export default function VideosPage() {
           placeholder="Find a clip: a name, or words said in it"
           aria-label="Find a clip"
           dir="auto"
-          className="h-9 w-full rounded-lg border bg-background px-3 text-sm sm:w-72"
+          className="h-10 w-full rounded-lg border bg-background px-3 text-sm sm:w-72"
         />
         <AnimatedSelect
           aria-label="Client"
@@ -109,25 +110,35 @@ export default function VideosPage() {
           type="button"
           onClick={() => setOnlyWithSpeech(v => !v)}
           aria-pressed={onlyWithSpeech}
-          className={`${chip(onlyWithSpeech)} sm:h-9`}
+          className={chip(onlyWithSpeech)}
         >
           Someone speaks
         </button>
       </div>
 
-      {(assets.error || jobs.error) && (
+      {assets.error || jobs.error ? (
         <Problem>
-          These files could not be read: {assets.error ?? jobs.error}
+          The footage could not be read: {assets.error ?? jobs.error}. Reload
+          the page to try again.
         </Problem>
-      )}
-      {assets.loading && <Spinner what="Reading the footage" />}
-      {!assets.loading && !shown.length && (
+      ) : null}
+      {unread ? (
+        <p className="mb-4 px-1 text-xs text-muted-foreground">
+          {unread} {unread === 1 ? "clip" : "clips"} could not be read by the
+          desk and {unread === 1 ? "is" : "are"} left out. Each job page says
+          why.
+        </p>
+      ) : null}
+      {assets.loading && !assets.data ? (
+        <Spinner what="Reading the footage" />
+      ) : null}
+      {!assets.loading && !assets.error && !shown.length ? (
         <Empty>
           {onlyWithSpeech
-            ? "Nothing here has speech in it. Most of our footage is silent."
-            : "No footage has been read yet."}
+            ? "No clip here has speech in it. Turn off Someone speaks to see them all."
+            : "No footage has been read yet. The desk reads a job's Drive folder every half hour."}
         </Empty>
-      )}
+      ) : null}
 
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
         {shown.map(a => {

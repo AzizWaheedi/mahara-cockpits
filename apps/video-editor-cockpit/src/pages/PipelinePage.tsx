@@ -3,24 +3,19 @@ import { Link } from "react-router";
 import { Empty, Page, PageHeader, Problem, Spinner } from "../components/bits";
 import { useJobs } from "../lib/data";
 import { day, whenDue } from "../lib/format";
+import { holder, onEditor, stageLabel, stageRank } from "../lib/stages";
 import type { Job } from "../lib/types";
+import { syncedLine } from "./JobsPage";
 
 /**
  * The board as the team works it, not as the desk stores it.
  *
- * Columns are ClickUp's own statuses in the order work moves through them, so
- * what this shows and what someone sees in ClickUp are the same thing. A
- * status nobody has used is not drawn, and a status the board invents later
- * appears at the end rather than being dropped.
+ * Columns are ClickUp's own statuses in ClickUp's own order (lib/stages.ts),
+ * so what this shows and what someone sees in ClickUp are the same thing. A
+ * status nobody has used is not drawn, and a status the board adds later
+ * appears at the end rather than being dropped. Live and cancelled cards
+ * are finished and stay off the board.
  */
-const ORDER = [
-  "new video request",
-  "in progress",
-  "update required",
-  "client review",
-  "complete",
-];
-const CLOSED = new Set(["complete", "closed", "done", "cancelled"]);
 
 /** The two dots a card can carry, said once in the header's legend. */
 const DOT = {
@@ -29,15 +24,16 @@ const DOT = {
   stuck: { label: "Waiting on someone", tone: "var(--warning)" },
 } as const;
 
-/** "in progress" -> "In progress": the board's words, in sentence case. */
-function sentence(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
 function Card({ job }: { job: Job }) {
+  // Late only means something while the job is the editor's turn.
+  const owed = onEditor(job);
   const due = whenDue(job.due_at);
-  const stuck = job.state === "blocked" || job.state === "stale";
-  const dot = stuck ? DOT.stuck : job.state === "ready" ? DOT.ready : null;
+  const stuck = owed && (job.state === "blocked" || job.state === "stale");
+  const dot = stuck
+    ? DOT.stuck
+    : owed && job.state === "ready"
+      ? DOT.ready
+      : null;
   return (
     <Link
       to={`/job/${job.task_id}`}
@@ -67,11 +63,14 @@ function Card({ job }: { job: Job }) {
       </p>
       <p
         className={`mt-0.5 text-xs ${
-          due.late ? "txt-bad font-medium" : "text-muted-foreground"
+          owed && due.late ? "txt-bad font-medium" : "text-muted-foreground"
         }`}
       >
-        {due.text}
-        {job.due_at ? ` · ${day(job.due_at)}` : ""}
+        {!job.due_at
+          ? "No date"
+          : owed
+            ? `${due.text} · ${day(job.due_at)}`
+            : `Due ${day(job.due_at)}`}
       </p>
     </Link>
   );
@@ -106,23 +105,23 @@ export default function PipelinePage({
 
   const columns = useMemo(() => {
     const all = (jobs ?? []).filter(
-      j => j.state !== "gone" && !CLOSED.has((j.status ?? "").toLowerCase()),
+      j => j.state !== "gone" && holder(j.status) !== "finished",
     );
     const seen = new Map<string, Job[]>();
     for (const j of all) {
       const key = (j.status ?? "no status").toLowerCase();
       seen.set(key, [...(seen.get(key) ?? []), j]);
     }
-    const known = ORDER.filter(s => seen.has(s));
-    const rest = [...seen.keys()].filter(s => !ORDER.includes(s)).sort();
-    return [...known, ...rest].map(key => ({ key, jobs: seen.get(key) ?? [] }));
+    return [...seen.keys()]
+      .sort((a, b) => stageRank(a) - stageRank(b) || a.localeCompare(b))
+      .map(key => ({ key, jobs: seen.get(key) ?? [] }));
   }, [jobs]);
 
   return (
-    <Page wide>
+    <Page>
       <PageHeader
         title="Jobs"
-        sub="Every open job by its status on the board."
+        sub={syncedLine(jobs)}
         actions={
           <>
             {actions}
@@ -131,9 +130,18 @@ export default function PipelinePage({
         }
       />
 
-      {error && <Problem>The board could not be read: {error}</Problem>}
-      {loading && <Spinner what="Reading the board" />}
-      {!loading && !columns.length && <Empty>No open jobs on the board.</Empty>}
+      {error ? (
+        <Problem>
+          The board could not be read: {error}. Reload the page to try again.
+        </Problem>
+      ) : null}
+      {loading && !jobs ? <Spinner what="Reading the board" /> : null}
+      {!loading && !error && !columns.length ? (
+        <Empty>
+          No open jobs on the board. New cards on the Video Pipeline show here
+          within five minutes.
+        </Empty>
+      ) : null}
 
       {/* The board scrolls sideways inside its own strip, edge to edge on
           a phone, never the page. */}
@@ -142,8 +150,8 @@ export default function PipelinePage({
           {columns.map(col => (
             <section key={col.key} className="w-64 shrink-0">
               <div className="mb-2 flex items-baseline gap-2 px-1">
-                <h2 className="text-sm font-semibold tracking-tight">
-                  {sentence(col.key)}
+                <h2 className="text-[15px] font-semibold tracking-tight">
+                  {stageLabel(col.key)}
                 </h2>
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {col.jobs.length}
@@ -153,11 +161,6 @@ export default function PipelinePage({
                 {col.jobs.map(j => (
                   <Card key={j.task_id} job={j} />
                 ))}
-                {!col.jobs.length ? (
-                  <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-                    empty
-                  </p>
-                ) : null}
               </div>
             </section>
           ))}

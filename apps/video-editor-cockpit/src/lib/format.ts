@@ -51,15 +51,35 @@ export function moment(iso: string | null | undefined): string {
   });
 }
 
+/**
+ * Kuwait calendar days from today to the due date: 0 is today, -1 yesterday.
+ *
+ * ClickUp stores a date-only due date at 04:00 Kuwait, so the time of day
+ * means nothing. Rounding hours turned a job due today into "1 day late"
+ * from about 16:00 onwards.
+ */
+export function dueDays(
+  iso: string | null | undefined,
+  now = new Date(),
+): number | null {
+  if (!iso) return null;
+  const due = new Date(iso);
+  if (Number.isNaN(due.getTime())) return null;
+  const a = Date.parse(kuwaitDay(due));
+  const b = Date.parse(kuwaitDay(now));
+  return Math.round((a - b) / 86_400_000);
+}
+
 /** "3 days late", "due today", "in 2 days". Plain words, no colour logic here. */
-export function whenDue(iso: string | null | undefined): {
+export function whenDue(
+  iso: string | null | undefined,
+  now = new Date(),
+): {
   text: string;
   late: boolean;
 } {
-  if (!iso) return { text: "no date", late: false };
-  const due = new Date(iso);
-  if (Number.isNaN(due.getTime())) return { text: "no date", late: false };
-  const days = Math.round((due.getTime() - Date.now()) / 86_400_000);
+  const days = dueDays(iso, now);
+  if (days === null) return { text: "no date", late: false };
   if (days < -1) return { text: `${Math.abs(days)} days late`, late: true };
   if (days === -1) return { text: "1 day late", late: true };
   if (days === 0) return { text: "due today", late: false };

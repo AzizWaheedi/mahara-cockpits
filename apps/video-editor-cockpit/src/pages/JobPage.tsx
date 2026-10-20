@@ -16,10 +16,12 @@ import {
   Section,
   Spinner,
   StateBadge,
+  StatusChip,
 } from "../components/bits";
 import Footage from "../components/Footage";
 import MoveCard from "../components/MoveCard";
-import { Button } from "../components/ui/button";
+import { ReportIssue } from "../components/ReportIssue";
+import { Button, buttonClass } from "../components/ui/button";
 import { useWho } from "../lib/auth";
 import {
   addNote,
@@ -33,7 +35,8 @@ import {
   useVersions,
 } from "../lib/data";
 import { clock, day, minutes, moment, whenDue } from "../lib/format";
-import type { Job, Note } from "../lib/types";
+import { onEditor, stageLabel } from "../lib/stages";
+import type { Job, Note, WorkRequest } from "../lib/types";
 
 function Fact({
   label,
@@ -120,7 +123,76 @@ function At({ note, url }: { note: Note; url: string | null }) {
 function whose(note: Note): string {
   if (note.source === "frameio") return " · Frame.io";
   if (note.source === "clickup") return " · from the card";
+  if (note.source === "review") return " · from the client review";
   return "";
+}
+
+/** What each request asks the desk to do, in the button's own words. */
+const KIND: Record<string, string> = {
+  deliver: "Request internal review",
+  check: "Check the cut",
+  status: "Move the card",
+  ask: "Ask for it",
+  comment: "Comment on the card",
+  rescan: "Read the footage again",
+  dosdonts: "Add a rule",
+  toideation: "Save to ideation",
+};
+
+/**
+ * The last few things asked of the desk for this job, and how each ended.
+ * A request that failed says why, so nobody believes a card moved when it
+ * did not. Requests older than a week drop off.
+ */
+function DeskWork({ requests }: { requests: WorkRequest[] }) {
+  const weekAgo = Date.now() - 7 * 86_400_000;
+  const recent = requests
+    .filter(r => r.kind !== "eod")
+    .filter(r => !r.created_at || Date.parse(r.created_at) > weekAgo)
+    .slice(0, 5);
+  if (!recent.length) return null;
+  return (
+    <div>
+      <p className={`${KICKER} mb-2`}>Asked of the desk</p>
+      <ul className="divide-y rounded-xl bg-muted/40 px-4">
+        {recent.map(r => {
+          const tone =
+            r.status === "done"
+              ? "good"
+              : r.status === "failed"
+                ? "bad"
+                : "warn";
+          const word =
+            r.status === "done"
+              ? "Done"
+              : r.status === "failed"
+                ? "Failed"
+                : r.status === "running"
+                  ? "Working on it"
+                  : "Queued";
+          return (
+            <li key={r.id} className="py-2.5 text-sm">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="font-medium">{KIND[r.kind] ?? r.kind}</span>
+                <StatusChip tone={tone}>{word}</StatusChip>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {r.requested_by_name || r.requested_by} ·{" "}
+                  {moment(r.finished_at ?? r.created_at)}
+                </span>
+              </div>
+              {r.error && r.status !== "done" ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {r.status === "failed"
+                    ? `It stopped: ${r.error}. Try again, or do it in ClickUp.`
+                    : `Last try: ${r.error}. The desk tries again in a few minutes.`}
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 export default function JobPage() {
@@ -132,10 +204,14 @@ export default function JobPage() {
   const versions = useVersions(taskId);
   const notes = useNotes(taskId);
   // How many notes are still open, which is the number that tells an
-  // editor whether the cut is waiting on them.
-  const openNotes = (notes.data ?? []).filter(n => !n.done).length;
+  // editor whether the cut is waiting on them. Unknown when the read failed.
+  const openNotes = notes.error
+    ? 0
+    : (notes.data ?? []).filter(n => !n.done).length;
   const requests = useRequests(taskId);
 
+  // The route keys this page by job (App.tsx), so a link or a note typed
+  // for one job can never be sent with another one's id.
   const [link, setLink] = useState("");
   const [noteText, setNoteText] = useState("");
   const [saying, setSaying] = useState<string | null>(null);
@@ -153,14 +229,23 @@ export default function JobPage() {
   if (job.error)
     return (
       <Page>
-        <Problem>{job.error}</Problem>
+        <Problem>
+          This job could not be read: {job.error}. Reload the page to try again.
+        </Problem>
       </Page>
     );
   if (!job.data)
     return (
       <Page>
-        <Empty>
-          That job is not on the desk. It may have been closed on the board.
+        <Empty
+          action={
+            <Link to="/" className={buttonClass({ variant: "outline" })}>
+              All jobs
+            </Link>
+          }
+        >
+          That job is not on the desk. Its card may have been archived or
+          deleted in ClickUp.
         </Empty>
       </Page>
     );
@@ -168,9 +253,6 @@ export default function JobPage() {
   const j = job.data;
   const c = client.data;
   const due = whenDue(j.due_at);
-  const waiting = (requests.data ?? []).filter(
-    r => r.status === "queued" || r.status === "running",
-  );
   const blocked = Boolean(j.missing?.length);
 
   async function send(kind: "deliver" | "check") {
@@ -226,14 +308,22 @@ export default function JobPage() {
             {blocked ? null : <StateBadge state={j.state} />}
           </span>
         }
-        actions={<MoveCard job={j} onMoved={() => job.reload()} />}
+        actions={
+          <>
+            <MoveCard job={j} onMoved={() => job.reload()} />
+            <ReportIssue />
+          </>
+        }
       />
 
       <dl className="mb-6 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
         <Fact label="Editor">{j.editor ?? "Nobody assigned"}</Fact>
         <Fact label="Due">
-          <span className={due.late ? "txt-bad font-medium" : ""}>
-            {due.text}
+          {/* Late only while it is the editor's turn (lib/stages.ts). */}
+          <span
+            className={onEditor(j) && due.late ? "txt-bad font-medium" : ""}
+          >
+            {onEditor(j) ? due.text : stageLabel(j.status)}
           </span>
           {j.due_at ? (
             <span className="text-muted-foreground"> · {day(j.due_at)}</span>
@@ -291,269 +381,317 @@ export default function JobPage() {
           </section>
         ) : null}
 
-        <Section title="The cut">
-          <div className="space-y-4">
-            <FrameioCut job={j} openNotes={openNotes} />
-            <div>
-              <label
-                htmlFor="cut-link"
-                className="mb-1.5 block text-sm font-medium"
-              >
-                Link to the cut in Drive
-              </label>
-              <input
-                id="cut-link"
-                value={link}
-                onChange={e => setLink(e.target.value)}
-                placeholder={
-                  j.edited_url ?? "https://drive.google.com/file/d/…"
-                }
-                className={`${FIELD} h-10`}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => send("check")}
-              >
-                Check it first
-              </Button>
-              <Button disabled={busy} onClick={() => send("deliver")}>
-                Request internal review
-              </Button>
-              {j.edited_url ? (
-                <span className="text-sm sm:ml-auto">
-                  <Out href={j.edited_url}>Current cut</Out>
-                </span>
-              ) : null}
-            </div>
-            {saying && (
-              <p role="status" className="text-sm text-muted-foreground">
-                {saying}
-              </p>
-            )}
-            {waiting.length > 0 && (
-              <p className="text-sm text-muted-foreground">
-                The desk has {waiting.length} job
-                {waiting.length === 1 ? "" : "s"} queued here. It picks work up
-                every few minutes.
-              </p>
-            )}
-
-            {versions.data?.length ? (
-              <ul className="space-y-2">
-                {versions.data.map(v => (
-                  <li key={v.id} className="rounded-xl bg-muted/40 px-4 py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-medium">
-                        Version {v.n} · {moment(v.at)}
-                      </span>
-                      <span
-                        className={`inline-flex items-center gap-1.5 text-xs font-medium ${
-                          v.passed ? "txt-good" : "txt-warn"
-                        }`}
-                      >
-                        {v.passed ? (
-                          <CircleCheck aria-hidden className="size-3.5" />
-                        ) : (
-                          <TriangleAlert aria-hidden className="size-3.5" />
-                        )}
-                        {v.passed ? "Everything checked out" : "Worth a look"}
-                      </span>
-                    </div>
-                    <ul className="mt-2 space-y-1">
-                      {(v.checks ?? []).map(ch => (
-                        <li key={ch.name} className="flex gap-2 text-xs">
-                          {ch.ok ? (
-                            <CircleCheck
-                              aria-label="Passed"
-                              className="txt-good mt-px size-3.5 shrink-0"
-                            />
-                          ) : (
-                            <TriangleAlert
-                              aria-label="Worth a look"
-                              className="txt-warn mt-px size-3.5 shrink-0"
-                            />
-                          )}
-                          <span className="text-muted-foreground">
-                            {ch.detail}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        </Section>
-
-        <Section
-          title="The brand"
-          side={
-            c?.docs_read_at || c?.url ? (
-              <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                {c?.docs_read_at ? (
-                  <span className="text-muted-foreground">
-                    Read {moment(c.docs_read_at)}
-                  </span>
-                ) : null}
-                {c?.url ? <Out href={c.url}>Client card</Out> : null}
-              </span>
-            ) : undefined
-          }
-        >
-          {client.loading && <Spinner what="Reading the client card" />}
-          {!client.loading && !c && (
-            <p className="text-sm text-muted-foreground">
-              The tag on this card does not match a company on Clients - Mahara,
-              so the brand rules could not be found. Fixing the tag on the card
-              is enough.
-            </p>
-          )}
-          {c && (
-            <div>
-              {c.dos_donts ? (
-                <div className="pb-3">
-                  <p className={`${KICKER} mb-2`}>Do's and don'ts</p>
-                  <Prose text={c.dos_donts} />
+        {/* The work on the left; what the client wants on the right. */}
+        <div className="grid gap-4 sm:gap-6 lg:grid-cols-5 lg:items-start">
+          <div className="min-w-0 space-y-4 sm:space-y-6 lg:col-span-3">
+            <Section title="The cut">
+              <div className="space-y-4">
+                <FrameioCut job={j} openNotes={openNotes} />
+                <div>
+                  <label
+                    htmlFor="cut-link"
+                    className="mb-1.5 block text-sm font-medium"
+                  >
+                    Link to the cut in Drive
+                  </label>
+                  <input
+                    id="cut-link"
+                    value={link}
+                    onChange={e => setLink(e.target.value)}
+                    placeholder={
+                      j.edited_url ?? "https://drive.google.com/file/d/…"
+                    }
+                    className={`${FIELD} h-10`}
+                  />
                 </div>
-              ) : (
-                <p className="pb-3 text-sm text-muted-foreground">
-                  No do's and don'ts written for this client yet.
-                </p>
-              )}
-              {c.brand_dna ? (
-                <Fold title="Brand DNA">
-                  <Prose text={c.brand_dna} />
-                </Fold>
-              ) : c.brand_dna_url ? (
-                <div className="border-t py-3 text-sm">
-                  <Out href={c.brand_dna_url}>Brand DNA document</Out>
-                </div>
-              ) : null}
-              {c.offer ? (
-                <Fold title="Offer cheat sheet">
-                  <Prose text={c.offer} />
-                </Fold>
-              ) : c.offer_url ? (
-                <div className="border-t py-3 text-sm">
-                  <Out href={c.offer_url}>Offer cheat sheet</Out>
-                </div>
-              ) : null}
-              <div className="border-t pt-4">
-                <AddRule
-                  clientTaskId={c.task_id}
-                  clientName={c.name}
-                  onSent={() => client.reload()}
-                />
-              </div>
-              {c.website || c.instagram || c.docs_error ? (
-                <p className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-xs">
-                  {c.website ? <Out href={c.website}>Website</Out> : null}
-                  {c.instagram ? <Out href={c.instagram}>Instagram</Out> : null}
-                  {c.docs_error ? (
-                    <span className="txt-warn">
-                      A document could not be read: {c.docs_error}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => send("check")}
+                  >
+                    Check it first
+                  </Button>
+                  <Button disabled={busy} onClick={() => send("deliver")}>
+                    Request internal review
+                  </Button>
+                  {j.edited_url ? (
+                    <span className="text-sm sm:ml-auto">
+                      <Out href={j.edited_url}>Current cut</Out>
                     </span>
                   ) : null}
-                </p>
-              ) : null}
-            </div>
-          )}
-        </Section>
+                </div>
+                {saying && (
+                  <p role="status" className="text-sm text-muted-foreground">
+                    {saying}
+                  </p>
+                )}
+                {requests.error ? (
+                  <p className="text-sm text-muted-foreground">
+                    What the desk was asked could not be read: {requests.error}.
+                  </p>
+                ) : (
+                  <DeskWork requests={requests.data ?? []} />
+                )}
 
-        {j.script || j.brief ? (
-          <Section title="What to make">
-            {j.brief ? (
-              <div className="pb-3">
-                <p className={`${KICKER} mb-2`}>Brief on the card</p>
-                <Prose text={j.brief} />
+                {versions.data?.length ? (
+                  <ul className="space-y-2">
+                    {versions.data.map(v => (
+                      <li
+                        key={v.id}
+                        className="rounded-xl bg-muted/40 px-4 py-3"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-sm font-medium">
+                            Version {v.n} · {moment(v.at)}
+                          </span>
+                          <span
+                            className={`inline-flex items-center gap-1.5 text-xs font-medium ${
+                              v.passed ? "txt-good" : "txt-warn"
+                            }`}
+                          >
+                            {v.passed ? (
+                              <CircleCheck aria-hidden className="size-3.5" />
+                            ) : (
+                              <TriangleAlert aria-hidden className="size-3.5" />
+                            )}
+                            {v.passed
+                              ? "Everything checked out"
+                              : "Worth a look"}
+                          </span>
+                        </div>
+                        <ul className="mt-2 space-y-1">
+                          {(v.checks ?? []).map(ch => (
+                            <li key={ch.name} className="flex gap-2 text-xs">
+                              {ch.ok ? (
+                                <CircleCheck
+                                  aria-label="Passed"
+                                  className="txt-good mt-px size-3.5 shrink-0"
+                                />
+                              ) : (
+                                <TriangleAlert
+                                  aria-label="Worth a look"
+                                  className="txt-warn mt-px size-3.5 shrink-0"
+                                />
+                              )}
+                              <span className="text-muted-foreground">
+                                {ch.detail}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
-            ) : null}
-            {j.script ? (
-              <Fold title="Script" open={!j.brief}>
-                <Prose text={j.script} />
-              </Fold>
-            ) : null}
-          </Section>
-        ) : null}
+            </Section>
 
-        <Section title="Footage">
-          {assets.loading ? (
-            <Spinner what="Reading the footage" />
-          ) : (
-            <Footage assets={assets.data ?? []} />
-          )}
-        </Section>
+            <Section title="Footage">
+              {assets.loading && !assets.data ? (
+                <Spinner what="Reading the footage" />
+              ) : assets.error ? (
+                <Problem>
+                  The footage list could not be read: {assets.error}. Reload the
+                  page before you ask for footage that may already be here.
+                </Problem>
+              ) : (
+                <Footage assets={assets.data ?? []} />
+              )}
+            </Section>
 
-        {!blocked ? (
-          <Section title="Need something?">
-            <Ask job={j} onSent={() => job.reload()} />
-          </Section>
-        ) : null}
-
-        <Section title="Notes">
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <input
-                id="new-note"
-                aria-label="New note"
-                value={noteText}
-                onChange={e => setNoteText(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter") say();
-                }}
-                placeholder="Add a note for this job"
-                className={`${FIELD} h-10 min-w-0 flex-1`}
-              />
-              <Button variant="outline" size="lg" disabled={busy} onClick={say}>
-                Add
-              </Button>
-            </div>
-            {noteSaid ? (
-              <p role="alert" className="txt-bad text-sm">
-                {noteSaid}
-              </p>
-            ) : null}
-
-            {notes.loading && <Spinner what="Reading the notes" />}
-            {!notes.loading && !notes.data?.length && (
-              <Empty>No notes on this job yet.</Empty>
-            )}
-            <ul className="divide-y">
-              {(notes.data ?? []).map(n => (
-                <li key={n.id} className="flex items-start gap-3 py-2.5">
+            <Section title="Notes">
+              <div className="space-y-3">
+                <div className="flex gap-2">
                   <input
-                    type="checkbox"
-                    id={`note-${n.id}`}
-                    aria-label="Done"
-                    checked={Boolean(n.done)}
-                    onChange={async e => {
-                      await markNoteDone(n.id, e.target.checked);
-                      notes.reload();
+                    id="new-note"
+                    aria-label="New note"
+                    value={noteText}
+                    onChange={e => setNoteText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") say();
                     }}
-                    className="mt-1 size-4 shrink-0 accent-primary"
+                    placeholder="Add a note for this job"
+                    className={`${FIELD} h-10 min-w-0 flex-1`}
                   />
-                  <div className="min-w-0 flex-1">
-                    <p
-                      dir="auto"
-                      className={`rtl-safe text-sm ${n.done ? "text-muted-foreground line-through" : ""}`}
-                    >
-                      <At note={n} url={j.frameio_url} />
-                      {n.text}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {n.by_name || n.by_email || "Someone"} · {moment(n.at)}
-                      {whose(n)}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    disabled={busy}
+                    onClick={say}
+                  >
+                    Add
+                  </Button>
+                </div>
+                {noteSaid ? (
+                  <p role="alert" className="txt-bad text-sm">
+                    {noteSaid}
+                  </p>
+                ) : null}
+
+                {notes.loading && !notes.data ? (
+                  <Spinner what="Reading the notes" />
+                ) : null}
+                {notes.error ? (
+                  <Problem>
+                    The notes could not be read: {notes.error}. Reload the page
+                    before you send the cut, so no client note is missed.
+                  </Problem>
+                ) : null}
+                {!notes.loading && !notes.error && !notes.data?.length ? (
+                  <Empty>
+                    No notes on this job yet. Notes from the card, the client
+                    review and Frame.io land here.
+                  </Empty>
+                ) : null}
+                <ul className="divide-y">
+                  {(notes.data ?? []).map(n => (
+                    <li key={n.id} className="flex items-start gap-3 py-2.5">
+                      <input
+                        type="checkbox"
+                        id={`note-${n.id}`}
+                        aria-label="Done"
+                        checked={Boolean(n.done)}
+                        onChange={async e => {
+                          const err = await markNoteDone(
+                            n.id,
+                            e.target.checked,
+                          );
+                          if (err)
+                            setNoteSaid(`That tick was not saved: ${err}`);
+                          notes.reload();
+                        }}
+                        className="mt-1 size-4 shrink-0 accent-primary"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p
+                          dir="auto"
+                          className={`rtl-safe text-sm ${n.done ? "text-muted-foreground line-through" : ""}`}
+                        >
+                          <At note={n} url={j.frameio_url} />
+                          {n.text}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {n.by_name || n.by_email || "Someone"} ·{" "}
+                          {moment(n.at)}
+                          {whose(n)}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </Section>
           </div>
-        </Section>
+          <div className="min-w-0 space-y-4 sm:space-y-6 lg:col-span-2">
+            <Section
+              title="The brand"
+              side={
+                c?.docs_read_at || c?.url ? (
+                  <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                    {c?.docs_read_at ? (
+                      <span className="text-muted-foreground">
+                        Read {moment(c.docs_read_at)}
+                      </span>
+                    ) : null}
+                    {c?.url ? <Out href={c.url}>Client card</Out> : null}
+                  </span>
+                ) : undefined
+              }
+            >
+              {client.loading && !c ? (
+                <Spinner what="Reading the client card" />
+              ) : null}
+              {client.error ? (
+                <Problem>
+                  The client card could not be read: {client.error}. Reload the
+                  page to try again.
+                </Problem>
+              ) : null}
+              {!client.loading && !client.error && !c && (
+                <p className="text-sm text-muted-foreground">
+                  The tag on this card does not match a company on Clients -
+                  Mahara, so the brand rules could not be found. Fixing the tag
+                  on the card is enough.
+                </p>
+              )}
+              {c && (
+                <div>
+                  {c.dos_donts ? (
+                    <div className="pb-3">
+                      <p className={`${KICKER} mb-2`}>Do's and don'ts</p>
+                      <Prose text={c.dos_donts} />
+                    </div>
+                  ) : (
+                    <p className="pb-3 text-sm text-muted-foreground">
+                      No do's and don'ts written for this client yet.
+                    </p>
+                  )}
+                  {c.brand_dna ? (
+                    <Fold title="Brand DNA">
+                      <Prose text={c.brand_dna} />
+                    </Fold>
+                  ) : c.brand_dna_url ? (
+                    <div className="border-t py-3 text-sm">
+                      <Out href={c.brand_dna_url}>Brand DNA document</Out>
+                    </div>
+                  ) : null}
+                  {c.offer ? (
+                    <Fold title="Offer cheat sheet">
+                      <Prose text={c.offer} />
+                    </Fold>
+                  ) : c.offer_url ? (
+                    <div className="border-t py-3 text-sm">
+                      <Out href={c.offer_url}>Offer cheat sheet</Out>
+                    </div>
+                  ) : null}
+                  <div className="border-t pt-4">
+                    <AddRule
+                      clientTaskId={c.task_id}
+                      clientName={c.name}
+                      onSent={() => client.reload()}
+                    />
+                  </div>
+                  {c.website || c.instagram || c.docs_error ? (
+                    <p className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t pt-3 text-xs">
+                      {c.website ? <Out href={c.website}>Website</Out> : null}
+                      {c.instagram ? (
+                        <Out href={c.instagram}>Instagram</Out>
+                      ) : null}
+                      {c.docs_error ? (
+                        <span className="txt-warn">
+                          A document could not be read: {c.docs_error}
+                        </span>
+                      ) : null}
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </Section>
+
+            {j.script || j.brief ? (
+              <Section title="What to make">
+                {j.brief ? (
+                  <div className="pb-3">
+                    <p className={`${KICKER} mb-2`}>Brief on the card</p>
+                    <Prose text={j.brief} />
+                  </div>
+                ) : null}
+                {j.script ? (
+                  <Fold title="Script" open={!j.brief}>
+                    <Prose text={j.script} />
+                  </Fold>
+                ) : null}
+              </Section>
+            ) : null}
+
+            {!blocked ? (
+              <Section title="Need something?">
+                <Ask job={j} onSent={() => job.reload()} />
+              </Section>
+            ) : null}
+          </div>
+        </div>
 
         {j.error ? (
           <p className="px-1 text-xs text-muted-foreground">

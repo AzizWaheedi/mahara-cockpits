@@ -39,12 +39,21 @@ function useQuery<T>(
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    Promise.resolve(fetcher()).then(({ data: rows, error: err }) => {
-      if (!alive) return;
-      setError(err ? err.message : null);
-      setData(rows ?? null);
-      setLoading(false);
-    });
+    // A rejected request (the network dropped) used to leave the spinner
+    // up for good. It is an error like any other.
+    Promise.resolve(fetcher()).then(
+      ({ data: rows, error: err }) => {
+        if (!alive) return;
+        setError(err ? err.message : null);
+        setData(rows ?? null);
+        setLoading(false);
+      },
+      (err: unknown) => {
+        if (!alive) return;
+        setError(err instanceof Error ? err.message : String(err));
+        setLoading(false);
+      },
+    );
     return () => {
       alive = false;
     };
@@ -225,7 +234,8 @@ export function useEodToday(
 
 /**
  * Team meetings as Fathom recorded them. A row policy decides which ones:
- * the ones you were on (team_recordings, 20260927d).
+ * since the team-only seats of 2026-10-17 (docs/access/TEAM-ONLY-SEATS.md),
+ * every full seat reads all of them and a call-center seat only its own.
  */
 export function useMeetings(): Loaded<TeamMeeting[]> {
   return useQuery<TeamMeeting[]>(
@@ -246,7 +256,7 @@ export function useMe(email: string | null): Loaded<EditorPerson> {
         ? supabase
             .from("editor_people")
             .select("*")
-            .ilike("email", email)
+            .ilike("email", email.trim().replace(/[\\%_]/g, "\\$&"))
             .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
     [email],

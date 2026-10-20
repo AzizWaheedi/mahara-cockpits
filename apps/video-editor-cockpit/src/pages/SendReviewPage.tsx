@@ -21,6 +21,7 @@ import {
   KICKER,
   Page,
   PageHeader,
+  Problem,
   Section,
   Spinner,
 } from "../components/bits";
@@ -150,10 +151,16 @@ export default function SendReviewPage() {
   const [made, setMade] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [copied, copy] = useCopy();
+  const [listError, setListError] = useState<string | null>(null);
 
+  // A failed read is said as one, not shown as "Nothing sent yet", which
+  // would invite a second link for a video that already has one.
   const load = useCallback(async () => {
-    const { data } = await supabase.rpc("cockpit_review_list", { p_limit: 25 });
-    setRows((data as Row[]) ?? []);
+    const { data, error } = await supabase.rpc("cockpit_review_list", {
+      p_limit: 25,
+    });
+    setListError(error ? error.message : null);
+    setRows(error ? [] : ((data as Row[]) ?? []));
   }, []);
   useEffect(() => {
     void load();
@@ -211,7 +218,7 @@ export default function SendReviewPage() {
   }
 
   return (
-    <Page>
+    <Page narrow>
       <PageHeader
         title="Send for review"
         sub="One link for the whole delivery. The client approves each cut or asks for a change, and their notes land here."
@@ -474,6 +481,11 @@ export default function SendReviewPage() {
         <Section title="Sent already">
           {rows === null ? (
             <Spinner what="Reading the links" />
+          ) : listError ? (
+            <Problem>
+              The links already sent could not be read: {listError}. Reload the
+              page before you make a new one.
+            </Problem>
           ) : rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               Nothing sent yet. The first link you make appears here with what

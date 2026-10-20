@@ -1,3 +1,4 @@
+import { Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import logo from "../assets/mahara-logo-dark.png";
@@ -158,7 +159,8 @@ function Thumb({ x }: { x: Item }) {
     );
   }
   if (x.poster_url) return <img src={x.poster_url} alt="" loading="lazy" />;
-  if (drivePreview(x.video_url)) return <span aria-hidden="true">▶</span>;
+  if (drivePreview(x.video_url))
+    return <Play aria-hidden className="size-5" strokeWidth={1.75} />;
   if (x.kind === "image")
     return <img src={x.video_url} alt="" loading="lazy" />;
   return (
@@ -397,10 +399,27 @@ export default function ReviewPage() {
     }
   }, [note, draftKey]);
 
+  // review_open answers null for a link that is revoked, expired or wrong.
+  // A request that fails (the network dropped) is not that: after a saved
+  // answer the page stays, and says the refresh did not come back.
+  const shown = useRef(false);
+  const inArabic = useRef(arabic);
+  useEffect(() => {
+    inArabic.current = arabic;
+  }, [arabic]);
   const load = useCallback(async () => {
     const { data, error } = await supabase.rpc("review_open", {
       p_token: token,
     });
+    if (error && shown.current) {
+      setProblem(
+        inArabic.current
+          ? "تعذّر تحديث الصفحة. تم حفظ ردكم، حدّثوا الصفحة بعد قليل."
+          : "The page could not refresh. Your answer was saved. Reload in a moment.",
+      );
+      return;
+    }
+    shown.current = Boolean(data) && !error;
     setBundle(error || !data ? "missing" : (data as Bundle));
   }, [token]);
 
@@ -460,6 +479,14 @@ export default function ReviewPage() {
   const watching = Boolean(item) && (!allDone || reopened);
   const posts = items.length > 0 && items.every(i => i.kind === "post");
   const slides = item?.post?.media?.length ?? 0;
+  const kindWord =
+    item?.kind === "image"
+      ? t("Image", "صورة")
+      : item?.kind === "post"
+        ? t("Post", "منشور")
+        : items.length > 1
+          ? t("Cut", "فيديو")
+          : t("Video", "فيديو");
   const noun = posts
     ? " posts"
     : items.every(i => i.kind === "image")
@@ -473,7 +500,7 @@ export default function ReviewPage() {
     setBusy(true);
     setProblem(null);
     try {
-      const { data } = await supabase.rpc("review_decide", {
+      const { data, error } = await supabase.rpc("review_decide", {
         p_token: token,
         p_item: item.id,
         p_decision: decision,
@@ -493,12 +520,16 @@ export default function ReviewPage() {
               : Math.floor(at),
         p_name: name.trim() || null,
       });
-      if (!(data as { ok?: boolean } | null)?.ok) {
+      if (error || !(data as { ok?: boolean } | null)?.ok) {
+        // The server's own reason (for example, a change needs a note)
+        // says what to fix; the Arabic page keeps one plain line.
         setProblem(
-          t(
-            "That did not save. Refresh the page and try once more.",
-            "لم يتم حفظ الرد. حدّثوا الصفحة وحاولوا مرة أخرى.",
-          ),
+          error?.message && !arabic
+            ? `That did not save: ${error.message}.`
+            : t(
+                "That did not save. Refresh the page and try once more.",
+                "لم يتم حفظ الرد. حدّثوا الصفحة وحاولوا مرة أخرى.",
+              ),
         );
         return;
       }
@@ -567,7 +598,7 @@ export default function ReviewPage() {
 
       {posts && bundle.note && watching ? (
         <p className="brief" dir="auto">
-          <span className="mono">From the team</span>
+          <span className="mono">{t("From the team", "من الفريق")}</span>
           {bundle.note}
         </p>
       ) : null}
@@ -579,7 +610,7 @@ export default function ReviewPage() {
             {changeCount === 0
               ? t("Everything is approved.", "تمت الموافقة على الفيديو.")
               : posts
-                ? "Your notes are with the team."
+                ? t("Your notes are with the team.", "وصلت ملاحظاتكم للفريق.")
                 : t(
                     "Your notes are with the editor.",
                     "وصلت ملاحظاتكم إلى فريق المونتاج.",
@@ -588,13 +619,16 @@ export default function ReviewPage() {
           <p className="lede">
             {changeCount === 0
               ? posts
-                ? "We will post them on their days."
+                ? t("We will post them on their days.", "سننشرها في مواعيدها.")
                 : t(
                     "We will take it from here.",
                     "سيتابع فريقنا تجهيز الإطلاق.",
                   )
               : posts
-                ? "We will send you the changes shortly."
+                ? t(
+                    "We will send you the changes shortly.",
+                    "سنرسل لكم التعديلات قريبًا.",
+                  )
                 : t(
                     "The team will review your requested changes.",
                     "سيراجع الفريق التعديلات المطلوبة ويتابع معكم.",
@@ -683,12 +717,8 @@ export default function ReviewPage() {
             <div className="eyebrow">
               <span className="cut mono">
                 {items.length > 1
-                  ? `${item.kind === "image" ? "Image" : item.kind === "post" ? "Post" : "Cut"} ${two(here + 1)} / ${two(items.length)}`
-                  : item.kind === "image"
-                    ? "Image"
-                    : item.kind === "post"
-                      ? "Post"
-                      : t("Video", "فيديو")}
+                  ? `${kindWord} ${two(here + 1)} / ${two(items.length)}`
+                  : kindWord}
               </span>
               {item.kind === "video" && item.seconds ? (
                 <span className="dur mono">{clock(item.seconds)}</span>
@@ -735,7 +765,10 @@ export default function ReviewPage() {
                 <p className="verdictLine">
                   {item.decision === "approved"
                     ? item.kind === "post"
-                      ? "You approved this post."
+                      ? t(
+                          "You approved this post.",
+                          "تم تسجيل موافقتكم على المنشور.",
+                        )
                       : t("You approved this one.", "تم تسجيل موافقتكم.")
                     : t("You asked for a change.", "تم تسجيل طلب التعديل.")}
                 </p>
@@ -789,9 +822,13 @@ export default function ReviewPage() {
                 <label htmlFor="note" className="askLabel">
                   {t("What should change?", "ما التعديل المطلوب؟")}
                   {item.kind === "video" && !embedded ? (
-                    <span className="mono">At {clock(at) || "0:00"}</span>
+                    <span className="mono">
+                      {t("At", "عند")} {clock(at) || "0:00"}
+                    </span>
                   ) : item.kind === "post" && slides > 1 ? (
-                    <span className="mono">Slide {slide + 1}</span>
+                    <span className="mono">
+                      {t("Slide", "الشريحة")} {slide + 1}
+                    </span>
                   ) : null}
                 </label>
                 <textarea
@@ -802,7 +839,10 @@ export default function ReviewPage() {
                   onChange={e => setNote(e.target.value)}
                   placeholder={
                     item.kind === "post"
-                      ? "Use the photo of the finished kitchen instead"
+                      ? t(
+                          "Use the photo of the finished kitchen instead",
+                          "مثال: استخدموا صورة المطبخ بعد التشطيب",
+                        )
                       : t(
                           "For example: replace the logo at the end",
                           "مثال: يرجى تغيير الشعار في نهاية الفيديو",
@@ -816,7 +856,10 @@ export default function ReviewPage() {
                     onChange={e => setName(e.target.value)}
                     placeholder={
                       posts
-                        ? "Your name, so the team knows who asked"
+                        ? t(
+                            "Your name, so the team knows who asked",
+                            "اسمكم ليعرف الفريق صاحب الملاحظة",
+                          )
                         : t(
                             "Your name, so the editor knows who asked",
                             "اسمكم ليعرف الفريق صاحب الملاحظة",
@@ -858,12 +901,11 @@ export default function ReviewPage() {
                   disabled={busy}
                   onClick={() => void decide("approved")}
                 >
-                  {arabic ? "موافقة على " : "Approve this "}
                   {item.kind === "post"
-                    ? "post"
+                    ? t("Approve this post", "الموافقة على المنشور")
                     : item.kind === "image"
-                      ? "image"
-                      : t("video", "الفيديو")}
+                      ? t("Approve this image", "الموافقة على الصورة")
+                      : t("Approve this video", "الموافقة على الفيديو")}
                 </button>
                 <button
                   type="button"
@@ -894,18 +936,23 @@ export default function ReviewPage() {
           aria-label={
             watching
               ? posts
-                ? "Every post in this month"
-                : "Every cut in this delivery"
+                ? t("Every post in this month", "كل منشورات الشهر")
+                : t(
+                    "Every cut in this delivery",
+                    "كل الفيديوهات في هذا التسليم",
+                  )
               : posts
-                ? "Look at one again"
-                : "Watch one again"
+                ? t("Look at one again", "عرض منشور مرة أخرى")
+                : t("Watch one again", "مشاهدة الفيديو مرة أخرى")
           }
         >
           <p className="reelLabel mono">
             {watching
-              ? `All ${items.length}${noun}`
+              ? arabic
+                ? `الكل (${items.length})`
+                : `All ${items.length}${noun}`
               : posts
-                ? "Look at one again"
+                ? t("Look at one again", "عرض منشور مرة أخرى")
                 : t("Watch one again", "مشاهدة الفيديو مرة أخرى")}
           </p>
           <div className="frames">

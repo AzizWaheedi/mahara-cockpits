@@ -11,6 +11,7 @@ os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
 from desk import ads, brand, checks, clients, foreplay, frameio, http, media, meetings, prepare, queue, sheets, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
+from desk import supabase as supabase_mod
 from desk.drive import parse_id
 from tests.fakes import FakeClickUp, FakeDrive, FakeSupabase, drive_file, folder, task
 
@@ -514,6 +515,31 @@ class QueueTests(unittest.TestCase):
         self.assertFalse(self.cu.posted)
         self.assertIn("switched off", self.sb.requests_rows["r1"]["error"])
 
+
+    def test_a_delivery_the_board_refuses_to_move_is_not_marked_delivered(self):
+        self.cu.refuse_status = True
+        self.sb.queue({"id": "r1", "kind": "deliver", "task_id": "86abc", "created_at": NOW,
+                       "input": "https://drive.google.com/file/d/1FinalCutAAAAAAAAAAAAAAAAAAA/view"})
+        out = self.drain()
+        self.assertEqual(out["failed"], 1)
+        row = self.sb.requests_rows["r1"]
+        self.assertEqual(row["status"], "queued", "it is tried again")
+        self.assertIn("did not move to internal review", row["error"])
+        self.assertNotEqual(self.sb.job("86abc").get("state"), "delivered")
+        self.assertFalse(self.cu.posted, "no 'Delivered' comment for a cut nobody is asked to review")
+
+    def test_a_fault_in_the_desk_never_leaves_a_request_running(self):
+        def broken(*a, **k):
+            raise KeyError("params")
+        was = queue.run_comment
+        queue.run_comment = broken
+        self.addCleanup(lambda: setattr(queue, "run_comment", was))
+        self.sb.queue({"id": "r1", "kind": "comment", "task_id": "86abc", "created_at": NOW, "input": "x"})
+        out = self.drain()
+        self.assertEqual(out["failed"], 1)
+        row = self.sb.requests_rows["r1"]
+        self.assertEqual(row["status"], "queued")
+        self.assertIn("the desk hit a fault: KeyError", row["error"])
 
 class AskTests(unittest.TestCase):
     """An editor short of something has to be able to say so, on the card
@@ -1436,6 +1462,44 @@ class ComposioRouteTests(unittest.TestCase):
                 fp.get("/api/lens/reporting")
 
 
+    def _stateless(self, fp, init_body, answer):
+        """The server as Composio runs it since October 2026: initialize is
+        answered with no session header."""
+        calls = []
+
+        def fake(method, url, *, headers=None, data=None, timeout=60, retries=0, **kw):
+            body = json.loads(data.decode()) if data else {}
+            calls.append((body.get("method"), dict(headers or {})))
+            if body.get("method") == "initialize":
+                return 200, {}, init_body
+            payload = {"result": {"content": [{"text": json.dumps(answer)}]}}
+            return 200, {}, ("data: " + json.dumps(payload)).encode()
+
+        was = foreplay.http.request
+        foreplay.http.request = fake
+        self.addCleanup(lambda: setattr(foreplay.http, "request", was))
+        return calls
+
+    def test_a_stateless_server_is_used_without_a_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
+            ok = b'event: message\ndata: {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18"}}\n'
+            calls = self._stateless(fp, ok, {"data": {"results": [{"response": {
+                "successful": True, "data": {"data": [{"id": "b1"}]}}}]}})
+            self.assertEqual(fp.boards(), [{"id": "b1"}])
+            fp.usage()
+            self.assertEqual([m for m, _ in calls].count("initialize"), 1, "the handshake is done once")
+            self.assertFalse(any("mcp-session-id" in h for _, h in calls), "no session id is invented")
+
+    def test_a_handshake_that_failed_is_still_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fp = foreplay.Foreplay(self.cfg_with(tmp, composio="c"), lambda m: None)
+            bad = b'data: {"jsonrpc": "2.0", "id": 1, "error": {"code": -32600, "message": "bad key"}}\n'
+            self._stateless(fp, bad, {})
+            with self.assertRaises(http.HttpError) as caught:
+                fp.usage()
+            self.assertIn("refused the MCP handshake", str(caught.exception))
+
 class DropBoxNamingTests(unittest.TestCase):
     """The board was renamed from "Ideation" to "Client Ideation" within a
     day of being set up. A config that demands an exact string breaks that
@@ -1855,3 +1919,38 @@ class FrameioTokenTests(unittest.TestCase):
         with self.assertRaises(http.HttpError) as caught:
             fp.token()
         self.assertIn("never been authorised", str(caught.exception))
+
+
+class ClosedCardTests(unittest.TestCase):
+    """A card closed on the board (cancelled, complete) is not new work,
+    but the job it already made must not keep its old status."""
+
+    class _Rows(supabase_mod.Supabase):
+        def __init__(self, stored):
+            self.stored = stored
+            self.upserts = []
+
+        def select(self, table, params):
+            return [dict(r) for r in self.stored]
+
+        def upsert(self, table, rows, on_conflict):
+            self.upserts.extend(rows)
+
+    def test_a_closed_card_updates_a_known_job_and_adds_no_new_one(self):
+        sb = self._Rows([{"task_id": "86abc", "state": "ready"}])
+        known = {**job_row(task("86abc", status="cancelled"), now_iso=NOW)}
+        unknown = {**job_row(task("86new", status="complete"), now_iso=NOW)}
+        out = sb.store_jobs([known, unknown], create=False)
+        self.assertEqual(out, {"new": 0, "updated": 1})
+        self.assertEqual([r["task_id"] for r in sb.upserts], ["86abc"])
+        self.assertEqual(sb.upserts[0]["status"], "cancelled")
+        self.assertNotIn("state", sb.upserts[0], "the worker state is kept")
+
+    def test_footage_of_a_closed_job_is_never_read(self):
+        sb = self._Rows([
+            {"task_id": "a", "state": "new", "status": "planning"},
+            {"task_id": "b", "state": "new", "status": "Cancelled"},
+            {"task_id": "c", "state": "stale", "status": "live \U0001f680"},
+        ])
+        self.assertEqual([r["task_id"] for r in sb.jobs_to_prepare(10)], ["a"],
+                         "cancelled and live work is finished; reading it costs money for nothing")

@@ -139,7 +139,7 @@ export default function EodPage() {
   const field = `${FIELD} resize-y py-2`;
 
   return (
-    <Page>
+    <Page narrow>
       <PageHeader
         title="End of day"
         sub={
@@ -153,7 +153,7 @@ export default function EodPage() {
                 onBlur={() => setEditingWho(false)}
                 // biome-ignore lint/a11y/noAutofocus: opened on purpose by the Change link
                 autoFocus
-                className="h-9 w-48 rounded-lg border bg-background px-3 text-sm"
+                className="h-10 w-48 rounded-lg border bg-background px-3 text-sm"
               />
               <span>for {spoken(day)}.</span>
             </span>
@@ -242,10 +242,12 @@ export default function EodPage() {
           </p>
         )}
 
+        {/* Until the desk knows whether today is already filed, a second
+            filing could reach the sheet twice, so the button waits. */}
         <Button
           type="submit"
           size="lg"
-          disabled={busy}
+          disabled={busy || filed.loading || Boolean(filed.error)}
           className="w-full pointer-coarse:h-11 sm:w-auto"
         >
           {busy ? "Filing" : "File the day"}
