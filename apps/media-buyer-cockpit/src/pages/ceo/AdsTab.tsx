@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   ChartColumn,
   ChevronRight,
+  Columns3,
   Loader2,
   Megaphone,
   Table2,
@@ -41,6 +42,7 @@ import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { rereadCeoSections, STALE_AFTER_MS } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
+import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
 import { cn } from "@/lib/utils";
 import type {
@@ -72,6 +74,7 @@ import {
   verdictLabel,
 } from "./adsFacts";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
+import { EXTRA_COLS, MetricPicker, useExtraMetrics } from "./adsMetrics";
 import {
   anyTurnedOn,
   heldSentence,
@@ -825,14 +828,21 @@ function AdTable({
   onDone,
   clock,
   setStatus,
+  extra,
 }: {
   p: B2bAdsPayload;
   win: Win;
   onDone: (m: string | null) => void;
   clock: SwitchClock;
   setStatus: SetStatus;
+  /** Ticked extra metrics; empty is the classic table, untouched. */
+  extra: string[];
 }) {
   const { held } = useSwitches();
+  const cols = useMemo(
+    () => [...COLS, ...EXTRA_COLS.filter(c => extra.includes(c.key))],
+    [extra],
+  );
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({
     key: "spend",
     dir: -1,
@@ -843,7 +853,7 @@ function AdTable({
         s.ads.map(a => ({ a, campaign: c.name, type: c.type, adset: s.name })),
       ),
     );
-    const col = COLS.find(c => c.key === sort.key) ?? COLS[0];
+    const col = cols.find(c => c.key === sort.key) ?? COLS[0];
     return all.sort((x, y) => {
       const vx = col.get(x.a[win]);
       const vy = col.get(y.a[win]);
@@ -852,7 +862,7 @@ function AdTable({
       if (vy === null) return -1;
       return (vx - vy) * sort.dir;
     });
-  }, [p, win, sort]);
+  }, [p, win, sort, cols]);
 
   return (
     <div className="ceo-table-scroll overflow-x-auto">
@@ -862,7 +872,7 @@ function AdTable({
             <th className="sticky left-0 z-10 bg-card py-2 pr-3 font-medium">
               Ad
             </th>
-            {COLS.map(c => {
+            {cols.map(c => {
               const active = sort.key === c.key;
               const Arrow = sort.dir === 1 ? ArrowUp : ArrowDown;
               return (
@@ -935,7 +945,7 @@ function AdTable({
                     </div>
                   </div>
                 </td>
-                {COLS.map(c => (
+                {cols.map(c => (
                   <td
                     key={c.key}
                     className="whitespace-nowrap px-2 py-2 text-right"
@@ -1042,6 +1052,8 @@ export function AdsTab({ sections, now }: CeoTabProps) {
   const stored = section?.payload ?? null;
   const tf = useTimeframe("7d");
   const [view, setView] = useState<View>("funnel");
+  const [extra, setExtra] = useExtraMetrics();
+  const [picking, setPicking] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
   const readWindow = useAction(api.ceo.windows.ads);
@@ -1339,7 +1351,23 @@ export function AdsTab({ sections, now }: CeoTabProps) {
           }
           section={section}
           hideAsOf
-          actions={<ViewSwitch view={view} onView={setView} />}
+          actions={
+            <div className="flex items-center gap-2">
+              {view === "table" ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-expanded={picking}
+                  aria-controls="ads-metrics"
+                  onClick={() => setPicking(x => !x)}
+                >
+                  <Columns3 aria-hidden />
+                  {extra.length ? `Metrics · ${extra.length} more` : "Metrics"}
+                </Button>
+              ) : null}
+              <ViewSwitch view={view} onView={setView} />
+            </div>
+          }
           order={1}
         >
           {() => (
@@ -1354,8 +1382,12 @@ export function AdsTab({ sections, now }: CeoTabProps) {
                   {`Meta is refusing changes while the ad account is ${frozen}. Settle it in Ads Manager and every row can be changed again.`}
                 </p>
               ) : null}
+              {view === "table" && picking ? (
+                <MetricPicker shown={extra} onChange={setExtra} />
+              ) : null}
               {view === "table" ? (
                 <AdTable
+                  extra={extra}
                   p={p}
                   win={win}
                   onDone={setMsg}
