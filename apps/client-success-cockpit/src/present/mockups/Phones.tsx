@@ -112,9 +112,10 @@ function StatusBar() {
 }
 
 /**
- * The creative itself or, before there is one, the client's own mark on
- * the picture's ground: a plain brand card, never a "your ad goes here"
- * placeholder on the client's screen.
+ * The creative itself or, before there is one, the client's own brand card
+ * on the picture's ground: their mark and their name set as a card would
+ * carry them, never a "your ad goes here" placeholder and never a bare
+ * monogram in an empty square.
  */
 function Media({
   c,
@@ -128,7 +129,8 @@ function Media({
   if (!c?.url)
     return (
       <span className="dkc-media-empty dkc-media-mark" aria-hidden>
-        <Avatar who={who} size="calc(var(--u) * 104)" />
+        <Avatar who={who} size="calc(var(--u) * 92)" />
+        <b dir="auto">{who.name}</b>
       </span>
     );
   if (c.video && play)

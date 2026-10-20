@@ -28,13 +28,22 @@ import {
  * Each lane is as wide as its longest name needs, so every name stays
  * inside its own lane (on two balanced lines at most) and the matrix holds
  * its own entries: the customer's lane, ours ("Booked, confirmed," is the
- * widest line in either language) and the client's.
+ * widest line in either language) and the client's. Done with you, our
+ * team holds no step: its lane narrows to its head (quiet, not lit) and
+ * the client's lane, where every step after the form sits, takes the room.
+ * The matrix is 840 wide either way, so the stage never moves.
  */
-export const LANE_WS: Record<LaneKey, number> = {
+const LANE_WS: Record<LaneKey, number> = {
   customer: 244,
   us: 312,
   you: 260,
 };
+const LANE_WS_DWY: Record<LaneKey, number> = {
+  customer: 244,
+  us: 148,
+  you: 424,
+};
+const widths = (dwy: boolean) => (dwy ? LANE_WS_DWY : LANE_WS);
 export const LANE_GAP = 12;
 export const ROW_H = 92;
 export const HEAD_H = 48;
@@ -46,12 +55,15 @@ const NODE_IN = 30;
 const NAME_IN = 56;
 
 const laneIndex = (k: LaneKey) => LANES.indexOf(k);
-export const laneX = (k: LaneKey) =>
-  LANES.slice(0, laneIndex(k)).reduce((x, l) => x + LANE_WS[l] + LANE_GAP, 0);
-export const nodeX = (k: LaneKey) => laneX(k) + NODE_IN;
+export const laneX = (k: LaneKey, dwy = false) =>
+  LANES.slice(0, laneIndex(k)).reduce(
+    (x, l) => x + widths(dwy)[l] + LANE_GAP,
+    0,
+  );
+export const nodeX = (k: LaneKey, dwy = false) => laneX(k, dwy) + NODE_IN;
 export const rowY = (i: number) => HEAD_H + ROW_H / 2 + i * ROW_H;
 /** How wide a lane's names may run before they wrap. */
-const nameW = (k: LaneKey) => LANE_WS[k] - NAME_IN - 12;
+const nameW = (k: LaneKey, dwy: boolean) => widths(dwy)[k] - NAME_IN - 12;
 
 /** The rail's path between two steps (left to right): straight in a lane, an S across. */
 export function railPath(
@@ -189,7 +201,8 @@ export function JourneyLanes({
   style,
 }: LanesProps) {
   const owners = journeyOwners(dwy);
-  const pts = owners.map((o, i) => ({ x: nodeX(o), y: rowY(i) }));
+  const W = widths(dwy);
+  const pts = owners.map((o, i) => ({ x: nodeX(o, dwy), y: rowY(i) }));
   const prev = usePrevious(current);
   const now = idle ? -1 : current;
   const drawing = !still && prev !== undefined && now === prev + 1;
@@ -202,29 +215,30 @@ export function JourneyLanes({
     leaderTo && at
       ? `M ${bandEnd} ${at.y} L ${bandEnd + 14} ${at.y} L ${leaderTo.x} ${leaderTo.y}`
       : null;
-  const youX = nodeX("you");
+  const youX = nodeX("you", dwy);
   // The fork (DESIGN 6.2): a no-show goes back to our team's lane; done
-  // with you, it stays in the client's lane, on the side away from the
-  // names, where the follow-up messages start by themselves.
+  // with you, it stays in the client's lane, between "You meet" and "You
+  // mark it", out past the names, its own name beside it in that lane.
   const forkEnd = dwy
-    ? { x: youX - 22, y: rowY(5) + ROW_H / 2 + 6 }
+    ? { x: youX + 196, y: rowY(5) + ROW_H / 2 + 4 }
     : { x: nodeX("us"), y: rowY(6) };
   const forkPath = dwy
-    ? `M ${youX - 10} ${rowY(5) + 9} C ${youX - 26} ${rowY(5) + 18} ${forkEnd.x - 8} ${forkEnd.y - 24} ${forkEnd.x} ${forkEnd.y - 11}`
+    ? `M ${youX} ${rowY(5) + 14} C ${youX} ${forkEnd.y} ${forkEnd.x - 120} ${forkEnd.y} ${forkEnd.x - 11} ${forkEnd.y}`
     : `M ${youX} ${rowY(5) + 14} C ${youX} ${rowY(5) + 70} ${forkEnd.x + 60} ${forkEnd.y - 30} ${forkEnd.x} ${forkEnd.y - 11}`;
   return (
     <div
       className="dkc-lanes"
       data-idle={idle ? "" : undefined}
+      data-dwy={dwy ? "" : undefined}
       style={{ width: LANES_W, height: LANES_H, ...style }}
     >
       <svg viewBox={`0 0 ${LANES_W} ${LANES_H}`} aria-hidden>
         {LANES.map(k => (
           <rect
             key={k}
-            x={laneX(k)}
+            x={laneX(k, dwy)}
             y={40}
-            width={LANE_WS[k]}
+            width={W[k]}
             height={LANES_H - 40}
             rx={12}
             fill="var(--dk-lane)"
@@ -324,23 +338,17 @@ export function JourneyLanes({
           key={k}
           className="dkc-lane-head"
           data-lane={k}
-          style={{ insetInlineStart: laneX(k) + 20 }}
+          style={{ insetInlineStart: laneX(k, dwy) + 20 }}
         >
           {t(SHARED.lane[k], lang)}
         </span>
       ))}
       {fork && !idle ? (
-        // The rebook node says what it is: the stage's "Didn't come?" card.
+        // The rebook node says what it is: the stage's "Didn't come?" card,
+        // named to the node's end side, inside the lane it is drawn in.
         <span
           className="dkc-fork-name"
-          style={
-            dwy
-              ? {
-                  insetInlineEnd: LANES_W - (forkEnd.x - 18),
-                  top: forkEnd.y,
-                }
-              : { insetInlineStart: forkEnd.x + 20, top: forkEnd.y }
-          }
+          style={{ insetInlineStart: forkEnd.x + 20, top: forkEnd.y }}
         >
           {t(LAUNCH.journey.fork.noShow, lang)}
         </span>
@@ -351,7 +359,7 @@ export function JourneyLanes({
         const place = {
           insetInlineStart: p.x + NAME_IN - NODE_IN,
           top: p.y,
-          maxWidth: nameW(owners[i]),
+          maxWidth: nameW(owners[i], dwy),
         };
         if (idle)
           return (

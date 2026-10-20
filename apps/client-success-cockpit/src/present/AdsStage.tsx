@@ -150,6 +150,12 @@ export function AdTray({
     if (id && !onPhone.has(id)) onPhone.set(id, k);
   }
   const pick = ctx.d.launch.pick;
+  // The tray is on the client's screen too, so it reads as their own
+  // contact sheet, not as software: the title with its count beside it, the
+  // two sources as two words, and every caption at the canvas's floor in
+  // one voice under its picture (which phone it is on, or its shape; a
+  // template says so on its own line), nothing printed over a picture but
+  // their pick's star and a video's play mark.
   return (
     <section className="dkc-tray" aria-label={t(A.tray, lang)}>
       <div className="dkc-tray-head">
@@ -174,11 +180,6 @@ export function AdTray({
               onPointerUp={letGo}
             >
               {t(k === "meta" ? A.meta : A.uploaded, lang)}
-              {k === "meta" ? (
-                <span className="dkc-tray-n">
-                  {digits(model.meta.length, lang)}
-                </span>
-              ) : null}
             </button>
           ))}
         </div>
@@ -207,7 +208,7 @@ export function AdTray({
                   }}
                   onClick={() => placeCreative(ctx, model, c.id)}
                   onPointerUp={letGo}
-                  aria-label={`${c.name}, ${c.video ? "video" : "picture"}, ${shape}${c.seconds ? `, ${duration(c.seconds)}` : ""}${on ? `. On ${FRAME[on].en}` : ""}`}
+                  aria-label={`${c.name}, ${c.video ? "video" : "picture"}, ${shape}${c.seconds ? `, ${duration(c.seconds)}` : ""}${c.starter ? ", template" : ""}${on ? `. On ${FRAME[on].en}` : ""}`}
                 >
                   <span className="dkc-thumb-img">
                     {(c.poster ?? c.url) ? (
@@ -216,11 +217,6 @@ export function AdTray({
                         alt=""
                         draggable={false}
                       />
-                    ) : null}
-                    {c.starter ? (
-                      <span className="dkc-thumb-chip">
-                        {t(A.starterChip, lang)}
-                      </span>
                     ) : null}
                     {pick === c.id ? (
                       <Star className="dkc-thumb-star" aria-hidden />
@@ -245,6 +241,11 @@ export function AdTray({
                         {c.language ? ` · ${c.language.toUpperCase()}` : ""}
                       </span>
                     )}
+                    {c.starter ? (
+                      <span className="dkc-thumb-starter">
+                        {t(A.starterChip, lang)}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
               </li>
@@ -279,11 +280,25 @@ interface Place {
   o: number;
 }
 
-/** Where each phone sits: the overview, or one in focus (DESIGN 8.3). */
-export function layout(focus: PhoneKey | null): Record<PhoneKey, Place> {
+/**
+ * Where each phone sits: the overview, or one in focus (DESIGN 8.3). With
+ * no creative anywhere yet, the overview is one phone (the feed) in the
+ * middle: three phones carrying the same brand card would be three empty
+ * pictures.
+ */
+export function layout(
+  focus: PhoneKey | null,
+  one = false,
+): Record<PhoneKey, Place> {
   const mw = NATIVE_W * MID;
   const sw = NATIVE_W * SIDE;
   const midX = (AREA_W - mw) / 2;
+  if (!focus && one)
+    return {
+      feed: { x: midX, y: 0, s: MID, o: 1 },
+      reels: { x: midX + mw + 64, y: (MID_H - SIDE_H) / 2, s: SIDE, o: 0 },
+      facebook: { x: midX + mw + 64, y: (MID_H - SIDE_H) / 2, s: SIDE, o: 0 },
+    };
   if (!focus)
     return {
       feed: { x: midX - 64 - sw, y: (MID_H - SIDE_H) / 2, s: SIDE, o: 1 },
@@ -304,9 +319,25 @@ export function layout(focus: PhoneKey | null): Record<PhoneKey, Place> {
   return out;
 }
 
+/** How wide a leader's label may run on each side of the phone in focus. */
+const LABEL_W = { start: 266, end: 360 } as const;
+
+let ruler: CanvasRenderingContext2D | null = null;
+/** How many lines a label takes at its width (the deck's face, measured). */
+function linesOf(text: string, rtl: boolean, room: number): number {
+  ruler ??= document.createElement("canvas").getContext("2d");
+  if (!ruler) return Math.ceil((text.length * 13) / room);
+  ruler.font = rtl
+    ? '500 26px "IBM Plex Sans Arabic", Geist, sans-serif'
+    : '500 24px Geist, "IBM Plex Sans Arabic", sans-serif';
+  return Math.max(1, Math.ceil(ruler.measureText(text).width / room));
+}
+
 interface Leader {
   key: string;
   label: string;
+  /** Lines the label and its second line take, to keep labels apart. */
+  lines: number;
   /** A second line under the label (the "Sponsored" mark, in the header). */
   sub?: string;
   /** Your page and logo sits at the phone's start: its label goes that way. */
@@ -338,7 +369,8 @@ export function PhoneRow({
 }) {
   const { lang, tour, still } = ctx;
   const focus = focusOf(tour);
-  const places = layout(focus);
+  const none = PHONES.every(k => !model.phones[k]);
+  const places = layout(focus, none);
   const rtl = lang === "ar";
   const phoneRefs = useRef<Partial<Record<PhoneKey, HTMLDivElement | null>>>(
     {},
@@ -367,6 +399,9 @@ export function PhoneRow({
     const P = places[focus];
     const found: Leader[] = [];
     for (const part of PARTS) {
+      // No creative on this phone yet: its picture and its words are the
+      // brand card and nothing, so no leader names them.
+      if (!focused && (part === "media" || part === "words")) continue;
       const node = el.querySelector<HTMLElement>(`[data-part="${part}"]`);
       if (!node) continue;
       const r = node.getBoundingClientRect();
@@ -394,16 +429,24 @@ export function PhoneRow({
               word: t(APP.sponsored, model.app),
             })
           : undefined;
-      found.push({ key: part, label, sub, side, ax, ay, ly: ay });
+      // A label wraps inside its side's room (the area clips past its
+      // edge), so a long one ("The button: إرسال رسالة واتساب") is never cut.
+      const lines =
+        linesOf(label, rtl, LABEL_W[side]) +
+        (sub ? linesOf(sub, rtl, LABEL_W[side]) : 0);
+      found.push({ key: part, label, lines, sub, side, ax, ay, ly: ay });
     }
-    // Spread each side's labels so none sits on another (60 px apart; a
-    // two-line label takes 90).
+    // Spread each side's labels so none sits on another (60 px apart for
+    // two one-line labels, more for each line a label wraps to).
     for (const side of ["start", "end"] as const) {
       const list = found
         .filter(f => f.side === side)
         .sort((a, b) => a.ay - b.ay);
       for (let i = 1; i < list.length; i++) {
-        const room = list[i - 1].sub || list[i].sub ? 90 : 60;
+        const room = Math.max(
+          60,
+          (list[i - 1].lines + list[i].lines) * 17 + 24,
+        );
         if (list[i].ly - list[i - 1].ly < room)
           list[i].ly = list[i - 1].ly + room;
       }
@@ -414,7 +457,7 @@ export function PhoneRow({
       }
     }
     setLeaders(found);
-  }, [focus, focused?.id, lang, cropped, ctaText, model.app]);
+  }, [focus, focused?.id, lang, cropped, ctaText, model.app, none]);
 
   const phys = (x: number, w = 0) => (rtl ? AREA_W - x - w : x);
   const labelX = 330 + NATIVE_W + 56;
@@ -511,7 +554,7 @@ export function PhoneRow({
       })}
       {focus ? null : (
         <div className="dkc-phone-labels" aria-hidden>
-          {PHONES.map(k => {
+          {(none ? (["feed"] as PhoneKey[]) : PHONES).map(k => {
             const P = places[k];
             const w = NATIVE_W * P.s;
             return (
@@ -570,8 +613,12 @@ export function PhoneRow({
           data-side={l.side}
           style={
             l.side === "end"
-              ? { insetInlineStart: labelX, top: l.ly }
-              : { insetInlineEnd: AREA_W - labelEnd, top: l.ly }
+              ? { insetInlineStart: labelX, top: l.ly, maxWidth: LABEL_W.end }
+              : {
+                  insetInlineEnd: AREA_W - labelEnd,
+                  top: l.ly,
+                  maxWidth: LABEL_W.start,
+                }
           }
         >
           {l.label}
@@ -581,7 +628,7 @@ export function PhoneRow({
       {focus && focused?.starter ? (
         <span
           className="dk-tag dkc-focus-tag"
-          style={{ insetInlineStart: labelX }}
+          style={{ insetInlineStart: labelX, maxWidth: LABEL_W.end }}
         >
           {t(SHARED.tag.starter, lang)}
         </span>

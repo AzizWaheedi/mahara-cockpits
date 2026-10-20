@@ -262,7 +262,14 @@ export function useCallCursor({
 
 // ------------------------------------------------------------- drawing
 
-/** A line with its slots: filled in teal, missing as a dashed chip. */
+/**
+ * A line with its slots. A filled one is set in teal (the legend: "Words in
+ * teal came from your files"), with no underline, so a long one never reads
+ * as a link. A name in the other script stays whole on one line. A slot
+ * still to give us is an editor's insertion in square brackets, in amber,
+ * its label in the sentence's own case, so the sentence around it still
+ * reads ("At Atlas, [to give us: what makes you different, in one line].").
+ */
 export function Line({
   line,
   lang,
@@ -273,31 +280,46 @@ export function Line({
   slots: Slots;
 }) {
   const out: ReactNode[] = [];
+  let said = "";
   pieces(line, lang).forEach((p, i) => {
     if ("text" in p) {
       out.push(<span key={`t${String(i)}`}>{p.text}</span>);
+      said += p.text;
       return;
     }
     const v = slots[p.slot][lang];
-    if (v.text)
+    if (v.text) {
+      const other = /[\u0600-\u06ff]/.test(v.text) !== (lang === "ar");
       out.push(
         <span
           key={`s${String(i)}`}
           className={v.given ? "dkc-slot" : undefined}
+          data-other={other ? "" : undefined}
           dir="auto"
         >
           {v.text}
         </span>,
       );
-    if (v.ask)
+      said += v.text;
+    }
+    if (v.ask) {
+      const label = t(TO_GIVE, lang);
+      // Mid-sentence, the insertion's label starts in lower case.
+      const opens = !said.trim() || /[.!?؟]\s*$/.test(said);
+      const head =
+        lang === "en" && !opens
+          ? label.charAt(0).toLowerCase() + label.slice(1)
+          : label;
       out.push(
         <span key={`a${String(i)}`} className="dkc-ask">
           {v.text ? " " : null}
           <span>
-            {t(TO_GIVE, lang)}: {v.ask[lang]}
+            [{head}: {v.ask[lang]}]
           </span>
         </span>,
       );
+      said += "x";
+    }
   });
   return <>{out}</>;
 }

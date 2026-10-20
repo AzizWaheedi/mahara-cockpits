@@ -114,29 +114,37 @@ function GoalAsk({ ctx }: { ctx: SlideCtx }) {
   );
   // The question is the slide: set large in the middle of the page, with
   // the answer's line under it drawn only under the CSM's pointer or while
-  // typing, so the client never sees an empty form field.
+  // typing, so the client never sees an empty form field. The footnote
+  // ("They're targets…") comes once there is a target on the screen.
   return (
-    <div className="dkc-goal-asking">
-      <p className="dk-h1 dkc-goal-ask">{t(O.goals.empty, lang)}</p>
-      <textarea
-        className="dkc-goal-input"
-        data-empty={value.trim() ? undefined : ""}
-        rows={1}
-        dir="auto"
-        value={value}
-        aria-label={t(O.goals.input, lang)}
-        onChange={e => {
-          setValue(e.target.value);
-          save({ goals: { ...goals, goal90: e.target.value.trim() || null } });
-        }}
-        onKeyDown={e => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            e.currentTarget.blur();
-          }
-        }}
-      />
-    </div>
+    <>
+      <div className="dkc-goal-asking">
+        <p className="dk-h1 dkc-goal-ask">{t(O.goals.empty, lang)}</p>
+        <textarea
+          className="dkc-goal-input"
+          data-empty={value.trim() ? undefined : ""}
+          rows={1}
+          dir="auto"
+          value={value}
+          aria-label={t(O.goals.input, lang)}
+          onChange={e => {
+            setValue(e.target.value);
+            save({
+              goals: { ...goals, goal90: e.target.value.trim() || null },
+            });
+          }}
+          onKeyDown={e => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              e.currentTarget.blur();
+            }
+          }}
+        />
+      </div>
+      {value.trim() ? (
+        <p className="dk-small dkc-foot">{t(O.goals.foot, lang)}</p>
+      ) : null}
+    </>
   );
 }
 
@@ -159,7 +167,6 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
       <>
         <h2 className="dk-h2">{t(O.goals.titleAsk, lang)}</h2>
         <GoalAsk ctx={ctx} />
-        <p className="dk-small dkc-foot">{t(O.goals.foot, lang)}</p>
       </>
     );
   const lead = by.get("goal90") ?? by.get("goal12_24");
@@ -358,20 +365,8 @@ function AddService({
       }}
     />
   );
-  // No services yet: the input is the matrix's first row, its cells waiting.
-  if (!d.services.length)
-    return (
-      <div className="dkc-matrix-row" role="row">
-        <span className="dkc-service" role="rowheader">
-          {input}
-        </span>
-        {O.one.tests.map(x => (
-          <span key={x.key} className="dkc-cell" role="cell">
-            <i className="dkc-cell-empty" aria-hidden />
-          </span>
-        ))}
-      </div>
-    );
+  // No services yet, or more to add: the input alone on the matrix's next
+  // row (no empty cells waiting beside it).
   return (
     <div className="dkc-add" role="row">
       {input}
@@ -402,15 +397,24 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
           className="dkc-matrix"
           role="table"
           aria-label={t(O.one.title, lang)}
+          data-empty={d.services.length ? undefined : ""}
         >
-          <div className="dkc-matrix-head" role="row">
-            <span role="columnheader" />
-            {O.one.tests.map(x => (
-              <span key={x.key} role="columnheader">
-                {t(x.label, lang)}
-              </span>
-            ))}
-          </div>
+          {/* The tests head their columns once a service row exists:
+              over an empty table they would be an unfinished form. */}
+          {d.services.length ? (
+            <div className="dkc-matrix-head" role="row">
+              <span role="columnheader" />
+              {O.one.tests.map(x => (
+                <span key={x.key} role="columnheader">
+                  {t(x.label, lang)}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="dkc-one-tests">
+              {O.one.tests.map(x => t(x.label, lang)).join(" · ")}
+            </p>
+          )}
           {d.services.map(s => (
             <div
               key={s}
@@ -698,11 +702,10 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
     if (v) save({ [key]: [...lines, v] }, true);
     setValue("");
   };
-  // No lines yet: a ruled hairline, nothing else. Once a line is typed the
-  // amber panel holds them and the input goes quiet until the CSM points
-  // at it (no placeholder on the client's canvas either way).
-  // Nothing typed yet: nothing drawn. The sentence above already asks for
-  // them; the input's line shows only under the CSM's pointer or while
+  // Each line as the launch deck sets a red line: an amber mark (theirs,
+  // and fixed), then their words in ink. No panel and no box around them,
+  // which read as an input field and a warning. Nothing typed yet: nothing
+  // drawn; the input's line shows only under the CSM's pointer or while
   // typing, so the client never sees an empty form field.
   return (
     <div className="dkc-redlines" data-empty={lines.length ? undefined : ""}>
@@ -710,7 +713,10 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
         <ul>
           {lines.map(l => (
             <li key={l}>
-              <span dir="auto">{l}</span>
+              <i aria-hidden />
+              <span dir="auto" className="dkc-theirs">
+                {l}
+              </span>
               <button
                 type="button"
                 className="dkc-press"

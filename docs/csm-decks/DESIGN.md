@@ -2522,3 +2522,36 @@ earlier line disagree, this list wins.
 | 9.5 | The road runs down the page as an itinerary: one row per step (step, its date or "Today" or "After go-live", and the launch call's note), the node line at the start edge, today on the journey's row band, the footer under it. |
 | 9.6 | The ticks sit under each row's words; the status column holds one chip on one line. Done is teal on its soft fill with a check (quieter than To do). The words run 820 wide. The Drive folder is a folder mark and its name in ink-2. |
 | 9.7 | What to expect on the start side (two statements, a hairline between), what's next as the card beside it (name, what it is, the date on its foot once booked), both from just under the title. No red lines yet: nothing is drawn; the input shows under the CSM's pointer. |
+
+### 19.9 The fourth critic pass (2026-10-20)
+
+A critic scored 41 slides and stops under 4, the lowest at 2 (a cut-off
+leader label, a slot spliced into a sentence, empty phones, an unfinished
+form on the client's screen). What changed, by section. Where this list and
+an earlier line disagree, this list wins. No copy changed.
+
+| Section | Change |
+|---|---|
+| 4.2 | Every label the client reads is at the floor (24, Plex 26): the mini rail's step name, the 90 days' axis, go-live label and notes, the journey calendar's hours, the tray's captions and switch, Your part's calendar day and the slide count. The canvas still scales whole (no reflow), so at 1366 x 768 nothing outside a phone arrives under 17 px. |
+| 6.1, 6.2 | Done with you, our team holds no step, so its lane narrows to its head (148) in ink-3, not teal, and the client's lane takes the room (424); the matrix stays 840 wide. The no-show branch stays in the client's lane, between "You meet" and "You mark it", out past the names, its name beside it inside that lane. |
+| 6.3 stop 3 | The stop's words say the hours, the top of the list and the night rule (copy rule 1), so the card does not repeat them: no "Top of the list" chip and no night line. The tries are the card's legend under it, on the start side, with the Example tag on the end corner. The rows carry their place in the queue (1 to 4, the first in teal on the row band); no ring per row. The card is set so its first row is level with the lit row when the words leave room, and the leader runs straight into that row. A long service name wraps; it is never cut. |
+| 6.3 stop 4 | The steps before the meeting are drawn at the lanes' scale: nodes on the dotted line from the lit row down to "You meet" (the meeting's node level with that row), names at the row names' size and one x. The leader runs straight into the first node. |
+| 6.3 stop 6 | The CRM's stage names keep one line each ("Quote sent" no longer wraps under its neighbours). |
+| 7.1 | The island carries a 1 px `--dk-line` edge, so it shows on Instagram's black status bar as it does over a picture: the three phones read as one device. Before a creative exists, the picture is a brand card: the mark with the client's name under it, not a bare monogram. |
+| 8.3 | With no creative anywhere, the overview is the feed phone alone in the middle, with the sentence in the tray. A phone in focus with no creative names only its page and its button (no leader on a brand card or on words it does not have). A leader's label wraps inside its side's room (266 start, 360 end) and the labels spread by their measured lines, so none is cut by the phone area's edge; the starter tag beside the phone in focus wraps in the same room. Tray: the count right after its title; the two sources as two words (the shown one in ink on a hairline), no segmented box and no count on the Meta tab; 128 px thumbnails; one caption voice at the floor (the phone it is on, or its shape), and "Template" on its own caption line instead of a chip on the picture. |
+| 8.4 | Stop 1: the page's words take column one's place and size (30 px), the same at every stop, so one press changes one thing; the feed phone sits in the room the other columns take, with the label on the side where "Sponsored" is and the dot just outside the frame, the pair centred as one. Stops 2 and 3: no shrunken phone in column one; the columns hug their words, tops level (no band before a foot). At stop 2 the open column is drawn ahead, at 40%, head and list only, as the journey draws what is ahead. With no red lines the hidden input takes no room. |
+| 8.6, 11.3 | A filled slot is teal with no underline (four underlined lines read as links). A name in the other script stays whole on one line. A slot still to give us is an editor's insertion in square brackets, amber, its label in the sentence's case ("At Atlas, [to give us: what makes you different, in one line]."). |
+| 8.7 | Done with you without Mahara OS, the one stop's words are at the body size and the CRM drawing's branch runs deeper, so the drawing fills its column. |
+| 8.9 | The first check-in before it is booked is the chart's own diamond, open (an outline), at day 10, its words starting under it; no bracket. With no goal line the chart sits in the middle of the room under the title. |
+| 8.10 | Stop 2: the walked road is drawn level, as the cover's strip is (steps down toward its end read as a falling chart under the ask). Its end is always named: "Go-live", with the date once there is one. |
+| 9.2 | Nothing from the form: the question alone in the middle of the page; the footnote ("They're targets…") comes once an answer is typed. |
+| 9.4 | A ledger, not a form: ruled rows, the tests' heads centred over their columns (256 each), and in each cell a short stretch of the unlit dotted line; a yes is the teal node with a check. An unanswered cell shows nothing more; the CSM's pointer finds it. With no services, no heads: the three tests are said once as a line, and the quiet "Add a service" control sits under it. A service's name is never cut (two balanced lines at most). The campaign card is 360 wide and holds "Launch with this" in its bottom padding, so it has no empty half. |
+| 9.5 | The road is as wide as its words (1080): the step, then its date in its own column; the launch call's note sits under its name, never in the date's column; today's band lights the row and no empty ground. |
+| 9.6 | Status as words in their colour, not pills: Done teal with a check, To do amber with its dot, Not checked yet in ink-3. The parts under a row's words the same way, with no boxes. |
+| 9.7 | A red line is set as on the launch deck: an amber mark, then the words in ink; no amber box around it. The next call's card is as tall as its words. |
+
+Held, not changed: the WhatsApp confirmation in the Arabic deck prints its
+date and time as the live template does ("October 21, 2026", "4:00 PM"),
+as `EXAMPLE-CALL.md` and a test pin. The critic read it as a mismatch beside
+the Arabic-Indic reminders. It changes when the live template text is read
+(CONTENT open question 7).

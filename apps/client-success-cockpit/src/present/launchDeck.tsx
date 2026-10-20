@@ -62,7 +62,6 @@ import {
   Crop,
   type CropBox,
   FiveDots,
-  fiveDotsHeight,
   QueueCard,
   Reminders,
   Tagged,
@@ -430,19 +429,17 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
   }
   if (i === 2) {
     const text = dwy ? stop.dwy : d.uae ? stop.lineUae : stop.line;
+    // The stop's words, then the queue (its new row level with the lit
+    // row, so the leader runs straight in), then what's under it: the tries
+    // as the card's own legend beside its tag, and "not every enquiry
+    // books". Done with you the tries are in the words already.
     return (
       <div className="dkc-stage" data-kind="card">
-        <StopWords
-          lane={lane}
-          line={line(text ?? stop.line)}
-          lang={lang}
-          aside={
-            dwy ? null : (
-              <span className="dkc-chip dkc-tries">{t(J.tries, lang)}</span>
-            )
-          }
-        />
-        <Tagged tag={t(SHARED.tag.example, lang)} className="dkc-stage-pic">
+        <StopWords lane={lane} line={line(text ?? stop.line)} lang={lang} />
+        <figure
+          className="dkc-tagged dkc-stage-pic dkc-queue-fig"
+          data-level=""
+        >
           <QueueCard
             lang={lang}
             services={[
@@ -458,7 +455,15 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
             dwy={dwy}
             still={still}
           />
-        </Tagged>
+          <figcaption>
+            {dwy ? (
+              <span />
+            ) : (
+              <span className="dkc-queue-tries">{t(J.tries, lang)}</span>
+            )}
+            <span className="dk-tag">{t(SHARED.tag.example, lang)}</span>
+          </figcaption>
+        </figure>
         {dwy ? null : (
           <p className="dk-small dk-ink2 dkc-notall">{t(J.notAll, lang)}</p>
         )}
@@ -470,13 +475,14 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
     return (
       <div className="dkc-stage" data-kind="line">
         <StopWords lane={lane} line={line(text ?? stop.line)} lang={lang} />
-        {/* The strip's middle on its row's centre line: the leader runs
-            straight in from the lit row. */}
+        {/* From the lit row down to "You meet": its first node on the lit
+            row's centre line (the leader runs straight into it), its last
+            level with the meeting. */}
         <div
           className="dkc-stage-pic dkc-dots-pic"
-          style={{ top: rowY(3) - fiveDotsHeight(dwy) / 2 }}
+          style={{ top: rowY(3) - 12 }}
         >
-          <FiveDots lang={lang} dwy={dwy} />
+          <FiveDots lang={lang} dwy={dwy} height={rowY(5) - rowY(3)} />
         </div>
       </div>
     );
@@ -609,6 +615,8 @@ function Journey({ ctx }: { ctx: SlideCtx }) {
   const [leaderTo, setLeaderTo] = useState<{ x: number; y: number } | null>(
     null,
   );
+  // Measured after every render (a stage may set itself level first), and
+  // set only when it moved, so it settles in one pass.
   useLayoutEffect(() => {
     const lanes = lanesRef.current;
     const fig = stageRef.current?.querySelector<HTMLElement>(".dkc-stage-pic");
@@ -616,22 +624,44 @@ function Journey({ ctx }: { ctx: SlideCtx }) {
     // card or the phone itself.
     const pic =
       fig?.querySelector<HTMLElement>(":scope > :not(figcaption)") ?? fig;
-    if (!lanes || !pic) {
-      setLeaderTo(null);
+    if (!lanes || !pic || !fig) {
+      setLeaderTo(l => (l ? null : l));
       return;
     }
     const a = lanes.getBoundingClientRect();
-    const b = pic.getBoundingClientRect();
     const k = a.width / LANES_W || 1;
+    const want = rowY(tour);
+    const anchor = pic.querySelector<HTMLElement>("[data-anchor]");
+    const mid = () => {
+      const c = (anchor as HTMLElement).getBoundingClientRect();
+      return ((c.top + c.bottom) / 2 - a.top) / k;
+    };
+    // A card whose row the leader names sits level with the lit row when
+    // the words above it leave the room; it never moves up into them.
+    if (anchor && fig.hasAttribute("data-level")) {
+      fig.style.marginTop = "";
+      const short = want - mid();
+      if (short > 0) fig.style.marginTop = `${short}px`;
+    }
+    const b = pic.getBoundingClientRect();
     const x = lang === "ar" ? (a.right - b.right) / k : (b.left - a.left) / k;
     const top = (b.top - a.top) / k;
     const bottom = (b.bottom - a.top) / k;
-    const want = rowY(tour);
-    setLeaderTo({
-      x: x - 4,
-      y: Math.max(top + 24, Math.min(bottom - 24, want)),
-    });
-  }, [tour, lang]);
+    // On a named row: straight when that row is within reach of the lit
+    // one's centre line, else to the row's own centre.
+    const at = anchor ? mid() : null;
+    const y =
+      at != null
+        ? Math.abs(at - want) <= 20
+          ? want
+          : at
+        : Math.max(top + 24, Math.min(bottom - 24, want));
+    setLeaderTo(l =>
+      l && Math.abs(l.x - (x - 4)) < 0.5 && Math.abs(l.y - y) < 0.5
+        ? l
+        : { x: x - 4, y },
+    );
+  });
   return (
     <div className="dkc-journey">
       <h2 className="dk-h2">{t(JOURNEY.title, lang)}</h2>
@@ -689,33 +719,21 @@ function Ads({ ctx }: { ctx: SlideCtx }) {
 // -------------------------------------------------- L4 creative freedom
 
 /**
- * The feed phone with its "Sponsored" word named: at the slide's first
- * stop, large, with one leader on the word; in the three columns after it,
- * small and without the leader (the point is made, and a leader on a 3 px
- * word helps no one on a share).
+ * The feed phone with its "Sponsored" word named (creative freedom's first
+ * stop): one leader, its dot just outside the frame on the side where the
+ * word is and level with it, so no line crosses the app's own header, and
+ * the label beyond it on that side.
  */
-function SponsoredPhone({
-  ctx,
-  height,
-  leader = false,
-}: {
-  ctx: SlideCtx;
-  height: number;
-  leader?: boolean;
-}) {
+function SponsoredPhone({ ctx, height }: { ctx: SlideCtx; height: number }) {
   const { d, lang } = ctx;
   const { feed, model } = useFeed(ctx);
   const ref = useRef<HTMLDivElement>(null);
-  const [at, setAt] = useState<{ x: number; y: number; w: number } | null>(
+  const side = model.app === lang ? "start" : "end";
+  const [at, setAt] = useState<{ dot: number; y: number; w: number } | null>(
     null,
   );
-  // One leader on "Sponsored", measured where it is drawn.
   // biome-ignore lint/correctness/useExhaustiveDependencies: measured again when the language or the picture changes
   useLayoutEffect(() => {
-    if (!leader) {
-      setAt(null);
-      return;
-    }
     const root = ref.current;
     const sp = root?.querySelector<HTMLElement>('[data-part="sponsored"]');
     const phone = root?.querySelector<HTMLElement>(".dkc-phone");
@@ -725,12 +743,21 @@ function SponsoredPhone({
     const s = sp.getBoundingClientRect();
     const p = phone.getBoundingClientRect();
     const rtl = lang === "ar";
-    const x = (rtl ? r.right - s.left : s.right - r.left) / k + 8;
-    const edge = (rtl ? r.right - p.left : p.right - r.left) / k;
-    setAt({ x, y: (s.top + s.height / 2 - r.top) / k, w: edge - x + 36 });
-  }, [lang, feed?.id, leader, height]);
+    // Logical x: from the root's inline-start edge.
+    const lx = (px: number) => (rtl ? r.right - px : px - r.left) / k;
+    const edge =
+      side === "start"
+        ? lx(rtl ? p.right : p.left)
+        : lx(rtl ? p.left : p.right);
+    setAt({
+      dot: side === "start" ? edge - 12 : edge + 12,
+      y: (s.top + s.height / 2 - r.top) / k,
+      w: r.width / k,
+    });
+  }, [lang, feed?.id, height, side]);
+  const run = 44;
   return (
-    <div className="dkc-own-page" ref={ref}>
+    <div className="dkc-own-page" data-side={side} ref={ref}>
       <Phone height={height} label={t(SHARED.frame.feed, lang)}>
         <IgFeed
           creative={feed}
@@ -744,14 +771,23 @@ function SponsoredPhone({
         <>
           <span
             className="dkc-own-leader"
+            data-side={side}
             aria-hidden
-            style={{ insetInlineStart: at.x, top: at.y, width: at.w }}
+            style={{
+              insetInlineStart: side === "start" ? at.dot - run : at.dot,
+              top: at.y,
+              width: run,
+            }}
           >
             <i />
           </span>
           <span
             className="dkc-own-label"
-            style={{ insetInlineStart: at.x + at.w + 14, top: at.y }}
+            style={
+              side === "start"
+                ? { insetInlineEnd: at.w - (at.dot - run - 12), top: at.y }
+                : { insetInlineStart: at.dot + run + 12, top: at.y }
+            }
           >
             {/* The word as the phone shows it, in the phone's language. */}
             {tf(LAUNCH.ads.leaders.sponsored, lang, {
@@ -925,42 +961,47 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
       </div>
     );
   else if (tour === 0)
-    // The first stop is the page alone: its words, and the feed phone
-    // large enough that "Sponsored" can be read where the leader ends.
+    // The first stop is the page alone: its words in the place and size
+    // they keep for the next two stops (one press, one change), and the
+    // feed phone large in the room the columns will take, so "Sponsored"
+    // can be read where the leader ends.
     body = (
       <div className="dkc-freedom-intro" key="intro">
         <section>
           <h3 className="dkc-col-head">{t(T.page.name, lang)}</h3>
           <p className="dk-body dkc-col-copy">{t(T.page.copy, lang)}</p>
         </section>
-        <SponsoredPhone ctx={ctx} height={660} leader />
+        <SponsoredPhone ctx={ctx} height={660} />
       </div>
     );
   else
     body = (
+      // The columns hug their own words, tops level: no column is
+      // stretched into an empty band, and the page's phone, read at the
+      // first stop, is not shrunk into an ornament here.
       <div className="dkc-freedom-cols" key="cols">
         <section data-lit="">
           <h3 className="dkc-col-head">{t(T.page.name, lang)}</h3>
-          <p className="dk-small dkc-col-copy dkc-own-copy">
-            {t(T.page.copy, lang)}
-          </p>
-          <SponsoredPhone ctx={ctx} height={340} />
+          <p className="dk-body dkc-col-copy">{t(T.page.copy, lang)}</p>
         </section>
         <RedLinesPanel ctx={ctx} lit />
+        {/* Ahead, as the journey draws what is ahead: its head and what we
+            test quiet beside the lit panel, so the panel never stands alone
+            in an empty row; the next press lights it and adds its words. */}
         <section data-lit={tour >= 2 ? "" : undefined}>
+          <h3 className="dkc-col-head">{t(T.open.name, lang)}</h3>
+          {/* What we test, listed as the red lines are: one line each, the
+              open ones marked in ink where the fixed ones are amber. */}
+          <ul className="dkc-open-list">
+            {T.open.chips.map(c => (
+              <li key={c.en}>
+                <i aria-hidden />
+                {t(c, lang)}
+              </li>
+            ))}
+          </ul>
           {tour >= 2 ? (
             <>
-              <h3 className="dkc-col-head">{t(T.open.name, lang)}</h3>
-              {/* What we test, listed as the red lines are: one line each,
-                  the open ones marked in ink where the fixed ones are amber. */}
-              <ul className="dkc-open-list">
-                {T.open.chips.map(c => (
-                  <li key={c.en}>
-                    <i aria-hidden />
-                    {t(c, lang)}
-                  </li>
-                ))}
-              </ul>
               <div className="dkc-open-pick">
                 {(pick?.poster ?? pick?.url) ? (
                   <span className="dkc-open-thumb">
@@ -972,8 +1013,7 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
                   {t(pick ? T.open.pick : T.open.pickNone, lang)}
                 </p>
               </div>
-              {/* How a test starts and how theirs joins it: one paragraph,
-                  on the columns' shared foot. */}
+              {/* How a test starts and how theirs joins it: one paragraph. */}
               <p className="dk-small dk-ink2 dkc-open-foot">
                 {t(T.open.approve, lang)} {t(T.footer, lang)}
               </p>
@@ -1479,7 +1519,7 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
       // The stop's own name already says it is their number-one job, so
       // the drawing carries no second tag saying so.
       <div className="dkc-portal-crm">
-        <CrmStages lang={lang} width={820} />
+        <CrmStages lang={lang} width={820} drop={230} />
       </div>
     );
   else {
@@ -1530,8 +1570,13 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
               >
                 {t(name(s), lang)}
               </button>
+              {/* A slide of one stop gives its words the body's size. */}
               {i === tour ? (
-                <p className="dk-small dk-ink2">{t(copy(s), lang)}</p>
+                <p
+                  className={`${stops.length === 1 ? "dk-body" : "dk-small"} dk-ink2`}
+                >
+                  {t(copy(s), lang)}
+                </p>
               ) : null}
             </li>
           ))}
@@ -1748,9 +1793,11 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
         <span className="dkc-prog-row-name">{t(D.checkins, lang)}</span>
         <div className="dkc-prog-lane dkc-prog-checks">
           {first == null ? (
+            // Not booked yet: the diamond open, a week or two in.
             <i
-              className="dkc-prog-bracket"
-              style={{ insetInlineStart: x(7), width: x(14) - x(7) }}
+              className="dkc-prog-diamond"
+              data-open=""
+              style={{ insetInlineStart: x(10) }}
             />
           ) : (
             <i
@@ -1767,7 +1814,11 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
               style={{ insetInlineStart: x(n) }}
             />
           ))}
-          <span className="dkc-prog-note" style={{ insetInlineStart: x(7) }}>
+          {/* Its words start under the first diamond's start edge. */}
+          <span
+            className="dkc-prog-note"
+            style={{ insetInlineStart: x(first ?? 10) - 9 }}
+          >
             {d.launch.checkin
               ? `${t(D.first, lang).split(" · ")[0]} · ${dayShort(d.launch.checkin, lang, d.timeZone)}`
               : t(D.first, lang)}
@@ -1796,7 +1847,9 @@ function FirstNinety({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
   const D = LAUNCH.days;
   return (
-    <div className="dkc-days">
+    // With no goal line the chart and its milestones sit in the middle of
+    // the room under the title, not high with a void before the footer.
+    <div className="dkc-days" data-nogoal={d.launch.goal90 ? undefined : ""}>
       <h2 className="dk-h2">{t(D.title, lang)}</h2>
       {d.launch.goal90 ? (
         <div className="dkc-days-goal">
@@ -1859,6 +1912,9 @@ function GreenLight({ ctx }: { ctx: SlideCtx }) {
   return (
     <div className="dkc-green dkc-green-two" key="two">
       <p className="dk-display dkc-green-question">{t(G.question, lang)}</p>
+      {/* The road walked, drawn level as the cover's strip is: under the
+          ask, steps down toward its end would read as a falling chart. Its
+          end is always named, with the date once there is one. */}
       <div className="dkc-green-rail">
         <MiniRail
           lang={lang}
@@ -1867,15 +1923,15 @@ function GreenLight({ ctx }: { ctx: SlideCtx }) {
           all
           scale={1.8}
           col={212}
-          rowGap={32}
+          rowGap={0}
           end={16}
           className="dkc-green-mini"
         />
-        {d.goLive ? (
-          <span className="dkc-green-golive">
-            {tf(G.rail, lang, { date: dayMonth(d.goLive, lang, d.timeZone) })}
-          </span>
-        ) : null}
+        <span className="dkc-green-golive">
+          {d.goLive
+            ? tf(G.rail, lang, { date: dayMonth(d.goLive, lang, d.timeZone) })
+            : t(LAUNCH.days.goLive, lang)}
+        </span>
       </div>
       {d.launch.checkin ? (
         <p className="dk-body dkc-green-next">

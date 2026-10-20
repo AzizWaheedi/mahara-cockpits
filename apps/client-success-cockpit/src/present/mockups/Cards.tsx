@@ -1,5 +1,13 @@
 import type { CSSProperties, ReactNode } from "react";
-import { JOURNEY, type L, LAUNCH, type Lang, t, tf } from "../content";
+import {
+  JOURNEY,
+  type L,
+  LAUNCH,
+  type Lang,
+  stepNumeral,
+  t,
+  tf,
+} from "../content";
 import { Node } from "../JourneyLanes";
 import { Avatar, type Identity } from "./Identity";
 
@@ -35,7 +43,12 @@ export function Tagged({
 /**
  * Our dialer's list, simplified (journey stop 3): four rows, no names, no
  * phone numbers, the client's own services. The new enquiry carries no time
- * and no "Calling" chip: the card shows the order, never a speed.
+ * and no "Calling" chip: the card shows the order, never a speed. The
+ * stop's words already say the hours, the top of the list and the night
+ * rule, so the card does not say them again: its order shows the first,
+ * and done with you its one chip says who calls. No marks on the rows (a
+ * ring per row read as a form's radio buttons): each row carries its place
+ * in the queue, the new enquiry first, on the journey's row band.
  */
 export function QueueCard({
   lang,
@@ -68,42 +81,33 @@ export function QueueCard({
   return (
     <div className="dkc-queue" data-still={still ? "" : undefined}>
       <ol>
-        <li data-row="new">
-          <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden>
-            <Node x={14} y={14} r={10} state="now" />
-          </svg>
+        {/* The row the journey's leader points at. */}
+        <li data-row="new" data-anchor="">
+          <span className="dkc-queue-n">{stepNumeral(0, lang)}</span>
           <span className="dkc-queue-text">
             <bdi>{row(Q.fresh, 0)}</bdi>
           </span>
-          <span className="dkc-queue-chip">
-            {t(dwy ? Q.topDwy : Q.top, lang)}
-          </span>
+          {dwy ? (
+            <span className="dkc-queue-chip">{t(Q.topDwy, lang)}</span>
+          ) : null}
         </li>
         <li>
-          <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden>
-            <Node x={14} y={14} r={10} state="ahead" />
-          </svg>
+          <span className="dkc-queue-n">{stepNumeral(1, lang)}</span>
           <span className="dkc-queue-text">
             <bdi>{row(Q.second, 1)}</bdi>
           </span>
         </li>
         <li>
-          <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden>
-            <Node x={14} y={14} r={10} state="ahead" />
-          </svg>
+          <span className="dkc-queue-n">{stepNumeral(2, lang)}</span>
           <span className="dkc-queue-text">
             <bdi>{row(Q.callback, 2)}</bdi>
           </span>
         </li>
         <li data-row="lost">
-          <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden>
-            <Node x={14} y={14} r={10} state="ahead" />
-          </svg>
+          <span className="dkc-queue-n">{stepNumeral(3, lang)}</span>
           <span className="dkc-queue-text">{t(Q.lost, lang)}</span>
         </li>
       </ol>
-      {/* Our call centre's hours: done with you, their team calls. */}
-      {dwy ? null : <p className="dkc-queue-night">{t(Q.night, lang)}</p>}
     </div>
   );
 }
@@ -142,45 +146,50 @@ export function CalendarEntry({
 }
 
 /**
- * Journey stop 4: the steps before the meeting as dots down one line, each
- * named in a word or two beside its dot (the call slide's stop 7 timeline,
- * the home of these steps, in miniature). Done with you, its four steps. A
- * step with no time of its own (the provisional bookings' calls) is named
- * by its whole line. Every name starts at one x, on its dot's centre line.
+ * Journey stop 4: the steps before the meeting, drawn at the lanes' own
+ * scale and in their marks (nodes on the dotted line, names at the row
+ * names' size), running down from the lit row to the meeting: the
+ * strip starts level with "Booked, confirmed, reminded" and its last node,
+ * "The meeting", sits level with "You meet". The call slide's stop 7 is
+ * the home of these steps; here each is named in a word or two. Done with
+ * you, its four steps; a step with no time of its own (the provisional
+ * bookings' calls) is named by its whole line.
  */
-const DOT_STEP = 58;
-
-/** The strip's height, to set it level with its row before it renders. */
-export const fiveDotsHeight = (dwy: boolean) =>
-  ((dwy ? LAUNCH.call.after.rowsDwy : LAUNCH.call.after.rows).length - 1) *
-    DOT_STEP +
-  28;
-
-export function FiveDots({ lang, dwy }: { lang: Lang; dwy: boolean }) {
+export function FiveDots({
+  lang,
+  dwy,
+  height,
+}: {
+  lang: Lang;
+  dwy: boolean;
+  /** From the first node's centre to the last's. */
+  height: number;
+}) {
   const A = LAUNCH.call.after;
   const rows = dwy ? A.rowsDwy : A.rows;
   const n = rows.length;
-  const y = (i: number) => 14 + i * DOT_STEP;
-  const h = y(n - 1) + 14;
+  // A node a step under the lanes' 14, so five fit between two rows with
+  // the dotted line still showing between them.
+  const R = 12;
+  const y = (i: number) => R + (i * height) / (n - 1);
+  const h = height + R * 2;
   return (
     <div className="dkc-fivedots" style={{ height: h }}>
-      <svg width={28} height={h} viewBox={`0 0 28 ${h}`} aria-hidden>
+      <svg width={R * 2} height={h} viewBox={`0 0 ${R * 2} ${h}`} aria-hidden>
         <path
-          d={`M 14 ${y(0)} L 14 ${y(n - 1)}`}
+          d={`M ${R} ${y(0)} L ${R} ${y(n - 1)}`}
           stroke="var(--dk-line-strong)"
           strokeWidth={2}
           strokeLinecap="round"
           strokeDasharray="2 8"
         />
         {rows.map((r, i) => (
-          <circle
+          <Node
             key={r.what.en}
-            cx={14}
-            cy={y(i)}
-            r={7}
-            fill={i === 0 ? "var(--dk-teal)" : "var(--dk-space)"}
-            stroke={i === 0 ? "var(--dk-teal)" : "var(--dk-line-strong)"}
-            strokeWidth={2}
+            x={R}
+            y={y(i)}
+            r={R}
+            state={i === 0 ? "now" : "ahead"}
           />
         ))}
       </svg>
@@ -190,6 +199,7 @@ export function FiveDots({ lang, dwy }: { lang: Lang; dwy: boolean }) {
             key={r.what.en}
             style={{ top: y(i) }}
             data-first={i === 0 ? "" : undefined}
+            data-anchor={i === 0 ? "" : undefined}
           >
             {r.plain && r.when
               ? `${t(r.when, lang)}: ${t(r.what, lang)}`
@@ -363,18 +373,23 @@ export function TestTiles({ still }: { still?: boolean }) {
 export function CrmStages({
   lang,
   width = 940,
+  drop = 150,
 }: {
   lang: Lang;
   width?: number;
+  /** How far below the stages the no-show branch ends. */
+  drop?: number;
 }) {
   const [noShow, ...main] = LAUNCH.portal.crm;
   const R = 14;
-  const COL = 250;
+  // The last stage's own room; every stage's name has its column to itself
+  // and sits on one line ("Quote sent" never wraps under its neighbours').
+  const COL = 200;
   const gap = (width - COL) / 3;
   const x = (i: number) => R + i * gap;
   const NAME = 64;
   const y = NAME + R + 6;
-  const yb = y + 150;
+  const yb = y + drop;
   const H = yb + R + 6;
   const steps: { label: L; i: number; state: "past" | "now" | "ahead" }[] = [
     { label: JOURNEY.rows[5].name, i: 0, state: "past" },
@@ -421,7 +436,7 @@ export function CrmStages({
               bottom: H - y + R + 18,
               // A stage's name keeps clear of the next node's column; the
               // last one has the end column to itself.
-              width: s.i === 3 ? COL : gap - 20,
+              width: s.i === 3 ? COL : gap - 8,
             }}
           >
             {t(s.label, lang)}

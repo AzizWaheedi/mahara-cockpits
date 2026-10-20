@@ -6,21 +6,24 @@ import { Node } from "./JourneyLanes";
  * own marks and the journey's own direction: down the page, one row per
  * step, the nodes on one line (solid teal up to today, dotted after it),
  * today's row on the journey's row band. Each row reads across as a line
- * of an itinerary: the step, its date (or "Today", or "After go-live"),
- * and a note where a step has one. Rows are evenly spaced: this is an
- * order, not a calendar. The cover's road strip (7.9) is the same order,
- * drawn small and across.
+ * of an itinerary: the step, then its date (or "Today", or "After
+ * go-live") in its own column, and a step's note under its name, never in
+ * the date's column. The road is as wide as its words, so today's band
+ * lights the row and no empty ground. Rows are evenly spaced (a row with a
+ * note is taller by the note): this is an order, not a calendar. The
+ * cover's road strip (7.9) is the same order, drawn small and across.
  */
 
-/** One row's height. */
+/** One row's height, and a noted row's extra. */
 export const ROAD_ROW = 96;
+const NOTE_H = 58;
 const R = 14;
 
 export interface RoadStop {
   name: ReactNode;
   /** Its date, "Today" or "After go-live". */
   when?: ReactNode;
-  /** A note beside it (the launch call's). */
+  /** A note under its name (the launch call's). */
   line?: ReactNode;
 }
 
@@ -38,15 +41,18 @@ export function Road({
   draw?: boolean;
 }) {
   const n = stops.length;
-  const H = ROAD_ROW * n;
+  const hs = stops.map(s => ROAD_ROW + (s.line ? NOTE_H : 0));
+  const tops = hs.map((_, i) => hs.slice(0, i).reduce((a, b) => a + b, 0));
+  const H = hs.reduce((a, b) => a + b, 0);
   const x = R + 2;
-  const y = (i: number) => ROAD_ROW / 2 + i * ROAD_ROW;
+  // Each node on its step's name line, the first line of its row.
+  const y = (i: number) => tops[i] + ROAD_ROW / 2;
   return (
     <div className="dkc-road" style={{ height: H }}>
       <i
         className="dkc-road-band"
         aria-hidden
-        style={{ top: now * ROAD_ROW, height: ROAD_ROW }}
+        style={{ top: tops[now], height: hs[now] }}
       />
       <svg width={x * 2} height={H} viewBox={`0 0 ${x * 2} ${H}`} aria-hidden>
         <path
@@ -85,13 +91,11 @@ export function Road({
             className="dkc-road-stop"
             data-state={i < now ? "past" : i === now ? "now" : "ahead"}
             aria-current={i === now ? "step" : undefined}
-            style={{ height: ROAD_ROW }}
+            style={{ height: hs[i] }}
           >
             <span className="dkc-road-name">{s.name}</span>
-            <span className="dkc-road-detail">
-              {s.when ? <span className="dkc-road-when">{s.when}</span> : null}
-              {s.line ? <span className="dkc-road-line">{s.line}</span> : null}
-            </span>
+            <span className="dkc-road-when">{s.when ?? null}</span>
+            {s.line ? <span className="dkc-road-line">{s.line}</span> : null}
           </li>
         ))}
       </ol>

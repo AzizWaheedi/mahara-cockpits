@@ -489,14 +489,14 @@
   bottom: 48px;
   inset-inline-end: 136px;
   font-family: var(--dk-mono);
-  font-size: 22px;
+  font-size: 24px;
   line-height: 1;
   color: var(--dk-ink-3);
   font-variant-numeric: tabular-nums;
 }
 [dir="rtl"] .dk-count {
   font-family: var(--dk-font-ar);
-  font-size: 24px;
+  font-size: 26px;
 }
 
 .dk-overview {
@@ -605,23 +605,26 @@
   outline-offset: 4px;
 }
 
-/* A status chip: Done, To do, Not checked yet (DESIGN 9.6). */
+/* A status: Done, To do, Not checked yet (DESIGN 9.6). Said as words in
+   their colour, not as pills (three pill styles in one column read as a
+   form's controls): done is teal with a check, to do amber with its dot,
+   not checked yet quiet in ink-3. */
 .dkc-status {
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  height: 48px;
-  padding: 0 20px;
-  border-radius: 999px;
-  border: 2px solid var(--dk-line-strong);
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: none;
   font-size: 24px;
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
-  color: var(--dk-ink-2);
+  color: var(--dk-ink-3);
   transition:
-    background-color var(--dk-swap-ms) var(--dk-ease),
     border-color var(--dk-hover-canvas-ms) var(--dk-ease),
     color var(--dk-swap-ms) var(--dk-ease);
 }
@@ -629,22 +632,26 @@
   font-size: 26px;
 }
 .dkc-status[data-status="done"] {
-  background: var(--dk-teal-soft);
-  border-color: transparent;
   color: var(--dk-teal);
 }
 .dkc-status svg {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   stroke-width: 3;
 }
 .dkc-status[data-status="todo"] {
-  background: var(--dk-leak-soft);
-  border-color: var(--dk-leak);
   color: var(--dk-leak);
 }
-button.dkc-status:hover:not([data-status="done"]) {
-  border-color: var(--dk-edge);
+.dkc-status[data-status="todo"]::before {
+  content: "";
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--dk-leak);
+}
+button.dkc-status:hover {
+  border-bottom-color: var(--dk-edge);
 }
 
 /* ------------------------------------------- letterhead (both covers) */
@@ -987,27 +994,32 @@ button.dkc-status:hover:not([data-status="done"]) {
    with the first service's row, under the tests' heads. */
 .dkc-one {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 400px;
-  gap: 64px;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 56px;
   align-items: start;
-  margin-top: 48px;
+  margin-top: 56px;
   min-height: 0;
 }
+/* A ledger, not a form: each service a ruled row, the three tests' heads
+   centred over their columns, and through each row the journey's unlit
+   dotted line, on which a yes is a teal node with a check. Nothing waits
+   in an unanswered cell (no ring, no box); the CSM's pointer finds it. */
 .dkc-matrix {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(3, 264px);
+  grid-template-columns: minmax(0, 1fr) repeat(3, 256px);
   align-items: center;
 }
 .dkc-matrix-head {
   display: contents;
 }
 .dkc-matrix-head > span {
-  padding: 0 6px 14px;
+  padding: 0 0 16px;
   font-size: 24px;
   line-height: 1.25;
   font-weight: 500;
   color: var(--dk-ink-2);
   white-space: nowrap;
+  text-align: center;
   align-self: end;
 }
 [dir="rtl"] .dkc-matrix-head > span {
@@ -1017,13 +1029,15 @@ button.dkc-status:hover:not([data-status="done"]) {
   display: contents;
 }
 .dkc-matrix-row > * {
-  height: 80px;
+  height: 88px;
   display: flex;
   align-items: center;
+  box-shadow: inset 0 -1px 0 var(--dk-line);
   transition: background-color 300ms var(--dk-ease);
 }
 .dkc-matrix-row[data-lead] > * {
-  background: var(--dk-teal-faint);
+  background-color: var(--dk-teal-faint);
+  box-shadow: none;
 }
 .dkc-matrix-row[data-lead] > :first-child {
   border-start-start-radius: 14px;
@@ -1036,20 +1050,20 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-service {
   gap: 16px;
   min-width: 0;
-  padding-inline: 20px 12px;
+  padding-inline: 20px 16px;
 }
+/* A service's name is never cut: a long one takes two balanced lines. */
 .dkc-service-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
   padding: 2px 0;
   font-size: 30px;
+  line-height: 1.2;
   font-weight: 500;
   text-align: start;
+  text-wrap: balance;
 }
 .dkc-service-name:hover {
   border-bottom-color: var(--dk-edge);
@@ -1059,6 +1073,7 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 [dir="rtl"] .dkc-service-name {
   font-size: 32px;
+  line-height: 1.35;
 }
 .dkc-chip {
   flex: none;
@@ -1077,13 +1092,45 @@ button.dkc-status:hover:not([data-status="done"]) {
 [dir="rtl"] .dkc-chip {
   font-size: 26px;
 }
+/* Under each test's head, a short stretch of the journey's unlit dotted
+   line: the answer not given yet. A yes is the lit node on it. */
 .dkc-cell {
-  justify-content: flex-start;
-  padding-inline: 6px;
+  position: relative;
+  justify-content: center;
 }
-/* A test not yet answered is a quiet ring in the line language, not an
-   empty form box; a yes is the solid teal node with a check. The press
-   area stays 52 px for the CSM's pointer. */
+.dkc-cell::after {
+  content: "";
+  position: absolute;
+  inset-inline: 56px;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background-image: linear-gradient(
+    to right,
+    var(--dk-line-strong) 2px,
+    transparent 2px
+  );
+  background-size: 10px 2px;
+  background-repeat: repeat-x;
+  background-position: center;
+  pointer-events: none;
+}
+.dkc-cell .dkc-tick {
+  z-index: 1;
+}
+/* No services yet: the three tests said once, as the line they will be
+   asked by, and the quiet control under it. */
+.dkc-one-tests {
+  grid-column: 1 / -1;
+  margin: 0 0 8px;
+  padding-inline: 20px;
+  font-size: 30px;
+  line-height: 1.4;
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dkc-one-tests {
+  font-size: 32px;
+}
 .dkc-tick {
   position: relative;
   display: grid;
@@ -1101,30 +1148,29 @@ button.dkc-status:hover:not([data-status="done"]) {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 16px;
-  height: 16px;
-  margin: -8px 0 0 -8px;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
   box-sizing: border-box;
   border-radius: 999px;
-  border: 2px solid var(--dk-line-strong);
+  border: 2px solid transparent;
   transition:
     border-color var(--dk-hover-canvas-ms) var(--dk-ease),
-    transform var(--dk-swap-ms) var(--dk-ease),
     background-color var(--dk-swap-ms) var(--dk-ease);
 }
 .dkc-tick:hover::before {
   border-color: var(--dk-edge);
+  background: var(--dk-space);
 }
 .dkc-tick[aria-pressed="true"]::before {
   border-color: var(--dk-teal);
   background: var(--dk-teal);
-  transform: scale(2.5);
 }
 .dkc-tick svg {
   position: relative;
-  width: 24px;
-  height: 24px;
-  stroke-width: 3;
+  width: 18px;
+  height: 18px;
+  stroke-width: 3.5;
 }
 .dkc-add {
   grid-column: 1 / -1;
@@ -1154,15 +1200,6 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 [dir="rtl"] .dkc-add-btn {
   font-size: 26px;
-}
-.dkc-cell-empty {
-  display: block;
-  width: 16px;
-  height: 16px;
-  margin-inline: 18px;
-  box-sizing: border-box;
-  border-radius: 999px;
-  border: 2px solid var(--dk-line);
 }
 .dkc-add-input {
   width: 100%;
@@ -1195,13 +1232,13 @@ button.dkc-status:hover:not([data-status="done"]) {
   flex-direction: column;
   gap: 20px;
   /* The tests' heads' height: the card starts on the first row. */
-  margin-top: 44px;
+  margin-top: 46px;
 }
 .dkc-campaign {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 36px 40px 40px;
+  padding: 32px 40px 52px;
   border-radius: 16px;
   background: var(--dk-panel);
 }
@@ -1247,6 +1284,20 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-campaign:not(:hover) .dkc-launch:not(:focus-visible) {
   opacity: 0;
 }
+/* The card's foot holds the control without leaving its room empty: it
+   sits in the card's bottom padding. */
+.dkc-campaign {
+  position: relative;
+}
+.dkc-campaign[data-done] {
+  padding-bottom: 36px;
+}
+.dkc-campaign .dkc-launch {
+  position: absolute;
+  inset-inline-start: 40px;
+  bottom: 14px;
+  margin: 0;
+}
 [dir="rtl"] .dkc-launch {
   font-size: 26px;
 }
@@ -1254,7 +1305,8 @@ button.dkc-status:hover:not([data-status="done"]) {
 /* ------------------------------------------------------ O5 · road */
 
 /* The road down the page, as the journey runs: a node line at the start
-   edge, one row per step (step, date, note), today on the row band. */
+   edge, one row per step (the step, then its date in its own column, a
+   note under the step), today on the row band. As wide as its words. */
 .dkc-road-wrap {
   margin-block: auto;
   display: flex;
@@ -1263,6 +1315,7 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 .dkc-road {
   position: relative;
+  width: 1080px;
 }
 .dkc-road > svg {
   position: absolute;
@@ -1275,7 +1328,7 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 .dkc-road-band {
   position: absolute;
-  inset-inline: -16px 0;
+  inset-inline: -16px -24px;
   border-radius: 12px;
   background: var(--dk-teal-faint);
 }
@@ -1285,19 +1338,15 @@ button.dkc-status:hover:not([data-status="done"]) {
   padding: 0;
   list-style: none;
 }
+/* The name's line is the row's first 96 px, centred on its node; a note
+   sits under the name in the same column. */
 .dkc-road-stop {
   display: grid;
-  grid-template-columns: 480px minmax(0, 1fr);
-  gap: 32px;
+  grid-template-columns: 600px minmax(0, 1fr);
+  grid-template-rows: 96px auto;
+  column-gap: 48px;
   align-items: center;
   padding-inline-start: 72px;
-}
-/* A step's date, then its note when it has one: one line beside it. */
-.dkc-road-detail {
-  display: flex;
-  align-items: baseline;
-  gap: 40px;
-  min-width: 0;
 }
 .dkc-road-name {
   font-size: 30px;
@@ -1329,6 +1378,9 @@ button.dkc-status:hover:not([data-status="done"]) {
   color: var(--dk-teal);
 }
 .dkc-road-line {
+  grid-column: 1 / -1;
+  align-self: start;
+  margin-top: -18px;
   font-size: 24px;
   line-height: 1.4;
   color: var(--dk-ink-2);
@@ -1442,14 +1494,14 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-tickline {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   padding: 2px 0;
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
   font-size: 24px;
   line-height: 1.3;
-  color: var(--dk-ink-2);
+  color: var(--dk-ink-3);
 }
 [dir="rtl"] .dkc-tickline {
   font-size: 26px;
@@ -1457,29 +1509,34 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-tickline:hover {
   border-bottom-color: var(--dk-edge);
 }
+/* A part's state in the same words-and-colour voice as the row's: done
+   is ink with a teal check, to do amber with its dot, not checked yet
+   ink-3 with no mark. No boxes. */
 .dkc-tickline i {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  border: 2px solid var(--dk-line-strong);
-  color: var(--dk-deep);
+  display: none;
 }
 .dkc-tickline[data-status="done"] {
   color: var(--dk-ink);
 }
 .dkc-tickline[data-status="done"] i {
-  background: var(--dk-teal);
-  border-color: var(--dk-teal);
+  display: grid;
+  place-items: center;
+  color: var(--dk-teal);
+}
+.dkc-tickline[data-status="todo"] {
+  color: var(--dk-leak);
 }
 .dkc-tickline[data-status="todo"] i {
-  border-color: var(--dk-leak);
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--dk-leak);
 }
 .dkc-tickline svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 3.5;
+  width: 22px;
+  height: 22px;
+  stroke-width: 3;
 }
 
 /* --------------------------------------------------- O7 · next */
@@ -1490,7 +1547,7 @@ button.dkc-status:hover:not([data-status="done"]) {
   display: grid;
   grid-template-columns: 960px minmax(0, 1fr);
   gap: 80px;
-  align-items: stretch;
+  align-items: start;
   margin-top: 64px;
 }
 .dkc-next-expect {
@@ -1509,14 +1566,7 @@ button.dkc-status:hover:not([data-status="done"]) {
   border-top: 1px solid var(--dk-line);
 }
 .dkc-redlines {
-  margin-top: 10px;
-  padding: 26px 32px 28px;
-  border-radius: 16px;
-  background: var(--dk-leak-soft);
-  /* On the deep blue ground the soft fill alone reads grey; a 1 px amber
-     edge all round (not a side bar) keeps it the colour of what needs the
-     client. */
-  box-shadow: inset 0 0 0 1px var(--dk-leak-line);
+  margin-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1532,14 +1582,23 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-redlines li {
   display: flex;
   align-items: baseline;
-  gap: 14px;
+  gap: 16px;
   font-size: 30px;
   line-height: 1.35;
-  color: var(--dk-leak);
+  font-weight: 500;
+  color: var(--dk-ink);
 }
 [dir="rtl"] .dkc-redlines li {
   font-size: 32px;
   line-height: 1.55;
+}
+.dkc-redlines li > i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--dk-leak);
+  transform: translateY(-0.12em);
 }
 .dkc-redlines li button {
   flex: none;
@@ -1595,16 +1654,8 @@ button.dkc-status:hover:not([data-status="done"]) {
   .dkc-redline-input {
   display: none;
 }
-/* Nothing typed yet: no panel and no rule on the client's screen; the
-   input's line and its prompt show under the CSM's pointer or while
-   typing. */
-.dkc-redlines[data-empty] {
-  margin-top: 0;
-  padding: 0;
-  background: none;
-  box-shadow: none;
-  gap: 0;
-}
+/* Nothing typed yet: no rule on the client's screen; the input's line
+   and its prompt show under the CSM's pointer or while typing. */
 .dkc-redlines[data-empty] .dkc-redline-input:not(:hover):not(:focus) {
   border-bottom-color: transparent;
 }
@@ -1622,7 +1673,7 @@ button.dkc-status:hover:not([data-status="done"]) {
   text-wrap: balance;
 }
 .dkc-band-when {
-  margin-top: auto;
+  margin-top: 8px;
   padding-top: 24px;
   border-top: 1px solid var(--dk-line);
   font-size: 30px;
@@ -1700,6 +1751,11 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 .dkc-lane-head[data-lane="you"] {
   color: var(--dk-ink);
+}
+/* Done with you, our team holds no step on the path: its head is quiet,
+   not lit, and its lane is only as wide as the head. */
+.dkc-lanes[data-dwy] .dkc-lane-head[data-lane="us"] {
+  color: var(--dk-ink-3);
 }
 .dkc-row-name {
   position: absolute;
@@ -1791,14 +1847,14 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 .dkc-rail-name {
   position: absolute;
-  font-size: 20px;
+  font-size: 24px;
   line-height: 1;
   color: var(--dk-ink-2);
   white-space: nowrap;
   transform: translateY(-100%);
 }
 [dir="rtl"] .dkc-rail-name {
-  font-size: 22px;
+  font-size: 26px;
 }
 
 /* ===================================================== phone mockups
@@ -1835,6 +1891,9 @@ button.dkc-status:hover:not([data-status="done"]) {
   height: calc(var(--u) * 30);
   border-radius: 999px;
   background: var(--dk-island);
+  /* The island's own edge, so it reads on a black status bar (Instagram's)
+     as it does over a picture: the three phones are one device. */
+  box-shadow: 0 0 0 1px var(--dk-line);
   transform: translateX(-50%);
   pointer-events: none;
 }
@@ -1997,7 +2056,21 @@ button.dkc-status:hover:not([data-status="done"]) {
 /* Before a creative exists: the client's mark, centred on the picture's
    ground, as a plain brand card would carry it. */
 .dkc-media-mark {
-  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 18);
+  padding: calc(var(--u) * 32);
+}
+.dkc-media-mark b {
+  max-width: calc(var(--u) * 300);
+  font-size: calc(var(--u) * 24);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--dk-ink);
+  text-wrap: balance;
 }
 .dkc-cta-bar {
   flex: none;
@@ -2515,30 +2588,28 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-stop-words .dk-leak {
   margin-top: 4px;
 }
-.dkc-tries {
-  align-self: flex-start;
-  border-color: var(--dk-teal);
-  color: var(--dk-ink);
-}
 .dkc-notall {
   max-width: 756px;
 }
-/* The steps before the meeting, down one dotted line under the stop's
-   words (stop 4): every name at one x, on its dot's centre line. */
+/* The steps before the meeting (stop 4), at the lanes' scale: 14 px
+   nodes down the dotted line from the lit row to the meeting, each name
+   at the row names' size and one x, on its node's centre line. */
 .dkc-stage[data-kind="line"] {
   position: relative;
 }
 .dkc-dots-pic {
   position: absolute;
-  inset-inline-start: 0;
+  inset-inline: 0;
 }
 .dkc-fivedots {
   position: relative;
-  min-width: 520px;
 }
 .dkc-fivedots svg {
   display: block;
   overflow: visible;
+}
+[dir="rtl"] .dkc-fivedots svg {
+  transform: scaleX(-1);
 }
 .dkc-fivedots ol {
   list-style: none;
@@ -2547,20 +2618,22 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 .dkc-fivedots li {
   position: absolute;
-  inset-inline-start: 52px;
+  inset-inline-start: 56px;
+  max-width: calc(100% - 56px);
   transform: translateY(-50%);
   font-size: 26px;
-  line-height: 1.25;
+  line-height: 1.2;
   font-weight: 500;
-  white-space: nowrap;
+  text-wrap: balance;
   color: var(--dk-ink-2);
 }
 .dkc-fivedots li[data-first] {
   color: var(--dk-ink);
+  font-weight: 600;
 }
 [dir="rtl"] .dkc-fivedots li {
   font-size: 28px;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 .dkc-stage-crm {
   margin-top: 48px;
@@ -2616,12 +2689,14 @@ button.dkc-status:hover:not([data-status="done"]) {
   line-height: 1.55;
 }
 
-/* The queue card (DESIGN 6.5): our dialer's list, simplified. */
+/* The queue card (DESIGN 6.5): our dialer's list, simplified. Each row
+   carries its place in the queue; the new enquiry, first, sits on the
+   journey's row band. No marks per row (rings read as radio buttons). */
 .dkc-queue {
   width: 756px;
   border-radius: 16px;
   background: var(--dk-panel);
-  padding: 12px 28px 18px;
+  padding: 6px 12px 10px;
 }
 .dkc-queue ol {
   list-style: none;
@@ -2631,20 +2706,35 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-queue li {
   display: flex;
   align-items: center;
-  gap: 16px;
-  height: 54px;
+  gap: 18px;
+  min-height: 54px;
+  padding: 6px 16px;
+  border-radius: 10px;
   font-size: 26px;
   line-height: 1.2;
   color: var(--dk-ink-2);
   animation: dkc-push 420ms var(--dk-ease) both;
 }
 .dkc-queue li[data-row="new"] {
+  background: var(--dk-teal-faint);
   color: var(--dk-ink);
   font-weight: 600;
   animation-name: dkc-drop;
 }
 .dkc-queue li[data-row="lost"] {
   color: var(--dk-ink-3);
+}
+.dkc-queue-n {
+  flex: none;
+  width: 22px;
+  font-weight: 500;
+  color: var(--dk-ink-3);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.dkc-queue li[data-row="new"] .dkc-queue-n {
+  color: var(--dk-teal);
+  font-weight: 700;
 }
 @keyframes dkc-drop {
   from {
@@ -2667,12 +2757,12 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-queue[data-still] li {
   animation: none;
 }
+/* A service's name is never cut: beside the done-with-you chip a long
+   one takes a second line. */
 .dkc-queue-text {
   flex: 1;
   min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-wrap: balance;
 }
 .dkc-queue-chip {
   flex: none;
@@ -2686,17 +2776,28 @@ button.dkc-status:hover:not([data-status="done"]) {
   font-size: 24px;
   font-weight: 600;
 }
-.dkc-queue-night {
-  margin: 8px 0 0;
+/* Under the card, its legend: the tries on the start side, the tag on the
+   end corner. */
+.dkc-queue-fig > figcaption {
+  order: 1;
+  align-self: stretch;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 24px;
+  margin-top: 4px;
+}
+.dkc-queue-tries {
   font-size: 24px;
-  line-height: 1.35;
-  color: var(--dk-ink-2);
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink);
 }
 [dir="rtl"] .dkc-queue li {
   font-size: 28px;
 }
 [dir="rtl"] .dkc-queue-chip,
-[dir="rtl"] .dkc-queue-night {
+[dir="rtl"] .dkc-queue-tries {
   font-size: 26px;
 }
 
@@ -2723,7 +2824,7 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-cal-time {
   flex: none;
   width: 92px;
-  font-size: 22px;
+  font-size: 24px;
   line-height: 1;
   color: var(--dk-ink-3);
   font-variant-numeric: tabular-nums;
@@ -2749,8 +2850,15 @@ button.dkc-status:hover:not([data-status="done"]) {
   font-weight: 600;
 }
 [dir="rtl"] .dkc-cal-block,
-[dir="rtl"] .dkc-cal-day {
+[dir="rtl"] .dkc-cal-day,
+[dir="rtl"] .dkc-cal-time {
   font-size: 26px;
+}
+[dir="rtl"] .dkc-cal-time {
+  width: 104px;
+}
+[dir="rtl"] .dkc-cal-block {
+  inset-inline-start: 120px;
 }
 
 /* --------------------------------------------- the meeting and the fork */
@@ -2809,64 +2917,55 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-tray-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 14px;
 }
 .dkc-tray-title {
   font-size: 26px;
   font-weight: 600;
 }
+/* The count right after the title it counts, never floated to the far
+   edge of the column. */
 .dkc-tray-count {
-  font-family: var(--dk-mono);
-  font-size: 24px;
+  font-size: 26px;
+  font-weight: 500;
   color: var(--dk-ink-3);
   font-variant-numeric: tabular-nums;
 }
-[dir="rtl"] .dkc-tray-count {
-  font-family: var(--dk-font-ar);
-}
+/* The two sources as two words, not a segmented control: the one shown in
+   ink on a hairline, the other in ink-3. */
 .dkc-tray-tabs {
   display: flex;
-  margin-top: 14px;
-  border-radius: 12px;
-  box-shadow: inset 0 0 0 1px var(--dk-line-strong);
-  padding: 3px;
+  gap: 28px;
+  margin-top: 12px;
 }
 .dkc-tray-tabs button {
-  flex: 1 1 auto;
   white-space: nowrap;
-  padding: 0 16px;
-  height: 44px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 1px solid transparent;
-  border-radius: 9px;
+  padding: 2px 0 6px;
+  border: 0;
+  border-bottom: 2px solid transparent;
   background: none;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 500;
-  color: var(--dk-ink-2);
+  color: var(--dk-ink-3);
+}
+[dir="rtl"] .dkc-tray-tabs button {
+  font-size: 26px;
 }
 .dkc-tray-tabs button[aria-selected="true"] {
-  background: var(--dk-panel-2);
+  border-bottom-color: var(--dk-ink-3);
   color: var(--dk-ink);
 }
 .dkc-tray-tabs button:hover:not([aria-selected="true"]) {
-  border-color: var(--dk-edge);
-}
-.dkc-tray-n {
-  font-variant-numeric: tabular-nums;
-  color: var(--dk-ink-3);
+  border-bottom-color: var(--dk-edge);
 }
 .dkc-tray-grid {
   list-style: none;
-  margin: 18px 0 0;
+  margin: 20px 0 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(3, 120px);
-  gap: 14px 20px;
-  max-height: 520px;
+  grid-template-columns: repeat(3, 128px);
+  gap: 18px 28px;
+  max-height: 540px;
   overflow-y: auto;
   scrollbar-width: none;
 }
@@ -2874,7 +2973,7 @@ button.dkc-status:hover:not([data-status="done"]) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  width: 120px;
+  width: 128px;
   padding: 0;
   border: 0;
   background: none;
@@ -2883,8 +2982,8 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-thumb-img {
   position: relative;
   display: block;
-  width: 120px;
-  height: 120px;
+  width: 128px;
+  height: 128px;
   border-radius: 12px;
   overflow: hidden;
   background: var(--dk-panel);
@@ -2909,24 +3008,12 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-thumb[data-failed] .dkc-thumb-img {
   box-shadow: 0 0 0 2px var(--dk-leak);
 }
-.dkc-thumb-chip {
-  position: absolute;
-  top: 6px;
-  inset-inline-start: 6px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: var(--dk-deep);
-  font-size: 18px;
-  line-height: 1.2;
-  font-weight: 600;
-  color: var(--dk-ink);
-}
 /* Their pick is theirs, so ink, on the deep ground a chip sits on: teal
    in the tray says only which creatives are on a phone (the edge). */
 .dkc-thumb-star {
   position: absolute;
-  top: 6px;
-  inset-inline-end: 6px;
+  top: 7px;
+  inset-inline-end: 7px;
   box-sizing: content-box;
   width: 18px;
   height: 18px;
@@ -2953,31 +3040,37 @@ button.dkc-status:hover:not([data-status="done"]) {
   height: 14px;
   fill: currentColor;
 }
-/* One caption voice under every thumbnail: Geist 500 20, figures tabular.
-   Ink-3 says its shape; ink-2 says which phone it is on (the teal edge
-   already says it is on one). */
+/* One caption voice under every thumbnail, at the canvas's floor: ink-2
+   names the phone it is on (the teal edge already says it is on one),
+   ink-3 its shape, and a template says so on its own line. */
 .dkc-thumb-cap {
-  display: block;
-  width: 136px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 148px;
   font-family: var(--dk-font);
-  font-size: 20px;
-  line-height: 1.15;
+  font-size: 24px;
+  line-height: 1.2;
   font-weight: 500;
   color: var(--dk-ink-3);
   font-variant-numeric: tabular-nums;
 }
 [dir="rtl"] .dkc-thumb-cap {
   font-family: var(--dk-font-ar);
-  font-size: 22px;
+  font-size: 26px;
+  line-height: 1.3;
 }
 .dkc-thumb-spec {
   display: block;
-  white-space: nowrap;
+  text-wrap: balance;
 }
 .dkc-thumb-on {
   display: block;
   color: var(--dk-ink-2);
-  white-space: nowrap;
+  text-wrap: balance;
+}
+.dkc-thumb-starter {
+  display: block;
 }
 /* Nothing in the tray yet: the sentence, said plainly under the head, no
    dashed box to fill in. */
@@ -3078,7 +3171,8 @@ button.dkc-status:hover:not([data-status="done"]) {
   line-height: 1.25;
   font-weight: 500;
   color: var(--dk-ink);
-  white-space: nowrap;
+  width: max-content;
+  text-wrap: balance;
   animation: dk-cut 300ms var(--dk-ease) 200ms both;
 }
 [dir="rtl"] .dkc-leader-label {
@@ -3091,10 +3185,11 @@ button.dkc-status:hover:not([data-status="done"]) {
   display: block;
   color: var(--dk-ink-2);
 }
+/* Inside the end side's room, never cut by the phone area's edge. */
 .dkc-focus-tag {
   position: absolute;
   top: 0;
-  white-space: nowrap;
+  text-wrap: balance;
 }
 /* A file saving behind the preview: a 4 px bar along the screen's foot. */
 .dkc-phone-progress {
@@ -3385,36 +3480,19 @@ button.dkc-status:hover:not([data-status="done"]) {
   flex-direction: column;
   height: 100%;
 }
-/* The first stop: the page's words, then the feed phone large, its one
-   leader on "Sponsored". The columns come with the next press. */
+/* The first stop: the page's words in column one's place and size (they
+   stay put when the columns come), and the feed phone large in the room
+   the other two columns will take, its one leader on "Sponsored". */
 .dkc-freedom-intro {
   display: grid;
-  grid-template-columns: 560px auto;
-  gap: 120px;
+  grid-template-columns: 460px minmax(0, 1fr);
+  gap: 64px;
   margin-top: 40px;
   flex: 1;
   min-height: 0;
   animation: dkc-swap 420ms var(--dk-ease) both;
 }
-.dkc-freedom-intro > section {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  padding-top: 28px;
-}
-.dkc-freedom-intro .dkc-col-copy {
-  color: var(--dk-ink-2);
-}
-/* Three columns of one height: the panel fills it, and the last line of
-   the first and third columns sits on its foot. */
-.dkc-freedom-cols {
-  display: grid;
-  grid-template-columns: 460px 600px 460px;
-  gap: 64px;
-  margin-top: 40px;
-  align-items: stretch;
-  animation: dkc-swap 420ms var(--dk-ease) both;
-}
+.dkc-freedom-intro > section,
 .dkc-freedom-cols > section {
   display: flex;
   flex-direction: column;
@@ -3423,16 +3501,30 @@ button.dkc-status:hover:not([data-status="done"]) {
   /* Heads on one line with the panel's, inside its padding. */
   padding-top: 28px;
 }
-.dkc-freedom-cols > section > .dkc-own-page {
-  margin-top: auto;
+/* The phone and its label centred as one group: the label's room is
+   added on the side it sits. */
+.dkc-freedom-intro > .dkc-own-page {
+  justify-self: center;
+  align-self: start;
+}
+.dkc-freedom-intro > .dkc-own-page[data-side="start"] {
+  padding-inline-start: 300px;
+}
+.dkc-freedom-intro > .dkc-own-page[data-side="end"] {
+  padding-inline-end: 300px;
+}
+/* Three columns, tops level, each as tall as its own words: no column is
+   stretched into an empty band before its foot. */
+.dkc-freedom-cols {
+  display: grid;
+  grid-template-columns: 460px 600px 460px;
+  gap: 64px;
+  margin-top: 40px;
+  align-items: start;
+  animation: dkc-swap 420ms var(--dk-ease) both;
 }
 .dkc-own-page {
   position: relative;
-  align-self: flex-start;
-}
-.dkc-own-copy {
-  margin: 0;
-  max-width: 560px;
 }
 .dkc-own-leader {
   position: absolute;
@@ -3440,6 +3532,7 @@ button.dkc-status:hover:not([data-status="done"]) {
   margin-top: -1px;
   background: var(--dk-line-strong);
 }
+/* The dot on the frame's side of the line, just outside the phone. */
 .dkc-own-leader i {
   position: absolute;
   inset-inline-start: -6px;
@@ -3449,6 +3542,10 @@ button.dkc-status:hover:not([data-status="done"]) {
   height: 12px;
   border-radius: 999px;
   background: var(--dk-teal);
+}
+.dkc-own-leader[data-side="start"] i {
+  inset-inline-start: auto;
+  inset-inline-end: -6px;
 }
 .dkc-own-label {
   position: absolute;
@@ -3462,6 +3559,13 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 .dkc-col-copy {
   color: var(--dk-ink-2);
+}
+/* The column still ahead: quiet, as the journey's rows ahead are. */
+.dkc-freedom-cols > section:not([data-lit]) {
+  opacity: 0.4;
+}
+.dkc-freedom-cols > section {
+  transition: opacity 300ms var(--dk-ease);
 }
 /* A column head that wraps keeps its words together ("Open: everything /
    else we test"), never one word alone on a line. */
@@ -3560,10 +3664,6 @@ button.dkc-status:hover:not([data-status="done"]) {
   font-size: 26px;
   line-height: 1.6;
 }
-/* With lines, the closing sentence sits on the columns' shared foot. */
-.dkc-fixed:not([data-empty]) .dkc-fixed-copy {
-  margin-top: auto;
-}
 /* No red lines yet: the card is only as tall as its sentence, and the
    input is drawn only under the CSM's pointer or while typing. */
 .dkc-fixed[data-empty] {
@@ -3571,6 +3671,13 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 .dkc-quiet-input {
   border-bottom-color: transparent;
+}
+/* It takes no room until the CSM points at the card, so the card ends on
+   its sentence. */
+.dkc-fixed[data-empty]:not(:hover):not(:focus-within) .dkc-quiet-input {
+  height: 0;
+  margin-top: -20px;
+  overflow: hidden;
 }
 .dkc-quiet-input:not(:hover):not(:focus)::placeholder {
   color: transparent;
@@ -3608,7 +3715,7 @@ button.dkc-status:hover:not([data-status="done"]) {
   fill: var(--dk-ink);
 }
 .dkc-open-foot {
-  margin-top: auto;
+  padding-top: 4px;
 }
 .dkc-freedom-foot {
   display: flex;
@@ -4038,31 +4145,19 @@ button.dkc-status:hover:not([data-status="done"]) {
   color: var(--dk-ink-2);
   text-align: left;
 }
+/* Words from their files: teal, and nothing more (an underline across a
+   whole sentence read as a link). A name in the other script stays whole. */
 .dkc-slot {
   color: var(--dk-teal);
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 7px;
-  text-decoration-color: var(--dk-teal);
 }
-/* Under Arabic the line runs whole, below the letters' tails, never cut
-   into dashes by skip-ink. */
-.dkc-turn-ar .dkc-slot {
-  text-decoration-skip-ink: none;
-  text-underline-offset: 0.45em;
+.dkc-turn [data-other] {
+  white-space: nowrap;
 }
-/* A slot still to give us reads as part of the sentence, as a filled one
-   does: amber words with a dashed underline (the teal ones are solid),
-   wrapping with the line, never a box that breaks it. */
+/* A slot still to give us: an editor's insertion in square brackets, in
+   amber, part of the sentence, never a box that breaks it. */
 .dkc-ask > span {
   color: var(--dk-leak);
   font-weight: 500;
-  text-decoration: underline dashed var(--dk-leak) 2px;
-  text-underline-offset: 7px;
-  text-decoration-skip-ink: none;
-}
-.dkc-turn-ar .dkc-ask > span {
-  text-underline-offset: 0.45em;
 }
 .dkc-after {
   position: absolute;
@@ -4589,7 +4684,7 @@ button.dkc-status:hover:not([data-status="done"]) {
   background: var(--dk-panel);
 }
 .dkc-part-dayname {
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 600;
   margin-bottom: 4px;
 }
@@ -4598,43 +4693,47 @@ button.dkc-status:hover:not([data-status="done"]) {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  height: 34px;
+  height: 42px;
 }
 .dkc-part-time {
   flex: none;
-  width: 64px;
-  font-size: 18px;
+  width: 76px;
+  font-size: 24px;
   line-height: 1;
   color: var(--dk-ink-3);
   font-variant-numeric: tabular-nums;
 }
 [dir="rtl"] .dkc-part-time,
 [dir="rtl"] .dkc-part-dayname {
-  font-size: 22px;
+  font-size: 26px;
+}
+[dir="rtl"] .dkc-part-time {
+  width: 96px;
 }
 .dkc-part-hour > i {
   flex: 1;
   height: 2px;
-  margin-top: 8px;
+  margin-top: 11px;
   background: var(--dk-line);
 }
 .dkc-part-busy {
   position: absolute;
-  top: 9px;
-  inset-inline: 76px 0;
-  height: 34px;
+  top: 12px;
+  inset-inline: 88px 0;
+  height: 40px;
   display: flex;
   align-items: center;
   padding-inline: 10px;
   border-radius: 8px;
   overflow: hidden;
   border: 1.5px solid var(--dk-ink-3);
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 600;
   color: var(--dk-ink);
 }
 [dir="rtl"] .dkc-part-busy {
-  font-size: 22px;
+  font-size: 26px;
+  inset-inline-start: 108px;
 }
 .dkc-part-busy svg {
   position: absolute;
@@ -4694,14 +4793,15 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-prog-week {
   position: absolute;
   top: 34px;
-  font-size: 20px;
+  font-size: 24px;
   line-height: 1.2;
   color: var(--dk-ink-3);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 [dir="rtl"] .dkc-prog-week {
-  font-size: 21px;
+  font-size: 26px;
+  top: 30px;
 }
 .dkc-prog-golive {
   position: absolute;
@@ -4714,9 +4814,9 @@ button.dkc-status:hover:not([data-status="done"]) {
 }
 .dkc-prog-golive-label {
   position: absolute;
-  top: 0;
+  top: -4px;
   inset-inline-start: 12px;
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 600;
   color: var(--dk-teal);
 }
@@ -4768,24 +4868,24 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-prog-note {
   position: absolute;
   top: 48px;
-  font-size: 22px;
+  font-size: 24px;
   line-height: 1.2;
   color: var(--dk-ink-2);
   white-space: nowrap;
 }
-[dir="rtl"] .dkc-prog-note {
-  font-size: 24px;
+[dir="rtl"] .dkc-prog-note,
+[dir="rtl"] .dkc-prog-golive-label {
+  font-size: 26px;
 }
 .dkc-prog-checks > i {
   animation: dk-cut 200ms var(--dk-ease) 600ms both;
 }
-.dkc-prog-bracket {
-  position: absolute;
-  top: 14px;
-  height: 22px;
+/* The first check-in before it is booked: the chart's own diamond, open
+   (an outline), the way the bar's open end is drawn. */
+.dkc-prog-diamond[data-open] {
+  box-sizing: border-box;
+  background: var(--dk-space);
   border: 2px solid var(--dk-teal);
-  border-bottom: 0;
-  border-radius: 4px 4px 0 0;
 }
 .dkc-prog-diamond {
   position: absolute;
@@ -4831,12 +4931,12 @@ button.dkc-status:hover:not([data-status="done"]) {
 .dkc-prog-axis {
   align-self: end;
   padding-bottom: 2px;
-  font-size: 20px;
+  font-size: 24px;
   line-height: 1.2;
   color: var(--dk-ink-3);
 }
 [dir="rtl"] .dkc-prog-axis {
-  font-size: 21px;
+  font-size: 26px;
 }
 .dkc-prog-open {
   color: var(--dk-ink-3);
@@ -4873,6 +4973,9 @@ button.dkc-status:hover:not([data-status="done"]) {
   color: var(--dk-ink-3);
 }
 .dkc-days-foot {
+  margin-top: auto;
+}
+.dkc-days[data-nogoal] .dkc-prog {
   margin-top: auto;
 }
 
@@ -4929,11 +5032,11 @@ button.dkc-status:hover:not([data-status="done"]) {
   transform: scaleX(-1);
 }
 .dkc-green-golive {
+  align-self: center;
   font-size: 30px;
   font-weight: 600;
   color: var(--dk-teal);
   white-space: nowrap;
-  margin-bottom: -8px;
 }
 .dkc-green-next {
   margin-top: 36px;
