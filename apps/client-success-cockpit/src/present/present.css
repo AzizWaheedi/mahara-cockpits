@@ -2735,11 +2735,11 @@ button.dkc-status:hover {
   width: fit-content;
 }
 /* The two ways a meeting goes (stop 6), drawn as the lanes draw the fork:
-   the meeting's line on to a node ahead (yours), and the dotted drop to the
+   the meeting's line on to a node ahead (came, thinking it over: followed
+   up by both of us, marked by the client), and the dotted drop to the
    lanes' rebook mark (ours, teal). Each end's name and line beside it. */
 .dkc-fork {
   position: relative;
-  height: 172px;
 }
 .dkc-fork svg {
   display: block;
@@ -2777,6 +2777,21 @@ button.dkc-status:hover {
 }
 .dkc-fork[data-ours] .dkc-fork-end[data-noshow] p {
   color: var(--dk-teal);
+}
+/* Done for you, the follow-up of someone thinking it over is shared: the
+   line stays in the client's ink, its first sentence ("Both of us.") in
+   our teal. */
+.dkc-fork-both {
+  color: var(--dk-teal);
+}
+/* That shared line runs to two lines: it sits beside its node, its name
+   above it, so the no-show's end below keeps its own room. */
+.dkc-fork-end[data-both] b {
+  position: absolute;
+  bottom: 100%;
+  inset-inline-start: 0;
+  margin-bottom: 2px;
+  white-space: nowrap;
 }
 [dir="rtl"] .dkc-fork-end b {
   font-size: 32px;
@@ -5144,8 +5159,9 @@ button.dkc-status:hover {
 .dkc-prog-checks > i {
   animation: dk-cut 200ms var(--dk-ease) 600ms both;
 }
-/* The first check-in before it is booked: the chart's own diamond, open
-   (an outline), the way the bar's open end is drawn. */
+/* The first check-in before it is booked, and (smaller) the weeks between
+   on a weekly rhythm: the chart's own diamond, open (an outline), the way
+   the bar's open end is drawn. */
 .dkc-prog-diamond[data-open] {
   box-sizing: border-box;
   background: var(--dk-space);
@@ -5162,6 +5178,15 @@ button.dkc-status:hover {
 }
 .dkc-prog-diamond[data-ring] {
   box-shadow: 0 0 0 5px var(--dk-space), 0 0 0 7px var(--dk-teal);
+}
+/* The weeks between, on a weekly rhythm: open and smaller, on the same
+   centre line, so the first check-in before it is booked (open, full size)
+   keeps its own look. */
+.dkc-prog-diamond[data-weekly] {
+  top: 22px;
+  width: 14px;
+  height: 14px;
+  margin-inline-start: -7px;
 }
 .dkc-prog[data-still] .dkc-prog-bar,
 .dkc-prog[data-still] .dkc-prog-float,
@@ -5192,6 +5217,22 @@ button.dkc-status:hover {
 .dkc-prog-key[data-ring] {
   box-shadow: 0 0 0 3px var(--dk-space), 0 0 0 5px var(--dk-teal);
 }
+.dkc-prog-key[data-open] {
+  box-sizing: border-box;
+  top: -0.5px;
+  width: 9px;
+  height: 9px;
+  background: var(--dk-space);
+  border: 2px solid var(--dk-teal);
+}
+/* The keys before a line, one width for both lines so their words start
+   level: the rhythm's two marks (solid, and open for the weeks between),
+   and the look back's ringed one. */
+.dkc-prog-keys {
+  flex: none;
+  display: inline-flex;
+  width: 44px;
+}
 .dkc-prog-axis {
   align-self: end;
   padding-bottom: 2px;
@@ -5207,6 +5248,11 @@ button.dkc-status:hover {
 }
 .dkc-prog-under b {
   font-weight: 600;
+}
+/* Why the rhythm is weekly or every two weeks, on its own line under it. */
+.dkc-prog-why {
+  display: block;
+  color: var(--dk-ink-2);
 }
 /* The milestones row: under a rule, past go-live's line, in order. */
 .dkc-prog-ms-name,

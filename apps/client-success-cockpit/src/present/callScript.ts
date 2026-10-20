@@ -11,8 +11,9 @@ import type { L, Lang } from "./content";
  * (delays, design, cost) that change four lines, and the budget band by
  * country and scale. The words are copied from EXAMPLE-CALL.md; this file
  * does not write new ones. Its copy rules are pinned by
- * scripts/deck-call.test.ts: no speed or results promise, no guarantee, no
- * leads, never مقاول, no em dash, no exclamation mark. Unlike the slides,
+ * scripts/deck-call.test.ts: no "instantly" or "same day", no results
+ * promise, no guarantee, no leads, never مقاول, no em dash, no exclamation
+ * mark. Unlike the slides,
  * the call speaks a dialect and names the fictional customer's budget band
  * on purpose.
  */

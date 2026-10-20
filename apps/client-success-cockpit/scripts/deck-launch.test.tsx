@@ -220,7 +220,9 @@ describe("done with you", () => {
         </>,
       );
     expect(render("journey", 2)).toContain("Your team calls");
-    expect(render("journey", 2)).toContain("Your team: call now");
+    // The new row's one chip says who calls; the stop's words say how fast.
+    expect(render("journey", 2)).toContain('data-lane="you">Your team</span>');
+    expect(render("journey", 2)).not.toContain("call now");
     expect(render("journey", 2)).not.toContain("Top of the list");
     expect(render("journey", 5)).toContain(
       "The follow-up messages start by themselves.",
@@ -233,8 +235,9 @@ describe("done with you", () => {
       "Your caller&#x27;s notes",
     );
     expect(render("call", CALL_STAGES + 1)).toContain("It lands in your CRM.");
+    // A number keeps its word on the canvas (a no-break space after it).
     expect(render("your-part")).toContain(
-      "Call fast, note every try, keep every stage true",
+      "Call within 5\u00a0minutes, note every try, keep every stage true",
     );
     expect(render("your-part")).toContain(
       "Your team books into the times you leave free.",
@@ -272,9 +275,16 @@ describe("done with you", () => {
     ];
     // The transcript is the caller speaking as the client's own business
     // ("Shall we book you in?"), so its turns are theirs and are not read.
+    // So is the thank-you screen: the client's own page speaking to their
+    // customer ("Our team will call you", فريقنا بيتصل عليك), its "our
+    // team" is theirs.
     const runs = (html: string) =>
       html
         .replace(/<div class="dkc-transcript"[^>]*>[\s\S]*?<\/ol><\/div>/g, "")
+        .replace(
+          /(<div class="dkc-form-intro dkc-form-thanks">[\s\S]*?)<p dir="auto">[^<]*<\/p>/g,
+          "$1",
+        )
         .replace(/<[^>]+>/g, "\n")
         .replace(/&#x27;/g, "'")
         .replace(/&quot;/g, '"')
@@ -347,6 +357,75 @@ describe("done with you", () => {
     expect(call).toContain("What we do before the meeting");
     expect(call).toContain("A confirmation call");
     expect(call).not.toContain("Provisional bookings");
+  });
+});
+
+/**
+ * The CEO's answers of 2026-10-20, as drawn: we call new enquiries within
+ * 5 minutes during working hours (the night rule beside it), someone who
+ * came and is thinking it over is followed up by both of us (done for
+ * you), and check-ins are weekly or every two weeks.
+ */
+describe("the CEO's answers, drawn", () => {
+  const render = (d: DeckData, id: string, tour = 0) =>
+    renderToStaticMarkup(
+      <>
+        {launchSlides()
+          .find(s => s.id === id)
+          ?.render(ctx(d, tour))}
+      </>,
+    )
+      .replace(/&#x27;/g, "'")
+      .replace(/[\u2066-\u2069]/g, "")
+      // A number keeps its word on the canvas (a no-break space after it).
+      .replace(/\u00a0/g, " ");
+
+  test("stop 3 says within 5 minutes, with the hours and the night rule", () => {
+    const d = data("full");
+    const html = render(d, "journey", 2);
+    expect(html).toContain(
+      "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning.",
+    );
+    expect(render({ ...d, uae: true }, "journey", 2)).toContain(
+      "10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday.",
+    );
+    expect(html).toContain("Up to 4 tries over 3 working days");
+    const ar = render(data("full", "ar"), "journey", 2);
+    expect(ar).toContain("خلال ٥ دقايق في أوقات الدوام");
+    expect(render(data("dwy"), "journey", 2)).toContain(
+      "Call within 5 minutes. Up to 4 tries over 3 working days.",
+    );
+  });
+
+  test("came and thinking it over: both of us done for you, theirs done with you", () => {
+    const html = render(data("full"), "journey", 5);
+    // The line stays in the client's ink; its first sentence is ours and
+    // theirs together, in teal.
+    expect(html).toContain('<span class="dkc-fork-both">Both of us.</span>');
+    expect(html).toContain(
+      "We call to follow up, and so do you: you know them best. Then mark it.",
+    );
+    expect(html).toContain("Ours. We call to rebook.");
+    const ar = render(data("full", "ar"), "journey", 5);
+    expect(ar).toContain('<span class="dkc-fork-both">علينا وعليكم.</span>');
+    const dwy = render(data("dwy"), "journey", 5);
+    expect(dwy).not.toContain("dkc-fork-both");
+    expect(dwy).toContain("Follow up, then move it to the right stage.");
+  });
+
+  test("first 90 days: weekly or every two weeks, why, and both marks drawn", () => {
+    const html = render(data("full"), "first-90-days");
+    expect(html).toContain("Then weekly or every two weeks");
+    expect(html).toContain(
+      "Depending on your plan and how long you've been with us.",
+    );
+    // The two-week check-ins solid, the weeks between open: never one
+    // rhythm alone.
+    const weekly = html.match(/data-weekly=""/g) ?? [];
+    const solid =
+      html.match(/class="dkc-prog-diamond"(?! data-open)[^>]*>/g) ?? [];
+    expect(weekly.length).toBeGreaterThanOrEqual(5);
+    expect(solid.length).toBeGreaterThanOrEqual(5);
   });
 });
 

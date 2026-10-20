@@ -68,16 +68,14 @@ const AR = ALL.filter(l => l.lang === "ar");
 /** Lines allowed to name what a rule bans, because they tell the CSM not to. */
 const ALLOWED: Record<string, string[]> = {
   guarantee: ["Don't link this list to the contract or to any guarantee."],
-  // "The same day" is allowed for the client's own job, never for ours
-  // (CONTENT copy rule 1); "Calling for" names the call card, not a chip on
-  // a new enquiry.
+  // "The same day" is allowed for the client's own job, never for our
+  // calls or our fixes (CONTENT copy rule 1).
   speed: [
     "Mark every meeting, the same day",
     "Did they come? Did you quote? Did you win? A few taps, the same day.",
     "A few taps, the same day.",
     "Move each meeting to the right stage in the CRM the same day: didn't show, showed, quote sent, closed.",
     "Your team moves it to the right stage in the CRM, the same day.",
-    "Calling for {name}",
     "سجلوا نتيجة كل موعد، بنفس اليوم",
     "حضر؟ عطيتوه عرض سعر؟ وقّع معكم؟ كم ضغطة، بنفس اليوم.",
     "كم ضغطة، بنفس اليوم.",
@@ -86,10 +84,6 @@ const ALLOWED: Record<string, string[]> = {
   ],
   // "Always …" heads the client's own DO items on their red-lines panel.
   always: ["دايماً …"],
-  // "Call as soon as it arrives" is the client's own team's job (done with you).
-  soon: [
-    "A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call as soon as it arrives. Up to 4 tries over 3 working days.",
-  ],
   // Arabic كل, read one by one: never for a step of ours. These say "all
   // the slides", "everything", "not every enquiry", the client's own jobs
   // and approvals, the check-in rhythm, what Meta does, and the notes' own
@@ -108,8 +102,9 @@ const ALLOWED: Record<string, string[]> = {
     "أهم شغلة عليكم: كل مرحلة تكون صحيحة",
     "انقلوا كل موعد للمرحلة الصح في الـCRM بنفس اليوم: ما حضر، حضر، انرسل عرض السعر، وقّع.",
     "سجلوا نتيجة كل موعد، بنفس اليوم",
-    "اتصلوا بسرعة، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة",
-    "وبعدها كل أسبوعين",
+    "اتصلوا خلال ٥ دقايق، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة",
+    "وبعدها كل أسبوع أو كل أسبوعين",
+    "بعد أول مكالمة متابعة، تكون المكالمات كل أسبوع أو كل أسبوعين، على حسب باقتكم، وكم صار لكم معنا.",
     "(If they want more questions) كل سؤال زيادة يطيّر معه ناس زينين بعد. نضيف سؤال لما الاستفسارات توضح إننا نحتاجه.",
     "(What lands with them) كل اللي عرفه فريق الاتصال يوصلكم، فتدخلون الموعد وأنتم عارفين المشروع.",
     "والبوابة تقدر تذكركم بعد كل موعد عشان تسجلون نتيجته.",
@@ -137,12 +132,109 @@ describe("content.ts is read whole", () => {
   });
 });
 
-describe("rule 1: no speed promise", () => {
-  test("English", () => {
+/** Journey stop 3, as the CEO answered (2026-10-20): "keep it 5 mins for all". */
+const STOP3 = {
+  en: "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning.",
+  uae: "We call new enquiries within 5 minutes during working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning.",
+  dwy: "A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call within 5 minutes. Up to 4 tries over 3 working days.",
+};
+
+describe("rule 1: within 5 minutes, with the hours and the night rule", () => {
+  test("stop 3 says the 5 minutes, the working hours and the night rule", () => {
+    const S = content.LAUNCH.journey.stops[2];
+    expect(S.line.en).toBe(STOP3.en);
+    expect(S.lineUae?.en).toBe(STOP3.uae);
+    expect(S.lineUae?.en).toContain(content.HOURS.uae.en);
+    for (const l of [S.line, S.lineUae as content.L]) {
+      expect(l.ar).toStartWith(
+        "نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام: ",
+      );
+      expect(l.ar).toContain("من السبت إلى الخميس.");
+      expect(l.ar).toEndWith(
+        "واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام.",
+      );
+    }
+    expect(S.line.ar).toContain("من ١٠ صباحاً إلى ٦ مساءً، من السبت");
+    expect(S.lineUae?.ar).toContain(content.HOURS.uae.ar);
+    // Done with you: their own team calls within 5 minutes; the tries stay.
+    expect(S.dwy?.en).toBe(STOP3.dwy);
+    expect(S.dwy?.ar).toContain("اتصلوا خلال ٥ دقايق.");
+    expect(content.LAUNCH.journey.tries.en).toBe(
+      "Up to 4 tries over 3 working days",
+    );
+    expect(S.dwy?.en).toContain(content.LAUNCH.journey.tries.en);
+    expect(S.dwy?.ar).toContain(content.LAUNCH.journey.tries.ar);
+  });
+  test("the form's line and the thank-you screen say it the same way", () => {
+    const F = content.LAUNCH.form;
+    expect(F.waNextUs.en).toBe(
+      "Our team calls them within 5 minutes during working hours.",
+    );
+    expect(F.thanksDefault.en).toBe(
+      "Thank you. Our team will call you within 5 minutes during working hours.",
+    );
+    expect(F.waNextUs.ar).toContain("خلال ٥ دقايق في أوقات الدوام");
+    expect(F.thanksDefault.ar).toBe(
+      "شكراً لك. فريقنا بيتصل عليك خلال ٥ دقايق في أوقات الدوام.",
+    );
+    // The presenter gives the night rule on the form slide too.
+    expect(
+      content.L_NOTES.form.say.some(
+        l =>
+          l.includes("within 5 minutes during working hours") &&
+          l.includes("called from 10 the next working morning"),
+      ),
+    ).toBe(true);
+  });
+  test("the presenter says it plainly at stop 3, with the hours and the night rule", () => {
+    const n = content.L_NOTES.journey;
+    expect(
+      n.say.some(
+        l =>
+          l.startsWith("At stop 3") &&
+          l.includes(
+            "within 5 minutes during working hours, 10 to 6, Saturday to Thursday",
+          ) &&
+          l.includes("called from 10 the next working morning"),
+      ),
+    ).toBe(true);
+    expect(
+      n.sayAr.some(
+        l =>
+          l.includes("خلال ٥ دقايق في أوقات الدوام") &&
+          l.includes("بالليل") &&
+          l.includes("أول يوم دوام"),
+      ),
+    ).toBe(true);
+    // A UAE client hears their own hours in Arabic too, as the slide shows.
+    expect(
+      n.sayAr.some(
+        l => l.includes("بتوقيت السعودية") && l.includes("بتوقيت الإمارات"),
+      ),
+    ).toBe(true);
+  });
+  test("English: only ever within 5 minutes, and ours with the working hours", () => {
+    const five = EN.filter(l => /\b(?:5|five) minutes\b/i.test(l.text));
+    expect(five.length).toBeGreaterThanOrEqual(7);
     expect(
       offenders(
         EN,
-        /\b5 minutes\b|five minutes|within (?:a few |five |5 )?minutes|\binstantly\b|\bsame[- ]day\b|\bjust now\b|\bCalling\b|21\s?[x×]|100\s?[x×]/i,
+        /(?<!within )\b5 minutes\b|five minutes|within (?!5 minutes)(?:a few |\d+ )?minutes/i,
+      ),
+    ).toEqual([]);
+    // Ours always comes with the working hours; done with you (a dwy line)
+    // it is their own team's call.
+    expect(
+      five
+        .filter(l => !/dwy/i.test(l.path) && !/working hours/.test(l.text))
+        .map(l => `${l.path}: ${l.text}`),
+    ).toEqual([]);
+  });
+  test("English: still never instantly, same day for ours, or 21x and 100x", () => {
+    expect(
+      offenders(
+        EN,
+        /\binstantly\b|\bsame[- ]day\b|\bjust now\b|21\s?[x×]|100\s?[x×]/i,
         "speed",
       ),
     ).toEqual([]);
@@ -150,15 +242,34 @@ describe("rule 1: no speed promise", () => {
       offenders(
         EN,
         /right away|immediately|\bin (?:a few |\d+ )?minutes|within (?:the|an|one|\d+) hours?|\bas soon as\b|\bstraight away\b/i,
-        "soon",
+      ),
+    ).toEqual([]);
+    // The old rule's leftovers are gone.
+    expect(
+      offenders(
+        ALL,
+        /promise faster|never a speed|don't promise (?:a )?speed/i,
       ),
     ).toEqual([]);
   });
-  test("Arabic", () => {
+  test("Arabic: ٥ دقايق only, ours with the working hours, never فوراً", () => {
+    const five = AR.filter(l => /[٠-٩0-9]+ دقا(?:ي|ئ)ق/.test(l.text));
+    expect(five.length).toBeGreaterThanOrEqual(7);
     expect(
       offenders(
         AR,
-        /خمس دقايق|خمس دقائق|[٥0-9]+ دقايق|[٥0-9]+ دقائق|خلال دقا(?:ئ|ي)ق|فوراً|فورا|نفس اليوم|على طول|سيده|بأسرع وقت/,
+        /خمس دقايق|خمس دقائق|(?<![٠-٩0-9])(?!٥ دقايق)[٠-٩0-9]+ دقا(?:ي|ئ)ق|(?<!خلال )٥ دقايق|خلال دقا(?:ئ|ي)ق/,
+      ),
+    ).toEqual([]);
+    expect(
+      five
+        .filter(l => !/dwy/i.test(l.path) && !/أوقات الدوام/.test(l.text))
+        .map(l => `${l.path}: ${l.text}`),
+    ).toEqual([]);
+    expect(
+      offenders(
+        AR,
+        /فوراً|فورا|نفس اليوم|على طول|سيده|بأسرع وقت|(?:٢١|١٠٠|21|100)\s?(?:[x×]|ضعف|مرة)/,
         "speed",
       ),
     ).toEqual([]);
@@ -219,7 +330,7 @@ describe("rule 3: no leads, no cost per lead, no budgets in money", () => {
   });
 });
 
-describe("rules 4 and 5: no every or always for our steps, no weekly", () => {
+describe("rules 4 and 5: no every or always for our steps, the rhythm never one alone", () => {
   test("every and always only for the client's own job and the check-in rhythm", () => {
     // Allowed: the client's own jobs, the check-in rhythm, the honest "not
     // every enquiry books", the head of their own DO items, and a note on
@@ -231,20 +342,55 @@ describe("rules 4 and 5: no every or always for our steps, no weekly", () => {
         l => /\bevery\b|\balways\b/i.test(l.text) && !fine.test(l.text),
       ).map(l => `${l.path}: ${l.text}`),
     ).toEqual([]);
-    expect(
-      offenders(EN, /\bweekly\b|seven days a week|7 days a week/i),
-    ).toEqual([]);
+    expect(offenders(EN, /seven days a week|7 days a week/i)).toEqual([]);
     expect(
       offenders(
         AR,
-        /أسبوعي(?!ن)|كل أسبوع(?!ين)|سبعة أيام|٧ أيام بالأسبوع|دايم|دائم/,
+        /أسبوعي(?!ن)|كل أسبوع(?!ين| أو كل أسبوعين)|سبعة أيام|٧ أيام بالأسبوع|دايم|دائم/,
         "always",
       ),
     ).toEqual([]);
     // Arabic كل, line by line (ALLOWED.everyAr says why each is fine).
     expect(offenders(AR, /(?:^|[\s(،.])كل(?=\s)/, "everyAr")).toEqual([]);
   });
-  test("rule 5: check-ins every two weeks, never weekly", () => {
+  test("rule 5: check-ins weekly or every two weeks, and why", () => {
+    const D = content.LAUNCH.days;
+    expect(D.later.en).toBe("Then weekly or every two weeks");
+    expect(D.later.ar).toBe("وبعدها كل أسبوع أو كل أسبوعين");
+    expect(D.laterWhy.en).toBe(
+      "Depending on your plan and how long you've been with us.",
+    );
+    expect(D.laterWhy.ar).toBe("على حسب باقتكم، وكم صار لكم معنا.");
+    // The first check-in stays a week or two after go-live.
+    expect(D.first.en).toBe("Your first check-in · a week or two in");
+    // The presenter says both, and why.
+    const n = content.L_NOTES["first-90-days"];
+    expect(
+      n.say.some(l =>
+        l.includes(
+          "weekly or every two weeks, depending on your plan and how long you've been with us",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      n.sayAr.some(l =>
+        l.includes("كل أسبوع أو كل أسبوعين، على حسب باقتكم، وكم صار لكم معنا"),
+      ),
+    ).toBe(true);
+  });
+  test("rule 5: never one of the two alone", () => {
+    expect(
+      offenders(
+        EN,
+        /\bweekly\b(?! or every two weeks)|(?<!weekly or )\bevery two weeks\b|\bbi-?weekly\b|fortnight/i,
+      ),
+    ).toEqual([]);
+    expect(
+      offenders(
+        AR,
+        /كل أسبوع(?!ين| أو كل أسبوعين)|(?<!كل أسبوع أو )كل أسبوعين|أسبوعي(?!ن)/,
+      ),
+    ).toEqual([]);
     expect(
       offenders(
         ALL,
@@ -254,17 +400,52 @@ describe("rules 4 and 5: no every or always for our steps, no weekly", () => {
   });
 });
 
-describe("rule 6: a no-show is ours, someone deciding is theirs", () => {
+describe("rule 6: a no-show is ours; someone thinking it over, both of us", () => {
   test("the journey's fork, in both languages", () => {
     const fork = content.LAUNCH.journey.fork;
-    expect(fork.noShowLine.en).toMatch(/^Ours\b/);
-    expect(fork.noShowLine.ar).toMatch(/^علينا/);
-    expect(fork.decidingLine.en).toMatch(/^Yours\b/);
-    expect(fork.decidingLine.ar).toMatch(/^عليكم/);
-    // Never the other way round, anywhere.
+    expect(fork.noShowLine.en).toBe("Ours. We call to rebook.");
+    expect(fork.noShowLine.ar).toMatch(/^علينا\./);
+    // Done for you: we call to follow up, so does the client (they know the
+    // customer best), and the client still marks it.
+    expect(fork.decidingLine.en).toBe(
+      "Both of us. We call to follow up, and so do you: you know them best. Then mark it.",
+    );
+    expect(fork.decidingLine.ar).toMatch(/^علينا وعليكم\./);
+    expect(fork.decidingLine.ar).toContain("نتصل عليه ونتابع معه");
+    expect(fork.decidingLine.ar).toContain("وأنتم بعد تتابعونه");
+    expect(fork.decidingLine.ar).toMatch(/وبعدها سجلوا النتيجة\.$/);
+    // Done with you, unchanged: their own team follows up.
+    expect(fork.decidingDwy.en).toBe(
+      "Follow up, then move it to the right stage.",
+    );
+    expect(fork.decidingDwy.ar).toBe("تابعوه، وبعدها انقلوه للمرحلة الصح.");
+    expect(fork.noShowDwy.en).toBe(
+      "The follow-up messages start by themselves.",
+    );
+    // Never the client's alone (done for you), never ours alone.
     expect(
-      offenders(EN, /Didn't (?:come|show)\? Yours|thinking it over\? Ours/i),
+      offenders(
+        ALL,
+        /Didn't (?:come|show)\? Yours|thinking it over\? (?:Ours|Yours)\b|^Yours\. Follow up|^عليكم\. تابعوه/i,
+      ),
     ).toEqual([]);
+  });
+  test("the presenter explains the shared follow-up at stop 6", () => {
+    const n = content.L_NOTES.journey;
+    expect(
+      n.say.some(
+        l =>
+          l.includes("thinking it over") &&
+          l.includes("our caller calls them") &&
+          l.includes("the client follows up too") &&
+          l.includes("still marks the outcome"),
+      ),
+    ).toBe(true);
+    expect(
+      n.sayAr.some(
+        l => l.includes("نتابعه إحنا وأنتم") && l.includes("سجلوا النتيجة"),
+      ),
+    ).toBe(true);
   });
   test("one name for a no-show: the CRM's stage, asked on the fork", () => {
     expect(content.LAUNCH.journey.fork.noShow.en).toBe("Didn't show?");

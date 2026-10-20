@@ -2,7 +2,7 @@
 
 The Arabic for every on-screen string in `CONTENT.md`, slide by slide with the same ids, then the presenter lines the client success manager says out loud when the call is in Arabic. The example call itself is in `EXAMPLE-CALL.md`.
 
-Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm-professional client register for engineering, construction, fit-out and design firms, Saudi-safe. The register follows the client-facing Arabic Mahara already sends (`client-comms/csm-templates.md`, `onboarding-to-launch-csm.md`) and the Onboarding Map's own stop names. Revised the same day with `CONTENT.md` after the critique (see its Revision notes).
+Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm-professional client register for engineering, construction, fit-out and design firms, Saudi-safe. The register follows the client-facing Arabic Mahara already sends (`client-comms/csm-templates.md`, `onboarding-to-launch-csm.md`) and the Onboarding Map's own stop names. Revised the same day with `CONTENT.md` after the critique, and again on 2026-10-20 with the CEO's answers to its open questions 1 to 3 (see its Revision notes and [the section at the end](#ceo-answers-2026-10-20)).
 
 ## Decisions for the Arabic (made once, for both decks)
 
@@ -16,6 +16,7 @@ Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm
 8. **The presenting CSM's title is gendered in Arabic.** Store `csm.title_ar` on the seat, or a gender: مدير نجاح العملاء for a man, مديرة نجاح العملاء for a woman. With no name and no gender, the line reads فريق نجاح العملاء. Inside the O3 group, where the CSM is a role, the row reads نجاح العملاء.
 9. **Meta's own Arabic labels** (مُموَّل and the button labels) are my best reading of Meta's Arabic interface. Check each against a live Arabic preview before shipping (DESIGN 17.2).
 10. **The test is الاختبار on slides.** فترة التجربة reads as a trial or probation period, too close to the service itself being on trial, and نتعلم can sound like learning on the client's money. Slides say الاختبار، نختبر، نكتشف اللي يشتغل. نجرب stays in spoken lines only.
+11. **The CEO's answers, 2026-10-20 (`CONTENT.md` copy rules 1, 5 and 6).** The call is خلال ٥ دقايق, always beside في أوقات الدوام with the hours, and the night line stays. دقايق is spelled as the sales deck spells it, so the client reads the same promise in both decks; it is the spoken Gulf spelling slides already use in رسايل, not a ج/ي swap. The check-in rhythm is كل أسبوع أو كل أسبوعين, never one of the two alone, with the reason على حسب باقتكم، وكم صار لكم معنا. باقة names our plan, because العرض on these decks is the client's own offer. The customer who came and is thinking it over is علينا وعليكم done for you, beside the no-show's علينا; done with you is unchanged.
 
 ## Shared vocabulary
 
@@ -28,6 +29,9 @@ Use these the same way in both decks, the notes and the prep view.
 | Brand Blueprint call | مكالمة بناء الهوية والعرض | map stop 4, with مكالمة |
 | launch call | مكالمة الإطلاق | |
 | check-in | مكالمة متابعة | |
+| weekly or every two weeks | كل أسبوع أو كل أسبوعين | the check-in rhythm, never one alone (decision 11) |
+| your plan (ours, with them) | باقتكم | never العرض, which is the client's offer |
+| within 5 minutes during working hours | خلال ٥ دقايق في أوقات الدوام | decision 11 |
 | go live / go-live | ننطلق / الإطلاق | |
 | customer (the client's buyer) | عميلكم، العميل | never ليد |
 | enquiry | استفسار | |
@@ -330,7 +334,8 @@ Both Arabic titles put the verb before the name, so a company name never forces 
 | 1 | `journey.1` | Sees your ad | يشوف إعلانكم | They see your ad in their feed. | يشوف إعلانكم وهو يقلّب جواله. |
 | 2 | `journey.2` | Answers your questions | يجاوب على أسئلتكم | A few short questions about their project, then your thank-you screen. | يجاوب على كم سؤال قصير عن مشروعه، وبعدها تطلع له صفحة الشكر. |
 | 2 | `journey.2.whatsapp` | | | They message you on WhatsApp. The chat opens with their first message ready to send. | يراسلكم على الواتساب. المحادثة تفتح ورسالته الأولى جاهزة يرسلها. |
-| 3 | `journey.3` | We call | نتصل عليه | We call during working hours, 10 to 6, Saturday to Thursday. New enquiries go to the top of the list. Anything that comes in at night is called from 10 the next working morning. | نتصل خلال أوقات الدوام: من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس. الاستفسارات الجديدة تطلع أول القائمة. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام. |
+| 3 | `journey.3` | We call | نتصل عليه | We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning. | نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام: من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام. |
+| 3 | `journey.3.line.uae` | | | We call new enquiries within 5 minutes during working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning. | نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام: من ١٠ صباحاً إلى ٦ مساءً بتوقيت السعودية (من ١١ إلى ٧ بتوقيت الإمارات)، من السبت إلى الخميس. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام. |
 | 3 | `journey.3.chip` | | | Up to 4 tries over 3 working days | لين ٤ محاولات خلال ٣ أيام دوام |
 | 3 | `journey.3.notall` | | | Not every enquiry books. Some can't be reached, some aren't a fit. Our caller notes why, and we go through it with you at check-ins. | مو كل استفسار ينحجز له موعد. فيه ناس ما نقدر نوصل لهم، وفيه ناس ما يناسبونكم. وفريق الاتصال يكتب السبب، ونمر عليه معكم بمكالمات المتابعة. |
 | 4 | `journey.4` | Booked, confirmed, reminded | ينحجز ويتأكد ونذكّره | The serious ones are booked in, confirmed on WhatsApp and reminded before the meeting. | الجادين نحجز لهم، ويوصلهم تأكيد على الواتساب، ونذكّرهم قبل الموعد. |
@@ -339,7 +344,7 @@ Both Arabic titles put the verb before the name, so a company name never forces 
 | 5 | `journey.5.nocal` | | | Connect Google Calendar in Mahara OS so bookings land there. | اربطوا تقويم قوقل في Mahara OS عشان المواعيد تنزل فيه. |
 | 6 | `journey.6` | You meet | تقابلونه | You hold the meeting: {form.consult_types}. | تقابلونه: {form.consult_types}. |
 | 6 | `journey.6.noshow` | | | Didn't show? Ours. We call to rebook. | ما حضر؟ علينا. نتصل عليه ونحجز له من جديد. |
-| 6 | `journey.6.deciding` | | | Came, and thinking it over? Yours. Follow up, then mark it. | حضر وقاعد يفكر؟ عليكم. تابعوه، وبعدها سجلوا النتيجة. |
+| 6 | `journey.6.deciding` | | | Came, and thinking it over? Both of us. We call to follow up, and so do you: you know them best. Then mark it. | حضر وقاعد يفكر؟ علينا وعليكم. نتصل عليه ونتابع معه، وأنتم بعد تتابعونه، لأنكم تعرفونه أكثر. وبعدها سجلوا النتيجة. |
 | 7 | `journey.7` | You mark it | تسجلون النتيجة | You mark how it went, in a few taps. | تسجلون كيف راح الموعد، بكم ضغطة. |
 
 | Key | English | Arabic |
@@ -361,7 +366,7 @@ For stop 6, join two or three consultation types with أو (في مكتبكم أ
 
 | # | Key | English row name | Arabic row name | English line | Arabic line |
 |---|---|---|---|---|---|
-| 3 | `journey.3.dwy` | Your team calls | فريقكم يتصل | A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call as soon as it arrives. Up to 4 tries over 3 working days. | تنبيه الاستفسار الجديد يوصل لجوالات فريق الاتصال عندكم وللقروب. اتصلوا أول ما يوصل، لين ٤ محاولات خلال ٣ أيام دوام. |
+| 3 | `journey.3.dwy` | Your team calls | فريقكم يتصل | A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call within 5 minutes. Up to 4 tries over 3 working days. | تنبيه الاستفسار الجديد يوصل لجوالات فريق الاتصال عندكم وللقروب. اتصلوا خلال ٥ دقايق. لين ٤ محاولات خلال ٣ أيام دوام. |
 | 4 | `journey.4.dwy` | Your team books | فريقكم يحجز | Book on the right calendar. The confirmation goes out by itself. | احجزوا على التقويم الصح، والتأكيد يطلع للعميل تلقائياً. |
 | 5 | `journey.5.dwy` | Lands with you | يوصلكم | It lands in your calendar and your CRM, with your caller's notes. | الموعد ينزل بتقويمكم وفي الـCRM، ومعاه ملاحظات فريق الاتصال عندكم. |
 | 6 | `journey.6.noshow.dwy` | | | Didn't show? The follow-up messages start by themselves. | ما حضر؟ رسايل المتابعة تبدي تلقائياً. |
@@ -369,8 +374,10 @@ For stop 6, join two or three consultation types with أو (في مكتبكم أ
 | 7 | `journey.7.dwy` | You mark it | تسجلون النتيجة | Your team moves it to the right stage in the CRM, the same day. | فريقكم ينقله للمرحلة الصح في الـCRM، بنفس اليوم. |
 
 **Spoken lines (Arabic)**
-- (Stop 3, if they ask about night) فريقنا يشتغل من ١٠ الصبح إلى ٦ المسا، من السبت إلى الخميس، واللي يوصل بالليل يكون من أول الاتصالات بأول يوم دوام.
-- (Stop 6) شوفوا هالخط: اللي ما يحضر، يرجع لنا.
+- (Stop 3) نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام، من ١٠ الصبح إلى ٦ المسا، من السبت إلى الخميس. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ الصبح بأول يوم دوام. ونحاول معه لين ٤ مرات، خلال ٣ أيام دوام.
+- (Stop 3, a UAE client, the hours) من ١٠ الصبح إلى ٦ المسا بتوقيت السعودية، يعني من ١١ الصبح إلى ٧ المسا بتوقيت الإمارات.
+- (Stop 6) شوفوا هالخط: اللي ما يحضر، يرجع لنا، ونتصل عليه ونحجز له من جديد.
+- (Stop 6, came and thinking it over) واللي حضر وقاعد يفكر، نتابعه إحنا وأنتم: فريق الاتصال عندنا يتصل عليه ويتابع معه، وأنتم بعد تتابعونه، لأنكم قابلتوه وتعرفونه أكثر. وبعدها سجلوا النتيجة.
 - **Temp check:** فيه خطوة هنا تبونها تمشي بطريقة ثانية؟
 
 ## L3 · `ads`
@@ -473,7 +480,7 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 | `form.stop.3` | The thank-you screen | صفحة الشكر |
 | `form.stop.3.line` | Then your thank-you screen, and a welcome message. | وبعدها صفحة الشكر، ورسالة ترحيب. |
 | `form.stop.3.video` | Then your thank-you screen, and a welcome message with a short video about you. | وبعدها صفحة الشكر، ورسالة ترحيب فيها فيديو قصير يعرّف عنكم. |
-| `form.thanks.default` | Thank you. Our team will call you during working hours. | شكراً لك. فريقنا بيتواصل معك خلال أوقات الدوام. |
+| `form.thanks.default` | Thank you. Our team will call you within 5 minutes during working hours. | شكراً لك. فريقنا بيتصل عليك خلال ٥ دقايق في أوقات الدوام. |
 | `form.fallback` | We're finishing yours. (The "Example form" tag over the phone already says what it is.) | نشتغل على نموذجكم. |
 | `form.whatsapp` | Your ad opens a WhatsApp chat. | إعلانكم يفتح محادثة واتساب. |
 | `form.whatsapp.message` (Example wording) | Hi, I saw your ad. I'd like to know more about {service}. | السلام عليكم، شفت إعلانكم وأبي أعرف أكثر عن {service}. |
@@ -481,7 +488,7 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 | `form.whatsapp.next` | What happens next | اللي يصير بعدها |
 | `form.whatsapp.next.1` | Their first message is ready in the chat. They tap send. | رسالته الأولى جاهزة بالمحادثة، ويضغط إرسال. |
 | `form.whatsapp.next.2` | It arrives on your WhatsApp. | توصل على الواتساب عندكم. |
-| `form.whatsapp.next.3` | Our team calls them during working hours. | وفريقنا يتصل عليه خلال أوقات الدوام. |
+| `form.whatsapp.next.3` | Our team calls them within 5 minutes during working hours. | وفريقنا يتصل عليه خلال ٥ دقايق في أوقات الدوام. |
 | `form.whatsapp.next.3.dwy` | Your team calls them. | وفريقكم يتصل عليه. |
 
 **The example form** (drawn when no form is confirmed; it speaks to the customer, so it is singular)
@@ -502,6 +509,7 @@ The headline, questions and options of a confirmed form are the client's own, in
 - هذا أول فلتر، والمكالمة هي الفلتر الثاني.
 - أسماء الخدمات والمناطق والكلام هنا، كلها صحيحة؟
 - (If they want more questions) كل سؤال زيادة يطيّر معه ناس زينين بعد. نضيف سؤال لما الاستفسارات توضح إننا نحتاجه.
+- (If they ask about night) واللي يوصل بالليل، نتصل عليه من الساعة ١٠ الصبح بأول يوم دوام.
 
 ## L6 · `call`
 
@@ -631,7 +639,7 @@ The calendar day on row 5 names its blocked hour: Busy · مشغول.
 
 | # | English job | Arabic job | English why | Arabic why |
 |---|---|---|---|---|
-| 2 | Call fast, note every try, keep every stage true | اتصلوا بسرعة، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة | Interest fades, and a missing note means nobody knows what happened. | الحماس يبرد، والملاحظة الناقصة تخلي ماحد يعرف اللي صار. |
+| 2 | Call within 5 minutes, note every try, keep every stage true | اتصلوا خلال ٥ دقايق، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة | Interest fades, and a missing note means nobody knows what happened. | الحماس يبرد، والملاحظة الناقصة تخلي ماحد يعرف اللي صار. |
 | 5 | (unchanged) | (unchanged) | Your team books into the times you leave free. | فريقكم يحجز بالأوقات اللي تخلونها فاضية. |
 
 **Spoken lines (Arabic)**
@@ -654,7 +662,8 @@ The calendar day on row 5 names its blocked hour: Busy · مشغول.
 | `days.1.open` | Can run longer | ممكن تطوّل |
 | `days.2.when` | Your first check-in · a week or two in | أول مكالمة متابعة · بعد أسبوع أو أسبوعين |
 | `days.2.date` | {next.checkin} | {next.checkin} |
-| `days.3.when` | Then every two weeks | وبعدها كل أسبوعين |
+| `days.3.when` | Then weekly or every two weeks | وبعدها كل أسبوع أو كل أسبوعين |
+| `days.3.why` (its own line under the key, in ink-2, and in the notes) | Depending on your plan and how long you've been with us. | على حسب باقتكم، وكم صار لكم معنا. |
 | `days.3.line` | 20 to 30 minutes on Zoom: what's working, and what we're changing. | من ٢٠ إلى ٣٠ دقيقة على زوم: اللي شغال، واللي بنغيره. |
 | `days.4.line` | At 30, 60 and 90 days, that check-in looks back over the month. | عند ٣٠ و٦٠ و٩٠ يوم، مكالمة المتابعة تراجع الشهر كامل. |
 | `days.ms.label` | In this order, not on a date: | بهالترتيب، مو بتاريخ: |
@@ -670,6 +679,7 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged.
 **Spoken lines (Arabic)**
 - فيه بدايات تكون زحمة، وفيه بدايات هادية. وبالحالتين، إحنا نكتشف اللي يتفاعل معه سوقكم.
 - والتحديثات توصلكم بالقروب أول بأول.
+- بعد أول مكالمة متابعة، تكون المكالمات كل أسبوع أو كل أسبوعين، على حسب باقتكم، وكم صار لكم معنا.
 - مكالمات المتابعة: لابتوب ومكان هادي، مو وأنتم بالسيارة. واللي بعدها نحجزها بآخر كل مكالمة.
 - **Temp check:** هالإيقاع يناسبكم؟
 - (DWY) أول حجز بيكون من فريقكم.
@@ -707,12 +717,11 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged.
 |---|---|---|
 | 5.4 tags | Preview · Your form · Example form · Example · Example wording · Example written from our script · Demo workspace · Starter, from our templates · Illustration | معاينة · نموذجكم · نموذج للتوضيح · مثال · صياغة للتوضيح · مثال مكتوب من سكربتنا · حساب تجريبي · إعلان بداية، من قوالبنا · توضيح |
 | 6.5 queue card | New enquiry · {service} | استفسار جديد · {service} |
-| 6.5 queue chip | Top of the list | أول القائمة |
 | 6.5 queue card | Try 2 of 4 · {service} · 5 pm | المحاولة ٢ من ٤ · {service} · ٥ مساءً |
 | 6.5 queue card | Callback · {service} · 10 am | معاودة اتصال · {service} · ١٠ صباحاً |
 | 6.5 queue card | Not reached after 4 tries · reason noted | ما ردّ بعد ٤ محاولات · السبب مكتوب |
 | 6.5 queue card | Came in at night? Called from 10 the next working morning. | وصل بالليل؟ نتصل عليه من الساعة ١٠ صباح أول يوم دوام. |
-| 6.8 queue chip, DWY | Your team: call now | فريقكم: اتصلوا الحين |
+| 6.8 queue chip, DWY | Your team | فريقكم |
 | 6.5 calendar entry | {day} · 4 pm · Appointment · {place} | {day} · ٤ مساءً · موعد · {place} |
 | 7.2 to 7.4 Meta chrome | See more · Like · Comment · Share | عرض المزيد · أعجبني · تعليق · مشاركة |
 | 7.3 label | Reels and Stories | ريلز وستوري |
@@ -755,3 +764,17 @@ The Arabic follows `CONTENT.md`'s composition pass line for line. No new Arabic 
 - `portal.4.tag` is gone. `portal.4.copy` is set as its parts: the three questions (`portal.4.asks`) and «كم ضغطة، بنفس اليوم.» (`portal.4.taps`).
 - `part.why` is gone (no column head).
 
+---
+
+# CEO answers (2026-10-20)
+
+The Arabic follows `CONTENT.md`'s copy rules 1, 5 and 6 as rewritten that day, line for line, under the voice skill in the slide-level white Gulf register (Saudi-safe, the client in the plural, the customer singular). Decision 11 records the word choices.
+
+- `journey.3` and the new `journey.3.line.uae`: «نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام» opens the line; «الاستفسارات الجديدة تطلع أول القائمة» is gone (the queue card shows the list); the hours and the night sentence are the approved Arabic, unchanged.
+- `journey.3.dwy`: «اتصلوا أول ما يوصل» becomes «اتصلوا خلال ٥ دقايق.», and the tries keep the chip's own words. L8's DWY tile 2 «اتصلوا بسرعة» becomes «اتصلوا خلال ٥ دقايق».
+- `journey.6.deciding`: «عليكم. تابعوه، وبعدها سجلوا النتيجة.» becomes «علينا وعليكم. نتصل عليه ونتابع معه، وأنتم بعد تتابعونه، لأنكم تعرفونه أكثر. وبعدها سجلوا النتيجة.» The DWY line is unchanged.
+- `form.thanks.default` and `form.whatsapp.next.3` add «خلال ٥ دقايق في أوقات الدوام». The thank-you's «بيتواصل معك» becomes «بيتصل عليك», so the Arabic promises a call, as the English does and as the WhatsApp step beside it says (يتصل عليه); the rest of each line is the approved Arabic.
+- `days.3.when` is «وبعدها كل أسبوع أو كل أسبوعين», and the new `days.3.why` is «على حسب باقتكم، وكم صار لكم معنا.»
+- Spoken lines: stop 3 now says the promise, the hours, the night rule and the tries in one line (it replaces the night answer), and a second line gives a UAE client's hours, as the slide's UAE line does; L5 gains the night line «واللي يوصل بالليل، نتصل عليه من الساعة ١٠ الصبح بأول يوم دوام.» in the journey's own words; the no-show line adds «ونتصل عليه ونحجز له من جديد»; the shared follow-up at stop 6 (فريق الاتصال عندنا, so it is clear whose callers) and the rhythm on the 90 days are new.
+- The done-with-you queue chip «فريقكم: اتصلوا الحين» becomes «فريقكم»: it says who calls, and the stop's words beside it say how fast (اتصلوا خلال ٥ دقايق). The done-for-you chip «أول القائمة» was never drawn and is gone.
+- Unchanged on purpose: the chip «لين ٤ محاولات خلال ٣ أيام دوام», the first check-in «أول مكالمة متابعة · بعد أسبوع أو أسبوعين», the no-show «علينا. نتصل عليه ونحجز له من جديد.», and every DWY fork line.

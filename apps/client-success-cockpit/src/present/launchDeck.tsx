@@ -376,8 +376,11 @@ function StopWords({
 /**
  * Journey stop 6's two outcomes, in the lanes' line language: the meeting's
  * line (the leader's end) runs on, solid, to a node ahead (came, and
- * thinking it over: yours), and drops, dotted, to the lanes' rebook mark
- * (didn't show). Each end carries its name and one line beside it.
+ * thinking it over), and drops, dotted, to the lanes' rebook mark (didn't
+ * show). Each end carries its name and one line beside it. Done for you,
+ * the one thinking it over is followed up by both of us and marked by the
+ * client, so that end stays in the client's ink with its first sentence
+ * ("Both of us.") in our teal; done with you it is all theirs, in ink.
  */
 function Fork({
   lang,
@@ -386,18 +389,32 @@ function Fork({
   noShow,
 }: {
   lang: Lang;
-  /** The no-show is ours to rebook (teal); done with you it is theirs. */
+  /**
+   * Done for you: the no-show is ours to rebook (teal), and the follow-up
+   * of someone thinking it over is shared (its first sentence in teal).
+   * Done with you, both are theirs.
+   */
   ours: boolean;
   came: [L, L];
   noShow: [L, L];
 }) {
-  const y0 = 40;
+  const cameLine = t(came[1], lang);
+  // The shared line's first sentence, ours and theirs together, in teal.
+  const both = ours ? /^(.+?\.)\s+(.+)$/s.exec(cameLine) : null;
+  // That line runs to two lines, so it sits beside its node with its name
+  // above it (clear of the no-show's end), and the fork starts lower to
+  // leave the name its room under the stop's words.
+  const y0 = both ? 92 : 40;
   const y1 = y0 + 96;
   const trunk = 56;
   const end = 168;
   const tone = ours ? "var(--dk-teal)" : "var(--dk-ink-2)";
   return (
-    <div className="dkc-fork" data-ours={ours ? "" : undefined}>
+    <div
+      className="dkc-fork"
+      data-ours={ours ? "" : undefined}
+      style={{ height: y1 + 36 }}
+    >
       <svg
         width={end + 14}
         height={y1 + 16}
@@ -437,9 +454,19 @@ function Fork({
         />
       </svg>
       <i className="dkc-fork-anchor" data-anchor="" style={{ top: y0 }} />
-      <div className="dkc-fork-end" style={{ top: y0 }}>
+      <div
+        className="dkc-fork-end"
+        data-both={both ? "" : undefined}
+        style={{ top: y0 }}
+      >
         <b>{t(came[0], lang)}</b>
-        <p>{t(came[1], lang)}</p>
+        {both ? (
+          <p>
+            <span className="dkc-fork-both">{both[1]}</span> {both[2]}
+          </p>
+        ) : (
+          <p>{cameLine}</p>
+        )}
       </div>
       <div className="dkc-fork-end" data-noshow="" style={{ top: y1 }}>
         <b>{t(noShow[0], lang)}</b>
@@ -588,10 +615,12 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
     const F = J.fork;
     // The two ways a meeting goes, drawn as the lanes draw the fork: the
     // leader runs into the meeting's line, which goes on, solid, to "came,
-    // and thinking it over" (yours) and drops, dotted, to the lanes' rebook
-    // mark for a no-show (ours in teal; done with you, theirs in ink). The
-    // stop's words sit right on top; the lanes draw the fork from the next
-    // stop, so it is never named twice on one screen.
+    // and thinking it over" (both of us follow up and the client marks it,
+    // so the client's ink with "Both of us." in teal; done with you, theirs)
+    // and drops, dotted, to the lanes' rebook mark for a no-show (ours in
+    // teal; done with you, theirs in ink). The stop's words sit right on
+    // top; the lanes draw the fork from the next stop, so it is never named
+    // twice on one screen.
     return (
       <div className="dkc-stage" data-kind="line">
         <div className="dkc-stage-pic dkc-dots-pic" data-level="">
@@ -1779,6 +1808,11 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
     { length: 6 },
     (_, i) => (first ?? 14) + 14 * (i + 1),
   ).filter(n => n <= DAYS);
+  // Then weekly or every two weeks (their plan and how long they've been
+  // with us decide): the two-week check-ins solid, the weeks between open
+  // and smaller (so the unbooked first check-in, open at full size, keeps
+  // its own look), and the chart never draws one rhythm alone.
+  const weekly = [first ?? 14, ...after].map(n => n + 7).filter(n => n <= DAYS);
   const ring = new Set(
     [30, 60, 90].map(target =>
       [first ?? 10, ...after].reduce((a, b) =>
@@ -1888,6 +1922,15 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
               style={{ insetInlineStart: x(n) }}
             />
           ))}
+          {weekly.map(n => (
+            <i
+              key={`w${n}`}
+              className="dkc-prog-diamond"
+              data-open=""
+              data-weekly=""
+              style={{ insetInlineStart: x(n) }}
+            />
+          ))}
           {/* Its words start under the first diamond's start edge. */}
           <span
             className="dkc-prog-note"
@@ -1902,13 +1945,21 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
         {/* Each line under the chart starts with the mark it explains. */}
         <div className="dkc-prog-under">
           <p className="dk-small">
-            <i className="dkc-prog-key" aria-hidden />
+            {/* Both marks: every two weeks solid, the weeks between open and smaller. */}
+            <span className="dkc-prog-keys" aria-hidden>
+              <i className="dkc-prog-key" />
+              <i className="dkc-prog-key" data-open="" />
+            </span>
             <span>
               <b>{t(D.later, lang)}</b> · {t(D.laterLine, lang)}
+              {/* Why it is one of the two, under the rhythm it explains. */}
+              <span className="dkc-prog-why">{t(D.laterWhy, lang)}</span>
             </span>
           </p>
           <p className="dk-small dk-ink2">
-            <i className="dkc-prog-key" data-ring="" aria-hidden />
+            <span className="dkc-prog-keys" aria-hidden>
+              <i className="dkc-prog-key" data-ring="" />
+            </span>
             <span>{t(D.looksBack, lang)}</span>
           </p>
         </div>

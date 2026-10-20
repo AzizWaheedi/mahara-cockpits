@@ -577,8 +577,8 @@ export const FAQS: Record<PillarKey, Faq[]> = {
     {
       q: { en: "Who teaches it?", ar: "منو يدرّب؟" },
       a: {
-        en: "Our team, through the Premium Projects Academy and a weekly consulting call on your actual deals.",
-        ar: "فريقنا.. من خلال أكاديمية المشاريع المميزة، ومكالمة استشارة أسبوعية على صفقاتك الحقيقية.",
+        en: "Our team, through the Premium Projects Academy and a consulting call on your actual deals, weekly or every two weeks.",
+        ar: "فريقنا.. من خلال أكاديمية المشاريع المميزة، ومكالمة استشارة على صفقاتك الحقيقية كل أسبوع أو كل أسبوعين.",
       },
     },
   ],
@@ -632,8 +632,8 @@ export const INCLUDED: L[] = [
     ar: "متابعة اللي ما حضروا واللي ما قرروا",
   },
   {
-    en: "Sales training and a weekly consulting call",
-    ar: "تدريب مبيعات ومكالمة استشارة أسبوعية",
+    en: "Sales training and a consulting call, weekly or every two weeks",
+    ar: "تدريب مبيعات ومكالمة استشارة كل أسبوع أو كل أسبوعين",
   },
   {
     en: "Mahara OS, your portal, on laptop and phone",

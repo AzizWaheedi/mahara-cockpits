@@ -43,13 +43,12 @@ export function Tagged({
 
 /**
  * Our dialer's list, simplified (journey stop 3): four rows, no names, no
- * phone numbers, the client's own services. The new enquiry carries no time
- * and no "Calling" chip: the card shows the order, never a speed. The
- * stop's words already say the hours, the top of the list and the night
- * rule, so the card does not say them again: its order shows the first,
- * and done with you its one chip says who calls. No marks on the rows (a
- * ring per row read as a form's radio buttons): each row carries its place
- * in the queue, the new enquiry first, on the journey's row band.
+ * phone numbers, the client's own services. The stop's words above it say
+ * the 5 minutes, the working hours and the night rule, so the card does not
+ * say them again: it shows the order, the new enquiry first, and done with
+ * you its one chip says who calls. No marks on the rows (a ring per row
+ * read as a form's radio buttons): each row carries its place in the
+ * queue, the new enquiry first, on the journey's row band.
  */
 export function QueueCard({
   lang,

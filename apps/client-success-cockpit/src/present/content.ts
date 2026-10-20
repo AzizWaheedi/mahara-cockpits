@@ -4,9 +4,14 @@
  * the source; this file copies their words, it does not write new ones).
  *
  * The rules this copy keeps, pinned by scripts/deck-copy.test.ts:
- * - No speed promise and no results promise; no leads, no cost per lead and
- *   no budgets in money; no "every" or "always" for a process step; check-ins
- *   are every two weeks; a no-show is ours and someone deciding is theirs.
+ * - We call new enquiries within 5 minutes, said with the working hours and
+ *   the night rule; never "instantly", "same day" for our calls or fixes, or
+ *   the 21x and 100x figures. No results promise; no leads, no cost per lead
+ *   and no budgets in money; no "every" or "always" for a process step;
+ *   check-ins are weekly or every two weeks (the plan and how long they've
+ *   been with us decide), never one alone; a no-show is ours to rebook, and
+ *   someone thinking it over is followed up by both of us (done for you) or
+ *   by their own team (done with you).
  * - Roles, not names: the presenting CSM's first name is on the two covers
  *   only. The Arabic CSM title is gendered, and no seat carries a gender, so
  *   the cover uses the role نجاح العملاء, as the WhatsApp group row does.
@@ -782,16 +787,16 @@ export const LAUNCH = {
       },
       {
         line: {
-          en: "We call during working hours, 10 to 6, Saturday to Thursday. New enquiries go to the top of the list. Anything that comes in at night is called from 10 the next working morning.",
-          ar: "نتصل خلال أوقات الدوام: من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس. الاستفسارات الجديدة تطلع أول القائمة. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام.",
+          en: "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning.",
+          ar: "نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام: من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام.",
         },
         lineUae: {
-          en: "We call during working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. New enquiries go to the top of the list. Anything that comes in at night is called from 10 the next working morning.",
-          ar: "نتصل خلال أوقات الدوام: من ١٠ صباحاً إلى ٦ مساءً بتوقيت السعودية (من ١١ إلى ٧ بتوقيت الإمارات)، من السبت إلى الخميس. الاستفسارات الجديدة تطلع أول القائمة. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام.",
+          en: "We call new enquiries within 5 minutes during working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning.",
+          ar: "نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام: من ١٠ صباحاً إلى ٦ مساءً بتوقيت السعودية (من ١١ إلى ٧ بتوقيت الإمارات)، من السبت إلى الخميس. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ صباح أول يوم دوام.",
         },
         dwy: {
-          en: "A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call as soon as it arrives. Up to 4 tries over 3 working days.",
-          ar: "تنبيه الاستفسار الجديد يوصل لجوالات فريق الاتصال عندكم وللقروب. اتصلوا أول ما يوصل، لين ٤ محاولات خلال ٣ أيام دوام.",
+          en: "A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call within 5 minutes. Up to 4 tries over 3 working days.",
+          ar: "تنبيه الاستفسار الجديد يوصل لجوالات فريق الاتصال عندكم وللقروب. اتصلوا خلال ٥ دقايق. لين ٤ محاولات خلال ٣ أيام دوام.",
         },
       },
       {
@@ -865,9 +870,14 @@ export const LAUNCH = {
         ar: "رسايل المتابعة تبدي تلقائياً.",
       },
       deciding: { en: "Came, and thinking it over?", ar: "حضر وقاعد يفكر؟" },
+      /**
+       * Done for you, both of us follow them up: our caller calls, and the
+       * client too, who knows the customer best; the client marks it. The
+       * first sentence is ours and theirs together, drawn in teal.
+       */
       decidingLine: {
-        en: "Yours. Follow up, then mark it.",
-        ar: "عليكم. تابعوه، وبعدها سجلوا النتيجة.",
+        en: "Both of us. We call to follow up, and so do you: you know them best. Then mark it.",
+        ar: "علينا وعليكم. نتصل عليه ونتابع معه، وأنتم بعد تتابعونه، لأنكم تعرفونه أكثر. وبعدها سجلوا النتيجة.",
       },
       decidingDwy: {
         en: "Follow up, then move it to the right stage.",
@@ -876,8 +886,8 @@ export const LAUNCH = {
     },
     queue: {
       fresh: { en: "New enquiry · {service}", ar: "استفسار جديد · {service}" },
-      top: { en: "Top of the list", ar: "أول القائمة" },
-      topDwy: { en: "Your team: call now", ar: "فريقكم: اتصلوا الحين" },
+      /** Done with you, the new row's one chip says who calls (the stop's words say how fast). */
+      topDwy: { en: "Your team", ar: "فريقكم" },
       second: {
         en: "Try 2 of 4 · {service} · 5 pm",
         ar: "المحاولة ٢ من ٤ · {service} · ٥ مساءً",
@@ -1069,8 +1079,8 @@ export const LAUNCH = {
       ar: "وبعدها صفحة الشكر، ورسالة ترحيب فيها فيديو قصير يعرّف عنكم.",
     },
     thanksDefault: {
-      en: "Thank you. Our team will call you during working hours.",
-      ar: "شكراً لك. فريقنا بيتواصل معك خلال أوقات الدوام.",
+      en: "Thank you. Our team will call you within 5 minutes during working hours.",
+      ar: "شكراً لك. فريقنا بيتصل عليك خلال ٥ دقايق في أوقات الدوام.",
     },
     fallback: {
       en: "We're finishing yours.",
@@ -1104,8 +1114,8 @@ export const LAUNCH = {
       },
     ],
     waNextUs: {
-      en: "Our team calls them during working hours.",
-      ar: "وفريقنا يتصل عليه خلال أوقات الدوام.",
+      en: "Our team calls them within 5 minutes during working hours.",
+      ar: "وفريقنا يتصل عليه خلال ٥ دقايق في أوقات الدوام.",
     },
     waNextDwy: {
       en: "Your team calls them.",
@@ -1360,8 +1370,8 @@ export const LAUNCH = {
           ar: "نتائجكم توضح أي إعلانات تجيب مشاريع حقيقية.",
         },
         jobDwy: {
-          en: "Call fast, note every try, keep every stage true",
-          ar: "اتصلوا بسرعة، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة",
+          en: "Call within 5 minutes, note every try, keep every stage true",
+          ar: "اتصلوا خلال ٥ دقايق، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة",
         },
         whyDwy: {
           en: "Interest fades, and a missing note means nobody knows what happened.",
@@ -1428,7 +1438,15 @@ export const LAUNCH = {
       en: "Your first check-in · a week or two in",
       ar: "أول مكالمة متابعة · بعد أسبوع أو أسبوعين",
     },
-    later: { en: "Then every two weeks", ar: "وبعدها كل أسبوعين" },
+    later: {
+      en: "Then weekly or every two weeks",
+      ar: "وبعدها كل أسبوع أو كل أسبوعين",
+    },
+    /** Why the rhythm is one of the two: the client's plan and their time with us. */
+    laterWhy: {
+      en: "Depending on your plan and how long you've been with us.",
+      ar: "على حسب باقتكم، وكم صار لكم معنا.",
+    },
     laterLine: {
       en: "20 to 30 minutes on Zoom: what's working, and what we're changing.",
       ar: "من ٢٠ إلى ٣٠ دقيقة على زوم: اللي شغال، واللي بنغيره.",
@@ -1515,19 +1533,22 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
   journey: {
     say: [
       "Walk the stops with the arrow keys. Let each one land before you speak. The mini rail on the next slides makes the callback; don't announce it.",
-      "At stop 3, say the hours plainly and don't promise faster. If they ask why not at night: the team works 10 to 6, Saturday to Thursday, and night enquiries are among the first calls of the next working morning.",
-      "At stop 6, point at the dotted line: the no-show comes back to us.",
+      "At stop 3, say it plainly: we call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday (11 to 7 for a UAE client), and anything that comes in at night is called from 10 the next working morning. Then up to 4 tries over 3 working days.",
+      "At stop 6, point at the dotted line: a no-show comes back to us, and we call to rebook.",
+      "Someone who came and is thinking it over is followed up by both sides: our caller calls them, and the client follows up too, because they met the customer and know them best. The client still marks the outcome.",
     ],
     sayAr: [
-      "(The calling stop, if they ask about night) فريقنا يشتغل من ١٠ الصبح إلى ٦ المسا، من السبت إلى الخميس، واللي يوصل بالليل يكون من أول الاتصالات بأول يوم دوام.",
-      "(The fork) شوفوا هالخط: اللي ما يحضر، يرجع لنا.",
+      "(The calling stop) نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام، من ١٠ الصبح إلى ٦ المسا، من السبت إلى الخميس. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ الصبح بأول يوم دوام. ونحاول معه لين ٤ مرات، خلال ٣ أيام دوام.",
+      "(A UAE client, the hours) من ١٠ الصبح إلى ٦ المسا بتوقيت السعودية، يعني من ١١ الصبح إلى ٧ المسا بتوقيت الإمارات.",
+      "(The fork) شوفوا هالخط: اللي ما يحضر، يرجع لنا، ونتصل عليه ونحجز له من جديد.",
+      "(Came and thinking it over) واللي حضر وقاعد يفكر، نتابعه إحنا وأنتم: فريق الاتصال عندنا يتصل عليه ويتابع معه، وأنتم بعد تتابعونه، لأنكم قابلتوه وتعرفونه أكثر. وبعدها سجلوا النتيجة.",
     ],
     temp: {
       en: "Any step here you'd want done differently?",
       ar: "فيه خطوة هنا تبونها تمشي بطريقة ثانية؟",
     },
     dwy: [
-      "Stops 3 and 4 sit in their lane: their team calls and books. The no-show line stays in their lane too.",
+      "Stops 3 and 4 sit in their lane: their team calls within 5 minutes of the alert, and books. The no-show line stays in their lane too, and so does the follow-up of someone thinking it over.",
     ],
   },
   ads: {
@@ -1572,11 +1593,13 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       'Read the filter questions out: "This is the first filter. The call is the second."',
       "Check the facts with them: service names, areas, wording.",
       "If they want more questions: every extra question also loses some good people. We add one when the enquiries show we need it.",
+      'The thank-you screen and the WhatsApp steps promise the call within 5 minutes during working hours, the same promise as the journey. A customer who writes at night sees "during working hours" and is called from 10 the next working morning.',
     ],
     sayAr: [
       "هذا أول فلتر، والمكالمة هي الفلتر الثاني.",
       "أسماء الخدمات والمناطق والكلام هنا، كلها صحيحة؟",
       "(If they want more questions) كل سؤال زيادة يطيّر معه ناس زينين بعد. نضيف سؤال لما الاستفسارات توضح إننا نحتاجه.",
+      "(If they ask about night) واللي يوصل بالليل، نتصل عليه من الساعة ١٠ الصبح بأول يوم دوام.",
     ],
   },
   call: {
@@ -1647,11 +1670,13 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "No numbers promised. Never give a date for a milestone.",
       "Some first weeks are busy and some are quiet. Either way, we're finding what their market responds to.",
       "Updates come in the group as things happen.",
+      'The rhythm, both and why: "After the first one, weekly or every two weeks, depending on your plan and how long you\'ve been with us." Never promise one of the two alone.',
       "Check-ins: a laptop, somewhere quiet, not in the car. The next one is booked at the end of each.",
     ],
     sayAr: [
       "فيه بدايات تكون زحمة، وفيه بدايات هادية. وبالحالتين، إحنا نكتشف اللي يتفاعل معه سوقكم.",
       "والتحديثات توصلكم بالقروب أول بأول.",
+      "بعد أول مكالمة متابعة، تكون المكالمات كل أسبوع أو كل أسبوعين، على حسب باقتكم، وكم صار لكم معنا.",
       "مكالمات المتابعة: لابتوب ومكان هادي، مو وأنتم بالسيارة. واللي بعدها نحجزها بآخر كل مكالمة.",
     ],
     temp: { en: "Does this rhythm work for you?", ar: "هالإيقاع يناسبكم؟" },

@@ -377,17 +377,16 @@ x 136       x 336 348      x 548 560      x 760  x 832                          
 |  Your customer      Our team           You                (lane heads, Geist 500 24, y 252)|
 |  :             :    :             :    :             :    (the lane bands start here)      |
 |  (v) Sees your ad                                         [ Our team does this ]           |
-|   |                                                       We call during working hours,    |
-|  (v) Answers your questions                               10 to 6, Saturday to Thursday.   |
-|     \________                                             New enquiries go to the top of   |
-|#             (o) We call                                  the list. Anything that comes in |
-|               |  \___________________________________ .   at night is called from 10 the   |
-|               :  Booked, confirmed, reminded          \   next working morning.            |
+|   |                                                       We call new enquiries within 5   |
+|  (v) Answers your questions                               minutes during working hours,    |
+|     \________                                             10 to 6, Saturday to Thursday.   |
+|#             (o) We call                                  Anything that comes in at night  |
+|               |  \___________________________________ .   is called from 10 the next       |
+|               :  Booked, confirmed, reminded          \   working morning.                 |
 |               :.......                                 \  [ Up to 4 tries over 3 working   |
 |                       ( ) Lands with you                \   days ]                         |
 |                        :  You meet                       > +--------------------------+    |
 |                        :  You mark it                      | New enquiry · Kitchens   |    |
-|                                                            |       [Top of the list]  |    |
 |                                                            | Try 2 of 4 · Bathrooms   |    |
 |                                                            | Callback · Villa fit-out |    |
 |                                                            | Not reached · noted      |    |
@@ -456,10 +455,10 @@ one place a fact is explained (the decision table in `CONTENT.md`).
 |---|---|---|---|---|---|
 | 1 | Sees your ad | Customer | Customer | Their first ad in the Instagram feed phone (7.2), or the Reels phone if they only have video | Thin (slide 3) |
 | 2 | Answers your questions | Customer | Customer | Their confirmed form's question screen in a phone (7.5), the example form tagged "Example form", or their landing page or WhatsApp destination | Thin (slide 5) |
-| 3 | We call | Our team | You | The call queue card (6.5) | Home of the hours, the list, the tries and "not every enquiry books" |
+| 3 | We call | Our team | You | The call queue card (6.5) | Home of the call within 5 minutes with the hours and the night rule, the list (the card), the tries and "not every enquiry books" |
 | 4 | Booked, confirmed, reminded | Our team | You | The five-dot strip (6.5), no words | Thin (slide 6, stop 7) |
 | 5 | Lands with you | You | You | The calendar entry (6.5); the amber "Connect Google Calendar" line when the kickoff says it is not connected | Home of the calendar, Mahara OS and the alert |
-| 6 | You meet | You | You | `meeting-table.webp` cropped across the top of the stage, with no scrim, and the fork's two cards beneath it (6.4) | Home of the no-show rule |
+| 6 | You meet | You | You | `meeting-table.webp` cropped across the top of the stage, with no scrim, and the fork's two cards beneath it (6.4) | Home of who follows up after the meeting (the fork) |
 | 7 | You mark it | You | You | `portal-outcome-{lang}.webp` as a plain figure (1 px `--dk-line-strong` edge, 16 px radius, no browser bar), cropped to the form (Demo workspace) | Thin (slide 7) |
 
 **Stage layout.** Two kinds:
@@ -477,15 +476,22 @@ legible in the share.
 
 ### 6.4 Stop 6, the fork
 
-Two cards side by side, under the meeting render (cards floated over a
-dimmed photo would murk both in a share):
+The meeting's two outcomes (drawn in the lanes' line language since 19.11):
 
 - **"Didn't show?"** Ours. We call to rebook.
-- **"Came, and thinking it over?"** Yours. Follow up, then mark it.
+- **"Came, and thinking it over?"** Both of us. We call to follow up, and so
+  do you: you know them best. Then mark it.
 
-This is the one place either deck says who owns a no-show. It matches the
-Client Process Map and the lead's rule. The portal slide keeps only "mark it,
-the same day".
+This is the one place either deck says who follows up after a meeting. The
+no-show matches the Client Process Map: its dotted return and rebook mark are
+ours, in teal. The customer thinking it over is shared done for you, by the
+CEO's answer of 2026-10-20 ("We will call them to follow up to rebook but also
+the client has the most context and should follow up as well"): that end keeps
+the meeting's line and node, because the client still marks it, and its line
+stays in the client's ink-2 with its first sentence, "Both of us.", in our
+teal, so the drawing says the follow-up is shared. Done with you is unchanged:
+their team makes the calls, and the whole fork stays in the "You" lane. The
+portal slide keeps only "mark it, the same day".
 
 ### 6.5 The drawn cards (our own UI, so deck tokens)
 
@@ -493,14 +499,17 @@ the same day".
 drawn as a simplified version of our dialer's list: four rows, no names, no
 phone numbers, services from their own chips (fallback "your service").
 
-1. "New enquiry · {service}", with a teal chip "Top of the list". On arrival
-   it drops in from above and pushes the others down.
+1. "New enquiry · {service}", first in the list, its place number in teal on
+   the row band. No chip done for you (done with you, one ink chip, "Your
+   team", 6.8). On arrival it drops in from above and pushes the others down.
 2. "Try 2 of 4 · {service} · 5 pm"
 3. "Callback · {service} · 10 am"
 4. "Not reached after 4 tries · reason noted", in ink-3.
 
-The new row carries no time and no "Calling" chip: the card shows the order,
-never a speed. Under it, one ink-2 line, with no glyph (a moon would be
+The new row carries no clock and no speed chip: the stop's words beside the
+card already say the call within 5 minutes during working hours (copy rule
+1), and the card shows the order, so a timer or a speed chip would only say
+it a second time. Under it, one ink-2 line, with no glyph (a moon would be
 decoration; the words say night): "Came in at night? Called from 10 the next
 working morning." Tag: Example. It shows the true
 mechanism without a fake caller ID on a phone.
@@ -563,9 +572,9 @@ there.
 
 When `serviceModel()` says DWY, stops 3 and 4 sit in the "You" lane, their
 words become the client's team's job ("Your team calls", "Your team books"),
-the queue card's chip reads "Your team: call now" instead of "Top of the
-list", the line visibly stays in the client's column for those steps, and the
-fork's dotted curve stays in the "You" lane. Unknown service model: done for
+the queue card's new row carries one ink chip, "Your team" (who calls; the
+words beside it say how fast), the line visibly stays in the client's column
+for those steps, and the fork's dotted curve stays in the "You" lane. Unknown service model: done for
 you, with a prep warning (section 12).
 
 ### 6.9 RTL
@@ -694,8 +703,8 @@ drawn with the example greeting and three generic questions from
 Page name. Tag: "Example form". Its thank-you is the default one.
 
 **The default thank-you.** Their avatar and "Thank you. Our team will call you
-during working hours." No button. A video frame (a 16:9 poster with a play
-glyph) shows only when `prep.welcome_video` is on.
+within 5 minutes during working hours." No button. A video frame (a 16:9
+poster with a play glyph) shows only when `prep.welcome_video` is on.
 
 A WhatsApp destination draws a WhatsApp chat opening with the prefilled
 message. A landing page shows a prep-uploaded phone screenshot of the page in
@@ -787,16 +796,21 @@ call, your portal, your part, the first 90 days, green light.
 The decision table in `CONTENT.md` ("Decision table, binding for both files")
 is the one list of homes, and this file follows it. In short:
 
-- the hours, the list, the tries and "not every enquiry books" live on
-  journey stop 3;
+- the call within 5 minutes with the hours and the night rule, the list, the
+  tries and "not every enquiry books" live on journey stop 3 (the form slide
+  repeats only "within 5 minutes during working hours", in its thank-you and
+  its WhatsApp step);
 - the confirmation and the reminders live on the call's stop 7, and journey
   stop 4 is one line and five unlabelled dots;
 - what lands with the client lives on journey stop 5, and the call's stop 8
   shows what it carries;
-- the no-show fork lives on journey stop 6;
+- the fork lives on journey stop 6: a no-show is ours, and a customer
+  thinking it over is followed up by both of us, done for you;
 - the thank-you screen lives on the form slide;
 - "the numbers decide" lives on creative freedom, once;
 - marking outcomes ends the portal slide;
+- the check-in rhythm (weekly or every two weeks after the first) lives on
+  the 90 days;
 - group hours live on onboarding slide 3; the green light's hours card shows
   only for a client who never saw the onboarding deck.
 
@@ -1152,8 +1166,16 @@ the "You" lane's ink, 8.3).
   date): solid teal over weeks 1 and 2, then a 2 px dashed teal outline with
   no fill to week 5, ending without a cap. That is how a programme of works
   draws float; a gradient fading to nothing would be a glow by another name.
-  The first check-in is a bracket (day 7 to 14), then a diamond every two
-  weeks. The check-ins nearest day 30, 60 and 90 carry a ring, and one line
+  The first check-in is a bracket (day 7 to 14), then the later check-ins as
+  diamonds. The rhythm is "weekly or every two weeks", by the plan and how
+  long the client has been with us (CEO, 2026-10-20), so the chart draws
+  both: the check-ins every two weeks are solid diamonds, and the weeks
+  between are open diamonds (`data-weekly`), smaller (14 px against 22) on
+  the same centre line, so the first check-in before it is booked (open, full
+  size) keeps its own look. The key line under the chart starts with both
+  marks and names both ("Then weekly or every two weeks"), with the reason on
+  its own ink-2 line under it ("Depending on your plan and how long you've
+  been with us."). The drawing never stands for one rhythm alone. The check-ins nearest day 30, 60 and 90 carry a ring, and one line
   says they look back over the month. There is no separate review row: no SOP
   defines a review meeting. Milestones are an undated sequence under the
   chart, never placed on it.
@@ -1165,8 +1187,9 @@ the "You" lane's ink, 8.3).
   "Week" (13 "Week n" labels crowd each other at 104 px a column). Every
   column's label sits the same 12 px after its line, the first included.
 - **Keys:** the two lines under the chart each start with the mark they
-  explain (the check-in diamond, the ringed diamond), and the dashed open end
-  is labelled where it is drawn: "Can run longer".
+  explain (the rhythm's two marks, solid and a smaller open one; the ringed
+  diamond), and the dashed open end is labelled where it is drawn: "Can run
+  longer".
 - No rail.
 
 ### 8.10 Green light
@@ -1916,7 +1939,7 @@ Arabic deck is Arabic-Indic, the thumbnails' shapes included (٩:١٦, ٤:٥).
 | Primary text, headline | Per creative, prep | Caption shows the page name only | Missing, Add |
 | Call to action | Per creative | "Learn more" (Default) | Default, Change |
 | Form questions | The confirmed form (exact form id, CSM tick), then prep | Slide hidden; journey stop 2 shows the example form, tagged | "No form confirmed…" |
-| Thank-you text | The confirmed form's thank-you | "Thank you. Our team will call you during working hours." | Default |
+| Thank-you text | The confirmed form's thank-you | "Thank you. Our team will call you within 5 minutes during working hours." | Default |
 | Consultant's name | Call guide, form, prep | Amber "To give us" chip | "Consultant's name missing…" |
 | Consultation types | Onboarding form | "a consultation"; the place chip | |
 | Instagram handle | Onboarding form | Its bubble (4:35) is dropped | |
@@ -2042,7 +2065,7 @@ copy test fails on them.
 | `ads-account`, `ads-twenty-on`, `ads-twenty-off` | Daily budgets, spend and a cost per result; other clients' ads, faces and logos. Creative freedom's proof is drawn (7.9) |
 | `interior-majlis.webp` | The client saw it on the pitch, and behind their name it reads as their project. Both covers use the faint lanes |
 | Wistia `ti2alygqn0` and callcenter.maharamedia.com | Real calls with no consent record |
-| The speed slide, "within 5 minutes", the MIT figures | Contradicted by measured data |
+| The speed slide (21×) and the MIT figures (100×) | Statistics the CSM decks never quote. "Within 5 minutes" itself is now said in words (CEO, 2026-10-20; `CONTENT.md` copy rule 1): for our calls always beside "during working hours", and on stop 3 with the hours and the night rule; done with you, their own team's lines carry no hours |
 | `portal-results`, `portal-ads`, `portal-leads` | Cost per lead and lead counts |
 | The pillar `Rail`, `FaqPanel`, the problem picker, prospect numbers, budget, investment, guarantee | Sales-only |
 | `LogoRiver`, count-ups | No ambient motion on a shared screen |
@@ -2061,7 +2084,7 @@ copy test fails on them.
 | `ServiceMatrix.tsx`, `AccessList.tsx`, `RedLines.tsx`, `YourPart.tsx`, `Programme.tsx`, `GreenLight.tsx` | The remaining slides |
 | `NotesWindow.tsx`, `PrepView.tsx`, `usePrep.ts`, `useDeckSources.ts`, `deckContext.ts` | Presenter views, data and the shared deck state |
 | `present.css` | The CSM deck's own classes, prefixed `dkc-` so nothing collides with the sales `.dk-ig`, `.dk-chat`, `.dk-path`, `.dk-call` |
-| Tests in `apps/client-success-cockpit/scripts/` | Slide order; the copy rules (no leads, no cost per lead, no "5 minutes", no "just now", no ROI, no guarantee, no "every" on process steps, no em dash in Arabic); the banned asset names (16.2); Esc never navigates; one home per fact (each decision-table fact's key appears on one slide only); the slot table; the upload state machine |
+| Tests in `apps/client-success-cockpit/scripts/` | Slide order; the copy rules (no leads, no cost per lead; "within 5 minutes" only beside "during working hours", and no 21×, 100×, "instantly" or "same day" for our calls; the check-in rhythm only as "weekly or every two weeks"; the fork's "thinking it over" end shared done for you; no ROI, no guarantee, no "every" on process steps, no em dash in Arabic); the banned asset names (16.2); Esc never navigates; one home per fact (each decision-table fact's key appears on one slide only); the slot table; the upload state machine |
 | A harness | `present-harness.html` with fixtures, in the brief harness pattern |
 
 ### 16.4 State held in the shell
@@ -2140,7 +2163,10 @@ changed:
    shows a number. It is now the call queue card, which shows a true mechanism
    (new enquiries jump to the top) and carries the hours and tries sentence
    the lead fixed. After the critique its new row lost "just now" and the
-   "Calling" chip, which drew a speed claim the words avoid.
+   "Calling" chip. Since the CEO's answer of 2026-10-20 the words beside it
+   say the call within 5 minutes during working hours, so the card still
+   carries no speed chip: it would say the same thing twice. Done with you,
+   its one chip, "Your team", says who calls.
 4. **The reminders.** First drawn as a phone lock screen with three
    notifications. That needed invented message text and caller IDs. It is now
    a plain timeline, worded as what we do, with no buttons drawn, and it lives
@@ -2545,7 +2571,7 @@ an earlier line disagree, this list wins. No copy changed.
 |---|---|
 | 4.2 | Every label the client reads is at the floor (24, Plex 26): the mini rail's step name, the 90 days' axis, go-live label and notes, the journey calendar's hours, the tray's captions and switch, Your part's calendar day and the slide count. The canvas still scales whole (no reflow), so at 1366 x 768 nothing outside a phone arrives under 17 px. |
 | 6.1, 6.2 | Done with you, our team holds no step, so its lane narrows to its head (148) in ink-3, not teal, and the client's lane takes the room (424); the matrix stays 840 wide. The no-show branch stays in the client's lane, between "You meet" and "You mark it", out past the names, its name beside it inside that lane. |
-| 6.3 stop 3 | The stop's words say the hours, the top of the list and the night rule (copy rule 1), so the card does not repeat them: no "Top of the list" chip and no night line. The tries are the card's legend under it, on the start side, with the Example tag on the end corner. The rows carry their place in the queue (1 to 4, the first in teal on the row band); no ring per row. The card is set so its first row is level with the lit row when the words leave room, and the leader runs straight into that row. A long service name wraps; it is never cut. |
+| 6.3 stop 3 | The stop's words say the hours, the top of the list and the night rule (copy rule 1), so the card does not repeat them: no "Top of the list" chip and no night line. (Since 2026-10-20 the words say the 5 minutes, the hours and the night rule, and the top of the list is the card's own row order: 19.13.) The tries are the card's legend under it, on the start side, with the Example tag on the end corner. The rows carry their place in the queue (1 to 4, the first in teal on the row band); no ring per row. The card is set so its first row is level with the lit row when the words leave room, and the leader runs straight into that row. A long service name wraps; it is never cut. |
 | 6.3 stop 4 | The steps before the meeting are drawn at the lanes' scale: nodes on the dotted line from the lit row down to "You meet" (the meeting's node level with that row), names at the row names' size and one x. The leader runs straight into the first node. |
 | 6.3 stop 6 | The CRM's stage names keep one line each ("Quote sent" no longer wraps under its neighbours). |
 | 7.1 | The island carries a 1 px `--dk-line` edge, so it shows on Instagram's black status bar as it does over a picture: the three phones read as one device. Before a creative exists, the picture is a brand card: the mark with the client's name under it, not a bare monogram. |
@@ -2577,7 +2603,7 @@ an earlier line disagree, this list wins.
 |---|---|
 | 7.9, 8.1 | The cover's road strip names its lit node, "Launch call · Today", under that node; its end is not named (it had read as today, and the green light's "Go-live" named the same end another way). |
 | 8.3 | The tray's count sits beside what it counts: beside the title when there is one list, beside each source when there are two ("Your creatives 6" had stood over five). With nothing in the tray, the lead is "How your ads will look on your customers' phones." ("right now" contradicted "We're finishing your first ads"). The in-use caption "Facebook feed" stays on one line (the tray's box now reaches into the gap before the phones). A leader's dot slides along its part to its label's line, and the labels spread about their middle, so the leaders run straight; a label that must sit past its part's edge gets a square elbow, never a diagonal (Reels' button leader was bent). |
-| 6.2, 6.3, 6.5 | A no-show has one name: "Didn't show?" on the fork, as the CRM's stage "Didn't show". Done with you, the no-show's branch, mark and card are the client's ink, not our teal, and the queue's "Your team: call now" chip is outlined in ink like "You do this". The queue keeps one script per card (an Arabic service name is left off an English row, and the other way round). Stop 2's phone shows the questions screen from its top (it had opened on question 2, or on a cropped option); with no service known, the example form leaves its service question out. Stop 5's calendar starts at the booked hour, the appointment its first row, level with the lit row. Done with you, stop 7's CRM stages are set level with "You mark it" (the leader ran into empty space), and each stage name has a clear gap before the next. |
+| 6.2, 6.3, 6.5 | A no-show has one name: "Didn't show?" on the fork, as the CRM's stage "Didn't show". Done with you, the no-show's branch, mark and card are the client's ink, not our teal, and the queue's "Your team" chip is outlined in ink like "You do this" (it read "Your team: call now" until 2026-10-20, 19.13). The queue keeps one script per card (an Arabic service name is left off an English row, and the other way round). Stop 2's phone shows the questions screen from its top (it had opened on question 2, or on a cropped option); with no service known, the example form leaves its service question out. Stop 5's calendar starts at the booked hour, the appointment its first row, level with the lit row. Done with you, stop 7's CRM stages are set level with "You mark it" (the leader ran into empty space), and each stage name has a clear gap before the next. |
 | 8.4 | A red line is set whole in its own direction: an English line in the Arabic card has its mark on its left and the English type, an Arabic line in the English card the other way round. |
 | 8.6, 11.5 | The tag shows while the call plays; stops 7 and 8 carry their own tags only (stop 7 had three). The label no longer repeats the tag's provenance: "The customer in it is made up." Stop 7's steps keep the journey's tense: the booking now (solid), the rest ahead (teal rings on a dotted line). Stop 8's notes start on their label's edge. A line in the other script (the Arabic in the English deck, a subtitle in the Arabic one) wraps greedily, not balanced, so its first line is its longest and meets its block's far edge (a shorter first line had read as a stray indent). Done with you, the card reads اتصال باسم in Arabic, the notes are "Your caller's notes", the caption "It lands in your CRM.", and stop 7's block starts a line higher so the confirmation ends clear of the slide count. |
 | 8.7 | The recorded call is cropped to its own row from its top edge (no white band beside the row's tint) and ends in the middle of a waveform gap. The phone's film sits in the same dark bezel as the other screens, its tag on the frame's corner. |
@@ -2610,7 +2636,7 @@ pass"). Where this list and an earlier line disagree, this list wins.
 | 9.6 | A checklist read down its start: each row's mark is the journey's node (done: teal with a check; to do: an amber ring; not checked yet: a quiet ring), the name with its state under it as plain words in their colour, and what it needs beside them at a 75-character measure. A done row keeps only its parts, so the slide gets lighter as the call goes on. Ruled rows, closer in Arabic and with six rows. |
 | 9.7 | What to expect as two statements side by side under the title (no rule, no card). The close runs across the foot on its own rule: "Next: your Brand Blueprint call" at h1, what it is under it, and its date in teal at the end once booked. No rounded card. |
 | 6.3 stop 3 | The stop's words sit directly on top of the reminder strip as one block, the strip's first node level with the lit row; each step says when it happens and what happens then ("The day before · a reminder"), in the call slide's words. |
-| 6.3 stop 5, 6.4 | The two outcomes are drawn in the lanes' line language, not as cards: the leader runs into the meeting's line, which goes on, solid, to a node ahead ("Came, and thinking it over?" · yours) and drops, dotted, to the lanes' rebook mark ("Didn't show?" · ours in teal; theirs in ink done with you), each end's name and line beside it. The lanes draw the fork from the next stop on, so it is never named twice on one screen. |
+| 6.3 stop 5, 6.4 | The two outcomes are drawn in the lanes' line language, not as cards: the leader runs into the meeting's line, which goes on, solid, to a node ahead ("Came, and thinking it over?" · yours; both of us done for you since 2026-10-20, 19.13) and drops, dotted, to the lanes' rebook mark ("Didn't show?" · ours in teal; theirs in ink done with you), each end's name and line beside it. The lanes draw the fork from the next stop on, so it is never named twice on one screen. |
 | 8.4 | No eyebrow. Stop 1: one lead in ink at the lead's size with its foot line under it, in the middle of the phone's height; the feed phone on the content's end edge (stepped in by the label's room when the label sits on its far side). Stops 2 and 3: two columns, the red lines leading on our card at the start (880), what we test beside it; one top and one height. At stop 3 the approval and the footer run across under both on a hairline as one foot line. No red lines: the card's ask is set at the lead's size in ink, so the card leads before anything is written on it. |
 | 8.7 | One stop at a time: its name (h3) and words under the title, its screen beside them; no list of the other stops. Stop 4 (done for you) shows no screenshot (the form is shown once, on the journey's last stop): the job is the stop's heading at h1, "A few taps, the same day." under it, its three questions as three taps on one line (ink rings), and the footer on a rule. Done with you keeps the CRM's stages. |
 | 8.8 | No table: six cells on one grid, three across, the title and its line in the first, the five jobs in the rest, each the same thing (a 2 px rule, the job, why, its picture where it has one). The second row starts at one height for every client. The calendar's busy hour is a plain raised block, not hatched. |
@@ -2627,3 +2653,22 @@ The fourth score left one slide under 4, the form (L5), worst in Arabic.
 | 7.8, 8.5 | The phone is 812 tall (772 under a tag), so it ends about 50 px above the mini rail's name instead of 27. |
 | 5.4, 8.5 | "Example form" and "Example wording" sit above the phone's outer corner, on the eyebrow's line across the slide, not inline after "Your form". The phone is at the content's start with the words at its end, so its end corner would have set the tag on one line with the eyebrow across the gutter. |
 | 8.5 | "Filters" is the word in teal, not a teal pill. |
+
+### 19.13 The CEO's answers (2026-10-20)
+
+The CEO answered `CONTENT.md` open questions 1 to 3, and its copy rules 1, 5
+and 6 are rewritten to his words. Where this list and an earlier line
+disagree, this list wins.
+
+| Section | Change |
+|---|---|
+| 6.1, 6.3 stop 3, 8.0, 8.8 | "keep it 5 mins for all": the stop's words are "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning." (the UAE line adds its zone). "New enquiries go to the top of the list" left the words; the queue card's row order (the new enquiry first, in teal) shows the list. Done with you: "Call within 5 minutes.", and Your part's tile 2 is "Call within 5 minutes, note every try, keep every stage true". |
+| 6.5, 18 | The old "never a speed" reason for the queue card is gone. The new row still carries no clock and no speed chip, because the words beside it say the 5 minutes with the hours. |
+| 6.5, 6.8 | Done with you, the new row's chip reads "Your team" (فريقكم), not "Your team: call now": it says who calls, and the words beside it ("Call within 5 minutes.") say how fast, so the screen states one speed. The unused "Top of the list" string is gone from the code. |
+| 7.5, 14, 8.5 | The default thank-you is "Thank you. Our team will call you within 5 minutes during working hours.", and the WhatsApp step "Our team calls them within 5 minutes during working hours." |
+| 6.3 stop 6, 6.4, 19.11 | "We will call them to follow up to rebook but also the client has the most context and should follow up as well": the no-show stays ours (teal, the rebook mark). "Came, and thinking it over?" reads "Both of us. We call to follow up, and so do you: you know them best. Then mark it." That end keeps the meeting's line and node and its line in ink-2, with "Both of us." in our teal (`.dkc-fork-both`). Done with you is unchanged, all in the client's ink. |
+| 8.9 | "for both put weekly-biweekly cause it depends on how long theyve been with us and what the offer": the key reads "Then weekly or every two weeks", the reason is its own ink-2 line under it and in the notes, and the chart draws both: solid diamonds every two weeks, smaller open diamonds on the weeks between (14 px against 22, so the unbooked first check-in, open at full size, keeps its own look), with both marks in the key. The first check-in, a week or two in, is unchanged. |
+| 16.2, 16.3 | The 21× and 100× figures stay banned; "within 5 minutes" is allowed only beside "during working hours". The copy test (`deck-copy.test.ts`) moved with the rules: rule 1 pins the stop 3 lines (and the form's line, the thank-you and both slides' night notes) and allows only "within 5 minutes", beside "working hours" for our lines; rule 5 pins "weekly or every two weeks" and the reason, and fails either one alone; rule 6 pins "Both of us…" done for you and the unchanged done-with-you lines. |
+
+The measured first-dial figures in `CONTENT.md` open question 1 are
+unchanged by the answer.

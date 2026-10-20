@@ -2,7 +2,7 @@
 
 The onboarding deck and the launch deck the client success manager presents from a client's page in the client success cockpit. This file holds the final English copy, the data each slot pulls, the presenter notes and the source behind every claim. The Arabic copy is in `CONTENT-AR.md`, written under `mahara-context/skills/aziz-kuwaiti-voice` in the warm-professional client register and Saudi-safe. The example call is in `EXAMPLE-CALL.md`.
 
-Written 2026-10-19 from the scout reports (`deck-scouts.md`), the old template decks, the sales deck (`apps/sales-cockpit/src/deck/content.ts`, `proof.ts`, `tour.ts`), mahara-context and the memory notes. The lead's decisions are followed as given. Revised the same day after the critique: see [Revision notes](#revision-notes) at the end.
+Written 2026-10-19 from the scout reports (`deck-scouts.md`), the old template decks, the sales deck (`apps/sales-cockpit/src/deck/content.ts`, `proof.ts`, `tour.ts`), mahara-context and the memory notes. The lead's decisions are followed as given. Revised the same day after the critique, and again on 2026-10-20 with the CEO's answers to open questions 1 to 3: see [Revision notes](#revision-notes) at the end.
 
 ## How to read this
 
@@ -14,12 +14,12 @@ Written 2026-10-19 from the scout reports (`deck-scouts.md`), the old template d
 
 ## Copy rules (pin these in the deck's copy test)
 
-1. **No speed promise, written or drawn.** Never "5 minutes", "within minutes" (for our calls), "instantly", "same day" (for our calls or our fixes), "just now" or a "Calling" chip on a new enquiry, or the 21× and 100× statistics. The calling line is fixed: "We call during working hours, 10 to 6, Saturday to Thursday. New enquiries go to the top of the list. Anything that comes in at night is called from 10 the next working morning." Then "Up to 4 tries over 3 working days."
+1. **The 5-minute call, always with the hours.** The CEO, 2026-10-20: "keep it 5 mins for all". The 5-minute promise the sales deck and the call-centre page make is said in the launch deck too. Wherever a CSM deck says how fast we call a new enquiry, it says "within 5 minutes", always beside "during working hours". On its home, L2 stop 3, the line also gives the hours (10 to 6, Saturday to Thursday; for the UAE, "10 to 6 Saudi time (11 to 7 in the UAE)") and the night rule ("Anything that comes in at night is called from 10 the next working morning."), and the notes of both slides that say it (L2 and L5) give the night rule. The calling line is fixed: "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning." Then "Up to 4 tries over 3 working days." Done with you, their own team's line is "Call within 5 minutes." "Within 5 minutes" is the only speed the decks state. For our calls it never appears without "during working hours" (L5's WhatsApp step and the default thank-you screen say exactly "within 5 minutes during working hours"). Done with you, their own team's lines ("Call within 5 minutes." and L8's tile 2) carry no hours, because the hours are theirs. Still banned: the 21× and 100× statistics, "instantly", "same day" for our calls or our fixes, and any results promise (rule 2).
 2. **No results promise.** No ROI, no multiples, no "fill your calendar", no project or appointment counts, no guarantee of any kind. The 7-day satisfaction guarantee never appears.
 3. **No leads, no cost per lead, no budgets in money.** On screen and in the notes, the person who responds is "a customer" or "an enquiry", never "a lead". The only money on screen is what the client wrote themselves (their goals) and the fictional customer's budget band in the example call. One accepted exception: the reused Mahara OS screens carry the portal's own headings ("Calls with your leads", "Did the lead attend?"). That is product UI; crop below the heading wherever the crop keeps the screen readable.
 4. **No "every" and no "always" for process steps.** Say what we do. The reminder sequence is "what we do before the meeting". "Every" is allowed only for the client's own job ("mark every meeting").
-5. **Rhythm:** check-ins are every two weeks after the first one. Never "weekly". Never "seven days a week".
-6. **Who follows up:** a no-show is ours to rebook. Someone who came and is deciding is the client's to follow up and mark.
+5. **Rhythm:** the CEO, 2026-10-20: "for both put weekly-biweekly cause it depends on how long theyve been with us and what the offer". After the first check-in (a week or two after go-live, unchanged), check-ins are "weekly or every two weeks", with the reason "depending on your plan and how long you've been with us" wherever it fits, and always in the presenter notes. Never one of the two alone for the rhythm. The same holds in the sales deck ("for both"). Never "seven days a week".
+6. **Who follows up:** the CEO, 2026-10-20: "We will call them to follow up to rebook but also the client has the most context and should follow up as well". A no-show is ours: we call to rebook. A customer who came and is thinking it over is shared, done for you: our caller calls them to follow up, and the client follows up too, because they know the customer best. The client still marks the outcome. Done with you is unchanged: their own team makes the calls and the follow-up.
 7. **Words:** "Meta" for the company and the platform. "Facebook" only inside "Facebook Page" and "Facebook feed". "Appointments" or "meetings", never "site visits". "Customer" for the client's buyer. Never "contractor", "agency", "B2B", "patient", "deposit", "Slack" or "pod".
 8. **Names:** the presenting CSM's first name on the two covers only. Everyone else is a role: the creative director, the media buyer, the systems team, your caller. The caller in the example call is never named.
 9. **Form:** sentence case. No exclamation marks. No em dashes. Plain quotes.
@@ -32,16 +32,16 @@ Where `CONTENT.md` and `DESIGN.md` gave the same fact different homes, this tabl
 
 | Fact or piece | Its one home | Elsewhere, only as |
 |---|---|---|
-| Calling hours, the list, the tries, "not every enquiry books" | L2 stop 3, with the queue card | L6 plays a call; the mini rail lights stop 3 |
+| The call within 5 minutes with the working hours and the night rule, the list, the tries, "not every enquiry books" | L2 stop 3, with the queue card (the card shows the list) | L5's line and thank-you screen say "within 5 minutes during working hours"; L6 plays a call; the mini rail lights stop 3 |
 | The WhatsApp confirmation and the reminders | L6 stop 7, after the call | L2 stop 4: one line and five dots, each named in a word or two from L6's timeline (four done with you; the provisional bookings' dot carries its whole line) |
 | It lands with the client: calendar, Mahara OS, the WhatsApp alert | L2 stop 5 | L6 stop 8 shows what it carries (the caller's notes) |
-| A no-show is ours, deciding is theirs | L2 stop 6, the fork, drawn | L7 stop 4 keeps only "mark it, the same day" |
+| A no-show is ours; a customer thinking it over is followed up by both of us (done for you), and the client marks it | L2 stop 6, the fork, drawn | L7 stop 4 keeps only "mark it, the same day" |
 | The thank-you screen | L5 stop 3 | L2 stop 2 names it in its line |
 | What their ads look like, and the swap | L3 | L2 stop 1: one picture. L4 stop 1 reuses the feed phone, small |
 | Ads are a test; the numbers decide | L4: one line, plus the optional proof stop | O7 plants it with the red lines; L8 row 1 is the action only; L9 is a bar labelled "Finding what works" |
 | Red lines | Asked on O7, shown on L4 | |
 | Marking outcomes | L7 stop 4, the slide's last stop | L2 stop 7: one picture. L8: one tile |
-| Check-in rhythm | L9 | O3 and L10 carry no cadence |
+| Check-in rhythm: the first a week or two after go-live, then weekly or every two weeks, depending on the plan and how long the client has been with us | L9 | O3 and L10 carry no cadence (L10's notes book only the first check-in) |
 | Group hours | O3, at the foot | L10 card only when the onboarding deck was never presented |
 | The Brand Blueprint, described | O7, the next-step band | O5 stop 4: the name and the booked date |
 | Content before the Blueprint | O6 row 3 | |
@@ -365,31 +365,32 @@ Ten slides, about 22 minutes of a 30-minute slot, so there is room for questions
 |---|---|---|---|---|---|
 | 1 | Sees your ad | Your customer | "They see your ad in their feed." | Their first ad in an Instagram feed phone, with their Page name and logo | `ads.*` (first ready ad). Fallback: the frame with the logo and "Your ad goes here". |
 | 2 | Answers your questions | Your customer | "A few short questions about their project, then your thank-you screen." When the ad opens WhatsApp: "They message you on WhatsApp. The chat opens with their first message ready to send." | Their form's question screen in a phone, or their landing page, or (WhatsApp) the chat with their first message waiting to send, tagged "Example wording" | `funnel.*` once confirmed. Fallback: the drawn example form, tagged "Example form". |
-| 3 | We call | Our team | "We call during working hours, 10 to 6, Saturday to Thursday. New enquiries go to the top of the list. Anything that comes in at night is called from 10 the next working morning." Chip: "Up to 4 tries over 3 working days". Small line: "Not every enquiry books. Some can't be reached, some aren't a fit. Our caller notes why, and we go through it with you at check-ins." | The queue card (DESIGN 6.5), tagged Example | UAE zone note from the data map. |
+| 3 | We call | Our team | "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning." Chip: "Up to 4 tries over 3 working days". Small line: "Not every enquiry books. Some can't be reached, some aren't a fit. Our caller notes why, and we go through it with you at check-ins." | The queue card (DESIGN 6.5), tagged Example: it shows the list, the new enquiry first | UAE: "We call new enquiries within 5 minutes during working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning." |
 | 4 | Booked, confirmed, reminded | Our team | "The serious ones are booked in, confirmed on WhatsApp and reminded before the meeting." With `prep.booking_video`: "The serious ones are booked in, confirmed on WhatsApp with a short video about you, and reminded before the meeting." | Five dots on a short line, each named in a word or two from L6's timeline (the full timeline is on L6) | `booking_video` defaults to off. |
 | 5 | Lands with you | You | "Once it's confirmed, it lands in your calendar and in Mahara OS, and you get a WhatsApp alert." | The drawn calendar entry (DESIGN 6.5), tagged Example | If the kickoff says Google Calendar is not connected, an amber line: "Connect Google Calendar in Mahara OS so bookings land there." |
-| 6 | You meet | You | "You hold the meeting: {form.consult_types}." Then the fork: "Didn't show? Ours. We call to rebook." · "Came, and thinking it over? Yours. Follow up, then mark it." | The fork's two cards, each with its mark (the lanes' rebook mark on ours); a dotted line returns to the "Our team" lane, its node named "Didn't show?" (the no-show has one name everywhere: the CRM's stage is "Didn't show") | `form.consult_types` fallback: "at your office, at their home, or online". |
+| 6 | You meet | You | "You hold the meeting: {form.consult_types}." Then the fork: "Didn't show? Ours. We call to rebook." · "Came, and thinking it over? Both of us. We call to follow up, and so do you: you know them best. Then mark it." | The fork's two cards, each with its mark (the lanes' rebook mark on ours); a dotted line returns to the "Our team" lane, its node named "Didn't show?" (the no-show has one name everywhere: the CRM's stage is "Didn't show") | `form.consult_types` fallback: "at your office, at their home, or online". |
 | 7 | You mark it | You | "You mark how it went, in a few taps." | `portal-outcome` thumbnail, cropped to the form, Demo workspace | |
 
 Stops 1, 2, 4 and 7 open up on later slides (L3, L5, L6 and L7), so their lines stay short. Stops 3, 5 and 6 carry their full facts here and nowhere else.
 
 **Notes**
 - Walk the stops with the arrow keys. Let each one land before you speak. The mini rail on the next slides makes the callback; don't announce it.
-- At stop 3, say the hours plainly and don't promise faster. If they ask why not at night: the team works 10 to 6, Saturday to Thursday, and night enquiries are among the first calls of the next working morning.
-- At stop 6, point at the dotted line: the no-show comes back to us.
+- At stop 3, say it plainly: we call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday (11 to 7 for a UAE client), and anything that comes in at night is called from 10 the next working morning. Then up to 4 tries over 3 working days.
+- At stop 6, point at the dotted line: a no-show comes back to us, and we call to rebook.
+- Someone who came and is thinking it over is followed up by both sides: our caller calls them, and the client follows up too, because they met the customer and know them best. The client still marks the outcome.
 - **Temp check** after stop 7: "Any step here you'd want done differently?"
 
-**DWY variant (stops that change).** Stops 3 and 4 move into the "You" lane.
+**DWY variant (stops that change).** Stops 3 and 4 move into the "You" lane. Notes: their team calls within 5 minutes of the alert, and books; the no-show line and the follow-up of someone thinking it over stay in their lane too.
 
 | # | Row name | Line |
 |---|---|---|
-| 3 | Your team calls | "A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call as soon as it arrives. Up to 4 tries over 3 working days." |
+| 3 | Your team calls | "A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call within 5 minutes. Up to 4 tries over 3 working days." |
 | 4 | Your team books | "Book on the right calendar. The confirmation goes out by itself." |
 | 5 | Lands with you | "It lands in your calendar and your CRM, with your caller's notes." |
-| 6 | You meet | Fork: "Didn't show? The follow-up messages start by themselves." · "Came, and thinking it over? Follow up, then move it to the right stage." The dotted line stays in the "You" lane. |
+| 6 | You meet | Fork: "Didn't show? The follow-up messages start by themselves." · "Came, and thinking it over? Follow up, then move it to the right stage." The dotted line stays in the "You" lane. (Unchanged by the CEO's answer of 2026-10-20: done with you, their own team makes the calls.) |
 | 7 | You mark it | "Your team moves it to the right stage in the CRM, the same day." |
 
-**Sources:** CPM (the client-side steps, the WhatsApp alert, the split after the meeting), DOM and CCD (10:00 to 18:00 Saturday to Thursday, Friday off, new enquiries to the top of the queue, the 4-try ladder, a reason noted on every lost enquiry, 45% of enquiries with no verified dial, median first dial 163 working minutes), LAF (Main bookings notify the client; Provisional bookings are internal until confirmed), BR (WhatsApp confirmation on booking), PS §2 and §4 (thank-you video on booking, consultation types), CRF ("results fine but unhappy" when expectations are off), DWY SOP §2 to §5 (alerts, calendars, CRM stages), MOS (the DWY flow in Mahara OS needs per-client approval), DEC 2026-10-17 (DWY enquiries also go to the client's group).
+**Sources:** CEO (the call within 5 minutes during working hours, for all; the shared follow-up after a meeting, done for you), CPM (the client-side steps, the WhatsApp alert, the no-show is ours), DOM and CCD (10:00 to 18:00 Saturday to Thursday, Friday off, new enquiries to the top of the queue, the 4-try ladder, a reason noted on every lost enquiry, 45% of enquiries with no verified dial, median first dial 163 working minutes: the measured figures behind open question 1, unchanged by its answer), LAF (Main bookings notify the client; Provisional bookings are internal until confirmed), BR (WhatsApp confirmation on booking), PS §2 and §4 (thank-you video on booking, consultation types), CRF ("results fine but unhappy" when expectations are off), DWY SOP §2 to §5 (alerts, calendars, CRM stages), MOS (the DWY flow in Mahara OS needs per-client approval), DEC 2026-10-17 (DWY enquiries also go to the client's group).
 
 ## L3 · `ads`
 
@@ -490,21 +491,22 @@ After stop 3:
 **Stops (the phone's screens)**
 1. Opening · {funnel.headline}
 2. The questions · each {label} with its options, gates tagged
-3. The thank-you screen · "Then your thank-you screen, and a welcome message." With `prep.welcome_video`: "Then your thank-you screen, and a welcome message with a short video about you." The screen is their form's thank-you, or the default: "Thank you. Our team will call you during working hours." A video frame shows only when `welcome_video` is on.
+3. The thank-you screen · "Then your thank-you screen, and a welcome message." With `prep.welcome_video`: "Then your thank-you screen, and a welcome message with a short video about you." The screen is their form's thank-you, or the default: "Thank you. Our team will call you within 5 minutes during working hours." A video frame shows only when `welcome_video` is on.
 
 **Slots**
 - `funnel.*` once `prep.form_confirmed`, with `prep` questions overriding.
 - No confirmed form and no prep questions: the slide is hidden by default, and prep says why. If the CSM shows it anyway, the phone draws the example form (DESIGN 7.5), tagged "Example form", with the line "We're finishing yours."
-- When `funnel.kind` is WhatsApp, the line becomes: "Your ad opens a WhatsApp chat." Check the destination with the media buyer before the call. The phone shows the chat with the message the ad fills in, waiting to send, tagged "Example wording": "Hi, I saw your ad. I'd like to know more about {service}." (no service: "Hi, I saw your ad and I'd like to know more."). Beside it, "What happens next": 1. "Their first message is ready in the chat. They tap send." 2. "It arrives on your WhatsApp." 3. "Our team calls them during working hours." (DWY: "Your team calls them.")
+- When `funnel.kind` is WhatsApp, the line becomes: "Your ad opens a WhatsApp chat." Check the destination with the media buyer before the call. The phone shows the chat with the message the ad fills in, waiting to send, tagged "Example wording": "Hi, I saw your ad. I'd like to know more about {service}." (no service: "Hi, I saw your ad and I'd like to know more."). Beside it, "What happens next": 1. "Their first message is ready in the chat. They tap send." 2. "It arrives on your WhatsApp." 3. "Our team calls them within 5 minutes during working hours." (DWY: "Your team calls them.")
 
 **Notes**
 - Read the filter questions out: "This is the first filter. The call is the second."
 - Check the facts with them: service names, areas, wording.
 - If they want more questions: every extra question also loses some good people. We add one when the enquiries show we need it.
+- The thank-you screen and the WhatsApp steps promise the call within 5 minutes during working hours, the same promise as the journey. A customer who writes at night sees "during working hours" and is called from 10 the next working morning.
 
 **DWY:** same.
 
-**Sources:** scout csm (the funnels source and its fields, `FormPreview` and `leadForm.ts`; the account-name match is fuzzy), PEA (friction: add a question only once the enquiries are proven wrong), DESIGN 14 (the default thank-you).
+**Sources:** scout csm (the funnels source and its fields, `FormPreview` and `leadForm.ts`; the account-name match is fuzzy), PEA (friction: add a question only once the enquiries are proven wrong), DESIGN 14 (the default thank-you), CEO (the 5 minutes, said with the working hours).
 
 ## L6 · `call`
 
@@ -618,7 +620,7 @@ The slide ends on stop 4.
 - They don't need to answer on Fridays or in the evening.
 - **Temp check:** "Which of these will be hardest for your team?"
 
-**DWY:** tile 2 becomes "Call fast, note every try, keep every stage true" · "Interest fades, and a missing note means nobody knows what happened." No picture (only rows 1 and 5 carry one). Tile 5's why becomes "Your team books into the times you leave free." (their own team books, never "our callers"). Notes: "Their own callers ask those questions and book into the free times; the group answers them."
+**DWY:** tile 2 becomes "Call within 5 minutes, note every try, keep every stage true" · "Interest fades, and a missing note means nobody knows what happened." No picture (only rows 1 and 5 carry one). Tile 5's why becomes "Your team books into the times you leave free." (their own team books, never "our callers"). Notes: "Their own callers ask those questions and book into the free times; the group answers them."
 
 **Sources:** the old onboarding template's "roadblocks" (the structure), PS §8 (the client's jobs; only 30% of recent appointments have attendance marked; footage is scarce; the questions the call centre needs answered), CRF (goes quiet in weeks 3 to 4, outcomes stop being filled), LCF (block busy time in Google Calendar), PEA (ads fatigue), CSMT (keep the folder full), DWY SOP §2 and §6 (speed, a note before every stage move).
 
@@ -633,7 +635,7 @@ The slide ends on stop 4.
 - A timeline from {go_live} to day 90, which ends the axis on its own dashed line, named "Day 90" with its date (the week heads stop at day 77, so none sits on it):
   - "Weeks 1 and 2 · Finding what works" (a bar, no sentence); its dashed open end is labelled "Can run longer"
   - "Your first check-in · a week or two in" · {next.checkin}
-  - "Then every two weeks" · "20 to 30 minutes on Zoom: what's working, and what we're changing." (keyed with the check-in diamond)
+  - "Then weekly or every two weeks" · "20 to 30 minutes on Zoom: what's working, and what we're changing." (keyed with both marks: the solid check-in diamond, and the smaller open one for the weeks between), then the reason as its own line under it, in ink-2: "Depending on your plan and how long you've been with us." If a layout check shows the line does not fit, it is shortened without losing either part (the plan, the time with us), and the notes always say it. The rhythm is never shown as one of the two alone.
   - "At 30, 60 and 90 days, that check-in looks back over the month." (keyed with the ringed diamond)
 - Milestones, unlit at launch and never dated: First booking · First attended appointment · First won project
 - Footer: "Dates depend on your market, your offer and your follow-up. We track them with you."
@@ -644,12 +646,13 @@ The slide ends on stop 4.
 - No numbers promised. Never give a date for a milestone.
 - Some first weeks are busy and some are quiet. Either way, we're finding what their market responds to.
 - Updates come in the group as things happen.
+- The rhythm, both and why: "After the first one, weekly or every two weeks, depending on your plan and how long you've been with us." Never promise one of the two alone.
 - Check-ins: a laptop, somewhere quiet, not in the car. The next one is booked at the end of each.
 - **Temp check:** "Does this rhythm work for you?"
 
 **DWY:** same. The first booking is their team's.
 
-**Sources:** the lead's decision (the first check-in at day 7 to 14, then every two weeks), O2L Day 14 (a call every two weeks, updates in the group as things happen), CSMT "When Ads Launch" (20 to 30 minutes on Zoom, somewhere quiet with a laptop), PS §2 and §7 (30, 60 and 90-day marks in the portal journey; no SOP defines a separate review meeting; milestones), SD `MILESTONES`, FCL PLAN (drop "the first weeks are always slowest"), PS §3 (measured first booking about 4 days after launch: single source, so not printed), GR.
+**Sources:** the lead's decision (the first check-in at day 7 to 14), CEO (then weekly or every two weeks, by the plan and how long the client has been with us), O2L Day 14 (a call every two weeks, updates in the group as things happen), CSMT "When Ads Launch" (20 to 30 minutes on Zoom, somewhere quiet with a laptop), PS §2 and §7 (30, 60 and 90-day marks in the portal journey; no SOP defines a separate review meeting; milestones), SD `MILESTONES`, FCL PLAN (drop "the first weeks are always slowest"), PS §3 (measured first booking about 4 days after launch: single source, so not printed), GR.
 
 ## L10 · `green-light`
 
@@ -792,7 +795,7 @@ The delays variant's stop 8 note is "Their last company finished four months lat
 - **"Accelerator access":**
   - Slack is removed: clients are not in Slack, and the WhatsApp group replaces it (O3).
   - Skool became the Premium Projects Academy (O6).
-  - "Bi-weekly check-ins" moved to L9.
+  - "Bi-weekly check-ins" moved to L9, which now says "weekly or every two weeks" (CEO, 2026-10-20).
 - **"Most common roadblocks"** was merged into L8, "Your part", as five jobs with why each matters:
   - "Not using Slack" became the group tile.
   - "Not watching the trainings" moved to O6, as the Academy row.
@@ -812,7 +815,7 @@ The delays variant's stop 8 note is "Their last company finished four months lat
 ## From the sales deck
 
 - **`JOURNEY` (5 stops)** became L2 (7 stops), from the client's side:
-  - "A call within 5 minutes" and the MIT 100× line are removed (copy rule 1).
+  - "A call within 5 minutes" is kept, as stop 3's "within 5 minutes during working hours", always with the hours and the night rule (copy rule 1, CEO 2026-10-20). The MIT 100× line is removed.
   - Its screenshots (`jr-*`) are not used: they show other clients and a real customer (copy rule 11). Every stop is drawn from this client's data.
   - The landing-page stop shows only when the client really has a page; most run on Meta forms.
   - The welcome and booking videos became prep toggles.
@@ -822,20 +825,20 @@ The delays variant's stop 8 note is "Their last company finished four months lat
   - "script" (a knowledge base per firm) became L6's call-guide line.
   - "who" (3+ years, 50+ interviews, 4 trainings a week) is dropped. It is sales proof, the client has already bought, and it isn't needed to set expectations.
   - "listen" (the real recording) is dropped: there is no consent, and another client's brand would be exposed. The scripted call replaces it.
-  - "nothing" (four follow-ups, same-day no-show call, "came but didn't sign? we follow up") is replaced by "up to 4 tries over 3 working days" and the fork on L2 stop 6.
+  - "nothing" (four follow-ups, same-day no-show call, "came but didn't sign? we follow up") is replaced by "up to 4 tries over 3 working days" and the fork on L2 stop 6. Since the CEO's answer of 2026-10-20 the fork's "Both of us" agrees with "Came but didn't sign? We follow up.", which the sales deck keeps. The same-day no-show call is still not said: "same day" stays banned for our calls (copy rule 1).
 - **`ADS_TOUR`:**
   - "account" (20 ads, 11 on, 9 off) became L4's optional proof, drawn as neutral tiles. The screenshots show daily budgets, spend, a cost per result, other clients' ads and faces, so they are not used.
   - Targeting, platforms, the market picker, portfolio, brief and offer are dropped: they are sales proof, and the client lived the Blueprint.
 - **`CLOSING_TOUR`:**
   - The academy became O6 row 5, with the real course names.
-  - "Weekly 1:1 check-in calls" is corrected to every two weeks (L9).
+  - "Weekly 1:1 check-in calls" became "1:1 check-in calls", "weekly or every two weeks with your success manager, depending on your plan and how long you've been with us", in the sales deck itself (CEO, 2026-10-20: "for both"). L9 says the same rhythm.
   - Mastery and the reviewed-calls tracker are dropped.
 - **`PORTAL_TOUR`:**
   - Overview, calls and outcome are kept (L7), and the phone film is added as a stop.
   - "Every lead, and the ad that brought it", "Your results, in money" and "Every ad" are dropped: they show leads and cost per lead (copy rule 3).
 - **`TIMELINE`** ("Days 1 to 7", "leads in 7 to 10 days", "cost per lead comes down") is replaced by O5 and L9, with no promised times and no cost per lead.
 - **Also removed:**
-  - **`INCLUDED`**: "within five minutes" and "a weekly consulting call" are removed; the rest is covered by O3.
+  - **`INCLUDED`**: "Every lead called within five minutes" is not copied (it says "lead"; the 5 minutes is on L2 stop 3, with the hours). The sales deck's consulting call now reads "weekly or every two weeks" there; the CSM decks carry the rhythm only as L9's check-ins. The rest is covered by O3.
   - **`NEXT_STEPS`**: the deposit and "live within 7 days" are removed.
   - **The speed slide (21×)** is removed.
   - **Proof** (stories, reviews, #1, 70+ firms) is removed: the client has already bought.
@@ -858,11 +861,11 @@ The delays variant's stop 8 note is "Their last company finished four months lat
   - "Up to 8 follow-ups" is replaced by 4 tries over 3 working days.
   - "5x to 10x ROI" is removed (copy rule 2).
 - **CSM "When Ads Launch" message:**
-  - Feedback anytime went to L4 and L10. Check-ins every two weeks went to L9. Tracking went to L7, as the portal. Keep sending content went to L8. Say the awkward thing went to L10.
+  - Feedback anytime went to L4 and L10. Check-ins went to L9, now weekly or every two weeks. Tracking went to L7, as the portal. Keep sending content went to L8. Say the awkward thing went to L10.
   - "Month one is always the slowest" is replaced (FCL PLAN).
   - After the launch call, the "Your part" card replaces the long message.
 - **CSM day 8 message:** "The call centre handles every lead seven days a week" is not used. The hours are Saturday to Thursday.
-- **Client Process Map:** "we call the same day" and "we confirm twice, 48h and 24h" are not used (the second is true only for provisional bookings). "A no-show is ours, someone who showed is yours" is kept (L2 stop 6).
+- **Client Process Map:** "we call the same day" and "we confirm twice, 48h and 24h" are not used (the second is true only for provisional bookings). "A no-show is ours" is kept (L2 stop 6). "Someone who showed is yours" became shared, done for you (CEO, 2026-10-20): our caller follows up too, and the client still follows up and marks it.
 
 ## Deliberate overlaps (kept, and why)
 
@@ -876,11 +879,14 @@ The delays variant's stop 8 note is "Their last company finished four months lat
 
 # Open questions for the CEO
 
-Each one names the default used in this copy.
+Each one names the default used in this copy. Questions 1 to 3 were answered by the CEO on 2026-10-20; the other 20 are open.
 
 1. **The sales deck still promises speed.** It says "A call within 5 minutes", "Every lead called within five minutes", 21× and 100×, and callcenter.maharamedia.com says the same. The official figures for 20 Sep to 19 Oct are a median of 163 working minutes to the first dial and 1.8% dialled within 2 working minutes. So a client hears one thing on the sales call and another on the launch call. **Default:** the launch deck uses the fixed hours wording and the sales deck is untouched (out of scope here). Fix the sales deck and the public page to match?
+   **Answered 2026-10-20:** "keep it 5 mins for all". The 5-minute promise stays in the sales deck and on the call-centre page, and the launch deck now says it too: L2 stop 3 ("We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning."), the DWY stop 3 ("Call within 5 minutes.") and L8's DWY tile, L5's WhatsApp step and the default thank-you screen: our lines always with the working hours, and stop 3 (and L5's notes) also with the night rule; done with you, their own team's lines carry no hours. Copy rule 1 is rewritten; the 21× and 100× figures, "instantly" and "same day" for our calls stay out of the CSM decks. The measured figures above are unchanged.
 2. **Weekly against every two weeks.** The sales deck promises "Weekly 1:1 check-in calls" and "a weekly consulting call". **Default:** every two weeks after the first check-in, as decided. Correct the sales deck too?
+   **Answered 2026-10-20:** "for both put weekly-biweekly cause it depends on how long theyve been with us and what the offer". L9 now reads "Then weekly or every two weeks", with "Depending on your plan and how long you've been with us." on its own line under it and in the notes. The sales deck changes too: its check-ins item is "1:1 check-in calls", "Weekly or every two weeks with your success manager, depending on your plan and how long you've been with us: the numbers, the calls, the next move.", and its consulting-call lines say "weekly or every two weeks". Copy rule 5 is rewritten. The first check-in, a week or two after go-live, is unchanged.
 3. **Who follows up a customer who came and is deciding.** As decided, it is the client's, which matches the Client Process Map. But the sales deck says "Came but didn't sign? We follow up", and the dialer has an attended follow-up script and a "Client handover". **Default:** the client's, on L2 stop 6. Should the deck mention that our callers may also check in after a meeting?
+   **Answered 2026-10-20:** "We will call them to follow up to rebook but also the client has the most context and should follow up as well". A no-show stays ours: we call to rebook. A customer who came and is thinking it over is now followed up by both, done for you: L2 stop 6 reads "Came, and thinking it over? Both of us. We call to follow up, and so do you: you know them best. Then mark it." The client still marks the outcome. Done with you is unchanged: their own team makes the calls. The sales deck's "Came but didn't sign? We follow up." is true under this answer and stays. Copy rule 6 is rewritten.
 4. **Where outcomes are marked.** The "When Ads Launch" message says the tracking sheet, the portal has the outcome form, and the sheet is still the authoritative record. **Default:** the Mahara OS outcome form on screen, with "the two stay in step" in the notes.
 5. **The steps before the meeting are not uniform.** In the last 30 days there were about 50 confirmation calls against about 166 bookings. The day-before reminder buttons are live on 8 accounts. 40 of 47 no-show attempts ended lost. **Default:** the decided wording, as "what we do", with no "every". Comfortable showing "a confirmation call" in the sequence at that coverage?
 6. **Welcome and booking videos.** Who records them, and which clients have them, is unconfirmed. **Default:** prep toggles, off. The copy says "a welcome message" until the CSM turns a video on.
@@ -909,6 +915,7 @@ Each one names the default used in this copy.
 | Code | Source |
 |---|---|
 | BR | Snapshot workflow "3. Booking Router & Notifications" (966abbc0): WhatsApp confirmation on booking, reminder 1 day before, SMS 2 hours before. Read by the example-call scout. |
+| CEO | Aziz's answers to open questions 1 to 3, 2026-10-20 (quoted under [Open questions](#open-questions-for-the-ceo) and in copy rules 1, 5 and 6) |
 | CCD | Memory `call-centre-data.md` and the example-call scout §3 and §4: the shift, priority, the measured first-dial figures, 45% with no verified dial, only Maqsam calls carry recordings |
 | CPM | mahara-context `systems/Projects/Client Process Map.md` |
 | CRF | mahara-context `skills/meta/mahara-client-comms/references/churn-red-flags.md` |
@@ -969,6 +976,8 @@ Revised 2026-10-19 against the critique (claims, flow and design lenses). All fo
 - **The Academy on O3** (lead's list): it moves to O6 row 5 only, so it is said once, with what it is.
 
 **Also fixed while in there:** the English `{project}` values say "your"; the English call uses `{time}`; 2:51 uses `{engineer}` so design studios fit; a missing Instagram handle drops its bubble; unknown access reads "Not checked yet"; `{next.*}` shows nothing until booked.
+
+**2026-10-20, the CEO's answers to open questions 1 to 3.** Copy rules 1, 5 and 6 are rewritten to his words. The launch deck now says we call new enquiries within 5 minutes (L2 stop 3 and its UAE line, the DWY stop 3 and L8's DWY tile 2, L5's WhatsApp step and the default thank-you): our lines always with the working hours, and stop 3 (and L5's notes) also with the night rule; done with you, their own team's lines carry no hours, because the hours are theirs. "New enquiries go to the top of the list" left stop 3's line; the queue card still shows the list. The check-in rhythm is "weekly or every two weeks", with "Depending on your plan and how long you've been with us." on its own line under L9's key and in its notes; the first check-in is unchanged. The fork's "came, and thinking it over" end is "Both of us" done for you; DWY is unchanged. The decision table's three rows, L2's notes and sources, L5, L8's DWY tile, L9, the merged-and-removed lines and the source key (CEO) follow. `CONTENT-AR.md` and `DESIGN.md` (section 19.13) changed with them, and the code takes the same English strings; the copy test's rules 1, 5 and 6 (`deck-copy.test.ts`) move to the new rules with it. `EXAMPLE-CALL.md` stated none of the old rules and is unchanged. After the check the same day: L5's notes gained the night rule, the Arabic stop 3 notes give a UAE client's hours, the done-with-you queue chip reads "Your team" (the stop's words say how fast), and L9 draws the weeks between as smaller open diamonds, so the unbooked first check-in keeps its own look.
 
 ---
 

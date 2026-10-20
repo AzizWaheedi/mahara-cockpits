@@ -75,14 +75,19 @@ describe("the example call's copy", () => {
     expect(ALL.length).toBeGreaterThan(150);
   });
 
-  test("no speed promise and no results promise", () => {
+  // The 5 minutes is said on the slides, with the working hours (CEO,
+  // 2026-10-20); the call itself never promises "instantly", "same day",
+  // the 21x or 100x figures, or a result.
+  test("no instant or same-day promise, no 21x or 100x, no results promise", () => {
     expect(
       bad(
-        /\b5 minutes\b|within minutes|\binstantly\b|\bsame[- ]day\b|\bROI\b/i,
+        /within minutes|\binstantly\b|\bsame[- ]day\b|21\s?[x×]|100\s?[x×]|\bROI\b/i,
         "en",
       ),
     ).toEqual([]);
-    expect(bad(/خمس دقايق|فوراً|بنفس اليوم/, "ar")).toEqual([]);
+    expect(
+      bad(/فوراً|بنفس اليوم|(?:٢١|١٠٠|21|100)\s?(?:[x×]|ضعف|مرة)/, "ar"),
+    ).toEqual([]);
   });
 
   test("no guarantee made for the client, no deposit, no hundreds of families", () => {

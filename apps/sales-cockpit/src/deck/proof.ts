@@ -1305,10 +1305,10 @@ export const CLOSING_TOUR: Stop[] = [
   },
   {
     key: "checkins",
-    name: { en: "Weekly 1:1 check-in calls", ar: "مكالمات أسبوعية ١:١" },
+    name: { en: "1:1 check-in calls", ar: "مكالمات متابعة ١:١" },
     what: {
-      en: "Every week with your success manager: the numbers, the calls, the next move.",
-      ar: "كل أسبوع مع مدير حسابك: الأرقام، المكالمات، والخطوة الياية.",
+      en: "Weekly or every two weeks with your success manager, depending on your plan and how long you've been with us: the numbers, the calls, the next move.",
+      ar: "كل أسبوع أو كل أسبوعين مع مدير حسابك، حسب باقتك وشكثر صار لك معانا: الأرقام، المكالمات، والخطوة الياية.",
     },
     why: {
       en: "You never work it out alone.",
@@ -1316,9 +1316,7 @@ export const CLOSING_TOUR: Stop[] = [
     },
     media: {
       kind: "shots",
-      items: [
-        { src: pcmCall, alt: "A weekly check-in call", r: 1.857, w: 1439 },
-      ],
+      items: [{ src: pcmCall, alt: "A check-in call", r: 1.857, w: 1439 }],
     },
     more: {
       href: "https://fathom.video/share/giCrmrxkJqc7hpPALMHsHSrevBVvn9wm",
