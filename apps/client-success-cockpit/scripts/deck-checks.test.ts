@@ -24,7 +24,8 @@ describe("build checks", () => {
     expect(r.out).not.toContain("DRIFTED  deck");
     expect(r.out).not.toContain("MISSING  deck");
     expect(r.code).toBe(0);
-  });
+    // bash on Windows takes longer than the 5 second default.
+  }, 60_000);
 
   test("the app typechecks", () => {
     const r = run(
