@@ -480,7 +480,7 @@ legible in the share.
 Two cards side by side, under the meeting render (cards floated over a
 dimmed photo would murk both in a share):
 
-- **"Didn't come?"** Ours. We call to rebook.
+- **"Didn't show?"** Ours. We call to rebook.
 - **"Came, and thinking it over?"** Yours. Follow up, then mark it.
 
 This is the one place either deck says who owns a no-show. It matches the
@@ -510,8 +510,10 @@ teal, no labels. The call's stop 7 lights the same strip with its words
 (11.5), so the client recognises it there.
 
 **The calendar entry (stop 5).** A `--dk-panel` day column, 520 px wide: the
-day's name at the top, hour lines at 2, 3, 4 and 5 pm in ink-3, and one
-teal-soft block at 4 pm reading "Appointment · {place}". No customer name and
+day's name at the top, then four hour lines in ink-3 from the hour the
+example call books (4 pm, earlier for a client who closes earlier), the
+first carrying one teal-soft block reading "Appointment · {place}", so the
+block sits level with "Lands with you" and the leader ends on it, straight. No customer name and
 no phone. Tag: Example. It is not `portal-overview`, which belongs to the
 portal slide.
 
@@ -764,8 +766,10 @@ and is designed as one, not as a broken-logo fallback.
   (toggle off, tile at 35%). No thumbnails, no columns, no money. Tag:
   Illustration.
 - **The road strip (launch cover).** The onboarding road (9.5, in the
-  journey's marks) at 40% scale under the go-live date, lit up to "Launch
-  call · Today". No other words.
+  journey's marks) at 40% scale under the go-live date, lit up to the
+  launch call, its lit node named "Launch call · Today" under that node,
+  starting at it. The strip's end (first appointments) is not named, so it
+  never reads as today or as go-live. No other words.
 - **The CRM stage list (portal slide, done with you).** Four `--dk-panel`
   rows: didn't show, showed, quote sent, closed, with a teal arrow between
   them. Drawn because no screenshot of the client's own CRM exists.
@@ -1658,7 +1662,7 @@ your files. Anything marked 'To give us', we'll complete with you."
   the end side, with the caption "Our caller's notes come with it."
 - **Done with you:** stop 7 reads "Book on the right calendar, and the
   confirmation goes out by itself", with the "Before the meeting" timeline;
-  stop 8's caption is "Your caller's notes, in your CRM."
+  stop 8's notes are headed "Your caller's notes" and its caption is "It lands in your CRM."
 
 ### 11.6 Dialect, subtitles, pain, done with you
 
@@ -2555,3 +2559,24 @@ date and time as the live template does ("October 21, 2026", "4:00 PM"),
 as `EXAMPLE-CALL.md` and a test pin. The critic read it as a mismatch beside
 the Arabic-Indic reminders. It changes when the live template text is read
 (CONTENT open question 7).
+
+### 19.10 The correctness pass (2026-10-20)
+
+The third critic score listed what was wrong or contradictory on the
+client's screen, apart from taste. Each is fixed below. Where this list and
+an earlier line disagree, this list wins.
+
+| Section | Change |
+|---|---|
+| 7.9, 8.1 | The cover's road strip names its lit node, "Launch call · Today", under that node; its end is not named (it had read as today, and the green light's "Go-live" named the same end another way). |
+| 8.3 | The tray's count sits beside what it counts: beside the title when there is one list, beside each source when there are two ("Your creatives 6" had stood over five). With nothing in the tray, the lead is "How your ads will look on your customers' phones." ("right now" contradicted "We're finishing your first ads"). The in-use caption "Facebook feed" stays on one line (the tray's box now reaches into the gap before the phones). A leader's dot slides along its part to its label's line, and the labels spread about their middle, so the leaders run straight; a label that must sit past its part's edge gets a square elbow, never a diagonal (Reels' button leader was bent). |
+| 6.2, 6.3, 6.5 | A no-show has one name: "Didn't show?" on the fork, as the CRM's stage "Didn't show". Done with you, the no-show's branch, mark and card are the client's ink, not our teal, and the queue's "Your team: call now" chip is outlined in ink like "You do this". The queue keeps one script per card (an Arabic service name is left off an English row, and the other way round). Stop 2's phone shows the questions screen from its top (it had opened on question 2, or on a cropped option); with no service known, the example form leaves its service question out. Stop 5's calendar starts at the booked hour, the appointment its first row, level with the lit row. Done with you, stop 7's CRM stages are set level with "You mark it" (the leader ran into empty space), and each stage name has a clear gap before the next. |
+| 8.4 | A red line is set whole in its own direction: an English line in the Arabic card has its mark on its left and the English type, an Arabic line in the English card the other way round. |
+| 8.6, 11.5 | The tag shows while the call plays; stops 7 and 8 carry their own tags only (stop 7 had three). The label no longer repeats the tag's provenance: "The customer in it is made up." Stop 7's steps keep the journey's tense: the booking now (solid), the rest ahead (teal rings on a dotted line). Stop 8's notes start on their label's edge. A line in the other script (the Arabic in the English deck, a subtitle in the Arabic one) wraps greedily, not balanced, so its first line is its longest and meets its block's far edge (a shorter first line had read as a stray indent). Done with you, the card reads اتصال باسم in Arabic, the notes are "Your caller's notes", the caption "It lands in your CRM.", and stop 7's block starts a line higher so the confirmation ends clear of the slide count. |
+| 8.7 | The recorded call is cropped to its own row from its top edge (no white band beside the row's tint) and ends in the middle of a waveform gap. The phone's film sits in the same dark bezel as the other screens, its tag on the frame's corner. |
+| 8.8 | The list ends well above the slide count in Arabic (the last rule ran through it): rows 96 high with 14 px padding, the calendar day's hours 34 apart. Done with you, row 5's why is "Your team books into the times you leave free." |
+| 8.9 | The chart runs from go-live to day 90 and ends on a dashed line named "Day 90" with its date; the week heads stop at day 77, so none sits on it (the axis had stopped at day 84). |
+| 9.2 | An answer in the other script is set in its own face and leading (an English answer in the Arabic deck read at 1.65). |
+| 9.3 | Done with you, the lead does not name our call centre: "The people who run your ads and funnel and your success manager are all in this one group." |
+| 9.4 | "Your #1" marks their #1 only while the card names another service (one service had been said three times). With no services, the tests' line and "Add a service" start on the title's edge. |
+| Tests | `deck-launch.test.tsx` renders every slide and stop of both decks, in both languages, for the done-with-you client and the full client switched to done with you, and fails on any line saying our call centre, our callers or we call. `deck-shots.mjs` measures every shot and fails the run when anything painted on the slide comes within 4 px of the slide count, the mini rail or a slide's foot line. |

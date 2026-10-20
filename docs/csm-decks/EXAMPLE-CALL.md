@@ -248,14 +248,16 @@ The transcript and the stage rail stay exactly as above: the caller already spea
 | | Arabic | English |
 |---|---|---|
 | Title | كيف يتصل فريقكم | How your team should call |
-| Label | من الدليل اللي نعطيكم إياه | From the playbook we give you |
+| Label | العميل في هالمكالمة مو حقيقي، والسكربت كامل بالدليل اللي نعطيكم إياه. | The customer in it is made up. The full script is in the playbook we give you. |
+| Call card | اتصال باسم [الشركة] | Calling for {Company} |
+| Notes heading | ملاحظات فريق الاتصال عندكم | Your caller's notes |
 | Stop 7 line | احجزوا على التقويم الصح، والتأكيد يطلع للعميل تلقائياً. | Book on the right calendar, and the confirmation goes out by itself. |
 | Timeline heading | قبل الموعد | Before the meeting ("What we do" would be false here) |
 | Timeline 1 | عند الحجز: تأكيد | Booked: a confirmation |
 | Timeline 2 | تذكيرات قبل الموعد | Reminders before the meeting |
 | Timeline 3 | الحجوزات المبدئية: فريقكم يتصل قبلها بيومين، وقبلها بيوم | Provisional bookings: your team calls 48 and 24 hours before |
 | Timeline 4 | الموعد | The meeting |
-| Stop 8 caption | ملاحظات فريق الاتصال عندكم، في الـCRM. | Your caller's notes, in your CRM. |
+| Stop 8 caption | الموعد ينزل في الـCRM عندكم. | It lands in your CRM. |
 
 **The DWY framing line** (the CSM says it as the call starts):
 

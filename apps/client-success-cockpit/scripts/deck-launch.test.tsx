@@ -25,6 +25,7 @@ import {
   placesLine,
   portalStops,
 } from "../src/present/launchDeck";
+import { onboardingSlides } from "../src/present/onboardingDeck";
 import { CALL_STAGES, callRun, stageRange } from "../src/present/Transcript";
 
 /**
@@ -229,11 +230,109 @@ describe("done with you", () => {
     expect(render("call", CALL_STAGES)).toContain("Before the meeting");
     expect(render("call", CALL_STAGES)).toContain("Provisional bookings");
     expect(render("call", CALL_STAGES + 1)).toContain(
-      "Your caller&#x27;s notes, in your CRM.",
+      "Your caller&#x27;s notes",
     );
+    expect(render("call", CALL_STAGES + 1)).toContain("It lands in your CRM.");
     expect(render("your-part")).toContain(
       "Call fast, note every try, keep every stage true",
     );
+    expect(render("your-part")).toContain(
+      "Your team books into the times you leave free.",
+    );
+  });
+
+  /**
+   * Done with you, the client's own team calls and books, so no line on
+   * either deck may say that we do: no "our call centre", no "our callers",
+   * no "we call". Every slide and stop of both decks is rendered, in both
+   * languages, for the done-with-you client and for the full client switched
+   * to done with you (a confirmed form, uploads and every optional row), and
+   * each text run on the canvas is read, the example call's own turns aside.
+   */
+  test("no line on either deck says our team calls, done with you", () => {
+    const EN = [
+      /\bour call(?:ing)? cent(?:re|er)\b/i,
+      /\bour callers?\b/i,
+      /\bwe call\b(?! you\b)/i,
+      /\bwe(?:'ll| will)? (?:book|rebook|ring|phone)\b/i,
+      /\bour team (?:does this|calls|books)\b/i,
+      /\bcalls we make\b/i,
+    ];
+    const AR = [
+      /فريقنا (?:يتصل|بيتصل|يحجز|يسويها)/,
+      /يسويه فريقنا/,
+      // "نتصل عليكم" is the CSM calling the client, and stays.
+      /(?<![\u0600-\u06ff])نتصل (?:عليه|عليهم|خلال|باسم)/,
+      /قبل لا نتصل/,
+      /مكالماتنا|سكربت مكالماتنا/,
+      /اللي نسويها لكم/,
+      // The calling team named in a sentence is theirs: "فريق الاتصال
+      // عندكم". Alone, as the transcript's speaker, it is their caller.
+      /فريق الاتصال(?!\s*عندكم)(?=\S|\s+\S)/,
+    ];
+    // The transcript is the caller speaking as the client's own business
+    // ("Shall we book you in?"), so its turns are theirs and are not read.
+    const runs = (html: string) =>
+      html
+        .replace(/<div class="dkc-transcript"[^>]*>[\s\S]*?<\/ol><\/div>/g, "")
+        .replace(/<[^>]+>/g, "\n")
+        .replace(/&#x27;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&amp;/g, "&")
+        .replace(/[\u2066-\u2069]/g, "")
+        .split("\n")
+        .map(x => x.trim())
+        .filter(Boolean);
+    const found: string[] = [];
+    let seen = 0;
+    for (const key of ["dwy", "full"] as FixtureKey[])
+      for (const deck of ["onboarding", "launch"] as const)
+        for (const lang of ["en", "ar"] as Lang[]) {
+          const f = FIXTURES[key](deck);
+          const prep = {
+            ...f.prep,
+            onboarding: { ...f.prep.onboarding, service_model: "DWY" },
+          };
+          const d = deckData({
+            taskId: `fixture-${key}`,
+            deck,
+            lang,
+            sources: f.sources,
+            kit: f.kit,
+            prep,
+            ads: f.ads,
+            presenterName: "Sara Al-Harbi",
+            publicUrl: (_b, p) => p,
+            now: NOW,
+          });
+          expect(d.mode.dwy).toBe(true);
+          const base: SlideCtx = {
+            ...ctx(d),
+            deck,
+            prep: prep[deck],
+            prepOf: k => prep[k],
+          };
+          const slides =
+            deck === "launch" ? launchSlides() : onboardingSlides();
+          for (const s of slides) {
+            const stops = s.stops?.(base) ?? 1;
+            for (let tour = 0; tour < stops; tour++) {
+              const html = renderToStaticMarkup(
+                <>{s.render({ ...base, tour })}</>,
+              );
+              for (const run of runs(html)) {
+                seen++;
+                for (const re of lang === "ar" ? [...AR, ...EN] : EN)
+                  if (re.test(run))
+                    found.push(
+                      `${key} ${deck} ${lang} ${s.id}:${tour}: ${run}`,
+                    );
+              }
+            }
+          }
+        }
+    expect(seen).toBeGreaterThan(2000);
+    expect([...new Set(found)]).toEqual([]);
   });
 
   test("done for you keeps our team's words", () => {

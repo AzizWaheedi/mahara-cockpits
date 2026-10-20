@@ -122,9 +122,12 @@ const SHOTS: Record<
   calls: {
     src: { en: callsEn, ar: callsAr },
     crop: {
-      // Each crop's edge falls in a gap of the waveform, never through a bar.
-      en: { box: [0.042, 0.245, 0.556, 0.668], ratio: PORTAL_RATIO },
-      ar: { box: [0.452, 0.245, 0.958, 0.668], ratio: PORTAL_RATIO },
+      // The recorded call's own row, from its top edge: no list heading,
+      // and no band of the card's white beside the row's tint. The crop's
+      // waveform edge falls in the middle of a gap (each 14 px of the
+      // 2x screen), so no bar is cut or touches the frame.
+      en: { box: [0.0579, 0.311, 0.5568, 0.668], ratio: PORTAL_RATIO },
+      ar: { box: [0.4407, 0.311, 0.9421, 0.668], ratio: PORTAL_RATIO },
     },
   },
   outcome: {
@@ -217,8 +220,7 @@ function Cover({ ctx }: { ctx: SlideCtx }) {
           </p>
         ) : null}
         <div className="dkc-cover-road">
-          <RoadStrip now={4} />
-          <span>{t(L1.road, lang)}</span>
+          <RoadStrip now={4} label={t(L1.road, lang)} />
         </div>
         <p className="dk-lead dkc-cover-line">
           {t(live ? L1.lineLive : L1.line, lang)}
@@ -407,16 +409,13 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
       : L.form.source === "example"
         ? t(SHARED.tag.exampleForm, lang)
         : t(SHARED.tag.yourForm, lang);
-    const firstGate = L.form.questions.findIndex(q => q.isGate);
+    // The questions screen from its top, as a customer first sees it: the
+    // first question first, none scrolled away or cut at the top edge
+    // (the form slide walks them one by one).
     return (
       <div className="dkc-stage" data-kind="phone">
         <Tagged tag={tag} className="dkc-stage-pic" style={{ width: 304 }}>
-          <FormPhone
-            ctx={ctx}
-            height={650}
-            screen="questions"
-            focus={L.form.source === "example" ? 1 : Math.max(0, firstGate)}
-          />
+          <FormPhone ctx={ctx} height={650} screen="questions" focus={null} />
         </Tagged>
         <StopWords
           lane={lane}
@@ -442,16 +441,14 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
         >
           <QueueCard
             lang={lang}
+            // One script per card: a service named only in the other script
+            // stays off the rows (an Arabic name inside an English row, or
+            // the other way round, breaks the row's reading order), and a
+            // row with no service leaves it out.
             services={[
               ...(L.service[lang] ? [L.service[lang] as string] : []),
-              // One script per card: in the Arabic deck only Arabic service
-              // names join the launch service (the rest fall back to it).
-              ...d.services.filter(
-                s =>
-                  s !== L.service[lang] &&
-                  (lang !== "ar" || /[\u0600-\u06ff]/.test(s)),
-              ),
-            ]}
+              ...d.services.filter(s => s !== L.service[lang]),
+            ].filter(s => /[\u0600-\u06ff]/.test(s) === (lang === "ar"))}
             dwy={dwy}
             still={still}
           />
@@ -505,6 +502,7 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
             lang={lang}
             day={dayShort(L.call.slot.iso, lang, d.timeZone)}
             place={t(LAUNCH.call.lands.places[place], lang)}
+            hour={L.call.slot.hour}
           />
         </Tagged>
       </div>
@@ -522,27 +520,28 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
           lang={lang}
         />
         <div className="dkc-stage-pic dkc-fork">
-          <div data-side="ours">
+          {/* Ours in teal; done with you the follow-up is theirs, in ink. */}
+          <div data-side={dwy ? "theirs" : "ours"}>
             <svg width="36" height="36" viewBox="0 0 36 36" aria-hidden>
               <circle
                 cx={18}
                 cy={18}
                 r={16}
                 fill="none"
-                stroke="var(--dk-teal)"
+                stroke={dwy ? "var(--dk-line-strong)" : "var(--dk-teal)"}
                 strokeWidth={2}
               />
               <path
                 d="M 11 14 A 8 8 0 1 1 12 23"
                 fill="none"
-                stroke="var(--dk-teal)"
+                stroke={dwy ? "var(--dk-ink-2)" : "var(--dk-teal)"}
                 strokeWidth={2.5}
                 strokeLinecap="round"
               />
               <path
                 d="M 8 12 L 11 15 L 14.5 11.5"
                 fill="none"
-                stroke="var(--dk-teal)"
+                stroke={dwy ? "var(--dk-ink-2)" : "var(--dk-teal)"}
                 strokeWidth={2.5}
                 strokeLinecap="round"
                 strokeLinejoin="round"
@@ -581,15 +580,17 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
   // approved for them (as on the portal slide): its stages, not our form.
   const crm = dwy && !L.dwyOs;
   return (
-    <div className="dkc-stage" data-kind="card" data-low="">
+    // The CRM's stages are set level with "You mark it" (the leader runs
+    // straight into their line); the screenshot sits low, as before.
+    <div className="dkc-stage" data-kind="card" data-low={crm ? undefined : ""}>
       <StopWords
         lane={lane}
         line={line((dwy ? stop.dwy : stop.line) ?? stop.line)}
         lang={lang}
       />
       {crm ? (
-        <div className="dkc-stage-pic dkc-stage-crm">
-          <CrmStages lang={lang} width={740} />
+        <div className="dkc-stage-pic dkc-stage-crm" data-level="">
+          <CrmStages lang={lang} width={740} drop={44} anchor />
         </div>
       ) : (
         <Tagged
@@ -640,8 +641,10 @@ function Journey({ ctx }: { ctx: SlideCtx }) {
     // the words above it leave the room; it never moves up into them.
     if (anchor && fig.hasAttribute("data-level")) {
       fig.style.marginTop = "";
+      // On top of the figure's own margin, never in place of it.
+      const base = Number.parseFloat(getComputedStyle(fig).marginTop) || 0;
       const short = want - mid();
-      if (short > 0) fig.style.marginTop = `${short}px`;
+      if (short > 0) fig.style.marginTop = `${base + short}px`;
     }
     const b = pic.getBoundingClientRect();
     const x = lang === "ar" ? (a.right - b.right) / k : (b.left - a.left) / k;
@@ -701,7 +704,14 @@ function Ads({ ctx }: { ctx: SlideCtx }) {
         <Owner lane="customer" text={A.owner} lang={lang} />
         {/* No "Preview" tag here: the foot under the phones says it. */}
         <h2 className="dk-h2">{t(A.title, lang)}</h2>
-        <p className="dk-body dk-ink2 dkc-ads-line">{t(A.line, lang)}</p>
+        {/* With nothing in the tray yet, the line says what the phones show:
+            "right now" would promise what the tray says is being finished. */}
+        <p className="dk-body dk-ink2 dkc-ads-line">
+          {t(
+            model.tray.length || model.meta.length ? A.line : A.lineEmpty,
+            lang,
+          )}
+        </p>
         {planned.length ? (
           <p className="dk-small dk-ink2">
             {tf(A.planned, lang, {
@@ -835,17 +845,16 @@ function LineGroup({
 
 /**
  * One red line, in the client's words: an amber mark (theirs, and fixed),
- * then the line in its own direction, hugging its words beside the mark,
- * so an English line in the Arabic deck reads as one block, not a ragged
- * right-aligned paragraph.
+ * then the line, the whole row in the line's own direction: an English
+ * line in the Arabic deck has its mark on its left, where an English list
+ * starts (never trailing after its last word), and its own type, not the
+ * Arabic leading; an Arabic line in the English deck the same, mirrored.
  */
 function RedLine({ text }: { text: string }) {
   return (
-    <li>
+    <li dir="auto">
       <i aria-hidden />
-      <span dir="auto" className="dkc-theirs" data-hug="">
-        {text}
-      </span>
+      <span className="dkc-theirs">{text}</span>
     </li>
   );
 }
@@ -1043,8 +1052,11 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
 function formStops(d: DeckData): number {
   const f = d.launch.form;
   if (f.kind !== "form" && f.source !== "example") return 1;
-  const custom =
-    f.source === "example" ? 3 : f.questions.filter(q => !isContact(q)).length;
+  const questions =
+    f.source === "example"
+      ? exampleQuestions(d.launch.service[d.lang] ?? d.serviceFocus, d.lang)
+      : f.questions;
+  const custom = questions.filter(q => !isContact(q)).length;
   return 1 + Math.min(6, custom) + 1;
 }
 
@@ -1133,7 +1145,7 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
             ? t(F.whatsapp, lang)
             : f.source === "example"
               ? t(F.fallback, lang)
-              : t(F.line, lang)}
+              : t(d.mode.dwy ? F.lineDwy : F.line, lang)}
         </p>
         {destination ? (
           f.kind === "website" ? (
@@ -1326,11 +1338,11 @@ function CallSlide({ ctx }: { ctx: SlideCtx }) {
             </>
           ) : null}
         </p>
-        {/* Stop 8 shows the appointment, tagged Example on its own; the
-            transcript and its tag are gone (one tag on the screen). */}
+        {/* One tag on the screen: the transcript's while it plays. Stop 7's
+            confirmation and stop 8's appointment carry their own. */}
         <span
           className="dk-tag"
-          style={phase === "lands" ? { visibility: "hidden" } : undefined}
+          style={phase === "call" ? undefined : { visibility: "hidden" }}
         >
           {t(dwy ? C.tagDwy : C.tag, lang)}
         </span>
@@ -1340,7 +1352,7 @@ function CallSlide({ ctx }: { ctx: SlideCtx }) {
           <div className="dkc-call-card-head">
             <ClientMark who={who(d)} size={56} />
             <span className="dkc-call-card-name">
-              <bdi>{tf(C.card, lang, { name: company })}</bdi>
+              <bdi>{tf(dwy ? C.cardDwy : C.card, lang, { name: company })}</bdi>
             </span>
           </div>
           <div className="dkc-clock">
@@ -1399,7 +1411,11 @@ function CallSlide({ ctx }: { ctx: SlideCtx }) {
             still={still}
           />
         </div>
-        <div className="dkc-after" aria-hidden={phase === "call"}>
+        <div
+          className="dkc-after"
+          aria-hidden={phase === "call"}
+          data-line={dwy ? "" : undefined}
+        >
           {dwy ? (
             <p className="dk-body dkc-after-line">{t(C.after.lineDwy, lang)}</p>
           ) : null}
@@ -1449,6 +1465,7 @@ function CallSlide({ ctx }: { ctx: SlideCtx }) {
                 },
               ]}
               notes={notes}
+              dwy={dwy}
             />
           </Tagged>
           <p className="dk-small dk-ink2">
@@ -1707,10 +1724,14 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
   const { d, lang, still } = ctx;
   const D = LAUNCH.days;
   const start = d.goLive ? new Date(`${d.goLive}T12:00:00Z`).getTime() : null;
-  const weeks = Array.from({ length: 13 }, (_, i) => i);
+  // The chart runs from go-live to day 90 and ends there, on its own marked
+  // line: the title's 90 days are on the axis. The weeks head from day 0 to
+  // day 77; week 13's head (day 84) would sit on day 90's.
+  const DAYS = 90;
+  const weeks = Array.from({ length: 12 }, (_, i) => i);
   const W = 1648 - 300;
-  const col = W / 13;
-  const x = (day: number) => (day / 91) * W;
+  const col = (7 / DAYS) * W;
+  const x = (day: number) => (day / DAYS) * W;
   const booked =
     d.launch.checkin && start
       ? Math.round((new Date(d.launch.checkin).getTime() - start) / DAY)
@@ -1719,7 +1740,7 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
   const after = Array.from(
     { length: 6 },
     (_, i) => (first ?? 14) + 14 * (i + 1),
-  ).filter(n => n <= 91);
+  ).filter(n => n <= DAYS);
   const ring = new Set(
     [30, 60, 90].map(target =>
       [first ?? 10, ...after].reduce((a, b) =>
@@ -1728,12 +1749,12 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
     ),
   );
   // A programme's week heads: the day, with the month where it changes.
-  const label = (i: number): { text: string; month: boolean } => {
-    // No go-live date: bare week numbers under the axis title "Week".
-    if (!start) return { text: digits(i + 1, lang), month: false };
-    const day = new Date(start + i * 7 * DAY);
-    const prev = new Date(start + (i - 1) * 7 * DAY);
-    const month = i === 0 || day.getUTCMonth() !== prev.getUTCMonth();
+  const dayLabel = (at: number, prevAt: number | null) => {
+    const day = new Date((start as number) + at * DAY);
+    const month =
+      prevAt == null ||
+      day.getUTCMonth() !==
+        new Date((start as number) + prevAt * DAY).getUTCMonth();
     const n = digits(day.getUTCDate(), lang);
     if (!month) return { text: n, month: false };
     const name = new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en-GB", {
@@ -1743,6 +1764,13 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
     }).format(day);
     return { text: `${n} ${name}`, month: true };
   };
+  const label = (i: number): { text: string; month: boolean } =>
+    // No go-live date: bare week numbers under the axis title "Week".
+    start
+      ? dayLabel(i * 7, i ? (i - 1) * 7 : null)
+      : { text: digits(i + 1, lang), month: false };
+  // Day 90's date, with its month (it ends the axis).
+  const endDate = start ? dayLabel(DAYS, null).text : null;
   return (
     <div className="dkc-prog" data-still={still ? "" : undefined}>
       <div
@@ -1772,6 +1800,14 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
           })}
           <i className="dkc-prog-golive" />
           <span className="dkc-prog-golive-label">{t(D.goLive, lang)}</span>
+          {/* The end: day 90, its name and date ending on its line. */}
+          <i className="dkc-prog-end" style={{ insetInlineStart: x(DAYS) }} />
+          <span className="dkc-prog-end-label">{t(D.day90, lang)}</span>
+          {endDate ? (
+            <span className="dkc-prog-week dkc-prog-end-date" data-month="">
+              {endDate}
+            </span>
+          ) : null}
         </div>
         <span className="dkc-prog-row-name">{t(D.finding, lang)}</span>
         <div className="dkc-prog-lane">

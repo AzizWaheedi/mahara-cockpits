@@ -154,6 +154,7 @@ The card bodies are the client's own answers, shown as written. No quote marks a
 
 | Key | English | Arabic |
 |---|---|---|
+| `team.line.dwy` | The people who run your ads and funnel and your success manager are all in this one group. | اللي يشتغلون على إعلاناتكم ومسار العميل، ونجاح العملاء، كلهم معكم في قروب واحد. |
 | `team.alerts.name.dwy` | New-enquiry alerts | تنبيهات الاستفسارات الجديدة |
 | `team.alerts.line.dwy` | New enquiries arrive here too, for your callers. | الاستفسارات الجديدة توصل هنا بعد، لفريق الاتصال عندكم. |
 
@@ -228,7 +229,7 @@ The six stop names are the Onboarding Map's own, exactly. Stop 4 carries only it
 | `week.3.line` | Before your Blueprint call: photos and videos in your Drive folder. Finished projects, work in progress, your team on site. Don't filter. We will. | قبل مكالمة بناء الهوية: صور وفيديوهات بمجلد الدرايف. مشاريع خلصت، وشغل قيد التنفيذ، وفريقكم بالموقع. لا تفلترون، إحنا نفلتر. |
 | `week.3.link` | (link to {links.drive}) | مجلد الدرايف |
 | `week.4.name` | Past enquiries | الاستفسارات القديمة |
-| `week.4.line` | Have a list of old enquiries? Send it, and we'll agree whether to call them. | عندكم قائمة باستفسارات قديمة؟ أرسلوها، ونتفق إذا نتصل عليهم. |
+| `week.4.line` | Have a list of old enquiries? Send it, and we'll agree whether to call them. | عندكم قائمة باستفسارات قديمة؟ أرسلوها، ونتفق إذا ينتصل عليهم. |
 | `week.5.name` | The Academy | الأكاديمية |
 | `week.5.line` | Courses for you and your team: your offer, closing your projects, your team and operations. Join, and start with the onboarding course. | كورسات لكم ولفريقكم: العرض، وتوقيع المشاريع، والفريق والتشغيل. انضموا، وابدوا بكورس Onboarding. |
 | `week.links` (copied into the group) | Meta access (one link): {url} · Your Drive folder: {url} · The Academy: {url} · Mahara OS: {url} · Install Mahara OS on your phone: {url} | صلاحيات ميتا (رابط واحد): {url} · مجلد الدرايف: {url} · الأكاديمية: {url} · Mahara OS: {url} · نزّلوا Mahara OS على جوالكم مثل أي تطبيق: {url} |
@@ -337,7 +338,7 @@ Both Arabic titles put the verb before the name, so a company name never forces 
 | 5 | `journey.5` | Lands with you | يوصلكم | Once it's confirmed, it lands in your calendar and in Mahara OS, and you get a WhatsApp alert. | لما يتأكد الموعد، ينزل بتقويمكم وفي Mahara OS، ويوصلكم تنبيه على الواتساب. |
 | 5 | `journey.5.nocal` | | | Connect Google Calendar in Mahara OS so bookings land there. | اربطوا تقويم قوقل في Mahara OS عشان المواعيد تنزل فيه. |
 | 6 | `journey.6` | You meet | تقابلونه | You hold the meeting: {form.consult_types}. | تقابلونه: {form.consult_types}. |
-| 6 | `journey.6.noshow` | | | Didn't come? Ours. We call to rebook. | ما حضر؟ علينا. نتصل عليه ونحجز له من جديد. |
+| 6 | `journey.6.noshow` | | | Didn't show? Ours. We call to rebook. | ما حضر؟ علينا. نتصل عليه ونحجز له من جديد. |
 | 6 | `journey.6.deciding` | | | Came, and thinking it over? Yours. Follow up, then mark it. | حضر وقاعد يفكر؟ عليكم. تابعوه، وبعدها سجلوا النتيجة. |
 | 7 | `journey.7` | You mark it | تسجلون النتيجة | You mark how it went, in a few taps. | تسجلون كيف راح الموعد، بكم ضغطة. |
 
@@ -363,7 +364,7 @@ For stop 6, join two or three consultation types with أو (في مكتبكم أ
 | 3 | `journey.3.dwy` | Your team calls | فريقكم يتصل | A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call as soon as it arrives. Up to 4 tries over 3 working days. | تنبيه الاستفسار الجديد يوصل لجوالات فريق الاتصال عندكم وللقروب. اتصلوا أول ما يوصل، لين ٤ محاولات خلال ٣ أيام دوام. |
 | 4 | `journey.4.dwy` | Your team books | فريقكم يحجز | Book on the right calendar. The confirmation goes out by itself. | احجزوا على التقويم الصح، والتأكيد يطلع للعميل تلقائياً. |
 | 5 | `journey.5.dwy` | Lands with you | يوصلكم | It lands in your calendar and your CRM, with your caller's notes. | الموعد ينزل بتقويمكم وفي الـCRM، ومعاه ملاحظات فريق الاتصال عندكم. |
-| 6 | `journey.6.noshow.dwy` | | | Didn't come? The follow-up messages start by themselves. | ما حضر؟ رسايل المتابعة تبدي تلقائياً. |
+| 6 | `journey.6.noshow.dwy` | | | Didn't show? The follow-up messages start by themselves. | ما حضر؟ رسايل المتابعة تبدي تلقائياً. |
 | 6 | `journey.6.deciding.dwy` | | | Came, and thinking it over? Follow up, then move it to the right stage. | حضر وقاعد يفكر؟ تابعوه، وبعدها انقلوه للمرحلة الصح. |
 | 7 | `journey.7.dwy` | You mark it | تسجلون النتيجة | Your team moves it to the right stage in the CRM, the same day. | فريقكم ينقله للمرحلة الصح في الـCRM، بنفس اليوم. |
 
@@ -382,6 +383,7 @@ For stop 6, join two or three consultation types with أو (في مكتبكم أ
 | `ads.title` | Your ads | إعلاناتكم |
 | `ads.tag` | Preview | معاينة |
 | `ads.line` | We can show any of your creatives in the phones, right now. | نقدر نوريكم أي تصميم من تصاميمكم على الجوالات، الحين. |
+| `ads.line.empty` | How your ads will look on your customers' phones. | بهالشكل بتطلع إعلاناتكم على جوالات عملائكم. |
 | `ads.frame.igfeed` | Instagram feed | فيد إنستقرام |
 | `ads.frame.igstory` | Instagram Stories and Reels | ستوري وريلز إنستقرام |
 | `ads.frame.fbfeed` | Facebook feed | فيد فيسبوك |
@@ -463,6 +465,7 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 | `form.eyebrow` | Your customer sees this | هذا اللي يشوفه عميلكم |
 | `form.title` | Your form | نموذج إعلانكم |
 | `form.line` | What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit. | اللي يجاوب عليه العميل قبل لا نتصل. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم. |
+| `form.line.dwy` | What they answer before your team calls. Questions marked 'Filters' screen out people who aren't a fit. | اللي يجاوب عليه العميل قبل لا يتصل فريقكم. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم. |
 | `form.tag.gate` | Filters | فلتر |
 | `form.label.page` | Your page | صفحتكم |
 | `form.stop.1` | Opening | البداية |
@@ -491,6 +494,8 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 | Question 3 | Is the project a home or a business? · Home · Business | المشروع بيت ولا محل تجاري؟ · بيت · تجاري |
 | Contact fields | Full name · Phone number · Email · City · Filled in by Meta · Next | الاسم الكامل · رقم الهاتف · البريد الإلكتروني · المدينة · تعبّيه ميتا تلقائياً · التالي |
 
+With no service known, question 1 is left out (a choice whose only option is "Something else" is not a question), and the form slide walks two questions. Journey stop 2 shows the questions screen from its top, the first question first.
+
 The headline, questions and options of a confirmed form are the client's own, in the form's language.
 
 **Spoken lines (Arabic)**
@@ -510,7 +515,7 @@ The turns, slots, pain variants, budget bands and both dialects are in `EXAMPLE-
 | `call.title` | How we'll speak to your customers | كيف نكلم عملاءكم |
 | `call.tag` | Example written from our script | مثال مكتوب من سكربتنا |
 | `call.line` | {client.name} · {prep.service_focus} | {client.name} · {prep.service_focus} |
-| `call.label` | Written from our call script. The customer in it is made up. | مكتوبة من سكربت مكالماتنا، والعميل فيها مو حقيقي. |
+| `call.label` | The customer in it is made up. | العميل في هالمكالمة مو حقيقي. |
 | `call.stop.7` | After the call | بعد المكالمة |
 | `call.stop.8` | What lands with you | اللي يوصلكم |
 | `call.stage.1` | The opening | المقدمة |
@@ -544,7 +549,8 @@ The stage names follow the sales deck's `stages` (المقدمة، تحديد ا
 | Key | English | Arabic |
 |---|---|---|
 | `call.title.dwy` | How your team should call | كيف يتصل فريقكم |
-| `call.label.dwy` | From the playbook we give you | من الدليل اللي نعطيكم إياه |
+| `call.label.dwy` | The customer in it is made up. The full script is in the playbook we give you. | العميل في هالمكالمة مو حقيقي، والسكربت كامل بالدليل اللي نعطيكم إياه. |
+| `call.card.dwy` | Calling for {Company} | اتصال باسم {Company} |
 | `call.tag.dwy` | Our script, for your team | سكربتنا، لفريقكم |
 | `call.after.line.dwy` | Book on the right calendar, and the confirmation goes out by itself. | احجزوا على التقويم الصح، والتأكيد يطلع للعميل تلقائياً. |
 | `call.after.heading.dwy` | Before the meeting | قبل الموعد |
@@ -552,7 +558,8 @@ The stage names follow the sales deck's `stages` (المقدمة، تحديد ا
 | `call.after.2.dwy` | Reminders before the meeting | تذكيرات قبل الموعد |
 | `call.after.3.dwy` | Provisional bookings: your team calls 48 and 24 hours before | الحجوزات المبدئية: فريقكم يتصل قبلها بيومين، وقبلها بيوم |
 | `call.after.4.dwy` | The meeting | الموعد |
-| `call.lands.caption.dwy` | Your caller's notes, in your CRM. | ملاحظات فريق الاتصال عندكم، في الـCRM. |
+| `call.lands.notes.dwy` | Your caller's notes | ملاحظات فريق الاتصال عندكم |
+| `call.lands.caption.dwy` | It lands in your CRM. | الموعد ينزل في الـCRM عندكم. |
 
 **Spoken lines (Arabic)**
 - هذا السكربت اللي نستخدمه، ومعلوماتكم داخله. فريق الاتصال يتكلم باسمكم، كقسم المواعيد عندكم.
@@ -625,6 +632,7 @@ The calendar day on row 5 names its blocked hour: Busy · مشغول.
 | # | English job | Arabic job | English why | Arabic why |
 |---|---|---|---|---|
 | 2 | Call fast, note every try, keep every stage true | اتصلوا بسرعة، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة | Interest fades, and a missing note means nobody knows what happened. | الحماس يبرد، والملاحظة الناقصة تخلي ماحد يعرف اللي صار. |
+| 5 | (unchanged) | (unchanged) | Your team books into the times you leave free. | فريقكم يحجز بالأوقات اللي تخلونها فاضية. |
 
 **Spoken lines (Arabic)**
 - هذي خمس شغلات عليكم، بمكان واحد. وبأرسل لكم هالكرت بالقروب.
@@ -654,7 +662,8 @@ The calendar day on row 5 names its blocked hour: Busy · مشغول.
 | `days.ms.2` | First attended appointment | أول عميل حضر |
 | `days.ms.3` | First won project | أول مشروع موقّع |
 | `days.footer` | Dates depend on your market, your offer and your follow-up. We track them with you. | التواريخ تعتمد على سوقكم وعرضكم ومتابعتكم، ونتابعها معكم. |
-| `days.fallback.weeks` | Week 1 … Week 13 | الأسبوع ١ … الأسبوع ١٣ |
+| `days.day90` | Day 90 | يوم ٩٠ |
+| `days.fallback.weeks` | Week 1 … Week 12, then Day 90 | الأسبوع ١ … الأسبوع ١٢، وبعدها يوم ٩٠ |
 
 The three milestones are the sales deck's `MILESTONES` Arabic, unchanged.
 

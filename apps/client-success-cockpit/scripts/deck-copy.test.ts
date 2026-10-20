@@ -261,8 +261,16 @@ describe("rule 6: a no-show is ours, someone deciding is theirs", () => {
     expect(fork.decidingLine.ar).toMatch(/^عليكم/);
     // Never the other way round, anywhere.
     expect(
-      offenders(EN, /Didn't come\? Yours|thinking it over\? Ours/i),
+      offenders(EN, /Didn't (?:come|show)\? Yours|thinking it over\? Ours/i),
     ).toEqual([]);
+  });
+  test("one name for a no-show: the CRM's stage, asked on the fork", () => {
+    expect(content.LAUNCH.journey.fork.noShow.en).toBe("Didn't show?");
+    expect(content.LAUNCH.portal.crm[0].en).toBe("Didn't show");
+    expect(content.LAUNCH.journey.fork.noShow.ar).toBe(
+      `${content.LAUNCH.portal.crm[0].ar}؟`,
+    );
+    expect(offenders(EN, /\bdidn't come\b|\bno-?shows? came\b/i)).toEqual([]);
   });
 });
 

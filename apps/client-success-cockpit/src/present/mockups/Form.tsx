@@ -28,7 +28,11 @@ export type FormScreen = "intro" | "questions" | "thanks";
 
 const ARABIC = /[؀-ۿ]/;
 
-/** The example form's questions, in the deck's words (CONTENT-AR L5). */
+/**
+ * The example form's questions, in the deck's words (CONTENT-AR L5). With
+ * no service known, the service question is left out: a choice whose only
+ * option is "Something else" is not a question.
+ */
 export function exampleQuestions(
   service: string | null,
   lang: Lang,
@@ -36,13 +40,17 @@ export function exampleQuestions(
   const E = LAUNCH.form.example;
   const tt = (l: L) => t(l, lang);
   return [
-    {
-      label: tt(E.q1),
-      options: [service ?? tt(E.q1other), ...(service ? [tt(E.q1other)] : [])],
-      isGate: false,
-      note: null,
-      type: "choice",
-    },
+    ...(service
+      ? [
+          {
+            label: tt(E.q1),
+            options: [service, tt(E.q1other)],
+            isGate: false,
+            note: null,
+            type: "choice" as const,
+          },
+        ]
+      : []),
     {
       label: tt(E.q2),
       options: E.q2options.map(tt),

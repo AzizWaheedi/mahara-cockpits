@@ -160,28 +160,37 @@ export function AdTray({
     <section className="dkc-tray" aria-label={t(A.tray, lang)}>
       <div className="dkc-tray-head">
         <span className="dkc-tray-title">{t(A.tray, lang)}</span>
-        {/* No count beside an empty tray: an empty tray says so itself. */}
-        {model.tray.length + model.meta.length ? (
+        {/* The count beside what it counts: the title's when the tray is one
+            list, each source's own when there are two, so the number on the
+            screen is always the number of pictures under it. No count
+            beside an empty tray: an empty tray says so itself. */}
+        {!model.meta.length && model.tray.length ? (
           <span className="dkc-tray-count">
-            {digits(model.tray.length + model.meta.length, lang)}
+            {digits(model.tray.length, lang)}
           </span>
         ) : null}
       </div>
       {model.meta.length ? (
         <div className="dkc-tray-tabs" role="tablist">
-          {(["uploaded", "meta"] as const).map(k => (
-            <button
-              key={k}
-              type="button"
-              role="tab"
-              aria-selected={tab === k}
-              className="dkc-press"
-              onClick={() => setLive(l => ({ ...l, tray: k }))}
-              onPointerUp={letGo}
-            >
-              {t(k === "meta" ? A.meta : A.uploaded, lang)}
-            </button>
-          ))}
+          {(["uploaded", "meta"] as const).map(k => {
+            const n = (k === "meta" ? model.meta : model.tray).length;
+            return (
+              <button
+                key={k}
+                type="button"
+                role="tab"
+                aria-selected={tab === k}
+                className="dkc-press"
+                onClick={() => setLive(l => ({ ...l, tray: k }))}
+                onPointerUp={letGo}
+              >
+                {t(k === "meta" ? A.meta : A.uploaded, lang)}
+                {n ? (
+                  <span className="dkc-tray-count">{digits(n, lang)}</span>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
       ) : null}
       {items.length ? (
@@ -345,6 +354,9 @@ interface Leader {
   /** The part's anchor, in the area's logical coordinates. */
   ax: number;
   ay: number;
+  /** The part's own top and bottom: its dot may sit anywhere between. */
+  top: number;
+  bottom: number;
   /** Where its label sits. */
   ly: number;
 }
@@ -414,6 +426,8 @@ export function PhoneRow({
       // crosses the app's own UI (a caption, the menu, a headline).
       const ax = side === "start" ? P.x - 10 : P.x + NATIVE_W + 10;
       const ay = P.y + ((r.top + r.bottom) / 2 - box.top) / k;
+      const top = P.y + (r.top - box.top) / k;
+      const bottom = P.y + (r.bottom - box.top) / k;
       const label =
         part === "who"
           ? t(A.leaders.who, lang)
@@ -434,27 +448,52 @@ export function PhoneRow({
       const lines =
         linesOf(label, rtl, LABEL_W[side]) +
         (sub ? linesOf(sub, rtl, LABEL_W[side]) : 0);
-      found.push({ key: part, label, lines, sub, side, ax, ay, ly: ay });
+      found.push({
+        key: part,
+        label,
+        lines,
+        sub,
+        side,
+        ax,
+        ay,
+        top,
+        bottom,
+        ly: ay,
+      });
     }
-    // Spread each side's labels so none sits on another (60 px apart for
-    // two one-line labels, more for each line a label wraps to).
+    // Spread each side's labels so none sits on another: half a line of
+    // each plus a 14 px gap (44 px for two one-line labels), the pair
+    // pushed apart about their middle, never one shoved down alone.
     for (const side of ["start", "end"] as const) {
       const list = found
         .filter(f => f.side === side)
         .sort((a, b) => a.ay - b.ay);
+      const room = (a: Leader, b: Leader) => (a.lines + b.lines) * 15 + 14;
       for (let i = 1; i < list.length; i++) {
-        const room = Math.max(
-          60,
-          (list[i - 1].lines + list[i].lines) * 17 + 24,
-        );
-        if (list[i].ly - list[i - 1].ly < room)
-          list[i].ly = list[i - 1].ly + room;
+        const short =
+          room(list[i - 1], list[i]) - (list[i].ly - list[i - 1].ly);
+        if (short > 0) {
+          list[i - 1].ly -= short / 2;
+          list[i].ly += short / 2;
+          // Pushing one up may crowd the one above it: settle upwards.
+          for (let j = i - 1; j > 0; j--) {
+            const up =
+              room(list[j - 1], list[j]) - (list[j].ly - list[j - 1].ly);
+            if (up <= 0) break;
+            list[j - 1].ly -= up;
+          }
+        }
       }
       const last = list.at(-1);
       if (last && last.ly > AREA_H - 30) {
         const lift = last.ly - (AREA_H - 30);
         for (const f of list) f.ly -= lift;
       }
+      // Each dot moves along its part to its label's line where the part
+      // reaches it (a caption, a button), so the leader runs straight;
+      // only a label that has to sit past its part's edge gets an elbow.
+      for (const f of list)
+        f.ay = Math.min(Math.max(f.ly, f.top + 6), f.bottom - 6);
     }
     setLeaders(found);
   }, [focus, focused?.id, lang, cropped, ctaText, model.app, none]);
@@ -592,10 +631,16 @@ export function PhoneRow({
           {leaders.map(l => {
             const bend = l.side === "end" ? 330 + NATIVE_W + 20 : 330 - 20;
             const to = l.side === "end" ? labelX - 14 : labelEnd + 14;
+            // Straight when the dot is level with its label; else a square
+            // elbow (the form slide's), never a diagonal.
+            const d =
+              Math.abs(l.ly - l.ay) < 1
+                ? `M ${phys(l.ax)} ${l.ay} L ${phys(to)} ${l.ly}`
+                : `M ${phys(l.ax)} ${l.ay} L ${phys(bend)} ${l.ay} L ${phys(bend)} ${l.ly} L ${phys(to)} ${l.ly}`;
             return (
               <g key={l.key}>
                 <path
-                  d={`M ${phys(l.ax)} ${l.ay} L ${phys(bend)} ${l.ay} L ${phys(to)} ${l.ly}`}
+                  d={d}
                   fill="none"
                   stroke="var(--dk-line-strong)"
                   strokeWidth={2}

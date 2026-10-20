@@ -251,7 +251,9 @@ function Team({ ctx }: { ctx: SlideCtx }) {
   return (
     <>
       <h2 className="dk-h2">{t(O.team.title, lang)}</h2>
-      <p className="dk-lead dkc-team-line">{t(O.team.line, lang)}</p>
+      <p className="dk-lead dkc-team-line">
+        {t(d.mode.dwy ? O.team.lineDwy : O.team.line, lang)}
+      </p>
       <WhatsAppGroup
         who={who(d)}
         lang={lang}
@@ -440,7 +442,10 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
                 >
                   {s}
                 </button>
-                {same(s, d.numberOne) ? (
+                {/* Their #1 is marked only while the card names another
+                    service: when the card names it, the row, the mark and
+                    the card would say one service three times. */}
+                {same(s, d.numberOne) && !same(s, candidate) ? (
                   <span className="dkc-chip">{t(O.one.numberOne, lang)}</span>
                 ) : null}
               </span>

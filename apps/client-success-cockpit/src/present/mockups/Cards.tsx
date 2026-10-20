@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import {
+  digits,
   JOURNEY,
   type L,
   LAUNCH,
@@ -88,7 +89,10 @@ export function QueueCard({
             <bdi>{row(Q.fresh, 0)}</bdi>
           </span>
           {dwy ? (
-            <span className="dkc-queue-chip">{t(Q.topDwy, lang)}</span>
+            // Their team's step: the "You" lane's ink, never our teal.
+            <span className="dkc-queue-chip" data-lane="you">
+              {t(Q.topDwy, lang)}
+            </span>
           ) : null}
         </li>
         <li>
@@ -114,27 +118,39 @@ export function QueueCard({
 
 // ------------------------------------------------- the calendar entry
 
-/** Their calendar's day, one appointment at 4 pm (journey stop 5). */
+/**
+ * Their calendar's day (journey stop 5), from the booked hour on: the
+ * appointment at the hour the example call books (4 pm, or earlier for a
+ * client who closes earlier), then the three hours after it. The block is
+ * the card's first row, so it sits level with "Lands with you" and the
+ * lanes' leader ends on it, straight.
+ */
 export function CalendarEntry({
   lang,
   day,
   place,
+  hour,
 }: {
   lang: Lang;
   day: string;
   place: string;
+  /** The booked hour, 24-hour (13 to 16). */
+  hour: number;
 }) {
   const C = LAUNCH.journey.calendar;
+  const hours = [hour, hour + 1, hour + 2, hour + 3];
   return (
     <div className="dkc-cal">
       <b className="dkc-cal-day">{day}</b>
       <div className="dkc-cal-grid">
-        {C.hours.map((h, i) => (
-          <div key={h.en} className="dkc-cal-hour">
-            <span className="dkc-cal-time">{t(h, lang)}</span>
+        {hours.map((h, i) => (
+          <div key={h} className="dkc-cal-hour">
+            <span className="dkc-cal-time">
+              {tf(C.hour, lang, { h: digits(h % 12 || 12, lang) })}
+            </span>
             <i />
-            {i === 2 ? (
-              <span className="dkc-cal-block">
+            {i === 0 ? (
+              <span className="dkc-cal-block" data-anchor="">
                 <bdi>{tf(C.block, lang, { place })}</bdi>
               </span>
             ) : null}
@@ -305,10 +321,13 @@ export function AppointmentCard({
   lang,
   rows,
   notes,
+  dwy = false,
 }: {
   lang: Lang;
   rows: { label: L; value: ReactNode }[];
   notes: string[];
+  /** Done with you: the notes are their own caller's. */
+  dwy?: boolean;
 }) {
   const N = LAUNCH.call.lands;
   return (
@@ -323,7 +342,7 @@ export function AppointmentCard({
         ))}
       </dl>
       <div className="dkc-appt-notes">
-        <span className="dk-label">{t(N.notes, lang)}</span>
+        <span className="dk-label">{t(dwy ? N.notesDwy : N.notes, lang)}</span>
         <ul>
           {notes.map(n => (
             <li key={n} dir="auto">
@@ -374,17 +393,21 @@ export function CrmStages({
   lang,
   width = 940,
   drop = 150,
+  anchor = false,
 }: {
   lang: Lang;
   width?: number;
   /** How far below the stages the no-show branch ends. */
   drop?: number;
+  /** Mark the stages' line for a leader to run straight into. */
+  anchor?: boolean;
 }) {
   const [noShow, ...main] = LAUNCH.portal.crm;
   const R = 14;
-  // The last stage's own room; every stage's name has its column to itself
-  // and sits on one line ("Quote sent" never wraps under its neighbours').
-  const COL = 200;
+  // The last stage's own room ("Closed" is short), so the other names get
+  // the width: every stage's name has its column to itself, on one line,
+  // with a clear gap before the next ("Quote sent" and "Closed" read as two).
+  const COL = 130;
   const gap = (width - COL) / 3;
   const x = (i: number) => R + i * gap;
   const NAME = 64;
@@ -426,6 +449,13 @@ export function CrmStages({
         ))}
         <Node x={x(1)} y={yb} r={R} state="ahead" />
       </svg>
+      {anchor ? (
+        <i
+          data-anchor=""
+          aria-hidden
+          style={{ position: "absolute", top: y - 1, height: 2, width: 2 }}
+        />
+      ) : null}
       <ol>
         {steps.map(s => (
           <li

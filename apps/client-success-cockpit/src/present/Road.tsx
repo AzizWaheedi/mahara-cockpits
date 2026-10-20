@@ -103,14 +103,28 @@ export function Road({
   );
 }
 
-/** The road at 40%, no words: under the launch cover's date (DESIGN 7.9). */
-export function RoadStrip({ count = 6, now }: { count?: number; now: number }) {
+/**
+ * The road at 40%, under the launch cover's date (DESIGN 7.9): the lit
+ * node's name under that node, starting at it, and no other words. The
+ * strip's end is the road's own (first appointments), left unnamed, so it
+ * never reads as today or as go-live.
+ */
+export function RoadStrip({
+  count = 6,
+  now,
+  label,
+}: {
+  count?: number;
+  now: number;
+  /** The lit node's name ("Launch call · Today"). */
+  label?: ReactNode;
+}) {
   const gap = 120;
   const r = 6;
   const x = (i: number) => r + 2 + i * gap;
   const y = r + 2;
   const end = x(count - 1);
-  return (
+  const svg = (
     <svg
       width={end + r + 2}
       height={y * 2}
@@ -143,5 +157,19 @@ export function RoadStrip({ count = 6, now }: { count?: number; now: number }) {
         />
       ))}
     </svg>
+  );
+  if (!label) return svg;
+  return (
+    <div className="dkc-roadstrip-fig">
+      {svg}
+      {/* Under the lit node, from its start edge (the strip mirrors in
+          Arabic, so the inline start is the node's side either way). */}
+      <span
+        className="dkc-roadstrip-label"
+        style={{ marginInlineStart: x(now) - r }}
+      >
+        {label}
+      </span>
+    </div>
   );
 }

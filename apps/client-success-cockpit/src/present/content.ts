@@ -247,6 +247,11 @@ export const O = {
       en: "The people who run your ads and funnel, our call centre and your success manager are all in this one group.",
       ar: "اللي يشتغلون على إعلاناتكم ومسار العميل، وفريق الاتصال، ونجاح العملاء، كلهم معكم في قروب واحد.",
     },
+    /** Done with you: their own team calls, so no call centre of ours is in the group. */
+    lineDwy: {
+      en: "The people who run your ads and funnel and your success manager are all in this one group.",
+      ar: "اللي يشتغلون على إعلاناتكم ومسار العميل، ونجاح العملاء، كلهم معكم في قروب واحد.",
+    },
     header: { en: "Your WhatsApp group", ar: "قروب الواتساب" },
     rows: [
       {
@@ -409,7 +414,7 @@ export const O = {
         name: { en: "Past enquiries", ar: "الاستفسارات القديمة" },
         line: {
           en: "Have a list of old enquiries? Send it, and we'll agree whether to call them.",
-          ar: "عندكم قائمة باستفسارات قديمة؟ أرسلوها، ونتفق إذا نتصل عليهم.",
+          ar: "عندكم قائمة باستفسارات قديمة؟ أرسلوها، ونتفق إذا ينتصل عليهم.",
         },
         ticks: [
           {
@@ -849,7 +854,8 @@ export const LAUNCH = {
     },
     or: { en: "or", ar: "أو" },
     fork: {
-      noShow: { en: "Didn't come?", ar: "ما حضر؟" },
+      /** The same words as the CRM's stage ("Didn't show"), asked. */
+      noShow: { en: "Didn't show?", ar: "ما حضر؟" },
       noShowLine: {
         en: "Ours. We call to rebook.",
         ar: "علينا. نتصل عليه ونحجز له من جديد.",
@@ -891,6 +897,8 @@ export const LAUNCH = {
     },
     calendar: {
       block: { en: "Appointment · {place}", ar: "موعد · {place}" },
+      /** An afternoon hour on the journey's calendar card. */
+      hour: { en: "{h} pm", ar: "{h} مساءً" },
       hours: [
         { en: "2 pm", ar: "٢ مساءً" },
         { en: "3 pm", ar: "٣ مساءً" },
@@ -905,6 +913,11 @@ export const LAUNCH = {
     line: {
       en: "We can show any of your creatives in the phones, right now.",
       ar: "نقدر نوريكم أي تصميم من تصاميمكم على الجوالات، الحين.",
+    },
+    /** No creative in the tray yet: what the phones show, never a promise of "right now". */
+    lineEmpty: {
+      en: "How your ads will look on your customers' phones.",
+      ar: "بهالشكل بتطلع إعلاناتكم على جوالات عملائكم.",
     },
     tray: { en: "Your creatives", ar: "تصاميم إعلاناتكم" },
     uploaded: { en: "Uploaded", ar: "المرفوعة" },
@@ -1030,6 +1043,10 @@ export const LAUNCH = {
       en: "What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit.",
       ar: "اللي يجاوب عليه العميل قبل لا نتصل. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم.",
     },
+    lineDwy: {
+      en: "What they answer before your team calls. Questions marked 'Filters' screen out people who aren't a fit.",
+      ar: "اللي يجاوب عليه العميل قبل لا يتصل فريقكم. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم.",
+    },
     gate: { en: "Filters", ar: "فلتر" },
     page: { en: "Your page", ar: "صفحتكم" },
     stops: [
@@ -1129,13 +1146,14 @@ export const LAUNCH = {
       ar: "مثال مكتوب من سكربتنا",
     },
     tagDwy: { en: "Our script, for your team", ar: "سكربتنا، لفريقكم" },
+    /** Under the call: what its tag cannot say (the tag already says where it came from). */
     label: {
-      en: "Written from our call script. The customer in it is made up.",
-      ar: "مكتوبة من سكربت مكالماتنا، والعميل فيها مو حقيقي.",
+      en: "The customer in it is made up.",
+      ar: "العميل في هالمكالمة مو حقيقي.",
     },
     labelDwy: {
-      en: "From the playbook we give you",
-      ar: "من الدليل اللي نعطيكم إياه",
+      en: "The customer in it is made up. The full script is in the playbook we give you.",
+      ar: "العميل في هالمكالمة مو حقيقي، والسكربت كامل بالدليل اللي نعطيكم إياه.",
     },
     stages: [
       { en: "The opening", ar: "المقدمة" },
@@ -1146,6 +1164,7 @@ export const LAUNCH = {
       { en: "Locking it in", ar: "تثبيت الموعد" },
     ],
     card: { en: "Calling for {name}", ar: "نتصل باسم {name}" },
+    cardDwy: { en: "Calling for {name}", ar: "اتصال باسم {name}" },
     clockOn: { en: "On the call", ar: "على المكالمة" },
     clockEnd: { en: "Call ended", ar: "انتهت المكالمة" },
     agent: { en: "Our caller", ar: "فريقنا" },
@@ -1223,13 +1242,14 @@ export const LAUNCH = {
       where: { en: "Where", ar: "المكان" },
       service: { en: "Service", ar: "الخدمة" },
       notes: { en: "Our caller's notes", ar: "ملاحظات فريق الاتصال" },
+      notesDwy: { en: "Your caller's notes", ar: "ملاحظات فريق الاتصال عندكم" },
       caption: {
         en: "Our caller's notes come with it.",
         ar: "وملاحظات فريق الاتصال توصل معه.",
       },
       captionDwy: {
-        en: "Your caller's notes, in your CRM.",
-        ar: "ملاحظات فريق الاتصال عندكم، في الـCRM.",
+        en: "It lands in your CRM.",
+        ar: "الموعد ينزل في الـCRM عندكم.",
       },
       places: {
         office: { en: "At your office", ar: "في مكتبكم" },
@@ -1366,6 +1386,10 @@ export const LAUNCH = {
           en: "Our callers book into the times you leave free.",
           ar: "فريق الاتصال يحجز بالأوقات اللي تخلونها فاضية.",
         },
+        whyDwy: {
+          en: "Your team books into the times you leave free.",
+          ar: "فريقكم يحجز بالأوقات اللي تخلونها فاضية.",
+        },
       },
     ] as { key: string; job: L; why: L; jobDwy?: L; whyDwy?: L }[],
     drive: { en: "Drive", ar: "الدرايف" },
@@ -1400,6 +1424,8 @@ export const LAUNCH = {
       ar: "عند ٣٠ و٦٠ و٩٠ يوم، مكالمة المتابعة تراجع الشهر كامل.",
     },
     goLive: { en: "Go-live", ar: "الإطلاق" },
+    /** The chart's end, on the axis: the title's 90 days. */
+    day90: { en: "Day 90", ar: "يوم ٩٠" },
     week: { en: "Week {n}", ar: "الأسبوع {n}" },
     msLabel: {
       en: "In this order, not on a date:",
@@ -1587,6 +1613,9 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "After the call, send this card in the group as the recap.",
       "A slot outside their hours, a holiday and a service detail are the questions our callers ask most.",
       "They don't need to answer on Fridays or in the evening.",
+    ],
+    dwy: [
+      "Their own callers ask those questions and book into the free times; the group answers them.",
     ],
     sayAr: [
       "هذي خمس شغلات عليكم، بمكان واحد. وبأرسل لكم هالكرت بالقروب.",

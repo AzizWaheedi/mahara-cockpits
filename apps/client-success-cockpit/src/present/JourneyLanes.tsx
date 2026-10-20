@@ -88,6 +88,7 @@ export function segmentPath(
 const TEAL = "var(--dk-teal)";
 const STRONG = "var(--dk-line-strong)";
 const GROUND = "var(--dk-space)";
+const INK2 = "var(--dk-ink-2)";
 const DEEP = "var(--dk-deep)";
 
 /** One node in the line language. */
@@ -291,20 +292,22 @@ export function JourneyLanes({
           );
         })}
         {fork && !idle ? (
+          // Teal only when the no-show comes back to us: done with you the
+          // follow-up is their own (their lane's ink), never ours.
           <g>
-            <path d={forkPath} {...dotted} stroke={TEAL} />
+            <path d={forkPath} {...dotted} stroke={dwy ? INK2 : TEAL} />
             <circle
               cx={forkEnd.x}
               cy={forkEnd.y}
               r={10}
               fill={GROUND}
-              stroke={TEAL}
+              stroke={dwy ? INK2 : TEAL}
               strokeWidth={2}
             />
             <path
               d={`M ${forkEnd.x - 4} ${forkEnd.y - 3} A 4.5 4.5 0 1 1 ${forkEnd.x - 3.5} ${forkEnd.y + 3}`}
               fill="none"
-              stroke={TEAL}
+              stroke={dwy ? INK2 : TEAL}
               strokeWidth={2}
               strokeLinecap="round"
             />
@@ -344,7 +347,7 @@ export function JourneyLanes({
         </span>
       ))}
       {fork && !idle ? (
-        // The rebook node says what it is: the stage's "Didn't come?" card,
+        // The rebook node says what it is: the stage's "Didn't show?" card,
         // named to the node's end side, inside the lane it is drawn in.
         <span
           className="dkc-fork-name"

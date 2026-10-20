@@ -182,7 +182,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 - Roles, not names. Your own name is on the cover.
 - Friday is off. Messages after 6 are answered the next working day.
 
-**DWY:** row 5 becomes "New-enquiry alerts" · "New enquiries arrive here too, for your callers."
+**DWY:** the line becomes "The people who run your ads and funnel and your success manager are all in this one group." (their own team calls, so no call centre of ours is in it), and row 5 becomes "New-enquiry alerts" · "New enquiries arrive here too, for your callers."
 
 **Sources:** CTX §3 and OCF (the pillars: ads and funnel, appointment conversion, 1-1 support), LCF and PS §9 (one group with the team, hours 10 to 6, Friday off, concerns get a call), PS §8 (the questions the call centre asks), DEC 2026-10-17 (DWY enquiries also go to the client's group), RN.
 
@@ -194,7 +194,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 **On screen**
 - Title: "One service per campaign"
 - Line: "We launch with one service, so the ads, the form questions and the calls are all written for one kind of customer."
-- Service chips: {form.services}, with {form.number_one} tagged "Your #1"
+- Service chips: {form.services}, with {form.number_one} tagged "Your #1" while the "Your first campaign" card names another service (when the card names their #1, the tag is left out: one service is not said three times)
 - Three tests, ticked per chip:
   - Easiest to sell
   - Most profit
@@ -368,7 +368,7 @@ Ten slides, about 22 minutes of a 30-minute slot, so there is room for questions
 | 3 | We call | Our team | "We call during working hours, 10 to 6, Saturday to Thursday. New enquiries go to the top of the list. Anything that comes in at night is called from 10 the next working morning." Chip: "Up to 4 tries over 3 working days". Small line: "Not every enquiry books. Some can't be reached, some aren't a fit. Our caller notes why, and we go through it with you at check-ins." | The queue card (DESIGN 6.5), tagged Example | UAE zone note from the data map. |
 | 4 | Booked, confirmed, reminded | Our team | "The serious ones are booked in, confirmed on WhatsApp and reminded before the meeting." With `prep.booking_video`: "The serious ones are booked in, confirmed on WhatsApp with a short video about you, and reminded before the meeting." | Five dots on a short line, each named in a word or two from L6's timeline (the full timeline is on L6) | `booking_video` defaults to off. |
 | 5 | Lands with you | You | "Once it's confirmed, it lands in your calendar and in Mahara OS, and you get a WhatsApp alert." | The drawn calendar entry (DESIGN 6.5), tagged Example | If the kickoff says Google Calendar is not connected, an amber line: "Connect Google Calendar in Mahara OS so bookings land there." |
-| 6 | You meet | You | "You hold the meeting: {form.consult_types}." Then the fork: "Didn't come? Ours. We call to rebook." · "Came, and thinking it over? Yours. Follow up, then mark it." | The fork's two cards, each with its mark (the lanes' rebook mark on ours); a dotted line returns to the "Our team" lane, its node named "Didn't come?" | `form.consult_types` fallback: "at your office, at their home, or online". |
+| 6 | You meet | You | "You hold the meeting: {form.consult_types}." Then the fork: "Didn't show? Ours. We call to rebook." · "Came, and thinking it over? Yours. Follow up, then mark it." | The fork's two cards, each with its mark (the lanes' rebook mark on ours); a dotted line returns to the "Our team" lane, its node named "Didn't show?" (the no-show has one name everywhere: the CRM's stage is "Didn't show") | `form.consult_types` fallback: "at your office, at their home, or online". |
 | 7 | You mark it | You | "You mark how it went, in a few taps." | `portal-outcome` thumbnail, cropped to the form, Demo workspace | |
 
 Stops 1, 2, 4 and 7 open up on later slides (L3, L5, L6 and L7), so their lines stay short. Stops 3, 5 and 6 carry their full facts here and nowhere else.
@@ -386,7 +386,7 @@ Stops 1, 2, 4 and 7 open up on later slides (L3, L5, L6 and L7), so their lines 
 | 3 | Your team calls | "A new-enquiry alert reaches your callers' phones and your WhatsApp group. Call as soon as it arrives. Up to 4 tries over 3 working days." |
 | 4 | Your team books | "Book on the right calendar. The confirmation goes out by itself." |
 | 5 | Lands with you | "It lands in your calendar and your CRM, with your caller's notes." |
-| 6 | You meet | Fork: "Didn't come? The follow-up messages start by themselves." · "Came, and thinking it over? Follow up, then move it to the right stage." The dotted line stays in the "You" lane. |
+| 6 | You meet | Fork: "Didn't show? The follow-up messages start by themselves." · "Came, and thinking it over? Follow up, then move it to the right stage." The dotted line stays in the "You" lane. |
 | 7 | You mark it | "Your team moves it to the right stage in the CRM, the same day." |
 
 **Sources:** CPM (the client-side steps, the WhatsApp alert, the split after the meeting), DOM and CCD (10:00 to 18:00 Saturday to Thursday, Friday off, new enquiries to the top of the queue, the 4-try ladder, a reason noted on every lost enquiry, 45% of enquiries with no verified dial, median first dial 163 working minutes), LAF (Main bookings notify the client; Provisional bookings are internal until confirmed), BR (WhatsApp confirmation on booking), PS §2 and §4 (thank-you video on booking, consultation types), CRF ("results fine but unhappy" when expectations are off), DWY SOP §2 to §5 (alerts, calendars, CRM stages), MOS (the DWY flow in Mahara OS needs per-client approval), DEC 2026-10-17 (DWY enquiries also go to the client's group).
@@ -399,14 +399,14 @@ Stops 1, 2, 4 and 7 open up on later slides (L3, L5, L6 and L7), so their lines 
 **On screen**
 - Eyebrow: "Your customer sees this"
 - Title: "Your ads", with the tag "Preview"
-- Line: "We can show any of your creatives in the phones, right now."
+- Line: "We can show any of your creatives in the phones, right now." With nothing in the tray yet (the tray says "We're finishing your first ads"), it becomes "How your ads will look on your customers' phones.", never a promise of "right now".
 - Three phone frames, side by side:
   - Instagram feed
   - Instagram Stories and Reels
   - Facebook feed
 
   Each frame shows {page name}, the avatar, "Sponsored", the primary text, the creative, the headline and the call to action.
-- Tray: "Your creatives", with two tabs: "Uploaded" · "From your Meta ads"
+- Tray: "Your creatives", with two tabs: "Uploaded" · "From your Meta ads". The count sits beside what it counts: beside the title when there is one list, beside each tab when there are two.
 - Starter ads are named once, in the foot under the phones: "Previews of starter ads, from our templates. Meta fits each ad to the screen it shows on." (in focus, the tag "Starter, from our templates" once). On a tray thumbnail, the short form "Template".
 - A tray thumbnail on a phone says which: "Feed" · "Reels" · "Facebook feed".
 - The leader on "Sponsored" quotes the word as the phone shows it: "Marked {word}".
@@ -482,7 +482,7 @@ After stop 3:
 **On screen**
 - Eyebrow: "Your customer sees this"
 - Title: "Your form"
-- Line: "What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit."
+- Line: "What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit." DWY: "What they answer before your team calls. Questions marked 'Filters' screen out people who aren't a fit."
 - One phone, screen by screen, walked with the arrow keys.
 - Gate questions carry the teal tag "Filters".
 - When the destination is a website: the label "Your page" and the page in the phone (a screenshot from prep, or the live page).
@@ -515,7 +515,7 @@ After stop 3:
 - Eyebrow: "Our team does this"
 - Title: "How we'll speak to your customers", with the tag "Example written from our script"
 - Line: "{client.name} · {prep.service_focus}"
-- Label, always visible: "Written from our call script. The customer in it is made up."
+- Label, always visible: "The customer in it is made up." (the tag already says where the call came from, so the label does not say it again). The tag shows while the call plays; stops 7 and 8 carry their own tags ("Example wording", "Example") instead, so the screen never has two.
 - Stage rail: The opening · Their goal · The details · What sets you apart · The booking · Locking it in. Each stage lights as the call reaches it.
 - Call clock, 0:00 to 4:51.
 - Two-sided transcript. The Arabic line sits above its English subtitle. In the Arabic deck the subtitle can be switched off.
@@ -524,6 +524,7 @@ After stop 3:
   - The WhatsApp confirmation from {client.name}, labelled "Example wording" (EXAMPLE-CALL.md)
   - A heading, "What we do before the meeting", over the timeline: Booked: a WhatsApp confirmation · The day before: a reminder · A confirmation call · 2 hours before: an SMS · The meeting
 - Stop 8, what lands with you: the appointment as it reaches them, tagged Example: "New appointment" · Abu Fahad · {day}, {time} · {place} · {service}, then "Our caller's notes": "Planning it for six months, wants to start soon. Budget: {band.note}. {pain note}" Caption: "Our caller's notes come with it."
+- The call card reads "Calling for {client.name}".
 - Small line under the transcript, only when a slot is marked "To give us" (one sentence about the chips, never two):
   - With `prep.call_guide_checked`: "Your caller's facts come from your call guide in Mahara OS. Check it, and fill in anything marked 'To give us'."
   - Without it: "Send us anything marked 'To give us' in the group, and we'll add it to your call guide."
@@ -544,10 +545,11 @@ After stop 3:
 
 **DWY variant**
 - Title: "How your team should call"
-- Label: "From the playbook we give you"
+- Label: "The customer in it is made up. The full script is in the playbook we give you."
+- The call card's Arabic reads اتصال باسم {client.name} (نتصل باسم would say we call); the English stays "Calling for {client.name}".
 - The stage rail and the transcript stay the same.
 - Stop 7: "Book on the right calendar, and the confirmation goes out by itself." Timeline heading "Before the meeting": Booked: a confirmation · Reminders before the meeting · Provisional bookings: your team calls 48 and 24 hours before · The meeting
-- Stop 8: the same card in the CRM, captioned "Your caller's notes, in your CRM."
+- Stop 8: the same card in the CRM, its notes headed "Your caller's notes", captioned "It lands in your CRM."
 - Links in the notes window: their calling playbook (the DWY SOP copy on their card) and the sample script (`SCRIPTS_DOC`).
 
 **Sources:** CS (sections 01 to 06, and the 07 answers to "how much does it cost?" and "I don't have a budget yet"), FW (prices, experience and guarantees come only from the client's guide; no deposits unless the client's policy says so), PB (the confirmation call: the evening before for morning meetings, the morning of for afternoon ones; 48-hour call for provisional slots), BR (WhatsApp confirmation on booking, a reminder the day before, an SMS 2 hours before; the confirmation's structure), EX (the median booking call is 291 seconds, used for pacing only; no consent exists to play real calls), CCD (a mandatory note on every call outcome; "Feedback for the client" posted to the portal per appointment), SD `CALLS_TOUR` stages (names adapted for clients), KB (the call guide lives in the client's portal Knowledge area; the new-client automation is not yet observed on a genuinely new form; an edited starter page gets a separate review page), DWY SOP §4.
@@ -602,9 +604,9 @@ The slide ends on stop 4.
 | # | Picture | Job | Why it matters |
 |---|---|---|---|
 | 1 | The ad tray (L3) | Leave the ads running through the first weeks | Ads need time before we can tell which ones work. |
-| 2 | The outcome form (L7) | Mark every meeting, the same day | Your outcomes show which ads bring real projects. |
-| 3 | The Drive folder (O6) | Keep your Drive folder fed | Fresh projects keep your ads from tiring. |
-| 4 | The WhatsApp group (O3) | Keep the offer steady while we test | Want to change it? Ask in the group first. A new offer mid-test starts the test again. If you ask first, we can plan it in. |
+| 2 | None | Mark every meeting, the same day | Your outcomes show which ads bring real projects. |
+| 3 | None | Keep your Drive folder fed | Fresh projects keep your ads from tiring. |
+| 4 | None | Keep the offer steady while we test | Want to change it? Ask in the group first. A new offer mid-test starts the test again. If you ask first, we can plan it in. |
 | 5 | A blocked-out calendar slot | Block busy times and holidays in your calendar | Our callers book into the times you leave free. |
 
 **Slots:** none.
@@ -616,7 +618,7 @@ The slide ends on stop 4.
 - They don't need to answer on Fridays or in the evening.
 - **Temp check:** "Which of these will be hardest for your team?"
 
-**DWY:** tile 2 becomes "Call fast, note every try, keep every stage true" · "Interest fades, and a missing note means nobody knows what happened." Picture: the CRM stages.
+**DWY:** tile 2 becomes "Call fast, note every try, keep every stage true" · "Interest fades, and a missing note means nobody knows what happened." No picture (only rows 1 and 5 carry one). Tile 5's why becomes "Your team books into the times you leave free." (their own team books, never "our callers"). Notes: "Their own callers ask those questions and book into the free times; the group answers them."
 
 **Sources:** the old onboarding template's "roadblocks" (the structure), PS §8 (the client's jobs; only 30% of recent appointments have attendance marked; footage is scarce; the questions the call centre needs answered), CRF (goes quiet in weeks 3 to 4, outcomes stop being filled), LCF (block busy time in Google Calendar), PEA (ads fatigue), CSMT (keep the folder full), DWY SOP §2 and §6 (speed, a note before every stage move).
 
@@ -628,7 +630,7 @@ The slide ends on stop 4.
 **On screen**
 - Title: "Your first 90 days"
 - Top line: "Your 90-day goal, in your words: {form.goal90}", with the footnote "A target, not a promise of results."
-- A timeline from {go_live}:
+- A timeline from {go_live} to day 90, which ends the axis on its own dashed line, named "Day 90" with its date (the week heads stop at day 77, so none sits on it):
   - "Weeks 1 and 2 · Finding what works" (a bar, no sentence); its dashed open end is labelled "Can run longer"
   - "Your first check-in · a week or two in" · {next.checkin}
   - "Then every two weeks" · "20 to 30 minutes on Zoom: what's working, and what we're changing." (keyed with the check-in diamond)
