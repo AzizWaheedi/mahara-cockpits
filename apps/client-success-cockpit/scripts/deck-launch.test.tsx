@@ -14,23 +14,34 @@ import {
   turnsFor,
 } from "../src/present/callScript";
 import { emptyLive } from "../src/present/channel";
-import { journeyOwners, type Lang } from "../src/present/content";
+import { journeyOwners, L_TITLES, type Lang } from "../src/present/content";
+
+const L_TITLES_GREEN = () => L_TITLES["green-light"].en;
+
 import type { SlideCtx } from "../src/present/deckContext";
 import { type DeckData, deckData } from "../src/present/deckData";
 import { shownSlides } from "../src/present/decks";
-import { defaultPhones, PROOF_ID } from "../src/present/launchData";
+import {
+  goalAsk,
+  goalAskParts,
+  partText,
+  pushbackVariant,
+  replyText,
+} from "../src/present/launchControls";
+import { defaultPhones } from "../src/present/launchData";
 import {
   formStops,
   launchSlides,
   placesLine,
   portalStops,
+  redLineGroups,
 } from "../src/present/launchDeck";
 import { onboardingSlides } from "../src/present/onboardingDeck";
 import { CALL_STAGES, callRun, stageRange } from "../src/present/Transcript";
 
 /**
- * The launch deck (docs/csm-decks/CONTENT.md L1 to L10, DESIGN.md section
- * 8): its order and stops, the journey's lanes done for you and done with
+ * The launch deck (docs/csm-decks/CONTENT.md L1 to L13, DESIGN.md sections
+ * 8 and 20): its order and stops, the journey's lanes done for you and done with
  * you, the fallbacks on the harness's four clients, the example call's
  * script and slots, and every slide and stop rendered in both languages.
  */
@@ -49,6 +60,8 @@ function data(key: FixtureKey, lang: Lang = "en"): DeckData {
     ads: f.ads,
     presenterName: key === "sparse" ? null : "Sara Al-Harbi",
     publicUrl: (_b, p) => p,
+    videos: f.videos,
+    videosProblem: f.videosProblem,
     now: NOW,
   });
 }
@@ -71,21 +84,26 @@ function ctx(d: DeckData, tour = 0, still = true): SlideCtx {
   };
 }
 
+// Creative flexibility before the ads (the fixer's round, 2026-10-20): the
+// guard rails are agreed before the client sees an ad.
 const ORDER = [
   "cover",
   "journey",
-  "ads",
   "creative-freedom",
+  "ads",
   "form",
   "call",
+  "partnership",
+  "training",
   "portal",
   "your-part",
   "first-90-days",
+  "good-to-know",
   "green-light",
 ];
 
 describe("the launch deck's order and stops", () => {
-  test("ten slides, in CONTENT.md's order", () => {
+  test("thirteen slides, in CONTENT.md's order", () => {
     expect(launchSlides().map(s => s.id)).toEqual(ORDER);
   });
 
@@ -111,18 +129,25 @@ describe("the launch deck's order and stops", () => {
       cover: 1,
       journey: 7,
       ads: 4,
-      "creative-freedom": 3,
+      // The ads' job, the volume, input first, the quick check, the content.
+      "creative-freedom": 5,
       // Opening, their three questions, the thank-you.
       form: 5,
       call: 8,
+      // The pie, their piece out, the two roads, the one line.
+      partnership: 4,
+      // The classroom, a lesson, then the two statements.
+      training: 3,
       portal: 4,
       "your-part": 1,
       "first-90-days": 1,
-      "green-light": 2,
+      "good-to-know": 1,
+      // The question alone: the housekeeping is the slide before.
+      "green-light": 1,
     });
   });
 
-  test("the mini rail opens one journey step on slides 3 to 7 only", () => {
+  test("the mini rail opens one journey step on slides 3 to 6, 8 and 9 only", () => {
     const d = data("full");
     const rail = (id: string, tour = 0) =>
       launchSlides()
@@ -136,13 +161,18 @@ describe("the launch deck's order and stops", () => {
     expect(rail("call", 0)).toBe(2);
     expect(rail("call", CALL_STAGES)).toBe(3);
     expect(rail("call", CALL_STAGES + 1)).toBe(4);
+    // The pie is the whole split, not a zoom into one stop.
+    expect(rail("partnership")).toBeNull();
+    // The training lights the meeting it is for.
+    expect(rail("training")).toBe(5);
     expect(rail("portal")).toBe(6);
     expect(rail("your-part")).toBeNull();
     expect(rail("first-90-days")).toBeNull();
+    expect(rail("good-to-know")).toBeNull();
     expect(rail("green-light")).toBeNull();
   });
 
-  test("the optional proof stop shows only when prep asks for it", () => {
+  test("creative freedom's five stops are core: a saved test-proof is ignored", () => {
     const f = FIXTURES.full("launch");
     const d = deckData({
       taskId: "x",
@@ -152,13 +182,20 @@ describe("the launch deck's order and stops", () => {
       kit: f.kit,
       prep: {
         ...f.prep,
-        launch: { ...f.prep.launch, shown_slides: [PROOF_ID] },
+        launch: { ...f.prep.launch, shown_slides: ["test-proof"] },
       },
       ads: f.ads,
       now: NOW,
     });
     const s = launchSlides().find(x => x.id === "creative-freedom");
-    expect(s?.stops?.(ctx(d))).toBe(4);
+    expect(s?.stops?.(ctx(d))).toBe(5);
+    expect([0, 1, 2, 3, 4].map(i => s?.stopName?.(i, ctx(d))?.en)).toEqual([
+      "Your ads have one job",
+      "We test a lot, fast",
+      "Your input comes first",
+      "Then a quick check, not a redesign",
+      "Keep the content coming",
+    ]);
   });
 
   test("the form slide hides itself until a form is confirmed or typed", () => {
@@ -237,10 +274,13 @@ describe("done with you", () => {
     expect(render("call", CALL_STAGES + 1)).toContain("It lands in your CRM.");
     // A number keeps its word on the canvas (a no-break space after it).
     expect(render("your-part")).toContain(
-      "Call within 5\u00a0minutes, note every try, keep every stage true",
+      "Call new enquiries within 5\u00a0minutes, and note every try",
     );
     expect(render("your-part")).toContain(
-      "Your team books into the times you leave free.",
+      "Your team books into them. On a day off, block each hour, not one all-day event.",
+    );
+    expect(render("your-part")).toContain(
+      "Move each meeting to the right stage the same day",
     );
   });
 
@@ -355,8 +395,27 @@ describe("done with you", () => {
       </>,
     );
     expect(call).toContain("What we do before the meeting");
-    expect(call).toContain("A confirmation call");
+    // Every row leads with its when; the meeting ends the list, bold.
+    expect(call).toContain(
+      '<span class="dkc-rem-when">Before the meeting</span> · <span>a call to confirm</span>',
+    );
+    expect(call).toContain('<span class="dkc-rem-end">The meeting</span>');
     expect(call).not.toContain("Provisional bookings");
+  });
+
+  test("the clock: Latin digits while it runs, the deck's digits once it is a length", () => {
+    const clock = (lang: "en" | "ar", tour: number) =>
+      renderToStaticMarkup(
+        <>
+          {launchSlides()
+            .find(s => s.id === "call")
+            ?.render(ctx(data("full", lang), tour))}
+        </>,
+      ).match(/<b class="dk-ltr">([^<]*)<\/b>/)?.[1];
+    // 0:00 in Arabic-Indic reads as dots at 72 px (DESIGN 13.4).
+    expect(clock("ar", 0)).toMatch(/^[0-9]:[0-9]{2}$/);
+    expect(clock("ar", CALL_STAGES + 1)).toBe("٤:٥١");
+    expect(clock("en", CALL_STAGES + 1)).toBe("4:51");
   });
 });
 
@@ -383,16 +442,38 @@ describe("the CEO's answers, drawn", () => {
   test("stop 3 says within 5 minutes, with the hours and the night rule", () => {
     const d = data("full");
     const html = render(d, "journey", 2);
-    expect(html).toContain(
+    expect(html.replace(/<[^>]+>/g, "")).toContain(
       "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning.",
     );
+    // "5 minutes" underlined in teal, as the form's thank-you band marks it.
+    expect(html).toContain('<span class="dkc-thanks-mark">5 minutes</span>');
     expect(render({ ...d, uae: true }, "journey", 2)).toContain(
       "10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday.",
     );
     expect(html).toContain("Up to 4 tries over 3 working days");
+    // Each row its own service, never the first one three times.
+    expect(html).toContain("Try 2 of 4 · Bathrooms · 5 pm");
+    expect(html).toContain("Callback · Full villa fit-out · 10 am");
     const ar = render(data("full", "ar"), "journey", 2);
-    expect(ar).toContain("خلال ٥ دقايق في أوقات الدوام");
-    expect(render(data("dwy"), "journey", 2)).toContain(
+    expect(ar).toContain("المحاولة ٢ من ٤ · الحمامات · ٥ مساءً");
+    expect(ar).toContain("معاودة اتصال · تشطيب فيلا كاملة · ١٠ صباحاً");
+    // A row past the list leaves its service out rather than repeat one.
+    const one = { ...d, services: [] };
+    const solo = render(
+      {
+        ...one,
+        launch: { ...one.launch, service: { en: "Kitchens", ar: null } },
+      },
+      "journey",
+      2,
+    );
+    expect(solo).toContain("New enquiry · Kitchens");
+    expect(solo).toContain("Try 2 of 4 · 5 pm");
+    expect(solo).toContain("Callback · 10 am");
+    expect(ar.replace(/<[^>]+>/g, "")).toContain(
+      "خلال ٥ دقايق في أوقات الدوام",
+    );
+    expect(render(data("dwy"), "journey", 2).replace(/<[^>]+>/g, "")).toContain(
       "Call within 5 minutes. Up to 4 tries over 3 working days.",
     );
   });
@@ -419,13 +500,620 @@ describe("the CEO's answers, drawn", () => {
     expect(html).toContain(
       "Depending on your plan and how long you've been with us.",
     );
-    // The two-week check-ins solid, the weeks between open: never one
-    // rhythm alone.
+    // One glyph for the rhythm, whichever it is (small and open), the
+    // look back ringed, the first open at full size: no solid diamond
+    // without a ring, so the key's two lines name every mark drawn.
     const weekly = html.match(/data-weekly=""/g) ?? [];
+    const rings = html.match(/class="dkc-prog-diamond" data-ring=""/g) ?? [];
     const solid =
-      html.match(/class="dkc-prog-diamond"(?! data-open)[^>]*>/g) ?? [];
-    expect(weekly.length).toBeGreaterThanOrEqual(5);
-    expect(solid.length).toBeGreaterThanOrEqual(5);
+      html.match(
+        /class="dkc-prog-diamond"(?! data-open)(?! data-ring)[^>]*>/g,
+      ) ?? [];
+    expect(weekly.length).toBeGreaterThanOrEqual(7);
+    expect(rings.length).toBe(3);
+    expect(solid.length).toBe(0);
+    expect(html.match(/class="dkc-prog-key"/g)?.length).toBe(2);
+  });
+});
+
+/**
+ * The Gamma pass (CEO, 2026-10-20), as drawn: the piece of the pie and its
+ * two roads, the sales training, what to tell us on the portal, the six
+ * jobs, the slower first weeks, the money and replies, and the green light
+ * alone. Each in both service models where they differ, and in Arabic.
+ */
+describe("the Gamma pass, drawn", () => {
+  const html = (d: DeckData, id: string, tour = 0) =>
+    renderToStaticMarkup(
+      <>
+        {launchSlides()
+          .find(s => s.id === id)
+          ?.render(ctx(d, tour))}
+      </>,
+    )
+      .replace(/&#x27;/g, "'")
+      .replace(/[\u2066-\u2069]/g, "")
+      .replace(/\u00a0/g, " ");
+  const text = (h: string) => h.replace(/<[^>]+>/g, "\n");
+
+  test("the pie: ours whole at stop 1, theirs pulled out and named at stop 2", () => {
+    const d = data("full");
+    const one = html(d, "partnership", 0);
+    expect(one).toContain("We bring them to your door.");
+    // Our one piece, named three ways, with one leader; theirs drawn ahead.
+    for (const n of [
+      "Ads and enquiries",
+      "Calls and bookings",
+      "Reminders and rebooking",
+    ])
+      expect(one).toContain(n);
+    expect((one.match(/class="dkc-pie-leader"/g) ?? []).length).toBe(2);
+    expect(one).not.toContain('class="dkc-pie" data-out');
+    expect(one).not.toMatch(/dkc-pie-theirs" style/);
+    // Two pieces in the SVG: ours, and theirs (ahead and lit, one shape).
+    expect(
+      (one.match(/class="dkc-pie-(?:ours|ahead|lit)"/g) ?? []).length,
+    ).toBe(3);
+    const two = html(d, "partnership", 1);
+    expect(two).toContain('class="dkc-pie" data-out=""');
+    expect(two).toMatch(
+      /dkc-pie-theirs" style="transform:translate\(-33\.9\d*px, -33\.9\d*px\)"/,
+    );
+    expect(two).toContain("You win the project.");
+    expect(two).toContain("The meeting and the close");
+    // No number on the pie: no percentage, no fraction.
+    expect(text(two)).not.toMatch(/%|٪|quarter/i);
+  });
+
+  test("done with you, the pie splits by owner in halves, theirs pulled out together", () => {
+    const d = data("dwy");
+    const two = html(d, "partnership", 1);
+    expect(two).toContain("We bring you the enquiries.");
+    expect(two).toContain("Your team books them and wins the project.");
+    expect(two).toContain('style="transform:translate(-48px, 0px)"');
+    expect(two).toContain("Your team");
+    for (const n of [
+      "Ads and enquiries",
+      "Confirmations and reminders",
+      "Calls and bookings",
+      "The meeting and the close",
+    ])
+      expect(two).toContain(n);
+    expect(two).not.toContain("Reminders and rebooking");
+  });
+
+  test("the two roads, then the one line at the foot", () => {
+    const d = data("full");
+    const three = html(d, "partnership", 2);
+    expect(three).toContain("The enquiries we bring take the longer road.");
+    expect(three).toContain("An enquiry from your ad");
+    // Why the ad road is longer, written on its bends, not under its name.
+    expect(three).toMatch(
+      /class="dkc-route-bend" data-side="over"[^>]*><span>Meeting you for the first time<\/span>/,
+    );
+    expect(three).toMatch(
+      /class="dkc-route-bend" data-side="over"[^>]*><span>Comparing you with others<\/span>/,
+    );
+    expect(three).not.toContain("and comparing you with others.");
+    expect(three).toContain("A referral");
+    expect(three).toContain("Already trusts you.");
+    expect(three).toContain("Your meeting");
+    expect(three).toContain("Signed project");
+    expect(three).not.toMatch(/longer road<|shorter road/i);
+    expect(three).not.toContain("dkc-partner-foot");
+    expect(three).not.toContain("data-close");
+    // The ad road takes longer at the same speed: its draw runs longer.
+    const ms = [...three.matchAll(/animation-duration:(\d+)ms/g)].map(m =>
+      Number(m[1]),
+    );
+    expect(ms.length).toBe(2);
+    expect(ms[0]).toBeGreaterThan(ms[1] * 1.6);
+    const four = html(d, "partnership", 3);
+    expect(four).toContain('class="dkc-routes" data-close=""');
+    expect(four).toContain(
+      "We can't close for you. We can help you get better at it.",
+    );
+    expect(four).not.toContain("Marketing without sales");
+    const ar = html(data("full", "ar"), "partnership", 3);
+    expect(ar).toContain(
+      "ما نقدر نوقّع المشروع عنكم، بس نقدر نساعدكم تصيرون أشطر فيه.",
+    );
+  });
+
+  test("the training: the Academy's two screens, masked and tagged, then the statements", () => {
+    const one = html(data("full"), "training", 0);
+    expect(one).toContain("pcm-academy-masked");
+    expect(one).toContain('alt="The Academy\'s six courses"');
+    expect(one).toContain("Academy screenshot");
+    expect(one).not.toContain("dkc-train-say");
+    // The course being sold, ringed on its own tile (the fixer's round).
+    expect((one.match(/class="dkc-train-ring"/g) ?? []).length).toBe(1);
+    // Why it matters, said on the slide; the Academy named over its list.
+    expect(one).toContain(
+      "Enquiries from ads are meeting you for the first time. This course shows you how to win them.",
+    );
+    expect(one).toContain("Premium Projects Academy");
+    const two = html(data("full"), "training", 1);
+    expect(two).toContain("pcm-lesson-masked");
+    // The lesson cropped to its outline and drawn larger: a crop, named.
+    expect(two).toContain(
+      'role="img" aria-label="A lesson inside Project Closing Mastery"',
+    );
+    expect(two).not.toContain("dkc-train-ring");
+    const ar = html(data("full", "ar"), "training", 1);
+    expect(ar).toContain("لقطة من الأكاديمية");
+    expect(ar).toContain('aria-label="درس من كورس إتقان توقيع المشاريع"');
+    // The list stays put on all three stops.
+    for (const i of [0, 1, 2])
+      expect(
+        (html(data("full"), "training", i).match(/class="dkc-course-n"/g) ?? [])
+          .length,
+      ).toBe(6);
+  });
+
+  test("the training: six courses, the one lit, what it teaches, two statements, no cadence", () => {
+    for (const key of ["full", "dwy"] as FixtureKey[]) {
+      const h = html(data(key), "training", 2);
+      const lit =
+        h.match(/<li data-lit=""[^>]*>[\s\S]*?<\/ol><\/span><\/li>/)?.[0] ?? "";
+      expect(lit).toContain("Project Closing Mastery");
+      expect(lit).toContain("What it teaches");
+      for (const p of [
+        "The consultation",
+        "The proposal",
+        "The objections",
+        "The close",
+      ])
+        expect(lit).toContain(p);
+      expect((h.match(/class="dkc-course-n"/g) ?? []).length).toBe(6);
+      // The quiet rows carry no ring: only the lit row draws a node.
+      expect((h.match(/<svg/g) ?? []).length).toBe(1);
+      expect((h.match(/class="dkc-train-say"/g) ?? []).length).toBe(2);
+      expect(h).toContain("starting with the sales crash course");
+      expect(h).toContain("The link is in your WhatsApp group.");
+      expect(text(h)).not.toMatch(/weekly|every two weeks/i);
+    }
+    const ar = html(data("full", "ar"), "training", 2);
+    expect(ar).toContain("إتقان توقيع المشاريع");
+    expect(ar).toContain("اللي بتتعلمونه");
+    // The Academy's own numbers, in Arabic-Indic digits, never ٠١.
+    expect(ar).toContain('<span class="dkc-course-n">٥</span>');
+  });
+
+  test("the portal's number-one job: three taps with their lines, and what to tell us", () => {
+    const full = html(data("full"), "portal", 3);
+    expect(full).toContain("Your number-one job: mark every meeting");
+    for (const l of [
+      "Running late isn't a no-show.",
+      "Sent it later? Update it then.",
+      "Add the value, or a line on why.",
+    ])
+      expect(full).toContain(l);
+    expect(full).toContain(
+      "Cancelled or moved with you directly? Tell us in the group: we change the reminders or call to rebook.",
+    );
+    // The three taps are numbered, in order, and the rebook mark has its
+    // arrowhead (a ring and an arc read as a copyright sign).
+    expect(full).toMatch(
+      /<li><i aria-hidden="true">1<\/i><span>Did they come\?/,
+    );
+    expect(full).toContain('class="dkc-rebook"');
+    expect(full).not.toContain("so we can call to rebook");
+    // Done with you their own team rebooks: no moved row, the late check under the stages.
+    const dwy = html(data("dwy"), "portal", 0);
+    expect(dwy).not.toContain("Cancelled or moved");
+    expect(dwy).toContain(
+      "Not there? Check they're not just running late before you move it.",
+    );
+  });
+
+  test("the six jobs: three heads, two jobs each, the calendar week with ten or more open slots", () => {
+    const h = html(data("full"), "your-part");
+    expect(h).toContain("Your six jobs, in one place");
+    expect(h).not.toContain("Your part");
+    for (const head of [
+      "Before your meetings",
+      "After each meeting",
+      "Week to week",
+    ])
+      expect(h).toContain(head);
+    expect((h.match(/class="dkc-part-cell"/g) ?? []).length).toBe(6);
+    expect(h).toContain("Keep at least 10 open slots, at different times");
+    expect(h).toContain("Add each booking to your own system");
+    expect(h).toContain(
+      "Mark every meeting the same day, with the value when you win",
+    );
+    expect(h).toContain(
+      "You send the quote and set the second meeting. Our caller checks in too.",
+    );
+    expect(h).toContain(
+      "Pausing early ends the test before it tells us anything.",
+    );
+    // The week: open slots at different hours, a day off blocked hour by
+    // hour (never one block), and the dark cells named once, in a key.
+    const open = (h.match(/class="dkc-wk-slot"><\/i>/g) ?? []).length;
+    expect(open).toBeGreaterThanOrEqual(10);
+    const off =
+      h.match(
+        /<span class="dkc-wk-day" data-off="">[\s\S]*?<\/i><\/span>/,
+      )?.[0] ?? "";
+    expect(off).toContain("Day off");
+    expect((off.match(/data-busy=""/g) ?? []).length).toBe(3);
+    expect((h.match(/>Busy</g) ?? []).length).toBe(0);
+    expect(h).toMatch(
+      /class="dkc-wk-key"><i class="dkc-wk-slot" data-busy=""><\/i>Blocked<\/span>/,
+    );
+    // Their project pictures sit with the Drive folder they feed.
+    const cell = (job: string) =>
+      h.match(
+        new RegExp(
+          `data-job="${job}">[\\s\\S]*?</p><p class="dkc-part-why">[^<]*</p>(<span class="dkc-part-pic dkc-part-tray")?`,
+        ),
+      )?.[1] ?? "";
+    expect(cell("drive")).toContain("dkc-part-tray");
+    expect(cell("ads")).toBe("");
+    // Each head holds its own two jobs, in order.
+    const col = (head: string) =>
+      h.match(new RegExp(`data-head="${head}">[\\s\\S]*?</section>`))?.[0] ??
+      "";
+    expect(col("before")).toMatch(/data-job="slots"[\s\S]*data-job="system"/);
+    expect(col("after")).toMatch(/data-job="mark"[\s\S]*data-job="follow"/);
+    expect(col("weeks")).toMatch(/data-job="ads"[\s\S]*data-job="drive"/);
+    // Done with you, no calling job under "After each meeting".
+    const dwy = html(data("dwy"), "your-part");
+    const dwyAfter =
+      dwy.match(/data-head="after">[\s\S]*?<\/section>/)?.[0] ?? "";
+    expect(dwyAfter).not.toMatch(/\bCall\b|within 5 minutes/);
+    const dwyBefore =
+      dwy.match(/data-head="before">[\s\S]*?<\/section>/)?.[0] ?? "";
+    expect(dwyBefore).toContain(
+      "Call new enquiries within 5 minutes, and note every try",
+    );
+    expect(dwy).not.toContain("Add each booking to your own system");
+  });
+
+  test("the group's recap: the six jobs, how we test, the course and its link, then the videos", () => {
+    const recap = partText(data("starter"));
+    expect(recap.split("\n")[0]).toBe("Your six jobs, in one place");
+    expect(recap).toContain("Before your meetings:");
+    expect(recap.match(/^- /gm)?.length).toBe(6);
+    expect(recap).toContain(
+      "How we test your ads: your red lines stay fixed, your ideas go in the group before the next round, you check the facts, prices and claims before an ad goes live, and small style changes go into the next round so your launch doesn't wait.",
+    );
+    // The money and the first weeks, every time, after how we test.
+    expect(recap).toContain(
+      "Keep your ad card funded. Your payments to us are on the dates in your agreement.\nThe first weeks are usually slower while the ads find your audience. Leave them running.",
+    );
+    expect(recap.indexOf("Keep your ad card")).toBeGreaterThan(
+      recap.indexOf("How we test your ads"),
+    );
+    // No video recorded: the course is the last line.
+    expect(recap.trimEnd().split("\n").at(-1)).toBe(
+      "Before your first meetings: Project Closing Mastery in the Academy: https://www.skool.com/premium-projects-academy-3669",
+    );
+    // With videos, they close the recap.
+    const full = partText(data("full"));
+    expect(full).toContain("Missed something on the call? Watch:");
+    expect(full.indexOf("Watch:")).toBeGreaterThan(full.indexOf("skool.com"));
+    const ar = partText(data("full", "ar"));
+    expect(ar).toContain(
+      "قبل أول مواعيدكم: كورس إتقان توقيع المشاريع في الأكاديمية: https://www.skool.com/",
+    );
+  });
+
+  test("the first two weeks: usually slower, under the bar's label", () => {
+    const h = html(data("full"), "first-90-days");
+    expect(h).toContain("Usually slower, while the ads find your audience.");
+    expect(html(data("full", "ar"), "first-90-days")).toContain(
+      "عادةً تكون أهدأ",
+    );
+  });
+
+  test("the call's stop 7: one voice before the meeting, done for you only", () => {
+    const line =
+      "Before the meeting, the messages come from us, so your customer hears one voice.";
+    expect(html(data("full"), "call", CALL_STAGES)).toContain(line);
+    expect(html(data("dwy"), "call", CALL_STAGES)).not.toContain(line);
+  });
+
+  test("good to know: the money rows, then the messages, the replies only without the onboarding deck", () => {
+    const full = html(data("full"), "good-to-know");
+    // Not "before we go live": comments and replies run on after it.
+    expect(full).toContain("Good to know");
+    expect(full).not.toContain("Before we go live");
+    expect(full).toMatch(
+      /data-group="money"><h3[^>]*>Money<\/h3>[\s\S]*data-row="charges"[\s\S]*data-row="card"[\s\S]*data-row="pay"[\s\S]*data-group="messages"><h3[^>]*>Messages<\/h3>[\s\S]*data-row="comments"[\s\S]*data-row="replies"/,
+    );
+    for (const k of ["charges", "card", "pay", "comments", "replies"])
+      expect(full).toContain(`data-row="${k}"`);
+    expect(full.replace(/<[^>]+>/g, "")).toContain(
+      "On the dates in your agreement. If one fails, the ads, our calls and Mahara OS pause until it's sorted.",
+    );
+    // Each money row's do-this in ink inside its line.
+    for (const act of [
+      "Tell your bank",
+      "Tell us first",
+      "On the dates in your agreement.",
+    ])
+      expect(full).toContain(`<span class="dkc-know-act">${act}</span>`);
+    expect(full).toContain(
+      "In the group within 2 working hours, 10 to 6, Saturday to Thursday.",
+    );
+    expect(html({ ...data("full"), uae: true }, "good-to-know")).toContain(
+      "In the group within 2 working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday.",
+    );
+    // A client who saw the onboarding deck heard the reply time on O3.
+    const dwy = html(data("dwy"), "good-to-know");
+    expect(dwy).not.toContain('data-row="replies"');
+    expect(dwy).toContain("the ads and the systems we run for you pause");
+    expect(dwy).not.toContain("our calls");
+  });
+
+  test("the green light is the question alone, with the road behind it", () => {
+    const h = html(data("full"), "green-light");
+    expect(h).toContain("Happy for us to go live?");
+    expect(h).not.toContain("Meta's first charges");
+    expect(L_TITLES_GREEN()).toBe("Happy for us to go live?");
+  });
+});
+
+/**
+ * Creative flexibility (the CEO, 2026-10-20; CONTENT L3, DESIGN 21.1): five
+ * stops beside one drawing, the field of ad tiles, and the pushback handle
+ * tied to the client's own 90-day goal.
+ */
+describe("creative flexibility, drawn", () => {
+  const html = (d: DeckData, tour = 0) =>
+    renderToStaticMarkup(
+      <>
+        {launchSlides()
+          .find(s => s.id === "creative-freedom")
+          ?.render(ctx(d, tour))}
+      </>,
+    )
+      .replace(/&#x27;/g, "'")
+      .replace(/[\u2066-\u2069]/g, "")
+      .replace(/\u00a0/g, " ");
+  const field = (h: string) =>
+    h.match(/<div class="dkf-field"[\s\S]*$/)?.[0] ?? "";
+  const lit = (h: string) => (field(h).match(/data-lit=""/g) ?? []).length;
+
+  test("stop 1: the ads' job, beside the field all lit, tagged, with no phone", () => {
+    const h = html(data("full"), 0);
+    expect(h).toContain("Your ads have one job");
+    expect(h).toContain(
+      "Your page shows your brand. Your ads are there to bring in business: enquiries from people who don't know you yet.",
+    );
+    // Never an absolute a client can test against their own Page.
+    expect(h).toContain(
+      "They show in people's feeds, marked Sponsored, not as posts on your page.",
+    );
+    expect((field(h).match(/class="dkf-tile"/g) ?? []).length).toBe(18);
+    expect(lit(h)).toBe(18);
+    expect(h).toContain("Illustration");
+    expect(h).not.toContain("dkc-phone");
+    expect(field(h)).toContain('data-stop="0"');
+    // The next round waits, unseen.
+    expect(field(h)).not.toContain("data-shown");
+  });
+
+  test("stop 2: most switch off, three stay lit, and their pick runs too", () => {
+    const h = html(data("full"), 1);
+    expect(h).toContain("We test a lot, fast");
+    expect(h).toContain(
+      "We make many versions and switch most of them off. That's how we find the few that work.",
+    );
+    expect(lit(h)).toBe(3);
+    expect(h).toContain("Your pick runs too, beside the ones you'd skip.");
+    expect(html(data("starter"), 1)).toContain(
+      "The ones you'd pick run too, beside the ones you'd skip.",
+    );
+  });
+
+  test("stop 3: their red lines on the amber panel, then the smooth way to ask, and the offer", () => {
+    const h = html(data("full"), 2);
+    expect(h).toContain("Your input comes first");
+    expect(h).toContain("Fixed: your red lines");
+    // What they told us leads.
+    expect(h.indexOf("No photos of the owner")).toBeLessThan(
+      h.indexOf("Show our real projects, never stock photos"),
+    );
+    // The spec's pair heads the groups; the lines typed on O7 carry "you
+    // told us" after them, the card's lines do not (score round 2).
+    const heads = [...h.matchAll(/class="dkc-fixed-lead">([^<]*)</g)].map(
+      m => m[1],
+    );
+    expect(heads).toEqual(["Never", "Always"]);
+    expect(h).toMatch(
+      /No photos of the owner<\/span><span class="dkc-told">you told us<\/span>/,
+    );
+    expect(h).toMatch(/Never show prices in an ad<\/span><\/li>/);
+    expect(h).not.toContain("You told us:");
+    // A typed line copied to the card shows once, as theirs.
+    const copied = redLineGroups(
+      {
+        told: ["No photos of the owner"],
+        never: ["No photos of the owner", "Never show prices in an ad"],
+        always: [],
+      },
+      "en",
+    );
+    expect(copied.never).toEqual([
+      { text: "No photos of the owner", told: true },
+      { text: "Never show prices in an ad", told: false },
+    ]);
+    // In Arabic, the card's English lines are quoted under "من ملفكم",
+    // never mixed into the Arabic groups.
+    const ar = html(data("full", "ar"), 2);
+    const arHeads = [...ar.matchAll(/class="dkc-fixed-lead">([^<]*)</g)].map(
+      m => m[1],
+    );
+    expect(arHeads).toEqual(["أبد", "من ملفكم"]);
+    expect(ar.indexOf("من ملفكم")).toBeLessThan(
+      ar.indexOf("Never show prices in an ad"),
+    );
+    expect(ar).toMatch(
+      /لا تحطون صور المالك<\/span><span class="dkc-told">قلتوا لنا<\/span>/,
+    );
+    expect(h).toContain("We never cross these.");
+    expect(h).not.toContain("You approve every fact");
+    expect(h).toContain(
+      "Ideas, a new offer, a new price, something to change? Send it in the group before we make the next round.",
+    );
+    expect(h).toContain(
+      "Keep your offer steady while a test runs. A new offer starts the test again.",
+    );
+    expect(field(h)).toContain("data-shown");
+    expect(field(h)).toContain("Next round");
+    // No red lines yet: the panel asks for them.
+    expect(html(data("starter"), 2)).toContain(
+      "No red lines written yet. Tell us now and we'll add them to your card.",
+    );
+  });
+
+  test("stop 4: the check is one line, small style changes go into the next round", () => {
+    const h = html(data("full"), 3);
+    expect(h).toContain("Then a quick check, not a redesign");
+    const check = h.match(/<p class="dkc-cf-checks">[\s\S]*?<\/p>/)?.[0] ?? "";
+    expect(check.replace(/<[^>]+>/g, "")).toBe("Facts · Prices · Claims");
+    // One small line, not two saying the same thing.
+    expect(h).toContain("You check these in the group before an ad goes live.");
+    expect(h).toContain(
+      "Small style changes go into the next round, so your launch doesn't wait.",
+    );
+    expect(h).not.toContain("You approve your ads in the group.");
+    expect(field(h)).toContain("Your style change");
+    expect(field(h)).toContain('data-stop="3"');
+    const ar = html(data("full", "ar"), 3);
+    const checkAr =
+      ar.match(/<p class="dkc-cf-checks">[\s\S]*?<\/p>/)?.[0] ?? "";
+    expect(checkAr.replace(/<[^>]+>/g, "")).toBe(
+      "المعلومات · الأسعار · الوعود",
+    );
+  });
+
+  test("stop 5: keep the content coming, with the why, and where the folder is", () => {
+    const h = html(data("full"), 4);
+    expect(h).toContain("Keep the content coming");
+    expect(h).toContain(
+      "Send new photos and videos of your projects whenever you can. More content means more ads to test.",
+    );
+    expect(h).toContain("Your folder link is pinned in your WhatsApp group.");
+    expect(h).not.toContain("drive.google.com");
+    expect(field(h)).toContain('data-stop="4"');
+  });
+
+  test("the field never carries a count, and of the client's creatives only their pick, on a tile that stays lit", () => {
+    for (const tour of [0, 1, 2, 3, 4]) {
+      const f = field(html(data("full"), tour));
+      expect(f.replace(/<[^>]+>/g, " ")).not.toMatch(/[0-9٠-٩]/);
+      // All lit at stop 1: no picture yet. From the switch-off on, their
+      // marked pick runs on one lit tile with its star, never a dimmed one.
+      const pics = f.match(/<img/g) ?? [];
+      expect(pics.length).toBe(tour === 0 ? 0 : 1);
+      if (tour > 0)
+        expect(f).toMatch(
+          /<span class="dkf-tile" data-lit="" data-pick=""><span class="dkf-pick" aria-hidden="true"><img/,
+        );
+    }
+    // No pick marked: no picture at all.
+    for (const tour of [1, 4])
+      expect(field(html(data("starter"), tour))).not.toContain("<img");
+  });
+
+  test("the stamp, once their yes is recorded, on any stop; none before", () => {
+    for (const tour of [0, 2, 4])
+      expect(html(data("full"), tour)).toContain(
+        "Agreed to test this way · 19 Oct",
+      );
+    // On the title row, off the words column (the visual review).
+    expect(html(data("full"), 2)).toMatch(
+      /class="dkc-cf-head"><h2[^>]*>[^<]*<\/h2><span class="dk-tag dkc-stamp">/,
+    );
+    expect(html(data("starter"), 3)).not.toContain("Agreed to test this way");
+  });
+
+  test("done with you: the same slide", () => {
+    const words = (h: string) =>
+      h.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    for (const tour of [0, 1, 3, 4])
+      expect(words(html(data("dwy"), tour))).toContain(
+        words(html(data("full"), tour)).match(
+          /Your ads have one job|We test a lot, fast|Then a quick check, not a redesign|Keep the content coming/,
+        )?.[0] ?? "x",
+      );
+    const n = launchSlides().find(s => s.id === "creative-freedom")?.notes;
+    expect(n?.dwy?.[0]).toContain(
+      "Your team runs the calls, but the ads work the same way",
+    );
+  });
+
+  test("prep warns when more than five red lines would push the panel past the content box", () => {
+    const s = launchSlides().find(x => x.id === "creative-freedom");
+    expect(s?.missing?.(data("full"))).toEqual([]);
+    const d = data("full");
+    const six = {
+      ...d,
+      launch: {
+        ...d.launch,
+        redLines: {
+          ...d.launch.redLines,
+          told: [...d.launch.redLines.told, "One more"],
+        },
+      },
+    };
+    expect(s?.missing?.(six)).toEqual([
+      "More than five red lines show on slide 3. Hide some in prep so the panel fits.",
+    ]);
+  });
+
+  test("the pushback is picked by their own 90-day goal: shown, held back, or none", () => {
+    const full = data("full");
+    expect(pushbackVariant(full)).toBe("shown");
+    expect(goalAsk(full, "en")).toBe(
+      'You told us your goal is "Two to three kitchen projects signed every month, mostly in north Riyadh". What matters more: this one change, or getting the ads live so we can get there?',
+    );
+    // The notes window sets the goal on its own line, between the halves.
+    expect(goalAskParts(full, "en")).toEqual({
+      before: "You told us your goal is",
+      goal: "Two to three kitchen projects signed every month, mostly in north Riyadh",
+      after:
+        "What matters more: this one change, or getting the ads live so we can get there?",
+    });
+    expect(goalAskParts(full, "ar")).toEqual({
+      before: "قلتوا لنا إن هدفكم:",
+      goal: "Two to three kitchen projects signed every month, mostly in north Riyadh",
+      after: "أيهم أهم لكم: هالتعديل، ولا إن الإعلانات تنزل عشان نوصل له؟",
+    });
+    const held = {
+      ...full,
+      launch: { ...full.launch, goal90: null, goal90Held: true },
+    };
+    expect(pushbackVariant(held)).toBe("held");
+    expect(goalAskParts(held, "ar")).toBeNull();
+    expect(goalAsk(held, "en")).toBe(
+      "You told us what you want from your first 90 days. What matters more: this one change, or getting the ads live so we can work towards it?",
+    );
+    expect(pushbackVariant(data("sparse"))).toBe("none");
+    expect(goalAsk(data("sparse"), "ar")).toBe(
+      "أيهم أهم لكم: هالتعديل، ولا إن الإعلانات تنزل؟",
+    );
+    // Copy reply: one line, in the deck's language, never isolated.
+    expect(replyText(full)).toStartWith(
+      'Thanks, noted. You told us your goal is "Two to three kitchen projects signed every month, mostly in north Riyadh", so',
+    );
+    // A goal written in the first person still reads: it is quoted, not spliced.
+    const we = {
+      ...full,
+      launch: { ...full.launch, goal90: "We want two kitchens a month." },
+    };
+    expect(replyText(we)).toStartWith(
+      'Thanks, noted. You told us your goal is "We want two kitchens a month", so',
+    );
+    expect(replyText(held)).not.toMatch(/\{goal\}|Two to three/);
+    const ar = data("dwy", "ar");
+    expect(replyText(ar)).toContain("قلتوا لنا إن هدفكم: نبي نوصل لمشروعين");
+    expect(replyText(ar)).not.toMatch(/[\u2066-\u2069]/);
   });
 });
 
@@ -455,9 +1143,9 @@ describe("the launch deck's fallbacks", () => {
 
   test("red lines: what they told us first, then the card's DO and DON'T, never NOTES", () => {
     const R = data("full").launch.redLines;
-    expect(R.told).toEqual(["No photos of the owner"]);
+    expect(R.told).toEqual(["No photos of the owner", "No music with lyrics"]);
     expect(R.never).toContain("Never show prices in an ad");
-    expect(R.always).toContain("Show finished kitchens in daylight");
+    expect(R.always).toContain("Show our real projects, never stock photos");
     expect(JSON.stringify(R)).not.toContain("calls after 4");
     expect(data("starter").launch.redLines).toEqual({
       told: [],

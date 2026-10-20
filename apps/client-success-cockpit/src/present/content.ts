@@ -45,8 +45,21 @@ export function isolate(text: string, lang: Lang): string {
   return text.replace(LATIN, m => `${LRI}${m}${PDI}`);
 }
 
+const NB = "\u00a0";
+/**
+ * Working hours stay whole on one line: "10 to 6" and "١٠ صباحاً إلى ٦
+ * مساءً" never break inside (hold() keeps only a number with the word
+ * after it, so "to" or إلى could still end a line). So does the product's
+ * name, "Mahara OS".
+ */
+const hours = (s: string) =>
+  s
+    .replace(/([0-9])[ \u00a0]to (?=[0-9])/g, `$1${NB}to${NB}`)
+    .replace(/(صباحاً|[٠-٩])[ \u00a0]إلى (?=[٠-٩])/g, `$1${NB}إلى${NB}`)
+    .replace(/Mahara OS/g, `Mahara${NB}OS`);
+
 /** A line in the language on screen, its numbers held to what they count. */
-export const t = (l: L, lang: Lang) => hold(isolate(l[lang], lang));
+export const t = (l: L, lang: Lang) => hours(hold(isolate(l[lang], lang)));
 
 /** `{name}` slots filled; a slot with no value is left out with its space. */
 export function fill(text: string, slots: Record<string, string>): string {
@@ -58,7 +71,7 @@ export function fill(text: string, slots: Record<string, string>): string {
 
 /** A line with its slots filled, in the language on screen. */
 export const tf = (l: L, lang: Lang, slots: Record<string, string>) =>
-  hold(isolate(fill(l[lang], slots), lang));
+  hours(hold(isolate(fill(l[lang], slots), lang)));
 
 const AR = "٠١٢٣٤٥٦٧٨٩";
 /** Digits as the deck writes them: Arabic-Indic in Arabic, never ٬. */
@@ -100,6 +113,7 @@ export const SHARED = {
     exampleWording: { en: "Example wording", ar: "صياغة للتوضيح" },
     illustration: { en: "Illustration", ar: "توضيح" },
     demo: { en: "Demo workspace", ar: "حساب تجريبي" },
+    academy: { en: "Academy screenshot", ar: "لقطة من الأكاديمية" },
   },
   /** The journey's three lanes, in their order (DESIGN 6). */
   lane: {
@@ -155,7 +169,7 @@ export type Cta =
   | "SEND_WHATSAPP_MESSAGE"
   | "APPLY_NOW";
 
-/** The call to action as Meta writes it (CONTENT L3, CONTENT-AR table). */
+/** The call to action as Meta writes it (CONTENT L4, CONTENT-AR table). */
 export const CTA: Record<Cta, L> = {
   LEARN_MORE: { en: "Learn more", ar: "معرفة المزيد" },
   GET_QUOTE: { en: "Get quote", ar: "الحصول على عرض أسعار" },
@@ -246,14 +260,14 @@ export const O = {
       en: "Your team, in your WhatsApp group",
       ar: "فريقكم، في قروب الواتساب",
     },
+    /**
+     * One line (the fixer's round, 2026-10-20): the rows below name the
+     * roles, so the line no longer lists them. The same in both service
+     * models, since it names no call centre.
+     */
     line: {
-      en: "The people who run your ads and funnel, our call centre and your success manager are all in this one group.",
-      ar: "اللي يشتغلون على إعلاناتكم ومسار العميل، وفريق الاتصال، ونجاح العملاء، كلهم معكم في قروب واحد.",
-    },
-    /** Done with you: their own team calls, so no call centre of ours is in the group. */
-    lineDwy: {
-      en: "The people who run your ads and funnel and your success manager are all in this one group.",
-      ar: "اللي يشتغلون على إعلاناتكم ومسار العميل، ونجاح العملاء، كلهم معكم في قروب واحد.",
+      en: "Everyone who works on your account is in this one group.",
+      ar: "كل اللي يشتغلون على حسابكم معكم في هالقروب.",
     },
     header: { en: "Your WhatsApp group", ar: "قروب الواتساب" },
     rows: [
@@ -300,13 +314,14 @@ export const O = {
         ar: "الاستفسارات الجديدة توصل هنا بعد، لفريق الاتصال عندكم.",
       },
     },
+    /** The group's reply time, within 2 working hours (LEAD decision 7, the Gamma launch deck). */
     foot: {
-      en: "We reply 10 to 6, Saturday to Thursday. If something worries you, we call you.",
-      ar: "نرد من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس. وإذا فيه شي شاغل بالكم، نتصل عليكم.",
+      en: "We reply within 2 working hours, 10 to 6, Saturday to Thursday. If something worries you, we call you.",
+      ar: "نرد خلال ساعتين دوام، من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس. وإذا فيه شي شاغل بالكم، نتصل عليكم.",
     },
     footUae: {
-      en: "We reply 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. If something worries you, we call you.",
-      ar: "نرد من ١٠ صباحاً إلى ٦ مساءً بتوقيت السعودية (من ١١ إلى ٧ بتوقيت الإمارات)، من السبت إلى الخميس. وإذا فيه شي شاغل بالكم، نتصل عليكم.",
+      en: "We reply within 2 working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. If something worries you, we call you.",
+      ar: "نرد خلال ساعتين دوام، من ١٠ صباحاً إلى ٦ مساءً بتوقيت السعودية (من ١١ إلى ٧ بتوقيت الإمارات)، من السبت إلى الخميس. وإذا فيه شي شاغل بالكم، نتصل عليكم.",
     },
   },
   one: {
@@ -351,8 +366,11 @@ export const O = {
       { en: "First appointments", ar: "أول المواعيد" },
     ],
     today: { en: "Today", ar: "اليوم" },
-    /** The launch call's caption on the road until it is booked. */
-    launchTime: { en: "20 to 30 minutes", ar: "من ٢٠ إلى ٣٠ دقيقة" },
+    /**
+     * The launch call's caption on the road until it is booked: about 45
+     * minutes since the launch deck grew to thirteen slides (CJ).
+     */
+    launchTime: { en: "About 45 minutes", ar: "تقريباً ٤٥ دقيقة" },
     launchLine: {
       en: "We walk you through everything that's going live.",
       ar: "نمر معكم على كل شي بينزل.",
@@ -431,8 +449,8 @@ export const O = {
       academy: {
         name: { en: "The Academy", ar: "الأكاديمية" },
         line: {
-          en: "Courses for you and your team: your offer, closing your projects, your team and operations. Join, and start with the onboarding course.",
-          ar: "كورسات لكم ولفريقكم: العرض، وتوقيع المشاريع، والفريق والتشغيل. انضموا، وابدوا بكورس Onboarding.",
+          en: "Courses for you and your team: your offer, closing your projects, your team and operations. Join, and start with the introduction.",
+          ar: "كورسات لكم ولفريقكم: العرض، وتوقيع المشاريع، والفريق والتشغيل. انضموا، وابدوا بكورس البداية.",
         },
         ticks: [
           { key: "academy", label: { en: "The Academy", ar: "الأكاديمية" } },
@@ -479,17 +497,32 @@ export const O = {
       en: "Your own ads, made from your content, go live first.",
       ar: "أول شي تنزل إعلاناتكم الخاصة، اللي نسويها من محتواكم.",
     },
+    /** The check, set small before any ad exists (the spec review, 2026-10-20). */
     approval: {
-      en: "Your first ads go live only once you've approved them.",
-      ar: "أول إعلاناتكم ما تنزل إلا بعد موافقتكم.",
+      en: "They go live only once you've approved the facts, prices and claims in them.",
+      ar: "ما تنزل أي وحدة منها إلا بعد ما توافقون على المعلومات والأسعار والوعود اللي فيها.",
     },
     testName: {
       en: "The first weeks are a test",
       ar: "أول الأسابيع نختبر فيها الإعلانات",
     },
+    /**
+     * Creative flexibility, planted where the red lines are asked (CEO,
+     * 2026-10-20), in three lines (score round 2: one four-sentence block
+     * read dense): the ads' job, at the body's ink; the volume and the
+     * moving launch, in ink-2; then the red lines' ask, over their list.
+     */
     testLine: {
-      en: "Your red lines stay fixed. Tell us now what we must never say or show. Everything else, we test.",
-      ar: "خطوطكم الحمراء ثابتة. قولوا لنا الحين اللي ما نقوله ولا نوريه أبد، والباقي نختبره.",
+      en: "Your ads are there to bring in business, not to look like your page.",
+      ar: "إعلاناتكم هدفها تجيب لكم شغل، مو إنها تشبه صفحتكم.",
+    },
+    testVolume: {
+      en: "We test many ads, fast. Small style changes go into the next round, so your launch keeps moving.",
+      ar: "نختبر إعلانات كثيرة، وبسرعة. والتعديلات الصغيرة على الشكل تروح للإعلانات الجاية، عشان إطلاقكم يمشي.",
+    },
+    testAsk: {
+      en: "Your red lines stay fixed: tell us now what we must never say or show.",
+      ar: "وخطوطكم الحمراء ثابتة: قولوا لنا الحين اللي ما نقوله ولا نوريه أبد.",
     },
     input: {
       en: "Your red lines, in your words",
@@ -537,6 +570,13 @@ export const O_TITLES = {
 export interface SlideNotes {
   say: string[];
   sayAr: string[];
+  /**
+   * The pushback handle (creative flexibility): said only if the client
+   * pushes back, so the notes window keeps it under one "If they push
+   * back" disclosure instead of in the stop-by-stop track.
+   */
+  push?: string[];
+  pushAr?: string[];
   temp?: L;
   dwy?: string[];
 }
@@ -577,10 +617,14 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
       "One sentence per role. Each person messages them about one thing; anything else goes to you.",
       "Roles, not names. Your own name is on the cover.",
       "Friday is off. Messages after 6 are answered the next working day.",
+      '"2 working hours" counts only the hours we work: a message at 5:30 may be answered the next morning.',
+      "Check the group now: whoever handles their schedule and whoever meets the customers should both be in it. Add anyone missing before you move on.",
     ],
     sayAr: [
       "كل واحد بالقروب يكلمكم عن شي واحد. وأنا نقطة تواصلكم معنا، لأي شي ثاني.",
       "الجمعة إجازة، والرسايل اللي توصل بعد الساعة ٦ نرد عليها بأول يوم دوام بعدها.",
+      "والساعتين تنحسب من ساعات دوامنا بس: الرسالة اللي توصل الساعة خمس ونص، ممكن نرد عليها الصبح.",
+      "خلنا نتأكد إن اللي يرتب مواعيدكم، واللي يقابل العملاء، موجودين بالقروب الحين.",
     ],
   },
   "one-service": {
@@ -633,13 +677,17 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
   next: {
     say: [
       "Most clients want to see the starter ads first (3 of 4 recent kickoffs). If they do, go to stop 2.",
-      "Approval names the ads, the offer and the Page they run under. No answer is not approval.",
+      "Approval of starter ads names the ads, the offer and the Page they run under; what the client checks in an ad is the facts, prices and claims. No answer is not approval.",
       'Red lines: type them in their words ("never show prices"), just under the test\'s line. They come back on the launch call.',
+      'The testing, in one breath: "We make a lot of ads and switch most of them off, so we can find the ones that work. Your red lines are the part that never changes." Plant it and move on: the launch call sets the rest, and the red lines you type now are what you\'ll go back to if they push back there.',
+      "Before we make anything: their ideas, the offer and the facts (prices, services, areas) go into the Blueprint call, or in the group before it. That is the easy way to shape the ads before they exist.",
       "Book the Blueprint before you hang up.",
     ],
     sayAr: [
       "تبون تشوفون إعلانات البداية الحين؟",
       "فيه شي ما تبونا نقوله أو نوريه أبد؟ قولوه بكلامكم، وأنا أكتبه.",
+      "(The testing, in one breath) نسوي إعلانات كثيرة ونوقف أغلبها، عشان نلقى اللي يشتغل. وخطوطكم الحمراء هي الشي الوحيد اللي ما يتغير.",
+      "(Before we make anything) قبل لا نسوي أي إعلان: أفكاركم، وعرضكم، والمعلومات مثل الأسعار والخدمات والمناطق، قولوها بمكالمة بناء الهوية والعرض، أو أرسلوها بالقروب قبلها.",
       "خلنا نحجز مكالمة بناء الهوية والعرض الحين.",
     ],
     temp: {
@@ -669,6 +717,139 @@ export const GROUP_LINKS = {
   installShort: {
     en: "Install it on your phone: {url}",
     ar: "نزّلوه على جوالكم مثل أي تطبيق: {url}",
+  },
+  /** The six jobs recap's last line: the course before the first meetings. */
+  academyFirst: {
+    en: "Before your first meetings: Project Closing Mastery in the Academy: {url}",
+    ar: "قبل أول مواعيدكم: كورس إتقان توقيع المشاريع في الأكاديمية: {url}",
+  },
+  /**
+   * The launch recap's testing line (the spec review, 2026-10-20): slide 3's
+   * agreement in writing, for the CSM to point to when the ads reach the group.
+   */
+  testing: {
+    en: "How we test your ads: your red lines stay fixed, your ideas go in the group before the next round, you check the facts, prices and claims before an ad goes live, and small style changes go into the next round so your launch doesn't wait. New photos and videos help: send them whenever you can.",
+    ar: "كيف نختبر إعلاناتكم: خطوطكم الحمراء ثابتة، وأفكاركم ترسلونها بالقروب قبل الإعلانات الجاية، وتراجعون المعلومات والأسعار والوعود قبل لا ينزل الإعلان، والتعديلات الصغيرة على الشكل تروح للإعلانات الجاية عشان إطلاقكم ما يتأخر. وأي صور أو فيديوهات جديدة، أرسلوها كل ما قدرتوا.",
+  },
+  /**
+   * Two lines the recap always carries (the fixer's round, 2026-10-20):
+   * slide 12's money and slide 11's first weeks, in writing, for a client
+   * who missed them on the call while their videos are not recorded yet.
+   */
+  payments: {
+    en: "Keep your ad card funded. Your payments to us are on the dates in your agreement.",
+    ar: "خلوا بطاقة الإعلانات فيها رصيد. ودفعاتكم لنا بالتواريخ المكتوبة في عقدكم.",
+  },
+  firstWeeks: {
+    en: "The first weeks are usually slower while the ads find your audience. Leave them running.",
+    ar: "أول الأسابيع عادةً تكون أهدأ، لين تتعرف الإعلانات على جمهوركم. خلوها شغالة.",
+  },
+  /**
+   * Who does what, in writing (score round 2), while the launch deck's
+   * start-to-finish, call-team and winning videos are not all recorded: a
+   * client who missed the journey, the call or the pie still has it. Left
+   * out once all three are recorded and shown for this client.
+   */
+  whoDoesWhat: {
+    en: "Who does what: we bring the enquiries, call them within 5 minutes during working hours, book and remind them, and rebook anyone who doesn't show. You hold the meeting and win the project.",
+    ar: "مين يسوي إيش: نجيب لكم الاستفسارات، ونتصل عليهم خلال ٥ دقايق في أوقات الدوام، ونحجز لهم ونذكّرهم قبل الموعد، واللي ما يحضر نتصل عليه ونحجز له من جديد. وأنتم تقابلونهم، وتوقيع المشروع عليكم.",
+  },
+  whoDoesWhatDwy: {
+    en: "Who does what: we bring the enquiries. Your team calls them within 5 minutes and books them on the right calendar, and the confirmation goes out by itself. You hold the meeting and win the project.",
+    ar: "مين يسوي إيش: نجيب لكم الاستفسارات، وفريقكم يتصل عليهم خلال ٥ دقايق ويحجز لهم على التقويم الصح، والتأكيد يطلع للعميل تلقائياً. وأنتم تقابلونهم، وتوقيع المشروع عليكم.",
+  },
+  /**
+   * O7's creative-flexibility plant in writing, in the onboarding links,
+   * while the onboarding testing video is not recorded (score round 2):
+   * O7 is the slide most often rushed.
+   */
+  testingShort: {
+    en: "Your ads are there to bring in business. We test many ads, fast, and small style changes go into the next round. Send your red lines in the group.",
+    ar: "إعلاناتكم هدفها تجيب لكم شغل. نختبر إعلانات كثيرة وبسرعة، والتعديلات الصغيرة على الشكل تروح للإعلانات الجاية. وأرسلوا خطوطكم الحمراء بالقروب.",
+  },
+  /** The recap's last block: every recorded video shown for this client. */
+  watch: {
+    en: "Missed something on the call? Watch:",
+    ar: "فاتكم شي بالمكالمة؟ شوفوا:",
+  },
+} as const;
+
+/**
+ * The deck's video slots (CONTENT "Video slots", CONTENT-AR "Video slots",
+ * DESIGN 21.2 and 21.3): the slots' titles, the quiet control on the
+ * canvas, the player's lines. The registry itself is in videos.ts.
+ */
+export const VIDEO = {
+  /** Each slot's title, by `deck:slot` (the registry's keys). */
+  titles: {
+    "onboarding:welcome": {
+      en: "Welcome to Mahara",
+      ar: "حياكم الله في مهارة",
+    },
+    "onboarding:meta-access": { en: "Meta access", ar: "صلاحيات ميتا" },
+    "onboarding:whatsapp-calendar": {
+      en: "WhatsApp and calendar",
+      ar: "الواتساب والتقويم",
+    },
+    "onboarding:testing": {
+      en: "Why we test so many ads",
+      ar: "ليش نختبر إعلانات كثيرة",
+    },
+    "launch:start-to-finish": {
+      en: "How it works, start to finish",
+      ar: "كيف يمشي كل شي، من البداية للنهاية",
+    },
+    "launch:testing": {
+      en: "Why we test so many ads",
+      ar: "ليش نختبر إعلانات كثيرة",
+    },
+    "launch:call-team": {
+      en: "How our call team works",
+      ar: "كيف يشتغل فريق الاتصال",
+    },
+    "launch:winning": {
+      en: "Your part in winning the project",
+      ar: "دوركم في توقيع المشروع",
+    },
+    "launch:portal-guide": {
+      en: "The Mahara OS guide",
+      ar: "دليل Mahara OS",
+    },
+    "launch:calendar-hours": {
+      en: "Blocking hours in your calendar",
+      ar: "كيف تسكرون الساعات بالتقويم",
+    },
+    "launch:first-90-days": {
+      en: "Your first 90 days",
+      ar: "أول ٩٠ يوم",
+    },
+    "launch:payments": { en: "How payments work", ar: "كيف تمشي الدفعات" },
+  } as Record<string, L>,
+  /** The control's lead, said once before one or two videos. */
+  watch: { en: "Watch:", ar: "شوفوا:" },
+  /** The control's accessible name. */
+  label: {
+    en: "Watch the video: {title}, {length}",
+    ar: "شوفوا الفيديو: {title}، {length}",
+  },
+  labelBare: { en: "Watch the video: {title}", ar: "شوفوا الفيديو: {title}" },
+  /** A length in Arabic is said in words, never m:ss (CONTENT-AR decision 13). */
+  minutes: {
+    under: { ar: "أقل من دقيقة" },
+    one: { ar: "دقيقة" },
+    two: { ar: "دقيقتين" },
+    few: { ar: "{n} دقايق" },
+    many: { ar: "{n} دقيقة" },
+  },
+  close: { en: "Close", ar: "إغلاق" },
+  loading: { en: "Loading the video", ar: "نحمّل الفيديو" },
+  failed: {
+    en: "The video didn't load. We'll send you the link in the group.",
+    ar: "ما اشتغل الفيديو. بنرسل لكم الرابط بالقروب.",
+  },
+  blocked: {
+    en: "This video can't play here. We'll send you the link in the group.",
+    ar: "هالفيديو ما يشتغل هنا. بنرسل لكم الرابط بالقروب.",
   },
 } as const;
 
@@ -815,8 +996,8 @@ export const LAUNCH = {
       },
       {
         line: {
-          en: "Once it's confirmed, it lands in your calendar and in Mahara OS, and you get a WhatsApp alert.",
-          ar: "لما يتأكد الموعد، ينزل بتقويمكم وفي Mahara OS، ويوصلكم تنبيه على الواتساب.",
+          en: "Once it's confirmed, it lands in your calendar and in Mahara OS. WhatsApp alerts tell you about new bookings, cancellations and changes.",
+          ar: "لما يتأكد الموعد، ينزل بتقويمكم وفي Mahara OS. وتوصلكم تنبيهات على الواتساب بالمواعيد الجديدة، وبأي إلغاء أو تغيير.",
         },
         dwy: {
           en: "It lands in your calendar and your CRM, with your caller's notes.",
@@ -869,7 +1050,7 @@ export const LAUNCH = {
         en: "The follow-up messages start by themselves.",
         ar: "رسايل المتابعة تبدي تلقائياً.",
       },
-      deciding: { en: "Came, and thinking it over?", ar: "حضر وقاعد يفكر؟" },
+      deciding: { en: "Came, still thinking it over?", ar: "حضر وقاعد يفكر؟" },
       /**
        * Done for you, both of us follow them up: our caller calls, and the
        * client too, who knows the customer best; the client marks it. The
@@ -974,32 +1155,101 @@ export const LAUNCH = {
       },
     },
   },
+  /**
+   * L3, creative flexibility (CONTENT L3, DESIGN 21.1): five stops beside
+   * one drawing, the field of ad tiles. The CEO, 2026-10-20: "Creative
+   * flexibility is a big expectation", set before the ads go live.
+   */
   test: {
     title: {
       en: "Your red lines are fixed. The rest, we test.",
       ar: "خطوطكم الحمراء ثابتة، والباقي نختبره.",
     },
-    page: {
-      name: { en: "Your page stays yours", ar: "صفحتكم تبقى لكم" },
-      /** The first stop's lead, beside the feed phone. */
+    /** Stop 1: the ads' job. */
+    job: {
+      name: { en: "Your ads have one job", ar: "إعلاناتكم لها مهمة وحدة" },
       copy: {
-        en: "Ads show in the feed, marked Sponsored, to people who don't know you yet. They don't appear on your page.",
-        ar: "الإعلانات الممولة تطلع بالفيد ومكتوب عليها مُموَّل، لناس ما يعرفونكم للحين. وما تطلع على صفحتكم.",
+        en: "Your page shows your brand. Your ads are there to bring in business: enquiries from people who don't know you yet.",
+        ar: "صفحتكم تعرض هويتكم. وإعلاناتكم موجودة عشان تجيب لكم شغل: استفسارات من ناس ما يعرفونكم للحين.",
       },
-      /** The first stop's foot line. */
-      foot: {
-        en: "The polished work belongs in your page's own posts.",
-        ar: "والشغل الفخم والمرتب مكانه حسابكم نفسه.",
+      small: {
+        en: "They show in people's feeds, marked Sponsored, not as posts on your page.",
+        ar: "تطلع بالفيد ومكتوب عليها مُموَّل، وما تنزل كمنشور على صفحتكم.",
+      },
+    },
+    /** Stop 2: the volume, and most of them switched off. */
+    volume: {
+      name: { en: "We test a lot, fast", ar: "نختبر كثير، وبسرعة" },
+      copy: {
+        en: "We make many versions and switch most of them off. That's how we find the few that work.",
+        ar: "نسوي نسخ كثيرة، ونوقف أغلبها. وبهالطريقة نلقى النسخ القليلة اللي تشتغل.",
+      },
+      small: {
+        en: "Each one tries something different: the hook, the angle, the format or who's on camera.",
+        ar: "كل وحدة فيها شي مختلف: البداية اللي تشد، أو الزاوية، أو طريقة العرض، أو مين يطلع بالفيديو.",
+      },
+    },
+    /** Stop 3: their input comes first, and the red lines it starts from. */
+    input: {
+      name: { en: "Your input comes first", ar: "نسمع منكم أول" },
+      copy: {
+        en: "Ideas, a new offer, a new price, something to change? Send it in the group before we make the next round.",
+        ar: "عندكم فكرة، أو عرض جديد، أو سعر جديد، أو شي تبون تغيرونه؟ أرسلوه بالقروب قبل لا نسوي الإعلانات الجاية.",
+      },
+      offer: {
+        en: "Keep your offer steady while a test runs. A new offer starts the test again.",
+        ar: "خلوا عرضكم ثابت وقت الاختبار. العرض الجديد يرجّع الاختبار من البداية.",
+      },
+    },
+    /** The field's next round (stops 3 to 5). */
+    round: { en: "Next round", ar: "الإعلانات الجاية" },
+    /** Stop 4: the check after the ads are made, as small as it can be. */
+    check: {
+      name: {
+        en: "Then a quick check, not a redesign",
+        ar: "بعدها مراجعة سريعة، مو تصميم من جديد",
+      },
+      /** One line, its middots in ink-3 (DESIGN 21.1): not steps. */
+      words: [
+        { en: "Facts", ar: "المعلومات" },
+        { en: "Prices", ar: "الأسعار" },
+        { en: "Claims", ar: "الوعود" },
+      ],
+      /** One small line under the three words (the two lines merged). */
+      line: {
+        en: "You check these in the group before an ad goes live.",
+        ar: "تراجعونها بالقروب قبل لا ينزل الإعلان.",
+      },
+      style: {
+        en: "Small style changes go into the next round, so your launch doesn't wait.",
+        ar: "والتعديلات الصغيرة على الشكل تروح للإعلانات الجاية، عشان إطلاقكم ما يتأخر.",
+      },
+      /** The leader in the field, over the client's own tile. */
+      change: { en: "Your style change", ar: "تعديلكم على الشكل" },
+    },
+    /** Stop 5: keep the content coming, with the why. */
+    content: {
+      name: {
+        en: "Keep the content coming",
+        ar: "خلوا المحتوى يوصلنا أول بأول",
+      },
+      copy: {
+        en: "Send new photos and videos of your projects whenever you can. More content means more ads to test.",
+        ar: "أرسلوا صور وفيديوهات جديدة لمشاريعكم كل ما قدرتوا. كل ما زاد المحتوى، زادت الإعلانات اللي نختبرها.",
       },
     },
     fixed: {
       name: { en: "Fixed: your red lines", ar: "الثابت: خطوطكم الحمراء" },
-      always: { en: "Always …", ar: "دايماً …" },
-      never: { en: "Never …", ar: "أبد ما …" },
-      told: { en: "You told us:", ar: "قلتوا لنا:" },
+      /** The panel's two heads, the spec's pair (score round 2). */
+      never: { en: "Never", ar: "أبد" },
+      always: { en: "Always", ar: "دايماً" },
+      /** After a line they typed on O7, small, in ink-3. */
+      told: { en: "you told us", ar: "قلتوا لنا" },
+      /** Card lines in the other script, quoted from their card. */
+      card: { en: "From your card", ar: "من ملفكم" },
       copy: {
-        en: "We never cross these. You approve every fact, price and claim. Anything wrong or off-brand, we fix.",
-        ar: "وهذي ما نتعداها أبد. وأنتم توافقون على كل معلومة، وكل سعر، وكل وعد نقوله عنكم. وأي شي غلط أو ما يشبه هويتكم، نصلحه.",
+        en: "We never cross these.",
+        ar: "وهذي ما نتعداها أبد.",
       },
       fallback: {
         en: "No red lines written yet. Tell us now and we'll add them to your card.",
@@ -1011,17 +1261,6 @@ export const LAUNCH = {
       },
     },
     open: {
-      name: {
-        en: "Open: everything else we test",
-        ar: "المفتوح: كل شي ثاني نختبره",
-      },
-      chips: [
-        { en: "Angles", ar: "الزوايا" },
-        { en: "Hooks", ar: "البداية اللي تشد" },
-        { en: "Formats", ar: "طرق العرض" },
-        { en: "Thumbnails", ar: "صورة الغلاف" },
-        { en: "Who's on camera", ar: "مين يطلع بالفيديو" },
-      ],
       pick: {
         en: "Your pick runs too, beside the ones you'd skip. The numbers tell us which work.",
         ar: "اختياركم ينزل بعد، جنب اللي يمكن ما تختارونها. والأرقام هي اللي توضح لنا أي واحد يشتغل.",
@@ -1030,26 +1269,47 @@ export const LAUNCH = {
         en: "The ones you'd pick run too, beside the ones you'd skip. The numbers tell us which work.",
         ar: "اللي تختارونها تنزل بعد، جنب اللي يمكن ما تختارونها. والأرقام هي اللي توضح لنا أي واحد يشتغل.",
       },
-      /** The open stop's foot line, with the footer after it. */
-      approve: {
-        en: "You approve your ads in the group.",
-        ar: "توافقون على إعلاناتكم بالقروب.",
-      },
-    },
-    footer: {
-      en: "Prefer something different later? Ask, and we'll launch it too.",
-      ar: "تبون شي ثاني بعدين؟ اطلبوه، وننزله بعد.",
-    },
-    proof: {
-      name: { en: "How a test runs", ar: "بهالشكل يمشي الاختبار" },
-      caption: {
-        en: "One campaign, 20 versions side by side. Some stay on, some go off.",
-        ar: "حملة وحدة، فيها ٢٠ نسخة مع بعض. بعضها يكمل، وبعضها يوقف.",
-      },
     },
     stamp: {
       en: "Agreed to test this way · {date}",
       ar: "اتفقنا نختبر بهالطريقة · {date}",
+    },
+    /**
+     * The pushback question (notes only), picked by the client's 90-day
+     * goal: shown, on file but held back, or none (CONTENT L3).
+     */
+    ask: {
+      shown: {
+        en: 'You told us your goal is "{goal}". What matters more: this one change, or getting the ads live so we can get there?',
+        ar: "قلتوا لنا إن هدفكم: {goal}. أيهم أهم لكم: هالتعديل، ولا إن الإعلانات تنزل عشان نوصل له؟",
+      },
+      held: {
+        en: "You told us what you want from your first 90 days. What matters more: this one change, or getting the ads live so we can work towards it?",
+        ar: "قلتوا لنا هدفكم لأول ٩٠ يوم. أيهم أهم لكم: هالتعديل، ولا إن الإعلانات تنزل عشان نشتغل عليه؟",
+      },
+      none: {
+        en: "What matters more to you: this one change, or getting the ads live?",
+        ar: "أيهم أهم لكم: هالتعديل، ولا إن الإعلانات تنزل؟",
+      },
+    },
+    /**
+     * "Copy reply": one line for pushback in the group, after the call,
+     * picked like the question. Pasted into WhatsApp, so {goal} is filled
+     * without isolates.
+     */
+    reply: {
+      shown: {
+        en: "Thanks, noted. You told us your goal is \"{goal}\", so we'd rather not hold your ads for a small style change: it goes into the next round. If a fact, price or claim is wrong, tell us and we'll fix it before the ad goes live.",
+        ar: "شكراً، وصلتنا. قلتوا لنا إن هدفكم: {goal}. وما نبي إعلاناتكم تتأخر عشان تعديل صغير على الشكل، فبنحطه بالإعلانات الجاية. وأي معلومة أو سعر أو وعد غلط، قولوا لنا ونصلحه قبل لا ينزل الإعلان.",
+      },
+      held: {
+        en: "Thanks, noted. You told us what you want from your first 90 days, so we'd rather not hold your ads for a small style change: it goes into the next round. If a fact, price or claim is wrong, tell us and we'll fix it before the ad goes live.",
+        ar: "شكراً، وصلتنا. قلتوا لنا هدفكم لأول ٩٠ يوم، وما نبي إعلاناتكم تتأخر عشان تعديل صغير على الشكل، فبنحطه بالإعلانات الجاية. وأي معلومة أو سعر أو وعد غلط، قولوا لنا ونصلحه قبل لا ينزل الإعلان.",
+      },
+      none: {
+        en: "Thanks, noted. We'd rather not hold your ads for a small style change: it goes into the next round. If a fact, price or claim is wrong, tell us and we'll fix it before the ad goes live.",
+        ar: "شكراً، وصلتنا. ما نبي إعلاناتكم تتأخر عشان تعديل صغير على الشكل، فبنحطه بالإعلانات الجاية. وأي معلومة أو سعر أو وعد غلط، قولوا لنا ونصلحه قبل لا ينزل الإعلان.",
+      },
     },
   },
   form: {
@@ -1182,7 +1442,7 @@ export const LAUNCH = {
     card: { en: "Calling for {name}", ar: "نتصل باسم {name}" },
     cardDwy: { en: "Calling for {name}", ar: "اتصال باسم {name}" },
     clockOn: { en: "On the call", ar: "على المكالمة" },
-    clockEnd: { en: "Call ended", ar: "انتهت المكالمة" },
+    clockEnd: { en: "Call length", ar: "مدة المكالمة" },
     agent: { en: "Our caller", ar: "فريقنا" },
     agentDwy: { en: "Your caller", ar: "فريق الاتصال" },
     lead: { en: "Customer", ar: "العميل" },
@@ -1208,6 +1468,15 @@ export const LAUNCH = {
         en: "What we do before the meeting",
         ar: "اللي نسويه قبل الموعد",
       },
+      /**
+       * Done for you, under the heading: the launch call SOP's third
+       * expectation, that the client doesn't message the customer before
+       * the meeting (CONTENT L6, the spec review of 2026-10-20).
+       */
+      oneVoice: {
+        en: "Before the meeting, the messages come from us, so your customer hears one voice.",
+        ar: "قبل الموعد، الرسايل تطلع منا، عشان عميلكم يسمع صوت واحد.",
+      },
       rows: [
         {
           when: { en: "Booked", ar: "عند الحجز" },
@@ -1217,13 +1486,16 @@ export const LAUNCH = {
           when: { en: "The day before", ar: "قبلها بيوم" },
           what: { en: "a reminder", ar: "تذكير" },
         },
-        { what: { en: "A confirmation call", ar: "مكالمة تأكيد" } },
+        {
+          when: { en: "Before the meeting", ar: "قبل الموعد" },
+          what: { en: "a call to confirm", ar: "مكالمة تأكيد" },
+        },
         {
           when: { en: "2 hours before", ar: "قبلها بساعتين" },
           what: { en: "an SMS", ar: "رسالة نصية" },
         },
-        { what: { en: "The meeting", ar: "الموعد" } },
-      ] as { when?: L; what: L; plain?: boolean }[],
+        { what: { en: "The meeting", ar: "الموعد" }, end: true },
+      ] as { when?: L; what: L; plain?: boolean; end?: boolean }[],
       lineDwy: {
         en: "Book on the right calendar, and the confirmation goes out by itself.",
         ar: "احجزوا على التقويم الصح، والتأكيد يطلع للعميل تلقائياً.",
@@ -1235,10 +1507,8 @@ export const LAUNCH = {
           what: { en: "a confirmation", ar: "تأكيد" },
         },
         {
-          what: {
-            en: "Reminders before the meeting",
-            ar: "تذكيرات قبل الموعد",
-          },
+          when: { en: "Before the meeting", ar: "قبل الموعد" },
+          what: { en: "reminders", ar: "تذكيرات" },
         },
         {
           when: { en: "Provisional bookings", ar: "الحجوزات المبدئية" },
@@ -1248,8 +1518,8 @@ export const LAUNCH = {
           },
           plain: true,
         },
-        { what: { en: "The meeting", ar: "الموعد" } },
-      ] as { when?: L; what: L; plain?: boolean }[],
+        { what: { en: "The meeting", ar: "الموعد" }, end: true },
+      ] as { when?: L; what: L; plain?: boolean; end?: boolean }[],
     },
     lands: {
       heading: { en: "New appointment", ar: "موعد جديد" },
@@ -1259,9 +1529,10 @@ export const LAUNCH = {
       service: { en: "Service", ar: "الخدمة" },
       notes: { en: "Our caller's notes", ar: "ملاحظات فريق الاتصال" },
       notesDwy: { en: "Your caller's notes", ar: "ملاحظات فريق الاتصال عندكم" },
+      /** The stop's lead, above the cards (the caption under them repeated the notes' label). */
       caption: {
-        en: "Our caller's notes come with it.",
-        ar: "وملاحظات فريق الاتصال توصل معه.",
+        en: "Everything our caller learned lands with you.",
+        ar: "كل اللي عرفه فريق الاتصال يوصلكم.",
       },
       captionDwy: {
         en: "It lands in your CRM.",
@@ -1271,6 +1542,135 @@ export const LAUNCH = {
         office: { en: "At your office", ar: "في مكتبكم" },
         home: { en: "At the customer's home", ar: "في بيت العميل" },
         online: { en: "Online", ar: "أونلاين" },
+      },
+    },
+  },
+  /**
+   * L7, the piece of the pie (CONTENT L7, DESIGN 20.3 and 20.4): our one
+   * piece, named three ways, and theirs pulled out; then the two roads.
+   * Done with you, the pie splits by owner in halves.
+   */
+  partner: {
+    title: {
+      en: "We bring them to your door. You win the project.",
+      ar: "نوصّلهم لين بابكم. وتوقيع المشروع عليكم.",
+    },
+    line1: { en: "We bring them to your door.", ar: "نوصّلهم لين بابكم." },
+    line2: { en: "You win the project.", ar: "وتوقيع المشروع عليكم." },
+    line1Dwy: {
+      en: "We bring you the enquiries.",
+      ar: "نوصّل لكم الاستفسارات.",
+    },
+    line2Dwy: {
+      en: "Your team books them and wins the project.",
+      ar: "والحجز وتوقيع المشروع على فريقكم.",
+    },
+    owner: {
+      us: { en: "Our team", ar: "فريقنا" },
+      you: { en: "You", ar: "أنتم" },
+      youDwy: { en: "Your team", ar: "فريقكم" },
+    },
+    /** Our one piece, named three ways (the Gamma's "we do": leads, bookings, shows). */
+    ours: [
+      { en: "Ads and enquiries", ar: "الإعلانات والاستفسارات" },
+      { en: "Calls and bookings", ar: "الاتصال والحجز" },
+      { en: "Reminders and rebooking", ar: "التذكير وإعادة الحجز" },
+    ],
+    /** Theirs: the Gamma's "you do: closes". */
+    theirs: [{ en: "The meeting and the close", ar: "الموعد وتوقيع المشروع" }],
+    oursDwy: [
+      { en: "Ads and enquiries", ar: "الإعلانات والاستفسارات" },
+      { en: "Confirmations and reminders", ar: "التأكيد والتذكير" },
+    ],
+    theirsDwy: [
+      { en: "Calls and bookings", ar: "الاتصال والحجز" },
+      { en: "The meeting and the close", ar: "الموعد وتوقيع المشروع" },
+    ],
+    road: {
+      ad: { en: "An enquiry from your ad", ar: "استفسار من إعلانكم" },
+      /** On the ad road's bends, not under its name: why the road is longer. */
+      bends: [
+        { en: "Meeting you for the first time", ar: "أول مرة يتعرف عليكم" },
+        { en: "Comparing you with others", ar: "يقارنكم بغيركم" },
+      ],
+      referral: { en: "A referral", ar: "عميل جاكم بتوصية" },
+      referralLine: { en: "Already trusts you.", ar: "يثق فيكم من قبل." },
+      meeting: { en: "Your meeting", ar: "موعدكم معه" },
+      signed: { en: "Signed project", ar: "مشروع موقّع" },
+      caption: {
+        en: "The enquiries we bring take the longer road.",
+        ar: "والاستفسارات اللي نجيبها لكم تمشي الطريق الأطول.",
+      },
+    },
+    /** Stop 4, the one line at the foot: it hands over to the training. */
+    close: {
+      en: "We can't close for you. We can help you get better at it.",
+      ar: "ما نقدر نوقّع المشروع عنكم، بس نقدر نساعدكم تصيرون أشطر فيه.",
+    },
+  },
+  /**
+   * L8, the sales training (CONTENT L8, DESIGN 20.5): the Academy's six
+   * courses in its own order, Project Closing Mastery lit and opened into
+   * what it teaches (the sales deck's summary, not its section names).
+   */
+  training: {
+    title: { en: "Your sales training", ar: "تدريبكم على المبيعات" },
+    /** Why the course matters, said on the slide (the two roads are one slide back). */
+    lead: {
+      en: "Enquiries from ads are meeting you for the first time. This course shows you how to win them.",
+      ar: "اللي يجونكم من الإعلانات أول مرة يقابلونكم، وهالكورس يعلمكم كيف تكسبونهم.",
+    },
+    /** Over the course list: where the course is. */
+    academy: {
+      en: "Premium Projects Academy",
+      ar: "أكاديمية المشاريع المميزة",
+    },
+    courses: [
+      { en: "Introduction", ar: "البداية" },
+      { en: "Onboarding", ar: "التعريف" },
+      { en: "Google optimisation", ar: "تحسين قوقل" },
+      { en: "Offer creation", ar: "صناعة العرض" },
+      { en: "Project Closing Mastery", ar: "إتقان توقيع المشاريع" },
+      { en: "Team and operations", ar: "الفريق والتشغيل" },
+    ],
+    /** The lit course, from 0 (Project Closing Mastery is the Academy's fifth). */
+    lit: 4,
+    teaches: { en: "What it teaches", ar: "اللي بتتعلمونه" },
+    parts: [
+      { en: "The consultation", ar: "الاستشارة" },
+      { en: "The proposal", ar: "عرض السعر" },
+      { en: "The objections", ar: "الاعتراضات" },
+      { en: "The close", ar: "التوقيع" },
+    ],
+    statements: [
+      {
+        name: { en: "Before your first meetings", ar: "قبل أول مواعيدكم" },
+        line: {
+          en: "Everyone who meets your customers or sends the quotes watches it, starting with the sales crash course.",
+          ar: "كل اللي يقابل عملاءكم أو يرسل عروض الأسعار يشوفه، ويبدي بقسم Sales crash course.",
+        },
+      },
+      {
+        name: { en: "Your real deals", ar: "صفقاتكم الحقيقية" },
+        line: {
+          en: "At your check-ins, we go through your meetings with you: what closed, and what to change.",
+          ar: "بمكالمات المتابعة، نمر معكم على مواعيدكم: اللي توقّع، واللي يحتاج يتغير.",
+        },
+      },
+    ],
+    foot: {
+      en: "The link is in your WhatsApp group.",
+      ar: "الرابط في قروب الواتساب.",
+    },
+    /** The Academy's own screens, masked (copy rule 11): their alt text. */
+    shots: {
+      classroom: {
+        en: "The Academy's six courses",
+        ar: "الكورسات الستة في الأكاديمية",
+      },
+      lesson: {
+        en: "A lesson inside Project Closing Mastery",
+        ar: "درس من كورس إتقان توقيع المشاريع",
       },
     },
   },
@@ -1329,6 +1729,28 @@ export const LAUNCH = {
       { en: "Did you quote?", ar: "عطيتوه عرض سعر؟" },
       { en: "Did you win?", ar: "وقّع معكم؟" },
     ],
+    /** One line under each tap (the Gamma's "let us know", CONTENT L9 stop 4). */
+    askLines: [
+      { en: "Running late isn't a no-show.", ar: "اللي متأخر شوي مو غايب." },
+      {
+        en: "Sent it later? Update it then.",
+        ar: "أرسلتوا عرض السعر بعدين؟ حدّثوا الجواب وقتها.",
+      },
+      {
+        en: "Add the value, or a line on why.",
+        ar: "أضيفوا قيمة المشروع، أو سطر عن السبب.",
+      },
+    ],
+    /** Done for you: moved, we change the reminders; cancelled, we rebook. Never both. */
+    moved: {
+      en: "Cancelled or moved with you directly? Tell us in the group: we change the reminders or call to rebook.",
+      ar: "لغى أو غيّر موعده معكم مباشرة؟ قولوا لنا بالقروب، ونعدّل التذكيرات أو نتصل عليه ونحجز له من جديد.",
+    },
+    /** Done with you, under the CRM's stages. */
+    lateDwy: {
+      en: "Not there? Check they're not just running late before you move it.",
+      ar: "ما وصل؟ تأكدوا إنه مو بس متأخر قبل لا تنقلونه.",
+    },
     taps: { en: "A few taps, the same day.", ar: "كم ضغطة، بنفس اليوم." },
     footer: {
       en: "What isn't marked can't be improved.",
@@ -1341,37 +1763,55 @@ export const LAUNCH = {
       { en: "Closed", ar: "وقّع" },
     ],
   },
+  /**
+   * L10, the six jobs (CONTENT L10, DESIGN 20.7): grouped by when they
+   * happen, two under each head. Done with you, the booking job becomes
+   * their own calling job (before the meetings) and the marking job the
+   * stage move, so no calling job sits under "After each meeting".
+   */
   part: {
-    title: { en: "Your part", ar: "دوركم" },
-    line: {
-      en: "Your five jobs, in one place.",
-      ar: "خمس شغلات عليكم، بمكان واحد.",
+    title: {
+      en: "Your six jobs, in one place",
+      ar: "ست شغلات عليكم، بمكان واحد",
+    },
+    heads: {
+      before: { en: "Before your meetings", ar: "قبل مواعيدكم" },
+      after: { en: "After each meeting", ar: "بعد كل موعد" },
+      weeks: { en: "Week to week", ar: "أسبوع بأسبوع" },
     },
     rows: [
       {
-        key: "ads",
+        key: "slots",
+        head: "before",
         job: {
-          en: "Leave the ads running through the first weeks",
-          ar: "خلوا الإعلانات شغالة أول الأسابيع",
+          en: "Keep at least 10 open slots, at different times",
+          ar: "خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة",
         },
         why: {
-          en: "Ads need time before we can tell which ones work.",
-          ar: "الإعلانات تحتاج وقت، قبل لا نعرف أي واحد فيها يشتغل.",
+          en: "Our callers book into them. On a day off, block each hour, not one all-day event.",
+          ar: "فريق الاتصال يحجز فيها. ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل.",
+        },
+        whyDwy: {
+          en: "Your team books into them. On a day off, block each hour, not one all-day event.",
+          ar: "فريقكم يحجز فيها. ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل.",
         },
       },
       {
-        key: "mark",
+        key: "system",
+        head: "before",
         job: {
-          en: "Mark every meeting, the same day",
-          ar: "سجلوا نتيجة كل موعد، بنفس اليوم",
+          en: "Add each booking to your own system",
+          ar: "ضيفوا كل موعد لنظامكم",
         },
         why: {
-          en: "Your outcomes show which ads bring real projects.",
-          ar: "نتائجكم توضح أي إعلانات تجيب مشاريع حقيقية.",
+          en: "If your team plans in other software, the booking goes there too, so nobody books over it.",
+          ar: "إذا فريقكم يخطط على برنامج ثاني، الموعد ينضاف فيه بعد، عشان ماحد يحجز فوقه.",
         },
+        // Done with you their team already books: the job before the
+        // meetings is the call itself.
         jobDwy: {
-          en: "Call within 5 minutes, note every try, keep every stage true",
-          ar: "اتصلوا خلال ٥ دقايق، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة",
+          en: "Call new enquiries within 5 minutes, and note every try",
+          ar: "اتصلوا على الاستفسارات الجديدة خلال ٥ دقايق، وسجلوا كل محاولة",
         },
         whyDwy: {
           en: "Interest fades, and a missing note means nobody knows what happened.",
@@ -1379,7 +1819,56 @@ export const LAUNCH = {
         },
       },
       {
+        key: "mark",
+        head: "after",
+        job: {
+          en: "Mark every meeting the same day, with the value when you win",
+          ar: "سجلوا نتيجة كل موعد بنفس اليوم، ومعها قيمة المشروع إذا وقّع",
+        },
+        why: {
+          en: "Your outcomes show which ads bring real projects.",
+          ar: "نتائجكم توضح أي إعلانات تجيب مشاريع حقيقية.",
+        },
+        jobDwy: {
+          en: "Move each meeting to the right stage the same day",
+          ar: "انقلوا كل موعد للمرحلة الصح بنفس اليوم",
+        },
+        whyDwy: {
+          en: "Your stages show which ads bring real projects.",
+          ar: "مراحلكم توضح أي إعلانات تجيب مشاريع حقيقية.",
+        },
+      },
+      {
+        key: "follow",
+        head: "after",
+        job: {
+          en: "Follow up the ones thinking it over, and book the second meeting",
+          ar: "تابعوا اللي قاعدين يفكرون، واحجزوا الموعد الثاني",
+        },
+        why: {
+          en: "You send the quote and set the second meeting. Our caller checks in too.",
+          ar: "أنتم ترسلون عرض السعر وتحددون الموعد الثاني، وفريق الاتصال يتابع معهم بعد.",
+        },
+        whyDwy: {
+          en: "You send the quote and set the second meeting.",
+          ar: "أنتم ترسلون عرض السعر وتحددون الموعد الثاني.",
+        },
+      },
+      {
+        key: "ads",
+        head: "weeks",
+        job: {
+          en: "Leave the ads running through the first weeks",
+          ar: "خلوا الإعلانات شغالة أول الأسابيع",
+        },
+        why: {
+          en: "Pausing early ends the test before it tells us anything.",
+          ar: "لو وقفتوها بدري، ينتهي الاختبار قبل لا يعطينا جواب.",
+        },
+      },
+      {
         key: "drive",
+        head: "weeks",
         job: {
           en: "Keep your Drive folder fed",
           ar: "خلوا مجلد الدرايف مليان",
@@ -1389,35 +1878,26 @@ export const LAUNCH = {
           ar: "المشاريع الجديدة تخلي إعلاناتكم ما تبهت.",
         },
       },
-      {
-        key: "offer",
-        job: {
-          en: "Keep the offer steady while we test",
-          ar: "ثبّتوا العرض وإحنا نختبر",
-        },
-        why: {
-          en: "Want to change it? Ask in the group first. A new offer mid‑test starts the test again. If you ask first, we can plan it in.",
-          ar: "تبون تغيرونه؟ قولوا لنا بالقروب أول. العرض الجديد بنص الاختبار يرجّعه من البداية. وإذا قلتوا لنا أول، نرتب له.",
-        },
-      },
-      {
-        key: "calendar",
-        job: {
-          en: "Block busy times and holidays in your calendar",
-          ar: "سكروا أوقات انشغالكم وإجازاتكم بالتقويم",
-        },
-        why: {
-          en: "Our callers book into the times you leave free.",
-          ar: "فريق الاتصال يحجز بالأوقات اللي تخلونها فاضية.",
-        },
-        whyDwy: {
-          en: "Your team books into the times you leave free.",
-          ar: "فريقكم يحجز بالأوقات اللي تخلونها فاضية.",
-        },
-      },
-    ] as { key: string; job: L; why: L; jobDwy?: L; whyDwy?: L }[],
-    drive: { en: "Drive", ar: "الدرايف" },
-    busy: { en: "Busy", ar: "مشغول" },
+    ] as {
+      key: string;
+      head: "before" | "after" | "weeks";
+      job: L;
+      why: L;
+      jobDwy?: L;
+      whyDwy?: L;
+    }[],
+    /** The calendar week under the open slots: Saturday to Thursday. */
+    days: [
+      { en: "Sat", ar: "سبت" },
+      { en: "Sun", ar: "أحد" },
+      { en: "Mon", ar: "اثنين" },
+      { en: "Tue", ar: "ثلاثاء" },
+      { en: "Wed", ar: "أربعاء" },
+      { en: "Thu", ar: "خميس" },
+    ],
+    /** The calendar's key, under the week: the dark cells, named once. */
+    blocked: { en: "Blocked", ar: "مسكّر" },
+    dayOff: { en: "Day off", ar: "إجازة" },
   },
   days: {
     title: { en: "Your first 90 days", ar: "أول ٩٠ يوم" },
@@ -1431,6 +1911,11 @@ export const LAUNCH = {
     },
     finding: { en: "Finding what works", ar: "نكتشف اللي يشتغل" },
     weeks12: { en: "Weeks 1 and 2", ar: "أول أسبوعين" },
+    /** Under the first bar's label: "usually", never "always" (FCL PLAN, the Gamma's slower start). */
+    slow: {
+      en: "Usually slower, while the ads find your audience.",
+      ar: "عادةً تكون أهدأ، لين تتعرف الإعلانات على جمهوركم.",
+    },
     /** Under the dashed open end of the first window. */
     open: { en: "Can run longer", ar: "ممكن تطوّل" },
     checkins: { en: "Check-ins", ar: "مكالمات المتابعة" },
@@ -1452,8 +1937,8 @@ export const LAUNCH = {
       ar: "من ٢٠ إلى ٣٠ دقيقة على زوم: اللي شغال، واللي بنغيره.",
     },
     looksBack: {
-      en: "At 30, 60 and 90 days, that check-in looks back over the month.",
-      ar: "عند ٣٠ و٦٠ و٩٠ يوم، مكالمة المتابعة تراجع الشهر كامل.",
+      en: "Around 30, 60 and 90 days, that check-in looks back over the month.",
+      ar: "تقريباً عند ٣٠ و٦٠ و٩٠ يوم، مكالمة المتابعة تراجع الشهر كامل.",
     },
     goLive: { en: "Go-live", ar: "الإطلاق" },
     /** The chart's end, on the axis: the title's 90 days. */
@@ -1473,24 +1958,93 @@ export const LAUNCH = {
       ar: "التواريخ تعتمد على سوقكم وعرضكم ومتابعتكم، ونتابعها معكم.",
     },
   },
+  /**
+   * L12, good to know (CONTENT L12, DESIGN 20.9): the money, then the
+   * messages, each row a head over its line. The replies row shows only
+   * when this client never saw the onboarding deck (O3 says it).
+   */
+  know: {
+    title: { en: "Good to know", ar: "زين تعرفونه" },
+    groups: {
+      money: { en: "Money", ar: "الفلوس" },
+      messages: { en: "Messages", ar: "الرسايل" },
+    },
+    rows: [
+      {
+        key: "charges",
+        group: "money",
+        name: { en: "Meta's first charges", ar: "أول مبالغ تخصمها ميتا" },
+        line: {
+          en: "Small at first, and that's normal. Tell your bank so it doesn't block them.",
+          ar: "تكون صغيرة بالبداية، وهذا طبيعي. بلّغوا البنك عشان ما يوقفها.",
+        },
+        /** The row's do-this, set in ink inside its line (score round 2). */
+        act: { en: "Tell your bank", ar: "بلّغوا البنك" },
+      },
+      {
+        key: "card",
+        group: "money",
+        name: {
+          en: "Keep your ad card funded",
+          ar: "خلوا بطاقة الإعلانات فيها رصيد",
+        },
+        line: {
+          en: "A failed payment stops your ads. Repeated ones can get the account restricted and reset what the ads have learned. Running low? Tell us first, and we'll pause the ads safely.",
+          ar: "إذا فشل الدفع، تتوقف إعلاناتكم. وإذا تكرر، ممكن ميتا تقيّد الحساب، ويروح اللي تعلمته الإعلانات. الرصيد قرب يخلص؟ قولوا لنا قبلها، ونوقف الإعلانات بطريقة آمنة.",
+        },
+        act: { en: "Tell us first", ar: "قولوا لنا قبلها" },
+      },
+      {
+        key: "pay",
+        group: "money",
+        name: { en: "Your payments to us", ar: "دفعاتكم لنا" },
+        act: {
+          en: "On the dates in your agreement.",
+          ar: "بالتواريخ المكتوبة في عقدكم.",
+        },
+        line: {
+          en: "On the dates in your agreement. If one fails, the ads, our calls and Mahara OS pause until it's sorted.",
+          ar: "بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات ومكالماتنا وMahara OS لين تنحل.",
+        },
+        lineDwy: {
+          en: "On the dates in your agreement. If one fails, the ads and the systems we run for you pause until it's sorted.",
+          ar: "بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات والأنظمة اللي نشغلها لكم لين تنحل.",
+        },
+      },
+      {
+        key: "comments",
+        group: "messages",
+        name: { en: "Comments on your ads", ar: "التعليقات على إعلاناتكم" },
+        line: {
+          en: "Yours to answer. Not sure what to say? Ask in the group.",
+          ar: "الرد عليها عليكم. ما تدرون كيف تردون؟ اسألونا بالقروب.",
+        },
+      },
+      {
+        key: "replies",
+        group: "messages",
+        name: { en: "Our replies", ar: "ردودنا" },
+        line: {
+          en: "In the group within 2 working hours, 10 to 6, Saturday to Thursday.",
+          ar: "بالقروب خلال ساعتين دوام، من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس.",
+        },
+        lineUae: {
+          en: "In the group within 2 working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday.",
+          ar: "بالقروب خلال ساعتين دوام، من ١٠ صباحاً إلى ٦ مساءً بتوقيت السعودية (من ١١ إلى ٧ بتوقيت الإمارات)، من السبت إلى الخميس.",
+        },
+      },
+    ] as {
+      key: string;
+      group: "money" | "messages";
+      name: L;
+      line: L;
+      lineDwy?: L;
+      lineUae?: L;
+      /** The row's do-this, set in ink inside its line. */
+      act?: L;
+    }[],
+  },
   green: {
-    title: { en: "Before we go live", ar: "قبل لا ننطلق" },
-    charges: {
-      en: "Meta's first charges on your card are small. That's normal. Tell your bank so it doesn't block them.",
-      ar: "أول مبالغ تخصمها ميتا من بطاقتكم تكون صغيرة، وهذا طبيعي. بلّغوا البنك عشان ما يوقفها.",
-    },
-    comments: {
-      en: "Comments on your ads are yours to answer. Not sure what to say? Ask in the group.",
-      ar: "التعليقات على إعلاناتكم، الرد عليها عليكم. ما تدرون كيف تردون؟ اسألونا بالقروب.",
-    },
-    hours: {
-      en: "We reply 10 to 6, Saturday to Thursday.",
-      ar: "نرد من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس.",
-    },
-    hoursUae: {
-      en: "We reply 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday.",
-      ar: "نرد من ١٠ صباحاً إلى ٦ مساءً بتوقيت السعودية (من ١١ إلى ٧ بتوقيت الإمارات)، من السبت إلى الخميس.",
-    },
     question: { en: "Happy for us to go live?", ar: "على بركة الله، ننطلق؟" },
     next: {
       en: "Your first check-in · {date}",
@@ -1504,27 +2058,40 @@ export const LAUNCH = {
 export const L_TITLES = {
   cover: LAUNCH.cover.title,
   journey: JOURNEY.title,
-  ads: LAUNCH.ads.title,
   "creative-freedom": LAUNCH.test.title,
+  ads: LAUNCH.ads.title,
   form: LAUNCH.form.title,
   call: LAUNCH.call.title,
+  partnership: LAUNCH.partner.title,
+  training: LAUNCH.training.title,
   portal: LAUNCH.portal.title,
   "your-part": LAUNCH.part.title,
   "first-90-days": LAUNCH.days.title,
-  "green-light": LAUNCH.green.title,
+  "good-to-know": LAUNCH.know.title,
+  "green-light": LAUNCH.green.question,
 } as const;
+
+/** L10's six jobs in the deck's service model, in order, with their heads. */
+export function partJobs(dwy: boolean) {
+  return LAUNCH.part.rows.map(r => ({
+    key: r.key,
+    head: r.head,
+    job: (dwy && r.jobDwy) || r.job,
+    why: (dwy && r.whyDwy) || r.why,
+  }));
+}
 
 export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
   cover: {
     say: [
-      'Frame it: "About 25 minutes. What goes live, what happens when someone enquires, and what we need from you. Stop me anytime."',
+      'Frame it: "About 45 minutes, with time for your questions. What goes live, what happens when someone enquires, who does what, and what we need from you. Stop me anytime."',
       "Ask for their full attention for those minutes.",
       "If starter ads are already running, say so plainly and use the call to show the whole picture.",
       "Skip the introduction if you ran their onboarding call.",
       "Share the deck window only. Present maximised, not full screen, so you can add a file from the notes window.",
     ],
     sayAr: [
-      "تقريباً ٢٥ دقيقة. بنمر على اللي بينزل، وعلى اللي يصير لما أحد يستفسر، وعلى اللي نحتاجه منكم. وقفوني بأي وقت.",
+      "تقريباً ٤٥ دقيقة، ومعها وقت لأسئلتكم. بنمر على اللي بينزل، وعلى اللي يصير لما أحد يستفسر، وعلى مين يسوي كل خطوة، وعلى اللي نحتاجه منكم. وقفوني بأي وقت.",
       "إذا تقدرون، خلونا معكم هالدقايق كاملة.",
       "(Starter ads already running) إعلانات البداية شغالة من قبل، واليوم بوريكم الصورة كاملة.",
       "(Only if you did not run their onboarding call) أنا {csm}، من فريق نجاح العملاء، وباقي الفريق بتعرفونهم بأدوارهم.",
@@ -1553,40 +2120,73 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
   },
   ads: {
     say: [
-      'Let them choose: "Which one would stop you scrolling?" Mark it (M, or the star here).',
+      'Point back before you show them: "As we just agreed: a wrong fact, price or claim we fix before it goes live, and the rest goes into the next round. Tell me as we go."',
+      'Let them choose: "Which one would stop you scrolling?" Mark it (M, or the star here). Their pick runs beside the others, as the slide before said.',
       "Swap one live, so they see how each creative looks in the feed.",
-      "A wrong fact (a price, a service, an area): write it down; we fix it.",
-      "A preference: that's the next slide.",
+      "A wrong fact (a price, a service, an area): write it down; we fix it before it goes live.",
+      "A preference: write it down for the next round, as you just agreed.",
       "This preview isn't approval. Approval happens in the group.",
     ],
     sayAr: [
+      "(Before you show them) مثل ما اتفقنا قبل شوي: أي معلومة أو سعر أو وعد غلط نصلحه قبل لا ينزل الإعلان، والباقي يروح للإعلانات الجاية. قولوها لي وإحنا نمر عليها.",
       "أي واحد فيها بيوقفكم وأنتم تقلّبون جوالكم؟",
       "خلوني أحط هذا مكانه الحين، وشوفوا كيف يطلع بالفيد.",
-      "(A wrong fact) خلوني أكتبها، ونصلحها.",
-      "(A preference) هذي نتكلم عنها بالشريحة الجاية.",
+      "(A wrong fact) خلوني أكتبها، ونصلحها قبل لا ينزل الإعلان.",
+      "(A preference) بكتبها للإعلانات الجاية، مثل ما اتفقنا.",
       "هذي معاينة بس، مو موافقة.",
     ],
   },
   "creative-freedom": {
     say: [
-      "Concede first: their page, then their red lines, then the ask.",
-      'The close, in your own words: "You came to us for performance. We\'d rather protect that than protect a look."',
-      "Ask: \"Anything else we must never say or show?\" Add it to their card's Do's & Don'ts after the call.",
-      "They ask for changes in the group, and we answer with the reason.",
-      "At the temp check, record the agreement only when they say yes.",
-      "A content plan for their page is a separate conversation. Don't promise it here.",
+      "Stop 1: \"Your brand matters, and your page is where it shows. It stays as polished as you like. The ads have a different goal: revenue for your business, not looking like your page. They're for people who don't know you yet.\" The polished work belongs in their page's own posts. A content plan for their page is a separate conversation; don't promise it here.",
+      "Stop 2: say it before they see it happen. Most ads get switched off; that's how testing works, not a sign that something went wrong. No numbers: no win rate, no \"one in ten\", no count of ads a month. If their pick is already marked, its picture is on one of the lit tiles, with the star; if not, they choose one on the next slide. If they ask what changes from one version to the next: the hook, the angle, the format, the thumbnail, who's on camera.",
+      "Stop 3: concede first. Read their red lines out, then ask: \"Anything else we must never say or show?\" Add it to their card's Do's & Don'ts after the call. Then the smooth way to ask: ideas, a new offer, a new price or a change go in the group before we make the next round, so they are in the ads from the start, and we answer with the reason.",
+      'Stop 3, the offer: "Want to change the offer? Ask in the group first. A new offer mid-test starts the test again; if you ask first, we can plan it in."',
+      "Stop 4, set it before they see the ads, in your own words: \"On the next slide you'll see your ads, and you'll want to change small things. We'll keep those for the next round, so your launch doesn't wait.\"",
+      "Stop 4: a wrong fact, price or claim is different: we fix it before the ad goes live. So is anything that breaks their red lines or gets their name, logo or colours wrong. Any matter of taste, small or large, goes into the next round.",
+      'Stop 4, why it stays small: "An ad held back for a small change is an ad we\'re not testing, and testing more is how we find the ones that work." The same holds for the rounds after launch.',
+      "Stop 5: content is said once here, with the why; slide 10 has it as a job. The more they send, the more versions we can make.",
+      "At the temp check, record the agreement only when they say yes (A, or the button here).",
+    ],
+    push: [
+      'If they push back, now or when the ads reach the group, first go back to what you both agreed: their red lines from the onboarding call, and the quick check agreed on this call (the "How we test your ads" line in the group recap). "Let me pull up what we agreed."',
+      'Then, warmly: "The last thing we want is to hold your launch for a small change." Then ask: "{goalAsk}"',
+      'After their answer: "Great, let\'s get them live. Your change goes into the next round." Then write the change in the group, so they see it kept.',
+      'If the change still matters more to them and it is a matter of taste: "Then we\'ll make your version too and run it beside the others in the next round. The numbers tell us which works." Never hold the launch for it.',
+      "Never \"we won't do it\": the change isn't refused, it waits for the next round. A wrong fact, price or claim is not pushback: fix it before the ad goes live.",
+      'Pushback in the group after the call: "Copy reply" here copies one line for the group, picked by their 90-day goal.',
+      'Don\'t back it with numbers: no count of clients, no results, no "after working with X clients".',
       'If they want to hold an ad back until it\'s perfect: "An ad waiting for the perfect version earns nothing while it waits."',
+      'The close, in your own words: "You came to us for performance. We\'d rather protect that than protect a look."',
     ],
     sayAr: [
-      "أنتم جيتونا عشان الأداء، وإحنا نفضّل نحمي الأداء على إننا نحمي شكل معين.",
-      "فيه شي ثاني ما تبونا نقوله أو نوريه أبد؟",
-      "أي تغيير تبونه، اطلبوه بالقروب، ونرد عليكم بالسبب.",
+      "(Stop 1, the ads' job) هويتكم مهمة، وصفحتكم هي المكان اللي تبان فيه، وتبقى مرتبة مثل ما تبون. أما الإعلانات فهدفها غير: تجيب دخل لشركتكم، مو إنها تشبه صفحتكم. وهي لناس ما يعرفونكم للحين.",
+      "(Stop 2, most get switched off) أغلب الإعلانات اللي نختبرها نوقفها، وهذا طبيعي، مو معناها إن فيه شي غلط. هذي الطريقة اللي نلقى فيها اللي يشتغل.",
+      "(Stop 3, their red lines) فيه شي ثاني ما تبونا نقوله أو نوريه أبد؟",
+      "(Stop 3, input first) أي فكرة أو عرض جديد أو سعر جديد أو تغيير، أرسلوه بالقروب قبل لا نسوي الإعلانات الجاية، عشان يكون فيها من البداية، وإحنا نرد عليكم بالسبب.",
+      "(Stop 3, the offer) تبون تغيرون العرض؟ قولوا لنا بالقروب أول. العرض الجديد بنص الاختبار يرجّعه من البداية، وإذا قلتوا لنا أول، نرتب له.",
+      "(Stop 4, before they see the ads) بالشريحة الجاية بتشوفون إعلاناتكم، وأكيد بتبون تغيرون أشياء صغيرة. هذي نخليها للإعلانات الجاية، عشان إطلاقكم ما يتأخر.",
+      "(Stop 4, a wrong fact) أي معلومة أو سعر أو وعد غلط، نصلحه قبل لا ينزل الإعلان. ونصلح بعد أي شي يتعدى خطوطكم الحمراء، أو يغلط في اسمكم أو شعاركم أو ألوانكم. وأي شي يرجع للذوق، صغير ولا كبير، يروح للإعلانات الجاية.",
+      "(Stop 4, why it stays small) ليش نخليها مراجعة سريعة؟ الإعلان اللي ينتظر تعديل صغير، إعلان ما نختبره. ونلقى اللي يشتغل لما نختبر أكثر.",
+      "(Stop 5, the content) كل ما أرسلتوا محتوى أكثر، قدرنا نسوي نسخ أكثر.",
+    ],
+    pushAr: [
+      "(If they push back: both agreements) خلونا نرجع للي اتفقنا عليه: خطوطكم الحمراء من مكالمة التعريف، والمراجعة السريعة من مكالمة الإطلاق. خلوني أطلّعه لكم.",
+      "(Then, warmly) آخر شي نبيه إن إطلاقكم يتأخر عشان تعديل صغير.",
+      "(Then ask) {goalAsk}",
+      "(After their answer) تمام، خلونا ننزلها. وتعديلكم بنحطه بالإعلانات الجاية.",
+      "(The change still matters more, and it is taste) إذا كذا، نسوي نسختكم بعد، وننزلها جنب الباقي بالإعلانات الجاية. والأرقام هي اللي توضح لنا أي وحدة تشتغل.",
       "(If they want to wait for a perfect ad) الإعلان اللي ينتظر النسخة المثالية، ما يجيب شي وهو ينتظر.",
+      "أنتم جيتونا عشان الأداء، وإحنا نفضّل نحمي الأداء على إننا نحمي شكل معين.",
     ],
     temp: {
       en: "Can we agree to test this way?",
       ar: "متفقين نختبر بهالطريقة؟",
     },
+    dwy: [
+      '"Your team runs the calls, but the ads work the same way: your red lines, the quick check and the next round are the same."',
+      "(Arabic) فريقكم هو اللي يتصل، بس الإعلانات تمشي بنفس الطريقة: خطوطكم الحمراء، والمراجعة السريعة، والإعلانات الجاية.",
+    ],
   },
   form: {
     say: [
@@ -1607,17 +2207,18 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       '"This is the script we use, with your details in it. Our caller speaks as your appointments team."',
       'Point at the teal words. Ask for anything marked "To give us".',
       "If they'd rather the caller share a starting price, ask them to add it to the guide. The script doesn't quote prices it doesn't have.",
-      "At stop 7, the reminders: say them once, as what we do before the meeting.",
+      "At stop 7, the reminders: say them once, as what we do before the meeting. Then the line under the heading: ask them not to message the customer from their own WhatsApp before the meeting. Two voices confuse the customer.",
       'At stop 8: "Everything the caller learned comes to you, so you walk in knowing the project."',
-      "\"You'll hear your own real calls in Mahara OS. I'll show you next.\" Never play a recording of another client's call.",
+      "\"You'll hear your own real calls in Mahara OS.\" Never play a recording of another client's call.",
     ],
     sayAr: [
       "هذا السكربت اللي نستخدمه، ومعلوماتكم داخله. فريق الاتصال يتكلم باسمكم، كقسم المواعيد عندكم.",
       "الكلمات الملونة من ملفاتكم. واللي عليه نحتاجه منكم، تقدرون تعطونا إياه الحين.",
       "إذا تبون فريق الاتصال يذكر سعر يبدي منه، ضيفوه بالدليل. السكربت ما يذكر سعر ما عندنا.",
       "(After the call) وهذا اللي نسويه قبل الموعد.",
+      "(The one-voice line) قبل الموعد، ياليت ما تراسلون العميل من واتسابكم. صوتين يلخبطون العميل، فخلوا الرسايل علينا.",
       "(What lands with them) كل اللي عرفه فريق الاتصال يوصلكم، فتدخلون الموعد وأنتم عارفين المشروع.",
-      "مكالماتكم الحقيقية بتسمعونها في Mahara OS، وبوريكم إياها الحين.",
+      "مكالماتكم الحقيقية بتسمعونها في Mahara OS.",
     ],
     temp: {
       en: "Is that how you'd want your customers spoken to? Anything we should never say?",
@@ -1628,26 +2229,89 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "(Arabic) هذي الطريقة اللي نبي فريقكم يتصل فيها: نفس المراحل الست، ونفس السكربت، ومعلوماتكم داخله.",
     ],
   },
+  partnership: {
+    say: [
+      'Stop 1: "This piece is ours: the ads and the enquiries, the calls and the bookings, the reminders, and rebooking anyone who doesn\'t show."',
+      "Stop 2: \"This piece is yours, and it's the one that pays: the meeting and the close.\" Let it land. This is the CEO's piece of the pie.",
+      'Stop 3: "Someone who comes through a referral already trusts you. Someone from an ad is meeting you for the first time and comparing you with others. Expect more questions, more follow-up and a longer road to a signature."',
+      'Don\'t put a number on it: no close rate, no "most sales come after the third contact", no count of the firms they compare, and never "three quarters of the work".',
+      "Stop 4: \"Marketing without sales won't grow your business. We bring them to the door, and we can't sign them for you.\" The next slide is how we help.",
+      "When a client later says the enquiries are poor, come back to this slide: a customer from an ad is a different sale from a referral.",
+    ],
+    sayAr: [
+      "(Our piece) هالقطعة علينا: الإعلانات والاستفسارات، والاتصال والحجز، والتذكير، وإعادة الحجز لأي أحد ما حضر.",
+      "(Their piece) وهالقطعة عليكم، وهي اللي يجي منها الدخل: الموعد وتوقيع المشروع.",
+      "(The two roads) اللي يجيكم بتوصية يثق فيكم من قبل. واللي يجيكم من إعلان، أول مرة يتعرف عليكم، ويقارنكم بغيركم. فتوقعوا أسئلة أكثر، ومتابعة أكثر، وطريق أطول لين التوقيع.",
+      "(The last line) التسويق بدون بيع ما يكبّر شغلكم. إحنا نوصّلهم لين بابكم، بس التوقيع ما نقدر نسويه عنكم. وهنا نقدر نساعدكم.",
+    ],
+    temp: {
+      en: "Anything here you thought was ours?",
+      ar: "فيه شي هنا كنتوا تحسبونه علينا؟",
+    },
+    dwy: [
+      '"Your team holds half the work: the calls and bookings, and the meeting and the close. The ads, the enquiries and the messages that go out by themselves are ours."',
+      "(Arabic) فريقكم عليه نص الشغل: الاتصال والحجز، والموعد وتوقيع المشروع. والإعلانات والاستفسارات، والرسايل اللي تطلع تلقائياً، علينا.",
+    ],
+  },
+  training: {
+    say: [
+      'Stop 1, the classroom: "This is the Academy as you\'ll see it. The course for your meetings is the fifth one, Project Closing Mastery."',
+      'Stop 2, the lesson: "Inside, it opens on the sales crash course. Start there."',
+      "Why it matters, in your words: a referral already trusts them; a customer from an ad needs a proper consultation and a quote they can compare.",
+      "Stop 3: ask who meets the customers and who sends the quotes. Those people take the course.",
+      "Copy the Academy link into the group now, from the notes window.",
+      "Inside Project Closing Mastery, as the Academy names its sections: a sales crash course (start there), objections, follow-ups and bonus lessons (the no-show protocol is one of them). The four words on the slide are what the course walks them through, not its section names.",
+      'Its follow-ups section: "It\'s for the ones thinking it over, which you now share with us."',
+      "The Academy is self-paced. We don't run training sessions for their staff; their deals come to the check-ins, and you can offer a call on a stuck deal.",
+      "No promise about results: don't say the course makes them close more.",
+      'If they say they already sell well: "Good. This is for customers from ads, who don\'t know you yet. Most firms are used to referrals."',
+    ],
+    sayAr: [
+      "(The classroom) هذي الأكاديمية مثل ما بتشوفونها. والكورس اللي يخص مواعيدكم هو الخامس: إتقان توقيع المشاريع.",
+      "(The lesson) ومن داخله، يبدي بقسم Sales crash course. ابدوا منه.",
+      "اللي يجيكم بتوصية يثق فيكم من قبل. بس عميل الإعلان يبي استشارة مرتبة، وعرض سعر واضح يقدر يقارنه.",
+      "مين عندكم يقابل العملاء؟ ومين يرسل عروض الأسعار؟ هم اللي يشوفون الكورس.",
+      "بحط رابط الأكاديمية بالقروب الحين.",
+      "(Its follow-ups section) قسم المتابعة يخص اللي قاعدين يفكرون، واللي صرنا نتابعهم إحنا وأنتم.",
+      "(If they say they already sell well) ممتاز. هذا لعملاء الإعلانات، اللي ما يعرفونكم للحين. وأغلب الشركات متعودة على التوصيات.",
+    ],
+    temp: {
+      en: "Who on your team will watch it first?",
+      ar: "مين من فريقكم بيشوفه أول؟",
+    },
+    dwy: [
+      "Their callers' script and playbook are on slide 6; this slide is for whoever meets the customers.",
+    ],
+  },
   portal: {
     say: [
       "If they haven't signed in yet, do it now.",
+      "Ask who meets the customers and will mark the meetings. If it isn't the person signed in, add them now: Settings, then Your team & access.",
       "Slow down on stop 4. It's the job clients most often drop: only 30% of recent appointments have attendance marked.",
-      "Why it matters: the outcomes show which ads bring real projects, so we put more behind those.",
+      "A no-show: a customer running late isn't a no-show yet, so check first. Once they're marked, we call to rebook.",
+      'The value is required when they mark a win. "A line on why" is the outcome form\'s own box: one honest sentence ("wants to compare three quotes") helps more than "thinking".',
+      "A customer who cancels or moves the meeting with them directly: we only know if they tell us, and the reminders would go out for the old time. Moved, we change the reminders to the new time; cancelled, our caller calls to rebook. Never both: a moved meeting is already booked.",
       "The portal can remind them after each appointment to mark it.",
       "If they already use the report sheet, the two stay in step.",
     ],
     sayAr: [
       "إذا ما سجلتوا دخول للحين، خلنا نسويها الحين.",
+      "مين اللي يقابل العملاء ويسجل نتائج المواعيد؟ إذا مو هو اللي مسجل دخول، خلنا نضيفه الحين: من الإعدادات، وبعدها Your team & access.",
       "(Marking outcomes) هذي أكثر شغلة تنتسى، فخلونا نوقف عندها شوي.",
-      "النتائج توضح لنا أي إعلانات تجيب مشاريع حقيقية، فنحط عليها أكثر.",
+      "(A no-show) اللي متأخر شوي مو غايب، فتأكدوا أول. ولما تسجلونه ما حضر، نتصل عليه ونحجز له من جديد.",
+      "(Did you win) وإذا ما وقّع، سطر واحد صريح عن السبب يفيدنا أكثر من كلمة يفكر.",
+      "(Cancelled or moved) لو أحد لغى أو غيّر موعده معكم مباشرة، ما نعرف إلا إذا قلتوا لنا، والتذكيرات بتروح له على الوقت القديم. إذا غيّره، نعدّل التذكيرات على الوقت الجديد. وإذا لغاه، نتصل عليه ونحجز له من جديد.",
       "والبوابة تقدر تذكركم بعد كل موعد عشان تسجلون نتيجته.",
       "وإذا تستخدمون شيت التقارير، الاثنين يتحدثون مع بعض.",
     ],
   },
   "your-part": {
     say: [
-      'Sixty seconds: "Your five jobs in one place. I\'ll send this card to the group."',
-      "After the call, send this card in the group as the recap.",
+      '"Three of these are new today: the open slots, a day off blocked by the hour (point at the calendar week) and your own system. Slow down there. The rest you\'ve already heard."',
+      'After the call, send this card in the group as the recap: "Copy for the group" posts the six jobs under their three heads, then the testing line ("How we test your ads": it puts slide 3\'s agreement in writing), the money and first-weeks lines, then the course line, then the videos recorded for this deck. The same button is on slide 13, and here once the deck closes.',
+      "Open slots: the more of their opening hours we can book into, the sooner a customer finds a time. Ten is the floor.",
+      "A day off: block the working hours as busy, not an all-day event. Calendars can miss an all-day block, and we'd book into it. We once booked over a client's own appointments because a day was blocked the wrong way, and the client left.",
+      "After a meeting, the follow-up is theirs and ours (before it, the messages are ours: slide 6).",
       "A slot outside their hours, a holiday and a service detail are the questions our callers ask most.",
       "They don't need to answer on Fridays or in the evening.",
     ],
@@ -1655,8 +2319,10 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "Their own callers ask those questions and book into the free times; the group answers them.",
     ],
     sayAr: [
-      "هذي خمس شغلات عليكم، بمكان واحد. وبأرسل لكم هالكرت بالقروب.",
-      "تبون تغيرون العرض أو الخدمة؟ قولوا لنا بالقروب أول، ونرتبها بطريقة ما ترجّع التجربة من الصفر.",
+      "ثلاث من هذي جديدة عليكم اليوم: المواعيد الفاضية، ويوم الإجازة اللي تسكرونه بالساعات، ونظامكم. والباقي سمعتوه قبل.",
+      "وبأرسل لكم هالكرت بالقروب، ومعاه رابط كورس إتقان توقيع المشاريع.",
+      "كل ما خليتوا أوقات فاضية أكثر من ساعات دوامكم، لقى العميل وقت يناسبه أسرع.",
+      "يوم الإجازة، سكروا ساعات الدوام وحطوها مشغول، مو حدث على اليوم كامل، لأن التقويم أحياناً ما ينتبه لليوم المسكّر كامل، فنحجز فيه بالغلط.",
       "أكثر أسئلة يسألها فريق الاتصال: موعد برا أوقات دوامكم، أو إجازة، أو تفصيلة عن خدمة.",
       "وما يحتاج تردون يوم الجمعة أو بالليل.",
     ],
@@ -1668,15 +2334,17 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
   "first-90-days": {
     say: [
       "No numbers promised. Never give a date for a milestone.",
-      "Some first weeks are busy and some are quiet. Either way, we're finding what their market responds to.",
+      "Weeks 1 and 2 are usually slower while the ads find their audience. Some start busy. Either way, we're finding what their market responds to.",
       "Updates come in the group as things happen.",
       'The rhythm, both and why: "After the first one, weekly or every two weeks, depending on your plan and how long you\'ve been with us." Never promise one of the two alone.',
+      "Their deals come to these check-ins too (slide 8).",
       "Check-ins: a laptop, somewhere quiet, not in the car. The next one is booked at the end of each.",
     ],
     sayAr: [
-      "فيه بدايات تكون زحمة، وفيه بدايات هادية. وبالحالتين، إحنا نكتشف اللي يتفاعل معه سوقكم.",
+      "أول أسبوعين عادةً أهدأ، لين تتعرف الإعلانات على جمهوركم. وفيه بدايات تكون زحمة. وبالحالتين، إحنا نكتشف اللي يتفاعل معه سوقكم.",
       "والتحديثات توصلكم بالقروب أول بأول.",
       "بعد أول مكالمة متابعة، تكون المكالمات كل أسبوع أو كل أسبوعين، على حسب باقتكم، وكم صار لكم معنا.",
+      "وصفقاتكم بعد نمر عليها بمكالمات المتابعة.",
       "مكالمات المتابعة: لابتوب ومكان هادي، مو وأنتم بالسيارة. واللي بعدها نحجزها بآخر كل مكالمة.",
     ],
     temp: { en: "Does this rhythm work for you?", ar: "هالإيقاع يناسبكم؟" },
@@ -1685,13 +2353,31 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "(Arabic) أول حجز بيكون من فريقكم.",
     ],
   },
+  "good-to-know": {
+    say: [
+      "Say the money rows once, plainly. No amounts on screen or aloud.",
+      "The ad account's card: the whole month's ad spend should be on it. Running low: they tell us in the group, and the media buyer pauses the campaign before a payment fails.",
+      'Payments to us: "the dates in your agreement". Never "monthly from today": plans differ.',
+      'If the replies row shows, add that Friday is off and that "2 working hours" counts only the hours we work.',
+    ],
+    sayAr: [
+      "هذي أشياء بسيطة عن الفلوس والرسايل، بس مهم تعرفونها قبل لا ننطلق.",
+      "بطاقة الإعلانات: خلوا فيها مصروف الإعلانات للشهر كامل. وإذا قرب يخلص، قولوا لنا بالقروب، ونوقف الحملة قبل لا يفشل الدفع.",
+      "دفعاتكم لنا بالتواريخ اللي في عقدكم.",
+      "(If the replies row shows) الجمعة إجازة، والساعتين تنحسب من ساعات دوامنا بس.",
+    ],
+    temp: {
+      en: "Anything on money or messages you'd like to check before we go live?",
+      ar: "فيه شي عن الفلوس أو الرسايل تبون تتأكدون منه قبل لا ننطلق؟",
+    },
+  },
   "green-light": {
     say: [
       "Questions first, then ask for the green light in those words.",
       "Book the first check-in before you hang up, a week or two after go-live.",
       "If they hesitate, find the one thing and solve it now, or agree a date to solve it.",
       'Say the awkward thing: "If anything worries you at any point, tell me. The partners who do best tell us the good and the bad."',
-      'After the call, send the "Your part" card in the group as the one short recap, not the long launch message.',
+      'After the call, send the recap in the group. "Copy for the group" is here too (the six jobs, how we test your ads, the money and the first weeks, the course, the videos), so it goes out even if you didn\'t reach slide 10. It is the one short recap, not the long launch message.',
     ],
     sayAr: [
       "قبل لا نكمل، عندكم أي سؤال؟",

@@ -14,7 +14,13 @@ import { createRoot } from "react-dom/client";
 import type { Overrides } from "@/present/deckData";
 import { PresentApp, type View } from "@/present/PresentApp";
 import { applyPatch } from "@/present/prep";
-import type { DeckKind, LaunchAd } from "@/present/sources";
+import {
+  type DeckKind,
+  type DeckVideos,
+  type LaunchAd,
+  type VideoRow,
+  VideoSaveError,
+} from "@/present/sources";
 import type { DeckIO } from "@/present/useDeckModel";
 import { FIXTURES, type FixtureKey } from "./deck/fixtures";
 import { PartsSheet } from "./deck/PartsSheet";
@@ -26,6 +32,54 @@ const deck = (
   params.get("deck") === "launch" ? "launch" : "onboarding"
 ) as DeckKind;
 const view = (params.get("view") ?? "present") as View;
+
+/**
+ * The harness's stand-in for the server's link check (VIDEOS.md 3), so prep's
+ * Videos section can be tried without signing in. Dev only, and simpler
+ * than the server's: the real parse is in the migration.
+ */
+function harnessParse(
+  raw: string,
+): Pick<VideoRow, "provider" | "url" | "embedUrl"> {
+  const v = raw.trim();
+  if (/^http:\/\//i.test(v))
+    throw new VideoSaveError("Use the https link.", "22023", "link");
+  let m =
+    /^https:\/\/(?:www\.)?loom\.com\/(?:share|embed)\/(?:[A-Za-z0-9-]+-)?([0-9a-f]{32})\/?(?:[?#].*)?$/.exec(
+      v,
+    );
+  if (m)
+    return {
+      provider: "loom",
+      url: `https://www.loom.com/share/${m[1]}`,
+      embedUrl: `https://www.loom.com/embed/${m[1]}?hideEmbedTopBar=true`,
+    };
+  m =
+    /^https:\/\/fast\.wistia\.net\/embed\/iframe\/([a-z0-9]{10})\/?(?:[?#].*)?$/.exec(
+      v,
+    );
+  if (m)
+    return {
+      provider: "wistia",
+      url: `https://fast.wistia.net/embed/iframe/${m[1]}`,
+      embedUrl: `https://fast.wistia.net/embed/iframe/${m[1]}?seo=false`,
+    };
+  m =
+    /^https:\/\/(?:www\.youtube\.com\/watch\?v=|youtu\.be\/)([A-Za-z0-9_-]{11})(?:[&?#].*)?$/.exec(
+      v,
+    );
+  if (m)
+    return {
+      provider: "youtube",
+      url: `https://www.youtube.com/watch?v=${m[1]}`,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${m[1]}?rel=0&playsinline=1&enablejsapi=1`,
+    };
+  throw new VideoSaveError(
+    "Paste a link from Loom, YouTube, Wistia, Vimeo or Google Drive.",
+    "22023",
+    "link",
+  );
+}
 
 /** The harness's address with one setting changed. */
 function at(change: Record<string, string | null>) {
@@ -45,8 +99,79 @@ function Harness() {
     store.launch = loaded.prep.launch;
     let ads: LaunchAd[] = [...loaded.ads];
     let revision = 1;
+    let videos: DeckVideos | null = loaded.videos ?? null;
+    // ?video=youtube: slide 3's recording as a YouTube one (a made-up id),
+    // so deck-shots.mjs can stub the player's "can't play here" state.
+    if (params.get("video") === "youtube" && videos)
+      videos = {
+        ...videos,
+        rows: videos.rows.map(r =>
+          r.slotKey === "testing"
+            ? {
+                ...r,
+                provider: "youtube",
+                url: "https://www.youtube.com/watch?v=AAAAAAAAAAA",
+                embedUrl:
+                  "https://www.youtube-nocookie.com/embed/AAAAAAAAAAA?rel=0&playsinline=1&enablejsapi=1",
+              }
+            : r,
+        ),
+      };
+    const at = (slotKey: string, lang: string) =>
+      videos?.rows.find(r => r.slotKey === slotKey && r.lang === lang) ?? null;
+    const conflict = (seen: number, row: VideoRow | null, verb: string) => {
+      if ((row?.revision ?? 0) !== seen)
+        throw new VideoSaveError(
+          `Someone else changed this video just now. Check it, then ${verb}.`,
+          "40001",
+          null,
+        );
+    };
     return {
-      load: async () => ({ ...loaded, ads: [...ads], prep: { ...store } }),
+      load: async () => ({
+        ...loaded,
+        ads: [...ads],
+        prep: { ...store },
+        videos: videos ? { ...videos, rows: [...videos.rows] } : null,
+      }),
+      saveVideo: async v => {
+        if (!videos)
+          throw Error("The deck's videos are not live yet, so no video shows.");
+        const before = at(v.slotKey, v.lang);
+        conflict(v.revision, before, "save again");
+        const title = v.title?.trim() || null;
+        if (title && title.length > 40)
+          throw new VideoSaveError(
+            "Keep the title under 40 characters.",
+            "22023",
+            "title",
+          );
+        const row: VideoRow = {
+          deck,
+          slotKey: v.slotKey,
+          lang: v.lang,
+          ...harnessParse(v.url),
+          title,
+          durationSeconds: v.durationSeconds ?? null,
+          revision: (before?.revision ?? 0) + 1,
+          updatedBy: "harness",
+          updatedAt: new Date().toISOString(),
+        };
+        videos = {
+          ...videos,
+          rows: [...videos.rows.filter(r => r !== before), row],
+        };
+        return { ...row, changed: true };
+      },
+      clearVideo: async v => {
+        if (!videos)
+          throw Error("The deck's videos are not live yet, so no video shows.");
+        const before = at(v.slotKey, v.lang);
+        if (!before) return { cleared: false, revision: null };
+        conflict(v.revision, before, "clear it again");
+        videos = { ...videos, rows: videos.rows.filter(r => r !== before) };
+        return { cleared: true, revision: before.revision + 1 };
+      },
       uploadAd: async ({ file, kind, facts, onProgress }) => {
         for (let i = 1; i <= 10; i++) {
           await new Promise(r => setTimeout(r, 150));

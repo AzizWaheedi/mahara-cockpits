@@ -619,3 +619,248 @@ export async function updateLaunchAd(
   );
   return out.ad;
 }
+
+// ------------------------------------------------- the deck's video slots
+
+/**
+ * The videos behind each slot (docs/csm-decks/VIDEOS.md, the migration
+ * 20261020120000_csm_deck_videos.sql): read, saved and cleared only through
+ * the three gated functions. The server parses every link and stores the
+ * embed address the player frames; the browser checks each row's hosts
+ * again and never builds an embed address of its own.
+ */
+export type VideoLang = "en" | "ar" | "any";
+export type VideoProvider = "loom" | "youtube" | "wistia" | "vimeo" | "drive";
+
+const EMBED_HOST = {
+  loom: "www.loom.com",
+  youtube: "www.youtube-nocookie.com",
+  wistia: "fast.wistia.net",
+  vimeo: "player.vimeo.com",
+  drive: "drive.google.com",
+} as const;
+const OPEN_HOST =
+  /^(www\.loom\.com|www\.youtube\.com|fast\.wistia\.net|vimeo\.com|drive\.google\.com)$/;
+const EMBED_HOSTS =
+  /^(www\.loom\.com|www\.youtube-nocookie\.com|fast\.wistia\.net|player\.vimeo\.com|drive\.google\.com)$/;
+/** No user, no password, no port. */
+const bare = (s: string) => {
+  try {
+    const u = new URL(s);
+    return !u.username && !u.password && !u.port;
+  } catch {
+    return false;
+  }
+};
+
+const videoBase = z.object({
+  deck: z.enum(["onboarding", "launch"]),
+  slotKey: z.string(),
+  lang: z.enum(["en", "ar", "any"]),
+  provider: z.enum(["loom", "youtube", "wistia", "vimeo", "drive"]),
+  url: z.url({ protocol: /^https$/, hostname: OPEN_HOST }).refine(bare),
+  embedUrl: z.url({ protocol: /^https$/, hostname: EMBED_HOSTS }).refine(bare),
+  title: z.string().nullable(),
+  durationSeconds: z.number().int().nullable(),
+  revision: z.number().int().min(1),
+  updatedBy: z.string(),
+  updatedAt: z.string(),
+});
+const sameHost = (r: { embedUrl: string; provider: VideoProvider }) =>
+  new URL(r.embedUrl).hostname === EMBED_HOST[r.provider];
+
+export const videoRow = videoBase.refine(sameHost);
+export type VideoRow = z.infer<typeof videoRow>;
+const savedVideo = videoBase.extend({ changed: z.boolean() }).refine(sameHost);
+
+export interface DeckVideos {
+  rows: VideoRow[];
+  /**
+   * Rows the server returned that failed the shape: never shown, never "Not
+   * recorded yet". Each keeps the server's revision when it has one, so
+   * prep can save it again over the row the server still holds.
+   */
+  refused: Array<{ slotKey: string; lang: VideoLang; revision?: number }>;
+  slots: string[];
+}
+
+/** The sentence when the three functions are not deployed yet. */
+export const VIDEOS_NOT_LIVE =
+  "The deck's videos are not live yet, so no video shows.";
+
+/** The video functions are not live yet: the deck works as it did. */
+export class VideosNotLive extends Error {
+  constructor() {
+    super(VIDEOS_NOT_LIVE);
+  }
+}
+
+const notLive = (error: unknown) => {
+  const e = (error ?? {}) as { code?: unknown; message?: unknown };
+  return (
+    e.code === "PGRST202" ||
+    /could not find the function|PGRST202|does not exist/i.test(
+      String(e.message ?? ""),
+    )
+  );
+};
+
+const readShape = z
+  .object({
+    rows: z.array(z.unknown()).default([]),
+    slots: z.array(z.string()).default([]),
+  })
+  .passthrough();
+const keyShape = z
+  .object({
+    slotKey: z.string(),
+    lang: z.enum(["en", "ar", "any"]),
+    revision: z.number().int().min(1).optional().catch(undefined),
+  })
+  .passthrough();
+
+/** A read's rows, split into the ones the browser keeps and the ones it refuses. */
+export function videosFrom(data: unknown): DeckVideos {
+  const parsed = readShape.safeParse(data);
+  if (!parsed.success)
+    throw Error(
+      "The deck's videos came back in a shape this page does not read.",
+    );
+  const rows: VideoRow[] = [];
+  const refused: DeckVideos["refused"] = [];
+  for (const raw of parsed.data.rows) {
+    const ok = videoRow.safeParse(raw);
+    if (ok.success) rows.push(ok.data);
+    else {
+      const key = keyShape.safeParse(raw);
+      if (key.success)
+        refused.push({
+          slotKey: key.data.slotKey,
+          lang: key.data.lang,
+          revision: key.data.revision,
+        });
+    }
+  }
+  return { rows, refused, slots: parsed.data.slots };
+}
+
+/** cockpit_csm_deck_videos_read, for one deck. */
+export async function readDeckVideos(
+  client: DeckClient,
+  deck: DeckKind,
+): Promise<DeckVideos> {
+  const { data, error } = await client.rpc("cockpit_csm_deck_videos_read", {
+    p_deck: deck,
+  });
+  if (error) {
+    if (notLive(error)) throw new VideosNotLive();
+    throw Error(problem(error, "try again"));
+  }
+  return videosFrom(data);
+}
+
+/** The prep field a server sentence is about (VIDEOS.md 4); null puts it on the row. */
+export function videoErrorField(
+  message: string,
+): "link" | "title" | "length" | "language" | null {
+  if (
+    /^Use the https link\.|^Paste a link from Loom|^That Drive link is a folder|link has no video in it|^That link is too long/.test(
+      message,
+    )
+  )
+    return "link";
+  if (/^Keep the title under|^The title has a character/.test(message))
+    return "title";
+  if (/^The length must be between/.test(message)) return "length";
+  if (/^Choose English, Arabic or any language/.test(message))
+    return "language";
+  return null;
+}
+
+/** A save or clear the server refused, with what prep does with it. */
+export class VideoSaveError extends Error {
+  code: "42501" | "22023" | "40001" | "other";
+  /** The prep field the sentence goes under; null puts it on the row. */
+  field: "link" | "title" | "length" | "language" | null;
+  constructor(
+    message: string,
+    code: VideoSaveError["code"],
+    field: VideoSaveError["field"],
+  ) {
+    super(message);
+    this.code = code;
+    this.field = field;
+  }
+}
+
+function saveError(error: unknown, fallback: string): VideoSaveError {
+  if (notLive(error)) return new VideoSaveError(VIDEOS_NOT_LIVE, "other", null);
+  const raw = String((error as { code?: unknown })?.code ?? "");
+  const code: VideoSaveError["code"] =
+    raw === "42501" || raw === "22023" || raw === "40001" ? raw : "other";
+  const message = problem(error, fallback);
+  return new VideoSaveError(
+    message,
+    code,
+    code === "22023" ? videoErrorField(message) : null,
+  );
+}
+
+/** cockpit_csm_deck_video_save: the saved row, and whether anything changed. */
+export async function saveDeckVideo(
+  client: DeckClient,
+  v: {
+    deck: DeckKind;
+    slotKey: string;
+    lang: VideoLang;
+    url: string;
+    title?: string | null;
+    durationSeconds?: number | null;
+    /** The read's revision for this slot and language; 0 when the read left it out. */
+    revision: number;
+  },
+): Promise<VideoRow & { changed: boolean }> {
+  const { data, error } = await client.rpc("cockpit_csm_deck_video_save", {
+    p_deck: v.deck,
+    p_slot_key: v.slotKey,
+    p_lang: v.lang,
+    p_url: v.url,
+    p_title: v.title ?? null,
+    p_duration_seconds: v.durationSeconds ?? null,
+    p_revision: v.revision,
+  });
+  if (error) throw saveError(error, "This video was not saved. Try again.");
+  const parsed = savedVideo.safeParse(data);
+  if (!parsed.success)
+    throw new VideoSaveError(
+      "The server did not confirm the save. Read the videos again.",
+      "other",
+      null,
+    );
+  return parsed.data;
+}
+
+/** cockpit_csm_deck_video_clear. */
+export async function clearDeckVideo(
+  client: DeckClient,
+  v: { deck: DeckKind; slotKey: string; lang: VideoLang; revision: number },
+): Promise<{ cleared: boolean; revision: number | null }> {
+  const { data, error } = await client.rpc("cockpit_csm_deck_video_clear", {
+    p_deck: v.deck,
+    p_slot_key: v.slotKey,
+    p_lang: v.lang,
+    p_revision: v.revision,
+  });
+  if (error) throw saveError(error, "This video was not cleared. Try again.");
+  const parsed = z
+    .object({ cleared: z.boolean(), revision: z.number().int().nullable() })
+    .passthrough()
+    .safeParse(data);
+  if (!parsed.success)
+    throw new VideoSaveError(
+      "The server did not confirm the clear. Read the videos again.",
+      "other",
+      null,
+    );
+  return { cleared: parsed.data.cleared, revision: parsed.data.revision };
+}

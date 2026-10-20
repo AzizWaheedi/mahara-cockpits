@@ -5,8 +5,10 @@ import {
   slideAtHash,
   stepFrom,
   visible,
+  withPlayer,
 } from "../src/present/engine";
 import { onboardingSlides } from "../src/present/onboardingDeck";
+import { playerStep } from "../src/present/videos";
 
 /**
  * The deck engine's rules (DESIGN 5.2, 15.1): a press walks a slide's stops
@@ -119,6 +121,40 @@ describe("keys", () => {
     expect(k("f", { meta: true })).toBe("none");
     expect(k("l", { ctrl: true })).toBe("none");
     expect(k("ArrowRight", { alt: true })).toBe("none");
+  });
+});
+
+describe("the video player (DESIGN 21.3, 21.6)", () => {
+  test("V plays the slide's video or closes it; typing is never caught", () => {
+    expect(keyCommand({ key: "v" })).toBe("video");
+    expect(keyCommand({ key: "V" })).toBe("video");
+    expect(keyCommand({ key: "v", tag: "TEXTAREA" })).toBe("none");
+    expect(keyCommand({ key: "v", meta: true })).toBe("none");
+  });
+  test("the player is a panel: Esc closes it, never the deck", () => {
+    expect(keyCommand({ key: "Escape", panel: true })).toBe("close");
+    expect(keyCommand({ key: "Escape", panel: true, overview: true })).toBe(
+      "close",
+    );
+  });
+  test("with the player open, a move key closes it and does nothing else", () => {
+    for (const cmd of ["next", "prev", "first", "last"] as const)
+      expect(withPlayer(cmd)).toBe("close");
+    for (const cmd of [
+      "video",
+      "close",
+      "notes",
+      "fullscreen",
+      "lang",
+    ] as const)
+      expect(withPlayer(cmd)).toBe(cmd);
+  });
+  test("a stubbed Wistia frame that loads and sends nothing stays up", () => {
+    let p = playerStep("loading", { type: "load" });
+    for (const ev of [{ type: "timeout" }, { type: "offline" }] as const)
+      p = playerStep(p, ev);
+    expect(p).toBe("ready");
+    expect(playerStep("loading", { type: "timeout" })).toBe("failed");
   });
 });
 

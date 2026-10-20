@@ -43,11 +43,17 @@ function leaves(): Leaf[] {
     }
     if (v && typeof v === "object")
       for (const [k, x] of Object.entries(v)) {
-        const said = notes && (k === "say" || k === "sayAr" || k === "dwy");
+        const said =
+          notes &&
+          (k === "say" ||
+            k === "sayAr" ||
+            k === "push" ||
+            k === "pushAr" ||
+            k === "dwy");
         const l =
-          k === "en" || (notes && k === "say")
+          k === "en" || (notes && (k === "say" || k === "push"))
             ? "en"
-            : k === "ar" || (notes && k === "sayAr")
+            : k === "ar" || (notes && (k === "sayAr" || k === "pushAr"))
               ? "ar"
               : notes && k === "dwy"
                 ? "script"
@@ -71,19 +77,21 @@ const ALLOWED: Record<string, string[]> = {
   // "The same day" is allowed for the client's own job, never for our
   // calls or our fixes (CONTENT copy rule 1).
   speed: [
-    "Mark every meeting, the same day",
+    "Mark every meeting the same day, with the value when you win",
+    "Move each meeting to the right stage the same day",
     "Did they come? Did you quote? Did you win? A few taps, the same day.",
     "A few taps, the same day.",
     "Move each meeting to the right stage in the CRM the same day: didn't show, showed, quote sent, closed.",
     "Your team moves it to the right stage in the CRM, the same day.",
-    "سجلوا نتيجة كل موعد، بنفس اليوم",
+    "سجلوا نتيجة كل موعد بنفس اليوم، ومعها قيمة المشروع إذا وقّع",
+    "انقلوا كل موعد للمرحلة الصح بنفس اليوم",
     "حضر؟ عطيتوه عرض سعر؟ وقّع معكم؟ كم ضغطة، بنفس اليوم.",
     "كم ضغطة، بنفس اليوم.",
     "انقلوا كل موعد للمرحلة الصح في الـCRM بنفس اليوم: ما حضر، حضر، انرسل عرض السعر، وقّع.",
     "فريقكم ينقله للمرحلة الصح في الـCRM، بنفس اليوم.",
   ],
-  // "Always …" heads the client's own DO items on their red-lines panel.
-  always: ["دايماً …"],
+  // "Always" heads the client's own DO items on their red-lines panel.
+  always: ["دايماً"],
   // Arabic كل, read one by one: never for a step of ours. These say "all
   // the slides", "everything", "not every enquiry", the client's own jobs
   // and approvals, the check-in rhythm, what Meta does, and the notes' own
@@ -101,8 +109,14 @@ const ALLOWED: Record<string, string[]> = {
     "أهم شغلة عليكم: سجلوا نتيجة كل موعد",
     "أهم شغلة عليكم: كل مرحلة تكون صحيحة",
     "انقلوا كل موعد للمرحلة الصح في الـCRM بنفس اليوم: ما حضر، حضر، انرسل عرض السعر، وقّع.",
-    "سجلوا نتيجة كل موعد، بنفس اليوم",
-    "اتصلوا خلال ٥ دقايق، وسجلوا كل محاولة، وخلوا كل مرحلة صحيحة",
+    "سجلوا نتيجة كل موعد بنفس اليوم، ومعها قيمة المشروع إذا وقّع",
+    "انقلوا كل موعد للمرحلة الصح بنفس اليوم",
+    "اتصلوا على الاستفسارات الجديدة خلال ٥ دقايق، وسجلوا كل محاولة",
+    "ضيفوا كل موعد لنظامكم",
+    "بعد كل موعد",
+    "كل اللي يقابل عملاءكم أو يرسل عروض الأسعار يشوفه، ويبدي بقسم Sales crash course.",
+    "تقريباً ٤٥ دقيقة، ومعها وقت لأسئلتكم. بنمر على اللي بينزل، وعلى اللي يصير لما أحد يستفسر، وعلى مين يسوي كل خطوة، وعلى اللي نحتاجه منكم. وقفوني بأي وقت.",
+    "كل ما خليتوا أوقات فاضية أكثر من ساعات دوامكم، لقى العميل وقت يناسبه أسرع.",
     "وبعدها كل أسبوع أو كل أسبوعين",
     "بعد أول مكالمة متابعة، تكون المكالمات كل أسبوع أو كل أسبوعين، على حسب باقتكم، وكم صار لكم معنا.",
     "(If they want more questions) كل سؤال زيادة يطيّر معه ناس زينين بعد. نضيف سؤال لما الاستفسارات توضح إننا نحتاجه.",
@@ -115,7 +129,23 @@ const ALLOWED: Record<string, string[]> = {
     "كل واحد بالقروب يكلمكم عن شي واحد. وأنا نقطة تواصلكم معنا، لأي شي ثاني.",
     "ومع كل خطوة تخلص، يوصلكم الجزء اللي بعدها من هالطريق بقروب الواتساب.",
     "كل ما رفعتوا محتوى أكثر قبل مكالمة بناء الهوية، طلعت أول إعلاناتكم أحسن.",
+    // Creative flexibility (2026-10-20): each version of an ad, "whenever
+    // you can" and "the more" for the client's own content, and a video's
+    // title, "how everything works".
+    "كل وحدة فيها شي مختلف: البداية اللي تشد، أو الزاوية، أو طريقة العرض، أو مين يطلع بالفيديو.",
+    "أرسلوا صور وفيديوهات جديدة لمشاريعكم كل ما قدرتوا. كل ما زاد المحتوى، زادت الإعلانات اللي نختبرها.",
+    "(Stop 5, the content) كل ما أرسلتوا محتوى أكثر، قدرنا نسوي نسخ أكثر.",
+    "كيف يمشي كل شي، من البداية للنهاية",
+    // The fixer's round (2026-10-20): everyone on their account (the
+    // group's one line), whenever they can (the recap's content line), and
+    // everything the caller learned (what lands with them).
+    "كل اللي يشتغلون على حسابكم معكم في هالقروب.",
+    "كيف نختبر إعلاناتكم: خطوطكم الحمراء ثابتة، وأفكاركم ترسلونها بالقروب قبل الإعلانات الجاية، وتراجعون المعلومات والأسعار والوعود قبل لا ينزل الإعلان، والتعديلات الصغيرة على الشكل تروح للإعلانات الجاية عشان إطلاقكم ما يتأخر. وأي صور أو فيديوهات جديدة، أرسلوها كل ما قدرتوا.",
+    "كل اللي عرفه فريق الاتصال يوصلكم.",
   ],
+  // A number beside مواعيد that is the client's own job (the open slots
+  // they keep), never a count of appointments we promise.
+  countAr: ["خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة"],
 };
 
 function offenders(list: Leaf[], re: RegExp, rule?: string) {
@@ -303,6 +333,7 @@ describe("rule 2: no results promise, no guarantee", () => {
       offenders(
         AR,
         /[٠-٩0-9]+\s+(?:مشاريع|مشروع|مواعيد|موعد|حجوزات|حجز|استفسارات|استفسار|عملاء|عميل)/,
+        "countAr",
       ),
     ).toEqual([]);
   });
@@ -336,7 +367,7 @@ describe("rules 4 and 5: no every or always for our steps, the rhythm never one 
     // every enquiry books", the head of their own DO items, and a note on
     // why each extra form question costs.
     const fine =
-      /mark every meeting|every two weeks|every stage true|every fact, price and claim|every try|not every enquiry books|^Always …$|every extra question/i;
+      /mark every meeting|every two weeks|every stage true|every fact, price and claim|every try|not every enquiry books|^Always$|every extra question/i;
     expect(
       EN.filter(
         l => /\bevery\b|\balways\b/i.test(l.text) && !fine.test(l.text),
@@ -510,7 +541,7 @@ describe("rule 9: form", () => {
   });
   test("titles in sentence case", () => {
     const PROPER =
-      /^(?:Meta|Mahara|OS|WhatsApp|Instagram|Facebook|Brand|Blueprint|Google|Calendar|CRM|Academy|Drive|Page|LeadConnector|Saudi|UAE|Saturday|Thursday|Friday|Stories|Reels|EN|F|L|O|N|Esc|I|Sponsored|Zoom|SMS)$/;
+      /^(?:Meta|Mahara|OS|WhatsApp|Instagram|Facebook|Brand|Blueprint|Google|Calendar|CRM|Academy|Drive|Page|LeadConnector|Saudi|UAE|Saturday|Thursday|Friday|Stories|Reels|EN|F|L|O|N|Esc|I|Sponsored|Zoom|SMS|Premium|Projects|Project|Closing|Mastery)$/;
     const titles = ALL.filter(
       l =>
         l.lang === "en" &&
@@ -559,7 +590,15 @@ describe("rule 9: form", () => {
 
 describe("Arabic numbers and register (CONTENT-AR decisions 2, 3 and 6)", () => {
   test("Arabic-Indic digits only, never ٬, never a lone ٠", () => {
-    expect(offenders(AR, /[0-9]/)).toEqual([]);
+    // A spoken line's English cue for the CSM, "(Stop 3, the offer)", is
+    // English: its stop number is not Arabic copy.
+    const cue = /^\([A-Za-z0-9 ,:'-]+\)\s*/;
+    expect(
+      offenders(
+        AR.map(l => ({ ...l, text: l.text.replace(cue, "") })),
+        /[0-9]/,
+      ),
+    ).toEqual([]);
     expect(offenders(AR, /٬/)).toEqual([]);
     expect(offenders(AR, /(?<![٠-٩])٠(?![٠-٩])/)).toEqual([]);
   });
@@ -598,6 +637,10 @@ describe("rule 11: no other client's material", () => {
     "ads-account",
     "ads-twenty-on",
     "ads-twenty-off",
+    // The sales deck's Academy screenshots (copy rule 11, 2026-10-20): an
+    // actor's likeness on a course cover, another client's brand.
+    "pcm-academy",
+    "pcm-lesson",
     "interior-majlis",
     "portal-results",
     "portal-ads",
@@ -606,11 +649,14 @@ describe("rule 11: no other client's material", () => {
     "callcenter.maharamedia.com",
   ];
 
+  // The Academy's screens only as the masked copies (copy rule 11): the
+  // unmasked names fail, "-masked" is the one form allowed.
+  const MASKED = /pcm-(?:academy|lesson)-masked/g;
   test("the deck's files name none of the banned pictures", () => {
     expect(scanned.length).toBeGreaterThan(10);
     const hits: string[] = [];
     for (const f of scanned) {
-      const name = f.slice(root.length + 1);
+      const name = f.slice(root.length + 1).replace(MASKED, "masked-shot");
       for (const b of BANNED)
         if (name.includes(b)) hits.push(`${name} is ${b}`);
       if (/\bcc-[a-z0-9-]+\.(?:webp|png|jpe?g)/.test(name))
@@ -619,7 +665,7 @@ describe("rule 11: no other client's material", () => {
         /\.(?:png|jpe?g|webp|svg|mp4|tsx?|css)$/.test(f) &&
         !/\.(?:png|jpe?g|webp|mp4)$/.test(f)
       ) {
-        const text = readFileSync(f, "utf8");
+        const text = readFileSync(f, "utf8").replace(MASKED, "masked-shot");
         for (const b of BANNED)
           if (text.includes(b)) hits.push(`${name} names ${b}`);
         if (/\bcc-[a-z0-9-]+\.(?:webp|png|jpe?g)|proof\/cc-/.test(text))
@@ -633,5 +679,426 @@ describe("rule 11: no other client's material", () => {
       }
     }
     expect(hits).toEqual([]);
+  });
+
+  /** A WebP's width and height, from its header (VP8, VP8L or VP8X). */
+  const webpSize = (path: string) => {
+    const b = readFileSync(path);
+    const kind = b.toString("ascii", 12, 16);
+    if (kind === "VP8X")
+      return [1 + b.readUIntLE(24, 3), 1 + b.readUIntLE(27, 3)];
+    if (kind === "VP8L") {
+      const bits = b.readUInt32LE(21);
+      return [1 + (bits & 0x3fff), 1 + ((bits >> 14) & 0x3fff)];
+    }
+    return [b.readUInt16LE(26) & 0x3fff, b.readUInt16LE(28) & 0x3fff];
+  };
+
+  test("the Academy's screens are the masked copies, at their pinned sizes, at most 300 KB", () => {
+    const shot = (n: string) => join(root, "present", "assets", n);
+    expect(webpSize(shot("pcm-academy-masked.webp"))).toEqual([1456, 1029]);
+    // The lesson cropped below the top bar (the member's avatar and counts),
+    // and above "05: Closing Deposits" (copy rule 7: never "deposit").
+    expect(webpSize(shot("pcm-lesson-masked.webp"))).toEqual([1444, 990]);
+    for (const n of ["pcm-academy-masked.webp", "pcm-lesson-masked.webp"])
+      expect(statSync(shot(n)).size).toBeLessThanOrEqual(300 * 1024);
+  });
+});
+
+/**
+ * Creative flexibility and the video slots (the CEO, 2026-10-20): the
+ * expectation as CONTENT L3 and O7 write it, the handle's three goal lines,
+ * the recap's testing line, and the slots' words.
+ */
+describe("creative flexibility and the video slots, as written", () => {
+  const T = content.LAUNCH.test;
+  test("slide 3's five stops, as CONTENT L3 writes them", () => {
+    expect(T.job.copy.en).toBe(
+      "Your page shows your brand. Your ads are there to bring in business: enquiries from people who don't know you yet.",
+    );
+    expect(T.volume.copy.en).toBe(
+      "We make many versions and switch most of them off. That's how we find the few that work.",
+    );
+    expect(T.input.copy.en).toBe(
+      "Ideas, a new offer, a new price, something to change? Send it in the group before we make the next round.",
+    );
+    expect(T.input.offer.en).toBe(
+      "Keep your offer steady while a test runs. A new offer starts the test again.",
+    );
+    expect(T.check.words.map(w => w.en).join(" · ")).toBe(
+      "Facts · Prices · Claims",
+    );
+    expect(T.check.style.en).toBe(
+      "Small style changes go into the next round, so your launch doesn't wait.",
+    );
+    expect(T.content.copy.en).toBe(
+      "Send new photos and videos of your projects whenever you can. More content means more ads to test.",
+    );
+    expect(T.fixed.copy.en).toBe("We never cross these.");
+    expect(T.round.ar).toBe("الإعلانات الجاية");
+    // A دفعة is a payment: never the next round.
+    expect(
+      offenders(
+        AR.filter(l => l.path.startsWith("LAUNCH.test")),
+        /دفعة/,
+      ),
+    ).toEqual([]);
+  });
+  test("no count on slide 3: no win rate, no 20 versions, no one in ten", () => {
+    const four = ALL.filter(
+      l =>
+        l.path.startsWith("LAUNCH.test") &&
+        !l.path.includes(".ask.held") &&
+        !l.path.includes(".reply.held"),
+    );
+    expect(offenders(four, /[0-9٠-٩]|%|one in|win rate/i)).toEqual([]);
+    // The retired optional stop and its 20 versions are gone.
+    expect(
+      offenders(
+        ALL,
+        /How a test runs|20 versions|٢٠ نسخة|Your page stays yours|Open: everything else we test/,
+      ),
+    ).toEqual([]);
+  });
+  test("O7 plants it before any ad exists: the small check and the next round", () => {
+    expect(content.O.next.approval.en).toBe(
+      "They go live only once you've approved the facts, prices and claims in them.",
+    );
+    // The ads' job first (business, not the brand page), then the volume,
+    // then the red lines' ask: three lines, not one block (score round 2).
+    expect(
+      [
+        content.O.next.testLine.en,
+        content.O.next.testVolume.en,
+        content.O.next.testAsk.en,
+      ].join(" "),
+    ).toBe(
+      "Your ads are there to bring in business, not to look like your page. We test many ads, fast. Small style changes go into the next round, so your launch keeps moving. Your red lines stay fixed: tell us now what we must never say or show.",
+    );
+    expect(content.O.next.testLine.ar).toBe(
+      "إعلاناتكم هدفها تجيب لكم شغل، مو إنها تشبه صفحتكم.",
+    );
+    expect(
+      content.O_NOTES.next.say.some(l =>
+        l.startsWith("The testing, in one breath"),
+      ),
+    ).toBe(true);
+  });
+  test("the handle: three goal lines, warm, and never 'we won't do it'", () => {
+    expect(T.ask.shown.en).toBe(
+      'You told us your goal is "{goal}". What matters more: this one change, or getting the ads live so we can get there?',
+    );
+    // Quoted, never spliced: a goal written as "We want…" still reads.
+    expect(T.reply.shown.en).toContain('You told us your goal is "{goal}", so');
+    expect(T.ask.shown.ar).toStartWith("قلتوا لنا إن هدفكم: {goal}. ");
+    expect(T.reply.shown.ar).toContain("قلتوا لنا إن هدفكم: {goal}. ");
+    expect(T.ask.held.en).not.toContain("{goal}");
+    expect(T.ask.none.en).toBe(
+      "What matters more to you: this one change, or getting the ads live?",
+    );
+    for (const v of ["shown", "held", "none"] as const) {
+      expect(T.reply[v].en).toStartWith("Thanks, noted.");
+      expect(T.reply[v].en).toContain("it goes into the next round");
+      expect(T.reply[v].ar).toStartWith("شكراً، وصلتنا.");
+    }
+    // The handle lives under "If they push back", apart from the stops.
+    const say = content.L_NOTES["creative-freedom"].push ?? [];
+    expect(say.some(l => l.includes("{goalAsk}"))).toBe(true);
+    expect(content.L_NOTES["creative-freedom"].pushAr).toContain(
+      "(Then ask) {goalAsk}",
+    );
+    expect(
+      content.L_NOTES["creative-freedom"].say.some(l =>
+        l.includes("{goalAsk}"),
+      ),
+    ).toBe(false);
+    expect(
+      say.some(l =>
+        l.includes(
+          "The last thing we want is to hold your launch for a small change.",
+        ),
+      ),
+    ).toBe(true);
+    // Said only as what never to say.
+    expect(
+      offenders(ALL, /we won'?t do it|ما راح نسويه/).filter(
+        l => !l.includes('Never "we won\'t do it"'),
+      ),
+    ).toEqual([]);
+    expect(say.some(l => l.includes("after working with X clients"))).toBe(
+      true,
+    );
+  });
+  test("the recap's testing line puts slide 3's agreement in writing", () => {
+    // The rule the pushback is about (small style changes go into the next
+    // round) and the content ask are in it, the line the CSM points to.
+    expect(content.GROUP_LINKS.testing.en).toBe(
+      "How we test your ads: your red lines stay fixed, your ideas go in the group before the next round, you check the facts, prices and claims before an ad goes live, and small style changes go into the next round so your launch doesn't wait. New photos and videos help: send them whenever you can.",
+    );
+    // The money and the first weeks, in writing, until their videos exist.
+    expect(content.GROUP_LINKS.payments.en).toBe(
+      "Keep your ad card funded. Your payments to us are on the dates in your agreement.",
+    );
+    expect(content.GROUP_LINKS.firstWeeks.en).toBe(
+      "The first weeks are usually slower while the ads find your audience. Leave them running.",
+    );
+    expect(content.GROUP_LINKS.watch.en).toBe(
+      "Missed something on the call? Watch:",
+    );
+    expect(content.GROUP_LINKS.watch.ar).toBe("فاتكم شي بالمكالمة؟ شوفوا:");
+  });
+  test("the slots' titles fit one line, and the canvas never shows an empty slot's words", () => {
+    for (const [k, t] of Object.entries(content.VIDEO.titles)) {
+      expect(`${k}: ${t.en}`.length - k.length - 2).toBeLessThanOrEqual(32);
+      expect(t.ar.length).toBeGreaterThan(3);
+    }
+    // "Not recorded yet" is cockpit UI, never a canvas string.
+    expect(
+      offenders(ALL, /not recorded|coming soon|(?<![\u0600-\u06FF])قريباً/i),
+    ).toEqual([]);
+    // The Arabic length is said in words: no m:ss template.
+    for (const v of Object.values(content.VIDEO.minutes))
+      expect(v.ar).not.toMatch(/:/);
+  });
+});
+
+/**
+ * The Gamma pass (CEO, 2026-10-20) and its spec review: the expectation
+ * setting from Mahara's own Gamma decks, pinned where the words live.
+ */
+describe("the Gamma pass: the expectations, as written", () => {
+  const L = content.LAUNCH;
+
+  test("we reply within 2 working hours, on O3 and on the good-to-know row", () => {
+    const O3 = content.O.team;
+    expect(O3.foot.en).toStartWith(
+      "We reply within 2 working hours, 10 to 6, Saturday to Thursday.",
+    );
+    expect(O3.footUae.en).toContain(
+      "within 2 working hours, 10 to 6 Saudi time (11 to 7 in the UAE)",
+    );
+    expect(O3.foot.ar).toStartWith("نرد خلال ساعتين دوام، ");
+    expect(O3.footUae.ar).toStartWith("نرد خلال ساعتين دوام، ");
+    const replies = L.know.rows.find(r => r.key === "replies");
+    expect(replies?.line.en).toBe(
+      "In the group within 2 working hours, 10 to 6, Saturday to Thursday.",
+    );
+    expect(replies?.lineUae?.en).toContain(content.HOURS.uae.en);
+    expect(replies?.line.ar).toContain("خلال ساعتين دوام");
+    // The reply time is said one way only.
+    expect(
+      offenders(
+        EN,
+        /\bwithin (?:24|two|a couple of) (?:working |business )?hours\b|\b2 business hours\b/i,
+      ),
+    ).toEqual([]);
+  });
+
+  test("at least 10 open slots, at different times, and a day off blocked by the hour", () => {
+    const slots = L.part.rows.find(r => r.key === "slots");
+    expect(slots?.head).toBe("before");
+    expect(slots?.job.en).toBe(
+      "Keep at least 10 open slots, at different times",
+    );
+    expect(slots?.job.ar).toBe("خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة");
+    expect(slots?.why.en).toBe(
+      "Our callers book into them. On a day off, block each hour, not one all-day event.",
+    );
+    expect(slots?.whyDwy?.en).toStartWith("Your team books into them.");
+    expect(L.part.days.map(d => d.en)).toEqual([
+      "Sat",
+      "Sun",
+      "Mon",
+      "Tue",
+      "Wed",
+      "Thu",
+    ]);
+  });
+
+  test("the pie's two parts: one piece of ours named three ways, theirs the meeting and the close", () => {
+    const P = L.partner;
+    expect(P.line1.en).toBe("We bring them to your door.");
+    expect(P.line2.en).toBe("You win the project.");
+    expect(P.ours.map(x => x.en)).toEqual([
+      "Ads and enquiries",
+      "Calls and bookings",
+      "Reminders and rebooking",
+    ]);
+    expect(P.theirs.map(x => x.en)).toEqual(["The meeting and the close"]);
+    expect(P.owner.us.en).toBe("Our team");
+    expect(P.owner.you.en).toBe("You");
+    // Done with you, the pie splits by owner in halves: their team calls,
+    // books, meets and closes; the messages that go out by themselves are ours.
+    expect(P.oursDwy.map(x => x.en)).toEqual([
+      "Ads and enquiries",
+      "Confirmations and reminders",
+    ]);
+    expect(P.theirsDwy.map(x => x.en)).toEqual([
+      "Calls and bookings",
+      "The meeting and the close",
+    ]);
+    expect(P.owner.youDwy.en).toBe("Your team");
+    // The roads carry no length labels and no speed claim; stop 4 is one line.
+    expect(P.close.en).toBe(
+      "We can't close for you. We can help you get better at it.",
+    );
+    expect(JSON.stringify(P)).not.toMatch(
+      /longer road"|shorter road|easier|faster|5 others/i,
+    );
+    // No percentage or fraction is ever written for the split.
+    expect(
+      offenders(
+        ALL,
+        /three quarters|\b75 ?%|\b25 ?%|ثلاث أرباع|ربع الشغل|٧٥٪|٢٥٪/i,
+      ).filter(l => !l.startsWith("L_NOTES.partnership.say")),
+    ).toEqual([]);
+  });
+
+  test("the training: the Academy's six courses in order, Project Closing Mastery lit, what it teaches", () => {
+    const T = L.training;
+    expect(T.courses.map(c => c.en)).toEqual([
+      "Introduction",
+      "Onboarding",
+      "Google optimisation",
+      "Offer creation",
+      "Project Closing Mastery",
+      "Team and operations",
+    ]);
+    expect(T.courses[T.lit].en).toBe("Project Closing Mastery");
+    expect(T.teaches.en).toBe("What it teaches");
+    expect(T.parts.map(p => p.en)).toEqual([
+      "The consultation",
+      "The proposal",
+      "The objections",
+      "The close",
+    ]);
+    // Where to start is the course's real first section, never "the
+    // consultation" (not a section of the course).
+    expect(T.statements[0].line.en).toContain(
+      "starting with the sales crash course",
+    );
+    expect(JSON.stringify(T)).not.toMatch(
+      /starting with the consultation|وابدوا بالاستشارة/,
+    );
+    // Rule 5: the rhythm's one home is the 90 days, so the training states no cadence.
+    expect(JSON.stringify(T)).not.toMatch(
+      /weekly|every two weeks|fortnight|كل أسبوع|أسبوعين/i,
+    );
+    // The recap ends on the course, with the Academy link.
+    expect(content.GROUP_LINKS.academyFirst.en).toBe(
+      "Before your first meetings: Project Closing Mastery in the Academy: {url}",
+    );
+    // O6 starts them where the Academy says to start.
+    expect(content.O.week.rows.academy.line.en).toEndWith(
+      "Join, and start with the introduction.",
+    );
+    expect(content.O.week.rows.academy.line.ar).toEndWith(
+      "انضموا، وابدوا بكورس البداية.",
+    );
+  });
+
+  test("marking every meeting: the three taps' lines, and moved kept apart from cancelled", () => {
+    const P = L.portal;
+    expect(P.askLines.map(x => x.en)).toEqual([
+      "Running late isn't a no-show.",
+      "Sent it later? Update it then.",
+      "Add the value, or a line on why.",
+    ]);
+    // One line (the fixer's round): the reminders or the rebook, never both.
+    expect(P.moved.en).toBe(
+      "Cancelled or moved with you directly? Tell us in the group: we change the reminders or call to rebook.",
+    );
+    expect(P.moved.ar).toContain(
+      "ونعدّل التذكيرات أو نتصل عليه ونحجز له من جديد.",
+    );
+    // A moved meeting is never rebooked a third time.
+    expect(
+      offenders(ALL, /update the reminders and rebook|ونحدّث التذكيرات ونحجز/),
+    ).toEqual([]);
+  });
+
+  test("the six jobs: at most six, each head with its own, no calling job after the meeting", () => {
+    for (const dwy of [false, true]) {
+      const jobs = content.partJobs(dwy);
+      expect(jobs.length).toBe(6);
+      const by = (h: string) => jobs.filter(j => j.head === h).map(j => j.key);
+      expect(by("before")).toEqual(["slots", "system"]);
+      expect(by("after")).toEqual(["mark", "follow"]);
+      expect(by("weeks")).toEqual(["ads", "drive"]);
+      const after = jobs.filter(j => j.head === "after");
+      // Calling a new enquiry happens before any meeting.
+      expect(
+        after.filter(j => /\bcall\b|within 5 minutes/i.test(j.job.en)),
+      ).toEqual([]);
+      expect(after.filter(j => /اتصلوا|دقايق/.test(j.job.ar))).toEqual([]);
+    }
+    const dwy = content.partJobs(true);
+    expect(dwy.find(j => j.key === "system")?.job.en).toBe(
+      "Call new enquiries within 5 minutes, and note every try",
+    );
+    expect(dwy.find(j => j.key === "mark")?.job.en).toBe(
+      "Move each meeting to the right stage the same day",
+    );
+    // Done with you their own team makes the calls: no "our caller".
+    expect(
+      dwy.filter(j =>
+        /\bour callers?\b|فريق الاتصال(?!\s*عندكم)/i.test(
+          `${j.why.en} ${j.why.ar}`,
+        ),
+      ),
+    ).toEqual([]);
+    expect(L.part.heads.weeks.en).toBe("Week to week");
+    expect(L.part.title.en).toBe("Your six jobs, in one place");
+    // Keep the offer steady is said on L3 now, not a job.
+    expect(JSON.stringify(L.part)).not.toMatch(/offer steady/i);
+    expect(
+      content.L_NOTES["creative-freedom"].say.length +
+        content.L_NOTES["creative-freedom"].sayAr.length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("the first weeks: usually slower, never always", () => {
+    expect(L.days.slow.en).toBe(
+      "Usually slower, while the ads find your audience.",
+    );
+    expect(L.days.slow.ar).toStartWith("عادةً");
+    expect(
+      offenders(ALL, /always (?:the )?slow|دايماً أهدأ|always quiet/i),
+    ).toEqual([]);
+  });
+
+  test("before the meeting, one voice: done for you only", () => {
+    expect(L.call.after.oneVoice.en).toBe(
+      "Before the meeting, the messages come from us, so your customer hears one voice.",
+    );
+  });
+
+  test("payments: the dates in your agreement, never monthly from today", () => {
+    const pay = L.know.rows.find(r => r.key === "pay");
+    expect(pay?.line.en).toStartWith("On the dates in your agreement.");
+    expect(pay?.lineDwy?.en).not.toMatch(/our calls/);
+    // Only the note telling the presenter never to say it may name it.
+    expect(
+      offenders(
+        ALL,
+        /monthly from today|every month from today|renews every month/i,
+      ).filter(l => !l.includes('Never "monthly from today"')),
+    ).toEqual([]);
+    const card = L.know.rows.find(r => r.key === "card");
+    expect(card?.line.en).toContain(
+      "Running low? Tell us first, and we'll pause the ads safely.",
+    );
+  });
+
+  test("the Gamma lines left out on purpose stay out", () => {
+    expect(
+      offenders(
+        EN,
+        /\b(?:8|eight) (?:tries|times|follow-?ups)\b|\b80 ?%|third contact(?! ")|\b10 minutes\b|Sunday to Thursday|\bAI\b|tons of|monthly projections|monthly (?:results |reporting )?call/i,
+      ).filter(l => !l.startsWith("L_NOTES.partnership.say")),
+    ).toEqual([]);
+    expect(
+      offenders(AR, /الأحد إلى الخميس|[٨8] محاولات|٨٠٪|١٠ دقايق|ذكاء اصطناعي/),
+    ).toEqual([]);
   });
 });

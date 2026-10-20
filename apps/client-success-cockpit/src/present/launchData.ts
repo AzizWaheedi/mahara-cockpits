@@ -105,10 +105,13 @@ export interface LaunchData {
   funnels: Funnel[];
   redLines: { told: string[]; always: string[]; never: string[] };
   agreedAt: string | null;
-  /** The optional "How a test runs" stop on slide 4 (prep shows it). */
-  proofShown: boolean;
   call: CallData;
   goal90: string | null;
+  /**
+   * A 90-day goal on file but held back (it counts enquiries or
+   * appointments): slide 3's pushback names it without saying it.
+   */
+  goal90Held: boolean;
   checkin: string | null;
   /** The green light's hours card: only when the onboarding deck was never shown. */
   hoursCard: boolean;
@@ -123,9 +126,6 @@ export interface LaunchData {
     clickup: string | null;
   };
 }
-
-/** The pseudo slide id prep shows the optional test tiles with. */
-export const PROOF_ID = "test-proof";
 
 export interface LaunchInput {
   d: Omit<DeckData, "launch">;
@@ -437,6 +437,7 @@ export function launchData(input: LaunchInput): LaunchData {
 
   const goal = d.goals.find(g => g.key === "goal90");
   const goal90 = goal?.lines.length && !goal.held ? goal.lines[0] : null;
+  const goal90Held = Boolean(goal?.lines.length && goal.held);
 
   return {
     today,
@@ -457,7 +458,6 @@ export function launchData(input: LaunchInput): LaunchData {
     funnels: input.funnels,
     redLines,
     agreedAt: str(p.creative_agreed_at),
-    proofShown: list(p.shown_slides).includes(PROOF_ID),
     call: {
       slots,
       dialect: dia.dialect,
@@ -479,6 +479,7 @@ export function launchData(input: LaunchInput): LaunchData {
       missing,
     },
     goal90,
+    goal90Held,
     checkin: d.next.checkin ?? null,
     hoursCard: !d.presentedAt,
     dwyOs: op.dwy_os_approved === true,

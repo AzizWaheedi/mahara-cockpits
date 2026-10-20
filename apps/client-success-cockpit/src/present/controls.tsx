@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { fill, GROUP_LINKS, type L, O, SHARED } from "./content";
 import type { AccessStatus, CallKind, DeckData, Overrides } from "./deckData";
 import type { DeckKind } from "./sources";
+import { recapVideos, slotCovered } from "./videos";
 
 /**
  * The presenter's own controls for a slide, in cockpit UI: the notes window
@@ -438,7 +439,18 @@ export function groupLinks(d: DeckData): { text: string; missing: string[] } {
   ].filter((x): x is string => Boolean(x));
   if (!d.links.drive)
     missing.push("No Drive folder link on the card, so it is left out.");
-  return { text: lines.join("\n"), missing };
+  // O7's testing plant in writing while its video is not recorded (score
+  // round 2), then the onboarding deck's recorded videos (CONTENT O6).
+  const testing = slotCovered(d, "testing") ? null : G.testingShort[d.lang];
+  const videos = recapVideos(d);
+  return {
+    text: [
+      lines.join("\n"),
+      ...(testing ? ["", testing] : []),
+      ...(videos ? ["", videos] : []),
+    ].join("\n"),
+    missing,
+  };
 }
 
 export const BLUEPRINT_LINE = `${O.next.bandHead.en} · ${O.next.bandRest.en}`;

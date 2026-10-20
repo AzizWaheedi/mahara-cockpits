@@ -172,9 +172,10 @@ describe("a client with everything on file", () => {
   test("a starter pack with starter ads: the first ads line names the service", () => {
     expect(d.starterPack).toBe(true);
     expect(d.starterAds).toHaveLength(2);
+    // Mid-sentence, in sentence case: "templates for kitchens".
     expect(firstAdsLine(d)).toEqual({
       line: expect.anything(),
-      service: "Kitchens",
+      service: "kitchens",
     });
   });
 });
@@ -320,6 +321,79 @@ describe("the small rules", () => {
     expect(leadService(d, {}, "Full villa fit-out").candidate).toBe(
       "Full villa fit-out",
     );
+  });
+});
+
+describe("O7 names the launch service in the deck's own script", () => {
+  // The fixer's round (2026-10-20): "لخدمة Kitchens" put a Latin name in an
+  // Arabic line. The Arabic deck takes the CSM's Arabic name from prep (the
+  // field the launch deck reads too), and leaves a Latin-only name unnamed.
+  const render = (d: DeckData, tour: number) => {
+    const f = FIXTURES.full();
+    const s = onboardingSlides().find(x => x.id === "next");
+    return renderToStaticMarkup(
+      <>
+        {s?.render({
+          d,
+          lang: d.lang,
+          deck: "onboarding",
+          prep: f.prep.onboarding,
+          prepOf: k => f.prep[k],
+          save: () => {},
+          saveTo: () => {},
+          live: emptyLive(),
+          setLive: () => {},
+          still: true,
+          presenting: true,
+          tour,
+          setTour: () => {},
+        })}
+      </>,
+    );
+  };
+  const typed = (lang: Lang) => {
+    const f = FIXTURES.full();
+    return deckData({
+      taskId: "fixture-full",
+      deck: "onboarding",
+      lang,
+      sources: f.sources,
+      kit: f.kit,
+      prep: {
+        ...f.prep,
+        onboarding: {
+          ...f.prep.onboarding,
+          service_focus: "Kitchens",
+          service_focus_ar: "المطابخ",
+        },
+      },
+      ads: f.ads,
+      presenterName: "Sara Al-Harbi",
+      publicUrl: (_b, p) => p,
+      now: NOW,
+    });
+  };
+  test("typed in Arabic: both stops name it in Arabic, never the Latin name", () => {
+    const d = typed("ar");
+    for (const tour of [0, 1]) {
+      const html = render(d, tour);
+      expect(html).toContain("المطابخ");
+      expect(html).not.toContain("Kitchens");
+    }
+    expect(firstAdsLine(d).service).toBe("المطابخ");
+  });
+  test("only a Latin name on file: the Arabic deck leaves it unnamed, and prep says so", () => {
+    const d = data("full", "ar");
+    expect(d.serviceFocus).toBe("Kitchens");
+    for (const tour of [0, 1])
+      expect(render(d, tour)).not.toContain("Kitchens");
+    expect(firstAdsLine(d).service).toBeNull();
+    const s = onboardingSlides().find(x => x.id === "next");
+    expect(s?.missing?.(d).some(m => m.includes("Type its Arabic name"))).toBe(
+      true,
+    );
+    // The English deck still names it, in sentence case mid-sentence.
+    expect(render(data("full"), 0)).toContain("templates for kitchens");
   });
 });
 

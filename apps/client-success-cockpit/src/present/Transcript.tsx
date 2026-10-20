@@ -462,7 +462,7 @@ export function Transcript({
   );
 }
 
-/** The call clock's reading: the last turn's time, then "Call ended" at 4:51. */
+/** The call clock's reading: the last turn's time, then "Call length" over 4:51. */
 export function clockAt(
   turns: CallTurn[],
   shown: number,

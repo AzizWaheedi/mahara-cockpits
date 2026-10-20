@@ -22,6 +22,7 @@ import { LaunchControls } from "./launchControls";
 import { saveLine } from "./NotesWindow";
 import type { DeckKind } from "./sources";
 import type { DeckIO, DeckModel } from "./useDeckModel";
+import { PrepVideos } from "./VideoPrep";
 
 /**
  * Before the call, never shared (DESIGN 12.3): the deck live in a box, a
@@ -432,6 +433,7 @@ export function PrepView({
               ) : null}
             </div>
           </section>
+          <PrepVideos model={model} deck={deck} all={all} io={io} />
         </aside>
       </div>
     </div>

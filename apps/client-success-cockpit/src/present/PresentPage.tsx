@@ -6,8 +6,10 @@ import { useDeckReport } from "./DeckBoundary";
 import { loadDeck } from "./load";
 import { PresentApp, type PresentUrls, type View } from "./PresentApp";
 import {
+  clearDeckVideo,
   type DeckKind,
   readFileFacts,
+  saveDeckVideo,
   savePrep,
   updateLaunchAd,
   uploadLaunchAd,
@@ -61,7 +63,11 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
     () => ({
       load: () => {
         if (!client) throw Error("Sign in to the cockpit to open the deck.");
-        return loadDeck(client, key);
+        return loadDeck(
+          client,
+          key,
+          deck === "launch" ? "launch" : "onboarding",
+        );
       },
       savePrep: (k, patch) => {
         if (!client)
@@ -94,8 +100,22 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
           );
         return updateLaunchAd(client, key, id, patch);
       },
+      saveVideo: v => {
+        if (!client)
+          throw Error(
+            "Saving needs your cockpit sign-in. The preview still works.",
+          );
+        return saveDeckVideo(client, v);
+      },
+      clearVideo: v => {
+        if (!client)
+          throw Error(
+            "Saving needs your cockpit sign-in. The preview still works.",
+          );
+        return clearDeckVideo(client, v);
+      },
     }),
-    [client, key, auth.name],
+    [client, key, auth.name, deck],
   );
 
   if (deck !== "onboarding" && deck !== "launch")

@@ -4,11 +4,15 @@ import type { OnboardingRow } from "@/lib/onboardingCore";
 import { fetchClientProfile } from "@/lib/performance";
 import type { Overrides } from "./deckData";
 import {
+  type DeckKind,
   type DeckSources,
+  type DeckVideos,
   listLaunchAds,
   problem,
   readDeckSources,
+  readDeckVideos,
   sourcesSchema,
+  VideosNotLive,
 } from "./sources";
 import type { Loaded } from "./useDeckModel";
 
@@ -62,16 +66,42 @@ export function fallbackSources(
   });
 }
 
+/**
+ * The videos are read beside the sources and never stop the deck. Null is
+ * "not read", said in the notes and prep, never "Not recorded yet"; the
+ * functions not being live yet is its own sentence (VIDEOS.md 7).
+ */
+export function videosRead(r: PromiseSettledResult<DeckVideos>): {
+  videos: DeckVideos | null;
+  problem: string | null;
+  line: string | null;
+} {
+  if (r.status === "fulfilled")
+    return { videos: r.value, problem: null, line: null };
+  if (r.reason instanceof VideosNotLive)
+    return { videos: null, problem: r.reason.message, line: r.reason.message };
+  const why = problem(r.reason, "try again");
+  return {
+    videos: null,
+    problem: why,
+    line: `The deck's videos could not be read: ${why}`,
+  };
+}
+
 export async function loadDeck(
   client: SupabaseClient,
   taskId: string,
+  deck: DeckKind,
 ): Promise<Loaded> {
   const problems: string[] = [];
-  const [src, kits, ads] = await Promise.allSettled([
+  const [src, kits, ads, videos] = await Promise.allSettled([
     readDeckSources(client, taskId),
     readOnboardingKits(client, [taskId]),
     listLaunchAds(client, taskId),
+    readDeckVideos(client, deck),
   ]);
+  const read = videosRead(videos);
+  if (read.line) problems.push(read.line);
   const kit =
     kits.status === "fulfilled"
       ? (kits.value.rows.find(r => r.clickup_task_id === taskId) ?? null)
@@ -123,5 +153,7 @@ export async function loadDeck(
     ads: ads.status === "fulfilled" ? ads.value : sources.launchAds,
     prep,
     problems,
+    videos: read.videos,
+    videosProblem: read.problem,
   };
 }

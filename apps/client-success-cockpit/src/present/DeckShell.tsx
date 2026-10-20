@@ -8,12 +8,21 @@ import {
   useRef,
   useState,
 } from "react";
-import type { DeckHub } from "./channel";
+import type { DeckHub, VideoPhase } from "./channel";
 import { CHROME, CLOSED, digits, type Lang, t } from "./content";
 import { DeckBoundary } from "./DeckBoundary";
 import { type SlideCtx, type SlideDef, slideTitle } from "./deckContext";
-import { keyCommand, type Pos, slideAtHash, stepFrom } from "./engine";
+import {
+  keyCommand,
+  type Pos,
+  slideAtHash,
+  stepFrom,
+  withPlayer,
+} from "./engine";
 import { MiniRail } from "./JourneyLanes";
+import type { VideoLang } from "./sources";
+import { type ControlItem, VideoControl, VideoPlayer } from "./VideoPlayer";
+import { filledOn, slotId, VIDEO_SLOTS } from "./videos";
 
 /**
  * The deck engine on screen (DESIGN 5, 12.1, 15): a 1920 x 1080 canvas
@@ -87,6 +96,8 @@ export function DeckShell({
   const setPos = setPosIn ?? setOwn;
   const [overview, setOverview] = useState(false);
   const [idle, setIdle] = useState(false);
+  /** The video playing over the slide (never kept: a reload never reopens it). */
+  const [player, setPlayer] = useState<ControlItem | null>(null);
   const [scale, setScale] = useState(1);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -148,6 +159,70 @@ export function DeckShell({
 
   const ctx: SlideCtx = { ...base, tour, setTour };
   ctxRef.current = ctx;
+
+  // The slide's recorded videos (DESIGN 21.2): an empty slot has none.
+  const videoItems = useMemo(
+    () => (slide ? filledOn(base.d, slide.id) : []),
+    [base.d, slide],
+  );
+  const opener = useRef<HTMLElement | null>(null);
+  const openVideo = useCallback((item: ControlItem) => {
+    const el = document.activeElement;
+    opener.current =
+      el instanceof HTMLElement && el.closest(".dkv-control") ? el : null;
+    setPlayer(item);
+  }, []);
+  const closeVideo = useCallback(() => {
+    setPlayer(null);
+    // Focus goes back to the control that opened it, else to nothing.
+    const back = opener.current;
+    opener.current = null;
+    window.setTimeout(() => {
+      if (back?.isConnected) back.focus();
+      else (document.activeElement as HTMLElement | null)?.blur?.();
+    }, 0);
+  }, []);
+  /** A slot's recording by id, in a given language (the notes window's offer). */
+  const itemFor = useCallback(
+    (id: string, lang?: VideoLang): ControlItem | null => {
+      const slot = VIDEO_SLOTS.find(s => slotId(s) === id);
+      if (!slot) return null;
+      if (!lang) return videoItems.find(v => v.slot === slot) ?? null;
+      const row = base.d.videos.videos?.rows.find(
+        r => r.deck === slot.deck && r.slotKey === slot.key && r.lang === lang,
+      );
+      return row ? { slot, row } : null;
+    },
+    [videoItems, base.d],
+  );
+  const playerSlot = player ? slotId(player.slot) : null;
+  /** The player's last phase, for a notes window that opens while it plays. */
+  const lastPhase = useRef<VideoPhase | null>(null);
+  const reportPhase = useCallback(
+    (phase: VideoPhase) => {
+      lastPhase.current = phase;
+      if (playerSlot && hub && !embedded)
+        hub.post({ type: "video-state", slot: playerSlot, phase });
+    },
+    [hub, embedded, playerSlot],
+  );
+  // A player belongs to its slide: another slide closes it.
+  const slideKey = slide?.id;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: closes when the slide changes
+  useEffect(() => {
+    setPlayer(p => (p ? null : p));
+  }, [slideKey]);
+  // Tell the notes window when a player closes.
+  const lastSlot = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastSlot.current && lastSlot.current !== playerSlot && hub)
+      hub.post({
+        type: "video-state",
+        slot: lastSlot.current,
+        phase: "closed",
+      });
+    lastSlot.current = playerSlot;
+  }, [playerSlot, hub]);
   const railAt = slide?.rail?.(ctx) ?? null;
   const slideId = slide?.id ?? "";
   useEffect(() => {
@@ -192,6 +267,24 @@ export function DeckShell({
   useEffect(() => {
     if (!hub || embedded) return;
     return hub.on(m => {
+      if (m.type === "video") {
+        if (!m.slot) closeVideo();
+        else {
+          const item = itemFor(m.slot, m.lang);
+          if (item) openVideo(item);
+        }
+        return;
+      }
+      // With the player open, a move from the notes window closes it only.
+      if ((m.type === "nav" || m.type === "goto") && player) {
+        closeVideo();
+        return;
+      }
+      if (m.type === "key" && player) return;
+      if (m.type === "key" && (m.key === "v" || m.key === "V")) {
+        if (videoItems[0]) openVideo(videoItems[0]);
+        return;
+      }
       if (m.type === "nav") {
         if (m.to === "next") step(1);
         else if (m.to === "prev") step(-1);
@@ -202,7 +295,7 @@ export function DeckShell({
             Math.max(0, (stops[slides.length - 1] ?? 1) - 1),
           );
       } else if (m.type === "goto") go(m.index, m.tour ?? 0);
-      else if (m.type === "hello" && m.from === "notes" && slide)
+      else if (m.type === "hello" && m.from === "notes" && slide) {
         hub.post({
           type: "state",
           index,
@@ -213,11 +306,26 @@ export function DeckShell({
           lang,
           startedAt: started.current,
         });
-      else if (m.type === "key") {
+        // A notes window that opens mid-video learns what is on screen.
+        if (playerSlot && lastPhase.current)
+          hub.post({
+            type: "video-state",
+            slot: playerSlot,
+            phase: lastPhase.current,
+          });
+      } else if (m.type === "key") {
         if (!slide?.onKey?.(m.key, ctx)) onKey?.(m.key, ctx);
       }
     });
   });
+
+  // The notes window offers the recap once the deck window is gone.
+  useEffect(() => {
+    if (!hub || embedded) return;
+    const gone = () => hub.post({ type: "closed" });
+    window.addEventListener("pagehide", gone);
+    return () => window.removeEventListener("pagehide", gone);
+  }, [hub, embedded]);
 
   // Scale: the window, or the prep view's box.
   useLayoutEffect(() => {
@@ -279,15 +387,34 @@ export function DeckShell({
         if (e.key === "Escape") el.blur();
         return;
       }
-      const cmd = keyCommand({
+      const asked = keyCommand({
         key: e.key,
         tag: el?.tagName ?? null,
         editable: Boolean(el?.isContentEditable),
         meta: e.metaKey,
         ctrl: e.ctrlKey,
         alt: e.altKey,
+        panel: Boolean(player),
         overview,
       });
+      // The player is a panel: a move key, Esc or V closes it, nothing else.
+      const cmd = player ? withPlayer(asked) : asked;
+      if (player) {
+        if (cmd === "close" || cmd === "video") {
+          e.preventDefault();
+          closeVideo();
+        } else if (cmd === "none" && e.key === "Escape") e.preventDefault();
+        else if (cmd !== "none" && cmd !== "notes" && cmd !== "fullscreen") {
+          e.preventDefault();
+        } else if (cmd === "notes") onNotes?.();
+        else if (cmd === "fullscreen") fullscreen();
+        return;
+      }
+      if (cmd === "video") {
+        e.preventDefault();
+        if (videoItems[0]) openVideo(videoItems[0]);
+        return;
+      }
       if (cmd === "none") {
         if (
           !e.metaKey &&
@@ -369,6 +496,7 @@ export function DeckShell({
           {slide ? (
             <section
               key={`${slide.id}-${lang}`}
+              inert={player ? true : undefined}
               className="dk-slide"
               data-deep={slide.deep ? "" : undefined}
               data-rail={railAt != null ? "" : undefined}
@@ -398,6 +526,21 @@ export function DeckShell({
               {`${count(index + 1)} / ${count(n)}`}
             </span>
           ) : null}
+          {/* The video control is presenter chrome on the canvas's head
+              band; the player covers the canvas (DESIGN 21.2, 21.3). */}
+          {player ? null : (
+            <VideoControl items={videoItems} lang={lang} onOpen={openVideo} />
+          )}
+          {player ? (
+            <VideoPlayer
+              key={`${slotId(player.slot)}:${player.row.lang}`}
+              item={player}
+              lang={lang}
+              still={base.still}
+              onClose={closeVideo}
+              onPhase={reportPhase}
+            />
+          ) : null}
         </div>
       </div>
 
@@ -418,7 +561,11 @@ export function DeckShell({
                 onPointerUp={letGo}
                 dir={dir}
               >
-                {t(CHROME.back, lang)} <bdi>{base.d.name}</bdi>
+                {/* One run: the button's flex gap plus the space read as
+                    two spaces before the name (score round 2). */}
+                <span>
+                  {t(CHROME.back, lang)} <bdi>{base.d.name}</bdi>
+                </span>
               </button>
             ) : null}
           </div>

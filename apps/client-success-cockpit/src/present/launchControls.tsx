@@ -12,13 +12,24 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { focusOf, playOn } from "./AdsStage";
 import { PAIN_STORY, type Pain } from "./callScript";
-import { CTA, type Cta, fill, GROUP_LINKS, LAUNCH, LINKS, t } from "./content";
+import {
+  CTA,
+  type Cta,
+  fill,
+  GROUP_LINKS,
+  LAUNCH,
+  type Lang,
+  LINKS,
+  partJobs,
+  t,
+} from "./content";
 import { Field, PrepText, Segmented, Toggle } from "./controls";
 import type { CallKind, DeckData, Overrides } from "./deckData";
-import { defaultPhones, PROOF_ID } from "./launchData";
+import { defaultPhones } from "./launchData";
 import type { DeckKind } from "./sources";
 import { type LocalItem, useLocalAds } from "./uploads";
 import type { DeckModel } from "./useDeckModel";
+import { recapVideos, slotCovered } from "./videos";
 
 /**
  * The launch deck's presenter controls, in cockpit UI (DESIGN 12.2, 12.3):
@@ -68,7 +79,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
   return (
     <Button
@@ -735,7 +746,6 @@ function CallControls(p: LaunchControlProps) {
 function FreedomControls({ d, model, full }: LaunchControlProps) {
   const agreed = d.launch.agreedAt;
   const prep = model.prep.launch;
-  const shown = strings(prep.shown_slides);
   const hidden = strings(prep.dos_donts_hidden);
   return (
     <div className="space-y-4">
@@ -761,22 +771,18 @@ function FreedomControls({ d, model, full }: LaunchControlProps) {
           </span>
         </div>
       </Section>
-      <Toggle
-        checked={shown.includes(PROOF_ID)}
-        onChange={v =>
-          model.setPrep(
-            "launch",
-            {
-              shown_slides: v
-                ? [...shown, PROOF_ID]
-                : shown.filter(x => x !== PROOF_ID),
-            },
-            true,
-          )
-        }
-      >
-        Show "How a test runs" (the 20 tiles, an illustration)
-      </Toggle>
+      <Section title="Pushback in the group, after the call">
+        <CopyButton text={replyText(d)} label="Copy reply" />
+        <div className="text-xs text-muted-foreground">
+          One line in the deck's language, picked by their 90-day goal (
+          {pushbackVariant(d) === "shown"
+            ? "it names the goal"
+            : pushbackVariant(d) === "held"
+              ? "the goal is held back, so it names it without saying it"
+              : "no goal on file, so the plain line"}
+          ).
+        </div>
+      </Section>
       {full && (d.dosDonts.do.length || d.dosDonts.dont.length) ? (
         <Section title="Do's & Don'ts to show (NOTES never show)">
           {[...d.dosDonts.dont, ...d.dosDonts.do].map(x => (
@@ -798,6 +804,15 @@ function FreedomControls({ d, model, full }: LaunchControlProps) {
               {x}
             </Toggle>
           ))}
+          {d.lang === "ar" &&
+          [...d.dosDonts.dont, ...d.dosDonts.do].some(
+            x => !hidden.includes(x) && !/[\u0600-\u06ff]/.test(x),
+          ) ? (
+            <div className="text-xs text-muted-foreground">
+              The Arabic deck shows the English lines under «من ملفكم» (from
+              your card), so they read as quoted from it.
+            </div>
+          ) : null}
         </Section>
       ) : null}
       <Section title="Red lines typed on the call">
@@ -985,16 +1000,99 @@ function CoverControls({ d, model }: LaunchControlProps) {
   );
 }
 
+/**
+ * The launch recap for the group (DESIGN 20.7, 21.4): its title, who does
+ * what while its three videos are not all recorded (score round 2), the six
+ * jobs under their three heads, then how we test their ads (slide 3's agreement in
+ * writing), the money and the first weeks (sent every time: their videos
+ * are not recorded yet), the course before the first meetings, and the
+ * videos recorded for this deck. Filled without Arabic isolates, so each
+ * link stays one clickable run.
+ */
 function partText(d: DeckData): string {
   const P = LAUNCH.part;
   const lang = d.lang;
+  const jobs = partJobs(d.mode.dwy);
+  const videos = recapVideos(d);
+  const who = ["start-to-finish", "call-team", "winning"].every(k =>
+    slotCovered(d, k),
+  )
+    ? []
+    : [
+        "",
+        (d.mode.dwy ? GROUP_LINKS.whoDoesWhatDwy : GROUP_LINKS.whoDoesWhat)[
+          lang
+        ],
+      ];
   return [
     t(P.title, lang),
-    ...P.rows.map(
-      r =>
-        `- ${t(d.mode.dwy && r.jobDwy ? r.jobDwy : r.job, lang)}. ${t(d.mode.dwy && r.whyDwy ? r.whyDwy : r.why, lang)}`,
-    ),
+    ...who,
+    ...(["before", "after", "weeks"] as const).flatMap(head => [
+      "",
+      `${t(P.heads[head], lang)}:`,
+      ...jobs
+        .filter(j => j.head === head)
+        .map(j => `- ${t(j.job, lang)}. ${t(j.why, lang)}`),
+    ]),
+    "",
+    GROUP_LINKS.testing[lang],
+    "",
+    GROUP_LINKS.payments[lang],
+    GROUP_LINKS.firstWeeks[lang],
+    "",
+    fill(GROUP_LINKS.academyFirst[lang], { url: LINKS.academy }),
+    ...(videos ? ["", videos] : []),
   ].join("\n");
+}
+
+/**
+ * Which pushback line fits this client (CONTENT L3): their 90-day goal
+ * shown, on file but held back (it counts enquiries or appointments), or
+ * none at all.
+ */
+export function pushbackVariant(d: DeckData): "shown" | "held" | "none" {
+  if (d.launch.goal90) return "shown";
+  return d.launch.goal90Held ? "held" : "none";
+}
+
+/** The pushback question, for the notes ({goalAsk}). */
+export function goalAsk(d: DeckData, lang: Lang): string {
+  return fill(LAUNCH.test.ask[pushbackVariant(d)][lang], {
+    goal: goalWords(d),
+  });
+}
+
+/**
+ * The pushback question in three parts, for the notes window, when it
+ * names their goal: the words before it, the goal itself (set on its own
+ * line, isolated, so an English goal never wraps inside an Arabic
+ * sentence) and the question after it. Null when the line names no goal.
+ */
+export function goalAskParts(
+  d: DeckData,
+  lang: Lang,
+): { before: string; goal: string; after: string } | null {
+  if (pushbackVariant(d) !== "shown") return null;
+  const [before = "", after = ""] = LAUNCH.test.ask.shown[lang].split("{goal}");
+  return {
+    before: before.replace(/[\s"“]+$/, ""),
+    goal: goalWords(d),
+    after: after.replace(/^["”]?[.,،]?\s*/, ""),
+  };
+}
+
+/**
+ * Their goal as they wrote it, without its closing stop: our sentence
+ * puts its own after the quote.
+ */
+const goalWords = (d: DeckData) =>
+  (d.launch.goal90 ?? "").trim().replace(/[\s.。!,،;؛]+$/, "");
+
+/** "Copy reply": one line for pushback in the group, in the deck's language, never isolated. */
+export function replyText(d: DeckData): string {
+  return fill(LAUNCH.test.reply[pushbackVariant(d)][d.lang], {
+    goal: goalWords(d),
+  });
 }
 
 /** The launch deck's controls for one slide. */
@@ -1063,12 +1161,32 @@ export function LaunchControls(p: LaunchControlProps) {
           ) : null}
         </div>
       );
-    case "your-part":
+    case "training":
       return (
-        <CopyButton text={partText(d)} label='Copy "Your part" for the group' />
+        <CopyButton
+          text={fill(GROUP_LINKS.academy[d.lang], { url: LINKS.academy })}
+          label="Copy the Academy link for the group"
+        />
+      );
+    case "your-part":
+      return <CopyButton text={partText(d)} label="Copy for the group" />;
+    case "green-light":
+      return (
+        <div className="space-y-3">
+          <CopyButton text={partText(d)} label="Copy for the group" />
+          {book ? (
+            <div className="flex flex-wrap gap-2">
+              {book(
+                "checkin",
+                d.next.checkin
+                  ? "Book the first check-in again"
+                  : "Book the first check-in",
+              )}
+            </div>
+          ) : null}
+        </div>
       );
     case "first-90-days":
-    case "green-light":
       return book ? (
         <div className="flex flex-wrap gap-2">
           {book(

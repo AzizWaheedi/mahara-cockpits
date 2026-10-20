@@ -1,4 +1,5 @@
-import type { CSSProperties, ReactNode } from "react";
+import { Star } from "lucide-react";
+import { type CSSProperties, type ReactNode, useEffect, useRef } from "react";
 import {
   digits,
   JOURNEY,
@@ -63,9 +64,11 @@ export function QueueCard({
 }) {
   const Q = LAUNCH.journey.queue;
   // A service in the other script keeps its place in the row (an isolate).
-  // With no service known, the rows leave it out (no made-up placeholder).
+  // Each row names its own service; a row past the list leaves it out
+  // rather than repeat the first (score round 2: three rows of one service
+  // read as filler), as the rows do with no service known.
   const s = (i: number) => {
-    const name = services[i] ?? services[0];
+    const name = services[i];
     return name ? `\u2068${name}\u2069` : "";
   };
   const row = (l: L, i: number) =>
@@ -216,12 +219,16 @@ export function FiveDots({
             data-first={i === 0 ? "" : undefined}
             data-anchor={i === 0 ? "" : undefined}
           >
+            {/* Every row leads with its time in bold; the meeting, the
+                strip's end, is bold whole. */}
             {r.when ? (
               <>
                 <span className="dkc-dot-when">{t(r.when, lang)}</span>
                 {r.plain ? (lang === "ar" ? "، " : ": ") : " · "}
                 {t(r.what, lang)}
               </>
+            ) : r.end ? (
+              <span className="dkc-dot-when">{t(r.what, lang)}</span>
             ) : (
               t(r.what, lang)
             )}
@@ -245,12 +252,15 @@ export function Reminders({
   dwy,
   lit,
   still,
+  line,
 }: {
   lang: Lang;
   dwy: boolean;
   /** Light the rows (on arrival at stop 7). */
   lit: boolean;
   still?: boolean;
+  /** One line under the heading (done for you: one voice before the meeting). */
+  line?: string | null;
 }) {
   const A = LAUNCH.call.after;
   const rows = dwy ? A.rowsDwy : A.rows;
@@ -261,6 +271,7 @@ export function Reminders({
       data-still={still ? "" : undefined}
     >
       <h4>{t(dwy ? A.headingDwy : A.heading, lang)}</h4>
+      {line ? <p className="dkc-rem-line">{line}</p> : null}
       <ol>
         {rows.map((r, i) => (
           <li
@@ -278,7 +289,9 @@ export function Reminders({
                   {r.plain ? (lang === "ar" ? "، " : ": ") : " · "}
                 </>
               ) : null}
-              <span>{t(r.what, lang)}</span>
+              <span className={r.end ? "dkc-rem-end" : undefined}>
+                {t(r.what, lang)}
+              </span>
             </span>
           </li>
         ))}
@@ -362,24 +375,185 @@ export function AppointmentCard({
 
 // ------------------------------------------- creative freedom's proof
 
-/** The 11 on and 9 off of one campaign's 20 versions, as neutral tiles. */
-const ON = new Set([0, 2, 3, 5, 8, 9, 11, 12, 14, 17, 18]);
+/**
+ * The field of ad tiles (creative freedom's signature, DESIGN 21.1): many
+ * versions, drawn as neutral tiles with no picture, no words and no count
+ * (never the client's own creatives: dimming a real ad before launch reads
+ * as a verdict on it). It arrives all lit; at the next press most switch
+ * off and three stay lit; then the next round waits under it, takes the
+ * client's style change, and fills. Each stop changes one thing.
+ */
+const FIELD = 18;
+/** Row 1 column 1, row 1 column 5, row 3 column 3: never a line, so it reads as chance. */
+const STAY_LIT = new Set([0, 4, 14]);
+/** Their pick, when marked, runs on this one of the three (row 3, column 3). */
+const PICK_TILE = 14;
+/** What varies: a video (a play mark) on six, a carousel (two edges) on four, a picture on eight. */
+const FORMAT: ("video" | "carousel" | "picture")[] = [
+  "video",
+  "picture",
+  "carousel",
+  "picture",
+  "video",
+  "picture",
+  "picture",
+  "video",
+  "picture",
+  "carousel",
+  "picture",
+  "video",
+  "carousel",
+  "picture",
+  "video",
+  "picture",
+  "carousel",
+  "video",
+];
+const ROUND = 6;
 
-export function TestTiles({ still }: { still?: boolean }) {
+function FormatMark({ kind }: { kind: (typeof FORMAT)[number] }) {
+  if (kind === "picture") return null;
   return (
-    <div className="dkc-tiles" data-still={still ? "" : undefined}>
-      {Array.from({ length: 20 }, (_, i) => (
-        <span
-          key={`tile-${String(i)}`}
-          className="dkc-tile"
-          data-on={ON.has(i) ? "" : undefined}
-          style={{ "--i": i } as CSSProperties}
-        >
-          <i className="dkc-toggle" aria-hidden>
-            <i />
-          </i>
-        </span>
-      ))}
+    <svg
+      className="dkf-mark"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      aria-hidden
+    >
+      {kind === "video" ? (
+        <path d="M7 4.5v15l12-7.5z" fill="currentColor" />
+      ) : (
+        <>
+          <rect
+            x="3"
+            y="7"
+            width="13"
+            height="14"
+            rx="2.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          />
+          <path
+            d="M8 3.5h10.5A2.5 2.5 0 0 1 21 6v11"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** Meta's on/off switch: the on layer (teal track, deep knob) over the off one. */
+function Switch() {
+  return (
+    <span className="dkf-switch" aria-hidden>
+      <i className="dkf-track" />
+      <i className="dkf-track dkf-on" />
+      <i className="dkf-knob" />
+      <i className="dkf-knob dkf-on" />
+    </span>
+  );
+}
+
+/** One outline of the next round: dotted while ahead, solid once made. */
+function RoundTile({ theirs }: { theirs: boolean }) {
+  return (
+    <span className="dkf-round-tile" data-theirs={theirs ? "" : undefined}>
+      <svg width="104" height="130" viewBox="0 0 104 130" aria-hidden>
+        <rect
+          className="dkf-dots"
+          x="1"
+          y="1"
+          width="102"
+          height="128"
+          rx="11"
+        />
+        <rect
+          className="dkf-solid"
+          x="1"
+          y="1"
+          width="102"
+          height="128"
+          rx="11"
+        />
+      </svg>
+    </span>
+  );
+}
+
+export function AdField({
+  stop,
+  round,
+  change,
+  pick = null,
+}: {
+  /** The slide's stop, from 0: 0 all lit, 1 the switch-off, 2 the round ahead, 3 their change, 4 made. */
+  stop: number;
+  /** "Next round", in the deck's language. */
+  round: string;
+  /** "Your style change", in the deck's language. */
+  change: string;
+  /**
+   * Their pick's picture, when they marked one: drawn on a tile that stays
+   * lit, with the star, from the switch-off on, so "your pick runs too,
+   * beside the ones you'd skip" is drawn, not only said. It is never
+   * dimmed (a real ad switched off before launch reads as a verdict).
+   */
+  pick?: string | null;
+}) {
+  // ← sets the previous stop at once, with no reverse: only a step forward animates.
+  const last = useRef(stop);
+  const back = stop < last.current;
+  useEffect(() => {
+    last.current = stop;
+  }, [stop]);
+  return (
+    <div
+      className="dkf-field"
+      data-stop={stop}
+      data-instant={back ? "" : undefined}
+    >
+      <div className="dkf-grid">
+        {Array.from({ length: FIELD }, (_, i) => (
+          <span
+            key={`tile-${String(i)}`}
+            className="dkf-tile"
+            data-lit={stop === 0 || STAY_LIT.has(i) ? "" : undefined}
+            data-pick={pick && stop > 0 && i === PICK_TILE ? "" : undefined}
+          >
+            {pick && stop > 0 && i === PICK_TILE ? (
+              <span className="dkf-pick" aria-hidden>
+                <img src={pick} alt="" draggable={false} />
+                <Star />
+              </span>
+            ) : null}
+            <i className="dkf-edge" aria-hidden />
+            {pick && stop > 0 && i === PICK_TILE ? null : (
+              <FormatMark kind={FORMAT[i]} />
+            )}
+            <Switch />
+          </span>
+        ))}
+      </div>
+      <div className="dkf-next" data-shown={stop >= 2 ? "" : undefined}>
+        <div className="dkf-labels">
+          <span className="dkf-label">{round}</span>
+          <span className="dkf-label dkf-label-theirs">
+            {change}
+            <i aria-hidden />
+          </span>
+        </div>
+        <div className="dkf-round">
+          {Array.from({ length: ROUND }, (_, i) => (
+            <RoundTile key={`round-${String(i)}`} theirs={i === ROUND - 1} />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -499,6 +673,12 @@ export interface CropBox {
   box: [number, number, number, number];
   /** The picture's own width over height. */
   ratio: number;
+  /**
+   * Parts painted over in the screen's own white, as fractions of the whole
+   * picture (x0, y0, x1, y1): words copy rule 3 keeps off the canvas that
+   * sit inside a crop that otherwise reads well. Masked, never rewritten.
+   */
+  masks?: [number, number, number, number][];
 }
 
 /**
@@ -524,6 +704,7 @@ export function Crop({
   const imgW = width / (x1 - x0);
   const imgH = imgW / crop.ratio;
   const height = (y1 - y0) * imgH;
+  const masks = crop.masks ?? [];
   return (
     <div
       className="dkc-crop"
@@ -541,6 +722,19 @@ export function Crop({
           top: -y0 * imgH,
         }}
       />
+      {masks.map(([mx0, my0, mx1, my1]) => (
+        <i
+          key={`${mx0}-${my0}`}
+          className="dkc-crop-mask"
+          aria-hidden
+          style={{
+            left: (mx0 - x0) * imgW,
+            top: (my0 - y0) * imgH,
+            width: (mx1 - mx0) * imgW,
+            height: (my1 - my0) * imgH,
+          }}
+        />
+      ))}
     </div>
   );
 }

@@ -19,8 +19,10 @@ import {
 import { langParam } from "./engine";
 import { applyPatch, PrepSaver, prepAfterLoad } from "./prep";
 import {
+  type clearDeckVideo,
   type DeckKind,
   type DeckSources,
+  type DeckVideos,
   type FileFacts,
   keepLinks,
   type LaunchAd,
@@ -28,6 +30,7 @@ import {
   type SavedPrep,
   SIGN_FRESH_MS,
   SIGNED_LINK,
+  type saveDeckVideo,
 } from "./sources";
 import { localAds } from "./uploads";
 
@@ -45,6 +48,10 @@ export interface Loaded {
   prep: { onboarding: Overrides; launch: Overrides };
   /** What could not be read, in plain sentences (the notes and prep show them). */
   problems: string[];
+  /** This deck's video slots (VIDEOS.md 7): null or absent is "not read". */
+  videos?: DeckVideos | null;
+  /** Why the videos were not read, for the notes and prep. */
+  videosProblem?: string | null;
 }
 
 export interface DeckIO {
@@ -64,6 +71,14 @@ export interface DeckIO {
   updateAd?: (id: string, patch: Record<string, unknown>) => Promise<LaunchAd>;
   /** Read a file's size, length and first frame. */
   fileFacts?: (file: File) => Promise<FileFacts>;
+  /** Save a video to one of this deck's slots (shared by every client's deck). */
+  saveVideo?: (
+    v: Parameters<typeof saveDeckVideo>[1],
+  ) => ReturnType<typeof saveDeckVideo>;
+  /** Clear a slot's video for one language. */
+  clearVideo?: (
+    v: Parameters<typeof clearDeckVideo>[1],
+  ) => ReturnType<typeof clearDeckVideo>;
 }
 
 export type SaveState =
@@ -323,7 +338,7 @@ export function useDeckModel({
         else if (m.type === "lang") {
           langChosen.current = true;
           setLangState(m.lang);
-        } else if (m.type === "ads") void reload();
+        } else if (m.type === "ads" || m.type === "videos") void reload();
         else if (m.type === "file" || m.type === "upload") localAds.apply(m);
       }),
     [hub, reload],
@@ -355,6 +370,8 @@ export function useDeckModel({
       presenterName: io.presenterName,
       booked,
       publicUrl: io.publicUrl,
+      videos: loaded.videos ?? null,
+      videosProblem: loaded.videosProblem ?? null,
       now: io.now?.() ?? new Date(),
     });
   }, [loaded, taskId, deck, lang, prep, booked, io]);

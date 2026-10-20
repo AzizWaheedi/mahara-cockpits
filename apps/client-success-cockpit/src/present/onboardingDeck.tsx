@@ -264,9 +264,7 @@ function Team({ ctx }: { ctx: SlideCtx }) {
   return (
     <>
       <h2 className="dk-h2">{t(O.team.title, lang)}</h2>
-      <p className="dk-lead dkc-team-line">
-        {t(d.mode.dwy ? O.team.lineDwy : O.team.line, lang)}
-      </p>
+      <p className="dk-lead dkc-team-line">{t(O.team.line, lang)}</p>
       <WhatsAppGroup
         who={who(d)}
         lang={lang}
@@ -715,17 +713,38 @@ function ThisWeek({ ctx }: { ctx: SlideCtx }) {
 
 // --------------------------------------------------------------- O7 next
 
+const ARABIC_LETTER = /[\u0600-\u06FF]/;
+
+/**
+ * The launch service as O7 names it: the Arabic deck takes the CSM's
+ * Arabic name (prep's service_focus_ar, which deckData already prefers),
+ * and a name only in Latin letters is left unnamed there, as the journey's
+ * queue card keeps a name in the other script off its rows: "لخدمة
+ * Kitchens" mixed two scripts in one line (the fixer's round). The launch
+ * deck reads the same prep field, so both calls name it the same way.
+ */
+export function o7Service(d: DeckData): string | null {
+  const s = d.serviceFocus;
+  if (!s) return null;
+  if (d.lang === "ar") return ARABIC_LETTER.test(s) ? s : null;
+  // Mid-sentence, a common-noun service keeps sentence case ("templates
+  // for kitchens", score round 2): a name whose only capital is its first
+  // letter is lowered; one with another capital (a brand) stays as typed.
+  return /^[A-Z][^A-Z]*$/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
+}
+
 /** The first-ads sentence for the kickoff's templated-ads answer (CONTENT O7). */
 export function firstAdsLine(d: DeckData) {
-  const pack = d.starterPack && d.serviceFocus;
+  const service = o7Service(d);
+  const pack = d.starterPack && service;
   if (d.templated === "declined")
     return { line: O.next.declined, service: null };
   if (d.templated === "approved")
     return pack
-      ? { line: O.next.approved, service: d.serviceFocus }
+      ? { line: O.next.approved, service }
       : { line: O.next.approvedNoPack, service: null };
   return pack
-    ? { line: O.next.pending, service: d.serviceFocus }
+    ? { line: O.next.pending, service }
     : { line: O.next.pendingNoPack, service: null };
 }
 
@@ -803,7 +822,7 @@ function StarterAds({ ctx }: { ctx: SlideCtx }) {
   // phone), then what these are under the tag; stop 1 already said they go
   // live only once approved, so that is not said again. The pair sits on
   // the content's end edge.
-  const service = d.starterPack ? d.serviceFocus : null;
+  const service = d.starterPack ? o7Service(d) : null;
   return (
     <div className="dkc-starter">
       <div className="dkc-starter-side">
@@ -865,7 +884,12 @@ function Next({ ctx }: { ctx: SlideCtx }) {
         <section>
           <h3 className="dk-h3">{t(O.next.testName, lang)}</h3>
           <p className="dk-body">{t(O.next.testLine, lang)}</p>
-          <RedLines ctx={ctx} />
+          <p className="dk-small dk-ink2">{t(O.next.testVolume, lang)}</p>
+          {/* The ask heads the list it fills, in ink. */}
+          <div className="dkc-next-ask">
+            <p className="dk-small">{t(O.next.testAsk, lang)}</p>
+            <RedLines ctx={ctx} />
+          </div>
         </section>
       </div>
       <section className="dkc-band">
@@ -982,6 +1006,11 @@ export function onboardingSlides(): SlideDef[] {
           : [
               `Starter pack${d.serviceFocus ? ` for ${d.serviceFocus}` : ""}? Tick it only if a ready pack exists. Otherwise this slide doesn't name the service.`,
             ]),
+        ...(d.lang === "ar" && d.serviceFocus && !o7Service(d)
+          ? [
+              `The Arabic deck leaves "${d.serviceFocus}" unnamed on this slide. Type its Arabic name on slide 4 to name it.`,
+            ]
+          : []),
         ...(d.starterPack && !d.starterAds.length
           ? [
               "No starter ads in the tray, so the starter ads stop stays hidden.",

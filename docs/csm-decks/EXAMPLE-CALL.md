@@ -236,7 +236,7 @@ The appointment as it reaches the client, drawn in deck tokens (not a WhatsApp o
 | Note 3, delays | الشركة اللي قبل تأخرت عليه ٤ شهور. | Their last company finished four months late. |
 | Note 3, design | المرة اللي فاتت، التنفيذ ما طلع نفس المخططات. | Last time, what was built didn't match the drawings. |
 | Note 3, cost | المرة اللي فاتت، الفاتورة طلعت أكثر بكثير من عرض السعر. | Last time, the final bill came in far above the quote. |
-| Caption | وملاحظات فريق الاتصال توصل معه. | Our caller's notes come with it. |
+| Lead, over the cards (the fixer's round, 2026-10-20: the caption under the card repeated the notes' label) | كل اللي عرفه فريق الاتصال يوصلكم. | Everything our caller learned lands with you. |
 | Tag | مثال | Example |
 
 ---
@@ -253,11 +253,11 @@ The transcript and the stage rail stay exactly as above: the caller already spea
 | Notes heading | ملاحظات فريق الاتصال عندكم | Your caller's notes |
 | Stop 7 line | احجزوا على التقويم الصح، والتأكيد يطلع للعميل تلقائياً. | Book on the right calendar, and the confirmation goes out by itself. |
 | Timeline heading | قبل الموعد | Before the meeting ("What we do" would be false here) |
-| Timeline 1 | عند الحجز: تأكيد | Booked: a confirmation |
-| Timeline 2 | تذكيرات قبل الموعد | Reminders before the meeting |
+| Timeline 1 | عند الحجز · تأكيد | Booked · a confirmation |
+| Timeline 2 (led by its when, the fixer's round) | قبل الموعد · تذكيرات | Before the meeting · reminders |
 | Timeline 3 | الحجوزات المبدئية: فريقكم يتصل قبلها بيومين، وقبلها بيوم | Provisional bookings: your team calls 48 and 24 hours before |
 | Timeline 4 | الموعد | The meeting |
-| Stop 8 caption | الموعد ينزل في الـCRM عندكم. | It lands in your CRM. |
+| Stop 8 lead | الموعد ينزل في الـCRM عندكم. | It lands in your CRM. |
 
 **The DWY framing line** (the CSM says it as the call starts):
 

@@ -5,8 +5,15 @@ manager from a client's page in the client success cockpit. This is the
 design plan the build follows: tokens, type, every slide's layout and motion,
 the signature element, the mockups, the ads upload, the example call, the
 presenter's own views, RTL, empty states, accessibility, and what is reused.
-It ends with the self-critique against the CEO's brief (section 18) and the
-Hallmark audit of this file (section 19).
+It ends with the self-critique against the CEO's brief (section 18), the
+Hallmark audit of this file (section 19), and the Gamma pass of 2026-10-20
+(section 20: the partnership pie, the sales training, good to know; the
+launch deck is thirteen slides since then), and the creative flexibility and
+video slots pass of the same day (section 21: creative freedom in five stops
+around a field of ad tiles, the video control, its player, and the notes and
+prep views for it; the backend contract is `VIDEOS.md`), revised by its spec
+review the same day (21.10 is the change log; training's Academy
+screenshots are in 20.5).
 
 Written 2026-10-19 on branch `csm-decks-1019`, following
 `mahara-context/skills/frontend-design/SKILL.md` (brainstorm, plan, critique,
@@ -54,7 +61,7 @@ the client expected something different from what happens.
   Leave the call knowing the road, the one service we launch with, and what
   they owe us this week. The setup itself happens live; the deck is the frame
   around it.
-- **Launch (10 slides, about 22 minutes of a 30-minute slot).** Before a single enquiry arrives,
+- **Launch (13 slides since 2026-10-20, about 28 minutes of a call of about 45; section 20).** Before a single enquiry arrives,
   the client sees exactly what their customer will see and hear, who does
   each step, and agrees to the two things that decide a launch: letting us
   test creative, and marking every outcome. Then the green light.
@@ -163,7 +170,7 @@ ours or lit.
 
 | New token | Value | Why |
 |---|---|---|
-| `--dk-leak-soft` | `rgba(245,184,75,.14)` | Amber's fill twin, exactly as `--dk-teal-soft` is teal's. For "to give us" slots, "To do" chips and the red-lines panel. |
+| `--dk-leak-soft` | `rgba(245,184,75,.14)` | Amber's fill twin, exactly as `--dk-teal-soft` is teal's. For "to give us" slots and "To do" chips. Not the red-lines panel since the visual review of 2026-10-20: over navy it rendered as a neutral charcoal (42, 42, 54), a grey card from another palette; the panel is `--dk-panel` with a 1 px `--dk-leak-line` hairline, and the amber marks say "theirs" (21.1). |
 | `--dk-teal-faint` | `rgba(0,207,200,.08)` | The band behind the current journey row. Teal-soft at full row width was heavier than the content in it. |
 | `--dk-lane` | `rgba(255,255,255,.045)` | The swimlane columns. A panel fill would be too heavy for three full-height columns; below .04 the band vanishes in Zoom. The column heads and node positions carry the meaning; the band only supports it. |
 | `--dk-line-strong` | `rgba(255,255,255,.22)` | Lines that must survive Zoom compression: the unlit journey path, leaders, phone edges. `--dk-line` at .1 disappears in a share. |
@@ -288,8 +295,8 @@ Padding by slide kind:
 
 | Slide kind | Padding (top, inline, bottom) | Content box |
 |---|---|---|
-| Launch slides with the mini rail (3 to 7) | 96, 136, 132 | y 96 to 948 |
-| Slides without a rail (covers, journey, 8 to 10, all onboarding) | 112, 136, 104 | y 112 to 976 |
+| Launch slides with the mini rail (3 to 6, 8 and 9 since 2026-10-20) | 96, 136, 132 | y 96 to 948 |
+| Slides without a rail (covers, journey, 7 and 10 to 13, all onboarding) | 112, 136, 104 | y 112 to 976 |
 
 The slide count sits at the foot, end side (`.dk-count`), on every slide but
 the covers.
@@ -341,14 +348,15 @@ there would be glass for its own sake.
 
 | Tag | On |
 |---|---|
-| Preview | Every ad mockup shown on its own. On the ads slide it sits once, after the title on its baseline (`CONTENT.md` L3), and the three phones carry none, so the slide does not say "Preview" four times |
+| Preview | Every ad mockup shown on its own. On the ads slide it sits once, after the title on its baseline (`CONTENT.md` L4), and the three phones carry none, so the slide does not say "Preview" four times |
 | Starter, from our templates | Every starter ad, on the phone and on its tray thumbnail |
 | Your form | The instant form, drawn from their confirmed form |
 | Example form | The drawn example form, when no form is confirmed |
 | Example | The queue card, the calendar entry, the appointment card |
 | Example wording | The WhatsApp confirmation |
 | Example written from our script | The call transcript |
-| Illustration | Creative freedom's test tiles |
+| Illustration | Creative freedom's field of ad tiles (stops 1 to 5, section 21.1) |
+| Academy screenshot | Training's two masked screenshots (stops 1 and 2, section 20.5) |
 | Demo workspace | Mahara OS screenshots (fictional "Demo Studio") |
 
 The tag is the structure telling the truth about each picture.
@@ -493,6 +501,12 @@ teal, so the drawing says the follow-up is shared. Done with you is unchanged:
 their team makes the calls, and the whole fork stays in the "You" lane. The
 portal slide keeps only "mark it, the same day".
 
+Since score round 2 (21.13) the stop's words sit at the stage's top, where
+stops 3 and 5 set theirs, and the fork alone is set level with "You meet":
+the came end rises 84 px off the meeting's line (40 px over a one-line
+line, done with you) and the no-show's end drops just clear of it, so the
+whole fork ends above the lanes' foot in Arabic's taller lines too.
+
 ### 6.5 The drawn cards (our own UI, so deck tokens)
 
 **The call queue card (stop 3).** A `--dk-panel` card at the stage's width,
@@ -541,7 +555,7 @@ portal slide.
 - **Reduced motion:** every state is set instantly, and the queue card's rows
   are already in place.
 
-### 6.7 The mini rail (the journey at the foot of slides 3 to 7)
+### 6.7 The mini rail (the journey at the foot of slides 3 to 6, 8 and 9)
 
 Slides 3 to 7 each open one stop of the journey (ads: 1, creative freedom: 1,
 form: 2, the call: 3, then 4 at its stop 7 and 5 at its stop 8, portal: 7).
@@ -558,8 +572,12 @@ x 136                                                                   x 1590  
              is lit, with its short name to its inline-end side, Geist 20 ink-2)
 ```
 
+Since 2026-10-20 (20.1) the training slide (8) lights stop 6, "You meet",
+and the portal moved to slide 9; the partnership slide (7) carries no rail.
+
 It sits at the foot (bottom 44, height 56) where the sales deck's pillar rail
-sits. It is not shown on the covers, the journey itself, or slides 8 to 10.
+sits. It is not shown on the covers, the journey itself, or slides 7 and 10
+to 13.
 The green light slide draws it large and fully lit (8.10).
 
 **No hand-off animation.** The first plan scaled the lit node from the lanes
@@ -773,7 +791,8 @@ and is designed as one, not as a broken-logo fallback.
   in a 5 x 4 grid, `--dk-panel` with no image inside, each with a small toggle
   in Meta's on/off shape: 11 lit (teal toggle, full opacity) and 9 dimmed
   (toggle off, tile at 35%). No thumbnails, no columns, no money. Tag:
-  Illustration.
+  Illustration. **Superseded 2026-10-20 by the field of ad tiles (21.1),** a
+  core stop now: eighteen 4:5 tiles, most switching off.
 - **The road strip (launch cover).** The onboarding road (9.5, in the
   journey's marks) at 40% scale under the go-live date, lit up to the
   launch call, its lit node named "Launch call · Today" under that node,
@@ -787,9 +806,13 @@ and is designed as one, not as a broken-logo fallback.
 
 ## 8. The launch deck, slide by slide
 
-Ten slides, about 22 minutes of a 30-minute slot. Every slide in English and
-Arabic. The order: cover, journey, your ads, creative freedom, your form, the
-call, your portal, your part, the first 90 days, green light.
+Thirteen slides since 2026-10-20, about 28 minutes of a call of about 45.
+Every slide in English and Arabic. The order: cover, journey, your ads,
+creative freedom, your form, the call, partnership, training, your portal,
+your part, the first 90 days, good to know, green light. The subsections
+below keep their numbers: 8.7 is slide 9, 8.8 slide 10 (its layout replaced
+by 20.7), 8.9 slide 11, 8.10 slides 12 and 13 (20.9, 20.10). The new slides
+are in section 20.
 
 ### 8.0 One home per fact
 
@@ -807,12 +830,18 @@ is the one list of homes, and this file follows it. In short:
 - the fork lives on journey stop 6: a no-show is ours, and a customer
   thinking it over is followed up by both of us, done for you;
 - the thank-you screen lives on the form slide;
-- "the numbers decide" lives on creative freedom, once;
+- "the numbers decide" lives on creative freedom, once, and since
+  2026-10-20 so does the rest of creative flexibility: the ads' job, the
+  volume, the client's input first, the quick check and the content (21.1);
 - marking outcomes ends the portal slide;
 - the check-in rhythm (weekly or every two weeks after the first) lives on
   the 90 days;
-- group hours live on onboarding slide 3; the green light's hours card shows
-  only for a client who never saw the onboarding deck.
+- group hours and the reply time live on onboarding slide 3; the good-to-know
+  slide's replies row shows only for a client who never saw the onboarding
+  deck;
+- who does what, as a share (the pie, the two roads), lives on the
+  partnership slide; the sales training on the training slide; the money
+  rows on the good-to-know slide (section 20).
 
 Any other appearance is a picture or the mini rail, not a second explanation.
 
@@ -923,6 +952,9 @@ assets, the fork at stop 6. Thin stops get one sentence.
 
 ### 8.4 Creative freedom
 
+**Superseded on 2026-10-20 by 21.1** (five stops around the field of ad
+tiles). Kept below as the record of the three-column plan.
+
 ```text
 +--------------------------------------------------------------------------------------------+
 | Creative freedom                (owner line, ink-2)                                        |
@@ -954,11 +986,12 @@ assets, the fork at stop 6. Thin stops get one sentence.
   slide ground with no border, so the one thing that does not move is the one
   thing drawn solid, and no card sits inside another. A column not yet
   reached shows only its heading, in ink-3.
-- **Stop 1:** the L3 feed phone at 520 px with their creative and one leader
+- **Stop 1:** the L4 feed phone at 520 px with their creative and one leader
   on "Sponsored". No profile grid: we do not have their grid, and drawing one
   would be invented content.
-- **Stop 2:** the amber panel (`--dk-leak-soft` fill, 16 px radius, no edge
-  bars and no bar on any item; the items are 24 px apart and their wording
+- **Stop 2:** the red-lines panel (since the visual review of 2026-10-20,
+  `--dk-panel` with a 1 px `--dk-leak-line` hairline; it was a
+  `--dk-leak-soft` fill; 16 px radius, no edge bars and no bar on any item; the items are 24 px apart and their wording
   marks them). DO items as "Always …", DON'T items as "Never …",
   picked in prep; NOTES never show (they are internal). Red lines typed on
   onboarding slide 7 lead the list, introduced by "You told us: …". No Do's &
@@ -966,7 +999,7 @@ assets, the fork at stop 6. Thin stops get one sentence.
   us now and we'll add them to your card." with an input the CSM types into
   live; it saves to prep, and prep reminds the CSM to copy it to the card.
 - **Stop 3:** the chips, their starred pick as a thumbnail, and the lines
-  from `CONTENT.md` L4.
+  from `CONTENT.md` L3.
 - **Stop 4 (optional, hidden by default):** "How a test runs". The test tiles
   (7.9) replace the three columns, with the caption. Never a screenshot of an
   ads account.
@@ -1147,7 +1180,7 @@ the "You" lane's ink, 8.3).
 |            26 Oct  2 Nov  9 Nov  16 Nov 23 Nov 30 Nov  7 Dec ... 18 Jan  (13 week columns)  |
 | Finding what works [=======- - - - - - -]   (solid weeks 1 and 2, dashed open end to wk 5) |
 | Check-ins        <--day 7-14-->   <>     <>   (<>)30  <>   (<>)60  <>  (<>)90              |
-|                  At 30, 60 and 90 days, that check-in looks back over the month.           |
+|                  Around 30, 60 and 90 days, that check-in looks back over the month.           |
 |                                                                                            |
 | In this order, not on a date:  First booking  >  First attended appointment  >             |
 |                                First won project                                           |
@@ -1432,11 +1465,13 @@ ours. The agenda is numbered because it is the order of the call.
 | What to expect, and what's next   (H2)                                                     |
 |                                                                                            |
 |  Your first ads   (880)                        The first weeks are a test   (672)          |
-|  Starter ads go live first, from our ready     Your red lines stay fixed. Tell us now      |
-|  templates. Your own ads, made from your       what we must never say or show.             |
-|  content, follow.                              Everything else, we test.                   |
-|  Your first ads go live only once you've       +- amber panel -------------------+         |
-|  approved them.                                | Never show prices  (typed live) |         |
+|  Starter ads go live first, from our ready     We test many ads, fast. Small style         |
+|  templates. Your own ads, made from your       changes go into the next round, so your     |
+|  content, follow.                              launch keeps moving. Your red lines stay    |
+|  They go live only once you've approved       fixed: tell us now what we must never say   |
+|  the facts, prices and claims in them.         or show.                                    |
+|                                                +- amber panel -------------------+         |
+|                                                | Never show prices  (typed live) |         |
 |                                                | _______________                 |         |
 |                                                +---------------------------------+         |
 |  +- band, --dk-panel ------------------------------------------------------------------+   |
@@ -1448,6 +1483,15 @@ ours. The agenda is numbered because it is the order of the call.
 
 - **One row of two statements** of unequal width (880 and 672, 96 px apart),
   not cards, and no rule between them: the gap divides them.
+- **Fit (the spec review, 2026-10-20).** Both statements grew: the
+  approval line names the facts, prices and claims (two lines at 880), and
+  the testing statement plants the small check (four or five lines at 672,
+  30/1.4; Arabic Plex 32/1.6, five). The sizes stay; nothing shrinks to fit.
+  `deck-shots.mjs` shoots O7 stop 1 in both languages with three typed red
+  lines and fails when the amber panel's foot comes within 48 px of the
+  band's top. If it does, the panel's live input moves beside the last red
+  line instead of under it (the panel loses one row); the words are never
+  cut on the slide.
 - **The red lines input:** a small version of creative freedom's amber panel
   (`--dk-leak-soft`, no edge bars). The CSM types as the client speaks; Enter adds a line; each
   saves to prep on change (16.4) and comes back on the launch deck.
@@ -1676,7 +1720,10 @@ your files. Anything marked 'To give us', we'll complete with you."
 
 ### 11.5 After the call (stops 7 and 8)
 
-- **Stop 7, the home of the reminders.** The transcript dims to 35%. The
+- **Stop 7, the home of the reminders.** The transcript goes (score round 2,
+  21.13: it dimmed to 35%, a fourth thing to sort beside the call card that
+  already says the call ended); the block starts level with the call card,
+  which rests 72 px lower, where stop 8 keeps it. The
   WhatsApp confirmation card (7.6) lands at the inline end. Then "What we do
   before the meeting" lights top to bottom, 400 ms per step: five rows joined
   by the journey's line (dotted, turning solid teal as each row lights), each
@@ -1727,6 +1774,13 @@ movement:
   it goes to a neutral "Deck closed" screen on the deck route.
 - **Top end:** ع / EN, Notes (opens the notes window), All slides, Full screen.
 - **Foot centre:** the ← n / N → pill.
+- **Head centre, on a slide with a filled video slot:** the video control
+  (21.2). It belongs to the chrome: it wakes with it and hides with it.
+
+The "Deck closed" screen stays neutral: it says nothing about the recap,
+because the client may still be looking at the shared window. The notes
+window, which only the CSM sees, offers the recap once the deck closes
+(21.4).
 
 No prep link, no CSM-only data, no booking buttons and no upload controls on
 the shared tab. The deck route sits outside `AppLayout`, so HermesChat and the
@@ -1757,7 +1811,7 @@ theme, kit components), not the canvas.
 | Say                                                              |
 | - Point at their page name and logo.                             |
 | - Put one video on the Reels phone, live.                        |
-| - Asked for changes? Note them; slide 4 covers how we test.      |
+| - Asked for changes? Note them; slide 3 covered how we test.     |
 | [!] Temp check: "Which one would stop you scrolling?"            |
 | ---------------------------------------------------------------- |
 | Only you see this                                                |
@@ -1777,15 +1831,25 @@ theme, kit components), not the canvas.
 ```
 
 - **Talk track:** three to five lines per slide or stop, from `CONTENT.md`.
+  On a slide with stops, the lines that name another stop ("Stop 3, …" in
+  English, "(Stop 3, …)" before the Arabic) step back to muted, and the
+  current stop's first line scrolls into view on each press; lines that
+  name no stop (the pushback, the close) stay as they are (the visual
+  review, 2026-10-20: slide 4 had 17 lines at one weight). The pushback
+  question that names the client's goal sets the goal on its own line,
+  in `<bdi dir=auto>`, under "Their goal, in their words:", between the
+  question's two halves.
 - **Temp check:** every three to four slides, as the framework asks.
-- **Timer:** elapsed against the deck's target (10 minutes onboarding, 25
-  launch); amber past the target, never red.
+- **Timer:** elapsed against the deck's target (10 minutes onboarding, 28
+  launch, `TARGET_MINUTES` in `decks.ts`); amber past the target, never red.
 - **Booking buttons:** Brand Blueprint (onboarding) and first check-in
   (launch), through the existing `BookCallButton` (real GHL bookings; never
   tested on a real client).
 - **Uploads:** add, progress, "Saved", errors and Undo (section 10).
-- **Agreement and their pick:** the creative freedom stamp and the L3 star
+- **Agreement and their pick:** the creative freedom stamp and the L4 star
   (8.3, 8.4).
+- **Videos:** a Video section per slide with a slot: Play on screen, Copy
+  link, or why there is none (21.4).
 - **One screen:** share the deck window, not the desktop, and float the notes
   window beside it, with the deck maximised rather than in full screen. The
   notes stay out of the share only if Zoom captures just that window; this is
@@ -1851,6 +1915,8 @@ Slot copy (active, plain, says what to do):
 
 Everything prep saves goes to `cockpit_csm_deck_prep` (overrides, hidden
 slides, language, dialect, service focus, agreed-at), gated and audited.
+Video links are not prep: the Videos section (21.5) saves to
+`cockpit_csm_deck_videos`, shared by every client's deck (`VIDEOS.md`).
 
 ---
 
@@ -1890,7 +1956,12 @@ slides, language, dialect, service focus, agreed-at), gated and audited.
 
 The clock runs at 72 px from 0:00. In Arabic-Indic digits it would open on
 `٠:٠٠`, the lone-zero trap at headline size (it reads as dots). The clock
-therefore uses Latin digits in both languages, as a phone's call timer reads.
+therefore uses Latin digits in both languages while it runs, as a phone's
+call timer reads. Once the call ends its label says "Call length" (مدة
+المكالمة) and it is a length, not a timer: from then on (the end of stop 6,
+and stops 7 and 8) it takes the deck's digits, ٤:٥١, beside stop 8's card
+and its other Arabic-Indic numbers; 4:51 holds no ٠ (the fixer's round,
+2026-10-20).
 A video's length on a tray thumbnail (0:24) is a timer too, with the same
 trap, and keeps Latin digits for the same reason. Every other number in the
 Arabic deck is Arabic-Indic, the thumbnails' shapes included (٩:١٦, ٤:٥).
@@ -1934,7 +2005,7 @@ Arabic deck is Arabic-Indic, the thumbnails' shapes included (٩:١٦, ٤:٥).
 | Red lines | Card Do's & Don'ts (DO and DON'T only), lines typed on onboarding slide 7 | The panel invites the CSM to type live | Pick items; copy typed lines to the card |
 | Drive, Leadsie, Academy links | Kit links | The notes' copy list leaves that link out and says so | |
 | Creatives | Uploads, then Meta ads | Identity frames with "Your ad goes here"; the empty tray | "No ads yet…" |
-| Their pick | The L3 star | Creative freedom reads "The ones you'd pick run too…" | |
+| Their pick | The L4 star | Creative freedom reads "The ones you'd pick run too…" | |
 | Page name | Prep, then the kickoff "Facebook page" | The client name | |
 | Primary text, headline | Per creative, prep | Caption shows the page name only | Missing, Add |
 | Call to action | Per creative | "Learn more" (Default) | Default, Change |
@@ -1976,9 +2047,10 @@ lines and access ticks.
 | S | Subtitles |
 | D | Dialect |
 | 1, 2, 3 | Place the selected creative |
-| M | Mark the selected creative as their pick (slide 3) |
+| M | Mark the selected creative as their pick (slide 4, the ads) |
 | A | Record the client's agreement (creative freedom) |
-| Esc | Close an open panel, then the overview. Nothing more: Esc never leaves the deck |
+| V | Play the slide's video, or close it (21.6) |
+| Esc | Close the video, then an open panel, then the overview. Nothing more: Esc never leaves the deck |
 
 Esc never navigates, in or out of full screen. The start/stop button on many
 clickers sends Esc, and leaving would put the cockpit's client page (results,
@@ -2063,6 +2135,7 @@ copy test fails on them.
 |---|---|
 | `jr-form-1..3`, `jr-confirm`, `jr-landing*`, `jr-thanks-phone`, `jr-booked`, `jr-slack`, every `cc-*` | They show other clients' names and brands (The Circle Consulting Engineers, PIDCO Group, amheco), a real customer's project, budget and district, agent initials, a Slack frame clients are told they are not in, and a 24-hour promise. This deck draws this client's own assets from data |
 | `ads-account`, `ads-twenty-on`, `ads-twenty-off` | Daily budgets, spend and a cost per result; other clients' ads, faces and logos. Creative freedom's proof is drawn (7.9) |
+| `pcm-academy`, `pcm-lesson` as they are | The classroom's Project Closing Mastery cover carries a recognisable figure; the lesson shows a member's avatar and counts in its top bar and another client's name on the video's slide. Since 2026-10-20 (the CEO) training shows masked copies made from them, `pcm-academy-masked.webp` and `pcm-lesson-masked.webp` in the client success app (20.5); the copy test fails on the unmasked names there, and the sales deck's own files stay untouched |
 | `interior-majlis.webp` | The client saw it on the pitch, and behind their name it reads as their project. Both covers use the faint lanes |
 | Wistia `ti2alygqn0` and callcenter.maharamedia.com | Real calls with no consent record |
 | The speed slide (21×) and the MIT figures (100×) | Statistics the CSM decks never quote. "Within 5 minutes" itself is now said in words (CEO, 2026-10-20; `CONTENT.md` copy rule 1): for our calls always beside "during working hours", and on stop 3 with the hours and the night rule; done with you, their own team's lines carry no hours |
@@ -2133,6 +2206,27 @@ These are facts the design depends on that nobody has verified yet.
    ad's `page_id` once Leadsie access exists (7.1).
 10. **Saturday hours:** whether "from 10 the next working morning" holds on a
     Saturday, when one caller starts at 12 (`CONTENT.md` open question 13).
+11. **The frame policy, on production** (the spec review, 2026-10-20). After
+    the ship, on cockpit.maharamedia.com: open a client's creative preview
+    (Meta's frame), the Portal tasks sheet (ClickUp's form) and one
+    launch-deck video. All three must load. The harness runs on Vite
+    without `vercel.json`'s headers, so only this check sees the policy
+    (`VIDEOS.md` 6).
+12. **A real video over a real Zoom share** at 1280 and 1366 wide: the
+    control wakes with the chrome and hides with it; "Optimize for video
+    clip" ticked while it plays and unticked after, and the slides sharp
+    again once it is unticked.
+13. **Each provider's messages,** read from a real frame: YouTube's and
+    Vimeo's ready, play and error; whether Wistia's iframe player posts
+    play and error at all. The samples are pinned in `videos.test.ts`
+    (`VIDEOS.md` 6). Loom and Drive with sharing turned off: what the frame
+    shows, and that prep's "Check it plays" shows the same.
+14. **The six seeded videos** watched once for another client's name,
+    account, ads or calendar, and for their spoken language (`CONTENT.md`
+    open question 30), the 11-second calendar Loom first.
+15. **The masked screenshots** at full size: no face on the Project
+    Closing Mastery cover, no member's avatar or counts, and no other
+    client's name on the lesson's video frame, in Latin or Arabic.
 
 ---
 
@@ -2390,7 +2484,7 @@ generated, and the fix now written into the section named.
     (a rule inside the call card), 11.3 (a hairline over each subtitle). →
     Removed. Bands, gaps and alignment carry the structure.
 23. **[minor] "Preview" four times on one slide.** 5.4, 8.3. → Once, after the
-    title, as `CONTENT.md` L3 has it (5.4, 8.3).
+    title, as `CONTENT.md` L4 has it (5.4, 8.3).
 24. **[minor] Translucent tag pills.** 5.4: glass with no purpose, since the
     tags sit outside the pictures. → Plain Mono captions (5.4).
 25. **[minor] The date in a pill.** 8.1. → Set as type: "Go-live", then the
@@ -2672,3 +2766,1433 @@ disagree, this list wins.
 
 The measured first-dial figures in `CONTENT.md` open question 1 are
 unchanged by the answer.
+
+---
+
+## 20. The Gamma pass (2026-10-20): the pie, the training, and the slides around them
+
+The CEO asked for the expectation setting in Mahara's own Gamma launch deck:
+the sales training and "the piece of the pie", what we do against what they
+do. `CONTENT.md` holds the words and the gap map ("From the Gamma decks");
+this section is the design plan for the two new slides (partnership,
+training), the new good-to-know slide and the changed ones (journey stop 5,
+the portal's number-one job, Your part, the 90 days, the green light, O3).
+It follows `mahara-context/skills/frontend-design/SKILL.md` (tokens, type,
+layout, one signature, then the critique) and Hallmark (honest copy, locked
+tokens, no italic headings, the slop test, structural variety between
+neighbouring slides). Where this section and an earlier one disagree, this
+section wins.
+
+### 20.1 The deck now: order, rail, count, time
+
+| # | Slide | Its design | Mini rail | Stops | Minutes |
+|---|---|---|---|---|---|
+| 1 | Cover | 8.1 | none | 1 | 1 |
+| 2 | Journey | 6, 8.2 (stop 5's line, 20.11) | is the rail | 7 | 2.5 |
+| 3 | Creative freedom | 21.1 (since 2026-10-20; was 8.4); before the ads since the fixer's round (21.12) | stop 1 | 5 | 3 (was 2.5) |
+| 4 | Your ads | 8.3 | stop 1 | 4 | 2.5 |
+| 5 | Your form | 8.5 | stop 2 | per form | 1.5 |
+| 6 | The call | 8.6 | stops 3 to 5 | 8 | 4 |
+| 7 | **Partnership (new)** | 20.3, 20.4 | none | 4 | 2.5 |
+| 8 | **Training (new)** | 20.5 | stop 6, "You meet" | 3 (1 until the spec review of 2026-10-20 added the two Academy screenshots) | 2 (was 1.5) |
+| 9 | Your portal | 8.7, 20.6 | stop 7 | 4 | 2.5 |
+| 10 | Your part, "Your six jobs, in one place" | 20.7 (replaces 8.8's layout) | none | 1 | 2 |
+| 11 | The first 90 days | 8.9, 20.8 | none | 1 | 1.5 |
+| 12 | **Good to know (new)**, its title "Good to know" since the fixer's round | 20.9 | none | 1 | 1.5 |
+| 13 | Green light | 20.10 (replaces 8.10's two stops) | none | 1 | 1 |
+
+About 27 minutes before questions (about 28 since creative freedom's five
+stops, 21.1, and training's two screenshot stops, 20.5), so O5 and the cover's frame now say the
+call takes about 45 minutes (`CONTENT.md` open question 25). The slide
+count reads "07 / 13" (`.dk-count`, tabular figures). Section 8's
+subsection numbers stay as they are: 8.7 is slide 9, 8.8 slide 10, 8.9 slide
+11, 8.10 slides 12 and 13.
+
+**The rail.** Training lights journey stop 6, "You meet": the one stop that
+had no slide of its own, and the meeting the course is for. Partnership
+carries no rail, for the reason the journey carries none: the pie is the
+whole split, not a zoom into one stop. So the rail lights stops 1, 1, 2,
+3 to 5, then pauses on the pie, then 6 and 7 on slides 8 and 9: the client
+sees the path walked to its end. Slides 3 to 6, 8 and 9 take the rail's
+padding (5.1).
+
+### 20.2 Tokens and type (the plan)
+
+**No new hue and no new token.** Every value below is a 3.1 or 3.2 token.
+
+| Piece | Tokens |
+|---|---|
+| Our piece of the pie (done with you, our half) | `--dk-teal-soft` fill, 3 px `--dk-teal` edge |
+| Their piece, lit | `--dk-panel-2` fill, 3 px `--dk-ink` edge |
+| Their piece, ahead (partnership stop 1) | no fill, 2 px `--dk-line-strong` edge, dotted as the lanes' unlit line (dash 2, gap 8) |
+| The one cut between the two pieces | 8 px of the slide ground (`--dk-space`) between their edges, never a white rule |
+| Leaders | 2 px `--dk-line-strong`, a 6 px dot in its piece's edge colour (8.3's leader) |
+| The roads | 3 px `--dk-line-strong`, solid: the customer's path, not ours; nodes in the lanes' marks |
+| The meeting and the signed project, lit (stop 4) | `--dk-ink` fill and the last segment in 3 px `--dk-ink` |
+| The lit course | the journey's current row band (`--dk-teal-faint`), the current node (solid teal, `--dk-deep` dot) |
+| What it teaches (the lit course's four words) | a 3 px teal line with 16 px nodes; "The close" in `--dk-ink` (theirs, as on the pie) |
+| The calendar week | `--dk-panel` day columns; open slots as 2 px `--dk-teal` outlines (the times we book into); busy hours as `--dk-panel-2` blocks |
+
+Colour keeps its three meanings (3.1): teal is ours or lit, ink is the
+client's, amber is something the client must still give us. Nothing on the
+new slides is amber: no line on them is a to-do on the client's screen.
+
+**Type.** Section 4's scale, nothing new. The partnership title is H1
+(80/700, Plex 84/1.25) in two lines, the first in teal because it is ours
+(the cover's "goes live." precedent), the second in ink because it is
+theirs. That colour split is the only accent in a title anywhere in the
+deck, and it says what the pie draws. Piece names and road names are Geist
+600 30 ink (Plex 600 32); their lines Geist 400 24 ink-2 (Plex 26); owner
+names Geist 500 24 in their lane's tone, as the lane heads. No italic, no
+capitals, no Mono above a title, at most five sizes on a slide.
+
+### 20.3 Partnership, stops 1 and 2: the pie (the signature)
+
+```text
+1920 x 1080 · stop 2 of 4 (English)
+x 136                                                                           x 1784
++--------------------------------------------------------------------------------------+
+| We bring them to your door.           (H1, teal)                                     |
+| You win the project.                  (H1, ink; appears at stop 2)                   |
+|                                                                                      |
+|  You (ink)          .-----.                                                          |
+|  The meeting and   ( you   )   .-------------.                                       |
+|  the close --------o      /   '               \                                      |
+|                    '-----'   |                 |       Our team (teal)              |
+|          (pulled 48 px)      |      ours       |  o----- Ads and enquiries          |
+|                              |  (12 to 9, the  |         Calls and bookings         |
+|                               \  long way)    /          Reminders and rebooking    |
+|                                 '-----------'                                        |
+|                                                                             07 / 13 |
++--------------------------------------------------------------------------------------+
+```
+
+- **Two pieces, as the Gamma draws it** (the spec review, 2026-10-20).
+  Ours is one 270° piece, twelve to nine clockwise; theirs is the 90°
+  piece, nine to twelve, on the upper start side, so when it is pulled out
+  it moves toward the title's second line, "You win the project.": the
+  drawing points at the sentence that names it. One 8 px cut between the
+  two (each straight edge set 5.5 px back from its radius, so 8 px of
+  ground shows between the 3 px edges), no inner gaps. Four equal pieces
+  with a leader each, the plan before the review, was the stock
+  segmented-cycle infographic, and clockwise journey order read as a loop
+  from the meeting back to the ads.
+- **Geometry.** The disc is 520 px across (r 260), centred at x 1060,
+  y 680 (x 800 to 1320, y 420 to 940), on the slide's end half under the
+  title, so the title's start edge leads. Theirs moves 48 px along its own
+  bisector (34 px back, 34 px up); pulled, its top is at y 386, at least
+  64 px under the Arabic title's second line and about 100 px under the
+  English.
+- **Labels, two leaders.** On the end side from x 1400: "Our team"
+  (Geist 500 24 teal, the lane head) over a short stack of our three names
+  (600 30 ink), centred on the disc's centre line, with one level leader
+  from the stack's start edge into our piece, ending in a 6 px teal dot
+  inside its edge ("Reminders and rebooking" measures 366 px at 600/30, so
+  the stack fits the 384 px). On the start side, level with their pulled
+  piece: "You" (500 24 ink) over "The meeting and the close" (600 30 ink),
+  one leader into it ending in a 6 px ink dot. Those are the only words.
+- **What it leaves out on purpose.** No percentages, no numbers, no legend
+  box, no shadow, no 3D tilt, no gradient, no glow, no hover. A pie is a
+  data form; this one carries no data: two pieces, names instead of
+  values, and one moved piece as the only emphasis. The notes never say
+  "three quarters of the work". It carries no provenance tag: like the O3
+  group, it is a diagram of who does what, not a picture of a screen.
+- **Motion.** Arrival: the slide's crossfade only; the pie is whole, our
+  piece lit and named, theirs drawn ahead (dotted, unfilled, unnamed) in
+  its place. Stop 2 (→): theirs takes its fill (240 ms, opacity), moves
+  out along its bisector (420 ms, `transform`, `--dk-ease`), its leader
+  and name arrive as it lands (200 ms, opacity), and the title's second
+  line fades in (200 ms). One press, one meaning: their piece comes out.
+  ← sets stop 1 again at once, with no reverse animation.
+- **Reduced motion.** Every state is set at once: at stop 2 their piece is
+  simply out, lit and named.
+- **Done with you** (the spec review). The pie splits by owner, not by
+  journey order: ours is the end half (twelve to six), "Ads and enquiries"
+  and "Confirmations and reminders" under "Our team"; theirs is the start
+  half (six to twelve), "Calls and bookings" and "The meeting and the
+  close" under "Your team", drawn ahead at stop 1 and pulled out together
+  at stop 2, 48 px along the nine o'clock bisector: one transform, one
+  meaning. (The plan drew theirs as opposite quarters, each pulled along
+  its own bisector, which read as a pinwheel, not a half.) Journey order
+  lives on the lanes of slide 2. The title's second line, "Your team books
+  them and wins the project.", measures about 1610 px at 80/700 against
+  the 1648 px box, so `deck-shots.mjs` fails a shot where either title
+  line wraps.
+- **RTL.** The SVG holds no text and is mirrored with `scaleX(-1)` (6.9):
+  their piece sits on the upper right, toward the Arabic title, and is
+  pulled toward it. Labels are HTML with logical properties.
+
+### 20.4 Partnership, stops 3 and 4: the two roads (the quiet second picture)
+
+```text
+stop 4 of 4
++--------------------------------------------------------------------------------------+
+| We bring them to your door.                                                          |
+| You win the project.                                                                 |
+| The enquiries we bring take the longer road.          (lead 40/400, ink-2; stop 3)   |
+|                                                                                      |
+|  An enquiry from your ad   ( )--.  .--.  .--.  .--.                                  |
+|  Meeting you for the first      |  |  |  |  |  |  |                                  |
+|  time, and comparing you        '--'  '--'  '--'  |                                  |
+|  with others.                                     |                                  |
+|  A referral                ( )-------------------(●)-----------(●)                   |
+|  Already trusts you.                         Your meeting   Signed project           |
+|  ──────────────────────────────────────────────────────────────────────────────────  |
+|  We can't close for you. We can help you get better at it.   (H3 40/700; stop 4)    |
++--------------------------------------------------------------------------------------+
+```
+
+- **Stop 3 (→).** The pie leaves by the stage swap (420 ms, opacity) and
+  the roads arrive in the same band; the caption arrives under the title.
+  The title stays: the roads explain why the client's piece takes work.
+- **The roads are drawn, not illustrated.** Both are 3 px
+  `--dk-line-strong` lines in the journey's line language. The referral
+  road is one straight horizontal line. The ad road winds in hairpin
+  switchbacks before it drops into the same meeting node from above,
+  about twice the length: each turn is a half circle (60 px corners on
+  120 px runs) and no two are the same depth, so it reads as a road taking
+  the long way, not as a square signal trace (the visual review,
+  2026-10-20; it had 24 px elbows on equal pulses). No question marks, no road texture, no cars, no
+  spurs to "other firms" (a drawn count would stand for the Gamma's
+  unsourced five), and, since the spec review, no length labels: the
+  drawing, the caption and the notes already said it three ways. The
+  length is the whole message.
+- **Geometry** (the spec review: the referral road has to be visibly one
+  straight line, so it runs at the node's height). The referral road
+  starts at a lanes' "ahead" ring at x 560 on the node's line, runs
+  straight to the meeting node at x 1440, then on to "Signed project" at
+  x 1680. The ad road starts at its own ring at x 560, about 220 px above,
+  winds right in six hairpins of different depths within a band about
+  150 px deep, and
+  drops into the meeting node from above with one vertical segment. Each
+  road's words sit at its start, in the 384 px start zone, level with its
+  own ring: the name (600 30 ink) and its line (400 24 ink-2). "Your
+  meeting" and "Signed project" sit under their nodes (500 24 ink-2).
+- **Motion.** The two roads draw at the same speed from their starts
+  (`stroke-dashoffset`): the referral road lands in 520 ms and the ad road
+  keeps drawing for about as long again. That is the one place in the deck
+  where a draw runs past `--dk-draw-ms`, because the time it takes is the
+  point. Then nothing moves.
+- **Stop 4 (→).** Under a hairline at the foot, one line at H3 in ink:
+  "We can't close for you. We can help you get better at it." On the
+  roads, the meeting node and the signed project fill in `--dk-ink`, the
+  segment between them turns solid ink and their names turn ink: the close
+  is theirs. One change on the canvas, the line and the client's end of
+  the road arriving together. "Marketing without sales won't grow your
+  business." opens the stop's note, said, not shown (the title, a second
+  H3 and the line all said the close is theirs).
+- **Reduced motion.** At stop 3 both roads are drawn complete at once.
+- **Done with you** and **RTL:** the same drawing (the roads run from the
+  right in Arabic, the SVG mirrored).
+
+### 20.5 Training: the course list, then the Academy's screens (three stops)
+
+```text
+stop 1 of 3 (English) · a rail slide: content y 96 to 948
++--------------------------------------------------------------------------------------+
+| Your sales training   (H2)                                                           |
+| The course for your meetings, in the Premium Projects Academy.   (lead, one line)    |
+|                                                          Academy screenshot  (tag)   |
+|  1      Introduction                                | +----------------------------+ |
+|  2      Onboarding                                  | | the Academy's classroom,   | |
+|  3      Google optimisation                         | | masked: six course cards,  | |
+|  4      Offer creation                              | | the fifth cover's figure   | |
+|# 5 (●)  Project Closing Mastery     (H3 40/700)     | | blurred, its title kept    | |
+|#        What it teaches                             | | 704 x 498                  | |
+|#        o---------o---------o---------●             | +----------------------------+ |
+|#        The consultation  ...  The close            |                                |
+|  6      Team and operations                         |                                |
+|  customer o-o ... you o-o-(●) You meet   (mini rail, stop 6)                 08 / 13 |
++--------------------------------------------------------------------------------------+
+stop 2: the end column swaps to the lesson (masked, cropped: 704 x 502), same tag
+stop 3: the end column swaps to the two statements and the link line
+```
+
+- **The signature is the one lit course opening into what it teaches.**
+  Six ruled rows in the Academy's own order and numbers (the client finds
+  them that way; numbering encodes something true here). The five quiet
+  rows are the number (Geist 500 24 ink-3, tabular; Arabic ١ to ٦, never
+  ٠١) and the name (30/400 ink-2), nothing more: since the spec review no
+  ring sits on a quiet row (with them the slide carried about 17 marks).
+  Project Closing Mastery is the current row: the journey's row band, the
+  current node in the marker column, and its name at H3 40/700 ink, the
+  slide's one primary. Under it, inside the band: the label "What it
+  teaches" (500 24 ink-2), then a 3 px teal line with four 16 px nodes and
+  their names under them (500 24 ink-2). "The close" ends in an ink node,
+  the same ink as the client's piece of the pie, so the slide picks up
+  where the partnership slide left the client. The four words are the
+  sales deck's summary of the course, not its sections (a sales crash
+  course, objections, follow-ups and bonus lessons), and the label says
+  so. The list is drawn and stays put on all three stops: it is what the
+  client can read on a shared screen.
+- **Columns.** The title and the lead run across the top (the lead is one
+  line, so the list starts higher). Under them the list takes the start
+  column (x 136 to 1000) and the end column (x 1080 to 1784, 704 wide)
+  holds one thing per stop, its top level with the list's first row.
+- **The Academy's screens (stops 1 and 2; the CEO, 2026-10-20: "add
+  screenshots of the project closing mastery in skool as well same as the
+  sales pitch deck").** One screenshot per stop, as the sales deck shows
+  them (its academy and mastery tour stops), never side by side: two at
+  half the column's width would be unreadable on a share.
+  - Stop 1: the classroom, `pcm-academy-masked.webp` (1456 x 1029, set at
+    704 x 498). Masked: the figure on the Project Closing Mastery cover is
+    blurred (a 24 px Gaussian on the cover's art, inside the card's own
+    edges) and the title "PROJECT CLOSING MASTERY" kept sharp over it; the
+    other five covers are generated art with no person who can be named,
+    and stay as they are.
+  - Stop 2: a Project Closing Mastery lesson, `pcm-lesson-masked.webp`,
+    cropped from the sales deck's 1444 x 1807 to 1444 x 990 from y 150:
+    the top bar (the Academy's name, the search, the message and alert
+    counts and the member's avatar) and the tab row are cropped off, and
+    the outline opens on "05: Project Closing Mastery" and "01: Sales
+    Crash Course", and it ends on "04: Uncertainty Objections" (since
+    the visual review, 40 px shorter, so "05: Closing Deposits" never
+    reaches the client's screen: copy rule 7). The slide inside the video
+    frame is blurred (24 px): it carries another client's name, in Latin
+    and in Arabic. Set at 704 x 483.
+  - Both are set as the portal's screens are (8.7): the screenshot itself,
+    a 1 px `--dk-line-strong` edge, a 16 px radius, taken down a step
+    (brightness 0.92), no browser bar and no shadow. The tag "Academy
+    screenshot" (5.4) sits above the picture's end corner. Their `alt` is
+    "The Academy's six courses" and "A lesson inside Project Closing
+    Mastery" (`CONTENT-AR.md` has the Arabic).
+  - The masked copies are made once, from the sales deck's files, which
+    stay untouched (byte-pinned). They are WebP, at most 300 KB each, and
+    the copy test pins their names and sizes (1456 x 1029, 1444 x 990).
+- **Stop 3, the statements.** Two statements, each a head (600 30 ink)
+  over its line (400 30 ink-2) at a 60-character measure, 48 px apart; the
+  link line under them at 24 ink-2. They are statements on the slide
+  ground, not cards: no border, no fill, no icon. Two, not three: "Before
+  your first meetings" says who watches it and where to start, so the
+  slide no longer reads as three bold-head statements (the humanizer's
+  inline-header list). The slide ends on them: the ask (who watches it
+  first) is the last thing the client sees.
+- **Why the list stays drawn beside the screenshots.** The classroom
+  screenshot is light, small text at 704 wide (about 470 px in a 1280
+  window): it shows the Academy is real and what it looks like, and the
+  drawn list says what to read in it. Nothing of Skool is redrawn (Hallmark
+  gate 47): the screens are the real ones, masked and tagged.
+- **Motion.** The slide's crossfade; at stops 2 and 3 the end column's
+  stage swap (420 ms, opacity). The list never moves. Reduced motion: each
+  stop is set at once.
+- **Done with you** and **RTL:** the same; the list's numbers and nodes sit
+  on the right in Arabic, the line under the lit course runs right to left,
+  and the screenshots move to the left column unmirrored (they are pictures
+  of an English page).
+
+### 20.6 The portal's number-one job (slide 9, stop 4)
+
+- The heading (h1) and "A few taps, the same day." are unchanged, except
+  that the heading's measure is now the content width: at the old 1500 px
+  "Your number-one job: mark every meeting" (1542 px in English) wrapped.
+- The three taps stay one line-joined row at 40/600, the stop's primary
+  sequence. Each question gets one caption under it, one line at 24 ink-2
+  (the spec review: the plan's two- to three-line captions turned the row
+  into three columns of text, one slide before Your part's three
+  columns): "Running late isn't a no-show.", "Sent it later? Update it
+  then.", "Add the value, or a line on why." "So we can call to rebook" is
+  said, not shown: the no-show's home is the journey's stop 6.
+- Under them, across the content width under a hairline, the "Cancelled
+  or moved" row: the lanes' rebook mark in teal (we rebook) before its
+  words at 400 30 ink. Then the footer on its rule, as before.
+- Still one stop and no screenshot. Done with you: the CRM stages as now,
+  with the late check as one line under them (400 24 ink-2); no moved row.
+
+### 20.7 Your part (slide 10): three moments, two jobs each
+
+```text
++--------------------------------------------------------------------------------------+
+| Your six jobs, in one place   (H2, the slide's one heading)                          |
+|                                                                                      |
+| Before your meetings        After each meeting          Week to week                |
+| ─────────────────────       ─────────────────────       ─────────────────────        |
+| Keep at least 10 open       Mark every meeting the      Leave the ads running        |
+| slots, at different times   same day, with the value    through the first weeks      |
+| Our callers book into       when you win                Pausing early ends the test  |
+| them. On a day off, block   Your outcomes show ...      before it tells us anything. |
+| the hours, not the whole    ─────────────────────       [creative][creative][creat.] |
+| day.                        Follow up the ones          ─────────────────────        |
+|        Day off              thinking it over, and       Keep your Drive folder fed   |
+| [ Sat Sun Mon Tue Wed Thu ] book the second meeting     Fresh projects keep ...      |
+| [ the week, 4 hour rows  ]  You send the quote and set                               |
+| ─────────────────────       the second meeting. Our                                  |
+| Add each booking to your    caller checks in too.                                    |
+| own system                                                                           |
+| If your team plans ...                                                               |
++--------------------------------------------------------------------------------------+
+```
+
+- **Why the layout changed.** Six jobs under a title in a 3 by 2 grid of
+  equal cells is the stock feature grid (19.1, item 4). Grouped by when
+  they happen, the jobs read as a schedule: three heads that encode
+  something true, two jobs under each, and pictures only where they show
+  something. The three moments are the real ones, not a forced triad.
+- **One heading** (the spec review): "Your six jobs, in one place", with
+  no line under it, and the overview's title is the same. "Your part" over
+  "Your six jobs, in one place." said it twice, and "your part" competed
+  with the pie's "You" three slides before. Head 3 is "Week to week": it
+  was "Through the first weeks", said again word for word in its own job,
+  and keeping the folder fed is not a first-weeks job.
+- **Geometry.** Three columns of 512 px, 56 apart (the content's 1648).
+  Heads in the lane-head style (Geist 500 24, ink-2). Each job has a 2 px
+  `--dk-line-strong` rule over it, the job at 28/700 ink, its why at
+  24/400 ink-2. Built at these sizes, not 8.8's 30 and 26: measured at
+  them, with job 1's why cut to two sentences, the first column ends near
+  y 916 in English and 951 in Arabic, under the content box's 976.
+  Columns end where their content ends: "After each meeting" has no
+  picture and is shorter, which is honest.
+- **The calendar week** (under job 1, 512 wide): six day columns, Saturday
+  to Thursday (right to left in Arabic), four hour rows, no hours written.
+  At least ten open slots as 2 px teal outlines at different hours, busy
+  hours as raised blocks named "Busy" once, and one day off blocked hour
+  by hour (four separate blocks), named "Day off" over its column: never
+  one full-height block, because that is the mistake the job warns
+  against. No dates, no customer, no names. It replaces 8.8's single day
+  with one busy hour.
+- **The creatives** (under "Leave the ads running"): three of their
+  creatives, as 8.8 had them, only with three or more.
+- **Done with you** (the spec review): no calling job under "After each
+  meeting". Before your meetings: the open slots ("Your team books into
+  them…") and "Call new enquiries within 5 minutes, and note every try",
+  in place of the booking job (their team already books). After each
+  meeting: "Move each meeting to the right stage the same day" and the
+  follow-up job. Week to week: the same two. The copy test pins the
+  head-to-job mapping in both modes.
+- One stop, no stagger, no rail. The notes window's "Copy for the group"
+  posts the six jobs as text, grouped under the three heads, then (since
+  the spec review of creative flexibility) the testing line, "How we test
+  your ads: …", then the course line, "Before your first meetings: Project
+  Closing Mastery in the Academy: {academy url}", so the training is in the
+  recap the client keeps, then the videos (21.4). The same button is on
+  slide 13's notes and on the notes window once the deck closes.
+
+### 20.8 The first 90 days (slide 11)
+
+One line under the first bar's label: "Usually slower, while the ads find
+your audience.", Geist 400 24 ink-2 (Plex 26), one line, on the bar's
+row. The bar, its dashed open end and "Can run longer" are unchanged. If
+the 96 px row cannot hold the label and the line, the row grows to 120
+and the chart keeps its scale. The line arrives with the label when the
+bar draws; reduced motion: drawn.
+
+### 20.9 Good to know (slide 12): "Good to know" (it was "Before we go live" until the fixer's round, 21.12)
+
+- **Why its own slide.** The Gamma's payment and reply facts, with the
+  existing housekeeping, are five items: more than three calm cards on the
+  green light. They take 8.10's first stop as their own slide, and the
+  green light carries one thing.
+- **Composition.** The title (H2) on the start side (x 136 to 560), the
+  rows beside it (x 640 to 1784), as 19.8 set the green light's first
+  stop: ruled rows, each a head (600 26 ink) stacked over its line (400 30
+  ink-2, a 64-character measure). The head sits over its line, never
+  beside it (Hallmark gate 54's hanging header). Rows hug their words and
+  stack from the top, so the replies row hides without leaving a gap.
+- No amber, no icons, no money figures, no card fills. One stop, no rail.
+
+### 20.10 Green light (slide 13)
+
+8.10's second stop, alone: the question at display (118/700) at the
+content's inline start, the journey's rail drawn large (1400 px) and lit in
+solid teal to "Go-live", with the date once there is one, and the check-in
+line once booked. Arrival is the crossfade only; the rail is already lit.
+The overview's title for the slide is the question.
+
+### 20.11 Smaller changes
+
+- **Journey stop 5** gains a sentence ("WhatsApp alerts tell you about new
+  bookings, cancellations and changes."). The words column takes the extra
+  line; the calendar entry stays level with "Lands with you" when it fits,
+  and if the words push it down, the entry moves and the leader stays
+  straight. No new picture: the alert's look is not confirmed (`CONTENT.md`
+  open question 21).
+- **Creative freedom:** no canvas change ("Keep the offer steady" is said,
+  in the notes). Superseded the same day by 21.1: the offer is on stop 3.
+- **O3:** the hours line under the group's name gains "within 2 working
+  hours" and may wrap to two lines at its 60-character measure; nothing
+  else moves. **O5:** the launch call's caption reads "About 45 minutes".
+
+### 20.12 The critique, and the slop test on these slides
+
+Checked against the plan before writing it down, as frontend-design asks:
+the template answer for "what we do and what you do" is a two-column "We
+do / You do" table with checkmarks, or two cards with icons. The plan
+rejects both: the CEO's own picture is a pie with one piece out, and the
+deck already has a line language to draw it in. The template answer for a
+training slide is a screenshot of the course platform; the plan draws the
+one course that matters as a road, in the same marks as the journey, and
+(since the CEO's request of 2026-10-20) shows the platform's real screens
+beside it, one per stop, masked and tagged, never as the slide's only
+content.
+
+Hallmark gates that these slides could fail, and how they pass:
+
+- **No invented numbers (46).** No percentages on the pie, no "80% after
+  the third contact", no "5 others", no close rate. "At least 10 open
+  slots" is the Gamma's requirement, said as the client's job.
+- **No re-drawn chrome (47).** No drawn Skool window, no phone, no
+  WhatsApp screen on the new slides; training's two screens are the real
+  ones (20.5).
+- **Locked tokens (48).** Every colour is a 3.1 or 3.2 token (20.2).
+- **No italic headings (38a), no eyebrows, no capitals.** The new slides
+  have no line above their titles.
+- **No stock grid, no icon tiles, no cards in cards.** Your part is
+  recomposed (20.7); the statements on training and the rows on good to
+  know sit on the ground.
+- **Motion.** `transform`, `opacity` and `stroke-dashoffset` only, stepped
+  by the presenter, nothing loops; reduced motion is set for every moving
+  part (20.3, 20.4, 20.8).
+- **Structural variety.** Call record (6), diagram (7), a list with one
+  row opened (8), a job with its three taps (9), three columns by time
+  (10), a programme (11), ruled rows (12), one question (13): no two
+  neighbours share a structure, and each has one primary (the pie, then
+  the roads; the lit course; the job; the three moments; the chart; the
+  rows; the question).
+
+Pre-emit, these slides: `P5 H4 E4 S5 R4 V4`. Specificity is 5 because the
+two pictures are the CEO's own, redrawn in the subject's line language;
+Execution stays at 4 until they are seen on a real Zoom share at 1280 and
+1366 wide (17.5). The stamp at the top of `present.css` stays as it is:
+these slides meet it.
+
+### 20.13 For the build
+
+- `content.ts` takes the words from `CONTENT.md` and `CONTENT-AR.md`:
+  `LAUNCH.partner`, `LAUNCH.training` and `LAUNCH.know` are new; the
+  portal's stop 4 gains its three captions and the moved row; `LAUNCH.part`
+  gains its three heads and six jobs (with the done-with-you swaps);
+  `LAUNCH.call.after` gains the one-voice line; `LAUNCH.days` gains its
+  slow line; `GROUP_LINKS` gains the recap's course line;
+  `L_TITLES` and `L_NOTES` gain `partnership`, `training` and
+  `good-to-know`, and `green-light` takes the question as its title.
+- Slide definitions: partnership has 4 stops and no `rail`; training has 1
+  stop and `rail: () => 5` (3 stops since the spec review of creative
+  flexibility, 20.5); good-to-know has 1 stop; the green light drops
+  to 1. The two new slides live in `launchExpect.tsx`, beside
+  `launchDeck.tsx`; their class prefixes (`dkc-partner`, `dkc-pie`,
+  `dkc-route`, `dkc-train`, `dkc-course`, `dkc-teaches`, `dkc-know`, and
+  `dkc-wk` for the calendar week) are new, because `dkc-road`,
+  `dkc-week` and `dkc-cal` already name O5, O6 and the journey's calendar
+  card.
+- The copy test: rule 11 fails on the unmasked `pcm-academy` and
+  `pcm-lesson` names in the client success app (the masked copies pass,
+  20.5); rule 5 fails if the training
+  slide states a cadence (its home is the 90 days); "within 2 working
+  hours" is pinned on O3 and the good-to-know replies row; "Usually
+  slower" is pinned and "always slower" fails.
+- `deck-shots.mjs` covers the new slides in both languages, done for you
+  and done with you, at 1920 x 1080, and the pie and the course list at
+  1366 x 768.
+
+### 20.14 The spec review (2026-10-20)
+
+Applied before the build, in this section and in `CONTENT.md` and
+`CONTENT-AR.md`:
+
+1. The pie is two pieces with one cut and two leaders, centred lower
+   (20.3); done with you it splits by owner, in halves, theirs pulled out
+   together, and the shots check the title stays two lines.
+2. The referral road is one straight line at the node's height, the ad
+   road meanders above it and drops in; no length labels; stop 4 is one
+   line (20.4).
+3. The training list: quiet rows without rings, the lit course at H3, the
+   four words under "What it teaches", one lead, two statements (20.5).
+4. The portal's taps keep 40/600 with one-line captions; the heading takes
+   the content width; the moved row splits moved from cancelled (20.6).
+5. Your part: one heading, "Week to week", job 1's why in two sentences,
+   built at 28 and 24, the done-with-you regroup, the recap's seventh line
+   (20.7); 2 minutes, with 30 seconds each from slides 3 and 4 (20.1).
+6. The call's stop 7, done for you, says under its heading that the
+   messages before the meeting come from us (the launch call SOP's third
+   expectation; `CONTENT.md` L6).
+
+## 21. Creative flexibility and video slots (2026-10-20)
+
+The CEO asked the same day for creative flexibility as a full expectation,
+set before the ads exist, and for a video slot behind each main part of both
+decks, so a part the CSM skips can still be watched. `CONTENT.md` holds the
+words (L3, O7, "Video slots"), `CONTENT-AR.md` the Arabic, and `VIDEOS.md`
+the backend and the frontend calls. This section is the design plan, written
+as frontend-design asks (the plan, then the critique) and checked against
+Hallmark. Where it and an earlier section disagree, this section wins. It
+was revised the same day by the spec review (21.10 lists every finding).
+
+### 21.0 The plan
+
+- **Colour:** no new hue and no new colour token. The field and the video
+  pieces use 3.1 and 3.2 only (21.7). Teal stays ours and lit, amber the
+  client's red lines, ink the client's own (their style change).
+- **Type:** section 4's scale. On creative freedom: H2 (56) for the title,
+  H3 (40/700) for each stop's name, body 30 (400; 600 for the check's one
+  line), small 24/400 ink-2, labels 500 24, Mono 24 for the tag and the
+  stamp: four sizes. The video control: 500 24 and Mono 24.
+- **Layout:** creative freedom keeps its title and gains two columns, the
+  stop's words on the start side and the field on the end side, from the
+  first stop. The video control sits in the canvas's head band, centred,
+  and belongs to the presenter chrome: it shows only while the chrome is
+  awake. The player covers the canvas.
+- **Signature:** the field of ad tiles. It arrives all lit, most of it
+  switches off at the next press, a few stay lit, and the next round waits
+  under them. It is the one new drawing; everything else here is quiet
+  text.
+
+### 21.1 Creative freedom (slide 3 since the fixer's round; slide 4 before it): five stops, one field
+
+```text
+1920 x 1080 · stop 4 of 5 (English) · a rail slide: content y 96 to 948
+x 136                                  x 952   x 1050                                    x 1784
++---------------------------------------------------------------------------------------------+
+|        (> Watch: Why we test so many ads · 2:40   only while the chrome is awake, 21.2)       |
+| Your red lines are fixed. The rest, we test.   (H2)      Agreed to test this way · 20 Oct  |
+|                                                                             Illustration    |
+|  Then a quick check, not a redesign   (H3)           [#][ ][ ][ ][#][ ]                      |
+|                                                      [ ][ ][ ][ ][ ][ ]   the field:         |
+|  Facts · Prices · Claims   (600 40, ink)             [ ][ ][#][ ][ ][ ]   18 tiles, 3 lit    |
+|  You check these before an ad goes live.                                                     |
+|                                                      Next round          Your style change   |
+|  Small style changes go into the next round,         [:][:][:][:][:][=]                      |
+|  so your launch doesn't wait.                        (dotted: ahead)     (solid ink: theirs) |
+|  You approve your ads in the group.   (24 ink-2)                                             |
+|                                                                                              |
+|                                                                                              |
+|  customer o-*-o ... (mini rail, stop 1)                                              04 / 13 |
++---------------------------------------------------------------------------------------------+
+```
+
+**Why one slide, not two.** One picture, the field, carries all five
+stops, so each press changes one thing in a drawing that stays put: the
+field arrives lit, most of it switches off, the next round appears, the
+client's change takes its place in it, the round fills. Split over two
+slides, the field would be drawn twice and the deal (input first, a small
+check, content) would sit on a slide without the mechanism that explains
+it. The deck stays at thirteen slides.
+
+**Composition**
+- The title stays (H2, one line, no eyebrow). Under it, two columns: the
+  words from x 136 to 952 (816, about 54 characters at 30) and the field
+  from x 1050 to 1784 (734). Both start at y 232.
+- **The words column** holds one stop at a time: its name at H3 (40/700
+  ink, one line in both languages; `deck-shots.mjs` fails a wrapped one),
+  then its lines. It changes by the stage swap (420 ms, opacity) at each
+  press. Stop by stop:
+  - 1: the body (30/400 ink) and the small line (24 ink-2).
+  - 2: the body, the small line, then their pick from L4 as today
+    (`.dkc-open-pick`: the starred thumbnail, 96 px, and the pick line at
+    24 ink-2). Without a pick, the line alone.
+  - 3: creative freedom's red-lines panel (`--dk-panel` with a 1 px
+    `--dk-leak-line` hairline, 16 px radius, 24 px padding, the column's
+    width; the visual review replaced the `--dk-leak-soft` fill, which
+    rendered as a neutral charcoal) with its head, the red lines (30/400;
+    each row in the panel's direction with its amber mark on the panel's
+    start edge, only the words isolated in their own direction and type,
+    the same rule as O7's list) and "We never cross these."; the fallback and
+    its live input as before. Under the panel, the input line (30/400 ink)
+    and the offer line (24 ink-2). More than five red lines would push the
+    column past the content box, so the slide's prep warning asks the CSM
+    to hide some ("More than five red lines show on slide 3. Hide some in
+    prep so the panel fits."), using the existing Do's & Don'ts toggles.
+  - 4: the check as one line, `test.check.words` as `CONTENT.md` writes it,
+    "Facts · Prices · Claims": Geist 600 40/1.25 ink (Plex 600 40/1.45),
+    the middots in ink-3, 16 px under the H3. Since the visual review it is
+    set larger than the sentence under it: it is the stop's one idea. No line and no nodes: facts,
+    prices and claims are not steps, and a line-joined row is the deck's
+    device for a sequence (slide 9's three taps). Under it "You check
+    these before an ad goes live." (24 ink-2); then the style line (30/400
+    ink) and the approval (24 ink-2).
+  - 5: the body (30/400 ink) and the small line (24 ink-2).
+- **The stamp** ("Agreed to test this way · {date}", Mono 24 ink-2, the
+  tag style) sits on the title row since the visual review of 2026-10-20:
+  at the row's inline end (x 1784; in RTL its left edge, x 136), on the
+  title's baseline, on any stop once recorded, fading in over 400 ms. At
+  the foot of the words column it read as a third line of the Arabic
+  stop's paragraph (about 20 px under it) and floated alone at stop 1.
+  On the title row it is never read as part of the stop's words and never
+  near the mini rail's lit label below the content box; both titles leave
+  550 px or more free there. The words column keeps its full height. No
+  rule above it.
+- **No phone on this slide** (since the spec review). Slide 3 has just
+  shown the ads in the feed with the "Marked Sponsored" leader; stop 1's
+  small line says it in words.
+
+**The field (the signature)**
+- **Eighteen tiles, 6 columns by 3 rows, each 104 x 130** (4:5, the shape
+  of a feed ad), 22 px apart: 734 x 434, from y 252. A tile is `--dk-panel`
+  with a 2 px inset edge and a 12 px radius. Nothing is pictured in it: no
+  thumbnail, no face, no words, no money. The client's own creatives never
+  go in the field, because dimming a real ad before launch reads as a
+  verdict on it (the 2026-10-19 critique).
+- **The edge never fades.** `--dk-panel` on `--dk-space` is about 1.08:1, so
+  a tile is drawn only by its edge. Every tile keeps its 2 px inset edge at
+  full opacity: `--dk-line-strong` when off, `--dk-teal` when lit. The teal
+  edge is its own layer over the off edge, so switching off fades the teal
+  layer out (opacity); the tile itself stays at 100%.
+- **What varies,** drawn in ink-2 at 24 px, 12 px in from each tile's top
+  start corner: a play triangle on six tiles (a video), two stacked edges on
+  four (a carousel), nothing on eight (a picture). It is the only mark inside
+  a tile, and it is why the field reads as different versions, not as one ad
+  copied eighteen times. If 24 px crowds the 104 px tile in the shots, the
+  marks go, and stop 2's small line carries the variety alone.
+- **The toggle** in Meta's on/off shape at each tile's foot end corner
+  (40 x 24): on, a `--dk-teal` track with a `--dk-deep` knob at the end;
+  off, a `--dk-line-strong` track with an ink-2 knob at the start. The on
+  track and knob are layers over the off ones, so a switch is the knob's
+  slide (transform) and the layers' fade (opacity).
+- **Lit and off.** At stop 1 all eighteen are lit. From stop 2, three stay
+  lit, at row 1 column 1, row 1 column 5 and row 3 column 3 (never one row,
+  one column or a diagonal, so the eye reads chance, not a pattern). The
+  other fifteen are off: the off edge, and the toggle and the format mark at
+  45% opacity. No star, crown, glow or badge on the lit ones. The field
+  carries no count anywhere, said or drawn as a number.
+- **Tag:** "Illustration" above the field's end corner (5.4), y about 210,
+  from stop 1.
+- **The next round** (stops 3 to 5): six outlines of the same size in one
+  row, 90 px under the field (y 776 to 906). "Next round" (500 24 ink-2, the
+  lane heads' style) sits over the row's first outline, at y 726. At stop
+  3 the outlines are dotted (2 px `--dk-line-strong`, the lanes' unlit line,
+  dash 2 and gap 8) and empty: ahead. At stop 4 the last outline turns solid
+  2 px `--dk-ink`, and "Your style change" (500 24 ink) sits over it, level
+  with "Next round", with a 2 px ink leader that ends on its edge (20 px,
+  the same length at stop 5, where the tile is filled). At stop 5
+  every outline takes the `--dk-panel-2` fill and a solid `--dk-line-strong`
+  edge, and the client's keeps its ink edge: the round is made.
+
+**Motion, stop by stop** (`transform` and `opacity` only; one press, one
+change, then stillness; ← sets the previous stop at once, with no reverse;
+nothing on the slide changes without a press)
+- **Stop 1:** the slide's crossfade brings the field in, all eighteen lit,
+  with its tag. Nothing moves after it.
+- **Stop 2:** at the press, fifteen tiles switch off together: the knobs
+  slide (`transform`), and the teal edge and track layers fade out while
+  the toggles and marks go to 45% (`opacity`), all in `--dk-swap-ms` (240
+  ms). The words swap with it. "All on" is a resting stop of its own, so
+  the client sees it for as long as stop 1 lasts, whatever the share's
+  frame rate.
+- **Stop 3:** the field stays still. The dotted next round and its label
+  fade in (240 ms). The words swap.
+- **Stop 4:** the last outline's edge turns ink and its label and leader
+  fade in (240 ms). The words swap.
+- **Stop 5:** the next round's fill fades in (240 ms). The words swap.
+- **Reduced motion** (the system setting or `?still=1`): every stop is set
+  at once.
+
+**Distinct from its neighbours.** Slide 3 is three phones in a row with a
+tray; slide 5 is one phone walked screen by screen. Every stop of slide 4
+is the field beside a column of words, which no other slide has (slide
+10's calendar week is a grid of hours, six slides on), so the slide reads as
+its own from its first frame, between two phone slides. One primary per
+stop: the lit field at 1 (many versions), the switch-off at 2, the red lines
+at 3, the check's one line at 4, the filled round at 5.
+
+**Done with you:** the same slide. **RTL:** the words on the right, the
+field on the left; the grid runs right to left, so the lit cells keep their
+logical places; the toggles, the format marks and the leader mirror; the
+check line reads right to left, and the stamp sits at the title row's
+left edge.
+
+**Notes and prep controls.** The agreement button and A stay as they are
+(8.4). The "How a test runs" toggle is removed: the field is a core stop,
+and a saved `test-proof` in `shown_slides` is ignored. The slide's prep
+warnings gain the red-lines count above. The notes window's slide 4 gains
+"Copy reply" (`CONTENT.md` L3: one line for pushback in the group, picked by
+the client's goal), and prep's slide 4 panel the same button, because that
+pushback comes after the call.
+
+### 21.2 The video control on the canvas
+
+**Place: the head band of the canvas, centred** (its box y 28 to 68,
+centred on x 960, at most 960 wide), on every slide with a filled slot
+shown for this client. Why there:
+- The foot is taken: the slide count at the end (bottom 48), the mini rail
+  at the start (bottom 44, its lit step's name above it), and the slides'
+  own foot lines inside the content box.
+- The two top corners belong to the rest of the presenter chrome (12.1),
+  which wakes on the same mouse move the CSM makes to reach a control
+  there, so a corner control would sit under it.
+- The head band's centre is clear on every slide: nothing on any slide is
+  drawn above y 96, and the chrome groups sit at the corners.
+- At window widths of 1280 and up (a canvas scale of 0.67 or more), the
+  control's 960 canvas px is at most 640 window px and clears both chrome
+  groups. Below that the chrome can meet its ends while awake (section 17
+  checks it at 1280 and 1366).
+
+**Visibility: it is presenter chrome** (since the spec review). Opacity 0
+at rest. It shows while the chrome is awake (12.1's mouse wake, hiding with
+it after 2.5 s, in the chrome's own fade), or at once, with no fade, while
+it has keyboard focus. It stays in the tab order at rest. Why:
+- In a share the client cannot click it, and a control left up for a whole
+  slide would advertise the part the CSM skipped for time.
+- At rest it is not there, so it never reads as an eyebrow or a banner
+  over the slide's title (8.3: only the owner line sits above a title).
+- It now pairs truly with the nav pill: both are chrome, the pill on the
+  window's foot centre line, the control on the canvas's head centre line,
+  waking and hiding together.
+- On the presenter's own screen Zoom docks its floating share controls at
+  the top centre by default, over this place. V and the notes window's
+  "Play on screen" are the main ways in; the control serves a mouse that is
+  already up there.
+
+The client hears about the video from the CSM, and gets its link in the
+recap. The notes window's Video block ends with "If you skip this, say the
+video is in your group." on every slide with a filled slot (21.4).
+
+**Look.** Quiet text, not a button shape: "Watch:" first, unlined, then
+each video as its own item: a 16 px play triangle (an SVG path, ink-2),
+the title in Geist 500 24 ink-2 (Plex 500 26), " · " and the length in the
+same face, tabular (in Arabic the length is in words, Plex 500 26,
+`CONTENT-AR.md` decision 13), and a 2 px `--dk-line-strong` hairline under
+the item, as onboarding's launch control (`.dkc-launch`). One grammar for
+one video and for two (the visual review, 2026-10-20: "Watch:" inside a
+single item's hairline, and Mono beside Geist reading as "2 : 40", are
+gone). No fill, no box, no pill, no thumbnail. No length on file:
+the title alone. Titles fit one line by rule (the registry's are at most 32
+characters, a typed title at most 40).
+
+**Two slots on one slide** (slide 6 of onboarding): "Watch:" once, then the
+two items, each with its own triangle and its own hit area, 40 px apart,
+exactly as one slot reads with one item.
+V opens the first.
+
+**States**
+
+| State | What shows |
+|---|---|
+| Empty (no recording in the deck's language or for any language) | Nothing, awake or not. No placeholder, no "coming soon" on the client's screen |
+| Videos not read yet, the read failed, or the row was refused | Nothing on the canvas; the notes window says which (21.4) |
+| Not shown for this client (done with you) | Nothing |
+| Filled, chrome asleep | Opacity 0, still in the tab order |
+| Filled, chrome awake | The control as above, fading in and out with the chrome |
+| Hover | The hairline turns `--dk-edge` in 120 ms and the text turns ink. Nothing grows: unlike `.dkc-launch`, a size change would move a centred control |
+| Focus-visible | Shown at once, with no fade, and the 3 px teal outline, 4 px offset (15.2) |
+| Active (pressed) | Text and hairline in ink for the press |
+| Disabled | Never: an empty slot has no control |
+| Its video open | Under the player's veil. On close, focus returns to it if it opened the player, else to the canvas |
+
+The control lets go of focus after a mouse click (12.1), so Space moves the
+deck once the player is closed. Its accessible name is "Watch the video:
+{title}, {length}" in the deck's language. It shows in prep's preview on
+hover, and in one chrome-awake shot per deck in `deck-shots.mjs`.
+
+### 21.3 The player
+
+- **Opens** from the control, with V (the slide's first filled slot), or
+  from the notes window's "Play on screen". It is a dialog on the canvas,
+  above the slide, the rail and the count: `--dk-deep`, opaque, over the
+  whole canvas (no blur), the slide under it `inert`. Opaque since the
+  visual review: the 0.97 veil left the slide's title a faint ghost under
+  the player's head, and nothing under the player is meant to be read.
+- **Geometry.** A head line at y 64 to 112: the title (Geist 600 30 ink,
+  Plex 600 32) from x 240, then the length (500 24 ink-2, tabular); at x 1680, on
+  the end, "Close" alone, in the control's quiet text style. No key hint on
+  the canvas: the notes window says which keys close it. The frame: 1440 x
+  810 (16:9) at x 240 to 1680, y 144 to 954, a `--dk-panel` ground, a 1 px
+  `--dk-line-strong` edge and a 16 px radius, no shadow (only the phones
+  carry one), so the frame is visible on the veil before the provider
+  paints and in every state below. A portrait recording letterboxes inside
+  the provider's own player.
+- **Focus.** `role="dialog"`, `aria-modal="true"`, labelled by the title.
+  On open, focus goes to the dialog itself (`tabindex="-1"`), not into the
+  player, so Esc and the deck's keys still reach the deck; Tab reaches the
+  player, then Close.
+- **The frame.** The `src` is the server's embed address (`VIDEOS.md`), and
+  only the deck adds the provider's autoplay (YouTube, Vimeo, Wistia) and,
+  for YouTube, its `origin`, through `URL` and `searchParams`; prep's check
+  never autoplays. `sandbox="allow-scripts allow-same-origin
+  allow-presentation"`: no popups, no top navigation and no forms, so
+  nothing in a player can open a tab in the shared window or move the deck.
+  `allow="autoplay; fullscreen; picture-in-picture; encrypted-media"`: no
+  camera, microphone, location or clipboard.
+  `referrerpolicy="strict-origin-when-cross-origin"` (Vimeo and Wistia check
+  the embedding domain), `title` the slot's title. `allow-same-origin` is
+  safe only because every allowed host is another origin than the
+  cockpit's; the server never stores a cockpit address. The cockpit's CSP
+  names in `frame-src` the five embed hosts plus the hosts the app already
+  frames (Meta previews, the ClickUp form), exactly as `VIDEOS.md` 6 gives
+  it, so a link that slipped past the server still could not be framed.
+- **Closing:** Esc, V again, "Close", a click on the veil around the frame,
+  or "Close the video" in the notes window. A deck move key (→ ← Space
+  PageDown PageUp, a clicker) closes it and does nothing else: one press,
+  one change. Esc never leaves the deck (15.1). Once the CSM clicks inside
+  the player, the player has the keyboard (another origin's frame keeps its
+  keys); a click on the veil or "Close" hands the keys back. The notes say
+  so.
+- **States inside the frame**
+
+| State | When | What shows |
+|---|---|---|
+| Loading | From opening until the frame's `load` event, or the provider's ready message, whichever comes first | The frame's ground with "Loading the video" (24 ink-2, centred), shown only after 400 ms so a quick load never flashes it. No spinner: nothing loops on the canvas (1) |
+| Ready | The frame's `load` event fired, for every provider (a ready message only ends Loading sooner) | The provider's own player and its own controls (real, not redrawn), shown at once |
+| Playing | The provider's play event: YouTube state 1, Vimeo `play`, Wistia's play | The same; the notes window now says "Playing on screen" |
+| Didn't load | No `load` event within 15 s of opening, or the browser is offline | The frame is removed; its ground says "The video didn't load. We'll send you the link in the group." (30 ink, centred, balanced lines at most 1100 wide, so no word is left alone on a line) |
+| Can't play here | Only an explicit error from the provider: YouTube `onError` 100, 101 or 150 (removed, private, embedding off), Vimeo `error`, or Wistia's error | "This video can't play here. We'll send you the link in the group." |
+| Loaded, silent | The frame loaded and its provider sends nothing more (Loom and Drive always; any provider whose messages don't arrive) | The provider's own player stays, with its own error screen if it has one. Nothing is replaced |
+
+  A missing message is never read as a block: a slow connection, or a
+  provider that posts ready only after its own handshake, would otherwise
+  show the client a false failure over a player that works. Loom and Drive
+  cannot report a block at all (their sign-in or no-access page loads like
+  a video); prep's "Check it plays" (21.5) is the guard for them. Messages
+  are read only from that player's own frame and that provider's origin,
+  and the deck posts to a provider only with its exact origin, never `"*"`
+  (`VIDEOS.md` 6). The two failure lines speak to the client and promise
+  only the link, which the recap carries anyway; the notes window tells the
+  CSM what to do.
+- **Motion:** the veil and the head arrive in `--dk-cut-ms` (opacity) and
+  leave in 150 ms; with reduced motion, at once. No scale, no slide-in.
+- **On Zoom:** video reaches the client in jumps unless the share has
+  "Optimize for video clip" ticked, and left ticked it blurs the shared
+  slides. The notes window says to tick it on the first play of the call
+  and to untick it when that video closes (21.4).
+
+### 21.4 The notes window
+
+A "Video" section on each slide that has a slot, after the talk track and
+the temp check, before "Only you see this". Cockpit UI (12.2), English.
+Each block is headed by the video's title alone: the section's label
+already says "Video" (the visual review, 2026-10-20).
+
+```text
+| Why we test so many ads                                             |
+| Recorded · any language · 2:40                                      |
+| [ Play on screen ]  [ Copy link ]                                   |
+| If you skip this, say the video is in your group.                   |
+```
+
+| State | What it says | Actions |
+|---|---|---|
+| Recorded | "Recorded · {English, Arabic or any language} · {m:ss}" (no length: left out), then "If you skip this, say the video is in your group." | Play on screen · Copy link ("Copied" for 2 s; it copies the link people open) |
+| Opening (the deck's player is loading) | "Opening on screen" | Close the video |
+| On screen, not started (ready, no play event yet; always for Loom and Drive, which never report one) | "On screen, not started. Click play in the deck window." | Close the video |
+| Playing (only after the provider's play event) | "Playing on screen" | Close the video |
+| While the player is open | "Esc, V or Close closes it; a deck key closes it too." (muted, under the state line) | |
+| First play of the call (or the first video already open when the notes window joins) | "Zoom: while it plays, tick 'Optimize for video clip' in the share's More menu. Untick it after, or the slides blur." | |
+| When that first video closes (once per call) | "Untick 'Optimize for video clip' now." | |
+| Not recorded | "Not recorded yet." (muted) | None here; prep adds it |
+| Other language only | "Not recorded in Arabic yet. The English one:" | Play on screen · Copy link |
+| Not shown for this client | "Done with you: not shown, because this video shows how we work done for you." or "Not shown until Mahara OS is approved for this client." | |
+| Refused (the row failed the browser's shape check, `VIDEOS.md` 7) | "This video's link was refused. Save it again in prep." | |
+| Read failed | "Videos could not be read: {reason}. The deck shows none." (bad tone) | |
+| Didn't load on screen | "Didn't load on screen. Check the connection and press Play on screen again, or copy the link into the group." | Play on screen · Copy link |
+| Can't play on screen | "The provider says it can't play here (its privacy or sharing setting). Copy the link into the group, and fix the sharing in prep." | Copy link |
+
+Two slots on one slide: one block each. V in the notes window plays the
+slide's first slot on screen, forwarded as the other deck keys are. The
+deck window reports the player's state back (`video-state`, 21.9), so the
+notes window says what the client is seeing, and never "Playing" before the
+provider says so: an unmuted autoplay started from another window can be
+refused, and Loom and Drive never start on their own.
+
+**The recap, wherever the call ends** (the spec review). The launch recap
+("Copy for the group": the six jobs, the testing line, the course line, the
+videos) is on slide 10's notes, on slide 13's notes, and on the closing
+panel below; the onboarding deck's "Copy links for the group" is on slide
+6's notes and on the closing panel.
+
+**When the deck closes.** The deck window posts `{type: "closed"}` on
+`pagehide` ("Back to {client}", or the window closed). The notes window
+then shows one panel in place of the talk track: "The deck is closed." and
+the deck's recap button, plus "Copy reply" on the launch deck. Nothing of it
+reaches the shared window, whose "Deck closed" screen stays neutral (12.1).
+
+**Copy reply** (slide 4, and prep's slide 4 panel): copies one line for
+pushback in the group, in the deck's language, chosen by the client's goal
+(`CONTENT.md` L3: goal shown, held back, or none). "Copied" for 2 s.
+
+### 21.5 Prep: the Videos section
+
+A section under "The whole deck" in the prep aside (12.3), listing every
+slot of this deck in slide order, whether it shows for this client or not.
+
+```text
+| Videos for the launch deck                                              |
+| Shared by every client's deck: a link saved here shows on every launch  |
+| deck. Mahara's own recordings only. Nothing that shows another client.  |
+| ---------------------------------------------------------------------- |
+| 2 · How it works, start to finish   Not recorded yet   [ Add a link ]   |
+|     Done with you: not shown for this client.                           |
+| 4 · Why we test so many ads         Not recorded yet   [ Add a link ]   |
+| 9 · The Mahara OS guide                                                 |
+|     English  fast.wistia.net/embed/iframe/lxlse6ckhf · 4:37             |
+|              [Check it plays]  [Clear]                                  |
+|     Arabic   fast.wistia.net/embed/iframe/hyuxh7skjv · 4:45             |
+|              [Check it plays]  [Clear]                                  |
+|     + Add a link for any language                                       |
+| ---------------------------------------------------------------------- |
+| A video in their own thank-you or booking message is set on slides 2    |
+| and 5.                                                                  |
+```
+
+- **An empty slot is one row** (the spec review): "{slide} · {title}   Not
+  recorded yet   [Add a link]". No fields until the CSM asks for them:
+  recording videos is not this client's prep, and a column of open forms
+  would read as homework and push "The whole deck" down. "Add a link" opens
+  the fields under the row and moves focus to Link. It stays on the title's
+  row whatever the title's length: the title wraps in its own cell (the
+  visual review, 2026-10-20: the button had jumped to a row of its own).
+- **Recorded rows,** one per recorded language, with its host and id, its
+  length when there is one, "Check it plays" and "Clear". One line: a long
+  link is cut in the middle (its host and its end both show, the whole
+  link in the tooltip), and the length is its own item, never wrapped
+  away from the link. "+ Add a link"
+  opens the fields for a language still free.
+- **Fields,** labels above (Hallmark's forms): Link (the placeholder shows
+  the format, "https://www.loom.com/share/…"), Language (Any, English,
+  Arabic; the default is the deck's language when it is free, else Any),
+  Length (m:ss, optional; checked in the browser: "Type the length as
+  minutes and seconds, like 2:40."), Title (optional, at most 40
+  characters; "Blank: the slot's own title, in the deck's language.").
+- **The revision** sent with a save or a clear is the read's for that slot
+  and language, or 0 when the read left it out (`VIDEOS.md` 4). A row the
+  browser refused keeps its revision from the read, so "Save it again in
+  prep" saves over the row the server still holds instead of conflicting.
+- **Save,** all eight states: default; hover; focus-visible; active;
+  disabled while the link is empty; "Saving…" in flight; on an error, the
+  server's sentence replaces the hint under the field it is about
+  (`aria-invalid`, `aria-describedby`; the field comes from `VIDEOS.md` 4's
+  table), and what was typed stays; on success, "Saved" for 2 s, the row
+  shows as recorded, and the hub posts `{type: "videos"}` so the deck and
+  the notes window read the videos again. An action keeps its name: Save,
+  Saved; Clear, Cleared.
+- **Check it plays:** the player inline under the row (352 x 198, no
+  autoplay, the same sandbox, reading only its own frame's messages), with
+  "If it asks for a sign-in or says you need access, change its sharing:
+  'Anyone with the link' on Loom and Drive, embedding allowed for
+  cockpit.maharamedia.com on Vimeo." under it. This is the check for Loom
+  and Drive, which cannot report a block (21.3).
+- **Clear:** at once, no confirm, then "Cleared. Undo" for 10 s; Undo saves
+  the same link, language, length and title again with revision 0 (a new
+  revision with its own audit row).
+- **Someone else saved first** (`40001`): the server's sentence on the row,
+  and the section reads the videos again.
+- **Refused row:** "This video's link was refused. Save it again in prep."
+  on the row, with "Add a link" open for the same language.
+- **Read failed:** "Videos could not be read: {reason}." with "Try again",
+  and no fields, so an unread slot never looks unrecorded.
+- **Readiness:** a slot never counts in "8 of 11 ready" and never turns a
+  slide amber. A deck without videos is complete.
+- `welcome_video` and `booking_video` stay on the journey and form
+  controls, worded as they are; the section's foot line points there.
+
+### 21.6 Keys
+
+| Key | Action |
+|---|---|
+| V | Play the slide's first filled video, or close the player |
+| Esc | Close the player first, then a panel, then the overview; never leave the deck |
+| → ← Space PageDown PageUp, with the player open | Close the player, nothing else |
+
+`keyCommand` gains a "video" command, and the player counts as an open
+panel, so the engine's existing Esc rule covers it. Typing in a field is
+still never caught.
+
+### 21.7 Tokens
+
+| Piece | Tokens |
+|---|---|
+| A tile | `--dk-panel` fill, 2 px inset `--dk-line-strong` edge at full opacity, 12 px radius; off: toggle and mark at 45% |
+| A lit tile | a 2 px `--dk-teal` edge layer over the off edge; toggle track `--dk-teal`, knob `--dk-deep` |
+| A tile's format mark | `--dk-ink-2`, 24 px, 12 px in from the top start corner |
+| The next round, ahead | 2 px `--dk-line-strong`, dash 2 gap 8, no fill |
+| The client's style change | 2 px `--dk-ink` edge and leader, label in ink |
+| The next round, made | `--dk-panel-2` fill, solid `--dk-line-strong` edge |
+| The check's one line | ink text, `--dk-ink-3` middots |
+| The video control | ink-2 text and triangle, 2 px `--dk-line-strong` hairline, `--dk-edge` on hover; opacity follows the chrome |
+| The player | `--dk-deep` (opaque) over the canvas, `--dk-panel` frame ground, 1 px `--dk-line-strong` edge, 16 px radius |
+
+No new duration and no new colour: every value is 3.1 or 3.2. (The
+`--dk-settle-ms` of the first plan is gone with its timer.)
+
+### 21.8 The critique, and the slop test
+
+The template answer for "set creative expectations" is a "What you control /
+What we control / What we test" grid, or a do and don't table with ticks.
+The plan rejects both: the field shows the mechanism happening instead of
+listing it, and the deal around it is said one stop at a time. The template
+answer for videos is a grid of thumbnails with play buttons, or a modal with
+a spinning loader. The plan uses one line of quiet text that is there only
+for the presenter's hand, a still loading line, and nothing on the client's
+screen when a slot is empty.
+
+Hallmark gates these could fail, and how they pass:
+- **No invented numbers (46):** the field has no count and no percentage,
+  and is tagged Illustration; the caption that said "20 versions" is gone.
+- **No re-drawn chrome (47):** the player is the provider's real one in a
+  frame; the field is not drawn as Ads Manager.
+- **Locked tokens (48):** 21.7.
+- **No italic headings, no eyebrows, no capitals:** the H3s are sentence
+  case, roman; the video control is not an eyebrow, since it is not there
+  at rest.
+- **Motion:** `transform` and `opacity` only, stepped by the presenter, no
+  timer, nothing loops, reduced motion set for every moving part.
+- **Eight states:** the video control (21.2) and prep's Save (21.5).
+- **Structural variety:** as in 21.1.
+
+Pre-emit, these pieces: `P5 H4 E4 S5 R4 V4`. Execution stays at 4 until a
+real video plays over a real Zoom share at 1280 and 1366 wide (17.12).
+
+### 21.9 For the build
+
+- `content.ts`: `LAUNCH.test` gains `job`, `volume`, `input`, `round`,
+  `check` and `content`, and loses `page.name`, `page.copy`, `page.foot`,
+  `open.name`, `open.chips`, `footer`, `proof.name` and `proof.caption`
+  (`open.pick`, `open.pickNone` and `open.approve` stay; `fixed.copy` is cut
+  to its first sentence); `test.input.copy` names a new price;
+  `O.next.approval` and `O.next.testLine` change; `L_NOTES["creative-
+  freedom"]` takes `CONTENT.md`'s notes, with `{goalAsk}` picked from the
+  three variants and `{goal}` filled from `d.launch.goal90`, and their
+  Arabic; L4's notes gain their first line; O7's notes gain theirs; L11's
+  and L13's notes change; the "Copy reply" lines (three, both languages);
+  the recap's testing line; `LAUNCH.training` gains the screenshot tag and
+  alt text; new `VIDEO` strings (the control, the Arabic lengths, the
+  player's three lines, "Close", the recap's heading).
+- `launchDeck.tsx`: `CreativeFreedom` becomes the two columns with the
+  field from stop 1, five stops, and the five stop names; `SponsoredPhone`
+  leaves slide 4; `mockups/Cards.tsx`'s `TestTiles` becomes the field
+  (`AdField`, with the next round, the layered edges and toggles, and the
+  24 px marks); `PROOF_ID` and its toggle go; the slide's `missing` gains
+  the red-lines count; the check is one line.
+- `launchExpect.tsx`: `Training` has three stops (20.5), with the two
+  masked screenshots in `src/present/assets/`.
+- New `videos.ts` (the registry `VIDEO_SLOTS`, twelve slots; the language
+  lookup, the mode rule, the length text, the recap lines, the provider
+  origins and message readers), `VideoControl.tsx` and `VideoPlayer.tsx`,
+  both drawn by `DeckShell` beside the count, the control inside the
+  chrome's wake state; `engine.ts` gains "video".
+- `channel.ts` gains `{type: "video", slot: string | null, lang}` (notes to
+  deck), `{type: "video-state", slot, phase}` (deck to notes; `phase` is
+  `loading`, `ready`, `playing`, `failed`, `blocked` or `closed`, and
+  `playing` only after the provider's play event), `{type: "videos"}` (read
+  again) and `{type: "closed"}` (the deck window's `pagehide`). None of it
+  goes in `LiveState`: a reloaded deck never reopens a player on its own,
+  and autoplay needs the press.
+- `sources.ts`, `load.ts`, `useDeckModel.ts`: the three calls, the stricter
+  row shape and the read at load (`VIDEOS.md` 7).
+- `NotesWindow.tsx`: the Video section, its states and the skip line; the
+  closing panel; "Copy reply" on slide 4; the launch recap on slides 10 and
+  13. `launchControls.tsx` and `controls.tsx`: `partText` gains the testing
+  line and ends with the recap's video block; `groupLinks` ends with it.
+  `PrepView.tsx`: the Videos section (empty slots as one row) and "Copy
+  reply" in slide 4's panel.
+- `decks.ts`: `TARGET_MINUTES.launch` stays 28.
+- `vercel.json` (client success): the header value exactly as `VIDEOS.md`
+  6 gives it.
+- Tests: the copy test (the new strings; no count on the field; the recap
+  block left out when no slot is filled; the testing line in the recap; an
+  Arabic length never m:ss; `VIDEO_SLOTS` equals the migration's twelve;
+  the unmasked `pcm-*` names absent from the client success app); the
+  engine (V, Esc, a move key closing the player; a stubbed Wistia frame
+  that loads and sends nothing stays up, and is never shown as failed or
+  blocked; a message from another frame or origin is ignored); `videos.ts`
+  (lookup order, the mode rule, the lengths, the goal variants, the
+  recorded provider samples); the PGlite test (`VIDEOS.md` 8).
+- `deck-shots.mjs`: slide 4's five stops in both languages, done for you
+  and done with you, stop 3 with five red lines and the stamp; training's
+  three stops; O7 stop 1 with three red lines (9.7); one chrome-awake shot
+  per deck with a filled slot, and onboarding slide 6 with two; the
+  player's loading, didn't-load and can't-play states with the frame
+  stubbed, so no provider loads during shots.
+- Section 17 has the checks only production and a real call can make
+  (17.11 to 17.15).
+
+### 21.10 Change log: the spec review (2026-10-20)
+
+The findings on this section's first version, each applied unless the line
+says otherwise, with the CEO's two requests made during the build. The list
+reached this revision cut off inside its thirty-sixth finding; how that one
+was read is at its row.
+
+| # | Finding | Applied in |
+|---|---|---|
+| 1 | Seed the calendar-blocking Loom (the CEO) | `VIDEOS.md` 6 (six seeds, with lengths), 8; `CONTENT.md` L10, the registry, the Gamma table, open question 30; `CONTENT-AR.md` point 9 |
+| 2 | Show the Project Closing Mastery screenshots, masked (the CEO) | `CONTENT.md` copy rule 11, L8; 16.2, 20.5, 20.13 |
+| 3 | O7 sets the small check before any ad exists | `CONTENT.md` O7 (approval line, testing line, notes), L3's intro; 9.7's fit check |
+| 4 | A slot on O7 | `onboarding:testing`: the registry, `VIDEOS.md` 3, 8 |
+| 5 | The agreement in writing; the handle points to it | The recap's testing line (`CONTENT.md` L10, L13); L3's notes |
+| 6 | Warmth around the handle | L3's notes (opener, close, way out, "Copy reply"); 21.4, 21.5 |
+| 7 | Three goal variants | `CONTENT.md` L3, the data map; `CONTENT-AR.md` L3 |
+| 8 | Why the check stays small | L3 stop 4's notes |
+| 9 | "Off-brand" is no longer subjective | L3 stop 4's notes: red lines, or their name, logo or colours |
+| 10 | The guard rail before the phones | `CONTENT.md` L4's first note |
+| 11 | A slot on L11 | `launch:first-90-days`: the registry, `VIDEOS.md` 3, 8 |
+| 12 | The recap without reaching L10 | L13's notes; 21.4's closing panel |
+| 13 | A new price among the inputs; does the team ask first? | L3 stop 3; open question 34 |
+| 14 | The CEO's contrast in stop 1's notes | L3's notes (the on-screen copy unchanged) |
+| 15 | No timer: "all on" is a resting stop | 21.1 motion; 21.7 (`--dk-settle-ms` gone) |
+| 16 | The video control is chrome | 21.2; 12.1; the skip line in 21.4 |
+| 17 | No false "can't play" | 21.3 states; the engine test in 21.9 |
+| 18 | Slide 4 opens on the field, not a phone | 21.1; 21.9 (`SponsoredPhone` leaves the slide) |
+| 19 | A tile's edge never fades | 21.1, 21.7 |
+| 20 | Format marks at 24 px ink-2 | 21.1, 21.7, with the fallback if they crowd |
+| 21 | The check is one line, not a stepper | 21.0, 21.1, 21.7 |
+| 22 | The stamp at the words column's end edge | 21.1 |
+| 23 | The player's frame is visible on the veil | 21.3, 21.7 |
+| 24 | No "Esc" on the canvas | 21.3; the notes window line in 21.4 |
+| 25 | Untick "Optimize for video clip" | 21.3, 21.4 |
+| 26 | "Playing" only after the play event | 21.4; the `ready` phase in 21.9 |
+| 27 | An empty slot is one row in prep | 21.5 |
+| 28 | The CSP keeps the frames the app already has | `VIDEOS.md` 6 (the exact header value); 21.3; 17.11 |
+| 29 | Six seeds, six seed audit rows, the lengths | `VIDEOS.md` 6, 8; `CONTENT.md` open question 30 |
+| 30 | The PGlite test loads the gate and counts the new functions | `VIDEOS.md` 8 |
+| 31 | The revision is required; 0 means "I saw it empty" | `VIDEOS.md` 4, 7, 8; 21.5 |
+| 32 | Null arguments get sentences; one slot list | `VIDEOS.md` 3, 4, 8 |
+| 33 | The link parse, exactly | `VIDEOS.md` 3, 8 |
+| 34 | Loom title slugs; Drive's `resourcekey` | `VIDEOS.md` 3, 8 |
+| 35 | A stricter row shape in the browser | `VIDEOS.md` 7; the refused state in 21.4, 21.5 |
+| 36 | Messages from a player (cut off after "The outbound Y…") | Read as: a message is credited to a player only when it comes from that player's own frame (`event.source`) and its provider's origin, and outbound messages (YouTube's `listening` handshake, Vimeo's `addEventListener`) name the provider's exact origin, never `"*"`. `VIDEOS.md` 6; 21.3; the engine test in 21.9 |
+
+**Where a finding was applied differently, and why**
+- **The read takes its deck** (32). The finding asked every function to
+  refuse a null deck, and the read used null for "both decks". No window
+  needs both (the deck, the notes window and prep each read their own), so
+  the read now requires its deck like the others, and `readDeckVideos`
+  takes it.
+- **The skip line is said once** (16). "If you skip this, say the video is
+  in your group." ends the notes window's Video block on every slide with a
+  filled slot, instead of being copied into each slide's notes: one home,
+  and it never shows where there is no video to point to.
+- **"Copy reply" is in prep too** (6), because pushback in the group comes
+  after the call, when the notes window is closed.
+- **Training is three stops** (2): the classroom, the lesson, then the
+  statements. Two screenshots side by side at the column's width would be
+  unreadable on a share, and the slide ends on the ask.
+- **`cockpit_csm_deck_video_json` is a definer** (30). The finding's
+  exemption list named the three `IMMUTABLE` helpers; the row-to-JSON
+  helper is `STABLE` and was not named, so it is `SECURITY DEFINER` like the
+  audit function, revoked from every role, and the census's definer rule
+  holds for it unchanged.
+- **Every sentence the video functions raise ends with a full stop,**
+  including "Choose the onboarding or the launch deck.", which the decks
+  migration raises without one. They are new functions; prep shows them as
+  sentences.
+- **The clear's conflict says "clear it again"** where the save's says
+  "save again", so the sentence names the action that failed.
+
+### 21.11 Build notes (the frontend, 2026-10-20)
+
+Where the build set something differently from 21.1 to 21.9, and why. The
+shots are in the run's `cv-frontend` folder.
+- **The red lines' panel head** is a label (600 24 ink, Plex 600 26), not
+  the 30/700 column head: under the stop's own H3 it made two headings
+  stacked, and five red lines with the stamp did not clear y 892. The red
+  lines stay the stop's one primary. The panel is `--dk-leak-soft` as 21.1
+  says; the lines are 30/1.25 (Arabic 30/1.4) with 2 px between them.
+- **O7 in Arabic** (9.7): the plant made the test's line three lines, so
+  with three typed red lines and a booked Blueprint the date met the slide
+  count. In Arabic only, the statements start 48 px under the title (was
+  64), the red lines are 30/1.4 with 4 px between them, and the band's rule
+  is 36 px above it (was 44). English is unchanged and fits.
+- **Media marks never mirror.** 21.1 mirrors the format marks in RTL; a
+  play triangle points right in every language, so the field's marks and
+  the video control's triangle stay as drawn. The toggles, the grid and the
+  leader mirror.
+- **Training's "What it teaches"** keeps its four words on one line: with
+  the list column at 864 (20.5) the line's steps are 204 px apart (was 220)
+  and the words do not wrap ("The close" broke onto two lines).
+- **The players' messages** were read from real frames: `VIDEOS.md` 6 has
+  the shapes, and a Vimeo `PlaybackError` is not read as a block.
+- **A notes window opened mid-video** asks the deck (its `hello`) and is
+  told what the player is doing, so it never offers "Play on screen" over a
+  video already up.
+
+### 21.12 The fixer's round (2026-10-20): every slide to at least 4
+
+The score round's findings, as built. Each line is the change and why.
+
+**Order.** Creative freedom is slide 3 and the ads slide 4 (they swapped).
+The coach's point, which the CEO adopted, is to set the guard rails before
+the client sees the ads: the first look is when the small-change requests
+start. The ads slide's notes now point back ("As we just agreed"), and
+creative freedom's stop 4 says "On the next slide you'll see your ads". The
+`L3` and `L4` labels across these files follow the new order.
+
+**Journey.**
+- Stop 4's five dots (and L6 stop 7's timeline) lead every row with its time
+  in bold: "Booked", "The day before", "Before the meeting" (the call to
+  confirm; it had no lead), "2 hours before"; the meeting, the list's end,
+  is bold whole (`.dkc-dot-when`, `.dkc-rem-end`).
+- Stop 6's fork: each end's node sits on its name's first line (the block
+  is lifted half the name's line, 19.5 px, 22.4 in Arabic), never between
+  two lines. Done for you the shared end's two-line line would push the
+  no-show to the slide's foot, so that end rises 50 px off the meeting's
+  line, the solid line bending up into it, and the fork still ends above
+  the foot. The name reads "Came, still thinking it over?".
+- The rebook mark is one drawing (`RebookMark`, `JourneyLanes.tsx`): a ring
+  with a circular arrow turning 270 degrees and a filled head. The open arc
+  read as a copyright sign at Zoom size. It is used in the lanes, the
+  fork and the portal's number-one job, and mirrors in Arabic.
+- Stop 7's outcome form is two crops in one frame (`OUTCOME_PIECES`): the
+  attended buttons, then where the deal stands, the empty band and the
+  rule between them cut out, drawn 732 px wide (it was 660), so its labels
+  read at about 16 px.
+
+**Creative freedom (21.1).**
+- Stops 1 and 2 carry no next round; the pair (words and field) sits 110 px
+  lower, in the middle of the room between the title and the rail, and
+  rises as the round arrives at stop 3. Stop 5's words sit in the middle of
+  the field beside them.
+- Stop 2: their pick, when marked, runs on tile 15 of the field (row 3,
+  column 3, one of the three that stay lit), its picture under the teal
+  edge, the star on its corner, from the switch-off on. The thumbnail
+  beside the words is gone. A real creative is never on a dimmed tile.
+- Stop 3's panel: its head at 28/600 in ink, its items at 26, and "You told
+  us:" and "Always" the same small label with 12 px above each.
+- Stop 4: "Facts · Prices · Claims" is the stop's hero (56/700), about 32 px
+  under the stop's name, with one small line under it ("You check these in
+  the group before an ad goes live."); the second small line is gone.
+
+**The form's thank-you stop.** A leader from just outside the phone, level
+with its thank-you message, into the band's start padding on the line that
+holds "5 minutes", which is underlined in teal: the band reads as the
+screen said large, not as a duplicate.
+
+**The call's stop 8.** The caption under the card is the stop's lead over
+it ("Everything our caller learned lands with you."), and the call card
+and the appointment move down 72 px together, into the middle of the room
+above the rail. Once the call has ended the clock is a length in the deck's
+digits (٤:٥١ in Arabic); while it runs it keeps Latin digits (13.4).
+
+**Partnership.** The pie's missing piece is dotted in ink-3 at 1.5 px (it
+was line-strong at 2), so the gap reads before stop 2 pulls it out. On the
+roads, the ad road's reasons sit on its own bends ("Meeting you for the
+first time" over its first crest, "Comparing you with others" under its
+third dip), fading in after the road draws; the line under its name is
+gone.
+
+**Training.** The lead says why ("Enquiries from ads are meeting you for
+the first time. This course is how you win them."); "Premium Projects
+Academy" is a small label over the list, on the tag's row, so the list and
+the picture still start level. Stop 1 rings Project Closing Mastery's tile
+(2 px teal, 7 px out) and draws one teal leader from the lit row, in at the
+screenshot's margin and along the gap between the tiles' rows, so it never
+crosses a tile. Stop 2 crops the lesson to its outline (to the first
+objection) and its title, the cut in the video's dark ground, about 1.3
+times larger.
+
+**Portal.** The title spans the slide on one line; the stop's words sit
+under it, the screen beside them. The phone stop stands the phone about
+840 px tall (a 440 x 778 film in its bezel and tag) at the end margin,
+beside the title. The screens are a step down and crisper
+(`brightness(0.9) contrast(1.12)`; the phone's still had its capture's haze
+lifted with a levels pass, since it is the client success app's own file).
+The overview's demo row masks "Lead quality" and the item after it with
+the screen's own white (`CropBox.masks`): the picture is the sales deck's,
+byte-pinned, so it is never edited. A dark-mode capture of the portal was
+asked for and is still open: it needs a sign-in to a demo workspace. The
+number-one job numbers its three taps in their rings.
+
+**Your part.** The three project pictures sit under "Keep your Drive folder
+fed", the job they illustrate. The calendar's dark cells are named once,
+in a key under the week ("Blocked", مسكّر); no cell carries a word. The
+reviewer's suggestion to move "Leave the ads running" into the middle
+column to balance it was not taken: it would put a week-to-week job under
+"After each meeting".
+
+**The first 90 days.** Every check-in after the first is one glyph, a small
+open diamond, whichever rhythm it falls on; the ringed diamond marks the
+look back at about 30, 60 and 90 days; the first is open at full size with
+its own words. The key has one line per glyph.
+
+**Good to know.** The title is "Good to know" (زين تعرفونه); the rows sit
+under two small heads, "Money" and "Messages", 30 px apart. The Arabic rows
+run at 30/1.5 so five rows still end above the count.
+
+**The notes window.** On a slide whose notes are led by two or more stops,
+the talk track is grouped under the stops' names, the current stop open
+and the others folded to their name (a click opens one). Creative
+freedom's pushback handle (`SlideNotes.push`, `pushAr`) sits under one "If
+they push back" disclosure that stays as the CSM left it across stops.
+
+**The player.** The shots' stubbed frame is painted in the deck's panel,
+#0e1a42 (it was #111, a second dark), so a stubbed frame sits in the same
+palette as the loading and failure states, which already show the frame's
+panel. A provider's own player paints its own ground.
+
+**Prep.** "Not recorded yet" sits under every slot's title, however short.
+
+
+### 21.13 The fixer's round, score round 2 (2026-10-20)
+
+Score round 2's findings, as built. Each line is the change and why; where
+it changes an earlier section, that section says so.
+
+**Journey.**
+- Stop 3's "5 minutes" carries the thank-you band's teal underline
+  (`.dkc-thanks-mark`, `fiveMinutes()`), so the promise reads the same on
+  both slides. The queue card names each row's own service and leaves a
+  row past the list without one (it repeated the first: المطابخ three times
+  in Arabic).
+- Stop 6: the words at the stage's top (y 284, as stop 3), the fork alone in
+  the `data-level` figure, level with "You meet" (6.4). It ends at y 968 in
+  Arabic (it ran to 1002, past the lanes' foot at 975).
+
+**Creative freedom (21.1).**
+- Stop 3's panel: heads "Never" and "Always" (the spec's pair); a line typed
+  on O7 carries "you told us" after it, 20 px in ink-3 (22 in Arabic); a card
+  line in the other script than the deck's goes under a third head, "From
+  your card" (من ملفكم), quoted as written (`redLineGroups()`); a typed line
+  later copied to the card shows once, as theirs. Prep's Do's & Don'ts
+  section says so in the Arabic deck.
+- Stop 5's words sit on stops 3 and 4's anchor: the centring that dropped its
+  name from y 255 to 493 is gone.
+- The stamp is set in the text face (Geist, ink-2), not the mono tags'.
+
+**The form's thank-you stop.** No leader: the band's highlight and its
+underlined "5 minutes" pair it with the phone's message; the leader's
+right-angle detour round the list was a second thing to follow.
+
+**The call's stop 7 (11.5).** The transcript goes; the reminders and the
+confirmation start level with the call card's top, and the card sits 72 px
+lower, where stop 8 keeps it, so it no longer jumps between the two. The
+reminders take 500 px (gap 48, the confirmation 620), so "Before the
+meeting · a call to confirm" (437 px at 26) stays one line.
+
+**Partnership.** In Arabic the roads sit 49 px lower (`[dir="rtl"]
+.dkc-routes`): the two-line Arabic title and its caption stand 49 px taller
+than the English, and the first crest's words were drawn on the caption.
+They now keep the English 33 px under it. "Comparing you with others" sits
+over the last crest (x 1130 to 1256, y 404): under the third dip it was
+nearer the referral road than its own bend.
+
+**Training.** Stop 1's leader runs from the lit course, level with its
+name, to the screenshot's edge and stops there; the 2 px teal ring alone
+marks the tile. Run on along the gap between the tiles' rows, it lay on the
+neighbouring tile's top edge (Offer Creation in English, Team & Operations
+in Arabic). The lead says "This course shows you how to win them."
+
+**Portal.** The Arabic overview masks the row after ملاحظاتك (x 0.6355 to
+0.7399 of the screen, the English mask's height), as the English ends at
+"Your feedback". The recorded call is drawn at 880 px (0.74 of its crop),
+by the stop's words, its tag on its own corner: the source's waveform was
+caught mid-draw, so at 1080 it read soft. The phone stop adds the install
+address under its words (small, ink-2) and stands the phone 400 px in from
+the end margin, its middle at about 60% of the width.
+
+**Your part.** The calendar week has three rows (eleven open slots, the day
+off three blocked hours) and its key sits on the "Day off" line at the
+week's start, so the first column ends at y 896 (it ran to 966).
+
+**The first 90 days.** The weeks between, there only on a weekly rhythm,
+are open diamonds edged in ink-3, so the axis shows both rhythms the key
+names without a new glyph.
+
+**Good to know.** Each money row's do-this is in ink inside its ink-2 line
+(`.dkc-know-act`).
+
+**Onboarding.** O3's Arabic reply hours run on a 560 px line. O7's testing
+statement is three lines: the ads' job at the body's size; the volume small,
+in ink-2; the ask small, in ink, over the list it fills; the list ends
+29 px above the band's rule with three red lines.
+
+**The chrome and the notes window.** "Back to {client}" is one run inside
+its button (the flex gap and the space read as two spaces). The notes
+window's video block leads with "If you skip this, say the video is in
+your group.", so the sticky Back/Next bar never covers it.
+
+**The shots.** `deck-shots.mjs` fails a run on any two runs of text in
+different blocks that overlap by more than 2 px anywhere on the slide (each
+run's line box taken in by a sixth of its height top and bottom), as well as
+on anything near the foot: the Arabic roads' collision passed because only
+the foot was checked.
+
+**Not taken.** Journey stop 5's calendar stays four hours: cropped to 4 to
+6 pm, its entry would leave the lit row's line, since the stage is set low.
+Training stop 3's statements stay at the list's top: level with the lit
+course they would run past the foot.

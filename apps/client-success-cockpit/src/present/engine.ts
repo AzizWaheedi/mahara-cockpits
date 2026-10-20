@@ -37,6 +37,7 @@ export type Command =
   | "lang"
   | "overview"
   | "notes"
+  | "video"
   | "close"
   | "none";
 
@@ -48,7 +49,7 @@ export interface KeyState {
   meta?: boolean;
   ctrl?: boolean;
   alt?: boolean;
-  /** What is open over the slide: a panel first, then the overview. */
+  /** What is open over the slide: a panel (the video player) first, then the overview. */
   panel?: boolean;
   overview?: boolean;
 }
@@ -71,9 +72,22 @@ export function keyCommand(s: KeyState): Command {
   if (k === "l" || k === "L") return "lang";
   if (k === "o" || k === "O") return "overview";
   if (k === "n" || k === "N") return "notes";
+  // V plays the slide's first recorded video, or closes the player.
+  if (k === "v" || k === "V") return "video";
   if (k === "Escape" || k === "Esc")
     return s.panel || s.overview ? "close" : "none";
   return "none";
+}
+
+/**
+ * A command while the video player is open (DESIGN 21.6): a move key closes
+ * the player and does nothing else (one press, one change); Esc and V close
+ * it; the rest are left to the deck.
+ */
+export function withPlayer(cmd: Command): Command {
+  if (cmd === "next" || cmd === "prev" || cmd === "first" || cmd === "last")
+    return "close";
+  return cmd;
 }
 
 /**

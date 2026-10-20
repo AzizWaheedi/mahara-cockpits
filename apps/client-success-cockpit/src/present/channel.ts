@@ -1,6 +1,6 @@
 import type { Lang } from "./content";
 import type { CallKind, Overrides } from "./deckData";
-import type { DeckKind } from "./sources";
+import type { DeckKind, VideoLang } from "./sources";
 
 /**
  * The shared deck and the CSM's notes window keep in step over one
@@ -114,7 +114,27 @@ export type DeckMessage =
       message?: string | null;
     }
   /** The notes window's own keys pressed there (P, S, D, M, A on the launch deck). */
-  | { type: "key"; key: string };
+  | { type: "key"; key: string }
+  /**
+   * Notes to deck: play a slot's video on screen (in that language's
+   * recording), or close the player (slot null). Never kept in LiveState: a
+   * reloaded deck never reopens a player, and autoplay needs the press.
+   */
+  | { type: "video"; slot: string | null; lang?: VideoLang }
+  /** Deck to notes: what the player is doing ("playing" only after the provider says so). */
+  | { type: "video-state"; slot: string; phase: VideoPhase }
+  /** A video was saved or cleared in prep: every window reads the videos again. */
+  | { type: "videos" }
+  /** The deck window closed (pagehide): the notes window shows the recap. */
+  | { type: "closed" };
+
+export type VideoPhase =
+  | "loading"
+  | "ready"
+  | "playing"
+  | "failed"
+  | "blocked"
+  | "closed";
 
 export type UploadPhase = "shown" | "saving" | "saved" | "failed";
 

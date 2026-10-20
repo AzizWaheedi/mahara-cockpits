@@ -23,7 +23,8 @@ import {
 import { type L, type Lang, LINKS, O } from "./content";
 import { dayOf, gulfToday } from "./dates";
 import { type LaunchData, launchData } from "./launchData";
-import type { DeckKind, DeckSources, LaunchAd } from "./sources";
+import type { DeckKind, DeckSources, DeckVideos, LaunchAd } from "./sources";
+import type { VideoRead } from "./videos";
 
 /**
  * One client's deck, every slot filled from its data with the fallbacks in
@@ -86,6 +87,9 @@ export interface DeckInput {
   booked?: Partial<Record<CallKind, string>>;
   /** The public link of an object in a public bucket (the verified logos). */
   publicUrl?: (bucket: string, path: string) => string;
+  /** This deck's video slots as read (null: not read), and why not. */
+  videos?: DeckVideos | null;
+  videosProblem?: string | null;
   now: Date;
 }
 
@@ -146,6 +150,8 @@ export interface DeckData {
   /** Facts only the CSM sees (the notes window and prep). */
   notes: string[];
   presentedAt: string | null;
+  /** This deck's video slots as read: null when not read, with the reason. */
+  videos: VideoRead;
   /** The launch deck's own slots (launchData.ts). */
   launch: LaunchData;
 }
@@ -675,6 +681,10 @@ export function deckData(input: DeckInput): DeckData {
     stage,
     notes,
     presentedAt: str(onboardingPrep.onboarding_presented_at),
+    videos: {
+      videos: input.videos ?? null,
+      problem: input.videos ? null : (input.videosProblem ?? null),
+    },
   };
   return {
     ...base,

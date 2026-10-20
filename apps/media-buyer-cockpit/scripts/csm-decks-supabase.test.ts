@@ -1,12 +1,15 @@
 /**
  * CSM decks backend (20261019120000_csm_decks.sql, docs/csm-decks/CONTENT.md
- * data map, DESIGN.md 10 and 12.3) on an isolated PostgreSQL with Supabase's
- * default privileges on, so a missing REVOKE opens the object here as it
- * would in production.
+ * data map, DESIGN.md 10 and 12.3) and its video slots
+ * (20261020120000_csm_deck_videos.sql, docs/csm-decks/VIDEOS.md 8) on an
+ * isolated PostgreSQL with Supabase's default privileges on, so a missing
+ * REVOKE opens the object here as it would in production.
  *
  * It stands on the real client gate (cockpit_csm_client_gate from 20261006c,
  * the seat rule from 20260927a, the roster tables from 20260927v), the real
- * name key (20261012c) and the canonical read-model tables (20260927s/w/x).
+ * client success seat gate (cockpit_csm_actor from 20260926m, which the video
+ * functions call), the real name key (20261012c) and the canonical read-model
+ * tables (20260927s/w/x).
  * Campaigns, ads, daily rows, HighLevel accounts, the editor's client cards,
  * the onboarding kit, the call store and the dialer's caller rows are cut-down
  * stand-ins with the live column names. Storage is a stand-in schema with RLS
@@ -17,6 +20,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import { actor, cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
 
 const FILE = "20261019120000_csm_decks.sql";
+const VIDEOS = "20261020120000_csm_deck_videos.sql";
 
 const CSM_A = "00000000-0000-4000-8000-0000000000a1"; // csm, Acme only
 const CSM_A2 = "00000000-0000-4000-8000-0000000000a2"; // csm, Acme only (a second seat)
@@ -244,9 +248,17 @@ beforeAll(async () => {
     ($1,'other',now()+interval '1 day',NULL,'booked',NULL),
     ($2,'blueprint',now()+interval '1 day',NULL,'booked',NULL)`, [A, B]);
 
+  // The seat gate the video functions call. plpgsql resolves a call only when
+  // it runs, so without it the videos file applies and every call fails.
+  await db.exec(cut(migration("20260926m_cockpit_csm_state.sql"),
+    /CREATE OR REPLACE FUNCTION public\.cockpit_csm_actor\(\)[\s\S]*?END \$\$;/, "csm actor"));
+  await db.exec("REVOKE ALL ON FUNCTION public.cockpit_csm_actor() FROM PUBLIC, anon, authenticated, service_role;");
+
   // Applied twice: the second run must change nothing and raise nothing.
   await db.exec(migration(FILE));
   await db.exec(migration(FILE));
+  await db.exec(migration(VIDEOS));
+  await db.exec(migration(VIDEOS));
 }, 30000);
 afterAll(async () => { await db?.close(); });
 
@@ -274,12 +286,16 @@ describe("tables, grants and the bucket", () => {
       "cockpit_csm_launch_object_allowed", "cockpit_csm_deck_sources", "cockpit_csm_deck_prep_read", "cockpit_csm_launch_ads_read",
       "cockpit_csm_launch_ad_get", "cockpit_csm_deck_prep_save", "cockpit_csm_launch_ad_reserve", "cockpit_csm_launch_ad_accept",
       "cockpit_csm_launch_ad_update", "cockpit_csm_launch_ad_remove", "cockpit_csm_launch_ad_stale", "cockpit_csm_launch_ad_purged",
+      "cockpit_csm_deck_videos_read", "cockpit_csm_deck_video_save", "cockpit_csm_deck_video_clear",
     ];
-    expect(fns.length).toBe(21);
+    // Plain IMMUTABLE helpers that read no table; every other function is a definer.
+    const notDefiners = ["cockpit_csm_deck_text", "cockpit_csm_deck_choice",
+      "cockpit_csm_deck_video_slots", "cockpit_csm_deck_video_slot_ok", "cockpit_csm_deck_video_parse"];
+    expect(fns.length).toBe(29);
     for (const fn of fns) {
       const name = fn.sig.split("(")[0].replace(/^public\./, "");
       expect(fn.config).toContain('search_path=""');
-      if (!["cockpit_csm_deck_text", "cockpit_csm_deck_choice"].includes(name)) expect(fn.definer).toBe(true);
+      expect(fn.definer).toBe(!notDefiners.includes(name));
       const can = async (role: string) => (await db.query<{ ok: boolean }>("SELECT has_function_privilege($1,$2,'EXECUTE') ok", [role, fn.sig])).rows[0].ok;
       expect(await can("anon")).toBe(false);
       expect(await can("service_role")).toBe(false);
@@ -803,5 +819,454 @@ describe("launch ads", () => {
     expect(s.launchAds.length).toBeGreaterThan(0);
     expect(s.launchAds.every((a: Row) => a.status === "ready" && a.taskId === A)).toBe(true);
     expect(JSON.stringify(s.launchAds)).not.toContain("request");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Video slots (20261020120000_csm_deck_videos.sql, docs/csm-decks/VIDEOS.md)
+// ---------------------------------------------------------------------------
+
+const SEED_BY = "migration 20261020120000_csm_deck_videos";
+const LOOM = "e2d83bffee614d9aa035d898d37d8989";
+const YT = "dQw4w9WgXcQ";
+const DRIVE = "1AbCdEfGhIjKlMnOpQrStUvWxYz_-0123";
+const HOSTS = "Paste a link from Loom, YouTube, Wistia, Vimeo or Google Drive.";
+const NO_VIDEO = (p: string) => `That ${p} link has no video in it. Copy the video's share link.`;
+const SAVE_CONFLICT = "Someone else changed this video just now. Check it, then save again.";
+const CLEAR_CONFLICT = "Someone else changed this video just now. Check it, then clear it again.";
+const LAUNCH_SLOTS = ["launch:start-to-finish", "launch:testing", "launch:call-team", "launch:winning",
+  "launch:portal-guide", "launch:calendar-hours", "launch:first-90-days", "launch:payments"];
+const ONBOARDING_SLOTS = ["onboarding:welcome", "onboarding:meta-access", "onboarding:whatsapp-calendar", "onboarding:testing"];
+
+type Video = { deck: string; slot: string; lang: string; url: string | null; title?: string | null; seconds?: number | null; revision: number | null };
+const SAVE_SQL = `SELECT public.cockpit_csm_deck_video_save(p_deck => $1::text, p_slot_key => $2::text, p_lang => $3::text,
+  p_url => $4::text, p_title => $5::text, p_duration_seconds => $6::integer, p_revision => $7::integer) r`;
+const CLEAR_SQL = "SELECT public.cockpit_csm_deck_video_clear(p_deck => $1::text, p_slot_key => $2::text, p_lang => $3::text, p_revision => $4::integer) r";
+const READ_SQL = "SELECT public.cockpit_csm_deck_videos_read($1::text) r";
+const saveArgs = (v: Video) => [v.deck, v.slot, v.lang, v.url, v.title ?? null, v.seconds ?? null, v.revision];
+const vSave = (who: string, v: Video) => one(who, SAVE_SQL, saveArgs(v));
+const vClear = (who: string, deck: string, slot: string, lang: string, revision: number | null) =>
+  one(who, CLEAR_SQL, [deck, slot, lang, revision]);
+const vRead = (who: string, deck: string | null) => one(who, READ_SQL, [deck]);
+async function failure(who: string | null, text: string, params: unknown[] = []): Promise<{ code: string; message: string }> {
+  await actor(db, who);
+  try {
+    await db.query(text, params);
+  } catch (e) {
+    const err = e as { code?: string; message: string };
+    return { code: err.code ?? "", message: err.message };
+  } finally {
+    await asOwner();
+  }
+  throw new Error(`Expected a refusal for ${text}`);
+}
+async function parse(url: string | null): Promise<Row> {
+  await asOwner();
+  return (await db.query<{ r: Row }>("SELECT public.cockpit_csm_deck_video_parse($1::text) r", [url])).rows[0].r;
+}
+async function parseFails(url: string | null): Promise<{ code: string; message: string }> {
+  await asOwner();
+  try {
+    await db.query("SELECT public.cockpit_csm_deck_video_parse($1::text) r", [url]);
+  } catch (e) {
+    const err = e as { code?: string; message: string };
+    return { code: err.code ?? "", message: err.message };
+  }
+  throw new Error(`Expected the parser to refuse ${url}`);
+}
+async function videoRow(deck: string, slot: string, lang: string): Promise<Row | undefined> {
+  await asOwner();
+  return (await db.query<Row>("SELECT * FROM public.cockpit_csm_deck_videos WHERE deck=$1 AND slot_key=$2 AND lang=$3", [deck, slot, lang])).rows[0];
+}
+const videoAudits = () => audits("cockpit_csm_deck_videos");
+
+describe("deck videos", () => {
+  test("the six seeds are there after the double apply, with their lengths and exactly six seed audit rows; a third apply keeps later changes", async () => {
+    await asOwner();
+    const seeded = (await db.query<Row>(`SELECT deck, slot_key, lang, provider, url, embed_url, title, duration_seconds, revision, updated_by, cleared_at
+      FROM public.cockpit_csm_deck_videos ORDER BY deck, slot_key, lang`)).rows;
+    expect(seeded).toEqual([
+      { deck: "launch", slot_key: "calendar-hours", lang: "any", provider: "loom", url: "https://www.loom.com/share/6aa67297dfcf421887f8961d3c1c7768",
+        embed_url: "https://www.loom.com/embed/6aa67297dfcf421887f8961d3c1c7768?hideEmbedTopBar=true", title: null, duration_seconds: 11, revision: 1, updated_by: SEED_BY, cleared_at: null },
+      { deck: "launch", slot_key: "portal-guide", lang: "ar", provider: "wistia", url: "https://fast.wistia.net/embed/iframe/hyuxh7skjv",
+        embed_url: "https://fast.wistia.net/embed/iframe/hyuxh7skjv?seo=false", title: null, duration_seconds: 285, revision: 1, updated_by: SEED_BY, cleared_at: null },
+      { deck: "launch", slot_key: "portal-guide", lang: "en", provider: "wistia", url: "https://fast.wistia.net/embed/iframe/lxlse6ckhf",
+        embed_url: "https://fast.wistia.net/embed/iframe/lxlse6ckhf?seo=false", title: null, duration_seconds: 277, revision: 1, updated_by: SEED_BY, cleared_at: null },
+      { deck: "onboarding", slot_key: "meta-access", lang: "any", provider: "loom", url: `https://www.loom.com/share/${LOOM}`,
+        embed_url: `https://www.loom.com/embed/${LOOM}?hideEmbedTopBar=true`, title: null, duration_seconds: 94, revision: 1, updated_by: SEED_BY, cleared_at: null },
+      { deck: "onboarding", slot_key: "welcome", lang: "any", provider: "wistia", url: "https://fast.wistia.net/embed/iframe/up0z6n691k",
+        embed_url: "https://fast.wistia.net/embed/iframe/up0z6n691k?seo=false", title: null, duration_seconds: 148, revision: 1, updated_by: SEED_BY, cleared_at: null },
+      { deck: "onboarding", slot_key: "whatsapp-calendar", lang: "any", provider: "loom", url: "https://www.loom.com/share/4ddc5519935f4ba8bdc7ac6f3667a701",
+        embed_url: "https://www.loom.com/embed/4ddc5519935f4ba8bdc7ac6f3667a701?hideEmbedTopBar=true", title: null, duration_seconds: 231, revision: 1, updated_by: SEED_BY, cleared_at: null },
+    ]);
+    const seedAudits = await videoAudits();
+    expect(seedAudits.length).toBe(6);
+    expect(seedAudits.every(r => r.action === "deck_video.seed" && r.before === null && r.source_app === "client-success"
+      && r.source_system === "supabase" && r.after?.updated_by === SEED_BY && r.metadata.op === "INSERT")).toBe(true);
+    expect(seedAudits.map(r => r.entity_id).sort()).toEqual(["launch:calendar-hours:any", "launch:portal-guide:ar", "launch:portal-guide:en",
+      "onboarding:meta-access:any", "onboarding:welcome:any", "onboarding:whatsapp-calendar:any"]);
+    // A CSM changes one seed and clears another; the file applied again keeps both as they are.
+    const titled = await vSave(CSM_A, { deck: "launch", slot: "calendar-hours", lang: "any", url: "https://www.loom.com/share/6aa67297dfcf421887f8961d3c1c7768", title: "Block your hours", seconds: 11, revision: 1 });
+    expect(titled).toMatchObject({ revision: 2, title: "Block your hours", changed: true });
+    expect(await vClear(CSM_A, "onboarding", "welcome", "any", 1)).toEqual({ deck: "onboarding", slotKey: "welcome", lang: "any", cleared: true, revision: 2 });
+    await asOwner();
+    await db.exec(migration(VIDEOS));
+    expect((await db.query<{ n: number }>("SELECT count(*)::int n FROM public.cockpit_csm_deck_videos")).rows[0].n).toBe(6);
+    expect(await videoRow("launch", "calendar-hours", "any")).toMatchObject({ title: "Block your hours", revision: 2, updated_by: "csm-a@tests.invalid" });
+    expect(await videoRow("onboarding", "welcome", "any")).toMatchObject({ url: null, embed_url: null, provider: null, duration_seconds: null, revision: 2 });
+    expect((await videoRow("onboarding", "welcome", "any"))?.cleared_at).not.toBeNull();
+    const after = await videoAudits();
+    expect(after.filter(r => r.action === "deck_video.seed").length).toBe(6);
+    expect(after.length).toBe(8);
+    // Put the welcome video back (prep's Undo: the same link with revision 0).
+    expect(await vSave(CSM_A, { deck: "onboarding", slot: "welcome", lang: "any", url: "https://fast.wistia.net/embed/iframe/up0z6n691k", seconds: 148, revision: 0 }))
+      .toMatchObject({ revision: 3, changed: true, durationSeconds: 148 });
+  });
+
+  test("the table: row security on, no policies, no browser grants, the service key reads only, and the audit trigger is on", async () => {
+    await asOwner();
+    const table = "public.cockpit_csm_deck_videos";
+    const has = async (role: string, privilege: string) =>
+      (await db.query<{ ok: boolean }>("SELECT has_table_privilege($1,$2,$3) ok", [role, table, privilege])).rows[0].ok;
+    for (const role of ["anon", "authenticated"])
+      for (const privilege of ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"]) expect(await has(role, privilege)).toBe(false);
+    expect(await has("service_role", "SELECT")).toBe(true);
+    for (const privilege of ["INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]) expect(await has("service_role", privilege)).toBe(false);
+    expect((await db.query<{ rls: boolean }>("SELECT relrowsecurity rls FROM pg_class WHERE oid=$1::regclass", [table])).rows[0].rls).toBe(true);
+    expect((await db.query("SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='cockpit_csm_deck_videos'")).rows.length).toBe(0);
+    const triggers = (await db.query<Row>("SELECT tgname FROM pg_trigger WHERE tgrelid=$1::regclass AND NOT tgisinternal", [table])).rows;
+    expect(triggers.map(t => t.tgname)).toEqual(["cockpit_csm_deck_videos_audit"]);
+    for (const who of [CSM_A, CEO, null]) {
+      expect(await refused(who, `SELECT * FROM ${table}`)).toContain("permission denied");
+      expect(await refused(who, `INSERT INTO ${table}(deck,slot_key,lang,updated_by,cleared_at) VALUES('launch','payments','en','x',now())`)).toContain("permission denied");
+    }
+  });
+
+  test("the gate: signed out, a seat without client success, a deactivated and an unconfirmed seat are refused with 42501; a CSM seat and the CEO read and save", async () => {
+    const before = (await videoAudits()).length;
+    const calls: [string, unknown[]][] = [
+      [READ_SQL, ["launch"]],
+      [SAVE_SQL, saveArgs({ deck: "launch", slot: "payments", lang: "en", url: `https://www.loom.com/share/${LOOM}`, revision: 0 })],
+      [CLEAR_SQL, ["launch", "portal-guide", "en", 1]],
+    ];
+    for (const [sql, params] of calls) {
+      const anon = await failure(null, sql, params);
+      expect(anon.code).toBe("42501");
+      expect(anon.message).toContain("permission denied");
+      for (const who of [BUYER, SALES, GONE, UNCONFIRMED])
+        expect(await failure(who, sql, params)).toEqual({ code: "42501", message: "Active client-success access required" });
+    }
+    expect((await videoAudits()).length).toBe(before);
+    expect(await videoRow("launch", "payments", "en")).toBeUndefined();
+    expect((await videoRow("launch", "portal-guide", "en"))?.revision).toBe(1);
+    // A slot belongs to no client: a seat scoped to one client reads and saves every deck's slots.
+    for (const who of [CSM_A, CSM_B, CSM_ALL, CEO]) {
+      const read = await vRead(who, "launch");
+      expect(read.slots).toEqual(LAUNCH_SLOTS);
+      expect(read.rows.map((r: Row) => `${r.slotKey}:${r.lang}`)).toEqual(["calendar-hours:any", "portal-guide:ar", "portal-guide:en"]);
+    }
+    const byCeo = await vSave(CEO, { deck: "launch", slot: "payments", lang: "en", url: `https://www.loom.com/share/${LOOM}`, revision: 0 });
+    expect(byCeo).toMatchObject({ revision: 1, updatedBy: "aziz@maharamedia.com", changed: true });
+    expect(await vClear(CSM_B, "launch", "payments", "en", 1)).toMatchObject({ cleared: true, revision: 2 });
+    const added = (await videoAudits()).slice(before);
+    expect(added.map(r => [r.action, r.entity_id, r.actor_email])).toEqual([
+      ["deck_video.save", "launch:payments:en", "aziz@maharamedia.com"],
+      ["deck_video.clear", "launch:payments:en", "csm-b@tests.invalid"],
+    ]);
+  });
+
+  test("null and unknown arguments get their sentence and code, never a raw violation; an unknown deck is the deck's sentence", async () => {
+    const before = (await videoAudits()).length;
+    const deckSentence = { code: "22023", message: "Choose the onboarding or the launch deck." };
+    const url = `https://www.loom.com/share/${LOOM}`;
+    // The read.
+    expect(await failure(CSM_A, READ_SQL, [null])).toEqual(deckSentence);
+    expect(await failure(CSM_A, READ_SQL, ["sales"])).toEqual(deckSentence);
+    expect(await failure(CSM_A, "SELECT public.cockpit_csm_deck_videos_read() r")).toEqual(deckSentence);
+    // Save and clear, in the order the checks run.
+    const cases: [Partial<Video>, string, string][] = [
+      [{ deck: null as unknown as string }, "Choose the onboarding or the launch deck.", "Choose the onboarding or the launch deck."],
+      [{ deck: "sales", slot: "nope" }, "Choose the onboarding or the launch deck.", "Choose the onboarding or the launch deck."],
+      [{ slot: null as unknown as string }, "That video slot is not in the launch deck.", "That video slot is not in the launch deck."],
+      [{ slot: "nope" }, "That video slot is not in the launch deck.", "That video slot is not in the launch deck."],
+      [{ slot: "welcome" }, "That video slot is not in the launch deck.", "That video slot is not in the launch deck."],
+      [{ deck: "onboarding", slot: "portal-guide" }, "That video slot is not in the onboarding deck.", "That video slot is not in the onboarding deck."],
+      [{ lang: null as unknown as string }, "Choose English, Arabic or any language.", "Choose English, Arabic or any language."],
+      [{ lang: "fr" }, "Choose English, Arabic or any language.", "Choose English, Arabic or any language."],
+      [{ revision: null }, "Read the videos again, then save.", "Read the videos again, then clear."],
+      [{ revision: -1 }, "Read the videos again, then save.", "Read the videos again, then clear."],
+    ];
+    for (const [change, saveSentence, clearSentence] of cases) {
+      const v: Video = { deck: "launch", slot: "testing", lang: "en", url, revision: 0, ...change };
+      expect(await failure(CSM_A, SAVE_SQL, saveArgs(v))).toEqual({ code: "22023", message: saveSentence });
+      expect(await failure(CSM_A, CLEAR_SQL, [v.deck, v.slot, v.lang, v.revision])).toEqual({ code: "22023", message: clearSentence });
+    }
+    // A save left without its revision (the default) is refused the same way.
+    expect(await failure(CSM_A, "SELECT public.cockpit_csm_deck_video_save(p_deck => 'launch', p_slot_key => 'testing', p_lang => 'en', p_url => $1) r", [url]))
+      .toEqual({ code: "22023", message: "Read the videos again, then save." });
+    expect(await failure(CSM_A, "SELECT public.cockpit_csm_deck_video_clear(p_deck => 'launch', p_slot_key => 'testing', p_lang => 'en') r"))
+      .toEqual({ code: "22023", message: "Read the videos again, then clear." });
+    expect((await videoAudits()).length).toBe(before);
+    expect(await videoRow("launch", "testing", "en")).toBeUndefined();
+  });
+
+  test("links: every accepted form gives its two addresses and is a fixed point; every refused form gives its sentence", async () => {
+    const loom = (id: string) => ({ provider: "loom", url: `https://www.loom.com/share/${id}`, embedUrl: `https://www.loom.com/embed/${id}?hideEmbedTopBar=true` });
+    const yt = (start?: number) => ({ provider: "youtube", url: `https://www.youtube.com/watch?v=${YT}${start ? `&t=${start}` : ""}`,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${YT}?rel=0&playsinline=1&enablejsapi=1${start ? `&start=${start}` : ""}` });
+    const wistia = (id: string) => ({ provider: "wistia", url: `https://fast.wistia.net/embed/iframe/${id}`, embedUrl: `https://fast.wistia.net/embed/iframe/${id}?seo=false` });
+    const vimeo = (hash?: string) => ({ provider: "vimeo", url: `https://vimeo.com/123456789${hash ? `/${hash}` : ""}`,
+      embedUrl: `https://player.vimeo.com/video/123456789?dnt=1${hash ? `&h=${hash}` : ""}` });
+    const drive = (key?: string) => ({ provider: "drive", url: `https://drive.google.com/file/d/${DRIVE}/view${key ? `?resourcekey=${key}` : ""}`,
+      embedUrl: `https://drive.google.com/file/d/${DRIVE}/preview${key ? `?resourcekey=${key}` : ""}` });
+    const accepted: [string, Row][] = [
+      // The six seeds.
+      ["https://fast.wistia.net/embed/iframe/up0z6n691k", wistia("up0z6n691k")],
+      [`https://www.loom.com/share/${LOOM}`, loom(LOOM)],
+      ["https://www.loom.com/share/4ddc5519935f4ba8bdc7ac6f3667a701", loom("4ddc5519935f4ba8bdc7ac6f3667a701")],
+      ["https://fast.wistia.net/embed/iframe/lxlse6ckhf", wistia("lxlse6ckhf")],
+      ["https://fast.wistia.net/embed/iframe/hyuxh7skjv", wistia("hyuxh7skjv")],
+      ["https://www.loom.com/share/6aa67297dfcf421887f8961d3c1c7768", loom("6aa67297dfcf421887f8961d3c1c7768")],
+      // Loom.
+      [`https://loom.com/share/${LOOM}`, loom(LOOM)],
+      [`https://www.loom.com/embed/${LOOM}`, loom(LOOM)],
+      [`https://www.loom.com/share/Some-Title-${LOOM}`, loom(LOOM)],
+      [`HTTPS://WWW.LOOM.COM/share/${LOOM}`, loom(LOOM)],
+      [`https://www.loom.com/share/${LOOM}/?sid=abc#t=10`, loom(LOOM)],
+      [`  https://www.loom.com/share/${LOOM}  `, loom(LOOM)],
+      // YouTube.
+      [`https://youtu.be/${YT}`, yt()],
+      [`https://www.youtube.com/watch?v=${YT}&t=1m30s`, yt(90)],
+      [`https://www.youtube.com/embed/${YT}?start=45`, yt(45)],
+      [`https://www.youtube-nocookie.com/embed/${YT}`, yt()],
+      [`https://youtube.com/watch?v=${YT}`, yt()],
+      [`https://m.youtube.com/watch?feature=share&v=${YT}&t=30s`, yt(30)],
+      [`https://youtu.be/${YT}?t=1h2m3s`, yt(3723)],
+      [`https://youtu.be/${YT}?t=99999999999`, yt()],
+      [`https://youtu.be/${YT}?t=0`, yt()],
+      [`https://youtu.be/${YT}?t=13h`, yt()],
+      // Wistia, Vimeo and Drive.
+      ["https://mahara.wistia.com/medias/abcde12345", wistia("abcde12345")],
+      ["https://vimeo.com/123456789", vimeo()],
+      ["https://www.vimeo.com/123456789/abcdef1234", vimeo("abcdef1234")],
+      ["https://player.vimeo.com/video/123456789", vimeo()],
+      ["https://player.vimeo.com/video/123456789?h=abcdef1234&badge=0", vimeo("abcdef1234")],
+      [`https://drive.google.com/file/d/${DRIVE}/view?usp=sharing`, drive()],
+      [`https://drive.google.com/file/d/${DRIVE}/preview`, drive()],
+      [`https://drive.google.com/file/d/${DRIVE}`, drive()],
+      [`https://drive.google.com/file/d/${DRIVE}/view?usp=sharing&resourcekey=0-AbC_dEf`, drive("0-AbC_dEf")],
+    ];
+    for (const [link, expected] of accepted) {
+      const got = await parse(link);
+      expect({ link, got }).toEqual({ link, got: expected });
+      expect(await parse(got.url)).toEqual(got);
+    }
+    const longLink = `https://www.loom.com/share/${LOOM}?x=`;
+    const refusedLinks: [string | null, string][] = [
+      [`http://www.loom.com/share/${LOOM}`, "Use the https link."],
+      [`HTTP://youtu.be/${YT}`, "Use the https link."],
+      [`https://www.loom.com.example.org/share/${LOOM}`, HOSTS],
+      [`https://www.loom.com./share/${LOOM}`, HOSTS],
+      [`https://user@www.loom.com/share/${LOOM}`, HOSTS],
+      [`https://www.loom.com:8443/share/${LOOM}`, HOSTS],
+      [`https://www.loom.com\\@evil.org/share/${LOOM}`, HOSTS],
+      [`https://www.loo%6D.com/share/${LOOM}`, HOSTS],
+      [`https://www.loom.com/share/%65${LOOM.slice(1)}`, NO_VIDEO("Loom")],
+      [`https://www.lоom.com/share/${LOOM}`, HOSTS],
+      [`https://142.250.80.46/watch?v=${YT}`, HOSTS],
+      [`https://www.loom.com/share/ ${LOOM}`, HOSTS],
+      ["https://example.org/video.mp4", HOSTS],
+      ["javascript:alert(1)", HOSTS],
+      ["data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==", HOSTS],
+      ["", HOSTS],
+      ["   ", HOSTS],
+      [null, HOSTS],
+      ["https://www.youtube.com/watch?v=dQw4w9WgXc", NO_VIDEO("YouTube")],
+      ["https://www.youtube.com/watch?v=dQw4w9WgXcQQ", NO_VIDEO("YouTube")],
+      ["https://www.youtube.com/@mahara", NO_VIDEO("YouTube")],
+      ["https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz", "That Drive link is a folder. Paste the link to the video file."],
+      ["https://drive.google.com/drive/u/0/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz", "That Drive link is a folder. Paste the link to the video file."],
+      ["https://vimeo.com/showcase/1234567", NO_VIDEO("Vimeo")],
+      ["https://fast.wistia.net/embed/iframe/abcde1234", NO_VIDEO("Wistia")],
+      [`https://www.loom.com/share/${LOOM.toUpperCase()}`, NO_VIDEO("Loom")],
+      [longLink + "a".repeat(501 - longLink.length), "That link is too long. Copy the video's share link."],
+    ];
+    expect((longLink + "a".repeat(501 - longLink.length)).length).toBe(501);
+    for (const [link, sentence] of refusedLinks) expect({ link, ...(await parseFails(link)) }).toEqual({ link, code: "22023", message: sentence });
+    // A 500-character link is not too long.
+    expect((await parse(longLink + "a".repeat(500 - longLink.length))).url).toBe(`https://www.loom.com/share/${LOOM}`);
+    // The save refuses the same links with the same sentence and writes nothing.
+    const before = (await videoAudits()).length;
+    for (const [link, sentence] of [
+      ["https://evil.example.org/share/x", HOSTS],
+      [`http://www.loom.com/share/${LOOM}`, "Use the https link."],
+      ["javascript:alert(document.cookie)", HOSTS],
+      ["data:text/html,<script>alert(1)</script>", HOSTS],
+    ])
+      expect(await failure(CSM_A, SAVE_SQL, saveArgs({ deck: "launch", slot: "winning", lang: "any", url: link, revision: 0 }))).toEqual({ code: "22023", message: sentence });
+    expect((await videoAudits()).length).toBe(before);
+    expect(await videoRow("launch", "winning", "any")).toBeUndefined();
+  });
+
+  test("save: revision 0 records an empty slot, the same values change nothing, a stale or blind save conflicts, and bad fields get their sentences", async () => {
+    const audited = async () => (await videoAudits()).filter(r => r.entity_id === "launch:testing:en");
+    const v: Video = { deck: "launch", slot: "testing", lang: "en", url: `https://youtu.be/${YT}?t=90`, revision: 0 };
+    const first = await vSave(CSM_A, v);
+    expect(first).toEqual({ deck: "launch", slotKey: "testing", lang: "en", provider: "youtube", url: `https://www.youtube.com/watch?v=${YT}&t=90`,
+      embedUrl: `https://www.youtube-nocookie.com/embed/${YT}?rel=0&playsinline=1&enablejsapi=1&start=90`, title: null, durationSeconds: null,
+      revision: 1, updatedBy: "csm-a@tests.invalid", updatedAt: expect.any(String), changed: true });
+    expect(Number.isNaN(Date.parse(first.updatedAt))).toBe(false);
+    let rowsNow = await audited();
+    expect(rowsNow.length).toBe(1);
+    expect(rowsNow[0]).toMatchObject({ action: "deck_video.save", actor_email: "csm-a@tests.invalid", before: null, source_app: "client-success", source_system: "supabase" });
+    expect(rowsNow[0].after).toMatchObject({ url: first.url, embed_url: first.embedUrl, revision: 1 });
+    expect(rowsNow[0].metadata).toMatchObject({ op: "INSERT", deck: "launch", slot_key: "testing", lang: "en" });
+    // The same values with the read's revision: nothing written. Another spelling of the same link is the same link.
+    const same = await vSave(CSM_A2, { ...v, url: `https://www.youtube.com/watch?v=${YT}&t=90`, revision: 1 });
+    expect(same).toMatchObject({ revision: 1, changed: false, updatedBy: "csm-a@tests.invalid" });
+    expect((await audited()).length).toBe(1);
+    // A new title (trimmed) and a length: revision 2, one audit row.
+    const titled = await vSave(CSM_A2, { ...v, title: "  Why we test so many ads  ", seconds: 160, revision: 1 });
+    expect(titled).toMatchObject({ revision: 2, title: "Why we test so many ads", durationSeconds: 160, updatedBy: "csm-a2@tests.invalid", changed: true });
+    rowsNow = await audited();
+    expect(rowsNow.length).toBe(2);
+    expect(rowsNow[1]).toMatchObject({ action: "deck_video.save", actor_email: "csm-a2@tests.invalid" });
+    expect(rowsNow[1].before).toMatchObject({ revision: 1, title: null });
+    expect(rowsNow[1].after).toMatchObject({ revision: 2, title: "Why we test so many ads" });
+    // A stale revision, a blind "I saw it empty" and a revision for a row that does not exist: conflicts, nothing written.
+    const conflict = { code: "40001", message: SAVE_CONFLICT };
+    expect(await failure(CSM_A, SAVE_SQL, saveArgs({ ...v, title: "Mine", revision: 1 }))).toEqual(conflict);
+    expect(await failure(CSM_A, SAVE_SQL, saveArgs({ ...v, title: "Mine", revision: 0 }))).toEqual(conflict);
+    expect(await failure(CSM_A, SAVE_SQL, saveArgs({ ...v, lang: "ar", revision: 3 }))).toEqual(conflict);
+    expect((await audited()).length).toBe(2);
+    expect(await videoRow("launch", "testing", "en")).toMatchObject({ title: "Why we test so many ads", revision: 2 });
+    expect(await videoRow("launch", "testing", "ar")).toBeUndefined();
+    // Field sentences, each before anything is written.
+    const fields: [Partial<Video>, string][] = [
+      [{ title: "x".repeat(41) }, "Keep the title under 40 characters."],
+      [{ title: "Why we test\u0007" }, "The title has a character it can't keep. Type it again."],
+      [{ title: "Why we\ntest" }, "The title has a character it can't keep. Type it again."],
+      // A bidi override or isolate, or a line separator, would reorder or
+      // split the recap's "- title: link" line in WhatsApp.
+      [{ title: "Watch\u202Eevil" }, "The title has a character it can't keep. Type it again."],
+      [{ title: "Watch\u2066evil" }, "The title has a character it can't keep. Type it again."],
+      [{ title: "Watch\u2028evil" }, "The title has a character it can't keep. Type it again."],
+      [{ seconds: 0 }, "The length must be between 1 second and 3 hours."],
+      [{ seconds: 10801 }, "The length must be between 1 second and 3 hours."],
+      [{ seconds: -5 }, "The length must be between 1 second and 3 hours."],
+      [{ slot: "made-up" }, "That video slot is not in the launch deck."],
+      [{ lang: "EN" }, "Choose English, Arabic or any language."],
+    ];
+    for (const [change, sentence] of fields)
+      expect(await failure(CSM_A, SAVE_SQL, saveArgs({ ...v, revision: 2, ...change }))).toEqual({ code: "22023", message: sentence });
+    expect((await audited()).length).toBe(2);
+    // Forty characters and three hours are kept; a blank title is no title.
+    expect(await vSave(CSM_A, { ...v, title: "y".repeat(40), seconds: 10800, revision: 2 })).toMatchObject({ revision: 3, title: "y".repeat(40), durationSeconds: 10800 });
+    expect(await vSave(CSM_A, { ...v, title: "   ", seconds: 1, revision: 3 })).toMatchObject({ revision: 4, title: null, durationSeconds: 1 });
+    expect((await audited()).length).toBe(4);
+    // Arabic, with a right-to-left mark, is kept (another slot, so this
+    // test's revisions stay as the next test reads them).
+    expect(await vSave(CSM_A, { deck: "launch", slot: "call-team", lang: "ar", url: `https://www.loom.com/share/${LOOM}`, title: "كيف يشتغل\u200F فريق الاتصال", seconds: null, revision: 0 })).toMatchObject({ revision: 1, title: "كيف يشتغل\u200F فريق الاتصال" });
+    // The read carries the row in the same shape.
+    const read = await vRead(CSM_B, "launch");
+    const { changed: _changed, ...shape } = await vSave(CSM_A, { ...v, title: null, seconds: 1, revision: 4 });
+    expect(_changed).toBe(false);
+    expect(read.rows.find((r: Row) => r.slotKey === "testing" && r.lang === "en")).toEqual(shape);
+  });
+
+  test("clear: keeps the row with its link removed, leaves the read, runs once, and a save with revision 0 records it again", async () => {
+    const audited = async () => (await videoAudits()).filter(r => r.entity_id === "launch:testing:en");
+    const before = (await audited()).length;
+    const current = (await videoRow("launch", "testing", "en"))!;
+    expect(current.revision).toBe(4);
+    // A blind clear ("I saw it empty") on a recorded slot conflicts.
+    expect(await failure(CSM_A, CLEAR_SQL, ["launch", "testing", "en", 0])).toEqual({ code: "40001", message: CLEAR_CONFLICT });
+    expect(await failure(CSM_A, CLEAR_SQL, ["launch", "testing", "en", 3])).toEqual({ code: "40001", message: CLEAR_CONFLICT });
+    expect((await audited()).length).toBe(before);
+    const cleared = await vClear(CSM_A2, "launch", "testing", "en", 4);
+    expect(cleared).toEqual({ deck: "launch", slotKey: "testing", lang: "en", cleared: true, revision: 5 });
+    const row = (await videoRow("launch", "testing", "en"))!;
+    expect(row).toMatchObject({ provider: null, url: null, embed_url: null, title: null, duration_seconds: null, revision: 5, updated_by: "csm-a2@tests.invalid" });
+    expect(row.cleared_at).not.toBeNull();
+    let added = (await audited()).slice(before);
+    expect(added.length).toBe(1);
+    expect(added[0]).toMatchObject({ action: "deck_video.clear", actor_email: "csm-a2@tests.invalid" });
+    expect(added[0].before).toMatchObject({ url: `https://www.youtube.com/watch?v=${YT}&t=90`, revision: 4 });
+    expect(added[0].after).toMatchObject({ url: null, revision: 5 });
+    // The read leaves it out; a second clear (any revision of 0 or more) changes nothing.
+    expect((await vRead(CSM_A, "launch")).rows.some((r: Row) => r.slotKey === "testing")).toBe(false);
+    expect(await vClear(CSM_A, "launch", "testing", "en", 5)).toEqual({ deck: "launch", slotKey: "testing", lang: "en", cleared: false, revision: 5 });
+    expect(await vClear(CSM_A, "launch", "testing", "en", 0)).toEqual({ deck: "launch", slotKey: "testing", lang: "en", cleared: false, revision: 5 });
+    expect(await vClear(CSM_A, "launch", "first-90-days", "ar", 0)).toEqual({ deck: "launch", slotKey: "first-90-days", lang: "ar", cleared: false, revision: null });
+    expect((await audited()).length).toBe(before + 1);
+    // Undo: the same link with revision 0 records the cleared slot again.
+    const undone = await vSave(CSM_A2, { deck: "launch", slot: "testing", lang: "en", url: `https://www.youtube.com/watch?v=${YT}&t=90`, seconds: 1, revision: 0 });
+    expect(undone).toMatchObject({ revision: 6, changed: true, durationSeconds: 1 });
+    expect((await videoRow("launch", "testing", "en"))?.cleared_at).toBeNull();
+    expect((await vRead(CSM_A, "launch")).rows.some((r: Row) => r.slotKey === "testing" && r.lang === "en")).toBe(true);
+    added = (await audited()).slice(before);
+    expect(added.map(r => r.action)).toEqual(["deck_video.clear", "deck_video.save"]);
+    // A cleared slot also takes its stored revision.
+    await vClear(CSM_A, "launch", "testing", "en", 6);
+    expect(await vSave(CSM_A, { deck: "launch", slot: "testing", lang: "en", url: `https://youtu.be/${YT}`, revision: 7 })).toMatchObject({ revision: 8, changed: true });
+  });
+
+  test("the table's own checks hold even for the owner", async () => {
+    await asOwner();
+    const insert = "INSERT INTO public.cockpit_csm_deck_videos(deck,slot_key,lang,provider,url,embed_url,title,duration_seconds,updated_by,cleared_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'owner',$9)";
+    const ownerFails = async (params: unknown[]) => {
+      try {
+        await db.query(insert, params);
+      } catch (e) {
+        return (e as Error).message;
+      }
+      throw new Error(`Expected the table to refuse ${JSON.stringify(params)}`);
+    };
+    const before = (await videoAudits()).length;
+    // An unlisted host: the parser's sentence from inside the check.
+    expect(await ownerFails(["launch", "payments", "any", "loom", "https://evil.example.org/share/x", "https://evil.example.org/embed/x", null, null, null])).toContain(HOSTS);
+    // A listed link with an embed address the parser would not build.
+    expect(await ownerFails(["launch", "payments", "any", "loom", `https://www.loom.com/share/${LOOM}`, "https://evil.example.org/embed", null, null, null])).toContain("cockpit_csm_deck_videos_link");
+    expect(await ownerFails(["launch", "payments", "any", "youtube", `https://www.loom.com/share/${LOOM}`, `https://www.loom.com/embed/${LOOM}?hideEmbedTopBar=true`, null, null, null])).toContain("cockpit_csm_deck_videos_link");
+    // A cleared row with a title, and half of each.
+    expect(await ownerFails(["launch", "payments", "any", null, null, null, "A title", null, new Date().toISOString()])).toContain("cockpit_csm_deck_videos_state");
+    expect(await ownerFails(["launch", "payments", "any", "loom", `https://www.loom.com/share/${LOOM}`, `https://www.loom.com/embed/${LOOM}?hideEmbedTopBar=true`, null, null, new Date().toISOString()])).toContain("cockpit_csm_deck_videos_state");
+    // A slot not in the list.
+    expect(await ownerFails(["launch", "welcome", "any", null, null, null, null, null, new Date().toISOString()])).toContain("cockpit_csm_deck_videos_slot");
+    // An update is held to the same rule.
+    let message = "";
+    try {
+      await db.query("UPDATE public.cockpit_csm_deck_videos SET url='https://evil.example.org/x' WHERE deck='launch' AND slot_key='portal-guide' AND lang='en'");
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain(HOSTS);
+    expect((await videoAudits()).length).toBe(before);
+    expect(await videoRow("launch", "payments", "any")).toBeUndefined();
+  });
+
+  test("the lists: each read carries its own deck's slots in registry order; the server holds twelve", async () => {
+    const launch = await vRead(CSM_A, "launch");
+    const onboarding = await vRead(CEO, "onboarding");
+    expect(launch.slots).toEqual(LAUNCH_SLOTS);
+    expect(onboarding.slots).toEqual(ONBOARDING_SLOTS);
+    expect(launch.rows.every((r: Row) => r.deck === "launch")).toBe(true);
+    expect(onboarding.rows.map((r: Row) => `${r.slotKey}:${r.lang}`)).toEqual(["meta-access:any", "welcome:any", "whatsapp-calendar:any"]);
+    const keys = launch.rows.map((r: Row) => `${r.slotKey}:${r.lang}`);
+    expect(keys).toEqual([...keys].sort());
+    expect(Number.isNaN(Date.parse(launch.at))).toBe(false);
+    expect(launch.rows.find((r: Row) => r.slotKey === "portal-guide" && r.lang === "en")).toEqual({
+      deck: "launch", slotKey: "portal-guide", lang: "en", provider: "wistia",
+      url: "https://fast.wistia.net/embed/iframe/lxlse6ckhf", embedUrl: "https://fast.wistia.net/embed/iframe/lxlse6ckhf?seo=false",
+      title: null, durationSeconds: 277, revision: 1, updatedBy: SEED_BY, updatedAt: expect.any(String),
+    });
+    await asOwner();
+    const all = (await db.query<{ r: string[] }>("SELECT public.cockpit_csm_deck_video_slots() r")).rows[0].r;
+    expect(all).toEqual([...ONBOARDING_SLOTS, ...LAUNCH_SLOTS]);
+    expect(all.length).toBe(12);
+    for (const [deck, slot, ok] of [["launch", "testing", true], ["onboarding", "testing", true], ["launch", "welcome", false], [null, "testing", false], ["launch", null, false]] as [string | null, string | null, boolean][])
+      expect((await db.query<{ ok: boolean }>("SELECT public.cockpit_csm_deck_video_slot_ok($1::text,$2::text) ok", [deck, slot])).rows[0].ok).toBe(ok);
+    // No client data travels with a video read (a slot belongs to no client).
+    for (const leak of ["taskA1", "taskB1", "Acme", "Beta", "clientName", "taskId"]) expect(JSON.stringify([launch, onboarding]).includes(leak)).toBe(false);
   });
 });

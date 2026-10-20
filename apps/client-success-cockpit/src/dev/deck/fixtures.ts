@@ -20,9 +20,16 @@
 
 import type { OnboardingRow } from "@/lib/onboardingCore";
 import type { Overrides } from "@/present/deckData";
-import type { DeckKind } from "@/present/sources";
+import type {
+  DeckKind,
+  DeckVideos,
+  VideoLang,
+  VideoProvider,
+  VideoRow,
+} from "@/present/sources";
 import { type LaunchAd, sourcesSchema } from "@/present/sources";
 import type { Loaded } from "@/present/useDeckModel";
+import { deckSlots, slotId } from "@/present/videos";
 import siteFeed from "./custom-site.webp";
 import siteTall from "./custom-site-tall.webp";
 import square from "./custom-square.webp";
@@ -96,6 +103,109 @@ function ad(
     ...extra,
   };
 }
+
+/**
+ * One video row as the server returns it (VIDEOS.md 4). The links are
+ * Mahara's own recordings, the six the migration seeds; `testing` carries a
+ * made-up Loom id, harness only, so slide 3's control shows in the shots.
+ */
+function video(
+  deck: DeckKind,
+  slotKey: string,
+  lang: VideoLang,
+  provider: VideoProvider,
+  id: string,
+  seconds: number | null,
+  title: string | null = null,
+): VideoRow {
+  const links: Record<VideoProvider, [string, string]> = {
+    wistia: [
+      `https://fast.wistia.net/embed/iframe/${id}`,
+      `https://fast.wistia.net/embed/iframe/${id}?seo=false`,
+    ],
+    loom: [
+      `https://www.loom.com/share/${id}`,
+      `https://www.loom.com/embed/${id}?hideEmbedTopBar=true`,
+    ],
+    youtube: [
+      `https://www.youtube.com/watch?v=${id}`,
+      `https://www.youtube-nocookie.com/embed/${id}?rel=0&playsinline=1&enablejsapi=1`,
+    ],
+    vimeo: [
+      `https://vimeo.com/${id}`,
+      `https://player.vimeo.com/video/${id}?dnt=1`,
+    ],
+    drive: [
+      `https://drive.google.com/file/d/${id}/view`,
+      `https://drive.google.com/file/d/${id}/preview`,
+    ],
+  };
+  return {
+    deck,
+    slotKey,
+    lang,
+    provider,
+    url: links[provider][0],
+    embedUrl: links[provider][1],
+    title,
+    durationSeconds: seconds,
+    revision: 1,
+    updatedBy: "migration 20261020120000_csm_deck_videos",
+    updatedAt: "2026-10-20T12:00:00+00:00",
+  };
+}
+
+/** The six seeds (VIDEOS.md 6), and the slots the server knows. */
+export function seededVideos(
+  deck: DeckKind,
+  extra: VideoRow[] = [],
+): DeckVideos {
+  const seeds = [
+    video("onboarding", "welcome", "any", "wistia", "up0z6n691k", 148),
+    video(
+      "onboarding",
+      "meta-access",
+      "any",
+      "loom",
+      "e2d83bffee614d9aa035d898d37d8989",
+      94,
+    ),
+    video(
+      "onboarding",
+      "whatsapp-calendar",
+      "any",
+      "loom",
+      "4ddc5519935f4ba8bdc7ac6f3667a701",
+      231,
+    ),
+    video("launch", "portal-guide", "en", "wistia", "lxlse6ckhf", 277),
+    video("launch", "portal-guide", "ar", "wistia", "hyuxh7skjv", 285),
+    video(
+      "launch",
+      "calendar-hours",
+      "any",
+      "loom",
+      "6aa67297dfcf421887f8961d3c1c7768",
+      11,
+    ),
+  ];
+  return {
+    rows: [...seeds, ...extra].filter(r => r.deck === deck),
+    refused: [],
+    slots: deckSlots(deck).map(slotId),
+  };
+}
+
+/** Slide 4's slot, recorded for the harness (a made-up Loom id). */
+const TESTING = (deck: DeckKind) =>
+  video(
+    deck,
+    "testing",
+    "any",
+    "loom",
+    "0f0e0d0c0b0a09080706050403020100",
+    160,
+  );
 
 function full(deck: DeckKind = "onboarding"): Loaded {
   const taskId = "fixture-full";
@@ -199,7 +309,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
       serviceMode: "DFY",
     },
     dosDonts: {
-      text: "DO's:\n- Show finished kitchens in daylight\nDON'Ts:\n- Never show prices in an ad\n- No before-and-after of client homes\nNOTES:\n- Owner prefers calls after 4",
+      text: "DO's:\n- Show our real projects, never stock photos\nDON'Ts:\n- Never show prices in an ad\n- No before-and-after of client homes\nNOTES:\n- Owner prefers calls after 4",
       source: "card",
     },
     kit: {
@@ -272,12 +382,31 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           starter_pack: true,
           service_focus: "Kitchens",
           service_focus_ar: "المطابخ",
-          red_lines: ["No photos of the owner"],
-          red_lines_ar: ["لا تحطون صور المالك"],
+          red_lines: ["No photos of the owner", "No music with lyrics"],
+          red_lines_ar: ["لا تحطون صور المالك", "بدون موسيقى فيها كلمات"],
         }
-      : { starter_pack: true },
+      : {
+          starter_pack: true,
+          // Three typed live on O7: the plant's tightest fit (DESIGN 9.7).
+          red_lines: [
+            "No photos of the owner",
+            "No music with lyrics",
+            "Never show prices in an ad",
+          ],
+        },
     launch: launch
       ? {
+          // Five red lines and the stamp: slide 3's tightest stop (DESIGN
+          // 21.1), stamped on the launch call's own day (the cover's date).
+          creative_agreed_at: "2026-10-19T10:20:00Z",
+          // The services in Arabic, so the Arabic queue card names each
+          // row's own (score round 2), never the first one three times.
+          services_ar: [
+            "المطابخ",
+            "الحمامات",
+            "تشطيب فيلا كاملة",
+            "التصميم الداخلي",
+          ],
           form_confirmed: "9100000001",
           their_pick: "custom-site",
           cover_creative: "custom-site",
@@ -335,6 +464,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
     ],
     prep,
     problems: [],
+    videos: seededVideos(deck, [TESTING(deck)]),
   };
 }
 
@@ -366,7 +496,9 @@ function sparse(_deck: DeckKind = "onboarding"): Loaded {
     }),
     ads: [],
     prep: { onboarding: {}, launch: {} },
-    problems: [],
+    problems: ["The deck's videos are not live yet, so no video shows."],
+    videos: null,
+    videosProblem: "The deck's videos are not live yet, so no video shows.",
   };
 }
 
@@ -480,6 +612,7 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
       launch: launch ? { shown_slides: ["form"], go_live: "2026-10-27" } : {},
     },
     problems: [],
+    videos: seededVideos(deck, [TESTING(deck)]),
   };
 }
 
@@ -596,6 +729,7 @@ function starter(_deck: DeckKind = "launch"): Loaded {
       launch: { form_confirmed: "native:fixture-wa" },
     },
     problems: [],
+    videos: { rows: [], refused: [], slots: deckSlots("launch").map(slotId) },
   };
 }
 

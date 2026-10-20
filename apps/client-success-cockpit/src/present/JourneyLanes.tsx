@@ -296,20 +296,12 @@ export function JourneyLanes({
           // follow-up is their own (their lane's ink), never ours.
           <g>
             <path d={forkPath} {...dotted} stroke={dwy ? INK2 : TEAL} />
-            <circle
-              cx={forkEnd.x}
-              cy={forkEnd.y}
+            <RebookMark
+              x={forkEnd.x}
+              y={forkEnd.y}
               r={10}
+              stroke={dwy ? INK2 : TEAL}
               fill={GROUND}
-              stroke={dwy ? INK2 : TEAL}
-              strokeWidth={2}
-            />
-            <path
-              d={`M ${forkEnd.x - 4} ${forkEnd.y - 3} A 4.5 4.5 0 1 1 ${forkEnd.x - 3.5} ${forkEnd.y + 3}`}
-              fill="none"
-              stroke={dwy ? INK2 : TEAL}
-              strokeWidth={2}
-              strokeLinecap="round"
             />
           </g>
         ) : null}
@@ -504,5 +496,63 @@ export function MiniRail({
         </span>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The rebook mark (the fixer's round, 2026-10-20): a ring with a circular
+ * arrow inside, its head drawn, so at a share's size it reads as "again",
+ * never as a copyright sign or a spinner. One drawing for the lanes' fork,
+ * the journey's stop 6 and the portal's number-one job. The arrow turns
+ * 270 degrees clockwise from eight o'clock; the SVG it sits in mirrors in
+ * Arabic, so there it turns the other way, with the reading.
+ */
+export function RebookMark({
+  x,
+  y,
+  r,
+  stroke,
+  fill = "var(--dk-space)",
+}: {
+  x: number;
+  y: number;
+  /** The ring's radius. */
+  r: number;
+  stroke: string;
+  fill?: string;
+}) {
+  const q = r * 0.5;
+  const from = (150 * Math.PI) / 180;
+  const to = (60 * Math.PI) / 180;
+  const sx = x + q * Math.cos(from);
+  const sy = y + q * Math.sin(from);
+  const ex = x + q * Math.cos(to);
+  const ey = y + q * Math.sin(to);
+  // The head: along the arc's clockwise tangent at its end, across it on
+  // the radius.
+  const tx = -Math.sin(to);
+  const ty = Math.cos(to);
+  const nx = Math.cos(to);
+  const ny = Math.sin(to);
+  const h = r * 0.56;
+  const w = r * 0.38;
+  const pt = (a: number, b: number) => `${a.toFixed(2)} ${b.toFixed(2)}`;
+  const head = [
+    pt(ex + tx * h * 0.6, ey + ty * h * 0.6),
+    pt(ex - tx * h * 0.4 + nx * w, ey - ty * h * 0.4 + ny * w),
+    pt(ex - tx * h * 0.4 - nx * w, ey - ty * h * 0.4 - ny * w),
+  ];
+  return (
+    <g className="dkc-rebook">
+      <circle cx={x} cy={y} r={r} fill={fill} stroke={stroke} strokeWidth={2} />
+      <path
+        d={`M ${pt(sx, sy)} A ${q} ${q} 0 1 1 ${pt(ex - tx * 0.6, ey - ty * 0.6)}`}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={2}
+        strokeLinecap="round"
+      />
+      <path d={`M ${head[0]} L ${head[1]} L ${head[2]} Z`} fill={stroke} />
+    </g>
   );
 }

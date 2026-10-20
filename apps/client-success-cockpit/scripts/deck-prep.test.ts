@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { FIXTURES } from "../src/dev/deck/fixtures";
+import { deckData } from "../src/present/deckData";
+import { launchSlides } from "../src/present/launchDeck";
+import { videosRead } from "../src/present/load";
 import {
   applyPatch,
   PREP_KEYS,
@@ -13,6 +17,7 @@ import {
   readDeckSources,
   savePrep,
   uploadRefusal,
+  VideosNotLive,
 } from "../src/present/sources";
 
 /**
@@ -54,6 +59,85 @@ describe("the keys prep may send", () => {
   test("anything else is refused before it is sent, in a plain sentence", () => {
     expect(refusedKey("goals")).toBeNull();
     expect(refusedKey("leads")).toBe('Prep does not keep "leads".');
+  });
+
+  test("the old video toggles stay: they are the client's own messages, not deck videos", () => {
+    // welcome_video and booking_video say whether the client's thank-you
+    // screen and booking confirmation carry a video about the client (L5
+    // stop 3, L2 stop 4). The deck's own videos are shared slots, kept in
+    // cockpit_csm_deck_videos, never in a client's prep.
+    expect(refusedKey("welcome_video")).toBeNull();
+    expect(refusedKey("booking_video")).toBeNull();
+    for (const k of ["videos", "video_links", "deck_videos"])
+      expect(refusedKey(k)).not.toBeNull();
+  });
+
+  test("a saved test-proof (the retired optional stop) is kept and ignored: slide 3 has five stops", () => {
+    const f = FIXTURES.full("launch");
+    const d = deckData({
+      taskId: "x",
+      deck: "launch",
+      lang: "en",
+      sources: f.sources,
+      kit: f.kit,
+      prep: {
+        ...f.prep,
+        launch: { ...f.prep.launch, shown_slides: ["form", "test-proof"] },
+      },
+      ads: f.ads,
+      now: new Date("2026-10-19T09:00:00Z"),
+    });
+    const four = launchSlides().find(s => s.id === "creative-freedom");
+    expect(
+      four?.stops?.({
+        d,
+        lang: "en",
+        deck: "launch",
+        tour: 0,
+        setTour: () => {},
+        prep: {},
+        prepOf: () => ({}),
+        save: () => {},
+        saveTo: () => {},
+        live: { ticks: {}, candidate: null },
+        setLive: () => {},
+        still: true,
+        presenting: true,
+      }),
+    ).toBe(5);
+    expect(applyPatch({}, { shown_slides: ["test-proof"] })).toEqual({
+      shown_slides: ["test-proof"],
+    });
+  });
+});
+
+describe("the videos read at load", () => {
+  test("read: kept as read, nothing said", () => {
+    const v = { rows: [], refused: [], slots: ["launch:testing"] };
+    expect(videosRead({ status: "fulfilled", value: v })).toEqual({
+      videos: v,
+      problem: null,
+      line: null,
+    });
+  });
+  test("not live yet: its own sentence, and null (never empty)", () => {
+    expect(
+      videosRead({ status: "rejected", reason: new VideosNotLive() }),
+    ).toEqual({
+      videos: null,
+      problem: "The deck's videos are not live yet, so no video shows.",
+      line: "The deck's videos are not live yet, so no video shows.",
+    });
+  });
+  test("another failure: said plainly in the deck's problems, null for the slots", () => {
+    const r = videosRead({
+      status: "rejected",
+      reason: Error("Failed to fetch"),
+    });
+    expect(r.videos).toBeNull();
+    expect(r.line).toBe(
+      "The deck's videos could not be read: No connection. Check the internet, then try again.",
+    );
   });
 });
 
