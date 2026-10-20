@@ -150,13 +150,17 @@ describe("the example call's copy", () => {
 });
 
 describe("the script is EXAMPLE-CALL.md's, word for word", () => {
-  const doc = require("node:fs").readFileSync(
-    require("node:path").resolve(
-      import.meta.dir,
-      "../../../docs/csm-decks/EXAMPLE-CALL.md",
-    ),
-    "utf8",
-  ) as string;
+  // A Windows checkout ends every line in CRLF, and a row cut with
+  // slice(2, -2) then kept a trailing space in its last cell.
+  const doc = (
+    require("node:fs").readFileSync(
+      require("node:path").resolve(
+        import.meta.dir,
+        "../../../docs/csm-decks/EXAMPLE-CALL.md",
+      ),
+      "utf8",
+    ) as string
+  ).replace(/\r\n/g, "\n");
   /** The rows of the table under a heading: cells split on " | ". */
   const table = (heading: string) => {
     const at = doc.indexOf(heading);
