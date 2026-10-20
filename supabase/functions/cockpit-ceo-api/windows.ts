@@ -285,7 +285,7 @@ export function treeSql(from7: string, from30: string, to: string): string {
       count(*) filter (where 'roas-qualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unqualified' <> all(coalesce(l.tags, '{}'::text[])) and 'roas-unprepared' = any(coalesce(l.tags, '{}'::text[]))) as not_ready_leads,
       -- Per lead, never per appointment (the CEO, 2026-10-18: "it should just
       -- count once"): a lead with a no-show and a rebooked intro is one intro.
-      -- An intro leaves out a lead whose every intro was cancelled; one marked
+      -- An intro leaves out a lead whose every intro was cancelled, one marked
       -- invalid was held, so it stays (B2B's show rule counts invalid as
       -- shown). A confirmed intro showed, or is still confirmed once its time
       -- has passed (the CEO's rule, B2B's intros_qualified).
@@ -559,7 +559,7 @@ function constraintOf(window: B2bAdWindow, account: B2bAdWindow): B2bAdsPayload[
   return { stage: worst.label, owner: worst.owner, mine: Math.round((worst.mine ?? 0) * 1000) / 1000, account: Math.round((worst.all ?? 0) * 1000) / 1000 };
 }
 
-function windowRowsSql(from: string, to: string): string {
+export function windowRowsSql(from: string, to: string): string {
   const first = dateLiteral(from);
   const last = dateLiteral(to);
   return `select
@@ -877,7 +877,7 @@ export type ContentWindow = {
   voided: { deals: number; contracted: number; cash: number };
 };
 
-function contentWindowSql(from: string, to: string): string {
+export function contentWindowSql(from: string, to: string): string {
   const first = dateLiteral(from);
   const last = dateLiteral(to);
   return `with base as (

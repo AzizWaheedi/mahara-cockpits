@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readAdsWindow, readContentWindow, treeSql } from './windows.ts';
+import { contentWindowSql, readAdsWindow, readContentWindow, treeSql, windowRowsSql } from './windows.ts';
 
 // Meta: the account read, the live on/off lists, then whole-window insights per level. No row means no
 // frequency. Without `live` the status lists are refused, so a test stays on the snapshot rule (the fallback).
@@ -491,4 +491,16 @@ test('custom range falls back to the snapshot rule with a note when Meta\'s stat
   });
   expect(partial.statusFrom).toBe('snapshots');
   expect(partial.notes.some(note => note.text.includes('(Meta returned an incomplete ads page.)'))).toBe(true);
+});
+
+// 2026-10-20: one semicolon inside a SQL comment made finance/tools.ts refuse the
+// whole ads query ("Finance source query is not allowed") on every custom range.
+// Every SQL a window sends must pass that same guard.
+test('every window query passes the read-only finance guard', () => {
+  const guard = (q: string) => /^\s*(select|with)\b/i.test(q) && !q.includes(';');
+  for (const [from, to] of [['2026-10-13', '2026-10-19'], ['2026-09-20', '2026-10-19']]) {
+    expect(guard(treeSql(from, from, to))).toBe(true);
+    expect(guard(windowRowsSql(from, to))).toBe(true);
+    expect(guard(contentWindowSql(from, to))).toBe(true);
+  }
 });
