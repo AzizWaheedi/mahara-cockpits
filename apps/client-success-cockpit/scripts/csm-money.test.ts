@@ -27,7 +27,11 @@ const earner = (id: string) => {
 function contractPlan(): {
   parts: { key: string; [k: string]: unknown }[];
 } {
-  const doc = readFileSync(resolve(ROOT, "docs/pay/PAY-PLANS.md"), "utf8");
+  // A Windows checkout ends every line in CRLF; the pattern matches on \n.
+  const doc = readFileSync(
+    resolve(ROOT, "docs/pay/PAY-PLANS.md"),
+    "utf8",
+  ).replace(/\r\n/g, "\n");
   const m = doc.match(
     /\/\/ Client success manager\n([\s\S]*?)\n\n\/\/ Systems manager/,
   );
