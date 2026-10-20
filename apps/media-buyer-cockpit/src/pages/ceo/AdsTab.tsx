@@ -73,6 +73,7 @@ import {
   verdictChips,
   verdictLabel,
 } from "./adsFacts";
+import { HiringAdsCard } from "./adsHiring";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
 import { EXTRA_COLS, MetricPicker, useExtraMetrics } from "./adsMetrics";
 import {
@@ -1416,7 +1417,15 @@ export function AdsTab({ sections, now }: CeoTabProps) {
         </SectionCard>
       )}
 
-      <LaunchCard ads={stored} order={2} />
+      <HiringAdsCard
+        p={p}
+        win={win}
+        from={shown.bounds?.from ?? null}
+        to={shown.bounds?.to ?? null}
+        order={2}
+      />
+
+      <LaunchCard ads={stored} order={3} />
     </div>
   );
 }
