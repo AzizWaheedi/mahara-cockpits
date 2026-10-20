@@ -12,6 +12,7 @@ import {
   Spinner,
 } from "../components/bits";
 import { useStills, useWinners } from "../lib/data";
+import { day } from "../lib/format";
 import { AD_VIDEOS_BUCKET } from "../lib/supabase";
 import type { WinnerAd } from "../lib/types";
 
@@ -138,9 +139,17 @@ export default function WinnersPage() {
     AD_VIDEOS_BUCKET,
   );
   const mine = shown.filter(a => a.file_path).length;
+  // When the list last changed. The automatic copy from the ad accounts
+  // stopped on 2026-10-08 (Convex retirement); only saves made by hand have
+  // come in since, so the page says how old it is.
+  const lastIn = (winners.data ?? [])
+    .map(a => a.mirrored_at)
+    .filter((s): s is string => Boolean(s))
+    .sort()
+    .at(-1);
 
   return (
-    <Page wide>
+    <Page>
       <PageHeader
         title="What works"
         sub={
@@ -152,6 +161,7 @@ export default function WinnersPage() {
                 {mine} of {shown.length} play from our own copy.
               </>
             ) : null}
+            {lastIn ? <> Last added {day(lastIn)}.</> : null}
           </>
         }
       />
@@ -171,7 +181,7 @@ export default function WinnersPage() {
               </span>
             ) : null}
           </button>
-          {clients.slice(0, 12).map(([name, n]) => (
+          {clients.map(([name, n]) => (
             <button
               key={name}
               type="button"
@@ -186,13 +196,21 @@ export default function WinnersPage() {
         </div>
       ) : null}
 
-      {winners.error && (
-        <Problem>These could not be read: {winners.error}</Problem>
-      )}
-      {winners.loading && <Spinner what="Reading the winners" />}
-      {!winners.loading && !shown.length && (
-        <Empty>No winning ads have been mirrored here yet.</Empty>
-      )}
+      {winners.error ? (
+        <Problem>
+          The winning ads could not be read: {winners.error}. Reload the page to
+          try again.
+        </Problem>
+      ) : null}
+      {winners.loading && !winners.data ? (
+        <Spinner what="Reading the winners" />
+      ) : null}
+      {!winners.loading && !winners.error && !shown.length ? (
+        <Empty>
+          No winning ads here yet. The media buyer saves the ads that paid, and
+          they show here.
+        </Empty>
+      ) : null}
 
       <ul className="grid items-start gap-4 lg:grid-cols-2">
         {shown.map(ad => (

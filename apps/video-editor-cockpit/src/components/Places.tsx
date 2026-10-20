@@ -64,25 +64,25 @@ const LIBRARY = [
   { to: "/swipe", label: "Swipe file" },
 ];
 
-/** The Library's tabs above each of its three pages, each at its own address. */
+/**
+ * The Library's tabs above each of its three pages, each at its own address:
+ * 32px pills with the active one teal, the tab style of every cockpit
+ * (DESIGN.md, Controls). The row scrolls sideways on a phone.
+ */
 export function Library({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   return (
     <>
       <nav
         aria-label="Library"
-        className="mx-auto flex w-full max-w-6xl gap-1 overflow-x-auto border-b px-4 pt-6 no-scrollbar sm:px-6 lg:px-8"
+        className="mx-auto mb-6 flex w-full max-w-6xl gap-1.5 overflow-x-auto no-scrollbar"
       >
         {LIBRARY.map(t => (
           <Link
             key={t.to}
             to={t.to}
             aria-current={pathname === t.to ? "page" : undefined}
-            className={`-mb-px shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-              pathname === t.to
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
+            className={chip(pathname === t.to)}
           >
             {t.label}
           </Link>

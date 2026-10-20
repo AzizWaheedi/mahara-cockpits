@@ -1,6 +1,13 @@
 import { Menu, Search } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { Link, Navigate, Route, Routes, useLocation } from "react-router";
+import {
+  Link,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "react-router";
 import { JobsHome, Library } from "./components/Places";
 import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
@@ -10,8 +17,10 @@ import { useCanOpen, useEodToday, useJobs, useMe } from "./lib/data";
 import { kuwaitDay } from "./lib/format";
 import { portalUrl } from "./lib/portal";
 import { openSearch } from "./lib/search";
+import { onEditor } from "./lib/stages";
 import { Toaster } from "./lib/toast";
 import EodPage from "./pages/EodPage";
+import GuidePage from "./pages/GuidePage";
 import { IdeationPage } from "./pages/IdeationPage";
 import JobPage from "./pages/JobPage";
 import MeetingsPage from "./pages/MeetingsPage";
@@ -49,11 +58,48 @@ function Shell() {
   const eodToday = useEodToday(eodDay, session && allowed ? email : null);
   const counts = useMemo(
     () => ({
-      ready: (jobs.data ?? []).filter(j => j.state === "ready").length,
-      eod: eodToday.data?.length ? 0 : 1,
+      // The same rule as the Jobs page: ready, and the editor's turn.
+      ready: (jobs.data ?? []).filter(j => onEditor(j) && j.state === "ready")
+        .length,
+      // A failed read says nothing either way, so it draws no dot. A filing
+      // that failed did not reach the sheet, so the dot stays.
+      eod:
+        eodToday.error || eodToday.loading
+          ? 0
+          : (eodToday.data ?? []).some(r => r.status !== "failed")
+            ? 0
+            : 1,
     }),
-    [jobs.data, eodToday.data],
+    [jobs.data, eodToday.data, eodToday.error, eodToday.loading],
   );
+
+  // The rail folds to its icons from 1024px (the button at its top, or
+  // Ctrl/Cmd + B), and the choice is remembered, as in the client success
+  // and media buyer cockpits.
+  const [folded, setFolded] = useState(() => {
+    try {
+      return localStorage.getItem(FOLD_KEY) === "collapsed";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(FOLD_KEY, folded ? "collapsed" : "open");
+    } catch {
+      // A private window forbids this; the rail just forgets.
+    }
+  }, [folded]);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setFolded(f => !f);
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
 
   // index.html names the tab "Mahara Media", because a client opening a
   // review link sees it before anything loads. The desk names itself.
@@ -137,10 +183,22 @@ function Shell() {
 
   return (
     <div className="flex h-full">
-      {/* A rail from 1024px up, a drawer below it: an iPad held upright
-          gets the whole width for the page, as in the other cockpits. */}
-      <aside className="hidden w-60 shrink-0 border-r bg-card pt-safe lg:block">
-        <Sidebar name={who} isAdmin={isAdmin} counts={counts} />
+      {/* A floating rail from 1024px up, a sheet below it: an iPad held
+          upright gets the whole width for the page, as in the other
+          cockpits. 14rem open and 4rem folded, plus the 8px float. */}
+      <aside
+        className="hidden shrink-0 p-2 transition-[width] duration-150 ease-[cubic-bezier(.4,0,.2,1)] motion-reduce:transition-none lg:block"
+        style={{ width: folded ? "5rem" : "15rem" }}
+      >
+        <div className="h-full overflow-hidden rounded-2xl border border-sidebar-border/70 bg-sidebar/95 shadow-lg shadow-black/5 backdrop-blur-md">
+          <Sidebar
+            name={who}
+            isAdmin={isAdmin}
+            counts={counts}
+            folded={folded}
+            onToggleFold={() => setFolded(f => !f)}
+          />
+        </div>
       </aside>
 
       {drawer ? (
@@ -151,12 +209,13 @@ function Shell() {
             onClick={() => setDrawer(false)}
             className="absolute inset-0 bg-black/50"
           />
-          <aside className="absolute inset-y-0 left-0 w-[min(18rem,85vw)] border-r bg-card pt-safe pb-safe sm:w-[22rem]">
+          <aside className="absolute inset-y-0 left-0 w-full border-r bg-sidebar pt-safe pb-safe sm:w-[22rem]">
             <Sidebar
               name={who}
               isAdmin={isAdmin}
               counts={counts}
               onNavigate={() => setDrawer(false)}
+              onClose={() => setDrawer(false)}
             />
           </aside>
         </div>
@@ -189,7 +248,8 @@ function Shell() {
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 lg:pt-[env(safe-area-inset-top,0px)]">
+        {/* The layout pads every page, 16 / 24 / 32px (DESIGN.md, Pages). */}
+        <main className="min-w-0 flex-1 px-4 pt-4 pb-12 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8">
           <Routes>
             {/* Jobs is home: the list, or the board (?view=board). */}
             <Route path="/" element={<JobsHome eodDue={counts.eod > 0} />} />
@@ -232,12 +292,13 @@ function Shell() {
               }
             />
             <Route path="/eod" element={<EodPage />} />
-            <Route path="/job/:taskId" element={<JobPage />} />
+            <Route path="/job/:taskId" element={<OneJob />} />
+            <Route path="/guide" element={<GuidePage />} />
             <Route path="/send-review" element={<SendReviewPage />} />
             <Route
               path="*"
               element={
-                <div className="px-4 py-16 text-center text-sm text-muted-foreground">
+                <div className="py-16 text-center text-sm text-muted-foreground">
                   <p>That page does not exist.</p>
                   <Link
                     to="/"
@@ -256,17 +317,24 @@ function Shell() {
   );
 }
 
+const FOLD_KEY = "mahara-editor-sidebar";
+
 /**
- * The gutter for the two pages shared with the other cockpits. Theirs sit
- * inside a padded layout; this desk has none, so without this they ran from
- * edge to edge of the screen.
+ * The width for the two pages shared with the other cockpits. The layout's
+ * main pads them now, as theirs does.
  */
 function Gutter({ children }: { children: ReactNode }) {
-  return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-      {children}
-    </div>
-  );
+  return <div className="mx-auto w-full max-w-6xl">{children}</div>;
+}
+
+/**
+ * One job page per job. Keyed by the id, so moving from one job to another
+ * starts a fresh page: a cut link or a note typed for one job can never be
+ * sent with the next one's id.
+ */
+function OneJob() {
+  const { taskId = "" } = useParams();
+  return <JobPage key={taskId} />;
 }
 
 /**

@@ -9,14 +9,16 @@ import {
   Problem,
   Spinner,
   StateBadge,
+  StatTile,
+  StatusChip,
 } from "../components/bits";
+import { ReportIssue } from "../components/ReportIssue";
 import { Button } from "../components/ui/button";
 import { useWho } from "../lib/auth";
 import { useJobs } from "../lib/data";
-import { day, minutes, whenDue } from "../lib/format";
+import { day, dueDays, minutes, moment, whenDue } from "../lib/format";
+import { holder, onEditor, stageLabel } from "../lib/stages";
 import type { Job } from "../lib/types";
-
-const DONE = new Set(["complete", "closed", "done", "cancelled"]);
 
 function isMine(job: Job, email: string): boolean {
   if (!email) return false;
@@ -24,18 +26,23 @@ function isMine(job: Job, email: string): boolean {
   return (job.editors ?? []).some(p => (p.email ?? "").toLowerCase() === low);
 }
 
-/** Whole days from now to the due date, rounded the way `whenDue` rounds. */
-function daysToDue(iso: string | null): number | null {
-  if (!iso) return null;
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return null;
-  return Math.round((t - Date.now()) / 86_400_000);
+/** When the board was last read, from the rows themselves. */
+export function syncedLine(jobs: Job[] | null): string {
+  const last = (jobs ?? [])
+    .map(j => j.synced_at)
+    .filter((s): s is string => Boolean(s))
+    .sort()
+    .at(-1);
+  return last
+    ? `The Video Pipeline in ClickUp, synced ${moment(last)}.`
+    : "The Video Pipeline in ClickUp.";
 }
 
 /**
- * Jobs in the order an editor thinks about them: what can I start, what is
- * stuck and on whom, what is finished. Grouping does the work that a row of
- * filter buttons used to, so the first screen already answers the question.
+ * Jobs in the order an editor thinks about them: what is mine to start,
+ * what is stuck and on whom, what is with a reviewer, what is finished.
+ * Whose turn it is comes from the ClickUp status (lib/stages.ts); the
+ * desk's state only says whether the footage is read.
  */
 const GROUPS: {
   key: string;
@@ -47,37 +54,53 @@ const GROUPS: {
     key: "ready",
     title: "Ready to start",
     hint: "Footage read, nothing missing",
-    has: j => j.state === "ready",
+    has: j => onEditor(j) && j.state === "ready",
   },
   {
     key: "blocked",
     title: "Waiting on something",
     hint: "These need someone else first",
-    has: j => j.state === "blocked" || j.state === "stale",
+    has: j => onEditor(j) && (j.state === "blocked" || j.state === "stale"),
   },
   {
     key: "new",
     title: "Not read yet",
-    hint: "The desk reads the board every half hour",
-    has: j => j.state === "new" || j.state === null,
+    hint: "The desk reads new footage every half hour",
+    has: j => onEditor(j) && (j.state === "new" || j.state === null),
   },
   {
-    key: "delivered",
-    title: "Delivered",
-    hint: "Sent for client review",
-    has: j => j.state === "delivered",
+    key: "review",
+    title: "In review",
+    hint: "With the reviewer or the client until it comes back",
+    has: j =>
+      j.state !== "gone" &&
+      (holder(j.status) === "review" ||
+        (holder(j.status) === "editor" && j.state === "delivered")),
+  },
+  {
+    key: "hold",
+    title: "On hold",
+    hint: "Paused on the board",
+    has: j => j.state !== "gone" && holder(j.status) === "hold",
+  },
+  {
+    key: "finished",
+    title: "Finished",
+    hint: "Live or cancelled on the board",
+    has: j => j.state !== "gone" && holder(j.status) === "finished",
   },
   {
     key: "gone",
-    title: "Card deleted",
-    hint: "The ClickUp card no longer exists",
+    title: "Off the board",
+    hint: "Archived or deleted in ClickUp",
     has: j => j.state === "gone",
   },
 ];
 
-function JobRow({ job, badge }: { job: Job; badge: boolean }) {
+function JobRow({ job, group }: { job: Job; group: string }) {
+  const owed = onEditor(job);
   const due = whenDue(job.due_at);
-  const blocker = job.missing?.[0];
+  const blocker = owed ? job.missing?.[0] : undefined;
   const more = (job.missing?.length ?? 0) - 1;
 
   return (
@@ -97,10 +120,15 @@ function JobRow({ job, badge }: { job: Job; badge: boolean }) {
 
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
           <span>{job.editor ?? "Nobody assigned"}</span>
-          <span className={due.late ? "txt-bad font-medium" : ""}>
-            {due.text}
-            {job.due_at ? ` · ${day(job.due_at)}` : ""}
-          </span>
+          {/* Late only means something while the job is the editor's. */}
+          {owed ? (
+            <span className={due.late ? "txt-bad font-medium" : ""}>
+              {due.text}
+              {job.due_at ? ` · ${day(job.due_at)}` : ""}
+            </span>
+          ) : job.due_at ? (
+            <span>Due {day(job.due_at)}</span>
+          ) : null}
           {job.files ? (
             <span className="tabular-nums">
               {job.files} file{job.files === 1 ? "" : "s"} ·{" "}
@@ -120,45 +148,27 @@ function JobRow({ job, badge }: { job: Job; badge: boolean }) {
           </p>
         ) : null}
 
-        {job.asked_for ? (
+        {owed && job.asked_for ? (
           <p className="mt-1.5 text-xs text-muted-foreground">
             Asked for {job.asked_for}.
           </p>
         ) : null}
       </div>
 
-      {/* The group title already says the state; only "Waiting on
-          something" holds two (blocked, reading again), so only it shows. */}
-      {badge ? <StateBadge state={job.state} /> : null}
+      {/* The group title already says the state. "Waiting on something"
+          holds two (blocked, reading again), and a review or finished
+          group holds several board statuses, so those rows say theirs. */}
+      {group === "blocked" ? <StateBadge state={job.state} /> : null}
+      {group === "review" || group === "finished" || group === "hold" ? (
+        <StatusChip tone={group === "review" ? "accent" : "neutral"}>
+          {stageLabel(job.status)}
+        </StatusChip>
+      ) : null}
       <ChevronRight
         aria-hidden
         className="size-4 shrink-0 text-muted-foreground"
       />
     </Link>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  alarm = false,
-}: {
-  label: string;
-  value: number | null;
-  /** Red, for the one number that means something is wrong. */
-  alarm?: boolean;
-}) {
-  return (
-    <div className="min-w-0 rounded-2xl border bg-card p-3 sm:p-4">
-      <p className="truncate text-xs text-muted-foreground">{label}</p>
-      <p
-        className={`mt-1 whitespace-nowrap text-2xl font-semibold tracking-tight tabular-nums ${
-          alarm && value ? "txt-bad" : ""
-        }`}
-      >
-        {value ?? "n/a"}
-      </p>
-    </div>
   );
 }
 
@@ -169,12 +179,11 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
   const [showDone, setShowDone] = useState(false);
 
   const shown = useMemo(() => {
-    // A deleted card leaves its job behind, with the transcripts and frames
-    // that cost money to make. It is kept, and shown only on purpose.
+    // A card taken off the board leaves its job behind, with the transcripts
+    // and frames that cost money to make. Finished and removed jobs are
+    // kept, and shown only on purpose.
     let all = (jobs ?? []).filter(
-      j =>
-        showDone ||
-        (j.state !== "gone" && !DONE.has((j.status ?? "").toLowerCase())),
+      j => showDone || (j.state !== "gone" && holder(j.status) !== "finished"),
     );
     if (onlyMine) all = all.filter(j => isMine(j, email));
     return all;
@@ -189,28 +198,29 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
   );
 
   const mineCount = useMemo(
-    () => (jobs ?? []).filter(j => isMine(j, email)).length,
+    () => (jobs ?? []).filter(j => onEditor(j) && isMine(j, email)).length,
     [jobs, email],
   );
 
-  // The day in four numbers, counted from the list already on screen: open
-  // jobs only (closed and deleted cards never count), mine only when that
-  // filter is on. Late and due today leave out what is already delivered.
+  // The day in four numbers. Every one counts only work that is the
+  // editor's turn (lib/stages.ts), mine only when that filter is on.
   const tally = useMemo(() => {
     if (!jobs) return null;
-    const open = jobs.filter(
-      j =>
-        j.state !== "gone" &&
-        !DONE.has((j.status ?? "").toLowerCase()) &&
-        (!onlyMine || isMine(j, email)),
+    const owed = jobs.filter(
+      j => onEditor(j) && (!onlyMine || isMine(j, email)),
     );
-    const owed = open.filter(j => j.state !== "delivered");
     return {
-      ready: open.filter(j => j.state === "ready").length,
-      waiting: open.filter(j => j.state === "blocked" || j.state === "stale")
+      ready: owed.filter(j => j.state === "ready").length,
+      waiting: owed.filter(j => j.state === "blocked" || j.state === "stale")
         .length,
-      late: owed.filter(j => (daysToDue(j.due_at) ?? 0) < 0).length,
-      today: owed.filter(j => daysToDue(j.due_at) === 0).length,
+      late: owed.filter(j => (dueDays(j.due_at) ?? 0) < 0).length,
+      today: owed.filter(j => dueDays(j.due_at) === 0).length,
+      review: jobs.filter(
+        j =>
+          j.state !== "gone" &&
+          holder(j.status) === "review" &&
+          (!onlyMine || isMine(j, email)),
+      ).length,
     };
   }, [jobs, onlyMine, email]);
 
@@ -218,7 +228,7 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
     <Page>
       <PageHeader
         title="Jobs"
-        sub="Everything on the Video Pipeline, read by the desk every half hour."
+        sub={syncedLine(jobs)}
         actions={
           <>
             {actions}
@@ -226,18 +236,32 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
               <RefreshCw aria-hidden />
               Refresh
             </Button>
+            <ReportIssue />
           </>
         }
       />
 
       {tally ? (
-        // One row on a phone too: four short numbers read at a glance.
-        <div className="mb-6 grid grid-cols-4 gap-2 sm:gap-4">
-          <Stat label="Ready" value={tally.ready} />
-          <Stat label="Waiting" value={tally.waiting} />
-          <Stat label="Late" value={tally.late} alarm />
-          <Stat label="Due today" value={tally.today} />
-        </div>
+        <>
+          {/* One row on a phone too: four short numbers read at a glance. */}
+          <div className="grid grid-cols-4 gap-2 sm:gap-4">
+            <StatTile label="Ready" value={tally.ready} />
+            <StatTile label="Waiting" value={tally.waiting} />
+            <StatTile
+              label="Late"
+              value={tally.late}
+              tone={tally.late ? "txt-bad" : undefined}
+            />
+            <StatTile label="Due today" value={tally.today} />
+          </div>
+          <p className="mt-2 mb-6 px-1 text-xs text-muted-foreground">
+            These count jobs on you: new, planning, in progress and update
+            required.
+            {tally.review
+              ? ` ${tally.review} more ${tally.review === 1 ? "is" : "are"} in review.`
+              : ""}
+          </p>
+        </>
       ) : null}
 
       <div className="-mx-4 mb-6 flex flex-nowrap items-center gap-2 overflow-x-auto px-4 no-scrollbar sm:mx-0 sm:flex-wrap sm:px-0">
@@ -256,19 +280,23 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
           aria-pressed={showDone}
           className={chip(showDone)}
         >
-          Include closed and deleted
+          Include finished and removed
         </button>
       </div>
 
-      {error && <Problem>These jobs could not be read: {error}</Problem>}
-      {loading && <Spinner what="Reading the board" />}
-      {!loading && !groups.length && (
+      {error ? (
+        <Problem>
+          The jobs could not be read: {error}. Press Refresh to try again.
+        </Problem>
+      ) : null}
+      {loading && !jobs ? <Spinner what="Reading the board" /> : null}
+      {!loading && !error && !groups.length ? (
         <Empty>
           {onlyMine
-            ? "Nothing is assigned to you right now."
-            : "No open jobs on the board."}
+            ? "Nothing is assigned to you right now. Turn off Assigned to me to see every job."
+            : "No open jobs on the board. New cards on the Video Pipeline show here within five minutes."}
         </Empty>
-      )}
+      ) : null}
 
       <div className="space-y-6">
         {groups.map(g => (
@@ -286,11 +314,7 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
             </div>
             <div className="divide-y overflow-hidden rounded-2xl border bg-card">
               {g.jobs.map(job => (
-                <JobRow
-                  key={job.task_id}
-                  job={job}
-                  badge={g.key === "blocked"}
-                />
+                <JobRow key={job.task_id} job={job} group={g.key} />
               ))}
             </div>
           </section>

@@ -51,25 +51,79 @@ export function chip(on: boolean): string {
 }
 
 /**
- * The page's frame: the gutter, the width and the one heading. This app has
- * no padded layout around its pages, so each page brings its own.
+ * The page's width. The layout's `<main>` pads every page, as in the other
+ * cockpits (DESIGN.md, Pages), so a page brings no gutter of its own.
  */
 export function Page({
-  wide = false,
+  narrow = false,
   children,
 }: {
-  /** Galleries and the board; reading pages stay narrow. */
-  wide?: boolean;
+  /** A form or one record read top to bottom; everything else is max-w-6xl. */
+  narrow?: boolean;
   children: ReactNode;
 }) {
   return (
-    <div
-      className={`mx-auto w-full px-4 py-6 sm:px-6 lg:px-8 ${
-        wide ? "max-w-6xl" : "max-w-3xl"
-      }`}
-    >
+    <div className={`mx-auto w-full ${narrow ? "max-w-3xl" : "max-w-6xl"}`}>
       {children}
     </div>
+  );
+}
+
+/** One number with its label, as the CSM kit draws it (kit.tsx StatTile). */
+export function StatTile({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: ReactNode;
+  value: ReactNode;
+  sub?: ReactNode;
+  /** A txt-* class when the number itself is good or bad news. */
+  tone?: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-2xl border bg-card p-4">
+      <div className="truncate text-xs text-muted-foreground">{label}</div>
+      <div
+        className={`mt-1 whitespace-nowrap text-2xl font-semibold tracking-tight tabular-nums ${tone ?? ""}`}
+      >
+        {value}
+      </div>
+      {sub ? (
+        <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>
+      ) : null}
+    </div>
+  );
+}
+
+export type Tone = "good" | "warn" | "bad" | "neutral" | "accent";
+
+const TONE: Record<Tone, string> = {
+  good: "var(--success)",
+  warn: "var(--warning)",
+  bad: "var(--destructive)",
+  neutral: "var(--muted-foreground)",
+  accent: "var(--primary)",
+};
+
+/** A status chip: the colour on the dot, the words readable (kit.tsx Chip). */
+export function StatusChip({
+  tone = "neutral",
+  children,
+}: {
+  tone?: Tone;
+  children: ReactNode;
+}) {
+  return (
+    <span className="inline-flex max-w-full shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium">
+      <span
+        aria-hidden
+        className="size-1.5 shrink-0 rounded-full"
+        style={{ background: TONE[tone] }}
+      />
+      <span className="min-w-0 truncate">{children}</span>
+    </span>
   );
 }
 
@@ -163,9 +217,20 @@ export function Fold({
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
+/** Nothing here yet: one sentence that says what happens next, and an
+ * optional action (the media buyer's EmptyState). */
+export function Empty({
+  children,
+  action,
+}: {
+  children: ReactNode;
+  action?: ReactNode;
+}) {
   return (
-    <p className="py-6 text-center text-sm text-muted-foreground">{children}</p>
+    <div className="py-6 text-center text-sm text-muted-foreground">
+      <p>{children}</p>
+      {action ? <div className="mt-3 flex justify-center">{action}</div> : null}
+    </div>
   );
 }
 

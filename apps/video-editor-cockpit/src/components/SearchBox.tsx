@@ -1,7 +1,6 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { COCKPIT_SOP } from "../lib/cockpits";
 import { useJobs, useSearchAssets } from "../lib/data";
 import { portalUrl } from "../lib/portal";
 import { matchScore, onOpenSearch } from "../lib/search";
@@ -167,12 +166,10 @@ function Results({ onClose }: { onClose: () => void }) {
     const sop: Hit = {
       key: "page:sop",
       label: "How to use this desk",
-      sub: "The editors' SOP, in ClickUp",
+      sub: "The demo video and both SOPs",
       kind: "Page",
-      href: COCKPIT_SOP.editor,
-      external: true,
-      newTab: true,
-      text: "how to use this desk sop guide help the day steps",
+      href: "/guide",
+      text: "how to use this desk sop guide help the day steps demo video links",
     };
     const all = [...jobHits, ...clipHits, ...PAGES, team, performance, sop];
     if (!typed)
@@ -202,7 +199,7 @@ function Results({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="overflow-hidden rounded-[var(--radius-lg,16px)] border bg-card shadow-xl">
+    <div className="overflow-hidden rounded-[var(--radius-lg,16px)] border bg-card">
       <div className="flex items-center gap-2 border-b px-3">
         <Search aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <input

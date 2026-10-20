@@ -20,6 +20,16 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from . import http
+from .config import DONE_STATUSES
+
+# Finished work for the footage reader: the closed statuses plus "live 🚀".
+FINISHED = {*DONE_STATUSES, "live"}
+
+
+def _letters(status: Any) -> str:
+    """"Live 🚀" and "live" are one status: lower case, letters and spaces."""
+    return " ".join("".join(c for c in str(status or "").lower() if c.isalpha() or c == " ").split())
+
 
 JOB_COLUMNS = {
     "task_id", "name", "url", "status", "client", "clients", "client_task_id", "editor", "editors", "request_type",
@@ -170,8 +180,12 @@ class Supabase:
                 out[r["task_id"]] = r
         return out
 
-    def store_jobs(self, rows: list[dict[str, Any]]) -> dict[str, int]:
-        """Board rows in. A job already known keeps its worker state; a new one starts at `new`."""
+    def store_jobs(self, rows: list[dict[str, Any]], *, create: bool = True) -> dict[str, int]:
+        """Board rows in. A job already known keeps its worker state; a new one starts at `new`.
+
+        With `create` off, only jobs already here are updated: a closed card
+        is not work to add, but a job that was open takes its new status.
+        """
         stamp = now_iso()
         have = self.existing_jobs([r.get("task_id", "") for r in rows])
         fresh: list[dict[str, Any]] = []
@@ -184,7 +198,7 @@ class Supabase:
                 body = self._row(r, BOARD_COLUMNS)
                 body["updated_at"] = stamp
                 known.append({**body, "task_id": tid})
-            else:
+            elif create:
                 body = self._row(r, JOB_COLUMNS)
                 body.update({"state": "new", "ready": False, "attempts": 0, "updated_at": stamp})
                 fresh.append(body)
@@ -197,12 +211,17 @@ class Supabase:
         return rows[0] if rows else None
 
     def jobs_to_prepare(self, limit: int) -> list[dict[str, Any]]:
-        """Open jobs the worker has not finished, oldest first, tried fewer than four times."""
+        """Open jobs the worker has not finished, oldest first, tried fewer than four times.
+
+        A job whose card is finished (cancelled, complete, live) is skipped:
+        reading its footage would spend money on work nobody will do. Live is
+        not a closed status to the sync, so its status still updates.
+        """
         rows = self.select(
             "editor_jobs",
             "select=*&state=in.(\"new\",\"stale\")&attempts=lt.4&order=opened_at.asc&limit=" + str(int(limit)),
         )
-        return rows
+        return [r for r in rows if _letters(r.get("status")) not in FINISHED]
 
     def retire_missing(self, on_board: Iterable[str], stamp: str) -> dict[str, Any]:
         """Mark jobs whose card is no longer on the board.

@@ -91,8 +91,12 @@ def run_deliver(cfg: Config, log: Callable[[str], None], sb: Supabase, cu: Click
     try:
         cu.set_status(task_id, status)
     except http.HttpError as e:
-        log(f"{task_id}: status not changed: {http.scrub(str(e))[:140]}")
-        status = str(job.get("status") or "")
+        # A cut nobody is asked to review is not delivered. The link is
+        # already on the card and writing it again is harmless, so the
+        # request fails and the drain tries the whole step again.
+        raise http.HttpError(
+            0, f"the link is on the card, but the status did not move to {status}: {http.scrub(str(e))[:140]}",
+        ) from e
     sb.mark_job(task_id, edited_url=url, status=status, state="delivered")
     if cfg.clickup_writeback:
         who = req.get("requested_by_name") or req.get("requested_by") or "the editor"
@@ -444,4 +448,12 @@ def run_requests(cfg: Config, log: Callable[[str], None], sb: Supabase, *, limit
             _fail(sb, rid, msg, attempts)
             out["failed"] += 1
             log(f"{kind} {task_id}: {msg}")
+        except Exception as e:  # noqa: BLE001 - a fault in the desk itself
+            # Anything else is a bug here, not a bad request. Without this
+            # the row stayed "running" for ever and the editor saw "Working
+            # on it" with nothing working. It fails, says so, and is retried.
+            msg = http.scrub(f"{type(e).__name__}: {e}")[:300]
+            _fail(sb, rid, f"the desk hit a fault: {msg}", attempts)
+            out["failed"] += 1
+            log(f"{kind} {task_id}: fault: {msg}")
     return out

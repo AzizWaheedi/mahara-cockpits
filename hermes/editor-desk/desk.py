@@ -248,6 +248,14 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         log.warn(f"jobs not retired: {http.scrub(str(e))[:160]}")
 
     out = sb.store_jobs(rows)
+    # A card moved to a closed status is not added as work, but a job that
+    # was open takes the new status. Before this, a cancelled card kept
+    # showing in the cockpit at the status it had before.
+    closed = 0
+    if not args.closed:
+        shut = [job_row(t, now_iso=stamp) for t in every
+                if not is_open(str((t.get("status") or {}).get("status") or ""))]
+        closed = sb.store_jobs([r for r in shut if r["task_id"]], create=False).get("updated", 0)
     # A job whose board fields changed after preparation is read again.
     stale = 0
     for r in rows:
@@ -258,7 +266,7 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             sb.mark_job(r["task_id"], state="stale", attempts=0)
             stale += 1
     summary = {
-        "tasks": len(rows), **out, "stale": stale,
+        "tasks": len(rows), **out, "closed": closed, "stale": stale,
         "clients": len(people), "matched": matched, "docs_read": docs_read,
         "seats": seats, "retired": retired.get("retired", 0),
     }

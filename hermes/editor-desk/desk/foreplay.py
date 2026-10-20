@@ -76,6 +76,7 @@ class Foreplay:
         self.log = log or (lambda m: None)
         self.calls = 0
         self._session = ""
+        self._opened = False
 
     def _h(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.cfg.foreplay_key}", "Accept": "application/json"}
@@ -116,7 +117,7 @@ class Foreplay:
 
     def _open(self) -> None:
         """Handshake once, then reuse the session for every call."""
-        if self._session:
+        if self._opened:
             return
         status, headers, body = http.request(
             "POST", COMPOSIO_MCP,
@@ -134,10 +135,14 @@ class Foreplay:
         for k, v in (headers or {}).items():
             if str(k).lower() == "mcp-session-id":
                 sid = str(v).strip()
-        if not sid:
-            answer = self._sse(body or b"")
-            raise http.HttpError(status or 0, f"Composio gave no MCP session: {json.dumps(answer)[:160]}")
+        # From October 2026 Composio answers initialize with no session
+        # header: a stateless server, where every call stands alone. A
+        # good answer is enough; only a handshake that failed is refused.
+        answer = self._sse(body or b"")
+        if not sid and not answer.get("result"):
+            raise http.HttpError(status or 0, f"Composio refused the MCP handshake: {json.dumps(answer)[:160]}")
         self._session = sid
+        self._opened = True
         # Politeness the protocol asks for; the server does not answer it.
         try:
             http.request("POST", COMPOSIO_MCP, headers=self._mcp_headers(),

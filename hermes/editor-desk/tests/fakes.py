@@ -134,14 +134,14 @@ class FakeSupabase:
     def existing_jobs(self, ids):
         return {i: self.jobs[i] for i in ids if i in self.jobs}
 
-    def store_jobs(self, rows):
+    def store_jobs(self, rows, *, create=True):
         new = updated = 0
         for r in rows:
             tid = r["task_id"]
             if tid in self.jobs:
                 self.jobs[tid].update({k: v for k, v in r.items() if k != "task_id"})
                 updated += 1
-            else:
+            elif create:
                 self.jobs[tid] = {"state": "new", "ready": False, "attempts": 0, **r}
                 new += 1
         return {"new": new, "updated": updated}
@@ -339,4 +339,7 @@ class FakeClickUp:
         self.fields.append((task_id, field_key, value))
 
     def set_status(self, task_id, status):
+        if getattr(self, "refuse_status", False):
+            from desk import http
+            raise http.HttpError(400, "Status does not exist")
         self.statuses.append((task_id, status))

@@ -32,6 +32,8 @@
   --color-destructive: var(--destructive);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-border: var(--sidebar-border);
 
   --radius-sm: calc(var(--radius) - 4px);
   /* 8px: on the brand's 4/8/12/16/24 scale. */
@@ -62,6 +64,10 @@
   --destructive: oklch(0.55 0.22 25);
   --border: oklch(0.91 0.008 250);
   --ring: var(--mahara-teal);
+
+  /* The floating rail, as in the client success cockpit. */
+  --sidebar: oklch(0.975 0.004 250);
+  --sidebar-border: oklch(0.91 0.008 250);
 }
 
 .dark {
@@ -81,6 +87,9 @@
   --destructive: oklch(0.65 0.2 25);
   --border: oklch(1 0 0 / 10%);
   --ring: var(--mahara-teal);
+
+  --sidebar: #070f2a;
+  --sidebar-border: oklch(1 0 0 / 10%);
 }
 
 html,
@@ -206,7 +215,10 @@ h3 {
 }
 /* Outside every layer so the text-sm and h-8 utilities do not win; touch screens only. */
 @media (pointer: coarse) {
-  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea { font-size: max(16px, 1em); min-height: 2.5rem; }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea { font-size: max(16px, 1em); }
+  /* Not textareas: they are two rows at least, and a floor here beat their
+     own min-h (the media buyer's rule, index.css there). */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select { min-height: 2.5rem; }
   main :is(button, [role="button"]):not([role="switch"]):not(.no-touch) { min-height: 2.5rem; touch-action: manipulation; }
 }
 
@@ -303,6 +315,15 @@ h3 {
  * chevron opts out with the no-marker class.
  */
 @layer base {
+  /* Everything that can be pressed shows the hand, as in the other cockpits. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    cursor: pointer;
+  }
   summary {
     list-style: none;
     cursor: pointer;

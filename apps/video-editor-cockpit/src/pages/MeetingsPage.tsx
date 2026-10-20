@@ -1,4 +1,3 @@
-import { ArrowUpRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   Empty,
@@ -10,18 +9,18 @@ import {
   Prose,
   Spinner,
 } from "../components/bits";
-import { Button, buttonClass } from "../components/ui/button";
+import { Button } from "../components/ui/button";
 import { useMeetings } from "../lib/data";
 import { moment } from "../lib/format";
-import { portalUrl } from "../lib/portal";
 
 /**
  * Team meetings, from Fathom.
  *
- * Only the ones you were on the invite for. That is decided in Postgres, not
- * here: an internal call can carry pay, performance or a disagreement about
- * somebody, so being on the editor list is not a reason to read a meeting
- * you were not in. Admins see all of them.
+ * Which ones is decided in Postgres, not here. Since the team-only seats
+ * of 2026-10-17 (docs/access/TEAM-ONLY-SEATS.md) every full seat reads all
+ * of them, and a call-center seat only the ones it was invited to. The
+ * schedule and agendas are the portal's Team meetings, at the foot of the
+ * rail, so they are not linked twice here.
  *
  * The last two weeks first; older ones are one tap away, not sixty cards
  * down the page.
@@ -65,26 +64,24 @@ export default function MeetingsPage() {
     <Page>
       <PageHeader
         title="Meetings"
-        sub="The team meetings you were on, recorded by Fathom. Client calls are not here."
-        actions={
-          // The schedule and agendas live in the portal; one Meetings here.
-          <a
-            href={`${portalUrl()}/team`}
-            className={buttonClass({ variant: "outline", size: "sm" })}
-          >
-            Team schedule and agendas
-            <ArrowUpRight aria-hidden />
-          </a>
-        }
+        sub="Team meetings recorded by Fathom, with what came out of them. Client calls are not here."
       />
 
-      {meetings.error && (
-        <Problem>These could not be read: {meetings.error}</Problem>
-      )}
-      {meetings.loading && <Spinner what="Reading the meetings" />}
-      {!meetings.loading && !mine.length && (
-        <Empty>No team meetings you were on in the last few weeks.</Empty>
-      )}
+      {meetings.error ? (
+        <Problem>
+          The meetings could not be read: {meetings.error}. Reload the page to
+          try again.
+        </Problem>
+      ) : null}
+      {meetings.loading && !meetings.data ? (
+        <Spinner what="Reading the meetings" />
+      ) : null}
+      {!meetings.loading && !meetings.error && !mine.length ? (
+        <Empty>
+          No team meetings recorded yet. Fathom recordings show here within the
+          hour.
+        </Empty>
+      ) : null}
 
       <div className="space-y-4 sm:space-y-6">
         {actions.length ? (
