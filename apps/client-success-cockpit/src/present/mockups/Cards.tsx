@@ -163,13 +163,13 @@ export function CalendarEntry({
 
 /**
  * Journey stop 4: the steps before the meeting, drawn at the lanes' own
- * scale and in their marks (nodes on the dotted line, names at the row
- * names' size), running down from the lit row to the meeting: the
- * strip starts level with "Booked, confirmed, reminded" and its last node,
- * "The meeting", sits level with "You meet". The call slide's stop 7 is
- * the home of these steps; here each is named in a word or two. Done with
- * you, its four steps; a step with no time of its own (the provisional
- * bookings' calls) is named by its whole line.
+ * scale and in their marks (nodes on the dotted line), running down from
+ * the lit row to the meeting: the strip starts level with "Booked,
+ * confirmed, reminded" and its last node, "The meeting", sits level with
+ * "You meet". Each step says when it happens and what happens then
+ * ("The day before · a reminder"), in the call slide's words, so the
+ * stop's sentence above it reads straight into the strip. Done with you,
+ * its four steps.
  */
 export function FiveDots({
   lang,
@@ -217,9 +217,15 @@ export function FiveDots({
             data-first={i === 0 ? "" : undefined}
             data-anchor={i === 0 ? "" : undefined}
           >
-            {r.plain && r.when
-              ? `${t(r.when, lang)}: ${t(r.what, lang)}`
-              : t(r.when ?? r.what, lang)}
+            {r.when ? (
+              <>
+                <span className="dkc-dot-when">{t(r.when, lang)}</span>
+                {r.plain ? (lang === "ar" ? "، " : ": ") : " · "}
+                {t(r.what, lang)}
+              </>
+            ) : (
+              t(r.what, lang)
+            )}
           </li>
         ))}
       </ol>

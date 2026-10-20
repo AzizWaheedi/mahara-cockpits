@@ -146,7 +146,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 **Slots**
 - `form.goal90`, `form.goal12_24`, `form.challenges`, `form.why`, with `prep.goals` overriding any of them.
 - Each card holds at most about 120 characters. Money stays in the client's own currency, exactly as they wrote it. Copy rule 10 applies.
-- Fallback: a card with no answer is hidden. If all four are missing, the slide shows the title "Your goals, in your words" (nothing was written, so not "as you wrote them") and "What would make the next 90 days a win for you?", and the CSM types the answer live; it saves to prep and goes into the kickoff form.
+- Fallback: a card with no answer is hidden. If all four are missing, the slide shows only the question "What would make the next 90 days a win for you?" as its one heading (no title over it; the composition pass of 2026-10-20 dropped "Your goals, in your words", which competed with the question), and the CSM types the answer live; it saves to prep and goes into the kickoff form.
 
 **Notes**
 - Read their goals back. Don't re-ask anything they already answered.
@@ -231,13 +231,13 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
   2. Onboarding form
   3. Onboarding call · "Today"
   4. Brand and offer · {next.blueprint}
-  5. Launch call · "20 to 30 minutes. We walk you through everything that's going live." · {next.launch}
+  5. Launch call · {next.launch}, else "20 to 30 minutes" · then "We walk you through everything that's going live."
   6. First appointments · "After go-live"
 - Footer: "Each call is booked at the end of the one before."
 
 **Slots**
 - The lit stop comes from the client's stage: on the onboarding call it is always stop 3. If the deck is opened later, Brand Blueprint Booked lights stop 4, and LAUNCH BOOKED or Ready For Launch lights stop 5.
-- `next.blueprint`, `next.launch`: a date shows only when the call is booked. Fallback: no date. Never an estimate.
+- `next.blueprint`, `next.launch`: a date shows only when the call is booked. Fallback: no date (the launch call says how long it takes instead). Never an estimate. A step already passed with no date on file reads "Done".
 
 **Notes**
 - Stop 4 is the Brand Blueprint call. Name it here; slide 7 says what it is.
@@ -444,19 +444,19 @@ Stops 1, 2, 4 and 7 open up on later slides (L3, L5, L6 and L7), so their lines 
 **Title:** Your red lines are fixed. The rest, we test.
 **Time:** 3 minutes
 
-**On screen:** eyebrow "Creative freedom", title "Your red lines are fixed. The rest, we test.", then one layout that builds in three stops, concession first (DESIGN 8.4).
+**On screen:** title "Your red lines are fixed. The rest, we test." (no eyebrow since the composition pass of 2026-10-20), then one layout that builds in three stops, concession first (DESIGN 8.4).
 
 **Stops**
 
 | # | Panel | Copy | Picture |
 |---|---|---|---|
-| 1 | Your page stays yours | "Paid ads show in the feed, marked Sponsored. They don't appear on your page. They're made for people who don't know you yet. The polished work belongs in your page's own posts." | The L3 feed phone, small, with a leader on "Sponsored" |
+| 1 | Your page stays yours | Lead: "Ads show in the feed, marked Sponsored, to people who don't know you yet. They don't appear on your page." Foot line: "The polished work belongs in your page's own posts." | The L3 feed phone, with a leader on "Sponsored" |
 | 2 | Fixed: your red lines | {dosDonts} as "Always…" and "Never…" lines. When a red line came from O7: "You told us: {red line}." Then: "We never cross these. You approve every fact, price and claim. Anything wrong or off-brand, we fix." | The amber panel. Fallback: "No red lines written yet. Tell us now and we'll add them to your card." |
-| 3 | Open: everything else we test | Chips: Angles · Hooks · Formats · Thumbnails · Who's on camera. Their L3 pick, starred: "Your pick runs too, beside the ones you'd skip. The numbers tell us which work." Then: "You approve your ads in the group. Once you have, we test versions of them side by side." ("An ad waiting for the perfect version earns nothing while it waits." is said, not shown: see Notes.) | The panel, with their starred creative as a thumbnail |
+| 3 | Open: everything else we test | Chips: Angles · Hooks · Formats · Thumbnails · Who's on camera. Their L3 pick, starred: "Your pick runs too, beside the ones you'd skip. The numbers tell us which work." Foot line, across under both columns: "You approve your ads in the group." then the footer. ("An ad waiting for the perfect version earns nothing while it waits." is said, not shown: see Notes.) | The panel, with their starred creative as a thumbnail |
 | 4 (optional) | How a test runs | Caption: "One campaign, 20 versions side by side. Some stay on, some go off." | 20 neutral tiles with on/off toggles, 11 lit and 9 dimmed. No thumbnails, no columns, no money. Tagged "Illustration" |
 
 After stop 3:
-- Footer: "Prefer something different later? Ask in the group, and we'll launch it too."
+- Footer, on the foot line after the approval: "Prefer something different later? Ask, and we'll launch it too."
 - Once the CSM records the client's yes: a quiet stamp, "Agreed to test this way · {date}". Nothing shows before that.
 
 **Slots:** `dosDonts`, `prep.red_lines`, `prep.their_pick` (without one, the star line reads "The ones you'd pick run too, beside the ones you'd skip."), `prep.creative_agreed_at`, written with an audit row from the notes window ("We agree to test this way") or the A key. The stamp records the conversation; it is not a contract term.
@@ -571,7 +571,7 @@ After stop 3:
 | 1 | Where things stand | "Your next appointments, and anything waiting on you." | `portal-overview` |
 | 2 | Your calls, recorded | "Listen back to the calls we make for you, in Mahara OS." | `portal-calls` |
 | 3 | On your phone | "Install it like an app." | `mahara-mobile-{lang}.mp4` |
-| 4 | Your number-one job: mark every meeting | "Did they come? Did you quote? Did you win? A few taps, the same day." Footer: "What isn't marked can't be improved." | `portal-outcome`, with the amber tag "Your number-one job" |
+| 4 | Your number-one job: mark every meeting | The job as the stop's heading, then "A few taps, the same day.", then its three questions as three taps in order: "Did they come?" · "Did you quote?" · "Did you win?" Footer: "What isn't marked can't be improved." | Drawn, no screenshot: the outcome form is shown once, on L2 stop 7 |
 
 The slide ends on stop 4.
 
@@ -599,7 +599,7 @@ The slide ends on stop 4.
 **On screen**
 - Title: "Your part"
 - Line: "Your five jobs, in one place."
-- One checklist of five rows: the job in one short line and its "Why it matters" line. Two rows carry a picture at their end (DESIGN 8.8): three of their creatives on row 1 (only with three or more), and a calendar day with one hour blocked, "Busy", on row 5:
+- The five jobs on one grid with the title, three across: each the job in one short line and why it matters under it (no column head). Two carry a picture under their words (DESIGN 8.8): three of their creatives under job 1 (only with three or more), and a calendar day with one hour blocked, "Busy", under job 5:
 
 | # | Picture | Job | Why it matters |
 |---|---|---|---|
@@ -990,3 +990,16 @@ Run 2026-10-19 over every English on-screen string, presenter note and fallback 
 **Arabic.** `CONTENT-AR.md` mirrors each English change in its English column. The Arabic changed only where the meaning moved: O3's `team.line` (no longer "one team") and L7's stop 4 spoken line (now "this is the job most often forgotten"). Both were written under the voice skill, and `team.line` stays in slide-level white Gulf Arabic.
 
 **`DESIGN.md` is untouched.** Its wireframes still quote three of the old strings (O1's agenda, O3's line and L6's legend). Per its own line 21, the final words are in this file.
+
+---
+
+# Composition pass (2026-10-20)
+
+The slides were recomposed so each has its own structure and one primary (DESIGN 19.11). Where a composition needed fewer or split words, the copy changed here, in `CONTENT-AR.md` and in `content.ts` together. No fact, slot or decision changed.
+
+- **O2, nothing from the form:** the title "Your goals, in your words" is gone; the question is the slide's one heading.
+- **O5:** the launch call's line is split in two. Its caption is its date once booked, else "20 to 30 minutes"; "We walk you through everything that's going live." sits under it. A passed step with no date on file reads "Done" (the status word the deck already uses).
+- **L4:** no eyebrow ("Creative freedom" sat over a title that says it). Stop 1's words are cut to one lead ("Ads show in the feed, marked Sponsored, to people who don't know you yet. They don't appear on your page.") and a foot line ("The polished work belongs in your page's own posts."). "They're made for people who don't know you yet" folds into the lead. The approval loses "Once you have, we test versions of them side by side." (the title says the rest is tested, and the pick line says how), and the footer loses its second "in the group": the two now read as one foot line, "You approve your ads in the group. Prefer something different later? Ask, and we'll launch it too."
+- **L7 stop 4:** no screenshot and no amber tag. Its sentence is set as its parts: "A few taps, the same day." under the job, and the three questions as three taps ("Did they come?" · "Did you quote?" · "Did you win?"). The stop's full copy line stays the record of the wording.
+- **L8:** no "Why it matters" column head (each job carries its own why, so nothing heads a column).
+

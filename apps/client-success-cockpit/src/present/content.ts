@@ -218,8 +218,6 @@ export const O = {
       en: "Your goals, as you wrote them",
       ar: "أهدافكم مثل ما كتبتوها",
     },
-    /** The title when nothing was written and the CSM types it live. */
-    titleAsk: { en: "Your goals, in your words", ar: "أهدافكم، بكلامكم" },
     source: { en: "From your onboarding form", ar: "من نموذج التعريف بالنشاط" },
     goal90: { en: "In 90 days", ar: "خلال ٩٠ يوم" },
     goal12_24: { en: "In 12 to 24 months", ar: "خلال سنة إلى سنتين" },
@@ -348,9 +346,11 @@ export const O = {
       { en: "First appointments", ar: "أول المواعيد" },
     ],
     today: { en: "Today", ar: "اليوم" },
+    /** The launch call's caption on the road until it is booked. */
+    launchTime: { en: "20 to 30 minutes", ar: "من ٢٠ إلى ٣٠ دقيقة" },
     launchLine: {
-      en: "20 to 30 minutes. We walk you through everything that's going live.",
-      ar: "من ٢٠ إلى ٣٠ دقيقة. نمر معكم على كل شي بينزل.",
+      en: "We walk you through everything that's going live.",
+      ar: "نمر معكم على كل شي بينزل.",
     },
     afterGoLive: { en: "After go-live", ar: "بعد الإطلاق" },
     footer: {
@@ -965,16 +965,21 @@ export const LAUNCH = {
     },
   },
   test: {
-    owner: { en: "Creative freedom", ar: "المساحة الإبداعية" },
     title: {
       en: "Your red lines are fixed. The rest, we test.",
       ar: "خطوطكم الحمراء ثابتة، والباقي نختبره.",
     },
     page: {
       name: { en: "Your page stays yours", ar: "صفحتكم تبقى لكم" },
+      /** The first stop's lead, beside the feed phone. */
       copy: {
-        en: "Paid ads show in the feed, marked Sponsored. They don't appear on your page. They're made for people who don't know you yet. The polished work belongs in your page's own posts.",
-        ar: "الإعلانات الممولة تطلع بالفيد، ومكتوب عليها مُموَّل، وما تطلع على صفحتكم. معمولة لناس ما يعرفونكم للحين. والشغل الفخم والمرتب مكانه حسابكم نفسه.",
+        en: "Ads show in the feed, marked Sponsored, to people who don't know you yet. They don't appear on your page.",
+        ar: "الإعلانات الممولة تطلع بالفيد ومكتوب عليها مُموَّل، لناس ما يعرفونكم للحين. وما تطلع على صفحتكم.",
+      },
+      /** The first stop's foot line. */
+      foot: {
+        en: "The polished work belongs in your page's own posts.",
+        ar: "والشغل الفخم والمرتب مكانه حسابكم نفسه.",
       },
     },
     fixed: {
@@ -1015,14 +1020,15 @@ export const LAUNCH = {
         en: "The ones you'd pick run too, beside the ones you'd skip. The numbers tell us which work.",
         ar: "اللي تختارونها تنزل بعد، جنب اللي يمكن ما تختارونها. والأرقام هي اللي توضح لنا أي واحد يشتغل.",
       },
+      /** The open stop's foot line, with the footer after it. */
       approve: {
-        en: "You approve your ads in the group. Once you have, we test versions of them side by side.",
-        ar: "توافقون على إعلاناتكم بالقروب، وبعد موافقتكم نختبر أكثر من نسخة منها مع بعض.",
+        en: "You approve your ads in the group.",
+        ar: "توافقون على إعلاناتكم بالقروب.",
       },
     },
     footer: {
-      en: "Prefer something different later? Ask in the group, and we'll launch it too.",
-      ar: "تبون شي ثاني بعدين؟ اطلبوه بالقروب، وننزله بعد.",
+      en: "Prefer something different later? Ask, and we'll launch it too.",
+      ar: "تبون شي ثاني بعدين؟ اطلبوه، وننزله بعد.",
     },
     proof: {
       name: { en: "How a test runs", ar: "بهالشكل يمشي الاختبار" },
@@ -1304,7 +1310,16 @@ export const LAUNCH = {
         },
       },
     ] as { key: string; name: L; copy: L; nameDwy?: L; copyDwy?: L }[],
-    jobTag: { en: "Your number-one job", ar: "أهم شغلة عليكم" },
+    /**
+     * The number-one job's stop, drawn: the outcome stop's sentence as its
+     * three questions on one line, in order, then how it's done.
+     */
+    asks: [
+      { en: "Did they come?", ar: "حضر؟" },
+      { en: "Did you quote?", ar: "عطيتوه عرض سعر؟" },
+      { en: "Did you win?", ar: "وقّع معكم؟" },
+    ],
+    taps: { en: "A few taps, the same day.", ar: "كم ضغطة، بنفس اليوم." },
     footer: {
       en: "What isn't marked can't be improved.",
       ar: "اللي ما ينسجل، ما نقدر نحسّنه.",
@@ -1322,7 +1337,6 @@ export const LAUNCH = {
       en: "Your five jobs, in one place.",
       ar: "خمس شغلات عليكم، بمكان واحد.",
     },
-    why: { en: "Why it matters", ar: "ليش مهم" },
     rows: [
       {
         key: "ads",

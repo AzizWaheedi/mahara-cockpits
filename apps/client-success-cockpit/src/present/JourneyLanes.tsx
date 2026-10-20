@@ -175,7 +175,7 @@ export interface LanesProps {
   dwy: boolean;
   /** Reduced motion: every state set at once. */
   still?: boolean;
-  /** Draw the fork from "You meet" (stop 6 on). */
+  /** Draw the fork from "You meet" (stop 7 on: stop 6's stage draws it). */
   fork?: boolean;
   /** The leader's end: the nearest edge of the stage picture, in lanes px. */
   leaderTo?: { x: number; y: number } | null;
@@ -347,8 +347,8 @@ export function JourneyLanes({
         </span>
       ))}
       {fork && !idle ? (
-        // The rebook node says what it is: the stage's "Didn't show?" card,
-        // named to the node's end side, inside the lane it is drawn in.
+        // The rebook node says what it is (the end the stage drew a stop
+        // before), named to the node's end side, inside its lane.
         <span
           className="dkc-fork-name"
           style={{ insetInlineStart: forkEnd.x + 20, top: forkEnd.y }}

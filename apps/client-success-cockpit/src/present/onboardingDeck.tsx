@@ -112,14 +112,15 @@ function GoalAsk({ ctx }: { ctx: SlideCtx }) {
   const [value, setValue] = useState(
     typeof goals.goal90 === "string" ? goals.goal90 : "",
   );
-  // The question is the slide: set large in the middle of the page, with
+  // The question is the slide, and its only heading: set at the covers'
+  // display size in the middle of the page (no smaller title over it), with
   // the answer's line under it drawn only under the CSM's pointer or while
   // typing, so the client never sees an empty form field. The footnote
   // ("They're targets…") comes once there is a target on the screen.
   return (
     <>
       <div className="dkc-goal-asking">
-        <p className="dk-h1 dkc-goal-ask">{t(O.goals.empty, lang)}</p>
+        <h2 className="dk-display dkc-goal-ask">{t(O.goals.empty, lang)}</h2>
         <textarea
           className="dkc-goal-input"
           data-empty={value.trim() ? undefined : ""}
@@ -148,36 +149,54 @@ function GoalAsk({ ctx }: { ctx: SlideCtx }) {
   );
 }
 
+/**
+ * One answer of a list, hugging its own lines: its box ends on the
+ * label's edge and its lines keep their own start, so a list in the other
+ * script lines up under its label at both ends of every item.
+ */
+function Answer({ text }: { text: string }) {
+  const ref = useRef<HTMLLIElement>(null);
+  useHug(ref, text);
+  return (
+    <li ref={ref} className="dk-body dkc-theirs" dir="auto" data-hug="">
+      {text}
+    </li>
+  );
+}
+
 function Goals({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
   const shown = shownGoals(d);
   const by = new Map<Goal["key"], Goal>(shown.map(g => [g.key, g]));
   const leadRef = useRef<HTMLParagraphElement>(null);
   const laterRef = useRef<HTMLParagraphElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
+  const whyRef = useRef<HTMLParagraphElement>(null);
   const said = shown.map(g => g.lines.join("|")).join("/");
   useHug(leadRef, said);
   useHug(laterRef, said);
-  useHug(listRef, said);
+  useHug(whyRef, said);
   // Nothing from the form (a goal typed live here does not count): the
   // question, and the CSM types the answer as the client says it.
   const ask = !shown.some(g => !(g.key === "goal90" && g.from === "prep"));
-  if (ask)
-    return (
-      <>
-        <h2 className="dk-h2">{t(O.goals.titleAsk, lang)}</h2>
-        <GoalAsk ctx={ctx} />
-      </>
-    );
+  if (ask) return <GoalAsk ctx={ctx} />;
   const lead = by.get("goal90") ?? by.get("goal12_24");
   const later = lead?.key === "goal90" ? by.get("goal12_24") : undefined;
   const challenges = by.get("challenges");
   const why = by.get("why");
+  const rest = [later, challenges, why].filter(Boolean).length;
+  // One label convention: every answer sits under its own label. The goal
+  // the launch is built around leads, in their words at 60 px; the other
+  // answers sit side by side under a rule, one column each. Where they come
+  // from is said once, on the title's line.
   return (
     <>
-      <h2 className="dk-h2">{t(O.goals.title, lang)}</h2>
+      <div className="dkc-goal-head">
+        <h2 className="dk-h2">{t(O.goals.title, lang)}</h2>
+        <span className="dk-tag">{t(O.goals.source, lang)}</span>
+      </div>
       {lead ? (
         <div className="dkc-goal-block">
+          <span className="dk-label">{t(lead.label, lang)}</span>
           <p
             ref={leadRef}
             className="dk-words dkc-theirs"
@@ -186,21 +205,10 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
           >
             {lead.lines[0]}
           </p>
-          <div className="dkc-caption">
-            <span className="dk-label">{t(lead.label, lang)}</span>
-            <span className="dk-tag">{t(O.goals.source, lang)}</span>
-          </div>
         </div>
-      ) : (
-        <div className="dkc-caption" style={{ marginTop: 56 }}>
-          <span className="dk-tag">{t(O.goals.source, lang)}</span>
-        </div>
-      )}
-      {later || challenges ? (
-        <div
-          className="dkc-goal-cols"
-          data-one={later && challenges ? undefined : ""}
-        >
+      ) : null}
+      {rest ? (
+        <div className="dkc-goal-cols" data-n={rest}>
           {later ? (
             <div>
               <span className="dk-label">{t(later.label, lang)}</span>
@@ -215,26 +223,29 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
             </div>
           ) : null}
           {challenges ? (
-            <div>
+            <div data-list="">
               <span className="dk-label">{t(challenges.label, lang)}</span>
-              <ul ref={listRef} data-hug="">
+              <ul>
                 {challenges.lines.map(l => (
-                  <li key={l} className="dk-body dkc-theirs" dir="auto">
-                    {l}
-                  </li>
+                  <Answer key={l} text={l} />
                 ))}
               </ul>
             </div>
           ) : null}
+          {why ? (
+            <div>
+              <span className="dk-label">{t(why.label, lang)}</span>
+              <p
+                ref={whyRef}
+                className="dk-body dkc-theirs"
+                dir="auto"
+                data-hug=""
+              >
+                {why.lines[0]}
+              </p>
+            </div>
+          ) : null}
         </div>
-      ) : null}
-      {why ? (
-        <p className="dk-body dkc-why">
-          <span className="dk-label">{t(why.label, lang)}</span>
-          <span className="dkc-theirs" dir="auto">
-            {why.lines[0]}
-          </span>
-        </p>
       ) : null}
       <p className="dk-small dkc-foot">{t(O.goals.foot, lang)}</p>
     </>
@@ -245,8 +256,10 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
 
 function Team({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
+  // Done with you, the last line is the group's own alerts for their
+  // callers: theirs, not one of ours.
   const rows = d.mode.dwy
-    ? [...O.team.rows.slice(0, 4), O.team.alertsDwy]
+    ? [...O.team.rows.slice(0, 4), { ...O.team.alertsDwy, theirs: true }]
     : [...O.team.rows];
   return (
     <>
@@ -326,7 +339,7 @@ function AddService({
   };
   if (!open)
     return (
-      <div className="dkc-add" role="row">
+      <div className="dkc-add">
         <button
           type="button"
           className="dkc-add-btn dkc-press"
@@ -367,18 +380,14 @@ function AddService({
       }}
     />
   );
-  // No services yet, or more to add: the input alone on the matrix's next
-  // row (no empty cells waiting beside it).
-  return (
-    <div className="dkc-add" role="row">
-      {input}
-    </div>
-  );
+  // No services yet, or more to add: the input alone on the list's next
+  // row.
+  return <div className="dkc-add">{input}</div>;
 }
 
 function OneService({ ctx }: { ctx: SlideCtx }) {
   const { d, lang, live, setLive, save } = ctx;
-  // With no services yet the matrix's first row is its quiet "Add a
+  // With no services yet the list's first row is its quiet "Add a
   // service" control, not an open input on the client's screen.
   const [adding, setAdding] = useState(false);
   const [grab, setGrab] = useState(false);
@@ -390,46 +399,101 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
       row[test] = !row[test];
       return { ...l, ticks: { ...l.ticks, [service]: row } };
     });
+  const add = (
+    <AddService
+      ctx={ctx}
+      open={adding}
+      setOpen={setAdding}
+      focus={grab}
+      setFocus={setGrab}
+    />
+  );
+  // No services yet: the three tests are the slide, said large and in
+  // order, with the quiet control under them; the CSM adds each service as
+  // the client names it.
+  if (!d.services.length)
+    return (
+      <>
+        <h2 className="dk-h2">{t(O.one.title, lang)}</h2>
+        <p className="dk-lead dkc-one-line">{t(O.one.line, lang)}</p>
+        <div className="dkc-one-ask">
+          <ul className="dkc-one-tests">
+            {O.one.tests.map(x => (
+              <li key={x.key}>{t(x.label, lang)}</li>
+            ))}
+          </ul>
+          {add}
+        </div>
+      </>
+    );
+  // The choice is the hero: the service the tests point at, named large on
+  // the start side, as the campaign it becomes. Their services sit beside
+  // it as a short scoreboard: the three tests head their columns once, and
+  // a yes is the teal node with a check in its column. A test not answered
+  // shows nothing at all (no dotted line, no ring): the CSM's pointer finds
+  // the cell, so nothing waits on the client's screen as a form.
+  const leadRow = lead ?? live.candidate ?? (confirmed ? candidate : null);
   return (
     <>
       <h2 className="dk-h2">{t(O.one.title, lang)}</h2>
       <p className="dk-lead dkc-one-line">{t(O.one.line, lang)}</p>
       <div className="dkc-one">
+        <div className="dkc-pick" data-done={confirmed ? "" : undefined}>
+          {candidate ? (
+            <>
+              {confirmed ? (
+                // The result sentence, its lead-in as the label and the
+                // service alone on its own line, never split mid-name.
+                <span className="dk-label dkc-pick-done">
+                  <Check aria-hidden />
+                  {tf(O.one.result, lang, { service: "" }).trim()}
+                </span>
+              ) : (
+                <span className="dk-label">{t(O.one.first, lang)}</span>
+              )}
+              <p
+                className={`${candidate.trim().length > 14 ? "dk-h1" : "dk-display"} dkc-pick-name`}
+              >
+                <bdi>{candidate}</bdi>
+              </p>
+              <p className="dk-body dk-ink2">{t(O.one.small, lang)}</p>
+              {confirmed ? null : (
+                // A quiet control, not a call to action: the client watches
+                // the choice, the CSM makes it (gone once confirmed).
+                <button
+                  type="button"
+                  className="dkc-launch dkc-press"
+                  onClick={() => {
+                    save({ service_focus: candidate }, true);
+                    setLive(l => ({ ...l, candidate }));
+                  }}
+                  onPointerUp={letGo}
+                >
+                  {t(O.one.launch, lang)}
+                </button>
+              )}
+            </>
+          ) : null}
+        </div>
         <div
-          className="dkc-matrix"
+          className="dkc-board"
           role="table"
           aria-label={t(O.one.title, lang)}
-          data-empty={d.services.length ? undefined : ""}
         >
-          {/* The tests head their columns once a service row exists:
-              over an empty table they would be an unfinished form. */}
-          {d.services.length ? (
-            <div className="dkc-matrix-head" role="row">
-              <span role="columnheader" />
-              {O.one.tests.map(x => (
-                <span key={x.key} role="columnheader">
-                  {t(x.label, lang)}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="dkc-one-tests">
-              {O.one.tests.map(x => t(x.label, lang)).join(" · ")}
-            </p>
-          )}
+          <div className="dkc-board-head" role="row">
+            <span role="columnheader" />
+            {O.one.tests.map(x => (
+              <span key={x.key} role="columnheader">
+                {t(x.label, lang)}
+              </span>
+            ))}
+          </div>
           {d.services.map(s => (
             <div
               key={s}
-              className="dkc-matrix-row"
+              className="dkc-board-row"
               role="row"
-              data-lead={
-                same(
-                  s,
-                  lead ?? live.candidate ?? (confirmed ? candidate : null),
-                )
-                  ? ""
-                  : undefined
-              }
+              data-lead={same(s, leadRow) ? "" : undefined}
             >
               <span className="dkc-service" role="rowheader">
                 <button
@@ -442,11 +506,13 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
                 >
                   {s}
                 </button>
-                {/* Their #1 is marked only while the card names another
-                    service: when the card names it, the row, the mark and
-                    the card would say one service three times. */}
+                {/* Their #1 is said only while the hero names another
+                    service: when it names it, the row and the hero already
+                    say it twice. */}
                 {same(s, d.numberOne) && !same(s, candidate) ? (
-                  <span className="dkc-chip">{t(O.one.numberOne, lang)}</span>
+                  <span className="dkc-numberone">
+                    {t(O.one.numberOne, lang)}
+                  </span>
                 ) : null}
               </span>
               {O.one.tests.map(x => {
@@ -468,52 +534,10 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
               })}
             </div>
           ))}
-          <AddService
-            ctx={ctx}
-            open={adding}
-            setOpen={setAdding}
-            focus={grab}
-            setFocus={setGrab}
-          />
-        </div>
-        {candidate ? (
-          <div className="dkc-campaign-col">
-            <div
-              className="dkc-campaign"
-              data-done={confirmed ? "" : undefined}
-            >
-              {confirmed ? (
-                // The result sentence, its lead-in as the label and the
-                // service alone on its own line, never split mid-name.
-                <span className="dk-label dkc-campaign-done">
-                  <Check aria-hidden />
-                  {tf(O.one.result, lang, { service: "" }).trim()}
-                </span>
-              ) : (
-                <span className="dk-label">{t(O.one.first, lang)}</span>
-              )}
-              <p className="dk-h3 dkc-campaign-name">
-                <bdi>{candidate}</bdi>
-              </p>
-              {confirmed ? null : (
-                // A quiet control, not a call to action: the client watches
-                // the choice, the CSM makes it (gone once confirmed).
-                <button
-                  type="button"
-                  className="dkc-launch dkc-press"
-                  onClick={() => {
-                    save({ service_focus: candidate }, true);
-                    setLive(l => ({ ...l, candidate }));
-                  }}
-                  onPointerUp={letGo}
-                >
-                  {t(O.one.launch, lang)}
-                </button>
-              )}
-            </div>
-            <p className="dk-small dk-ink2">{t(O.one.small, lang)}</p>
+          <div className="dkc-board-add" role="row">
+            {add}
           </div>
-        ) : null}
+        </div>
       </div>
     </>
   );
@@ -531,14 +555,21 @@ function RoadSlide({ ctx }: { ctx: SlideCtx }) {
     ) : null;
   const stops: RoadStop[] = O.road.stops.map((name, i) => {
     const stop: RoadStop = { name: t(name, lang) };
-    if (i < d.roadNow) stop.when = date(d.roadDays[i]);
+    // A step passed with no date on file is still said: done.
+    if (i < d.roadNow)
+      stop.when = date(d.roadDays[i]) ?? t(SHARED.status.done, lang);
     else if (i === d.roadNow && i === 2)
       stop.when = (
         <span className="dkc-road-today">{t(O.road.today, lang)}</span>
       );
     else if (i === 5) stop.when = t(O.road.afterGoLive, lang);
     else stop.when = date(d.roadDays[i], true);
-    if (i === 4) stop.line = t(O.road.launchLine, lang);
+    // The launch call: its date once booked, else how long it takes; what
+    // happens on it under that.
+    if (i === 4) {
+      stop.when = stop.when ?? t(O.road.launchTime, lang);
+      stop.line = t(O.road.launchLine, lang);
+    }
     return stop;
   });
   return (
@@ -573,14 +604,9 @@ function StatusChip({
   label: string;
 }) {
   const words = t(SHARED.status[status], lang);
-  // Done is quiet (teal on its soft fill, a check); what is still to do is
-  // the louder of the two, so the eye goes to what is left.
-  const inner = (
-    <>
-      {status === "done" ? <Check aria-hidden /> : null}
-      {words}
-    </>
-  );
+  // The row's mark at its start carries the check or the ring, so the
+  // state is said here as words in its colour alone.
+  const inner = words;
   if (!onFlip)
     return (
       <span className="dkc-status" data-status={status}>
@@ -608,14 +634,31 @@ function WeekRow({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
     save({ access: { ...access, [key]: nextStatus(from) } }, true);
   const name = t(row.name, lang);
   const single = row.ticks.length === 1 ? row.ticks[0] : null;
+  const done = row.status === "done";
   return (
-    <li>
-      <span className="dkc-week-name">{name}</span>
-      {/* The row's words, and under them its parts to tick (or the Drive
-          folder): the status column holds the one chip, on one line. */}
+    <li data-status={row.status}>
+      {/* The row's state, read down one column at the start: done is the
+          teal node with a check, to do an amber ring, not checked yet a
+          quiet ring (the journey's marks). */}
+      <span className="dkc-week-mark" aria-hidden>
+        {done ? <Check /> : null}
+      </span>
+      <span className="dkc-week-head">
+        <span className="dkc-week-name">{name}</span>
+        <StatusChip
+          status={row.status}
+          lang={lang}
+          label={name}
+          onFlip={single ? () => flip(single.key, single.status) : undefined}
+        />
+      </span>
+      {/* What it needs, while it still needs it: a done row keeps only its
+          parts, so the slide gets lighter as the call goes on. */}
       <span className="dkc-week-text">
-        {t(row.line, lang)}
-        {row.key === "content" ? (
+        {done ? null : (
+          <span className="dkc-week-what">{t(row.line, lang)}</span>
+        )}
+        {row.key === "content" && !done ? (
           <span className="dkc-week-more">
             {d.links.drive ? (
               <a
@@ -650,14 +693,6 @@ function WeekRow({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
             ))}
           </span>
         )}
-      </span>
-      <span className="dkc-week-state">
-        <StatusChip
-          status={row.status}
-          lang={lang}
-          label={name}
-          onFlip={single ? () => flip(single.key, single.status) : undefined}
-        />
       </span>
     </li>
   );
@@ -813,33 +848,33 @@ function Next({ ctx }: { ctx: SlideCtx }) {
   const booked = d.next.blueprint
     ? when(d.next.blueprint, lang, d.timeZone)
     : null;
-  // The title's two halves, side by side: what to expect (the first ads,
-  // then the test with their red lines) on the start side, and what's next
-  // (the Blueprint call, its date once booked) as the card beside it.
+  // What to expect as two statements side by side under the title, and
+  // the close across the foot: the next call, named large on its own rule,
+  // with its date at the end once it is booked. No card around it.
   return (
     <>
       <h2 className="dk-h2">{t(O.next.title, lang)}</h2>
       <div className="dkc-next">
-        <div className="dkc-next-expect">
-          <section>
-            <h3 className="dk-h3">{t(O.next.adsName, lang)}</h3>
-            <p className="dk-body">
-              {tf(first.line, lang, { service: first.service ?? "" })}
-            </p>
-            <p className="dk-body dk-ink2">{t(O.next.approval, lang)}</p>
-          </section>
-          <section>
-            <h3 className="dk-h3">{t(O.next.testName, lang)}</h3>
-            <p className="dk-body">{t(O.next.testLine, lang)}</p>
-            <RedLines ctx={ctx} />
-          </section>
-        </div>
-        <aside className="dkc-band">
-          <p className="dk-h3">{t(O.next.bandHead, lang)}</p>
-          <p className="dk-body dk-ink2">{t(O.next.bandRest, lang)}</p>
-          {booked ? <span className="dkc-band-when">{booked}</span> : null}
-        </aside>
+        <section>
+          <h3 className="dk-h3">{t(O.next.adsName, lang)}</h3>
+          <p className="dk-body">
+            {tf(first.line, lang, { service: first.service ?? "" })}
+          </p>
+          <p className="dk-body dk-ink2">{t(O.next.approval, lang)}</p>
+        </section>
+        <section>
+          <h3 className="dk-h3">{t(O.next.testName, lang)}</h3>
+          <p className="dk-body">{t(O.next.testLine, lang)}</p>
+          <RedLines ctx={ctx} />
+        </section>
       </div>
+      <section className="dkc-band">
+        <div className="dkc-band-what">
+          <p className="dk-h1">{t(O.next.bandHead, lang)}</p>
+          <p className="dk-body dk-ink2">{t(O.next.bandRest, lang)}</p>
+        </div>
+        {booked ? <span className="dkc-band-when">{booked}</span> : null}
+      </section>
     </>
   );
 }

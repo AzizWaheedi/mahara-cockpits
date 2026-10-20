@@ -46,11 +46,13 @@ import {
 import { dayMonth, dayShort, weekdayDate } from "./dates";
 import type { SlideCtx, SlideDef } from "./deckContext";
 import type { DeckData } from "./deckData";
+import { useHug } from "./hug";
 import {
   FaintLanes,
   JourneyLanes,
   LANES_W,
   MiniRail,
+  Node,
   rowY,
 } from "./JourneyLanes";
 import { type FormQuestion, PHONES } from "./launchData";
@@ -97,7 +99,6 @@ import {
  * Every word is in content.ts and callScript.ts; this file only places them.
  */
 
-const letGo = (e: { currentTarget: HTMLElement }) => e.currentTarget.blur();
 const PORTAL_RATIO = 2384 / 1504;
 
 /**
@@ -372,6 +373,82 @@ function StopWords({
   );
 }
 
+/**
+ * Journey stop 6's two outcomes, in the lanes' line language: the meeting's
+ * line (the leader's end) runs on, solid, to a node ahead (came, and
+ * thinking it over: yours), and drops, dotted, to the lanes' rebook mark
+ * (didn't show). Each end carries its name and one line beside it.
+ */
+function Fork({
+  lang,
+  ours,
+  came,
+  noShow,
+}: {
+  lang: Lang;
+  /** The no-show is ours to rebook (teal); done with you it is theirs. */
+  ours: boolean;
+  came: [L, L];
+  noShow: [L, L];
+}) {
+  const y0 = 40;
+  const y1 = y0 + 96;
+  const trunk = 56;
+  const end = 168;
+  const tone = ours ? "var(--dk-teal)" : "var(--dk-ink-2)";
+  return (
+    <div className="dkc-fork" data-ours={ours ? "" : undefined}>
+      <svg
+        width={end + 14}
+        height={y1 + 16}
+        viewBox={`0 0 ${end + 14} ${y1 + 16}`}
+        aria-hidden
+      >
+        <path
+          d={`M 0 ${y0} L ${end - 14} ${y0}`}
+          fill="none"
+          stroke="var(--dk-line-strong)"
+          strokeWidth={2}
+          strokeLinecap="round"
+        />
+        <path
+          d={`M ${trunk} ${y0} C ${trunk + 56} ${y0} ${end - 72} ${y1} ${end - 12} ${y1}`}
+          fill="none"
+          stroke={tone}
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeDasharray="2 8"
+        />
+        <Node x={end} y={y0} r={14} state="ahead" />
+        <circle
+          cx={end}
+          cy={y1}
+          r={12}
+          fill="var(--dk-space)"
+          stroke={tone}
+          strokeWidth={2}
+        />
+        <path
+          d={`M ${end - 5} ${y1 - 3.5} A 5.5 5.5 0 1 1 ${end - 4.3} ${y1 + 3.6}`}
+          fill="none"
+          stroke={tone}
+          strokeWidth={2}
+          strokeLinecap="round"
+        />
+      </svg>
+      <i className="dkc-fork-anchor" data-anchor="" style={{ top: y0 }} />
+      <div className="dkc-fork-end" style={{ top: y0 }}>
+        <b>{t(came[0], lang)}</b>
+        <p>{t(came[1], lang)}</p>
+      </div>
+      <div className="dkc-fork-end" data-noshow="" style={{ top: y1 }}>
+        <b>{t(noShow[0], lang)}</b>
+        <p>{t(noShow[1], lang)}</p>
+      </div>
+    </div>
+  );
+}
+
 function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
   const { d, lang, still } = ctx;
   const J = LAUNCH.journey;
@@ -469,17 +546,16 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
   }
   if (i === 3) {
     const text = dwy ? stop.dwy : L.bookingVideo ? stop.video : stop.line;
+    // The stop's words sit right on top of the strip they describe, the
+    // two one block: its first node on the lit row's centre line (the
+    // leader runs straight into it), its last level with "You meet".
     return (
       <div className="dkc-stage" data-kind="line">
-        <StopWords lane={lane} line={line(text ?? stop.line)} lang={lang} />
-        {/* From the lit row down to "You meet": its first node on the lit
-            row's centre line (the leader runs straight into it), its last
-            level with the meeting. */}
-        <div
-          className="dkc-stage-pic dkc-dots-pic"
-          style={{ top: rowY(3) - 12 }}
-        >
-          <FiveDots lang={lang} dwy={dwy} height={rowY(5) - rowY(3)} />
+        <div className="dkc-stage-pic dkc-dots-pic" data-level="">
+          <div className="dkc-dots-block">
+            <StopWords lane={lane} line={line(text ?? stop.line)} lang={lang} />
+            <FiveDots lang={lang} dwy={dwy} height={rowY(5) - rowY(3)} />
+          </div>
         </div>
       </div>
     );
@@ -510,67 +586,29 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
   }
   if (i === 5) {
     const F = J.fork;
-    // The two ways a meeting goes, as the fork in the lanes draws them: the
-    // no-show card carries the lanes' rebook mark, so the two read as one.
+    // The two ways a meeting goes, drawn as the lanes draw the fork: the
+    // leader runs into the meeting's line, which goes on, solid, to "came,
+    // and thinking it over" (yours) and drops, dotted, to the lanes' rebook
+    // mark for a no-show (ours in teal; done with you, theirs in ink). The
+    // stop's words sit right on top; the lanes draw the fork from the next
+    // stop, so it is never named twice on one screen.
     return (
-      <div className="dkc-stage" data-kind="card" data-low="">
-        <StopWords
-          lane={lane}
-          line={tf(stop.line, lang, { places: placesLine(L.places, lang) })}
-          lang={lang}
-        />
-        <div className="dkc-stage-pic dkc-fork">
-          {/* Ours in teal; done with you the follow-up is theirs, in ink. */}
-          <div data-side={dwy ? "theirs" : "ours"}>
-            <svg width="36" height="36" viewBox="0 0 36 36" aria-hidden>
-              <circle
-                cx={18}
-                cy={18}
-                r={16}
-                fill="none"
-                stroke={dwy ? "var(--dk-line-strong)" : "var(--dk-teal)"}
-                strokeWidth={2}
-              />
-              <path
-                d="M 11 14 A 8 8 0 1 1 12 23"
-                fill="none"
-                stroke={dwy ? "var(--dk-ink-2)" : "var(--dk-teal)"}
-                strokeWidth={2.5}
-                strokeLinecap="round"
-              />
-              <path
-                d="M 8 12 L 11 15 L 14.5 11.5"
-                fill="none"
-                stroke={dwy ? "var(--dk-ink-2)" : "var(--dk-teal)"}
-                strokeWidth={2.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <b>{t(F.noShow, lang)}</b>
-            <p>{t(dwy ? F.noShowDwy : F.noShowLine, lang)}</p>
-          </div>
-          <div data-side="yours">
-            <svg width="36" height="36" viewBox="0 0 36 36" aria-hidden>
-              <circle
-                cx={18}
-                cy={18}
-                r={16}
-                fill="none"
-                stroke="var(--dk-line-strong)"
-                strokeWidth={2}
-              />
-              <path
-                d="M 11 18 L 25 18 M 20 13 L 25 18 L 20 23"
-                fill="none"
-                stroke="var(--dk-ink-2)"
-                strokeWidth={2.5}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-            <b>{t(F.deciding, lang)}</b>
-            <p>{t(dwy ? F.decidingDwy : F.decidingLine, lang)}</p>
+      <div className="dkc-stage" data-kind="line">
+        <div className="dkc-stage-pic dkc-dots-pic" data-level="">
+          <div className="dkc-dots-block">
+            <StopWords
+              lane={lane}
+              line={tf(stop.line, lang, {
+                places: placesLine(L.places, lang),
+              })}
+              lang={lang}
+            />
+            <Fork
+              lang={lang}
+              ours={!dwy}
+              came={[F.deciding, dwy ? F.decidingDwy : F.decidingLine]}
+              noShow={[F.noShow, dwy ? F.noShowDwy : F.noShowLine]}
+            />
           </div>
         </div>
       </div>
@@ -676,7 +714,7 @@ function Journey({ ctx }: { ctx: SlideCtx }) {
             current={tour}
             dwy={d.mode.dwy}
             still={still}
-            fork={tour >= 5}
+            fork={tour >= 6}
             leaderTo={leaderTo}
             onPick={i => setTour(i)}
           />
@@ -921,7 +959,11 @@ function RedLinesPanel({ ctx, lit }: { ctx: SlideCtx; lit: boolean }) {
           />
           {empty ? (
             <>
-              <p className="dkc-fixed-copy">{t(T.fallback, lang)}</p>
+              {/* The panel's ask, at the lead's size: the card is the
+                  slide's lead even before anything is written on it. */}
+              <p className="dkc-fixed-copy" data-ask="">
+                {t(T.fallback, lang)}
+              </p>
               {/* No ruled line on the client's screen: the input is drawn
                   only under the CSM's pointer, or while typing. */}
               <input
@@ -970,33 +1012,27 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
       </div>
     );
   else if (tour === 0)
-    // The first stop is the page alone: its words in the place and size
-    // they keep for the next two stops (one press, one change), and the
-    // feed phone large in the room the columns will take, so "Sponsored"
-    // can be read where the leader ends.
+    // The first stop: one lead beside the feed phone (what an ad is, and
+    // that it never lands on their page) with the stop's foot line under
+    // it, the two in the middle of the phone's height; the phone on the
+    // content's end edge with its one leader on "Sponsored".
     body = (
       <div className="dkc-freedom-intro" key="intro">
-        <section>
-          <h3 className="dkc-col-head">{t(T.page.name, lang)}</h3>
-          <p className="dk-body dkc-col-copy">{t(T.page.copy, lang)}</p>
-        </section>
-        <SponsoredPhone ctx={ctx} height={660} />
+        <div className="dkc-freedom-words">
+          <p className="dk-lead dkc-freedom-lead">{t(T.page.copy, lang)}</p>
+          <p className="dk-body dkc-freedom-pagefoot">{t(T.page.foot, lang)}</p>
+        </div>
+        <SponsoredPhone ctx={ctx} height={680} />
       </div>
     );
   else
     body = (
-      // The columns hug their own words, tops level: no column is
-      // stretched into an empty band, and the page's phone, read at the
-      // first stop, is not shrunk into an ornament here.
+      // The red lines lead, on our card at the start; what we test sits
+      // beside it (drawn ahead, quiet, until the next press lights it).
+      // The two share a top and a foot: the card is as tall as the column
+      // beside it, and the approval runs across under both as one line.
       <div className="dkc-freedom-cols" key="cols">
-        <section data-lit="">
-          <h3 className="dkc-col-head">{t(T.page.name, lang)}</h3>
-          <p className="dk-body dkc-col-copy">{t(T.page.copy, lang)}</p>
-        </section>
         <RedLinesPanel ctx={ctx} lit />
-        {/* Ahead, as the journey draws what is ahead: its head and what we
-            test quiet beside the lit panel, so the panel never stands alone
-            in an empty row; the next press lights it and adds its words. */}
         <section data-lit={tour >= 2 ? "" : undefined}>
           <h3 className="dkc-col-head">{t(T.open.name, lang)}</h3>
           {/* What we test, listed as the red lines are: one line each, the
@@ -1010,37 +1046,39 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
             ))}
           </ul>
           {tour >= 2 ? (
-            <>
-              <div className="dkc-open-pick">
-                {(pick?.poster ?? pick?.url) ? (
-                  <span className="dkc-open-thumb">
-                    <img src={(pick.poster ?? pick.url) as string} alt="" />
-                    <Star aria-hidden />
-                  </span>
-                ) : null}
-                <p className="dk-small">
-                  {t(pick ? T.open.pick : T.open.pickNone, lang)}
-                </p>
-              </div>
-              {/* How a test starts and how theirs joins it: one paragraph. */}
-              <p className="dk-small dk-ink2 dkc-open-foot">
-                {t(T.open.approve, lang)} {t(T.footer, lang)}
+            <div className="dkc-open-pick">
+              {(pick?.poster ?? pick?.url) ? (
+                <span className="dkc-open-thumb">
+                  <img src={(pick.poster ?? pick.url) as string} alt="" />
+                  <Star aria-hidden />
+                </span>
+              ) : null}
+              <p className="dk-body">
+                {t(pick ? T.open.pick : T.open.pickNone, lang)}
               </p>
-            </>
+            </div>
           ) : null}
         </section>
       </div>
     );
   return (
     <div className="dkc-freedom">
-      <Owner lane="plain" text={T.owner} lang={lang} />
       <h2 className="dk-h2">{t(T.title, lang)}</h2>
       {body}
-      {agreed ? (
+      {(tour >= 2 && !proof) || agreed ? (
         <div className="dkc-freedom-foot">
-          <span className="dk-tag dkc-stamp">
-            {tf(T.stamp, lang, { date: dayMonth(agreed, lang, d.timeZone) })}
-          </span>
+          {tour >= 2 && !proof ? (
+            <p className="dk-body dk-ink2">
+              {t(T.open.approve, lang)} {t(T.footer, lang)}
+            </p>
+          ) : (
+            <span />
+          )}
+          {agreed ? (
+            <span className="dk-tag dkc-stamp">
+              {tf(T.stamp, lang, { date: dayMonth(agreed, lang, d.timeZone) })}
+            </span>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -1498,7 +1536,7 @@ function portalStops(d: DeckData) {
 }
 
 function PortalSlide({ ctx }: { ctx: SlideCtx }) {
-  const { d, lang, tour, still, setTour } = ctx;
+  const { d, lang, tour, still } = ctx;
   const P = LAUNCH.portal;
   const stops = portalStops(d);
   const at = stops[Math.min(tour, stops.length - 1)];
@@ -1508,6 +1546,41 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
     dwy && s.nameDwy ? s.nameDwy : s.name;
   const copy = (s: (typeof stops)[number]) =>
     dwy && s.copyDwy ? s.copyDwy : s.copy;
+  const head = (
+    <>
+      <Owner lane="you" text={P.owner} lang={lang} />
+      <h2 className="dk-h2">
+        {/* "Mahara OS" never breaks across two lines. */}
+        {t(crm ? P.titleDwy : P.title, lang).replace(
+          "Mahara OS",
+          "Mahara\u00a0OS",
+        )}
+      </h2>
+    </>
+  );
+  // The number-one job, done for you: no screenshot (the journey's last
+  // stop already showed the form). The job is the stop's one heading,
+  // large, how it is done under it, and the three questions it asks drawn
+  // as the three taps, in order, on one line; why on the foot.
+  if (at.key === "outcome" && !dwy)
+    return (
+      <div className="dkc-portal" data-job="">
+        <div className="dkc-portal-start">{head}</div>
+        <div className="dkc-job" key={`job-${lang}`}>
+          <p className="dk-h1 dkc-job-name">{t(name(at), lang)}</p>
+          <p className="dk-lead dkc-job-taps">{t(P.taps, lang)}</p>
+          <ol className="dkc-asks">
+            {P.asks.map(a => (
+              <li key={a.en}>
+                <i aria-hidden />
+                <span>{t(a, lang)}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="dk-h3 dkc-job-foot">{t(P.footer, lang)}</p>
+        </div>
+      </div>
+    );
   let screen: ReactNode;
   if (at.key === "phone")
     screen = (
@@ -1531,27 +1604,21 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
         </div>
       </Tagged>
     );
-  else if (at.key === "outcome" && crm)
+  else if (at.key === "outcome")
     screen = (
-      // The stop's own name already says it is their number-one job, so
-      // the drawing carries no second tag saying so.
+      // Done with you: the stages their team keeps true, in the journey's
+      // line language (their CRM, or Mahara OS once approved for them).
       <div className="dkc-portal-crm">
         <CrmStages lang={lang} width={820} drop={230} />
       </div>
     );
   else {
-    const shot = SHOTS[at.key as "overview" | "calls" | "outcome"];
+    const shot = SHOTS[at.key as "overview" | "calls"];
     screen = (
       <Tagged
-        tag={at.key === "outcome" ? null : t(SHARED.tag.demo, lang)}
+        tag={t(SHARED.tag.demo, lang)}
         className="dkc-portal-shot dkc-screen"
       >
-        {at.key === "outcome" ? (
-          <div className="dkc-shot-tags">
-            <span className="dkc-job-tag">{t(P.jobTag, lang)}</span>
-            <span className="dk-tag">{t(SHARED.tag.demo, lang)}</span>
-          </div>
-        ) : null}
         <Crop
           src={shot.src[lang]}
           crop={shot.crop[lang]}
@@ -1561,46 +1628,20 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
       </Tagged>
     );
   }
+  // One stop at a time: the stop's name and its words under the title, and
+  // its screen beside them. No list of the other stops (a menu of grey
+  // headings read as the app's own navigation, not a slide).
   return (
     <div className="dkc-portal">
       <div className="dkc-portal-start">
-        <Owner lane="you" text={P.owner} lang={lang} />
-        <h2 className="dk-h2">
-          {/* "Mahara OS" never breaks across two lines. */}
-          {t(crm ? P.titleDwy : P.title, lang).replace(
-            "Mahara OS",
-            "Mahara\u00a0OS",
-          )}
-        </h2>
-        <ol className="dkc-portal-stops">
-          {stops.map((s, i) => (
-            <li
-              key={s.key}
-              data-state={i === tour ? "now" : i < tour ? "past" : "ahead"}
-            >
-              <button
-                type="button"
-                className="dkc-press"
-                aria-current={i === tour ? "step" : undefined}
-                onClick={() => setTour(i)}
-                onPointerUp={letGo}
-              >
-                {t(name(s), lang)}
-              </button>
-              {/* A slide of one stop gives its words the body's size. */}
-              {i === tour ? (
-                <p
-                  className={`${stops.length === 1 ? "dk-body" : "dk-small"} dk-ink2`}
-                >
-                  {t(copy(s), lang)}
-                </p>
-              ) : null}
-            </li>
-          ))}
-        </ol>
-        {at.key === "outcome" ? (
-          <p className="dk-body dkc-portal-foot">{t(P.footer, lang)}</p>
-        ) : null}
+        {head}
+        <div className="dkc-portal-stop" key={`${at.key}-${lang}`}>
+          <h3 className="dk-h3">{t(name(at), lang)}</h3>
+          <p className="dk-body dk-ink2">{t(copy(at), lang)}</p>
+          {at.key === "outcome" ? (
+            <p className="dk-body dkc-portal-foot">{t(P.footer, lang)}</p>
+          ) : null}
+        </div>
       </div>
       <div className="dkc-portal-screen" key={`${at.key}-${lang}`}>
         {screen}
@@ -1612,11 +1653,10 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
 // ---------------------------------------------------------- L8 your part
 
 /**
- * The pictures sit on the rows they show (DESIGN 8.8, after the second
- * critic pass): three of their creatives at the end of "Leave the ads
- * running", and a calendar day with a blocked hour at the end of "Block
- * busy times". A tray of fewer than three gives no strip (one or two lone
- * tiles read as gaps), and that row's words run on.
+ * The pictures sit with the jobs they show (DESIGN 8.8): three of their
+ * creatives under "Leave the ads running", and a calendar day with a busy
+ * hour under "Block busy times". A tray of fewer than three gives no strip
+ * (one or two lone tiles read as gaps).
  */
 function PartTray({ ctx }: { ctx: SlideCtx }) {
   const model = useCreatives(ctx);
@@ -1650,30 +1690,7 @@ function PartDay({ ctx }: { ctx: SlideCtx }) {
           <span className="dkc-part-time">{t(h, lang)}</span>
           <i />
           {i === 1 ? (
-            <b className="dkc-part-busy">
-              <svg aria-hidden="true">
-                <defs>
-                  <pattern
-                    id="dkc-part-hatch"
-                    width="10"
-                    height="10"
-                    patternUnits="userSpaceOnUse"
-                    patternTransform="rotate(45)"
-                  >
-                    <line
-                      x1="0"
-                      y1="0"
-                      x2="0"
-                      y2="10"
-                      stroke="var(--dk-line-strong)"
-                      strokeWidth="3"
-                    />
-                  </pattern>
-                </defs>
-                <rect width="100%" height="100%" fill="url(#dkc-part-hatch)" />
-              </svg>
-              <span>{t(LAUNCH.part.busy, lang)}</span>
-            </b>
+            <b className="dkc-part-busy">{t(LAUNCH.part.busy, lang)}</b>
           ) : null}
         </span>
       ))}
@@ -1689,29 +1706,27 @@ function YourPart({ ctx }: { ctx: SlideCtx }) {
     ads: <PartTray ctx={ctx} />,
     calendar: <PartDay ctx={ctx} />,
   };
+  // Six cells on one grid, three across: the title and its line take the
+  // first, the five jobs the rest. Every job is the same thing (a rule,
+  // the job, why it matters, and its picture where it has one), so the
+  // slide has one rhythm and no table.
   return (
     <div className="dkc-part">
-      <h2 className="dk-h2">{t(P.title, lang)}</h2>
-      <p className="dk-lead dkc-part-line">{t(P.line, lang)}</p>
-      <div className="dkc-part-list">
-        <div className="dkc-part-head">
-          <span />
-          <span className="dk-label">{t(P.why, lang)}</span>
-        </div>
-        <ul className="dkc-part-rows">
-          {P.rows.map(r => (
-            <li key={r.key}>
-              <b className="dkc-part-job">
-                {t(dwy && r.jobDwy ? r.jobDwy : r.job, lang)}
-              </b>
-              <span className="dkc-part-why">
-                {t(dwy && r.whyDwy ? r.whyDwy : r.why, lang)}
-              </span>
-              {pics[r.key] ?? null}
-            </li>
-          ))}
-        </ul>
-      </div>
+      <header className="dkc-part-title">
+        <h2 className="dk-h2">{t(P.title, lang)}</h2>
+        <p className="dk-lead">{t(P.line, lang)}</p>
+      </header>
+      {P.rows.map(r => (
+        <section key={r.key} className="dkc-part-cell">
+          <h3 className="dkc-part-job">
+            {t(dwy && r.jobDwy ? r.jobDwy : r.job, lang)}
+          </h3>
+          <p className="dkc-part-why">
+            {t(dwy && r.whyDwy ? r.whyDwy : r.why, lang)}
+          </p>
+          {pics[r.key] ?? null}
+        </section>
+      ))}
     </div>
   );
 }
@@ -1874,32 +1889,12 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
             <span>{t(D.looksBack, lang)}</span>
           </p>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function FirstNinety({ ctx }: { ctx: SlideCtx }) {
-  const { d, lang } = ctx;
-  const D = LAUNCH.days;
-  return (
-    // With no goal line the chart and its milestones sit in the middle of
-    // the room under the title, not high with a void before the footer.
-    <div className="dkc-days" data-nogoal={d.launch.goal90 ? undefined : ""}>
-      <h2 className="dk-h2">{t(D.title, lang)}</h2>
-      {d.launch.goal90 ? (
-        <div className="dkc-days-goal">
-          <span className="dk-label">{t(D.goal, lang)}</span>
-          <p className="dkc-days-goal-line dkc-theirs" dir="auto">
-            {d.launch.goal90}
-          </p>
-          <p className="dk-small dk-ink2">{t(D.goalFoot, lang)}</p>
-        </div>
-      ) : null}
-      <Programme ctx={ctx} />
-      <div className="dkc-days-ms">
-        <span className="dk-label">{t(D.msLabel, lang)}</span>
-        <ol>
+        {/* The milestones as the chart's last row, under its rule and
+            past go-live's line: in order, never on a date. */}
+        <span className="dkc-prog-row-name dkc-prog-ms-name">
+          {t(D.msLabel, lang)}
+        </span>
+        <ol className="dkc-prog-ms">
           {D.milestones.map((m, i) => (
             <li key={m.en}>
               {i ? (
@@ -1912,6 +1907,38 @@ function FirstNinety({ ctx }: { ctx: SlideCtx }) {
           ))}
         </ol>
       </div>
+    </div>
+  );
+}
+
+function FirstNinety({ ctx }: { ctx: SlideCtx }) {
+  const { d, lang } = ctx;
+  const D = LAUNCH.days;
+  const goalRef = useRef<HTMLParagraphElement>(null);
+  useHug(goalRef, d.launch.goal90);
+  // One primary: the programme, large in the middle of the slide, with
+  // its key and the milestones as its own last rows. Their goal sits beside
+  // the title, in their words, as the frame for it; the foot under it all.
+  return (
+    <div className="dkc-days" data-nogoal={d.launch.goal90 ? undefined : ""}>
+      <div className="dkc-days-head">
+        <h2 className="dk-h2">{t(D.title, lang)}</h2>
+        {d.launch.goal90 ? (
+          <div className="dkc-days-goal">
+            <span className="dk-label">{t(D.goal, lang)}</span>
+            <p
+              ref={goalRef}
+              className="dkc-days-goal-line dkc-theirs"
+              dir="auto"
+              data-hug=""
+            >
+              {d.launch.goal90}
+            </p>
+            <p className="dk-small dk-ink2">{t(D.goalFoot, lang)}</p>
+          </div>
+        ) : null}
+      </div>
+      <Programme ctx={ctx} />
       <p className="dk-small dk-ink2 dkc-days-foot">{t(D.footer, lang)}</p>
     </div>
   );

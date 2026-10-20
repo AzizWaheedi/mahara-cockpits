@@ -115,7 +115,6 @@ Use these the same way in both decks, the notes and the prep view.
 |---|---|---|
 | `goals.eyebrow` | From your onboarding form | من نموذج التعريف بالنشاط |
 | `goals.title` | Your goals, as you wrote them | أهدافكم مثل ما كتبتوها |
-| `goals.titleAsk` | Your goals, in your words | أهدافكم، بكلامكم |
 | `goals.card.goal90` | In 90 days | خلال ٩٠ يوم |
 | `goals.card.goal12_24` | In 12 to 24 months | خلال سنة إلى سنتين |
 | `goals.card.challenges` | What's in the way | اللي واقف بطريقكم |
@@ -199,7 +198,8 @@ The chips are the client's services as the form holds them (decision on prep fie
 | `road.today` | Today | اليوم |
 | `road.stop.4` | Brand and offer | بناء الهوية والعرض |
 | `road.stop.5` | Launch call | مكالمة الإطلاق |
-| `road.stop.5.line` | 20 to 30 minutes. We walk you through everything that's going live. | من ٢٠ إلى ٣٠ دقيقة. نمر معكم على كل شي بينزل. |
+| `road.stop.5.time` | 20 to 30 minutes | من ٢٠ إلى ٣٠ دقيقة |
+| `road.stop.5.line` | We walk you through everything that's going live. | نمر معكم على كل شي بينزل. |
 | `road.stop.6` | First appointments | أول المواعيد |
 | `road.stop.6.line` | After go-live | بعد الإطلاق |
 | `road.footer` | Each call is booked at the end of the one before. | كل مكالمة نحجزها بآخر المكالمة اللي قبلها. |
@@ -425,10 +425,10 @@ The three phones share one app language (DESIGN 7.1): the language most of the c
 
 | Key | English | Arabic |
 |---|---|---|
-| `test.eyebrow` | Creative freedom | المساحة الإبداعية |
 | `test.title` | Your red lines are fixed. The rest, we test. | خطوطكم الحمراء ثابتة، والباقي نختبره. |
 | `test.page.name` | Your page stays yours | صفحتكم تبقى لكم |
-| `test.page.copy` | Paid ads show in the feed, marked Sponsored. They don't appear on your page. They're made for people who don't know you yet. The polished work belongs in your page's own posts. | الإعلانات الممولة تطلع بالفيد، ومكتوب عليها مُموَّل، وما تطلع على صفحتكم. معمولة لناس ما يعرفونكم للحين. والشغل الفخم والمرتب مكانه حسابكم نفسه. |
+| `test.page.copy` | Ads show in the feed, marked Sponsored, to people who don't know you yet. They don't appear on your page. | الإعلانات الممولة تطلع بالفيد ومكتوب عليها مُموَّل، لناس ما يعرفونكم للحين. وما تطلع على صفحتكم. |
+| `test.page.foot` | The polished work belongs in your page's own posts. | والشغل الفخم والمرتب مكانه حسابكم نفسه. |
 | `test.page.leader` | Marked Sponsored | مكتوب عليه مُموَّل |
 | `test.fixed.name` | Fixed: your red lines | الثابت: خطوطكم الحمراء |
 | `test.fixed.always` | Always … | دايماً … |
@@ -440,8 +440,8 @@ The three phones share one app language (DESIGN 7.1): the language most of the c
 | `test.open.chips` | Angles · Hooks · Formats · Thumbnails · Who's on camera | الزوايا · البداية اللي تشد · طرق العرض · صورة الغلاف · مين يطلع بالفيديو |
 | `test.open.pick` | Your pick runs too, beside the ones you'd skip. The numbers tell us which work. | اختياركم ينزل بعد، جنب اللي يمكن ما تختارونها. والأرقام هي اللي توضح لنا أي واحد يشتغل. |
 | `test.open.pick.none` | The ones you'd pick run too, beside the ones you'd skip. The numbers tell us which work. | اللي تختارونها تنزل بعد، جنب اللي يمكن ما تختارونها. والأرقام هي اللي توضح لنا أي واحد يشتغل. |
-| `test.open.approve` | You approve your ads in the group. Once you have, we test versions of them side by side. | توافقون على إعلاناتكم بالقروب، وبعد موافقتكم نختبر أكثر من نسخة منها مع بعض. |
-| `test.footer` | Prefer something different later? Ask in the group, and we'll launch it too. | تبون شي ثاني بعدين؟ اطلبوه بالقروب، وننزله بعد. |
+| `test.open.approve` | You approve your ads in the group. | توافقون على إعلاناتكم بالقروب. |
+| `test.footer` | Prefer something different later? Ask, and we'll launch it too. | تبون شي ثاني بعدين؟ اطلبوه، وننزله بعد. |
 | `test.proof.name` | How a test runs | بهالشكل يمشي الاختبار |
 | `test.proof.caption` | One campaign, 20 versions side by side. Some stay on, some go off. | حملة وحدة، فيها ٢٠ نسخة مع بعض. بعضها يكمل، وبعضها يوقف. |
 | `test.proof.tag` | Illustration | توضيح |
@@ -589,7 +589,8 @@ The stage names follow the sales deck's `stages` (المقدمة، تحديد ا
 | `portal.links` (copied into the group) | Mahara OS: {url} · Install it on your phone: {url} | Mahara OS: {url} · نزّلوه على جوالكم مثل أي تطبيق: {url} |
 | `portal.4.name` | Your number-one job: mark every meeting | أهم شغلة عليكم: سجلوا نتيجة كل موعد |
 | `portal.4.copy` | Did they come? Did you quote? Did you win? A few taps, the same day. | حضر؟ عطيتوه عرض سعر؟ وقّع معكم؟ كم ضغطة، بنفس اليوم. |
-| `portal.4.tag` | Your number-one job | أهم شغلة عليكم |
+| `portal.4.asks` | Did they come? · Did you quote? · Did you win? | حضر؟ · عطيتوه عرض سعر؟ · وقّع معكم؟ |
+| `portal.4.taps` | A few taps, the same day. | كم ضغطة، بنفس اليوم. |
 | `portal.4.footer` | What isn't marked can't be improved. | اللي ما ينسجل، ما نقدر نحسّنه. |
 
 **DWY**
@@ -615,7 +616,6 @@ The stage names follow the sales deck's `stages` (المقدمة، تحديد ا
 |---|---|---|
 | `part.title` | Your part | دوركم |
 | `part.line` | Your five jobs, in one place. | خمس شغلات عليكم، بمكان واحد. |
-| `part.why` | Why it matters | ليش مهم |
 
 | # | English job | Arabic job | English why | Arabic why |
 |---|---|---|---|---|
@@ -742,3 +742,16 @@ The thank-you default and the example form speak to the customer, so they are si
 3. **Prep needs Arabic boxes** for the service focus, the selling point, the project, the red lines and any goal edits, or the Arabic deck shows English inside Arabic sentences.
 4. **The Academy's onboarding course** is named in Latin (Onboarding) because the sales deck's Arabic, الأونبوردنق, is agency jargon and كورس البداية is a different course. If the Academy has an Arabic title for it, use that.
 5. **The live WhatsApp confirmation template** in Arabic, word for word, so stop 7 of the call can copy it.
+
+---
+
+# Composition pass (2026-10-20)
+
+The Arabic follows `CONTENT.md`'s composition pass line for line. No new Arabic was written: every changed string is built from the approved Arabic's own sentences and clauses (cut, or put in a different order), in the same slide-level white Gulf register, so the voice stays as the voice pass left it.
+
+- `goals.titleAsk` is gone (the question is the slide's one heading).
+- `road.stop.5.line` is split into `road.stop.5.time` («من ٢٠ إلى ٣٠ دقيقة») and the line («نمر معكم على كل شي بينزل.»).
+- `test.eyebrow` is gone. `test.page.copy` keeps its first two clauses and folds «معمولة لناس ما يعرفونكم للحين» into them; its last sentence becomes `test.page.foot`. `test.open.approve` keeps its first clause; `test.footer` drops «بالقروب», said once on the same foot line.
+- `portal.4.tag` is gone. `portal.4.copy` is set as its parts: the three questions (`portal.4.asks`) and «كم ضغطة، بنفس اليوم.» (`portal.4.taps`).
+- `part.why` is gone (no column head).
+

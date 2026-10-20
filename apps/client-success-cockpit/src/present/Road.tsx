@@ -3,27 +3,23 @@ import { Node } from "./JourneyLanes";
 
 /**
  * The road to the first appointments (DESIGN 9.5), drawn in the journey's
- * own marks and the journey's own direction: down the page, one row per
- * step, the nodes on one line (solid teal up to today, dotted after it),
- * today's row on the journey's row band. Each row reads across as a line
- * of an itinerary: the step, then its date (or "Today", or "After
- * go-live") in its own column, and a step's note under its name, never in
- * the date's column. The road is as wide as its words, so today's band
- * lights the row and no empty ground. Rows are evenly spaced (a row with a
- * note is taller by the note): this is an order, not a calendar. The
- * cover's road strip (7.9) is the same order, drawn small and across.
+ * own marks across the content's whole width: six nodes evenly spaced on
+ * one line (solid teal up to today, dotted after it), as the cover's road
+ * strip draws it small. Each step's name starts at its node's start edge,
+ * as a drawing's callout does, with what is known under it: its date,
+ * "Today", "After go-live", or how long the launch call takes. A step's
+ * note (the launch call's) sits under its caption and may run on to the
+ * content's end, under the steps after it, which carry one line. Nodes are
+ * evenly spaced: this is an order, not a calendar.
  */
 
-/** One row's height, and a noted row's extra. */
-export const ROAD_ROW = 96;
-const NOTE_H = 58;
-const R = 14;
+const R = 16;
 
 export interface RoadStop {
   name: ReactNode;
-  /** Its date, "Today" or "After go-live". */
+  /** Its date, "Today", "After go-live", or the launch call's length. */
   when?: ReactNode;
-  /** A note under its name (the launch call's). */
+  /** A note under its caption (the launch call's). */
   line?: ReactNode;
 }
 
@@ -31,32 +27,36 @@ export function Road({
   stops,
   now,
   still,
+  width = 1648,
   draw = true,
 }: {
   stops: RoadStop[];
   /** The lit stop, from 0. */
   now: number;
   still?: boolean;
+  /** The road's width (the content's, on the slide). */
+  width?: number;
   /** Draw the lit line on arrival. */
   draw?: boolean;
 }) {
   const n = stops.length;
-  const hs = stops.map(s => ROAD_ROW + (s.line ? NOTE_H : 0));
-  const tops = hs.map((_, i) => hs.slice(0, i).reduce((a, b) => a + b, 0));
-  const H = hs.reduce((a, b) => a + b, 0);
-  const x = R + 2;
-  // Each node on its step's name line, the first line of its row.
-  const y = (i: number) => tops[i] + ROAD_ROW / 2;
+  // Evenly spaced nodes; the last step's words keep a column's room after
+  // its node ("First appointments" on one line).
+  const last = 300;
+  const gap = (width - last) / (n - 1);
+  const x = (i: number) => R + 2 + i * gap;
+  const y = R + 2;
+  const H = y * 2;
+  const cols = `repeat(${n - 1}, ${gap}px) ${last}px`;
+  const state = (i: number) => (i < now ? "past" : i === now ? "now" : "ahead");
+  // One grid for the words: the names on one row, what is known under them
+  // on the next, and a step's note on a third, from its own column to the
+  // content's end, so a wrapped name never pushes a caption into a note.
   return (
-    <div className="dkc-road" style={{ height: H }}>
-      <i
-        className="dkc-road-band"
-        aria-hidden
-        style={{ top: tops[now], height: hs[now] }}
-      />
-      <svg width={x * 2} height={H} viewBox={`0 0 ${x * 2} ${H}`} aria-hidden>
+    <div className="dkc-road" style={{ width }}>
+      <svg width={width} height={H} viewBox={`0 0 ${width} ${H}`} aria-hidden>
         <path
-          d={`M ${x} ${y(now)} L ${x} ${y(n - 1)}`}
+          d={`M ${x(now)} ${y} L ${x(n - 1)} ${y}`}
           fill="none"
           stroke="var(--dk-line-strong)"
           strokeWidth={2}
@@ -65,7 +65,7 @@ export function Road({
         />
         {now > 0 ? (
           <path
-            d={`M ${x} ${y(0)} L ${x} ${y(now)}`}
+            d={`M ${x(0)} ${y} L ${x(now)} ${y}`}
             fill="none"
             stroke="var(--dk-teal)"
             strokeWidth={3}
@@ -77,25 +77,43 @@ export function Road({
         {stops.map((_, i) => (
           <Node
             key={`road-${String(i)}`}
-            x={x}
-            y={y(i)}
+            x={x(i)}
+            y={y}
             r={R}
-            state={i < now ? "past" : i === now ? "now" : "ahead"}
+            state={state(i)}
           />
         ))}
       </svg>
-      <ol className="dkc-road-stops">
+      <ol className="dkc-road-stops" style={{ gridTemplateColumns: cols }}>
         {stops.map((s, i) => (
           <li
             key={`stop-${String(i)}`}
             className="dkc-road-stop"
-            data-state={i < now ? "past" : i === now ? "now" : "ahead"}
+            data-state={state(i)}
             aria-current={i === now ? "step" : undefined}
-            style={{ height: hs[i] }}
           >
-            <span className="dkc-road-name">{s.name}</span>
-            <span className="dkc-road-when">{s.when ?? null}</span>
-            {s.line ? <span className="dkc-road-line">{s.line}</span> : null}
+            <span
+              className="dkc-road-name"
+              style={{ gridColumn: i + 1, gridRow: 1 }}
+            >
+              {s.name}
+            </span>
+            {s.when ? (
+              <span
+                className="dkc-road-when"
+                style={{ gridColumn: i + 1, gridRow: 2 }}
+              >
+                {s.when}
+              </span>
+            ) : null}
+            {s.line ? (
+              <span
+                className="dkc-road-line"
+                style={{ gridColumn: `${i + 1} / -1`, gridRow: 3 }}
+              >
+                {s.line}
+              </span>
+            ) : null}
           </li>
         ))}
       </ol>
