@@ -465,7 +465,7 @@ Generated with `python3 guardian.py checks --json`.
 | `crm-syncs` |  | Any last_status that is not ok (a 429 only once older than 2 h), or older than 26 h: warn. |  |
 | `client-panels` |  | Not ok, or older than 26 h: fail. |  |
 | `meta-access` | M7 | 'API access blocked', an OAuthException, or an account status other than 1: fail. |  |
-| `b2b-sources` | W5 | A status that is not success, or older than its cadence: warn. |  |
+| `b2b-sources` | W5 | A status other than success or running, or a last success older than its cadence (meta 60 min): warn. |  |
 | `live-tables` |  | None: not deployed yet; some of a migration but not all: fail. |  |
 | `live-function` |  | Missing: not deployed yet; anything else wrong: fail. |  |
 | `live-code` |  | A function deployed without its live-calls modules: fail (urgent). |  |

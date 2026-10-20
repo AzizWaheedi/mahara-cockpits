@@ -166,7 +166,8 @@ def run_meta(ctx: Context) -> Result:
 
 
 B2B_LIMIT_MIN = {"assets_social_ig_mahara": 8 * 1440, "assets_social_youtube_mahara": 8 * 1440, "assets_web": 8 * 1440,
-                 "assets_wistia": 3 * 1440}
+                 "assets_wistia": 3 * 1440,
+                 "meta": 60}  # B2B's meta-sync runs every 15 min: four missed runs
 
 
 def run_b2b(ctx: Context) -> Result:
@@ -181,7 +182,9 @@ def run_b2b(ctx: Context) -> Result:
         age = age_min(s.get("last_synced_at"), ctx.now)
         if status == "running" and age is None:
             continue  # the old rows stuck at running with no time
-        if status and status not in ("success", "ok"):
+        # A sync marks itself running at the start and moves last_synced_at only on
+        # success, so a run in progress is healthy and a stuck one shows up as age.
+        if status and status not in ("success", "ok", "running"):
             bad.append(f"{name} ({status}: {brief_error(s.get('last_error'), 90)})")
         elif age is not None and age > B2B_LIMIT_MIN.get(name, 2 * 1440):
             bad.append(f"{name} ({ago(age)} old)")
@@ -241,7 +244,8 @@ CHECKS = [
         id="b2b-sources", area="providers", name="B2B's own syncs", catalogue="W5",
         means="B2B reads its sources (Fathom, Maqsam, HighLevel, Wistia, assets) on time.", severity="low",
         reads="cockpit_sales_settings b2b_sources (copied each mirror run)",
-        threshold="A status that is not success, or older than its cadence: warn.", run=run_b2b,
+        threshold="A status other than success or running, or a last success older than its cadence "
+                  "(meta 60 min): warn.", run=run_b2b,
         owner="the systems manager", action="B2B is the systems manager's to fix; B2B is read-only for us.",
     ),
 ]
