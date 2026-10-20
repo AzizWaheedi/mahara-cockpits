@@ -1134,7 +1134,8 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
     const measure = () => {
       const q = root.querySelector<HTMLElement>('[data-part="question"]');
       const row = root.querySelector<HTMLElement>("[data-row-lit]");
-      if (!q || !row) {
+      const phone = root.querySelector<HTMLElement>(".dkc-phone");
+      if (!q || !row || !phone) {
         setLeader(null);
         return;
       }
@@ -1142,11 +1143,25 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
       const k = box.width / root.offsetWidth || 1;
       const qa = q.getBoundingClientRect();
       const ra = row.getBoundingClientRect();
+      const pa = phone.getBoundingClientRect();
       const rtl = lang === "ar";
+      // The question's first line: its words, not the block they sit in.
+      const label = q.querySelector("b");
+      let y = qa.top + 14;
+      if (label) {
+        const range = document.createRange();
+        range.selectNodeContents(label);
+        const first = range.getClientRects()[0];
+        if (first) y = (first.top + first.bottom) / 2;
+      }
+      // The dot sits just outside the frame on the list's side, level with
+      // the question (the ads' leaders do the same): an English question
+      // in the Arabic deck starts on that side, and a dot inside the screen
+      // landed on its first letter.
       setLeader({
         a: [
-          ((rtl ? qa.left - 4 : qa.right + 4) - box.left) / k,
-          (qa.top + 14 - box.top) / k,
+          ((rtl ? pa.left - 10 : pa.right + 10) - box.left) / k,
+          (y - box.top) / k,
         ],
         b: [
           ((rtl ? ra.right + 12 : ra.left - 12) - box.left) / k,
@@ -1163,21 +1178,29 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
       ? t({ en: "Filled in by Meta", ar: "تعبّيه ميتا تلقائياً" }, lang)
       : t(F.choice, lang);
   const thanksLine = d.launch.welcomeVideo ? F.thanksVideo : F.thanksLine;
+  // The tag names the picture, so it sits over the phone's outer corner
+  // (as journey stop 2 tags the same phone), never on the title's line.
+  const tag =
+    f.source === "example"
+      ? t(SHARED.tag.exampleForm, lang)
+      : opensWhatsApp(d)
+        ? t(SHARED.tag.exampleWording, lang)
+        : null;
   return (
     <div className="dkc-form-slide" ref={pageRef}>
-      <div className="dkc-form-phone">
-        <FormPhone ctx={ctx} height={852} screen={screen} focus={lit} />
-      </div>
+      <Tagged tag={tag} className="dkc-form-phone">
+        {/* The phone ends well above the mini rail's name (at 852 it had
+            ended 27 px above it); with a tag over it, shorter by its line. */}
+        <FormPhone
+          ctx={ctx}
+          height={tag ? 772 : 812}
+          screen={screen}
+          focus={lit}
+        />
+      </Tagged>
       <div className="dkc-form-side">
         <Owner lane="customer" text={F.owner} lang={lang} />
-        <div className="dkc-title-tag">
-          <h2 className="dk-h2">{t(F.title, lang)}</h2>
-          {f.source === "example" ? (
-            <span className="dk-tag">{t(SHARED.tag.exampleForm, lang)}</span>
-          ) : opensWhatsApp(d) ? (
-            <span className="dk-tag">{t(SHARED.tag.exampleWording, lang)}</span>
-          ) : null}
-        </div>
+        <h2 className="dk-h2">{t(F.title, lang)}</h2>
         <p className="dk-body dk-ink2 dkc-form-line">
           {destination && f.kind === "whatsapp"
             ? t(F.whatsapp, lang)

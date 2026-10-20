@@ -484,7 +484,7 @@ After stop 3:
 - Title: "Your form"
 - Line: "What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit." DWY: "What they answer before your team calls. Questions marked 'Filters' screen out people who aren't a fit."
 - One phone, screen by screen, walked with the arrow keys.
-- Gate questions carry the teal tag "Filters".
+- Gate questions carry the word "Filters" in teal (a word, not a pill).
 - When the destination is a website: the label "Your page" and the page in the phone (a screenshot from prep, or the live page).
 
 **Stops (the phone's screens)**

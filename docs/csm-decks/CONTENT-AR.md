@@ -474,7 +474,7 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 | `form.stop.3.line` | Then your thank-you screen, and a welcome message. | وبعدها صفحة الشكر، ورسالة ترحيب. |
 | `form.stop.3.video` | Then your thank-you screen, and a welcome message with a short video about you. | وبعدها صفحة الشكر، ورسالة ترحيب فيها فيديو قصير يعرّف عنكم. |
 | `form.thanks.default` | Thank you. Our team will call you during working hours. | شكراً لك. فريقنا بيتواصل معك خلال أوقات الدوام. |
-| `form.fallback` | We're finishing yours. (Beside the "Example form" tag, which already says what it is.) | نشتغل على نموذجكم. |
+| `form.fallback` | We're finishing yours. (The "Example form" tag over the phone already says what it is.) | نشتغل على نموذجكم. |
 | `form.whatsapp` | Your ad opens a WhatsApp chat. | إعلانكم يفتح محادثة واتساب. |
 | `form.whatsapp.message` (Example wording) | Hi, I saw your ad. I'd like to know more about {service}. | السلام عليكم، شفت إعلانكم وأبي أعرف أكثر عن {service}. |
 | `form.whatsapp.message.any` | Hi, I saw your ad and I'd like to know more. | السلام عليكم، شفت إعلانكم وأبي أعرف أكثر. |

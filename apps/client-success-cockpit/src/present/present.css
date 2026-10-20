@@ -3388,8 +3388,28 @@ button.dkc-status:hover {
 .dkc-form-screen[data-cover] .dkc-form-intro {
   position: relative;
   z-index: 1;
+  flex: none;
   margin-top: calc(var(--u) * -36);
   padding-top: 0;
+  padding-bottom: calc(var(--u) * 28);
+}
+/* The cover takes the screen's free height, up to the feed ad's own 4:5,
+   so the intro is not a black hole between its headline and Next; any
+   height left over sits above Next, where Meta pins it. */
+.dkc-form-screen[data-cover] .dkc-form-cover {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: calc(var(--u) * 300);
+  max-height: calc(var(--u) * 458);
+}
+.dkc-form-screen[data-screen="intro"] .dkc-form-next {
+  margin-top: auto;
+}
+/* No picture to head it: the Page and its words in the middle of the
+   screen, as the thank-you screen sets them, not at the top of a void. */
+.dkc-form-screen[data-screen="intro"]:not([data-cover]) .dkc-form-intro {
+  justify-content: center;
+  padding-bottom: calc(var(--u) * 96);
 }
 .dkc-form-screen[data-cover] .dkc-form-intro .dkc-avatar {
   box-shadow: 0 0 0 calc(var(--u) * 4) var(--app-ground);
@@ -3951,8 +3971,14 @@ button.dkc-status:hover {
   position: relative;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
   gap: 96px;
   height: 100%;
+}
+/* The phone's tag over its outer corner, away from the words beside it,
+   so it never reads on with the eyebrow across the gutter. */
+.dkc-form-phone > figcaption {
+  align-self: flex-start;
 }
 .dkc-form-side {
   display: flex;
@@ -4018,13 +4044,8 @@ button.dkc-status:hover {
   font-size: 24px;
   color: var(--dk-ink-2);
 }
+/* A filtering question: the word in teal, set as a word, not a pill. */
 .dkc-gate {
-  display: inline-flex;
-  align-items: center;
-  height: 38px;
-  padding: 0 14px;
-  border-radius: 999px;
-  background: var(--dk-teal-soft);
   color: var(--dk-teal);
   font-size: 24px;
   font-weight: 600;

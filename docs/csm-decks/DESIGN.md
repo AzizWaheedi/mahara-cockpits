@@ -740,7 +740,7 @@ and is designed as one, not as a broken-logo fallback.
 | Journey stage | 640 | 0.76 | 13 px (a picture; the stage words carry the meaning) |
 | Ads overview (three phones) | 760 middle, 680 sides | 0.82 to 0.73 | 12 to 14 px (the gestalt) |
 | Ads focus | 852 | 1.0 | 17 px, with leaders naming the parts in deck type |
-| Form focus | 852 | 1.0 | 17 px, with the question list beside it in deck type |
+| Form focus | 812 (772 under its tag) | 0.93 (0.88) | 16 px, with the question list beside it in deck type; the phone ends 50 px above the mini rail's name |
 | Creative freedom, stop 1 | 520 | 0.62 | a picture; one leader names "Sponsored" |
 | Cover and onboarding starter stop | 640 to 760 | 0.76 to 0.9 | a picture |
 
@@ -987,16 +987,23 @@ assets, the fork at stop 6. Thin stops get one sentence.
   thank-you screen. Each → highlights the next question in the phone and its
   row in the list, joined by a leader. The thank-you screen is shown in full
   here and nowhere else.
-- **Filtering questions** carry a teal "Filters" chip. The CSM can add one
-  line per gate question in prep ("Filters out people with no budget yet");
-  without it, the chip stands alone.
+- **Filtering questions** carry the word "Filters" in teal, set as a word
+  (no pill, no fill). The CSM can add one line per gate question in prep
+  ("Filters out people with no budget yet"); without it, the word stands
+  alone.
+- **The leader** leaves the phone 10 px outside its frame on the list's side,
+  level with the lit question's first line, as the ads' leaders do, so its
+  dot never sits on the app's words whatever their direction.
+- **The intro** is headed by the ad's own picture, which takes the screen's
+  free height up to the feed ad's 4:5; any height left sits above Next.
 - **Other destinations:** WhatsApp or landing page per 7.5.
 - **Data:** only a form the CSM confirmed in prep. A match by account name is
   never used: a near miss would draw another client's form as "Your form".
 - **Fallback:** no confirmed form and no prep questions: the slide is hidden
   by default and prep says why. If the CSM shows it, the phone draws the
-  example form (7.5), tagged "Example form". Journey stop 2 uses the same
-  example form with the same tag.
+  example form (7.5), tagged "Example form" above the phone's outer corner
+  (never on the title's line). Journey stop 2 uses the same example form
+  with the same tag.
 
 ### 8.6 The example call
 
@@ -2609,3 +2616,14 @@ pass"). Where this list and an earlier line disagree, this list wins.
 | 8.8 | No table: six cells on one grid, three across, the title and its line in the first, the five jobs in the rest, each the same thing (a 2 px rule, the job, why, its picture where it has one). The second row starts at one height for every client. The calendar's busy hour is a plain raised block, not hatched. |
 | 8.9 | One primary: the programme, larger (96 px lanes, 36 px bar, 22 px diamonds) in the middle of the room, with its key and the milestones as its own last row (under a rule, past go-live's line). Their goal sits at the end of the title's row in their words, as the frame; an answer in the other script keeps its own leading. |
 
+### 19.12 The form slide pass (2026-10-20)
+
+The fourth score left one slide under 4, the form (L5), worst in Arabic.
+
+| Section | Change |
+|---|---|
+| 8.5 | The leader's dot sits 10 px outside the phone's frame on the list's side, level with the lit question's first line (the ads' rule, 8.3). In Arabic the phone is on the right and an English question starts on its left edge, so the dot had landed on its first letter. |
+| 8.5, 7.5 | The intro's cover, the ad's own picture, takes the screen's free height up to 4:5, the headline keeps its room under it, and any height left sits above Next; with no picture, the Page and its words sit in the middle of the screen as the thank-you sets them. It had been about 230 px of black between the headline and Next. |
+| 7.8, 8.5 | The phone is 812 tall (772 under a tag), so it ends about 50 px above the mini rail's name instead of 27. |
+| 5.4, 8.5 | "Example form" and "Example wording" sit above the phone's outer corner, on the eyebrow's line across the slide, not inline after "Your form". The phone is at the content's start with the words at its end, so its end corner would have set the tag on one line with the eyebrow across the gutter. |
+| 8.5 | "Filters" is the word in teal, not a teal pill. |
