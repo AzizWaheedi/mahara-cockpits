@@ -1241,7 +1241,11 @@ describe("which plan a person follows", () => {
 
 describe("the seeds are the contract's", () => {
   test("ROLE_PLANS_2026_10 is PAY-PLANS.md section 2, plan for plan", () => {
-    const doc = readFileSync(new URL("docs/pay/PAY-PLANS.md", root), "utf8");
+    // A Windows checkout ends every line in CRLF; the pattern matches on \n.
+    const doc = readFileSync(
+      new URL("docs/pay/PAY-PLANS.md", root),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
     const block = doc.match(
       /## 2\. Plans seeded[\s\S]*?```jsonc\n([\s\S]*?)```/,
     )?.[1];
