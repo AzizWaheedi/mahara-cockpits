@@ -1,6 +1,7 @@
 import { OFF_STATUSES } from "../board.js";
 import { CPB_BAD, CPB_GATE, CPL_GATE, SHOW_RATE_GOOD } from "../constants.js";
 import { attendanceOf, clientDelivery, hasNoOutcome, isWon, } from "../data/triage.js";
+import { deliveryClientGroups } from "../data/deliveryClients.js";
 import { addDays, kuwaitDay, monthStart } from "../time.js";
 // The gates come from convex/constants.ts, the one place the whole cockpit
 // reads them, so the delivery colours, the client risk points and the KPI
@@ -526,20 +527,17 @@ export const delivery = {
                         noOutcomeBy.set(a.clientId, list);
                     }
                 }
-                return triage.clients
+                return deliveryClientGroups(triage.clients, spendBy, bookBy, countsBy, noOutcomeBy)
                     .map(c => {
-                    const r = spendBy.get(c.clientId);
-                    if (!r || r.spend <= 0)
+                    const r = c.spend;
+                    if (!(r.spend > 0))
                         return null;
-                    const booked = bookBy.get(c.clientId) ?? {
-                        provisional: 0,
-                        confirmed: 0,
-                    };
+                    const booked = c.booked;
                     const bookings = booked.provisional + booked.confirmed;
                     const cpl = r.leads > 0 ? usd(r.spend / r.leads) : null;
                     const cpb = bookings > 0 ? usd(r.spend / bookings) : null;
                     const cpbConfirmed = booked.confirmed > 0 ? usd(r.spend / booked.confirmed) : null;
-                    const rates30 = deliveryRates(countsOf(c.clientId));
+                    const rates30 = deliveryRates(c.counts);
                     // Done With You clients book their own appointments, so none of
                     // ours exist to count and cost per lead is the only number we
                     // own. A client we do book for is judged on all three, even in
@@ -567,7 +565,7 @@ export const delivery = {
                         cpbConfirmed7d: cpbConfirmed,
                         costPerShownAt60: costPerShownAt60(cpbConfirmed),
                         rates30,
-                        noOutcome: noOutcomeBy.get(c.clientId) ?? [],
+                        noOutcome: c.noOutcome,
                     };
                 })
                     .filter((x) => x !== null)
