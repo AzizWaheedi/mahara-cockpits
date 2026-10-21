@@ -11,6 +11,7 @@
  */
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { PGlite } from "@electric-sql/pglite";
 import {
   actor,
@@ -167,7 +168,6 @@ async function refusedFor(
   await owner(db);
   throw new Error(`Expected a refusal for ${text}`);
 }
-const r1 = (n: number) => Math.round(n * 10) / 10;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 async function lead(id: string, loc: string, created: string, extra: Row = {}) {
@@ -811,6 +811,26 @@ const NOW = "2026-10-22T08:00:00Z";
 const KW = (iso: string) => `${iso}+03:00`;
 const csmLoc = (n: number) => `locCsmClient${String(n).padStart(6, "0")}`;
 
+/**
+ * results-speed-timing.sql (the repository root) holds, for each read the screens make, one plain SELECT that
+ * does the function's work with today's objects only, so it can be timed on the live database before the
+ * migrations are applied. timing(tag) is a block as written (its transaction wrapper included) and
+ * timingQuery(tag) the SELECT inside it.
+ */
+const TIMING = new Map(
+  readFileSync(join(import.meta.dir, "../../../results-speed-timing.sql"), "utf8")
+    .replace(/\r\n/g, "\n")
+    .split(/^-- @@ /m)
+    .slice(1)
+    .map(p => [p.slice(0, p.indexOf("\n")), p.slice(p.indexOf("\n") + 1)] as const),
+);
+const timing = (tag: string) => TIMING.get(tag) ?? "";
+const timingQuery = (tag: string) => {
+  const t = timing(tag);
+  const a = t.indexOf("SET LOCAL statement_timeout = '15s';\n") + "SET LOCAL statement_timeout = '15s';\n".length;
+  return t.slice(a, t.lastIndexOf("\nROLLBACK;"));
+};
+
 describe("3. the CSM call list", () => {
   /** One sheet row of a client's report sheet. */
   const row = (when: string, extra: Row = {}) => ({
@@ -957,6 +977,21 @@ describe("3. the CSM call list", () => {
     await owner(db);
     await expect(q("SELECT * FROM public.cockpit_csm_call_list(now(), 0)")).rejects.toThrow(/cap of at least 1/);
     await expect(q("SELECT * FROM public.cockpit_csm_call_list(now(), 5, '{}'::jsonb)")).rejects.toThrow(/JSON array/);
+  });
+
+  test("the timing file's CSM query (Q3) does the function's work: the same clients, ranks and counts", async () => {
+    const inline = timingQuery("Q3").replace("SELECT now() AS ts", `SELECT '${NOW}'::timestamptz AS ts`);
+    expect(inline).toContain(NOW);
+    await owner(db);
+    const got = await q(inline);
+    const want = await svc(
+      `SELECT location_id, client_name, rank, missing_meetings, missing_show, missing_closed, oldest_meeting,
+              in_first_chase, jsonb_array_length(meetings) AS meetings_listed, sheet_checked_at, sheet_error
+       FROM public.cockpit_csm_call_list($1::timestamptz, 1000)`,
+      [NOW],
+    );
+    expect(want.length).toBeGreaterThan(2);
+    expect(got).toEqual(want);
   });
 });
 
@@ -1601,5 +1636,117 @@ describe("6. the browser's doors and the CSM call log (20261021i)", () => {
       "SELECT has_table_privilege('anon','public.cockpit_csm_call_log','SELECT') AS a, has_table_privilege('authenticated','public.cockpit_csm_call_log','SELECT') AS u, has_table_privilege('service_role','public.cockpit_csm_call_log','SELECT') AS s, (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.cockpit_csm_call_log'::regclass) AS rls",
     );
     expect(table[0]).toEqual({ a: false, u: false, s: true, rls: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. results-speed-timing.sql: the queries to time on the live database before the migrations are applied.
+describe("7. the timing file does the same work as the functions", () => {
+  const TAGS = ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7"];
+  const speedWindow = (days: number) => [`${kd(days - 1)}T00:00:00+03:00`, `${dayShift(today, 1)}T00:00:00+03:00`];
+
+  test("each block is one read-only transaction with a 15 second limit, and holds no write", () => {
+    expect([...TIMING.keys()].sort()).toEqual(TAGS);
+    for (const tag of TAGS) {
+      const block = timing(tag);
+      expect(block).toContain("BEGIN READ ONLY;\nSET LOCAL statement_timeout = '15s';\n");
+      expect(block.trimEnd().endsWith("ROLLBACK;")).toBe(true);
+      const query = timingQuery(tag);
+      expect(query).not.toMatch(/\b(insert|update|delete|create|drop|alter|truncate|grant|revoke|notify|set)\b/i);
+      expect(query).not.toContain("enable_nestloop");
+    }
+  });
+
+  test("the dialer's call view is read once, in a MATERIALIZED CTE with a date range, and only where it is needed", () => {
+    const calls = (tag: string) => timingQuery(tag).split("mahara_reporting.cc_calls").length - 1;
+    for (const tag of ["Q4", "Q5", "Q6"]) {
+      expect(calls(tag)).toBe(1);
+      expect(timingQuery(tag)).toMatch(/calls AS MATERIALIZED \(/);
+      expect(timingQuery(tag)).toMatch(/started_at >= \(SELECT (t_from|v_start) FROM prm\)/);
+    }
+    for (const tag of ["Q1", "Q2", "Q3", "Q7"]) expect(calls(tag)).toBe(0);
+  });
+
+  test("every block runs as written, inside its own transaction, and leaves nothing open", async () => {
+    await owner(db);
+    for (const tag of TAGS) await db.exec(timing(tag));
+    expect((await q("SHOW transaction_read_only"))[0].transaction_read_only).toBe("off");
+  });
+
+  test("Q1, the gap report: the same clients, counts and board comparison as cockpit_gap_report", async () => {
+    await owner(db);
+    const got = await q(timingQuery("Q1"));
+    const want = await svc(
+      `SELECT location_id, client_name, meetings_past, no_result, crm_confirmed, sheet_blank, sheet_missing, sheet_unclear,
+              oldest_days, sheet_read_ok, sheet_rows_total, sheet_rows_in_window, sheet_checked_at,
+              board_meetings_past, board_no_outcome, matches_board
+       FROM public.cockpit_gap_report($1::date, $2::date)`,
+      [kd(13), today],
+    );
+    expect(want.length).toBeGreaterThan(3);
+    expect(want.some(r => r.no_result > 0)).toBe(true);
+    expect(got).toEqual(want);
+  });
+
+  test("Q2, one client's meetings: the same count and splits as cockpit_gap_meetings", async () => {
+    await owner(db);
+    const [got] = await q(timingQuery("Q2"));
+    expect(got.location_id).toBeTruthy();
+    const [want] = await svc(
+      `SELECT count(*) AS meetings, count(*) FILTER (WHERE sheet_state = 'blank') AS sheet_blank,
+              count(*) FILTER (WHERE crm_confirmed) AS crm_confirmed, max(meeting_at) AS latest
+       FROM public.cockpit_gap_meetings($1, $2::date, $3::date)`,
+      [got.location_id, kd(13), today],
+    );
+    expect(Number(want.meetings)).toBeGreaterThan(0);
+    expect({ ...got, location_id: undefined }).toEqual({ ...want, location_id: undefined });
+  });
+
+  for (const [tag, days] of [["Q4", 30], ["Q5", 90]] as const)
+    test(`${tag}, the speed chart over ${days} days: the same paid leads, bookings, cells and working minutes as cockpit_speed_leads`, async () => {
+      await owner(db);
+      const [got] = await q(timingQuery(tag));
+      const [from, to] = speedWindow(days);
+      const [want] = await svc(
+        `WITH s AS (SELECT * FROM public.cockpit_speed_leads($1::timestamptz, $2::timestamptz, 3))
+         SELECT (SELECT count(*) FROM (SELECT arrival_hour, country, public.cockpit_speed_band(clock_minutes, first_call_at IS NOT NULL)
+                                       FROM s GROUP BY 1, 2, 3) z) AS cells,
+                count(*) AS paid_leads, count(*) FILTER (WHERE booked) AS bookings,
+                count(*) FILTER (WHERE booked_any) AS bookings_any, round(sum(working_minutes)) AS working_minutes_sum
+         FROM s`,
+        [from, to],
+      );
+      expect(Number(want.paid_leads)).toBeGreaterThan(0);
+      expect(Number(got.paid_leads)).toBe(Number(want.paid_leads));
+      expect(Number(got.cells)).toBe(Number(want.cells));
+      expect(Number(got.bookings)).toBe(Number(want.bookings));
+      expect(Number(got.bookings_any)).toBe(Number(want.bookings_any));
+      expect(Number(got.working_minutes_sum)).toBe(Number(want.working_minutes_sum));
+    });
+
+  test("Q6, the morning list: the same counts per client, and the same board comparison, as the summary", async () => {
+    await owner(db);
+    const got = await q(timingQuery("Q6"));
+    const want = await svc(
+      `SELECT location_id, client_name, callable, exact, phone_only, outcome_only, never_called, uncalled_paid,
+              board_callable, board_verified, board_outcome_only, board_untouched, board_computed_at, matches_board
+       FROM public.cockpit_morning_uncalled_summary()`,
+    );
+    expect(want.length).toBeGreaterThan(0);
+    expect(want.some(r => r.callable > 0)).toBe(true);
+    expect(got).toEqual(want);
+  });
+
+  test("Q7, the board comparison alone: the clients and the stored rows it joins", async () => {
+    await owner(db);
+    const [got] = await q(timingQuery("Q7"));
+    const [want] = await q(
+      `SELECT count(*) AS board_clients,
+              count(*) FILTER (WHERE EXISTS (SELECT 1 FROM public.cockpit_client_now n WHERE n.location_id = b.location_id)) AS with_board_row
+       FROM public.cockpit_board_clients b WHERE b.service_mode IS DISTINCT FROM 'DWY' AND b.status = 'Active'`,
+    );
+    expect(Number(got.board_clients)).toBeGreaterThan(0);
+    expect(Number(got.board_clients)).toBe(Number(want.board_clients));
+    expect(Number(got.with_board_row)).toBe(Number(want.with_board_row));
   });
 });
