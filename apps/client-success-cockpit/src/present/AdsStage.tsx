@@ -16,6 +16,7 @@ import {
   type L,
   LAUNCH,
   SHARED,
+  sep,
   t,
   tf,
 } from "./content";
@@ -114,6 +115,12 @@ export function useCreatives(ctx: SlideCtx) {
     const journey = example
       ? exampleCreative(alt, "feed", words, ctx.lang)
       : phones.feed;
+    // The form slide's cover, right after the ads slide (whose phones carry
+    // the lead and the alternate): with an example, the service's third
+    // scene, so no picture shows twice in a row (DESIGN 22.14).
+    const formCover = example
+      ? exampleCreative(sceneAt(ctx.d.example, 2), "feed", words, ctx.lang)
+      : phones.feed;
     // The cover's example: while they have no creative of their own, a
     // starter template included (it is ours, not theirs), the lead picture.
     const own = [...tray, ...meta].some(c => !c.starter && (c.url || c.poster));
@@ -130,6 +137,7 @@ export function useCreatives(ctx: SlideCtx) {
       local,
       example,
       journey,
+      formCover,
       coverExample,
     };
   }, [L, local, ctx.live.phones, ctx.lang, ctx.d.example, ctx.d.exampleWords]);
@@ -139,9 +147,16 @@ export function useCreatives(ctx: SlideCtx) {
 export function useWarmExample(ctx: SlideCtx, on: boolean) {
   const lead = sceneAt(ctx.d.example, 0);
   const alt = sceneAt(ctx.d.example, 1);
+  const third = sceneAt(ctx.d.example, 2);
   useEffect(() => {
-    if (on) warmExamples([feedUrl(lead), storyUrl(alt), feedUrl(alt)]);
-  }, [on, lead, alt]);
+    if (on)
+      warmExamples([
+        feedUrl(lead),
+        storyUrl(alt),
+        feedUrl(alt),
+        feedUrl(third),
+      ]);
+  }, [on, lead, alt, third]);
 }
 
 /** Which phone a stop of the ads slide focuses (stop 0 is the overview). */
@@ -310,10 +325,13 @@ export function AdTray({
                     ) : (
                       <span className="dk-ltr dkc-thumb-spec">
                         {digits(shape, lang)}
+                        {/* «، » in Arabic: a dot beside ٤:٥ reads as ٠. */}
                         {c.video && c.seconds
-                          ? ` · ${duration(c.seconds)}`
+                          ? `${sep(lang)}${duration(c.seconds)}`
                           : ""}
-                        {c.language ? ` · ${c.language.toUpperCase()}` : ""}
+                        {c.language
+                          ? `${sep(lang)}${c.language.toUpperCase()}`
+                          : ""}
                       </span>
                     )}
                     {c.starter ? (

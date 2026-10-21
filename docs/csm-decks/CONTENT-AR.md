@@ -1171,6 +1171,7 @@ The Latin "Sales crash course" left the middle of the sentence (the score round'
 | Everything in this link is already in the tray. | كل اللي في هالرابط موجود بالتصاميم من قبل. |
 | Only the newest 20 came in. Paste a subfolder's link for the rest. | وصل أحدث ٢٠ ملف بس. وللباقي، الصق رابط مجلد من داخله. |
 | Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now. | ما أحد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع. |
+| This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now. | وقف بالنص. آخر مرة اشتغلت أداة الدرايف {time}. بيكمل من مكانه أول ما ترجع تشتغل، وإذا تحتاج الملفات الحين ارفعها هنا. |
 | The Drive importer hasn't run yet. Upload the files here for now. | أداة الدرايف ما اشتغلت للحين. ارفع الملفات هنا لين تشتغل. |
 | Couldn't check the import: {reason}. Trying again. | ما قدرنا نتأكد من الاستيراد: {reason}. نحاول مرة ثانية. |
 | Show the list ({n}) · Hide the list | اعرض القائمة ({n}) · سكّر القائمة |
@@ -1428,3 +1429,42 @@ Written under `aziz-kuwaiti-voice`, the client register (warm, professional, Sau
 |---|---|---|
 | L3 notes, stop 3 (new) | Stop 3, if they point at the pictures: "These are examples, to show how testing works. Your ads use your projects." | هذي أمثلة توضح كيف نختبر، وإعلاناتكم تكون من مشاريعكم. |
 
+
+## The five main services (CEO, 2026-10-21)
+
+Written under `aziz-kuwaiti-voice`, the client register (warm, professional, Saudi-safe). `CONTENT.md` [The five main services](CONTENT.md#the-five-main-services-ceo-2026-10-21) has the English and the rules; `DESIGN.md` 22.14 has the why.
+
+**Decision 15, the five main services.** The service is one of the kickoff form's five, said as a label on the canvas and with ال inside a sentence; never a sub-trade (مطابخ، حمامات) as the service. The lead's draft named construction مقاولات وبناء; the decks say بناء وإنشاءات, because decision 3 keeps مقاول out of Mahara's Arabic (the voice skill's rule for the buyer, and EXAMPLE-CALL's «Never مقاول in Mahara's Arabic»), and إنشاءات is how a building firm names its own work. "Other" is خدمة أخرى as the row's name, and the client's own words everywhere else. The separator inside an Arabic line is «، », never a middle dot: beside Arabic-Indic digits a dot reads as ٠ (score round 3); every Arabic line in `content.ts` already uses it.
+
+| Key | English label | Arabic label | Arabic inside a sentence |
+|---|---|---|---|
+| `design-build` | Design and build | تصميم وتنفيذ | التصميم والتنفيذ |
+| `interior` | Interior design | تصميم داخلي | التصميم الداخلي |
+| `architecture` | Architectural design | تصميم معماري | التصميم المعماري |
+| `fitout` | Fit-out and renovation | تشطيب وترميم | التشطيب والترميم |
+| `construction` | Construction | بناء وإنشاءات | البناء والإنشاءات |
+| `other` | Other | خدمة أخرى | the client's own words |
+
+In a sentence: لخدمة التصميم الداخلي (O7's starter line), إعلان عن التشطيب والترميم (O4's spoken line), مرتاحين نبدي بخدمة البناء والإنشاءات؟ (the temp check), بخصوص التصميم المعماري (the example call), أبي أعرف أكثر عن التصميم والتنفيذ (the WhatsApp message). On the queue card the label: استفسار جديد، تصميم داخلي.
+
+**Slide 4's rows.** The client's own words under a row stay as they wrote them, in their own direction (`<bdi>`); more than fit on the line are counted after them as +٢, set left to right so it never reads ٢+ in front of a Latin line.
+
+**Spoken line, O4 (replacing the first one)**
+- هذي الخدمات الخمس الأساسية اللي نسوي لها حملات. أي وحدة فيها الأسهل بالبيع؟ وأي وحدة تجيب لكم أكثر ربح؟ وأي وحدة الأريح لكم بالتنفيذ؟
+
+Not خدماتنا: the five are the client's kind of work, not services Mahara sells.
+
+**The six new example scenes' alt text** (إعلان مثال: {scene}):
+
+| Scene | English scene | Arabic scene |
+|---|---|---|
+| construction2 | a residential tower's concrete frame under a crane at dusk | هيكل خرساني لبرج سكني تحت رافعة وقت المغرب |
+| construction3 | a two-storey villa's concrete frame with scaffolding | هيكل خرساني لفيلا من دورين وحوله سقالات |
+| fitout2 | a fitted-out boutique with stone counters and lit shelves | محل مجهّز بطاولات حجر ورفوف مضاءة |
+| fitout3 | a fitted-out restaurant with timber booths and brass lights | مطعم مجهّز بجلسات خشب وإضاءة نحاس |
+| designbuild | a new villa's glass living room over its pool at dusk | صالة زجاج في فيلا جديدة على المسبح وقت المغرب |
+| architecture2 | a modern villa with a timber-screened upper floor | فيلا حديثة دورها العلوي بواجهة خشب |
+
+**Inside an example phone** the Arabic caption is `selling_point_ar` only, else nothing (no longer `service_focus_ar`); the Facebook headline is the service's Arabic label. The service is never written into a caption as if it were the client's copy.
+
+**O6, the Mahara OS card without its video:** the demo workspace's phone, tagged حساب تجريبي (the portal slide's own tag).

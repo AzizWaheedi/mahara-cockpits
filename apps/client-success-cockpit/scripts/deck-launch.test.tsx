@@ -1042,9 +1042,7 @@ describe("creative flexibility, drawn", () => {
     const ar = html(data("full", "ar"), 3);
     const checkAr =
       ar.match(/<p class="dkc-cf-checks">[\s\S]*?<\/p>/)?.[0] ?? "";
-    expect(checkAr.replace(/<[^>]+>/g, "")).toBe(
-      "المعلومات، الأسعار، الوعود",
-    );
+    expect(checkAr.replace(/<[^>]+>/g, "")).toBe("المعلومات، الأسعار، الوعود");
   });
 
   test("stop 5: keep the content coming, with the why, and where the folder is", () => {

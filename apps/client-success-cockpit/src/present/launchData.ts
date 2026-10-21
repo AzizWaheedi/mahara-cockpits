@@ -20,11 +20,7 @@ import {
 import type { L, Lang } from "./content";
 import { type Creative, creativeOf, creativeOfMeta } from "./creative";
 import type { AccessStatus, DeckData, Overrides } from "./deckData";
-import {
-  type ServiceKey,
-  type ServicePick,
-  serviceNames,
-} from "./services";
+import { type ServiceKey, type ServicePick, serviceNames } from "./services";
 import type { Funnel, LaunchAd, MetaAd } from "./sources";
 
 /**

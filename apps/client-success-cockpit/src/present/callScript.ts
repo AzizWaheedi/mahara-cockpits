@@ -639,16 +639,17 @@ export const ANY_PROJECT: L = { en: "your project", ar: "مشروعك" };
  * The family of one of the five main services (DESIGN 22.14): the call's
  * `{project}` and budget scale follow the service the client advertises.
  */
+const MAIN_FAMILIES: ReadonlySet<string> = new Set([
+  "design-build",
+  "interior",
+  "architecture",
+  "fitout",
+  "construction",
+]);
 export function familyOfKey(key: string | null | undefined) {
-  const k =
-    key === "fitout" || key === "construction" || key === "interior"
-      ? key
-      : key === "architecture"
-        ? "architecture"
-        : key === "design-build"
-          ? "design-build"
-          : null;
-  return k ? (FAMILIES.find(x => x.key === k) ?? null) : null;
+  return key && MAIN_FAMILIES.has(key)
+    ? (FAMILIES.find(x => x.key === key) ?? null)
+    : null;
 }
 
 /** The family a service belongs to; kitchens and interiors before the rest. */

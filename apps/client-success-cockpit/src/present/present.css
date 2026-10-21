@@ -953,6 +953,8 @@ button.dkc-status:hover {
   font-size: 26px;
   line-height: 1.4;
   color: var(--dk-ink-2);
+  /* The agenda's lead sets in with its rings, after the name (22.14). */
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc(var(--today-at, 0s) * var(--dk-m)) both;
 }
 .dkc-today[data-variant="cover"] li + li {
   margin-top: 36px;
@@ -1419,8 +1421,9 @@ button.dkc-status:hover {
 .dkc-goal-row + .dkc-foot {
   padding-top: 24px;
 }
+/* The foot comes in after the answers have risen (22.14), not before them. */
 .dkc-foot[data-rise] {
-  animation: dk-rise calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) both;
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(4 * var(--dk-t-step) * var(--dk-m)) both;
 }
 @keyframes dk-rise {
   from {
@@ -2204,24 +2207,28 @@ button.dkc-status:hover {
 .dkc-road-end {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 570px;
-  column-gap: 80px;
-  align-items: center;
+  column-gap: 64px;
+  align-items: start;
   margin-top: 8px;
 }
+/* The rule is the slide's second statement (22.14): set large on the start
+   half, its first line level with the card's top (under the card's tag),
+   so the band under the road reads as one statement and its proof, not a
+   line lost in a void. */
 .dkc-road-foot {
-  margin: 0;
-  max-width: 760px;
-  font-size: 40px;
-  line-height: 1.3;
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  margin: 24px 0 0;
+  max-width: 880px;
+  font-size: 56px;
+  line-height: 1.16;
+  font-weight: 600;
+  letter-spacing: -0.02em;
   color: var(--dk-ink-2);
   text-wrap: balance;
   animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(6 * var(--dk-t-step) * var(--dk-m)) both;
 }
 [dir="rtl"] .dkc-road-foot {
-  font-size: 40px;
-  line-height: 1.5;
+  font-size: 56px;
+  line-height: 1.4;
   letter-spacing: 0;
 }
 .dkc-road-card {
@@ -2443,6 +2450,41 @@ button.dkc-status:hover {
 [dir="rtl"] .dkc-setup-pic-words {
   font-size: 24px;
 }
+/* No guide's picture on the Mahara OS card (22.14): the app's first screen
+   on a phone rising out of the card's foot, the demo workspace's tag over
+   it. The phone runs into the card's bottom padding and is cut by the
+   card's edge, so it reads as held, not pasted on. */
+.dkc-setup-phone {
+  grid-column: 2;
+  grid-row: 2 / 4;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  margin: 0 0 -28px;
+}
+.dkc-setup-phone .dk-tag {
+  font-size: 20px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.dkc-setup-phone-body {
+  flex: 1 1 0;
+  min-height: 132px;
+  overflow: hidden;
+  padding: 7px 7px 0;
+  border-radius: 28px 28px 0 0;
+  background: var(--dk-deep);
+  box-shadow: inset 0 0 0 2px var(--dk-line-strong);
+  animation: dk-rise-far calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((2 * var(--dk-t-step) + var(--i, 0) * var(--dk-stagger)) * var(--dk-m)) both;
+}
+.dkc-setup-phone-body img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 21px 21px 0 0;
+}
 /* O6's arrival (22.14): the setup cards rise in turn, then what is already
    done ticks in order across them (the checklist ticking), then the
    week's rows set in under them. A tick made on the call draws at once. */
@@ -2594,6 +2636,57 @@ button.dkc-status:hover {
 }
 .dkc-setups[data-n="3"] .dkc-guide-word {
   display: none;
+}
+/* Three cards to a row (done with you, 22.14): the guide's own picture in
+   small, 80 x 45 on the head's line, under the posters' veil, the teal play
+   on it, so the board keeps a picture when no card has room for a poster.
+   Centred on the name and held to its height, so the card's name, status
+   and line sit where the other cards' do. */
+.dkc-guide[data-pic] {
+  align-self: center;
+  margin-block: -6px;
+}
+.dkc-guide-pic {
+  position: relative;
+  display: block;
+  flex: none;
+  width: 80px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--dk-panel-2);
+  box-shadow: inset 0 0 0 1px var(--dk-line);
+}
+.dkc-guide-pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.dkc-guide-pic::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--dk-deep);
+  opacity: 0.42;
+}
+.dkc-guide .dkc-guide-pic svg {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  padding: 7px 6px 7px 8px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--dk-teal);
+  color: var(--dk-deep);
+}
+[dir="rtl"] .dkc-guide .dkc-guide-pic svg {
+  transform: scaleX(-1);
 }
 .dkc-guide:hover {
   border-bottom-color: var(--dk-edge);

@@ -585,10 +585,7 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
             "What services do you offer, and their prices?",
             "بناء فلل سكنية، عظم وتشطيب، تأجير معدات",
           ),
-          answer(
-            "What is your #1 service you want to grow?",
-            "بناء فلل سكنية",
-          ),
+          answer("What is your #1 service you want to grow?", "بناء فلل سكنية"),
           answer(
             "What is your goal for the next 90 Days?",
             "نبي نوقع عقدين بناء فلل كل شهر في دبي والشارقة.",
@@ -722,10 +719,7 @@ function starter(_deck: DeckKind = "launch"): Loaded {
         response_id: "k4",
         submitted_at: "2026-10-05T11:00:00Z",
         answers: [
-          answer(
-            "Which service are we advertising?",
-            "Fit out and renovation",
-          ),
+          answer("Which service are we advertising?", "Fit out and renovation"),
           answer("Templated Ads Status", "Approved"),
           answer("Card linked to the account?", "Yes"),
           answer("Facebook access", "Access confirmed"),

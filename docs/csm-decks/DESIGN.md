@@ -5737,3 +5737,196 @@ of every changed slide in both languages and the full shot run
 | L9, stop 4 and L10: "Mark every meeting" said in three places | The journey shows it, slide 9 makes it the number-one job, and slide 10 is the recap the group gets in writing; rewording job 2 to point back ("as on slide 9") reads as a slide reference on the client's screen. For the lead |
 | L13: the ad that goes live in a 640 px phone | Taste; the close is the question, and the slide scored 4 |
 
+
+### 22.14 The five main services, score round 3's fixes and the arrivals (2026-10-21)
+
+The CEO's correction, word for word: "These are not kitchens. It is not one
+of the services. If you look, we have the main services, which you can see
+on the kickoff form. List them out: Architectural design, Interior design,
+Fitout / renovation, Construction, Design-build." And of the motion: the
+decks should have "really nice animations"; score round 3 found the motion
+clean but too quiet (builds of 0.2 to 1.1 s, three plain crossfades, the
+pictures never moving). The plan stays the cockpit's own system: Geist,
+`--dk-teal`, the `--dk-*` tokens, no new colour; the five services and the
+arrivals are built from what the decks already have.
+
+#### 22.14.1 The five main services
+
+The kickoff form (tG7dnxBn) asks "Which service are we advertising?" with
+Design and build · Interior design · Architectural design · Fit out and
+renovation · Construction only · Other; its hidden field `service_focus`
+carries the onboarding answer. Those five are the service, everywhere
+(`services.ts`, `SERVICES` in `content.ts`):
+
+| Key | Kickoff choice | Label EN / AR | Inside a sentence EN / AR | Example scenes, lead first |
+|---|---|---|---|---|
+| `design-build` | Design and build | Design and build / تصميم وتنفيذ | design and build / التصميم والتنفيذ | designbuild, villa, pool, stairs |
+| `interior` | Interior design | Interior design / تصميم داخلي | interior design / التصميم الداخلي | living, majlis, bedroom, bathroom, kitchen |
+| `architecture` | Architectural design | Architectural design / تصميم معماري | architectural design / التصميم المعماري | architecture2, villa, facade, landscape |
+| `fitout` | Fit out and renovation | Fit-out and renovation / تشطيب وترميم | fit-out and renovation / التشطيب والترميم | fitout2, fitout3, office, facade, kitchen |
+| `construction` | Construction only | Construction / بناء وإنشاءات | construction / البناء والإنشاءات | construction, construction2, construction3 |
+| `other` | Other | Other / خدمة أخرى (the row); their words elsewhere | their words | interior design's (the default) |
+
+Construction is بناء وإنشاءات, never مقاولات (13.5: never مقاول; CONTENT-AR
+decision 15). "Construction only" loses "only" on the canvas, where it read
+as a limit; the kickoff's own wording is what prep saves.
+
+**Reading a client's words** (`serviceOfText`). The kickoff's choices and the
+decks' own names are read whole, in both languages. Free text is read by
+keyword, in this order, the first match winning: design and build (turnkey,
+a pool: the whole project); a building's shell (عظم, shell and core: so
+"عظم وتشطيب" is construction, not a fit-out); fit-out and renovation (fit-out, renovation,
+finishing, office, retail, restaurant, flooring, ترميم، تشطيب، تجديد); interior
+design (interior, decor, kitchen, wardrobe, bathroom, bedroom, majlis,
+ديكور، مطابخ، حمامات، مجالس); architectural design (architect, facade,
+landscape, drawings, permit, consultancy, معماري، واجهات، حدائق، مخططات);
+construction (construction, contracting, building, structure, مقاولات، بناء،
+عظم، إنشاءات); last, a bare "design" or "studio" (تصميم) is an interior. So
+"Kitchens" is interior design, "Kitchen renovation" is fit-out and
+renovation, "Villa interior design" is interior design, "Swimming pools" is
+design and build. Arabic is read without its diacritics and tatweel, أ إ آ
+as ا, ة as ه, ى as ي, after its prefixes (و، ب، ال، لل). مكتب is left out on
+purpose: it starts a firm's name, not a service.
+
+**The client's service** (`resolveService`). The onboarding deck asks, in
+order: slide 4's choice (`service_chosen_at`), prep's `service_focus`, the
+kickoff's answer, then the onboarding form's #1 and its services. A choice
+(prep, the kickoff) is taken as it is, "Other" included; a form's line only
+when it fits one of the five, and words that fit none wait until nothing
+fits, then read "Other" in the client's own words. The launch deck asks the
+kickoff first, then the choice, prep and the forms, so the service the
+campaign was set up for is the one the launch call names.
+
+**Slide 4.** The matrix's rows are the five in the kickoff's order, and a
+sixth, "Other", only when some of the client's words fit none of the five
+or their pick is Other (`serviceRows`). Rows are 92 px (84 with six). A row's
+button holds the name (30/600 ink; 32 in Arabic) and, quiet under it (22/400
+ink-3; 23 in Arabic), the client's own words that belong to it, on one line,
+whole items only, the rest counted: "Villa interiors +2", the count
+isolated left to right so the Arabic deck reads +٢ after their words
+(`ownLine`). A word that is our label again is not repeated. "Your #1" sits
+beside the row their #1 belongs to. The band starts on the CSM's pointer,
+else the row with the most ticks (their #1 breaking a tie), else their
+likely service; nothing on file lights no row. "Launch with this" saves
+`service_focus` (the English label), `service_focus_ar` (the Arabic) and
+stamps `service_chosen_at`; "Other" saves their words; a prep picture chosen
+for another service is cleared (`chosenPatch`). The ghost rows and "Add a
+service" (22.13) are gone: the five are the choice, and the client's own
+words are typed in prep.
+
+**Prep.** "Launch service" is a select: the five and "Other, in their
+words", which opens the English and Arabic boxes. "Example ad" is two
+selects, by service then by scene; `example_theme` saves a service key (its
+lead picture) or a scene id, both on the server's allow-list
+(`20261020160100_csm_deck_prep_dos_ar.sql`, pinned by `deck-examples`).
+
+**Fixtures.** full is Noor Studio Interiors, interior design from its
+kickoff; sparse reads as design and build from its name; dwy is
+construction, with one service that fits none (so slide 4 shows Other);
+starter is fit-out and renovation. No fixture names kitchens or bathrooms as
+the service. `?service=<key>` in the harness shows any service's pictures.
+
+#### 22.14.2 Which picture where
+
+Each main service's scenes, its lead first, then its alternates
+(`SCENES`); a scene may serve two services. The six new scenes
+(construction2, construction3, fitout2, fitout3, designbuild,
+architecture2) are Mahara's own (Higgsfield, GPT Image 2.5), no people, no
+text, no logos: feed 1080 x 1350 and story 1080 x 1920 webp, 150 to 220 KB,
+and two 216 x 270 tile cuts each, like the twelve (72 files, pinned by
+`deck-examples`).
+
+| Place | Picture |
+|---|---|
+| O1, the Reels phone | the lead (story) |
+| O4, the feed phone | the lead of the row on the band; prep's scene when it belongs to that row |
+| O7, the strip | the service's scenes first, the lead on tile 0 (lit) |
+| L1, the cover (no creative of their own; a starter template does not count) | the lead (feed), tagged Example ad |
+| L2, journey stop 1 | the first alternate |
+| L3, the field | every scene once, the service's first; the lead and the alternate as detail tiles (cut b) |
+| L4, the phones | feed and Facebook the lead, Reels the alternate |
+| L5, the form's cover | the third scene |
+
+No picture shows twice in a row across consecutive slides: L1 the lead, L2
+the alternate, L3 details, L4 the lead and the alternate, L5 the third.
+
+#### 22.14.3 Score round 3's fixes
+
+| Finding | What changed |
+|---|---|
+| must: a starter client's launch cover showed faint lanes | With no creative of their own (starter templates are ours), the cover shows the tagged example ad (`coverExample`) |
+| must: a Latin Page name inside an Arabic caption read ".Al Reem … Co" | The Page name and the caption each sit in their own `dir="auto"` isolate (`Phones.tsx`); the client's words on slide 4 sit in `<bdi>` |
+| should: « · » beside Arabic-Indic digits read as ٠ | Every Arabic separator is «، » (`sep(lang)` in code, every Arabic line in `content.ts`), pinned by `deck-copy` |
+| should: the Reels who-row was hard to read over a light picture | The foot's scrim is `--app-scrim-deep` (0.82) under the who-row and button, fading out above them; a 6 px shadow on the name and caption |
+| should: L9 stop 2's "Open this on your phone" floated mid-canvas | Anchored to the phone: end-aligned 72 px before the framed film, level with its first screen, a 44 px teal hairline running to the phone |
+| should: prep's Loom slot with no thumbnail fell back badly | A designed poster: the dark ground, a teal play, the provider and length over the title in prep, no words in the notes window |
+| should: the notes window's sticky foot covered the video's Close and Copy row | The foot is measured (`--notes-foot`); the page's last spacer and the row's scroll margin use it, and the row scrolls into view when the video opens |
+| should: the fallbacks test rendered without a player, so a "{len}" could hide | `deck-fallbacks` renders every slide with `playVideo` and the seeded video slots |
+
+#### 22.14.4 The three weak slides
+
+- **O2, stop 1.** The goal is the stage's hero: it stands `--dk-lift`
+  (150 px) lower, over its 90 days drawn across the content, from today (a
+  teal dot, "Today") to the 90th day (a teal ring, the goal's label). On
+  stop 2 the pair settles up in one move (transform only) and the 90-day
+  line becomes the rule the other answers sit under. With no other answers
+  it sits in the stage's middle.
+- **O5.** The confirmation card hangs from the last stop by a dotted drop,
+  so it belongs to "First appointments". The road's rule ("Each call is
+  booked at the end of the one before.") is the slide's second statement,
+  56/600 ink-2 (Arabic 56 at 1.4), its first line level with the card's top,
+  so the band under the road reads as a statement and its proof instead of
+  a line beside a 400 px void.
+- **O6.** The setup cards carry a picture: on a two-card board, the video
+  guide's poster (16:9, 200 px, a 42% veil of `--dk-deep`, the teal play,
+  "Video guide · 1:34" under it), played by the CSM's click. When the
+  Mahara OS guide is not recorded, the app itself: its first screen
+  (`portal-phone-*.webp`, the portal slide's) on a phone rising out of the
+  card's foot, tagged "Demo workspace". Three cards to a row (done with
+  you) have no room for a poster: the guide's picture in small, 80 x 45 on
+  the head's line under the same veil with the teal play, beside its length.
+
+#### 22.14.5 The arrivals
+
+Each slide builds its signature once on entry, confidently enough to read
+on a Zoom share at 10 to 15 frames a second, then holds still. Eased, no
+bounce, transform and opacity only (a line drawing is the one paint
+exception, 22.3). Nothing loops while the presenter talks (checked: no
+infinite animation on any stop). Every duration and delay is a token times
+`--dk-m`, so `?still=1` and reduced motion paint the end state at once.
+
+| Token | Value | Use |
+|---|---|---|
+| `--dk-t-arrive` | 560 ms | a figure or a line of words arriving |
+| `--dk-t-step` | 120 ms | one beat between the parts of a build |
+| `--dk-t-line` | 140 ms | between the lines of O2's goal |
+| `--dk-t-sweep` | 900 ms | a line drawn across the slide (O2's 90 days) |
+| `--dk-t-drift`, `--dk-ease-drift`, `--dk-drift-scale` | 9 s, a soft ease, 1.04 | an example picture's drift |
+| `--dk-rise-far` | 64 px | a phone sliding up |
+| `--dk-lift` | 150 px | O2's goal on its first stop |
+| `--dk-t-trunk`, `--dk-t-branch` | 240, 200 ms | O3's group filling (were 160 each) |
+| `routeMs(k)` | min(1400, 600 + 240 k) ms | O5's lit line to today (was min(1000, 400 + 160 k)) |
+
+| Slide | The build (about) |
+|---|---|
+| O1 | their mark, then "Welcome," and their name a step apart, the phone sliding up 64 px with the example ad, then the agenda's lead and its three rings: 1.4 s |
+| O2 | the goal setting in line by line (each word box learns its line once laid out), the 90 days drawing from today, the ring and the label at its end: 1.5 s; stop 2, the pair settling up, the answers rising, then the foot |
+| O3 | their mark, the WhatsApp badge landing, the trunk, each branch with its role: 2 s |
+| O4 | the head, the five rows setting in one after another, the phone sliding up with its example, the band landing with the column's name: 1.2 s, the picture's drift on |
+| O5 | the stops appearing dot by dot with their names and dates, the lit line drawing to today, the drop and the card, the rule: 1.6 s |
+| O6 | the cards rising in turn, the posters or the phone, what is already done ticking in order across the cards, the week's rows: 1.1 s |
+| O7 | stop 1: the two columns in turn, the strip switching off; the starter stop: the phones sliding up one after the other; the booked call: its card rising beside its words |
+
+**The drift.** An example picture (never one of theirs) scales from 1.00 to
+1.04 over 9 s, once, then holds (`img[data-example]`, in the phones and on
+O4). Still and reduced motion show it at its end.
+
+#### 22.14.6 Checked
+
+All deck tests, both typechecks, `check-shared.sh` and Biome on the touched
+files. Shots read at 1920 x 1080: the onboarding deck for the full and the
+starter clients in English and Arabic, and the launch slides touched (the
+cover, the journey, the ads, the form, the call and the portal's phone stop,
+full and starter, both languages). The arrivals were stepped through in the
+live harness with every new animation paused and sought to its start, its
+middle and its end (three frames each), read and deleted.

@@ -34,13 +34,13 @@ import {
   type L,
   L_NOTES,
   L_TITLES,
+  LAUNCH,
   type LaneKey,
   type Lang,
-  LAUNCH,
   LINKS,
   partJobs,
-  sep,
   SHARED,
+  sep,
   stepNumeral,
   t,
   tf,
@@ -380,14 +380,18 @@ function FormPhone({
   height,
   screen,
   focus,
+  slide = false,
 }: {
   ctx: SlideCtx;
   height: number;
   screen: FormScreen;
   focus?: number | null;
+  /** On the form slide itself: its own cover, after the ads slide (22.14). */
+  slide?: boolean;
 }) {
   const { d, lang } = ctx;
-  const { feed } = useFeed(ctx);
+  const { feed: journeyFeed, model } = useFeed(ctx);
+  const feed = slide ? model.formCover : journeyFeed;
   const f = d.launch.form;
   const service = d.launch.service[lang] ?? d.serviceFocus;
   const questions =
@@ -1433,6 +1437,7 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
           height={tag ? 772 : 812}
           screen={screen}
           focus={lit}
+          slide
         />
       </Tagged>
       <div className="dkc-form-side">

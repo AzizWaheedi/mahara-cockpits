@@ -548,8 +548,7 @@ export function deckData(input: DeckInput): DeckData {
     prepSource,
     ...formSources,
   ]);
-  const service =
-    input.deck === "launch" ? launchService : onboardingService;
+  const service = input.deck === "launch" ? launchService : onboardingService;
   const named = serviceNames(service);
   const serviceFocus = named.name[lang] ?? null;
   const serviceMid = named.mid[lang] ?? null;
@@ -689,7 +688,8 @@ export function deckData(input: DeckInput): DeckData {
     service.text,
   );
   // The Arabic deck's headline: the service's Arabic name, never a Latin one.
-  const serviceAr = named.name.ar && ARABIC.test(named.name.ar) ? named.name.ar : null;
+  const serviceAr =
+    named.name.ar && ARABIC.test(named.name.ar) ? named.name.ar : null;
   const exampleWords =
     lang === "ar"
       ? {

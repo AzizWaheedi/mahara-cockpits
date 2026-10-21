@@ -219,6 +219,8 @@ Seven slides, about 22 minutes of a 45 to 60 minute call since the visual pass (
 
 **Changed by the visual pass (2026-10-20):** the matrix beside a product column with a large phone showing an example ad for the service, labelled Example ad; the checklist at the foot ticks the service only when the client chooses it on the call ("Launch with this"), never because prep named one (DESIGN 22.2.4).
 
+**Changed by the five main services (CEO, 2026-10-21):** the rows are no longer the client's typed services. They are the five main services, the kickoff form's own choices, with "Other" only when the client's words fit none; the client's own words sit quietly under the service they belong to. See [The five main services](#the-five-main-services-ceo-2026-10-21); it overrides the chips, slots and notes below where they differ.
+
 **On screen**
 - Title: "One service per campaign"
 - Line: "We launch with one service, so the ads, the form questions and the calls are all written for one kind of customer."
@@ -1155,6 +1157,7 @@ No English change. The Arabic of `training.when.line` loses its Latin section na
 | Done, nothing new | Everything in this link is already in the tray. |
 | Done, more than 20 | Only the newest 20 came in. Paste a subfolder's link for the rest. (added after the done line) |
 | Nothing picked it up | Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now. · The Drive importer hasn't run yet. Upload the files here for now. |
+| Stopped part-way | This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now. |
 | The read failed | Couldn't check the import: {reason}. Trying again. |
 | A finished import, folded to the files that didn't come in (the fixer's round) | Show the list ({n}) · Hide the list |
 | The field's clear button, beside a refused link (its accessible name) | Clear the link |
@@ -1876,3 +1879,86 @@ Every slide score round 2 put under 4 brought to at least 4, and the cheap clear
 - **Negative parallelism:** none added. "Where your ads will show" stands on its own; it does not say "not how they look".
 - **Passive voice:** "Only the first 10 links were sent." keeps the passive because the CSM's paste did the sending; the next sentence is active ("Paste the rest once these finish.").
 - **Em dashes, exclamation marks, title case, curly quotes, "every" or "always" for our steps:** none.
+
+---
+
+# The five main services (CEO, 2026-10-21)
+
+The CEO, word for word: "These are not kitchens. It is not one of the services. If you look, we have the main services, which you can see on the kickoff form. List them out: Architectural design, Interior design, Fitout / renovation, Construction, Design-build."
+
+The service a campaign advertises is one of the five choices of the kickoff form's "Which service are we advertising?" (Typeform tG7dnxBn, hidden field `service_focus`), never a sub-trade such as kitchens or bathrooms. Slide 4 offers the same five, in the form's order, so the client's pick on the call is the CSM's answer on the kickoff form. `DESIGN.md` 22.14 has the layout and the rules; `CONTENT-AR.md` decision 15 has the Arabic.
+
+## The names
+
+| Key | The kickoff's choice | As a label (`SERVICES.*.name`) | Inside a sentence (`SERVICES.*.mid`) |
+|---|---|---|---|
+| `design-build` | Design and build | Design and build | design and build |
+| `interior` | Interior design | Interior design | interior design |
+| `architecture` | Architectural design | Architectural design | architectural design |
+| `fitout` | Fit out and renovation | Fit-out and renovation | fit-out and renovation |
+| `construction` | Construction only | Construction | construction |
+| `other` | Other | Other (the row); the client's own words everywhere else | their own words, in sentence case mid-sentence |
+
+The label is the row's name on slide 4, the queue card's line ("New enquiry · Interior design"), the example form's first answer and the Facebook headline inside an example phone. The sentence form fills every `{service}` that sits inside a sentence: "templates for interior design", "This is how an ad for fit-out and renovation looks under your name", "Happy to start with construction?", the example call's "about interior design", the WhatsApp message's "more about design and build".
+
+## O4 · `one-service`, changed
+
+**On screen**
+- The five rows, always, in the kickoff's order. A sixth row, "Other", only when some of the client's words fit none of the five (or their pick is Other).
+- Under a row, quiet and on one line, the client's own words that belong to it, as they wrote them, each whole: "Villa interiors +2". Never our label again, never a word cut in half.
+- "Your #1" beside the row their #1 belongs to, while the band is on another.
+- The band starts on their likely service; the product column names it in grey until "Launch with this".
+- No "Add a service" on the canvas: the five are the choice. Their own words are typed in prep.
+
+**Which row the band starts on:** the CSM's pointer on the call, else the row with the most ticks (their #1 wins a tie), else their likely service: slide 4's choice, then prep's, then the kickoff's answer, then their #1 and their services read by keyword (DESIGN 22.14.2). A client with nothing on file starts with no row lit.
+
+**"Launch with this"** saves the main service in both languages (`service_focus` "Interior design", `service_focus_ar` تصميم داخلي) and stamps `service_chosen_at`, the existing flow. "Other" saves the client's words. A picture prep chose for another service gives way to the choice.
+
+**Notes (replacing the first two lines and the prep line)**
+- "The rows are the five main services we run campaigns for, the same choices as the kickoff form's 'Which service are we advertising?', so what they pick here is your answer there."
+- "The band starts on the service their answers point to. Their own words (kitchens, majlis, a villa fit-out) sit quietly under the service they belong to: a kitchen is part of a service, never the service."
+- "Ask the three questions out loud for the two or three services they really offer. Steer toward the one that passes all three. If none does, take the easiest to sell."
+- "Other shows only when some of their words fit none of the five. Pick it only if that is truly what they sell, in their words."
+- "If you set a service in prep, the column shows it in grey as a suggestion, and the checklist keeps it open. Let them choose."
+
+## O7 and the launch deck
+
+- O7's starter line names the service in its sentence form: "Starter ads can go live first, from our ready templates for interior design." In the Arabic deck, "Other" in Latin letters only is left unnamed, and prep's missing line says: "The Arabic deck leaves "{words}" unnamed on this slide. Type their service in Arabic in prep (Launch service, Other) to name it."
+- The launch deck reads the advertised service from the kickoff's answer first, then slide 4's choice, then prep, then the forms. The example call, the queue card, the form and the WhatsApp message all name that service.
+
+## Prep (cockpit UI)
+
+| Where | Words |
+|---|---|
+| Launch service, the select | Not set · From the kickoff form · From the onboarding form · Design and build · Interior design · Architectural design · Fit-out and renovation · Construction · Other, in their words |
+| Launch service, Other's boxes | Their service, in their words · Their service, Arabic (placeholder الخدمة بكلامهم) |
+| Launch service, the hint | Not chosen yet. Slide 4 starts on {service}, from the {kickoff form/onboarding form} ("{their words}"). · Suggested here. Slide 4 starts on it; the client chooses with Launch with this, and until then the checklist keeps it open. · Not chosen yet, and neither form names one. The client picks one of the five on slide 4. |
+| Their services, the hint | From the onboarding form, prices taken out. Each shows quietly under the main service it belongs to on slide 4. · Edited here. Each shows quietly under the main service it belongs to on slide 4. · None in the forms. Type them here, in their words. |
+| Example ad, the two selects | Example ad, service: Match their service, then the five · Example ad, picture: Their service's lead picture (or Their service's pictures), then that service's scenes |
+| Example ad, the line | {service}: {scene}, chosen here · {service}: {scene}, their service · {service}: {scene}. No service on file yet, so interior design's |
+| Example ad, the hint | Shown only until they have ads of their own, and labelled Example ad on the slide. Choose a service, then one of its pictures. |
+
+## Example ads, by service
+
+Each service has its own scenes, its lead picture first (DESIGN 22.14.3). Six new scenes join the twelve; their alt text follows the existing pattern ("Example ad: {scene}"):
+
+| Scene | Prep's name | Alt text scene |
+|---|---|---|
+| `construction2` | Tower frame | a residential tower's concrete frame under a crane at dusk |
+| `construction3` | Villa frame and scaffolding | a two-storey villa's concrete frame with scaffolding |
+| `fitout2` | Boutique | a fitted-out boutique with stone counters and lit shelves |
+| `fitout3` | Restaurant | a fitted-out restaurant with timber booths and brass lights |
+| `designbuild` | Villa and pool at dusk | a new villa's glass living room over its pool at dusk |
+| `architecture2` | Modern villa | a modern villa with a timber-screened upper floor |
+
+Inside an example phone the caption is only the client's selling point (`selling_point`, `selling_point_ar`), else nothing; the Facebook headline is the service's label. The service is never written into the caption as if it were their copy.
+
+## The separator in Arabic
+
+Every Arabic line separates its parts with the Arabic comma «، », never a middle dot: beside Arabic-Indic digits a dot reads as ٠ (score round 3). English keeps " · ". The code asks `sep(lang)` wherever it joins two parts on the canvas.
+
+## The humanizer on the new English
+
+- **Inflated words:** none. "Other, in their words" says what the box holds.
+- **Negative parallelism:** one, kept on purpose in the notes: "a kitchen is part of a service, never the service" is the CEO's correction, said to the CSM, not the client.
+- **Em dashes, exclamation marks, title case, "every" or "always" for our steps:** none. The service names keep the kickoff form's own words, so "Fit-out and renovation" is hyphenated as a noun and "Construction" drops "only", which on a slide read as a limit.

@@ -514,6 +514,13 @@ class Files(Base):
             for want in ("-maxrate", "3500k", "-bufsize", "7000k", "+faststart",
                          "scale='if(gt(iw,ih),-2,min(1080,iw))':'if(gt(iw,ih),min(1080,ih),-2)'"):
                 self.assertIn(want, args)
+            # The second review round: the input opens local files only, and
+            # the output stops a megabyte past what can land.
+            i = args.index("-i")
+            self.assertEqual(args[i - 2:i], ["-protocol_whitelist", "file"])
+            self.assertTrue(args[i + 1].endswith("in.mov") or args[i + 1].endswith("in.mp4") or args[i + 1].endswith("in.mkv"))
+            self.assertEqual(args[-3:-1], ["-fs", str(di.LANDING_CAP + (1 << 20))])
+            self.assertTrue(args[-1].endswith("out.mp4"))
 
     def test_an_h264_mp4_over_the_buckets_limit_is_converted(self):
         self.tools.convert_size = 0
@@ -624,6 +631,23 @@ class Upload(Base):
         self.assertEqual(sb.uploads, [])
         self.assertEqual(sb.imports[IID]["files"][0]["code"], "storage")
 
+    def test_a_reserved_path_with_a_trailing_newline_is_refused_too(self):
+        drive = FakeDrive(folders={ROOT: [media_file("1U00000000000000", "a.jpg", mime="image/jpeg")]},
+                          content={"1U00000000000000": JPEG})
+        sb = FakeSb([an_import()])
+        real = sb.rpc
+
+        def rpc(name: str, args: dict[str, Any], *, retry: bool = True) -> Any:
+            out = real(name, args, retry=retry)
+            if name.endswith("file_reserve") and isinstance(out, dict) and out.get("path"):
+                out["path"] = out["path"] + "\n"
+            return out
+
+        sb.rpc = rpc  # type: ignore[method-assign]
+        self.run_with(drive, sb)
+        self.assertEqual(sb.uploads, [])
+        self.assertEqual(sb.imports[IID]["files"][0]["code"], "storage")
+
 
 class Claims(Base):
     def test_a_lost_claim_stops_the_import_without_writing(self):
@@ -678,6 +702,28 @@ class Claims(Base):
         self.assertEqual(out["imports"][0]["status"], "working")
         self.assertNotIn("file_failed", sb.names())
         self.assertNotIn("finish", sb.names())
+
+    def test_a_heartbeat_that_dies_outside_urllib_is_the_turns_never_the_files(self):
+        """http.client's IncompleteRead is not an OSError, so http.request
+        lets it through; a heartbeat failing that way mid-download must not
+        fail a good file with a Drive sentence."""
+        import http.client
+
+        for err in (http.client.IncompleteRead(b""), ValueError("odd answer")):
+            drive = FakeDrive(folders={ROOT: [media_file("1A00000000000000", "a.mp4")]})
+            sb = FakeSb([an_import()])
+            sb.errors["heartbeat"] = err
+            real = drive.download
+
+            def download(*a: Any, _real: Any = real, **kw: Any) -> int:
+                self.clock.t += 61
+                return _real(*a, **kw)
+
+            drive.download = download  # type: ignore[method-assign]
+            out = self.run_with(drive, sb)
+            self.assertEqual(out["imports"][0]["status"], "working", err)
+            self.assertNotIn("file_failed", sb.names(), err)
+            self.assertNotIn("finish", sb.names(), err)
 
     def test_a_40001_mid_upload_writes_nothing_more(self):
         drive = FakeDrive(folders={ROOT: [media_file("1A00000000000000", "a.mp4")]})

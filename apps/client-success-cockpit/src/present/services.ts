@@ -61,9 +61,10 @@ interface Words {
 /**
  * A client's words to a main service, tried in this order; the first that
  * matches wins. A design-and-build or a pool is the whole project; a
- * fit-out or a renovation before an interior, so "Kitchen renovation" is a
- * renovation; an interior before an architect, so "Villa interior design"
- * is an interior; an architect before a builder, so "Building design" is a
+ * building's shell is construction ("عظم وتشطيب"); a fit-out or a
+ * renovation before an interior, so "Kitchen renovation" is a renovation;
+ * an interior before an architect, so "Villa interior design" is an
+ * interior; an architect before a builder, so "Building design" is a
  * design. A bare "design" is an interior, last of all. مكتب is left out on
  * purpose: it is how a firm's name starts (مكتب ... للتصميم), not a service.
  */
@@ -94,6 +95,9 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
       ],
     },
   ],
+  // A building's shell is construction, even with its finishing beside it
+  // ("عظم وتشطيب", shell and finishing), so it is read before a fit-out.
+  ["construction", { en: ["shell and core", "shell & core"], ar: ["عظم"] }],
   [
     "fitout",
     {
@@ -249,7 +253,6 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
         "structural",
         "civil",
         "concrete",
-        "shell and core",
         "engineering",
       ],
       ar: [
@@ -258,7 +261,6 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
         "بناء",
         "انشاء",
         "انشاءات",
-        "عظم",
         "هيكل",
         "خرسان",
         "هندسي",
@@ -326,9 +328,7 @@ export function serviceOfText(text: string | null | undefined): MainKey | null {
 
 /** The kickoff's "Other" with nothing typed beside it. */
 export const isOtherWord = (text: string | null | undefined) =>
-  /^(other|others|غير ذلك|اخرى|أخرى|خدمه اخرى)$/i.test(
-    normalise(text ?? ""),
-  );
+  /^(other|others|غير ذلك|اخرى|أخرى|خدمه اخرى)$/i.test(normalise(text ?? ""));
 
 /** Two names for the same thing, ignoring case, spaces and Arabic spelling. */
 export const sameWords = (
@@ -393,8 +393,7 @@ export function resolveService(sources: ServiceSource[]): ServicePick {
     const ar = s.ar?.trim() || null;
     if (!text && !ar) continue;
     const key = serviceOfText(text) ?? serviceOfText(ar);
-    if (key)
-      return { key, words: { en: null, ar: null }, from: s.from, text };
+    if (key) return { key, words: { en: null, ar: null }, from: s.from, text };
     const pick: ServicePick = {
       key: "other",
       words: wordsOf(clean(text), ar),
@@ -420,7 +419,10 @@ export function serviceNames(p: ServicePick): {
   mid: { en: string | null; ar: string | null };
 } {
   if (p.key && p.key !== "other")
-    return { name: { ...SERVICES[p.key].name }, mid: { ...SERVICES[p.key].mid } };
+    return {
+      name: { ...SERVICES[p.key].name },
+      mid: { ...SERVICES[p.key].mid },
+    };
   const en = p.words.en ?? p.words.ar;
   const ar = p.words.ar ?? p.words.en;
   return {
@@ -441,7 +443,10 @@ export interface ServiceRow {
  * order, each with the client's own words that map to it, and "Other" only
  * when some of their words fit none, or the pick itself is "Other".
  */
-export function serviceRows(services: string[], pick: ServicePick): ServiceRow[] {
+export function serviceRows(
+  services: string[],
+  pick: ServicePick,
+): ServiceRow[] {
   const own = new Map<ServiceKey, string[]>();
   const add = (k: ServiceKey, s: string) => {
     const list = own.get(k) ?? [];

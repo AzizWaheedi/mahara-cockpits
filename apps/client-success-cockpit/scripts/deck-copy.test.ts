@@ -631,7 +631,12 @@ describe("the five main services (CEO, 2026-10-21)", () => {
         ] as const
       ).map(k => [S[k].name.en, S[k].name.ar, S[k].mid.en, S[k].mid.ar]),
     ).toEqual([
-      ["Design and build", "تصميم وتنفيذ", "design and build", "التصميم والتنفيذ"],
+      [
+        "Design and build",
+        "تصميم وتنفيذ",
+        "design and build",
+        "التصميم والتنفيذ",
+      ],
       ["Interior design", "تصميم داخلي", "interior design", "التصميم الداخلي"],
       [
         "Architectural design",

@@ -503,6 +503,40 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
     ).toBe(false);
   });
 
+  test("stalled: working, but the importer quiet for over 10 minutes, says so instead of 'Bringing in' forever", () => {
+    const q = readOf("queued");
+    const working = {
+      ...q.imports[0],
+      status: "working" as const,
+      startedAt: new Date(NOW - 20 * 60_000).toISOString(),
+    };
+    const at = new Date(NOW).toISOString();
+    // Seen 2 minutes ago: still working.
+    expect(
+      V.stalledWorking(working, {
+        at,
+        workerSeenAt: new Date(NOW - 2 * 60_000).toISOString(),
+      }),
+    ).toBe(false);
+    // Seen 11 minutes ago: stalled.
+    const quiet = {
+      at,
+      workerSeenAt: new Date(NOW - 11 * 60_000).toISOString(),
+    };
+    expect(V.stalledWorking(working, quiet)).toBe(true);
+    // Never seen: falls back to when it started (20 minutes ago).
+    expect(V.stalledWorking(working, { at, workerSeenAt: null })).toBe(true);
+    // A queued import is never "stalled".
+    expect(V.stalledWorking(q.imports[0], quiet)).toBe(false);
+    const line = V.importLine(working, quiet, "en", new Date(NOW));
+    expect(line.state).toBe("stalled");
+    expect(line.line.tone).toBe("warn");
+    expect(line.line.text).toStartWith("This stopped part-way. The Drive importer last ran ");
+    expect(V.importLine(working, quiet, "ar", new Date(NOW)).line.text).toStartWith(
+      "وقف بالنص. آخر مرة اشتغلت أداة الدرايف ",
+    );
+  });
+
   test("several open: the head line, every open import and the three newest finished", () => {
     const v = view("several");
     expect(v.head).toBe("Bringing in 3 links from Drive…");

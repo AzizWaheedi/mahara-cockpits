@@ -154,7 +154,7 @@ export const SHARED = {
 
 /**
  * The five main services (CEO, 2026-10-21; CONTENT "The five main
- * services", CONTENT-AR decision 16): the kickoff form's choices, never a
+ * services", CONTENT-AR decision 15): the kickoff form's choices, never a
  * sub-trade such as kitchens. `name` is the choice as a label (slide 4's
  * rows, the queue card, the form's first answer); `mid` is the same service
  * said inside a sentence ("templates for interior design", لخدمة التصميم
@@ -525,8 +525,6 @@ export const O = {
     pending: { en: "We'll pick it together", ar: "نختارها مع بعض" },
     /** The column's control once "Launch with this" is pressed. */
     chosen: { en: "Chosen", ar: "اخترناها" },
-    add: { en: "Add a service", ar: "أضيفوا خدمة" },
-    addInput: { en: "A service, in your words", ar: "الخدمة، بكلامكم" },
   },
   road: {
     title: {
@@ -836,7 +834,7 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
   },
   "one-service": {
     say: [
-      "The rows are our five main services, the same choices as the kickoff form's 'Which service are we advertising?', so what they pick here is your answer there.",
+      "The rows are the five main services we run campaigns for, the same choices as the kickoff form's 'Which service are we advertising?', so what they pick here is your answer there.",
       "The band starts on the service their answers point to. Their own words (kitchens, majlis, a villa fit-out) sit quietly under the service they belong to: a kitchen is part of a service, never the service.",
       "Ask the three questions out loud for the two or three services they really offer. Steer toward the one that passes all three. If none does, take the easiest to sell.",
       "Other shows only when some of their words fit none of the five. Pick it only if that is truly what they sell, in their words.",
@@ -847,7 +845,7 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
       "When they choose, press Launch with this. The phone changes to the service they chose, and the checklist ticks it.",
     ],
     sayAr: [
-      "هذي خدماتنا الخمس الأساسية. أي وحدة فيها الأسهل بالبيع؟ وأي وحدة تجيب لكم أكثر ربح؟ وأي وحدة الأريح لكم بالتنفيذ؟",
+      "هذي الخدمات الخمس الأساسية اللي نسوي لها حملات. أي وحدة فيها الأسهل بالبيع؟ وأي وحدة تجيب لكم أكثر ربح؟ وأي وحدة الأريح لكم بالتنفيذ؟",
       "الإعلانات وأسئلة النموذج وسكربت المكالمة، كلها تنكتب لنوع واحد من العملاء.",
       "وهالخدمة نفسها بتكون بمكالمة الإطلاق، وبمثال المكالمة اللي بنوريكم إياه.",
       "هذا مثال لإعلان عن {service} باسمكم. إعلاناتكم الخاصة نسويها من محتواكم.",

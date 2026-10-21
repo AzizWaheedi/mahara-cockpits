@@ -10,6 +10,8 @@ import {
 } from "react";
 import maharaLogo from "@/assets/mahara-logo-dark.png";
 import { useCreatives } from "./AdsStage";
+import osPhoneAr from "./assets/portal/portal-phone-ar.webp";
+import osPhoneEn from "./assets/portal/portal-phone-en.webp";
 import { bookedSlot, CONFIRMATION, plain } from "./callScript";
 import {
   digits,
@@ -45,11 +47,11 @@ import { ClientMark, type Identity } from "./mockups/Identity";
 import { IgFeed, Phone, PhoneFigure, ReelStory } from "./mockups/Phones";
 import { WhatsAppGroup } from "./mockups/WhatsAppGroup";
 import { Route, type RouteStop, routeMs } from "./Road";
-import { type ServiceKey, serviceOfText } from "./services";
 import { StageSwap } from "./StageSwap";
+import { type ServiceKey, serviceOfText } from "./services";
 import { TodayList } from "./TodayList";
-import { filledOn, lengthText } from "./videos";
 import { posterFor } from "./VideoPoster";
+import { filledOn, lengthText } from "./videos";
 
 /**
  * The onboarding deck: seven slides, about 22 minutes of a 45 to 60 minute
@@ -656,7 +658,16 @@ function OwnWords({ words, lang }: { words: string[]; lang: Lang }) {
           <bdi>{w}</bdi>
         </span>
       ))}
-      {more ? <span className="dkc-service-more">{` +${digits(more, lang)}`}</span> : null}
+      {/* The count isolated left to right, so the Arabic deck reads +٢ after
+          their words, never ٢+ in front of a Latin line. */}
+      {more ? (
+        <>
+          {" "}
+          <bdi dir="ltr" className="dkc-service-more">
+            {`+${digits(more, lang)}`}
+          </bdi>
+        </>
+      ) : null}
     </span>
   );
 }
@@ -668,7 +679,9 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
   // Chosen is a recorded fact ("Launch with this" stamps it); the likely
   // pick from their answers is the proposal, in ink-2, until they choose.
   const chosenKey = d.service.from === "chosen" ? d.service.key : null;
-  const chosen = Boolean(d.today.service && candidate && candidate === chosenKey);
+  const chosen = Boolean(
+    d.today.service && candidate && candidate === chosenKey,
+  );
   const flip = (service: ServiceKey, test: string) =>
     setLive(l => {
       const row = { ...(l.ticks[service] ?? {}) };
@@ -733,9 +746,7 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
                       type="button"
                       className="dkc-service-name dkc-press"
                       aria-pressed={r.key === candidate}
-                      onClick={() =>
-                        setLive(l => ({ ...l, candidate: r.key }))
-                      }
+                      onClick={() => setLive(l => ({ ...l, candidate: r.key }))}
                       onPointerUp={letGo}
                     >
                       <span className="dkc-service-label">{name}</span>
@@ -811,7 +822,10 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
               </button>
             )}
           </div>
-          <ProductPhone ctx={ctx} service={chosen ? candidate : (chosenKey ?? candidate)} />
+          <ProductPhone
+            ctx={ctx}
+            service={chosen ? candidate : (chosenKey ?? candidate)}
+          />
         </div>
       </div>
       <div className="dkc-today-foot">
@@ -1050,6 +1064,14 @@ function SetupCard({
   // had no picture); the text control where it has none or it fails.
   const pic =
     wide && guide && ctx.playVideo && !broken ? posterFor(guide.row) : null;
+  // No guide's picture on the Mahara OS card: the app itself, its first
+  // screen on a phone rising from the card's foot (22.14), so the slide
+  // keeps a picture before the guide is recorded.
+  const osPhone = wide && !pic && row.key === "os";
+  // Three cards to a row (done with you): the guide's picture in small on
+  // the head's line, so the board keeps a picture there too (22.14).
+  const mini =
+    !wide && guide && ctx.playVideo && !broken ? posterFor(guide.row) : null;
   // With no length, the words alone: the separator goes with the slot.
   const guideWords = len
     ? tf(O.week.guide, lang, { len })
@@ -1059,10 +1081,22 @@ function SetupCard({
       className="dkc-setup"
       data-status={row.status}
       data-draw={done && !atOpen.current ? "" : undefined}
-      data-poster={pic ? "" : undefined}
+      data-poster={pic || osPhone ? "" : undefined}
       style={{ "--i": i } as CSSProperties}
     >
       <i className="dkc-setup-edge" aria-hidden />
+      {osPhone ? (
+        <figure className="dkc-setup-phone" aria-hidden>
+          <figcaption className="dk-tag">{t(SHARED.tag.demo, lang)}</figcaption>
+          <span className="dkc-setup-phone-body">
+            <img
+              src={lang === "ar" ? osPhoneAr : osPhoneEn}
+              alt=""
+              draggable={false}
+            />
+          </span>
+        </figure>
+      ) : null}
       {pic && guide ? (
         <button
           type="button"
@@ -1080,7 +1114,7 @@ function SetupCard({
               onError={() => setBroken(true)}
             />
             <span className="dkc-setup-play" aria-hidden>
-              <svg viewBox="0 0 16 16">
+              <svg viewBox="0 0 16 16" aria-hidden>
                 <path d="M4 2v12l10-6z" fill="currentColor" />
               </svg>
             </span>
@@ -1099,13 +1133,29 @@ function SetupCard({
           <button
             type="button"
             className="dkc-guide dkc-press"
+            data-pic={mini ? "" : undefined}
             aria-label={guideWords}
             onClick={() => ctx.playVideo?.(guide)}
             onPointerUp={letGo}
           >
-            <svg viewBox="0 0 16 16" aria-hidden>
-              <path d="M3 1.5v13l11-6.5z" fill="currentColor" />
-            </svg>
+            {mini ? (
+              <span className="dkc-guide-pic" aria-hidden>
+                <img
+                  src={mini.src}
+                  alt=""
+                  draggable={false}
+                  referrerPolicy="no-referrer"
+                  onError={() => setBroken(true)}
+                />
+                <svg viewBox="0 0 16 16" aria-hidden>
+                  <path d="M4 2v12l10-6z" fill="currentColor" />
+                </svg>
+              </span>
+            ) : (
+              <svg viewBox="0 0 16 16" aria-hidden>
+                <path d="M3 1.5v13l11-6.5z" fill="currentColor" />
+              </svg>
+            )}
             {/* Three cards to a row: the play mark and the length only. */}
             {len ? (
               <span aria-hidden>
@@ -1208,9 +1258,7 @@ function ThisWeek({ ctx }: { ctx: SlideCtx }) {
               row={r}
               ctx={ctx}
               wide={now.length <= 2}
-              from={now
-                .slice(0, i)
-                .reduce((n, x) => n + x.ticks.length, 0)}
+              from={now.slice(0, i).reduce((n, x) => n + x.ticks.length, 0)}
               i={i}
             />
           ))}

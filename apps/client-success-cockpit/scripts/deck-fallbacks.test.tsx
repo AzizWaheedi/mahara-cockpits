@@ -20,9 +20,9 @@ import {
   shownGoals,
 } from "../src/present/deckData";
 import {
+  chosenPatch,
   firstAdsLine,
   firstAppointmentDay,
-  chosenPatch,
   leadService,
   nextStatus,
   onboardingSlides,
@@ -167,7 +167,10 @@ describe("a client with everything on file", () => {
     expect(
       d.serviceRows.filter(r => r.own.length).map(r => [r.key, r.own]),
     ).toEqual([
-      ["interior", ["Villa interiors", "Kitchens and wardrobes", "Majlis design"]],
+      [
+        "interior",
+        ["Villa interiors", "Kitchens and wardrobes", "Majlis design"],
+      ],
       ["fitout", ["Full villa fit-out"]],
     ]);
   });
@@ -259,7 +262,10 @@ describe("a done-with-you client in the UAE", () => {
     expect(d.service).toMatchObject({ key: "construction", from: "prep" });
     expect(d.serviceFocusFrom).toBe("prep");
     // A word that fits none of the five adds "Other", in their words.
-    expect(d.serviceRows.at(-1)).toEqual({ key: "other", own: ["تأجير معدات"] });
+    expect(d.serviceRows.at(-1)).toEqual({
+      key: "other",
+      own: ["تأجير معدات"],
+    });
     expect(d.serviceChosen).toBeNull();
     expect(d.today.service).toBe(false);
     expect(d.redLines).toEqual(["لا تذكرون الأسعار في الإعلان"]);
@@ -487,7 +493,10 @@ describe("O7 names the launch service in the deck's own script", () => {
         kit: f.kit,
         prep: {
           ...f.prep,
-          onboarding: { ...f.prep.onboarding, service_focus: "Equipment rental" },
+          onboarding: {
+            ...f.prep.onboarding,
+            service_focus: "Equipment rental",
+          },
         },
         ads: f.ads,
         publicUrl: (_b, p) => p,
@@ -503,7 +512,9 @@ describe("O7 names the launch service in the deck's own script", () => {
     expect(firstAdsLine(arOther).service).toBeNull();
     const s = onboardingSlides().find(x => x.id === "next");
     expect(
-      s?.missing?.(arOther).some(m => m.includes("Type their service in Arabic")),
+      s
+        ?.missing?.(arOther)
+        .some(m => m.includes("Type their service in Arabic")),
     ).toBe(true);
     expect(render(other("en"), 0)).toContain("templates for equipment rental");
   });
@@ -643,12 +654,20 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
     // items only, the rest counted.
     expect(full).toContain("dkc-service-own");
     expect(full).not.toMatch(/dkc-service-label">Kitchens/);
-    expect(ownLine(["Villa interiors", "Kitchens and wardrobes", "Majlis design"])).toEqual({
+    expect(
+      ownLine(["Villa interiors", "Kitchens and wardrobes", "Majlis design"]),
+    ).toEqual({
       shown: ["Villa interiors"],
       more: 2,
     });
     expect(names(one(data("dwy", "ar"), "one-service")).at(-1)).toBe(
       "خدمة أخرى",
+    );
+    // The count is isolated left to right: +٢ after their words in Arabic,
+    // never ٢+ in front of a Latin line.
+    expect(full).toContain('<bdi dir="ltr" class="dkc-service-more">+2</bdi>');
+    expect(one(data("full", "ar"), "one-service")).toContain(
+      '<bdi dir="ltr" class="dkc-service-more">+٢</bdi>',
     );
     // The likely pick on the band, its name in the column.
     expect(full).toMatch(/data-lead=""[^>]*>[\s\S]*?Interior design/);
@@ -736,7 +755,9 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
       const html = board("full", lang);
       // The slide's picture (22.14): each setup card's guide as its poster.
       expect((html.match(/class="dkc-setup-poster/g) ?? []).length).toBe(2);
-      expect(html).toContain(lang === "en" ? "Video guide · 1:34" : "فيديو شرح، ");
+      expect(html).toContain(
+        lang === "en" ? "Video guide · 1:34" : "فيديو شرح، ",
+      );
       expect(html).not.toContain('class="dkc-guide ');
       expect(html).not.toMatch(/\{[a-zA-Z.]+\}/);
       // Done steps tick in order as the slide arrives.
@@ -748,7 +769,22 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
       expect(dwy).toMatch(
         /<header class="dkc-setup-head">[\s\S]*?dkc-guide[\s\S]*?dkc-status/,
       );
+      // Its picture in small on the head's line, so the board keeps one.
+      expect(dwy).toMatch(
+        /class="dkc-guide dkc-press"[^>]*><span class="dkc-guide-pic"/,
+      );
       expect(dwy).not.toMatch(/\{[a-zA-Z.]+\}/);
+      // No guide recorded (the starter client): the Mahara OS card shows the
+      // app's first screen on a phone, tagged as the demo workspace.
+      const starter = board("starter", lang);
+      expect(starter).not.toContain("dkc-setup-poster");
+      expect(starter).toMatch(
+        /class="dkc-setup-phone"[\s\S]*?portal-phone-(en|ar)/,
+      );
+      expect(starter).toContain(
+        lang === "en" ? "Demo workspace" : "حساب تجريبي",
+      );
+      expect((starter.match(/class="dkc-setup-phone"/g) ?? []).length).toBe(1);
     }
   });
   test("O7, not booked: the full calendar card as an empty day, no time made up", () => {

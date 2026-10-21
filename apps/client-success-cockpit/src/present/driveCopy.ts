@@ -61,6 +61,10 @@ export const DRIVE_UI = {
     en: "Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now.",
     ar: "ما أحد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع.",
   },
+  stalled: {
+    en: "This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now.",
+    ar: "وقف بالنص. آخر مرة اشتغلت أداة الدرايف {time}. بيكمل من مكانه أول ما ترجع تشتغل، وإذا تحتاج الملفات الحين ارفعها هنا.",
+  },
   never: {
     en: "The Drive importer hasn't run yet. Upload the files here for now.",
     ar: "أداة الدرايف ما اشتغلت للحين. ارفع الملفات هنا لين تشتغل.",

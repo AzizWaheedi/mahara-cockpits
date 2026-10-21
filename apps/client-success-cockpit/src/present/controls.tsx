@@ -323,7 +323,9 @@ export function ExampleSwitch({
             }}
           >
             <option value="">
-              {choice ? "Their service's pictures" : "Their service's lead picture"}
+              {choice
+                ? "Their service's pictures"
+                : "Their service's lead picture"}
             </option>
             {SCENES[shown].map(x => (
               <option key={x} value={x}>
@@ -343,7 +345,9 @@ function ServicePicker({ d, prep, setPrep }: ControlsProps) {
   const typed = typeof p.service_focus === "string" ? p.service_focus : "";
   const typedKey = serviceOfText(typed);
   const [other, setOther] = useState(Boolean(typed) && !typedKey);
-  const value = typedKey ?? (other || typed ? "other" : "");
+  // Once Other is picked here it stays open while their words are typed,
+  // even when the words turn out to belong to one of the five.
+  const value = other ? "other" : (typedKey ?? (typed ? "other" : ""));
   return (
     <div className="space-y-1.5">
       <select
@@ -374,7 +378,9 @@ function ServicePicker({ d, prep, setPrep }: ControlsProps) {
         }}
       >
         <option value="">
-          {d.service.key && d.service.from !== "prep" && d.service.from !== "chosen"
+          {d.service.key &&
+          d.service.from !== "prep" &&
+          d.service.from !== "chosen"
             ? `From the ${d.service.from === "kickoff" ? "kickoff form" : "onboarding form"}`
             : "Not set"}
         </option>
@@ -389,7 +395,7 @@ function ServicePicker({ d, prep, setPrep }: ControlsProps) {
         <>
           <PrepText
             label="Their service, in their words"
-            value={typedKey ? "" : typed}
+            value={typed}
             placeholder="Their service, in their words"
             onChange={v => setPrep("onboarding", { service_focus: v })}
           />

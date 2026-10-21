@@ -5,8 +5,8 @@ import { FIXTURES, type FixtureKey } from "../src/dev/deck/fixtures";
 import { deckData } from "../src/present/deckData";
 import {
   choiceOf,
-  examplePick,
   exampleCreative,
+  examplePick,
   parseChoice,
   SCENES,
   sceneAt,
@@ -86,6 +86,8 @@ describe("the five main services (CEO, 2026-10-21)", () => {
       ["Villa design and drawings", "architecture"],
       ["Engineering consultancy", "architecture"],
       ["مقاولات عامة", "construction"],
+      // Shell and finishing is a building, not a fit-out.
+      ["عظم وتشطيب", "construction"],
       ["بناء فلل سكنية", "construction"],
       ["Design studio", "interior"],
       // مكتب starts a firm's name; it is not a service.
@@ -114,7 +116,10 @@ describe("the five main services (CEO, 2026-10-21)", () => {
     const other = resolveService([
       { from: "form", text: "Equipment rental", explicit: false },
     ]);
-    expect(other).toMatchObject({ key: "other", words: { en: "Equipment rental" } });
+    expect(other).toMatchObject({
+      key: "other",
+      words: { en: "Equipment rental" },
+    });
     expect(serviceNames(other).mid.en).toBe("equipment rental");
     expect(serviceNames(resolveService([])).name.en).toBeNull();
   });
@@ -155,7 +160,10 @@ describe("which pictures: by main service (SERVICE-MAP, DESIGN 22.14)", () => {
   });
 
   test("prep's switch: a service's key or a scene (the server's allow-list)", () => {
-    expect(parseChoice("fitout")).toEqual({ service: "fitout", scene: "fitout2" });
+    expect(parseChoice("fitout")).toEqual({
+      service: "fitout",
+      scene: "fitout2",
+    });
     expect(parseChoice("kitchen")).toEqual({ service: null, scene: "kitchen" });
     // "construction" is both a key and its lead scene: the same pictures.
     expect(parseChoice("construction")).toEqual({
@@ -203,15 +211,18 @@ describe("which pictures: by main service (SERVICE-MAP, DESIGN 22.14)", () => {
     );
     const branch = sql.slice(sql.indexOf("WHEN p_key = 'example_theme'"));
     const allowed = new Set(
-      [...branch.slice(0, branch.indexOf("p_key);")).matchAll(/'([a-z0-9-]+)'/g)].map(
-        m => m[1],
-      ),
+      [
+        ...branch
+          .slice(0, branch.indexOf("p_key);"))
+          .matchAll(/'([a-z0-9-]+)'/g),
+      ].map(m => m[1]),
     );
     for (const k of MAIN) {
       expect(allowed.has(k)).toBe(true);
       for (const x of SCENES[k]) expect(allowed.has(choiceOf(k, x))).toBe(true);
     }
-    for (const x of THEMES) expect({ x, kept: allowed.has(x) }).toEqual({ x, kept: true });
+    for (const x of THEMES)
+      expect({ x, kept: allowed.has(x) }).toEqual({ x, kept: true });
   });
 
   test("every fixture shows a different service's pictures, none a sub-trade", () => {
@@ -258,10 +269,16 @@ describe("the tiles and the places (DESIGN 22.14)", () => {
     }
   });
 
-  test("the cover and journey stop 1 are different scenes; L4's second phone the alternate", () => {
+  test("the cover and journey stop 1 are different scenes; L4's second phone the alternate; L5 the third", () => {
     for (const k of MAIN) {
       const pick = examplePick(null, k);
       expect(sceneAt(pick, 0)).not.toBe(sceneAt(pick, 1));
+      // L5's cover comes right after L4, whose phones carry the lead and
+      // the alternate: it takes a third scene of the same service.
+      expect(SCENES[k].length).toBeGreaterThanOrEqual(3);
+      expect([sceneAt(pick, 0), sceneAt(pick, 1)]).not.toContain(
+        sceneAt(pick, 2),
+      );
     }
   });
 });

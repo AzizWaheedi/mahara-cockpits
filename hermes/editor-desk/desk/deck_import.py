@@ -59,12 +59,18 @@ PLAN_MIME = re.compile(r"(image|video)/[a-z0-9.+-]{1,60}")  # the plan's own rul
 EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
        "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm"}
 
+# The second review round: the input may open local files only (never a
+# network or playlist protocol, whatever the container asks for), and the
+# output stops a megabyte past what can land, so a file that lies about its
+# length cannot fill the scratch disk before the 15-minute kill.
 FFMPEG_CONVERT = [
-    "nice", "-n", "10", "ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-i", "{src}",
+    "nice", "-n", "10", "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+    "-protocol_whitelist", "file", "-i", "{src}",
     "-map", "0:v:0", "-map", "0:a:0?",
     "-vf", "scale='if(gt(iw,ih),-2,min(1080,iw))':'if(gt(iw,ih),min(1080,ih),-2)'",
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", "3500k", "-bufsize", "7000k",
-    "-pix_fmt", "yuv420p", "-threads", "2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "{dest}",
+    "-pix_fmt", "yuv420p", "-threads", "2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
+    "-fs", str(LANDING_CAP + (1 << 20)), "{dest}",
 ]
 
 OEMBED = {
@@ -356,7 +362,7 @@ class Run:
             self.call("cockpit_csm_launch_ads_import_heartbeat", {"p_import_id": import_id})
         except LostClaim:
             raise
-        except (RpcError, http.HttpError) as e:
+        except Exception as e:  # noqa: BLE001 - any failed heartbeat (http.client's IncompleteRead too) is the turn's
             raise TurnOver(f"heartbeat: {http.scrub(str(e))[:160]}") from None
 
     def elapsed(self) -> float:
@@ -740,7 +746,8 @@ class Run:
         ad = str(res.get("adId") or "")
         ok_path = re.compile(PATH_OK.format(task=re.escape(task), ad=re.escape(ad)))
         posters = [res.get("posterPath")] if facts.get("poster") else []
-        if not ad or not ok_path.match(str(res.get("path") or "")) or any(not ok_path.match(str(p or "")) for p in posters):
+        # fullmatch: `$` alone would let a path end in a newline.
+        if not ad or not ok_path.fullmatch(str(res.get("path") or "")) or any(not ok_path.fullmatch(str(p or "")) for p in posters):
             raise FileFailed("storage", "the reserved path is not the row's own")
         # Upload, the file then the poster.
         upsert = bool(res.get("resumed"))

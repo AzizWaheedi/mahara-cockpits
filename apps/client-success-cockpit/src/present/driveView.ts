@@ -27,6 +27,7 @@ export interface Line {
 export type ImportState =
   | "queued"
   | "nobody"
+  | "stalled"
   | "opening"
   | "working"
   | "done"
@@ -181,6 +182,25 @@ export function nobodyPickedUp(
   return seen === null || at - seen > STALE_MS;
 }
 
+/** Past this with no sign of the importer, a working import has stopped part-way. */
+export const STALLED_MS = 10 * 60_000;
+
+/**
+ * Working, but the importer has not been seen for over 10 minutes (it
+ * heartbeats through long downloads, so a quiet worker has stopped: a full
+ * disk, a missing cron line). Without this the box said "Bringing in" forever.
+ */
+export function stalledWorking(
+  imp: DriveImport,
+  read: Pick<DriveImports, "workerSeenAt" | "at">,
+): boolean {
+  if (imp.status !== "working") return false;
+  const at = ms(read.at);
+  if (at === null) return false;
+  const seen = ms(read.workerSeenAt) ?? ms(imp.startedAt);
+  return seen !== null && at - seen > STALLED_MS;
+}
+
 /** One import's line: its state, in the box's words. */
 export function importLine(
   imp: DriveImport,
@@ -203,6 +223,18 @@ export function importLine(
       : DRIVE_UI.never[lang];
     return { state: "nobody", line: { text, tone: "warn" }, extra: null };
   }
+  if (stalledWorking(imp, read))
+    return {
+      state: "stalled",
+      line: {
+        text: DRIVE_UI.stalled[lang].replace(
+          "{time}",
+          timeLabel(read.workerSeenAt ?? imp.startedAt ?? read.at, now, lang),
+        ),
+        tone: "warn",
+      },
+      extra: null,
+    };
   if (imp.status === "working")
     return imp.found === null
       ? {

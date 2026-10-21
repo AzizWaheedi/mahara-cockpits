@@ -776,11 +776,16 @@ today):
      5 s so it can `heartbeat` every 60 s, killed after 15 minutes:
 
      ```text
-     nice -n 10 ffmpeg -nostdin -y -loglevel error -i in.<ext> -map 0:v:0 -map 0:a:0?
+     nice -n 10 ffmpeg -nostdin -y -loglevel error -protocol_whitelist file -i in.<ext>
+       -map 0:v:0 -map 0:a:0?
        -vf scale='if(gt(iw,ih),-2,min(1080,iw))':'if(gt(iw,ih),min(1080,ih),-2)'
        -c:v libx264 -preset veryfast -crf 23 -maxrate 3500k -bufsize 7000k
-       -pix_fmt yuv420p -threads 2 -c:a aac -b:a 128k -movflags +faststart out.mp4
+       -pix_fmt yuv420p -threads 2 -c:a aac -b:a 128k -movflags +faststart
+       -fs 158334976 out.mp4
      ```
+
+     `-protocol_whitelist file` lets the input open local files only, and
+     `-fs` stops the output a megabyte past what can land (section 12).
 
      The short side becomes 1080 at most and never grows; ffmpeg applies the
      rotation first, so `iw` and `ih` are the upright size. `-maxrate`
@@ -882,6 +887,7 @@ video posters; a run stops itself at 45 minutes and is killed at 50."
 | Symptom | Fix | Who |
 | --- | --- | --- |
 | Prep's Drive box says "Nothing has picked this up yet" | The `deck-import` cron line is missing or the desk can't reach Supabase. `crontab -l \| grep deck-import`; restore it from the README's Cron block; `python3 desk.py doctor` names the blocker on its `deck-import` lines | Hermes |
+| Prep's Drive box says "This stopped part-way" | The importer died mid-import (full disk, a killed run, a missing cron line). `tail ~/.editor-desk/out/cron.log`, `df -h`, `python3 desk.py doctor`; the import resumes on the next run | Hermes |
 | "We can't open this folder" (or file, or link) | The client's own link is restricted to the client. Ask the client to share it as anyone with the link, or move it into their Drive folder, then paste the link again | The CSM |
 | "Drive can't be reached from our side right now" | The Google refresh token was revoked or expired: `python3 desk.py doctor`, the `google token` line. Aziz signs in again and the token goes into `~/.editor-desk/env` | Aziz |
 | iPhone photos fail with "we couldn't convert" | No `heif-convert` on the VPS: the doctor's `deck-import heic` line. Install `libheif-examples` | Hermes |
@@ -1039,6 +1045,7 @@ the code in `hint`; the box shows the sentence under the field for the
 | Done | `done` | The done line by its counts, and the file rows |
 | Failed | `failed` | `message` |
 | Nobody picked it up | `queued` for over 3 minutes and `workerSeenAt` null or over 3 minutes old | "Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now." (or the "hasn't run yet" line) |
+| Stopped part-way | `working` and `workerSeenAt` (else `startedAt`) over 10 minutes old (STALLED_MS) | "This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now." |
 | The read failed | `readDriveImports` throws | "Couldn't check the import: {reason}. Trying again." |
 
 - Reads on mount; every 5 s while any import is `queued` or `working`;
@@ -1320,6 +1327,26 @@ every migration on this branch and on `origin/main`).
 - **A `not_found` is logged with its reason**, for the runbook's
   `grep deck-import`.
 - **`example_theme`** takes the service keys and the new scenes (section 9).
+
+**Fixed in a second pass (the same day).** The fixes above were checked
+again line by line, the three migrations applied twice in the PGlite test
+(53 pass), and the server's parser, the worker's and `driveLink.ts` run side
+by side over 9,696 built links (schemes, look-alike and encoded hosts,
+userinfo, ports, every path shape, resource keys, whitespace): they agree
+on every one but a link padded with a no-break space, which only the
+browser trims, and the browser sends the server the link it rebuilt, so
+that one never reaches it.
+- **The conversion opens local files only and cannot fill the disk.**
+  `-protocol_whitelist file` on the input (the bytes already decide the
+  container, so this is a second lock), and `-fs` a megabyte past 150 MB on
+  the output: a file whose header lies about its length stops there and is
+  `too_big`, instead of writing until the 15-minute kill.
+- **Any failed heartbeat is the turn's.** It caught only `RpcError` and
+  `HttpError`; `http.client.IncompleteRead` is neither, so a broken answer
+  mid-download failed a good file as `download`. It now ends the turn and
+  the import resumes.
+- **The reserved path is matched whole** (`fullmatch`): with `match` and
+  `$`, a path ending in a newline passed.
 
 **Left for a decision (not changed).**
 - **A client-owned share is not proved to be this client's.** The
