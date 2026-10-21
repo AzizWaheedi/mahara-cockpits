@@ -580,7 +580,8 @@ describe("the board's payment chips and filter", () => {
       expect(hasPaymentProblem({ accountIssue: text })).toBe(true);
     expect(hasPaymentProblem({})).toBe(false);
     const page = source("src/pages/CockpitPage.tsx");
-    expect(page).toContain(
+    // The Ads filters live in adsFilters.ts since 2026-10-21.
+    expect(source("src/lib/adsFilters.ts")).toContain(
       "{ label: PAYMENT_FILTER, test: c => hasPaymentProblem(c) }",
     );
     expect(page).toContain("const issue = accountIssueFlag(c.accountIssue);");

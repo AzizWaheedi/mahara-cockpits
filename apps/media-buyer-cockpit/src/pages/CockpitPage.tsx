@@ -46,11 +46,13 @@ import { VerdictPlaybook } from "@/components/VerdictPlaybook";
 import { ViktorStatus } from "@/components/ViktorStatus";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { useContentTransition } from "@/hooks/use-content-transition";
+import { accountIssueFlag, PAYMENT_FILTER } from "@/lib/adBillingStrip";
 import {
-  accountIssueFlag,
-  hasPaymentProblem,
-  PAYMENT_FILTER,
-} from "@/lib/adBillingStrip";
+  ADS_FILTERS,
+  adsFilterPasses,
+  boardNumbers,
+  type RowNumbers,
+} from "@/lib/adsFilters";
 import { api, useAction } from "@/lib/board";
 import {
   howItIsGoing,
@@ -67,13 +69,7 @@ import {
   cplTone,
 } from "@/lib/costTone";
 import { HEALTH, healthScore, missingHealth } from "@/lib/eodForm";
-import {
-  belowKpi,
-  CPB_GATE,
-  CPL_BAD,
-  CPL_GATE,
-  LEARNING_DAYS,
-} from "@/lib/kpi";
+import { belowKpi, CPL_BAD, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
 import { type EodOutbox, eodDeliveryNote } from "@/lib/personalEod";
 import {
   defaultRange,
@@ -136,37 +132,6 @@ const CLOCKS = [
   "In 3 days",
   "Next week",
   "Only if the number gets worse",
-];
-
-/** One problem at a time — the filters mirror the way the SOP prioritises the day. */
-const FILTERS: { label: string; test: (c: Campaign) => boolean }[] = [
-  { label: "Everything", test: () => true },
-  {
-    label: "Critical",
-    test: c =>
-      c.verdict === "kill" ||
-      c.verdict === "off board" ||
-      (c.leads7d === 0 && c.spend7d > 20),
-  },
-  // Meta flags the ad account: unpaid, restricted, grace period or under
-  // review. The Payments strip's count chips turn this on (2026-10-13).
-  { label: PAYMENT_FILTER, test: c => hasPaymentProblem(c) },
-  // Both numbers (Muhammed, 2026-10-13): a hold or kill on the booking grid,
-  // or over the cost per lead gate where bookings are not tracked.
-  { label: "Below KPI", test: c => belowKpi(c) },
-  {
-    label: "Fatiguing",
-    test: c => c.verdict === "fatiguing" || (c.daysLive ?? 0) >= 14,
-  },
-  { label: "Under the floor", test: c => c.dayRate < 30 },
-  {
-    label: `Cost per booking over $${CPB_GATE}`,
-    test: c => (c.costPerBooking ?? 0) > CPB_GATE,
-  },
-  { label: "No bookings", test: c => c.bookings7d === 0 && c.spend7d > 20 },
-  { label: "Not touched in 4+ days", test: c => (c.daysSinceTouch ?? 99) >= 4 },
-  // Needs today's decisions, so the page applies it (see `passes`).
-  { label: "Undecided today", test: () => true },
 ];
 
 /** Straight into Ads Manager, filtered to that one campaign. Meta blocks iframes. */
@@ -274,64 +239,6 @@ const KICKER =
 
 // biome-ignore lint/suspicious/noExplicitAny: snapshot payload is untyped by design
 type Campaign = any;
-
-/**
- * The board's numbers for one campaign. On the 7-day default they are the
- * snapshot's own 7-day read (the one the calls are made on); on any other
- * range they come from the same per-campaign range read the campaign panel
- * and the account page use, so all three agree. [aziz, 2026-10-01]
- */
-type BoardNumbers =
-  | { state: "loading" | "error" }
-  | {
-      state: "ok";
-      spend?: number;
-      leads?: number;
-      cpl?: number;
-      bookings?: number;
-      bookingRate?: number;
-      costPerBooking?: number;
-    };
-
-function boardNumbers(
-  c: Campaign,
-  ranged: boolean,
-  read: Campaign | Error | undefined,
-): BoardNumbers {
-  if (!ranged)
-    return {
-      state: "ok",
-      spend: c.spend7d,
-      leads: c.leads7d,
-      cpl: c.cpl,
-      bookings: c.bookings7d,
-      bookingRate: c.bookingRate,
-      costPerBooking: c.costPerBooking,
-    };
-  if (read === undefined) return { state: "loading" };
-  if (read instanceof Error) return { state: "error" };
-  const t = read.total ?? {};
-  const spend = Number(t.spend ?? 0);
-  const leads = Number(t.leads ?? 0);
-  // Done-with-you accounts have no bookings at all: keep them n/a, not 0.
-  const bookings =
-    c.bookings7d === undefined
-      ? undefined
-      : Number(read.bookingsTotal ?? t.bookings ?? 0);
-  return {
-    state: "ok",
-    spend,
-    leads,
-    cpl: leads > 0 ? spend / leads : undefined,
-    bookings,
-    bookingRate:
-      bookings !== undefined && leads > 0
-        ? (bookings / leads) * 100
-        : undefined,
-    costPerBooking:
-      bookings && bookings > 0 && spend > 0 ? spend / bookings : undefined,
-  };
-}
 
 /** Who a decision was sent to, in words: "client_success" reads "CSM". */
 const DEPT_LABEL: Record<string, string> = Object.fromEntries(
@@ -1235,7 +1142,7 @@ function Cockpit({ view }: { view: View }) {
   // The Payments strip on Today opens the board as /ads?filter=payment. The
   // address is read once and cleared, so a reload does not pin the filter.
   const [filter, setFilter] = useState(() =>
-    params.get("filter") === "payment" ? PAYMENT_FILTER : FILTERS[0].label,
+    params.get("filter") === "payment" ? PAYMENT_FILTER : ADS_FILTERS[0].label,
   );
   useEffect(() => {
     if (!params.has("filter")) return;
@@ -1754,11 +1661,17 @@ function Cockpit({ view }: { view: View }) {
     );
   };
 
+  /** The row's numbers for the picked range; undefined until they are read. */
+  const rangedBoard = globalRange.key !== "7d";
+  const rowNumbers = (c: Campaign): RowNumbers | undefined => {
+    const n = boardNumbers(c, rangedBoard, boardReads[String(c.campaignName)]);
+    return n.state === "ok" ? n : undefined;
+  };
   /** The filter's own rule; "Undecided today" reads today's decisions. */
   const passes = (label: string, c: Campaign) =>
     label === "Undecided today"
       ? !decidedBySubject.has(c.campaignName)
-      : (FILTERS.find(f => f.label === label) ?? FILTERS[0]).test(c);
+      : adsFilterPasses(label, c, rowNumbers(c));
 
   /** One flag per row, the most urgent; the rest wait in the opened panel. */
   const flagFor = (
@@ -3336,6 +3249,27 @@ function Cockpit({ view }: { view: View }) {
   };
 
   const running = (snap.campaigns as Campaign[]).filter(c => !isParked(c));
+  // The last day any campaign has Meta numbers for: the media data runs to
+  // yesterday, so "Today" reads nothing until tomorrow.
+  const mediaThrough = running.reduce<string | undefined>(
+    (last, c) =>
+      c.dataThrough && (!last || String(c.dataThrough) > last)
+        ? String(c.dataThrough)
+        : last,
+    undefined,
+  );
+  // Rows whose picked range is still being read.
+  const rangeReading = running.filter(
+    c =>
+      boardNumbers(c, rangedBoard, boardReads[String(c.campaignName)]).state ===
+      "loading",
+  ).length;
+  // A filter on the range's numbers waits for them instead of showing an
+  // empty table that reads as "nothing over $60".
+  const filterReading =
+    adsTab === "running" &&
+    rangeReading > 0 &&
+    Boolean(ADS_FILTERS.find(f => f.label === filter)?.ranged);
   /**
    * The Payments strip's count chips: the board's own rows with a payment
    * problem, instead of a second list above them. On Today they open Ads.
@@ -3405,8 +3339,11 @@ function Cockpit({ view }: { view: View }) {
         />
         <span className="text-xs text-muted-foreground">
           {globalRange.key === "7d"
-            ? "Spend, leads and bookings below are for the last 7 days, the read the calls are made on."
-            : `Spend, leads and bookings below are for ${globalRange.label.toLowerCase()}. The Call column always uses the last 7 days.`}
+            ? "Spend, leads and bookings below, and the filters on them, are for the last 7 days, the read the calls are made on."
+            : `Spend, leads and bookings below, and the filters on them, are for ${globalRange.label.toLowerCase()}. The Call column and the day average always use the last 7 days.`}
+          {mediaThrough && globalRange.end > mediaThrough
+            ? ` Meta's numbers run to ${dayMonth(mediaThrough)}, so nothing after that is counted yet.`
+            : ""}
         </span>
       </div>
       {adsTab === "off" ? (
@@ -3419,10 +3356,18 @@ function Cockpit({ view }: { view: View }) {
       ) : (
         // Filters, so she can work one problem at a time instead of the
         // whole list. A filter with nothing in it hides, unless it is on.
+        // A filter on the range's numbers counts "…" until every row's range
+        // is read, so a count is never made of half the rows.
         <div className="mt-4 -mx-1 flex flex-nowrap gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden">
-          {FILTERS.map(f => {
+          {ADS_FILTERS.map(f => {
+            const reading = Boolean(f.ranged) && rangeReading > 0;
             const n = running.filter(c => passes(f.label, c)).length;
-            if (n === 0 && f.label !== filter && f.label !== "Everything")
+            if (
+              n === 0 &&
+              !reading &&
+              f.label !== filter &&
+              f.label !== "Everything"
+            )
               return null;
             return (
               <button
@@ -3433,7 +3378,9 @@ function Cockpit({ view }: { view: View }) {
                 className={pill(f.label === filter)}
               >
                 {f.label}
-                <span className="ml-1.5 tabular-nums opacity-70">{n}</span>
+                <span className="ml-1.5 tabular-nums opacity-70">
+                  {reading ? "…" : n}
+                </span>
               </button>
             );
           })}
@@ -3457,12 +3404,23 @@ function Cockpit({ view }: { view: View }) {
             </tr>
           </thead>
           <tbody>
+            {filterReading && (
+              <tr>
+                <td
+                  colSpan={8}
+                  className="py-6 text-center text-sm text-muted-foreground"
+                >
+                  Reading {globalRange.label.toLowerCase()} for every campaign…
+                </td>
+              </tr>
+            )}
             {(snap.campaigns as Campaign[])
               .filter(c => {
                 // Parked campaigns have their own screen; nothing else
                 // shows there. [Aziz, 2026-09-14]
                 if (adsTab === "off") return isParked(c);
                 if (isParked(c)) return false;
+                if (filterReading) return false;
                 return passes(filter, c);
               })
               // Grouped by client.
@@ -3647,6 +3605,7 @@ function Cockpit({ view }: { view: View }) {
                           className={`text-xs ${c.dayRate < 30 ? "txt-bad" : "text-muted-foreground"}`}
                         >
                           {money(c.dayRate)}/day avg
+                          {rangedBoard ? " over 7 days" : ""}
                           {c.dataThrough
                             ? ` · ${moneyOr(c.spendToday, 2)} on ${dayMonth(c.dataThrough)}`
                             : ""}

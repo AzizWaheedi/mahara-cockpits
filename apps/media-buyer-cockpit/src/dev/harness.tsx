@@ -20,6 +20,7 @@
  * portalFixtures.ts. A client's Calls part reads callCentreHarness.ts
  * (`&calls=` picks the answer). The Client Performance board
  * (?path=/performance) reads boardHarness.ts (`&board=` picks the answer).
+ * The Ads page (?path=/ads?range=30d) reads adsPageHarness.ts.
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -42,6 +43,7 @@ import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
 import { getCockpitSupabaseClient } from "@/auth/SupabaseAuthProvider";
+import { installAdsPageHarness } from "./adsPageHarness";
 import { installBoardHarness } from "./boardHarness";
 import { installCallCentreHarness } from "./callCentreHarness";
 import { CallsHarnessPage } from "./callsHarnessPage";
@@ -70,6 +72,9 @@ async function main() {
   installCallCentreHarness(getCockpitSupabaseClient());
   // The Client Performance board (?path=/performance&board=...).
   installBoardHarness(getCockpitSupabaseClient());
+  // The Ads page (?path=/ads?range=30d): made-up campaigns, their 7-day
+  // snapshot and a different read for every range (adsPageHarness.ts).
+  installAdsPageHarness(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
     // Optional since the cutover: the CEO tabs that still read them show
     // their empty states without.

@@ -29,10 +29,16 @@ export function useCockpitAuth(): CockpitAuthState {
     };
     // ?reads=1 gives the harness a made-up session, so the reads that wait
     // for one (useQuery, useQueryState: the LTV card, the proposals card)
-    // run against the fixtures in hoursHarness.ts. Off by default, as before.
+    // run against the fixtures in hoursHarness.ts. Off by default, as before,
+    // except on the Ads page, whose board reads every picked range through
+    // useQueries (adsPageHarness.ts answers them).
+    const search =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search)
+        : null;
     const reads =
-      typeof window !== "undefined" &&
-      new URLSearchParams(window.location.search).get("reads") === "1";
+      search?.get("reads") === "1" ||
+      /^\/ads\b/.test(search?.get("path") ?? "");
     state = {
       client: getCockpitSupabaseClient(),
       session: reads

@@ -16,8 +16,11 @@ export function kuwaitDay(offsetDays = 0): string {
 }
 
 export function lastNDays(n: number): { start: string; end: string } {
-  // n days ending today, inclusive.
-  return { start: kuwaitDay(n - 1), end: kuwaitDay(0) };
+  // The n complete days before today, as Meta's "Last 7 days", the 7-day
+  // read the calls are made on and the CEO cockpit's 7 days. The media data
+  // runs to yesterday, so a range that ended today held a day fewer than its
+  // name, and an opened campaign disagreed with its row (2026-10-21).
+  return { start: kuwaitDay(n), end: kuwaitDay(1) };
 }
 
 export const PRESETS: { key: string; label: string; make: () => Range }[] = [
@@ -25,7 +28,8 @@ export const PRESETS: { key: string; label: string; make: () => Range }[] = [
     key: "today",
     label: "Today",
     make: () => ({
-      ...lastNDays(1),
+      start: kuwaitDay(0),
+      end: kuwaitDay(0),
       label: "Today",
       key: "today",
     }),
