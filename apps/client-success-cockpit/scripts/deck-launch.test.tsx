@@ -459,23 +459,30 @@ describe("the CEO's answers, drawn", () => {
       "10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday.",
     );
     expect(html).toContain("Up to 4 tries over 3 working days");
-    // Each row its own service, never the first one three times.
-    expect(html).toContain("Try 2 of 4 · Bathrooms · 5 pm");
-    expect(html).toContain("Callback · Full villa fit-out · 10 am");
+    // Each row its own words, never the first one three times: the
+    // advertised main service first, then the client's own words for
+    // what customers ask about (DESIGN 22.14).
+    expect(html).toContain("New enquiry · Interior design");
+    expect(html).toContain("Try 2 of 4 · Villa interiors · 5 pm");
+    expect(html).toContain("Callback · Kitchens and wardrobes · 10 am");
     const ar = render(data("full", "ar"), "journey", 2);
-    expect(ar).toContain("المحاولة ٢ من ٤ · الحمامات · ٥ مساءً");
-    expect(ar).toContain("معاودة اتصال · تشطيب فيلا كاملة · ١٠ صباحاً");
+    // The Arabic separator is the Arabic comma: a dot beside Arabic-Indic
+    // digits reads as ٠ (score round 3).
+    expect(ar).toContain("استفسار جديد، تصميم داخلي");
+    expect(ar).toContain("المحاولة ٢ من ٤، تصميم داخلي للفلل، ٥ مساءً");
+    expect(ar).toContain("معاودة اتصال، المطابخ والخزائن، ١٠ صباحاً");
+    expect(ar).not.toMatch(/[٠-٩] · |· [٠-٩]/);
     // A row past the list leaves its service out rather than repeat one.
     const one = { ...d, services: [] };
     const solo = render(
       {
         ...one,
-        launch: { ...one.launch, service: { en: "Kitchens", ar: null } },
+        launch: { ...one.launch, service: { en: "Construction", ar: null } },
       },
       "journey",
       2,
     );
-    expect(solo).toContain("New enquiry · Kitchens");
+    expect(solo).toContain("New enquiry · Construction");
     expect(solo).toContain("Try 2 of 4 · 5 pm");
     expect(solo).toContain("Callback · 10 am");
     expect(ar.replace(/<[^>]+>/g, "")).toContain(
@@ -1036,7 +1043,7 @@ describe("creative flexibility, drawn", () => {
     const checkAr =
       ar.match(/<p class="dkc-cf-checks">[\s\S]*?<\/p>/)?.[0] ?? "";
     expect(checkAr.replace(/<[^>]+>/g, "")).toBe(
-      "المعلومات · الأسعار · الوعود",
+      "المعلومات، الأسعار، الوعود",
     );
   });
 
@@ -1130,18 +1137,18 @@ describe("creative flexibility, drawn", () => {
     const full = data("full");
     expect(pushbackVariant(full)).toBe("shown");
     expect(goalAsk(full, "en")).toBe(
-      'You told us your goal is "Two to three kitchen projects signed every month, mostly in north Riyadh". What matters more: this one change, or getting the ads live so we can get there?',
+      'You told us your goal is "Two to three villa interior projects signed every month, mostly in north Riyadh". What matters more: this one change, or getting the ads live so we can get there?',
     );
     // The notes window sets the goal on its own line, between the halves.
     expect(goalAskParts(full, "en")).toEqual({
       before: "You told us your goal is",
-      goal: "Two to three kitchen projects signed every month, mostly in north Riyadh",
+      goal: "Two to three villa interior projects signed every month, mostly in north Riyadh",
       after:
         "What matters more: this one change, or getting the ads live so we can get there?",
     });
     expect(goalAskParts(full, "ar")).toEqual({
       before: "قلتوا لنا إن هدفكم:",
-      goal: "Two to three kitchen projects signed every month, mostly in north Riyadh",
+      goal: "Two to three villa interior projects signed every month, mostly in north Riyadh",
       after: "أيهم أهم لكم: هالتعديل، ولا إن الإعلانات تنزل عشان نوصل له؟",
     });
     const held = {
@@ -1159,7 +1166,7 @@ describe("creative flexibility, drawn", () => {
     );
     // Copy reply: one line, in the deck's language, never isolated.
     expect(replyText(full)).toStartWith(
-      'Thanks, noted. You told us your goal is "Two to three kitchen projects signed every month, mostly in north Riyadh", so',
+      'Thanks, noted. You told us your goal is "Two to three villa interior projects signed every month, mostly in north Riyadh", so',
     );
     // A goal written in the first person still reads: it is quoted, not spliced.
     const we = {
@@ -1171,7 +1178,7 @@ describe("creative flexibility, drawn", () => {
     );
     expect(replyText(held)).not.toMatch(/\{goal\}|Two to three/);
     const ar = data("dwy", "ar");
-    expect(replyText(ar)).toContain("قلتوا لنا إن هدفكم: نبي نوصل لمشروعين");
+    expect(replyText(ar)).toContain("قلتوا لنا إن هدفكم: نبي نوقع عقدين");
     expect(replyText(ar)).not.toMatch(/[\u2066-\u2069]/);
   });
 });
@@ -1294,7 +1301,7 @@ describe("the example call", () => {
     expect(c.missing).toEqual([]);
     const line = c.turns.find(t => t.at === "3:25");
     expect(plain(line?.line.en ?? "", "en", c.slots)).toBe(
-      "At Noor Studio Interiors, we draw your kitchen in 3D before any work starts.",
+      "At Noor Studio Interiors, we design every room in 3D before any work starts.",
     );
   });
 

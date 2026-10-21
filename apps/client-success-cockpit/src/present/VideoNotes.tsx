@@ -1,5 +1,5 @@
 import { Copy, Play, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { DeckHub, VideoPhase } from "./channel";
 import type { DeckData } from "./deckData";
@@ -76,6 +76,12 @@ function Recorded({
   const play = () => hub.post({ type: "video", slot: id, lang: row.lang });
   const close = () => hub.post({ type: "video", slot: null });
   const open = mine === "loading" || mine === "ready" || mine === "playing";
+  // Once the video opens, its Close and Copy row is brought clear of the
+  // window's sticky foot (score round 3: the foot covered it).
+  const controls = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) controls.current?.scrollIntoView?.({ block: "nearest" });
+  }, [open]);
   const line = offer
     ? offer
     : `Recorded · ${LANG_NAME[row.lang]}${row.durationSeconds ? ` · ${clock(row.durationSeconds)}` : ""}`;
@@ -106,7 +112,12 @@ function Recorded({
           Esc, V or Close closes it; a deck key closes it too.
         </div>
       ) : null}
-      <div className="flex flex-wrap gap-2">
+      <div
+        ref={controls}
+        className="flex flex-wrap gap-2"
+        // The sticky foot's height, measured by the notes window.
+        style={{ scrollMarginBottom: "calc(var(--notes-foot, 9rem) + 16px)" }}
+      >
         {open ? (
           <Button size="sm" variant="outline" onClick={close}>
             <X aria-hidden />

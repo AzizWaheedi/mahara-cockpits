@@ -1,8 +1,23 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { EXAMPLE, fill, GROUP_LINKS, type L, O, SHARED } from "./content";
+import {
+  EXAMPLE,
+  fill,
+  GROUP_LINKS,
+  type L,
+  O,
+  SERVICES,
+  SHARED,
+} from "./content";
 import type { AccessStatus, CallKind, DeckData, Overrides } from "./deckData";
-import { feedUrl, THEMES } from "./examples";
+import { choiceOf, feedUrl, isTheme, parseChoice, SCENES } from "./examples";
+import {
+  isMain,
+  MAIN,
+  type MainKey,
+  sameWords,
+  serviceOfText,
+} from "./services";
 import type { DeckKind } from "./sources";
 import { recapVideos, slotCovered } from "./videos";
 
@@ -232,9 +247,10 @@ function GoalsControls({ d, prep, setPrep }: ControlsProps) {
 }
 
 /**
- * The example ad's theme (DESIGN 22.4.5): match their service, or one of the
- * twelve. A native select, its picture beside it as the preview. Saved on
- * the onboarding row and read by both decks.
+ * The example ad (DESIGN 22.14): match their service, or a service and then
+ * one of its pictures. Native selects, the picture beside them as the
+ * preview. Saved on the onboarding row ("service:scene") and read by both
+ * decks.
  */
 export function ExampleSwitch({
   d,
@@ -245,43 +261,71 @@ export function ExampleSwitch({
   prep: Overrides;
   setPrep: ControlsProps["setPrep"];
 }) {
-  const theme = d.example.theme;
-  const chosen =
-    typeof prep.example_theme === "string" ? prep.example_theme : "";
-  const name = EXAMPLE.names[theme];
+  const ex = d.example;
+  const choice = parseChoice(prep.example_theme);
+  // The service whose pictures the second select lists: the one chosen in
+  // the first select this session, else the one the deck reads (a saved
+  // scene shared by two services reads as the client's own, else the
+  // first that has it).
+  const [picked, setPicked] = useState<MainKey | null>(null);
+  const shown: MainKey =
+    picked && (!choice || SCENES[picked].includes(choice.scene))
+      ? picked
+      : ex.service;
+  const save = (v: string | null) =>
+    setPrep("onboarding", { example_theme: v }, true);
+  const name = EXAMPLE.names[ex.theme];
+  const svcName = SERVICES[ex.service].name.en;
   return (
     <Field
       label="Example ad"
-      hint="Shown only until they have ads of their own, and labelled Example ad on the slide."
+      hint="Shown only until they have ads of their own, and labelled Example ad on the slide. Choose a service, then one of its pictures."
     >
       <div className="flex items-start gap-3">
         <img
-          src={feedUrl(theme)}
+          src={feedUrl(ex.theme)}
           alt=""
           className="h-[120px] w-[96px] shrink-0 rounded-md border object-cover"
         />
-        <div className="min-w-0 space-y-1.5">
+        <div className="min-w-0 flex-1 space-y-1.5">
           <div className="text-xs">
-            {d.example.from === "prep"
-              ? `Example ad: ${name}, chosen here`
-              : d.example.from === "text" && d.example.text
-                ? `Example ad: ${name}, from "${d.example.text}"`
-                : `Example ad: ${name}`}
+            {ex.from === "prep"
+              ? `${svcName}: ${name}, chosen here`
+              : ex.from === "service"
+                ? `${svcName}: ${name}, their service`
+                : `${svcName}: ${name}. No service on file yet, so interior design's`}
           </div>
           <select
             className="h-8 w-full rounded-md border bg-background px-2 text-sm"
-            value={chosen}
-            aria-label="Example ad"
-            onChange={e =>
-              setPrep(
-                "onboarding",
-                { example_theme: e.target.value || null },
-                true,
-              )
-            }
+            value={choice ? shown : ""}
+            aria-label="Example ad, service"
+            onChange={e => {
+              const v = e.target.value;
+              setPicked(isMain(v) ? v : null);
+              save(isMain(v) ? v : null);
+            }}
           >
             <option value="">Match their service</option>
-            {THEMES.map(x => (
+            {MAIN.map(k => (
+              <option key={k} value={k}>
+                {SERVICES[k].name.en}
+              </option>
+            ))}
+          </select>
+          <select
+            className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+            value={choice ? choice.scene : ""}
+            aria-label="Example ad, picture"
+            onChange={e => {
+              const v = e.target.value;
+              setPicked(shown);
+              save(isTheme(v) ? choiceOf(shown, v) : null);
+            }}
+          >
+            <option value="">
+              {choice ? "Their service's pictures" : "Their service's lead picture"}
+            </option>
+            {SCENES[shown].map(x => (
               <option key={x} value={x}>
                 {EXAMPLE.names[x]}
               </option>
@@ -293,8 +337,84 @@ export function ExampleSwitch({
   );
 }
 
-function ServiceControls({ d, prep, setPrep }: ControlsProps) {
+/** The launch service in prep: one of the five, or Other in their words. */
+function ServicePicker({ d, prep, setPrep }: ControlsProps) {
   const p = prep.onboarding;
+  const typed = typeof p.service_focus === "string" ? p.service_focus : "";
+  const typedKey = serviceOfText(typed);
+  const [other, setOther] = useState(Boolean(typed) && !typedKey);
+  const value = typedKey ?? (other || typed ? "other" : "");
+  return (
+    <div className="space-y-1.5">
+      <select
+        className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+        value={value}
+        aria-label="Launch service"
+        onChange={e => {
+          const v = e.target.value;
+          if (v === "other") {
+            setOther(true);
+            setPrep("onboarding", {
+              service_focus: typedKey ? null : typed || null,
+              service_focus_ar: null,
+            });
+            return;
+          }
+          setOther(false);
+          setPrep(
+            "onboarding",
+            isMain(v)
+              ? {
+                  service_focus: SERVICES[v].name.en,
+                  service_focus_ar: SERVICES[v].name.ar,
+                }
+              : { service_focus: null, service_focus_ar: null },
+            true,
+          );
+        }}
+      >
+        <option value="">
+          {d.service.key && d.service.from !== "prep" && d.service.from !== "chosen"
+            ? `From the ${d.service.from === "kickoff" ? "kickoff form" : "onboarding form"}`
+            : "Not set"}
+        </option>
+        {MAIN.map(k => (
+          <option key={k} value={k}>
+            {SERVICES[k].name.en}
+          </option>
+        ))}
+        <option value="other">Other, in their words</option>
+      </select>
+      {value === "other" ? (
+        <>
+          <PrepText
+            label="Their service, in their words"
+            value={typedKey ? "" : typed}
+            placeholder="Their service, in their words"
+            onChange={v => setPrep("onboarding", { service_focus: v })}
+          />
+          <PrepText
+            label="Their service, Arabic"
+            value={
+              typeof p.service_focus_ar === "string" ? p.service_focus_ar : ""
+            }
+            placeholder="الخدمة بكلامهم"
+            rtl
+            onChange={v => setPrep("onboarding", { service_focus_ar: v })}
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function ServiceControls({ d, prep, setPrep, ...rest }: ControlsProps) {
+  const p = prep.onboarding;
+  const named = d.service.key
+    ? d.service.key === "other"
+      ? `Other: "${d.service.words.en ?? d.service.words.ar ?? "their words"}"`
+      : SERVICES[d.service.key].name.en
+    : null;
   return (
     <div className="space-y-4">
       <Field
@@ -314,40 +434,27 @@ function ServiceControls({ d, prep, setPrep }: ControlsProps) {
                 Undo the choice
               </button>
             </span>
-          ) : d.serviceFocusFrom === "prep" ? (
-            "Suggested here. The client chooses on slide 4 with Launch with this; until then the checklist keeps it open."
-          ) : d.serviceFocus ? (
-            `Not chosen yet. Until it is, the deck uses "${d.serviceFocus}" from the ${d.serviceFocusFrom === "kickoff" ? "kickoff form" : "onboarding form"}.`
+          ) : d.service.from === "prep" ? (
+            "Suggested here. Slide 4 starts on it; the client chooses with Launch with this, and until then the checklist keeps it open."
+          ) : named ? (
+            `Not chosen yet. Slide 4 starts on ${named}, from the ${d.service.from === "kickoff" ? "kickoff form" : "onboarding form"}${d.service.text && !sameWords(d.service.text, named) ? ` ("${d.service.text}")` : ""}.`
           ) : (
-            "Not chosen yet, and neither form names one."
+            "Not chosen yet, and neither form names one. The client picks one of the five on slide 4."
           )
         }
       >
-        <PrepText
-          label="Launch service"
-          value={typeof p.service_focus === "string" ? p.service_focus : ""}
-          onChange={v => setPrep("onboarding", { service_focus: v })}
-        />
-        <PrepText
-          label="Launch service, Arabic"
-          value={
-            typeof p.service_focus_ar === "string" ? p.service_focus_ar : ""
-          }
-          placeholder="اسم الخدمة بالعربي"
-          rtl
-          onChange={v => setPrep("onboarding", { service_focus_ar: v })}
-        />
+        <ServicePicker d={d} prep={prep} setPrep={setPrep} {...rest} />
       </Field>
       <Field
         label="Their services, one per line"
         hint={
           d.servicesFrom === "form"
-            ? "From the onboarding form, prices taken out. Edit to change the chips."
+            ? "From the onboarding form, prices taken out. Each shows quietly under the main service it belongs to on slide 4."
             : d.servicesFrom === "kickoff"
-              ? "Only the kickoff's advertised service. Add the others here or on the slide."
+              ? "Only the kickoff's advertised service. Add the others here."
               : d.servicesFrom === "prep"
-                ? "Edited here."
-                : "None in the forms. Type them here or on the slide."
+                ? "Edited here. Each shows quietly under the main service it belongs to on slide 4."
+                : "None in the forms. Type them here, in their words."
         }
       >
         <PrepText
@@ -372,7 +479,7 @@ function ServiceControls({ d, prep, setPrep }: ControlsProps) {
         checked={p.starter_pack === true}
         onChange={v => setPrep("onboarding", { starter_pack: v || null }, true)}
       >
-        A ready starter pack exists for {d.serviceFocus ?? "the launch service"}
+        A ready starter pack exists for {d.serviceMid ?? "the launch service"}
         <span className="block text-xs text-muted-foreground">
           Only then does slide 7 name the service and show the starter ads.
         </span>

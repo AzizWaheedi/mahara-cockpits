@@ -20,6 +20,7 @@ the row's id). Keys are read by name, never printed (http.scrub).
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -54,6 +55,7 @@ VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv")
 SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
 PLAYABLE_CODECS = {"h264", "vp8", "vp9", "av1"}
 PATH_OK = r"^{task}/{ad}(-poster)?\.(jpg|png|webp|mp4|mov|webm)$"
+PLAN_MIME = re.compile(r"(image|video)/[a-z0-9.+-]{1,60}")  # the plan's own rule
 EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
        "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm"}
 
@@ -239,7 +241,10 @@ def sniff(head: bytes) -> Optional[str]:
             return "heic"
         if brand == b"qt  ":
             return "quicktime"
-        if brand in (b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"dash"):
+        # iso3 to iso6 (CMAF and app exports) and 3GPP (older Android
+        # phones) are MP4 too; their codecs decide whether it is converted.
+        if brand in (b"isom", b"iso2", b"iso3", b"iso4", b"iso5", b"iso6", b"mp41", b"mp42", b"avc1",
+                     b"M4V ", b"dash", b"3gp4", b"3gp5", b"3g2a"):
             return "mp4"
     return None
 
@@ -359,7 +364,29 @@ class Run:
 
     # ---- the run ---------------------------------------------------------
     def run(self, limit: int = 3) -> dict[str, Any]:
+        """One run, under the command's own lock (the review round): the
+        cron line's flock guards cron from itself, but a run started by hand
+        beside it would otherwise clear the scratch of the run that is
+        mid-download. A second run says so and does nothing."""
         out: dict[str, Any] = {"imports": [], "posters": None}
+        try:
+            lock = open(Path(self.cfg.scratch) / "deck-import.lock", "a")
+        except OSError as e:
+            self.log(f"deck-import: its lock file can't be opened: {e}")
+            out["skipped"] = "lock"
+            return out
+        try:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                self.log("deck-import: another run is working; this one does nothing")
+                out["skipped"] = "running"
+                return out
+            return self._run(out, limit)
+        finally:
+            lock.close()
+
+    def _run(self, out: dict[str, Any], limit: int) -> dict[str, Any]:
         # A run killed at the 50-minute ceiling skips its `finally`: its
         # scratch would otherwise pin the disk gate shut. Under the lock, so
         # nothing else of this command is using it.
@@ -391,6 +418,10 @@ class Run:
         iid = str(imp["id"])
         summary: dict[str, Any] = {"id": iid, "status": "working"}
         self.last_beat = self.clock()
+        # What the last import's plan learned about its files is not this
+        # one's: a resumed import plans nothing, so it starts from empty.
+        self.can_download: dict[str, bool] = {}
+        self.parent_of: dict[str, str] = {}
         work_dir = self.root / str(uuid.UUID(iid))
         try:
             # A refresh token Google refused answers 400 before any Drive
@@ -423,7 +454,8 @@ class Run:
         except DriveDown as e:
             self.log(f"deck-import {iid}: Drive can't be reached: {http.scrub(str(e))[:160]}")
             summary["status"] = self.finish_failed(iid, "drive_down")
-        except NotFound:
+        except NotFound as e:
+            self.log(f"deck-import {iid}: can't open it: {http.scrub(str(e))[:160]}")
             summary["status"] = self.finish_failed(iid, "not_found")
         except TurnOver as e:
             self.log(f"deck-import {iid}: turn over, left working: {e}")
@@ -482,11 +514,14 @@ class Run:
                 raise
 
     def client_folder(self, task_id: str) -> Optional[str]:
-        """The client's own Drive folder, from their editor card."""
+        """The client's own Drive folder, from their editor card. None when
+        the card has none. A read that failed is not "no folder": the turn
+        ends and the import stays working, so a Supabase blip never closes
+        it as not_found (a final sentence telling the CSM to reshare)."""
         try:
             rows = self.sb.select("editor_clients", f"select=drive_url&task_id=eq.{http.quote(task_id)}")
-        except Exception:  # noqa: BLE001 - no folder known: only a client's own share passes
-            return None
+        except Exception as e:  # noqa: BLE001 - any failed read is the turn's, never the link's
+            raise TurnOver(f"the client's Drive folder was not read: {http.scrub(str(e))[:160]}") from None
         url = str((rows[0] if rows else {}).get("drive_url") or "")
         return parse_id(url) if url else None
 
@@ -582,7 +617,8 @@ class Run:
         self.parent_of = {str(f["id"]): f.get("_parent") or did for f in found}
         files = [{
             "id": str(f["id"]), "name": str(f.get("name") or f["id"]), "mime": self.plan_mime(f),
-            "bytes": int(f["size"]) if str(f.get("size") or "").isdigit() else None,
+            # The plan takes 0 to 10^12; anything larger is over the cap anyway.
+            "bytes": min(int(f["size"]), 10**12) if str(f.get("size") or "").isdigit() else None,
             "createdTime": f.get("createdTime"), "resourceKey": f.get("resourceKey"),
         } for f in found]
         planned = self.call("cockpit_csm_launch_ads_import_plan", {
@@ -592,11 +628,15 @@ class Run:
 
     @staticmethod
     def plan_mime(f: dict[str, Any]) -> str:
-        mime = str(f.get("mimeType") or "")
-        if mime.startswith(("image/", "video/")):
+        """Drive's type when the plan takes it as it is (the server refuses
+        anything but `^(image|video)/[a-z0-9.+-]{1,60}$`, and one refused
+        entry would refuse the whole plan); else a type from the name. The
+        bytes decide what the file really is, after the download."""
+        mime = str(f.get("mimeType") or "").strip().lower()
+        if PLAN_MIME.fullmatch(mime):
             return mime
         name = str(f.get("name") or "").lower()
-        if name.endswith(VIDEO_EXT):
+        if mime.startswith("video/") or name.endswith(VIDEO_EXT):
             return "video/" + ("quicktime" if name.endswith(".mov") else "mp4")
         return "image/" + ("heic" if name.endswith((".heic", ".heif")) else "jpeg")
 

@@ -25,6 +25,11 @@ export interface RouteStop {
   when?: ReactNode;
   /** A note under its caption, in its own column (the launch call's). */
   line?: ReactNode;
+  /**
+   * The stop hangs what follows it (the road's payoff, O5's confirmation):
+   * a dotted line drops from its caption to the card under it (22.14).
+   */
+  drop?: boolean;
 }
 
 /** The easing --dk-ease-move, so a check's delay meets the line's head. */
@@ -47,8 +52,12 @@ export function timeAt(progress: number): number {
   return bez((lo + hi) / 2, x1, x2);
 }
 
-/** The draw's length in ms for today at index k: min(1000, 400 + 160 k). */
-export const routeMs = (k: number) => Math.min(1000, 400 + 160 * k);
+/**
+ * The draw's length in ms for today at index k: min(1400, 600 + 240 k)
+ * since 22.14 (the stops light one by one, slowly enough to be seen on a
+ * share; 400 + 160 k read as a flicker).
+ */
+export const routeMs = (k: number) => Math.min(1400, 600 + 240 * k);
 
 export function Route({
   stops,
@@ -103,7 +112,16 @@ export function Route({
           const st = state(i);
           const key = `route-${String(i)}`;
           if (st === "ahead")
-            return <Node key={key} x={x(i)} y={y} r={R} state="ahead" />;
+            // The stops ahead appear one by one along the road (22.14).
+            return (
+              <g
+                key={key}
+                className="dkc-way-next"
+                style={{ "--i": i } as CSSProperties}
+              >
+                <Node x={x(i)} y={y} r={R} state="ahead" />
+              </g>
+            );
           if (st === "now")
             // Today: an open ring the token fills as it arrives.
             return (
@@ -160,6 +178,7 @@ export function Route({
             className="dkc-road-stop"
             data-state={state(i)}
             aria-current={i === now ? "step" : undefined}
+            style={{ "--i": i } as CSSProperties}
           >
             <span
               className="dkc-road-name"
@@ -190,6 +209,12 @@ export function Route({
               >
                 {s.line}
               </span>
+            ) : s.drop ? (
+              <i
+                className="dkc-road-drop"
+                aria-hidden
+                style={{ gridColumn: i + 1, gridRow: 3 }}
+              />
             ) : null}
           </li>
         ))}

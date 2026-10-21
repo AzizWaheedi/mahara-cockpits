@@ -749,8 +749,9 @@ today):
    - **Sniff the type from the first bytes** (it wins over Drive's
      `mimeType`): `FF D8 FF` JPEG; `89 50 4E 47` PNG; `RIFF….WEBP` WebP;
      `….ftyp` with `heic`, `heix`, `hevc`, `heim`, `heis`, `mif1` or
-     `msf1` HEIC; `….ftypqt` QuickTime; `….ftyp` with `isom`, `iso2`,
-     `mp41`, `mp42`, `avc1`, `M4V ` or `dash` MP4; `1A 45 DF A3` WebM or
+     `msf1` HEIC; `….ftypqt` QuickTime; `….ftyp` with `isom`, `iso2` to
+     `iso6`, `mp41`, `mp42`, `avc1`, `M4V `, `dash`, `3gp4`, `3gp5` or
+     `3g2a` MP4 (the last six added in the security review); `1A 45 DF A3` WebM or
      Matroska (ffprobe's `format_name` tells them apart); `RIFF….AVI ` AVI;
      anything else `wrong_type`. A picture over 157,286,400 bytes:
      `too_big`.
@@ -1078,9 +1079,20 @@ stamp branch:
     RETURN nullif(out, '{}'::jsonb);
   WHEN p_key = 'example_theme' THEN
     RETURN public.cockpit_csm_deck_choice(p_value,
-      ARRAY['kitchen','living','majlis','villa','construction','bathroom','pool',
-            'landscape','bedroom','office','facade','stairs'], p_key);
+      ARRAY['design-build','interior','architecture','fitout','construction',
+            'kitchen','living','majlis','villa','bathroom','pool',
+            'landscape','bedroom','office','facade','stairs',
+            'designbuild','architecture2','fitout2','fitout3','construction2','construction3'], p_key);
 ```
+
+As built in the security review (2026-10-21), after the CEO's correction
+that the example follows the client's main service, never a sub-trade:
+`example_theme` takes one of the five service keys of the kickoff form's
+"Which service are we advertising?" (`design-build`, `interior`,
+`architecture`, `fitout`, `construction`) or one of the eighteen example
+scenes (the first twelve and the six added for the services). Whichever the
+browser settles on is accepted; narrow the list in a later migration once
+it has.
 
 and the stamp branch reads:
 
@@ -1260,3 +1272,73 @@ block ("the census: 45 functions, every one with an empty search path; who
 may call which"), over a database with the three files applied twice. The
 existing census test keeps its 29: its database never has the new files,
 so changing it would test nothing new.
+
+## 12. As built: the security review (2026-10-21)
+
+An independent review of the migrations, the worker, its wiring and this
+spec, line by line. What it checked and found sound: row security on both
+new tables with every grant revoked in the same file (the service key
+included); every function `SECURITY DEFINER` with `search_path = ''` but
+the two immutable helpers; the two browser functions behind
+`cockpit_csm_client_gate` for that client, the seven worker functions and
+the two poster functions executable by `service_role` only; the server's
+parser (other hosts, look-alike hosts, `docs.google.com` forms and sheets,
+userinfo, ports, percent-encoded ids, a backslash or `#@` before the host,
+invisible and direction marks, path tricks) with the link rebuilt from the
+id and a clean resource key alone; one tray row per client per Drive file
+(the partial unique index, plan's skip, reserve's skip and its race guard);
+one audit row per write with the worker named; the storage path built from
+the task id, the row id and the type alone, the same rule as an upload by
+hand, so the deck reads both the same; the worker's limits, the streaming
+download to scratch and its cleanup, the type read from the bytes (so an
+HLS or concat playlist never reaches ffmpeg), the 50-minute ceiling under
+flock, the doctor's lines, scrubbed logs, and no other editor-desk command
+changed. No new function collides with an existing name (checked against
+every migration on this branch and on `origin/main`).
+
+**Fixed in the review.**
+- **Plan never refuses a whole folder for one name.** A name loses C1
+  controls, the Arabic letter mark, zero-width space, line and paragraph
+  separators, word joiners, the BOM and every direction mark (it lost only
+  C0 controls and some direction marks); a name with nothing left is the
+  file's Drive id instead of `22023`, which had failed the import three
+  times over.
+- **The worker sends the plan a type it takes.** Drive's `mimeType` is
+  lowercased and used only when it matches the plan's rule; otherwise the
+  type comes from the name (a `video/…` type with parameters stays a video,
+  so it keeps the 1.5 GB cap). A size over 10^12 is sent as 10^12.
+- **A failed read of the client's folder is the turn's, not the link's.**
+  `client_folder` treated a Supabase error as "no folder", so a blip closed
+  a team-owned link as `not_found` with a sentence telling the CSM to
+  reshare. It now ends the turn (`TurnOver`) and the import resumes.
+- **Each import starts from empty file facts.** `can_download` and
+  `parent_of` outlived their import, so a resumed import could fail a file
+  as `download` because another client's plan had said so.
+- **The command takes its own lock** (`<scratch>/deck-import.lock`,
+  non-blocking): a run started by hand beside the cron run does nothing,
+  instead of clearing the scratch of a run that is mid-download.
+- **A `not_found` is logged with its reason**, for the runbook's
+  `grep deck-import`.
+- **`example_theme`** takes the service keys and the new scenes (section 9).
+
+**Left for a decision (not changed).**
+- **A client-owned share is not proved to be this client's.** The
+  ownership check passes any link no `@maharamedia.com` address owns and
+  that is not in a shared drive. A seat limited to one client that pastes
+  another client's own share (or a teammate's personal Gmail folder that
+  the desk's account can open) brings it into this client's tray. It needs
+  the link, and the box and the tray show every file's name, but nothing
+  stops it. Closing it means proving the share is public ("anyone with the
+  link") or knowing each client's own Google accounts.
+- **A working import whose worker stopped shows "Bringing in" forever.**
+  The box's "Nothing has picked this up yet" (`driveView.ts`
+  `nobodyPickedUp`) covers queued imports only; when the disk gate or a
+  missing cron line stops the worker after a claim, `workerSeenAt` goes
+  stale but a `working` import keeps its progress line. The same test on a
+  working import would say so.
+- **Claim looks at five imports a minute.** Five clients whose cards are
+  missing from the roster hold the sixth client's import for up to 30
+  minutes (then they end `not_started`).
+- **The upload by hand keeps direction marks in its name.**
+  `cockpit_csm_launch_ad_reserve` (20261019120000, live) strips control
+  characters only; the import's names are now cleaner than an upload's.

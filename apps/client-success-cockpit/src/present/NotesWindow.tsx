@@ -6,7 +6,15 @@ import {
   Copy,
   MessageCircleQuestion,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
@@ -25,6 +33,7 @@ import {
   partText,
   replyText,
 } from "./launchControls";
+import { serviceNames } from "./services";
 import type { DeckKind } from "./sources";
 import type { DeckIO, DeckModel, SaveState } from "./useDeckModel";
 import { useDriveImports } from "./useDriveImports";
@@ -297,6 +306,18 @@ export function NotesWindow({
   playerRef.current = player;
   /** The Zoom tip, once per call: tick on the first play, untick when it closes. */
   const [zoom, setZoom] = useState<ZoomTip>(null);
+  /** The sticky foot's height, so the page's last row scrolls clear of it. */
+  const [footH, setFootH] = useState(144);
+  const footObserver = useRef<ResizeObserver | null>(null);
+  const footRef = useCallback((el: HTMLElement | null) => {
+    footObserver.current?.disconnect();
+    footObserver.current = null;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setFootH(el.offsetHeight));
+    ro.observe(el);
+    footObserver.current = ro;
+    setFootH(el.offsetHeight);
+  }, []);
   const zoomDone = useRef(false);
   /** The deck window closed: the recap takes the talk track's place. */
   const [deckClosed, setDeckClosed] = useState(false);
@@ -409,12 +430,18 @@ export function NotesWindow({
 
   const elapsed = at ? now - at.startedAt : 0;
   const target = TARGET_MINUTES[deck] * 60_000;
+  // The service as the notes say it inside a sentence, in each language.
+  const said = serviceNames(d.service).mid;
   const slots = {
-    service: d.serviceFocus ?? "the launch service",
+    service: said.en ?? "the launch service",
     csm: d.csmFirst ?? "",
     goalAsk: goalAsk(d, "en"),
   };
-  const slotsAr = { ...slots, goalAsk: goalAsk(d, "ar") };
+  const slotsAr = {
+    ...slots,
+    service: said.ar ?? "الخدمة",
+    goalAsk: goalAsk(d, "ar"),
+  };
   const askEn = goalAskParts(d, "en");
   const askAr = goalAskParts(d, "ar");
   const notes = slide.notes;
@@ -427,7 +454,10 @@ export function NotesWindow({
   const presentedAt = d.presentedAt;
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div
+      className="flex min-h-screen flex-col bg-background text-foreground"
+      style={{ "--notes-foot": `${footH}px` } as CSSProperties}
+    >
       <header className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span className="min-w-0 truncate">
@@ -671,12 +701,20 @@ export function NotesWindow({
             Marked as presented, so the launch deck leaves out the hours card.
           </div>
         ) : null}
-        {/* The sticky footer's height, so the last line (a video's block)
-            scrolls clear of it. */}
-        <div aria-hidden className="h-28 shrink-0" />
+        {/* The sticky footer's measured height, so the last line (a video's
+            Close and Copy row) scrolls clear of it (score round 3: a fixed
+            112 px was shorter than the foot). */}
+        <div
+          aria-hidden
+          className="shrink-0"
+          style={{ height: "calc(var(--notes-foot, 9rem) + 16px)" }}
+        />
       </main>
 
-      <footer className="sticky bottom-0 border-t bg-background/95 px-4 py-3 backdrop-blur">
+      <footer
+        ref={footRef}
+        className="sticky bottom-0 border-t bg-background/95 px-4 py-3 backdrop-blur"
+      >
         <div
           className={cn(
             "mb-2 flex items-center justify-between gap-2 text-xs",

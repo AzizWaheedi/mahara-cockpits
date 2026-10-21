@@ -12,6 +12,7 @@
 
 import { StrictMode, useMemo } from "react";
 import { createRoot } from "react-dom/client";
+import { SERVICES } from "@/present/content";
 import type { Overrides } from "@/present/deckData";
 import { PresentApp, type View } from "@/present/PresentApp";
 import { applyPatch } from "@/present/prep";
@@ -22,6 +23,7 @@ import {
   type VideoRow,
   VideoSaveError,
 } from "@/present/sources";
+import { isMain } from "@/present/services";
 import type { DeckIO } from "@/present/useDeckModel";
 import { DriveSheet } from "./deck/DriveSheet";
 import { fakeDrive } from "./deck/driveFixtures";
@@ -100,6 +102,15 @@ function Harness() {
     const loaded = FIXTURES[fixture]?.(deck) ?? FIXTURES.full(deck);
     store.onboarding = loaded.prep.onboarding;
     store.launch = loaded.prep.launch;
+    // ?service=<key>: the client's service as one of the five (DESIGN
+    // 22.14), so each service's example pictures can be seen in the harness.
+    const svc = params.get("service");
+    if (isMain(svc))
+      store.onboarding = {
+        ...store.onboarding,
+        service_focus: SERVICES[svc].name.en,
+        service_focus_ar: SERVICES[svc].name.ar,
+      };
     let ads: LaunchAd[] = [...loaded.ads];
     let revision = 1;
     let videos: DeckVideos | null = loaded.videos ?? null;

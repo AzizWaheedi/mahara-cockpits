@@ -1,13 +1,22 @@
 import { type Cta, EXAMPLE, type Lang, t, tf } from "./content";
 import type { Creative } from "./creative";
+import {
+  DEFAULT_SERVICE,
+  isMain,
+  MAIN,
+  type MainKey,
+  type ServiceKey,
+} from "./services";
 
 /**
- * The example ads (docs/csm-decks/DESIGN.md 22.4): twelve scenes from
- * Mahara's own Higgsfield run, no client's work, no people, no text, each
- * labelled "Example ad" wherever it shows. One theme per client, matched to
- * their service in English or Arabic; the CSM can switch it in prep
- * (`example_theme`). The pictures are URLs only: the bundle carries a table
- * of addresses, the bytes load after the first paint.
+ * The example ads (docs/csm-decks/DESIGN.md 22.4 and 22.14): eighteen
+ * scenes from Mahara's own Higgsfield run, no client's work, no people, no
+ * text, each labelled "Example ad" wherever it shows. Chosen by the
+ * client's main service (the kickoff form's five), its lead picture first
+ * and the others as alternates; the CSM can switch it in prep
+ * (`example_theme`, by service, then by scene). The pictures are URLs only:
+ * the bundle carries a table of addresses, the bytes load after the first
+ * paint.
  */
 
 export const THEMES = [
@@ -23,8 +32,110 @@ export const THEMES = [
   "office",
   "facade",
   "stairs",
+  // 2026-10-21: the five main services' own scenes (SERVICE-MAP).
+  "construction2",
+  "construction3",
+  "fitout2",
+  "fitout3",
+  "designbuild",
+  "architecture2",
 ] as const;
 export type Theme = (typeof THEMES)[number];
+
+/**
+ * The scenes of each main service, its lead picture first (CEO, 2026-10-21,
+ * SERVICE-MAP; DESIGN 22.14): the lead shows first, the others are the
+ * alternates a second phone and the tile fields take. A scene may serve two
+ * services (a villa is designed and built, or drawn by an architect).
+ */
+export const SCENES: Record<MainKey, readonly Theme[]> = {
+  "design-build": ["designbuild", "villa", "pool", "stairs"],
+  interior: ["living", "majlis", "bedroom", "bathroom", "kitchen"],
+  architecture: ["architecture2", "villa", "facade", "landscape"],
+  fitout: ["fitout2", "fitout3", "office", "facade", "kitchen"],
+  construction: ["construction", "construction2", "construction3"],
+};
+
+/**
+ * Prep's switch (`example_theme`, the server's allow-list: DRIVE-IMPORT.md
+ * 9): one of the five service keys (that service's pictures, its lead
+ * first) or one of the eighteen scenes (that picture first). A scene
+ * belongs to the client's service when it is one of its scenes, else to the
+ * first service that has it. "construction" is both, and means the same
+ * pictures either way.
+ */
+export function parseChoice(
+  v: unknown,
+): { service: MainKey | null; scene: Theme } | null {
+  if (isMain(v)) return { service: v, scene: SCENES[v][0] };
+  if (isTheme(v)) return { service: null, scene: v };
+  return null;
+}
+
+/**
+ * The value prep saves (by service, then by scene): the service's key for
+ * its lead picture, else the scene itself.
+ */
+export const choiceOf = (service: MainKey, scene: Theme): string =>
+  scene === SCENES[service][0] ? service : scene;
+
+export interface ServiceExample {
+  /** Whose pictures: the client's service, else the default (interior). */
+  service: MainKey;
+  /** The lead picture. */
+  theme: Theme;
+  /** The lead first, then the service's other scenes. */
+  scenes: Theme[];
+  /** The CSM's switch, the client's service, or the default. */
+  from: "prep" | "service" | "default";
+  /** The words the service was read from (prep's line names them). */
+  text: string | null;
+}
+
+/**
+ * The example for a client (DESIGN 22.14): prep's switch, else their main
+ * service's scenes, else interior design's. "Other" (their words fit none)
+ * takes the default, as SERVICE-MAP says.
+ */
+export function examplePick(
+  choice: unknown,
+  service: ServiceKey | null,
+  text: string | null = null,
+): ServiceExample {
+  const own = service && service !== "other" ? service : null;
+  const c = parseChoice(choice);
+  if (c) {
+    const svc =
+      c.service ??
+      (own && SCENES[own].includes(c.scene)
+        ? own
+        : (MAIN.find(k => SCENES[k].includes(c.scene)) ?? DEFAULT_SERVICE));
+    return {
+      service: svc,
+      theme: c.scene,
+      scenes: [c.scene, ...SCENES[svc].filter(x => x !== c.scene)],
+      from: "prep",
+      text: null,
+    };
+  }
+  const svc = own ?? DEFAULT_SERVICE;
+  return {
+    service: svc,
+    theme: SCENES[svc][0],
+    scenes: [...SCENES[svc]],
+    from: own ? "service" : "default",
+    text: own ? text : null,
+  };
+}
+
+/** The client's scene at a place: 0 the lead, 1 the first alternate, wrapping. */
+export const sceneAt = (pick: { scenes: readonly Theme[] }, i: number) =>
+  pick.scenes[i % pick.scenes.length];
+
+/** Every scene, the client's service first, then the rest in their order. */
+export function sceneOrder(pick: { scenes: readonly Theme[] }): Theme[] {
+  return [...pick.scenes, ...THEMES.filter(x => !pick.scenes.includes(x))];
+}
 
 export const isTheme = (v: unknown): v is Theme =>
   typeof v === "string" && (THEMES as readonly string[]).includes(v);
@@ -38,286 +149,35 @@ export const storyUrl = (theme: Theme) =>
 export const tileUrl = (theme: Theme, cut: "a" | "b") =>
   new URL(`./assets/examples/tile/${theme}-${cut}.webp`, import.meta.url).href;
 
-// ------------------------------------------------------- the service map
-
-/**
- * Lower case; Arabic without its diacritics and tatweel, أ إ آ read as ا,
- * ة as ه, ى as ي (DESIGN 22.4.2).
- */
-export function normalise(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[ً-ْٰـ]/g, "")
-    .replace(/[أإآ]/g, "ا")
-    .replace(/ة/g, "ه")
-    .replace(/ى/g, "ي")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** The families, tried in this order; the first that matches wins (DESIGN 22.4.2). */
-export const EXAMPLE_KEYWORDS: readonly [
-  Theme,
-  { en: readonly string[]; ar: readonly string[] },
-][] = [
-  ["kitchen", { en: ["kitchen", "cabinet"], ar: ["مطبخ", "مطابخ"] }],
-  // The pool before the bathroom: "حمام سباحة" (the usual Gulf word for a
-  // pool) would otherwise match حمام and land on a bathroom.
-  [
-    "pool",
-    {
-      en: ["pool", "swimming"],
-      ar: ["مسبح", "مسابح", "حوض سباحه", "سباحه"],
-    },
-  ],
-  [
-    "bathroom",
-    {
-      en: ["bathroom", "bath", "washroom", "toilet", "wet area"],
-      ar: ["حمام", "حمامات", "دوره مياه", "دورات مياه"],
-    },
-  ],
-  [
-    "landscape",
-    {
-      en: [
-        "landscape",
-        "landscaping",
-        "garden",
-        "outdoor",
-        "hardscape",
-        "softscape",
-        "pergola",
-      ],
-      ar: ["حديقه", "حدائق", "لاندسكيب", "تنسيق حدائق"],
-    },
-  ],
-  [
-    "majlis",
-    {
-      en: ["majlis", "diwan", "diwaniya", "diwaniyah"],
-      ar: ["مجلس", "مجالس", "ديوانيه"],
-    },
-  ],
-  [
-    "bedroom",
-    {
-      en: ["bedroom", "master suite", "wardrobe"],
-      ar: ["غرفه نوم", "غرف نوم", "غرف النوم"],
-    },
-  ],
-  [
-    "stairs",
-    {
-      en: [
-        "stair",
-        "staircase",
-        "entrance",
-        "lobby",
-        "foyer",
-        "marble",
-        "flooring",
-      ],
-      ar: ["درج", "سلالم", "مدخل", "مداخل", "رخام", "ارضيات"],
-    },
-  ],
-  [
-    "villa",
-    {
-      en: ["villa", "residential", "palace"],
-      ar: ["فيلا", "فلل", "قصر", "قصور", "سكني"],
-    },
-  ],
-  [
-    "office",
-    {
-      en: [
-        "office",
-        "commercial",
-        "retail",
-        "shop",
-        "showroom",
-        "restaurant",
-        "cafe",
-        "clinic",
-        "fit-out",
-        "fitout",
-        "fit out",
-      ],
-      ar: [
-        "مكتب",
-        "مكاتب",
-        "تجاري",
-        "محل",
-        "محلات",
-        "مطعم",
-        "مطاعم",
-        "كافيه",
-        "عياده",
-        "تشطيب",
-        "تشطيبات",
-      ],
-    },
-  ],
-  [
-    "facade",
-    {
-      en: [
-        "facade",
-        "façade",
-        "exterior",
-        "cladding",
-        "renovation",
-        "refurbishment",
-        "restoration",
-        "architecture",
-        "architectural",
-      ],
-      ar: ["واجهه", "واجهات", "ترميم", "تجديد", "معماري"],
-    },
-  ],
-  [
-    "construction",
-    {
-      en: [
-        "construction",
-        "contracting",
-        "build",
-        "building",
-        "structure",
-        "structural",
-        "engineering",
-        "concrete",
-      ],
-      ar: [
-        "مقاولات",
-        "بناء",
-        "انشاء",
-        "انشاءات",
-        "عظم",
-        "هندسي",
-        "هندسيه",
-        "خرسان",
-      ],
-    },
-  ],
-  [
-    "living",
-    {
-      en: [
-        "interior",
-        "design",
-        "decor",
-        "furniture",
-        "furnishing",
-        "living",
-        "lighting",
-      ],
-      ar: ["تصميم داخلي", "ديكور", "اثاث", "تصميم", "صاله", "معيشه"],
-    },
-  ],
-];
-
-const FIT_OUT = {
-  en: ["fit-out", "fitout", "fit out"],
-  ar: ["تشطيب", "تشطيبات"],
-};
-/** An interior word: with a home word, it is a home's interior (living). */
-const INTERIOR = {
-  en: ["interior", "interiors", "decor"],
-  ar: ["تصميم داخلي", "ديكور"],
-};
-const HOME = {
-  en: ["villa", "home", "house", "residential", "apartment"],
-  ar: ["فيلا", "فلل", "بيت", "منزل", "شقه", "شقق", "سكني"],
-};
-
-const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
-/** An English word at a word's start ("kitchens", "fit-outs" match). */
-const enWord = (k: string) =>
-  new RegExp(`(?:^|[^a-z0-9\\u00c0-\\u024f])${escapeRe(k)}`);
-/** An Arabic word at a word's start, after its usual prefixes (و، ب، ال، لل). */
-const arWord = (k: string) =>
-  new RegExp(
-    `(?:^|[^\\u0621-\\u064a])(?:وال|بال|فال|كال|لل|ال|و|ب|ف|ك|ل)?${escapeRe(k)}`,
-  );
-
-const cache = new Map<string, RegExp>();
-function has(
-  text: string,
-  words: { en: readonly string[]; ar: readonly string[] },
-) {
-  for (const k of words.en) {
-    const key = `en:${k}`;
-    const re = cache.get(key) ?? enWord(k);
-    cache.set(key, re);
-    if (re.test(text)) return true;
-  }
-  for (const k of words.ar) {
-    const key = `ar:${k}`;
-    const re = cache.get(key) ?? arWord(k);
-    cache.set(key, re);
-    if (re.test(text)) return true;
-  }
-  return false;
-}
-
-/**
- * One text's theme, or null: a fit-out of a home is an interior (living);
- * otherwise the families in order.
- */
-export function themeOfText(text: string | null | undefined): Theme | null {
-  if (!text?.trim()) return null;
-  const s = normalise(text);
-  // A fit-out or an interior of a home is an interior: the villa theme is
-  // the house from outside.
-  if ((has(s, FIT_OUT) || has(s, INTERIOR)) && has(s, HOME)) return "living";
-  for (const [theme, words] of EXAMPLE_KEYWORDS)
-    if (has(s, words)) return theme;
-  return null;
-}
-
-export interface ExamplePick {
-  theme: Theme;
-  /** Where it came from: the CSM's switch, a text that matched, or the default. */
-  from: "prep" | "text" | "default";
-  /** The text that matched (prep's line names it). */
-  text: string | null;
-}
-
-/**
- * The client's theme from the first source that matches (DESIGN 22.4.2):
- * prep's switch, then the given texts in order (the service focus and its
- * Arabic, the kickoff's service, the form's #1, the form's services, the
- * client's name). No match anywhere: living.
- */
-export function pickExample(
-  chosen: unknown,
-  texts: (string | null | undefined)[],
-): ExamplePick {
-  if (isTheme(chosen)) return { theme: chosen, from: "prep", text: null };
-  for (const text of texts) {
-    const theme = themeOfText(text);
-    if (theme) return { theme, from: "text", text: text?.trim() ?? null };
-  }
-  return { theme: "living", from: "default", text: null };
-}
-
 // ----------------------------------------------------------- the field
 
-/** L3's field: tile i shows the theme s + i, a wide shot for the first twelve, a detail after. */
-export function fieldTiles(theme: Theme, count = 18): string[] {
-  const s = THEMES.indexOf(theme);
-  return Array.from({ length: count }, (_, i) =>
-    tileUrl(THEMES[(s + i) % 12], i < 12 ? "a" : "b"),
+/**
+ * L3's field (DESIGN 22.14): every scene once, the client's service first.
+ * The two scenes the slides either side show large (L2's ad, L4's phones)
+ * take their detail tile, so no picture shows twice in a row.
+ */
+export function serviceField(pick: ServiceExample, count = 18): string[] {
+  const order = sceneOrder(pick);
+  const hero = new Set([sceneAt(pick, 0), sceneAt(pick, 1)]);
+  return Array.from({ length: count }, (_, i) => {
+    const scene = order[i % order.length];
+    return tileUrl(scene, hero.has(scene) ? "b" : "a");
+  });
+}
+
+/** The next round's six: details of the scenes after the field's first six. */
+export function serviceRound(pick: ServiceExample, count = 6): string[] {
+  const order = sceneOrder(pick);
+  return Array.from({ length: count }, (_, j) =>
+    tileUrl(order[(6 + j) % order.length], "b"),
   );
 }
 
-/** The next round's six: details of the themes after the field's first six. */
-export function roundTiles(theme: Theme, count = 6): string[] {
-  const s = THEMES.indexOf(theme);
-  return Array.from({ length: count }, (_, j) =>
-    tileUrl(THEMES[(s + 6 + j) % 12], "b"),
+/** O7's strip: the first six scenes, wide, the client's lead on tile 0. */
+export function stripTiles(pick: ServiceExample, count = 6): string[] {
+  const order = sceneOrder(pick);
+  return Array.from({ length: count }, (_, i) =>
+    tileUrl(order[i % order.length], "a"),
   );
 }
 

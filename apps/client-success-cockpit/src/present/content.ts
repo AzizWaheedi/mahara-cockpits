@@ -73,6 +73,14 @@ export function fill(text: string, slots: Record<string, string>): string {
 export const tf = (l: L, lang: Lang, slots: Record<string, string>) =>
   hours(hold(isolate(fill(l[lang], slots), lang)));
 
+/**
+ * The separator inside a line: a middle dot in English; the Arabic comma
+ * in Arabic, since a dot beside Arabic-Indic digits reads as ٠ (score
+ * round 3). Every Arabic line in this file uses it, and the code that joins
+ * two parts on the canvas asks for it here.
+ */
+export const sep = (lang: Lang) => (lang === "ar" ? "، " : " · ");
+
 const AR = "٠١٢٣٤٥٦٧٨٩";
 /** Digits as the deck writes them: Arabic-Indic in Arabic, never ٬. */
 export function digits(value: number | string, lang: Lang): string {
@@ -145,6 +153,43 @@ export const SHARED = {
 } as const;
 
 /**
+ * The five main services (CEO, 2026-10-21; CONTENT "The five main
+ * services", CONTENT-AR decision 16): the kickoff form's choices, never a
+ * sub-trade such as kitchens. `name` is the choice as a label (slide 4's
+ * rows, the queue card, the form's first answer); `mid` is the same service
+ * said inside a sentence ("templates for interior design", لخدمة التصميم
+ * الداخلي). Construction is بناء وإنشاءات, never مقاولات: the decks never call
+ * the client مقاول (DESIGN 13.5).
+ */
+export const SERVICES = {
+  "design-build": {
+    name: { en: "Design and build", ar: "تصميم وتنفيذ" },
+    mid: { en: "design and build", ar: "التصميم والتنفيذ" },
+  },
+  interior: {
+    name: { en: "Interior design", ar: "تصميم داخلي" },
+    mid: { en: "interior design", ar: "التصميم الداخلي" },
+  },
+  architecture: {
+    name: { en: "Architectural design", ar: "تصميم معماري" },
+    mid: { en: "architectural design", ar: "التصميم المعماري" },
+  },
+  fitout: {
+    name: { en: "Fit-out and renovation", ar: "تشطيب وترميم" },
+    mid: { en: "fit-out and renovation", ar: "التشطيب والترميم" },
+  },
+  construction: {
+    name: { en: "Construction", ar: "بناء وإنشاءات" },
+    mid: { en: "construction", ar: "البناء والإنشاءات" },
+  },
+  /** Slide 4's sixth row, only when the client's words fit none of the five. */
+  other: {
+    name: { en: "Other", ar: "خدمة أخرى" },
+    mid: { en: "your service", ar: "خدمتكم" },
+  },
+} as const;
+
+/**
  * The example ads (CONTENT "The visual pass", CONTENT-AR decision 14):
  * Mahara's own pictures, no client's work, labelled wherever they show.
  * إعلان مثال, never قالب (a template goes live) and never تجريبي.
@@ -200,8 +245,32 @@ export const EXAMPLE = {
       en: "an entrance hall with a floating marble staircase",
       ar: "مدخل فيه درج رخام معلّق",
     },
+    construction2: {
+      en: "a residential tower's concrete frame under a crane at dusk",
+      ar: "هيكل خرساني لبرج سكني تحت رافعة وقت المغرب",
+    },
+    construction3: {
+      en: "a two-storey villa's concrete frame with scaffolding",
+      ar: "هيكل خرساني لفيلا من دورين وحوله سقالات",
+    },
+    fitout2: {
+      en: "a fitted-out boutique with stone counters and lit shelves",
+      ar: "محل مجهّز بطاولات حجر ورفوف مضاءة",
+    },
+    fitout3: {
+      en: "a fitted-out restaurant with timber booths and brass lights",
+      ar: "مطعم مجهّز بجلسات خشب وإضاءة نحاس",
+    },
+    designbuild: {
+      en: "a new villa's glass living room over its pool at dusk",
+      ar: "صالة زجاج في فيلا جديدة على المسبح وقت المغرب",
+    },
+    architecture2: {
+      en: "a modern villa with a timber-screened upper floor",
+      ar: "فيلا حديثة دورها العلوي بواجهة خشب",
+    },
   },
-  /** Prep's names for the twelve (cockpit UI, English). */
+  /** Prep's names for the eighteen (cockpit UI, English). */
   names: {
     kitchen: "Kitchen",
     living: "Living room",
@@ -215,6 +284,12 @@ export const EXAMPLE = {
     office: "Office",
     facade: "Facade",
     stairs: "Entrance and stairs",
+    construction2: "Tower frame",
+    construction3: "Villa frame and scaffolding",
+    fitout2: "Boutique",
+    fitout3: "Restaurant",
+    designbuild: "Villa and pool at dusk",
+    architecture2: "Modern villa",
   },
 } as const;
 
@@ -277,7 +352,7 @@ export const CHROME = {
   of: { en: "of", ar: "من" },
   keys: {
     en: "→ ← move · F full screen · L language · O all slides · N notes · Esc closes this list",
-    ar: "→ ← تنقل · F ملء الشاشة · L اللغة · O كل الشرائح · N الملاحظات · Esc يقفل القائمة",
+    ar: "→ ← تنقل، F ملء الشاشة، L اللغة، O كل الشرائح، N الملاحظات، Esc يقفل القائمة",
   },
   /** A slide that could not be drawn (its own error boundary), on the canvas. */
   broken: {
@@ -292,7 +367,7 @@ export const O = {
   welcome: {
     title: { en: "Welcome, {name}", ar: "حياكم الله، {name}" },
     hello: { en: "Welcome,", ar: "حياكم الله،" },
-    dateline: { en: "Onboarding call · {date}", ar: "مكالمة التعريف · {date}" },
+    dateline: { en: "Onboarding call · {date}", ar: "مكالمة التعريف، {date}" },
     agendaLead: {
       en: "Before we hang up, we'll:",
       ar: "قبل لا نسكر المكالمة:",
@@ -325,6 +400,8 @@ export const O = {
     },
     source: { en: "From your onboarding form", ar: "من نموذج التعريف بالنشاط" },
     goal90: { en: "In 90 days", ar: "خلال ٩٠ يوم" },
+    /** The start of the goal's 90 days, drawn under it (22.14). */
+    today: { en: "Today", ar: "اليوم" },
     goal12_24: { en: "In 12 to 24 months", ar: "خلال سنة إلى سنتين" },
     challenges: { en: "What's in the way", ar: "اللي واقف بطريقكم" },
     why: { en: "Why you joined", ar: "ليش بديتوا معنا" },
@@ -493,7 +570,7 @@ export const O = {
     now: { en: "Now, on this call", ar: "الحين، على المكالمة" },
     later: { en: "This week, from you", ar: "هالأسبوع، منكم" },
     /** Only on a card whose video is recorded; {len} is m:ss, or words in Arabic. */
-    guide: { en: "Video guide · {len}", ar: "فيديو شرح · {len}" },
+    guide: { en: "Video guide · {len}", ar: "فيديو شرح، {len}" },
     rows: {
       meta: {
         name: { en: "Meta access", ar: "صلاحيات ميتا" },
@@ -653,7 +730,7 @@ export const O = {
     },
     cardWith: {
       en: "45 minutes · Our creative director",
-      ar: "٤٥ دقيقة · المدير الإبداعي",
+      ar: "٤٥ دقيقة، المدير الإبداعي",
     },
     cardOpen: {
       en: "We book it before we hang up",
@@ -759,16 +836,18 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
   },
   "one-service": {
     say: [
-      "Ask the three questions out loud for their top two or three services.",
-      "Steer toward the service that passes all three. If none does, take the easiest to sell.",
+      "The rows are our five main services, the same choices as the kickoff form's 'Which service are we advertising?', so what they pick here is your answer there.",
+      "The band starts on the service their answers point to. Their own words (kitchens, majlis, a villa fit-out) sit quietly under the service they belong to: a kitchen is part of a service, never the service.",
+      "Ask the three questions out loud for the two or three services they really offer. Steer toward the one that passes all three. If none does, take the easiest to sell.",
+      "Other shows only when some of their words fit none of the five. Pick it only if that is truly what they sell, in their words.",
       "Why one: the ads, the form questions and the call script are all written for one buyer.",
       "The choice carries through: it's the service in the launch deck and in the example call.",
       "The phone shows an example ad for this service, under their name and logo, and it says Example ad above it. Say so: 'This is how an ad for {service} looks under your name. Your own ads come from your content.'",
-      "If you named a service in prep, the column shows it in grey as a suggestion, and the checklist keeps it open. Let them choose.",
+      "If you set a service in prep, the column shows it in grey as a suggestion, and the checklist keeps it open. Let them choose.",
       "When they choose, press Launch with this. The phone changes to the service they chose, and the checklist ticks it.",
     ],
     sayAr: [
-      "أي خدمة فيها الأسهل بالبيع؟ وأي وحدة تجيب لكم أكثر ربح؟ وأي وحدة الأريح لكم بالتنفيذ؟",
+      "هذي خدماتنا الخمس الأساسية. أي وحدة فيها الأسهل بالبيع؟ وأي وحدة تجيب لكم أكثر ربح؟ وأي وحدة الأريح لكم بالتنفيذ؟",
       "الإعلانات وأسئلة النموذج وسكربت المكالمة، كلها تنكتب لنوع واحد من العملاء.",
       "وهالخدمة نفسها بتكون بمكالمة الإطلاق، وبمثال المكالمة اللي بنوريكم إياه.",
       "هذا مثال لإعلان عن {service} باسمكم. إعلاناتكم الخاصة نسويها من محتواكم.",
@@ -1077,7 +1156,7 @@ export const LAUNCH = {
   cover: {
     title: { en: "{name} goes live", ar: "انطلاقة {name}" },
     titleLive: { en: "{name} is live", ar: "انطلقنا مع {name}" },
-    dateline: { en: "Launch call · {date}", ar: "مكالمة الإطلاق · {date}" },
+    dateline: { en: "Launch call · {date}", ar: "مكالمة الإطلاق، {date}" },
     goLive: { en: "Go-live", ar: "الإطلاق" },
     line: {
       en: "Everything your customers will see, before they see it.",
@@ -1087,7 +1166,7 @@ export const LAUNCH = {
       en: "Everything your customers see, and what happens next.",
       ar: "كل شي يشوفه عملاؤكم، واللي يصير بعدها.",
     },
-    road: { en: "Launch call · Today", ar: "مكالمة الإطلاق · اليوم" },
+    road: { en: "Launch call · Today", ar: "مكالمة الإطلاق، اليوم" },
     /**
      * The rail's label once go-live has passed (the fixer's round): the rail
      * is lit to its end, and the label says both facts, so "is live" and
@@ -1095,7 +1174,7 @@ export const LAUNCH = {
      */
     roadLive: {
       en: "Live since {date} · Launch call today",
-      ar: "منطلقين من {date} · مكالمة الإطلاق اليوم",
+      ar: "منطلقين من {date}، مكالمة الإطلاق اليوم",
     },
   },
   journey: {
@@ -1217,20 +1296,20 @@ export const LAUNCH = {
       },
     },
     queue: {
-      fresh: { en: "New enquiry · {service}", ar: "استفسار جديد · {service}" },
+      fresh: { en: "New enquiry · {service}", ar: "استفسار جديد، {service}" },
       /** Done with you, the new row's one chip says who calls (the stop's words say how fast). */
       topDwy: { en: "Your team", ar: "فريقكم" },
       second: {
         en: "Try 2 of 4 · {service} · 5 pm",
-        ar: "المحاولة ٢ من ٤ · {service} · ٥ مساءً",
+        ar: "المحاولة ٢ من ٤، {service}، ٥ مساءً",
       },
       callback: {
         en: "Callback · {service} · 10 am",
-        ar: "معاودة اتصال · {service} · ١٠ صباحاً",
+        ar: "معاودة اتصال، {service}، ١٠ صباحاً",
       },
       lost: {
         en: "Not reached after 4 tries · reason noted",
-        ar: "ما ردّ بعد ٤ محاولات · السبب مكتوب",
+        ar: "ما ردّ بعد ٤ محاولات، السبب مكتوب",
       },
       night: {
         en: "Came in at night? Called from 10 the next working morning.",
@@ -1238,7 +1317,7 @@ export const LAUNCH = {
       },
     },
     calendar: {
-      block: { en: "Appointment · {place}", ar: "موعد · {place}" },
+      block: { en: "Appointment · {place}", ar: "موعد، {place}" },
       /** An afternoon hour on the journey's calendar card. */
       hour: { en: "{h} pm", ar: "{h} مساءً" },
       hours: [
@@ -1453,7 +1532,7 @@ export const LAUNCH = {
     },
     stamp: {
       en: "Agreed to test this way · {date}",
-      ar: "اتفقنا نختبر بهالطريقة · {date}",
+      ar: "اتفقنا نختبر بهالطريقة، {date}",
     },
     /**
      * The pushback question (notes only), picked by the client's 90-day
@@ -2117,7 +2196,7 @@ export const LAUNCH = {
     checkins: { en: "Check-ins", ar: "مكالمات المتابعة" },
     first: {
       en: "Your first check-in · a week or two in",
-      ar: "أول مكالمة متابعة · بعد أسبوع أو أسبوعين",
+      ar: "أول مكالمة متابعة، بعد أسبوع أو أسبوعين",
     },
     later: {
       en: "Then weekly or every two weeks",
@@ -2252,9 +2331,9 @@ export const LAUNCH = {
     },
     next: {
       en: "Your first check-in · {date}",
-      ar: "أول مكالمة متابعة · {date}",
+      ar: "أول مكالمة متابعة، {date}",
     },
-    rail: { en: "Go-live · {date}", ar: "الإطلاق · {date}" },
+    rail: { en: "Go-live · {date}", ar: "الإطلاق، {date}" },
   },
 } as const;
 

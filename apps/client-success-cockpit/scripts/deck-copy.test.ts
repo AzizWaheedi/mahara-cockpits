@@ -98,7 +98,7 @@ const ALLOWED: Record<string, string[]> = {
   // asides. A new كل line fails until it is read and added here.
   everyAr: [
     "كل الشرائح",
-    "→ ← تنقل · F ملء الشاشة · L اللغة · O كل الشرائح · N الملاحظات · Esc يقفل القائمة",
+    "→ ← تنقل، F ملء الشاشة، L اللغة، O كل الشرائح، N الملاحظات، Esc يقفل القائمة",
     "كل شي بيشوفه عملاؤكم، تشوفونه قبلهم.",
     "كل شي يشوفه عملاؤكم، واللي يصير بعدها.",
     "مو كل استفسار ينحجز له موعد. فيه ناس ما نقدر نوصل لهم، وفيه ناس ما يناسبونكم. وفريق الاتصال يكتب السبب، ونمر عليه معكم بمكالمات المتابعة.",
@@ -610,7 +610,54 @@ describe("Arabic numbers and register (CONTENT-AR decisions 2, 3 and 6)", () => 
         /(?:^|[\s،.])(?:شنو|شلون|ماكو|وايد|عيل|هني|جذي|باجر|وش|أبشر|إيش)(?=$|[\s،.؟])/,
       ),
     ).toEqual([]);
-    expect(offenders(AR, /طيب/)).toEqual([]);
+    // طيب as a word (تشطيب, finishing, holds the same letters).
+    expect(
+      offenders(AR, /(?:^|[^\u0621-\u064a])طيب(?=$|[^\u0621-\u064a])/),
+    ).toEqual([]);
+  });
+});
+
+describe("the five main services (CEO, 2026-10-21)", () => {
+  test("the kickoff form's five, in its order, with their Arabic; never a sub-trade", () => {
+    const S = content.SERVICES;
+    expect(
+      (
+        [
+          "design-build",
+          "interior",
+          "architecture",
+          "fitout",
+          "construction",
+        ] as const
+      ).map(k => [S[k].name.en, S[k].name.ar, S[k].mid.en, S[k].mid.ar]),
+    ).toEqual([
+      ["Design and build", "تصميم وتنفيذ", "design and build", "التصميم والتنفيذ"],
+      ["Interior design", "تصميم داخلي", "interior design", "التصميم الداخلي"],
+      [
+        "Architectural design",
+        "تصميم معماري",
+        "architectural design",
+        "التصميم المعماري",
+      ],
+      [
+        "Fit-out and renovation",
+        "تشطيب وترميم",
+        "fit-out and renovation",
+        "التشطيب والترميم",
+      ],
+      ["Construction", "بناء وإنشاءات", "construction", "البناء والإنشاءات"],
+    ]);
+    expect([S.other.name.en, S.other.name.ar]).toEqual(["Other", "خدمة أخرى"]);
+    // Construction is never مقاولات: the decks never call the client مقاول.
+    expect(offenders(AR, /مقاول/)).toEqual([]);
+    for (const k of Object.keys(S) as (keyof typeof S)[])
+      expect(S[k].name.en).not.toMatch(/kitchen|bathroom|majlis|pool/i);
+  });
+
+  test("an Arabic line never separates with a middle dot (it reads as ٠ beside a digit)", () => {
+    expect(offenders(AR, /·/)).toEqual([]);
+    expect(content.sep("ar")).toBe("، ");
+    expect(content.sep("en")).toBe(" · ");
   });
 });
 

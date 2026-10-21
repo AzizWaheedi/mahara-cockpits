@@ -22,8 +22,16 @@ import {
 } from "./clean";
 import { type L, type Lang, LINKS, O } from "./content";
 import { dayOf, gulfToday } from "./dates";
-import { type ExamplePick, pickExample } from "./examples";
+import { examplePick, type ServiceExample } from "./examples";
 import { type LaunchData, launchData } from "./launchData";
+import {
+  resolveService,
+  type ServicePick,
+  type ServiceRow,
+  type ServiceSource,
+  serviceNames,
+  serviceRows,
+} from "./services";
 import type { DeckKind, DeckSources, DeckVideos, LaunchAd } from "./sources";
 import type { VideoRead } from "./videos";
 
@@ -137,7 +145,18 @@ export interface DeckData {
   services: string[];
   servicesFrom: "prep" | "form" | "kickoff" | "none";
   numberOne: string | null;
+  /**
+   * The client's main service as this deck reads it (DESIGN 22.14): the
+   * onboarding deck asks slide 4's choice, then prep, the kickoff and the
+   * forms; the launch deck asks the kickoff first.
+   */
+  service: ServicePick;
+  /** Slide 4's rows: the five main services (and "Other"), the client's own words under each. */
+  serviceRows: ServiceRow[];
+  /** The service as a label in the deck's language ("Interior design"). */
   serviceFocus: string | null;
+  /** The same, said inside a sentence ("interior design", التصميم الداخلي). */
+  serviceMid: string | null;
   serviceFocusFrom: "prep" | "kickoff" | "form" | "none";
   /**
    * The service the client chose on slide 4 ("Launch with this" stamps
@@ -146,8 +165,8 @@ export interface DeckData {
    */
   serviceChosen: string | null;
   serviceChosenAt: string | null;
-  /** The example ad's theme while they have no creative (DESIGN 22.4.2). */
-  example: ExamplePick;
+  /** The example ad's pictures while they have no creative (DESIGN 22.14). */
+  example: ServiceExample;
   /** The client's own words inside an example phone: never written for them. */
   exampleWords: { primary: string | null; headline: string | null };
   /** The call's checklist, each item done from data, never from a press (DESIGN 22.2.0). */
@@ -493,16 +512,50 @@ export function deckData(input: DeckInput): DeckData {
     }
   }
 
-  const chosen = twin(onboardingPrep, "service_focus", lang);
+  // The main service (DESIGN 22.14). Slide 4's choice and prep's line
+  // are one field (service_focus); the stamp says the client chose it.
   const chosenAt = str(onboardingPrep.service_chosen_at);
-  const serviceFocus = chosen ?? advertised ?? numberOne ?? null;
-  const serviceFocusFrom: DeckData["serviceFocusFrom"] = chosen
-    ? "prep"
-    : advertised
-      ? "kickoff"
-      : numberOne
-        ? "form"
-        : "none";
+  const prepSource: ServiceSource = {
+    from: chosenAt ? "chosen" : "prep",
+    text: str(onboardingPrep.service_focus),
+    ar: str(onboardingPrep.service_focus_ar),
+    explicit: true,
+  };
+  const kickSource: ServiceSource = {
+    from: "kickoff",
+    text: advertised,
+    explicit: true,
+  };
+  const formSources: ServiceSource[] = [
+    numberOne,
+    ...serviceChips(answer(form, FORM.services)),
+    ...services,
+  ].map(text => ({ from: "form", text, explicit: false }));
+  const nameSource: ServiceSource = {
+    from: "none",
+    text: [nameEn, nameAr].filter(Boolean).join(" "),
+    explicit: false,
+  };
+  // The onboarding deck: the choice, prep, the kickoff, the forms. The
+  // launch deck: the kickoff first, then the choice, prep and the forms.
+  const onboardingService = resolveService([
+    prepSource,
+    kickSource,
+    ...formSources,
+  ]);
+  const launchService = resolveService([
+    kickSource,
+    prepSource,
+    ...formSources,
+  ]);
+  const service =
+    input.deck === "launch" ? launchService : onboardingService;
+  const named = serviceNames(service);
+  const serviceFocus = named.name[lang] ?? null;
+  const serviceMid = named.mid[lang] ?? null;
+  const serviceFocusFrom: DeckData["serviceFocusFrom"] =
+    service.from === "chosen" ? "prep" : service.from;
+  const chosenNamed = serviceNames(onboardingService);
 
   // Starter ads and approval.
   const templatedAnswer = str(answer(kickoff, KICK.templated));
@@ -624,34 +677,28 @@ export function deckData(input: DeckInput): DeckData {
     null,
   ];
 
-  // The example ad (DESIGN 22.4.2): prep's switch, then the service as the
-  // call knows it, the kickoff's, the form's #1, the form's services and
-  // the client's name, in that order. Its words are the client's own.
+  // The example ad (DESIGN 22.14): prep's switch, else the pictures of
+  // this deck's service, else of the client's name read as a service, else
+  // interior design's. Its words are the client's own: their selling point
+  // as the caption, the service as the Facebook headline.
   const launchPrep = input.prep.launch ?? {};
-  const example = pickExample(onboardingPrep.example_theme, [
-    str(onboardingPrep.service_focus),
-    str(onboardingPrep.service_focus_ar),
-    advertised,
-    numberOne,
-    ...serviceChips(answer(form, FORM.services)),
-    ...services,
-    nameEn,
-    nameAr,
-  ]);
-  // The Arabic deck's caption: the CSM's Arabic, else the service as the
-  // forms wrote it when that is Arabic (never a Latin name in it).
-  const serviceAr =
-    str(onboardingPrep.service_focus_ar) ??
-    (serviceFocus && ARABIC.test(serviceFocus) ? serviceFocus : null);
+  const byName = service.key ? null : resolveService([nameSource]);
+  const example = examplePick(
+    onboardingPrep.example_theme,
+    service.key ?? (byName?.key === "other" ? null : (byName?.key ?? null)),
+    service.text,
+  );
+  // The Arabic deck's headline: the service's Arabic name, never a Latin one.
+  const serviceAr = named.name.ar && ARABIC.test(named.name.ar) ? named.name.ar : null;
   const exampleWords =
     lang === "ar"
       ? {
-          primary: str(launchPrep.selling_point_ar) ?? serviceAr,
+          primary: str(launchPrep.selling_point_ar),
           headline: serviceAr,
         }
       : {
-          primary: str(launchPrep.selling_point) ?? serviceFocus,
-          headline: serviceFocus,
+          primary: str(launchPrep.selling_point),
+          headline: named.name.en,
         };
 
   const kickPage = str(answer(kickoff, KICK.pageName));
@@ -726,9 +773,15 @@ export function deckData(input: DeckInput): DeckData {
     services,
     servicesFrom,
     numberOne,
+    service,
+    serviceRows: serviceRows(services, onboardingService),
     serviceFocus,
+    serviceMid,
     serviceFocusFrom,
-    serviceChosen: chosenAt ? (chosen ?? serviceFocus) : null,
+    serviceChosen:
+      chosenAt && onboardingService.from === "chosen"
+        ? (chosenNamed.name[lang] ?? null)
+        : null,
     serviceChosenAt: chosenAt,
     example,
     exampleWords,
@@ -790,6 +843,7 @@ export function deckData(input: DeckInput): DeckData {
         areas: answer(form, FORM.areas),
       },
       advertised,
+      service: launchService,
       today,
       refs: {
         brandDna: str(s?.editor?.brandDnaUrl) ?? str(kit?.links?.brand_dna),

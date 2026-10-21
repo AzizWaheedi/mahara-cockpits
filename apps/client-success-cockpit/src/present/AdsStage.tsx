@@ -21,7 +21,13 @@ import {
 } from "./content";
 import { appLanguage, type Creative, phoneFor, shapeOf } from "./creative";
 import type { SlideCtx } from "./deckContext";
-import { exampleCreative, feedUrl, storyUrl, warmExamples } from "./examples";
+import {
+  exampleCreative,
+  feedUrl,
+  sceneAt,
+  storyUrl,
+  warmExamples,
+} from "./examples";
 import { defaultPhones, PHONES, type PhoneKey } from "./launchData";
 import type { Identity } from "./mockups/Identity";
 import { FbFeed, IgFeed, Phone, phoneWidth, ReelStory } from "./mockups/Phones";
@@ -91,23 +97,51 @@ export function useCreatives(ctx: SlideCtx) {
     // in its three placements, labelled "Example ads" (DESIGN 22.4.3). The
     // moment one of theirs exists, the deck shows theirs.
     const example = !tray.length && !meta.some(m => Boolean(m.poster ?? m.url));
+    // Their service's lead picture and its first alternate (DESIGN 22.14):
+    // the feed and Facebook phones carry the lead, the second phone (Reels)
+    // the alternate.
+    const lead = sceneAt(ctx.d.example, 0);
+    const alt = sceneAt(ctx.d.example, 1);
+    const words = ctx.d.exampleWords;
     if (example) {
-      const { theme } = ctx.d.example;
-      const words = ctx.d.exampleWords;
-      phones.feed = exampleCreative(theme, "feed", words, ctx.lang);
-      phones.reels = exampleCreative(theme, "story", words, ctx.lang);
-      phones.facebook = exampleCreative(theme, "feed", words, ctx.lang);
+      phones.feed = exampleCreative(lead, "feed", words, ctx.lang);
+      phones.reels = exampleCreative(alt, "story", words, ctx.lang);
+      phones.facebook = exampleCreative(lead, "feed", words, ctx.lang);
     }
-    return { tray, meta, byId, phones, placed, app, local, example };
+    // The ad the journey and the form follow: with an example, the
+    // alternate, so the cover (the lead) and journey stop 1 never show one
+    // picture twice in a row, nor the ads slide's feed and the form's cover.
+    const journey = example
+      ? exampleCreative(alt, "feed", words, ctx.lang)
+      : phones.feed;
+    // The cover's example: while they have no creative of their own, a
+    // starter template included (it is ours, not theirs), the lead picture.
+    const own = [...tray, ...meta].some(c => !c.starter && (c.url || c.poster));
+    const coverExample = own
+      ? null
+      : exampleCreative(lead, "feed", words, ctx.lang);
+    return {
+      tray,
+      meta,
+      byId,
+      phones,
+      placed,
+      app,
+      local,
+      example,
+      journey,
+      coverExample,
+    };
   }, [L, local, ctx.live.phones, ctx.lang, ctx.d.example, ctx.d.exampleWords]);
 }
 
-/** Warm the example's two pictures after the first paint, while they show. */
+/** Warm the example's pictures after the first paint, while they show. */
 export function useWarmExample(ctx: SlideCtx, on: boolean) {
-  const { theme } = ctx.d.example;
+  const lead = sceneAt(ctx.d.example, 0);
+  const alt = sceneAt(ctx.d.example, 1);
   useEffect(() => {
-    if (on) warmExamples([feedUrl(theme), storyUrl(theme)]);
-  }, [on, theme]);
+    if (on) warmExamples([feedUrl(lead), storyUrl(alt), feedUrl(alt)]);
+  }, [on, lead, alt]);
 }
 
 /** Which phone a stop of the ads slide focuses (stop 0 is the overview). */

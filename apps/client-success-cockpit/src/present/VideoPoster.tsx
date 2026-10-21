@@ -10,10 +10,10 @@ import { clock } from "./videos";
  * card and no play glyph, so it never reads as a video that is there.
  * Recorded: the provider's own picture (the worker keeps it on the row as
  * `posterUrl`), else one built from the link (YouTube, Drive, Wistia's
- * swatch), else one 64 px row until a picture exists (score round 2: an
- * empty 16:9 box with a small play glyph read as a broken image): the
- * provider and the length over the title, and a 32 px play button. An image
- * that fails falls back to that row. Every picture sits under a 35% veil of
+ * swatch), else a designed poster until a picture exists (score round 3:
+ * the 64 px row read as a broken card): the dark ground, a teal play, and
+ * in prep the provider and length over the title. An image that fails
+ * falls back to it. Every picture sits under a 35% veil of
  * the panel's ground, so a near-white browser capture never reads as an
  * empty white card. In the notes window the picture carries no words: the
  * title is over it and the length on the line under it.
@@ -100,28 +100,41 @@ export function VideoPoster({
   const pic = broken ? null : posterFor(row);
   const length = row.durationSeconds ? clock(row.durationSeconds) : null;
   if (!pic)
-    // No picture yet: one row with the weight of the "Not recorded yet"
-    // line, the provider and the length over the title, then the play.
+    // No picture yet (a Loom link before the worker reads its thumbnail):
+    // a designed poster, not a fallback (score round 3: the 64 px row read
+    // as a broken card beside the posters that have pictures). The dark
+    // ground every video poster has, the play in the cockpit's teal, and in
+    // prep the provider and length over the title, as a title card sets
+    // them. In the notes window it carries no words, as the others don't.
     return (
       <div
         className={cn(
-          "flex h-16 max-w-full items-center gap-3 rounded-lg border bg-muted px-3 text-foreground",
-          size === "prep" ? "w-[352px]" : "w-[240px]",
+          base,
+          "bg-foreground text-background dark:bg-card dark:text-foreground",
         )}
-        data-video-row=""
+        data-video-poster="designed"
       >
-        <span className="min-w-0 flex-1">
-          <span className="block text-[11px] text-muted-foreground">
+        {size === "prep" ? (
+          <span className="absolute inset-x-3 top-2.5 text-[11px] opacity-70">
             {PROVIDER[row.provider]}
             {length ? ` · ${length}` : ""}
           </span>
-          <span className="block truncate text-[13px] font-semibold leading-snug">
+        ) : null}
+        <span
+          className={cn(
+            "absolute grid place-items-center rounded-full bg-primary text-primary-foreground",
+            size === "prep"
+              ? "top-1/2 left-1/2 size-12 -translate-x-1/2 -translate-y-[60%]"
+              : "top-1/2 left-1/2 size-10 -translate-x-1/2 -translate-y-1/2",
+          )}
+        >
+          <Triangle size={size === "prep" ? 18 : 15} />
+        </span>
+        {size === "prep" ? (
+          <span className="absolute inset-x-3 bottom-2.5 line-clamp-2 text-[13px] font-semibold leading-snug">
             {title}
           </span>
-        </span>
-        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-foreground text-background">
-          <Triangle size={14} />
-        </span>
+        ) : null}
       </div>
     );
   return (

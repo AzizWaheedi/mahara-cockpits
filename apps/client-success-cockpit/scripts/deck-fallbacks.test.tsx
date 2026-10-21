@@ -22,10 +22,11 @@ import {
 import {
   firstAdsLine,
   firstAppointmentDay,
-  ghostRows,
+  chosenPatch,
   leadService,
   nextStatus,
   onboardingSlides,
+  ownLine,
   rowHeight,
   STRIP_LIT,
 } from "../src/present/onboardingDeck";
@@ -57,6 +58,9 @@ function data(
     ads: f.ads,
     presenterName: key === "sparse" ? null : "Sara Al-Harbi",
     publicUrl: (_b, p) => p,
+    // The seeded video slots, so the guides render (score round 3).
+    videos: f.videos ?? null,
+    videosProblem: f.videosProblem ?? null,
     now: NOW,
   });
 }
@@ -65,9 +69,9 @@ describe("a client with nothing on file", () => {
   const d = data("sparse");
 
   test("the name stands, initials stand in for the logo, the role for the CSM", () => {
-    expect(d.name).toBe("Atlas Fit-Out & Renovation Contracting");
+    expect(d.name).toBe("Atlas Design & Build Contracting");
     expect(d.logo).toBeNull();
-    expect(d.initials).toBe("AF");
+    expect(d.initials).toBe("AD");
     expect(d.csmFirst).toBeNull();
   });
 
@@ -86,6 +90,17 @@ describe("a client with nothing on file", () => {
     expect(shownGoals(d)).toEqual([]);
     expect(d.services).toEqual([]);
     expect(d.serviceFocus).toBeNull();
+    // Slide 4 still offers the five; nothing is pre-highlighted. The
+    // example ads read the name: design and build's pictures.
+    expect(d.serviceRows.map(r => r.key)).toEqual([
+      "design-build",
+      "interior",
+      "architecture",
+      "fitout",
+      "construction",
+    ]);
+    expect(d.service.key).toBeNull();
+    expect(d.example.service).toBe("design-build");
     expect(d.next).toEqual({});
     expect(d.goLive).toBeNull();
     expect(d.roadNow).toBe(2);
@@ -136,14 +151,25 @@ describe("a client with everything on file", () => {
 
   test("services from the form, prices and notes taken out, the #1 tagged", () => {
     expect(d.services).toEqual([
-      "Kitchens",
-      "Bathrooms",
+      "Villa interiors",
+      "Kitchens and wardrobes",
+      "Majlis design",
       "Full villa fit-out",
       "Interior design",
     ]);
-    expect(d.numberOne).toBe("Kitchens");
-    expect(d.serviceFocus).toBe("Kitchens");
+    expect(d.numberOne).toBe("Villa interiors");
+    // The service is the kickoff's main service, never a sub-trade.
+    expect(d.serviceFocus).toBe("Interior design");
+    expect(d.serviceMid).toBe("interior design");
     expect(d.serviceFocusFrom).toBe("kickoff");
+    expect(d.service.key).toBe("interior");
+    // Their own words sit under the service they belong to.
+    expect(
+      d.serviceRows.filter(r => r.own.length).map(r => [r.key, r.own]),
+    ).toEqual([
+      ["interior", ["Villa interiors", "Kitchens and wardrobes", "Majlis design"]],
+      ["fitout", ["Full villa fit-out"]],
+    ]);
   });
 
   test("access read from the kickoff: done, to do, and the content row unticked", () => {
@@ -179,10 +205,10 @@ describe("a client with everything on file", () => {
   test("a starter pack with starter ads: the first ads line names the service", () => {
     expect(d.starterPack).toBe(true);
     expect(d.starterAds).toHaveLength(2);
-    // Mid-sentence, in sentence case: "templates for kitchens".
+    // Mid-sentence, in sentence case: "templates for interior design".
     expect(firstAdsLine(d)).toEqual({
       line: expect.anything(),
-      service: "kitchens",
+      service: "interior design",
     });
   });
 });
@@ -226,10 +252,14 @@ describe("a done-with-you client in the UAE", () => {
     expect(firstAdsLine(d).line.en).toBe(
       "Your own ads, made from your content, go live first.",
     );
-    // Typed in prep before the call: the proposal, not a choice. The
+    // Typed in prep before the call, in their words ("بناء الفلل"): read as
+    // the main service it belongs to, the proposal, not a choice. The
     // checklist keeps it open until "Launch with this" stamps it.
-    expect(d.serviceFocus).toBe("مطابخ حسب الطلب");
+    expect(d.serviceFocus).toBe("Construction");
+    expect(d.service).toMatchObject({ key: "construction", from: "prep" });
     expect(d.serviceFocusFrom).toBe("prep");
+    // A word that fits none of the five adds "Other", in their words.
+    expect(d.serviceRows.at(-1)).toEqual({ key: "other", own: ["تأجير معدات"] });
     expect(d.serviceChosen).toBeNull();
     expect(d.today.service).toBe(false);
     expect(d.redLines).toEqual(["لا تذكرون الأسعار في الإعلان"]);
@@ -343,20 +373,45 @@ describe("the small rules", () => {
     expect(nextStatus("todo")).toBe("done");
   });
 
-  test("the matrix points at the most ticks, the #1 breaking a tie", () => {
+  test("the matrix starts on their likely service, then follows the ticks, the #1 breaking a tie", () => {
     const d = data("full");
+    // Pre-highlighted from the kickoff's answer.
     expect(leadService(d, {}, null)).toEqual({
       lead: null,
-      candidate: "Kitchens",
+      candidate: "interior",
     });
-    const ticks = { Bathrooms: { sell: true }, Kitchens: { sell: true } };
-    expect(leadService(d, ticks, null).lead).toBe("Kitchens");
+    const ticks = { fitout: { sell: true }, interior: { sell: true } };
+    // A tie: their #1 ("Villa interiors") is an interior design.
+    expect(leadService(d, ticks, null).lead).toBe("interior");
     expect(
-      leadService(d, { Bathrooms: { sell: true, profit: true } }, null).lead,
-    ).toBe("Bathrooms");
-    expect(leadService(d, {}, "Full villa fit-out").candidate).toBe(
-      "Full villa fit-out",
-    );
+      leadService(d, { fitout: { sell: true, profit: true } }, null).lead,
+    ).toBe("fitout");
+    expect(leadService(d, {}, "construction").candidate).toBe("construction");
+    // Nothing on file: no row is pre-highlighted.
+    expect(leadService(data("sparse"), {}, null).candidate).toBeNull();
+  });
+
+  test("Launch with this saves the main service in both languages, and drops a picture chosen for another", () => {
+    const d = data("full");
+    expect(chosenPatch(d, "interior", {})).toEqual({
+      service_focus: "Interior design",
+      service_focus_ar: "تصميم داخلي",
+      service_chosen_at: true,
+    });
+    expect(
+      chosenPatch(d, "construction", { example_theme: "interior" }),
+    ).toMatchObject({ service_focus: "Construction", example_theme: null });
+    expect(
+      chosenPatch(d, "construction", { example_theme: "majlis" }),
+    ).toMatchObject({ example_theme: null });
+    expect(
+      chosenPatch(d, "fitout", { example_theme: "kitchen" }),
+    ).not.toHaveProperty("example_theme");
+    const dwy = data("dwy");
+    expect(chosenPatch(dwy, "other", {})).toMatchObject({
+      service_focus: "تأجير معدات",
+      service_focus_ar: "تأجير معدات",
+    });
   });
 });
 
@@ -399,8 +454,8 @@ describe("O7 names the launch service in the deck's own script", () => {
         ...f.prep,
         onboarding: {
           ...f.prep.onboarding,
-          service_focus: "Kitchens",
-          service_focus_ar: "المطابخ",
+          service_focus: "Swimming pools and spas",
+          service_focus_ar: "مسابح وجاكوزي",
         },
       },
       ads: f.ads,
@@ -409,27 +464,48 @@ describe("O7 names the launch service in the deck's own script", () => {
       now: NOW,
     });
   };
-  test("typed in Arabic: both stops name it in Arabic, never the Latin name", () => {
-    const d = typed("ar");
-    for (const tour of [0, 1]) {
-      const html = render(d, tour);
-      expect(html).toContain("المطابخ");
-      expect(html).not.toContain("Kitchens");
-    }
-    expect(firstAdsLine(d).service).toBe("المطابخ");
-  });
-  test("only a Latin name on file: the Arabic deck leaves it unnamed, and prep says so", () => {
-    const d = data("full", "ar");
-    expect(d.serviceFocus).toBe("Kitchens");
+  test("a main service: both decks say it in their own language, inside the sentence", () => {
+    const ar = data("full", "ar");
+    expect(ar.serviceFocus).toBe("تصميم داخلي");
+    expect(firstAdsLine(ar).service).toBe("التصميم الداخلي");
     for (const tour of [0, 1])
-      expect(render(d, tour)).not.toContain("Kitchens");
-    expect(firstAdsLine(d).service).toBeNull();
+      expect(render(ar, tour)).not.toContain("Interior design");
+    expect(render(data("full"), 0)).toContain("templates for interior design");
+  });
+  test("their own words (it fits no other way): named in each deck's script, mapped where it fits", () => {
+    // A pool is a design and build: the main service is named, not the pool.
+    const d = typed("ar");
+    expect(d.service.key).toBe("design-build");
+    expect(firstAdsLine(d).service).toBe("التصميم والتنفيذ");
+    const other = (lang: Lang) => {
+      const f = FIXTURES.full();
+      return deckData({
+        taskId: "fixture-full",
+        deck: "onboarding",
+        lang,
+        sources: f.sources,
+        kit: f.kit,
+        prep: {
+          ...f.prep,
+          onboarding: { ...f.prep.onboarding, service_focus: "Equipment rental" },
+        },
+        ads: f.ads,
+        publicUrl: (_b, p) => p,
+        now: NOW,
+      });
+    };
+    // Only a Latin name for "Other": the Arabic deck leaves it unnamed, and
+    // prep says how to name it.
+    const arOther = other("ar");
+    expect(arOther.service.key).toBe("other");
+    for (const tour of [0, 1])
+      expect(render(arOther, tour)).not.toContain("Equipment rental");
+    expect(firstAdsLine(arOther).service).toBeNull();
     const s = onboardingSlides().find(x => x.id === "next");
-    expect(s?.missing?.(d).some(m => m.includes("Type its Arabic name"))).toBe(
-      true,
-    );
-    // The English deck still names it, in sentence case mid-sentence.
-    expect(render(data("full"), 0)).toContain("templates for kitchens");
+    expect(
+      s?.missing?.(arOther).some(m => m.includes("Type their service in Arabic")),
+    ).toBe(true);
+    expect(render(other("en"), 0)).toContain("templates for equipment rental");
   });
 });
 
@@ -452,6 +528,9 @@ describe("every slide and stop renders, for every client, in both languages", ()
           setLive: () => {},
           still: true,
           presenting: true,
+          // With a player (score round 3): without one the video guides
+          // never render, so a "{len}" left in one could not be caught.
+          playVideo: () => {},
         };
         const seen: Record<string, string> = {};
         for (const s of slides) {
@@ -546,19 +625,34 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
       </>,
     );
   };
-  test("O4: three rows always show while fewer than three services are typed, roomier when few", () => {
-    expect([0, 1, 2, 3, 5].map(ghostRows)).toEqual([3, 2, 1, 0, 0]);
-    expect([0, 3, 4].map(rowHeight)).toEqual([96, 96, 72]);
-    const sparse = one(data("sparse"), "one-service");
-    expect((sparse.match(/dkc-matrix-ghost/g) ?? []).length).toBe(3);
-    // "Add a service" sits in the first ghost's name slot, not its own row.
-    expect(sparse).toMatch(
-      /dkc-matrix-ghost"[^>]*role="row"[\s\S]*?Add a service/,
-    );
-    expect(sparse).not.toContain("dkc-matrix-add");
+  test("O4: the five main services always, Other only when their words fit none", () => {
+    expect([5, 6].map(rowHeight)).toEqual([92, 84]);
+    const names = (html: string) =>
+      [...html.matchAll(/class="dkc-service-label">([^<]+)</g)].map(m => m[1]);
+    const five = [
+      "Design and build",
+      "Interior design",
+      "Architectural design",
+      "Fit-out and renovation",
+      "Construction",
+    ];
+    expect(names(one(data("sparse"), "one-service"))).toEqual(five);
     const full = one(data("full"), "one-service");
-    expect(full).not.toContain("dkc-matrix-ghost");
-    expect(full).toContain("dkc-matrix-add");
+    expect(names(full)).toEqual(five);
+    // Their own words, quiet under the service they belong to; whole
+    // items only, the rest counted.
+    expect(full).toContain("dkc-service-own");
+    expect(full).not.toMatch(/dkc-service-label">Kitchens/);
+    expect(ownLine(["Villa interiors", "Kitchens and wardrobes", "Majlis design"])).toEqual({
+      shown: ["Villa interiors"],
+      more: 2,
+    });
+    expect(names(one(data("dwy", "ar"), "one-service")).at(-1)).toBe(
+      "خدمة أخرى",
+    );
+    // The likely pick on the band, its name in the column.
+    expect(full).toMatch(/data-lead=""[^>]*>[\s\S]*?Interior design/);
+    expect(full).toContain("dkc-matrix-band");
   });
   test("O5: the road ends at an example confirmation in their name, dated after go-live", () => {
     const d = data("full");
@@ -600,11 +694,11 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
     expect(test).not.toContain("dkc-redlines");
     expect(html).toMatch(/<section>[\s\S]*dkc-redlines[\s\S]*?<\/section>/);
   });
-  test("O6: the video guide on the card's head, its length filled in both languages", () => {
-    for (const lang of ["en", "ar"] as Lang[]) {
-      const f = FIXTURES.full();
+  test("O6: the video guide's poster on a two-card board, the text guide on three; its length filled in both languages", () => {
+    const board = (key: FixtureKey, lang: Lang) => {
+      const f = FIXTURES[key]();
       const d = deckData({
-        taskId: "fixture-full",
+        taskId: `fixture-${key}`,
         deck: "onboarding",
         lang,
         sources: f.sources,
@@ -617,7 +711,7 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
         now: NOW,
       });
       const s = onboardingSlides().find(x => x.id === "this-week");
-      const html = renderToStaticMarkup(
+      return renderToStaticMarkup(
         <>
           {s?.render({
             d,
@@ -637,11 +731,24 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
           })}
         </>,
       );
-      expect(html).toContain("dkc-guide-word");
-      expect(html).toMatch(
+    };
+    for (const lang of ["en", "ar"] as Lang[]) {
+      const html = board("full", lang);
+      // The slide's picture (22.14): each setup card's guide as its poster.
+      expect((html.match(/class="dkc-setup-poster/g) ?? []).length).toBe(2);
+      expect(html).toContain(lang === "en" ? "Video guide · 1:34" : "فيديو شرح، ");
+      expect(html).not.toContain('class="dkc-guide ');
+      expect(html).not.toMatch(/\{[a-zA-Z.]+\}/);
+      // Done steps tick in order as the slide arrives.
+      expect(html).toContain('data-arrive="" style="--k:0"');
+      // Three cards to a row: no room for a poster, the text guide on the
+      // card's head line, before its status.
+      const dwy = board("dwy", lang);
+      expect(dwy).not.toContain("dkc-setup-poster");
+      expect(dwy).toMatch(
         /<header class="dkc-setup-head">[\s\S]*?dkc-guide[\s\S]*?dkc-status/,
       );
-      expect(html).not.toMatch(/\{[a-zA-Z.]+\}/);
+      expect(dwy).not.toMatch(/\{[a-zA-Z.]+\}/);
     }
   });
   test("O7, not booked: the full calendar card as an empty day, no time made up", () => {

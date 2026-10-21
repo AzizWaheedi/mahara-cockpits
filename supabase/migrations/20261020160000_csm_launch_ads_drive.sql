@@ -566,10 +566,15 @@ BEGIN
     IF jsonb_typeof(f) <> 'object' OR coalesce(f->>'id', '') !~ '^[A-Za-z0-9_-]{10,200}$' THEN
       RAISE EXCEPTION 'Each file needs its Drive id.' USING ERRCODE = '22023';
     END IF;
-    -- The name's last path segment, with no control or direction marks.
+    -- The name's last path segment, with no control (C0 or C1), invisible or
+    -- direction marks (the review round: the Arabic letter mark, zero-width
+    -- space, line and paragraph separators, word joiners and the BOM too).
+    -- A name with nothing left is the file's Drive id: one odd name never
+    -- refuses the whole plan.
     v_name := btrim(left(regexp_replace(regexp_replace(coalesce(f->>'name', ''), '^.*[/\\]', ''),
-                                        '[[:cntrl:]‎‏‪-‮⁦-⁩]', '', 'g'), 200));
-    IF v_name = '' THEN RAISE EXCEPTION 'Each file needs its name.' USING ERRCODE = '22023'; END IF;
+                E'[[:cntrl:]\u0080-\u009F\u061C\u200B\u200E\u200F\u2028-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]',
+                '', 'g'), 200));
+    IF v_name = '' THEN v_name := f->>'id'; END IF;
     IF coalesce(f->>'mime', '') !~ '^(image|video)/[a-z0-9.+-]{1,60}$' THEN
       RAISE EXCEPTION 'Each file is a picture or a video.' USING ERRCODE = '22023';
     END IF;

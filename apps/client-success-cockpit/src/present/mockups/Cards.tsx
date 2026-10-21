@@ -6,6 +6,7 @@ import {
   type L,
   LAUNCH,
   type Lang,
+  sep,
   stepNumeral,
   t,
   tf,
@@ -77,7 +78,7 @@ export function QueueCard({
       : t(
           {
             en: l.en.replace(" · {service}", ""),
-            ar: l.ar.replace(" · {service}", ""),
+            ar: l.ar.replace("، {service}", ""),
           },
           lang,
         );
@@ -224,7 +225,7 @@ export function FiveDots({
             {r.when ? (
               <>
                 <span className="dkc-dot-when">{t(r.when, lang)}</span>
-                {r.plain ? (lang === "ar" ? "، " : ": ") : " · "}
+                {r.plain ? (lang === "ar" ? "، " : ": ") : sep(lang)}
                 {t(r.what, lang)}
               </>
             ) : r.end ? (
@@ -286,7 +287,7 @@ export function Reminders({
               {r.when ? (
                 <>
                   <span className="dkc-rem-when">{t(r.when, lang)}</span>
-                  {r.plain ? (lang === "ar" ? "، " : ": ") : " · "}
+                  {r.plain ? (lang === "ar" ? "، " : ": ") : sep(lang)}
                 </>
               ) : null}
               <span className={r.end ? "dkc-rem-end" : undefined}>

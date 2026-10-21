@@ -146,7 +146,16 @@ function Media({
       />
     );
   const src = c.video ? c.poster : c.url;
-  return src ? <img key={c.id} src={src} alt="" draggable={false} /> : null;
+  // An example ad's picture drifts once, slowly (DESIGN 22.14); theirs never.
+  return src ? (
+    <img
+      key={c.id}
+      src={src}
+      alt=""
+      draggable={false}
+      data-example={c.from === "example" ? "" : undefined}
+    />
+  ) : null;
 }
 
 /**
@@ -170,7 +179,8 @@ function Words({
       </div>
     ) : null;
   // The caption runs in its own language's direction, the Page name first,
-  // as the app sets a caption written in the other language.
+  // as the app sets a caption written in the other language. The text sits
+  // in its own isolate too: a caption is the client's, in either script.
   return (
     <div
       className={className}
@@ -179,7 +189,7 @@ function Words({
     >
       {lead}
       {lead ? " " : null}
-      <span>{text}</span>
+      <span dir="auto">{text}</span>
     </div>
   );
 }
@@ -238,7 +248,9 @@ export function IgFeed({ creative, who, pageName, app, play }: AdProps) {
       <Words
         text={creative?.primaryText ?? null}
         className="dkc-caption-text"
-        lead={<b>{pageName}</b>}
+        // Isolated: a Latin Page name inside an Arabic caption ("Al Reem …
+        // Co.") kept its full stop at its start without it (score round 3).
+        lead={<b dir="auto">{pageName}</b>}
       />
       <IgTabs />
     </div>

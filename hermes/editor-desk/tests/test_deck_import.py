@@ -380,6 +380,21 @@ class Listing(Base):
         self.assertEqual(sb.imports[IID]["code"], "not_found")
         self.assertEqual(drive.downloads, [])
 
+    def test_a_failed_read_of_the_clients_folder_leaves_the_import_working_never_not_found(self):
+        team = {"id": ROOT, "name": "Reels", "mimeType": FOLDER_MIME, "owners": [{"emailAddress": "ops@maharamedia.com"}],
+                "parents": ["1Mid000000000000000"]}
+        drive = FakeDrive(folders={ROOT: [media_file("1A00000000000000", "a.mp4")]}, meta={ROOT: team})
+        sb = FakeSb([an_import()])
+
+        def select(table: str, params: str) -> list[dict[str, Any]]:
+            raise http.HttpError(503, "service unavailable")
+
+        sb.select = select  # type: ignore[method-assign]
+        out = self.run_with(drive, sb)
+        self.assertEqual(out["imports"][0]["status"], "working")
+        self.assertNotIn("finish", sb.names())
+        self.assertEqual(drive.downloads, [])
+
     def test_a_subfolder_of_the_clients_folder_lands_even_when_the_team_owns_it(self):
         sub = {"id": ROOT, "name": "Reels", "mimeType": FOLDER_MIME, "owners": [{"emailAddress": "ops@maharamedia.com"}],
                "parents": ["1Mid000000000000000"]}
@@ -449,6 +464,30 @@ class Files(Base):
         self.assertEqual(self.entry(sb)["code"], "wrong_type")
         self.assertEqual(di.sniff(b"RIFF\x00\x00\x00\x00WEBPVP8 "), "webp")
         self.assertEqual(di.sniff(b"RIFF\x00\x00\x00\x00AVI LIST"), "avi")
+        for brand in (b"iso5", b"iso6", b"3gp4", b"3g2a"):
+            self.assertEqual(di.sniff(b"\x00\x00\x00\x18ftyp" + brand), "mp4", brand)
+        self.assertIsNone(di.sniff(b"\x00\x00\x00\x18ftypavis"))
+        self.assertIsNone(di.sniff(b"#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0"))
+        self.assertIsNone(di.sniff(b"ffconcat version 1.0\nfile "))
+
+    def test_the_plan_gets_a_type_the_server_takes_whatever_drive_says(self):
+        cases = [
+            ({"mimeType": "Video/MP4", "name": "clip"}, "video/mp4"),
+            ({"mimeType": "video/mp4; codecs=avc1", "name": "clip"}, "video/mp4"),
+            ({"mimeType": "application/octet-stream", "name": "IMG_2.MOV"}, "video/quicktime"),
+            ({"mimeType": "application/octet-stream", "name": "IMG_3.HEIC"}, "image/heic"),
+            ({"mimeType": "image/jpeg", "name": "a.jpg"}, "image/jpeg"),
+            ({"mimeType": "", "name": "photo"}, "image/jpeg"),
+        ]
+        for f, want in cases:
+            got = di.Run.plan_mime(f)
+            self.assertEqual(got, want, f)
+            self.assertIsNotNone(di.PLAN_MIME.fullmatch(got))
+        drive, sb = self.one(media_file("1Z00000000000000", "huge.mov", size=6 * 10**12), MOV)
+        plan = next(c for c in sb.calls if c[0].endswith("_plan"))[1]
+        self.assertEqual(plan["p_files"][0]["bytes"], 10**12)
+        self.assertEqual(self.entry(sb)["code"], "too_big")
+        self.assertEqual(drive.downloads, [])
 
     def test_heic_without_heif_convert_is_heic(self):
         self.tools.heif = False
@@ -531,6 +570,23 @@ class Resume(Base):
         self.assertTrue(all(u["upsert"] for u in sb.uploads))
         self.assertEqual(sb.uploads[0]["path"], f"{TASK}/00000000-0000-4000-8000-000000000777.mp4")
         self.assertEqual(sb.imports[IID]["status"], "done")
+
+    def test_a_resumed_import_never_reads_what_the_previous_import_learned_about_a_file(self):
+        shared = "1Same000000000000"
+        first = an_import()
+        second_id = "6f0c1e2a-0000-4000-8000-000000000002"
+        entry = {"driveId": shared, "name": "a.mp4", "mime": "video/mp4", "bytes": 100, "status": "queued",
+                 "adId": None, "resourceKey": None}
+        second = an_import(id=second_id, taskId="86c1other", driveId="1OtherRoot000000000", resumed=True,
+                           files=[entry], found=1)
+        # In the first client's folder Drive says it cannot be downloaded.
+        drive = FakeDrive(folders={ROOT: [media_file(shared, "a.mp4", capabilities={"canDownload": False})]},
+                          content={shared: MP4})
+        sb = FakeSb([first, second])
+        self.run_with(drive, sb)
+        self.assertEqual(sb.imports[IID]["files"][0]["code"], "download")
+        self.assertEqual(sb.imports[second_id]["files"][0]["status"], "landed")
+        self.assertEqual(drive.downloads[0]["keys"], {shared: None})
 
 
 class Upload(Base):
@@ -661,6 +717,22 @@ class Claims(Base):
         self.run_with(FakeDrive(), FakeSb())
         self.assertFalse((self.cfg.scratch / "deck-import").exists())
 
+    def test_a_second_run_beside_a_working_one_does_nothing_and_keeps_its_scratch(self):
+        import fcntl
+        left = self.cfg.scratch / "deck-import" / IID / "1A"
+        left.mkdir(parents=True)
+        (left / "in.bin").write_bytes(b"x" * 100)
+        with open(self.cfg.scratch / "deck-import.lock", "a") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            sb = FakeSb([an_import()])
+            out = self.run_with(FakeDrive(), sb)
+        self.assertEqual(out.get("skipped"), "running")
+        self.assertEqual(sb.calls, [])
+        self.assertTrue((left / "in.bin").exists(), "the working run's download is untouched")
+        # Once the first run is gone, the next one runs.
+        sb = FakeSb()
+        self.assertNotIn("skipped", self.run_with(FakeDrive(), sb))
+
     def test_under_4_gb_free_nothing_is_claimed(self):
         self.tools.free = 3 * GB
         sb = FakeSb([an_import()])
@@ -720,6 +792,49 @@ class Links(unittest.TestCase):
         self.assertGreater(len(cases), 60)
         for c in cases:
             self.assertEqual(di.parse_drive_link(c["link"]), c["want"], c["name"])
+
+    def test_links_built_to_slip_past_a_parser(self):
+        """The security review's table; the same one runs through the
+        server's parser (csm-decks-supabase.test.ts)."""
+        i, i2 = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345", "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765"
+        bad = [
+            (f"https://drive.google.com/drive/folders/%31{i[1:]}", "link_bad"),
+            (f"https://drive.google.com/open?id=%31{i[1:]}", "link_bad"),
+            (f"https://drive.google.com/file/d/{i}%2F..%2F/view", "link_bad"),
+            (f"https://drive.google.com/drive/folders/{i}‏", "link_bad"),
+            (f"‮https://drive.google.com/drive/folders/{i}", "link_bad"),
+            (f"https://drive.google.com/drive/folders/{i}​", "link_bad"),
+            (f"https://drіve.google.com/drive/folders/{i}", "link_bad"),
+            (f"https://drive.google.com\\@evil.example/drive/folders/{i}", "link_bad"),
+            (f"https://evil.example\\.drive.google.com/drive/folders/{i}", "link_bad"),
+            (f"https://drive.google.com#@evil.example/drive/folders/{i}", "link_bad"),
+            (f"https://drive.google.com?/drive/folders/{i}", "link_bad"),
+            (f"https://drive.google.com./drive/folders/{i}", "link_bad"),
+            (f"https://127.0.0.1/drive/folders/{i}", "link_bad"),
+            (f"https://drive.google.com/drive/folders/{i}/../../file/d/{i2}", "link_bad"),
+            (f"https:/drive.google.com/drive/folders/{i}", "link_bad"),
+            (f"https:\\\\drive.google.com/drive/folders/{i}", "link_bad"),
+            (f"//drive.google.com/drive/folders/{i}", "link_bad"),
+            (f"https://drive.google.com/drive/folders/{i}\thttps://drive.google.com/drive/folders/{i2}", "link_bad"),
+            ("https://forms.gle/AbCdEfGhIjKl", "link_bad"),
+            ("https://docs.google.com/forms/d/e/1FAIpQLSfAbCdEf/viewform?usp=sf_link", "link_docs"),
+        ]
+        for link, code in bad:
+            self.assertEqual(di.parse_drive_link(link), {"ok": False, "code": code}, link)
+        good = [
+            (f"https://drive.google.com/open?id={i}&resourcekey=0-abc%2F..",
+             {"ok": True, "id": i, "kind": "either", "resourceKey": None, "link": f"https://drive.google.com/open?id={i}"}),
+            (f"https://drive.google.com/drive/folders/{i}?resourcekey=0-ok&resourcekey=0-second",
+             {"ok": True, "id": i, "kind": "folder", "resourceKey": "0-ok",
+              "link": f"https://drive.google.com/drive/folders/{i}?resourcekey=0-ok"}),
+            (f"https://DRIVE.google.com/file/d/{i}/view?resourcekey=RK_1-x#frag",
+             {"ok": True, "id": i, "kind": "file", "resourceKey": "RK_1-x",
+              "link": f"https://drive.google.com/file/d/{i}/view?resourcekey=RK_1-x"}),
+            (f"https://drive.google.com/uc?id={i}&id={i2}",
+             {"ok": True, "id": i, "kind": "file", "resourceKey": None, "link": f"https://drive.google.com/file/d/{i}/view"}),
+        ]
+        for link, want in good:
+            self.assertEqual(di.parse_drive_link(link), want, link)
 
 
 class Helpers(unittest.TestCase):

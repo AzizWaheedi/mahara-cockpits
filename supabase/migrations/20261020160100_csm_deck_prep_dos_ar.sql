@@ -2,8 +2,15 @@
 --
 --   dos_donts_ar       launch row: the Arabic of each Do's & Don'ts card line,
 --                      keyed by the line as parsed (DESIGN.md 22.6.2)
---   example_theme      onboarding row: the example ad's theme, one of twelve,
---                      read by both decks (DESIGN.md 22.4.5)
+--   example_theme      onboarding row: the example ad's theme, read by both
+--                      decks (DESIGN.md 22.4.5). The CEO, 2026-10-21: the
+--                      example follows the client's main service (the
+--                      kickoff form's "Which service are we advertising?"),
+--                      never a sub-trade. So it takes one of the five
+--                      service keys (design-build, interior, architecture,
+--                      fitout, construction) or one of the eighteen example
+--                      scenes (the first twelve and the six added for the
+--                      services); either names a picture set the browser has.
 --   service_chosen_at  onboarding row: O4's "Launch with this" (DESIGN.md
 --                      22.2.0). Set with true (the server writes its own time,
 --                      never the browser's), cleared with null or false (the
@@ -184,10 +191,13 @@ BEGIN
     END LOOP;
     RETURN nullif(out, '{}'::jsonb);
   WHEN p_key = 'example_theme' THEN
-    -- The example ad's theme while the client has no creative (DESIGN.md 22.4.5).
+    -- The example ad's theme while the client has no creative (DESIGN.md 22.4.5):
+    -- a main service's key, or one of the example scenes.
     RETURN public.cockpit_csm_deck_choice(p_value,
-      ARRAY['kitchen','living','majlis','villa','construction','bathroom','pool',
-            'landscape','bedroom','office','facade','stairs'], p_key);
+      ARRAY['design-build','interior','architecture','fitout','construction',
+            'kitchen','living','majlis','villa','bathroom','pool',
+            'landscape','bedroom','office','facade','stairs',
+            'designbuild','architecture2','fitout2','fitout3','construction2','construction3'], p_key);
   ELSE
     RAISE EXCEPTION 'Prep does not keep "%"', p_key;
   END CASE;

@@ -2310,6 +2310,12 @@ describe("the visual pass: Drive imports, prep keys and video posters", () => {
       (await save(CSM_A, A, "onboarding", { example_theme: "majlis" }))
         .overrides.example_theme,
     ).toBe("majlis");
+    // The CEO, 2026-10-21: the example follows the main service. The five
+    // service keys and the six scenes added for them are kept too.
+    for (const theme of ["design-build", "interior", "architecture", "fitout", "construction", "fitout2", "designbuild", "architecture2"])
+      expect(
+        (await save(CSM_A, A, "onboarding", { example_theme: theme })).overrides.example_theme,
+      ).toBe(theme);
     const first = await save(CSM_A, A, "onboarding", {
       service_chosen_at: true,
     });
@@ -2453,5 +2459,73 @@ describe("the visual pass: Drive imports, prep keys and video posters", () => {
     expect(added.map(r => [r.action, r.actor_email])).toEqual([
       ["deck_video.poster", `worker:${WORKER}`],
     ]);
+  });
+
+  // The security review (2026-10-21): links built to slip past a parser.
+  // The same table runs through the worker's parser (test_deck_import.py).
+  test("the parser refuses look-alike hosts, userinfo, encoded ids, invisible marks and path tricks, and keeps only a clean resource key", async () => {
+    const ID = "1AbCdEfGhIjKlMnOpQrStUvWxYz012345";
+    const ID2 = "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765";
+    const bad: [string, string][] = [
+      [`https://drive.google.com/drive/folders/%31${ID.slice(1)}`, "link_bad"],
+      [`https://drive.google.com/open?id=%31${ID.slice(1)}`, "link_bad"],
+      [`https://drive.google.com/file/d/${ID}%2F..%2F/view`, "link_bad"],
+      [`https://drive.google.com/drive/folders/${ID}\u200f`, "link_bad"],
+      [`\u202ehttps://drive.google.com/drive/folders/${ID}`, "link_bad"],
+      [`https://drive.google.com/drive/folders/${ID}\u200b`, "link_bad"],
+      [`https://dr\u0456ve.google.com/drive/folders/${ID}`, "link_bad"],
+      [`https://drive.google.com\\@evil.example/drive/folders/${ID}`, "link_bad"],
+      [`https://evil.example\\.drive.google.com/drive/folders/${ID}`, "link_bad"],
+      [`https://drive.google.com#@evil.example/drive/folders/${ID}`, "link_bad"],
+      [`https://drive.google.com?/drive/folders/${ID}`, "link_bad"],
+      [`https://drive.google.com./drive/folders/${ID}`, "link_bad"],
+      [`https://127.0.0.1/drive/folders/${ID}`, "link_bad"],
+      [`https://drive.google.com/drive/folders/${ID}/../../file/d/${ID2}`, "link_bad"],
+      [`https:/drive.google.com/drive/folders/${ID}`, "link_bad"],
+      [`https:\\\\drive.google.com/drive/folders/${ID}`, "link_bad"],
+      [`//drive.google.com/drive/folders/${ID}`, "link_bad"],
+      [`https://drive.google.com/drive/folders/${ID}\thttps://drive.google.com/drive/folders/${ID2}`, "link_bad"],
+      [`https://forms.gle/AbCdEfGhIjKl`, "link_bad"],
+      [`https://docs.google.com/forms/d/e/1FAIpQLSfAbCdEf/viewform?usp=sf_link`, "link_docs"],
+    ];
+    await asOwner();
+    for (const [link, code] of bad) {
+      const r = (await db.query<{ r: Row }>("SELECT public.cockpit_csm_drive_link_parse($1::text) r", [link])).rows[0].r;
+      expect({ link, r }).toEqual({ link, r: { ok: false, code } });
+    }
+    const good: [string, Row][] = [
+      [`https://drive.google.com/open?id=${ID}&resourcekey=0-abc%2F..`,
+        { ok: true, id: ID, kind: "either", resourceKey: null, link: `https://drive.google.com/open?id=${ID}` }],
+      [`https://drive.google.com/drive/folders/${ID}?resourcekey=0-ok&resourcekey=0-second`,
+        { ok: true, id: ID, kind: "folder", resourceKey: "0-ok", link: `https://drive.google.com/drive/folders/${ID}?resourcekey=0-ok` }],
+      [`https://DRIVE.google.com/file/d/${ID}/view?resourcekey=RK_1-x#frag`,
+        { ok: true, id: ID, kind: "file", resourceKey: "RK_1-x", link: `https://drive.google.com/file/d/${ID}/view?resourcekey=RK_1-x` }],
+      [`https://drive.google.com/uc?id=${ID}&id=${ID2}`,
+        { ok: true, id: ID, kind: "file", resourceKey: null, link: `https://drive.google.com/file/d/${ID}/view` }],
+    ];
+    for (const [link, want] of good) {
+      const r = (await db.query<{ r: Row }>("SELECT public.cockpit_csm_drive_link_parse($1::text) r", [link])).rows[0].r;
+      expect({ link, r }).toEqual({ link, r: want });
+    }
+    // Through the browser's call: refused, and nothing stored.
+    const before = (await importAudits()).length;
+    expect(await fail(CSM_A, REQUEST, [A, `https://drive.google.com\\@evil.example/drive/folders/${ID}`])).toMatchObject({
+      code: "22023",
+      hint: "link_bad",
+    });
+    expect((await importAudits()).length).toBe(before);
+  });
+
+  test("plan: a name loses its invisible and direction marks, and a name with nothing left is the file's id, never a refused plan", async () => {
+    await closeOpen();
+    const imp = await request(CSM_A, A, `https://drive.google.com/drive/folders/${F(13)}`);
+    await claim();
+    const planned = await plan(imp.id, [
+      media(50, { name: "a\u061cb\u2066c\u2069\u0085d\u200be.mp4" }),
+      media(51, { name: "\u202e\u200b \u200f" }),
+      media(52, { name: "folder/sub\\clip\u2028.mov" }),
+    ]);
+    expect(planned.files.map((f: Row) => f.name)).toEqual(["abcde.mp4", FILE_ID(51), "clip.mov"]);
+    expect(await finish(imp.id)).toMatchObject({ status: "done", failed: 3 });
   });
 });

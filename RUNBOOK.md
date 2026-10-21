@@ -247,6 +247,7 @@ hour, notes hourly, each under its own lock; log `~/.editor-desk/out/cron.log`.
 | iPhone photos fail with "we couldn't convert" | No `heif-convert` on the VPS: the doctor's `deck-import heic` line. Install `libheif-examples` | Hermes |
 | A video says "couldn't be converted to play in a browser" | ffmpeg failed or ran past 15 minutes on it: `grep deck-import ~/.editor-desk/out/cron.log` for its line. Export it as H.264 MP4 and upload it by hand, or paste its new link | The CSM |
 | An import says "stopped three times without bringing anything in" | The run keeps dying on that import (out of disk, killed at the 50-minute ceiling, or the desk lost Supabase). `python3 desk.py doctor`; `grep deck-import ~/.editor-desk/out/cron.log` | Hermes |
+| `deck-import: another run is working; this one does nothing` in the log | A run started by hand beside the cron run (the command takes its own lock, `<scratch>/deck-import.lock`, so it never clears a working run's downloads). Let the first one finish; use `--dry-run --link` to look at a link without a lock | Hermes |
 | An import stays "Bringing in" while the roster is refreshed | Expected for a few minutes: the server answers 55006 and the worker leaves the import working (never a file failure). It carries on once the client roster is ready | Nobody |
 | Video posters in prep stay the designed card | `python3 desk.py doctor`, the `deck-import posters` line ("missing: apply 20261020160200…" means the migration). A provider whose oEmbed fails is asked again a day later | Hermes |
 

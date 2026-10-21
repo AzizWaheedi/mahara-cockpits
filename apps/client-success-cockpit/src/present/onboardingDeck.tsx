@@ -1,8 +1,9 @@
-import { Check, FolderOpen, Plus, X } from "lucide-react";
+import { Check, FolderOpen, X } from "lucide-react";
 import {
   type CSSProperties,
-  type KeyboardEvent,
+  type RefObject,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -11,12 +12,14 @@ import maharaLogo from "@/assets/mahara-logo-dark.png";
 import { useCreatives } from "./AdsStage";
 import { bookedSlot, CONFIRMATION, plain } from "./callScript";
 import {
+  digits,
   EXAMPLE,
   type L,
   type Lang,
   O,
   O_NOTES,
   O_TITLES,
+  SERVICES,
   SHARED,
   t,
   tf,
@@ -29,10 +32,11 @@ import { shownGoals } from "./deckData";
 import {
   exampleCreative,
   feedUrl,
+  parseChoice,
+  SCENES,
   storyUrl,
-  THEMES,
-  themeOfText,
-  tileUrl,
+  stripTiles,
+  type Theme,
   warmExamples,
 } from "./examples";
 import { useHug } from "./hug";
@@ -41,9 +45,11 @@ import { ClientMark, type Identity } from "./mockups/Identity";
 import { IgFeed, Phone, PhoneFigure, ReelStory } from "./mockups/Phones";
 import { WhatsAppGroup } from "./mockups/WhatsAppGroup";
 import { Route, type RouteStop, routeMs } from "./Road";
+import { type ServiceKey, serviceOfText } from "./services";
 import { StageSwap } from "./StageSwap";
 import { TodayList } from "./TodayList";
 import { filledOn, lengthText } from "./videos";
+import { posterFor } from "./VideoPoster";
 
 /**
  * The onboarding deck: seven slides, about 22 minutes of a 45 to 60 minute
@@ -227,6 +233,71 @@ export function goalsView(d: DeckData) {
 const goalSize = (text: string) =>
   text.length > 150 ? "56" : text.length > 90 ? "64" : "80";
 
+/**
+ * The goal's words, each its own box, so the goal sets in line by line on
+ * arrival (DESIGN 22.14): once laid out, each word learns its line (`--ln`),
+ * and a line rises after the one above it. Under still and reduced motion
+ * every line is set at once.
+ */
+function useLines(ref: RefObject<HTMLElement | null>, key: string) {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: key is the text being set
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let live = true;
+    const mark = () => {
+      if (!live) return;
+      const words = [...el.querySelectorAll<HTMLElement>(".dkc-goal-w")];
+      let line = -1;
+      let top = Number.NEGATIVE_INFINITY;
+      for (const w of words) {
+        if (w.offsetTop > top + 4) {
+          line += 1;
+          top = w.offsetTop;
+        }
+        w.style.setProperty("--ln", String(line));
+      }
+    };
+    mark();
+    document.fonts?.ready.then(mark);
+    return () => {
+      live = false;
+    };
+  }, [key]);
+}
+
+/** The goal's words as boxes, the spaces between them kept as text. */
+const goalWords = (text: string) =>
+  text
+    .split(/(\s+)/)
+    .filter(Boolean)
+    .map((w, i) =>
+      /^\s+$/.test(w) ? (
+        w
+      ) : (
+        <span key={`${String(i)}-${w}`} className="dkc-goal-w">
+          {w}
+        </span>
+      ),
+    );
+
+/**
+ * Under the goal, its 90 days drawn (DESIGN 22.14): from today to the end
+ * of the 90 days, the line drawing across the slide on arrival. On the
+ * second stop it is the rule the other answers sit under.
+ */
+function GoalTrack({ label, lang }: { label: L; lang: Lang }) {
+  return (
+    <div className="dkc-goal-track" aria-hidden>
+      <i className="dkc-goal-track-line" />
+      <i className="dkc-goal-track-from" />
+      <i className="dkc-goal-track-to" />
+      <span className="dkc-goal-track-today">{t(O.goals.today, lang)}</span>
+      <span className="dkc-goal-track-end">{t(label, lang)}</span>
+    </div>
+  );
+}
+
 function GoalInput({ ctx }: { ctx: SlideCtx }) {
   const { lang, prep, save } = ctx;
   const goals = record(prep.goals);
@@ -314,6 +385,7 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
   const { lead, rest } = goalsView(d);
   const leadRef = useRef<HTMLParagraphElement>(null);
   useHug(leadRef, lead?.lines[0] ?? "");
+  useLines(leadRef, `${lang}:${lead?.lines[0] ?? ""}`);
   const row = tour >= 1 && rest.length ? rest : null;
   // One stop when there is nothing to add: the footnote is there at once.
   const foot = rest.length ? tour >= 1 : true;
@@ -344,25 +416,33 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
         <h2 className="dk-h2">{t(O.goals.title, lang)}</h2>
         <span className="dk-tag">{t(O.goals.source, lang)}</span>
       </div>
-      {/* Stop 1: the goal alone, their words set as type. It never moves
-          or shrinks when the rest arrives. */}
-      <div className="dkc-goal-block">
-        <span className="dk-label">{t(lead.label, lang)}</span>
-        <p
-          ref={leadRef}
-          className="dkc-goal-text dkc-theirs"
-          data-size={goalSize(lead.lines[0] ?? "")}
-          // Their words in Latin letters keep the Latin type's line height
-          // in the Arabic deck too (Arabic's taller one pushed stop 2's
-          // row into the foot).
-          data-latin={
-            /[\u0600-\u06ff]/.test(lead.lines[0] ?? "") ? undefined : ""
-          }
-          dir="auto"
-          data-hug=""
-        >
-          {lead.lines[0]}
-        </p>
+      {/* Stop 1: the goal alone, their words set as type, line by line,
+          over its 90 days drawn across the slide; the pair sits low on the
+          stage (22.14: it left the lower half empty) and settles up when the
+          other answers arrive under the line, which is their rule. */}
+      <div
+        className="dkc-goal-stage"
+        data-lift={row ? undefined : rest.length ? "" : undefined}
+        data-alone={rest.length ? undefined : ""}
+      >
+        <div className="dkc-goal-block">
+          <p
+            ref={leadRef}
+            className="dkc-goal-text dkc-theirs"
+            data-size={goalSize(lead.lines[0] ?? "")}
+            // Their words in Latin letters keep the Latin type's line
+            // height in the Arabic deck too (Arabic's taller one pushed
+            // stop 2's row into the foot).
+            data-latin={
+              /[\u0600-\u06ff]/.test(lead.lines[0] ?? "") ? undefined : ""
+            }
+            dir="auto"
+            data-hug=""
+          >
+            {goalWords(lead.lines[0] ?? "")}
+          </p>
+        </div>
+        <GoalTrack label={lead.label} lang={lang} />
       </div>
       {row ? <GoalRow goals={row} lang={lang} /> : null}
       {foot ? (
@@ -403,132 +483,87 @@ function Team({ ctx }: { ctx: SlideCtx }) {
 
 // ------------------------------------------------------- O4 one service
 
-const same = (a: string | null | undefined, b: string | null | undefined) =>
-  Boolean(a && b && a.trim().toLowerCase() === b.trim().toLowerCase());
-
-/** The service the matrix points at: the CSM's pick, else the most ticks. */
+/**
+ * The row the matrix points at (DESIGN 22.14): the CSM's pointer, else the
+ * row with the most ticks (their #1 wins a tie), else the client's likely
+ * service from their answers (slide 4's choice, prep, the kickoff, then
+ * their own words mapped to a main service). Keys, never sub-trades.
+ */
 export function leadService(
   d: DeckData,
   ticks: Record<string, Record<string, boolean>>,
   picked: string | null,
-) {
-  const score = (s: string) =>
-    Object.values(ticks[s] ?? {}).filter(Boolean).length;
-  let best: string | null = null;
+): { lead: ServiceKey | null; candidate: ServiceKey | null } {
+  const keys = d.serviceRows.map(r => r.key);
+  const one = serviceOfText(d.numberOne);
+  const score = (k: ServiceKey) =>
+    Object.values(ticks[k] ?? {}).filter(Boolean).length;
+  let best: ServiceKey | null = null;
   let top = 0;
-  for (const s of d.services) {
-    const n = score(s);
-    if (n > top || (n === top && n > 0 && same(s, d.numberOne))) {
-      best = s;
+  for (const k of keys) {
+    const n = score(k);
+    if (n > top || (n === top && n > 0 && k === one)) {
+      best = k;
       top = n;
     }
   }
   const lead = top > 0 ? best : null;
-  const candidate =
-    (picked && d.services.find(s => same(s, picked))) ||
-    lead ||
-    d.serviceChosen ||
-    d.serviceFocus ||
-    d.services[0] ||
-    null;
-  return { lead, candidate };
-}
-
-function AddService({
-  ctx,
-  open,
-  setOpen,
-  setFocus,
-  focus,
-}: {
-  ctx: SlideCtx;
-  open: boolean;
-  setOpen: (v: boolean) => void;
-  setFocus: (v: boolean) => void;
-  /** Take the keyboard: only when the CSM opened it, never on arrival (a clicker's → would type). */
-  focus: boolean;
-}) {
-  const { d, lang, prep, save } = ctx;
-  const [value, setValue] = useState("");
-  const key =
-    lang === "ar" && strings(prep.services_ar).length
-      ? "services_ar"
-      : "services";
-  const add = () => {
-    const v = value.trim();
-    if (v && !d.services.some(s => same(s, v)))
-      save({ [key]: [...d.services, v] }, true);
-    setValue("");
-  };
-  if (!open)
-    return (
-      <div className="dkc-add">
-        <button
-          type="button"
-          className="dkc-add-btn dkc-press"
-          onClick={() => {
-            setFocus(true);
-            setOpen(true);
-          }}
-          onPointerUp={letGo}
-        >
-          <Plus aria-hidden style={{ width: 22, height: 22 }} />
-          {t(O.one.add, lang)}
-        </button>
-      </div>
-    );
-  return (
-    <div className="dkc-add">
-      <input
-        className="dkc-add-input"
-        // biome-ignore lint/a11y/noAutofocus: only after the CSM pressed Add a service
-        autoFocus={focus}
-        dir="auto"
-        value={value}
-        placeholder={t(O.one.addInput, lang)}
-        aria-label={t(O.one.addInput, lang)}
-        onChange={e => setValue(e.target.value)}
-        onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            add();
-          } else if (e.key === "Escape") {
-            e.stopPropagation();
-            setValue("");
-            setOpen(false);
-          }
-        }}
-        onBlur={() => {
-          add();
-          if (d.services.length) setOpen(false);
-        }}
-      />
-    </div>
-  );
+  const mine = keys.find(k => k === picked) ?? null;
+  const likely =
+    d.service.key && keys.includes(d.service.key) ? d.service.key : null;
+  return { lead, candidate: mine ?? lead ?? likely };
 }
 
 /**
- * The matrix's row height (DESIGN 22.2.4): the band moves by it. Three
- * services or fewer take 96 px rows and 36 px names (score round 2: two
- * 72 px rows ended the table at y 600 beside a full-height phone).
+ * The matrix's row height (DESIGN 22.14): five rows take 92 px, six (with
+ * "Other") 84, room for a name and the client's own words under it, and
+ * the table ends above the foot's checklist in both languages. The band
+ * moves by it.
  */
-export const rowHeight = (services: number) => (services <= 3 ? 96 : 72);
+export const rowHeight = (rows: number) => (rows > 5 ? 84 : 92);
+
+/** A row's name: the service in the deck's language; "Other" as said. */
+const rowName = (key: ServiceKey, lang: Lang) => t(SERVICES[key].name, lang);
 
 /**
- * The rows still to fill, drawn as ghosts (score round 2): with no service
- * the matrix read as an empty table. Three rows always show while fewer
- * than three services are typed; each typed one takes a ghost's place, and
- * "Add a service" sits in the first ghost's name slot.
+ * The service a choice saves (DESIGN 22.14): a main service's two names,
+ * the kickoff's own wording in English; "Other" as the client wrote it.
  */
-export const ghostRows = (services: number) => Math.max(0, 3 - services);
+export function chosenPatch(
+  d: DeckData,
+  key: ServiceKey,
+  prep: Record<string, unknown>,
+): Record<string, unknown> {
+  const words = d.serviceRows.find(r => r.key === key)?.own[0] ?? null;
+  const patch: Record<string, unknown> =
+    key === "other"
+      ? {
+          service_focus: words,
+          service_focus_ar: words && ARABIC_LETTER.test(words) ? words : null,
+        }
+      : {
+          service_focus: SERVICES[key].name.en,
+          service_focus_ar: SERVICES[key].name.ar,
+        };
+  // A picture chosen in prep for another service gives way to the choice.
+  const pickedPic = parseChoice(prep.example_theme);
+  if (
+    pickedPic &&
+    (key === "other" ||
+      (pickedPic.service
+        ? pickedPic.service !== key
+        : !SCENES[key].includes(pickedPic.scene)))
+  )
+    patch.example_theme = null;
+  return { ...patch, service_chosen_at: true };
+}
 
-/**
- * The example a service maps to (DESIGN 22.4.2), else the client's own
- * theme: the phone shows the chosen service's picture once it is chosen.
- */
-function themeFor(d: DeckData, service: string | null) {
-  if (d.example.from === "prep") return d.example.theme;
-  return themeOfText(service) ?? d.example.theme;
+/** The lead picture for a row on O4's phone: prep's pick for it, else its own lead. */
+function sceneFor(d: DeckData, key: ServiceKey | null): Theme {
+  if (!key || key === "other") return d.example.theme;
+  if (d.example.from === "prep" && d.example.service === key)
+    return d.example.theme;
+  return SCENES[key][0];
 }
 
 function ProductPhone({
@@ -536,24 +571,28 @@ function ProductPhone({
   service,
 }: {
   ctx: SlideCtx;
-  /** The service the phone shows: the chosen one, else the proposal. */
-  service: string | null;
+  /** The row the phone shows: the chosen one, else the proposal. */
+  service: ServiceKey | null;
 }) {
   const { d, lang } = ctx;
   const model = useCreatives(ctx);
-  const theme = themeFor(d, service);
+  const theme = sceneFor(d, service);
   // A custom creative of their own shows instead of the example, untagged
   // (never a starter template: that is what goes live, not their work).
   const own =
     [...model.tray, ...model.meta].find(
       c => !c.starter && phoneFor(c) !== "reels" && (c.url || c.poster),
     ) ?? null;
+  const headline =
+    service && service !== "other"
+      ? t(SERVICES[service].name, lang)
+      : d.exampleWords.headline;
   const creative: Creative =
     own ??
     exampleCreative(
       theme,
       "feed",
-      { primary: d.exampleWords.primary, headline: service },
+      { primary: d.exampleWords.primary, headline },
       lang,
     );
   useEffect(() => {
@@ -588,50 +627,79 @@ function ProductPhone({
   );
 }
 
+/**
+ * The words a row's quiet line has room for (about 36 characters): whole
+ * items only, the rest counted, so no word of theirs is cut mid-way.
+ */
+export function ownLine(words: string[], room = 36) {
+  const shown: string[] = [];
+  let used = 0;
+  for (const w of words) {
+    const add = (shown.length ? 2 : 0) + w.length;
+    if (shown.length && used + add > room) break;
+    shown.push(w);
+    used += add;
+  }
+  return { shown, more: words.length - shown.length };
+}
+
+/** A row's own words, quiet, each in its own direction (never our label again). */
+function OwnWords({ words, lang }: { words: string[]; lang: Lang }) {
+  if (!words.length) return null;
+  const sep = lang === "ar" ? "، " : ", ";
+  const { shown, more } = ownLine(words, lang === "ar" ? 32 : 36);
+  return (
+    <span className="dkc-service-own">
+      {shown.map((w, i) => (
+        <span key={w}>
+          {i ? sep : null}
+          <bdi>{w}</bdi>
+        </span>
+      ))}
+      {more ? <span className="dkc-service-more">{` +${digits(more, lang)}`}</span> : null}
+    </span>
+  );
+}
+
 function OneService({ ctx }: { ctx: SlideCtx }) {
-  const { d, lang, live, setLive, save } = ctx;
-  // With no services yet the matrix's first row is its quiet "Add a
-  // service" control, not an open input on the client's screen.
-  const [adding, setAdding] = useState(false);
-  const [grab, setGrab] = useState(false);
-  const { lead, candidate } = leadService(d, live.ticks, live.candidate);
-  // Chosen is a recorded fact ("Launch with this" stamps it); a service
-  // typed in prep is the proposal, in ink-2, until the client chooses.
-  const chosen = d.today.service && same(candidate, d.serviceChosen);
-  const flip = (service: string, test: string) =>
+  const { d, lang, live, setLive, save, prep } = ctx;
+  const { candidate } = leadService(d, live.ticks, live.candidate);
+  const rows = d.serviceRows;
+  // Chosen is a recorded fact ("Launch with this" stamps it); the likely
+  // pick from their answers is the proposal, in ink-2, until they choose.
+  const chosenKey = d.service.from === "chosen" ? d.service.key : null;
+  const chosen = Boolean(d.today.service && candidate && candidate === chosenKey);
+  const flip = (service: ServiceKey, test: string) =>
     setLive(l => {
       const row = { ...(l.ticks[service] ?? {}) };
       row[test] = !row[test];
       return { ...l, ticks: { ...l.ticks, [service]: row } };
     });
-  const leadRow = lead ?? live.candidate ?? (chosen ? candidate : null);
-  const at = d.services.findIndex(s => same(s, leadRow));
-  const long = (candidate ?? "").trim().length > 22;
-  const n = d.services.length;
-  const rowH = rowHeight(n);
-  const ghosts = ghostRows(n);
-  const add = (
-    <AddService
-      ctx={ctx}
-      open={adding}
-      setOpen={setAdding}
-      focus={grab}
-      setFocus={setGrab}
-    />
-  );
+  const at = rows.findIndex(r => r.key === candidate);
+  const rowH = rowHeight(rows.length);
+  const one = serviceOfText(d.numberOne);
+  const other = rows.find(r => r.key === "other");
+  // "Other" names itself in the client's words; with none, it cannot launch.
+  const candidateName =
+    candidate === "other"
+      ? (other?.own[0] ?? null)
+      : candidate
+        ? rowName(candidate, lang)
+        : null;
+  const long = (candidateName ?? "").trim().length > 22;
   return (
     <>
       <h2 className="dk-h2">{t(O.one.title, lang)}</h2>
       <p className="dk-lead dkc-one-line">{t(O.one.line, lang)}</p>
       <div className="dkc-one">
-        {/* The decision: their services against the three tests. A tick is
-            the lanes' passed mark; the row the tests point at sits on the
-            band, which moves to it. */}
+        {/* The decision: the five main services (the kickoff's own choices)
+            against the three tests, the client's own words quiet under the
+            service they belong to. A tick is the lanes' passed mark; the
+            row the decision points at sits on the band, which moves to it. */}
         <div
           className="dkc-matrix"
           role="table"
           aria-label={t(O.one.title, lang)}
-          data-few={n <= 3 ? "" : undefined}
           style={{ "--row-h": `${rowH}px` } as CSSProperties}
         >
           <div className="dkc-matrix-row dkc-matrix-head" role="row">
@@ -649,74 +717,58 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
               data-on={at >= 0 ? "" : undefined}
               style={{ transform: `translateY(${Math.max(0, at) * rowH}px)` }}
             />
-            {d.services.map(s => (
-              <div
-                key={s}
-                className="dkc-matrix-row"
-                role="row"
-                data-lead={same(s, leadRow) ? "" : undefined}
-              >
-                <span className="dkc-service" role="rowheader">
-                  <button
-                    type="button"
-                    className="dkc-service-name dkc-press dkc-theirs"
-                    dir="auto"
-                    aria-pressed={same(s, candidate)}
-                    onClick={() => setLive(l => ({ ...l, candidate: s }))}
-                    onPointerUp={letGo}
-                  >
-                    {s}
-                  </button>
-                  {same(s, d.numberOne) && !same(s, candidate) ? (
-                    <span className="dkc-numberone">
-                      {t(O.one.numberOne, lang)}
-                    </span>
-                  ) : null}
-                </span>
-                {O.one.tests.map(x => {
-                  const on = Boolean(live.ticks[s]?.[x.key]);
-                  return (
-                    <span key={x.key} className="dkc-cell" role="cell">
-                      <button
-                        type="button"
-                        className="dkc-tick dkc-press"
-                        aria-pressed={on}
-                        aria-label={`${s}: ${t(x.label, lang)}`}
-                        onClick={() => flip(s, x.key)}
-                        onPointerUp={letGo}
-                      >
-                        <svg viewBox="0 0 24 24" aria-hidden>
-                          <path pathLength={1} d="M6 12.5l4 4 8-9" />
-                        </svg>
-                      </button>
-                    </span>
-                  );
-                })}
-              </div>
-            ))}
-            {ghosts ? (
-              Array.from({ length: ghosts }, (_, i) => (
+            {rows.map((r, i) => {
+              const name = rowName(r.key, lang);
+              return (
                 <div
-                  key={`ghost-${String(i)}`}
-                  className="dkc-matrix-row dkc-matrix-ghost"
-                  role={i === 0 ? "row" : undefined}
-                  aria-hidden={i === 0 ? undefined : true}
+                  key={r.key}
+                  className="dkc-matrix-row"
+                  role="row"
+                  data-lead={r.key === candidate ? "" : undefined}
+                  data-own={r.own.length ? "" : undefined}
+                  style={{ "--i": i } as CSSProperties}
                 >
                   <span className="dkc-service" role="rowheader">
-                    {i === 0 ? add : null}
+                    <button
+                      type="button"
+                      className="dkc-service-name dkc-press"
+                      aria-pressed={r.key === candidate}
+                      onClick={() =>
+                        setLive(l => ({ ...l, candidate: r.key }))
+                      }
+                      onPointerUp={letGo}
+                    >
+                      <span className="dkc-service-label">{name}</span>
+                      <OwnWords words={r.own} lang={lang} />
+                    </button>
+                    {r.key === one && r.key !== candidate ? (
+                      <span className="dkc-numberone">
+                        {t(O.one.numberOne, lang)}
+                      </span>
+                    ) : null}
                   </span>
-                  {O.one.tests.map(x => (
-                    <span key={x.key} className="dkc-cell" aria-hidden>
-                      <i className="dkc-tick dkc-tick-ghost" />
-                    </span>
-                  ))}
+                  {O.one.tests.map(x => {
+                    const on = Boolean(live.ticks[r.key]?.[x.key]);
+                    return (
+                      <span key={x.key} className="dkc-cell" role="cell">
+                        <button
+                          type="button"
+                          className="dkc-tick dkc-press"
+                          aria-pressed={on}
+                          aria-label={`${name}: ${t(x.label, lang)}`}
+                          onClick={() => flip(r.key, x.key)}
+                          onPointerUp={letGo}
+                        >
+                          <svg viewBox="0 0 24 24" aria-hidden>
+                            <path pathLength={1} d="M6 12.5l4 4 8-9" />
+                          </svg>
+                        </button>
+                      </span>
+                    );
+                  })}
                 </div>
-              ))
-            ) : (
-              <div className="dkc-matrix-add" role="row">
-                {add}
-              </div>
-            )}
+              );
+            })}
           </div>
         </div>
         {/* The product column, on the ground (no card around the phone):
@@ -726,10 +778,16 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
             <span className="dk-label">{t(O.one.first, lang)}</span>
             <p
               className="dkc-product-name"
-              data-state={chosen ? "chosen" : candidate ? "proposal" : "none"}
+              data-state={
+                chosen ? "chosen" : candidateName ? "proposal" : "none"
+              }
               data-long={long ? "" : undefined}
             >
-              {candidate ? <bdi>{candidate}</bdi> : t(O.one.pending, lang)}
+              {candidateName ? (
+                <bdi>{candidateName}</bdi>
+              ) : (
+                t(O.one.pending, lang)
+              )}
             </p>
             <p className="dk-small dk-ink2">{t(O.one.small, lang)}</p>
             {chosen ? (
@@ -741,13 +799,10 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
               <button
                 type="button"
                 className="dkc-launch dkc-press"
-                disabled={!candidate}
+                disabled={!candidate || !candidateName}
                 onClick={() => {
-                  if (!candidate) return;
-                  save(
-                    { service_focus: candidate, service_chosen_at: true },
-                    true,
-                  );
+                  if (!candidate || !candidateName) return;
+                  save(chosenPatch(d, candidate, prep), true);
                   setLive(l => ({ ...l, candidate }));
                 }}
                 onPointerUp={letGo}
@@ -756,10 +811,7 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
               </button>
             )}
           </div>
-          <ProductPhone
-            ctx={ctx}
-            service={chosen ? candidate : (d.serviceChosen ?? candidate)}
-          />
+          <ProductPhone ctx={ctx} service={chosen ? candidate : (chosenKey ?? candidate)} />
         </div>
       </div>
       <div className="dkc-today-foot">
@@ -842,6 +894,8 @@ function RoadSlide({ ctx }: { ctx: SlideCtx }) {
       stop.when = stop.when ?? t(O.road.launchTime, lang);
       stop.line = t(O.road.launchLine, lang);
     }
+    // The road's payoff hangs from its last stop (22.14).
+    if (i === O.road.stops.length - 1) stop.drop = true;
     return stop;
   });
   return (
@@ -850,9 +904,10 @@ function RoadSlide({ ctx }: { ctx: SlideCtx }) {
       <div className="dkc-way-wrap">
         <Route stops={stops} now={d.roadNow} still={still} />
         {/* The road ends at its payoff (score round 2): under its last two
-            stops, the confirmation their customer gets, rising once the
-            line has lit to today; the foot line on the start half, level
-            with the card's foot. */}
+            stops, hung from the last by a dotted drop (22.14: it read as a
+            card belonging to no step), the confirmation their customer
+            gets, rising once the road has lit; the foot line on the start
+            half, set as the slide's second statement beside it. */}
         <div className="dkc-road-end">
           <p className="dk-body dk-ink2 dkc-road-foot">
             {t(O.road.footer, lang)}
@@ -925,20 +980,26 @@ function StepRing({
   status,
   onFlip,
   lang,
+  k,
 }: {
   done: boolean;
   label: string;
   status: AccessStatus;
   onFlip: () => void;
   lang: Lang;
+  /** Its place in the board's order: what was done ticks in turn on arrival. */
+  k: number;
 }) {
-  // What was done when the card opened: only a later tick draws.
+  // What was done when the card opened ticks in order as the slide
+  // arrives (22.14, "the checklist ticking"); a later tick draws at once.
   const atOpen = useRef(done);
   return (
     <button
       type="button"
       className="dkc-step dkc-press"
       data-status={status}
+      data-arrive={done && atOpen.current ? "" : undefined}
+      style={{ "--k": k } as CSSProperties}
       data-draw={done && !atOpen.current ? "" : undefined}
       aria-label={`${label}: ${t(SHARED.status[status], lang)}`}
       onClick={onFlip}
@@ -956,8 +1017,24 @@ function StepRing({
   );
 }
 
-function SetupCard({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
+function SetupCard({
+  row,
+  ctx,
+  wide,
+  from,
+  i,
+}: {
+  row: AccessRow;
+  ctx: SlideCtx;
+  /** Two cards to a row: room for the video guide's poster (22.14). */
+  wide: boolean;
+  /** The board's count of steps before this card's first. */
+  from: number;
+  /** The card's place in the row, for its arrival. */
+  i: number;
+}) {
   const { d, lang, prep, save } = ctx;
+  const [broken, setBroken] = useState(false);
   const access = record(prep.access);
   const flip = (key: string, from: AccessStatus) =>
     save({ access: { ...access, [key]: nextStatus(from) } }, true);
@@ -969,22 +1046,56 @@ function SetupCard({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
     ? filledOn(d, "this-week").find(v => v.slot.key === slot)
     : undefined;
   const len = guide ? lengthText(guide.row.durationSeconds, lang) : null;
+  // The guide's own picture, on a card with room for it (22.14: the slide
+  // had no picture); the text control where it has none or it fails.
+  const pic =
+    wide && guide && ctx.playVideo && !broken ? posterFor(guide.row) : null;
+  // With no length, the words alone: the separator goes with the slot.
   const guideWords = len
     ? tf(O.week.guide, lang, { len })
-    : t(O.week.guide, lang).replace(/ · \{len\}$/, "");
+    : tf(O.week.guide, lang, { len: "" }).replace(/(?: ·|،)\s*$/, "");
   return (
     <article
       className="dkc-setup"
       data-status={row.status}
       data-draw={done && !atOpen.current ? "" : undefined}
+      data-poster={pic ? "" : undefined}
+      style={{ "--i": i } as CSSProperties}
     >
       <i className="dkc-setup-edge" aria-hidden />
+      {pic && guide ? (
+        <button
+          type="button"
+          className="dkc-setup-poster dkc-press"
+          aria-label={guideWords}
+          onClick={() => ctx.playVideo?.(guide)}
+          onPointerUp={letGo}
+        >
+          <span className="dkc-setup-pic">
+            <img
+              src={pic.src}
+              alt=""
+              draggable={false}
+              referrerPolicy="no-referrer"
+              onError={() => setBroken(true)}
+            />
+            <span className="dkc-setup-play" aria-hidden>
+              <svg viewBox="0 0 16 16">
+                <path d="M4 2v12l10-6z" fill="currentColor" />
+              </svg>
+            </span>
+          </span>
+          <span className="dkc-setup-pic-words" aria-hidden>
+            {guideWords}
+          </span>
+        </button>
+      ) : null}
       {/* The video guide sits on the head's line, before the status (score
           round 2: on a row of its own it left a dead band at the card's
           foot, and beside three steps it had no room). */}
       <header className="dkc-setup-head">
         <h3 className="dkc-setup-name">{name}</h3>
-        {guide && ctx.playVideo ? (
+        {guide && ctx.playVideo && !pic ? (
           <button
             type="button"
             className="dkc-guide dkc-press"
@@ -1012,7 +1123,7 @@ function SetupCard({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
       </header>
       <p className="dkc-setup-line">{t(row.line, lang)}</p>
       <div className="dkc-setup-steps">
-        {row.ticks.map(k => (
+        {row.ticks.map((k, j) => (
           <StepRing
             key={k.key}
             done={k.status === "done"}
@@ -1020,6 +1131,7 @@ function SetupCard({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
             label={t(k.label, lang)}
             onFlip={() => flip(k.key, k.status)}
             lang={lang}
+            k={from + j}
           />
         ))}
       </div>
@@ -1027,7 +1139,15 @@ function SetupCard({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
   );
 }
 
-function LaterRow({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
+function LaterRow({
+  row,
+  ctx,
+  i,
+}: {
+  row: AccessRow;
+  ctx: SlideCtx;
+  i: number;
+}) {
   const { d, lang, prep, save } = ctx;
   const access = record(prep.access);
   const flip = (key: string, from: AccessStatus) =>
@@ -1035,7 +1155,7 @@ function LaterRow({ row, ctx }: { row: AccessRow; ctx: SlideCtx }) {
   const name = t(row.name, lang);
   const single = row.ticks.length === 1 ? row.ticks[0] : null;
   return (
-    <li data-status={row.status}>
+    <li data-status={row.status} style={{ "--i": i } as CSSProperties}>
       <span className="dkc-later-name">{name}</span>
       <span className="dkc-later-what">
         {t(row.line, lang)}
@@ -1082,14 +1202,23 @@ function ThisWeek({ ctx }: { ctx: SlideCtx }) {
       <div className="dkc-week-board">
         <p className="dkc-week-group">{t(O.week.now, lang)}</p>
         <div className="dkc-setups" data-n={now.length}>
-          {now.map(r => (
-            <SetupCard key={r.key} row={r} ctx={ctx} />
+          {now.map((r, i) => (
+            <SetupCard
+              key={r.key}
+              row={r}
+              ctx={ctx}
+              wide={now.length <= 2}
+              from={now
+                .slice(0, i)
+                .reduce((n, x) => n + x.ticks.length, 0)}
+              i={i}
+            />
           ))}
         </div>
         <p className="dkc-week-group">{t(O.week.later, lang)}</p>
         <ul className="dkc-later">
-          {later.map(r => (
-            <LaterRow key={r.key} row={r} ctx={ctx} />
+          {later.map((r, i) => (
+            <LaterRow key={r.key} row={r} ctx={ctx} i={i} />
           ))}
         </ul>
       </div>
@@ -1105,21 +1234,19 @@ function ThisWeek({ ctx }: { ctx: SlideCtx }) {
 const ARABIC_LETTER = /[؀-ۿ]/;
 
 /**
- * The launch service as O7 names it: the Arabic deck takes the CSM's
- * Arabic name (prep's service_focus_ar, which deckData already prefers),
- * and a name only in Latin letters is left unnamed there, as the journey's
- * queue card keeps a name in the other script off its rows: "لخدمة
- * Kitchens" mixed two scripts in one line (the fixer's round). The launch
- * deck reads the same prep field, so both calls name it the same way.
+ * The launch service as O7 says it inside a sentence (DESIGN 22.14): one
+ * of the five main services in its sentence form ("templates for interior
+ * design", لخدمة التصميم الداخلي), or "Other" in the client's own words.
+ * Words only in Latin letters are left unnamed in the Arabic deck, as the
+ * journey's queue card keeps a name in the other script off its rows: a
+ * Latin name inside an Arabic line mixed two scripts (the fixer's round).
+ * The launch deck reads the same service, so both calls name it the same.
  */
 export function o7Service(d: DeckData): string | null {
-  const s = d.serviceFocus;
+  const s = d.serviceMid;
   if (!s) return null;
   if (d.lang === "ar") return ARABIC_LETTER.test(s) ? s : null;
-  // Mid-sentence, a common-noun service keeps sentence case ("templates
-  // for kitchens", score round 2): a name whose only capital is its first
-  // letter is lowered; one with another capital (a brand) stays as typed.
-  return /^[A-Z][^A-Z]*$/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;
+  return s;
 }
 
 /** The first-ads sentence for the kickoff's templated-ads answer (CONTENT O7). */
@@ -1275,12 +1402,8 @@ const STRIP_OFF = [3, 1, 5, 2];
  */
 function TestStrip({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
-  const s = THEMES.indexOf(d.example.theme);
-  const tiles = useMemo(
-    () =>
-      Array.from({ length: 6 }, (_, i) => tileUrl(THEMES[(s + i) % 12], "a")),
-    [s],
-  );
+  // Their service's scenes first (its lead on tile 0, lit), then the rest.
+  const tiles = useMemo(() => stripTiles(d.example), [d.example]);
   return (
     <div className="dkc-strip">
       <span className="dk-tag">{t(EXAMPLE.tags, lang)}</span>
@@ -1579,7 +1702,7 @@ export function onboardingSlides(): SlideDef[] {
             ]),
         ...(d.lang === "ar" && d.serviceFocus && !o7Service(d)
           ? [
-              `The Arabic deck leaves "${d.serviceFocus}" unnamed on this slide. Type its Arabic name on slide 4 to name it.`,
+              `The Arabic deck leaves "${d.serviceFocus}" unnamed on this slide. Type their service in Arabic in prep (Launch service, Other) to name it.`,
             ]
           : []),
         ...(d.starterPack && !d.starterAds.length

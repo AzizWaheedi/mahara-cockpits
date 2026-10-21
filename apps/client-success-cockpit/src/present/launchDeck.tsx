@@ -34,11 +34,12 @@ import {
   type L,
   L_NOTES,
   L_TITLES,
-  LAUNCH,
   type LaneKey,
   type Lang,
+  LAUNCH,
   LINKS,
   partJobs,
+  sep,
   SHARED,
   stepNumeral,
   t,
@@ -48,7 +49,7 @@ import { type Creative, phoneFor } from "./creative";
 import { dayMonth, dayShort, weekdayDate } from "./dates";
 import type { SlideCtx, SlideDef } from "./deckContext";
 import type { DeckData } from "./deckData";
-import { fieldTiles, roundTiles } from "./examples";
+import { serviceField, serviceRound } from "./examples";
 import { useHug } from "./hug";
 import {
   FaintLanes,
@@ -240,13 +241,14 @@ function Cover({ ctx }: { ctx: SlideCtx }) {
   const [before, after] = template.split("{name}");
   const size = nameSize(d.name, lang);
   const model = useCreatives(ctx);
-  // With no creative of theirs at all, the cover shows the example ad for
-  // their service, tagged "Example ad" (the fixer's round, which overturns
-  // DESIGN 22.4.6 for this case): the CEO's "an example ad instead of just
-  // the logo". A client with creatives keeps the faint lanes until the CSM
-  // picks one for the cover.
-  useWarmExample(ctx, !d.launch.cover && model.example);
-  const example = !d.launch.cover && model.example ? model.phones.feed : null;
+  // With no creative of their own (a starter template is ours, so it does
+  // not count), the cover shows the example ad for their service, tagged
+  // "Example ad" (the fixer's round, which overturns DESIGN 22.4.6 for this
+  // case): the CEO's "an example ad instead of just the logo". A client
+  // with creatives of their own keeps the faint lanes until the CSM picks
+  // one for the cover.
+  const example = d.launch.cover ? null : model.coverExample;
+  useWarmExample(ctx, Boolean(example));
   const cover = d.launch.cover ?? example;
   const app = example ? lang : model.app;
   const props = { who: who(d), pageName: d.pageName, app, deck: lang };
@@ -344,11 +346,15 @@ function placesLine(places: Place[], lang: Lang): string {
     : `${list.slice(0, -1).join(", ")}, ${or} ${list.at(-1)}`;
 }
 
-/** The creative on the feed phone (the ads slide's, before or after a swap). */
+/**
+ * The ad the journey and the form follow: the ads slide's feed phone,
+ * before or after a swap; with only an example, its alternate picture
+ * (DESIGN 22.14), so the cover and journey stop 1 differ.
+ */
 function useFeed(ctx: SlideCtx) {
   const model = useCreatives(ctx);
   useWarmExample(ctx, model.example);
-  return { model, feed: model.phones.feed };
+  return { model, feed: model.journey };
 }
 
 /** The ad opens a WhatsApp chat (their confirmed destination), not a form. */
@@ -361,7 +367,8 @@ const opensWhatsApp = (d: DeckData) =>
  * customer's line never mixes the two.
  */
 function waMessage(d: DeckData, lang: Lang): string {
-  const named = d.launch.service[lang] ?? d.serviceFocus;
+  // Inside the customer's sentence: "more about interior design".
+  const named = d.launch.serviceMid[lang] ?? d.serviceMid;
   const service =
     named && /[\u0600-\u06ff]/.test(named) === (lang === "ar") ? named : null;
   const F = LAUNCH.form;
@@ -1210,7 +1217,7 @@ function FreedomWords({
               <span key={w.en}>
                 {i ? (
                   <span className="dkc-cf-dot" aria-hidden>
-                    {" · "}
+                    {sep(lang)}
                   </span>
                 ) : null}
                 {t(w, lang)}
@@ -1244,10 +1251,11 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
   const model = useCreatives(ctx);
   const marked = d.launch.pick ? (model.byId.get(d.launch.pick) ?? null) : null;
   const pick = marked ? (marked.poster ?? marked.url ?? null) : null;
-  const theme = d.example.theme;
+  // Their service's scenes first, every scene once; the two shown large on
+  // the slides either side take their detail tile (DESIGN 22.14).
   const tiles = useMemo(
-    () => ({ field: fieldTiles(theme), next: roundTiles(theme) }),
-    [theme],
+    () => ({ field: serviceField(d.example), next: serviceRound(d.example) }),
+    [d.example],
   );
   return (
     <div className="dkc-freedom">
@@ -1628,7 +1636,7 @@ function CallSlide({ ctx }: { ctx: SlideCtx }) {
           <bdi>{d.name}</bdi>
           {service ? (
             <>
-              {" · "}
+              {sep(lang)}
               <bdi>{service}</bdi>
             </>
           ) : null}
@@ -2328,7 +2336,7 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
             style={{ insetInlineStart: x(first ?? 10) - 9 }}
           >
             {d.launch.checkin
-              ? `${t(D.first, lang).split(" · ")[0]} · ${dayShort(d.launch.checkin, lang, d.timeZone)}`
+              ? `${t(D.first, lang).split(sep(lang))[0]}${sep(lang)}${dayShort(d.launch.checkin, lang, d.timeZone)}`
               : t(D.first, lang)}
           </span>
         </div>
@@ -2341,7 +2349,9 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
               <i className="dkc-prog-key" data-open="" />
             </span>
             <span>
-              <b>{t(D.later, lang)}</b> · {t(D.laterLine, lang)}
+              <b>{t(D.later, lang)}</b>
+              {sep(lang)}
+              {t(D.laterLine, lang)}
               {/* Why it is one of the two, under the rhythm it explains. */}
               <span className="dkc-prog-why">{t(D.laterWhy, lang)}</span>
             </span>
