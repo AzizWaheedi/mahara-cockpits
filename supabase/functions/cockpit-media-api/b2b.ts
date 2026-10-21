@@ -1,5 +1,8 @@
-import {assertObjectScope,budget,type Provider,type Row,type Plan,type MultiPlan} from './core.ts';
+import {assertObjectScope,budget,dollarAccount,type Provider,type Row,type Plan,type MultiPlan} from './core.ts';
+import {usdToBudget} from './currency.ts';
 export const B2B_OPERATIONS=['inspect','rename','setBudget','setSchedule','setAudience','createAdset','duplicateAdset'].map(x=>`ceo.b2bManage.${x}`);
+// Mahara's own ad account, in dollars: the budgets read below are worded as dollars without a currency call, and every budget write checks Meta.
+const MAHARA_ACCOUNT='746108264865897';
 const metaId=(x:unknown)=>{if(!/^\d{5,}$/.test(String(x??'')))throw new Error('Invalid Meta id');return String(x);};
 const kind=(name:string)=>/retarget|remarket|hammer them/i.test(name)?'retargeting':/hiring|recruit/i.test(name)?'unknown':'lead_gen';
 const usd=(value:unknown)=>value==null||value===''?null:Number(value)/100;
@@ -16,6 +19,7 @@ function audience(t:Row,a:Row) {
  if((t.age_min??18)>(t.age_max??65))throw new Error('Youngest age must be below oldest');return t;
 }
 export async function prepareB2b(operation:string,a:Row,s:Row,p:Provider):Promise<Plan|MultiPlan|{read:unknown}> {
+ if(String(s.account)!==MAHARA_ACCOUNT)throw new Error("These tools work only on Mahara's own ad account");
  const op=operation.split('.').at(-1),level=['inspect','rename','setBudget'].includes(op??'')?a.level:'adset';
  const o=await own(op==='createAdset'?a.campaignId:a.metaId??a.adsetId,op==='createAdset'?'campaign':level,s,p);
  const target=String(o.id??a.metaId??a.adsetId);
@@ -44,7 +48,7 @@ export async function prepareB2b(operation:string,a:Row,s:Row,p:Provider):Promis
   const amount=a.dailyUsd??a.lifetimeUsd;if(typeof amount!=='number'||amount<1||amount>5000)throw new Error('Budget must be between $1 and $5000');
   if(level==='adset'&&(o.campaign?.daily_budget||o.campaign?.lifetime_budget))throw new Error('The campaign holds this budget');
   if(level==='campaign'&&!(o.daily_budget||o.lifetime_budget))throw new Error('This campaign uses ad set budgets');
-  body=expected={[a.dailyUsd!==undefined?'daily_budget':'lifetime_budget']:budget(amount)};result={dailyUsd:a.dailyUsd??null};const before=usd(o.daily_budget)??usd(o.lifetime_budget);if(before&&Math.abs(amount-before)/before>0.2)result.warning='A budget change over 20% can restart the learning phase.';
+  body=expected={[a.dailyUsd!==undefined?'daily_budget':'lifetime_budget']:usdToBudget(budget(amount),await dollarAccount(s.account,p))};result={dailyUsd:a.dailyUsd??null};const before=usd(o.daily_budget)??usd(o.lifetime_budget);if(before&&Math.abs(amount-before)/before>0.2)result.warning='A budget change over 20% can restart the learning phase.';
  } else if(op==='setSchedule') {
   const end=String(a.endTime??'').trim();if(end&&(!Number.isFinite(Date.parse(end))||Date.parse(end)<Date.now()))throw new Error('Choose a valid future end date');body={end_time:end};expected={end_time:end};
  } else if(op==='setAudience') {
@@ -52,7 +56,7 @@ export async function prepareB2b(operation:string,a:Row,s:Row,p:Provider):Promis
  } else if(op==='createAdset') {
   const source=await own(a.copyFromAdsetId,'adset',s,p),name=String(a.name??'').trim();if(name.length<3||name.length>200)throw new Error('Give the ad set a name of 3 to 200 characters');
   body={name,campaign_id:target,status:'PAUSED',targeting:JSON.stringify(audience(cleanTargeting(source.targeting),a)),optimization_goal:source.optimization_goal??'OFFSITE_CONVERSIONS',billing_event:source.billing_event??'IMPRESSIONS'};
-  if(!(o.daily_budget||o.lifetime_budget)){if(a.dailyBudgetUsd<1||a.dailyBudgetUsd>5000)throw new Error('Budget must be between $1 and $5000');body.daily_budget=budget(a.dailyBudgetUsd);body.bid_strategy=source.bid_strategy??'LOWEST_COST_WITHOUT_CAP';}
+  if(!(o.daily_budget||o.lifetime_budget)){if(a.dailyBudgetUsd<1||a.dailyBudgetUsd>5000)throw new Error('Budget must be between $1 and $5000');body.daily_budget=usdToBudget(budget(a.dailyBudgetUsd),await dollarAccount(s.account,p));body.bid_strategy=source.bid_strategy??'LOWEST_COST_WITHOUT_CAP';}
   if(source.promoted_object)body.promoted_object=JSON.stringify(source.promoted_object);
   path=`act_${s.account}/adsets`;verify='$id';expected={status:'PAUSED',name,campaign_id:target};result={id:'$id',name,note:'Created paused. Add ads and review before switching it on.'};
  } else throw new Error('Unsupported B2B operation');

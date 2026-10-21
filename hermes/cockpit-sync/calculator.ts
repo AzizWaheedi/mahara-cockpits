@@ -3,6 +3,7 @@
 import {type ActionCtx,internal,graph,allAdAccounts,callTool,supabaseQuery,unwrap,providerFetch,recordLog,MAHARA_BUSINESS_ID} from './runtime';
 import {CPL_GATE,CPB_GATE,CPB_BAD,BOOKING_RATE_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';
 import {withoutExcludedAds} from './excludedAds';
+import {budgetCurrency,campaignBudgets,unconvertedBudgetNote} from './currency';
 import {cleanLostNote} from './lostNotes';
 import {hasPicture,isMetaId,metaImageExpiry,metaImageUsable,sameStoredRow,stillCaptureDue,stillKeyFor} from './metaMedia';
 const TRACKER = "1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro";
@@ -1519,6 +1520,8 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // Meta ids, so every row can deep-link into Ads Manager on the exact campaign.
   const accountIdByName = new Map<string, string>();
   const accountIssueByName = new Map<string, string>();
+  // Account id -> its currency per Meta, which budgets are read in.
+  const currencyByAccount = new Map<string, string>();
   const campaignIdByName = new Map<string, string>();
   // Campaign name -> { ad account, campaign id }, straight from Meta.
   // This used to come only from Supabase, which reaches the Viktor tool
@@ -1531,6 +1534,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     // Viktor tool gateway is down. See tools.ts:graph().
     for (const a of await allAdAccounts()) {
       accountIdByName.set(normalize(a.name ?? ""), a.account_id);
+      if (a.currency) currencyByAccount.set(a.account_id, String(a.currency));
       // Meta refuses every write on an unsettled or disabled account. Say
       // so on the row instead of letting a button fail. [2026-09-11]
       const st = Number(a.account_status ?? 1);
@@ -2462,30 +2466,26 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           "daily_budget,lifetime_budget,adsets.limit(200){id,name,status,effective_status,daily_budget,lifetime_budget}",
       });
       const sets = campRes?.adsets ?? { data: [] };
-      {
-        const minor = (x: unknown) => (x ? Number(x) / 100 : undefined);
-        const setRows = (sets?.data ?? []) as any[];
-        const delivering = setRows.filter(
-          s => String(s.effective_status ?? s.status) === "ACTIVE",
-        );
-        const counted = delivering.length ? delivering : setRows;
-        if (campRes?.daily_budget || campRes?.lifetime_budget) {
-          c.budgetLevel = "campaign";
-          c.budgetDaily = minor(campRes.daily_budget);
-          c.budgetLifetime = minor(campRes.lifetime_budget);
-        } else {
-          c.budgetLevel = "adset";
-          const daily = counted.reduce(
-            (sum, s) => sum + (minor(s.daily_budget) ?? 0),
-            0,
-          );
-          const lifetime = counted.reduce(
-            (sum, s) => sum + (minor(s.lifetime_budget) ?? 0),
-            0,
-          );
-          c.budgetDaily = daily || undefined;
-          c.budgetLifetime = lifetime || undefined;
-        }
+      // Budgets come back in minor units of the account's own currency; the
+      // cockpit stores dollars (Ardon's "17500" is SAR 175, $46.66, not $175).
+      // The currency is Meta's. The sheet's blank reads "USD", so the sheet
+      // counts only when Meta gave none and it names another currency.
+      // [2026-10-21]
+      const budgetCur = budgetCurrency(
+        currencyByAccount,
+        c.metaAccountId,
+        c.currency,
+      );
+      const budget = campaignBudgets(campRes, budgetCur);
+      c.budgetLevel = budget.level;
+      c.budgetDaily = budget.daily;
+      c.budgetLifetime = budget.lifetime;
+      if (budget.unconverted) {
+        // A warning, not an error: the budget is blank, not wrong, and the
+        // native transport turns any error log into a failed source that
+        // stops the whole run from publishing (it keeps none of the words).
+        const note = unconvertedBudgetNote(c.metaAccountId, budgetCur);
+        if (note) recordLog("warn", note);
       }
       // biome-ignore lint/suspicious/noExplicitAny: Meta payload
       for (const s of (sets?.data ?? []) as any[]) {
@@ -2496,9 +2496,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           name: String(s.name ?? ""),
           status: String(s.status ?? ""),
           effectiveStatus: s.effective_status,
-          dailyBudget: s.daily_budget
-            ? Number(s.daily_budget) / 100
-            : undefined,
+          dailyBudget: budget.adSetDaily.get(String(s.id)),
           syncedAt: now,
         });
       }

@@ -1219,7 +1219,9 @@ longer retried; "Read X of Y ad accounts" counts the ad-day reads only (the nigh
 `select public.cockpit_meta_ad_days_status()->'budgets';`. Second source before the board shows it: compare
 `cockpit_meta_budgets` (level campaign, daily_budget, budget_level) with Ads Manager on one CBO, one ABO and
 one SAR account, and with `cockpit_campaigns.raw_data` budgetDaily/budgetLevel where both have the campaign
-(that copy sums every ad set when none is active; this one never sums a paused one). To fill the days before
+(that copy sums every ad set when none is active; this one never sums a paused one). From 2026-10-21
+budgetDaily is in dollars, so compare it with `daily_budget_usd` to the cent, not with `daily_budget`
+(Shades: daily_budget 120, daily_budget_usd 31.992, budgetDaily 31.99). To fill the days before
 the ship day: `{"job":"backfill","days":45}` (step 4's call).
 
 Creative dashboard feed of 2026-10-18 (Muhammed: meta-ad-days is the one Meta ad reader; the creative

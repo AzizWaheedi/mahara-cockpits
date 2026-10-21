@@ -9,16 +9,59 @@ type Row=Record<string,any>;
 const scope={account:'123456',campaign:'222222',campaignName:'Client campaign',task:'card1'};
 function provider(rows:Row[]){const calls:any[]=[];return {calls,async call(...args:any[]){calls.push(args);const row=rows.shift();if(!row)throw new Error('Unexpected request');return row;}};}
 test('recommendations cap budget changes and refuse cuts to the last live ad',async()=>{
- const p=provider([{id:'222222',name:'Campaign',account_id:'123456',daily_budget:10000}]);
+ const p=provider([{id:'222222',name:'Campaign',account_id:'123456',daily_budget:10000},{currency:'USD'}]);
  const plan=await prepareRecommendation({action:'Raise to $500',targetBudget:500},scope,p);
  expect(plan.body?.daily_budget).toBe(12500);expect(p.calls.every(x=>x[1]==='GET')).toBe(true);
+ expect(plan.result?.did).toBe('Raised the campaign budget on "Campaign" from $100.00 to $125.00 a day (capped at 25% for this step).');
  await expect(prepareRecommendation({action:'Cut the worst ad'},scope,provider([{id:'222222',account_id:'123456'},{data:[{id:'333333',effective_status:'ACTIVE'}]}]))).rejects.toThrow('last live');
- await expect(prepareRecommendation({action:'Scale the winner'},scope,provider([{id:'222222',account_id:'123456',daily_budget:1000}]))).rejects.toThrow('$30');
+ await expect(prepareRecommendation({action:'Scale the winner'},scope,provider([{id:'222222',account_id:'123456',daily_budget:1000},{currency:'USD'}]))).rejects.toThrow('$30');
+});
+test('the 25% step on a dollar account is worked in whole cents, never above 25%',async()=>{
+ const campaign=(daily_budget:string)=>provider([{id:'222222',name:'Campaign',account_id:'123456',daily_budget},{currency:'USD'}]);
+ // The old dollar arithmetic floored 24.04 x 1.25 to $30.04; the cent arithmetic gives the exact $30.05.
+ const scale=await prepareRecommendation({action:'Scale the winner'},scope,campaign('2404'));
+ expect(scale).toMatchObject({body:{daily_budget:3005},expected:{daily_budget:3005},precondition:{daily_budget:'2404'}});
+ expect(scale.result?.did).toBe('Raised the campaign budget on "Campaign" from $24.04 to $30.05 a day.');
+ for(const [from,to] of [[9996,12495],[2424,3030],[17500,21875]])expect((await prepareRecommendation({action:'Scale the winner'},scope,campaign(String(from)))).body?.daily_budget).toBe(to);
+ // A target that rounds to today's cents is refused instead of sending the same budget back.
+ await expect(prepareRecommendation({action:'Raise to $30',targetBudget:30.004},scope,campaign('3000'))).rejects.toThrow('already at or above that target: $30.00 a day');
+});
+test('raises on a riyal account work in halalas and say both currencies',async()=>{
+ const campaign=(daily_budget:string)=>({id:'222222',name:'Ardon_mahar-22\\9',account_id:'123456',daily_budget});
+ // Ardon today: SAR 175 is $46.66, already above $30.
+ const ardon=provider([campaign('17500'),{currency:'SAR'}]);
+ await expect(prepareRecommendation({action:'Raise to $30',targetBudget:30},scope,ardon)).rejects.toThrow('already at or above that target: $46.66 (175.00 SAR in Meta) a day');
+ expect(ardon.calls[1]).toEqual(['meta','GET','act_123456?fields=currency']);
+ // SAR 100 is $26.66: the raise is due and lands on SAR 112.53.
+ const raise=await prepareRecommendation({action:'Raise to $30',targetBudget:30},scope,provider([campaign('10000'),{currency:'SAR'}]));
+ expect(raise).toMatchObject({body:{daily_budget:11253},expected:{daily_budget:11253},precondition:{daily_budget:'10000'}});
+ expect(raise.result?.did).toBe('Raised the campaign budget on "Ardon_mahar-22\\9" from $26.66 (100.00 SAR in Meta) to $30.00 (112.53 SAR in Meta) a day.');
+ const executed=provider([{daily_budget:'10000'},{success:true},{daily_budget:'11253'}]);
+ await executePlan(raise,executed);expect(executed.calls[1]).toEqual(['meta','POST','222222',{daily_budget:11253},undefined]);
+ await expect(executePlan(raise,provider([{daily_budget:'12000'}]))).rejects.toThrow('changed since preview');
+ // SAR 25 cannot reach $30 in one 25% step.
+ await expect(prepareRecommendation({action:'Raise to $30',targetBudget:30},scope,provider([campaign('2500'),{currency:'SAR'}]))).rejects.toThrow('A 25% step cannot reach the $30 floor');
+ // Scale: +25% in riyals, worded in dollars with the riyals beside them.
+ const scale=await prepareRecommendation({action:'Scale the winner'},scope,provider([campaign('17500'),{currency:'SAR'}]));
+ expect(scale.body?.daily_budget).toBe(21875);expect(scale.precondition).toEqual({daily_budget:'17500'});
+ expect(scale.result?.did).toContain('from $46.66 (175.00 SAR in Meta) to $58.32 (218.75 SAR in Meta) a day');
+ await expect(prepareRecommendation({action:'Scale the winner'},scope,provider([campaign('17500'),{currency:'KWD'}]))).rejects.toThrow('This ad account is in KWD. Change the budget in Ads Manager.');
+ await expect(prepareRecommendation({action:'Scale the winner'},scope,provider([campaign('17500'),{}]))).rejects.toThrow('Meta did not say which currency');
+});
+test('cutting the worst ad on a riyal account words its spend in dollars',async()=>{
+ const ad=(id:string,name:string,spend:string,leads:string)=>({id,name,account_id:'123456',campaign_id:'222222',effective_status:'ACTIVE',insights:{data:[{spend,account_currency:'SAR',actions:[{action_type:'lead',value:leads}]}]}});
+ const p=provider([{id:'222222',account_id:'123456'},{data:[ad('333333','Hook 1','757.32','11'),ad('444444','Hook 2','300','30')]}]);
+ const plan=await prepareRecommendation({action:'Cut the worst ad'},scope,p);
+ expect(plan.path).toBe('333333');expect(plan.result?.did).toBe('Paused "Hook 1": $201.90 spent for 11 leads in 7 days, the worst in this campaign.');
+ expect(p.calls).toHaveLength(2);expect(p.calls[1][2]).toContain('account_currency');
+ const unnamed=provider([{id:'222222',account_id:'123456'},{data:[{...ad('333333','Hook 1','757.32','11'),insights:{data:[{spend:'757.32',actions:[{action_type:'lead',value:'11'}]}]}},ad('444444','Hook 2','300','30')]}]);
+ expect((await prepareRecommendation({action:'Cut the worst ad'},scope,unnamed)).result?.did).toBe('Paused "Hook 1": 757.32 spent in the account\'s own currency for 11 leads in 7 days, the worst in this campaign.');
 });
 test('paused B2B launch builds campaign/adset/clones with references and refuses prior intents',async()=>{
  const row={id:1,kind:'lead_gen',name:'Mahara | Lead Gen',brief:'Approved brief',daily_budget_usd:50,status:'ready',clone_ad_ids:['333333'],variants:[]};
- const plan=await prepareLaunch(row,provider([{id:'333333',name:'Winner',account_id:'746108264865897',creative:{id:'444444'}}]));
- expect(plan.steps.map(s=>s.body?.status)).toEqual(['PAUSED','PAUSED','PAUSED']);expect(plan.steps[0].body?.is_adset_budget_sharing_enabled).toBe('false');expect(plan.steps[1].body?.campaign_id).toBe('$step0.id');expect(plan.result.metaAdIds).toEqual(['$step2.id']);
+ const plan=await prepareLaunch(row,provider([{id:'333333',name:'Winner',account_id:'746108264865897',creative:{id:'444444'}},{currency:'USD'}]));
+ expect(plan.steps.map(s=>s.body?.status)).toEqual(['PAUSED','PAUSED','PAUSED']);expect(plan.steps[1].body?.daily_budget).toBe(5000);
+ await expect(prepareLaunch(row,provider([{id:'333333',name:'Winner',account_id:'746108264865897',creative:{id:'444444'}},{currency:'SAR'}]))).rejects.toThrow('not USD');expect(plan.steps[0].body?.is_adset_budget_sharing_enabled).toBe('false');expect(plan.steps[1].body?.campaign_id).toBe('$step0.id');expect(plan.result.metaAdIds).toEqual(['$step2.id']);
  await expect(prepareLaunch({...row,launch_action_id:'prior'},provider([]))).rejects.toThrow('reconciliation');
 });
 test('Meta transport retains form encoding and nested parameter JSON from original tools',async()=>{

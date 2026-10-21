@@ -459,6 +459,36 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(p.tables.campaigns[0].spend7d).toBe(120);
   expect(p.tables.campaigns[0].leads7d).toBe(10);
   expect(p.tables.campaigns[0].cpl).toBe(12);
+  expect(p.tables.campaigns[0]).toMatchObject({budgetLevel:'campaign',budgetDaily:30});
+  // Budgets are in dollars, read in the account's currency per Meta's listing, never the sheet's
+  // blank-means-USD: Ardon's SAR 175 ("17500") is $46.66, not $175. A currency the worker cannot
+  // convert leaves the budget blank with a warning, never an error that stops the run. [2026-10-21]
+  const budgets=async(currency:string|undefined,campaign:Row)=>{
+   const levels:string[]=[];
+   const inCurrency:Reads={...reads,
+    async graph(path,params){
+     if(path.endsWith('/owned_ad_accounts'))return {data:[{id:'act_222222',name:'Alpha',account_status:1,...(currency?{currency}:{})}]};
+     if(path==='111111')return campaign;
+     return reads.graph(path,params);
+    },
+    log(level){levels.push(level);},
+   };
+   const out=await calculate(s,inCurrency,{receipts:[]},fixtureEnv);
+   return {row:out.tables.campaigns[0],adSet:out.tables.metaTree.find((r:Row)=>r.kind==='adset'),levels};
+  };
+  const sar=await budgets('SAR',{daily_budget:'17500',adsets:{data:[{id:'555555',name:'Set',status:'ACTIVE',effective_status:'ACTIVE'}]}});
+  expect(sar.row).toMatchObject({currency:'USD',budgetLevel:'campaign',budgetDaily:46.66,spend7d:120});
+  expect(sar.levels).not.toContain('warn');
+  const sarAdSets=await budgets('SAR',{adsets:{data:[{id:'555555',name:'Set',status:'ACTIVE',effective_status:'ACTIVE',daily_budget:'10000'}]}});
+  expect(sarAdSets.row).toMatchObject({budgetLevel:'adset',budgetDaily:26.66});
+  expect(sarAdSets.adSet).toMatchObject({metaId:'555555',dailyBudget:26.66});
+  for(const currency of ['BHD',undefined]){
+   const refused=await budgets(currency,{daily_budget:'17500',adsets:{data:[{id:'555555',name:'Set',status:'ACTIVE',effective_status:'ACTIVE'}]}});
+   expect(refused.row.budgetDaily).toBeUndefined();
+   expect(refused.row.spend7d).toBe(120);
+   expect(refused.levels).toContain('warn');
+   expect(refused.levels).not.toContain('error');
+  }
   expect(p.tables.marketPlays[0].cpl).toBe(12);
   expect(p.tables.winnersArchive[0].adId).toBe('333333');
   expect(p.creative.campaigns[0]._id).toBe('legacy-creative-campaign');
