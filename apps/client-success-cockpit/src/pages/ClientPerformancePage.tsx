@@ -22,6 +22,7 @@ import {
   StatTile,
 } from "@/components/kit";
 import { PortalTasksButton } from "@/components/PortalTasks";
+import { GapReport } from "@/components/results/GapReport";
 import { ReportIssue } from "@/components/ReportIssue";
 import {
   ResultsNav,
@@ -2649,6 +2650,8 @@ export function ClientPerformancePage({
         />
       ) : (
         <>
+          {embedded ? <GapReport /> : null}
+
           <div className="space-y-2">
             <PillRow>
               {GROUPS.map(g => {

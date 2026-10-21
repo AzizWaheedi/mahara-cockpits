@@ -50,6 +50,7 @@ import {
 import { KitSummary, OnboardingKit } from "@/components/OnboardingKit";
 import { PortalTasksButton } from "@/components/PortalTasks";
 import { ReportIssue } from "@/components/ReportIssue";
+import { CallList } from "@/components/results/CallList";
 import { SyncStrip } from "@/components/SyncStrip";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -2628,6 +2629,8 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       {section === "today" && <AdBillingDailyTask />}
 
       {section === "today" && <TodaysCalls snap={snap} />}
+
+      {section === "today" && <CallList />}
 
       {section === "today" && (
         <section id="who-needs-you" className="space-y-8">

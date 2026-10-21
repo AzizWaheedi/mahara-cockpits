@@ -28,6 +28,7 @@ const FILES = {
   gap: "20261021f_meeting_gap_report.sql",
   callList: "20261021g_csm_call_list.sql",
   speed: "20261021h_speed_bands_and_uncalled.sql",
+  reads: "20261021i_results_speed_reads.sql",
 };
 /** The board, in production order (as the board API test loads it). */
 const BOARD_CHAIN = [
@@ -1258,5 +1259,347 @@ describe("5. the morning uncalled list", () => {
       expect(r.exact + r.phone_only + r.outcome_only + r.never_called).toBe(r.callable);
       if (r.matches_board !== null) expect(r.matches_board).toBe(true);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+describe("6. the browser's doors and the CSM call log (20261021i)", () => {
+  const CSM = "00000000-0000-4000-8000-0000000000c1";
+  const CSM_LIM = "00000000-0000-4000-8000-0000000000c2";
+  const SALES = "00000000-0000-4000-8000-0000000000c3";
+  const GONE = "00000000-0000-4000-8000-0000000000c4";
+  const LIM_E = "00000000-0000-4000-8000-0000000000c5";
+  const rd = (n: number) => `locRdClient${String(n).padStart(8, "0")}`;
+  const RD_COUNTS = [6, 5, 4, 4, 3, 2, 1];
+  const RD_ORDER = ["Rd Client 1", "Rd Client 2", "Rd Client 4", "Rd Client 3", "Rd Client 5", "Rd Client 6", "Rd Client 7"];
+
+  /** Run as a seat and give back the first column named r. */
+  async function seat<T = any>(who: string | null, text: string, params: unknown[] = []): Promise<T> {
+    await actor(db, who);
+    try {
+      return (await db.query<{ r: T }>(text, params)).rows[0].r;
+    } finally {
+      await owner(db);
+    }
+  }
+
+  beforeAll(async () => {
+    await member(db, CSM, "csm@tests.invalid", ["csm"]);
+    await member(db, CSM_LIM, "csm.limited@tests.invalid", ["csm"]);
+    await member(db, SALES, "sales@tests.invalid", ["sales"]);
+    await member(db, GONE, "gone@tests.invalid", ["csm"], false);
+    await member(db, LIM_E, "limited.e@tests.invalid", ["media_buyer"]);
+    await q("UPDATE public.cockpit_members SET clients = ARRAY['Rd Client 1','Rd Client 6','Rd Client 7'] WHERE auth_user_id = $1", [CSM_LIM]);
+    await q("UPDATE public.cockpit_members SET clients = ARRAY['Client E'] WHERE auth_user_id = $1", [LIM_E]);
+    await q(
+      "INSERT INTO public.cockpit_people(name,email,role,active,schedule) VALUES('Sara Csm','csm@tests.invalid','Client success',true,$1::jsonb)",
+      [JSON.stringify(SCHEDULE)],
+    );
+    // Seven clients with meetings 22 days ago, still blank in the sheet: two Thursday runs have passed for each.
+    for (let i = 0; i < RD_COUNTS.length; i++) {
+      // Rd Client 4 ties with Rd Client 3 on four meetings, and its oldest one is older.
+      const rows: Row[] = Array.from({ length: i === 3 ? RD_COUNTS[i] - 1 : RD_COUNTS[i] }, (_, j) => ({
+        tab: "Oct 26",
+        name: `Person${j} Surname`,
+        phone: "+96560000000",
+        meeting: ms(kt(22, `${String(10 + j).padStart(2, "0")}:00`)),
+        show: null,
+        closed: null,
+        confirmed: null,
+        row: 2 + j,
+      }));
+      if (i === 3) rows.push({ ...rows[0], name: "Oldest Four", meeting: ms(kt(30, "12:00")), row: 20 });
+      await q(
+        "INSERT INTO public.cockpit_board_clients(location_id,client_name,status,service_mode) VALUES($1,$2,'Active','DFY')",
+        [rd(i + 1), `Rd Client ${i + 1}`],
+      );
+      await sheet(rd(i + 1), `Rd Client ${i + 1}`, rows);
+    }
+  });
+  afterAll(async () => {
+    await owner(db);
+    await q("DELETE FROM mahara_reporting.sheet_snapshots WHERE id LIKE 'locRdClient%'");
+    await q("DELETE FROM public.cockpit_csm_call_log WHERE location_id LIKE 'locRdClient%'");
+    await q("DELETE FROM public.cockpit_board_clients WHERE location_id LIKE 'locRdClient%'");
+  });
+
+  test("every door refuses anon and an inactive seat, the internals and the log table refuse a signed-in seat", async () => {
+    const doors: [string, unknown[]][] = [
+      ["SELECT public.cockpit_gap_read($1::date,$2::date) AS r", WINDOW],
+      ["SELECT public.cockpit_gap_client_read($1,$2::date,$3::date) AS r", [LOC_A, FROM, today]],
+      ["SELECT public.cockpit_csm_calls_read() AS r", []],
+      ["SELECT public.cockpit_speed_read($1::date,$2::date) AS r", [kd(62), today]],
+      ["SELECT public.cockpit_morning_uncalled_read() AS r", []],
+      ["SELECT public.cockpit_csm_call_logged($1) AS r", [rd(1)]],
+    ];
+    for (const [text, params] of doors) {
+      expect(await refusedFor(null, text, params)).toMatch(/permission denied/);
+      // An inactive seat is signed in and has no seat.
+      expect(await refusedFor(GONE, text, params)).toMatch(/active cockpit seat|client success seat|every client|Only the client success seat/);
+    }
+    for (const who of [BUYER, CSM])
+      for (const text of [
+        "SELECT public.cockpit_csm_calls_json(now(), true)",
+        "SELECT public.cockpit_whole_board_seat()",
+        "SELECT public.cockpit_allowed_locations()",
+        "SELECT * FROM public.cockpit_csm_call_log",
+        "INSERT INTO public.cockpit_csm_call_log(location_id,client_name,week_key,missing_meetings,called_by,called_by_id) VALUES('x','x','2026-W43',1,'x',gen_random_uuid())",
+        "UPDATE public.cockpit_csm_call_log SET missing_meetings = 9",
+        "DELETE FROM public.cockpit_csm_call_log",
+      ])
+        expect(await refusedFor(who, text)).toMatch(/permission denied/);
+    await svc("SELECT * FROM public.cockpit_csm_call_log");
+  });
+
+  test("the gap read is the report for the clients the seat sees, the most missing first, with the two splits apart", async () => {
+    const rep = await svc("SELECT * FROM public.cockpit_gap_report($1::date,$2::date)", WINDOW);
+    const got = await seat(BUYER, "SELECT public.cockpit_gap_read($1::date,$2::date) AS r", WINDOW);
+    const withMeetings = rep.filter(r => r.meetings_past > 0);
+    expect(withMeetings.length).toBeGreaterThan(1);
+    expect(got.rows.map((r: Row) => r.locationId).sort()).toEqual(withMeetings.map(r => r.location_id).sort());
+    for (const r of got.rows) {
+      const x = rep.find(y => y.location_id === r.locationId)!;
+      expect([r.clientName, r.meetings, r.noResult, r.withResult]).toEqual([x.client_name, x.meetings_past, x.no_result, x.with_attendance]);
+      expect([r.sheetBlank, r.sheetMissing, r.sheetUnclear, r.crmConfirmed, r.confirmedAndBlank]).toEqual([
+        x.sheet_blank, x.sheet_missing, x.sheet_unclear, x.crm_confirmed, x.crm_confirmed_sheet_blank,
+      ]);
+      expect(r.share).toBeCloseTo(x.no_result / x.meetings_past, 3);
+      expect(r.matchesBoard).toBe(x.matches_board);
+      expect(r.sheetReadOk).toBe(x.sheet_read_ok);
+    }
+    const counts = got.rows.map((r: Row) => r.noResult);
+    expect(counts).toEqual([...counts].sort((a: number, b: number) => b - a));
+    expect(got.quietClients).toBe(rep.length - withMeetings.length);
+    const sum = (k: string) => got.rows.reduce((a: number, r: Row) => a + r[k], 0);
+    expect(got.totals.meetings).toBe(sum("meetings"));
+    expect(got.totals.noResult).toBe(sum("noResult"));
+    expect(got.totals.sheetBlank).toBe(sum("sheetBlank"));
+    expect(got.totals.crmConfirmed).toBe(sum("crmConfirmed"));
+    expect(got.totals.share).toBeCloseTo(got.totals.noResult / got.totals.meetings, 3);
+    // no lead's name, phone number or email is in it
+    expect(Object.keys(got.rows[0]).some(k => /phone|email|contact/i.test(k))).toBe(false);
+    expect([got.from, got.to]).toEqual(WINDOW);
+  });
+
+  test("a seat limited to some clients reads only those, and bad windows are refused", async () => {
+    const got = await seat(LIM_E, "SELECT public.cockpit_gap_read($1::date,$2::date) AS r", WINDOW);
+    expect(got.rows.map((r: Row) => r.clientName)).toEqual(["Client E"]);
+    expect(got.quietClients).toBe(0);
+    const none = await seat(CSM_LIM, "SELECT public.cockpit_gap_read($1::date,$2::date) AS r", WINDOW);
+    expect(none.rows).toEqual([]);
+    expect(none.totals.meetings).toBe(0);
+    expect(none.totals.share).toBeNull();
+    expect(await refusedFor(BUYER, "SELECT public.cockpit_gap_read($1::date,$2::date) AS r", [kd(500), today])).toMatch(/366|day/i);
+  });
+
+  test("one client's meetings are the report's meetings with no result, and a client the seat cannot see is refused", async () => {
+    const direct = await svc("SELECT * FROM public.cockpit_gap_meetings($1,$2::date,$3::date)", [LOC_E, FROM, today]);
+    const got = await seat(BUYER, "SELECT public.cockpit_gap_client_read($1,$2::date,$3::date) AS r", [LOC_E, FROM, today]);
+    expect(got.clientName).toBe("Client E");
+    expect(got.meetings.map((m: Row) => m.id)).toEqual(direct.map(m => m.appointment_id));
+    expect(got.meetings.length).toBeGreaterThan(0);
+    expect(got.meetings.map((m: Row) => m.sheetState).sort()).toEqual(direct.map(m => m.sheet_state).sort());
+    expect(Object.keys(got.meetings[0]).sort()).toEqual(
+      ["calendar", "contactId", "contactUrl", "crmConfirmed", "crmStatus", "day", "daysSince", "firstName", "id", "meetingAt", "sheetState"],
+    );
+    expect(await refusedFor(LIM_E, "SELECT public.cockpit_gap_client_read($1,$2::date,$3::date) AS r", [LOC_A, FROM, today])).toMatch(/not on your board/);
+    expect(await refusedFor(BUYER, "SELECT public.cockpit_gap_client_read($1,$2::date,$3::date) AS r", ["no such client", FROM, today])).toMatch(/Choose one/);
+    expect(await refusedFor(BUYER, "SELECT public.cockpit_gap_client_read($1,$2::date,$3::date) AS r", ["locNobody00000001", FROM, today])).toMatch(/not on your board/);
+  });
+
+  test("the speed read holds the same counts as bookings by call speed, for every band, hour and country", async () => {
+    const from = kd(62);
+    for (const clock of ["clock", "working"]) {
+      const got = await seat(BUYER, "SELECT public.cockpit_speed_read($1::date,$2::date,$3) AS r", [from, today, clock]);
+      expect(got.clock).toBe(clock);
+      expect(got.note).toContain("Correlation only");
+      const truth = await svc(
+        "SELECT * FROM public.cockpit_booking_by_speed(($1::date)::timestamp AT TIME ZONE 'Asia/Kuwait', (($2::date) + 1)::timestamp AT TIME ZONE 'Asia/Kuwait', $3)",
+        [from, today, clock],
+      );
+      const cells: [number, string, string, number, number, number][] = got.cells;
+      const add = (pick: (c: (typeof cells)[number]) => boolean) =>
+        cells.filter(pick).reduce((a, c) => [a[0] + c[3], a[1] + c[4], a[2] + c[5]], [0, 0, 0]);
+      // every band
+      for (const t of truth.filter(r => r.dimension === "speed" && r.band !== "all"))
+        expect(add(c => c[2] === t.band)).toEqual([t.paid_leads, t.bookings, t.bookings_any]);
+      // the total
+      const all = truth.find(r => r.dimension === "speed" && r.band === "all")!;
+      expect(add(() => true)).toEqual([all.paid_leads, all.bookings, all.bookings_any]);
+      // the 1,365 invented leads, and the four paid leads of the uncalled fixture (U1, U2, U4, U6)
+      if (clock === "clock") expect(all.paid_leads).toBe(1365 + 4);
+      // every hour, and every hour's bands
+      for (const t of truth.filter(r => r.dimension === "arrival_hour"))
+        expect(add(c => c[0] === Number(t.key) && (t.band === "all" || c[2] === t.band))).toEqual([t.paid_leads, t.bookings, t.bookings_any]);
+      // every country, and every country's bands
+      for (const t of truth.filter(r => r.dimension === "country"))
+        expect(add(c => c[1] === t.key && (t.band === "all" || c[2] === t.band))).toEqual([t.paid_leads, t.bookings, t.bookings_any]);
+    }
+  });
+
+  test("the speed read is for seats that see every client, and takes only sensible windows", async () => {
+    const text = "SELECT public.cockpit_speed_read($1::date,$2::date,$3) AS r";
+    expect(await refusedFor(LIM_E, text, [kd(30), today, "clock"])).toMatch(/every client/);
+    expect(await refusedFor(CSM_LIM, text, [kd(30), today, "clock"])).toMatch(/every client/);
+    expect(await refusedFor(BUYER, text, [kd(30), today, "hourly"])).toMatch(/clock minutes or working minutes/);
+    expect(await refusedFor(BUYER, text, [kd(130), today, "clock"])).toMatch(/at most 120 days/);
+    expect(await refusedFor(BUYER, text, [today, kd(3), "clock"])).toMatch(/first day before the last/);
+    // a seat with an empty client list sees every client, whatever its role
+    const got = await seat(SALES, text, [kd(30), today, "clock"]);
+    expect(Array.isArray(got.cells)).toBe(true);
+  });
+
+  test("the morning read equals the summary and the list, once, and keeps the groups apart", async () => {
+    const summary = await svc("SELECT * FROM public.cockpit_morning_uncalled_summary()");
+    const list = await svc("SELECT * FROM public.cockpit_morning_uncalled()");
+    const got = await seat(BUYER, "SELECT public.cockpit_morning_uncalled_read() AS r");
+    expect(got.clients.map((c: Row) => c.locationId).sort()).toEqual(summary.map(s => s.location_id).sort());
+    for (const c of got.clients) {
+      const s = summary.find(x => x.location_id === c.locationId)!;
+      expect([c.callable, c.exact, c.phoneOnly, c.outcomeOnly, c.neverCalled, c.noCallLinked, c.uncalledPaid]).toEqual([
+        s.callable, s.exact, s.phone_only, s.outcome_only, s.never_called, s.uncalled_strict, s.uncalled_paid,
+      ]);
+      expect([c.boardCallable, c.boardVerified, c.boardOutcomeOnly, c.boardUntouched, c.matchesBoard]).toEqual([
+        s.board_callable, s.board_verified, s.board_outcome_only, s.board_untouched, s.matches_board,
+      ]);
+    }
+    expect(got.leads.map((l: Row) => l.contactId)).toEqual(list.map(l => l.contact_id));
+    expect(got.leads.every((l: Row) => l.group !== "exact")).toBe(true);
+    const u = got.clients.find((c: Row) => c.locationId === LOC_U);
+    expect([u.callable, u.exact, u.phoneOnly, u.outcomeOnly, u.neverCalled, u.noCallLinked, u.uncalledPaid, u.matchesBoard]).toEqual([7, 1, 3, 1, 2, 6, 3, true]);
+    // the totals are the clients' sums, and the groups add up to the callable leads
+    const sum = (k: string) => got.clients.reduce((a: number, c: Row) => a + c[k], 0);
+    expect(got.totals.callable).toBe(sum("callable"));
+    expect(got.totals.neverCalled + got.totals.outcomeOnly + got.totals.phoneOnly + got.totals.exact).toBe(got.totals.callable);
+    expect(got.totals.noCallLinked).toBe(got.leads.length);
+    expect(got.totals.matchesBoard).toBe(true);
+    // only a first name and the last four digits of a number
+    expect(Object.keys(got.leads[0]).some((k: string) => /^(phone|email|contactName|name)$/i.test(k))).toBe(false);
+    // one client, and a client the seat cannot see
+    const one = await seat(BUYER, "SELECT public.cockpit_morning_uncalled_read($1) AS r", [LOC_U]);
+    expect(one.clients.map((c: Row) => c.locationId)).toEqual([LOC_U]);
+    expect(one.leads.map((l: Row) => l.contactId)).toEqual(list.filter(l => l.location_id === LOC_U).map(l => l.contact_id));
+    expect(await refusedFor(LIM_E, "SELECT public.cockpit_morning_uncalled_read($1) AS r", [LOC_U])).toMatch(/not on your board/);
+    expect(await refusedFor(BUYER, "SELECT public.cockpit_morning_uncalled_read($1) AS r", ["bad id!"])).toMatch(/Choose one/);
+    const limited = await seat(LIM_E, "SELECT public.cockpit_morning_uncalled_read() AS r");
+    expect(limited.clients.map((c: Row) => c.clientName)).toEqual(["Client E"]);
+    expect(limited.leads.every((l: Row) => l.locationId === LOC_E)).toBe(true);
+    expect(limited.leads.length).toBe(list.filter(l => l.location_id === LOC_E).length);
+  });
+
+  test("the call list is the cockpit_csm_call_list for a seat that sees every client: five to call, the rest queued", async () => {
+    const week = await one("SELECT to_char(now() AT TIME ZONE 'Asia/Kuwait', 'IYYY-\"W\"IW') AS r");
+    const direct = await svc("SELECT * FROM public.cockpit_csm_call_list(now())");
+    const got = await seat(CSM, "SELECT public.cockpit_csm_calls_read() AS r");
+    expect(got.week).toBe(week);
+    expect(got.cap).toBe(5);
+    expect(got.rows.map((r: Row) => r.clientName)).toEqual(RD_ORDER);
+    expect(got.rows.map((r: Row) => r.clientName)).toEqual(direct.map(r => r.client_name));
+    expect(got.rows.map((r: Row) => r.missing)).toEqual([6, 5, 4, 4, 3, 2, 1]);
+    expect(got.rows.map((r: Row) => r.status)).toEqual(["call", "call", "call", "call", "call", "queued", "queued"]);
+    expect(got.rows.map((r: Row) => r.status)).toEqual(direct.map(r => r.status));
+    expect(got.rows.every((r: Row) => r.calledAt === null && r.calledBy === null)).toBe(true);
+    expect(got.runsBasis).toBe("scheduled_runs");
+    expect(got.notes.join(" ")).toContain("Thursday messages that were due");
+    // first names only
+    expect(JSON.stringify(got)).not.toContain("Surname");
+    // the sales seat and an inactive seat are refused; the admin and the CEO gates are the role check's
+    expect(await refusedFor(SALES, "SELECT public.cockpit_csm_calls_read() AS r")).toMatch(/client success seat/);
+    expect(await refusedFor(BUYER, "SELECT public.cockpit_csm_calls_read() AS r")).toMatch(/client success seat/);
+  });
+
+  test("a limited CSM seat is ranked again inside its own clients", async () => {
+    const got = await seat(CSM_LIM, "SELECT public.cockpit_csm_calls_read() AS r");
+    expect(got.rows.map((r: Row) => [r.rank, r.clientName, r.status])).toEqual([
+      [1, "Rd Client 1", "call"],
+      [2, "Rd Client 6", "call"],
+      [3, "Rd Client 7", "call"],
+    ]);
+  });
+
+  test("pressing Called records who and when, once a week, and nothing else changes", async () => {
+    const before = await one("SELECT count(*)::int AS r FROM public.cockpit_audit_log");
+    // a queued client, a client the seat cannot see on its list, and a client that is on no list
+    expect(await refusedFor(CSM, "SELECT public.cockpit_csm_call_logged($1) AS r", [rd(6)])).toMatch(/not on this week's call list/);
+    expect(await refusedFor(CSM_LIM, "SELECT public.cockpit_csm_call_logged($1) AS r", [rd(2)])).toMatch(/not on this week's call list/);
+    expect(await refusedFor(CSM, "SELECT public.cockpit_csm_call_logged($1) AS r", [LOC_A])).toMatch(/not on this week's call list/);
+    expect(await refusedFor(CSM, "SELECT public.cockpit_csm_call_logged($1) AS r", ["bad id!"])).toMatch(/Choose one/);
+    // the sales seat and the media buyer cannot log a call
+    for (const who of [SALES, BUYER])
+      expect(await refusedFor(who, "SELECT public.cockpit_csm_call_logged($1) AS r", [rd(1)])).toMatch(/client success seat/);
+    expect(await one("SELECT count(*)::int AS r FROM public.cockpit_csm_call_log")).toBe(0);
+    expect(await one("SELECT count(*)::int AS r FROM public.cockpit_audit_log")).toBe(before);
+
+    const first = await seat(CSM, "SELECT public.cockpit_csm_call_logged($1) AS r", [rd(1)]);
+    expect(first.ok).toBe(true);
+    expect(first.alreadyLogged).toBe(false);
+    expect(first.calledBy).toBe("csm@tests.invalid");
+    expect(first.clientName).toBe("Rd Client 1");
+    expect(Date.now() - Date.parse(first.calledAt)).toBeLessThan(120_000);
+    const week = await one("SELECT to_char(now() AT TIME ZONE 'Asia/Kuwait', 'IYYY-\"W\"IW') AS r");
+    expect(first.week).toBe(week);
+
+    // one row, with the count that was missing at that moment, and one audit row
+    const rows = await q("SELECT * FROM public.cockpit_csm_call_log");
+    expect(rows.map(r => [r.location_id, r.client_name, r.week_key, r.missing_meetings, r.called_by])).toEqual([
+      [rd(1), "Rd Client 1", week, 6, "csm@tests.invalid"],
+    ]);
+    const audit = await q("SELECT action, entity_type, entity_id, actor_email, source_app, \"after\" FROM public.cockpit_audit_log WHERE entity_type = 'cockpit_csm_call_log'");
+    expect(audit.length).toBe(1);
+    expect([audit[0].action, audit[0].actor_email, audit[0].source_app, audit[0].entity_id]).toEqual(["csm_call.insert", "csm@tests.invalid", "client-success", rows[0].id]);
+    expect(audit[0].after.location_id).toBe(rd(1));
+
+    // another CSM presses the same client the same week: the first row comes back, nothing is written
+    const again = await seat(CSM_LIM, "SELECT public.cockpit_csm_call_logged($1) AS r", [rd(1)]);
+    expect(again.alreadyLogged).toBe(true);
+    expect(again.calledBy).toBe("csm@tests.invalid");
+    expect(again.calledAt).toBe(first.calledAt);
+    expect(await one("SELECT count(*)::int AS r FROM public.cockpit_csm_call_log")).toBe(1);
+    expect(await one("SELECT count(*)::int AS r FROM public.cockpit_audit_log WHERE entity_type = 'cockpit_csm_call_log'")).toBe(1);
+
+    // the list shows who and when, by name, for every seat that reads it, and the ranking does not move
+    for (const who of [CSM, CSM_LIM]) {
+      const got = await seat(who, "SELECT public.cockpit_csm_calls_read() AS r");
+      const row = got.rows.find((r: Row) => r.locationId === rd(1));
+      expect([row.calledBy, row.calledByName, row.calledAt]).toEqual(["csm@tests.invalid", "Sara Csm", first.calledAt]);
+      expect(got.rows.filter((r: Row) => r.calledAt !== null).length).toBe(1);
+    }
+    const all = await seat(CSM, "SELECT public.cockpit_csm_calls_read() AS r");
+    expect(all.rows.map((r: Row) => r.clientName)).toEqual(RD_ORDER);
+    expect(all.rows.filter((r: Row) => r.status === "call").length).toBe(5);
+
+    // a later week starts clean: the same client, a week on, has no call logged
+    const next = await svc(
+      "SELECT public.cockpit_csm_calls_json(now() + interval '7 days', true) AS r",
+    );
+    expect(next[0].r.week).not.toBe(week);
+    expect(next[0].r.rows.every((r: Row) => r.calledAt === null)).toBe(true);
+  });
+
+  test("a change or removal of a logged call leaves an audit row", async () => {
+    await owner(db);
+    const [row] = await q("SELECT id FROM public.cockpit_csm_call_log LIMIT 1");
+    await q("UPDATE public.cockpit_csm_call_log SET missing_meetings = 7 WHERE id = $1", [row.id]);
+    await q("UPDATE public.cockpit_csm_call_log SET missing_meetings = 7 WHERE id = $1", [row.id]);
+    await q("DELETE FROM public.cockpit_csm_call_log WHERE id = $1", [row.id]);
+    const audit = await q("SELECT action FROM public.cockpit_audit_log WHERE entity_type = 'cockpit_csm_call_log' AND entity_id = $1 ORDER BY created_at, id", [row.id]);
+    // insert, one update (the repeat changed nothing) and the delete
+    expect(audit.map(a => a.action).sort()).toEqual(["csm_call.delete", "csm_call.insert", "csm_call.update"]);
+  });
+
+  test("the migration applies twice and never opens a function or the table to anon", async () => {
+    await owner(db);
+    await db.exec(migration(FILES.reads));
+    const anon = await q(
+      `SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname IN ('cockpit_whole_board_seat','cockpit_allowed_locations','cockpit_gap_read','cockpit_gap_client_read',
+         'cockpit_csm_calls_json','cockpit_csm_calls_read','cockpit_csm_call_logged','cockpit_speed_read','cockpit_morning_uncalled_read','cockpit_csm_call_audit')
+         AND (has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('public', p.oid, 'EXECUTE'))`,
+    );
+    expect(anon).toEqual([]);
+    const table = await q(
+      "SELECT has_table_privilege('anon','public.cockpit_csm_call_log','SELECT') AS a, has_table_privilege('authenticated','public.cockpit_csm_call_log','SELECT') AS u, has_table_privilege('service_role','public.cockpit_csm_call_log','SELECT') AS s, (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.cockpit_csm_call_log'::regclass) AS rls",
+    );
+    expect(table[0]).toEqual({ a: false, u: false, s: true, rls: true });
   });
 });

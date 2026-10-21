@@ -17,7 +17,14 @@ import {
   Table2,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useSearchParams } from "react-router";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { FilterChips } from "@/components/ceo/FilterChips";
@@ -57,6 +64,7 @@ import { cn } from "@/lib/utils";
 import { BoardGrid, BoardGridSkeleton, type Sort, sortRows } from "./BoardGrid";
 import { ClientPanel } from "./ClientPanel";
 import { BoardDot, Problem } from "./cells";
+import { ResultsView, ViewSwitch, viewOf } from "./ResultsViews";
 import { TargetsDialog } from "./TargetsDialog";
 
 // ---------------------------------------------------------------------------
@@ -528,7 +536,37 @@ function Freshness({ board, now }: { board: Board; now: number }) {
   );
 }
 
+/**
+ * The page: the board, or one of the results and speed views beside it (?view=gap, speed, morning).
+ * The board is the default, so the address every team member knows still opens it.
+ */
 export function PerformancePage() {
+  const [params, setParams] = useSearchParams();
+  const view = viewOf(params.get("view"));
+  const switcher = (
+    <ViewSwitch
+      view={view}
+      onChange={next =>
+        setParams(
+          prev => {
+            const out = new URLSearchParams(prev);
+            if (next === "board") out.delete("view");
+            else out.set("view", next);
+            return out;
+          },
+          { replace: true },
+        )
+      }
+    />
+  );
+  return view === "board" ? (
+    <BoardView switcher={switcher} />
+  ) : (
+    <ResultsView view={view} switcher={switcher} />
+  );
+}
+
+function BoardView({ switcher }: { switcher: ReactNode }) {
   const [params, setParams] = useSearchParams();
   const now = useNow();
   const today = kuwaitToday(now);
@@ -680,6 +718,8 @@ export function PerformancePage() {
           ) : null}
         </div>
       </header>
+
+      {switcher}
 
       <div className="space-y-2">
         <FrameControl
