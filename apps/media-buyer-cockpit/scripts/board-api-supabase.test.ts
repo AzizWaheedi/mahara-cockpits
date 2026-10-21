@@ -11,8 +11,11 @@
  * known answer. Since 2026-10-17 the budget store (20261017100000_meta_budgets)
  * and the board's budgets (20261017100100_board_budgets) run too: Client A's
  * account gets hand-written budgets now and per day, so Budget/day, Spend/day
- * and Budget used have known answers. Every person, client, ad and number is
- * invented.
+ * and Budget used have known answers. Since 2026-10-21 the reads are
+ * 20261021a_board_skip_excluded_ads's: ads on the compromise list
+ * (cockpit_excluded_ads, matched on the ad id) never count, and their
+ * outsiders' campaigns leave Budget/day and Budget used and are said instead.
+ * Every person, client, ad and number is invented.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -45,6 +48,9 @@ const READ_CHECKED = [
   // The budgets on the board (2026-10-17).
   "20261017100100_board_budgets.sql",
   "20261017120000_board_budget_issue_scope.sql",
+  // Ads on the compromise list never count (2026-10-21). It takes the read as
+  // live, so cockpit_is_team_only (20261017b) is loaded first.
+  "20261021a_board_skip_excluded_ads.sql",
 ];
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
@@ -111,6 +117,31 @@ const DIALER = (() => {
   if (!hit || hit[1].includes("${"))
     throw new Error("The board facts test's DIALER block moved");
   return hit[1];
+})();
+
+/** The compromise list's table, as 20261010a makes it (the rest of that file needs the dashboard's tables). */
+const EXCLUDED_ADS = (() => {
+  const hit = migration("20261010a_exclude_unauthorized_ads.sql").match(
+    /create table if not exists public\.cockpit_excluded_ads \([\s\S]*?\n\);\nalter table public\.cockpit_excluded_ads enable row level security;\nrevoke all on public\.cockpit_excluded_ads from anon, authenticated;/,
+  );
+  if (!hit) throw new Error("The compromise list's table moved in 20261010a");
+  return hit[0];
+})();
+/** cockpit_is_team_only and its grants, as 20261017b makes them: the live read asks it. */
+const TEAM_ONLY = (() => {
+  const sql = migration("20261017b_team_only_seats.sql");
+  const fn = sql.match(
+    /CREATE OR REPLACE FUNCTION public\.cockpit_is_team_only\(\)[\s\S]*?\n\$\$;/,
+  );
+  const revoke = sql.match(
+    /REVOKE ALL ON FUNCTION public\.cockpit_is_team_only\(\) FROM [^;]*;/,
+  );
+  const grant = sql.match(
+    /GRANT EXECUTE ON FUNCTION public\.cockpit_is_team_only\(\) TO [^;]*;/,
+  );
+  if (!fn || !revoke || !grant)
+    throw new Error("cockpit_is_team_only moved in 20261017b");
+  return `${fn[0]}\n${revoke[0]}\n${grant[0]}`;
 })();
 
 let db: PGlite;
@@ -673,6 +704,8 @@ beforeAll(async () => {
     [LOC_A, kd(6), today],
   );
 
+  await db.exec(EXCLUDED_ADS);
+  await db.exec(TEAM_ONLY);
   await db.exec(migration(FILE));
   for (const f of FIXES) await db.exec(migration(f));
   for (const f of READ_CHECKED) await db.exec(migration(f));
@@ -3968,6 +4001,477 @@ describe("daily budgets and budget used (2026-10-17)", () => {
     expect(ctx.evidence).toBe(
       `Client A Budget used, ${dm(kd(3))} to ${dm(kd(1))}: 30.56% against a good line of 90.0% (off target).`,
     );
+  });
+
+  test("an outsider's campaign on the compromise list (2026-10-21): its budget leaves the sums with its spend and is said; the page lists it flagged, with no figures; one that also runs the client's own ad keeps its budget", async () => {
+    await seed();
+    const row = async () => rowOf(await board(CEO, kd(6), kd(4)), LOC_A).values;
+    const before = await row();
+    expect(before.budgetUsed).toMatchObject({ v: 88, num: 66, den: 75 });
+    await owner(db);
+    try {
+      // "Copy 3/3" on Client A's account: switched on at $8,150 a day, spending $500 a day.
+      await budgetNow({
+        id: "80099",
+        name: "Copy 3/3",
+        budgetLevel: "campaign",
+        type: "daily",
+        daily: 8150,
+      });
+      for (const n of [6, 5, 4]) {
+        await budgetDay("80099", n, 8150);
+        await adDay({
+          account: ACCT_A,
+          day: kd(n),
+          campaign: "80099",
+          campaignName: "Copy 3/3",
+          objective: "OUTCOME_SALES",
+          adset: "81099",
+          ad: "70099",
+          adName: "Made-up sales ad",
+          spend: 500,
+          imp: 50000,
+          clicks: 50,
+        });
+      }
+      // Off the list it counts, as the board did before 2026-10-21.
+      let v = await row();
+      expect(v.spend.v).toBe(66 + 1500);
+      expect(v.dailyBudget).toMatchObject({ v: 92 + 8150, campaigns: 4 });
+      expect(v.budgetUsed).toMatchObject({
+        num: 66 + 1500,
+        den: 75 + 3 * 8150,
+      });
+      // On the list: its spend and its budget leave the sums together, and Client A reads as
+      // before. Budget/day says the outsider's campaign switched on, so it is switched off in Meta.
+      await owner(db);
+      await q(
+        "INSERT INTO public.cockpit_excluded_ads(ad_id,account_id,campaign_id,reason) VALUES('70099',$1,'80099','unauthorized_meta_incident_2026_10')",
+        [`act_${ACCT_A}`],
+      );
+      v = await row();
+      for (const k of ["spend", "spendPerDay", "budgetUsed"])
+        expect(v[k]).toEqual(before[k]);
+      const OUT =
+        "1 outsider's campaign on the compromise list is switched on at $8,150.00 a day, not counted: switch it off in Meta.";
+      const { note, outsiders, ...daily } = v.dailyBudget;
+      const { note: beforeNote, ...beforeDaily } = before.dailyBudget;
+      expect(daily).toEqual(beforeDaily);
+      expect(outsiders).toEqual({ campaigns: 1, budget: 8150 });
+      expect(beforeNote).toContain(" Spending limit nearly used:");
+      expect(note).toBe(
+        beforeNote.replace(
+          " Spending limit nearly used:",
+          ` ${OUT} Spending limit nearly used:`,
+        ),
+      );
+      // The account's spending limit is read as Meta runs it: the outsider's budget spends it too.
+      expect(v.dailyBudget.accountIssues).toMatchObject([
+        { accountId: ACCT_A, issue: "limit_near" },
+      ]);
+      const page = await client(CEO, LOC_A, kd(6), kd(4));
+      expect(page.campaigns.map((c: Row) => c.id)).not.toContain("80099");
+      const listed = page.budgets.campaigns.find((c: Row) => c.id === "80099");
+      expect(listed).toMatchObject({
+        name: "Copy 3/3",
+        outsider: true,
+        flag: {
+          status: "off",
+          words:
+            "An outsider's campaign on the compromise list ($8,150.00 a day), not counted. Switch it off in Meta.",
+        },
+        metrics: {},
+      });
+      // Flagged first, the client's own campaigns after it with their figures as before.
+      expect(page.budgets.campaigns[0].id).toBe("80099");
+      expect(
+        page.budgets.campaigns
+          .filter((c: Row) => !c.outsider)
+          .every((c: Row) => c.metrics.dailyBudget),
+      ).toBe(true);
+      // A campaign that also runs one of the client's own ads is the client's: its budget
+      // stays, and only the listed ad's spend leaves.
+      await owner(db);
+      await adDay({
+        account: ACCT_A,
+        day: kd(5),
+        campaign: "80099",
+        campaignName: "Copy 3/3",
+        objective: "OUTCOME_SALES",
+        adset: "81099",
+        ad: "70098",
+        spend: 4,
+        imp: 400,
+        clicks: 4,
+      });
+      v = await row();
+      expect(v.spend.v).toBe(66 + 4);
+      expect(v.dailyBudget.v).toBe(92 + 8150);
+      expect(v.dailyBudget.outsiders).toBeUndefined();
+      expect(v.budgetUsed).toMatchObject({ num: 66 + 4, den: 75 + 3 * 8150 });
+      const own = (
+        await client(CEO, LOC_A, kd(6), kd(4))
+      ).budgets.campaigns.find((c: Row) => c.id === "80099");
+      expect(own.outsider).toBeUndefined();
+      expect(own.metrics.dailyBudget.v).toBe(8150);
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.cockpit_excluded_ads WHERE ad_id = '70099'");
+      await q(
+        "DELETE FROM public.cockpit_meta_ad_days WHERE ad_id IN ('70098', '70099')",
+      );
+      await q(
+        "DELETE FROM public.cockpit_meta_budgets WHERE object_id = '80099'",
+      );
+      await q(
+        "DELETE FROM public.cockpit_meta_budget_days WHERE campaign_id = '80099'",
+      );
+    }
+  });
+
+  test("an account whose only campaign switched on is an outsider's is still in use (2026-10-21): its payment and its spending limit are said, its budget is not counted", async () => {
+    await seed();
+    await owner(db);
+    const OLD = "7777777778";
+    const [{ ids }] = await q<{ ids: string[] }>(
+      "SELECT ad_account_ids AS ids FROM public.cockpit_board_clients WHERE location_id = $1",
+      [LOC_A],
+    );
+    const daily = async () =>
+      rowOf(await board(CEO, kd(3), kd(1)), LOC_A).values.dailyBudget;
+    try {
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = ad_account_ids || ARRAY[$2] WHERE location_id = $1",
+        [LOC_A, OLD],
+      );
+      // An unsettled account, nothing of the client's running or spending, and an outsider's
+      // campaign switched on at $5,130 a day. No ad of it is stored.
+      await state(OLD, { status: 3 });
+      await budgetNow({
+        id: "8999902",
+        name: "Made-up |MAHARA|3\\3",
+        budgetLevel: "adset",
+        type: "daily",
+        daily: 5130,
+        delivering: false,
+        whyNot: "Account unsettled: payment needed",
+        account: OLD,
+      });
+      await q(
+        "INSERT INTO public.cockpit_excluded_ads(ad_id,account_id,campaign_id,reason) VALUES('8999903',$1,'8999902','unauthorized_meta_incident_2026_10')",
+        [`act_${OLD}`],
+      );
+      let d = await daily();
+      expect(d.v).toBe(92);
+      expect(d.campaigns).toBe(3);
+      expect(d.outsiders).toEqual({ campaigns: 1, budget: 5130 });
+      expect(
+        (d.accountIssues ?? []).find((i: Row) => i.accountId === OLD),
+      ).toMatchObject({
+        issue: "billing",
+        words: "Account unsettled: payment needed",
+      });
+      expect(d.note).toContain(
+        "1 outsider's campaign on the compromise list is switched on at $5,130.00 a day, not counted: switch it off in Meta. Spending limit nearly used",
+      );
+      // Settled, with a $1,000 spending limit: under a day of the outsider's budget left.
+      await state(OLD, { cap: 1000, spent: 0 });
+      d = await daily();
+      expect(
+        (d.accountIssues ?? []).find((i: Row) => i.accountId === OLD),
+      ).toMatchObject({
+        issue: "limit_near",
+        words:
+          "Spending limit nearly used: $1,000.00 left, under a day of budget",
+      });
+      const account = (
+        await client(CEO, LOC_A, kd(3), kd(1))
+      ).budgets.account.find((a: Row) => a.accountId === OLD);
+      expect(account.words).toBe(
+        "Spending limit: $1,000.00 left (under a day of budget).",
+      );
+      // Switched off in Meta: nothing to say, and the old account goes quiet.
+      await q(
+        "UPDATE public.cockpit_meta_budgets SET switched_on = false WHERE object_id = '8999902'",
+      );
+      await state(OLD, { status: 3 });
+      d = await daily();
+      expect(d.outsiders).toBeUndefined();
+      expect(d.note).not.toContain("outsider");
+      expect(
+        (d.accountIssues ?? []).map((i: Row) => i.accountId),
+      ).not.toContain(OLD);
+    } finally {
+      await owner(db);
+      await q(
+        "DELETE FROM public.cockpit_excluded_ads WHERE ad_id = '8999903'",
+      );
+      for (const t of ["cockpit_meta_budgets", "cockpit_meta_account_state"])
+        await q(`DELETE FROM public.${t} WHERE account_id = $1`, [OLD]);
+      await q(
+        "UPDATE public.cockpit_board_clients SET ad_account_ids = $2 WHERE location_id = $1",
+        [LOC_A, ids],
+      );
+    }
+  });
+
+  test("an outsider's campaign on a lifetime budget is flagged like a daily one (2026-10-21): no lifetime figures, so it never reads as the client's own lifetime budget", async () => {
+    await seed();
+    const page = async () =>
+      (await client(CEO, LOC_A, kd(3), kd(1))).budgets.campaigns as Row[];
+    const daily = async () =>
+      rowOf(await board(CEO, kd(3), kd(1)), LOC_A).values.dailyBudget;
+    const own = (await page()).find(c => c.id === "80003");
+    expect(own).toMatchObject({
+      budgetType: "lifetime",
+      flag: null,
+      lifetime: { budget: 500, remaining: 200 },
+    });
+    expect(own?.outsider).toBeUndefined();
+    expect((await daily()).note).toContain(LIFETIME_OUT);
+    await owner(db);
+    try {
+      // "Spring launch" holds no stored ad of the client's, so one listed ad makes it the outsiders'.
+      await q(
+        "INSERT INTO public.cockpit_excluded_ads(ad_id,account_id,campaign_id,reason) VALUES('70096',$1,'80003','unauthorized_meta_incident_2026_10')",
+        [`act_${ACCT_A}`],
+      );
+      expect((await page()).find(c => c.id === "80003")).toEqual(
+        expect.objectContaining({
+          budgetType: "lifetime",
+          outsider: true,
+          lifetime: null,
+          metrics: {},
+          flag: {
+            status: "off",
+            words:
+              "An outsider's campaign on the compromise list (a lifetime budget), not counted. Switch it off in Meta.",
+          },
+        }),
+      );
+      // Budget/day says it as an outsider's campaign with no daily figure, not as the client's lifetime budget.
+      const d = await daily();
+      expect(d.outsiders).toEqual({ campaigns: 1 });
+      expect(d.lifetime).toBe(0);
+      expect(d.note).not.toContain(LIFETIME_OUT);
+      expect(d.note).toContain(
+        "1 outsider's campaign on the compromise list is switched on, not counted: switch it off in Meta.",
+      );
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.cockpit_excluded_ads WHERE ad_id = '70096'");
+    }
+  });
+});
+
+describe("ads on the compromise list never count (2026-10-21)", () => {
+  // An outsider's lead ad on Formula Co's account on each of its ten days ($40, 4,000
+  // impressions, 20 link clicks and 2 form leads a day), and one on an account no client carries.
+  const OUTSIDER = {
+    account: ACCT_D,
+    tz: "Asia/Riyadh",
+    campaign: "90009",
+    campaignName: "Copy 3/3",
+    adset: "91009",
+    ad: "92009",
+    adName: "Made-up sales ad",
+    spend: 40,
+    imp: 4000,
+    clicks: 20,
+    leads: 2,
+    destination: "ON_AD",
+  };
+  const LOOSE = "8888888888";
+  const list = (ad: string, account: string, campaign: string) =>
+    q(
+      "INSERT INTO public.cockpit_excluded_ads(ad_id,account_id,campaign_id,reason) VALUES($1,$2,$3,'unauthorized_meta_incident_2026_10')",
+      [ad, account, campaign],
+    );
+  const unlist = (ad: string) =>
+    q("DELETE FROM public.cockpit_excluded_ads WHERE ad_id = $1", [ad]);
+  /** Formula Co's row and the board's spend outside the rows, read by the CEO. */
+  const read = async () => {
+    const b = await board(CEO);
+    return { v: rowOf(b, LOC_D).values, offBoard: b.offBoard };
+  };
+  /** Run `fn` with the outsider's ad off the list, then put it back. */
+  async function offTheList<T>(fn: () => Promise<T>): Promise<T> {
+    await owner(db);
+    await unlist("92009");
+    try {
+      return await fn();
+    } finally {
+      await owner(db);
+      await list("92009", `act_${ACCT_D}`, "90009");
+    }
+  }
+  let base: Awaited<ReturnType<typeof read>>;
+
+  beforeAll(async () => {
+    base = await read();
+    await owner(db);
+    for (let i = 0; i < 10; i++) await adDay({ ...OUTSIDER, day: kd(40 - i) });
+    await adDay({
+      account: LOOSE,
+      accountName: "Outsider's ads",
+      day: kd(35),
+      campaign: `1${LOOSE}`,
+      adset: `2${LOOSE}`,
+      ad: `3${LOOSE}`,
+      spend: 25,
+      imp: 1000,
+      clicks: 10,
+    });
+    await list("92009", `act_${ACCT_D}`, "90009");
+    await list(`3${LOOSE}`, `act_${LOOSE}`, `1${LOOSE}`);
+  });
+  afterAll(async () => {
+    await owner(db);
+    await q("DELETE FROM public.cockpit_excluded_ads");
+    await q("DELETE FROM public.cockpit_meta_ad_days WHERE ad_id = ANY($1)", [
+      ["92009", `3${LOOSE}`],
+    ]);
+  });
+
+  test("its spend, impressions, clicks and form leads leave the client's row; the client's own ads stay", async () => {
+    const on = await read();
+    // Formula Co reads exactly as before the outsider's ad was stored.
+    expect(on.v).toEqual(base.v);
+    expect(on.v.spend.v).toBe(1000);
+    expect(on.v.metaLeads.v).toBe(50);
+    expect(on.v.cpl).toMatchObject({ v: 16, num: 800, den: 50 });
+    expect(on.v.costPerBooking).toMatchObject({ v: 100 });
+    // Off the list it is counted, as the board did before 2026-10-21.
+    const off = await offTheList(read);
+    expect(off.v.spend.v).toBe(1400);
+    expect(off.v.impressions.v).toBe(240000);
+    expect(off.v.linkClicks.v).toBe(1550);
+    expect(off.v.metaLeads.v).toBe(70);
+    expect(off.v.cpl).toMatchObject({ num: 1200, den: 70 });
+    expect(off.v.costPerBooking).toMatchObject({ v: 140 });
+  });
+
+  test("the client page's tree names none of its campaign, ad set or ad; the client's own keep their numbers", async () => {
+    const tree = (c: Row) =>
+      (c.campaigns as Row[]).map(x => [x.id, x.metrics.spend.v]);
+    const on = await client(CEO, LOC_D);
+    expect(tree(on)).toEqual([
+      ["90001", 800],
+      ["90002", 200],
+    ]);
+    expect(JSON.stringify(on)).not.toMatch(
+      /9[012]009|Made-up sales ad|Copy 3\/3/,
+    );
+    const off = await offTheList(() => client(CEO, LOC_D));
+    expect(tree(off)).toEqual([
+      ["90001", 800],
+      ["90009", 400],
+      ["90002", 200],
+    ]);
+  });
+
+  test("spend outside the rows leaves it out too", async () => {
+    expect((await read()).offBoard).toEqual({
+      spend: 0,
+      unpriced: false,
+      accounts: [],
+    });
+    await owner(db);
+    await unlist(`3${LOOSE}`);
+    try {
+      expect((await read()).offBoard).toEqual({
+        spend: 25,
+        unpriced: false,
+        accounts: [
+          {
+            accountId: LOOSE,
+            name: "Outsider's ads",
+            spend: 25,
+            reason: "not_tied",
+          },
+        ],
+      });
+    } finally {
+      await owner(db);
+      await list(`3${LOOSE}`, `act_${LOOSE}`, `1${LOOSE}`);
+    }
+  });
+
+  test("the list is matched on the ad id alone, as the media sync and the snapshot trigger match it: the account written with act_, without, or another one", async () => {
+    await owner(db);
+    await unlist("92009");
+    try {
+      await list("92009", ACCT_D, "90009");
+      expect((await read()).v.spend.v).toBe(1000);
+      await owner(db);
+      await unlist("92009");
+      // Meta's ad ids are unique: an account written wrong on the list still leaves the ad out.
+      await list("92009", "act_9999999999", "90009");
+      expect((await read()).v.spend.v).toBe(1000);
+    } finally {
+      await owner(db);
+      await unlist("92009");
+      await list("92009", `act_${ACCT_D}`, "90009");
+    }
+  });
+
+  test("a client row's frequency leaves Meta's reach out while a listed ad delivered on its accounts in the time frame, and says why: the client's own ads' daily frequency stands in", async () => {
+    const freq = async () =>
+      rowOf(await board(CEO, kd(6), today), LOC_A).values.frequency;
+    // Client A's reach over the last 7 days: 12,000 impressions over 5,000 people.
+    expect(await freq()).toMatchObject({ v: 2.4, basis: "window" });
+    await owner(db);
+    try {
+      // An outsider's ad on Client A's account: Meta's reach for the account counts its people too.
+      await adDay({
+        account: ACCT_A,
+        day: kd(3),
+        campaign: "80097",
+        campaignName: "Copy 4/4",
+        adset: "81097",
+        ad: "70097",
+        adName: "Made-up outsider ad",
+        spend: 30,
+        imp: 9000,
+        clicks: 9,
+        freq: 3,
+      });
+      await list("70097", `act_${ACCT_A}`, "80097");
+      const f = await freq();
+      // Client A's own ads all read 1.1 a day; the outsider's 3.0 is left out with its row.
+      expect(f).toMatchObject({
+        v: 1.1,
+        basis: "average_daily",
+        sample: 13200,
+      });
+      expect(f.num).toBeUndefined();
+      expect(f.den).toBeUndefined();
+      expect(f.note).toEndWith(
+        "Meta's reach for these ad accounts also counts the outsiders' ads on the compromise list, so it is not used: this is the average daily frequency of the client's own ads.",
+      );
+      // Off the list its delivery is the client's: Meta's reach again.
+      await owner(db);
+      await unlist("70097");
+      expect(await freq()).toMatchObject({ v: 2.4, basis: "window" });
+      // Listed, with no impression in these days: nobody of it is in the reach, so the reach stays.
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_meta_ad_days SET impressions = 0, spend = 0, spend_usd = 0, frequency = NULL WHERE ad_id = '70097'",
+      );
+      await list("70097", `act_${ACCT_A}`, "80097");
+      expect(await freq()).toMatchObject({ v: 2.4, basis: "window" });
+      // Delivered before the time frame only: the reach stays too.
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_meta_ad_days SET day = $1, impressions = 9000, spend = 30, spend_usd = 30, frequency = 3 WHERE ad_id = '70097'",
+        [kd(8)],
+      );
+      expect(await freq()).toMatchObject({ v: 2.4, basis: "window" });
+    } finally {
+      await owner(db);
+      await unlist("70097");
+      await q("DELETE FROM public.cockpit_meta_ad_days WHERE ad_id = '70097'");
+    }
   });
 });
 

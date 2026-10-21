@@ -290,13 +290,23 @@ Clients = cards Active on ≥ 1 `rosterDays` snapshot in the month joined to
 `cockpit_board_clients` by ClickUp id (a roster key with no board row is listed
 `notMeasured: 'no board row'`). Spend, lead spend, Meta leads from
 `cockpit_meta_ad_days` (`account_id = ANY(ad_account_ids)`, day in month, day <
-today on the account's clock); bookings from `cockpit_client_days` with
+today on the account's clock), leaving out every ad on the compromise list
+(`cockpit_excluded_ads`, matched on the ad id; since 2026-10-21,
+`20261021a_board_skip_excluded_ads.sql`): the ads outsiders placed during the
+October 2026 Meta compromise are never the client's spend, its creative start
+or its leads; bookings from `cockpit_client_days` with
 `day < Kuwait today`. Per client `unpricedRows` (spend > 0, spend_usd null) and
 `nullBookingDays`; either > 0 sets `notMeasured` for that measure and drops the
 client from that pool. Creative start = card `launchDate`, else first
-lead-campaign spend day. `nonLeadSpendUsd` per client and pooled. References:
-September pooled CPL $13.83 (698 leads), CPB $57.78 (153 bookings, the
-unshared-account client out); guarded (all clients) $14.92 over 11.
+lead-campaign spend day. `nonLeadSpendUsd` per client and pooled. References
+(since 2026-10-21, the listed ads out): September pooled CPL $13.83 (698
+leads; the listed ads carry no form leads, so it holds), CPB $55.51 ($8,493.03
+over 153 bookings, the unshared-account client out; it read $57.78 while they
+counted); guarded (all clients) $14.05 over 10. The strategist's guard is where
+the list bites: the $500 floor reads the client's own spend, so Munshaat
+Khalida ($404.26 of its own in September, $594.09 with the outsiders' ads)
+leaves the pool; it read $14.92 over 11 before. October to the 20th, guarded:
+$11.32 over 9 (Khalida and Liwan leave; it read $11.75 over 11).
 
 ### 4.3 Clients (`cockpit_pay_facts_clients`)
 

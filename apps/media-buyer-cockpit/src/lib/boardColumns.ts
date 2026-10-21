@@ -1014,6 +1014,19 @@ export type BudgetFacts = {
    * much at once.
    */
   budgetHigh: string[];
+  /**
+   * Clients with an outsiders' campaign switched on now: one on the
+   * compromise list (cockpit_excluded_ads) whose ads are all on it
+   * ("Liwan ($7,260 a day)"). Not in Budget/day, so only this says it; a
+   * payment or a fixed account would let it spend (2026-10-21).
+   */
+  outsiders: string[];
+  /**
+   * How many outsiders' campaigns those clients have switched on, all
+   * together: equal to outsiders.length when each has exactly one, so the
+   * sentence says "an outsider's campaign ... switch it off".
+   */
+  outsiderCampaigns: number;
   /** Something needs action now (an account, a campaign not spending, an off figure), not only a watch. */
   off: boolean;
 };
@@ -1025,6 +1038,8 @@ export function budgetFacts(rows: ClientRow[]): BudgetFacts {
     under: [],
     issues: {},
     budgetHigh: [],
+    outsiders: [],
+    outsiderCampaigns: 0,
     off: false,
   };
   const add = (list: string[], name: string) => {
@@ -1049,6 +1064,15 @@ export function budgetFacts(rows: ClientRow[]): BudgetFacts {
       daily.v > BUDGET_HIGH_TIMES * perDay
     ) {
       add(f.budgetHigh, `${r.clientName} (${money(daily.v)} a day)`);
+      f.off = true;
+    }
+    const out = daily?.outsiders;
+    if (out && isNum(out.campaigns) && out.campaigns > 0) {
+      const name = isNum(out.budget)
+        ? `${r.clientName} (${money(out.budget)} a day${out.atLeast ? " or more" : ""})`
+        : r.clientName;
+      if (!f.outsiders.includes(name)) f.outsiderCampaigns += out.campaigns;
+      add(f.outsiders, name);
       f.off = true;
     }
     if (s === "off") f.off = true;
@@ -1143,6 +1167,7 @@ const GROUP_LABEL: Record<string, string> = {
   limit_near: "Under a day of spending limit left",
   balance_low: "Under a day of prepaid balance left",
   budgetHigh: "Budget far above its usual spend",
+  outsiders: "Outsiders' campaigns switched on",
   notSpending: "Spent nothing yesterday",
   notDelivering: "Budget switched on, not delivering",
   under: "Spent under budget in these dates",
@@ -1158,6 +1183,16 @@ const GROUP_LABEL: Record<string, string> = {
 export function budgetGroups(f: BudgetFacts): BudgetGroup[] {
   const seen = new Set<string>();
   const out: BudgetGroup[] = [];
+  // Before everything: not the client's at all, and Meta would spend their
+  // budgets as soon as the account can deliver (2026-10-21: Liwan's two
+  // campaigns on the compromise list, $7,260 a day, on an unsettled account).
+  if (f.outsiders.length)
+    out.push({
+      key: "outsiders",
+      label: GROUP_LABEL.outsiders,
+      stops: true,
+      names: f.outsiders,
+    });
   // First, and whatever else names the client: a payment or a fixed account
   // would let Meta spend that budget at once (2026-10-17: Liwan had $7,260 a
   // day switched on while its account owed a payment; Meta refuses edits
@@ -1207,6 +1242,13 @@ export function listName(name: string): string {
 export function budgetSentence(f: BudgetFacts): string | null {
   const one = (list: string[]) => list.length === 1;
   const parts = [
+    f.outsiders.length
+      ? f.outsiderCampaigns === f.outsiders.length
+        ? one(f.outsiders)
+          ? `${nameList(f.outsiders)} has an outsider's campaign switched on: switch it off in Meta`
+          : `${nameList(f.outsiders)} each have an outsider's campaign switched on: switch them off in Meta`
+        : `${nameList(f.outsiders)} ${one(f.outsiders) ? "has" : "have"} outsiders' campaigns switched on: switch them off in Meta`
+      : null,
     f.notSpending.length
       ? `${nameList(f.notSpending)} spent nothing yesterday on a running budget`
       : null,

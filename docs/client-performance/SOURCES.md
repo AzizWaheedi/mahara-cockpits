@@ -56,6 +56,69 @@ board's read functions and screen).
   or per-account ratios.
 - **A stale source never lowers a closed day**; a complete read may, and the
   refresh's audit row lists each drop.
+- **Ads on the compromise list never count** (since 21 Oct 2026,
+  `20261021a_board_skip_excluded_ads.sql`). `cockpit_excluded_ads` lists the
+  ads that outsiders placed during the October 2026 Meta compromise. They are
+  matched on the ad id alone, as the media sync (`withoutExcludedAds`) and the
+  dashboard feed's snapshot trigger match them: Meta's ad ids are unique, so
+  the account the list writes beside an ad does not matter. They leave every
+  ad figure: the rows, the tree, the spend outside the rows, Budget used's
+  campaign-days and the pay facts. So the board reads below Meta's account
+  total in Ads Manager by the listed ads' spend. Meta reads reach per
+  account, so one ad cannot be taken out of it: when a listed ad delivered on
+  a client's accounts in the time frame, the client row leaves Meta's reach
+  out, and its frequency is the impression-weighted daily frequency of the
+  client's own ads, with a note that says why (see Frequency). A new
+  outsider's ad counts until it is listed: add it in a migration, together
+  with `EXCLUDED_AD_IDS` in `hermes/cockpit-sync/excludedAds.ts`.
+  - **An outsiders' campaign** is one the list names whose stored ads are all
+    on it. Its budget leaves the sums in Budget/day and Budget used with its
+    spend, but while it is switched on it is never hidden. Budget/day's note
+    says it ("2 outsiders' campaigns on the compromise list are switched on
+    at $7,260.00 a day, not counted: switch them off in Meta.") and the cell
+    carries `outsiders` (`campaigns`, `budget`, `atLeast`). The board's budget
+    line names the client first, under "Outsiders' campaigns switched on". The
+    client page's budget list keeps the campaign as a row flagged off, with
+    its daily budget in the words and no figures. One on a lifetime budget
+    stays in that table too, "(a lifetime budget)" in its words and no
+    lifetime figures, never in the client's own "On a lifetime budget" list.
+    A campaign that also runs a client's own ad is the client's and keeps its
+    budget.
+  - **The ad account is read as Meta runs it.** An outsiders' campaign
+    switched on keeps its account "in use", so a payment due or a closed
+    account is still said. The days of spending limit or prepaid balance left
+    count its budget too, because Meta spends the limit on it.
+  - **Checked on live data on 21 Oct**, in a transaction that was rolled back.
+    Khalida's September spend went from $594.09 to $404.26 (−$189.83).
+    October to the 20th went from $1,704.74 to $262.44 (−$1,442.30). Liwan
+    went from $1,063.77 to $946.94 in September and from $1,379.53 to $194.58
+    in October. ARCWANI went from $832.63 to $791.81 and from $418.97 to
+    $151.40. Each equals the store's own sum without the listed ads.
+  - **Budget/day.** Liwan's went from $7,260 to $0. Its note now says "2
+    outsiders' campaigns on the compromise list are switched on at $7,260.00
+    a day", the total only, beside "Account unsettled: payment needed"; the
+    client page's budget list shows each ($6,220 and $1,040 a day).
+    ARCWANI's went from $1,109 to $35, and its note says 1 outsider's
+    campaign is switched on at $1,074.00 a day. Both accounts still read
+    "Account unsettled".
+  - **Frequency, 1 to 21 Oct.** Meta's reach for Liwan's accounts covered
+    460,096 impressions, and the client's own ads made 7,119 of them to
+    yesterday, so about 98% were the outsiders'. ARCWANI: 123,783 and 7,418
+    (about 94%). Khalida: 106,650 and 7,963 (about 91%). So the rows no
+    longer use it: Liwan 1.30 -> 1.12, ARCWANI 1.28 -> 1.12, Khalida 1.19 ->
+    1.08, each the client's own ads' average daily frequency (checked live in
+    a rolled-back transaction).
+  - **Spend outside the rows.** Ideal Elite's $578.62 is an outsider's
+    campaign on the list, and Rm decor's $127.38 is a listed ad ("What is
+    left" below). Both leave it.
+  - **All Active clients' October spend to the 20th** went from $10,578.42 to
+    $7,683.60 (Khalida −$1,442.30, Liwan −$1,184.95, ARCWANI −$267.57).
+  - **Still to list.** Khalida's "29/8 - Copy" (ad 120247012327250088, $70.91,
+    with a $9,220 daily budget) and "New Engagement Campaign" (ad
+    120247083365360088, $0 stored, $525 a day) count until they are listed.
+    Until then Khalida's October $262.44 includes "29/8 - Copy"'s $70.91, and
+    Budget used reads 0.56% ($262.44 / $47,185). Once both are listed, October
+    reads $191.53 and Budget used 34.2% ($191.53 / $560).
 
 ## Column by column
 
@@ -207,7 +270,9 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
   used up is the CEO's "budget set, not spending", so it counts and shows a
   low Budget used with the reason. A campaign waiting for its start (its
   own, or every ad set switched on starts later) is not switched on yet: it
-  is listed as "Starts 20 Oct", with no dot and not as a problem.
+  is listed as "Starts 20 Oct", with no dot and not as a problem. An
+  outsiders' campaign on the compromise list never counts: it is said
+  instead (see "Ads on the compromise list never count" above).
 - **Which budget:** CBO (a campaign budget) is the campaign's own budget.
   ABO (ad set budgets) is the sum of the ad sets switched on, delivering or
   not. A paused or ended ad set never counts (the media sync in
@@ -388,6 +453,15 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 - **Checked against:** Meta's frequency for the same range (equal).
 - **Gaps:** for a two-account client the reach is a sum, so frequency reads a
   little low.
+- **Compromise list (since 21 Oct 2026):** Meta's reach is per account, so it
+  counts the outsiders' ads on the compromise list too. When a listed ad had
+  impressions on a client's accounts in the time frame, the client row does
+  not use the reach: it shows the impression-weighted daily frequency of the
+  client's own ads (`basis: average_daily`), and the note says "Meta's reach
+  for these ad accounts also counts the outsiders' ads on the compromise
+  list, so it is not used: this is the average daily frequency of the
+  client's own ads." The tree's campaign, ad set and ad reach is each node's
+  own; the listed nodes are not shown.
 
 ### Link clicks, link CTR, CPC, CPM
 
@@ -841,7 +915,7 @@ Budgets on the board (2026-10-17), in order (systems manager):
 | --- | --- |
 | Shades's lead form "Shades\|mahara\|14\10" is not connected to its GoHighLevel location (newest contact 8 Oct; 3 to 4 form leads since 14 Oct never arrived). Connect it, send one test lead, re-send the missing ones. | Media buyer |
 | Professional Touch's ad account is not shared with Mahara's business 767701513092162: ask the client to share it and give the system user ads_read; then add a hand tie and run a backfill for that account. Until then spend is "unknown", never $0. | CEO, then systems manager |
-| Cancelled clients' accounts spent $1,507 in 30 days (Ideal Elite $578.62 on a Mahara campaign, Pidco $553.00 still delivering, AEA, Rm decor, حول العمران, MOFAG). Confirm each client's status; switch delivery off where the client is gone; decide whether to remove Pidco's account from Mahara's business. | Client success, media buyer, CEO |
+| Cancelled clients' accounts spent $1,507 in 30 days (Ideal Elite $578.62 on an outsider's campaign on the compromise list, not Mahara's, so the board leaves it out since 21 Oct; Pidco $553.00 still delivering, AEA, Rm decor, حول العمران, MOFAG). Confirm each client's status; switch delivery off where the client is gone; decide whether to remove Pidco's account from Mahara's business. | Client success, media buyer, CEO |
 | Alkhalil's SAR account 640644143620696 is kept out of Alkhalil's figures (only the client's own Instagram post boosts). If Mahara does manage it, set its `kept_out` to false in a migration with the evidence. | Media buyer, then systems manager |
 | Atlantis's "Project Review & Qualification Call" calendar also takes leads' own bookings (3 of 5). Say whether it is a booking calendar: if yes, the board's calendar rule should count it (by its calendar id); if no, the booking page should not offer it. | Client success, then systems manager |
 | Triple Edge (spending, a clients row, no GoHighLevel location): a client or not? If yes, create its location and tie it; if no, hide it. | Client success |
@@ -965,7 +1039,7 @@ data (blank where nothing changes).
 | نهوض نجد | video fields, 30d, 7d | 4,629 / 21,859 / 1,340 / 2,501 / 1,293 / 761 / 417 | same | yes | |
 | نهوض نجد | reach, last_30, last_7 | 10,726 / 23,701 / 2.21; 3,408 / 5,299 / 1.55 | 10,726 / 23,723 / 2.21; 3,416 / 5,321 / 1.56 | yes | today's delivery |
 | نهوض نجد | CRM ad leads vs Meta form leads, 30d, 7d | 58; 10 | 67; 13 | no | bulk upload on 6 Oct; 9 not contacts in the window |
-| Ideal Elite (cancelled) | spend / impressions / link clicks, 30d | 578.62 / 5,281 / 106 | same | yes | Mahara campaign ran 24 Sep to 7 Oct, 0 leads |
+| Ideal Elite (cancelled) | spend / impressions / link clicks, 30d | 578.62 / 5,281 / 106 | same | yes | ran 24 Sep to 7 Oct, 0 leads; an outsider's campaign on the compromise list, not Mahara's (corrected 21 Oct) |
 | Ideal Elite (cancelled) | form leads / lead action; LPV | none / 0; 31 | 0 / none; 31 | yes | |
 | MOFAG (cancelled) | spend / impressions / link clicks, 30d | 31.48 / 883 / 27 | same | yes | QAR at 0.2747 |
 | MOFAG (cancelled) | form leads, video | 4 / 4; 142 / 810 / 40 / 48 / 28 / 19 / 14 | same | yes | |

@@ -443,8 +443,13 @@ function BudgetPart({
   canLever: boolean;
   onLever: () => void;
 }) {
-  const daily = budgets.campaigns.filter(c => c.budgetType !== "lifetime");
-  const lifetime = budgets.campaigns.filter(c => c.budgetType === "lifetime");
+  // An outsiders' campaign stays in the table whatever its budget type, so
+  // its flag ("An outsider's campaign on the compromise list...") shows and
+  // it never reads as the client's own lifetime budget (2026-10-21).
+  const isLifetime = (c: BudgetCampaign) =>
+    c.budgetType === "lifetime" && !c.outsider;
+  const daily = budgets.campaigns.filter(c => !isLifetime(c));
+  const lifetime = budgets.campaigns.filter(isLifetime);
   const paused = budgets.paused;
   const off = statusOf(row?.values.budgetUsed) === "off";
   return (

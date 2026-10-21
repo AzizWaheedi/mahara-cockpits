@@ -407,6 +407,13 @@ function BudgetLine({
                 {g.names.map(listName).join(", ")}
               </span>
             </span>
+            {g.key === "outsiders" ? (
+              <span className="col-start-2 row-start-2 text-xs text-muted-foreground">
+                On the compromise list, so not in Budget/day. Switch them off in
+                Meta: Meta would spend their budgets as soon as the account can
+                deliver.
+              </span>
+            ) : null}
             {g.key === "budgetHigh" ? (
               <span className="col-start-2 row-start-2 text-xs text-muted-foreground">
                 Meta could spend this much as soon as the account can deliver.

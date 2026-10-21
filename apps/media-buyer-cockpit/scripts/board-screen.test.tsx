@@ -156,11 +156,12 @@ const { boardFixture, clientFixture } = await import("../src/dev/boardFixture");
 const today = client.kuwaitToday();
 type Scenario = "default" | "empty" | "stale" | "board_override";
 
-/** The reads answer from the fixture; `edit` changes the board before it is sent. */
+/** The reads answer from the fixture; `edit` changes the board, `editClient` a client's page, before it is sent. */
 function answer(
   opts: {
     scenario?: Scenario;
     edit?: (board: any) => void;
+    editClient?: (page: any) => void;
     fail?: Answer["error"];
     save?: (args: any) => Answer;
   } = {},
@@ -179,6 +180,7 @@ function answer(
     }
     if (name === "cockpit_board_client") {
       const c = clientFixture(args.p_location, args.p_from, args.p_to, today);
+      if (c) opts.editClient?.(c);
       return c
         ? { data: c, error: null }
         : {
@@ -846,6 +848,8 @@ describe("budgets", () => {
       under: [],
       issues: {},
       budgetHigh: [],
+      outsiders: [],
+      outsiderCampaigns: 0,
       off: true,
       ...over,
     });
@@ -997,6 +1001,79 @@ describe("budgets", () => {
     );
   });
 
+  test("an outsiders' campaign switched on is named before everything, with its budget and what to do (2026-10-21)", () => {
+    const row = (name: string, outsiders: any, daily = 0) =>
+      ({
+        clientName: name,
+        values: {
+          dailyBudget: {
+            v: daily,
+            status: null,
+            ...(outsiders ? { outsiders } : {}),
+          },
+          spendPerDay: { v: 10, status: null },
+          budgetUsed: { v: null, status: "not_measured" },
+        },
+      }) as any;
+    const f = columns.budgetFacts([
+      // Two outsiders' campaigns at $5,480 a day, none of the client's own switched on.
+      row("Harbor Kitchens", { campaigns: 2, budget: 5480 }),
+      row("Dune Interiors", { campaigns: 1, budget: 860, atLeast: true }, 25),
+      row("Orbit Glass", null, 40),
+      row("Nova Landscapes", { campaigns: 1 }),
+    ]);
+    expect(f.outsiders).toEqual([
+      "Harbor Kitchens ($5,480 a day)",
+      "Dune Interiors ($860 a day or more)",
+      "Nova Landscapes",
+    ]);
+    expect(f.outsiderCampaigns).toBe(4);
+    expect(f.budgetHigh).toEqual([]);
+    expect(f.off).toBe(true);
+    const groups = columns.budgetGroups({
+      ...f,
+      issues: { billing: ["Harbor Kitchens"] },
+    });
+    expect(groups.map(g => [g.key, g.stops])).toEqual([
+      ["outsiders", true],
+      ["billing", true],
+    ]);
+    expect(groups[0].label).toBe("Outsiders' campaigns switched on");
+    expect(columns.budgetSentence({ ...f, issues: {} })).toBe(
+      "Harbor Kitchens ($5,480 a day), Dune Interiors ($860 a day or more) and Nova Landscapes have outsiders' campaigns switched on: switch them off in Meta.",
+    );
+    // One client, two campaigns: "campaigns" and "them".
+    const two = columns.budgetFacts([
+      row("Harbor Kitchens", { campaigns: 2, budget: 5480 }),
+    ]);
+    expect(columns.budgetSentence(two)).toBe(
+      "Harbor Kitchens ($5,480 a day) has outsiders' campaigns switched on: switch them off in Meta.",
+    );
+    // One client, one campaign: "an outsider's campaign" and "it".
+    const one = columns.budgetFacts([
+      row("Dune Interiors", { campaigns: 1, budget: 860 }, 25),
+    ]);
+    expect(one.outsiderCampaigns).toBe(1);
+    expect(columns.budgetSentence(one)).toBe(
+      "Dune Interiors ($860 a day) has an outsider's campaign switched on: switch it off in Meta.",
+    );
+    // Two clients with one each.
+    expect(
+      columns.budgetSentence(
+        columns.budgetFacts([
+          row("Dune Interiors", { campaigns: 1, budget: 860 }, 25),
+          row("Nova Landscapes", { campaigns: 1 }),
+        ]),
+      ),
+    ).toBe(
+      "Dune Interiors ($860 a day) and Nova Landscapes each have an outsider's campaign switched on: switch them off in Meta.",
+    );
+    // None switched on: nothing said.
+    const none = columns.budgetFacts([row("Orbit Glass", null, 40)]);
+    expect(none.outsiders).toEqual([]);
+    expect(none.outsiderCampaigns).toBe(0);
+  });
+
   test("the budget line is not there when nothing needs action", async () => {
     answer({
       edit: b => {
@@ -1130,6 +1207,53 @@ describe("budgets", () => {
     );
     // Its budget used is good: no lever offered here.
     expect(buttons("Add a lever for budget used", panel).length).toBe(0);
+  });
+
+  test("an outsider's campaign on a lifetime budget stays in the table with its flag, never in the client's own lifetime list (2026-10-21)", async () => {
+    const WORDS =
+      "An outsider's campaign on the compromise list (a lifetime budget), not counted. Switch it off in Meta.";
+    answer({
+      editClient: c => {
+        const own = c.budgets.campaigns.find(
+          (x: any) => x.budgetType === "lifetime",
+        );
+        c.budgets.campaigns.unshift({
+          ...own,
+          id: "120099",
+          name: "Made-up copy 5/5",
+          lifetime: null,
+          flag: { status: "off", words: WORDS },
+          metrics: {},
+          outsider: true,
+        });
+      },
+    });
+    await show();
+    await click(button("Open Harbor Kitchens"));
+    const part = sheet()
+      .querySelector("#board-panel-budgets")
+      .closest("section") as any;
+    const row = part.querySelector('tr[data-budget-row="120099"]');
+    expect(row).not.toBeNull();
+    expect(text(row)).toContain("Made-up copy 5/5");
+    expect(text(row)).toContain(WORDS);
+    expect(
+      row.querySelector("[data-budget-flag]").getAttribute("data-budget-flag"),
+    ).toBe("off");
+    // No figure of its own: every cell is empty, never $0.
+    for (const td of Array.from(row.querySelectorAll("td") as ArrayLike<any>))
+      expect(text(td)).not.toMatch(/\$\d/);
+    // The client's own lifetime campaign is still the only one listed apart.
+    expect(part.querySelector('[data-budget-lifetime="120099"]')).toBeNull();
+    expect(
+      Array.from(
+        part.querySelectorAll("[data-budget-lifetime]") as ArrayLike<any>,
+      ).map(li => text(li)),
+    ).toEqual([
+      expect.stringContaining(
+        "Harbor Kitchens | Spring launch: $400 left of $900",
+      ),
+    ]);
   });
 
   test("a prepaid balance is said as a balance, and a campaign waiting for its start is listed without a problem", async () => {
