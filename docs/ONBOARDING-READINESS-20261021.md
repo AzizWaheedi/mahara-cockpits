@@ -3,7 +3,8 @@
 ## What is ready
 
 All seven clients currently in onboarding have their exact ClickUp task in the
-onboarding store, CSM client list, creative client list and media client links.
+onboarding store, CSM client list, creative client list, media client links and
+editor records.
 Their portal directory and access records agree on the exact task and location.
 All seven have enabled Google calendar enrollment and managed CRM connections
 recorded in the portal. None has an unfinished portal access-provisioning job.
@@ -30,10 +31,12 @@ its Wistia player; English and Arabic onboarding covers showed the same client.
 - Some onboarding/kickoff/Blueprint forms are unfinished. The seven names are
   Alalia.co, Ghazzawi.sa, Makers, Qatar Technology, Render, Smmim studio and
   شركة مصنع المعادن الهندسية للصناعة. The existing source cards remain authoritative.
-- The shared source feed last published at 12:25 UTC during this check. Later
-  receipts include a Meta 403, a Google Sheets 403, an uncertain publication 500,
-  and an expired run. Preserve the last good data and reconcile exact receipts;
-  do not remove the full-publication guard or replay uncertain writes.
+- The shared source feed stalled after 12:25 UTC, then its existing schedule
+  recovered and published at 13:56 UTC. The CEO client list refreshed at 13:57.
+  Earlier receipts include a Meta 403, a Google Sheets 403, an uncertain
+  publication 500 and an expired run. This recovery does not clear every
+  historical resource error. Preserve the last good data and reconcile exact
+  receipts; do not remove the full-publication guard or replay uncertain writes.
 - CEO delivery fails when two ad accounts map to the same ClickUp client. This
   branch fixes that aggregation and includes it in the immutable worker package.
   Production needs an approved release and a fresh successful section readback.
