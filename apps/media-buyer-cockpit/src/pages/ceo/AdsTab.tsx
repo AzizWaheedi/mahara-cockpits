@@ -99,6 +99,7 @@ import {
   UnlessHeld,
   useSwitches,
 } from "./adsSwitch";
+import { isHiringCampaign } from "./hiringRoles";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";
 
@@ -630,7 +631,11 @@ function CampaignRow({
                     ? "neutral"
                     : "warning"
               }
-              label={humanize(c.type)}
+              label={
+                c.type !== "lead_gen" && isHiringCampaign(c.name)
+                  ? "Hiring · not in lead gen"
+                  : humanize(c.type)
+              }
             />
             <span>{`${plural(c.adsets.length, "ad set")} · ${plural(adCount, "ad")}`}</span>
           </span>
@@ -1214,6 +1219,15 @@ export function AdsTab({ sections, now }: CeoTabProps) {
       ? p.notes.filter(n => !n.text.startsWith(NOTHING_DELIVERING))
       : p.notes;
   const retargeting = p.retargetingSpend[win];
+  // Hiring campaigns are typed "excluded" by b2b_campaign_type, so they are
+  // never in lead-gen spend or any cost per lead. Shown beside it, like retargeting.
+  const hiring = p.campaigns
+    .filter(c => c.type !== "lead_gen" && isHiringCampaign(c.name))
+    .reduce((n, c) => n + c[win].spend, 0);
+  const besides = [
+    retargeting ? `${money(retargeting)} retargeting` : null,
+    hiring ? `${money(hiring)} hiring` : null,
+  ].filter(Boolean);
   const rows: RowProps = {
     win,
     account: p.accountId,
@@ -1260,11 +1274,11 @@ export function AdsTab({ sections, now }: CeoTabProps) {
                 label="Lead-gen spend"
                 value={money(a.spend)}
                 sub={
-                  retargeting
-                    ? `${money(retargeting)} more on retargeting`
+                  besides.length
+                    ? `Plus ${besides.join(" · ")}, not in it`
                     : undefined
                 }
-                hint="Lead-gen campaigns only, the way the B2B dashboard reads the account. Retargeting is beside it, never inside a cost per lead."
+                hint="Lead-gen campaigns only, the way the B2B dashboard reads the account. Retargeting and hiring are beside it, never inside lead-gen spend or a cost per lead."
               />
               <StatTile
                 variant="plain"

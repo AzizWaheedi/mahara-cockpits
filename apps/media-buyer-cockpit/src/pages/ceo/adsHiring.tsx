@@ -66,7 +66,7 @@ export function HiringAdsCard({
     <SectionCard
       kicker="Mahara's own account"
       title="Hiring ads"
-      description="Applications are every application the role's form received in these days, from any source: an application carries no ad id."
+      description="Not in lead-gen spend or any cost per lead. Applications are every application the role's form received in these days, from any source: an application carries no ad id."
       order={order}
     >
       {() => (
