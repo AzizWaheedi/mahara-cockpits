@@ -57,6 +57,25 @@ test('canonical sources require initialized, exact complete counts; RPC permissi
  }finally{await db.close();}
 },30000);
 
+test('manifest upgrade rejects an old captured plan and allows a fresh capture on the same fenced run',async()=>{
+ const db=await fixture();try{
+  await initialize(db);await owner(db);
+  const legacy=migration('20260927x_cockpit_native_media_sync.sql').match(/CREATE OR REPLACE FUNCTION public\.cockpit_native_manifest\(\)[\s\S]*?END \$\$;/)?.[0];
+  if(!legacy)throw new Error('Canonical original manifest missing');
+  await db.exec(legacy);await service(db);
+  const c=await claim(db),oldPlan=plan(await state(db));
+  await owner(db);await db.exec(migration('20261021173015_native_manifest_compact_fingerprint.sql'));await service(db);
+  await expect(publish(db,c,oldPlan)).rejects.toThrow(/Source revision conflict/);
+  await owner(db);
+  expect((await db.query<{n:number}>('SELECT count(*)::int n FROM cockpit_campaigns')).rows[0].n).toBe(0);
+  await service(db);
+  const freshPlan=plan(await state(db));
+  const result=await publish(db,c,freshPlan);
+  expect(result.status).toBe('published');
+  expect(await publish(db,c,freshPlan)).toEqual(result);
+ }finally{await db.close();}
+},30000);
+
 test('publish updates actual consumer rows, preserves human state/history, reconciles deletions, retries exactly',async()=>{
  const db=await fixture();try{
   await initialize(db);await owner(db);
