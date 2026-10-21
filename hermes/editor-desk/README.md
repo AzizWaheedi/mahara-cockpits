@@ -105,13 +105,16 @@ file. If you add a job, add its row here in the same commit.
 27 * * * *    flock -n $HOME/.editor-desk/meetings.lock bash -c "set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet meetings" >> $HOME/.editor-desk/out/cron.log 2>&1
 */20 * * * *  flock -n $HOME/.editor-desk/foreplay.lock bash -c "set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet foreplay" >> $HOME/.editor-desk/out/cron.log 2>&1
 41 3 * * *    flock -n $HOME/.editor-desk/archive.lock bash -c "set -a; . $HOME/.editor-desk/env; . /opt/data/bibi/api-keys.env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet archive --limit 25" >> $HOME/.editor-desk/out/cron.log 2>&1
+* * * * *     flock -n $HOME/.editor-desk/deck-import.lock timeout -k 30 50m bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet deck-import" >> $HOME/.editor-desk/out/cron.log 2>&1
 ```
 
 Sync every half hour, prepare every half hour offset from it, notes and
 meetings hourly on their own minutes, foreplay every twenty, archive
 overnight, and the cockpit's queue every three minutes so a person pressing
 "send to client review" does not wait. Each under its own lock, so a long
-read never overlaps itself.
+read never overlaps itself. deck-import every minute, for the client success
+Drive links and the video posters; a run stops itself at 45 minutes and is
+killed at 50.
 
 Salma, the social media producer, is also on this crontab -- see
 `hermes/salma/README.md`.

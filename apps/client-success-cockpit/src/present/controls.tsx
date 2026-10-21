@@ -1,7 +1,8 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { fill, GROUP_LINKS, type L, O, SHARED } from "./content";
+import { EXAMPLE, fill, GROUP_LINKS, type L, O, SHARED } from "./content";
 import type { AccessStatus, CallKind, DeckData, Overrides } from "./deckData";
+import { feedUrl, THEMES } from "./examples";
 import type { DeckKind } from "./sources";
 import { recapVideos, slotCovered } from "./videos";
 
@@ -230,6 +231,68 @@ function GoalsControls({ d, prep, setPrep }: ControlsProps) {
   );
 }
 
+/**
+ * The example ad's theme (DESIGN 22.4.5): match their service, or one of the
+ * twelve. A native select, its picture beside it as the preview. Saved on
+ * the onboarding row and read by both decks.
+ */
+export function ExampleSwitch({
+  d,
+  prep,
+  setPrep,
+}: {
+  d: DeckData;
+  prep: Overrides;
+  setPrep: ControlsProps["setPrep"];
+}) {
+  const theme = d.example.theme;
+  const chosen =
+    typeof prep.example_theme === "string" ? prep.example_theme : "";
+  const name = EXAMPLE.names[theme];
+  return (
+    <Field
+      label="Example ad"
+      hint="Shown only until they have ads of their own, and labelled Example ad on the slide."
+    >
+      <div className="flex items-start gap-3">
+        <img
+          src={feedUrl(theme)}
+          alt=""
+          className="h-[120px] w-[96px] shrink-0 rounded-md border object-cover"
+        />
+        <div className="min-w-0 space-y-1.5">
+          <div className="text-xs">
+            {d.example.from === "prep"
+              ? `Example ad: ${name}, chosen here`
+              : d.example.from === "text" && d.example.text
+                ? `Example ad: ${name}, from "${d.example.text}"`
+                : `Example ad: ${name}`}
+          </div>
+          <select
+            className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+            value={chosen}
+            aria-label="Example ad"
+            onChange={e =>
+              setPrep(
+                "onboarding",
+                { example_theme: e.target.value || null },
+                true,
+              )
+            }
+          >
+            <option value="">Match their service</option>
+            {THEMES.map(x => (
+              <option key={x} value={x}>
+                {EXAMPLE.names[x]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </Field>
+  );
+}
+
 function ServiceControls({ d, prep, setPrep }: ControlsProps) {
   const p = prep.onboarding;
   return (
@@ -237,11 +300,27 @@ function ServiceControls({ d, prep, setPrep }: ControlsProps) {
       <Field
         label="Launch service"
         hint={
-          d.serviceChosen
-            ? "Chosen on the call."
-            : d.serviceFocus
-              ? `Not chosen yet. Until it is, the deck uses "${d.serviceFocus}" from the ${d.serviceFocusFrom === "kickoff" ? "kickoff form" : "onboarding form"}.`
-              : "Not chosen yet, and neither form names one."
+          d.today.service ? (
+            <span className="flex flex-wrap items-center gap-2">
+              Chosen on the call with Launch with this.
+              {/* Undo clears the stamp: the checklist's item opens again. */}
+              <button
+                type="button"
+                className="underline underline-offset-2"
+                onClick={() =>
+                  setPrep("onboarding", { service_chosen_at: null }, true)
+                }
+              >
+                Undo the choice
+              </button>
+            </span>
+          ) : d.serviceFocusFrom === "prep" ? (
+            "Suggested here. The client chooses on slide 4 with Launch with this; until then the checklist keeps it open."
+          ) : d.serviceFocus ? (
+            `Not chosen yet. Until it is, the deck uses "${d.serviceFocus}" from the ${d.serviceFocusFrom === "kickoff" ? "kickoff form" : "onboarding form"}.`
+          ) : (
+            "Not chosen yet, and neither form names one."
+          )
         }
       >
         <PrepText
@@ -288,6 +367,7 @@ function ServiceControls({ d, prep, setPrep }: ControlsProps) {
           }
         />
       </Field>
+      <ExampleSwitch d={d} prep={p} setPrep={setPrep} />
       <Toggle
         checked={p.starter_pack === true}
         onChange={v => setPrep("onboarding", { starter_pack: v || null }, true)}

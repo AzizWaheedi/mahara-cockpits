@@ -2,14 +2,26 @@ import { Play, Star } from "lucide-react";
 import {
   type CSSProperties,
   type DragEvent,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { APP, CTA, digits, type L, LAUNCH, SHARED, t, tf } from "./content";
+import {
+  APP,
+  CTA,
+  digits,
+  EXAMPLE,
+  type L,
+  LAUNCH,
+  SHARED,
+  t,
+  tf,
+} from "./content";
 import { appLanguage, type Creative, phoneFor, shapeOf } from "./creative";
 import type { SlideCtx } from "./deckContext";
+import { exampleCreative, feedUrl, storyUrl, warmExamples } from "./examples";
 import { defaultPhones, PHONES, type PhoneKey } from "./launchData";
 import type { Identity } from "./mockups/Identity";
 import { FbFeed, IgFeed, Phone, phoneWidth, ReelStory } from "./mockups/Phones";
@@ -74,8 +86,28 @@ export function useCreatives(ctx: SlideCtx) {
       ]),
     ) as Record<PhoneKey, TrayCreative | null>;
     const app = appLanguage([...tray, ...meta], ctx.lang);
-    return { tray, meta, byId, phones, placed, app, local };
-  }, [L, local, ctx.live.phones, ctx.lang]);
+    // No creative of theirs at all (no file in the tray, no Meta ad with a
+    // still): the phones show Mahara's example ad for their service, one ad
+    // in its three placements, labelled "Example ads" (DESIGN 22.4.3). The
+    // moment one of theirs exists, the deck shows theirs.
+    const example = !tray.length && !meta.some(m => Boolean(m.poster ?? m.url));
+    if (example) {
+      const { theme } = ctx.d.example;
+      const words = ctx.d.exampleWords;
+      phones.feed = exampleCreative(theme, "feed", words, ctx.lang);
+      phones.reels = exampleCreative(theme, "story", words, ctx.lang);
+      phones.facebook = exampleCreative(theme, "feed", words, ctx.lang);
+    }
+    return { tray, meta, byId, phones, placed, app, local, example };
+  }, [L, local, ctx.live.phones, ctx.lang, ctx.d.example, ctx.d.exampleWords]);
+}
+
+/** Warm the example's two pictures after the first paint, while they show. */
+export function useWarmExample(ctx: SlideCtx, on: boolean) {
+  const { theme } = ctx.d.example;
+  useEffect(() => {
+    if (on) warmExamples([feedUrl(theme), storyUrl(theme)]);
+  }, [on, theme]);
 }
 
 /** Which phone a stop of the ads slide focuses (stop 0 is the overview). */
@@ -262,6 +294,10 @@ export function AdTray({
           })}
         </ul>
       ) : (
+        // Nothing of theirs yet: the tray says so and holds no tile (score
+        // round 2: the example the phones show, filed here as a tile,
+        // repeated the phones and sat under "Your creatives"; the title's
+        // tag already names it).
         <p className="dkc-tray-empty">
           {t(tab === "meta" ? A.metaEmpty : A.empty, lang)}
         </p>
@@ -516,7 +552,7 @@ export function PhoneRow({
     if (files.length && ctx.ads) void ctx.ads.add(files.slice(0, 1), k);
   };
 
-  return (
+  const row = (
     <div
       className="dkc-phones"
       style={{ width: AREA_W, height: AREA_H }}
@@ -612,9 +648,11 @@ export function PhoneRow({
           {/* Starter ads: the tag said once, in the foot, never per phone. */}
           <p className="dk-small dk-ink2 dkc-phones-foot">
             {t(
-              PHONES.some(k => model.phones[k]?.starter)
-                ? A.footStarter
-                : A.foot,
+              model.example
+                ? A.footExample
+                : PHONES.some(k => model.phones[k]?.starter)
+                  ? A.footStarter
+                  : A.foot,
               lang,
             )}
           </p>
@@ -670,12 +708,27 @@ export function PhoneRow({
           {l.sub ? <span className="dkc-leader-sub">{l.sub}</span> : null}
         </span>
       ))}
-      {focus && focused?.starter ? (
+    </div>
+  );
+  // The tag of a phone in focus sits above the phone's top end corner, on
+  // one line, never in the leaders' callout column (where it wrapped and
+  // stacked onto "Your page and logo", the score round). It lives outside
+  // the clipped phone area, so it can sit over the phone's top edge.
+  const tag =
+    focus && focused?.starter
+      ? t(SHARED.tag.starter, lang)
+      : focus && focused?.from === "example" && !model.example
+        ? t(EXAMPLE.tag, lang)
+        : null;
+  return (
+    <div className="dkc-phones-wrap">
+      {row}
+      {tag ? (
         <span
           className="dk-tag dkc-focus-tag"
-          style={{ insetInlineStart: labelX, maxWidth: LABEL_W.end }}
+          style={{ insetInlineEnd: AREA_W - (330 + NATIVE_W) }}
         >
-          {t(SHARED.tag.starter, lang)}
+          {tag}
         </span>
       ) : null}
     </div>

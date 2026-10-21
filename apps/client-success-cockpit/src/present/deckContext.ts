@@ -3,6 +3,7 @@ import type { LiveState } from "./channel";
 import { type L, type Lang, type SlideNotes, tf } from "./content";
 import type { DeckData, Overrides } from "./deckData";
 import type { DeckKind } from "./sources";
+import type { ControlItem } from "./VideoPlayer";
 
 /**
  * What a slide is given (DESIGN 16.4). The engine mounts one slide at a
@@ -31,6 +32,11 @@ export interface SlideCtx {
   still: boolean;
   /** True on the shared deck; false in the prep view's preview. */
   presenting: boolean;
+  /**
+   * Open a recorded video in the deck's player (O6's "Video guide" marks):
+   * the same player the head band's control opens (DESIGN 21.3, 22.2.6).
+   */
+  playVideo?: (item: ControlItem) => void;
   /**
    * Add files to the ads tray (a file dropped on a phone): shown at once,
    * saved behind it, the words said in the notes window (DESIGN 10.3).

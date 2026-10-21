@@ -22,6 +22,7 @@ import {
 } from "./clean";
 import { type L, type Lang, LINKS, O } from "./content";
 import { dayOf, gulfToday } from "./dates";
+import { type ExamplePick, pickExample } from "./examples";
 import { type LaunchData, launchData } from "./launchData";
 import type { DeckKind, DeckSources, DeckVideos, LaunchAd } from "./sources";
 import type { VideoRead } from "./videos";
@@ -40,6 +41,20 @@ export type AccessStatus = "done" | "todo" | "unchecked";
 export type GoalKey = "goal90" | "goal12_24" | "challenges" | "why";
 export type CallKind = "blueprint" | "launch" | "checkin" | "onboarding";
 export type Templated = "approved" | "pending" | "declined";
+
+/**
+ * A form's value said mid-sentence: a value in Title Case ("Wants To See
+ * Them First") is lowered after its first letter; one with a capital that
+ * is not a word's first (a brand, an acronym such as "OS") stays as typed.
+ */
+export function sentenceCase(value: string): string {
+  const words = value.trim().split(/\s+/);
+  const title =
+    words.length > 1 && words.every(w => /^[A-Z][a-z'’]*[.,]?$/.test(w));
+  if (!title) return value.trim();
+  const lowered = words.map(w => w.toLowerCase()).join(" ");
+  return lowered[0].toUpperCase() + lowered.slice(1);
+}
 
 export interface Goal {
   key: GoalKey;
@@ -124,14 +139,27 @@ export interface DeckData {
   numberOne: string | null;
   serviceFocus: string | null;
   serviceFocusFrom: "prep" | "kickoff" | "form" | "none";
-  /** The service the CSM confirmed on slide 4 (prep only). */
+  /**
+   * The service the client chose on slide 4 ("Launch with this" stamps
+   * `service_chosen_at`; Undo clears it). A service typed in prep with no
+   * stamp is only the proposal (DESIGN 22.2.0).
+   */
   serviceChosen: string | null;
+  serviceChosenAt: string | null;
+  /** The example ad's theme while they have no creative (DESIGN 22.4.2). */
+  example: ExamplePick;
+  /** The client's own words inside an example phone: never written for them. */
+  exampleWords: { primary: string | null; headline: string | null };
+  /** The call's checklist, each item done from data, never from a press (DESIGN 22.2.0). */
+  today: { service: boolean; access: boolean; blueprint: boolean };
   templated: Templated;
   templatedAnswer: string | null;
   starterPack: boolean;
   starterAds: LaunchAd[];
   redLines: string[];
   dosDonts: { do: string[]; dont: string[] };
+  /** The Arabic of each card line, typed in prep (`dos_donts_ar`, DESIGN 22.6.2). */
+  dosDontsAr: Record<string, string>;
   kickoffFiled: boolean;
   access: AccessRow[];
   links: {
@@ -346,8 +374,8 @@ export function deckData(input: DeckInput): DeckData {
       : ghlMode && /^(DFY|DWY)$/.test(ghlMode)
         ? { dwy: ghlMode === "DWY", known: true, from: "highlevel" }
         : { dwy: false, known: false, from: "none" };
-  if (!mode.known)
-    notes.push("Service mode not set on the card. The deck uses done for you.");
+  // An unknown model is said once, by slide 3's prep line ("Service model
+  // not set…"), not again here (the fixer's round: prep showed both).
 
   // The presenting CSM's first name (the covers only).
   const fromAuth = str(input.presenterName);
@@ -466,6 +494,7 @@ export function deckData(input: DeckInput): DeckData {
   }
 
   const chosen = twin(onboardingPrep, "service_focus", lang);
+  const chosenAt = str(onboardingPrep.service_chosen_at);
   const serviceFocus = chosen ?? advertised ?? numberOne ?? null;
   const serviceFocusFrom: DeckData["serviceFocusFrom"] = chosen
     ? "prep"
@@ -493,6 +522,16 @@ export function deckData(input: DeckInput): DeckData {
     do: sections.find(x => x.tone === "do")?.items ?? [],
     dont: sections.find(x => x.tone === "dont")?.items ?? [],
   };
+  // Only the lines still on the card: a key whose line is gone is ignored
+  // (and pruned on the next save in prep).
+  const cardLines = new Set([...dosDonts.do, ...dosDonts.dont]);
+  const dosDontsAr: Record<string, string> = {};
+  for (const [k, v] of Object.entries(
+    record(input.prep.launch?.dos_donts_ar),
+  )) {
+    const ar = str(v);
+    if (ar && cardLines.has(k)) dosDontsAr[k] = ar;
+  }
 
   // Access: the kickoff's setup answers, then the CSM's live ticks.
   const kickoffFiled = Boolean(kickoff);
@@ -585,6 +624,36 @@ export function deckData(input: DeckInput): DeckData {
     null,
   ];
 
+  // The example ad (DESIGN 22.4.2): prep's switch, then the service as the
+  // call knows it, the kickoff's, the form's #1, the form's services and
+  // the client's name, in that order. Its words are the client's own.
+  const launchPrep = input.prep.launch ?? {};
+  const example = pickExample(onboardingPrep.example_theme, [
+    str(onboardingPrep.service_focus),
+    str(onboardingPrep.service_focus_ar),
+    advertised,
+    numberOne,
+    ...serviceChips(answer(form, FORM.services)),
+    ...services,
+    nameEn,
+    nameAr,
+  ]);
+  // The Arabic deck's caption: the CSM's Arabic, else the service as the
+  // forms wrote it when that is Arabic (never a Latin name in it).
+  const serviceAr =
+    str(onboardingPrep.service_focus_ar) ??
+    (serviceFocus && ARABIC.test(serviceFocus) ? serviceFocus : null);
+  const exampleWords =
+    lang === "ar"
+      ? {
+          primary: str(launchPrep.selling_point_ar) ?? serviceAr,
+          headline: serviceAr,
+        }
+      : {
+          primary: str(launchPrep.selling_point) ?? serviceFocus,
+          headline: serviceFocus,
+        };
+
   const kickPage = str(answer(kickoff, KICK.pageName));
   const pagePrep =
     twin(prep, "page_name", lang) ?? twin(onboardingPrep, "page_name", lang);
@@ -619,7 +688,9 @@ export function deckData(input: DeckInput): DeckData {
         : "No caller is assigned to this account yet.",
     );
   if (templatedAnswer)
-    notes.push(`Kickoff, templated ads: ${templatedAnswer}.`);
+    // The form's raw value can arrive in Title Case ("Wants To See Them
+    // First"): said in sentence case, as every line here is.
+    notes.push(`Kickoff, templated ads: ${sentenceCase(templatedAnswer)}.`);
   else if (kickoffFiled)
     notes.push("Kickoff filed without a templated ads answer.");
   else
@@ -657,13 +728,26 @@ export function deckData(input: DeckInput): DeckData {
     numberOne,
     serviceFocus,
     serviceFocusFrom,
-    serviceChosen: chosen,
+    serviceChosen: chosenAt ? (chosen ?? serviceFocus) : null,
+    serviceChosenAt: chosenAt,
+    example,
+    exampleWords,
+    today: {
+      service: Boolean(chosenAt),
+      // The setup done live on O6: Meta access and Mahara OS (done with
+      // you, their CRM and their callers' phones), every step done.
+      access: rows
+        .filter(r => ["meta", "os", "crm", "phones"].includes(r.key))
+        .every(r => r.status === "done"),
+      blueprint: Boolean(next.blueprint),
+    },
     templated,
     templatedAnswer,
     starterPack,
     starterAds,
     redLines,
     dosDonts,
+    dosDontsAr,
     kickoffFiled,
     access: rows,
     links: {

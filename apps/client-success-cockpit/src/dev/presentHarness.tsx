@@ -2,8 +2,9 @@
  * The client decks from fixtures, to see and screenshot every slide without
  * signing in. `bunx vite`, then open
  * /client-success/present-harness.html?fixture=full&deck=onboarding&lang=en
- * (fixture: full | sparse | dwy | starter; view: present | notes | prep;
- * still=1 for no motion). Saves and uploads stay in memory (an upload
+ * (fixture: full | sparse | dwy | starter; view: present | notes | prep |
+ * parts | drive; still=1 for no motion; drive=<scenario> for the Drive box,
+ * src/dev/deck/driveFixtures.ts). Saves and uploads stay in memory (an upload
  * pretends to take a second and a half); nothing is sent anywhere.
  *
  * scripts/deck-shots.mjs drives it to capture every slide and stop.
@@ -22,6 +23,8 @@ import {
   VideoSaveError,
 } from "@/present/sources";
 import type { DeckIO } from "@/present/useDeckModel";
+import { DriveSheet } from "./deck/DriveSheet";
+import { fakeDrive } from "./deck/driveFixtures";
 import { FIXTURES, type FixtureKey } from "./deck/fixtures";
 import { PartsSheet } from "./deck/PartsSheet";
 import "@/index.css";
@@ -119,6 +122,16 @@ function Harness() {
       };
     const at = (slotKey: string, lang: string) =>
       videos?.rows.find(r => r.slotKey === slotKey && r.lang === lang) ?? null;
+    // ?drive=<scenario>: the Drive box's imports (driveFixtures.ts); a link
+    // pasted in prep or the notes window runs a pretend worker whose files
+    // join this tray.
+    const drive = fakeDrive({
+      scenario: params.get("drive"),
+      taskId: `fixture-${fixture}`,
+      addAd: ad => {
+        ads = [...ads, ad];
+      },
+    });
     const conflict = (seen: number, row: VideoRow | null, verb: string) => {
       if ((row?.revision ?? 0) !== seen)
         throw new VideoSaveError(
@@ -209,6 +222,7 @@ function Harness() {
         revision += 1;
         return { deck: k, overrides: store[k], revision, changed: true };
       },
+      ...drive,
       presenterName: fixture === "sparse" ? null : "Sara Al-Harbi",
       publicUrl: (_bucket, path) => path,
       now: () => new Date("2026-10-19T09:00:00Z"),
@@ -253,14 +267,15 @@ function Harness() {
 }
 
 const parts = params.get("view") === "parts";
+const driveSheet = params.get("view") === "drive";
+const sheetLang = params.get("lang") === "ar" ? "ar" : "en";
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     {parts ? (
-      <PartsSheet
-        lang={params.get("lang") === "ar" ? "ar" : "en"}
-        sheet={Number(params.get("sheet") ?? 0)}
-      />
+      <PartsSheet lang={sheetLang} sheet={Number(params.get("sheet") ?? 0)} />
+    ) : driveSheet ? (
+      <DriveSheet lang={sheetLang} />
     ) : (
       <Harness />
     )}

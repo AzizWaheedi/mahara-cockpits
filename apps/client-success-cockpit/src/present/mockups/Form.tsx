@@ -108,6 +108,7 @@ export function InstantForm({
   thanks,
   video,
   cover,
+  coverTag = null,
 }: {
   who: Identity;
   pageName: string;
@@ -127,6 +128,8 @@ export function InstantForm({
    * there is one.
    */
   cover?: string | null;
+  /** "Example" on the cover's end corner when it is the example ad's picture. */
+  coverTag?: string | null;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const [shift, setShift] = useState(0);
@@ -162,6 +165,9 @@ export function InstantForm({
           {cover ? (
             <div className="dkc-form-cover" aria-hidden>
               <img src={cover} alt="" draggable={false} />
+              {coverTag ? (
+                <span className="dkc-cover-chip">{coverTag}</span>
+              ) : null}
             </div>
           ) : null}
           <div className="dkc-form-intro">

@@ -55,10 +55,25 @@ export const PREP_KEYS: ReadonlySet<string> = new Set([
   "form_confirmed",
   "creative_agreed_at",
   "onboarding_presented_at",
+  // The visual pass (DRIVE-IMPORT.md 9, migration 20261020160100): the
+  // Arabic of each card Do's & Don'ts line (launch), the example ad's
+  // theme, and O4's "Launch with this" (onboarding).
+  "dos_donts_ar",
+  "example_theme",
+  "service_chosen_at",
   ...TWINS.map(k => `${k}_ar`),
 ]);
 
-const STAMPS = new Set(["creative_agreed_at", "onboarding_presented_at"]);
+const STAMPS = new Set([
+  "creative_agreed_at",
+  "onboarding_presented_at",
+  "service_chosen_at",
+]);
+/**
+ * A stamp the server writes again on every true (DRIVE-IMPORT.md 9): a
+ * second choice on the call is stamped at the time it was last chosen.
+ */
+const RESTAMPS = new Set(["service_chosen_at"]);
 const LISTS =
   /^(red_lines|services|dos_donts_hidden|platforms_planned|hidden_slides|shown_slides)(_ar)?$/;
 
@@ -93,7 +108,7 @@ export function applyPatch(
         delete out[k];
         continue;
       }
-      if (out[k]) continue;
+      if (out[k] && !RESTAMPS.has(k)) continue;
       out[k] = now();
       continue;
     }

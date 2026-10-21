@@ -1,0 +1,615 @@
+{
+  "about": "Drive links and what both parsers make of them: cockpit_csm_drive_link_parse in supabase/migrations/20261020160000_csm_launch_ads_drive.sql and parseDriveLink in driveLink.ts (docs/csm-decks/DRIVE-IMPORT.md 2). want is the server's return: {ok, id, kind, resourceKey, link} or {ok: false, code}. A null link is SQL NULL.",
+  "cases": [
+    {
+      "name": "a folder link",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a folder link shared with usp",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?usp=sharing",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a folder link with /u/0/",
+      "link": "https://drive.google.com/drive/u/0/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a folder link with /u/1/ and authuser, which is dropped",
+      "link": "https://drive.google.com/drive/u/1/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?authuser=sara@maharamedia.com",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a folder link with a trailing slash",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a folder link with its resource key",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?resourcekey=0-AbCdEfGhIjKlMn&usp=sharing",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": "0-AbCdEfGhIjKlMn",
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?resourcekey=0-AbCdEfGhIjKlMn"
+      }
+    },
+    {
+      "name": "a folder link with a fragment",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345#grid",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a folder link copied in a phone's browser",
+      "link": "https://drive.google.com/drive/mobile/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?usp=sharing",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a phone's folder link with /u/0/",
+      "link": "https://drive.google.com/drive/u/0/mobile/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "folderview",
+      "link": "https://drive.google.com/folderview?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345&usp=sharing",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a folder link without a scheme",
+      "link": "drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "www.drive.google.com",
+      "link": "https://www.drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "upper-case scheme and host",
+      "link": "HTTPS://DRIVE.GOOGLE.COM/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "http, rebuilt as https",
+      "link": "http://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "spaces around it are trimmed",
+      "link": "   https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345   ",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a file link",
+      "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "a file link with /view and usp",
+      "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view?usp=drive_link",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "a file link with /edit",
+      "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/edit",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "a file link with /preview",
+      "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/preview",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "a file link with a trailing slash",
+      "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "a file link with /u/1/",
+      "link": "https://drive.google.com/file/u/1/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "a file link with its resource key",
+      "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view?usp=sharing&resourcekey=0-AbCdEfGhIjKlMn",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": "0-AbCdEfGhIjKlMn",
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view?resourcekey=0-AbCdEfGhIjKlMn"
+      }
+    },
+    {
+      "name": "uc with export=download",
+      "link": "https://drive.google.com/uc?export=download&id=1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "uc with the id first",
+      "link": "https://drive.google.com/uc?id=1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765&export=view",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "usercontent download",
+      "link": "https://drive.usercontent.google.com/download?id=1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765&export=download&authuser=0",
+      "want": {
+        "ok": true,
+        "id": "1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765",
+        "kind": "file",
+        "resourceKey": null,
+        "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/view"
+      }
+    },
+    {
+      "name": "open?id=",
+      "link": "https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "either",
+        "resourceKey": null,
+        "link": "https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "open?id= with usp first",
+      "link": "https://drive.google.com/open?usp=drive_fs&id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "either",
+        "resourceKey": null,
+        "link": "https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "open?id= with its resource key",
+      "link": "https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345&resourcekey=0-AbCdEfGhIjKlMn",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "either",
+        "resourceKey": "0-AbCdEfGhIjKlMn",
+        "link": "https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz012345&resourcekey=0-AbCdEfGhIjKlMn"
+      }
+    },
+    {
+      "name": "a resource key that is not one is dropped",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?resourcekey=not!a*key",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    },
+    {
+      "name": "a Google Doc",
+      "link": "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOp/edit",
+      "want": {
+        "ok": false,
+        "code": "link_docs"
+      }
+    },
+    {
+      "name": "a Google Sheet",
+      "link": "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOp/edit#gid=0",
+      "want": {
+        "ok": false,
+        "code": "link_docs"
+      }
+    },
+    {
+      "name": "Google Slides",
+      "link": "https://docs.google.com/presentation/d/1AbCdEfGhIjKlMnOp/edit",
+      "want": {
+        "ok": false,
+        "code": "link_docs"
+      }
+    },
+    {
+      "name": "a Google Form",
+      "link": "https://docs.google.com/forms/d/e/1AbCdEfGhIjKlMnOp/viewform",
+      "want": {
+        "ok": false,
+        "code": "link_docs"
+      }
+    },
+    {
+      "name": "a Google Drawing",
+      "link": "https://docs.google.com/drawings/d/1AbCdEfGhIjKlMnOp/edit",
+      "want": {
+        "ok": false,
+        "code": "link_docs"
+      }
+    },
+    {
+      "name": "another docs.google.com page",
+      "link": "https://docs.google.com/",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "My Drive",
+      "link": "https://drive.google.com/drive/my-drive",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "My Drive with /u/0/",
+      "link": "https://drive.google.com/drive/u/0/my-drive",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "Shared with me",
+      "link": "https://drive.google.com/drive/shared-with-me",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "Recent",
+      "link": "https://drive.google.com/drive/recent",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "Starred",
+      "link": "https://drive.google.com/drive/starred",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "Home",
+      "link": "https://drive.google.com/drive/home",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "Computers",
+      "link": "https://drive.google.com/drive/computers",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "a Drive search",
+      "link": "https://drive.google.com/drive/search?q=kitchen",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "/drive/ alone",
+      "link": "https://drive.google.com/drive/",
+      "want": {
+        "ok": false,
+        "code": "link_page"
+      }
+    },
+    {
+      "name": "empty",
+      "link": "",
+      "want": {
+        "ok": false,
+        "code": "link_empty"
+      }
+    },
+    {
+      "name": "only spaces",
+      "link": "   ",
+      "want": {
+        "ok": false,
+        "code": "link_empty"
+      }
+    },
+    {
+      "name": "null",
+      "link": null,
+      "want": {
+        "ok": false,
+        "code": "link_empty"
+      }
+    },
+    {
+      "name": "another host",
+      "link": "https://www.dropbox.com/sh/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "a host that only starts like Drive's",
+      "link": "https://drive.google.com.example.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "Drive's path on another host",
+      "link": "https://example.com/drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "javascript:",
+      "link": "javascript:alert(1)",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "ftp",
+      "link": "ftp://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "a port",
+      "link": "https://drive.google.com:443/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "a user",
+      "link": "https://sara@drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "a user and a password",
+      "link": "https://sara:secret@drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "an id of 9 characters",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGh",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "an id of 201 characters",
+      "link": "https://drive.google.com/drive/folders/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "a file link with /copy",
+      "link": "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFeDcBa98765/copy",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "open with no id",
+      "link": "https://drive.google.com/open?usp=sharing",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "uc with a short id",
+      "link": "https://drive.google.com/uc?id=short",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "a folder link with no id",
+      "link": "https://drive.google.com/drive/folders/",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "the Drive home page",
+      "link": "https://drive.google.com/",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "Arabic after the id",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345ـمجلد",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "2001 characters",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?usp=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "want": {
+        "ok": false,
+        "code": "link_bad"
+      }
+    },
+    {
+      "name": "2000 characters",
+      "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345?usp=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "want": {
+        "ok": true,
+        "id": "1AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+        "kind": "folder",
+        "resourceKey": null,
+        "link": "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+      }
+    }
+  ]
+}

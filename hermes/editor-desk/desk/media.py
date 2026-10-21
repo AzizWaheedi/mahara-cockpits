@@ -27,6 +27,7 @@ def probe(path: Path) -> dict[str, Any]:
     out: dict[str, Any] = {
         "seconds": None, "width": None, "height": None, "fps": None,
         "has_audio": None, "bytes": None, "video_codec": None, "audio_codec": None,
+        "format_name": None, "rotation": None,
     }
     try:
         out["bytes"] = os.path.getsize(path)
@@ -43,6 +44,7 @@ def probe(path: Path) -> dict[str, Any]:
     except ValueError:
         return out
     fmt = info.get("format") or {}
+    out["format_name"] = fmt.get("format_name")
     if fmt.get("duration"):
         try:
             out["seconds"] = round(float(fmt["duration"]), 2)
@@ -54,6 +56,7 @@ def probe(path: Path) -> dict[str, Any]:
         if s.get("codec_type") == "video" and out["width"] is None:
             out["width"], out["height"] = s.get("width"), s.get("height")
             out["video_codec"] = s.get("codec_name")
+            out["rotation"] = rotation_of(s)
             rate = str(s.get("avg_frame_rate") or s.get("r_frame_rate") or "")
             if "/" in rate:
                 num, _, den = rate.partition("/")
@@ -65,6 +68,22 @@ def probe(path: Path) -> dict[str, Any]:
         if s.get("codec_type") == "audio" and out["audio_codec"] is None:
             out["audio_codec"] = s.get("codec_name")
     return out
+
+
+def rotation_of(stream: dict[str, Any]) -> Optional[int]:
+    """A phone's rotation in degrees: the `rotate` tag ffmpeg 4.x reports, or
+    the display matrix side data newer versions report instead."""
+    tags = stream.get("tags") or {}
+    for value in [tags.get("rotate")] + [
+        sd.get("rotation") for sd in (stream.get("side_data_list") or []) if isinstance(sd, dict)
+    ]:
+        if value is None or value == "":
+            continue
+        try:
+            return int(round(float(value))) % 360
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def extract_audio(path: Path, dest: Path, *, seconds: Optional[float] = None) -> Optional[Path]:

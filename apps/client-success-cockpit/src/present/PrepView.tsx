@@ -22,6 +22,7 @@ import { LaunchControls } from "./launchControls";
 import { saveLine } from "./NotesWindow";
 import type { DeckKind } from "./sources";
 import type { DeckIO, DeckModel } from "./useDeckModel";
+import { useDriveImports } from "./useDriveImports";
 import { PrepVideos } from "./VideoPrep";
 
 /**
@@ -88,6 +89,14 @@ export function PrepView({
   );
   const [picked, setPicked] = useState(all[0]?.id ?? "");
   const [logoNote, setLogoNote] = useState<string | null>(null);
+  const drive = useDriveImports({
+    taskId: deck === "launch" ? (d?.taskId ?? null) : null,
+    io,
+    hub: model.hub,
+    onLanded: () => {
+      void model.reload().then(() => model.hub.post({ type: "ads" }));
+    },
+  });
   if (!d) return null;
   const prep = model.prep[deck];
   const hidden = new Set(strings(prep.hidden_slides));
@@ -306,7 +315,7 @@ export function PrepView({
                       ? d.logo.from === "verified"
                         ? "The verified logo from the logo library."
                         : "Uploaded here."
-                      : "None yet: the deck shows their initials.")
+                      : "None yet: the deck shows their first letter.")
                   }
                 >
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:border-primary">
@@ -344,6 +353,7 @@ export function PrepView({
                   addFiles={addFiles}
                   updateAd={io?.updateAd}
                   messages={messages}
+                  drive={drive}
                 />
               ) : (
                 <SlideControls

@@ -351,9 +351,16 @@ export function FbFeed({ creative, who, pageName, app, play }: AdProps) {
         <Media c={creative} who={who} play={play} />
       </div>
       <div className="dkc-fb-link">
-        {/* No headline, no slot: the button keeps its place at the end. */}
+        {/* No headline, no slot: the button keeps its place at the end. An
+            example with no service to name carries their Page name there
+            (their own words), so its bar is never a blank strip (the
+            fixer's round). */}
         <div>
-          {creative?.headline ? <b dir="auto">{creative.headline}</b> : null}
+          {creative?.headline ? (
+            <b dir="auto">{creative.headline}</b>
+          ) : creative?.from === "example" ? (
+            <b dir="auto">{pageName}</b>
+          ) : null}
         </div>
         <span className="dkc-fb-cta" data-part="cta">
           {ctaLabel(creative, app)}
@@ -390,13 +397,16 @@ export function FbFeed({ creative, who, pageName, app, play }: AdProps) {
 /**
  * A phone with what it is under it and, above its end corner, the tag that
  * says what kind of picture it is (DESIGN 5.4): outside the frame, never on
- * the status bar.
+ * the status bar. On a cover the tag hangs under the phone's foot instead
+ * (`tagBelow`, score round 2): over it, it stacked under the presenter's
+ * name and role as a third line.
  */
 export function PhoneFigure({
   height,
   mark,
   label,
   tag,
+  tagBelow = false,
   wide = false,
   head = true,
   foot = true,
@@ -407,6 +417,11 @@ export function PhoneFigure({
   mark: PlatformMark;
   label: string;
   tag?: string | null;
+  /**
+   * The tag 24 px under the phone, end-aligned, out of the figure's flow, so
+   * the figure's box is the phone's and it centres on it (the covers).
+   */
+  tagBelow?: boolean;
   /** The tag may run wider than the phone, toward the start (end-aligned). */
   wide?: boolean;
   /** Leave room above for a tag (off where the slide tags the picture once). */
@@ -419,9 +434,10 @@ export function PhoneFigure({
   return (
     <figure
       className="dkc-figure"
+      data-tag-below={tagBelow ? "" : undefined}
       style={{ margin: 0, width: wide ? undefined : phoneWidth(height) }}
     >
-      {head ? (
+      {head && !tagBelow ? (
         <div className="dkc-figure-head">
           {tag ? <span className="dk-tag">{tag}</span> : null}
         </div>
@@ -429,6 +445,9 @@ export function PhoneFigure({
       <Phone height={height} label={label} progress={progress}>
         {children}
       </Phone>
+      {tagBelow && tag ? (
+        <span className="dk-tag dkc-figure-tag-below">{tag}</span>
+      ) : null}
       {foot ? (
         <figcaption
           className="dkc-figure-foot dk-label"

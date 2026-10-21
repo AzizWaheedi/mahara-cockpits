@@ -8,7 +8,9 @@ import { PresentApp, type PresentUrls, type View } from "./PresentApp";
 import {
   clearDeckVideo,
   type DeckKind,
+  readDriveImports,
   readFileFacts,
+  requestDriveImport,
   saveDeckVideo,
   savePrep,
   updateLaunchAd,
@@ -113,6 +115,18 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
             "Saving needs your cockpit sign-in. The preview still works.",
           );
         return clearDeckVideo(client, v);
+      },
+      requestDriveImport: link => {
+        if (!client)
+          throw Error(
+            "Saving needs your cockpit sign-in. The preview still works.",
+          );
+        return requestDriveImport(client, key, link);
+      },
+      readDriveImports: () => {
+        if (!client)
+          throw Error("Sign in to the cockpit to read the Drive imports.");
+        return readDriveImports(client, key);
       },
     }),
     [client, key, auth.name, deck],

@@ -114,7 +114,7 @@ const ALLOWED: Record<string, string[]> = {
     "اتصلوا على الاستفسارات الجديدة خلال ٥ دقايق، وسجلوا كل محاولة",
     "ضيفوا كل موعد لنظامكم",
     "بعد كل موعد",
-    "كل اللي يقابل عملاءكم أو يرسل عروض الأسعار يشوفه، ويبدي بقسم Sales crash course.",
+    "كل اللي يقابل عملاءكم أو يرسل عروض الأسعار يشوفه، ويبدي بأول قسم فيه، أساسيات البيع.",
     "تقريباً ٤٥ دقيقة، ومعها وقت لأسئلتكم. بنمر على اللي بينزل، وعلى اللي يصير لما أحد يستفسر، وعلى مين يسوي كل خطوة، وعلى اللي نحتاجه منكم. وقفوني بأي وقت.",
     "كل ما خليتوا أوقات فاضية أكثر من ساعات دوامكم، لقى العميل وقت يناسبه أسرع.",
     "وبعدها كل أسبوع أو كل أسبوعين",
@@ -541,7 +541,7 @@ describe("rule 9: form", () => {
   });
   test("titles in sentence case", () => {
     const PROPER =
-      /^(?:Meta|Mahara|OS|WhatsApp|Instagram|Facebook|Brand|Blueprint|Google|Calendar|CRM|Academy|Drive|Page|LeadConnector|Saudi|UAE|Saturday|Thursday|Friday|Stories|Reels|EN|F|L|O|N|Esc|I|Sponsored|Zoom|SMS|Premium|Projects|Project|Closing|Mastery)$/;
+      /^(?:Meta|Mahara|OS|WhatsApp|Instagram|Facebook|Brand|Blueprint|Google|Calendar|CRM|Academy|Drive|Page|LeadConnector|Saudi|UAE|Saturday|Thursday|Friday|Stories|Reels|EN|F|L|O|N|Esc|I|Sponsored|Zoom|SMS|Premium|Projects|Project|Closing|Mastery|Arabic|English)$/;
     const titles = ALL.filter(
       l =>
         l.lang === "en" &&
@@ -871,14 +871,12 @@ describe("the Gamma pass: the expectations, as written", () => {
 
   test("we reply within 2 working hours, on O3 and on the good-to-know row", () => {
     const O3 = content.O.team;
-    expect(O3.foot.en).toStartWith(
-      "We reply within 2 working hours, 10 to 6, Saturday to Thursday.",
-    );
-    expect(O3.footUae.en).toContain(
-      "within 2 working hours, 10 to 6 Saudi time (11 to 7 in the UAE)",
-    );
-    expect(O3.foot.ar).toStartWith("نرد خلال ساعتين دوام، ");
-    expect(O3.footUae.ar).toStartWith("نرد خلال ساعتين دوام، ");
+    // O3's second stop: the promise as its heading, then the hours.
+    expect(O3.reply.en).toBe("We reply within 2 working hours.");
+    expect(O3.reply.ar).toBe("نرد خلال ساعتين دوام.");
+    expect(O3.hours.en).toStartWith("10 to 6, Saturday to Thursday.");
+    expect(O3.hoursUae.en).toContain("10 to 6 Saudi time (11 to 7 in the UAE)");
+    expect(O3.hours.ar).toStartWith("من ١٠ صباحاً إلى ٦ مساءً، ");
     const replies = L.know.rows.find(r => r.key === "replies");
     expect(replies?.line.en).toBe(
       "In the group within 2 working hours, 10 to 6, Saturday to Thursday.",
@@ -924,7 +922,7 @@ describe("the Gamma pass: the expectations, as written", () => {
       "Calls and bookings",
       "Reminders and rebooking",
     ]);
-    expect(P.theirs.map(x => x.en)).toEqual(["The meeting and the close"]);
+    expect(P.theirs.map(x => x.en)).toEqual(["The meeting", "The close"]);
     expect(P.owner.us.en).toBe("Our team");
     expect(P.owner.you.en).toBe("You");
     // Done with you, the pie splits by owner in halves: their team calls,

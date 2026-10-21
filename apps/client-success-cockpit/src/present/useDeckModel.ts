@@ -23,6 +23,8 @@ import {
   type DeckKind,
   type DeckSources,
   type DeckVideos,
+  type DriveImport,
+  type DriveImports,
   type FileFacts,
   keepLinks,
   type LaunchAd,
@@ -79,6 +81,12 @@ export interface DeckIO {
   clearVideo?: (
     v: Parameters<typeof clearDeckVideo>[1],
   ) => ReturnType<typeof clearDeckVideo>;
+  /** Bring in this client's files from one Drive link (DRIVE-IMPORT.md 8). */
+  requestDriveImport?: (
+    link: string,
+  ) => Promise<DriveImport & { existing: boolean }>;
+  /** This client's Drive imports, newest first. */
+  readDriveImports?: () => Promise<DriveImports>;
 }
 
 export type SaveState =

@@ -1270,3 +1270,1188 @@ describe("deck videos", () => {
     for (const leak of ["taskA1", "taskB1", "Acme", "Beta", "clientName", "taskId"]) expect(JSON.stringify([launch, onboarding]).includes(leak)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The visual pass (docs/csm-decks/DRIVE-IMPORT.md 10, VIDEOS.md 9): the Drive
+// imports (20261020160000), three prep keys (20261020160100) and the video
+// posters (20261020160200), applied twice after every test above, so the
+// earlier blocks keep testing the files as they stood.
+// ---------------------------------------------------------------------------
+
+const DRIVE_FILE = "20261020160000_csm_launch_ads_drive.sql";
+const PREP_AR = "20261020160100_csm_deck_prep_dos_ar.sql";
+const POSTERS = "20261020160200_csm_deck_video_posters.sql";
+const WORKER = "editor-desk@vps-1";
+const F = (n: number) => `1Folder${String(n).padStart(8, "0")}xyzAB`;
+const FILE_ID = (n: number) => `1File${String(n).padStart(10, "0")}abcDE`;
+
+type Failure = { code: string; message: string; hint: string | null };
+async function svc<T = any>(text: string, params: unknown[] = []): Promise<T> {
+  await asOwner();
+  await db.exec("SET ROLE service_role");
+  try {
+    return (await db.query<{ r: T }>(text, params)).rows[0]?.r as T;
+  } finally {
+    await asOwner();
+  }
+}
+async function svcFail(text: string, params: unknown[] = []): Promise<Failure> {
+  await asOwner();
+  await db.exec("SET ROLE service_role");
+  try {
+    await db.query(text, params);
+  } catch (e) {
+    const err = e as { code?: string; message: string; hint?: string };
+    return {
+      code: err.code ?? "",
+      message: err.message,
+      hint: err.hint ?? null,
+    };
+  } finally {
+    await asOwner();
+  }
+  throw new Error(`Expected a refusal for ${text}`);
+}
+async function fail(
+  who: string | null,
+  text: string,
+  params: unknown[] = [],
+): Promise<Failure> {
+  await actor(db, who);
+  try {
+    await db.query(text, params);
+  } catch (e) {
+    const err = e as { code?: string; message: string; hint?: string };
+    return {
+      code: err.code ?? "",
+      message: err.message,
+      hint: err.hint ?? null,
+    };
+  } finally {
+    await asOwner();
+  }
+  throw new Error(`Expected a refusal for ${text}`);
+}
+const REQUEST = "SELECT public.cockpit_csm_launch_ads_import_request($1,$2) r";
+const READ_IMPORTS = "SELECT public.cockpit_csm_launch_ads_imports_read($1) r";
+const request = (who: string, task: string, link: string) =>
+  one(who, REQUEST, [task, link]);
+const claim = (worker = WORKER, peek = false) =>
+  svc("SELECT public.cockpit_csm_launch_ads_import_claim($1,$2) r", [
+    worker,
+    peek,
+  ]);
+const heartbeat = (id: string, worker = WORKER) =>
+  svc("SELECT public.cockpit_csm_launch_ads_import_heartbeat($1::uuid,$2) r", [
+    id,
+    worker,
+  ]);
+const PLAN =
+  "SELECT public.cockpit_csm_launch_ads_import_plan($1::uuid,$2,$3,$4::jsonb,$5) r";
+const plan = (
+  id: string,
+  files: Row[],
+  kind = "folder",
+  over = false,
+  worker = WORKER,
+) => svc(PLAN, [id, worker, kind, JSON.stringify(files), over]);
+const RESERVE =
+  "SELECT public.cockpit_csm_launch_ads_import_file_reserve($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) r";
+const fileReserve = (
+  id: string,
+  file: string,
+  mime: string,
+  bytes: number,
+  extra: unknown[] = [null, null, null, null, null, null],
+  worker = WORKER,
+) => svc(RESERVE, [id, worker, file, mime, bytes, ...extra]);
+const LANDED =
+  "SELECT public.cockpit_csm_launch_ads_import_file_landed($1::uuid,$2,$3) r";
+const landed = (id: string, file: string, worker = WORKER) =>
+  svc(LANDED, [id, worker, file]);
+const FAILED =
+  "SELECT public.cockpit_csm_launch_ads_import_file_failed($1::uuid,$2,$3,$4) r";
+const fileFailed = (id: string, file: string, code: string, worker = WORKER) =>
+  svc(FAILED, [id, worker, file, code]);
+const FINISH =
+  "SELECT public.cockpit_csm_launch_ads_import_finish($1::uuid,$2,$3) r";
+const finish = (id: string, code: string | null = null, worker = WORKER) =>
+  svc(FINISH, [id, worker, code]);
+const media = (n: number, extra: Row = {}) => ({
+  id: FILE_ID(n),
+  name: `kitchen-${n}.mp4`,
+  mime: "video/mp4",
+  bytes: 1000 + n,
+  createdTime: "2026-10-18T09:12:00Z",
+  resourceKey: null,
+  ...extra,
+});
+async function importRow(id: string): Promise<Row> {
+  await asOwner();
+  return (
+    await db.query<Row>(
+      "SELECT * FROM public.cockpit_csm_launch_ads_imports WHERE id=$1",
+      [id],
+    )
+  ).rows[0];
+}
+async function adRow(id: string): Promise<Row> {
+  await asOwner();
+  return (
+    await db.query<Row>(
+      "SELECT * FROM public.cockpit_csm_launch_ads WHERE id=$1",
+      [id],
+    )
+  ).rows[0];
+}
+const importAudits = () => audits("cockpit_csm_launch_ads_imports");
+/** Every open import out of the way, so the next claim takes the one a test means. */
+async function closeOpen() {
+  await asOwner();
+  await db.query(
+    "UPDATE public.cockpit_csm_launch_ads_imports SET status='failed', code='not_started', message='closed by the test', finished_at=now() WHERE status IN ('queued','working')",
+  );
+}
+
+describe("the visual pass: Drive imports, prep keys and video posters", () => {
+  beforeAll(async () => {
+    await asOwner();
+    for (const file of [DRIVE_FILE, PREP_AR, POSTERS]) {
+      await db.exec(migration(file));
+      await db.exec(migration(file));
+    }
+  }, 30000);
+
+  test("the parser gives every row of driveLink.cases.json what the browser's does", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const cases = JSON.parse(
+      readFileSync(
+        resolve(
+          import.meta.dir,
+          "../../client-success-cockpit/src/present/driveLink.cases.json",
+        ),
+        "utf8",
+      ),
+    ).cases as { name: string; link: string | null; want: Row }[];
+    expect(cases.length).toBeGreaterThan(60);
+    await asOwner();
+    for (const c of cases) {
+      const got = (
+        await db.query<{ r: Row }>(
+          "SELECT public.cockpit_csm_drive_link_parse($1::text) r",
+          [c.link],
+        )
+      ).rows[0].r;
+      expect({ name: c.name, got }).toEqual({ name: c.name, got: c.want });
+    }
+  });
+
+  test("the census: 45 functions, every one with an empty search path; who may call which", async () => {
+    const fns = (
+      await db.query<{
+        sig: string;
+        definer: boolean;
+        config: string[] | null;
+      }>(`
+      SELECT p.oid::regprocedure::text sig, p.prosecdef definer, p.proconfig config FROM pg_proc p
+       WHERE p.pronamespace='public'::regnamespace AND (p.proname LIKE 'cockpit_csm_deck%' OR p.proname LIKE 'cockpit_csm_launch%'
+          OR p.proname LIKE 'cockpit_csm_drive%')`)
+    ).rows;
+    expect(fns.length).toBe(45);
+    const browser = [
+      "cockpit_csm_launch_object_allowed",
+      "cockpit_csm_deck_sources",
+      "cockpit_csm_deck_prep_read",
+      "cockpit_csm_launch_ads_read",
+      "cockpit_csm_launch_ad_get",
+      "cockpit_csm_deck_prep_save",
+      "cockpit_csm_launch_ad_reserve",
+      "cockpit_csm_launch_ad_accept",
+      "cockpit_csm_launch_ad_update",
+      "cockpit_csm_launch_ad_remove",
+      "cockpit_csm_launch_ad_stale",
+      "cockpit_csm_launch_ad_purged",
+      "cockpit_csm_deck_videos_read",
+      "cockpit_csm_deck_video_save",
+      "cockpit_csm_deck_video_clear",
+      "cockpit_csm_launch_ads_import_request",
+      "cockpit_csm_launch_ads_imports_read",
+    ];
+    const worker = [
+      "cockpit_csm_launch_ads_import_claim",
+      "cockpit_csm_launch_ads_import_heartbeat",
+      "cockpit_csm_launch_ads_import_plan",
+      "cockpit_csm_launch_ads_import_file_reserve",
+      "cockpit_csm_launch_ads_import_file_landed",
+      "cockpit_csm_launch_ads_import_file_failed",
+      "cockpit_csm_launch_ads_import_finish",
+      "cockpit_csm_deck_video_posters_due",
+      "cockpit_csm_deck_video_poster_save",
+    ];
+    const notDefiners = [
+      "cockpit_csm_deck_text",
+      "cockpit_csm_deck_choice",
+      "cockpit_csm_deck_video_slots",
+      "cockpit_csm_deck_video_slot_ok",
+      "cockpit_csm_deck_video_parse",
+      "cockpit_csm_drive_link_parse",
+      "cockpit_csm_drive_import_sentence",
+    ];
+    for (const fn of fns) {
+      const name = fn.sig.split("(")[0].replace(/^public\./, "");
+      expect(fn.config).toContain('search_path=""');
+      expect(fn.definer).toBe(!notDefiners.includes(name));
+      const can = async (role: string) =>
+        (
+          await db.query<{ ok: boolean }>(
+            "SELECT has_function_privilege($1,$2,'EXECUTE') ok",
+            [role, fn.sig],
+          )
+        ).rows[0].ok;
+      expect(await can("anon")).toBe(false);
+      expect(await can("authenticated")).toBe(browser.includes(name));
+      expect(await can("service_role")).toBe(worker.includes(name));
+    }
+    // The internal ones are definers callable by nobody.
+    for (const name of [
+      "cockpit_csm_launch_ads_import_json",
+      "cockpit_csm_launch_ads_import_end",
+      "cockpit_csm_deck_video_poster_reset",
+    ])
+      expect(
+        fns.some(
+          f =>
+            f.sig.replace(/^public\./, "").startsWith(`${name}(`) && f.definer,
+        ),
+      ).toBe(true);
+  });
+
+  test("the two tables: row security on, no policies, no grant to any role, the service key included; the trigger audits the imports", async () => {
+    for (const table of [
+      "public.cockpit_csm_launch_ads_imports",
+      "public.cockpit_csm_drive_import_worker",
+    ]) {
+      for (const role of ["anon", "authenticated", "service_role"])
+        for (const privilege of [
+          "SELECT",
+          "INSERT",
+          "UPDATE",
+          "DELETE",
+          "TRUNCATE",
+        ])
+          expect(
+            (
+              await db.query<{ ok: boolean }>(
+                "SELECT has_table_privilege($1,$2,$3) ok",
+                [role, table, privilege],
+              )
+            ).rows[0].ok,
+          ).toBe(false);
+      expect(
+        (
+          await db.query<{ rls: boolean }>(
+            "SELECT relrowsecurity rls FROM pg_class WHERE oid=$1::regclass",
+            [table],
+          )
+        ).rows[0].rls,
+      ).toBe(true);
+    }
+    expect(
+      (
+        await db.query(
+          "SELECT 1 FROM pg_policies WHERE tablename IN ('cockpit_csm_launch_ads_imports','cockpit_csm_drive_import_worker')",
+        )
+      ).rows.length,
+    ).toBe(0);
+    expect(
+      await svcFail("SELECT * FROM public.cockpit_csm_launch_ads_imports"),
+    ).toMatchObject({ message: expect.stringContaining("permission denied") });
+    expect(
+      await fail(CSM_A, "SELECT * FROM public.cockpit_csm_launch_ads_imports"),
+    ).toMatchObject({ message: expect.stringContaining("permission denied") });
+    const triggers = (
+      await db.query<Row>(
+        "SELECT tgname FROM pg_trigger WHERE tgrelid IN ('public.cockpit_csm_launch_ads_imports'::regclass,'public.cockpit_csm_drive_import_worker'::regclass) AND NOT tgisinternal",
+      )
+    ).rows;
+    expect(triggers.map(t => t.tgname)).toEqual([
+      "cockpit_csm_launch_ads_imports_audit",
+    ]);
+    // The claim's sweep takes rows FOR UPDATE SKIP LOCKED (PGlite is one session, so it is read from the body).
+    const body = (
+      await db.query<{ d: string }>(
+        "SELECT pg_get_functiondef('public.cockpit_csm_launch_ads_import_claim(text,boolean)'::regprocedure) d",
+      )
+    ).rows[0].d;
+    expect(body).toMatch(/FOR UPDATE SKIP LOCKED/);
+  });
+
+  test("request: the gate, each refusal's code in its hint, the rebuilt link stored, the same open link once", async () => {
+    await closeOpen();
+    const before = (await importAudits()).length;
+    const link = `https://drive.google.com/drive/u/1/folders/${F(1)}?authuser=noura@acme.example&usp=sharing`;
+    for (const who of [BUYER, SALES, GONE, UNCONFIRMED, CSM_B])
+      expect((await fail(who, REQUEST, [A, link])).code).toBe("42501");
+    expect((await fail(null, REQUEST, [A, link])).message).toContain(
+      "permission denied",
+    );
+    const refusals: [string, string, string][] = [
+      [
+        "",
+        "link_empty",
+        "Paste a Drive link: a folder, or one video or picture.",
+      ],
+      [
+        "https://docs.google.com/document/d/1AbCdEfGhIjKlMnOp/edit",
+        "link_docs",
+        "That's a Google Docs link. Paste a Drive folder, or one video or picture.",
+      ],
+      [
+        "https://drive.google.com/drive/my-drive",
+        "link_page",
+        "This link opens a Drive page, not a folder. Open the folder and copy its link.",
+      ],
+      [
+        "javascript:alert(1)",
+        "link_bad",
+        "This isn't a Drive folder or file link.",
+      ],
+    ];
+    for (const [bad, hint, message] of refusals)
+      expect(await fail(CSM_A, REQUEST, [A, bad])).toEqual({
+        code: "22023",
+        hint,
+        message,
+      });
+    expect((await importAudits()).length).toBe(before);
+    const first = await request(CSM_A, A, link);
+    expect(first).toMatchObject({
+      existing: false,
+      taskId: A,
+      status: "queued",
+      kind: "folder",
+      driveId: F(1),
+      found: null,
+      link: `https://drive.google.com/drive/folders/${F(1)}`,
+      requestedBy: "csm-a@tests.invalid",
+      files: [],
+      landed: 0,
+    });
+    expect(JSON.stringify(first)).not.toContain("acme.example");
+    const again = await request(
+      CSM_A2,
+      A,
+      `https://drive.google.com/drive/folders/${F(1)}`,
+    );
+    expect(again).toMatchObject({ existing: true, id: first.id });
+    const added = (await importAudits()).slice(before);
+    expect(added.map(r => [r.action, r.actor_email, r.entity_id])).toEqual([
+      ["driveImport.request", "csm-a@tests.invalid", first.id],
+    ]);
+    // Beta's seat cannot read Acme's imports.
+    expect((await fail(CSM_B, READ_IMPORTS, [A])).code).toBe("42501");
+  });
+
+  test("ten open imports a client, thirty links a seat an hour", async () => {
+    await closeOpen();
+    const task = "twin1";
+    for (let i = 0; i < 10; i++)
+      await request(
+        CSM_ALL,
+        task,
+        `https://drive.google.com/drive/folders/${F(100 + i)}`,
+      );
+    expect(
+      await fail(CSM_ALL, REQUEST, [
+        task,
+        `https://drive.google.com/drive/folders/${F(110)}`,
+      ]),
+    ).toEqual({
+      code: "22023",
+      hint: "too_many_open",
+      message:
+        "Ten imports are already running for this client. Wait for one to finish, then paste the link again.",
+    });
+    await closeOpen();
+    // Twenty more in the last hour from this seat (finished ones count too).
+    await asOwner();
+    for (let i = 0; i < 20; i++)
+      await db.query(
+        `INSERT INTO public.cockpit_csm_launch_ads_imports(task_id,link,drive_id,kind,status,code,message,requested_by,requested_by_email,finished_at)
+        VALUES('twin2',$1,$2,'folder','failed','not_found','x',$3,'csm-all@tests.invalid',now())`,
+        [
+          `https://drive.google.com/drive/folders/${F(200 + i)}`,
+          F(200 + i),
+          CSM_ALL,
+        ],
+      );
+    expect(
+      await fail(CSM_ALL, REQUEST, [
+        task,
+        `https://drive.google.com/drive/folders/${F(111)}`,
+      ]),
+    ).toEqual({
+      code: "22023",
+      hint: "too_many_links",
+      message:
+        "Too many Drive links in the last hour. Wait a few minutes, then paste it again.",
+    });
+    // An hour later the seat may paste again (the next tests start clean).
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET requested_at = requested_at - interval '2 hours' WHERE requested_by=$1",
+      [CSM_ALL],
+    );
+  });
+
+  test("read: open ones first whatever their age, then 14 days of finished ones, 20 at most, newest first; found null before the plan", async () => {
+    await closeOpen();
+    await asOwner();
+    await db.query(
+      `INSERT INTO public.cockpit_csm_launch_ads_imports(task_id,link,drive_id,kind,status,code,message,requested_by,requested_by_email,requested_at,finished_at)
+      VALUES('twin2',$1,$2,'folder','failed','not_found','x',$3,'csm-all@tests.invalid',now()-interval '20 days',now()-interval '20 days')`,
+      [`https://drive.google.com/drive/folders/${F(300)}`, F(300), CSM_ALL],
+    );
+    const old = await request(
+      CSM_ALL,
+      "twin2",
+      `https://drive.google.com/drive/folders/${F(301)}`,
+    );
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET requested_at=now()-interval '40 days' WHERE id=$1",
+      [old.id],
+    );
+    const read = await one(CSM_ALL, READ_IMPORTS, ["twin2"]);
+    expect(read.imports.length).toBe(20);
+    expect(read.imports.some((i: Row) => i.id === old.id)).toBe(true);
+    expect(read.imports.some((i: Row) => i.driveId === F(300))).toBe(false);
+    const times = read.imports.map((i: Row) => Date.parse(i.requestedAt));
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+    expect(read.imports.find((i: Row) => i.id === old.id).found).toBeNull();
+    expect(Number.isNaN(Date.parse(read.at))).toBe(false);
+  });
+
+  test("a folder comes in: claim, plan, reserve, upload, landed, finish; each write audited with the worker as actor", async () => {
+    await closeOpen();
+    const imp = await request(
+      CSM_A,
+      A,
+      `https://drive.google.com/drive/folders/${F(2)}`,
+    );
+    // Already in the tray: one file from an earlier import.
+    await asOwner();
+    const peek = await claim("doctor", true);
+    expect(peek).toMatchObject({ queued: 1, working: 0 });
+    const auditsBefore = (await importAudits()).length;
+    const taken = await claim();
+    expect(taken.import).toMatchObject({
+      id: imp.id,
+      status: "working",
+      resumed: false,
+      resourceKey: null,
+    });
+    expect(taken.queued).toBe(0);
+    // The worker row is written; the doctor's peek wrote nothing.
+    const planned = await plan(imp.id, [
+      media(1),
+      media(2, { name: "../../etc/pass‮wd.jpg", mime: "image/jpeg" }),
+      media(3),
+    ]);
+    expect(planned.found).toBe(3);
+    expect(planned.files.map((f: Row) => [f.name, f.status])).toEqual([
+      ["kitchen-1.mp4", "queued"],
+      ["passwd.jpg", "queued"],
+      ["kitchen-3.mp4", "queued"],
+    ]);
+    // Video: reserve, then the bytes and the poster, then landed.
+    const r1 = await fileReserve(imp.id, FILE_ID(1), "video/mp4", 5_000_000, [
+      1080,
+      1920,
+      30,
+      "image/jpeg",
+      90_000,
+      "converted",
+    ]);
+    expect(r1.resumed).toBe(false);
+    expect(r1.path).toBe(`${A}/${r1.adId}.mp4`);
+    expect(r1.posterPath).toBe(`${A}/${r1.adId}-poster.jpg`);
+    const row = await adRow(r1.adId);
+    expect(row).toMatchObject({
+      task_id: A,
+      kind: "custom",
+      status: "uploading",
+      source: "drive",
+      source_drive_id: FILE_ID(1),
+      import_id: imp.id,
+      created_by: CSM_A,
+      created_by_email: "csm-a@tests.invalid",
+      updated_by: `worker:${WORKER}`,
+      file_name: "kitchen-1.mp4",
+    });
+    expect(row.request_id).not.toBe(row.id);
+    // The file did not arrive: refused.
+    expect(await svcFail(LANDED, [imp.id, WORKER, FILE_ID(1)])).toMatchObject({
+      code: "22023",
+      message: "The file did not arrive. Upload it again.",
+    });
+    await putObject(r1.path, 5_000_000, "video/mp4");
+    await putObject(r1.posterPath, 90_000, "image/jpeg");
+    const after1 = await landed(imp.id, FILE_ID(1));
+    expect(after1.landed).toBe(1);
+    expect(after1.files[0]).toMatchObject({
+      status: "landed",
+      note: "converted",
+      adId: r1.adId,
+    });
+    expect((await adRow(r1.adId)).status).toBe("ready");
+    // A second landed writes nothing.
+    const n = (await importAudits()).length;
+    await landed(imp.id, FILE_ID(1));
+    expect((await importAudits()).length).toBe(n);
+    // A picture: Storage's size differs, so it is refused; the worker reports storage.
+    const r2 = await fileReserve(imp.id, FILE_ID(2), "image/jpeg", 2048, [
+      1080,
+      1350,
+      null,
+      null,
+      null,
+      null,
+    ]);
+    await putObject(r2.path, 2047, "image/jpeg");
+    expect((await svcFail(LANDED, [imp.id, WORKER, FILE_ID(2)])).message).toBe(
+      "The file did not arrive. Upload it again.",
+    );
+    const failed2 = await fileFailed(imp.id, FILE_ID(2), "storage");
+    expect(failed2.files[1]).toMatchObject({
+      status: "failed",
+      code: "storage",
+      message:
+        "passwd.jpg didn't save. Paste the link again; files already in the tray are skipped.",
+    });
+    expect((await adRow(r2.adId)).status).toBe("removed");
+    // The third never got past its download: finish fails it as unfinished.
+    const done = await finish(imp.id);
+    expect(done).toMatchObject({
+      status: "done",
+      code: null,
+      message: null,
+      landed: 1,
+      failed: 2,
+      found: 3,
+    });
+    expect(done.files[2]).toMatchObject({
+      status: "failed",
+      code: "unfinished",
+      message:
+        "kitchen-3.mp4 didn't finish. Paste the link again; files already in the tray are skipped.",
+    });
+    expect(await finish(imp.id)).toMatchObject({ status: "done" });
+    // Every write audited once, the worker named, only changed columns kept.
+    const added = (await importAudits()).slice(auditsBefore);
+    expect(added.map(r => r.action)).toEqual([
+      "driveImport.claim",
+      "driveImport.plan",
+      "driveImport.reserve",
+      "driveImport.ready",
+      "driveImport.reserve",
+      "driveImport.fileFailed",
+      "driveImport.finish",
+    ]);
+    expect(added.every(r => r.actor_email === `worker:${WORKER}`)).toBe(true);
+    const ready = added.find(r => r.action === "driveImport.ready");
+    expect(ready?.after.landed).toBe(1);
+    expect(ready?.after.status).toBeUndefined();
+    expect(Object.keys(ready?.after.files)).toEqual([FILE_ID(1)]);
+    const adAudits = (await audits("cockpit_csm_launch_ads")).filter(
+      r => r.entity_id === r1.adId || r.entity_id === r2.adId,
+    );
+    expect(adAudits.map(r => [r.action, r.actor_email])).toEqual([
+      ["driveImport.reserve", `worker:${WORKER}`],
+      ["driveImport.ready", `worker:${WORKER}`],
+      ["driveImport.reserve", `worker:${WORKER}`],
+      ["driveImport.drop", `worker:${WORKER}`],
+    ]);
+    // The browser reads it without the worker's fields.
+    const read = await one(CSM_A, READ_IMPORTS, [A]);
+    const mine = read.imports.find((i: Row) => i.id === imp.id);
+    expect(mine.files[0]).toEqual({
+      driveId: FILE_ID(1),
+      name: "kitchen-1.mp4",
+      kind: "video",
+      bytes: 1001,
+      status: "landed",
+      code: null,
+      message: null,
+      note: "converted",
+      adId: r1.adId,
+    });
+    expect(mine.resourceKey).toBeUndefined();
+    expect(mine.startedAt).not.toBeNull();
+    // A later plain service-role write is not the worker's (the actor is transaction-local).
+    await asOwner();
+    await db.exec("SET ROLE service_role");
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads SET hidden=true WHERE id=$1",
+      [r1.adId],
+    );
+    await asOwner();
+    const last = (await audits("cockpit_csm_launch_ads")).at(-1);
+    expect(last?.actor_email).not.toContain("worker:");
+  });
+
+  test("the same file twice: skipped at plan, skipped at reserve, and a racing reserve is skipped, not an error", async () => {
+    await closeOpen();
+    // FILE_ID(1) landed above for Acme.
+    const imp = await request(
+      CSM_A,
+      A,
+      `https://drive.google.com/drive/folders/${F(3)}`,
+    );
+    await claim();
+    const planned = await plan(imp.id, [media(1), media(4)]);
+    expect(planned.files.map((f: Row) => f.status)).toEqual([
+      "skipped",
+      "queued",
+    ]);
+    expect(planned.skipped).toBe(1);
+    // Another import of the same client reserves FILE_ID(4) first.
+    const other = await request(
+      CSM_A,
+      A,
+      `https://drive.google.com/file/d/${FILE_ID(4)}/view`,
+    );
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET status='working', claimed_at=now(), claimed_by='other-run', heartbeat_at=now() WHERE id=$1",
+      [other.id],
+    );
+    await svc(PLAN, [
+      other.id,
+      "other-run",
+      "file",
+      JSON.stringify([media(4)]),
+      false,
+    ]);
+    const otherRes = await svc(RESERVE, [
+      other.id,
+      "other-run",
+      FILE_ID(4),
+      "video/mp4",
+      4000,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+    ]);
+    expect(otherRes.resumed).toBe(false);
+    // Ours: an ad with that Drive id exists now: skipped.
+    expect(await fileReserve(imp.id, FILE_ID(4), "video/mp4", 4000)).toEqual({
+      skipped: true,
+    });
+    const row = await importRow(imp.id);
+    expect(row.skipped).toBe(2);
+    const actions = (await importAudits())
+      .filter(r => r.entity_id === imp.id)
+      .map(r => r.action);
+    expect(actions).toContain("driveImport.skip");
+  });
+
+  test("a resumed import: the claim expires, the next run takes it again (resumed), re-reserves the same row and lands it; another mime is refused", async () => {
+    await closeOpen();
+    const imp = await request(
+      CSM_A,
+      A,
+      `https://drive.google.com/drive/folders/${F(5)}`,
+    );
+    await claim("run-one");
+    await svc(PLAN, [
+      imp.id,
+      "run-one",
+      "folder",
+      JSON.stringify([media(10), media(11)]),
+      false,
+    ]);
+    const first = await svc(RESERVE, [
+      imp.id,
+      "run-one",
+      FILE_ID(10),
+      "video/mp4",
+      7000,
+      1080,
+      1920,
+      12,
+      null,
+      null,
+      null,
+    ]);
+    // run-one dies; five minutes pass without a heartbeat.
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET heartbeat_at=now()-interval '6 minutes' WHERE id=$1",
+      [imp.id],
+    );
+    const again = await claim("run-two");
+    expect(again.import).toMatchObject({ id: imp.id, resumed: true });
+    expect((await importRow(imp.id)).attempts).toBe(2);
+    // The slower run is stopped at its next call, and writes nothing.
+    expect(
+      await svcFail(LANDED, [imp.id, "run-one", FILE_ID(10)]),
+    ).toMatchObject({
+      code: "40001",
+      message: "This import is not yours to work on.",
+    });
+    expect(
+      await svcFail(
+        "SELECT public.cockpit_csm_launch_ads_import_heartbeat($1::uuid,$2) r",
+        [imp.id, "run-one"],
+      ),
+    ).toMatchObject({ code: "40001" });
+    // Plan is not sent again; a plan after a file started is 55000, never 40001.
+    expect(
+      await svcFail(PLAN, [
+        imp.id,
+        "run-two",
+        "folder",
+        JSON.stringify([media(10)]),
+        false,
+      ]),
+    ).toMatchObject({
+      code: "55000",
+      message: "This import already started its files.",
+    });
+    expect(
+      await svcFail(RESERVE, [
+        imp.id,
+        "run-two",
+        FILE_ID(10),
+        "video/quicktime",
+        7000,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      ]),
+    ).toMatchObject({
+      code: "22023",
+      message: "That file changed in Drive since it was reserved.",
+    });
+    const resumed = await svc(RESERVE, [
+      imp.id,
+      "run-two",
+      FILE_ID(10),
+      "video/mp4",
+      7100,
+      1080,
+      1920,
+      12,
+      null,
+      null,
+      null,
+    ]);
+    expect(resumed).toEqual({
+      adId: first.adId,
+      path: first.path,
+      posterPath: null,
+      resumed: true,
+    });
+    expect(Number((await adRow(first.adId)).bytes)).toBe(7100);
+    await putObject(first.path, 7100, "video/mp4");
+    const out = await svc(LANDED, [imp.id, "run-two", FILE_ID(10)]);
+    expect(out.landed).toBe(1);
+    expect((await importRow(imp.id)).attempts).toBe(0);
+    expect(await svc(FINISH, [imp.id, "run-two", null])).toMatchObject({
+      status: "done",
+      landed: 1,
+      failed: 1,
+    });
+  });
+
+  test("claim: three takes in a row without a file landing end it stopped, with its uploading rows removed", async () => {
+    await closeOpen();
+    const imp = await request(
+      CSM_A,
+      A,
+      `https://drive.google.com/drive/folders/${F(6)}`,
+    );
+    await claim();
+    await plan(imp.id, [media(20)]);
+    const res = await fileReserve(imp.id, FILE_ID(20), "video/mp4", 9000);
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET attempts=3, heartbeat_at=now()-interval '6 minutes' WHERE id=$1",
+      [imp.id],
+    );
+    expect((await claim()).import).toBeNull();
+    const row = await importRow(imp.id);
+    expect(row).toMatchObject({
+      status: "failed",
+      code: "stopped",
+      message:
+        "This import stopped three times without bringing anything in. Paste the link again, or upload the files here.",
+    });
+    expect(row.files[0]).toMatchObject({
+      status: "failed",
+      code: "unfinished",
+    });
+    expect((await adRow(res.adId)).status).toBe("removed");
+  });
+
+  test("claim: a requester who lost the client ends it access_revoked; a client gone from the roster does not block the next client's import, and ends not_started after 30 minutes", async () => {
+    await closeOpen();
+    const revoked = await request(
+      CSM_B,
+      B,
+      `https://drive.google.com/drive/folders/${F(7)}`,
+    );
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_members SET clients=$1 WHERE auth_user_id=$2",
+      [["Acme Interiors"], CSM_B],
+    );
+    expect((await claim()).import).toBeNull();
+    expect(await importRow(revoked.id)).toMatchObject({
+      status: "failed",
+      code: "access_revoked",
+    });
+    await db.query(
+      "UPDATE public.cockpit_members SET clients=$1 WHERE auth_user_id=$2",
+      [["Beta Build"], CSM_B],
+    );
+    // twin1's card goes missing from the roster; Acme's import is queued after it.
+    const stuck = await request(
+      CSM_ALL,
+      "twin2",
+      `https://drive.google.com/drive/folders/${F(8)}`,
+    );
+    const next = await request(
+      CSM_A,
+      A,
+      `https://drive.google.com/drive/folders/${F(9)}`,
+    );
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_sources SET data = data || '{\"taskId\":\"twin2-gone\"}'::jsonb WHERE table_name='clients' AND data->>'taskId'='twin2'",
+    );
+    const taken = await claim();
+    expect(taken.import?.id).toBe(next.id);
+    expect((await importRow(stuck.id)).status).toBe("queued");
+    await closeOpen();
+    const stuck2 = await request(
+      CSM_ALL,
+      "twin1",
+      `https://drive.google.com/drive/folders/${F(10)}`,
+    );
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET status='queued', code=NULL, message=NULL, finished_at=NULL, claimed_at=NULL WHERE id=$1",
+      [stuck.id],
+    );
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET status='failed', code='not_found', message='x', finished_at=now() WHERE id=$1",
+      [stuck2.id],
+    );
+    const waiting = await claim();
+    expect(waiting).toMatchObject({
+      import: null,
+      waiting:
+        "The client ID is missing or ambiguous. Refresh its native source",
+    });
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET requested_at=now()-interval '31 minutes' WHERE id=$1",
+      [stuck.id],
+    );
+    await claim();
+    expect(await importRow(stuck.id)).toMatchObject({
+      status: "failed",
+      code: "not_started",
+    });
+    await db.query(
+      "UPDATE public.cockpit_csm_sources SET data = data || '{\"taskId\":\"twin2\"}'::jsonb WHERE table_name='clients' AND data->>'taskId'='twin2-gone'",
+    );
+  });
+
+  test("a roster mid-refresh at reserve is the import's, not the file's: 55006, nothing written", async () => {
+    await closeOpen();
+    const imp = await request(
+      CSM_A,
+      A,
+      `https://drive.google.com/drive/folders/${F(11)}`,
+    );
+    await claim();
+    await plan(imp.id, [media(30)]);
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_source_state SET ready=false WHERE table_name='clients'",
+    );
+    expect(
+      await svcFail(RESERVE, [
+        imp.id,
+        WORKER,
+        FILE_ID(30),
+        "video/mp4",
+        100,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      ]),
+    ).toMatchObject({ code: "55006", hint: "roster" });
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_source_state SET ready=true WHERE table_name='clients'",
+    );
+    expect((await importRow(imp.id)).files[0].status).toBe("queued");
+  });
+
+  test("heartbeat: refreshes the import and the worker row, writes no audit row; workerSeenAt is the later of the two", async () => {
+    await closeOpen();
+    const imp = await request(
+      CSM_A,
+      A,
+      `https://drive.google.com/drive/folders/${F(12)}`,
+    );
+    await claim();
+    const before = (await importAudits()).length;
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_csm_drive_import_worker SET seen_at=now()-interval '1 hour'",
+    );
+    await db.query(
+      "UPDATE public.cockpit_csm_launch_ads_imports SET heartbeat_at=now()-interval '2 hours' WHERE id=$1",
+      [imp.id],
+    );
+    await heartbeat(imp.id);
+    expect((await importAudits()).length).toBe(before);
+    const row = await importRow(imp.id);
+    expect(Date.now() - Date.parse(row.heartbeat_at)).toBeLessThan(60_000);
+    const read = await one(CSM_A, READ_IMPORTS, [A]);
+    expect(Date.now() - Date.parse(read.workerSeenAt)).toBeLessThan(60_000);
+    // Plan's checks: each file once, at least one, a known kind; finish takes the worker's four codes only.
+    expect(
+      await svcFail(PLAN, [
+        imp.id,
+        WORKER,
+        "folder",
+        JSON.stringify([media(40), media(40)]),
+        false,
+      ]),
+    ).toMatchObject({ code: "22023", message: "Send each file once." });
+    expect(
+      await svcFail(PLAN, [imp.id, WORKER, "folder", "[]", false]),
+    ).toMatchObject({
+      message: "Send at least one file, or finish with nothing_found.",
+    });
+    expect(
+      await svcFail(FINISH, [imp.id, WORKER, "access_revoked"]),
+    ).toMatchObject({ code: "22023", message: "Name an import failure." });
+    expect(
+      await svcFail(FAILED, [imp.id, WORKER, FILE_ID(40), "nope"]),
+    ).toMatchObject({ code: "22023", message: "Name a file failure." });
+    expect(
+      await svcFail(
+        "SELECT public.cockpit_csm_launch_ads_import_claim($1,false) r",
+        ["Bad Worker!"],
+      ),
+    ).toMatchObject({ code: "22023", message: "Name the worker." });
+    expect(
+      await svcFail(
+        "SELECT public.cockpit_csm_launch_ads_import_heartbeat($1::uuid,$2) r",
+        ["00000000-0000-4000-8000-000000000000", WORKER],
+      ),
+    ).toMatchObject({ code: "P0002" });
+    const failed = await finish(imp.id, "not_found");
+    expect(failed).toMatchObject({
+      status: "failed",
+      code: "not_found",
+      message:
+        "We can't open this folder. Ask the client to share it as anyone with the link, or move it into their Drive folder.",
+    });
+  });
+
+  test("prep keeps the three keys: the Arabic of card lines, the example's theme, and the choice the server stamps every time", async () => {
+    const saved = await save(CSM_A, A, "launch", {
+      dos_donts_ar: {
+        " Never show prices in an ad ": " ما نعرض الأسعار ",
+        "Show real projects": "",
+      },
+    });
+    expect(saved.overrides.dos_donts_ar).toEqual({
+      "Never show prices in an ad": "ما نعرض الأسعار",
+    });
+    for (const [patch, message] of [
+      [{ dos_donts_ar: ["x"] }, "dos_donts_ar maps card lines to their Arabic"],
+      [{ dos_donts_ar: { " ": "x" } }, "card line that is empty or too long"],
+      [{ example_theme: "garage" }, "example_theme must be one of"],
+      [
+        { service_chosen_at: 5 },
+        "service_chosen_at is set with true and cleared with null",
+      ],
+    ] as [Row, string][])
+      expect(
+        await refused(
+          CSM_A,
+          "SELECT public.cockpit_csm_deck_prep_save($1,'onboarding',$2::jsonb)",
+          [A, JSON.stringify(patch)],
+        ),
+      ).toContain(message);
+    expect(
+      (await save(CSM_A, A, "launch", { dos_donts_ar: null })).overrides
+        .dos_donts_ar,
+    ).toBeUndefined();
+    expect(
+      (await save(CSM_A, A, "onboarding", { example_theme: "majlis" }))
+        .overrides.example_theme,
+    ).toBe("majlis");
+    const first = await save(CSM_A, A, "onboarding", {
+      service_chosen_at: true,
+    });
+    const stamp = first.overrides.service_chosen_at;
+    expect(stamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    await new Promise(r => setTimeout(r, 15));
+    const second = await save(CSM_A, A, "onboarding", {
+      service_chosen_at: "1999-01-01T00:00:00Z",
+    });
+    expect(second.overrides.service_chosen_at).not.toBe(
+      "1999-01-01T00:00:00.000Z",
+    );
+    expect(
+      Date.parse(second.overrides.service_chosen_at),
+    ).toBeGreaterThanOrEqual(Date.parse(stamp));
+    expect(
+      (await save(CSM_A, A, "onboarding", { service_chosen_at: null }))
+        .overrides.service_chosen_at,
+    ).toBeUndefined();
+    expect(
+      await refused(
+        CSM_A,
+        "SELECT public.cockpit_csm_deck_prep_save($1,'launch','{\"leads\":1}'::jsonb)",
+        [A],
+      ),
+    ).toContain('Prep does not keep "leads"');
+  });
+
+  test("posters: the six seeds backfilled, the read carries them, a new link clears one, the worker's due list and save", async () => {
+    await asOwner();
+    const seeds = (
+      await db.query<Row>(
+        "SELECT deck, slot_key, lang, poster_url FROM public.cockpit_csm_deck_videos WHERE url IS NOT NULL ORDER BY deck, slot_key, lang",
+      )
+    ).rows;
+    // The welcome seed was cleared and saved again above, so its link is still the seed's.
+    expect(seeds.filter(s => s.poster_url).length).toBeGreaterThanOrEqual(5);
+    const read = await vRead(CSM_A, "onboarding");
+    const meta = read.rows.find((r: Row) => r.slotKey === "meta-access");
+    expect(meta.posterUrl).toBe(
+      "https://cdn.loom.com/sessions/thumbnails/e2d83bffee614d9aa035d898d37d8989-b17bc3f4ce782f9b.jpg",
+    );
+    // The table refuses another host, even for the owner.
+    let message = "";
+    try {
+      await db.query(
+        "UPDATE public.cockpit_csm_deck_videos SET poster_url='https://evil.example/x.jpg' WHERE deck='onboarding' AND slot_key='meta-access'",
+      );
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain("cockpit_csm_deck_videos_poster");
+    // A new link clears its poster.
+    const before = await vRead(CSM_A, "launch");
+    const cal = before.rows.find((r: Row) => r.slotKey === "calendar-hours");
+    await vSave(CSM_A, {
+      deck: "launch",
+      slot: "calendar-hours",
+      lang: "any",
+      url: `https://www.loom.com/share/${LOOM}`,
+      revision: cal.revision,
+    });
+    expect(
+      (await videoRow("launch", "calendar-hours", "any"))?.poster_url,
+    ).toBeNull();
+    const due = await svc(
+      "SELECT public.cockpit_csm_deck_video_posters_due($1) r",
+      [WORKER],
+    );
+    expect(
+      due.due.some(
+        (d: Row) =>
+          d.slotKey === "calendar-hours" &&
+          d.url === `https://www.loom.com/share/${LOOM}`,
+      ),
+    ).toBe(true);
+    expect(due.due.every((d: Row) => d.provider !== "drive")).toBe(true);
+    const SAVE_POSTER =
+      "SELECT public.cockpit_csm_deck_video_poster_save($1,$2,$3,$4,$5,$6) r";
+    const auditsBefore = (await videoAudits()).length;
+    // An old link: nothing written.
+    expect(
+      await svc(SAVE_POSTER, [
+        WORKER,
+        "launch",
+        "calendar-hours",
+        "any",
+        "https://www.loom.com/share/6aa67297dfcf421887f8961d3c1c7768",
+        "https://cdn.loom.com/x.jpg",
+      ]),
+    ).toEqual({ saved: false });
+    // A failed check: the time only, no audit row; it is not due again for a day.
+    expect(
+      await svc(SAVE_POSTER, [
+        WORKER,
+        "launch",
+        "calendar-hours",
+        "any",
+        `https://www.loom.com/share/${LOOM}`,
+        null,
+      ]),
+    ).toEqual({ saved: true, posterUrl: null });
+    expect((await videoAudits()).length).toBe(auditsBefore);
+    expect(
+      (
+        await svc("SELECT public.cockpit_csm_deck_video_posters_due($1) r", [
+          WORKER,
+        ])
+      ).due.some((d: Row) => d.slotKey === "calendar-hours"),
+    ).toBe(false);
+    expect(
+      await svcFail(SAVE_POSTER, [
+        WORKER,
+        "launch",
+        "calendar-hours",
+        "any",
+        `https://www.loom.com/share/${LOOM}`,
+        "https://i.ytimg.com/vi/x/hqdefault.jpg",
+      ]),
+    ).toMatchObject({
+      code: "22023",
+      message: "That poster is not from the video's provider.",
+    });
+    const rev = (await videoRow("launch", "calendar-hours", "any"))?.revision;
+    expect(
+      await svc(SAVE_POSTER, [
+        WORKER,
+        "launch",
+        "calendar-hours",
+        "any",
+        `https://www.loom.com/share/${LOOM}`,
+        "https://cdn.loom.com/sessions/thumbnails/abc-def.jpg",
+      ]),
+    ).toEqual({
+      saved: true,
+      posterUrl: "https://cdn.loom.com/sessions/thumbnails/abc-def.jpg",
+    });
+    const row = await videoRow("launch", "calendar-hours", "any");
+    expect(row?.revision).toBe(rev);
+    const added = (await videoAudits()).slice(auditsBefore);
+    expect(added.map(r => [r.action, r.actor_email])).toEqual([
+      ["deck_video.poster", `worker:${WORKER}`],
+    ]);
+  });
+});

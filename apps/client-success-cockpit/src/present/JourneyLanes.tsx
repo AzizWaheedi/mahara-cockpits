@@ -1,4 +1,10 @@
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   journeyName,
   journeyOwners,
@@ -168,6 +174,65 @@ function usePrevious<T>(value: T): T | undefined {
   return prev;
 }
 
+/** A motion token's length in ms, read from the deck's CSS, times --dk-m. */
+function motionMs(el: Element, name: string): number {
+  const css = getComputedStyle(el);
+  const m = Number.parseFloat(css.getPropertyValue("--dk-m"));
+  const v = Number.parseFloat(css.getPropertyValue(name));
+  return (Number.isFinite(m) ? m : 1) * (Number.isFinite(v) ? v : 0);
+}
+
+/**
+ * The enquiry's token rides the head of the line as it draws to the next
+ * node, and is absorbed as the node fills (DESIGN 22.3.3, L2). The line is
+ * sampled at 24 equal lengths (equal parameter steps would run ahead of or
+ * behind the stroke's head), and the token's Web Animation shares the
+ * line's duration (--dk-draw-ms), delay (--dk-t-beat) and easing
+ * (--dk-ease-move). It lives inside the lanes' own SVG, so a point maps
+ * 1:1 and the RTL mirror carries it. Under --dk-m 0 (still, reduced
+ * motion) it never shows.
+ */
+function useToken(
+  path: React.RefObject<SVGPathElement | null>,
+  token: React.RefObject<SVGCircleElement | null>,
+  on: boolean,
+) {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable; the draw is the trigger
+  useLayoutEffect(() => {
+    const line = path.current;
+    const dot = token.current;
+    if (!on || !line || !dot || typeof dot.animate !== "function") return;
+    const draw = motionMs(dot, "--dk-draw-ms");
+    if (draw <= 0) {
+      dot.style.opacity = "0";
+      return;
+    }
+    const beat = motionMs(dot, "--dk-t-beat");
+    const tick = motionMs(dot, "--dk-t-tick");
+    const total = line.getTotalLength();
+    const frames = Array.from({ length: 24 }, (_, i) => {
+      const p = line.getPointAtLength((i / 23) * total);
+      return { transform: `translate(${p.x}px, ${p.y}px)` };
+    });
+    const ride = dot.animate(frames, {
+      duration: draw,
+      delay: beat,
+      easing: "cubic-bezier(0.65, 0, 0.35, 1)",
+      fill: "both",
+    });
+    const absorb = dot.animate([{ opacity: 1 }, { opacity: 0 }], {
+      duration: tick,
+      delay: beat + draw,
+      easing: "cubic-bezier(0.7, 0, 0.84, 0)",
+      fill: "both",
+    });
+    return () => {
+      ride.cancel();
+      absorb.cancel();
+    };
+  }, [on]);
+}
+
 export interface LanesProps {
   lang: Lang;
   /** The lit step, from 0. */
@@ -208,6 +273,9 @@ export function JourneyLanes({
   const now = idle ? -1 : current;
   const drawing = !still && prev !== undefined && now === prev + 1;
   const at = pts[now];
+  const drawRef = useRef<SVGPathElement | null>(null);
+  const tokenRef = useRef<SVGCircleElement | null>(null);
+  useToken(drawRef, tokenRef, drawing);
   // The leader leaves the lit row's band at the matrix's end edge, on the
   // row's own centre line, and runs straight to the stage picture: it never
   // crosses a name, and the band itself says which row it belongs to.
@@ -272,10 +340,15 @@ export function JourneyLanes({
               {lit ? (
                 <path
                   key={drawing && i === now - 1 ? `draw-${now}` : "lit"}
+                  ref={drawing && i === now - 1 ? drawRef : undefined}
                   d={d}
                   {...solid}
                   pathLength={1}
-                  className={drawing && i === now - 1 ? "dkc-draw" : undefined}
+                  className={
+                    drawing && i === now - 1
+                      ? "dkc-draw dkc-draw-move"
+                      : undefined
+                  }
                 />
               ) : null}
               {handover ? (
@@ -318,15 +391,36 @@ export function JourneyLanes({
             <circle cx={leaderTo?.x} cy={leaderTo?.y} r={3} fill={STRONG} />
           </g>
         ) : null}
-        {pts.map((p, i) => (
-          <Node
-            key={`n-${String(i)}`}
-            x={p.x}
-            y={p.y}
-            r={14}
-            state={i < now ? "past" : i === now ? "now" : "ahead"}
+        {pts.map((p, i) =>
+          drawing && i === now ? (
+            // Today's node fills as the token arrives: its lit layer fades
+            // in over the ahead ring when the line reaches it.
+            <g key={`n-${String(i)}`}>
+              <Node x={p.x} y={p.y} r={14} state="ahead" />
+              <g className="dkc-node-fill">
+                <Node x={p.x} y={p.y} r={14} state="now" />
+              </g>
+            </g>
+          ) : (
+            <Node
+              key={`n-${String(i)}`}
+              x={p.x}
+              y={p.y}
+              r={14}
+              state={i < now ? "past" : i === now ? "now" : "ahead"}
+            />
+          ),
+        )}
+        {drawing ? (
+          <circle
+            key={`token-${now}`}
+            ref={tokenRef}
+            className="dkc-token"
+            cx={0}
+            cy={0}
+            r={7.5}
           />
-        ))}
+        ) : null}
       </svg>
       {LANES.map(k => (
         <span

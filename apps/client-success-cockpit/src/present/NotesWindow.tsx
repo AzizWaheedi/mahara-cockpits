@@ -27,6 +27,7 @@ import {
 } from "./launchControls";
 import type { DeckKind } from "./sources";
 import type { DeckIO, DeckModel, SaveState } from "./useDeckModel";
+import { useDriveImports } from "./useDriveImports";
 import {
   firstFilled,
   NotesVideos,
@@ -301,6 +302,14 @@ export function NotesWindow({
   const [deckClosed, setDeckClosed] = useState(false);
   /** "If they push back": stays as the CSM left it, open once opened. */
   const [pushOpen, setPushOpen] = useState(false);
+  const drive = useDriveImports({
+    taskId: deck === "launch" ? (d?.taskId ?? null) : null,
+    io,
+    hub,
+    onLanded: () => {
+      void model.reload().then(() => hub.post({ type: "ads" }));
+    },
+  });
   const addFiles = useMemo(
     () =>
       io
@@ -616,6 +625,7 @@ export function NotesWindow({
             messages={messages}
             now={now}
             still={base.still}
+            drive={drive}
           />
         ) : (
           <SlideControls
@@ -661,6 +671,9 @@ export function NotesWindow({
             Marked as presented, so the launch deck leaves out the hours card.
           </div>
         ) : null}
+        {/* The sticky footer's height, so the last line (a video's block)
+            scrolls clear of it. */}
+        <div aria-hidden className="h-28 shrink-0" />
       </main>
 
       <footer className="sticky bottom-0 border-t bg-background/95 px-4 py-3 backdrop-blur">
@@ -697,7 +710,8 @@ export function NotesWindow({
           </Button>
           <span className="min-w-0 truncate text-xs text-muted-foreground">
             {tour + 1 < stops
-              ? "Next: the next stop"
+              ? // The next stop by its name, where the slide names its stops.
+                `Next: ${stopNames(tour + 2)?.replace(/^Next:\s*/, "") ?? `stop ${tour + 2} of ${stops}`}`
               : nextSlide
                 ? `Next: ${t(nextSlide.title, "en").replace("{name}", d.nameEn)}`
                 : "Last slide"}
@@ -708,7 +722,8 @@ export function NotesWindow({
           </Button>
         </div>
         <div className="mt-2 text-[11px] text-muted-foreground">
-          Share the deck window only, maximised rather than full screen.
+          Share the deck window only, maximised rather than full screen, so you
+          can reach this window.
         </div>
       </footer>
     </div>

@@ -8,7 +8,7 @@ import {
   heldReason,
   serviceChips,
 } from "../src/present/clean";
-import { type Lang, O } from "../src/present/content";
+import { EXAMPLE, type Lang, O, t } from "../src/present/content";
 import { dayMonth, dayShort, when } from "../src/present/dates";
 import type { SlideCtx } from "../src/present/deckContext";
 import {
@@ -21,9 +21,13 @@ import {
 } from "../src/present/deckData";
 import {
   firstAdsLine,
+  firstAppointmentDay,
+  ghostRows,
   leadService,
   nextStatus,
   onboardingSlides,
+  rowHeight,
+  STRIP_LIT,
 } from "../src/present/onboardingDeck";
 
 /**
@@ -89,9 +93,12 @@ describe("a client with nothing on file", () => {
 
   test("an unknown service model reads done for you, and the CSM is told", () => {
     expect(d.mode).toEqual({ dwy: false, known: false, from: "none" });
-    expect(d.notes).toContain(
-      "Service mode not set on the card. The deck uses done for you.",
-    );
+    // Said once, by slide 3's prep line, never twice (the fixer's round).
+    const team = onboardingSlides().find(x => x.id === "team");
+    expect(team?.missing?.(d)).toEqual([
+      "Service model not set. The deck uses done for you. Change it if their team calls.",
+    ]);
+    expect(d.notes.join(" ")).not.toMatch(/Service mode(l)? not set/);
   });
 
   test("the Page name falls back to the client's name; today stands in for the call's day", () => {
@@ -219,9 +226,38 @@ describe("a done-with-you client in the UAE", () => {
     expect(firstAdsLine(d).line.en).toBe(
       "Your own ads, made from your content, go live first.",
     );
-    expect(d.serviceChosen).toBe("مطابخ حسب الطلب");
+    // Typed in prep before the call: the proposal, not a choice. The
+    // checklist keeps it open until "Launch with this" stamps it.
+    expect(d.serviceFocus).toBe("مطابخ حسب الطلب");
+    expect(d.serviceFocusFrom).toBe("prep");
+    expect(d.serviceChosen).toBeNull();
+    expect(d.today.service).toBe(false);
     expect(d.redLines).toEqual(["لا تذكرون الأسعار في الإعلان"]);
     expect(d.roadNow).toBe(3);
+  });
+
+  test("Launch with this stamps the choice; Undo clears it", () => {
+    const f = FIXTURES.dwy();
+    const stamped = (at: string | null) =>
+      deckData({
+        taskId: "fixture-dwy",
+        deck: "onboarding",
+        lang: "en",
+        sources: f.sources,
+        kit: f.kit,
+        prep: {
+          ...f.prep,
+          onboarding: { ...f.prep.onboarding, service_chosen_at: at },
+        },
+        ads: f.ads,
+        presenterName: "Sara Al-Harbi",
+        publicUrl: (_b, p) => p,
+        now: NOW,
+      });
+    const chosen = stamped("2026-10-19T09:10:00Z");
+    expect(chosen.serviceChosen).toBe(chosen.serviceFocus);
+    expect(chosen.today.service).toBe(true);
+    expect(stamped(null).today.service).toBe(false);
   });
 });
 
@@ -425,6 +461,9 @@ describe("every slide and stop renders, for every client, in both languages", ()
               s.render({ ...base, tour, setTour: () => {} }),
             );
             expect(html.length).toBeGreaterThan(200);
+            // No slot is ever left unfilled on the canvas (score round 2:
+            // the Arabic guide showed its "{len}").
+            expect(html).not.toMatch(/\{[a-zA-Z.]+\}/);
             seen[`${s.id}:${tour}`] = html;
           }
         }
@@ -439,10 +478,178 @@ describe("every slide and stop renders, for every client, in both languages", ()
           expect(week).not.toContain('data-status="done"');
           expect(week).not.toContain('data-status="todo"');
         }
-        // No unbooked call shows a date on the next-step band.
+        // No unbooked call shows a date on the Blueprint stop.
+        const last = Object.keys(seen)
+          .filter(k => k.startsWith("next:"))
+          .sort()
+          .at(-1) as string;
         if (!d.next.blueprint)
-          expect(seen["next:0"]).not.toContain("dkc-band-when");
+          expect(seen[last]).not.toContain("dkc-band-when");
+        // The last stop closes the call's checklist, its calendar card at
+        // full size whether booked or not (score round 2); stop 1 is what
+        // to expect, its strip of example ads under the test's words with
+        // their own service's tile lit.
+        expect(seen[last]).toContain('data-variant="close"');
+        expect(seen[last]).toContain("dkc-cal-grid");
+        if (!d.next.blueprint)
+          expect(seen[last]).toContain('class="dkc-cal-block" data-open=""');
+        expect(seen["next:0"]).toContain('class="dkc-strip"');
+        expect(seen["next:0"]).toMatch(
+          /<section class="dkc-next-test">[\s\S]*class="dkc-strip"/,
+        );
+        expect(seen["next:0"]).toMatch(
+          /<ul aria-hidden="true"><li data-lit=""/,
+        );
+        expect(seen["next:0"]).toContain(
+          lang === "ar" ? "إعلانات مثال" : "Example ads",
+        );
         // The starter stop shows only with a pack and starter ads.
-        expect(Object.keys(seen).includes("next:1")).toBe(key === "full");
+        expect(Object.keys(seen).includes("next:2")).toBe(key === "full");
+        // No example ever stands in for a starter. The cover shows the
+        // example ad for their service, tagged (the fixer's round, which
+        // overturns DESIGN 22.4.6 for the covers), in a Reels phone with
+        // the story picture, so O4's feed picture is not shown twice. The
+        // tag hangs under the phone's foot (score round 2), never stacked
+        // under the presenter's name.
+        if (key === "full") expect(seen["next:1"]).not.toContain("examples/");
+        expect(seen["welcome:0"]).toContain("examples/");
+        expect(seen["welcome:0"]).toContain("-story");
+        expect(seen["welcome:0"]).toContain(
+          `<span class="dk-tag dkc-figure-tag-below">${t(EXAMPLE.tag, lang)}</span>`,
+        );
+        expect(seen["welcome:0"]).not.toContain("dkc-figure-head");
+        expect(seen["welcome:0"]).not.toContain("dkc-faint");
       });
+});
+
+describe("score round 2: the onboarding deck's placeholders, designed", () => {
+  const one = (d: DeckData, id: string, tour = 0) => {
+    const f = FIXTURES.full();
+    const s = onboardingSlides().find(x => x.id === id);
+    return renderToStaticMarkup(
+      <>
+        {s?.render({
+          d,
+          lang: d.lang,
+          deck: "onboarding",
+          prep: f.prep.onboarding,
+          prepOf: k => f.prep[k],
+          save: () => {},
+          saveTo: () => {},
+          live: emptyLive(),
+          setLive: () => {},
+          still: true,
+          presenting: true,
+          tour,
+          setTour: () => {},
+        })}
+      </>,
+    );
+  };
+  test("O4: three rows always show while fewer than three services are typed, roomier when few", () => {
+    expect([0, 1, 2, 3, 5].map(ghostRows)).toEqual([3, 2, 1, 0, 0]);
+    expect([0, 3, 4].map(rowHeight)).toEqual([96, 96, 72]);
+    const sparse = one(data("sparse"), "one-service");
+    expect((sparse.match(/dkc-matrix-ghost/g) ?? []).length).toBe(3);
+    // "Add a service" sits in the first ghost's name slot, not its own row.
+    expect(sparse).toMatch(
+      /dkc-matrix-ghost"[^>]*role="row"[\s\S]*?Add a service/,
+    );
+    expect(sparse).not.toContain("dkc-matrix-add");
+    const full = one(data("full"), "one-service");
+    expect(full).not.toContain("dkc-matrix-ghost");
+    expect(full).toContain("dkc-matrix-add");
+  });
+  test("O5: the road ends at an example confirmation in their name, dated after go-live", () => {
+    const d = data("full");
+    const html = one(d, "road");
+    expect(html).toContain("dkc-road-card");
+    expect(html).toContain(">Example wording<");
+    expect(html).toContain(`Your appointment with ${d.nameEn} is confirmed.`);
+    // The launch call's line stays in its own column.
+    expect(html).not.toMatch(/grid-column:5 \/ -1/);
+    // The day: go-live, else a week after the booked launch call, else
+    // three weeks after this call; never before the launch call.
+    expect(firstAppointmentDay({ ...d, goLive: "2026-11-02" })).toBe(
+      "2026-11-02",
+    );
+    expect(
+      firstAppointmentDay({
+        ...d,
+        goLive: null,
+        next: { launch: "2026-10-27T13:00:00Z" },
+      }),
+    ).toBe("2026-11-03");
+    expect(
+      firstAppointmentDay({
+        ...d,
+        goLive: null,
+        next: {},
+        onboardingDay: "2026-10-19",
+      }),
+    ).toBe("2026-11-09");
+  });
+  test("O7: their own service's tile stays lit, and the strip sits with the test's words", () => {
+    expect(STRIP_LIT.has(0)).toBe(true);
+    expect(STRIP_LIT.size).toBe(2);
+    const html = one(data("full"), "next", 0);
+    const test =
+      html.match(/<section class="dkc-next-test">[\s\S]*?<\/section>/)?.[0] ??
+      "";
+    expect(test).toContain("dkc-strip");
+    expect(test).not.toContain("dkc-redlines");
+    expect(html).toMatch(/<section>[\s\S]*dkc-redlines[\s\S]*?<\/section>/);
+  });
+  test("O6: the video guide on the card's head, its length filled in both languages", () => {
+    for (const lang of ["en", "ar"] as Lang[]) {
+      const f = FIXTURES.full();
+      const d = deckData({
+        taskId: "fixture-full",
+        deck: "onboarding",
+        lang,
+        sources: f.sources,
+        kit: f.kit,
+        prep: f.prep,
+        ads: f.ads,
+        presenterName: "Sara Al-Harbi",
+        publicUrl: (_b, p) => p,
+        videos: f.videos,
+        now: NOW,
+      });
+      const s = onboardingSlides().find(x => x.id === "this-week");
+      const html = renderToStaticMarkup(
+        <>
+          {s?.render({
+            d,
+            lang,
+            deck: "onboarding",
+            prep: f.prep.onboarding,
+            prepOf: k => f.prep[k],
+            save: () => {},
+            saveTo: () => {},
+            live: emptyLive(),
+            setLive: () => {},
+            still: true,
+            presenting: true,
+            tour: 0,
+            setTour: () => {},
+            playVideo: () => {},
+          })}
+        </>,
+      );
+      expect(html).toContain("dkc-guide-word");
+      expect(html).toMatch(
+        /<header class="dkc-setup-head">[\s\S]*?dkc-guide[\s\S]*?dkc-status/,
+      );
+      expect(html).not.toMatch(/\{[a-zA-Z.]+\}/);
+    }
+  });
+  test("O7, not booked: the full calendar card as an empty day, no time made up", () => {
+    const d = data("sparse");
+    expect(d.next.blueprint).toBeUndefined();
+    const html = one(d, "next", 1);
+    expect(html).toContain('class="dkc-cal-block" data-open=""');
+    expect(html).toContain("We book it before we hang up");
+    expect(html).not.toMatch(/\d{1,2} (am|pm)/);
+  });
 });

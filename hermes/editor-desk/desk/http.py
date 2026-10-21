@@ -11,7 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 USER_AGENT = "mahara-editor-desk/1.0"
 RETRY_STATUSES = (408, 425, 429, 500, 502, 503, 504)
@@ -130,13 +130,35 @@ def post_multipart(url: str, fields: dict[str, str], files: dict[str, tuple[str,
     return json.loads(out.decode("utf-8")) if out else None
 
 
-def download(url: str, path: str, *, max_bytes: int, timeout: float = 600, headers: Optional[dict[str, str]] = None) -> int:
-    """Stream a file to disk with a hard size cap. Returns bytes written."""
+class TooLarge(HttpError):
+    """A download that ran past its cap. Still an HttpError, so every caller
+    that caught the cap before catches it the same way."""
+
+
+def download(
+    url: str,
+    path: str,
+    *,
+    max_bytes: int,
+    timeout: float = 600,
+    headers: Optional[dict[str, str]] = None,
+    deadline: Optional[float] = None,
+    on_chunk: Optional[Callable[[int], None]] = None,
+) -> int:
+    """Stream a file to disk with a hard size cap. Returns bytes written.
+
+    `timeout` is urllib's per-read timeout. `deadline` is a time.monotonic()
+    value: past it the download stops, so a slow trickle cannot hold a run
+    for hours one read at a time. `on_chunk(bytes_so_far)` runs after each
+    chunk is written.
+    """
     h = {"User-Agent": USER_AGENT}
     if headers:
         h.update(headers)
     req = urllib.request.Request(url, headers=h)
     written = 0
+    if deadline is not None and time.monotonic() > deadline:
+        raise HttpError(0, "download deadline passed", b"", url)
     with urllib.request.urlopen(req, timeout=timeout) as res, open(path, "wb") as fh:
         while True:
             chunk = res.read(1 << 16)
@@ -144,8 +166,12 @@ def download(url: str, path: str, *, max_bytes: int, timeout: float = 600, heade
                 break
             written += len(chunk)
             if written > max_bytes:
-                raise HttpError(0, f"file is larger than the {max_bytes} byte cap", b"", url)
+                raise TooLarge(0, f"file is larger than the {max_bytes} byte cap", b"", url)
             fh.write(chunk)
+            if on_chunk is not None:
+                on_chunk(written)
+            if deadline is not None and time.monotonic() > deadline:
+                raise HttpError(0, "download deadline passed", b"", url)
     return written
 
 

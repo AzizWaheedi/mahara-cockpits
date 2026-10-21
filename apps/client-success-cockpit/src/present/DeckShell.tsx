@@ -157,9 +157,6 @@ export function DeckShell({
     [index, here, setPos],
   );
 
-  const ctx: SlideCtx = { ...base, tour, setTour };
-  ctxRef.current = ctx;
-
   // The slide's recorded videos (DESIGN 21.2): an empty slot has none.
   const videoItems = useMemo(
     () => (slide ? filledOn(base.d, slide.id) : []),
@@ -172,6 +169,8 @@ export function DeckShell({
       el instanceof HTMLElement && el.closest(".dkv-control") ? el : null;
     setPlayer(item);
   }, []);
+  const ctx: SlideCtx = { ...base, tour, setTour, playVideo: openVideo };
+  ctxRef.current = ctx;
   const closeVideo = useCallback(() => {
     setPlayer(null);
     // Focus goes back to the control that opened it, else to nothing.

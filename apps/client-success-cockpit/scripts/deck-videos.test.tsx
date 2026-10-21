@@ -511,6 +511,21 @@ describe("the frame's address (the server builds the embed; the deck adds autopl
     for (const b of bad)
       expect(S.videoRow.safeParse(row(b)).success).toBe(false);
   });
+  test("a poster only from the provider's picture hosts; any other reads as none, and the row still plays", () => {
+    const loom =
+      "https://cdn.loom.com/sessions/thumbnails/e2d83bffee614d9aa035d898d37d8989-b17bc3f4ce782f9b.jpg";
+    expect(S.videoRow.parse(row({ posterUrl: loom })).posterUrl).toBe(loom);
+    for (const other of [
+      "https://evil.org/x.jpg",
+      "http://cdn.loom.com/x.jpg",
+      "https://cdn.loom.com.example.org/x.jpg",
+    ]) {
+      const r = S.videoRow.safeParse(row({ posterUrl: other }));
+      expect(r.success).toBe(true);
+      expect(r.data?.posterUrl).toBeNull();
+    }
+    expect(S.videoRow.parse(row({})).posterUrl).toBeUndefined();
+  });
   test("a read keeps good rows and sets refused ones apart, never as empty", () => {
     const out = S.videosFrom({
       rows: [

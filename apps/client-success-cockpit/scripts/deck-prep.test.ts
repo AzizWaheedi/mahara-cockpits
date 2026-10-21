@@ -26,9 +26,13 @@ import {
  * server keeps are sent (the list is read from the migration itself).
  */
 
+/**
+ * The newest migration that defines the prep checker (the visual pass's
+ * 20261020160100 replaced the decks' own, DRIVE-IMPORT.md 9).
+ */
 const MIGRATION = resolve(
   import.meta.dir,
-  "../../../supabase/migrations/20261019120000_csm_decks.sql",
+  "../../../supabase/migrations/20261020160100_csm_deck_prep_dos_ar.sql",
 );
 
 /** The prep keys the server's checker accepts, read from its SQL. */

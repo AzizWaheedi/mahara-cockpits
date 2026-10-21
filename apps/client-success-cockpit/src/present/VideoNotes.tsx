@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import type { DeckHub, VideoPhase } from "./channel";
 import type { DeckData } from "./deckData";
 import { VIDEOS_NOT_LIVE, type VideoRow } from "./sources";
+import { VideoPoster } from "./VideoPoster";
 import {
   clock,
   LANG_NAME,
@@ -144,6 +145,13 @@ function SlotBlock({
   return (
     <div className="space-y-1.5">
       <div className="text-sm font-medium">{title}</div>
+      {state.kind === "filled" || (state.kind === "empty" && !state.other) ? (
+        <VideoPoster
+          title={title}
+          row={state.kind === "filled" ? state.row : null}
+          size="notes"
+        />
+      ) : null}
       {state.kind === "hidden" ? (
         <div className="text-xs text-muted-foreground">{WHY[state.why]}</div>
       ) : state.kind === "unread" ? (
@@ -165,9 +173,7 @@ function SlotBlock({
             hub={hub}
             offer={`Not recorded in ${deckLang} yet. The ${LANG_NAME[state.other.lang]} one:`}
           />
-        ) : (
-          <div className="text-xs text-muted-foreground">Not recorded yet.</div>
-        )
+        ) : null
       ) : (
         <Recorded slot={slot} row={state.row} player={player} hub={hub} />
       )}

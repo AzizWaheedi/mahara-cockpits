@@ -117,6 +117,8 @@ function video(
   id: string,
   seconds: number | null,
   title: string | null = null,
+  /** The poster the migration seeds for this row (VIDEOS.md 9). */
+  posterUrl: string | null = null,
 ): VideoRow {
   const links: Record<VideoProvider, [string, string]> = {
     wistia: [
@@ -152,8 +154,28 @@ function video(
     revision: 1,
     updatedBy: "migration 20261020120000_csm_deck_videos",
     updatedAt: "2026-10-20T12:00:00+00:00",
+    ...(posterUrl ? { posterUrl } : {}),
   };
 }
+
+/**
+ * The posters 20261020160200_csm_deck_video_posters.sql seeds for the six
+ * rows, so the harness shows prep and the notes as production will (the
+ * fixer's round: the Loom rows fell back to the designed card).
+ */
+const SEED_POSTER = {
+  welcome:
+    "https://embed-ssl.wistia.com/deliveries/c3cdb9067a8a3c9ae21dede3cf45611b739ee3f1.jpg?image_crop_resized=960x540",
+  meta: "https://cdn.loom.com/sessions/thumbnails/e2d83bffee614d9aa035d898d37d8989-b17bc3f4ce782f9b.jpg",
+  whatsapp:
+    "https://cdn.loom.com/sessions/thumbnails/4ddc5519935f4ba8bdc7ac6f3667a701-1ddb7d7f640afcbd.jpg",
+  portalEn:
+    "https://embed-ssl.wistia.com/deliveries/02b381c067d9a4e711551bdc4923c80a0b28e6f6.jpg?image_crop_resized=960x540",
+  portalAr:
+    "https://embed-ssl.wistia.com/deliveries/234d6305c6581a586700670201e21c8f488eaa5f.jpg?image_crop_resized=960x540",
+  calendar:
+    "https://cdn.loom.com/sessions/thumbnails/6aa67297dfcf421887f8961d3c1c7768-a2384fa2a097cc77.jpg",
+} as const;
 
 /** The six seeds (VIDEOS.md 6), and the slots the server knows. */
 export function seededVideos(
@@ -161,7 +183,16 @@ export function seededVideos(
   extra: VideoRow[] = [],
 ): DeckVideos {
   const seeds = [
-    video("onboarding", "welcome", "any", "wistia", "up0z6n691k", 148),
+    video(
+      "onboarding",
+      "welcome",
+      "any",
+      "wistia",
+      "up0z6n691k",
+      148,
+      null,
+      SEED_POSTER.welcome,
+    ),
     video(
       "onboarding",
       "meta-access",
@@ -169,6 +200,8 @@ export function seededVideos(
       "loom",
       "e2d83bffee614d9aa035d898d37d8989",
       94,
+      null,
+      SEED_POSTER.meta,
     ),
     video(
       "onboarding",
@@ -177,9 +210,29 @@ export function seededVideos(
       "loom",
       "4ddc5519935f4ba8bdc7ac6f3667a701",
       231,
+      null,
+      SEED_POSTER.whatsapp,
     ),
-    video("launch", "portal-guide", "en", "wistia", "lxlse6ckhf", 277),
-    video("launch", "portal-guide", "ar", "wistia", "hyuxh7skjv", 285),
+    video(
+      "launch",
+      "portal-guide",
+      "en",
+      "wistia",
+      "lxlse6ckhf",
+      277,
+      null,
+      SEED_POSTER.portalEn,
+    ),
+    video(
+      "launch",
+      "portal-guide",
+      "ar",
+      "wistia",
+      "hyuxh7skjv",
+      285,
+      null,
+      SEED_POSTER.portalAr,
+    ),
     video(
       "launch",
       "calendar-hours",
@@ -187,6 +240,8 @@ export function seededVideos(
       "loom",
       "6aa67297dfcf421887f8961d3c1c7768",
       11,
+      null,
+      SEED_POSTER.calendar,
     ),
   ];
   return {
@@ -367,7 +422,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           ads: [
             {
               id: "120200000000001",
-              name: "Kitchen site, square",
+              name: "Family kitchen, square",
               still: { url: square },
             },
           ],
@@ -422,17 +477,17 @@ function full(deck: DeckKind = "onboarding"): Loaded {
     ? [
         ad("custom-site", "custom", siteFeed, 720, 900, {
           primaryText:
-            "Built right, shown honestly: this is one of our sites in north Riyadh this week.",
-          headline: "See a site in progress",
+            "A dining room we finished in north Riyadh this month, from the first drawing to the last chair.",
+          headline: "See a finished home",
           cta: "GET_QUOTE",
           language: "en",
-          fileName: "site-north-riyadh.webp",
+          fileName: "dining-north-riyadh.webp",
         }),
         ad("custom-tall", "custom", siteTall, 540, 960, {
-          primaryText: "A minute on site with our team.",
+          primaryText: "A minute inside a home we finished.",
           cta: "LEARN_MORE",
           language: "en",
-          fileName: "site-walk.webp",
+          fileName: "home-walk.webp",
         }),
         ad("custom-square", "custom", square, 800, 800, {
           primaryText:
@@ -440,7 +495,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           headline: "مطابخ نور ستوديو",
           cta: "BOOK_NOW",
           language: "ar",
-          fileName: "villa-ar.webp",
+          fileName: "kitchen-ar.webp",
         }),
       ]
     : [];
