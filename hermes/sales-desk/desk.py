@@ -810,6 +810,7 @@ def cmd_recordings(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
         log.error(str(e))
         return 1
     detail = (f"{out['indexed']} sales calls in the last {out['days']} days, {out['by_email']} matched by email, "
+              f"{out.get('by_room', 0)} by the cockpit's room, "
               f"{out['by_appointment']} by appointment, {out['unmatched']} unmatched"
               + (f"; could not read {', '.join(out['reps_unread'])}" if out["reps_unread"] else ""))
     _status(cfg, log, "recordings", not out["reps_unread"], detail)
@@ -850,6 +851,7 @@ def cmd_calls_vault(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
     else:
         detail = (f"{out['rows']} sales calls from the vault ({out['first'] or '?'}"
                   f" to {out['last'] or '?'}), {out['by_email']} matched by email, "
+                  f"{out.get('by_room', 0)} by the cockpit's room, "
                   f"{out['by_appointment']} by appointment, {out['unmatched']} unmatched "
                   f"({out['outsider_joined']} with no lead on the invite but someone from outside on the call), "
                   f"{out['lead_calls']} from notes the vault could not place whose invitee is a lead, "

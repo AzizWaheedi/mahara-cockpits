@@ -1,10 +1,18 @@
 """Fathom recordings of sales calls, per rep, matched to a lead where the desk can.
 
-A recording belongs to a lead when one of the invite's outside addresses is
-the lead's email, any case. When nobody from outside was on the invite (the
-lead joined from the link), it belongs to the lead whose intro or demo
-appointment started within 30 minutes of the recording, if exactly one lead
-had one then. Anything less certain stays unmatched: a proposal drafted for the
+The first rule that fits decides (agreed with Muhammed, 2026-10-21):
+1. A closer or a manager linked the call by hand (sales-api recording.link,
+   matched_by `hand`). The desk never changes it.
+2. One of the invite's outside addresses is the lead's email, any case.
+3. The call was held in the room the cockpit made for the lead
+   (cockpit_sales_zoom_links): the call's title is the room's name, the person
+   who made the room recorded it, it started within three hours after the
+   room was made, and only one lead had such a room. A closer who opens a new
+   room an hour after the booked time is caught here (محسن's demo, 20 Oct).
+4. Exactly one lead's intro or demo started within 30 minutes of the call, and
+   Fathom says someone from outside joined. A team meeting held at a demo's
+   time is never that lead's call (two "Slow Client Call" recordings were).
+Anything less certain stays unmatched: a proposal drafted for the
 wrong lead is worse than one the closer has to point at the right call.
 
 Client-service calls are left out by title, with the same filter webinar-pull
@@ -18,6 +26,7 @@ pull in; 111 of them had been dropped as team meetings this way).
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
@@ -28,13 +37,17 @@ from .fathom import NOT_SALES, Fathom, flatten, parse_ts
 from .supabase import CALLS_BUCKET, iso
 
 WINDOW = timedelta(minutes=30)
+# A call held in a cockpit room starts at most this long after the room was
+# made; a few minutes before allows for the two clocks.
+ROOM_AFTER = timedelta(hours=3)
+ROOM_BEFORE = timedelta(minutes=5)
 OUR_DOMAIN = "maharamedia.com"
 SALES_CALLS = ("intro", "demo")
-# What the desk writes in matched_by: an invitee's email, an appointment beside
-# the recording, the phone number of a Maqsam call, or nothing. Anything else
-# on a row was put there by someone else (a person pointing a recording at a
-# lead) and is left alone.
-MATCHES = ("email", "appointment", "phone")
+# What the desk writes in matched_by: an invitee's email, the cockpit room the
+# call was held in, an appointment beside the recording, the phone number of a
+# Maqsam call, or nothing. Anything else on a row was put there by someone else
+# (`hand`: a closer pointing a recording at a lead) and is left alone.
+MATCHES = ("email", "room", "appointment", "phone")
 OURS = MATCHES + ("none",)
 # Fathom's flag for a meeting someone from outside the company was on.
 OUTSIDER = "one_or_more_external"
@@ -101,7 +114,8 @@ def external_emails(meeting: dict[str, Any]) -> list[str]:
     return out
 
 
-def _near(appointments: Iterable[dict[str, Any]], at: datetime) -> list[tuple[float, dict[str, Any]]]:
+def _near(appointments: Iterable[dict[str, Any]], at: datetime,
+          within: timedelta = WINDOW) -> list[tuple[float, dict[str, Any]]]:
     out = []
     for a in appointments:
         if str(a.get("call_type") or "") not in SALES_CALLS:
@@ -110,14 +124,43 @@ def _near(appointments: Iterable[dict[str, Any]], at: datetime) -> list[tuple[fl
         if t is None:
             continue
         gap = abs((t - at).total_seconds())
-        if gap <= WINDOW.total_seconds():
+        if gap <= within.total_seconds():
             out.append((gap, a))
     return sorted(out, key=lambda x: x[0])
 
 
+def _name(text: Any) -> str:
+    """A title as two systems may write it: one space between words, any case."""
+    return unicodedata.normalize("NFC", " ".join(str(text or "").split())).casefold()
+
+
+def room_lead(meeting: dict[str, Any], rooms: Iterable[dict[str, Any]]) -> Optional[str]:
+    """The lead whose cockpit room the call was held in (rule 3), or None.
+    The room's name is the call's title, the person who made the room (its
+    seat or its Zoom host) recorded the call, and the call began within
+    ROOM_AFTER of the room being made. Two leads' rooms that fit is no answer."""
+    at, who, title = started(meeting), recorder(meeting)["email"], _name(title_of(meeting))
+    if at is None or not who or not title:
+        return None
+    found: set[str] = set()
+    for r in rooms:
+        made = parse_ts(r.get("made_at"))
+        if not r.get("contact_id") or made is None or not (made - ROOM_BEFORE <= at <= made + ROOM_AFTER):
+            continue
+        if who not in {str(r.get(k) or "").strip().lower() for k in ("seat_email", "host_email")}:
+            continue
+        if _name(r.get("topic")) == title:
+            found.add(str(r["contact_id"]))
+    return found.pop() if len(found) == 1 else None
+
+
 def match(meeting: dict[str, Any], *, leads: dict[str, dict[str, Any]],
-          appointments: list[dict[str, Any]], rep_user_ids: Iterable[str] = ()) -> tuple[Optional[str], Optional[str], str]:
-    """(contact_id, appointment_id, matched_by) for one meeting."""
+          appointments: list[dict[str, Any]], rep_user_ids: Iterable[str] = (),
+          rooms: Iterable[dict[str, Any]] = (),
+          outsider: Optional[bool] = None) -> tuple[Optional[str], Optional[str], str]:
+    """(contact_id, appointment_id, matched_by) for one meeting.
+    `outsider`: whether someone from outside joined, when the caller knows it
+    better than the meeting does (a vault note carries no Fathom flag)."""
     at = started(meeting)
     for email in external_emails(meeting):
         lead = leads.get(email)
@@ -129,6 +172,15 @@ def match(meeting: dict[str, Any], *, leads: dict[str, dict[str, Any]],
                 appt = mine[0].get("appointment_id") if mine else None
             return contact, appt, "email"
     if at is None:
+        return None, None, "none"
+    contact = room_lead(meeting, rooms)
+    if contact:
+        # The room was opened late, so the booking can be hours away.
+        mine = [a for _gap, a in _near(appointments, at, ROOM_AFTER) if str(a.get("contact_id") or "") == contact]
+        return contact, (mine[0].get("appointment_id") if mine else None), "room"
+    if outsider is None:
+        outsider = outsider_joined(meeting) or bool(external_emails(meeting))
+    if not outsider:
         return None, None, "none"
     near = _near(appointments, at)
     reps = {str(u) for u in rep_user_ids if u}
@@ -188,15 +240,16 @@ def index(sb: Any, fathom: Fathom, log: Callable[[str], None], *, days: int) -> 
     not_sales = len(meetings) - len(sales)
     leads = sb.leads_by_email({e for m in sales for e in external_emails(m)})
     starts = [t for t in (started(m) for m in sales) if t]
-    appointments = (sb.appointments_between(iso(min(starts) - WINDOW), iso(max(starts) + WINDOW))
+    appointments = (sb.appointments_between(iso(min(starts) - ROOM_AFTER), iso(max(starts) + ROOM_AFTER))
                     if starts else [])
+    rooms = sb.rooms_made_between(iso(min(starts) - ROOM_AFTER), iso(max(starts) + ROOM_BEFORE)) if starts else []
 
     rows: list[dict[str, Any]] = []
     team = 0
     for m in sales:
         rep_id = reps.get(recorder(m)["email"])
         contact, appt, how = match(m, leads=leads, appointments=appointments,
-                                   rep_user_ids=[rep_id] if rep_id else [])
+                                   rep_user_ids=[rep_id] if rep_id else [], rooms=rooms)
         if how == "none" and not external_emails(m) and not outsider_joined(m):
             team += 1
             continue
@@ -205,12 +258,12 @@ def index(sb: Any, fathom: Fathom, log: Callable[[str], None], *, days: int) -> 
     kept = _keep_earlier_matches(sb, rows)
     stored = sb.store_recordings(rows) if rows else 0
     marked = mark_recordings(sb, log, "recordings")
-    by = {"email": 0, "appointment": 0, "none": 0}
+    by = {"email": 0, "room": 0, "appointment": 0, "none": 0}
     for r in rows:
         by[r["matched_by"]] = by.get(r["matched_by"], 0) + 1
     summary = {
         "days": days, "reps": len(reps), "seen": len(meetings), "not_sales": not_sales,
-        "team": team, "indexed": stored, "by_email": by.get("email", 0),
+        "team": team, "indexed": stored, "by_email": by.get("email", 0), "by_room": by.get("room", 0),
         "by_appointment": by.get("appointment", 0), "unmatched": by.get("none", 0),
         "kept_earlier_match": kept, "reps_unread": unread, "marked": marked,
     }

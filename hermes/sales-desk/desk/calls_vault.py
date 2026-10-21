@@ -51,7 +51,8 @@ from typing import Any, Callable, Iterable, Optional
 
 from . import http
 from .fathom import NOT_SALES
-from .recordings import OUR_DOMAIN, WINDOW, _keep_earlier_matches, external_emails, mark_recordings, match
+from .recordings import (OUR_DOMAIN, ROOM_AFTER, ROOM_BEFORE, _keep_earlier_matches, external_emails,
+                         mark_recordings, match)
 from .supabase import CALLS_BUCKET, iso
 
 TRANSCRIPT_BUCKET = CALLS_BUCKET
@@ -267,6 +268,7 @@ def meeting_of(note: dict[str, Any]) -> dict[str, Any]:
         "recording_id": note["recording_id"],
         "title": note["title"],
         "recording_start_time": iso(note["started"]) if note["started"] else None,
+        "recorded_by": {"email": note.get("rep_email") or ""},
         "calendar_invitees": [
             {"email": p["email"], "is_external": not p["email"].endswith("@" + OUR_DOMAIN)}
             for p in note["people"] if p["email"]
@@ -358,9 +360,17 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
     appointments = _all(
         sb, "cockpit_sales_appointments",
         "select=appointment_id,contact_id,call_type,start_at,status,assigned_user_id"
-        f"&start_at=gte.{http.quote(iso(min(starts) - WINDOW))}"
-        f"&start_at=lte.{http.quote(iso(max(starts) + WINDOW))}"
+        f"&start_at=gte.{http.quote(iso(min(starts) - ROOM_AFTER))}"
+        f"&start_at=lte.{http.quote(iso(max(starts) + ROOM_AFTER))}"
         "&call_type=in.(intro,demo)&order=start_at.asc,appointment_id.asc",
+    ) if starts else []
+    # The rooms the cockpit made for leads, which name the lead a call was held with.
+    rooms = _all(
+        sb, "cockpit_sales_zoom_links",
+        "select=id,contact_id,topic,made_at,seat_email,host_email"
+        f"&made_at=gte.{http.quote(iso(min(starts) - ROOM_AFTER))}"
+        f"&made_at=lte.{http.quote(iso(max(starts) + ROOM_BEFORE))}"
+        "&contact_id=not.is.null&order=made_at.asc,id.asc",
     ) if starts else []
     reps: dict[str, str] = {}
     for r in _all(sb, "cockpit_sales_reps", "select=ghl_user_id,fathom_email,maqsam_email&order=id"):
@@ -395,18 +405,24 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
     rows: list[dict[str, Any]] = []
     joined = {"note": 0, "cockpit": 0, "fathom": 0}
     undecided: list[dict[str, Any]] = []
+
+    def decide(n: dict[str, Any], outsider: bool) -> tuple[Optional[str], Optional[str], str]:
+        rep = reps.get(str(n["rep_email"] or ""))
+        return match(meeting_of(n), leads=leads, appointments=appointments,
+                     rep_user_ids=[rep] if rep else [], rooms=rooms, outsider=outsider)
+
     for n in notes:
         m = meeting_of(n)
-        rep = reps.get(str(n["rep_email"] or ""))
-        contact, appt, how = match(m, leads=leads, appointments=appointments,
-                                   rep_user_ids=[rep] if rep else [])
+        # A note carries no Fathom flag: an outside invitee or an impromptu
+        # title the vault filed as sales is what it can show by itself.
+        seen = bool(external_emails(m)) or outsider_in_note(n)
+        contact, appt, how = decide(n, seen)
         if how == "none" and not external_emails(m):
-            # Nobody from outside on the invite and no appointment: a sales
-            # call only if someone from outside joined all the same.
-            if outsider_in_note(n):
+            # Nobody from outside on the invite and no room of the cockpit's:
+            # a sales call, and one an appointment beside it can place, only
+            # if someone from outside joined all the same. Fathom says that.
+            if seen:
                 joined["note"] += 1
-            elif n["recording_id"] in in_cockpit:
-                joined["cockpit"] += 1
             else:
                 undecided.append(n)
                 continue
@@ -430,6 +446,12 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
     for n in undecided:
         if n["recording_id"] in flagged:
             joined["fathom"] += 1
+            contact, appt, how = decide(n, True)
+            rows.append(row_of(n, have.get(n["recording_id"], {}), contact, appt, how))
+        elif n["recording_id"] in in_cockpit:
+            # Already a cockpit call (the Fathom step kept it): it stays one,
+            # and a link it already has is kept below.
+            joined["cockpit"] += 1
             rows.append(row_of(n, have.get(n["recording_id"], {}), None, None, "none"))
         else:
             team += 1
@@ -479,7 +501,7 @@ def run(sb: Any, vault: Path, log: Callable[[str], None], *, upload: Optional[Ca
         "new_lead_calls": sum(1 for r in rows if r["recording_id"] in lead_ids and r["recording_id"] not in in_cockpit),
         "stored": stored, "transcripts_uploaded": uploaded, "transcripts_new": new_transcripts,
         "kept_earlier_match": kept, "filled_fathom_rows": enriched if not dry else len(fill),
-        "by_email": by.get("email", 0), "by_appointment": by.get("appointment", 0),
+        "by_email": by.get("email", 0), "by_room": by.get("room", 0), "by_appointment": by.get("appointment", 0),
         "unmatched": by.get("none", 0), "dry": dry, "marked": marked,
         "first": min((r["started_at"] for r in rows if r["started_at"]), default=None),
         "last": max((r["started_at"] for r in rows if r["started_at"]), default=None),

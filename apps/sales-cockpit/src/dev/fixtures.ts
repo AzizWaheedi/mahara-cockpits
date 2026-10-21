@@ -1865,4 +1865,23 @@ export const RECORDINGS: Row[] = [
     transcript_chars: 41200,
     hidden_reason: null,
   },
+  // A demo held in a room opened after the booking, which no rule placed:
+  // the lead page's Link a call offers it (recording.link).
+  {
+    recording_id: "rec-unlinked-1",
+    title: "Mahara Media: Mohsen (demo)",
+    recorded_by: "aziz@maharamedia.com",
+    started_at: new Date(Date.now() - 20 * H).toISOString(),
+    duration_s: 5536,
+    share_url: "https://fathom.video/share/harness-unlinked-1",
+    contact_id: null,
+    appointment_id: null,
+    matched_by: "none",
+    indexed_at: new Date(Date.now() - 19 * H).toISOString(),
+    source: "vault",
+    kind: "sales",
+    transcript_path: "rec-unlinked-1.md",
+    transcript_chars: 69783,
+    hidden_reason: null,
+  },
 ];

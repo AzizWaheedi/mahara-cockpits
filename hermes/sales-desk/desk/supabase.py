@@ -34,6 +34,7 @@ PROPOSALS = "cockpit_sales_proposals"
 LEADS = "cockpit_sales_leads"
 RECORDINGS = "cockpit_sales_recordings"
 APPOINTMENTS = "cockpit_sales_appointments"
+ZOOM_LINKS = "cockpit_sales_zoom_links"
 PEOPLE = "cockpit_sales_people"
 STATUS = "cockpit_sales_worker_status"
 SETTINGS = "cockpit_sales_settings"
@@ -373,6 +374,16 @@ class Supabase:
             "select=appointment_id,contact_id,call_type,start_at,status,assigned_user_id"
             f"&start_at=gte.{http.quote(start)}&start_at=lte.{http.quote(end)}"
             "&call_type=in.(intro,demo)&order=start_at.asc&limit=1000",
+        )
+
+    def rooms_made_between(self, start: str, end: str) -> list[dict[str, Any]]:
+        """The meeting rooms the cockpit made for leads (sales-api zoom links),
+        deleted ones too: a room cleaned up after the call still says whose call it was."""
+        return self.select(
+            ZOOM_LINKS,
+            "select=contact_id,topic,made_at,seat_email,host_email"
+            f"&made_at=gte.{http.quote(start)}&made_at=lte.{http.quote(end)}"
+            "&contact_id=not.is.null&order=made_at.asc&limit=1000",
         )
 
     def people(self) -> list[dict[str, Any]]:

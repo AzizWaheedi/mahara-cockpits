@@ -695,6 +695,36 @@ export function useRecordings(f: RecordingFilter): Loaded<Recording[]> {
   }, [f.q, f.by.join(","), f.kind, f.hidden ? 1 : 0, f.page]);
 }
 
+/** How far back a call can be linked from a lead's page (sales-api calllinks.ts LINK_DAYS). */
+export const LINK_DAYS = 3;
+
+/**
+ * Video calls of the last LINK_DAYS days that no lead has yet, newest first:
+ * the calls a closer can link to a lead by hand (sales-api recording.link).
+ * `by` is the closer's addresses; null reads everyone's (a manager). Read
+ * only while the picker is open.
+ */
+export function useUnlinkedCalls(
+  by: string[] | null,
+  open: boolean,
+): Loaded<Recording[]> {
+  return useQuery<Recording[]>(() => {
+    if (!open) return none<Recording[]>();
+    const since = new Date(Date.now() - LINK_DAYS * 86_400_000).toISOString();
+    let q = supabase
+      .from("cockpit_sales_recordings")
+      .select(RECORDING_LIST)
+      .is("contact_id", null)
+      .is("hidden_reason", null)
+      .or("source.is.null,source.neq.maqsam")
+      .gte("started_at", since)
+      .order("started_at", { ascending: false })
+      .limit(50);
+    if (by) q = q.in("recorded_by", by);
+    return q as unknown as Result<Recording[]>;
+  }, [open, by === null ? "*" : by.join(",")]);
+}
+
 export function useRecording(id: string): Loaded<Recording> {
   return useQuery<Recording>(
     () =>

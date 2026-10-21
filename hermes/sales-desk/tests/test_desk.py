@@ -755,17 +755,82 @@ class RecordingTests(unittest.TestCase):
             {"email": "FAHAD@mirage-test.example", "is_external": True}])
         self.assertEqual(recordings.match(m, leads=self.LEADS, appointments=self.APPTS), ("c-1", "a-1", "email"))
 
+    @staticmethod
+    def joined(m: dict) -> dict:
+        """Fathom says someone from outside was on the call (the lead came from the link)."""
+        m["calendar_invitees_domains_type"] = recordings.OUTSIDER
+        return m
+
+    ROOM = {"contact_id": "c-9", "topic": "Mahara Media: محسن (demo)", "made_at": "2099-01-01T10:55:00Z",
+            "seat_email": "rep.one@maharamedia.com", "host_email": "rep.one@maharamedia.com"}
+
     def test_an_appointment_within_half_an_hour_matches_and_one_further_does_not(self):
-        m = fakes.meeting("2", start="2099-01-01T10:25:00Z")
+        m = self.joined(fakes.meeting("2", start="2099-01-01T10:25:00Z"))
         self.assertEqual(recordings.match(m, leads={}, appointments=self.APPTS), ("c-1", "a-1", "appointment"))
-        far = fakes.meeting("3", start="2099-01-01T10:45:00Z")
+        far = self.joined(fakes.meeting("3", start="2099-01-01T10:45:00Z"))
         self.assertEqual(recordings.match(far, leads={}, appointments=self.APPTS)[2], "none")
 
     def test_two_leads_at_once_match_nobody_unless_the_rep_settles_it(self):
-        m = fakes.meeting("4", start="2099-01-01T12:05:00Z")
+        m = self.joined(fakes.meeting("4", start="2099-01-01T12:05:00Z"))
         self.assertEqual(recordings.match(m, leads={}, appointments=self.APPTS)[2], "none")
         self.assertEqual(recordings.match(m, leads={}, appointments=self.APPTS, rep_user_ids=["u-rep"]),
                          ("c-3", "a-3", "appointment"))
+
+    def test_a_team_meeting_at_a_demos_time_is_nobodys_call(self):
+        # Two "Slow Client Call" recordings began two minutes before محسن's
+        # demo and were matched to him (20 Oct). Nobody from outside joined them.
+        team = fakes.meeting("5", start="2099-01-01T10:03:00Z", title="Slow Client Call", recorder="aziz@maharamedia.com")
+        team["calendar_invitees_domains_type"] = "only_internal"
+        self.assertEqual(recordings.match(team, leads={}, appointments=self.APPTS), (None, None, "none"))
+        # A note that cannot show an outsider is not placed by its time either.
+        self.assertEqual(recordings.match(fakes.meeting("6", start="2099-01-01T10:03:00Z"), leads={},
+                                          appointments=self.APPTS, outsider=False)[2], "none")
+        # An outside invitee who is not a lead still shows someone from outside was asked.
+        guest = fakes.meeting("7", start="2099-01-01T10:03:00Z",
+                              invitees=[{"email": "office@lead-company.example", "is_external": True}])
+        self.assertEqual(recordings.match(guest, leads={}, appointments=self.APPTS), ("c-1", "a-1", "appointment"))
+
+    def test_a_call_in_the_cockpits_room_is_that_leads_even_an_hour_after_the_booking(self):
+        # محسن's demo was booked for 16:00; the closer made a new room at 16:55
+        # and the call began at 16:59, alone on the invite (20 Oct).
+        appts = self.APPTS + [{"appointment_id": "a-9", "contact_id": "c-9", "call_type": "demo",
+                               "start_at": "2099-01-01T10:00:00Z", "assigned_user_id": "u-rep"}]
+        m = self.joined(fakes.meeting("8", start="2099-01-01T10:59:00Z", title="Mahara Media:  محسن (demo)"))
+        self.assertEqual(recordings.match(m, leads={}, appointments=appts, rooms=[self.ROOM]), ("c-9", "a-9", "room"))
+        # The room decides before the time does, and without Fathom's flag.
+        quiet = fakes.meeting("9", start="2099-01-01T11:20:00Z", title="Mahara Media: محسن (demo)")
+        self.assertEqual(recordings.match(quiet, leads={}, appointments=self.APPTS, rooms=[self.ROOM]),
+                         ("c-9", None, "room"))
+        # An invitee who is a lead still comes first.
+        lead = fakes.meeting("10", start="2099-01-01T10:59:00Z", title="Mahara Media: محسن (demo)",
+                             invitees=[{"email": "fahad@mirage-test.example", "is_external": True}])
+        self.assertEqual(recordings.match(lead, leads=self.LEADS, appointments=self.APPTS, rooms=[self.ROOM])[0], "c-1")
+
+    def test_a_room_fits_only_its_maker_its_name_its_hours_and_one_lead(self):
+        def lead_of(**kw):
+            m = fakes.meeting("11", **{"start": "2099-01-01T11:00:00Z", "title": "Mahara Media: محسن (demo)", **kw})
+            return recordings.match(m, leads={}, appointments=[], rooms=[self.ROOM])[0]
+
+        self.assertEqual(lead_of(), "c-9")
+        self.assertIsNone(lead_of(recorder="other.rep@maharamedia.com"))
+        self.assertIsNone(lead_of(title="Mahara Media: لطفي (demo)"))
+        self.assertIsNone(lead_of(start="2099-01-01T14:00:00Z"))  # more than three hours after the room
+        self.assertIsNone(lead_of(start="2099-01-01T10:40:00Z"))  # before the room was made
+        twin = {**self.ROOM, "contact_id": "c-10", "made_at": "2099-01-01T10:57:00Z"}
+        m = fakes.meeting("12", start="2099-01-01T11:00:00Z", title="Mahara Media: محسن (demo)")
+        self.assertEqual(recordings.match(m, leads={}, appointments=[], rooms=[self.ROOM, twin])[2], "none")
+        # The Zoom host made it on the seat's behalf: the host recorded it.
+        hosted = {**self.ROOM, "seat_email": "aziz@maharamedia.com"}
+        self.assertEqual(recordings.match(m, leads={}, appointments=[], rooms=[hosted])[0], "c-9")
+
+    def test_a_hand_link_is_never_the_desks_to_change(self):
+        pg = FakePostgrest()
+        pg.put("cockpit_sales_recordings", {"recording_id": "13", "contact_id": "c-1", "matched_by": "hand"})
+        rows = [{"recording_id": "13", "contact_id": "c-2", "appointment_id": None, "matched_by": "room"}]
+        with mock.patch.object(http, "request", pg):
+            kept = recordings._keep_earlier_matches(Supabase("https://example.supabase.co", "k"), rows)
+        self.assertEqual((kept, rows[0]["contact_id"], rows[0]["matched_by"]), (1, "c-1", "hand"))
+        self.assertNotIn("hand", recordings.OURS)
 
     def test_the_index_asks_per_rep_skips_what_is_not_sales_and_keeps_earlier_matches(self):
         pg = FakePostgrest()
@@ -797,6 +862,26 @@ class RecordingTests(unittest.TestCase):
         kept = pg.one("cockpit_sales_recordings", recording_id="5")
         self.assertEqual((kept["contact_id"], kept["matched_by"]), ("c-7", "email"))
         self.assertIsNone(pg.one("cockpit_sales_recordings", recording_id="3"))
+
+    def test_the_index_places_a_call_by_its_room_and_drops_a_team_meeting_at_the_demos_time(self):
+        pg = FakePostgrest()
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        at = lambda h: (now - timedelta(hours=h)).isoformat().replace("+00:00", "Z")  # noqa: E731
+        pg.put("cockpit_sales_appointments", {"appointment_id": "a-9", "contact_id": "c-9", "call_type": "demo",
+                                              "start_at": at(6), "assigned_user_id": "u-rep"})
+        pg.put("cockpit_sales_zoom_links", {"id": "z-1", "contact_id": "c-9", "topic": "Mahara Media: محسن (demo)",
+                                            "made_at": at(5.1), "seat_email": "rep.one@maharamedia.com",
+                                            "host_email": "rep.one@maharamedia.com", "deleted_at": None})
+        demo = self.joined(fakes.meeting("20", start=at(5), title="Mahara Media: محسن (demo)"))
+        team = fakes.meeting("21", start=at(6), title="Slow Client Call")
+        team["calendar_invitees_domains_type"] = "only_internal"
+        with mock.patch.object(http, "request", pg):
+            out = recordings.index(Supabase("https://example.supabase.co", "service-test"),
+                                   FakeFathom(meetings={None: [demo, team]}), lambda _m: None, days=14)
+        self.assertEqual((out["by_room"], out["by_appointment"], out["team"]), (1, 0, 1))
+        row = pg.one("cockpit_sales_recordings", recording_id="20")
+        self.assertEqual((row["contact_id"], row["appointment_id"], row["matched_by"]), ("c-9", "a-9", "room"))
+        self.assertIsNone(pg.one("cockpit_sales_recordings", recording_id="21"))
 
     def test_the_newest_long_enough_recording_is_picked(self):
         pg = FakePostgrest()

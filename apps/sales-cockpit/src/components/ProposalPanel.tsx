@@ -398,8 +398,8 @@ export function ProposalPanel({
           </div>
           {!videos.length ? (
             <p className="muted text-xs">
-              No video recording of the demo is linked to this lead yet. Share
-              the demo's recording with the team in Fathom first; the writer
+              No video recording of the demo is linked to this lead yet. If you
+              recorded it in Fathom, link it under Recorded calls. The writer
               looks in Fathom again when you draft, and never drafts from a
               phone call.
             </p>

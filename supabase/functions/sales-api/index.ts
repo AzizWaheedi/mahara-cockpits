@@ -193,6 +193,7 @@ import { makeFollowupAgent } from "./followupAgent.ts";
 import { bookingUrl, makeScriptNotes } from "./scriptnotes.ts";
 import { makeZoomLinks } from "./zoomlinks.ts";
 import { makeGroups } from "./groups.ts";
+import { makeCallLinks } from "./calllinks.ts";
 import {
   clockCountry,
   budgetCap,
@@ -8295,6 +8296,8 @@ const scriptNotes = makeScriptNotes({ svc, audit, cockpitLead });
 // from the rooms machine, whose switches stay off.
 const zoomLinks = makeZoomLinks({ svc, audit, fetchWithin, env, background });
 const groups = makeGroups({ svc, audit, ghl });
+// A closer links their own sales call to a lead by hand (2026-10-21).
+const callLinks = makeCallLinks({ svc, audit, cockpitLead });
 
 const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...rooms.actions,
@@ -8302,6 +8305,7 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   ...scriptNotes.actions,
   ...zoomLinks.actions,
   ...groups.actions,
+  ...callLinks.actions,
   mark,
   "mark.retry": markRetry,
   "note.add": noteAdd,

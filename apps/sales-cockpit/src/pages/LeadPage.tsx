@@ -506,8 +506,10 @@ export default function LeadPage({ me }: { me: Me }) {
           </SectionCard>
           <SectionCard title="Recorded calls">
             <LeadRecordings
+              me={me}
               contactId={l.contact_id}
               recordings={a?.recordings ?? []}
+              onLinked={activity.reload}
               loading={reading}
               error={activity.error}
               retry={activity.reload}
