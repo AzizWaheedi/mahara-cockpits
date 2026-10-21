@@ -11,8 +11,25 @@ export function doctor(env:Env){
  if(env.SUPABASE_URL&&env.SUPABASE_URL.replace(/\/$/,'')!=='https://bldgtotkfmhoxmlzowdx.supabase.co')missing.push('SUPABASE_URL must identify Creative Triage');
  return {ok:!missing.length,missing,check:'named-environment-only',unverified:['credential validity','canonical source readiness and exact counts','publication RPCs and service grants','storage bucket and policies','provider response completeness'],next:'Run doctor --sources for read-only repository prerequisites; run a protected dry run before activation',dry_run_default:true};
 }
+type MetaError={code:number;subcode?:number;transient:boolean};
+// Meta's throttle codes (application, user, page, custom and business use case limits). They arrive as HTTP 400 or 403.
+const throttled=(e:MetaError)=>e.transient||[4,17,32,613].includes(e.code)||(e.code>=80000&&e.code<=80014);
+async function metaError(response:Response):Promise<MetaError|undefined>{
+ const e=(await response.clone().json().catch(()=>null))?.error;
+ const code=Number(e?.code);if(!e||typeof e!=='object'||!Number.isFinite(code))return undefined;
+ const subcode=Number(e.error_subcode);return {code,subcode:Number.isFinite(subcode)?subcode:undefined,transient:e.is_transient===true};
+}
+/** How long to wait before retrying a throttled Meta read; undefined when Meta says access returns later than a run can wait. */
+export function throttlePause(headers:Headers,attempt:number):number|undefined{
+ let minutes=0;
+ try{for(const rows of Object.values(JSON.parse(headers.get('x-business-use-case-usage')??'{}') as Record<string,Row[]>))for(const row of rows??[])minutes=Math.max(minutes,Number(row?.estimated_time_to_regain_access)||0);}catch{}
+ if(minutes>2)return undefined;
+ return minutes>0?minutes*60000:attempt*15000;
+}
 export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>new Promise(r=>setTimeout(r,ms))){
  const receipts:Row[]=[],faults:Row[]=[],logs:Row[]=[];const cache=new Map<string,Response>();let requests=0;let googleToken:string|undefined;let googleEmail:string|undefined;
+ // A run waits at most two minutes in total for Meta throttling; its lease is 30 minutes and a run takes about ten.
+ const metaErrors=new WeakMap<Response,MetaError>();let throttleBudget=120000;
  const needed=(name:string)=>{if(!env[name])throw new Error(`Missing named key: ${name}`);return env[name]!;};
  let fathomQueue: Promise<void> = Promise.resolve();
  const HTTP_DATE_REGEX=/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s\d{2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s\d{4}\s\d{2}:\d{2}:\d{2}\sGMT$/;
@@ -59,7 +76,18 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
      await wait(1500);
     }
     const response=await request(url.href,{...init,headers,redirect:'error',signal:AbortSignal.timeout(30000)});
-    receipts.push({resource,method,phase:'response',http_status:response.status,attempt,at:new Date().toISOString()});
+    const receipt:Row={resource,method,phase:'response',http_status:response.status,attempt,at:new Date().toISOString()};receipts.push(receipt);
+    if(url.hostname==='graph.facebook.com'&&(response.status===400||response.status===403)){
+     const meta=await metaError(response);
+     if(meta){metaErrors.set(response,meta);Object.assign(receipt,{meta_code:meta.code,meta_subcode:meta.subcode});}
+     const pause=meta&&throttled(meta)&&attempt<3?throttlePause(response.headers,attempt):undefined;
+     if(pause!==undefined&&pause<=throttleBudget){
+      throttleBudget-=pause;
+      try{await response.body?.cancel();}catch{}
+      await wait(pause);
+      continue;
+     }
+    }
     if(response.status===429||response.status===503||response.status>=500){
      const retryMs=parseRetryAfter(response.headers.get('retry-after'));
      if(retryMs!==undefined&&retryMs>60000){
@@ -73,7 +101,7 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
       continue;
      }
     }
-    if(!response.ok){faults.push({resource,status:response.status});return response;}
+    if(!response.ok){const meta=metaErrors.get(response);faults.push({resource,status:response.status,...(meta?{meta_code:meta.code,meta_subcode:meta.subcode}:{})});return response;}
     if(!response.headers.get('content-type')?.startsWith('image/'))cache.set(key,response.clone());return response;
    }catch(error){
     receipts.push({resource,method,phase:'unknown',attempt});
@@ -89,7 +117,7 @@ export function transport(env:Env,request:typeof fetch=fetch,wait=(ms:number)=>n
   }
   throw new Error('Read attempts exhausted');
  };
- const json=async(url:string,init?:RequestInit)=>{const response=await fetchRead(url,init);if(!response.ok){const u=new URL(url),resource=u.hostname+u.pathname;throw Object.assign(new Error(`Read rejected (${response.status}) at ${u.hostname}`),{status:response.status,resource,nativeFaults:faults.filter(f=>f.resource===resource&&f.status===response.status)});}return response.json();};
+ const json=async(url:string,init?:RequestInit)=>{const response=await fetchRead(url,init);if(!response.ok){const u=new URL(url),resource=u.hostname+u.pathname,meta=metaErrors.get(response),code=meta?` (Meta code ${meta.code}${meta.subcode===undefined?'':`/${meta.subcode}`})`:'';throw Object.assign(new Error(`Read rejected (${response.status}) at ${u.hostname}${code}`),{status:response.status,resource,nativeFaults:faults.filter(f=>f.resource===resource&&f.status===response.status)});}return response.json();};
  const google=async(expectedEmail?:string)=>{
   if(googleToken){if(expectedEmail&&googleEmail?.toLowerCase()!==expectedEmail.toLowerCase())throw new Error('Google service-account identity differs from verified calendar configuration');return googleToken;}
   const account=z.object({type:z.literal('service_account'),client_email:z.string().email(),private_key:z.string().min(1)}).parse(JSON.parse(await readFile(needed('GOOGLE_APPLICATION_CREDENTIALS'),'utf8')));
