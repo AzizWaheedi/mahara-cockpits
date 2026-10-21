@@ -16,10 +16,17 @@ import type {
   UncalledLead,
 } from "../lib/resultsReads";
 
-export type ResultsScenario = "default" | "empty" | "few" | "unread" | "allcalled";
+export type ResultsScenario =
+  | "default"
+  | "empty"
+  | "few"
+  | "unread"
+  | "allcalled";
 
 const day = (n: number, base = new Date()) =>
-  new Date(base.getTime() + 3 * 3600e3 - n * 86400e3).toISOString().slice(0, 10);
+  new Date(base.getTime() + 3 * 3600e3 - n * 86400e3)
+    .toISOString()
+    .slice(0, 10);
 
 /** A small repeatable pseudo-random run, so a fixture reads the same every time. */
 function lcg(seed: number) {
@@ -47,12 +54,34 @@ const NAMES = [
   "Kite Academy",
 ];
 const loc = (i: number) => `locFixResults${String(i + 1).padStart(2, "0")}`;
-const LEADS = ["Omar", "Sara", "Yousef", "Maha", "Khaled", "Noor", "Fahad", "Dana", "Hessa", "Talal", "Rana", "Bader", "ريم", "سلمان"];
+const LEADS = [
+  "Omar",
+  "Sara",
+  "Yousef",
+  "Maha",
+  "Khaled",
+  "Noor",
+  "Fahad",
+  "Dana",
+  "Hessa",
+  "Talal",
+  "Rana",
+  "Bader",
+  "ريم",
+  "سلمان",
+];
 
 // ---------------------------------------------------------------------------
 // The gap report
 
-type Spec = [meetings: number, noResult: number, blank: number, missing: number, unclear: number, confirmed: number];
+type Spec = [
+  meetings: number,
+  noResult: number,
+  blank: number,
+  missing: number,
+  unclear: number,
+  confirmed: number,
+];
 const GAP_SPECS: Spec[] = [
   [14, 9, 8, 0, 0, 5],
   [12, 7, 6, 0, 0, 1],
@@ -71,32 +100,49 @@ const GAP_SPECS: Spec[] = [
 ];
 const GAP_ORDER = [2, 0, 4, 3, 1, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 
-export function gapFixture(from: string, to: string, scenario: ResultsScenario = "default"): GapReport {
-  const take = scenario === "few" ? 3 : scenario === "empty" ? 0 : GAP_SPECS.length;
-  const rows: GapRow[] = GAP_ORDER.slice(0, take).map(i => {
-    const [meetings, noResult, blank, missing, unclear, confirmed] = GAP_SPECS[i];
-    return {
-      locationId: loc(i),
-      clientName: NAMES[i],
-      serviceMode: "DFY",
-      meetings,
-      withResult: meetings - noResult,
-      noResult,
-      share: Math.round((noResult / meetings) * 10000) / 10000,
-      crmConfirmed: confirmed,
-      sheetBlank: blank,
-      sheetMissing: missing,
-      sheetUnclear: unclear,
-      confirmedAndBlank: Math.min(confirmed, blank),
-      oldestDays: noResult ? 12 : null,
-      sheetReadOk: !(scenario === "unread" && i === 4),
-      sheetCheckedAt: `${day(0)}T07:30:00Z`,
-      sheetError: scenario === "unread" && i === 4 ? "The sheet could not be opened." : null,
-      matchesBoard: i !== 3,
-      note: null,
-    };
-  }).sort((a, b) => b.noResult - a.noResult || b.meetings - a.meetings || a.clientName.localeCompare(b.clientName));
-  const sum = (k: "meetings" | "noResult" | "sheetBlank" | "crmConfirmed") => rows.reduce((a, r) => a + r[k], 0);
+export function gapFixture(
+  from: string,
+  to: string,
+  scenario: ResultsScenario = "default",
+): GapReport {
+  const take =
+    scenario === "few" ? 3 : scenario === "empty" ? 0 : GAP_SPECS.length;
+  const rows: GapRow[] = GAP_ORDER.slice(0, take)
+    .map(i => {
+      const [meetings, noResult, blank, missing, unclear, confirmed] =
+        GAP_SPECS[i];
+      return {
+        locationId: loc(i),
+        clientName: NAMES[i],
+        serviceMode: "DFY",
+        meetings,
+        withResult: meetings - noResult,
+        noResult,
+        share: Math.round((noResult / meetings) * 10000) / 10000,
+        crmConfirmed: confirmed,
+        sheetBlank: blank,
+        sheetMissing: missing,
+        sheetUnclear: unclear,
+        confirmedAndBlank: Math.min(confirmed, blank),
+        oldestDays: noResult ? 12 : null,
+        sheetReadOk: !(scenario === "unread" && i === 4),
+        sheetCheckedAt: `${day(0)}T07:30:00Z`,
+        sheetError:
+          scenario === "unread" && i === 4
+            ? "The sheet could not be opened."
+            : null,
+        matchesBoard: i !== 3,
+        note: null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.noResult - a.noResult ||
+        b.meetings - a.meetings ||
+        a.clientName.localeCompare(b.clientName),
+    );
+  const sum = (k: "meetings" | "noResult" | "sheetBlank" | "crmConfirmed") =>
+    rows.reduce((a, r) => a + r[k], 0);
   return {
     from,
     to,
@@ -108,23 +154,39 @@ export function gapFixture(from: string, to: string, scenario: ResultsScenario =
       noResult: sum("noResult"),
       sheetBlank: sum("sheetBlank"),
       crmConfirmed: sum("crmConfirmed"),
-      share: sum("meetings") > 0 ? Math.round((sum("noResult") / sum("meetings")) * 10000) / 10000 : null,
+      share:
+        sum("meetings") > 0
+          ? Math.round((sum("noResult") / sum("meetings")) * 10000) / 10000
+          : null,
     },
     notes:
       scenario === "unread"
-        ? ["The dialer could not read some clients' sheets on its last pass, so their no-result count may be too high."]
+        ? [
+            "The dialer could not read some clients' sheets on its last pass, so their no-result count may be too high.",
+          ]
         : [],
   };
 }
 
-export function gapClientFixture(location: string, from: string, to: string): GapClient | null {
+export function gapClientFixture(
+  location: string,
+  from: string,
+  to: string,
+): GapClient | null {
   const i = GAP_ORDER.find(n => loc(n) === location);
   if (i === undefined) return null;
   const [, noResult, blank, missing, unclear, confirmed] = GAP_SPECS[i];
   const rnd = lcg(i + 7);
   const meetings = Array.from({ length: noResult }, (_, k) => {
     const ago = 1 + Math.floor(((k + 1) * 12) / (noResult + 1));
-    const state = k < blank ? "blank" : k < blank + missing ? "missing" : k < blank + missing + unclear ? "unclear" : "blank";
+    const state =
+      k < blank
+        ? "blank"
+        : k < blank + missing
+          ? "missing"
+          : k < blank + missing + unclear
+            ? "unclear"
+            : "blank";
     return {
       id: `${location}-m${k + 1}`,
       contactId: `${location}c${k + 1}`,
@@ -139,7 +201,14 @@ export function gapClientFixture(location: string, from: string, to: string): Ga
       contactUrl: `https://app.gohighlevel.com/v2/location/${location}/contacts/detail/${location}c${k + 1}`,
     };
   }).sort((a, b) => a.meetingAt.localeCompare(b.meetingAt));
-  return { locationId: location, clientName: NAMES[i], from, to, computedAt: new Date().toISOString(), meetings };
+  return {
+    locationId: location,
+    clientName: NAMES[i],
+    from,
+    to,
+    computedAt: new Date().toISOString(),
+    meetings,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +224,9 @@ const CALL_SPECS: [name: string, missing: number][] = [
   ["Pearl Fitness", 1],
 ];
 
-export function callListFixture(scenario: ResultsScenario = "default"): CallList {
+export function callListFixture(
+  scenario: ResultsScenario = "default",
+): CallList {
   const rows: CallRow[] =
     scenario === "empty"
       ? []
@@ -191,7 +262,9 @@ export function callListFixture(scenario: ResultsScenario = "default"): CallList
     computedAt: new Date().toISOString(),
     runsBasis: "scheduled_runs",
     rows,
-    notes: ["Counted by Thursday messages that were due, not by messages sent: the sent list lives in Make."],
+    notes: [
+      "Counted by Thursday messages that were due, not by messages sent: the sent list lives in Make.",
+    ],
   };
 }
 
@@ -213,7 +286,9 @@ const BAND_SHARE: [string, number][] = [
   ["over_24h", 0.24],
   ["no_call", 0.29],
 ];
-const HOUR_WEIGHT = [1, 1, 0, 0, 0, 1, 2, 3, 5, 6, 6, 6, 5, 5, 6, 6, 6, 7, 8, 9, 9, 8, 5, 3];
+const HOUR_WEIGHT = [
+  1, 1, 0, 0, 0, 1, 2, 3, 5, 6, 6, 6, 5, 5, 6, 6, 6, 7, 8, 9, 9, 8, 5, 3,
+];
 
 export function speedFixture(
   from: string,
@@ -226,10 +301,20 @@ export function speedFixture(
   const total = scenario === "few" ? 90 : scenario === "empty" ? 0 : 1365;
   const weight = HOUR_WEIGHT.reduce((a, b) => a + b, 0);
   for (let h = 0; h < 24; h++) {
-    for (const [country, share] of [["KW", 0.7], ["SA", 0.2], ["AE", 0.1]] as [string, number][]) {
+    for (const [country, share] of [
+      ["KW", 0.7],
+      ["SA", 0.2],
+      ["AE", 0.1],
+    ] as [string, number][]) {
       for (const [band, bandShare] of BAND_SHARE) {
         const shift = clock === "working" && band === "up_to_30m" ? 0.04 : 0;
-        const n = Math.round(total * (HOUR_WEIGHT[h] / weight) * share * (bandShare + shift) * (0.85 + rnd() * 0.3));
+        const n = Math.round(
+          total *
+            (HOUR_WEIGHT[h] / weight) *
+            share *
+            (bandShare + shift) *
+            (0.85 + rnd() * 0.3),
+        );
         if (n <= 0) continue;
         const booked = Math.round(n * BAND_RATE[band] * (0.85 + rnd() * 0.3));
         cells.push([h, country, band, n, booked, booked]);
@@ -251,7 +336,10 @@ export function speedFixture(
 // ---------------------------------------------------------------------------
 // The morning list
 
-export function morningFixture(location: string | null = null, scenario: ResultsScenario = "default"): Morning {
+export function morningFixture(
+  location: string | null = null,
+  scenario: ResultsScenario = "default",
+): Morning {
   const rnd = lcg(5);
   const leads: UncalledLead[] = [];
   const groupCount: Record<UncalledLead["group"], number> = {
@@ -268,25 +356,38 @@ export function morningFixture(location: string | null = null, scenario: Results
         clientName: NAMES[c],
         contactId: `${loc(c)}u${n}`,
         firstName: LEADS[Math.floor(rnd() * LEADS.length)],
-        createdAt: new Date(Date.now() - (2 + rnd() * 70) * 3600e3).toISOString(),
+        createdAt: new Date(
+          Date.now() - (2 + rnd() * 70) * 3600e3,
+        ).toISOString(),
         hoursWaiting: Math.round((2 + rnd() * 70) * 10) / 10,
         paid: rnd() > 0.35,
         group,
         callEvidence: group === "phone_only" ? "unique_phone_match" : null,
-        lastCallAt: group === "phone_only" ? new Date(Date.now() - 20 * 3600e3).toISOString() : null,
-        lastAttemptAt: group === "outcome_only" ? new Date(Date.now() - 22 * 3600e3).toISOString() : null,
-        lastOutcome: group === "outcome_only" ? ["NO ANSWER", "CALLBACK", "WRONG NUMBER"][k % 3] : null,
+        lastCallAt:
+          group === "phone_only"
+            ? new Date(Date.now() - 20 * 3600e3).toISOString()
+            : null,
+        lastAttemptAt:
+          group === "outcome_only"
+            ? new Date(Date.now() - 22 * 3600e3).toISOString()
+            : null,
+        lastOutcome:
+          group === "outcome_only"
+            ? ["NO ANSWER", "CALLBACK", "WRONG NUMBER"][k % 3]
+            : null,
         phoneLast4: String(1000 + Math.floor(rnd() * 8999)),
         contactUrl: `https://app.gohighlevel.com/v2/location/${loc(c)}/contacts/detail/${loc(c)}u${n}`,
       });
     }
   }
   const mine = location ? leads.filter(l => l.locationId === location) : leads;
-  const count = (g: UncalledLead["group"]) => mine.filter(l => l.group === g).length;
+  const count = (g: UncalledLead["group"]) =>
+    mine.filter(l => l.group === g).length;
   const clients = NAMES.slice(0, 6)
     .map((name, c) => {
       const own = mine.filter(l => l.locationId === loc(c));
-      const g = (k: UncalledLead["group"]) => own.filter(l => l.group === k).length;
+      const g = (k: UncalledLead["group"]) =>
+        own.filter(l => l.group === k).length;
       return {
         locationId: loc(c),
         clientName: name,

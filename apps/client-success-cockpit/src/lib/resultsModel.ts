@@ -47,9 +47,7 @@ export function dayText(value: string): string {
   const at = /^\d{4}-\d{2}-\d{2}$/.test(value)
     ? Date.parse(`${value}T12:00:00Z`)
     : Date.parse(value);
-  return Number.isFinite(at)
-    ? DAY_FORMAT.format(at).replace(/,/g, "")
-    : value;
+  return Number.isFinite(at) ? DAY_FORMAT.format(at).replace(/,/g, "") : value;
 }
 
 /** "Tue 21 Oct, 14:05" in Kuwait time. */
@@ -158,7 +156,12 @@ export function speedBands(
     leads += c[3];
     bookings += c[4];
   }
-  const band = (key: BandKey | "all", label: string, n: number, b: number): SpeedBand => ({
+  const band = (
+    key: BandKey | "all",
+    label: string,
+    n: number,
+    b: number,
+  ): SpeedBand => ({
     key,
     label,
     leads: n,
@@ -181,7 +184,9 @@ export function speedHours(
   for (const c of cells)
     if (country === null || c[1] === country)
       by.set(c[0], (by.get(c[0]) ?? 0) + c[3]);
-  return [...by].map(([hour, leads]) => ({ hour, leads })).sort((a, b) => a.hour - b.hour);
+  return [...by]
+    .map(([hour, leads]) => ({ hour, leads }))
+    .sort((a, b) => a.hour - b.hour);
 }
 
 /** The countries that have leads under the hour filter, most leads first, for the picker. */
@@ -206,7 +211,10 @@ export const SPEED_WINDOWS = [
 export type SpeedWindowKey = (typeof SPEED_WINDOWS)[number]["key"];
 
 /** The days a speed read asks for: the window's days up to today. Leads of the last 3 days are not counted yet. */
-export function speedWindow(key: SpeedWindowKey, today: string = kuwaitToday()) {
+export function speedWindow(
+  key: SpeedWindowKey,
+  today: string = kuwaitToday(),
+) {
   const days = SPEED_WINDOWS.find(w => w.key === key)?.days ?? 60;
   return { from: shiftDay(today, -(days - 1)), to: today };
 }
@@ -282,6 +290,7 @@ export function queuedText(rows: CallRow[]): string | null {
 /** Who called and when, for a row that has been called: "Sara Csm, Tue 21 Oct, 14:05". */
 export function calledText(row: CallRow): string | null {
   if (!row.calledAt) return null;
-  const who = row.calledByName?.trim() || row.calledBy?.split("@")[0] || "A teammate";
+  const who =
+    row.calledByName?.trim() || row.calledBy?.split("@")[0] || "A teammate";
   return `${who}, ${stampText(row.calledAt)}`;
 }

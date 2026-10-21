@@ -241,7 +241,11 @@ export type UncalledClient = z.infer<typeof UncalledClientSchema>;
 
 export class ReadShapeError extends Error {}
 
-export function parseRead<T>(schema: z.ZodType<T>, data: unknown, what: string): T {
+export function parseRead<T>(
+  schema: z.ZodType<T>,
+  data: unknown,
+  what: string,
+): T {
   const out = schema.safeParse(data);
   if (out.success) return out.data;
   const first = out.error.issues[0];
@@ -250,7 +254,8 @@ export function parseRead<T>(schema: z.ZodType<T>, data: unknown, what: string):
   );
 }
 
-const FAILED = "This did not load. Try again; if it keeps failing, tell the CEO.";
+const FAILED =
+  "This did not load. Try again; if it keeps failing, tell the CEO.";
 
 /** A failed read as one plain sentence: the database's own refusals are already written for this page. */
 export function readProblem(error: unknown): string {
@@ -271,7 +276,10 @@ export function readProblem(error: unknown): string {
   return FAILED;
 }
 
-async function rpc(name: string, args: Record<string, unknown>): Promise<unknown> {
+async function rpc(
+  name: string,
+  args: Record<string, unknown>,
+): Promise<unknown> {
   // Loaded when a read runs, so a page that only imports the shapes (or a test that mocks the sign-in)
   // does not need the database client.
   const { supabase } = await import("./supabase");
@@ -281,22 +289,46 @@ async function rpc(name: string, args: Record<string, unknown>): Promise<unknown
 }
 
 export const fetchGap = async (from: string, to: string) =>
-  parseRead(GapReportSchema, await rpc("cockpit_gap_read", { p_from: from, p_to: to }), "meetings with no result");
+  parseRead(
+    GapReportSchema,
+    await rpc("cockpit_gap_read", { p_from: from, p_to: to }),
+    "meetings with no result",
+  );
 
-export const fetchGapClient = async (location: string, from: string, to: string) =>
+export const fetchGapClient = async (
+  location: string,
+  from: string,
+  to: string,
+) =>
   parseRead(
     GapClientSchema,
-    await rpc("cockpit_gap_client_read", { p_location: location, p_from: from, p_to: to }),
+    await rpc("cockpit_gap_client_read", {
+      p_location: location,
+      p_from: from,
+      p_to: to,
+    }),
     "client's meetings",
   );
 
 export const fetchCallList = async () =>
-  parseRead(CallListSchema, await rpc("cockpit_csm_calls_read", {}), "call list");
+  parseRead(
+    CallListSchema,
+    await rpc("cockpit_csm_calls_read", {}),
+    "call list",
+  );
 
 export const logCall = async (location: string) =>
-  parseRead(CallLoggedSchema, await rpc("cockpit_csm_call_logged", { p_location: location }), "call log");
+  parseRead(
+    CallLoggedSchema,
+    await rpc("cockpit_csm_call_logged", { p_location: location }),
+    "call log",
+  );
 
-export const fetchSpeed = async (from: string, to: string, clock: "clock" | "working") =>
+export const fetchSpeed = async (
+  from: string,
+  to: string,
+  clock: "clock" | "working",
+) =>
   parseRead(
     SpeedSchema,
     await rpc("cockpit_speed_read", { p_from: from, p_to: to, p_clock: clock }),

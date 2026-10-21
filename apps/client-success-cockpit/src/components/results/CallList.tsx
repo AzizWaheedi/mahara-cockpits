@@ -3,12 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  calledText,
-  dayText,
-  plural,
-  queuedText,
-} from "@/lib/resultsModel";
+import { calledText, dayText, plural, queuedText } from "@/lib/resultsModel";
 import {
   type CallRow,
   fetchCallList,
@@ -35,7 +30,12 @@ import {
 export function CallList({ className }: { className?: string }) {
   const read = useRead("csm-calls", fetchCallList);
   const [busy, setBusy] = useState<string | null>(null);
-  const data = read.status === "ready" ? read.data : read.status === "error" ? read.data : undefined;
+  const data =
+    read.status === "ready"
+      ? read.data
+      : read.status === "error"
+        ? read.data
+        : undefined;
   const calls = (data?.rows ?? []).filter(r => r.status === "call");
   const called = calls.filter(r => r.calledAt).length;
   const queued = queuedText(data?.rows ?? []);
@@ -100,14 +100,16 @@ export function CallList({ className }: { className?: string }) {
           Queued for next week: {queued}
         </p>
       ) : null}
-      {data?.notes.map(n => <WarnLine key={n}>{n}</WarnLine>)}
+      {data?.notes.map(n => (
+        <WarnLine key={n}>{n}</WarnLine>
+      ))}
       {data ? (
         <SourceNote>
-          A meeting counts when it ended in the last 60 days, its Show cell
-          (or Closed cell, after a Show of Y) is still blank in the client's
-          sheet, and two Thursday 10:00 reminders have gone by since it ended.
-          A client with a call logged this week stays on the list until its
-          sheet is filled in.
+          A meeting counts when it ended in the last 60 days, its Show cell (or
+          Closed cell, after a Show of Y) is still blank in the client's sheet,
+          and two Thursday 10:00 reminders have gone by since it ended. A client
+          with a call logged this week stays on the list until its sheet is
+          filled in.
         </SourceNote>
       ) : null}
     </ResultCard>
@@ -135,7 +137,10 @@ function CallLine({
             className="inline-flex items-center gap-1 text-sm font-medium underline-offset-4 hover:underline"
           >
             {r.clientName}
-            <ChevronRight aria-hidden className="size-3.5 text-muted-foreground" />
+            <ChevronRight
+              aria-hidden
+              className="size-3.5 text-muted-foreground"
+            />
           </Link>
           <p className="text-xs text-muted-foreground">
             {plural(r.missing, "meeting")} still blank after 2 Thursday

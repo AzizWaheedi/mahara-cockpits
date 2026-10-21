@@ -1,13 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
-  fetchGap,
-  fetchGapClient,
-  type GapMeeting,
-  type GapRow,
-  useRead,
-} from "@/lib/resultsReads";
-import {
   dayText,
   gapAside,
   gapWindow,
@@ -16,6 +9,13 @@ import {
   plural,
   SHEET_STATE_TEXT,
 } from "@/lib/resultsModel";
+import {
+  fetchGap,
+  fetchGapClient,
+  type GapMeeting,
+  type GapRow,
+  useRead,
+} from "@/lib/resultsReads";
 import { cn } from "@/lib/utils";
 import {
   Notice,
@@ -48,12 +48,19 @@ export function GapReport({ className }: { className?: string }) {
   );
   const [open, setOpen] = useState<string | null>(null);
   const [all, setAll] = useState(false);
-  const data = read.status === "ready" ? read.data : read.status === "error" ? read.data : undefined;
+  const data =
+    read.status === "ready"
+      ? read.data
+      : read.status === "error"
+        ? read.data
+        : undefined;
   const rows = data?.rows ?? [];
   const shown = all ? rows : rows.slice(0, FIRST);
   const total = data?.totals;
   const share = percent(total?.share);
-  const comparable = rows.filter(r => r.matchesBoard !== null && r.matchesBoard !== undefined);
+  const comparable = rows.filter(
+    r => r.matchesBoard !== null && r.matchesBoard !== undefined,
+  );
   const agree = comparable.filter(r => r.matchesBoard).length;
   const unread = rows.filter(r => r.sheetReadOk === false);
 
@@ -134,7 +141,8 @@ export function GapReport({ className }: { className?: string }) {
       ) : null}
       {data && data.quietClients > 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">
-          {plural(data.quietClients, "client")} had no past meeting in these days.
+          {plural(data.quietClients, "client")} had no past meeting in these
+          days.
         </p>
       ) : null}
       {data ? (
@@ -304,7 +312,9 @@ function GapMeetings({
 function MeetingLine({ meeting: m }: { meeting: GapMeeting }) {
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1.5 py-2.5 text-sm first:pt-0 last:pb-0">
-      <span className="w-28 shrink-0 font-medium tabular-nums">{dayText(m.day)}</span>
+      <span className="w-28 shrink-0 font-medium tabular-nums">
+        {dayText(m.day)}
+      </span>
       <span className="min-w-0 text-muted-foreground">
         <bdi>{m.firstName || "Lead"}</bdi>
         {typeof m.daysSince === "number"
@@ -315,7 +325,9 @@ function MeetingLine({ meeting: m }: { meeting: GapMeeting }) {
         <StateChip tone={m.sheetState === "blank" ? "warn" : "neutral"}>
           {SHEET_STATE_TEXT[m.sheetState] ?? m.sheetState}
         </StateChip>
-        {m.crmConfirmed ? <StateChip tone="warn">Still confirmed</StateChip> : null}
+        {m.crmConfirmed ? (
+          <StateChip tone="warn">Still confirmed</StateChip>
+        ) : null}
       </span>
       {m.contactUrl ? (
         <OutLink href={m.contactUrl} className="ml-auto text-xs">

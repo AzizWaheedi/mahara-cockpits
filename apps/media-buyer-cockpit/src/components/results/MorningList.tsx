@@ -41,7 +41,12 @@ export function MorningList({ className }: { className?: string }) {
   const read = useRead("morning", () => fetchMorning(null));
   const [paidOnly, setPaidOnly] = useState(false);
   const [location, setLocation] = useState<string | null>(null);
-  const data = read.status === "ready" ? read.data : read.status === "error" ? read.data : undefined;
+  const data =
+    read.status === "ready"
+      ? read.data
+      : read.status === "error"
+        ? read.data
+        : undefined;
   const groups = useMemo(
     () => morningGroups(data?.leads ?? [], { paidOnly, location }),
     [data, paidOnly, location],
@@ -86,7 +91,9 @@ export function MorningList({ className }: { className?: string }) {
           aria-label="Client"
           className="ceo-select-sm"
           value={location ?? "all"}
-          onChange={e => setLocation(e.target.value === "all" ? null : e.target.value)}
+          onChange={e =>
+            setLocation(e.target.value === "all" ? null : e.target.value)
+          }
         >
           <option value="all">All clients</option>
           {withLeads.map(c => (
@@ -157,19 +164,28 @@ function Group({
       aria-labelledby={`morning-${group}`}
       className="min-w-0 rounded-xl bg-muted/40 p-4"
     >
-      <h3 id={`morning-${group}`} className="flex items-baseline gap-2 text-sm font-semibold">
+      <h3
+        id={`morning-${group}`}
+        className="flex items-baseline gap-2 text-sm font-semibold"
+      >
         {title}
         <span className="font-normal tabular-nums text-muted-foreground">
           {leads.length}
         </span>
       </h3>
-      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{hint}</p>
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        {hint}
+      </p>
       {leads.length === 0 ? (
         <p className="mt-3 text-xs text-muted-foreground">None right now.</p>
       ) : (
         <ul className="mt-3 divide-y">
           {shown.map(l => (
-            <LeadLine key={`${l.locationId}:${l.contactId}`} lead={l} showClient={showClient} />
+            <LeadLine
+              key={`${l.locationId}:${l.contactId}`}
+              lead={l}
+              showClient={showClient}
+            />
           ))}
         </ul>
       )}
@@ -187,13 +203,23 @@ function Group({
   );
 }
 
-function LeadLine({ lead: l, showClient }: { lead: UncalledLead; showClient: boolean }) {
+function LeadLine({
+  lead: l,
+  showClient,
+}: {
+  lead: UncalledLead;
+  showClient: boolean;
+}) {
   const waited = waitingText(l.hoursWaiting);
   const detail = [
     waited ? `${waited} ago` : null,
     l.phoneLast4 ? `ends ${l.phoneLast4}` : null,
-    l.group === "outcome_only" && l.lastOutcome ? `saved: ${l.lastOutcome.toLowerCase()}` : null,
-    l.group === "phone_only" && l.lastCallAt ? `same number called ${stampText(l.lastCallAt)}` : null,
+    l.group === "outcome_only" && l.lastOutcome
+      ? `saved: ${l.lastOutcome.toLowerCase()}`
+      : null,
+    l.group === "phone_only" && l.lastCallAt
+      ? `same number called ${stampText(l.lastCallAt)}`
+      : null,
   ].filter(Boolean);
   return (
     <li className="py-2.5 text-sm first:pt-0 last:pb-0">
@@ -201,13 +227,18 @@ function LeadLine({ lead: l, showClient }: { lead: UncalledLead; showClient: boo
         <p className="min-w-0 font-medium">
           {l.firstName || "Lead"}
           {showClient ? (
-            <span className="font-normal text-muted-foreground"> · {l.clientName}</span>
+            <span className="font-normal text-muted-foreground">
+              {" "}
+              · {l.clientName}
+            </span>
           ) : null}
         </p>
         {l.paid ? <StateChip tone="accent">Paid ad</StateChip> : null}
       </div>
       <div className="mt-0.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <p className={cn("min-w-0 text-xs text-muted-foreground")}>{detail.join(" · ")}</p>
+        <p className={cn("min-w-0 text-xs text-muted-foreground")}>
+          {detail.join(" · ")}
+        </p>
         {l.contactUrl ? (
           <OutLink href={l.contactUrl} className="text-xs">
             Open in CRM
@@ -224,9 +255,10 @@ function Tie({ data, unfiltered }: { data: Morning; unfiltered: boolean }) {
   const differs = data.clients.filter(c => c.matchesBoard === false);
   return (
     <SourceNote>
-      A lead is listed when it is one of the last 30 days' callable leads (a Kuwait, Saudi, UAE or Qatar
-      number, not a WhatsApp chat, and at least one working hour old) and no call the caller saved is linked to
-      it. Done-with-you clients are left out, as on the board.{" "}
+      A lead is listed when it is one of the last 30 days' callable leads (a
+      Kuwait, Saudi, UAE or Qatar number, not a WhatsApp chat, and at least one
+      working hour old) and no call the caller saved is linked to it.
+      Done-with-you clients are left out, as on the board.{" "}
       {unfiltered
         ? `Never called (${t.neverCalled}) and Result saved, no call (${t.outcomeOnly}) equal the board's untouched and outcome-only counts. The board counts Probably called (${t.phoneOnly}) as called, because a call to the same number exists. ${
             differs.length === 0

@@ -22,7 +22,6 @@ import {
   StatTile,
 } from "@/components/kit";
 import { PortalTasksButton } from "@/components/PortalTasks";
-import { GapReport } from "@/components/results/GapReport";
 import { ReportIssue } from "@/components/ReportIssue";
 import {
   ResultsNav,
@@ -30,6 +29,7 @@ import {
   ResultsParts,
   ResultsSection,
 } from "@/components/ResultsLayout";
+import { GapReport } from "@/components/results/GapReport";
 import {
   bucketDays,
   partialBucket,

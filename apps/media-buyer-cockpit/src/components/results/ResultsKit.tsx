@@ -82,7 +82,10 @@ export function StateChip({
         className,
       )}
     >
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", DOT[tone])} />
+      <span
+        aria-hidden
+        className={cn("size-1.5 shrink-0 rounded-full", DOT[tone])}
+      />
       <span className="min-w-0 truncate">{children}</span>
     </span>
   );
@@ -213,7 +216,10 @@ export function SourceNote({ children }: { children: ReactNode }) {
 export function WarnLine({ children }: { children: ReactNode }) {
   return (
     <p className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-muted-foreground">
-      <span aria-hidden className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning" />
+      <span
+        aria-hidden
+        className="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning"
+      />
       <span>{children}</span>
     </p>
   );

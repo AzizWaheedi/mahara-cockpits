@@ -52,26 +52,46 @@ export function installResultsHarness(client: SupabaseClient): void {
     if (pick === "error")
       return {
         data: null,
-        error: { code: "57014", message: "canceling statement due to statement timeout" },
+        error: {
+          code: "57014",
+          message: "canceling statement due to statement timeout",
+        },
       };
     if (pick === "refused")
       return {
         data: null,
         error: {
           code: "42501",
-          message: "Speed numbers cover every client, so only seats that see every client open them.",
+          message:
+            "Speed numbers cover every client, so only seats that see every client open them.",
         },
       };
     if (pick === "missing")
-      return { data: null, error: { code: "PGRST202", message: "Could not find the function" } };
+      return {
+        data: null,
+        error: { code: "PGRST202", message: "Could not find the function" },
+      };
     const scenario = pick as ResultsScenario;
     if (name === "cockpit_gap_read")
-      return { data: gapFixture(String(args.p_from), String(args.p_to), scenario), error: null };
+      return {
+        data: gapFixture(String(args.p_from), String(args.p_to), scenario),
+        error: null,
+      };
     if (name === "cockpit_gap_client_read") {
-      const data = gapClientFixture(String(args.p_location), String(args.p_from), String(args.p_to));
+      const data = gapClientFixture(
+        String(args.p_location),
+        String(args.p_from),
+        String(args.p_to),
+      );
       return data
         ? { data, error: null }
-        : { data: null, error: { code: "42501", message: "That client is not on your board." } };
+        : {
+            data: null,
+            error: {
+              code: "42501",
+              message: "That client is not on your board.",
+            },
+          };
     }
     if (name === "cockpit_speed_read")
       return {
@@ -84,8 +104,18 @@ export function installResultsHarness(client: SupabaseClient): void {
         error: null,
       };
     if (name === "cockpit_morning_uncalled_read")
-      return { data: morningFixture((args.p_location as string | null) ?? null, scenario), error: null };
-    if (name === "cockpit_csm_calls_read") return { data: callListFixture(scenario), error: null };
-    return { data: null, error: { message: `The harness has no fixture for ${name}.` } };
+      return {
+        data: morningFixture(
+          (args.p_location as string | null) ?? null,
+          scenario,
+        ),
+        error: null,
+      };
+    if (name === "cockpit_csm_calls_read")
+      return { data: callListFixture(scenario), error: null };
+    return {
+      data: null,
+      error: { message: `The harness has no fixture for ${name}.` },
+    };
   };
 }

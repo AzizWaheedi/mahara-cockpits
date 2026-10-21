@@ -39,7 +39,10 @@ export function ViewSwitch({
   );
 }
 
-const INTRO: Record<Exclude<ViewKey, "board">, { title: string; text: string }> = {
+const INTRO: Record<
+  Exclude<ViewKey, "board">,
+  { title: string; text: string }
+> = {
   gap: {
     title: "Meetings with no result",
     text: "Which clients are behind on filling in how their meetings went, and why.",

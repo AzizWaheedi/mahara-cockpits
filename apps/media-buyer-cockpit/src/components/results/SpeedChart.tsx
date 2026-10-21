@@ -18,7 +18,13 @@ import {
   speedWindow,
 } from "@/lib/resultsModel";
 import { fetchSpeed, useRead } from "@/lib/resultsReads";
-import { Notice, Problem, ResultCard, RowsSkeleton, SourceNote } from "./ResultsKit";
+import {
+  Notice,
+  Problem,
+  ResultCard,
+  RowsSkeleton,
+  SourceNote,
+} from "./ResultsKit";
 
 const BAR_AREA = 168;
 
@@ -38,7 +44,12 @@ export function SpeedChart({ className }: { className?: string }) {
   const read = useRead(`speed|${win.from}|${win.to}|${clock}`, () =>
     fetchSpeed(win.from, win.to, clock),
   );
-  const data = read.status === "ready" ? read.data : read.status === "error" ? read.data : undefined;
+  const data =
+    read.status === "ready"
+      ? read.data
+      : read.status === "error"
+        ? read.data
+        : undefined;
   const cells = data?.cells ?? [];
   const { bands, total } = useMemo(
     () => speedBands(cells, { hour, country }),
@@ -51,7 +62,10 @@ export function SpeedChart({ className }: { className?: string }) {
   const scale =
     Math.max(10, ...bands.map(b => b.per100 ?? 0), total.per100 ?? 0) * 1.15;
   const figure = bands
-    .map(b => `${b.label}: ${b.per100 === null ? "too few leads" : `${rateText(b.per100)} per 100`}`)
+    .map(
+      b =>
+        `${b.label}: ${b.per100 === null ? "too few leads" : `${rateText(b.per100)} per 100`}`,
+    )
     .join(". ");
 
   return (
@@ -74,7 +88,9 @@ export function SpeedChart({ className }: { className?: string }) {
           aria-label="Arrival hour"
           className="ceo-select-sm"
           value={hour === null ? "all" : String(hour)}
-          onChange={e => setHour(e.target.value === "all" ? null : Number(e.target.value))}
+          onChange={e =>
+            setHour(e.target.value === "all" ? null : Number(e.target.value))
+          }
         >
           <option value="all">All hours</option>
           {hours.map(h => (
@@ -87,7 +103,9 @@ export function SpeedChart({ className }: { className?: string }) {
           aria-label="Country"
           className="ceo-select-sm"
           value={country ?? "all"}
-          onChange={e => setCountry(e.target.value === "all" ? null : e.target.value)}
+          onChange={e =>
+            setCountry(e.target.value === "all" ? null : e.target.value)
+          }
         >
           <option value="all">All countries</option>
           {countries.map(c => (
@@ -150,14 +168,18 @@ export function SpeedChart({ className }: { className?: string }) {
                     <div
                       aria-hidden
                       className="pointer-events-none absolute inset-x-0 border-t border-dashed border-foreground/40"
-                      style={{ bottom: `${(total.per100 / scale) * BAR_AREA}px` }}
+                      style={{
+                        bottom: `${(total.per100 / scale) * BAR_AREA}px`,
+                      }}
                     />
                   ) : null}
                 </div>
                 <div className="mt-2 flex gap-2 sm:gap-4">
                   {bands.map(b => (
                     <div key={b.key} className="min-w-0 flex-1 text-center">
-                      <p className="text-xs leading-4 text-foreground">{b.label}</p>
+                      <p className="text-xs leading-4 text-foreground">
+                        {b.label}
+                      </p>
                       <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
                         {plural(b.leads, "lead")}
                       </p>
@@ -187,9 +209,10 @@ export function SpeedChart({ className }: { className?: string }) {
         <SourceNote>
           {data.note} Paid leads are CRM leads that carry an ad, created{" "}
           {dayText(win.from)} to {dayText(data.windowTo ?? win.to)}; the last{" "}
-          {data.settleDays} days are left out so bookings have time to arrive. Only
-          counted bookings are included: not provisional, cancelled or Google
-          Calendar ones. A band under {MIN_LEADS} paid leads shows no rate.
+          {data.settleDays} days are left out so bookings have time to arrive.
+          Only counted bookings are included: not provisional, cancelled or
+          Google Calendar ones. A band under {MIN_LEADS} paid leads shows no
+          rate.
           {clock === "working"
             ? " Working hours count only the caller's scheduled hours between the lead and the call."
             : " Clock time counts every minute between the lead and the call."}{" "}
@@ -214,7 +237,10 @@ function NumbersTable({ rows }: { rows: SpeedBand[] }) {
       </thead>
       <tbody className="divide-y">
         {rows.map(b => (
-          <tr key={b.key} className={b.key === "all" ? "font-medium" : undefined}>
+          <tr
+            key={b.key}
+            className={b.key === "all" ? "font-medium" : undefined}
+          >
             <td className="py-1.5 pr-3">{b.label}</td>
             <td className="px-3 py-1.5 text-right">{b.leads}</td>
             <td className="px-3 py-1.5 text-right">{b.bookings}</td>
@@ -239,7 +265,9 @@ function Bar({ band: b, scale }: { band: SpeedBand; scale: number }) {
   const height = Math.max(2, (b.per100 / scale) * BAR_AREA);
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col items-center justify-end">
-      <p className="mb-1 text-sm font-semibold tabular-nums">{rateText(b.per100)}</p>
+      <p className="mb-1 text-sm font-semibold tabular-nums">
+        {rateText(b.per100)}
+      </p>
       <div
         className="w-full max-w-12 rounded-t-md"
         style={{ height, backgroundColor: "var(--ceo-emphasis)" }}

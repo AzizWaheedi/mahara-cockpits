@@ -43,16 +43,32 @@ client.rpc = async (name, args = {}) => {
   if (pick === "error")
     return {
       data: null,
-      error: { code: "57014", message: "canceling statement due to statement timeout" },
+      error: {
+        code: "57014",
+        message: "canceling statement due to statement timeout",
+      },
     };
   const scenario = pick as ResultsScenario;
   if (name === "cockpit_gap_read")
-    return { data: gapFixture(String(args.p_from), String(args.p_to), scenario), error: null };
+    return {
+      data: gapFixture(String(args.p_from), String(args.p_to), scenario),
+      error: null,
+    };
   if (name === "cockpit_gap_client_read") {
-    const data = gapClientFixture(String(args.p_location), String(args.p_from), String(args.p_to));
+    const data = gapClientFixture(
+      String(args.p_location),
+      String(args.p_from),
+      String(args.p_to),
+    );
     return data
       ? { data, error: null }
-      : { data: null, error: { code: "42501", message: "That client is not on your board." } };
+      : {
+          data: null,
+          error: {
+            code: "42501",
+            message: "That client is not on your board.",
+          },
+        };
   }
   if (name === "cockpit_csm_calls_read") {
     const list = callListFixture(scenario);
@@ -65,11 +81,16 @@ client.rpc = async (name, args = {}) => {
     return { data: list, error: null };
   }
   if (name === "cockpit_csm_call_logged") {
-    const row = callListFixture(scenario).rows.find(r => r.locationId === args.p_location);
+    const row = callListFixture(scenario).rows.find(
+      r => r.locationId === args.p_location,
+    );
     if (row?.status !== "call")
       return {
         data: null,
-        error: { code: "22023", message: "That client is not on this week's call list." },
+        error: {
+          code: "22023",
+          message: "That client is not on this week's call list.",
+        },
       };
     const at = new Date().toISOString();
     called.set(row.locationId, at);
@@ -86,7 +107,10 @@ client.rpc = async (name, args = {}) => {
       error: null,
     };
   }
-  return { data: null, error: { message: `The harness has no fixture for ${name}.` } };
+  return {
+    data: null,
+    error: { message: `The harness has no fixture for ${name}.` },
+  };
 };
 
 createRoot(document.getElementById("root") as HTMLElement).render(

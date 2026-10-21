@@ -24,8 +24,9 @@
 -- see. The CSM list is ranked again inside the seat's own clients, so a CSM limited to some clients gets
 -- five of their own, and a seat that sees every client gets the list cockpit_csm_call_list gives.
 --
--- Not applied to any database. Rollback: DROP FUNCTION each name below, DROP TABLE cockpit_csm_call_log.
+-- Applied to the Creative Triage database on 21 October 2026, after 20261021e to h. Rollback: DROP FUNCTION each name below, DROP TABLE cockpit_csm_call_log.
 BEGIN;
+SET LOCAL lock_timeout = '3s';
 
 DO $$
 BEGIN
