@@ -37,9 +37,11 @@ its Wistia player; English and Arabic onboarding covers showed the same client.
   publication 500 and an expired run. This recovery does not clear every
   historical resource error. Preserve the last good data and reconcile exact
   receipts; do not remove the full-publication guard or replay uncertain writes.
-- CEO delivery fails when two ad accounts map to the same ClickUp client. This
-  branch fixes that aggregation and includes it in the immutable worker package.
-  Production needs an approved release and a fresh successful section readback.
+- CEO delivery failed when two ad accounts mapped to the same ClickUp client.
+  A concurrent worker repair restored it at 15:31 UTC. PR 62 preserves that
+  grouping and adds guards for repeated joins, invalid counts and conflicting
+  account ownership, plus complete worker packaging. Aziz approved merge and
+  deployment. Verify the final release separately from this earlier recovery.
 - The broader intake audit still holds one incomplete Make execution and a
   WhatsApp resolver that returned `manual_required`. A green Make execution is
   not proof of calendar completion, QR retrieval or client group membership.
@@ -48,11 +50,13 @@ its Wistia player; English and Arabic onboarding covers showed the same client.
 
 - CSM deck/presentation suite: 261 tests, 2,505 assertions passed.
 - Onboarding database/sync/deck storage suite: 77 tests, 1,129 assertions passed.
-- Delivery fix: eight tests, 22 assertions passed. The integration fixture runs
+- Delivery fix: nine tests, 24 assertions passed. The integration fixture runs
   the database-result parser, delivery adapter and metric extractor together.
 - Worker package: 11 tests passed. The check also found four imported Guardian
   modules missing from the package list; this branch includes them.
-- Existing triage SQL tests: five passed before local dependency cleanup.
+- Current triage SQL tests: six tests, 40 assertions passed after merging main's
+  concurrent multi-account source change. These are separate from the live
+  worker's source mapping rules, which the narrow PR 62 deployment preserves.
 - Portal production origin checks: 17/17 passed. The exact portal source
   `42a7a026e47c5d11f0f3103e7cc9fbd850cdead5` passed tests, type checks and build in
   [GitHub CI](https://github.com/AzizWaheedi/mahara-client-portal/actions/runs/39605653115).
@@ -60,6 +64,8 @@ its Wistia player; English and Arabic onboarding covers showed the same client.
   portal-suite result is claimed.
 
 No new intake, client invitation, message, booking, permission grant or ad
-activation was performed in these checks. No production worker was replaced.
+activation was performed in these checks. The initial audit did not replace a
+worker. The approved release must retain the current collector and mapping fixes;
+record the activated release and fresh database receipt in shared context.
 The shared operating checklist remains in the mahara-context repository's
 `systems/Mahara OS V2/Make Scenarios/Processes/Client Onboarding Flow.md`.

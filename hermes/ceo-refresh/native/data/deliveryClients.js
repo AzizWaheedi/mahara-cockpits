@@ -3,7 +3,7 @@
  * source, then combine their counts once under the exact ClickUp identity.
  * Ratios are calculated by the adapter after this merge, never averaged.
  */
-export function deliveryClientGroups(clients, spendBy, bookBy, countsBy, noOutcomeBy) {
+export function deliveryClientGroups(clients, spendBy = new Map(), bookBy = new Map(), countsBy = new Map(), noOutcomeBy = new Map()) {
     const groups = new Map();
     const owners = new Map();
     const add = (target, source) => {

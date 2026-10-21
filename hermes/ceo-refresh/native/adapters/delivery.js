@@ -364,11 +364,11 @@ export const delivery = {
                             leads += d.leads;
                         }
                     const month = windowOf(from, today);
+                    const goneClients = deliveryClientGroups(triage.clients.filter(c => gone.has(c.clientId)));
                     if (lost > 0)
-                        warn(`${dollars(lost)} of this month's spend is on ${plural(gone.size, "client")} already marked cancelled, and it brought in ${plural(leads, "lead")}: ${triage.clients
-                            .filter(c => gone.has(c.clientId))
+                        warn(`${dollars(lost)} of this month's spend is on ${plural(goneClients.length, "client")} already marked cancelled, and it brought in ${plural(leads, "lead")}: ${goneClients
                             .map(c => c.name)
-                            .join(", ")}. That money is inside the totals above. Without ${gone.size === 1 ? "it" : "them"} the month reads ${dollars(month.spend - lost)} and ${plural(month.leads - leads, "lead")}.`);
+                            .join(", ")}. That money is inside the totals above. Without ${goneClients.length === 1 ? "it" : "them"} the month reads ${dollars(month.spend - lost)} and ${plural(month.leads - leads, "lead")}.`);
                 }
             }
             if (triage.media.untied.length) {
@@ -379,7 +379,7 @@ export const delivery = {
                 warn(`${plural(triage.unmapped.length, "ad account")} spending in this window ${triage.unmapped.length === 1 ? "is" : "are"} tied to no client card, so ${triage.unmapped.length === 1 ? "its" : "their"} spend is in the totals but has no client row: ${triage.unmapped.slice(0, 5).join(", ")}${triage.unmapped.length > 5 ? ` and ${triage.unmapped.length - 5} more` : ""}.`);
             if (triage.unknownCurrencies.length)
                 warn(`Spend in ${triage.unknownCurrencies.join(", ")} is left out entirely: the cockpit has no exchange rate for ${triage.unknownCurrencies.length === 1 ? "it" : "them"}, and counting it at one to one would be wrong rather than approximate.`);
-            const noMode = triage.clients.filter(c => c.clickupTaskId && !c.serviceMode);
+            const noMode = deliveryClientGroups(triage.clients).filter(c => c.clickupTaskId && !c.serviceMode);
             if (noMode.length)
                 info(`${plural(noMode.length, "client")} ${noMode.length === 1 ? "has" : "have"} a blank Service Mode, so nothing here knows whether we book their appointments or they do: ${noMode
                     .map(c => c.name)
@@ -700,7 +700,7 @@ export const delivery = {
             .filter(g => !g.tracked)
             .map(g => g.client);
         if (triage) {
-            const dwy = triage.clients.filter(c => c.serviceMode && !/dfy|done for/i.test(c.serviceMode));
+            const dwy = deliveryClientGroups(triage.clients).filter(c => c.serviceMode && !/dfy|done for/i.test(c.serviceMode));
             warn(`${dwy.length
                 ? `${plural(dwy.length, "Done With You client")} ${dwy.length === 1 ? "books" : "book"} their own, so no cost per booking is worked out for them: ${dwy
                     .map(c => c.name)

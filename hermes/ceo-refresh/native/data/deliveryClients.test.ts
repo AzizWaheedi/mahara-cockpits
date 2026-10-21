@@ -52,6 +52,12 @@ test('conflicting service modes are not silently selected',()=>{
   expect(rows[0].serviceMode).toBeNull();
 });
 
+test('client warning counts use the same exact client identities without accounting inputs',()=>{
+  const rows=deliveryClientGroups(clients);
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toMatchObject({clickupTaskId:'client-one',campaigns:5,accountIds:['account-a','account-b'],serviceMode:'dfy'});
+});
+
 test('invalid numeric source values fail before publication',()=>{
   expect(()=>deliveryClientGroups(clients,new Map([['account-a',{spend:NaN}]]),books,counts,new Map())).toThrow('invalid source count');
 });
