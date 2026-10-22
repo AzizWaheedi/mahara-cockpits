@@ -2,7 +2,7 @@
 
 The Arabic for every on-screen string in `CONTENT.md`, slide by slide with the same ids, then the presenter lines the client success manager says out loud when the call is in Arabic. The example call itself is in `EXAMPLE-CALL.md`.
 
-Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm-professional client register for engineering, construction, fit-out and design firms, Saudi-safe. The register follows the client-facing Arabic Mahara already sends (`client-comms/csm-templates.md`, `onboarding-to-launch-csm.md`) and the Onboarding Map's own stop names. Revised the same day with `CONTENT.md` after the critique, again on 2026-10-20 with the CEO's answers to its open questions 1 to 3 (see its Revision notes and [the section at the end](#ceo-answers-2026-10-20)), and again on 2026-10-20 for the Gamma pass: two new launch slides (L7 partnership, L8 training), the good-to-know slide (L12), the changed portal, Your part, 90 days and green light, and the onboarding deck's reply time ([Gamma pass](#gamma-pass-2026-10-20) at the end). The launch deck has thirteen slides now; sections dated before that pass use the ten-slide numbers. Revised once more on 2026-10-20 with `CONTENT.md` for the CEO's creative flexibility (L3 in five stops, O7's line) and the video slots ([the section at the end](#creative-flexibility-and-video-slots-2026-10-20)), and again the same day with its spec review ([the last section](#spec-review-of-creative-flexibility-and-the-video-slots-2026-10-20)).
+Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm-professional client register for engineering, construction, fit-out and design firms, Saudi-safe. The register follows the client-facing Arabic Mahara already sends (`client-comms/csm-templates.md`, `onboarding-to-launch-csm.md`) and the Onboarding Map's own stop names. Revised the same day with `CONTENT.md` after the critique, again on 2026-10-20 with the CEO's answers to its open questions 1 to 3 (see its Revision notes and [the section at the end](#ceo-answers-2026-10-20)), and again on 2026-10-20 for the Gamma pass: two new launch slides (L7 partnership, L8 training), the good-to-know slide (L12), the changed portal, Your part, 90 days and green light, and the onboarding deck's reply time ([Gamma pass](#gamma-pass-2026-10-20) at the end). The launch deck has thirteen slides now; sections dated before that pass use the ten-slide numbers. Revised once more on 2026-10-20 with `CONTENT.md` for the CEO's creative flexibility (L3 in five stops, O7's line) and the video slots ([the section at the end](#creative-flexibility-and-video-slots-2026-10-20)), and again the same day with its spec review ([the last section](#spec-review-of-creative-flexibility-and-the-video-slots-2026-10-20)). Revised once more on 2026-10-20 for the CEO's visual pass ([The visual pass](#the-visual-pass-ceo-2026-10-20)): the call's checklist, the onboarding slides' new labels, the example ads and their alt text, L3's source lines and its `dos_donts_ar`, L7's two names, L8's line without Latin, and the Drive link's words.
 
 ## Decisions for the Arabic (made once, for both decks)
 
@@ -11,7 +11,7 @@ Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm
 3. **Voice-skill rules kept:** تمام never طيب; بصراحة; نبدي and تبدي, not نبدأ; plain spoken verbs, never bookish ones (يحاكي، يجسد، يعكس); never مقاول for the client; loanwords in Arabic script where people say them (سكربت، كورس، لابتوب، زوم، فيد، ريلز، ستوري).
 4. **Form:** no guillemets and no quote marks around Arabic words, no em dashes, no exclamation marks. ".." only inside spoken lines.
 5. **Times:** on slides, ١٠ صباحاً and ٦ مساءً (how Gulf businesses write their hours). In spoken lines and in the call, الصبح، العصر، المسا.
-6. **Numbers:** Arabic-Indic digits through `Fig`, never ٬, never a lone ٠, never a digit glued to بـ or لـ (write إلى ٦, not لـ٦). Small numbers inside speech are words (ست شهور، سنتين). The running call clock and the WhatsApp confirmation's date and time stay in Latin digits (DESIGN 13.4, 7.6); once the call ends, its length takes Arabic-Indic digits, ٤:٥١ (the fixer's round).
+6. **Numbers:** Arabic-Indic digits through `Fig`, never ٬, never a lone ٠, never a digit glued to بـ or لـ (write إلى ٦, not لـ٦). Small numbers inside speech are words (ست شهور، سنتين). The running call clock, the WhatsApp confirmation's date and time, and the Drive box's clock in {time} (أمس الساعة 09:05; a date before it keeps Arabic-Indic digits, يوم ١٦ أكتوبر) stay in Latin digits (DESIGN 13.4, 7.6, DRIVE-IMPORT 8); once the call ends, its length takes Arabic-Indic digits, ٤:٥١ (the fixer's round).
 7. **Slots keep CONTENT's ids** in braces. Client and page names, handles and English words sit in `<bdi dir=auto>` (DESIGN 13.2). In the Arabic deck `{client.name}` is the Arabic name from `ghl_clients.client_name` when there is one.
 8. **The presenting CSM's title is gendered in Arabic.** Store `csm.title_ar` on the seat, or a gender: مدير نجاح العملاء for a man, مديرة نجاح العملاء for a woman. With no name and no gender, the line reads فريق نجاح العملاء. Inside the O3 group, where the CSM is a role, the row reads نجاح العملاء.
 9. **Meta's own Arabic labels** (مُموَّل and the button labels) are my best reading of Meta's Arabic interface. Check each against a live Arabic preview before shipping (DESIGN 17.2).
@@ -115,7 +115,7 @@ Use these the same way in both decks, the notes and the prep view.
 
 | Key | English | Arabic |
 |---|---|---|
-| `welcome.eyebrow` | Onboarding call · {onboarding.date} | مكالمة التعريف · {onboarding.date} |
+| `welcome.eyebrow` | Onboarding call · {onboarding.date} | مكالمة التعريف، {onboarding.date} |
 | `welcome.title` | Welcome, {client.name} | حياكم الله، {client.name} |
 | `welcome.agenda.lead` | Before we hang up, we'll: | قبل لا نسكر المكالمة: |
 | `welcome.agenda.1` | Choose your launch service | نختار خدمة الإطلاق |
@@ -192,7 +192,7 @@ The card bodies are the client's own answers, shown as written. No quote marks a
 | Key | English | Arabic |
 |---|---|---|
 | `one.title` | One service per campaign | خدمة وحدة لكل حملة |
-| `one.line` | We launch with one service, so the ads, the form questions and the calls are all written for one kind of customer. | نبدي بخدمة وحدة، عشان كل إعلان وكل سؤال وكل مكالمة تكلم نوع واحد من العملاء. |
+| `one.line` | We launch with one service, so the ads, the form questions and the calls are all written for one kind of customer. | نبدي بخدمة وحدة، عشان الإعلانات والأسئلة والمكالمات كلها تكلم نوع واحد من العملاء. |
 | `one.tag.number_one` | Your #1 | الأولى عندكم |
 | `one.test.sell` | Easiest to sell | الأسهل بالبيع |
 | `one.test.profit` | Most profit | الأكثر ربح |
@@ -220,7 +220,7 @@ The chips are the client's services as the form holds them (decision on prep fie
 | `road.stop.2` | Onboarding form | نموذج التعريف بالنشاط |
 | `road.stop.3` | Onboarding call | مكالمة التعريف |
 | `road.today` | Today | اليوم |
-| `road.stop.4` | Brand and offer | بناء الهوية والعرض |
+| `road.stop.4` | Brand Blueprint call | بناء الهوية والعرض |
 | `road.stop.5` | Launch call | مكالمة الإطلاق |
 | `road.stop.5.time` | About 45 minutes | تقريباً ٤٥ دقيقة |
 | `road.stop.5.line` | We walk you through everything that's going live. | نمر معكم على كل شي بينزل. |
@@ -250,7 +250,7 @@ The six stop names are the Onboarding Map's own, exactly. Stop 4 carries only it
 | `week.2.line` | Sign in, then connect WhatsApp and Google Calendar, so bookings land in your real calendar. | سجلوا دخول، وبعدها اربطوا الواتساب وتقويم قوقل، عشان المواعيد تنزل بتقويمكم الحقيقي. |
 | `week.2.ticks` | Signed in · WhatsApp · Calendar | تسجيل الدخول · واتساب · التقويم |
 | `week.3.name` | Your content | محتواكم |
-| `week.3.line` | Before your Blueprint call: photos and videos in your Drive folder. Finished projects, work in progress, your team on site. Don't filter. We will. | قبل مكالمة بناء الهوية: صور وفيديوهات بمجلد الدرايف. مشاريع خلصت، وشغل قيد التنفيذ، وفريقكم بالموقع. لا تفلترون، إحنا نفلتر. |
+| `week.3.line` | Before your Blueprint call: photos and videos in your Drive folder. Finished projects, work in progress, your team on site. Don't filter. We will. | قبل مكالمة بناء الهوية: صور وفيديوهات بمجلد الدرايف. مشاريع خلصت، وشغل قيد التنفيذ، وفريقكم بالموقع. لا تفلترون، إحنا نفلتر. (a no-break space between لا and تفلترون, so the negation never ends a line; final score round 1) |
 | `week.3.link` | (link to {links.drive}) | مجلد الدرايف |
 | `week.4.name` | Past enquiries | الاستفسارات القديمة |
 | `week.4.line` | Have a list of old enquiries? Send it, and we'll agree whether to call them. | عندكم قائمة باستفسارات قديمة؟ أرسلوها، ونتفق إذا ينتصل عليهم. |
@@ -271,11 +271,11 @@ Since the spec review of 2026-10-20, O6 starts them on the introduction, the cou
 | `week.2.name.dwy` | Your CRM | الـCRM عندكم |
 | `week.2.line.dwy` | Sign in, and connect your calendar, so bookings land in your real calendar. | سجلوا دخول، واربطوا تقويمكم، عشان المواعيد تنزل بتقويمكم الحقيقي. |
 | `week.2.ticks.dwy` | Signed in · Calendar | تسجيل الدخول · التقويم |
-| `week.6.name.dwy` | Your callers' phones | جوالات فريق الاتصال عندكم |
+| `week.6.name.dwy` | Callers' phones | جوالات فريق الاتصال |
 | `week.6.line.dwy` | Install the LeadConnector app, sign in and turn on alerts. | نزّلوا تطبيق LeadConnector، وسجلوا دخول، وفعّلوا التنبيهات. |
 
 **Spoken lines (Arabic)**
-- خلنا نخلص صلاحيات ميتا وMahara OS الحين، مع بعض.
+- خلنا نخلص صلاحيات ميتا ومنصة Mahara OS الحين، مع بعض.
 - كل ما رفعتوا محتوى أكثر قبل مكالمة بناء الهوية، طلعت أول إعلاناتكم أحسن.
 - الاستفسارات القديمة نتفق عليها بمكالمة بناء الهوية أو بالقروب، إذا نتصل عليهم ولا لا.
 - (For anything left open) هذي مين بيخلصها، ومتى؟
@@ -326,13 +326,13 @@ Order (since the fixer's round, 2026-10-20: creative freedom before the ads): L1
 
 | Key | English | Arabic |
 |---|---|---|
-| `cover.eyebrow` | Launch call · {today} | مكالمة الإطلاق · {today} |
+| `cover.eyebrow` | Launch call · {today} | مكالمة الإطلاق، {today} |
 | `cover.title` | {client.name} goes live | انطلاقة {client.name} |
 | `cover.title.live` | {client.name} is live | انطلقنا مع {client.name} |
 | `cover.date` | {go_live} | {go_live} |
 | `cover.line` | Everything your customers will see, before they see it. | كل شي بيشوفه عملاؤكم، تشوفونه قبلهم. |
 | `cover.line.live` | Everything your customers see, and what happens next. | كل شي يشوفه عملاؤكم، واللي يصير بعدها. |
-| `cover.road` | Launch call · Today | مكالمة الإطلاق · اليوم |
+| `cover.road` | Launch call · Today | مكالمة الإطلاق، اليوم |
 | `cover.footer` | {csm.first} · Your client success manager | {csm.first} · مدير نجاح العملاء (or مديرة نجاح العملاء) |
 
 Both Arabic titles put the verb before the name, so a company name never forces a gender on the verb. On the cover the teal word is انطلاقة (or انطلقنا).
@@ -426,7 +426,7 @@ Five stops, as `CONTENT.md` L3 sets them. The keys after `test.title` are new or
 | `test.field.tag` (approved as `test.proof.tag`) | Illustration | توضيح |
 | `test.input.name` (stop 3) | Your input comes first | نسمع منكم أول |
 | `test.fixed.name` (approved) | Fixed: your red lines | الثابت: خطوطكم الحمراء |
-| `test.fixed.never` · `test.fixed.always` (the panel's two heads since score round 2; they read "Never …" · "Always …", أبد ما … · دايماً …, as leads) | Never · Always | أبد · دايماً |
+| `test.fixed.never` · `test.fixed.always` (the panel's two heads since score round 2; they read "Never …" · "Always …", أبداً ما … · دايماً …, as leads; أبداً since score round 4, where أبد alone read as a cut-off word) | Never · Always | أبداً · دايماً |
 | `test.fixed.told` (since score round 2, small after a line typed on O7, not a head; it read "You told us: {red line}.") | you told us | قلتوا لنا |
 | `test.fixed.card` (new, score round 2: heads the card's lines written in the other script, quoted as they are) | From your card | من ملفكم |
 | `test.fixed.copy` (cut to its first sentence) | We never cross these. | وهذي ما نتعداها أبد. |
@@ -442,7 +442,7 @@ Five stops, as `CONTENT.md` L3 sets them. The keys after `test.title` are new or
 | `test.content.name` (stop 5) | Keep the content coming | خلوا المحتوى يوصلنا أول بأول |
 | `test.content.copy` | Send new photos and videos of your projects whenever you can. More content means more ads to test. | أرسلوا صور وفيديوهات جديدة لمشاريعكم كل ما قدرتوا. كل ما زاد المحتوى، زادت الإعلانات اللي نختبرها. |
 | `test.content.small` (approved as `driveMissing`) | Your folder link is pinned in your WhatsApp group. | رابط المجلد مثبت فوق في قروب الواتساب. |
-| `test.stamp` (approved) | Agreed to test this way · {date} | اتفقنا نختبر بهالطريقة · {date} |
+| `test.stamp` (approved) | Agreed to test this way · {date} | اتفقنا نختبر بهالطريقة، {date} |
 | `test.video` (the slot's title, see Video slots) | Why we test so many ads | ليش نختبر إعلانات كثيرة |
 
 Gone from the slide on 2026-10-20 (their Arabic stays in this file's history): `test.page.name`, `test.page.copy`, `test.page.foot` (now said, stop 1), `test.open.name` and `test.open.chips` (stop 2's small line names four of them), the second and third sentences of `test.fixed.copy` (stop 4 and its spoken line), `test.footer` (stop 4's style line says it with the reason), `test.proof.name` and `test.proof.caption` (stop 2, with no count).
@@ -455,6 +455,7 @@ The red lines are the client's own Do's and Don'ts as written on their card, and
 - (Stop 3) فيه شي ثاني ما تبونا نقوله أو نوريه أبد؟
 - (Stop 3) أي فكرة أو عرض جديد أو سعر جديد أو تغيير، أرسلوه بالقروب قبل لا نسوي الإعلانات الجاية، عشان يكون فيها من البداية، وإحنا نرد عليكم بالسبب.
 - (Stop 3, the offer) تبون تغيرون العرض؟ قولوا لنا بالقروب أول. العرض الجديد بنص الاختبار يرجّعه من البداية، وإذا قلتوا لنا أول، نرتب له.
+- (Stop 3, if they point at the pictures) هذي أمثلة توضح كيف نختبر، وإعلاناتكم تكون من مشاريعكم.
 - (Stop 4, before they see the ads) بالشريحة الجاية بتشوفون إعلاناتكم، وأكيد بتبون تغيرون أشياء صغيرة. هذي نخليها للإعلانات الجاية، عشان إطلاقكم ما يتأخر.
 - (Stop 4, a wrong fact) أي معلومة أو سعر أو وعد غلط، نصلحه قبل لا ينزل الإعلان. ونصلح بعد أي شي يتعدى خطوطكم الحمراء، أو يغلط في اسمكم أو شعاركم أو ألوانكم. وأي شي يرجع للذوق، صغير ولا كبير، يروح للإعلانات الجاية.
 - (Stop 4, why it stays small) ليش نخليها مراجعة سريعة؟ الإعلان اللي ينتظر تعديل صغير، إعلان ما نختبره. ونلقى اللي يشتغل لما نختبر أكثر.
@@ -538,6 +539,8 @@ The three phones share one app language (DESIGN 7.1): the language most of the c
 |---|---|---|
 | `form.eyebrow` | Your customer sees this | هذا اللي يشوفه عميلكم |
 | `form.title` | Your form | نموذج إعلانكم |
+| `form.titleWhatsApp` (score round 2: the ad opens WhatsApp, so there is no form) | Your WhatsApp chat | محادثة الواتساب |
+| `tag.exampleWordingStarter` (score round 2 of the five services: the chat under a starter template's picture) | Example wording, starter ad | صياغة للتوضيح، إعلان بداية |
 | `form.line` | What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit. | اللي يجاوب عليه العميل قبل لا نتصل. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم. |
 | `form.line.dwy` | What they answer before your team calls. Questions marked 'Filters' screen out people who aren't a fit. | اللي يجاوب عليه العميل قبل لا يتصل فريقكم. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم. |
 | `form.tag.gate` | Filters | فلتر |
@@ -558,6 +561,7 @@ The three phones share one app language (DESIGN 7.1): the language most of the c
 | `form.whatsapp.next.2` | It arrives on your WhatsApp. | توصل على الواتساب عندكم. |
 | `form.whatsapp.next.3` | Our team calls them within 5 minutes during working hours. | وفريقنا يتصل عليه خلال ٥ دقايق في أوقات الدوام. |
 | `form.whatsapp.next.3.dwy` | Your team calls them. | وفريقكم يتصل عليه. |
+| `form.app.today` · `form.app.message` (WhatsApp's own words on the chat, in the phone's language; check against a live Arabic WhatsApp, as decision 9 asks for Meta's) | Today · Message | اليوم · رسالة |
 
 **The example form** (drawn when no form is confirmed; it speaks to the customer, so it is singular)
 
@@ -708,7 +712,7 @@ Done with you the pie splits by owner in halves: ours holds الإعلانات �
 | `training.academy` (over the course list) | Premium Projects Academy | أكاديمية المشاريع المميزة |
 | `training.course.1` | Introduction | البداية |
 | `training.course.2` | Onboarding | التعريف |
-| `training.course.3` | Google optimisation | تحسين قوقل |
+| `training.course.3` | Google optimization | تحسين قوقل |
 | `training.course.4` | Offer creation | صناعة العرض |
 | `training.course.5` | Project Closing Mastery | إتقان توقيع المشاريع |
 | `training.course.5.latin` (new, the visual review, the lit row only, ink-2 at 24 px) | (none) | Project Closing Mastery |
@@ -801,10 +805,10 @@ The two screenshots are the Academy's own, in English, masked as `CONTENT.md` co
 
 | Head | English job | Arabic job | English why | Arabic why |
 |---|---|---|---|---|
-| Before | Keep at least 10 open slots, at different times | خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة | Our callers book into them. On a day off, block each hour, not one all-day event. | فريق الاتصال يحجز فيها. ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل. |
+| Before | Keep at least 10 open slots, at different times | خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة | Our callers book into them. (Notes and recap: On a day off, block each hour, not one all-day event.) | فريق الاتصال يحجز فيها. (الملاحظات والملخص: ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل.) |
 | Before | Add each booking to your own system | ضيفوا كل موعد لنظامكم | If your team plans in other software, the booking goes there too, so nobody books over it. | إذا فريقكم يخطط على برنامج ثاني، الموعد ينضاف فيه بعد، عشان ماحد يحجز فوقه. |
 | After | Mark every meeting the same day, with the value when you win | سجلوا نتيجة كل موعد بنفس اليوم، ومعها قيمة المشروع إذا وقّع | Your outcomes show which ads bring real projects. | نتائجكم توضح أي إعلانات تجيب مشاريع حقيقية. |
-| After | Follow up the ones thinking it over, and book the second meeting | تابعوا اللي قاعدين يفكرون، واحجزوا الموعد الثاني | You send the quote and set the second meeting. Our caller checks in too. | أنتم ترسلون عرض السعر وتحددون الموعد الثاني، وفريق الاتصال يتابع معهم بعد. |
+| After | Follow up the ones thinking it over, and book the second meeting | تابعوا اللي قاعدين يفكرون، واحجزوا الموعد الثاني | You send the quote and set the second meeting. Our caller checks in too. (Done for you; done with you, the first sentence alone.) | أنتم ترسلون عرض السعر وتحددون الموعد الثاني. وفريق الاتصال يتابع معهم بعد. (لما نتصل نحن؛ لما يتصل فريقهم، الجملة الأولى بس.) |
 | Weeks | Leave the ads running through the first weeks | خلوا الإعلانات شغالة أول الأسابيع | Pausing early ends the test before it tells us anything. | لو وقفتوها بدري، ينتهي الاختبار قبل لا يعطينا جواب. |
 | Weeks | Keep your Drive folder fed | خلوا مجلد الدرايف مليان | Fresh projects keep your ads from tiring. | المشاريع الجديدة تخلي إعلاناتكم ما تبهت. |
 
@@ -816,7 +820,7 @@ Left this slide on 2026-10-20: «ثبّتوا العرض وإحنا نختبر»
 
 | Head | English | Arabic |
 |---|---|---|
-| Before, open slots, why | Your team books into them. On a day off, block each hour, not one all-day event. | فريقكم يحجز فيها. ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل. |
+| Before, open slots, why | Your team books into them. (Notes and recap: On a day off, block each hour, not one all-day event.) | فريقكم يحجز فيها. (الملاحظات والملخص: ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل.) |
 | Before, in place of the booking job | Call new enquiries within 5 minutes, and note every try · Interest fades, and a missing note means nobody knows what happened. | اتصلوا على الاستفسارات الجديدة خلال ٥ دقايق، وسجلوا كل محاولة · الحماس يبرد، والملاحظة الناقصة تخلي ماحد يعرف اللي صار. |
 | After, the marking job | Move each meeting to the right stage the same day · Your stages show which ads bring real projects. | انقلوا كل موعد للمرحلة الصح بنفس اليوم · مراحلكم توضح أي إعلانات تجيب مشاريع حقيقية. |
 | After, follow-up, why | You send the quote and set the second meeting. | أنتم ترسلون عرض السعر وتحددون الموعد الثاني. |
@@ -841,6 +845,7 @@ Then, after the six jobs:
 - وبأرسل لكم هالكرت بالقروب، ومعاه رابط كورس إتقان توقيع المشاريع.
 - كل ما خليتوا أوقات فاضية أكثر من ساعات دوامكم، لقى العميل وقت يناسبه أسرع.
 - يوم الإجازة، سكروا ساعات الدوام وحطوها مشغول، مو حدث على اليوم كامل، لأن التقويم أحياناً ما ينتبه لليوم المسكّر كامل، فنحجز فيه بالغلط.
+- (Done for you) وبعد الموعد، المتابعة علينا وعليكم: أنتم ترسلون عرض السعر وتحددون الموعد الثاني، وفريق الاتصال عندنا يتابع مع العميل بعد.
 - أكثر أسئلة يسألها فريق الاتصال: موعد برا أوقات دوامكم، أو إجازة، أو تفصيلة عن خدمة.
 - وما يحتاج تردون يوم الجمعة أو بالليل.
 - **Temp check:** أي وحدة من هذي بتكون أصعب على فريقكم؟
@@ -857,7 +862,7 @@ Then, after the six jobs:
 | `days.1.when` | Weeks 1 and 2 · Finding what works | أول أسبوعين · نكتشف اللي يشتغل لكم |
 | `days.1.slow` (new, under the bar's label) | Usually slower, while the ads find your audience. | عادةً تكون أهدأ، لين تتعرف الإعلانات على جمهوركم. |
 | `days.1.open` | Can run longer | ممكن تطوّل |
-| `days.2.when` | Your first check-in · a week or two in | أول مكالمة متابعة · بعد أسبوع أو أسبوعين |
+| `days.2.when` | Your first check-in · a week or two in | أول مكالمة متابعة، بعد أسبوع أو أسبوعين |
 | `days.2.date` | {next.checkin} | {next.checkin} |
 | `days.3.when` | Then weekly or every two weeks | وبعدها كل أسبوع أو كل أسبوعين |
 | `days.3.why` (its own line under the key, in ink-2, and in the notes) | Depending on your plan and how long you've been with us. | على حسب باقتكم، وكم صار لكم معنا. |
@@ -888,7 +893,7 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged. أهد
 
 | Key | English | Arabic |
 |---|---|---|
-| `know.title` (the fixer's round: the comments and replies run on after go-live) | Good to know | زين تعرفونه |
+| `know.title` (the fixer's round: the comments and replies run on after go-live) | Good to know | أشياء تهمكم |
 | `know.groups` (two small heads over the rows) | Money · Messages | الفلوس · الرسايل |
 | `know.charges.name` | Meta's first charges | أول مبالغ تخصمها ميتا |
 | `know.charges.line` | Small at first, and that's normal. Tell your bank so it doesn't block them. | تكون صغيرة بالبداية، وهذا طبيعي. بلّغوا البنك عشان ما يوقفها. |
@@ -896,7 +901,7 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged. أهد
 | `know.card.line` | A failed payment stops your ads. Repeated ones can get the account restricted and reset what the ads have learned. Running low? Tell us first, and we'll pause the ads safely. | إذا فشل الدفع، تتوقف إعلاناتكم. وإذا تكرر، ممكن ميتا تقيّد الحساب، ويروح اللي تعلمته الإعلانات. الرصيد قرب يخلص؟ قولوا لنا قبلها، ونوقف الإعلانات بطريقة آمنة. |
 | `know.pay.name` | Your payments to us | دفعاتكم لنا |
 | `know.act` (since score round 2, each money row's do-this, set in ink inside its line) | Tell your bank · Tell us first · On the dates in your agreement. | بلّغوا البنك · قولوا لنا قبلها · بالتواريخ المكتوبة في عقدكم. |
-| `know.pay.line` | On the dates in your agreement. If one fails, the ads, our calls and Mahara OS pause until it's sorted. | بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات ومكالماتنا وMahara OS لين تنحل. |
+| `know.pay.line` | On the dates in your agreement. If one fails, the ads, our calls and Mahara OS pause until it's sorted. | بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات ومكالماتنا ومنصة Mahara OS لين تنحل. |
 | `know.pay.line.dwy` | On the dates in your agreement. If one fails, the ads and the systems we run for you pause until it's sorted. | بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات والأنظمة اللي نشغلها لكم لين تنحل. |
 | `know.comments.name` | Comments on your ads | التعليقات على إعلاناتكم |
 | `know.comments.line` | Yours to answer. Not sure what to say? Ask in the group. | الرد عليها عليكم. ما تدرون كيف تردون؟ اسألونا بالقروب. |
@@ -920,14 +925,16 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged. أهد
 | Key | English | Arabic |
 |---|---|---|
 | `green.question` (the slide's title and its one heading) | Happy for us to go live? | على بركة الله، ننطلق؟ |
-| `green.next` | Your first check-in · {next.checkin} | أول مكالمة متابعة · {next.checkin} |
-| `green.rail` | Go-live · {go_live} | الإطلاق · {go_live} |
+| `green.question.live` (the fixer's round: when the cover says the starter ads are already running) | Happy for us to carry on? | على بركة الله، نكمل؟ |
+| `green.next` | Your first check-in · {next.checkin} | أول مكالمة متابعة، {next.checkin} |
+| `green.rail` | Go-live · {go_live} | الإطلاق، {go_live} |
 
 على بركة الله is how a Gulf owner gives a green light, in Kuwait and in Saudi Arabia alike. The housekeeping cards that were this slide's first stop (`green.card.charges`, `green.card.comments`, `green.card.hours`) are L12's rows now.
 
 **Spoken lines (Arabic)**
 - قبل لا نكمل، عندكم أي سؤال؟
 - على بركة الله، ننطلق؟
+- (Already live) على بركة الله، نكمل؟
 - خلنا نحجز أول مكالمة متابعة، بعد الإطلاق بأسبوع أو أسبوعين.
 - (If they hesitate) فيه شي واحد لو انحل، ترتاحون أكثر؟ خلنا نحله الحين، أو نتفق متى ينحل.
 - إذا أي شي شغل بالكم بأي وقت، قولوا لي. أنجح شركائنا هم اللي يقولون لنا الزين والشين.
@@ -983,6 +990,233 @@ Done with you, and in the other language, a slot is left out exactly as `CONTENT
 
 ---
 
+# The visual pass (CEO, 2026-10-20)
+
+The Arabic for every new or changed string in `CONTENT.md`, [The visual pass](CONTENT.md#the-visual-pass-ceo-2026-10-20), with the same keys, written under `mahara-context/skills/aziz-kuwaiti-voice` in the client register this file set (decisions 1 to 13): the firm in the plural, a white Gulf Arabic a Saudi office reads as serious, no ج/ي swaps on slides, دقايق as decision 11 spells it, digits through `Fig`. The prep and notes lines are cockpit UI, shown in English today; their Arabic is here because the lead asked for the Drive box in both languages, ready for an Arabic prep. They address one CSM, so they use the singular imperative (الصق، ارفع).
+
+**Decision 14, the visual pass.** "Example ad" is إعلان للتوضيح, plural إعلانات للتوضيح, short مثال, never قالب (a template is something that goes live) and never تجريبي (the test is الاختبار, decision 10). "Today", over the call's checklist, is اليوم. The tray, in the CSM's lines, is التصاميم, as the deck's tray head (`ads.tray.title`) calls it. A size in megabytes is ميقا, as the Gulf says it. A file's state is said from our side (نجيبه، وصل).
+
+## The call's checklist (onboarding)
+
+| Key | English | Arabic |
+|---|---|---|
+| `today.label` | Today | اليوم |
+| `today.1.short` | Launch service | خدمة الإطلاق |
+| `today.2.short` | Your access | الصلاحيات |
+| `today.3.short` | Blueprint call | مكالمة بناء الهوية |
+
+The long names are O1's agenda, unchanged (نختار خدمة الإطلاق · نجهّز الصلاحيات · نحجز مكالمة بناء الهوية والعرض). The numbers in the rings are written from `"١٢٣"`.
+
+**Spoken lines (Arabic)**
+- (O1) هذي الثلاث بنخلصها قبل لا نسكر المكالمة.
+- (O6) لما نخلص بطاقات الصلاحيات، تنحط علامة صح على الصلاحيات تحت. وهذي أكثر خطوة تأخر الإطلاق عادةً.
+- (O7, the last stop) خلونا نمر على اللي خلصناه اليوم. وإذا باقي شي، نتفق مين يخلصه ومتى.
+
+## O2 · `goals`
+
+No new words: stop 1 is the goal alone, stop 2 the other answers. `goals.input` is بكلامكم (score round 2 of the five services: the question and the track already say ٩٠ يوم); هدفكم خلال ٩٠ يوم، بكلامكم stays as the field's name for a screen reader (`goals.inputLabel`).
+
+**Spoken lines (Arabic)**
+- (Stop 1) خلوني أقرا لكم هدفكم مثل ما كتبتوه.
+
+## O3 · `team`
+
+| Key | English | Arabic |
+|---|---|---|
+| `team.reply` | We reply within 2 working hours. | نرد خلال ساعتين دوام. |
+| `team.hours` | 10 to 6, Saturday to Thursday. If something worries you, we call you. | من ١٠ صباحاً إلى ٦ مساءً، من السبت إلى الخميس. وإذا فيه شي شاغل بالكم، نتصل عليكم. |
+| `team.hours.uae` | 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. If something worries you, we call you. | من ١٠ صباحاً إلى ٦ مساءً بتوقيت السعودية (من ١١ إلى ٧ بتوقيت الإمارات)، من السبت إلى الخميس. وإذا فيه شي شاغل بالكم، نتصل عليكم. |
+
+`team.foot` and `team.foot.uae` retire; their words are these. The hours line keeps score round 2's rule: من never ends a line (the 560 px measure).
+
+**Spoken lines (Arabic)**
+- (Stop 1, once the group has filled; the English note reads "The group fills as the slide opens. Then go down the five roles.") هذا قروبكم، والفريق كله فيه. خلوني أعرفكم عليهم واحد واحد.
+- (Stop 2) ونرد خلال ساعتين دوام.
+
+The Friday line keeps its own note (الجمعة إجازة، والرسايل اللي توصل بعد الساعة ٦…), so stop 2 says the promise alone.
+
+"Your WhatsApp group" is now a small label beside the WhatsApp mark (قروب الواتساب, the appendix's 9.3 row), and `team.reply` is the stop's heading.
+
+## O4 · `one-service`
+
+| Key | English | Arabic |
+|---|---|---|
+| `one.first` (unchanged) | Your first campaign | أول حملة |
+| `one.pending` | We'll pick it together | نختارها مع بعض |
+| `one.chosen` | Chosen | اخترناها |
+| `example.tag` | Example ad | إعلان للتوضيح |
+
+**Spoken lines (Arabic)**
+- هذا مثال لإعلان عن {prep.service_focus} باسمكم. إعلاناتكم الخاصة نسويها من محتواكم.
+
+The English note names the logo too; the Arabic leaves شعاركم out, since a client with no logo sees their first letter (the fixer's round).
+
+The service is named by `service_focus_ar`; a service on file only in Latin letters is left out of the spoken line, as O7 leaves it out (score round 2's rule).
+
+## O6 · `this-week`
+
+| Key | English | Arabic |
+|---|---|---|
+| `week.now` | Now, on this call | الحين، على المكالمة |
+| `week.later` | This week, from you | هالأسبوع، منكم |
+| `week.guide` | Video guide · {m:ss} | فيديو شرح، {length in words} |
+
+The length is said in words through the deck's existing `lengthText` (decision 13, rounded to the minute): فيديو شرح، دقيقتين for 1:34, فيديو شرح، ٤ دقايق for 3:51.
+
+`week.line` (وأغلبه بنسويه مع بعض، الحين.) leaves the slide: "Now, on this call" (الحين، على المكالمة) says it a line below. It is said instead.
+
+**Spoken lines (Arabic)**
+- (As the slide opens) وأغلب هذا بنسويه مع بعض، على المكالمة نفسها.
+- خلنا نخلص صلاحيات ميتا ومنصة Mahara OS الحين.
+
+## O7 · `next`
+
+| Key | English | Arabic |
+|---|---|---|
+| `next.title.expect` | What to expect | اللي تتوقعونه |
+| `next.band.title` | Next: your Brand Blueprint call | الخطوة الجاية: مكالمة بناء الهوية والعرض |
+| `next.band.line` | 45 minutes with our creative director: your brand, your offer, your first ad scripts. | ٤٥ دقيقة مع المدير الإبداعي: هويتكم، وعرضكم، وسكربتات أول إعلاناتكم. |
+
+`next.title` (the overview's title) stays اللي تتوقعونه، والخطوة الجاية. The two band strings are `next.band` split at its middot, word for word. Stop 1's strip of example tiles carries `example.tags` (إعلانات للتوضيح).
+
+**Spoken lines (Arabic)**
+- (Stop 1, the strip) هالصور الصغيرة أمثلة لإعلانات، مو إعلاناتكم: أغلبها نوقفه، وكم واحد يكمل. وهذا هو الاختبار.
+
+## Example ads
+
+| Key | English | Arabic |
+|---|---|---|
+| `example.tag` | Example ad | إعلان للتوضيح |
+| `example.tags` | Example ads | إعلانات للتوضيح |
+| `example.short` | Example | مثال (also the chip on L5's form cover when it is the example's picture) |
+| `ads.lineExample` (new) | Where your ads will show on your customers' phones. | هذي الأماكن اللي بتطلع فيها إعلاناتكم على جوالات عملائكم. |
+| `ads.foot.example` | Meta fits each ad to the screen it shows on. | ميتا تضبط الإعلان على مقاس الشاشة اللي يطلع فيها. |
+
+`ads.empty` is unchanged (نشتغل على أول إعلاناتكم الحين): the title's tag and the thumbnail's chip already say the phones show an example. `ads.lineEmpty` (بهالشكل بتطلع إعلاناتكم…) stays for the starter case only: beside an example it would call the example their look.
+
+**The pictures' alt text** (إعلان للتوضيح: {scene}):
+
+| Theme | English scene | Arabic scene |
+|---|---|---|
+| kitchen | a finished kitchen with an oak and quartz island | مطبخ جديد بجزيرة كوارتز وخشب بلوط |
+| living | a new villa living room | صالة جديدة في فيلا |
+| majlis | a contemporary majlis with carved wood and brass lanterns | مجلس عصري بخشب محفور وفوانيس نحاس |
+| villa | a new two-storey villa at golden hour | فيلا جديدة من دورين وقت الغروب |
+| construction | a villa's concrete frame on a tidy site | هيكل خرساني لفيلا في موقع مرتب |
+| bathroom | a marble bathroom with a stone bathtub | حمام رخام فيه بانيو حجر |
+| pool | a villa pool at dusk | مسبح فيلا وقت المغرب |
+| landscape | a landscaped villa garden with a pergola | حديقة فيلا منسقة فيها برجولة |
+| bedroom | a calm master bedroom | غرفة نوم رئيسية هادية |
+| office | a fitted-out office with a glass meeting room | مكتب مجهّز فيه غرفة اجتماعات زجاج |
+| facade | a renovated villa facade in stone | واجهة فيلا مجددة بالحجر |
+| stairs | an entrance hall with a floating marble staircase | مدخل فيه درج رخام معلّق |
+
+**Inside an example phone** the Arabic deck's caption is `selling_point_ar`, else `service_focus_ar`, else nothing; the button is معرفة المزيد (Meta's label, decision 9).
+
+**Spoken lines (Arabic)**
+- (L2 stop 1, when its phone shows the example) هذا إعلان للتوضيح، ومكتوب عليه كذا. ولما تجهز إعلاناتكم، تطلع مكانه.
+- (L4, when the phones show the example) هذي إعلانات للتوضيح، ومكتوب عليها كذا. ولما تجهز إعلاناتكم، تطلع مكانها.
+- (L3 stop 1) هالمربعات أمثلة لإعلانات، مو إعلاناتكم. الفكرة إنكم تشوفون كم إعلان نختبر.
+
+## L3 · `creative-freedom`, stop 3
+
+| Key | English | Arabic |
+|---|---|---|
+| `test.field.tag` (changed: it read توضيح) | Example ads | إعلانات للتوضيح |
+| `test.field.tag.pick` (new: when their pick is on the field) | Example ads, and your pick | إعلانات للتوضيح، واختياركم |
+| `test.fixed.source.both` | From your card, and what you told us on the onboarding call. | من ملفكم، ومن اللي قلتوه لنا بمكالمة التعريف. |
+| `test.fixed.source.card` | From your card. | من ملفكم. |
+| `test.fixed.source.told` | What you told us on the onboarding call. | اللي قلتوه لنا بمكالمة التعريف. |
+| `test.fixed.card` (renamed: it read من ملفكم, which the source line now says) | On your card, in English | بملفكم، بالإنجليزي |
+
+Off the canvas: `test.fixed.name` (الثابت: خطوطكم الحمراء), `test.fixed.copy` (وهذي ما نتعداها أبد.), `test.fixed.told` (قلتوا لنا).
+
+**The heads say it once.** Under أبداً a line drops a leading أبد or أبداً; under دايماً a leading دايماً or دائماً. A line's own ما or لا stays, so أبداً over ما نعرض الأسعار reads as one sentence, the way the heads were meant (score round 2).
+
+**The card's lines in Arabic (`dos_donts_ar`).** Each card line gets its Arabic in prep, typed by the CSM in this register and without أبد or دايماً (the head says it): "Never show prices in an ad" → ما نعرض الأسعار بالإعلان; "Show our real projects, never stock photos" → نعرض مشاريعكم الحقيقية، مو صور جاهزة. A line with its Arabic sits in its group like any other; a line without one stays in English, quoted as written, and prep counts it. The panel keeps the English deck's two columns, أبداً and دايماً (score round 2 of the five services: it had stacked its groups, then the English block under a third head with run-in heads): each column lists its Arabic lines first, then that column's English card lines as one left-to-right block at the column's start, its marks on its own left. The first such block carries the small tag بملفكم، بالإنجليزي in ink-3, said once on the panel.
+
+**Spoken lines (Arabic), stop 3, changed:** the input line first, unchanged (أي فكرة أو عرض جديد أو سعر جديد أو تغيير، أرسلوه بالقروب قبل لا نسوي الإعلانات الجاية، عشان يكون فيها من البداية، وإحنا نرد عليكم بالسبب.), then the red lines: وبعدها خلوني أقرا لكم خطوطكم الحمراء.. فيه شي ثاني ما تبونا نقوله أو نوريه أبد؟
+
+## L7 · `partnership`
+
+| Key | English | Arabic |
+|---|---|---|
+| `partner.piece.meeting` (new) | The meeting | الموعد |
+| `partner.piece.close` (changed: it read الموعد وتوقيع المشروع) | The close | توقيع المشروع |
+
+Done with you is unchanged. The spoken lines keep الموعد وتوقيع المشروع as one phrase.
+
+## L8 · `training`
+
+| Key | English | Arabic |
+|---|---|---|
+| `training.when.line` (changed) | Everyone who meets your customers or sends the quotes watches it, starting with the sales crash course. | كل اللي يقابل عملاءكم أو يرسل عروض الأسعار يشوفه، ويبدي بأول قسم فيه، أساسيات البيع. |
+
+The Latin "Sales crash course" left the middle of the sentence (the score round's finding): the screenshot beside it shows the section's own English name, and the line says what it is. Point 6 of "Points for the lead" is settled this way. The spoken line changes with it: (The lesson) وأول قسم فيه، أساسيات البيع. ابدوا منه.
+
+## The Drive link (prep's ads panel and the notes window; cockpit UI)
+
+| English | Arabic |
+|---|---|
+| Bring in from Drive | جيب من الدرايف |
+| Paste a Drive link | الصق رابط من الدرايف |
+| A folder, or one video or picture. The first files arrive in the tray in about a minute. | مجلد، أو فيديو أو صورة وحدة. أول الملفات توصل للتصاميم خلال دقيقة تقريباً. |
+| Bring in · Checking… · Started | جيب · نتأكد من الرابط… · بدينا |
+| {link}: {its sentence} (one line per refused link) | {link}: {its sentence} |
+| Skipped | تركناه |
+| Only the first 10 links were sent. Paste the rest once these finish. | أرسلنا أول ١٠ روابط بس. الصق الباقي لما تخلص هذي. |
+| Bringing in {n} links from Drive… | نجيب {n} روابط من الدرايف… (٢: رابطين · ٣ إلى ١٠: {n} روابط) |
+| Bringing in {n} of {total} links from Drive… | نجيب {n} من {total} روابط من الدرايف… (the noun follows {total}: ٣ إلى ١٠ روابط، ١١ وفوق رابط) |
+| Waiting to start. It usually starts within a minute. | ينتظر دوره. عادةً يبدي خلال دقيقة. |
+| Opening the Drive link… | نفتح رابط الدرايف… |
+| Bringing in {n} files from Drive… | نجيب {n} ملفات من الدرايف… (١: ملف واحد · ٢: ملفين · ٣ إلى ١٠: {n} ملفات · ١١ إلى ٢٠: {n} ملف) |
+| Waiting · Bringing in · In the tray · Already in the tray | ينتظر · نجيبه · وصل للتصاميم · موجود من قبل |
+| Brought in {n} files from Drive. | جبنا {n} ملفات من الدرايف. (the same number forms) |
+| Brought in {landed} of {n} files. Each one that didn't come in says why below. | جبنا {landed} من {n}. واللي ما وصل، مكتوب تحته السبب. |
+| Everything in this link is already in the tray. | كل اللي في هالرابط موجود بالتصاميم من قبل. |
+| Only the newest 20 came in. Paste a subfolder's link for the rest. | وصل أحدث ٢٠ ملف بس. وللباقي، الصق رابط مجلد من داخله. |
+| Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now. | ما بدينا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع تشتغل. |
+| This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now. | الاستيراد وقف بالنص. آخر مرة اشتغلت أداة الدرايف {time}. بيكمل من مكانه أول ما ترجع تشتغل، وإذا تحتاج الملفات الحين، ارفعها هنا. |
+| The Drive importer hasn't run yet. Upload the files here for now. | أداة الدرايف ما اشتغلت للحين. ارفع الملفات هنا لين تشتغل. |
+| Couldn't check the import: {reason}. Trying again. | ما قدرنا نتأكد من الاستيراد: {reason}. نحاول مرة ثانية. |
+| Show the list ({n}) · Hide the list | اعرض القائمة ({n}) · سكّر القائمة |
+| Clear the link | امسح الرابط |
+| Bringing in from Drive isn't live yet. Upload the files here for now. | الاستيراد من الدرايف ما صار جاهز للحين. ارفع الملفات هنا لين يجهز. |
+
+**The server's sentences** (`DRIVE-IMPORT.md` 6, by code):
+
+| Code | English | Arabic |
+|---|---|---|
+| `link_empty` | Paste a Drive link: a folder, or one video or picture. | الصق رابط من الدرايف: مجلد، أو فيديو أو صورة وحدة. |
+| `link_docs` | That's a Google Docs link. Paste a Drive folder, or one video or picture. | هذا رابط مستند من Google Docs. الصق رابط مجلد بالدرايف، أو فيديو أو صورة وحدة. |
+| `link_page` | This link opens a Drive page, not a folder. Open the folder and copy its link. | هذا الرابط يفتح صفحة بالدرايف، مو مجلد. افتح المجلد وانسخ رابطه. |
+| `link_bad` | This isn't a Drive folder or file link. | هذا مو رابط مجلد أو ملف بالدرايف. |
+| `too_many_open` | Ten imports are already running for this client. Wait for one to finish, then paste the link again. | فيه ١٠ عمليات استيراد شغالة لهالعميل. انتظر وحدة تخلص، وبعدها الصق الرابط مرة ثانية. |
+| `too_many_links` | Too many Drive links in the last hour. Wait a few minutes, then paste it again. | وصلتنا روابط درايف كثيرة خلال آخر ساعة. انتظر كم دقيقة، وبعدها الصق الرابط مرة ثانية. |
+| `not_found` (a folder) | We can't open this folder. Ask the client to share it as anyone with the link, or move it into their Drive folder. | ما نقدر نفتح هالمجلد. اطلب من العميل يشاركه مع أي شخص لديه الرابط، أو ينقله داخل مجلدهم بالدرايف. |
+| `not_found` (a file) | We can't open this file. Ask the client to share it as anyone with the link, or move it into their Drive folder. | ما نقدر نفتح هالملف. اطلب من العميل يشاركه مع أي شخص لديه الرابط، أو ينقله داخل مجلدهم بالدرايف. |
+| `not_found` (an open?id= link) | We can't open this link. Ask the client to share it as anyone with the link, or move it into their Drive folder. | ما نقدر نفتح هالرابط. اطلب من العميل يشاركه مع أي شخص لديه الرابط، أو ينقل الملف داخل مجلدهم بالدرايف. |
+| `not_media` | That file isn't a picture or a video. Paste a folder, or one video or picture. | هالملف مو صورة ولا فيديو. الصق رابط مجلد، أو فيديو أو صورة وحدة. |
+| `nothing_found` | There are no pictures or videos in this folder, or in the folders inside it. | ما فيه صور ولا فيديوهات في هالمجلد، ولا في المجلدات اللي داخله. |
+| `drive_down` | Drive can't be reached from our side right now. Upload the files here instead. | ما نقدر نوصل للدرايف من عندنا الحين. ارفع الملفات هنا بدال الرابط. |
+| `access_revoked` | This import stopped: whoever started it can no longer open this client. | توقف الاستيراد: اللي بداه ما عاد يقدر يفتح هالعميل. |
+| `stopped` | This import stopped three times without bringing anything in. Paste the link again, or upload the files here. | توقف الاستيراد ثلاث مرات وما جاب شي. الصق الرابط مرة ثانية، أو ارفع الملفات هنا. |
+| `not_started` | This import couldn't start. Paste the link again, or upload the files here. | ما قدرنا نبدي بالاستيراد. الصق الرابط مرة ثانية، أو ارفع الملفات هنا. |
+| `too_big` (a video) | {name} is too long or too large to bring in. Upload a cut under 5 minutes, or send it in the group. | {name} طويل أو حجمه كبير، وما نقدر نجيبه. ارفع نسخة أقل من ٥ دقايق، أو أرسله بالقروب. |
+| `too_big` (a picture) | {name} is over 150 MB. Export a smaller copy and upload it here. | {name} أكبر من ١٥٠ ميقا. صدّر نسخة أصغر وارفعها هنا. |
+| `wrong_type` | {name} isn't a picture or a video we can show. Pictures: JPG, PNG, WebP. Videos: MP4, MOV, WebM. | {name} مو صورة أو فيديو نقدر نعرضه. الصور: JPG وPNG وWebP. الفيديوهات: MP4 وMOV وWebM. |
+| `heic` | {name} is an iPhone photo (HEIC) we couldn't convert. Export it as JPG and upload it here. | {name} صورة آيفون (HEIC) ما قدرنا نحولها. صدّرها JPG وارفعها هنا. |
+| `unplayable` | {name} couldn't be converted to play in a browser. Export it as MP4 and upload it here. | {name} ما قدرنا نحوله عشان يشتغل بالمتصفح. صدّره MP4 وارفعه هنا. |
+| `download` | {name} didn't come through from Drive. Paste the link again; files already in the tray are skipped. | {name} ما وصل من الدرايف. الصق الرابط مرة ثانية، واللي بالتصاميم ما يتكرر. |
+| `storage` | {name} didn't save. Paste the link again; files already in the tray are skipped. | {name} ما انحفظ. الصق الرابط مرة ثانية، واللي بالتصاميم ما يتكرر. |
+| `unfinished` | {name} didn't finish. Paste the link again; files already in the tray are skipped. | {name} ما كمل. الصق الرابط مرة ثانية، واللي بالتصاميم ما يتكرر. |
+| `full` | This client has 200 files already. Remove some, then paste the link again. | عند هالعميل ٢٠٠ ملف. شيل بعضها، وبعدها الصق الرابط مرة ثانية. |
+| `converted` (a note on a file that landed, not a failure; it replaces the `hevc` note: HEVC is now converted) | {name} was converted to MP4 so it plays in every browser. | {name} حوّلناه MP4 عشان يشتغل على كل المتصفحات. |
+
+`{name}` is the file's Drive name, in `<bdi dir=auto>`, as any name is (DESIGN 13.2). Latin product names (Google Docs, JPG, HEIC, Safari) stay in Latin and are isolated.
+
+---
+
 # Appendix: canvas labels that live in DESIGN.md
 
 `DESIGN.md` draws a few labels on the canvas that `CONTENT.md` does not list. They are given here so the Arabic is in one place. The decision table in `CONTENT.md` rules wherever the two files once disagreed, and `DESIGN.md` 16.2 rules on media. Notes-window and prep-view strings are cockpit UI, in English, and are not listed.
@@ -990,17 +1224,17 @@ Done with you, and in the other language, a slot is left out exactly as `CONTENT
 | Where (DESIGN) | English | Arabic |
 |---|---|---|
 | 5.4 tags | Preview · Your form · Example form · Example · Example wording · Example written from our script · Demo workspace · Starter, from our templates · Illustration · Academy screenshot | معاينة · نموذجكم · نموذج للتوضيح · مثال · صياغة للتوضيح · مثال مكتوب من سكربتنا · حساب تجريبي · إعلان بداية، من قوالبنا · توضيح · لقطة من الأكاديمية |
-| 6.5 queue card | New enquiry · {service} | استفسار جديد · {service} |
-| 6.5 queue card | Try 2 of 4 · {service} · 5 pm | المحاولة ٢ من ٤ · {service} · ٥ مساءً |
-| 6.5 queue card | Callback · {service} · 10 am | معاودة اتصال · {service} · ١٠ صباحاً |
-| 6.5 queue card | Not reached after 4 tries · reason noted | ما ردّ بعد ٤ محاولات · السبب مكتوب |
+| 6.5 queue card | New enquiry · {service} | استفسار جديد، {service} |
+| 6.5 queue card | Try 2 of 4 · {service} · 5 pm | المحاولة ٢ من ٤، {service}، ٥ مساءً |
+| 6.5 queue card | Callback · {service} · 10 am | معاودة اتصال، {service}، ١٠ صباحاً |
+| 6.5 queue card | Not reached after 4 tries · reason noted | ما ردّ بعد ٤ محاولات، السبب مكتوب |
 | 6.5 queue card | Came in at night? Called from 10 the next working morning. | وصل بالليل؟ نتصل عليه من الساعة ١٠ صباح أول يوم دوام. |
 | 6.8 queue chip, DWY | Your team | فريقكم |
-| 6.5 calendar entry | {day} · 4 pm · Appointment · {place} | {day} · ٤ مساءً · موعد · {place} |
+| 6.5 calendar entry | {day} · 4 pm · Appointment · {place} | {day} · ٤ مساءً · موعد، {place} |
 | 7.2 to 7.4 Meta chrome | See more · Like · Comment · Share | عرض المزيد · أعجبني · تعليق · مشاركة |
 | 7.3 label | Reels and Stories | ريلز وستوري |
-| 8.3 leaders | Your page and logo · Marked {word} · Your picture or video · Your words · The button: Learn more | صفحتكم وشعاركم · مكتوب عليه {word} · صورتكم أو الفيديو · كلامكم · الزر: معرفة المزيد |
-| 8.3 leaders, {word} | The word as the phone shows it, in the phone's language: Sponsored, or مُموَّل | |
+| 8.3 leaders ({word} is the phone's Sponsored named in the deck's language, مُموَّل in the Arabic deck, Sponsored in the English one, since score round 1; the button stays as the phone shows it, isolated after the colon) | Your page and logo · Marked {word} · Your picture or video · Your words · The button: Learn more | صفحتكم وشعاركم · مكتوب عليه {word} · صورتكم أو الفيديو · كلامكم · الزر: معرفة المزيد |
+| 8.3 leaders, {word} | The phone's Sponsored named in the deck's language, whatever the phone's: Sponsored | مُموَّل |
 | 8.3 crop leader | Meta crops this to 4:5 in the feed | ميتا تقص هذا على مقاس ٤:٥ في الفيد |
 | 8.3 phone fallback | Your ad goes here | إعلانكم هنا |
 | 8.3 foot | Previews. Meta fits each ad to the screen it shows on. | معاينات. ميتا تضبط كل إعلان على الشاشة اللي يطلع فيها. |
@@ -1037,6 +1271,7 @@ The thank-you default and the example form speak to the customer, so they are si
 7. **ميتا تقيّد الحساب** (L12) says what Meta does to an account after repeated failed payments in plain words. Check it against the wording Meta shows an Arabic advertiser.
 8. **Mahara's name in Arabic** (2026-10-20, closed the same day). The welcome slot's title is حياكم الله في مهارة: the company is مهارة in Arabic, as the cockpit's own client messages and the sales deck spell it. Mahara OS stays Latin, the product's name.
 9. **The seeded videos' language** (`CONTENT.md` open question 30). Four are seeded for any language (the welcome video, the two Loom guides and, since the CEO's request of 2026-10-20, the calendar Loom). If one speaks only English, its row becomes English, and the Arabic deck stops showing it on the canvas and in the recap. The Mahara OS guide is the only one with an Arabic recording, titled in Arabic on Wistia.
+10. **Drive's Arabic name for "Anyone with the link"** (the Drive box's three `not_found` sentences, spec review of the visual pass). The sentences say أي شخص لديه الرابط, and the CSM asks the client to do both (يشاركه، أو ينقله). If Drive's Arabic sharing menu names the setting differently, use its words, so the client finds the setting by the name the CSM says.
 
 ---
 
@@ -1063,7 +1298,7 @@ The Arabic follows `CONTENT.md`'s copy rules 1, 5 and 6 as rewritten that day, l
 - `days.3.when` is «وبعدها كل أسبوع أو كل أسبوعين», and the new `days.3.why` is «على حسب باقتكم، وكم صار لكم معنا.»
 - Spoken lines: stop 3 now says the promise, the hours, the night rule and the tries in one line (it replaces the night answer), and a second line gives a UAE client's hours, as the slide's UAE line does; L5 gains the night line «واللي يوصل بالليل، نتصل عليه من الساعة ١٠ الصبح بأول يوم دوام.» in the journey's own words; the no-show line adds «ونتصل عليه ونحجز له من جديد»; the shared follow-up at stop 6 (فريق الاتصال عندنا, so it is clear whose callers) and the rhythm on the 90 days are new.
 - The done-with-you queue chip «فريقكم: اتصلوا الحين» becomes «فريقكم»: it says who calls, and the stop's words beside it say how fast (اتصلوا خلال ٥ دقايق). The done-for-you chip «أول القائمة» was never drawn and is gone.
-- Unchanged on purpose: the chip «لين ٤ محاولات خلال ٣ أيام دوام», the first check-in «أول مكالمة متابعة · بعد أسبوع أو أسبوعين», the no-show «علينا. نتصل عليه ونحجز له من جديد.», and every DWY fork line.
+- Unchanged on purpose: the chip «لين ٤ محاولات خلال ٣ أيام دوام», the first check-in «أول مكالمة متابعة، بعد أسبوع أو أسبوعين», the no-show «علينا. نتصل عليه ونحجز له من جديد.», and every DWY fork line.
 
 ---
 
@@ -1145,7 +1380,7 @@ The reviewers' Arabic was used where they gave it; the rest under `mahara-contex
 - **L8:** اللي يجونكم من الإعلانات أول مرة يقابلونكم، وهالكورس يعلمكم كيف تكسبونهم. and the label أكاديمية المشاريع المميزة.
 - **L9:** لغى أو غيّر موعده معكم مباشرة؟ قولوا لنا بالقروب، ونعدّل التذكيرات أو نتصل عليه ونحجز له من جديد.
 - **L10:** the key reads مسكّر, the word the notes already use for a blocked day (اليوم المسكّر).
-- **L12:** زين تعرفونه, with الفلوس and الرسايل.
+- **L12:** أشياء تهمكم, with الفلوس and الرسايل.
 - **The recap:** the testing line adds والتعديلات الصغيرة على الشكل تروح للإعلانات الجاية عشان إطلاقكم ما يتأخر and the content ask; the money and first-weeks lines are new.
 - **Still English in the Arabic panel:** a card Do's & Don'ts line written in English stays English on L3 until prep can hold an Arabic version of it (a server prep key, the backend's).
 
@@ -1155,7 +1390,7 @@ The reviewers' Arabic was used where they gave it; the rest under `mahara-contex
 
 In the deck's warm client register, under `mahara-context/skills/aziz-kuwaiti-voice`; every new line reuses the slides' own words.
 
-- **L2:** the queue card names each row's own service in Arabic (`prep.services_ar`: المطابخ، الحمامات، تشطيب فيلا كاملة in the harness), and a row past the list leaves its service out: المطابخ is never read three times. «٥ دقايق» is underlined in teal on stop 3, as on L5's band.
+- **L2:** the queue card names each row's own service in Arabic (`prep.services_ar`), and a row past the list leaves its service out. Since score round 1 of the five services (2026-10-21) its rows are the launch service, then the client's words for that same service only: never a sub-trade (المطابخ، الحمامات، الخزائن) and never another service's words (تشطيب فيلا كاملة in an interior design queue). The harness reads استفسار جديد، تصميم داخلي · المحاولة ٢ من ٤، تصميم داخلي للفلل · معاودة اتصال، تصميم المجالس. «٥ دقايق» is underlined in teal on stop 3, as on L5's band.
 - **L3:** the panel's heads are أبد and دايماً; a line typed on O7 carries a small قلتوا لنا after it; the card's English lines sit under من ملفكم, quoted as written, so they never read as our own copy left untranslated. ملفكم, not بطاقتكم: the fallback already says ونضيفها لملفكم for the same card.
 - **L8:** the Arabic lead already said يعلمكم كيف تكسبونهم; the English now says the same ("shows you how to win them").
 - **L9:** the Arabic overview's row ends at ملاحظاتك, as the English ends at "Your feedback"; جودة العميل and كيف سار الموعد are masked.
@@ -1164,3 +1399,95 @@ In the deck's warm client register, under `mahara-context/skills/aziz-kuwaiti-vo
 - **O7:** the testing line is three lines, the same words: the ads' job; نختبر إعلانات كثيرة، وبسرعة … small; and the ask over the red lines, وخطوطكم الحمراء ثابتة …, its و kept, since it reads on from the line above.
 - **The recaps:** مين يسوي إيش: … in the launch recap until its three videos are recorded (both service models); O6's links carry إعلاناتكم هدفها تجيب لكم شغل. نختبر إعلانات كثيرة وبسرعة … وأرسلوا خطوطكم الحمراء بالقروب. until the `testing` video is.
 - **Still English in the Arabic panel, now quoted:** a typed Arabic line per card item (`dos_donts_ar`) waits on the server key, which is the backend agent's migration.
+
+---
+
+# Spec review of the visual pass (2026-10-20)
+
+In the deck's warm client register for the slides and the singular imperative for the CSM's box, under `mahara-context/skills/aziz-kuwaiti-voice`, Saudi-safe; every new line reuses words this file already set. `DESIGN.md` 22.10 is the change log.
+
+- **L4:** `ads.lineExample`, هذي الأماكن اللي بتطلع فيها إعلاناتكم على جوالات عملائكم.: the line names where the ads show, never how theirs look, beside an example. `ads.empty` stays as it was.
+- **L3:** إعلانات للتوضيح، واختياركم when their pick is on the field, so their own ad is never called an example.
+- **O3, O6, O7:** three spoken lines; O6's `week.line` is said, not shown.
+- **The alt text:** صالة جديدة في فيلا, with no city: a generated room is no real place's.
+- **The Drive box:** أول الملفات توصل للتصاميم خلال دقيقة تقريباً (the first files, not all of them); the over-ten line and the plural نجيب {n} روابط; ١٠ open imports; the restricted-link sentences name the fix in the client's terms (يشاركه مع أي شخص لديه الرابط, the wording Drive's own Arabic sharing menu uses for "Anyone with the link", to be checked against it, point 10 of "Points for the lead"); الاستيراد ما بدا is said from our side, ما قدرنا نبدي بالاستيراد (decision 14); a converted video's note replaces the HEVC note; the too-big video sentence gives the 5-minute cut, ٥ دقايق as decision 11 spells it.
+
+## The fixer's round, score round 1 (2026-10-21)
+
+Written under `aziz-kuwaiti-voice`, the client register (warm, professional, Saudi-safe). `DESIGN.md` 22.12 has the why.
+
+| Key | English | Arabic |
+|---|---|---|
+| `cover.roadLive` | Live since {date} · Launch call today | منطلقين من {date}، ومكالمة الإطلاق اليوم (score round 4: و ties the two facts; a bare comma read as a list) |
+| `portal.installLabel` | Open this on your phone | افتحوا هالرابط من جوالكم |
+| `next.cardName` | Brand Blueprint call | مكالمة بناء الهوية والعرض |
+| `next.cardWith` | 45 minutes · Our creative director | ٤٥ دقيقة مع المدير الإبداعي (score round 4: the attendee needs مع, as the band line says) |
+| `next.cardOpen` | We book it before we hang up | نحجزها قبل لا نسكر المكالمة |
+
+`road.stop.4` keeps بناء الهوية والعرض (the English now reads "Brand Blueprint call"; the Arabic already named the same call). `team.line` (كل اللي يشتغلون على حسابكم معكم في هالقروب.) is said, not shown: the Arabic notes' stop 1 line (هذا قروبكم، والفريق كله فيه) already says it. `example.tag` was إعلان مثال here (decision 14): the score round read it as a calque and suggested نموذج, but نموذج is the decks' word for a form, so "نموذج إعلان" would read as an ad form. Score round 4 settled it as إعلان للتوضيح, the deck's own pattern for the same idea (نموذج للتوضيح، صياغة للتوضيح), which avoids نموذج, قالب and تجريبي.
+
+## The fixer's round, score round 2 (2026-10-21)
+
+Written under `aziz-kuwaiti-voice`, the client register (warm, professional, Saudi-safe). `DESIGN.md` 22.13 has the why. No new words on the canvas: O5's example confirmation reuses the live template's Arabic (تم تأكيد موعدك مع [اسم الشركة]. / التاريخ: {date} / الوقت: {time} / نشوفك على خير.) under صياغة للتوضيح, its date and time in the template's Latin digits as on L6; O7's empty day reuses `next.cardName` and `next.cardOpen`.
+
+| Key | English | Arabic |
+|---|---|---|
+| L3 notes, stop 3 (new) | Stop 3, if they point at the pictures: "These are examples, to show how testing works. Your ads use your projects." | هذي أمثلة توضح كيف نختبر، وإعلاناتكم تكون من مشاريعكم. |
+
+
+## The five main services (CEO, 2026-10-21)
+
+Written under `aziz-kuwaiti-voice`, the client register (warm, professional, Saudi-safe). `CONTENT.md` [The five main services](CONTENT.md#the-five-main-services-ceo-2026-10-21) has the English and the rules; `DESIGN.md` 22.14 has the why.
+
+**Decision 15, the five main services.** The service is one of the kickoff form's five, said as a label on the canvas and with ال inside a sentence; never a sub-trade (مطابخ، حمامات) as the service. The lead's draft named construction مقاولات وبناء; the decks say بناء وإنشاءات, because decision 3 keeps مقاول out of Mahara's Arabic (the voice skill's rule for the buyer, and EXAMPLE-CALL's «Never مقاول in Mahara's Arabic»), and إنشاءات is how a building firm names its own work. "Other" is خدمة أخرى as the row's name, and the client's own words everywhere else. The separator inside an Arabic line is «، », never a middle dot: beside Arabic-Indic digits a dot reads as ٠ (score round 3); every Arabic line in `content.ts` already uses it.
+
+| Key | English label | Arabic label | Arabic inside a sentence |
+|---|---|---|---|
+| `design-build` | Design and build | تصميم وتنفيذ | التصميم والتنفيذ |
+| `interior` | Interior design | تصميم داخلي | التصميم الداخلي |
+| `architecture` | Architectural design | تصميم معماري | التصميم المعماري |
+| `fitout` | Fit-out and renovation | تشطيب وترميم | التشطيب والترميم |
+| `construction` | Construction | بناء وإنشاءات | البناء والإنشاءات |
+| `other` | Other | خدمة أخرى | the client's own words |
+
+In a sentence: لخدمة التصميم الداخلي (O7's starter line), إعلان عن التشطيب والترميم (O4's spoken line), مرتاحين نبدي بخدمة البناء والإنشاءات؟ (the temp check), بخصوص التصميم المعماري (the example call), أبي أعرف أكثر عن التصميم والتنفيذ (the WhatsApp message). On the queue card the label: استفسار جديد، تصميم داخلي.
+
+**Slide 4's rows.** The client's own words under a row stay as they wrote them, in their own direction (`<bdi>`); more than fit on the line are counted after them as +٢, set left to right so it never reads ٢+ in front of a Latin line.
+
+**Spoken line, O4 (replacing the first one)**
+- هذي الخدمات الخمس الأساسية اللي نسوي لها حملات. أي وحدة فيها الأسهل بالبيع؟ وأي وحدة تجيب لكم أكثر ربح؟ وأي وحدة الأريح لكم بالتنفيذ؟
+
+Not خدماتنا: the five are the client's kind of work, not services Mahara sells.
+
+**The six new example scenes' alt text** (إعلان للتوضيح: {scene}):
+
+| Scene | English scene | Arabic scene |
+|---|---|---|
+| construction2 | a residential tower's concrete frame under a crane at dusk | هيكل خرساني لبرج سكني وفوقه رافعة وقت المغرب |
+| construction3 | a two-storey villa's concrete frame with scaffolding | هيكل خرساني لفيلا من دورين وحوله سقالات |
+| fitout2 | a fitted-out boutique with stone counters and lit shelves | محل مجهّز بكاونترات حجر ورفوف فيها إضاءة |
+| fitout3 | a fitted-out restaurant with timber booths and brass lights | مطعم مجهّز بجلسات خشب وإضاءة نحاس |
+| designbuild | a new villa's glass living room over its pool at dusk | صالة زجاج في فيلا جديدة تطل على المسبح وقت المغرب |
+| architecture2 | a modern villa with a timber-screened upper floor | فيلا حديثة دورها العلوي عليه سواتر خشب |
+
+**Inside an example phone** the Arabic caption is `selling_point_ar` only, else nothing (no longer `service_focus_ar`); the Facebook headline is the service's Arabic label. The service is never written into a caption as if it were the client's copy.
+
+**O6, the Mahara OS card without its video:** the demo workspace's phone, tagged حساب تجريبي (the portal slide's own tag).
+
+**Harness only, the starter client's two starter templates** (fit-out and renovation, Kuwait; never on a client's deck, written in the same register so the preview reads as a real fit-out firm's ads, where they said نجدد مطبخكم):
+
+| Phone | Arabic |
+|---|---|
+| Feed | نشطّب ونرمّم المحلات والمطاعم والمكاتب، من المخطط لين التسليم. |
+| Reels | من أول معاينة للموقع لين آخر لمسة. |
+
+**Score round 4 (2026-10-21), the Arabic.** Reviewed under `aziz-kuwaiti-voice` (warm-professional client register, Saudi-safe):
+- "Example ad" is إعلان للتوضيح, plural إعلانات للتوضيح (decision 14, changed): إعلان مثال read as a word-for-word "Example ad"; the short tag stays مثال.
+- The red lines' Never head is أبداً (أبد alone read as a cut-off word), beside دايماً; the quoted English block keeps its own أبداً and دايماً when it holds both.
+- `next.cardWith` is ٤٥ دقيقة مع المدير الإبداعي; `cover.roadLive` is منطلقين من {date}، ومكالمة الإطلاق اليوم.
+- Scenes: fitout2 محل مجهّز بكاونترات حجر ورفوف فيها إضاءة (a counter is كاونتر, not طاولة); designbuild تطل على المسبح; architecture2 عليه سواتر خشب; construction2 وفوقه رافعة; construction without its comma.
+- Spoken: الفكرة إنكم تشوفون كم إعلان نختبر (L3 stop 1); تنحط علامة صح (O6).
+- The Drive box: {time} is said with الساعة (الساعة 13:02، أمس الساعة 09:05); nobody's line is ما بدينا فيه للحين … لين ترجع تشتغل; the stalled line names its subject (الاستيراد وقف بالنص) with a comma before ارفعها; `notLive` is الاستيراد من الدرايف, never الجلب; `too_many_links` is said from our side (وصلتنا روابط درايف كثيرة … الصق الرابط مرة ثانية); `wrong_type` says الفيديوهات beside الصور.
+- The notes window's Arabic temp check is filled from the Arabic slots; with no Arabic name for the service it reads (اسم الخدمة), a cue for the CSM, never a Latin name or الخدمة twice. A kickoff answer of أخرى, خدمة أخرى or غيرها is "Other" with nothing typed, never the client's words.
+- Every single-string row above that still showed a middle dot now shows «، » (decision 15).
+

@@ -8,8 +8,11 @@ import type { LaunchAd, MetaAd } from "./sources";
  */
 export interface Creative {
   id: string;
-  /** Where it came from: an upload, or a Meta ad. */
-  from: "upload" | "meta";
+  /**
+   * Where it came from: an upload, a Meta ad, or Mahara's own example
+   * picture shown before they have any (examples.ts, always labelled).
+   */
+  from: "upload" | "meta" | "example";
   name: string;
   url: string | null;
   poster: string | null;

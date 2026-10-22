@@ -15,6 +15,10 @@
     python3 desk.py archive [--limit N]        keep our own copy of the ads we ran
     python3 desk.py notes [--task ID]          pull ClickUp comments in as timestamped notes
     python3 desk.py jobs [--mine EMAIL]        what is open, and what is blocking it
+    python3 desk.py deck-import [--limit 3]    the client success Drive links into the ads tray,
+                                               then the video slots' posters
+    python3 desk.py deck-import --dry-run --link LINK
+                                               read-only: what a Drive link would bring in
 
 Standard library plus ffmpeg. Keys are read by name and never printed. The
 desk builds no timeline, generates no clip and burns in no caption: the cut
@@ -41,7 +45,7 @@ from desk.clickup import ClickUp, fields_of, is_open, job_row  # noqa: E402
 from desk.config import Config  # noqa: E402
 from desk.drive import Drive  # noqa: E402
 from desk.log import Logger  # noqa: E402
-from desk.supabase import Supabase, SupabaseError, now_iso  # noqa: E402
+from desk.supabase import RpcError, Supabase, SupabaseError, now_iso  # noqa: E402
 
 DOC_RE = re.compile(r"https://docs\.google\.com/document/d/[A-Za-z0-9_-]+")
 
@@ -117,6 +121,8 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                 add("supabase tables", True, f"editor_jobs reachable, {n} job(s) stored", True)
             except (http.HttpError, SupabaseError) as e:
                 add("supabase tables", False, f"{http.scrub(str(e))[:180]} (see README for the DDL)", True)
+        if cfg.supabase_configured:
+            _doctor_deck_import(cfg, add)
         if cfg.elevenlabs_key:
             try:
                 out = http.get_json("https://api.elevenlabs.io/v1/user/subscription", headers={"xi-api-key": cfg.elevenlabs_key}, timeout=30)
@@ -132,6 +138,73 @@ def cmd_doctor(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             print(f"{'OK ' if r['ok'] else '-- '} {r['check']:<20} {r['detail']}")
         print("blockers:", ", ".join(b["check"] for b in blockers) if blockers else "none")
     return 1 if blockers else 0
+
+
+def _doctor_deck_import(cfg: Config, add: Any) -> None:
+    """The client success Drive imports' six lines (docs/csm-decks/DRIVE-IMPORT.md 7)."""
+    from desk import deck_import, media
+
+    sb = _sb(cfg)
+    try:
+        peek = sb.rpc("cockpit_csm_launch_ads_import_claim", {"p_worker": "doctor", "p_peek": True}) or {}
+        seen = peek.get("workerSeenAt") or "never"
+        add("deck-import rpcs", True, f"{peek.get('queued', 0)} queued, {peek.get('working', 0)} working; last ran {seen}", True)
+    except RpcError as e:
+        if e.sqlstate == "42501":
+            add("deck-import rpcs", False, "DESK_SUPABASE_KEY is not the service role key: imports can't be claimed", True)
+        elif e.sqlstate in ("PGRST202", "42883"):
+            add("deck-import rpcs", False, "missing: apply 20261020160000_csm_launch_ads_drive.sql", True)
+        else:
+            add("deck-import rpcs", False, http.scrub(str(e))[:180], True)
+    except (http.HttpError, SupabaseError) as e:
+        add("deck-import rpcs", False, http.scrub(str(e))[:180], True)
+    try:
+        sb.storage_list(deck_import.BUCKET, prefix="", limit=1)
+        add("deck-import bucket", True, f"{deck_import.BUCKET} reachable", True)
+    except (http.HttpError, SupabaseError) as e:
+        add("deck-import bucket", False, http.scrub(str(e))[:180], True)
+    free = media.free_bytes(cfg.scratch if cfg.scratch.exists() else cfg.home)
+    gb = round(free / 1024**3, 1)
+    add("deck-import disk", free >= deck_import.DISK_FLOOR,
+        f"{gb} GB free in scratch" if free >= deck_import.DISK_FLOOR else f"{gb} GB free: deck-import waits for 4 GB", True)
+    ok, detail = deck_import.doctor_heic()
+    add("deck-import heic", ok, detail)
+    try:
+        due = sb.rpc("cockpit_csm_deck_video_posters_due", {"p_worker": "doctor"}) or {}
+        add("deck-import posters", True, f"{len(due.get('due') or [])} video slots wait for a poster")
+    except RpcError as e:
+        missing = e.sqlstate in ("PGRST202", "42883")
+        add("deck-import posters", False,
+            "missing: apply 20261020160200_csm_deck_video_posters.sql" if missing else http.scrub(str(e))[:180])
+    except (http.HttpError, SupabaseError) as e:
+        add("deck-import posters", False, http.scrub(str(e))[:180])
+
+
+def cmd_deck_import(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
+    """The client success Drive links into the launch deck's ads tray, then
+    the video slots' posters. Every minute from cron, under its own lock."""
+    from desk import deck_import
+
+    sb = _sb(cfg)
+    try:
+        drive = Drive(cfg, log.info)
+    except http.HttpError as e:
+        # No Google keys: say so in one line; the box in the cockpit says
+        # nothing picked the link up, never "0 files".
+        log.error(f"deck-import: {http.scrub(str(e))[:200]}")
+        return 1
+    run = deck_import.Run(cfg, log.info, sb, drive)
+    if args.dry_run:
+        if not args.link:
+            log.error("deck-import --dry-run needs --link")
+            return 2
+        _print(run.dry_run(args.link), True)
+        return 0
+    out = run.run(limit=args.limit or 3)
+    if out.get("imports") or (out.get("posters") or {}).get("due"):
+        log.info(f"deck-import: {out}")
+    _print(out, args.json)
+    return 0
 
 
 def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
@@ -515,6 +588,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     dl = sub.add_parser("deliver"); dl.add_argument("--task", required=True); dl.add_argument("--url", required=True); dl.add_argument("--status")
     nt = sub.add_parser("notes"); nt.add_argument("--task")
     jb = sub.add_parser("jobs"); jb.add_argument("--mine"); jb.add_argument("--closed", action="store_true")
+    di = sub.add_parser("deck-import"); di.add_argument("--limit", type=int, default=3)
+    di.add_argument("--dry-run", action="store_true"); di.add_argument("--link", default="")
 
     args = ap.parse_args(argv)
     cfg = Config.from_env()
@@ -524,6 +599,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         "doctor": cmd_doctor, "sync": cmd_sync, "prepare": cmd_prepare,
         "check": cmd_check, "deliver": cmd_deliver, "notes": cmd_notes, "jobs": cmd_jobs,
         "requests": cmd_requests, "meetings": cmd_meetings, "foreplay": cmd_foreplay, "frameio": cmd_frameio, "archive": cmd_archive,
+        "deck-import": cmd_deck_import,
     }
     try:
         return handlers[args.cmd](cfg, args, log)

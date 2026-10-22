@@ -1,6 +1,8 @@
 import {
   ArrowLeft,
+  CheckCheck,
   ChevronLeft,
+  Mic,
   Paperclip,
   Phone as PhoneIcon,
   Play,
@@ -108,6 +110,7 @@ export function InstantForm({
   thanks,
   video,
   cover,
+  coverTag = null,
 }: {
   who: Identity;
   pageName: string;
@@ -127,6 +130,8 @@ export function InstantForm({
    * there is one.
    */
   cover?: string | null;
+  /** "Example" on the cover's end corner when it is the example ad's picture. */
+  coverTag?: string | null;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const [shift, setShift] = useState(0);
@@ -162,6 +167,9 @@ export function InstantForm({
           {cover ? (
             <div className="dkc-form-cover" aria-hidden>
               <img src={cover} alt="" draggable={false} />
+              {coverTag ? (
+                <span className="dkc-cover-chip">{coverTag}</span>
+              ) : null}
             </div>
           ) : null}
           <div className="dkc-form-intro">
@@ -224,7 +232,7 @@ export function InstantForm({
         <div className="dkc-form-screen" data-screen="thanks">
           <Top />
           <div className="dkc-form-intro dkc-form-thanks">
-            <Avatar who={who} size="calc(var(--u) * 64)" />
+            <Avatar who={who} size="calc(var(--u) * 76)" />
             <b dir="auto">{pageName}</b>
             <p dir="auto">{thanks}</p>
             {video ? (
@@ -243,20 +251,82 @@ export function InstantForm({
  * A WhatsApp chat opening from the ad (DESIGN 7.5): the business at the top
  * of a new chat, and the message the ad fills in, waiting in the compose
  * field with the send button lit. The words are example wording, tagged on
- * the slide, until the ad's own template is read.
+ * the slide, until the ad's own template is read. `sent` (L5, fixer round
+ * 2): the message as sent, at the foot of the chat over the field, with
+ * the ad it came from on top of it, as WhatsApp shows a chat started from
+ * an ad, and the field empty again.
  */
 export function WhatsAppChat({
   who,
   pageName,
   app,
   message,
+  sent = false,
+  ad = null,
+  adTag = null,
 }: {
   who: Identity;
   pageName: string;
   app: Lang;
   /** The prefilled message, in the customer's words. */
   message: string;
+  sent?: boolean;
+  /** The ad's picture the chat was opened from. */
+  ad?: string | null;
+  /** "Example" on that picture when it is the example ad's. */
+  adTag?: string | null;
 }) {
+  if (sent)
+    return (
+      <div
+        className="dkc-app"
+        data-app="wa"
+        data-sent=""
+        dir={app === "ar" ? "rtl" : "ltr"}
+      >
+        <div className="dkc-status-bar" aria-hidden>
+          <span>10:24</span>
+          <i className="dkc-battery" />
+        </div>
+        <div className="dkc-wa-head">
+          <ArrowLeft className="dkc-flip" aria-hidden />
+          <Avatar who={who} size="calc(var(--u) * 36)" />
+          <b dir="auto">{pageName}</b>
+          <Video aria-hidden />
+          <PhoneIcon aria-hidden />
+        </div>
+        <div className="dkc-wa-body">
+          <div className="dkc-wa-profile">
+            <Avatar who={who} size="calc(var(--u) * 72)" />
+            <b dir="auto">{pageName}</b>
+          </div>
+          <span className="dkc-wa-day">{t(FORM_APP.today, app)}</span>
+          <div className="dkc-wa-out" data-part="message">
+            {ad ? (
+              <div className="dkc-wa-ad" aria-hidden>
+                <img src={ad} alt="" draggable={false} />
+                {adTag ? <span className="dkc-cover-chip">{adTag}</span> : null}
+              </div>
+            ) : null}
+            <span dir="auto">{message}</span>
+            <i className="dkc-wa-meta" aria-hidden>
+              10:24
+              <CheckCheck />
+            </i>
+          </div>
+        </div>
+        <div className="dkc-wa-compose">
+          <div className="dkc-wa-input">
+            <Smile aria-hidden />
+            <span className="dkc-wa-empty">{t(FORM_APP.message, app)}</span>
+            <Paperclip aria-hidden />
+          </div>
+          <span className="dkc-wa-send" aria-hidden>
+            <Mic />
+          </span>
+        </div>
+      </div>
+    );
   return (
     <div className="dkc-app" data-app="wa" dir={app === "ar" ? "rtl" : "ltr"}>
       <div className="dkc-status-bar" aria-hidden>
@@ -270,11 +340,22 @@ export function WhatsAppChat({
         <Video aria-hidden />
         <PhoneIcon aria-hidden />
       </div>
-      <div className="dkc-wa-body">
+      <div className="dkc-wa-body" data-ref={ad ? "" : undefined}>
         <div className="dkc-wa-profile">
           <Avatar who={who} size="calc(var(--u) * 72)" />
           <b dir="auto">{pageName}</b>
         </div>
+        {/* The ad the chat was opened from, over the waiting message, as
+            WhatsApp shows a chat started from an ad (score round 2 of the
+            five services: without it the chat was 60% empty). */}
+        {ad ? (
+          <div className="dkc-wa-ref" aria-hidden>
+            <div className="dkc-wa-ad">
+              <img src={ad} alt="" draggable={false} />
+              {adTag ? <span className="dkc-cover-chip">{adTag}</span> : null}
+            </div>
+          </div>
+        ) : null}
       </div>
       <div className="dkc-wa-compose" data-part="message">
         <div className="dkc-wa-input">

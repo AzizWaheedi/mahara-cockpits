@@ -8,7 +8,10 @@ import { PresentApp, type PresentUrls, type View } from "./PresentApp";
 import {
   clearDeckVideo,
   type DeckKind,
+  readDriveImports,
   readFileFacts,
+  removeLaunchAd,
+  requestDriveImport,
   saveDeckVideo,
   savePrep,
   updateLaunchAd,
@@ -100,6 +103,13 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
           );
         return updateLaunchAd(client, key, id, patch);
       },
+      removeAd: id => {
+        if (!client)
+          throw Error(
+            "Deleting needs your cockpit sign-in. Sign in, then delete it again.",
+          );
+        return removeLaunchAd(client, key, id);
+      },
       saveVideo: v => {
         if (!client)
           throw Error(
@@ -113,6 +123,18 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
             "Saving needs your cockpit sign-in. The preview still works.",
           );
         return clearDeckVideo(client, v);
+      },
+      requestDriveImport: link => {
+        if (!client)
+          throw Error(
+            "Saving needs your cockpit sign-in. The preview still works.",
+          );
+        return requestDriveImport(client, key, link);
+      },
+      readDriveImports: () => {
+        if (!client)
+          throw Error("Sign in to the cockpit to read the Drive imports.");
+        return readDriveImports(client, key);
       },
     }),
     [client, key, auth.name, deck],

@@ -23,6 +23,8 @@ import {
   type DeckKind,
   type DeckSources,
   type DeckVideos,
+  type DriveImport,
+  type DriveImports,
   type FileFacts,
   keepLinks,
   type LaunchAd,
@@ -69,6 +71,8 @@ export interface DeckIO {
   }) => Promise<LaunchAd>;
   /** Change an upload's words, placement, kind or hidden flag. */
   updateAd?: (id: string, patch: Record<string, unknown>) => Promise<LaunchAd>;
+  /** Delete a file from the client's tray for good (prep's tray, launchAds.remove). */
+  removeAd?: (id: string) => Promise<LaunchAd>;
   /** Read a file's size, length and first frame. */
   fileFacts?: (file: File) => Promise<FileFacts>;
   /** Save a video to one of this deck's slots (shared by every client's deck). */
@@ -79,6 +83,12 @@ export interface DeckIO {
   clearVideo?: (
     v: Parameters<typeof clearDeckVideo>[1],
   ) => ReturnType<typeof clearDeckVideo>;
+  /** Bring in this client's files from one Drive link (DRIVE-IMPORT.md 8). */
+  requestDriveImport?: (
+    link: string,
+  ) => Promise<DriveImport & { existing: boolean }>;
+  /** This client's Drive imports, newest first. */
+  readDriveImports?: () => Promise<DriveImports>;
 }
 
 export type SaveState =

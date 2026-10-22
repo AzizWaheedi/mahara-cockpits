@@ -2,7 +2,7 @@
 
 The onboarding deck and the launch deck the client success manager presents from a client's page in the client success cockpit. This file holds the final English copy, the data each slot pulls, the presenter notes and the source behind every claim. The Arabic copy is in `CONTENT-AR.md`, written under `mahara-context/skills/aziz-kuwaiti-voice` in the warm-professional client register and Saudi-safe. The example call is in `EXAMPLE-CALL.md`.
 
-Written 2026-10-19 from the scout reports (`deck-scouts.md`), the old template decks, the sales deck (`apps/sales-cockpit/src/deck/content.ts`, `proof.ts`, `tour.ts`), mahara-context and the memory notes. The lead's decisions are followed as given. Revised the same day after the critique, again on 2026-10-20 with the CEO's answers to open questions 1 to 3, and again on 2026-10-20 against Mahara's own Gamma decks (the CEO: "The launch deck is missing a lot of the expectation setting, such as going through the sales training and the piece of the pie"): see [From the Gamma decks](#from-the-gamma-decks-ceo-2026-10-20) and [Revision notes](#revision-notes) at the end. The launch deck now has thirteen slides; slide numbers in sections dated before that pass use the old ten-slide numbering. Revised once more on 2026-10-20 for the CEO's request of the same day: creative flexibility as a full expectation on L3 (five stops), a short plant on O7, and a video slot for each main part of both decks ([Video slots](#video-slots-ceo-2026-10-20); the backend is in `VIDEOS.md`). The deck keeps thirteen slides. Revised again on 2026-10-20 by the spec review of that pass, with two requests the CEO made during the build (seed the calendar-blocking Loom; show the Academy's Project Closing Mastery screenshots, masked): see the last entry of [Revision notes](#revision-notes).
+Written 2026-10-19 from the scout reports (`deck-scouts.md`), the old template decks, the sales deck (`apps/sales-cockpit/src/deck/content.ts`, `proof.ts`, `tour.ts`), mahara-context and the memory notes. The lead's decisions are followed as given. Revised the same day after the critique, again on 2026-10-20 with the CEO's answers to open questions 1 to 3, and again on 2026-10-20 against Mahara's own Gamma decks (the CEO: "The launch deck is missing a lot of the expectation setting, such as going through the sales training and the piece of the pie"): see [From the Gamma decks](#from-the-gamma-decks-ceo-2026-10-20) and [Revision notes](#revision-notes) at the end. The launch deck now has thirteen slides; slide numbers in sections dated before that pass use the old ten-slide numbering. Revised once more on 2026-10-20 for the CEO's request of the same day: creative flexibility as a full expectation on L3 (five stops), a short plant on O7, and a video slot for each main part of both decks ([Video slots](#video-slots-ceo-2026-10-20); the backend is in `VIDEOS.md`). The deck keeps thirteen slides. Revised again on 2026-10-20 by the spec review of that pass, with two requests the CEO made during the build (seed the calendar-blocking Loom; show the Academy's Project Closing Mastery screenshots, masked): see the last entry of [Revision notes](#revision-notes). Revised once more on 2026-10-20 for the CEO's visual pass (the onboarding deck redesigned around the call's checklist, example ads drawn with Higgsfield, the Drive link for their ads): see [The visual pass](#the-visual-pass-ceo-2026-10-20).
 
 ## How to read this
 
@@ -36,7 +36,7 @@ Where `CONTENT.md` and `DESIGN.md` gave the same fact different homes, this tabl
 | The WhatsApp confirmation and the reminders | L6 stop 7, after the call | L2 stop 4: one line and five dots, each named in a word or two from L6's timeline (four done with you; the provisional bookings' dot carries its whole line). L7's pie names "Reminders and rebooking" as ours |
 | Before the meeting, the messages come from us (one voice to the customer) | L6 stop 7, under the timeline's heading, done for you (the spec review, 2026-10-20) | L10's notes keep only the after-meeting half |
 | It lands with the client: calendar, Mahara OS, the WhatsApp alerts (new bookings, cancellations and changes) | L2 stop 5 | L6 stop 8 shows what it carries (the caller's notes) |
-| A no-show is ours; a customer thinking it over is followed up by both of us (done for you), and the client marks it | L2 stop 6, the fork, drawn | L9 stop 4: "mark it, the same day", the late check, and that the mark lets us call to rebook. L10: the client's follow-up as one job; its why keeps 'Our caller checks in too.' so the six-jobs card, pasted alone as the group recap, still says the follow-up is shared |
+| A no-show is ours; a customer thinking it over is followed up by both of us (done for you), and the client marks it | L2 stop 6, the fork, drawn | L9 stop 4: "mark it, the same day", the late check, and that the mark lets us call to rebook. L10: the client's follow-up as one job; done for you, its why on the slide is "You send the quote and set the second meeting. Our caller checks in too." (score round 2 of the five services: the second sentence is on the slide too, so the job never reads as the client's alone), also said in the notes and kept in the recap |
 | Who does what, as a share: our three pieces of the work and their one (the meeting and the close), the two roads, "marketing without sales won't grow your business" | L7 (2026-10-20) | L2's lanes show who does each step; L10 lists their jobs. Done with you, the pie splits in halves |
 | The sales training: Project Closing Mastery before the first meetings, who takes it, their deals at the check-ins | L8 (2026-10-20) | O6 row 5 is joining the Academy; L11's notes say their deals come to the check-ins |
 | The thank-you screen | L5 stop 3 | L2 stop 2 names it in its line |
@@ -84,7 +84,7 @@ Where `CONTENT.md` and `DESIGN.md` gave the same fact different homes, this tabl
 | `{next.blueprint}`, `{next.launch}`, `{next.checkin}` | Client row `nextCallAt` with `nextCallKind` (blueprint, launch, checkin), or the booked event on that calendar | Nothing on the canvas until it is booked. The Book button is in the notes window (`BookCallButton`, kinds blueprint and checkin); the date line appears once the booking reads back. |
 | `{form.*}` | Onboarding form KFRCXPFx (`forms.onboarding.answers`), read with the `GOALS` patterns and `formAnswer()` in `clientBrief.ts`: `goal90` ("90 Days"), `goal12_24` ("12-24 months"), `challenges` ("TOP 3 challenges"), `why` ("motivated you to join"), `number_one` ("#1 service"), `ideal_project`, `services` (services and prices), `consult_types`, `engineers`, `free_consult`, `instagram`, `areas`, `hours` | Each slide gives its own fallback. `goal90` also picks and fills L3's pushback lines in the notes and its "Copy reply" (2026-10-20), with the same rule as L11, prep's edit first: shown, then the line says the goal; on file but held back while it counts enquiries or appointments, then the line names "what you want from your first 90 days" without saying it; none, then the plain line. |
 | `{kickoff.*}` | Kickoff form tG7dnxBn (`forms.kickoff`), read with the `KICKOFF` and `SETUP` patterns in `clientBrief.ts`: `advertised` service, `platforms`, `page_name` ("name of the Facebook page"), `templated` status (Approved, Declined, Waiting On Client, Wants To See Them First), the setup items (card, Facebook access, Mahara OS access, WhatsApp synced, Google Calendar) judged by `SETUP_DONE`, and `pre_existing` leads | The kickoff form is filled on the onboarding call, so before it is filed every setup item reads "Not checked yet". Missing is never shown as done or as to do. |
-| `{prep.*}` | New `cockpit_csm_deck_prep` (task_id, deck) `overrides`: `service_focus`, `starter_pack` (the service has a ready starter pack), `goals`, `page_name`, `go_live`, `cover_creative` (a creative marked custom), `dialect`, `project`, `selling_point`, `pain` (delays, design or cost), `budget_band`, `welcome_video`, `booking_video`, `access` (live ticks), `red_lines` (typed on O7), `their_pick` (marked on L4), `form_confirmed` (the Meta form id the CSM ticked as theirs), `call_guide_checked`, `platforms_planned`, `dwy_os_approved`, `creative_agreed_at`, `onboarding_presented_at`, `hidden_slides` | Each slot falls back to the source in its row. `welcome_video` and `booking_video` stay as they are (2026-10-20): they say whether the client's own messages to their customer carry a video about the client (L5 stop 3, L2 stop 4), which is not a deck video. The prep toggle for L3's old optional proof stop (`test-proof` in `shown_slides`) is retired: the field is a core stop now, and a saved `test-proof` is ignored. |
+| `{prep.*}` | New `cockpit_csm_deck_prep` (task_id, deck) `overrides`: `service_focus`, `starter_pack` (the main service the ready starter pack was made for: one of the five keys or `other`; a yes saved before keys is read as the kickoff's service, score round 2), `goals`, `page_name`, `go_live`, `cover_creative` (a creative marked custom), `dialect`, `project`, `selling_point`, `pain` (delays, design or cost), `budget_band`, `welcome_video`, `booking_video`, `access` (live ticks), `red_lines` (typed on O7), `their_pick` (marked on L4), `form_confirmed` (the Meta form id the CSM ticked as theirs), `call_guide_checked`, `platforms_planned`, `dwy_os_approved`, `creative_agreed_at`, `onboarding_presented_at`, `hidden_slides` | Each slot falls back to the source in its row. `welcome_video` and `booking_video` stay as they are (2026-10-20): they say whether the client's own messages to their customer carry a video about the client (L5 stop 3, L2 stop 4), which is not a deck video. The prep toggle for L3's old optional proof stop (`test-proof` in `shown_slides`) is retired: the field is a core stop now, and a saved `test-proof` is ignored. |
 | `{videos.*}` | New `cockpit_csm_deck_videos` (one row per deck, slot and language), read through `cockpit_csm_deck_videos_read` (`VIDEOS.md`): the link, the embed address, the provider, an optional title, the length | A slot with no row in the deck's language and none for any language shows nothing on the canvas, and reads "Not recorded yet" in the notes window and prep. When the read fails, the notes and prep say "Videos could not be read", never "Not recorded yet". A row the browser refuses (its link fails the shape check, `VIDEOS.md` 7) shows nothing on the canvas and reads "This video's link was refused. Save it again in prep.", never "Not recorded yet". |
 | `{ads.*}` | New `cockpit_csm_launch_ads` (uploads, with placement, primary text, headline, CTA, language, kind starter or custom), plus `cockpit_csm_client_ads` (built Meta ads, paused ones included) with stills from `cockpit-ad-stills` | Empty phone frames with the logo and Page name, and "We're finishing your first ads". |
 | `{funnel.*}` | `cockpit_creative_sources` (table_name `funnels`) through `cockpit_csm_deck_sources`, matched by the exact Meta form id (or ad account id) from this client's own campaigns, never by account name: `kind` (Instant form, WhatsApp, website), `headline`, `questions[{label, options, isGate}]`, `followUpUrl`, the thank-you text | Shown only after the CSM ticks "This is their form" in prep (`prep.form_confirmed`). Then questions typed in prep. Then the drawn example form (DESIGN 7.5), tagged "Example form". Never a real client's screen. |
@@ -114,12 +114,14 @@ Where `CONTENT.md` and `DESIGN.md` gave the same fact different homes, this tabl
 
 # Onboarding deck
 
-Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live while slide 6 is up. Payment, the contract and the kickoff form stay in the talk track, and the kickoff form stays in the CSM's own tab.
+Seven slides, about 22 minutes of a 45 to 60 minute call since the visual pass (it was about 10, counting the slides only): about 13 on the slides and 9 for the setup, done live while slide 6 is up. Payment, the contract and the kickoff form stay in the talk track, and the kickoff form stays in the CSM's own tab.
 
 ## O1 · `welcome`
 
 **Title:** Welcome, {client.name}
-**Time:** 1 minute
+**Time:** 1.5 minutes (the visual pass; it was 1)
+
+**Changed by the visual pass (2026-10-20):** the agenda is the call's checklist, three rings beside the name; the faint lanes leave the cover (DESIGN 22.2.1; words in [The visual pass](#the-visual-pass-ceo-2026-10-20)).
 
 **On screen**
 - {client.logo}, over the faint journey lanes (DESIGN 9.1)
@@ -140,7 +142,8 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 - Frame the call: "About 45 minutes. A few slides first, then we set most things up together, live."
 - Check who is on the call. If the owner isn't there, ask who decides on the ads and who meets the customers.
 - Say the call is recorded for the team.
-- Keep the kickoff form open in your own tab. Share only the deck window.
+- Keep the kickoff form open in your own tab. (How to share the deck, the
+  deck window only and maximised, is said once, in the notes window's foot.)
 
 **DWY:** same.
 
@@ -149,7 +152,9 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 ## O2 · `goals`
 
 **Title:** Your goals, as you wrote them
-**Time:** 2 minutes
+**Time:** 2.5 minutes (the visual pass; it was 2)
+
+**Changed by the visual pass (2026-10-20):** two stops, the 90-day goal alone first, then the other answers (DESIGN 22.2.2).
 
 **On screen**
 - Eyebrow: "From your onboarding form"
@@ -180,7 +185,9 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 ## O3 · `team`
 
 **Title:** Your team, in your WhatsApp group
-**Time:** 1.5 minutes
+**Time:** 2 minutes (the visual pass; it was 1.5)
+
+**Changed by the visual pass (2026-10-20):** two stops, the group filling as the slide opens, then the reply time as the stop's heading (`team.reply`, `team.hours`); "Your WhatsApp group" is a small label beside the mark, since the title says it (DESIGN 22.2.3).
 
 **On screen**
 - Title: "Your team, in your WhatsApp group"
@@ -208,7 +215,11 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 ## O4 · `one-service`
 
 **Title:** One service per campaign
-**Time:** 2 minutes
+**Time:** 3 minutes (the visual pass; it was 2)
+
+**Changed by the visual pass (2026-10-20):** the matrix beside a product column with a large phone showing an example ad for the service, labelled Example ad; the checklist at the foot ticks the service only when the client chooses it on the call ("Launch with this"), never because prep named one (DESIGN 22.2.4).
+
+**Changed by the five main services (CEO, 2026-10-21):** the rows are no longer the client's typed services. They are the five main services, the kickoff form's own choices, with "Other" only when the client's words fit none; the client's own words sit quietly under the service they belong to. See [The five main services](#the-five-main-services-ceo-2026-10-21); it overrides the chips, slots and notes below where they differ.
 
 **On screen**
 - Title: "One service per campaign"
@@ -241,7 +252,9 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 ## O5 · `road`
 
 **Title:** The road to your first appointments
-**Time:** 1 minute
+**Time:** 1.5 minutes (the visual pass; it was 1)
+
+**Changed by the visual pass (2026-10-20):** a straight route, lit to today on arrival, every label below its stop; no new words (DESIGN 22.2.5).
 
 **On screen**
 - Title: "The road to your first appointments"
@@ -249,7 +262,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
   1. Contract signed
   2. Onboarding form
   3. Onboarding call · "Today"
-  4. Brand and offer · {next.blueprint}
+  4. Brand Blueprint call · {next.blueprint}
   5. Launch call · {next.launch}, else "About 45 minutes" (was "20 to 30 minutes" until 2026-10-20: the launch deck grew to thirteen slides, about 27 minutes before questions) · then "We walk you through everything that's going live."
   6. First appointments · "After go-live"
 - Footer: "Each call is booked at the end of the one before."
@@ -272,7 +285,9 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 ## O6 · `this-week`
 
 **Title:** What we need from you this week
-**Time:** 1.5 minutes on screen, then the setup itself, live
+**Time:** 1.5 minutes on screen, then the setup itself, live (about 9 in all since the visual pass)
+
+**Changed by the visual pass (2026-10-20):** a board: "Now, on this call" as two cards (Meta access, Mahara OS) with their steps and video guides, "This week, from you" as three rows; the checklist at the foot ticks the access; the line "Most of it we'll do together, right now." leaves the slide for the notes, because "Now, on this call" says it (DESIGN 22.2.6).
 
 **On screen**
 - Title: "What we need from you this week"
@@ -300,14 +315,16 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 
 **DWY**
 - Row 2 becomes "Your CRM" · "Sign in, and connect your calendar, so bookings land in your real calendar." · ticks: Signed in · Calendar. It shows the Mahara OS row instead only when `prep.dwy_os_approved` is set.
-- Add row 6: "Your callers' phones" · "Install the LeadConnector app, sign in and turn on alerts."
+- Add row 6: "Callers' phones" · "Install the LeadConnector app, sign in and turn on alerts."
 
 **Sources:** OCF (Leadsie, WhatsApp connection, Mahara OS sign-in, Google Calendar, content to Drive, reactivation of old leads, Academy), KF and `clientBrief.ts` `SETUP` (the status fields), PS §3 and §8 (Meta access not done for any of 5 kickoffs, card not funded for 3 of 4, calendar not connected for 4 of 5), O2L Day 4 (the content wording), CTX §3 (ad spend is paid straight to Meta), SD `CLOSING_TOUR` academy (the six courses), AC (the first course, Introduction, is marked START HERE), OM phase 5 (the client watches the course; Mahara does not train their team), MOS (the DWY flow in Mahara OS sits behind per-client approval), DWY SOP §2 (lead alerts), GR (the guarantee terms are never framed here).
 
 ## O7 · `next`
 
 **Title:** What to expect, and what's next
-**Time:** 1.5 minutes
+**Time:** 2.5 minutes (the visual pass; it was 1.5)
+
+**Changed by the visual pass (2026-10-20):** stop 1 is "What to expect" with the plant at legible sizes, under a small strip of six example ads, two lit and four switched off, tagged "Example ads"; the Blueprint is the last stop, where the checklist closes (DESIGN 22.2.7). The starter stop, when shown, sits between them.
 
 **On screen (stop 1)**
 - Title: "What to expect, and what's next"
@@ -317,13 +334,13 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
      - Waiting On Client, Wants To See Them First, or no answer: "Starter ads can go live first, from our ready templates for {prep.service_focus}. Your own ads, made from your content, follow." ("can", not "go": no answer is not approval. The condition itself is the line under all three, so it is not said twice.)
      - Declined: "Your own ads, made from your content, go live first."
      - Under all three: "They go live only once you've approved the facts, prices and claims in them." (Changed by the spec review of 2026-10-20: it read "…only once you've approved them.", an open-ended approval L3 then had to narrow. O7 is the only point before any ad exists, so the check is set small here.)
-     - Without `prep.starter_pack`, "for {prep.service_focus}" is left out of the first two variants: "Starter ads go live first, from our ready templates."
-     - Mid-sentence, a common-noun service keeps sentence case (score round 2): "templates for kitchens", not "for Kitchens". A name whose only capital is its first letter is lowered; one with another capital (a brand) stays as typed. Stop 2's line does the same.
+     - Without `prep.starter_pack`, "for {prep.service_focus}" is left out of the first two variants: "Starter ads go live first, from our ready templates." The same when the pack was made for another service than the one chosen on slide 4 (score round 2: "our ready templates for architectural design" sat over interior templates); prep says so beside the tick.
+     - Mid-sentence, a common-noun service keeps sentence case (score round 2): "templates for interior design", not "for Interior design". A name whose only capital is its first letter is lowered; one with another capital (a brand) stays as typed. Stop 2's line does the same.
      - The Arabic deck names the service by `prep.service_focus_ar` (typed on O4, the field the launch deck reads too). A service on file only in Latin letters is left unnamed there, as the no-pack variant, so an Arabic line never carries "Kitchens" (the fixer's round, 2026-10-20; the journey's queue card keeps a name in the other script off its rows the same way). Prep says so: "The Arabic deck leaves "{service}" unnamed on this slide. Type its Arabic name on slide 4 to name it."
   2. "The first weeks are a test", then three lines (score round 2: one four-sentence block at body size read dense beside the band's larger head): "Your ads are there to bring in business, not to look like your page." at the body's size, in ink; "We test many ads, fast. Small style changes go into the next round, so your launch keeps moving." small, in ink-2; and the ask, small, in ink, right over the list it fills: "Your red lines stay fixed: tell us now what we must never say or show." Below it, the red lines the CSM types live as the client says them (two or three), in amber. (Changed twice on 2026-10-20 for the CEO's creative flexibility: it read "Your red lines stay fixed. Tell us now what we must never say or show. Everything else, we test.", then "We test many ads and keep your launch moving. …"; the spec review planted the small check as well, so the client hears it before any ad exists. DESIGN 9.7 checks the fit.)
 - Next step band: "Next: your Brand Blueprint call · 45 minutes with our creative director: your brand, your offer, your first ad scripts." Then {next.blueprint} once booked.
 
-**On screen (stop 2, optional):** "Your starter ads", tagged once "Starter, from our templates", then "Our ready templates for {prep.service_focus}, under your Page name and logo." (no pack: "Our ready templates, under your Page name and logo."). The L4 phone component (Instagram feed and Reels) with the starter ads under their Page name and logo. Shown only when `prep.starter_pack` is set and starter creatives exist for {prep.service_focus}. No upload or swap here; that is L4.
+**On screen (stop 2, optional):** "Your starter ads", tagged once "Starter, from our templates", then "Our ready templates for {prep.service_focus}, under your Page name and logo." (no pack: "Our ready templates, under your Page name and logo."). The L4 phone component (Instagram feed and Reels) with the starter ads under their Page name and logo. Shown only when `prep.starter_pack` names the service chosen on slide 4 and starter creatives exist for it. No upload or swap here; that is L4.
 
 **Slots:** `kickoff.templated` picks the variant. `prep.service_focus`, `prep.starter_pack`. `prep.red_lines` (typed live; the prep view reminds the CSM to copy them to the card's Do's & Don'ts). `next.blueprint` (Book button in the notes window). `ads.*` kind starter (stop 2).
 
@@ -346,7 +363,7 @@ Seven slides, about 10 minutes of a 45 to 60 minute call. The setup is done live
 
 # Launch deck
 
-Thirteen slides since 2026-10-20 (it was ten), about 28 minutes of a call booked for about 45 (27 until L3 became five stops the same day; L8's two screenshot stops add half a minute), so there is room for questions and the sign-in. Eight slides carry a video slot ([Video slots](#video-slots-ceo-2026-10-20)), so a part the CSM skips for time can still be watched. Visual first. The journey slide is the signature; the partnership pie (L7) is the second drawing the client remembers. The order: L1 cover, L2 journey, L4 ads, L3 creative freedom, L5 form, L6 call, L7 partnership, L8 training, L9 portal, L10 your part, L11 first 90 days, L12 good to know ("Before we go live"), L13 green light.
+Thirteen slides since 2026-10-20 (it was ten), about 28 minutes of a call booked for about 45 (27 until L3 became five stops the same day; L8's two screenshot stops add half a minute), so there is room for questions and the sign-in. Eight slides carry a video slot ([Video slots](#video-slots-ceo-2026-10-20)), so a part the CSM skips for time can still be watched. Visual first. The journey slide is the signature; the partnership pie (L7) is the second drawing the client remembers. The order: L1 cover, L2 journey, L3 creative freedom, L4 ads, L5 form, L6 call, L7 partnership, L8 training, L9 portal, L10 your part, L11 first 90 days, L12 good to know ("Before we go live"), L13 green light.
 
 ## L1 · `cover`
 
@@ -380,6 +397,8 @@ Thirteen slides since 2026-10-20 (it was ten), about 28 minutes of a call booked
 **Title:** Your customer's journey
 **Time:** 2.5 minutes
 
+**Changed by the visual pass (2026-10-20):** stop 1's phone shows an example ad, tagged "Example ad", while the client has no creative; the enquiry's token rides the line from lane to lane; stop 6's statement sits right above the fork (DESIGN 22.3.3, 22.4.3, 22.6.1).
+
 **On screen**
 - Title: "Your customer's journey"
 - Line: "From your ad to your meeting, step by step."
@@ -391,7 +410,7 @@ Thirteen slides since 2026-10-20 (it was ten), about 28 minutes of a call booked
 |---|---|---|---|---|---|
 | 1 | Sees your ad | Your customer | "They see your ad in their feed." | Their first ad in an Instagram feed phone, with their Page name and logo | `ads.*` (first ready ad). Fallback: the frame with the logo and "Your ad goes here". |
 | 2 | Answers your questions | Your customer | "A few short questions about their project, then your thank-you screen." When the ad opens WhatsApp: "They message you on WhatsApp. The chat opens with their first message ready to send." | Their form's question screen in a phone, or their landing page, or (WhatsApp) the chat with their first message waiting to send, tagged "Example wording" | `funnel.*` once confirmed. Fallback: the drawn example form, tagged "Example form". |
-| 3 | We call | Our team | "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning." "5 minutes" is underlined in teal, as L5's thank-you band marks it, so the promise reads the same on both slides (score round 2). Chip: "Up to 4 tries over 3 working days". Small line: "Not every enquiry books. Some can't be reached, some aren't a fit. Our caller notes why, and we go through it with you at check-ins." | The queue card (DESIGN 6.5), tagged Example: it shows the list, the new enquiry first. Each row names its own service from `prep.services` (`prep.services_ar` in Arabic); a row past the list leaves its service out, never repeats the first (score round 2) | UAE: "We call new enquiries within 5 minutes during working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning." |
+| 3 | We call | Our team | "We call new enquiries within 5 minutes during working hours, 10 to 6, Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning." "5 minutes" is underlined in teal, as L5's thank-you band marks it, so the promise reads the same on both slides (score round 2). Chip: "Up to 4 tries over 3 working days". Small line: "Not every enquiry books. Some can't be reached, some aren't a fit. Our caller notes why, and we go through it with you at check-ins." | The queue card (DESIGN 6.5), tagged Example: it shows the list, the new enquiry first. The first row names the launch service; the next rows the client's own words for that same service (`prep.services`, `prep.services_ar` in Arabic), never a sub-trade (kitchens, bathrooms, wardrobes) and never another service's words (score round 1 of the five services: "Callback · Kitchens and wardrobes" sat in an interior design campaign's queue); a row past them leaves its service out, never repeats the first (score round 2) | UAE: "We call new enquiries within 5 minutes during working hours, 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. Anything that comes in at night is called from 10 the next working morning." |
 | 4 | Booked, confirmed, reminded | Our team | "The serious ones are booked in, confirmed on WhatsApp and reminded before the meeting." With `prep.booking_video`: "The serious ones are booked in, confirmed on WhatsApp with a short video about you, and reminded before the meeting." | Five dots on a short line, each named in a word or two from L6's timeline (the full timeline is on L6). Every row leads with its time in bold ("Booked", "The day before", "Before the meeting", "2 hours before") and the meeting, the end, is bold whole (the fixer's round, 2026-10-20) | `booking_video` defaults to off. |
 | 5 | Lands with you | You | "Once it's confirmed, it lands in your calendar and in Mahara OS. WhatsApp alerts tell you about new bookings, cancellations and changes." (changed 2026-10-20, LEAD decision 5: it said "and you get a WhatsApp alert") | The drawn calendar entry (DESIGN 6.5), tagged Example | If the kickoff says Google Calendar is not connected, an amber line: "Connect Google Calendar in Mahara OS so bookings land there." |
 | 6 | You meet | You | "You hold the meeting: {form.consult_types}." Then the fork: "Didn't show? Ours. We call to rebook." · "Came, still thinking it over? Both of us. We call to follow up, and so do you: you know them best. Then mark it." | The fork's two ends, each node on its name's first line, each with its mark (the lanes' rebook mark on ours: a ring with a circular arrow, its head drawn, the same in the lanes, here and on L9 stop 4); a dotted line returns to the "Our team" lane, its node named "Didn't show?" (the no-show has one name everywhere: the CRM's stage is "Didn't show") | `form.consult_types` fallback: "at your office, at their home, or online". |
@@ -425,6 +444,8 @@ Stops 1, 2, 4 and 7 open up on later slides (L4, L5, L6 and L9), so their lines 
 **Title:** Your red lines are fixed. The rest, we test.
 **Time:** 3 minutes (2.5 until 2026-10-20: the optional proof became a core stop, and two stops were added)
 
+**Changed by the visual pass (2026-10-20):** the field's tiles hold example ads (tagged "Example ads") and switch off one by one; stop 3 leads with the input line, its panel loses its head and foot, says "Never" once and names its sources once; the Arabic deck keeps the card's lines in their groups through `dos_donts_ar`; the field no longer jumps at stop 3 ([The visual pass](#the-visual-pass-ceo-2026-10-20), DESIGN 22.4.4, 22.6.2).
+
 The CEO, 2026-10-20: "Creative flexibility is a big expectation", with "a smooth way for them to ask before they create it", and the check after "as small as possible", because the more volume we test, the better the ads. O7 sets it before any ad exists; this slide sets it in full before the ads go live. Since the fixer's round (2026-10-20) it comes before the ads slide, not after it: the guard rails are agreed before the client sees a single ad, which is the coach's point the CEO adopted (the first look is when the small-change requests start), and L4's notes point back to it ("As we just agreed").
 
 **One slide, five stops** (the lead offered one slide or two). One drawing, the field of ad tiles, carries all five stops (DESIGN 21.1): it arrives all lit, and each press changes one thing in a picture that stays put, so the slide holds the five calmly. Two slides would split the field from the deal it explains, and make the deck fourteen slides.
@@ -454,6 +475,7 @@ After stop 4, once the CSM records the client's yes: the quiet stamp "Agreed to 
 - Stop 2: say it before they see it happen. Most ads get switched off; that's how testing works, not a sign that something went wrong. No numbers: no win rate, no "one in ten", no count of ads a month. If their pick is already marked, its picture is on one of the lit tiles, with the star; if not, they choose one on the next slide. If they ask what changes from one version to the next: the hook, the angle, the format, the thumbnail, who's on camera.
 - Stop 3: concede first. Read their red lines out, then ask: "Anything else we must never say or show?" Add it to their card's Do's & Don'ts after the call. Then the smooth way to ask: ideas, a new offer, a new price or a change go in the group before we make the next round, so they are in the ads from the start, and we answer with the reason.
 - Stop 3, the offer: "Want to change the offer? Ask in the group first. A new offer mid-test starts the test again; if you ask first, we can plan it in."
+- Stop 3, if they point at the pictures: "These are examples, to show how testing works. Your ads use your projects." (Score round 2: a red line such as "Show our real projects, never stock photos" sits beside the field.)
 - Stop 4, set it before they see the ads, in your own words: "On the next slide you'll see your ads, and you'll want to change small things. We'll keep those for the next round, so your launch doesn't wait."
 - Stop 4: a wrong fact, price or claim is different: we fix it before the ad goes live. So is anything that breaks their red lines or gets their name, logo or colours wrong. Any matter of taste, small or large, goes into the next round.
 - Stop 4, why it stays small: "An ad held back for a small change is an ad we're not testing, and testing more is how we find the ones that work." The same holds for the rounds after launch.
@@ -490,6 +512,8 @@ After stop 4, once the CSM records the client's yes: the quiet stamp "Agreed to 
 **Title:** Your ads
 **Time:** 2.5 minutes (3 until the spec review of 2026-10-20, which gave 30 seconds to L10)
 
+**Changed by the visual pass (2026-10-20):** with no creative of their own, the three phones show one example ad in its three placements, the title's tag reads "Example ads", and the tray shows the example's thumbnail; prep and the notes window take a Drive link that brings their files into the tray (DESIGN 22.4.3, 22.7; `DRIVE-IMPORT.md`).
+
 **On screen**
 - Eyebrow: "Your customer sees this"
 - Title: "Your ads", with the tag "Preview"
@@ -503,7 +527,7 @@ After stop 4, once the CSM records the client's yes: the quiet stamp "Agreed to 
 - Tray: "Your creatives", with two tabs: "Uploaded" · "From your Meta ads". The count sits beside what it counts: beside the title when there is one list, beside each tab when there are two.
 - Starter ads are named once, in the foot under the phones: "Previews of starter ads, from our templates. Meta fits each ad to the screen it shows on." (in focus, the tag "Starter, from our templates" once). On a tray thumbnail, the short form "Template".
 - A tray thumbnail on a phone says which: "Feed" · "Reels" · "Facebook feed".
-- The leader on "Sponsored" quotes the word as the phone shows it: "Marked {word}".
+- The leader on "Sponsored" names the mark in the deck's language: "Marked Sponsored" in the English deck, «مكتوب عليه مُموَّل» in the Arabic one, whatever the phone's language (score round 1: "Marked مُموّل" read as two languages in one label). The button's leader quotes the button as the phone shows it, in its own isolate after the colon ("The button: إرسال رسالة واتساب").
 - Only with `prep.platforms_planned`: "Planned next: {platforms}".
 
 **Slots**
@@ -550,12 +574,12 @@ After stop 4, once the CSM records the client's yes: the quiet stamp "Agreed to 
 **Stops (the phone's screens)**
 1. Opening · {funnel.headline}
 2. The questions · each {label} with its options, gates tagged
-3. The thank-you screen · "Then your thank-you screen, and a welcome message." With `prep.welcome_video`: "Then your thank-you screen, and a welcome message with a short video about you." Done for you, the same line goes on: "Our team calls them within 5 minutes during working hours." (the visual review, 2026-10-20: the promise sat only inside the phone, too small to read on a Zoom share; done with you, the line stops after the message). The screen is their form's thank-you, or the default: "Thank you. Our team will call you within 5 minutes during working hours." A video frame shows only when `welcome_video` is on.
+3. The thank-you screen · "Then your thank-you screen, and a welcome message." With `prep.welcome_video`: "Then your thank-you screen, and a welcome message with a short video about you." Done for you, the same line goes on: "Our team calls them within 5 minutes during working hours." (the visual review, 2026-10-20: the promise sat only inside the phone, too small to read on a Zoom share; done with you, the line stops after the message). The screen is their form's thank-you, or the default: "Thank you. Our team will call you within 5 minutes during working hours." A video frame shows only when `welcome_video` is on. The phone's thank-you screen is read from the slide (score round 1: its words were about 17 canvas px in a phone 80% empty): the Page's avatar about 64 canvas px, its name and the words about 24, centred in the screen's upper half.
 
 **Slots**
 - `funnel.*` once `prep.form_confirmed`, with `prep` questions overriding.
 - No confirmed form and no prep questions: the slide is hidden by default, and prep says why. If the CSM shows it anyway, the phone draws the example form (DESIGN 7.5), tagged "Example form", with the line "We're finishing yours."
-- When `funnel.kind` is WhatsApp, the line becomes: "Your ad opens a WhatsApp chat." Check the destination with the media buyer before the call. The phone shows the chat with the message the ad fills in, waiting to send, tagged "Example wording": "Hi, I saw your ad. I'd like to know more about {service}." (no service: "Hi, I saw your ad and I'd like to know more."). Beside it, "What happens next": 1. "Their first message is ready in the chat. They tap send." 2. "It arrives on your WhatsApp." 3. "Our team calls them within 5 minutes during working hours." (DWY: "Your team calls them.")
+- When `funnel.kind` is WhatsApp, the title becomes "Your WhatsApp chat" (score round 2: "Your form" over a chat with no form) and the line: "Your ad opens a WhatsApp chat." Check the destination with the media buyer before the call. The phone shows the chat as sent, the ad it came from on top of the first message, as WhatsApp shows a chat started from an ad, tagged "Example wording", or "Example wording, starter ad" when the picture is a starter template (score round 2 of the five services); the steps start 96 px under the line and the third, the call, is the thank-you stop's band, 32 px under the second, so the three read as one sequence (final score round 1: on the phone's foot it stood 270 px from the second). Journey stop 2's waiting chat shows the same ad over the field. The message: "Hi, I saw your ad. I'd like to know more about {service}." (no service: "Hi, I saw your ad and I'd like to know more."). Beside it, "What happens next": 1. "Their first message is ready in the chat. They tap send." 2. "It arrives on your WhatsApp." 3. "Our team calls them within 5 minutes during working hours." (DWY: "Your team calls them.")
 
 **Notes**
 - Read the filter questions out: "This is the first filter. The call is the second."
@@ -623,6 +647,8 @@ After stop 4, once the CSM records the client's yes: the quiet stamp "Agreed to 
 **Title:** We bring them to your door. You win the project.
 **Time:** 2.5 minutes
 
+**Changed by the visual pass (2026-10-20):** their piece is named as fully as ours: "You" over "The meeting" and "The close" (DESIGN 22.6.4); the piece pulls apart as one sequence (22.3.3).
+
 The CEO's "piece of the pie" (the Gamma launch deck's "You do / We do" and "Paid ad vs referral" pictures), redrawn in deck tokens. It comes straight after the call, where the slide before ended on what lands with the client, so the split follows the moment the booking reaches them.
 
 **On screen**
@@ -667,10 +693,12 @@ The CEO's "piece of the pie" (the Gamma launch deck's "You do / We do" and "Paid
 **Title:** Your sales training
 **Time:** 2 minutes (1.5 until the spec review of 2026-10-20 added the Academy's two screenshots)
 
+**Changed by the visual pass (2026-10-20):** stop 2's lesson keeps the whole player in its crop (DESIGN 22.6.5); the Arabic line names the first section in Arabic (`CONTENT-AR.md`).
+
 **On screen**
 - Title: "Your sales training"
 - Lead, across the slide: "Enquiries from ads are meeting you for the first time. This course shows you how to win them." (the fixer's round, 2026-10-20: the slide now says why; it read "The course for your meetings, in the Premium Projects Academy.") Over the course list, its small label: "Premium Projects Academy".
-- The six courses as a list, in the Academy's own order and with its own numbers (the client finds them that way in the Academy): 1 "Introduction" · 2 "Onboarding" · 3 "Google optimisation" · 4 "Offer creation" · 5 "Project Closing Mastery" · 6 "Team and operations". The quiet rows are the number and the name only. Course 5 is lit, its name at H3, and opens into what it teaches: a small label "What it teaches" over a short line with four nodes, "The consultation" · "The proposal" · "The objections" · "The close". These are the sales deck's summary of the course, not its section names, and the label says so.
+- The six courses as a list, in the Academy's own order and with its own numbers (the client finds them that way in the Academy): 1 "Introduction" · 2 "Onboarding" · 3 "Google optimization" (the Academy's own spelling, so it matches the screenshot beside it; final score round 1) · 4 "Offer creation" · 5 "Project Closing Mastery" · 6 "Team and operations". The quiet rows are the number and the name only. Course 5 is lit, its name at H3, and opens into what it teaches: a small label "What it teaches" over a short line with four nodes, "The consultation" · "The proposal" · "The objections" · "The close". These are the sales deck's summary of the course, not its section names, and the label says so.
 - Beside the list, one thing at a time (three stops; the list stays put on all three):
   1. The Academy's classroom, as the sales deck shows it (masked, copy rule 11), tagged "Academy screenshot". Project Closing Mastery's tile is ringed in teal, and a short leader runs from the lit course on the list to the screenshot's edge, level with the course's name (the fixer's round; score round 2: run on along the gap between the tiles' rows, it lay on the neighbouring tile's edge, so the wrong course looked ringed). The teal ring alone marks the tile.
   2. A Project Closing Mastery lesson, as the sales deck shows it (masked: the top bar cropped off, the video's slide blurred), tagged "Academy screenshot", cropped to the course outline (down to its first objection) and the lesson's title, the cut in the video's dark ground so no word is cut, and drawn about 1.3 times larger (the fixer's round: the section names, "07: Objections 101" and "01: 'It's too expensive'", are the proof). Its course outline opens on "01: Sales Crash Course".
@@ -759,12 +787,14 @@ The slide ends on stop 4.
 
 | Head | Job | Why it matters | Picture |
 |---|---|---|---|
-| Before your meetings | Keep at least 10 open slots, at different times | Our callers book into them. On a day off, block each hour, not one all-day event. | A calendar week: open slots at different times, a few hours blocked, and a day off blocked hour by hour; on its "Day off" line, at its start, the key, "Blocked" |
+| Before your meetings | Keep at least 10 open slots, at different times | Our callers book into them. (Notes and recap: "On a day off, block each hour, not one all-day event.") | A calendar week: open slots at different times, a few hours blocked, and a day off blocked hour by hour; on its "Day off" line, at its start, the key, "Blocked" |
 | Before your meetings | Add each booking to your own system | If your team plans in other software, the booking goes there too, so nobody books over it. | None |
 | After each meeting | Mark every meeting the same day, with the value when you win | Your outcomes show which ads bring real projects. | None |
-| After each meeting | Follow up the ones thinking it over, and book the second meeting | You send the quote and set the second meeting. Our caller checks in too. | None |
+| After each meeting | Follow up the ones thinking it over, and book the second meeting | You send the quote and set the second meeting. Our caller checks in too. (Done for you; done with you, the first sentence alone.) | None |
 | Week to week | Leave the ads running through the first weeks | Pausing early ends the test before it tells us anything. | None |
 | Week to week | Keep your Drive folder fed | Fresh projects keep your ads from tiring. | Three of their project pictures |
+
+One sentence of why per job on the slide (score round 1: six jobs at two sentences each, about 22 px, read as a document). A job's second sentence (`more` in `content.ts`) is said in the notes and kept in the recap the notes window copies for the group. The moments are set at 28 px, the jobs at 32, their why at 26 (Arabic 30, 34, 28).
 
 Left this slide on 2026-10-20: "Keep the offer steady while we test" (now said on L3, in its notes) and "Block busy times and holidays in your calendar" (folded into the open-slots job and its picture).
 
@@ -775,13 +805,13 @@ Left this slide on 2026-10-20: "Keep the offer steady while we test" (now said o
 - After the call, send this card in the group as the recap: the notes window's "Copy for the group" posts the title; then, while the `start-to-finish`, `call-team` and `winning` videos are not all recorded and shown for this client (score round 2: a client who missed the journey, the call or the pie had nothing to catch up from), "Who does what: we bring the enquiries, call them within 5 minutes during working hours, book and remind them, and rebook anyone who doesn't show. You hold the meeting and win the project." (done with you: "Who does what: we bring the enquiries. Your team calls them within 5 minutes and books them on the right calendar, and the confirmation goes out by itself. You hold the meeting and win the project."); then the six jobs under their three heads; then, since the spec review of 2026-10-20, the testing line, "How we test your ads: your red lines stay fixed, your ideas go in the group before the next round, you check the facts, prices and claims before an ad goes live, and small style changes go into the next round so your launch doesn't wait. New photos and videos help: send them whenever you can." (the fixer's round added the rule the pushback is about, and the content ask); then, every time (the fixer's round, until the `payments` and `first-90-days` videos exist), the money line, "Keep your ad card funded. Your payments to us are on the dates in your agreement.", and the first-weeks line, "The first weeks are usually slower while the ads find your audience. Leave them running."; then the course line, "Before your first meetings: Project Closing Mastery in the Academy: {academy url}", so the training goes into the recap too; then the videos (below). The testing line puts L3's agreement in writing, so the CSM has it to point to when the ads reach the group. The same button is on L13's notes and on the notes window once the deck closes, so the recap goes out even when the call ran out of time before this slide.
 - Open slots: the more of their opening hours we can book into, the sooner a customer finds a time. Ten is the floor.
 - A day off: block the working hours as busy, not an all-day event. Calendars can miss an all-day block, and we'd book into it. We once booked over a client's own appointments because a day was blocked the wrong way, and the client left.
-- After a meeting, the follow-up is theirs and ours (before it, the messages are ours: slide 6).
+- After a meeting, the follow-up is theirs and ours: they send the quote and set the second meeting, and done for you, our caller checks in too (before it, the messages are ours: slide 6).
 - A slot outside their hours, a holiday and a service detail are the questions our callers ask most.
 - They don't need to answer on Fridays or in the evening.
 - **Temp check:** "Which of these will be hardest for your team?"
 
 **DWY** (regrouped by the spec review, 2026-10-20, so no calling job sits under "After each meeting")
-- Before your meetings: the open slots, its why "Your team books into them. On a day off, block each hour, not one all-day event."; and, in place of "Add each booking to your own system" (their own team already books), "Call new enquiries within 5 minutes, and note every try" · "Interest fades, and a missing note means nobody knows what happened."
+- Before your meetings: the open slots, its why "Your team books into them." (the day off in the notes and the recap, as above); and, in place of "Add each booking to your own system" (their own team already books), "Call new enquiries within 5 minutes, and note every try" · "Interest fades, and a missing note means nobody knows what happened."
 - After each meeting: "Move each meeting to the right stage the same day" · "Your stages show which ads bring real projects."; and the follow-up job, its why only "You send the quote and set the second meeting." (their own team makes the calls).
 - Week to week: the same two jobs.
 - Notes: "Their own callers ask those questions and book into the free times; the group answers them."
@@ -864,7 +894,7 @@ The housekeeping that was L10's first stop, with the money and reply facts from 
 **Time:** 1 minute
 
 **On screen**
-- The question, large: "Happy for us to go live?"
+- The question, large: "Happy for us to go live?" Already live (the cover says the ads are running): "Happy for us to carry on?" instead, never a go-live question.
 - The journey's rail drawn large and fully lit, ending at "Go-live", with the date once there is one.
 - Once booked: "Your first check-in · {next.checkin}"
 - One stop. The housekeeping that was this slide's first stop is L12.
@@ -873,10 +903,11 @@ The housekeeping that was L10's first stop, with the money and reply facts from 
 
 **Notes**
 - Questions first, then ask for the green light in those words.
+- Already live (the cover says so): ask "Happy for us to carry on?" in those words; never ask to go live.
 - Book the first check-in before you hang up, a week or two after go-live.
 - If they hesitate, find the one thing and solve it now, or agree a date to solve it.
 - Say the awkward thing: "If anything worries you at any point, tell me. The partners who do best tell us the good and the bad."
-- After the call, send the recap in the group. "Copy for the group" is here too (the six jobs, how we test your ads, the course, the videos), so it goes out even if you didn't reach slide 10. It is the one short recap, not the long launch message.
+- After the call, send the recap in the group. "Copy for the group" is here too (the six jobs, how we test your ads, the money and the first weeks, the course, the videos), so it goes out even if you didn't reach slide 10. It is the one short recap, not the long launch message.
 
 **DWY:** same.
 
@@ -934,6 +965,255 @@ Missed something on the call? Watch:
 
 ---
 
+# The visual pass (CEO, 2026-10-20)
+
+The CEO, 2026-10-20: "make the onboarding presentation: look better. Add more visuals as well for the placeholders. You can use Higgsfield to add an example ad instead of just having the logo as well. Don't be afraid to do that and add really nice animations." And: "for their ads allow just a drive link to work and it can work with folder or just the video. make it really easy for him to prepare." The design is `DESIGN.md` 22; the Drive link's backend is `DRIVE-IMPORT.md`. This section holds every new or changed word. Copy rules 1 to 11 hold for all of it; nothing here names a result, a lead, a cost or a budget, and every picture that is not the client's own is labelled "Example ad".
+
+**Decision table, added rows** (the table above is unchanged otherwise):
+
+| Fact or piece | Its one home | Elsewhere, only as |
+|---|---|---|
+| The call's three outcomes (service chosen, access set up, Blueprint booked) | O1, as the agenda ("Before we hang up, we'll:") | The checklist at the foot of O4 and O6, ticked when each is done; O7's last stop, in its true state |
+| What an ad for their service looks like, before they have ads | O4's product card (one example ad) | L2 stop 1 and L4, while they have no creative of their own; L3's field (example tiles) |
+| The reply time | O3 stop 2 (it was O3's foot) | L12's replies row, only when the onboarding deck was never presented (unchanged) |
+| Many ads tested, most switched off, as a picture | L3's field | O7 stop 1, only as the small strip of six example tiles over the plant (no toggles, no words of its own beyond its tag) |
+
+## The call's checklist (onboarding)
+
+| Key | English | Where |
+|---|---|---|
+| `welcome.agenda.lead` (unchanged) | Before we hang up, we'll: | O1 |
+| `welcome.agenda.1` · `.2` · `.3` (unchanged) | Choose your launch service · Set up your access · Book your Brand Blueprint call | O1, and O7's last stop |
+| `today.label` (new) | Today | The foot of O4 and O6; O7's last stop |
+| `today.1.short` · `today.2.short` · `today.3.short` (new) | Launch service · Your access · Blueprint call | The foot of O4 and O6 |
+
+An item is done from data, never from a Next press: the service when it was chosen with O4's "Launch with this" (`prep.service_chosen_at`; the notes window's Undo clears it), the access when O6's setup cards are both Done, the Blueprint when the booking reads back. A service typed in prep before the call is only the column's proposal: the item stays open until the client chooses. Never "2 of 3".
+
+**Notes, added**
+- O1: "Point at the three: by the end of this call, these are done."
+- O6: "When the access cards are done, the checklist at the foot ticks 'Your access'. Say it: that's the step that most often holds a launch up."
+- O7, last stop: "Read the checklist back. If one is still open, agree who finishes it and by when, and write it in the kickoff form."
+
+## O2 · `goals`
+
+On screen as before, in two stops: stop 1 is "In 90 days" and the goal alone; stop 2 adds the other three answers and the footnote. The input's placeholder when no goal is on file is `goals.input`, "In your words" (score round 2 of the five services: the question above it and the track under it already say 90 days; "Your 90-day goal, in your words" stays as the field's name for a screen reader, `goals.inputLabel`). With the track under the field, the "In 90 days" label over it is not shown.
+
+**Notes, added:** "Stop 1: read their goal back, then pause. Stop 2: the rest of their answers. Remember the top challenge for slide 4."
+
+## O3 · `team`
+
+The foot becomes stop 2, in two lines:
+
+| Key | English |
+|---|---|
+| `team.reply` (new, from `team.foot`) | We reply within 2 working hours. |
+| `team.hours` (new, from `team.foot`) | 10 to 6, Saturday to Thursday. If something worries you, we call you. |
+| `team.hours.uae` (new, from `team.foot.uae`) | 10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday. If something worries you, we call you. |
+
+`team.foot` and `team.foot.uae` retire; their words live on in these three. The copy test's "within 2 working hours" pin moves to `team.reply`.
+
+**Notes, added:** "The group fills as the slide opens. Then go down the five roles. Stop 2 is the promise: say the reply time." Friday and the hours stay in their own notes, unchanged.
+
+## O4 · `one-service`
+
+| Key | English |
+|---|---|
+| `one.first` (unchanged, now the product column's label) | Your first campaign |
+| `one.pending` (new: the column before any service exists) | We'll pick it together |
+| `one.chosen` (new: the column's control after "Launch with this") | Chosen |
+| `example.tag` (new) | Example ad |
+
+**Notes, added**
+- "The phone shows an example ad for this service, under their name and logo, and it says Example ad above it. Say so: 'This is how an ad for {prep.service_focus} looks under your name. Your own ads come from your content.'"
+- "If you named a service in prep, the column shows it in grey as a suggestion, and the checklist keeps it open. Let them choose."
+- "When they choose, press Launch with this. The phone changes to the service they chose, and the checklist ticks it."
+
+## O6 · `this-week`
+
+| Key | English |
+|---|---|
+| `week.now` (new, the first group's head) | Now, on this call |
+| `week.later` (new, the second group's head) | This week, from you |
+| `week.guide` (new, on the Meta access and Mahara OS cards, only when that video is recorded) | Video guide · {m:ss} |
+| `week.line` (unchanged words, now in the notes only) | Most of it we'll do together, right now. |
+
+The rows, their lines and their ticks are unchanged. Done with you, "Callers' phones" moves into "Now, on this call". The title is followed directly by "Now, on this call"; the old lead is said, not shown.
+
+**Notes, added:** "Say it as you open the slide: most of this we'll do together, right now."
+
+## O7 · `next`
+
+| Key | English |
+|---|---|
+| `next.title` (unchanged, the overview's title) | What to expect, and what's next |
+| `next.title.expect` (new, stop 1's title) | What to expect |
+| `next.band.title` (from `next.band`, the last stop's title) | Next: your Brand Blueprint call |
+| `next.band.line` (from `next.band`) | 45 minutes with our creative director: your brand, your offer, your first ad scripts. |
+
+Stop 1 holds "Your first ads" and "The first weeks are a test" with the red lines, worded as before, under a strip of six example tiles tagged `example.tags` ("Example ads"), two lit and four switched off. The optional starter stop is next. The last stop is the Blueprint, its date once booked, and the checklist under "Today", whose done items tick in order as the stop opens.
+
+**Notes, added (stop 1):** "The small pictures are example ads, not theirs: most get switched off, a few keep running. That's the test."
+
+## Example ads (L2 stop 1, L3's field, L4, L5, O4, O7)
+
+| Key | English | Where |
+|---|---|---|
+| `example.tag` | Example ad | Above one phone: L2 stop 1, O4, and any example phone beside a real creative on L4 |
+| `example.tags` | Example ads | After L4's title, in place of "Preview", when every phone shows the example; L3's field tag, in place of "Illustration"; O7 stop 1's strip |
+| `example.short` | Example | On the tray's example thumbnail, where "Template" sits on a starter; on L5's form cover when it is the example's picture |
+| `ads.lineExample` (new) | Where your ads will show on your customers' phones. | L4's line under "Your customer sees this", whenever every phone shows the example. `ads.lineEmpty` ("How your ads will look on your customers' phones.") would call the example their look; it stays for the starter case only |
+| `ads.foot.example` (new) | Meta fits each ad to the screen it shows on. | Under L4's phones when they show the example (the tag already says what they are) |
+
+`ads.empty` is unchanged ("We're finishing your first ads"): with the title's tag and the thumbnail's chip, a third "example" on the slide would be one too many.
+
+**Inside an example phone, nothing is written for them.** The Page name and avatar as for any ad; the caption's text is their own selling point (`prep.selling_point`), else the service as they wrote it, else nothing (the Page name alone); the button is "Learn more"; the Facebook headline is the service. The picture's alt text is "Example ad: {scene}":
+
+| Theme | Scene |
+|---|---|
+| kitchen | a finished kitchen with an oak and quartz island |
+| living | a new villa living room |
+| majlis | a contemporary majlis with carved wood and brass lanterns |
+| villa | a new two-storey villa at golden hour |
+| construction | a villa's concrete frame on a tidy site |
+| bathroom | a marble bathroom with a stone bathtub |
+| pool | a villa pool at dusk |
+| landscape | a landscaped villa garden with a pergola |
+| bedroom | a calm master bedroom |
+| office | a fitted-out office with a glass meeting room |
+| facade | a renovated villa facade in stone |
+| stairs | an entrance hall with a floating marble staircase |
+
+**Notes, added**
+- L2 stop 1, when its phone shows the example: "This is an example ad, marked on the slide. Your own replaces it when it's ready." Never call an example theirs, and never call it a template.
+- L4, when the phones show the example: "These are example ads, marked on the slide. Your own replace them when they're ready." The same two nevers.
+- L3 stop 1: "The tiles are example ads, not theirs: the picture is about how many we test."
+
+**Where examples never go:** the two covers, O7's starter stop, L10's project pictures, L7's roads (`DESIGN.md` 22.4.6).
+
+## L3 · `creative-freedom`, stop 3
+
+- Off the canvas: `test.fixed.name` ("Fixed: your red lines"), `test.fixed.copy` ("We never cross these.") and `test.fixed.told` ("you told us"). The title already says the red lines are fixed.
+- The column's order: the stop's name, `test.input.copy`, `test.input.offer`, then the red lines under "Never" and "Always".
+- A line under a head drops a leading word that repeats the head (`DESIGN.md` 22.6.2): "Never show prices in an ad" reads "Show prices in an ad" under "Never".
+- One source line under the red lines:
+
+| Key | English | When |
+|---|---|---|
+| `test.field.tag` (changed: it read "Illustration") | Example ads | The field's tag, stops 1 to 5 |
+| `test.field.tag.pick` (new) | Example ads, and your pick | The field's tag whenever their pick is on tile 14, so their real ad is never called an example |
+| `test.fixed.source.both` | From your card, and what you told us on the onboarding call. | Both sources |
+| `test.fixed.source.card` | From your card. | Card lines only |
+| `test.fixed.source.told` | What you told us on the onboarding call. | Lines typed on O7 only |
+| `test.fixed.card` (renamed) | On your card, in Arabic | The English deck's head for card lines written in Arabic, quoted as written (the Arabic deck's twin is in `CONTENT-AR.md`) |
+
+**Notes, changed (stop 3):** "Start with the input line: ideas, a new offer, a new price or a change go in the group before the next round. Then read their red lines out, and ask: 'Anything else we must never say or show?' Add it to their card's Do's & Don'ts after the call."
+
+## L7 · `partnership`
+
+| Key | English |
+|---|---|
+| `partner.piece.meeting` (new) | The meeting |
+| `partner.piece.close` (changed: it read "The meeting and the close") | The close |
+
+Theirs is a two-name stack under "You", like ours under "Our team". The notes keep "the meeting and the close" as one phrase. Done with you is unchanged.
+
+## L8 · `training`
+
+No English change. The Arabic of `training.when.line` loses its Latin section name (`CONTENT-AR.md`).
+
+## Prep and the notes window (cockpit UI, English)
+
+| Where | Words |
+|---|---|
+| The ads panel, no creatives | No ads yet, so the phones show an example ad ({Theme}). Paste a Drive link or add files here to show theirs. |
+| Launch service, typed here but not chosen on the call (changed) | Suggested here. The client chooses on slide 4 with Launch with this; until then the checklist keeps it open. |
+| Launch service, chosen on the call (the fixer's round) | Chosen on the call with Launch with this. · Undo the choice (a button: it clears `service_chosen_at` only, so the checklist's item opens again and the service stays as it was) |
+| The example, beside its picture | Example ad: {Theme}, from "{service}" · Example ad: {Theme}, chosen here |
+| The switch's first option | Match their service |
+| The switch's hint | Shown only until they have ads of their own, and labelled Example ad on the slide. |
+| The twelve themes | Kitchen · Living room · Majlis · Villa · Construction · Bathroom · Pool · Garden · Bedroom · Office · Facade · Entrance and stairs |
+| No logo (changed) | No logo. Upload one, or the deck shows their first letter. |
+| No goals (changed) | No goals in their onboarding form yet. The slide asks the question, and you type their answer on the call. |
+| Do's & Don'ts, each card line in the Arabic deck | In Arabic (the field's label) · Write it without أبد or دايماً; the heading says it. (its hint) |
+| Do's & Don'ts, untranslated lines | 1 card line has no Arabic yet. Type it so the Arabic deck keeps it under Never or Always. · {n} card lines have no Arabic yet. Type each one so the Arabic deck keeps it under Never or Always. |
+| A video poster, empty | Not recorded yet (unchanged) |
+
+## The Drive link (prep's ads panel and the notes window)
+
+| Where | Words |
+|---|---|
+| The block's title | Bring in from Drive |
+| The field's label | Paste a Drive link |
+| The hint under it (changed by the spec review) | A folder, or one video or picture. The first files arrive in the tray in about a minute. |
+| The button | Bring in · Checking… (in flight) · Started (2 s, after a request; a paste that holds a link sends at once, with no click) |
+| A link refused, one line each under the field | {link, cut in the middle}: {its sentence} |
+| A link left out of a paste whose other links started (the fixer's round, 2026-10-21: the field is cleared and not red, since the paste worked), one muted line each | Skipped (then the link, cut in the middle, and its sentence: "Skipped {link}: {its sentence}") |
+| More than ten links in one paste | Only the first 10 links were sent. Paste the rest once these finish. |
+| Two or more imports open (the box's head line) | Bringing in {n} links from Drive… |
+| The same, with finished links shown under the open ones (score round 2: "3 links" sat over six link cards) | Bringing in {n} of {total} links from Drive… |
+| Queued | Waiting to start. It usually starts within a minute. |
+| Opening | Opening the Drive link… |
+| Working | Bringing in {n} files from Drive… · Bringing in 1 file from Drive… |
+| A file's state | Waiting · Bringing in · In the tray · Already in the tray · (a converted file, under its row) {name} was converted to MP4 so it plays in every browser. |
+| Done, all | Brought in {n} files from Drive. · Brought in 1 file from Drive. |
+| Done, some | Brought in {landed} of {n} files. Each one that didn't come in says why below. |
+| Done, nothing new | Everything in this link is already in the tray. |
+| Done, more than 20 | Only the newest 20 came in. Paste a subfolder's link for the rest. (added after the done line) |
+| Nothing picked it up | Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now. · The Drive importer hasn't run yet. Upload the files here for now. |
+| Stopped part-way | This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now. |
+| The read failed | Couldn't check the import: {reason}. Trying again. |
+| A finished import, folded to the files that didn't come in (the fixer's round) | Show the list ({n}) · Hide the list |
+| The field's clear button, beside a refused link (its accessible name) | Clear the link |
+| The importer's functions not deployed yet (the fixer's round) | Bringing in from Drive isn't live yet. Upload the files here for now. |
+
+The sentences the server raises or stores (a refused link, a folder it can't open, a video too long to bring in and the rest) are `DRIVE-IMPORT.md` 6's, word for word; the browser shows them as written. Their Arabic is in `CONTENT-AR.md`.
+
+## The fixer's round, score round 1 (2026-10-21)
+
+`DESIGN.md` 22.12 has the why. New or changed words only; copy rules 1 to 11 hold.
+
+| Key | English | Where |
+|---|---|---|
+| `example.tag` (now also on O1, and on L1 when the client has no creative) | Example ad | Over O1's Reels phone and L1's feed phone |
+| `road.stops[3]` (changed: it read "Brand and offer") | Brand Blueprint call | O5's fourth stop: one name for one call, as O1, O6 and O7 say it |
+| `cover.roadLive` (new) | Live since {date} · Launch call today | L1's rail, once go-live has passed |
+| `portal.installLabel` (new) | Open this on your phone | L9's phone stop, over the install address set large |
+| `next.cardName` (new) | Brand Blueprint call | O7's last stop, the call's block on the calendar card |
+| `next.cardWith` (new) | 45 minutes · Our creative director | Under it |
+| `next.cardOpen` (new) | We book it before we hang up | The card before the call is booked, beside an open ring |
+| `team.line` (unchanged words, now said, not shown) | Everyone who works on your account is in this one group. | The notes, as O3's group fills |
+| `DRIVE_UI.skipped` (new, cockpit UI) | Skipped | Before a link left out of a paste whose other links started |
+
+**Notes, changed**
+- O3: "The group fills as the slide opens: "Everyone who works on your account is in this one group." Then go down the five roles. Stop 2 is the promise: say the reply time."
+
+**Prep, changed**
+- The logo line: "No logo. Upload one, or the deck shows their first letter." (it said "initials"; the monogram is one letter).
+- "Service mode not set on the card. The deck uses done for you." is gone: slide 3's line, "Service model not set. The deck uses done for you. Change it if their team calls.", says it once.
+- "Kickoff, templated ads: {answer}." says a Title Case answer in sentence case.
+- A video slot not recorded: "Not recorded yet", one line under its title.
+- The notes' foot: "Next: {the next stop's name}" (or "Next: stop {n} of {m}").
+
+## The fixer's round, score round 2 (2026-10-21)
+
+`DESIGN.md` 22.13 has the why. No new client-facing words: the pictures reuse words already written. Copy rules 1 to 11 hold.
+
+| Key | English | Where |
+|---|---|---|
+| `CONFIRMATION` (unchanged, now also on O5) | Your appointment with {Company} is confirmed. / Date: {date} / Time: {time} / See you then. | O5's end, under the last two stops, tagged `tag.exampleWording` ("Example wording"); the date is two working days after go-live (else a week after the booked launch call, else three weeks after this call), never before the launch call |
+| `next.cardName`, `next.cardOpen` (unchanged words) | Brand Blueprint call / We book it before we hang up | O7's close before the booking: the day row, and the dashed 45-minute block on the calendar card at full size |
+| `status.done` (shared, unchanged words) | Done | O7's close when the deck is opened after the Blueprint (the stage past it, as O5's road shows) and no booking is on file: the block's ring ticked in teal. With the held call on file (`last.blueprint`), the card shows its day and time as booked. The checklist ticks the Blueprint either way (final score round 1: O5 showed it done while O7 still booked it) |
+| `week.guide` (unchanged words) | Video guide · {len} | On the setup card's head line, before its status; three cards to a row show the play mark and the length only, the words kept for a screen reader |
+
+**Notes, changed**
+- L3, stop 3 (new): 'Stop 3, if they point at the pictures: "These are examples, to show how testing works. Your ads use your projects."'
+- O1: "Keep the kickoff form open in your own tab." ("Share only the deck window. Present maximised, not full screen." is gone.) L1 loses "Share the deck window only. Present maximised, not full screen, so you can add a file from the notes window." The notes window's foot says it once, for every slide: "Share the deck window only, maximised rather than full screen, so you can reach this window." Prep's "Add a file" panel loses its own copy of it.
+
+**Taken off the canvas**
+- L4, an example only: the tray's "Example" tile. The tray says "We're finishing your first ads" alone; the title's tag names the example the phones show.
+
+---
+
 # Appendix A: the example call
 
 Used by L6. Scripted from the dialer's real booking script (`config/call-script.json`, verified 2026-09-09) and its framework (`public/framework.js`). It is never a real recording. The customer ("Abu Fahad") is fictional, and the caller is never named: she opens as "the appointments team at {Company}". `EXAMPLE-CALL.md` holds both Arabic dialects, the pain variants, the budget bands and the male-caller swaps.
@@ -952,7 +1232,7 @@ Filled slots are highlighted in teal. A missing slot shows a dashed "To give us:
 | `{place}` | `form.consult_types`, first match: "at our office", "at your home", "online" | "To give us: where you hold consultations" |
 | `{selling point}` | `prep.selling_point`, typed from their Brand DNA, offer (`editor_clients.offer`) or call guide. Prep shows it beside the pain variant so the two match. | "To give us: what makes you different, in one line" |
 | `{instagram}` | `form.instagram` (handle only) | The 4:35 bubble is dropped. |
-| `{day}`, `{time}` | The first working day two days ahead, inside `form.hours`. The time is 4 pm, moved to the client's last afternoon hour when they close earlier. | Two days ahead, Sunday to Thursday, 4 pm. |
+| `{day}`, `{time}` | The first working day two days ahead, inside `form.hours`, counted from go-live while go-live is still ahead (final score round 1: the example booking fell before a client's go-live), else from today, as O5's confirmation does. The time is 4 pm, moved to the client's last afternoon hour when they close earlier. | Two days ahead, Sunday to Thursday, 4 pm. |
 | `{band}`, `{band.answer}`, `{band.note}` | `prep.budget_band`, else `EXAMPLE-CALL.md` by country and scale | The script's figures, no currency. |
 | Pain variant | `prep.pain`: delays (default), design, or cost. Changes the 1:46, 2:05, 2:17 and 3:16 lines and stop 8's note. | Delays. |
 | Dialect | `prep.dialect`, then `client.country` (SA gives Saudi; KW, QA, BH and AE give Kuwaiti), then `form.areas` (a Saudi city gives Saudi) | Kuwaiti, the script's own dialect. Switchable in the notes window. |
@@ -1565,7 +1845,169 @@ Every slide score round 2 put under 4 brought to at least 4, and the cheap clear
 - **L11:** the in-between check-ins are drawn in ink-3.
 - **L12:** each money row's do-this is in ink.
 - **O3:** the Arabic reply hours never strand "من" at a line's end.
-- **O7:** the plant is three lines (the ads' job, the volume, the ask over the list); "templates for kitchens" in sentence case.
+- **O7:** the plant is three lines (the ads' job, the volume, the ask over the list); "templates for interior design" in sentence case.
 - **The recaps:** the launch recap carries "Who does what: …" until the `start-to-finish`, `call-team` and `winning` videos are recorded and shown; O6's links carry O7's plant until the `testing` video is.
 - **The chrome and the notes window:** one space in "Back to {client}"; the video block leads with "If you skip this, say the video is in your group."
 - **Not done here, and why:** a typed Arabic line for each card Do's & Don'ts item (`dos_donts_ar`) still needs the server to keep the key, which is the backend agent's migration; until then the panel quotes the English lines under "من ملفكم". Journey stop 5's calendar stays four hours (cropped, its entry would leave the lit row's line). Training stop 3's statements stay at the list's top (level with the lit course, they would run past the foot).
+
+---
+
+# The visual pass (2026-10-20): revision notes and the humanizer
+
+**What changed in this file.** A new section, [The visual pass](#the-visual-pass-ceo-2026-10-20), holds every new word; each slide it touches says so in one line under its time. The onboarding deck's time is about 22 minutes with the setup. Three rows joined the decision table. Two keys split (`team.foot` into `team.reply` and `team.hours`; `next.band` into `next.band.title` and `next.band.line`), three left L3's canvas (`test.fixed.name`, `test.fixed.copy`, `test.fixed.told`), one was renamed (`test.fixed.card`), and L7's one name for theirs became two. Score round 2's "Not done here" item, the Arabic of each card Do's & Don'ts line, is now specified (`dos_donts_ar`, `DRIVE-IMPORT.md` 9).
+
+**The humanizer on the new English** (`mahara-context/skills/humanizer`):
+- **Inflated or promotional words:** none. "Example ad" says what it is; the tray's line says "We're finishing your first ads", not "coming soon".
+- **Rule of three:** the checklist has three items because the call has three outcomes (O1's agenda, unchanged). The Drive hint names two shapes, a folder or one file, not three.
+- **Negative parallelism ("not X, but Y"):** none added. The O4 note's "Your own ads come from your content" stands alone.
+- **Copula avoidance and -ing tails:** "Bringing in 6 files from Drive…" is a progress line, the verb kept from the button ("Bring in", "Bringing in", "Brought in").
+- **Vague attributions:** the source line under the red lines says exactly where they came from ("From your card, and what you told us on the onboarding call.").
+- **Em dashes, exclamation marks, title case, curly quotes:** none.
+- **Filler and hedging:** "It usually starts within a minute." keeps "usually" because a queue's timing is not promised; the other lines state plainly.
+- **Changed after the pass:** "The others are below, with why." became "Each one that didn't come in says why below."; "Your 90-day goal" kept its existing wording rather than a new one.
+
+---
+
+# Spec review of the visual pass (2026-10-20): what changed in the words, and the humanizer
+
+`DESIGN.md` 22.10 is the change log of the review; this is what it changed here.
+
+- **Canvas:** `ads.lineExample` ("Where your ads will show on your customers' phones.") replaces `ads.lineEmpty` beside an example; `ads.empty` goes back to "We're finishing your first ads"; `test.field.tag.pick` ("Example ads, and your pick"); O6's lead moves to the notes; O7 stop 1's strip carries "Example ads"; L5's form cover carries "Example" when it shows the example's picture; the `living` scene loses its city ("a new villa living room").
+- **The checklist:** item 1 is done only when the client chooses on the call; a service typed in prep is a suggestion (the new prep line and O4's note say so).
+- **Notes:** O3 ("The group fills as the slide opens. Then go down the five roles."), O4 (the suggestion), O6 (the old lead, said), O7 (the strip).
+- **The Drive box:** the hint says the first files arrive in about a minute; a paste sends at once; one line per refused link; the over-ten line; the plural "Bringing in {n} links from Drive…"; ten open imports, not three; the restricted-link sentences name the fix; `stopped` and the new `not_started`; the too-big video and `unplayable` sentences now that the desk converts; the `converted` note replaces the HEVC note.
+
+**The humanizer on the new English** (`mahara-context/skills/humanizer`):
+- **Inflated or vague words:** "so it plays everywhere" (the review's wording) became "so it plays in every browser", which says where. "Suggested here" says what prep did, not "recommended".
+- **Hedging:** "The first files arrive in the tray in about a minute." keeps "about" because a queue's timing is not promised; "Upload a cut under 5 minutes" states the fix plainly.
+- **Negative parallelism:** none added. "Where your ads will show" stands on its own; it does not say "not how they look".
+- **Passive voice:** "Only the first 10 links were sent." keeps the passive because the CSM's paste did the sending; the next sentence is active ("Paste the rest once these finish.").
+- **Em dashes, exclamation marks, title case, curly quotes, "every" or "always" for our steps:** none.
+
+---
+
+# The five main services (CEO, 2026-10-21)
+
+The CEO, word for word: "These are not kitchens. It is not one of the services. If you look, we have the main services, which you can see on the kickoff form. List them out: Architectural design, Interior design, Fitout / renovation, Construction, Design-build."
+
+The service a campaign advertises is one of the five choices of the kickoff form's "Which service are we advertising?" (Typeform tG7dnxBn, hidden field `service_focus`), never a sub-trade such as kitchens or bathrooms. Slide 4 offers the same five, in the form's order, so the client's pick on the call is the CSM's answer on the kickoff form. `DESIGN.md` 22.14 has the layout and the rules; `CONTENT-AR.md` decision 15 has the Arabic.
+
+## The names
+
+| Key | The kickoff's choice | As a label (`SERVICES.*.name`) | Inside a sentence (`SERVICES.*.mid`) |
+|---|---|---|---|
+| `design-build` | Design and build | Design and build | design and build |
+| `interior` | Interior design | Interior design | interior design |
+| `architecture` | Architectural design | Architectural design | architectural design |
+| `fitout` | Fit out and renovation | Fit-out and renovation | fit-out and renovation |
+| `construction` | Construction only | Construction | construction |
+| `other` | Other | Other (the row); the client's own words everywhere else | their own words, in sentence case mid-sentence |
+
+The label is the row's name on slide 4, the queue card's line ("New enquiry · Interior design"), the example form's first answer and the Facebook headline inside an example phone. The sentence form fills every `{service}` that sits inside a sentence: "templates for interior design", "This is how an ad for fit-out and renovation looks under your name", "Happy to start with construction?", the example call's "about interior design", the WhatsApp message's "more about design and build".
+
+## O4 · `one-service`, changed
+
+**On screen**
+- The five rows, always, in the kickoff's order. A sixth row, "Other", only when some of the client's words fit none of the five (or their pick is Other).
+- Under a row, quiet and on one line, the client's own words that belong to it, as they wrote them, each whole: "Villa interiors +2". Never our label again, never a word cut in half.
+- "Your #1" beside the row their #1 belongs to, while the band is on another.
+- The band starts on their likely service; the product column names it in ink on a dashed line until "Launch with this", then on a solid teal one (score round 4: grey read as disabled on a share).
+- No "Add a service" on the canvas: the five are the choice. Their own words are typed in prep.
+- One script per line (score round 1): the Arabic deck reads their words from prep's "The same, in Arabic" (`services_ar`, either deck's prep), so تصميم داخلي carries «تصميم داخلي للفلل +٢», never "+٢ Villa interiors"; with no Arabic list it shows their words as written, left to right with the count after them in Western digits ("Villa fit-out +2"). Words all in one script run in that script's direction in either deck, so Arabic words in the English deck read right to left with the Arabic comma in place (final score round 1).
+
+**Which row the band starts on:** the CSM's pointer on the call, else the row with the most ticks (their #1 wins a tie), else their likely service: slide 4's choice, then prep's, then the kickoff's answer, then their #1 and their services read by keyword (DESIGN 22.14.2). A client with nothing on file starts with no row lit.
+
+**"Launch with this"** saves the main service in both languages (`service_focus` "Interior design", `service_focus_ar` تصميم داخلي) and stamps `service_chosen_at`, the existing flow. "Other" saves the client's words. A picture prep chose for another service gives way to the choice.
+
+**Notes (replacing the first two lines and the prep line)**
+- "The rows are the five main services we run campaigns for, the same choices as the kickoff form's 'Which service are we advertising?', so what they pick here is your answer there."
+- "The band starts on the service their answers point to. Their own words (kitchens, majlis, a villa fit-out) sit quietly under the service they belong to: a kitchen is part of a service, never the service."
+- "Ask the three questions out loud for the two or three services they really offer. Steer toward the one that passes all three. If none does, take the easiest to sell."
+- "Other shows only when some of their words fit none of the five. Pick it only if that is truly what they sell, in their words."
+- "If you set a service in prep, the column shows it as a suggestion, its name on a dashed line, and the checklist keeps it open. Let them choose."
+
+## O7 and the launch deck
+
+- O7's starter line names the service in its sentence form: "Starter ads can go live first, from our ready templates for interior design." In the Arabic deck, "Other" in Latin letters only is left unnamed, and prep's missing line says: "The Arabic deck leaves "{words}" unnamed on this slide. Type their service in Arabic in prep (Launch service, Other) to name it."
+- The launch deck reads the advertised service from the kickoff's answer first, then slide 4's choice, then prep, then the forms. The example call, the queue card, the form and the WhatsApp message all name that service.
+
+## Prep (cockpit UI)
+
+| Where | Words |
+|---|---|
+| Launch service, the select | Not set · From the kickoff form · From the onboarding form · Design and build · Interior design · Architectural design · Fit-out and renovation · Construction · Other, in their words |
+| Launch service, Other's boxes | Their service, in their words · Their service, Arabic (placeholder الخدمة بكلامهم) |
+| Launch service, the hint | Not chosen yet. Slide 4 starts on {service}, from the {kickoff form/onboarding form} ("{their words}"). · Suggested here. Slide 4 starts on it; the client chooses with Launch with this, and until then the checklist keeps it open. · Not chosen yet, and neither form names one. The client picks one of the five on slide 4. |
+| Their services, the hint | From the onboarding form, prices taken out. Each shows quietly under the main service it belongs to on slide 4. · Edited here. Each shows quietly under the main service it belongs to on slide 4. · None in the forms. Type them here, in their words. |
+| Example ad, the two selects | Example ad, service: Match their service, then the five · Example ad, picture: Their service's lead picture (or Their service's pictures), then that service's scenes |
+| Example ad, the line | {service}: {scene}, chosen here · {service}: {scene}, their service · {service}: {scene}. No service on file yet, so interior design's |
+| Example ad, the hint | Shown only until they have ads of their own, and labelled Example ad on the slide. Choose a service, then one of its pictures. |
+
+## Example ads, by service
+
+Each service has its own scenes, its lead picture first (DESIGN 22.14.3). Six new scenes join the twelve; their alt text follows the existing pattern ("Example ad: {scene}"):
+
+| Scene | Prep's name | Alt text scene |
+|---|---|---|
+| `construction2` | Tower frame | a residential tower's concrete frame under a crane at dusk |
+| `construction3` | Villa frame and scaffolding | a two-storey villa's concrete frame with scaffolding |
+| `fitout2` | Boutique | a fitted-out boutique with stone counters and lit shelves |
+| `fitout3` | Restaurant | a fitted-out restaurant with timber booths and brass lights |
+| `designbuild` | Villa and pool at dusk | a new villa's glass living room over its pool at dusk |
+| `architecture2` | Modern villa | a modern villa with a timber-screened upper floor |
+
+Inside an example phone the caption is only the client's selling point (`selling_point`, `selling_point_ar`), else nothing; the Facebook headline is the service's label. The service is never written into the caption as if it were their copy.
+
+## The harness's clients
+
+The four made-up clients each advertise a different main service: full is interior design (Noor Studio Interiors, from its kickoff), sparse design and build (from its name), dwy construction (one of its own words fits none, so slide 4 shows Other), starter fit-out and renovation. Architectural design is seen with `?service=architecture`. None names a sub-trade as the service, as their #1 or in a starter template's words or picture (`deck-examples` pins it): the starter client's #1 is "Villa fit-out", its own words "Villa fit-out, Shop and office fit-out, Kitchen renovation" (a kitchen only quietly under fit-out, in their words), and its two starter templates are cut from Mahara's own sales-deck pictures (an office desk under the Kuwait Towers and drawings on a desk), never one of the example scenes, with fit-out words (`CONTENT-AR.md`; the reel's words say معاينة, never زيارة). Full's two starter templates are cut from the same sales-deck pictures, interior and never kitchens; the reel's words end "…to the last detail." (score round 4: "…the last cabinet" was a kitchen's, and was cut on screen). The harness is never a client's deck; its words follow the same rules so the preview reads true.
+
+## O2, the goal's first stop
+
+No new words. The goal stands larger as the stop's hero over its 90 days ("Today" to "In 90 days"), then settles to its own size when the other answers arrive (`DESIGN.md` 22.14.4).
+
+## The separator in Arabic
+
+Every Arabic line separates its parts with the Arabic comma «، », never a middle dot: beside Arabic-Indic digits a dot reads as ٠ (score round 3). English keeps " · ". The code asks `sep(lang)` wherever it joins two parts on the canvas.
+
+## The humanizer on the new English
+
+- **Inflated words:** none. "Other, in their words" says what the box holds.
+- **Negative parallelism:** one, kept on purpose in the notes: "a kitchen is part of a service, never the service" is the CEO's correction, said to the CSM, not the client.
+- **Em dashes, exclamation marks, title case, "every" or "always" for our steps:** none. The service names keep the kickoff form's own words, so "Fit-out and renovation" is hyphenated as a noun and "Construction" drops "only", which on a slide read as a limit.
+
+---
+
+# Score round 4 (2026-10-21)
+
+Every new or changed English word from the fourth score round. Copy rules 1 to 11 hold; nothing names a result, a lead, a cost or a budget. `DESIGN.md` 22.15 has the layout; `CONTENT-AR.md` has the Arabic.
+
+## On the canvas
+
+- **L1, a client with ads of their own and no cover pick:** the cover shows their first ad, tagged "Preview", where it showed the faint lanes. The lanes stay only when there is nothing to show.
+- **O2 stop 1:** the 90 days' two ends carry their dates under "Today" and "In 90 days" (this call's day and the 90th day after it), quiet, while the goal is the hero. With no goal on the form, the question, its label and its line build in turn and the same 90 days sweep under them.
+- **O6:** a card with some steps done and the rest not checked reads "To do", not "Not checked yet".
+- **L3's panel:** when the card's lines quoted in the other script hold both kinds, they keep their own "Never" and "Always" heads inside "On your card, in English" (or "in Arabic").
+- **O4:** the proposed service is in ink on a dashed line until "Launch with this", then on a solid teal line. No new words.
+
+## Prep (cockpit UI)
+
+| Where | Words |
+|---|---|
+| The cover's creative, no ad of their own (the hint) | No ads of their own yet: the cover shows the example ad, labelled Example ad. |
+| The cover's creative, ads of their own and none picked (the hint) | No cover picked: it shows their first ad. Pick another here. |
+| The cover's creative, the empty choice | The example ad · Their first ad |
+| The cover's creative, no ad of their own | The example's switch (by service, then by scene) under the select, as on the onboarding prep |
+| The ads panel, starter templates but no ad of their own | No ads of their own yet, so the cover shows an example ad ({scene}); the phones show the starter templates. Paste a Drive link or add files here to show theirs. |
+| The cover's prep check (only with ads of their own and none picked) | Cover: no ad picked, so it shows their first ad. Pick another here if a different one suits. |
+| The tray, a Drive file pasted today | From Drive · pasted by {first name} · today, 08:15 (was a bare "08:15" beside "yesterday, 17:40") |
+
+## The notes window
+
+- O4: "If you set a service in prep, the column shows it as a suggestion, its name on a dashed line, and the checklist keeps it open. Let them choose." (it said "in grey").
+- The Arabic temp check is filled with the Arabic service name; with none in Arabic it reads "(اسم الخدمة)", a cue for the CSM to say it.
+
+## The humanizer
+
+- **Inflated words, em dashes, exclamation marks, title case, "every" or "always" for our steps:** none. "Their first ad" and "The example ad" say what the cover will show.
+

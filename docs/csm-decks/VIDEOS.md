@@ -34,8 +34,11 @@ joins `apps/media-buyer-cockpit/scripts/csm-decks-supabase.test.ts`.
 - Every write leaves one `cockpit_audit_log` row, through a trigger.
 - A clear keeps the row, with its link removed: nobody deletes, and the
   audit row keeps what was there.
-- No outside call is made by the server or by a worker. The only thing that
-  reaches a provider is the player's frame in the CSM's browser.
+- The server makes no outside call. The player's frame in the CSM's
+  browser reaches the provider, and since the visual pass (2026-10-20) one
+  worker does too: the editor desk's `deck-import` run asks each provider's
+  public oEmbed, which needs no key, for a recorded slot's poster picture
+  (section 9).
 
 ## 2. The table
 
@@ -531,6 +534,7 @@ const EMBED_HOST = {
 } as const;
 const OPEN_HOST = /^(www\.loom\.com|www\.youtube\.com|fast\.wistia\.net|vimeo\.com|drive\.google\.com)$/;
 const EMBED_HOSTS = /^(www\.loom\.com|www\.youtube-nocookie\.com|fast\.wistia\.net|player\.vimeo\.com|drive\.google\.com)$/;
+const POSTER_HOSTS = /^(cdn\.loom\.com|embed-ssl\.wistia\.com|i\.vimeocdn\.com|i\.ytimg\.com)$/;
 /** No user, no password, no port. */
 const bare = (s: string) => {
   const u = new URL(s);
@@ -550,6 +554,11 @@ export const videoRow = z
     revision: z.number().int().min(1),
     updatedBy: z.string(),
     updatedAt: z.string(),
+    /** The provider's own poster picture, filled by the worker (section 9).
+     *  As built: optional (a read from before the posters migration has
+     *  none), and a poster from any other host reads as null instead of
+     *  refusing the row, so the slot still plays with the designed card. */
+    posterUrl: z.url({ protocol: /^https$/, hostname: POSTER_HOSTS }).nullable().optional().catch(null),
   })
   .refine(r => new URL(r.embedUrl).hostname === EMBED_HOST[r.provider]);
 export type VideoRow = z.infer<typeof videoRow>;
@@ -717,3 +726,135 @@ In `apps/client-success-cockpit`, the copy test reads the twelve keys from
 the SQL file's `cockpit_csm_deck_video_slots()` and fails when they differ
 from `VIDEO_SLOTS`, and the engine test covers the player (`DESIGN.md`
 21.3: a stubbed Wistia frame that loads and sends nothing stays up).
+
+## 9. Posters (the visual pass, 2026-10-20)
+
+Prep's Videos section and the notes window's Video block show each
+recorded slot as a poster card (`DESIGN.md` 22.5.3). A real picture needs
+the provider's own thumbnail, and for Loom, the provider every onboarding
+guide uses, that address carries a hash only oEmbed gives (checked
+2026-10-20: `…/e2d83bffee614d9aa035d898d37d8989-b17bc3f4ce782f9b.jpg`
+answers 200 `image/jpeg`; the plain `-00001.jpg` pattern answers 403). The
+browser cannot ask oEmbed: `connect-src` allows only the app and Supabase.
+`img-src` is not set (`vercel.json` sets no `default-src`), so the picture
+itself loads once its address is known. The address is therefore fetched
+once, by a worker, and kept on the row.
+
+Until a recorded slot has a picture (no `posterUrl` and none built from its
+link, or a picture that fails to load), it is one 64 px row, the provider
+and the length over the title and a 32 px play button, not a 16:9 card
+(score round 2: an empty box with a small play glyph read as a broken
+image). In the notes window the picture carries no words; the title is over
+it and the length on the "Recorded" line under it.
+
+**The migration** `supabase/migrations/20261020160200_csm_deck_video_posters.sql`
+(after `20261020160000_csm_launch_ads_drive.sql`, `BEGIN; … COMMIT;`,
+applies twice):
+
+```sql
+ALTER TABLE public.cockpit_csm_deck_videos
+  ADD COLUMN IF NOT EXISTS poster_url text,
+  ADD COLUMN IF NOT EXISTS poster_checked_at timestamptz;
+-- Added in a DO block that skips it when it exists, so the file applies twice.
+ALTER TABLE public.cockpit_csm_deck_videos ADD CONSTRAINT cockpit_csm_deck_videos_poster CHECK (
+  poster_url IS NULL OR (
+    url IS NOT NULL AND char_length(poster_url) <= 500 AND
+    poster_url ~ '^https://(cdn[.]loom[.]com|embed-ssl[.]wistia[.]com|i[.]vimeocdn[.]com|i[.]ytimg[.]com)/[A-Za-z0-9/_.~%=&?:+-]+$'));
+```
+
+- **A new link clears the poster.** `cockpit_csm_deck_video_poster_reset()`,
+  `plpgsql SECURITY DEFINER SET search_path = ''`, no grant, on `BEFORE
+  UPDATE … FOR EACH ROW` (trigger `cockpit_csm_deck_videos_poster_reset`):
+  when `NEW.url IS DISTINCT FROM OLD.url`, it sets `poster_url` and
+  `poster_checked_at` to null. Save and clear are not replaced.
+- **The read** carries it: `cockpit_csm_deck_video_json` is replaced with
+  its body plus `'posterUrl', v.poster_url`. Nothing else in the read
+  changes.
+- **The audit:** `cockpit_csm_deck_video_audit()` is replaced with its body
+  plus two things: the actor reads `coalesce(<the signed-in email>,
+  nullif(current_setting('cockpit.deck_actor', true), ''), session_user)`,
+  as the decks' trigger does since `DRIVE-IMPORT.md` 5; and an `UPDATE`
+  where only `poster_checked_at` changed returns without writing (a failed
+  check once a day is not an action).
+
+**The worker's two functions** (`service_role` only, `plpgsql SECURITY
+DEFINER SET search_path = ''`; `p_worker` must match
+`^[a-z0-9@._:-]{1,80}$`, else `22023` "Name the worker."):
+
+- `public.cockpit_csm_deck_video_posters_due(p_worker text) RETURNS jsonb`,
+  `STABLE`, writes nothing: `{"due": [{"deck", "slotKey", "lang",
+  "provider", "url"}]}`, at most 6, oldest `updated_at` first: recorded
+  rows (`url` set) whose provider is not `drive` (Drive has no oEmbed; the
+  card builds its thumbnail, `DESIGN.md` 22.5.3), with `poster_url` null
+  and `poster_checked_at` null or more than 24 hours old.
+- `public.cockpit_csm_deck_video_poster_save(p_worker text, p_deck text,
+  p_slot_key text, p_lang text, p_url text, p_poster_url text) RETURNS
+  jsonb`, `VOLATILE`: takes the row `FOR UPDATE`; none, or its `url` is no
+  longer `p_url` (the link changed while the worker looked):
+  `{"saved": false}`, nothing written. `p_poster_url` null: sets
+  `poster_checked_at = now()` only (no audit row, above). Else the
+  picture's host must be the provider's (`loom`: `cdn.loom.com`, `wistia`:
+  `embed-ssl.wistia.com`, `vimeo`: `i.vimeocdn.com`, `youtube`:
+  `i.ytimg.com`), else `22023` "That poster is not from the video's
+  provider."; it sets `poster_url` and `poster_checked_at = now()`, with
+  `cockpit.deck_action` `deck_video.poster` and `cockpit.deck_actor`
+  `worker:<name>`. `revision`, `updated_at` and `updated_by` do not change:
+  the poster is a fact about the link, not an edit. Returns `{"saved":
+  true, "posterUrl"}`.
+
+```sql
+REVOKE ALL ON FUNCTION
+  public.cockpit_csm_deck_video_posters_due(text),
+  public.cockpit_csm_deck_video_poster_save(text, text, text, text, text, text),
+  public.cockpit_csm_deck_video_poster_reset()
+FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION
+  public.cockpit_csm_deck_video_posters_due(text),
+  public.cockpit_csm_deck_video_poster_save(text, text, text, text, text, text)
+TO service_role;
+```
+
+**The backfill.** The six seeds' posters, read from each provider's oEmbed
+on 2026-10-20 and each checked to answer 200 `image/jpeg`, are written in a
+`DO` block (action `deck_video.poster`, actor `migration
+20261020160200_csm_deck_video_posters`) only where the row's `url` is still
+the seed's and `poster_url` is null:
+
+| Slot | `poster_url` |
+|---|---|
+| `onboarding:welcome:any` | `https://embed-ssl.wistia.com/deliveries/c3cdb9067a8a3c9ae21dede3cf45611b739ee3f1.jpg?image_crop_resized=960x540` |
+| `onboarding:meta-access:any` | `https://cdn.loom.com/sessions/thumbnails/e2d83bffee614d9aa035d898d37d8989-b17bc3f4ce782f9b.jpg` |
+| `onboarding:whatsapp-calendar:any` | `https://cdn.loom.com/sessions/thumbnails/4ddc5519935f4ba8bdc7ac6f3667a701-1ddb7d7f640afcbd.jpg` |
+| `launch:portal-guide:en` | `https://embed-ssl.wistia.com/deliveries/02b381c067d9a4e711551bdc4923c80a0b28e6f6.jpg?image_crop_resized=960x540` |
+| `launch:portal-guide:ar` | `https://embed-ssl.wistia.com/deliveries/234d6305c6581a586700670201e21c8f488eaa5f.jpg?image_crop_resized=960x540` |
+| `launch:calendar-hours:any` | `https://cdn.loom.com/sessions/thumbnails/6aa67297dfcf421887f8961d3c1c7768-a2384fa2a097cc77.jpg` |
+
+**The worker's step** (`DRIVE-IMPORT.md` 7, step 8), for each due slot: one
+GET of the provider's oEmbed, 20 s timeout, no key:
+
+| Provider | oEmbed |
+|---|---|
+| `loom` | `https://www.loom.com/v1/oembed?url=<url, encoded>` |
+| `wistia` | `https://fast.wistia.com/oembed?url=<url, encoded>` |
+| `youtube` | `https://www.youtube.com/oembed?format=json&url=<url, encoded>` |
+| `vimeo` | `https://vimeo.com/api/oembed.json?url=<url, encoded>` |
+
+It reads `thumbnail_url`; a Loom address ending `.gif` is swapped for its
+`.jpg` sibling (the GIF moves, and runs to megabytes); the address must be
+on the provider's host above; one GET of it must answer 200 with
+`image/jpeg`, `image/png` or `image/webp`. Then `poster_save` with it, or
+with `null` when any step fails.
+
+**Tests.** In the PGlite file: the column's check refuses another host and
+a poster on a cleared row; saving a new link clears the poster; the read
+carries `posterUrl`; `posters_due` lists only recorded, non-Drive rows
+without a poster and not checked in 24 hours; `poster_save` with an old
+`url` writes nothing; a `null` save writes no audit row; a real save writes
+one with the worker as actor and leaves `revision` alone; the backfill
+fills the six seeds and leaves a changed seed alone. In
+`scripts/deck-videos.test.tsx`: a Loom poster is kept, one from any other
+host (or over http) reads as null and the row still parses. The card
+itself is `src/present/VideoPoster.tsx` (`DESIGN.md` 22.5.3). The census counts
+these three functions (`DRIVE-IMPORT.md` 10). The worker's tests are in
+`DRIVE-IMPORT.md` 7.
+

@@ -87,8 +87,10 @@ fi
 # deck), the copy rules and banned pictures, every fallback and slide,
 # prep's saves against the migration's own key list, the launch deck's
 # order and stops, the example call's script, and adding files on the call.
+# Every deck-*.test file runs (the visual pass added the Drive box, the
+# example ads, the motion, the tray and the video slots' tests).
 if [ -f apps/client-success-cockpit/scripts/deck-engine.test.ts ]; then
-  (cd apps/client-success-cockpit && bun test scripts/deck-engine.test.ts scripts/deck-copy.test.ts scripts/deck-fallbacks.test.tsx scripts/deck-prep.test.ts scripts/deck-launch.test.tsx scripts/deck-call.test.ts scripts/deck-uploads.test.ts scripts/deck-checks.test.ts >/dev/null 2>&1) \
+  (cd apps/client-success-cockpit && bun test scripts/deck-*.test.ts scripts/deck-*.test.tsx >/dev/null 2>&1) \
     || { echo "the client deck tests fail (cd apps/client-success-cockpit && bun test scripts/deck-)"; exit 1; }
 fi
 if [ -f apps/client-success-cockpit/scripts/check-in.test.ts ]; then

@@ -6,10 +6,12 @@ import {
   type L,
   LAUNCH,
   type Lang,
+  sep,
   stepNumeral,
   t,
   tf,
 } from "../content";
+import { KEPT } from "../examples";
 import { Node } from "../JourneyLanes";
 import { Avatar, type Identity } from "./Identity";
 
@@ -77,7 +79,7 @@ export function QueueCard({
       : t(
           {
             en: l.en.replace(" · {service}", ""),
-            ar: l.ar.replace(" · {service}", ""),
+            ar: l.ar.replace("، {service}", ""),
           },
           lang,
         );
@@ -224,7 +226,7 @@ export function FiveDots({
             {r.when ? (
               <>
                 <span className="dkc-dot-when">{t(r.when, lang)}</span>
-                {r.plain ? (lang === "ar" ? "، " : ": ") : " · "}
+                {r.plain ? (lang === "ar" ? "، " : ": ") : sep(lang)}
                 {t(r.what, lang)}
               </>
             ) : r.end ? (
@@ -286,7 +288,7 @@ export function Reminders({
               {r.when ? (
                 <>
                   <span className="dkc-rem-when">{t(r.when, lang)}</span>
-                  {r.plain ? (lang === "ar" ? "، " : ": ") : " · "}
+                  {r.plain ? (lang === "ar" ? "، " : ": ") : sep(lang)}
                 </>
               ) : null}
               <span className={r.end ? "dkc-rem-end" : undefined}>
@@ -377,15 +379,20 @@ export function AppointmentCard({
 
 /**
  * The field of ad tiles (creative freedom's signature, DESIGN 21.1): many
- * versions, drawn as neutral tiles with no picture, no words and no count
- * (never the client's own creatives: dimming a real ad before launch reads
- * as a verdict on it). It arrives all lit; at the next press most switch
+ * versions: Mahara's example ads (DESIGN 22.4.4), tagged "Example ads" on
+ * the slide, with no words and no count (never the client's own creatives
+ * but their pick: dimming a real ad before launch reads as a verdict on
+ * it). It arrives all lit; at the next press most switch
  * off and three stay lit; then the next round waits under it, takes the
  * client's style change, and fills. Each stop changes one thing.
  */
 const FIELD = 18;
-/** Row 1 column 1, row 1 column 5, row 3 column 3: never a line, so it reads as chance. */
-const STAY_LIT = new Set([0, 4, 14]);
+/**
+ * Row 1 column 1, row 1 column 5, row 3 column 3: never a line, so it reads
+ * as chance. `serviceField` puts the client's own scenes on them (DESIGN
+ * 22.15), so "the few that work" are always their service's pictures.
+ */
+const STAY_LIT = new Set<number>(KEPT);
 /** Their pick, when marked, runs on this one of the three (row 3, column 3). */
 const PICK_TILE = 14;
 /** What varies: a video (a play mark) on six, a carousel (two edges) on four, a picture on eight. */
@@ -460,10 +467,37 @@ function Switch() {
   );
 }
 
-/** One outline of the next round: dotted while ahead, solid once made. */
-function RoundTile({ theirs }: { theirs: boolean }) {
+/**
+ * The order the field switches off in (DESIGN 22.3.3): scattered, so it
+ * reads as chance, never a sweep. The three that stay lit are not in it.
+ */
+const OFF_ORDER = [8, 3, 12, 17, 6, 1, 10, 16, 5, 13, 2, 11, 7, 15, 9];
+
+/** One outline of the next round: dotted while ahead, solid once made, then its picture. */
+function RoundTile({
+  theirs,
+  photo,
+  i,
+}: {
+  theirs: boolean;
+  photo?: string | null;
+  i: number;
+}) {
   return (
-    <span className="dkf-round-tile" data-theirs={theirs ? "" : undefined}>
+    <span
+      className="dkf-round-tile"
+      data-theirs={theirs ? "" : undefined}
+      style={{ "--o": i } as CSSProperties}
+    >
+      {photo ? (
+        <img
+          className="dkf-photo"
+          src={photo}
+          alt=""
+          draggable={false}
+          decoding="async"
+        />
+      ) : null}
       <svg width="104" height="130" viewBox="0 0 104 130" aria-hidden>
         <rect
           className="dkf-dots"
@@ -491,6 +525,8 @@ export function AdField({
   round,
   change,
   pick = null,
+  photos = null,
+  next = null,
 }: {
   /** The slide's stop, from 0: 0 all lit, 1 the switch-off, 2 the round ahead, 3 their change, 4 made. */
   stop: number;
@@ -505,6 +541,13 @@ export function AdField({
    * dimmed (a real ad switched off before launch reads as a verdict).
    */
   pick?: string | null;
+  /**
+   * An example ad's picture in every tile (DESIGN 22.4.4): tagged "Example
+   * ads" on the slide, under each tile's edge, dimmed when switched off.
+   */
+  photos?: string[] | null;
+  /** The next round's six pictures, shown once the round is made (stop 5). */
+  next?: string[] | null;
 }) {
   // ← sets the previous stop at once, with no reverse: only a step forward animates.
   const last = useRef(stop);
@@ -519,26 +562,42 @@ export function AdField({
       data-instant={back ? "" : undefined}
     >
       <div className="dkf-grid">
-        {Array.from({ length: FIELD }, (_, i) => (
-          <span
-            key={`tile-${String(i)}`}
-            className="dkf-tile"
-            data-lit={stop === 0 || STAY_LIT.has(i) ? "" : undefined}
-            data-pick={pick && stop > 0 && i === PICK_TILE ? "" : undefined}
-          >
-            {pick && stop > 0 && i === PICK_TILE ? (
-              <span className="dkf-pick" aria-hidden>
-                <img src={pick} alt="" draggable={false} />
-                <Star />
-              </span>
-            ) : null}
-            <i className="dkf-edge" aria-hidden />
-            {pick && stop > 0 && i === PICK_TILE ? null : (
-              <FormatMark kind={FORMAT[i]} />
-            )}
-            <Switch />
-          </span>
-        ))}
+        {Array.from({ length: FIELD }, (_, i) => {
+          const theirs = Boolean(pick && stop > 0 && i === PICK_TILE);
+          const photo = theirs ? null : (photos?.[i] ?? null);
+          return (
+            <span
+              key={`tile-${String(i)}`}
+              className="dkf-tile"
+              data-lit={stop === 0 || STAY_LIT.has(i) ? "" : undefined}
+              data-pick={theirs ? "" : undefined}
+              data-photo={photo ? "" : undefined}
+              style={
+                { "--o": Math.max(0, OFF_ORDER.indexOf(i)) } as CSSProperties
+              }
+            >
+              {photo ? (
+                <img
+                  className="dkf-photo"
+                  src={photo}
+                  alt=""
+                  draggable={false}
+                  decoding="async"
+                />
+              ) : null}
+              {theirs && pick ? (
+                <span className="dkf-pick" aria-hidden>
+                  <img src={pick} alt="" draggable={false} />
+                  <Star />
+                </span>
+              ) : null}
+              <i className="dkf-base" aria-hidden />
+              <i className="dkf-edge" aria-hidden />
+              {theirs ? null : <FormatMark kind={FORMAT[i]} />}
+              <Switch />
+            </span>
+          );
+        })}
       </div>
       <div className="dkf-next" data-shown={stop >= 2 ? "" : undefined}>
         <div className="dkf-labels">
@@ -550,7 +609,12 @@ export function AdField({
         </div>
         <div className="dkf-round">
           {Array.from({ length: ROUND }, (_, i) => (
-            <RoundTile key={`round-${String(i)}`} theirs={i === ROUND - 1} />
+            <RoundTile
+              key={`round-${String(i)}`}
+              theirs={i === ROUND - 1}
+              photo={next?.[i] ?? null}
+              i={i}
+            />
           ))}
         </div>
       </div>

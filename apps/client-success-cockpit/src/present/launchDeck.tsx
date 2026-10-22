@@ -3,11 +3,12 @@ import {
   type ReactNode,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import maharaLogo from "@/assets/mahara-logo-dark.png";
-import { AdTray, PhoneRow, useCreatives } from "./AdsStage";
+import { AdTray, PhoneRow, useCreatives, useWarmExample } from "./AdsStage";
 import callsAr from "./assets/portal/portal-calls-ar.webp";
 import callsEn from "./assets/portal/portal-calls-en.webp";
 import outcomeAr from "./assets/portal/portal-outcome-ar.webp";
@@ -27,6 +28,7 @@ import {
 } from "./callScript";
 import {
   digits,
+  EXAMPLE,
   JOURNEY,
   journeyOwners,
   type L,
@@ -38,13 +40,16 @@ import {
   LINKS,
   partJobs,
   SHARED,
+  sep,
   stepNumeral,
   t,
   tf,
 } from "./content";
+import { type Creative, phoneFor } from "./creative";
 import { dayMonth, dayShort, weekdayDate } from "./dates";
 import type { SlideCtx, SlideDef } from "./deckContext";
 import type { DeckData } from "./deckData";
+import { scenesNamed, serviceField, serviceRound } from "./examples";
 import { useHug } from "./hug";
 import {
   FaintLanes,
@@ -88,6 +93,8 @@ import { ClientMark } from "./mockups/Identity";
 import { IgFeed, Phone, PhoneFigure } from "./mockups/Phones";
 import { nameSize, who } from "./onboardingDeck";
 import { RoadStrip } from "./Road";
+import { StageSwap } from "./StageSwap";
+import { queueServices } from "./services";
 import {
   CALL_STAGES,
   type CallTurn,
@@ -111,7 +118,7 @@ import {
 const PORTAL_RATIO = 2384 / 1504;
 
 /**
- * The portal's screens, cropped below their "lead" headings and above the
+ * The portal's screens, cropped below their "lead" headings and without the
  * demo call's summary (CONTENT rule 3), each to the part its stop names so
  * the words read on a share: the appointment updates card ("anything
  * waiting on you"), and the recorded call with its player. Each crop keeps
@@ -180,8 +187,21 @@ const OUTCOME_PIECES: Record<Lang, [number, number][]> = {
   ],
 };
 const OUTCOME_W = 732;
-/** The recorded call's crop (1189 px of the screen) drawn at 0.74. */
-const CALLS_W = 880;
+/**
+ * The calls screen in two pieces, one frame (score round 2: the recorded
+ * call alone filled the top 40% of the stage): the recorded call's row
+ * with its player, then, under the screen's own rule, the next call's row.
+ * The band between them, the demo call's summary, is cut out (it names a
+ * budget, CONTENT rule 3), as journey stop 7 cuts its form's empty band.
+ */
+const CALLS_PIECES: [number, number][] = [
+  [0.311, 0.668],
+  [0.8438, 0.952],
+];
+/** The calls screen's pieces (1189 px of the screen) drawn at 0.81. */
+const CALLS_W = 960;
+/** The portal's one stage box (DESIGN 22.6.3): 1104 x 704, from x 680, y 244. */
+const PORTAL_STAGE_W = 1104;
 
 /** The owner line: the journey lane's own type and tone (DESIGN 8.3). */
 function Owner({
@@ -221,8 +241,18 @@ function Cover({ ctx }: { ctx: SlideCtx }) {
   const template = (live ? L1.titleLive : L1.title)[lang];
   const [before, after] = template.split("{name}");
   const size = nameSize(d.name, lang);
-  const cover = d.launch.cover;
-  const app = useCreatives(ctx).app;
+  const model = useCreatives(ctx);
+  // With no creative of their own (a starter template is ours, so it does
+  // not count), the cover shows the example ad for their service, tagged
+  // "Example ad" (the fixer's round, which overturns DESIGN 22.4.6 for this
+  // case): the CEO's "an example ad instead of just the logo". A client
+  // with creatives of their own and no pick shows their first ad (DESIGN
+  // 22.15: the faint lanes were an empty preview of the next slide); the
+  // lanes stay only when there is nothing to show.
+  const example = d.launch.cover ? null : model.coverExample;
+  useWarmExample(ctx, Boolean(example));
+  const cover = model.coverShown;
+  const app = example ? lang : model.app;
   const props = { who: who(d), pageName: d.pageName, app, deck: lang };
   return (
     <>
@@ -264,7 +294,18 @@ function Cover({ ctx }: { ctx: SlideCtx }) {
           </p>
         ) : null}
         <div className="dkc-cover-road">
-          <RoadStrip now={4} label={t(L1.road, lang)} />
+          {/* Past go-live, the rail is lit to its end and says both facts,
+              so it agrees with "is live". */}
+          <RoadStrip
+            now={live ? 5 : 4}
+            label={
+              live && d.goLive
+                ? tf(L1.roadLive, lang, {
+                    date: dayMonth(d.goLive, lang, d.timeZone),
+                  })
+                : t(L1.road, lang)
+            }
+          />
         </div>
         <p className="dk-lead dkc-cover-line">
           {t(live ? L1.lineLive : L1.line, lang)}
@@ -273,10 +314,11 @@ function Cover({ ctx }: { ctx: SlideCtx }) {
       {cover ? (
         <div className="dkc-cover-phone">
           <PhoneFigure
-            height={700}
+            height={760}
             mark="instagram"
             label={t(SHARED.frame.feed, lang)}
-            tag={t(SHARED.tag.preview, lang)}
+            tag={t(example ? EXAMPLE.tag : SHARED.tag.preview, lang)}
+            tagBelow
             foot={false}
           >
             <IgFeed creative={cover} {...props} />
@@ -306,10 +348,15 @@ function placesLine(places: Place[], lang: Lang): string {
     : `${list.slice(0, -1).join(", ")}, ${or} ${list.at(-1)}`;
 }
 
-/** The creative on the feed phone (the ads slide's, before or after a swap). */
+/**
+ * The ad the journey and the form follow: the ads slide's feed phone,
+ * before or after a swap; with only an example, its alternate picture
+ * (DESIGN 22.14), so the cover and journey stop 1 differ.
+ */
 function useFeed(ctx: SlideCtx) {
   const model = useCreatives(ctx);
-  return { model, feed: model.phones.feed };
+  useWarmExample(ctx, model.example);
+  return { model, feed: model.journey };
 }
 
 /** The ad opens a WhatsApp chat (their confirmed destination), not a form. */
@@ -317,12 +364,21 @@ const opensWhatsApp = (d: DeckData) =>
   d.launch.form.kind === "whatsapp" && d.launch.form.source !== "example";
 
 /**
+ * The chat phone's tag: the words are example wording, and a starter
+ * template's picture over them is said too (score round 2 of the five
+ * services: the starter's picture sat under "Example wording" alone).
+ */
+const waTag = (ad: Creative | null) =>
+  ad?.starter ? SHARED.tag.exampleWordingStarter : SHARED.tag.exampleWording;
+
+/**
  * The message a WhatsApp ad fills in (example wording, DESIGN 7.5): the
  * service only when it is written in the message's own script, so a
  * customer's line never mixes the two.
  */
 function waMessage(d: DeckData, lang: Lang): string {
-  const named = d.launch.service[lang] ?? d.serviceFocus;
+  // Inside the customer's sentence: "more about interior design".
+  const named = d.launch.serviceMid[lang] ?? d.serviceMid;
   const service =
     named && /[\u0600-\u06ff]/.test(named) === (lang === "ar") ? named : null;
   const F = LAUNCH.form;
@@ -334,14 +390,18 @@ function FormPhone({
   height,
   screen,
   focus,
+  slide = false,
 }: {
   ctx: SlideCtx;
   height: number;
   screen: FormScreen;
   focus?: number | null;
+  /** On the form slide itself: its own cover, after the ads slide (22.14). */
+  slide?: boolean;
 }) {
   const { d, lang } = ctx;
-  const { feed } = useFeed(ctx);
+  const { feed: journeyFeed, model } = useFeed(ctx);
+  const feed = slide ? model.formCover : journeyFeed;
   const f = d.launch.form;
   const service = d.launch.service[lang] ?? d.serviceFocus;
   const questions =
@@ -360,6 +420,13 @@ function FormPhone({
       pageName={d.pageName}
       app={lang}
       message={waMessage(d, lang)}
+      // On L5 itself (fixer round 2): the message sent, under the ad it
+      // came from; journey stop 2 keeps it waiting to send, the ad it came
+      // from over the field (score round 2 of the five services: without
+      // it the chat was 60% empty).
+      sent={slide}
+      ad={feed ? (feed.video ? feed.poster : feed.url) : null}
+      adTag={feed?.from === "example" ? t(EXAMPLE.short, lang) : null}
     />
   ) : f.kind === "website" && f.source !== "example" ? (
     <PageShot shot={d.launch.pageShot} deck={lang} />
@@ -375,10 +442,17 @@ function FormPhone({
       thanks={thanks}
       video={d.launch.welcomeVideo}
       cover={feed ? (feed.video ? feed.poster : feed.url) : null}
+      coverTag={feed?.from === "example" ? t(EXAMPLE.short, lang) : null}
     />
   );
   return (
-    <Phone height={height} label={t(LAUNCH.form.title, lang)}>
+    <Phone
+      height={height}
+      label={t(
+        opensWhatsApp(d) ? LAUNCH.form.titleWhatsApp : LAUNCH.form.title,
+        lang,
+      )}
+    >
       {content}
     </Phone>
   );
@@ -525,9 +599,12 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
   const L = d.launch;
   const line = (l: L) => t(l, lang);
   if (i === 0) {
-    const tag = feed?.starter
-      ? t(SHARED.tag.starter, lang)
-      : t(SHARED.tag.preview, lang);
+    const tag =
+      feed?.from === "example"
+        ? t(EXAMPLE.tag, lang)
+        : feed?.starter
+          ? t(SHARED.tag.starter, lang)
+          : t(SHARED.tag.preview, lang);
     return (
       <div className="dkc-stage" data-kind="phone">
         <Tagged tag={tag} className="dkc-stage-pic" style={{ width: 304 }}>
@@ -548,7 +625,7 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
   if (i === 1) {
     const wa = opensWhatsApp(d);
     const tag = wa
-      ? t(SHARED.tag.exampleWording, lang)
+      ? t(waTag(feed), lang)
       : L.form.source === "example"
         ? t(SHARED.tag.exampleForm, lang)
         : t(SHARED.tag.yourForm, lang);
@@ -590,14 +667,16 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
         >
           <QueueCard
             lang={lang}
-            // One script per card: a service named only in the other script
-            // stays off the rows (an Arabic name inside an English row, or
-            // the other way round, breaks the row's reading order), and a
-            // row with no service leaves it out.
-            services={[
-              ...(L.service[lang] ? [L.service[lang] as string] : []),
-              ...d.services.filter(s => s !== L.service[lang]),
-            ].filter(s => /[\u0600-\u06ff]/.test(s) === (lang === "ar"))}
+            // The launch service, then the client's own words for that
+            // service only, in the deck's script: never a sub-trade or
+            // another service's words (CEO, 2026-10-21: "These are not
+            // kitchens"), and a row past them leaves its service out.
+            services={queueServices(
+              L.service[lang],
+              L.serviceKey,
+              d.services,
+              lang,
+            )}
             dwy={dwy}
             still={still}
           />
@@ -668,22 +747,28 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
     // hung from the row, so the words jumped on this press), and the fork
     // alone is set level with the row. The lanes draw the fork from the
     // next stop, so it is never named twice on one screen.
+    // The statement sits directly above the fork it describes (DESIGN
+    // 22.6.1): one block, its last line 40 px over the first end's name, so
+    // the two never read as apart. The fork is still set level with "You
+    // meet" (Journey measures its anchor), and the words travel with it.
     return (
       <div className="dkc-stage" data-kind="line">
-        <StopWords
-          lane={lane}
-          line={tf(stop.line, lang, {
-            places: placesLine(L.places, lang),
-          })}
-          lang={lang}
-        />
         <div className="dkc-stage-pic dkc-fork-pic" data-level="">
-          <Fork
-            lang={lang}
-            ours={!dwy}
-            came={[F.deciding, dwy ? F.decidingDwy : F.decidingLine]}
-            noShow={[F.noShow, dwy ? F.noShowDwy : F.noShowLine]}
-          />
+          <div className="dkc-fork-block">
+            <StopWords
+              lane={lane}
+              line={tf(stop.line, lang, {
+                places: placesLine(L.places, lang),
+              })}
+              lang={lang}
+            />
+            <Fork
+              lang={lang}
+              ours={!dwy}
+              came={[F.deciding, dwy ? F.decidingDwy : F.decidingLine]}
+              noShow={[F.noShow, dwy ? F.noShowDwy : F.noShowLine]}
+            />
+          </div>
         </div>
       </div>
     );
@@ -743,7 +828,10 @@ function Journey({ ctx }: { ctx: SlideCtx }) {
   // set only when it moved, so it settles in one pass.
   useLayoutEffect(() => {
     const lanes = lanesRef.current;
-    const fig = stageRef.current?.querySelector<HTMLElement>(".dkc-stage-pic");
+    // The incoming stage's picture (the outgoing one fades out beside it).
+    const fig = stageRef.current?.querySelector<HTMLElement>(
+      '[data-swap="in"] .dkc-stage-pic',
+    );
     // A tagged figure's picture, not its caption: the leader ends on the
     // card or the phone itself.
     const pic =
@@ -805,9 +893,9 @@ function Journey({ ctx }: { ctx: SlideCtx }) {
           />
         </div>
         <div className="dkc-journey-stage" ref={stageRef}>
-          <div key={tour} className="dkc-stage-swap">
+          <StageSwap at={tour} className="dkc-stage-swap" still={still}>
             <JourneyStage ctx={ctx} i={tour} />
-          </div>
+          </StageSwap>
         </div>
       </div>
     </div>
@@ -820,18 +908,31 @@ function Ads({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
   const A = LAUNCH.ads;
   const model = useCreatives(ctx);
+  useWarmExample(ctx, model.example);
   const planned = d.launch.platformsPlanned;
   return (
     <div className="dkc-ads">
       <div className="dkc-ads-start">
         <Owner lane="customer" text={A.owner} lang={lang} />
-        {/* No "Preview" tag here: the foot under the phones says it. */}
-        <h2 className="dk-h2">{t(A.title, lang)}</h2>
-        {/* With nothing in the tray yet, the line says what the phones show:
-            "right now" would promise what the tray says is being finished. */}
+        {/* No "Preview" tag here: the foot under the phones says it. With
+            the example in every phone, the title's tag says what they are,
+            once (DESIGN 22.4.3). */}
+        <div className="dkc-title-tag">
+          <h2 className="dk-h2">{t(A.title, lang)}</h2>
+          {model.example ? (
+            <span className="dk-tag">{t(EXAMPLE.tags, lang)}</span>
+          ) : null}
+        </div>
+        {/* The line says what the phones show: with the example, where their
+            ads will show, never "how they will look"; with nothing of theirs
+            yet but templates, how their ads will look. */}
         <p className="dk-body dk-ink2 dkc-ads-line">
           {t(
-            model.tray.length || model.meta.length ? A.line : A.lineEmpty,
+            model.example
+              ? A.lineExample
+              : model.tray.length || model.meta.length
+                ? A.line
+                : A.lineEmpty,
             lang,
           )}
         </p>
@@ -855,52 +956,74 @@ function Ads({ ctx }: { ctx: SlideCtx }) {
 type RedLineItem = { text: string; told: boolean };
 
 /**
- * A group of red lines under its head ("Never", "Always", or "From your
- * card" for card lines in the other script). Every group is headed, so the
- * two read as the spec's pair (score round 2: "You told us:" headed the
- * card's lines too, beside "Always" with no colon).
+ * One column of red lines under its head ("Never" or "Always"), in either
+ * deck (fixer round 2: the Arabic deck stacked its groups, then the card's
+ * English lines under a third head with run-in heads, denser than the
+ * English deck's two columns). The deck's own lines first, then the card's
+ * lines in the other script with no translation, quoted as one block in
+ * their own direction at the column's start edge, as wide as its widest
+ * line, its marks on its own start; each quoted block carries one small
+ * tag saying where they come from ("On your card, in Arabic" /
+ * بملفكم، بالإنجليزي). A line drops a leading word its head
+ * already says (DESIGN 22.6.2), so "Never" is said once.
  */
 function LineGroup({
   lead,
   items,
+  quoted = [],
+  tag = null,
   lang,
+  group,
 }: {
   lead: L;
   items: RedLineItem[];
+  /** The card's lines in the other script, quoted as written. */
+  quoted?: RedLineItem[];
+  /** The quoted block's tag, said once on the panel. */
+  tag?: L | null;
   lang: Lang;
+  group: "never" | "always";
 }) {
-  if (!items.length) return null;
+  if (!items.length && !quoted.length) return null;
   return (
-    <div className="dkc-fixed-group">
+    <div className="dkc-fixed-group" data-group={group}>
       <span className="dkc-fixed-lead">{t(lead, lang)}</span>
-      <ul>
-        {items.map(l => (
-          <RedLine
-            key={l.text}
-            text={l.text}
-            told={l.told ? t(LAUNCH.test.fixed.told, lang) : null}
-          />
-        ))}
-      </ul>
+      {items.length ? (
+        <ul>
+          {items.map(l => (
+            <RedLine key={l.text} text={underHead(l.text, group)} />
+          ))}
+        </ul>
+      ) : null}
+      {quoted.length ? (
+        <div className="dkc-fixed-quoted">
+          {tag ? (
+            <span className="dkc-fixed-sublead">{t(tag, lang)}</span>
+          ) : null}
+          <ul dir={lang === "ar" ? "ltr" : "rtl"}>
+            {quoted.map(l => (
+              <RedLine key={l.text} text={underHead(l.text, group)} />
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 /**
  * One red line, in the client's words: an amber mark (theirs, and fixed),
- * then the line, and for a line they typed on O7 a small "you told us"
- * after it. The row keeps the panel's direction, so every mark sits on one
- * edge, and only the words are isolated in their own direction with their
- * own type: the same rule as O7's list (the visual review).
+ * then the line. The row keeps the panel's direction, so every mark sits
+ * on one edge, and only the words are isolated in their own direction with
+ * their own type: the same rule as O7's list (the visual review).
  */
-function RedLine({ text, told }: { text: string; told?: string | null }) {
+function RedLine({ text }: { text: string }) {
   return (
     <li>
       <i aria-hidden />
       <span dir="auto" className="dkc-theirs">
         {text}
       </span>
-      {told ? <span className="dkc-told">{told}</span> : null}
     </li>
   );
 }
@@ -910,26 +1033,53 @@ const ALWAYS = /^(always|دايماً|دائماً)/i;
 /** Arabic letters: which script a line is written in. */
 const ARABIC = /[\u0600-\u06ff]/;
 
+/** The leading words a head already says (DESIGN 22.6.2). */
+const LEADS: Record<"never" | "always", RegExp> = {
+  never: /^(?:never|don['\u2019]t|do not|no|أبداً|أبدا|أبد|ابدا|ابد)[\s،,:]+/i,
+  always: /^(?:always|do|دايماً|دائماً|دايما|دائما)[\s،,:]+/i,
+};
+
 /**
- * The panel's three groups (score round 2): Never (the lines typed on O7,
- * then the card's DON'Ts), Always (the DO items, and a typed line that
- * says "always"), and the card's lines in the other script than the
- * deck's under "From your card", so an English card line in the Arabic
- * deck reads as quoted from their card, never as our copy left untranslated.
+ * A line under its head, without the head's own word: "Never show prices
+ * in an ad" reads "Show prices in an ad" under "Never". A line left with
+ * fewer than two words keeps its lead; a line's own «ما» or «لا» stays.
+ */
+export function underHead(text: string, group: "never" | "always"): string {
+  const t0 = text.trim();
+  const rest = t0.replace(LEADS[group], "");
+  if (rest === t0 || rest.split(/\s+/).filter(Boolean).length < 2) return t0;
+  return ARABIC.test(rest[0] ?? "")
+    ? rest
+    : rest[0].toUpperCase() + rest.slice(1);
+}
+
+/**
+ * The panel's groups (score round 2, DESIGN 22.6.2): Never (the lines
+ * typed on O7, then the card's DON'Ts), Always (the DO items, and a typed
+ * line that says "always"), and the card's lines in the other script than
+ * the deck's with no translation, quoted as written under "On your card,
+ * in English" (or "in Arabic"), so an untranslated card line reads as
+ * quoted from their card, never as our copy left untranslated. A card line
+ * with its Arabic typed in prep (`dos_donts_ar`) takes its own group in the
+ * Arabic deck, in Arabic.
  */
 export function redLineGroups(
   R: { told: string[]; always: string[]; never: string[] },
   lang: Lang,
+  arabic: Record<string, string> = {},
 ) {
   const quoted = (x: string) => ARABIC.test(x) !== (lang === "ar");
   const told = (x: string) => ({ text: x, told: true });
   const card = (x: string) => ({ text: x, told: false });
+  // The Arabic deck reads a card line in Arabic when the CSM typed it.
+  const own = (x: string) =>
+    lang === "ar" && !ARABIC.test(x) && arabic[x] ? arabic[x] : x;
   // A line typed on O7 and then copied to the card (as prep asks) shows
   // once, as theirs.
   const key = (x: string) => x.trim().toLowerCase();
   const typed = new Set(R.told.map(key));
-  const never = R.never.filter(x => !typed.has(key(x)));
-  const always = R.always.filter(x => !typed.has(key(x)));
+  const never = R.never.filter(x => !typed.has(key(x))).map(own);
+  const always = R.always.filter(x => !typed.has(key(x))).map(own);
   return {
     never: [
       ...R.told.filter(x => !ALWAYS.test(x.trim())).map(told),
@@ -940,16 +1090,40 @@ export function redLineGroups(
       ...always.filter(x => !quoted(x)).map(card),
     ],
     fromCard: [...never, ...always].filter(quoted).map(card),
+    // The quoted block keeps the never/always split the deck's own groups
+    // have (DESIGN 22.15): the Arabic deck lost it for English card lines.
+    fromCardNever: never.filter(quoted).map(card),
+    fromCardAlways: always.filter(quoted).map(card),
   };
 }
 
-function RedLinesPanel({ ctx, lit }: { ctx: SlideCtx; lit: boolean }) {
+/** Where the red lines come from, said once under them (DESIGN 22.6.2). */
+function sourceLine(R: {
+  told: string[];
+  always: string[];
+  never: string[];
+}): L | null {
+  const T = LAUNCH.test.fixed.source;
+  const told = R.told.length > 0;
+  const card = R.always.length + R.never.length > 0;
+  return told && card ? T.both : card ? T.card : told ? T.told : null;
+}
+
+function RedLinesPanel({ ctx }: { ctx: SlideCtx }) {
   const { d, lang, prepOf, saveTo } = ctx;
   const T = LAUNCH.test.fixed;
   const R = d.launch.redLines;
   const [value, setValue] = useState("");
   const empty = !R.told.length && !R.always.length && !R.never.length;
-  const groups = redLineGroups(R, lang);
+  const groups = redLineGroups(R, lang, d.dosDontsAr);
+  // Each column: the deck's own lines, then the card's quoted ones.
+  const never = groups.fromCardNever;
+  const always = groups.fromCardAlways;
+  const nNever = groups.never.length + never.length;
+  const nAlways = groups.always.length + always.length;
+  // Never and Always side by side when Always is short (three lines or
+  // fewer); else stacked. In either deck (fixer round 2).
+  const side = nNever > 0 && nAlways > 0 && nAlways <= 3;
   const add = () => {
     const v = value.trim();
     if (!v) return;
@@ -964,49 +1138,64 @@ function RedLinesPanel({ ctx, lit }: { ctx: SlideCtx; lit: boolean }) {
     saveTo("onboarding", { [key]: [...before, v] }, true);
     setValue("");
   };
+  const source = sourceLine(R);
+  // The panel, lighter (DESIGN 22.6.2): no head and no foot (the title
+  // says "Your red lines are fixed"), the two groups and their lines, and
+  // one source line under it.
   return (
-    <div
-      className="dkc-fixed"
-      data-lit={lit ? "" : undefined}
-      data-empty={empty ? "" : undefined}
-    >
-      <h3 className="dkc-col-head">{t(T.name, lang)}</h3>
-      {lit ? (
-        <>
-          <LineGroup lead={T.never} items={groups.never} lang={lang} />
-          <LineGroup lead={T.always} items={groups.always} lang={lang} />
-          <LineGroup lead={T.card} items={groups.fromCard} lang={lang} />
-          {empty ? (
-            <>
-              {/* The panel's ask, at the lead's size: the card is the
-                  slide's lead even before anything is written on it. */}
-              <p className="dkc-fixed-copy" data-ask="">
-                {t(T.fallback, lang)}
-              </p>
-              {/* No ruled line on the client's screen: the input is drawn
-                  only under the CSM's pointer, or while typing. */}
-              <input
-                className="dkc-redline-input dkc-quiet-input"
-                dir="auto"
-                value={value}
-                placeholder={t(T.input, lang)}
-                aria-label={t(T.input, lang)}
-                onChange={e => setValue(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    add();
-                  }
-                }}
-                onBlur={add}
-              />
-            </>
-          ) : (
-            <p className="dkc-fixed-copy">{t(T.copy, lang)}</p>
-          )}
-        </>
+    <>
+      <div className="dkc-fixed" data-empty={empty ? "" : undefined}>
+        {empty ? (
+          <>
+            <p className="dkc-fixed-copy" data-ask="">
+              {t(T.fallback, lang)}
+            </p>
+            {/* No ruled line on the client's screen: the input is drawn
+                only under the CSM's pointer, or while typing. */}
+            <input
+              className="dkc-redline-input dkc-quiet-input"
+              dir={value.trim() ? "auto" : lang === "ar" ? "rtl" : "ltr"}
+              value={value}
+              placeholder={t(T.input, lang)}
+              aria-label={t(T.input, lang)}
+              onChange={e => setValue(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  add();
+                }
+              }}
+              onBlur={add}
+            />
+          </>
+        ) : (
+          <div className="dkc-fixed-pair" data-side={side ? "" : undefined}>
+            <LineGroup
+              lead={T.never}
+              items={groups.never}
+              quoted={never}
+              // Each quoted block carries its tag (score round 2 of the five
+              // services: said once, the English line under دايماً read as
+              // untagged).
+              tag={never.length ? T.card : null}
+              lang={lang}
+              group="never"
+            />
+            <LineGroup
+              lead={T.always}
+              items={groups.always}
+              quoted={always}
+              tag={always.length ? T.card : null}
+              lang={lang}
+              group="always"
+            />
+          </div>
+        )}
+      </div>
+      {!empty && source ? (
+        <p className="dk-small dk-ink2 dkc-fixed-source">{t(source, lang)}</p>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -1062,12 +1251,14 @@ function FreedomWords({
       </>
     );
   if (tour === 2)
+    // Your input comes first, in fact as well as in the name (DESIGN
+    // 22.6.2): the input line, the offer, then the red lines.
     return (
       <>
         {name(T.input.name)}
-        <RedLinesPanel ctx={ctx} lit />
         <p className="dk-body">{t(T.input.copy, lang)}</p>
         <p className="dk-small dk-ink2">{t(T.input.offer, lang)}</p>
+        <RedLinesPanel ctx={ctx} />
       </>
     );
   if (tour === 3)
@@ -1083,7 +1274,7 @@ function FreedomWords({
               <span key={w.en}>
                 {i ? (
                   <span className="dkc-cf-dot" aria-hidden>
-                    {" · "}
+                    {sep(lang)}
                   </span>
                 ) : null}
                 {t(w, lang)}
@@ -1117,6 +1308,17 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
   const model = useCreatives(ctx);
   const marked = d.launch.pick ? (model.byId.get(d.launch.pick) ?? null) : null;
   const pick = marked ? (marked.poster ?? marked.url ?? null) : null;
+  // Their service's scenes first, every scene once; the two shown large on
+  // the slides either side take their detail tile (DESIGN 22.14).
+  // Never a scene a starter template was cut from (DESIGN 22.18): L4
+  // shows the starters as theirs.
+  const tiles = useMemo(() => {
+    const avoid = scenesNamed(d.starterAds.map(a => a.fileName));
+    return {
+      field: serviceField(d.example, 18, avoid),
+      next: serviceRound(d.example, 6, avoid),
+    };
+  }, [d.example, d.starterAds]);
   return (
     <div className="dkc-freedom">
       {/* The stamp sits on the title row, at its end, on the title's
@@ -1132,20 +1334,28 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
           </span>
         ) : null}
       </div>
-      {/* Before the next round shows (stops 1 and 2), the pair sits in the
-          middle of the room it will fill; it rises as the round arrives. */}
+      {/* The field keeps one place on every stop (DESIGN 22.6.2): the next
+          round's band is reserved, empty, until it arrives, so nothing on
+          the slide moves between stops but what the stop changes. */}
       <div className="dkc-cf" data-stop={tour}>
         <div className="dkc-cf-words">
-          <div key={tour} className="dkc-cf-stop">
+          <StageSwap at={tour} className="dkc-cf-stop" still={ctx.still}>
             <FreedomWords ctx={ctx} pick={Boolean(pick)} />
-          </div>
+          </StageSwap>
         </div>
-        <Tagged tag={t(SHARED.tag.illustration, lang)} className="dkc-cf-field">
+        {/* Example ads in every tile, tagged as such; their own pick, when
+            marked, is the one tile that is theirs, and the tag says so. */}
+        <Tagged
+          tag={t(pick && tour > 0 ? EXAMPLE.tagsPick : EXAMPLE.tags, lang)}
+          className="dkc-cf-field"
+        >
           <AdField
             stop={tour}
             round={t(T.round, lang)}
             change={t(T.check.change, lang)}
             pick={pick}
+            photos={tiles.field}
+            next={tiles.next}
           />
         </Tagged>
       </div>
@@ -1267,16 +1477,21 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
       ? t({ en: "Filled in by Meta", ar: "تعبّيه ميتا تلقائياً" }, lang)
       : t(F.choice, lang);
   const thanksLine = d.launch.welcomeVideo ? F.thanksVideo : F.thanksLine;
+  const { model } = useFeed(ctx);
   // The tag names the picture, so it sits over the phone's outer corner
   // (as journey stop 2 tags the same phone), never on the title's line.
   const tag =
     f.source === "example"
       ? t(SHARED.tag.exampleForm, lang)
       : opensWhatsApp(d)
-        ? t(SHARED.tag.exampleWording, lang)
+        ? t(waTag(model.formCover), lang)
         : null;
   return (
-    <div className="dkc-form-slide" ref={pageRef}>
+    <div
+      className="dkc-form-slide"
+      ref={pageRef}
+      data-wa={opensWhatsApp(d) ? "" : undefined}
+    >
       <Tagged tag={tag} className="dkc-form-phone">
         {/* The phone ends well above the mini rail's name (at 852 it had
             ended 27 px above it); with a tag over it, shorter by its line. */}
@@ -1285,11 +1500,14 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
           height={tag ? 772 : 812}
           screen={screen}
           focus={lit}
+          slide
         />
       </Tagged>
       <div className="dkc-form-side">
         <Owner lane="customer" text={F.owner} lang={lang} />
-        <h2 className="dk-h2">{t(F.title, lang)}</h2>
+        <h2 className="dk-h2">
+          {t(opensWhatsApp(d) ? F.titleWhatsApp : F.title, lang)}
+        </h2>
         <p className="dk-body dk-ink2 dkc-form-line">
           {destination && f.kind === "whatsapp"
             ? t(F.whatsapp, lang)
@@ -1302,14 +1520,25 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
             <p className="dk-body">{t(F.page, lang)}</p>
           ) : (
             // A WhatsApp ad: what happens after the chat opens, step by step.
+            // The call (the last step) is the thank-you stop's band, level
+            // with the chat's foot; the first two sit under the line (score
+            // round 2 of the five services: all three at the foot left a
+            // 360 px gap under the line).
             <div className="dkc-wa-next">
               <span className="dk-label">{t(F.waNextHead, lang)}</span>
               <ol>
                 {[...F.waNext, d.mode.dwy ? F.waNextDwy : F.waNextUs].map(
-                  (step, i) => (
-                    <li key={step.en}>
+                  (step, i, all) => (
+                    <li
+                      key={step.en}
+                      data-band={i === all.length - 1 ? "" : undefined}
+                    >
                       <span className="dkc-q-n">{stepNumeral(i, lang)}</span>
-                      <span className="dk-body">{t(step, lang)}</span>
+                      <span className="dk-body">
+                        {i === all.length - 1
+                          ? fiveMinutes(t(step, lang))
+                          : t(step, lang)}
+                      </span>
                     </li>
                   ),
                 )}
@@ -1488,7 +1717,7 @@ function CallSlide({ ctx }: { ctx: SlideCtx }) {
           <bdi>{d.name}</bdi>
           {service ? (
             <>
-              {" · "}
+              {sep(lang)}
               <bdi>{service}</bdi>
             </>
           ) : null}
@@ -1663,6 +1892,44 @@ function portalStops(d: DeckData) {
   return all.filter(s => s.key === "outcome");
 }
 
+/**
+ * The portal's phone recording (1080 x 1920, checked 2026-10-21): it opens
+ * on a title card, then the install steps in Safari (whose menus show in
+ * Arabic in the English file, and a phone inside the phone), so it plays
+ * from the sign-in to the app's last screen, before the end card. The
+ * install address is said in the words column. A file of another size
+ * (the portal replaced it) would not fit the crop, so it is not shown and
+ * the still stays.
+ */
+const FILM = {
+  en: { from: 13.2, to: 50.2 },
+  ar: { from: 13.7, to: 49.8 },
+} as const;
+const FILM_SIZE = { w: 1080, h: 1920 };
+
+function PortalFilm({ lang }: { lang: Lang }) {
+  const [fits, setFits] = useState(true);
+  const { from, to } = FILM[lang];
+  if (!fits) return null;
+  return (
+    <video
+      key={lang}
+      src={`${LINKS.portal}/demos/mahara-mobile-${lang}.mp4#t=${from},${to}`}
+      muted
+      playsInline
+      autoPlay
+      loop={false}
+      preload="metadata"
+      onLoadedMetadata={e => {
+        const v = e.currentTarget;
+        if (v.videoWidth !== FILM_SIZE.w || v.videoHeight !== FILM_SIZE.h)
+          setFits(false);
+      }}
+      onError={() => setFits(false)}
+    />
+  );
+}
+
 function PortalSlide({ ctx }: { ctx: SlideCtx }) {
   const { d, lang, tour, still } = ctx;
   const P = LAUNCH.portal;
@@ -1736,17 +2003,7 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
               overview, cropped to the screen), not the recording's splash.
               The recording itself is cropped to the same screen in CSS. */}
           <img src={lang === "ar" ? phoneAr : phoneEn} alt="" />
-          {still ? null : (
-            <video
-              key={lang}
-              src={`${LINKS.portal}/demos/mahara-mobile-${lang}.mp4`}
-              muted
-              playsInline
-              autoPlay
-              loop={false}
-              preload="metadata"
-            />
-          )}
+          {still ? null : <PortalFilm lang={lang} />}
         </div>
       </Tagged>
     );
@@ -1760,20 +2017,43 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
         <p className="dk-small dk-ink2 dkc-portal-late">{t(P.lateDwy, lang)}</p>
       </div>
     );
-  else {
-    const shot = SHOTS[at.key as "overview" | "calls"];
+  else if (at.key === "calls") {
+    const [x0, , x1] = SHOTS.calls.crop[lang].box;
     screen = (
       <Tagged
         tag={t(SHARED.tag.demo, lang)}
         className="dkc-portal-shot dkc-screen"
       >
-        {/* The recorded call at about three quarters of the overview's
-            width (score round 2): its waveform was caught mid-draw in the
-            source, so at 1080 it read soft beside the deck's own type. */}
+        {/* Under the overview's width (score round 2): the waveform was
+            caught mid-draw in the source, so at 1080 it read soft beside
+            the deck's own type. */}
+        <div
+          className="dkc-crop dkc-crop-stack"
+          style={{ width: CALLS_W, borderRadius: 10 }}
+        >
+          {CALLS_PIECES.map(([y0, y1]) => (
+            <Crop
+              key={y0}
+              src={SHOTS.calls.src[lang]}
+              crop={{ box: [x0, y0, x1, y1], ratio: PORTAL_RATIO }}
+              width={CALLS_W}
+              radius={0}
+            />
+          ))}
+        </div>
+      </Tagged>
+    );
+  } else {
+    const shot = SHOTS.overview;
+    screen = (
+      <Tagged
+        tag={t(SHARED.tag.demo, lang)}
+        className="dkc-portal-shot dkc-screen"
+      >
         <Crop
           src={shot.src[lang]}
           crop={shot.crop[lang]}
-          width={at.key === "calls" ? CALLS_W : 1080}
+          width={PORTAL_STAGE_W}
           radius={10}
         />
       </Tagged>
@@ -1784,25 +2064,44 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
   // stands the slide's full height at the end margin, beside the title.
   // No list of the other stops (a menu of grey headings read as the app's
   // own navigation, not a slide).
+  // One stage for every stop (DESIGN 22.6.3): the box x 680 to 1784, y 244
+  // to 948, each figure anchored to its top and end edges, the tag on the
+  // box's end corner at one place. Only a figure's own size changes, by the
+  // stage swap, so the top edge, the end edge and the tag never move.
   return (
     <div className="dkc-portal" data-stop={at.key}>
       <div className="dkc-portal-head">{head}</div>
-      <div className="dkc-portal-stop" key={`stop-${at.key}-${lang}`}>
+      <StageSwap
+        at={`stop-${at.key}-${lang}`}
+        still={still}
+        className="dkc-portal-stop"
+      >
         <h3 className="dk-h3">{t(name(at), lang)}</h3>
         <p className="dk-body dk-ink2">{t(copy(at), lang)}</p>
-        {at.key === "phone" ? (
-          // Where to install it, the address the group gets (score round
-          // 2): the words column said only "Install it like an app."
-          <p className="dk-small dk-ink2 dkc-portal-link" dir="ltr">
-            {LINKS.portalInstall.replace(/^https:\/\//, "")}
-          </p>
-        ) : null}
         {at.key === "outcome" ? (
           <p className="dk-body dkc-portal-foot">{t(P.footer, lang)}</p>
         ) : null}
-      </div>
-      <div className="dkc-portal-screen" key={`screen-${at.key}-${lang}`}>
-        {screen}
+        {/* The install address under "Install it like an app.", large, a
+            teal leader running from it to the phone it opens on (score
+            round 2 of the five services: beside the phone it floated
+            mid-slide, far from the words that say what to do with it). */}
+        {at.key === "phone" ? (
+          <div className="dkc-portal-install">
+            <span className="dk-label">{t(P.installLabel, lang)}</span>
+            <p dir="ltr">
+              <span>{LINKS.portalInstall.replace(/^https:\/\//, "")}</span>
+            </p>
+          </div>
+        ) : null}
+      </StageSwap>
+      <div className="dkc-portal-screen">
+        <StageSwap
+          at={`screen-${at.key}-${lang}`}
+          still={still}
+          className="dkc-portal-screen-in"
+        >
+          {screen}
+        </StageSwap>
       </div>
     </div>
   );
@@ -1811,18 +2110,34 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
 // --------------------------------------------------------- L10 your part
 
 /**
- * The pictures sit with the jobs they show (DESIGN 20.7): three of their
- * project pictures under "Keep your Drive folder fed" (what the folder
- * feeds), and a calendar week under the open slots. A tray of fewer than
- * three gives no strip (one or two lone tiles read as gaps).
+ * The pictures their Drive folder feeds (score round 2): their own
+ * creatives, never a starter template, each picture once. A feed post and
+ * its Reels crop are two files of one picture (the tray showed one dining
+ * room twice), so the feed-shaped ones come first and a tall one is taken
+ * only to make two. Three, or two when there are only two; fewer gives no
+ * strip (a lone tile reads as a gap).
+ */
+export function partTiles(creatives: Creative[]): string[] {
+  const own = creatives.filter(c => !c.starter && (c.poster ?? c.url));
+  const src = (c: Creative) => (c.poster ?? c.url) as string;
+  const flat = [...new Set(own.filter(c => phoneFor(c) !== "reels").map(src))];
+  const tall = [...new Set(own.filter(c => phoneFor(c) === "reels").map(src))];
+  const tiles =
+    flat.length >= 2
+      ? flat.slice(0, 3)
+      : [...new Set([...flat, ...tall])].slice(0, 3);
+  return tiles.length >= 2 ? tiles : [];
+}
+
+/**
+ * The pictures sit with the jobs they show (DESIGN 20.7): their project
+ * pictures under "Keep your Drive folder fed" (what the folder feeds), and
+ * a calendar week at the foot of "Before your meetings".
  */
 function PartTray({ ctx }: { ctx: SlideCtx }) {
   const model = useCreatives(ctx);
-  const tiles = [...model.tray, ...model.meta]
-    .map(c => c.poster ?? c.url)
-    .filter((x): x is string => Boolean(x))
-    .slice(0, 3);
-  if (tiles.length < 3) return null;
+  const tiles = partTiles([...model.tray, ...model.meta]);
+  if (!tiles.length) return null;
   return (
     <span className="dkc-part-pic dkc-part-tray" aria-hidden>
       {tiles.map((src, i) => (
@@ -1890,12 +2205,15 @@ function YourPart({ ctx }: { ctx: SlideCtx }) {
   const P = LAUNCH.part;
   const jobs = partJobs(d.mode.dwy);
   const pics: Record<string, ReactNode> = {
-    slots: <PartWeek ctx={ctx} />,
     drive: <PartTray ctx={ctx} />,
   };
   // Three moments, two jobs under each (DESIGN 20.7): the heads encode
   // when, so the six read as a schedule, not a feature grid. Each job is a
-  // rule, the job, why it matters, and its picture where it has one.
+  // rule, the job, why it matters, and its picture where it has one. The
+  // week closes the first column, under its second job (score round 2:
+  // between the two it started that column's second job 225 px lower than
+  // the others'), and the columns share their rows, so the three second
+  // jobs start on one line.
   return (
     <div className="dkc-part">
       <h2 className="dk-h2">{t(P.title, lang)}</h2>
@@ -1905,11 +2223,17 @@ function YourPart({ ctx }: { ctx: SlideCtx }) {
             <h3 className="dkc-part-head">{t(P.heads[head], lang)}</h3>
             {jobs
               .filter(j => j.head === head)
-              .map(j => (
+              .map((j, i, all) => (
                 <div key={j.key} className="dkc-part-cell" data-job={j.key}>
                   <p className="dkc-part-job">{t(j.job, lang)}</p>
-                  <p className="dkc-part-why">{t(j.why, lang)}</p>
+                  <p className="dkc-part-why">
+                    {t(j.why, lang)}
+                    {j.moreShown && j.more ? ` ${t(j.more, lang)}` : null}
+                  </p>
                   {pics[j.key] ?? null}
+                  {head === "before" && i === all.length - 1 ? (
+                    <PartWeek ctx={ctx} />
+                  ) : null}
                 </div>
               ))}
           </section>
@@ -2099,7 +2423,7 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
             style={{ insetInlineStart: x(first ?? 10) - 9 }}
           >
             {d.launch.checkin
-              ? `${t(D.first, lang).split(" · ")[0]} · ${dayShort(d.launch.checkin, lang, d.timeZone)}`
+              ? `${t(D.first, lang).split(sep(lang))[0]}${sep(lang)}${dayShort(d.launch.checkin, lang, d.timeZone)}`
               : t(D.first, lang)}
           </span>
         </div>
@@ -2112,7 +2436,9 @@ function Programme({ ctx }: { ctx: SlideCtx }) {
               <i className="dkc-prog-key" data-open="" />
             </span>
             <span>
-              <b>{t(D.later, lang)}</b> · {t(D.laterLine, lang)}
+              <b>{t(D.later, lang)}</b>
+              {sep(lang)}
+              {t(D.laterLine, lang)}
               {/* Why it is one of the two, under the rhythm it explains. */}
               <span className="dkc-prog-why">{t(D.laterWhy, lang)}</span>
             </span>
@@ -2248,7 +2574,14 @@ function GreenLight({ ctx }: { ctx: SlideCtx }) {
   // slide before, so nothing is repeated small above it.
   return (
     <div className="dkc-green dkc-green-two" key="two">
-      <p className="dk-display dkc-green-question">{t(G.question, lang)}</p>
+      {/* Their mark back from the cover, top start (score round 4), so the
+          call ends where it began: their name on the road. */}
+      <div className="dkc-green-mark">
+        <ClientMark who={who(d)} size={96} />
+      </div>
+      <p className="dk-display dkc-green-question">
+        {t(d.launch.live ? G.questionLive : G.question, lang)}
+      </p>
       {/* The road walked, drawn level as the cover's strip is: under the
           ask, steps down toward its end would read as a falling chart. Its
           end is always named, with the date once there is one. */}
@@ -2347,22 +2680,25 @@ export function launchSlides(): SlideDef[] {
     {
       id: "cover",
       title: L_TITLES.cover,
+      titleOf: d => (d.launch.live ? LAUNCH.cover.titleLive : L_TITLES.cover),
       cover: true,
       notes: N.cover,
       render: ctx => <Cover ctx={ctx} />,
       missing: d => [
         ...(d.logo
           ? []
-          : ["No logo. Upload one, or the deck shows their initials."]),
+          : ["No logo. Upload one, or the deck shows their first letter."]),
         ...(d.goLive
           ? []
           : [
               "No go-live date on the card. Add it here; the cover and the 90 days use it.",
             ]),
-        ...(d.launch.cover
+        // Only when there is a choice to make (DESIGN 22.15): with no ad of
+        // their own the cover shows the example ad, which is designed.
+        ...(d.launch.cover || !d.launch.creatives.some(c => !c.starter)
           ? []
           : [
-              "Cover: pick one of their custom creatives, or the cover shows the lanes.",
+              "Cover: no ad picked, so it shows their first ad. Pick another here if a different one suits.",
             ]),
       ],
     },
@@ -2575,6 +2911,8 @@ export function launchSlides(): SlideDef[] {
     {
       id: "green-light",
       title: L_TITLES["green-light"],
+      titleOf: d =>
+        d.launch.live ? LAUNCH.green.questionLive : L_TITLES["green-light"],
       notes: N["green-light"],
       render: ctx => <GreenLight ctx={ctx} />,
       missing: d =>

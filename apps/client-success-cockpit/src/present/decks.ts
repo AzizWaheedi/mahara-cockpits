@@ -14,7 +14,7 @@ export const DECKS: Record<DeckKind, () => SlideDef[]> = {
 
 /** The call's length the notes window's timer counts against (DESIGN 12.2). */
 export const TARGET_MINUTES: Record<DeckKind, number> = {
-  onboarding: 10,
+  onboarding: 22,
   launch: 28,
 };
 
