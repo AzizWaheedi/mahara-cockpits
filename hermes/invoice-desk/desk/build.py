@@ -83,11 +83,13 @@ def fill(inv: dict[str, Any], invoice_no: str, template: str) -> str:
     if kind not in ("checkout", "autocharge", "paid"):
         raise BuildError(f"Unknown invoice type {kind!r}.")
     period = (inv.get("period") or "").strip()
+    tax_id = (inv.get("client_tax_id") or "").strip()
     html = template
     html = strip_block(html, "CHECKOUT", kind == "checkout")
     html = strip_block(html, "AUTOCHARGE", kind == "autocharge")
     html = strip_block(html, "PAID", kind == "paid")
     html = strip_block(html, "PERIOD", bool(period))
+    html = strip_block(html, "TAX_ID", bool(tax_id))
     amount = money(inv["amount_usd"])
     due = inv.get("due_date")
     values: dict[str, str] = {
@@ -99,6 +101,7 @@ def fill(inv: dict[str, Any], invoice_no: str, template: str) -> str:
         "PAID_LINES": paid_lines(inv.get("payments") or []) if kind == "paid" else "",
         "CLIENT_NAME": esc(inv["client_name"]),
         "CLIENT_DETAIL": esc(inv.get("client_detail") or ""),
+        "CLIENT_TAX_ID": esc(tax_id),
         "DESCRIPTION": esc(inv["description"]),
         "LINE_NOTE": esc(inv.get("line_note") or ""),
         "PERIOD": esc(period),

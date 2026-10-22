@@ -29,6 +29,7 @@ import {
   ResultsParts,
   ResultsSection,
 } from "@/components/ResultsLayout";
+import { GapReport } from "@/components/results/GapReport";
 import {
   bucketDays,
   completeDays,
@@ -2819,6 +2820,8 @@ export function ClientPerformancePage({
         />
       ) : (
         <>
+          {embedded ? <GapReport /> : null}
+
           <div className="space-y-2">
             <PillRow>
               {GROUPS.map(g => {

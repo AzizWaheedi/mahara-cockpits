@@ -42,6 +42,17 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
   const [html, setHtml] = useState<string | null>(null);
   const today = useMemo(() => kuwaitToday(), []);
 
+  // Each client's tax number from their newest invoice that had one; the list is newest first.
+  const taxIds = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const i of data?.invoices ?? []) {
+      if (i.client_tax_id && !(i.clickup_task_id in out)) {
+        out[i.clickup_task_id] = i.client_tax_id;
+      }
+    }
+    return out;
+  }, [data]);
+
   const load = useCallback(async () => {
     if (!auth.client) return;
     try {
@@ -85,7 +96,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
       } catch {
         // A half-typed value; the last good page stays up.
       }
-    }, 200);
+    }, 100);
     return () => window.clearTimeout(timer);
   }, [template, draft]);
 
@@ -166,6 +177,7 @@ export function InvoicesPage({ embedded = false }: { embedded?: boolean }) {
           <InvoiceForm
             clients={data.clients}
             folders={data.folders}
+            taxIds={taxIds}
             today={today}
             canSetFolder={auth.isAdmin || auth.isCeo}
             onDraft={setDraft}

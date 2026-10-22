@@ -286,7 +286,7 @@ def cmd_prepare(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             return 2
         jobs = [job]
     else:
-        jobs = sb.jobs_to_prepare(args.limit or cfg.max_jobs_per_run)
+        jobs = sb.jobs_to_prepare(args.limit or cfg.max_jobs_per_run, retry_blocked_hours=cfg.retry_blocked_hours)
     if not jobs:
         _print({"prepared": 0, "note": "nothing waiting"}, args.json)
         return 0

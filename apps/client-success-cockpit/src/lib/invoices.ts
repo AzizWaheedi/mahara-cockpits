@@ -22,6 +22,7 @@ export type InvoiceRow = {
   kind: InvoiceKind;
   amount_usd: number;
   description: string;
+  client_tax_id: string | null;
   period: string | null;
   issue_date: string;
   due_date: string | null;
@@ -70,6 +71,7 @@ export type InvoiceRequest = {
   description: string;
   lineNote?: string;
   clientDetail?: string;
+  taxId?: string;
   period?: string;
   payNote?: string;
   dueDate?: string;
@@ -87,7 +89,7 @@ export type InvoicesData = {
 };
 
 const COLUMNS =
-  "id,clickup_task_id,client_name,kind,amount_usd,description,period,issue_date,due_date,payments,checkout_source,checkout_url,whop_plan_id,status,invoice_no,drive_url,error,attempts,requested_by,requested_at,issued_at";
+  "id,clickup_task_id,client_name,kind,amount_usd,description,client_tax_id,period,issue_date,due_date,payments,checkout_source,checkout_url,whop_plan_id,status,invoice_no,drive_url,error,attempts,requested_by,requested_at,issued_at";
 
 function fail(error: { message?: string } | null): void {
   if (error) throw new Error(error.message || "The database did not answer.");

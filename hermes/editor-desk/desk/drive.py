@@ -20,7 +20,11 @@ FILES = "https://www.googleapis.com/drive/v3/files"
 UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
-FILE_FIELDS = "id,name,mimeType,size,md5Checksum,createdTime,modifiedTime,webViewLink,videoMediaMetadata(width,height,durationMillis),parents"
+SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
+FILE_FIELDS = (
+    "id,name,mimeType,size,md5Checksum,createdTime,modifiedTime,webViewLink,"
+    "videoMediaMetadata(width,height,durationMillis),parents,shortcutDetails(targetId,targetMimeType)"
+)
 
 # Any Drive link shape the team pastes into ClickUp.
 _ID_PATTERNS = [
@@ -42,6 +46,41 @@ def parse_id(link: str) -> Optional[str]:
             return m.group(1)
     if re.fullmatch(r"[A-Za-z0-9_-]{20,}", text):
         return text
+    return None
+
+
+# The footage folder rule (2026-10-22). Linked folders often hold finished
+# work beside the raw clips: the Clients V2 template has "Completed Ads /
+# EDITED" next to "Raw Videos", and some cards link a client's whole archive.
+_RAW_FOLDER = re.compile(r"\b(raw\s+(videos?|footage|clips?)|client\s+footage|footage)\b|(?:^|\s)(?:ال)?خام(?:$|\s)")
+_FINISHED_FOLDER = re.compile(
+    r"\b(completed|edited|final|finals|finished|exports?|promos?|promotions?|posts|reels|published)\b"
+    r"|نهائي|نهائيه|نهائية|منشور"
+)
+
+
+def _folder_name(name: Any) -> str:
+    return " ".join(str(name or "").lower().split())
+
+
+def is_raw_folder(name: Any) -> bool:
+    """A folder that holds the client's raw clips: "Raw Videos", "Client Footage"."""
+    n = _folder_name(name)
+    return bool(_RAW_FOLDER.search(n)) and not _FINISHED_FOLDER.search(n)
+
+
+def is_finished_folder(name: Any) -> bool:
+    """A folder of finished work: "Completed Ads", "EDITED", "Final", "نهائي", promos, posts, reels."""
+    return bool(_FINISHED_FOLDER.search(_folder_name(name)))
+
+
+def _folder_id(f: dict[str, Any]) -> Optional[str]:
+    """The folder a listing entry opens: a folder, or a shortcut to one."""
+    if f.get("mimeType") == FOLDER_MIME:
+        return str(f.get("id") or "") or None
+    target = f.get("shortcutDetails") or {}
+    if f.get("mimeType") == SHORTCUT_MIME and target.get("targetMimeType") == FOLDER_MIME:
+        return str(target.get("targetId") or "") or None
     return None
 
 
@@ -121,8 +160,36 @@ class Drive:
                 break
         return items
 
-    def videos_under(self, folder_id: str, *, depth: int = 2, limit: int = 50) -> list[dict[str, Any]]:
-        """Video files in a folder and its subfolders, newest last, bounded."""
+    def follow(self, shortcut: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """The file a shortcut points to, under the shortcut's own id.
+
+        Drive refuses to download a shortcut (HTTP 403): the 12 clips of one
+        job on 2026-10-22 were all shortcuts into a client's shared drive.
+        The row keeps the shortcut's id, so the failed rows already stored
+        for it are replaced by the read, and `target_id` is what is fetched.
+        A target the desk cannot open stays a shortcut, so its download
+        fails with a reason on the clip instead of the clip vanishing.
+        """
+        tid = str((shortcut.get("shortcutDetails") or {}).get("targetId") or "")
+        if not tid:
+            return None
+        try:
+            target = self.get(tid)
+        except http.HttpError as e:
+            self.log(f"shortcut {shortcut.get('id')}: its target could not be read: {http.scrub(str(e))[:120]}")
+            return {**shortcut, "target_id": tid}
+        return {**target, "id": shortcut.get("id"), "name": shortcut.get("name") or target.get("name"), "target_id": tid}
+
+    def videos_under(self, folder_id: str, *, depth: int = 2, limit: int = 50, name: str = "") -> list[dict[str, Any]]:
+        """Video files in a folder and its subfolders, newest last, bounded.
+        A shortcut to a video counts as that video; a shortcut to a folder
+        is walked like a subfolder.
+
+        The footage folder rule: when the linked folder (`name`) is not itself
+        raw footage and holds a raw-footage folder ("Raw Videos", "Client
+        Footage"), only those folders are read, and loose videos beside them
+        are not. A folder named for finished work ("Completed Ads", "EDITED",
+        "Final", "نهائي", promos, posts, reels) is never walked."""
         found: list[dict[str, Any]] = []
         frontier = [(folder_id, 0)]
         seen: set[str] = set()
@@ -131,9 +198,30 @@ class Drive:
             if fid in seen:
                 continue
             seen.add(fid)
-            for f in self.list_folder(fid):
+            items = self.list_folder(fid)
+            if level == 0 and not is_raw_folder(name):
+                raw = [_folder_id(f) for f in items if _folder_id(f) and is_raw_folder(f.get("name"))]
+                if raw:
+                    frontier.extend((r, 1) for r in raw if r)
+                    continue
+            for f in items:
+                if f.get("mimeType") == SHORTCUT_MIME:
+                    target = f.get("shortcutDetails") or {}
+                    kind = str(target.get("targetMimeType") or "")
+                    if kind == FOLDER_MIME:
+                        if level < depth and target.get("targetId") and not is_finished_folder(f.get("name")):
+                            frontier.append((str(target["targetId"]), level + 1))
+                        continue
+                    if not kind.startswith("video/"):
+                        continue
+                    followed = self.follow(f)
+                    if followed:
+                        found.append(followed)
+                        if len(found) >= limit:
+                            break
+                    continue
                 if f.get("mimeType") == FOLDER_MIME:
-                    if level < depth:
+                    if level < depth and not is_finished_folder(f.get("name")):
                         frontier.append((f["id"], level + 1))
                 elif is_video(f):
                     found.append(f)

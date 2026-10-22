@@ -89,7 +89,7 @@ class FakeDrive:
         self.calls += 1
         return list(self.tree.get(folder_id, []))
 
-    def videos_under(self, folder_id: str, *, depth: int = 2, limit: int = 50) -> list[dict[str, Any]]:
+    def videos_under(self, folder_id: str, *, depth: int = 2, limit: int = 50, name: str = "") -> list[dict[str, Any]]:
         found: list[dict[str, Any]] = []
         stack = [(folder_id, 0)]
         while stack and len(found) < limit:
@@ -149,7 +149,7 @@ class FakeSupabase:
     def job(self, task_id):
         return self.jobs.get(task_id)
 
-    def jobs_to_prepare(self, limit):
+    def jobs_to_prepare(self, limit, *, retry_blocked_hours=0):
         return [j for j in self.jobs.values() if j.get("state") in ("new", "stale") and int(j.get("attempts") or 0) < 4][:limit]
 
     def retire_missing(self, on_board, stamp):
@@ -175,6 +175,12 @@ class FakeSupabase:
 
     def assets(self, task_id):
         return [a for a in self.assets_rows.values() if a.get("task_id") == task_id]
+
+    def delete_assets(self, task_id, ids):
+        gone = [i for i in ids if self.assets_rows.get(i, {}).get("task_id") == task_id]
+        for i in gone:
+            del self.assets_rows[i]
+        return len(gone)
 
     def store_version(self, row):
         self.versions_rows[row["id"]] = row

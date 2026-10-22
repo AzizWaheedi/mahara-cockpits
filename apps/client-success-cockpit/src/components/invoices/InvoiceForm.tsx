@@ -70,6 +70,7 @@ type State = {
   description: string;
   lineNote: string;
   clientDetail: string;
+  taxId: string;
   period: string;
   payNote: string;
   dueDate: string;
@@ -91,13 +92,22 @@ const blankPayment = (today: string): PayLine => ({
   ref: "",
 });
 
-const fresh = (today: string, taskId = "", clientDetail = ""): State => ({
+/** The same rule the database checks (cockpit_invoices_client_tax_id_check). */
+const TAX_ID = /^[A-Za-z0-9][A-Za-z0-9 ./-]{0,39}$/;
+
+const fresh = (
+  today: string,
+  taskId = "",
+  clientDetail = "",
+  taxId = "",
+): State => ({
   taskId,
   kind: "paid",
   amount: "",
   description: "",
   lineNote: "",
   clientDetail,
+  taxId,
   period: "",
   payNote: "",
   dueDate: "",
@@ -134,6 +144,8 @@ const usd = (c: number) => `USD ${money((c / 100).toFixed(2))}`;
 /** The first thing still missing, in the database's own words; null when ready. */
 function problemOf(s: State, today: string): string | null {
   if (!s.taskId) return "Pick a client.";
+  if (s.taxId.trim() && !TAX_ID.test(s.taxId.trim()))
+    return "Type the tax number with letters, numbers, spaces, dots or dashes only.";
   const total = cents(s.amount);
   if (total === null)
     return "Type the amount in US dollars, for example 1500 or 1500.50.";
@@ -171,6 +183,7 @@ function problemOf(s: State, today: string): string | null {
 export function InvoiceForm({
   clients,
   folders,
+  taxIds,
   today,
   canSetFolder,
   onDraft,
@@ -179,6 +192,8 @@ export function InvoiceForm({
 }: {
   clients: InvoiceClient[];
   folders: Record<string, ClientFolder>;
+  /** Each client's tax number from their last invoice that had one. */
+  taxIds: Record<string, string>;
   today: string;
   canSetFolder: boolean;
   onDraft: (draft: InvoiceDraft) => void;
@@ -203,6 +218,7 @@ export function InvoiceForm({
       ...prev,
       taskId,
       clientDetail: c?.country ?? "",
+      taxId: taxIds[taskId] ?? "",
       amount:
         prev.amount || prev.kind === "paid" || !c?.nextUsd
           ? prev.amount
@@ -233,6 +249,7 @@ export function InvoiceForm({
       description: s.description.trim() || "Description",
       line_note: s.lineNote.trim() || null,
       client_detail: s.clientDetail.trim() || null,
+      client_tax_id: s.taxId.trim() || null,
       period: s.period.trim() || null,
       pay_note: s.payNote.trim() || null,
       issue_date: today,
@@ -271,6 +288,7 @@ export function InvoiceForm({
       description: s.description.trim(),
       lineNote: trim(s.lineNote),
       clientDetail: trim(s.clientDetail),
+      taxId: trim(s.taxId),
       period: trim(s.period),
       payNote: trim(s.payNote),
       dueDate: s.kind === "paid" ? undefined : s.dueDate,
@@ -292,7 +310,7 @@ export function InvoiceForm({
     });
     setSending(false);
     setAsking(false);
-    if (ok) setS(fresh(today, s.taskId, s.clientDetail));
+    if (ok) setS(fresh(today, s.taskId, s.clientDetail, s.taxId));
   }
 
   async function saveFolder() {
@@ -377,19 +395,39 @@ export function InvoiceForm({
             ) : null}
           </div>
         ) : null}
-        <Field
-          id="inv-detail"
-          label="Location"
-          hint="The line under the client's name."
-        >
-          <Input
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+          <Field
             id="inv-detail"
-            maxLength={120}
-            placeholder="Jeddah, Saudi Arabia"
-            value={s.clientDetail}
-            onChange={e => set({ clientDetail: e.target.value })}
-          />
-        </Field>
+            label="Location"
+            hint="The line under the client's name."
+          >
+            <Input
+              id="inv-detail"
+              maxLength={120}
+              placeholder="Jeddah, Saudi Arabia"
+              value={s.clientDetail}
+              onChange={e => set({ clientDetail: e.target.value })}
+            />
+          </Field>
+          <Field
+            id="inv-tax"
+            label="Tax number (optional)"
+            hint={
+              s.taxId && s.taxId === taxIds[s.taskId]
+                ? "From this client's last invoice."
+                : "Only when the client sent one."
+            }
+          >
+            <Input
+              id="inv-tax"
+              maxLength={40}
+              placeholder="300123456700003"
+              className="font-mono tabular-nums"
+              value={s.taxId}
+              onChange={e => set({ taxId: e.target.value })}
+            />
+          </Field>
+        </div>
       </section>
 
       <section className="space-y-4">

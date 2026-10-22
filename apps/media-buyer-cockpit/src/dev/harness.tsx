@@ -52,6 +52,7 @@ import { setFixtures } from "./convexStub";
 import { installDataViewHarness } from "./dataViewHarness";
 import { installHoursHarness } from "./hoursHarness";
 import { portalFixtures } from "./portalFixtures";
+import { installResultsHarness } from "./resultsHarness";
 import { webinarTargetsFixtures } from "./webinarTargetsFixture";
 
 async function load(path: string): Promise<unknown> {
@@ -72,6 +73,8 @@ async function main() {
   installCallCentreHarness(getCockpitSupabaseClient());
   // The Client Performance board (?path=/performance&board=...).
   installBoardHarness(getCockpitSupabaseClient());
+  // The results view beside it (?path=/performance?view=gap).
+  installResultsHarness(getCockpitSupabaseClient());
   // The Ads page (?path=/ads?range=30d): made-up campaigns, their 7-day
   // snapshot and a different read for every range (adsPageHarness.ts).
   installAdsPageHarness(getCockpitSupabaseClient());

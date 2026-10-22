@@ -18,7 +18,7 @@ Link and the status. Nothing is posted to any platform.
 |---|---|
 | `doctor` | every key, binary, disk and service, with the blocker named |
 | `sync` | the ClickUp Video Pipeline into `editor_jobs`, plus the client card behind each job: the tag on a video card is the client, and Clients - Mahara is where the brand work lives |
-| `prepare` | for each video in the job's Drive folder: read it, transcribe the speech with word timings, find the shot boundaries, take a three-frame storyboard, note where each script line was said, then say whether the job is ready to start or what is blocking it |
+| `prepare` | for each video in the job's Drive folder: read it, transcribe the speech with word timings, find the shot boundaries, take a three-frame storyboard, note where each script line was said, then say whether the job is ready to start or what is blocking it. A blocked job with a footage link is looked at again once a day, and a job whose footage link changes on the card is read again at the next run, so footage added later is found without a Rescan. The card gets a comment only when the look found something new |
 | `check` | read a cut the editor uploaded: shape, length, loudness, and the export's own transcript against the approved script, so a missing line is caught before the client sees it |
 | `deliver` | write the Edited Video Link and move the card to client review |
 | `requests` | carry out what the cockpit asked for: deliver, check, comment, rescan |
@@ -133,7 +133,8 @@ Read by name from the environment, then `/opt/data/bibi/api-keys.env` and
 
 `DESK_HOME` (default `~/.editor-desk`), `DESK_MAX_FILES` 12 per job,
 `DESK_MAX_FILE_BYTES` 3 GB, `DESK_MAX_TRANSCRIBE_SEC` 5400 (90 minutes),
-`DESK_MAX_JOBS` 3 per run, `DESK_SCENE_THRESHOLD` 0.35, `DESK_STILLS` 3,
+`DESK_MAX_JOBS` 3 per run, `DESK_RETRY_BLOCKED_HOURS` 24 (0 turns the daily
+look at blocked jobs off), `DESK_SCENE_THRESHOLD` 0.35, `DESK_STILLS` 3,
 `DESK_HOOK_WINDOW` 3, `DESK_LOUDNESS_TARGET` -14 with tolerance 3,
 `DESK_RATIO_TOLERANCE` 0.02, `DESK_REQUIRE_SCRIPT` 0,
 `DESK_SPEECH_PROVIDER` `elevenlabs,groq`, `DESK_CLICKUP_WRITEBACK` 1.
@@ -210,6 +211,25 @@ the shot map, and the storyboards.
   says so on the `google token` line.
 - A file over 3 GB is recorded with its reason and not downloaded. The editor
   opens it in their own app; the desk is not the place to move a 20 GB rush.
+- Drive will not download a shortcut (HTTP 403), so the desk reads the file a
+  shortcut points to, under the shortcut's id. A shortcut to a folder is walked
+  like a subfolder.
+- The footage folder rule (2026-10-22). When the linked folder is not itself
+  raw footage and holds a "Raw Videos" or "Client Footage" folder, only those
+  are read; loose videos and "Raw Images" beside them are not. A folder named
+  for finished work ("Completed Ads", "EDITED", "Final", "نهائي", promos,
+  posts, reels, exports) is never walked. The names live in `desk/drive.py`.
+- A job's stored clips follow what the rule reads at its last look: a clip no
+  longer read (a finished ad, a file that left the folder) is removed from
+  `editor_assets`. A link that cannot be opened removes nothing. A ready job is
+  looked at again only on a link change, Rescan or `prepare --task`.
+- The rule reads folder names, not files. A finished ad filed in "Raw Videos",
+  or a shortcut to one, is still read; a card that links a whole archive needs
+  its ClickUp link changed to the raw folder.
+- A download needs 8 GB free on the box. Below that, a clip is recorded as
+  "not enough free disk" and read at a later look.
+- ElevenLabs is the first speech engine and Groq Whisper the fallback. A clip
+  with sound that neither could transcribe is tried again at the next look.
 - Only the first 90 minutes of a long file are transcribed, and the note says
   so on the asset.
 - Shot boundaries come from ffmpeg's scene score, which is a hint for
