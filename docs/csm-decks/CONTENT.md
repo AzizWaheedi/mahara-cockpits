@@ -315,7 +315,7 @@ Seven slides, about 22 minutes of a 45 to 60 minute call since the visual pass (
 
 **DWY**
 - Row 2 becomes "Your CRM" · "Sign in, and connect your calendar, so bookings land in your real calendar." · ticks: Signed in · Calendar. It shows the Mahara OS row instead only when `prep.dwy_os_approved` is set.
-- Add row 6: "Your callers' phones" · "Install the LeadConnector app, sign in and turn on alerts."
+- Add row 6: "Callers' phones" · "Install the LeadConnector app, sign in and turn on alerts."
 
 **Sources:** OCF (Leadsie, WhatsApp connection, Mahara OS sign-in, Google Calendar, content to Drive, reactivation of old leads, Academy), KF and `clientBrief.ts` `SETUP` (the status fields), PS §3 and §8 (Meta access not done for any of 5 kickoffs, card not funded for 3 of 4, calendar not connected for 4 of 5), O2L Day 4 (the content wording), CTX §3 (ad spend is paid straight to Meta), SD `CLOSING_TOUR` academy (the six courses), AC (the first course, Introduction, is marked START HERE), OM phase 5 (the client watches the course; Mahara does not train their team), MOS (the DWY flow in Mahara OS sits behind per-client approval), DWY SOP §2 (lead alerts), GR (the guarantee terms are never framed here).
 
@@ -1037,7 +1037,7 @@ The foot becomes stop 2, in two lines:
 | `week.guide` (new, on the Meta access and Mahara OS cards, only when that video is recorded) | Video guide · {m:ss} |
 | `week.line` (unchanged words, now in the notes only) | Most of it we'll do together, right now. |
 
-The rows, their lines and their ticks are unchanged. Done with you, "Your callers' phones" moves into "Now, on this call". The title is followed directly by "Now, on this call"; the old lead is said, not shown.
+The rows, their lines and their ticks are unchanged. Done with you, "Callers' phones" moves into "Now, on this call". The title is followed directly by "Now, on this call"; the old lead is said, not shown.
 
 **Notes, added:** "Say it as you open the slide: most of this we'll do together, right now."
 
@@ -1960,7 +1960,7 @@ Inside an example phone the caption is only the client's selling point (`selling
 
 ## The harness's clients
 
-The four made-up clients each advertise a different main service: full is interior design (Noor Studio Interiors, from its kickoff), sparse design and build (from its name), dwy construction (one of its own words fits none, so slide 4 shows Other), starter fit-out and renovation. Architectural design is seen with `?service=architecture`. None names a sub-trade as the service, as their #1 or in a starter template's words or picture (`deck-examples` pins it): the starter client's #1 is "Villa fit-out", its own words "Villa fit-out, Shop and office fit-out, Kitchen renovation" (a kitchen only quietly under fit-out, in their words), and its two starter templates show a fitted-out restaurant and office (an office frame without a skyline: the client is in Kuwait) with fit-out words (`CONTENT-AR.md`). Full's two starter templates are interior rooms, a majlis and a bedroom, never kitchens; the reel's words end "…to the last detail." (score round 4: "…the last cabinet" was a kitchen's, and was cut on screen). The harness is never a client's deck; its words follow the same rules so the preview reads true.
+The four made-up clients each advertise a different main service: full is interior design (Noor Studio Interiors, from its kickoff), sparse design and build (from its name), dwy construction (one of its own words fits none, so slide 4 shows Other), starter fit-out and renovation. Architectural design is seen with `?service=architecture`. None names a sub-trade as the service, as their #1 or in a starter template's words or picture (`deck-examples` pins it): the starter client's #1 is "Villa fit-out", its own words "Villa fit-out, Shop and office fit-out, Kitchen renovation" (a kitchen only quietly under fit-out, in their words), and its two starter templates are cut from Mahara's own sales-deck pictures (an office desk under the Kuwait Towers and drawings on a desk), never one of the example scenes, with fit-out words (`CONTENT-AR.md`; the reel's words say معاينة, never زيارة). Full's two starter templates are cut from the same sales-deck pictures, interior and never kitchens; the reel's words end "…to the last detail." (score round 4: "…the last cabinet" was a kitchen's, and was cut on screen). The harness is never a client's deck; its words follow the same rules so the preview reads true.
 
 ## O2, the goal's first stop
 

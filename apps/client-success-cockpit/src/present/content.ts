@@ -652,7 +652,7 @@ export const O = {
         ],
       },
       phones: {
-        name: { en: "Your callers' phones", ar: "جوالات فريق الاتصال عندكم" },
+        name: { en: "Callers' phones", ar: "جوالات فريق الاتصال" },
         line: {
           en: "Install the LeadConnector app, sign in and turn on alerts.",
           ar: "نزّلوا تطبيق LeadConnector، وسجلوا دخول، وفعّلوا التنبيهات.",

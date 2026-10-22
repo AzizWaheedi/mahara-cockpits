@@ -271,7 +271,7 @@ Since the spec review of 2026-10-20, O6 starts them on the introduction, the cou
 | `week.2.name.dwy` | Your CRM | الـCRM عندكم |
 | `week.2.line.dwy` | Sign in, and connect your calendar, so bookings land in your real calendar. | سجلوا دخول، واربطوا تقويمكم، عشان المواعيد تنزل بتقويمكم الحقيقي. |
 | `week.2.ticks.dwy` | Signed in · Calendar | تسجيل الدخول · التقويم |
-| `week.6.name.dwy` | Your callers' phones | جوالات فريق الاتصال عندكم |
+| `week.6.name.dwy` | Callers' phones | جوالات فريق الاتصال |
 | `week.6.line.dwy` | Install the LeadConnector app, sign in and turn on alerts. | نزّلوا تطبيق LeadConnector، وسجلوا دخول، وفعّلوا التنبيهات. |
 
 **Spoken lines (Arabic)**
@@ -1479,7 +1479,7 @@ Not خدماتنا: the five are the client's kind of work, not services Mahara 
 | Phone | Arabic |
 |---|---|
 | Feed | نشطّب ونرمّم المحلات والمطاعم والمكاتب، من المخطط لين التسليم. |
-| Reels | من أول زيارة للموقع لين آخر لمسة. |
+| Reels | من أول معاينة للموقع لين آخر لمسة. |
 
 **Score round 4 (2026-10-21), the Arabic.** Reviewed under `aziz-kuwaiti-voice` (warm-professional client register, Saudi-safe):
 - "Example ad" is إعلان للتوضيح, plural إعلانات للتوضيح (decision 14, changed): إعلان مثال read as a word-for-word "Example ad"; the short tag stays مثال.

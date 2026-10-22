@@ -5845,7 +5845,7 @@ fit-out pictures (`starter-fitout-feed.webp`, a closer, mirrored frame of
 the restaurant; `starter-fitout-reel.webp`, the office's desk and partition
 below its windows, so no skyline shows: the client is in Kuwait)
 with fit-out words (the feed: نشطّب ونرمّم المحلات والمطاعم والمكاتب، من
-المخطط لين التسليم. The reel: من أول زيارة للموقع لين آخر لمسة.), where they
+المخطط لين التسليم. The reel: من أول معاينة للموقع لين آخر لمسة.), where they
 were a kitchen and "we renovate your kitchen". `?service=<key>` in the harness shows any
 service's pictures.
 

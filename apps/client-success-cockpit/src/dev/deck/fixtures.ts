@@ -526,7 +526,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
         // a mirrored crop of the example living room).
         ad("custom-square", "custom", square, 800, 800, {
           primaryText:
-            "بيتكم يتصمم على طريقة عيشة عائلتكم. احجزوا زيارة لمعرضنا في الرياض.",
+            "بيتكم يتصمم على طريقة عيشة عائلتكم. احجزوا موعدكم في معرضنا بالرياض.",
           headline: "تصاميم نور ستوديو",
           cta: "BOOK_NOW",
           language: "ar",
@@ -832,7 +832,7 @@ function starter(deck: DeckKind = "launch"): Loaded {
         language: "ar",
       }),
       ad("starter-reel", "starter", fitoutReelPic, 608, 1080, {
-        primaryText: "من أول زيارة للموقع لين آخر لمسة.",
+        primaryText: "من أول معاينة للموقع لين آخر لمسة.",
         cta: "SEND_WHATSAPP_MESSAGE",
         language: "ar",
       }),
