@@ -1,5 +1,7 @@
 # Native media feed, installed before this CSM worker; the exact live line.
 */15 * * * * /usr/bin/flock -n /home/hermes/.cockpit-native-state/native-source-ceo.lock /usr/bin/python3 /home/hermes/.cockpit-native-state/run-source-ceo-cycle.py >> /home/hermes/.cockpit-native-state/native-cron.log 2>&1
+# Native sync plans older than 48 hours (hermes/native-prune), added 2026-10-22. Its own lock, so it never blocks a cycle.
+40 * * * *   flock -n $HOME/.cockpit-native-state/native-prune.lock bash -c "cd $HOME/mahara-cockpits/hermes/native-prune && python3 prune.py --apply" >> $HOME/.cockpit-native-state/native-prune.log 2>&1
 
 # CSM calls, its own release and lock. It never runs as part of the native media feed.
 */15 * * * * flock -n $HOME/.csm-calls/run.lock $HOME/csm-calls-current/hermes/csm-calls/run.sh run --apply --report $HOME/.csm-calls/last-run.json >> $HOME/.csm-calls/cron.log 2>&1
