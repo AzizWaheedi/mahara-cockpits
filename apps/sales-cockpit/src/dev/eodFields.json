@@ -1,0 +1,198 @@
+{
+  "setter": [
+    {
+      "key": "dials",
+      "label": "Dials",
+      "column": "Dials",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "contact_made",
+      "label": "Contact made",
+      "column": "Contact Made",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "conversations",
+      "label": "Conversations",
+      "column": "Conversations",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "quality_conversations",
+      "label": "Quality conversations",
+      "column": "Quality Conversations",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "talk_time",
+      "label": "Talk time",
+      "column": "Talk Time",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "key": "intros_scheduled",
+      "label": "Intro calls scheduled",
+      "column": "Intro Calls Scheduled",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "intros_booked",
+      "label": "Intros booked",
+      "column": "Intro Booked",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "intro_shows",
+      "label": "Intro shows",
+      "column": "Intro Shows",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "demos_booked",
+      "label": "Demos booked",
+      "column": "Booked Demos",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "calls_confirmed",
+      "label": "Calls confirmed",
+      "column": "Calls Confirmed",
+      "kind": "count"
+    },
+    {
+      "key": "deals_closed",
+      "label": "Deals closed on your sets",
+      "column": "Deals Closed",
+      "kind": "count"
+    },
+    {
+      "key": "cash",
+      "label": "Cash collected on your sets ($)",
+      "column": "Cash Collected (Sets) $",
+      "kind": "money"
+    },
+    {
+      "key": "contracted",
+      "label": "Contracted revenue on your sets ($)",
+      "column": "Contracted Revenue (Sets) $",
+      "kind": "money"
+    },
+    {
+      "key": "objections",
+      "label": "Objections you heard",
+      "column": "Objections",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "key": "summary",
+      "label": "How the day went",
+      "column": "Day Summary",
+      "kind": "text",
+      "required": true
+    }
+  ],
+  "closer": [
+    {
+      "key": "slots",
+      "label": "Slots available",
+      "column": "Slots Available",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "demos_scheduled",
+      "label": "Demos scheduled",
+      "column": "Demos Scheduled",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "demos_showed",
+      "label": "Demos showed",
+      "column": "Demos Showed",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "no_shows",
+      "label": "No-shows",
+      "column": "No Shows",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "cancels",
+      "label": "Cancels",
+      "column": "Cancels",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "rescheduled",
+      "label": "Rescheduled",
+      "column": "Rescheduled",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "offers",
+      "label": "Offers given",
+      "column": "Offers Given",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "deposits",
+      "label": "Deposits",
+      "column": "Deposits",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "closed",
+      "label": "Clients closed",
+      "column": "Clients Closed",
+      "kind": "count",
+      "required": true
+    },
+    {
+      "key": "cash",
+      "label": "Cash collected ($)",
+      "column": "Cash Collected",
+      "kind": "money",
+      "required": true
+    },
+    {
+      "key": "contracted",
+      "label": "Contracted revenue ($)",
+      "column": "Contracted Revenue ($)",
+      "kind": "money",
+      "required": true
+    },
+    {
+      "key": "objections",
+      "label": "Objections you heard",
+      "column": "Objections",
+      "kind": "text",
+      "required": true
+    },
+    {
+      "key": "summary",
+      "label": "How the day went",
+      "column": "Day Summary",
+      "kind": "text",
+      "required": true
+    }
+  ]
+}

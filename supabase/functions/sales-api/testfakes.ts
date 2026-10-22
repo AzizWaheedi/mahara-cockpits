@@ -22,6 +22,11 @@ const LIVE = ["requested", "creating", "open", "host_in", "lead_in"];
 const FINAL = ["ended", "expired", "failed", "cancelled"];
 
 const UNIQUES: Record<string, Unique[]> = {
+  cockpit_sales_demo_handoffs: [
+    {name:"cockpit_sales_demo_handoffs_pkey",cols:["id"]},
+    {name:"cockpit_sales_demo_handoffs_contact_id_day_key",cols:["contact_id","day"]},
+    {name:"cockpit_sales_demo_handoffs_source_intro_id_key",cols:["source_intro_id"],where:r=>r.source_intro_id!=null},
+  ],
   cockpit_sales_rooms: [
     { name: "cockpit_sales_rooms_pkey", cols: ["id"] },
     { name: "cockpit_sales_rooms_request_id_key", cols: ["request_id"] },

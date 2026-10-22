@@ -46,7 +46,6 @@ import {
   toThread,
   whatsappWindow,
   EOD_FIELDS,
-  EOD_TAB,
   type EodRole,
   eodColumns,
   eodDay,
@@ -93,6 +92,8 @@ import {
   routePhone,
   slotOffered,
 } from "./dialer.ts";
+import { callAttended, callReviewed, dayBounds, reviewVersion, type ReviewCall } from "./dayReview.ts";
+import { makeDemoHandoffs } from "./demoHandoffs.ts";
 import { hotFresh, hotPatch, stillHot } from "./hot.ts";
 import {
   alreadyBookedMessage,
@@ -562,6 +563,7 @@ async function mark(who: Who, b: Row) {
   const result = await markAppointment(who, id, cleanText(b.status, 20), {
     reason: cleanText(b.reason, 300) || null,
     note: cleanText(b.note, 4000) || null,
+    quiet: b.source === "eod",
   });
   await resolveRoomMarkAlerts(id);
   return { mark: result };
@@ -2827,14 +2829,12 @@ async function takeOver(who: Who, f: Row): Promise<Record<string, string> | null
 // ---------------------------------------------------------------------------
 
 /** #eods-salesreps, where the Typeform EODs were posted (Make scenarios 9327584/9327485). */
-const EOD_CHANNEL = "C0AF5PJEAUX";
 const HOUR = 3_600_000;
 
 function eodRoleFor(who: Who, asked: unknown): EodRole {
   const role = String(who.role ?? "");
-  if (role === "setter") return "setter";
-  if (role === "closer") return "closer";
-  return asked === "closer" ? "closer" : "setter";
+  if (asked === "setter" || asked === "closer") return asked;
+  return role === "closer" ? "closer" : "setter";
 }
 
 function eodDayOk(day: unknown): string {
@@ -2883,9 +2883,8 @@ async function eodCount(who: Who, role: EodRole, day: string): Promise<EodCounte
         .filter(d => !d.voided)
     : [];
   const sum = (rows: Row[], k: string) => rows.reduce((a, r) => a + Number(r[k] ?? 0), 0);
-  // The show rule used everywhere: showed, or confirmed or invalid once past.
-  const shown = (r: Row) =>
-    r.status === "showed" || ((r.status === "confirmed" || r.status === "invalid") && Date.parse(String(r.start_at)) < Date.now());
+  // EOD attendance needs an explicit outcome; a confirmation alone is not attendance.
+  const shown = (r: Row) => callAttended(r as ReviewCall) && Date.parse(String(r.start_at)) < Date.now();
 
   if (role === "setter") {
     const maqsam = String(who.maqsam_email ?? "").toLowerCase();
@@ -2920,7 +2919,7 @@ async function eodCount(who: Who, role: EodRole, day: string): Promise<EodCounte
         `cockpit_sales_calendar?call_type=eq.intro&assigned_user_id=eq.${enc(ghlUser)}&${between("booked_at")}&select=appointment_id`,
       )).length;
       // Demos booked today for leads whose intro was theirs in the last 60 days.
-      const demos = await svc(`cockpit_sales_calendar?call_type=eq.demo&${between("booked_at")}&select=contact_id`);
+      const demos = await svc(`cockpit_sales_calendar?call_type=eq.demo&${between("booked_at")}&select=appointment_id,contact_id`);
       const ids = [...new Set(demos.map(d => String(d.contact_id ?? "")).filter(Boolean))];
       if (ids.length) {
         const since = new Date(Date.parse(from) - 60 * 24 * HOUR).toISOString();
@@ -2928,11 +2927,17 @@ async function eodCount(who: Who, role: EodRole, day: string): Promise<EodCounte
           `cockpit_sales_calendar?call_type=eq.intro&assigned_user_id=eq.${enc(ghlUser)}&start_at=gte.${enc(since)}&contact_id=in.(${ids.map(i => `"${i}"`).join(",")})&select=contact_id`,
         );
         const theirs = new Set(mine.map(m => String(m.contact_id)));
-        out.demos_booked = demos.filter(d => theirs.has(String(d.contact_id))).length;
+        const recorded = await svcAll(`cockpit_sales_demo_handoffs?state=eq.recorded&demo_id=in.(${demos.map(d => enc(String(d.appointment_id))).join(",")})&select=demo_id,setter_email`);
+        const setterOf = new Map(recorded.map(r => [String(r.demo_id), String(r.setter_email)]));
+        out.demos_booked = demos.filter(d => {
+          const credited = setterOf.get(String(d.appointment_id));
+          return credited ? credited === who.email : theirs.has(String(d.contact_id));
+        }).length;
       } else out.demos_booked = 0;
+      prefill.push("intros_scheduled", "intros_booked", "intro_shows", "demos_booked");
       notes.intros_scheduled = "Intro calls on your calendar that day.";
       notes.intros_booked = "Intro calls booked that day onto your calendar.";
-      notes.intro_shows = "Intros that day marked showed (a confirmed call that has passed counts as shown).";
+      notes.intro_shows = "Intros with a saved attended or disqualified outcome. A confirmation alone does not count.";
       notes.demos_booked = "Demos booked that day for leads whose intro was yours in the last 60 days.";
     }
     const sets = deals.filter(d => names.includes(String(d.setter ?? "").trim().toLowerCase()));
@@ -2952,7 +2957,7 @@ async function eodCount(who: Who, role: EodRole, day: string): Promise<EodCounte
       out.no_shows = demos.filter(d => d.status === "noshow").length;
       out.cancels = demos.filter(d => d.status === "cancelled").length;
       notes.demos_scheduled = "Demos on your calendar that day.";
-      notes.demos_showed = "Of those, marked showed (a confirmed call that has passed counts as shown).";
+      notes.demos_showed = "Demos with a saved attended or disqualified outcome. A confirmation alone does not count.";
       notes.no_shows = "Of those, marked no-show.";
       notes.cancels = "Of those, cancelled.";
       prefill.push("demos_scheduled", "demos_showed", "no_shows", "cancels");
@@ -2979,19 +2984,27 @@ async function eodCount(who: Who, role: EodRole, day: string): Promise<EodCounte
   return { values: out, notes, prefill };
 }
 
+async function eodReview(who: Who, day: string) {
+  if (!who.ghl_user_id) return { calls: [] as ReviewCall[], pending: 0, version: "", linked: false };
+  const { from, to } = dayBounds(day);
+  const calls = await svcAll(`cockpit_sales_calendar?assigned_user_id=eq.${enc(String(who.ghl_user_id))}&start_at=gte.${enc(from)}&start_at=lt.${enc(to)}&start_at=lte.${enc(new Date().toISOString())}&call_type=in.(intro,demo,follow_up,callback)&select=*&order=start_at.asc`) as ReviewCall[];
+  return { calls, pending: calls.filter(r => !callReviewed(r)).length, version: reviewVersion(calls), linked: true };
+}
+
 async function eodPrefill(who: Who, b: Row) {
   const role = eodRoleFor(who, b.role);
   const day = eodDayOk(b.day);
-  const [counted, saved, person] = await Promise.all([
+  const [counted, saved, person, review] = await Promise.all([
     eodCount(who, role, day),
     svc(`cockpit_sales_eods?email=eq.${enc(String(who.email))}&day=eq.${day}&role=eq.${role}&select=*`),
     svc(`cockpit_sales_people?email=eq.${enc(String(who.email))}&select=name,slack_user_id`),
+    eodReview(who, day),
   ]);
   const eod = saved[0] ?? null;
   const outbox = eod?.outbox_id
     ? (await svc(`eod_outbox?id=eq.${eod.outbox_id}&select=status,slack_ts,sent_at,sheet_at,error,sheet_error,attempts`))[0] ?? null
     : null;
-  const role_choice = ["setter", "closer"].includes(String(who.role)) ? [String(who.role)] : ["setter", "closer"];
+  const role_choice = ["setter", "closer"];
   return {
     day,
     today: eodDay(Date.now()),
@@ -3003,6 +3016,7 @@ async function eodPrefill(who: Who, b: Row) {
     has_ghl: Boolean(who.ghl_user_id),
     fields: EOD_FIELDS[role],
     computed: counted.values,
+    review,
     notes: counted.notes,
     prefill: counted.prefill,
     eod,
@@ -3025,54 +3039,26 @@ async function eodSubmit(who: Who, b: Row) {
   if (missing.length) throw new Refusal(`Fill in ${missing.slice(0, 3).join(", ")}${missing.length > 3 ? " and the rest" : ""} first.`);
 
   const email = String(who.email);
-  const existing = (await svc(`cockpit_sales_eods?email=eq.${enc(email)}&day=eq.${day}&role=eq.${role}&select=*`))[0];
-  if (existing?.submitted_at)
-    throw new Refusal("This day's end of day is already in. If a number was wrong, tell your manager.", 409);
+  const review = await eodReview(who, day);
+  if (!review.linked) throw new Refusal("Link your HighLevel user on the Team page so your calls can be checked before filing.", 409);
+  if (review.pending) throw new Refusal(`Review ${review.pending} call${review.pending === 1 ? "" : "s"} before sending your end of day.`, 409, { code: "calls_pending" });
+  if (b.review_version !== review.version) throw new Refusal("Your calls changed. Refresh the totals and check them before sending.", 409, { code: "review_changed" });
   const person = (await svc(`cockpit_sales_people?email=eq.${enc(email)}&select=name,slack_user_id`))[0];
   const name = String(person?.name ?? who.name ?? email.split("@")[0]);
   const slackId = person?.slack_user_id ? String(person.slack_user_id) : null;
   const computed = (await eodCount(who, role, day)).values;
   const now = Date.now();
   const responseId = `cockpit-${crypto.randomUUID().slice(0, 8)}`;
-
-  let outbox: Row;
-  try {
-    outbox = (await svc("eod_outbox", {
-      method: "POST",
-      body: {
-        role: `sales_${role}`,
-        day,
-        person: name,
-        slack_id: slackId,
-        channel: EOD_CHANNEL,
-        tab: EOD_TAB[role],
-        body: eodMessage(role, name, slackId, day, answers),
-        row_values: eodColumns(role, name, day, now, responseId, answers),
-      },
-      prefer: "return=representation",
-    }))[0];
-  } catch (e) {
-    if (/23505|duplicate/.test(String((e as Error).message ?? e)))
-      throw new Refusal("An end of day for this day and name is already on its way out.", 409);
-    throw e;
-  }
-  const saved = (await svc("cockpit_sales_eods?on_conflict=email,day,role", {
-    method: "POST",
-    body: {
-      email,
-      name,
-      role,
-      day,
-      answers,
-      computed,
-      submitted_at: new Date(now).toISOString(),
-      outbox_id: outbox.id,
-      updated_at: new Date(now).toISOString(),
-    },
-    prefer: "resolution=merge-duplicates,return=representation",
-  }))[0];
-  await audit(who, "eod.submit", "cockpit_sales_eods", String(saved.id), existing ?? null, { role, day, outbox_id: outbox.id });
-  return { eod: saved, outbox: { status: outbox.status } };
+  // The final call check, report and outgoing row commit together. A retry
+  // after a lost answer returns the same report and never posts twice.
+  const result = await liveio.rpc("cockpit_sales_submit_reviewed_eod", {
+    p_email: email, p_role: role, p_day: day, p_answers: answers, p_computed: computed,
+    p_body: eodMessage(role, name, slackId, day, answers),
+    p_columns: eodColumns(role, name, day, now, responseId, answers),
+    p_review_version: review.version,
+    p_review_rows: review.calls.map(r => ({id: r.appointment_id, status: r.marked_status ?? r.status, mark_id: r.mark_id ?? null, note: r.mark_note ?? null, start_at: r.start_at})),
+  });
+  return result as Row;
 }
 
 /** Put a stalled EOD back in the queue (the bot was invited after it gave up, say). */
@@ -7359,6 +7345,10 @@ async function pipelineMove(who: Who, b: Row) {
   const stageId = cleanText(b.stage_id, 80);
   if (!contact || !stageId) throw new Refusal("Which lead, and which stage?");
   if ((await readClient(svc, contact)).client) throw new Refusal(CLIENT_MOVE_REFUSAL, 409, { code: "client" });
+  if (Object.prototype.hasOwnProperty.call(b, "expected_stage_id")) {
+    const latest = (await svc(`cockpit_sales_leads?contact_id=eq.${enc(contact)}&select=stage_id`))[0];
+    if ((latest?.stage_id ?? null) !== b.expected_stage_id) throw new Refusal("The pipeline changed. Refresh the lead before saving.", 409);
+  }
   const out = await moveStage(who, contact, { stageId, pipelineId: cleanText(b.pipeline_id, 80) || undefined }, {
     source: "board",
   });
@@ -8247,6 +8237,7 @@ async function coachDelete(who: Who, b: Row) {
 // The live-call and follow-up agent modules (contract v2): their IO has a
 // timeout on every call, and index.ts lends them the sends and the marks.
 const liveio = makeLiveIO({ env, background });
+const demoHandoffs = makeDemoHandoffs({ io: liveio, locationId: LOCATION, audit, markAppointment });
 const rooms = makeRooms({
   io: liveio,
   audit,
@@ -8324,6 +8315,8 @@ const ACTIONS: Record<string, (who: Who, b: Row) => Promise<Row>> = {
   "followup.approve": followupApprove,
   "followup.skip": followupSkip,
   "followup.settings": followupSettings,
+  "demo.plan": demoHandoffs.plan,
+  "demo.record": demoHandoffs.record,
   "eod.prefill": eodPrefill,
   "eod.submit": eodSubmit,
   "eod.retry": eodRetry,
