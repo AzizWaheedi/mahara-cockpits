@@ -77,5 +77,41 @@
       "requested_by": "finance@maharamedia.com"
     },
     "sha256": "f9e8995657c316f72227428a8a7b847c3bcb09bed4d0748e9f3bd285b9a9db07"
+  },
+  {
+    "name": "paid in full, with the client's tax number",
+    "invoiceNo": "INV-2026-031",
+    "invoice": {
+      "id": "00000000-0000-4000-8000-000000000031",
+      "clickup_task_id": "z8xmdvfpyw",
+      "client_name": "Shades Interior Design & General Contracting",
+      "kind": "paid",
+      "amount_usd": 6000,
+      "description": "90-day agreement",
+      "line_note": "Paid in full, covering all 90 days of the agreement",
+      "client_detail": "Jeddah, Saudi Arabia",
+      "period": "Days 1-90",
+      "pay_note": "This invoice confirms that BassamCo For Product Promotion received USD 6,000.00 in full for the 90-day agreement. Nothing further is due.",
+      "issue_date": "2026-10-11",
+      "due_date": null,
+      "checkout_url": null,
+      "payments": [
+        {
+          "date": "2026-10-03",
+          "method": "Bank transfer",
+          "amount": 500,
+          "ref": "DEPOSIT"
+        },
+        {
+          "date": "2026-10-06",
+          "method": "Bank transfer",
+          "amount": 5500,
+          "ref": "FINAL PAYMENT"
+        }
+      ],
+      "requested_by": "csm@maharamedia.com",
+      "client_tax_id": "300123456700003"
+    },
+    "sha256": "2675e176b86b5afda0ddb72639d766443ee947c9cab014bc9dfce73b808337ba"
   }
 ]

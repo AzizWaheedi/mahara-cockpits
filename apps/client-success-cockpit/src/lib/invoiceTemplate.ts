@@ -25,6 +25,8 @@ export type InvoiceDraft = {
   description: string;
   line_note?: string | null;
   client_detail?: string | null;
+  /** The client's own tax number, printed under the location when given. */
+  client_tax_id?: string | null;
   period?: string | null;
   pay_note?: string | null;
   issue_date: string;
@@ -146,11 +148,13 @@ export function fillInvoice(
     throw new InvoiceBuildError(`Unknown invoice type ${String(kind)}.`);
   }
   const period = (inv.period ?? "").trim();
+  const taxId = (inv.client_tax_id ?? "").trim();
   let html = template;
   html = stripBlock(html, "CHECKOUT", kind === "checkout");
   html = stripBlock(html, "AUTOCHARGE", kind === "autocharge");
   html = stripBlock(html, "PAID", kind === "paid");
   html = stripBlock(html, "PERIOD", Boolean(period));
+  html = stripBlock(html, "TAX_ID", Boolean(taxId));
   const amount = money(inv.amount_usd);
   const due = inv.due_date;
   const values: Record<string, string> = {
@@ -162,6 +166,7 @@ export function fillInvoice(
     PAID_LINES: kind === "paid" ? paidLines(inv.payments ?? []) : "",
     CLIENT_NAME: esc(inv.client_name),
     CLIENT_DETAIL: esc(inv.client_detail ?? ""),
+    CLIENT_TAX_ID: esc(taxId),
     DESCRIPTION: esc(inv.description),
     LINE_NOTE: esc(inv.line_note ?? ""),
     PERIOD: esc(period),
