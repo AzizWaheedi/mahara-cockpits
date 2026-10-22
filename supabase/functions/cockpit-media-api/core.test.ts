@@ -1,6 +1,7 @@
 import {describe,it,expect} from 'bun:test';
 import {assertObjectScope,budget,confirmed,prepare,ADS_LIST,STATUS_FIELD,CITIES_FIELD,type Row} from './core';
 import {providerTools} from './tools';
+import {executePlan} from './execute';
 import {budgetToUsd,budgetWords,spendToUsd,usdToBudget} from './currency';
 const scope={account:'123456',campaign:'999999',task:'taskabc',campaignName:'Campaign'};
 function provider(rows:Row[]) { const calls:unknown[]=[];return {calls,async call(...args:unknown[]){calls.push(args);const row=rows.shift();if(!row)throw new Error('unexpected call');return row;}}; }
@@ -106,5 +107,41 @@ describe('budgets in the account currency',()=>{
   // Under a campaign budget the new ad set carries none, so Meta is not asked for the currency.
   const cbo=provider([{...abo,daily_budget:'2000'},source]);const underCbo:any=await prepare('ceo.b2bManage.createAdset',args,ceo,cbo);
   expect(underCbo.body.daily_budget).toBeUndefined();expect(cbo.calls).toHaveLength(2);
+ });
+});
+describe('read-back checks for lists and nested ids',()=>{
+ const reads=(task:Row,made:Row={})=>({calls:[] as unknown[],async call(_provider:string,method:string,path:string){this.calls.push([method,path]);return method==='GET'?task:made;}});
+ it('has: a tag (any case) or an assignee must be on the read-back; the rest of the list is the provider\'s',async()=>{
+  const tag={provider:'clickup' as const,method:'POST',path:'task/abc/tag/acme',verifyPath:'task/abc',expected:{},has:[{path:'tags' as const,key:'name' as const,value:'Acme'}]};
+  await executePlan(tag,reads({id:'abc',tags:[{name:'other'},{name:'acme'}]}));
+  await expect(executePlan(tag,reads({id:'abc',tags:[{name:'beta'}]}))).rejects.toThrow('did not show the tag');
+  await expect(executePlan(tag,reads({id:'abc'}))).rejects.toThrow('did not show the tag');
+  const assign={provider:'clickup' as const,method:'PUT',path:'task/abc',body:{assignees:{add:[123]},due_date:5},verifyPath:'task/abc',expected:{due_date:'5'},has:[{path:'assignees' as const,key:'id' as const,value:'123'}]};
+  await executePlan(assign,reads({id:'abc',due_date:'5',assignees:[{id:999},{id:123}]}));
+  await expect(executePlan(assign,reads({id:'abc',due_date:'5',assignees:[]}))).rejects.toThrow('did not show the assignee');
+ });
+ it('idFrom: a create whose id is nested is read back by that id; a top-level id still wins',async()=>{
+  const step={provider:'clickup' as const,method:'POST',path:'list/1/taskTemplate/t-1',body:{name:'N'},verifyPath:'task/$id',expected:{name:'N'},idFrom:'task.id',result:{id:'$id'}};
+  const nested=reads({id:'new1',name:'N'},{task:{id:'new1'}});expect((await executePlan(step,nested)).result.id).toBe('new1');expect(nested.calls.at(-1)).toEqual(['GET','task/new1']);
+  expect((await executePlan(step,reads({id:'top1',name:'N'},{id:'top1',task:{id:'other'}}))).result.id).toBe('top1');
+  await expect(executePlan(step,reads({id:'x',name:'N'},{}))).rejects.toThrow('no verifiable object id');
+  await expect(executePlan({...step,idFrom:undefined},reads({id:'new1',name:'N'},{task:{id:'new1'}}))).rejects.toThrow('no verifiable object id');
+ });
+});
+describe('the Make close provider',()=>{
+ const HOOK='https://hook.eu1.make.com/abcdefgh12345678';
+ const on={BLUEPRINT_MAKE_CLOSE:'on',MAKE_BLUEPRINT_HOOK:HOOK,MAKE_BLUEPRINT_KEY:'make-secret'} as Record<string,string>;
+ const make=(env:Record<string,string>,status=200)=>{const rows:Row[]=[];const sent:any[]=[];const p=providerTools(k=>env[k],async r=>{rows.push(r);},async(url:any,init:any)=>{sent.push([String(url),JSON.parse(init.body)]);return new Response('Accepted',{status});});return {p,rows,sent};};
+ it('posts once to the exact hook from the env, with the key added second, and keeps the key out of every receipt',async()=>{
+  const {p,rows,sent}=make(on);
+  expect(await p.call('make','POST','hook',{source:'mahara-cockpit',event:'blueprint.call_closed',task_id:'t1'})).toEqual({ok:true,status:200});
+  expect(sent).toEqual([[HOOK,{source:'mahara-cockpit',key:'make-secret',event:'blueprint.call_closed',task_id:'t1'}]]);
+  expect(rows.map(r=>r.phase)).toEqual(['intent','response']);expect(JSON.stringify(rows)).not.toContain('make-secret');expect(JSON.stringify(rows)).not.toContain(HOOK);
+ });
+ it('refuses while switched off, without a secret, with another URL, another path or a read, and a rejection is never retried',async()=>{
+  for(const env of [{...on,BLUEPRINT_MAKE_CLOSE:'off'},{...on,MAKE_BLUEPRINT_KEY:''},{BLUEPRINT_MAKE_CLOSE:'on',MAKE_BLUEPRINT_KEY:'k'}]){const {p,sent}=make(env);await expect(p.call('make','POST','hook',{})).rejects.toThrow('not switched on');expect(sent).toEqual([]);}
+  const {p:other,sent:none}=make({...on,MAKE_BLUEPRINT_HOOK:'https://evil.invalid/hook'});await expect(other.call('make','POST','hook',{})).rejects.toThrow('not a Make webhook URL');expect(none).toEqual([]);
+  const {p}=make(on);await expect(p.call('make','POST','scenarios/1/run',{})).rejects.toThrow('Unsupported Make resource');await expect(p.call('make','GET','hook')).rejects.toThrow('Unsupported Make resource');
+  const {p:bad,sent}=make(on,500);await expect(bad.call('make','POST','hook',{source:'mahara-cockpit'})).rejects.toThrow('Make rejected the close (500)');expect(sent.length).toBe(1);
  });
 });

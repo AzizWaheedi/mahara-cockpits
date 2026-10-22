@@ -4,6 +4,23 @@ import type {Provider,Row} from './core.ts';
 // Page objects); it is used only in the header and is never stored.
 export function providerTools(env:(name:string)=>string|undefined,health:(row:Row)=>Promise<void>,request:typeof fetch=fetch):Provider {
  return {async call(provider,method,path,body,as) {
+  // Make: only the Brand Blueprint close hook, by its exact URL from the server's env, never a path from a
+  // payload, and only while BLUEPRINT_MAKE_CLOSE is on. The key joins the body here, so no plan holds it.
+  if(provider==='make'){
+   const hook=env('MAKE_BLUEPRINT_HOOK'),secret=env('MAKE_BLUEPRINT_KEY');
+   if(method!=='POST'||path!=='hook')throw new Error('Unsupported Make resource');
+   if(env('BLUEPRINT_MAKE_CLOSE')!=='on'||!hook||!secret)throw new Error('The Make close is not switched on in the server');
+   if(!/^https:\/\/hook\.[a-z0-9]+\.make\.com\/[A-Za-z0-9]{8,64}$/.test(hook))throw new Error('MAKE_BLUEPRINT_HOOK is not a Make webhook URL');
+   const receipt={provider,method,resource:'blueprint-close-hook'};
+   await health({...receipt,phase:'intent'});
+   let response:Response;
+   try{const {source,...rest}=body??{};response=await request(hook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,key:secret,...rest}),signal:AbortSignal.timeout(25000)});}
+   catch{await health({...receipt,phase:'unknown'});throw new Error('Make\'s response is unknown. Check the client\'s WhatsApp group before sending again.');}
+   await response.text().catch(()=>'');
+   await health({...receipt,phase:'response',http_status:response.status,object_id:null});
+   if(!response.ok)throw new Error(`Make rejected the close (${response.status}). Check the client's WhatsApp group before sending again.`);
+   return {ok:true,status:response.status};
+  }
   const key=provider==='meta'?'META_SYSTEM_TOKEN':provider==='slack'?'SLACK_BOT_TOKEN':provider==='ghl'?'GHL_MAHARA_PIT':'CLICKUP_API_TOKEN';
   const system=env(key);
   if(!system) throw new Error(`${key} is not configured`);

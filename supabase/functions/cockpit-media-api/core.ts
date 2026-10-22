@@ -14,8 +14,10 @@ export const CITIES_FIELD = 'b98aa20e-c2d1-4785-baae-67e67506023d';
 export const OPERATIONS = new Set(['control.setStatus','ceo.b2bControl.setStatus','edit.setAdSetBudget',
  'edit.duplicateAdSet','board.adStatusOptions','board.advertisingCityOptions','board.setAdStatus',
  'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS,...FUNNEL_OPERATIONS,...PAGE_FORM_OPERATIONS]);
-export interface Provider { call(provider:'meta'|'clickup'|'slack'|'ghl', method:string,path:string,body?:Row,as?:{token:string}):Promise<Row> }
-export interface Plan { provider:'meta'|'clickup'|'slack'; method:string; path:string; body?:Row; verifyPath:string; expected:Row; result?:Row; imageUpload?:boolean; precondition?:Row; liveAdsGuard?:{path:string;target:string};slackMessage?:boolean;clickupComment?:boolean;asPage?:string }
+export interface Provider { call(provider:'meta'|'clickup'|'slack'|'ghl'|'make', method:string,path:string,body?:Row,as?:{token:string}):Promise<Row> }
+// has: a tag or an assignee the read-back must show (the rest of the list is the provider's).
+// idFrom: where a create's id sits when the response does not carry it at the top (a ClickUp template task).
+export interface Plan { provider:'meta'|'clickup'|'slack'; method:string; path:string; body?:Row; verifyPath:string; expected:Row; result?:Row; imageUpload?:boolean; precondition?:Row; liveAdsGuard?:{path:string;target:string};slackMessage?:boolean;clickupComment?:boolean;asPage?:string;has?:{path:'assignees'|'tags';key:'id'|'name';value:string}[];idFrom?:string }
 export interface MultiPlan {steps:Plan[]; result:Row; check?:Row}
 const id = (x:unknown) => { if(!/^\d{5,}$/.test(String(x??''))) throw new Error('A valid Meta id is required'); return String(x); };
 const text = (x:unknown) => { if(typeof x!=='string'||!x.trim()||x.length>500) throw new Error('A name is required'); return x.trim(); };
