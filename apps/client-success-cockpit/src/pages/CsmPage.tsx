@@ -57,7 +57,6 @@ import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { type Caller, useClientCallers } from "@/lib/callCentreClient";
-import { useNotCalled } from "@/lib/notCalled";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
 import { useClientWhatsApp } from "@/lib/clientWhatsApp";
@@ -101,6 +100,7 @@ import {
   sentence,
   shortDay,
 } from "@/lib/format";
+import { useNotCalled } from "@/lib/notCalled";
 import {
   readOnboardingKits,
   refreshOnboardingKits,
