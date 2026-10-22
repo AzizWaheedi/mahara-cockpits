@@ -11,7 +11,7 @@ import {
   Prose,
   Spinner,
 } from "../components/bits";
-import { useStills, useWinners } from "../lib/data";
+import { useAdStills, useStills, useWinners } from "../lib/data";
 import { day } from "../lib/format";
 import { AD_VIDEOS_BUCKET } from "../lib/supabase";
 import type { WinnerAd } from "../lib/types";
@@ -47,7 +47,17 @@ function usd(n: number | null, as: Intl.NumberFormat): string {
   return n === null || n === undefined ? "n/a" : as.format(n);
 }
 
-function Card({ ad, ours }: { ad: WinnerAd; ours?: string }) {
+function Card({
+  ad,
+  ours,
+  still,
+  copyPending,
+}: {
+  ad: WinnerAd;
+  ours?: string;
+  still?: string;
+  copyPending?: boolean;
+}) {
   return (
     <li className="@container overflow-hidden rounded-2xl border bg-card">
       <div className="grid gap-4 p-4 @sm:grid-cols-[11rem_1fr]">
@@ -56,9 +66,11 @@ function Card({ ad, ours }: { ad: WinnerAd; ours?: string }) {
             adId={ad.ad_id}
             title={`${ad.client ?? "Ad"} · ${ad.service_line ?? ad.ad_name ?? ""}`.trim()}
             thumbUrl={ad.thumb_url}
+            stillUrl={still}
             format={ad.format}
             watchUrl={ad.watch_url}
             ourCopy={ours}
+            copyPending={copyPending}
           />
         </div>
         <div className="min-w-0">
@@ -138,6 +150,9 @@ export default function WinnersPage() {
     shown.map(a => a.file_path),
     AD_VIDEOS_BUCKET,
   );
+  // The signed links come back in one batch, so any link means it is in.
+  const copiesIn = Object.keys(ourCopies).length > 0;
+  const stills = useAdStills(shown.map(a => a.ad_id));
   const mine = shown.filter(a => a.file_path).length;
   // When the list last changed. The automatic copy from the ad accounts
   // stopped on 2026-10-08 (Convex retirement); only saves made by hand have
@@ -218,6 +233,8 @@ export default function WinnersPage() {
             key={ad.ad_id}
             ad={ad}
             ours={ad.file_path ? ourCopies[ad.file_path] : undefined}
+            still={stills[ad.ad_id]}
+            copyPending={Boolean(ad.file_path) && !copiesIn}
           />
         ))}
       </ul>
