@@ -56,6 +56,7 @@ import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
+import { FillFormButton, useFormNews } from "@/forms/OpenFormButton";
 import { type Caller, useClientCallers } from "@/lib/callCentreClient";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
@@ -1427,6 +1428,13 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   }, [snap, section, clientRow]);
   const kitsWanted =
     section === "today" || section === "clients" || section === "client";
+  // A form window sent or checked a client: say so, and read the kits again.
+  const [kitNews, setKitNews] = useState(0);
+  useFormNews(news => {
+    if (news.type === "sent") toast.success(news.say);
+    setKitNews(n => n + 1);
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: kitNews only asks for a fresh read
   useEffect(() => {
     if (!kitsWanted || !kitKey) return;
     let live = true;
@@ -1448,7 +1456,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
       live = false;
       clearInterval(timer);
     };
-  }, [kitsWanted, kitKey, auth.client]);
+  }, [kitsWanted, kitKey, auth.client, kitNews]);
   const kitOf = (client: Client) => {
     const id = String(client.taskId);
     if (!kitLoadedFor.split(",").includes(id)) return undefined;
@@ -1803,6 +1811,22 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                   See this client's data
                 </a>
               ) : null}
+              {/* The kickoff, a click away while it is still to fill
+                  (docs/csm-forms/KICKOFF.md 1). */}
+              {(() => {
+                const kit = kitOf(c);
+                return kit !== undefined &&
+                  !kit?.forms?.kickoff &&
+                  (kit ? kit.in_onboarding : c.bucket === "onboarding") ? (
+                  <FillFormButton
+                    taskId={String(c.taskId)}
+                    form="kickoff"
+                    variant="outline"
+                  >
+                    Kickoff
+                  </FillFormButton>
+                ) : null;
+              })()}
               <PresentButton
                 taskId={String(c.taskId)}
                 stage={c.stage}

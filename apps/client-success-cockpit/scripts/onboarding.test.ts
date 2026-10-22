@@ -104,6 +104,17 @@ describe("a card as a row", () => {
     expect(row.forms).toBeUndefined();
   });
 
+  test("maps Next Payment Amount, kept only above 0, like the daily budget", () => {
+    const amount = (value: unknown) =>
+      cardRow(card({ [F.nextPayment]: value }), options, NOW).handover
+        .next_payment_amount;
+    expect(F.nextPayment).toBe("f071ee8f-b7ce-49e8-899b-6bef649d86ba");
+    expect(amount("1500")).toBe(1500);
+    expect(amount(750.5)).toBe(750.5);
+    for (const none of [undefined, null, "", "0", 0, "-20", "abc"])
+      expect(amount(none)).toBeUndefined();
+  });
+
   test("onboarding is the roster's set, and ghosted only before launch", () => {
     expect(inOnboarding("Needs Contacting", null)).toBe(true);
     expect(inOnboarding("Active", null)).toBe(false);

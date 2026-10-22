@@ -5,8 +5,9 @@ import {
   Copy,
   RefreshCw,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton, MainContact } from "@/components/ClientCheckIn";
 import { Chip, Dot, ExtLink, Kicker, type Tone } from "@/components/kit";
 import { PortalTasksButton } from "@/components/PortalTasks";
@@ -18,11 +19,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { readFormSends } from "@/forms/formClient";
+import type { FormSend } from "@/forms/formConfig";
+import { kickoffCardDone, sendLine } from "@/forms/formStatus";
+import { FillFormButton, useFormNews } from "@/forms/OpenFormButton";
 import { shortDay } from "@/lib/format";
 import {
   type FormEntry,
   type KitsPage,
-  kickoffFormLink,
   type OnboardingRow,
   onboardingFormLink,
   type Step,
@@ -227,7 +231,28 @@ export function OnboardingKit({
   onRefresh: () => void;
 }) {
   const [reading, setReading] = useState<Reading | null>(null);
-  const track = kit ? kit.in_onboarding : client.bucket === "onboarding";
+  const auth = useCockpitAuth();
+  // The cockpit's own record of a kickoff sent from its window (KICKOFF.md
+  // 4.3): read quietly, and again when a form window says it sent or checked.
+  const [kickSend, setKickSend] = useState<FormSend | null>(null);
+  const [news, setNews] = useState(0);
+  useFormNews(n => {
+    if (n.taskId === client.taskId && n.form === "kickoff") setNews(x => x + 1);
+  });
+  const onboarding = kit ? kit.in_onboarding : client.bucket === "onboarding";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: news only asks for a fresh read
+  useEffect(() => {
+    if (!auth.client || !onboarding) return;
+    let on = true;
+    readFormSends(auth.client, client.taskId, "kickoff").then(
+      r => on && setKickSend(r.sends[0] ?? null),
+      () => on && setKickSend(null),
+    );
+    return () => {
+      on = false;
+    };
+  }, [auth.client, client.taskId, news, onboarding]);
+  const track = onboarding;
   const step: Step | null = track ? stepOf(kit ?? { forms: {} }) : null;
   const order: Step[] = ["before", "call", "after"];
   /** Past onboarding: the forms are history, nothing to chase or open. */
@@ -254,7 +279,6 @@ export function OnboardingKit({
   const h = kit?.handover ?? {};
   const f = kit?.forms ?? {};
   const salesCall = links.sales_call ?? links.fathom;
-  const kickoffLink = links.kickoff_form ?? kickoffFormLink(client.taskId);
   const notes = h.closer_notes
     ? h.closer_notes
     : [
@@ -431,12 +455,18 @@ export function OnboardingKit({
               tone={f.kickoff ? "good" : step === "call" ? "warn" : "neutral"}
               label="Kickoff form"
               status={
-                filled(f.kickoff) ??
-                (live
-                  ? "Not on record"
-                  : f.onboarding
-                    ? "Not filled yet. It opens with their onboarding answers."
-                    : "Not filled yet. Their onboarding answers are not in, so it opens without them.")
+                kickSend
+                  ? sendLine(
+                      { after: { cardDone: kickoffCardDone } },
+                      kickSend,
+                      kit ?? null,
+                    )
+                  : (filled(f.kickoff) ??
+                    (live
+                      ? "Not on record"
+                      : f.onboarding
+                        ? "Not filled yet. It opens with their onboarding answers."
+                        : "Not filled yet. Their onboarding answers are not in, so it opens without them."))
               }
             >
               {f.kickoff ? (
@@ -451,15 +481,14 @@ export function OnboardingKit({
                 >
                   Read what was filled
                 </Read>
-              ) : live ? null : step === "call" ? (
-                <Button size="sm" asChild>
-                  <a href={kickoffLink} target="_blank" rel="noreferrer">
-                    Open the kickoff form
-                    <ArrowUpRight aria-hidden />
-                  </a>
-                </Button>
-              ) : (
-                <ExtLink href={kickoffLink}>Open the kickoff form</ExtLink>
+              ) : live ? null : (
+                <FillFormButton
+                  taskId={client.taskId}
+                  form="kickoff"
+                  variant={step === "call" ? "default" : "link"}
+                >
+                  Fill the kickoff
+                </FillFormButton>
               )}
             </Item>
             {live ? null : (

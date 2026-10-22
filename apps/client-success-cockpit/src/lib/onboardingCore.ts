@@ -54,6 +54,8 @@ export const F = {
   contractSigned: "91e9e408-5673-4d8c-96c5-b557f2803b86",
   dailyBudget: "539743c2-b6cd-4eeb-bf2f-abaf64769a5e",
   service: "fccfc09c-650e-4aed-b4cd-3f50beba05a3",
+  /** The cash the client pays next, as the closer set it (2026-10-22). */
+  nextPayment: "f071ee8f-b7ce-49e8-899b-6bef649d86ba",
 } as const;
 
 /** The card fields a sync cannot do without; a missing one is said on the screen. */
@@ -173,6 +175,8 @@ export type Handover = {
   contract_signed?: string;
   daily_budget?: number;
   service?: string;
+  /** Next Payment Amount: kept only above 0, like the daily budget. */
+  next_payment_amount?: number;
 };
 
 export type FormAnswer = { ref: string; title: string; value: string };
@@ -304,6 +308,10 @@ export function cardRow(t: Any, options: Options, now: string): OnboardingRow {
   if (val(F.dailyBudget) !== undefined && Number.isFinite(budget) && budget > 0)
     handover.daily_budget = budget;
   put("service", dropdown(options, F.service, val(F.service)));
+  // Blank, null and 0 read as 0 here, so only a real amount is kept.
+  const nextPayment = Number(val(F.nextPayment));
+  if (Number.isFinite(nextPayment) && nextPayment > 0)
+    handover.next_payment_amount = nextPayment;
 
   const csm = ((val(F.csm) ?? []) as Any[])
     .map(u => String(u?.username || u?.email || "").trim())

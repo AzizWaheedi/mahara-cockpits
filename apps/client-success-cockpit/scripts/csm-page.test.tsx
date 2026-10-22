@@ -1223,16 +1223,50 @@ test("an onboarding client's row and page show its onboarding steps", async () =
     expect(text).toContain("On the call");
     expect(text).toContain("After the call");
     expect(text).toContain("Filled 2 Oct");
-    expect(text).toContain("Open the kickoff form");
+    expect(text).toContain("Fill the kickoff");
     expect(text).toContain("You are here");
-    // With no card links, the kickoff form still opens, with the card id.
-    const kickoff = [...page.querySelectorAll("a")].find(a =>
-      (a.textContent ?? "").includes("Open the kickoff form"),
-    );
-    expect(kickoff).toBeDefined();
-    expect(kickoff?.getAttribute("href")).toBe(
-      "https://maharamedia.typeform.com/to/tG7dnxBn#onboarding_client_id=86exnk0v4",
-    );
+    // The kickoff opens in its own window, by name, at the client's form
+    // route (docs/csm-forms/KICKOFF.md 1): the record builds its client ID.
+    const opened: string[][] = [];
+    const replaced: string[] = [];
+    const open = win.open;
+    // biome-ignore lint/suspicious/noExplicitAny: a stand-in window for openNamed
+    (win as any).open = (url: string, name: string) => {
+      opened.push([url, name]);
+      return {
+        location: {
+          href: "about:blank",
+          replace: (u: string) => replaced.push(u),
+        },
+        focus: () => {},
+      };
+    };
+    try {
+      const fill = [...page.querySelectorAll("button")].find(b =>
+        (b.textContent ?? "").includes("Fill the kickoff"),
+      );
+      expect(fill).toBeDefined();
+      await reactAct(async () => fill?.click());
+      expect(opened).toEqual([["", "mahara-form-86exnk0v4-kickoff"]]);
+      expect(replaced).toEqual([
+        "/client-success/clients/86exnk0v4/forms/kickoff",
+      ]);
+      // The header's outline Kickoff opens the same window.
+      const head = [...page.querySelectorAll("button")].find(
+        b => (b.textContent ?? "").trim() === "Kickoff",
+      );
+      expect(head).toBeDefined();
+      await reactAct(async () => head?.click());
+      expect(opened[1]).toEqual(["", "mahara-form-86exnk0v4-kickoff"]);
+    } finally {
+      win.open = open;
+    }
+    // No Typeform link is built by hand on the page any more.
+    expect(
+      [...page.querySelectorAll("a")].some(a =>
+        (a.getAttribute("href") ?? "").includes("/to/tG7dnxBn"),
+      ),
+    ).toBe(false);
     await reactAct(async () => root2.unmount());
   } finally {
     host.remove();
