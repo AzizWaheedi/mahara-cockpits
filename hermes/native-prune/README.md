@@ -33,7 +33,7 @@ python3 -m unittest test_prune
 Cron, in `hermes/cockpit-guardian/crontab.manifest`:
 
 ```
-40 * * * *   flock -n $HOME/.cockpit-native-state/native-prune.lock bash -c "cd $HOME/mahara-cockpits/hermes/native-prune && python3 prune.py --apply" >> $HOME/.cockpit-native-state/native-prune.log 2>&1
+40 * * * *   flock -n $HOME/.cockpit-native-state/native-prune.lock bash -c "cd $HOME/.native-prune/app && python3 prune.py --apply" >> $HOME/.cockpit-native-state/native-prune.log 2>&1
 ```
 
 It has its own lock. Deleting old plans does not touch the cycle in progress, so it
@@ -52,5 +52,7 @@ never waits for or blocks the native lock.
 
 ## Install
 
-Copy `prune.py`, `test_prune.py` and this file to `~/mahara-cockpits/hermes/native-prune`,
-compare sha256 with the commit, run the tests and a dry run, then add the cron line.
+Copy `prune.py`, `test_prune.py` and this file to `~/.native-prune/app` (owned by hermes;
+`~/mahara-cockpits/hermes` belongs to root, so hermes cannot add a folder there). Compare
+sha256 with the commit, run the tests and a dry run, then add the cron line. The release
+bundle, stage and backups live under `~/.native-prune` too.
