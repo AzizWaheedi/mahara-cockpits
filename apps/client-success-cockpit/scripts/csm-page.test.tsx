@@ -1581,3 +1581,117 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     if (!hadObserver) delete g.ResizeObserver;
   }
 });
+
+/**
+ * Ardon, 14 to 20 Oct 2026: a SAR ad account. The worker stores its spend
+ * ($201.90 for 11 leads) and its budget (SAR 175, $46.66) in dollars, and the
+ * tab printed them as "SAR 202" and "SAR 18.35 a lead" (2026-10-21).
+ */
+test("the Ads tab prints a SAR account's amounts in dollars", async () => {
+  const { AdsView } = await import("../src/components/ClientAds");
+  const { buildAdsModel, fetchClientAds } = await import(
+    "../src/lib/clientAds"
+  );
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const OCT = { from: "2026-10-14", to: "2026-10-20", label: "14 to 20 Oct" };
+  const ARDON = "Ardon_mahar-22\\9";
+  const campaign = {
+    name: ARDON,
+    metaCampaignId: "120253219612130526",
+    accountId: "718146936708597",
+    accountName: "Ardon",
+    currency: "SAR",
+    budgetDaily: 46.66,
+    budgetLevel: "campaign",
+    ended: false,
+  };
+  const day = (name: string, adId: string, spend: number, leads: number) => ({
+    date: "2026-10-18",
+    campaignName: name,
+    adSetName: "Leads",
+    adName: `Ad ${adId}`,
+    adId,
+    spend,
+    leads,
+    impressions: 9000,
+    linkClicks: 90,
+    frequency: 1.2,
+  });
+  // The tab as words, through the read's own parse.
+  const shown = async (campaigns: object[], rows: object[]) => {
+    const read = await fetchClientAds(
+      {
+        rpc: async () => ({
+          data: {
+            ...ADS_READ,
+            clientName: "Ardon",
+            start: OCT.from,
+            end: OCT.to,
+            statsAt: "2026-10-21T06:00:00Z",
+            feedLast: "2026-10-20",
+            coverage: { first: "2026-09-22", last: "2026-10-20" },
+            campaigns,
+            adsets: [],
+            ads: [],
+            rows,
+          },
+          error: null,
+        }),
+      } as never,
+      "ardon",
+      OCT.from,
+      OCT.to,
+    );
+    const model = buildAdsModel(read, OCT, Date.parse("2026-10-21T09:00:00Z"));
+    return renderToStaticMarkup(
+      createElement(AdsView, {
+        model,
+        clientName: "Ardon",
+        per: OCT,
+        dwy: false,
+      }),
+    )
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ");
+  };
+
+  const ardon = await shown([campaign], [day(ARDON, "9001", 201.9, 11)]);
+  expect(ardon).toContain("$202 spent");
+  expect(ardon).toContain("$18.35 a lead");
+  expect(ardon).toContain(
+    "Ardon · SAR account, shown in dollars · $46.66 a day · 1 ad set",
+  );
+  expect(ardon).not.toMatch(/SAR \d/);
+
+  // A SAR and a USD account add up: the chart's day row reads leads, spend
+  // and cost per lead for both.
+  const usd = {
+    ...campaign,
+    name: "EXAMPLE-USD",
+    metaCampaignId: "333",
+    accountId: "888",
+    accountName: "example usd",
+    currency: "USD",
+    budgetDaily: 40,
+  };
+  const both = await shown(
+    [campaign, usd],
+    [day(ARDON, "9001", 201.9, 11), day("EXAMPLE-USD", "9002", 100, 4)],
+  );
+  expect(both).toContain("18 Oct 15 $302 $20.13");
+  expect(both).toContain("example usd · $40 a day · 1 ad set");
+  expect(both).not.toContain("converted to dollars, so spend");
+
+  // An account the worker does not convert keeps its code, and stays out of
+  // the client's dollar total.
+  const dinars = await shown(
+    [{ ...usd, currency: "BHD", budgetDaily: undefined }, campaign],
+    [day(ARDON, "9001", 201.9, 11), day("EXAMPLE-USD", "9002", 120, 4)],
+  );
+  expect(dinars).toContain("BHD 120 spent");
+  expect(dinars).toContain("BHD account, spend not converted to dollars");
+  expect(dinars).toContain(
+    "Not every ad account here is converted to dollars, so spend does not add up across campaigns.",
+  );
+  expect(dinars).not.toContain("$322");
+});

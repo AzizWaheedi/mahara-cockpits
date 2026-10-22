@@ -69,6 +69,9 @@ JOBS: tuple[Job, ...] = (
     Job("desk-doctor", "desk.py --quiet doctor", 60, "other", "~/.sales-desk.log", "~/.sales-desk/doctor.lock"),
     Job("radar-scan", "radar.py --quiet scan", 10080, "paid", "~/.ideation-radar/out/cron.log", "~/.ideation-radar/scan.lock"),
     Job("radar-pending", "radar.py --quiet pending", 5, "paid", "~/.ideation-radar/out/cron.log", "~/.ideation-radar/pending.lock"),
+    # Deletes old native sync plans (2026-10-22). It deletes files, so the guardian only alerts.
+    Job("native-prune", "prune.py --apply", 60, "other", "~/.cockpit-native-state/native-prune.log",
+        "~/.cockpit-native-state/native-prune.lock"),
 )
 BY_NAME = {j.name: j for j in JOBS}
 

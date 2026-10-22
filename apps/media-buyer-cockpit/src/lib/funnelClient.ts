@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type FunnelStats, parseStats } from "./funnelStats";
 import type { LeadFormSpec } from "./leadForm";
 import { mediaAction } from "./mediaActionsClient";
+import { bookingsCap, mediaDataThrough } from "./mediaStatsClient";
 import { supabase } from "./supabase";
 
 /**
@@ -197,6 +198,10 @@ export { leftOut, totalsFor } from "./funnelStats";
 /**
  * The campaign's daily numbers and booked calls for these dates, the same
  * read as the panel's range table, counted by Meta ad id in funnelStats.ts.
+ * Calls booked after the last day the media data has spend for are left out
+ * when that day falls inside the range, as the range table leaves them out
+ * (mediaDataThrough, 2026-10-21). A range wholly after it keeps every call
+ * and names the day as `spendNotIn` (bookingsCap, 2026-10-22).
  */
 export function useFunnelStats(
   campaignName: string | null,
@@ -205,14 +210,18 @@ export function useFunnelStats(
   return useOnce(
     campaignName ? `${campaignName}|${range.start}|${range.end}` : null,
     async () => {
-      const { data, error } = await supabase.rpc("cockpit_media_statistics", {
-        p_kind: "range",
-        p_campaign: campaignName,
-        p_start: range.start,
-        p_end: range.end,
-      });
+      const [{ data, error }, through] = await Promise.all([
+        supabase.rpc("cockpit_media_statistics", {
+          p_kind: "range",
+          p_campaign: campaignName,
+          p_start: range.start,
+          p_end: range.end,
+        }),
+        mediaDataThrough(supabase),
+      ]);
       if (error) throw new Error(error.message);
-      return parseStats(data);
+      const cap = bookingsCap(range, through);
+      return parseStats(data, cap.through, cap.spendNotIn);
     },
   );
 }

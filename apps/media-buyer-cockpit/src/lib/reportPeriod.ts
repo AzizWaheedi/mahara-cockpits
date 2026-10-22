@@ -123,10 +123,20 @@ export function periodOf(
       custom[1] <= custom[2] ? [custom[1], custom[2]] : [custom[2], custom[1]];
     return spanPeriod(k, from, to, `${dayLabel(from)} to ${dayLabel(to)}`);
   }
+  // "Last N days" are the N complete days before today, as on the media
+  // buyer's ranges (2026-10-21): the ad data runs to yesterday, so a span
+  // that ended today held one day of ads fewer than its name (Ardon's "7
+  // days" read 15-20 Oct, $162.47 / 2 = $81.24 a booking, against 14-20 Oct,
+  // $201.90 / 5 = $40.38). "This month" still runs through today.
   const days = /^(\d+)d$/.exec(k);
   if (days) {
     const n = Math.max(1, Number(days[1]));
-    return spanPeriod(k, shiftDay(today, -(n - 1)), today, `last ${n} days`);
+    return spanPeriod(
+      k,
+      shiftDay(today, -n),
+      shiftDay(today, -1),
+      `last ${n} days`,
+    );
   }
   if (k === "lastMonth")
     return monthPeriod(k, shiftDay(`${today.slice(0, 7)}-01`, -1).slice(0, 7));

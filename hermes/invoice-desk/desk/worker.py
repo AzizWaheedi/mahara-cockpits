@@ -22,12 +22,12 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urlsplit
 
-from . import build, http, render, whop
+from . import build, ecom, http, render, whop
 from .config import Config
 from .google import FOLDER, Google
 from .supa import Supa
 
-VERSION = "invoice-desk 2026-10-15"
+VERSION = "invoice-desk 2026-10-22-ecom"
 
 
 class Problem(Exception):
@@ -61,6 +61,7 @@ class Desk:
     render: Callable[[str], bytes] = print_pdf
     log: Callable[[str], None] = print
     whop_api: Optional[whop.Whop] = None
+    ecom_api: Optional[ecom.Ecom] = None
 
     # 1 ---------------------------------------------------------------------
     def number(self, inv: dict[str, Any]) -> str:
@@ -81,6 +82,8 @@ class Desk:
     # 1b --------------------------------------------------------------------
     def link(self, inv: dict[str, Any], number: str) -> None:
         """Make sure a Whop invoice has its own payment link before it is printed."""
+        if inv["kind"] == "checkout" and inv.get("checkout_source") == "ecom":
+            return self.ecom_link(inv, number)
         if inv["kind"] != "checkout" or inv.get("checkout_source") != "whop":
             return
         if inv.get("whop_plan_id") and inv.get("checkout_url"):
@@ -108,6 +111,37 @@ class Desk:
             raise Problem(f"{e} Tell Muhammed before trying again.") from None
         self.supa.progress(inv["id"], {"whopPlanId": plan["id"], "checkoutUrl": url})
         inv["whop_plan_id"], inv["checkout_url"] = plan["id"], url
+
+    def ecom_link(self, inv: dict[str, Any], number: str) -> None:
+        if inv.get("ecom_invoice_id") and inv.get("checkout_url"):
+            return
+        if self.ecom_api is None:
+            raise Problem("Ecom credentials are missing on the invoice worker. Tell Muhammed; do not issue this link elsewhere.")
+        try:
+            # A fresh rate is mandatory even after a failed attempt. If the rate moved
+            # and an earlier invoice exists, check refuses it instead of duplicating it.
+            rate, rate_at = self.ecom_api.quote()
+            amount = ecom.kwd(inv["amount_usd"], rate)
+            found = self.ecom_api.find(inv["id"], number) if inv.get("ecom_started_at") else None
+            if found is None:
+                self.supa.progress(inv["id"], {"ecomStarted": True})
+                found = self.ecom_api.create(inv, number, amount)
+            url = self.ecom_api.check(found, amount)
+            patch = {"ecomInvoiceId": found["id"], "checkoutUrl": url,
+                     "amountKwd": f"{amount:.3f}", "kwdRate": f"{rate:.6f}", "kwdRateAt": rate_at}
+            self.supa.progress(inv["id"], patch)
+            inv.update(ecom_invoice_id=found["id"], checkout_url=url, amount_kwd=patch["amountKwd"],
+                       kwd_rate=patch["kwdRate"], kwd_rate_at=rate_at)
+        except ecom.EcomRefused as exc:
+            if "quote" in str(exc):
+                raise Passing(str(exc)) from None
+            raise Problem(f"{exc} Tell Muhammed; do not make a second payment link.") from None
+        except http.HttpError as exc:
+            if exc.status in (401, 403):
+                raise Problem("The Ecom credentials cannot create payment links. Tell Muhammed.") from None
+            if 400 <= exc.status < 500 and exc.status not in http.RETRY_STATUSES:
+                raise Problem(f"Ecom refused the link ({http.scrub(exc)[:160]}). Tell Muhammed.") from None
+            raise
 
     # 2 ---------------------------------------------------------------------
     def folder(self, inv: dict[str, Any]) -> str:
@@ -212,7 +246,9 @@ class Ledger:
     def __call__(self, method: str, url: str, status: Optional[int], ok: bool, detail: str) -> None:
         parts = urlsplit(url)
         host = parts.netloc
-        if host == "api.whop.com":
+        if host in ("api-live.ecom.io", "api-sandbox.ecom.io"):
+            provider = "ecom"
+        elif host == "api.whop.com":
             provider = "whop"
         elif "googleapis.com" in host:
             provider = "google_sheets" if host.startswith("sheets.") else "google_drive"

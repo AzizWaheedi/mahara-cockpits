@@ -25,11 +25,16 @@ export type InvoiceDraft = {
   description: string;
   line_note?: string | null;
   client_detail?: string | null;
+  /** The client's own tax number, printed under the location when given. */
+  client_tax_id?: string | null;
   period?: string | null;
   pay_note?: string | null;
   issue_date: string;
   due_date?: string | null;
   checkout_url?: string | null;
+  checkout_source?: "pasted" | "whop" | "ecom";
+  amount_kwd?: string | number | null;
+  kwd_rate?: string | number | null;
   payments?: InvoicePayment[] | null;
 };
 
@@ -146,11 +151,19 @@ export function fillInvoice(
     throw new InvoiceBuildError(`Unknown invoice type ${String(kind)}.`);
   }
   const period = (inv.period ?? "").trim();
+  const taxId = (inv.client_tax_id ?? "").trim();
   let html = template;
+  html = stripBlock(
+    html,
+    "ECOM",
+    kind === "checkout" && inv.checkout_source === "ecom",
+  );
+  html = stripBlock(html, "NOT_ECOM", inv.checkout_source !== "ecom");
   html = stripBlock(html, "CHECKOUT", kind === "checkout");
   html = stripBlock(html, "AUTOCHARGE", kind === "autocharge");
   html = stripBlock(html, "PAID", kind === "paid");
   html = stripBlock(html, "PERIOD", Boolean(period));
+  html = stripBlock(html, "TAX_ID", Boolean(taxId));
   const amount = money(inv.amount_usd);
   const due = inv.due_date;
   const values: Record<string, string> = {
@@ -162,12 +175,18 @@ export function fillInvoice(
     PAID_LINES: kind === "paid" ? paidLines(inv.payments ?? []) : "",
     CLIENT_NAME: esc(inv.client_name),
     CLIENT_DETAIL: esc(inv.client_detail ?? ""),
+    CLIENT_TAX_ID: esc(taxId),
     DESCRIPTION: esc(inv.description),
     LINE_NOTE: esc(inv.line_note ?? ""),
     PERIOD: esc(period),
     AMOUNT: esc(amount),
     AMOUNT_FULL: esc(amount),
     CHECKOUT_URL: esc(inv.checkout_url ?? ""),
+    ECOM_AMOUNT_LINE: esc(
+      inv.amount_kwd != null && inv.kwd_rate != null
+        ? `Pay KWD ${Number(inv.amount_kwd).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} (USD ${amount} at ${inv.kwd_rate})`
+        : "KWD amount calculated at today's exchange rate before issue",
+    ),
     PAY_NOTE: esc(payNote(inv)),
   };
   // One pass: text a person typed is never read again as a placeholder.

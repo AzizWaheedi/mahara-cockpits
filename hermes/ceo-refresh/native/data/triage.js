@@ -338,7 +338,6 @@ export function provisionalBookingsSql(from, to) {
     select min(m.client_id::text) as client_id
     from public.ghl_client_ad_accounts m
     where m.location_id = p.location_id
-    having count(*) = 1
   ) one on true
   left join public.ghl_clients g on g.location_id = p.location_id
   group by 1, 2, 3, 4`;
@@ -347,9 +346,10 @@ export function provisionalBookingsSql(from, to) {
  * Appointments with their client tie. The sync sets `client_id` on most rows;
  * the ones it leaves empty (24 of 157 booking rows in the 30 days to
  * 2026-09-21, twelve of them one client's confirmed appointments) are tied
- * here through the row's GHL location, when exactly one ad account is tied
- * to that location. A location tied to two accounts, or to none, leaves the
- * row untied, and the adapter says so.
+ * here through the row's GHL location. A location tied to two ad accounts is
+ * one client on one card that moved account (clientDelivery folds the rows
+ * on a card into one), so the row ties to either; one tied to none stays
+ * untied, and the adapter says so. [2026-10-21: it used to need exactly one]
  */
 const tied = (where) => `
   select ap.*,
@@ -361,7 +361,6 @@ const tied = (where) => `
     select min(m.client_id::text) as client_id
     from public.ghl_client_ad_accounts m
     where m.location_id = ap.ghl_location_id
-    having count(*) = 1
   ) one on true
   left join public.ghl_clients g on g.location_id = ap.ghl_location_id
   where ${where}`;
@@ -508,7 +507,29 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
             campaigns: 0,
         });
     }
-    const known = new Set(clients.map(c => c.clientId));
+    // One ClickUp card is one client, however many ad accounts it runs. When a
+    // client moves to a new account the old one keeps its spend for the week
+    // (Munshaat Khalida, 2026-10-20), and two rows on one card made Delivery
+    // publish that card twice and refuse. Rows on a card fold into the first,
+    // and every day, booking, win and appointment of the others is counted
+    // under it. [2026-10-21]
+    const canonical = new Map();
+    const byCard = new Map();
+    for (const c of clients) {
+        const first = c.clickupTaskId ? byCard.get(c.clickupTaskId) : undefined;
+        if (first) {
+            canonical.set(c.clientId, first.clientId);
+            continue;
+        }
+        if (c.clickupTaskId)
+            byCard.set(c.clickupTaskId, c);
+        canonical.set(c.clientId, c.clientId);
+    }
+    const folded = clients.filter(c => canonical.get(c.clientId) === c.clientId);
+    clients.length = 0;
+    clients.push(...folded);
+    const canon = (id) => canonical.get(id) ?? id;
+    const known = new Set(canonical.keys());
     const days = [];
     const recentCampaigns = new Map();
     const recentFrom3 = addDaysTo(to, -2);
@@ -526,7 +547,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         }
         const date = String(r.day);
         days.push({
-            clientId,
+            clientId: canon(clientId),
             date,
             spend: Math.round(num(r.spend_usd) * 100) / 100,
             leads: num(r.leads),
@@ -535,10 +556,10 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         // Campaigns that spent in the last three days of the window, counted once.
         if (date >= recentFrom3 && date <= to) {
             const list = Array.isArray(r.campaigns) ? r.campaigns : typeof r.campaigns === "string" ? JSON.parse(r.campaigns) : [];
-            const set = recentCampaigns.get(clientId) ?? new Set();
+            const set = recentCampaigns.get(canon(clientId)) ?? new Set();
             for (const name of list)
                 set.add(String(name));
-            recentCampaigns.set(clientId, set);
+            recentCampaigns.set(canon(clientId), set);
         }
     }
     for (const c of clients)
@@ -585,7 +606,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         }
         seen[kind].add(calendar);
         bookings.push({
-            clientId,
+            clientId: canon(clientId),
             date: String(r.date),
             kind,
             count,
@@ -615,7 +636,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         if (own.has(clientId) || hiddenClients.has(clientId) || !known.has(clientId))
             continue;
         wins.push({
-            clientId,
+            clientId: canon(clientId),
             date: String(r.date),
             count: num(r.count),
             value: num(r.value),
@@ -632,7 +653,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
             continue;
         const at = String(r.at);
         appointments.push({
-            clientId,
+            clientId: canon(clientId),
             date: at.slice(0, 10),
             at,
             kind,

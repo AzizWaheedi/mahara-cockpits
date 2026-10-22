@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { transport } from './transport';
+import { throttlePause, transport } from './transport';
 
 it('isolates only confirmed unavailable lead forms and keeps ordinary Meta batches strict',async()=>{
  const fields='name,status,leads_count,questions,question_page_custom_headline,follow_up_action_url';
@@ -457,5 +457,62 @@ describe('transport', () => {
    () => t.reads.fetch('https://api.fathom.ai/external/v1/meetings', { method: 'DELETE' }),
    /Feed collection cannot perform provider writes/
   );
+ });
+
+ const metaRefusal = (code: number, subcode?: number, headers: Record<string, string> = {}, status = 403) =>
+  new Response(JSON.stringify({ error: { code, error_subcode: subcode, message: 'provider-secret' } }), {
+   status,
+   headers: { 'content-type': 'application/json', ...headers },
+  });
+
+ it('waits and retries a Meta throttle refusal, keeping its code on the receipt', async () => {
+  const delays: number[] = [];
+  let calls = 0;
+  const t = transport(baseEnv, async () => (++calls === 1 ? metaRefusal(4, 1504022) : new Response(JSON.stringify({ data: [] }), { status: 200, headers: { 'content-type': 'application/json' } })), async ms => { delays.push(ms); });
+  const page = await t.reads.graph('act_222222/insights', { level: 'ad' });
+  assert.deepEqual(page.data, []);
+  assert.equal(calls, 2);
+  assert.deepEqual(delays, [15000]);
+  assert.equal(t.faults.length, 0);
+  assert.deepEqual(t.receipts.filter(r => r.phase === 'response').map(r => [r.http_status, r.meta_code, r.meta_subcode]), [[403, 4, 1504022], [200, undefined, undefined]]);
+  assert.equal(JSON.stringify(t.receipts).includes('provider-secret'), false);
+ });
+
+ it('names the Meta code when throttling outlasts three attempts', async () => {
+  const delays: number[] = [];
+  let calls = 0;
+  const t = transport(baseEnv, async () => { calls++; return metaRefusal(4, 1504022); }, async ms => { delays.push(ms); });
+  await assert.rejects(() => t.reads.graph('120252052674890234/insights', {}), /Read rejected \(403\) at graph\.facebook\.com \(Meta code 4\/1504022\)/);
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [15000, 30000]);
+  assert.equal(t.faults.find(f => f.status === 403)?.meta_code, 4);
+ });
+
+ it('does not retry a Meta refusal that is not throttling, and still names its code', async () => {
+  let calls = 0;
+  const t = transport(baseEnv, async () => { calls++; return metaRefusal(100, undefined, {}, 400); }, async () => { throw new Error('No wait expected'); });
+  await assert.rejects(() => t.reads.graph('767701513092162/client_ad_accounts', {}), /Read rejected \(400\) at graph\.facebook\.com \(Meta code 100\)/);
+  assert.equal(calls, 1);
+ });
+
+ it('fails at once when Meta says access returns later than a run can wait, and caps total throttle waits per run', async () => {
+  let calls = 0;
+  const later = transport(baseEnv, async () => { calls++; return metaRefusal(80000, 2446079, { 'x-business-use-case-usage': JSON.stringify({ '222222': [{ type: 'ads_insights', estimated_time_to_regain_access: 5 }] }) }); }, async () => { throw new Error('No wait expected'); });
+  await assert.rejects(() => later.reads.graph('act_222222/insights', {}), /Meta code 80000\/2446079/);
+  assert.equal(calls, 1);
+
+  const delays: number[] = [];
+  const capped = transport(baseEnv, async () => metaRefusal(4), async ms => { delays.push(ms); });
+  for (const id of ['1', '2', '3', '4']) await assert.rejects(() => capped.reads.graph(`${id}/insights`, {}), /Meta code 4/);
+  assert.equal(delays.reduce((a, b) => a + b, 0) <= 120000, true);
+  assert.deepEqual(delays, [15000, 30000, 15000, 30000, 15000, 15000]);
+ });
+
+ it('reads the business use case wait in minutes', () => {
+  const usage = (minutes: number) => new Headers({ 'x-business-use-case-usage': JSON.stringify({ '1': [{ estimated_time_to_regain_access: 0 }], '2': [{ estimated_time_to_regain_access: minutes }] }) });
+  assert.equal(throttlePause(new Headers(), 2), 30000);
+  assert.equal(throttlePause(usage(1), 1), 60000);
+  assert.equal(throttlePause(usage(3), 1), undefined);
+  assert.equal(throttlePause(new Headers({ 'x-business-use-case-usage': 'not json' }), 1), 15000);
  });
 });

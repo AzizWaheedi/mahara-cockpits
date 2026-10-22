@@ -484,7 +484,7 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
       tone: "warn",
     });
     expect(view("nobody", "ar").blocks[0].line.text).toBe(
-      "محد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف أمس الساعة 13:02. ارفع الملفات هنا لين ترجع تشتغل.",
+      "ما بدينا فيه للحين. آخر مرة اشتغلت أداة الدرايف أمس الساعة 13:02. ارفع الملفات هنا لين ترجع تشتغل.",
     );
     expect(view("never").blocks[0].line.text).toBe(
       "The Drive importer hasn't run yet. Upload the files here for now.",
@@ -620,6 +620,9 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
     expect(
       V.timeLabel(new Date(2026, 9, 19, 9, 5).toISOString(), now, "ar"),
     ).toBe("أمس الساعة 09:05");
+    expect(
+      V.timeLabel(new Date(2026, 9, 16, 9, 5).toISOString(), now, "ar"),
+    ).toBe("يوم ١٦ أكتوبر الساعة 09:05");
   });
 
   test("the read failed, said with its reason", () => {

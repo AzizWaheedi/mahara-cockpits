@@ -9,18 +9,32 @@ import {
 const TODAY = "2026-10-06";
 
 describe("what a pick means", () => {
-  test("a rolling span ends today and is compared with the same span before", () => {
+  test("a rolling span is the complete days before today, compared with the same span before", () => {
+    // The ad data runs to yesterday: "7 days" on 6 Oct is 29 Sep to 5 Oct,
+    // seven days of ads, never six and today (2026-10-21).
     const p = periodOf("7d", TODAY);
     expect([p.from, p.to, p.label]).toEqual([
-      "2026-09-30",
-      "2026-10-06",
+      "2026-09-29",
+      "2026-10-05",
       "last 7 days",
     ]);
     expect([p.prevFrom, p.prevTo, p.prevLabel]).toEqual([
-      "2026-09-23",
-      "2026-09-29",
+      "2026-09-22",
+      "2026-09-28",
       "the 7 days before",
     ]);
+    const three = periodOf("3d", TODAY);
+    expect([three.from, three.to]).toEqual(["2026-10-03", "2026-10-05"]);
+    const thirty = periodOf("30d", TODAY);
+    expect([thirty.from, thirty.to]).toEqual(["2026-09-06", "2026-10-05"]);
+    // Ardon, 21 Oct: "7 days" is 14-20 Oct, the board's and the truth's week.
+    const ardon = periodOf("7d", "2026-10-21");
+    expect([ardon.from, ardon.to]).toEqual(["2026-10-14", "2026-10-20"]);
+  });
+
+  test("this month keeps the whole month, today included", () => {
+    const p = periodOf("month", "2026-10-21");
+    expect([p.from, p.to]).toEqual(["2026-10-01", "2026-10-31"]);
   });
 
   test("a month is compared with the month before it", () => {

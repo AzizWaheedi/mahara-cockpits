@@ -1059,7 +1059,7 @@ the code in `hint`; the box shows the sentence under the field for the
   deck window and the other window show the new files.
 - `requestDriveImport` with `existing: true` shows that import's progress,
   with no error.
-- `{time}` is the CSM's local time, "13:02", or "yesterday, 13:02"; in Arabic with الساعة, as a time is said after a verb: "الساعة 13:02", "أمس الساعة 09:05", "١٦ أكتوبر الساعة 09:05" (score round 4).
+- `{time}` is the CSM's local time, "13:02", or "yesterday, 13:02"; in Arabic with الساعة, as a time is said after a verb: "الساعة 13:02", "أمس الساعة 09:05", "يوم ١٦ أكتوبر الساعة 09:05" (score round 4).
 
 ## 9. The prep keys: `dos_donts_ar`, `example_theme` and `service_chosen_at`
 

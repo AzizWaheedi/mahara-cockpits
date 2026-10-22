@@ -13,6 +13,7 @@ import {
   findingsOf,
   lostByAdOf,
   mediaBuyerView,
+  money,
   scopeChanges,
   scopeTotals,
 } from "../src/lib/clientAds";
@@ -301,10 +302,44 @@ describe("the tree", () => {
     expect(m.missingPictures).toBe(2);
   });
 
-  test("a client with campaigns in two currencies has no client currency", () => {
+  test("a client with a SAR and a USD campaign still adds up, in dollars", () => {
+    // The worker stores SAR spend in dollars, so a second account currency
+    // no longer hides the client's totals.
     const r = read();
     r.campaigns[1].currency = "SAR";
-    expect(buildAdsModel(r, PERIOD, NOW).currency).toBeUndefined();
+    const m = buildAdsModel(r, PERIOD, NOW);
+    expect(m.currency).toBe("USD");
+    expect(money(m.t.spend, m.currency)).toBe("$100");
+    expect(money(m.t.cpl, m.currency, true)).toBe("$12.50");
+    const s = chartSeries(m, { level: "all" }, "spend");
+    expect(s.points.reduce((n, p) => n + (p.y ?? 0), 0)).toBe(100);
+    const old = m.campaigns.find(c => c.name === "OLD");
+    expect(old?.currency).toBe("USD");
+    expect(old?.currencyNote).toBe("SAR account, shown in dollars");
+    expect(m.campaigns.find(c => c.name === "LIVE")?.currencyNote).toBe(
+      undefined,
+    );
+  });
+
+  test("an account the worker does not convert keeps its code and its own totals", () => {
+    // calculator.ts converts USD, SAR, QAR, AED and KWD, matched exactly; any
+    // other code is stored as Meta gave it, so BHD 120 is not $120.
+    const r = read();
+    r.campaigns[1].currency = "BHD";
+    const m = buildAdsModel(r, PERIOD, NOW);
+    const old = m.campaigns.find(c => c.name === "OLD");
+    expect(old?.currency).toBe("BHD");
+    expect(money(old?.t.spend, old?.currency)).toBe("BHD 50");
+    expect(old?.currencyNote).toBe(
+      "BHD account, spend not converted to dollars",
+    );
+    // Dollars and dinars do not add up: the client has no one currency.
+    expect(m.currency).toBeUndefined();
+    // A code the sheet wrote in lower case is not converted either.
+    r.campaigns[1].currency = "sar";
+    const lower = buildAdsModel(r, PERIOD, NOW);
+    expect(lower.campaigns.find(c => c.name === "OLD")?.currency).toBe("SAR");
+    expect(lower.currency).toBeUndefined();
   });
 });
 
@@ -708,5 +743,195 @@ describe("the media buyer's board on the Ads tab", () => {
       m,
     );
     expect(named.rows.find(x => x.adId === "9999")?.name).toBe("Winter promo");
+  });
+});
+
+/**
+ * Ardon and Shades, 14 to 20 Oct 2026: SAR ad accounts, both CBO. Meta's
+ * budgets are "17500" and "12000", SAR 175 and SAR 120 ($46.66 and $31.99);
+ * spend arrives in dollars, $201.90 for 11 leads and $203.63 for 24. The page
+ * read them as "SAR 202" and "SAR 18.35 a lead".
+ */
+describe("a SAR account's amounts are dollars", () => {
+  const OCT = { from: "2026-10-14", to: "2026-10-20" };
+  const OCT_NOW = Date.parse("2026-10-21T09:00:00Z");
+  const ARDON = "Ardon_mahar-22\\9";
+  const SHADES = "Shades|mahara|17\\10";
+  type Campaign = ClientAdsRead["campaigns"][number];
+  const sar = (c: Partial<Campaign> & { name: string }): Campaign => ({
+    metaCampaignId: undefined,
+    accountId: undefined,
+    accountName: undefined,
+    currency: "SAR",
+    budgetDaily: undefined,
+    budgetLevel: "campaign",
+    ended: false,
+    ...c,
+  });
+  const october = (
+    campaigns: Campaign[],
+    rows: ReturnType<typeof row>[],
+  ): ClientAdsRead =>
+    read({
+      clientName: "Ardon",
+      start: OCT.from,
+      end: OCT.to,
+      statsAt: "2026-10-21T06:00:00Z",
+      feedLast: "2026-10-20",
+      coverage: { first: "2026-09-22", last: "2026-10-20" },
+      campaigns,
+      adsets: [],
+      ads: [],
+      rows,
+      history: [],
+      bookings: [],
+      verdicts: [],
+      stills: {},
+      changes: [],
+    });
+  const ARDON_CAMPAIGN = sar({
+    name: ARDON,
+    metaCampaignId: "120253219612130526",
+    accountId: "718146936708597",
+    accountName: "Ardon",
+    // What the media worker stores once it converts Meta's "17500".
+    budgetDaily: 46.66,
+  });
+  const ARDON_ROW = row(
+    "2026-10-18",
+    ARDON,
+    "9001",
+    "Villa reel",
+    "Leads",
+    201.9,
+    11,
+    9000,
+  );
+  const ardon = buildAdsModel(
+    october([ARDON_CAMPAIGN], [ARDON_ROW]),
+    OCT,
+    OCT_NOW,
+  );
+
+  test("Ardon's spend, cost per lead and CPM read in dollars", () => {
+    const c = ardon.campaigns[0];
+    expect(c.currency).toBe("USD");
+    expect(c.t.spend).toBeCloseTo(201.9);
+    expect(money(c.t.spend, c.currency)).toBe("$202");
+    expect(money(c.t.cpl, c.currency, true)).toBe("$18.35");
+    expect(money(c.t.cpm, c.currency, true)).toBe("$22.43");
+    expect(money(ardon.t.spend, ardon.currency)).toBe("$202");
+    expect(c.currencyNote).toBe("SAR account, shown in dollars");
+  });
+
+  test("the daily budget reads in dollars, cents and all", () => {
+    expect(ardon.campaigns[0].budgetText).toBe("$46.66 a day");
+    const shades = buildAdsModel(
+      october(
+        [
+          sar({
+            name: SHADES,
+            metaCampaignId: "120250793408940703",
+            accountId: "762687672022667",
+            accountName: "Shades",
+            budgetDaily: 31.99,
+          }),
+        ],
+        [row("2026-10-18", SHADES, "9101", "Pergola", "Leads", 203.63, 24)],
+      ),
+      OCT,
+      OCT_NOW,
+    ).campaigns[0];
+    expect(shades.budgetText).toBe("$31.99 a day");
+    expect(money(shades.t.spend, shades.currency)).toBe("$204");
+    expect(money(shades.t.cpl, shades.currency, true)).toBe("$8.48");
+    // A budget on the ad sets: two SAR ad sets of "10000" each.
+    const sets = buildAdsModel(
+      october(
+        [
+          sar({
+            name: "EXAMPLE-SAR-ABO",
+            budgetDaily: 53.32,
+            budgetLevel: "adset",
+          }),
+        ],
+        [],
+      ),
+      OCT,
+      OCT_NOW,
+    ).campaigns[0];
+    expect(sets.budgetText).toBe("$53.32 a day, set on its ad sets");
+  });
+
+  test("an ended campaign on an account not in dollars shows no budget", () => {
+    // Its row keeps what its last sync wrote: Meta's riyals before the worker
+    // converted (Mofage, QAR, still holds 83), or dollars after. It spent in
+    // the period, so its card is drawn.
+    const ended = (currency: string, budgetDaily: number) =>
+      buildAdsModel(
+        october(
+          [sar({ ...ARDON_CAMPAIGN, currency, budgetDaily, ended: true })],
+          [ARDON_ROW],
+        ),
+        OCT,
+        OCT_NOW,
+      ).campaigns[0];
+    const riyals = ended("SAR", 175);
+    expect(riyals.active).toBe(true);
+    expect(riyals.budgetText).toBe("");
+    expect(riyals.currencyNote).toBe("SAR account, shown in dollars");
+    expect(ended("QAR", 83).budgetText).toBe("");
+    // A dollar account's budget was dollars before and after: it stays.
+    expect(ended("USD", 40).budgetText).toBe("$40 a day");
+  });
+
+  test("a SAR and a USD campaign add up to the client's total", () => {
+    const m = buildAdsModel(
+      october(
+        [
+          ARDON_CAMPAIGN,
+          {
+            ...ARDON_CAMPAIGN,
+            name: "EXAMPLE-USD",
+            metaCampaignId: "333",
+            accountId: "888",
+            accountName: "example usd",
+            currency: "USD",
+            budgetDaily: 40,
+          },
+        ],
+        [
+          ARDON_ROW,
+          row(
+            "2026-10-18",
+            "EXAMPLE-USD",
+            "9002",
+            "Pool",
+            "Leads",
+            100,
+            4,
+            5000,
+          ),
+        ],
+      ),
+      OCT,
+      OCT_NOW,
+    );
+    expect(m.currency).toBe("USD");
+    expect(money(m.t.spend, m.currency)).toBe("$302");
+    expect(money(m.t.cpl, m.currency, true)).toBe("$20.13");
+    expect(m.campaigns.find(c => c.name === "EXAMPLE-USD")?.currencyNote).toBe(
+      undefined,
+    );
+  });
+
+  test("a campaign row with no currency reads as dollars, as the worker does", () => {
+    const blank = buildAdsModel(
+      october([{ ...ARDON_CAMPAIGN, currency: undefined }], [ARDON_ROW]),
+      OCT,
+      OCT_NOW,
+    ).campaigns[0];
+    expect(blank.currency).toBe("USD");
+    expect(blank.currencyNote).toBeUndefined();
   });
 });

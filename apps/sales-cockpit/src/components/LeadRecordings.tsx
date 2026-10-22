@@ -2,25 +2,32 @@ import { FileText } from "lucide-react";
 import { Link } from "react-router";
 import { useReviews } from "../lib/data";
 import { day, duration } from "../lib/format";
-import type { Recording } from "../lib/types";
+import type { Me, Recording } from "../lib/types";
 import { Failed, Reading } from "./kit";
+import { canLinkCalls, LinkCall } from "./LinkCall";
 import { GradeChip } from "./ReviewCard";
 
 /**
  * A lead's recorded calls (video calls from Fathom, phone calls from
  * Maqsam), each with Vince's grade when he reviewed it. The parent owns the
  * recordings' read and says when it is still on its way or failed; until
- * both it and the reviews are in, nothing here says "no recordings".
+ * both it and the reviews are in, nothing here says "no recordings". A closer
+ * or a manager can link a call the cockpit did not place (LinkCall).
  */
 export function LeadRecordings({
+  me,
   contactId,
   recordings,
+  onLinked,
   loading = false,
   error = null,
   retry,
 }: {
+  me: Me;
   contactId: string;
   recordings: Recording[];
+  /** A call was linked to this lead: read the lead's calls again. */
+  onLinked: () => void;
   /** The recordings have not been read yet. */
   loading?: boolean;
   /** Why the recordings could not be read. */
@@ -50,15 +57,24 @@ export function LeadRecordings({
       retry={reviews.reload}
     />
   ) : null;
+  const linking = canLinkCalls(me) ? (
+    <LinkCall me={me} contactId={contactId} onLinked={onLinked} />
+  ) : null;
   if (!recordings.length && !loose.length) {
     // A review with no recording still shows here, so "none" waits for the reviews too.
     if (reviewsFailed) return reviewsFailed;
     if (!reviews.data) return <Reading what="the recorded calls" />;
     return (
-      <p className="muted text-sm">
-        No recorded calls with this lead yet. Video calls from Fathom and
-        answered phone calls from Maqsam appear here within half an hour.
-      </p>
+      <div className="space-y-3">
+        <p className="muted text-sm">
+          No recorded calls with this lead yet. Video calls from Fathom and
+          answered phone calls from Maqsam appear here within half an hour.
+          {linking
+            ? " If you recorded the call and it is not here, link it."
+            : null}
+        </p>
+        {linking}
+      </div>
     );
   }
   return (
@@ -110,6 +126,7 @@ export function LeadRecordings({
         ))}
       </ul>
       {reviewsFailed}
+      {linking}
     </div>
   );
 }

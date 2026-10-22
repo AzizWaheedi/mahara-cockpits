@@ -8,7 +8,7 @@ import {
 } from "@/components/CallCentreSection";
 import { CreativePreview } from "@/components/CreativePreview";
 import { EmptyState } from "@/components/ceo/EmptyState";
-import { money } from "@/components/ceo/format";
+import { money, shortDate } from "@/components/ceo/format";
 import { StatTile } from "@/components/ceo/StatTile";
 import {
   STATUS_COLOR,
@@ -33,8 +33,16 @@ import { Button } from "@/components/ui/button";
 import { accountIssueFlag, metaBillingUrl } from "@/lib/adBillingStrip";
 import { callCentreKey } from "@/lib/callCentreClient";
 import { api, useQueries, useQuery } from "@/lib/cockpitApi";
-import { COST_DOT, type CostTone, cpbTone, cplTone } from "@/lib/costTone";
+import {
+  COST_DOT,
+  type CostTone,
+  cpbDisplay,
+  cpbValue,
+  cplTone,
+  spendNotInWhy,
+} from "@/lib/costTone";
 import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "@/lib/kpi";
+import { everyBookingPlaced } from "@/lib/mediaStatsClient";
 import { kuwaitDay, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 import { LeadSyncPanel } from "./LeadSync";
@@ -112,6 +120,28 @@ const usd2 = (n: number | undefined) =>
 const pctText = (n: number | undefined) =>
   n === undefined || Number.isNaN(n) ? "n/a" : `${n.toFixed(2)}%`;
 
+/**
+ * "3 booked at $75", "None booked yet", or "None booked on $233": a
+ * campaign's bookings in its line on a client's page (2026-10-21). A range
+ * after the media data's last day keeps its real count with no cost:
+ * "2 booked" (2026-10-22).
+ */
+function bookedFacts(
+  spend: number,
+  booked: number,
+  cost?: number,
+  spendNotIn?: string,
+): string {
+  const shown = cpbDisplay(spend, booked, { cost, spendNotIn });
+  if (booked > 0)
+    return shown.text === "n/a"
+      ? `${booked} booked`
+      : `${booked} booked at ${shown.text}`;
+  return shown.noneOnSpend
+    ? `None booked on ${money(spend)}`
+    : "None booked yet";
+}
+
 /** One read per campaign over the range, keyed by campaign name. */
 function byCampaign(
   reads: string,
@@ -134,6 +164,16 @@ type AdCard = {
   row?: RangeRow;
   /** Its campaign's numbers could not be read: n/a, never $0 and 0. */
   failed: boolean;
+  /**
+   * Every booking in its campaign's range was credited to one of its ads, so
+   * an ad with none really has none.
+   */
+  allTraced: boolean;
+  /**
+   * The media data's last day, when the whole range comes after it: the
+   * ad's spend and leads are not in yet, so they read n/a, never $0.00 and 0.
+   */
+  spendNotIn?: string;
   /** The Meta tree nodes behind this name (several ads can share one). */
   nodes: Row[];
   ids: string[];
@@ -224,6 +264,17 @@ export function AccountView({
   const cpl = sum.leads > 0 ? sum.spend / sum.leads : undefined;
   const cpb =
     sum.bookings > 0 && sum.spend > 0 ? sum.spend / sum.bookings : undefined;
+  // The media data's last day when the whole range comes after it (Today):
+  // every campaign's read names the same day (mediaStatsClient.ts).
+  const spendNotIn = names
+    .map(n => read(n)?.spendNotIn as string | undefined)
+    .find(Boolean);
+  // No booking on more than $60 reads "None on $233" with the grid's chip,
+  // not a grey n/a (2026-10-21).
+  const cpbShown = cpbDisplay(sum.spend, sum.bookings, {
+    cost: cpb,
+    spendNotIn,
+  });
   const bookingRate =
     sum.leads > 0 ? (sum.bookings / sum.leads) * 100 : undefined;
   const rateable = sum.impressions >= MIN_IMPRESSIONS;
@@ -268,6 +319,12 @@ export function AccountView({
       const name = String(c.campaignName);
       const failedRead = ranges[name] instanceof Error;
       const rows: RangeRow[] = read(name)?.ads ?? [];
+      const whole = read(name);
+      // Every booking was credited to one of the ads listed, not only given
+      // an ad id: an id that maps to no row leaves its booking unplaced.
+      const allTraced = everyBookingPlaced(whole);
+      const cardSpendNotIn =
+        typeof whole?.spendNotIn === "string" ? whole.spendNotIn : undefined;
       const nodes = tree.filter(
         (t: Row) => t.kind === "ad" && t.campaignName === name,
       );
@@ -304,6 +361,8 @@ export function AccountView({
           name: adName,
           row,
           failed: !row && failedRead,
+          allTraced,
+          spendNotIn: cardSpendNotIn,
           nodes: mine,
           ids,
           running: mine.some(isLive),
@@ -412,6 +471,11 @@ export function AccountView({
   ];
   const behind =
     coverage?.last && coverage.last < kuwaitDay(1) && range.end > coverage.last;
+  // Bookings stop on the media data's last day when the range runs past it
+  // (mediaStatsClient.ts, 2026-10-21); every campaign's read names the same day.
+  const bookingsThrough = names
+    .map(n => read(n)?.bookingsThrough as string | undefined)
+    .find(Boolean);
 
   const tile = (
     label: string,
@@ -549,10 +613,26 @@ export function AccountView({
         </h3>
         {behind && (
           <p className="callout-warn mt-4 rounded-lg border px-3 py-2 text-xs">
-            The tracker sheet has spend up to {coverage.last}. Anything after
-            that has not been pulled yet; it is not missing.
+            The tracker sheet has spend up to {shortDate(coverage.last)}.
+            Anything after that has not been pulled yet; it is not missing.
           </p>
         )}
+        {!behind && !leadsOnly && bookingsThrough && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Bookings are counted to {shortDate(bookingsThrough)}, the last day
+            with Meta's numbers, so spend and bookings cover the same days.
+          </p>
+        )}
+        {/* Until the worker publishes a client-level figure (R8, 2026-10-22),
+            these totals are the campaigns listed here only. Atlantis's
+            14-20 Oct reads $174.53 / 3 = $58.18 here once the call-back rule
+            ships, against $174.53 / 4 = $43.63 on the Client Performance
+            board: its fourth booking came from 13\9, a stopped campaign. */}
+        <p className="mt-2 text-xs text-muted-foreground">
+          These totals are the campaigns listed here. A campaign removed from
+          the list is left out, with its spend and bookings; the Client
+          Performance board counts the whole ad account.
+        </p>
         {failed.length > 0 && !allFailed && (
           <p className="callout-warn mt-4 rounded-lg border px-3 py-2 text-xs">
             The numbers for {failed.join(", ")} could not be read, so the totals
@@ -574,8 +654,16 @@ export function AccountView({
           ) : !sum.hasData ? (
             <EmptyState
               compact
-              title={`No spend between ${range.start} and ${range.end}`}
-              text="Pick another range above. Today's numbers appear once the tracker has pulled the day."
+              title={
+                spendNotIn
+                  ? spendNotInWhy(spendNotIn)
+                  : `No spend between ${range.start} and ${range.end}`
+              }
+              text={
+                spendNotIn && !leadsOnly && sum.bookings > 0
+                  ? `${sum.bookings} booking${sum.bookings === 1 ? " was" : "s were"} made in this range: see Campaigns below. ${sum.bookings === 1 ? "Its" : "Their"} cost waits for the spend; pick another range for the full numbers.`
+                  : "Pick another range above. Today's numbers appear once the tracker has pulled the day."
+              }
             />
           ) : (
             <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-4 @6xl:grid-cols-8">
@@ -593,14 +681,16 @@ export function AccountView({
                       : `${Math.round(bookingRate)}% of leads`,
                 })}
               {!leadsOnly &&
-                tile(
-                  "Cost per booking",
-                  cpb === undefined ? "n/a" : money(cpb),
-                  {
-                    status: gate(cpb, cpbTone(cpb), CPB_GATE, CPB_BAD),
-                    naHint: "No bookings in this range.",
-                  },
-                )}
+                tile("Cost per booking", cpbShown.text, {
+                  status: gate(
+                    cpbShown.judged,
+                    cpbShown.tone,
+                    CPB_GATE,
+                    CPB_BAD,
+                  ),
+                  hint: cpbShown.why,
+                  naHint: cpbShown.why ?? "No bookings in this range.",
+                })}
               {tile("Link CTR", pctText(linkCtr), {
                 hint: "Link clicks divided by impressions. Not CTR (all).",
                 naHint: fewImpressions,
@@ -764,13 +854,20 @@ export function AccountView({
             );
             const dwy = c.serviceMode === "DWY";
             const facts = [
-              r
-                ? `${money(r.total?.spend)} · ${r.total?.leads ?? 0} leads · ${usd2(r.total?.cpl)} a lead`
-                : ranges[String(c.campaignName)] instanceof Error
-                  ? "Numbers could not be read. Reload to try again."
-                  : "Loading…",
+              r?.spendNotIn
+                ? spendNotInWhy(String(r.spendNotIn))
+                : r
+                  ? `${money(r.total?.spend)} · ${r.total?.leads ?? 0} leads · ${usd2(r.total?.cpl)} a lead`
+                  : ranges[String(c.campaignName)] instanceof Error
+                    ? "Numbers could not be read. Reload to try again."
+                    : "Loading…",
               r && !dwy && r.total?.bookings !== undefined
-                ? `${r.bookingsTotal ?? r.total.bookings} booked${r.total?.costPerBooking !== undefined ? ` at ${money(r.total.costPerBooking)}` : ""}`
+                ? bookedFacts(
+                    Number(r.total?.spend ?? 0),
+                    Number(r.bookingsTotal ?? r.total.bookings),
+                    r.total?.costPerBooking,
+                    r.spendNotIn,
+                  )
                 : null,
               c.budgetDaily !== undefined
                 ? `${money(c.budgetDaily)}/day ${c.budgetLevel === "campaign" ? "CBO" : c.budgetLevel === "adset" ? "ABO" : ""}`.trim()
@@ -877,22 +974,38 @@ function AdTile({
     : card.nodes.length
       ? metaWords(card.nodes[0]) || "Not running"
       : "Not in Meta's list";
-  // A failed read is n/a, never $0.00 and 0; an ad that did not spend in a
-  // range that was read is $0.00 and 0. Cost colours follow the grid.
-  const quiet = card.failed ? "n/a" : undefined;
-  const cells: [string, ReactNode, CostTone?][] = [
+  // A failed read is n/a, never $0.00 and 0; so is a range whose spend is
+  // not in yet (Today); an ad that did not spend in a range that was read is
+  // $0.00 and 0. Cost colours follow the grid.
+  const quiet = card.failed || (!r && card.spendNotIn) ? "n/a" : undefined;
+  const cells: [string, ReactNode, CostTone?, string?][] = [
     ["Spend", quiet ?? (r ? usd2(r.spend) : "$0.00")],
     ["Leads", quiet ?? (r ? String(r.leads) : "0")],
     ["CPL", usd2(r?.cpl), cplTone(r?.cpl)],
   ];
   if (!dwy) {
-    const counted = r?.bookingsAttributed && r.costPerBooking !== undefined;
+    // No booking credited to this ad: "None yet" or "None on $233", coloured
+    // only when every booking in the range was credited to one of the ads
+    // listed (2026-10-21); otherwise the hover says why it has no colour.
+    const none =
+      r?.bookingsAttributed && r.bookings === 0
+        ? cpbDisplay(r.spend, 0)
+        : undefined;
+    const counted =
+      r?.bookingsAttributed && r.costPerBooking !== undefined
+        ? cpbValue(r.costPerBooking)
+        : undefined;
+    const shown = none ?? counted;
+    const untraced = Boolean(none?.noneOnSpend && !card.allTraced);
     cells.push(
       ["Booked", r?.bookingsAttributed ? String(r.bookings) : "n/a"],
       [
         "Per booking",
-        counted ? money(r.costPerBooking) : "n/a",
-        counted ? cpbTone(r.costPerBooking) : undefined,
+        shown ? shown.text : "n/a",
+        untraced ? undefined : shown?.tone,
+        untraced
+          ? "No booking was credited to this ad, but some bookings in this range could not be tied to one ad, so it is not coloured."
+          : shown?.why,
       ],
     );
   }
@@ -952,14 +1065,23 @@ function AdTile({
       <dl
         className="grid grid-cols-3 gap-x-2 gap-y-2"
         // Said once above the wall; the tile keeps the reason on hover.
-        title={card.failed ? FAILED_READ : undefined}
+        title={
+          card.failed
+            ? FAILED_READ
+            : !r && card.spendNotIn
+              ? `${spendNotInWhy(card.spendNotIn)}.`
+              : undefined
+        }
       >
-        {cells.map(([label, value, tone]) => (
+        {cells.map(([label, value, tone, why]) => (
           <div key={label} className="min-w-0">
             <dt className="font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground">
               {label}
             </dt>
-            <dd className="flex items-center gap-1 whitespace-nowrap text-[13px] font-semibold tabular-nums">
+            <dd
+              className="flex items-center gap-1 whitespace-nowrap text-[13px] font-semibold tabular-nums"
+              title={why}
+            >
               {tone && (
                 <span
                   aria-hidden

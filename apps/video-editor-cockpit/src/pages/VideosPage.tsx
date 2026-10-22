@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { Link } from "react-router";
 import {
   chip,
@@ -10,8 +11,17 @@ import {
 } from "../components/bits";
 import { AnimatedSelect } from "../components/ui/animated-select";
 import { useAllAssets, useJobs, useStills } from "../lib/data";
+import { GAP_ORDER, gapOf, jobsWithoutFootage } from "../lib/footageGaps";
 import { clock, minutes, shape } from "../lib/format";
 import { matchScore } from "../lib/search";
+import { stageLabel } from "../lib/stages";
+import type { Job } from "../lib/types";
+
+/** What a job without a client tag is filed under, on the wall and the list. */
+const NO_TAG = "No client tag";
+
+/** Rows a reason shows before "Show the other N" (DESIGN.md, long lists). */
+const FIRST_ROWS = 5;
 
 /**
  * Every clip the desk has read, in one wall. Called Footage, as in the
@@ -33,10 +43,18 @@ export default function VideosPage() {
 
   const clientOf = useMemo(() => {
     const map = new Map<string, string>();
-    for (const j of jobs.data ?? [])
-      map.set(j.task_id, j.client ?? "No client tag");
+    for (const j of jobs.data ?? []) map.set(j.task_id, j.client ?? NO_TAG);
     return map;
   }, [jobs.data]);
+
+  // Open jobs the desk has not read, so a client missing from the wall
+  // is missing for a reason the page can name.
+  const notRead = useMemo(() => {
+    const read = new Set(
+      (assets.data ?? []).filter(a => !a.error).map(a => a.task_id),
+    );
+    return jobsWithoutFootage(jobs.data ?? [], read);
+  }, [assets.data, jobs.data]);
 
   const shown = useMemo(() => {
     let rows = (assets.data ?? []).filter(a => !a.error);
@@ -60,11 +78,21 @@ export default function VideosPage() {
     const counts = new Map<string, number>();
     for (const a of assets.data ?? []) {
       if (a.error) continue;
-      const name = clientOf.get(a.task_id) ?? "No client tag";
+      const name = clientOf.get(a.task_id) ?? NO_TAG;
       counts.set(name, (counts.get(name) ?? 0) + 1);
     }
+    // A client with jobs but no clip read yet is still a client: picking
+    // it shows why its footage is missing instead of hiding it.
+    for (const j of notRead) {
+      const name = j.client ?? NO_TAG;
+      if (!counts.has(name)) counts.set(name, 0);
+    }
     return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [assets.data, clientOf]);
+  }, [assets.data, clientOf, notRead]);
+
+  const notReadShown = client
+    ? notRead.filter(j => (j.client ?? NO_TAG) === client)
+    : notRead;
 
   const stills = useStills(shown.map(a => a.still_path));
   const unread = (assets.data ?? []).filter(a => a.error).length;
@@ -132,11 +160,20 @@ export default function VideosPage() {
       {assets.loading && !assets.data ? (
         <Spinner what="Reading the footage" />
       ) : null}
+      {notReadShown.length ? (
+        <NotRead
+          key={client}
+          jobs={notReadShown}
+          open={Boolean(client) && !shown.length}
+        />
+      ) : null}
       {!assets.loading && !assets.error && !shown.length ? (
         <Empty>
           {onlyWithSpeech
             ? "No clip here has speech in it. Turn off Someone speaks to see them all."
-            : "No footage has been read yet. The desk reads a job's Drive folder every half hour."}
+            : client && notReadShown.length
+              ? `No footage has been read for ${client} yet. The list above says why.`
+              : "No footage has been read yet. The desk reads a job's Drive folder every half hour."}
         </Empty>
       ) : null}
 
@@ -195,5 +232,130 @@ export default function VideosPage() {
         })}
       </ul>
     </Page>
+  );
+}
+
+/**
+ * The jobs whose footage is not on the wall, grouped by what fixes them.
+ * Folded by default: the wall is the page. It opens on its own when the
+ * client picked has no clip at all, because then it is the only answer.
+ */
+function NotRead({ jobs, open: initial }: { jobs: Job[]; open: boolean }) {
+  const [open, setOpen] = useState(initial);
+  const id = useId();
+  const groups = useMemo(() => {
+    const by = new Map<string, { title: string; fix: string; jobs: Job[] }>();
+    for (const j of jobs) {
+      const gap = gapOf(j);
+      const g = by.get(gap.kind) ?? {
+        title: gap.title,
+        fix: gap.fix,
+        jobs: [],
+      };
+      g.jobs.push(j);
+      by.set(gap.kind, g);
+    }
+    return GAP_ORDER.flatMap(k => {
+      const g = by.get(k);
+      return g ? [{ kind: k, ...g }] : [];
+    });
+  }, [jobs]);
+  const clients = new Set(jobs.map(j => j.client ?? NO_TAG)).size;
+
+  return (
+    <section className="mb-6 rounded-2xl border bg-card px-4 sm:px-6">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-center justify-between gap-3 py-4 text-left"
+      >
+        <span className="min-w-0">
+          <span className="block text-[15px] font-semibold tracking-tight">
+            Not read yet
+          </span>
+          <span className="block text-[13px] text-muted-foreground tabular-nums">
+            {jobs.length} open {jobs.length === 1 ? "job" : "jobs"} for{" "}
+            {clients} {clients === 1 ? "client" : "clients"} have no footage
+            here, and why
+          </span>
+        </span>
+        <ChevronDown
+          aria-hidden
+          className={`size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      <div id={id} hidden={!open} className="space-y-6 pb-6">
+        {groups.map(g => (
+          <Reason key={g.kind} title={g.title} fix={g.fix} jobs={g.jobs} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** One reason: what fixes it, then its jobs as divided rows. */
+function Reason({
+  title,
+  fix,
+  jobs,
+}: {
+  title: string;
+  fix: string;
+  jobs: Job[];
+}) {
+  const [all, setAll] = useState(false);
+  const rows = all ? jobs : jobs.slice(0, FIRST_ROWS);
+  const more = jobs.length - rows.length;
+  return (
+    <div>
+      <h3 className="text-sm font-medium">
+        {title}{" "}
+        <span className="font-normal text-muted-foreground tabular-nums">
+          · {jobs.length}
+        </span>
+      </h3>
+      <p className="mt-1 text-[13px] text-muted-foreground">{fix}</p>
+      <ul className="mt-2 divide-y border-y">
+        {rows.map(j => (
+          <li key={j.task_id}>
+            <Link
+              to={`/job/${j.task_id}`}
+              className="flex items-center gap-3 py-2.5 text-sm hover:text-primary"
+            >
+              <span className="min-w-0 flex-1">
+                <span dir="auto" className="block truncate font-medium">
+                  {j.client ?? (
+                    <span className="text-muted-foreground">{NO_TAG}</span>
+                  )}
+                </span>
+                <span
+                  dir="auto"
+                  className="block truncate text-xs text-muted-foreground"
+                >
+                  {j.name || "Untitled card"} · {stageLabel(j.status)}
+                </span>
+              </span>
+              <ChevronRight
+                aria-hidden
+                className="size-4 shrink-0 text-muted-foreground"
+              />
+            </Link>
+          </li>
+        ))}
+      </ul>
+      {more > 0 ? (
+        <button
+          type="button"
+          onClick={() => setAll(true)}
+          className="mt-2 text-xs font-medium text-primary underline-offset-4 hover:underline"
+        >
+          Show the other {more}
+        </button>
+      ) : null}
+    </div>
   );
 }

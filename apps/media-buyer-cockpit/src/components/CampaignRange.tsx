@@ -1,7 +1,15 @@
 import type { ReactNode } from "react";
+import { shortDate } from "@/components/ceo/format";
 import { bookingCostCell } from "@/lib/booking-cost";
 import { api, useQuery } from "@/lib/cockpitApi";
-import { costText, cpbTone, cplTone } from "@/lib/costTone";
+import {
+  costText,
+  cpbDisplay,
+  cpbValue,
+  cplTone,
+  spendNotInWhy,
+} from "@/lib/costTone";
+import { everyBookingPlaced } from "@/lib/mediaStatsClient";
 import type { Range } from "@/lib/range";
 import { kuwaitDay, rangeDays } from "@/lib/range";
 import { RangePicker } from "./RangePicker";
@@ -141,6 +149,17 @@ export function CampaignRange({
   // yesterday and a range ending today always runs past it. That is not
   // stale. It is stale when even yesterday has not been pulled.
   const behind = Boolean(coverage?.last && coverage.last < kuwaitDay(1));
+  // No booking on more than $60 reads "None on $233" in the grid's colour,
+  // not a grey n/a (2026-10-21).
+  const totalCpb = cpbDisplay(data?.total?.spend, data?.total?.bookings, {
+    cost: data?.total?.costPerBooking,
+    spendNotIn: data?.spendNotIn,
+  });
+  // An ad with no booking is judged only when every booking in the range
+  // was credited to one of the ads listed; otherwise one of the others may
+  // be its. Carrying an ad id is not enough: an id that maps to no row
+  // leaves its booking unplaced.
+  const allTraced = everyBookingPlaced(data);
 
   return (
     <div className="mt-3">
@@ -162,8 +181,8 @@ export function CampaignRange({
       {behind && coverage?.last && range.end > coverage.last && (
         <div className="mb-3 rounded-lg border callout-warn px-3 py-2 text-xs">
           The tracker sheet has spend up to{" "}
-          <span className="font-semibold">{coverage.last}</span>. Anything after
-          that is not missing: it has not been pulled yet.
+          <span className="font-semibold">{shortDate(coverage.last)}</span>.
+          Anything after that is not missing: it has not been pulled yet.
         </div>
       )}
 
@@ -175,10 +194,16 @@ export function CampaignRange({
 
       {data && !data.hasData && (
         <div className="rounded-lg bg-background/60 p-3 text-sm text-muted-foreground">
-          No spend recorded for this campaign between {range.start} and{" "}
-          {range.end}.
-          {days <= 2 &&
+          {data.spendNotIn
+            ? `${spendNotInWhy(data.spendNotIn)}, so this range has no spend or leads to show yet.`
+            : `No spend recorded for this campaign between ${range.start} and ${range.end}.`}
+          {!data.spendNotIn &&
+            days <= 2 &&
             " Today's numbers only appear once the tracker has pulled the day. Before that this is genuinely empty rather than zero."}
+          {!leadsOnly &&
+            data.spendNotIn &&
+            data.bookingsTotal > 0 &&
+            ` ${data.bookingsTotal} booking${data.bookingsTotal === 1 ? " was" : "s were"} made in it; the cost per booking waits for the spend.`}
         </div>
       )}
 
@@ -220,9 +245,10 @@ export function CampaignRange({
                 <span>
                   <span className="text-muted-foreground">Cost/booking </span>
                   <span
-                    className={`font-semibold tabular-nums ${costText(cpbTone(data.total.costPerBooking))}`}
+                    className={`font-semibold tabular-nums ${costText(totalCpb.tone)}`}
+                    title={totalCpb.why}
                   >
-                    {money(data.total.costPerBooking, 0)}
+                    {totalCpb.text}
                   </span>
                 </span>
               </>
@@ -232,6 +258,9 @@ export function CampaignRange({
               {!leadsOnly &&
                 data.bookingsTotal > 0 &&
                 ` · ${data.bookingsAttributed} of ${data.bookingsTotal} bookings traced to an ad`}
+              {!leadsOnly &&
+                data.bookingsThrough &&
+                ` · bookings to ${shortDate(data.bookingsThrough)}, the last day with Meta's numbers`}
             </span>
           </div>
 
@@ -239,11 +268,13 @@ export function CampaignRange({
             title="Ad sets"
             rows={data.adSets as Row[]}
             leadsOnly={leadsOnly}
+            allTraced={allTraced}
             emptyNote="Meta did not name an ad set on these rows."
           />
           <Table
             title="Ads"
             rows={withQuietAds(data.ads as Row[], extraAds, adIdsByName)}
+            allTraced={allTraced}
             referenceRows={(trailing?.ads ?? []) as Row[]}
             selectedWindow={`${range.start} to ${range.end}`}
             leadsOnly={leadsOnly}
@@ -320,12 +351,15 @@ function Table({
   tailTitle,
   emptyNote,
   leadsOnly,
+  allTraced,
 }: {
   title: string;
   rows: Row[];
   referenceRows?: Row[];
   selectedWindow?: string;
   leadsOnly?: boolean;
+  /** Every booking in the range carried an ad id, so a row's none is a real none. */
+  allTraced?: boolean;
   renderKey?: (key: string, row?: Row) => ReactNode;
   renderTail?: (key: string, row?: Row) => ReactNode;
   /** "Save as winner", in the tail cell after the page's own controls. */
@@ -338,6 +372,18 @@ function Table({
     referenceRows
       ? bookingCostCell(r, referenceRows)
       : { value: r.costPerBooking };
+  // A row with no booking: "None yet", or "None on $233", coloured only when
+  // every booking was traced to an ad (2026-10-21).
+  const none = (r: Row) => {
+    const shown = cpbDisplay(r.spend, 0);
+    return allTraced
+      ? shown
+      : {
+          ...shown,
+          tone: undefined,
+          why: "No booking was credited to this one, but some bookings in this range could not be tied to one ad, so it is not coloured.",
+        };
+  };
   if (!rows || rows.length === 0) {
     return emptyNote ? (
       <p className="mb-2 text-xs text-muted-foreground">{emptyNote}</p>
@@ -416,16 +462,20 @@ function Table({
                     )}
                   </td>
                   <td
-                    className={`tabular-nums ${costText(cpbTone(cost(r).value))}`}
+                    className={`tabular-nums ${costText(r.bookingsAttributed && r.bookings === 0 ? none(r).tone : cpbValue(cost(r).value).tone)}`}
                     title={
-                      cost(r).label === "30d"
-                        ? `30-day spend / 30-day bookings for this exact ad. Selected window: ${selectedWindow ?? "current range"}.`
-                        : `Selected-window spend / selected-window bookings: ${selectedWindow ?? "current range"}.`
+                      r.bookingsAttributed && r.bookings === 0
+                        ? none(r).why
+                        : cost(r).label === "30d"
+                          ? `30-day spend / 30-day bookings for this exact ad. Selected window: ${selectedWindow ?? "current range"}.`
+                          : `Selected-window spend / selected-window bookings: ${selectedWindow ?? "current range"}.`
                     }
                   >
-                    {r.bookingsAttributed ? (
+                    {r.bookingsAttributed && r.bookings === 0 ? (
+                      none(r).text
+                    ) : r.bookingsAttributed ? (
                       <>
-                        {money(cost(r).value, 0)}
+                        {cpbValue(cost(r).value).text}
                         {"label" in cost(r) && cost(r).label === "30d" && (
                           <span className="ml-1 text-[11px] font-normal text-muted-foreground">
                             30d

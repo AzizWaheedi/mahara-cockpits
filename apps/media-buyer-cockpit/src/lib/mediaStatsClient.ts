@@ -221,17 +221,70 @@ export type MediaStatsData = {
   historical: Record<string, any>[];
 };
 
+/**
+ * How a range's bookings meet the media data's last day (2026-10-21, and
+ * 2026-10-22 for a range wholly after it):
+ * - the range ends on or before that day: nothing changes;
+ * - the day falls inside the range: bookings are counted only through it
+ *   (`through`), so they meet the spend they came from;
+ * - the whole range comes after it (Today, or Yesterday before the nightly
+ *   pull): there is no spend to pair with at all, so the bookings are kept
+ *   as they are, a real count, and `spendNotIn` names the day so the cost
+ *   reads "n/a" with the reason. Never 0 bookings, never "None yet".
+ */
+export function bookingsCap(
+  range: { start: string; end: string },
+  last: string | null | undefined,
+): { through?: string; spendNotIn?: string } {
+  if (!last || last >= range.end) return {};
+  return last < range.start ? { spendNotIn: last } : { through: last };
+}
+
+/**
+ * Every booking in a range read was credited to one of the ads it lists, so
+ * an ad with none really has none and may be coloured on its spend. Carrying
+ * an ad id is not enough: an id that maps to no row (its ad spent more than
+ * 30 days before the range) leaves the booking unplaced, and it may be any
+ * ad's (2026-10-22).
+ */
+export function everyBookingPlaced(
+  read: { bookingsTotal?: number; ads?: { bookings?: number }[] } | undefined,
+): boolean {
+  const total = Number(read?.bookingsTotal ?? 0);
+  if (!read || total <= 0) return false;
+  const placed = (read.ads ?? []).reduce(
+    (n, r) => n + Number(r.bookings ?? 0),
+    0,
+  );
+  return placed === total;
+}
+
 export async function computeMediaRange(
   data: MediaStatsData,
-  args: { campaignName: string; start: string; end: string },
+  args: {
+    campaignName: string;
+    start: string;
+    end: string;
+    /**
+     * The last day the media data has spend for (mediaDataThrough): no
+     * booking after it is counted, so a range ending today never sets
+     * today's bookings against spend that stops yesterday.
+     */
+    bookingsThrough?: string | null;
+  },
 ) {
+  const { bookingsThrough, ...range } = args;
+  const { through, spendNotIn } = bookingsCap(range, bookingsThrough);
+  const bookings = through
+    ? data.bookings.filter(b => String(b.date ?? "") <= through)
+    : data.bookings;
   const context = {
     db: {
       query(table: string) {
         let rows =
           table === "dailyStats"
             ? [...data.historical, ...data.rows]
-            : [...data.bookings];
+            : [...bookings];
         const conditions: ((r: Record<string, any>) => boolean)[] = [];
         const builder = {
           eq: (key: string, v: unknown) => {
@@ -261,10 +314,20 @@ export async function computeMediaRange(
       },
     },
   };
-  return computeRange(context, args);
+  const result = await computeRange(context, range);
+  return {
+    ...result,
+    /** The last day whose bookings are counted, inside the range. */
+    bookingsThrough: through,
+    /**
+     * The media data's last day, when the whole range comes after it: the
+     * bookings are counted, their spend is not in yet.
+     */
+    spendNotIn,
+  };
 }
 
-export async function readMediaStats(
+async function statistics(
   client: SupabaseClient,
   kind: string,
   args: Record<string, any> = {},
@@ -278,7 +341,70 @@ export async function readMediaStats(
   if (error) throw error;
   if (data === null || data === undefined)
     throw new Error("Statistics source did not return a result.");
-  if (kind !== "range") return data;
+  return data;
+}
+
+/** How long one coverage read serves every range read that asks for it. */
+const COVERAGE_FRESH_MS = 60_000;
+let coverageRead:
+  | { client: SupabaseClient; at: number; value: Promise<any> }
+  | undefined;
+
+/**
+ * The media data's first and last day across every campaign this seat reads
+ * (kind "coverage"), read once and shared: the board's rows, an open panel,
+ * a client's page, the funnel and the page's own note all land within a few
+ * seconds of each other and get the same answer. A failed read is not kept.
+ */
+export function mediaCoverage(
+  client: SupabaseClient,
+  now = Date.now(),
+): Promise<{ first?: string | null; last?: string | null }> {
+  const held = coverageRead;
+  if (held && held.client === client && now - held.at < COVERAGE_FRESH_MS)
+    return held.value;
+  const entry = { client, at: now, value: statistics(client, "coverage") };
+  coverageRead = entry;
+  entry.value.catch(() => {
+    if (coverageRead === entry) coverageRead = undefined;
+  });
+  return entry.value;
+}
+
+/**
+ * The last day the media data has spend for: Meta's numbers run to
+ * yesterday, while a booking lands the moment it is made. A range ending
+ * today (Today, Month to date, Year to date, a custom range) counted today's
+ * bookings against spend that stops yesterday: City Wood's month to date
+ * read $674.63 / 7 = $96.38 on 21 Oct, against $224.88 for its 3 bookings
+ * to 20 Oct. So a range read that runs past this day counts bookings only
+ * through it (bookingsCap); a range wholly after it keeps its bookings and
+ * says its spend is not in yet. One day for the whole read, never each
+ * campaign's own last day: Atlantis
+ * 7\10 stopped spending on 17 Oct and still bought the bookings made on
+ * 18-20 Oct (2026-10-21). Spend windows stay as picked: this month still
+ * runs through today. Null when there is no media data at all.
+ */
+export async function mediaDataThrough(
+  client: SupabaseClient,
+): Promise<string | null> {
+  const last = (await mediaCoverage(client))?.last;
+  return typeof last === "string" && /^\d{4}-\d{2}-\d{2}$/.test(last)
+    ? last
+    : null;
+}
+
+export async function readMediaStats(
+  client: SupabaseClient,
+  kind: string,
+  args: Record<string, any> = {},
+) {
+  if (kind === "coverage") return mediaCoverage(client);
+  if (kind !== "range") return statistics(client, kind, args);
+  const [data, bookingsThrough] = await Promise.all([
+    statistics(client, kind, args),
+    mediaDataThrough(client),
+  ]);
   if (
     !Array.isArray(data.rows) ||
     !Array.isArray(data.bookings) ||
@@ -289,5 +415,6 @@ export async function readMediaStats(
     campaignName: args.campaignName,
     start: args.start,
     end: args.end,
+    bookingsThrough,
   });
 }

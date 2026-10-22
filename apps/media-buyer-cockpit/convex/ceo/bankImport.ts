@@ -39,6 +39,7 @@ const KINDS: LineKind[] = [
   "whop_payout",
   "whop_topup",
   "tap_settlement",
+  "ecom_settlement",
   "own_transfer",
   "refund_in",
   "expense",

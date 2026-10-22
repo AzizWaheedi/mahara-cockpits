@@ -50,6 +50,7 @@ const row = (over: Partial<InvoiceRow>): InvoiceRow => ({
   kind: "paid",
   amount_usd: 6000,
   description: "90-day agreement",
+  client_tax_id: null,
   period: "Days 1-90",
   issue_date: "2026-10-11",
   due_date: null,
@@ -87,8 +88,10 @@ const invoices = [
     kind: "autocharge",
     amount_usd: 1333,
   }),
-  row({}),
+  row({ client_tax_id: "300123456700003" }),
 ];
+// What the page works out from the list: the newest tax number per client.
+const taxIds = { ex1: "300123456700003" };
 
 function Preview() {
   const [template, setTemplate] = useState<string | null>(null);
@@ -124,6 +127,7 @@ function Preview() {
           <InvoiceForm
             clients={clients}
             folders={folders}
+            taxIds={taxIds}
             today={kuwaitToday()}
             canSetFolder
             onDraft={setDraft}

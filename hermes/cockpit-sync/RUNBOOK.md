@@ -84,6 +84,8 @@ Fathom reads start 24 hours before the last successful full native publication. 
 
 Run doctor and a dry run from a new immutable `/home/hermes/.cockpit-native-releases/<sha>` folder, not from `~/mahara-cockpits`. The run wrapper is `/home/hermes/.cockpit-native-state/run-source-ceo-cycle.py`; it writes reports under `/home/hermes/.cockpit-native-state/`. Stage via `scripts/prepare-native-worker-package.py` and include every new runtime file in its REQUIRED list. Keep the prior symlink target for rollback. The live cron line is above and in `hermes/cockpit-guardian/crontab.manifest`. Muhammed owns the native cutover.
 
+Old cycle plans are pruned hourly by `hermes/native-prune` (its own cron line and lock, 2026-10-22). A `sync-plan.json` goes after 48 hours unless its cycle failed: a failure file, a sync step that did not publish, or a missing or unfinished receipt. Those plans stay for reconciliation, as do the 8 newest plans and every receipt and log.
+
 ## Preservation and failure behavior
 
 - A publication compares exact table counts/content fingerprints and source stamps after taking write-conflicting locks. A concurrent source, human checklist, decision, profile, or dismissal change rejects the entire plan.

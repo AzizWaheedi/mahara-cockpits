@@ -97,14 +97,19 @@ class Run(VaultCase):
     def test_calls_land_matched_with_their_transcripts(self):
         self.write("a.md", note(rid="11"))
         # The lead joined from the link: nobody from outside on the invite, but
-        # Omar's demo with this rep began 10 minutes after the recording.
+        # Omar's demo with this rep began 10 minutes after the recording, and
+        # Fathom says someone from outside was on it.
         self.write("b.md", note(rid="22", date="2026-08-11", time="12:00",
                                 people='["Rami Rep (rami@maharamedia.com)"]', title="Demo"))
         # A team meeting with a sales word: no outsider, no appointment.
         self.write("c.md", note(rid="33", date="2026-08-12", people='["Rami Rep (rami@maharamedia.com)"]'))
         self.write("d.md", note(rid="44", kind="team"))
-        out = self.run_it()
-        self.assertEqual((out["rows"], out["team"], out["by_email"], out["by_appointment"]), (2, 1, 1, 1))
+        # A team meeting at the time of Omar's demo that nobody from outside joined.
+        self.write("e.md", note(rid="55", date="2026-08-11", time="12:05", title="Demo practice",
+                                people='["Rami Rep (rami@maharamedia.com)"]'))
+        out = self.run_it(fathom_outsiders=lambda _since: {"22"}, now=datetime(2026, 8, 20, tzinfo=timezone.utc))
+        self.assertEqual((out["rows"], out["team"], out["by_email"], out["by_appointment"]), (2, 2, 1, 1))
+        self.assertIsNone(self.pg.one("cockpit_sales_recordings", recording_id="55"))
         a = self.pg.one("cockpit_sales_recordings", recording_id="11")
         self.assertEqual((a["contact_id"], a["matched_by"], a["source"]), ("c-lina", "email", "vault"))
         self.assertEqual(a["duration_s"], 3900)
@@ -185,7 +190,9 @@ class OutsiderJoined(VaultCase):
         self.assertEqual(asked, [datetime(2026, 8, 13, 9, 0, tzinfo=timezone.utc)])
         self.assertEqual(out["outsider_by"], {"note": 1, "cockpit": 1, "fathom": 1})
         self.assertEqual((out["team"], out["rows"], out["unmatched"]), (2, 3, 3))
-        self.assertIn("asked about 2, 1 had someone from outside", out["fathom"])
+        # The call already in the cockpit is asked about too: only Fathom's
+        # word lets an appointment beside it place it.
+        self.assertIn("asked about 3, 1 had someone from outside", out["fathom"])
         for rid in ("71", "72", "74"):
             row = self.pg.one("cockpit_sales_recordings", recording_id=rid)
             self.assertEqual((row["matched_by"], row["contact_id"], row["kind"]), ("none", None, "sales"))
@@ -210,6 +217,28 @@ class OutsiderJoined(VaultCase):
         out = self.run_it(fathom_outsiders=refused, now=self.NOW)
         self.assertEqual((out["rows"], out["team"]), (1, 1))
         self.assertTrue(out["fathom"].startswith("could not be asked"))
+
+
+class CockpitRoom(VaultCase):
+    """A call held in the room the cockpit made for a lead is that lead's,
+    without asking Fathom, even when it began long after the booking."""
+
+    def test_a_note_held_in_a_leads_room_is_theirs_and_one_in_another_reps_room_is_not(self):
+        self.pg.put("cockpit_sales_zoom_links", {
+            "id": "z-1", "contact_id": "c-omar", "topic": "Mahara Media: Omar (demo)",
+            "made_at": "2026-08-11T13:05:00+00:00", "seat_email": "rami@maharamedia.com",
+            "host_email": "rami@maharamedia.com"})
+        # Booked for 12:10, held at 13:10 in a room made at 13:05.
+        self.write("a.md", note(rid="91", date="2026-08-11", time="13:10", title="Mahara Media: Omar (demo)",
+                                people='["Rami Rep (rami@maharamedia.com)"]'))
+        # The same room's name, recorded by someone who did not make it.
+        self.write("b.md", note(rid="92", date="2026-08-11", time="13:12", title="Mahara Media: Omar (demo)",
+                                people='["Sara Rep (sara@maharamedia.com)"]'))
+        out = self.run_it(fathom_outsiders=lambda _since: set(), now=datetime(2026, 8, 20, tzinfo=timezone.utc))
+        self.assertEqual((out["by_room"], out["rows"]), (1, 1))
+        row = self.pg.one("cockpit_sales_recordings", recording_id="91")
+        self.assertEqual((row["contact_id"], row["appointment_id"], row["matched_by"]), ("c-omar", "a-omar", "room"))
+        self.assertIsNone(self.pg.one("cockpit_sales_recordings", recording_id="92"))
 
 
 class LeadOnTheInvite(VaultCase):

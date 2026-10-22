@@ -4,6 +4,7 @@ import {
   ArrowUpRight,
   ChartColumn,
   ChevronRight,
+  Columns3,
   Loader2,
   Megaphone,
   Table2,
@@ -41,7 +42,9 @@ import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import { rereadCeoSections, STALE_AFTER_MS } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
+import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
+import { CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import type {
   B2bAdNode,
@@ -71,7 +74,9 @@ import {
   verdictChips,
   verdictLabel,
 } from "./adsFacts";
+import { HiringAdsCard } from "./adsHiring";
 import { ManageBar, ManagePanel, type Target } from "./adsManage";
+import { EXTRA_COLS, MetricPicker, useExtraMetrics } from "./adsMetrics";
 import {
   anyTurnedOn,
   heldSentence,
@@ -95,6 +100,7 @@ import {
   UnlessHeld,
   useSwitches,
 } from "./adsSwitch";
+import { isHiringCampaign } from "./hiringRoles";
 import { LaunchCard } from "./LaunchCard";
 import type { CeoTabProps } from "./types";
 
@@ -143,9 +149,6 @@ const CONSTRAINT_STAGE: Record<string, string> = {
   "leads to intros booked": "intros",
   "intros to confirmed intros": "confirmed",
 };
-
-/** The cost per lead gate every tab judges against. */
-const CPL_GATE = 15;
 
 function adsManagerUrl(
   account: string,
@@ -626,7 +629,11 @@ function CampaignRow({
                     ? "neutral"
                     : "warning"
               }
-              label={humanize(c.type)}
+              label={
+                c.type !== "lead_gen" && isHiringCampaign(c.name)
+                  ? "Hiring · not in lead gen"
+                  : humanize(c.type)
+              }
             />
             <span>{`${plural(c.adsets.length, "ad set")} · ${plural(adCount, "ad")}`}</span>
           </span>
@@ -825,14 +832,21 @@ function AdTable({
   onDone,
   clock,
   setStatus,
+  extra,
 }: {
   p: B2bAdsPayload;
   win: Win;
   onDone: (m: string | null) => void;
   clock: SwitchClock;
   setStatus: SetStatus;
+  /** Ticked extra metrics; empty is the classic table, untouched. */
+  extra: string[];
 }) {
   const { held } = useSwitches();
+  const cols = useMemo(
+    () => [...COLS, ...EXTRA_COLS.filter(c => extra.includes(c.key))],
+    [extra],
+  );
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 }>({
     key: "spend",
     dir: -1,
@@ -843,7 +857,7 @@ function AdTable({
         s.ads.map(a => ({ a, campaign: c.name, type: c.type, adset: s.name })),
       ),
     );
-    const col = COLS.find(c => c.key === sort.key) ?? COLS[0];
+    const col = cols.find(c => c.key === sort.key) ?? COLS[0];
     return all.sort((x, y) => {
       const vx = col.get(x.a[win]);
       const vy = col.get(y.a[win]);
@@ -852,7 +866,7 @@ function AdTable({
       if (vy === null) return -1;
       return (vx - vy) * sort.dir;
     });
-  }, [p, win, sort]);
+  }, [p, win, sort, cols]);
 
   return (
     <div className="ceo-table-scroll overflow-x-auto">
@@ -862,7 +876,7 @@ function AdTable({
             <th className="sticky left-0 z-10 bg-card py-2 pr-3 font-medium">
               Ad
             </th>
-            {COLS.map(c => {
+            {cols.map(c => {
               const active = sort.key === c.key;
               const Arrow = sort.dir === 1 ? ArrowUp : ArrowDown;
               return (
@@ -935,7 +949,7 @@ function AdTable({
                     </div>
                   </div>
                 </td>
-                {COLS.map(c => (
+                {cols.map(c => (
                   <td
                     key={c.key}
                     className="whitespace-nowrap px-2 py-2 text-right"
@@ -1042,6 +1056,8 @@ export function AdsTab({ sections, now }: CeoTabProps) {
   const stored = section?.payload ?? null;
   const tf = useTimeframe("7d");
   const [view, setView] = useState<View>("funnel");
+  const [extra, setExtra] = useExtraMetrics();
+  const [picking, setPicking] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [target, setTarget] = useState<Target | null>(null);
   const readWindow = useAction(api.ceo.windows.ads);
@@ -1201,6 +1217,15 @@ export function AdsTab({ sections, now }: CeoTabProps) {
       ? p.notes.filter(n => !n.text.startsWith(NOTHING_DELIVERING))
       : p.notes;
   const retargeting = p.retargetingSpend[win];
+  // Hiring campaigns are typed "excluded" by b2b_campaign_type, so they are
+  // never in lead-gen spend or any cost per lead. Shown beside it, like retargeting.
+  const hiring = p.campaigns
+    .filter(c => c.type !== "lead_gen" && isHiringCampaign(c.name))
+    .reduce((n, c) => n + c[win].spend, 0);
+  const besides = [
+    retargeting ? `${money(retargeting)} retargeting` : null,
+    hiring ? `${money(hiring)} hiring` : null,
+  ].filter(Boolean);
   const rows: RowProps = {
     win,
     account: p.accountId,
@@ -1247,11 +1272,11 @@ export function AdsTab({ sections, now }: CeoTabProps) {
                 label="Lead-gen spend"
                 value={money(a.spend)}
                 sub={
-                  retargeting
-                    ? `${money(retargeting)} more on retargeting`
+                  besides.length
+                    ? `Plus ${besides.join(" · ")}, not in it`
                     : undefined
                 }
-                hint="Lead-gen campaigns only, the way the B2B dashboard reads the account. Retargeting is beside it, never inside a cost per lead."
+                hint="Lead-gen campaigns only, the way the B2B dashboard reads the account. Retargeting and hiring are beside it, never inside lead-gen spend or a cost per lead."
               />
               <StatTile
                 variant="plain"
@@ -1339,7 +1364,23 @@ export function AdsTab({ sections, now }: CeoTabProps) {
           }
           section={section}
           hideAsOf
-          actions={<ViewSwitch view={view} onView={setView} />}
+          actions={
+            <div className="flex items-center gap-2">
+              {view === "table" ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-expanded={picking}
+                  aria-controls="ads-metrics"
+                  onClick={() => setPicking(x => !x)}
+                >
+                  <Columns3 aria-hidden />
+                  {extra.length ? `Metrics · ${extra.length} more` : "Metrics"}
+                </Button>
+              ) : null}
+              <ViewSwitch view={view} onView={setView} />
+            </div>
+          }
           order={1}
         >
           {() => (
@@ -1354,8 +1395,12 @@ export function AdsTab({ sections, now }: CeoTabProps) {
                   {`Meta is refusing changes while the ad account is ${frozen}. Settle it in Ads Manager and every row can be changed again.`}
                 </p>
               ) : null}
+              {view === "table" && picking ? (
+                <MetricPicker shown={extra} onChange={setExtra} />
+              ) : null}
               {view === "table" ? (
                 <AdTable
+                  extra={extra}
                   p={p}
                   win={win}
                   onDone={setMsg}
@@ -1384,7 +1429,15 @@ export function AdsTab({ sections, now }: CeoTabProps) {
         </SectionCard>
       )}
 
-      <LaunchCard ads={stored} order={2} />
+      <HiringAdsCard
+        p={p}
+        win={win}
+        from={shown.bounds?.from ?? null}
+        to={shown.bounds?.to ?? null}
+        order={2}
+      />
+
+      <LaunchCard ads={stored} order={3} />
     </div>
   );
 }

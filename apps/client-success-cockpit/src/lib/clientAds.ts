@@ -20,9 +20,27 @@ import { dayLabel, kuwaitDay, shiftDay } from "./reportPeriod";
  *
  * A booked call counts as attended when it is marked showed, or confirmed or
  * invalid once its time has passed: Aziz's rule, the media buyer's funnel sheet.
+ *
+ * Amounts are in dollars whatever the ad account's currency (2026-10-21): the
+ * media worker converts spend before it stores cockpit_media_daily_stats, and
+ * the daily budget from Meta's minor units (Ardon's SAR 175 is $46.66). The
+ * page labelled Ardon's $201.90 as "SAR 202". An account in a currency the
+ * worker cannot convert is stored in its own, and keeps its code here.
  */
 
 const MIN_IMPRESSIONS_FOR_RATES = 1000;
+/**
+ * The account currencies the media worker turns into dollars before it stores
+ * spend: FX in hermes/cockpit-sync/calculator.ts. Its lookup is exact, so an
+ * account filed as "sar" or "BHD" is stored in its own currency.
+ */
+const WORKER_CONVERTS: ReadonlySet<string> = new Set([
+  "USD",
+  "SAR",
+  "QAR",
+  "AED",
+  "KWD",
+]);
 /** Longer periods chart by week, as the client charts do. */
 export const WEEKLY_AFTER_DAYS = 45;
 /** The function reads at most 400 days at a time. */
@@ -279,7 +297,13 @@ export type CampaignNode = {
   id?: string;
   accountId?: string;
   accountName?: string;
+  /**
+   * What its amounts are in: "USD" for every account the media worker
+   * converts, else the account's own code ("BHD").
+   */
   currency: string;
+  /** The account's own currency when it is not dollars, in words. */
+  currencyNote?: string;
   budgetText: string;
   ended: boolean;
   statusText: string;
@@ -319,7 +343,10 @@ export type AdsModel = {
   feedFirst?: string;
   campaigns: CampaignNode[];
   t: Metrics;
-  /** One currency for every campaign, so client totals may add up. */
+  /**
+   * One currency for every campaign, so client totals may add up: dollars,
+   * unless an account the worker cannot convert is in the period.
+   */
   currency?: string;
   unattributedCount: number;
   bookingsReady: boolean;
@@ -434,11 +461,28 @@ export function money(
   return currency === "USD" ? `$${n}` : `${currency} ${n}`;
 }
 
-function budgetText(
-  c: ClientAdsRead["campaigns"][number] | undefined,
-  currency: string,
-) {
-  const daily = money(c?.budgetDaily, currency);
+/** What a campaign's spend is stored in, by the code on its row. */
+function amountCurrency(code: string | undefined): string {
+  // A blank code reads "USD" in the worker too (calculator.ts).
+  if (code === undefined || WORKER_CONVERTS.has(code)) return "USD";
+  return code.trim().toUpperCase();
+}
+
+/**
+ * The daily budget, which the media worker stores in dollars (Meta's minor
+ * units converted since 2026-10-21), with cents when it has them: "$47"
+ * would not match the media buyer's "$46.66". An ended campaign keeps what
+ * its last sync wrote: on an account not in dollars that may be Meta's own
+ * riyals (Mofage's QAR 83) or dollars, and the row does not say which, so
+ * its budget is left out.
+ */
+function budgetText(c: ClientAdsRead["campaigns"][number] | undefined) {
+  if (c?.ended && c.currency?.trim().toUpperCase() !== "USD") return "";
+  const v = c?.budgetDaily;
+  const daily =
+    v === undefined
+      ? undefined
+      : money(v, "USD", Math.round(v * 100) % 100 !== 0);
   if (!daily) return "Budget not recorded";
   return c?.budgetLevel === "adset"
     ? `${daily} a day, set on its ad sets`
@@ -544,14 +588,21 @@ export function buildAdsModel(
     let c = campaigns.get(name);
     if (!c) {
       const src = campaignOf.get(name);
-      const currency = src?.currency ?? "USD";
+      const currency = amountCurrency(src?.currency);
+      const own = src?.currency?.trim().toUpperCase();
       c = {
         name,
         id: src?.metaCampaignId,
         accountId: src?.accountId,
         accountName: src?.accountName,
         currency,
-        budgetText: budgetText(src, currency),
+        currencyNote:
+          !own || own === "USD"
+            ? undefined
+            : currency === "USD"
+              ? `${own} account, shown in dollars`
+              : `${own} account, spend not converted to dollars`,
+        budgetText: budgetText(src),
         ended: Boolean(src?.ended),
         statusText: "",
         tone: "neutral",

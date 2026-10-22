@@ -223,11 +223,12 @@ describe("an ad-day row", () => {
   });
 
   test("the rows sent to the database carry exactly the columns the apply RPC reads", () => {
-    // The newest migration that defines the apply RPC (20261018120000 added clicks).
+    // The newest migration that defines the apply RPC (20261018120000 added
+    // clicks; 20261021k keeps settled spend from Meta's zeroed reads).
     const dir = new URL("../../migrations/", import.meta.url);
     const START = "CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_apply";
     const file = readdirSync(dir).filter(f => f.endsWith(".sql") && readFileSync(new URL(f, dir), "utf8").includes(START)).sort().at(-1) as string;
-    expect(file).toBe("20261018120000_meta_dashboard_feed.sql");
+    expect(file).toBe("20261021k_meta_ad_days_zero_reads.sql");
     const sql = readFileSync(new URL(file, dir), "utf8").replace(/\r\n/g, "\n");
     const from = sql.indexOf(START);
     const body = sql.slice(from, sql.indexOf("\n$$;", from));

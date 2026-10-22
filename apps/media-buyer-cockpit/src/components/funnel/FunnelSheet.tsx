@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { type FunnelStep, FunnelStrip } from "@/components/ceo/FunnelStrip";
-import { count, money, relative } from "@/components/ceo/format";
+import { count, money, relative, shortDate } from "@/components/ceo/format";
 import { Kicker } from "@/components/ceo/Kicker";
 import { StatusChip } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import {
   SheetDescription,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { costText, cpbDisplay } from "@/lib/costTone";
 import {
   checkSwitch,
   type FunnelDestination,
@@ -367,6 +368,14 @@ function Destination({
   const kind = KIND[d.kind];
   const Icon = kind.icon;
   const t = totalsFor(stats, d.ads);
+  // The same reading as the campaign panel's Cost / booking cell: bookings
+  // with no spend in the range, or a range after Meta's last day, read n/a
+  // with the reason, never "$0"; no booking on more than $60 is coloured on
+  // its spend (costTone.ts cpbDisplay, 2026-10-22).
+  const spendNotIn = stats?.spendNotIn;
+  const cpb = t
+    ? cpbDisplay(spendNotIn ? undefined : t.spend, t.booked, { spendNotIn })
+    : undefined;
   // Click-through is always the lowest rate, so the bars start at the click:
   // the biggest leak they mark is then a real step of the funnel.
   const steps: FunnelStep[] = t
@@ -439,7 +448,10 @@ function Destination({
                 rateNoun="went on"
                 ariaLabel={`From the click to showing up, ${range.label}`}
                 context={[
-                  { label: "Spend", value: money(t.spend) },
+                  {
+                    label: "Spend",
+                    value: spendNotIn ? "Not in yet" : money(t.spend),
+                  },
                   { label: "Saw the ad", value: count(t.impressions) },
                   {
                     label: "Clicked",
@@ -449,14 +461,29 @@ function Destination({
                   },
                   {
                     label: "Cost per lead",
-                    value: t.leads ? money(t.spend / t.leads) : "No leads",
+                    value: spendNotIn
+                      ? "n/a"
+                      : t.leads
+                        ? money(t.spend / t.leads)
+                        : "No leads",
                   },
                   {
                     label: "Cost per booking",
-                    value: t.booked ? money(t.spend / t.booked) : "No bookings",
+                    value: (
+                      <span title={cpb?.why} className={costText(cpb?.tone)}>
+                        {cpb?.text ?? "n/a"}
+                      </span>
+                    ),
                   },
                 ]}
               />
+              {(stats?.callsThrough || spendNotIn) && (
+                <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                  {spendNotIn
+                    ? `Meta's numbers after ${shortDate(spendNotIn)} are not in yet, so the calls booked in ${span(range)} are counted and their spend is not.`
+                    : `Calls counted to ${shortDate(stats?.callsThrough)}, the last day with Meta's numbers, so each call meets the spend it came from.`}
+                </p>
+              )}
               {t.booked > 0 && (
                 <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                   Showed up counts calls marked showed, and calls still marked

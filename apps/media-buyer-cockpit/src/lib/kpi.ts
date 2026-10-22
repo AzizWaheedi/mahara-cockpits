@@ -21,11 +21,16 @@ export const CLOSE_RATE_GATE = 20;
 /**
  * The client status rule on the CEO Delivery tab (Aziz, 2026-09-21): good
  * needs a show rate of at least SHOW_RATE_GOOD and a cost per confirmed
- * booking within CPB_GATE; bad is a cost per booking over CPB_BAD or a bad
- * cost per lead (CPL_GATE * 1.5). There is one show rate line for clients,
- * 60, and no lower or higher one (Aziz, 2026-09-21 and 2026-10-12): under it
- * is watch, never bad. SHOW_RATE_AIM is what we aim for above it, not a
- * second line. Keep in step with convex/constants.ts.
+ * booking within CPB_GATE; bad is a cost per booking over CPB_BAD, or no
+ * booking after more than CPB_BAD of spend (the spend is the least one
+ * booking costs). The golden rule (Aziz; written down 2026-10-21): while the
+ * cost per booking is known and within CPB_GATE, a cost per lead over
+ * CPL_GATE is a watch, never a constraint. Only when the bookings do not
+ * already answer it does a bad cost per lead (over CPL_GATE * 1.5) make a
+ * client bad. There is one show rate line for clients, 60, and no lower or
+ * higher one (Aziz, 2026-09-21 and 2026-10-12): under it is watch, never
+ * bad. SHOW_RATE_AIM is what we aim for above it, not a second line. Keep in
+ * step with convex/constants.ts.
  */
 export const SHOW_RATE_GOOD = 60;
 export const CPB_BAD = 80;
@@ -125,9 +130,13 @@ export function gridCell(
   const cpl = spend / leads;
   const column = cpl <= CPL_GATE ? 0 : cpl <= CPL_BAD ? 1 : 2;
   // No booking yet: what it has spent is already the least one booking costs.
-  const cpb = booked > 0 ? spend / booked : spend;
+  // The $60 and $80 lines judge the cents a cell shows, as the worker's judge
+  // and the Ads page's colours do: $60.004 reads "$60" and is not over $60
+  // (2026-10-22).
+  const cents = (v: number) => Math.round(v * 100) / 100;
+  const cpb = cents(booked > 0 ? spend / booked : spend);
   const row: GridRow =
-    booked === 0 && spend <= CPB_GATE
+    booked === 0 && cents(spend) <= CPB_GATE
       ? "early"
       : cpb <= CPB_GATE
         ? "good"
@@ -138,9 +147,14 @@ export function gridCell(
 }
 
 /**
- * Out of KPI by both numbers: a hold or a kill on the grid, but not a
- * campaign that is only too early to judge on bookings. Without booking data
- * (Done With You, no GHL) it is the cost per lead gate alone.
+ * Out of KPI by both numbers: a kill on the grid, or a hold because the cost
+ * per booking is between CPB_GATE and CPB_BAD (or nothing was booked on that
+ * much spend). A hold on the good row is not out of KPI: its bookings cost
+ * CPB_GATE or less and only the cost per lead is high, and the golden rule
+ * makes that a watch, never a constraint (2026-10-21; the old rule listed
+ * Atlantis at $43.63 a booking as out of KPI). Too early to judge on bookings
+ * is not out of KPI either, unless its cost per lead is a kill. Without
+ * booking data (Done With You, no GHL) it is the cost per lead gate alone.
  */
 export function belowKpi(c: {
   spend7d: number;
@@ -153,6 +167,6 @@ export function belowKpi(c: {
   if (c.leads7d <= 0) return c.spend7d >= 1;
   const cell = gridCell(c.spend7d, c.leads7d, c.bookings7d);
   return (
-    cell.verdict === "kill" || (cell.verdict === "hold" && cell.row !== "early")
+    cell.verdict === "kill" || (cell.verdict === "hold" && cell.row === "watch")
   );
 }

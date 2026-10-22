@@ -52,7 +52,7 @@ export const KINDS: { key: InvoiceKind; label: string; hint: string }[] = [
   },
 ];
 
-const METHODS = ["Bank transfer", "Card", "Whop", "Cash"];
+const METHODS = ["Bank transfer", "Card", "Ecom", "Whop", "Tap", "Cash"];
 const MAX_PAYMENTS = 12;
 
 type PayLine = {
@@ -70,17 +70,18 @@ type State = {
   description: string;
   lineNote: string;
   clientDetail: string;
+  taxId: string;
   period: string;
   payNote: string;
   dueDate: string;
   /** "Pay online": the worker creates the Whop link, or a person pastes one. */
-  linkMode: "whop" | "paste";
+  linkMode: "ecom" | "paste";
   checkoutUrl: string;
   payments: PayLine[];
 };
 
 /** What the preview's Pay now button points at until the worker makes the real link. */
-const WHOP_PREVIEW = "https://whop.com/checkout/";
+const ECOM_PREVIEW = "https://invoice.ecom.io/";
 
 let nextKey = 1;
 const blankPayment = (today: string): PayLine => ({
@@ -91,17 +92,26 @@ const blankPayment = (today: string): PayLine => ({
   ref: "",
 });
 
-const fresh = (today: string, taskId = "", clientDetail = ""): State => ({
+/** The same rule the database checks (cockpit_invoices_client_tax_id_check). */
+const TAX_ID = /^[A-Za-z0-9][A-Za-z0-9 ./-]{0,39}$/;
+
+const fresh = (
+  today: string,
+  taskId = "",
+  clientDetail = "",
+  taxId = "",
+): State => ({
   taskId,
   kind: "paid",
   amount: "",
   description: "",
   lineNote: "",
   clientDetail,
+  taxId,
   period: "",
   payNote: "",
   dueDate: "",
-  linkMode: "whop",
+  linkMode: "ecom",
   checkoutUrl: "",
   payments: [blankPayment(today)],
 });
@@ -134,6 +144,8 @@ const usd = (c: number) => `USD ${money((c / 100).toFixed(2))}`;
 /** The first thing still missing, in the database's own words; null when ready. */
 function problemOf(s: State, today: string): string | null {
   if (!s.taskId) return "Pick a client.";
+  if (s.taxId.trim() && !TAX_ID.test(s.taxId.trim()))
+    return "Type the tax number with letters, numbers, spaces, dots or dashes only.";
   const total = cents(s.amount);
   if (total === null)
     return "Type the amount in US dollars, for example 1500 or 1500.50.";
@@ -171,6 +183,7 @@ function problemOf(s: State, today: string): string | null {
 export function InvoiceForm({
   clients,
   folders,
+  taxIds,
   today,
   canSetFolder,
   onDraft,
@@ -179,6 +192,8 @@ export function InvoiceForm({
 }: {
   clients: InvoiceClient[];
   folders: Record<string, ClientFolder>;
+  /** Each client's tax number from their last invoice that had one. */
+  taxIds: Record<string, string>;
   today: string;
   canSetFolder: boolean;
   onDraft: (draft: InvoiceDraft) => void;
@@ -203,6 +218,7 @@ export function InvoiceForm({
       ...prev,
       taskId,
       clientDetail: c?.country ?? "",
+      taxId: taxIds[taskId] ?? "",
       amount:
         prev.amount || prev.kind === "paid" || !c?.nextUsd
           ? prev.amount
@@ -233,15 +249,18 @@ export function InvoiceForm({
       description: s.description.trim() || "Description",
       line_note: s.lineNote.trim() || null,
       client_detail: s.clientDetail.trim() || null,
+      client_tax_id: s.taxId.trim() || null,
       period: s.period.trim() || null,
       pay_note: s.payNote.trim() || null,
       issue_date: today,
       due_date: s.kind === "paid" ? null : s.dueDate || today,
+      checkout_source:
+        s.linkMode === "ecom" && s.kind === "checkout" ? "ecom" : "pasted",
       checkout_url:
         s.kind !== "checkout"
           ? null
-          : s.linkMode === "whop"
-            ? WHOP_PREVIEW
+          : s.linkMode === "ecom"
+            ? ECOM_PREVIEW
             : s.checkoutUrl.trim(),
       payments:
         s.kind === "paid"
@@ -271,6 +290,7 @@ export function InvoiceForm({
       description: s.description.trim(),
       lineNote: trim(s.lineNote),
       clientDetail: trim(s.clientDetail),
+      taxId: trim(s.taxId),
       period: trim(s.period),
       payNote: trim(s.payNote),
       dueDate: s.kind === "paid" ? undefined : s.dueDate,
@@ -279,7 +299,7 @@ export function InvoiceForm({
           ? s.checkoutUrl.trim()
           : undefined,
       createLink:
-        s.kind === "checkout" && s.linkMode === "whop" ? true : undefined,
+        s.kind === "checkout" && s.linkMode === "ecom" ? true : undefined,
       payments:
         s.kind === "paid"
           ? s.payments.map(p => ({
@@ -292,7 +312,7 @@ export function InvoiceForm({
     });
     setSending(false);
     setAsking(false);
-    if (ok) setS(fresh(today, s.taskId, s.clientDetail));
+    if (ok) setS(fresh(today, s.taskId, s.clientDetail, s.taxId));
   }
 
   async function saveFolder() {
@@ -377,19 +397,39 @@ export function InvoiceForm({
             ) : null}
           </div>
         ) : null}
-        <Field
-          id="inv-detail"
-          label="Location"
-          hint="The line under the client's name."
-        >
-          <Input
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+          <Field
             id="inv-detail"
-            maxLength={120}
-            placeholder="Jeddah, Saudi Arabia"
-            value={s.clientDetail}
-            onChange={e => set({ clientDetail: e.target.value })}
-          />
-        </Field>
+            label="Location"
+            hint="The line under the client's name."
+          >
+            <Input
+              id="inv-detail"
+              maxLength={120}
+              placeholder="Jeddah, Saudi Arabia"
+              value={s.clientDetail}
+              onChange={e => set({ clientDetail: e.target.value })}
+            />
+          </Field>
+          <Field
+            id="inv-tax"
+            label="Tax number (optional)"
+            hint={
+              s.taxId && s.taxId === taxIds[s.taskId]
+                ? "From this client's last invoice."
+                : "Only when the client sent one."
+            }
+          >
+            <Input
+              id="inv-tax"
+              maxLength={40}
+              placeholder="300123456700003"
+              className="font-mono tabular-nums"
+              value={s.taxId}
+              onChange={e => set({ taxId: e.target.value })}
+            />
+          </Field>
+        </div>
       </section>
 
       <section className="space-y-4">
@@ -549,10 +589,10 @@ export function InvoiceForm({
             <div className="space-y-2">
               <PillRow>
                 <Pill
-                  active={s.linkMode === "whop"}
-                  onClick={() => set({ linkMode: "whop" })}
+                  active={s.linkMode === "ecom"}
+                  onClick={() => set({ linkMode: "ecom" })}
                 >
-                  Create a Whop link
+                  Create an Ecom link (KWD at today's rate)
                 </Pill>
                 <Pill
                   active={s.linkMode === "paste"}
@@ -562,8 +602,8 @@ export function InvoiceForm({
                 </Pill>
               </PillRow>
               <p className="text-xs text-muted-foreground">
-                {s.linkMode === "whop"
-                  ? "The worker creates a private one-time Whop checkout for this amount and puts it on the invoice as a Pay now button."
+                {s.linkMode === "ecom"
+                  ? "The worker converts USD to KWD at today's rate and creates an Ecom payment link for the Pay now button."
                   : "Use a payment link you already have. It goes on the invoice as a Pay now button."}
               </p>
             </div>
@@ -575,7 +615,7 @@ export function InvoiceForm({
                   id="inv-link"
                   type="url"
                   maxLength={500}
-                  placeholder="https://whop.com/checkout/..."
+                  placeholder="https://invoice.ecom.io/..."
                   value={s.checkoutUrl}
                   onChange={e => set({ checkoutUrl: e.target.value })}
                 />
@@ -633,8 +673,8 @@ export function InvoiceForm({
               {total !== null ? usd(total) : ""} for {chosen?.name}. It gets the
               next invoice number, goes into the client's Drive folder, where
               the client can see it, and is locked against edits.
-              {s.kind === "checkout" && s.linkMode === "whop"
-                ? " The worker also creates its private Whop payment link first."
+              {s.kind === "checkout" && s.linkMode === "ecom"
+                ? " The worker also creates its Ecom payment link in KWD first."
                 : null}
             </AlertDialogDescription>
           </AlertDialogHeader>

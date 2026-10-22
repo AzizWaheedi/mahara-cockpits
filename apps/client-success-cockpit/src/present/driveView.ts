@@ -89,7 +89,7 @@ const pad = (n: number) => String(n).padStart(2, "0");
 /**
  * {time}: the CSM's local time, "13:02", or "yesterday, 13:02"; in Arabic
  * with الساعة, as a time is said after a verb ("الساعة 13:02", "أمس الساعة
- * 09:05").
+ * 09:05"), and a date with يوم ("يوم ١٦ أكتوبر الساعة 09:05").
  */
 export function timeLabel(iso: string, now: Date, lang: Lang): string {
   const d = new Date(iso);
@@ -105,7 +105,7 @@ export function timeLabel(iso: string, now: Date, lang: Lang): string {
     const month = new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en-GB", {
       month: lang === "ar" ? "long" : "short",
     }).format(d);
-    out = `${lang === "ar" ? num(d.getDate(), "ar") : d.getDate()} ${month}${comma}${hm}`;
+    out = `${lang === "ar" ? `يوم ${num(d.getDate(), "ar")}` : d.getDate()} ${month}${comma}${hm}`;
   }
   // The clock stays in Latin digits (decision 6): a ٠ beside a colon reads
   // as a dot, and ٠٩ would open on a lone ٠.

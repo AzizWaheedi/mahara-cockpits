@@ -593,9 +593,18 @@ export function sortNumber(cell: Cell | null | undefined): number | null {
 // ---------------------------------------------------------------------------
 // The first break: the first step of the funnel that is off its target.
 
+// Cost per booking comes straight after the booking rate (2026-10-21): the
+// line read "Off at ROAS" for SAFAD, Khalida and City Wood while their cost
+// per booking was off. Where the booking rate is the cause it still names the
+// booking rate first, and the call centre's lever with it.
 export const FUNNEL_ORDER: { key: string; label: string; metric: string }[] = [
   { key: "cpl", label: "cost per lead", metric: "cpl" },
   { key: "leadToBooking", label: "booking rate", metric: "lead_to_booking" },
+  {
+    key: "costPerBooking",
+    label: "cost per booking",
+    metric: "cost_per_booking",
+  },
   { key: "showRate", label: "show rate", metric: "show_rate" },
   { key: "quotationRate", label: "quote rate", metric: "quotation_rate" },
   { key: "closeRate", label: "close rate", metric: "close_rate" },
@@ -610,14 +619,21 @@ export type FirstBreak =
 /**
  * Where this client's funnel breaks first, in funnel order: the first step
  * that is off, else the first one to watch, else on target when at least one
- * step was judged. The statuses are the database's.
+ * step was judged. The statuses are the database's. A done-with-you client
+ * books its own calls, so its cost per booking never names the break.
  */
-export function firstBreak(row: Pick<ClientRow, "values">): FirstBreak {
+export function firstBreak(
+  row: Pick<ClientRow, "values"> & { serviceMode?: string | null },
+): FirstBreak {
+  const steps =
+    row.serviceMode === "DWY"
+      ? FUNNEL_ORDER.filter(s => s.key !== "costPerBooking")
+      : FUNNEL_ORDER;
   for (const kind of ["off", "watch"] as const) {
-    const hit = FUNNEL_ORDER.find(s => statusOf(row.values[s.key]) === kind);
+    const hit = steps.find(s => statusOf(row.values[s.key]) === kind);
     if (hit) return { kind, ...hit };
   }
-  return FUNNEL_ORDER.some(s => statusOf(row.values[s.key]) === "good")
+  return steps.some(s => statusOf(row.values[s.key]) === "good")
     ? { kind: "on_target" }
     : { kind: "unknown" };
 }
@@ -1014,6 +1030,19 @@ export type BudgetFacts = {
    * much at once.
    */
   budgetHigh: string[];
+  /**
+   * Clients with an outsiders' campaign switched on now: one on the
+   * compromise list (cockpit_excluded_ads) whose ads are all on it
+   * ("Liwan ($7,260 a day)"). Not in Budget/day, so only this says it; a
+   * payment or a fixed account would let it spend (2026-10-21).
+   */
+  outsiders: string[];
+  /**
+   * How many outsiders' campaigns those clients have switched on, all
+   * together: equal to outsiders.length when each has exactly one, so the
+   * sentence says "an outsider's campaign ... switch it off".
+   */
+  outsiderCampaigns: number;
   /** Something needs action now (an account, a campaign not spending, an off figure), not only a watch. */
   off: boolean;
 };
@@ -1025,6 +1054,8 @@ export function budgetFacts(rows: ClientRow[]): BudgetFacts {
     under: [],
     issues: {},
     budgetHigh: [],
+    outsiders: [],
+    outsiderCampaigns: 0,
     off: false,
   };
   const add = (list: string[], name: string) => {
@@ -1049,6 +1080,15 @@ export function budgetFacts(rows: ClientRow[]): BudgetFacts {
       daily.v > BUDGET_HIGH_TIMES * perDay
     ) {
       add(f.budgetHigh, `${r.clientName} (${money(daily.v)} a day)`);
+      f.off = true;
+    }
+    const out = daily?.outsiders;
+    if (out && isNum(out.campaigns) && out.campaigns > 0) {
+      const name = isNum(out.budget)
+        ? `${r.clientName} (${money(out.budget)} a day${out.atLeast ? " or more" : ""})`
+        : r.clientName;
+      if (!f.outsiders.includes(name)) f.outsiderCampaigns += out.campaigns;
+      add(f.outsiders, name);
       f.off = true;
     }
     if (s === "off") f.off = true;
@@ -1143,6 +1183,7 @@ const GROUP_LABEL: Record<string, string> = {
   limit_near: "Under a day of spending limit left",
   balance_low: "Under a day of prepaid balance left",
   budgetHigh: "Budget far above its usual spend",
+  outsiders: "Outsiders' campaigns switched on",
   notSpending: "Spent nothing yesterday",
   notDelivering: "Budget switched on, not delivering",
   under: "Spent under budget in these dates",
@@ -1158,6 +1199,16 @@ const GROUP_LABEL: Record<string, string> = {
 export function budgetGroups(f: BudgetFacts): BudgetGroup[] {
   const seen = new Set<string>();
   const out: BudgetGroup[] = [];
+  // Before everything: not the client's at all, and Meta would spend their
+  // budgets as soon as the account can deliver (2026-10-21: Liwan's two
+  // campaigns on the compromise list, $7,260 a day, on an unsettled account).
+  if (f.outsiders.length)
+    out.push({
+      key: "outsiders",
+      label: GROUP_LABEL.outsiders,
+      stops: true,
+      names: f.outsiders,
+    });
   // First, and whatever else names the client: a payment or a fixed account
   // would let Meta spend that budget at once (2026-10-17: Liwan had $7,260 a
   // day switched on while its account owed a payment; Meta refuses edits
@@ -1207,6 +1258,13 @@ export function listName(name: string): string {
 export function budgetSentence(f: BudgetFacts): string | null {
   const one = (list: string[]) => list.length === 1;
   const parts = [
+    f.outsiders.length
+      ? f.outsiderCampaigns === f.outsiders.length
+        ? one(f.outsiders)
+          ? `${nameList(f.outsiders)} has an outsider's campaign switched on: switch it off in Meta`
+          : `${nameList(f.outsiders)} each have an outsider's campaign switched on: switch them off in Meta`
+        : `${nameList(f.outsiders)} ${one(f.outsiders) ? "has" : "have"} outsiders' campaigns switched on: switch them off in Meta`
+      : null,
     f.notSpending.length
       ? `${nameList(f.notSpending)} spent nothing yesterday on a running budget`
       : null,

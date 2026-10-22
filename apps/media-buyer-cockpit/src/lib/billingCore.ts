@@ -53,6 +53,7 @@ export const METHODS = [
   "Bank transfer",
   "Tap link",
   "Whop link",
+  "Ecom link",
   "Check",
 ] as const;
 export const PLANS = [

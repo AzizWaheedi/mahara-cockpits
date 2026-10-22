@@ -1,8 +1,12 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {withNativeContext} from './runtime';
-import {dialerReplacedBookingIds, ghlBookingEvents, placeBookings} from './calculator';
+import {calendarKind, dialerReplacedBookingIds, ghlBookingEvents, movedBookingDay, movedFromCounted, placeBookings} from './calculator';
 import {capture} from './capture';
+
+// The native context with test doubles for its reads.
+// biome-ignore lint/suspicious/noExplicitAny: test doubles stand in for the native reads
+const inNative = <T>(reads: unknown, fn: () => Promise<T>) => withNativeContext(reads as any, {} as any, fn);
 
 // Muhammed, 2026-10-12: bookings for a meeting still ahead were invisible
 // until the meeting day, and bookings bought by a stopped or replaced
@@ -44,7 +48,7 @@ test('GHL is asked for past and future meetings, each booking once, dated by whe
  const now = Date.now();
  const fetch = async (url: string) => {
   const u = new URL(url);
-  if (u.pathname === '/calendars/') return Response.json({calendars: [{id: 'cal', name: 'Consultation'}, {id: 'cb', name: 'Callback calendar'}]});
+  if (u.pathname === '/calendars/') return Response.json({calendars: [{id: 'cal', name: 'Main Appointment Calendar'}, {id: 'cb', name: 'Callback calendar'}]});
   if (u.pathname === '/calendars/events') {
    const start = Number(u.searchParams.get('startTime')), end = Number(u.searchParams.get('endTime'));
    asked.push({start, end});
@@ -62,7 +66,7 @@ test('GHL is asked for past and future meetings, each booking once, dated by whe
   return new Response('', {status: 404});
  };
  const reads = {graph: async () => ({}), tool: async () => null, fetch, log: () => {}};
- const events = await withNativeContext(reads as any, {} as any, () => ghlBookingEvents('loc', 'pit-test'));
+ const events = await inNative(reads, () => ghlBookingEvents('loc', 'pit-test'));
  assert.ok(events);
  assert.equal(asked.length, 2, 'the callback calendar is skipped; the booking calendar is asked twice');
  assert.ok(asked.some(a => a.end > now + 30 * 86400000), 'one ask reaches meetings weeks ahead');
@@ -73,45 +77,173 @@ test('GHL is asked for past and future meetings, each booking once, dated by whe
  ]);
 });
 
-test('the call centre\'s RESCHEDULE and CALLBACK bookings are dropped by id; a lead\'s own booking on the same calendar counts', async () => {
- // Atlantis, 2026-10-16: "Project Review & Qualification Call" holds the call
- // centre's callbacks and a lead's own widget booking. The calendar is asked;
- // only the ids the dialer marks are left out.
+test('only the main and online appointment calendars are asked, as on the board', () => {
+ // cockpit_board_calendar_kind, 20261016111157_board_facts.sql. Names from the
+ // Active clients' GHL calendars on 2026-10-22.
+ assert.equal(calendarKind('Main Appointment Calendar'), 'main');
+ assert.equal(calendarKind('A. Appointment Calendar (Online)'), 'online');
+ assert.equal(calendarKind('Not Confirmed Appointments'), 'provisional');
+ assert.equal(calendarKind('Callback calendar'), 'callback');
+ assert.equal(calendarKind('معاودة الاتصال'), 'callback');
+ assert.equal(calendarKind('Reschedule Calendar'), 'reschedule');
+ // Decision D0c, default not counted (2026-10-21).
+ assert.equal(calendarKind('مكالمة مراجعة المشروع وتنسيق الاستشارة | Project Review & Qualification Call'), 'other');
+ assert.equal(calendarKind('Mahara OS Google Sync Test (internal)'), 'other');
+ assert.equal(calendarKind('Personal Calendar'), 'other');
+ assert.equal(calendarKind(''), 'other');
+});
+
+test('the call centre\'s CALLBACK bookings are dropped by id; a lead\'s own booking on the same calendar counts', async () => {
+ // Atlantis, 2026-10-16: the call centre's call-backs sat beside a lead's own
+ // widget booking. Dropped by id, so a call-back on a main calendar is left
+ // out too. The qualification calendar is not asked at all (decision D0c).
  const now = Date.now();
  const asked: string[] = [];
  const fetch = async (url: string) => {
   const u = new URL(url);
-  if (u.pathname === '/calendars/') return Response.json({calendars: [{id: 'qual', name: 'Project Review & Qualification Call'}]});
+  if (u.pathname === '/calendars/') return Response.json({calendars: [{id: 'main', name: 'Main Appointment Calendar'}, {id: 'qual', name: 'Project Review & Qualification Call'}]});
   if (u.pathname === '/calendars/events') {
    asked.push(String(u.searchParams.get('calendarId')));
    if (Number(u.searchParams.get('startTime')) >= now) return Response.json({events: []});
    return Response.json({events: [
-    {id: 'cb1', contactId: 'c1', startTime: new Date(now - 86400000).toISOString(), dateAdded: '2026-10-10T09:00:00Z', appointmentStatus: 'confirmed'},
-    {id: 'widget', contactId: 'c2', startTime: new Date(now - 86400000).toISOString(), dateAdded: '2026-10-12T09:00:00Z', appointmentStatus: 'confirmed', createdBy: {source: 'booking_widget'}},
+    {id: 'cb1', contactId: 'c1', startTime: new Date(now - 86400000).toISOString(), dateAdded: '2026-10-18T09:00:00Z', appointmentStatus: 'confirmed'},
+    {id: 'widget', contactId: 'c2', startTime: new Date(now - 86400000).toISOString(), dateAdded: '2026-10-19T09:00:00Z', appointmentStatus: 'confirmed'},
    ]});
   }
   if (u.pathname === '/opportunities/search') return Response.json({opportunities: []});
   return new Response('', {status: 404});
  };
  const reads = {graph: async () => ({}), tool: async () => null, fetch, log: () => {}};
- const events = await withNativeContext(reads as any, {} as any, () => ghlBookingEvents('loc', 'pit-test', new Set(['cb1'])));
- assert.ok(asked.includes('qual'), 'the calendar is not skipped by its name');
+ const events = await inNative(reads, () => ghlBookingEvents('loc', 'pit-test', {callbacks: new Set(['cb1']), moved: new Map(), originalDay: new Map()}));
+ assert.deepEqual([...new Set(asked)], ['main'], 'the qualification calendar is not asked');
  assert.deepEqual(events?.map(e => e.eventId), ['widget']);
  // Without the dialer's ids (it could not be read) every booking counts, as before.
- const all = await withNativeContext(reads as any, {} as any, () => ghlBookingEvents('loc', 'pit-test'));
+ const all = await inNative(reads, () => ghlBookingEvents('loc', 'pit-test'));
  assert.deepEqual(all?.map(e => e.eventId).sort(), ['cb1', 'widget']);
 });
 
-test('the dialer\'s replaced booking ids come from its RESCHEDULE and CALLBACK dispositions; a failed read gives none', async () => {
+test('a location with no main or online calendar has unknown bookings, never zero', async () => {
+ const logs: string[] = [];
+ const fetch = async (url: string) => {
+  const u = new URL(url);
+  if (u.pathname === '/calendars/') return Response.json({calendars: [{id: 'c', name: 'Consultation'}, {id: 'nc', name: 'Not Confirmed Appointments'}]});
+  throw new Error(`not asked: ${u.pathname}`);
+ };
+ const reads = {graph: async () => ({}), tool: async () => null, fetch, log: (level: string) => { logs.push(level); }};
+ assert.equal(await inNative(reads, () => ghlBookingEvents('loc', 'pit-test')), undefined);
+ assert.deepEqual(logs, ['warn']);
+});
+
+test('a RESCHEDULE\'s booking is left out only while the one it moved still counts, and dated by the lead\'s booking', async () => {
+ // Decision D0b, 2026-10-21. SAFAD's MxRYJYyO64JjX7lL7kMc moved
+ // hncsfdNodMEdkVNW3245, which GHL and public.appointments no longer hold: it
+ // is the lead's only booking and counts on its own day. Arcturus's
+ // l1Ar6ZhyTqKN4baJush0 (28 Sep) moved OQGyKMbxm7ZiEwNar9h4, which GHL no
+ // longer holds but public.appointments knows was booked on 22 Sep: it counts
+ // on 22 Sep, the day the board counts it. A move whose original still counts
+ // is the same booking, counted once as the original.
+ const now = Date.now();
+ const at = (id: string, day: string, over: Record<string, unknown> = {}) =>
+  ({id, contactId: `c-${id}`, startTime: new Date(now - 86400000).toISOString(), dateAdded: `${day}T09:00:00Z`, appointmentStatus: 'confirmed', ...over});
+ const fetch = async (url: string) => {
+  const u = new URL(url);
+  if (u.pathname === '/calendars/') return Response.json({calendars: [{id: 'main', name: 'Main Appointment Calendar'}]});
+  if (u.pathname === '/calendars/events') {
+   if (Number(u.searchParams.get('startTime')) >= now) return Response.json({events: []});
+   return Response.json({events: [
+    at('orig', '2026-10-10'), at('moved', '2026-10-12'),
+    at('safad', '2026-10-20'),
+    at('arcturus', '2026-09-28'),
+    at('dropped', '2026-10-09', {appointmentStatus: 'cancelled'}), at('rebooked', '2026-10-13'),
+    at('first', '2026-10-01'), at('second', '2026-10-05'), at('third', '2026-10-08'),
+    at('cb', '2026-10-14'), at('cbmoved', '2026-10-15'),
+    at('lateMove', '2026-10-16'),
+    at('gone2', '2026-10-17', {deleted: true}), at('afterDeleted', '2026-10-18'),
+   ]});
+  }
+  if (u.pathname === '/opportunities/search') return Response.json({opportunities: []});
+  return new Response('', {status: 404});
+ };
+ const reads = {graph: async () => ({}), tool: async () => null, fetch, log: () => {}};
+ const dialer = {
+  callbacks: new Set(['cb']),
+  moved: new Map([
+   ['moved', 'orig'], // original still counts: left out
+   ['safad', 'hncsfdNodMEdkVNW3245'], // original gone everywhere: counts on its own day
+   ['arcturus', 'OQGyKMbxm7ZiEwNar9h4'], // original gone from GHL, booked 22 Sep: counts on 22 Sep
+   ['rebooked', 'dropped'], // original held and cancelled: a new booking on its own day
+   ['second', 'first'], ['third', 'second'], // moved twice: counted once, as the first
+   ['cbmoved', 'cb'], // a moved call-back is still a call-back
+   ['lateMove', 'oldMeeting'], // original's meeting older than the 30 days read: its own weeks
+   ['afterDeleted', 'gone2'], // GHL marks the original deleted: it is gone
+  ]),
+  originalDay: new Map([
+   ['OQGyKMbxm7ZiEwNar9h4', '2026-09-22'],
+   ['dropped', '2026-10-09'],
+   ['oldMeeting', '2026-08-30'],
+   ['gone2', '2026-10-17'],
+  ]),
+ };
+ const events = await inNative(reads, () => ghlBookingEvents('loc', 'pit-test', dialer));
+ assert.deepEqual(events?.map(e => [e.eventId, e.date]).sort(), [
+  ['afterDeleted', '2026-10-17'],
+  ['arcturus', '2026-09-22'],
+  ['first', '2026-10-01'],
+  ['lateMove', '2026-08-30'],
+  ['orig', '2026-10-10'],
+  ['rebooked', '2026-10-13'],
+  ['safad', '2026-10-20'],
+ ]);
+ // The middle of a chain may be gone: the move still finds the first booking.
+ assert.equal(movedFromCounted('third', dialer.moved, new Set(['first'])), true);
+ assert.equal(movedFromCounted('safad', dialer.moved, new Set(['orig'])), false);
+ assert.equal(movedFromCounted('cbmoved', dialer.moved, new Set(), dialer.callbacks), true);
+ // Bad data that loops never drops a booking for itself.
+ assert.equal(movedFromCounted('x', new Map([['x', 'x']]), new Set(['x'])), false);
+ // A chain of moves GHL no longer holds is dated by its earliest known booking.
+ const chain = new Map([['c3', 'c2'], ['c2', 'c1']]);
+ assert.equal(movedBookingDay('c3', chain, new Set(), new Map([['c2', '2026-10-05'], ['c1', '2026-10-01']])), '2026-10-01');
+ assert.equal(movedBookingDay('c3', chain, new Set(['c2']), new Map([['c1', '2026-10-01']])), undefined);
+ assert.equal(movedBookingDay('x', new Map([['x', 'x']]), new Set(), new Map([['x', '2026-10-01']])), undefined);
+});
+
+test('the dialer\'s CALLBACK ids and RESCHEDULE moves come from its dispositions; a failed read gives none and warns', async () => {
  const queries: string[] = [];
- const ok = {graph: async () => ({}), fetch: async () => new Response(''), log: () => {},
-  tool: async (_name: string, args: {query: string}) => { queries.push(args.query); return {result: JSON.stringify([{id: 'a1'}, {id: 'a2'}, {id: ''}])}; }};
- const ids = await withNativeContext(ok as any, {} as any, () => dialerReplacedBookingIds());
- assert.deepEqual([...(ids ?? [])].sort(), ['a1', 'a2']);
+ const logs: string[] = [];
+ const ok = {graph: async () => ({}), fetch: async () => new Response(''), log: (level: string) => { logs.push(level); },
+  tool: async (_name: string, args: {query: string}) => { queries.push(args.query); return {result: JSON.stringify([
+   {outcome: 'CALLBACK', id: 'a1', original: null}, {outcome: 'CALLBACK', id: 'a2', original: null},
+   {outcome: 'RESCHEDULE', id: 'n1', original: 'o1', original_day: '2026-09-22', original_status: 'confirmed', original_source: null, original_calendar: 'Main Appointment Calendar'},
+   {outcome: 'RESCHEDULE', id: 'n0', original: null},
+   {outcome: 'RESCHEDULE', id: 'n2', original: 'o2', original_day: null},
+   {outcome: 'RESCHEDULE', id: 'n3', original: 'o3', original_day: '2026-10-01', original_status: 'cancelled', original_calendar: 'Main Appointment Calendar'},
+   {outcome: 'RESCHEDULE', id: 'n4', original: 'o4', original_day: '2026-10-02', original_status: 'confirmed', original_calendar: 'Not Confirmed Appointments'},
+   {outcome: 'RESCHEDULE', id: 'n5', original: 'o5', original_day: '2026-10-03', original_status: 'confirmed', original_source: 'google_calendar', original_calendar: 'Main Appointment Calendar'},
+   {outcome: 'RESCHEDULE', id: 'n6', original: 'o6', original_day: '2026-10-04', original_status: 'showed', original_calendar: 'A. Appointment Calendar (Online)'},
+   {outcome: 'CALLBACK', id: '', original: null},
+  ])}; }};
+ const read = await inNative(ok, () => dialerReplacedBookingIds());
+ assert.deepEqual([...(read?.callbacks ?? [])].sort(), ['a1', 'a2']);
+ // A RESCHEDULE that names no original moved nothing that can be checked: it counts.
+ assert.deepEqual([...(read?.moved ?? [])].map(([k]) => k), ['n1', 'n2', 'n3', 'n4', 'n5', 'n6']);
+ // Only an original public.appointments holds as a counted main or online booking dates a move.
+ assert.deepEqual([...(read?.originalDay ?? [])], [['o1', '2026-09-22'], ['o6', '2026-10-04']]);
  assert.match(queries[0], /'RESCHEDULE', 'CALLBACK'/);
  assert.match(queries[0], /bookingVerification/);
+ assert.match(queries[0], /originalAppointmentId/);
+ assert.match(queries[0], /public\.appointments/);
+ assert.match(queries[0], /Asia\/Kuwait/);
+ assert.doesNotMatch(queries[0], /\blimit\s+\d/i, 'the native transport refuses a capped read');
+ assert.deepEqual(logs, []);
+ // In this harness the tool failure only throws. On the native worker the
+ // failed read is also a source fault, so that run does not publish at all.
  const down = {...ok, tool: async () => { throw new Error('Supabase is down'); }};
- assert.equal(await withNativeContext(down as any, {} as any, () => dialerReplacedBookingIds()), undefined);
+ assert.equal(await inNative(down, () => dialerReplacedBookingIds()), undefined);
+ assert.deepEqual(logs, ['warn']);
+ // An answer that is not rows: call-backs count this run, with a warning.
+ const odd = {...ok, tool: async () => ({result: '{"error":"not rows"}'})};
+ assert.equal(await inNative(odd, () => dialerReplacedBookingIds()), undefined);
+ assert.deepEqual(logs, ['warn', 'warn']);
 });
 
 const state = (over: Record<string, unknown> = {}) => ({

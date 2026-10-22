@@ -95,6 +95,7 @@ const BANK_KINDS: { value: string; label: string }[] = [
   { value: "whop_payout", label: "Whop payout" },
   { value: "whop_topup", label: "Transfer into Whop" },
   { value: "tap_settlement", label: "Tap settlement" },
+  { value: "ecom_settlement", label: "Ecom settlement" },
   { value: "own_transfer", label: "Own transfer" },
   { value: "refund_in", label: "Refund received" },
   { value: "expense", label: "Expense" },
@@ -110,6 +111,7 @@ const NOTE_MATCH =
 const RAIL_LABEL: Record<MoneyLine["rail"], string> = {
   whop: "Whop",
   tap: "Tap",
+  ecom: "Ecom",
   transfer: "Bank transfer",
   manual: "Logged by hand",
   bank: "Bank",

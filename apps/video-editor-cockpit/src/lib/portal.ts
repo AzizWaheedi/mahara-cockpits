@@ -66,14 +66,14 @@ export async function adPreview(
 
     const { data: winner } = await supabase
       .from("winner_ads")
-      .select("thumbnail_url")
+      .select("thumb_url")
       .eq("ad_id", adId)
       .maybeSingle();
 
-    if (winner?.thumbnail_url) {
+    if (winner?.thumb_url) {
       return {
         ok: true,
-        thumbUrl: winner.thumbnail_url ?? undefined,
+        thumbUrl: winner.thumb_url ?? undefined,
       };
     }
 

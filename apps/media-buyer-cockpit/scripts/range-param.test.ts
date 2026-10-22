@@ -40,3 +40,32 @@ describe("the range in the address", () => {
     expect(defaultRange().key).toBe("7d");
   });
 });
+
+/**
+ * "Last N days" are the N complete days before today (2026-10-21): the media
+ * data runs to yesterday, so a range that ended today held a day fewer than
+ * its name and an opened campaign disagreed with its 7-day row.
+ */
+describe("the presets in Kuwait days", () => {
+  const day = (n: number) =>
+    new Date(Date.now() + 3 * 3600 * 1000 - n * 86400000)
+      .toISOString()
+      .slice(0, 10);
+  const preset = (key: string) => PRESETS.find(p => p.key === key)?.make();
+
+  test("last 3, 7, 14 and 30 days end yesterday and hold that many days", () => {
+    for (const [key, n] of [
+      ["3d", 3],
+      ["7d", 7],
+      ["14d", 14],
+      ["30d", 30],
+    ] as const) {
+      expect(preset(key)).toMatchObject({ start: day(n), end: day(1) });
+    }
+  });
+
+  test("today is today, and yesterday is yesterday", () => {
+    expect(preset("today")).toMatchObject({ start: day(0), end: day(0) });
+    expect(preset("yesterday")).toMatchObject({ start: day(1), end: day(1) });
+  });
+});

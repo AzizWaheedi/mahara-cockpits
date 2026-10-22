@@ -971,6 +971,23 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
       F.PROPOSALS.unshift(row);
       return { proposal: row };
     }
+    case "recording.link": {
+      // A call no rule placed, linked by hand, as sales-api calllinks.ts does.
+      const r = F.RECORDINGS.find(
+        x => x.recording_id === String(b.recording_id ?? ""),
+      );
+      if (!r) throw new Refusal("That call is not in the cockpit.", 404);
+      if (r.contact_id)
+        throw new Refusal(
+          "That call is already another lead's. Ask a manager to move it.",
+          409,
+        );
+      Object.assign(r, {
+        contact_id: String(b.contact_id ?? ""),
+        matched_by: "hand",
+      });
+      return { recording: r };
+    }
     case "proposal.retry": {
       // Draft again: a new request on the same proposal, as sales-api does.
       const p = F.PROPOSALS.find(x => x.id === String(b.id ?? ""));
@@ -1247,6 +1264,11 @@ async function main() {
           parts.some(([col, op, ...pat]) => {
             const needle = pat.join(".").replace(/\*/g, "");
             const hay = String(r[col] ?? "");
+            // Video calls only: source.is.null,source.neq.maqsam.
+            if (op === "is" && needle === "null")
+              return r[col] === null || r[col] === undefined;
+            if (op === "eq") return r[col] != null && hay === needle;
+            if (op === "neq") return r[col] != null && hay !== needle;
             return op === "ilike"
               ? hay.toLowerCase().includes(needle.toLowerCase())
               : hay.includes(needle);

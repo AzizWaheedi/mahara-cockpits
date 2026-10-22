@@ -1,6 +1,7 @@
 import {writeCopy,type Kind} from './copy.ts';
 import {type ModelEnv,type ModelHealth} from './model.ts';
-import {assertObjectScope,type Provider,type Row,type MultiPlan,type Plan} from './core.ts';
+import {assertObjectScope,dollarAccount,type Provider,type Row,type MultiPlan,type Plan} from './core.ts';
+import {usdToBudget} from './currency.ts';
 import {cleanTargeting} from './b2b.ts';
 import {CREATIVE_FIELDS,copyableSpec,setCopy,flattenNote} from './metaCreative.ts';
 type Any=Row;
@@ -104,8 +105,10 @@ export async function prepareLaunch(row:Row,p:Provider):Promise<MultiPlan>{
  const clones=[];for(const id of row.clone_ad_ids??[])clones.push(await ownAd(id,p));
  if(!clones.length)throw new Error('Select source ads so the campaign has reusable media');
  const variants=row.variants??[];if(!Array.isArray(variants)||variants.length>5)throw new Error('Approve at most five variants');
+ // The draft's budget is dollars; the launch refuses unless Meta says Mahara's account is still in dollars.
+ const dailyBudget=usdToBudget(Number(row.daily_budget_usd),await dollarAccount(ACCOUNT,p));
  const steps:Plan[]=[{provider:'meta',method:'POST',path:`${ACT}/campaigns`,body:{name:row.name,objective:row.objective??'OUTCOME_LEADS',status:'PAUSED',special_ad_categories:[],is_adset_budget_sharing_enabled:'false'},verifyPath:'$id?fields=id,name,status',expected:{name:row.name,status:'PAUSED'}},
- {provider:'meta',method:'POST',path:`${ACT}/adsets`,body:{campaign_id:'$step0.id',name:`${KIND_LABEL[row.kind as Kind]} | ${row.source_adset_name??'fresh'}`,status:'PAUSED',daily_budget:Math.round(Number(row.daily_budget_usd)*100),bid_strategy:'LOWEST_COST_WITHOUT_CAP',targeting:JSON.stringify(cleanTargeting(row.targeting)),optimization_goal:row.optimization_goal??'OFFSITE_CONVERSIONS',billing_event:row.billing_event??'IMPRESSIONS',...(row.promoted_object?{promoted_object:JSON.stringify(cleanPromoted(row.promoted_object))}:{})},verifyPath:'$id?fields=id,status,campaign_id',expected:{status:'PAUSED',campaign_id:'$step0.id'}}];
+ {provider:'meta',method:'POST',path:`${ACT}/adsets`,body:{campaign_id:'$step0.id',name:`${KIND_LABEL[row.kind as Kind]} | ${row.source_adset_name??'fresh'}`,status:'PAUSED',daily_budget:dailyBudget,bid_strategy:'LOWEST_COST_WITHOUT_CAP',targeting:JSON.stringify(cleanTargeting(row.targeting)),optimization_goal:row.optimization_goal??'OFFSITE_CONVERSIONS',billing_event:row.billing_event??'IMPRESSIONS',...(row.promoted_object?{promoted_object:JSON.stringify(cleanPromoted(row.promoted_object))}:{})},verifyPath:'$id?fields=id,status,campaign_id',expected:{status:'PAUSED',campaign_id:'$step0.id'}}];
  const adIds:string[]=[];const addAd=(name:string,creativeId:string)=>{const index=steps.length;steps.push({provider:'meta',method:'POST',path:`${ACT}/ads`,body:{name,adset_id:'$step1.id',status:'PAUSED',creative:JSON.stringify({creative_id:creativeId})},verifyPath:'$id?fields=id,status,adset_id',expected:{status:'PAUSED',adset_id:'$step1.id'}});adIds.push(`$step${index}.id`);};
  for(const ad of clones)addAd(`${ad.name??ad.id} | relaunch`,metaId(ad.creative?.id));
  let rebuilt:any=null,note:string|null=null;for(const ad of clones){const copy=copyableSpec(ad.creative);if(copy.ok){rebuilt=copy.spec;note=flattenNote(copy.flattened);break;}}

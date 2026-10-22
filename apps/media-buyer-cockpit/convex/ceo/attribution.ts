@@ -17,7 +17,7 @@ import { nameKey } from "./manualMatch";
  * reads a database, so the rules can be tested on their own.
  */
 
-export type Rail = "whop" | "tap" | "transfer" | "manual";
+export type Rail = "whop" | "tap" | "ecom" | "transfer" | "manual";
 
 /** One payment in, as the rails give it. */
 export type PaymentIn = {

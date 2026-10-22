@@ -66,6 +66,22 @@ describe("invoice preview", () => {
     expect(html).not.toContain(`>${url}<`);
   });
 
+  test("the tax number prints under the location only when given", () => {
+    const c = cases.find(x => x.name.includes("tax number"));
+    if (!c) throw new Error("golden case missing");
+    const html = fillInvoice(c.invoice, "INV-2026-031", appTemplate);
+    expect(html).toContain('Tax no. <span class="mono">300123456700003</span>');
+    for (const blank of [null, "", "   "]) {
+      const none = fillInvoice(
+        { ...c.invoice, client_tax_id: blank },
+        "INV-2026-031",
+        appTemplate,
+      );
+      expect(none).not.toContain("Tax no.");
+      expect(none).not.toContain("IF_TAX_ID");
+    }
+  });
+
   test("money rounds half up as typed, like Python's Decimal", () => {
     expect(money(6000)).toBe("6,000.00");
     expect(money("1500.5")).toBe("1,500.50");

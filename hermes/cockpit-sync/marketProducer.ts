@@ -273,21 +273,48 @@ function leadsOf(insights: Row): { spend: number; leads: number } {
   return { spend, leads };
 }
 
-async function resolveInsights(entityId: string, insights: unknown): Promise<Row> {
+type InsightLevel = "adset" | "ad";
+type InsightWindow = (level: InsightLevel) => Promise<Map<string, Row[]>>;
+
+/**
+ * Meta leaves out nested insights for an ad set or ad with no delivery in the
+ * window. One explicit, fully paged 30-day read per account and level verifies
+ * those, instead of one read per ad set or ad (about 528 Meta calls a run on
+ * 21 Oct 2026, the calls Meta refused at busy hours). An id missing from the
+ * account's rows had no delivery: a verified zero.
+ */
+function accountWindow(accountId: string): InsightWindow {
+  const levels: Partial<Record<InsightLevel, Promise<Map<string, Row[]>>>> = {};
+  return level =>
+    (levels[level] ??= (async () => {
+      const res = await graph(`act_${accountId}/insights`, {
+        level,
+        date_preset: 'last_30d',
+        fields: `${level}_id,spend,actions`,
+        limit: 500,
+      });
+      if (!Array.isArray(res?.data)) throw new Error('Market insight window is missing or ambiguous');
+      const rows = new Map<string, Row[]>();
+      for (const row of res.data) {
+        const id = String(row?.[`${level}_id`] ?? "").trim();
+        if (!id) throw new Error('Market insight identity missing');
+        rows.set(id, [...(rows.get(id) ?? []), row]);
+      }
+      return rows;
+    })());
+}
+
+async function resolveInsights(entityId: string, insights: unknown, window: () => Promise<Map<string, Row[]>>): Promise<Row> {
   if (insights !== undefined && insights !== null) {
     return insights as Row;
   }
   const cleanId = String(entityId ?? "").trim();
   if (!cleanId) throw new Error('Market entity identity missing for insight lookup');
-  const res = await graph(`${cleanId}/insights`, {
-    date_preset: 'last_30d',
-    fields: 'spend,actions',
-  });
-  return res as Row;
+  return {data: (await window()).get(cleanId) ?? []};
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: Meta payload
-async function readCreatives(ads: Row[]) {
+async function readCreatives(ads: Row[], window: InsightWindow) {
   const out: Record<string, unknown>[] = [];
   const formats = new Set<string>();
   const ctas = new Set<string>();
@@ -302,7 +329,7 @@ async function readCreatives(ads: Row[]) {
     const full = creativeCopyParts(spec);
     const copy = readCreativeCopy(cr);
     const [t, lang] = copyTraits(full.body, full.headline);
-    const resolvedInsight = await resolveInsights(String(ad.id), ad.insights);
+    const resolvedInsight = await resolveInsights(String(ad.id), ad.insights, () => window("ad"));
     const { spend, leads } = leadsOf(resolvedInsight);
     formats.add(copy.format);
     if (copy.cta) ctas.add(copy.cta);
@@ -345,7 +372,7 @@ async function readCreatives(ads: Row[]) {
 
 /** Turn one ad set's targeting into a comparable "play". */
 // biome-ignore lint/suspicious/noExplicitAny: Meta payload
-async function readPlay(adset: Row) {
+async function readPlay(adset: Row, window: InsightWindow) {
   const t = adset.targeting ?? {};
   const names = new Set<string>();
   for (const spec of t.flexible_spec ?? [])
@@ -357,7 +384,7 @@ async function readPlay(adset: Row) {
     : interests.length
       ? "interests"
       : "broad";
-  const resolvedInsight = await resolveInsights(String(adset.id), adset.insights);
+  const resolvedInsight = await resolveInsights(String(adset.id), adset.insights, () => window("adset"));
   const { spend, leads } = leadsOf(resolvedInsight);
   return {
     adsetId: String(adset.id),
@@ -378,16 +405,17 @@ export async function collectMarket(state: Row): Promise<Row[]> {
   const out: Row[] = [];
   for (const account of accounts) {
     const label = account;
+    const window = accountWindow(account.accountId);
     const response = await graph(`act_${account.accountId}/adsets`, {fields: 'id,name,optimization_goal,targeting{flexible_spec,interests,custom_audiences,age_min,age_max},insights.date_preset(last_30d){spend,actions}', limit: 100});
     if (!Array.isArray(response.data)) throw new Error('Market ad sets are unavailable');
     for (const adset of response.data) {
       if(!adset.id)throw new Error('Market ad set identity missing');
-      const play = await readPlay(adset);
+      const play = await readPlay(adset, window);
       if (play.spend <= 0) continue;
       // Separate paginated edge avoids truncating nested ads.limit(25).
       const ads = await graph(`${adset.id}/ads`, {fields: 'id,name,creative{id,object_story_spec,thumbnail_url,image_url},insights.date_preset(last_30d){spend,actions}', limit: 100});
       if (!Array.isArray(ads.data)) throw new Error('Market creatives are unavailable');
-      const creative = await readCreatives(ads.data);
+      const creative = await readCreatives(ads.data, window);
       const old = prior.get(play.adsetId);
       const saved = new Map<string, Row>((old?.creatives ?? []).map((row: Row) => [String(row.adId), row]));
       for (const row of creative.creatives) {

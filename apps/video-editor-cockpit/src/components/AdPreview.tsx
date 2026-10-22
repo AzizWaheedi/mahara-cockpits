@@ -1,7 +1,31 @@
-import { Play } from "lucide-react";
-import { useState } from "react";
+import { ImageOff, Play } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { adPreview, type AdPreview as Preview } from "../lib/portal";
+import { FRAME_AT, metaLinkExpired, pickPicture } from "../lib/thumbs";
 import Lightbox from "./Lightbox";
+
+/** True once the element comes near the screen, so a frame loads only then. */
+function useNear<T extends Element>() {
+  const ref = useRef<T>(null);
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || near) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setNear(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      ([e]) => {
+        if (e?.isIntersecting) setNear(true);
+      },
+      { rootMargin: "400px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [near]);
+  return [ref, near] as const;
+}
 
 /**
  * A winning ad, watchable.
@@ -14,26 +38,48 @@ import Lightbox from "./Lightbox";
  *
  * Either way it opens over the page rather than inside a card column. An ad
  * is a nine-by-sixteen video and a column is the wrong shape for it.
+ *
+ * The picture on the card comes from `pickPicture` (lib/thumbs.ts): Meta's
+ * stored picture links have all expired, so a link that fails to load falls
+ * to the next source and, with none left, the card says no picture is saved.
  */
 export default function AdPreviewFrame({
   adId,
   title,
   thumbUrl,
+  stillUrl,
   format,
   watchUrl,
   ourCopy,
+  copyPending,
 }: {
   adId: string;
   title: string;
   thumbUrl?: string | null;
+  /** A still in our own storage, from the native ad mirror. */
+  stillUrl?: string | null;
   format?: string | null;
   watchUrl?: string | null;
   /** A signed link to our own stored file. The best of the three. */
   ourCopy?: string;
+  /** We hold a copy and its signed link is still on its way. */
+  copyPending?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<"idle" | "loading" | "done">("idle");
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  const [boxRef, near] = useNear<HTMLButtonElement>();
+  const fail = (src: string) => setFailed(f => new Set(f).add(src));
+
+  const picture = pickPicture({
+    still: stillUrl,
+    thumbUrl,
+    ourCopy,
+    copyPending,
+    failed,
+  });
+  const poster = picture.kind === "image" ? picture.src : undefined;
 
   async function openIt() {
     setOpen(true);
@@ -43,27 +89,53 @@ export default function AdPreviewFrame({
     setState("done");
   }
 
-  const still = preview?.stillUrl ?? preview?.thumbUrl ?? thumbUrl ?? null;
+  const still =
+    [preview?.stillUrl, preview?.thumbUrl, poster].find(
+      (u): u is string => !!u && !metaLinkExpired(u) && !failed.has(u),
+    ) ?? null;
 
   return (
     <>
       <button
+        ref={boxRef}
         type="button"
         onClick={openIt}
         className="group relative block aspect-[4/5] w-full overflow-hidden rounded-xl bg-muted"
       >
-        {thumbUrl ? (
+        {picture.kind === "image" ? (
           <img
-            src={thumbUrl}
+            key={picture.src}
+            src={picture.src}
             alt=""
             loading="lazy"
+            onError={() => fail(picture.src)}
             className="absolute inset-0 size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+          />
+        ) : picture.kind === "frame" && near ? (
+          <video
+            key={picture.src}
+            src={`${picture.src}${FRAME_AT}`}
+            preload="metadata"
+            muted
+            playsInline
+            aria-hidden
+            tabIndex={-1}
+            onError={() => fail(picture.src)}
+            className="pointer-events-none absolute inset-0 size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
           />
         ) : null}
         <span className="absolute inset-0 grid place-items-center bg-black/10 transition-colors group-hover:bg-black/25">
-          <span className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white">
-            <Play className="size-3" strokeWidth={2.5} />
-            Watch
+          <span className="flex flex-col items-center gap-3">
+            {picture.kind === "none" ? (
+              <span className="flex flex-col items-center gap-1.5 text-muted-foreground">
+                <ImageOff className="size-5" strokeWidth={1.75} />
+                <span className="text-xs">No picture saved</span>
+              </span>
+            ) : null}
+            <span className="flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1.5 text-xs font-medium text-white">
+              <Play className="size-3" strokeWidth={2.5} />
+              Watch
+            </span>
           </span>
         </span>
       </button>
@@ -76,7 +148,7 @@ export default function AdPreviewFrame({
               {/* biome-ignore lint/a11y/useMediaCaption: an ad carries none */}
               <video
                 src={ourCopy}
-                poster={thumbUrl ?? undefined}
+                poster={poster}
                 controls
                 autoPlay
                 playsInline
@@ -129,6 +201,7 @@ export default function AdPreviewFrame({
                 <img
                   src={still}
                   alt=""
+                  onError={() => fail(still)}
                   className="mx-auto max-h-96 rounded-lg"
                 />
               ) : null}

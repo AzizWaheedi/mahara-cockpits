@@ -49,6 +49,10 @@ def readiness(
     missing: list[str] = []
     if not job.get("footage_url"):
         missing.append("No footage folder on the card. Add the Client Footage Folder or Raw Video Link.")
+    elif not drive_mod.parse_id(str(job.get("footage_url") or job.get("raw_url") or "")):
+        # Said plainly, because "the folder is empty" sent people looking in
+        # a Drive folder that the card never pointed to.
+        missing.append("The footage link is not a Google Drive link. Put the footage in a Drive folder and paste that link on the card.")
     elif not assets:
         missing.append("The footage folder has no video in it yet, or it is not shared with us.")
     if not (job.get("brief") or "").strip() and not (job.get("script") or "").strip():
@@ -85,7 +89,7 @@ def prepare_job(
     task_id = str(job.get("task_id") or "")
     stamp = now_iso()
     summary: dict[str, Any] = {
-        "task_id": task_id, "files": 0, "read": 0, "skipped": 0, "failed": 0,
+        "task_id": task_id, "files": 0, "read": 0, "skipped": 0, "failed": 0, "removed": 0,
         "seconds": 0.0, "transcript_chars": 0, "warnings": [],
     }
     folder_link = str(job.get("footage_url") or job.get("raw_url") or "")
@@ -100,8 +104,17 @@ def prepare_job(
         summary["warnings"].append(f"the footage link could not be opened: {http.scrub(str(e))[:160]}")
         return _finish(cfg, log, sb, job, [], summary, stamp, clickup, client)
 
+    if node.get("mimeType") == drive_mod.SHORTCUT_MIME:
+        # The card links a shortcut: read what it points to.
+        target = node.get("shortcutDetails") or {}
+        if target.get("targetMimeType") == drive_mod.FOLDER_MIME and target.get("targetId"):
+            folder_id = str(target["targetId"])
+            node = {"mimeType": drive_mod.FOLDER_MIME, "name": node.get("name")}
+        else:
+            node = drive.follow(node) or {}
+
     if node.get("mimeType") == drive_mod.FOLDER_MIME:
-        files = drive.videos_under(folder_id, depth=2, limit=cfg.max_files_per_job * 3)
+        files = drive.videos_under(folder_id, depth=2, limit=cfg.max_files_per_job * 3, name=str(node.get("name") or ""))
     elif drive_mod.is_video(node):
         files = [node]
     else:
@@ -112,14 +125,34 @@ def prepare_job(
     summary["files"] = len(files)
     log(f"{task_id}: {len(files)} video file(s) under the folder")
 
-    known = {a.get("drive_id"): a for a in sb.assets(task_id) if a.get("drive_id")}
+    stored = sb.assets(task_id)
+    known = {a.get("drive_id"): a for a in stored if a.get("drive_id")}
+    # The stored clips follow what is read now. A clip the folder rule no
+    # longer reads (a finished ad, a file that left the folder) goes, or the
+    # Footage wall would keep showing it. Only a listing that worked gets here.
+    current = {str(f.get("id")) for f in files}
+    gone = [str(a["id"]) for a in stored if a.get("id") and str(a.get("drive_id")) not in current]
+    if gone:
+        try:
+            summary["removed"] = sb.delete_assets(task_id, gone)
+            log(f"{task_id}: removed {len(gone)} clip(s) no longer in its footage folders")
+        except Exception as e:  # noqa: BLE001 - the read goes on; the next look tries again
+            log(f"{task_id}: could not remove {len(gone)} old clip(s): {http.scrub(str(e))[:140]}")
     script = str(job.get("script") or "")
     rows: list[dict[str, Any]] = []
 
     for f in files:
         fid = str(f.get("id"))
         prior = known.get(fid)
-        if prior and not force and prior.get("transcript") is not None and not prior.get("error"):
+        # Read and listened to. A clip with sound that no engine could
+        # transcribe (method "none") is not done: on 2026-10-17 ElevenLabs
+        # ran out of credits with no fallback set, and 9 clips kept an empty
+        # transcript that a later look would never have filled.
+        listened = prior is not None and (
+            prior.get("has_audio") is False
+            or (prior.get("method") or {}).get("transcribe") not in (None, "none")
+        )
+        if prior and not force and prior.get("transcript") is not None and not prior.get("error") and listened:
             summary["skipped"] += 1
             rows.append(prior)
             continue
@@ -145,6 +178,8 @@ def _read_file(
     sb: Supabase,
 ) -> dict[str, Any]:
     fid = str(f.get("id"))
+    # A shortcut's row keeps the shortcut's id; the bytes come from its target.
+    source = str(f.get("target_id") or fid)
     name = str(f.get("name") or fid)
     meta = f.get("videoMediaMetadata") or {}
     row: dict[str, Any] = {
@@ -158,8 +193,11 @@ def _read_file(
         "width": meta.get("width"),
         "height": meta.get("height"),
         "seconds": round(int(meta.get("durationMillis") or 0) / 1000, 2) or None,
-        "preview_url": drive_mod.preview_url(fid),
+        "preview_url": drive_mod.preview_url(source),
         "at": now_iso(),
+        # Said every time: the store merges rows, so a read that works
+        # would otherwise keep the error of the read before it.
+        "error": None,
     }
 
     size = int(f.get("size") or 0)
@@ -176,7 +214,7 @@ def _read_file(
     try:
         local = work / "source"
         try:
-            drive.download(fid, str(local), max_bytes=cfg.max_file_bytes)
+            drive.download(source, str(local), max_bytes=cfg.max_file_bytes)
         except (http.HttpError, OSError) as e:
             row["error"] = f"could not download: {http.scrub(str(e))[:180]}"
             summary["failed"] += 1
@@ -254,6 +292,11 @@ def _finish(
     state = "ready" if ready else "blocked"
     if summary["failed"] and not summary["read"]:
         state = "stale"
+    # The card hears about a look only when it found something: new footage,
+    # another state, or another reason. A blocked job is looked at again
+    # every day, and the same "not ready" comment daily would be noise.
+    # Read before mark_job, which may update `job` itself.
+    changed = bool(summary["read"]) or job.get("state") != state or list(job.get("missing") or []) != missing
     fields = {
         "state": state,
         "ready": ready,
@@ -272,9 +315,11 @@ def _finish(
     summary["state"] = state
     summary["ready"] = ready
     summary["missing"] = missing
-    if clickup is not None and cfg.clickup_writeback and (summary["read"] or missing):
+    summary["commented"] = False
+    if clickup is not None and cfg.clickup_writeback and (summary["read"] or missing) and changed:
         try:
             clickup.comment(task_id, comment_text(job, assets, summary, client))
+            summary["commented"] = True
         except http.HttpError as e:
             log(f"ClickUp comment failed for {task_id}: {http.scrub(str(e))[:140]}")
     log(f"{task_id}: {state}, {summary['read']} read, {summary['skipped']} skipped, {summary['failed']} failed")

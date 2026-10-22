@@ -58,6 +58,7 @@ type Target = TieTarget["kind"];
 const RAIL: Record<MoneyLine["rail"], string> = {
   whop: "Whop",
   tap: "Tap",
+  ecom: "Ecom",
   transfer: "bank transfer",
   manual: "logged by hand",
   bank: "bank",

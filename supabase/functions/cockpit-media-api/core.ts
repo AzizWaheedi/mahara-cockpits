@@ -1,6 +1,7 @@
 import {prepareB2b} from './b2b.ts';
 import {prepareCreative} from './creative.ts';
 import {preparePublish,prepareSwitch,readFunnel} from './funnel.ts';
+import {HUNDREDTHS,usdToBudget} from './currency.ts';
 const B2B_OPERATIONS=['inspect','rename','setBudget','setSchedule','setAudience','createAdset','duplicateAdset'].map(x=>`ceo.b2bManage.${x}`);
 const CREATIVE_OPERATIONS=['edit.newAdsFromExisting','edit.addCreativeToCampaign','ceo.b2bManage.createAds'];
 const FUNNEL_OPERATIONS=['funnel.read','forms.publish','forms.switch'];
@@ -17,7 +18,21 @@ export interface Plan { provider:'meta'|'clickup'|'slack'; method:string; path:s
 export interface MultiPlan {steps:Plan[]; result:Row; check?:Row}
 const id = (x:unknown) => { if(!/^\d{5,}$/.test(String(x??''))) throw new Error('A valid Meta id is required'); return String(x); };
 const text = (x:unknown) => { if(typeof x!=='string'||!x.trim()||x.length>500) throw new Error('A name is required'); return x.trim(); };
-export function budget(x:unknown) { if(typeof x!=='number'||!Number.isFinite(x)||x<=0||x>100000) throw new Error('Daily budget must be between 0 and 100000'); return Math.round(x*100); }
+// The typed dollars, range-checked. Only usdToBudget turns them into what Meta holds.
+export function budget(x:unknown) { if(typeof x!=='number'||!Number.isFinite(x)||x<=0||x>100000) throw new Error('Daily budget must be between 0 and 100000'); return x; }
+// The ad account's currency per Meta, read once for an action that writes a budget. No currency, or one without a Meta offset, is refused.
+export async function accountCurrency(account:unknown,p:Provider) {
+ const cur=String((await p.call('meta','GET',`act_${id(account)}?fields=currency`)).currency??'').trim().toUpperCase();
+ if(!cur) throw new Error('Meta did not say which currency this ad account uses. Change the budget in Ads Manager.');
+ if(!HUNDREDTHS.has(cur)) throw new Error(`This ad account is in ${cur}. Change the budget in Ads Manager.`);
+ return cur;
+}
+// Mahara's own account is in dollars; its budget paths refuse any other currency instead of converting.
+export async function dollarAccount(account:unknown,p:Provider) {
+ const cur=await accountCurrency(account,p);
+ if(cur!=='USD') throw new Error(`This ad account is in ${cur}, not USD. Change the budget in Ads Manager.`);
+ return cur;
+}
 export async function prepare(operation:string,a:Row,s:Row,p:Provider):Promise<Plan|MultiPlan|{read:unknown}> {
  if(!OPERATIONS.has(operation)) throw new Error(`Unsupported provider operation: ${operation}`);
  if(B2B_OPERATIONS.includes(operation))return prepareB2b(operation,a,s,p);
@@ -69,13 +84,15 @@ export async function prepare(operation:string,a:Row,s:Row,p:Provider):Promise<P
   if(!parent?.id) throw new Error('Meta did not confirm this ad set campaign');
   if(Number(parent.lifetime_budget)>0) throw new Error('This campaign uses a lifetime budget; change it in Ads Manager');
   const where=Number(parent.daily_budget)>0?id(parent.id):target;
-  return {provider:'meta',method:'POST',path:where,body:{daily_budget:budget(a.dailyBudget)},verifyPath:`${where}?fields=daily_budget`,expected:{daily_budget:budget(a.dailyBudget)}};
+  const dollars=budget(a.dailyBudget),minor=usdToBudget(dollars,await accountCurrency(s.account,p));
+  return {provider:'meta',method:'POST',path:where,body:{daily_budget:minor},verifyPath:`${where}?fields=daily_budget`,expected:{daily_budget:minor}};
  }
  if(!parent?.id) throw new Error('Meta did not confirm this ad set campaign');
  const targeting=structuredClone(obj.targeting??{});
  if(targeting.instagram_positions?.includes('explore_home')&&!targeting.instagram_positions.includes('explore')) targeting.instagram_positions.push('explore');
  const body:Row={name:text(a.newName),campaign_id:parent.id,billing_event:obj.billing_event,optimization_goal:obj.optimization_goal,targeting:JSON.stringify(targeting),status:'PAUSED'};
- if(!Number(parent.daily_budget)&&!Number(parent.lifetime_budget)) body.daily_budget=a.dailyBudget===undefined?obj.daily_budget??3000:budget(a.dailyBudget);
+ // A budget copied from the source ad set is already in the account's currency; a typed one, or the $30 default, is converted.
+ if(!Number(parent.daily_budget)&&!Number(parent.lifetime_budget)) body.daily_budget=a.dailyBudget===undefined&&obj.daily_budget!=null?obj.daily_budget:usdToBudget(a.dailyBudget===undefined?30:budget(a.dailyBudget),await accountCurrency(s.account,p));
  for(const key of ['promoted_object','destination_type','attribution_spec','bid_strategy']) if(obj[key]) body[key]=typeof obj[key]==='object'?JSON.stringify(obj[key]):obj[key];
  return {provider:'meta',method:'POST',path:`act_${id(s.account)}/adsets`,body,verifyPath:'$id?fields=status,name,campaign_id',expected:{status:'PAUSED',name:body.name,campaign_id:parent.id},result:{adsetId:'$id'}};
 }

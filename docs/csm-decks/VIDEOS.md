@@ -3,8 +3,11 @@
 The data behind the decks' video slots (the CEO, 2026-10-20). `CONTENT.md`
 "Video slots" is the registry and the words, `CONTENT-AR.md` the Arabic, and
 `DESIGN.md` 21.2 to 21.5 the control, the player, the notes window and prep.
-This file is what the migration builds and what the frontend calls. It is a
-spec: nothing here is applied yet.
+This file describes the migration and frontend contract. The earlier statement
+that nothing was applied is superseded: on 21 October 2026 the production table
+and configured slots were read back, and the signed-in onboarding deck opened
+its Wistia welcome player. See [the readiness check](../ONBOARDING-READINESS-20261021.md).
+That check does not certify playback of every configured video.
 
 **Final since the spec review of 2026-10-20** (`DESIGN.md` 21.10 lists the
 findings). Two builders work from it in parallel: the backend builds sections

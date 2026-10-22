@@ -4,7 +4,8 @@
  * it must never count toward spend, leads, CPL, CPB or any verdict. Kept by
  * immutable ad id; names were reused ("New Engagement Ad") and cannot be
  * trusted. Mirrors public.cockpit_excluded_ads in Creative Triage
- * (migration 20261010a). Evidence: workspace meta-unauthorized-ads/.
+ * (migrations 20261010a and 20261021b). Evidence: workspace
+ * meta-unauthorized-ads/ and the 20261021b header.
  */
 export const EXCLUDED_AD_IDS: ReadonlySet<string> = new Set([
   "120246624477980705",
@@ -18,6 +19,9 @@ export const EXCLUDED_AD_IDS: ReadonlySet<string> = new Set([
   "120246911853480088",
   "120246912291150088",
   "120246912291170088",
+  // 20261021b: Munshaat Khalida act_1275190574533155, made after 10 Oct.
+  "120247012327250088", // "29/8 - Copy", Jonathan Rbn, 15 Oct (US, pixel purchases)
+  "120247083365360088", // "New Engagement Campaign", Lucas J Ortiz, 20 Oct (Egypt)
   "120250570737440269",
   "120250615876980269",
   "120250733492810269",

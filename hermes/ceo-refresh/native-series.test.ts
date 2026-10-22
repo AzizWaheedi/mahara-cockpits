@@ -104,7 +104,7 @@ describe("Front-end cash is the paid deal ledger (MONEY-ATTRIBUTION.md rule 6)",
     const ledger = readDealLedger(ledgerRows, deals);
     expect(paidIn(ledger.rows, "2026-10-01", "2026-10-18")).toEqual({
       paid: 7000, paidDeposit: 1500, paidRemainder: 5500, payments: 3, paidDeals: 2,
-      byRail: { whop: 6000, tap: 0, bank: 0, manual: 1000 },
+      byRail: { whop: 6000, tap: 0, ecom: 0, bank: 0, manual: 1000 },
       byCloser: [{ name: "Closer One", usd: 6000, payments: 2 }, { name: "Closer Two", usd: 1000, payments: 1 }],
     });
     // A bank transfer is the bank rail; September's payment counts in September.

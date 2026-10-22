@@ -2267,6 +2267,7 @@ const REASON: Record<
 const RAIL_WORD: Record<RenewalEvidence["rail"], string> = {
   whop: "Whop",
   tap: "Tap",
+  ecom: "Ecom",
   manual: "logged by hand",
 };
 

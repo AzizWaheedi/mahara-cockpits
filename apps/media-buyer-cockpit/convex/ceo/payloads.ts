@@ -52,7 +52,7 @@ export type CashRail = {
  * ceoManualPayments.rail in convex/schema.ts (writeGuard.ts `vManualRail`),
  * so an adapter passing a stored row through is checked against it.
  */
-export type ManualRail = "bank_transfer" | "cheque" | "cash" | "tap" | "other";
+export type ManualRail = "bank_transfer" | "cheque" | "cash" | "tap" | "ecom" | "other";
 
 /** One hand-logged payment as the Money tab shows it (ceoManualPayments). */
 export type ManualPaymentRow = {
@@ -118,7 +118,7 @@ export type PossibleDuplicate = {
   manualUsd: number;
   manualClient: string;
   /** What it may duplicate. */
-  against: "whop" | "tap" | "closer_form";
+  against: "whop" | "tap" | "ecom" | "closer_form";
   otherDay: string;
   otherUsd: number;
   /**
@@ -177,6 +177,7 @@ export type MoneyPayload = {
     whop: CashRail;
     /** Tap Payments. connected is false until TAP_SECRET_KEY is set on the deployment. */
     tap: CashRail;
+    ecom: CashRail;
     /**
      * Payments Aziz logs by hand on the Money tab (ceoManualPayments, added
      * 2026-09-16): bank transfers, cheques, cash, Tap links and other. Same
@@ -493,7 +494,7 @@ export type Transaction = {
   id: string;
   /** Kuwait day. */
   day: string;
-  rail: "whop" | "tap" | "transfer" | "manual" | "bank";
+  rail: "whop" | "tap" | "ecom" | "transfer" | "manual" | "bank";
   direction: "in" | "out";
   usd: number;
   currency: string;
@@ -1237,7 +1238,7 @@ export type ClientRow = {
 
 /** The payment that counts as a renewal under the 2026-09-16 rule. */
 export type RenewalEvidence = {
-  rail: "whop" | "tap" | "manual";
+  rail: "whop" | "tap" | "ecom" | "manual";
   /** Kuwait day of the payment, always after the term end. */
   day: string;
   amountUsd: number;

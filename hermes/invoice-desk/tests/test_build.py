@@ -51,6 +51,16 @@ class Fill(unittest.TestCase):
         self.assertIn("Payment by card", html)
         self.assertNotIn("Payment received", html)
 
+    def test_tax_number_prints_under_the_location_only_when_given(self):
+        inv = case("paid in full, with the client's tax number")["invoice"]
+        html = build.fill(inv, "INV-2026-031", TEMPLATE)
+        self.assertIn('<p>Jeddah, Saudi Arabia</p><!--IF_TAX_ID--><p style="margin-top:0">Tax no. '
+                      '<span class="mono">300123456700003</span></p>', html)
+        for blank in (None, "", "   "):
+            html = build.fill({**inv, "client_tax_id": blank}, "INV-2026-031", TEMPLATE)
+            self.assertNotIn("Tax no.", html)
+            self.assertNotIn("IF_TAX_ID", html)
+
     def test_card_on_file_without_period_drops_the_period_column(self):
         html = build.fill(case("card on file")["invoice"], "INV-2026-100", TEMPLATE)
         self.assertNotIn(">Period<", html)

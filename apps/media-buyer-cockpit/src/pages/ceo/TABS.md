@@ -1095,7 +1095,7 @@ list writes its own `authenticatedQuery` and returns `auditTrail(ctx, ...)`.
 | `amountUsd`, `usdPerUnit` | number, number | From `usdAtWrite` at write time (the fixed `USD_PER` table money.ts uses, 1 KWD = $3.26). The rate is kept so history never moves. |
 | `clientName` | string | As typed. |
 | `clickupTaskId` | string, optional | The ClickUp client card, when picked from the roster. This is what ties the payment to a client for the renewal rule. |
-| `rail` | `"bank_transfer" \| "cheque" \| "cash" \| "tap" \| "other"` | How it arrived. |
+| `rail` | `"bank_transfer" \| "cheque" \| "cash" \| "tap" \| "ecom" \| "other"` | How it arrived. |
 | `dealContracted`, `dealContractedUsd` | number, optional | A new deal's contract value, same currency and rate as the payment. Adds to contracted, never to cash. |
 | `note` | string, optional | One line. |
 | `addedBy`, `addedAt` | string, number | From `w.by`, `w.at`. |

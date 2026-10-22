@@ -17,6 +17,7 @@ const D = (n: number) => addDays(today, n);
 const SAR = "00000000-0000-4000-8000-00000000000a";
 const USD = "00000000-0000-4000-8000-00000000000b";
 const OWN = "00000000-0000-4000-8000-00000000000c";
+const MOVED = "00000000-0000-4000-8000-00000000000d";
 
 const SCHEMA = `
   CREATE SCHEMA portal_data; CREATE SCHEMA mahara_reporting;
@@ -36,7 +37,7 @@ const SCHEMA = `
   CREATE TABLE mahara_reporting.cc_attempts(location_id text, data jsonb);
 `;
 
-async function seed(db: { exec(sql: string): Promise<unknown> }, opts: { feedRows?: number; ready?: boolean } = {}) {
+async function seed(db: { exec(sql: string): Promise<unknown> }, opts: { feedRows?: number; ready?: boolean; moved?: boolean } = {}) {
   const at = (day: string, hour = 9) => `${day}T${String(hour).padStart(2, "0")}:00:00+03:00`;
   await db.exec(`
     INSERT INTO public.clients VALUES
@@ -89,9 +90,18 @@ async function seed(db: { exec(sql: string): Promise<unknown> }, opts: { feedRow
         'bookingVerification', jsonb_build_object('id','cc-1','calendarId','cal-prov-u','verifiedAt', (extract(epoch from now()) * 1000)::bigint,
           'startTime','${D(-4)}T10:00:00+03:00','appointmentStatus','new')));
   `);
+  // The client moved to a new ad account: a second client row on the same GHL
+  // location and ClickUp card, spending the same week (Munshaat Khalida, 2026-10-20).
+  if (opts.moved)
+    await db.exec(`
+      INSERT INTO public.clients VALUES ('${MOVED}','Ardon new account','act_333','USD',false);
+      INSERT INTO public.cockpit_campaigns VALUES (4,'333','{"campaignName":"Ardon new A"}',now(),false);
+      INSERT INTO public.cockpit_media_daily_stats VALUES ('m7','Ardon new A','${D(-1)}','{"metaAdId":"ad-8","spend":25,"leads":2}');
+      INSERT INTO public.ghl_client_ad_accounts VALUES ('${MOVED}','loc-sar','meta_exact');
+    `);
 }
 
-async function withDb<T>(opts: { feedRows?: number; ready?: boolean }, run: () => Promise<T>): Promise<T> {
+async function withDb<T>(opts: { feedRows?: number; ready?: boolean; moved?: boolean }, run: () => Promise<T>): Promise<T> {
   const { PGlite } = await import("../../../../apps/media-buyer-cockpit/node_modules/@electric-sql/pglite");
   const db = new PGlite();
   try {
@@ -144,6 +154,29 @@ describe("clientDelivery on the live media table (R2) with PGlite", () => {
   test("a feed that is not ready, or mid-rewrite, raises instead of reading as zero", async () => {
     await expect(withDb({ ready: false }, () => clientDelivery(D(-40), today, D(-30), { now }))).rejects.toThrow("not ready");
     await expect(withDb({ feedRows: 9 }, () => clientDelivery(D(-40), today, D(-30), { now }))).rejects.toThrow("rewrite in flight");
+  });
+});
+
+describe("A client on two ad accounts (one ClickUp card) with PGlite", () => {
+  test("rows on one card fold into one client: spend, leads and bookings counted once, under one id", async () => {
+    const result = await withDb({ moved: true, feedRows: 7 }, () => clientDelivery(D(-40), D(10), D(-30), { now })) as {
+      days: Row[]; clients: Row[]; bookings: Row[]; untied: Row[];
+    };
+    // One client per card, so Delivery's client:<card> scope is unique.
+    const ardon = result.clients.filter(c => c.clickupTaskId === "task-ardon");
+    expect(ardon.length).toBe(1);
+    expect(result.clients.length).toBe(2);
+    const id = String(ardon[0].clientId);
+    expect([SAR, MOVED]).toContain(id);
+    // Every row of either account is counted under that one id, the new account's $25 included.
+    expect(result.days.every(d => d.clientId === id || d.clientId === USD)).toBe(true);
+    const ardonDay1 = result.days.filter(d => d.clientId === id && d.date === D(-1)).reduce((n, d) => n + Number(d.spend), 0);
+    expect(ardonDay1).toBe(25);
+    expect(result.days.filter(d => d.clientId === id).reduce((n, d) => n + Number(d.leads), 0)).toBe(5 + 3 + 2 + 2 + 5 + 2);
+    // The location now has two accounts: its appointments still tie to the client, never untied.
+    expect(result.bookings.filter(b => b.kind === "main" && b.clientId === id).reduce((n, b) => n + Number(b.count), 0)).toBe(1);
+    expect(result.bookings.filter(b => b.kind === "provisional" && b.clientId === id).reduce((n, b) => n + Number(b.count), 0)).toBe(2);
+    expect(result.untied).toEqual([]);
   });
 });
 

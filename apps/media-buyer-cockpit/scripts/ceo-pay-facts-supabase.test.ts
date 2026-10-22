@@ -15,6 +15,14 @@ import type { PGlite } from "@electric-sql/pglite";
 import { cockpitTestDb, migration, owner } from "./lib/cockpitTestDb";
 
 const SQL = migration("20261018b_ceo_pay_facts.sql");
+/** The ads facts as 20261021a leaves them: ads on the compromise list never count. */
+const PAY_ADS = (() => {
+  const hit = migration("20261021a_board_skip_excluded_ads.sql").match(
+    /CREATE OR REPLACE FUNCTION public\.cockpit_pay_facts_ads\([\s\S]*?\n\$\$;/,
+  );
+  if (!hit) throw new Error("cockpit_pay_facts_ads missing from 20261021a");
+  return hit[0];
+})();
 const CALENDAR_KIND = (() => {
   const hit = migration("20261016111157_board_facts.sql").match(
     /CREATE OR REPLACE FUNCTION public\.cockpit_board_calendar_kind\(p_name text\)[\s\S]*?\$\$;/,
@@ -49,6 +57,7 @@ CREATE TABLE public.cockpit_csm_sources(table_name text, source_id text, data js
 CREATE TABLE public.cockpit_board_clients(location_id text PRIMARY KEY, clickup_id text, client_name text, service_mode text,
   ad_account_ids text[] DEFAULT '{}', tiktok boolean DEFAULT false);
 CREATE TABLE public.cockpit_meta_ad_days(account_id text, account_timezone text, day date, ad_id text, spend numeric, spend_usd numeric, leads bigint);
+CREATE TABLE public.cockpit_excluded_ads(ad_id text PRIMARY KEY, account_id text NOT NULL, campaign_id text, reason text NOT NULL);
 CREATE TABLE public.cockpit_client_days(location_id text, day date, confirmed_bookings integer, PRIMARY KEY(location_id, day));
 CREATE TABLE public.cockpit_client_billing_days(day date, clickup_task_id text, next_payment_date date, paused_on date, churn_type text,
   PRIMARY KEY(day, clickup_task_id));
@@ -272,6 +281,7 @@ beforeAll(async () => {
   await db.exec(STUBS);
   await db.exec(CALENDAR_KIND);
   await db.exec(SQL);
+  await db.exec(PAY_ADS);
   await owner(db);
 
   // ---- people
@@ -970,6 +980,47 @@ describe("ads", () => {
     });
     expect(byName(f.clients, "Client A").spendUsd).toBe(350); // the month's figures do not change
     expect(f.note.join(" ")).toContain("plus 14 days");
+  });
+
+  test("an ad on the compromise list never counts: its spend, its leads and its first day leave; the account's other ads stay (2026-10-21)", async () => {
+    const month = () => facts("cockpit_pay_facts_ads", MONTH, MONTH_END, 0);
+    const before = await month();
+    try {
+      // Outsiders' lead ads on Client A's account, and on Client E's before its first lead day.
+      await q(
+        `INSERT INTO public.cockpit_meta_ad_days(account_id,day,ad_id,spend,spend_usd,leads) VALUES
+           ('111','2026-09-12','ad-outsider',500,500,9), ('111','2026-09-02','ad-outsider',70,70,1),
+           ('555','2026-08-25','ad-outsider-e',30,30,1)`,
+      );
+      const off = await month();
+      expect(byName(off.clients, "Client A")).toMatchObject({
+        spendUsd: 920,
+        leads: 25,
+      });
+      expect(byName(off.clients, "Client E").creativeStart).toBe("2026-08-25");
+      // On the list, matched on the ad id alone (Meta's ad ids are unique), whatever account it
+      // is written under: as if they were never stored.
+      await q(
+        `INSERT INTO public.cockpit_excluded_ads(ad_id,account_id,campaign_id,reason) VALUES
+           ('ad-outsider','act_111','camp-outsider','unauthorized_meta_incident_2026_10'),
+           ('ad-outsider-e','act_999','camp-outsider-e','unauthorized_meta_incident_2026_10')`,
+      );
+      const on = await month();
+      expect(on).toEqual(before);
+      expect(byName(on.clients, "Client A")).toMatchObject({
+        spendUsd: 350,
+        leadSpendUsd: 300,
+        leads: 15,
+        cpl: 20,
+        cpb: 116.67,
+      });
+      expect(byName(on.clients, "Client E").creativeStart).toBe("2026-09-03");
+    } finally {
+      await q(
+        "DELETE FROM public.cockpit_meta_ad_days WHERE ad_id IN ('ad-outsider', 'ad-outsider-e')",
+      );
+      await q("DELETE FROM public.cockpit_excluded_ads");
+    }
   });
 });
 

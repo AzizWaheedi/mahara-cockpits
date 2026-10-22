@@ -661,6 +661,7 @@ describe("both money adapters read the same inputs the same way (contract sectio
       { id: 2, statement_id: "st-1", day: ago(8), usd: -32.6, amount: -10, currency: "KWD", reference: "Software vendor", account: "XXXX0001", kind: "expense", category: "software" },
       // A Tap settlement: it credits nobody, the charge it covers does.
       { id: 3, statement_id: "st-1", day: ago(28), usd: 400, amount: 122.7, currency: "KWD", reference: "Tap settlement", account: "XXXX0001", kind: "tap_settlement" },
+      { id: 5, statement_id: "st-1", day: ago(3), usd: 300, amount: 92, currency: "KWD", reference: "ECOM settlement", account: "XXXX0001", kind: "ecom_settlement" },
       // A debit classed as a client payment is no payment in.
       { id: 4, statement_id: "st-1", day: ago(7), usd: -50, amount: -15.34, currency: "KWD", reference: "Reversal Client Old Example", account: "XXXX0001", kind: "client_payment" },
     ],
@@ -685,6 +686,7 @@ describe("both money adapters read the same inputs the same way (contract sectio
     { id: "chg_settled", day: ago(30), at_ms: now - 30 * 86_400_000, currency: "USD", amount: 400, usd: 400, email: null, name: "Old  Payer Family" },
     { id: "chg_new", day: ago(5), at_ms: now - 5 * 86_400_000, currency: "USD", amount: 250, usd: 250, email: "OWNER@New.example.test", name: "Payer   Newfamily" },
   ];
+  const ecomRows: Row[] = [{ id: "INV_test1", day: ago(5), at_ms: now - 5 * 86_400_000, amount_kwd: 92, usd: 300, customer_email: "FORM@NEW.EXAMPLE.TEST", customer_name: "Payer Newfamily" }];
   const transferRows: Row[] = [
     { id: 9, day: ago(12), amount_usd: 600, method: "wire", client: "Client  Old  Example", reference: "INV-1", deal_response_id: null },
   ];
@@ -704,6 +706,8 @@ describe("both money adapters read the same inputs the same way (contract sectio
       "money.attribution.logins": loginRows,
       "money.tap_state": [{ ok: true, note: null, rows_seen: 2, run_ms: now, ok_ms: now }],
       "money.tap_charges": tapRows,
+      "money.ecom_state": [{ ok: true, note: null, ok_ms: now }],
+      "money.ecom_invoices": ecomRows,
       "money.media_feed": [{ ready: true, source_rows: 2, actual_rows: 2, snapshot_ms: now - 600_000, first_day: ago(60), last_day: today }],
     };
     if (!marker) throw new Error(`Unmarked query ${query.slice(0, 80)}`);
@@ -714,6 +718,7 @@ describe("both money adapters read the same inputs the same way (contract sectio
       return [{ refunds_mtd: 0, refunds_90: 0, failed_count_30: 0, failed_amount_30: 0, whop_synced_ms: now, whop_last_paid_ms: now, avg_contract_90: 3833.33, deals_synced_ms: now, first_deal_day: ago(10), expense_months: null, transfer_months: null }];
     if (/cockpit_sync_state/.test(query)) return [{ ok: true, note: null, rows_seen: 2, run_ms: now, ok_ms: now }];
     if (/from public\.cockpit_tap_charges/.test(query)) return tapRows;
+    if (/from public\.cockpit_ecom_invoices/.test(query)) return ecomRows;
     if (/from public\.cockpit_bank_lines/.test(query)) return snapshot.bank_lines;
     if (/from public\.cockpit_statements/.test(query))
       return snapshot.statements.map(st => ({ ...st, imported_ms: now }));
@@ -772,6 +777,8 @@ describe("both money adapters read the same inputs the same way (contract sectio
     // The payer pays under the contact's own name on the form: that deal, in its term.
     expect(look("tap:chg_new")?.slice(0, 5)).toEqual(["front_end", "Closer New Example", "deal-new", "card-new", "deal_name"]);
     expect(rows.get("tap:chg_new")?.payerEmail).toBe("owner@new.example.test");
+    expect(rows.get("ecom:INV_test1")?.payerEmail).toBe("form@new.example.test");
+    expect((nativeOut.payload.rails as Row).ecom).toMatchObject({ label: "Ecom", connected: true });
     // Two forms on one day: the earlier form, in both copies.
     expect(look("whop:pay_same")?.slice(0, 3)).toEqual(["front_end", "Closer One Example", "deal-same-a"]);
     expect(look("whop:pay_tied")?.slice(0, 3)).toEqual(["front_end", "Closer Two Example", "deal-same-b"]);

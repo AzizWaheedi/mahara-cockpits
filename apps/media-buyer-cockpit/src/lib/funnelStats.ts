@@ -27,7 +27,22 @@ export type StatCall = {
   appointmentDate: string | null;
 };
 
-export type FunnelStats = { rows: StatRow[]; calls: StatCall[] };
+export type FunnelStats = {
+  rows: StatRow[];
+  calls: StatCall[];
+  /**
+   * Calls are counted to this day, the last one with Meta's numbers, when
+   * it falls inside the range: the sheet should say "Calls counted to
+   * 21 Oct" beside its dates (2026-10-22).
+   */
+  callsThrough?: string;
+  /**
+   * The media data's last day, when the whole range comes after it (Today):
+   * the calls are real and counted, their spend is not in yet, so a cost per
+   * booking reads n/a with that reason, never $0.
+   */
+  spendNotIn?: string;
+};
 
 export type RangeTotals = {
   spend: number;
@@ -70,13 +85,27 @@ const text = (v: unknown) =>
   v === null || v === undefined || v === "" ? null : String(v);
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
-/** The statistics function's range read, checked and reduced to what the sheet counts. */
-export function parseStats(data: unknown): FunnelStats {
+/**
+ * The statistics function's range read, checked and reduced to what the
+ * sheet counts. `through` is the last day the media data has spend for,
+ * when it falls inside the range: a call booked after it is not set against
+ * spend that stops before it (2026-10-21). `spendNotIn` is that day when the
+ * whole range comes after it: every call is kept (bookingsCap in
+ * mediaStatsClient.ts decides which of the two applies).
+ */
+export function parseStats(
+  data: unknown,
+  through?: string | null,
+  spendNotIn?: string | null,
+): FunnelStats {
   const d = data as { rows?: unknown; bookings?: unknown } | null;
   if (!d || !Array.isArray(d.rows) || !Array.isArray(d.bookings))
     throw new Error(
       "The numbers came back in a shape this screen cannot read.",
     );
+  const booked = (d.bookings as Record<string, unknown>[]).filter(
+    b => !through || String(b.date ?? "") <= through,
+  );
   return {
     rows: (d.rows as Record<string, unknown>[]).map(r => ({
       adId: text(r.metaAdId),
@@ -85,12 +114,14 @@ export function parseStats(data: unknown): FunnelStats {
       linkClicks: num(r.linkClicks),
       leads: num(r.leads),
     })),
-    calls: (d.bookings as Record<string, unknown>[]).map(b => ({
+    calls: booked.map(b => ({
       adId: text(b.adId),
       status: String(b.status ?? "").toLowerCase(),
       startTime: text(b.startTime),
       appointmentDate: text(b.appointmentDate)?.slice(0, 10) ?? null,
     })),
+    ...(through ? { callsThrough: through } : {}),
+    ...(spendNotIn ? { spendNotIn } : {}),
   };
 }
 

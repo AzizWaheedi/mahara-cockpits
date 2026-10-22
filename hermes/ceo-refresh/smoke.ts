@@ -135,6 +135,8 @@ function localTransport(db: TestDb, options: { failMarker?: string } = {}): Fetc
       "money.recent_deals": [{ day, business: "Client A", closer: "Closer", contracted: 500, cash: 100, plan: "Monthly" }],
       "money.tap_state": [{ ok: true, rows_seen: 0, run_ms: now, ok_ms: now, note: "Synthetic configured-empty Tap source" }],
       "money.tap_charges": [],
+      "money.ecom_state": [{ ok: true, note: null, ok_ms: now }],
+      "money.ecom_invoices": [],
       "expenses.revenue": [{ revenue: 100, synced_ms: now }],
       "expenses.client_ads": [{ spend: 50, clients: 1, own_spend: 0, own_clients: 0, unknown_days: 0, frozen_days: 0 }],
       "expenses.media_feed": [{ ready: true, source_rows: 1, actual_rows: 1, snapshot_ms: now, first_day: day, last_day: day }],

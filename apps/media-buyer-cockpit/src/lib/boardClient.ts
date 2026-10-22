@@ -112,6 +112,20 @@ export const CellSchema = z
     starting: num,
     accountIssues: z.array(AccountIssueSchema).nullable().optional(),
     /**
+     * Budget/day (2026-10-21): the outsiders' campaigns on the compromise
+     * list switched on now, not counted, and their daily budgets in dollars
+     * (atLeast when some are not in dollars or not daily).
+     */
+    outsiders: z
+      .object({
+        campaigns: num,
+        budget: num,
+        atLeast: z.boolean().nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+    /**
      * Budget used: the days with a budget, yesterday, the campaigns switched
      * on with a daily budget that spent nothing yesterday, and above 110% (a
      * note, never a status).
@@ -331,6 +345,11 @@ const BudgetCampaignSchema = z
       .nullable()
       .optional(),
     metrics: MetricsSchema,
+    /**
+     * An outsiders' campaign on the compromise list (2026-10-21): not the
+     * client's, so no figures and no lifetime budget, only its flag's words.
+     */
+    outsider: z.boolean().nullable().optional(),
   })
   .passthrough();
 export type BudgetCampaign = z.output<typeof BudgetCampaignSchema>;

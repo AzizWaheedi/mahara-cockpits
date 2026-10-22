@@ -3,7 +3,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import { actor, cockpitTestDb, member, migration, owner } from "./lib/cockpitTestDb";
 
 // supabase/migrations/20261011v_cockpit_invoices.sql, with 20261015a's Whop
-// payment links on top, against canonical SQL:
+// payment links and 20261022a's client tax number on top, against canonical SQL:
 // who may ask for an invoice from the client success cockpit, what the form
 // must hold, who sees which invoices, and the worker's claim / progress /
 // finish cycle. Supabase's default grants are on, so a missing REVOKE fails here.
@@ -31,6 +31,7 @@ beforeEach(async () => {
   await db.exec("GRANT EXECUTE ON FUNCTION public.cockpit_client_allowed(text) TO authenticated, service_role;");
   await db.exec(migration("20261011v_cockpit_invoices.sql"));
   await db.exec(migration("20261015a_cockpit_invoice_whop_links.sql"));
+  await db.exec(migration("20261022a_cockpit_invoice_tax_id.sql"));
   await member(db, CEO, "aziz@maharamedia.com", []);
   await member(db, CSM, "csm@maharamedia.com", ["csm"]);
   await member(db, OTHER_CSM, "other@maharamedia.com", ["csm"]);
@@ -123,6 +124,20 @@ test("the form is checked: amount, description, payments, due date, link", async
   expect(ok.due_date).toBe("2026-11-01");
   const card = await request(CSM, { ...checkout, kind: "autocharge", checkoutUrl: "https://ignored.example", amount: "1400" });
   expect(card.checkout_url).toBeNull();
+});
+
+test("the client's tax number is optional, trimmed and checked", async () => {
+  const none = await request(CSM, paid);
+  expect(none.client_tax_id).toBeNull();
+  await db.exec("DELETE FROM public.cockpit_invoices");
+  const row = await request(CSM, { ...paid, taxId: "  300123456700003 " });
+  expect(row.client_tax_id).toBe("300123456700003");
+  await db.exec("DELETE FROM public.cockpit_invoices");
+  await refused(CSM, { ...paid, taxId: "300<b>" }, /letters, numbers, spaces, dots or dashes only/);
+  await refused(CSM, { ...paid, taxId: "-300" }, /letters, numbers, spaces, dots or dashes only/);
+  await refused(CSM, { ...paid, taxId: "1".repeat(41) }, /The tax number is too long/);
+  const left = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM public.cockpit_invoices");
+  expect(left.rows[0].n).toBe(0);
 });
 
 test("the same form sent twice makes one invoice", async () => {

@@ -838,6 +838,43 @@ export const money: Adapter = {
       });
     }
 
+    // Ecom's 15-minute ledger sync is authoritative even when it has no paid rows.
+    const ecomRail: CashRail = {
+      label: "Ecom", connected: false, today: null, yesterday: null, mtd: null,
+      lastMonthToDate: null, lastMonth: null, projectedMonth: null, refundsMtd: null, daily: [], lastPaymentAt: null,
+    };
+    let ecomRead: { id: string; day: string; at: number; amount: number; usd: number; email: string | null; name: string | null }[] = [];
+    let ecomInvoices: typeof ecomRead = [];
+    try {
+      const [state, invoices] = await Promise.all([
+        sql(TRIAGE, `select ok, note, floor(extract(epoch from last_ok_at)*1000) as ok_ms from public.cockpit_sync_state where key='ecom-payments-sync'`),
+        sql(TRIAGE, `select id,to_char(day,'YYYY-MM-DD') as day,floor(extract(epoch from paid_at)*1000) as at_ms,amount_kwd,usd,customer_email,customer_name from public.cockpit_ecom_invoices where status='PAID' and day between ${day(seedFrom)} and ${day(today)} order by paid_at`),
+      ]);
+      const lastOk = epoch(state[0]?.ok_ms);
+      if (!state[0] || state[0].ok !== true || lastOk === undefined || now - lastOk > 60 * 60_000 || now < lastOk - 60_000)
+        throw new Error(String(state[0]?.note ?? "no recent successful ecom-payments-sync run"));
+      if (invoices.some(r => r.usd === null || r.usd === undefined)) throw new Error("a paid invoice has no USD conversion");
+      ecomRead = invoices.map(r => ({ id: String(r.id), day: String(r.day), at: num(r.at_ms), amount: num(r.amount_kwd), usd: usd(num(r.usd)), email: r.customer_email ? String(r.customer_email).toLowerCase() : null, name: r.customer_name ? cleanText(r.customer_name, 100) : null }));
+      ecomInvoices = ecomRead.filter(r => r.day >= from180);
+      const byDay = new Map<string, number>();
+      for (const r of ecomInvoices) byDay.set(r.day, (byDay.get(r.day) ?? 0) + r.usd);
+      ecomRail.daily = [];
+      for (let d = from180; d <= today; d = addDays(d, 1)) ecomRail.daily.push({ date: d, value: usd(byDay.get(d) ?? 0) });
+      const between = (a: string, b: string) => usd(ecomRail.daily.filter(p => p.date >= a && p.date <= b).reduce((t, p) => t + p.value, 0));
+      ecomRail.connected = true;
+      ecomRail.today = between(today, today);
+      ecomRail.yesterday = between(addDays(today, -1), addDays(today, -1));
+      ecomRail.mtd = between(monthStart(today), today);
+      ecomRail.lastMonthToDate = between(lastMonthStart, lastMonthToDateEnd);
+      ecomRail.lastMonth = between(lastMonthStart, lastMonthEnd);
+      ecomRail.projectedMonth = usd((ecomRail.mtd / dayOfMonth) * dim);
+      ecomRail.lastPaymentAt = ecomInvoices.length ? Math.max(...ecomInvoices.map(r => r.at)) : null;
+      sources.push({ name: "Ecom payments", freshestAt: lastOk, ok: true, note: `${ecomRead.length} paid invoices` });
+    } catch (e) {
+      sources.push({ name: "Ecom payments", ok: false, note: errText(e) });
+      notes.push({ level: "warn", text: "Ecom could not be read this run, so Ecom is n/a and is excluded from the total." });
+    }
+
     // --- The Bank rail: the statements Aziz uploads (cockpit_bank_lines,
     // 2026-09-21). Client payments on them are cash; Whop payouts, Tap
     // settlements and Mahara's own transfers are dropped, so nothing is
@@ -961,6 +998,29 @@ export const money: Adapter = {
         .map(c => ({ id: c.id, day: c.day, usd: c.usd as number })),
       { lookback: 10, tolerance: 0.05 },
     );
+    const ecomSettlements = bankLines.filter(l => l.kind === "ecom_settlement");
+    const ecomMatches = matchPayouts(
+      ecomSettlements.map(l => ({ id: String(l.id), day: l.day, usd: l.usd })),
+      ecomInvoices.map(r => ({ id: r.id, day: r.day, usd: r.usd })),
+      { lookback: 10, tolerance: 0.05 },
+    );
+    const ecomCovered = new Set<string>();
+    for (const match of ecomMatches.values()) {
+      const candidates = ecomInvoices.filter(r => r.day >= match.from && r.day <= match.to && !ecomCovered.has(r.id)).sort((a,b) => a.day.localeCompare(b.day));
+      for (const r of candidates.slice(0, match.count)) ecomCovered.add(r.id);
+    }
+    if (ecomCovered.size) {
+      const coveredByDay = new Map<string, number>();
+      for (const r of ecomInvoices) if (ecomCovered.has(r.id)) coveredByDay.set(r.day, (coveredByDay.get(r.day) ?? 0) + r.usd);
+      ecomRail.daily = ecomRail.daily.map(p => ({ date: p.date, value: usd(p.value - (coveredByDay.get(p.date) ?? 0)) }));
+      const between = (a: string, b: string) => usd(ecomRail.daily.filter(p => p.date >= a && p.date <= b).reduce((t,p) => t + p.value, 0));
+      ecomRail.today = between(today, today);
+      ecomRail.yesterday = between(addDays(today, -1), addDays(today, -1));
+      ecomRail.mtd = between(monthStart(today), today);
+      ecomRail.lastMonthToDate = between(lastMonthStart, lastMonthToDateEnd);
+      ecomRail.lastMonth = between(lastMonthStart, lastMonthEnd);
+      ecomRail.projectedMonth = usd(((ecomRail.mtd ?? 0) / dayOfMonth) * dim);
+    }
     // Tap charges a settlement line accounts for count on the bank line, not twice.
     const tapCoveredIds = new Set<string>();
     if (tapCharges && settlementMatches.size) {
@@ -1402,7 +1462,7 @@ export const money: Adapter = {
 
     // --- The total covers the connected rails only, and a total over a
     // number no rail can give stays null rather than quietly dropping to 0.
-    const connected = [whopRail, tapRail, manualRail, bankRail].filter(
+    const connected = [whopRail, tapRail, ecomRail, manualRail, bankRail].filter(
       r => r.connected,
     );
     const railSum = (
@@ -1859,6 +1919,12 @@ export const money: Adapter = {
           billingReason: r.billing_reason ? String(r.billing_reason) : null,
         });
       }
+       for (const r of ecomRead) {
+         const id = `ecom:${r.id}`;
+         detailOf.set(id, null);
+         paymentsIn.push({ id, rail: "ecom", day: r.day, usd: r.usd, currency: "KWD", amount: r.amount,
+           payerEmail: r.email, payerName: r.name, dealResponseId: null, clickupTaskId: null, billingReason: null });
+       }
       for (const c of [...tapOlder, ...(tapCharges ?? [])]) {
         if (c.usd === null) continue;
         const id = `tap:${c.id}`;
@@ -2450,6 +2516,7 @@ export const money: Adapter = {
       rails: {
         whop: whopRail,
         tap: tapRail,
+        ecom: ecomRail,
         // Left off when the hand log could not be read, so the screen says
         // "not read" rather than "nothing logged".
         ...(manual ? { manual: manualRail } : {}),

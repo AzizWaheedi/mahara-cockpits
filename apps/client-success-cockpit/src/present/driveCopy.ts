@@ -59,7 +59,7 @@ export const DRIVE_UI = {
   },
   nobody: {
     en: "Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now.",
-    ar: "محد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع تشتغل.",
+    ar: "ما بدينا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع تشتغل.",
   },
   stalled: {
     en: "This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now.",

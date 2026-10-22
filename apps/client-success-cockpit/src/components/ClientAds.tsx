@@ -793,7 +793,9 @@ function AdsChart({
   const f = findScope(model, scope);
   const currency =
     scope.level === "all" ? model.currency : (f.campaign?.currency ?? "USD");
-  // Spend in two currencies does not add up: those two measures wait for a campaign.
+  // Amounts are in dollars on every account the media worker converts; one it
+  // does not keeps its own currency, and that does not add up with dollars:
+  // those two measures wait for a campaign.
   const mixed = currency === undefined;
   const shownMeasure: Measure =
     mixed && (measure === "spend" || measure === "cpl") ? "leads" : measure;
@@ -907,8 +909,9 @@ function AdsChart({
         </FilterRow>
         {mixed ? (
           <p className="text-xs text-muted-foreground">
-            These campaigns spend in different currencies. Pick one campaign to
-            see its spend and cost per lead.
+            Not every ad account here is converted to dollars, so spend does not
+            add up across campaigns. Pick one campaign to see its spend and cost
+            per lead.
           </p>
         ) : null}
       </div>
@@ -1364,8 +1367,8 @@ function CampaignCard({
   const sets = [...c.sets].sort((x, y) => y.t.spend - x.t.spend);
   const spent = sets.filter(s => s.active);
   const quiet = sets.filter(s => !s.active);
-  // The meter compares with the client's average, or the campaign's when the
-  // client's campaigns spend in different currencies.
+  // The meter compares with the client's average, or the campaign's when an
+  // account's amounts are not in dollars and so do not add up with the rest.
   const avg = model.currency ? model.t.cpl : c.t.cpl;
   return (
     <article className="@container overflow-hidden rounded-2xl border bg-card">
@@ -1387,7 +1390,12 @@ function CampaignCard({
             {c.name}
           </AmLink>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {[c.accountName, c.budgetText, plural(c.sets.length, "ad set")]
+            {[
+              c.accountName,
+              c.currencyNote,
+              c.budgetText,
+              plural(c.sets.length, "ad set"),
+            ]
               .filter(Boolean)
               .join(" · ")}
           </p>
@@ -1653,7 +1661,7 @@ function AdRow({
   const cur = c.currency;
   const ready = model.bookingsReady;
   // The same base as the cost per lead meter: the client, or the campaign
-  // when the client's campaigns spend in different currencies.
+  // when an account's amounts are not in dollars.
   const avgCpb = model.currency ? model.t.cpb : c.t.cpb;
   return (
     <li className="border-t py-2.5 first:border-t-0">

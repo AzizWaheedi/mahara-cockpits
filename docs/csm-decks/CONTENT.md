@@ -527,7 +527,7 @@ After stop 4, once the CSM records the client's yes: the quiet stamp "Agreed to 
 - Tray: "Your creatives", with two tabs: "Uploaded" · "From your Meta ads". The count sits beside what it counts: beside the title when there is one list, beside each tab when there are two.
 - Starter ads are named once, in the foot under the phones: "Previews of starter ads, from our templates. Meta fits each ad to the screen it shows on." (in focus, the tag "Starter, from our templates" once). On a tray thumbnail, the short form "Template".
 - A tray thumbnail on a phone says which: "Feed" · "Reels" · "Facebook feed".
-- The leader on "Sponsored" names the mark in the deck's language: "Marked Sponsored" in the English deck, «مكتوب عليه مُموّل» in the Arabic one, whatever the phone's language (score round 1: "Marked مُموّل" read as two languages in one label). The button's leader quotes the button as the phone shows it, in its own isolate after the colon ("The button: إرسال رسالة واتساب").
+- The leader on "Sponsored" names the mark in the deck's language: "Marked Sponsored" in the English deck, «مكتوب عليه مُموَّل» in the Arabic one, whatever the phone's language (score round 1: "Marked مُموّل" read as two languages in one label). The button's leader quotes the button as the phone shows it, in its own isolate after the colon ("The button: إرسال رسالة واتساب").
 - Only with `prep.platforms_planned`: "Planned next: {platforms}".
 
 **Slots**

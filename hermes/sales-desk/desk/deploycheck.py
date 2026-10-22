@@ -60,6 +60,9 @@ TABLES: dict[str, tuple[str, tuple[str, ...]]] = {
     "cockpit_sales_people": ("20260924a_sales_cockpit.sql", ("email", "role", "active")),
     "cockpit_sales_followups": ("the follow-ups migration", ("id", "contact_id", "segment", "status")),
     "cockpit_sales_wa_templates": ("the WhatsApp templates migration", ("key",)),
+    # The rooms a call is matched by (recordings.room_lead).
+    "cockpit_sales_zoom_links": ("20261010s_sales_zoom_links.sql", (
+        "contact_id", "topic", "made_at", "seat_email", "host_email")),
     # Every appointments column sales-api's room code selects (m1 round 3b,
     # demo-end-column-missing-breaks-room-create: room.create once read an
     # end_at the mirror never had, and every press failed with a 500).

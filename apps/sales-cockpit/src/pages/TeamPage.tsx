@@ -346,6 +346,7 @@ const SOURCE_WORDS: Record<string, string> = {
   typeform: "The New Client Form",
   typeform_eod: "The end-of-day forms",
   whop_payments: "Whop's payments",
+  ecom_payments: "Ecom payments",
   assets_web: "The asset library (web)",
   assets_wistia: "The asset library (Wistia)",
   assets_social_youtube_mahara: "The asset library (YouTube)",

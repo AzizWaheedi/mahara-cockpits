@@ -504,3 +504,19 @@ test('every window query passes the read-only finance guard', () => {
     expect(guard(contentWindowSql(from, to))).toBe(true);
   }
 });
+
+// 2026-10-20, the CEO: "make sure it differentiates lead gen spend from hiring
+// spend". b2b_campaign_type types a hiring campaign "excluded": its spend and
+// results never reach lead-gen spend, leads or cost per lead.
+test('hiring campaign spend stays out of lead-gen spend and cost per lead', async () => {
+  const result = await runRows([
+    adRow('lg', 'lead_gen', { spend: 100, leads: 5, impressions: 1000 }),
+    adRow('hire', 'excluded', { spend: 40, leads: 9, meta_leads: 3, impressions: 800 }),
+    adRow('rt', 'retargeting', { spend: 10, impressions: 200 }),
+  ]);
+  expect(result.account.w7.spend).toBe(100);
+  expect(result.account.w7.leads).toBe(5);
+  expect(result.account.w7.cpl).toBe(20);
+  expect(result.retargetingSpend.w7).toBe(10);
+  expect(adIn(result, 'hire').verdict.verdict).toBe('not_judged');
+});

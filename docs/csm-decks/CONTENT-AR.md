@@ -11,7 +11,7 @@ Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm
 3. **Voice-skill rules kept:** تمام never طيب; بصراحة; نبدي and تبدي, not نبدأ; plain spoken verbs, never bookish ones (يحاكي، يجسد، يعكس); never مقاول for the client; loanwords in Arabic script where people say them (سكربت، كورس، لابتوب، زوم، فيد، ريلز، ستوري).
 4. **Form:** no guillemets and no quote marks around Arabic words, no em dashes, no exclamation marks. ".." only inside spoken lines.
 5. **Times:** on slides, ١٠ صباحاً and ٦ مساءً (how Gulf businesses write their hours). In spoken lines and in the call, الصبح، العصر، المسا.
-6. **Numbers:** Arabic-Indic digits through `Fig`, never ٬, never a lone ٠, never a digit glued to بـ or لـ (write إلى ٦, not لـ٦). Small numbers inside speech are words (ست شهور، سنتين). The running call clock and the WhatsApp confirmation's date and time stay in Latin digits (DESIGN 13.4, 7.6); once the call ends, its length takes Arabic-Indic digits, ٤:٥١ (the fixer's round).
+6. **Numbers:** Arabic-Indic digits through `Fig`, never ٬, never a lone ٠, never a digit glued to بـ or لـ (write إلى ٦, not لـ٦). Small numbers inside speech are words (ست شهور، سنتين). The running call clock, the WhatsApp confirmation's date and time, and the Drive box's clock in {time} (أمس الساعة 09:05; a date before it keeps Arabic-Indic digits, يوم ١٦ أكتوبر) stay in Latin digits (DESIGN 13.4, 7.6, DRIVE-IMPORT 8); once the call ends, its length takes Arabic-Indic digits, ٤:٥١ (the fixer's round).
 7. **Slots keep CONTENT's ids** in braces. Client and page names, handles and English words sit in `<bdi dir=auto>` (DESIGN 13.2). In the Arabic deck `{client.name}` is the Arabic name from `ghl_clients.client_name` when there is one.
 8. **The presenting CSM's title is gendered in Arabic.** Store `csm.title_ar` on the seat, or a gender: مدير نجاح العملاء for a man, مديرة نجاح العملاء for a woman. With no name and no gender, the line reads فريق نجاح العملاء. Inside the O3 group, where the CSM is a role, the row reads نجاح العملاء.
 9. **Meta's own Arabic labels** (مُموَّل and the button labels) are my best reading of Meta's Arabic interface. Check each against a live Arabic preview before shipping (DESIGN 17.2).
@@ -561,6 +561,7 @@ The three phones share one app language (DESIGN 7.1): the language most of the c
 | `form.whatsapp.next.2` | It arrives on your WhatsApp. | توصل على الواتساب عندكم. |
 | `form.whatsapp.next.3` | Our team calls them within 5 minutes during working hours. | وفريقنا يتصل عليه خلال ٥ دقايق في أوقات الدوام. |
 | `form.whatsapp.next.3.dwy` | Your team calls them. | وفريقكم يتصل عليه. |
+| `form.app.today` · `form.app.message` (WhatsApp's own words on the chat, in the phone's language; check against a live Arabic WhatsApp, as decision 9 asks for Meta's) | Today · Message | اليوم · رسالة |
 
 **The example form** (drawn when no form is confirmed; it speaks to the customer, so it is singular)
 
@@ -844,6 +845,7 @@ Then, after the six jobs:
 - وبأرسل لكم هالكرت بالقروب، ومعاه رابط كورس إتقان توقيع المشاريع.
 - كل ما خليتوا أوقات فاضية أكثر من ساعات دوامكم، لقى العميل وقت يناسبه أسرع.
 - يوم الإجازة، سكروا ساعات الدوام وحطوها مشغول، مو حدث على اليوم كامل، لأن التقويم أحياناً ما ينتبه لليوم المسكّر كامل، فنحجز فيه بالغلط.
+- (Done for you) وبعد الموعد، المتابعة علينا وعليكم: أنتم ترسلون عرض السعر وتحددون الموعد الثاني، وفريق الاتصال عندنا يتابع مع العميل بعد.
 - أكثر أسئلة يسألها فريق الاتصال: موعد برا أوقات دوامكم، أو إجازة، أو تفصيلة عن خدمة.
 - وما يحتاج تردون يوم الجمعة أو بالليل.
 - **Temp check:** أي وحدة من هذي بتكون أصعب على فريقكم؟
@@ -1173,7 +1175,7 @@ The Latin "Sales crash course" left the middle of the sentence (the score round'
 | Brought in {landed} of {n} files. Each one that didn't come in says why below. | جبنا {landed} من {n}. واللي ما وصل، مكتوب تحته السبب. |
 | Everything in this link is already in the tray. | كل اللي في هالرابط موجود بالتصاميم من قبل. |
 | Only the newest 20 came in. Paste a subfolder's link for the rest. | وصل أحدث ٢٠ ملف بس. وللباقي، الصق رابط مجلد من داخله. |
-| Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now. | محد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع تشتغل. |
+| Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now. | ما بدينا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع تشتغل. |
 | This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now. | الاستيراد وقف بالنص. آخر مرة اشتغلت أداة الدرايف {time}. بيكمل من مكانه أول ما ترجع تشتغل، وإذا تحتاج الملفات الحين، ارفعها هنا. |
 | The Drive importer hasn't run yet. Upload the files here for now. | أداة الدرايف ما اشتغلت للحين. ارفع الملفات هنا لين تشتغل. |
 | Couldn't check the import: {reason}. Trying again. | ما قدرنا نتأكد من الاستيراد: {reason}. نحاول مرة ثانية. |
@@ -1231,8 +1233,8 @@ The Latin "Sales crash course" left the middle of the sentence (the score round'
 | 6.5 calendar entry | {day} · 4 pm · Appointment · {place} | {day} · ٤ مساءً · موعد، {place} |
 | 7.2 to 7.4 Meta chrome | See more · Like · Comment · Share | عرض المزيد · أعجبني · تعليق · مشاركة |
 | 7.3 label | Reels and Stories | ريلز وستوري |
-| 8.3 leaders ({word} is the phone's Sponsored named in the deck's language, مُموّل in the Arabic deck, Sponsored in the English one, since score round 1; the button stays as the phone shows it, isolated after the colon) | Your page and logo · Marked {word} · Your picture or video · Your words · The button: Learn more | صفحتكم وشعاركم · مكتوب عليه {word} · صورتكم أو الفيديو · كلامكم · الزر: معرفة المزيد |
-| 8.3 leaders, {word} | The word as the phone shows it, in the phone's language: Sponsored, or مُموَّل | |
+| 8.3 leaders ({word} is the phone's Sponsored named in the deck's language, مُموَّل in the Arabic deck, Sponsored in the English one, since score round 1; the button stays as the phone shows it, isolated after the colon) | Your page and logo · Marked {word} · Your picture or video · Your words · The button: Learn more | صفحتكم وشعاركم · مكتوب عليه {word} · صورتكم أو الفيديو · كلامكم · الزر: معرفة المزيد |
+| 8.3 leaders, {word} | The phone's Sponsored named in the deck's language, whatever the phone's: Sponsored | مُموَّل |
 | 8.3 crop leader | Meta crops this to 4:5 in the feed | ميتا تقص هذا على مقاس ٤:٥ في الفيد |
 | 8.3 phone fallback | Your ad goes here | إعلانكم هنا |
 | 8.3 foot | Previews. Meta fits each ad to the screen it shows on. | معاينات. ميتا تضبط كل إعلان على الشاشة اللي يطلع فيها. |
@@ -1485,7 +1487,7 @@ Not خدماتنا: the five are the client's kind of work, not services Mahara 
 - `next.cardWith` is ٤٥ دقيقة مع المدير الإبداعي; `cover.roadLive` is منطلقين من {date}، ومكالمة الإطلاق اليوم.
 - Scenes: fitout2 محل مجهّز بكاونترات حجر ورفوف فيها إضاءة (a counter is كاونتر, not طاولة); designbuild تطل على المسبح; architecture2 عليه سواتر خشب; construction2 وفوقه رافعة; construction without its comma.
 - Spoken: الفكرة إنكم تشوفون كم إعلان نختبر (L3 stop 1); تنحط علامة صح (O6).
-- The Drive box: {time} is said with الساعة (الساعة 13:02، أمس الساعة 09:05); nobody's line is محد بدا فيه للحين … لين ترجع تشتغل; the stalled line names its subject (الاستيراد وقف بالنص) with a comma before ارفعها; `notLive` is الاستيراد من الدرايف, never الجلب; `too_many_links` is said from our side (وصلتنا روابط درايف كثيرة … الصق الرابط مرة ثانية); `wrong_type` says الفيديوهات beside الصور.
+- The Drive box: {time} is said with الساعة (الساعة 13:02، أمس الساعة 09:05); nobody's line is ما بدينا فيه للحين … لين ترجع تشتغل; the stalled line names its subject (الاستيراد وقف بالنص) with a comma before ارفعها; `notLive` is الاستيراد من الدرايف, never الجلب; `too_many_links` is said from our side (وصلتنا روابط درايف كثيرة … الصق الرابط مرة ثانية); `wrong_type` says الفيديوهات beside الصور.
 - The notes window's Arabic temp check is filled from the Arabic slots; with no Arabic name for the service it reads (اسم الخدمة), a cue for the CSM, never a Latin name or الخدمة twice. A kickoff answer of أخرى, خدمة أخرى or غيرها is "Other" with nothing typed, never the client's words.
 - Every single-string row above that still showed a middle dot now shows «، » (decision 15).
 

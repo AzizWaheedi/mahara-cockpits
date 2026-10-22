@@ -231,7 +231,7 @@ export const edit = authenticatedAction({
     }),
 });
 
-const RAILS = ["bank_transfer", "cheque", "cash", "tap", "other"] as const;
+const RAILS = ["bank_transfer", "cheque", "cash", "tap", "ecom", "other"] as const;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { readSearchAssets, type SearchAsset } from "./assetSearch";
 import { STILLS_BUCKET, supabase } from "./supabase";
+import { isOwnStill } from "./thumbs";
 import type {
   Asset,
   Client,
@@ -208,6 +209,35 @@ export function useWinners(): Loaded<WinnerAd[]> {
         .limit(300),
     [],
   );
+}
+
+/**
+ * Stills the native ad mirror keeps in our own storage, by Meta ad id. They
+ * last, unlike Meta's own picture links. `cockpit_ads` is scoped by client, so
+ * an editor gets the stills of the clients they may open; every other card
+ * falls back to a frame of our own copy of the video.
+ */
+export function useAdStills(adIds: string[]): Record<string, string> {
+  const key = [...new Set(adIds)].sort().join(",");
+  const read = useQuery<{ meta_ad_id: string; still_url: string | null }[]>(
+    () =>
+      key
+        ? supabase
+            .from("cockpit_ads")
+            .select("meta_ad_id, still_url")
+            .in("meta_ad_id", key.split(","))
+            .not("still_url", "is", null)
+        : Promise.resolve({ data: [], error: null }),
+    [key],
+  );
+  return useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const r of read.data ?? []) {
+      if (r.still_url && isOwnStill(r.still_url))
+        out[r.meta_ad_id] = r.still_url;
+    }
+    return out;
+  }, [read.data]);
 }
 
 /** Has this editor filed today? Unowned legacy history is not a personal report. */
