@@ -80,9 +80,10 @@ export const RAIL_LABEL: Record<ManualRail, string> = {
   cheque: "Cheque",
   cash: "Cash",
   tap: "Tap",
+  ecom: "Ecom",
   other: "Other",
 };
-const RAILS: ManualRail[] = ["bank_transfer", "cheque", "cash", "tap", "other"];
+const RAILS: ManualRail[] = ["bank_transfer", "cheque", "cash", "tap", "ecom", "other"];
 
 /** The same bounds the server checks (writeGuard.ts). */
 const FIRST_DAY = "2025-01-01";
@@ -1285,12 +1286,14 @@ export function ManualEntriesCard({
 const AGAINST: Record<PossibleDuplicate["against"], string> = {
   whop: "Whop payment",
   tap: "Tap charge",
+  ecom: "Ecom payment",
   closer_form: "Closer form deal",
 };
 
 const LIKE: Record<PossibleDuplicate["against"], string> = {
   whop: "Like a Whop payment",
   tap: "Like a Tap charge",
+  ecom: "Like an Ecom payment",
   closer_form: "Like a closer form deal",
 };
 

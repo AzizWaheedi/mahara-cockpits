@@ -1394,6 +1394,7 @@ const schema = defineSchema({
       v.literal("cheque"),
       v.literal("cash"),
       v.literal("tap"),
+      v.literal("ecom"),
       v.literal("other"),
     ),
     /**

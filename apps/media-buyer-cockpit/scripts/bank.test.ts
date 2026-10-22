@@ -114,6 +114,7 @@ describe("classifyLine", () => {
     expect(acct(150, "TRF FROM DECOR PLUS CO")).toBe("client_payment");
     expect(acct(1234.5, "WHOP PAYOUT 2026-06-02")).toBe("whop_payout");
     expect(acct(80, "TAP PAYMENTS SETTLEMENT")).toBe("tap_settlement");
+    expect(acct(80, "ECOM PAYMENTS SETTLEMENT")).toBe("ecom_settlement");
     expect(acct(200, "537015XXXXXX4348 /CC")).toBe("own_transfer");
   });
   test("account debits: into Whop, to the card, fees, expenses", () => {

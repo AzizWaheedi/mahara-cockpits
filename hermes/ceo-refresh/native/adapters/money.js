@@ -7,6 +7,7 @@ import { MEDIA_FEED_SQL, MEDIA_STALE_MS, mediaClientDaysSql, mediaFeedFresh } fr
 
 const STALE_MS = 60 * 60_000;
 const TAP_STALE_MS = 3 * 60 * 60_000;
+const ECOM_STALE_MS = 60 * 60_000;
 const BANK_STALE_DAYS = 7;
 const MANUAL_CAP = 5000;
 const ROUND2 = value => Math.round(value * 100) / 100;
@@ -712,6 +713,24 @@ export function createMoneyAdapter(snapshot) {
       const tapOlder = tapRead.filter(row => row.day < dates.from180 && row.usd !== null);
       sources.push({ name: "Tap charges", freshestAt: tapFreshAt, ok: true });
 
+      const [ecomStateRows, ecomRows] = await Promise.all([
+        sql(TRIAGE, `/* ceo-refresh:money.ecom_state */ SELECT ok,note,floor(extract(epoch FROM last_ok_at)*1000)::bigint AS ok_ms FROM public.cockpit_sync_state WHERE key='ecom-payments-sync'`),
+        sql(TRIAGE, `/* ceo-refresh:money.ecom_invoices */ SELECT id,to_char(day,'YYYY-MM-DD') AS day,floor(extract(epoch FROM paid_at)*1000)::bigint AS at_ms,amount_kwd,usd,customer_name,customer_email FROM public.cockpit_ecom_invoices WHERE status='PAID' AND day BETWEEN date '${seedFrom}' AND date '${today}' ORDER BY paid_at`),
+      ]);
+      const ecomState = ecomStateRows[0];
+      const ecomFreshAt = epoch(ecomState?.ok_ms);
+      if (!ecomState || ecomState.ok !== true || ecomFreshAt === null || now - ecomFreshAt > ECOM_STALE_MS || now < ecomFreshAt - 60_000)
+        failSource("Ecom payment sync", ecomState?.note ? cleanText(ecomState.note, 120) : "no recent successful ecom-payments-sync run");
+      const ecomRead = ecomRows.map(row => ({
+        id: String(row.id), day: dateText(row.day), at: num(row.at_ms), amount: num(row.amount_kwd),
+        usd: row.usd === null || row.usd === undefined ? null : ROUND2(num(row.usd)),
+        email: row.customer_email ? String(row.customer_email).toLowerCase() : null,
+        name: row.customer_name ? cleanText(row.customer_name, 100) : null,
+      }));
+      if (ecomRead.some(row => row.usd === null)) failSource("Ecom payments", "a paid invoice has no USD conversion");
+      const ecomInvoices = ecomRead.filter(row => row.day >= dates.from180);
+      sources.push({ name: "Ecom payments", freshestAt: ecomFreshAt, ok: true, note: `${ecomRead.length} paid invoices` });
+
       const statementRows = bankFacts.statements;
       const statement = statementRows.slice().sort((a, b) => dateText(field(b, "to_day", "toDay")).localeCompare(dateText(field(a, "to_day", "toDay"))))[0];
       const bankLines = bankFacts.lines;
@@ -725,6 +744,17 @@ export function createMoneyAdapter(snapshot) {
         const candidates = tapCharges.filter(row => row.usd !== null && row.day >= match.from && row.day <= match.to).sort((a, b) => a.day.localeCompare(b.day));
         for (const charge of candidates.slice(0, match.count)) tapCovered.add(charge.id);
       }
+      const ecomSettlements = bankLines.filter(line => line.kind === "ecom_settlement").map(line => ({ id: String(line.id), day: line.day, usd: Math.abs(line.usd) }));
+      const ecomMatches = matchRuns(ecomSettlements, ecomInvoices.map(row => ({ id: row.id, day: row.day, usd: row.usd })), 10, 0.05);
+      const ecomCovered = new Set();
+      for (const match of ecomMatches.values()) {
+        const candidates = ecomInvoices.filter(row => row.day >= match.from && row.day <= match.to && !ecomCovered.has(row.id)).sort((a, b) => a.day.localeCompare(b.day));
+        for (const invoice of candidates.slice(0, match.count)) ecomCovered.add(invoice.id);
+      }
+      const ecomByDay = new Map();
+      for (const invoice of ecomInvoices) if (!ecomCovered.has(invoice.id)) ecomByDay.set(invoice.day, (ecomByDay.get(invoice.day) ?? 0) + invoice.usd);
+      const ecomDaily = [];
+      for (let day = dates.from180; day <= today; day = addDays(day, 1)) ecomDaily.push({ date: day, value: ROUND2(ecomByDay.get(day) ?? 0) });
       const tapByDay = new Map();
       for (const charge of tapCharges) if (charge.usd !== null && !tapCovered.has(charge.id)) tapByDay.set(charge.day, (tapByDay.get(charge.day) ?? 0) + charge.usd);
       const tapDaily = [];
@@ -736,6 +766,14 @@ export function createMoneyAdapter(snapshot) {
         lastMonth: railBetween({ daily: tapDaily }, dates.lastMonthStart, dates.lastMonthEnd),
         projectedMonth: ROUND2(railBetween({ daily: tapDaily }, monthStart(today), today) / dates.dayOfMonth * dates.dim),
         refundsMtd: null, daily: tapDaily, lastPaymentAt: Math.max(0, ...tapCharges.filter(row => row.usd !== null).map(row => row.at)) || null,
+      };
+
+      const ecomRail = {
+        label: "Ecom", connected: true, today: railBetween({ daily: ecomDaily }, today, today), yesterday: railBetween({ daily: ecomDaily }, addDays(today, -1), addDays(today, -1)),
+        mtd: railBetween({ daily: ecomDaily }, monthStart(today), today), lastMonthToDate: railBetween({ daily: ecomDaily }, dates.lastMonthStart, dates.lastMonthToDateEnd),
+        lastMonth: railBetween({ daily: ecomDaily }, dates.lastMonthStart, dates.lastMonthEnd),
+        projectedMonth: ROUND2(railBetween({ daily: ecomDaily }, monthStart(today), today) / dates.dayOfMonth * dates.dim),
+        refundsMtd: null, daily: ecomDaily, lastPaymentAt: Math.max(0, ...ecomInvoices.map(row => row.at)) || null,
       };
 
       const paymentRows = [];
@@ -750,6 +788,10 @@ export function createMoneyAdapter(snapshot) {
       for (const charge of [...tapOlder, ...tapCharges]) if (charge.usd !== null) paymentRows.push({
         id: `tap:${charge.id}`, rail: "tap", day: charge.day, usd: charge.usd, currency: charge.currency, amount: charge.amount,
         payerEmail: charge.email, payerName: charge.name, dealResponseId: null, clickupTaskId: null, billingReason: null,
+      });
+      for (const invoice of ecomRead) paymentRows.push({
+        id: `ecom:${invoice.id}`, rail: "ecom", day: invoice.day, usd: invoice.usd, currency: "KWD", amount: invoice.amount,
+        payerEmail: invoice.email, payerName: invoice.name, dealResponseId: null, clickupTaskId: null, billingReason: null,
       });
       for (const row of transferRows) paymentRows.push({
         id: `transfer:${row.id}`, rail: "transfer", day: dateText(row.day), usd: ROUND2(num(row.amount_usd)), currency: "USD", amount: ROUND2(num(row.amount_usd)),
@@ -908,7 +950,7 @@ export function createMoneyAdapter(snapshot) {
         projectedMonth: bankMtd === null || bankDaysThisMonth === 0 ? null : ROUND2(bankMtd / bankDaysThisMonth * dates.dim),
         refundsMtd: null, daily: bankDaily, lastPaymentAt: bankNewestPayment ? dayStart(bankNewestPayment) : null,
       };
-      const connected = [whopRail, tapRail, manualRail, bankRail].filter(rail => rail.connected);
+      const connected = [whopRail, tapRail, ecomRail, manualRail, bankRail].filter(rail => rail.connected);
       const sumRails = key => connected.length ? ROUND2(connected.reduce((total, rail) => total + (rail[key] ?? 0), 0)) : null;
       const totalDaily = [];
       for (let day = dates.from180; day <= today; day = addDays(day, 1)) {
@@ -1070,7 +1112,7 @@ export function createMoneyAdapter(snapshot) {
       }
       const payload = {
         month: dates.month, dayOfMonth: dates.dayOfMonth, daysInMonth: dates.dim, cash: whopCash,
-        rails: { whop: whopRail, tap: tapRail, manual: manualRail, bank: bankRail, total: totalRail },
+        rails: { whop: whopRail, tap: tapRail, ecom: ecomRail, manual: manualRail, bank: bankRail, total: totalRail },
         manualEntries, possibleDuplicates: duplicates, monthly: monthlyWithManual,
         refunds: { mtd: ROUND2(num(summary.refunds_mtd) + manualRefundsMtd), last90: ROUND2(num(summary.refunds_90) + manualRefunds90), manualMtd: manualRefundsMtd, manualLast90: manualRefunds90 },
         deals: dealsPayload,
@@ -1095,7 +1137,7 @@ export function createMoneyAdapter(snapshot) {
       sources.push({ name: "Manual payment history and finance revision", freshestAt: liveManualStamp ?? undefined, ok: true, note: `revision ${sourceRevision}` });
       sources.push({ name: "Bank classification and exclusions", freshestAt: Math.max(0, ...statementRows.map(row => epoch(field(row, "imported_at", "importedAt")) ?? 0)) || undefined, ok: true, note: `${bankLines.length} canonical bank lines, ${bankFacts.exclusions.length} human exclusion rules` });
       sources.push({ name: "Payer mappings and client billing snapshots", freshestAt: Math.max(0, ...billingRows.map(row => row.syncedAt)) || undefined, ok: true, note: `${rowsFor(snapshot, "payers").length} human payer mappings` });
-      sources.push({ name: "Whop and Tap transaction attribution", freshestAt: Math.max(epoch(summary.whop_synced_ms) ?? 0, tapFreshAt) || undefined, ok: true, note: `${clientPayments.length} client payment snapshots and ${dealPayments.length} deal payments computed; ${ties.applied} of ${ties.live} ties applied` });
+      sources.push({ name: "Whop, Tap and Ecom transaction attribution", freshestAt: Math.max(epoch(summary.whop_synced_ms) ?? 0, tapFreshAt, ecomFreshAt) || undefined, ok: true, note: `${clientPayments.length} client payment snapshots and ${dealPayments.length} deal payments computed; ${ties.applied} of ${ties.live} ties applied` });
       return { payload, sources, daily, clientPayments, dealPayments, financeRevision: sourceRevision };
     },
   };

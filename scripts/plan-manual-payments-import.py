@@ -57,7 +57,7 @@ def payment(row: dict, deployment: str) -> dict:
     if datetime.strptime(day, "%Y-%m-%d").date().isoformat() != day:
         raise ValueError("day: invalid calendar date")
     rail = text(row, "rail")
-    if rail not in {"bank_transfer", "cheque", "cash", "tap", "other"}:
+    if rail not in {"bank_transfer", "cheque", "cash", "tap", "ecom", "other"}:
         raise ValueError("rail: unsupported source method")
     kind = row.get("kind", "payment")
     if kind not in {"payment", "refund"}:

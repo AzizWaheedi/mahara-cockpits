@@ -251,6 +251,7 @@ export function MoneyTab({ sections, now, day, goTab }: CeoTabProps) {
               payload.rails?.total,
               payload.rails?.whop,
               payload.rails?.tap,
+              payload.rails?.ecom,
               payload.rails?.manual,
               payload.rails?.bank,
             ].filter((r): r is NonNullable<typeof r> => Boolean(r))}
@@ -692,6 +693,7 @@ function RailsBody({
     if (!rails) return { data: [], series: [] as ChartSeries[] };
     const extra = [
       { key: "tap", rail: rails.tap, label: "Tap" },
+      { key: "ecom", rail: rails.ecom, label: "Ecom" },
       { key: "manual", rail: rails.manual, label: "Logged by hand" },
       { key: "bank", rail: rails.bank, label: "Bank statements" },
     ].filter(x => x.rail?.connected);
@@ -740,11 +742,12 @@ function RailsBody({
   const rows: RailRow[] = [
     { key: "whop", rail: rails.whop },
     { key: "tap", rail: rails.tap },
+    { key: "ecom", rail: rails.ecom },
     ...(manual ? [{ key: "manual", rail: manual }] : []),
     ...(rails.bank ? [{ key: "bank", rail: rails.bank }] : []),
     { key: "total", rail: rails.total },
   ];
-  const liveRails = [rails.whop, rails.tap, manual, rails.bank ?? null].filter(
+  const liveRails = [rails.whop, rails.tap, rails.ecom, manual, rails.bank ?? null].filter(
     r => r?.connected,
   ).length;
 

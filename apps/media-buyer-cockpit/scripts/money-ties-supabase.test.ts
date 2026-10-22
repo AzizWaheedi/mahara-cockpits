@@ -78,6 +78,8 @@ async function moneyTiesDb(): Promise<PGlite> {
   await next.exec(extract(migration("20260924a_sales_cockpit.sql"), /create table if not exists public\.cockpit_sales_deals \([\s\S]*?\n\);/i, "cockpit_sales_deals"));
   await next.exec("ALTER TABLE public.cockpit_sales_deals ENABLE ROW LEVEL SECURITY; REVOKE ALL ON public.cockpit_sales_deals FROM anon, authenticated;");
   await next.exec(migration(MIGRATION));
+  await next.exec("CREATE TABLE public.cockpit_ecom_invoices(id text primary key,status text not null)");
+  await next.exec(migration("20261022c_ecom_money_rails.sql"));
 
   // Made-up sources.
   await next.exec(`
@@ -92,6 +94,7 @@ async function moneyTiesDb(): Promise<PGlite> {
     INSERT INTO public.cockpit_tap_charges(id,day,at,status,live,currency,amount,usd,email,name) VALUES
       ('chg_fixture1','2026-10-05','2026-10-05T10:00:00Z','CAPTURED',true,'KWD',150,489,'payer.four@example.test','Payer Four'),
       ('chg_fixture2','2026-10-05','2026-10-05T11:00:00Z','FAILED',true,'KWD',150,489,'payer.four@example.test','Payer Four');
+    INSERT INTO public.cockpit_ecom_invoices(id,status) VALUES ('INV_fixture1','PAID'),('INV_unpaid','UNPAID');
     INSERT INTO public.cockpit_statements(id,account,imported_by) VALUES('fixture-statement','0000','fixture');
     INSERT INTO public.cockpit_bank_lines(id,statement_id,account,hash,day,amount,usd,kind) VALUES
       (9001,'fixture-statement','0000','fixture:1','2026-10-06',300,978,'client_payment'),
@@ -231,6 +234,7 @@ describe("ties", () => {
       [{ ...BASE, paymentId: "whop:pay_missing", dealResponseId: "resp_deal_a" }, "That payment is not in the ledger yet; refresh Money first."],
       [{ ...BASE, paymentId: "whop:pay_outOnly", dealResponseId: "resp_deal_a" }, "That payment is not in the ledger yet; refresh Money first."],
       [{ ...BASE, paymentId: "tap:chg_fixture2", dealResponseId: "resp_deal_a" }, "That payment is not in the ledger yet"],
+      [{ ...BASE, paymentId: "ecom:INV_unpaid", dealResponseId: "resp_deal_a" }, "That payment is not in the ledger yet"],
       [{ ...BASE, paymentId: "bank:9002", dealResponseId: "resp_deal_a" }, "That payment is not in the ledger yet"],
       [{ ...BASE, paymentId: "manual:manual-fixture-gone", dealResponseId: "resp_deal_a" }, "That payment is not in the ledger yet"],
       [{ ...BASE, paymentId: "whop:pay_fixtureA", dealResponseId: "resp_missing" }, "That deal is not a signed closer-form deal"],
@@ -256,10 +260,11 @@ describe("ties", () => {
     const a = await tie({ ...BASE, paymentId: "whop:pay_fixtureA", dealResponseId: "resp_deal_a", evidence: "Fixture: same amount as the typed deposit" });
     expect(a).toEqual({ ok: true, id: expect.any(Number) });
     expect((await tie({ ...BASE, paymentId: "tap:chg_fixture1", clickupTaskId: "task_card_a" })).ok).toBe(true);
+    expect((await tie({ ...BASE, paymentId: "ecom:INV_fixture1", clickupTaskId: "task_card_a" })).ok).toBe(true);
     expect((await tie({ ...BASE, paymentId: "bank:9001", notClient: true, note: "Fixture: an owner's transfer" })).ok).toBe(true);
     expect((await tie({ ...BASE, paymentId: "manual:manual-fixture-1", clickupTaskId: "task_card_b" })).ok).toBe(true);
     expect((await tie({ ...BASE, paymentId: "transfer:fixture-transfer-1", dealResponseId: "resp_deal_a" })).ok).toBe(true);
-    expect(await revision()).toBe(before + 5);
+    expect(await revision()).toBe(before + 6);
 
     const again = await tie({ ...BASE, paymentId: "whop:pay_fixtureA", clickupTaskId: "task_card_a", note: "Fixture: it is the card's renewal" });
     expect(again.id).not.toBe(a.id);
@@ -325,7 +330,7 @@ describe("ties", () => {
     const rows = (await db.query<{ action: string; entity_type: string; entity_id: string; actor_email: string; before: unknown; after: Record<string, unknown> }>(
       "select action, entity_type, entity_id, actor_email, before, after from public.cockpit_audit_log where action like 'money.%' order by created_at, id")).rows;
     const ceoEmail = (await db.query<{ email: string }>("select lower(email) email from auth.users where id=$1", [CEO])).rows[0].email;
-    expect(rows.filter(r => r.action === "money.tie").length).toBe(10);
+    expect(rows.filter(r => r.action === "money.tie").length).toBe(11);
     expect(rows.filter(r => r.action === "money.untie").length).toBe(1);
     for (const r of rows) {
       expect(r.entity_type).toBe("cockpit_payment_ties");

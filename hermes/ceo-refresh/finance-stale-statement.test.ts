@@ -53,6 +53,8 @@ function reader(overrides: Record<string, Fixture> = {}) {
     "money.attribution.expenses": [],
     "money.tap_state": [{ ok: true, note: null, rows_seen: 0, run_ms: now, ok_ms: now }],
     "money.tap_charges": [],
+      "money.ecom_state": [{ ok: true, note: null, ok_ms: now }],
+      "money.ecom_invoices": [],
     "money.media_feed": [{ ready: true, source_rows: 2, actual_rows: 2, snapshot_ms: now - 600_000, first_day: "2026-08-13", last_day: today }],
     "money.client_ads": [
       { client_id: "c-1", day: today, spend_usd: 40, leads: 2, campaigns: ["Camp A"], currency: "USD", source: "media", own: false },

@@ -111,7 +111,14 @@ export const DEPOSIT_CONFIRMED = `(exists (
  * the voided deals of each window, dated as the function dates a deal, for
  * toWindow to take off; every direct read of closed_deals leaves them out.
  */
-function windowsSql(ranges, hours) {
+function windowsSql(ranges, hours, ecomRows = []) {
+    const ecomJson = JSON.stringify(ecomRows).replace(/'/g, "''");
+    const confirmed = `(${DEPOSIT_CONFIRMED} or exists (
+      select 1 from jsonb_to_recordset('${ecomJson}'::jsonb) as ep(day text,email text,name text)
+      where ep.day::date between (d.submitted_at at time zone 'Asia/Riyadh')::date - 7 and (d.submitted_at at time zone 'Asia/Riyadh')::date + 60
+        and ((ep.email is not null and lower(btrim(ep.email))=lower(btrim(d.email)))
+          or (ep.name is not null and length(regexp_replace(lower(ep.name),'[^[:alnum:]]','','g'))>=6
+              and regexp_replace(lower(ep.name),'[^[:alnum:]]','','g')=regexp_replace(lower(btrim(concat_ws(' ',d.client_first_name,d.client_last_name))),'[^[:alnum:]]','','g')))))`;
     const workingMin = workingMinutesSql("l.lead_created_at", "fc.first_call", hours);
     const values = Object.entries(ranges)
         .map(([k, [f, t]]) => `('${k}', ${day(f)}, ${day(t)})`)
@@ -169,8 +176,8 @@ fe as (
   select w.k,
     count(*) as fe_deals,
     coalesce(sum(d.cash_collected), 0) as fe_deposit,
-    count(*) filter (where coalesce(d.cash_collected, 0) > 0 and ${DEPOSIT_CONFIRMED}) as fe_deals_confirmed,
-    coalesce(sum(d.cash_collected) filter (where ${DEPOSIT_CONFIRMED}), 0) as fe_confirmed
+    count(*) filter (where coalesce(d.cash_collected, 0) > 0 and ${confirmed}) as fe_deals_confirmed,
+    coalesce(sum(d.cash_collected) filter (where ${confirmed}), 0) as fe_confirmed
   from w
   join public.closed_deals d on (d.submitted_at at time zone 'Asia/Riyadh')::date between w.f and w.t
     and not ${webbyDeal("d")}
@@ -838,7 +845,7 @@ export function voidedNote(days, windows) {
  */
 export const KICKOFF_FORM = "tG7dnxBn";
 export const KICKOFF_READ_FROM = "2026-10-04";
-const KICKOFF_RAILS = new Set(["whop", "tap", "transfer"]);
+const KICKOFF_RAILS = new Set(["whop", "tap", "ecom", "transfer"]);
 export const KICKOFF_SQL = `select clickup_task_id, client_name,
     to_char(((forms->'kickoff'->>'submitted_at')::timestamptz at time zone 'Asia/Kuwait')::date, 'YYYY-MM-DD') as day,
     forms->'kickoff'->>'payment' as payment,
@@ -939,7 +946,7 @@ export const LEDGER_STALE_MS = 2 * 60 * 60_000;
 /** A deal's money is the closer's this many days after signing (money.js DEAL_TERM_DAYS), so the ledger points at deals this far back. */
 const DEAL_TERM_DAYS = 120;
 /** The ledger's rail in the tile's words: a bank transfer (B2B transfers and statement lines) is bank. */
-const LEDGER_RAIL = { whop: "whop", tap: "tap", manual: "manual", transfer: "bank", bank: "bank" };
+const LEDGER_RAIL = { whop: "whop", tap: "tap", ecom: "ecom", manual: "manual", transfer: "bank", bank: "bank" };
 /** The deal ledger and the Money section's own count of it, in one statement so both are one publish. */
 export function dealLedgerSql(from) {
     return `with m as (
@@ -1026,7 +1033,7 @@ export function paidIn(rows, from, to) {
     const mine = rows.filter(r => r.day >= from && r.day <= to);
     const sum = list => round2(list.reduce((n, r) => n + r.usd, 0));
     const byRail = {};
-    for (const rail of ["whop", "tap", "bank", "manual"])
+    for (const rail of ["whop", "tap", "ecom", "bank", "manual"])
         byRail[rail] = sum(mine.filter(r => r.rail === rail));
     const closers = new Map();
     for (const r of mine) {
@@ -1118,7 +1125,8 @@ export const growth = {
         // The working hours the speed-to-lead clock uses (cockpit_settings, or the default).
         const wh = await workingHoursForAdapters();
         // Core read. No fallback: a failure keeps the last good payload.
-        const windowRows = await sql(B2B, windowsSql(ranges, wh.hours));
+    const ecomConfirmRows = await sql(TRIAGE, `select to_char(day,'YYYY-MM-DD') as day, nullif(lower(btrim(customer_email)),'') as email, nullif(btrim(customer_name),'') as name from public.cockpit_ecom_invoices where status='PAID' and day >= current_date - 450`);
+        const windowRows = await sql(B2B, windowsSql(ranges, wh.hours, ecomConfirmRows));
         const byKey = new Map(windowRows.map(r => [String(r.k), r]));
         const rowOf = (k) => {
             const r = byKey.get(k);

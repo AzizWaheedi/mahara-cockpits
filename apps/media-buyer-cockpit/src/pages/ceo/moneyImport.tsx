@@ -43,7 +43,7 @@ const TD = "px-3 py-2 align-top first:pl-0 last:pr-0";
  *     one payment is typed in by hand. There is no bulk insert path.
  */
 
-type Rail = "bank_transfer" | "cheque" | "cash" | "tap" | "other";
+type Rail = "bank_transfer" | "cheque" | "cash" | "tap" | "ecom" | "other";
 type Currency = "USD" | "KWD";
 
 const RAILS: { value: Rail; label: string; match: RegExp }[] = [

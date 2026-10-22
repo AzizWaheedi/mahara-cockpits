@@ -74,7 +74,7 @@ const paymentFields = schema.tables.ceoManualPayments.validator.fields;
 export const vTeamStatus = teamFields.status;
 /** "USD" | "KWD". */
 export const vManualCurrency = paymentFields.currency;
-/** "bank_transfer" | "cheque" | "cash" | "tap" | "other". */
+/** "bank_transfer" | "cheque" | "cash" | "tap" | "ecom" | "other". */
 export const vManualRail = paymentFields.rail;
 
 export type TeamStatus = Infer<typeof vTeamStatus>;
@@ -87,6 +87,7 @@ export const MANUAL_RAIL_LABEL: Record<ManualRail, string> = {
   cheque: "cheque",
   cash: "cash",
   tap: "Tap",
+  ecom: "Ecom",
   other: "other",
 };
 
