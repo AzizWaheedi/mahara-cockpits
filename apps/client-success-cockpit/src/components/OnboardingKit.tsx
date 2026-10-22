@@ -5,9 +5,8 @@ import {
   Copy,
   RefreshCw,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
-import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton, MainContact } from "@/components/ClientCheckIn";
 import { Chip, Dot, ExtLink, Kicker, type Tone } from "@/components/kit";
 import { PortalTasksButton } from "@/components/PortalTasks";
@@ -19,10 +18,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { readFormSends } from "@/forms/formClient";
 import type { FormSend } from "@/forms/formConfig";
 import { kickoffCardDone, sendLine } from "@/forms/formStatus";
-import { FillFormButton, useFormNews } from "@/forms/OpenFormButton";
+import { FillFormButton } from "@/forms/OpenFormButton";
 import { shortDay } from "@/lib/format";
 import {
   type FormEntry,
@@ -221,6 +219,7 @@ export function OnboardingKit({
   error,
   refreshing,
   onRefresh,
+  kickSend = null,
 }: {
   client: Client;
   /** undefined while loading, null when the table has no row for the card. */
@@ -229,30 +228,14 @@ export function OnboardingKit({
   error: string | null;
   refreshing: boolean;
   onRefresh: () => void;
+  /**
+   * The newest kickoff sent from the cockpit's own window (KICKOFF.md 4.3),
+   * read once by the client page so its header agrees with this panel.
+   */
+  kickSend?: FormSend | null;
 }) {
   const [reading, setReading] = useState<Reading | null>(null);
-  const auth = useCockpitAuth();
-  // The cockpit's own record of a kickoff sent from its window (KICKOFF.md
-  // 4.3): read quietly, and again when a form window says it sent or checked.
-  const [kickSend, setKickSend] = useState<FormSend | null>(null);
-  const [news, setNews] = useState(0);
-  useFormNews(n => {
-    if (n.taskId === client.taskId && n.form === "kickoff") setNews(x => x + 1);
-  });
-  const onboarding = kit ? kit.in_onboarding : client.bucket === "onboarding";
-  // biome-ignore lint/correctness/useExhaustiveDependencies: news only asks for a fresh read
-  useEffect(() => {
-    if (!auth.client || !onboarding) return;
-    let on = true;
-    readFormSends(auth.client, client.taskId, "kickoff").then(
-      r => on && setKickSend(r.sends[0] ?? null),
-      () => on && setKickSend(null),
-    );
-    return () => {
-      on = false;
-    };
-  }, [auth.client, client.taskId, news, onboarding]);
-  const track = onboarding;
+  const track = kit ? kit.in_onboarding : client.bucket === "onboarding";
   const step: Step | null = track ? stepOf(kit ?? { forms: {} }) : null;
   const order: Step[] = ["before", "call", "after"];
   /** Past onboarding: the forms are history, nothing to chase or open. */
@@ -451,8 +434,27 @@ export function OnboardingKit({
           </StepPanel>
 
           <StepPanel title="On the call" state={stateOf("call")}>
+            {/* In the call's own order: the deck, then the kickoff. The
+                kickoff is the step's one teal button. */}
+            {live ? null : (
+              <Item
+                tone="neutral"
+                label="The onboarding deck"
+                status="Seven slides for the call, in its own window. Share that window only."
+              >
+                <PresentDeckLinks taskId={client.taskId} deck="onboarding" />
+              </Item>
+            )}
             <Item
-              tone={f.kickoff ? "good" : step === "call" ? "warn" : "neutral"}
+              tone={
+                f.kickoff
+                  ? "good"
+                  : kickSend
+                    ? "accent"
+                    : step === "call"
+                      ? "warn"
+                      : "neutral"
+              }
               label="Kickoff form"
               status={
                 kickSend
@@ -460,6 +462,7 @@ export function OnboardingKit({
                       { after: { cardDone: kickoffCardDone } },
                       kickSend,
                       kit ?? null,
+                      page?.now ?? new Date().toISOString(),
                     )
                   : (filled(f.kickoff) ??
                     (live
@@ -481,7 +484,17 @@ export function OnboardingKit({
                 >
                   Read what was filled
                 </Read>
-              ) : live ? null : (
+              ) : live ? null : kickSend ? (
+                // Sent, and Make or the sync has not written it to the record
+                // yet: the window shows where it is, and holds a second one.
+                <FillFormButton
+                  taskId={client.taskId}
+                  form="kickoff"
+                  variant="link"
+                >
+                  Open the kickoff window
+                </FillFormButton>
+              ) : (
                 <FillFormButton
                   taskId={client.taskId}
                   form="kickoff"
@@ -518,19 +531,6 @@ export function OnboardingKit({
                     ? "Book another time"
                     : "Book the onboarding call"}
                 </BookCallButton>
-              </Item>
-            )}
-            {live ? null : (
-              <Item
-                tone="neutral"
-                label="The onboarding deck"
-                status="Seven slides for the call, in its own window. Share that window only."
-              >
-                <PresentDeckLinks
-                  taskId={client.taskId}
-                  deck="onboarding"
-                  primary={step === "call"}
-                />
               </Item>
             )}
             {links.onboarding_map ? (
@@ -622,7 +622,7 @@ export function OnboardingKit({
                   kind="blueprint"
                   variant="outline"
                 >
-                  Book the Blueprint call
+                  Book the Brand Blueprint call
                 </BookCallButton>
                 <BookCallButton
                   taskId={client.taskId}

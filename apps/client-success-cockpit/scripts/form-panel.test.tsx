@@ -27,6 +27,10 @@ for (const k of [
   "Element",
   "Node",
   "Event",
+  "CustomEvent",
+  "NodeFilter",
+  "HTMLInputElement",
+  "FocusEvent",
   "MouseEvent",
   "KeyboardEvent",
   "DocumentFragment",
@@ -305,7 +309,12 @@ describe("a send", () => {
     );
     await flush();
     expect(host.textContent).toContain(
-      "Typeform has the kickoff and Make has started, but the cockpit could not note it: The cockpit's form record is not live yet.",
+      "The kickoff went to Typeform, but the cockpit could not note it. The cockpit's form record is not live yet.",
+    );
+    // The reason's own full stop is not doubled.
+    expect(host.textContent).not.toContain("yet..");
+    expect(host.textContent).toContain(
+      "Sent at 13:30. Not noted in the cockpit yet.",
     );
     fail = false;
     await act(async () => button(host, "Try again").click());
@@ -315,6 +324,69 @@ describe("a send", () => {
       "resp0000000002",
     ]);
     expect(host.textContent).not.toContain("could not note it");
+    expect(host.textContent).toContain("Sent from the cockpit at 13:30.");
+  });
+
+  test("a retried note keeps the submit's clock, so Make's update just after the submit still counts", async () => {
+    const { mounted, embed } = stand();
+    const { host, root } = mountHost();
+    let fail = true;
+    const { io: panelIo } = io({
+      record: async (input: any) => {
+        if (fail) throw Error("The cockpit's form record is not live yet.");
+        // The server stamps the retry's own time, 12 minutes on.
+        return fx.fixtureSend({
+          responseId: input.responseId,
+          sentAt: "2026-10-22T10:42:00.000Z",
+        });
+      },
+    });
+    const draw = (ctx: any) =>
+      act(async () =>
+        root.render(
+          <FormPanel
+            config={KICKOFF}
+            ctx={ctx}
+            io={panelIo}
+            clientName={fx.NAME}
+            embed={embed}
+          />,
+        ),
+      );
+    await draw(fx.fixtureContext());
+    await flush();
+    await act(async () =>
+      mounted[0].options.onSubmit({
+        formId: "tG7dnxBn",
+        responseId: "resp0000000009",
+      }),
+    );
+    await flush();
+    // Make updated the card a minute after the submit; the retry comes later.
+    await draw(
+      fx.fixtureContext({
+        row: fx.fixtureRow({
+          client_status: "Brand Blueprint Booked♠️",
+          card_updated_at: "2026-10-22T10:31:00.000Z",
+          forms: {
+            onboarding: fx.onboardingEntry(),
+            kickoff: {
+              form_id: "tG7dnxBn",
+              response_id: "resp0000000009",
+              submitted_at: "2026-10-22T10:30:00.000Z",
+              answers: [],
+            },
+          },
+        }),
+        now: "2026-10-22T10:42:00.000Z",
+        readAt: Date.now(),
+      }),
+    );
+    fail = false;
+    await act(async () => button(host, "Try again").click());
+    await flush();
+    expect(host.textContent).toContain("Make updated the card at 13:31");
+    expect(host.textContent).not.toContain("Make has not updated the card");
   });
 
   test("the card is checked again on the config's schedule, and on Check now", async () => {
@@ -383,8 +455,10 @@ describe("a send", () => {
       }),
     );
     await flush();
+    // The ending's own words, so the booking has one name.
     expect(asked.at(-1)).toMatchObject({
-      label: "Book the Blueprint call",
+      kind: "blueprint",
+      label: "Book the Brand Blueprint call",
       autoOpen: false,
     });
     await act(async () =>
@@ -432,10 +506,18 @@ describe("the guard and the frozen form", () => {
       `A kickoff for ${fx.NAME} went in on 15 Oct. Sending another runs Make again: a second Technical and Creative task, a second WhatsApp to the client's group and a second summary. Fix a wrong answer in Typeform's results instead.`,
     );
     expect(button(host, "Read what was filled")).toBeTruthy();
+    expect(host.textContent).toContain("Already sent");
+    expect(host.textContent).toContain(
+      "Only if the first one cannot be fixed:",
+    );
     const second = button(host, "Open a second kickoff anyway");
     expect(second.getAttribute("data-variant") ?? second.className).toContain(
       "outline",
     );
+    // The answers sheet names the form first, and links a link.
+    await act(async () => button(host, "Read what was filled").click());
+    await flush();
+    expect(win.document.body.textContent).toContain(`Kickoff for ${fx.NAME}`);
     await act(async () => second.click());
     await flush();
     expect(mounted.length).toBe(1);
@@ -550,6 +632,109 @@ describe("the window", () => {
     ).toBe(false);
   });
 
+  test("after a send, the header no longer offers a fresh form in Typeform", async () => {
+    const { mounted, embed } = stand();
+    const { host, root } = mountHost();
+    const { io: panelIo } = io();
+    const state = { kind: "ready" as const, ctx: fx.fixtureContext() };
+    await act(async () =>
+      root.render(
+        <FormWindowView
+          cfg={KICKOFF}
+          taskId={fx.TASK}
+          state={state}
+          io={panelIo}
+          embed={embed}
+          onRetry={() => {}}
+          onRefresh={() => {}}
+          initialSharing={false}
+        />,
+      ),
+    );
+    await flush();
+    const typeformLink = () =>
+      Array.from(host.querySelectorAll("header a")).find((a: any) =>
+        (a.textContent ?? "").includes("Open in Typeform"),
+      );
+    expect(typeformLink()).toBeTruthy();
+    await act(async () =>
+      mounted[0].options.onSubmit({
+        formId: "tG7dnxBn",
+        responseId: "resp0000000010",
+      }),
+    );
+    await flush();
+    expect(typeformLink()).toBeUndefined();
+  });
+
+  test("in rehearsal the seal says so, and sends to no one", async () => {
+    const { embed } = stand();
+    const { host, root } = mountHost();
+    const { io: panelIo } = io();
+    await act(async () =>
+      root.render(
+        <FormWindowView
+          cfg={KICKOFF}
+          taskId={fx.TASK}
+          state={{ kind: "ready", ctx: fx.fixtureContext() }}
+          io={panelIo}
+          embed={embed}
+          rehearse
+          onRetry={() => {}}
+          onRefresh={() => {}}
+          initialSharing={false}
+        />,
+      ),
+    );
+    await flush();
+    const header = host.querySelector("header")?.textContent ?? "";
+    expect(header).toContain("Rehearsal ·");
+    expect(header).not.toContain("Sends to");
+  });
+
+  test("Still missing points at its row", async () => {
+    const { embed } = stand();
+    const { host, root } = mountHost();
+    const { io: panelIo } = io();
+    const ctx = fx.fixtureContext({
+      row: fx.fixtureRow({ forms: {}, handover: {} }),
+      deck: fx.fixtureDeck({}),
+      timeline: fx.fixtureTimeline([]),
+    });
+    await act(async () =>
+      root.render(
+        <FormPanel
+          config={KICKOFF}
+          ctx={ctx}
+          io={panelIo}
+          clientName={fx.NAME}
+          embed={embed}
+        />,
+      ),
+    );
+    await flush();
+    const target = host.querySelector("#rail-contract") as any;
+    expect(target).toBeTruthy();
+    // Only the panel scrolls, never the window under the header.
+    const aside = host.querySelector("[data-rail-scroll]") as any;
+    expect(aside?.tagName).toBe("ASIDE");
+    let scrolled = false;
+    aside.scrollTo = () => {
+      scrolled = true;
+    };
+    const pointer = buttons(host).find(b =>
+      (b.textContent ?? "").startsWith("Contract status"),
+    );
+    await act(async () => pointer.click());
+    expect(scrolled).toBe(true);
+    // The onboarding link to send sits in its own missing row.
+    expect(button(host, "Copy their onboarding link")).toBeTruthy();
+    // The empty rows in a row are one line.
+    expect(host.textContent).toContain(
+      "Not on record: Daily budget, Facebook access, Calendar, Content.",
+    );
+  });
+
   test("the plain states say what is wrong and what still works", async () => {
     const { host, root } = mountHost();
     const { io: panelIo } = io();
@@ -576,9 +761,12 @@ describe("the window", () => {
       ),
     );
     expect(host.textContent).toContain(
-      "This client is not on your list, so the kickoff cannot open here.",
+      "This client is not on your list, so the kickoff cannot open here. Ask your lead to add this client, then try again.",
     );
     expect(button(host, "Try again")).toBeUndefined();
+    expect(button(host, "Close this window")).toBeTruthy();
+    // Nothing to hide on a plain state, so no Just me / Sharing switch.
+    expect(button(host, "Sharing")).toBeUndefined();
     await draw(
       blockedFor(
         Error("The client roster is incomplete. Refresh its native source"),
@@ -630,5 +818,7 @@ describe("the app's frame rule", () => {
       .map(s => s.trim())
       .find(s => s.startsWith("frame-src"));
     expect(frame?.split(/\s+/)).toContain("https://form.typeform.com");
+    // Only the cockpit's own pages may frame it.
+    expect(csp).toContain("frame-ancestors 'self'");
   });
 });

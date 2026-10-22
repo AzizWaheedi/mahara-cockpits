@@ -23,8 +23,27 @@ export function formUrl(taskId: string, form: FormKey) {
 export const formWindowName = (taskId: string, form: FormKey) =>
   `mahara-form-${taskId}-${form}`;
 
+/**
+ * A window of its own, not a tab: Zoom's "share this window" then shares
+ * the form alone, never the cockpit tab beside it. As large as the screen
+ * allows, 1440 x 900 when the screen does not say.
+ */
+export function formWindowFeatures(
+  screen:
+    | { availWidth?: number; availHeight?: number }
+    | undefined = typeof window !== "undefined" ? window.screen : undefined,
+) {
+  const w = Math.round(screen?.availWidth || 1440);
+  const h = Math.round(screen?.availHeight || 900);
+  return `popup,width=${w},height=${h},left=0,top=0`;
+}
+
 export function openForm(taskId: string, form: FormKey) {
-  return openNamed(formUrl(taskId, form), formWindowName(taskId, form));
+  return openNamed(
+    formUrl(taskId, form),
+    formWindowName(taskId, form),
+    formWindowFeatures(),
+  );
 }
 
 /** "Fill the kickoff": the step's one teal button, or a quiet one. */
@@ -43,7 +62,7 @@ export function FillFormButton({
     return (
       <button
         type="button"
-        className="text-xs text-primary underline-offset-4 hover:underline"
+        className="text-xs text-primary-ink underline-offset-4 hover:underline"
         onClick={() => openForm(taskId, form)}
       >
         {children}

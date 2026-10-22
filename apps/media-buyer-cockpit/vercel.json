@@ -61,7 +61,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "connect-src 'self' https://bldgtotkfmhoxmlzowdx.supabase.co wss://bldgtotkfmhoxmlzowdx.supabase.co"
+          "value": "connect-src 'self' https://bldgtotkfmhoxmlzowdx.supabase.co wss://bldgtotkfmhoxmlzowdx.supabase.co; frame-ancestors 'self'"
         }
       ]
     }

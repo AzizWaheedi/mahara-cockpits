@@ -59,7 +59,7 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
                                 CASE WHEN m.name LIKE '%@%' THEN NULL ELSE nullif(btrim(m.name), '') END,
                                 '')), ' ', 1), '') AS first
                          FROM public.cockpit_members m WHERE m.auth_user_id = s.sent_by LIMIT 1) x),
-    'sentByEmail', s.sent_by_email, 'sentAt', s.sent_at)
+    'sentAt', s.sent_at)
 $$;
 
 CREATE OR REPLACE FUNCTION public.cockpit_csm_form_sent(

@@ -154,7 +154,6 @@ export function fixtureSend(over: Partial<FormSend> = {}): FormSend {
     hiddenKeys: ["onboarding_client_id", "legal_name"],
     second: false,
     sentBy: "Lina",
-    sentByEmail: "lina@example.invalid",
     sentAt: "2026-10-22T11:02:00Z",
     ...over,
   };

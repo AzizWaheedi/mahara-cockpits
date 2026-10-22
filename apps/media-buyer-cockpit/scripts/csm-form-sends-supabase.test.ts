@@ -431,8 +431,9 @@ describe("noting a send", () => {
       hiddenKeys: KEYS,
       second: false,
       sentBy: "Noura",
-      sentByEmail: "csm-a@tests.invalid",
     });
+    // The read shows a first name only: the address stays in the table.
+    expect(r.send).not.toHaveProperty("sentByEmail");
     expect(typeof r.send.sentAt).toBe("string");
     expect(await sends()).toBe(1);
     expect(await audits()).toBe(1);
@@ -515,7 +516,12 @@ describe("noting a send", () => {
   test("the CEO may note a send for any client", async () => {
     const r = await send(CEO, C, "respgamma002");
     expect(r.noted).toBe(true);
-    expect(r.send.sentByEmail).toBe("aziz@maharamedia.com");
+    expect(r.send).not.toHaveProperty("sentByEmail");
+    await asOwner();
+    const who = await db.query<{ sent_by_email: string }>(
+      "SELECT sent_by_email FROM public.cockpit_csm_form_sends WHERE response_id='respgamma002'",
+    );
+    expect(who.rows[0]?.sent_by_email).toBe("aziz@maharamedia.com");
   });
 });
 

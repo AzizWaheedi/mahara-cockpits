@@ -1228,11 +1228,12 @@ test("an onboarding client's row and page show its onboarding steps", async () =
     // The kickoff opens in its own window, by name, at the client's form
     // route (docs/csm-forms/KICKOFF.md 1): the record builds its client ID.
     const opened: string[][] = [];
+    const features: string[] = [];
     const replaced: string[] = [];
     const open = win.open;
-    // biome-ignore lint/suspicious/noExplicitAny: a stand-in window for openNamed
-    (win as any).open = (url: string, name: string) => {
+    (win as any).open = (url: string, name: string, f?: string) => {
       opened.push([url, name]);
+      features.push(f ?? "");
       return {
         location: {
           href: "about:blank",
@@ -1242,21 +1243,20 @@ test("an onboarding client's row and page show its onboarding steps", async () =
       };
     };
     try {
-      const fill = [...page.querySelectorAll("button")].find(b =>
-        (b.textContent ?? "").includes("Fill the kickoff"),
+      // The header's outline button and the panel's teal one: one name, one
+      // window.
+      const fills = [...page.querySelectorAll("button")].filter(
+        b => (b.textContent ?? "").trim() === "Fill the kickoff",
       );
-      expect(fill).toBeDefined();
-      await reactAct(async () => fill?.click());
+      expect(fills.length).toBe(2);
+      await reactAct(async () => fills[1]?.click());
       expect(opened).toEqual([["", "mahara-form-86exnk0v4-kickoff"]]);
       expect(replaced).toEqual([
         "/client-success/clients/86exnk0v4/forms/kickoff",
       ]);
-      // The header's outline Kickoff opens the same window.
-      const head = [...page.querySelectorAll("button")].find(
-        b => (b.textContent ?? "").trim() === "Kickoff",
-      );
-      expect(head).toBeDefined();
-      await reactAct(async () => head?.click());
+      // A window of its own, so Zoom can share the form alone.
+      expect(features[0]).toMatch(/^popup,width=\d+,height=\d+/);
+      await reactAct(async () => fills[0]?.click());
       expect(opened[1]).toEqual(["", "mahara-form-86exnk0v4-kickoff"]);
     } finally {
       win.open = open;

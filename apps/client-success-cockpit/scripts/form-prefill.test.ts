@@ -85,9 +85,11 @@ describe("the kickoff's hidden fields", () => {
     const p = hidden(fixtureRow({ forms: {} }));
     expect(p.values).toEqual({ onboarding_client_id: TASK, legal_name: NAME });
     expect(p.onboarding).toBeNull();
-    expect(p.notes[0]).toBe(
+    // Said once, in the panel's "Onboarding answers" row, not as a note.
+    expect(p.noOnboarding).toBe(
       `${NAME} has not filled the onboarding form, so the kickoff opens with their name and card only.`,
     );
+    expect(p.notes).toEqual([]);
     expect(p.copy?.label).toBe("Copy their onboarding link");
     expect(p.copy?.value).toContain(`#onboarding_client_id=${TASK}`);
     // A card link full of values is still not used without an onboarding response.
@@ -229,6 +231,13 @@ describe("the kickoff's hidden fields", () => {
       }),
     );
     expect(other.values.challenges).toBe(cut);
+    // Cut by the mirror with nothing to undo it: said, not hidden.
+    expect(other.notes).toContain(
+      'Their "Top challenges" answer is longer than the cockpit keeps, so the form carries its first 4,000 characters.',
+    );
+    expect(p.notes.some(n => n.includes("longer than the cockpit keeps"))).toBe(
+      false,
+    );
     // No value is cut, however long the link gets.
     expect(p.linkChars).toBeGreaterThan(5000);
   });
@@ -267,7 +276,9 @@ describe("the kickoff's hidden fields", () => {
   });
 
   test("the length note appears above 4,000 characters, never below", () => {
-    expect(hidden().notes.some(n => n.includes("long form link"))).toBe(false);
+    expect(hidden().notes.some(n => n.includes("answers are long"))).toBe(
+      false,
+    );
     const p = hidden(
       fixtureRow({
         forms: {
@@ -280,7 +291,7 @@ describe("the kickoff's hidden fields", () => {
     );
     expect(p.linkChars).toBeGreaterThan(LONG_LINK);
     expect(p.notes).toContain(
-      `Their answers make a long form link (${p.linkChars.toLocaleString("en-US")} characters). If the form opens without them, use Open in Typeform.`,
+      "Their answers are long. If the form opens empty, use Open in Typeform.",
     );
   });
 

@@ -23,7 +23,6 @@ const send = z.object({
   hiddenKeys: z.array(z.string()),
   second: z.boolean(),
   sentBy: z.string().nullable(),
-  sentByEmail: z.string(),
   sentAt: z.string(),
 });
 const sent = z.object({ send, noted: z.boolean() });

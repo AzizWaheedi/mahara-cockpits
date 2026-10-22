@@ -157,8 +157,81 @@ const lines = (s: string | undefined) =>
     .map(l => l.replace(/^\s*[-•]\s*/, "").trim())
     .filter(Boolean);
 
+/** A number as the form's number field takes it: digits, no separators. */
 const money = (n: number) =>
   Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/\.?0+$/, "");
+
+/**
+ * Daily Budget and Next Payment Amount are ClickUp currency fields in US
+ * dollars (their type_config.currency_type is "USD", read 2026-10-22), so
+ * the card's currency is the dollar: "$40 a day", "$1,000".
+ */
+const dollars = (n: number) =>
+  `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+
+/** "KW" as "Kuwait"; a name, or a code no browser knows, as it came. */
+export function countryName(code: string | null): string | null {
+  if (!code || !/^[A-Za-z]{2}$/.test(code)) return code;
+  try {
+    return (
+      new Intl.DisplayNames(["en"], { type: "region" }).of(
+        code.toUpperCase(),
+      ) ?? code
+    );
+  } catch {
+    return code;
+  }
+}
+
+/** "Onboarding form, 13 Oct" inside a sentence; a name like "ClickUp" stays. */
+const lowerFirst = (s: string) =>
+  /^[A-Z][a-z]*\b/.test(s) && !/^[A-Z][a-z]*[A-Z]/.test(s)
+    ? s.charAt(0).toLowerCase() + s.slice(1)
+    : s;
+
+/** A row that can join its empty neighbours in one "Not on record: …" line. */
+const plainEmpty = (r: RailRow, keep: Set<string>) =>
+  r.value === null &&
+  r.missing === NOT_ON_RECORD &&
+  !r.required &&
+  !r.recheck &&
+  !r.choices &&
+  !r.carries &&
+  !r.hint &&
+  !r.href &&
+  !keep.has(r.id);
+
+/**
+ * Runs of two or more plain empty rows become one line ("Not on record:
+ * Daily budget, Facebook access, Calendar, Content."). A row "Still
+ * missing" points to stays its own.
+ */
+export function foldEmpty(rows: RailRow[], keep: Set<string>): RailRow[] {
+  const out: RailRow[] = [];
+  let run: RailRow[] = [];
+  const flush = () => {
+    if (run.length >= 2)
+      out.push({
+        id: `empty-${run.map(r => r.id).join("-")}`,
+        label: "Not on record",
+        value: null,
+        source: null,
+        missing: NOT_ON_RECORD,
+        empties: run.map(r => r.label),
+      });
+    else out.push(...run);
+    run = [];
+  };
+  for (const r of rows) {
+    if (plainEmpty(r, keep)) run.push(r);
+    else {
+      flush();
+      out.push(r);
+    }
+  }
+  flush();
+  return out;
+}
 
 export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
   const row = ctx.row;
@@ -173,25 +246,49 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
   const service = suggestedService(ctx);
   const picked = pickLabel(service.pick);
   const own = serviceRows(service.services, service.pick);
+  // Q10: the five as the form's labels, the suggestion ringed, their own
+  // words under each. The only place the five are drawn.
   const serviceRow: RailRow = {
     id: "service",
     label: "Which service are we advertising?",
     value: picked,
     source: service.source,
-    pick: true,
     required: true,
     missing: ASK_SERVICE,
     hint:
       service.pick.key === "other"
         ? `In their words: ${service.pick.words.en ?? service.pick.words.ar ?? service.pick.text ?? ""}`.trim()
         : undefined,
+    choices: {
+      options: [
+        ...MAIN.map(k => ({
+          label: KICKOFF_CHOICE[k],
+          own: own.find(r => r.key === k)?.own ?? [],
+        })),
+        ...(own.some(r => r.key === "other")
+          ? [
+              {
+                label: "Other",
+                own: (own.find(r => r.key === "other")?.own ?? []).filter(
+                  w => !isOtherWord(w),
+                ),
+              },
+            ]
+          : []),
+      ],
+      picked,
+    },
   };
 
   const contract = contractChoice(h);
   const recording = todaysRecording(ctx.timeline?.calls, nowIso);
   const payment =
     typeof h.next_payment_amount === "number" && h.next_payment_amount > 0
-      ? money(h.next_payment_amount)
+      ? h.next_payment_amount
+      : null;
+  const budget =
+    typeof h.daily_budget === "number" && h.daily_budget > 0
+      ? h.daily_budget
       : null;
   const billing = lines(h.billing_notes);
   const paymentHint = [
@@ -201,18 +298,19 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     .filter(Boolean)
     .join(". ");
 
-  // --- Still missing -------------------------------------------------------
+  // --- Still missing: short pointers; the full sentence is on the row ------
   const missing: RailRow[] = [];
   if (!recording)
     missing.push({
       id: "missing-recording",
-      label: "Call Recording Link",
+      label: "Call recording link",
       value: null,
       source: null,
       required: true,
       missing: ctx.failed.timeline
-        ? "The call store could not be read just now. Check again, or paste it from Fathom."
-        : NO_RECORDING,
+        ? "The call store could not be read."
+        : "Not in the call store yet.",
+      anchor: "recording",
     });
   if (!contract)
     missing.push({
@@ -221,7 +319,8 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
       value: null,
       source: null,
       required: true,
-      missing: ASK_CONTRACT,
+      missing: "Ask on the call.",
+      anchor: "contract",
     });
   if (!picked)
     missing.push({
@@ -230,7 +329,8 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
       value: null,
       source: null,
       required: true,
-      missing: ASK_SERVICE,
+      missing: "Ask on the call.",
+      anchor: "service",
     });
   if (!onb)
     missing.push({
@@ -238,7 +338,10 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
       label: "Onboarding answers",
       value: null,
       source: null,
-      missing: "No onboarding answers: the form's read-backs will be empty.",
+      missing:
+        prefill.noOnboarding ??
+        `${row.client_name} has not filled the onboarding form.`,
+      action: prefill.copy,
     });
   if (!payment)
     missing.push({
@@ -246,8 +349,12 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
       label: "Payment amount",
       value: null,
       source: null,
-      missing: NOT_ON_RECORD,
+      missing: "Not on the card.",
+      anchor: "payment",
     });
+  const pointed = new Set(
+    missing.map(r => r.anchor).filter((a): a is string => Boolean(a)),
+  );
 
   // --- The client ----------------------------------------------------------
   const offerText = str(ctx.deck?.editor?.offer);
@@ -269,7 +376,7 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     missing: NOT_ON_RECORD,
   };
   const city = str(ctx.deck?.ghl?.city);
-  const country = str(ctx.deck?.ghl?.country);
+  const country = countryName(str(ctx.deck?.ghl?.country));
   const place = [city, country].filter(Boolean).join(", ") || null;
   const areas = answerOf(onb, ONB.areas);
   const areaRow: RailRow = {
@@ -279,32 +386,6 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     source: place ? "HighLevel" : areas ? fromOnb : null,
     hint: place && areas ? `They serve: ${areas}` : undefined,
     missing: NOT_ON_RECORD,
-  };
-  const servicesRow: RailRow = {
-    id: "services",
-    label: "Services",
-    value: picked,
-    source: service.source,
-    missing: ASK_SERVICE,
-    choices: {
-      options: [
-        ...MAIN.map(k => ({
-          label: KICKOFF_CHOICE[k],
-          own: own.find(r => r.key === k)?.own ?? [],
-        })),
-        ...(own.some(r => r.key === "other")
-          ? [
-              {
-                label: "Other",
-                own: (own.find(r => r.key === "other")?.own ?? []).filter(
-                  w => !isOtherWord(w),
-                ),
-              },
-            ]
-          : []),
-      ],
-      picked,
-    },
   };
 
   // --- In the form's order -------------------------------------------------
@@ -328,25 +409,23 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     };
   });
   const filled = carries.filter(c => c.value !== null).length;
+  // The source most values share is said once, in the title.
+  const counts = new Map<string, number>();
+  for (const c of carries)
+    if (c.source) counts.set(c.source, (counts.get(c.source) ?? 0) + 1);
+  const carriesFrom =
+    [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   const booking = answerOf(onb, ONB.booking);
   const length = answerOf(onb, ONB.appointmentLength);
   const drive = answerOf(onb, ONB.drive);
   const order: RailRow[] = [
-    {
-      id: "carries",
-      label: `What the form carries (${filled} of ${carries.length})`,
-      value: filled ? String(filled) : null,
-      source: null,
-      missing: onb ? "The client left it blank." : NOT_ON_RECORD,
-      carries,
-    },
     serviceRow,
     {
       id: "consultation-types",
       label: "Consultation types",
       value: answerOf(onb, ONB.consultationTypes),
       source: fromOnb,
-      pick: true,
+      suggest: true,
       required: true,
       missing: NOT_ON_RECORD,
     },
@@ -355,17 +434,14 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
       label: "Contract status",
       value: contract,
       source: contract ? "ClickUp card" : null,
-      pick: true,
       required: true,
       missing: ASK_CONTRACT,
     },
     {
       id: "daily-budget",
       label: "Daily budget",
-      value:
-        typeof h.daily_budget === "number" && h.daily_budget > 0
-          ? money(h.daily_budget)
-          : null,
+      value: budget === null ? null : `${dollars(budget)} a day`,
+      copyValue: budget === null ? undefined : money(budget),
       source: "ClickUp card",
       copy: true,
       missing: NOT_ON_RECORD,
@@ -396,11 +472,13 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     },
     {
       id: "recording",
-      label: "Call Recording Link",
+      label: "Call recording link",
       value: recording?.recordingUrl ?? null,
       source: recording
         ? `${recording.source === "fathom" ? "Fathom" : "Call store"}, ${whenSaid(recording.startsAt, nowIso)}`
         : null,
+      href: recording?.recordingUrl ?? undefined,
+      linkLabel: recording ? "Open the recording" : undefined,
       copy: true,
       recheck: true,
       required: true,
@@ -410,12 +488,24 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
     },
     {
       id: "payment",
-      label: "Payment Amount",
-      value: payment,
+      label: "Payment amount",
+      value: payment === null ? null : dollars(payment),
+      copyValue: payment === null ? undefined : money(payment),
       source: payment ? "ClickUp card, Next Payment Amount" : null,
       copy: true,
       hint: paymentHint || undefined,
       missing: NOT_ON_RECORD,
+    },
+    // Typeform reads these back itself, so they come last and folded.
+    {
+      id: "carries",
+      label: `What the form carries · ${filled} of ${carries.length}${carriesFrom ? ` · ${lowerFirst(carriesFrom)}` : ""}`,
+      value: filled ? String(filled) : null,
+      source: null,
+      missing: onb ? "The client left it blank." : NOT_ON_RECORD,
+      carries,
+      carriesFrom,
+      blank: onb ? "Left blank" : "Not on record",
     },
   ];
 
@@ -455,12 +545,21 @@ export function kickoffRail(ctx: FormContext, prefill: Prefill): RailPart[] {
   parts.push({
     id: "client",
     title: "The client",
-    rows: [offerRow, servicesRow, areaRow],
+    rows: foldEmpty([offerRow, areaRow], pointed),
     problem: deckFailed
       ? "The offer and HighLevel details could not be read just now."
       : undefined,
   });
-  parts.push({ id: "order", title: "In the form's order", rows: order });
-  parts.push({ id: "sale", title: "From the sale", rows: sale, fold: true });
+  parts.push({
+    id: "order",
+    title: "In the form's order",
+    rows: foldEmpty(order, pointed),
+  });
+  parts.push({
+    id: "sale",
+    title: "From the sale",
+    rows: foldEmpty(sale, pointed),
+    fold: true,
+  });
   return parts;
 }

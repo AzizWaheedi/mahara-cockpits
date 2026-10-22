@@ -46,7 +46,14 @@ import { formLink } from "./prefill";
 
 export type WindowState =
   | { kind: "loading" }
-  | { kind: "blocked"; text: string; retry: boolean; plain: string | null }
+  | {
+      kind: "blocked";
+      text: string;
+      retry: boolean;
+      plain: string | null;
+      /** Nothing here will change it: offer to close the window. */
+      close?: boolean;
+    }
   | { kind: "unread" }
   | { kind: "ready"; ctx: FormContext };
 
@@ -65,9 +72,10 @@ export function blockedFor(
   )
     return {
       kind: "blocked",
-      text: `This client is not on your list, so the ${name} cannot open here.`,
+      text: `This client is not on your list, so the ${name} cannot open here. Ask your lead to add this client, then try again.`,
       retry: false,
       plain: null,
+      close: true,
     };
   if (/roster is incomplete|missing or ambiguous/i.test(m))
     return {
@@ -203,8 +211,10 @@ function LiveFormWindow({
     void load();
   }, [load]);
 
-  // Prep (slide 4's service pick) and the call store are read again when the
-  // window gets focus, so a pick made on the deck shows up here.
+  // The client's row, prep (slide 4's service pick) and the call store are
+  // read again when the window gets focus: a pick made on the deck shows up
+  // here, and onboarding answers that came in after the window opened are
+  // said over the form (the form itself stays as it opened until Reload).
   const lastFocusRead = useRef(Date.now());
   useEffect(() => {
     const onFocus = () => {
@@ -213,9 +223,18 @@ function LiveFormWindow({
       void Promise.allSettled([
         readDeckSources(client, taskId),
         readClientTimeline(client, taskId),
-      ]).then(([deck, timeline]) =>
+        readOnboardingKits(client, [taskId]),
+      ]).then(([deck, timeline, kits]) => {
+        const row =
+          kits.status === "fulfilled"
+            ? kits.value.rows.find(r => r.clickup_task_id === taskId)
+            : undefined;
         update(ctx => ({
           ...ctx,
+          // A failed read, or no row, keeps the row the window has.
+          ...(row && kits.status === "fulfilled"
+            ? { row, now: kits.value.now, readAt: Date.now() }
+            : {}),
           deck: deck.status === "fulfilled" ? deck.value : ctx.deck,
           timeline:
             timeline.status === "fulfilled" ? timeline.value : ctx.timeline,
@@ -227,8 +246,8 @@ function LiveFormWindow({
                 ? message(timeline.reason)
                 : undefined,
           },
-        })),
-      );
+        }));
+      });
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
@@ -310,7 +329,7 @@ function LiveFormWindow({
           taskId={taskId}
           clientName={ctx.row.client_name}
           stage={ctx.row.client_status ?? undefined}
-          kind="blueprint"
+          kind={p.kind}
           variant={p.variant}
           defaultOpen={p.autoOpen}
           onAutoOpenConsumed={p.onAutoOpenConsumed}
@@ -397,6 +416,7 @@ export function FormWindowView({
             clientName={clientName}
             taskId={ctx.row.clickup_task_id}
             glow={phase !== "sent"}
+            rehearse={rehearse}
           />
         ) : !sharing ? (
           <span className="font-mono text-[13px] text-muted-foreground">
@@ -409,40 +429,49 @@ export function FormWindowView({
           </span>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
-          <div
-            role="group"
-            aria-label="Who sees this window"
-            className="inline-flex rounded-full p-0.5 ring-1 ring-border"
-          >
-            {(
-              [
-                [false, "Just me"],
-                [true, "Sharing"],
-              ] as const
-            ).map(([on, label]) => (
-              <button
-                key={label}
-                type="button"
-                aria-pressed={sharing === on}
-                onClick={() => flip(on)}
-                className={cn(
-                  "h-7 rounded-full px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  sharing === on
-                    ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {/* Not while a second kickoff is held: that is the guard's click. */}
-          {!sharing && !rehearse && open && phase !== "held" ? (
+          {/* Only with a form to hide things from. */}
+          {ctx ? (
+            <div
+              role="group"
+              aria-label="Who sees this window"
+              className="inline-flex rounded-full p-0.5 ring-1 ring-border"
+            >
+              {(
+                [
+                  [false, "Just me"],
+                  [true, "Sharing"],
+                ] as const
+              ).map(([on, label]) => (
+                <button
+                  key={label}
+                  type="button"
+                  aria-pressed={sharing === on}
+                  onClick={() => flip(on)}
+                  className={cn(
+                    "h-7 rounded-full px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    sharing === on
+                      ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/40"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          {/* Not while a second kickoff is held (that is the guard's click),
+              and not once this one is sent: a fresh form for the same client
+              would be a second kickoff without the guard. */}
+          {!sharing &&
+          !rehearse &&
+          open &&
+          phase !== "held" &&
+          phase !== "sent" ? (
             <a
               href={open}
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden items-center gap-1 text-xs text-primary underline-offset-4 hover:underline sm:inline-flex"
+              className="hidden items-center gap-1 text-xs text-primary-ink underline-offset-4 hover:underline sm:inline-flex"
               title="The same form, with the same client and answers, in Typeform"
             >
               Open in Typeform
@@ -473,12 +502,21 @@ export function FormWindowView({
                     Try again
                   </Button>
                 ) : null}
+                {state.close ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => window.close()}
+                  >
+                    Close this window
+                  </Button>
+                ) : null}
                 {state.plain && !rehearse ? (
                   <a
                     href={state.plain}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-primary underline-offset-4 hover:underline"
+                    className="inline-flex items-center gap-1 text-sm text-primary-ink underline-offset-4 hover:underline"
                   >
                     Open the plain {cfg.title.toLowerCase()} (card ID only)
                     <ArrowUpRight aria-hidden className="size-3.5" />
@@ -526,30 +564,38 @@ function Seal({
   clientName,
   taskId,
   glow,
+  rehearse,
 }: {
   clientName: string;
   taskId: string;
   glow: boolean;
+  rehearse: boolean;
 }) {
-  const why =
-    "From the client record. Make writes everything from this form to this card.";
+  const why = rehearse
+    ? "A rehearsal in Typeform's sandbox: nothing is saved, nothing reaches this card, and Make does not run."
+    : "From the client record. Make writes everything from this form to this card.";
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          title={why}
           className={cn(
-            "inline-flex min-w-0 max-w-full items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-sm ring-1 ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            glow && "glow-teal",
+            "inline-flex min-w-0 max-w-full items-center gap-2 rounded-full px-3 py-1 text-sm ring-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            rehearse
+              ? "bg-warning/10 ring-warning/60"
+              : "bg-primary/10 ring-primary/40",
+            glow && !rehearse && "glow-teal",
           )}
         >
           <span
             aria-hidden
-            className="size-2 shrink-0 rounded-full bg-primary"
+            className={cn(
+              "size-2 shrink-0 rounded-full",
+              rehearse ? "bg-warning" : "bg-primary",
+            )}
           />
           <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
-            Sends to
+            {rehearse ? "Rehearsal ·" : "Sends to"}
           </span>
           <bdi className="min-w-0 truncate font-medium">{clientName}</bdi>
           <span className="shrink-0 font-mono text-[13px] text-foreground/80">
@@ -571,7 +617,7 @@ function Plain({
 }) {
   return (
     <div className="m-auto w-full max-w-md space-y-4 p-8 text-center">
-      <p className="text-[15px] leading-6" role="status">
+      <p className="text-balance text-[15px] leading-6" role="status">
         {children}
       </p>
       {actions ? (

@@ -37,6 +37,8 @@ export interface Prefill {
   from: Record<string, PrefillSource>;
   /** Plain sentences for the panel. */
   notes: string[];
+  /** Said in the panel's "Onboarding answers" row when there are none. */
+  noOnboarding: string | null;
   /** The length of the whole public link these values make. */
   linkChars: number;
   /** The newest completed onboarding response, when there is one. */
@@ -278,12 +280,11 @@ export function buildHidden(
   if (link.problem) notes.push(link.problem);
 
   let copy: Prefill["copy"];
+  let noOnboarding: string | null = null;
   if (!onboarding) {
     // 5. No onboarding response: the ID and the name from the card only.
     if (opts.nameKey) put(opts.nameKey, row.client_name.trim(), "card name");
-    notes.push(
-      `${row.client_name} has not filled the onboarding form, so the ${opts.title.toLowerCase()} opens with their name and card only.`,
-    );
+    noOnboarding = `${row.client_name} has not filled the onboarding form, so the ${opts.title.toLowerCase()} opens with their name and card only.`;
     if (opts.onboardingLink)
       copy = {
         label: "Copy their onboarding link",
@@ -303,6 +304,11 @@ export function buildHidden(
           theirs.length > mine.length &&
           theirs.startsWith(mine);
         put(s.key, cut ? theirs : mine, cut ? "card link" : "onboarding form");
+        // Cut by the mirror, and no card link to undo it: said, not hidden.
+        if (mine.length === MIRROR_CUT && !cut)
+          notes.push(
+            `Their "${s.label}" answer is longer than the cockpit keeps, so the form carries its first ${MIRROR_CUT.toLocaleString("en-US")} characters.`,
+          );
       } else if (theirs !== null) {
         put(s.key, theirs, "card link");
       } else if (s.key === opts.nameKey) {
@@ -327,9 +333,9 @@ export function buildHidden(
   const linkChars = formLink(opts.formId, values).length;
   if (linkChars > LONG_LINK)
     notes.push(
-      `Their answers make a long form link (${linkChars.toLocaleString("en-US")} characters). If the form opens without them, use Open in Typeform.`,
+      "Their answers are long. If the form opens empty, use Open in Typeform.",
     );
-  return { values, from, notes, linkChars, onboarding, copy };
+  return { values, from, notes, noOnboarding, linkChars, onboarding, copy };
 }
 
 /** True when two hidden objects carry the same values. */

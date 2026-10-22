@@ -25,6 +25,8 @@
   --color-popover-foreground: var(--popover-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  /* Teal as text: links and small type. Fills and rings keep --primary. */
+  --color-primary-ink: var(--primary-ink);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -65,6 +67,8 @@
   /* Teal as the primary action colour, Deep Space text on it for contrast. */
   --primary: var(--mahara-teal);
   --primary-foreground: var(--deep-space);
+  /* Teal text on white: #00CFC8 reads at about 1.9:1, this at 4.8:1. */
+  --primary-ink: #00807b;
   --sidebar-primary: var(--mahara-teal);
   --sidebar-primary-foreground: var(--deep-space);
 
@@ -116,6 +120,7 @@
 .dark {
   --primary: var(--mahara-teal);
   --primary-foreground: var(--deep-space);
+  --primary-ink: var(--mahara-teal);
   --sidebar-primary: var(--mahara-teal);
   --sidebar-primary-foreground: var(--deep-space);
 

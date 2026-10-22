@@ -1,7 +1,7 @@
 import type { TimelineForm } from "@/lib/csmCalls";
 import type { FormEntry, OnboardingRow } from "@/lib/onboardingCore";
 import type { Already, FormConfig, FormContext, FormSend } from "./formConfig";
-import { kuwaitTime } from "./formTime";
+import { atWhen, kuwaitDay, kuwaitTime } from "./formTime";
 
 /**
  * After a send: the trail of four stops, worked out again from the reads
@@ -13,9 +13,11 @@ export type StopKey = "sent" | "typeform" | "card" | "link";
 
 export interface TrailStop {
   key: StopKey;
+  /** In the tense of its state: "Make updates the card", "Make updated the card at 14:03". */
   label: string;
   done: boolean;
-  line: string;
+  /** A line under the label, when it adds something. */
+  line: string | null;
 }
 
 export interface Trail {
@@ -50,58 +52,86 @@ export function kickoffCardDone(
   );
 }
 
+/** This response as Typeform lists it: the mirror's entry, or the form history's. */
+function listed(
+  ctx: Pick<FormContext, "row" | "timeline">,
+  key: FormConfig["key"],
+  responseId: string,
+): { at: string | null } | null {
+  const entry = (
+    ctx.row.forms as Record<string, FormEntry | undefined> | undefined
+  )?.[key];
+  if (entry?.response_id === responseId)
+    return { at: entry.submitted_at ?? null };
+  const hist = ctx.timeline?.forms.find(f => f.token === responseId);
+  return hist ? { at: hist.submittedAt ?? null } : null;
+}
+
 /** Typeform lists this response: the mirror has it, or the form history does. */
 export function typeformHas(
   ctx: Pick<FormContext, "row" | "timeline">,
   key: FormConfig["key"],
   responseId: string,
 ): boolean {
-  const entry = ctx.row.forms?.[key as "kickoff" | "blueprint"];
-  if (entry?.response_id === responseId) return true;
-  return Boolean(ctx.timeline?.forms.some(f => f.token === responseId));
+  return listed(ctx, key, responseId) !== null;
 }
 
 export function trailFor(
   cfg: Pick<FormConfig, "key" | "after" | "title">,
   ctx: Pick<FormContext, "row" | "timeline">,
-  send: Pick<FormSend, "responseId" | "sentAt">,
+  /** `noted: false` once the cockpit's note of the send has failed. */
+  send: Pick<FormSend, "responseId" | "sentAt"> & { noted?: boolean },
   nowMs: number,
 ): Trail {
-  const typeform = typeformHas(ctx, cfg.key, send.responseId);
+  const seen = listed(ctx, cfg.key, send.responseId);
+  const typeform = seen !== null;
   const card = cfg.after.cardDone(ctx.row, send.sentAt);
   const back = cfg.after.linkBack;
   const linked = Boolean(card && back && ctx.row.links?.[back.key]);
+  const sentTime = kuwaitTime(send.sentAt);
   const stops: TrailStop[] = [
     {
       key: "sent",
       label: "Sent",
       done: true,
-      line: `Sent from the cockpit at ${kuwaitTime(send.sentAt)}.`,
-    },
-    {
-      key: "typeform",
-      label: "Typeform has it",
-      done: typeform || card,
       line:
-        typeform || card
-          ? "Typeform has it."
-          : "Waiting for Typeform to list it.",
+        send.noted === false
+          ? `Sent at ${sentTime}. Not noted in the cockpit yet.`
+          : `Sent from the cockpit at ${sentTime}.`,
     },
-    {
-      key: "card",
-      label: "Make updated the card",
-      done: card,
-      line: card
-        ? cfg.after.cardLine(ctx.row)
-        : "Waiting for Make to update the card.",
-    },
+    typeform || card
+      ? {
+          key: "typeform",
+          label: "Typeform has it",
+          done: true,
+          line: seen?.at ? `Submitted at ${kuwaitTime(seen.at)}.` : null,
+        }
+      : {
+          key: "typeform",
+          label: "Typeform lists it",
+          done: false,
+          line: "Usually within a minute.",
+        },
+    card
+      ? {
+          key: "card",
+          label: `Make updated the card at ${kuwaitTime(ctx.row.card_updated_at)}`,
+          done: true,
+          line: cfg.after.cardLine(ctx.row),
+        }
+      : {
+          key: "card",
+          label: "Make updates the card",
+          done: false,
+          line: "Usually within a minute of Typeform.",
+        },
   ];
   if (back)
     stops.push({
       key: "link",
-      label: back.label,
+      label: linked ? back.label : back.pending,
       done: linked,
-      line: linked ? `${back.label}.` : back.waiting,
+      line: null,
     });
   const current = stops.find(s => !s.done)?.key ?? null;
 
@@ -114,13 +144,35 @@ export function trailFor(
     const name = cfg.title.toLowerCase();
     if (typeform) {
       late = "make";
-      lateLine = `Make has not updated the card in ${cfg.after.lateAfterMin} minutes. The ${name} is safe in Typeform. Open the card and look for the ${cfg.title} Handoff comment; if it is not there, tell the tech lead. Do not send the ${name} again.`;
+      lateLine = cfg.after.lateMake;
     } else {
       late = "typeform";
       lateLine = `Typeform has not listed this ${name} after ${cfg.after.lateAfterMin} minutes. Look for it in Typeform's results before anything else, and do not send it again.`;
     }
   }
   return { stops, current, late, lateLine };
+}
+
+/** The trail in a few words, for a folded panel: "Kickoff sent · waiting for Make". */
+export function trailSummary(
+  cfg: Pick<FormConfig, "title" | "after">,
+  trail: Pick<Trail, "current" | "late">,
+): string {
+  const head = `${cfg.title} sent`;
+  if (trail.late === "make") return `${head} · Make is late`;
+  if (trail.late === "typeform") return `${head} · Typeform is late`;
+  switch (trail.current) {
+    case null:
+      return `${head} · every step done`;
+    case "typeform":
+      return `${head} · waiting for Typeform`;
+    case "card":
+      return `${head} · waiting for Make`;
+    case "link":
+      return `${head} · waiting for ${cfg.after.linkBack?.short ?? "Make"}`;
+    default:
+      return head;
+  }
 }
 
 /** A form history entry as the answers sheet reads it. */
@@ -178,16 +230,24 @@ export function kickoffAlready(
 
 /**
  * The one-line state for the Onboarding panel's kickoff row: "Sent from the
- * cockpit at 14:02 by Lina. Make updated the card at 14:03."
+ * cockpit today at 14:02 by Lina. Make updated the card at 14:03." The day
+ * is said, so the line still reads right the next day.
  */
 export function sendLine(
   cfg: { after: Pick<FormConfig["after"], "cardDone"> },
   send: Pick<FormSend, "sentAt" | "sentBy">,
   row: OnboardingRow | null,
+  nowIso: string,
 ): string {
   const by = send.sentBy ? ` by ${send.sentBy}` : "";
-  const first = `Sent from the cockpit at ${kuwaitTime(send.sentAt)}${by}.`;
-  if (row && cfg.after.cardDone(row, send.sentAt))
-    return `${first} Make updated the card at ${kuwaitTime(row.card_updated_at)}.`;
+  const first = `Sent from the cockpit ${atWhen(send.sentAt, nowIso)}${by}.`;
+  if (row && cfg.after.cardDone(row, send.sentAt)) {
+    const sameDay = kuwaitDay(row.card_updated_at) === kuwaitDay(send.sentAt);
+    return `${first} Make updated the card ${
+      sameDay
+        ? `at ${kuwaitTime(row.card_updated_at)}`
+        : atWhen(row.card_updated_at, nowIso)
+    }.`;
+  }
   return first;
 }

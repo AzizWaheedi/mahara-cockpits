@@ -57,6 +57,7 @@ import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { FillFormButton, useFormNews } from "@/forms/OpenFormButton";
+import { useFormSend } from "@/forms/useFormSend";
 import { type Caller, useClientCallers } from "@/lib/callCentreClient";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
@@ -1462,6 +1463,18 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     if (!kitLoadedFor.split(",").includes(id)) return undefined;
     return kitPage?.rows.find(row => row.clickup_task_id === id) ?? null;
   };
+  // A kickoff sent from the cockpit's own window (KICKOFF.md 4.3), read once
+  // for the client page: its header and its Onboarding panel both use it.
+  const kickClient = section === "client" ? clientRow : null;
+  const kickKit = kickClient ? kitOf(kickClient) : undefined;
+  const kickSend = useFormSend(
+    auth.client,
+    kickClient &&
+      (kickKit ? kickKit.in_onboarding : kickClient.bucket === "onboarding")
+      ? String(kickClient.taskId)
+      : null,
+    "kickoff",
+  );
   const refreshKit = async (taskId: string) => {
     setKitRefreshing(taskId);
     try {
@@ -1812,18 +1825,20 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
                 </a>
               ) : null}
               {/* The kickoff, a click away while it is still to fill
-                  (docs/csm-forms/KICKOFF.md 1). */}
+                  (docs/csm-forms/KICKOFF.md 1): not once it is on record
+                  or sent from the cockpit. */}
               {(() => {
                 const kit = kitOf(c);
                 return kit !== undefined &&
                   !kit?.forms?.kickoff &&
+                  !kickSend &&
                   (kit ? kit.in_onboarding : c.bucket === "onboarding") ? (
                   <FillFormButton
                     taskId={String(c.taskId)}
                     form="kickoff"
                     variant="outline"
                   >
-                    Kickoff
+                    Fill the kickoff
                   </FillFormButton>
                 ) : null;
               })()}
@@ -2414,6 +2429,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
               error={kitError}
               refreshing={kitRefreshing === String(c.taskId)}
               onRefresh={() => void refreshKit(String(c.taskId))}
+              kickSend={kickSend}
             />
             <section className="space-y-3">
               <h2 className="text-[15px] font-semibold">Their links</h2>

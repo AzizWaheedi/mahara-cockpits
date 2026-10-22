@@ -33,6 +33,8 @@ EXPECTED_TOKENS = {
     "wss://bldgtotkfmhoxmlzowdx.supabase.co",
 }
 
+ALLOWED_DIRECTIVES = {"connect-src", "frame-src", "frame-ancestors"}
+
 ARBITRARY_CONVEX_ORIGINS = [
     "https://happy-otter-123.convex.cloud",
     "wss://happy-otter-123.convex.cloud",
@@ -69,11 +71,17 @@ class TestCockpitConnectPolicy(unittest.TestCase):
 
                 raw_policy = csp_headers[0].get("value", "").strip()
                 directives = [d.strip() for d in raw_policy.split(";") if d.strip()]
-                self.assertEqual(len(directives), 1)
+                names = [d.split()[0] for d in directives]
+                # connect-src first and exact; besides it only the frame rules
+                # (frame-src for embeds, frame-ancestors 'self' against framing).
+                self.assertEqual(names[0], "connect-src")
+                self.assertEqual(len(names), len(set(names)))
+                self.assertTrue(set(names) <= ALLOWED_DIRECTIVES, names)
+                if "frame-ancestors" in names:
+                    ancestors = directives[names.index("frame-ancestors")].split()[1:]
+                    self.assertEqual(ancestors, ["'self'"])
 
                 directive_parts = directives[0].split()
-                self.assertEqual(directive_parts[0], "connect-src")
-
                 token_set = set(directive_parts[1:])
                 self.assertEqual(token_set, EXPECTED_TOKENS)
 

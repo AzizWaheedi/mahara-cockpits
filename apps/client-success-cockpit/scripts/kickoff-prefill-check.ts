@@ -7,6 +7,10 @@
  * form panel would send, and prints counts and field names only: never a
  * client's answer, and never the token.
  *
+ * It also checks that the kickoff declares every hidden key the build sends
+ * (exit 1 if not), and, for a client whose kickoff is on record, compares
+ * the build with the hidden values Typeform stored on that submission.
+ *
  * Run (the token is read over ssh and never printed):
  *   TYPEFORM_TOKEN=$(ssh 187.77.156.166 'grep -h "^TYPEFORM_API_TOKEN=" /opt/data/bibi/api-keys.env | head -1 | cut -d= -f2- | tr -d "\"'"'"'"') \
  *     bun scripts/kickoff-prefill-check.ts
@@ -58,8 +62,9 @@ function readRows(): OnboardingRow[] {
 async function typeformResponse(
   token: string,
   responseId: string,
+  formId: string = FORMS.onboarding,
 ): Promise<any | null> {
-  const url = `https://api.typeform.com/forms/${FORMS.onboarding}/responses?included_response_ids=${encodeURIComponent(responseId)}&page_size=1`;
+  const url = `https://api.typeform.com/forms/${formId}/responses?included_response_ids=${encodeURIComponent(responseId)}&page_size=1`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -74,6 +79,32 @@ const rows = readRows();
 console.log(
   `${rows.length} clients in onboarding. Typeform ${token ? "is read for each onboarding response" : "is NOT read (no TYPEFORM_TOKEN)"}.`,
 );
+
+// 0. The kickoff declares every hidden key the build sends: Typeform drops a
+// value whose key the form does not declare, without a word.
+if (token) {
+  const res = await fetch(`https://api.typeform.com/forms/${FORMS.kickoff}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    console.log(
+      `Typeform answered ${res.status} for the kickoff's definition.`,
+    );
+    process.exitCode = 1;
+  } else {
+    const def = await res.json();
+    const declared: string[] = Array.isArray(def?.hidden) ? def.hidden : [];
+    const undeclared = KICKOFF_HIDDEN.map(s => s.key).filter(
+      k => !declared.includes(k),
+    );
+    console.log(
+      undeclared.length
+        ? `The kickoff form does not declare ${undeclared.length} key(s) the build sends: ${undeclared.join(", ")}.`
+        : `The kickoff form declares all ${KICKOFF_HIDDEN.length} keys the build sends.`,
+    );
+    if (undeclared.length) process.exitCode = 1;
+  }
+}
 
 let full = 0;
 for (const row of rows) {
@@ -134,13 +165,55 @@ for (const row of rows) {
   else if (link.hidden.onboarding_client_id !== id)
     parts.push("the card link carries another client ID");
   else {
-    const differ = keys.filter(
-      k =>
-        k !== "onboarding_client_id" && !sameValue(p.values[k], link.hidden[k]),
+    // A key the build took from the card name is the designed fallback (Make
+    // 10's plain link carries the ID only), not a difference.
+    const compared = keys.filter(
+      k => k !== "onboarding_client_id" && p.from[k] !== "card name",
+    );
+    const rawDiffer = compared.filter(
+      k => (p.values[k] ?? "") !== (link.hidden[k] ?? ""),
+    );
+    const differ = compared.filter(
+      k => !sameValue(p.values[k], link.hidden[k]),
     );
     parts.push(
-      `${differ.length} differ from the card link after normalising${differ.length ? ` (${differ.join(", ")})` : ""}`,
+      `${rawDiffer.length} differ from the card link as written${rawDiffer.length ? ` (${rawDiffer.join(", ")})` : ""}, ${differ.length} after normalising${differ.length ? ` (${differ.join(", ")})` : ""}`,
     );
+    if (p.from.legal_name === "card name")
+      parts.push("legal_name added from the card name");
+  }
+
+  // 2b. The end-to-end proof: what Typeform stored on a submitted kickoff.
+  const sent = row.forms?.kickoff;
+  if (token && sent?.response_id) {
+    try {
+      const r = await typeformResponse(token, sent.response_id, FORMS.kickoff);
+      if (!r)
+        parts.push(
+          sent.form_id === FORMS.kickoff
+            ? "Typeform did not return the submitted kickoff"
+            : "the kickoff on record is the old form's, so its hidden values are not compared",
+        );
+      else {
+        const hidden = (r.hidden ?? {}) as Record<string, string>;
+        const loose: string[] = [];
+        const off: string[] = [];
+        for (const k of keys) {
+          const built = p.values[k] ?? "";
+          const stored = hidden[k] ?? "";
+          if (built === stored) continue;
+          if (sameValue(built, stored)) loose.push(k);
+          else off.push(k);
+        }
+        parts.push(
+          !loose.length && !off.length
+            ? "the submitted kickoff's hidden values: exact"
+            : `the submitted kickoff's hidden values: ${loose.length ? `match only after normalising (${loose.join(", ")})` : ""}${loose.length && off.length ? "; " : ""}${off.length ? `differ (${off.join(", ")})` : ""}`,
+        );
+      }
+    } catch (e) {
+      parts.push(String((e as Error).message));
+    }
   }
 
   // 3. Where each value came from, and the link's length.

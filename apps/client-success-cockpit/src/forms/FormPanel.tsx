@@ -29,7 +29,7 @@ import type {
   RailPart,
   RailRow,
 } from "./formConfig";
-import { trailFor } from "./formStatus";
+import { type Trail, trailFor, trailSummary } from "./formStatus";
 import { kuwaitShortDay, kuwaitTime } from "./formTime";
 import type { FormNews } from "./OpenFormButton";
 import { formLink, hiddenSha256, type Prefill, sameHidden } from "./prefill";
@@ -73,6 +73,8 @@ export interface FormIO {
 export type FormPhase = "held" | "open" | "started" | "sent";
 
 export interface BookProps {
+  /** The call the form's ending books. */
+  kind: NonNullable<FormConfig["ending"]>["book"];
   label: string;
   variant: "default" | "outline";
   autoOpen: boolean;
@@ -100,6 +102,20 @@ export const serverNow = (ctx: Pick<FormContext, "now" | "readAt">) =>
 
 const message = (e: unknown) =>
   String((e as Error)?.message ?? e ?? "").trim() || "No reason was given.";
+
+/** A reason inside a sentence: its own last full stop goes, the sentence adds one. */
+const clause = (s: string) => s.replace(/\.\s*$/, "");
+
+/** Teal text that passes contrast in light mode (--primary-ink). */
+const INK = "text-primary-ink";
+
+const reducedMotion = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const STEPS = ["", "one", "two", "three", "four", "five", "six"];
+const http = (s: string) => /^https?:\/\/\S+$/i.test(s.trim());
 
 async function copyText(text: string, label: string) {
   try {
@@ -222,13 +238,9 @@ export function FormPanel({
           hiddenSha256: await hiddenSha256(p.values),
           carriedId: p.values[config.idField] ?? "",
         });
-        setSent({
-          responseId,
-          at: send.sentAt,
-          send,
-          error: null,
-          busy: false,
-        });
+        // The trail keeps the submit's own clock: a retry is noted later,
+        // and Make's change to the card comes seconds after the submit.
+        setSent({ responseId, at, send, error: null, busy: false });
       } catch (e) {
         setSent({ responseId, at, send: null, error: message(e), busy: false });
       }
@@ -273,7 +285,7 @@ export function FormPanel({
         toast("Rehearsal: the booking stays closed.");
         return;
       }
-      if (config.ending === "book-blueprint") setAutoBook(true);
+      if (config.ending) setAutoBook(true);
     },
   };
 
@@ -330,7 +342,7 @@ export function FormPanel({
           onSubmit: e => handlers.current.submit(e.responseId),
         };
         if (rehearse) options.enableSandbox = true;
-        if (config.ending !== "none")
+        if (config.ending)
           options.onEndingButtonClick = () => handlers.current.ending();
         w = create(config.formId, options);
       })
@@ -358,18 +370,51 @@ export function FormPanel({
     [config, ctx, prefill],
   );
   const missingCount = parts.find(p => p.id === "missing")?.rows.length ?? 0;
-  // A desk monitor (1920): the wider panel opens "What the form carries".
-  const wide = useMinWidth(1536);
   const desk = useMinWidth(1024);
 
   const trail = sent
     ? trailFor(
         config,
         ctx,
-        { responseId: sent.responseId, sentAt: sent.at },
+        { responseId: sent.responseId, sentAt: sent.at, noted: !sent.error },
         serverNow(ctx),
       )
     : null;
+
+  // Below 1024 px the panel is a fold; it opens on its own when a step is late.
+  const [foldOpen, setFoldOpen] = useState(false);
+  const late = trail?.late ?? null;
+  useEffect(() => {
+    if (late) setFoldOpen(true);
+  }, [late]);
+
+  // "Still missing" points at its row: scroll there and mark it a moment.
+  const [jumped, setJumped] = useState<string | null>(null);
+  const jump = useCallback((id: string) => {
+    const el = document.getElementById(`rail-${id}`);
+    if (!el) return;
+    // Only the panel's own scroll moves: scrollIntoView would also move the
+    // window under the header.
+    const box = el.closest<HTMLElement>("[data-rail-scroll]");
+    if (box) {
+      const top =
+        el.getBoundingClientRect().top -
+        box.getBoundingClientRect().top +
+        box.scrollTop -
+        (box.clientHeight - el.clientHeight) / 2;
+      box.scrollTo?.({
+        top: Math.max(0, top),
+        behavior: reducedMotion() ? "auto" : "smooth",
+      });
+    }
+    el.focus?.({ preventScroll: true });
+    setJumped(id);
+  }, []);
+  useEffect(() => {
+    if (!jumped) return;
+    const t = window.setTimeout(() => setJumped(null), 1600);
+    return () => window.clearTimeout(t);
+  }, [jumped]);
 
   const rail = (
     <div className="space-y-6 p-4 sm:p-5">
@@ -385,9 +430,10 @@ export function FormPanel({
           onCheck={() => void runCheck()}
           onRetry={() => void note(sent.responseId, sent.at)}
           book={
-            book && config.ending === "book-blueprint"
+            book && config.ending
               ? book({
-                  label: "Book the Blueprint call",
+                  kind: config.ending.book,
+                  label: config.ending.label,
                   variant: trail.current === null ? "default" : "outline",
                   autoOpen: autoBook,
                   onAutoOpenConsumed: () => setAutoBook(false),
@@ -401,18 +447,25 @@ export function FormPanel({
       {parts
         .filter(p => p.id === "missing" && !sent)
         .map(p => (
-          <Part key={p.id} part={p} wide={wide} onRecheck={io.recheck} />
+          <Part
+            key={p.id}
+            part={p}
+            jumped={jumped}
+            onJump={jump}
+            onRecheck={io.recheck}
+          />
         ))}
-      <Notes
-        prefill={prefill}
-        changed={changed}
-        onReload={reload}
-        sent={Boolean(sent)}
-      />
+      <Notes notes={prefill.notes} />
       {parts
         .filter(p => p.id !== "missing")
         .map(p => (
-          <Part key={p.id} part={p} wide={wide} onRecheck={io.recheck} />
+          <Part
+            key={p.id}
+            part={p}
+            jumped={jumped}
+            onJump={jump}
+            onRecheck={io.recheck}
+          />
         ))}
     </div>
   );
@@ -446,6 +499,23 @@ export function FormPanel({
             Rehearsal finished. Nothing was saved and nothing was noted.
           </p>
         ) : null}
+        {/* About the form on this side, so it sits over the form. Not on a
+            shared screen: the CSM flips back to Just me to see it. */}
+        {changed && !sharing ? (
+          <div
+            className="callout-warn flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-2 text-sm"
+            role="status"
+          >
+            <span className="min-w-0 flex-1">
+              Their onboarding answers changed after this form opened. Reload
+              the form to use them.
+            </span>
+            <Button size="sm" variant="outline" onClick={reload}>
+              <RotateCcw aria-hidden />
+              Reload the form
+            </Button>
+          </div>
+        ) : null}
         {held && already ? (
           <Hold
             config={config}
@@ -455,11 +525,11 @@ export function FormPanel({
             onOpen={() => setReleased(true)}
           />
         ) : (
-          <>
+          <div className="relative flex min-h-0 flex-1 flex-col">
             <div ref={box} className="min-h-0 flex-1" data-form-frame />
             {!ready ? (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-                <p className="pointer-events-auto max-w-sm text-center text-sm text-muted-foreground">
+                <p className="pointer-events-auto max-w-sm text-balance text-center text-sm text-muted-foreground">
                   {slow ? (
                     rehearse ? (
                       "The form has not loaded here. Reload this window to try again."
@@ -470,7 +540,10 @@ export function FormPanel({
                           href={fallback}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-primary underline-offset-4 hover:underline"
+                          className={cn(
+                            INK,
+                            "underline-offset-4 hover:underline",
+                          )}
                         >
                           Open it in Typeform
                         </a>
@@ -483,32 +556,55 @@ export function FormPanel({
                 </p>
               </div>
             ) : null}
-          </>
+          </div>
         )}
       </section>
 
       <aside
         hidden={sharing}
         aria-label="What the cockpit knows"
+        data-rail-scroll={desk ? "" : undefined}
         className="order-first min-h-0 overflow-y-auto border-b bg-card lg:order-none lg:border-b-0 lg:border-l"
       >
         {desk ? (
           rail
         ) : (
-          <details className="group">
+          <details
+            className="group/fold"
+            open={foldOpen}
+            onToggle={e => setFoldOpen(e.currentTarget.open)}
+          >
             <summary className="no-marker flex cursor-pointer items-center gap-2 px-4 py-3 text-sm font-medium">
               <ChevronRight
                 aria-hidden
-                className="size-4 text-muted-foreground transition-transform group-open:rotate-90"
+                className="size-4 shrink-0 text-muted-foreground transition-transform group-open/fold:rotate-90"
               />
-              What the cockpit knows
-              {missingCount && !sent ? (
-                <span className="text-muted-foreground">
-                  · {missingCount} missing
+              {trail ? (
+                <span className="min-w-0 truncate">
+                  {late ? (
+                    <span className="mr-1.5 inline-flex align-middle">
+                      <Dot tone="warn" />
+                    </span>
+                  ) : null}
+                  {trailSummary(config, trail)}
                 </span>
-              ) : null}
+              ) : (
+                <>
+                  What the cockpit knows
+                  {missingCount ? (
+                    <span className="text-muted-foreground">
+                      · {missingCount} missing
+                    </span>
+                  ) : null}
+                </>
+              )}
             </summary>
-            <div className="max-h-[55dvh] overflow-y-auto border-t">{rail}</div>
+            <div
+              data-rail-scroll=""
+              className="max-h-[55dvh] overflow-y-auto border-t"
+            >
+              {rail}
+            </div>
           </details>
         )}
       </aside>
@@ -522,7 +618,7 @@ export function FormPanel({
             <>
               <SheetHeader className="text-left">
                 <SheetTitle className="text-lg">
-                  {clientName}, {config.title.toLowerCase()}
+                  {config.title} for <bdi>{clientName}</bdi>
                 </SheetTitle>
                 <SheetDescription>
                   Filled {kuwaitShortDay(reading.submitted_at)},{" "}
@@ -538,7 +634,16 @@ export function FormPanel({
                       className="mt-1 whitespace-pre-line break-words text-sm"
                       dir="auto"
                     >
-                      {a.value}
+                      {http(a.value) ? (
+                        <ExtLink
+                          href={a.value.trim()}
+                          className={cn(INK, "break-all")}
+                        >
+                          {a.value.trim()}
+                        </ExtLink>
+                      ) : (
+                        a.value
+                      )}
                     </dd>
                   </div>
                 ))}
@@ -567,11 +672,15 @@ function Hold({
   onOpen: () => void;
 }) {
   const day = already.at ? kuwaitShortDay(already.at) : null;
+  const name = config.title.toLowerCase();
   return (
     <div className="m-auto w-full max-w-xl space-y-4 p-6 sm:p-10" role="note">
-      <Kicker>Already sent</Kicker>
+      <div className="txt-warn flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.08em]">
+        <Dot tone="warn" />
+        Already sent
+      </div>
       <p className="text-[15px] leading-6">
-        A {config.title.toLowerCase()} for <bdi>{clientName}</bdi> went in
+        A {name} for <bdi>{clientName}</bdi> went in
         {day ? ` on ${day}` : ""}
         {already.by ? (
           <>
@@ -588,11 +697,16 @@ function Hold({
             Read what was filled
           </Button>
         ) : null}
-        <ExtLink href={config.resultsUrl} className="text-sm">
+        <ExtLink href={config.resultsUrl} className={cn(INK, "text-sm")}>
           Open Typeform's results
         </ExtLink>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t pt-4">
+        <span className="text-xs text-muted-foreground">
+          Only if the first one cannot be fixed:
+        </span>
         <Button size="sm" variant="outline" onClick={onOpen}>
-          Open a second {config.title.toLowerCase()} anyway
+          Open a second {name} anyway
         </Button>
       </div>
     </div>
@@ -601,33 +715,11 @@ function Hold({
 
 // ------------------------------------------------------------ notes
 
-function Notes({
-  prefill,
-  changed,
-  onReload,
-  sent,
-}: {
-  prefill: Prefill;
-  changed: boolean;
-  onReload: () => void;
-  sent: boolean;
-}) {
-  if (!prefill.notes.length && !changed && !prefill.copy) return null;
+function Notes({ notes }: { notes: string[] }) {
+  if (!notes.length) return null;
   return (
     <div className="space-y-2 text-xs text-muted-foreground">
-      {changed ? (
-        <div className="callout-warn flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
-          <span className="min-w-0 flex-1">
-            Their onboarding answers changed after this form opened. Reload the
-            form to use them.
-          </span>
-          <Button size="sm" variant="outline" onClick={onReload}>
-            <RotateCcw aria-hidden />
-            Reload the form
-          </Button>
-        </div>
-      ) : null}
-      {prefill.notes.map(n => (
+      {notes.map(n => (
         <p key={n} className="flex gap-2">
           <span className="mt-1.5">
             <Dot tone="neutral" />
@@ -635,26 +727,6 @@ function Notes({
           <span className="min-w-0">{n}</span>
         </p>
       ))}
-      {prefill.copy && !sent ? (
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
-          onClick={() => {
-            const c = prefill.copy;
-            if (c)
-              navigator.clipboard.writeText(c.value).then(
-                () => toast.success(c.done),
-                () =>
-                  toast.error(
-                    "The browser would not copy. Select the text instead.",
-                  ),
-              );
-          }}
-        >
-          <Copy aria-hidden className="size-3.5" />
-          {prefill.copy.label}
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -663,11 +735,13 @@ function Notes({
 
 function Part({
   part,
-  wide,
+  jumped,
+  onJump,
   onRecheck,
 }: {
   part: RailPart;
-  wide: boolean;
+  jumped: string | null;
+  onJump: (id: string) => void;
   onRecheck: () => Promise<void>;
 }) {
   const rows = (
@@ -677,7 +751,8 @@ function Part({
           key={r.id}
           row={r}
           warn={part.tone === "warn"}
-          wide={wide}
+          jumped={jumped === r.id}
+          onJump={onJump}
           onRecheck={onRecheck}
         />
       ))}
@@ -692,11 +767,11 @@ function Part({
   );
   if (part.fold)
     return (
-      <details className="group">
+      <details className="group/part">
         <summary className="no-marker flex cursor-pointer items-center gap-1">
           <ChevronRight
             aria-hidden
-            className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90"
+            className="size-3.5 text-muted-foreground transition-transform group-open/part:rotate-90"
           />
           {head}
         </summary>
@@ -741,12 +816,14 @@ function CopyButton({ value, label }: { value: string; label: string }) {
 function Row({
   row,
   warn,
-  wide,
+  jumped,
+  onJump,
   onRecheck,
 }: {
   row: RailRow;
   warn: boolean;
-  wide: boolean;
+  jumped: boolean;
+  onJump: (id: string) => void;
   onRecheck: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
@@ -765,69 +842,113 @@ function Row({
     </div>
   );
 
-  if (warn)
-    return (
-      <li className="flex gap-2 py-2">
+  // "Still missing": a pointer to its row, or a row that is its own answer.
+  if (warn) {
+    const body = (
+      <>
         <span className="mt-1.5">
           <Dot tone="warn" />
         </span>
-        <div className="min-w-0">
-          <div className="text-sm font-medium">{row.label}</div>
-          <div className="text-xs text-muted-foreground">{row.missing}</div>
-        </div>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">{row.label}</span>
+          <span className="block text-xs text-muted-foreground">
+            {row.missing}
+          </span>
+        </span>
+      </>
+    );
+    return (
+      <li className="py-1">
+        {row.anchor ? (
+          <button
+            type="button"
+            onClick={() => onJump(row.anchor as string)}
+            className="-mx-1.5 flex w-[calc(100%+0.75rem)] items-start gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {body}
+            <ChevronRight
+              aria-hidden
+              className="mt-1 ml-auto size-3.5 shrink-0 text-muted-foreground"
+            />
+          </button>
+        ) : (
+          <div className="flex gap-2 py-1">{body}</div>
+        )}
+        {row.action ? (
+          <ActionCopy action={row.action} className="mt-1 ml-3.5" />
+        ) : null}
+      </li>
+    );
+  }
+
+  // Marked a moment when Still missing points here. Rounded only then: a
+  // rounded row would bend the hairline between rows.
+  const mark = cn(
+    "outline-none transition-colors duration-500",
+    jumped && "-mx-2 rounded-md bg-primary/10 px-2",
+  );
+
+  if (row.empties)
+    return (
+      <li className="py-2.5 text-sm text-muted-foreground">
+        {row.label}: {row.empties.join(", ")}.
       </li>
     );
 
-  if (row.carries)
+  if (row.carries) {
+    const shown = row.carries.filter(c => c.value !== null);
+    const blank = row.carries.filter(c => c.value === null);
     return (
-      <li className="py-2">
-        <details className="group" open={wide}>
-          <summary className="no-marker flex cursor-pointer items-center gap-1 text-sm font-medium">
+      <li id={`rail-${row.id}`} tabIndex={-1} className={cn("py-2", mark)}>
+        <details className="group/carries">
+          <summary className="no-marker flex cursor-pointer items-start gap-1 text-sm font-medium">
             <ChevronRight
               aria-hidden
-              className="size-3.5 text-muted-foreground transition-transform group-open:rotate-90"
+              className="mt-0.5 size-3.5 shrink-0 text-muted-foreground transition-transform group-open/carries:rotate-90"
             />
             {row.label}
           </summary>
           <dl className="mt-2 space-y-2 border-l pl-3">
-            {row.carries.map(c => (
+            {shown.map(c => (
               <div key={c.key}>
                 <dt className="text-xs text-muted-foreground">{c.label}</dt>
-                {c.value !== null ? (
-                  <>
-                    <dd
-                      className="line-clamp-3 whitespace-pre-line break-words text-sm"
-                      dir="auto"
-                      title={c.value}
-                    >
-                      <bdi>{c.value}</bdi>
-                    </dd>
-                    {c.source ? <SourceTag>{c.source}</SourceTag> : null}
-                  </>
-                ) : (
-                  <dd className="text-xs text-muted-foreground">
-                    {row.missing}
-                  </dd>
-                )}
+                <dd
+                  className="line-clamp-3 whitespace-pre-line break-words text-sm"
+                  dir="auto"
+                  title={c.value ?? undefined}
+                >
+                  <bdi>{c.value}</bdi>
+                </dd>
+                {c.source && c.source !== row.carriesFrom ? (
+                  <SourceTag>{c.source}</SourceTag>
+                ) : null}
               </div>
             ))}
+            {blank.length ? (
+              <p className="text-xs text-muted-foreground">
+                {row.blank ?? "Left blank"}:{" "}
+                {blank.map(c => c.label).join(", ")}.
+              </p>
+            ) : null}
           </dl>
         </details>
       </li>
     );
+  }
 
+  const linkOnly = row.value !== null && row.value === row.href;
   return (
-    <li className="py-2.5">
+    <li id={`rail-${row.id}`} tabIndex={-1} className={cn("py-2.5", mark)}>
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           {label}
           {row.choices ? (
             <Choices choices={row.choices} />
-          ) : row.value !== null && row.value !== row.href ? (
+          ) : row.value !== null && !linkOnly ? (
             <div className="mt-0.5 flex min-w-0 items-baseline gap-1.5 text-sm">
-              {row.pick ? (
+              {row.suggest ? (
                 <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
-                  Pick
+                  Suggest
                 </span>
               ) : null}
               <bdi
@@ -844,8 +965,12 @@ function Row({
             </div>
           ) : null}
           {row.href ? (
-            <div className="mt-0.5 text-xs">
-              <ExtLink href={row.href}>{row.linkLabel ?? "Open"}</ExtLink>
+            <div
+              className={cn("mt-0.5 min-w-0", linkOnly ? "text-sm" : "text-xs")}
+            >
+              <ExtLink href={row.href} className={cn(INK, "max-w-full")}>
+                <span className="truncate">{row.linkLabel ?? "Open"}</span>
+              </ExtLink>
             </div>
           ) : null}
           {row.hint ? (
@@ -858,9 +983,10 @@ function Row({
           ) : null}
         </div>
         {row.copy && row.value !== null ? (
-          <CopyButton value={row.value} label={row.label} />
+          <CopyButton value={row.copyValue ?? row.value} label={row.label} />
         ) : null}
-        {row.recheck ? (
+        {/* Once the value is here, there is nothing to check again. */}
+        {row.recheck && row.value === null ? (
           <Button
             size="sm"
             variant="ghost"
@@ -871,7 +997,7 @@ function Row({
               onRecheck()
                 .catch(e =>
                   toast.error(
-                    `The call store could not be read: ${message(e)}`,
+                    `The call store could not be read. ${clause(message(e))}.`,
                   ),
                 )
                 .finally(() => setBusy(false));
@@ -886,6 +1012,35 @@ function Row({
         ) : null}
       </div>
     </li>
+  );
+}
+
+function ActionCopy({
+  action,
+  className,
+}: {
+  action: NonNullable<RailRow["action"]>;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        INK,
+        "inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline",
+        className,
+      )}
+      onClick={() =>
+        navigator.clipboard.writeText(action.value).then(
+          () => toast.success(action.done),
+          () =>
+            toast.error("The browser would not copy. Select the text instead."),
+        )
+      }
+    >
+      <Copy aria-hidden className="size-3.5" />
+      {action.label}
+    </button>
   );
 }
 
@@ -948,7 +1103,7 @@ function AfterSend({
   config: FormConfig;
   ctx: FormContext;
   sent: { error: string | null; busy: boolean; send: FormSend | null };
-  trail: NonNullable<ReturnType<typeof trailFor>>;
+  trail: Trail;
   checking: boolean;
   checkedAt: string | null;
   checkError: string | null;
@@ -959,14 +1114,22 @@ function AfterSend({
   const back = config.after.linkBack;
   const link = back ? ctx.row.links?.[back.key] : undefined;
   const name = config.title.toLowerCase();
+  const late = trail.late;
+  // The late sentence: its first sentence in bold, the rest as it is.
+  const lateFirst = trail.lateLine?.match(/^.*?\.(?=\s|$)/)?.[0] ?? "";
+  const lateRest = trail.lateLine?.slice(lateFirst.length).trim() ?? "";
+  const steps = STEPS[trail.stops.length] ?? String(trail.stops.length);
   return (
     <section
-      className="space-y-4 rounded-xl bg-primary/5 p-4 ring-1 ring-primary/40"
+      className={cn(
+        "space-y-4 rounded-xl p-4 ring-1",
+        late ? "bg-card ring-border" : "bg-primary/5 ring-primary/40",
+      )}
       aria-label="After the send"
     >
       <div>
         <p className="text-[15px] font-semibold leading-6">
-          {config.after.say}
+          {late ? config.after.lateSay[late] : config.after.say}
         </p>
         <p className="text-xs text-muted-foreground">{config.after.sub}</p>
       </div>
@@ -974,8 +1137,7 @@ function AfterSend({
       {sent.error ? (
         <div className="callout-warn flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-xs">
           <span className="min-w-0 flex-1">
-            Typeform has the {name} and Make has started, but the cockpit could
-            not note it: {sent.error}
+            {`The ${name} went to Typeform, but the cockpit could not note it. ${clause(sent.error)}.`}
           </span>
           <Button
             size="sm"
@@ -991,6 +1153,9 @@ function AfterSend({
       <ol role="status" aria-live="polite" className="relative space-y-3">
         {trail.stops.map((s, i) => {
           const now = trail.current === s.key;
+          // A pending stop's line is context for the next step only, and
+          // not once that step is late ("Usually within a minute").
+          const line = s.done || (now && !late) ? s.line : null;
           return (
             <li key={s.key} className="relative flex gap-3">
               {i < trail.stops.length - 1 ? (
@@ -1007,7 +1172,9 @@ function AfterSend({
                   s.done
                     ? "bg-success motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-[180ms] motion-safe:ease-out"
                     : now
-                      ? "glow-teal bg-primary"
+                      ? late
+                        ? "bg-warning"
+                        : "glow-teal bg-primary"
                       : "bg-muted-foreground/30",
                 )}
               />
@@ -1020,11 +1187,17 @@ function AfterSend({
                 >
                   {s.label}
                   <span className="sr-only">
-                    {s.done ? ", done" : now ? ", next" : ", waiting"}
+                    {s.done
+                      ? ", done"
+                      : now
+                        ? late
+                          ? ", late"
+                          : ", next"
+                        : ", waiting"}
                   </span>
                 </div>
-                {s.line.replace(/\.$/, "") !== s.label ? (
-                  <div className="text-xs text-muted-foreground">{s.line}</div>
+                {line && line.replace(/\.$/, "") !== s.label ? (
+                  <div className="text-xs text-muted-foreground">{line}</div>
                 ) : null}
               </div>
             </li>
@@ -1033,24 +1206,36 @@ function AfterSend({
       </ol>
 
       {trail.lateLine ? (
-        <div className="callout-warn space-y-2 rounded-lg border px-3 py-2 text-xs">
-          <p>{trail.lateLine}</p>
-          {trail.late === "make" && ctx.row.links?.clickup ? (
-            <ExtLink href={ctx.row.links.clickup}>
-              Open the ClickUp card
-            </ExtLink>
-          ) : trail.late === "typeform" ? (
-            <ExtLink href={config.resultsUrl}>Open Typeform's results</ExtLink>
-          ) : null}
+        <div className="space-y-2 rounded-lg border border-warning/50 bg-warning/10 px-3 py-2.5 text-xs text-foreground">
+          <p className="flex gap-2 leading-5">
+            <span className="mt-[7px]">
+              <Dot tone="warn" />
+            </span>
+            <span className="min-w-0">
+              <strong className="font-semibold">{lateFirst}</strong>
+              {lateRest ? ` ${lateRest}` : ""}
+            </span>
+          </p>
+          <div className="pl-3.5">
+            {late === "make" && ctx.row.links?.clickup ? (
+              <ExtLink href={ctx.row.links.clickup} className={INK}>
+                Open the ClickUp card
+              </ExtLink>
+            ) : late === "typeform" ? (
+              <ExtLink href={config.resultsUrl} className={INK}>
+                Open Typeform's results
+              </ExtLink>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
       {book || link ? (
         <div className="flex flex-wrap items-center gap-3">
           {book}
-          {link && trail.current === null ? (
-            <ExtLink href={link} className="text-sm">
-              Open the Brand Blueprint form
+          {link && back && trail.current === null ? (
+            <ExtLink href={link} className={cn(INK, "text-sm")}>
+              {back.open}
             </ExtLink>
           ) : null}
         </div>
@@ -1060,13 +1245,15 @@ function AfterSend({
         <span>
           {checkError
             ? null
-            : checkedAt
-              ? `Checked ClickUp and Typeform at ${kuwaitTime(checkedAt)}.`
-              : trail.late || trail.current === null
-                ? "The 10-minute sync carries on."
-                : `The cockpit checks the card at ${config.after.checksAtSec
-                    .map(s => (s < 60 ? `${s} s` : `${s / 60} min`))
-                    .join(", ")}.`}
+            : trail.current === null
+              ? `All ${steps} steps are done.`
+              : checkedAt
+                ? `Checked ClickUp and Typeform at ${kuwaitTime(checkedAt)}.`
+                : late
+                  ? "The 10-minute sync carries on."
+                  : `The cockpit checks the card at ${config.after.checksAtSec
+                      .map(s => (s < 60 ? `${s} s` : `${s / 60} min`))
+                      .join(", ")}.`}
         </span>
         <Button size="sm" variant="ghost" onClick={onCheck} disabled={checking}>
           <RefreshCw
@@ -1078,16 +1265,15 @@ function AfterSend({
       </div>
       {checkError ? (
         <p className="txt-warn text-xs">
-          The cockpit could not read ClickUp and Typeform just now: {checkError}
-          . The {name} is safe in Typeform; the 10-minute sync will catch up.
+          {`The cockpit could not read ClickUp and Typeform just now: ${clause(checkError)}. The ${name} is safe in Typeform; the 10-minute sync will catch up.`}
         </p>
       ) : null}
 
-      <details className="group text-xs">
+      <details className="group/make text-xs">
         <summary className="no-marker flex cursor-pointer items-center gap-1 text-muted-foreground">
           <ChevronRight
             aria-hidden
-            className="size-3.5 transition-transform group-open:rotate-90"
+            className="size-3.5 transition-transform group-open/make:rotate-90"
           />
           What Make does now
         </summary>

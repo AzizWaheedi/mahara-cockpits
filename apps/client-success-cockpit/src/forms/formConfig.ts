@@ -2,6 +2,7 @@ import type { Timeline } from "@/lib/csmCalls";
 import {
   FORMS,
   type FormEntry,
+  type LinkKey,
   type OnboardingRow,
   onboardingFormLink,
 } from "@/lib/onboardingCore";
@@ -30,9 +31,8 @@ export interface FormSend {
   hiddenKeys: string[];
   /** Set by the server: an earlier send, or a response already on record. */
   second: boolean;
-  /** The sender's first name, when the seat has one. */
+  /** The sender's first name, when the seat has one. Never their address. */
   sentBy: string | null;
-  sentByEmail: string;
   sentAt: string;
 }
 
@@ -75,6 +75,8 @@ export interface RailRow {
   source: string | null;
   /** A copy button for the value. */
   copy?: boolean;
+  /** What the copy button copies, when the shown value is dressed ("$40 a day" copies "40"). */
+  copyValue?: string;
   /** Said when the value is null: "Not on record." */
   missing?: string;
   /** A quiet line under the value (a hint, never a number to type). */
@@ -82,10 +84,16 @@ export interface RailRow {
   /** The value is a link; `linkLabel` is what the link says. */
   href?: string;
   linkLabel?: string;
-  /** The value is a suggestion to pick in the form ("Pick: Interior design"). */
-  pick?: boolean;
-  /** A "Check again" button that re-reads the call store. */
+  /** The value is the cockpit's suggestion, from the client's words or the deck; the CSM picks in the form. */
+  suggest?: boolean;
+  /** A "Check again" button that re-reads the call store, while the value is missing. */
   recheck?: boolean;
+  /** "Still missing" rows: the row in the panel this one points to. */
+  anchor?: string;
+  /** "Still missing" rows: a copy action in the row itself ("Copy their onboarding link"). */
+  action?: { label: string; value: string; done: string };
+  /** Several empty rows said in one line: "Not on record: Daily budget, Calendar." */
+  empties?: string[];
   required?: boolean;
   /** The form's choices, the suggested one ringed, the client's words under each. */
   choices?: {
@@ -99,6 +107,10 @@ export interface RailRow {
     value: string | null;
     source: string | null;
   }[];
+  /** The source most carried values share, said once in the title; only the others are tagged. */
+  carriesFrom?: string | null;
+  /** How the carried keys with no value are said, in one line: "Left blank", "Not on record". */
+  blank?: string;
 }
 
 export interface RailPart {
@@ -131,8 +143,12 @@ export interface FormConfig {
   again: string;
   /** What the form's submit sets off, in plain words. */
   makeDoes: string[];
-  /** Typeform's ending button: open a cockpit action instead of redirecting. */
-  ending: "book-blueprint" | "none";
+  /**
+   * Typeform's ending button opens the cockpit's own booking for this client
+   * instead of redirecting; `label` is the ending's own words, so the
+   * booking keeps one name. Null: the ending is Typeform's.
+   */
+  ending: { book: "blueprint"; label: string } | null;
   /** Partial submit point (the Blueprint only, KICKOFF.md 2.6). */
   partial?: { afterRef: string; say: string };
   after: {
@@ -140,16 +156,30 @@ export interface FormConfig {
     say: string;
     /** The muted line under it. */
     sub: string;
+    /** The headline instead, once a step is late. */
+    lateSay: { make: string; typeform: string };
+    /** Make is late: what to look for on the card, in full (it names the comment Make writes). */
+    lateMake: string;
     /** One-card refreshes after a send, in seconds. */
     checksAtSec: number[];
     /** When the trail says Make or Typeform is late. */
     lateAfterMin: number;
     /** Make has done its part on the card since the send. */
     cardDone(row: OnboardingRow, sentAt: string): boolean;
-    /** The card stop's line once it is done. */
+    /** The card stop's line once it is done: "The card is at Brand Blueprint Booked." */
     cardLine(row: OnboardingRow): string;
     /** The last stop: a link Make writes back, when there is one. */
-    linkBack?: { key: "blueprint_form"; label: string; waiting: string };
+    linkBack?: {
+      key: LinkKey;
+      /** The stop once done: "Blueprint link on the card". */
+      label: string;
+      /** The stop while it waits: "Make adds the Blueprint link". */
+      pending: string;
+      /** In the short summary: "waiting for the Blueprint link". */
+      short: string;
+      /** The link's own words once it is there: "Open the Brand Blueprint form". */
+      open: string;
+    };
   };
 }
 
@@ -181,21 +211,31 @@ export const KICKOFF: FormConfig = {
     "The phase-4 WhatsApp to the client's group.",
     "Make 06's summary of the call, waiting for approval in Slack.",
   ],
-  ending: "book-blueprint",
+  // Typeform's ending says "Book the Brand Blueprint call"; so does the cockpit.
+  ending: { book: "blueprint", label: "Book the Brand Blueprint call" },
   after: {
     say: "Kickoff sent. Make is booking the Brand Blueprint.",
     sub: "Make also drafts the client's WhatsApp summary for approval in Slack.",
+    lateSay: {
+      make: "Kickoff sent. Make has not updated the card yet.",
+      typeform: "Kickoff sent. Typeform has not listed it yet.",
+    },
+    // Make 12 posts the answers as the card's "Kickoff Handoff" comment.
+    lateMake:
+      "Make has not updated the card in 5 minutes. The kickoff is safe in Typeform. Open the card and look for the Kickoff Handoff comment; if it is not there, tell the tech lead. Do not send the kickoff again.",
     checksAtSec: [45, 120, 300],
     lateAfterMin: 5,
     cardDone: kickoffCardDone,
     cardLine: row =>
-      `Make updated the card: ${String(row.client_status ?? "")
+      `The card is at ${String(row.client_status ?? "")
         .replace(/[^\p{L}\p{N}\s-]/gu, "")
         .trim()}.`,
     linkBack: {
       key: "blueprint_form",
       label: "Blueprint link on the card",
-      waiting: "Waiting for the Blueprint link on the card.",
+      pending: "Make adds the Blueprint link",
+      short: "the Blueprint link",
+      open: "Open the Brand Blueprint form",
     },
   },
 };

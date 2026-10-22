@@ -45,3 +45,13 @@ export function whenSaid(
     ? `today ${time}`
     : `${shortDay(day)} ${time}`;
 }
+
+/** "today at 14:02", or "on 15 Oct at 14:02" on another day. */
+export function atWhen(iso: string | null | undefined, nowIso: string): string {
+  const day = kuwaitDay(iso);
+  if (!day) return "";
+  const time = kuwaitTime(iso);
+  return day === kuwaitDay(nowIso)
+    ? `today at ${time}`
+    : `on ${shortDay(day)} at ${time}`;
+}

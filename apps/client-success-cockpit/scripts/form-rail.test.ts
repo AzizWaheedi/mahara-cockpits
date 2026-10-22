@@ -22,6 +22,8 @@ import { KICKOFF } from "../src/forms/formConfig";
 import {
   CONTRACT_CHOICES,
   contractChoice,
+  countryName,
+  foldEmpty,
   suggestedService,
 } from "../src/forms/formRail";
 
@@ -38,8 +40,8 @@ describe("the parts, in order", () => {
     const parts = rail();
     expect(parts.map(p => p.id)).toEqual(["client", "order", "sale"]);
     expect(part(parts, "sale")?.fold).toBe(true);
+    // Typeform reads the carried values back itself, so they come last.
     expect(part(parts, "order")?.rows.map(r => r.id)).toEqual([
-      "carries",
       "service",
       "consultation-types",
       "contract",
@@ -49,6 +51,12 @@ describe("the parts, in order", () => {
       "content",
       "recording",
       "payment",
+      "carries",
+    ]);
+    // The five services are drawn once, on Q10, not again on The client.
+    expect(part(parts, "client")?.rows.map(r => r.id)).toEqual([
+      "offer",
+      "area",
     ]);
   });
 
@@ -61,19 +69,59 @@ describe("the parts, in order", () => {
     const parts = rail(ctx);
     expect(parts[0].id).toBe("missing");
     expect(parts[0].tone).toBe("warn");
-    expect(parts[0].rows.map(r => [r.label, r.missing])).toEqual([
-      [
-        "Call Recording Link",
-        "Not in the call store yet. It arrives a few minutes after the call ends. Check again, or paste it from Fathom.",
-      ],
-      ["Contract status", "Not on record. Ask on the call."],
-      ["Service", "Not on record. Ask which of the five they want first."],
+    // Short pointers to their rows; the full sentence is said once, there.
+    expect(parts[0].rows.map(r => [r.label, r.missing, r.anchor])).toEqual([
+      ["Call recording link", "Not in the call store yet.", "recording"],
+      ["Contract status", "Ask on the call.", "contract"],
+      ["Service", "Ask on the call.", "service"],
       [
         "Onboarding answers",
-        "No onboarding answers: the form's read-backs will be empty.",
+        "Cedar & Stone Interiors has not filled the onboarding form, so the kickoff opens with their name and card only.",
+        undefined,
       ],
-      ["Payment amount", "Not on record."],
+      ["Payment amount", "Not on the card.", "payment"],
     ]);
+    // Their onboarding link to send is in the same row.
+    expect(parts[0].rows[3].action?.label).toBe("Copy their onboarding link");
+    expect(row(parts, "recording")?.missing).toBe(
+      "Not in the call store yet. It arrives a few minutes after the call ends. Check again, or paste it from Fathom.",
+    );
+    // One casing in both lists.
+    expect(row(parts, "recording")?.label).toBe("Call recording link");
+    expect(row(parts, "payment")?.label).toBe("Payment amount");
+    // Empty rows in a row are one line; a row Still missing points to stays.
+    const order = part(parts, "order")?.rows ?? [];
+    const empties = order.find(r => r.empties);
+    expect(empties?.empties).toEqual([
+      "Daily budget",
+      "Facebook access",
+      "Calendar",
+      "Content",
+    ]);
+    expect(order.map(r => r.id)).toContain("payment");
+    expect(order.map(r => r.id)).toContain("contract");
+  });
+
+  test("foldEmpty: two or more plain empty rows become one line, one stays itself", () => {
+    const empty = (id: string) => ({
+      id,
+      label: id,
+      value: null,
+      source: null,
+      missing: "Not on record.",
+    });
+    const full = { id: "x", label: "X", value: "1", source: null };
+    expect(foldEmpty([empty("a"), full, empty("b")], new Set())).toEqual([
+      empty("a"),
+      full,
+      empty("b"),
+    ]);
+    const folded = foldEmpty([empty("a"), empty("b"), full], new Set());
+    expect(folded[0].empties).toEqual(["a", "b"]);
+    expect(folded[0].missing).toBe("Not on record.");
+    expect(
+      foldEmpty([empty("a"), empty("b")], new Set(["b"])).map(r => r.id),
+    ).toEqual(["a", "b"]);
   });
 
   test("a missing fact is a sentence, never a zero or a dash", () => {
@@ -92,7 +140,12 @@ describe("the parts, in order", () => {
         expect(r.missing).toBeTruthy();
         expect(r.missing).not.toMatch(/^[-–—0]$/);
       }
-    expect(row(rail(ctx), "daily-budget")?.value).toBeNull();
+    expect(row(rail(ctx), "daily-budget")).toBeUndefined();
+    expect(
+      rail(ctx)
+        .flatMap(p => p.rows)
+        .find(r => r.empties?.includes("Daily budget")),
+    ).toBeTruthy();
   });
 });
 
@@ -129,7 +182,7 @@ describe("the client", () => {
 
   test("area: HighLevel's city and country, with their service areas under it; else the service areas answer", () => {
     expect(row(rail(), "area")).toMatchObject({
-      value: "Salmiya, KW",
+      value: "Salmiya, Kuwait",
       source: "HighLevel",
       hint: "They serve: Kuwait City, Salmiya, Hawalli",
     });
@@ -145,8 +198,15 @@ describe("the client", () => {
     ).toBeNull();
   });
 
-  test("services: the five as the form's exact labels, the suggestion ringed, their own words under each", () => {
-    const s = row(rail(), "services");
+  test("a country code reads as the country's name", () => {
+    expect(countryName("KW")).toBe("Kuwait");
+    expect(countryName("sa")).toBe("Saudi Arabia");
+    expect(countryName("Kuwait")).toBe("Kuwait");
+    expect(countryName(null)).toBeNull();
+  });
+
+  test("services, on Q10: the five as the form's exact labels, the suggestion ringed, their own words under each", () => {
+    const s = row(rail(), "service");
     expect(s?.choices?.options.map(o => o.label)).toEqual([
       "Design and build",
       "Interior design",
@@ -242,7 +302,12 @@ describe("the service, in the onboarding deck's order", () => {
 describe("in the form's order", () => {
   test("what the form carries: 22 values, each with its source, and a blank one said", () => {
     const c = row(rail(), "carries");
-    expect(c?.label).toBe("What the form carries (22 of 22)");
+    // The shared source is said once, in the title.
+    expect(c?.label).toBe(
+      "What the form carries · 22 of 22 · onboarding form, 13 Oct",
+    );
+    expect(c?.carriesFrom).toBe("Onboarding form, 13 Oct");
+    expect(c?.blank).toBe("Left blank");
     expect(c?.carries?.length).toBe(22);
     expect(c?.carries?.every(x => x.source === "Onboarding form, 13 Oct")).toBe(
       true,
@@ -256,12 +321,23 @@ describe("in the form's order", () => {
       ),
       "carries",
     );
-    expect(blank?.label).toBe("What the form carries (21 of 22)");
+    expect(blank?.label).toBe(
+      "What the form carries · 21 of 22 · onboarding form, 13 Oct",
+    );
     expect(blank?.carries?.find(x => x.key === "client_notes")).toMatchObject({
       value: null,
       source: null,
     });
     expect(blank?.missing).toBe("The client left it blank.");
+    // No onboarding answers: the card name is the one value, and its source.
+    const none = row(
+      rail(fixtureContext({ row: fixtureRow({ forms: {} }) })),
+      "carries",
+    );
+    expect(none?.label).toBe(
+      "What the form carries · 1 of 22 · ClickUp card name",
+    );
+    expect(none?.blank).toBe("Not on record");
   });
 
   test("contract status: Contract Status first, then Contract Signed, as the form's five choices", () => {
@@ -284,16 +360,19 @@ describe("in the form's order", () => {
     expect(contractChoice({})).toBeNull();
     for (const c of CONTRACT_CHOICES)
       expect(contractChoice({ contract_status: c })).toBe(c);
+    // A fact from the card, not a suggestion.
     expect(row(rail(), "contract")).toMatchObject({
       value: "Signed",
       source: "ClickUp card",
-      pick: true,
     });
+    expect(row(rail(), "contract")?.suggest).toBeUndefined();
+    expect(row(rail(), "consultation-types")?.suggest).toBe(true);
   });
 
-  test("daily budget: the card's, with a copy button", () => {
+  test("daily budget: the card's, in its dollars, with a copy button that copies digits", () => {
     expect(row(rail(), "daily-budget")).toMatchObject({
-      value: "40",
+      value: "$40 a day",
+      copyValue: "40",
       copy: true,
       source: "ClickUp card",
     });
@@ -315,6 +394,8 @@ describe("in the form's order", () => {
     const r = row(rail(), "recording");
     expect(r).toMatchObject({
       value: "https://fathom.example/share/cedar-onboarding",
+      href: "https://fathom.example/share/cedar-onboarding",
+      linkLabel: "Open the recording",
       source: "Fathom, today 13:10",
       copy: true,
       recheck: true,
@@ -350,7 +431,8 @@ describe("in the form's order", () => {
 
   test("payment: the card's Next Payment Amount only; billing lines and the plan are hints, never a number", () => {
     expect(row(rail(), "payment")).toMatchObject({
-      value: "1000",
+      value: "$1,000",
+      copyValue: "1000",
       source: "ClickUp card, Next Payment Amount",
       copy: true,
       hint: "Billing on the card: Cash collected: 500 · Next: 1,000 on launch. Payment plan: Split Pay (2x payments)",

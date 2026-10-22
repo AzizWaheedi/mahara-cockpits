@@ -5,7 +5,9 @@
  * (state: open | missing | long | changed | held | after | done | late-make |
  * late-typeform | note-failed | slow | loading | blocked-list |
  * blocked-roster | blocked-identity | unreadable | unread; sharing=1;
- * rehearse=1; theme=light).
+ * rehearse=1; theme=light). state=panel and state=panel-sent draw the
+ * client page's Onboarding panel before and after a kickoff sent from the
+ * window (KICKOFF.md 1, step 10).
  *
  * Typeform is a stand-in drawn here: no Typeform page loads and nothing is
  * submitted anywhere. Its "submit" only calls the panel's own handler, and
@@ -15,6 +17,7 @@
 import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Toaster } from "sonner";
+import { OnboardingKit } from "@/components/OnboardingKit";
 import { Button } from "@/components/ui/button";
 import type { BookProps, CreateWidget, FormIO } from "@/forms/FormPanel";
 import {
@@ -31,6 +34,7 @@ import {
   fixtureRow,
   fixtureSend,
   fixtureTimeline,
+  NAME,
   NOW,
   onboardingEntry,
   TASK,
@@ -169,9 +173,6 @@ function before(): FormContext {
           },
         }),
       };
-    case "late-make":
-    case "late-typeform":
-      return { ...base, now: minutes(NOW, 6) };
     default:
       return base;
   }
@@ -188,10 +189,21 @@ function after(ctx: FormContext, sentAt: string): FormContext {
       answers: [],
     },
   ];
+  // The late scenarios: the checks read the record six minutes on.
+  const later = scenario.startsWith("late")
+    ? { now: minutes(sentAt, 6), readAt: Date.now() }
+    : {};
   switch (scenario) {
     case "after":
-    case "late-make":
       return { ...ctx, timeline: fixtureTimeline(undefined, history) };
+    case "late-make":
+      return {
+        ...ctx,
+        ...later,
+        timeline: fixtureTimeline(undefined, history),
+      };
+    case "late-typeform":
+      return { ...ctx, ...later };
     case "done":
       return {
         ...ctx,
@@ -328,8 +340,35 @@ function Harness() {
   );
 }
 
+/** The client page's Onboarding panel, before and after a cockpit send. */
+function PanelHarness() {
+  const kit = fixtureRow();
+  const sent = scenario === "panel-sent" ? fixtureSend({ sentAt: NOW }) : null;
+  return (
+    <div className="min-h-dvh bg-background p-6 text-foreground">
+      <div className="mx-auto max-w-6xl">
+        <OnboardingKit
+          client={{
+            name: NAME,
+            taskId: TASK,
+            bucket: "onboarding",
+            stage: "Onboarding Booked",
+          }}
+          kit={kit}
+          page={{ rows: [kit], last: null, lastOk: null, now: NOW }}
+          error={null}
+          refreshing={false}
+          onRefresh={() => {}}
+          kickSend={sent}
+        />
+      </div>
+      <Toaster />
+    </div>
+  );
+}
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
-    <Harness />
+    {scenario.startsWith("panel") ? <PanelHarness /> : <Harness />}
   </StrictMode>,
 );
