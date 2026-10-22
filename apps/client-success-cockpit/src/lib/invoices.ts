@@ -27,10 +27,13 @@ export type InvoiceRow = {
   issue_date: string;
   due_date: string | null;
   payments: InvoicePayment[];
-  /** "whop": the invoice worker makes the link; "pasted": a person typed it. */
-  checkout_source: "pasted" | "whop";
+  /** "ecom" is the default new link; legacy Whop and pasted links remain readable. */
+  checkout_source: "pasted" | "whop" | "ecom";
   checkout_url: string | null;
   whop_plan_id: string | null;
+  ecom_invoice_id: string | null;
+  amount_kwd: number | null;
+  kwd_rate: number | null;
   status: InvoiceStatus;
   invoice_no: string | null;
   drive_url: string | null;
@@ -76,7 +79,7 @@ export type InvoiceRequest = {
   payNote?: string;
   dueDate?: string;
   checkoutUrl?: string;
-  /** "Pay online" only: the invoice worker creates a hidden one-time Whop link for the amount. */
+  /** "Pay online" only: the invoice worker creates an Ecom link in KWD at today's rate. */
   createLink?: boolean;
   payments?: { date: string; method: string; amount: string; ref?: string }[];
 };
@@ -89,7 +92,7 @@ export type InvoicesData = {
 };
 
 const COLUMNS =
-  "id,clickup_task_id,client_name,kind,amount_usd,description,client_tax_id,period,issue_date,due_date,payments,checkout_source,checkout_url,whop_plan_id,status,invoice_no,drive_url,error,attempts,requested_by,requested_at,issued_at";
+  "id,clickup_task_id,client_name,kind,amount_usd,description,client_tax_id,period,issue_date,due_date,payments,checkout_source,checkout_url,whop_plan_id,ecom_invoice_id,amount_kwd,kwd_rate,status,invoice_no,drive_url,error,attempts,requested_by,requested_at,issued_at";
 
 function fail(error: { message?: string } | null): void {
   if (error) throw new Error(error.message || "The database did not answer.");

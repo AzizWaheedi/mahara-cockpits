@@ -178,6 +178,7 @@ const RAIL: Record<string, string> = {
   tap: "Tap",
   other: "another way",
   whop: "Whop",
+  ecom: "Ecom",
   bank: "the bank statement",
   manual: "logged by hand",
 };
@@ -619,7 +620,7 @@ function Panel({
               </p>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              Card and Whop payments arrive by themselves; typing one here would
+              Card, Ecom and Whop payments arrive by themselves; typing one here would
               count it twice. {api.ledgerLine}
             </p>
             <div className="flex flex-wrap gap-2">

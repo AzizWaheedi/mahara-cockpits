@@ -102,7 +102,7 @@ export function InvoiceList({
                 {inv.kind === "checkout" && inv.checkout_url ? (
                   <>
                     <ExtLink href={inv.checkout_url}>
-                      {inv.whop_plan_id ? "Whop payment page" : "Payment page"}
+                      {inv.checkout_source === "ecom" ? "Ecom payment page" : inv.whop_plan_id ? "Whop payment page" : "Payment page"}
                     </ExtLink>
                     <Button
                       variant="ghost"

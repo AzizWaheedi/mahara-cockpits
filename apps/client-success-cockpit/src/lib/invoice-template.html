@@ -201,11 +201,12 @@
       <div class="kv">
         <div class="k">Payable to</div><div class="v">BassamCo For Product Promotion</div>
       </div>
+      <!--IF_ECOM--><p class="note">{{ECOM_AMOUNT_LINE}}</p><!--/IF_ECOM-->
       <div class="pay-row">
         <a class="pay-btn" href="{{CHECKOUT_URL}}">Pay now</a>
         <span class="pay-alt">Button not working? Open the <a href="{{CHECKOUT_URL}}">secure checkout page</a>.</span>
       </div>
-      <p class="note">Card processing fees are added at checkout and are payable by the client, so the total charged will be slightly above the invoice amount. Send a screenshot of the confirmation in the WhatsApp group once it is paid.</p>
+      <!--IF_NOT_ECOM--><p class="note">Card processing fees are added at checkout and are payable by the client, so the total charged will be slightly above the invoice amount. Send a screenshot of the confirmation in the WhatsApp group once it is paid.</p><!--/IF_NOT_ECOM-->
     </section>
     <!--/IF_CHECKOUT-->
 

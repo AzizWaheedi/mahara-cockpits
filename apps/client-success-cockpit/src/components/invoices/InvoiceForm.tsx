@@ -52,7 +52,7 @@ export const KINDS: { key: InvoiceKind; label: string; hint: string }[] = [
   },
 ];
 
-const METHODS = ["Bank transfer", "Card", "Whop", "Cash"];
+const METHODS = ["Bank transfer", "Card", "Ecom", "Whop", "Tap", "Cash"];
 const MAX_PAYMENTS = 12;
 
 type PayLine = {
@@ -75,13 +75,13 @@ type State = {
   payNote: string;
   dueDate: string;
   /** "Pay online": the worker creates the Whop link, or a person pastes one. */
-  linkMode: "whop" | "paste";
+  linkMode: "ecom" | "paste";
   checkoutUrl: string;
   payments: PayLine[];
 };
 
 /** What the preview's Pay now button points at until the worker makes the real link. */
-const WHOP_PREVIEW = "https://whop.com/checkout/";
+const ECOM_PREVIEW = "https://invoice.ecom.io/";
 
 let nextKey = 1;
 const blankPayment = (today: string): PayLine => ({
@@ -111,7 +111,7 @@ const fresh = (
   period: "",
   payNote: "",
   dueDate: "",
-  linkMode: "whop",
+  linkMode: "ecom",
   checkoutUrl: "",
   payments: [blankPayment(today)],
 });
@@ -254,11 +254,12 @@ export function InvoiceForm({
       pay_note: s.payNote.trim() || null,
       issue_date: today,
       due_date: s.kind === "paid" ? null : s.dueDate || today,
+      checkout_source: s.linkMode === "ecom" && s.kind === "checkout" ? "ecom" : "pasted",
       checkout_url:
         s.kind !== "checkout"
           ? null
-          : s.linkMode === "whop"
-            ? WHOP_PREVIEW
+          : s.linkMode === "ecom"
+            ? ECOM_PREVIEW
             : s.checkoutUrl.trim(),
       payments:
         s.kind === "paid"
@@ -297,7 +298,7 @@ export function InvoiceForm({
           ? s.checkoutUrl.trim()
           : undefined,
       createLink:
-        s.kind === "checkout" && s.linkMode === "whop" ? true : undefined,
+        s.kind === "checkout" && s.linkMode === "ecom" ? true : undefined,
       payments:
         s.kind === "paid"
           ? s.payments.map(p => ({
@@ -587,10 +588,10 @@ export function InvoiceForm({
             <div className="space-y-2">
               <PillRow>
                 <Pill
-                  active={s.linkMode === "whop"}
-                  onClick={() => set({ linkMode: "whop" })}
+                  active={s.linkMode === "ecom"}
+                  onClick={() => set({ linkMode: "ecom" })}
                 >
-                  Create a Whop link
+                  Create an Ecom link (KWD at today's rate)
                 </Pill>
                 <Pill
                   active={s.linkMode === "paste"}
@@ -600,8 +601,8 @@ export function InvoiceForm({
                 </Pill>
               </PillRow>
               <p className="text-xs text-muted-foreground">
-                {s.linkMode === "whop"
-                  ? "The worker creates a private one-time Whop checkout for this amount and puts it on the invoice as a Pay now button."
+                {s.linkMode === "ecom"
+                  ? "The worker converts USD to KWD at today's rate and creates an Ecom payment link for the Pay now button."
                   : "Use a payment link you already have. It goes on the invoice as a Pay now button."}
               </p>
             </div>
@@ -613,7 +614,7 @@ export function InvoiceForm({
                   id="inv-link"
                   type="url"
                   maxLength={500}
-                  placeholder="https://whop.com/checkout/..."
+                  placeholder="https://invoice.ecom.io/..."
                   value={s.checkoutUrl}
                   onChange={e => set({ checkoutUrl: e.target.value })}
                 />
@@ -671,8 +672,8 @@ export function InvoiceForm({
               {total !== null ? usd(total) : ""} for {chosen?.name}. It gets the
               next invoice number, goes into the client's Drive folder, where
               the client can see it, and is locked against edits.
-              {s.kind === "checkout" && s.linkMode === "whop"
-                ? " The worker also creates its private Whop payment link first."
+              {s.kind === "checkout" && s.linkMode === "ecom"
+                ? " The worker also creates its Ecom payment link in KWD first."
                 : null}
             </AlertDialogDescription>
           </AlertDialogHeader>

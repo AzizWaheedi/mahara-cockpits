@@ -54,7 +54,7 @@
       "payments": [],
       "requested_by": "csm@maharamedia.com"
     },
-    "sha256": "1ed7422455cc843de52a0036464b5ac9b0957ec0cf9cc93f98181aeddbd86dc0"
+    "sha256": "6c3b4bbe0e398e3730908eb19b768ec1ce478b4142bf6ae30bf8a572bfb32b72"
   },
   {
     "name": "card on file, no period",
