@@ -1,6 +1,13 @@
 import { CheckCircle2, ClipboardCheck } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useSearchParams } from "react-router";
+import { DayCallReview } from "../components/DayCallReview";
 import {
   AnimatedSelect,
   button,
@@ -18,6 +25,7 @@ import {
 } from "../components/kit";
 import { api } from "../lib/api";
 import { useQuery } from "../lib/data";
+import { type DayReview, type EodDraft, refreshDraft } from "../lib/dayReview";
 import { ago, clock } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import { toast } from "../lib/toast";
@@ -66,6 +74,7 @@ interface Eod {
 
 interface Prefill {
   day: string;
+  review: DayReview;
   today: string;
   role: Role;
   roles: Role[];
@@ -108,17 +117,24 @@ export default function EodPage({ me }: { me: Me }) {
   const role = params.get("role") ?? undefined;
   const day = params.get("day") ?? undefined;
 
+  const request = useRef(0);
   const load = useCallback(async () => {
+    const version = ++request.current;
     setError(null);
     try {
-      setData(await api<Prefill>("eod.prefill", { role, day }));
+      const next = await api<Prefill>("eod.prefill", { role, day });
+      if (version === request.current) setData(next);
     } catch (e) {
-      setError(String((e as Error).message ?? e));
+      if (version === request.current)
+        setError(String((e as Error).message ?? e));
     }
   }, [role, day]);
   useEffect(() => {
     setData(null);
     void load();
+    return () => {
+      request.current++;
+    };
   }, [load]);
 
   // While it is on its way out, look at where it got to every 20 seconds.
@@ -189,7 +205,12 @@ export default function EodPage({ me }: { me: Me }) {
       ) : data.eod?.submitted_at ? (
         <Filed data={data} onRetry={load} />
       ) : (
-        <EodForm key={`${data.role}:${data.day}`} data={data} onSent={load} />
+        <EodForm
+          key={`${me.email}:${data.role}:${data.day}`}
+          data={data}
+          email={me.email ?? ""}
+          onSent={load}
+        />
       )}
 
       {me.manager && data ? <TeamToday day={data.day} /> : null}
@@ -198,47 +219,69 @@ export default function EodPage({ me }: { me: Me }) {
         The same questions as the Typeform EODs, filed to the "Setter" or "Sales
         Rep" tab of the EOD Reports sheet and posted to #eods-salesreps, where
         EOD Radar reads it. Beside each number is what the cockpit counted and
-        where from; a setter's call counts come from Maqsam and include intro
-        calls, so they are shown, not filled in. An end of day filed before
-        04:00 is for the day before, and Friday is not a working day.
+        where from. Intro and demo totals follow saved call outcomes. Maqsam
+        dial counts include intro calls, so they remain a reference. An end of
+        day filed before 04:00 is for the day before, and Friday is not a
+        working day.
       </SourceNote>
     </main>
   );
 }
 
-function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
-  const draftKey = `sales-eod:${data.role}:${data.day}`;
-  const [answers, setAnswers] = useState<Record<string, string>>(() => {
+function EodForm({
+  data,
+  email,
+  onSent,
+}: {
+  data: Prefill;
+  email: string;
+  onSent: () => Promise<void>;
+}) {
+  const draftKey = `sales-eod:v2:${email}:${data.role}:${data.day}`;
+  const [draft, setDraft] = useState<EodDraft>(() => {
     try {
-      const saved = sessionStorage.getItem(draftKey);
-      if (saved) return JSON.parse(saved) as Record<string, string>;
+      const cached = JSON.parse(sessionStorage.getItem(draftKey) ?? "null");
+      if (cached?.values && cached?.manual)
+        return refreshDraft(cached, data.computed, data.prefill);
     } catch {
-      // no storage
+      /* start a fresh draft */
     }
-    const start: Record<string, string> = {};
-    for (const k of data.prefill) {
-      const v = data.computed[k];
-      if (v !== null && v !== undefined) start[k] = String(v);
-    }
-    return start;
+    return refreshDraft(
+      { values: {}, manual: {} },
+      data.computed,
+      data.prefill,
+    );
   });
+  const answers = draft.values;
+  function edit(key: string, value: string) {
+    setDraft(d => ({
+      values: { ...d.values, [key]: value },
+      manual: { ...d.manual, [key]: true },
+    }));
+  }
+  useEffect(() => {
+    setDraft(d => refreshDraft(d, data.computed, data.prefill));
+  }, [data.computed, data.prefill]);
   useEffect(() => {
     try {
-      sessionStorage.setItem(draftKey, JSON.stringify(answers));
+      sessionStorage.setItem(draftKey, JSON.stringify(draft));
     } catch {
-      // the draft just will not survive a reload
+      /* storage unavailable */
     }
-  }, [draftKey, answers]);
+  }, [draftKey, draft]);
+  const [reviewBusy, setReviewBusy] = useState(0);
   const [busy, setBusy] = useState(false);
 
   async function send(e: FormEvent) {
     e.preventDefault();
+    if (reviewBusy || !data.review.linked || data.review.pending) return;
     setBusy(true);
     try {
       await api("eod.submit", {
         role: data.role,
         day: data.day,
         answers,
+        review_version: data.review.version,
       });
       try {
         sessionStorage.removeItem(draftKey);
@@ -272,7 +315,15 @@ function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
           channel and the sheet.
         </p>
       ) : null}
+      <DayCallReview
+        review={data.review}
+        onChanged={onSent}
+        onBusy={busy => setReviewBusy(n => Math.max(0, n + (busy ? 1 : -1)))}
+      />
       <SectionCard title="Today's numbers">
+        <p className="muted mb-4 text-sm">
+          Filled from saved outcomes. You can correct any number before sending.
+        </p>
         <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
           {numbers.map(f => (
             <NumberQuestion
@@ -283,7 +334,7 @@ function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
                 f.key === "talk_time" ? null : (data.computed[f.key] ?? null)
               }
               note={data.notes[f.key]}
-              onChange={v => setAnswers(a => ({ ...a, [f.key]: v }))}
+              onChange={v => edit(f.key, v)}
             />
           ))}
         </div>
@@ -298,9 +349,7 @@ function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
               </span>
               <textarea
                 value={answers[f.key] ?? ""}
-                onChange={e =>
-                  setAnswers(a => ({ ...a, [f.key]: e.target.value }))
-                }
+                onChange={e => edit(f.key, e.target.value)}
                 rows={3}
                 dir="auto"
                 required={f.required}
@@ -311,13 +360,23 @@ function EodForm({ data, onSent }: { data: Prefill; onSent: () => void }) {
         </div>
       </SectionCard>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" disabled={busy} className={buttonPrimary}>
+        <button
+          type="submit"
+          disabled={
+            busy ||
+            reviewBusy > 0 ||
+            !data.review.linked ||
+            data.review.pending > 0
+          }
+          className={buttonPrimary}
+        >
           <ClipboardCheck className="size-4" aria-hidden />
           {busy ? "Sending…" : "Send my end of day"}
         </button>
         <p className="muted text-xs">
-          Once sent it cannot be changed here; a wrong number is for your
-          manager to correct.
+          {data.review.pending
+            ? "Save the remaining call outcomes to finish your day."
+            : "Check your numbers, then send. Your corrections are kept with the original totals."}
         </p>
       </div>
     </form>

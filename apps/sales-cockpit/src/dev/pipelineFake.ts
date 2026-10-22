@@ -62,7 +62,7 @@ const LS = {
   ],
 };
 
-const PIPES = [TWO_CALL, LS];
+export const PIPES = [TWO_CALL, LS];
 
 /** Stage per open lead (by fixture index), its heat and its next step. */
 const OPEN: {
@@ -259,5 +259,12 @@ export function pipelineMoveFake(b: Row): Row {
     );
   moved.set(id, stageId);
   const stage = PIPES.flatMap(p => p.stages).find(s => s.id === stageId);
+  const lead = F.LEADS.find(l => l.contact_id === id);
+  if (lead)
+    Object.assign(lead, {
+      stage_id: stageId,
+      stage_name: stage?.name,
+      pipeline_id: b.pipeline_id,
+    });
   return { move: { state: "done", to_stage_name: stage?.name ?? null } };
 }
