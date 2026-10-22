@@ -89,7 +89,7 @@ def prepare_job(
     task_id = str(job.get("task_id") or "")
     stamp = now_iso()
     summary: dict[str, Any] = {
-        "task_id": task_id, "files": 0, "read": 0, "skipped": 0, "failed": 0,
+        "task_id": task_id, "files": 0, "read": 0, "skipped": 0, "failed": 0, "removed": 0,
         "seconds": 0.0, "transcript_chars": 0, "warnings": [],
     }
     folder_link = str(job.get("footage_url") or job.get("raw_url") or "")
@@ -109,12 +109,12 @@ def prepare_job(
         target = node.get("shortcutDetails") or {}
         if target.get("targetMimeType") == drive_mod.FOLDER_MIME and target.get("targetId"):
             folder_id = str(target["targetId"])
-            node = {"mimeType": drive_mod.FOLDER_MIME}
+            node = {"mimeType": drive_mod.FOLDER_MIME, "name": node.get("name")}
         else:
             node = drive.follow(node) or {}
 
     if node.get("mimeType") == drive_mod.FOLDER_MIME:
-        files = drive.videos_under(folder_id, depth=2, limit=cfg.max_files_per_job * 3)
+        files = drive.videos_under(folder_id, depth=2, limit=cfg.max_files_per_job * 3, name=str(node.get("name") or ""))
     elif drive_mod.is_video(node):
         files = [node]
     else:
@@ -125,7 +125,19 @@ def prepare_job(
     summary["files"] = len(files)
     log(f"{task_id}: {len(files)} video file(s) under the folder")
 
-    known = {a.get("drive_id"): a for a in sb.assets(task_id) if a.get("drive_id")}
+    stored = sb.assets(task_id)
+    known = {a.get("drive_id"): a for a in stored if a.get("drive_id")}
+    # The stored clips follow what is read now. A clip the folder rule no
+    # longer reads (a finished ad, a file that left the folder) goes, or the
+    # Footage wall would keep showing it. Only a listing that worked gets here.
+    current = {str(f.get("id")) for f in files}
+    gone = [str(a["id"]) for a in stored if a.get("id") and str(a.get("drive_id")) not in current]
+    if gone:
+        try:
+            summary["removed"] = sb.delete_assets(task_id, gone)
+            log(f"{task_id}: removed {len(gone)} clip(s) no longer in its footage folders")
+        except Exception as e:  # noqa: BLE001 - the read goes on; the next look tries again
+            log(f"{task_id}: could not remove {len(gone)} old clip(s): {http.scrub(str(e))[:140]}")
     script = str(job.get("script") or "")
     rows: list[dict[str, Any]] = []
 

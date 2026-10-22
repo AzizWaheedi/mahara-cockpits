@@ -309,6 +309,15 @@ class Supabase:
     def assets(self, task_id: str) -> list[dict[str, Any]]:
         return self.select("editor_assets", f"select=*&task_id=eq.{http.quote(task_id)}&order=at.asc")
 
+    def delete_assets(self, task_id: str, ids: list[str]) -> int:
+        """Remove one job's clips by row id. Both filters, so a bad id list can
+        never reach another job's clips."""
+        if not ids:
+            return 0
+        listed = ",".join(f'"{i}"' for i in ids)
+        self.delete("editor_assets", f"task_id=eq.{http.quote(task_id)}&id=in.({http.quote(listed)})")
+        return len(ids)
+
     def store_version(self, row: dict[str, Any]) -> str:
         stamp = now_iso()
         body = self._row(row, VERSION_COLUMNS)

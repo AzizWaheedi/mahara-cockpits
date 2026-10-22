@@ -2175,3 +2175,152 @@ class UnheardClipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             os.environ.pop("DESK_SPEECH_PROVIDER", None)
             self.assertEqual(speech.providers(cfg_in(tmp)), ["elevenlabs", "groq"])
+
+
+class FootageFolderRuleTests(unittest.TestCase):
+    """On 2026-10-22 the Footage wall showed finished ads for some clients: a
+    card linked the client's whole archive ("promotions videos"), and the
+    Clients V2 template keeps "Completed Ads / EDITED" beside "Raw Videos"."""
+
+    _Drive = ShortcutTests._Drive
+
+    @staticmethod
+    def folder_shortcut(fid, name, target):
+        return ShortcutTests.shortcut(fid, name, target, drive_mod.FOLDER_MIME)
+
+    def ids(self, tree, name="", files=None):
+        return sorted(f["id"] for f in self._Drive(tree, files or {}).videos_under("root", name=name))
+
+    def test_folder_names(self):
+        for name in ("Raw Videos", "Raw Footage", "Client Footage", "Castello Footage", "مواد خام", "unedited footage"):
+            self.assertTrue(drive_mod.is_raw_folder(name), name)
+        for name in ("Raw Images", "Completed Ads", "Scripts & Creatives", "المشروع الخامس", "Final footage"):
+            self.assertFalse(drive_mod.is_raw_folder(name), name)
+        for name in ("Completed Ads", "EDITED", "Final", "promotions videos ", "daily reels", "posts", "Exports", "فيديو نهائي"):
+            self.assertTrue(drive_mod.is_finished_folder(name), name)
+        for name in ("Raw Videos", "unedited", "Finishing & fit-out works", "source", "RENDERS"):
+            self.assertFalse(drive_mod.is_finished_folder(name), name)
+
+    def test_a_clients_v2_folder_reads_only_raw_videos(self):
+        tree = {
+            "root": [folder("raw", "Raw Videos"), folder("img", "Raw Images"), folder("done", "Completed Ads"),
+                     drive_file("loose", "loose.mp4")],
+            "raw": [drive_file("clip", "C1218.MP4")],
+            "img": [drive_file("still", "photo-video.mp4")],
+            "done": [folder("edited", "EDITED")],
+            "edited": [drive_file("ad", "final ad.mp4")],
+        }
+        self.assertEqual(self.ids(tree, "Mahara - Client"), ["clip"])
+
+    def test_raw_and_client_footage_folders_are_both_read(self):
+        tree = {"root": [folder("raw", "Raw Videos"), folder("cf", "Client Footage")],
+                "raw": [drive_file("a", "a.mp4")], "cf": [drive_file("b", "b.mp4")]}
+        self.assertEqual(self.ids(tree), ["a", "b"])
+
+    def test_an_empty_raw_folder_still_wins(self):
+        tree = {"root": [folder("raw", "Raw Videos"), folder("img", "Raw Images")],
+                "raw": [], "img": [drive_file("x", "x.mp4")]}
+        self.assertEqual(self.ids(tree), [], "the job then says its footage folder is empty")
+
+    def test_a_linked_raw_folder_is_read_whole_except_finished_work(self):
+        tree = {"root": [folder("stock", "Stock"), folder("fin", "Final"), drive_file("top", "top.mp4")],
+                "stock": [drive_file("s", "showroom.mp4")], "fin": [drive_file("f", "final.mp4")]}
+        self.assertEqual(self.ids(tree, "Client Footage"), ["s", "top"])
+
+    def test_an_archive_skips_finished_folders(self):
+        tree = {
+            "root": [folder("posts", "posts"), folder("videos", "videos")],
+            "posts": [drive_file("p", "post.mp4")],
+            "videos": [folder("promo", "promotions videos "), folder("reels", "daily reels"), folder("src", "source")],
+            "promo": [drive_file("ad", "final arabic+.mp4")],
+            "reels": [drive_file("r", "1.mp4")],
+            "src": [drive_file("s", "stock.mp4")],
+        }
+        self.assertEqual(self.ids(tree, "Atlantis data"), ["s"])
+
+    def test_folder_shortcuts_follow_the_same_rule(self):
+        tree = {
+            "root": [self.folder_shortcut("toraw", "Raw Videos", "rawT"), self.folder_shortcut("todone", "Completed Ads", "doneT")],
+            "rawT": [drive_file("clip", "clip.mp4"), self.folder_shortcut("tofinal", "EDITED", "finalT")],
+            "doneT": [drive_file("ad", "ad.mp4")],
+            "finalT": [drive_file("ad2", "ad2.mp4")],
+        }
+        self.assertEqual(self.ids(tree), ["clip"])
+
+
+class StaleClipTests(unittest.TestCase):
+    """The stored clips follow what the folder rule reads now."""
+
+    def setUp(self):
+        was = media.free_bytes
+        media.free_bytes = lambda _p: 500 * 1024**3
+        self.addCleanup(lambda: setattr(media, "free_bytes", was))
+        media.probe = lambda p: {"seconds": 60.0, "width": 1080, "height": 1920, "has_audio": True, "bytes": 2048}
+        media.extract_audio = lambda p, d, seconds=None: d
+        media.scenes = lambda p, threshold=0.35, limit=400: []
+        media.storyboard = lambda p, w, seconds=None, count=3, width=480: None
+
+    def _store(self, sb, task_id, drive_id):
+        sb.store_assets([{"id": f"{task_id}:{drive_id}", "task_id": task_id, "drive_id": drive_id,
+                          "transcript": "hi", "has_audio": True, "method": {"transcribe": "elevenlabs:scribe_v1"}}])
+
+    def test_a_clip_no_longer_read_is_removed_and_other_jobs_are_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sb = FakeSupabase()
+            sb.store_jobs([job_row(task(), now_iso=NOW)])
+            self._store(sb, "86abc", "1KeepAAAAAAAAAAAAAAAAAAAAAAAA")
+            self._store(sb, "86abc", "1FinishedAdAAAAAAAAAAAAAAAAAA")
+            self._store(sb, "other", "1FinishedAdAAAAAAAAAAAAAAAAAA")
+            drive = FakeDrive({"1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi": [drive_file("1KeepAAAAAAAAAAAAAAAAAAAAAAAA", "keep.mp4")]})
+            out = prepare.prepare_job(cfg_in(tmp), lambda m: None, sb, drive, sb.job("86abc"), transcribe_fn=fake_speech("hello"))
+            self.assertEqual(out["removed"], 1)
+            self.assertEqual([a["drive_id"] for a in sb.assets("86abc")], ["1KeepAAAAAAAAAAAAAAAAAAAAAAAA"])
+            self.assertEqual(len(sb.assets("other")), 1)
+            self.assertEqual(drive.downloads, [], "the clip still in the folder is not read again")
+
+    def test_a_link_that_cannot_be_opened_removes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sb = FakeSupabase()
+            sb.store_jobs([job_row(task(), now_iso=NOW)])
+            self._store(sb, "86abc", "1KeepAAAAAAAAAAAAAAAAAAAAAAAA")
+
+            class Broken(FakeDrive):
+                def get(self, file_id):
+                    raise http.HttpError(403, "Forbidden")
+
+            out = prepare.prepare_job(cfg_in(tmp), lambda m: None, sb, Broken({}), sb.job("86abc"), transcribe_fn=fake_speech("hello"))
+            self.assertEqual(out["removed"], 0)
+            self.assertEqual(len(sb.assets("86abc")), 1)
+
+    def test_a_failed_remove_does_not_stop_the_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sb = FakeSupabase()
+            sb.store_jobs([job_row(task(), now_iso=NOW)])
+            self._store(sb, "86abc", "1FinishedAdAAAAAAAAAAAAAAAAAA")
+
+            def refuse(task_id, ids):
+                raise http.HttpError(500, "server error")
+
+            sb.delete_assets = refuse
+            logs = []
+            drive = FakeDrive({"1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi": [drive_file("1NewAAAAAAAAAAAAAAAAAAAAAAAAA", "new.mp4")]})
+            out = prepare.prepare_job(cfg_in(tmp), logs.append, sb, drive, sb.job("86abc"), transcribe_fn=fake_speech("hello"))
+            self.assertEqual(out["read"], 1)
+            self.assertTrue(any("could not remove 1 old clip" in m for m in logs))
+
+    def test_the_store_removes_by_job_and_id(self):
+        calls = []
+
+        class Rec(supabase_mod.Supabase):
+            def __init__(self):
+                pass
+
+            def delete(self, table, where):
+                calls.append((table, where))
+
+        self.assertEqual(Rec().delete_assets("86abc", ["86abc:1A", "86abc:1B"]), 2)
+        table, where = calls[0]
+        self.assertEqual(table, "editor_assets")
+        self.assertTrue(where.startswith("task_id=eq.86abc&id=in."), where)
+        self.assertIn(http.quote('"86abc:1A","86abc:1B"'), where)
+        self.assertEqual(Rec().delete_assets("86abc", []), 0)

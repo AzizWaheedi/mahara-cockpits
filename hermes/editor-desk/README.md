@@ -214,6 +214,18 @@ the shot map, and the storyboards.
 - Drive will not download a shortcut (HTTP 403), so the desk reads the file a
   shortcut points to, under the shortcut's id. A shortcut to a folder is walked
   like a subfolder.
+- The footage folder rule (2026-10-22). When the linked folder is not itself
+  raw footage and holds a "Raw Videos" or "Client Footage" folder, only those
+  are read; loose videos and "Raw Images" beside them are not. A folder named
+  for finished work ("Completed Ads", "EDITED", "Final", "نهائي", promos,
+  posts, reels, exports) is never walked. The names live in `desk/drive.py`.
+- A job's stored clips follow what the rule reads at its last look: a clip no
+  longer read (a finished ad, a file that left the folder) is removed from
+  `editor_assets`. A link that cannot be opened removes nothing. A ready job is
+  looked at again only on a link change, Rescan or `prepare --task`.
+- The rule reads folder names, not files. A finished ad filed in "Raw Videos",
+  or a shortcut to one, is still read; a card that links a whole archive needs
+  its ClickUp link changed to the raw folder.
 - A download needs 8 GB free on the box. Below that, a clip is recorded as
   "not enough free disk" and read at a later look.
 - ElevenLabs is the first speech engine and Groq Whisper the fallback. A clip

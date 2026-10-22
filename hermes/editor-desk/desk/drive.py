@@ -49,6 +49,41 @@ def parse_id(link: str) -> Optional[str]:
     return None
 
 
+# The footage folder rule (2026-10-22). Linked folders often hold finished
+# work beside the raw clips: the Clients V2 template has "Completed Ads /
+# EDITED" next to "Raw Videos", and some cards link a client's whole archive.
+_RAW_FOLDER = re.compile(r"\b(raw\s+(videos?|footage|clips?)|client\s+footage|footage)\b|(?:^|\s)(?:ال)?خام(?:$|\s)")
+_FINISHED_FOLDER = re.compile(
+    r"\b(completed|edited|final|finals|finished|exports?|promos?|promotions?|posts|reels|published)\b"
+    r"|نهائي|نهائيه|نهائية|منشور"
+)
+
+
+def _folder_name(name: Any) -> str:
+    return " ".join(str(name or "").lower().split())
+
+
+def is_raw_folder(name: Any) -> bool:
+    """A folder that holds the client's raw clips: "Raw Videos", "Client Footage"."""
+    n = _folder_name(name)
+    return bool(_RAW_FOLDER.search(n)) and not _FINISHED_FOLDER.search(n)
+
+
+def is_finished_folder(name: Any) -> bool:
+    """A folder of finished work: "Completed Ads", "EDITED", "Final", "نهائي", promos, posts, reels."""
+    return bool(_FINISHED_FOLDER.search(_folder_name(name)))
+
+
+def _folder_id(f: dict[str, Any]) -> Optional[str]:
+    """The folder a listing entry opens: a folder, or a shortcut to one."""
+    if f.get("mimeType") == FOLDER_MIME:
+        return str(f.get("id") or "") or None
+    target = f.get("shortcutDetails") or {}
+    if f.get("mimeType") == SHORTCUT_MIME and target.get("targetMimeType") == FOLDER_MIME:
+        return str(target.get("targetId") or "") or None
+    return None
+
+
 def is_video(f: dict[str, Any]) -> bool:
     mime = str(f.get("mimeType") or "")
     if mime.startswith("video/"):
@@ -145,10 +180,16 @@ class Drive:
             return {**shortcut, "target_id": tid}
         return {**target, "id": shortcut.get("id"), "name": shortcut.get("name") or target.get("name"), "target_id": tid}
 
-    def videos_under(self, folder_id: str, *, depth: int = 2, limit: int = 50) -> list[dict[str, Any]]:
+    def videos_under(self, folder_id: str, *, depth: int = 2, limit: int = 50, name: str = "") -> list[dict[str, Any]]:
         """Video files in a folder and its subfolders, newest last, bounded.
         A shortcut to a video counts as that video; a shortcut to a folder
-        is walked like a subfolder."""
+        is walked like a subfolder.
+
+        The footage folder rule: when the linked folder (`name`) is not itself
+        raw footage and holds a raw-footage folder ("Raw Videos", "Client
+        Footage"), only those folders are read, and loose videos beside them
+        are not. A folder named for finished work ("Completed Ads", "EDITED",
+        "Final", "نهائي", promos, posts, reels) is never walked."""
         found: list[dict[str, Any]] = []
         frontier = [(folder_id, 0)]
         seen: set[str] = set()
@@ -157,12 +198,18 @@ class Drive:
             if fid in seen:
                 continue
             seen.add(fid)
-            for f in self.list_folder(fid):
+            items = self.list_folder(fid)
+            if level == 0 and not is_raw_folder(name):
+                raw = [_folder_id(f) for f in items if _folder_id(f) and is_raw_folder(f.get("name"))]
+                if raw:
+                    frontier.extend((r, 1) for r in raw if r)
+                    continue
+            for f in items:
                 if f.get("mimeType") == SHORTCUT_MIME:
                     target = f.get("shortcutDetails") or {}
                     kind = str(target.get("targetMimeType") or "")
                     if kind == FOLDER_MIME:
-                        if level < depth and target.get("targetId"):
+                        if level < depth and target.get("targetId") and not is_finished_folder(f.get("name")):
                             frontier.append((str(target["targetId"]), level + 1))
                         continue
                     if not kind.startswith("video/"):
@@ -174,7 +221,7 @@ class Drive:
                             break
                     continue
                 if f.get("mimeType") == FOLDER_MIME:
-                    if level < depth:
+                    if level < depth and not is_finished_folder(f.get("name")):
                         frontier.append((f["id"], level + 1))
                 elif is_video(f):
                     found.append(f)
