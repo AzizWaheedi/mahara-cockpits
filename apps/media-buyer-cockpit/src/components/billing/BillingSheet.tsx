@@ -66,7 +66,7 @@ export type BillingPayload = Sheet & {
   moneyAsOf?: number | null;
 };
 
-export type Rail = "bank_transfer" | "cheque" | "cash" | "tap" | "other";
+export type Rail = "bank_transfer" | "cheque" | "cash" | "tap" | "ecom" | "other";
 
 export type PaymentInput = {
   account: Account;
@@ -176,6 +176,7 @@ const RAIL: Record<string, string> = {
   cheque: "cheque",
   cash: "cash",
   tap: "Tap",
+  ecom: "Ecom",
   other: "another way",
   whop: "Whop",
   bank: "the bank statement",
@@ -619,7 +620,7 @@ function Panel({
               </p>
             ) : null}
             <p className="text-xs text-muted-foreground">
-              Card and Whop payments arrive by themselves; typing one here would
+              Card, Ecom and Whop payments arrive by themselves; typing one here would
               count it twice. {api.ledgerLine}
             </p>
             <div className="flex flex-wrap gap-2">

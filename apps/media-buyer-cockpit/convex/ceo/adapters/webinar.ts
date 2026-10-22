@@ -126,7 +126,7 @@ const JOURNEY_SQL = `select
     where c.contact_id = l.contact_id and c.call_type in ('intro', 'demo')
       and c.booked_at >= ${webbyFrom("l")} - interval '1 hour') as calls,
   (select json_agg(json_build_object(
-      'submitted_at', d.submitted_at, 'contracted', d.contracted_revenue,
+      'submitted_at', d.submitted_at, 'email', d.email, 'name', concat_ws(' ', d.client_first_name, d.client_last_name), 'contracted', d.contracted_revenue,
       'cash', d.cash_collected, 'confirmed', ${DEPOSIT_CONFIRMED})
       order by d.submitted_at)
     from public.closed_deals d
@@ -290,6 +290,8 @@ type Journey = {
     contracted: number;
     cash: number;
     confirmed: boolean;
+    email: string | null;
+    name: string | null;
   }[];
   firstContact: number | null;
 };
@@ -359,6 +361,8 @@ function journeyOf(r: Row): Journey {
       contracted: num(d.contracted),
       cash: num(d.cash),
       confirmed: d.confirmed === true || d.confirmed === "true",
+      email: d.email ? String(d.email).trim().toLowerCase() : null,
+      name: d.name ? String(d.name).trim() : null,
     })),
     firstContact: ms(r.first_contact) ?? null,
   };
@@ -440,6 +444,20 @@ export const webinar: Adapter = {
       freshestAt: now,
     });
     const journeys = journeyRows.map(journeyOf);
+    // Ecom lives in Creative Triage, not in the B2B database of Whop.
+    const ecomPaid = await sql(TRIAGE, `select day, customer_email, customer_name from public.cockpit_ecom_invoices where status='PAID' and day >= current_date - 450`);
+    const payerKey = (value: string | null) => (value ?? "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    for (const journey of journeys) for (const deal of journey.deals) {
+      if (deal.confirmed || !deal.submittedAt) continue;
+      deal.confirmed = ecomPaid.some(p => {
+        const paid = Date.parse(`${String(p.day).slice(0, 10)}T00:00:00Z`);
+        const delta = paid - deal.submittedAt;
+        const email = String(p.customer_email ?? "").trim().toLowerCase();
+        const name = payerKey(String(p.customer_name ?? ""));
+        return delta >= -8 * 86_400_000 && delta <= 61 * 86_400_000 &&
+          (Boolean(email && deal.email && email === deal.email) || Boolean(name.length >= 6 && deal.name && name === payerKey(deal.name)));
+      });
+    }
     const spend: SpendRow[] = spendRows.map(r => ({
       day: String(r.day),
       campaignId: String(r.campaign_id),

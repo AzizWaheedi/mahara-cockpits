@@ -63,6 +63,7 @@ export type LineKind =
   | "whop_payout"
   | "whop_topup"
   | "tap_settlement"
+  | "ecom_settlement"
   | "own_transfer"
   | "refund_in"
   | "expense"
@@ -76,6 +77,7 @@ export const KIND_LABEL: Record<LineKind, string> = {
   whop_payout: "Whop payout",
   whop_topup: "Transfer into Whop",
   tap_settlement: "Tap settlement",
+  ecom_settlement: "Ecom settlement",
   own_transfer: "Own transfer",
   refund_in: "Refund received",
   expense: "Expense",
@@ -510,6 +512,7 @@ export function statementId(p: ParsedStatement): string {
 
 const WHOP = /\bwhop\b/i;
 const WHOP_PURCHASE = /whop\s*\*/i;
+const ECOM = /\becom\b/i;
 const TAP = /\btap\b|tap payments|tap company|tap\.company/i;
 const FEE =
   /non sufficient|decline fee|ann\.?\s*sub\.?\s*fee|service charge|\bcommission\b|\bfee\b|charges?\b/i;
@@ -552,6 +555,7 @@ export function classifyLine(
   if (l.amount > 0) {
     if (WHOP.test(ref) && !WHOP_PURCHASE.test(ref)) return "whop_payout";
     if (TAP.test(ref)) return "tap_settlement";
+    if (ECOM.test(ref)) return "ecom_settlement";
     if (REFUND.test(ref)) return "refund_in";
     if (OWN_MASK.test(ref) || CARD_TOPUP.test(ref)) return "own_transfer";
     return "client_payment";

@@ -23,7 +23,7 @@ import { nameKey, usdWords } from "./manualMatch.ts";
  * fixtures. Pure: the money adapter loads the rows and this file decides.
  */
 
-export type Rail = "whop" | "tap" | "transfer" | "manual";
+export type Rail = "whop" | "tap" | "ecom" | "transfer" | "manual";
 
 /** One payment in, as the rails give it. */
 export type PaymentIn = {

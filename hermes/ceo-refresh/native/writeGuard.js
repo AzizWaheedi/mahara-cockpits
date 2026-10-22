@@ -3,5 +3,6 @@ export const MANUAL_RAIL_LABEL = {
     cheque: "cheque",
     cash: "cash",
     tap: "Tap",
+    ecom: "Ecom",
     other: "other",
 };

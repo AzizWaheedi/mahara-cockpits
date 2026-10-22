@@ -85,6 +85,8 @@ def fill(inv: dict[str, Any], invoice_no: str, template: str) -> str:
     period = (inv.get("period") or "").strip()
     tax_id = (inv.get("client_tax_id") or "").strip()
     html = template
+    html = strip_block(html, "ECOM", kind == "checkout" and inv.get("checkout_source") == "ecom")
+    html = strip_block(html, "NOT_ECOM", inv.get("checkout_source") != "ecom")
     html = strip_block(html, "CHECKOUT", kind == "checkout")
     html = strip_block(html, "AUTOCHARGE", kind == "autocharge")
     html = strip_block(html, "PAID", kind == "paid")
@@ -108,6 +110,7 @@ def fill(inv: dict[str, Any], invoice_no: str, template: str) -> str:
         "AMOUNT": esc(amount),
         "AMOUNT_FULL": esc(amount),
         "CHECKOUT_URL": esc(inv.get("checkout_url") or ""),
+        "ECOM_AMOUNT_LINE": esc(f"Pay KWD {Decimal(str(inv['amount_kwd'])):,.3f} (USD {amount} at {inv['kwd_rate']})" if inv.get("amount_kwd") and inv.get("kwd_rate") else "KWD amount calculated at today's exchange rate before issue"),
         "PAY_NOTE": esc(pay_note(inv)),
     }
 
@@ -150,7 +153,7 @@ def register_row(inv: dict[str, Any], invoice_no: str, link: str) -> list[Any]:
             for p in inv.get("payments") or [])
         summary = f"Paid in full: {lines}."
     elif kind == "checkout":
-        made = f" (Whop plan {inv['whop_plan_id']}, made by the invoice desk)" if inv.get("whop_plan_id") else ""
+        made = f" (Ecom invoice {inv['ecom_invoice_id']}, KWD {inv.get('amount_kwd')}, rate {inv.get('kwd_rate')})" if inv.get("ecom_invoice_id") else f" (Whop plan {inv['whop_plan_id']}, made by the invoice desk)" if inv.get("whop_plan_id") else ""
         summary = f"Pay online link{made}: {inv.get('checkout_url')}."
     else:
         summary = "Card on file, charged automatically on the due date."

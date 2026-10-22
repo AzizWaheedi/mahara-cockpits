@@ -4,7 +4,7 @@ export type Transaction = {
   id: string;
   /** Kuwait day. */
   day: string;
-  rail: "whop" | "tap" | "transfer" | "manual" | "bank";
+  rail: "whop" | "tap" | "ecom" | "transfer" | "manual" | "bank";
   direction: "in" | "out";
   usd: number;
   currency: string;
@@ -52,7 +52,7 @@ export type PossibleDuplicate = {
   manualUsd: number;
   manualClient: string;
   /** What it may duplicate. */
-  against: "whop" | "tap" | "closer_form";
+  against: "whop" | "tap" | "ecom" | "closer_form";
   otherDay: string;
   otherUsd: number;
   /**
@@ -119,7 +119,7 @@ export type ManualPaymentRow = {
   coveredByTap?: { chargeDay: string; chargeUsd: number } | null;
 };
 
-export type ManualRail = "bank_transfer" | "cheque" | "cash" | "tap" | "other";
+export type ManualRail = "bank_transfer" | "cheque" | "cash" | "tap" | "ecom" | "other";
 
 export type CashRail = {
   /** Plain name for the screen, e.g. "Whop", "Tap", "All rails". */
@@ -236,6 +236,7 @@ export type MoneyPayload = {
     whop: CashRail;
     /** Tap Payments. connected is false until TAP_SECRET_KEY is set on the deployment. */
     tap: CashRail;
+    ecom: CashRail;
     /**
      * Payments Aziz logs by hand on the Money tab (ceoManualPayments, added
      * 2026-09-16): bank transfers, cheques, cash, Tap links and other. Same

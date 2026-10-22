@@ -26,6 +26,7 @@ from desk.config import Config
 from desk.google import Google, service_token
 from desk.supa import Supa
 from desk.whop import Whop
+from desk.ecom import Ecom
 from desk.worker import VERSION, Desk, Ledger, print_pdf
 
 HERE = Path(__file__).resolve().parent
@@ -60,6 +61,17 @@ def whop_doctor(cfg: Config) -> bool:
         return line(False, f"Whop did not answer the probe clearly ({http.scrub(e)[:120]})")
 
 
+def ecom_doctor(cfg: Config) -> bool:
+    if not cfg.ecom_token or not cfg.ecom_mid:
+        return line(False, "ECOM_LIVE_API_TOKEN or ECOM_LIVE_MID is missing")
+    try:
+        api = Ecom(cfg.ecom_token, cfg.ecom_mid)
+        http.get_json(f"{api.api}?page=1&take=1", headers=api.headers)
+        return line(True, "Ecom live invoice list is readable (read-only)")
+    except Exception as exc:
+        return line(False, f"Ecom invoice list failed: {http.scrub(exc)[:160]}")
+
+
 def doctor() -> int:
     cfg = Config.load()
     good = True
@@ -84,6 +96,7 @@ def doctor() -> int:
             line(True, "the Whop link columns are there")
         except http.HttpError:
             good = line(False, "the Whop link columns are missing. Apply supabase/migrations/20261015a_cockpit_invoice_whop_links.sql")
+    good = ecom_doctor(cfg) and good
     good = whop_doctor(cfg) and good
     # os.path.isfile, not Path.is_file: a path in someone else's home answers False, not PermissionError.
     if cfg.google_key_file and os.path.isfile(cfg.google_key_file):
@@ -139,7 +152,8 @@ def run(limit: int) -> int:
     ledger = Ledger()
     http.ledger = ledger
     desk = Desk(supa=supa, google=Google(token), cfg=cfg, template=build.TEMPLATE.read_text(encoding="utf-8"),
-                whop_api=Whop(cfg.whop_key, cfg.whop_product) if cfg.whop_key else None)
+                whop_api=Whop(cfg.whop_key, cfg.whop_product) if cfg.whop_key else None,
+                ecom_api=Ecom(cfg.ecom_token, cfg.ecom_mid) if cfg.ecom_token and cfg.ecom_mid else None)
     results: dict[str, int] = {}
     try:
         for _ in range(limit):

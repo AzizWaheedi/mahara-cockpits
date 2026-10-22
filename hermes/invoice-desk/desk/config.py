@@ -102,6 +102,8 @@ class Config:
     google_key_file: str
     register_sheet: str
     register_tab: str
+    ecom_token: str = ""
+    ecom_mid: str = ""
     whop_key: str = ""
     whop_product: str = DEFAULT_WHOP_PRODUCT
 
@@ -113,6 +115,8 @@ class Config:
             google_key_file=key("INVOICE_GOOGLE_KEY_FILE"),
             register_sheet=key("INVOICE_REGISTER_SHEET", DEFAULT_REGISTER_SHEET),
             register_tab=key("INVOICE_REGISTER_TAB", DEFAULT_REGISTER_TAB),
+            ecom_token=key("ECOM_LIVE_API_TOKEN") or _parse_env_file(DEFAULT_WHOP_KEY_FILE).get("ECOM_LIVE_API_TOKEN", ""),
+            ecom_mid=key("ECOM_LIVE_MID") or _parse_env_file(DEFAULT_WHOP_KEY_FILE).get("ECOM_LIVE_MID", ""),
             whop_key=whop_key(),
             whop_product=key("INVOICE_WHOP_PRODUCT", DEFAULT_WHOP_PRODUCT),
         )
