@@ -104,6 +104,15 @@ def prepare_job(
         summary["warnings"].append(f"the footage link could not be opened: {http.scrub(str(e))[:160]}")
         return _finish(cfg, log, sb, job, [], summary, stamp, clickup, client)
 
+    if node.get("mimeType") == drive_mod.SHORTCUT_MIME:
+        # The card links a shortcut: read what it points to.
+        target = node.get("shortcutDetails") or {}
+        if target.get("targetMimeType") == drive_mod.FOLDER_MIME and target.get("targetId"):
+            folder_id = str(target["targetId"])
+            node = {"mimeType": drive_mod.FOLDER_MIME}
+        else:
+            node = drive.follow(node) or {}
+
     if node.get("mimeType") == drive_mod.FOLDER_MIME:
         files = drive.videos_under(folder_id, depth=2, limit=cfg.max_files_per_job * 3)
     elif drive_mod.is_video(node):
@@ -123,7 +132,15 @@ def prepare_job(
     for f in files:
         fid = str(f.get("id"))
         prior = known.get(fid)
-        if prior and not force and prior.get("transcript") is not None and not prior.get("error"):
+        # Read and listened to. A clip with sound that no engine could
+        # transcribe (method "none") is not done: on 2026-10-17 ElevenLabs
+        # ran out of credits with no fallback set, and 9 clips kept an empty
+        # transcript that a later look would never have filled.
+        listened = prior is not None and (
+            prior.get("has_audio") is False
+            or (prior.get("method") or {}).get("transcribe") not in (None, "none")
+        )
+        if prior and not force and prior.get("transcript") is not None and not prior.get("error") and listened:
             summary["skipped"] += 1
             rows.append(prior)
             continue
@@ -149,6 +166,8 @@ def _read_file(
     sb: Supabase,
 ) -> dict[str, Any]:
     fid = str(f.get("id"))
+    # A shortcut's row keeps the shortcut's id; the bytes come from its target.
+    source = str(f.get("target_id") or fid)
     name = str(f.get("name") or fid)
     meta = f.get("videoMediaMetadata") or {}
     row: dict[str, Any] = {
@@ -162,8 +181,11 @@ def _read_file(
         "width": meta.get("width"),
         "height": meta.get("height"),
         "seconds": round(int(meta.get("durationMillis") or 0) / 1000, 2) or None,
-        "preview_url": drive_mod.preview_url(fid),
+        "preview_url": drive_mod.preview_url(source),
         "at": now_iso(),
+        # Said every time: the store merges rows, so a read that works
+        # would otherwise keep the error of the read before it.
+        "error": None,
     }
 
     size = int(f.get("size") or 0)
@@ -180,7 +202,7 @@ def _read_file(
     try:
         local = work / "source"
         try:
-            drive.download(fid, str(local), max_bytes=cfg.max_file_bytes)
+            drive.download(source, str(local), max_bytes=cfg.max_file_bytes)
         except (http.HttpError, OSError) as e:
             row["error"] = f"could not download: {http.scrub(str(e))[:180]}"
             summary["failed"] += 1

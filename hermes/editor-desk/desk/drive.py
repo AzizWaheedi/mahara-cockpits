@@ -20,7 +20,11 @@ FILES = "https://www.googleapis.com/drive/v3/files"
 UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
-FILE_FIELDS = "id,name,mimeType,size,md5Checksum,createdTime,modifiedTime,webViewLink,videoMediaMetadata(width,height,durationMillis),parents"
+SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
+FILE_FIELDS = (
+    "id,name,mimeType,size,md5Checksum,createdTime,modifiedTime,webViewLink,"
+    "videoMediaMetadata(width,height,durationMillis),parents,shortcutDetails(targetId,targetMimeType)"
+)
 
 # Any Drive link shape the team pastes into ClickUp.
 _ID_PATTERNS = [
@@ -121,8 +125,30 @@ class Drive:
                 break
         return items
 
+    def follow(self, shortcut: dict[str, Any]) -> Optional[dict[str, Any]]:
+        """The file a shortcut points to, under the shortcut's own id.
+
+        Drive refuses to download a shortcut (HTTP 403): the 12 clips of one
+        job on 2026-10-22 were all shortcuts into a client's shared drive.
+        The row keeps the shortcut's id, so the failed rows already stored
+        for it are replaced by the read, and `target_id` is what is fetched.
+        A target the desk cannot open stays a shortcut, so its download
+        fails with a reason on the clip instead of the clip vanishing.
+        """
+        tid = str((shortcut.get("shortcutDetails") or {}).get("targetId") or "")
+        if not tid:
+            return None
+        try:
+            target = self.get(tid)
+        except http.HttpError as e:
+            self.log(f"shortcut {shortcut.get('id')}: its target could not be read: {http.scrub(str(e))[:120]}")
+            return {**shortcut, "target_id": tid}
+        return {**target, "id": shortcut.get("id"), "name": shortcut.get("name") or target.get("name"), "target_id": tid}
+
     def videos_under(self, folder_id: str, *, depth: int = 2, limit: int = 50) -> list[dict[str, Any]]:
-        """Video files in a folder and its subfolders, newest last, bounded."""
+        """Video files in a folder and its subfolders, newest last, bounded.
+        A shortcut to a video counts as that video; a shortcut to a folder
+        is walked like a subfolder."""
         found: list[dict[str, Any]] = []
         frontier = [(folder_id, 0)]
         seen: set[str] = set()
@@ -132,6 +158,21 @@ class Drive:
                 continue
             seen.add(fid)
             for f in self.list_folder(fid):
+                if f.get("mimeType") == SHORTCUT_MIME:
+                    target = f.get("shortcutDetails") or {}
+                    kind = str(target.get("targetMimeType") or "")
+                    if kind == FOLDER_MIME:
+                        if level < depth and target.get("targetId"):
+                            frontier.append((str(target["targetId"]), level + 1))
+                        continue
+                    if not kind.startswith("video/"):
+                        continue
+                    followed = self.follow(f)
+                    if followed:
+                        found.append(followed)
+                        if len(found) >= limit:
+                            break
+                    continue
                 if f.get("mimeType") == FOLDER_MIME:
                     if level < depth:
                         frontier.append((f["id"], level + 1))

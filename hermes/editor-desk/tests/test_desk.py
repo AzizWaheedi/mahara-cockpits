@@ -11,6 +11,7 @@ os.environ.setdefault("DESK_HOME", "/tmp/desk-unit")
 from desk import ads, brand, checks, clients, foreplay, frameio, http, media, meetings, prepare, queue, sheets, speech
 from desk.clickup import editors_of, fields_of, is_open, job_row
 from desk.config import Config
+from desk import drive as drive_mod
 from desk import supabase as supabase_mod
 from desk.drive import parse_id
 from tests.fakes import FakeClickUp, FakeDrive, FakeSupabase, drive_file, folder, task
@@ -2065,3 +2066,112 @@ class QuietLookTests(unittest.TestCase):
             self.assertEqual(out["read"], 1)
             self.assertEqual(out["state"], "ready")
             self.assertEqual(len(cu.posted), 2)
+
+
+class ShortcutTests(unittest.TestCase):
+    """Drive will not download a shortcut (HTTP 403). On 2026-10-22 all 12
+    clips of one job were shortcuts into the client's shared drive."""
+
+    class _Drive(drive_mod.Drive):
+        def __init__(self, tree, files):
+            self.tree, self.files, self.log, self.calls = tree, files, (lambda m: None), 0
+
+        def list_folder(self, folder_id, *, pages=4):
+            return list(self.tree.get(folder_id, []))
+
+        def get(self, file_id):
+            if file_id not in self.files:
+                raise http.HttpError(404, "not found")
+            return dict(self.files[file_id])
+
+    @staticmethod
+    def shortcut(fid, name, target, kind="video/mp4"):
+        return {"id": fid, "name": name, "mimeType": drive_mod.SHORTCUT_MIME,
+                "shortcutDetails": {"targetId": target, "targetMimeType": kind}}
+
+    def test_a_video_shortcut_is_read_as_its_target_under_its_own_id(self):
+        target = drive_file("1TargetVideoAAAAAAAAAAAAAAAAA", "VID1.mp4", seconds=42)
+        d = self._Drive({"root": [self.shortcut("1ShortcutAAAAAAAAAAAAAAAAAAAA", "VID1.mp4", target["id"])]},
+                        {target["id"]: target})
+        [got] = d.videos_under("root")
+        self.assertEqual(got["id"], "1ShortcutAAAAAAAAAAAAAAAAAAAA", "the row the failed read made is the one replaced")
+        self.assertEqual(got["target_id"], target["id"])
+        self.assertEqual(got["mimeType"], "video/mp4")
+        self.assertEqual(got["size"], target["size"])
+
+    def test_a_folder_shortcut_is_walked_and_other_shortcuts_are_skipped(self):
+        inner = drive_file("1InnerVideoAAAAAAAAAAAAAAAAAA", "inner.mp4")
+        d = self._Drive({
+            "root": [self.shortcut("1ToFolderAAAAAAAAAAAAAAAAAAAA", "raw", "1SharedFolderAAAAAAAAAAAAAAA", drive_mod.FOLDER_MIME),
+                     self.shortcut("1ToDocAAAAAAAAAAAAAAAAAAAAAAA", "brief", "1DocAAAAAAAAAAAAAAAAAAAAAAAA", "application/vnd.google-apps.document")],
+            "1SharedFolderAAAAAAAAAAAAAAA": [inner],
+        }, {})
+        self.assertEqual([f["id"] for f in d.videos_under("root")], [inner["id"]])
+
+    def test_a_target_the_desk_cannot_open_stays_visible(self):
+        d = self._Drive({"root": [self.shortcut("1ShortcutAAAAAAAAAAAAAAAAAAAA", "gone.mp4", "1MissingAAAAAAAAAAAAAAAAAAAA")]}, {})
+        [got] = d.videos_under("root")
+        self.assertEqual(got["target_id"], "1MissingAAAAAAAAAAAAAAAAAAAA", "its download fails with a reason on the clip")
+
+    def test_prepare_downloads_the_target_and_clears_the_old_error(self):
+        was = media.free_bytes
+        media.free_bytes = lambda _p: 500 * 1024**3
+        self.addCleanup(lambda: setattr(media, "free_bytes", was))
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            sb = FakeSupabase()
+            sb.store_jobs([job_row(task(), now_iso=NOW)])
+            sb.store_assets([{"id": "86abc:1ShortcutAAAAAAAAAAAAAAAAAAAA", "task_id": "86abc",
+                              "drive_id": "1ShortcutAAAAAAAAAAAAAAAAAAAA", "error": "could not download: HTTP Error 403: Forbidden"}])
+            clip = {**drive_file("1TargetVideoAAAAAAAAAAAAAAAAA", "VID1.mp4"),
+                    "id": "1ShortcutAAAAAAAAAAAAAAAAAAAA", "target_id": "1TargetVideoAAAAAAAAAAAAAAAAA"}
+            drive = FakeDrive({"1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi": [clip]})
+            media.probe = lambda p: {"seconds": 42.0, "width": 1080, "height": 1920, "has_audio": True, "bytes": 2048}
+            media.extract_audio = lambda p, d, seconds=None: d
+            media.scenes = lambda p, threshold=0.35, limit=400: []
+            media.storyboard = lambda p, w, seconds=None, count=3, width=480: None
+            out = prepare.prepare_job(cfg, lambda m: None, sb, drive, sb.job("86abc"), transcribe_fn=fake_speech("hello"))
+            self.assertEqual(out["read"], 1)
+            self.assertEqual(drive.downloads, ["1TargetVideoAAAAAAAAAAAAAAAAA"])
+            row = sb.assets("86abc")[0]
+            self.assertIsNone(row["error"], "a read that works clears the error of the read before it")
+            self.assertIn("1TargetVideoAAAAAAAAAAAAAAAAA", row["preview_url"])
+
+
+class UnheardClipTests(unittest.TestCase):
+    """A clip with sound that no engine transcribed is read again; a silent
+    one, or one already heard, is not."""
+
+    def setUp(self):
+        was = media.free_bytes
+        media.free_bytes = lambda _p: 500 * 1024**3
+        self.addCleanup(lambda: setattr(media, "free_bytes", was))
+
+    def _with(self, prior):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            sb = FakeSupabase()
+            sb.store_jobs([job_row(task(), now_iso=NOW)])
+            sb.store_assets([{"id": "86abc:1VideoOneAAAAAAAAAAAAAAAAAAAA", "task_id": "86abc",
+                              "drive_id": "1VideoOneAAAAAAAAAAAAAAAAAAAA", "transcript": "", **prior}])
+            drive = FakeDrive({"1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi": [drive_file("1VideoOneAAAAAAAAAAAAAAAAAAAA", "one.mp4")]})
+            media.probe = lambda p: {"seconds": 60.0, "width": 1080, "height": 1920, "has_audio": True, "bytes": 2048}
+            media.extract_audio = lambda p, d, seconds=None: d
+            media.scenes = lambda p, threshold=0.35, limit=400: []
+            media.storyboard = lambda p, w, seconds=None, count=3, width=480: None
+            prepare.prepare_job(cfg, lambda m: None, sb, drive, sb.job("86abc"), transcribe_fn=fake_speech("hello"))
+            return drive.downloads
+
+    def test_nobody_listened_so_it_is_read_again(self):
+        self.assertEqual(len(self._with({"has_audio": True, "method": {"transcribe": "none"}})), 1)
+
+    def test_a_silent_clip_is_not_read_again(self):
+        self.assertEqual(self._with({"has_audio": False, "method": {"transcribe": "none"}}), [])
+
+    def test_a_clip_heard_with_no_speech_is_not_read_again(self):
+        self.assertEqual(self._with({"has_audio": True, "method": {"transcribe": "elevenlabs:scribe_v1"}}), [])
+
+    def test_groq_is_the_fallback_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ.pop("DESK_SPEECH_PROVIDER", None)
+            self.assertEqual(speech.providers(cfg_in(tmp)), ["elevenlabs", "groq"])

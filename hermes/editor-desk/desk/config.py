@@ -139,7 +139,9 @@ class Config:
     # by anyone on any device, reaches the shared ideation board.
     foreplay_drop_box: str = "Ideation"
     foreplay_mahara_box: str = "#mahara_b2b"
-    speech_providers: str = "elevenlabs"
+    # Groq Whisper is the fallback the README promised. Without it, the free
+    # ElevenLabs plan running dry (2026-10-17) left every clip untranscribed.
+    speech_providers: str = "elevenlabs,groq"
     elevenlabs_stt_model: str = "scribe_v1"
 
     # Stores.
@@ -172,7 +174,7 @@ class Config:
             ratio_tolerance=_float("DESK_RATIO_TOLERANCE", 0.02),
             foreplay_drop_box=key("FOREPLAY_DROP_BOX", "Ideation"),
             foreplay_mahara_box=key("FOREPLAY_MAHARA_BOX", "#mahara_b2b"),
-            speech_providers=key("DESK_SPEECH_PROVIDER", "elevenlabs"),
+            speech_providers=key("DESK_SPEECH_PROVIDER", "elevenlabs,groq"),
             elevenlabs_stt_model=key("DESK_ELEVENLABS_STT_MODEL", "scribe_v1"),
             supabase_url=key("DESK_SUPABASE_URL") or key("RADAR_SUPABASE_URL", ""),
             supabase_key=key("DESK_SUPABASE_KEY") or key("RADAR_SUPABASE_KEY", ""),

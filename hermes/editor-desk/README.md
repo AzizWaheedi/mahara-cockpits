@@ -211,6 +211,13 @@ the shot map, and the storyboards.
   says so on the `google token` line.
 - A file over 3 GB is recorded with its reason and not downloaded. The editor
   opens it in their own app; the desk is not the place to move a 20 GB rush.
+- Drive will not download a shortcut (HTTP 403), so the desk reads the file a
+  shortcut points to, under the shortcut's id. A shortcut to a folder is walked
+  like a subfolder.
+- A download needs 8 GB free on the box. Below that, a clip is recorded as
+  "not enough free disk" and read at a later look.
+- ElevenLabs is the first speech engine and Groq Whisper the fallback. A clip
+  with sound that neither could transcribe is tried again at the next look.
 - Only the first 90 minutes of a long file are transcribed, and the note says
   so on the asset.
 - Shot boundaries come from ffmpeg's scene score, which is a hint for
