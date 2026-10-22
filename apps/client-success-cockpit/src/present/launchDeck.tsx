@@ -987,7 +987,9 @@ function LineGroup({
       ) : null}
       {quoted.length ? (
         <div className="dkc-fixed-quoted">
-          {tag ? <span className="dkc-fixed-sublead">{t(tag, lang)}</span> : null}
+          {tag ? (
+            <span className="dkc-fixed-sublead">{t(tag, lang)}</span>
+          ) : null}
           <ul dir={lang === "ar" ? "ltr" : "rtl"}>
             {quoted.map(l => (
               <RedLine key={l.text} text={underHead(l.text, group)} />
@@ -1148,7 +1150,7 @@ function RedLinesPanel({ ctx }: { ctx: SlideCtx }) {
                 only under the CSM's pointer, or while typing. */}
             <input
               className="dkc-redline-input dkc-quiet-input"
-              dir="auto"
+              dir={value.trim() ? "auto" : lang === "ar" ? "rtl" : "ltr"}
               value={value}
               placeholder={t(T.input, lang)}
               aria-label={t(T.input, lang)}
@@ -1163,26 +1165,24 @@ function RedLinesPanel({ ctx }: { ctx: SlideCtx }) {
             />
           </>
         ) : (
-          <>
-            <div className="dkc-fixed-pair" data-side={side ? "" : undefined}>
-              <LineGroup
-                lead={T.never}
-                items={groups.never}
-                quoted={never}
-                tag={tagOn === "never" ? T.card : null}
-                lang={lang}
-                group="never"
-              />
-              <LineGroup
-                lead={T.always}
-                items={groups.always}
-                quoted={always}
-                tag={tagOn === "always" ? T.card : null}
-                lang={lang}
-                group="always"
-              />
-            </div>
-          </>
+          <div className="dkc-fixed-pair" data-side={side ? "" : undefined}>
+            <LineGroup
+              lead={T.never}
+              items={groups.never}
+              quoted={never}
+              tag={tagOn === "never" ? T.card : null}
+              lang={lang}
+              group="never"
+            />
+            <LineGroup
+              lead={T.always}
+              items={groups.always}
+              quoted={always}
+              tag={tagOn === "always" ? T.card : null}
+              lang={lang}
+              group="always"
+            />
+          </div>
         )}
       </div>
       {!empty && source ? (

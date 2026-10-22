@@ -225,6 +225,17 @@ export function severalLinks(n: number, lang: Lang): string {
     : `نجيب ${num(n, "ar")} روابط من الدرايف…`;
 }
 
+/**
+ * "Bringing in {n} of {total} links from Drive…": the head line when the
+ * box also shows finished links under the open ones (score round 2: "3
+ * links" sat over six link cards). `total` is at least 3 here.
+ */
+export function severalLinksOf(n: number, total: number, lang: Lang): string {
+  if (lang === "en") return `Bringing in ${n} of ${total} links from Drive…`;
+  const links = total <= 10 ? "روابط" : "رابط";
+  return `نجيب ${num(n, "ar")} من ${num(total, "ar")} ${links} من الدرايف…`;
+}
+
 /** The Arabic number forms for files (CONTENT-AR "The Drive link"). */
 function filesAr(n: number): string {
   if (n === 1) return "ملف واحد";

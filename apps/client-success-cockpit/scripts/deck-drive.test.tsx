@@ -337,6 +337,14 @@ describe("the words, as the spec writes them", () => {
     expect(C.broughtFiles(10, "ar")).toBe("جبنا ١٠ ملفات من الدرايف.");
     expect(C.severalLinks(2, "ar")).toBe("نجيب رابطين من الدرايف…");
     expect(C.severalLinks(7, "ar")).toBe("نجيب ٧ روابط من الدرايف…");
+    // Of how many, when finished links show under the open ones.
+    expect(C.severalLinksOf(3, 6, "en")).toBe(
+      "Bringing in 3 of 6 links from Drive…",
+    );
+    expect(C.severalLinksOf(3, 6, "ar")).toBe("نجيب ٣ من ٦ روابط من الدرايف…");
+    expect(C.severalLinksOf(2, 12, "ar")).toBe("نجيب ٢ من ١٢ رابط من الدرايف…");
+    expect(en).toContain("Bringing in {n} of {total} links from Drive…");
+    expect(ar).toContain("نجيب {n} من {total} روابط من الدرايف…");
     expect(ar).toContain(
       "(١: ملف واحد · ٢: ملفين · ٣ إلى ١٠: {n} ملفات · ١١ إلى ٢٠: {n} ملف)",
     );
@@ -583,7 +591,9 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
 
   test("several open: the head line, every open import and the three newest finished", () => {
     const v = view("several");
-    expect(v.head).toBe("Bringing in 3 links from Drive…");
+    // Counted against every card the box shows (score round 2: "3 links"
+    // sat over six cards).
+    expect(v.head).toBe("Bringing in 3 of 6 links from Drive…");
     expect(v.blocks.map(b => b.state)).toEqual([
       "queued",
       "opening",
@@ -592,7 +602,7 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
       "failed",
       "done",
     ]);
-    expect(view("several", "ar").head).toBe("نجيب ٣ روابط من الدرايف…");
+    expect(view("several", "ar").head).toBe("نجيب ٣ من ٦ روابط من الدرايف…");
     expect(view("working").head).toBeNull();
   });
 

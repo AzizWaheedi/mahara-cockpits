@@ -539,6 +539,7 @@ The three phones share one app language (DESIGN 7.1): the language most of the c
 |---|---|---|
 | `form.eyebrow` | Your customer sees this | هذا اللي يشوفه عميلكم |
 | `form.title` | Your form | نموذج إعلانكم |
+| `form.titleWhatsApp` (score round 2: the ad opens WhatsApp, so there is no form) | Your WhatsApp chat | محادثة الواتساب |
 | `form.line` | What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit. | اللي يجاوب عليه العميل قبل لا نتصل. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم. |
 | `form.line.dwy` | What they answer before your team calls. Questions marked 'Filters' screen out people who aren't a fit. | اللي يجاوب عليه العميل قبل لا يتصل فريقكم. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم. |
 | `form.tag.gate` | Filters | فلتر |
@@ -1129,7 +1130,7 @@ Off the canvas: `test.fixed.name` (الثابت: خطوطكم الحمراء), `
 
 **The heads say it once.** Under أبداً a line drops a leading أبد or أبداً; under دايماً a leading دايماً or دائماً. A line's own ما or لا stays, so أبداً over ما نعرض الأسعار reads as one sentence, the way the heads were meant (score round 2).
 
-**The card's lines in Arabic (`dos_donts_ar`).** Each card line gets its Arabic in prep, typed by the CSM in this register and without أبد or دايماً (the head says it): "Never show prices in an ad" → ما نعرض الأسعار بالإعلان; "Show our real projects, never stock photos" → نعرض مشاريعكم الحقيقية، مو صور جاهزة. A line with its Arabic sits in its group like any other; a line without one stays under بملفكم، بالإنجليزي, quoted as written, and prep counts it. When that block holds both kinds, it keeps the split under two small heads, أبداً and دايماً (score round 4: the English deck shows it, the Arabic deck lost it).
+**The card's lines in Arabic (`dos_donts_ar`).** Each card line gets its Arabic in prep, typed by the CSM in this register and without أبد or دايماً (the head says it): "Never show prices in an ad" → ما نعرض الأسعار بالإعلان; "Show our real projects, never stock photos" → نعرض مشاريعكم الحقيقية، مو صور جاهزة. A line with its Arabic sits in its group like any other; a line without one stays in English, quoted as written, and prep counts it. The panel keeps the English deck's two columns, أبداً and دايماً (score round 2 of the five services: it had stacked its groups, then the English block under a third head with run-in heads): each column lists its Arabic lines first, then that column's English card lines as one left-to-right block at the column's start, its marks on its own left. The first such block carries the small tag بملفكم، بالإنجليزي in ink-3, said once on the panel.
 
 **Spoken lines (Arabic), stop 3, changed:** the input line first, unchanged (أي فكرة أو عرض جديد أو سعر جديد أو تغيير، أرسلوه بالقروب قبل لا نسوي الإعلانات الجاية، عشان يكون فيها من البداية، وإحنا نرد عليكم بالسبب.), then the red lines: وبعدها خلوني أقرا لكم خطوطكم الحمراء.. فيه شي ثاني ما تبونا نقوله أو نوريه أبد؟
 
@@ -1162,6 +1163,7 @@ The Latin "Sales crash course" left the middle of the sentence (the score round'
 | Skipped | تركناه |
 | Only the first 10 links were sent. Paste the rest once these finish. | أرسلنا أول ١٠ روابط بس. الصق الباقي لما تخلص هذي. |
 | Bringing in {n} links from Drive… | نجيب {n} روابط من الدرايف… (٢: رابطين · ٣ إلى ١٠: {n} روابط) |
+| Bringing in {n} of {total} links from Drive… | نجيب {n} من {total} روابط من الدرايف… (the noun follows {total}: ٣ إلى ١٠ روابط، ١١ وفوق رابط) |
 | Waiting to start. It usually starts within a minute. | ينتظر دوره. عادةً يبدي خلال دقيقة. |
 | Opening the Drive link… | نفتح رابط الدرايف… |
 | Bringing in {n} files from Drive… | نجيب {n} ملفات من الدرايف… (١: ملف واحد · ٢: ملفين · ٣ إلى ١٠: {n} ملفات · ١١ إلى ٢٠: {n} ملف) |

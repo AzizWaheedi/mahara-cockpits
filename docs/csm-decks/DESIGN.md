@@ -6095,3 +6095,54 @@ languages), L3 stop 1 (full, starter), L4 (starter stops 0 to 2, full stop
 dwy), O2 (sparse, starter in both languages), O4 (full, both languages),
 O7 (starter), the Drive sheet's stalled card (both languages) and prep's
 slide 4 and call sections.
+
+
+### 22.17 The five main services, score round 2's fixes (2026-10-22)
+
+Score round 2 put four slides at 3 (O2 for the one-group client, O7 in
+the Arabic deck and for the done-with-you and starter clients, the Arabic
+L3 panel and the WhatsApp L5) and named one must. The fixer that took the
+round was cut off part-way; this records the whole round as finished.
+
+| Finding | What changed |
+|---|---|
+| must: the starter pack was a yes with no service, so a different choice on slide 4 put "our ready templates for architectural design" over interior templates | `starter_pack` saves the main service the pack was made for (one of the five keys or `other`; the server's allow-list in `20261020160100`, its PGlite case); a yes saved before keys reads as the kickoff's service. `deckData` sets `starterPack` only while that key is the deck's service, so O7 falls back to the no-pack lines and drops the starter stop; prep says which service the tick was for beside it. Pinned in `deck-fallbacks` |
+| should: O2's settle printed "Today" over "In 12 to 24 months" for two or three frames | The answers' rise waits for 0.8 of the stage's settle (`:is(.dkc-goal-stage, .dkc-goal-asking) + .dkc-goal-row`), opacity 0 until then. Pinned in `deck-motion` |
+| should: one short answer group left O2 stop 2's lower 350 px empty (done with you) | With one group the goal and its 90 days hold `--dk-hold` (120 px) low on stop 2 too, and the row travels with them (the individual `translate`, so its rise still runs): one block from about y 390 to 715 between the title and the foot, in both decks. Pinned in `deck-motion` |
+| should: red lines in the other script sat on their column's far edge (O7: English lines in the Arabic deck, an Arabic line in the English deck) | `.dkc-redlines ul` is a block at the column's start, as wide as its widest line (`width: max-content`), its direction set from its lines when they share one script, so its marks sit on its own start. A mixed list keeps each line's own |
+| should: L5 for an ad that opens WhatsApp was titled "Your form" over an empty chat | "Your WhatsApp chat" (محادثة الواتساب); the phone shows the chat as sent, the ad it came from on top of the first message (WhatsApp's own look for a chat started from an ad), tagged "Example wording"; the three steps sit level with the phone's foot. No reply bubble: what the business answers is theirs, and the steps already say what happens |
+| should: the Arabic L3 panel stacked its groups, then a third head with run-in heads | The English deck's two columns, أبداً and دايماً; each lists its Arabic lines, then its English card lines as one left-to-right block at the column's start (`.dkc-fixed-quoted`, `max-content`), its marks on its left; the first carries بملفكم، بالإنجليزي in ink-3, once. Pinned in `deck-launch` |
+| should: prep's scene picker offered Kitchen and Bathroom as a client's example ad | `pickableScenes` leaves the sub-trades out of the select; a kitchen saved before is listed only while it is the choice ("a room, not the service"). Pinned in `deck-examples` |
+| should: the harness's full form offered "Kitchens and wardrobes" (L2 stop 1, L5) | "A design consultation" |
+| should (from O2 stop 1): the no-goal answer line ended about 250 px short of the 90 days under it | It spans the content (to 1784), as the track does |
+| taste: the harness's pictures repeated the example scenes (the starter's templates were its example ad and the strip's lit tiles; full's own Facebook ad a mirrored crop of the example living room) | Re-cut from Mahara's own sales-deck pictures, none of the eighteen example scenes: `starter-fitout-feed.webp` an office desk under the Kuwait Towers (the client is in Kuwait), `starter-fitout-reel.webp` a materials board (stone, wood, fabric, brass), `custom-square.webp` a majlis at night. Harness only |
+| taste: with no red lines, O7's start column ended on its sentence over 400 px of nothing (starter) | Three rows to fill, each a faint amber mark and a dashed amber line, the first the input itself |
+| taste: O7's strip ended 320 px short of its column | Six tiles in one row across the column, about 127 x 159 at 1920 (a size container; under about 100 px a tile the strip leaves) |
+| taste: the Drive box headed six link cards "Bringing in 3 links from Drive…" | "Bringing in 3 of 6 links from Drive…" (نجيب ٣ من ٦ روابط من الدرايف…) when finished links show under the open ones. Pinned in `deck-drive` |
+| taste: prep's slide-4 instruction was set in coral and read as an error | A slide's on-the-call steps (`todo`) are muted, apart from what is missing |
+| found in the shots: an empty answer field in the Arabic deck read left to right (O2's Arabic prompt sat on the left; O7's and L3's red-line fields too) | Empty, a field takes the deck's direction; once typed in, its words' own (`dir="auto"`) |
+
+Not changed:
+
+- **More indoor scenes for the L3 field** (interior and fit-out about half
+  exteriors): new pictures need the Higgsfield pipeline and the CEO's eye
+  on each; left for a picture round. The field stays honest (tagged, no
+  building sites, no sub-trades).
+- **O1, one baseline for the name block and the phone** (optional, "to
+  reach 5"): the left block's place is set for the longest names across
+  the fixtures; not moved without a pass over every fixture's cover.
+- **O5's Arabic example message** keeps the Latin date and time: whether
+  the reminder template renders an Arabic date is not known, and the card
+  is labelled "Example wording".
+- **L5's thank-you welcome bubble** (optional): the phone already reads
+  as the form's last screen.
+- **O4's Arabic headers**: already bottom-aligned (a one-line header sits
+  on its two-line neighbours' second line).
+
+Checked: all deck tests, both typechecks, `check-shared.sh`, Biome on the
+touched files, the PGlite suite and the worker suite. Shots at 1920 x
+1080, read and deleted: O2 (done with you in both languages, starter in
+both), O4 (full, Arabic), O7 (full in both languages, done with you,
+starter in both), O1 (full), L3 stop 3 (full in both languages), L4
+(full, starter), L5 (starter in both languages, full stop 2), prep's
+slide 4 (full, starter) and the Drive sheet.

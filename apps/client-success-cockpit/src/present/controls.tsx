@@ -379,11 +379,7 @@ function StarterPackToggle({
     <Toggle
       checked={d.starterPack}
       onChange={v =>
-        setPrep(
-          "onboarding",
-          { starter_pack: v ? (key ?? true) : null },
-          true,
-        )
+        setPrep("onboarding", { starter_pack: v ? (key ?? true) : null }, true)
       }
     >
       A ready starter pack exists for {d.serviceMid ?? "the launch service"}

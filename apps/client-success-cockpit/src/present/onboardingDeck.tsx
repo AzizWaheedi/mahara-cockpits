@@ -346,7 +346,9 @@ function GoalInput({ ctx }: { ctx: SlideCtx }) {
       className="dkc-goal-input"
       data-empty={value.trim() ? undefined : ""}
       rows={1}
-      dir="auto"
+      // Empty, it takes the deck's direction (an empty dir="auto" field
+      // reads left to right, so the Arabic prompt sat on the left).
+      dir={value.trim() ? "auto" : lang === "ar" ? "rtl" : "ltr"}
       value={value}
       placeholder={t(O.goals.input, lang)}
       aria-label={t(O.goals.input, lang)}
@@ -1432,7 +1434,7 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
   const input = (
     <input
       className="dkc-redline-input"
-      dir="auto"
+      dir={value.trim() ? "auto" : lang === "ar" ? "rtl" : "ltr"}
       value={value}
       placeholder={t(O.next.input, lang)}
       aria-label={t(O.next.input, lang)}

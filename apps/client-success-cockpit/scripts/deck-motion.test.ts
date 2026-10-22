@@ -133,7 +133,8 @@ describe("the arrivals (DESIGN 22.14.5)", () => {
     // At the settle's midpoint (where round 2 saw "Today" over "In 12 to
     // 24 months") the answers have not begun.
     expect(start).toBeGreaterThan(ms(token("--dk-t-stage")) / 2);
-    const rise = /@keyframes dk-rise \{\s*from \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    const rise =
+      /@keyframes dk-rise \{\s*from \{([^}]*)\}/.exec(css)?.[1] ?? "";
     expect(rise).toContain("opacity: 0");
     expect(bare).toMatch(
       /\.dkc-goal-row \{[^}]*animation: dk-rise [^;]* both;/,
@@ -146,9 +147,7 @@ describe("the arrivals (DESIGN 22.14.5)", () => {
     expect(rule(".dkc-goal-stage + .dkc-goal-row[data-hold]")).toContain(
       "translate: 0 var(--dk-hold)",
     );
-    expect(ms(token("--dk-hold"))).toBeLessThanOrEqual(
-      ms(token("--dk-lift")),
-    );
+    expect(ms(token("--dk-hold"))).toBeLessThanOrEqual(ms(token("--dk-lift")));
   });
 
   test("O7's stops overlap their fades, so the canvas is never blank between them", () => {

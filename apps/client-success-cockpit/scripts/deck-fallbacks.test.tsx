@@ -227,7 +227,10 @@ describe("a client with everything on file", () => {
         lang: "en",
         sources: f.sources,
         kit: f.kit,
-        prep: { ...f.prep, onboarding: { ...f.prep.onboarding, ...onboarding } },
+        prep: {
+          ...f.prep,
+          onboarding: { ...f.prep.onboarding, ...onboarding },
+        },
         ads: f.ads,
         publicUrl: (_b, p) => p,
         now: NOW,

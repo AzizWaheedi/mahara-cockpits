@@ -1038,7 +1038,7 @@ the code in `hint`; the box shows the sentence under the field for the
 | Idle | No open import | The field and the button |
 | Refused | `parseDriveLink` refuses every piece of typed text | The sentence under the field; the button off |
 | Sending | Requests in flight | "Checking…" on the button, the field read-only |
-| Several open | Two or more imports `queued` or `working` | "Bringing in {n} links from Drive…" over the imports' own blocks |
+| Several open | Two or more imports `queued` or `working` | "Bringing in {n} links from Drive…" over the imports' own blocks; with finished imports shown under them too, "Bringing in {n} of {total} links from Drive…", {total} the blocks the box shows (score round 2) |
 | Queued | The import is `queued` | "Waiting to start. It usually starts within a minute." |
 | Opening | `working`, `found` null | "Opening the Drive link…" |
 | Working | `working`, `found` set | "Bringing in {n} files from Drive…" and the file rows |

@@ -1009,16 +1009,34 @@ describe("creative flexibility, drawn", () => {
       { text: "No photos of the owner", told: true },
       { text: "Never show prices in an ad", told: false },
     ]);
-    // In Arabic, the card's English lines with no Arabic typed are quoted
-    // under "بملفكم، بالإنجليزي", never mixed into the Arabic groups.
+    // In Arabic, the English deck's two columns (score round 2: the panel
+    // stacked its groups, then a third head with run-in heads): أبداً and
+    // دايماً, each with its Arabic lines first, then the card's English
+    // lines with no Arabic typed, quoted as one left-to-right block, never
+    // mixed into the Arabic lines. The block's tag is said once.
     const ar = html(data("full", "ar"), 2);
     const arHeads = [...ar.matchAll(/class="dkc-fixed-lead">([^<]*)</g)].map(
       m => m[1],
     );
-    expect(arHeads).toEqual(["أبداً", "بملفكم، بالإنجليزي"]);
-    expect(ar.indexOf("بملفكم، بالإنجليزي")).toBeLessThan(
-      ar.indexOf("Never show prices in an ad"),
+    expect(arHeads).toEqual(["أبداً", "دايماً"]);
+    expect(ar).toContain('class="dkc-fixed-pair" data-side=""');
+    expect(ar.match(/بملفكم، بالإنجليزي/g)).toHaveLength(1);
+    const never = ar.slice(
+      ar.indexOf('data-group="never"'),
+      ar.indexOf('data-group="always"'),
     );
+    const always = ar.slice(ar.indexOf('data-group="always"'));
+    expect(never.indexOf("لا تحطون صور المالك")).toBeLessThan(
+      never.indexOf("بملفكم، بالإنجليزي"),
+    );
+    expect(never.indexOf("بملفكم، بالإنجليزي")).toBeLessThan(
+      never.indexOf(">Show prices in an ad<"),
+    );
+    expect(never).toMatch(
+      /<div class="dkc-fixed-quoted"><span class="dkc-fixed-sublead">[^<]*<\/span><ul dir="ltr">/,
+    );
+    expect(always).toMatch(/<div class="dkc-fixed-quoted"><ul dir="ltr">/);
+    expect(always).toContain("Show our real projects, never stock photos");
     expect(ar).toContain("لا تحطون صور المالك");
     // A card line with its Arabic typed in prep takes its own group.
     const typed = redLineGroups(

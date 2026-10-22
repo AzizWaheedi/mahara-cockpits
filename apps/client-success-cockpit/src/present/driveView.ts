@@ -9,6 +9,7 @@ import {
   DRIVE_UI,
   num,
   severalLinks,
+  severalLinksOf,
 } from "./driveCopy";
 import { cutMiddle, shortLink } from "./driveLink";
 import type { DriveImport, DriveImportFile, DriveImports } from "./sources";
@@ -57,7 +58,10 @@ export interface ImportBlock {
   files: FileRow[];
 }
 export interface BoxView {
-  /** "Bringing in {n} links from Drive…" with two or more open. */
+  /**
+   * "Bringing in {n} links from Drive…" with two or more open; "Bringing
+   * in {n} of {total} links…" when finished ones show under them.
+   */
   head: string | null;
   blocks: ImportBlock[];
 }
@@ -289,7 +293,14 @@ export function boxView(
   const list = shownImports(read.imports);
   const open = list.filter(isOpen).length;
   return {
-    head: open >= 2 ? severalLinks(open, lang) : null,
+    // Two or more open: how many, and of how many cards when finished
+    // ones show under them (score round 2).
+    head:
+      open < 2
+        ? null
+        : open < list.length
+          ? severalLinksOf(open, list.length, lang)
+          : severalLinks(open, lang),
     blocks: list.map(imp => {
       const l = importLine(imp, read, lang, now);
       return {

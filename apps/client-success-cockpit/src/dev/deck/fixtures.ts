@@ -520,9 +520,10 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           importedAt: "2026-10-19T07:15:00Z",
           createdAt: "2026-10-19T07:20:00Z",
         }),
-        // Their own living room, from Drive (a mirrored crop of the
-        // example living room): never a kitchen, the one large picture
-        // the CEO would read as "kitchens" again (score round 1).
+        // Their own majlis at night, from Drive: never a kitchen (score
+        // round 1), and none of the eighteen example scenes, so their own
+        // ad never looks like the example beside it (score round 2: it was
+        // a mirrored crop of the example living room).
         ad("custom-square", "custom", square, 800, 800, {
           primaryText:
             "بيتكم يتصمم على طريقة عيشة عائلتكم. احجزوا زيارة لمعرضنا في الرياض.",
@@ -810,11 +811,11 @@ function starter(_deck: DeckKind = "launch"): Loaded {
     kit,
     ads: [
       // Fit-out pictures and words: the starter templates of the service
-      // the kickoff advertises (crops of the example scenes): the
-      // restaurant framed closer, and the boutique whole, its shelving,
-      // ceiling and glass front in view (score round 1: a close crop of an
-      // office chair read as a furniture ad; the office's window shows a
-      // skyline, and this client is in Kuwait).
+      // the kickoff advertises: an office desk under the Kuwait Towers, and
+      // a materials board (stone, wood, fabric, brass). None of the
+      // eighteen example scenes (score round 2: the boutique and the
+      // restaurant were also this client's example ad and the strip's lit
+      // tiles, one picture shown four times).
       ad("starter-feed", "starter", fitoutFeedPic, 864, 1080, {
         primaryText:
           "نشطّب ونرمّم المحلات والمطاعم والمكاتب، من المخطط لين التسليم.",
