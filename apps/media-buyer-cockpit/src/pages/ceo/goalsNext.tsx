@@ -738,7 +738,7 @@ export function NextMonth({
                     />
                   </span>
                 </Line>
-                <Line label="Client cost per booking">
+                <Line label="Client cost per confirmed booking">
                   <span className="inline-flex flex-wrap items-center gap-2">
                     <Worked value={p.clientCpb} unit="usd" />
                     <GateChip

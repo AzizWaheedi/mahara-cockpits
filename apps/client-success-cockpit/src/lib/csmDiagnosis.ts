@@ -139,6 +139,53 @@ export function sheetCoverage(
 
 const pct = (n: number, d: number) =>
   d > 0 ? Math.round((n / d) * 100) : null;
+
+/**
+ * The client's own 7 days as the media sync publishes them on its profile
+ * (`ads7d`, the cost per booking build of 22 Oct 2026, R8): Mahara's
+ * campaigns on the client's ad accounts, stopped ones included, against the
+ * confirmed bookings made on the same days, every campaign's. Summing the
+ * campaigns still listed left a stopped campaign out: Atlantis 14 to 20 Oct
+ * read $58.18 a booking where the client's figure is $174.53 / 4 = $43.63,
+ * its fourth booking from a stopped campaign. Undefined when the profile has
+ * no such figure (an older publish, or no ad account): the listed campaigns
+ * are summed then, as before, and the evidence says "in the last 7 days".
+ */
+export type ClientWeek = {
+  from: string;
+  through: string;
+  spend: number;
+  leads: number;
+  /** Null when the bookings were not read: never 0. */
+  bookings: number | null;
+};
+
+export function clientWeek(v: unknown): ClientWeek | undefined {
+  const w = v as Any;
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const finite = (n: unknown): n is number =>
+    typeof n === "number" && Number.isFinite(n);
+  if (!w || typeof w !== "object") return undefined;
+  if (!day.test(String(w.from ?? "")) || !day.test(String(w.through ?? "")))
+    return undefined;
+  if (!finite(w.spend) || !finite(w.leads)) return undefined;
+  if (w.bookings !== null && !finite(w.bookings)) return undefined;
+  return {
+    from: w.from,
+    through: w.through,
+    spend: w.spend,
+    leads: w.leads,
+    bookings: w.bookings,
+  };
+}
+
+/** "14 Oct" from "2026-10-14". */
+const dayMonth = (d: string) =>
+  new Date(`${d}T12:00:00Z`).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
 const first = (name: string) => (name ?? "").split(/[\s—–-]/)[0] || name || "";
 
 /**
@@ -173,19 +220,33 @@ function diagnoseRaw(p: Any): Diagnosis {
       ),
     0,
   );
-  const spend7 = ads.reduce((n, c) => n + Number(c.spend7d ?? 0), 0);
-  const leads7 = ads.reduce((n, c) => n + Number(c.leads7d ?? 0), 0);
+  // The client's own 7 days when the media sync published them, else the
+  // campaigns listed, summed (clientWeek above).
+  const week = clientWeek(p?.ads7d);
+  const span = week
+    ? `from ${dayMonth(week.from)} to ${dayMonth(week.through)} on Mahara's campaigns (stopped ones included)`
+    : "in the last 7 days";
+  const spend7 = week
+    ? week.spend
+    : ads.reduce((n, c) => n + Number(c.spend7d ?? 0), 0);
+  const leads7 = week
+    ? week.leads
+    : ads.reduce((n, c) => n + Number(c.leads7d ?? 0), 0);
   const cpl = leads7 > 0 ? spend7 / leads7 : null;
   // Done with you: the client books their own, so cost per lead alone decides.
   const dwy = serviceModel(p?.service).dwy;
   // Cost per booking over the same 7 days, only where the sync read the
-  // client's GoHighLevel. Bookings are counted per campaign (Muhammed,
-  // 2026-10-13), so they add up against the spend of the campaigns that carry
-  // them. A campaign without the count is unknown (the read failed or never
-  // ran): missing is never zero.
-  const tracked = ads.filter(
-    c => typeof c.bookings7d === "number" && Number.isFinite(c.bookings7d),
-  );
+  // client's GoHighLevel. Without the client's own figure, bookings are
+  // counted per campaign (Muhammed, 2026-10-13), so they add up against the
+  // spend of the campaigns that carry them. A campaign without the count is
+  // unknown (the read failed or never ran): missing is never zero.
+  const tracked = week
+    ? week.bookings === null
+      ? []
+      : [{ bookings7d: week.bookings, spend7d: week.spend }]
+    : ads.filter(
+        c => typeof c.bookings7d === "number" && Number.isFinite(c.bookings7d),
+      );
   const bookings7 = tracked.reduce((n, c) => n + Number(c.bookings7d), 0);
   const bookedSpend7 = tracked.reduce((n, c) => n + Number(c.spend7d ?? 0), 0);
   const cpb =
@@ -297,8 +358,8 @@ function diagnoseRaw(p: Any): Diagnosis {
         title:
           cpb != null
             ? `Cost per booking is $${cpb.toFixed(2)} against a $${GATES.costPerBooking} gate`
-            : `No bookings from $${bookedSpend7.toFixed(0)} spent in the last 7 days, against a $${GATES.costPerBooking} gate`,
-        evidence: `$${bookedSpend7.toFixed(0)} spent in the last 7 days for ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"} from ${leads7} leads.`,
+            : `No bookings from $${bookedSpend7.toFixed(0)} spent ${span}, against a $${GATES.costPerBooking} gate`,
+        evidence: `$${bookedSpend7.toFixed(0)} spent ${span} for ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"} from ${leads7} leads.`,
         diagnosis: !leads7
           ? "The week's spend brought no leads at all, so it is the ads, not the calls."
           : cplOver
@@ -322,7 +383,7 @@ function diagnoseRaw(p: Any): Diagnosis {
         id: "cpl_watch",
         layer: "micro",
         title: `Cost per lead is $${cpl.toFixed(2)}, over the $${GATES.cpl} gate, but bookings still cost $${cpb.toFixed(2)}, ${cpb < GATES.costPerBooking ? "under" : "on"} the $${GATES.costPerBooking} gate`,
-        evidence: `$${spend7.toFixed(0)} spent in the last 7 days for ${leads7} leads and ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"}.`,
+        evidence: `$${spend7.toFixed(0)} spent ${span} for ${leads7} leads and ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"}.`,
         diagnosis:
           "Cost per booking decides, not cost per lead, so a higher cost per lead is not the constraint while those leads still book.",
         fixes: [
@@ -335,7 +396,7 @@ function diagnoseRaw(p: Any): Diagnosis {
         id: "cpl_high",
         layer: "micro",
         title: `Cost per lead is $${cpl.toFixed(2)} against a $${GATES.cpl} gate`,
-        evidence: `$${spend7.toFixed(0)} spent in the last 7 days for ${leads7} leads${
+        evidence: `$${spend7.toFixed(0)} spent ${span} for ${leads7} leads${
           cpb != null
             ? `, and each booking costs $${cpb.toFixed(2)}.`
             : unbooked
@@ -487,7 +548,7 @@ function diagnoseRaw(p: Any): Diagnosis {
   const healthy = ranked.length === 0;
   const basis = dwy
     ? [
-        `${leads7} leads in the last 7 days`,
+        `${leads7} leads ${span}`,
         cpl != null
           ? `cost per lead $${cpl.toFixed(2)}`
           : "no cost per lead yet",

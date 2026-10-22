@@ -1212,20 +1212,36 @@ export type DeliveryWindow = {
   spend: number;
   leads: number;
   cpl: number | null;
-  /** Total bookings: provisional + online + main calendars, by the day the meeting is for, future ones excluded. */
-  bookings: number;
-  /** Spend over total bookings. */
+  /**
+   * Total bookings: confirmed plus provisional. Since 2026-10-22 (R2) the
+   * Client Performance board's counts (cockpit_client_days) by the Kuwait day
+   * the booking was made; before, appointments by the day the meeting was
+   * for. Kept for older screens; every cost per booking divides by
+   * `confirmed` (src/pages/ceo/deliveryCost.ts). Null when the board stores
+   * no day of the window for any client here: not measured, never zero.
+   */
+  bookings: number | null;
+  /** Measured spend over total bookings, provisional included. */
   cpb: number | null;
   /**
-   * The three booking counts (Aziz, 2026-09-21): provisional = the
-   * provisional calendar only (it has produced no rows in Creative Triage
-   * yet); confirmed = the online and main calendars. `bookings` above is
-   * their sum. Absent on payloads stored before this shipped.
+   * The booking counts (Aziz, 2026-09-21): confirmed = main and online
+   * calendar bookings, provisional = the Not Confirmed Appointments calendar.
+   * Null when the board stores no day of the window (not measured, never
+   * zero); absent on payloads stored before the split.
    */
-  provisional?: number;
-  confirmed?: number;
-  /** Spend over confirmed bookings, the main cost per booking. */
+  provisional?: number | null;
+  confirmed?: number | null;
+  /** spendMeasured over confirmed bookings: the cost per confirmed booking. */
   cpbConfirmed?: number | null;
+  /**
+   * Spend on the days the board stores a booking count for the client: the
+   * spend a cost per confirmed booking divides (R2, 2026-10-22). Absent on
+   * payloads stored before then, which the screens read as "this refresh
+   * predates the confirmed count", never as the old figure.
+   */
+  spendMeasured?: number;
+  /** Spend left out of spendMeasured, per client, with the plain reason. */
+  notMeasured?: { client: string; spend: number; why: string }[];
 };
 
 /** A client's funnel rates over a window, the three booking metrics and the Mahara OS outcomes. */
@@ -1261,13 +1277,33 @@ export type NoOutcomeAppointment = {
   status: string | null;
 };
 
+/** One day of the delivery series (DeliveryPayload.daily). */
+export type DeliveryDay = {
+  date: string;
+  spend: number;
+  leads: number;
+  /** Confirmed plus provisional (0 on a day the board stores nothing, for older screens). */
+  bookings: number;
+  /** The board's confirmed bookings made that day; null = not stored; absent before 2026-10-22. */
+  confirmed?: number | null;
+  provisional?: number | null;
+  /** Spend that day on clients whose bookings the board stores that day; null when it stores none. */
+  spendMeasured?: number | null;
+};
+
 export type DeliveryPayload = {
   yesterday: DeliveryWindow;
   last7: DeliveryWindow;
   prevLast7: DeliveryWindow;
   mtd: DeliveryWindow;
-  /** Last 30 days, oldest first. */
-  daily: { date: string; spend: number; leads: number; bookings: number }[];
+  /**
+   * One row per day, oldest first, to yesterday. `bookings` is confirmed
+   * plus provisional. Since 2026-10-22 each day also carries the board's
+   * `confirmed` and `provisional` counts and the `spendMeasured` that pairs
+   * with them: null when the board stores no count that day (not measured),
+   * absent on rows stored before then.
+   */
+  daily: DeliveryDay[];
   gates: { cpl: number; cpb: number };
   campaigns: {
     running: number;
@@ -1283,22 +1319,42 @@ export type DeliveryPayload = {
     spend7d: number;
     leads7d: number;
     cpl7d: number | null;
-    bookings7d: number;
+    /** Confirmed plus provisional; null when the board stores none of these days (not measured). */
+    bookings7d: number | null;
     cpb7d: number | null;
     /** Campaigns running now: with spend in the last three days. */
     campaigns: number;
     /**
-     * Aziz's rule (2026-09-21): good = cost per lead at most $15, cost per
-     * confirmed booking at most $60 and show rate at least 60%; bad = cost
-     * per booking over $80, or cost per lead over $22.50, or show rate under
-     * 40%; watch otherwise. no-data when nothing was spent.
+     * Aziz's rule (2026-09-21) under the golden rule (2026-10-22, R5), for a
+     * client we book for: cost per confirmed booking within $60 is good with
+     * cost per lead within $15 and show rate at least 60%, else watch; over
+     * $60 it is watch, bad over $80 or with cost per lead over $22.50. No
+     * confirmed booking yet: the spend counts as the cost per booking (over
+     * $80 bad, $60 to $80 watch, up to $60 too early). Bookings not measured:
+     * cost per lead alone. Done With You: cost per lead alone. no-data when
+     * nothing was spent.
      */
     status: "good" | "watch" | "bad" | "no-data";
-    /** Provisional and confirmed bookings in the last 7 days; `bookings7d` is their sum. Absent on older payloads. */
-    provisional7d?: number;
-    confirmed7d?: number;
-    /** Spend over confirmed bookings, the main cost per booking. */
+    /** No confirmed booking yet on measured spend within $60: too early to judge (shown as a watch). */
+    tooEarly?: boolean;
+    /**
+     * Set when the status is judged on cost per lead alone, and why: "dwy" is
+     * a Done With You client with no booking (it books its own meetings);
+     * "no service mode" is a client with no card or a blank Service Mode and
+     * no booking, so nothing says we book for it; "not measured" is a client
+     * we book for whose bookings the board does not store (a watch at best).
+     * Null when cost per booking decides; absent before 2026-10-22.
+     */
+    cplOnly?: "dwy" | "no service mode" | "not measured" | null;
+    /** Provisional and confirmed bookings in the last 7 days; null = not measured. Absent on older payloads. */
+    provisional7d?: number | null;
+    confirmed7d?: number | null;
+    /** Spend on the days the board stores bookings (R2, 2026-10-22). */
+    spendMeasured7d?: number;
+    /** spendMeasured7d over confirmed bookings, the main cost per booking. */
     cpbConfirmed7d?: number | null;
+    /** Why some or all of the spend has no stored bookings, in one sentence; null when all of it is measured. */
+    bookingsWhy?: string | null;
     /**
      * What a booking that shows would cost at a 60% show rate: cost per
      * confirmed booking over 0.6. Null without confirmed bookings.
@@ -1326,8 +1382,15 @@ export type DeliveryPayload = {
     /** Mahara OS outcome rows only start on 2026-09-18. */
     since: string | null;
   };
-  /** Whether the provisional calendar has produced any appointment row in Creative Triage yet. */
+  /** Whether provisional bookings are read at all (always true since the board's counts, 2026-10-22). */
   provisionalSynced?: boolean;
+  /**
+   * Where the bookings came from: "board" is the Client Performance board's
+   * counts by booking day (2026-10-22); "media sync" is the fallback when
+   * Creative Triage could not be read, with no confirmed count. Absent on
+   * payloads stored before 2026-10-22.
+   */
+  bookingSource?: "board" | "media sync";
   launches: {
     inFlight: number;
     stuck: { client: string; days: number; blocker: string | null }[];

@@ -52,5 +52,7 @@ export async function nativeFeedDb() {
  if(!calendarOwner)throw new Error('Canonical calendar owner permission missing');await db.exec(calendarOwner);
  for(const name of ['20261004d_media_native_surface.sql','20261004e_media_native_worker_contracts.sql','20261006b_cockpit_whatsapp_history.sql','20260927x_cockpit_native_media_sync.sql','20261008h_native_media_audit_dedup.sql'])await db.exec(migration(name));
  await db.exec(migration('20261021173015_native_manifest_compact_fingerprint.sql'));
+ // The live publish since 22 Oct: a matched booking's day follows its data.
+ await db.exec(migration('20261022p_native_publish_booking_day.sql'));
  return db;
 }

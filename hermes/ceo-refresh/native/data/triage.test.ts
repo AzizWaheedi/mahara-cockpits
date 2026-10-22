@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { withRuntime, type Row, type Runtime } from "../../runtime.ts";
-import { clientDelivery, mediaFeedFresh, usdRateSql } from "./triage.js";
+import { BoardBookingsUnreadable, clientDelivery, mediaFeedFresh, usdRateSql } from "./triage.js";
 
 /**
- * R2 and A113 (2026-10-11) against a real Postgres (PGlite) with the
+ * R2 (2026-10-11 and 2026-10-22) against a real Postgres (PGlite) with the
  * production column shapes: client spend and leads from the live media table
- * (already USD, tied through cockpit_campaigns), the frozen snapshot table
- * for the ad-days the live table has no tied row for (matched by Meta ad id),
- * and provisional bookings from the
- * call-centre reporting store, provisional calendar only.
+ * (already USD, tied through cockpit_campaigns), the snapshot table for the
+ * ad-days the live table has no tied row for (matched by Meta ad id), ads on
+ * the compromise list left out of both (R3), and bookings from the Client
+ * Performance board's stored days (cockpit_client_days), tied to the client
+ * through cockpit_board_clients by ad account first and GoHighLevel second.
  */
 const now = Date.now();
 const today = new Date(now + 3 * 3600_000).toISOString().slice(0, 10);
@@ -18,14 +19,16 @@ const SAR = "00000000-0000-4000-8000-00000000000a";
 const USD = "00000000-0000-4000-8000-00000000000b";
 const OWN = "00000000-0000-4000-8000-00000000000c";
 const MOVED = "00000000-0000-4000-8000-00000000000d";
+const LOOSE = "00000000-0000-4000-8000-00000000000e";
 
 const SCHEMA = `
-  CREATE SCHEMA portal_data; CREATE SCHEMA mahara_reporting;
+  CREATE SCHEMA portal_data;
   CREATE TABLE public.clients(id uuid PRIMARY KEY, name text, meta_ad_account_id text, currency text, hidden_from_dashboard boolean);
   CREATE TABLE public.cockpit_campaigns(id bigint, meta_account_id text, raw_data jsonb, synced_at timestamptz, source_deleted boolean DEFAULT false);
   CREATE TABLE public.cockpit_media_daily_stats(source_id text, campaign_name text, day date, data jsonb);
   CREATE TABLE public.cockpit_media_feed_state(feed text, ready boolean, source_snapshot_at timestamptz, source_rows bigint);
   CREATE TABLE public.ads_daily_snapshots(ad_id text, client_id uuid, date date, campaign_id text, campaign_name text, spend numeric, leads integer, last_synced_at timestamptz);
+  CREATE TABLE public.cockpit_excluded_ads(ad_id text PRIMARY KEY);
   CREATE TABLE public.ghl_client_ad_accounts(client_id uuid, location_id text, matched_by text);
   CREATE TABLE public.ghl_clients(location_id text, client_name text, clickup_id text, service_mode text, status text);
   CREATE TABLE public.appointments(ghl_appointment_id text, ghl_location_id text, ghl_location text, client_id uuid, calendar_id text,
@@ -33,12 +36,15 @@ const SCHEMA = `
   CREATE TABLE public.ghl_calendars(location_id text, calendar_id text, name text, synced_at timestamptz);
   CREATE TABLE public.client_opportunities(location_id text, status text, last_stage_change_at timestamptz, updated_at timestamptz, monetary_value numeric);
   CREATE TABLE portal_data.appointment_outcomes(appointment_id text, attendance text, deal text, revision integer, captured_at timestamptz);
-  CREATE TABLE mahara_reporting.facts(namespace text, kind text, source text, data jsonb, version_at timestamptz, conflict boolean);
-  CREATE TABLE mahara_reporting.cc_attempts(location_id text, data jsonb);
+  CREATE TABLE public.cockpit_board_clients(location_id text PRIMARY KEY, clickup_id text, client_name text, service_mode text, status text, ad_account_ids text[]);
+  CREATE TABLE public.cockpit_client_days(location_id text, day date, confirmed_bookings integer, provisional_bookings integer, computed_at timestamptz);
 `;
 
-async function seed(db: { exec(sql: string): Promise<unknown> }, opts: { feedRows?: number; ready?: boolean; moved?: boolean } = {}) {
+type Opts = { feedRows?: number; ready?: boolean; moved?: boolean; noBoardDays?: boolean; noBoardTable?: boolean; shared?: boolean; loose?: boolean; cents?: boolean };
+
+async function seed(db: { exec(sql: string): Promise<unknown> }, opts: Opts = {}) {
   const at = (day: string, hour = 9) => `${day}T${String(hour).padStart(2, "0")}:00:00+03:00`;
+  const liveRows = 7 + (opts.moved ? 1 : 0) + (opts.loose ? 1 : 0);
   await db.exec(`
     INSERT INTO public.clients VALUES
       ('${SAR}','Ardon SAR','act_111','SAR',false),
@@ -55,53 +61,82 @@ async function seed(db: { exec(sql: string): Promise<unknown> }, opts: { feedRow
       ('m3','Ardon old','${D(-10)}','{"metaAdId":"ad-3","spend":50,"leads":2}'),
       ('m4','Ocean A','${D(-1)}','{"metaAdId":"ad-4","spend":30,"leads":3}'),
       ('m5','Ghost campaign','${D(-1)}','{"metaAdId":"ad-5","spend":12.34,"leads":1}'),
-      ('m6','Ghost campaign','${D(-12)}','{"metaAdId":"ad-6","spend":40,"leads":2}');
-    INSERT INTO public.cockpit_media_feed_state VALUES ('dailyStats', ${opts.ready ?? true}, now() - interval '10 minutes', ${opts.feedRows ?? 6});
-    -- Frozen table, in SAR: a day before the live table's first day (converted);
+      ('m6','Ghost campaign','${D(-12)}','{"metaAdId":"ad-6","spend":40,"leads":2}'),
+      -- An outsider's ad on the client's account, on the compromise list (R3).
+      ('m9','Ardon A','${D(-2)}','{"metaAdId":"ad-x","spend":500,"leads":0}');
+    INSERT INTO public.cockpit_excluded_ads VALUES ('ad-x'),('ad-y');
+    INSERT INTO public.cockpit_media_feed_state VALUES ('dailyStats', ${opts.ready ?? true}, now() - interval '10 minutes', ${opts.feedRows ?? liveRows});
+    -- Snapshot table, in SAR: a day before the live table's first day (converted);
     -- the live table's own ad-day (ignored: the live row wins); an ad the live
-    -- table does not hold on a live day (converted, counted); and the ghost
-    -- campaign's untied ad-day, which the frozen table ties to the client.
+    -- table does not hold on a live day (converted, counted); the ghost
+    -- campaign's untied ad-day, which the snapshot table ties to the client;
+    -- and a listed outsider ad (left out).
     INSERT INTO public.ads_daily_snapshots VALUES
       ('ad-0','${SAR}','${D(-30)}','c-old','Ardon gone',100,5,now() - interval '9 days'),
       ('ad-1','${SAR}','${D(-2)}','c-a','Ardon A',999,9,now() - interval '9 days'),
       ('ad-7','${SAR}','${D(-2)}','c-off','Ardon off board',50,3,now() - interval '9 days'),
-      ('ad-6','${SAR}','${D(-12)}','c-ghost','Ghost campaign',150,2,now() - interval '9 days');
+      ('ad-6','${SAR}','${D(-12)}','c-ghost','Ghost campaign',150,2,now() - interval '9 days'),
+      ('ad-y','${SAR}','${D(-3)}','c-out','Outsider',400,0,now());
     INSERT INTO public.ghl_client_ad_accounts VALUES ('${SAR}','loc-sar','exact'),('${USD}','loc-usd','exact');
-    INSERT INTO public.ghl_clients VALUES ('loc-sar','Ardon','task-ardon','DFY','Active'),('loc-usd','Ocean Home','task-ocean','DFY','Active');
+    INSERT INTO public.ghl_clients VALUES ('loc-sar','Ardon (GHL)','task-ardon','DFY','Active'),('loc-usd','Ocean Home (GHL)','task-ocean','DFY','Active');
+    -- The board lists Ardon's account itself; Ocean's location is on the board
+    -- with no ad account listed, so Ocean ties through GoHighLevel; a client
+    -- on the board with no ad spend here has bookings that are named, not counted.
+    INSERT INTO public.cockpit_board_clients VALUES
+      ('loc-sar','task-ardon','Ardon','DFY','Active',ARRAY['111']),
+      ('loc-usd','task-ocean','Ocean Home','DFY','Active',ARRAY[]::text[]),
+      ('loc-pro','task-pro','Professional Touch','DFY','Active',ARRAY[]::text[]);
+    ${opts.noBoardDays ? "" : `INSERT INTO public.cockpit_client_days VALUES
+      ('loc-sar','${D(-2)}',2,1,now() - interval '3 hours'),
+      ('loc-sar','${D(-1)}',null,null,now()),
+      ('loc-usd','${D(-1)}',1,null,now()),
+      ('loc-usd','${D(-60)}',4,0,now()),
+      ('loc-pro','${D(-1)}',3,0,now());`}
+    ${opts.noBoardTable ? "DROP TABLE public.cockpit_client_days;" : ""}
     INSERT INTO public.ghl_calendars VALUES
       ('loc-sar','cal-main','Main Appointment Calendar',now()),
-      ('loc-sar','cal-prov','Not Confirmed Appointments',now()),
-      ('loc-usd','cal-prov-u','Not Confirmed Appointments',now());
-    -- A main-calendar booking in the appointments sync, and the same provisional
-    -- appointment in both the appointments sync and the dialer's facts.
+      ('loc-sar','cal-prov','Not Confirmed Appointments',now());
+    -- Past meetings for the show rate: main calendar only, by the day of the meeting.
     INSERT INTO public.appointments VALUES
-      ('ap-main','loc-sar',null,null,'cal-main','${at(D(-2))}','${at(D(-3))}','confirmed',null,now(),'ghl'),
-      ('ap-prov-dup','loc-sar',null,null,'cal-prov','${at(D(-1))}','${at(D(-2))}','confirmed',null,now() - interval '1 day','ghl');
-    INSERT INTO mahara_reporting.facts VALUES
-      ('production','appointment','ghl','{"locationId":"loc-sar","id":"ap-prov-dup","calendarId":"cal-prov","startAt":"${D(-1)}T06:00:00.000Z","status":"confirmed"}',now(),false),
-      ('production','appointment','ghl','{"locationId":"loc-sar","id":"f-prov-1","calendarId":"cal-prov","startAt":"${D(-3)}T06:00:00.000Z","status":"confirmed"}',now(),false),
-      ('production','appointment','ghl','{"locationId":"loc-sar","id":"f-prov-conflict","calendarId":"cal-prov","startAt":"${D(-3)}T06:00:00.000Z","status":"confirmed"}',now(),true),
-      ('production','appointment','ghl','{"locationId":"loc-sar","id":"f-prov-deleted","calendarId":"cal-prov","startAt":"${D(-3)}T06:00:00.000Z","status":"confirmed","deleted":true}',now(),false),
-      ('production','appointment','ghl','{"locationId":"loc-sar","id":"f-main-new","calendarId":"cal-main","startAt":"${D(-3)}T06:00:00.000Z","status":"new"}',now(),false),
-      ('production','appointment','ghl','{"locationId":"loc-usd","id":"f-prov-future","calendarId":"cal-prov-u","startAt":"${D(5)}T06:00:00.000Z","status":"confirmed"}',now(),false);
-    -- A verified dialer booking on the provisional calendar, its start time in milliseconds.
-    INSERT INTO mahara_reporting.cc_attempts VALUES
-      ('loc-usd', jsonb_build_object('disposition', jsonb_build_object('outcome','BOOKED'),
-        'bookingVerification', jsonb_build_object('id','cc-1','calendarId','cal-prov-u','verifiedAt', (extract(epoch from now()) * 1000)::bigint,
-          'startTime','${D(-4)}T10:00:00+03:00','appointmentStatus','new')));
+      ('ap-main','loc-sar',null,null,'cal-main','${at(D(-2))}','${at(D(-3))}','showed',null,now(),'ghl'),
+      ('ap-prov','loc-sar',null,null,'cal-prov','${at(D(-1))}','${at(D(-2))}','confirmed',null,now(),'ghl'),
+      ('ap-cancel','loc-sar',null,null,'cal-main','${at(D(-1))}','${at(D(-2))}','cancelled',null,now(),'ghl'),
+      -- A Google Calendar copy of a booking: never marked, so it is no meeting of its own.
+      ('ap-gcal','loc-sar',null,null,'cal-main','${at(D(-1))}','${at(D(-2))}','confirmed',null,now(),'google_calendar');
   `);
-  // The client moved to a new ad account: a second client row on the same GHL
-  // location and ClickUp card, spending the same week (Munshaat Khalida, 2026-10-20).
+  // The client moved to a new ad account: a second client row on the same
+  // location and ClickUp card, spending the same week (Munshaat Khalida,
+  // 2026-10-20). The board lists both accounts on the one location.
   if (opts.moved)
     await db.exec(`
       INSERT INTO public.clients VALUES ('${MOVED}','Ardon new account','act_333','USD',false);
       INSERT INTO public.cockpit_campaigns VALUES (4,'333','{"campaignName":"Ardon new A"}',now(),false);
       INSERT INTO public.cockpit_media_daily_stats VALUES ('m7','Ardon new A','${D(-1)}','{"metaAdId":"ad-8","spend":25,"leads":2}');
       INSERT INTO public.ghl_client_ad_accounts VALUES ('${MOVED}','loc-sar','meta_exact');
+      UPDATE public.cockpit_board_clients SET ad_account_ids = ARRAY['111','333'] WHERE location_id = 'loc-sar';
+    `);
+  // An account a second board row also lists: it counts once, under the first location.
+  if (opts.shared)
+    await db.exec(`
+      INSERT INTO public.cockpit_board_clients VALUES ('loc-zz','task-zz','Ardon twin','DFY','Active',ARRAY['111']);
+    `);
+  // A snapshot ad-day worth a fraction of a cent in USD (1 SAR = $0.2666).
+  if (opts.cents)
+    await db.exec(`
+      INSERT INTO public.ads_daily_snapshots VALUES ('ad-r','${SAR}','${D(-4)}','c-r','Ardon cents',1,0,now());
+    `);
+  // An account tied through GoHighLevel to a location the board does not carry: not measured.
+  if (opts.loose)
+    await db.exec(`
+      INSERT INTO public.clients VALUES ('${LOOSE}','Loose account','act_444','USD',false);
+      INSERT INTO public.cockpit_campaigns VALUES (5,'444','{"campaignName":"Loose A"}',now(),false);
+      INSERT INTO public.cockpit_media_daily_stats VALUES ('m8','Loose A','${D(-1)}','{"metaAdId":"ad-9","spend":10,"leads":1}');
+      INSERT INTO public.ghl_client_ad_accounts VALUES ('${LOOSE}','loc-nb','exact');
+      INSERT INTO public.ghl_clients VALUES ('loc-nb','Loose client','task-loose','DFY','Active');
     `);
 }
 
-async function withDb<T>(opts: { feedRows?: number; ready?: boolean; moved?: boolean }, run: () => Promise<T>): Promise<T> {
+async function withDb<T>(opts: Opts, run: () => Promise<T>): Promise<T> {
   const { PGlite } = await import("../../../../apps/media-buyer-cockpit/node_modules/@electric-sql/pglite");
   const db = new PGlite();
   try {
@@ -115,36 +150,48 @@ async function withDb<T>(opts: { feedRows?: number; ready?: boolean; moved?: boo
   }
 }
 
+type Result = {
+  bookingsFreshAt?: number;
+  bookingsDayFreshAt: Record<string, number>;
+  days: Row[];
+  clients: Row[];
+  bookingDays: Row[];
+  untied: Row[];
+  appointments: Row[];
+  sharedAccounts: Row[];
+  media: { firstDay: string; untied: Row[]; frozenRows: number };
+  unknownCurrencies: string[];
+};
+
 describe("clientDelivery on the live media table (R2) with PGlite", () => {
-  test("spend is already USD, ties through the campaign's ad account, and the frozen table fills only the ad-days the live table lacks", async () => {
-    const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as {
-      days: Row[]; clients: Row[]; media: { firstDay: string; untied: Row[]; frozenRows: number }; unknownCurrencies: string[];
-    };
+  test("spend is already USD, ties through the campaign's ad account, and the snapshot table fills only the ad-days the live table lacks", async () => {
+    const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
     const sum = (id: string, from = D(-40)) => result.days.filter(d => d.clientId === id && String(d.date) >= from).reduce((n, d) => n + Number(d.spend), 0);
-    // 100 + 20.5 on one day, not converted from SAR a second time.
+    // 100 + 20.5 on one day, not converted from SAR a second time; the listed outsider ad's $500 is left out.
     const live2 = result.days.filter(d => d.clientId === SAR && d.date === D(-2) && d.source === "media");
     expect(live2.map(d => d.spend)).toEqual([120.5]);
     expect(live2[0]?.leads).toBe(5);
-    // Same day: ad-1's frozen 999 SAR is ignored (the live row wins); ad-7,
+    // Same day: ad-1's snapshot 999 SAR is ignored (the live row wins); ad-7,
     // which the live table does not hold, is counted at the rate: 50 SAR = $13.33.
     const filled = result.days.filter(d => d.clientId === SAR && d.date === D(-2) && d.source === "frozen");
     expect(filled.map(d => d.spend)).toEqual([13.33]);
     expect(filled[0]?.leads).toBe(3);
     // The deleted campaign still ties.
     expect(result.days.find(d => d.clientId === SAR && d.date === D(-10))?.spend).toBe(50);
-    // Frozen: 100 SAR before the first live day at the rate table (0.2666), source frozen;
-    // the frozen row on a live day (999 SAR) is ignored.
+    // 100 SAR before the first live day at the rate table (0.2666).
     const frozen = result.days.find(d => d.clientId === SAR && d.date === D(-30));
     expect(frozen?.spend).toBe(26.66);
     expect(frozen?.source).toBe("frozen");
-    // The ghost campaign's ad-day the frozen table ties to the client: 150 SAR = $39.99.
+    // The ghost campaign's ad-day the snapshot table ties to the client: 150 SAR = $39.99.
     expect(result.days.find(d => d.clientId === SAR && d.date === D(-12))?.spend).toBe(39.99);
+    // The listed outsider ad in the snapshot table (400 SAR on D-3) is left out too (R3).
+    expect(result.days.find(d => d.clientId === SAR && d.date === D(-3))).toBeUndefined();
     expect(sum(SAR)).toBeCloseTo(120.5 + 13.33 + 50 + 39.99 + 26.66, 2);
     expect(result.media.frozenRows).toBe(3);
     expect(result.media.firstDay).toBe(D(-12));
     expect(result.days.find(d => d.clientId === USD)?.spend).toBe(30);
     // The campaign that ties to nothing is named, never dropped silently; its
-    // ad-day the frozen table counts for the client is not named again.
+    // ad-day the snapshot table counts for the client is not named again.
     expect(result.media.untied).toEqual([{ campaign: "Ghost campaign", spend: 12.34, firstDay: D(-1), lastDay: D(-1) }]);
     // Mahara's own hidden account is not a client row.
     expect(result.clients.map(c => c.clientId).sort()).toEqual([SAR, USD].sort());
@@ -153,19 +200,80 @@ describe("clientDelivery on the live media table (R2) with PGlite", () => {
 
   test("a feed that is not ready, or mid-rewrite, raises instead of reading as zero", async () => {
     await expect(withDb({ ready: false }, () => clientDelivery(D(-40), today, D(-30), { now }))).rejects.toThrow("not ready");
-    await expect(withDb({ feedRows: 9 }, () => clientDelivery(D(-40), today, D(-30), { now }))).rejects.toThrow("rewrite in flight");
+    await expect(withDb({ feedRows: 99 }, () => clientDelivery(D(-40), today, D(-30), { now }))).rejects.toThrow("rewrite in flight");
+  });
+});
+
+describe("Bookings from the Client Performance board (R2, 2026-10-22) with PGlite", () => {
+  test("clients tie by the board's ad account first, GoHighLevel second, and carry their board locations", async () => {
+    const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    const ardon = result.clients.find(c => c.clientId === SAR);
+    const ocean = result.clients.find(c => c.clientId === USD);
+    // The board's own name, card and tie win over GoHighLevel's.
+    expect(ardon).toMatchObject({ name: "Ardon", clickupTaskId: "task-ardon", matchedBy: "board ad account", locationIds: ["loc-sar"], adAccount: "111" });
+    expect(ocean).toMatchObject({ name: "Ocean Home", clickupTaskId: "task-ocean", matchedBy: "exact", locationIds: ["loc-usd"] });
+  });
+
+  test("stored days come back as they are: counts by the day the booking was made, a NULL count never read as zero", async () => {
+    const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    const by = (loc: string) => result.bookingDays.filter(b => b.locationId === loc).map(b => [b.date, b.confirmed, b.provisional]);
+    expect(by("loc-sar")).toEqual([[D(-2), 2, 1]]);
+    expect(by("loc-usd")).toEqual([[D(-1), 1, null]]);
+    // Outside the window: not read.
+    expect(result.bookingDays.some(b => b.date === D(-60))).toBe(false);
+    // Bookings on a board client with no ad spend here are named, in no figure.
+    expect(result.untied).toEqual([{ date: D(-1), client: "Professional Touch", status: "Active", count: 3 }]);
+  });
+
+  test("show and close rates still read past meetings by the day of the meeting, main and online calendars only, Google copies left out", async () => {
+    const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    // ap-gcal, a confirmed Google Calendar copy on the main calendar, is not
+    // a meeting: it would only swell the "no outcome" counts.
+    expect(result.appointments.map(a => [a.clientId, a.date, a.kind, a.status])).toEqual([[SAR, D(-2), "main", "showed"]]);
+  });
+
+  test("each stored day says when the board last counted it, so a stale or unfinished day can be told apart", async () => {
+    const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    const two = result.bookingsDayFreshAt[D(-2)];
+    const one = result.bookingsDayFreshAt[D(-1)];
+    expect(one).toBeGreaterThan(two);
+    expect(result.bookingsFreshAt).toBe(one);
+    // Counted three hours before the newest day, give or take the test's own run time.
+    expect(Math.round((one - two) / 3600_000)).toBe(3);
+    expect(result.bookingsDayFreshAt[D(-60)]).toBeUndefined();
+  });
+
+  test("a client-day's spend stays unrounded; callers round once after adding", async () => {
+    const result = await withDb({ cents: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    const day = result.days.find(d => d.clientId === SAR && d.date === D(-4));
+    expect(day?.spend).toBeCloseTo(0.2666, 6);
+  });
+
+  test("no stored day for any client, or no board table, is a failed read: the section keeps its last good payload", async () => {
+    await expect(withDb({ noBoardDays: true }, () => clientDelivery(D(-40), today, D(-30), { now }))).rejects.toBeInstanceOf(BoardBookingsUnreadable);
+    await expect(withDb({ noBoardTable: true }, () => clientDelivery(D(-40), today, D(-30), { now }))).rejects.toBeInstanceOf(BoardBookingsUnreadable);
+  });
+
+  test("an account the board lists on two rows counts once, under the first location, and is named", async () => {
+    const result = await withDb({ shared: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.clients.find(c => c.clientId === SAR)?.locationIds).toEqual(["loc-sar"]);
+    expect(result.sharedAccounts).toEqual([{ account: "111", client: "Ardon", rows: 2 }]);
+  });
+
+  test("an account tied only to a location the board does not carry has no locations: not measured", async () => {
+    const result = await withDb({ loose: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.clients.find(c => c.clientId === LOOSE)).toMatchObject({ name: "Loose client", clickupTaskId: "task-loose", locationIds: [] });
   });
 });
 
 describe("A client on two ad accounts (one ClickUp card) with PGlite", () => {
-  test("rows on one card fold into one client: spend, leads and bookings counted once, under one id", async () => {
-    const result = await withDb({ moved: true, feedRows: 7 }, () => clientDelivery(D(-40), D(10), D(-30), { now })) as {
-      days: Row[]; clients: Row[]; bookings: Row[]; untied: Row[];
-    };
+  test("rows on one card fold into one client: spend and leads counted once, under one id, with the location once", async () => {
+    const result = await withDb({ moved: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
     // One client per card, so Delivery's client:<card> scope is unique.
     const ardon = result.clients.filter(c => c.clickupTaskId === "task-ardon");
     expect(ardon.length).toBe(1);
     expect(result.clients.length).toBe(2);
+    expect(ardon[0].locationIds).toEqual(["loc-sar"]);
     const id = String(ardon[0].clientId);
     expect([SAR, MOVED]).toContain(id);
     // Every row of either account is counted under that one id, the new account's $25 included.
@@ -173,31 +281,7 @@ describe("A client on two ad accounts (one ClickUp card) with PGlite", () => {
     const ardonDay1 = result.days.filter(d => d.clientId === id && d.date === D(-1)).reduce((n, d) => n + Number(d.spend), 0);
     expect(ardonDay1).toBe(25);
     expect(result.days.filter(d => d.clientId === id).reduce((n, d) => n + Number(d.leads), 0)).toBe(5 + 3 + 2 + 2 + 5 + 2);
-    // The location now has two accounts: its appointments still tie to the client, never untied.
-    expect(result.bookings.filter(b => b.kind === "main" && b.clientId === id).reduce((n, b) => n + Number(b.count), 0)).toBe(1);
-    expect(result.bookings.filter(b => b.kind === "provisional" && b.clientId === id).reduce((n, b) => n + Number(b.count), 0)).toBe(2);
-    expect(result.untied).toEqual([]);
-  });
-});
-
-describe("Provisional bookings from the call-centre reporting store (A113) with PGlite", () => {
-  test("provisional calendar only, deduplicated, no conflicts or deletions, dated by the meeting day", async () => {
-    const result = await withDb({}, () => clientDelivery(D(-40), D(10), D(-30), { now })) as {
-      bookings: Row[]; provisional: { rowsEver: number; inAppointmentsSync: number };
-    };
-    const prov = result.bookings.filter(b => b.kind === "provisional");
-    const by = (id: string) => prov.filter(b => b.clientId === id).reduce((n, b) => n + Number(b.count), 0);
-    // SAR: the duplicate (appointments sync + facts) once, plus f-prov-1; the
-    // conflict, the deleted one and the main-calendar "new" are not provisional.
-    expect(by(SAR)).toBe(2);
-    // USD: the verified dialer booking (ms timestamps parsed) and one future appointment.
-    expect(by(USD)).toBe(2);
-    expect(prov.find(b => b.clientId === USD && b.date === D(5))?.future).toBe(1);
-    expect(prov.find(b => b.clientId === SAR && b.date === D(-1))?.count).toBe(1);
-    // The main-calendar appointment stays confirmed, from the appointments sync.
-    expect(result.bookings.filter(b => b.kind === "main").reduce((n, b) => n + Number(b.count), 0)).toBe(1);
-    expect(result.provisional.rowsEver).toBe(4);
-    expect(result.provisional.inAppointmentsSync).toBe(1);
+    expect(result.untied.map(u => u.client)).toEqual(["Professional Touch"]);
   });
 });
 

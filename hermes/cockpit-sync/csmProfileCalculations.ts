@@ -1,5 +1,6 @@
 import type {Row} from './runtime';
 import type {ClientDataRow} from './csmProducer';
+import {isExcludedAd} from './excludedAds';
 export const PROFILE_CF: Record<string,string> = {
   sheet: "e6da13ae-6498-44a1-b7dd-9c6198500aa9",
   drive: "19e39b91-dd2f-4027-ba88-31bc6aae07c3",
@@ -784,89 +785,159 @@ export function cleanDosDonts(raw: string): { text: string; notes: string[] } {
   };
 }
 
-export function adLeadsByClient(campaigns:Row[],dailyStats:Row[],at=Date.now()) {
-    const byCampaign = new Map<string, string>();
-    for (const c of campaigns) {
-      const key = c.clientName
-        ? normTight(c.clientName)
-        : c.clientTag
-          ? c.clientTag
-          : (c.tags ?? [])[0];
-      if (key) byCampaign.set(c.campaignName, key);
-    }
-    const now = new Date(at + 3 * 3600_000);
-    const ym = (d: Date) =>
-      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-    const thisMonth = ym(now);
-    const lastMonth = ym(
-      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)),
+/**
+ * Each client's lead and spend history from the daily rows. With `owners`
+ * (the sync's ClientWeeks) a row is the client's whose ad account it ran on,
+ * stopped campaigns included: keyed by the listed campaigns only, ARCWANI's
+ * and Liwan's months were empty and Castello lost 3 Oct (R8, 2026-10-22).
+ * Only Mahara's campaigns count (owners.mahara, listed now, or named as a
+ * board card): the client's own and outsiders' campaigns stay out. A row
+ * with no account to go by (it predates accountId and cockpit_campaigns)
+ * is the client's its board card is tagged with: Atlantis-mahara-30\8 spent
+ * $76.73 on 12 to 14 Sep. Ads on the compromise list never count. Without
+ * `owners` the listed campaigns decide, as before.
+ */
+export function adLeadsByClient(
+  campaigns: Row[],
+  dailyStats: Row[],
+  at = Date.now(),
+  owners?: {
+    campaignAccount: ReadonlyMap<string, string>;
+    accountClient: ReadonlyMap<string, string>;
+    mahara: ReadonlySet<string>;
+    cardClient?: (campaignName: string) => string | undefined;
+  },
+) {
+  const byCampaign = new Map<string, string>();
+  for (const c of campaigns) {
+    const key = c.clientName
+      ? normTight(c.clientName)
+      : c.clientTag
+        ? c.clientTag
+        : (c.tags ?? [])[0];
+    if (key) byCampaign.set(c.campaignName, key);
+  }
+  const clientOf = (d: Row): string | undefined => {
+    if (!owners) return byCampaign.get(d.campaignName);
+    const card = owners.cardClient?.(d.campaignName);
+    if (
+      !owners.mahara.has(d.campaignName) &&
+      !byCampaign.has(d.campaignName) &&
+      !card
+    )
+      return undefined;
+    const account = String(
+      d.accountId ?? owners.campaignAccount.get(d.campaignName) ?? "",
+    ).replace(/^act_/, "");
+    const owner = account ? owners.accountClient.get(account) : undefined;
+    if (owner) return normTight(owner);
+    return (
+      byCampaign.get(d.campaignName) ?? (card ? normTight(card) : undefined)
     );
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 86400_000)
-      .toISOString()
-      .slice(0, 10);
-    const out: Record<
-      string,
-      {
-        month: number;
-        lastMonth: number;
-        last7d: number;
-        allTime: number;
-        spendMonth: number;
-        spendAllTime: number;
-        firstDay?: string;
-        campaigns: string[];
-        daily: Record<string, { leads: number; spend: number }>;
-      }
-    > = {};
-    for (const d of dailyStats) {
-      const key = byCampaign.get(d.campaignName);
-      if (!key) continue;
-      if (!out[key])
-        out[key] = {
-          month: 0,
-          lastMonth: 0,
-          last7d: 0,
-          allTime: 0,
-          spendMonth: 0,
-          spendAllTime: 0,
-          campaigns: [],
-          daily: {},
-        };
-      const row = out[key];
-      const leads = Number(d.leads ?? 0);
-      const spend = Number(d.spend ?? 0);
-      row.allTime += leads;
-      row.spendAllTime += spend;
-      if (d.date.startsWith(thisMonth)) {
-        row.month += leads;
-        row.spendMonth += spend;
-      }
-      if (d.date.startsWith(lastMonth)) row.lastMonth += leads;
-      if (d.date >= sevenDaysAgo) row.last7d += leads;
-      if (!row.firstDay || d.date < row.firstDay) row.firstDay = d.date;
-      if (!row.campaigns.includes(d.campaignName))
-        row.campaigns.push(d.campaignName);
-      // The whole history, one row per day, so "all time" and custom spans
-      // add up in the app without another Meta call.
-      if (!row.daily[d.date]) row.daily[d.date] = { leads: 0, spend: 0 };
-      row.daily[d.date].leads += leads;
-      row.daily[d.date].spend += spend;
+  };
+  const now = new Date(at + 3 * 3600_000);
+  const ym = (d: Date) =>
+    `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  const thisMonth = ym(now);
+  const lastMonth = ym(
+    new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)),
+  );
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+  const out: Record<
+    string,
+    {
+      month: number;
+      lastMonth: number;
+      last7d: number;
+      allTime: number;
+      spendMonth: number;
+      spendAllTime: number;
+      firstDay?: string;
+      campaigns: string[];
+      daily: Record<string, { leads: number; spend: number }>;
     }
-    for (const r of Object.values(out)) {
-      r.spendMonth = Math.round(r.spendMonth * 100) / 100;
-      r.spendAllTime = Math.round(r.spendAllTime * 100) / 100;
+  > = {};
+  // One Meta ad on one day counts once for its client, under whatever
+  // campaign name it was stored: a renamed campaign leaves its old rows
+  // behind (Shades 14\10 and 17\10 both held 14 to 16 Oct, $70.00 twice).
+  // A listed campaign's row wins, then Mahara's, then the larger read.
+  const rank = (d: Row) => [
+    byCampaign.has(d.campaignName) ? 1 : 0,
+    owners?.mahara.has(d.campaignName) || owners?.cardClient?.(d.campaignName)
+      ? 1
+      : 0,
+    Number(d.spend ?? 0),
+  ];
+  const better = (a: Row, b: Row) => {
+    const [ra, rb] = [rank(a), rank(b)];
+    for (let i = 0; i < ra.length; i += 1)
+      if (ra[i] !== rb[i]) return ra[i] > rb[i];
+    return false;
+  };
+  const byAdDay = new Map<string, { d: Row; key: string }>();
+  const rows: { d: Row; key: string }[] = [];
+  for (const d of dailyStats) {
+    if (isExcludedAd(d.metaAdId)) continue;
+    const key = clientOf(d);
+    if (!key) continue;
+    if (!d.metaAdId || !d.date) {
+      rows.push({ d, key });
+      continue;
     }
-    // Arabic client names cannot be object keys in a Convex value; hand back
-    // rows, with the daily grain as an array for the same reason.
-    return Object.entries(out).map(([key, r]) => ({
-      key,
-      ...r,
-      daily: Object.entries(r.daily)
-        .map(([date, v]) => ({
-          date,
-          leads: v.leads,
-          spend: Math.round(v.spend * 100) / 100,
-        }))
-        .sort((a, b) => (a.date < b.date ? -1 : 1)),
-    }));
+    const k = `${key}|${d.metaAdId}|${d.date}`;
+    const held = byAdDay.get(k);
+    if (!held || better(d, held.d)) byAdDay.set(k, { d, key });
+  }
+  rows.push(...byAdDay.values());
+  for (const { d, key } of rows) {
+    if (!out[key])
+      out[key] = {
+        month: 0,
+        lastMonth: 0,
+        last7d: 0,
+        allTime: 0,
+        spendMonth: 0,
+        spendAllTime: 0,
+        campaigns: [],
+        daily: {},
+      };
+    const row = out[key];
+    const leads = Number(d.leads ?? 0);
+    const spend = Number(d.spend ?? 0);
+    row.allTime += leads;
+    row.spendAllTime += spend;
+    if (d.date.startsWith(thisMonth)) {
+      row.month += leads;
+      row.spendMonth += spend;
+    }
+    if (d.date.startsWith(lastMonth)) row.lastMonth += leads;
+    if (d.date >= sevenDaysAgo) row.last7d += leads;
+    if (!row.firstDay || d.date < row.firstDay) row.firstDay = d.date;
+    if (!row.campaigns.includes(d.campaignName))
+      row.campaigns.push(d.campaignName);
+    // The whole history, one row per day, so "all time" and custom spans
+    // add up in the app without another Meta call.
+    if (!row.daily[d.date]) row.daily[d.date] = { leads: 0, spend: 0 };
+    row.daily[d.date].leads += leads;
+    row.daily[d.date].spend += spend;
+  }
+  for (const r of Object.values(out)) {
+    r.spendMonth = Math.round(r.spendMonth * 100) / 100;
+    r.spendAllTime = Math.round(r.spendAllTime * 100) / 100;
+  }
+  // Arabic client names cannot be object keys in a Convex value; hand back
+  // rows, with the daily grain as an array for the same reason.
+  return Object.entries(out).map(([key, r]) => ({
+    key,
+    ...r,
+    daily: Object.entries(r.daily)
+      .map(([date, v]) => ({
+        date,
+        leads: v.leads,
+        spend: Math.round(v.spend * 100) / 100,
+      }))
+      .sort((a, b) => (a.date < b.date ? -1 : 1)),
+  }));
 }

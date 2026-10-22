@@ -276,7 +276,7 @@ export const COLUMNS: BoardColumn[] = [
     group: "funnel",
     unit: "count",
     key10: true,
-    how: "Main and online calendar bookings made on these days, cancelled, invalid and Google Calendar copies left out.",
+    how: "Main and online calendar bookings made on these days. Cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts are left out.",
   },
   {
     key: "leadToBooking",

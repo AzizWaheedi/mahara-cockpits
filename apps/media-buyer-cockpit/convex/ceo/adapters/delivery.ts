@@ -76,21 +76,34 @@ function shortIssue(text: string): string {
 const CPL_BAD = CPL_GATE * 1.5;
 
 /**
- * Aziz's client status rule (2026-09-21). Costs are the last 7 days, the show
- * rate the last 30.
+ * Aziz's client status rule (2026-09-21) under the golden rule (R5,
+ * 2026-10-22): cost per booking is the number that matters, so a cost per
+ * lead over the gate under a good cost per booking is a watch line, never off
+ * track. Costs are the last 7 days, the show rate the last 30. The same rule
+ * as the native refresh (hermes/ceo-refresh/native/adapters/delivery.js
+ * clientStatus), which delivery-rates.test.ts holds them to.
  *
- * - good: cost per lead within CPL_GATE, cost per confirmed booking within
- *   CPB_GATE and show rate at least SHOW_RATE_GOOD.
- * - bad: cost per confirmed booking over CPB_BAD, or cost per lead over
- *   CPL_BAD (spend with no leads is that). A low show rate alone is watch,
- *   not bad: the one show rate line for clients is 60 (Aziz, 2026-09-21).
- * - watch: everything between, including a show rate nobody has recorded,
- *   which cannot be shown to be good.
- * - no-data: nothing spent.
+ * For a client we book for:
+ * - cost per confirmed booking known and within CPB_GATE: good when cost per
+ *   lead is within CPL_GATE and the show rate at least SHOW_RATE_GOOD, else
+ *   watch, however high the cost per lead;
+ * - known and over CPB_GATE: bad over CPB_BAD or with a cost per lead over
+ *   CPL_BAD (spend with no leads is that), else watch;
+ * - no confirmed booking yet (measured): the spend so far is the cost per
+ *   booking: over CPB_BAD bad, over CPB_GATE watch (bad with a bad cost per
+ *   lead), up to CPB_GATE too early to judge, which reads watch (bad only with
+ *   a bad cost per lead or no leads);
+ * - bookings not measured (`confirmed` null): judged on cost per lead alone.
+ * A low show rate alone is watch, never bad: the one show rate line for
+ * clients is 60 (Aziz, 2026-09-21). no-data is nothing spent.
  *
  * `weBook` false is a Done With You client with no bookings: they book their
  * own, so cost per lead is the only number we own and the only one judged,
  * as the sync judges DWY campaigns.
+ *
+ * `confirmed` absent reads `cpbConfirmed` alone: known when it is a number,
+ * no confirmed booking when it is null. `spendMeasured` is the spend on the
+ * days the board stores bookings (all of `spend` when absent).
  */
 export function clientStatus(x: {
   spend: number;
@@ -99,22 +112,47 @@ export function clientStatus(x: {
   cpbConfirmed: number | null;
   showRate: number | null;
   weBook: boolean;
+  confirmed?: number | null;
+  spendMeasured?: number;
 }): Status {
   if (x.spend <= 0) return "no-data";
   const cplBad = x.leads === 0 || x.cpl === null || x.cpl > CPL_BAD;
   const cplGood = x.cpl !== null && x.cpl <= CPL_GATE;
   if (!x.weBook) return cplBad ? "bad" : cplGood ? "good" : "watch";
-  if (cplBad || (x.cpbConfirmed !== null && x.cpbConfirmed > CPB_BAD))
-    return "bad";
-  if (
-    cplGood &&
-    x.cpbConfirmed !== null &&
-    x.cpbConfirmed <= CPB_GATE &&
-    x.showRate !== null &&
-    x.showRate >= SHOW_RATE_GOOD / 100
-  )
-    return "good";
-  return "watch";
+  if (x.confirmed === null) return cplBad ? "bad" : "watch";
+  if (x.cpbConfirmed !== null) {
+    if (x.cpbConfirmed <= CPB_GATE)
+      return cplGood &&
+        x.showRate !== null &&
+        x.showRate >= SHOW_RATE_GOOD / 100
+        ? "good"
+        : "watch";
+    return x.cpbConfirmed > CPB_BAD || cplBad ? "bad" : "watch";
+  }
+  const spent = x.spendMeasured ?? x.spend;
+  if (spent > CPB_BAD) return "bad";
+  return cplBad ? "bad" : "watch";
+}
+
+/**
+ * Too early to judge: a client we book for with no confirmed booking yet on
+ * measured spend within the booking gate and a cost per lead that is not bad.
+ */
+export function tooEarly(x: {
+  spend: number;
+  leads: number;
+  cpl: number | null;
+  cpbConfirmed: number | null;
+  weBook: boolean;
+  confirmed?: number | null;
+  spendMeasured?: number;
+}): boolean {
+  if (!x.weBook || x.confirmed === null || x.confirmed === undefined)
+    return false;
+  if (x.cpbConfirmed !== null) return false;
+  const spent = x.spendMeasured ?? x.spend;
+  const cplBad = x.leads === 0 || x.cpl === null || x.cpl > CPL_BAD;
+  return spent > 0 && spent <= CPB_GATE && !cplBad;
 }
 
 /** What a booking that shows would cost at the good show rate: cost per confirmed booking over 0.6. */
@@ -193,7 +231,7 @@ export const delivery: Adapter = {
         : `Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`,
     );
     info(
-      `Client status is Aziz's rule (2026-09-21): good with cost per lead within $${CPL_GATE}, cost per confirmed booking within $${CPB_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%; bad with cost per booking over $${CPB_BAD}, cost per lead over $${CPL_BAD.toFixed(2)} (spend with no leads counts as that); watch otherwise, which includes a show rate under ${SHOW_RATE_GOOD}% or one nobody has recorded. There is one show rate line for clients, ${SHOW_RATE_GOOD}%. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client with no bookings is judged on cost per lead alone.`,
+      `Client status is Aziz's rule (2026-09-21) under the golden rule (2026-10-22): cost per booking decides. For a client we book for, a cost per confirmed booking within $${CPB_GATE} is on track with a cost per lead within $${CPL_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%, and a watch otherwise, however high the cost per lead. Over $${CPB_GATE} it is a watch, and off track over $${CPB_BAD} or with a cost per lead over $${CPL_BAD.toFixed(2)} (spend with no leads counts as that). With no confirmed booking yet, the spend so far counts as the cost per booking: over $${CPB_BAD} is off track, $${CPB_GATE} to $${CPB_BAD} a watch (off track with a cost per lead over $${CPL_BAD.toFixed(2)}), and up to $${CPB_GATE} too early to judge, shown as a watch (off track only with a cost per lead over $${CPL_BAD.toFixed(2)} or no leads). A client whose bookings are not measured is judged on cost per lead alone. There is one show rate line for clients, ${SHOW_RATE_GOOD}%. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client with no bookings is judged on cost per lead alone.`,
     );
     if (triageError)
       warn(
@@ -689,6 +727,8 @@ export const delivery: Adapter = {
                 bookings7d: bookings,
                 cpb7d: cpb,
                 campaigns: c.campaigns,
+                // This copy counts its own bookings, so they are always
+                // measured: the count is passed, as the native refresh does.
                 status: clientStatus({
                   spend: r.spend,
                   leads: r.leads,
@@ -696,6 +736,7 @@ export const delivery: Adapter = {
                   cpbConfirmed,
                   showRate: rates30.showRate,
                   weBook,
+                  confirmed: booked.confirmed,
                 }),
                 provisional7d: booked.provisional,
                 confirmed7d: booked.confirmed,
@@ -739,6 +780,9 @@ export const delivery: Adapter = {
             cpbConfirmed: cpb,
             showRate: null,
             weBook: g.tracked,
+            // The sync's booking events, read only where its GHL is;
+            // anywhere else bookings are not measured (as the native refresh).
+            confirmed: g.tracked ? g.bookings : null,
           }),
           rates30: null,
         };

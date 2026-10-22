@@ -62,6 +62,12 @@ import type {
   TeamPerson,
 } from "@/types/ceo/payloads";
 import {
+  CPB_CONFIRMED_LABEL,
+  cpbConfirmedOf,
+  cpbConfirmedOfDays,
+} from "./deliveryCost";
+import { cplOnlyOf, DWY_BOOKINGS } from "./deliveryStatus";
+import {
   feedState,
   jobName,
   sectionsFailing,
@@ -642,6 +648,9 @@ function KpiRow({
       : null;
   const pendingD = d ? undefined : "Delivery numbers are not computed yet";
   const pendingC = c ? undefined : "Call numbers are not computed yet";
+  // One cost per booking for every tab: confirmed only (./deliveryCost.ts).
+  const cost7 = d ? cpbConfirmedOf(d.last7, d.bookingSource) : null;
+  const costY = d ? cpbConfirmedOf(d.yesterday, d.bookingSource) : null;
   const s = c?.speedToLead ?? null;
   const sinceDays = s?.since && day ? daysBetween(s.since, day) : null;
 
@@ -721,29 +730,30 @@ function KpiRow({
         />
         <StatTile
           variant="plain"
-          label="Client appointments yesterday"
-          value={d ? f.count(d.yesterday.bookings) : null}
-          naHint={pendingD}
+          label="Client bookings made yesterday"
+          hint="Confirmed bookings made yesterday, as the Client Performance board counts them (main and online calendars, by the day the booking was made). The line under it is the last 7 days' cost per confirmed booking, the same figure as the Delivery tab's."
+          value={d ? f.count(costY?.confirmed) : null}
+          naHint={pendingD ?? costY?.why ?? undefined}
           delta={
-            d ? (
+            d && cost7?.confirmed !== null && cost7?.confirmed !== undefined ? (
               <Delta
-                value={f.change(d.yesterday.bookings, d.last7.bookings / 7)}
+                value={f.change(costY?.confirmed, cost7.confirmed / 7)}
                 vs="vs 7-day average"
               />
             ) : undefined
           }
           sub={
-            d ? (
+            d && cost7 ? (
               <span className="flex items-start gap-1">
                 <GateIcon
-                  value={d.last7.cpb}
+                  value={cost7.value}
                   gate={d.gates.cpb}
                   className="mt-1 self-start"
                 />
                 <span>
-                  {f.isNum(d.last7.cpb)
-                    ? `${f.money(d.last7.cpb)} per booking vs ${f.money(d.gates.cpb)} gate`
-                    : `No cost per booking yet, gate ${f.money(d.gates.cpb)}`}
+                  {f.isNum(cost7.value)
+                    ? `${f.money(cost7.value)} per confirmed booking over 7 days (${f.count(cost7.confirmed)}), gate ${f.money(d.gates.cpb)}`
+                    : `${CPB_CONFIRMED_LABEL}, 7 days: n/a. ${cost7.why ?? ""}`}
                 </span>
               </span>
             ) : undefined
@@ -817,27 +827,40 @@ function DeliveryFunnelCard({
         // Calls keep 30 days per day; a window that starts earlier says so.
         const callsKept =
           own7 || (w && callDays && !startsLate(callDays[0]?.date, w));
+        // Confirmed bookings and the cost per confirmed booking, the one rule
+        // every tab uses (./deliveryCost.ts): the server's 7 days, or the
+        // daily series for any other run of days.
         const win7 =
           own7 || !w
-            ? {
-                leads: d.last7.leads,
-                bookings: d.last7.bookings,
-                spend: d.last7.spend,
-                cpl: d.last7.cpl,
-                cpb: d.last7.cpb,
-                dials: c?.providerDials ?? null,
-                connected: c?.connected ?? null,
-              }
+            ? (() => {
+                const cost = cpbConfirmedOf(d.last7, d.bookingSource);
+                return {
+                  leads: d.last7.leads,
+                  bookings: cost.confirmed,
+                  spend: d.last7.spend,
+                  cpl: d.last7.cpl,
+                  cpb: cost.value,
+                  cpbWhy: cost.why,
+                  dials: c?.providerDials ?? null,
+                  connected: c?.connected ?? null,
+                };
+              })()
             : (() => {
                 const leads = sumIn(d.daily, w, r => r.leads) ?? 0;
-                const bookings = sumIn(d.daily, w, r => r.bookings) ?? 0;
                 const spend = sumIn(d.daily, w, r => r.spend) ?? 0;
+                const cost = cpbConfirmedOfDays(
+                  d.daily,
+                  w.from,
+                  w.to,
+                  d.bookingSource,
+                );
                 return {
                   leads,
-                  bookings,
+                  bookings: cost.confirmed,
                   spend,
                   cpl: leads > 0 ? spend / leads : null,
-                  cpb: bookings > 0 ? spend / bookings : null,
+                  cpb: cost.value,
+                  cpbWhy: cost.why,
                   dials: callsKept ? sumIn(callDays, w, r => r.dials) : null,
                   connected: callsKept
                     ? sumIn(callDays, w, r => r.connected)
@@ -854,9 +877,9 @@ function DeliveryFunnelCard({
           },
           { label: "Connected", value: win7.connected },
           {
-            label: "Bookings",
+            label: "Confirmed bookings",
             value: win7.bookings,
-            // Delivery uses appointment date, so this is not a call conversion.
+            // Bookings made on these days, not a conversion of these calls.
             skipRate: true,
           },
         ];
@@ -875,8 +898,12 @@ function DeliveryFunnelCard({
                   value: <GateValue value={win7.cpl} gate={d.gates.cpl} />,
                 },
                 {
-                  label: "Cost per booking",
-                  value: <GateValue value={win7.cpb} gate={d.gates.cpb} />,
+                  label: CPB_CONFIRMED_LABEL,
+                  value: f.isNum(win7.cpb) ? (
+                    <GateValue value={win7.cpb} gate={d.gates.cpb} />
+                  ) : (
+                    <Value value={null} hint={win7.cpbWhy ?? undefined} />
+                  ),
                 },
               ]}
             />
@@ -893,9 +920,11 @@ function DeliveryFunnelCard({
                 </summary>
                 <p className="mt-2 leading-relaxed">
                   Actual calls and connections use the shared call center
-                  report. Delivery bookings use appointment date, so these steps
-                  are separate activity counts rather than a lead conversion
-                  funnel.
+                  report. Confirmed bookings are the Client Performance
+                  board&apos;s, by the day the booking was made, and the cost
+                  per confirmed booking divides only the spend on the days the
+                  board stores them. These steps are separate activity counts
+                  rather than a lead conversion funnel.
                 </p>
               </details>
             ) : null}
@@ -1211,11 +1240,24 @@ const DELIVERY_COLUMNS: Column<DeliveryClient>[] = [
   },
   {
     key: "bookings",
-    header: "Bookings",
+    header: "Confirmed bookings",
     numeric: true,
     hideBelow: "sm",
-    cell: r => f.count(r.bookings7d),
-    sortValue: r => r.bookings7d,
+    // The board's confirmed bookings, the count every cost per booking
+    // divides by (./deliveryCost.ts); n/a with the reason when the board
+    // stores none of these days, for a Done With You client, or on a window
+    // the board's per-client counts do not cover, never 0.
+    cell: r => (
+      <Value
+        value={cplOnlyOf(r) === "dwy" ? null : f.count(r.confirmed7d)}
+        hint={
+          cplOnlyOf(r) === "dwy"
+            ? DWY_BOOKINGS
+            : (r.bookingsWhy ?? "Bookings are not measured for this client")
+        }
+      />
+    ),
+    sortValue: r => (cplOnlyOf(r) === "dwy" ? null : (r.confirmed7d ?? null)),
   },
 ];
 
@@ -1253,10 +1295,13 @@ function DeliveryByClientCard({
                   .map(r => {
                     const spend = sumIn(r.daily, w, x => x.spend) ?? 0;
                     const leads = sumIn(r.daily, w, x => x.leads) ?? 0;
-                    const bookings = sumIn(r.daily, w, x => x.bookings) ?? 0;
                     const seven = d.clients.find(
                       c => c.clickupTaskId === r.clickupTaskId,
                     );
+                    // The clients section's bookings per day are the media
+                    // sync's booking events, another rule: the column stays
+                    // the board's confirmed count, which per client is kept
+                    // for the last 7 days only.
                     return {
                       ...(seven ?? { status: "no-data" as const }),
                       client: r.name,
@@ -1264,7 +1309,11 @@ function DeliveryByClientCard({
                       spend7d: spend,
                       leads7d: leads,
                       cpl7d: leads > 0 ? spend / leads : null,
-                      bookings7d: bookings,
+                      bookings7d: null,
+                      confirmed7d: null,
+                      cplOnly: seven?.cplOnly ?? null,
+                      bookingsWhy:
+                        "The board's confirmed bookings per client are kept for the last 7 days only; pick 7 days, or see the Delivery tab's timeframe card for the company.",
                     } as DeliveryClient;
                   })
                   .filter(r => r.spend7d > 0 || r.leads7d > 0)

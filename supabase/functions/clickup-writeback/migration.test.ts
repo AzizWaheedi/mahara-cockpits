@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 // Static checks on 20261009f_clickup_writeback_native.sql: the contract between
 // the Edge Functions and the database, and the tables it must not write.
@@ -82,5 +82,26 @@ describe("migration 20261009f", () => {
     expect(SQL).toContain("WHEN (NEW.role='media_buyer' AND NEW.source_system='supabase')");
     expect(SQL).toContain("WHEN (NEW.kind='manual')");
     expect(/EXCEPTION WHEN OTHERS THEN\s+-- Never fail the cockpit save/.test(SQL)).toBe(true);
+  });
+});
+
+// 20261022z is the sql group's (cost per booking build 2, contract 2.7). Until it is in the tree this
+// check is reported as skipped, never as passed.
+const INPUTS_Z = new URL("../../migrations/20261022z_clickup_kpi_inputs.sql", import.meta.url);
+describe("migration 20261022z (R12 inputs)", () => {
+  it.skipIf(!existsSync(INPUTS_Z))("gives the KPI job the media sync's window and the booking ledger by campaign, and keeps every key it read before", () => {
+    const sql = readFileSync(INPUTS_Z, "utf8");
+    // What kpi.ts reads now.
+    for (const key of ["weekFrom", "weekThrough", "weekSource", "bookingsByCampaign", "campaignName", "booked"]) expect(sql).toContain(`'${key}'`);
+    expect(sql).toContain("cockpit_media_week()");
+    expect(sql).toContain("cockpit_media_booking_events");
+    // An overnight window starts 9 days back: the ledgers start 10 days back.
+    expect(sql).toMatch(/-\s*10\b|'10 days'/);
+    // Every key the job read before stays.
+    for (const key of ["workingDay", "campaigns", "spend7d", "leads7d", "bookings7d", "cpl", "taskId", "internal", "latestPublishAt", "latestSyncedAt", "dailyReady", "bookingsReady", "daily", "bookings"])
+      expect(sql).toContain(`'${key}'`);
+    // Service role only, as in 20261009f.
+    expect(sql).toMatch(/GRANT EXECUTE ON FUNCTION public\.cockpit_clickup_writeback_inputs\([^)]*\)\s+TO\s+service_role/);
+    expect(/GRANT [^;]*cockpit_clickup_writeback_inputs[^;]* TO [^;]*(anon|authenticated)/.test(sql)).toBe(false);
   });
 });

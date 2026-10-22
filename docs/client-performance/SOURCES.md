@@ -13,6 +13,14 @@ Google Sheets) and the ClickUp client roster. What they found is fixed in four
 migrations, one Edge Function change and two worker changes (see "What
 changed on 16 October"); what needs a person is listed under "What is left".
 
+On 21 October 2026 the CEO asked: "make sure it shows the cost per booking
+correctly for all". The audit of that day
+(`docs/client-performance/CPB-AUDIT-20261021.md`) found the board the closest
+surface and twenty faults across the cockpits (R1 to R20); the fixes are
+recorded in `docs/client-performance/CPB-20261021.md`. The rule every screen
+is checked against is "Cost per booking" below, with "Lead to booking" and
+"ROAS" beside it, and "What changed on 21 and 22 October" lists what moved.
+
 Roles, not names: the CEO, client success, the media buyer, the systems
 manager, the call-centre lead, and the board team (the team building the
 board's read functions and screen).
@@ -45,6 +53,9 @@ board's read functions and screen).
   `last_7_full` and `last_30_full` end yesterday, the last complete day. A
   board that shows full days must sum ad-days and CRM days over the same days
   as the reach row it shows.
+  Cost per booking and ROAS pair spend with the facts to yesterday on each
+  ad account's own clock (see Cost per booking), so on "Last 7" they cover
+  6 ad days and on "Last 30" 29.
 - **Today is "so far".** Every source on a day carries `partial: true` while
   its last read is before the day ended. Show "so far, as of HH:MM Kuwait"
   and no rates or target colours on a partial day. The dialer's dials are
@@ -205,8 +216,10 @@ board's read functions and screen).
 
 - **Source of truth:** stored TikTok advertisers or accounts (`clients`,
   `ghl_clients.tiktok_ad_account`) and the card's Ads Platform.
-- **Rule:** a flagged client's spend, CPL and ROAS are "Meta only": no TikTok
-  spend is read anywhere.
+- **Rule:** a flagged client's spend, CPL, cost per booking and ROAS are "Meta
+  only": no TikTok spend is read anywhere. Cost per booking then divides Meta
+  spend by every confirmed booking, the ones TikTok bought included, so it
+  reads low while TikTok spends; the row's note says "Meta only".
 - **Gaps:** Joe and Sera is flagged (a stored TikTok advertiser) while its card
   says Facebook/Meta; نهوض نجد's card says Tiktok and is now flagged. Client
   success confirms both.
@@ -222,7 +235,8 @@ board's read functions and screen).
   fixed rate: USD 1, KWD 3.26, AED 0.2723, SAR 0.2666, QAR 0.2747. A currency
   with no rate leaves `spend_usd` NULL, never 1 to 1. Never take spend from
   `cockpit_media_daily_stats` (it holds board-card campaigns only: 13% short
-  over 30 days).
+  over 30 days). The media buyer's client page reads it on purpose for
+  Mahara's campaigns only, and says so (see Cost per booking).
 - **Freshness:** hourly (yesterday and today); the nightly run reads the last
   28 days again because Meta settles them.
 - **Coverage:** every account shared with Mahara's business that spent;
@@ -627,24 +641,81 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 
 - **Source of truth:** `appointments` (GoHighLevel sync at :20), stored as
   `confirmed_bookings`.
-- **Rule:** main and online calendars, by the Kuwait day the booking was made,
-  minus cancelled, invalid, Google Calendar copies, and (since 16 Oct) the
-  call centre's RESCHEDULE and CALLBACK bookings, dropped by their ids (a
-  meeting moved is not a new booking). No calendar is dropped by its name for
-  this: Atlantis's "Project Review & Qualification Call" holds 2 CALLBACK
-  bookings and a lead's own widget booking among its 5.
-- **Checked against:** the dialer's report (board 170 against the dialer's 176
-  over 30 days, every difference traced: the dialer keeps bookings cancelled
-  later and 4 bookings GoHighLevel no longer holds) and the media sync's
-  booking events. The media sync counted the call centre's CALLBACK bookings
-  on Atlantis's qualification calendar; it now drops the call centre's
-  RESCHEDULE and CALLBACK booking ids as the facts do, read from the dialer
-  once a run (122 ids on 16 Oct; 2 of that calendar's 5 appointments), and
-  counts as before when the dialer cannot be read. The other 3 on that
-  calendar (a widget booking, a booking page booking, one with no source) stay
-  in the media sync, while the board counts main and online calendars only.
-- **Gaps:** the dialer's appointment facts never learn that GoHighLevel
-  dropped a booking: systems manager (dialer).
+- **Rule (since 21 Oct, `20261021l_board_booking_rule.sql`):** main and online
+  calendars, by the Kuwait day the booking was made, minus:
+  - cancelled and invalid bookings and Google Calendar copies;
+  - the call centre's call-back bookings (dialer outcome CALLBACK), always: a
+    call back is the call centre's own follow-up, not the lead's booking;
+  - a booking the call centre rescheduled (outcome RESCHEDULE), only while the
+    booking it moved (`originalAppointmentId`) is still a counted main or
+    online booking: a meeting moved is not a new booking, but once the first
+    one is gone the new one is the lead's only booking. A RESCHEDULE that
+    names no original is kept. Until 21 Oct every RESCHEDULE was dropped,
+    which lost SAFAD's 20 Oct booking: the lead booked through the call
+    centre at 14:45 Kuwait (`hncsfdNodMEdkVNW3245`), the booking was moved 10
+    minutes later and GoHighLevel deleted the first, so
+    `MxRYJYyO64JjX7lL7kMc` is the lead's only booking.
+    `cockpit_board_replaced_booking_ids` holds this rule (decision D0b);
+  - a booking GoHighLevel no longer holds (`cockpit_board_gone_booking_ids`,
+    the interim fix for audit item R7): the dialer's inventory of GoHighLevel
+    says it is gone and last saw it no later than a day after its meeting, the
+    appointments sync has not seen it since either, nothing marks it showed,
+    and it is not a booking the call centre moved while its new booking
+    stands. Four October bookings left this way: Alkhalil
+    `JTAbzlPF8oImhx5skXu0` (11 Oct), Ardon `QSzpJTdcRtTdgvQsNIy3` (12 Oct),
+    Ocean Home `PSGg0w3jaCymxMgzB1I0` (12 Oct) and Shades
+    `3BtZov0FxDGP4PMhbJr0` (18 Oct); in September ARCWANI 2 (21 to 19) and
+    Atlantis 1 (20 to 19), so approved September pay months move with them.
+
+  No calendar is dropped by its name. Atlantis's "Project Review &
+  Qualification Call" calendar is not a main or online calendar, so the
+  bookings on it are not counted (decision D0c, the default of 21 Oct: see
+  "What is left"). Meetings due, shows and no-shows are not changed by the
+  gone check.
+- **A read that fails never stops the bookings:** if the gone check cannot be
+  worked out, nothing is gone; if the call centre's rule cannot, the rule of
+  16 Oct stands (every RESCHEDULE and CALLBACK booking left out); the
+  appointments source says which. Only when the dialer's attempts cannot be
+  read at all does the appointments source fail, and the figures stored
+  before are kept.
+- **The campaign tree** on the client page leaves out the same bookings
+  since 21 Oct (`20261021m_board_tree_booking_rule.sql`); see Cost per
+  booking.
+- **Checked against:**
+  - the dialer's report (16 Oct: board 170 against the dialer's 176 over 30
+    days, every difference traced: the dialer keeps bookings cancelled later
+    and bookings GoHighLevel no longer holds);
+  - the media sync's booking events (`cockpit_media_booking_events`), read
+    only on 23 Oct at about 01:15 Kuwait: equal to the board client by client
+    for every Active client, 49 bookings over 14 to 20 Oct and 101 over 1 to
+    20 Oct. The board's 103 for 1 to 20 Oct adds Professional Touch's 2, which
+    the media sync cannot place on a campaign (its ad account is not shared
+    with Mahara's business).
+- **The media sync counts the same bookings since 22 Oct.** The native
+  release e4c0cpb1 put the board's rule into `hermes/cockpit-sync`
+  `calculator.ts`: main and online calendars only (`calendarKind`, the
+  board's calendar kinds), call-backs always out and a reschedule out only
+  while its original counts (`dialerReplacedBookingIds`, read from the dialer
+  once a run). A reschedule whose original GoHighLevel deleted but the
+  appointments table still counts is dated on the day the lead booked the
+  original, the day the board counts it. The media sync reads GoHighLevel
+  live, so a booking GoHighLevel no longer holds is never in it. A dialer
+  read that fails stops that run's publish, so the last publish stands; an
+  answer it cannot use keeps every booking for that run and logs "dialer
+  bookings unreadable". The 16 Oct change this section described before was
+  not released until then: the live worker kept counting Atlantis's
+  call-back bookings until 22 Oct (audit R4). Checked on 23 Oct: the six
+  Atlantis bookings the old worker counted (`dmO7mzPQ5RXH4PrVCSBL`,
+  `9tubP2ZbEbtrz7RvqRlg`, `ErVaQM4THKjBgFaoZoau`, `c67BHPSdhgymy0lQnHzf`,
+  `s3UnXy4fY1xp6RMYAJgh`, `opVzfk4564vQL7uG7gUZ`) are not in the media sync's
+  events; SAFAD `MxRYJYyO64JjX7lL7kMc` is, on 20 Oct; Arcturus
+  `l1Ar6ZhyTqKN4baJush0` is dated 22 Sep.
+- **Gaps:** the appointments sync never marks a row it stops receiving, so a
+  booking GoHighLevel deletes stays "confirmed" there until the gone check
+  takes it out; the sync should mark it itself (`ghl-appointments-sync`, not
+  built): systems manager. The dialer's appointment facts never learn that
+  GoHighLevel dropped a booking, and its RESCHEDULE should cancel the old
+  appointment: systems manager (dialer).
 
 ### Provisional bookings
 
@@ -656,6 +727,303 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
   Atlantis 16, mergestudio 6).
 - **Gaps:** provisional meetings never reach meetings due (the appointments
   sync does not carry that calendar). No effect today.
+
+### Cost per booking
+
+- **Source of truth:** the board's cell (`cockpit_board_rows`,
+  `costPerBooking`): spend from `cockpit_meta_ad_days.spend_usd` on the
+  client's linked ad accounts, divided by `cockpit_client_days.confirmed_bookings`
+  (Confirmed bookings above). Every other screen that shows a client's cost
+  per booking is checked against it; where one differs, and why, is written
+  below (No booking, no spend; the table of other screens; Mahara's
+  campaigns only).
+- **Rule:** the sum of spend over the sum of confirmed bookings, over the same
+  days: a ratio of sums, never an average of daily costs.
+  - **Paired days, to yesterday on each account's clock.** The days run from
+    the time frame's first day (never before the Meta store's first day) to
+    the earlier of yesterday in Kuwait and the last finished day of every
+    linked ad account on its own clock (`cockpit_board_ad_cover`, `pairFrom`
+    and `pairTo`). Spend is on each account's day and bookings on Kuwait days,
+    paired by date. Atlantis's account keeps Los Angeles time, so until 10:00
+    Kuwait (11:00 from November) its yesterday is Kuwait's day before
+    yesterday and its cost per booking stops a day earlier. Today never
+    counts: a booking lands the moment it is made, while Meta's spend for
+    today is not in yet.
+  - **Spend only on days with stored bookings.** A day whose confirmed
+    bookings are not stored (a failed appointments read, a day before the
+    facts) leaves both halves: its spend is never divided by bookings nobody
+    counted. When that leaves fewer days than the time frame's ad days, the
+    note says "Over the N of M days where both are known."
+  - **The whole ad account.** Every campaign on the client's linked accounts
+    counts, stopped ones and the client's own included (Shades' pre-launch
+    engagement campaign, $90.07 on 1 to 5 Oct: decision D0d keeps it on the
+    board); ads on the compromise list never do. The media buyer's screens
+    count Mahara's campaigns only and say so (below).
+  - **Confirmed only, by the day booked.** Provisional bookings are never
+    divided by; a figure that divides by both must say "incl. provisional".
+    A booking is dated by the Kuwait day it was made, never its meeting day:
+    the meeting day is right for meetings due and the show rate, never for
+    cost per booking (CEO Delivery counted by meeting day until build 2,
+    audit R2).
+  - **Lines:** good up to $60, a watch up to $80, off above
+    (`cockpit_board_default_targets`, `cost_per_booking`: `kpi.ts` `CPB_GATE`
+    and `CPB_BAD`, held equal by `board-api-supabase.test.ts`, "the default
+    targets"). A board or client target replaces them and the cell says which
+    (`cockpit_board_targets_map`, `source`). The line judges the cents the
+    cell shows: $60.40 is over $60, and $60.004 shows "$60" and is not.
+    The CEO's "Well over the $60 gate" chip starts at $75 (25% over), a
+    scale it states in its hint; over 14 to 20 Oct no client read between
+    $75 and $80.
+- **No booking, no spend, "at least" and n/a:**
+  - Spend and no confirmed booking: the cost is not known, but it is at least
+    the spend (`atLeast`, note "No confirmed booking yet for $233.36 of
+    spend."). The board's cell shows the spend with a + and the dot of its
+    line (`cells.tsx` `CellContent`; the help reads "at least $233"): up to
+    $60 too few to judge, a hollow ring (Madana "$11.09+", 14 to 20 Oct);
+    over $60 a watch and over $80 off (Alkhalil "$233+", نهوض نجد "$192+").
+    The media buyer's screens say the same floor in words (`costTone.ts`
+    `cpbDisplay`): "None yet" up to $60, "None on $233" in the grid's colour
+    over it, and the Ads page counts it in its "Cost per booking over $60"
+    filter (`adsFilters.ts`). The board has no such filter, and its totals
+    line has no cost per booking.
+  - Confirmed bookings and no spend on the paired days (the accounts did not
+    deliver, or a prepaid balance ran out): the board divides anyway and
+    shows "$0", judged good (one day each, read only on 23 Oct:
+    mergestudio.kw 19 Oct, 1 booking; Atlantis 18 Oct; شركة العلا 18 Oct;
+    Ocean Home 15 Oct, 2; Castello 26 Sep; Marble and more 29 Sep). Those
+    bookings came from ads that spent before the time frame, so $0 is not
+    what they cost. The media buyer, the client range read and the CEO read
+    n/a with the reason: the media buyer "Nothing was spent in this range: these bookings came from ads
+    that spent before it." (`cpbDisplay`), the client range read null with
+    "No spend on Mahara's campaigns is counted for these days, so there is
+    no cost per booking.", the CEO "No spend on the days the board stores
+    bookings." (`deliveryCost.ts`). The board is the one that differs (gap
+    below).
+  - Some spend in a currency with no fixed USD rate: the cost is at least
+    what the priced spend gives, judged as a floor; all of it unpriced: n/a.
+  - Not measured, never $0, with the reason in the note: no Meta ad account
+    linked (Professional Touch, whose account is not shared with Mahara's
+    business), a time frame of today only ("Ad numbers end yesterday"), no
+    day over on every linked account's clock, no stored bookings, or no day
+    with both.
+  - No spend and no booking: too few to judge, "No spend and no confirmed
+    booking in these days."
+- **Windows:** "Last 7" and "Last 30" end today, so cost per booking covers 6
+  and 29 ad days in them; `last_7_full` and `last_30_full` cover 7 and 30.
+  The picker and the cell's help say so.
+- **Done with you:** نهوض نجد books its own meetings, so a cost per booking is
+  not Mahara's to judge for it. The first break leaves cost per booking out
+  for a done-with-you client (`boardColumns.ts` `firstBreak`), the CEO and the
+  media buyer judge it on cost per lead only, and the media buyer's client
+  read gives n/a, "Done with you: the client books its own meetings." The
+  board's own cell still shows a floor ("$192+" for 14 to 20 Oct, gap below),
+  and its spend is in the Active totals while none of its bookings are
+  (Checked against).
+- **The golden rule (build 2, `20261022y_board_cpl_golden_rule.sql`):** when
+  a client's cost per booking is good and not a floor, a cost per lead that
+  would be off is a watch, with the note "Cost per booking is within the $60
+  gate, so a cost per lead over $15 is a watch line, not off (the golden
+  rule)." Both amounts are the client's own lines. Atlantis, 14 to 20 Oct:
+  $43.63 a booking (good) and $34.91 a lead, off until this ships, a watch
+  after it; the first break then reads "Off at ROAS". `kpi.ts` `belowKpi` (the
+  media buyer and the EOD, since 22 Oct) and the CEO's `clientStatus` (build
+  2) follow the same rule.
+- **The campaign tree (client page):** campaign, ad set and ad rows count a
+  booking under the ad whose id its appointment carries (`appointments.ad_id`),
+  by the facts' rule (`20261021m`: call-backs, moved bookings whose first
+  still counts and bookings GoHighLevel no longer holds left out), made on the
+  same paired days, and divide the ad's spend on those days ("Confirmed
+  bookings with this ad id and spend over the same days"). A booking with no
+  ad id is in the client row only, so the tree's rows need not add up to the
+  client row; since 21 Oct no campaign shows more bookings than its client.
+- **Checked against** (read only on 23 Oct at about 01:15 Kuwait: the board's
+  own read, `cockpit_board_rows`, against the sources below; 14 to 20 Oct and
+  1 to 20 Oct are over on every account's clock):
+  - the audit's truth table (`CPB-AUDIT-20261021.md` section 1: GoHighLevel's
+    appointments recounted, spend from the Meta store, itself checked against
+    Meta's account insights): equal for every Active client in both windows.
+  - 14 to 20 Oct: Alkhalil no booking on $233.36 (off); Arcturus $242.48 / 4
+    = $60.62 (watch); Ardon $201.90 / 5 = $40.38; Atlantis $174.53 / 4 =
+    $43.63; Castello $268.48 / 1 (off); City Wood $354.00 / 3 = $118.00 (off);
+    Marble and more $204.23 / 4 = $51.06; mergestudio.kw $134.69 / 8 =
+    $16.84; Ocean Home $235.87 / 9 = $26.21; SAFAD $390.80 / 2 = $195.40
+    (off); Shades $203.63 / 4 = $50.91; شركة العلا $153.13 / 4 = $38.28;
+    Khalida $91.62 / 1 (off); Madana no booking on $11.09 (too few to
+    judge); نهوض نجد no booking on $192.33 (off; done with you, above).
+    Active clients: $3,092.14 / 49 = $63.10 (with the 3 provisional, $59.46),
+    the sum of the cells. That spend includes نهوض نجد's $192.33, a client
+    that books its own meetings, so none of its bookings are in the 49.
+    Without it the clients Mahara books for read $2,899.81 / 49 = $59.18,
+    inside the $60 gate. Which of the two a portfolio figure shows is the
+    CEO's call (What is left); CEO Delivery's headline and the EOD total
+    (build 2) include it.
+  - 1 to 20 Oct: Alkhalil no booking on $367.34; Arcturus $56.29 (14); ARCWANI
+    $151.40 (1); Ardon $138.06 (6); Atlantis $111.96 (5); Castello $333.83
+    (2); City Wood $224.88 (3); Liwan $194.58 (1); Marble and more $52.34 (4);
+    mergestudio.kw $22.04 (11); Ocean Home $27.87 (27); SAFAD $227.93 (3);
+    Shades $73.43 (4); شركة العلا $33.37 (19); Khalida $191.53 (1); Madana
+    no booking on $11.09; نهوض نجد no booking on $533.33 (done with you).
+    Active clients: $7,783.36 / 101 = $77.06 (Professional Touch's 2 bookings
+    left out: its spend is not known). نهوض نجد's $533.33 is in it; without
+    it, $7,250.03 / 101 = $71.78.
+  - the media sync's booking events: equal client by client (Confirmed
+    bookings above).
+  - Mahara's campaigns in the media data (`cockpit_media_daily_stats`, one
+    row per ad and day, stopped campaigns included): equal to the board's
+    spend for every Active client in both windows except SAFAD (an outsider's
+    "New Engagement Campaign" on its account, $375.09 in 14 to 20 Oct and
+    $375.10 in 1 to 20 Oct, not on the compromise list until decision D0a)
+    and Shades in 1 to 20 Oct (the client's own $90.07). So the Active
+    clients on Mahara's campaigns read $2,717.05 / 49 = $55.45 for 14 to 20
+    Oct, the sum of the board's cells too once D0a lists SAFAD's ads. Both
+    include نهوض نجد's $192.33; without it, $2,524.72 / 49 = $51.52.
+- **Gaps:**
+  - The board's cell for a done-with-you client reads like a done-for-you
+    one: نهوض نجد 14 to 20 Oct shows "$192+" with the off dot (at least
+    $192.33), and its booking rate "0%" (off), from GoHighLevel bookings it
+    does not make. The first break skips the cost per booking but not the
+    booking rate, so it reads "Off at booking rate". A dash with "Done with
+    you" in both cells is a board change: board team, after the CEO's word.
+  - The board's cell reads "$0", judged good, for bookings made on days with
+    no spend (above). It should read n/a with the reason, as the media
+    buyer, the client range read and the CEO do: board team
+    (`cockpit_board_rows`).
+  - Professional Touch's note says "No Meta ad account is linked to this
+    client." when the account exists and is not shared with Mahara's
+    business (audit section 5, item 9): board team.
+
+**Where other screens differ, and what they say** (audit section 5; build 2
+items in section 7 of `CPB-20261021.md`):
+
+| Screen | Per | Spend | Bookings | Days | Label on screen |
+| --- | --- | --- | --- | --- | --- |
+| Board client row, pay facts | client | whole ad account (`cockpit_meta_ad_days`) | confirmed, board rule | paired, to yesterday on each account's clock | the cell's note |
+| Board campaign tree | campaign, ad set, ad | the ad's | confirmed with that ad id | the same paired days | "with this ad id" |
+| Media buyer campaign rows, decisions, ClickUp cards, and the EOD lines until build 2 | campaign | the campaign's, media sync | the media sync's, same rule since 22 Oct | the media sync's 7 days | the campaign's name |
+| Media buyer client page (build 2) | client | Mahara's campaigns only, stopped ones included | the board's confirmed | to `cockpit_media_week` `through` | "Mahara's campaigns only, stopped ones included; the Client Performance board counts the whole ad account." |
+| CSM Ads tab | client, by campaign name | the client's campaigns in the media data, stopped ones included | the media sync's | the period | "Spend, leads and clicks come from Meta, for Mahara's campaigns only (stopped ones included). The Client Performance board counts the whole ad account, so its spend can be higher." (`ClientAds.tsx`, 23 Oct) |
+| CSM Diagnosis, creative "Performance, last 7d", EOD client lines (build 2) | client | Mahara's campaigns, stopped ones included (`ads7d`) | `ads7d` | the media sync's 7 days | Mahara's campaigns, stopped ones included, and the days |
+| CSM Results tab | client | the campaigns listed | the client's sheet | the period, by sheet day | "from their sheet" |
+| CEO Delivery, Today, Backend (build 2) | client | whole ad account | confirmed, from the board's tables, by the day booked | the CEO's time frames (CEO `SOURCES.md`) | "Cost per confirmed booking" |
+| ClickUp Cost Per Booking | card | the campaign's | the media sync's | the media sync's 7 days | four bands at $45, $60 and $90, a different scale; a dry run |
+
+Two cases read differently on the board than on the other screens (No
+booking, no spend, above): no booking on spend is "$233+" on the board and
+"None on $233" on the media buyer's screens, the same floor in other words;
+bookings with no spend are "$0", judged good, on the board and n/a with the
+reason on the media buyer's screens, the client range read and the CEO's.
+
+**The media sync's 7 days (`cockpit_media_week`, build 2).** The media
+buyer's campaign rows, the EOD, the decisions, CSM Diagnosis, the creative
+dashboard and ClickUp's columns read the media sync's 7 days, not the board.
+The worker ends them on the last day the tracker sheet has spend for
+(`sevenDayWindow` `until7`; the Meta rows' last day when the sheet is more
+than two days behind), one end for every client in one publish, and starts
+them six days earlier (`since7`). Bookings stop on the same day. From
+midnight to about 06:00 Kuwait, before the sheet fills yesterday, the end is
+the day before yesterday; then it moves to yesterday. Build 2 publishes that
+window with each client's figures (`ads7d` on the client links, the CSM
+profiles and the creative clients) and gives it to every SQL reader through
+`public.cockpit_media_week()` (`20261022w_media_week.sql`): `from`,
+`through` and `source`, "media sync" from the newest ready publish, else
+"media data" (the last day of `cockpit_media_daily_stats`, never after
+Kuwait's yesterday, `from` null) until the worker publishes it. The media
+buyer's coverage read returns it as `bookingsThrough`, so a range read counts
+spend, leads and bookings through that one day and names it;
+`cockpit_winner_numbers` stops a winner's spend and bookings there (the
+preview of "CityWood v1" over 1 to 21 Oct, as read on 21 Oct: 3 bookings at
+$38.22, where it read 7 at $16.38, four of them made on 21 Oct after the
+spend); the client range read and ClickUp's inputs read it too. The board
+and the CEO cockpit do not: the board pairs each client's own accounts to
+yesterday, and the CEO stops at yesterday, or runs to today so far for This
+month on Delivery and Backend (CEO `SOURCES.md`).
+
+Winner saves stored before build 2 are not rewritten. Read only on 23 Oct,
+each of the ten in `cockpit_winner_saves` was recounted with today's booking
+events for its ad and window, to the day before it was saved (the last day
+its spend could hold: each save's spend equals its ad's spend to that day).
+Three hold a booking made on the day they were saved, after their spend
+stopped: Marble and more "ad-1" (52563107240566) and "ad-4"
+(52563116347566), saved 17 Oct over 11 to 17 Oct, 1 booking each on $20.25
+and $46.57, none once capped; Ocean Home's "HousingBuildReview" video
+(120255258731900230), saved 20 Oct over 1 Sep to 20 Oct, 3 at $33.22, 2 at
+$49.83 once capped. "CityWood v1" (120249959303660590) was saved over 19 to
+21 Oct with 3 at $23.22, equal to its capped recount; the 7 at $16.38 was the
+1 to 21 Oct preview, never a save.
+
+**Mahara's campaigns only (the media buyer's client page, build 2).**
+`cockpit_media_client_range(p_start, p_end, p_accounts)`
+(`20261022x_media_client_range.sql`) gives one client's figures for any range,
+the client found the way the board finds it (its ad accounts in
+`cockpit_board_clients`), with one difference it states: spend and leads are
+Mahara's campaigns only (a campaign that has, or had, a card on the Ads
+Management board), stopped and deleted ones included, from
+`cockpit_media_daily_stats`, one row per ad and day. The rest of the same
+accounts is `offBoardSpend`, named beside the total, never in it; ads on the
+compromise list are `excludedSpend`, out of both. Bookings are the board's
+confirmed bookings for the client's location over the same days
+(`mediaBookings`, the media sync's count, is the second source), n/a with the
+reason for a done-with-you client or a day not stored. Every figure stops on
+`cockpit_media_week()`'s `through` and starts no earlier than 24 Sep 2026,
+the first day the cockpit's campaign list can tell Mahara's campaigns from a
+client's own. The page says "Mahara's campaigns only, stopped ones included;
+the Client Performance board counts the whole ad account." Over the same
+days it equals the board wherever every campaign on the account is Mahara's.
+On 1 to 20 Oct, a window over on every account's clock, it differs for
+SAFAD, $308.69 / 3 = $102.90 against the board's $683.79 / 3 = $227.93 (the
+outsider's campaign, $375.10, decision D0a), and Shades, $203.63 / 4 =
+$50.91 against $293.71 / 4 = $73.43 (the client's own pre-launch campaign,
+$90.07, decision D0d); the page names both amounts as spent outside Mahara's
+campaigns. It also differs from the board, by design, when:
+- **The days differ.** It stops every client on `cockpit_media_week()`'s
+  `through`: from midnight until the sheet fills, the day before yesterday,
+  where the board pairs to yesterday. Atlantis's account keeps Los Angeles
+  time, so until 10:00 Kuwait the board stops it a day earlier; this read
+  stops it with everyone else. It never counts before 24 Sep 2026, where the
+  board counts from the Meta store's first day.
+- **A day's bookings are not stored.** Bookings and cost per booking are
+  null, "Bookings are not stored for N of the M days."; the board pairs the
+  stored days and says "Over the N of M days where both are known."
+- **Meta holds a Mahara campaign on days the media data lacks.** The cost
+  per booking is null and the note names the amount; the board counts
+  Meta's rows.
+- **Bookings came on days with no spend.** Null with the reason, where the
+  board shows "$0" (No booking, no spend, above).
+- **Done with you.** Bookings are n/a, "Done with you: the client books its
+  own meetings."; the board shows the floor (نهوض نجد "$533+", 1 to 20 Oct).
+
+Never take a client's spend for the board from `cockpit_media_daily_stats`
+(see Spend): this read takes Mahara's campaigns from it on purpose, and says
+so.
+
+### Lead to booking (booking rate)
+
+- **Source of truth:** the board's cell (`cockpit_board_rows`,
+  `leadToBooking`): `cockpit_client_days.confirmed_bookings` over
+  `cockpit_client_days.crm_leads`.
+- **Rule:** confirmed bookings / CRM leads, both by the Kuwait day they were
+  made, summed over the days where both are known (a lead sync outage is not
+  a 0); a ratio of sums. Both are CRM numbers on Kuwait days, so nothing is
+  paired to an ad account's clock, and today counts "so far". CRM leads keep
+  Instagram and Messenger chats and leave WhatsApp chats out (CRM leads
+  above), so the rate is not bookings over Meta's form leads.
+- **Lines:** good at 25% or more (`kpi.ts` `BOOKING_RATE_GATE`), a watch
+  from 17.5% (approved 16 Oct), off under it; under 10 CRM leads the rate is
+  shown and called too few (`cockpit_board_default_targets`,
+  `lead_to_booking`, held equal to `kpi.ts` by `board-api-supabase.test.ts`).
+- **n/a:** either figure not stored ("not measured" with the source's note),
+  no day with both, or no CRM lead in the time frame (too few).
+- **Done with you:** the call centre does not book for نهوض نجد, so its rate
+  reads 0% from GoHighLevel (0 of 13 CRM leads, 14 to 20 Oct) and is judged
+  off; see the gap under Cost per booking.
+- **Checked against** (14 to 20 Oct, read only on 23 Oct): the bookings are
+  the confirmed bookings above, equal to the media sync's client by client;
+  the CRM leads were checked against the dialer's report on 16 Oct. Rates:
+  mergestudio.kw 8 / 14 = 57.14% and Ardon 5 / 11 = 45.45% (good); Ocean
+  Home 9 / 32 = 28.13% (good); Marble and more 4 / 20 and شركة العلا 4 / 20
+  = 20.00% (watch); Shades 4 / 24 = 16.67%, Arcturus 4 / 40 and City Wood 3 /
+  30 = 10.00%, Castello 1 / 23 = 4.35% and Alkhalil 0 / 22 (off); Atlantis 4
+  / 8, SAFAD 2 / 3 and Khalida 1 / 6 too few.
 
 ### Meetings due
 
@@ -737,6 +1105,44 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 - **Checked against:** the sheets read live and the portal: 1 close in 30 days
   (Ocean Home, USD 67,000 on both), equal.
 - **Gaps:** seven clients fill no closes source: client success.
+
+### ROAS
+
+- **Source of truth:** the board's cell (`cockpit_board_rows`, `roas`):
+  revenue (`cockpit_client_days.revenue_usd`, closed deal values by meeting
+  day at the fixed rates; see Closes) over spend
+  (`cockpit_meta_ad_days.spend_usd`).
+- **Rule:** revenue / spend, both summed over cost per booking's paired days
+  (to yesterday on each account's clock) on which the facts know the
+  client's closed deals; a ratio of sums. Revenue is by meeting day and spend
+  by the day it was spent, so over a week ROAS sets this week's spend against
+  meetings from earlier leads: read it over 30 days or more.
+- **Lines:** good at 20x or more, a watch from 10x, off under it
+  (`cockpit_board_default_targets`, `roas`, approved 16 Oct; `kpi.ts` holds
+  no ROAS gate).
+- **"At least" and n/a:**
+  - a closed deal with no value in a known currency: ROAS is at least the
+    figure, good when that is already good, else not measured;
+  - the client records no closed deals: not filled in, "The client does not
+    record closed deals.";
+  - some spend in a currency with no fixed USD rate, no paired day, or no
+    spend on the days closed deals are known ("No ad spend in these days."):
+    not measured, never 0x;
+  - a TikTok-flagged client: Meta spend only (TikTok above).
+- **Checked against:** its two halves are checked where they are kept
+  (revenue against the client sheets and the portal under Closes, spend under
+  Cost per booking). Read only on 23 Oct: no closed deal is stored for an
+  Active client from 1 to 20 Oct (0 closes, $0.00 revenue). So on 14 to 20
+  Oct a client that records closed deals and spent on the days they are
+  known reads 0.00x (off): Alkhalil, Arcturus, Atlantis, City Wood, SAFAD,
+  شركة العلا and Khalida. A client that records none reads "Not filled in":
+  Ardon, Castello, Marble and more, mergestudio.kw, Shades, Madana, نهوض نجد
+  and Professional Touch. Nothing spent on the days its deals are known
+  reads n/a, "No ad spend in these days.", never 0x: ARCWANI, Joe and Sera,
+  Liwan, and Ocean Home, whose closed deals are known only on 16 Oct, a day
+  its account did not deliver. On 1 to 20 Oct ARCWANI, Liwan and Ocean Home
+  read 0.00x too, and only Joe and Sera reads n/a. The one close of the 16
+  Oct check (Ocean Home, USD 67,000) is dated 22 Sep.
 
 ### Lead quality
 
@@ -840,6 +1246,7 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 | Client sheets | `sheet_snapshots.checked_at` and `error`; the CSM copy's `performanceSyncedAt` | 3 hours, or an error |
 | Portal outcomes | the latest client report (`sources.outcomes.as_of`) | not a read time: no "behind" |
 | The facts | `cockpit_sync_state` board-facts and `cockpit_board_facts_doctor()` | 2 hours; the 120-day fill 26 hours |
+| The media sync's 7 days (build 2) | `cockpit_media_week()`: `through` and `source` ("media sync" once the worker publishes `ads7d`, else "media data") | `through` before the day before yesterday, or "media data" after the worker's first publish of `ads7d` |
 
 On 16 Oct at 16:30 Kuwait every source was fresh: lead sync 15:35, appointments
 16:20, the dialer's appointment and call jobs 16:25 to 16:27, sheets 16:22 to
@@ -867,7 +1274,7 @@ On 16 Oct at 16:30 Kuwait every source was fresh: lead sync 15:35, appointments
 | Today read as complete | same | `partial` on every source of a day not yet over |
 | Stale notes on old days after one failed read | same | the 30-minute run fills the 120 days again when the source reads again |
 | Bulk uploads unnamed | same | the day's leads note and `bulkImport` |
-| The call centre's CALLBACK bookings counted by the media sync | `calculator.ts` | dropped by their ids, as the facts do; no calendar dropped by its name |
+| The call centre's CALLBACK bookings counted by the media sync | `calculator.ts` | dropped by their ids, as the facts do; no calendar dropped by its name. Not released until 22 Oct (release e4c0cpb1, with the rule of 21 Oct): see What changed on 21 and 22 October |
 | An empty month tab called missing | same | "Its Oct 26 tab has no rows yet" |
 | The doctor's plain-word problems could not be added | same | typed as text |
 | A client's reach summed part of its accounts | `20261016210100_meta_ad_days_checked.sql` | Marble, ARCWANI, Liwan read "unknown" until the nightly run |
@@ -909,6 +1316,26 @@ Budgets on the board (2026-10-17), in order (systems manager):
    Castello (no ad-day rows) read a Budget used from the listing's $0 days,
    not n/a.
 
+## What changed on 21 and 22 October
+
+The cost per booking audit of 21 Oct (`CPB-AUDIT-20261021.md`) and its two
+builds (`CPB-20261021.md`). Shipped on 22 Oct unless the row says build 2.
+
+| Found | Fixed in | Effect |
+| --- | --- | --- |
+| Every RESCHEDULE booking dropped, so a lead whose first booking GoHighLevel deleted had none (R4, D0b) | `20261021l_board_booking_rule.sql` | SAFAD 14 to 20 Oct: 1 to 2 bookings, $390.80 / 2 = $195.40 |
+| Bookings GoHighLevel no longer holds still counted (R7) | same, the interim gone check | 1 to 20 Oct: Ardon 7 to 6 ($138.06), Ocean Home 28 to 27 ($27.87), Shades 5 to 4, Alkhalil 1 to 0 (no booking on $367.34) |
+| The campaign tree kept call-backs, moved bookings and gone bookings, so a campaign could show more bookings than its client (R4) | `20261021m_board_tree_booking_rule.sql` | 22 Sep to 21 Oct: Alkhalil 'ALKHALIL- MAHRA-15\9' 6 to 4, Arcturus 'Arcturus-Mahara-3\9' 26 to 25 ($43.41) |
+| A Meta zero read could replace a settled ad-day (R6) | `20261021k_meta_ad_days_zero_reads.sql` | none today: Atlantis 19 Oct healed itself to $15.38 on the 22 Oct nightly |
+| The CSM Ads tab counted ads on the compromise list (R3) | `20261021j_csm_client_ads_excluded.sql` | 1 to 20 Oct: Liwan $1,211.23 to $194.58, Khalida $1,244.98 to $191.53 |
+| The media sync counted the call centre's call-backs, every calendar except a short list of names, and bookings made today against spend to yesterday (R1, R4, R13) | native release e4c0cpb1, `calculator.ts` | the media sync's bookings equal the board's client by client (Confirmed bookings); its 7 days end on the sheet's last spend day |
+| The first break never named cost per booking (R14); no booking on more than $60 read an untoned "n/a" (R15) | `boardColumns.ts`, `costTone.ts` | 14 to 20 Oct: SAFAD and Khalida read "Off at cost per booking"; City Wood, Castello, Arcturus and Alkhalil, whose cost per booking is off or a watch too, read "Off at booking rate", which comes first (City Wood 3 / 30 = 10%). On the media buyer's Ads page Alkhalil reads "None on $233" in red; the board shows "$233+" with the off dot |
+| The board's cost per lead judged alone while cost per booking was good (R5) | build 2: `20261022y_board_cpl_golden_rule.sql` | Atlantis 14 to 20 Oct: cost per lead off to watch, first break "Off at ROAS" |
+| The Bookings help never said call-backs and moved bookings are left out (R4) | build 2: `boardColumns.ts` | "Main and online calendar bookings made on these days. Cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts are left out." |
+| No single 7-day end for the SQL readers; the media buyer's range reads ended on the newest day of any account, so overnight a sheet account counted a day of bookings past its spend (R1) | build 2: `20261022w_media_week.sql` | `cockpit_media_week()`, `bookingsThrough` on the coverage read, winner numbers capped (the 1 to 21 Oct preview of "CityWood v1": 3 bookings at $38.22, not 7 at $16.38); three saves stored before hold a booking made after their spend, named under Cost per booking |
+| The media buyer's client page summed only the campaigns still listed (R8) | build 2: `20261022x_media_client_range.sql`, `AccountView.tsx` | 1 to 20 Oct: Khalida $91.62 to $191.53 (1); Castello $333.83 (2); ARCWANI and Liwan open |
+| No cost per booking rule written down (R19) | this file | Cost per booking, Lead to booking, ROAS above |
+
 ## What is left, and who does it
 
 | What | Who |
@@ -917,7 +1344,13 @@ Budgets on the board (2026-10-17), in order (systems manager):
 | Professional Touch's ad account is not shared with Mahara's business 767701513092162: ask the client to share it and give the system user ads_read; then add a hand tie and run a backfill for that account. Until then spend is "unknown", never $0. | CEO, then systems manager |
 | Cancelled clients' accounts spent $1,507 in 30 days (Ideal Elite $578.62 on an outsider's campaign on the compromise list, not Mahara's, so the board leaves it out since 21 Oct; Pidco $553.00 still delivering, AEA, Rm decor, حول العمران, MOFAG). Confirm each client's status; switch delivery off where the client is gone; decide whether to remove Pidco's account from Mahara's business. | Client success, media buyer, CEO |
 | Alkhalil's SAR account 640644143620696 is kept out of Alkhalil's figures (only the client's own Instagram post boosts). If Mahara does manage it, set its `kept_out` to false in a migration with the evidence. | Media buyer, then systems manager |
-| Atlantis's "Project Review & Qualification Call" calendar also takes leads' own bookings (3 of 5). Say whether it is a booking calendar: if yes, the board's calendar rule should count it (by its calendar id); if no, the booking page should not offer it. | Client success, then systems manager |
+| Atlantis's "Project Review & Qualification Call" calendar (`GfUwbVvlYJjHSSauPwVB`) also takes leads' own bookings (3 of 5). Decision D0c, the default since 21 Oct: it is not a booking calendar, and the board and the media sync (release e4c0cpb1) both leave it out. If client success says it books, allow it by its calendar id in the worker and the board together (Atlantis would read $34.91 for 14 to 20 Oct and $79.97 for 1 to 20 Oct, audit section 1); if it does not, the booking page should not offer it. | Client success, then systems manager |
+| SAFAD's account ran two outsiders' campaigns during the compromise: "New Engagement Campaign" (ad 120254791600360066, $375.10 on 13 to 15 Oct, 0 leads) and one created on 20 Oct (ad 120254896955290066, $0). Neither is on the compromise list, so the board, the CEO and pay count them (decision D0a). Listed, SAFAD reads $15.71 / 2 = $7.86 for 14 to 20 Oct and $308.69 / 3 = $102.90 for 1 to 20 Oct, and the Active clients $2,717.05 / 49 = $55.45 (نهوض نجد's $192.33 in it; $51.52 without). Also confirm Mahara's business access to the account. | CEO's sanction, media buyer, then systems manager |
+| A done-with-you client's cost per booking and booking rate read from GoHighLevel bookings it does not make (نهوض نجد 14 to 20 Oct: "$192+" and "0%", both with the off dot). Show a dash with "Done with you" in both. | CEO, then board team |
+| Whether a portfolio cost per booking leaves out a done-with-you client's spend. نهوض نجد's spend is in the Active totals while none of its bookings are: 14 to 20 Oct $3,092.14 / 49 = $63.10 with it, $2,899.81 / 49 = $59.18 without (it crosses the $60 gate); 1 to 20 Oct $77.06 and $71.78. CEO Delivery's headline and the EOD total (build 2) include it. | CEO |
+| The board's cost per booking reads "$0", judged good, when confirmed bookings land on days with no spend (mergestudio.kw 19 Oct, Atlantis and شركة العلا 18 Oct, Ocean Home 15 Oct). Read n/a with the reason, as the media buyer, the client range read and the CEO do (Cost per booking). | Board team |
+| The appointments sync never marks the bookings it stops receiving; the board's gone check is the interim (R7). | Systems manager |
+| ClickUp's Bookings (7d) and Cost Per Booking stay a dry run after build 2 (`clickup-writeback:kpi` reads ok=false and says why). Switching `CLICKUP_WRITEBACK_APPLY_KPI` on needs the systems manager's approval; whether ClickUp's "911" starts at $80 or stays at $90 (1.5 times the gate) is the CEO's. | Systems manager, CEO |
 | Triple Edge (spending, a clients row, no GoHighLevel location): a client or not? If yes, create its location and tie it; if no, hide it. | Client success |
 | Art Vision (spent $25.67, no client record) and ريبالو/ORB (hidden; Ocean Home's owner's other brand?): name, hide or remove. | Client success, CEO |
 | Ardon's Page gives Mahara no lead access, so its leads cannot be matched lead by lead. | CEO asks the client |

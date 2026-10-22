@@ -19,6 +19,7 @@ import {
   adsPageAdRows,
   adsPageBilling,
   adsPageCampaignRows,
+  adsPageClientRange,
   adsPageCoverage,
   adsPageRange,
   adsPageSource,
@@ -190,8 +191,26 @@ export function installAdsPageHarness(client: SupabaseClient): void {
             };
         }
       }
+      // A client's totals over the range, stopped campaigns included (R8).
+      case "cockpit_media_client_range":
+        await wait(200);
+        return ok(
+          adsPageClientRange(
+            String(args.p_start ?? ""),
+            String(args.p_end ?? ""),
+            args.p_accounts,
+          ),
+        );
       case "cockpit_media_campaign_history":
         return ok([]);
+      // A client's page lists the campaign builds saved for it: none here.
+      case "cockpit_build_action":
+        return args.p_operation === "list"
+          ? ok([])
+          : {
+              data: null,
+              error: { message: "The harness does not save builds." },
+            };
       // An opened campaign's ads: none saved as a winner yet.
       case "cockpit_winner_saved_in":
         return ok({});

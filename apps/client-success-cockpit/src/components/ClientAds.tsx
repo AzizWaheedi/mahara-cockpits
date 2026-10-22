@@ -333,7 +333,9 @@ export function AdsView({
   return (
     <div className="space-y-4">
       <p className="text-xs text-muted-foreground">
-        Spend, leads and clicks come from Meta.
+        Spend, leads and clicks come from Meta, for Mahara's campaigns only
+        (stopped ones included). The Client Performance board counts the whole
+        ad account, so its spend can be higher.
         {bookings
           ? " Bookings come from the GHL calendar, matched to the ad that brought the lead."
           : null}{" "}

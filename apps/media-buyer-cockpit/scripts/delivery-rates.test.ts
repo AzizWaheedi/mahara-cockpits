@@ -6,12 +6,14 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import * as nativeDelivery from "../../../hermes/ceo-refresh/native/adapters/delivery.js";
 import * as native from "../../../hermes/ceo-refresh/native/constants.js";
 import * as csKpi from "../../client-success-cockpit/src/lib/kpi";
 import {
   clientStatus,
   costPerShownAt60,
   deliveryRates,
+  tooEarly,
 } from "../convex/ceo/adapters/delivery";
 import {
   attendanceOf,
@@ -195,20 +197,122 @@ describe("clientStatus", () => {
       "good",
     );
   });
-  test("bad on cost per booking, cost per lead, or spend with no leads; a low show rate alone is watch", () => {
+  test("bad on cost per booking over the bad line, or a bad cost per lead with no booking inside the gate; a low show rate alone is watch", () => {
     expect(clientStatus({ ...base, cpbConfirmed: CPB_BAD + 0.01 })).toBe("bad");
-    expect(clientStatus({ ...base, cpl: CPL_GATE * 1.5 + 0.01 })).toBe("bad");
+    // The golden rule (R5, 2026-10-22): a cost per lead over $22.50 under a
+    // cost per booking within the gate is a watch, never off track.
+    expect(clientStatus({ ...base, cpl: CPL_GATE * 1.5 + 0.01 })).toBe("watch");
+    expect(clientStatus({ ...base, leads: 0, cpl: null })).toBe("watch");
+    // Over the gate, a bad cost per lead makes it bad.
+    expect(
+      clientStatus({ ...base, cpbConfirmed: 70, cpl: CPL_GATE * 1.5 + 0.01 }),
+    ).toBe("bad");
     // Aziz (2026-09-21): 60% is the one show rate line for clients, there is no 40.
     expect(clientStatus({ ...base, showRate: 0.2 })).toBe("watch");
-    expect(clientStatus({ ...base, leads: 0, cpl: null })).toBe("bad");
   });
   test("watch in between, and when the show rate is unknown", () => {
     expect(clientStatus({ ...base, cpl: 18 })).toBe("watch");
     expect(clientStatus({ ...base, cpbConfirmed: 70 })).toBe("watch");
     expect(clientStatus({ ...base, showRate: 0.5 })).toBe("watch");
     expect(clientStatus({ ...base, showRate: null })).toBe("watch");
-    expect(clientStatus({ ...base, cpbConfirmed: null })).toBe("watch");
     expect(clientStatus({ ...base, cpbConfirmed: CPB_BAD })).toBe("watch");
+  });
+  test("no confirmed booking yet: the spend counts as the cost per booking", () => {
+    // $300 with no booking is over $80: bad (was a watch before the rule).
+    expect(clientStatus({ ...base, cpbConfirmed: null })).toBe("bad");
+    expect(
+      clientStatus({ ...base, cpbConfirmed: null, confirmed: 0, spend: 70 }),
+    ).toBe("watch");
+    expect(
+      clientStatus({
+        ...base,
+        cpbConfirmed: null,
+        confirmed: 0,
+        spend: 70,
+        cpl: 25,
+      }),
+    ).toBe("bad");
+    // Up to $60: too early to judge, a watch, bad only on a bad cost per lead or no leads.
+    const early = { ...base, cpbConfirmed: null, confirmed: 0, spend: 45 };
+    expect(clientStatus(early)).toBe("watch");
+    expect(tooEarly(early)).toBe(true);
+    expect(clientStatus({ ...early, leads: 0, cpl: null })).toBe("bad");
+    expect(tooEarly({ ...early, leads: 0, cpl: null })).toBe(false);
+    // Measured spend is what counts: $300 spent, $50 of it on stored days.
+    expect(
+      clientStatus({
+        ...base,
+        cpbConfirmed: null,
+        confirmed: 0,
+        spendMeasured: 50,
+      }),
+    ).toBe("watch");
+    expect(tooEarly({ ...base, cpbConfirmed: 30, confirmed: 1 })).toBe(false);
+  });
+  test("bookings not measured: cost per lead alone", () => {
+    const off = { ...base, cpbConfirmed: null, confirmed: null };
+    expect(clientStatus(off)).toBe("watch");
+    expect(clientStatus({ ...off, cpl: 25 })).toBe("bad");
+    expect(tooEarly(off)).toBe(false);
+  });
+  test("the 14 to 20 Oct 2026 clients read as the audit expects (R5)", () => {
+    const at = (
+      spend: number,
+      leads: number,
+      confirmed: number | null,
+      showRate: number | null = null,
+    ) => ({
+      spend,
+      leads,
+      cpl: leads > 0 ? Math.round((spend / leads) * 100) / 100 : null,
+      confirmed,
+      cpbConfirmed:
+        confirmed && confirmed > 0
+          ? Math.round((spend / confirmed) * 100) / 100
+          : null,
+      showRate,
+      weBook: true,
+    });
+    expect(clientStatus(at(174.53, 5, 4))).toBe("watch"); // Atlantis, CPL $34.91
+    expect(clientStatus(at(233.36, 17, 0))).toBe("bad"); // Alkhalil, no booking
+    expect(clientStatus(at(354, 32, 3))).toBe("bad"); // City Wood $118.00
+    expect(clientStatus(at(268.48, 20, 1))).toBe("bad"); // Castello
+    expect(clientStatus(at(91.62, 6, 1))).toBe("bad"); // Khalida
+    expect(clientStatus(at(242.48, 39, 4, 0.7))).toBe("watch"); // Arcturus $60.62
+  });
+  test("the native refresh and the TS twin judge every case the same", () => {
+    const spends = [0, 30, 59, 61, 79, 81, 300];
+    const cpls = [null, 10, 15, 18, 22.5, 23];
+    const cpbs = [null, 40, 60, 61, 80, 81];
+    const shows = [null, 0.5, 0.6];
+    const confirmeds = [undefined, null, 0, 2];
+    // Spend on the days the board stores bookings: absent (all of it), a
+    // part under each line, or none of it.
+    const measured = [undefined, 0, 45, 70, 90];
+    let n = 0;
+    for (const spend of spends)
+      for (const cpl of cpls)
+        for (const cpbConfirmed of cpbs)
+          for (const showRate of shows)
+            for (const confirmed of confirmeds)
+              for (const spendMeasured of measured)
+                for (const weBook of [true, false]) {
+                  const x = {
+                    spend,
+                    leads:
+                      cpl === null ? 0 : Math.max(1, Math.round(spend / cpl)),
+                    cpl,
+                    cpbConfirmed,
+                    showRate,
+                    weBook,
+                    confirmed,
+                    spendMeasured,
+                  };
+                  expect(nativeDelivery.clientStatus(x)).toBe(clientStatus(x));
+                  expect(nativeDelivery.tooEarly(x)).toBe(tooEarly(x));
+                  n += 1;
+                }
+    expect(n).toBeGreaterThan(25000);
   });
   test("no spend is no data", () => {
     expect(clientStatus({ ...base, spend: 0 })).toBe("no-data");

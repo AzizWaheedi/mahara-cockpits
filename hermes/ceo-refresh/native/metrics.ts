@@ -73,10 +73,18 @@ const TRIAGE = "Creative Triage Supabase (bldgtotkfmhoxmlzowdx)";
 const CLICKUP = "ClickUp, the Clients - Mahara list, synced into the cockpit";
 /**
  * Client Meta spend and leads since 2026-10-11 (R2): the media buyer's sync,
- * tied to a client through the campaign's ad account; the old snapshot table
- * stopped on 2026-10-02 and is read only before the live table's first day.
+ * tied to a client through the campaign's ad account; the snapshot table
+ * fills the ad-days the live table lacks. Its own sync stopped on 2026-10-02,
+ * and since 2026-10-18 the Meta dashboard feed keeps it current from
+ * cockpit_meta_ad_days every 10 minutes (R17, 2026-10-22).
  */
-const MEDIA = `${TRIAGE} cockpit_media_daily_stats (the media buyer's Meta sync, USD), tied to the client through cockpit_campaigns and the ad account; ads_daily_snapshots (frozen on 2026-10-02) for the ad-days the live table lacks, matched by Meta ad id`;
+const MEDIA = `${TRIAGE} cockpit_media_daily_stats (the media buyer's Meta sync, USD), tied to the client through cockpit_campaigns and the ad account; ads_daily_snapshots (kept current from cockpit_meta_ad_days by the Meta dashboard feed since 2026-10-18) for the ad-days the live table lacks, matched by Meta ad id; ads on the compromise list (cockpit_excluded_ads) left out of both`;
+/**
+ * Client bookings since 2026-10-22 (R2): the Client Performance board's
+ * stored counts per GoHighLevel location and Kuwait day, tied to the client
+ * through cockpit_board_clients (ad account first, GoHighLevel tie second).
+ */
+const BOARD_BOOKINGS = `${TRIAGE} cockpit_client_days (the Client Performance board's counts by the Kuwait day the booking was made), tied to the client through cockpit_board_clients`;
 /**
  * B2B keeps a voided deal in closed_deals and marks it in record_voids; every
  * deal figure here leaves it out (./voids.ts), the B2B dashboard does not.
@@ -284,7 +292,7 @@ export const DEFINITIONS: MetricDefinition[] = [
   d("expenses.overhead", "expenses", "Overhead expenses", "Matched rent, utilities, phone, insurance and accounting outflows for the latest statement month.", `${TRIAGE} canonical bank statements and exclusions`, "usd", "Missing groups remain missing. Unclassified transactions are excluded."),
   d("expenses.labour", "expenses", "Labour expenses", "Classified salary expense amount for the latest statement month.", `${TRIAGE} canonical bank statements and exclusions`, "usd", "Missing groups remain missing. Unclassified transactions are excluded."),
   d("expenses.ownAdSpend", "expenses", "Mahara advertising expenses", "Classified Mahara advertising outflows for the latest statement month.", `${TRIAGE} canonical bank statements and exclusions`, "usd", "Client advertising spend."),
-  d("expenses.clientAdSpend", "expenses", "Client advertising spend", "Client Meta ad spend in USD for the statement month, from campaigns on our ads board, excluding Mahara's own ad accounts.", MEDIA, "usd", "Mahara's own advertising spend; campaigns that tie to no client ad account; ad accounts with no campaign in the media sync."),
+  d("expenses.clientAdSpend", "expenses", "Client advertising spend", "Client Meta ad spend in USD for the statement month, every campaign that ties to a client ad account, excluding Mahara's own ad accounts.", MEDIA, "usd", "Mahara's own advertising spend; campaigns that tie to no client ad account; ads on the compromise list (the Expenses Refresh now button runs the cockpit-ceo-api Edge Function, which still counts them until it is changed)."),
   d("expenses.revenue", "expenses", "Whop statement-month cash", "Paid USD Whop net amounts for the latest statement month.", B2B, "usd", "Other payment rails. This is not complete company revenue."),
   // --- growth (Mahara's own funnel) ---
   d(
@@ -740,7 +748,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Client Meta spend by the ad account's reporting day, in USD, for every campaign in the media buyer's sync that ties to a client ad account.",
     MEDIA,
     "usd",
-    "Mahara's own accounts; campaigns that tie to no client; for frozen days, currencies with no rate.",
+    "Mahara's own accounts; campaigns that tie to no client; ads on the compromise list; snapshot days in a currency with no rate.",
   ),
   d(
     "delivery.leads",
@@ -754,26 +762,28 @@ export const DEFINITIONS: MetricDefinition[] = [
     "delivery.bookings",
     "delivery",
     "Client bookings",
-    "Appointments on a client's provisional, online and main calendars, by the day the meeting is for, future ones excluded.",
-    TRIAGE,
+    "Confirmed plus provisional bookings the Client Performance board stores, by the Kuwait day the booking was made.",
+    BOARD_BOOKINGS,
     "count",
+    "Days and clients the board stores no count for (not measured, never zero); clients with no ad account tied here.",
   ),
   d(
     "delivery.bookings_confirmed",
     "delivery",
     "Confirmed bookings",
-    "Appointments on the online and main calendars.",
-    TRIAGE,
+    "Main and online calendar bookings made that day, as the Client Performance board counts them.",
+    BOARD_BOOKINGS,
     "count",
+    "Cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts.",
   ),
   d(
     "delivery.bookings_provisional",
     "delivery",
     "Provisional bookings",
-    "Appointments on the provisional (Not Confirmed Appointments) calendar only, by the day the meeting is for, future ones excluded.",
-    `${TRIAGE} mahara_reporting (the call-centre report's appointment store: the dialer's GoHighLevel appointment facts and verified bookings), tied to the client by location`,
+    "Bookings on the Not Confirmed Appointments calendar made that day, as the Client Performance board counts them.",
+    BOARD_BOOKINGS,
     "count",
-    "Appointments on the main calendar still in status new, which the call-centre report calls provisional; conflicting and deleted rows.",
+    "Days the board stores no provisional count for (no dialer appointment sync for that client).",
   ),
   d(
     "delivery.cpl",
@@ -787,24 +797,26 @@ export const DEFINITIONS: MetricDefinition[] = [
     "delivery.cpb",
     "delivery",
     "Client cost per booking",
-    "Client spend over bookings.",
-    TRIAGE,
+    "Spend on the days the board stores bookings, over confirmed plus provisional bookings.",
+    `${MEDIA}; ${BOARD_BOOKINGS}`,
     "usd",
+    "Spend on days or clients whose bookings the board does not store, named on the screen.",
   ),
   d(
     "delivery.cpb_confirmed",
     "delivery",
     "Cost per confirmed booking",
-    "Client spend over confirmed bookings.",
-    TRIAGE,
+    "Spend on the days the board stores bookings, over confirmed bookings: the main cost per booking.",
+    `${MEDIA}; ${BOARD_BOOKINGS}`,
     "usd",
+    "Spend on days or clients whose bookings the board does not store, named on the screen.",
   ),
   d(
     "delivery.book_rate",
     "delivery",
     "Lead to booking",
     "Bookings over platform leads, last 30 days.",
-    TRIAGE,
+    `${MEDIA}; ${BOARD_BOOKINGS}`,
     "share",
   ),
   d(
@@ -812,14 +824,14 @@ export const DEFINITIONS: MetricDefinition[] = [
     "delivery",
     "Lead to confirmed booking",
     "Confirmed bookings over platform leads, last 30 days.",
-    TRIAGE,
+    `${MEDIA}; ${BOARD_BOOKINGS}`,
     "share",
   ),
   d(
     "delivery.show_rate",
     "delivery",
     "Client show rate",
-    "Showed over showed plus no-show on meetings whose day has passed, last 30 days.",
+    "Showed over showed plus no-show on meetings whose day has passed, by the day of the meeting, last 30 days.",
     TRIAGE,
     "share",
     "Meetings nobody updated.",
@@ -1185,15 +1197,22 @@ export function extractDelivery(p: DeliveryPayload): MetricValue[] {
   ): void => {
     out.push({ metric, scope, window, value: r(value) });
   };
+  // The booking metrics are defined as the Client Performance board's counts
+  // (BOARD_BOOKINGS). A refresh that fell back to the media sync's booking
+  // events, or a payload stored before the board's counts, uses another rule,
+  // so it writes no booking value under these names rather than mix two
+  // rules in one history (2026-10-22).
+  const board = p.bookingSource === "board";
   for (const w of ["yesterday", "last7", "prevLast7", "mtd"] as const) {
     const x = p[w];
     if (!x) continue;
     v("delivery.spend", w, x.spend);
     v("delivery.leads", w, x.leads);
+    v("delivery.cpl", w, x.cpl);
+    if (!board) continue;
     v("delivery.bookings", w, x.bookings);
     v("delivery.bookings_confirmed", w, x.confirmed);
     v("delivery.bookings_provisional", w, x.provisional);
-    v("delivery.cpl", w, x.cpl);
     v("delivery.cpb", w, x.cpb);
     v("delivery.cpb_confirmed", w, x.cpbConfirmed);
   }
@@ -1202,15 +1221,19 @@ export function extractDelivery(p: DeliveryPayload): MetricValue[] {
     const scope = `client:${c.clickupTaskId}`;
     v("delivery.spend", "last7", c.spend7d, scope);
     v("delivery.leads", "last7", c.leads7d, scope);
-    v("delivery.bookings", "last7", c.bookings7d, scope);
-    v("delivery.bookings_confirmed", "last7", c.confirmed7d, scope);
     v("delivery.cpl", "last7", c.cpl7d, scope);
-    v("delivery.cpb", "last7", c.cpb7d, scope);
-    v("delivery.cpb_confirmed", "last7", c.cpbConfirmed7d, scope);
+    if (board) {
+      v("delivery.bookings", "last7", c.bookings7d, scope);
+      v("delivery.bookings_confirmed", "last7", c.confirmed7d, scope);
+      v("delivery.cpb", "last7", c.cpb7d, scope);
+      v("delivery.cpb_confirmed", "last7", c.cpbConfirmed7d, scope);
+    }
     const rt = c.rates30;
     if (rt) {
-      v("delivery.book_rate", "last30", rt.bookRate, scope);
-      v("delivery.book_rate_confirmed", "last30", rt.bookRateConfirmed, scope);
+      if (board) {
+        v("delivery.book_rate", "last30", rt.bookRate, scope);
+        v("delivery.book_rate_confirmed", "last30", rt.bookRateConfirmed, scope);
+      }
       v("delivery.show_rate", "last30", rt.showRate, scope);
       v("delivery.close_rate", "last30", rt.closeRate, scope);
       v("delivery.no_outcome", "last30", rt.noOutcome, scope);

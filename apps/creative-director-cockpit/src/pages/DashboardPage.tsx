@@ -35,6 +35,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { WhatsAppDesk } from "@/components/WhatsAppDesk";
 import { CopyButton } from "@/components/WinningAds";
+import {
+  type ClientPerformance,
+  cplTitle,
+  performanceView,
+} from "@/lib/clientWeek";
 import { fill, TEMPLATES } from "@/lib/creativeTemplates";
 import { eodDeliveryNote } from "@/lib/personalEod";
 import { useCreativeSnapshot } from "@/lib/useCreativeSnapshot";
@@ -1204,7 +1209,11 @@ function ClientProfiles({
                     </span>
                   )}
                   {r.postsLate > 0 && <span>{r.postsLate} posts late</span>}
-                  {r.cpl !== undefined && <span>{money(r.cpl)} CPL</span>}
+                  {r.cpl !== undefined && (
+                    <span title={cplTitle(r.performance)}>
+                      {money(r.cpl)} CPL
+                    </span>
+                  )}
                 </span>
               </button>
               {isOpen && (
@@ -1225,38 +1234,7 @@ function ClientProfiles({
                         </span>
                       )}
                     </Stat>
-                    <Stat label="Performance, last 7d">
-                      {r.ads > 0 ? (
-                        <>
-                          {r.leads} leads at {r.cpl ? money(r.cpl) : "n/a"}
-                          <span className="block text-muted-foreground">
-                            {r.bookings7d} booked
-                            {r.showed7d === null ? (
-                              <span title="Show data comes from the client reporting sheets, which are not wired in yet">
-                                {" "}
-                                · shows not tracked yet
-                              </span>
-                            ) : (
-                              <>
-                                {" "}
-                                · {r.showed7d} showed
-                                {r.showRate !== null &&
-                                  ` · ${Math.round(r.showRate * 100)}% show`}
-                              </>
-                            )}
-                          </span>
-                          {r.costPerBooking !== undefined && (
-                            <span className="block text-muted-foreground">
-                              {money(r.costPerBooking)} per booking
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-muted-foreground">
-                          No ads on our boards
-                        </span>
-                      )}
-                    </Stat>
+                    <ClientWeekStat performance={r.performance} />
                     <Stat label="Touchpoints this week">
                       {r.touchesThisWeek} of 1 to 2
                       {r.touchesThisWeek === 0 ? (
@@ -1373,6 +1351,30 @@ function ClientProfiles({
         })}
       </ul>
     </Section>
+  );
+}
+
+/**
+ * The client's last 7 days: one figure for the whole client from the media
+ * sync, or the live campaign rows summed and labelled as such until it
+ * publishes. Every line says what it counts and what it leaves out.
+ */
+function ClientWeekStat({ performance }: { performance: ClientPerformance }) {
+  const view = performanceView(performance);
+  return (
+    <Stat label={view.label}>
+      {view.lines.map(line => (
+        <span
+          key={line.text}
+          title={line.title}
+          className={`block ${line.muted ? "text-muted-foreground" : ""} ${
+            line.note ? "mt-1 text-xs" : ""
+          }`}
+        >
+          {line.text}
+        </span>
+      ))}
+    </Stat>
   );
 }
 

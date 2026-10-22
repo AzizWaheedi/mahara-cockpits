@@ -114,7 +114,7 @@ async function read(project, query, timeoutMs) {
  * the planner from parallel scans, which hang here). Bookings count on the
  * booking day, attendance on the meeting day up to today, unknown attendance
  * is never a no-show, spend is USD (the media sync's own conversion; the
- * cockpit's rate table for days from the frozen snapshot table). Counts only.
+ * cockpit's rate table for days from the snapshot table). Counts only.
  */
 const pulseSql = (today) => `with w as (
   select d,
@@ -125,7 +125,7 @@ const pulseSql = (today) => `with w as (
   from (select date '${today}' as d) x
 ),
 -- Client ad spend by client and day in USD (R2): the live media table, the
--- frozen snapshot table for the ad-days it lacks (../data/triage.js mediaClientDaysSql).
+-- snapshot table for the ad-days it lacks (../data/triage.js mediaClientDaysSql).
 spend_days as (${mediaClientDaysSql(addDays(today, -89), today)})
 select g.clickup_id,
   coalesce(ap.appts_28d, 0) as appts_28d,
@@ -859,7 +859,7 @@ export function clientDailyOf(input) {
         }
         return r;
     };
-    // Ad-days counted from the live table, so the frozen fill never adds one twice.
+    // Ad-days counted from the live table, so the snapshot fill never adds one twice.
     const counted = new Set();
     for (const d of daily) {
         const taskId = taskOfCampaign.get(String(d.campaignName ?? ""));
@@ -872,8 +872,9 @@ export function clientDailyOf(input) {
         if (d.metaAdId)
             counted.add(`${d.metaAdId}|${date}`);
     }
-    // The frozen snapshot table's ad-days the live table lacks (up to 2 Oct
-    // 2026), already tied to the card by its ad account and in USD.
+    // The snapshot table's ad-days the live table lacks (kept current by the
+    // Meta dashboard feed since 18 Oct; R17, 2026-10-22), already tied to the
+    // card by its ad account and in USD.
     const fillTasks = new Set();
     let filled = 0;
     let filledUsd = 0;
@@ -1527,7 +1528,7 @@ export const clients = {
             dailyTo = today;
             dailyFrom = m?.firstDate && m.firstDate > addDays(today, -179) ? String(m.firstDate) : addDays(today, -179);
             const cardOf = (keys) => keys.map(tight).filter(Boolean).map(key => cardByKey.get(key)).find(id => id && rosterIds.has(id)) ?? null;
-            // The frozen snapshot rows only for cards on this roster; a
+            // The snapshot table's fill rows only for cards on this roster; a
             // currency with no rate has no dollar figure and is named.
             const noRate = new Set();
             const fill = [];
@@ -1546,7 +1547,7 @@ export const clients = {
                 r.daily = byTask.get(r.clickupTaskId) ?? null;
             notes.push({
                 level: "info",
-                text: `Per-day spend, leads and bookings per client start ${shortDay(dailyFrom)} (the media buyer's Meta sync, campaigns taken off the board included), so a window that starts earlier counts from then. That sync holds only the campaigns the media buyer tracks, so up to 2 Oct the ads it does not hold come from the old snapshot table (frozen since 2 Oct), tied to the card by its ad account, matched by Meta ad id so no day counts twice, converted at the cockpit's fixed rates${filled ? `: ${plural(filled, "ad-day")}, $${filledUsd.toFixed(2)}` : ""}.${noRate.size ? ` Spend in ${[...noRate].sort().join(", ")} has no fixed rate and is left out of those days.` : ""} Bookings per day are the booking events tied to the client's campaigns, future appointments left out; the 7-day bookings column is the client's whole GoHighLevel count, so the two can differ.`,
+                text: `Per-day spend, leads and bookings per client start ${shortDay(dailyFrom)} (the media buyer's Meta sync, campaigns taken off the board included), so a window that starts earlier counts from then. That sync holds only the campaigns the media buyer tracks, so the ads it does not hold come from the snapshot table (ads_daily_snapshots, kept current by the Meta dashboard feed since 18 Oct), tied to the card by its ad account, matched by Meta ad id so no day counts twice, converted at the cockpit's fixed rates, ads on the compromise list left out${filled ? `: ${plural(filled, "ad-day")}, $${filledUsd.toFixed(2)}` : ""}.${noRate.size ? ` Spend in ${[...noRate].sort().join(", ")} has no fixed rate and is left out of those days.` : ""} Bookings per day are the booking events tied to the client's campaigns, future appointments left out; the 7-day bookings column is the client's whole GoHighLevel count, so the two can differ.`,
             });
         }
         else {

@@ -1,6 +1,6 @@
 // Pure source shaping ported from media buyer fanout; no legacy service runtime.
 import {type Row, callTool, graph, unwrap, recordLog, assertNativeFence} from './runtime';
-import {CLIENTS_LIST, CREATIVE_LIST, VIDEO_LIST, CONTENT_LIST} from './calculator';
+import {CLIENTS_LIST, CREATIVE_LIST, VIDEO_LIST, CONTENT_LIST, type ClientWeeks, clientWeekFor} from './calculator';
 import {latestUpdates} from './clientUpdates';
 import {withoutExcludedAds} from './excludedAds';
 const TRACKER = '1pBEyClUxPLc4-RdXR8gZ0MxsLkLLFkWJwkiVqVf2rro';
@@ -524,13 +524,17 @@ export async function gatherFunnels(prior:Row[]=[]): Promise<Row[]> {
   return out;
 }
 
-export async function collectCreative(state: Row, tables: Record<string, Row[]>, csm: Record<string, Row[]>) {
+export async function collectCreative(state: Row, tables: Record<string, Row[]>, csm: Record<string, Row[]>, weeks?: ClientWeeks) {
   await assertNativeFence();
   const clients = await gatherClients();
   const previous = new Map<string, Row>((state.creative?.clients ?? []).map((row: Row) => [row.taskId, row]));
   for (const client of clients) {
     const old = previous.get(client.taskId);
     const profile = (csm.clientProfiles ?? []).find(row => normClient(row.clientName ?? row.name ?? row.client) === normClient(client.name));
+    // The client's 7 days, the same object the CSM profile and the media
+    // clientLinks row carry (ads7d, 2026-10-22); no key when none was published.
+    const week = clientWeekFor(weeks, client.taskId, client.name) ?? profile?.ads7d;
+    if (week) client.ads7d = week;
     if (profile) {
       if(Array.isArray(profile.adLeads?.daily)){
         const since=new Date(Date.now()-90*86400000).toISOString().slice(0,10);
@@ -564,6 +568,6 @@ export async function collectCreative(state: Row, tables: Record<string, Row[]>,
     client.updates = latestUpdates(state.media?.clientComments, client.taskId, Date.now());
   }
   const creative = await gatherCreative(clients);
-  tables.clientLinks = clients.map(row => ({name: row.name, taskId: row.taskId, aliases: row.aliases, url: row.url, driveLink: row.driveLink ?? row.driveFolder, brandDnaDoc: row.brandDnaDoc, offerCheatSheet: row.offerCheatSheet, dosDonts: row.dosDonts}));
+  tables.clientLinks = clients.map(row => ({name: row.name, taskId: row.taskId, aliases: row.aliases, url: row.url, driveLink: row.driveLink ?? row.driveFolder, brandDnaDoc: row.brandDnaDoc, offerCheatSheet: row.offerCheatSheet, dosDonts: row.dosDonts, ...(row.ads7d ? {ads7d: row.ads7d} : {})}));
   return {clients, creativeTasks: creative.tasks, videoJobs: creative.videos, contentPosts: creative.posts, campaigns: tables.campaigns, ads: tables.ads, metaTree: tables.metaTree, funnels: await gatherFunnels(state.creative?.funnels??[]), winnersArchive: tables.winnersArchive, marketPlays: tables.marketPlays};
 }

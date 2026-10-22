@@ -2,7 +2,7 @@
 // Regenerate with node hermes/cockpit-sync/extract.cjs; no service runtime dependency.
 import {type ActionCtx,internal,graph,allAdAccounts,callTool,supabaseQuery,unwrap,providerFetch,recordLog,MAHARA_BUSINESS_ID} from './runtime';
 import {CPL_GATE,CPB_GATE,CPB_BAD,BOOKING_RATE_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';
-import {withoutExcludedAds} from './excludedAds';
+import {isExcludedAd,withoutExcludedAds} from './excludedAds';
 import {budgetCurrency,campaignBudgets,unconvertedBudgetNote} from './currency';
 import {cleanLostNote} from './lostNotes';
 import {hasPicture,isMetaId,metaImageExpiry,metaImageUsable,sameStoredRow,stillCaptureDue,stillKeyFor} from './metaMedia';
@@ -508,7 +508,7 @@ export function diagnose(c: {
  * Bookings from the client's own GHL sub-account, last 7 days. Runs with the
  * per-client private token: the agency OAuth cannot see sub-account calendars.
  */
-type BookingEvent = {
+export type BookingEvent = {
   eventId?: string; locationId?: string; contactId?: string; startTime?: string;
   date: string;
   appointmentDate?: string;
@@ -555,6 +555,8 @@ export async function ghlBookingEvents(
   loc: string,
   token: string,
   replaced?: DialerReplaced,
+  /** Told why, whenever the answer is undefined (ClientWeek.bookingsWhy). */
+  miss?: (why: "read" | "calendar") => void,
 ): Promise<BookingEvent[] | undefined> {
   const calHeaders = {
     Authorization: `Bearer ${token}`,
@@ -580,7 +582,10 @@ export async function ghlBookingEvents(
       `https://services.leadconnectorhq.com/calendars/?locationId=${loc}`,
       { headers: calHeaders },
     );
-    if (!calRes.ok) return undefined;
+    if (!calRes.ok) {
+      miss?.("read");
+      return undefined;
+    }
     // Only the main and online appointment calendars hold bookings, as on the
     // board (calendarKind). "Not Confirmed Appointments" is the provisional
     // calendar and the callback / reschedule calendars are agent scheduling:
@@ -597,6 +602,7 @@ export async function ghlBookingEvents(
     // its bookings are unknown, and its campaigns are judged on cost per lead.
     if (cals.length === 0) {
       recordLog("warn", `no main or online appointment calendar at GHL location ${loc}`);
+      miss?.("calendar");
       return undefined;
     }
     // biome-ignore lint/suspicious/noExplicitAny: GHL payload
@@ -608,7 +614,17 @@ export async function ghlBookingEvents(
           `https://services.leadconnectorhq.com/calendars/events?locationId=${loc}&calendarId=${c.id}&startTime=${start}&endTime=${end}`,
           { headers: calHeaders },
         );
-        if (!evRes.ok) continue;
+        // A calendar or window that could not be read leaves the count short,
+        // so the client's bookings are unknown this run: a smaller number is
+        // never published as the known one (2026-10-22).
+        if (!evRes.ok) {
+          recordLog(
+            "warn",
+            `GHL events at location ${loc} refused (${evRes.status}); its bookings are not known this run`,
+          );
+          miss?.("read");
+          return undefined;
+        }
         // biome-ignore lint/suspicious/noExplicitAny: GHL payload
         for (const e of ((await evRes.json())?.events ?? []) as any[]) {
           // A meeting starting exactly now comes back from both asks.
@@ -652,7 +668,9 @@ export async function ghlBookingEvents(
     for (const e of events) {
       if (e?.id && e.deleted !== true) held.add(String(e.id));
       const status = String(e.appointmentStatus ?? "").toLowerCase();
-      if (status === "cancelled") continue;
+      // Cancelled and invalid bookings never count, as on the board
+      // (20261021l_board_booking_rule.sql).
+      if (status === "cancelled" || status === "invalid") continue;
       // A client's own Google Calendar event that two-way sync copied into
       // GHL is not a lead's booking (16 at Atlantis and 6 at Merge Studio in
       // 30 days). GHL marks it createdBy.source "google_calendar". Deleted
@@ -705,6 +723,7 @@ export async function ghlBookingEvents(
     }
     return kept;
   } catch {
+    miss?.("read");
     return undefined;
   }
 }
@@ -796,6 +815,92 @@ export async function dialerReplacedBookingIds(): Promise<DialerReplaced | undef
     );
     return undefined;
   }
+}
+
+/**
+ * Campaigns ever written to cockpit_campaigns, each with the Meta ad account
+ * it was last stored under (digits, when stored). The native publish writes
+ * only the campaigns on the Ads Management board there, and a stopped one
+ * stays (source_deleted), so these are every campaign that has been Mahara's.
+ * Undefined when unreadable.
+ */
+export async function publishedCampaigns(): Promise<
+  Map<string, string | undefined> | undefined
+> {
+  try {
+    const rows = await supabaseQuery(`
+      select raw_data->>'campaignName' as name,
+        (array_agg(regexp_replace(meta_account_id, '^act_', '') order by updated_at desc)
+          filter (where meta_account_id ~ '^(act_)?[0-9]+$'))[1] as account
+      from public.cockpit_campaigns
+      where nullif(raw_data->>'campaignName', '') is not null
+      group by 1
+    `);
+    const out = new Map<string, string | undefined>();
+    for (const r of rows) {
+      const name = String(r.name ?? "");
+      if (!name) continue;
+      const account = String(r.account ?? "").replace(/^act_/, "");
+      out.set(name, /^\d+$/.test(account) ? account : undefined);
+    }
+    return out;
+  } catch (e) {
+    recordLog(
+      "warn",
+      `published campaigns unreadable, a stopped campaign counts as Mahara's only when a board card is named after it: ${String(e).slice(0, 160)}`,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * Each campaign's Meta ad account (digits): as this run's rows name it, else
+ * as cockpit_campaigns last stored it. The second is how a campaign that
+ * stopped more than 30 days ago still finds its client in the CSM history,
+ * whose older rows carry no accountId.
+ */
+export function campaignAccounts(
+  grain: readonly Pick<WeekGrain, "campaignName" | "accountId">[],
+  published?: ReadonlyMap<string, string | undefined>,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const g of grain) {
+    const id = String(g.accountId ?? "").replace(/^act_/, "");
+    if (/^\d+$/.test(id) && !out.has(g.campaignName))
+      out.set(g.campaignName, id);
+  }
+  for (const [name, id] of published ?? [])
+    if (id && !out.has(name)) out.set(name, id);
+  return out;
+}
+
+/**
+ * A row's Meta ad account id, digits only, from the account's name as the
+ * sheet or Meta writes it. In this order: the id written in the name when
+ * Meta shows it ("718146936708597, SAR" is Ardon's); the one account Meta
+ * shows under that name (`named`); when several share the name (Khalida's
+ * 1275190574533155 and 1839126900588107 are both "منشآت خالدة"), the
+ * campaign's own account (`own`) if it is one of them, else none rather than
+ * the wrong one; for a name Meta does not show, the written id, else the
+ * campaign's own account.
+ */
+export function resolveAccountId(
+  accountName: string,
+  named: readonly string[],
+  own: string | undefined,
+  visible: ReadonlySet<string>,
+): string | undefined {
+  const digits = (v: unknown) => {
+    const d = String(v ?? "").replace(/^act_/, "");
+    return /^\d+$/.test(d) ? d : undefined;
+  };
+  const written = /\d{6,}/.exec(String(accountName ?? ""))?.[0];
+  if (written && visible.has(written)) return written;
+  const ids = named.map(digits).filter((d): d is string => Boolean(d));
+  if (ids.length === 1) return ids[0];
+  const mine = digits(own);
+  if (ids.length > 1) return mine && ids.includes(mine) ? mine : undefined;
+  return written ?? mine;
 }
 
 /**
@@ -914,6 +1019,351 @@ export function placeBookings(
     });
   }
   return { rows, unplaced };
+}
+
+/**
+ * One client's last 7 days, computed once here and published identically on
+ * the media `clientLinks` row, the CSM `clientProfiles` row and the creative
+ * `clients` row as `ads7d` (cost per booking build 2, 2026-10-22). Until then
+ * every client-level 7-day figure summed only the campaigns still listed, so
+ * a booking bought by a stopped campaign counted with none of its spend, or
+ * a stopped campaign's spend was lost (R8): Atlantis 14 to 20 Oct read $58.18
+ * where the client made 4 bookings on $174.53, $43.63.
+ *
+ * Money is USD to the cent. A count that could not be read is null with a
+ * plain reason, never 0.
+ */
+export type ClientWeek = {
+  /** The first of the 7 complete days (the sync's since7). */
+  from: string;
+  /** The last of them: the day the spend reaches, one day for every client. */
+  through: string;
+  /** Meta ad account ids, digits only, sorted. */
+  accounts: string[];
+  /**
+   * Mahara's campaigns on the client's accounts, stopped campaigns included,
+   * ads on the compromise list never in. Each Meta ad counts once a day.
+   */
+  spend: number;
+  leads: number;
+  /** Spend on these accounts' campaigns with no Ads Management card: the client's own or outsiders'. Left out of `spend`. */
+  offBoardSpend: number;
+  /** Bookings made from..through on the main and online calendars, every campaign's, stopped or off the board. */
+  bookings: number | null;
+  bookingsWhy?: string;
+  /**
+   * spend / bookings to the cent when both are above 0. Null when there is no
+   * booking, and null with `costPerBookingWhy` when there are bookings but
+   * Mahara's campaigns spent nothing: $0.00 a booking would read as inside
+   * the gate.
+   */
+  costPerBooking: number | null;
+  costPerBookingWhy?: string;
+  /** Of those bookings: GoHighLevel says showed. */
+  showed: number | null;
+  /** Of those bookings: GoHighLevel says no-show. */
+  noShows: number | null;
+  /** Of those bookings: the meeting time has passed (cancelled ones are never bookings). */
+  due: number | null;
+  /**
+   * Mahara's campaigns that spent or booked in the 7 days. Their leads add up
+   * to the client's, and their spend too, to within a cent of rounding.
+   */
+  campaigns: {
+    campaignName: string;
+    spend: number;
+    leads: number;
+    bookings: number | null;
+    /** In this publish's campaigns rows (on the board and spending this week). */
+    live: boolean;
+  }[];
+  source: "media sync";
+};
+
+/** One ad-day of the sync's 30 days, tied to the client its ad account belongs to. */
+export type WeekGrain = {
+  campaignName: string;
+  /** The client (Client Data's name) the row's ad account belongs to. */
+  client?: string;
+  accountId?: string;
+  date: string;
+  metaAdId?: string;
+  adSetName?: string;
+  adName?: string;
+  /** USD. */
+  spend: number;
+  leads: number;
+};
+
+export type WeekClient = {
+  /** Client Data's name. */
+  name: string;
+  /** Meta ad account ids, digits only. */
+  accounts: string[];
+  dwy: boolean;
+  /** Whether the cockpit holds the client's GoHighLevel connection. */
+  ghl: boolean;
+};
+
+/** Why a client's bookings are not known, in a sentence the screens can show. */
+export const BOOKINGS_WHY = {
+  dwy: "Done with you: the client books its own meetings.",
+  noGhl:
+    "This client has no GoHighLevel connection in the cockpit, so its bookings cannot be read.",
+  notAsked:
+    "Bookings were not read this run: the client's ad accounts spent nothing in the last 30 days.",
+  readFailed:
+    "GoHighLevel could not be read this run, so the bookings are not known.",
+  noCalendar:
+    "The client's GoHighLevel has no main or online appointment calendar, so its bookings cannot be counted.",
+} as const;
+
+/** Why a client with bookings has no cost per booking (ClientWeek.costPerBookingWhy). */
+export const COST_PER_BOOKING_WHY = {
+  noSpend:
+    "Mahara's campaigns spent nothing on these days, so there is no cost per booking: these bookings came from earlier spend or from campaigns that are not Mahara's.",
+} as const;
+
+/**
+ * Every client's 7 days (ClientWeek), keyed by normalize(client name).
+ * `grain` is the sync's 30 days of ad-days; `mahara` holds the campaigns that
+ * are Mahara's (on the board now, or published as Mahara's before and not
+ * off the board now); `live` the campaigns in this publish's campaigns rows;
+ * `events` each client's bookings as read (absent: not asked; undefined: not
+ * readable, `eventsWhy` says why); `placed` the bookings placed on campaigns,
+ * and `placedClients` the clients whose bookings were placed at all (absent:
+ * every client's were). A client read but not placed gives its campaigns
+ * null bookings, never 0. `unread` holds the ad accounts whose rows this run
+ * could not read (Meta's fill failed): a client with one gets no week at
+ * all, so its readers fall back, never to a spend of $0.
+ */
+export function clientWeeks(input: {
+  since7: string;
+  until7: string;
+  now: number;
+  grain: readonly WeekGrain[];
+  clients: readonly WeekClient[];
+  mahara: ReadonlySet<string>;
+  live: ReadonlySet<string>;
+  events: ReadonlyMap<string, BookingEvent[] | undefined>;
+  eventsWhy?: ReadonlyMap<string, string>;
+  placed: readonly { campaignName: string; client: string; date: string }[];
+  placedClients?: ReadonlySet<string>;
+  unread?: ReadonlySet<string>;
+}): Map<string, ClientWeek> {
+  const { since7, until7 } = input;
+  const inWindow = (day: string) => day >= since7 && day <= until7;
+  // One Meta ad on one day counts once. A renamed campaign can carry the same
+  // ad-day under both names (Shades 14\10 -> 17\10 repeated $70.00): the row
+  // of a live campaign wins, then Mahara's, then the larger read.
+  const rank = (g: WeekGrain) => [
+    input.live.has(g.campaignName) ? 1 : 0,
+    input.mahara.has(g.campaignName) ? 1 : 0,
+    g.spend,
+  ];
+  const better = (a: WeekGrain, b: WeekGrain) => {
+    const [ra, rb] = [rank(a), rank(b)];
+    for (let i = 0; i < ra.length; i += 1)
+      if (ra[i] !== rb[i]) return ra[i] > rb[i];
+    return false;
+  };
+  const kept = new Map<string, WeekGrain>();
+  for (const g of input.grain) {
+    if (!g.client || !inWindow(g.date) || isExcludedAd(g.metaAdId)) continue;
+    const key = g.metaAdId
+      ? `${normalize(g.client)}|id:${g.metaAdId}|${g.date}`
+      : `${normalize(g.client)}|${g.campaignName}|${g.adSetName ?? ""}|${g.adName ?? ""}|${g.date}`;
+    const held = kept.get(key);
+    if (!held || better(g, held)) kept.set(key, g);
+  }
+  const rowsByClient = new Map<string, WeekGrain[]>();
+  for (const g of kept.values()) {
+    const key = normalize(g.client ?? "");
+    rowsByClient.set(key, [...(rowsByClient.get(key) ?? []), g]);
+  }
+  const placedByClient = new Map<string, Map<string, number>>();
+  for (const b of input.placed) {
+    if (!inWindow(String(b.date ?? ""))) continue;
+    const key = normalize(b.client);
+    const byCampaign = placedByClient.get(key) ?? new Map<string, number>();
+    byCampaign.set(b.campaignName, (byCampaign.get(b.campaignName) ?? 0) + 1);
+    placedByClient.set(key, byCampaign);
+  }
+
+  const out = new Map<string, ClientWeek>();
+  for (const c of input.clients) {
+    const key = normalize(c.name);
+    if (!key || out.has(key)) continue;
+    const rows = rowsByClient.get(key) ?? [];
+    const accounts = [
+      ...new Set([...c.accounts, ...rows.map(r => r.accountId ?? "")]),
+    ]
+      .map(a => String(a).replace(/^act_/, ""))
+      .filter(a => /^\d+$/.test(a))
+      .sort();
+    // A client with no ad account has no 7 days to publish, and one whose
+    // account was not read this run has none that can be known.
+    if (accounts.length === 0 && rows.length === 0) continue;
+    if (accounts.some(a => input.unread?.has(a))) continue;
+
+    let why: string | undefined;
+    let events: BookingEvent[] | undefined;
+    if (c.dwy) why = BOOKINGS_WHY.dwy;
+    else if (!c.ghl) why = BOOKINGS_WHY.noGhl;
+    else if (!input.events.has(key)) why = BOOKINGS_WHY.notAsked;
+    else {
+      events = input.events.get(key);
+      if (!events) why = input.eventsWhy?.get(key) ?? BOOKINGS_WHY.readFailed;
+    }
+    const counted = events ? events.filter(e => inWindow(e.date)) : undefined;
+    const bookings = counted ? counted.length : null;
+
+    const perCampaign = new Map<string, { spend: number; leads: number }>();
+    let spend = 0;
+    let leads = 0;
+    let offBoard = 0;
+    for (const r of rows) {
+      if (!input.mahara.has(r.campaignName)) {
+        offBoard += r.spend;
+        continue;
+      }
+      spend += r.spend;
+      leads += r.leads;
+      const p = perCampaign.get(r.campaignName) ?? { spend: 0, leads: 0 };
+      p.spend += r.spend;
+      p.leads += r.leads;
+      perCampaign.set(r.campaignName, p);
+    }
+    const placed = placedByClient.get(key) ?? new Map<string, number>();
+    for (const name of placed.keys())
+      if (input.mahara.has(name) && !perCampaign.has(name))
+        perCampaign.set(name, { spend: 0, leads: 0 });
+    const campaigns = [...perCampaign.entries()]
+      .map(([campaignName, p]) => ({
+        campaignName,
+        spend: cents(p.spend),
+        leads: p.leads,
+        bookings:
+          bookings === null ||
+          (input.placedClients && !input.placedClients.has(key))
+            ? null
+            : (placed.get(campaignName) ?? 0),
+        live: input.live.has(campaignName),
+      }))
+      .filter(p => p.spend > 0 || p.leads > 0 || (p.bookings ?? 0) > 0)
+      .sort(
+        (a, b) =>
+          b.spend - a.spend || a.campaignName.localeCompare(b.campaignName),
+      );
+    const total = cents(spend);
+    out.set(key, {
+      from: since7,
+      through: until7,
+      accounts,
+      spend: total,
+      leads,
+      offBoardSpend: cents(offBoard),
+      bookings,
+      ...(why ? { bookingsWhy: why } : {}),
+      costPerBooking: bookings && total > 0 ? cents(total / bookings) : null,
+      ...(bookings && !(total > 0)
+        ? { costPerBookingWhy: COST_PER_BOOKING_WHY.noSpend }
+        : {}),
+      showed: counted
+        ? counted.filter(e => e.status === "showed").length
+        : null,
+      noShows: counted
+        ? counted.filter(e => e.status === "noshow").length
+        : null,
+      due: counted
+        ? counted.filter(e => {
+            const t = Date.parse(String(e.startTime ?? ""));
+            return Number.isFinite(t) && t <= input.now;
+          }).length
+        : null,
+      campaigns,
+      source: "media sync",
+    });
+  }
+  return out;
+}
+
+/**
+ * The clients' 7 days, or none when building them throws: the publish goes
+ * ahead without ads7d and every reader falls back, never a failed cycle.
+ */
+export async function weeksOrNone(
+  build: () => Promise<ClientWeeks>,
+): Promise<ClientWeeks | undefined> {
+  try {
+    return await build();
+  } catch (e) {
+    recordLog(
+      "error",
+      `client weeks failed, published without ads7d (readers fall back): ${String(e).slice(0, 200)}`,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * When Meta's fill failed, the client accounts whose rows this run did not
+ * read: no row in the 30 days, or none since `stale` (the fill's own test,
+ * the day before yesterday), or since `until7` when the window ends earlier
+ * because the whole sheet is behind.
+ */
+export function accountsNotRead(
+  grain: readonly Pick<WeekGrain, "accountId" | "date">[],
+  accounts: Iterable<string>,
+  until7: string,
+  stale: string,
+): Set<string> {
+  const last = new Map<string, string>();
+  for (const g of grain)
+    if (g.accountId && (last.get(g.accountId) ?? "") < g.date)
+      last.set(g.accountId, g.date);
+  const covered = until7 < stale ? until7 : stale;
+  const out = new Set<string>();
+  for (const id of accounts) if ((last.get(id) ?? "") < covered) out.add(id);
+  return out;
+}
+
+/**
+ * What the producers need to place a client's 7 days and history: the weeks
+ * by the client's ClickUp card id (Client Data's "Clickup ID") and by name,
+ * each campaign's ad account, each account's client, and the campaigns that
+ * are Mahara's. Carried in memory from syncOnce to the producers, never as a
+ * published table.
+ */
+export type ClientWeeks = {
+  byTask: ReadonlyMap<string, ClientWeek>;
+  byName: ReadonlyMap<string, ClientWeek>;
+  /** Campaign name -> Meta ad account id (digits): every campaign of the 30 days, then every one cockpit_campaigns holds (campaignAccounts). */
+  campaignAccount: ReadonlyMap<string, string>;
+  /** Meta ad account id (digits) -> Client Data's client name. */
+  accountClient: ReadonlyMap<string, string>;
+  /** Campaign names that are Mahara's (see clientWeeks). */
+  mahara: ReadonlySet<string>;
+  /**
+   * The client of the board card named exactly as a campaign (closed cards
+   * included), by the card's client tag: how a campaign that stopped before
+   * cockpit_campaigns or accountId existed still finds its client in the CSM
+   * history. Undefined for a campaign spending off the board now.
+   */
+  cardClient?: (campaignName: string) => string | undefined;
+};
+
+/** The client's 7 days, by its ClickUp card id first, else by its name. */
+export function clientWeekFor(
+  weeks: ClientWeeks | undefined,
+  taskId?: unknown,
+  name?: unknown,
+): ClientWeek | undefined {
+  if (!weeks) return undefined;
+  const id = String(taskId ?? "").trim();
+  if (id && weeks.byTask.has(id)) return weeks.byTask.get(id);
+  const key = normalize(String(name ?? ""));
+  return key ? weeks.byName.get(key) : undefined;
 }
 
 /**
@@ -1444,7 +1894,13 @@ function judgeOnLeads(
 /** Stills handed to one capture run per sync; the rest wait for the next sync. */
 const STILLS_PER_SYNC = 30;
 
-type SyncResult = { campaigns: number; ads: number; offBoard: number };
+type SyncResult = {
+  campaigns: number;
+  ads: number;
+  offBoard: number;
+  /** For the producers only (ClientWeeks); worker.ts keeps it out of the published plan. */
+  clientWeeks?: ClientWeeks;
+};
 
 export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   const now = Date.now();
@@ -1628,6 +2084,8 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         adSetName: string;
         adName: string;
         metaAdId?: string;
+        /** The row's ad account as the sheet or Meta names it; published as accountId (grainRow). */
+        accountName: string;
         spend: number;
         leads: number;
         impressions: number;
@@ -1703,6 +2161,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         adSetName,
         adName,
         metaAdId: r[C.adId] || undefined,
+        accountName: r[C.account] ?? "",
         spend: 0,
         leads: 0,
         impressions: 0,
@@ -1782,6 +2241,10 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
 
   // Meta ids, so every row can deep-link into Ads Manager on the exact campaign.
   const accountIdByName = new Map<string, string>();
+  // Every visible account id under each name: two accounts can share one
+  // (Khalida's 1275190574533155 and 1839126900588107, 2026-10-22), and the
+  // map above keeps only the last.
+  const accountIdsByName = new Map<string, string[]>();
   const accountIssueByName = new Map<string, string>();
   // Account id -> its currency per Meta, which budgets are read in.
   const currencyByAccount = new Map<string, string>();
@@ -1797,6 +2260,9 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     // Viktor tool gateway is down. See tools.ts:graph().
     for (const a of await allAdAccounts()) {
       accountIdByName.set(normalize(a.name ?? ""), a.account_id);
+      const named = accountIdsByName.get(normalize(a.name ?? "")) ?? [];
+      if (a.account_id && !named.includes(a.account_id))
+        accountIdsByName.set(normalize(a.name ?? ""), [...named, a.account_id]);
       if (a.currency) currencyByAccount.set(a.account_id, String(a.currency));
       // Meta refuses every write on an unsettled or disabled account. Say
       // so on the row instead of letting a button fail. [2026-09-11]
@@ -1984,8 +2450,42 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     );
   }
 
+  // Campaigns ever written to cockpit_campaigns, each with its stored ad
+  // account: Mahara's campaigns, stopped ones included (publishedCampaigns).
+  const published = await publishedCampaigns();
+  // Each ad-day's Meta ad account id (resolveAccountId), published on every
+  // daily row as accountId so a stopped campaign's spend still finds its
+  // client (R8, 2026-10-22). The campaign's own account is Meta's campaign
+  // list first, then the Creative Triage snapshots, then cockpit_campaigns.
+  const visibleIdSet = new Set(accountIdByName.values());
+  const accountIdOf = (accountName: string, campaign: string) =>
+    resolveAccountId(
+      accountName,
+      accountIdsByName.get(normalize(accountName)) ?? [],
+      campaignMetaByName.get(normalize(campaign))?.act ??
+        sbCampaign.get(normalize(campaign))?.act ??
+        published?.get(campaign),
+      visibleIdSet,
+    );
+  // A grain row as it is published: the account's id, never its name.
+  const grainRow = (
+    name: string,
+    d: Agg["daily"] extends Map<string, infer G> ? G : never,
+  ) => {
+    const { accountName, ...rest } = d;
+    const accountId = accountIdOf(accountName, name);
+    return { campaignName: name, ...rest, ...(accountId ? { accountId } : {}) };
+  };
+
   // One GHL call per client, not per campaign.
   const eventsByClient = new Map<string, BookingEvent[] | undefined>();
+  // Why a client's bookings could not be read (ClientWeek.bookingsWhy).
+  const bookingMiss = new Map<string, string>();
+  const missFor = (key: string) => (why: "read" | "calendar") =>
+    bookingMiss.set(
+      key,
+      why === "calendar" ? BOOKINGS_WHY.noCalendar : BOOKINGS_WHY.readFailed,
+    );
   // The call centre's RESCHEDULE and CALLBACK bookings, read once a run.
   const replacedBookings = await dialerReplacedBookingIds();
   // Why leads died, per client. Same one-call-per-client rule.
@@ -2048,7 +2548,14 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       const cred = ghlByClient.get(key);
       eventsByClient.set(
         key,
-        cred ? await ghlBookingEvents(cred.loc, cred.token, replacedBookings) : undefined,
+        cred
+          ? await ghlBookingEvents(
+              cred.loc,
+              cred.token,
+              replacedBookings,
+              missFor(key),
+            )
+          : undefined,
       );
     }
   }
@@ -2109,7 +2616,14 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           const cred = ghlByClient.get(key);
           eventsByClient.set(
             key,
-            cred ? await ghlBookingEvents(cred.loc, cred.token, replacedBookings) : undefined,
+            cred
+              ? await ghlBookingEvents(
+                  cred.loc,
+                  cred.token,
+                  replacedBookings,
+                  missFor(key),
+                )
+              : undefined,
           );
         }
         clientEvents = eventsByClient.get(key);
@@ -2297,7 +2811,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
         ids.add(String(d.metaAdId));
         idsByAdName.set(d.adName, ids);
       }
-      daily.push({ campaignName: name, ...d });
+      daily.push(grainRow(name, d));
     }
 
     for (const [adName, ad] of a.ads) {
@@ -3004,8 +3518,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   const bookedDaily: any[] = [];
   for (const [name, a] of byCampaign) {
     if (!bookedNames.has(name) || withDaily.has(name)) continue;
-    for (const d of a.daily.values())
-      bookedDaily.push({ campaignName: name, ...d });
+    for (const d of a.daily.values()) bookedDaily.push(grainRow(name, d));
   }
   const dailyScoped = [
     ...daily.filter(
@@ -3041,7 +3554,191 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     recordLog("error",`winners archive failed: ${String(e)}`);
   }
 
-  return result;
+  // Every client's 7 days (ClientWeek), for the producers to put on the
+  // client's rows. Carried in memory, never as a table: a media table the
+  // publish does not know refuses the whole publish. A run that read no
+  // spending campaign at all publishes none, never a week of zeros, and a
+  // failure here publishes none either: the readers fall back, and the rest
+  // of the publish goes ahead.
+  const buildWeeks = async (): Promise<ClientWeeks> => {
+    // Mahara's campaigns: on the board now, or written to cockpit_campaigns
+    // before (only on-board campaigns ever are, and a stopped one stays), or
+    // named exactly as a card on the board, and in every case not spending
+    // off the board now (ClientWeek.offBoardSpend). Khalida's '– 4\10' never
+    // had a card of its own and is Mahara's; Shades' own pre-launch campaign
+    // and SAFAD's outsider campaign never were.
+    const offBoardNow = new Set(
+      campaigns.filter(c => !c.onBoard && !c.internal).map(c => c.campaignName),
+    );
+    const mahara = new Set<string>([
+      ...onBoardNames,
+      ...(published?.keys() ?? []),
+    ]);
+    for (const name of byCampaign.keys())
+      if (taskByName.has(normalize(name))) mahara.add(name);
+    for (const name of offBoardNow) mahara.delete(name);
+
+    // Client Data's clients, each with its ClickUp card and its accounts as
+    // Meta ids: every visible account under the cell's name (Khalida's two
+    // share one). An account Meta does not show us is never read as $0.
+    const clickupCol = head.findIndex(
+      h =>
+        String(h ?? "")
+          .trim()
+          .toLowerCase() === "clickup id",
+    );
+    const clientInfo = new Map<
+      string,
+      { name: string; taskId?: string; accounts: Set<string> }
+    >();
+    for (const r of clientRows.slice(1)) {
+      const name = String(r[col("Client Name")] ?? "").trim();
+      if (!name) continue;
+      const key = normalize(name);
+      const info = clientInfo.get(key) ?? {
+        name,
+        accounts: new Set<string>(),
+      };
+      const task = clickupCol >= 0 ? String(r[clickupCol] ?? "").trim() : "";
+      if (task && !info.taskId) info.taskId = task;
+      const cell = String(r[col("Ad Account - Meta")] ?? "").trim();
+      if (cell && !INTERNAL_ACCOUNTS.includes(normalize(cell))) {
+        const digits = /\d{6,}/.exec(cell)?.[0];
+        const ids =
+          digits && visibleIdSet.has(digits)
+            ? [digits]
+            : (accountIdsByName.get(normalize(cell)) ?? []);
+        for (const id of ids) info.accounts.add(id);
+      }
+      clientInfo.set(key, info);
+    }
+    const accountClient = new Map<string, string>();
+    for (const info of clientInfo.values())
+      for (const id of info.accounts)
+        if (!accountClient.has(id)) accountClient.set(id, info.name);
+    const grain: WeekGrain[] = [];
+    for (const [name, a] of byCampaign) {
+      for (const d of a.daily.values()) {
+        if (INTERNAL_ACCOUNTS.includes(normalize(d.accountName))) continue;
+        const accountId = accountIdOf(d.accountName, name);
+        const client =
+          clientByAccount.get(normalize(d.accountName)) ??
+          (accountId ? accountClient.get(accountId) : undefined);
+        if (accountId && client && !accountClient.has(accountId))
+          accountClient.set(accountId, client);
+        grain.push({
+          campaignName: name,
+          client,
+          accountId,
+          date: d.date,
+          metaAdId: d.metaAdId,
+          adSetName: d.adSetName,
+          adName: d.adName,
+          spend: d.spend,
+          leads: d.leads,
+        });
+      }
+    }
+    // Meta's fill failed this run (extra unset): an account the sheet does
+    // not keep up to date was not read at all, and the fill's own test says
+    // which: no row in the 30 days, or none since the day before yesterday
+    // (the window's last day when the sheet is further behind). Its client
+    // gets no week this run rather than a spend of $0 and a false reason.
+    const unread = extra
+      ? new Set<string>()
+      : accountsNotRead(
+          grain,
+          [...clientInfo.values()].flatMap(info => [...info.accounts]),
+          until7,
+          daysAgo(2),
+        );
+    // Each campaign's account, for the CSM history's older rows (no accountId).
+    const campaignAccount = campaignAccounts(grain, published);
+    // A client tied to a row only by its account's id (Client Data names the
+    // account differently from the sheet) was not asked for its bookings in
+    // the campaign loop: ask now, so "not read" only ever means no spend.
+    for (const key of clientInfo.keys()) {
+      if (eventsByClient.has(key) || modeByClient.get(key) === "DWY") continue;
+      const cred = ghlByClient.get(key);
+      if (
+        !cred ||
+        !grain.some(g => g.spend > 0 && normalize(g.client ?? "") === key)
+      )
+        continue;
+      eventsByClient.set(
+        key,
+        await ghlBookingEvents(
+          cred.loc,
+          cred.token,
+          replacedBookings,
+          missFor(key),
+        ),
+      );
+    }
+    const byName = clientWeeks({
+      since7,
+      until7,
+      now,
+      grain,
+      clients: [...clientInfo.entries()].map(([key, info]) => ({
+        name: info.name,
+        accounts: [...info.accounts],
+        dwy: modeByClient.get(key) === "DWY",
+        ghl: ghlByClient.has(key),
+      })),
+      mahara,
+      live: onBoardNames,
+      events: eventsByClient,
+      eventsWhy: bookingMiss,
+      placed: bookingRows,
+      // Only these clients' bookings went through placeBookings; one asked
+      // for just above has its client figure, not a per-campaign split.
+      placedClients: new Set(clientNameByKey.keys()),
+      unread,
+    });
+    const byTask = new Map<string, ClientWeek>();
+    for (const [key, info] of clientInfo) {
+      const week = byName.get(key);
+      if (week && info.taskId && !byTask.has(info.taskId))
+        byTask.set(info.taskId, week);
+    }
+    // A card's client by its tag, as Client Data names the client: the same
+    // name, else the one client whose name starts like it.
+    const clientOfTag = (tag: string): string => {
+      const k = normalize(tag);
+      const exact = clientInfo.get(k)?.name;
+      if (exact) return exact;
+      const near = [...clientInfo.entries()].filter(
+        ([ck]) =>
+          k.length >= 5 &&
+          ck.length >= 5 &&
+          (ck.startsWith(k) || k.startsWith(ck)),
+      );
+      return near.length === 1 ? near[0][1].name : tag;
+    };
+    const cardClient = (campaignName: string): string | undefined => {
+      if (offBoardNow.has(campaignName)) return undefined;
+      const tag = String(
+        taskByName.get(normalize(campaignName))?.tags?.[0]?.name ?? "",
+      ).trim();
+      return tag ? clientOfTag(tag) : undefined;
+    };
+    recordLog(
+      "log",
+      `client weeks: ${byName.size} client(s), ${since7} to ${until7}${unread.size ? `; Meta's fill failed, ${unread.size} account(s) not read, their clients left out` : ""}${published ? "" : "; cockpit_campaigns unreadable, stopped campaigns count by their board card only"}`,
+    );
+    return {
+      byTask,
+      byName,
+      campaignAccount,
+      accountClient,
+      mahara,
+      cardClient,
+    };
+  };
+  const weeks = campaigns.length ? await weeksOrNone(buildWeeks) : undefined;
+
+  return { ...result, ...(weeks ? { clientWeeks: weeks } : {}) };
 }
 
 /** Keep the last good history when the campaign fetch produced no snapshot. */

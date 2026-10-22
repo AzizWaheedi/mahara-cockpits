@@ -15,6 +15,7 @@ import { BuildPanel } from "@/components/BuildPanel";
 import { CampaignRange } from "@/components/CampaignRange";
 import { CityPicker } from "@/components/CityPicker";
 import { ClientLogo } from "@/components/ClientLogo";
+import { ClientsNotListed } from "@/components/ClientsNotListed";
 import {
   type ClientUpdate,
   ClientUpdateList,
@@ -55,6 +56,7 @@ import {
   type RowNumbers,
 } from "@/lib/adsFilters";
 import { api, useAction } from "@/lib/board";
+import { adAccountsParam, parseAdAccounts } from "@/lib/clientRange";
 import {
   howItIsGoing,
   joinList,
@@ -70,7 +72,19 @@ import {
   cplTone,
 } from "@/lib/costTone";
 import { HEALTH, healthScore, missingHealth } from "@/lib/eodForm";
-import { belowKpi, CPL_BAD, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
+import {
+  bookingsLine,
+  clientFigures,
+  outOfKpiLines as clientOutOfKpiLines,
+  decisionEvidence,
+  eodTotals,
+  figureFor,
+  findClientLinks,
+  overCplGate,
+  sourceLine,
+} from "@/lib/eodRollup";
+import { CPL_BAD, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
+import { type MediaCoverage, pairedDay } from "@/lib/mediaStatsClient";
 import { type EodOutbox, eodDeliveryNote } from "@/lib/personalEod";
 import {
   defaultRange,
@@ -537,21 +551,6 @@ function ClientRules({
         </div>
       ) : null}
     </div>
-  );
-}
-
-/** A client's links from the ClickUp client list, matched by name or alias. */
-function findClientLinks(list: Campaign[], name: string): Campaign | undefined {
-  const key = name.trim().toLowerCase();
-  const tight = key.replace(/[^a-z0-9\u0600-\u06ff]+/g, "");
-  return (
-    list.find(l => String(l.name).trim().toLowerCase() === key) ??
-    list.find(l =>
-      (l.aliases ?? []).some(
-        (a: string) =>
-          a === key || a.replace(/[^a-z0-9\u0600-\u06ff]+/g, "") === tight,
-      ),
-    )
   );
 }
 
@@ -1056,11 +1055,21 @@ function Cockpit({ view }: { view: View }) {
    */
   const [params, setParams] = useSearchParams();
   const accountView = view === "ads" ? params.get("account") : null;
-  const setAccountView = (name: string | null) =>
+  // The ad accounts a client's page was opened with (?adAccounts=): a client
+  // with no campaign listed is read by them on every range (R8, 2026-10-22).
+  const accountIdsParam = params.get("adAccounts");
+  const accountIds = useMemo(
+    () => parseAdAccounts(accountIdsParam),
+    [accountIdsParam],
+  );
+  const setAccountView = (name: string | null, accounts: string[] = []) =>
     setParams(prev => {
       const next = new URLSearchParams(prev);
       if (name) next.set("account", name);
       else next.delete("account");
+      const ids = name ? adAccountsParam(accounts) : "";
+      if (ids) next.set("adAccounts", ids);
+      else next.delete("adAccounts");
       next.delete("campaign");
       return next;
     });
@@ -1124,10 +1133,11 @@ function Cockpit({ view }: { view: View }) {
     string,
     Campaign | Error | undefined
   >;
-  // The last day the media data has spend for: every range read counts
-  // bookings only through it (mediaStatsClient.ts), and the note under the
-  // range picker names it. The same shared read, so the two always agree.
-  const coverage = useQueryState<{ last?: string | null }>(
+  // The paired day, the last day every account's spend is in: every range
+  // read counts spend, leads and bookings only through it
+  // (mediaStatsClient.ts), and the note under the range picker names it.
+  // The same shared read, so the two always agree.
+  const coverage = useQueryState<MediaCoverage>(
     api.stats.coverage,
     view === "ads" ? {} : "skip",
   );
@@ -1296,6 +1306,12 @@ function Cockpit({ view }: { view: View }) {
       const client = c.clientName ?? c.campaignName;
       byClient.set(client, [...(byClient.get(client) ?? []), c]);
     }
+    // Each client's own 7 days (eodRollup.ts): the media sync's figure,
+    // stopped campaigns included, else its listed campaigns summed.
+    const figures = clientFigures(
+      (snap?.campaigns ?? []) as Campaign[],
+      (snap?.clientLinks ?? []) as Campaign[],
+    );
     const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
     for (const [client, list] of byClient) {
       if (list.some(c => told.has(c.campaignName))) continue;
@@ -1311,13 +1327,17 @@ function Cockpit({ view }: { view: View }) {
         .map(t => t.label);
       const done = whatWeDidAll(labels, lang);
       const weBook = list.some(x => x.serviceMode !== "DWY");
-      // bookings7d is the client's own count, carried on every campaign.
-      const bookings = Math.max(0, ...list.map(x => Number(x.bookings7d ?? 0)));
+      // The client's own 7 days: its bookings added up across its
+      // campaigns, never the largest one (bookings7d is per campaign).
+      const fig = figureFor(figures, client);
+      const bookings = fig?.bookings ?? undefined;
       const going = howItIsGoing(
         { verdict: c.verdict, bookings, weBook },
         lang,
       );
-      const numbers = `7 days: ${c.leads7d} leads at ${money(c.cpl, 2)}${weBook ? `, ${bookings} booked` : ""}`;
+      const leads7 = fig?.leads ?? Number(c.leads7d ?? 0);
+      const spend7 = fig?.spend ?? Number(c.spend7d ?? 0);
+      const numbers = `7 days: ${leads7} leads at ${leads7 > 0 ? moneyShown(spend7 / leads7) : "n/a"}${weBook ? `, ${bookings ?? "n/a"} booked` : ""}`;
       const base = { campaign: c, key: c.campaignName, client, lang };
       if (done.length > 0) {
         const kept = labels.filter(l => whatWeDid(l, "en") !== null);
@@ -1396,26 +1416,26 @@ function Cockpit({ view }: { view: View }) {
   }, [snap]);
 
   /**
-   * The clients out of KPI, one "• client — metric → next action" line each:
-   * the preview's list, and what "Start from the cockpit's list" puts in her
-   * answer so she edits it instead of copying from the preview.
+   * Each client's own 7 days, once (eodRollup.ts, 2026-10-22): the media
+   * sync's figure on the client card, stopped campaigns included, or the
+   * client's listed campaigns summed when it has none.
    */
-  const outOfKpiLines = useMemo(() => {
-    const cs = ((snap?.campaigns ?? []) as Campaign[]).filter(c => !c.internal);
-    return cs
-      .filter(c => belowKpi(c))
-      .slice(0, 8)
-      .map(
-        c =>
-          `• ${c.clientName ?? c.campaignName} — ${
-            c.bookings7d === undefined || c.bookings7d === null
-              ? `CPL ${money(c.cpl, 2)}`
-              : c.bookings7d === 0
-                ? `no booking on ${moneyShown(c.spend7d)}, CPL ${money(c.cpl, 2)}`
-                : `cost per booking ${moneyShown(c.costPerBooking)}, CPL ${money(c.cpl, 2)}`
-          } → ${c.findings?.[0]?.fixes?.[0] ?? "watching it"}`,
-      );
-  }, [snap]);
+  const figures = useMemo(
+    () =>
+      clientFigures(
+        (snap?.campaigns ?? []) as Campaign[],
+        (snap?.clientLinks ?? []) as Campaign[],
+      ),
+    [snap],
+  );
+
+  /**
+   * The clients out of KPI, one "• client - metric → next action" line each,
+   * on the client's own figure with its worst campaign named: the preview's
+   * list, and what "Start from the cockpit's list" puts in her answer so
+   * she edits it instead of copying from the preview.
+   */
+  const outOfKpiLines = useMemo(() => clientOutOfKpiLines(figures), [figures]);
 
   const eodReport = useMemo(() => {
     if (snap?.eod?.submittedAt && typeof snap.eod.body === "string")
@@ -1427,10 +1447,11 @@ function Cockpit({ view }: { view: View }) {
       kind: string;
       reason?: string;
     }[];
-    const spend = cs.reduce((t, c) => t + c.spend7d, 0);
-    const leads = cs.reduce((t, c) => t + c.leads7d, 0);
-    const bookings = cs.reduce((t, c) => t + (c.bookings7d ?? 0), 0);
-    const overGate = cs.filter(c => (c.cpl ?? 0) > CPL_GATE);
+    // One figure per client, summed: never a campaign's count read twice.
+    const totals = eodTotals(figures);
+    const spend = totals.spend;
+    const leads = totals.leads;
+    const overGate = overCplGate(figures);
     const lines: string[] = [
       `EOD - ${snap?.eodDay ? new Date(snap.eodDay + "T12:00:00+03:00").toLocaleDateString("en-GB", { timeZone: "Asia/Kuwait", weekday: "long", day: "numeric", month: "long" }) : "Date unavailable"}`,
       "",
@@ -1438,22 +1459,23 @@ function Cockpit({ view }: { view: View }) {
       `Total ad spend (7d): ${money(spend)}`,
       `Total leads (7d): ${leads}`,
       `Average CPL (7d): ${leads > 0 ? money(spend / leads, 2) : "no leads"}`,
-      `Bookings (7d): ${bookings}${bookings > 0 ? ` · cost per booking ${moneyShown(spend / bookings)}` : ""}`,
-      `Any client with a 7-day CPL above ${"$"}${CPL_GATE}: ${overGate.length ? `Yes: ${overGate.map(c => c.clientName ?? c.campaignName).join(", ")}` : "No"}`,
+      bookingsLine(totals),
+      `Any client with a 7-day CPL above ${"$"}${CPL_GATE}: ${overGate.length ? `Yes: ${overGate.join(", ")}` : "No"}`,
+      sourceLine(totals),
       "",
-      "ACCOUNT BY ACCOUNT — WHAT I CHANGED AND WHY",
+      "ACCOUNT BY ACCOUNT - WHAT I CHANGED AND WHY",
       ...(ds.length
         ? ds.map(
             d =>
-              `• ${d.subject} — ${d.action}${d.reason ? ` (${d.reason})` : ""}`,
+              `• ${d.subject} - ${d.action}${d.reason ? ` (${d.reason})` : ""}`,
           )
         : ["• No changes logged today"]),
       "",
-      "CLIENTS OUT OF KPI — METRIC AND NEXT ACTION",
+      "CLIENTS OUT OF KPI - METRIC AND NEXT ACTION",
       ...(outOfKpiLines.length ? outOfKpiLines : ["• None"]),
     ];
     return lines.join("\n");
-  }, [snap, outOfKpiLines]);
+  }, [snap, figures, outOfKpiLines]);
 
   const decidedBySubject = useMemo(() => {
     const m = new Map<string, { action: string; reroutedTo?: string }>();
@@ -1595,7 +1617,11 @@ function Cockpit({ view }: { view: View }) {
       subject: c.campaignName,
       action,
       kind,
-      evidence: c.reason,
+      // The campaign first: a reason quoted on the client's card (the CSM
+      // brief) otherwise reads as the client's own figure (R16, 2026-10-22).
+      // Its name is cleaned and shortened so the reason's figures fit the
+      // brief's cut; the full name is the subject.
+      evidence: decisionEvidence(String(c.campaignName), c.reason),
       metricAtDecision: c.cpl ?? undefined,
       ...extra,
     });
@@ -3257,13 +3283,14 @@ function Cockpit({ view }: { view: View }) {
   };
 
   const running = (snap.campaigns as Campaign[]).filter(c => !isParked(c));
-  // The last day the media data has Meta numbers for: it runs to yesterday,
-  // so "Today" reads nothing until tomorrow, and a range ending today counts
-  // its bookings only to this day too (2026-10-21). The coverage read is the
-  // day the range reads cap their bookings at; until it is in, the running
-  // campaigns' own last day stands in.
+  // The last day every account's numbers are in: it runs to yesterday, so
+  // "Today" reads nothing until tomorrow, and a range ending today counts
+  // its spend, leads and bookings only to this day (2026-10-21). Overnight,
+  // before the tracker sheet fills, it is the day before yesterday
+  // (pairedDay, 2026-10-22). The coverage read is the day the range reads
+  // stop at; until it is in, the running campaigns' own last day stands in.
   const mediaThrough =
-    coverage.data?.last ??
+    pairedDay(coverage.data) ??
     running.reduce<string | undefined>(
       (last, c) =>
         c.dataThrough && (!last || String(c.dataThrough) > last)
@@ -3357,7 +3384,7 @@ function Cockpit({ view }: { view: View }) {
           {mediaThrough && globalRange.start > mediaThrough
             ? ` Meta's numbers run to ${dayMonth(mediaThrough)}, so spend and leads for this range are not in yet. Its bookings are counted; their cost waits for the numbers.`
             : mediaThrough && globalRange.end > mediaThrough
-              ? ` Meta's numbers run to ${dayMonth(mediaThrough)}, so spend and bookings after that are not counted yet.`
+              ? ` Spend, leads and bookings are counted to ${dayMonth(mediaThrough)}, the last day every account's numbers are in, so they cover the same days.`
               : ""}
         </span>
       </div>
@@ -3709,6 +3736,13 @@ function Cockpit({ view }: { view: View }) {
         </table>
       </div>
       {adsTab === "running" && (
+        <ClientsNotListed
+          range={globalRange}
+          campaigns={running}
+          onOpen={(name, accounts) => setAccountView(name, accounts)}
+        />
+      )}
+      {adsTab === "running" && (
         <OffBoardCampaigns
           rows={(snap.offBoardCampaigns ?? []) as Campaign[]}
         />
@@ -3828,6 +3862,7 @@ function Cockpit({ view }: { view: View }) {
           {accountView && (
             <AccountView
               client={accountView}
+              accountIds={accountIds}
               campaigns={(snap.campaigns as Campaign[]).filter(
                 c => clientOf(c) === accountView,
               )}

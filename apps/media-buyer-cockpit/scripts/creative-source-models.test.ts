@@ -41,3 +41,20 @@ test('unverified feeds fail closed, rows filter on server, and client actions us
  await expect(db.query('SELECT cockpit_creative_source_read()')).rejects.toThrow('row count');
  }finally{await db.close();}
 });
+test('the client week the media sync puts on the client card reaches the dashboard through the read, and nothing marked is no show rate',async()=>{
+ const db=await cockpitTestDb();try{
+ const allowed=migration('20260926m_cockpit_csm_state.sql').match(/CREATE OR REPLACE FUNCTION public\.cockpit_client_allowed[\s\S]*?END \$\$;/)![0];await db.exec(allowed);
+ await db.exec(migration('20260927s_creative_read_models.sql'));
+ await member(db,A,'creative@tests.invalid',['creative']);await db.exec(`UPDATE cockpit_members SET clients=ARRAY['Alpha'] WHERE auth_user_id='${A}'`);
+ const ads7d={from:'2026-10-14',through:'2026-10-20',accounts:['290802986'],spend:174.53,leads:5,offBoardSpend:0,bookings:4,costPerBooking:43.63,showed:0,noShows:0,due:4,campaigns:[{campaignName:'Alpha 7\\10',spend:163.75,leads:5,bookings:3,live:true},{campaignName:'Alpha 13\\9',spend:10.78,leads:0,bookings:1,live:false}],source:'media sync'};
+ const rows:Record<string,any[]>={...tables,clients:[{...tables.clients[0],ads7d}],campaigns:[{_id:'camp-a',campaignName:'Alpha 7\\10',clientName:'Alpha',metaAccountId:'act_290802986',spend7d:174.54,leads7d:5,bookings7d:3,showed7d:0}],ads:[{_id:'ad-a',campaignName:'Alpha 7\\10',adName:'ad-1',spend:174.54,leads:5}]};
+ await owner(db);
+ for(const [table,list]of Object.entries(rows)){for(const row of list)await db.query("INSERT INTO cockpit_creative_sources(table_name,source_id,client_names,data,source_snapshot_at) VALUES($1,$2,$3,$4,'2026-10-22T00:00:00Z')",[table,row._id,['Alpha'],row]);await db.query("UPDATE cockpit_creative_source_state SET ready=true,row_count=$2,source_snapshot_at='2026-10-22T00:00:00Z' WHERE table_name=$1",[table,list.length]);}
+ await actor(db,A);const read=(await db.query<any>('SELECT cockpit_creative_source_read() v')).rows[0].v;
+ expect(read.tables.clients[0].ads7d.bookings).toBe(4);
+ const dashboard=await buildSnapshot(snapshotContext({...read.tables,checks:[],planItems:[],eodReports:[]}),new Set(['alpha']));
+ const alpha=dashboard.clients.find((c:any)=>c.client==='Alpha');
+ expect(alpha.performance.source).toBe('media sync');expect(alpha.bookings7d).toBe(4);expect(alpha.costPerBooking).toBe(43.63);expect(alpha.showRate).toBeNull();expect(alpha.performance.stoppedCampaigns).toBe(1);
+ expect(dashboard.showDataAvailable).toBeUndefined();
+ }finally{await db.close();}
+});

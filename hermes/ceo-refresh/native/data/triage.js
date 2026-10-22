@@ -120,17 +120,27 @@ export function usdRateSql(currencyExpr) {
  * clients.meta_ad_account_id ("act_" + id); client_id is null when it ties
  * to nothing.
  *
- * `old`: public.ads_daily_snapshots, stopped on 2026-10-02, in the account's
- * own currency with the client on the row. It fills only the ad-days the live
- * table has no tied row for. The live table is the board's sync: it lacks
- * campaigns with no card and drops a campaign's rows when it leaves the
- * board, so from 13 Aug to mid-September it holds a fraction of what clients
- * spent (checked 2026-10-11, Mahara's own accounts left out: 17 to 23 Aug
- * $472.75 live against $2,001.86 in the snapshots; September $8,773.94
- * against $10,472.85). Both tables carry Meta's ad id (metaAdId, ad_id): 500 ad-days
- * from 14 Sep to 2 Oct are in both, and no ad-day missing from one sits in
- * the other under a different id, so filling by ad id never counts a day
- * twice.
+ * `old`: public.ads_daily_snapshots, in the account's own currency with the
+ * client on the row. Its own sync stopped on 2026-10-02; since 2026-10-18 the
+ * Meta dashboard feed (20261018120000_meta_dashboard_feed.sql) keeps it
+ * current from cockpit_meta_ad_days every 10 minutes, so it holds every day.
+ * It fills only the ad-days the live table has no tied row for. The live
+ * table is the board's sync: it lacks campaigns with no card and drops a
+ * campaign's rows when it leaves the board, so from 13 Aug to mid-September
+ * it holds a fraction of what clients spent (checked 2026-10-11, Mahara's own
+ * accounts left out: 17 to 23 Aug $472.75 live against $2,001.86 in the
+ * snapshots; September $8,773.94 against $10,472.85). Both tables carry
+ * Meta's ad id (metaAdId, ad_id): 500 ad-days from 14 Sep to 2 Oct are in
+ * both, and no ad-day missing from one sits in the other under a different
+ * id, so filling by ad id never counts a day twice. In 14 to 20 Oct 2026 the
+ * fill carried $589.94: an outsider's campaign on SAFAD's account ($375.09),
+ * Pidco ($200.23) and Triple Edge ($14.62).
+ *
+ * Ads on the compromise list (public.cockpit_excluded_ads, outsiders' ads run
+ * on a client's account) never count, in either table (R3, 2026-10-22): the
+ * media publish never deletes their old rows, so the reader drops them. The
+ * snapshot table's trigger already keeps them out; the filter there is a
+ * second guard.
  */
 function adRowsCte(from, to) {
     return `camp as (
@@ -148,6 +158,7 @@ function adRowsCte(from, to) {
     left join camp on camp.name = d.campaign_name
     left join public.clients c on camp.account is not null and replace(c.meta_ad_account_id, 'act_', '') = camp.account
     where d.day between ${day(from)} and ${day(to)}
+      and not exists (select 1 from public.cockpit_excluded_ads x where x.ad_id = coalesce(nullif(d.data->>'metaAdId', ''), d.source_id))
   ),
   old as (
     select a.client_id::text as client_id, a.date as day, a.ad_id as ad,
@@ -159,16 +170,18 @@ function adRowsCte(from, to) {
     where a.date between ${day(from)} and ${day(to)}
       and (a.spend <> 0 or coalesce(a.leads, 0) <> 0)
       and not exists (select 1 from live l where l.client_id is not null and l.day = a.date and l.ad = a.ad_id)
+      and not exists (select 1 from public.cockpit_excluded_ads x where x.ad_id = a.ad_id)
   )`;
 }
 /**
  * Client ad spend and leads by client and day (R2, 2026-10-11; Aziz, A006:
  * "client ad spend, leads, and cost per lead ... just use the Supabase
- * table"), from adRowsCte: the live media table's tied rows, plus the frozen
+ * table"), from adRowsCte: the live media table's tied rows, plus the
  * snapshot rows for the ad-days the live table lacks, converted to USD with
  * the rate table (a currency with no rate gives a null spend, named by the
  * caller). A client day can have one row from each table; `source` says which
- * (media or frozen), and every caller adds them. A live campaign that ties to
+ * (media, or frozen for the snapshot table: the name it had while its own
+ * sync was stopped), and every caller adds them. A live campaign that ties to
  * nothing is left out here and named by mediaUntiedSql.
  */
 export function mediaClientDaysSql(from, to) {
@@ -194,7 +207,7 @@ export function mediaClientDaysSql(from, to) {
 }
 /**
  * Campaigns in the live media table with spend in the window that reach no
- * client (named, never dropped silently). An ad-day the frozen snapshot table
+ * client (named, never dropped silently). An ad-day the snapshot table
  * holds for a client is counted from there, so it is not named here.
  */
 export function mediaUntiedSql(from, to) {
@@ -210,7 +223,7 @@ export function mediaUntiedSql(from, to) {
   order by 2 desc`;
 }
 /**
- * The frozen snapshot ad-days the live table has no tied row for (adRowsCte
+ * The snapshot table's ad-days the live table has no tied row for (adRowsCte
  * `old`), one row per ad and day, in USD, with the client's ClickUp card
  * (ad account -> ghl_client_ad_accounts -> ghl_clients.clickup_id), for a
  * series keyed by card that reads the live table by campaign tags (Client
@@ -258,122 +271,133 @@ export function mediaFeedFresh(row, now, maxAgeMs) {
         throw new Error(`The media daily statistics feed was last written ${Math.round((now - at) / 3600_000)} hours ago`);
     return { at, firstDay: String(row.first_day), lastDay: row.last_day ? String(row.last_day) : null, rows: num(row.actual_rows) };
 }
-/** Provisional calendar names: the same words calendarKind() calls provisional, less callbacks and reschedules. */
-const PROVISIONAL_SQL = `lower(cal.name) ~ '${PROVISIONAL.source}' and lower(cal.name) !~ 'callback|call-back|reschedul|معاودة'`;
-/** The reporting store's time parser (mahara_reporting.cc_time), inline: the read-only role may not execute the function. */
-const ccTime = (expr) => `(case when (${expr}) ~ '^\\d{12,14}$' then to_timestamp((${expr})::numeric / 1000)
-      when (${expr}) ~ '^\\d{4}-\\d\\d-\\d\\dT.*(Z|[+-]\\d\\d:\\d\\d)$' then (${expr})::timestamptz end)`;
 /**
- * Provisional bookings (A113; Aziz, 2026-09-21: "provisional bookings
- * (provisional calendar only)"), one row per tied client, meeting day and
- * calendar. The appointments sync (public.appointments) has never carried
- * the Not Confirmed Appointments calendar, so this reads the call-centre
- * report's own source, mahara_reporting.cc_appointments, rebuilt here from
- * its three inputs because the view calls a function the read-only role
- * cannot run: public.appointments, the dialer's verified bookings
- * (cc_attempts) and the dialer's own GoHighLevel appointment facts, newest
- * version per appointment, Google Calendar copies dropped, exactly as the
- * view does. Kept: a calendar whose name says not confirmed, provisional or
- * tentative (the calendar only, not a main-calendar appointment in status
- * new), no conflict, not deleted at the provider. Dated by the day the
- * meeting is for, like confirmed bookings, and tied to a client through the
- * location when exactly one ad account is on it.
+ * Client bookings from the Client Performance board (R2, 2026-10-22), the
+ * one booking rule every cockpit now reads: public.cockpit_client_days, one
+ * row per GoHighLevel location and Kuwait day, written only by
+ * cockpit_board_facts_refresh. confirmed_bookings is main and online
+ * calendar bookings made that day, leaving out cancelled, invalid, Google
+ * Calendar copies, the call centre's call-back bookings and rescheduled
+ * bookings whose original still counts; provisional_bookings is the Not
+ * Confirmed Appointments calendar. NULL means the board did not store the
+ * count, which is never read as zero: a day with no row, or a NULL count, is
+ * "not measured". Only stored rows are read; a missing day is the same as a
+ * NULL one. The location reaches a ClickUp card through
+ * cockpit_board_clients. Both tables grant SELECT to service_role only;
+ * this read runs as the read-only SQL role, which reads every table.
  */
-export function provisionalBookingsSql(from, to) {
-    return `with records as (
-    select coalesce(nullif(ap.ghl_location_id, ''), nullif(ap.ghl_location, '')) as location_id, ap.ghl_appointment_id as id,
-           ap.calendar_id, ap.start_at, ap.status, ap.updated_at as version_at, 0 as priority, false as conflict
-    from public.appointments ap
-    union all
-    select a.location_id, a.data->'bookingVerification'->>'id', a.data->'bookingVerification'->>'calendarId',
-           ${ccTime("a.data->'bookingVerification'->>'startTime'")},
-           a.data->'bookingVerification'->>'appointmentStatus',
-           ${ccTime("a.data->'bookingVerification'->>'verifiedAt'")}, 2, false
-    from mahara_reporting.cc_attempts a
-    where a.data->'disposition'->>'outcome' = 'BOOKED' and a.data->'bookingVerification'->>'verifiedAt' is not null
-    union all
-    select f.data->>'locationId', f.data->>'id', f.data->>'calendarId',
-           ${ccTime("f.data->>'startAt'")},
-           case when coalesce(f.data->>'deleted', 'false') = 'true' or coalesce(f.data->>'missingFromProvider', 'false') = 'true' then 'deleted' else f.data->>'status' end,
-           f.version_at, 1, f.conflict
-    from mahara_reporting.facts f
-    where f.namespace = 'production' and f.kind = 'appointment' and f.source = 'ghl'
-  ),
-  latest as (
-    select distinct on (r.location_id, r.id) r.*
-    from records r
-    where r.location_id is not null and r.id is not null
-      and not exists (select 1 from public.appointments g where g.ghl_appointment_id = r.id and g.ghl_source = 'google_calendar')
-    order by r.location_id, r.id, r.version_at desc nulls last, r.priority
-  ),
-  calendars as (
-    select distinct on (c.location_id, c.calendar_id) c.location_id, c.calendar_id, c.name
-    from (select location_id, calendar_id, name, synced_at from public.ghl_calendars
-          union all
-          select f.data->>'locationId', f.data->>'id', f.data->>'name', f.version_at
-          from mahara_reporting.facts f where f.namespace = 'production' and f.kind = 'calendar') c
-    order by c.location_id, c.calendar_id, c.synced_at desc nulls last
-  ),
-  prov as (
-    select a.*, cal.name as calendar
-    from latest a
-    join calendars cal on cal.location_id = a.location_id and cal.calendar_id = a.calendar_id
-    where ${PROVISIONAL_SQL}
-      and a.conflict is not true
-      and a.status is distinct from 'deleted'
-      and a.start_at is not null
-      and (a.start_at at time zone 'Asia/Kuwait')::date between ${day(from)} and ${day(to)}
-  )
-  select one.client_id,
-         (g.location_id is not null) as has_client,
-         case when g.location_id is not null then to_char(p.start_at at time zone 'Asia/Kuwait', 'YYYY-MM-DD') end as date,
-         p.calendar,
-         min(g.client_name) as location_client,
-         count(*) as count,
-         count(*) filter (where p.start_at > now()) as future,
-         count(*) filter (where p.priority = 0) as from_appointments,
-         max(extract(epoch from p.version_at) * 1000) as fresh_ms
-  from prov p
-  left join lateral (
-    select min(m.client_id::text) as client_id
-    from public.ghl_client_ad_accounts m
-    where m.location_id = p.location_id
-  ) one on true
-  left join public.ghl_clients g on g.location_id = p.location_id
-  group by 1, 2, 3, 4`;
+export function boardBookingDaysSql(from, to) {
+    return `select b.location_id, b.clickup_id, b.client_name, b.status, b.service_mode,
+         to_char(d.day, 'YYYY-MM-DD') as date,
+         d.confirmed_bookings as confirmed,
+         d.provisional_bookings as provisional,
+         floor(extract(epoch from d.computed_at) * 1000)::bigint as computed_ms
+  from public.cockpit_client_days d
+  join public.cockpit_board_clients b on b.location_id = d.location_id
+  where d.day between ${day(from)} and ${day(to)}
+    and (d.confirmed_bookings is not null or d.provisional_bookings is not null)
+  order by b.location_id, d.day`;
 }
 /**
- * Appointments with their client tie. The sync sets `client_id` on most rows;
- * the ones it leaves empty (24 of 157 booking rows in the 30 days to
- * 2026-09-21, twelve of them one client's confirmed appointments) are tied
- * here through the row's GHL location. A location tied to two ad accounts is
- * one client on one card that moved account (clientDelivery folds the rows
- * on a card into one), so the row ties to either; one tied to none stays
- * untied, and the adapter says so. [2026-10-21: it used to need exactly one]
+ * The ad accounts with spend in the window and the client each one belongs
+ * to (R2, 2026-10-22). The board's tie comes first: an account listed in a
+ * cockpit_board_clients row's ad_account_ids (the board's own lead-sync-watch
+ * order and the hand ties of 20261016210200) gives that row's location, card,
+ * name, service mode and status. An account on two board rows counts once,
+ * under the first location, and `board_rows` says how many rows list it. Only
+ * an account the board does not list falls back to the GoHighLevel tie
+ * (ghl_client_ad_accounts, then that location's board row or ghl_clients),
+ * which a cancelled client with no account on the board still has.
+ */
+export function clientTiesSql(from, to) {
+    return `with days as (${mediaClientDaysSql(from, to)})
+  select c.id::text as client_id,
+         c.name as account,
+         coalesce(c.hidden_from_dashboard, false) as hidden,
+         coalesce(c.currency, 'USD') as currency,
+         nullif(replace(coalesce(c.meta_ad_account_id, ''), 'act_', ''), '') as ad_account,
+         coalesce(ba.location_id, bg.location_id, m.location_id) as location_id,
+         coalesce(ba.client_name, bg.client_name, g.client_name) as name,
+         coalesce(ba.clickup_id, bg.clickup_id, g.clickup_id) as clickup_id,
+         coalesce(ba.service_mode, bg.service_mode, g.service_mode) as service_mode,
+         coalesce(ba.status, bg.status, g.status) as status,
+         case when ba.location_id is not null then 'board ad account' else m.matched_by end as matched_by,
+         coalesce(ba.boards, 0) as board_rows,
+         (ba.location_id is not null or bg.location_id is not null) as on_board
+  from public.clients c
+  left join lateral (
+    select b.location_id, b.client_name, b.clickup_id, b.service_mode, b.status, count(*) over () as boards
+    from public.cockpit_board_clients b
+    where nullif(replace(coalesce(c.meta_ad_account_id, ''), 'act_', ''), '') = any (b.ad_account_ids)
+    order by b.location_id
+    limit 1
+  ) ba on true
+  left join lateral (
+    select m.location_id, m.matched_by
+    from public.ghl_client_ad_accounts m
+    where ba.location_id is null and m.client_id = c.id
+    order by m.location_id
+    limit 1
+  ) m on true
+  left join lateral (
+    select g.client_name, g.clickup_id, g.service_mode, g.status
+    from public.ghl_clients g
+    where g.location_id = m.location_id
+    limit 1
+  ) g on true
+  left join public.cockpit_board_clients bg on bg.location_id = m.location_id
+  where c.id::text in (select client_id from days)`;
+}
+/**
+ * Appointments with their client tie, for the show rate, the close rate and
+ * the no-outcome list only: those need the meeting to have happened, so
+ * they are dated by the day of the meeting. Bookings are never counted from
+ * here (boardBookingDaysSql). The sync sets `client_id` on most rows; the
+ * ones it leaves empty are tied here through the row's GHL location. A
+ * location tied to two ad accounts is one client on one card that moved
+ * account (clientDelivery folds the rows on a card into one), so the row
+ * ties to either; one tied to none stays untied.
  */
 const tied = (where) => `
   select ap.*,
-         coalesce(ap.client_id::text, one.client_id) as tie,
-         (g.location_id is not null) as has_client,
-         g.client_name as location_client
+         coalesce(ap.client_id::text, one.client_id) as tie
   from public.appointments ap
   left join lateral (
     select min(m.client_id::text) as client_id
     from public.ghl_client_ad_accounts m
     where m.location_id = ap.ghl_location_id
   ) one on true
-  left join public.ghl_clients g on g.location_id = ap.ghl_location_id
   where ${where}`;
+/**
+ * The board's booking read came back empty or failed. The section keeps its
+ * last good payload rather than show bookings as zero or fall back to a
+ * count with a different rule (R2, 2026-10-22).
+ */
+export class BoardBookingsUnreadable extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "BoardBookingsUnreadable";
+    }
+}
+/** Card statuses whose spend is named as money on a lost client. */
+export const GONE_STATUS = /cancel|stopped|churn/i;
 /**
  * Read client delivery between two Kuwait days, inclusive, plus every past
  * appointment from `recentFrom` with its Mahara OS outcome.
  *
  * Spend and leads come from mediaClientDaysSql: the live media table, already
- * in USD, and the frozen snapshot table for the ad-days the live one lacks,
- * converted with the one rate table (./tap.js USD_PER). An account in
- * a currency that table has no rate for is reported in `unknownCurrencies`
- * and its spend is left out rather than counted at one to one, which would
- * silently understate or inflate it.
+ * in USD, and the snapshot table for the ad-days the live one lacks,
+ * converted with the one rate table (./tap.js USD_PER), ads on the compromise
+ * list left out. An account in a currency that table has no rate for is
+ * reported in `unknownCurrencies` and its spend is left out rather than
+ * counted at one to one, which would silently understate or inflate it.
+ *
+ * Bookings are the board's stored counts (boardBookingDaysSql), by the day
+ * the booking was made, per location; each client carries the locations its
+ * ad accounts tie to (clientTiesSql), and the adapter pairs them
+ * (./deliveryClients.js). `bookingsDayFreshAt` is, per day, when the board
+ * last computed that day's counts, so the adapter can tell a count that is
+ * stale, or was taken before its day ended, from a final one.
  *
  * `options.now` and `options.maxAgeMs` set the media feed's freshness rule
  * (3 hours by default, the media sync's own stale line).
@@ -381,45 +405,15 @@ const tied = (where) => `
 export const MEDIA_STALE_MS = 3 * 3600_000;
 export async function clientDelivery(from, to, recentFrom, options = {}) {
     const now = options.now ?? Date.now();
-    const [feedRows, dayRows, untiedRows, clientRows, bookingRows, provisionalRows, winRows, appointmentRows, metaRows] = await Promise.all([
+    const boardRead = sql(TRIAGE, boardBookingDaysSql(from, to)).catch(e => {
+        throw new BoardBookingsUnreadable(`The Client Performance board's booking days (cockpit_client_days) could not be read: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
+    });
+    const [feedRows, dayRows, untiedRows, clientRows, boardRows, winRows, appointmentRows, metaRows] = await Promise.all([
         sql(TRIAGE, MEDIA_FEED_SQL),
         sql(TRIAGE, mediaClientDaysSql(from, to)),
         sql(TRIAGE, mediaUntiedSql(from, to)),
-        sql(TRIAGE, `with days as (${mediaClientDaysSql(from, to)})
-       select c.id::text as client_id,
-              c.name as account,
-              coalesce(c.hidden_from_dashboard, false) as hidden,
-              coalesce(c.currency, 'USD') as currency,
-              g.client_name as name,
-              g.clickup_id,
-              g.service_mode,
-              g.status,
-              m.matched_by
-       from public.clients c
-       left join public.ghl_client_ad_accounts m on m.client_id = c.id
-       left join public.ghl_clients g on g.location_id = m.location_id
-       where c.id::text in (select client_id from days)`),
-        // Appointments are dated by the day they are FOR, which is how a cost per
-        // booking is read. `future` carries the ones that have not happened yet, so
-        // the screen can show a comparable "due" figure and still say how many are
-        // coming, instead of a number that silently grows all month. Rows on a
-        // location with no client card collapse into one line per calendar: they
-        // are counted for a note, never by day. Provisional calendar rows are
-        // read from the reporting store below instead (it includes these rows,
-        // so a calendar the sync starts to cover is never counted twice).
-        sql(TRIAGE, `with ap as (${tied(`(ap.start_at at time zone 'Asia/Kuwait')::date between ${day(from)} and ${day(to)}`)})
-       select ap.tie as client_id,
-              ap.has_client,
-              case when ap.has_client then to_char(ap.start_at at time zone 'Asia/Kuwait', 'YYYY-MM-DD') end as date,
-              coalesce(cal.name, '') as calendar,
-              min(ap.location_client) as location_client,
-              count(*) as count,
-              count(*) filter (where ap.start_at > now()) as future,
-              max(extract(epoch from ap.updated_at) * 1000) as fresh_ms
-       from ap
-       left join public.ghl_calendars cal on cal.calendar_id = ap.calendar_id
-       group by 1, 2, 3, 4`),
-        sql(TRIAGE, provisionalBookingsSql(from, to)),
+        sql(TRIAGE, clientTiesSql(from, to)),
+        boardRead,
         // A close in the client's own CRM: an opportunity moved to won, dated by
         // the day the stage changed. Kept as the second source beside the Mahara
         // OS close rate; few clients mark wins, so it reads low by construction.
@@ -437,10 +431,15 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         // revision (portal_data.appointment_outcomes.appointment_id is the GHL
         // appointment id). Cancelled and invalid never count for anything, so
         // they are not read. The calendar name comes back and is classified
-        // here, so the booking rule lives in one place.
+        // here, so the booking rule lives in one place. Dated by the day of the
+        // meeting: show and close rates need the meeting to have happened.
+        // Google Calendar copies of a booking are left out with the board's
+        // own predicate (20261021l): a copy is never marked, so it would only
+        // swell the "no outcome" counts (26 in 22 Sep to 21 Oct 2026).
         sql(TRIAGE, `with ap as (${tied(`ap.start_at <= now()
            and (ap.start_at at time zone 'Asia/Kuwait')::date between ${day(recentFrom)} and ${day(to)}
-           and ap.status is distinct from 'cancelled' and ap.status is distinct from 'invalid'`)})
+           and ap.status is distinct from 'cancelled' and ap.status is distinct from 'invalid'
+           and coalesce(ap.ghl_source, '') <> 'google_calendar'`)})
        select ap.tie as client_id,
               to_char(ap.start_at at time zone 'Asia/Kuwait', 'YYYY-MM-DD HH24:MI') as at,
               coalesce(cal.name, '') as calendar,
@@ -460,14 +459,8 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
        ) o on true
        where ap.tie is not null
        order by ap.start_at desc`),
-        // Facts the notes need: how many locations carry the provisional
-        // calendar, whether the appointments sync has ever carried a row of it,
-        // and how far Mahara OS's outcomes reach.
-        sql(TRIAGE, `select (select count(*) from public.ghl_calendars cal where cal.name ~* '${PROVISIONAL.source}') as provisional_calendars,
-              (select string_agg(distinct cal.name, '|') from public.ghl_calendars cal where cal.name ~* '${PROVISIONAL.source}') as provisional_names,
-              (select count(*) from public.appointments ap join public.ghl_calendars cal on cal.calendar_id = ap.calendar_id
-                 where cal.name ~* '${PROVISIONAL.source}') as provisional_rows,
-              (select count(*) from portal_data.appointment_outcomes) as outcome_rows,
+        // How far Mahara OS's outcomes reach.
+        sql(TRIAGE, `select (select count(*) from portal_data.appointment_outcomes) as outcome_rows,
               (select count(distinct o.appointment_id) from portal_data.appointment_outcomes o
                  join public.appointments ap on ap.ghl_appointment_id = o.appointment_id) as outcomes_joined,
               (select to_char(min(o.captured_at) at time zone 'Asia/Kuwait', 'YYYY-MM-DD') from portal_data.appointment_outcomes o) as outcomes_since,
@@ -476,9 +469,14 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
     // A feed mid-rewrite or stale is not a source: the caller says so and
     // falls back, rather than showing missing spend as zero.
     const feed = mediaFeedFresh(feedRows[0], now, options.maxAgeMs ?? MEDIA_STALE_MS);
+    // No stored booking day for any client in the whole window is a failed
+    // read, never zero bookings: the section keeps its last good payload.
+    if (boardRows.length === 0)
+        throw new BoardBookingsUnreadable(`The Client Performance board stores no booking day for any client from ${from} to ${to} (cockpit_client_days), so bookings were not read`);
     const unknown = new Set();
     const clients = [];
     const own = new Set();
+    const sharedAccounts = [];
     // A client taken off the dashboards is off them everywhere: out of the
     // list, out of the company totals, out of every average (Aziz, 2026-09-22
     // about ريبالو, "I don't think that's a client... you can remove them for
@@ -495,15 +493,19 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
             own.add(clientId);
             continue;
         }
+        if (num(r.board_rows) > 1)
+            sharedAccounts.push({ account: String(r.ad_account ?? account), client: String(r.name ?? account), rows: num(r.board_rows) });
         clients.push({
             clientId,
             account,
+            adAccount: r.ad_account ? String(r.ad_account) : null,
             name: String(r.name ?? account),
             clickupTaskId: r.clickup_id ? String(r.clickup_id) : null,
             matchedBy: r.matched_by ? String(r.matched_by) : null,
             serviceMode: r.service_mode ? String(r.service_mode) : null,
             status: r.status ? String(r.status) : null,
             currency: String(r.currency ?? "USD").toUpperCase(),
+            locationIds: r.location_id && r.on_board === true ? [String(r.location_id)] : [],
             campaigns: 0,
         });
     }
@@ -511,14 +513,17 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
     // client moves to a new account the old one keeps its spend for the week
     // (Munshaat Khalida, 2026-10-20), and two rows on one card made Delivery
     // publish that card twice and refuse. Rows on a card fold into the first,
-    // and every day, booking, win and appointment of the others is counted
-    // under it. [2026-10-21]
+    // and every day, booking location, win and appointment of the others is
+    // counted under it. [2026-10-21]
     const canonical = new Map();
     const byCard = new Map();
     for (const c of clients) {
         const first = c.clickupTaskId ? byCard.get(c.clickupTaskId) : undefined;
         if (first) {
             canonical.set(c.clientId, first.clientId);
+            for (const loc of c.locationIds)
+                if (!first.locationIds.includes(loc))
+                    first.locationIds.push(loc);
             continue;
         }
         if (c.clickupTaskId)
@@ -541,7 +546,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         if (r.source === "frozen")
             frozenRows += 1;
         if (r.spend_usd === null || r.spend_usd === undefined) {
-            // Only the frozen table carries an account currency; no rate, no spend.
+            // Only the snapshot table carries an account currency; no rate, no spend.
             unknown.add(String(r.currency ?? "unknown"));
             continue;
         }
@@ -549,7 +554,9 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         days.push({
             clientId: canon(clientId),
             date,
-            spend: Math.round(num(r.spend_usd) * 100) / 100,
+            // Unrounded: every caller rounds once after adding, as the board
+            // does, so a week never drifts a cent from it.
+            spend: num(r.spend_usd),
             leads: num(r.leads),
             source: r.source === "frozen" ? "frozen" : "media",
         });
@@ -564,71 +571,33 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
     }
     for (const c of clients)
         c.campaigns = recentCampaigns.get(c.clientId)?.size ?? 0;
-    let bookingsFresh = 0;
-    const bookings = [];
-    const held = new Map();
-    const seen = {
-        main: new Set(),
-        online: new Set(),
-        provisional: new Set(),
-    };
+    // The board's stored days, as they are: a NULL count stays null.
+    const count = (x) => x === null || x === undefined || x === "" ? null : num(x);
+    const tiedLocations = new Set(clients.flatMap(c => c.locationIds));
+    const bookingDays = [];
     const untied = [];
-    const noClient = { rows: 0, calendars: new Set() };
-    const takeBooking = (r, kind, calendar) => {
-        const count = num(r.count);
-        if (r.has_client !== true) {
-            noClient.rows += count;
-            if (calendar)
-                noClient.calendars.add(calendar);
-            return;
-        }
-        const clientId = r.client_id ? String(r.client_id) : null;
-        if (clientId && (own.has(clientId) || hiddenClients.has(clientId)))
-            return;
-        if (!clientId || !known.has(clientId)) {
-            // A client's booking that reaches no client row: untied, or a client
-            // with no ad spend in the window (the table is clients with spend).
-            if (isBookingKind(kind))
-                untied.push({
-                    date: String(r.date),
-                    client: String(r.location_client ?? "a client with no card name"),
-                    count,
-                });
-            return;
-        }
-        if (!isBookingKind(kind)) {
-            const h = held.get(kind) ?? { count: 0, names: new Set() };
-            h.count += count;
-            if (calendar)
-                h.names.add(calendar);
-            held.set(kind, h);
-            return;
-        }
-        seen[kind].add(calendar);
-        bookings.push({
-            clientId: canon(clientId),
+    let bookingsFresh = 0;
+    const bookingsDayFreshAt = {};
+    for (const r of boardRows) {
+        const computed = num(r.computed_ms);
+        bookingsFresh = Math.max(bookingsFresh, computed);
+        const dayKey = String(r.date);
+        bookingsDayFreshAt[dayKey] = Math.max(bookingsDayFreshAt[dayKey] ?? 0, computed);
+        const row = {
+            locationId: String(r.location_id),
+            clickupTaskId: r.clickup_id ? String(r.clickup_id) : null,
+            client: String(r.client_name ?? r.location_id),
+            status: r.status ? String(r.status) : null,
             date: String(r.date),
-            kind,
-            count,
-            future: num(r.future),
-        });
-    };
-    for (const r of bookingRows) {
-        bookingsFresh = Math.max(bookingsFresh, num(r.fresh_ms));
-        const calendar = String(r.calendar ?? "");
-        const kind = calendarKind(calendar);
-        // Provisional comes from the reporting store, which already holds
-        // these rows; counting them here too would count them twice.
-        if (kind === "provisional")
-            continue;
-        takeBooking(r, kind, calendar);
-    }
-    let provisionalRows180 = 0;
-    let provisionalFresh = 0;
-    for (const r of provisionalRows) {
-        provisionalRows180 += num(r.count);
-        provisionalFresh = Math.max(provisionalFresh, num(r.fresh_ms));
-        takeBooking(r, "provisional", String(r.calendar ?? ""));
+            confirmed: count(r.confirmed),
+            provisional: count(r.provisional),
+        };
+        bookingDays.push(row);
+        // A booking on a client this section has no ad account for (no spend
+        // read, or no account tied): named, in no figure.
+        const booked = (row.confirmed ?? 0) + (row.provisional ?? 0);
+        if (!tiedLocations.has(row.locationId) && booked > 0)
+            untied.push({ date: row.date, client: row.client, status: row.status, count: booked });
     }
     const wins = [];
     for (const r of winRows) {
@@ -649,7 +618,8 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
             continue;
         const calendar = String(r.calendar ?? "");
         const kind = calendarKind(calendar);
-        if (!isBookingKind(kind))
+        // Show and close rates read the main and online calendars only.
+        if (kind !== "main" && kind !== "online")
             continue;
         const at = String(r.at);
         appointments.push({
@@ -677,12 +647,14 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
     return {
         clients,
         days,
-        bookings,
+        bookingDays,
         wins,
         appointments,
         adsFreshAt: feed.at,
         bookingsFreshAt: bookingsFresh > 0 ? bookingsFresh : undefined,
+        bookingsDayFreshAt,
         unmapped,
+        sharedAccounts,
         unknownCurrencies: [...unknown].sort(),
         media: {
             firstDay: feed.firstDay,
@@ -696,36 +668,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
                 lastDay: r.last_day ? String(r.last_day) : null,
             })),
         },
-        notBookings: [...held.entries()]
-            .map(([kind, h]) => ({
-            kind,
-            count: h.count,
-            calendars: [...h.names].sort(),
-        }))
-            .sort((a, b) => b.count - a.count),
-        calendarNames: {
-            main: [...seen.main].sort(),
-            online: [...seen.online].sort(),
-            provisional: [...seen.provisional].sort(),
-        },
         untied,
-        noClientLocation: {
-            rows: noClient.rows,
-            calendars: [...noClient.calendars].sort(),
-        },
-        provisional: {
-            calendars: num(meta.provisional_calendars),
-            names: String(meta.provisional_names ?? "")
-                .split("|")
-                .filter(Boolean)
-                .sort(),
-            // Provisional calendar rows over the read window, from the
-            // reporting store; and how many of them the appointments sync holds.
-            rowsEver: provisionalRows180,
-            inAppointmentsSync: num(meta.provisional_rows),
-            freshAt: provisionalFresh > 0 ? provisionalFresh : undefined,
-            source: "call-centre reporting store",
-        },
         outcomes: {
             rows: num(meta.outcome_rows),
             joined: num(meta.outcomes_joined),

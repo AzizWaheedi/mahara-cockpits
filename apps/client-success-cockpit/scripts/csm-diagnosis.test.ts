@@ -153,3 +153,108 @@ describe("cost per booking under 5 leads", () => {
     );
   });
 });
+
+// The client's own 7 days from the media sync (`ads7d` on the profile, the
+// cost per booking build of 22 Oct 2026, R8): Mahara's campaigns on its ad
+// accounts, stopped ones included, against the confirmed bookings made on
+// the same days. Atlantis 14 to 20 Oct: the listed campaigns 19\10 ($51.71,
+// none) and 7\10 ($122.82, 3) read $58.18 a booking; its fourth booking came
+// from 13\9, a stopped campaign, so the client's figure is $43.63.
+describe("the client's own 7 days", () => {
+  const atlantisAds = [
+    { spend7d: 51.71, leads7d: 3, bookings7d: 0 },
+    { spend7d: 122.82, leads7d: 2, bookings7d: 3 },
+  ];
+  const week = {
+    from: "2026-10-14",
+    through: "2026-10-20",
+    accounts: ["290802986"],
+    spend: 174.53,
+    leads: 5,
+    offBoardSpend: 0,
+    bookings: 4,
+    costPerBooking: 43.63,
+    showed: null,
+    noShows: null,
+    due: null,
+    campaigns: [],
+    source: "media sync",
+  };
+
+  test("Atlantis: bookings at $43.63 make its $34.91 a lead a watch", () => {
+    const d = diagnose({ ...profile(atlantisAds), ads7d: week });
+    expect(d.healthy).toBe(true);
+    expect(d.watch.map(w => w.title)).toEqual([
+      "Cost per lead is $34.91, over the $15 gate, but bookings still cost $43.63, under the $60 gate",
+    ]);
+    expect(d.watch[0].evidence).toBe(
+      "$175 spent from 14 Oct to 20 Oct on Mahara's campaigns (stopped ones included) for 5 leads and 4 bookings.",
+    );
+    // Without the client's figure, the listed campaigns read $58.18: still
+    // under $60, but not the client's number.
+    const listed = diagnose(profile(atlantisAds));
+    expect(listed.watch[0]?.title).toContain("bookings still cost $58.18");
+  });
+
+  test("the client's figure over the gate names its window", () => {
+    // Castello 14 to 20 Oct: $268.48 for 1 booking, 20 leads.
+    const c = all({
+      ...profile([{ spend7d: 225.36, leads7d: 14, bookings7d: 1 }]),
+      ads7d: { ...week, spend: 268.48, leads: 20, bookings: 1 },
+    }).find(x => x.id === "cpb_high");
+    expect(c?.title).toBe("Cost per booking is $268.48 against a $60 gate");
+    expect(c?.evidence).toBe(
+      "$268 spent from 14 Oct to 20 Oct on Mahara's campaigns (stopped ones included) for 1 booking from 20 leads.",
+    );
+  });
+
+  test("no booking on the client's figure is over the gate; unknown is not zero", () => {
+    // Alkhalil 14 to 20 Oct: $233.36, 17 leads, no booking.
+    const none = all({
+      ...profile([{ spend7d: 233.36, leads7d: 17, bookings7d: 0 }]),
+      ads7d: { ...week, spend: 233.36, leads: 17, bookings: 0 },
+    }).find(x => x.id === "cpb_high");
+    expect(none?.title).toBe(
+      "No bookings from $233 spent from 14 Oct to 20 Oct on Mahara's campaigns (stopped ones included), against a $60 gate",
+    );
+    // Bookings not read: the campaigns' counts are not used instead, and
+    // the cost per lead decides.
+    const unread = all({
+      ...profile([{ spend7d: 210, leads7d: 9, bookings7d: 4 }]),
+      ads7d: { ...week, spend: 210, leads: 9, bookings: null },
+    });
+    expect(unread.map(x => x.id)).toEqual(["cpl_high"]);
+    expect(unread[0].evidence).toBe(
+      "$210 spent from 14 Oct to 20 Oct on Mahara's campaigns (stopped ones included) for 9 leads. No cost per booking to weigh it against, so the cost per lead decides.",
+    );
+  });
+
+  test("done with you: the basis names the client's own window", () => {
+    // نهوض نجد books its own meetings: lead volume and cost per lead only.
+    const dwy = {
+      ...profile([{ spend7d: 150.2, leads7d: 9 }]),
+      service: "Done With You",
+    };
+    expect(diagnose(dwy).basis).toStartWith("9 leads in the last 7 days");
+    expect(
+      diagnose({
+        ...dwy,
+        ads7d: { ...week, spend: 192.33, leads: 12, bookings: null },
+      }).basis,
+    ).toStartWith(
+      "12 leads from 14 Oct to 20 Oct on Mahara's campaigns (stopped ones included) · cost per lead $16.03",
+    );
+  });
+
+  test("an ads7d not in the published shape is not used", () => {
+    for (const bad of [
+      { ...week, through: "20 Oct" },
+      { ...week, spend: "174.53" },
+      { ...week, bookings: "4" },
+      null,
+    ]) {
+      const d = diagnose({ ...profile(atlantisAds), ads7d: bad });
+      expect(d.watch[0]?.title).toContain("bookings still cost $58.18");
+    }
+  });
+});

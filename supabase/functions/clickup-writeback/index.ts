@@ -9,11 +9,21 @@
 //   dosdonts  hourly at :35, 03-18 UTC  Do's & Don'ts clean format (convex dosDonts.tidyClient)
 //   doctor    on demand                 secrets present (names only) and queue health
 //
-// Dry run by default: nothing reaches ClickUp unless the secret
-// CLICKUP_WRITEBACK_APPLY is exactly "true". Secrets read by name:
-// CLICKUP_API_TOKEN, META_SYSTEM_TOKEN (Ad Status read-back), CRON_SECRET,
-// optional META_GRAPH_VERSION, CLICKUP_WRITEBACK_ONLY_TASKS (comma-separated
-// task ids for a one-card live check) and CLICKUP_CALLS_PER_MINUTE. Every provider
+// Dry run by default. Three secrets open writes to ClickUp, each only when it
+// is exactly "true" (run.ts OUTWARD SAFETY):
+//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts
+//   CLICKUP_WRITEBACK_APPLY_CSM_TICKETS  client success tickets in the log, on
+//                                        their own (live since 2026-10-12)
+//   CLICKUP_WRITEBACK_APPLY_KPI          the board KPI columns; the general
+//                                        switch does not write them
+// The kpi job reports ok=false while it is a dry run, on a run limited to
+// CLICKUP_WRITEBACK_ONLY_TASKS, when no card had Last Updated written and when
+// a write failed, so the health line never says ok over frozen numbers.
+// Secrets read by name: CLICKUP_API_TOKEN, META_SYSTEM_TOKEN (Ad Status
+// read-back), CRON_SECRET, optional META_GRAPH_VERSION,
+// CLICKUP_WRITEBACK_ONLY_TASKS (comma-separated task ids for a one-card live
+// check; it narrows APPLY and APPLY_KPI, not client success tickets) and
+// CLICKUP_CALLS_PER_MINUTE. Every provider
 // call goes through cockpit-media-api/tools.ts and lands in
 // cockpit_media_provider_health. Nothing here logs a key.
 

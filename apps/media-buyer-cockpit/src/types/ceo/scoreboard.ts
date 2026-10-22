@@ -1,3 +1,4 @@
+import { cpbConfirmedOfDays } from "../../pages/ceo/deliveryCost";
 import type { CallCenterMetrics } from "./callCenterContract";
 import type {
   CallsPayload,
@@ -135,6 +136,22 @@ export type Payloads = {
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const div = (a: number | null, b: number | null) =>
   a !== null && b !== null && b > 0 ? r2(a / b) : null;
+
+/**
+ * Confirmed bookings and the spend they pair with over the window, from the
+ * delivery series (the CEO tabs' one rule, src/pages/ceo/deliveryCost.ts);
+ * null when no day is stored or the rows predate the board's counts.
+ */
+function confirmedDays(
+  p: Payloads,
+  from: string,
+  to: string,
+): { confirmed: number; spend: number } | null {
+  const c = cpbConfirmedOfDays(p.delivery?.daily, from, to);
+  return c.confirmed === null || c.spend === null
+    ? null
+    : { confirmed: c.confirmed, spend: c.spend };
+}
 
 /** The days of the growth series inside the window. */
 function days(p: Payloads, from: string, to: string): GrowthDay[] {
@@ -341,16 +358,18 @@ const READERS: Record<string, Reader> = {
     );
     return rows.length ? rows.reduce((n, d) => n + d.leads, 0) : null;
   },
-  clientBookings: (p, f, t) => {
-    const rows = (p.delivery?.daily ?? []).filter(
-      d => d.date >= f && d.date <= t,
-    );
-    return rows.length ? rows.reduce((n, d) => n + d.bookings, 0) : null;
-  },
+  // Confirmed bookings by the day they were made, and the cost per
+  // confirmed booking: spend on the days the board stores bookings over
+  // them (R10, 2026-10-22; src/pages/ceo/deliveryCost.ts is the same rule).
+  // Null for a day range with no stored day, or rows computed before the
+  // board's counts, never the old total under the new name.
+  clientBookings: (p, f, t) => confirmedDays(p, f, t)?.confirmed ?? null,
   clientCpl: (p, f, t) =>
     div(READERS.clientSpend(p, f, t), READERS.clientLeads(p, f, t)),
-  clientCpb: (p, f, t) =>
-    div(READERS.clientSpend(p, f, t), READERS.clientBookings(p, f, t)),
+  clientCpb: (p, f, t) => {
+    const c = confirmedDays(p, f, t);
+    return c ? div(c.spend, c.confirmed) : null;
+  },
 
   callLeads: (p, f, t) => callTotals(p, f, t)?.leads ?? null,
   callLeadToBooking: (p, f, t) => {
@@ -766,19 +785,19 @@ export const METRICS: MetricDef[] = [
   ),
   m(
     "clientBookings",
-    "Client bookings",
+    "Client confirmed bookings",
     "delivery",
     "count",
     "up",
-    "Bookings on client calendars, by the day they are for.",
+    "Main and online calendar bookings made on these days, as the Client Performance board counts them. Provisional bookings are left out.",
   ),
   m(
     "clientCpb",
-    "Client cost per booking",
+    "Client cost per confirmed booking",
     "delivery",
     "usd",
     "down",
-    "Client ad spend over client bookings.",
+    "Client ad spend on the days the board stores bookings, over the confirmed bookings made on them. Spend the board stores no bookings for is left out.",
     { level: true },
   ),
   m(

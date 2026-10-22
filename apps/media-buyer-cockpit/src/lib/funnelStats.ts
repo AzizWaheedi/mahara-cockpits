@@ -87,11 +87,12 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
 /**
  * The statistics function's range read, checked and reduced to what the
- * sheet counts. `through` is the last day the media data has spend for,
- * when it falls inside the range: a call booked after it is not set against
- * spend that stops before it (2026-10-21). `spendNotIn` is that day when the
- * whole range comes after it: every call is kept (bookingsCap in
- * mediaStatsClient.ts decides which of the two applies).
+ * sheet counts. `through` is the paired day (mediaDataThrough), when it
+ * falls inside the range: a call booked after it is not set against spend
+ * that stops before it (2026-10-21), and no spend or lead after it is
+ * counted either, so the two meet on one day (2026-10-22). `spendNotIn` is
+ * that day when the whole range comes after it: every call is kept and no
+ * spend row is (bookingsCap in mediaStatsClient.ts decides which applies).
  */
 export function parseStats(
   data: unknown,
@@ -106,14 +107,17 @@ export function parseStats(
   const booked = (d.bookings as Record<string, unknown>[]).filter(
     b => !through || String(b.date ?? "") <= through,
   );
+  const end = through || spendNotIn;
   return {
-    rows: (d.rows as Record<string, unknown>[]).map(r => ({
-      adId: text(r.metaAdId),
-      spend: num(r.spend),
-      impressions: num(r.impressions),
-      linkClicks: num(r.linkClicks),
-      leads: num(r.leads),
-    })),
+    rows: (d.rows as Record<string, unknown>[])
+      .filter(r => !end || String(r.date ?? "") <= end)
+      .map(r => ({
+        adId: text(r.metaAdId),
+        spend: num(r.spend),
+        impressions: num(r.impressions),
+        linkClicks: num(r.linkClicks),
+        leads: num(r.leads),
+      })),
     calls: booked.map(b => ({
       adId: text(b.adId),
       status: String(b.status ?? "").toLowerCase(),

@@ -32,7 +32,16 @@ import { TrendChart } from "@/components/TrendChart";
 import { Button } from "@/components/ui/button";
 import { accountIssueFlag, metaBillingUrl } from "@/lib/adBillingStrip";
 import { callCentreKey } from "@/lib/callCentreClient";
-import { api, useQueries, useQuery } from "@/lib/cockpitApi";
+import {
+  accountKey,
+  type ClientRangeRead,
+  campaignsNotListed,
+  clientCpb,
+  clientPagePlan,
+  clientRangeNotes,
+  countedLine,
+} from "@/lib/clientRange";
+import { api, useQueries, useQuery, useQueryState } from "@/lib/cockpitApi";
 import {
   COST_DOT,
   type CostTone,
@@ -42,7 +51,7 @@ import {
   spendNotInWhy,
 } from "@/lib/costTone";
 import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "@/lib/kpi";
-import { everyBookingPlaced } from "@/lib/mediaStatsClient";
+import { everyBookingPlaced, pairedDay } from "@/lib/mediaStatsClient";
 import { kuwaitDay, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 import { LeadSyncPanel } from "./LeadSync";
@@ -59,9 +68,14 @@ import { LeadSyncPanel } from "./LeadSync";
  *
  * So one range drives the whole page: the account's numbers and daily
  * trends, every ad with its picture and its numbers (the wall), and each
- * campaign in full through the table's own panel. The numbers are the
- * range table's (`stats.range`, one read per campaign, shared with the open
- * panel's own read), summed; nothing here is a second formula.
+ * campaign in full through the table's own panel. The ads, the campaigns and
+ * the daily charts are the range table's (`stats.range`, one read per
+ * campaign, shared with the open panel's own read). The client's totals are
+ * its own read (`stats.clientRange`, clientRange.ts, 2026-10-22): Mahara's
+ * campaigns on its ad accounts, stopped ones included, with the board's
+ * confirmed bookings, so a campaign removed from the list no longer drops
+ * out of them. When that read fails, the campaigns listed are summed and the
+ * page says so.
  */
 type Row = any;
 
@@ -199,10 +213,16 @@ export function AccountView({
   onSelect,
   renderPanel,
   onClose,
+  accountIds,
 }: {
   client: string;
   /** The client's campaigns from the snapshot, running and off. */
   campaigns: Row[];
+  /**
+   * The ad accounts the page was opened with (`?adAccounts=`): a client with
+   * no campaign listed reads its own numbers by them, on any range.
+   */
+  accountIds?: string[];
   /** Meta's tree for those campaigns: ad sets and ads, with their pictures. */
   tree: Row[];
   /** The 7-day call per ad (the snapshot's `ads` rows). */
@@ -233,13 +253,47 @@ export function AccountView({
   const ranges = useQueries(rangeQueries) as Record<string, Row>;
   const trends = useQueries(trendQueries) as Record<string, Row>;
   const coverage = useQuery(api.stats.coverage, {});
+  // The client's own totals over the range, read by its ad accounts: its
+  // campaigns', else the ones the page was opened with (a client with no
+  // campaign listed), else found by its name (R8, 2026-10-22).
+  const listedAccounts = [
+    ...new Set(campaigns.map(c => accountKey(c.metaAccountId)).filter(Boolean)),
+  ].sort();
+  const accounts =
+    listedAccounts.length > 0 ? listedAccounts : (accountIds ?? []);
+  const clientRead = useQueryState<ClientRangeRead>(api.stats.clientRange, {
+    start: range.start,
+    end: range.end,
+    accounts: accounts.length > 0 ? accounts : null,
+  });
+  // Whose figures the totals are (clientPagePlan): the client's own read
+  // when it counts the range; the campaigns listed, summed, with the reason,
+  // when it fails, counts no day of the range (Today before the nightly
+  // pull), or starts later than a range that has campaigns listed (before
+  // 24 Sep 2026), since the charts, the ads and the campaign rows cover the
+  // whole range.
+  const plan = clientPagePlan({
+    read: clientRead.data,
+    failed: Boolean(clientRead.error),
+    name: client,
+    accounts,
+    listed: campaigns.length,
+    start: range.start,
+    end: range.end,
+  });
+  const clientRow = plan.row;
+  const whole = plan.whole;
+  const clientPending = clientRead.data === undefined && !clientRead.error;
 
   const results = names.map(n => ranges[n]);
   const loading = results.some(r => r === undefined);
   const failed = names.filter(n => ranges[n] instanceof Error);
   const read = (n: string) =>
     ranges[n] && !(ranges[n] instanceof Error) ? ranges[n] : undefined;
-  const leadsOnly = campaigns.every(c => c.serviceMode === "DWY");
+  const leadsOnly =
+    campaigns.length > 0
+      ? campaigns.every(c => c.serviceMode === "DWY")
+      : clientRow?.serviceMode === "DWY";
 
   // The account over the range: the campaigns' own totals, summed, and the
   // rates worked out again from the sums rather than averaged.
@@ -261,22 +315,61 @@ export function AccountView({
     sum.linkClicks += Number(r.total?.linkClicks ?? 0);
     sum.bookings += Number(r.bookingsTotal ?? r.total?.bookings ?? 0);
   }
-  const cpl = sum.leads > 0 ? sum.spend / sum.leads : undefined;
-  const cpb =
-    sum.bookings > 0 && sum.spend > 0 ? sum.spend / sum.bookings : undefined;
   // The media data's last day when the whole range comes after it (Today):
   // every campaign's read names the same day (mediaStatsClient.ts).
   const spendNotIn = names
     .map(n => read(n)?.spendNotIn as string | undefined)
     .find(Boolean);
+  // The page's totals: the client's own when its read has them, else the
+  // campaigns listed here, summed. A figure the client read could not know
+  // is null and reads n/a with its reason, never 0.
+  const total: {
+    spend: number | null;
+    leads: number | null;
+    bookings: number | null;
+    cost?: number | null;
+    hasData: boolean;
+  } = whole
+    ? {
+        spend: whole.spend,
+        leads: whole.leads,
+        bookings: whole.bookings,
+        cost: whole.costPerBooking,
+        hasData:
+          (whole.spend ?? 0) > 0 ||
+          (whole.leads ?? 0) > 0 ||
+          (whole.bookings ?? 0) > 0,
+      }
+    : {
+        spend: sum.spend,
+        leads: sum.leads,
+        bookings: sum.bookings,
+        cost:
+          sum.bookings > 0 && sum.spend > 0
+            ? sum.spend / sum.bookings
+            : undefined,
+        hasData: sum.hasData,
+      };
+  const cpl =
+    total.spend !== null && total.leads !== null && total.leads > 0
+      ? total.spend / total.leads
+      : undefined;
   // No booking on more than $60 reads "None on $233" with the grid's chip,
   // not a grey n/a (2026-10-21).
-  const cpbShown = cpbDisplay(sum.spend, sum.bookings, {
-    cost: cpb,
-    spendNotIn,
-  });
+  // The client's own read can know bookings and spend and still have no cost
+  // for them (clientCpb): n/a with its reason, never the two divided.
+  const cpbShown = whole
+    ? clientCpb(whole)
+    : cpbDisplay(total.spend, total.bookings, {
+        cost: total.cost,
+        spendNotIn,
+      });
   const bookingRate =
-    sum.leads > 0 ? (sum.bookings / sum.leads) * 100 : undefined;
+    total.bookings !== null && total.leads !== null && total.leads > 0
+      ? (total.bookings / total.leads) * 100
+      : undefined;
+  // The rates need impressions and clicks, which only the campaigns' own
+  // reads carry: they are the campaigns listed here.
   const rateable = sum.impressions >= MIN_IMPRESSIONS;
   const linkCtr = rateable
     ? (sum.linkClicks / sum.impressions) * 100
@@ -440,6 +533,10 @@ export function AccountView({
     });
   }, [current]);
 
+  // Campaigns in the client's read that are no longer listed here: stopped,
+  // with spend, leads or bookings in the range. Their numbers are in the
+  // totals; they are listed under Campaigns without a panel.
+  const notListed = campaignsNotListed(whole, names);
   const liveCampaigns = campaigns.filter(c =>
     tree.some(
       (t: Row) =>
@@ -449,8 +546,13 @@ export function AccountView({
   const multi = campaigns.length > 1;
   // Bookings come from one HighLevel read per client, so any campaign carries them.
   const lost = campaigns.find(c => c.lost)?.lost;
-  // The client's calls are read by its ad account (CallCentreSection).
-  const callsKey = callCentreKey(campaigns);
+  // The client's calls are read by its ad account (CallCentreSection); a
+  // client with no campaign listed by the accounts its own read names.
+  const callsKey = callCentreKey(
+    campaigns.length > 0
+      ? campaigns
+      : (clientRow?.accounts ?? accounts).map(a => ({ metaAccountId: a })),
+  );
   // One lost breakdown per client: for a client we call, the Calls part's
   // "Why leads were lost" (the dialer's outcomes, with the calls to play)
   // stands in for the lost pipeline; done-with-you clients keep the pipeline.
@@ -464,18 +566,27 @@ export function AccountView({
       : []),
     { id: "calls", label: "Calls" },
     { id: "account-ads", label: "Ads", count: cards.length },
-    { id: "account-campaigns", label: "Campaigns", count: campaigns.length },
+    {
+      id: "account-campaigns",
+      label: "Campaigns",
+      count: campaigns.length + notListed.length,
+    },
     ...(current
       ? [{ id: "account-campaign", label: String(current.campaignName) }]
       : []),
   ];
-  const behind =
-    coverage?.last && coverage.last < kuwaitDay(1) && range.end > coverage.last;
-  // Bookings stop on the media data's last day when the range runs past it
-  // (mediaStatsClient.ts, 2026-10-21); every campaign's read names the same day.
-  const bookingsThrough = names
-    .map(n => read(n)?.bookingsThrough as string | undefined)
-    .find(Boolean);
+  // The last day every account's spend is in (pairedDay): before the
+  // tracker sheet fills, it is behind yesterday, and the page says so.
+  const paired = pairedDay(coverage);
+  const behind = Boolean(paired && paired < kuwaitDay(1) && range.end > paired);
+  // Spend, leads and bookings stop on that day when the range runs past it
+  // (mediaStatsClient.ts, 2026-10-21 and 2026-10-22); every campaign's read
+  // and the client's own read name the same day.
+  const bookingsThrough = whole
+    ? plan.countedTo
+    : names
+        .map(n => read(n)?.bookingsThrough as string | undefined)
+        .find(Boolean);
 
   const tile = (
     label: string,
@@ -501,6 +612,16 @@ export function AccountView({
   );
   const fewImpressions =
     "Fewer than 1,000 impressions in this range, so the rate would be noise.";
+  // The rates come from the campaigns listed: say so when the totals beside
+  // them hold more (a stopped campaign), and why they are n/a with none.
+  const ratesNote =
+    whole && notListed.length > 0
+      ? "Link CTR, CPM and opt-in rate are the campaigns listed here: a stopped campaign's impressions and clicks are not read."
+      : "";
+  const noRates =
+    names.length === 0
+      ? "No campaign of this client is listed now, so its impressions and clicks are not read here."
+      : undefined;
   // Muhammed's grid (kpi.ts): good to the gate, a warning to the bad line,
   // serious above it. The same bands colour the board.
   const gate = (
@@ -524,6 +645,20 @@ export function AccountView({
       />
     );
   const allFailed = names.length > 0 && failed.length === names.length;
+  // The tiles wait for the client's own read too, so they never flash the
+  // campaigns' sum first.
+  const numbersLoading = loading || clientPending;
+  // The days the totals count, when they are not the range picked: from the
+  // client read's first day (a client with no campaign listed), to the
+  // paired day. Before the sheet fills, the callout above says the second.
+  const countedNote = countedLine(
+    leadsOnly ? "Spend and leads" : "Spend, leads and bookings",
+    plan.countedFrom,
+    behind ? undefined : bookingsThrough,
+  );
+  // The client's read counts the days but cannot know its spend (no ad
+  // account of its own): say that, never "No spend".
+  const spendUnknown = whole !== undefined && whole.spend === null;
   // Meta flags this client's ad account: one line, once per account.
   const issues = [
     ...new Map(
@@ -557,8 +692,10 @@ export function AccountView({
               {client}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              {campaigns.length} campaign{campaigns.length === 1 ? "" : "s"} ·{" "}
-              {liveCampaigns} running on Meta · {range.start} to {range.end}
+              {campaigns.length > 0
+                ? `${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"} · ${liveCampaigns} running on Meta`
+                : "No campaign listed now"}{" "}
+              · {range.start} to {range.end}
             </p>
             <CallerLine
               clientName={client}
@@ -611,28 +748,35 @@ export function AccountView({
         <h3 id="account-numbers-title" className="text-[15px] font-semibold">
           Numbers
         </h3>
-        {behind && (
+        {behind && paired && (
           <p className="callout-warn mt-4 rounded-lg border px-3 py-2 text-xs">
-            The tracker sheet has spend up to {shortDate(coverage.last)}.
-            Anything after that has not been pulled yet; it is not missing.
+            The tracker sheet has spend up to {shortDate(paired)}, so spend,
+            leads{leadsOnly ? "" : " and bookings"} are counted to that day.
+            Anything after it has not been pulled yet; it is not missing.
           </p>
         )}
-        {!behind && !leadsOnly && bookingsThrough && (
+        {countedNote && (
+          <p className="mt-2 text-xs text-muted-foreground">{countedNote}</p>
+        )}
+        {/* The client's own read counts stopped campaigns (R8, 2026-10-22):
+            Atlantis 14-20 Oct reads $174.53 / 4 = $43.63 here as on the
+            Client Performance board, its fourth booking from 13\9, a stopped
+            campaign. Without that read the campaigns listed are summed and
+            the line says so. */}
+        {whole ? (
           <p className="mt-2 text-xs text-muted-foreground">
-            Bookings are counted to {shortDate(bookingsThrough)}, the last day
-            with Meta's numbers, so spend and bookings cover the same days.
+            {clientRangeNotes(whole, {
+              leadsOnly,
+              unlinked: plan.unlinked,
+            }).join(" ")}
           </p>
-        )}
-        {/* Until the worker publishes a client-level figure (R8, 2026-10-22),
-            these totals are the campaigns listed here only. Atlantis's
-            14-20 Oct reads $174.53 / 3 = $58.18 here once the call-back rule
-            ships, against $174.53 / 4 = $43.63 on the Client Performance
-            board: its fourth booking came from 13\9, a stopped campaign. */}
-        <p className="mt-2 text-xs text-muted-foreground">
-          These totals are the campaigns listed here. A campaign removed from
-          the list is left out, with its spend and bookings; the Client
-          Performance board counts the whole ad account.
-        </p>
+        ) : names.length > 0 ? (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {plan.why} A campaign removed from the list is left out, with its
+            spend and bookings; the Client Performance board counts the whole ad
+            account.
+          </p>
+        ) : null}
         {failed.length > 0 && !allFailed && (
           <p className="callout-warn mt-4 rounded-lg border px-3 py-2 text-xs">
             The numbers for {failed.join(", ")} could not be read, so the totals
@@ -641,45 +785,89 @@ export function AccountView({
         )}
 
         <div className="@container mt-4">
-          {loading ? (
+          {numbersLoading ? (
             <p className="rounded-xl bg-muted/40 p-3 text-sm text-muted-foreground">
               Loading {range.label.toLowerCase()}…
             </p>
-          ) : allFailed ? (
+          ) : allFailed && !whole ? (
             <EmptyState
               compact
               title="The numbers could not be read"
               text="This does not mean nothing was spent. Reload the page to try again."
             />
-          ) : !sum.hasData ? (
+          ) : names.length === 0 && !whole ? (
+            // No campaign listed and no figure from the client's own read:
+            // nothing to sum, so the reason, never "No spend".
             <EmptyState
               compact
               title={
-                spendNotIn
-                  ? spendNotInWhy(spendNotIn)
-                  : `No spend between ${range.start} and ${range.end}`
+                clientRead.error
+                  ? "The client's numbers could not be read"
+                  : "No numbers for this client in this range"
               }
               text={
-                spendNotIn && !leadsOnly && sum.bookings > 0
-                  ? `${sum.bookings} booking${sum.bookings === 1 ? " was" : "s were"} made in this range: see Campaigns below. ${sum.bookings === 1 ? "Its" : "Their"} cost waits for the spend; pick another range for the full numbers.`
-                  : "Pick another range above. Today's numbers appear once the tracker has pulled the day."
+                clientRead.error
+                  ? plan.why
+                  : `${plan.why} Pick another range above.`
+              }
+            />
+          ) : !total.hasData ? (
+            <EmptyState
+              compact
+              title={
+                spendUnknown
+                  ? "This client's spend is not known for these days"
+                  : !whole && spendNotIn
+                    ? spendNotInWhy(spendNotIn)
+                    : `No spend between ${(whole && plan.countedFrom) || range.start} and ${(whole && plan.countedTo) || range.end}`
+              }
+              text={
+                spendUnknown
+                  ? (whole?.why ??
+                    "Its ad account is not linked on the Client Performance board.")
+                  : !whole && spendNotIn && !leadsOnly && sum.bookings > 0
+                    ? `${sum.bookings} booking${sum.bookings === 1 ? " was" : "s were"} made in this range: see Campaigns below. ${sum.bookings === 1 ? "Its" : "Their"} cost waits for the spend; pick another range for the full numbers.`
+                    : "Pick another range above. Today's numbers appear once the tracker has pulled the day."
               }
             />
           ) : (
             <div className="grid grid-cols-2 gap-3 @2xl:grid-cols-4 @6xl:grid-cols-8">
-              {tile("Spend", money(sum.spend))}
-              {tile("Leads", String(sum.leads))}
+              {tile("Spend", money(total.spend), {
+                naHint: whole?.why ?? undefined,
+              })}
+              {tile(
+                "Leads",
+                total.leads === null ? "n/a" : String(total.leads),
+                {
+                  naHint: whole?.why ?? undefined,
+                },
+              )}
               {tile("Cost per lead", usd2(cpl), {
                 status: gate(cpl, cplTone(cpl), CPL_GATE, CPL_BAD),
-                naHint: "No leads in this range.",
+                // Leads or spend not known is not "no leads".
+                naHint:
+                  total.leads === null
+                    ? (whole?.why ??
+                      "The leads for this range could not be read.")
+                    : total.spend === null && total.leads > 0
+                      ? (whole?.why ??
+                        "The spend for this range could not be read.")
+                      : "No leads in this range.",
               })}
               {!leadsOnly &&
-                tile("Bookings", String(sum.bookings), {
-                  sub:
-                    bookingRate === undefined
-                      ? undefined
-                      : `${Math.round(bookingRate)}% of leads`,
-                })}
+                tile(
+                  "Bookings",
+                  total.bookings === null ? "n/a" : String(total.bookings),
+                  {
+                    sub:
+                      bookingRate === undefined
+                        ? undefined
+                        : `${Math.round(bookingRate)}% of leads`,
+                    naHint:
+                      whole?.why ??
+                      "The bookings for this range could not be read.",
+                  },
+                )}
               {!leadsOnly &&
                 tile("Cost per booking", cpbShown.text, {
                   status: gate(
@@ -689,21 +877,39 @@ export function AccountView({
                     CPB_BAD,
                   ),
                   hint: cpbShown.why,
-                  naHint: cpbShown.why ?? "No bookings in this range.",
+                  naHint:
+                    cpbShown.why ??
+                    (total.bookings === null
+                      ? (whole?.why ??
+                        "The bookings for this range could not be read.")
+                      : "No bookings in this range."),
                 })}
               {tile("Link CTR", pctText(linkCtr), {
                 hint: "Link clicks divided by impressions. Not CTR (all).",
-                naHint: fewImpressions,
+                naHint: noRates ?? fewImpressions,
               })}
-              {tile("CPM", usd2(cpm), { naHint: fewImpressions })}
+              {tile("CPM", usd2(cpm), { naHint: noRates ?? fewImpressions })}
               {tile("Opt-in rate", pctText(optIn), {
                 hint: "Of those who clicked through, how many left their details.",
-                naHint: "Fewer than 50 link clicks in this range.",
+                naHint: noRates ?? "Fewer than 50 link clicks in this range.",
               })}
             </div>
           )}
         </div>
+        {ratesNote && !numbersLoading && total.hasData && (
+          <p className="mt-2 text-xs text-muted-foreground">{ratesNote}</p>
+        )}
 
+        {trend.length >= 2 && whole && notListed.length > 0 && (
+          <p className="mt-4 text-xs text-muted-foreground">
+            The daily charts are the campaigns listed here; the{" "}
+            {notListed.length === 1
+              ? "stopped campaign"
+              : `${notListed.length} stopped campaigns`}{" "}
+            under Campaigns {notListed.length === 1 ? "is" : "are"} in the
+            totals above only.
+          </p>
+        )}
         {trend.length >= 2 && (
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <TrendChart
@@ -806,7 +1012,11 @@ export function AccountView({
             compact
             className="mt-4"
             title="No ads found for this client"
-            text="Meta has no ads under these campaigns, and none spent in this range."
+            text={
+              campaigns.length === 0
+                ? "No campaign of this client is listed now, so its ads are not read here. The numbers above come from its ad account's daily rows."
+                : "Meta has no ads under these campaigns, and none spent in this range."
+            }
           />
         ) : (
           <ul className="mt-4 grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4">
@@ -839,8 +1049,13 @@ export function AccountView({
       >
         <h3 className="text-[15px] font-semibold">Campaigns</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Pick one to see it in full below, with every action the table has. The
-          call is the 7-day read.
+          {campaigns.length > 0
+            ? "Pick one to see it in full below, with every action the table has. The call is the 7-day read."
+            : "No campaign of this client is listed now."}
+          {notListed.length > 0 &&
+            (campaigns.length > 0
+              ? " Last come the stopped campaigns that spent or booked in this range, with their numbers for it: they are in the totals above."
+              : " These stopped campaigns spent or booked in this range; their numbers are in the totals above.")}
         </p>
         <ul className="mt-3 space-y-1.5">
           {ordered.map(c => {
@@ -925,6 +1140,32 @@ export function AccountView({
               </li>
             );
           })}
+          {notListed.map(c => (
+            <li
+              key={`stopped\u0000${c.campaignName}`}
+              className="flex items-start gap-3 rounded-xl px-3 py-2.5"
+            >
+              <span className="min-w-0 flex-1">
+                <span
+                  className="block break-words text-sm font-semibold"
+                  dir="auto"
+                >
+                  {c.campaignName}
+                </span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  {[
+                    `${money(c.spend)} · ${c.leads ?? "n/a"} leads`,
+                    !leadsOnly && c.bookings !== null
+                      ? bookedFacts(Number(c.spend ?? 0), c.bookings)
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              </span>
+              <StatusChip tone="neutral" label="Not listed now" />
+            </li>
+          ))}
         </ul>
       </section>
 

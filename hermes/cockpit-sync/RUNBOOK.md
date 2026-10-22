@@ -86,6 +86,20 @@ Run doctor and a dry run from a new immutable `/home/hermes/.cockpit-native-rele
 
 Old cycle plans are pruned hourly by `hermes/native-prune` (its own cron line and lock, 2026-10-22). A `sync-plan.json` goes after 48 hours unless its cycle failed: a failure file, a sync step that did not publish, or a missing or unfinished receipt. Those plans stay for reconciliation, as do the 8 newest plans and every receipt and log.
 
+## Client 7 days (ads7d)
+
+Since cost per booking build 2 (2026-10-22) each run computes one 7-day figure per client in `calculator.ts` (`clientWeeks`) and the producers attach the same object as `ads7d` to the media `clientLinks` row, the CSM `clientProfiles` row and the creative `clients` row. It is carried in memory (`SyncResult.clientWeeks`, stripped in `worker.ts`), never as a table: a media table the publish does not know refuses the whole publish.
+
+- Window: `from` and `through` are the run's `since7` and `until7` (`sevenDayWindow`), one end for every client. Overnight, until the sheet fills yesterday, `through` is the day before yesterday.
+- Spend and leads: every Mahara campaign on the client's accounts, stopped ones included, each Meta ad once a day, ads on the compromise list never. A campaign is Mahara's when it is on the board now, or was ever written to `cockpit_campaigns`, or is named exactly as a board card (closed cards included), and in every case is not spending off the board now (one read-only query, `publishedCampaigns`, which also gives each stopped campaign its stored ad account). Spend with no card in this publish is `offBoardSpend`.
+- Bookings: the client's GoHighLevel bookings made in the window, every campaign's, cancelled and invalid ones out. `showed`, `noShows` and `due` count the same bookings. DWY, no connection, an unreadable read or no booking calendar read null with `bookingsWhy`, never 0. One refused calendar or window request makes the whole client's bookings unknown for the run (log line `GHL events at location ... refused`), never a shorter count.
+- Cost per booking: spend / bookings when both are above 0. Bookings with no spend on Mahara's campaigns read null with `costPerBookingWhy`, never $0.00.
+- When Meta's fill fails (log line `meta fallback: ...` at error), a client with an account the sheet does not keep up to date gets no `ads7d` that run, and the weeks log line says how many accounts were not read. Its readers fall back; the next run with the fill read brings it back.
+- A failure while building the weeks publishes without `ads7d` (log line `client weeks failed`), never a failed cycle.
+- Every published daily row carries `accountId` (digits). Two accounts with one name (Khalida's two "منشآت خالدة") are told apart by the campaign's own account; a row that cannot be told apart carries none rather than the wrong one. The first run after the release rewrites about 30 days of daily rows once.
+- The CSM `adLeads` history is keyed by the client's accounts the same way, and a row with no account (it predates `accountId` and `cockpit_campaigns`) by the client tag of the board card named after its campaign.
+- Check after a release: the log line `client weeks: N client(s), <from> to <through>`; every `clientLinks` row with an account carries `ads7d` with one shared `from` and `through`; compare each client's `bookings` with the board's confirmed bookings for the same days.
+
 ## Preservation and failure behavior
 
 - A publication compares exact table counts/content fingerprints and source stamps after taking write-conflicting locks. A concurrent source, human checklist, decision, profile, or dismissal change rejects the entire plan.

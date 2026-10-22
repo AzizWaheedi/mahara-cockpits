@@ -1,5 +1,12 @@
 /** Original verified read calculations from convex/{clients,creative,funnels,scripts,winners}.
  * Reads only the RPC-filtered snapshot, never network or mutation state. */
+import {
+  clientPerformance,
+  pickClientWeek,
+  readClientWeek,
+  weekContextLines,
+} from "./clientWeek";
+
 type SnapshotQuery = {
   collect(): Promise<any[]>;
   first(): Promise<any | null>;
@@ -444,10 +451,18 @@ export async function buildDetail(
       .sort((a: any, b: any) => b.spend - a.spend),
   };
 }
+/**
+ * Dollars to the cent for the context pack: a whole-dollar figure printed a
+ * $0.50 cost per lead as "$0" and $2.89 a booking as "$3", right under the
+ * client total, which is to the cent.
+ */
 function money(n?: number | null): string {
-  return n === null || n === undefined
+  return n === null || n === undefined || !Number.isFinite(n)
     ? "n/a"
-    : `$${Math.round(n).toLocaleString()}`;
+    : `$${n.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`;
 }
 function dt(ts?: number | null): string {
   return ts ? new Date(ts).toISOString().slice(0, 10) : "no date";
@@ -1294,7 +1309,12 @@ export const buildContextPack = async (ctx: any, { name }: any) => {
     L.push("");
   }
   h("Their performance");
+  // The client's own 7 days first, when the media sync published them; the
+  // campaign blocks below are per campaign and live campaigns only.
+  const week = readClientWeek(client.ads7d);
+  if (week) L.push(...weekContextLines(week), "");
   if (campaigns.length === 0) L.push("No campaigns matched to them.");
+  else if (week) L.push("Per campaign, live campaigns only:", "");
   for (const k of campaigns) {
     L.push(`### ${k.campaignName}`);
     line("Service", k.serviceType);
@@ -1569,18 +1589,10 @@ export async function buildSnapshot(
       .toLowerCase()
       .replace(/[^\p{L}\p{N}]+/gu, " ")
       .trim();
-  function docsFor(raw: string):
-    | {
-        brand?: string;
-        offer?: string;
-        matchedTo?: string;
-        onboardedAt?: number;
-        offerStatus?: string;
-      }
-    | undefined {
+  function boardRowFor(raw: string): any {
     const key = nrm(raw);
     if (!key) return undefined;
-    const hit =
+    return (
       clientBoard.find((c: any) => nrm(c.name) === key) ??
       clientBoard.find((c: any) =>
         (c.aliases ?? []).some(
@@ -1590,7 +1602,19 @@ export async function buildSnapshot(
       clientBoard.find((c: any) => {
         const n = nrm(c.name);
         return n.length > 4 && (key.includes(n) || n.includes(key));
-      });
+      })
+    );
+  }
+  function docsFor(raw: string):
+    | {
+        brand?: string;
+        offer?: string;
+        matchedTo?: string;
+        onboardedAt?: number;
+        offerStatus?: string;
+      }
+    | undefined {
+    const hit = boardRowFor(raw);
     return hit
       ? {
           brand: hit.brandDnaDoc,
@@ -1885,12 +1909,6 @@ export async function buildSnapshot(
     if (!prev || b.submittedAt > prev.submittedAt) blueprintByClient.set(k, b);
   }
   const tree = await ctx.db.query("metaTree").collect();
-  // Show data comes from the client reporting sheets, not GHL, and that pipe
-  // is not connected yet: every campaign reports 0 shows against 42 bookings.
-  // Rendering "0% show rate" would read as "nobody turns up" when the truth is
-  // "we do not know". Flag it as missing instead of printing a false zero.
-  // [meta+ghl, 2026-09-06]
-  const showDataAvailable = campaigns.some((c: any) => (c.showed7d ?? 0) > 0);
   const touchRows = (await ctx.db.query("touchLog").collect()).filter(
     (r: any) => inScope(scope, r.client),
   );
@@ -1911,8 +1929,6 @@ export async function buildSnapshot(
       const myAds = ads.filter(
         (a: any) => (clientOf.get(a.campaignName) ?? "").toLowerCase() === key,
       );
-      const spend = myAds.reduce((n: any, a: any) => n + a.spend, 0);
-      const leads = myAds.reduce((n: any, a: any) => n + a.leads, 0);
       const burning = myAds.filter(
         (a: any) => (a.frequency ?? 0) >= FATIGUE_FREQUENCY,
       ).length;
@@ -2006,11 +2022,25 @@ export async function buildSnapshot(
       const touchesThisWeek = touchRows.filter(
         (r: any) => r.client.toLowerCase() === key && r.at >= now - 7 * DAY,
       ).length;
-      const sum = (
-        f: (c: (typeof myCampaigns)[number]) => number | undefined,
-      ) => myCampaigns.reduce((n: any, c: any) => n + (f(c) ?? 0), 0);
-      const bookings = sum((c: any) => c.bookings7d);
-      const showed = sum((c: any) => c.showed7d);
+      /**
+       * The client's 7 days as one figure (R8, R20; build 2, 22 Oct 2026).
+       * The media sync publishes `ads7d` on the client card: every Mahara
+       * campaign of their ad accounts, stopped ones included, with the
+       * confirmed bookings and the showed, no-show and due counts of the same
+       * days. Before that publish, or for a client with no ad account, the
+       * live campaign rows are summed as before and labelled as such. Show
+       * rate is per client, showed / (showed + no-show), never 0% when
+       * nothing is marked.
+       */
+      const performance = clientPerformance(
+        pickClientWeek(
+          name,
+          boardRowFor(name),
+          clientBoard,
+          myCampaigns.map((c: any) => c.metaAccountId),
+        ),
+        { ads: myAds, campaigns: myCampaigns },
+      );
       return {
         client: name,
         // Creative onboarding is "done" only when the Brand Blueprint form
@@ -2051,11 +2081,11 @@ export async function buildSnapshot(
           stillUrl: a.stillUrl,
           stillTinyUrl: a.stillTinyUrl,
         })),
-        bookings7d: bookings,
-        showed7d: showDataAvailable ? showed : null,
-        showRate: showDataAvailable && bookings > 0 ? showed / bookings : null,
-        costPerBooking:
-          bookings > 0 ? sum((c: any) => c.spend7d) / bookings : undefined,
+        performance,
+        bookings7d: performance.bookings,
+        showed7d: performance.showed,
+        showRate: performance.showRate,
+        costPerBooking: performance.costPerBooking ?? undefined,
         touchesThisWeek,
         touchesOwed: Math.max(0, TOUCHPOINTS_PER_WEEK - touchesThisWeek),
         videos: myVideos.map((v2: any) => ({
@@ -2096,9 +2126,9 @@ export async function buildSnapshot(
         ).length,
         postsLate: late.length,
         ads: myAds.length,
-        spend,
-        leads,
-        cpl: leads > 0 ? spend / leads : undefined,
+        spend: performance.spend,
+        leads: performance.leads,
+        cpl: performance.cpl ?? undefined,
         burningAds: burning,
         lastTouch: lastTouchByClient.get(key) ?? null,
       };
@@ -2255,7 +2285,6 @@ export async function buildSnapshot(
     awaitingHisMove: videoJobs.filter((j: any) => j.hisMove).length,
     blueprintsOnFile: blueprintRows.length,
     blueprintsTracked,
-    showDataAvailable,
     touchpointsPerWeek: TOUCHPOINTS_PER_WEEK,
     counts: {
       openTasks: openTasks.length,

@@ -41,7 +41,7 @@ import {
   BOOKING_RATE_GATE,
   CLOSE_RATE_GATE,
   CPB_BAD,
-  CPL_GATE,
+  CPB_GATE,
   SHOW_RATE_GOOD,
 } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
@@ -50,6 +50,20 @@ import type {
   DeliveryWindow,
   Note,
 } from "@/types/ceo/payloads";
+import {
+  BEFORE_CONFIRMED,
+  CPB_CONFIRMED_LABEL,
+  cpbConfirmedOf,
+  daysHaveConfirmed,
+  FALLBACK_CONFIRMED,
+  NOT_STORED,
+} from "./deliveryCost";
+import {
+  cplOnlyOf,
+  cplOnlyRule,
+  DWY_BOOKINGS,
+  statusRule,
+} from "./deliveryStatus";
 import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
@@ -67,20 +81,24 @@ const STATUS: Record<
   "no-data": { tone: "neutral", label: "No data", order: 3 },
 };
 
-/** Aziz's status rule (2026-09-21), the same words the adapter judges by. */
-function statusHint(status: ClientStatus, gates: DeliveryPayload["gates"]) {
-  const cpl = money(gates.cpl);
-  const cpb = money(gates.cpb);
-  switch (status) {
-    case "bad":
-      return `Cost per confirmed booking over ${money(CPB_BAD)}, or cost per lead over ${money(CPL_GATE * 1.5)} (spend with no leads counts as that).`;
-    case "watch":
-      return `Between the two: not within every on-track gate and not past an off-track one, a show rate under ${SHOW_RATE_GOOD}%, or one nobody has recorded yet.`;
-    case "good":
-      return `Cost per lead within ${cpl}, cost per confirmed booking within ${cpb} and show rate at least ${SHOW_RATE_GOOD}% over the last 30 days.`;
-    default:
-      return "No spend in the last 7 days.";
-  }
+/**
+ * Aziz's status rule (2026-09-21) under the golden rule (2026-10-22): cost per
+ * booking decides. The same words the adapter judges by
+ * (hermes/ceo-refresh/native/adapters/delivery.js clientStatus), from
+ * ./deliveryStatus.ts. A row judged on cost per lead alone (Done With You, or
+ * bookings not measured) gets that rule instead, never the booking rule.
+ */
+function statusHint(status: ClientStatus, row?: ClientRow): string {
+  const only = row ? cplOnlyOf(row) : null;
+  return only ? cplOnlyRule(status, only) : statusRule(status);
+}
+
+/** The row's own reason under its status: too early, or why some spend is not measured. */
+function rowStatusNote(r: ClientRow): string {
+  if (r.tooEarly)
+    return ` Too early to judge: no confirmed booking yet on ${money(r.spendMeasured7d ?? r.spend7d)} of spend, within the ${money(CPB_GATE)} gate.`;
+  if (cplOnlyOf(r) === "dwy") return "";
+  return r.bookingsWhy ? ` ${r.bookingsWhy}` : "";
 }
 
 // Verdicts come from the media buyer sync (convex/sync.ts); unknown ones still show, in neutral.
@@ -140,11 +158,20 @@ function shiftDay(day: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Confirmed bookings, falling back to the whole for a payload stored before the split. */
-const confirmedOf = (w: DeliveryWindow) => w.confirmed ?? w.bookings;
-/** Cost per confirmed booking, the main cost per booking; older payloads carry only the whole. */
-const cpbConfirmedOf = (w: DeliveryWindow) =>
-  w.cpbConfirmed === undefined ? w.cpb : w.cpbConfirmed;
+/** A window's cost per confirmed booking (./deliveryCost.ts), or null. */
+const cpbOf = (w: DeliveryWindow) => cpbConfirmedOf(w).value;
+
+/** What the cost per confirmed booking leaves out of a window's spend, in one line. */
+function notMeasuredLine(w: DeliveryWindow): string {
+  const left = w.notMeasured ?? [];
+  if (left.length === 0) return "";
+  const total = left.reduce((n, x) => n + x.spend, 0);
+  const names = left
+    .slice(0, 3)
+    .map(x => `${x.client} ${money(x.spend)}`)
+    .join(", ");
+  return ` It leaves out ${money(total)} of spend whose bookings the board does not store (${names}${left.length > 3 ? ` and ${left.length - 3} more` : ""}); over all ${money(w.spend)} it would read ${money(isNum(w.confirmed) && w.confirmed > 0 ? w.spend / w.confirmed : null)}.`;
+}
 
 /** Clients' ads: spend, leads, bookings, campaign health, launches and account issues. */
 export function DeliveryTab({ sections, now, day }: CeoTabProps) {
@@ -363,15 +390,15 @@ function Headline({
     <WindowLines
       rows={[
         { label: yesterdayLabel, value: fmt(get(y)) },
-        { label: "This month", value: fmt(get(m)) },
+        { label: "This month, today so far", value: fmt(get(m)) },
       ]}
     />
   );
-  const split = w.confirmed !== undefined;
-  const provisionalNote =
-    d.provisionalSynced === false
-      ? " The provisional calendar (Not Confirmed Appointments) has produced no appointment row yet, so provisional reads 0 until the sync covers it."
-      : "";
+  const split = isNum(w.confirmed);
+  // The board's counts by booking day since 2026-10-22; an older payload
+  // counted meetings by the day they were for and says so.
+  const byBookingDay = d.bookingSource === "board";
+  const cost = cpbConfirmedOf(w, d.bookingSource);
 
   const tiles = [
     {
@@ -389,7 +416,7 @@ function Headline({
               vs={vs}
             />
           }
-          hint="Meta spend on client campaigns, in USD. Mahara's own lead-gen spend is a different pool and sits on the Marketing tab. The two are never added."
+          hint="Meta spend on each client's whole ad account, in USD, as the Client Performance board counts it: Mahara's campaigns and any other campaign on the account (a client's own campaign before launch included), ads on the compromise list left out. The media buyer's screens count Mahara's campaigns only, so they can read lower. Mahara's own lead-gen spend is a different pool and sits on the Marketing tab. The two are never added."
         />
       ),
     },
@@ -428,6 +455,7 @@ function Headline({
           variant="plain"
           label="Bookings"
           value={count(w.bookings)}
+          naHint={byBookingDay ? NOT_STORED : undefined}
           delta={<Delta value={change(w.bookings, p.bookings)} vs={vs} />}
           sub={
             split ? (
@@ -437,28 +465,36 @@ function Headline({
               </span>
             ) : undefined
           }
-          hint={`Appointments on the client's three booking calendar groups, on the day the meeting is for, future ones left out. Confirmed is the main calendars (Main Appointment Calendar, In Office, In Home) plus the online one; provisional is the Not Confirmed Appointments calendar; the headline is both.${provisionalNote}`}
+          hint={
+            byBookingDay
+              ? "Bookings made on these days, as the Client Performance board counts them (cockpit_client_days), by the Kuwait day the booking was made. Confirmed is main and online calendar bookings, leaving out cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts; provisional is the Not Confirmed Appointments calendar; the headline is both."
+              : "Appointments on the client's booking calendars, on the day the meeting was for. This refresh predates the board's counts by booking day."
+          }
         />
       ),
     },
     {
       key: "cpb",
-      lines: lines(money, cpbConfirmedOf),
+      lines: lines(money, cpbOf),
       tile: (
         <StatTile
           variant="plain"
-          label="Cost per confirmed booking"
-          value={money(cpbConfirmedOf(w))}
-          naHint="No confirmed bookings came due in the last 7 days, so there is no cost per booking."
-          status={gateChip(cpbConfirmedOf(w), gates.cpb, "booking")}
+          label={CPB_CONFIRMED_LABEL}
+          value={money(cost.value)}
+          naHint={cost.why ?? undefined}
+          status={gateChip(cost.value, gates.cpb, "booking")}
           delta={
             <Delta
-              value={change(cpbConfirmedOf(w), cpbConfirmedOf(p))}
+              value={change(cost.value, cpbOf(p))}
               goodWhen="down"
               vs={vs}
             />
           }
-          hint={`Spend divided by confirmed bookings (${count(confirmedOf(w))} in the last 7 days). The gate is ${money(gates.cpb)}; over ${money(CPB_BAD)} is off track.${split && isNum(w.cpb) && w.cpb !== cpbConfirmedOf(w) ? ` Over every booking, provisional included, it is ${money(w.cpb)}.` : ""}`}
+          hint={
+            cost.confirmed === null
+              ? (cost.why ?? undefined)
+              : `${money(cost.spend)} of spend divided by ${plural(cost.confirmed, "confirmed booking")} made in the last 7 days: spend only on the days the board stores bookings. The gate is ${money(gates.cpb)}; over ${money(CPB_BAD)} is off track.${notMeasuredLine(w)}${isNum(w.cpb) && w.cpb !== cost.value ? ` Over every booking, provisional included, it is ${money(w.cpb)}.` : ""}`
+          }
         />
       ),
     },
@@ -481,8 +517,19 @@ function Headline({
 // --- Daily charts ---------------------------------------------------------------
 
 function DailyCharts({ d }: { d: DeliveryPayload }) {
-  const rows = d.daily;
-  const total = (k: "spend" | "leads" | "bookings") =>
+  // Confirmed bookings by the day they were made, once the refresh reads the
+  // board; a day the board stores nothing for is a gap, never a zero. An
+  // older payload charts its own total, labelled as such.
+  const confirmedSeries = daysHaveConfirmed(d.daily);
+  const rows = useMemo(
+    () =>
+      d.daily.map(r => ({
+        ...r,
+        booked: confirmedSeries ? (r.confirmed ?? null) : r.bookings,
+      })),
+    [d.daily, confirmedSeries],
+  );
+  const total = (k: "spend" | "leads" | "booked") =>
     rows.reduce((s, r) => s + (isNum(r[k]) ? r[k] : 0), 0);
   const last = rows.at(-1);
   const span = rows.length
@@ -490,7 +537,10 @@ function DailyCharts({ d }: { d: DeliveryPayload }) {
     : "no days";
   const spend = total("spend");
   const leads = total("leads");
-  const bookings = total("bookings");
+  const bookings = total("booked");
+  const bookingsTitle = confirmedSeries
+    ? "Confirmed bookings made"
+    : "Bookings";
 
   return (
     <div className="grid min-w-0 gap-x-6 gap-y-8 @4xl:grid-cols-3">
@@ -521,14 +571,14 @@ function DailyCharts({ d }: { d: DeliveryPayload }) {
       <TimeSeriesChart
         initialRange="30d"
         data={rows}
-        series={[{ key: "bookings", label: "Bookings" }]}
+        series={[{ key: "booked", label: bookingsTitle }]}
         kind="area"
         unit="count"
-        title="Bookings"
+        title={bookingsTitle}
         summary={`${count(bookings)} total`}
         height={180}
         syncId="ceo-delivery-daily"
-        ariaLabel={`Client bookings per day, ${span}. ${count(bookings)} in total, ${count(last?.bookings)} on the last day.`}
+        ariaLabel={`Client ${bookingsTitle.toLowerCase()} per day, ${span}. ${count(bookings)} in total, ${count(last?.booked)} on the last day.`}
       />
     </div>
   );
@@ -672,18 +722,22 @@ function GateCell({
   value,
   gate,
   noun,
+  naHint,
 }: {
   value: number | null;
   gate: number;
   noun: string;
+  /** Why there is no value, when the row knows better than the default. */
+  naHint?: string;
 }) {
   if (!isNum(value))
     return (
       <Na
         hint={
-          noun === "lead"
+          naHint ??
+          (noun === "lead"
             ? "No leads in these 7 days"
-            : "No confirmed bookings came due for this client in these 7 days"
+            : "No confirmed booking was made for this client in these 7 days")
         }
       />
     );
@@ -816,6 +870,22 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
     [d.clients, filter],
   );
   const provisionalSynced = d.provisionalSynced === true;
+  // Rows from a refresh before the board's counts carry no measured spend:
+  // their cost per booking reads n/a with that reason, never the old figure.
+  const rowCost = (r: ClientRow): number | null =>
+    r.spendMeasured7d === undefined ? null : (r.cpbConfirmed7d ?? null);
+  const rowCostWhy = (r: ClientRow): string => {
+    if (r.spendMeasured7d === undefined)
+      return d.bookingSource === "media sync"
+        ? FALLBACK_CONFIRMED
+        : BEFORE_CONFIRMED;
+    if (cplOnlyOf(r) === "dwy") return DWY_BOOKINGS;
+    if (r.confirmed7d === null)
+      return r.bookingsWhy ?? "Bookings are not measured for this client.";
+    if (r.tooEarly)
+      return `Too early to judge: no confirmed booking yet on ${money(r.spendMeasured7d)} of spend, within the ${money(d.gates.cpb)} gate.`;
+    return `No confirmed booking on ${money(r.spendMeasured7d)} of spend in these 7 days.`;
+  };
 
   const columns: Column<ClientRow>[] = [
     {
@@ -855,7 +925,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
           tone={STATUS[r.status].tone}
           label={STATUS[r.status].label}
           className="min-w-max"
-          hint={`${statusHint(r.status, d.gates)}${
+          hint={`${statusHint(r.status, r)}${rowStatusNote(r)}${
             isNum(r.costPerShownAt60)
               ? ` At a ${SHOW_RATE_GOOD}% show rate, a shown booking would cost ${money(r.costPerShownAt60)}.`
               : ""
@@ -897,33 +967,40 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       key: "bookings",
       header: "Bookings",
       numeric: true,
-      // The total; the split appears only once the provisional calendar syncs,
-      // because until then confirmed and total are the same number.
-      cell: r => (
-        <Stacked
-          value={count(r.bookings7d)}
-          sub={
-            provisionalSynced && isNum(r.confirmed7d)
-              ? `${count(r.confirmed7d)} confirmed · ${count(r.provisional7d ?? 0)} provisional`
-              : undefined
-          }
-        />
-      ),
+      // The total and its split; n/a when the board stores none of these
+      // days for the client (not measured, never zero).
+      cell: r =>
+        cplOnlyOf(r) === "dwy" ? (
+          <Na hint={DWY_BOOKINGS} />
+        ) : isNum(r.bookings7d) ? (
+          <Stacked
+            value={count(r.bookings7d)}
+            sub={
+              provisionalSynced && isNum(r.confirmed7d)
+                ? `${count(r.confirmed7d)} confirmed · ${count(r.provisional7d ?? 0)} provisional`
+                : undefined
+            }
+          />
+        ) : (
+          <Na
+            hint={r.bookingsWhy ?? "Bookings are not measured for this client."}
+          />
+        ),
       sortValue: r => r.bookings7d,
     },
     {
       key: "cpb",
-      header: "Cost per confirmed booking",
+      header: CPB_CONFIRMED_LABEL,
       numeric: true,
       cell: r => (
         <GateCell
-          value={r.cpbConfirmed7d === undefined ? r.cpb7d : r.cpbConfirmed7d}
+          value={rowCost(r)}
           gate={d.gates.cpb}
           noun="booking"
+          naHint={rowCostWhy(r)}
         />
       ),
-      sortValue: r =>
-        r.cpbConfirmed7d === undefined ? r.cpb7d : r.cpbConfirmed7d,
+      sortValue: r => rowCost(r),
     },
     {
       key: "bookRate",
@@ -937,7 +1014,11 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
           <RateCell
             value={main}
             gate={BOOKING_RATE_GATE}
-            hint="No platform leads in the last 30 days"
+            hint={
+              x && x.leads > 0
+                ? "Bookings are not measured for this client in the last 30 days"
+                : "No platform leads in the last 30 days"
+            }
             detail={
               x && isNum(x.bookRateConfirmed)
                 ? `Last 30 days, over ${plural(x.leads, "lead")}: ${pct(x.bookRateConfirmed)} booked a confirmed appointment (${count(x.confirmed)}), ${pct(x.bookRateProvisional)} a provisional one (${count(x.provisional)}), ${pct(x.bookRate)} either (${count(x.bookings)}).`
@@ -1003,7 +1084,7 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
     label: STATUS[key].label,
     count: counts[key],
     tone: STATUS[key].tone,
-    hint: statusHint(key, d.gates),
+    hint: statusHint(key),
   });
   const every: FilterOption<Filter>[] = [
     { key: "all", label: "All", count: d.clients.length },

@@ -440,6 +440,8 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
      if(args.query.includes('select distinct s.campaign_name'))return {result:JSON.stringify([{campaign_name:'Alpha campaign',campaign_id:'111111',meta_ad_account_id:'222222'}])};
      // The dialer's call-back and rescheduled bookings (dialerReplacedBookingIds): none here.
      if(args.query.includes('thumbnail_url')||args.query.includes('ad_account_activities')||args.query.includes('cc_attempts'))return {result:'[]'};
+     // Campaigns ever written to cockpit_campaigns (publishedCampaigns): Mahara's, stopped ones included.
+     if(args.query.includes('from public.cockpit_campaigns'))return {result:JSON.stringify([{name:'Alpha campaign'}])};
      throw new Error('Unexpected fixture SQL source');
     }
     const url=new URL(args.url);
@@ -510,6 +512,109 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
    expect(refused.levels).not.toContain('error');
   }
   expect(p.tables.marketPlays[0].cpl).toBe(12);
+  // A Done For You client's 7 days, end to end (ads7d, 2026-10-22): the booking its stopped
+  // campaign bought counts, a campaign spending with no card of its own is named apart, and a
+  // booking made today waits for today's spend.
+  let dfyReads:Reads|undefined;
+  {
+   const kw=(days:number)=>new Date(Date.now()+10800000-days*86400000).toISOString().slice(0,10);
+   const row=(date:string,campaign:string,cost:string,leads:string,ad:string,status:string)=>{const r=Array<string>(25).fill('');Object.assign(r,{0:date,1:'Alpha',2:campaign,3:'Set',4:cost,5:leads,7:'1000',8:'40',10:'1.2',16:ad,17:`Ad ${ad}`,18:status,24:'USD'});return r;};
+   const dfyRows=[grid,row(kw(12),'Alpha old','30','2','777777','PAUSED'),row(kw(1),'Alpha own','15','0','888888','PAUSED')];
+   const dfyData=[headers,['Alpha','cu1','DFY','locA','pit-alpha','','','','Alpha','Active','Kuwait','Kuwait']];
+   const at=(days:number,hour=9)=>new Date(Date.parse(`${kw(days)}T00:00:00Z`)+(hour-3)*3600000).toISOString();
+   const ghlEvents=[
+    {id:'e1',contactId:'c1',dateAdded:at(1),startTime:at(1,15),appointmentStatus:'showed'},
+    {id:'e2',contactId:'c2',dateAdded:at(3),startTime:at(-2,15),appointmentStatus:'confirmed'},
+    {id:'e3',contactId:'c3',dateAdded:at(0,1),startTime:at(-3,15),appointmentStatus:'confirmed'},
+   ];
+   const dfy:Reads={...reads,
+    async tool(name,args){
+     if(name==='mcp_supabase_execute_sql'&&args.query.includes('from public.cockpit_campaigns'))return {result:JSON.stringify([{name:'Alpha campaign'},{name:'Alpha old'}])};
+     if(name==='pd_google_sheets_proxy_get'){
+      const url=new URL(args.url);
+      if(url.pathname.includes('1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0'))return {range:'Client Data!A1:Z200',values:dfyData};
+      if(decodeURIComponent(url.pathname).includes('data_fb'))return {range:'data_fb!A3:Y11005',values:dfyRows};
+     }
+     return reads.tool(name,args);
+    },
+    async fetch(url:string){
+     const u=new URL(url);
+     if(u.hostname!=='services.leadconnectorhq.com')throw new Error('Fixture must not call a live provider');
+     if(u.pathname==='/calendars/')return Response.json({calendars:[{id:'cal',name:'Main Appointment Calendar'}]});
+     if(u.pathname==='/calendars/events'){const from=Number(u.searchParams.get('startTime')),to=Number(u.searchParams.get('endTime'));return Response.json({events:ghlEvents.filter(e=>Date.parse(e.startTime)>=from&&Date.parse(e.startTime)<to)});}
+     if(u.pathname==='/opportunities/pipelines')return Response.json({pipelines:[{id:'lost',name:'Lost Leads',stages:[]}]});
+     if(u.pathname==='/opportunities/search')return Response.json(u.searchParams.get('pipeline_id')?{opportunities:[],meta:{total:0}}:{opportunities:[{contactId:'c1',attributions:[{utmAdId:'777777'}]}],meta:{total:1}});
+     throw new Error(`Unexpected fixture GHL resource ${u.pathname}`);
+    },
+   };
+   dfyReads=dfy;
+   const d=await calculate(s,dfy,{receipts:[]},fixtureEnv);
+   const w=d.csm.clientProfiles.find((r:Row)=>r.taskId==='cu1').ads7d;
+   expect(w).toMatchObject({through:kw(1),accounts:['222222'],spend:120,leads:10,offBoardSpend:15,bookings:2,costPerBooking:60,showed:1,noShows:0,due:1});
+   expect(w.bookingsWhy).toBeUndefined();
+   expect(w.campaigns).toEqual([{campaignName:'Alpha campaign',spend:120,leads:10,bookings:1,live:true},{campaignName:'Alpha old',spend:0,leads:0,bookings:1,live:false}]);
+   expect(d.tables.clientLinks.find((r:Row)=>r.taskId==='cu1').ads7d).toEqual(w);
+   expect(d.creative.clients.find((r:Row)=>r.taskId==='cu1').ads7d).toEqual(w);
+   // The listed campaign keeps its own 7 days; the client-level figure is the one above.
+   expect(d.tables.campaigns.map((c:Row)=>[c.campaignName,c.bookings7d])).toEqual([['Alpha campaign',1]]);
+   // The CSM history keeps the stopped campaign's day; the campaign with no card stays out.
+   const history=d.csm.clientProfiles.find((r:Row)=>r.taskId==='cu1').adLeads.daily;
+   expect(history.find((x:Row)=>x.date===kw(12))?.spend).toBe(30);
+   expect(history.find((x:Row)=>x.date===kw(1))?.spend).toBe(120);
+   // Client Data names the account by its id while the sheet uses its name: the rows are still the
+   // client's by the account's id, and its bookings are asked for, not left "not read".
+   const byId=[headers,['Alpha','cu1','DFY','locA','pit-alpha','','','','222222','Active','Kuwait','Kuwait']];
+   const idReads:Reads={...dfy,async tool(name,args){
+    if(name==='pd_google_sheets_proxy_get'){
+     const url=new URL(args.url);
+     if(url.pathname.includes('1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0'))return {range:'Client Data!A1:Z200',values:byId};
+     if(decodeURIComponent(url.pathname).includes('data_fb'))return {range:'data_fb!A3:Y11005',values:dfyRows.slice(0,2)};
+    }
+    return dfy.tool(name,args);
+   }};
+   const i=await calculate(s,idReads,{receipts:[]},fixtureEnv);
+   const iw=i.csm.clientProfiles.find((r:Row)=>r.taskId==='cu1').ads7d;
+   expect(iw).toMatchObject({accounts:['222222'],spend:120,offBoardSpend:0,bookings:2,costPerBooking:60});
+   expect(iw.bookingsWhy).toBeUndefined();
+   // Asked after the bookings were placed on campaigns: no per-campaign split, so null, never 0.
+   expect(iw.campaigns.map((c:Row)=>[c.campaignName,c.bookings])).toEqual([['Alpha campaign',null]]);
+   // Meta's fill fails on one Graph error (review of 22 Oct): Alpha's second account, which only
+   // Meta carries, was not read, so Alpha's 7 days are not known this run and no ads7d is
+   // published, never $0 with "spent nothing". With the fill read, the week is back, both accounts.
+   const twoAccounts=[headers,dfyData[1],['Alpha','cu1','DFY','locA','pit-alpha','','','','Alpha Two','Active','Kuwait','Kuwait']];
+   const fill=(fails:boolean)=>{
+    const said:string[]=[];
+    const r:Reads={...dfy,
+     async graph(path,params){
+      if(path.endsWith('/owned_ad_accounts')){
+       if(String(params?.fields).includes('insights')){if(fails)throw new Error('Meta refused the read (403)');return {data:[]};}
+       return {data:[{id:'act_222222',name:'Alpha',account_status:1,currency:'USD'},{id:'act_666666',name:'Alpha Two',account_status:1,currency:'USD'}]};
+      }
+      // The second account has nothing in it but its name.
+      if(path.startsWith('act_666666/'))return {data:[]};
+      return dfy.graph(path,params);
+     },
+     async tool(name,args){
+      if(name==='pd_google_sheets_proxy_get'&&new URL(args.url).pathname.includes('1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0'))return {range:'Client Data!A1:Z200',values:twoAccounts};
+      return dfy.tool(name,args);
+     },
+     log(level,args){said.push(`${level}: ${args.map(String).join(' ')}`);},
+    };
+    return {r,said};
+   };
+   const failed=fill(true);
+   const f=await calculate(s,failed.r,{receipts:[]},fixtureEnv);
+   expect(f.csm.clientProfiles.find((r:Row)=>r.taskId==='cu1').ads7d).toBeUndefined();
+   expect(f.tables.clientLinks.find((r:Row)=>r.taskId==='cu1').ads7d).toBeUndefined();
+   expect(f.creative.clients.find((r:Row)=>r.taskId==='cu1').ads7d).toBeUndefined();
+   expect(failed.said.some(l=>l.includes("Meta's fill failed, 1 account(s) not read"))).toBe(true);
+   // The campaign rows still publish from the sheet.
+   expect(f.tables.campaigns.map((x:Row)=>[x.campaignName,x.spend7d])).toEqual([['Alpha campaign',120]]);
+   const read=fill(false);
+   const o=await calculate(s,read.r,{receipts:[]},fixtureEnv);
+   expect(o.csm.clientProfiles.find((r:Row)=>r.taskId==='cu1').ads7d).toMatchObject({accounts:['222222','666666'],spend:120,offBoardSpend:15,bookings:2,costPerBooking:60});
+   expect(read.said.filter(l=>l.startsWith('error'))).toEqual([]);
+  }
   expect(p.tables.winnersArchive[0].adId).toBe('333333');
   expect(p.creative.campaigns[0]._id).toBe('legacy-creative-campaign');
   expect(p.tables.campaigns[0]._id).not.toBe('legacy-creative-campaign');
@@ -523,6 +628,20 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(p.csm.clientProfiles[0].calls.find((call:Row)=>call.url==='https://fathom.video/recorded-call').brief).toBe('Original recorded per-call brief');
   expect(p.creative.clients[0].name).toBe('Alpha');
   expect(p.creative.clients[0].daily[0].leads).toBe(10);
+  // Each client's 7 days, computed once by the sync and carried identically on the media
+  // clientLinks row, the CSM profile and the creative client (ads7d, 2026-10-22). DWY: bookings
+  // are not a number that exists, so they read null with the reason, never 0.
+  const week=p.csm.clientProfiles[0].ads7d;
+  expect(week).toMatchObject({from:new Date(Date.parse(`${yesterday}T00:00:00Z`)-6*86400000).toISOString().slice(0,10),through:yesterday,accounts:['222222'],spend:120,leads:10,offBoardSpend:0,bookings:null,costPerBooking:null,showed:null,noShows:null,due:null,source:'media sync'});
+  expect(week.bookingsWhy).toBe('Done with you: the client books its own meetings.');
+  expect(week.campaigns).toEqual([{campaignName:'Alpha campaign',spend:120,leads:10,bookings:null,live:true}]);
+  expect(p.tables.clientLinks.find((r:Row)=>r.taskId==='cu1').ads7d).toEqual(week);
+  expect(p.creative.clients.find((r:Row)=>r.taskId==='cu1').ads7d).toEqual(week);
+  // The ad account id rides on every daily row; the in-memory weeks never reach the plan.
+  expect(p.tables.dailyStats.length).toBeGreaterThan(0);
+  expect(p.tables.dailyStats.every((r:Row)=>r.accountId==='222222'&&!('accountName' in r))).toBe(true);
+  expect(p.result.clientWeeks).toBeUndefined();
+  expect(Object.keys(p.tables).some(k=>/week/i.test(k))).toBe(false);
   const retainedProfile={...p.csm.clientProfiles[0],performance:{sheetId:'verified-fixture-sheet',creativeStats:{booked:2}},performanceRetained:true,performanceSyncedAt:undefined};
   const retainedCreative=await withNativeContext(reads,{receipts:[]},()=>collectCreative(s,structuredClone(p.tables),{...p.csm,clientProfiles:[retainedProfile]}));
   expect(retainedCreative.clients[0].statsScannedAt).toBeUndefined();
@@ -555,10 +674,29 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   await publish(db,c,p);
   await owner(db);
   expect((await db.query<{spend:string}>('SELECT spend_7d::text spend FROM cockpit_campaigns')).rows[0].spend).toBe('120');
+  // The publish accepts ads7d on the three free rows and accountId on the daily grain.
+  expect((await db.query<{data:Row}>("SELECT data FROM cockpit_media_sources WHERE table_name='clientLinks'")).rows[0].data.ads7d).toEqual(week);
+  expect((await db.query<{data:Row}>("SELECT data FROM cockpit_creative_sources WHERE table_name='clients'")).rows[0].data.ads7d).toEqual(week);
+  expect((await db.query<{a:string}>("SELECT data->>'accountId' a FROM cockpit_media_daily_stats")).rows.map(r=>r.a)).toEqual(['222222']);
   expect((await db.query<{n:number}>("SELECT count(*)::int n FROM cockpit_csm_sources WHERE table_name='clientProfiles'")).rows[0].n).toBe(1);
   const stored=(await db.query<{data:Row}>("SELECT data FROM cockpit_csm_sources WHERE table_name='clientProfiles'")).rows[0].data;
   expect(stored.callsBrief).toBe('Original recorded overall summary');
   expect(stored.calls.find((call:Row)=>call.url==='https://fathom.video/manual-call').brief).toBe('Keep original manual annotation');
+  expect(stored.ads7d).toEqual(week);
+  // The next cycle on what was published, with the client's week changed (it now books for the
+  // client), publishes too: ads7d is a free field on its three rows, and the daily grain keeps one
+  // row per ad-day, now with its accountId.
+  if(!dfyReads)throw new Error('DFY fixture reads were not built');
+  await service(db);
+  const next=await calculate(await state(db),dfyReads,{receipts:[]},fixtureEnv);
+  expect((await publish(db,await claim(db),next)).status).toBe('published');
+  await owner(db);
+  const nextWeek=next.tables.clientLinks.find((r:Row)=>r.taskId==='cu1').ads7d;
+  expect(nextWeek).toMatchObject({bookings:2,costPerBooking:60,offBoardSpend:15});
+  expect((await db.query<{data:Row}>("SELECT data FROM cockpit_media_sources WHERE table_name='clientLinks'")).rows[0].data.ads7d).toEqual(nextWeek);
+  expect((await db.query<{data:Row}>("SELECT data FROM cockpit_creative_sources WHERE table_name='clients'")).rows[0].data.ads7d).toEqual(nextWeek);
+  expect((await db.query<{data:Row}>("SELECT data FROM cockpit_csm_sources WHERE table_name='clientProfiles'")).rows[0].data.ads7d).toEqual(nextWeek);
+  expect((await db.query<{n:number}>("SELECT count(*)::int n FROM cockpit_media_daily_stats WHERE data->>'accountId' IS DISTINCT FROM '222222'")).rows[0].n).toBe(0);
  }finally{await db.close();}
 },30000);
 

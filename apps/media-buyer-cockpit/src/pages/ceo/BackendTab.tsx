@@ -46,6 +46,8 @@ import type {
   Note,
 } from "@/types/ceo/payloads";
 import { CHURN_PAGE, churnView } from "./churnRegister";
+import { CPB_CONFIRMED_LABEL, cpbConfirmedOf } from "./deliveryCost";
+import { statusRule } from "./deliveryStatus";
 import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
 
@@ -402,7 +404,7 @@ function MediaBuyingCard({
   const d = section?.payload ?? null;
   return (
     <SectionCard
-      kicker="Month to date"
+      kicker="Month to date, today so far"
       title="Client ads"
       section={section}
       notes={notes}
@@ -431,6 +433,10 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
   const withSpend = d.clients.length;
   const spendLine = `of ${plural(withSpend, "client")} with spend in the last 7 days`;
   const vs = "vs the 7 days before";
+  // One cost per booking for every tab: confirmed only (./deliveryCost.ts).
+  const mtdCost = cpbConfirmedOf(d.mtd, d.bookingSource);
+  const last7Cost = cpbConfirmedOf(d.last7, d.bookingSource);
+  const prevCost = cpbConfirmedOf(d.prevLast7, d.bookingSource);
 
   return (
     <div className="min-w-0 space-y-6">
@@ -483,38 +489,49 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
         />
         <StatTile
           variant="plain"
-          label="Bookings"
-          value={count(d.mtd.bookings)}
+          label="Confirmed bookings"
+          hint="Main and online calendar bookings made on these days, as the Client Performance board counts them, by the Kuwait day the booking was made. Provisional bookings are counted apart."
+          value={count(mtdCost.confirmed)}
+          naHint={mtdCost.why ?? undefined}
           delta={
             <Delta
-              value={change(d.last7.bookings, d.prevLast7.bookings)}
+              value={change(last7Cost.confirmed, prevCost.confirmed)}
               vs={vs}
             />
           }
-          sub={`${count(d.last7.bookings)} in the last 7 days`}
+          sub={
+            last7Cost.confirmed === null
+              ? undefined
+              : `${count(last7Cost.confirmed)} in the last 7 days · ${count(d.mtd.provisional)} provisional this month`
+          }
         />
         <StatTile
           variant="plain"
-          label="Cost per booking"
-          value={money(d.mtd.cpb)}
-          naHint={
-            d.mtd.bookings === 0
-              ? "No client booking this month is read yet"
-              : undefined
+          label={CPB_CONFIRMED_LABEL}
+          hint={
+            mtdCost.spend === null
+              ? undefined
+              : `${money(mtdCost.spend)} of spend this month on the days the board stores bookings, over ${count(mtdCost.confirmed)} confirmed bookings made from the 1st to today so far, today's included as they come in. The same figure as Delivery's This month; the Client Performance board and the timeframe card stop at yesterday, so they can differ until the day ends.`
           }
+          value={money(mtdCost.value)}
+          naHint={mtdCost.why ?? undefined}
           status={gateChip(
-            d.mtd.cpb,
+            mtdCost.value,
             d.gates.cpb,
-            "Cost per booking this month is",
+            "Cost per confirmed booking this month is",
           )}
           delta={
             <Delta
-              value={change(d.last7.cpb, d.prevLast7.cpb)}
+              value={change(last7Cost.value, prevCost.value)}
               goodWhen="down"
               vs={vs}
             />
           }
-          sub={`${money(d.last7.cpb)} in the last 7 days`}
+          sub={
+            last7Cost.value === null
+              ? undefined
+              : `${money(last7Cost.value)} in the last 7 days`
+          }
         />
       </TileRow>
 
@@ -533,7 +550,7 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
             bad > 0 ? <StatusChip tone="serious" label="Needs a look" /> : null
           }
           sub={spendLine}
-          hint="No leads at all, or a cost per lead more than 50% over the gate, in the last 7 days."
+          hint={`Over the last 7 days: ${statusRule("bad")} A high cost per lead under a good cost per booking is a watch, never off track.`}
         />
         <StatTile
           variant="plain"
@@ -543,7 +560,7 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
             watch > 0 ? <StatusChip tone="warning" label="Watch" /> : null
           }
           sub={spendLine}
-          hint="Leads are coming, but cost per lead is a little over the gate, cost per booking is over its gate, or no booking is read yet."
+          hint={`Over the last 7 days: ${statusRule("watch")}`}
         />
       </TileRow>
     </div>
@@ -702,7 +719,7 @@ function CallCentreBody({ c }: { c: CallsPayload }) {
 function speedSentences(s: CallsPayload["speedToLead"]): string[] {
   return [
     `Speed to lead uses ${count(s.sample)} verified timed leads in the last 7 days. Its median excludes untimed leads; the 2-minute share includes all new leads in the cohort.`,
-    "Hours come from Team & payroll. Dials count saved dispositions with notes; actual calls and connection rate use Maqsam evidence. Bookings use creation date. Delivery's bookings use appointment date.",
+    "Hours come from Team & payroll. Dials count saved dispositions with notes; actual calls and connection rate use Maqsam evidence. Bookings use creation date, as Delivery's do (the Client Performance board's counts).",
   ];
 }
 

@@ -28,6 +28,7 @@ import {
   unmappedLine,
   writeFold,
 } from "../src/lib/adBillingStrip";
+import { countedLine } from "../src/lib/clientRange";
 import { cpbTone, cplTone } from "../src/lib/costTone";
 import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE, gridCell } from "../src/lib/kpi";
 import { normalizeDecisions } from "../src/lib/useMediaBuyerSnapshot";
@@ -646,8 +647,9 @@ describe("cost colours follow the grid", () => {
     expect(page).not.toMatch(/ok\.cpl > CPL_GATE|costPerBooking > 80/);
     const account = source("src/components/AccountView.tsx");
     expect(account).toContain("gate(cpl, cplTone(cpl), CPL_GATE, CPL_BAD)");
+    // The client's own totals, or the campaigns listed summed (R8).
     expect(account).toMatch(
-      /cpbDisplay\(sum\.spend, sum\.bookings, \{\s*cost: cpb,/,
+      /whole\s*\?\s*clientCpb\(whole\)\s*:\s*cpbDisplay\(total\.spend, total\.bookings, \{\s*cost: total\.cost,/,
     );
     expect(account).toMatch(
       /gate\(\s*cpbShown\.judged,\s*cpbShown\.tone,\s*CPB_GATE,\s*CPB_BAD,?\s*\)/,
@@ -748,12 +750,19 @@ describe("the bookings cap reads as plain words (2026-10-22)", () => {
   test("the cap day reads 21 Oct, never 2026-10-21", () => {
     const range = source("src/components/CampaignRange.tsx");
     expect(range).toContain(
-      "bookings to $" + "{shortDate(data.bookingsThrough)}",
+      "to $" +
+        "{shortDate(data.bookingsThrough)}, the last day every account's numbers are in",
     );
     expect(range).not.toContain("bookings to $" + "{data.bookingsThrough}");
+    // A client's page says it through countedLine, in words.
+    expect(
+      countedLine("Spend, leads and bookings", undefined, "2026-10-21"),
+    ).toBe(
+      "Spend, leads and bookings are counted to 21 Oct, the last day every account's numbers are in, so they cover the same days.",
+    );
     const account = source("src/components/AccountView.tsx");
-    expect(account).toContain(
-      "Bookings are counted to {shortDate(bookingsThrough)}",
+    expect(account).toMatch(
+      /countedLine\([\s\S]*?plan\.countedFrom,\s*behind \? undefined : bookingsThrough,?\s*\)/,
     );
   });
 
@@ -796,18 +805,24 @@ describe("the bookings cap reads as plain words (2026-10-22)", () => {
     expect(sheet).toContain("className={costText(cpb?.tone)}");
     expect(sheet).not.toContain('money(t.spend / t.booked) : "No bookings"');
     expect(sheet).toContain(
-      "Calls counted to $" + "{shortDate(stats?.callsThrough)}",
+      "Spend, leads and calls counted to $" +
+        "{shortDate(stats?.callsThrough)}",
     );
     expect(sheet).toContain(
       "Meta's numbers after $" + "{shortDate(spendNotIn)}",
     );
   });
 
-  test("a client's page says its totals are the campaigns listed", () => {
-    // Until the worker publishes a client-level figure (R8), a stopped
-    // campaign's spend and bookings are not in the page's totals.
+  test("a client's page says what its totals count", () => {
+    // The client's own read (R8, 2026-10-22) says Mahara's campaigns only
+    // (clientRange.ts clientRangeNotes); without it the campaigns listed
+    // are summed and the page says so.
     const account = source("src/components/AccountView.tsx");
-    expect(account).toContain("These totals are the campaigns listed here.");
-    expect(account).toContain("Performance board counts the whole ad account.");
+    expect(account).toContain("A campaign removed from the list is left out");
+    const range = source("src/lib/clientRange.ts");
+    expect(range).toContain("These totals are the campaigns listed here.");
+    expect(range).toContain(
+      "Mahara's campaigns only, stopped ones included; the Client Performance board counts the whole ad account.",
+    );
   });
 });
