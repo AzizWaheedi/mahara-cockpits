@@ -385,7 +385,8 @@ describe("which pictures: by main service (SERVICE-MAP, DESIGN 22.14)", () => {
         });
         // Each starter picture is a crop of its own service's scenes,
         // named for the service (starter-interior-*, starter-fitout-*).
-        const file = String(a.url).split("/").pop() ?? "";
+        // Under bun on Windows an imported asset is a backslash path.
+        const file = String(a.url).split(/[\\/]/).pop() ?? "";
         expect({ key, file }).toMatchObject({
           file: expect.stringMatching(
             key === "starter"

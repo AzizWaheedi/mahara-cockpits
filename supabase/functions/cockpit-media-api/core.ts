@@ -1,6 +1,7 @@
 import {prepareB2b} from './b2b.ts';
 import {prepareCreative} from './creative.ts';
 import {preparePublish,prepareSwitch,readFunnel} from './funnel.ts';
+import {PAGE_FORM_OPERATIONS} from './pageForms.ts';
 import {HUNDREDTHS,usdToBudget} from './currency.ts';
 const B2B_OPERATIONS=['inspect','rename','setBudget','setSchedule','setAudience','createAdset','duplicateAdset'].map(x=>`ceo.b2bManage.${x}`);
 const CREATIVE_OPERATIONS=['edit.newAdsFromExisting','edit.addCreativeToCampaign','ceo.b2bManage.createAds'];
@@ -12,7 +13,7 @@ export const STATUS_FIELD = '7f118f61-34b6-483a-b749-ff9fc31fd423';
 export const CITIES_FIELD = 'b98aa20e-c2d1-4785-baae-67e67506023d';
 export const OPERATIONS = new Set(['control.setStatus','ceo.b2bControl.setStatus','edit.setAdSetBudget',
  'edit.duplicateAdSet','board.adStatusOptions','board.advertisingCityOptions','board.setAdStatus',
- 'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS,...FUNNEL_OPERATIONS]);
+ 'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS,...FUNNEL_OPERATIONS,...PAGE_FORM_OPERATIONS]);
 export interface Provider { call(provider:'meta'|'clickup'|'slack'|'ghl', method:string,path:string,body?:Row,as?:{token:string}):Promise<Row> }
 export interface Plan { provider:'meta'|'clickup'|'slack'; method:string; path:string; body?:Row; verifyPath:string; expected:Row; result?:Row; imageUpload?:boolean; precondition?:Row; liveAdsGuard?:{path:string;target:string};slackMessage?:boolean;clickupComment?:boolean;asPage?:string }
 export interface MultiPlan {steps:Plan[]; result:Row; check?:Row}

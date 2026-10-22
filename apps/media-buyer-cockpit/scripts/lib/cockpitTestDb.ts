@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 
 export function migration(name: string): string {
   if (!/^[a-zA-Z0-9_]+\.sql$/.test(name)) throw new Error("Invalid fixture migration name");
-  return readFileSync(new URL(`../../../../supabase/migrations/${name}`, import.meta.url), "utf8");
+  // A Windows checkout has CRLF files; tests match the SQL on "\n".
+  return readFileSync(new URL(`../../../../supabase/migrations/${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 }
 
 function definition(sql: string, pattern: RegExp): string {

@@ -7,6 +7,7 @@ import {buildDraft,copyIdeas,prepareLaunch,toDraft,checkDraft} from './launch.ts
 import {prepareSlack,prepareDetail} from './slack.ts';
 import {cachedPreview,readAdPreview} from './preview.ts';
 import {executeWhatsappReply} from './whatsapp.ts';
+import {PAGE_FORM_OPERATIONS,pageFormOperation,supabasePageForms} from './pageForms.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}});
 const sorted=(value:any):any=>value&&typeof value==='object'?(Array.isArray(value)?value.map(sorted):Object.fromEntries(Object.keys(value).sort().filter(k=>value[k]!==undefined).map(k=>[k,sorted(value[k])]))):value;
@@ -29,6 +30,13 @@ Deno.serve(async(req:Request)=>{
   if(operation==='comms.sendReply'){
    admin=createClient(url,service,{auth:{persistSession:false}});
    return json(await executeWhatsappReply(userClient,admin,args,env));
+  }
+  // A client's own form page: its own scope check, receipt and read-back (pageForms.ts).
+  if(PAGE_FORM_OPERATIONS.includes(operation)){
+   admin=createClient(url,service,{auth:{persistSession:false}});
+   const {store,health}=supabasePageForms(admin,url,auth.user.id);
+   const scope=async(slug:string|null,client:string|null)=>{const {data,error}=await userClient.rpc('cockpit_page_form_scope',{p_slug:slug,p_client:client});if(error)throw new Error(error.message);return data as Row;};
+   return json(await pageFormOperation(operation,args,input.apply===true,input.requestId,{store,scope,fetch,health}));
   }
   const scopeCall=()=>operation==='previews.fresh'?userClient.rpc('cockpit_ad_preview_scope',{p_ad:args.adId}):operation==='cockpit.askForDetail'?userClient.rpc('cockpit_media_task_scope',{p_task:args.taskId}):operation==='edit.askViktorFor'?userClient.rpc('cockpit_media_request_scope',{p_campaign:args.campaignName??null,p_client:args.client??null}):userClient.rpc('cockpit_media_scope',{p_operation:operation,p_campaign:args.campaignName??(args.level==='campaign'?args.name:null)});
   const {data:scope,error:scopeError}=await scopeCall();
