@@ -254,7 +254,8 @@ export function InvoiceForm({
       pay_note: s.payNote.trim() || null,
       issue_date: today,
       due_date: s.kind === "paid" ? null : s.dueDate || today,
-      checkout_source: s.linkMode === "ecom" && s.kind === "checkout" ? "ecom" : "pasted",
+      checkout_source:
+        s.linkMode === "ecom" && s.kind === "checkout" ? "ecom" : "pasted",
       checkout_url:
         s.kind !== "checkout"
           ? null

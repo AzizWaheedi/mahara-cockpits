@@ -83,7 +83,14 @@ export const RAIL_LABEL: Record<ManualRail, string> = {
   ecom: "Ecom",
   other: "Other",
 };
-const RAILS: ManualRail[] = ["bank_transfer", "cheque", "cash", "tap", "ecom", "other"];
+const RAILS: ManualRail[] = [
+  "bank_transfer",
+  "cheque",
+  "cash",
+  "tap",
+  "ecom",
+  "other",
+];
 
 /** The same bounds the server checks (writeGuard.ts). */
 const FIRST_DAY = "2025-01-01";

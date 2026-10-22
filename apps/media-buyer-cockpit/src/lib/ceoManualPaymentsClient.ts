@@ -76,7 +76,9 @@ export async function manualPaymentList(
       typeof r.id !== "string" ||
       typeof r.client_name !== "string" ||
       !["USD", "KWD"].includes(r.currency) ||
-      !["bank_transfer", "cheque", "cash", "tap", "ecom", "other"].includes(r.rail) ||
+      !["bank_transfer", "cheque", "cash", "tap", "ecom", "other"].includes(
+        r.rail,
+      ) ||
       !["payment", "refund"].includes(r.kind)
     )
       throw new Error("Invalid payment row.");

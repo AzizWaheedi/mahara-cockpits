@@ -153,7 +153,11 @@ export function fillInvoice(
   const period = (inv.period ?? "").trim();
   const taxId = (inv.client_tax_id ?? "").trim();
   let html = template;
-  html = stripBlock(html, "ECOM", kind === "checkout" && inv.checkout_source === "ecom");
+  html = stripBlock(
+    html,
+    "ECOM",
+    kind === "checkout" && inv.checkout_source === "ecom",
+  );
   html = stripBlock(html, "NOT_ECOM", inv.checkout_source !== "ecom");
   html = stripBlock(html, "CHECKOUT", kind === "checkout");
   html = stripBlock(html, "AUTOCHARGE", kind === "autocharge");
@@ -178,7 +182,11 @@ export function fillInvoice(
     AMOUNT: esc(amount),
     AMOUNT_FULL: esc(amount),
     CHECKOUT_URL: esc(inv.checkout_url ?? ""),
-    ECOM_AMOUNT_LINE: esc(inv.amount_kwd != null && inv.kwd_rate != null ? `Pay KWD ${Number(inv.amount_kwd).toLocaleString("en-US", {minimumFractionDigits: 3, maximumFractionDigits: 3})} (USD ${amount} at ${inv.kwd_rate})` : "KWD amount calculated at today's exchange rate before issue"),
+    ECOM_AMOUNT_LINE: esc(
+      inv.amount_kwd != null && inv.kwd_rate != null
+        ? `Pay KWD ${Number(inv.amount_kwd).toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 3 })} (USD ${amount} at ${inv.kwd_rate})`
+        : "KWD amount calculated at today's exchange rate before issue",
+    ),
     PAY_NOTE: esc(payNote(inv)),
   };
   // One pass: text a person typed is never read again as a placeholder.

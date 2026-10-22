@@ -57,7 +57,13 @@ export type CashRail = {
  * ceoManualPayments.rail in convex/schema.ts (writeGuard.ts `vManualRail`),
  * so an adapter passing a stored row through is checked against it.
  */
-export type ManualRail = "bank_transfer" | "cheque" | "cash" | "tap" | "ecom" | "other";
+export type ManualRail =
+  | "bank_transfer"
+  | "cheque"
+  | "cash"
+  | "tap"
+  | "ecom"
+  | "other";
 
 /** One hand-logged payment as the Money tab shows it (ceoManualPayments). */
 export type ManualPaymentRow = {

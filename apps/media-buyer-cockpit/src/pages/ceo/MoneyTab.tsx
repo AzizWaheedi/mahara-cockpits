@@ -747,9 +747,13 @@ function RailsBody({
     ...(rails.bank ? [{ key: "bank", rail: rails.bank }] : []),
     { key: "total", rail: rails.total },
   ];
-  const liveRails = [rails.whop, rails.tap, rails.ecom, manual, rails.bank ?? null].filter(
-    r => r?.connected,
-  ).length;
+  const liveRails = [
+    rails.whop,
+    rails.tap,
+    rails.ecom,
+    manual,
+    rails.bank ?? null,
+  ].filter(r => r?.connected).length;
 
   // Each rail's month and today are in the table, and the total is the cash
   // card's figure above, so this card has no tiles of its own: every number
