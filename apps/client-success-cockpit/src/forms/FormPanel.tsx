@@ -241,6 +241,14 @@ export function FormPanel({
         // The trail keeps the submit's own clock: a retry is noted later,
         // and Make's change to the card comes seconds after the submit.
         setSent({ responseId, at, send, error: null, busy: false });
+        // The cockpit tab read the sends when "sent" arrived, before this
+        // note landed: it reads them again now, so its header and Onboarding
+        // panel show the send without waiting for the first check.
+        io.announce?.({
+          type: "noted",
+          taskId: ctxRef.current.taskId,
+          form: config.key,
+        });
       } catch (e) {
         setSent({ responseId, at, send: null, error: message(e), busy: false });
       }
@@ -441,6 +449,19 @@ export function FormPanel({
               : null
           }
         />
+      ) : null}
+      {/* The guard reads the cockpit's own sends too: when that read
+          failed, a send from here in the last minutes may be missed, so
+          the window says so instead of looking sure. */}
+      {ctx.failed.sends && !already && !sent ? (
+        <p className="txt-warn flex gap-2 text-xs" role="note">
+          <span className="mt-1.5">
+            <Dot tone="warn" />
+          </span>
+          <span className="min-w-0">
+            {`The cockpit could not check for a ${config.title.toLowerCase()} already sent from here: ${clause(ctx.failed.sends)}. Look at the client's Onboarding panel before you send.`}
+          </span>
+        </p>
       ) : null}
       {/* Still missing first (the trail takes its place after a send),
           then what the form opened with, then the rest. */}

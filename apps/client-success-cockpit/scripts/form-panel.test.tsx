@@ -237,6 +237,11 @@ describe("a send", () => {
       clientName: fx.NAME,
       say: `Kickoff sent for ${fx.NAME}. Make is booking the Brand Blueprint.`,
     });
+    // Once the note lands, the cockpit tab is told to read the sends again
+    // (its first read raced the note).
+    expect(news.filter(n => n.type === "noted")).toEqual([
+      { type: "noted", taskId: fx.TASK, form: "kickoff" },
+    ]);
     expect(host.textContent).toContain(
       "Kickoff sent. Make is booking the Brand Blueprint.",
     );
@@ -521,6 +526,43 @@ describe("the guard and the frozen form", () => {
     await act(async () => second.click());
     await flush();
     expect(mounted.length).toBe(1);
+  });
+
+  test("a failed read of the cockpit's own sends is said, since the guard may miss one", async () => {
+    const { embed } = stand();
+    const { host, root } = mountHost();
+    const { io: panelIo } = io();
+    await act(async () =>
+      root.render(
+        <FormPanel
+          config={KICKOFF}
+          ctx={fx.fixtureContext({
+            failed: { sends: "The network dropped." },
+          })}
+          io={panelIo}
+          clientName={fx.NAME}
+          embed={embed}
+        />,
+      ),
+    );
+    await flush();
+    expect(host.textContent).toContain(
+      "The cockpit could not check for a kickoff already sent from here: The network dropped. Look at the client's Onboarding panel before you send.",
+    );
+    // A clean read says nothing.
+    await act(async () =>
+      root.render(
+        <FormPanel
+          config={KICKOFF}
+          ctx={fx.fixtureContext()}
+          io={panelIo}
+          clientName={fx.NAME}
+          embed={embed}
+        />,
+      ),
+    );
+    await flush();
+    expect(host.textContent).not.toContain("could not check for a kickoff");
   });
 
   test("a kit re-read never remounts the form; changed answers are said and wait for Reload", async () => {

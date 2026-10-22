@@ -95,7 +95,9 @@ submit.
    (`BookCallButton kind="blueprint"`, the same HighLevel calendar
    `x84ET6KnA8odlsjYiVLq`) instead of leaving the window.
 10. The cockpit tab gets the same news (a toast and a re-read of the
-    Onboarding panel) through a `BroadcastChannel("mahara-forms")` message.
+    Onboarding panel) through a `BroadcastChannel("mahara-forms")` message,
+    and a second message (`noted`) once the cockpit has noted the send, so
+    the tab's read of the sends never races the note.
     Until Make or the 10-minute sync puts the kickoff on the record, the
     kickoff row reads as sent and pending: a teal dot, "Sent from the
     cockpit today at 14:02 by Lina.", and a quiet **Open the kickoff
@@ -365,6 +367,7 @@ stays its own.
 | No onboarding answers | "<Client> has not filled the onboarding form, so the kickoff opens with their name and card only." | Copy their onboarding link |
 | Kickoff already on record | see 4.4 | Read what was filled; Open a second kickoff anyway |
 | A side-panel read failed | that part only: "The offer and HighLevel details could not be read just now." | The form, and every other part |
+| The cockpit's own sends could not be read | over the side panel: "The cockpit could not check for a kickoff already sent from here: <reason>. Look at the client's Onboarding panel before you send." (the guard still reads the record and the form history) | The form; the server still marks a second send |
 
 The plain states (loading, blocked, unread) show no Just me / Sharing
 switch, since there is nothing to hide, and their sentence is balanced so

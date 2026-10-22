@@ -92,7 +92,7 @@ export type FormNews =
       clientName: string;
       say: string;
     }
-  | { type: "checked"; taskId: string; form: FormKey };
+  | { type: "checked" | "noted"; taskId: string; form: FormKey };
 
 const CHANNEL = "mahara-forms";
 

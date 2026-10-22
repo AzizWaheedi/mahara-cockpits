@@ -281,6 +281,11 @@ function LiveFormWindow({
           sends: sends.status === "fulfilled" ? sends.value.sends : ctx.sends,
           now: page.now,
           readAt: Date.now(),
+          failed: {
+            ...ctx.failed,
+            sends:
+              sends.status === "rejected" ? message(sends.reason) : undefined,
+          },
         }));
         if (page.problem) throw Error(page.problem);
       },
