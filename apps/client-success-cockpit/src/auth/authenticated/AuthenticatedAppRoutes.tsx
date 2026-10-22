@@ -6,6 +6,7 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { PublicLayout } from "@/components/PublicLayout";
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute";
 import { BillingReviewLayout, RoleRoute } from "@/components/RoleRoute";
+import { FormRouteBoundary } from "@/forms/FormBoundary";
 import {
   BacklogPage,
   ClientPage,
@@ -26,6 +27,8 @@ import { DeckRouteBoundary } from "@/present/DeckBoundary";
 
 /** The client decks, loaded only when a deck window opens. */
 const PresentPage = lazy(() => import("@/present/PresentPage"));
+/** A client's forms (the kickoff first), loaded only when a form window opens. */
+const FormWindow = lazy(() => import("@/forms/FormWindow"));
 
 /** An old address, sent on to where its page lives now, with its query string. */
 function Moved({ to }: { to: string }) {
@@ -88,6 +91,18 @@ export function AuthenticatedRoutes() {
                   <PresentPage notes />
                 </Suspense>
               </DeckRouteBoundary>
+            }
+          />
+          {/* The kickoff form (docs/csm-forms/KICKOFF.md): its own window,
+              outside AppLayout for the same reason as the decks. */}
+          <Route
+            path="/clients/:key/forms/:form"
+            element={
+              <FormRouteBoundary>
+                <Suspense fallback={null}>
+                  <FormWindow />
+                </Suspense>
+              </FormRouteBoundary>
             }
           />
         </Route>

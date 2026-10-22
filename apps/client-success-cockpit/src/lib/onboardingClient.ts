@@ -36,6 +36,7 @@ const row = z.object({
       contract_signed: text.optional(),
       daily_budget: z.number().optional(),
       service: text.optional(),
+      next_payment_amount: z.number().optional(),
     })
     .passthrough(),
   sales_transcript: nullable,

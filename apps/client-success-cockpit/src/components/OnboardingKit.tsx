@@ -18,11 +18,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import type { FormSend } from "@/forms/formConfig";
+import { kickoffCardDone, sendLine } from "@/forms/formStatus";
+import { FillFormButton } from "@/forms/OpenFormButton";
 import { shortDay } from "@/lib/format";
 import {
   type FormEntry,
   type KitsPage,
-  kickoffFormLink,
   type OnboardingRow,
   onboardingFormLink,
   type Step,
@@ -217,6 +219,7 @@ export function OnboardingKit({
   error,
   refreshing,
   onRefresh,
+  kickSend = null,
 }: {
   client: Client;
   /** undefined while loading, null when the table has no row for the card. */
@@ -225,6 +228,11 @@ export function OnboardingKit({
   error: string | null;
   refreshing: boolean;
   onRefresh: () => void;
+  /**
+   * The newest kickoff sent from the cockpit's own window (KICKOFF.md 4.3),
+   * read once by the client page so its header agrees with this panel.
+   */
+  kickSend?: FormSend | null;
 }) {
   const [reading, setReading] = useState<Reading | null>(null);
   const track = kit ? kit.in_onboarding : client.bucket === "onboarding";
@@ -254,7 +262,6 @@ export function OnboardingKit({
   const h = kit?.handover ?? {};
   const f = kit?.forms ?? {};
   const salesCall = links.sales_call ?? links.fathom;
-  const kickoffLink = links.kickoff_form ?? kickoffFormLink(client.taskId);
   const notes = h.closer_notes
     ? h.closer_notes
     : [
@@ -427,16 +434,42 @@ export function OnboardingKit({
           </StepPanel>
 
           <StepPanel title="On the call" state={stateOf("call")}>
+            {/* In the call's own order: the deck, then the kickoff. The
+                kickoff is the step's one teal button. */}
+            {live ? null : (
+              <Item
+                tone="neutral"
+                label="The onboarding deck"
+                status="Seven slides for the call, in its own window. Share that window only."
+              >
+                <PresentDeckLinks taskId={client.taskId} deck="onboarding" />
+              </Item>
+            )}
             <Item
-              tone={f.kickoff ? "good" : step === "call" ? "warn" : "neutral"}
+              tone={
+                f.kickoff
+                  ? "good"
+                  : kickSend
+                    ? "accent"
+                    : step === "call"
+                      ? "warn"
+                      : "neutral"
+              }
               label="Kickoff form"
               status={
-                filled(f.kickoff) ??
-                (live
-                  ? "Not on record"
-                  : f.onboarding
-                    ? "Not filled yet. It opens with their onboarding answers."
-                    : "Not filled yet. Their onboarding answers are not in, so it opens without them.")
+                kickSend
+                  ? sendLine(
+                      { after: { cardDone: kickoffCardDone } },
+                      kickSend,
+                      kit ?? null,
+                      page?.now ?? new Date().toISOString(),
+                    )
+                  : (filled(f.kickoff) ??
+                    (live
+                      ? "Not on record"
+                      : f.onboarding
+                        ? "Not filled yet. It opens with their onboarding answers."
+                        : "Not filled yet. Their onboarding answers are not in, so it opens without them."))
               }
             >
               {f.kickoff ? (
@@ -451,15 +484,24 @@ export function OnboardingKit({
                 >
                   Read what was filled
                 </Read>
-              ) : live ? null : step === "call" ? (
-                <Button size="sm" asChild>
-                  <a href={kickoffLink} target="_blank" rel="noreferrer">
-                    Open the kickoff form
-                    <ArrowUpRight aria-hidden />
-                  </a>
-                </Button>
+              ) : live ? null : kickSend ? (
+                // Sent, and Make or the sync has not written it to the record
+                // yet: the window shows where it is, and holds a second one.
+                <FillFormButton
+                  taskId={client.taskId}
+                  form="kickoff"
+                  variant="link"
+                >
+                  Open the kickoff window
+                </FillFormButton>
               ) : (
-                <ExtLink href={kickoffLink}>Open the kickoff form</ExtLink>
+                <FillFormButton
+                  taskId={client.taskId}
+                  form="kickoff"
+                  variant={step === "call" ? "default" : "link"}
+                >
+                  Fill the kickoff
+                </FillFormButton>
               )}
             </Item>
             {live ? null : (
@@ -489,19 +531,6 @@ export function OnboardingKit({
                     ? "Book another time"
                     : "Book the onboarding call"}
                 </BookCallButton>
-              </Item>
-            )}
-            {live ? null : (
-              <Item
-                tone="neutral"
-                label="The onboarding deck"
-                status="Seven slides for the call, in its own window. Share that window only."
-              >
-                <PresentDeckLinks
-                  taskId={client.taskId}
-                  deck="onboarding"
-                  primary={step === "call"}
-                />
               </Item>
             )}
             {links.onboarding_map ? (
@@ -593,7 +622,7 @@ export function OnboardingKit({
                   kind="blueprint"
                   variant="outline"
                 >
-                  Book the Blueprint call
+                  Book the Brand Blueprint call
                 </BookCallButton>
                 <BookCallButton
                   taskId={client.taskId}
