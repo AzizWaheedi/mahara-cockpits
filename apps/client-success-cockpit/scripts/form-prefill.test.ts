@@ -17,7 +17,7 @@ import {
   onboardingEntry,
   TASK,
 } from "../src/dev/formFixtures";
-import { KICKOFF } from "../src/forms/formConfig";
+import { KICKOFF } from "../src/forms/kickoff";
 import {
   buildHidden,
   canonicalHidden,

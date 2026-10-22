@@ -6,6 +6,8 @@ import { DeckShell } from "./DeckShell";
 import type { CallKind, DeckData } from "./deckData";
 import { baseCtx, DECKS, prefersStill, shownSlides } from "./decks";
 import type { Pos } from "./engine";
+import { KickoffLayer, type KickoffPort } from "./KickoffSlide";
+import { type BookOpts, KICKOFF_SLIDE, type KickoffShown } from "./kickoffStop";
 import { NotesWindow } from "./NotesWindow";
 import { PrepView } from "./PrepView";
 import { openNamed } from "./PresentButton";
@@ -51,6 +53,7 @@ export function PresentApp({
   book,
   uploadLogo,
   report,
+  kickoff,
 }: {
   taskId: string;
   deck: DeckKind;
@@ -63,10 +66,17 @@ export function PresentApp({
     kind: CallKind,
     label: string,
     onBooked: (startTime: string) => void,
+    opts?: BookOpts,
   ) => ReactNode;
   uploadLogo?: (file: File) => Promise<void>;
   /** Sends a slide's crash to the issue queue. */
   report?: (r: { title: string; detail: string }) => Promise<unknown>;
+  /**
+   * The kickoff form on the onboarding deck's last slide (O8): the reads
+   * and writes the kickoff window uses, for this client. Without it the
+   * slide draws its frame still (prep's preview).
+   */
+  kickoff?: KickoffPort;
 }) {
   const model = useDeckModel({
     taskId,
@@ -121,10 +131,44 @@ export function PresentApp({
   const bookFor = useMemo(
     () =>
       book && d
-        ? (kind: CallKind, label: string) =>
-            book(d, kind, label, startTime => model.book(kind, startTime))
+        ? (kind: CallKind, label: string, opts?: BookOpts) =>
+            book(d, kind, label, startTime => model.book(kind, startTime), opts)
         : undefined,
     [book, d, model],
+  );
+
+  // The kickoff's live layer, on the shared deck only (O8).
+  const [kickoffShown, setKickoffShown] = useState<KickoffShown | null>(null);
+  const onShown = useCallback(
+    (n: KickoffShown) =>
+      setKickoffShown(s =>
+        s && s.live === n.live && s.held === n.held ? s : n,
+      ),
+    [],
+  );
+  const live = kickoff && deck === "onboarding" && view === "present";
+  const kickoffWent = model.kickoffWent;
+  const layer = useMemo(
+    () =>
+      live && kickoff
+        ? ({
+            slideId,
+            ctx,
+          }: {
+            slideId: string;
+            ctx: { d: DeckData; lang: typeof model.lang };
+          }) => (
+            <KickoffLayer
+              on={slideId === KICKOFF_SLIDE}
+              ctx={ctx}
+              port={kickoff}
+              hub={model.hub}
+              onSent={kickoffWent}
+              onShown={onShown}
+            />
+          )
+        : undefined,
+    [live, kickoff, model.hub, kickoffWent, onShown],
   );
 
   const addFiles = useMemo(
@@ -142,6 +186,16 @@ export function PresentApp({
   const base = {
     ...baseCtx(model, d, deck, still, view === "present"),
     ads: { add: addFiles },
+    // On the shared deck the live layer draws the kickoff's frame; until
+    // its guard has read the client, the record says what is filled.
+    ...(live
+      ? {
+          kickoff: kickoffShown ?? {
+            live: true,
+            held: d.kickoff.from === "record",
+          },
+        }
+      : {}),
   };
 
   if (view === "notes")
@@ -196,6 +250,7 @@ export function PresentApp({
       onPos={onPos}
       closed={closed}
       report={report}
+      layer={layer}
     />
   );
 }

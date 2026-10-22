@@ -193,7 +193,7 @@ describe("which slides show, and the address", () => {
 });
 
 describe("the onboarding deck", () => {
-  test("seven slides, in CONTENT.md's order", () => {
+  test("eight slides, in CONTENT.md's order: the kickoff form last (2026-10-22)", () => {
     expect(onboardingSlides().map(s => s.id)).toEqual([
       "welcome",
       "goals",
@@ -202,6 +202,7 @@ describe("the onboarding deck", () => {
       "road",
       "this-week",
       "next",
+      "kickoff",
     ]);
   });
 

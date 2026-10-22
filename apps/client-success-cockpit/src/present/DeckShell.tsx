@@ -1,6 +1,7 @@
 import "./present.css";
 import {
   type CSSProperties,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -64,6 +65,12 @@ export interface ShellProps {
   onPos?: (p: Pos, slideId: string) => void;
   /** Sends a slide's crash to the issue queue (the slide itself shows a calm line). */
   report?: (r: { title: string; detail: string }) => Promise<unknown>;
+  /**
+   * What the deck window keeps above the slides, not keyed by slide or
+   * language, so it survives a move and an L (the kickoff form, O8): told
+   * where the call is, it decides when to show.
+   */
+  layer?: (at: { slideId: string; tour: number; ctx: SlideCtx }) => ReactNode;
 }
 
 /** A slide's own render, inside its boundary (so a throw there is caught). */
@@ -90,6 +97,7 @@ export function DeckShell({
   closed = false,
   onPos,
   report,
+  layer,
 }: ShellProps) {
   const { lang } = base;
   const [own, setOwn] = useState<Pos>(() => {
@@ -522,6 +530,13 @@ export function DeckShell({
                 <SlideBody slide={slide} ctx={ctx} />
               </DeckBoundary>
             </section>
+          ) : null}
+          {/* Above the slide, below the player: inert while the player
+              covers the canvas. */}
+          {layer && !embedded && slide ? (
+            <div className="dk-layer" inert={player ? true : undefined}>
+              {layer({ slideId: slide.id, tour, ctx })}
+            </div>
           ) : null}
           {railAt != null ? (
             <MiniRail lang={lang} current={railAt} dwy={base.d.mode.dwy} />

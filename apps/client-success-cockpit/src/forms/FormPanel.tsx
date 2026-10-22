@@ -1,16 +1,13 @@
-import type { WidgetOptions } from "@typeform/embed";
 import { Check, ChevronRight, Copy, RefreshCw, RotateCcw } from "lucide-react";
-import {
-  type ReactNode,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Dot, ExtLink, Kicker } from "@/components/kit";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Sheet,
   SheetContent,
@@ -18,9 +15,8 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import type { FormEntry } from "@/lib/onboardingCore";
+import type { FormEntry, OnboardingRow } from "@/lib/onboardingCore";
 import { cn } from "@/lib/utils";
-import type { SendInput } from "./formClient";
 import type {
   Already,
   FormConfig,
@@ -29,10 +25,24 @@ import type {
   RailPart,
   RailRow,
 } from "./formConfig";
-import { type Trail, trailFor, trailSummary } from "./formStatus";
+import { type Trail, trailSummary } from "./formStatus";
 import { kuwaitShortDay, kuwaitTime } from "./formTime";
-import type { FormNews } from "./OpenFormButton";
-import { formLink, hiddenSha256, type Prefill, sameHidden } from "./prefill";
+import {
+  type CreateWidget,
+  type FormIO,
+  type FormPhase,
+  message,
+  useFormPanel,
+} from "./useFormPanel";
+
+export {
+  type CreateWidget,
+  type FormIO,
+  type FormPhase,
+  loadTypeform,
+  serverNow,
+  type Widget,
+} from "./useFormPanel";
 
 /**
  * The reusable form panel (docs/csm-forms/KICKOFF.md 2): Typeform's own
@@ -41,36 +51,14 @@ import { formLink, hiddenSha256, type Prefill, sameHidden } from "./prefill";
  * the form ID, the hidden fields, the side panel, the duplicate guard, the
  * ending and the after-submit trail are all the config's. Layout-free: it
  * fills whatever frame holds it (the kickoff's own window here; a large
- * sheet in another cockpit).
+ * sheet in another cockpit). Its state is useFormPanel's, so the
+ * onboarding deck's last slide draws the same form on its canvas and the
+ * side panel's parts (RailView, AfterSend, AnswersSheet, exported here) in
+ * the notes window.
  *
  * The hidden object is built once when the form loads and never rebuilt
  * under a form being filled; a kit re-read never remounts the widget.
  */
-
-export type Widget = { unmount: () => void };
-export type CreateWidget = (formId: string, options: WidgetOptions) => Widget;
-
-/** Typeform's SDK and its stylesheet, loaded only when a form opens. */
-export async function loadTypeform(): Promise<CreateWidget> {
-  const [sdk] = await Promise.all([
-    import("@typeform/embed"),
-    import("@typeform/embed/build/css/widget.css"),
-  ]);
-  return sdk.createWidget;
-}
-
-export interface FormIO {
-  /** Notes one response (cockpit_csm_form_sent). Safe to repeat. */
-  record(input: SendInput): Promise<FormSend>;
-  /** Re-reads the card (the one-card refresh), the call store and the sends. */
-  check(): Promise<void>;
-  /** Re-reads the call store only (the recording). */
-  recheck(): Promise<void>;
-  /** Tells the cockpit's own tab. */
-  announce?(news: FormNews): void;
-}
-
-export type FormPhase = "held" | "open" | "started" | "sent";
 
 export interface BookProps {
   /** The call the form's ending books. */
@@ -95,13 +83,6 @@ export interface FormPanelProps {
   book?: (p: BookProps) => ReactNode;
   onPhase?: (phase: FormPhase) => void;
 }
-
-/** The server's clock now, from its clock at the last read. */
-export const serverNow = (ctx: Pick<FormContext, "now" | "readAt">) =>
-  Date.parse(ctx.now) + Math.max(0, Date.now() - ctx.readAt);
-
-const message = (e: unknown) =>
-  String((e as Error)?.message ?? e ?? "").trim() || "No reason was given.";
 
 /** A reason inside a sentence: its own last full stop goes, the sentence adds one. */
 const clause = (s: string) => s.replace(/\.\s*$/, "");
@@ -152,242 +133,36 @@ export function FormPanel({
   clientName,
   rehearse = false,
   sharing = false,
-  embed = loadTypeform,
+  embed,
   book,
   onPhase,
 }: FormPanelProps) {
-  // The guard is decided once, when the window opens: after this window's
-  // own send, the record will show a kickoff, and that is not a reason to
-  // hold the form again.
-  const [already] = useState<Already | null>(() => config.already(ctx));
-  const [released, setReleased] = useState(false);
-  const held = Boolean(already) && !released;
-
-  const [prefill, setPrefill] = useState<Prefill>(() => config.hidden(ctx));
-  const [mount, setMount] = useState(0);
-  const prefillRef = useRef(prefill);
-  prefillRef.current = prefill;
-  const current = useMemo(() => config.hidden(ctx), [config, ctx]);
-
-  const [ready, setReady] = useState(false);
-  const [slow, setSlow] = useState(false);
-  const [started, setStarted] = useState(false);
-  const [rehearsed, setRehearsed] = useState(false);
-  const [sent, setSent] = useState<{
-    responseId: string;
-    at: string;
-    send: FormSend | null;
-    error: string | null;
-    busy: boolean;
-  } | null>(null);
-  const [checking, setChecking] = useState(false);
-  const [checkedAt, setCheckedAt] = useState<string | null>(null);
-  const [checkError, setCheckError] = useState<string | null>(null);
-  const [autoBook, setAutoBook] = useState(false);
-  const [reading, setReading] = useState<FormEntry | null>(null);
-  const [, setTick] = useState(0);
-  const box = useRef<HTMLDivElement>(null);
-  const timers = useRef<number[]>([]);
-  const noted = useRef(new Set<string>());
-
-  const changed = !sent && !held && !sameHidden(current.values, prefill.values);
-  const phase: FormPhase = held
-    ? "held"
-    : sent
-      ? "sent"
-      : started
-        ? "started"
-        : "open";
-  const phaseRef = useRef(onPhase);
-  phaseRef.current = onPhase;
-  useEffect(() => {
-    phaseRef.current?.(phase);
-  }, [phase]);
-
-  const ctxRef = useRef(ctx);
-  ctxRef.current = ctx;
-
-  const runCheck = useCallback(async () => {
-    setChecking(true);
-    try {
-      await io.check();
-      setCheckedAt(new Date(serverNow(ctxRef.current)).toISOString());
-      setCheckError(null);
-      io.announce?.({
-        type: "checked",
-        taskId: ctxRef.current.taskId,
-        form: config.key,
-      });
-    } catch (e) {
-      setCheckError(message(e));
-    } finally {
-      setChecking(false);
-    }
-  }, [io, config.key]);
-
-  const note = useCallback(
-    async (responseId: string, at: string) => {
-      setSent({ responseId, at, send: null, error: null, busy: true });
-      try {
-        const p = prefillRef.current;
-        const send = await io.record({
-          taskId: ctxRef.current.taskId,
-          formKey: config.key,
-          responseId,
-          hiddenKeys: Object.keys(p.values),
-          hiddenSha256: await hiddenSha256(p.values),
-          carriedId: p.values[config.idField] ?? "",
-        });
-        // The trail keeps the submit's own clock: a retry is noted later,
-        // and Make's change to the card comes seconds after the submit.
-        setSent({ responseId, at, send, error: null, busy: false });
-        // The cockpit tab read the sends when "sent" arrived, before this
-        // note landed: it reads them again now, so its header and Onboarding
-        // panel show the send without waiting for the first check.
-        io.announce?.({
-          type: "noted",
-          taskId: ctxRef.current.taskId,
-          form: config.key,
-        });
-      } catch (e) {
-        setSent({ responseId, at, send: null, error: message(e), busy: false });
-      }
-    },
-    [io, config.key, config.idField],
-  );
-
-  const handlers = useRef({
-    started: () => {},
-    submit: (_responseId: string) => {},
-    ending: () => {},
+  const m = useFormPanel({
+    config,
+    ctx,
+    io,
+    clientName,
+    rehearse,
+    embed,
+    onPhase,
   });
-  handlers.current = {
-    started: () => setStarted(true),
-    submit: responseId => {
-      setStarted(false);
-      // A rehearsal is Typeform's sandbox: nothing to note, nothing ran.
-      if (rehearse || responseId === "__sandbox" || !responseId) {
-        setRehearsed(true);
-        return;
-      }
-      // Typeform says it once; a repeat never notes or schedules twice.
-      if (noted.current.has(responseId)) return;
-      noted.current.add(responseId);
-      const at = new Date(serverNow(ctxRef.current)).toISOString();
-      void note(responseId, at);
-      io.announce?.({
-        type: "sent",
-        taskId: ctxRef.current.taskId,
-        form: config.key,
-        clientName,
-        say: `${config.title} sent for ${clientName}. ${config.after.say.replace(/^[^.]*\.\s*/, "")}`,
-      });
-      for (const t of timers.current) window.clearTimeout(t);
-      timers.current = config.after.checksAtSec.map(sec =>
-        window.setTimeout(() => void runCheck(), sec * 1000),
-      );
-    },
-    ending: () => {
-      // In Typeform's sandbox nothing was sent, so nothing is booked from it.
-      if (rehearse) {
-        toast("Rehearsal: the booking stays closed.");
-        return;
-      }
-      if (config.ending) setAutoBook(true);
-    },
-  };
-
-  useEffect(
-    () => () => {
-      for (const t of timers.current) window.clearTimeout(t);
-    },
-    [],
-  );
-
-  // A half-filled form asks before the window closes.
-  useEffect(() => {
-    if (!started) return;
-    const ask = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = "";
-    };
-    window.addEventListener("beforeunload", ask);
-    return () => window.removeEventListener("beforeunload", ask);
-  }, [started]);
-
-  // The trail's clock moves on its own after a send.
-  useEffect(() => {
-    if (!sent) return;
-    const t = window.setInterval(() => setTick(n => n + 1), 15_000);
-    return () => window.clearInterval(t);
-  }, [sent]);
-
-  // The widget: mounted when the form is let open, and again only on Reload.
-  const titleRef = useRef(`${config.title} form for ${clientName}`);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the widget mounts once per Reload; reads and callbacks go through refs
-  useEffect(() => {
-    if (held || !box.current) return;
-    let live = true;
-    let w: Widget | null = null;
-    setReady(false);
-    setSlow(false);
-    const slowTimer = window.setTimeout(() => live && setSlow(true), 20_000);
-    embed()
-      .then(create => {
-        if (!live || !box.current) return;
-        const options: WidgetOptions = {
-          container: box.current,
-          hidden: prefillRef.current.values,
-          inlineOnMobile: true,
-          medium: "mahara-client-success",
-          // The ending's redirect would otherwise take the whole window away.
-          redirectTarget: "_blank",
-          iframeProps: { title: titleRef.current },
-          onReady: () => {
-            if (live) setReady(true);
-          },
-          onStarted: () => handlers.current.started(),
-          onSubmit: e => handlers.current.submit(e.responseId),
-        };
-        if (rehearse) options.enableSandbox = true;
-        if (config.ending)
-          options.onEndingButtonClick = () => handlers.current.ending();
-        w = create(config.formId, options);
-      })
-      .catch(() => {
-        if (live) setSlow(true);
-      });
-    return () => {
-      live = false;
-      window.clearTimeout(slowTimer);
-      w?.unmount();
-    };
-  }, [held, mount, config.formId, rehearse]);
-
-  const reload = () => {
-    if (started && !window.confirm("Reload the form? What was typed is lost."))
-      return;
-    setPrefill(config.hidden(ctxRef.current));
-    setStarted(false);
-    setMount(m => m + 1);
-  };
-
-  const fallback = formLink(config.formId, prefill.values);
-  const parts = useMemo(
-    () => config.rail(ctx, prefill),
-    [config, ctx, prefill],
-  );
+  const {
+    already,
+    held,
+    prefill,
+    changed,
+    ready,
+    slow,
+    rehearsed,
+    sent,
+    trail,
+    parts,
+    fallback,
+    box,
+  } = m;
+  const [reading, setReading] = useState<FormEntry | null>(null);
   const missingCount = parts.find(p => p.id === "missing")?.rows.length ?? 0;
   const desk = useMinWidth(1024);
-
-  const trail = sent
-    ? trailFor(
-        config,
-        ctx,
-        { responseId: sent.responseId, sentAt: sent.at, noted: !sent.error },
-        serverNow(ctx),
-      )
-    : null;
 
   // Below 1024 px the panel is a fold; it opens on its own when a step is late.
   const [foldOpen, setFoldOpen] = useState(false);
@@ -396,99 +171,46 @@ export function FormPanel({
     if (late) setFoldOpen(true);
   }, [late]);
 
-  // "Still missing" points at its row: scroll there and mark it a moment.
-  const [jumped, setJumped] = useState<string | null>(null);
-  const jump = useCallback((id: string) => {
-    const el = document.getElementById(`rail-${id}`);
-    if (!el) return;
-    // Only the panel's own scroll moves: scrollIntoView would also move the
-    // window under the header.
-    const box = el.closest<HTMLElement>("[data-rail-scroll]");
-    if (box) {
-      const top =
-        el.getBoundingClientRect().top -
-        box.getBoundingClientRect().top +
-        box.scrollTop -
-        (box.clientHeight - el.clientHeight) / 2;
-      box.scrollTo?.({
-        top: Math.max(0, top),
-        behavior: reducedMotion() ? "auto" : "smooth",
-      });
-    }
-    el.focus?.({ preventScroll: true });
-    setJumped(id);
-  }, []);
-  useEffect(() => {
-    if (!jumped) return;
-    const t = window.setTimeout(() => setJumped(null), 1600);
-    return () => window.clearTimeout(t);
-  }, [jumped]);
+  const { jumped, jump } = useJump();
 
   const rail = (
-    <div className="space-y-6 p-4 sm:p-5">
-      {sent && trail ? (
-        <AfterSend
-          config={config}
-          ctx={ctx}
-          sent={sent}
-          trail={trail}
-          checking={checking}
-          checkedAt={checkedAt}
-          checkError={checkError}
-          onCheck={() => void runCheck()}
-          onRetry={() => void note(sent.responseId, sent.at)}
-          book={
-            book && config.ending
-              ? book({
-                  kind: config.ending.book,
-                  label: config.ending.label,
-                  variant: trail.current === null ? "default" : "outline",
-                  autoOpen: autoBook,
-                  onAutoOpenConsumed: () => setAutoBook(false),
-                })
-              : null
-          }
-        />
-      ) : null}
-      {/* The guard reads the cockpit's own sends too: when that read
-          failed, a send from here in the last minutes may be missed, so
-          the window says so instead of looking sure. */}
-      {ctx.failed.sends && !already && !sent ? (
-        <p className="txt-warn flex gap-2 text-xs" role="note">
-          <span className="mt-1.5">
-            <Dot tone="warn" />
-          </span>
-          <span className="min-w-0">
-            {`The cockpit could not check for a ${config.title.toLowerCase()} already sent from here: ${clause(ctx.failed.sends)}. Look at the client's Onboarding panel before you send.`}
-          </span>
-        </p>
-      ) : null}
-      {/* Still missing first (the trail takes its place after a send),
-          then what the form opened with, then the rest. */}
-      {parts
-        .filter(p => p.id === "missing" && !sent)
-        .map(p => (
-          <Part
-            key={p.id}
-            part={p}
-            jumped={jumped}
-            onJump={jump}
-            onRecheck={io.recheck}
+    <RailView
+      config={config}
+      parts={parts}
+      notes={prefill.notes}
+      failedSends={
+        ctx.failed.sends && !already && !sent ? ctx.failed.sends : null
+      }
+      jumped={jumped}
+      onJump={jump}
+      onRecheck={io.recheck}
+      after={
+        sent && trail ? (
+          <AfterSend
+            config={config}
+            links={ctx.row.links}
+            sent={sent}
+            trail={trail}
+            checking={m.checking}
+            checkedAt={m.checkedAt}
+            checkError={m.checkError}
+            onCheck={() => void m.runCheck()}
+            onRetry={m.retry}
+            book={
+              book && config.ending
+                ? book({
+                    kind: config.ending.book,
+                    label: config.ending.label,
+                    variant: trail.current === null ? "default" : "outline",
+                    autoOpen: m.autoBook,
+                    onAutoOpenConsumed: m.bookConsumed,
+                  })
+                : null
+            }
           />
-        ))}
-      <Notes notes={prefill.notes} />
-      {parts
-        .filter(p => p.id !== "missing")
-        .map(p => (
-          <Part
-            key={p.id}
-            part={p}
-            jumped={jumped}
-            onJump={jump}
-            onRecheck={io.recheck}
-          />
-        ))}
-    </div>
+        ) : null
+      }
+    />
   );
 
   return (
@@ -531,7 +253,7 @@ export function FormPanel({
               Their onboarding answers changed after this form opened. Reload
               the form to use them.
             </span>
-            <Button size="sm" variant="outline" onClick={reload}>
+            <Button size="sm" variant="outline" onClick={() => m.reload()}>
               <RotateCcw aria-hidden />
               Reload the form
             </Button>
@@ -543,7 +265,7 @@ export function FormPanel({
             clientName={clientName}
             already={already}
             onRead={already.entry ? () => setReading(already.entry) : null}
-            onOpen={() => setReleased(true)}
+            onOpen={m.release}
           />
         ) : (
           <div className="relative flex min-h-0 flex-1 flex-col">
@@ -630,50 +352,240 @@ export function FormPanel({
         )}
       </aside>
 
-      <Sheet open={Boolean(reading)} onOpenChange={o => !o && setReading(null)}>
-        <SheetContent
-          side="right"
-          className="w-full overflow-y-auto sm:max-w-xl"
-        >
-          {reading ? (
-            <>
-              <SheetHeader className="text-left">
-                <SheetTitle className="text-lg">
-                  {config.title} for <bdi>{clientName}</bdi>
-                </SheetTitle>
-                <SheetDescription>
-                  Filled {kuwaitShortDay(reading.submitted_at)},{" "}
-                  {reading.answers.length} answers. Fix a wrong answer in
-                  Typeform's results.
-                </SheetDescription>
-              </SheetHeader>
-              <dl className="mt-4 divide-y">
-                {reading.answers.map(a => (
-                  <div key={a.ref} className="py-3">
-                    <dt className="text-xs text-muted-foreground">{a.title}</dt>
-                    <dd
-                      className="mt-1 whitespace-pre-line break-words text-sm"
-                      dir="auto"
-                    >
-                      {http(a.value) ? (
-                        <ExtLink
-                          href={a.value.trim()}
-                          className={cn(INK, "break-all")}
-                        >
-                          {a.value.trim()}
-                        </ExtLink>
-                      ) : (
-                        a.value
-                      )}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+      <AnswersSheet
+        title={config.title}
+        clientName={clientName}
+        entry={reading}
+        onClose={() => setReading(null)}
+      />
     </div>
+  );
+}
+
+// ------------------------------------------------------------ what was filled
+
+/** A response's answers, read only: "Kickoff for <client>". */
+export function AnswersSheet({
+  title,
+  clientName,
+  entry,
+  onClose,
+}: {
+  title: string;
+  clientName: string;
+  entry: FormEntry | null;
+  onClose: () => void;
+}) {
+  return (
+    <Sheet open={Boolean(entry)} onOpenChange={o => !o && onClose()}>
+      <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-xl">
+        {entry ? (
+          <>
+            <SheetHeader className="text-left">
+              <SheetTitle className="text-lg">
+                {title} for <bdi>{clientName}</bdi>
+              </SheetTitle>
+              <SheetDescription>
+                Filled {kuwaitShortDay(entry.submitted_at)},{" "}
+                {entry.answers.length} answers. Fix a wrong answer in Typeform's
+                results.
+              </SheetDescription>
+            </SheetHeader>
+            <dl className="mt-4 divide-y">
+              {entry.answers.map(a => (
+                <div key={a.ref} className="py-3">
+                  <dt className="text-xs text-muted-foreground">{a.title}</dt>
+                  <dd
+                    className="mt-1 whitespace-pre-line break-words text-sm"
+                    dir="auto"
+                  >
+                    {http(a.value) ? (
+                      <ExtLink
+                        href={a.value.trim()}
+                        className={cn(INK, "break-all")}
+                      >
+                        {a.value.trim()}
+                      </ExtLink>
+                    ) : (
+                      a.value
+                    )}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </>
+        ) : null}
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ------------------------------------------------------------ the side panel's parts
+
+/**
+ * "Still missing" points at its row: scroll the panel's own scroll there
+ * and mark the row a moment.
+ */
+export function useJump() {
+  const [jumped, setJumped] = useState<string | null>(null);
+  const jump = useCallback((id: string) => {
+    const el = document.getElementById(`rail-${id}`);
+    if (!el) return;
+    // Only the panel's own scroll moves: scrollIntoView would also move the
+    // window under the header.
+    const box = el.closest<HTMLElement>("[data-rail-scroll]");
+    if (box) {
+      const top =
+        el.getBoundingClientRect().top -
+        box.getBoundingClientRect().top +
+        box.scrollTop -
+        (box.clientHeight - el.clientHeight) / 2;
+      box.scrollTo?.({
+        top: Math.max(0, top),
+        behavior: reducedMotion() ? "auto" : "smooth",
+      });
+    }
+    // A page that scrolls as a whole (the deck's notes window).
+    else
+      el.scrollIntoView?.({
+        block: "center",
+        behavior: reducedMotion() ? "auto" : "smooth",
+      });
+    el.focus?.({ preventScroll: true });
+    setJumped(id);
+  }, []);
+  useEffect(() => {
+    if (!jumped) return;
+    const t = window.setTimeout(() => setJumped(null), 1600);
+    return () => window.clearTimeout(t);
+  }, [jumped]);
+  return { jumped, jump };
+}
+
+/**
+ * What the cockpit knows, in the form's order: the trail after a send (in
+ * Still missing's place), then the parts. The kickoff window draws it in
+ * its side panel; the onboarding deck draws it in the notes window.
+ */
+export function RailView({
+  config,
+  parts,
+  notes,
+  failedSends,
+  after,
+  jumped,
+  onJump,
+  onRecheck,
+}: {
+  config: Pick<FormConfig, "title">;
+  parts: RailPart[];
+  notes: string[];
+  /** The cockpit's own sends could not be read (only before a send, with no guard). */
+  failedSends: string | null | undefined;
+  /** The trail, once sent: it takes Still missing's place. */
+  after: ReactNode;
+  jumped: string | null;
+  onJump: (id: string) => void;
+  onRecheck: () => Promise<void>;
+}) {
+  return (
+    <div className="space-y-6 p-4 sm:p-5">
+      {after}
+      {/* The guard reads the cockpit's own sends too: when that read
+          failed, a send from here in the last minutes may be missed, so
+          the window says so instead of looking sure. */}
+      {failedSends ? (
+        <p className="txt-warn flex gap-2 text-xs" role="note">
+          <span className="mt-1.5">
+            <Dot tone="warn" />
+          </span>
+          <span className="min-w-0">
+            {`The cockpit could not check for a ${config.title.toLowerCase()} already sent from here: ${clause(failedSends)}. Look at the client's Onboarding panel before you send.`}
+          </span>
+        </p>
+      ) : null}
+      {/* Still missing first (the trail takes its place after a send),
+          then what the form opened with, then the rest. */}
+      {after
+        ? null
+        : parts
+            .filter(p => p.id === "missing")
+            .map(p => (
+              <Part
+                key={p.id}
+                part={p}
+                jumped={jumped}
+                onJump={onJump}
+                onRecheck={onRecheck}
+              />
+            ))}
+      <Notes notes={notes} />
+      {parts
+        .filter(p => p.id !== "missing")
+        .map(p => (
+          <Part
+            key={p.id}
+            part={p}
+            jumped={jumped}
+            onJump={onJump}
+            onRecheck={onRecheck}
+          />
+        ))}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------ the seal
+
+/**
+ * "Sends to <client> <card ID>": the join key, the window's one bold thing
+ * (KICKOFF.md 6). In rehearsal it says nothing reaches the card.
+ */
+export function Seal({
+  clientName,
+  taskId,
+  glow,
+  rehearse,
+}: {
+  clientName: string;
+  taskId: string;
+  glow: boolean;
+  rehearse: boolean;
+}) {
+  const why = rehearse
+    ? "A rehearsal in Typeform's sandbox: nothing is saved, nothing reaches this card, and Make does not run."
+    : "From the client record. Make writes everything from this form to this card.";
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className={cn(
+            "inline-flex min-w-0 max-w-full items-center gap-2 rounded-full px-3 py-1 text-sm ring-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            rehearse
+              ? "bg-warning/10 ring-warning/60"
+              : "bg-primary/10 ring-primary/40",
+            glow && !rehearse && "glow-teal",
+          )}
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "size-2 shrink-0 rounded-full",
+              rehearse ? "bg-warning" : "bg-primary",
+            )}
+          />
+          <span className="shrink-0 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">
+            {rehearse ? "Rehearsal ·" : "Sends to"}
+          </span>
+          <bdi className="min-w-0 truncate font-medium">{clientName}</bdi>
+          <span className="shrink-0 font-mono text-[13px] text-foreground/80">
+            {taskId}
+          </span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 text-sm">{why}</PopoverContent>
+    </Popover>
   );
 }
 
@@ -1109,9 +1021,9 @@ function Choices({ choices }: { choices: NonNullable<RailRow["choices"]> }) {
 
 // ------------------------------------------------------------ after submit
 
-function AfterSend({
+export function AfterSend({
   config,
-  ctx,
+  links,
   sent,
   trail,
   checking,
@@ -1121,8 +1033,9 @@ function AfterSend({
   onRetry,
   book,
 }: {
-  config: FormConfig;
-  ctx: FormContext;
+  config: Pick<FormConfig, "title" | "after" | "makeDoes" | "resultsUrl">;
+  /** The card's links: the ClickUp card, and the one Make writes back. */
+  links: OnboardingRow["links"] | undefined;
   sent: { error: string | null; busy: boolean; send: FormSend | null };
   trail: Trail;
   checking: boolean;
@@ -1133,7 +1046,7 @@ function AfterSend({
   book: ReactNode;
 }) {
   const back = config.after.linkBack;
-  const link = back ? ctx.row.links?.[back.key] : undefined;
+  const link = back ? links?.[back.key] : undefined;
   const name = config.title.toLowerCase();
   const late = trail.late;
   // The late sentence: its first sentence in bold, the rest as it is.
@@ -1238,8 +1151,8 @@ function AfterSend({
             </span>
           </p>
           <div className="pl-3.5">
-            {late === "make" && ctx.row.links?.clickup ? (
-              <ExtLink href={ctx.row.links.clickup} className={INK}>
+            {late === "make" && links?.clickup ? (
+              <ExtLink href={links.clickup} className={INK}>
                 Open the ClickUp card
               </ExtLink>
             ) : late === "typeform" ? (

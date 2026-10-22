@@ -8681,6 +8681,233 @@ button.dkc-status:hover {
   font-size: 26px;
 }
 
+/* ------------------------------------------------- O8 · the kickoff */
+
+/* DESIGN 23: the start column says what the form is and what sending it
+   does; the end column is the form in a frame (x 816 to 1784, y 112 to
+   936); the call's checklist sits at the foot, its third item the slide's
+   own. Under client text the ground is flat: no texture, no tilt. The
+   frame's head names whose form it is and, once Typeform has it, "Sent at
+   2:02 pm" with the checklist's tick drawn. */
+.dkc-kick-words {
+  width: 600px;
+  height: 824px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.dkc-kick-top {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+.dkc-kick-then {
+  padding-top: 28px;
+  border-top: 1px solid var(--dk-line-strong);
+}
+/* The words swap when the form is sent, with the head's tick. */
+.dkc-kick-say {
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) both;
+}
+.dkc-kick-frame {
+  position: absolute;
+  top: 112px;
+  bottom: 144px;
+  inset-inline-end: 136px;
+  width: 968px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dk-line-strong);
+  border-radius: 20px;
+  background: var(--dk-panel);
+  overflow: hidden;
+}
+.dkc-kick-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 76px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--dk-line);
+  font-size: 24px;
+  line-height: 1.3;
+}
+.dkc-kick-label {
+  flex: none;
+  font-family: var(--dk-mono);
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dkc-kick-label {
+  font-family: var(--dk-font-ar);
+  font-size: 26px;
+}
+.dkc-kick-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--dk-ink);
+}
+.dkc-kick-state {
+  flex: none;
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+  color: var(--dk-ink);
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) both;
+}
+.dkc-kick-state[data-tone="rehearse"] {
+  color: var(--dk-leak);
+}
+.dkc-kick-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--dk-leak);
+}
+.dkc-kick-mark {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  overflow: visible;
+}
+.dkc-kick-mark circle {
+  fill: none;
+  stroke: var(--dk-teal);
+  stroke-width: 2;
+}
+.dkc-kick-mark path {
+  fill: none;
+  stroke: var(--dk-teal);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* The tick in the head draws once, as the checklist's does. */
+.dkc-kick-state .dkc-kick-mark path {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: dkc-draw calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-beat) * var(--dk-m)) forwards;
+}
+.dkc-kick-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--dk-space);
+}
+.dkc-kick-form {
+  position: absolute;
+  inset: 0;
+}
+.dkc-kick-form > div,
+.dkc-kick-form iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.dkc-kick-line {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 48px;
+  pointer-events: none;
+}
+.dkc-kick-line p {
+  margin: 0;
+  max-width: 640px;
+  text-align: center;
+  text-wrap: balance;
+  font-size: 30px;
+  line-height: 1.45;
+  color: var(--dk-ink-2);
+}
+/* Kickoff on record: what was filled, on the panel's flat ground. */
+.dkc-kick-record {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  padding: 64px 72px;
+  background: var(--dk-panel);
+}
+.dkc-kick-record-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+.dkc-kick-record-head .dkc-kick-mark {
+  width: 44px;
+  height: 44px;
+  margin-top: 2px;
+}
+.dkc-kick-record-head .dk-dateline {
+  margin-top: 10px;
+}
+.dkc-kick-rows {
+  margin: 0;
+}
+.dkc-kick-rows > div {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  column-gap: 32px;
+  align-items: baseline;
+  padding: 24px 0;
+  border-top: 1px solid var(--dk-line);
+}
+.dkc-kick-rows > div:last-child {
+  border-bottom: 1px solid var(--dk-line);
+}
+.dkc-kick-rows dt {
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink-2);
+}
+.dkc-kick-rows dd {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.35;
+  font-weight: 500;
+  color: var(--dk-ink);
+  overflow-wrap: anywhere;
+}
+[dir="rtl"] .dkc-kick-rows dt {
+  font-size: 26px;
+}
+[dir="rtl"] .dkc-kick-rows dd {
+  font-size: 32px;
+  line-height: 1.5;
+}
+/* The deck window's layer (DeckShell): above the slide, kept between
+   slides; the kickoff's frame shows only on its slide, cut in with it,
+   and leaves at once. */
+.dk-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.dkc-kick-layer {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  visibility: hidden;
+}
+.dkc-kick-layer[data-on] {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity calc(var(--dk-cut-ms) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-kick-layer .dkc-kick-frame {
+  pointer-events: auto;
+}
+
 @media print {
   .dk-chrome {
     display: none !important;

@@ -10,7 +10,7 @@ import {
   SETUP_DONE,
 } from "@/lib/clientBrief";
 import { serviceModel } from "@/lib/csmTemplates";
-import type { OnboardingRow } from "@/lib/onboardingCore";
+import type { FormEntry, OnboardingRow } from "@/lib/onboardingCore";
 import {
   challengeLines,
   cleanAnswer,
@@ -110,6 +110,8 @@ export interface DeckInput {
   presenterName?: string | null;
   /** Calls booked from the notes window in this session, before they read back. */
   booked?: Partial<Record<CallKind, string>>;
+  /** When the kickoff was sent from the deck's last slide in this call (its submit). */
+  kickoffSent?: string | null;
   /** The public link of an object in a public bucket (the verified logos). */
   publicUrl?: (bucket: string, path: string) => string;
   /** This deck's video slots as read (null: not read), and why not. */
@@ -189,6 +191,19 @@ export interface DeckData {
   /** The Arabic of each card line, typed in prep (`dos_donts_ar`, DESIGN 22.6.2). */
   dosDontsAr: Record<string, string>;
   kickoffFiled: boolean;
+  /**
+   * The kickoff (the deck's last slide, 2026-10-22): when it went in, and
+   * how the deck knows. "call": its Submit on this call's last slide;
+   * "record": the kickoff on the client's record. `entry` is what was
+   * filled, when the record has it; `prefilled` says the onboarding form
+   * is on record, so the form opens with their details read back.
+   */
+  kickoff: {
+    sentAt: string | null;
+    from: "call" | "record" | null;
+    entry: FormEntry | null;
+    prefilled: boolean;
+  };
   access: AccessRow[];
   links: {
     drive: string | null;
@@ -831,7 +846,14 @@ export function deckData(input: DeckInput): DeckData {
         .every(r => r.status === "done"),
       // Booked, or held already (the stage past it, as O5's road shows):
       // O7's checklist never leaves it open beside a road that says Done.
-      blueprint: Boolean(next.blueprint) || roadNow > 3,
+      // Or the kickoff is sent: its submit is what books the Blueprint on
+      // our side (Make 12, Brand Blueprint Booked), so the last slide's
+      // Submit ticks it (2026-10-22).
+      blueprint:
+        Boolean(next.blueprint) ||
+        roadNow > 3 ||
+        Boolean(input.kickoffSent) ||
+        kickoffFiled,
     },
     templated,
     templatedAnswer,
@@ -842,6 +864,12 @@ export function deckData(input: DeckInput): DeckData {
     dosDonts,
     dosDontsAr,
     kickoffFiled,
+    kickoff: {
+      sentAt: input.kickoffSent ?? kickoff?.submitted_at ?? null,
+      from: input.kickoffSent ? "call" : kickoff ? "record" : null,
+      entry: kickoff,
+      prefilled: Boolean(form),
+    },
     access: rows,
     links: {
       drive,

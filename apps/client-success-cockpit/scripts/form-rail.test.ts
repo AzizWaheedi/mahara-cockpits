@@ -18,7 +18,6 @@ import {
   onboardingEntry,
 } from "../src/dev/formFixtures";
 import type { FormContext, RailPart } from "../src/forms/formConfig";
-import { KICKOFF } from "../src/forms/formConfig";
 import {
   CONTRACT_CHOICES,
   contractChoice,
@@ -26,6 +25,7 @@ import {
   foldEmpty,
   suggestedService,
 } from "../src/forms/formRail";
+import { KICKOFF } from "../src/forms/kickoff";
 
 const rail = (ctx: FormContext = fixtureContext()) =>
   KICKOFF.rail(ctx, KICKOFF.hidden(ctx));

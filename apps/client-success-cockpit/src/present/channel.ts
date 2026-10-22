@@ -1,5 +1,6 @@
 import type { Lang } from "./content";
 import type { CallKind, Overrides } from "./deckData";
+import type { KickoffAct, KickoffView } from "./kickoffStop";
 import type { DeckKind, VideoLang } from "./sources";
 
 /**
@@ -99,8 +100,19 @@ export type DeckMessage =
       type: "sync";
       live: LiveState;
       booked: Partial<Record<CallKind, string>>;
+      /** The kickoff's submit on the last slide, when this call sent it. */
+      kickoff?: string | null;
     }
   | { type: "booked"; kind: CallKind; startTime: string }
+  /** The last slide's kickoff was submitted: every window ticks the Blueprint call. */
+  | { type: "kickoff-sent"; at: string }
+  /**
+   * Deck to notes: the kickoff on the last slide, as the notes window draws
+   * it (the call sheet, the trail, the record). Never on the canvas.
+   */
+  | { type: "kickoff"; view: KickoffView }
+  /** Notes to deck: a press in the notes window's kickoff part. */
+  | { type: "kickoff-act"; act: KickoffAct }
   | { type: "ads" }
   /** A file added from the notes window, shown at once from the local copy. */
   | { type: "file"; file: LocalFile }

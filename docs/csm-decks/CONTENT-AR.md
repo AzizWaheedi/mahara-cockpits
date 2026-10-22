@@ -314,6 +314,46 @@ Since the spec review of 2026-10-20, O6 starts them on the introduction, the cou
 - خلنا نحجز مكالمة بناء الهوية والعرض الحين.
 - **Temp check:** فيه شي مو واضح لكم قبل لا نحجز مكالمة بناء الهوية؟
 
+## O8 · `kickoff` (2026-10-22)
+
+The kickoff form, filled with the client and sent before the call ends (CONTENT O8, DESIGN 23). "Kickoff form" is نموذج بداية الشغل on the slides and in the spoken lines: plain, and apart from الإطلاق (the launch) and انطلاقة (the launch deck's cover). The form inside the frame is Typeform's own, in its own words.
+
+**On screen**
+
+| Key | English | Arabic |
+|---|---|---|
+| `kickoff.title` (the overview) | Your kickoff form | نموذج بداية الشغل |
+| `kickoff.head` | Before we hang up: your kickoff form | قبل لا نسكر المكالمة: نموذج بداية الشغل |
+| `kickoff.prefilled` | Your details are already in, from your onboarding form. We check them together, then send it. | تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط. نراجعها مع بعض، وبعدها نرسله. |
+| `kickoff.together` | We fill it in together, now. | نعبيه مع بعض، الحين. |
+| `kickoff.sent` | Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | وأول ما ينرسل، يبدي فريقنا بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
+| `kickoff.done` | It's sent. Next, we pick the time for your Brand Blueprint call. | انرسل. والحين نختار وقت مكالمة بناء الهوية والعرض. |
+| `kickoff.doneThen` | Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | فريقنا يبدي بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
+| `kickoff.have` | We already have it, so there's nothing to fill in now. | النموذج وصلنا من قبل، فما فيه شي نعبيه الحين. |
+| `kickoff.change` | Want to change an answer? Tell us in your WhatsApp group. | تبون تغيرون أي جواب؟ قولوا لنا بقروب الواتساب. |
+| `kickoff.frame` | Kickoff form | نموذج بداية الشغل |
+| `kickoff.sentAt` | Sent at {time} | انرسل الساعة {time} |
+| `kickoff.rehearsal` | Rehearsal: nothing is sent | بروفة: ما ينرسل شي |
+| `kickoff.opening` | Opening your kickoff form | نفتح نموذج بداية الشغل |
+| `kickoff.away` | We'll open your kickoff form from our side. | بنفتح نموذج بداية الشغل من عندنا. |
+| `kickoff.here` (prep's preview) | Your kickoff form opens here. | نموذج بداية الشغل يفتح هنا. |
+| `kickoff.recordHead` | Kickoff on record | نموذج بداية الشغل عندنا |
+| `kickoff.filledOn` | Filled on {date} | تعبّى يوم {date} |
+| `kickoff.rows.service` | The service we advertise | الخدمة اللي نعلن عنها |
+| `kickoff.rows.page` | Your Page name | اسم صفحتكم |
+| `kickoff.rows.starter` | Starter ads | إعلانات البداية |
+| `kickoff.starter.approved` · `.pending` · `.declined` | Approved · You see them first · Your own ads first | موافقين عليها، تشوفونها أول، إعلاناتكم الخاصة أول |
+| `next.cardPick` (O7's card, the kickoff sent and no time yet) | We pick the time now | نختار الوقت الحين |
+
+{time} is the deck's clock (`clock`, ١٢:١٢ مساءً) and {date} its day and month (١٩ أكتوبر), Arabic-Indic, as every date on the slides. The service row says the service by its Arabic name (تصميم داخلي); the Page name stays as typed, in `<bdi dir=auto>`. Rehearsal is بروفة (a run-through), never تجربة, which decision 10 keeps off the slides.
+
+**Spoken lines (Arabic)**
+- هذا نموذج بداية الشغل. تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط، فبس نراجعها مع بعض.
+- تأكدوا من الأجوبة، وإذا شي تغير قولوا لي وأعدله الحين.
+- (Once it's sent) تمام، انرسل. خلنا نختار وقت مكالمة بناء الهوية والعرض الحين.
+- (Kickoff on record) نموذج بداية الشغل وصلنا من قبل. وإذا تبون تغيرون أي جواب، قولوا لنا بالقروب.
+- **Temp check:** فيه شي بالنموذج تبون تغيرونه قبل لا نرسله؟
+
 ---
 
 # Launch deck

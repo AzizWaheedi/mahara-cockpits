@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
-import type { FormKey, FormSend } from "./formConfig";
+import type { FormKey, FormSend, SendInput } from "./formConfig";
 
 /**
  * The two gated calls behind the form panel (supabase/migrations/
@@ -54,15 +54,7 @@ function said(message: string): string {
   return message;
 }
 
-export interface SendInput {
-  taskId: string;
-  formKey: FormKey;
-  responseId: string;
-  hiddenKeys: string[];
-  hiddenSha256: string;
-  /** The ID the form carried in its hidden field. */
-  carriedId: string;
-}
+export type { SendInput } from "./formConfig";
 
 /** Notes one Typeform response. Safe to repeat: the response ID is the key. */
 export async function recordFormSend(

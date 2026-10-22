@@ -4,8 +4,11 @@
  * /client-success/present-harness.html?fixture=full&deck=onboarding&lang=en
  * (fixture: full | sparse | dwy | starter; view: present | notes | prep |
  * parts | drive; still=1 for no motion; drive=<scenario> for the Drive box,
- * src/dev/deck/driveFixtures.ts). Saves and uploads stay in memory (an upload
- * pretends to take a second and a half); nothing is sent anywhere.
+ * src/dev/deck/driveFixtures.ts; kickoff=<scenario> for the onboarding
+ * deck's last slide, src/dev/deck/kickoffFixtures.ts, with Typeform's
+ * stand-in, and rehearse=1 for its sandbox). Saves and uploads stay in
+ * memory (an upload pretends to take a second and a half); nothing is sent
+ * anywhere and no form loads or submits.
  *
  * scripts/deck-shots.mjs drives it to capture every slide and stop.
  */
@@ -28,6 +31,7 @@ import type { DeckIO } from "@/present/useDeckModel";
 import { DriveSheet } from "./deck/DriveSheet";
 import { fakeDrive, HARNESS_NOW } from "./deck/driveFixtures";
 import { FIXTURES, type FixtureKey } from "./deck/fixtures";
+import { fakeKickoff, kickoffScenario } from "./deck/kickoffFixtures";
 import { PartsSheet } from "./deck/PartsSheet";
 import "@/index.css";
 
@@ -96,10 +100,52 @@ function at(change: Record<string, string | null>) {
   return `${window.location.pathname}?${p.toString()}`;
 }
 
+/**
+ * The fixture, as the kickoff's scenario needs it: before the kickoff (any
+ * scenario but "record"), the client has no kickoff on record and no
+ * Blueprint booked yet, as on a real onboarding call.
+ */
+function fixtureFor() {
+  const loaded = FIXTURES[fixture]?.(deck) ?? FIXTURES.full(deck);
+  const scenario = kickoffScenario(params.get("kickoff"), loaded);
+  if (deck !== "onboarding" || scenario === "record")
+    return { loaded, scenario };
+  const forms = { ...(loaded.kit?.forms ?? {}) };
+  delete forms.kickoff;
+  const next = { ...(loaded.sources?.calls?.next ?? {}) };
+  delete next.blueprint;
+  return {
+    scenario,
+    loaded: {
+      ...loaded,
+      kit: loaded.kit ? { ...loaded.kit, forms } : null,
+      sources: loaded.sources
+        ? {
+            ...loaded.sources,
+            calls: { last: loaded.sources.calls?.last ?? {}, next },
+          }
+        : null,
+    },
+  };
+}
+const fixed = fixtureFor();
+const startedAt = Date.now();
+const kickoff =
+  deck === "onboarding"
+    ? fakeKickoff({
+        loaded: fixed.loaded,
+        taskId: `fixture-${fixture}`,
+        scenario: fixed.scenario,
+        rehearse: params.get("rehearse") === "1",
+        now: () =>
+          new Date(HARNESS_NOW + (Date.now() - startedAt)).toISOString(),
+      })
+    : undefined;
+
 function Harness() {
   const io = useMemo<DeckIO>(() => {
     const store: Record<DeckKind, Overrides> = { onboarding: {}, launch: {} };
-    const loaded = FIXTURES[fixture]?.(deck) ?? FIXTURES.full(deck);
+    const loaded = fixed.loaded;
     store.onboarding = loaded.prep.onboarding;
     store.launch = loaded.prep.launch;
     // ?service=<key>: the client's service as one of the five (DESIGN
@@ -267,24 +313,36 @@ function Harness() {
           view: "prep",
         }),
       }}
-      book={(_d, kind, label, onBooked) => (
-        <button
-          type="button"
-          className="rounded-lg border px-3 py-1.5 text-sm hover:border-primary"
-          onClick={() =>
-            onBooked(
-              kind === "blueprint"
-                ? "2026-10-22T13:00:00Z"
-                : "2026-10-29T13:00:00Z",
-            )
-          }
-        >
-          {label} (harness)
-        </button>
+      book={(_d, kind, label, onBooked, opts) => (
+        <span className="inline-flex flex-col gap-1">
+          <button
+            type="button"
+            className="rounded-lg border px-3 py-1.5 text-sm hover:border-primary"
+            onClick={() =>
+              onBooked(
+                kind === "blueprint"
+                  ? "2026-10-22T13:00:00Z"
+                  : "2026-10-29T13:00:00Z",
+              )
+            }
+          >
+            {label} (harness)
+          </button>
+          {opts?.autoOpen ? (
+            <button
+              type="button"
+              className="text-left text-xs text-muted-foreground underline"
+              onClick={opts.onAutoOpenConsumed}
+            >
+              The booking dialog opens here (harness stand-in). Close it.
+            </button>
+          ) : null}
+        </span>
       )}
       uploadLogo={async () => {
         throw Error("The harness saves nothing.");
       }}
+      kickoff={kickoff}
     />
   );
 }

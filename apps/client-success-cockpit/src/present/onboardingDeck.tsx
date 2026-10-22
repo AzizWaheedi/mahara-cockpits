@@ -44,6 +44,8 @@ import {
   warmExamples,
 } from "./examples";
 import { useHug } from "./hug";
+import { KickoffSlide } from "./KickoffSlide";
+import { KICKOFF_SLIDE } from "./kickoffStop";
 import { Confirmation, Tagged } from "./mockups/Cards";
 import { ClientMark, type Identity } from "./mockups/Identity";
 import { IgFeed, Phone, PhoneFigure, ReelStory } from "./mockups/Phones";
@@ -56,15 +58,17 @@ import { posterFor } from "./VideoPoster";
 import { filledOn, lengthText } from "./videos";
 
 /**
- * The onboarding deck: seven slides, about 22 minutes of a 45 to 60 minute
- * call with the setup done live while slide 6 is up (docs/csm-decks/
- * CONTENT.md, DESIGN.md 9 and 22.2). Each slide has its own structure (a
- * cover with the call's checklist, a quotation set as type, a hub, a
- * matrix beside a product column, a route, a board, two columns under a
- * strip of example ads), and the call's checklist is the one drawing that
- * persists: the agenda on the cover, ticked at the foot of slides 4 and 6
- * from data, closed on the last stop. Every word is in content.ts; this
- * file only places them.
+ * The onboarding deck: eight slides, about 30 minutes of a 45 to 60 minute
+ * call with the setup done live while slide 6 is up and the kickoff form
+ * filled and sent on slide 8 (docs/csm-decks/CONTENT.md, DESIGN.md 9, 22.2
+ * and 23). Each slide has its own structure (a cover with the call's
+ * checklist, a quotation set as type, a hub, a matrix beside a product
+ * column, a route, a board, two columns under a strip of example ads, the
+ * kickoff form in its frame), and the call's checklist is the one drawing
+ * that persists: the agenda on the cover, ticked at the foot of slides 4
+ * and 6 from data, closed on O7's last stop, and at the foot of the
+ * kickoff slide, whose Submit ticks the Blueprint call. Every word is in
+ * content.ts; this file only places them.
  */
 
 export const who = (d: DeckData): Identity => ({
@@ -1723,6 +1727,10 @@ function BlueprintCard({ d, lang }: { d: DeckData; lang: Lang }) {
   // as it was held, or Done, never "We book it" beside a road that shows it
   // done (final score round 1).
   const held = !d.next.blueprint && d.roadNow > 3;
+  // The kickoff is sent (the last slide's Submit, or on record): the
+  // Blueprint is booked on our side and only its time is left, so the
+  // block is ticked with the checklist and says so (2026-10-22).
+  const picking = !held && Boolean(d.kickoff.sentAt);
   const when = d.next.blueprint ?? (held ? d.last.blueprint : undefined);
   const at = toDate(when);
   const timed = Boolean(at && clock(when, lang, d.timeZone));
@@ -1739,16 +1747,20 @@ function BlueprintCard({ d, lang }: { d: DeckData; lang: Lang }) {
                 <span
                   className="dkc-cal-block"
                   data-open=""
-                  data-done={held ? "" : undefined}
+                  data-done={held || picking ? "" : undefined}
                 >
                   <span className="dkc-cal-open">
                     <svg viewBox="0 0 28 28" aria-hidden>
                       <circle cx="14" cy="14" r="13" />
-                      {held ? <path d="M8.5 14.5l3.8 3.8 7.2-8" /> : null}
+                      {held || picking ? (
+                        <path d="M8.5 14.5l3.8 3.8 7.2-8" />
+                      ) : null}
                     </svg>
                     {held
                       ? t(SHARED.status.done, lang)
-                      : t(O.next.cardOpen, lang)}
+                      : picking
+                        ? t(O.next.cardPick, lang)
+                        : t(O.next.cardOpen, lang)}
                   </span>
                 </span>
               ) : null}
@@ -1975,8 +1987,32 @@ export function onboardingSlides(): SlideDef[] {
           : []),
         ...(d.next.blueprint
           ? []
-          : ["Book the Brand Blueprint call from the notes window."]),
+          : [
+              "Book the Brand Blueprint call from the notes window, once the kickoff on the next slide is sent.",
+            ]),
       ],
+    },
+    {
+      id: KICKOFF_SLIDE,
+      title: O_TITLES.kickoff,
+      notes: O_NOTES.kickoff,
+      render: ctx => <KickoffSlide ctx={ctx} />,
+      missing: d =>
+        d.kickoff.from === "record" || d.kickoff.prefilled
+          ? []
+          : [
+              "No onboarding answers on record, so the kickoff opens with their name and card only. Send them their onboarding link first if there is time.",
+            ],
+      todo: d =>
+        d.kickoff.from === "record"
+          ? [
+              "The kickoff is on record, so this slide shows what was filled, never a fresh form.",
+            ]
+          : d.kickoff.from === "call"
+            ? []
+            : [
+                "Fill the kickoff with them on this slide and press Submit in the form. The checklist ticks the Blueprint call once it is sent.",
+              ],
     },
   ];
 }

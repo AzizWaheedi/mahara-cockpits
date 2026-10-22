@@ -2,7 +2,10 @@ import { useMemo } from "react";
 import { Navigate, useLocation, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton } from "@/components/ClientCheckIn";
+import { loadTypeform } from "@/forms/useFormPanel";
+import { formReads } from "@/forms/useLiveForm";
 import { useDeckReport } from "./DeckBoundary";
+import type { KickoffPort } from "./KickoffSlide";
 import { loadDeck } from "./load";
 import { PresentApp, type PresentUrls, type View } from "./PresentApp";
 import {
@@ -140,6 +143,26 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
     [client, key, auth.name, deck],
   );
 
+  // The kickoff on the onboarding deck's last slide (O8) reads and notes
+  // through the same gated calls as the kickoff window. Rehearsal is
+  // Typeform's sandbox, for admins and the CEO only, as there.
+  const rehearse =
+    new URLSearchParams(search).get("rehearse") === "1" &&
+    (auth.isAdmin || auth.isCeo);
+  const kickoff = useMemo<KickoffPort>(() => {
+    const name = auth.name.trim();
+    return {
+      reads: formReads(client, key, "kickoff"),
+      me: {
+        email: auth.email,
+        firstName:
+          name && !name.includes("@") ? (name.split(/\s+/)[0] ?? null) : null,
+      },
+      rehearse,
+      embed: loadTypeform,
+    };
+  }, [client, key, auth.email, auth.name, rehearse]);
+
   if (deck !== "onboarding" && deck !== "launch")
     return <Navigate to={`/clients/${encodeURIComponent(key)}`} replace />;
 
@@ -152,18 +175,21 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
       io={io}
       report={report}
       urls={presentUrls(key, deck, lang)}
-      book={(d, kind, label, onBooked) => (
+      book={(d, kind, label, onBooked, opts) => (
         <BookCallButton
           taskId={d.taskId}
           clientName={d.nameEn}
           stage={d.stage ?? undefined}
           kind={kind}
-          variant="outline"
+          variant={opts?.variant ?? "outline"}
+          defaultOpen={opts?.autoOpen}
+          onAutoOpenConsumed={opts?.onAutoOpenConsumed}
           onBooked={r => onBooked(r.startTime)}
         >
           {label}
         </BookCallButton>
       )}
+      kickoff={kickoff}
       uploadLogo={async file => {
         if (!client)
           throw Error(

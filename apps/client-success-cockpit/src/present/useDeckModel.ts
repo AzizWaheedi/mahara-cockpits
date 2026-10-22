@@ -147,6 +147,10 @@ export function useDeckModel({
   const [booked, setBooked] = useState<Partial<Record<CallKind, string>>>({});
   const bookedRef = useRef(booked);
   bookedRef.current = booked;
+  /** The last slide's kickoff, sent on this call: its submit's time. */
+  const [kickoffSent, setKickoffSent] = useState<string | null>(null);
+  const kickoffRef = useRef(kickoffSent);
+  kickoffRef.current = kickoffSent;
   const asked = langParam(window.location.search);
   const [lang, setLangState] = useState<Lang>(
     () => asked ?? storedLang() ?? "en",
@@ -326,6 +330,15 @@ export function useDeckModel({
     [hub],
   );
 
+  /** The last slide's kickoff was submitted: the checklist ticks the Blueprint call. */
+  const kickoffWent = useCallback(
+    (at: string) => {
+      setKickoffSent(k => k ?? at);
+      hub.post({ type: "kickoff-sent", at });
+    },
+    [hub],
+  );
+
   // What the other windows say.
   useEffect(
     () =>
@@ -336,16 +349,26 @@ export function useDeckModel({
           setPrepState(all);
         } else if (m.type === "live" || m.type === "sync") {
           setLiveState(cur => newerLive(cur, m.live));
-          if (m.type === "sync") setBooked(b => ({ ...m.booked, ...b }));
+          if (m.type === "sync") {
+            setBooked(b => ({ ...m.booked, ...b }));
+            if (m.kickoff) {
+              const at = m.kickoff;
+              setKickoffSent(k => k ?? at);
+            }
+          }
         } else if (m.type === "join") {
           // A window opened or reloaded mid-call: hand it the call's state.
           const l = liveRef.current;
           const b = bookedRef.current;
-          if (l.at || Object.keys(b).length)
-            hub.post({ type: "sync", live: l, booked: b });
+          const k = kickoffRef.current;
+          if (l.at || Object.keys(b).length || k)
+            hub.post({ type: "sync", live: l, booked: b, kickoff: k });
         } else if (m.type === "booked")
           setBooked(b => ({ ...b, [m.kind]: m.startTime }));
-        else if (m.type === "lang") {
+        else if (m.type === "kickoff-sent") {
+          const at = m.at;
+          setKickoffSent(k => k ?? at);
+        } else if (m.type === "lang") {
           langChosen.current = true;
           setLangState(m.lang);
         } else if (m.type === "ads" || m.type === "videos") void reload();
@@ -379,12 +402,13 @@ export function useDeckModel({
       ads: loaded.ads,
       presenterName: io.presenterName,
       booked,
+      kickoffSent,
       publicUrl: io.publicUrl,
       videos: loaded.videos ?? null,
       videosProblem: loaded.videosProblem ?? null,
       now: io.now?.() ?? new Date(),
     });
-  }, [loaded, taskId, deck, lang, prep, booked, io]);
+  }, [loaded, taskId, deck, lang, prep, booked, kickoffSent, io]);
 
   return {
     loaded,
@@ -396,6 +420,8 @@ export function useDeckModel({
     setLive,
     booked,
     book,
+    kickoffSent,
+    kickoffWent,
     lang,
     setLang,
     hub,

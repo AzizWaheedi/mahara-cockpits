@@ -1,22 +1,16 @@
 import type { Timeline } from "@/lib/csmCalls";
-import {
-  FORMS,
-  type FormEntry,
-  type LinkKey,
-  type OnboardingRow,
-  onboardingFormLink,
-} from "@/lib/onboardingCore";
+import type { FormEntry, LinkKey, OnboardingRow } from "@/lib/onboardingCore";
 import type { DeckSources } from "@/present/sources";
-import { kickoffRail } from "./formRail";
-import { kickoffAlready, kickoffCardDone } from "./formStatus";
-import { buildHidden, KICKOFF_HIDDEN, type Prefill } from "./prefill";
+import type { Prefill } from "./prefill";
 
 /**
- * The reusable form panel's configuration (docs/csm-forms/KICKOFF.md 2).
- * Everything form-specific lives here; FormPanel never names a form. The
- * kickoff is the first configuration; the Brand Blueprint (creative
- * director cockpit) and the 1-1 check-in are later objects of the same
- * shape (KICKOFF.md 2.6 and 2.7). Pure: no React, no I/O.
+ * The reusable form panel's contract (docs/csm-forms/KICKOFF.md 2): the
+ * shapes a form's configuration fills and FormPanel reads. Types only: no
+ * value, no React, no I/O, so another cockpit can copy this file and the
+ * panel byte for byte and bring its own configuration (KICKOFF.md 2.6).
+ * The kickoff's configuration and the registry of forms this cockpit opens
+ * are in ./kickoff.ts; the Brand Blueprint and the 1-1 check-in are later
+ * objects of the same shape (KICKOFF.md 2.6 and 2.7).
  */
 
 export type FormKey = "kickoff" | "blueprint" | "checkin";
@@ -35,6 +29,28 @@ export interface FormSend {
   sentBy: string | null;
   sentAt: string;
 }
+
+/** One response to note (cockpit_csm_form_sent); the server re-checks every argument. */
+export interface SendInput {
+  taskId: string;
+  formKey: FormKey;
+  responseId: string;
+  hiddenKeys: string[];
+  hiddenSha256: string;
+  /** The ID the form carried in its hidden field. */
+  carriedId: string;
+}
+
+/** What a form window tells the cockpit's own tab. */
+export type FormNews =
+  | {
+      type: "sent";
+      taskId: string;
+      form: FormKey;
+      clientName: string;
+      say: string;
+    }
+  | { type: "checked" | "noted"; taskId: string; form: FormKey };
 
 /** Everything the panel reads about one client, already gated. */
 export interface FormContext {
@@ -181,72 +197,4 @@ export interface FormConfig {
       open: string;
     };
   };
-}
-
-export const KICKOFF: FormConfig = {
-  key: "kickoff",
-  formId: FORMS.kickoff,
-  title: "Kickoff",
-  idField: "onboarding_client_id",
-  resultsUrl: `https://admin.typeform.com/form/${FORMS.kickoff}/results#responses`,
-  hidden: ctx =>
-    buildHidden(ctx.row, {
-      spec: KICKOFF_HIDDEN,
-      formId: FORMS.kickoff,
-      idField: "onboarding_client_id",
-      linkKey: "kickoff_form",
-      title: "Kickoff",
-      nameKey: "legal_name",
-      onboardingLink: onboardingFormLink(ctx.row.clickup_task_id),
-    }),
-  rail: kickoffRail,
-  already: kickoffAlready,
-  again:
-    "a second Technical and Creative task, a second WhatsApp to the client's group and a second summary",
-  makeDoes: [
-    "A comment with every answer on the client's ClickUp card.",
-    "The card moves to In Progress.",
-    "A Technical Onboarding task and a Creative Onboarding task.",
-    "The Brand Blueprint link on the card, and Brand Blueprint Booked.",
-    "The phase-4 WhatsApp to the client's group.",
-    "Make 06's summary of the call, waiting for approval in Slack.",
-  ],
-  // Typeform's ending says "Book the Brand Blueprint call"; so does the cockpit.
-  ending: { book: "blueprint", label: "Book the Brand Blueprint call" },
-  after: {
-    say: "Kickoff sent. Make is booking the Brand Blueprint.",
-    sub: "Make also drafts the client's WhatsApp summary for approval in Slack.",
-    lateSay: {
-      make: "Kickoff sent. Make has not updated the card yet.",
-      typeform: "Kickoff sent. Typeform has not listed it yet.",
-    },
-    // Make 12 posts the answers as the card's "Kickoff Handoff" comment.
-    lateMake:
-      "Make has not updated the card in 5 minutes. The kickoff is safe in Typeform. Open the card and look for the Kickoff Handoff comment; if it is not there, tell the tech lead. Do not send the kickoff again.",
-    checksAtSec: [45, 120, 300],
-    lateAfterMin: 5,
-    cardDone: kickoffCardDone,
-    cardLine: row =>
-      `The card is at ${String(row.client_status ?? "")
-        .replace(/[^\p{L}\p{N}\s-]/gu, "")
-        .trim()}.`,
-    linkBack: {
-      key: "blueprint_form",
-      label: "Blueprint link on the card",
-      pending: "Make adds the Blueprint link",
-      short: "the Blueprint link",
-      open: "Open the Brand Blueprint form",
-    },
-  },
-};
-
-/** The forms this cockpit opens. The Blueprint and check-in come later. */
-export const FORM_CONFIGS: Partial<Record<FormKey, FormConfig>> = {
-  kickoff: KICKOFF,
-};
-
-export function formConfig(key: string | undefined): FormConfig | null {
-  return key && Object.hasOwn(FORM_CONFIGS, key)
-    ? (FORM_CONFIGS[key as FormKey] ?? null)
-    : null;
 }
