@@ -149,7 +149,7 @@ class FakeSupabase:
     def job(self, task_id):
         return self.jobs.get(task_id)
 
-    def jobs_to_prepare(self, limit):
+    def jobs_to_prepare(self, limit, *, retry_blocked_hours=0):
         return [j for j in self.jobs.values() if j.get("state") in ("new", "stale") and int(j.get("attempts") or 0) < 4][:limit]
 
     def retire_missing(self, on_board, stamp):

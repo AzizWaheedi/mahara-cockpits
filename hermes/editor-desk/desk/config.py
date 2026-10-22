@@ -122,6 +122,9 @@ class Config:
     max_file_bytes: int = 3 * 1024 * 1024 * 1024
     max_transcribe_seconds: float = 5400.0
     max_jobs_per_run: int = 3
+    # A blocked job with a footage link is looked at again after this long,
+    # so footage dropped into its folder later is found without a rescan.
+    retry_blocked_hours: float = 24.0
     scene_threshold: float = 0.35
     still_count: int = 3
 
@@ -160,6 +163,7 @@ class Config:
             max_file_bytes=_int("DESK_MAX_FILE_BYTES", 3 * 1024 * 1024 * 1024),
             max_transcribe_seconds=_float("DESK_MAX_TRANSCRIBE_SEC", 5400.0),
             max_jobs_per_run=_int("DESK_MAX_JOBS", 3),
+            retry_blocked_hours=_float("DESK_RETRY_BLOCKED_HOURS", 24.0),
             scene_threshold=_float("DESK_SCENE_THRESHOLD", 0.35),
             still_count=_int("DESK_STILLS", 3),
             hook_window_sec=_float("DESK_HOOK_WINDOW", 3.0),

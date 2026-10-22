@@ -1954,3 +1954,114 @@ class ClosedCardTests(unittest.TestCase):
         ])
         self.assertEqual([r["task_id"] for r in sb.jobs_to_prepare(10)], ["a"],
                          "cancelled and live work is finished; reading it costs money for nothing")
+
+
+class BlockedRetryTests(unittest.TestCase):
+    """A blocked job is looked at again: when its card gets a new footage
+    link, and once a day while it has one. Before 2026-10-22 a blocked job
+    was never read again unless an editor pressed Rescan."""
+
+    class _Rows(supabase_mod.Supabase):
+        def __init__(self, stored, blocked=None):
+            self.stored = stored
+            self.blocked = blocked or []
+            self.upserts = []
+            self.queries = []
+
+        def select(self, table, params):
+            self.queries.append(params)
+            rows = self.blocked if "state=eq.blocked" in params else self.stored
+            return [dict(r) for r in rows]
+
+        def upsert(self, table, rows, on_conflict):
+            self.upserts.extend(rows)
+
+    LINK = "https://drive.google.com/drive/folders/1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi?usp=drive_link"
+
+    def test_a_new_footage_link_sends_the_job_back_to_be_read(self):
+        sb = self._Rows([{"task_id": "86abc", "state": "blocked", "attempts": 3,
+                          "footage_url": "https://wetransfer.com/x", "raw_url": None}])
+        sb.store_jobs([job_row(task(), now_iso=NOW)])
+        self.assertEqual(sb.upserts[0]["state"], "new")
+        self.assertEqual(sb.upserts[0]["attempts"], 0)
+
+    def test_the_same_link_keeps_the_worker_state(self):
+        sb = self._Rows([{"task_id": "86abc", "state": "blocked", "footage_url": self.LINK, "raw_url": None}])
+        sb.store_jobs([job_row(task(), now_iso=NOW)])
+        self.assertNotIn("state", sb.upserts[0])
+
+    def test_a_removed_link_is_not_a_reason_to_read(self):
+        sb = self._Rows([{"task_id": "86abc", "state": "ready", "footage_url": self.LINK, "raw_url": None}])
+        sb.store_jobs([job_row(task(footage=""), now_iso=NOW)])
+        self.assertNotIn("state", sb.upserts[0])
+
+    def test_blocked_jobs_with_a_link_fill_the_room_left_over(self):
+        sb = self._Rows(
+            [{"task_id": "new1", "state": "new", "status": "planning"}],
+            blocked=[
+                {"task_id": "old", "state": "blocked", "status": "planning", "footage_url": self.LINK},
+                {"task_id": "nolink", "state": "blocked", "status": "planning", "footage_url": None, "raw_url": None},
+                {"task_id": "done", "state": "blocked", "status": "complete", "footage_url": self.LINK},
+                {"task_id": "next", "state": "blocked", "status": "in progress", "footage_url": self.LINK},
+            ],
+        )
+        got = [r["task_id"] for r in sb.jobs_to_prepare(2, retry_blocked_hours=24)]
+        self.assertEqual(got, ["new1", "old"], "new work first, then the longest wait; no link and finished are skipped")
+        self.assertIn("prepared_at=lt.", sb.queries[-1])
+
+    def test_no_room_means_no_second_query(self):
+        sb = self._Rows([{"task_id": f"n{i}", "state": "new", "status": "planning"} for i in range(3)])
+        self.assertEqual(len(sb.jobs_to_prepare(3, retry_blocked_hours=24)), 3)
+        self.assertEqual(len(sb.queries), 1)
+
+    def test_a_link_outside_drive_is_named_as_the_problem(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            job = job_row(task(footage="https://we.tl/t-abc123"), now_iso=NOW)
+            ready, missing = prepare.readiness(job, [], cfg)
+            self.assertFalse(ready)
+            self.assertTrue(any("not a Google Drive link" in m for m in missing), missing)
+            self.assertFalse(any("no video in it" in m for m in missing))
+
+
+class QuietLookTests(unittest.TestCase):
+    """A daily look at a blocked job comments on the card only when it found
+    something new."""
+
+    def setUp(self):
+        was = media.free_bytes
+        media.free_bytes = lambda _p: 500 * 1024**3
+        self.addCleanup(lambda: setattr(media, "free_bytes", was))
+
+    def test_the_same_result_twice_is_one_comment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            sb = FakeSupabase()
+            sb.store_jobs([job_row(task(), now_iso=NOW)])
+            drive = FakeDrive({"1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi": []})
+            cu = FakeClickUp()
+            first = prepare.prepare_job(cfg, lambda m: None, sb, drive, sb.job("86abc"), clickup=cu)
+            self.assertEqual(first["state"], "blocked")
+            self.assertTrue(first["commented"])
+            again = prepare.prepare_job(cfg, lambda m: None, sb, drive, sb.job("86abc"), clickup=cu)
+            self.assertFalse(again["commented"], "nothing changed, so the card is left alone")
+            self.assertEqual(len(cu.posted), 1)
+
+    def test_footage_that_arrives_later_is_read_and_said(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = cfg_in(tmp)
+            sb = FakeSupabase()
+            sb.store_jobs([job_row(task(), now_iso=NOW)])
+            drive = FakeDrive({"1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi": []})
+            cu = FakeClickUp()
+            prepare.prepare_job(cfg, lambda m: None, sb, drive, sb.job("86abc"), clickup=cu)
+            drive.tree["1tTO2R44N3I3uKaFYKYwBa0gdVkrpHi"] = [drive_file("1VideoOneAAAAAAAAAAAAAAAAAAAA", "one.mp4")]
+            media.probe = lambda p: {"seconds": 60.0, "width": 1080, "height": 1920, "has_audio": True, "bytes": 2048}
+            media.extract_audio = lambda p, d, seconds=None: d
+            media.scenes = lambda p, threshold=0.35, limit=400: []
+            media.storyboard = lambda p, w, seconds=None, count=3, width=480: None
+            out = prepare.prepare_job(cfg, lambda m: None, sb, drive, sb.job("86abc"), clickup=cu,
+                                      transcribe_fn=fake_speech("hello"))
+            self.assertEqual(out["read"], 1)
+            self.assertEqual(out["state"], "ready")
+            self.assertEqual(len(cu.posted), 2)

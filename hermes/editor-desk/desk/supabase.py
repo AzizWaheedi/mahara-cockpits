@@ -16,7 +16,7 @@ Rules the writes follow, learned the hard way on the radar:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 from . import http
@@ -29,6 +29,19 @@ FINISHED = {*DONE_STATUSES, "live"}
 def _letters(status: Any) -> str:
     """"Live 🚀" and "live" are one status: lower case, letters and spaces."""
     return " ".join("".join(c for c in str(status or "").lower() if c.isalpha() or c == " ").split())
+
+
+def _link_changed(stored: dict[str, Any], row: dict[str, Any]) -> bool:
+    """True when the board now gives a different footage link than the one
+    the job was read with. A link removed is not a change worth a read: the
+    job is blocked on "no link" already, or will be at its next look."""
+    for key in ("footage_url", "raw_url"):
+        if key not in row or key not in stored:
+            continue
+        new = str(row.get(key) or "").strip()
+        if new and new != str(stored.get(key) or "").strip():
+            return True
+    return False
 
 
 JOB_COLUMNS = {
@@ -174,7 +187,7 @@ class Supabase:
             chunk = ids[i : i + 100]
             rows = self.select(
                 "editor_jobs",
-                f"select=task_id,state,ready,prepared_at,attempts,script_task_id,error&task_id=in.({','.join(_q(t) for t in chunk)})",
+                f"select=task_id,state,ready,prepared_at,attempts,script_task_id,error,footage_url,raw_url&task_id=in.({','.join(_q(t) for t in chunk)})",
             )
             for r in rows:
                 out[r["task_id"]] = r
@@ -185,6 +198,12 @@ class Supabase:
 
         With `create` off, only jobs already here are updated: a closed card
         is not work to add, but a job that was open takes its new status.
+
+        The one exception: a known job whose footage link changed goes back
+        to `new`, because the link it was judged on is gone. A job blocked on
+        a link that was not shared, or not Drive at all, used to stay blocked
+        after someone fixed the card: on 2026-10-22, 34 of 63 jobs were
+        blocked and none of them would ever be read again on its own.
         """
         stamp = now_iso()
         have = self.existing_jobs([r.get("task_id", "") for r in rows])
@@ -197,6 +216,8 @@ class Supabase:
             if tid in have:
                 body = self._row(r, BOARD_COLUMNS)
                 body["updated_at"] = stamp
+                if _link_changed(have[tid], r):
+                    body.update({"state": "new", "attempts": 0})
                 known.append({**body, "task_id": tid})
             elif create:
                 body = self._row(r, JOB_COLUMNS)
@@ -210,18 +231,38 @@ class Supabase:
         rows = self.select("editor_jobs", f"select=*&task_id=eq.{http.quote(task_id)}&limit=1")
         return rows[0] if rows else None
 
-    def jobs_to_prepare(self, limit: int) -> list[dict[str, Any]]:
+    def jobs_to_prepare(self, limit: int, *, retry_blocked_hours: float = 0) -> list[dict[str, Any]]:
         """Open jobs the worker has not finished, oldest first, tried fewer than four times.
 
         A job whose card is finished (cancelled, complete, live) is skipped:
         reading its footage would spend money on work nobody will do. Live is
         not a closed status to the sync, so its status still updates.
+
+        Room left over goes to blocked jobs that have a footage link and were
+        last looked at more than `retry_blocked_hours` ago, longest wait first.
+        Footage often lands in the folder after the card is made, and nobody
+        presses Rescan. Looking again is a folder listing; a file already
+        read is skipped, so only new footage costs anything.
         """
         rows = self.select(
             "editor_jobs",
             "select=*&state=in.(\"new\",\"stale\")&attempts=lt.4&order=opened_at.asc&limit=" + str(int(limit)),
         )
-        return [r for r in rows if _letters(r.get("status")) not in FINISHED]
+        out = [r for r in rows if _letters(r.get("status")) not in FINISHED]
+        room = int(limit) - len(out)
+        if room <= 0 or retry_blocked_hours <= 0:
+            return out
+        before = (datetime.now(timezone.utc) - timedelta(hours=retry_blocked_hours)).replace(microsecond=0)
+        stamp = before.isoformat().replace("+00:00", "Z")
+        blocked = self.select(
+            "editor_jobs",
+            f"select=*&state=eq.blocked&prepared_at=lt.{stamp}&order=prepared_at.asc&limit=200",
+        )
+        again = [
+            r for r in blocked
+            if _letters(r.get("status")) not in FINISHED and (r.get("footage_url") or r.get("raw_url"))
+        ]
+        return out + again[:room]
 
     def retire_missing(self, on_board: Iterable[str], stamp: str) -> dict[str, Any]:
         """Mark jobs whose card is no longer on the board.

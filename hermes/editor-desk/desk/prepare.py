@@ -49,6 +49,10 @@ def readiness(
     missing: list[str] = []
     if not job.get("footage_url"):
         missing.append("No footage folder on the card. Add the Client Footage Folder or Raw Video Link.")
+    elif not drive_mod.parse_id(str(job.get("footage_url") or job.get("raw_url") or "")):
+        # Said plainly, because "the folder is empty" sent people looking in
+        # a Drive folder that the card never pointed to.
+        missing.append("The footage link is not a Google Drive link. Put the footage in a Drive folder and paste that link on the card.")
     elif not assets:
         missing.append("The footage folder has no video in it yet, or it is not shared with us.")
     if not (job.get("brief") or "").strip() and not (job.get("script") or "").strip():
@@ -254,6 +258,11 @@ def _finish(
     state = "ready" if ready else "blocked"
     if summary["failed"] and not summary["read"]:
         state = "stale"
+    # The card hears about a look only when it found something: new footage,
+    # another state, or another reason. A blocked job is looked at again
+    # every day, and the same "not ready" comment daily would be noise.
+    # Read before mark_job, which may update `job` itself.
+    changed = bool(summary["read"]) or job.get("state") != state or list(job.get("missing") or []) != missing
     fields = {
         "state": state,
         "ready": ready,
@@ -272,9 +281,11 @@ def _finish(
     summary["state"] = state
     summary["ready"] = ready
     summary["missing"] = missing
-    if clickup is not None and cfg.clickup_writeback and (summary["read"] or missing):
+    summary["commented"] = False
+    if clickup is not None and cfg.clickup_writeback and (summary["read"] or missing) and changed:
         try:
             clickup.comment(task_id, comment_text(job, assets, summary, client))
+            summary["commented"] = True
         except http.HttpError as e:
             log(f"ClickUp comment failed for {task_id}: {http.scrub(str(e))[:140]}")
     log(f"{task_id}: {state}, {summary['read']} read, {summary['skipped']} skipped, {summary['failed']} failed")
