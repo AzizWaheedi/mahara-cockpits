@@ -37,6 +37,7 @@ import {
   parseChoice,
   SCENES,
   STRIP_LIT,
+  scenesNamed,
   storyUrl,
   stripTiles,
   type Theme,
@@ -184,7 +185,10 @@ function Welcome({ ctx }: { ctx: SlideCtx }) {
   }, []);
   return (
     <>
-      <header className="dkc-letterhead">
+      {/* The presenter ends where the phone and its tag do, 120 px in from
+          the content's end (score round 2 of the five services: the phone
+          shared no edge with the name above it). */}
+      <header className="dkc-letterhead" data-inset="">
         <img src={maharaLogo} alt="Mahara Media" draggable={false} />
         <p className="dk-dateline">{tf(O.welcome.dateline, lang, { date })}</p>
         {/* With no first name on the seat, the role is the presenter's
@@ -351,7 +355,7 @@ function GoalInput({ ctx }: { ctx: SlideCtx }) {
       dir={value.trim() ? "auto" : lang === "ar" ? "rtl" : "ltr"}
       value={value}
       placeholder={t(O.goals.input, lang)}
-      aria-label={t(O.goals.input, lang)}
+      aria-label={t(O.goals.inputLabel, lang)}
       onChange={e => {
         setValue(e.target.value);
         save({
@@ -381,8 +385,13 @@ function Answers({ lines }: { lines: string[] }) {
   // Each item a block in the deck's direction, the words isolated in a
   // <bdi> (score round 4, as O7's red lines): an English answer in the
   // Arabic deck sits under its Arabic label's edge, not the column's other.
+  // Lines all in one script take its direction (score round 2 of the five
+  // services, as O7's red lines): three Arabic challenges run across the
+  // English deck's row right to left, the first on the right.
+  const dirs = lines.map(wordsDir);
+  const listDir = dirs.every(x => x === dirs[0]) ? dirs[0] : undefined;
   return (
-    <ul ref={ref} data-hug="">
+    <ul ref={ref} data-hug="" dir={listDir}>
       {lines.map(l => (
         <li key={l} className="dkc-theirs">
           <bdi>{l}</bdi>
@@ -462,12 +471,19 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
           data-lift={rest.length && !row ? "" : undefined}
         >
           <h2 className="dk-h1 dkc-goal-ask">{t(O.goals.empty, lang)}</h2>
-          <span className="dk-label dkc-goal-label">
-            {t(O.goals.goal90, lang)}
-          </span>
+          {/* "In 90 days" over the field only when no track says it under
+              the field (score round 2 of the five services: the slide said
+              90 days four times). */}
+          {rest.length ? (
+            <span className="dk-label dkc-goal-label">
+              {t(O.goals.goal90, lang)}
+            </span>
+          ) : null}
           <GoalInput ctx={ctx} />
           {/* The empty state builds like the filled one (score round 4):
-              the question rises, then its 90 days sweep under the line. */}
+              the question rises, then its 90 days sweep under the field,
+              the one line drawn there (the field's own rule shows only
+              under the pointer or while typing). */}
           {rest.length ? null : (
             <GoalTrack label={O.goals.goal90} d={d} lang={lang} />
           )}
@@ -770,6 +786,11 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
         ? rowName(candidate, lang)
         : null;
   const long = (candidateName ?? "").trim().length > 22;
+  // The proposal's one rule hugs its longest line (score round 2 of the
+  // five services): a wrapped inline block spans its column, so the rule
+  // ran 160 px past "Interior / design".
+  const nameRef = useRef<HTMLElement>(null);
+  useHug(nameRef, `${lang}:${candidateName ?? ""}:${long}`);
   return (
     <>
       <h2 className="dk-h2">{t(O.one.title, lang)}</h2>
@@ -865,7 +886,7 @@ function OneService({ ctx }: { ctx: SlideCtx }) {
               data-long={long ? "" : undefined}
             >
               {candidateName ? (
-                <bdi>{candidateName}</bdi>
+                <bdi ref={nameRef}>{candidateName}</bdi>
               ) : (
                 t(O.one.pending, lang)
               )}
@@ -1147,10 +1168,6 @@ function SetupCard({
   // screen on a phone rising from the card's foot (22.14), so the slide
   // keeps a picture before the guide is recorded.
   const osPhone = wide && !pic && row.key === "os";
-  // Three cards to a row (done with you): the guide's picture in small on
-  // the head's line, so the board keeps a picture there too (22.14).
-  const mini =
-    !wide && guide && ctx.playVideo && !broken ? posterFor(guide.row) : null;
   // With no length, the words alone: the separator goes with the slot.
   const guideWords = len
     ? tf(O.week.guide, lang, { len })
@@ -1219,41 +1236,20 @@ function SetupCard({
       <header className="dkc-setup-head">
         <h3 className="dkc-setup-name">{name}</h3>
         {guide && ctx.playVideo && !pic ? (
+          // Three cards to a row (done with you): the play mark and the
+          // length alone on the head's line (score round 2 of the five
+          // services: an 80 x 45 picture there crowded the line and read as
+          // a blank button).
           <button
             type="button"
             className="dkc-guide dkc-press"
-            data-pic={mini ? "" : undefined}
             aria-label={guideWords}
             onClick={() => ctx.playVideo?.(guide)}
             onPointerUp={letGo}
           >
-            {mini ? (
-              <span
-                className="dkc-guide-pic"
-                aria-hidden
-                data-decoded={decoded ? "" : undefined}
-              >
-                <img
-                  ref={el => {
-                    if (el?.complete && el.naturalWidth > 0 && !decoded)
-                      shown({ currentTarget: el });
-                  }}
-                  src={mini.src}
-                  alt=""
-                  draggable={false}
-                  referrerPolicy="no-referrer"
-                  onLoad={shown}
-                  onError={() => setBroken(true)}
-                />
-                <svg viewBox="0 0 16 16" aria-hidden>
-                  <path d="M4 2v12l10-6z" fill="currentColor" />
-                </svg>
-              </span>
-            ) : (
-              <svg viewBox="0 0 16 16" aria-hidden>
-                <path d="M3 1.5v13l11-6.5z" fill="currentColor" />
-              </svg>
-            )}
+            <svg viewBox="0 0 16 16" aria-hidden>
+              <path d="M3 1.5v13l11-6.5z" fill="currentColor" />
+            </svg>
             {/* Three cards to a row: the play mark and the length only. */}
             {len ? (
               <span aria-hidden>
@@ -1577,7 +1573,13 @@ const STRIP_OFF = [3, 1, 5, 2];
 function TestStrip({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
   // Their service's scenes first (its lead on tile 0, lit), then the rest.
-  const tiles = useMemo(() => stripTiles(d.example), [d.example]);
+  // Never a scene a starter template was cut from (DESIGN 22.18): stop 2
+  // shows the starters as theirs.
+  const tiles = useMemo(
+    () =>
+      stripTiles(d.example, 6, scenesNamed(d.starterAds.map(a => a.fileName))),
+    [d.example, d.starterAds],
+  );
   return (
     <div className="dkc-strip">
       <span className="dk-tag">{t(EXAMPLE.tags, lang)}</span>

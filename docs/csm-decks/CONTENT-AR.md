@@ -192,7 +192,7 @@ The card bodies are the client's own answers, shown as written. No quote marks a
 | Key | English | Arabic |
 |---|---|---|
 | `one.title` | One service per campaign | خدمة وحدة لكل حملة |
-| `one.line` | We launch with one service, so the ads, the form questions and the calls are all written for one kind of customer. | نبدي بخدمة وحدة، عشان كل إعلان وكل سؤال وكل مكالمة تكلم نوع واحد من العملاء. |
+| `one.line` | We launch with one service, so the ads, the form questions and the calls are all written for one kind of customer. | نبدي بخدمة وحدة، عشان الإعلانات والأسئلة والمكالمات كلها تكلم نوع واحد من العملاء. |
 | `one.tag.number_one` | Your #1 | الأولى عندكم |
 | `one.test.sell` | Easiest to sell | الأسهل بالبيع |
 | `one.test.profit` | Most profit | الأكثر ربح |
@@ -275,7 +275,7 @@ Since the spec review of 2026-10-20, O6 starts them on the introduction, the cou
 | `week.6.line.dwy` | Install the LeadConnector app, sign in and turn on alerts. | نزّلوا تطبيق LeadConnector، وسجلوا دخول، وفعّلوا التنبيهات. |
 
 **Spoken lines (Arabic)**
-- خلنا نخلص صلاحيات ميتا وMahara OS الحين، مع بعض.
+- خلنا نخلص صلاحيات ميتا ومنصة Mahara OS الحين، مع بعض.
 - كل ما رفعتوا محتوى أكثر قبل مكالمة بناء الهوية، طلعت أول إعلاناتكم أحسن.
 - الاستفسارات القديمة نتفق عليها بمكالمة بناء الهوية أو بالقروب، إذا نتصل عليهم ولا لا.
 - (For anything left open) هذي مين بيخلصها، ومتى؟
@@ -540,6 +540,7 @@ The three phones share one app language (DESIGN 7.1): the language most of the c
 | `form.eyebrow` | Your customer sees this | هذا اللي يشوفه عميلكم |
 | `form.title` | Your form | نموذج إعلانكم |
 | `form.titleWhatsApp` (score round 2: the ad opens WhatsApp, so there is no form) | Your WhatsApp chat | محادثة الواتساب |
+| `tag.exampleWordingStarter` (score round 2 of the five services: the chat under a starter template's picture) | Example wording, starter ad | صياغة للتوضيح، إعلان بداية |
 | `form.line` | What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit. | اللي يجاوب عليه العميل قبل لا نتصل. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم. |
 | `form.line.dwy` | What they answer before your team calls. Questions marked 'Filters' screen out people who aren't a fit. | اللي يجاوب عليه العميل قبل لا يتصل فريقكم. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم. |
 | `form.tag.gate` | Filters | فلتر |
@@ -806,7 +807,7 @@ The two screenshots are the Academy's own, in English, masked as `CONTENT.md` co
 | Before | Keep at least 10 open slots, at different times | خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة | Our callers book into them. (Notes and recap: On a day off, block each hour, not one all-day event.) | فريق الاتصال يحجز فيها. (الملاحظات والملخص: ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل.) |
 | Before | Add each booking to your own system | ضيفوا كل موعد لنظامكم | If your team plans in other software, the booking goes there too, so nobody books over it. | إذا فريقكم يخطط على برنامج ثاني، الموعد ينضاف فيه بعد، عشان ماحد يحجز فوقه. |
 | After | Mark every meeting the same day, with the value when you win | سجلوا نتيجة كل موعد بنفس اليوم، ومعها قيمة المشروع إذا وقّع | Your outcomes show which ads bring real projects. | نتائجكم توضح أي إعلانات تجيب مشاريع حقيقية. |
-| After | Follow up the ones thinking it over, and book the second meeting | تابعوا اللي قاعدين يفكرون، واحجزوا الموعد الثاني | You send the quote and set the second meeting. (Notes and recap: Our caller checks in too.) | أنتم ترسلون عرض السعر وتحددون الموعد الثاني. (الملاحظات والملخص: وفريق الاتصال يتابع معهم بعد.) |
+| After | Follow up the ones thinking it over, and book the second meeting | تابعوا اللي قاعدين يفكرون، واحجزوا الموعد الثاني | You send the quote and set the second meeting. Our caller checks in too. (Done for you; done with you, the first sentence alone.) | أنتم ترسلون عرض السعر وتحددون الموعد الثاني. وفريق الاتصال يتابع معهم بعد. (لما نتصل نحن؛ لما يتصل فريقهم، الجملة الأولى بس.) |
 | Weeks | Leave the ads running through the first weeks | خلوا الإعلانات شغالة أول الأسابيع | Pausing early ends the test before it tells us anything. | لو وقفتوها بدري، ينتهي الاختبار قبل لا يعطينا جواب. |
 | Weeks | Keep your Drive folder fed | خلوا مجلد الدرايف مليان | Fresh projects keep your ads from tiring. | المشاريع الجديدة تخلي إعلاناتكم ما تبهت. |
 
@@ -890,7 +891,7 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged. أهد
 
 | Key | English | Arabic |
 |---|---|---|
-| `know.title` (the fixer's round: the comments and replies run on after go-live) | Good to know | زين تعرفونه |
+| `know.title` (the fixer's round: the comments and replies run on after go-live) | Good to know | أشياء تهمكم |
 | `know.groups` (two small heads over the rows) | Money · Messages | الفلوس · الرسايل |
 | `know.charges.name` | Meta's first charges | أول مبالغ تخصمها ميتا |
 | `know.charges.line` | Small at first, and that's normal. Tell your bank so it doesn't block them. | تكون صغيرة بالبداية، وهذا طبيعي. بلّغوا البنك عشان ما يوقفها. |
@@ -898,7 +899,7 @@ The three milestones are the sales deck's `MILESTONES` Arabic, unchanged. أهد
 | `know.card.line` | A failed payment stops your ads. Repeated ones can get the account restricted and reset what the ads have learned. Running low? Tell us first, and we'll pause the ads safely. | إذا فشل الدفع، تتوقف إعلاناتكم. وإذا تكرر، ممكن ميتا تقيّد الحساب، ويروح اللي تعلمته الإعلانات. الرصيد قرب يخلص؟ قولوا لنا قبلها، ونوقف الإعلانات بطريقة آمنة. |
 | `know.pay.name` | Your payments to us | دفعاتكم لنا |
 | `know.act` (since score round 2, each money row's do-this, set in ink inside its line) | Tell your bank · Tell us first · On the dates in your agreement. | بلّغوا البنك · قولوا لنا قبلها · بالتواريخ المكتوبة في عقدكم. |
-| `know.pay.line` | On the dates in your agreement. If one fails, the ads, our calls and Mahara OS pause until it's sorted. | بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات ومكالماتنا وMahara OS لين تنحل. |
+| `know.pay.line` | On the dates in your agreement. If one fails, the ads, our calls and Mahara OS pause until it's sorted. | بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات ومكالماتنا ومنصة Mahara OS لين تنحل. |
 | `know.pay.line.dwy` | On the dates in your agreement. If one fails, the ads and the systems we run for you pause until it's sorted. | بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات والأنظمة اللي نشغلها لكم لين تنحل. |
 | `know.comments.name` | Comments on your ads | التعليقات على إعلاناتكم |
 | `know.comments.line` | Yours to answer. Not sure what to say? Ask in the group. | الرد عليها عليكم. ما تدرون كيف تردون؟ اسألونا بالقروب. |
@@ -1011,7 +1012,7 @@ The long names are O1's agenda, unchanged (نختار خدمة الإطلاق ·
 
 ## O2 · `goals`
 
-No new words: stop 1 is the goal alone, stop 2 the other answers. `goals.input` stays هدفكم خلال ٩٠ يوم، بكلامكم.
+No new words: stop 1 is the goal alone, stop 2 the other answers. `goals.input` is بكلامكم (score round 2 of the five services: the question and the track already say ٩٠ يوم); هدفكم خلال ٩٠ يوم، بكلامكم stays as the field's name for a screen reader (`goals.inputLabel`).
 
 **Spoken lines (Arabic)**
 - (Stop 1) خلوني أقرا لكم هدفكم مثل ما كتبتوه.
@@ -1064,7 +1065,7 @@ The length is said in words through the deck's existing `lengthText` (decision 1
 
 **Spoken lines (Arabic)**
 - (As the slide opens) وأغلب هذا بنسويه مع بعض، على المكالمة نفسها.
-- خلنا نخلص صلاحيات ميتا وMahara OS الحين.
+- خلنا نخلص صلاحيات ميتا ومنصة Mahara OS الحين.
 
 ## O7 · `next`
 
@@ -1377,7 +1378,7 @@ The reviewers' Arabic was used where they gave it; the rest under `mahara-contex
 - **L8:** اللي يجونكم من الإعلانات أول مرة يقابلونكم، وهالكورس يعلمكم كيف تكسبونهم. and the label أكاديمية المشاريع المميزة.
 - **L9:** لغى أو غيّر موعده معكم مباشرة؟ قولوا لنا بالقروب، ونعدّل التذكيرات أو نتصل عليه ونحجز له من جديد.
 - **L10:** the key reads مسكّر, the word the notes already use for a blocked day (اليوم المسكّر).
-- **L12:** زين تعرفونه, with الفلوس and الرسايل.
+- **L12:** أشياء تهمكم, with الفلوس and الرسايل.
 - **The recap:** the testing line adds والتعديلات الصغيرة على الشكل تروح للإعلانات الجاية عشان إطلاقكم ما يتأخر and the content ask; the money and first-weeks lines are new.
 - **Still English in the Arabic panel:** a card Do's & Don'ts line written in English stays English on L3 until prep can hold an Arabic version of it (a server prep key, the backend's).
 

@@ -776,6 +776,11 @@ button.dkc-status:hover {
 [dir="rtl"] .dkc-presenter b {
   font-size: 30px;
 }
+/* O1: the presenter on the phone's end edge (.dkc-welcome-phone), so the
+   name, the phone and its tag share one edge. */
+.dkc-letterhead[data-inset] .dkc-presenter {
+  margin-inline-end: 120px;
+}
 
 /* The journey behind a cover, whole and quiet, at 80% in the end half
    (DESIGN 9.1): 840 x 692 drawn as 672 x 554, ending above the foot. */
@@ -933,24 +938,27 @@ button.dkc-status:hover {
 .dkc-today li[data-done] .dkc-today-name {
   color: var(--dk-ink);
 }
-/* A tick seen on screen: the ring's teal layer fades in and the check
-   draws, then the name turns ink; the numeral leaves with them. */
+/* A tick seen on screen: the numeral leaves first (one beat), then the
+   ring's teal layer fades in and the check draws, then the name turns ink
+   (score round 2 of the five services: the numeral and a half-drawn check
+   showed together for a moment, a garbled 3 with a tick). */
 .dkc-today li[data-draw] {
   --dkt-delay: calc(min(calc(var(--k, 0) * var(--dk-stagger)), var(--dk-stagger-max)) * var(--dk-m));
+  --dkt-check: calc(var(--dkt-delay) + var(--dk-t-beat) * var(--dk-m));
 }
 .dkc-today li[data-draw] .dkc-today-done {
-  animation: dkc-swap calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) var(--dkt-delay) both;
+  animation: dkc-swap calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) var(--dkt-check) both;
 }
 .dkc-today li[data-draw] .dkc-today-check {
   stroke-dasharray: 1 1;
   stroke-dashoffset: 1;
-  animation: dkc-draw calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) var(--dkt-delay) forwards;
+  animation: dkc-draw calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) var(--dkt-check) forwards;
 }
 .dkc-today li[data-draw] .dkc-today-num {
-  animation: dk-swap-out calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease-in) var(--dkt-delay) both;
+  animation: dk-swap-out calc(var(--dk-t-beat) * var(--dk-m)) var(--dk-ease-in) var(--dkt-delay) both;
 }
 .dkc-today li[data-draw] .dkc-today-name {
-  transition-delay: calc(var(--dkt-delay) + var(--dk-t-tick) * var(--dk-m));
+  transition-delay: calc(var(--dkt-check) + var(--dk-t-tick) * var(--dk-m));
 }
 /* The cover's agenda, under the name (the fixer's round, 22.11): rings 36,
    names 32/600 in ink, 72 px apart, joined by the lanes' unlit dotted line.
@@ -1043,7 +1051,7 @@ button.dkc-status:hover {
   color: var(--dk-ink-2);
 }
 .dkc-today[data-variant="foot"] .dkc-today-num {
-  font-size: 14px;
+  font-size: 17px;
 }
 .dkc-today[data-variant="foot"] .dkc-today-name {
   font-size: 24px;
@@ -1623,6 +1631,17 @@ button.dkc-status:hover {
 .dkc-goal-input::placeholder {
   color: var(--dk-ink-3);
 }
+/* With no label over it (the track says 90 days), the field stands clear
+   of the question; and with the track under it, the track is the one line
+   drawn there: the field's own rule shows only under the pointer or while
+   typing (score round 2 of the five services: two rules 52 px apart read
+   as a form). */
+.dkc-goal-ask + .dkc-goal-input {
+  margin-top: 64px;
+}
+.dkc-goal-asking > .dkc-goal-input:has(+ .dkc-goal-track):not(:hover, :focus) {
+  border-bottom-color: transparent;
+}
 .dkc-goal-input:hover {
   border-bottom-color: var(--dk-edge);
 }
@@ -2023,11 +2042,14 @@ button.dkc-status:hover {
 .dkc-tick[aria-pressed="true"] path {
   stroke-dashoffset: 0;
 }
-/* The product column: its text (370 px) beside the feed phone, 600 tall,
-   its end edge on the content's. No card around the phone. */
+/* The product column: its text beside the feed phone, 640 tall, its end
+   edge on the content's. No card around the phone. The text takes what the
+   phone leaves (about 396 px) and stands on the phone's middle (score
+   round 2 of the five services: at the top it left 340 px empty under
+   it). */
 .dkc-product {
   display: grid;
-  grid-template-columns: 370px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) auto;
   column-gap: 44px;
   align-items: start;
 }
@@ -2036,14 +2058,14 @@ button.dkc-status:hover {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  align-self: center;
   gap: 16px;
-  padding-top: 72px;
   padding-bottom: 56px;
   min-width: 0;
 }
 .dkc-product-name {
   margin: 0;
-  max-width: 370px;
+  max-width: none;
   font-size: 56px;
   line-height: 1.12;
   font-weight: 700;
@@ -2057,21 +2079,19 @@ button.dkc-status:hover {
   line-height: 1.15;
 }
 /* The proposal before "Launch with this" (score round 4: ink-2 read as
-   disabled on a share): ink, with a dashed underline that turns solid once
-   chosen. */
+   disabled on a share): ink, with a dashed rule that turns solid teal once
+   chosen. One rule under the whole name, however many lines it takes
+   (score round 2 of the five services: an underline per line made
+   "Interior / design" read as two links). */
 .dkc-product-name[data-state="proposal"] bdi,
 .dkc-product-name[data-state="chosen"] bdi {
-  text-decoration-line: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 0.18em;
-  text-decoration-color: var(--dk-line-strong);
-}
-.dkc-product-name[data-state="proposal"] bdi {
-  text-decoration-style: dashed;
+  display: inline-block;
+  padding-bottom: 0.1em;
+  border-bottom: 2px dashed var(--dk-line-strong);
 }
 .dkc-product-name[data-state="chosen"] bdi {
-  text-decoration-style: solid;
-  text-decoration-color: var(--dk-teal);
+  border-bottom-style: solid;
+  border-bottom-color: var(--dk-teal);
 }
 .dkc-product-name[data-state="none"] {
   font-size: 44px;
@@ -2519,21 +2539,23 @@ button.dkc-status:hover {
 }
 /* A guide's poster shows once decoded (22.3.2, score round 4), so it never
    paints in after the card has built; the deck warms it on opening. */
-:is(.dkc-setup-pic, .dkc-guide-pic) img {
+.dkc-setup-pic img {
   opacity: 0;
 }
-:is(.dkc-setup-pic, .dkc-guide-pic)[data-decoded] img {
+.dkc-setup-pic[data-decoded] img {
   opacity: 1;
   animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) both;
 }
 /* A screen recording's frame is near-white: a veil of the deep ground over
-   it, so it sits in the deck and the teal play reads. */
+   it, so it sits in the deck and the teal play reads (score round 2 of the
+   five services: at 0.42 the pale Meta access frame read as an empty
+   placeholder on a share). */
 .dkc-setup-pic::after {
   content: "";
   position: absolute;
   inset: 0;
   background: var(--dk-deep);
-  opacity: 0.42;
+  opacity: 0.55;
 }
 .dkc-setup-play {
   z-index: 1;
@@ -2765,54 +2787,6 @@ button.dkc-status:hover {
 .dkc-setups[data-n="3"] .dkc-guide-word {
   display: none;
 }
-/* Three cards to a row (done with you, 22.14): the guide's own picture in
-   small, 80 x 45 on the head's line, under the posters' veil, the teal play
-   on it, so the board keeps a picture when no card has room for a poster.
-   Centred on the name and held to its height, so the card's name, status
-   and line sit where the other cards' do. */
-.dkc-guide[data-pic] {
-  align-self: center;
-  margin-block: -6px;
-}
-.dkc-guide-pic {
-  position: relative;
-  display: block;
-  flex: none;
-  width: 80px;
-  aspect-ratio: 16 / 9;
-  overflow: hidden;
-  border-radius: 8px;
-  background: var(--dk-panel-2);
-  box-shadow: inset 0 0 0 1px var(--dk-line);
-}
-.dkc-guide-pic img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-.dkc-guide-pic::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--dk-deep);
-  opacity: 0.42;
-}
-.dkc-guide .dkc-guide-pic svg {
-  position: absolute;
-  z-index: 1;
-  left: 50%;
-  top: 50%;
-  width: 26px;
-  height: 26px;
-  margin: -13px 0 0 -13px;
-  padding: 7px 6px 7px 8px;
-  box-sizing: border-box;
-  border-radius: 999px;
-  background: var(--dk-teal);
-  color: var(--dk-deep);
-}
 .dkc-guide:hover {
   border-bottom-color: var(--dk-edge);
   color: var(--dk-ink-2);
@@ -2897,22 +2871,27 @@ button.dkc-status:hover {
   flex-direction: column;
   height: 100%;
 }
-/* The strip: six example tiles in one row under the test's words in the
-   end column (score round 2), two lit and four switched off on arrival.
-   The row spans the column edge to edge at 4:5 (fixer round 2: a 3 x 2 of
-   150 x 188 ended 320 px short of the column's end), about 127 x 159 at
-   1920; with less height than that it takes what there is (a size
-   container), and under about 100 px a tile no longer reads as a picture,
-   so the strip leaves. */
+/* The strip: six example tiles under the test's words in the end column
+   (score round 2), two lit and four switched off on arrival. Three across
+   and two down, square, as large as the column's height allows (about
+   195 px at 1920, capped at 240): score round 2 of the five services found
+   the one row of 127 x 159 too small to read as pictures on a share, with
+   a 300 px empty band under both columns. The grid runs to the column's
+   foot, so the words above it and the ask opposite end on one line. Under
+   about 100 px a tile no longer reads as a picture, so the strip leaves. */
 .dkc-strip {
   flex: 1;
   min-height: 0;
-  margin-top: 36px;
+  margin-top: 24px;
   display: flex;
   flex-direction: column;
   gap: 14px;
   container-type: size;
-  --tile-w: min(calc((100cqw - 60px) / 6), calc((100cqh - 50px) * 0.8));
+  --tile-w: min(
+    calc((100cqw - 32px) / 3),
+    calc((100cqh - 56px) / 2),
+    240px
+  );
 }
 .dkc-strip .dk-tag {
   white-space: nowrap;
@@ -2923,12 +2902,12 @@ button.dkc-status:hover {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(6, var(--tile-w));
-  grid-auto-rows: calc(var(--tile-w) * 1.25);
-  justify-content: space-between;
-  gap: 12px;
+  grid-template-columns: repeat(3, var(--tile-w));
+  grid-auto-rows: var(--tile-w);
+  justify-content: start;
+  gap: 16px;
 }
-@container (max-height: 175px) {
+@container (max-height: 260px) {
   .dkc-strip > * {
     display: none;
   }
@@ -4340,6 +4319,7 @@ button.dkc-status:hover {
    stop is in sight, not while it is still at 0 opacity. */
 .dk-swap[data-mode="seq"] > [data-after] .dkc-today li[data-draw] {
   --dkt-delay: calc((var(--dk-t-stage) + min(calc(var(--k, 0) * var(--dk-stagger)), var(--dk-stagger-max))) * var(--dk-m));
+  --dkt-check: calc(var(--dkt-delay) + var(--dk-t-beat) * var(--dk-m));
 }
 .dkc-stage {
   display: flex;
@@ -5433,6 +5413,26 @@ button.dkc-status:hover {
   height: 100%;
   object-fit: cover;
 }
+/* Waiting to send (journey stop 2): the business at the top, the ad the
+   chat was opened from at the foot, over the field, on the outgoing side. */
+.dkc-wa-body[data-ref] {
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  padding: 0 calc(var(--u) * 12) calc(var(--u) * 4);
+}
+.dkc-wa-body[data-ref] .dkc-wa-profile {
+  align-self: center;
+  margin-bottom: auto;
+  padding-top: calc(var(--u) * 28);
+}
+.dkc-wa-ref {
+  align-self: flex-end;
+  width: 70%;
+  padding: calc(var(--u) * 4);
+  border-radius: calc(var(--u) * 12);
+  background: var(--app-out);
+}
 .dkc-wa-meta {
   align-self: flex-end;
   display: inline-flex;
@@ -5580,9 +5580,13 @@ button.dkc-status:hover {
   flex-direction: column;
   gap: 14px;
 }
+/* Never takes what its lines need, up to half the panel, and Always the
+   rest (score round 2 of the five services: a fixed 480 px squeezed an
+   English Always line into three lines beside it; up to 480 px, a quoted
+   English Never line still took it all). */
 .dkc-fixed-pair[data-side] {
   display: grid;
-  grid-template-columns: 480px minmax(0, 1fr);
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
   column-gap: 32px;
 }
 .dkc-fixed-group {
@@ -6128,9 +6132,11 @@ button.dkc-status:hover {
   padding: 18px 76px 20px 16px;
 }
 /* A WhatsApp ad: the steps after the chat opens, numbered like the
-   questions a form would have shown. On L5 (fixer round 2) the side runs
-   the phone's height and the steps sit on its foot, level with the chat's
-   last line, across the column. */
+   questions a form would have shown. On L5 the side runs the phone's
+   height: the steps start 96 px under the line, and the last (our call,
+   its "5 minutes" underlined) is the thank-you stop's band, on the column's
+   foot, level with the chat's last line (score round 2 of the five
+   services: all three at the foot left 360 px empty under the line). */
 .dkc-wa-next {
   margin-top: 56px;
   display: flex;
@@ -6145,8 +6151,22 @@ button.dkc-status:hover {
   align-self: stretch;
 }
 .dkc-form-slide[data-wa] .dkc-wa-next {
-  margin-top: auto;
+  flex: 1;
+  margin-top: 96px;
   max-width: none;
+}
+.dkc-form-slide[data-wa] .dkc-wa-next ol {
+  flex: 1;
+}
+.dkc-wa-next > ol > li[data-band] {
+  margin-top: auto;
+  padding: 18px 16px 20px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--dk-teal-faint);
+}
+.dkc-wa-next li:has(+ li[data-band]) {
+  border-bottom: 1px solid var(--dk-line);
 }
 .dkc-wa-next ol {
   list-style: none;
@@ -7344,30 +7364,20 @@ button.dkc-status:hover {
   top: 0;
   inset-inline-start: 0;
 }
-/* The phone stop's install address, large in the gap beside the phone,
-   centred on it (the fixer's round). */
-/* The install address, anchored to the phone it opens on (score round 3:
-   at the stage's start it floated mid-canvas): end-aligned 72 px before
-   the framed film, level with the app's first screen, a teal hairline
-   running from its end to the phone's edge. */
-.dkc-portal-screen-in > .dkc-portal-install {
-  position: absolute;
-  top: 132px;
-  inset-inline-end: calc(409px + 72px);
+/* The phone stop's install address, under "Install it like an app." in
+   the words column (score round 2 of the five services: beside the phone,
+   72 px before it, it floated mid-slide on a 44 px dash). On one line, it
+   may run past the 480 px column into the stage's empty start; a teal
+   leader runs on from its end to 16 px before the phone (whose start edge
+   is at x 1375: the stage box ends at 1784 and the framed film is 409
+   wide; the words start at 136, so the leader is 1207 px less the
+   address's width, in either direction). */
+.dkc-portal-stop .dkc-portal-install {
+  margin-top: 40px;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 14px;
-  text-align: end;
-}
-.dkc-portal-install::after {
-  content: "";
-  position: absolute;
-  inset-inline-start: calc(100% + 16px);
-  bottom: 22px;
-  width: 44px;
-  height: 2px;
-  background: var(--dk-teal);
+  align-items: flex-start;
+  gap: 12px;
 }
 .dkc-portal-install p {
   margin: 0;
@@ -7376,6 +7386,23 @@ button.dkc-status:hover {
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--dk-ink);
+  white-space: nowrap;
+}
+.dkc-portal-install p > span {
+  position: relative;
+}
+.dkc-portal-install p > span::after {
+  content: "";
+  position: absolute;
+  left: calc(100% + 16px);
+  top: 50%;
+  width: calc(1207px - 100%);
+  height: 2px;
+  background: var(--dk-teal);
+}
+[dir="rtl"] .dkc-portal-install p > span::after {
+  left: auto;
+  right: calc(100% + 16px);
 }
 .dkc-portal-start {
   display: flex;
@@ -8242,8 +8269,14 @@ button.dkc-status:hover {
   flex: none;
   align-self: flex-start;
 }
+/* The question, the road and the check-in as one block on the stage's
+   middle under their mark (score round 2 of the five services: at the
+   foot, the upper 550 px read as unfinished on a small Zoom tile). */
 .dkc-green-question {
   margin-top: auto;
+}
+.dkc-green > :last-child {
+  margin-bottom: auto;
 }
 .dkc-green-rail {
   position: relative;

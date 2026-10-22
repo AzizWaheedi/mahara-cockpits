@@ -119,6 +119,11 @@ export const SHARED = {
     exampleForm: { en: "Example form", ar: "نموذج للتوضيح" },
     example: { en: "Example", ar: "مثال" },
     exampleWording: { en: "Example wording", ar: "صياغة للتوضيح" },
+    /** A WhatsApp chat under a starter template's picture (score round 2 of the five services). */
+    exampleWordingStarter: {
+      en: "Example wording, starter ad",
+      ar: "صياغة للتوضيح، إعلان بداية",
+    },
     illustration: { en: "Illustration", ar: "توضيح" },
     demo: { en: "Demo workspace", ar: "حساب تجريبي" },
     academy: { en: "Academy screenshot", ar: "لقطة من الأكاديمية" },
@@ -418,7 +423,13 @@ export const O = {
       en: "What would make the next 90 days a win for you?",
       ar: "متى تقولون إن الثلاث شهور الجاية نجحت؟",
     },
-    input: {
+    /**
+     * The empty field's placeholder (score round 2 of the five services):
+     * the question over it and the track under it already say 90 days.
+     */
+    input: { en: "In your words", ar: "بكلامكم" },
+    /** The field's name for a screen reader. */
+    inputLabel: {
       en: "Your 90-day goal, in your words",
       ar: "هدفكم خلال ٩٠ يوم، بكلامكم",
     },
@@ -505,7 +516,7 @@ export const O = {
     title: { en: "One service per campaign", ar: "خدمة وحدة لكل حملة" },
     line: {
       en: "We launch with one service, so the ads, the form questions and the calls are all written for one kind of customer.",
-      ar: "نبدي بخدمة وحدة، عشان كل إعلان وكل سؤال وكل مكالمة تكلم نوع واحد من العملاء.",
+      ar: "نبدي بخدمة وحدة، عشان الإعلانات والأسئلة والمكالمات كلها تكلم نوع واحد من العملاء.",
     },
     numberOne: { en: "Your #1", ar: "الأولى عندكم" },
     tests: [
@@ -887,7 +898,7 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
     ],
     sayAr: [
       "(As the slide opens) وأغلب هذا بنسويه مع بعض، على المكالمة نفسها.",
-      "خلنا نخلص صلاحيات ميتا وMahara OS الحين.",
+      "خلنا نخلص صلاحيات ميتا ومنصة Mahara OS الحين.",
       "لما نخلص بطاقات الصلاحيات، تنحط علامة صح على الصلاحيات تحت. وهذي أكثر خطوة تأخر الإطلاق عادةً.",
       "كل ما رفعتوا محتوى أكثر قبل مكالمة بناء الهوية، طلعت أول إعلاناتكم أحسن.",
       "الاستفسارات القديمة نتفق عليها بمكالمة بناء الهوية أو بالقروب، إذا نتصل عليهم ولا لا.",
@@ -2135,12 +2146,16 @@ export const LAUNCH = {
           en: "You send the quote and set the second meeting.",
           ar: "أنتم ترسلون عرض السعر وتحددون الموعد الثاني.",
         },
-        // Done for you only: our caller's check-in, in the recap and the notes.
+        // Done for you only: our caller's check-in. On the slide too (score
+        // round 2 of the five services): without it the job read as the
+        // client's alone, while the CEO's answer is that a customer who came
+        // is followed up by both of us.
         more: {
           en: "Our caller checks in too.",
           ar: "وفريق الاتصال يتابع معهم بعد.",
         },
         moreDwy: null,
+        moreShown: true,
       },
       {
         key: "ads",
@@ -2174,10 +2189,12 @@ export const LAUNCH = {
       why: L;
       jobDwy?: L;
       whyDwy?: L;
-      /** Said in the notes and sent in the recap, never on the slide. */
+      /** Said in the notes and sent in the recap; on the slide only with `moreShown`. */
       more?: L;
       /** Done with you: its own `more`, or null for none. */
       moreDwy?: L | null;
+      /** The slide shows `more` after the why (the follow-up: both of us). */
+      moreShown?: boolean;
     }[],
     /** The calendar week under the open slots: Saturday to Thursday. */
     days: [
@@ -2257,7 +2274,7 @@ export const LAUNCH = {
    * when this client never saw the onboarding deck (O3 says it).
    */
   know: {
-    title: { en: "Good to know", ar: "زين تعرفونه" },
+    title: { en: "Good to know", ar: "أشياء تهمكم" },
     groups: {
       money: { en: "Money", ar: "الفلوس" },
       messages: { en: "Messages", ar: "الرسايل" },
@@ -2297,7 +2314,7 @@ export const LAUNCH = {
         },
         line: {
           en: "On the dates in your agreement. If one fails, the ads, our calls and Mahara OS pause until it's sorted.",
-          ar: "بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات ومكالماتنا وMahara OS لين تنحل.",
+          ar: "بالتواريخ المكتوبة في عقدكم. وإذا فشلت دفعة، تتوقف الإعلانات ومكالماتنا ومنصة Mahara OS لين تنحل.",
         },
         lineDwy: {
           en: "On the dates in your agreement. If one fails, the ads and the systems we run for you pause until it's sorted.",
@@ -2380,6 +2397,7 @@ export function partJobs(dwy: boolean) {
     job: (dwy && r.jobDwy) || r.job,
     why: (dwy && r.whyDwy) || r.why,
     more: (dwy && r.moreDwy !== undefined ? r.moreDwy : r.more) ?? null,
+    moreShown: Boolean(r.moreShown),
   }));
 }
 

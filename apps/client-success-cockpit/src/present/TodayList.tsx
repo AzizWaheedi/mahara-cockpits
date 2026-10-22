@@ -74,8 +74,10 @@ export function TodayList({
   const done = TODAY_KEYS.map(k => variant !== "cover" && d.today[k]);
   // What was done when the slide opened: only a later change draws.
   const atOpen = useRef(done);
-  // The cover's rings sit under the name since the fixer's round (22.11).
-  const size = variant === "foot" ? 24 : variant === "cover" ? 36 : 44;
+  // The cover's rings sit under the name since the fixer's round (22.11);
+  // the foot's at 30 with 17 px numerals (score round 2 of the five
+  // services: at 24 and 14 they did not read on a share).
+  const size = variant === "foot" ? 30 : variant === "cover" ? 36 : 44;
   const names =
     variant === "cover"
       ? O.welcome.agenda

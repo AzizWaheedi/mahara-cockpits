@@ -11,7 +11,12 @@ import {
 import type { DeckHub, VideoPhase } from "./channel";
 import { CHROME, CLOSED, digits, type Lang, t } from "./content";
 import { DeckBoundary } from "./DeckBoundary";
-import { type SlideCtx, type SlideDef, slideTitle } from "./deckContext";
+import {
+  type SlideCtx,
+  type SlideDef,
+  slideTitle,
+  titleFor,
+} from "./deckContext";
 import {
   keyCommand,
   type Pos,
@@ -448,7 +453,8 @@ export function DeckShell({
   const count = (i: number) =>
     lang === "ar" ? digits(i, lang) : String(i).padStart(2, "0");
   const stopName = slide?.stopName?.(tour, ctx);
-  const titleOf = (s: SlideDef) => slideTitle(s.title, lang, base.d.name);
+  const titleOf = (s: SlideDef) =>
+    slideTitle(titleFor(s, base.d), lang, base.d.name);
   const comma = lang === "ar" ? "، " : ", ";
   const announce = slide
     ? `${t(CHROME.slide, lang)} ${digits(index + 1, lang)} ${t(CHROME.of, lang)} ${digits(n, lang)}${comma}${titleOf(slide)}${stopName ? `${comma}${t(stopName, lang)}` : ""}`

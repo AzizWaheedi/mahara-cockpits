@@ -543,9 +543,12 @@ function full(deck: DeckKind = "onboarding"): Loaded {
     kit,
     ads: [
       ...custom,
-      // Interior design's own pictures (closer crops of the example
-      // majlis, mirrored, and the bedroom): never a kitchen as the
-      // interior-design template (CEO, 2026-10-21).
+      // Interior design's templates, cut from Mahara's own sales-deck
+      // studio table (a materials tray under a room's render; the villa
+      // model over its plan), none of the eighteen example scenes: score
+      // round 2 of the five services found the old ones were crops of the
+      // example majlis and bedroom, shown as "Example ads" on O7 stop 1 and
+      // as their starters on stop 2. Never a kitchen (CEO, 2026-10-21).
       ad("starter-feed", "starter", feedPic, 864, 1080, {
         primaryText:
           "Your home's interior, designed around how your family lives. Book a visit to our Riyadh showroom.",
@@ -812,7 +815,8 @@ function starter(_deck: DeckKind = "launch"): Loaded {
     ads: [
       // Fit-out pictures and words: the starter templates of the service
       // the kickoff advertises: an office desk under the Kuwait Towers, and
-      // a materials board (stone, wood, fabric, brass). None of the
+      // rolled drawings and a contract on a stone desk (the studio table's
+      // far end; full's templates are its other two parts). None of the
       // eighteen example scenes (score round 2: the boutique and the
       // restaurant were also this client's example ad and the strip's lit
       // tiles, one picture shown four times).

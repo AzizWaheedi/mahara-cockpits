@@ -52,6 +52,12 @@ export interface SlideCtx {
 export interface SlideDef {
   id: string;
   title: L;
+  /**
+   * The title as the slide shows it for this client, where that differs
+   * (score round 2 of the five services: prep and the notes said "goes
+   * live" over a cover saying "is live"). `titleFor` reads it.
+   */
+  titleOf?: (d: DeckData) => L;
   /** How many stops the slide has for this client (1 when left out). */
   stops?: (ctx: SlideCtx) => number;
   /** A stop's name, for the notes window and the live region. */
@@ -102,3 +108,7 @@ export function fillNotes(lines: string[], slots: Record<string, string>) {
  */
 export const slideTitle = (title: L, lang: Lang, name: string) =>
   tf(title, lang, { name });
+
+/** A slide's title for this client: its own, else the deck's. */
+export const titleFor = (s: SlideDef, d: DeckData): L =>
+  s.titleOf?.(d) ?? s.title;

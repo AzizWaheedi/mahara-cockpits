@@ -36,7 +36,7 @@ Where `CONTENT.md` and `DESIGN.md` gave the same fact different homes, this tabl
 | The WhatsApp confirmation and the reminders | L6 stop 7, after the call | L2 stop 4: one line and five dots, each named in a word or two from L6's timeline (four done with you; the provisional bookings' dot carries its whole line). L7's pie names "Reminders and rebooking" as ours |
 | Before the meeting, the messages come from us (one voice to the customer) | L6 stop 7, under the timeline's heading, done for you (the spec review, 2026-10-20) | L10's notes keep only the after-meeting half |
 | It lands with the client: calendar, Mahara OS, the WhatsApp alerts (new bookings, cancellations and changes) | L2 stop 5 | L6 stop 8 shows what it carries (the caller's notes) |
-| A no-show is ours; a customer thinking it over is followed up by both of us (done for you), and the client marks it | L2 stop 6, the fork, drawn | L9 stop 4: "mark it, the same day", the late check, and that the mark lets us call to rebook. L10: the client's follow-up as one job, its why on the slide one sentence; 'Our caller checks in too.' is its second sentence, said in the notes and kept in the recap, so the six-jobs card, pasted alone in the group, still says the follow-up is shared |
+| A no-show is ours; a customer thinking it over is followed up by both of us (done for you), and the client marks it | L2 stop 6, the fork, drawn | L9 stop 4: "mark it, the same day", the late check, and that the mark lets us call to rebook. L10: the client's follow-up as one job; done for you, its why on the slide is "You send the quote and set the second meeting. Our caller checks in too." (score round 2 of the five services: the second sentence is on the slide too, so the job never reads as the client's alone), also said in the notes and kept in the recap |
 | Who does what, as a share: our three pieces of the work and their one (the meeting and the close), the two roads, "marketing without sales won't grow your business" | L7 (2026-10-20) | L2's lanes show who does each step; L10 lists their jobs. Done with you, the pie splits in halves |
 | The sales training: Project Closing Mastery before the first meetings, who takes it, their deals at the check-ins | L8 (2026-10-20) | O6 row 5 is joining the Academy; L11's notes say their deals come to the check-ins |
 | The thank-you screen | L5 stop 3 | L2 stop 2 names it in its line |
@@ -579,7 +579,7 @@ After stop 4, once the CSM records the client's yes: the quiet stamp "Agreed to 
 **Slots**
 - `funnel.*` once `prep.form_confirmed`, with `prep` questions overriding.
 - No confirmed form and no prep questions: the slide is hidden by default, and prep says why. If the CSM shows it anyway, the phone draws the example form (DESIGN 7.5), tagged "Example form", with the line "We're finishing yours."
-- When `funnel.kind` is WhatsApp, the title becomes "Your WhatsApp chat" (score round 2: "Your form" over a chat with no form) and the line: "Your ad opens a WhatsApp chat." Check the destination with the media buyer before the call. The phone shows the chat as sent, the ad it came from on top of the first message, as WhatsApp shows a chat started from an ad, tagged "Example wording"; the three steps sit level with the phone's foot. The message: "Hi, I saw your ad. I'd like to know more about {service}." (no service: "Hi, I saw your ad and I'd like to know more."). Beside it, "What happens next": 1. "Their first message is ready in the chat. They tap send." 2. "It arrives on your WhatsApp." 3. "Our team calls them within 5 minutes during working hours." (DWY: "Your team calls them.")
+- When `funnel.kind` is WhatsApp, the title becomes "Your WhatsApp chat" (score round 2: "Your form" over a chat with no form) and the line: "Your ad opens a WhatsApp chat." Check the destination with the media buyer before the call. The phone shows the chat as sent, the ad it came from on top of the first message, as WhatsApp shows a chat started from an ad, tagged "Example wording", or "Example wording, starter ad" when the picture is a starter template (score round 2 of the five services); the steps start 96 px under the line and the third, the call, is the thank-you stop's band, level with the phone's foot. Journey stop 2's waiting chat shows the same ad over the field. The message: "Hi, I saw your ad. I'd like to know more about {service}." (no service: "Hi, I saw your ad and I'd like to know more."). Beside it, "What happens next": 1. "Their first message is ready in the chat. They tap send." 2. "It arrives on your WhatsApp." 3. "Our team calls them within 5 minutes during working hours." (DWY: "Your team calls them.")
 
 **Notes**
 - Read the filter questions out: "This is the first filter. The call is the second."
@@ -790,7 +790,7 @@ The slide ends on stop 4.
 | Before your meetings | Keep at least 10 open slots, at different times | Our callers book into them. (Notes and recap: "On a day off, block each hour, not one all-day event.") | A calendar week: open slots at different times, a few hours blocked, and a day off blocked hour by hour; on its "Day off" line, at its start, the key, "Blocked" |
 | Before your meetings | Add each booking to your own system | If your team plans in other software, the booking goes there too, so nobody books over it. | None |
 | After each meeting | Mark every meeting the same day, with the value when you win | Your outcomes show which ads bring real projects. | None |
-| After each meeting | Follow up the ones thinking it over, and book the second meeting | You send the quote and set the second meeting. (Notes and recap: "Our caller checks in too.") | None |
+| After each meeting | Follow up the ones thinking it over, and book the second meeting | You send the quote and set the second meeting. Our caller checks in too. (Done for you; done with you, the first sentence alone.) | None |
 | Week to week | Leave the ads running through the first weeks | Pausing early ends the test before it tells us anything. | None |
 | Week to week | Keep your Drive folder fed | Fresh projects keep your ads from tiring. | Three of their project pictures |
 
@@ -996,7 +996,7 @@ An item is done from data, never from a Next press: the service when it was chos
 
 ## O2 · `goals`
 
-On screen as before, in two stops: stop 1 is "In 90 days" and the goal alone; stop 2 adds the other three answers and the footnote. The input's placeholder when no goal is on file stays `goals.input`, "Your 90-day goal, in your words". No new words.
+On screen as before, in two stops: stop 1 is "In 90 days" and the goal alone; stop 2 adds the other three answers and the footnote. The input's placeholder when no goal is on file is `goals.input`, "In your words" (score round 2 of the five services: the question above it and the track under it already say 90 days; "Your 90-day goal, in your words" stays as the field's name for a screen reader, `goals.inputLabel`). With the track under the field, the "In 90 days" label over it is not shown.
 
 **Notes, added:** "Stop 1: read their goal back, then pause. Stop 2: the rest of their answers. Remember the top challenge for slide 4."
 

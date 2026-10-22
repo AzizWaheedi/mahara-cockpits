@@ -15,7 +15,7 @@ import { makeAddFiles } from "./adsActions";
 import { DECK_NAME, t } from "./content";
 import { Field, Segmented, SlideControls, Toggle } from "./controls";
 import { DeckShell } from "./DeckShell";
-import type { SlideCtx, SlideDef } from "./deckContext";
+import { type SlideCtx, type SlideDef, titleFor } from "./deckContext";
 import type { CallKind } from "./deckData";
 import { type Pos, stepFrom } from "./engine";
 import { LaunchControls } from "./launchControls";
@@ -250,7 +250,8 @@ export function PrepView({
                             : "bg-muted-foreground/50",
                       )}
                     />
-                    {i + 1} {t(s.title, "en").replace("{name}", d.nameEn)}
+                    {i + 1}{" "}
+                    {t(titleFor(s, d), "en").replace("{name}", d.nameEn)}
                     <span className="sr-only">
                       {st === "ready"
                         ? ", ready"
@@ -276,7 +277,7 @@ export function PrepView({
               <div className="flex items-start justify-between gap-2">
                 <h2 className="text-sm font-semibold">
                   Slide {all.indexOf(slide) + 1} ·{" "}
-                  {t(slide.title, "en").replace("{name}", d.nameEn)}
+                  {t(titleFor(slide, d), "en").replace("{name}", d.nameEn)}
                 </h2>
                 <Button
                   size="sm"

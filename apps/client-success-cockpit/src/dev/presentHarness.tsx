@@ -26,7 +26,7 @@ import {
 } from "@/present/sources";
 import type { DeckIO } from "@/present/useDeckModel";
 import { DriveSheet } from "./deck/DriveSheet";
-import { fakeDrive } from "./deck/driveFixtures";
+import { fakeDrive, HARNESS_NOW } from "./deck/driveFixtures";
 import { FIXTURES, type FixtureKey } from "./deck/fixtures";
 import { PartsSheet } from "./deck/PartsSheet";
 import "@/index.css";
@@ -37,8 +37,6 @@ const deck = (
   params.get("deck") === "launch" ? "launch" : "onboarding"
 ) as DeckKind;
 const view = (params.get("view") ?? "present") as View;
-/** The harness's "now": the fixtures' Sunday morning, 19 October. */
-const HARNESS_NOW = Date.parse("2026-10-19T09:00:00Z");
 
 /**
  * The harness's stand-in for the server's link check (VIDEOS.md 3), so prep's

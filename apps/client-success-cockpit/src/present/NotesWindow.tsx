@@ -22,7 +22,12 @@ import { makeAddFiles } from "./adsActions";
 import type { DeckMessage } from "./channel";
 import { DECK_NAME, t } from "./content";
 import { groupLinks, Segmented, SlideControls } from "./controls";
-import { fillNotes, type SlideCtx, type SlideDef } from "./deckContext";
+import {
+  fillNotes,
+  type SlideCtx,
+  type SlideDef,
+  titleFor,
+} from "./deckContext";
 import type { CallKind } from "./deckData";
 import { TARGET_MINUTES } from "./decks";
 import {
@@ -481,7 +486,7 @@ export function NotesWindow({
             {String(index + 1).padStart(2, "0")} / {slides.length}
           </span>
           <h1 className="min-w-0 truncate text-base font-semibold">
-            {t(slide.title, "en").replace("{name}", d.nameEn)}
+            {t(titleFor(slide, d), "en").replace("{name}", d.nameEn)}
           </h1>
         </div>
         <div className="text-xs text-muted-foreground">
@@ -757,7 +762,7 @@ export function NotesWindow({
               ? // The next stop by its name, where the slide names its stops.
                 `Next: ${stopNames(tour + 2)?.replace(/^Next:\s*/, "") ?? `stop ${tour + 2} of ${stops}`}`
               : nextSlide
-                ? `Next: ${t(nextSlide.title, "en").replace("{name}", d.nameEn)}`
+                ? `Next: ${t(titleFor(nextSlide, d), "en").replace("{name}", d.nameEn)}`
                 : "Last slide"}
           </span>
           <Button onClick={() => hub.post({ type: "nav", to: "next" })}>

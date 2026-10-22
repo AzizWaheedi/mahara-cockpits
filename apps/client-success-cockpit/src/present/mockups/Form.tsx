@@ -271,7 +271,7 @@ export function WhatsAppChat({
   /** The prefilled message, in the customer's words. */
   message: string;
   sent?: boolean;
-  /** The ad's picture the chat was opened from (sent only). */
+  /** The ad's picture the chat was opened from. */
   ad?: string | null;
   /** "Example" on that picture when it is the example ad's. */
   adTag?: string | null;
@@ -340,11 +340,22 @@ export function WhatsAppChat({
         <Video aria-hidden />
         <PhoneIcon aria-hidden />
       </div>
-      <div className="dkc-wa-body">
+      <div className="dkc-wa-body" data-ref={ad ? "" : undefined}>
         <div className="dkc-wa-profile">
           <Avatar who={who} size="calc(var(--u) * 72)" />
           <b dir="auto">{pageName}</b>
         </div>
+        {/* The ad the chat was opened from, over the waiting message, as
+            WhatsApp shows a chat started from an ad (score round 2 of the
+            five services: without it the chat was 60% empty). */}
+        {ad ? (
+          <div className="dkc-wa-ref" aria-hidden>
+            <div className="dkc-wa-ad">
+              <img src={ad} alt="" draggable={false} />
+              {adTag ? <span className="dkc-cover-chip">{adTag}</span> : null}
+            </div>
+          </div>
+        ) : null}
       </div>
       <div className="dkc-wa-compose" data-part="message">
         <div className="dkc-wa-input">

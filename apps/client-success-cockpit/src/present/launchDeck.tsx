@@ -49,7 +49,7 @@ import { type Creative, phoneFor } from "./creative";
 import { dayMonth, dayShort, weekdayDate } from "./dates";
 import type { SlideCtx, SlideDef } from "./deckContext";
 import type { DeckData } from "./deckData";
-import { serviceField, serviceRound } from "./examples";
+import { scenesNamed, serviceField, serviceRound } from "./examples";
 import { useHug } from "./hug";
 import {
   FaintLanes,
@@ -364,6 +364,14 @@ const opensWhatsApp = (d: DeckData) =>
   d.launch.form.kind === "whatsapp" && d.launch.form.source !== "example";
 
 /**
+ * The chat phone's tag: the words are example wording, and a starter
+ * template's picture over them is said too (score round 2 of the five
+ * services: the starter's picture sat under "Example wording" alone).
+ */
+const waTag = (ad: Creative | null) =>
+  ad?.starter ? SHARED.tag.exampleWordingStarter : SHARED.tag.exampleWording;
+
+/**
  * The message a WhatsApp ad fills in (example wording, DESIGN 7.5): the
  * service only when it is written in the message's own script, so a
  * customer's line never mixes the two.
@@ -413,10 +421,12 @@ function FormPhone({
       app={lang}
       message={waMessage(d, lang)}
       // On L5 itself (fixer round 2): the message sent, under the ad it
-      // came from; journey stop 2 keeps it waiting to send.
+      // came from; journey stop 2 keeps it waiting to send, the ad it came
+      // from over the field (score round 2 of the five services: without
+      // it the chat was 60% empty).
       sent={slide}
-      ad={slide && feed ? (feed.video ? feed.poster : feed.url) : null}
-      adTag={slide && feed?.from === "example" ? t(EXAMPLE.short, lang) : null}
+      ad={feed ? (feed.video ? feed.poster : feed.url) : null}
+      adTag={feed?.from === "example" ? t(EXAMPLE.short, lang) : null}
     />
   ) : f.kind === "website" && f.source !== "example" ? (
     <PageShot shot={d.launch.pageShot} deck={lang} />
@@ -615,7 +625,7 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
   if (i === 1) {
     const wa = opensWhatsApp(d);
     const tag = wa
-      ? t(SHARED.tag.exampleWording, lang)
+      ? t(waTag(feed), lang)
       : L.form.source === "example"
         ? t(SHARED.tag.exampleForm, lang)
         : t(SHARED.tag.yourForm, lang);
@@ -952,9 +962,9 @@ type RedLineItem = { text: string; told: boolean };
  * English deck's two columns). The deck's own lines first, then the card's
  * lines in the other script with no translation, quoted as one block in
  * their own direction at the column's start edge, as wide as its widest
- * line, its marks on its own start; the first quoted block in the panel
- * carries one small tag saying where they come from ("On your card, in
- * Arabic" / بملفكم، بالإنجليزي). A line drops a leading word its head
+ * line, its marks on its own start; each quoted block carries one small
+ * tag saying where they come from ("On your card, in Arabic" /
+ * بملفكم، بالإنجليزي). A line drops a leading word its head
  * already says (DESIGN 22.6.2), so "Never" is said once.
  */
 function LineGroup({
@@ -1114,12 +1124,6 @@ function RedLinesPanel({ ctx }: { ctx: SlideCtx }) {
   // Never and Always side by side when Always is short (three lines or
   // fewer); else stacked. In either deck (fixer round 2).
   const side = nNever > 0 && nAlways > 0 && nAlways <= 3;
-  // The quoted block's tag, once: on the first column that has one.
-  const tagOn: "never" | "always" | null = never.length
-    ? "never"
-    : always.length
-      ? "always"
-      : null;
   const add = () => {
     const v = value.trim();
     if (!v) return;
@@ -1170,7 +1174,10 @@ function RedLinesPanel({ ctx }: { ctx: SlideCtx }) {
               lead={T.never}
               items={groups.never}
               quoted={never}
-              tag={tagOn === "never" ? T.card : null}
+              // Each quoted block carries its tag (score round 2 of the five
+              // services: said once, the English line under دايماً read as
+              // untagged).
+              tag={never.length ? T.card : null}
               lang={lang}
               group="never"
             />
@@ -1178,7 +1185,7 @@ function RedLinesPanel({ ctx }: { ctx: SlideCtx }) {
               lead={T.always}
               items={groups.always}
               quoted={always}
-              tag={tagOn === "always" ? T.card : null}
+              tag={always.length ? T.card : null}
               lang={lang}
               group="always"
             />
@@ -1303,10 +1310,15 @@ function CreativeFreedom({ ctx }: { ctx: SlideCtx }) {
   const pick = marked ? (marked.poster ?? marked.url ?? null) : null;
   // Their service's scenes first, every scene once; the two shown large on
   // the slides either side take their detail tile (DESIGN 22.14).
-  const tiles = useMemo(
-    () => ({ field: serviceField(d.example), next: serviceRound(d.example) }),
-    [d.example],
-  );
+  // Never a scene a starter template was cut from (DESIGN 22.18): L4
+  // shows the starters as theirs.
+  const tiles = useMemo(() => {
+    const avoid = scenesNamed(d.starterAds.map(a => a.fileName));
+    return {
+      field: serviceField(d.example, 18, avoid),
+      next: serviceRound(d.example, 6, avoid),
+    };
+  }, [d.example, d.starterAds]);
   return (
     <div className="dkc-freedom">
       {/* The stamp sits on the title row, at its end, on the title's
@@ -1465,13 +1477,14 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
       ? t({ en: "Filled in by Meta", ar: "تعبّيه ميتا تلقائياً" }, lang)
       : t(F.choice, lang);
   const thanksLine = d.launch.welcomeVideo ? F.thanksVideo : F.thanksLine;
+  const { model } = useFeed(ctx);
   // The tag names the picture, so it sits over the phone's outer corner
   // (as journey stop 2 tags the same phone), never on the title's line.
   const tag =
     f.source === "example"
       ? t(SHARED.tag.exampleForm, lang)
       : opensWhatsApp(d)
-        ? t(SHARED.tag.exampleWording, lang)
+        ? t(waTag(model.formCover), lang)
         : null;
   return (
     <div
@@ -1507,14 +1520,25 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
             <p className="dk-body">{t(F.page, lang)}</p>
           ) : (
             // A WhatsApp ad: what happens after the chat opens, step by step.
+            // The call (the last step) is the thank-you stop's band, level
+            // with the chat's foot; the first two sit under the line (score
+            // round 2 of the five services: all three at the foot left a
+            // 360 px gap under the line).
             <div className="dkc-wa-next">
               <span className="dk-label">{t(F.waNextHead, lang)}</span>
               <ol>
                 {[...F.waNext, d.mode.dwy ? F.waNextDwy : F.waNextUs].map(
-                  (step, i) => (
-                    <li key={step.en}>
+                  (step, i, all) => (
+                    <li
+                      key={step.en}
+                      data-band={i === all.length - 1 ? "" : undefined}
+                    >
                       <span className="dkc-q-n">{stepNumeral(i, lang)}</span>
-                      <span className="dk-body">{t(step, lang)}</span>
+                      <span className="dk-body">
+                        {i === all.length - 1
+                          ? fiveMinutes(t(step, lang))
+                          : t(step, lang)}
+                      </span>
                     </li>
                   ),
                 )}
@@ -1973,24 +1997,15 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
   let screen: ReactNode;
   if (at.key === "phone")
     screen = (
-      <>
-        {/* The install address, large in the gap beside the phone (the
-            fixer's round): 870 px of the stage stood empty, and the words
-            column said it at its smallest size. */}
-        <div className="dkc-portal-install">
-          <span className="dk-label">{t(P.installLabel, lang)}</span>
-          <p dir="ltr">{LINKS.portalInstall.replace(/^https:\/\//, "")}</p>
+      <Tagged tag={t(SHARED.tag.demo, lang)} className="dkc-portal-film">
+        <div className="dkc-film">
+          {/* Still, and before it plays: a frame from inside the app (its
+              overview, cropped to the screen), not the recording's splash.
+              The recording itself is cropped to the same screen in CSS. */}
+          <img src={lang === "ar" ? phoneAr : phoneEn} alt="" />
+          {still ? null : <PortalFilm lang={lang} />}
         </div>
-        <Tagged tag={t(SHARED.tag.demo, lang)} className="dkc-portal-film">
-          <div className="dkc-film">
-            {/* Still, and before it plays: a frame from inside the app (its
-                overview, cropped to the screen), not the recording's splash.
-                The recording itself is cropped to the same screen in CSS. */}
-            <img src={lang === "ar" ? phoneAr : phoneEn} alt="" />
-            {still ? null : <PortalFilm lang={lang} />}
-          </div>
-        </Tagged>
-      </>
+      </Tagged>
     );
   else if (at.key === "outcome")
     screen = (
@@ -2065,6 +2080,18 @@ function PortalSlide({ ctx }: { ctx: SlideCtx }) {
         <p className="dk-body dk-ink2">{t(copy(at), lang)}</p>
         {at.key === "outcome" ? (
           <p className="dk-body dkc-portal-foot">{t(P.footer, lang)}</p>
+        ) : null}
+        {/* The install address under "Install it like an app.", large, a
+            teal leader running from it to the phone it opens on (score
+            round 2 of the five services: beside the phone it floated
+            mid-slide, far from the words that say what to do with it). */}
+        {at.key === "phone" ? (
+          <div className="dkc-portal-install">
+            <span className="dk-label">{t(P.installLabel, lang)}</span>
+            <p dir="ltr">
+              <span>{LINKS.portalInstall.replace(/^https:\/\//, "")}</span>
+            </p>
+          </div>
         ) : null}
       </StageSwap>
       <div className="dkc-portal-screen">
@@ -2199,7 +2226,10 @@ function YourPart({ ctx }: { ctx: SlideCtx }) {
               .map((j, i, all) => (
                 <div key={j.key} className="dkc-part-cell" data-job={j.key}>
                   <p className="dkc-part-job">{t(j.job, lang)}</p>
-                  <p className="dkc-part-why">{t(j.why, lang)}</p>
+                  <p className="dkc-part-why">
+                    {t(j.why, lang)}
+                    {j.moreShown && j.more ? ` ${t(j.more, lang)}` : null}
+                  </p>
                   {pics[j.key] ?? null}
                   {head === "before" && i === all.length - 1 ? (
                     <PartWeek ctx={ctx} />
@@ -2650,6 +2680,7 @@ export function launchSlides(): SlideDef[] {
     {
       id: "cover",
       title: L_TITLES.cover,
+      titleOf: d => (d.launch.live ? LAUNCH.cover.titleLive : L_TITLES.cover),
       cover: true,
       notes: N.cover,
       render: ctx => <Cover ctx={ctx} />,
@@ -2880,6 +2911,8 @@ export function launchSlides(): SlideDef[] {
     {
       id: "green-light",
       title: L_TITLES["green-light"],
+      titleOf: d =>
+        d.launch.live ? LAUNCH.green.questionLive : L_TITLES["green-light"],
       notes: N["green-light"],
       render: ctx => <GreenLight ctx={ctx} />,
       missing: d =>

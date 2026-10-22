@@ -218,6 +218,51 @@ export const storyUrl = (theme: Theme) =>
 export const tileUrl = (theme: Theme, cut: "a" | "b") =>
   new URL(`./assets/examples/tile/${theme}-${cut}.webp`, import.meta.url).href;
 
+// ------------------------------------------------- the starter templates
+
+/**
+ * The example scenes a starter template was cut from, read from its file
+ * name (DESIGN 22.18): a template made from one of the eighteen renders
+ * keeps the scene's name as a word ("majlis-feed.webp",
+ * "starter-living-reel.webp"). O7's strip and L3's field leave those scenes
+ * out, so one picture is never "Example ads" on one stop and "Starter,
+ * from our templates" on the next (score round 2 of the five services: the
+ * full client's starters were crops of the example majlis and bedroom).
+ */
+export function scenesNamed(
+  names: readonly (string | null | undefined)[],
+): Theme[] {
+  const out: Theme[] = [];
+  for (const name of names) {
+    for (const word of (name ?? "").toLowerCase().split(/[^a-z0-9]+/))
+      if (isTheme(word) && !out.includes(word)) out.push(word);
+  }
+  return out;
+}
+
+/**
+ * The pick without the scenes a starter was cut from: its own scenes that
+ * are left (a sub-trade only as its lead), then its near ones up to three,
+ * so the lit tiles stay their service's work (or the nearest to it) and
+ * never a kitchen or a bathroom. Unchanged when nothing is avoided.
+ */
+function without(
+  pick: ServiceExample,
+  avoid: readonly Theme[],
+): ServiceExample {
+  if (!avoid.length) return pick;
+  const lead = pick.scenes[0];
+  const own = pick.scenes.filter(
+    x => !avoid.includes(x) && (x === lead || !SUB_TRADE.has(x)),
+  );
+  const near = (NEAR[pick.service] ?? []).filter(
+    x => !avoid.includes(x) && !own.includes(x),
+  );
+  // Three at least: the field keeps three tiles lit, each a scene of its own.
+  const scenes = [...own, ...near].slice(0, Math.max(3, own.length));
+  return scenes.length ? { ...pick, scenes } : pick;
+}
+
 // ----------------------------------------------------------- the field
 
 /**
@@ -254,12 +299,15 @@ type Cut = "a" | "b";
  * "These are not kitchens").
  */
 function tilePlan(
-  pick: ServiceExample,
+  example: ServiceExample,
   count: number,
+  avoid: readonly Theme[] = [],
 ): { field: string[]; round: string[] } {
+  const pick = without(example, avoid);
   const own = pick.scenes;
   const rooms = ROOMS.has(pick.service);
-  const fits = (x: Theme) => !SUB_TRADE.has(x) && !(rooms && SITES.has(x));
+  const fits = (x: Theme) =>
+    !SUB_TRADE.has(x) && !(rooms && SITES.has(x)) && !avoid.includes(x);
   const key = (x: Theme, c: Cut) => `${x}-${c}`;
   const used = new Set<string>();
   const field: (string | null)[] = Array.from({ length: count }, () => null);
@@ -274,6 +322,7 @@ function tilePlan(
     KEPT.slice(0, 2).map((_, k) => own[k % own.length]),
   );
   const round = sceneOrder(pick)
+    .filter(x => !avoid.includes(x))
     .slice(0, 6)
     .map(x => {
       const cut: Cut = own.includes(x) && keptDetail.has(x) ? "a" : "b";
@@ -306,8 +355,12 @@ function tilePlan(
 }
 
 /** L3's field: the client's own scenes kept lit, the rest near their service. */
-export function serviceField(pick: ServiceExample, count = 18): string[] {
-  return tilePlan(pick, count).field;
+export function serviceField(
+  pick: ServiceExample,
+  count = 18,
+  avoid: readonly Theme[] = [],
+): string[] {
+  return tilePlan(pick, count, avoid).field;
 }
 
 /**
@@ -315,8 +368,12 @@ export function serviceField(pick: ServiceExample, count = 18): string[] {
  * the field's kept tiles did not show, then the near ones' details; never a
  * tile the field shows.
  */
-export function serviceRound(pick: ServiceExample, count = 6): string[] {
-  return tilePlan(pick, 18).round.slice(0, count);
+export function serviceRound(
+  pick: ServiceExample,
+  count = 6,
+  avoid: readonly Theme[] = [],
+): string[] {
+  return tilePlan(pick, 18, avoid).round.slice(0, count);
 }
 
 /**
@@ -331,10 +388,17 @@ export const STRIP_LIT = new Set([0, 4]);
  * always their own service's picture; the others their remaining scenes,
  * then the near ones and the fill-ins.
  */
-export function stripTiles(pick: ServiceExample, count = 6): string[] {
+export function stripTiles(
+  example: ServiceExample,
+  count = 6,
+  avoid: readonly Theme[] = [],
+): string[] {
+  const pick = without(example, avoid);
   const own = pick.scenes;
   const lit = new Map([...STRIP_LIT].map((at, k) => [at, own[k % own.length]]));
-  const rest = sceneOrder(pick).filter(x => ![...lit.values()].includes(x));
+  const rest = sceneOrder(pick).filter(
+    x => ![...lit.values()].includes(x) && !avoid.includes(x),
+  );
   let j = 0;
   return Array.from({ length: count }, (_, i) => {
     const scene = lit.get(i) ?? rest[j++ % rest.length];

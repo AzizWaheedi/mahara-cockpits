@@ -24,7 +24,7 @@ import {
 const L_TITLES_GREEN = () => L_TITLES["green-light"].en;
 
 import type { Creative } from "../src/present/creative";
-import type { SlideCtx } from "../src/present/deckContext";
+import { type SlideCtx, titleFor } from "../src/present/deckContext";
 import { type DeckData, deckData } from "../src/present/deckData";
 import { shownSlides } from "../src/present/decks";
 import {
@@ -758,8 +758,14 @@ describe("the Gamma pass, drawn", () => {
     // One sentence per job on the slide (score round 1: six jobs at two
     // sentences each read as a document); the second goes to the notes
     // and the recap.
-    expect(h).toContain("You send the quote and set the second meeting.");
-    expect(h).not.toContain("Our caller checks in too.");
+    // The follow-up keeps its second sentence on the slide (score round 2
+    // of the five services): followed up by both of us, done for you.
+    expect(h).toContain(
+      "You send the quote and set the second meeting. Our caller checks in too.",
+    );
+    expect(html(data("dwy"), "your-part")).not.toContain(
+      "Our caller checks in too.",
+    );
     expect(h).not.toContain("On a day off");
     expect(h).toContain(
       "Pausing early ends the test before it tells us anything.",
@@ -898,6 +904,49 @@ describe("the Gamma pass, drawn", () => {
     expect(h).not.toContain("Meta's first charges");
     expect(L_TITLES_GREEN()).toBe("Happy for us to go live?");
   });
+
+  test("prep and the notes name what the slide shows: a client already live is live, and the ask is to carry on (score round 2 of the five services)", () => {
+    const slide = (id: string) => {
+      const s = launchSlides().find(x => x.id === id);
+      if (!s) throw new Error(id);
+      return s;
+    };
+    const live = data("starter");
+    expect(live.launch.live).toBe(true);
+    expect(titleFor(slide("cover"), live).en).toBe("{name} is live");
+    expect(titleFor(slide("green-light"), live).en).toBe(
+      "Happy for us to carry on?",
+    );
+    const ahead = data("full");
+    expect(ahead.launch.live).toBe(false);
+    expect(titleFor(slide("cover"), ahead).en).toBe("{name} goes live");
+    expect(titleFor(slide("green-light"), ahead).en).toBe(
+      "Happy for us to go live?",
+    );
+  });
+
+  test("a WhatsApp ad's chat: the starter's picture said in the tag, the ad over the waiting message, our call as the band (score round 2 of the five services)", () => {
+    for (const lang of ["en", "ar"] as const) {
+      const d = data("starter", lang);
+      const form = html(d, "form");
+      expect(form).toContain(
+        lang === "en"
+          ? "Example wording, starter ad"
+          : "صياغة للتوضيح، إعلان بداية",
+      );
+      // Two steps under the line, then our call as the band, its 5
+      // minutes underlined.
+      expect((form.match(/<li data-band=""/g) ?? []).length).toBe(1);
+      expect(form).toMatch(
+        /<li data-band=""><span class="dkc-q-n">[^<]*<\/span><span class="dk-body">[^<]*<span class="dkc-thanks-mark">/,
+      );
+      // Journey stop 2: the chat waiting to send, the ad it came from over
+      // the field.
+      const journey = html(d, "journey", 1);
+      expect(journey).toContain('class="dkc-wa-body" data-ref=""');
+      expect(journey).toContain("dkc-wa-ref");
+    }
+  });
 });
 
 /**
@@ -1013,14 +1062,16 @@ describe("creative flexibility, drawn", () => {
     // stacked its groups, then a third head with run-in heads): أبداً and
     // دايماً, each with its Arabic lines first, then the card's English
     // lines with no Arabic typed, quoted as one left-to-right block, never
-    // mixed into the Arabic lines. The block's tag is said once.
+    // mixed into the Arabic lines. Each quoted block carries its tag
+    // (score round 2 of the five services: once, the English line under
+    // دايماً read as untagged).
     const ar = html(data("full", "ar"), 2);
     const arHeads = [...ar.matchAll(/class="dkc-fixed-lead">([^<]*)</g)].map(
       m => m[1],
     );
     expect(arHeads).toEqual(["أبداً", "دايماً"]);
     expect(ar).toContain('class="dkc-fixed-pair" data-side=""');
-    expect(ar.match(/بملفكم، بالإنجليزي/g)).toHaveLength(1);
+    expect(ar.match(/بملفكم، بالإنجليزي/g)).toHaveLength(2);
     const never = ar.slice(
       ar.indexOf('data-group="never"'),
       ar.indexOf('data-group="always"'),
@@ -1035,7 +1086,9 @@ describe("creative flexibility, drawn", () => {
     expect(never).toMatch(
       /<div class="dkc-fixed-quoted"><span class="dkc-fixed-sublead">[^<]*<\/span><ul dir="ltr">/,
     );
-    expect(always).toMatch(/<div class="dkc-fixed-quoted"><ul dir="ltr">/);
+    expect(always).toMatch(
+      /<div class="dkc-fixed-quoted"><span class="dkc-fixed-sublead">[^<]*<\/span><ul dir="ltr">/,
+    );
     expect(always).toContain("Show our real projects, never stock photos");
     expect(ar).toContain("لا تحطون صور المالك");
     // A card line with its Arabic typed in prep takes its own group.

@@ -26,7 +26,12 @@ import {
 import siteTall from "./custom-hall-tall.webp";
 import siteFeed from "./custom-site.webp";
 import square from "./custom-square.webp";
-import feedPic from "./starter-interior-feed.webp";
+
+/**
+ * The harness's "now": the fixtures' Sunday morning, 19 October. Prep, the
+ * pretend worker and the Drive sheet all read it, so they agree.
+ */
+export const HARNESS_NOW = Date.parse("2026-10-19T09:00:00Z");
 
 export const DRIVE_SCENARIOS = [
   "idle",
@@ -326,7 +331,9 @@ function planFor(kind: DriveImport["kind"]): DriveImportFile[] {
   ];
 }
 
-const PICTURES = [siteFeed, square, siteTall, feedPic];
+// Their own pictures only: never a starter template's (score round 2 of
+// the five services: one picture is never theirs and ours).
+const PICTURES = [siteFeed, square, siteTall];
 
 /**
  * The harness's io for the Drive box: the scenario's imports, and a pretend

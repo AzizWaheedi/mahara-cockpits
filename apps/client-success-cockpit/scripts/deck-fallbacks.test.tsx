@@ -759,6 +759,19 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
     const alone = asking(one(data("sparse"), "goals", 0));
     expect(alone).toContain('data-alone=""');
     expect(alone).not.toContain("data-lift");
+    // Alone, 90 days is said by the question and the track only (score
+    // round 2 of the five services: four times on one slide): the field
+    // asks for their words, with no label over it.
+    for (const lang of ["en", "ar"] as const) {
+      const h = one(data("sparse", lang), "goals", 0);
+      expect(h).toContain(
+        `placeholder="${lang === "en" ? "In your words" : "بكلامكم"}"`,
+      );
+      expect(h).not.toContain("dkc-goal-label");
+      expect(h).toContain("dkc-goal-track");
+    }
+    // With answers to come (no track under the field), the label stays.
+    expect(one(noGoal, "goals", 0)).toContain("dkc-goal-label");
   });
 
   test("O4: the five main services always, Other only when their words fit none", () => {
@@ -894,10 +907,9 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
       expect(dwy).toMatch(
         /<header class="dkc-setup-head">[\s\S]*?dkc-guide[\s\S]*?dkc-status/,
       );
-      // Its picture in small on the head's line, so the board keeps one.
-      expect(dwy).toMatch(
-        /class="dkc-guide dkc-press"[^>]*><span class="dkc-guide-pic"/,
-      );
+      // The play mark and the length alone (score round 2 of the five
+      // services: a small picture there read as a blank button).
+      expect(dwy).not.toContain("dkc-guide-pic");
       expect(dwy).not.toMatch(/\{[a-zA-Z.]+\}/);
       // No guide recorded (the starter client): the Mahara OS card shows the
       // app's first screen on a phone, tagged as the demo workspace.

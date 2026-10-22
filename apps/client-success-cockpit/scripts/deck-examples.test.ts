@@ -14,6 +14,7 @@ import {
   SCENES,
   STRIP_LIT,
   sceneAt,
+  scenesNamed,
   serviceField,
   serviceRound,
   stripTiles,
@@ -485,6 +486,44 @@ describe("the tiles and the places (DESIGN 22.14)", () => {
     expect(serviceField(kitchen)[0]).toContain("/tile/kitchen-b.webp");
     // Every service's near scenes are real scenes, never its own again.
     for (const k of MAIN) for (const x of NEAR[k]) expect(THEMES).toContain(x);
+  });
+
+  test("a starter template cut from an example scene: the strip and the field leave the scene out (DESIGN 22.18)", () => {
+    expect(
+      scenesNamed(["majlis-feed.webp", "Starter_Living-reel.webp", null]),
+    ).toEqual(["majlis", "living"]);
+    expect(scenesNamed(["starter-feed.webp", "interior-majlis2.webp"])).toEqual(
+      [],
+    );
+    for (const k of MAIN) {
+      const pick = examplePick(null, k);
+      const avoid = [sceneAt(pick, 0)];
+      const strip = stripTiles(pick, 6, avoid);
+      const field = serviceField(pick, 18, avoid);
+      const round = serviceRound(pick, 6, avoid);
+      for (const url of [...strip, ...field, ...round])
+        expect({ k, scene: sceneOf(url) }).not.toEqual({ k, scene: avoid[0] });
+      expect(new Set([...field, ...round]).size).toBe(24);
+      // What stays lit is still their service's work (or its nearest),
+      // never a sub-trade.
+      for (const i of STRIP_LIT) {
+        const scene = sceneOf(strip[i]);
+        expect([...SCENES[k], ...NEAR[k]] as string[]).toContain(scene);
+        expect(scene).not.toMatch(/kitchen|bathroom/);
+      }
+    }
+    // Nothing avoided: the same tiles as before.
+    const interior = examplePick(null, "interior");
+    expect(stripTiles(interior, 6, [])).toEqual(stripTiles(interior));
+    // Every fixture's starters are named for none of the eighteen scenes.
+    for (const key of Object.keys(FIXTURES) as FixtureKey[]) {
+      const loaded = FIXTURES[key]("launch");
+      const starters = loaded.ads.filter(a => a.kind === "starter");
+      expect({
+        key,
+        scenes: scenesNamed(starters.map(a => a.fileName)),
+      }).toEqual({ key, scenes: [] });
+    }
   });
 
   test("the cover and journey stop 1 are different scenes; L4's second phone the alternate; L5 the third", () => {

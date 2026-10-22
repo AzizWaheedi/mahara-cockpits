@@ -4111,7 +4111,7 @@ open diamond, whichever rhythm it falls on; the ringed diamond marks the
 look back at about 30, 60 and 90 days; the first is open at full size with
 its own words. The key has one line per glyph.
 
-**Good to know.** The title is "Good to know" (زين تعرفونه); the rows sit
+**Good to know.** The title is "Good to know" (أشياء تهمكم); the rows sit
 under two small heads, "Money" and "Messages", 30 px apart. The Arabic rows
 run at 30/1.5 so five rows still end above the count.
 
@@ -6146,3 +6146,87 @@ both), O4 (full, Arabic), O7 (full in both languages, done with you,
 starter in both), O1 (full), L3 stop 3 (full in both languages), L4
 (full, starter), L5 (starter in both languages, full stop 2), prep's
 slide 4 (full, starter) and the Drive sheet.
+
+
+### 22.18 The five main services, score round 2's fixes, the second fixer (2026-10-22)
+
+Score round 2 of the five main services left seven slides under 4 (O2's
+empty state and O7 stop 1 at 3; O4, O6 for done with you, O7 stop 2, the
+WhatsApp L5 and L9's install stop at 3.5) and named one must. Each is
+fixed below; the shoulds are applied but one, and the cheap taste wins.
+
+**The rule this round adds: a starter template never reuses an example
+render.** A starter template is ours and labelled "Starter, from our
+templates"; an example render is labelled "Example ad(s)". One picture
+under both labels on consecutive stops (O7 stop 1, then stop 2) says two
+contradictory things. The harness's templates are cut from Mahara's own
+sales-deck pictures, none of the eighteen scenes, and production is
+guarded: `scenesNamed` reads an example scene's name from a starter's file
+name ("majlis-feed.webp"), and O7's strip, L3's field and its next round
+leave that scene out (their lit and kept tiles stay the service's own
+work, or its nearest, never a kitchen or a bathroom). Pinned in
+`deck-examples`.
+
+| Finding | What changed |
+|---|---|
+| must: full's starter templates were crops of the example majlis and bedroom, an "Example ad" on O7 stop 1 and "Your starter ads" on stop 2 | `starter-interior-feed.webp` is the sales deck's studio table at its materials tray (marble, brass, oak, fabric under a room's render), `starter-interior-reel.webp` its villa model over the plan; the starter client's reel moved to the table's far end (rolled drawings, a contract and pen), so no two fixtures share a crop. The pretend Drive worker no longer lands the starter picture as their own. The guard above |
+| should: O7 stop 1 left a 280 to 330 px empty band under both columns, its six tiles 127 x 159 | The strip is three across and two down, square, as large as the column's height allows (about 195 px, capped at 240), and runs to the column's foot; under about 100 px a tile the strip leaves. Lit tiles 0 and 4 sit on a diagonal; the scattered switch-off is unchanged |
+| should: O2's empty state said 90 days four times, and the field's rule and the track drew two lines 52 px apart | The placeholder is "In your words" (بكلامكم); the "In 90 days" label over the field shows only when no track is under it; with the track there, the field's own rule shows only under the pointer or while typing (the field stands 64 px under the question) |
+| should: O4's two-line service name took a dashed underline per line and read as two links; the column was empty under it | One rule under the whole name (`bdi` an inline block with a 2 px dashed bottom border, solid teal once chosen), hugged to its longest line (`useHug`: a wrapped inline block spans its column, so the rule ran 160 px past "design"); the text takes what the phone leaves and stands on the phone's middle |
+| should: O4's Arabic lead said كل three times about our own process | نبدي بخدمة وحدة، عشان الإعلانات والأسئلة والمكالمات كلها تكلم نوع واحد من العملاء. |
+| should: L5 for a WhatsApp ad had 360 px empty under the line, and the starter's picture sat under "Example wording" alone | The steps start 96 px under the line; the third (our call, its "5 minutes" underlined) is the thank-you stop's teal band, level with the chat's foot. The tag reads "Example wording, starter ad" (صياغة للتوضيح، إعلان بداية) when the chat's picture is a starter, on L5 and journey stop 2 |
+| should: L9's install address floated mid-slide on a 44 px dash, far from "Install it like an app." | It sits under those words in the words column at 40 px on one line (it may run past the 480 px column into the stage's empty start), a teal leader running from its end to 16 px before the phone |
+| should: L10's follow-up read as the client's alone | Done for you, its why on the slide is "You send the quote and set the second meeting. Our caller checks in too." (`moreShown` on that row); done with you, the first sentence alone |
+| should: the Arabic L3 panel squeezed Always's English line into 256 px and tagged only the Never column's quoted block | Never takes what its lines need up to half the panel (`fit-content(50%)`; at `fit-content(480px)` the quoted English Never line still took 456 px and Always's line kept three lines) and Always the rest; each quoted block carries بملفكم، بالإنجليزي |
+| taste: O6 for done with you put an 80 x 45 picture on each card's head line, read as a blank button | The play mark and the length alone there; the posters' veil is 0.55 (the pale Meta access frame read as a placeholder) |
+| taste: O7's close showed the third ring's numeral and a half-drawn check together | The numeral leaves in one beat (`--dk-t-beat`), then the check draws |
+| taste: the foot's rings (O4, O6) did not read on a share | 30 px rings, 17 px numerals |
+| taste: O1's phone shared no edge with the presenter's name | The presenter ends 120 px in, on the phone's and its tag's end edge (O1 only; L1's phone and presenter already share the content's edge) |
+| taste: three Arabic challenges ran left to right across the English deck's row | A list whose lines share one script takes its direction, as O7's red lines |
+| taste: L12's Arabic glued و to Latin and its title read literal | ومنصة Mahara OS (and the same in the onboarding notes' line); the title is أشياء تهمكم |
+| taste: prep and the notes said "goes live" and "Happy for us to go live?" for a client already live | `SlideDef.titleOf`: the cover's "is live" and the carry-on question, read by prep's strip, its panel head, the notes window and the live region |
+| taste: the Arabic cover showed the picked English ad while an Arabic one of theirs exists | Prep's cover field says so and names their ad in the deck's language |
+| taste: L13's upper 550 px read as unfinished | The question, the road and the check-in are one block on the stage's middle under their mark |
+| taste: the Drive sheet read the wall clock | It reads the harness's 19 October, 09:00 (`HARNESS_NOW`, now in `driveFixtures.ts`), as prep does |
+
+Not changed, and why:
+
+- **L3's field for an interior or fit-out client** (should; about half
+  exteriors). Seven indoor scenes give fourteen tiles, and the field and
+  the next round need twenty-four different ones. Repeating tiles brings
+  back the "one generated batch with duplicates" read that 22.4.1 removed,
+  and twelve tiles moves the pick tile (14) and the field's place between
+  stops. Left for the picture round (22.17); the field stays honest.
+- **Straight quotes around 'Filters'** (taste). The copy rules ask for
+  plain quotes (`deck-copy`), and without them the word reads as Title
+  Case mid-sentence.
+- **L4's Facebook phone repeating the feed's starter** (taste). Meta runs
+  one ad in both feeds; that is what the placements show, and with two
+  pictures and three phones one repeats either way.
+- **L3's words column** (taste). The stamp's place on the title row was
+  settled in score round 2; the source line shows on stop 2 only.
+- **L1's phone 120 px in** (taste). Its edge is the presenter's; moving
+  both would give the letterhead two margins on the cover the client sees
+  first.
+- **L4's starter tag above the phone** (taste). The focused phone runs
+  the content's full height from its top margin (y 96), so a tag over it
+  sits in the top band; in the callout column it stacked onto "Your page
+  and logo" (score round 4), so it stays over the phone's corner.
+- **O3's hub** (optional, scored 4).
+
+Checked: all deck tests (with two new pins: the per-client titles, and the
+WhatsApp chat's tag, band and waiting ad; and the O2 empty state's words),
+both typechecks, `check-shared.sh` and Biome on the touched files. The
+disk ran under 1 GB free for part of the round (another process filling
+it), so the shots waited for it to come back over 3 GB. Shots at 1920 x
+1080, read and deleted: O7 stops 1 to 3 (full, both languages), O2's empty
+state (starter) and its one-group row (done with you), O4 (full, both
+languages: the Arabic lead first wrapped onto two lines and pushed the
+phone onto the count, so it says الأسئلة for أسئلة النموذج and runs one
+line), O1 (full, both languages), O6 (done with you), L2 journey stop 2
+and L5 (starter, both languages), L3 stop 2 (full, both languages: at
+`fit-content(480px)` the Arabic Always line still took three lines, hence
+half), L9 stop 2 (full, both languages), L10 (full), L12 (Arabic: a
+no-break space between ومنصة and Mahara OS split the name into two
+isolates and read "OS Mahara", so it is a plain space), L13 (full) and L4
+stop 1 (starter).

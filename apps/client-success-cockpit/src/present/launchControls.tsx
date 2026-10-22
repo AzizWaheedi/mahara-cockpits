@@ -1063,6 +1063,20 @@ function FormControls({ d, model, full }: LaunchControlProps) {
 
 function CoverControls({ d, model }: LaunchControlProps) {
   const custom = d.launch.creatives.filter(c => !c.starter);
+  // The picked ad's words in the other language from this deck, while an ad
+  // of theirs in its language exists (score round 2 of the five services:
+  // the Arabic cover showed their English dining room, their Arabic majlis
+  // first on L2).
+  const picked = d.launch.cover;
+  const inLang =
+    picked?.language && picked.language !== d.lang
+      ? custom.find(c => c.language === d.lang)
+      : undefined;
+  const langHint = inLang
+    ? d.lang === "ar"
+      ? `This ad's words are in English. For the Arabic deck, pick their Arabic ad (${inLang.name}).`
+      : `This ad's words are in Arabic. For the English deck, pick their English ad (${inLang.name}).`
+    : null;
   return (
     <div className="space-y-4">
       <Field
@@ -1088,7 +1102,7 @@ function CoverControls({ d, model }: LaunchControlProps) {
         hint={
           custom.length
             ? d.launch.cover
-              ? null
+              ? langHint
               : "No cover picked: it shows their first ad. Pick another here."
             : "No ads of their own yet: the cover shows the example ad, labelled Example ad."
         }

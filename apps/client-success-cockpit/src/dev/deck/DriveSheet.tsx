@@ -13,9 +13,11 @@ import {
   DRIVE_SCENARIOS,
   type DriveScenario,
   driveScenario,
+  HARNESS_NOW,
 } from "./driveFixtures";
 
-const NOW = Date.now();
+/** The harness's clock (19 October, 09:00), as prep reads it. */
+const NOW = HARNESS_NOW;
 
 function box(
   lang: Lang,
@@ -114,7 +116,11 @@ export function DriveSheet({ lang }: { lang: Lang }) {
             <h2 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {c.name}
             </h2>
-            <DriveBox box={c.box} initial={c.initial} />
+            <DriveBox
+              box={c.box}
+              initial={c.initial}
+              now={() => new Date(NOW)}
+            />
           </section>
         ))}
       </div>
