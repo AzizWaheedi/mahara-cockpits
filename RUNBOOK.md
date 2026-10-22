@@ -265,6 +265,7 @@ names what is wrong.
 | "Fathom's calls could not be read": `Fathom 401` or `DeepSeek 402` | New `FATHOM_API_KEY`, or top up the DeepSeek balance (`GET https://api.deepseek.com/user/balance`) | Aziz |
 | No objection categories though registrants had sales calls | The call's invitee email is not the registrant's, or the title reads like a client call (launch, check-in, onboarding). `python3 pull.py objections` prints what it matched | Aziz |
 | Landing page numbers stop moving | `webinar.maharamedia.com` must still load `/mm-track.js` (sites/webinar); the Edge Function `webinar-events` must be ACTIVE in Creative Triage | Aziz |
+| A client form page's "Where visitors stop" (media buyer cockpit, client page > Lead page) says no visit recorded although the page has traffic | The page's build must carry `events_url` (olivar-landing `client.json`); the Edge Function `page-form-events` must be ACTIVE with verify_jwt off; the page's host must be in `cockpit_page_forms.event_hosts` (add the live domain at go-live) | Muhammed |
 
 ## Team meetings
 

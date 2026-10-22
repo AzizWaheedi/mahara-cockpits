@@ -20,6 +20,8 @@ EXPECTED = {
     "sales-live": False,
     "sales-mirror": False,
     "webinar-events": False,
+    # Client form pages (Merge Studio first) post one event per screen here; public like webinar-events.
+    "page-form-events": False,
     "ghl-appointments-sync": False,
     "ghl-leads-sync": False,
     "ghl-pipelines-sync": False,
