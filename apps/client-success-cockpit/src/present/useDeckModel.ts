@@ -71,6 +71,8 @@ export interface DeckIO {
   }) => Promise<LaunchAd>;
   /** Change an upload's words, placement, kind or hidden flag. */
   updateAd?: (id: string, patch: Record<string, unknown>) => Promise<LaunchAd>;
+  /** Delete a file from the client's tray for good (prep's tray, launchAds.remove). */
+  removeAd?: (id: string) => Promise<LaunchAd>;
   /** Read a file's size, length and first frame. */
   fileFacts?: (file: File) => Promise<FileFacts>;
   /** Save a video to one of this deck's slots (shared by every client's deck). */

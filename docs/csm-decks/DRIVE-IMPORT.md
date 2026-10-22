@@ -325,7 +325,7 @@ it and writes nothing more.
 - **Peek** (`p_peek = true`, the doctor): returns `{"queued", "working",
   "oldestQueuedAt", "workerSeenAt"}` and writes nothing (not even the
   worker row).
-- Otherwise it looks at up to five imports, oldest first (by
+- Otherwise it looks at up to twenty imports, oldest first (by
   `requested_at`), that are `queued`, or `working` with `heartbeat_at`
   older than 5 minutes, taken `FOR UPDATE SKIP LOCKED`. For each, in this
   order:
@@ -1059,7 +1059,7 @@ the code in `hint`; the box shows the sentence under the field for the
   deck window and the other window show the new files.
 - `requestDriveImport` with `existing: true` shows that import's progress,
   with no error.
-- `{time}` is the CSM's local time, "13:02", or "yesterday, 13:02".
+- `{time}` is the CSM's local time, "13:02", or "yesterday, 13:02"; in Arabic with الساعة, as a time is said after a verb: "الساعة 13:02", "أمس الساعة 09:05", "١٦ أكتوبر الساعة 09:05" (score round 4).
 
 ## 9. The prep keys: `dos_donts_ar`, `example_theme` and `service_chosen_at`
 
@@ -1209,6 +1209,19 @@ already does:
     and `cockpit_csm_deck_video_poster_reset` are definers callable by
     nobody;
   - and the three files apply twice.
+- **The tray's source and two tidy-ups** (`20261020160300`, section 12,
+  its own block after the visual pass's): the file applies twice on top of
+  the others; the census runs again (still 45; the read stays stable, the
+  reserve volatile, both for signed-in seats only); the read returns every
+  row and field `cockpit_csm_launch_ads_rows` gives, in its order, plus
+  `source`, and on a Drive row the importer's first name (the address's
+  local part, then the team list's name, Arabic or mixed case kept) and
+  the paste's time, never an address or the link; the deck's own read
+  carries none of it; a seat without that client, a seat without client
+  success, a signed-out caller and the service key are refused; a hand
+  upload's name loses folders and invisible and direction marks, a name
+  with nothing left is its id and no name stays none; claim takes the
+  next client's import behind six stuck ones.
 
 ## 11. As built: the fixer's round (2026-10-21)
 
@@ -1354,18 +1367,106 @@ that one never reaches it.
   that is not in a shared drive. A seat limited to one client that pastes
   another client's own share (or a teammate's personal Gmail folder that
   the desk's account can open) brings it into this client's tray. It needs
-  the link, and the box and the tray show every file's name, but nothing
-  stops it. Closing it means proving the share is public ("anyone with the
-  link") or knowing each client's own Google accounts.
-- **A working import whose worker stopped shows "Bringing in" forever.**
-  The box's "Nothing has picked this up yet" (`driveView.ts`
-  `nobodyPickedUp`) covers queued imports only; when the disk gate or a
-  missing cron line stops the worker after a claim, `workerSeenAt` goes
-  stale but a `working` import keeps its progress line. The same test on a
-  working import would say so.
-- **Claim looks at five imports a minute.** Five clients whose cards are
-  missing from the roster hold the sixth client's import for up to 30
-  minutes (then they end `not_started`).
-- **The upload by hand keeps direction marks in its name.**
-  `cockpit_csm_launch_ad_reserve` (20261019120000, live) strips control
-  characters only; the import's names are now cleaner than an upload's.
+  the link, and nothing stops it. Closing it means proving the share is
+  public ("anyone with the link") or knowing each client's own Google
+  accounts. **Mitigated, not closed** (below): prep's list of the client's
+  files now says on each Drive file who pasted it and when, and deletes it
+  for good with one more press. It still needs the CSM to look.
+
+**Fixed after the review (2026-10-21).**
+- **A working import whose worker stopped no longer shows "Bringing in"
+  forever.** A `working` import whose importer has been quiet for over 10
+  minutes (`workerSeenAt`, else `startedAt`) says "This stopped part-way.
+  The Drive importer last ran {time}. It carries on when it runs again;
+  upload the files here if you need them now." (`driveView.ts`
+  `STALLED_MS` and `stalledWorking`, `driveCopy.ts` `stalled`, the row in
+  section 8's table, its test in `deck-drive.test.tsx`). The harness has
+  its own `stalled` scenario (`?drive=stalled`, and a card on the
+  `view=drive` sheet): a working import whose worker was last seen 11
+  minutes before the harness's clock, so the line can be reviewed.
+- **The harness's pretend worker lands files as the server does** (score
+  round 1, harness only): a `.mov` lands as `video/mp4` with its poster
+  (the tray says Video, not Picture), and a file that another open link
+  has already brought in is skipped instead of landing twice, as the
+  server's partial unique index refuses it. The harness's Drive file names
+  no longer say kitchens (`living-corner.jpg`).
+- **Prep names where each file came from** (the guard for a link pasted
+  under the wrong client). `20261020160300_csm_launch_ads_source.sql`
+  replaces `cockpit_csm_launch_ads_read`: every row and field it returned,
+  in the same order (it still reads through `cockpit_csm_launch_ads_rows`),
+  plus `source` (`upload` or `drive`) on each row and, on a Drive row,
+  `importedBy` (the first word of the importer's name on the team list,
+  `cockpit_people`, matched by address, skipping a title ending in a dot
+  ("Eng.") or a lone initial; else the address's first part of two letters
+  or more between its dots, underscores and pluses, so s.ahmed reads Ahmed;
+  capitalised when all lower case; at most 40 characters) and `importedAt`
+  (the import's `requested_at`), from this client's own import only (the
+  join also matches `task_id`). The three added fields never carry an
+  address or the link. The row's own `createdBy`, returned since
+  `20261019120000` and kept here, is unchanged, and on a Drive row it is
+  the importer's address; only a seat with that client reads the row.
+  Grants, `SECURITY DEFINER` and `search_path = ''` are as they were. In the browser, `sources.ts`'s
+  `launchAdSchema` takes the three as optional fields (a read from before
+  the migration still parses; a source it does not know reads as none),
+  and `TrayFiles.tsx` lists the client's files in prep's ads panel, under
+  "Add a file", newest first: name, picture or video, kind, hidden, and
+  on a Drive file "From Drive · pasted by {first name} · {when}" (the box's
+  `timeLabel`, with "today, 08:15" for today's paste, so it never reads as
+  a bare clock beside "yesterday, 17:40"); newest first by when each file
+  was made. Delete asks once more, then calls `launchAds.remove`
+  (`cockpit_csm_launch_ad_remove`, unchanged, which keeps the row for the
+  audit, and the Edge Function deletes the bytes). The deck window reads
+  the same list (`launchAds.list`) but never renders these fields: only
+  prep mounts `TrayFiles` (pinned in `deck-tray.test.tsx`), and
+  `cockpit_csm_deck_sources`, its fallback, carries none of them. The
+  client-facing deck and the notes window never say where a file came
+  from.
+- **Claim looks at twenty imports a minute** (`LIMIT 20` in
+  `20261020160000`, not yet applied, was 5), so a few clients whose cards
+  are missing from the roster no longer hold the next client's import for
+  up to 30 minutes. The PGlite test queues six stuck imports ahead of
+  Acme's and claim takes Acme's.
+- **The upload by hand cleans its name as the plan does.**
+  `20261020160300` replaces `cockpit_csm_launch_ad_reserve` with the live
+  body (read on 2026-10-21; it matched `20261019120000` line for line) and
+  one change: the name loses C0 and C1 controls, the Arabic letter mark,
+  the zero-width space, line and paragraph separators, direction marks,
+  embeddings, overrides and isolates, word joiners and the BOM, as the
+  plan's does, with the plan's character class written the same way, as
+  `\u` escapes (score round 4: typed literally, U+2028 split the line and
+  an editor's "unusual line terminators" fix would have turned the class
+  into a range that strips dashes and quotes; GitHub also flags literal
+  bidi characters). A name that was sent and has nothing left is the
+  file's own id, as the plan's is the Drive id; no name sent stays none.
+  Printable marks stay: "site – walk ‘a’….mp4" keeps its dash, quotes and
+  ellipsis (pinned).
+- **The file refuses to apply before `20261020160000`.** A plpgsql body is
+  checked only when it runs, so `20261020160300` alone would apply cleanly
+  and then fail every prep tray read with "column a.source does not
+  exist". A guard after `BEGIN` raises "Apply
+  20261020160000_csm_launch_ads_drive.sql first…" unless the imports
+  table, the team list and the tray's `source` and `import_id` columns are
+  there (pinned in PGlite).
+- **Every ffmpeg-family process that reads the Drive bytes opens local files
+  only.** The second pass locked the conversion alone; `ffprobe`
+  (`media.probe`, run on every downloaded video) and the poster
+  (`media.frame_at`, from the unconverted original when no conversion is
+  needed) now take `-protocol_whitelist file` too (`LOCAL_ONLY` in
+  `deck_import.py`; `input_args` in `media.py`, empty by default, so the
+  other workers' calls are unchanged). Pinned in `test_deck_import.py`.
+- **A broken answer is a transport error for every caller.**
+  `http.client.IncompleteRead` (and any `http.client.HTTPException`) is
+  not an `OSError`, so `desk/http.py` let it through: at `file_reserve` or
+  `file_landed` a good file failed as "storage", and at claim, plan or
+  finish the run ended in a traceback. `http.request` now retries it and
+  raises `HttpError(0)`, so reserve and landed end the turn and the import
+  resumes; the storage upload catches it the same way. Pinned in
+  `test_deck_import.py`.
+
+**The order to apply (the frontend ships after them).** Live
+`cockpit_csm_deck_prep_value` accepts neither `example_theme` nor
+`service_chosen_at` (checked read-only), so slide 4's "Launch with this" and
+prep's example switch would be refused on save. Apply `20261020160000`,
+`20261020160100`, `20261020160200` and `20261020160300`, in that order,
+before `scripts/ship.sh client-success`, then check on production that
+"Launch with this" and the example switch save.

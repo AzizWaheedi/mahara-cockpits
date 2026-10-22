@@ -1,4 +1,5 @@
--- CSM decks, the visual pass: three prep keys (docs/csm-decks/DRIVE-IMPORT.md 9).
+-- CSM decks, the visual pass: three prep keys (docs/csm-decks/DRIVE-IMPORT.md 9)
+-- and a wider starter_pack.
 --
 --   dos_donts_ar       launch row: the Arabic of each Do's & Don'ts card line,
 --                      keyed by the line as parsed (DESIGN.md 22.6.2)
@@ -17,10 +18,16 @@
 --                      notes window's Undo). The save's keep-the-first-time
 --                      rule names only the two older stamps, so a second
 --                      choice on the call stamps again.
+--   starter_pack       onboarding row, widened (fixer round 2): the main
+--                      service the ready pack was made for, one of the five
+--                      keys or other, so O7 shows the pack only while slide
+--                      4's choice is that service. A yes saved before keys
+--                      is still kept and read as the kickoff's service.
 --
 -- It replaces cockpit_csm_deck_prep_value with the body of
 -- 20261019120000_csm_decks.sql (the only file that defines it), two new
--- branches before its ELSE and one key added to its stamp branch. Everything
+-- branches before its ELSE, one key added to its stamp branch and
+-- starter_pack given its own branch out of the yes-or-no keys. Everything
 -- else is unchanged, and so are its grants (revoked from every role;
 -- cockpit_csm_deck_prep_save calls it as owner). The prep row's 64 KB cap and
 -- the save's audit row cover the new keys. It applies twice without error.
@@ -51,7 +58,16 @@ BEGIN
     RETURN public.cockpit_csm_deck_text(p_value, 300, p_key);
   WHEN v_base = 'thank_you' THEN
     RETURN public.cockpit_csm_deck_text(p_value, 500, p_key);
-  WHEN p_key IN ('starter_pack','welcome_video','booking_video','call_guide_checked','dwy_os_approved') THEN
+  WHEN p_key = 'starter_pack' THEN
+    -- The service the pack was made for (DESIGN.md 22.4.6): one of the five
+    -- keys or other (the service in the client's own words), or a yes
+    -- saved before keys (read as the kickoff's service).
+    IF t = 'boolean' THEN RETURN p_value; END IF;
+    IF t = 'string' AND (p_value #>> '{}') IN ('design-build','interior','architecture','fitout','construction','other') THEN
+      RETURN p_value;
+    END IF;
+    RAISE EXCEPTION 'starter_pack is a yes or no, or one of the service keys';
+  WHEN p_key IN ('welcome_video','booking_video','call_guide_checked','dwy_os_approved') THEN
     IF t <> 'boolean' THEN RAISE EXCEPTION '% is a yes or no', p_key; END IF;
     RETURN p_value;
   WHEN p_key = 'dialect' THEN RETURN public.cockpit_csm_deck_choice(p_value, ARRAY['kw','sa'], p_key);

@@ -89,7 +89,9 @@ export function WhatsAppGroup({
         from: { x: lx(rtl ? m.left : m.right) + 10, y: mid },
         // The bus 100 px before the roles, so the trunk from the mark is
         // under 300 px and the drawing reads as one group (score round 2:
-        // 470 px of trunk left a hole in the middle of it).
+        // 470 px of trunk left a hole in the middle of it). Not nearer the
+        // mark (score round 4 tried 196): the bus then ran through stop
+        // 2's reply-time block, which fills the hub's 460 px column.
         bus: Math.min(...to.map(p => p.x)) - 100,
         to,
       };

@@ -11,7 +11,13 @@ import { type ReactNode, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { focusOf, playOn } from "./AdsStage";
-import { PAIN_STORY, type Pain } from "./callScript";
+import {
+  ANY_PROJECT,
+  familyOf,
+  familyOfKey,
+  PAIN_STORY,
+  type Pain,
+} from "./callScript";
 import {
   CTA,
   type Cta,
@@ -66,6 +72,8 @@ export interface LaunchControlProps {
   still?: boolean;
   /** The Drive box's state, kept by the window (DRIVE-IMPORT.md 8). */
   drive?: DriveBoxState;
+  /** Prep's list of the saved files, under "Add a file" (TrayFiles). */
+  tray?: ReactNode;
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -276,19 +284,32 @@ function AdsControls(p: LaunchControlProps) {
   const prep = model.prep.launch;
   const planned = strings(prep.platforms_planned);
   const saved = Boolean(selected && !selected.startsWith("local-"));
-  // No creative of theirs at all: the phones show the example (DESIGN
-  // 22.5.2), said here with its switch, above the ways to bring theirs in.
+  // No ad of their own (starter templates are ours, so they do not count):
+  // the cover shows the example, and with no file at all the phones do too
+  // (DESIGN 22.5.2, 22.15), said here with its switch, above the ways to
+  // bring theirs in.
   const noAds =
-    !d.launch.creatives.length &&
+    !d.launch.creatives.some(c => !c.starter) &&
     !d.launch.metaCreatives.some(c => Boolean(c.poster ?? c.url));
+  const starters = d.launch.creatives.some(c => c.starter);
   return (
     <div className="space-y-4">
       {noAds ? (
         <Section title="The example ad">
           <div className="text-xs text-muted-foreground">
-            No ads yet, so the phones show an example ad (
-            {EXAMPLE.names[d.example.theme]}). Paste a Drive link or add files
-            here to show theirs.
+            {starters ? (
+              <>
+                No ads of their own yet, so the cover shows an example ad (
+                {EXAMPLE.names[d.example.theme]}); the phones show the starter
+                templates. Paste a Drive link or add files here to show theirs.
+              </>
+            ) : (
+              <>
+                No ads yet, so the phones show an example ad (
+                {EXAMPLE.names[d.example.theme]}). Paste a Drive link or add
+                files here to show theirs.
+              </>
+            )}
           </div>
           <ExampleSwitch
             d={d}
@@ -310,6 +331,7 @@ function AdsControls(p: LaunchControlProps) {
           Showing a preview is not approval; approval happens in the group.
         </div>
       </Section>
+      {p.tray ?? null}
       <Section title="On the phones">
         <div className="flex flex-wrap gap-2">
           <Button
@@ -558,6 +580,11 @@ function TextForm({
 function CallControls(p: LaunchControlProps) {
   const { d, model, full, sendKey } = p;
   const prep = model.prep.launch;
+  // What a blank project says: the launch service's own line (one of the
+  // five main services, never a sub-trade's "your new kitchen").
+  const blankProject =
+    (familyOfKey(d.launch.serviceKey) ?? familyOf(d.launch.service.en))?.project
+      .en ?? ANY_PROJECT.en;
   const set = (patch: Overrides, now = false) =>
     model.setPrep("launch", patch, now);
   const call = d.launch.call;
@@ -683,7 +710,7 @@ function CallControls(p: LaunchControlProps) {
               k="project"
               prep={prep}
               set={patch => set(patch)}
-              hint="Blank uses the service's family: 'your new kitchen'."
+              hint={`Blank uses the launch service's line: '${blankProject}'.`}
             />
             <Field
               label="The customer's budget band"
@@ -1060,8 +1087,10 @@ function CoverControls({ d, model }: LaunchControlProps) {
         label="The cover's creative (their own, never a starter)"
         hint={
           custom.length
-            ? null
-            : "No custom creatives yet: the cover shows the faint lanes."
+            ? d.launch.cover
+              ? null
+              : "No cover picked: it shows their first ad. Pick another here."
+            : "No ads of their own yet: the cover shows the example ad, labelled Example ad."
         }
       >
         <select
@@ -1076,7 +1105,9 @@ function CoverControls({ d, model }: LaunchControlProps) {
           }
           aria-label="Cover creative"
         >
-          <option value="">The faint lanes</option>
+          <option value="">
+            {custom.length ? "Their first ad" : "The example ad"}
+          </option>
           {custom.map(c => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -1084,6 +1115,15 @@ function CoverControls({ d, model }: LaunchControlProps) {
           ))}
         </select>
       </Field>
+      {/* No ad of their own: the cover's example is switched here too
+          (by service, then by scene), as in the onboarding prep. */}
+      {custom.length ? null : (
+        <ExampleSwitch
+          d={d}
+          prep={model.prep.onboarding}
+          setPrep={model.setPrep}
+        />
+      )}
     </div>
   );
 }
@@ -1120,7 +1160,10 @@ function partText(d: DeckData): string {
       `${t(P.heads[head], lang)}:`,
       ...jobs
         .filter(j => j.head === head)
-        .map(j => `- ${t(j.job, lang)}. ${t(j.why, lang)}`),
+        .map(
+          j =>
+            `- ${t(j.job, lang)}. ${t(j.why, lang)}${j.more ? ` ${t(j.more, lang)}` : ""}`,
+        ),
     ]),
     "",
     GROUP_LINKS.testing[lang],

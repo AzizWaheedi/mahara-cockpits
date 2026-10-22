@@ -15,6 +15,7 @@ Rules the writes follow, learned the hard way on the radar:
 """
 from __future__ import annotations
 
+import http.client as http_client
 import json
 import os
 import re
@@ -326,7 +327,7 @@ class Supabase:
                     sleep(2)
                     continue
                 raise http.HttpError(e.code, body[:300].decode("utf-8", "replace"), body, url) from None
-            except (urllib.error.URLError, OSError) as e:
+            except (urllib.error.URLError, OSError, http_client.HTTPException) as e:
                 if _is_timeout(e) and not last:
                     sleep(2)
                     continue

@@ -13,7 +13,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 RUN = {"capture_output": True, "text": True, "check": False, "stdin": subprocess.DEVNULL}
 
@@ -22,8 +22,10 @@ def has(binary: str) -> bool:
     return shutil.which(binary) is not None
 
 
-def probe(path: Path) -> dict[str, Any]:
-    """Duration, size, frame rate and whether there is audio."""
+def probe(path: Path, input_args: Sequence[str] = ()) -> dict[str, Any]:
+    """Duration, size, frame rate and whether there is audio. `input_args`
+    go before the input (the deck importer's `-protocol_whitelist file`);
+    the default leaves every other worker's call as it was."""
     out: dict[str, Any] = {
         "seconds": None, "width": None, "height": None, "fps": None,
         "has_audio": None, "bytes": None, "video_codec": None, "audio_codec": None,
@@ -36,7 +38,7 @@ def probe(path: Path) -> dict[str, Any]:
     if not has("ffprobe"):
         return out
     res = subprocess.run(
-        ["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)],
+        ["ffprobe", "-v", "error", *input_args, "-print_format", "json", "-show_format", "-show_streams", str(path)],
         timeout=120, **RUN,
     )
     try:
@@ -143,16 +145,18 @@ def loudness(path: Path) -> Optional[float]:
         return None
 
 
-def frame_at(path: Path, ts: float, dest: Path, *, width: int = 480) -> bool:
+def frame_at(path: Path, ts: float, dest: Path, *, width: int = 480,
+             input_args: Sequence[str] = ()) -> bool:
     """One JPEG. `-strict unofficial` is the fix for reels whose colour range
-    makes ffmpeg refuse to write a JPEG (recorded 2026-09-08)."""
+    makes ffmpeg refuse to write a JPEG (recorded 2026-09-08). `input_args`
+    go before the input, as in `probe`."""
     if not has("ffmpeg"):
         return False
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         dest.unlink()
     res = subprocess.run(
-        ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", "-ss", str(max(0.0, ts)), "-i", str(path),
+        ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", *input_args, "-ss", str(max(0.0, ts)), "-i", str(path),
          "-frames:v", "1", "-q:v", "5", "-vf", f"scale='min({width},iw)':-2", "-strict", "unofficial", str(dest)],
         timeout=120, **RUN,
     )

@@ -82,7 +82,11 @@ const named = (text: string, name: string, lang: Lang) =>
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** {time}: the CSM's local time, "13:02", or "yesterday, 13:02". */
+/**
+ * {time}: the CSM's local time, "13:02", or "yesterday, 13:02"; in Arabic
+ * with الساعة, as a time is said after a verb ("الساعة 13:02", "أمس الساعة
+ * 09:05").
+ */
 export function timeLabel(iso: string, now: Date, lang: Lang): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -90,8 +94,8 @@ export function timeLabel(iso: string, now: Date, lang: Lang): string {
   const day = (x: Date) =>
     new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((day(now) - day(d)) / 86_400_000);
-  const comma = lang === "ar" ? "، " : ", ";
-  let out = hm;
+  const comma = lang === "ar" ? " الساعة " : ", ";
+  let out = lang === "ar" ? `الساعة ${hm}` : hm;
   if (days === 1) out = `${DRIVE_UI.yesterday[lang]}${comma}${hm}`;
   else if (days !== 0) {
     const month = new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en-GB", {

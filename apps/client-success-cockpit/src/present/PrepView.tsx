@@ -21,6 +21,7 @@ import { type Pos, stepFrom } from "./engine";
 import { LaunchControls } from "./launchControls";
 import { saveLine } from "./NotesWindow";
 import type { DeckKind } from "./sources";
+import { TrayFiles } from "./TrayFiles";
 import type { DeckIO, DeckModel } from "./useDeckModel";
 import { useDriveImports } from "./useDriveImports";
 import { PrepVideos } from "./VideoPrep";
@@ -129,6 +130,7 @@ export function PrepView({
   };
   const sl = saveLine(model.save);
   const missing = slide?.missing?.(d) ?? [];
+  const todo = slide?.todo?.(d) ?? [];
   const stops = shown.map(x =>
     Math.max(1, x.stops?.({ ...base, tour: 0, setTour: () => {} }) ?? 1),
   );
@@ -305,6 +307,13 @@ export function PrepView({
               ) : (
                 <div className="text-xs txt-good">Ready.</div>
               )}
+              {todo.length ? (
+                <ul className="space-y-1 text-xs text-muted-foreground">
+                  {todo.map(m => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
+              ) : null}
               {(slide.id === "welcome" || slide.id === "cover") &&
               uploadLogo ? (
                 <Field
@@ -354,6 +363,18 @@ export function PrepView({
                   updateAd={io?.updateAd}
                   messages={messages}
                   drive={drive}
+                  tray={
+                    <TrayFiles
+                      ads={model.loaded?.ads ?? []}
+                      now={io?.now?.() ?? new Date()}
+                      remove={io?.removeAd}
+                      onRemoved={() => {
+                        void model
+                          .reload()
+                          .then(() => model.hub.post({ type: "ads" }));
+                      }}
+                    />
+                  }
                 />
               ) : (
                 <SlideControls

@@ -192,19 +192,24 @@ export const SERVICES = {
 /**
  * The example ads (CONTENT "The visual pass", CONTENT-AR decision 14):
  * Mahara's own pictures, no client's work, labelled wherever they show.
- * إعلان مثال, never قالب (a template goes live) and never تجريبي.
+ * إعلان للتوضيح (score round 4: إعلان مثال read as a word-for-word
+ * "Example ad"; the decks already say نموذج للتوضيح and صياغة للتوضيح for
+ * the same idea), never قالب (a template goes live) and never تجريبي.
  */
 export const EXAMPLE = {
   /** Above one phone: L2 stop 1, O4, an example phone beside a real creative on L4. */
-  tag: { en: "Example ad", ar: "إعلان مثال" },
+  tag: { en: "Example ad", ar: "إعلان للتوضيح" },
   /** L4's title tag when every phone shows it, L3's field, O7's strip. */
-  tags: { en: "Example ads", ar: "إعلانات مثال" },
+  tags: { en: "Example ads", ar: "إعلانات للتوضيح" },
   /** The tray's example thumbnail and L5's form cover. */
   short: { en: "Example", ar: "مثال" },
   /** L3's field when their real pick is on it: theirs is never called an example. */
-  tagsPick: { en: "Example ads, and your pick", ar: "إعلانات مثال، واختياركم" },
+  tagsPick: {
+    en: "Example ads, and your pick",
+    ar: "إعلانات للتوضيح، واختياركم",
+  },
   /** A picture's alt text: "Example ad: {scene}". */
-  alt: { en: "Example ad: {scene}", ar: "إعلان مثال: {scene}" },
+  alt: { en: "Example ad: {scene}", ar: "إعلان للتوضيح: {scene}" },
   scenes: {
     kitchen: {
       en: "a finished kitchen with an oak and quartz island",
@@ -221,7 +226,7 @@ export const EXAMPLE = {
     },
     construction: {
       en: "a villa's concrete frame on a tidy site",
-      ar: "هيكل خرساني لفيلا، في موقع مرتب",
+      ar: "هيكل خرساني لفيلا في موقع مرتب",
     },
     bathroom: {
       en: "a marble bathroom with a stone bathtub",
@@ -247,7 +252,7 @@ export const EXAMPLE = {
     },
     construction2: {
       en: "a residential tower's concrete frame under a crane at dusk",
-      ar: "هيكل خرساني لبرج سكني تحت رافعة وقت المغرب",
+      ar: "هيكل خرساني لبرج سكني وفوقه رافعة وقت المغرب",
     },
     construction3: {
       en: "a two-storey villa's concrete frame with scaffolding",
@@ -255,7 +260,7 @@ export const EXAMPLE = {
     },
     fitout2: {
       en: "a fitted-out boutique with stone counters and lit shelves",
-      ar: "محل مجهّز بطاولات حجر ورفوف مضاءة",
+      ar: "محل مجهّز بكاونترات حجر ورفوف فيها إضاءة",
     },
     fitout3: {
       en: "a fitted-out restaurant with timber booths and brass lights",
@@ -263,11 +268,11 @@ export const EXAMPLE = {
     },
     designbuild: {
       en: "a new villa's glass living room over its pool at dusk",
-      ar: "صالة زجاج في فيلا جديدة على المسبح وقت المغرب",
+      ar: "صالة زجاج في فيلا جديدة تطل على المسبح وقت المغرب",
     },
     architecture2: {
       en: "a modern villa with a timber-screened upper floor",
-      ar: "فيلا حديثة دورها العلوي بواجهة خشب",
+      ar: "فيلا حديثة دورها العلوي عليه سواتر خشب",
     },
   },
   /** Prep's names for the eighteen (cockpit UI, English). */
@@ -728,7 +733,7 @@ export const O = {
     },
     cardWith: {
       en: "45 minutes · Our creative director",
-      ar: "٤٥ دقيقة، المدير الإبداعي",
+      ar: "٤٥ دقيقة مع المدير الإبداعي",
     },
     cardOpen: {
       en: "We book it before we hang up",
@@ -841,7 +846,7 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
       "Why one: the ads, the form questions and the call script are all written for one buyer.",
       "The choice carries through: it's the service in the launch deck and in the example call.",
       "The phone shows an example ad for this service, under their name and logo, and it says Example ad above it. Say so: 'This is how an ad for {service} looks under your name. Your own ads come from your content.'",
-      "If you set a service in prep, the column shows it in grey as a suggestion, and the checklist keeps it open. Let them choose.",
+      "If you set a service in prep, the column shows it as a suggestion, its name on a dashed line, and the checklist keeps it open. Let them choose.",
       "When they choose, press Launch with this. The phone changes to the service they chose, and the checklist ticks it.",
     ],
     sayAr: [
@@ -883,7 +888,7 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
     sayAr: [
       "(As the slide opens) وأغلب هذا بنسويه مع بعض، على المكالمة نفسها.",
       "خلنا نخلص صلاحيات ميتا وMahara OS الحين.",
-      "لما نخلص بطاقات الصلاحيات، تنحط علامة على الصلاحيات تحت. وهذي أكثر خطوة تأخر الإطلاق عادةً.",
+      "لما نخلص بطاقات الصلاحيات، تنحط علامة صح على الصلاحيات تحت. وهذي أكثر خطوة تأخر الإطلاق عادةً.",
       "كل ما رفعتوا محتوى أكثر قبل مكالمة بناء الهوية، طلعت أول إعلاناتكم أحسن.",
       "الاستفسارات القديمة نتفق عليها بمكالمة بناء الهوية أو بالقروب، إذا نتصل عليهم ولا لا.",
       "(For anything left open) هذي مين بيخلصها، ومتى؟",
@@ -1172,7 +1177,7 @@ export const LAUNCH = {
      */
     roadLive: {
       en: "Live since {date} · Launch call today",
-      ar: "منطلقين من {date}، مكالمة الإطلاق اليوم",
+      ar: "منطلقين من {date}، ومكالمة الإطلاق اليوم",
     },
   },
   journey: {
@@ -1386,7 +1391,7 @@ export const LAUNCH = {
     },
     leaders: {
       who: { en: "Your page and logo", ar: "صفحتكم وشعاركم" },
-      /** {word} is the label as the phone shows it, in the phone's language. */
+      /** {word} is the phone's "Sponsored", named in the deck's language. */
       sponsored: { en: "Marked {word}", ar: "مكتوب عليه {word}" },
       media: { en: "Your picture or video", ar: "صورتكم أو الفيديو" },
       words: { en: "Your words", ar: "كلامكم" },
@@ -1483,7 +1488,7 @@ export const LAUNCH = {
     fixed: {
       name: { en: "Fixed: your red lines", ar: "الثابت: خطوطكم الحمراء" },
       /** The panel's two heads, the spec's pair (score round 2). */
-      never: { en: "Never", ar: "أبد" },
+      never: { en: "Never", ar: "أبداً" },
       always: { en: "Always", ar: "دايماً" },
       /** After a line they typed on O7, small, in ink-3. */
       told: { en: "you told us", ar: "قلتوا لنا" },
@@ -1573,6 +1578,8 @@ export const LAUNCH = {
   form: {
     owner: { en: "Your customer sees this", ar: "هذا اللي يشوفه عميلكم" },
     title: { en: "Your form", ar: "نموذج إعلانكم" },
+    /** The ad opens WhatsApp, so there is no form (fixer round 2). */
+    titleWhatsApp: { en: "Your WhatsApp chat", ar: "محادثة الواتساب" },
     line: {
       en: "What they answer before we call. Questions marked 'Filters' screen out people who aren't a fit.",
       ar: "اللي يجاوب عليه العميل قبل لا نتصل. والأسئلة اللي عليها فلتر تطلّع اللي ما يناسبونكم.",
@@ -2061,12 +2068,18 @@ export const LAUNCH = {
           ar: "خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة",
         },
         why: {
-          en: "Our callers book into them. On a day off, block each hour, not one all-day event.",
-          ar: "فريق الاتصال يحجز فيها. ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل.",
+          en: "Our callers book into them.",
+          ar: "فريق الاتصال يحجز فيها.",
         },
         whyDwy: {
-          en: "Your team books into them. On a day off, block each hour, not one all-day event.",
-          ar: "فريقكم يحجز فيها. ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل.",
+          en: "Your team books into them.",
+          ar: "فريقكم يحجز فيها.",
+        },
+        // The week drawn under it shows the day off; the recap and the
+        // notes say it (score round 1: one sentence per job on the slide).
+        more: {
+          en: "On a day off, block each hour, not one all-day event.",
+          ar: "ويوم إجازتكم، سكروا الساعات ساعة ساعة، مو حدث على اليوم كامل.",
         },
       },
       {
@@ -2119,13 +2132,15 @@ export const LAUNCH = {
           ar: "تابعوا اللي قاعدين يفكرون، واحجزوا الموعد الثاني",
         },
         why: {
-          en: "You send the quote and set the second meeting. Our caller checks in too.",
-          ar: "أنتم ترسلون عرض السعر وتحددون الموعد الثاني، وفريق الاتصال يتابع معهم بعد.",
-        },
-        whyDwy: {
           en: "You send the quote and set the second meeting.",
           ar: "أنتم ترسلون عرض السعر وتحددون الموعد الثاني.",
         },
+        // Done for you only: our caller's check-in, in the recap and the notes.
+        more: {
+          en: "Our caller checks in too.",
+          ar: "وفريق الاتصال يتابع معهم بعد.",
+        },
+        moreDwy: null,
       },
       {
         key: "ads",
@@ -2155,9 +2170,14 @@ export const LAUNCH = {
       key: string;
       head: "before" | "after" | "weeks";
       job: L;
+      /** The one sentence the slide shows under the job. */
       why: L;
       jobDwy?: L;
       whyDwy?: L;
+      /** Said in the notes and sent in the recap, never on the slide. */
+      more?: L;
+      /** Done with you: its own `more`, or null for none. */
+      moreDwy?: L | null;
     }[],
     /** The calendar week under the open slots: Saturday to Thursday. */
     days: [
@@ -2359,6 +2379,7 @@ export function partJobs(dwy: boolean) {
     head: r.head,
     job: (dwy && r.jobDwy) || r.job,
     why: (dwy && r.whyDwy) || r.why,
+    more: (dwy && r.moreDwy !== undefined ? r.moreDwy : r.more) ?? null,
   }));
 }
 
@@ -2389,7 +2410,7 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "(The calling stop) نتصل على الاستفسارات الجديدة خلال ٥ دقايق في أوقات الدوام، من ١٠ الصبح إلى ٦ المسا، من السبت إلى الخميس. واللي يوصل بالليل، نتصل عليه من الساعة ١٠ الصبح بأول يوم دوام. ونحاول معه لين ٤ مرات، خلال ٣ أيام دوام.",
       "(A UAE client, the hours) من ١٠ الصبح إلى ٦ المسا بتوقيت السعودية، يعني من ١١ الصبح إلى ٧ المسا بتوقيت الإمارات.",
       "(The fork) شوفوا هالخط: اللي ما يحضر، يرجع لنا، ونتصل عليه ونحجز له من جديد.",
-      "(Stop 1, when the phone shows an example) هذا إعلان مثال، ومكتوب عليه كذا. ولما تجهز إعلاناتكم، تطلع مكانه.",
+      "(Stop 1, when the phone shows an example) هذا إعلان للتوضيح، ومكتوب عليه كذا. ولما تجهز إعلاناتكم، تطلع مكانه.",
       "(Came and thinking it over) واللي حضر وقاعد يفكر، نتابعه إحنا وأنتم: فريق الاتصال عندنا يتصل عليه ويتابع معه، وأنتم بعد تتابعونه، لأنكم قابلتوه وتعرفونه أكثر. وبعدها سجلوا النتيجة.",
     ],
     temp: {
@@ -2417,7 +2438,7 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "(A wrong fact) خلوني أكتبها، ونصلحها قبل لا ينزل الإعلان.",
       "(A preference) بكتبها للإعلانات الجاية، مثل ما اتفقنا.",
       "هذي معاينة بس، مو موافقة.",
-      "(When the phones show an example) هذي إعلانات مثال، ومكتوب عليها كذا. ولما تجهز إعلاناتكم، تطلع مكانها.",
+      "(When the phones show an example) هذي إعلانات للتوضيح، ومكتوب عليها كذا. ولما تجهز إعلاناتكم، تطلع مكانها.",
     ],
   },
   "creative-freedom": {
@@ -2448,7 +2469,7 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
     sayAr: [
       "(Stop 1, the ads' job) هويتكم مهمة، وصفحتكم هي المكان اللي تبان فيه، وتبقى مرتبة مثل ما تبون. أما الإعلانات فهدفها غير: تجيب دخل لشركتكم، مو إنها تشبه صفحتكم. وهي لناس ما يعرفونكم للحين.",
       "(Stop 2, most get switched off) أغلب الإعلانات اللي نختبرها نوقفها، وهذا طبيعي، مو معناها إن فيه شي غلط. هذي الطريقة اللي نلقى فيها اللي يشتغل.",
-      "(Stop 1, the tiles) هالمربعات أمثلة لإعلانات، مو إعلاناتكم. الفكرة كم إعلان نختبر.",
+      "(Stop 1, the tiles) هالمربعات أمثلة لإعلانات، مو إعلاناتكم. الفكرة إنكم تشوفون كم إعلان نختبر.",
       "(Stop 3, input first) أي فكرة أو عرض جديد أو سعر جديد أو تغيير، أرسلوه بالقروب قبل لا نسوي الإعلانات الجاية، عشان يكون فيها من البداية، وإحنا نرد عليكم بالسبب.",
       "(Stop 3, then the red lines) وبعدها خلوني أقرا لكم خطوطكم الحمراء.. فيه شي ثاني ما تبونا نقوله أو نوريه أبد؟",
       "(Stop 3, the offer) تبون تغيرون العرض؟ قولوا لنا بالقروب أول. العرض الجديد بنص الاختبار يرجّعه من البداية، وإذا قلتوا لنا أول، نرتب له.",
@@ -2599,7 +2620,7 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       'After the call, send this card in the group as the recap: "Copy for the group" posts the six jobs under their three heads, then the testing line ("How we test your ads": it puts slide 3\'s agreement in writing), the money and first-weeks lines, then the course line, then the videos recorded for this deck. The same button is on slide 13, and here once the deck closes.',
       "Open slots: the more of their opening hours we can book into, the sooner a customer finds a time. Ten is the floor.",
       "A day off: block the working hours as busy, not an all-day event. Calendars can miss an all-day block, and we'd book into it. We once booked over a client's own appointments because a day was blocked the wrong way, and the client left.",
-      "After a meeting, the follow-up is theirs and ours (before it, the messages are ours: slide 6).",
+      "After a meeting, the follow-up is theirs and ours: they send the quote and set the second meeting, and done for you, our caller checks in too (before it, the messages are ours: slide 6).",
       "A slot outside their hours, a holiday and a service detail are the questions our callers ask most.",
       "They don't need to answer on Fridays or in the evening.",
     ],
@@ -2611,6 +2632,7 @@ export const L_NOTES: Record<keyof typeof L_TITLES, SlideNotes> = {
       "وبأرسل لكم هالكرت بالقروب، ومعاه رابط كورس إتقان توقيع المشاريع.",
       "كل ما خليتوا أوقات فاضية أكثر من ساعات دوامكم، لقى العميل وقت يناسبه أسرع.",
       "يوم الإجازة، سكروا ساعات الدوام وحطوها مشغول، مو حدث على اليوم كامل، لأن التقويم أحياناً ما ينتبه لليوم المسكّر كامل، فنحجز فيه بالغلط.",
+      "(Done for you) بعد الموعد، أنتم ترسلون عرض السعر وتحددون الموعد الثاني، وفريق الاتصال يتابع معهم بعد.",
       "أكثر أسئلة يسألها فريق الاتصال: موعد برا أوقات دوامكم، أو إجازة، أو تفصيلة عن خدمة.",
       "وما يحتاج تردون يوم الجمعة أو بالليل.",
     ],
@@ -2690,4 +2712,7 @@ export const FORM_APP = {
   city: { en: "City", ar: "المدينة" },
   byMeta: { en: "Filled in by Meta", ar: "تعبّيه ميتا تلقائياً" },
   next: { en: "Next", ar: "التالي" },
+  /** WhatsApp's own chrome: the day over the first message, the empty field. */
+  today: { en: "Today", ar: "اليوم" },
+  message: { en: "Message", ar: "رسالة" },
 } as const;

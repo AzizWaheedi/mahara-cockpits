@@ -951,8 +951,11 @@ describe("the Gamma pass: the expectations, as written", () => {
       "Keep at least 10 open slots, at different times",
     );
     expect(slots?.job.ar).toBe("خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة");
-    expect(slots?.why.en).toBe(
-      "Our callers book into them. On a day off, block each hour, not one all-day event.",
+    // The slide's one sentence, then the day off said in the notes and
+    // the recap (score round 1).
+    expect(slots?.why.en).toBe("Our callers book into them.");
+    expect(slots?.more?.en).toBe(
+      "On a day off, block each hour, not one all-day event.",
     );
     expect(slots?.whyDwy?.en).toStartWith("Your team books into them.");
     expect(L.part.days.map(d => d.en)).toEqual([
@@ -1093,7 +1096,7 @@ describe("the Gamma pass: the expectations, as written", () => {
     expect(
       dwy.filter(j =>
         /\bour callers?\b|فريق الاتصال(?!\s*عندكم)/i.test(
-          `${j.why.en} ${j.why.ar}`,
+          `${j.why.en} ${j.why.ar} ${j.more?.en ?? ""} ${j.more?.ar ?? ""}`,
         ),
       ),
     ).toEqual([]);

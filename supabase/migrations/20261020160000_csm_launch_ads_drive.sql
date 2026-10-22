@@ -460,10 +460,12 @@ BEGIN
   INSERT INTO public.cockpit_csm_drive_import_worker (id, worker, seen_at) VALUES (1, p_worker, now())
   ON CONFLICT (id) DO UPDATE SET worker = excluded.worker, seen_at = excluded.seen_at;
   PERFORM set_config('cockpit.deck_actor', 'worker:' || p_worker, true);
+  -- Twenty at a time, so a few clients whose cards are missing from the
+  -- roster (each waits up to 30 minutes) never hold back the next client.
   FOR imp IN
     SELECT * FROM public.cockpit_csm_launch_ads_imports x
      WHERE x.status = 'queued' OR (x.status = 'working' AND x.heartbeat_at < now() - interval '5 minutes')
-     ORDER BY x.requested_at, x.id LIMIT 5
+     ORDER BY x.requested_at, x.id LIMIT 20
        FOR UPDATE SKIP LOCKED
   LOOP
     -- Three takes in a row without a file landing: it stops.

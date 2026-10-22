@@ -109,24 +109,45 @@ export function useCreatives(ctx: SlideCtx) {
       phones.reels = exampleCreative(alt, "story", words, ctx.lang);
       phones.facebook = exampleCreative(lead, "feed", words, ctx.lang);
     }
-    // The ad the journey and the form follow: with an example, the
-    // alternate, so the cover (the lead) and journey stop 1 never show one
-    // picture twice in a row, nor the ads slide's feed and the form's cover.
-    const journey = example
-      ? exampleCreative(alt, "feed", words, ctx.lang)
-      : phones.feed;
-    // The form slide's cover, right after the ads slide (whose phones carry
-    // the lead and the alternate): with an example, the service's third
-    // scene, so no picture shows twice in a row (DESIGN 22.14).
-    const formCover = example
-      ? exampleCreative(sceneAt(ctx.d.example, 2), "feed", words, ctx.lang)
-      : phones.feed;
     // The cover's example: while they have no creative of their own, a
     // starter template included (it is ours, not theirs), the lead picture.
     const own = [...tray, ...meta].some(c => !c.starter && (c.url || c.poster));
     const coverExample = own
       ? null
       : exampleCreative(lead, "feed", words, ctx.lang);
+    // What the cover shows (DESIGN 22.15): the CSM's pick, else the example,
+    // else their first ad on the feed phone (never a starter template).
+    const coverShown =
+      L.cover ??
+      coverExample ??
+      (phones.feed && !phones.feed.starter ? phones.feed : null);
+    // The ad the journey and the form follow: with an example, the
+    // alternate, so the cover (the lead) and journey stop 1 never show one
+    // picture twice in a row, nor the ads slide's feed and the form's cover.
+    // With ads of their own, the first of the Facebook phone, the Reels
+    // phone and the tray's own pictures that is not the cover's (their
+    // language first); the feed phone only when they have one picture.
+    const pictured = (c: TrayCreative | null): c is TrayCreative =>
+      Boolean(c && (c.url || c.poster));
+    const notCover = (c: TrayCreative) =>
+      !coverShown ||
+      (c.id !== coverShown.id &&
+        (c.poster ?? c.url) !== (coverShown.poster ?? coverShown.url));
+    const others = [
+      phones.facebook,
+      phones.reels,
+      ...tray.filter(c => !c.starter),
+    ].filter(pictured);
+    const differ = others.filter(notCover);
+    const journey = example
+      ? exampleCreative(alt, "feed", words, ctx.lang)
+      : (differ.find(c => c.language === ctx.lang) ?? differ[0] ?? phones.feed);
+    // The form slide's cover, right after the ads slide (whose phones carry
+    // the lead and the alternate): with an example, the service's third
+    // scene, so no picture shows twice in a row (DESIGN 22.14).
+    const formCover = example
+      ? exampleCreative(sceneAt(ctx.d.example, 2), "feed", words, ctx.lang)
+      : phones.feed;
     return {
       tray,
       meta,
@@ -139,6 +160,7 @@ export function useCreatives(ctx: SlideCtx) {
       journey,
       formCover,
       coverExample,
+      coverShown,
     };
   }, [L, local, ctx.live.phones, ctx.lang, ctx.d.example, ctx.d.exampleWords]);
 }
@@ -481,8 +503,10 @@ export function PhoneRow({
   const focused = focus ? model.phones[focus] : null;
   const cropped =
     focus && focus !== "reels" && focused && shapeOf(focused.ratio) === "9:16";
-  // The button named as the phone shows it, in the phone's own language.
-  const ctaText = t(CTA[focused?.cta ?? "LEARN_MORE"], model.app);
+  // The button named as the phone shows it, in the phone's own language,
+  // isolated after the label's colon so a button in the other script
+  // keeps its own reading order (score round 1).
+  const ctaText = `\u2068${t(CTA[focused?.cta ?? "LEARN_MORE"], model.app)}\u2069`;
 
   // The leaders name the parts of the phone in focus, measured where they
   // are drawn (a mirrored phone included), in the phone's own units.
@@ -524,11 +548,13 @@ export function PhoneRow({
             : part === "words"
               ? t(A.leaders.words, lang)
               : tf(A.leaders.cta, lang, { cta: ctaText });
-      // The word as the phone shows it, in the phone's own language.
+      // The mark named in the deck's language ("Marked Sponsored" in the
+      // English deck though the phone shows مُموّل): one script per label
+      // (score round 1: "Marked مُموّل" read as two languages at once).
       const sub =
         part === "who" && el.querySelector('[data-part="sponsored"]')
           ? tf(A.leaders.sponsored, lang, {
-              word: t(APP.sponsored, model.app),
+              word: t(APP.sponsored, lang),
             })
           : undefined;
       // A label wraps inside its side's room (the area clips past its
@@ -721,11 +747,13 @@ export function PhoneRow({
           {leaders.map(l => {
             const bend = l.side === "end" ? 330 + NATIVE_W + 20 : 330 - 20;
             const to = l.side === "end" ? labelX - 14 : labelEnd + 14;
-            // Straight when the dot is level with its label; else a square
-            // elbow (the form slide's), never a diagonal.
+            // Straight when the dot is level with its label, or within 8 px
+            // of it (the label then moves to the dot's line: a 4 px elbow
+            // read as a glitch, score round 4); else a square elbow (the
+            // form slide's), never a diagonal.
             const d =
-              Math.abs(l.ly - l.ay) < 1
-                ? `M ${phys(l.ax)} ${l.ay} L ${phys(to)} ${l.ly}`
+              Math.abs(l.ly - l.ay) < 8
+                ? `M ${phys(l.ax)} ${l.ay} L ${phys(to)} ${l.ay}`
                 : `M ${phys(l.ax)} ${l.ay} L ${phys(bend)} ${l.ay} L ${phys(bend)} ${l.ly} L ${phys(to)} ${l.ly}`;
             return (
               <g key={l.key}>
@@ -741,25 +769,28 @@ export function PhoneRow({
           })}
         </svg>
       ) : null}
-      {leaders.map(l => (
-        <span
-          key={l.key}
-          className="dkc-leader-label"
-          data-side={l.side}
-          style={
-            l.side === "end"
-              ? { insetInlineStart: labelX, top: l.ly, maxWidth: LABEL_W.end }
-              : {
-                  insetInlineEnd: AREA_W - labelEnd,
-                  top: l.ly,
-                  maxWidth: LABEL_W.start,
-                }
-          }
-        >
-          {l.label}
-          {l.sub ? <span className="dkc-leader-sub">{l.sub}</span> : null}
-        </span>
-      ))}
+      {leaders.map(l => {
+        const top = Math.abs(l.ly - l.ay) < 8 ? l.ay : l.ly;
+        return (
+          <span
+            key={l.key}
+            className="dkc-leader-label"
+            data-side={l.side}
+            style={
+              l.side === "end"
+                ? { insetInlineStart: labelX, top, maxWidth: LABEL_W.end }
+                : {
+                    insetInlineEnd: AREA_W - labelEnd,
+                    top,
+                    maxWidth: LABEL_W.start,
+                  }
+            }
+          >
+            {l.label}
+            {l.sub ? <span className="dkc-leader-sub">{l.sub}</span> : null}
+          </span>
+        );
+      })}
     </div>
   );
   // The tag of a phone in focus sits above the phone's top end corner, on

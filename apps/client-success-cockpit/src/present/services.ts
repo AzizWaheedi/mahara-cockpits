@@ -65,8 +65,11 @@ interface Words {
  * renovation before an interior, so "Kitchen renovation" is a renovation;
  * an interior before an architect, so "Villa interior design" is an
  * interior; an architect before a builder, so "Building design" is a
- * design. A bare "design" is an interior, last of all. مكتب is left out on
- * purpose: it is how a firm's name starts (مكتب ... للتصميم), not a service.
+ * design. A bare "design" is an interior, last of all. مكتب alone is left
+ * out on purpose: it is how a firm's name starts (مكتب ... للتصميم), not a
+ * service; مكتب هندسي (an engineering office) is architectural design. In
+ * Gulf use عمارة is an apartment building (construction) unless it is
+ * designed (تصميم عمارة); معماري is the architect's adjective.
  */
 export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
   [
@@ -86,7 +89,9 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
       ar: [
         "تصميم وتنفيذ",
         "تصميم و تنفيذ",
+        "تصميم والتنفيذ",
         "تصميم وبناء",
+        "تصميم والبناء",
         "تسليم مفتاح",
         "مسبح",
         "مسابح",
@@ -98,6 +103,11 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
   // A building's shell is construction, even with its finishing beside it
   // ("عظم وتشطيب", shell and finishing), so it is read before a fit-out.
   ["construction", { en: ["shell and core", "shell & core"], ar: ["عظم"] }],
+  // An engineering office (مكتب هندسي) is the licensed design and
+  // supervision office in Kuwait and Saudi, as "Engineering consultancy" is
+  // architectural design; read before a fit-out, whose مكاتب (offices)
+  // would otherwise take "مكاتب هندسية".
+  ["architecture", { en: [], ar: ["مكتب هندسي", "مكاتب هندسيه"] }],
   [
     "fitout",
     {
@@ -135,6 +145,11 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
         "مطاعم",
         "كافيه",
         "عياده",
+        "عيادات",
+        "مقهي",
+        "مقاهي",
+        "فت اوت",
+        "فيت اوت",
         "ارضيات",
         "رخام",
         "جبس",
@@ -168,6 +183,11 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
       ],
       ar: [
         "تصميم داخلي",
+        "تصميم الداخلي",
+        "تصاميم داخليه",
+        "تصاميم الداخليه",
+        "انتيريور",
+        "انتريور",
         "ديكور",
         "اثاث",
         "مطبخ",
@@ -221,7 +241,6 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
       ar: [
         "معماري",
         "معماريه",
-        "عماره",
         "واجهه",
         "واجهات",
         "حديقه",
@@ -235,6 +254,16 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
         "تصميم فلل",
         "تصميم الفلل",
         "تصميم مباني",
+        "تصميم المباني",
+        "تصميم فيلا",
+        "تصميم الفيلا",
+        "تصميم بيوت",
+        "تصميم البيوت",
+        "تصميم بيت",
+        "تصميم منازل",
+        "تصميم المنازل",
+        "تصميم عماره",
+        "تصميم عمارات",
       ],
     },
   ],
@@ -261,6 +290,10 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
         "بناء",
         "انشاء",
         "انشاءات",
+        "تشييد",
+        "تنفيذ",
+        "عماره",
+        "عمارات",
         "هيكل",
         "خرسان",
         "هندسي",
@@ -269,7 +302,7 @@ export const SERVICE_KEYWORDS: readonly [MainKey, Words][] = [
     },
   ],
   // Last: a bare design is an interior ("Design studio", تصميم).
-  ["interior", { en: ["design", "studio"], ar: ["تصميم"] }],
+  ["interior", { en: ["design", "studio"], ar: ["تصميم", "تصاميم", "ديزاين"] }],
 ];
 
 /** The kickoff's own choices and the decks' names, read whole. */
@@ -326,9 +359,75 @@ export function serviceOfText(text: string | null | undefined): MainKey | null {
   return null;
 }
 
+/**
+ * A sub-trade's words (a kitchen, a bathroom, wardrobes): a room inside an
+ * interior or a fit-out, never the service an enquiry is about (CEO,
+ * 2026-10-21: "These are not kitchens").
+ */
+const SUB_TRADE: Words = {
+  en: [
+    "kitchen",
+    "bathroom",
+    "bath",
+    "washroom",
+    "wardrobe",
+    "closet",
+    "cabinet",
+  ],
+  ar: [
+    "مطبخ",
+    "مطابخ",
+    "حمام",
+    "حمامات",
+    "دوره مياه",
+    "دورات مياه",
+    "خزائن",
+    "خزاين",
+    "دواليب",
+  ],
+};
+
+/** Whether a client's words name a sub-trade ("Kitchens and wardrobes", المطابخ). */
+export const isSubTrade = (text: string | null | undefined) =>
+  Boolean(text?.trim()) && has(normalise(text ?? ""), SUB_TRADE);
+
+const ARABIC_RE = /[؀-ۿ]/;
+
+/**
+ * The call queue's rows (L2 stop 3, DESIGN 22.14): the launch service's
+ * name first, then the client's own words for that same service, in the
+ * deck's script only (a name in the other script inside a row breaks its
+ * reading order). Never a sub-trade and never another service's words, so
+ * an interior design campaign's queue never reads "Kitchens and wardrobes"
+ * or "Full villa fit-out". "Other" keeps the words that fit none of the
+ * five; with no service known, every word but a sub-trade.
+ */
+export function queueServices(
+  name: string | null | undefined,
+  key: ServiceKey | null,
+  words: readonly string[],
+  lang: "en" | "ar",
+): string[] {
+  const fits = (w: string) => {
+    if (isSubTrade(w)) return false;
+    if (!key) return true;
+    const k = serviceOfText(w);
+    return key === "other" ? k === null : k === key;
+  };
+  const out: string[] = name ? [name] : [];
+  for (const raw of words) {
+    const w = raw.trim();
+    if (!w || isOtherWord(w) || out.some(x => sameWords(x, w))) continue;
+    if (fits(w)) out.push(w);
+  }
+  return out.filter(s => ARABIC_RE.test(s) === (lang === "ar"));
+}
+
 /** The kickoff's "Other" with nothing typed beside it. */
 export const isOtherWord = (text: string | null | undefined) =>
-  /^(other|others|غير ذلك|اخرى|أخرى|خدمه اخرى)$/i.test(normalise(text ?? ""));
+  // normalise() has turned ى into ي and أ into ا, so the Arabic is written
+  // as it reads after it (اخري), never as typed (أخرى).
+  /^(other|others|غير ذلك|غيرها|اخري|خدمه اخري)$/i.test(normalise(text ?? ""));
 
 /** Two names for the same thing, ignoring case, spaces and Arabic spelling. */
 export const sameWords = (

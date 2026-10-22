@@ -37,12 +37,22 @@ const WHY: Record<"dwy" | "os", string> = {
   os: "Not shown until Mahara OS is approved for this client.",
 };
 
+/**
+ * Above the notes window's sticky foot (its height, measured there): the
+ * row scrolls into view clear of it, and so does each button when the
+ * keyboard reaches it (focus scrolls by the focused element's own margin).
+ */
+const CLEAR_FOOT = {
+  scrollMarginBottom: "calc(var(--notes-foot, 9rem) + 16px)",
+};
+
 function CopyLink({ url }: { url: string }) {
   const [done, setDone] = useState(false);
   return (
     <Button
       size="sm"
       variant="outline"
+      style={CLEAR_FOOT}
       onClick={() => {
         void navigator.clipboard?.writeText(url).then(() => {
           setDone(true);
@@ -116,15 +126,20 @@ function Recorded({
         ref={controls}
         className="flex flex-wrap gap-2"
         // The sticky foot's height, measured by the notes window.
-        style={{ scrollMarginBottom: "calc(var(--notes-foot, 9rem) + 16px)" }}
+        style={CLEAR_FOOT}
       >
         {open ? (
-          <Button size="sm" variant="outline" onClick={close}>
+          <Button
+            size="sm"
+            variant="outline"
+            style={CLEAR_FOOT}
+            onClick={close}
+          >
             <X aria-hidden />
             Close the video
           </Button>
         ) : mine === "blocked" ? null : (
-          <Button size="sm" variant="outline" onClick={play}>
+          <Button size="sm" variant="outline" style={CLEAR_FOOT} onClick={play}>
             <Play aria-hidden />
             Play on screen
           </Button>

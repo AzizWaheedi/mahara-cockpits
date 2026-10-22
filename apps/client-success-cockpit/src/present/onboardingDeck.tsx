@@ -36,6 +36,7 @@ import {
   feedUrl,
   parseChoice,
   SCENES,
+  STRIP_LIT,
   storyUrl,
   stripTiles,
   type Theme,
@@ -171,6 +172,16 @@ function WelcomePhone({ ctx }: { ctx: SlideCtx }) {
 function Welcome({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
   const date = dayMonth(d.onboardingDay, lang, d.timeZone);
+  // The deck opens here: slide 6's guide posters are fetched and decoded
+  // now, so none pops in after that slide has built (22.3.2, score round 4).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once per deck
+  useEffect(() => {
+    warmExamples(
+      filledOn(d, "this-week")
+        .map(v => posterFor(v.row)?.src)
+        .filter((x): x is string => Boolean(x)),
+    );
+  }, []);
   return (
     <>
       <header className="dkc-letterhead">
@@ -231,6 +242,17 @@ export function goalsView(d: DeckData) {
   return { lead, rest, stops: rest.length ? 2 : 1 };
 }
 
+/**
+ * The direction of a client's words, from their first strong letter (an
+ * Arabic goal in the English deck is right to left): the goal's size, its
+ * hang and the edge it grows from follow it, never the deck's (score
+ * round 4).
+ */
+export function wordsDir(text: string): "rtl" | "ltr" {
+  const m = /[A-Za-z\u00c0-\u024f\u0600-\u06ff]/.exec(text);
+  return m && /[\u0600-\u06ff]/.test(m[0]) ? "rtl" : "ltr";
+}
+
 /** The goal's size by its length: 80, then 64, then 56 (at most three lines). */
 const goalSize = (text: string) =>
   text.length > 150 ? "56" : text.length > 90 ? "64" : "80";
@@ -288,14 +310,25 @@ const goalWords = (text: string) =>
  * of the 90 days, the line drawing across the slide on arrival. On the
  * second stop it is the rule the other answers sit under.
  */
-function GoalTrack({ label, lang }: { label: L; lang: Lang }) {
+function GoalTrack({ label, d, lang }: { label: L; d: DeckData; lang: Lang }) {
+  // The two ends' dates (score round 4): this call's day and the 90th day
+  // after it, quiet under the labels, so the line is concrete. They show
+  // while the goal is the hero, and leave when the answers arrive under it.
+  const from = dayMonth(d.onboardingDay, lang, d.timeZone);
+  const to = dayMonth(plusDays(d.onboardingDay, 90), lang, d.timeZone);
   return (
     <div className="dkc-goal-track" aria-hidden>
       <i className="dkc-goal-track-line" />
       <i className="dkc-goal-track-from" />
       <i className="dkc-goal-track-to" />
-      <span className="dkc-goal-track-today">{t(O.goals.today, lang)}</span>
-      <span className="dkc-goal-track-end">{t(label, lang)}</span>
+      <span className="dkc-goal-track-today">
+        {t(O.goals.today, lang)}
+        {from ? <small className="dkc-goal-track-date">{from}</small> : null}
+      </span>
+      <span className="dkc-goal-track-end">
+        {t(label, lang)}
+        {to ? <small className="dkc-goal-track-date">{to}</small> : null}
+      </span>
     </div>
   );
 }
@@ -343,31 +376,46 @@ function GoalInput({ ctx }: { ctx: SlideCtx }) {
 function Answers({ lines }: { lines: string[] }) {
   const ref = useRef<HTMLUListElement>(null);
   useHug(ref, lines.join("\n"));
+  // Each item a block in the deck's direction, the words isolated in a
+  // <bdi> (score round 4, as O7's red lines): an English answer in the
+  // Arabic deck sits under its Arabic label's edge, not the column's other.
   return (
     <ul ref={ref} data-hug="">
       {lines.map(l => (
-        <li key={l} className="dkc-theirs" dir="auto">
-          {l}
+        <li key={l} className="dkc-theirs">
+          <bdi>{l}</bdi>
         </li>
       ))}
     </ul>
   );
 }
 
-/** One answer, hugging its lines so they keep their own start. */
+/** One answer, hugging its lines; a block in the deck's direction. */
 function AnswerText({ text }: { text: string }) {
   const ref = useRef<HTMLParagraphElement>(null);
   useHug(ref, text);
   return (
-    <p ref={ref} className="dkc-theirs" dir="auto" data-hug="">
-      {text}
+    <p ref={ref} className="dkc-theirs" data-hug="">
+      <bdi>{text}</bdi>
     </p>
   );
 }
 
-function GoalRow({ goals, lang }: { goals: Goal[]; lang: Lang }) {
+function GoalRow({
+  goals,
+  lang,
+  hold = false,
+}: {
+  goals: Goal[];
+  lang: Lang;
+  hold?: boolean;
+}) {
   return (
-    <div className="dkc-goal-row" data-n={goals.length}>
+    <div
+      className="dkc-goal-row"
+      data-n={goals.length}
+      data-hold={hold ? "" : undefined}
+    >
       {goals.map(g => (
         <div key={g.key} className="dkc-goal-col">
           <span className="dk-label">{t(g.label, lang)}</span>
@@ -389,6 +437,11 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
   useHug(leadRef, lead?.lines[0] ?? "");
   useLines(leadRef, `${lang}:${lead?.lines[0] ?? ""}`);
   const row = tour >= 1 && rest.length ? rest : null;
+  // One short group of answers (fixer round 2): the goal holds low with
+  // them under it, one block on the stage's middle, instead of settling to
+  // the top over 350 px of empty stage.
+  const hold = Boolean(row && row.length === 1);
+  const goalDir = wordsDir(lead?.lines[0] ?? "");
   // One stop when there is nothing to add: the footnote is there at once.
   const foot = rest.length ? tour >= 1 : true;
   if (!lead)
@@ -399,15 +452,23 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
         <div
           className="dkc-goal-asking"
           // Alone on the slide, the question and its line are one block on
-          // the slide's middle (the fixer's round); with answers to come on
-          // stop 2 it keeps the top, so nothing moves when they arrive.
+          // the slide's middle (the fixer's round). With answers to come on
+          // stop 2 it stands --dk-lift lower on stop 1, as the hero goal
+          // does, and settles up in one move when they arrive (score round
+          // 1: at the top it left the lower half of the stage empty).
           data-alone={rest.length ? undefined : ""}
+          data-lift={rest.length && !row ? "" : undefined}
         >
           <h2 className="dk-h1 dkc-goal-ask">{t(O.goals.empty, lang)}</h2>
           <span className="dk-label dkc-goal-label">
             {t(O.goals.goal90, lang)}
           </span>
           <GoalInput ctx={ctx} />
+          {/* The empty state builds like the filled one (score round 4):
+              the question rises, then its 90 days sweep under the line. */}
+          {rest.length ? null : (
+            <GoalTrack label={O.goals.goal90} d={d} lang={lang} />
+          )}
         </div>
         {row ? <GoalRow goals={row} lang={lang} /> : null}
       </>
@@ -426,27 +487,26 @@ function Goals({ ctx }: { ctx: SlideCtx }) {
         className="dkc-goal-stage"
         data-lift={row ? undefined : rest.length ? "" : undefined}
         data-alone={rest.length ? undefined : ""}
+        data-hold={hold ? "" : undefined}
       >
-        <div className="dkc-goal-block">
+        {/* The goal's own direction, in either deck (score round 4): its
+            type, the edge it hangs from and the edge it grows from, so an
+            Arabic goal in the English deck sits on the end margin with its
+            mark outside it, and nothing slides sideways as it settles. */}
+        <div className="dkc-goal-block" dir={goalDir}>
           <p
             ref={leadRef}
             className="dkc-goal-text dkc-theirs"
             data-size={goalSize(lead.lines[0] ?? "")}
-            // Their words in Latin letters keep the Latin type's line
-            // height in the Arabic deck too (Arabic's taller one pushed
-            // stop 2's row into the foot).
-            data-latin={
-              /[\u0600-\u06ff]/.test(lead.lines[0] ?? "") ? undefined : ""
-            }
-            dir="auto"
+            dir={goalDir}
             data-hug=""
           >
             {goalWords(lead.lines[0] ?? "")}
           </p>
         </div>
-        <GoalTrack label={lead.label} lang={lang} />
+        <GoalTrack label={lead.label} d={d} lang={lang} />
       </div>
-      {row ? <GoalRow goals={row} lang={lang} /> : null}
+      {row ? <GoalRow goals={row} lang={lang} hold={hold} /> : null}
       {foot ? (
         <p className="dk-small dkc-foot" data-rise={row ? "" : undefined}>
           {t(O.goals.foot, lang)}
@@ -528,8 +588,11 @@ export const rowHeight = (rows: number) => (rows > 5 ? 84 : 92);
 const rowName = (key: ServiceKey, lang: Lang) => t(SERVICES[key].name, lang);
 
 /**
- * The service a choice saves (DESIGN 22.14): a main service's two names,
- * the kickoff's own wording in English; "Other" as the client wrote it.
+ * The service a choice saves (DESIGN 22.14.1): "Launch with this" saves the
+ * deck's English label (`SERVICES[key].name.en`, "Construction", not the
+ * kickoff's "Construction only") and its Arabic twin, which `serviceOfText`
+ * reads back as the same main service as the kickoff's choice; "Other" as
+ * the client wrote it.
  */
 export function chosenPatch(
   d: DeckData,
@@ -648,13 +711,18 @@ export function ownLine(words: string[], room = 36) {
 /** A row's own words, quiet, each in its own direction (never our label again). */
 function OwnWords({ words, lang }: { words: string[]; lang: Lang }) {
   if (!words.length) return null;
-  const sep = lang === "ar" ? "، " : ", ";
   const { shown, more } = ownLine(words, lang === "ar" ? 32 : 36);
+  // Arabic words on both sides take the Arabic comma, in either deck
+  // (score round 4: "عظم وتشطيب, بناء فلل سكنية" in the English deck).
+  const sep = (a: string, b: string) =>
+    lang === "ar" || (ARABIC_LETTER.test(a) && ARABIC_LETTER.test(b))
+      ? "، "
+      : ", ";
   return (
     <span className="dkc-service-own">
       {shown.map((w, i) => (
         <span key={w}>
-          {i ? sep : null}
+          {i ? sep(shown[i - 1], w) : null}
           <bdi>{w}</bdi>
         </span>
       ))}
@@ -1049,6 +1117,15 @@ function SetupCard({
 }) {
   const { d, lang, prep, save } = ctx;
   const [broken, setBroken] = useState(false);
+  // A guide's poster shows once decoded (22.3.2), never painting in after
+  // the card has built; the deck warmed it when it opened.
+  const [decoded, setDecoded] = useState(false);
+  const shown = (e: { currentTarget: HTMLImageElement }) => {
+    const img = e.currentTarget;
+    const ok = () => setDecoded(true);
+    if (img.decode) img.decode().then(ok, ok);
+    else ok();
+  };
   const access = record(prep.access);
   const flip = (key: string, from: AccessStatus) =>
     save({ access: { ...access, [key]: nextStatus(from) } }, true);
@@ -1082,7 +1159,9 @@ function SetupCard({
       data-status={row.status}
       data-draw={done && !atOpen.current ? "" : undefined}
       data-poster={pic || osPhone ? "" : undefined}
-      style={{ "--i": i } as CSSProperties}
+      // The status lands after the card's last tick has drawn (score round
+      // 4: "Done" came before its rings).
+      style={{ "--i": i, "--k-end": from + row.ticks.length } as CSSProperties}
     >
       <i className="dkc-setup-edge" aria-hidden />
       {osPhone ? (
@@ -1105,12 +1184,20 @@ function SetupCard({
           onClick={() => ctx.playVideo?.(guide)}
           onPointerUp={letGo}
         >
-          <span className="dkc-setup-pic">
+          <span
+            className="dkc-setup-pic"
+            data-decoded={decoded ? "" : undefined}
+          >
             <img
+              ref={el => {
+                if (el?.complete && el.naturalWidth > 0 && !decoded)
+                  shown({ currentTarget: el });
+              }}
               src={pic.src}
               alt=""
               draggable={false}
               referrerPolicy="no-referrer"
+              onLoad={shown}
               onError={() => setBroken(true)}
             />
             <span className="dkc-setup-play" aria-hidden>
@@ -1139,12 +1226,21 @@ function SetupCard({
             onPointerUp={letGo}
           >
             {mini ? (
-              <span className="dkc-guide-pic" aria-hidden>
+              <span
+                className="dkc-guide-pic"
+                aria-hidden
+                data-decoded={decoded ? "" : undefined}
+              >
                 <img
+                  ref={el => {
+                    if (el?.complete && el.naturalWidth > 0 && !decoded)
+                      shown({ currentTarget: el });
+                  }}
                   src={mini.src}
                   alt=""
                   draggable={false}
                   referrerPolicy="no-referrer"
+                  onLoad={shown}
                   onError={() => setBroken(true)}
                 />
                 <svg viewBox="0 0 16 16" aria-hidden>
@@ -1327,14 +1423,57 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
   };
   // Each line as the launch deck sets a red line: an amber mark (theirs,
   // and fixed), then their words in ink. No panel and no box around them.
-  // Nothing typed yet: nothing drawn; the input's line shows only under
-  // the CSM's pointer or while typing.
+  // Lines all in one script set the list's direction (fixer round 2): the
+  // block sits at the column's start, as wide as its widest line, its
+  // bullets on its own start, so English lines in the Arabic deck no longer
+  // hug the column's far edge. A mixed list keeps each line's own.
+  const dirs = lines.map(wordsDir);
+  const listDir = dirs.every(x => x === dirs[0]) ? dirs[0] : undefined;
+  const input = (
+    <input
+      className="dkc-redline-input"
+      dir="auto"
+      value={value}
+      placeholder={t(O.next.input, lang)}
+      aria-label={t(O.next.input, lang)}
+      onChange={e => setValue(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          add();
+        }
+      }}
+      onBlur={add}
+    />
+  );
+  // Nothing typed yet (fixer round 2: the sentence alone left 400 px dead
+  // under it): three faint rows with their amber marks, dashed, to be
+  // filled; the first is the input itself.
+  if (!lines.length)
+    return (
+      <div className="dkc-redlines" data-empty="">
+        <div className="dkc-redline-row">
+          <i aria-hidden />
+          {input}
+        </div>
+        {[1, 2].map(k => (
+          <div key={k} className="dkc-redline-row" aria-hidden>
+            <i />
+            <span />
+          </div>
+        ))}
+      </div>
+    );
   return (
-    <div className="dkc-redlines" data-empty={lines.length ? undefined : ""}>
+    <div className="dkc-redlines">
       {lines.length ? (
-        <ul>
+        <ul dir={listDir}>
           {lines.map(l => (
-            <li key={l}>
+            // Each line in its own direction (score round 4): an Arabic red
+            // line in the English deck has its bullet at its own start. Set
+            // from the words (dir="auto" on the item would skip the words'
+            // own isolate and read left to right).
+            <li key={l} dir={wordsDir(l)}>
               <i aria-hidden />
               <span dir="auto" className="dkc-theirs">
                 {l}
@@ -1354,21 +1493,7 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
           ))}
         </ul>
       ) : null}
-      <input
-        className="dkc-redline-input"
-        dir="auto"
-        value={value}
-        placeholder={t(O.next.input, lang)}
-        aria-label={t(O.next.input, lang)}
-        onChange={e => setValue(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            add();
-          }
-        }}
-        onBlur={add}
-      />
+      {input}
     </div>
   );
 }
@@ -1425,13 +1550,12 @@ function StarterAds({ ctx }: { ctx: SlideCtx }) {
 }
 
 /**
- * The grid's two lit tiles (DESIGN 22.2.7): many tested, a few kept. On a
- * diagonal of the 3 x 2 grid, so they read as picks, not as a lit column.
- * Tile 0 is their own service's theme, and it stays lit (score round 2: it
- * was dimmed, so the slide showed their own kind of ad switched off), as
- * L3's tile 0 is.
+ * The grid's two lit tiles (DESIGN 22.2.7, 22.15): many tested, a few kept.
+ * Both are their own service's scenes, its lead on tile 0 and its first
+ * alternate on tile 4 (`stripTiles`): a kitchen lit as a winner for an
+ * interior client contradicted the CEO's correction.
  */
-export const STRIP_LIT = new Set([0, 4]);
+export { STRIP_LIT };
 
 /**
  * The order the other four switch off on arrival (score round 2): scattered,
@@ -1440,12 +1564,12 @@ export const STRIP_LIT = new Set([0, 4]);
 const STRIP_OFF = [3, 1, 5, 2];
 
 /**
- * Six example tiles, 3 x 2, under "We test many ads, fast" (score round 2:
+ * Six example tiles in one row, under "We test many ads, fast" (score round 2:
  * under "Your first ads" a client read them as their first ads, half
  * rejected). L3's field in miniature, tagged once: on arrival all six are
  * lit, then four switch off one after another, about 560 ms in all, and two
- * stay lit (under still=1 and reduced motion, that end at once). The tiles
- * take the column's free height, up to 150 x 188, and the grid leaves the
+ * stay lit (under still=1 and reduced motion, that end at once). The row
+ * spans the column at 4:5 (fixer round 2), about 127 x 159, and leaves the
  * slide when there is too little room for it to read as a picture.
  */
 function TestStrip({ ctx }: { ctx: SlideCtx }) {
@@ -1474,6 +1598,10 @@ function TestStrip({ ctx }: { ctx: SlideCtx }) {
     </div>
   );
 }
+
+/** The service a starter pack was ticked for, in prep's words. */
+const packName = (k: ServiceKey) =>
+  k === "other" ? "their own service" : SERVICES[k].name.en;
 
 /** O7's stops: what to expect, the starter ads (when there are), the Blueprint. */
 export const nextStops = (d: DeckData) => (showsStarter(d) ? 3 : 2);
@@ -1704,18 +1832,18 @@ export function onboardingSlides(): SlideDef[] {
       title: O_TITLES["one-service"],
       notes: O_NOTES["one-service"],
       render: ctx => <OneService ctx={ctx} />,
-      missing: d => [
-        ...(d.services.length
+      missing: d =>
+        d.services.length
           ? []
           : [
               "No services in the onboarding form. Press Add a service and type them as the client says them.",
-            ]),
-        ...(d.today.service
+            ],
+      todo: d =>
+        d.today.service
           ? []
           : [
               "The client picks the launch service on the call: press Launch with this on slide 4, and the checklist ticks it.",
-            ]),
-      ],
+            ],
     },
     {
       id: "road",
@@ -1745,9 +1873,13 @@ export function onboardingSlides(): SlideDef[] {
       missing: d => [
         ...(d.starterPack
           ? []
-          : [
-              `Starter pack${d.serviceFocus ? ` for ${d.serviceFocus}` : ""}? Tick it only if a ready pack exists. Otherwise this slide doesn't name the service.`,
-            ]),
+          : d.starterPackFor
+            ? [
+                `The starter pack is ticked for ${packName(d.starterPackFor)}, not ${d.serviceFocus ?? "the service chosen on slide 4"}, so this slide doesn't name the service or show the pack. Tick it again on slide 4's controls if a pack fits.`,
+              ]
+            : [
+                `Starter pack${d.serviceFocus ? ` for ${d.serviceFocus}` : ""}? Tick it only if a ready pack exists. Otherwise this slide doesn't name the service.`,
+              ]),
         ...(d.lang === "ar" && d.serviceFocus && !o7Service(d)
           ? [
               `The Arabic deck leaves "${d.serviceFocus}" unnamed on this slide. Type their service in Arabic in prep (Launch service, Other) to name it.`,

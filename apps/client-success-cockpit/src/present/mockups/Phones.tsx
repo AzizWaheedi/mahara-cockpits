@@ -252,6 +252,18 @@ export function IgFeed({ creative, who, pageName, app, play }: AdProps) {
         // Co.") kept its full stop at its start without it (score round 3).
         lead={<b dir="auto">{pageName}</b>}
       />
+      {/* No caption: the feed carries on with the next post's head and the
+          top of its picture, cut by the tab bar (score round 4: a black
+          band stood between the Page name and the tabs). */}
+      {creative?.primaryText ? null : (
+        <div className="dkc-next-post" aria-hidden>
+          <span className="dkc-next-post-head">
+            <i />
+            <b />
+          </span>
+          <span className="dkc-next-post-media" />
+        </div>
+      )}
       <IgTabs />
     </div>
   );

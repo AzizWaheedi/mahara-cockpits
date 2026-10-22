@@ -38,11 +38,14 @@ import type {
 import { type LaunchAd, sourcesSchema } from "@/present/sources";
 import type { Loaded } from "@/present/useDeckModel";
 import { deckSlots, slotId } from "@/present/videos";
+import siteTall from "./custom-hall-tall.webp";
 import siteFeed from "./custom-site.webp";
-import siteTall from "./custom-site-tall.webp";
 import square from "./custom-square.webp";
-import feedPic from "./starter-feed.webp";
-import reelPic from "./starter-reel.webp";
+import dwyVilla from "./dwy-villa.webp";
+import fitoutFeedPic from "./starter-fitout-feed.webp";
+import fitoutReelPic from "./starter-fitout-reel.webp";
+import feedPic from "./starter-interior-feed.webp";
+import reelPic from "./starter-interior-reel.webp";
 
 export type FixtureKey = "full" | "sparse" | "dwy" | "starter";
 
@@ -408,7 +411,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
                   options: [
                     "A whole villa interior",
                     "One room or a majlis",
-                    "Kitchens and wardrobes",
+                    "A design consultation",
                   ],
                   isGate: false,
                 },
@@ -442,17 +445,30 @@ function full(deck: DeckKind = "onboarding"): Loaded {
     launchAds: [],
     notes: [],
   });
+  // Their services in Arabic, typed in prep (onboarding side): the Arabic
+  // decks' slide 4 lines and queue card name each in Arabic, one script
+  // per card (score round 1: O4 read "Villa interiors" under تصميم داخلي).
+  const servicesAr = [
+    "تصميم داخلي للفلل",
+    "المطابخ والخزائن",
+    "تصميم المجالس",
+    "تشطيب فيلا كاملة",
+  ];
   const prep: { onboarding: Overrides; launch: Overrides } = {
     onboarding: launch
       ? {
           starter_pack: true,
           service_focus: "Interior design",
           service_focus_ar: "تصميم داخلي",
+          services_ar: servicesAr,
           red_lines: ["No photos of the owner", "No music with lyrics"],
           red_lines_ar: ["لا تحطون صور المالك", "بدون موسيقى فيها كلمات"],
         }
       : {
-          starter_pack: true,
+          // Ticked in prep for interior design (fixer round 2: the pack
+          // names its service, so another choice on slide 4 drops it).
+          starter_pack: "interior",
+          services_ar: servicesAr,
           // Three typed live on O7: the plant's tightest fit (DESIGN 9.7).
           red_lines: [
             "No photos of the owner",
@@ -465,41 +481,48 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           // Five red lines and the stamp: slide 3's tightest stop (DESIGN
           // 21.1), stamped on the launch call's own day (the cover's date).
           creative_agreed_at: "2026-10-19T10:20:00Z",
-          // The services in Arabic, so the Arabic queue card names each
-          // row's own (score round 2), never the first one three times.
-          services_ar: [
-            "تصميم داخلي للفلل",
-            "المطابخ والخزائن",
-            "تصميم المجالس",
-            "تشطيب فيلا كاملة",
-          ],
           form_confirmed: "9100000001",
           their_pick: "custom-site",
           cover_creative: "custom-site",
           pain: "design",
           selling_point: "we design every room in 3D before any work starts",
-          selling_point_ar: "نصمم لكم كل غرفة ثلاثي الأبعاد قبل لا نبدي أي شغل",
+          selling_point_ar:
+            "نوريكم كل غرفة بشكل ثلاثي الأبعاد قبل لا نبدي أي شغل",
           engineer_ar: "المهندس خالد",
           call_guide_checked: true,
         }
       : {},
   };
+  // The tray as the server reads it, oldest first (created_at): the hand
+  // upload and the starter templates, then yesterday's Drive paste, then
+  // today's, each made just after its link was pasted. Prep lists it
+  // newest first, so today's paste is on top.
   const custom = launch
     ? [
         ad("custom-site", "custom", siteFeed, 720, 900, {
+          createdAt: "2026-10-17T12:00:00Z",
           primaryText:
             "A dining room we finished in north Riyadh this month, from the first drawing to the last chair.",
           headline: "See a finished home",
           cta: "GET_QUOTE",
           language: "en",
           fileName: "dining-north-riyadh.webp",
+          source: "upload",
         }),
+        // Two came in from Drive links (prep's tray says who pasted them, and when).
         ad("custom-tall", "custom", siteTall, 540, 960, {
           primaryText: "A minute inside a home we finished.",
           cta: "LEARN_MORE",
           language: "en",
           fileName: "home-walk.webp",
+          source: "drive",
+          importedBy: "Sara",
+          importedAt: "2026-10-19T07:15:00Z",
+          createdAt: "2026-10-19T07:20:00Z",
         }),
+        // Their own living room, from Drive (a mirrored crop of the
+        // example living room): never a kitchen, the one large picture
+        // the CEO would read as "kitchens" again (score round 1).
         ad("custom-square", "custom", square, 800, 800, {
           primaryText:
             "بيتكم يتصمم على طريقة عيشة عائلتكم. احجزوا زيارة لمعرضنا في الرياض.",
@@ -507,6 +530,10 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           cta: "BOOK_NOW",
           language: "ar",
           fileName: "interior-ar.webp",
+          source: "drive",
+          importedBy: "Noura",
+          importedAt: "2026-10-18T16:40:00Z",
+          createdAt: "2026-10-18T16:45:00Z",
         }),
       ]
     : [];
@@ -515,17 +542,22 @@ function full(deck: DeckKind = "onboarding"): Loaded {
     kit,
     ads: [
       ...custom,
+      // Interior design's own pictures (closer crops of the example
+      // majlis, mirrored, and the bedroom): never a kitchen as the
+      // interior-design template (CEO, 2026-10-21).
       ad("starter-feed", "starter", feedPic, 864, 1080, {
         primaryText:
           "Your home's interior, designed around how your family lives. Book a visit to our Riyadh showroom.",
         headline: "Interiors by Noor Studio",
         cta: "BOOK_NOW",
         language: "en",
+        createdAt: "2026-10-17T12:05:00Z",
       }),
       ad("starter-reel", "starter", reelPic, 608, 1080, {
-        primaryText: "From the first drawing to the last cabinet.",
+        primaryText: "From the first drawing to the last detail.",
         cta: "LEARN_MORE",
         language: "en",
+        createdAt: "2026-10-17T12:06:00Z",
       }),
     ],
     prep,
@@ -657,7 +689,10 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
     kit,
     ads: launch
       ? [
-          ad("dwy-square", "custom", square, 800, 800, {
+          // A villa they built (a closer, mirrored frame of the example
+          // villa): a construction firm's own ad, never a kitchen, now the
+          // cover shows their first ad (DESIGN 22.15).
+          ad("dwy-square", "custom", dwyVilla, 800, 800, {
             primaryText: "فيلتكم من الأساس إلى التسليم.",
             cta: "SEND_WHATSAPP_MESSAGE",
             language: "ar",
@@ -696,12 +731,9 @@ function starter(_deck: DeckKind = "launch"): Loaded {
           answer("Business Name", "Al Reem Fit-Out & Renovation Co."),
           answer(
             "What services do you offer, and their prices?",
-            "Kitchen renovation, Villa fit-out",
+            "Villa fit-out, Shop and office fit-out, Kitchen renovation",
           ),
-          answer(
-            "What is your #1 service you want to grow?",
-            "Kitchen renovation",
-          ),
+          answer("What is your #1 service you want to grow?", "Villa fit-out"),
           answer(
             "What are your service areas?",
             "Kuwait City, Hawalli, Salmiya",
@@ -777,13 +809,20 @@ function starter(_deck: DeckKind = "launch"): Loaded {
     sources,
     kit,
     ads: [
-      ad("starter-feed", "starter", feedPic, 864, 1080, {
-        primaryText: "نجدد مطبخكم على طريقة طبخ عائلتكم.",
+      // Fit-out pictures and words: the starter templates of the service
+      // the kickoff advertises (crops of the example scenes): the
+      // restaurant framed closer, and the boutique whole, its shelving,
+      // ceiling and glass front in view (score round 1: a close crop of an
+      // office chair read as a furniture ad; the office's window shows a
+      // skyline, and this client is in Kuwait).
+      ad("starter-feed", "starter", fitoutFeedPic, 864, 1080, {
+        primaryText:
+          "نشطّب ونرمّم المحلات والمطاعم والمكاتب، من المخطط لين التسليم.",
         cta: "SEND_WHATSAPP_MESSAGE",
         language: "ar",
       }),
-      ad("starter-reel", "starter", reelPic, 608, 1080, {
-        primaryText: "من أول رسمة لآخر خزانة.",
+      ad("starter-reel", "starter", fitoutReelPic, 608, 1080, {
+        primaryText: "من أول زيارة للموقع لين آخر لمسة.",
         cta: "SEND_WHATSAPP_MESSAGE",
         language: "ar",
       }),

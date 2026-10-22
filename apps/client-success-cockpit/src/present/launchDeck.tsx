@@ -94,6 +94,7 @@ import { IgFeed, Phone, PhoneFigure } from "./mockups/Phones";
 import { nameSize, who } from "./onboardingDeck";
 import { RoadStrip } from "./Road";
 import { StageSwap } from "./StageSwap";
+import { queueServices } from "./services";
 import {
   CALL_STAGES,
   type CallTurn,
@@ -245,11 +246,12 @@ function Cover({ ctx }: { ctx: SlideCtx }) {
   // not count), the cover shows the example ad for their service, tagged
   // "Example ad" (the fixer's round, which overturns DESIGN 22.4.6 for this
   // case): the CEO's "an example ad instead of just the logo". A client
-  // with creatives of their own keeps the faint lanes until the CSM picks
-  // one for the cover.
+  // with creatives of their own and no pick shows their first ad (DESIGN
+  // 22.15: the faint lanes were an empty preview of the next slide); the
+  // lanes stay only when there is nothing to show.
   const example = d.launch.cover ? null : model.coverExample;
   useWarmExample(ctx, Boolean(example));
-  const cover = d.launch.cover ?? example;
+  const cover = model.coverShown;
   const app = example ? lang : model.app;
   const props = { who: who(d), pageName: d.pageName, app, deck: lang };
   return (
@@ -410,6 +412,11 @@ function FormPhone({
       pageName={d.pageName}
       app={lang}
       message={waMessage(d, lang)}
+      // On L5 itself (fixer round 2): the message sent, under the ad it
+      // came from; journey stop 2 keeps it waiting to send.
+      sent={slide}
+      ad={slide && feed ? (feed.video ? feed.poster : feed.url) : null}
+      adTag={slide && feed?.from === "example" ? t(EXAMPLE.short, lang) : null}
     />
   ) : f.kind === "website" && f.source !== "example" ? (
     <PageShot shot={d.launch.pageShot} deck={lang} />
@@ -429,7 +436,13 @@ function FormPhone({
     />
   );
   return (
-    <Phone height={height} label={t(LAUNCH.form.title, lang)}>
+    <Phone
+      height={height}
+      label={t(
+        opensWhatsApp(d) ? LAUNCH.form.titleWhatsApp : LAUNCH.form.title,
+        lang,
+      )}
+    >
       {content}
     </Phone>
   );
@@ -644,14 +657,16 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
         >
           <QueueCard
             lang={lang}
-            // One script per card: a service named only in the other script
-            // stays off the rows (an Arabic name inside an English row, or
-            // the other way round, breaks the row's reading order), and a
-            // row with no service leaves it out.
-            services={[
-              ...(L.service[lang] ? [L.service[lang] as string] : []),
-              ...d.services.filter(s => s !== L.service[lang]),
-            ].filter(s => /[\u0600-\u06ff]/.test(s) === (lang === "ar"))}
+            // The launch service, then the client's own words for that
+            // service only, in the deck's script: never a sub-trade or
+            // another service's words (CEO, 2026-10-21: "These are not
+            // kitchens"), and a row past them leaves its service out.
+            services={queueServices(
+              L.service[lang],
+              L.serviceKey,
+              d.services,
+              lang,
+            )}
             dwy={dwy}
             still={still}
           />
@@ -931,34 +946,55 @@ function Ads({ ctx }: { ctx: SlideCtx }) {
 type RedLineItem = { text: string; told: boolean };
 
 /**
- * A group of red lines under its head ("Never", "Always", or, for card
- * lines in the other script with no translation, "On your card, in
- * English"). A line drops a leading word its head already says (DESIGN
- * 22.6.2), so "Never" is said once.
+ * One column of red lines under its head ("Never" or "Always"), in either
+ * deck (fixer round 2: the Arabic deck stacked its groups, then the card's
+ * English lines under a third head with run-in heads, denser than the
+ * English deck's two columns). The deck's own lines first, then the card's
+ * lines in the other script with no translation, quoted as one block in
+ * their own direction at the column's start edge, as wide as its widest
+ * line, its marks on its own start; the first quoted block in the panel
+ * carries one small tag saying where they come from ("On your card, in
+ * Arabic" / بملفكم، بالإنجليزي). A line drops a leading word its head
+ * already says (DESIGN 22.6.2), so "Never" is said once.
  */
 function LineGroup({
   lead,
   items,
+  quoted = [],
+  tag = null,
   lang,
   group,
 }: {
   lead: L;
   items: RedLineItem[];
+  /** The card's lines in the other script, quoted as written. */
+  quoted?: RedLineItem[];
+  /** The quoted block's tag, said once on the panel. */
+  tag?: L | null;
   lang: Lang;
-  group: "never" | "always" | "card";
+  group: "never" | "always";
 }) {
-  if (!items.length) return null;
+  if (!items.length && !quoted.length) return null;
   return (
     <div className="dkc-fixed-group" data-group={group}>
       <span className="dkc-fixed-lead">{t(lead, lang)}</span>
-      <ul>
-        {items.map(l => (
-          <RedLine
-            key={l.text}
-            text={group === "card" ? l.text : underHead(l.text, group)}
-          />
-        ))}
-      </ul>
+      {items.length ? (
+        <ul>
+          {items.map(l => (
+            <RedLine key={l.text} text={underHead(l.text, group)} />
+          ))}
+        </ul>
+      ) : null}
+      {quoted.length ? (
+        <div className="dkc-fixed-quoted">
+          {tag ? <span className="dkc-fixed-sublead">{t(tag, lang)}</span> : null}
+          <ul dir={lang === "ar" ? "ltr" : "rtl"}>
+            {quoted.map(l => (
+              <RedLine key={l.text} text={underHead(l.text, group)} />
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1042,6 +1078,10 @@ export function redLineGroups(
       ...always.filter(x => !quoted(x)).map(card),
     ],
     fromCard: [...never, ...always].filter(quoted).map(card),
+    // The quoted block keeps the never/always split the deck's own groups
+    // have (DESIGN 22.15): the Arabic deck lost it for English card lines.
+    fromCardNever: never.filter(quoted).map(card),
+    fromCardAlways: always.filter(quoted).map(card),
   };
 }
 
@@ -1064,12 +1104,20 @@ function RedLinesPanel({ ctx }: { ctx: SlideCtx }) {
   const [value, setValue] = useState("");
   const empty = !R.told.length && !R.always.length && !R.never.length;
   const groups = redLineGroups(R, lang, d.dosDontsAr);
+  // Each column: the deck's own lines, then the card's quoted ones.
+  const never = groups.fromCardNever;
+  const always = groups.fromCardAlways;
+  const nNever = groups.never.length + never.length;
+  const nAlways = groups.always.length + always.length;
   // Never and Always side by side when Always is short (three lines or
-  // fewer); else stacked.
-  const side =
-    groups.never.length > 0 &&
-    groups.always.length > 0 &&
-    groups.always.length <= 3;
+  // fewer); else stacked. In either deck (fixer round 2).
+  const side = nNever > 0 && nAlways > 0 && nAlways <= 3;
+  // The quoted block's tag, once: on the first column that has one.
+  const tagOn: "never" | "always" | null = never.length
+    ? "never"
+    : always.length
+      ? "always"
+      : null;
   const add = () => {
     const v = value.trim();
     if (!v) return;
@@ -1120,22 +1168,20 @@ function RedLinesPanel({ ctx }: { ctx: SlideCtx }) {
               <LineGroup
                 lead={T.never}
                 items={groups.never}
+                quoted={never}
+                tag={tagOn === "never" ? T.card : null}
                 lang={lang}
                 group="never"
               />
               <LineGroup
                 lead={T.always}
                 items={groups.always}
+                quoted={always}
+                tag={tagOn === "always" ? T.card : null}
                 lang={lang}
                 group="always"
               />
             </div>
-            <LineGroup
-              lead={T.card}
-              items={groups.fromCard}
-              lang={lang}
-              group="card"
-            />
           </>
         )}
       </div>
@@ -1428,7 +1474,11 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
         ? t(SHARED.tag.exampleWording, lang)
         : null;
   return (
-    <div className="dkc-form-slide" ref={pageRef}>
+    <div
+      className="dkc-form-slide"
+      ref={pageRef}
+      data-wa={opensWhatsApp(d) ? "" : undefined}
+    >
       <Tagged tag={tag} className="dkc-form-phone">
         {/* The phone ends well above the mini rail's name (at 852 it had
             ended 27 px above it); with a tag over it, shorter by its line. */}
@@ -1442,7 +1492,9 @@ function FormSlide({ ctx }: { ctx: SlideCtx }) {
       </Tagged>
       <div className="dkc-form-side">
         <Owner lane="customer" text={F.owner} lang={lang} />
-        <h2 className="dk-h2">{t(F.title, lang)}</h2>
+        <h2 className="dk-h2">
+          {t(opensWhatsApp(d) ? F.titleWhatsApp : F.title, lang)}
+        </h2>
         <p className="dk-body dk-ink2 dkc-form-line">
           {destination && f.kind === "whatsapp"
             ? t(F.whatsapp, lang)
@@ -2492,6 +2544,11 @@ function GreenLight({ ctx }: { ctx: SlideCtx }) {
   // slide before, so nothing is repeated small above it.
   return (
     <div className="dkc-green dkc-green-two" key="two">
+      {/* Their mark back from the cover, top start (score round 4), so the
+          call ends where it began: their name on the road. */}
+      <div className="dkc-green-mark">
+        <ClientMark who={who(d)} size={96} />
+      </div>
       <p className="dk-display dkc-green-question">
         {t(d.launch.live ? G.questionLive : G.question, lang)}
       </p>
@@ -2605,10 +2662,12 @@ export function launchSlides(): SlideDef[] {
           : [
               "No go-live date on the card. Add it here; the cover and the 90 days use it.",
             ]),
-        ...(d.launch.cover
+        // Only when there is a choice to make (DESIGN 22.15): with no ad of
+        // their own the cover shows the example ad, which is designed.
+        ...(d.launch.cover || !d.launch.creatives.some(c => !c.starter)
           ? []
           : [
-              "Cover: pick one of their custom creatives, or the cover shows the lanes.",
+              "Cover: no ad picked, so it shows their first ad. Pick another here if a different one suits.",
             ]),
       ],
     },

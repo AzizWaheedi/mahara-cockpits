@@ -11,6 +11,7 @@ import {
   t,
   tf,
 } from "../content";
+import { KEPT } from "../examples";
 import { Node } from "../JourneyLanes";
 import { Avatar, type Identity } from "./Identity";
 
@@ -386,8 +387,12 @@ export function AppointmentCard({
  * client's style change, and fills. Each stop changes one thing.
  */
 const FIELD = 18;
-/** Row 1 column 1, row 1 column 5, row 3 column 3: never a line, so it reads as chance. */
-const STAY_LIT = new Set([0, 4, 14]);
+/**
+ * Row 1 column 1, row 1 column 5, row 3 column 3: never a line, so it reads
+ * as chance. `serviceField` puts the client's own scenes on them (DESIGN
+ * 22.15), so "the few that work" are always their service's pictures.
+ */
+const STAY_LIT = new Set<number>(KEPT);
 /** Their pick, when marked, runs on this one of the three (row 3, column 3). */
 const PICK_TILE = 14;
 /** What varies: a video (a play mark) on six, a carousel (two edges) on four, a picture on eight. */

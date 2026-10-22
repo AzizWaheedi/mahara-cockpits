@@ -6,6 +6,7 @@ other by a shared edit.
 """
 from __future__ import annotations
 
+import http.client as _http_client
 import json
 import time
 import urllib.error
@@ -87,7 +88,10 @@ def request(
                 raise last
             wait = _retry_after(e.headers) or (2**attempt)
             time.sleep(min(wait, 30))
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        # http.client's own failures (IncompleteRead, a bad status line) are
+        # not OSErrors: a broken answer is a transport error like a reset
+        # connection, retried here and then HttpError(0) for every caller.
+        except (urllib.error.URLError, TimeoutError, OSError, _http_client.HTTPException) as e:
             last = HttpError(0, f"{type(e).__name__}: {e}", b"", url)
             if attempt == retries:
                 raise last

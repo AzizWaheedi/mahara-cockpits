@@ -68,6 +68,12 @@ export interface SlideDef {
   /** Prep's readiness for this slide: what is missing, in plain words. */
   missing?: (d: DeckData) => string[];
   /**
+   * What the CSM does on the call itself (fixer round 2): an instruction,
+   * never missing data, so prep sets it in muted ink and the slide can
+   * still read Ready.
+   */
+  todo?: (d: DeckData) => string[];
+  /**
    * The journey's mini rail at the foot (launch slides 3 to 7, DESIGN 6.7):
    * the step this stop opens, from 0, or null for none. The shell draws it,
    * so it stays still while the slide changes around it.

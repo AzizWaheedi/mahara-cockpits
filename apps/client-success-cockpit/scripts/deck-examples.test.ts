@@ -7,8 +7,12 @@ import {
   choiceOf,
   exampleCreative,
   examplePick,
+  KEPT,
+  NEAR,
   parseChoice,
+  pickableScenes,
   SCENES,
+  STRIP_LIT,
   sceneAt,
   serviceField,
   serviceRound,
@@ -16,8 +20,10 @@ import {
   THEMES,
 } from "../src/present/examples";
 import {
+  isSubTrade,
   KICKOFF_CHOICE,
   MAIN,
+  queueServices,
   resolveService,
   serviceNames,
   serviceOfText,
@@ -142,6 +148,76 @@ describe("the five main services (CEO, 2026-10-21)", () => {
   });
 });
 
+describe("the call queue's rows (L2 stop 3): the launch service's own words only", () => {
+  test("a sub-trade is never a row's service, in either language", () => {
+    for (const w of [
+      "Kitchens and wardrobes",
+      "Kitchen renovation",
+      "Bathrooms",
+      "المطابخ والخزائن",
+      "حمامات",
+      "دواليب",
+    ])
+      expect({ w, sub: isSubTrade(w) }).toEqual({ w, sub: true });
+    for (const w of ["Villa interiors", "Majlis design", "تصميم المجالس", null])
+      expect({ w, sub: isSubTrade(w) }).toEqual({ w, sub: false });
+  });
+
+  test("the service first, then the client's words for that service, in the deck's script", () => {
+    const words = [
+      "Villa interiors",
+      "Kitchens and wardrobes",
+      "Majlis design",
+      "Full villa fit-out",
+      "Interior design",
+      "تصميم المجالس",
+    ];
+    expect(queueServices("Interior design", "interior", words, "en")).toEqual([
+      "Interior design",
+      "Villa interiors",
+      "Majlis design",
+    ]);
+    // A fit-out campaign: its own words, a kitchen's renovation left out.
+    expect(
+      queueServices(
+        "Fit-out and renovation",
+        "fitout",
+        ["Villa fit-out", "Shop and office fit-out", "Kitchen renovation"],
+        "en",
+      ),
+    ).toEqual([
+      "Fit-out and renovation",
+      "Villa fit-out",
+      "Shop and office fit-out",
+    ]);
+    expect(
+      queueServices(
+        "تصميم داخلي",
+        "interior",
+        [
+          "تصميم داخلي للفلل",
+          "المطابخ والخزائن",
+          "تصميم المجالس",
+          "تشطيب فيلا كاملة",
+        ],
+        "ar",
+      ),
+    ).toEqual(["تصميم داخلي", "تصميم داخلي للفلل", "تصميم المجالس"]);
+    // "Other": the words that fit none of the five; nothing known: all but a sub-trade.
+    expect(
+      queueServices(
+        "Equipment rental",
+        "other",
+        ["Crane hire", "Villa interiors"],
+        "en",
+      ),
+    ).toEqual(["Equipment rental", "Crane hire"]);
+    expect(
+      queueServices(null, null, ["Kitchens", "Villa interiors"], "en"),
+    ).toEqual(["Villa interiors"]);
+  });
+});
+
 describe("which pictures: by main service (SERVICE-MAP, DESIGN 22.14)", () => {
   test("each service's scenes, its lead first", () => {
     expect(SCENES).toEqual({
@@ -201,6 +277,25 @@ describe("which pictures: by main service (SERVICE-MAP, DESIGN 22.14)", () => {
     expect(examplePick(null, null).theme).toBe("living");
   });
 
+  test("prep's picture select never offers a kitchen or a bathroom as the example (fixer round 2)", () => {
+    for (const k of MAIN) {
+      const offered = pickableScenes(k);
+      expect(offered.join(" ")).not.toMatch(/kitchen|bathroom/);
+      // Everything else of the service's own, lead first.
+      expect(offered).toEqual(
+        SCENES[k].filter(x => x !== "kitchen" && x !== "bathroom"),
+      );
+      expect(offered[0]).toBe(SCENES[k][0]);
+    }
+    expect(pickableScenes("interior")).toEqual(["living", "majlis", "bedroom"]);
+    expect(pickableScenes("fitout")).toEqual([
+      "fitout2",
+      "fitout3",
+      "office",
+      "facade",
+    ]);
+  });
+
   test("every value prep can save is one the server keeps", () => {
     const sql = readFileSync(
       resolve(
@@ -225,6 +320,38 @@ describe("which pictures: by main service (SERVICE-MAP, DESIGN 22.14)", () => {
       expect({ x, kept: allowed.has(x) }).toEqual({ x, kept: true });
   });
 
+  test("slide 4's quiet lines keep one script: the Arabic list in the Arabic deck, the words as written without one (score round 1)", () => {
+    const f = FIXTURES.full("onboarding");
+    const make = (prep: typeof f.prep, lang: "en" | "ar") =>
+      deckData({
+        taskId: "fixture-full",
+        deck: "onboarding",
+        lang,
+        sources: f.sources,
+        kit: f.kit,
+        prep,
+        ads: f.ads,
+        publicUrl: (_b, p) => p,
+        now: new Date("2026-10-19T09:00:00Z"),
+      });
+    const own = (d: ReturnType<typeof make>, k: string) =>
+      d.serviceRows.find(r => r.key === k)?.own ?? [];
+    const ar = make(f.prep, "ar");
+    expect(own(ar, "interior")[0]).toBe("تصميم داخلي للفلل");
+    expect(own(ar, "fitout")).toEqual(["تشطيب فيلا كاملة"]);
+    for (const r of ar.serviceRows)
+      for (const w of r.own)
+        expect({ w, latin: /[A-Za-z]/.test(w) }).toEqual({ w, latin: false });
+    // The English deck keeps their words as written.
+    expect(own(make(f.prep, "en"), "interior")[0]).toBe("Villa interiors");
+    // No Arabic list: the Arabic deck falls back to the words as written.
+    const bare = make(
+      { ...f.prep, onboarding: { ...f.prep.onboarding, services_ar: null } },
+      "ar",
+    );
+    expect(own(bare, "interior")[0]).toBe("Villa interiors");
+  });
+
   test("every fixture shows a different service's pictures, none a sub-trade", () => {
     const seen = new Map<FixtureKey, string>();
     for (const key of Object.keys(FIXTURES) as FixtureKey[]) {
@@ -242,7 +369,29 @@ describe("which pictures: by main service (SERVICE-MAP, DESIGN 22.14)", () => {
       });
       expect(THEMES).toContain(d.example.theme);
       seen.set(key, d.example.service);
-      expect(d.serviceFocus ?? "").not.toMatch(/kitchen|bathroom/i);
+      // Neither the service, their #1 nor a starter template's words or
+      // picture name a sub-trade (the CEO, 2026-10-21: "These are not
+      // kitchens"; score round 4: the interior client's starters were two
+      // kitchens, one captioned "…the last cabinet").
+      const SUB_TRADE =
+        /kitchen|bathroom|cabinet|wardrobe|مطبخ|مطابخ|حمام|خزائن|دواليب/i;
+      expect(d.serviceFocus ?? "").not.toMatch(SUB_TRADE);
+      expect(d.numberOne ?? "").not.toMatch(SUB_TRADE);
+      for (const a of f.ads.filter(x => x.kind === "starter")) {
+        expect({ key, text: a.primaryText }).not.toMatchObject({
+          text: expect.stringMatching(SUB_TRADE),
+        });
+        // Each starter picture is a crop of its own service's scenes,
+        // named for the service (starter-interior-*, starter-fitout-*).
+        const file = String(a.url).split("/").pop() ?? "";
+        expect({ key, file }).toMatchObject({
+          file: expect.stringMatching(
+            key === "starter"
+              ? /^starter-fitout-(feed|reel)\.webp$/
+              : /^starter-interior-(feed|reel)\.webp$/,
+          ),
+        });
+      }
     }
     expect(Object.fromEntries(seen)).toEqual({
       full: "interior",
@@ -254,7 +403,7 @@ describe("which pictures: by main service (SERVICE-MAP, DESIGN 22.14)", () => {
 });
 
 describe("the tiles and the places (DESIGN 22.14)", () => {
-  test("the field: every scene once, the service first, the two large ones as details", () => {
+  test("the field and the round: no tile twice, the service first, the two large ones as details", () => {
     for (const k of MAIN) {
       const pick = examplePick(null, k);
       const field = serviceField(pick);
@@ -262,11 +411,80 @@ describe("the tiles and the places (DESIGN 22.14)", () => {
       expect(field.length).toBe(18);
       expect(round.length).toBe(6);
       expect(new Set([...field, ...round]).size).toBe(24);
-      // Tile 0 is their lead; L2's and L4's large pictures show as details.
+      // The kept tiles are their own: the lead and the alternate as
+      // details (L2's and L4's large pictures), the third wide.
       expect(field[0]).toContain(`/tile/${sceneAt(pick, 0)}-b.webp`);
-      expect(field[1]).toContain(`/tile/${sceneAt(pick, 1)}-b.webp`);
+      expect(field[4]).toContain(`/tile/${sceneAt(pick, 1)}-b.webp`);
+      expect(field[14]).toContain(`/tile/${sceneAt(pick, 2)}-a.webp`);
       expect(stripTiles(pick)[0]).toContain(`/tile/${sceneAt(pick, 0)}-a.webp`);
+      expect(stripTiles(pick)[4]).toContain(`/tile/${sceneAt(pick, 1)}-a.webp`);
     }
+  });
+
+  const sceneOf = (url: string) =>
+    /\/tile\/([a-z0-9]+)-[ab]\.webp$/.exec(url)?.[1] ?? "";
+
+  test("what wins is always their service's own picture, never a kitchen or a bathroom (DESIGN 22.15)", () => {
+    for (const k of MAIN) {
+      const pick = examplePick(null, k);
+      const strip = stripTiles(pick);
+      const own = (scene: string) =>
+        (SCENES[k] as readonly string[]).includes(scene);
+      for (const i of STRIP_LIT) {
+        const scene = sceneOf(strip[i]);
+        expect({ k, i, scene, own: own(scene) }).toEqual({
+          k,
+          i,
+          scene,
+          own: true,
+        });
+        expect(scene).not.toMatch(/kitchen|bathroom/);
+      }
+      const field = serviceField(pick);
+      for (const i of KEPT) {
+        const scene = sceneOf(field[i]);
+        expect({ k, i, scene, own: own(scene) }).toEqual({
+          k,
+          i,
+          scene,
+          own: true,
+        });
+      }
+    }
+  });
+
+  test("an interior or fit-out client's field and round: no building site anywhere, no kitchen or bathroom, the first row their own work and the near ones (score round 1)", () => {
+    for (const k of ["interior", "fitout"] as const) {
+      const pick = examplePick(null, k);
+      const field = serviceField(pick);
+      const shown = [...field, ...serviceRound(pick)];
+      for (const url of shown)
+        expect({ k, scene: sceneOf(url) }).not.toMatchObject({
+          scene: expect.stringMatching(/^construction|kitchen|bathroom/),
+        });
+      const near = [...SCENES[k], ...NEAR[k]] as string[];
+      for (const url of field.slice(0, 6))
+        expect({
+          k,
+          scene: sceneOf(url),
+          near: near.includes(sceneOf(url)),
+        }).toEqual({ k, scene: sceneOf(url), near: true });
+    }
+    // The interior client's field, as the CEO sees it on the harness.
+    const interior = serviceField(examplePick(null, "interior")).map(sceneOf);
+    expect(interior.slice(0, 6)).toEqual([
+      "living",
+      "office",
+      "stairs",
+      "fitout3",
+      "majlis",
+      "fitout2",
+    ]);
+    // A sub-trade the CSM picked as the lead is theirs: kept, as a detail.
+    const kitchen = examplePick("kitchen", "interior");
+    expect(serviceField(kitchen)[0]).toContain("/tile/kitchen-b.webp");
+    // Every service's near scenes are real scenes, never its own again.
+    for (const k of MAIN) for (const x of NEAR[k]) expect(THEMES).toContain(x);
   });
 
   test("the cover and journey stop 1 are different scenes; L4's second phone the alternate; L5 the third", () => {

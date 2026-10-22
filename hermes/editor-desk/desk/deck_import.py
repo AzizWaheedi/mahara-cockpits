@@ -59,13 +59,16 @@ PLAN_MIME = re.compile(r"(image|video)/[a-z0-9.+-]{1,60}")  # the plan's own rul
 EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
        "video/mp4": "mp4", "video/quicktime": "mov", "video/webm": "webm"}
 
-# The second review round: the input may open local files only (never a
-# network or playlist protocol, whatever the container asks for), and the
-# output stops a megabyte past what can land, so a file that lies about its
-# length cannot fill the scratch disk before the 15-minute kill.
+# The second review round: every ffmpeg-family process that reads the Drive
+# bytes (the probe, the conversion and the poster) may open local files only
+# (never a network or playlist protocol, whatever the container asks for),
+# and the conversion's output stops a megabyte past what can land, so a file
+# that lies about its length cannot fill the scratch disk before the
+# 15-minute kill.
+LOCAL_ONLY = ("-protocol_whitelist", "file")
 FFMPEG_CONVERT = [
     "nice", "-n", "10", "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
-    "-protocol_whitelist", "file", "-i", "{src}",
+    *LOCAL_ONLY, "-i", "{src}",
     "-map", "0:v:0", "-map", "0:a:0?",
     "-vf", "scale='if(gt(iw,ih),-2,min(1080,iw))':'if(gt(iw,ih),min(1080,ih),-2)'",
     "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", "3500k", "-bufsize", "7000k",
@@ -267,7 +270,7 @@ class Tools:
         return media.free_bytes(path)
 
     def probe(self, path: Path) -> dict[str, Any]:
-        return media.probe(path)
+        return media.probe(path, input_args=LOCAL_ONLY)
 
     def has(self, binary: str) -> bool:
         return media.has(binary)
@@ -306,7 +309,7 @@ class Tools:
             raise
 
     def poster(self, src: Path, ts: float, dest: Path) -> bool:
-        return media.frame_at(src, ts, dest, width=POSTER_WIDTH)
+        return media.frame_at(src, ts, dest, width=POSTER_WIDTH, input_args=LOCAL_ONLY)
 
 
 # ---------------------------------------------------------------------------

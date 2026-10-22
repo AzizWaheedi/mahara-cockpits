@@ -10,7 +10,14 @@ import {
   SHARED,
 } from "./content";
 import type { AccessStatus, CallKind, DeckData, Overrides } from "./deckData";
-import { choiceOf, feedUrl, isTheme, parseChoice, SCENES } from "./examples";
+import {
+  choiceOf,
+  feedUrl,
+  isTheme,
+  parseChoice,
+  pickableScenes,
+  SCENES,
+} from "./examples";
 import {
   isMain,
   MAIN,
@@ -249,8 +256,8 @@ function GoalsControls({ d, prep, setPrep }: ControlsProps) {
 /**
  * The example ad (DESIGN 22.14): match their service, or a service and then
  * one of its pictures. Native selects, the picture beside them as the
- * preview. Saved on the onboarding row ("service:scene") and read by both
- * decks.
+ * preview. Saved on the onboarding row (`example_theme`: a service's key
+ * for its lead picture, else the scene; `choiceOf`) and read by both decks.
  */
 export function ExampleSwitch({
   d,
@@ -327,7 +334,15 @@ export function ExampleSwitch({
                 ? "Their service's pictures"
                 : "Their service's lead picture"}
             </option>
-            {SCENES[shown].map(x => (
+            {/* A kitchen or a bathroom saved before (fixer round 2) is
+                listed only while it is the choice, so the select says
+                what the deck shows; it is never offered. */}
+            {choice && !pickableScenes(shown).includes(choice.scene) ? (
+              <option value={choice.scene}>
+                {EXAMPLE.names[choice.scene]}, a room, not the service
+              </option>
+            ) : null}
+            {pickableScenes(shown).map(x => (
               <option key={x} value={x}>
                 {EXAMPLE.names[x]}
               </option>
@@ -336,6 +351,48 @@ export function ExampleSwitch({
         </div>
       </div>
     </Field>
+  );
+}
+
+/**
+ * The starter pack is made for one service (fixer round 2): the tick saves
+ * that service's key ("other" for their own words), so a different choice
+ * on slide 4 leaves slide 7 without the pack until it is ticked for the
+ * new one. With no service on file yet it saves a plain yes, read as the
+ * kickoff's service.
+ */
+function StarterPackToggle({
+  d,
+  setPrep,
+}: {
+  d: DeckData;
+  setPrep: ControlsProps["setPrep"];
+}) {
+  const key = d.service.key;
+  const was = d.starterPack ? null : d.starterPackFor;
+  const other = was
+    ? isMain(was)
+      ? SERVICES[was].mid.en
+      : "their own service"
+    : null;
+  return (
+    <Toggle
+      checked={d.starterPack}
+      onChange={v =>
+        setPrep(
+          "onboarding",
+          { starter_pack: v ? (key ?? true) : null },
+          true,
+        )
+      }
+    >
+      A ready starter pack exists for {d.serviceMid ?? "the launch service"}
+      <span className="block text-xs text-muted-foreground">
+        {other
+          ? `Ticked for ${other}, so slide 7 leaves the pack out while the service is ${d.serviceMid ?? "not chosen"}. Tick it again if the pack fits this one.`
+          : "Only then does slide 7 name the service and show the starter ads."}
+      </span>
+    </Toggle>
   );
 }
 
@@ -480,16 +537,27 @@ function ServiceControls({ d, prep, setPrep, ...rest }: ControlsProps) {
           }
         />
       </Field>
-      <ExampleSwitch d={d} prep={p} setPrep={setPrep} />
-      <Toggle
-        checked={p.starter_pack === true}
-        onChange={v => setPrep("onboarding", { starter_pack: v || null }, true)}
+      <Field
+        label="The same, in Arabic"
+        hint="For the Arabic deck: slide 4's quiet lines and the call queue. Blank, it shows their words as written."
       >
-        A ready starter pack exists for {d.serviceMid ?? "the launch service"}
-        <span className="block text-xs text-muted-foreground">
-          Only then does slide 7 name the service and show the starter ads.
-        </span>
-      </Toggle>
+        <PrepText
+          label="Their services in Arabic"
+          rows={4}
+          rtl
+          value={strings(p.services_ar).join("\n")}
+          onChange={v =>
+            setPrep("onboarding", {
+              services_ar: v
+                .split("\n")
+                .map(x => x.trim())
+                .filter(Boolean),
+            })
+          }
+        />
+      </Field>
+      <ExampleSwitch d={d} prep={p} setPrep={setPrep} />
+      <StarterPackToggle d={d} setPrep={setPrep} />
     </div>
   );
 }

@@ -476,7 +476,7 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
       tone: "warn",
     });
     expect(view("nobody", "ar").blocks[0].line.text).toBe(
-      "ما أحد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف أمس، 13:02. ارفع الملفات هنا لين ترجع.",
+      "محد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف أمس الساعة 13:02. ارفع الملفات هنا لين ترجع تشتغل.",
     );
     expect(view("never").blocks[0].line.text).toBe(
       "The Drive importer hasn't run yet. Upload the files here for now.",
@@ -531,10 +531,54 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
     const line = V.importLine(working, quiet, "en", new Date(NOW));
     expect(line.state).toBe("stalled");
     expect(line.line.tone).toBe("warn");
-    expect(line.line.text).toStartWith("This stopped part-way. The Drive importer last ran ");
-    expect(V.importLine(working, quiet, "ar", new Date(NOW)).line.text).toStartWith(
-      "وقف بالنص. آخر مرة اشتغلت أداة الدرايف ",
+    expect(line.line.text).toStartWith(
+      "This stopped part-way. The Drive importer last ran ",
     );
+    expect(
+      V.importLine(working, quiet, "ar", new Date(NOW)).line.text,
+    ).toStartWith("الاستيراد وقف بالنص. آخر مرة اشتغلت أداة الدرايف الساعة ");
+    // The harness's own card (view=drive) shows it, so it can be reviewed.
+    expect(F.DRIVE_SCENARIOS).toContain("stalled");
+    const stalled = readOf("stalled");
+    expect(
+      V.importLine(stalled.imports[0], stalled, "en", new Date(NOW)).state,
+    ).toBe("stalled");
+  });
+
+  test("the harness's pretend worker: a video lands as an MP4 with its poster, and a file two links share lands once", async () => {
+    let now = NOW;
+    const ads: {
+      fileName?: string | null;
+      mime: string;
+      posterUrl?: string | null;
+    }[] = [];
+    const io = F.fakeDrive({
+      scenario: "idle",
+      taskId: "fixture-full",
+      addAd: a => ads.push(a),
+      now: () => now,
+    });
+    await io.requestDriveImport(
+      "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUv",
+    );
+    await io.requestDriveImport(
+      "https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHgFe/view",
+    );
+    now += 5 * 60_000;
+    const read = await io.readDriveImports();
+    const names = ads.map(a => a.fileName);
+    // Each Drive file once in the tray, though both links hold living-corner.jpg.
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.filter(n => n === "living-corner.jpg")).toHaveLength(1);
+    const shared = read.imports
+      .flatMap(i => i.files)
+      .filter(f => f.name === "living-corner.jpg")
+      .map(f => f.status)
+      .sort();
+    expect(shared).toEqual(["landed", "skipped"]);
+    const walk = ads.find(a => a.fileName === "site-walk.mov");
+    expect(walk?.mime).toBe("video/mp4");
+    expect(walk?.posterUrl).toBeTruthy();
   });
 
   test("several open: the head line, every open import and the three newest finished", () => {
@@ -565,7 +609,7 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
     ).toBe("16 Oct, 09:05");
     expect(
       V.timeLabel(new Date(2026, 9, 19, 9, 5).toISOString(), now, "ar"),
-    ).toBe("أمس، 09:05");
+    ).toBe("أمس الساعة 09:05");
   });
 
   test("the read failed, said with its reason", () => {

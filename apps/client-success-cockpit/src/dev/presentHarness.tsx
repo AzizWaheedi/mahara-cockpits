@@ -37,6 +37,8 @@ const deck = (
   params.get("deck") === "launch" ? "launch" : "onboarding"
 ) as DeckKind;
 const view = (params.get("view") ?? "present") as View;
+/** The harness's "now": the fixtures' Sunday morning, 19 October. */
+const HARNESS_NOW = Date.parse("2026-10-19T09:00:00Z");
 
 /**
  * The harness's stand-in for the server's link check (VIDEOS.md 3), so prep's
@@ -136,12 +138,17 @@ function Harness() {
     // ?drive=<scenario>: the Drive box's imports (driveFixtures.ts); a link
     // pasted in prep or the notes window runs a pretend worker whose files
     // join this tray.
+    // The pretend worker's clock: the harness's NOW plus the time since the
+    // page opened, so a link pasted here reads "today", never the machine's
+    // real date against the harness's 19 October.
+    const opened = Date.now();
     const drive = fakeDrive({
       scenario: params.get("drive"),
       taskId: `fixture-${fixture}`,
       addAd: ad => {
         ads = [...ads, ad];
       },
+      now: () => HARNESS_NOW + (Date.now() - opened),
     });
     const conflict = (seen: number, row: VideoRow | null, verb: string) => {
       if ((row?.revision ?? 0) !== seen)
@@ -228,6 +235,13 @@ function Harness() {
         if (!out) throw Error("Not in this harness's tray.");
         return out;
       },
+      removeAd: async id => {
+        await new Promise(r => setTimeout(r, 300));
+        const out = ads.find(a => a.id === id);
+        if (!out) throw Error("Not in this harness's tray.");
+        ads = ads.filter(a => a.id !== id);
+        return { ...out, status: "removed" };
+      },
       savePrep: async (k, patch) => {
         store[k] = applyPatch(store[k], patch);
         revision += 1;
@@ -236,7 +250,7 @@ function Harness() {
       ...drive,
       presenterName: fixture === "sparse" ? null : "Sara Al-Harbi",
       publicUrl: (_bucket, path) => path,
-      now: () => new Date("2026-10-19T09:00:00Z"),
+      now: () => new Date(HARNESS_NOW),
     };
   }, []);
   return (

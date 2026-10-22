@@ -3,7 +3,11 @@
  * table): `?drive=<scenario>` sets what the client's imports read as, and a
  * link pasted in prep or the notes window runs a pretend worker in memory
  * (queued, opening, the files one by one, done), whose files join the tray
- * the way the desk's do. Every name here is made up; nothing is sent.
+ * the way the desk's do: a video as an MP4 with its poster, and a file that
+ * another open link has already brought in is skipped, as the server's
+ * unique index refuses it (score round 1: site-walk.mov landed as a
+ * picture, and one file landed twice from two links). Every name here is
+ * made up; nothing is sent.
  */
 
 import {
@@ -19,10 +23,10 @@ import {
   type DriveImports,
   type LaunchAd,
 } from "@/present/sources";
+import siteTall from "./custom-hall-tall.webp";
 import siteFeed from "./custom-site.webp";
-import siteTall from "./custom-site-tall.webp";
 import square from "./custom-square.webp";
-import feedPic from "./starter-feed.webp";
+import feedPic from "./starter-interior-feed.webp";
 
 export const DRIVE_SCENARIOS = [
   "idle",
@@ -39,10 +43,11 @@ export const DRIVE_SCENARIOS = [
   "several",
   "readfail",
   "notlive",
+  "stalled",
 ] as const;
 export type DriveScenario = (typeof DRIVE_SCENARIOS)[number];
 
-const FOLDER = "1hArNeSsFoLdErKiTcHeNs2026";
+const FOLDER = "1hArNeSsFoLdErInTeRiOrS26";
 const S = 1000;
 const M = 60 * S;
 
@@ -126,7 +131,7 @@ function imp(
 
 const SIX = () => [
   file("villa-entrance.jpg", "landed"),
-  file("kitchen-island.jpg", "landed"),
+  file("living-corner.jpg", "landed"),
   file("site-walk.mov", "landed", { note: "converted" }),
   file("majlis-wide.jpg", "landed"),
   file("stair-detail.jpg", "landed"),
@@ -163,7 +168,7 @@ export function driveScenario(
             files: [
               file("villa-entrance.jpg", "landed"),
               file("site-walk.mov", "landed", { note: "converted" }),
-              file("kitchen-island.jpg", "skipped"),
+              file("living-corner.jpg", "skipped"),
               file("majlis-wide-angle-golden-hour-final.jpg", "working"),
               file("stair-detail.jpg", "queued"),
               file("pool-dusk.mov", "queued"),
@@ -184,7 +189,7 @@ export function driveScenario(
             files: [
               file("villa-entrance.jpg", "landed"),
               file("site-walk.mov", "landed", { note: "converted" }),
-              file("kitchen-island.jpg", "skipped"),
+              file("living-corner.jpg", "skipped"),
               file("majlis-wide.jpg", "landed"),
               failedFile("drone-flyover-4k.mov", "too_big"),
               failedFile("IMG_4471.HEIC", "heic"),
@@ -199,7 +204,7 @@ export function driveScenario(
           imp(now - 4 * M, "done", {
             files: [
               file("villa-entrance.jpg", "skipped"),
-              file("kitchen-island.jpg", "skipped"),
+              file("living-corner.jpg", "skipped"),
               file("site-walk.mov", "skipped"),
               file("majlis-wide.jpg", "skipped"),
             ],
@@ -230,6 +235,23 @@ export function driveScenario(
         ],
         workerSeenAt: seen,
       };
+    case "stalled":
+      // Working, but the importer last seen 11 minutes ago (STALLED_MS is
+      // 10): the box says it stopped part-way, never "Bringing in" forever.
+      return {
+        imports: [
+          imp(now - 14 * M, "working", {
+            files: [
+              file("villa-entrance.jpg", "landed"),
+              file("majlis-wide.jpg", "landed"),
+              file("site-walk.mov", "working"),
+              file("stair-detail.jpg", "queued"),
+            ],
+            updatedAt: iso(now - 11 * M),
+          }),
+        ],
+        workerSeenAt: iso(now - 11 * M),
+      };
     case "nobody":
       return {
         imports: [imp(now - 4 * M, "queued")],
@@ -249,7 +271,7 @@ export function driveScenario(
             found: null,
           }),
           imp(now - 2 * M, "working", {
-            driveId: "1KiTcHeNsBeFoReAfTeR26",
+            driveId: "1ViLlAsBeFoReAfTeR2026",
             files: [
               file("before-1.jpg", "landed"),
               file("after-1.jpg", "working"),
@@ -294,10 +316,10 @@ const EACH = 1.6 * S;
 
 /** What Drive "holds" behind a pasted link: a folder of five, or one file. */
 function planFor(kind: DriveImport["kind"]): DriveImportFile[] {
-  if (kind === "file") return [file("kitchen-island.jpg", "queued")];
+  if (kind === "file") return [file("living-corner.jpg", "queued")];
   return [
     file("villa-entrance.jpg", "queued"),
-    file("kitchen-island.jpg", "queued"),
+    file("living-corner.jpg", "queued"),
     file("site-walk.mov", "queued"),
     file("majlis-wide.jpg", "queued"),
     file("drone-flyover-4k.mov", "queued"),
@@ -326,6 +348,8 @@ export function fakeDrive(o: {
   const live: Array<{ imp: DriveImport; at: number; plan: DriveImportFile[] }> =
     [];
   const landedAds = new Set<string>();
+  /** Which import brought each Drive file in first: another link skips it. */
+  const owner = new Map<string, string>();
   let pic = 0;
 
   /** A pasted link's import as the pretend worker has it now. */
@@ -339,6 +363,9 @@ export function fakeDrive(o: {
       if (t < doneAt - EACH) return f;
       if (t < doneAt) return { ...f, status: "working" as const };
       if (/4k/.test(f.name)) return failedFile(f.name, "too_big");
+      const first = owner.get(f.driveId) ?? l.imp.id;
+      owner.set(f.driveId, first);
+      if (first !== l.imp.id) return { ...f, status: "skipped" as const };
       const landed: DriveImportFile = {
         ...f,
         status: "landed",
@@ -350,19 +377,35 @@ export function fakeDrive(o: {
       if (!landedAds.has(key)) {
         landedAds.add(key);
         const src = PICTURES[pic++ % PICTURES.length];
+        // A video lands as the desk converts it: an MP4 with its poster
+        // (the harness has no clip, so the poster stands in for both).
+        const video = f.kind === "video";
+        const stem = f.name.replace(/\.[^.]+$/, "");
         o.addAd({
           id: crypto.randomUUID(),
           taskId: o.taskId,
           kind: "custom",
           status: "ready",
-          path: `fixture/drive/${f.name}`,
-          mime: "image/webp",
+          path: `fixture/drive/${video ? `${stem}.mp4` : f.name}`,
+          mime: video ? "video/mp4" : "image/webp",
           bytes: f.bytes ?? 1,
           width: 1080,
-          height: 1350,
+          height: video ? 1920 : 1350,
+          seconds: video ? 18 : null,
+          posterPath: video ? `fixture/drive/${stem}.jpg` : null,
+          posterMime: video ? "image/jpeg" : null,
+          posterUrl: video ? src : null,
+          // The Drive name, as the server keeps it (the box says it was converted).
           fileName: f.name,
           hidden: false,
           url: src,
+          // As the tray's read gives a Drive file (20261020160300).
+          source: "drive",
+          importedBy: "Sara",
+          importedAt: iso(l.at),
+          // Made as it lands, on the harness's clock (its NOW plus the time
+          // since the page opened), so the tray reads it as today's.
+          createdAt: iso(l.at + doneAt),
         });
       }
       return landed;

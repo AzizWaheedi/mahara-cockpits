@@ -59,11 +59,11 @@ export const DRIVE_UI = {
   },
   nobody: {
     en: "Nothing has picked this up yet. The Drive importer last ran {time}. Upload the files here for now.",
-    ar: "ما أحد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع.",
+    ar: "محد بدا فيه للحين. آخر مرة اشتغلت أداة الدرايف {time}. ارفع الملفات هنا لين ترجع تشتغل.",
   },
   stalled: {
     en: "This stopped part-way. The Drive importer last ran {time}. It carries on when it runs again; upload the files here if you need them now.",
-    ar: "وقف بالنص. آخر مرة اشتغلت أداة الدرايف {time}. بيكمل من مكانه أول ما ترجع تشتغل، وإذا تحتاج الملفات الحين ارفعها هنا.",
+    ar: "الاستيراد وقف بالنص. آخر مرة اشتغلت أداة الدرايف {time}. بيكمل من مكانه أول ما ترجع تشتغل، وإذا تحتاج الملفات الحين، ارفعها هنا.",
   },
   never: {
     en: "The Drive importer hasn't run yet. Upload the files here for now.",
@@ -85,7 +85,7 @@ export const DRIVE_UI = {
    */
   notLive: {
     en: "Bringing in from Drive isn't live yet. Upload the files here for now.",
-    ar: "الجلب من الدرايف ما صار جاهز للحين. ارفع الملفات هنا لين يجهز.",
+    ar: "الاستيراد من الدرايف ما صار جاهز للحين. ارفع الملفات هنا لين يجهز.",
   },
   yesterday: { en: "yesterday", ar: "أمس" },
 } as const;
@@ -114,7 +114,7 @@ export const DRIVE_REFUSED: Record<string, L> = {
   },
   too_many_links: {
     en: "Too many Drive links in the last hour. Wait a few minutes, then paste it again.",
-    ar: "روابط الدرايف خلال آخر ساعة أكثر من اللازم. انتظر كم دقيقة، وبعدها الصقه مرة ثانية.",
+    ar: "وصلتنا روابط درايف كثيرة خلال آخر ساعة. انتظر كم دقيقة، وبعدها الصق الرابط مرة ثانية.",
   },
 };
 
@@ -174,7 +174,7 @@ export const DRIVE_FILE_FAILED = {
   },
   wrong_type: {
     en: "{name} isn't a picture or a video we can show. Pictures: JPG, PNG, WebP. Videos: MP4, MOV, WebM.",
-    ar: "{name} مو صورة أو فيديو نقدر نعرضه. الصور: JPG وPNG وWebP. الفيديو: MP4 وMOV وWebM.",
+    ar: "{name} مو صورة أو فيديو نقدر نعرضه. الصور: JPG وPNG وWebP. الفيديوهات: MP4 وMOV وWebM.",
   },
   heic: {
     en: "{name} is an iPhone photo (HEIC) we couldn't convert. Export it as JPG and upload it here.",

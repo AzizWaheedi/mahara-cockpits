@@ -25,7 +25,9 @@ import { dayOf, gulfToday } from "./dates";
 import { examplePick, type ServiceExample } from "./examples";
 import { type LaunchData, launchData } from "./launchData";
 import {
+  isMain,
   resolveService,
+  type ServiceKey,
   type ServicePick,
   type ServiceRow,
   type ServiceSource,
@@ -173,7 +175,14 @@ export interface DeckData {
   today: { service: boolean; access: boolean; blueprint: boolean };
   templated: Templated;
   templatedAnswer: string | null;
+  /**
+   * A ready starter pack for the service this deck is on (finder round 2):
+   * prep ticks it for one main service, so a different choice on slide 4
+   * leaves O7 without the pack's line and its stop.
+   */
   starterPack: boolean;
+  /** The service prep ticked the pack for; null when none is ticked. */
+  starterPackFor: ServiceKey | null;
   starterAds: LaunchAd[];
   redLines: string[];
   dosDonts: { do: string[]; dont: string[] };
@@ -332,10 +341,15 @@ function setupStatus(value: string | null | undefined): AccessStatus {
   return SETUP_DONE.test(value.trim()) ? "done" : "todo";
 }
 
-/** A row's status from its ticks: done only when every tick is done. */
+/**
+ * A row's status from its ticks: done only when every tick is done; to do
+ * when one is, or when some are done and the rest not checked (score round
+ * 4: "Not checked yet" headed a card with two of its three ticked).
+ */
 export function rowStatus(ticks: AccessStatus[]): AccessStatus {
   if (ticks.length && ticks.every(s => s === "done")) return "done";
   if (ticks.some(s => s === "todo")) return "todo";
+  if (ticks.some(s => s === "done")) return "todo";
   return "unchecked";
 }
 
@@ -484,10 +498,23 @@ export function deckData(input: DeckInput): DeckData {
     numberOneRaw.split(/\s+/).length <= 6
       ? numberOneRaw
       : null;
+  // The Arabic deck names the client's services in Arabic wherever prep
+  // has them (either deck's prep: the same client's words), so slide 4's
+  // quiet lines and the queue card keep one script (score round 1: O4 read
+  // "Villa interiors" under تصميم داخلي); the Latin words only when there
+  // is no Arabic list.
+  const servicesAr =
+    lang === "ar"
+      ? ([prep, onboardingPrep, input.prep.launch ?? {}]
+          .map(p => list(p.services_ar))
+          .find(l => l.length) ?? null)
+      : null;
+  // Prep's list is edited on the onboarding side: the launch deck reads it
+  // there when its own prep has none.
   const prepServices =
-    (lang === "ar" && list(prep.services_ar).length
-      ? list(prep.services_ar)
-      : null) ?? (list(prep.services).length ? list(prep.services) : null);
+    servicesAr ??
+    [prep, onboardingPrep].map(p => list(p.services)).find(l => l.length) ??
+    null;
   let services: string[];
   let servicesFrom: DeckData["servicesFrom"];
   if (prepServices) {
@@ -559,7 +586,17 @@ export function deckData(input: DeckInput): DeckData {
   // Starter ads and approval.
   const templatedAnswer = str(answer(kickoff, KICK.templated));
   const templated = TEMPLATED(templatedAnswer);
-  const starterPack = onboardingPrep.starter_pack === true;
+  // The pack is made for one service. Prep saves its key ("other": the
+  // service in their own words); a plain yes (saved before keys) means the
+  // kickoff's service, or, with none on the kickoff, the deck's.
+  const savedPack = onboardingPrep.starter_pack;
+  const starterPackFor: ServiceKey | null =
+    isMain(savedPack) || savedPack === "other"
+      ? savedPack
+      : savedPack === true
+        ? (resolveService([kickSource]).key ?? service.key)
+        : null;
+  const starterPack = starterPackFor !== null && starterPackFor === service.key;
   const starterAds = input.ads.filter(
     a => a.kind === "starter" && a.status === "ready" && !a.hidden,
   );
@@ -797,6 +834,7 @@ export function deckData(input: DeckInput): DeckData {
     templated,
     templatedAnswer,
     starterPack,
+    starterPackFor,
     starterAds,
     redLines,
     dosDonts,

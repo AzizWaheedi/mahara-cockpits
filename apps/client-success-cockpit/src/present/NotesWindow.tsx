@@ -437,9 +437,12 @@ export function NotesWindow({
     csm: d.csmFirst ?? "",
     goalAsk: goalAsk(d, "en"),
   };
+  // An Arabic line never says a Latin name or "الخدمة الخدمة": with no
+  // Arabic name, a cue in brackets for the CSM to say the service
+  // (CONTENT-AR O4: a Latin-only service is left out of the spoken line).
   const slotsAr = {
     ...slots,
-    service: said.ar ?? "الخدمة",
+    service: said.ar && /[؀-ۿ]/.test(said.ar) ? said.ar : "(اسم الخدمة)",
     goalAsk: goalAsk(d, "ar"),
   };
   const askEn = goalAskParts(d, "en");
@@ -582,7 +585,7 @@ export function NotesWindow({
                 <div className="text-xs font-medium txt-warn">Temp check</div>
                 <div>{fillNotes([notes.temp.en], slots)[0]}</div>
                 {model.lang === "ar" ? (
-                  <div dir="rtl">{fillNotes([notes.temp.ar], slots)[0]}</div>
+                  <div dir="rtl">{fillNotes([notes.temp.ar], slotsAr)[0]}</div>
                 ) : null}
               </div>
             </div>
@@ -612,6 +615,9 @@ export function NotesWindow({
               <li key={n} className="txt-warn">
                 {n}
               </li>
+            ))}
+            {slide.todo?.(d).map(n => (
+              <li key={n}>{n}</li>
             ))}
           </ul>
         </Section>

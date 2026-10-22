@@ -947,6 +947,66 @@ class Helpers(unittest.TestCase):
                 http.download("https://x", f"{d}/f", max_bytes=1000, deadline=10.0)
         self.assertIn("deadline", str(ctx.exception))
 
+    def test_a_broken_answer_is_a_transport_error_for_every_caller(self):
+        """IncompleteRead is an http.client.HTTPException, not an OSError:
+        http.request retries it and then raises HttpError(0), so file_reserve
+        and file_landed end the turn instead of failing a good file."""
+        import http.client as stdlib_http
+
+        class Res:
+            status = 200
+            headers: dict[str, str] = {}
+
+            def read(self, *a: Any) -> bytes:
+                raise stdlib_http.IncompleteRead(b"")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a: Any) -> None:
+                return None
+
+        with mock.patch("urllib.request.urlopen", return_value=Res()) as opened, \
+                mock.patch("time.sleep"):
+            with self.assertRaises(http.HttpError) as ctx:
+                http.request("POST", "https://x.supabase.co/rest/v1/rpc/f", json_body={}, retries=2)
+        self.assertEqual(ctx.exception.status, 0)
+        self.assertIn("IncompleteRead", str(ctx.exception))
+        self.assertEqual(opened.call_count, 3)
+
+    def test_the_probe_and_the_poster_open_local_files_only(self):
+        """The second review round's lock on the input is on every ffmpeg-family
+        process that reads the Drive bytes, not the conversion alone."""
+        seen: list[list[str]] = []
+
+        def run(cmd: list[str], **kw: Any) -> Any:
+            seen.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 1, "{}", "")
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(media, "has", return_value=True), \
+                mock.patch("subprocess.run", side_effect=run):
+            src = Path(d) / "in.mov"
+            src.write_bytes(b"x")
+            di.Tools().probe(src)
+            di.Tools().poster(src, 1.0, Path(d) / "p.jpg")
+        self.assertEqual(len(seen), 2)
+        probe_cmd, poster_cmd = seen
+        self.assertEqual(probe_cmd[0], "ffprobe")
+        self.assertEqual(probe_cmd[3:5], ["-protocol_whitelist", "file"])
+        self.assertEqual(probe_cmd[-1], str(src))
+        self.assertEqual(poster_cmd[0], "ffmpeg")
+        i = poster_cmd.index("-i")
+        self.assertEqual(poster_cmd[i + 1], str(src))
+        j = poster_cmd.index("-protocol_whitelist")
+        self.assertEqual(poster_cmd[j:j + 2], ["-protocol_whitelist", "file"])
+        self.assertLess(j, i)
+        # Every other worker's probe stays as it was.
+        seen.clear()
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(media, "has", return_value=True), \
+                mock.patch("subprocess.run", side_effect=run):
+            media.probe(Path(d) / "x.mp4")
+        self.assertNotIn("-protocol_whitelist", seen[0])
+
     def test_the_heic_doctor_names_whats_missing(self):
         t = FakeTools()
         t.heif = False

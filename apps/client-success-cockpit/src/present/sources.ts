@@ -53,6 +53,19 @@ export const launchAdSchema = z
     createdAt: opt,
     url: opt,
     posterUrl: opt,
+    /**
+     * Where the file came from, on the tray's read only (20261020160300):
+     * an upload by hand or a Drive link. A Drive file adds the first name of
+     * whoever pasted the link and when. These three never carry an address
+     * or the link; the row's own createdBy, returned since 20261019120000,
+     * is unchanged, and on a Drive row it is the importer's address. Prep
+     * shows them; the deck window reads the same list but never renders
+     * them. Optional, so a read from before that migration still parses; a
+     * value this build does not know reads as none.
+     */
+    source: z.enum(["upload", "drive"]).nullable().optional().catch(null),
+    importedBy: opt,
+    importedAt: opt,
   })
   .passthrough();
 export type LaunchAd = z.infer<typeof launchAdSchema>;
@@ -614,6 +627,28 @@ export async function updateLaunchAd(
       operation: "launchAds.update",
       requestId: crypto.randomUUID(),
       args: { taskId, id, patch },
+    },
+    z.object({ ad: launchAdSchema }).passthrough(),
+  );
+  return out.ad;
+}
+
+/**
+ * Delete one file from the client's tray for good: cockpit_csm_launch_ad_remove
+ * (gated, audited; the row stays for the audit), then cockpit-csm-api deletes
+ * its bytes. Prep's tray uses it for a file that is not this client's.
+ */
+export async function removeLaunchAd(
+  client: DeckClient,
+  taskId: string,
+  id: string,
+): Promise<LaunchAd> {
+  const out = await invoke(
+    client,
+    {
+      operation: "launchAds.remove",
+      requestId: crypto.randomUUID(),
+      args: { taskId, id },
     },
     z.object({ ad: launchAdSchema }).passthrough(),
   );

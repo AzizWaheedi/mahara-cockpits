@@ -30,6 +30,7 @@ import { shownSlides } from "../src/present/decks";
 import {
   goalAsk,
   goalAskParts,
+  LaunchControls,
   partText,
   pushbackVariant,
   replyText,
@@ -46,6 +47,7 @@ import {
 } from "../src/present/launchDeck";
 import { onboardingSlides } from "../src/present/onboardingDeck";
 import { CALL_STAGES, callRun, stageRange } from "../src/present/Transcript";
+import type { DeckModel } from "../src/present/useDeckModel";
 
 /**
  * The launch deck (docs/csm-decks/CONTENT.md L1 to L13, DESIGN.md sections
@@ -284,9 +286,10 @@ describe("done with you", () => {
     expect(render("your-part")).toContain(
       "Call new enquiries within 5\u00a0minutes, and note every try",
     );
-    expect(render("your-part")).toContain(
-      "Your team books into them. On a day off, block each hour, not one all-day event.",
-    );
+    // One sentence per job on the slide (score round 1); the day off is
+    // the week drawn under it, said in the notes and sent in the recap.
+    expect(render("your-part")).toContain("Your team books into them.");
+    expect(render("your-part")).not.toContain("On a day off");
     expect(render("your-part")).toContain(
       "Move each meeting to the right stage the same day",
     );
@@ -460,17 +463,22 @@ describe("the CEO's answers, drawn", () => {
     );
     expect(html).toContain("Up to 4 tries over 3 working days");
     // Each row its own words, never the first one three times: the
-    // advertised main service first, then the client's own words for
-    // what customers ask about (DESIGN 22.14).
+    // advertised main service first, then the client's own words for that
+    // same service (DESIGN 22.14). Never a sub-trade or another service's
+    // words (CEO, 2026-10-21: "These are not kitchens"): the client's
+    // "Kitchens and wardrobes" and "Full villa fit-out" stay off an
+    // interior design campaign's queue.
     expect(html).toContain("New enquiry · Interior design");
     expect(html).toContain("Try 2 of 4 · Villa interiors · 5 pm");
-    expect(html).toContain("Callback · Kitchens and wardrobes · 10 am");
+    expect(html).toContain("Callback · Majlis design · 10 am");
+    expect(html).not.toMatch(/Kitchens|fit-out/);
     const ar = render(data("full", "ar"), "journey", 2);
     // The Arabic separator is the Arabic comma: a dot beside Arabic-Indic
     // digits reads as ٠ (score round 3).
     expect(ar).toContain("استفسار جديد، تصميم داخلي");
     expect(ar).toContain("المحاولة ٢ من ٤، تصميم داخلي للفلل، ٥ مساءً");
-    expect(ar).toContain("معاودة اتصال، المطابخ والخزائن، ١٠ صباحاً");
+    expect(ar).toContain("معاودة اتصال، تصميم المجالس، ١٠ صباحاً");
+    expect(ar).not.toMatch(/المطابخ|تشطيب/);
     expect(ar).not.toMatch(/[٠-٩] · |· [٠-٩]/);
     // A row past the list leaves its service out rather than repeat one.
     const one = { ...d, services: [] };
@@ -747,9 +755,12 @@ describe("the Gamma pass, drawn", () => {
     expect(h).toContain(
       "Mark every meeting the same day, with the value when you win",
     );
-    expect(h).toContain(
-      "You send the quote and set the second meeting. Our caller checks in too.",
-    );
+    // One sentence per job on the slide (score round 1: six jobs at two
+    // sentences each read as a document); the second goes to the notes
+    // and the recap.
+    expect(h).toContain("You send the quote and set the second meeting.");
+    expect(h).not.toContain("Our caller checks in too.");
+    expect(h).not.toContain("On a day off");
     expect(h).toContain(
       "Pausing early ends the test before it tells us anything.",
     );
@@ -801,6 +812,14 @@ describe("the Gamma pass, drawn", () => {
     expect(recap.split("\n")[0]).toBe("Your six jobs, in one place");
     expect(recap).toContain("Before your meetings:");
     expect(recap.match(/^- /gm)?.length).toBe(6);
+    // The recap keeps every job's second sentence, pasted alone in the group.
+    expect(recap.replace(/\u00a0/g, " ")).toContain(
+      "- Keep at least 10 open slots, at different times. Our callers book into them. On a day off, block each hour, not one all-day event.",
+    );
+    expect(recap).toContain(
+      "You send the quote and set the second meeting. Our caller checks in too.",
+    );
+    expect(partText(data("dwy"))).not.toContain("Our caller checks in too.");
     expect(recap).toContain(
       "How we test your ads: your red lines stay fixed, your ideas go in the group before the next round, you check the facts, prices and claims before an ad goes live, and small style changes go into the next round so your launch doesn't wait.",
     );
@@ -996,7 +1015,7 @@ describe("creative flexibility, drawn", () => {
     const arHeads = [...ar.matchAll(/class="dkc-fixed-lead">([^<]*)</g)].map(
       m => m[1],
     );
-    expect(arHeads).toEqual(["أبد", "بملفكم، بالإنجليزي"]);
+    expect(arHeads).toEqual(["أبداً", "بملفكم، بالإنجليزي"]);
     expect(ar.indexOf("بملفكم، بالإنجليزي")).toBeLessThan(
       ar.indexOf("Never show prices in an ad"),
     );
@@ -1197,6 +1216,83 @@ describe("the launch deck's fallbacks", () => {
   test("the cover never uses a starter creative", () => {
     expect(data("full").launch.cover?.id).toBe("custom-site");
     expect(data("starter").launch.cover).toBeNull();
+  });
+
+  // The ad pictures a slide draws: the fixture's files and the examples.
+  const pictures = (h: string) =>
+    [...h.matchAll(/<img[^>]*?src="([^"]+)"/g)]
+      .map(m => m[1])
+      .filter(u => /custom-|dwy-|starter-|\/examples\//.test(u));
+
+  test("the cover and journey stop 1 never show one picture (DESIGN 22.15)", () => {
+    for (const key of ["full", "starter", "sparse"] as FixtureKey[])
+      for (const lang of ["en", "ar"] as Lang[]) {
+        const d = data(key, lang);
+        const cover = pictures(
+          renderToStaticMarkup(<>{launchSlides()[0].render(ctx(d))}</>),
+        );
+        const journey = pictures(
+          renderToStaticMarkup(<>{launchSlides()[1].render(ctx(d, 0))}</>),
+        );
+        expect({ key, lang, cover: cover.length > 0 }).toEqual({
+          key,
+          lang,
+          cover: true,
+        });
+        expect(journey.length).toBeGreaterThan(0);
+        for (const u of cover)
+          expect({ key, lang, u, again: journey.includes(u) }).toEqual({
+            key,
+            lang,
+            u,
+            again: false,
+          });
+      }
+  });
+
+  test("a client with ads of their own and no cover pick shows their first ad, never the faint lanes", () => {
+    for (const lang of ["en", "ar"] as Lang[]) {
+      const d = data("dwy", lang);
+      expect(d.launch.cover).toBeNull();
+      const h = renderToStaticMarkup(<>{launchSlides()[0].render(ctx(d))}</>);
+      expect(h).not.toContain("dkc-faint");
+      expect(pictures(h).some(u => /dwy-villa/.test(u))).toBe(true);
+    }
+  });
+
+  test("prep's cover controls say what the cover shows, and switch the example when there is no ad of their own", () => {
+    const controls = (key: FixtureKey) => {
+      const d = data(key);
+      const model = {
+        prep: { onboarding: {}, launch: {} },
+        setPrep: () => {},
+        live: emptyLive(),
+        setLive: () => {},
+      } as unknown as DeckModel;
+      return renderToStaticMarkup(
+        <LaunchControls slideId="cover" d={d} model={model} tour={0} full />,
+      );
+    };
+    const starter = controls("starter");
+    expect(starter).toContain(
+      "No ads of their own yet: the cover shows the example ad, labelled Example ad.",
+    );
+    expect(starter).toContain("The example ad");
+    expect(starter.toLowerCase()).not.toContain("faint lanes");
+    // The example's switch, by service then by scene.
+    expect(starter).toContain("Fit-out and renovation");
+    const dwy = controls("dwy");
+    expect(dwy).toContain(
+      "No cover picked: it shows their first ad. Pick another here.",
+    );
+    expect(dwy).toContain("Their first ad");
+    expect(dwy.toLowerCase()).not.toContain("faint lanes");
+    // The prep check speaks only when there is an ad of theirs to pick.
+    const cover = launchSlides()[0];
+    expect(cover.missing?.(data("starter")).join(" ")).not.toContain("Cover:");
+    expect(cover.missing?.(data("dwy")).join(" ")).toContain(
+      "Cover: no ad picked, so it shows their first ad.",
+    );
   });
 
   test("the hours card shows only when the onboarding deck was never presented", () => {

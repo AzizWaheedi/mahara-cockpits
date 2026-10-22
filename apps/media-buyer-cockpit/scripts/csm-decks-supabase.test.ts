@@ -1413,6 +1413,92 @@ async function closeOpen() {
   );
 }
 
+/**
+ * The census of every deck function (the decks, the launch ads, the Drive
+ * imports and the video posters): how many, an empty search path each, a
+ * definer but the immutable helpers, and who may call which. Run after the
+ * visual pass's files and again after 20261020160300.
+ */
+async function census() {
+  const fns = (
+    await db.query<{
+      sig: string;
+      definer: boolean;
+      config: string[] | null;
+    }>(`
+    SELECT p.oid::regprocedure::text sig, p.prosecdef definer, p.proconfig config FROM pg_proc p
+     WHERE p.pronamespace='public'::regnamespace AND (p.proname LIKE 'cockpit_csm_deck%' OR p.proname LIKE 'cockpit_csm_launch%'
+        OR p.proname LIKE 'cockpit_csm_drive%')`)
+  ).rows;
+  expect(fns.length).toBe(45);
+  const browser = [
+    "cockpit_csm_launch_object_allowed",
+    "cockpit_csm_deck_sources",
+    "cockpit_csm_deck_prep_read",
+    "cockpit_csm_launch_ads_read",
+    "cockpit_csm_launch_ad_get",
+    "cockpit_csm_deck_prep_save",
+    "cockpit_csm_launch_ad_reserve",
+    "cockpit_csm_launch_ad_accept",
+    "cockpit_csm_launch_ad_update",
+    "cockpit_csm_launch_ad_remove",
+    "cockpit_csm_launch_ad_stale",
+    "cockpit_csm_launch_ad_purged",
+    "cockpit_csm_deck_videos_read",
+    "cockpit_csm_deck_video_save",
+    "cockpit_csm_deck_video_clear",
+    "cockpit_csm_launch_ads_import_request",
+    "cockpit_csm_launch_ads_imports_read",
+  ];
+  const worker = [
+    "cockpit_csm_launch_ads_import_claim",
+    "cockpit_csm_launch_ads_import_heartbeat",
+    "cockpit_csm_launch_ads_import_plan",
+    "cockpit_csm_launch_ads_import_file_reserve",
+    "cockpit_csm_launch_ads_import_file_landed",
+    "cockpit_csm_launch_ads_import_file_failed",
+    "cockpit_csm_launch_ads_import_finish",
+    "cockpit_csm_deck_video_posters_due",
+    "cockpit_csm_deck_video_poster_save",
+  ];
+  const notDefiners = [
+    "cockpit_csm_deck_text",
+    "cockpit_csm_deck_choice",
+    "cockpit_csm_deck_video_slots",
+    "cockpit_csm_deck_video_slot_ok",
+    "cockpit_csm_deck_video_parse",
+    "cockpit_csm_drive_link_parse",
+    "cockpit_csm_drive_import_sentence",
+  ];
+  for (const fn of fns) {
+    const name = fn.sig.split("(")[0].replace(/^public\./, "");
+    expect(fn.config).toContain('search_path=""');
+    expect(fn.definer).toBe(!notDefiners.includes(name));
+    const can = async (role: string) =>
+      (
+        await db.query<{ ok: boolean }>(
+          "SELECT has_function_privilege($1,$2,'EXECUTE') ok",
+          [role, fn.sig],
+        )
+      ).rows[0].ok;
+    expect(await can("anon")).toBe(false);
+    expect(await can("authenticated")).toBe(browser.includes(name));
+    expect(await can("service_role")).toBe(worker.includes(name));
+  }
+  // The internal ones are definers callable by nobody.
+  for (const name of [
+    "cockpit_csm_launch_ads_import_json",
+    "cockpit_csm_launch_ads_import_end",
+    "cockpit_csm_deck_video_poster_reset",
+  ])
+    expect(
+      fns.some(
+        f =>
+          f.sig.replace(/^public\./, "").startsWith(`${name}(`) && f.definer,
+      ),
+    ).toBe(true);
+}
+
 describe("the visual pass: Drive imports, prep keys and video posters", () => {
   beforeAll(async () => {
     await asOwner();
@@ -1448,83 +1534,7 @@ describe("the visual pass: Drive imports, prep keys and video posters", () => {
   });
 
   test("the census: 45 functions, every one with an empty search path; who may call which", async () => {
-    const fns = (
-      await db.query<{
-        sig: string;
-        definer: boolean;
-        config: string[] | null;
-      }>(`
-      SELECT p.oid::regprocedure::text sig, p.prosecdef definer, p.proconfig config FROM pg_proc p
-       WHERE p.pronamespace='public'::regnamespace AND (p.proname LIKE 'cockpit_csm_deck%' OR p.proname LIKE 'cockpit_csm_launch%'
-          OR p.proname LIKE 'cockpit_csm_drive%')`)
-    ).rows;
-    expect(fns.length).toBe(45);
-    const browser = [
-      "cockpit_csm_launch_object_allowed",
-      "cockpit_csm_deck_sources",
-      "cockpit_csm_deck_prep_read",
-      "cockpit_csm_launch_ads_read",
-      "cockpit_csm_launch_ad_get",
-      "cockpit_csm_deck_prep_save",
-      "cockpit_csm_launch_ad_reserve",
-      "cockpit_csm_launch_ad_accept",
-      "cockpit_csm_launch_ad_update",
-      "cockpit_csm_launch_ad_remove",
-      "cockpit_csm_launch_ad_stale",
-      "cockpit_csm_launch_ad_purged",
-      "cockpit_csm_deck_videos_read",
-      "cockpit_csm_deck_video_save",
-      "cockpit_csm_deck_video_clear",
-      "cockpit_csm_launch_ads_import_request",
-      "cockpit_csm_launch_ads_imports_read",
-    ];
-    const worker = [
-      "cockpit_csm_launch_ads_import_claim",
-      "cockpit_csm_launch_ads_import_heartbeat",
-      "cockpit_csm_launch_ads_import_plan",
-      "cockpit_csm_launch_ads_import_file_reserve",
-      "cockpit_csm_launch_ads_import_file_landed",
-      "cockpit_csm_launch_ads_import_file_failed",
-      "cockpit_csm_launch_ads_import_finish",
-      "cockpit_csm_deck_video_posters_due",
-      "cockpit_csm_deck_video_poster_save",
-    ];
-    const notDefiners = [
-      "cockpit_csm_deck_text",
-      "cockpit_csm_deck_choice",
-      "cockpit_csm_deck_video_slots",
-      "cockpit_csm_deck_video_slot_ok",
-      "cockpit_csm_deck_video_parse",
-      "cockpit_csm_drive_link_parse",
-      "cockpit_csm_drive_import_sentence",
-    ];
-    for (const fn of fns) {
-      const name = fn.sig.split("(")[0].replace(/^public\./, "");
-      expect(fn.config).toContain('search_path=""');
-      expect(fn.definer).toBe(!notDefiners.includes(name));
-      const can = async (role: string) =>
-        (
-          await db.query<{ ok: boolean }>(
-            "SELECT has_function_privilege($1,$2,'EXECUTE') ok",
-            [role, fn.sig],
-          )
-        ).rows[0].ok;
-      expect(await can("anon")).toBe(false);
-      expect(await can("authenticated")).toBe(browser.includes(name));
-      expect(await can("service_role")).toBe(worker.includes(name));
-    }
-    // The internal ones are definers callable by nobody.
-    for (const name of [
-      "cockpit_csm_launch_ads_import_json",
-      "cockpit_csm_launch_ads_import_end",
-      "cockpit_csm_deck_video_poster_reset",
-    ])
-      expect(
-        fns.some(
-          f =>
-            f.sig.replace(/^public\./, "").startsWith(`${name}(`) && f.definer,
-        ),
-      ).toBe(true);
+    await census();
   });
 
   test("the two tables: row security on, no policies, no grant to any role, the service key included; the trigger audits the imports", async () => {
@@ -2291,6 +2301,10 @@ describe("the visual pass: Drive imports, prep keys and video posters", () => {
       [{ dos_donts_ar: { " ": "x" } }, "card line that is empty or too long"],
       [{ example_theme: "garage" }, "example_theme must be one of"],
       [
+        { starter_pack: "kitchens" },
+        "starter_pack is a yes or no, or one of the service keys",
+      ],
+      [
         { service_chosen_at: 5 },
         "service_chosen_at is set with true and cleared with null",
       ],
@@ -2316,6 +2330,13 @@ describe("the visual pass: Drive imports, prep keys and video posters", () => {
       expect(
         (await save(CSM_A, A, "onboarding", { example_theme: theme })).overrides.example_theme,
       ).toBe(theme);
+    // The starter pack names the service it was made for (fixer round 2),
+    // and a yes saved before keys is kept as it was.
+    for (const pack of ["interior", "fitout", "other", true])
+      expect(
+        (await save(CSM_A, A, "onboarding", { starter_pack: pack })).overrides.starter_pack,
+      ).toBe(pack);
+    await save(CSM_A, A, "onboarding", { starter_pack: null });
     const first = await save(CSM_A, A, "onboarding", {
       service_chosen_at: true,
     });
@@ -2527,5 +2548,243 @@ describe("the visual pass: Drive imports, prep keys and video posters", () => {
     ]);
     expect(planned.files.map((f: Row) => f.name)).toEqual(["abcde.mp4", FILE_ID(51), "clip.mov"]);
     expect(await finish(imp.id)).toMatchObject({ status: "done", failed: 3 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Where each tray file came from, and two tidy-ups from the Drive import's
+// review (docs/csm-decks/DRIVE-IMPORT.md 12): 20261020160300 applied twice
+// on top of everything above (the tray's read gains its source, a hand
+// upload's name is cleaned as a Drive file's is), and the claim window of
+// 20261020160000 (twenty imports at a time, not five).
+// ---------------------------------------------------------------------------
+
+const SOURCE = "20261020160300_csm_launch_ads_source.sql";
+const READ_ADS = "SELECT public.cockpit_csm_launch_ads_read($1) r";
+const ADDED = ["source", "importedBy", "importedAt"];
+
+describe("the tray's source, the claim window and a hand upload's name", () => {
+  beforeAll(async () => {
+    await asOwner();
+    // The team list, cut down to the columns the read uses (the live names,
+    // checked 2026-10-21). The read is a definer, so the stand-in grants
+    // nothing (live: authenticated SELECT under row security).
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS public.cockpit_people(id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        name text NOT NULL CHECK (length(btrim(name)) > 0), email text, active boolean NOT NULL DEFAULT true);
+      REVOKE ALL ON public.cockpit_people FROM PUBLIC, anon, authenticated;`);
+    await db.exec(migration(SOURCE));
+    await db.exec(migration(SOURCE));
+  }, 30000);
+
+  test("the census after it: still 45 functions; the two it replaces stay definers for signed-in seats only, the read stable", async () => {
+    await census();
+    const vol = (
+      await db.query<{ name: string; vol: string }>(
+        `SELECT p.proname name, p.provolatile vol FROM pg_proc p WHERE p.pronamespace='public'::regnamespace
+           AND p.proname IN ('cockpit_csm_launch_ads_read','cockpit_csm_launch_ad_reserve') ORDER BY 1`,
+      )
+    ).rows;
+    expect(vol.map(v => [v.name, v.vol])).toEqual([
+      ["cockpit_csm_launch_ad_reserve", "v"],
+      ["cockpit_csm_launch_ads_read", "s"],
+    ]);
+  });
+
+  test("read: every row and field it returned, in its order, plus the source; a Drive file adds the importer's first name and when the link was pasted, and nothing it adds names an address or the link", async () => {
+    // A hand upload and a Drive file, both in Acme's tray.
+    const up = await reserve(CSM_A2, uuid(9001), A, "custom", "image/png", 512, [800, 800, null, "hand.png", null, null]);
+    await putObject(up.path, 512, "image/png");
+    await accept(CSM_A2, A, up.id);
+    await closeOpen();
+    const imp = await request(CSM_A, A, `https://drive.google.com/drive/folders/${F(30)}`);
+    await claim();
+    await plan(imp.id, [media(70, { name: "majlis.jpg", mime: "image/jpeg" })]);
+    const r = await fileReserve(imp.id, FILE_ID(70), "image/jpeg", 4096, [1080, 1350, null, null, null, null]);
+    await putObject(r.path, 4096, "image/jpeg");
+    await landed(imp.id, FILE_ID(70));
+    await finish(imp.id);
+    await asOwner();
+    await db.query("UPDATE public.cockpit_csm_launch_ads_imports SET requested_at='2026-10-20T16:40:00Z' WHERE id=$1", [imp.id]);
+
+    // What it returned before, row for row and field for field.
+    const before = (await db.query<{ r: Row[] }>("SELECT public.cockpit_csm_launch_ads_rows($1, true) r", [A])).rows[0].r;
+    const read: Row[] = await one(CSM_A, READ_ADS, [A]);
+    const strip = (row: Row) => Object.fromEntries(Object.entries(row).filter(([k]) => !ADDED.includes(k)));
+    expect(read.map(strip)).toEqual(before);
+    expect(read.length).toBeGreaterThanOrEqual(2);
+    for (const row of read) expect(["upload", "drive"]).toContain(row.source);
+    const hand = read.find(x => x.id === up.id) as Row;
+    expect(hand.source).toBe("upload");
+    expect("importedBy" in hand || "importedAt" in hand).toBe(false);
+    const drive = read.find(x => x.id === r.adId) as Row;
+    expect(drive.source).toBe("drive");
+    // No team-list row: the address's local part, capitalised.
+    expect(drive.importedBy).toBe("Csm-A");
+    expect(Date.parse(drive.importedAt)).toBe(Date.parse("2026-10-20T16:40:00Z"));
+    // Nothing it adds names an address; nothing in the row is the link.
+    const added = JSON.stringify(read.map(x => ADDED.map(k => x[k])));
+    expect(added).not.toContain("@");
+    expect(JSON.stringify(read)).not.toContain("drive.google.com");
+    expect(JSON.stringify(read)).not.toContain(F(30));
+
+    // On the team list: the first word of the active row's name for that
+    // address (any case, spaces around it), never a name that is an address.
+    await asOwner();
+    await db.query(
+      "INSERT INTO public.cockpit_people(name,email,active) VALUES('Old Name','csm-a@tests.invalid',false),('noura al-sabah',' CSM-A@tests.invalid ',true),('csm-a@tests.invalid','csm-a@tests.invalid',true)",
+    );
+    const named = async () => ((await one(CSM_A, READ_ADS, [A])) as Row[]).find(x => x.id === r.adId)?.importedBy;
+    expect(await named()).toBe("Noura");
+    await asOwner();
+    await db.query("UPDATE public.cockpit_people SET name='نورة الصباح' WHERE name='noura al-sabah'");
+    expect(await named()).toBe("نورة");
+    await db.query("UPDATE public.cockpit_people SET name='McKenzie Ray' WHERE name='نورة الصباح'");
+    expect(await named()).toBe("McKenzie");
+    // A title or a lone initial is not a first name: the next word is.
+    await db.query("UPDATE public.cockpit_people SET name='Eng. Khalid Saad' WHERE name='McKenzie Ray'");
+    expect(await named()).toBe("Khalid");
+    await db.query("UPDATE public.cockpit_people SET name='K Saad' WHERE name='Eng. Khalid Saad'");
+    expect(await named()).toBe("Saad");
+    await db.query("DELETE FROM public.cockpit_people");
+    // The row's own createdBy (returned since 20261019120000) is unchanged:
+    // on a Drive row it is the importer's address, as before.
+    const own = ((await one(CSM_A, READ_ADS, [A])) as Row[]).find(x => x.id === r.adId) as Row;
+    expect(own.createdBy).toBe("csm-a@tests.invalid");
+    // The name comes from this client's own import only: a row pointed at
+    // another client's import reads its source and no name.
+    await asOwner();
+    const other = (
+      await db.query<{ id: string }>(
+        `INSERT INTO public.cockpit_csm_launch_ads_imports(task_id,link,drive_id,kind,requested_by,requested_by_email)
+         VALUES('twin2',$1,$2,'folder',$3,'csm-all@tests.invalid') RETURNING id`,
+        [`https://drive.google.com/drive/folders/${F(450)}`, F(450), CSM_ALL],
+      )
+    ).rows[0].id;
+    await db.query("UPDATE public.cockpit_csm_launch_ads SET import_id=$1 WHERE id=$2", [other, r.adId]);
+    try {
+      const moved = ((await one(CSM_A, READ_ADS, [A])) as Row[]).find(x => x.id === r.adId) as Row;
+      expect(moved.source).toBe("drive");
+      expect("importedBy" in moved || "importedAt" in moved).toBe(false);
+    } finally {
+      await asOwner();
+      await db.query("UPDATE public.cockpit_csm_launch_ads SET import_id=$1 WHERE id=$2", [imp.id, r.adId]);
+      await db.query("DELETE FROM public.cockpit_csm_launch_ads_imports WHERE id=$1", [other]);
+    }
+
+    // The deck's own read never carries where a file came from.
+    const deck = await sources(CSM_A, A);
+    expect(deck.launchAds.some((x: Row) => x.id === r.adId)).toBe(true);
+    for (const x of deck.launchAds as Row[]) for (const k of ADDED) expect(k in x).toBe(false);
+  });
+
+  test("read: only to a seat with that client; the CEO and an all-clients seat see the source too", async () => {
+    expect(await refused(CSM_B, READ_ADS, [A])).toContain("not on your access list");
+    for (const who of [BUYER, SALES, GONE, UNCONFIRMED])
+      expect(await refused(who, READ_ADS, [A])).toContain("client-success access is required");
+    expect(await refused(null, READ_ADS, [A])).toContain("permission denied");
+    await asOwner();
+    await db.exec("SET ROLE service_role");
+    let message = "";
+    try {
+      await db.query(READ_ADS, [A]);
+    } catch (e) {
+      message = (e as Error).message;
+    } finally {
+      await asOwner();
+    }
+    expect(message).toContain("permission denied");
+    for (const who of [CEO, CSM_ALL]) {
+      const read: Row[] = await one(who, READ_ADS, [A]);
+      expect(read.some(x => x.source === "drive" && x.importedBy === "Csm-A")).toBe(true);
+    }
+  });
+
+  test("a hand upload's name: no folders, no invisible or direction marks; a name with nothing left is the file's id, no name stays none", async () => {
+    const made: string[] = [];
+    const name = async (n: number, sent: string | null) => {
+      const a = await reserve(CSM_A2, uuid(9100 + n), A, "custom", "video/mp4", 1000 + n, [1080, 1920, 12, sent, null, null]);
+      made.push(a.id);
+      return { id: a.id as string, name: (await adRow(a.id)).file_name as string | null, json: a.fileName as string | null };
+    };
+    expect((await name(1, "a\u061cb\u2066c\u2069\u0085d\u200be.mp4")).name).toBe("abcde.mp4");
+    expect((await name(2, "folder/sub\\clip\u2028.mov")).name).toBe("clip.mov");
+    expect((await name(3, "  \u200fsite walk\ufeff.mp4\u0007  ")).name).toBe("site walk.mp4");
+    const empty = await name(4, "\u202e\u200b \u200f");
+    expect(empty.name).toBe(empty.id);
+    expect(empty.json).toBe(empty.id);
+    expect((await name(5, null)).name).toBeNull();
+    expect((await name(6, `${"x".repeat(250)}.mp4`)).name).toBe("x".repeat(200));
+    // Printable marks stay: a dash, curly quotes and an ellipsis are a name's
+    // own (the class is the plan's, written as \u escapes, never a range
+    // an editor's line-terminator fix could widen).
+    expect((await name(7, "site \u2013 walk \u2018a\u2019\u2026.mp4")).name).toBe("site \u2013 walk \u2018a\u2019\u2026.mp4");
+    // The same request again returns the same reservation, name and all.
+    const again = await reserve(CSM_A2, uuid(9101), A, "custom", "video/mp4", 1001, [1080, 1920, 12, "another name.mp4", null, null]);
+    expect(again.fileName).toBe("abcde.mp4");
+    for (const id of made) await one(CSM_A2, "SELECT public.cockpit_csm_launch_ad_remove($1,$2::uuid) r", [A, id]);
+  });
+
+  test("the file names its own invisible characters as escapes, the plan's class byte for byte", () => {
+    const cls = (file: string) => /E'\[\[:cntrl:\][^']*'/.exec(migration(file))?.[0];
+    expect(cls(SOURCE)).toBe(cls(DRIVE_FILE));
+    expect(cls(SOURCE)).toContain("\\u2028-\\u202E");
+    // Nothing in it is a literal invisible, bidi or line-separator character.
+    expect(migration(SOURCE)).not.toMatch(/[\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/);
+  });
+
+  test("applied before 20261020160000 it is refused, so prep's read never breaks in production", async () => {
+    await asOwner();
+    await db.exec("BEGIN; ALTER TABLE public.cockpit_csm_launch_ads RENAME COLUMN import_id TO import_id_gone;");
+    let message = "";
+    try {
+      await db.exec(migration(SOURCE));
+    } catch (e) {
+      message = (e as Error).message;
+    } finally {
+      await db.exec("ROLLBACK");
+    }
+    expect(message).toContain("Apply 20261020160000_csm_launch_ads_drive.sql first");
+    const cols = (
+      await db.query<{ n: number }>(
+        "SELECT count(*)::int n FROM pg_attribute WHERE attrelid='public.cockpit_csm_launch_ads'::regclass AND attname='import_id' AND NOT attisdropped",
+      )
+    ).rows[0].n;
+    expect(cols).toBe(1);
+  });
+
+  test("claim: twenty imports at a time, so six stuck behind a missing card never hold back the next client's", async () => {
+    await closeOpen();
+    await asOwner();
+    // twin2's card goes missing from the roster; six of its imports are older than Acme's.
+    for (let i = 0; i < 6; i++)
+      await db.query(
+        `INSERT INTO public.cockpit_csm_launch_ads_imports(task_id,link,drive_id,kind,requested_by,requested_by_email,requested_at)
+         VALUES('twin2',$1,$2,'folder',$3,'csm-all@tests.invalid',now()-interval '2 minutes')`,
+        [`https://drive.google.com/drive/folders/${F(400 + i)}`, F(400 + i), CSM_ALL],
+      );
+    await db.query(
+      "UPDATE public.cockpit_csm_sources SET data = data || '{\"taskId\":\"twin2-gone\"}'::jsonb WHERE table_name='clients' AND data->>'taskId'='twin2'",
+    );
+    try {
+      const next = await request(CSM_A, A, `https://drive.google.com/drive/folders/${F(410)}`);
+      const taken = await claim();
+      expect(taken.import?.id).toBe(next.id);
+      await asOwner();
+      const stuck = (
+        await db.query<{ status: string }>("SELECT status FROM public.cockpit_csm_launch_ads_imports WHERE task_id='twin2' AND drive_id = ANY($1::text[])", [
+          [0, 1, 2, 3, 4, 5].map(i => F(400 + i)),
+        ])
+      ).rows;
+      expect(stuck.map(s => s.status)).toEqual(Array(6).fill("queued"));
+      // The window is in the file itself, so the worker's claim sees twenty.
+      expect(migration(DRIVE_FILE)).toMatch(/ORDER BY x\.requested_at, x\.id LIMIT 20\n/);
+    } finally {
+      await asOwner();
+      await db.query(
+        "UPDATE public.cockpit_csm_sources SET data = data || '{\"taskId\":\"twin2\"}'::jsonb WHERE table_name='clients' AND data->>'taskId'='twin2-gone'",
+      );
+      await closeOpen();
+    }
   });
 });

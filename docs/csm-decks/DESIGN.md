@@ -5205,8 +5205,8 @@ whose statement and fork are more than 64 px apart.
   ("We never cross these.") leave the canvas: the slide's title already says
   "Your red lines are fixed". The panel keeps `--dk-panel` and its 1 px
   `--dk-leak-line` hairline. Inside: the two group heads, "Never" and
-  "Always" (Geist 600 24 ink-2), and the lines at 26/400 ink with their
-  amber marks. With three or fewer "Always" lines and room in 816 px, the
+  "Always" (Geist 600 24 ink-2; Arabic «أبداً» and «دايماً», score round
+  4), and the lines at 26/400 ink with their amber marks. With three or fewer "Always" lines and room in 816 px, the
   two groups sit side by side (Never 480 px, Always the rest); else
   stacked.
 - **"Never" once.** A line under a head drops a leading word that repeats
@@ -5223,8 +5223,10 @@ whose statement and fork are more than 64 px apart.
   onboarding call." (or "From your card." or "What you told us on the
   onboarding call.", whichever is true).
 - **The 110 px jump.** The field takes its stop 3 to 5 position (y 252)
-  from stop 1, and the next round's band is reserved, empty, on stops 1 and
-  2; the words column starts at y 232 on every stop. Nothing on the slide
+  from stop 1, and the next round's band is reserved on stops 1 and 2: its
+  six dashed slots are there from stop 1 at 35% with no label (score round
+  4: an empty 260 px band stood above the rail), and stop 3 brings in "Next
+  round" and full strength; the words column starts at y 232 on every stop. Nothing on the slide
   moves between stops but what the stop changes. (The fixer's round
   centred stops 1 and 2 in the room; the room under them is now where the
   next round arrives, which is where the eye already expects it.)
@@ -5769,7 +5771,9 @@ carries the onboarding answer. Those five are the service, everywhere
 
 Construction is بناء وإنشاءات, never مقاولات (13.5: never مقاول; CONTENT-AR
 decision 15). "Construction only" loses "only" on the canvas, where it read
-as a limit; the kickoff's own wording is what prep saves.
+as a limit. "Launch with this" saves the deck's English label
+(`SERVICES[key].name.en`) and its Arabic twin, which `serviceOfText` reads
+back as the same main service as the kickoff's choice.
 
 **Reading a client's words** (`serviceOfText`). The kickoff's choices and the
 decks' own names are read whole, in both languages. Free text is read by
@@ -5779,14 +5783,20 @@ a pool: the whole project); a building's shell (عظم, shell and core: so
 finishing, office, retail, restaurant, flooring, ترميم، تشطيب، تجديد); interior
 design (interior, decor, kitchen, wardrobe, bathroom, bedroom, majlis,
 ديكور، مطابخ، حمامات، مجالس); architectural design (architect, facade,
-landscape, drawings, permit, consultancy, معماري، واجهات، حدائق، مخططات);
+landscape, drawings, permit, consultancy, معماري، واجهات، حدائق، مخططات،
+تصميم بيوت/فيلا/منازل/المباني، مكتب هندسي, the licensed design and supervision
+office, read before a fit-out so مكاتب هندسية is not an office fit-out);
 construction (construction, contracting, building, structure, مقاولات، بناء،
-عظم، إنشاءات); last, a bare "design" or "studio" (تصميم) is an interior. So
+عظم، إنشاءات، تشييد، تنفيذ، عمارة: in Gulf use an apartment building); last,
+a bare "design" or "studio" (تصميم، تصاميم، ديزاين) is an interior. Score
+round 4 added التصميم والتنفيذ with ال on both words, تصاميم داخلية and
+انتيريور, عيادات، مقاهي and فت اوت, each pinned. So
 "Kitchens" is interior design, "Kitchen renovation" is fit-out and
 renovation, "Villa interior design" is interior design, "Swimming pools" is
 design and build. Arabic is read without its diacritics and tatweel, أ إ آ
-as ا, ة as ه, ى as ي, after its prefixes (و، ب، ال، لل). مكتب is left out on
-purpose: it starts a firm's name, not a service.
+as ا, ة as ه, ى as ي, after its prefixes (و، ب، ال، لل). مكتب alone is left
+out on purpose: it starts a firm's name, not a service. "Other" with nothing
+typed is read after the same normalising (أخرى، خدمة أخرى، غيرها، Other).
 
 **The client's service** (`resolveService`). The onboarding deck asks, in
 order: slide 4's choice (`service_chosen_at`), prep's `service_focus`, the
@@ -5823,8 +5833,21 @@ lead picture) or a scene id, both on the server's allow-list
 **Fixtures.** full is Noor Studio Interiors, interior design from its
 kickoff; sparse reads as design and build from its name; dwy is
 construction, with one service that fits none (so slide 4 shows Other);
-starter is fit-out and renovation. No fixture names kitchens or bathrooms as
-the service. `?service=<key>` in the harness shows any service's pictures.
+starter is fit-out and renovation; architecture is seen with
+`?service=architecture`. No fixture names kitchens or bathrooms as the
+service, as their #1, or in a starter template's words or picture (pinned by
+`deck-examples`); full's starter templates are a closer, mirrored majlis and
+a bedroom (`starter-interior-*.webp`), its reel ending "…to the last
+detail.": the starter client's #1 is "Villa fit-out", its own words
+"Villa fit-out, Shop and office fit-out, Kitchen renovation" (the kitchen
+only quietly under fit-out, as theirs), and its two starter templates are
+fit-out pictures (`starter-fitout-feed.webp`, a closer, mirrored frame of
+the restaurant; `starter-fitout-reel.webp`, the office's desk and partition
+below its windows, so no skyline shows: the client is in Kuwait)
+with fit-out words (the feed: نشطّب ونرمّم المحلات والمطاعم والمكاتب، من
+المخطط لين التسليم. The reel: من أول زيارة للموقع لين آخر لمسة.), where they
+were a kitchen and "we renovate your kitchen". `?service=<key>` in the harness shows any
+service's pictures.
 
 #### 22.14.2 Which picture where
 
@@ -5840,10 +5863,12 @@ and two 216 x 270 tile cuts each, like the twelve (72 files, pinned by
 |---|---|
 | O1, the Reels phone | the lead (story) |
 | O4, the feed phone | the lead of the row on the band; prep's scene when it belongs to that row |
-| O7, the strip | the service's scenes first, the lead on tile 0 (lit) |
+| O7, the strip | the two lit tiles their own: the lead on tile 0, the first alternate on tile 4; then their other scenes, the near ones, the fill-ins (22.15) |
 | L1, the cover (no creative of their own; a starter template does not count) | the lead (feed), tagged Example ad |
-| L2, journey stop 1 | the first alternate |
-| L3, the field | every scene once, the service's first; the lead and the alternate as detail tiles (cut b) |
+| L1, the cover (creatives of their own, none picked) | their first ad (the feed phone's), tagged Preview (22.15) |
+| L2, journey stop 1 | the first alternate; with ads of their own, the first of the Facebook phone, the Reels phone and the tray's own pictures that is not the cover's, their language first (one picture only: the same, the one exception) |
+| L3, the field | no tile twice across the field and the round; the three kept tiles (0, 4, 14) their own scenes, the lead and the alternate as details (cut b), the third wide; then what is left of their scenes and the near ones in both cuts, then the fill-ins (wide cuts first). An interior or fit-out client's field never shows a building site, and a kitchen or a bathroom only as the client's own detail, last (22.16) |
+| L3, the next round | their scenes in the cut the kept tiles did not show, then the near scenes' details; planned with the field, so never one of its tiles |
 | L4, the phones | feed and Facebook the lead, Reels the alternate |
 | L5, the form's cover | the third scene |
 
@@ -5866,11 +5891,16 @@ the alternate, L3 details, L4 the lead and the alternate, L5 the third.
 #### 22.14.4 The three weak slides
 
 - **O2, stop 1.** The goal is the stage's hero: it stands `--dk-lift`
-  (150 px) lower, over its 90 days drawn across the content, from today (a
-  teal dot, "Today") to the 90th day (a teal ring, the goal's label). On
-  stop 2 the pair settles up in one move (transform only) and the 90-day
-  line becomes the rule the other answers sit under. With no other answers
-  it sits in the stage's middle.
+  (150 px) lower and `--dk-hero-scale` (1.15) larger, over its 90 days
+  drawn across the content, from today (a teal dot, "Today") to the 90th
+  day (a teal ring, the goal's label). The goal grows from its foot and
+  from the hung quotation mark's outer edge (80 px out), so the 90 days
+  under it never move, the mark keeps its place in the margin and the
+  words step 12 px in; the widest goal (1400 px) lands inside the content
+  (56 + 1480 x 1.15 = 1758 of 1784, pinned by `deck-motion`). On stop 2
+  the pair settles up and to its own size in one move (transform only) and
+  the 90-day line becomes the rule the other answers sit under. With no
+  other answers it sits in the stage's middle, at the hero's size.
 - **O5.** The confirmation card hangs from the last stop by a dotted drop,
   so it belongs to "First appointments". The road's rule ("Each call is
   booked at the end of the one before.") is the slide's second statement,
@@ -5904,18 +5934,19 @@ infinite animation on any stop). Every duration and delay is a token times
 | `--dk-t-drift`, `--dk-ease-drift`, `--dk-drift-scale` | 9 s, a soft ease, 1.04 | an example picture's drift |
 | `--dk-rise-far` | 64 px | a phone sliding up |
 | `--dk-lift` | 150 px | O2's goal on its first stop |
+| `--dk-hero-scale` | 1.15 | O2's goal on its first stop, as the hero |
 | `--dk-t-trunk`, `--dk-t-branch` | 240, 200 ms | O3's group filling (were 160 each) |
 | `routeMs(k)` | min(1400, 600 + 240 k) ms | O5's lit line to today (was min(1000, 400 + 160 k)) |
 
 | Slide | The build (about) |
 |---|---|
 | O1 | their mark, then "Welcome," and their name a step apart, the phone sliding up 64 px with the example ad, then the agenda's lead and its three rings: 1.4 s |
-| O2 | the goal setting in line by line (each word box learns its line once laid out), the 90 days drawing from today, the ring and the label at its end: 1.5 s; stop 2, the pair settling up, the answers rising, then the foot |
+| O2 | the goal setting in line by line at the hero's size (each word box learns its line once laid out), the 90 days drawing from today, the ring and the label at its end: 1.5 s; stop 2, the pair settling up and to its own size, the answers rising, then the foot: 1 s |
 | O3 | their mark, the WhatsApp badge landing, the trunk, each branch with its role: 2 s |
 | O4 | the head, the five rows setting in one after another, the phone sliding up with its example, the band landing with the column's name: 1.2 s, the picture's drift on |
 | O5 | the stops appearing dot by dot with their names and dates, the lit line drawing to today, the drop and the card, the rule: 1.6 s |
 | O6 | the cards rising in turn, the posters or the phone, what is already done ticking in order across the cards, the week's rows: 1.1 s |
-| O7 | stop 1: the two columns in turn, the strip switching off; the starter stop: the phones sliding up one after the other; the booked call: its card rising beside its words |
+| O7 | stop 1: the two columns in turn, the strip switching off; the starter stop: the phones sliding up one after the other; the booked call: its card rising beside its words; between stops the incoming one starts halfway through the outgoing one's fade (22.15) |
 
 **The drift.** An example picture (never one of theirs) scales from 1.00 to
 1.04 over 9 s, once, then holds (`img[data-example]`, in the phones and on
@@ -5924,9 +5955,143 @@ O4). Still and reduced motion show it at its end.
 #### 22.14.6 Checked
 
 All deck tests, both typechecks, `check-shared.sh` and Biome on the touched
-files. Shots read at 1920 x 1080: the onboarding deck for the full and the
-starter clients in English and Arabic, and the launch slides touched (the
-cover, the journey, the ads, the form, the call and the portal's phone stop,
-full and starter, both languages). The arrivals were stepped through in the
-live harness with every new animation paused and sought to its start, its
-middle and its end (three frames each), read and deleted.
+files. `deck-motion` pins the arrivals from `present.css`: nothing loops,
+the build tokens are long enough to read on a share, the drift is once,
+slow, transform only and on `img[data-example]` alone, every animation that
+uses the 22.14 tokens runs on `--dk-m`, and the hero goal fits. Shots read
+at 1920 x 1080: the onboarding deck for all four clients in English and
+Arabic, and the launch slides touched (the cover, the journey, the field,
+the ads, the form, the call and the portal's phone stop, full and starter,
+both languages). The arrivals were stepped through in the live harness,
+each stop's own running animations paused and sought to its start, 40% and
+end (three frames each; an earlier stop's finished animations are left
+alone, or seeking them replays them), read and deleted: welcome 1.3 s,
+goals 1.5 s then 1 s, team 2 s, one service 1.2 s, road 1.6 s, this week
+1.1 s, what to expect 1.9 s, the starter phones 1.1 s, the Blueprint 0.9 s;
+no infinite animation on any stop; the drift (9 s) only on O1's and O4's
+example phones.
+
+### 22.15 Score round 4's fixes (2026-10-21)
+
+The fourth score round read every stop of both decks for all four clients
+in both languages and scored the onboarding deck 3 to 4 a slide. Its musts
+and shoulds are applied; taste where cheap and clearly better. Nothing new
+in the palette or the type: the cockpit's own tokens.
+
+#### 22.15.1 Pictures by service
+
+| Finding | What changed |
+|---|---|
+| must: O7's lit tiles were a kitchen (interior, fit-out, design and build, architecture) or a living room (construction) | `stripTiles`: tile 0 is the service's lead and tile 4 its first alternate (`STRIP_LIT`, now in `examples.ts`); the other four are its remaining scenes, then the near ones, then the fill-ins. Pinned for all five: both lit tiles are the service's own and never a kitchen or a bathroom |
+| must: L3's three kept tiles ("the few that work") were whatever scene landed on 0, 4 and 14 | `KEPT = [0, 4, 14]` in `examples.ts` (Cards.tsx lights them): the service's lead and alternate as details (cut b), its third wide; the other fifteen are the rest in `sceneOrder`, each once. Pinned for all five |
+| should: an interior client's field showed cranes in rows 2 and 3, and its next round started with a building site | `NEAR` per service (interior: office, stairs, restaurant; fit-out: living, majlis, bathroom, stairs; construction: design and build, villa, modern villa, facade; design and build: modern villa, villa frame, facade, living; architecture: design and build, pool, stairs, garden). `sceneOrder` is the service's scenes, its near ones, then the fill-ins (finished rooms and the whole home, the other services' leads, the sites, and a kitchen or a bathroom last of all, even one of the service's own). The next round is the service's scenes in the cut the field did not show, then the near ones' details. Pinned: no building site in an interior or fit-out client's first twelve tiles or next round |
+| must: full's starter templates were two kitchens, one captioned "…the last cabin…" | `starter-interior-feed.webp` (a closer, mirrored majlis) and `starter-interior-reel.webp` (the bedroom), the reel's words "…to the last detail."; the kitchen files are gone. The guard covers the starter pictures' files and words such as cabinet |
+| should: the starter client (Kuwait) had Riyadh's Kingdom Centre in its office reel | `starter-fitout-reel.webp` re-cut to the desk and partition below the windows: no skyline |
+| must: full's cover and journey stop 1 showed the same dining room | `useCreatives().journey`, with ads of their own: the first of the Facebook phone, the Reels phone and the tray's own pictures whose id and picture differ from the cover's (`coverShown`), their language first; the feed phone only when they have one picture (dwy: its one ad shows on both, the one exception). The harness's tall picture was a crop of the dining room; it is now an entrance hall (`custom-hall-tall.webp`). Pinned for full, starter and sparse in both languages |
+| should: a client with ads of their own and no cover pick (dwy) kept the faint lanes | `coverShown`: the pick, else the example (no ad of their own), else their first ad on the feed phone (never a starter), tagged Preview; the lanes only when nothing exists. dwy's own ad is a villa they built (`dwy-villa.webp`), never a kitchen |
+| must: prep still promised "the faint lanes" | Cover controls: "No ads of their own yet: the cover shows the example ad, labelled Example ad." with the example's switch under it; "No cover picked: it shows their first ad. Pick another here."; the empty choice reads "The example ad" or "Their first ad"; the prep check speaks only when there is an ad of theirs to pick; the ads panel counts own ads only (starters are ours) and says the phones show the starter templates. Pinned in `deck-launch` |
+| should: the field's stops 1 and 2 left an empty band above the rail | The next round's six dashed slots are there from stop 1 at 35% with no label; stop 3 brings in "Next round" at full strength (22.6.2) |
+
+#### 22.15.2 The onboarding deck
+
+| Finding | What changed |
+|---|---|
+| must: a goal in the other script took the deck's metrics and hang (a one-word widow, touching lines, 260 px off the margin, sliding 220 px as it settled) | `wordsDir` sets `dir` on the goal block and the goal: an Arabic goal takes Plex 76/1.45 (60/1.5, 52/1.55), balanced, in either deck, and sits on the right margin with its « outside it; an English goal on the left. Physical margins and the origin at the mark's outer edge (`calc(100% + 80px)` or `-80px`), so nothing slides between stops. Pinned in `deck-motion` |
+| must: one answer group filled 400 px and left 1250 px empty | `.dkc-goal-row[data-n="1"]`: the label spans the row and the items run across it, up to 520 px each, a hairline at each one's start |
+| must: English answers sat on the far edge under Arabic labels | Each answer a block in the deck's direction, the words in a `<bdi>`, as O7's red lines |
+| should: the no-goal state arrived with the crossfade alone | The question, its label and its line rise in turn, and the 90 days sweep under them (alone on the slide) |
+| taste: the track's ends said only "Today" and "In 90 days" | Their dates under them in ink-3 22 (this call's day and the 90th after it), while the goal is the hero |
+| should: O4 joined Arabic words with a Latin comma in the English deck | Arabic on both sides takes «، » |
+| taste: the proposed service in ink-2 read as disabled | Ink, its name on a 2 px dashed `--dk-line-strong` underline, solid teal once chosen |
+| taste: a caption-less feed phone showed a 70 px black band | The feed carries on: the next post's head and the top of its picture, cut by the tab bar |
+| should: the WhatsApp letter avatar was invisible | `--app-avatar: #6a7175` (3.2:1 on the card) |
+| should: the Arabic deck mirrored the play mark to ◀ | Media play never mirrors: the same ▶ and a physical 3 px optical offset in both decks |
+| should: posters painted in after the build | The deck warms slide 6's guide posters when it opens; a poster shows only once decoded (`data-decoded`) |
+| taste: "Done" landed before its ticks; "Not checked yet" headed a card with two of three ticked | The status chip fades in after the card's last tick (`--k-end`); `rowStatus` reads some done and the rest unchecked as To do |
+| taste: an Arabic red line in the English deck had its bullet on the left | Each line's `dir` is set from its words (`dir="auto"` on the item skipped the words' own isolate) |
+| should: O7's stops went blank for about 250 ms | The incoming stop starts halfway through the outgoing fade (`--dk-t-stage` x 0.375), about 100 ms of overlap, opacity only. Pinned in `deck-motion` |
+| should: about 520 px between O1's name block and its phone | The phone and its tag stand 120 px in from the content's end |
+
+#### 22.15.3 The launch deck, prep and the notes window
+
+- **L3's panel.** The Arabic Never head is «أبداً». When the lines quoted
+  from the card in the other script hold both kinds, they keep their own
+  Never and Always heads, small in ink-3, run in beside each group's first
+  line (a head on its own line pushed the source line into the rail).
+- **L4's leaders.** Within 8 px of its label, a leader runs straight and the
+  label moves to the dot's line (a 4 px elbow read as a glitch).
+- **L13.** Their mark (96) is back from the cover, top start.
+- **The notes window.** The Close, Play and Copy buttons each carry the
+  sticky foot's scroll margin, so the keyboard never leaves one under it.
+  The Arabic temp check is filled from the Arabic slots.
+- **Prep's tray.** Newest first by when each file was made; today's paste
+  reads "today, 08:15". The harness's tray and its pretend Drive worker run
+  on the harness's clock (19 October, 09:00, plus the time since the page
+  opened).
+
+#### 22.15.4 Not changed, and why
+
+- **O3, the trunk 96 px nearer the mark.** Tried: the bus then ran through
+  stop 2's reply-time block, which fills the hub's 460 px column. The bus
+  stays 100 px before the roles.
+- **O7, hour labels on the unbooked day.** A labelled grid puts the dashed
+  "We book it before we hang up" block at 10 am, a time nobody chose; the
+  rule (and its test) is never a made-up time.
+- **L6, the partnership roads.** Already `--dk-line-strong` at 3 px.
+- **L10, an "Update outcome" chip.** New words for a CRM action the column
+  already says; left for a content pass.
+- **A scene two services share, chosen in prep under the second.** Saving
+  `service:scene` needs the server's allow-list to change; documented in
+  `examples.ts`.
+
+#### 22.15.5 Checked
+
+All deck tests, both typechecks, `check-shared.sh` and Biome on the touched
+files; the PGlite suite (the provenance file applied twice, refused before
+20261020160000, its class equal to the plan's, the join on the client's own
+import, a title skipped in the importer's name); the worker suite (the probe
+and the poster lock their input, a broken answer is `HttpError(0)`). Shots
+at 1920 x 1080, read and deleted: the onboarding deck for full, dwy and
+starter in both languages (no foot, wrap or overlap hits), and the launch
+deck for full, dwy and starter in both languages (one hit, the L3 panel's
+run-in heads, fixed and shot again clean).
+
+
+### 22.16 The five main services, score round 1's fixes (2026-10-21)
+
+Score round 1 of the five main services put six slides at 3; each is at
+least 4 now. The rule behind most of them is the CEO's correction (22.14):
+a kitchen or a bathroom is part of a service, never the service, and an
+interior or fit-out client never sees another service's work as theirs.
+
+| Finding | What changed |
+|---|---|
+| must: L2 stop 3's queue read "Callback · Kitchens and wardrobes" (المطابخ والخزائن) in an interior design campaign | `queueServices` (`services.ts`): the launch service's name, then the client's own words for that same service only (`serviceOfText(word)` is the launch key), in the deck's script; never a sub-trade (`isSubTrade`: kitchens, bathrooms, wardrobes, cabinets, in both languages) and never another service's words; "Other" keeps the words that fit none. Full reads Interior design · Villa interiors · Majlis design (تصميم داخلي · تصميم داخلي للفلل · تصميم المجالس). Pinned in `deck-launch` and `deck-examples` |
+| should: L3 stop 1's field showed three building sites, a kitchen and a bathroom to an interior client | `tilePlan` (`examples.ts`) plans the field and the next round together, so no tile shows twice across the two: the kept tiles, then the round (their scenes in the cut the kept tiles did not show, then the near ones' details), then the field's fifteen from what is left of their scenes and the near ones in both cuts, then the fill-ins, wide cuts first. An interior or fit-out client's field never shows a building site; a kitchen or a bathroom only as the client's own detail, after everything else (none appears for the five leads). `NEAR`: interior adds the boutique; fit-out's bathroom (a sub-trade, never shown) gives way to the bedroom. The interior field's first row: living, office, stairs, restaurant, majlis, boutique. Pinned in `deck-examples` |
+| should: full's own Facebook-feed ad was a large kitchen (L4, L10's Drive thumbnails) | `custom-square.webp` (harness only) is a mirrored crop of Mahara's own living room, 800 x 800, 100 KB |
+| should: the starter's Reels template was a close crop of an office chair (O7's starter stop, L4) | `starter-fitout-reel.webp` (harness only) is the boutique's story cut whole, 608 x 1080: shelving, ceiling, glass front. The office scene shows a skyline through its windows (and the client is in Kuwait), so it was not re-cut; the feed template stays the restaurant |
+| should: the call prep's project hint still said "your new kitchen" | "Blank uses the launch service's line: '{line}'.", the line read from the launch service (`familyOfKey`, else the label's family, else "your project") |
+| should: the Drive box's stalled line had no card on the harness sheet | A `stalled` scenario (`driveFixtures.ts`): working, files part-way, the worker last seen 11 minutes before the harness's clock; `view=drive` shows it as a card, `?drive=stalled` in prep (DRIVE-IMPORT.md) |
+| should: O2's no-goal state sat in the top of the stage | With other answers to come, the question block stands `--dk-lift` lower on stop 1, as the hero goal does, and settles up with the answers in one move (`.dkc-goal-asking[data-lift]`, transform only). Alone, it already sat on the stage's middle (measured 270 to 780 of 1080 for the starter client in both languages). Pinned in `deck-fallbacks` |
+| taste: O4's Arabic deck showed the client's words in Latin under Arabic labels | The Arabic deck reads `services_ar` from either deck's prep (the same client's words), and prep has a field for it ("The same, in Arabic", onboarding side); with no Arabic list it shows their words as written. The launch deck also reads the onboarding prep's `services` when its own has none (prep only ever wrote them there). Pinned in `deck-examples` |
+| taste: L4's leaders mixed scripts ("Marked مُموّل", "The button: إرسال رسالة واتساب") | "Marked {word}" names the mark in the deck's language (Marked Sponsored, مكتوب عليه مُموّل), whatever the phone's; the button stays as the phone shows it, in its own isolate after the colon |
+| taste, and the slide was at 3: L5 stop 5's thank-you phone was about 80% empty, its words about 17 canvas px | The thank-you screen at a reading size: the Page's avatar 76u (about 67 canvas px), its name 28u and the words 27u (about 24 px), the block centred in the screen's upper half (`padding-bottom: 240u`) |
+| taste, and the slide was at 3: L10's six jobs read as a document | One sentence of why per job on the slide; a job's second sentence (`more`: the day off, "Our caller checks in too.") is said in the notes and kept in the recap the notes window copies. The moments at 28 px, the jobs at 32, the why at 26 (Arabic 30, 34, 28). Pinned in `deck-launch` and `deck-copy` |
+| taste: the harness's pretend Drive worker landed site-walk.mov as a picture, and one file twice from two links | A video lands as `video/mp4` with its poster; a file another open import has already landed is skipped, as the server's unique index refuses it. The harness's Drive names no longer say kitchens |
+| taste: CONTENT.md's sentence-case example was "templates for kitchens" | "templates for interior design" |
+
+Not changed: O1's Arabic role line (نجاح العملاء under the presenter's
+name) needs the presenter's gender from `cockpit_people` to say the role
+(مديرة or مدير); left for the content pass that reads it. O2 stop 2's
+single short group, O3's 2.0 s build and L7 stop 3's empty lower half were
+optional and scored 4.
+
+Checked: all deck tests (409), both typechecks (`tsc -b`, `tsc --noEmit`),
+`check-shared.sh` and Biome on the touched files. Every other test file
+passes on its own but three, which touch nothing here: two need
+`convex/_generated`, missing in this worktree, and the auth race test. Shots at 1920 x 1080, read and deleted: L2 stop 3 (full, both
+languages), L3 stop 1 (full, starter), L4 (starter stops 0 to 2, full stop
+3), L5's thank-you (full, both languages), L10 (full in both languages,
+dwy), O2 (sparse, starter in both languages), O4 (full, both languages),
+O7 (starter), the Drive sheet's stalled card (both languages) and prep's
+slide 4 and call sections.

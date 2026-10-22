@@ -10,6 +10,7 @@ import {
   type DeckKind,
   readDriveImports,
   readFileFacts,
+  removeLaunchAd,
   requestDriveImport,
   saveDeckVideo,
   savePrep,
@@ -101,6 +102,13 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
             "Saving needs your cockpit sign-in. The preview still works.",
           );
         return updateLaunchAd(client, key, id, patch);
+      },
+      removeAd: id => {
+        if (!client)
+          throw Error(
+            "Deleting needs your cockpit sign-in. Sign in, then delete it again.",
+          );
+        return removeLaunchAd(client, key, id);
       },
       saveVideo: v => {
         if (!client)

@@ -17,6 +17,7 @@ import {
   deckData,
   initials,
   roadNowFor,
+  rowStatus,
   shownGoals,
 } from "../src/present/deckData";
 import {
@@ -25,6 +26,7 @@ import {
   firstAppointmentDay,
   leadService,
   nextStatus,
+  nextStops,
   onboardingSlides,
   ownLine,
   rowHeight,
@@ -213,6 +215,50 @@ describe("a client with everything on file", () => {
       line: expect.anything(),
       service: "interior design",
     });
+    expect(nextStops(d)).toBe(3);
+  });
+
+  test("the pack is for one service: another choice on slide 4 drops its line and its stop (fixer round 2)", () => {
+    const f = FIXTURES.full();
+    const withPrep = (onboarding: Record<string, unknown>) =>
+      deckData({
+        taskId: "fixture-full",
+        deck: "onboarding",
+        lang: "en",
+        sources: f.sources,
+        kit: f.kit,
+        prep: { ...f.prep, onboarding: { ...f.prep.onboarding, ...onboarding } },
+        ads: f.ads,
+        publicUrl: (_b, p) => p,
+        now: NOW,
+      });
+    for (const service of ["Architectural design", "Design and build"]) {
+      const chose = withPrep({
+        service_focus: service,
+        service_chosen_at: "2026-10-19T08:50:00Z",
+      });
+      expect(chose.starterPackFor).toBe("interior");
+      expect(chose.starterPack).toBe(false);
+      expect(firstAdsLine(chose).service).toBeNull();
+      expect(nextStops(chose)).toBe(2);
+    }
+    // Ticked again for the new service, it is back.
+    const again = withPrep({
+      service_focus: "Architectural design",
+      service_chosen_at: "2026-10-19T08:50:00Z",
+      starter_pack: "architecture",
+    });
+    expect(again.starterPack).toBe(true);
+    expect(firstAdsLine(again).service).toBe("architectural design");
+    // A yes saved before keys is the kickoff's service (Interior design).
+    const legacy = (service: string) =>
+      withPrep({
+        starter_pack: true,
+        service_focus: service,
+        service_chosen_at: "2026-10-19T08:50:00Z",
+      }).starterPack;
+    expect(legacy("Interior design")).toBe(true);
+    expect(legacy("Architectural design")).toBe(false);
   });
 });
 
@@ -421,6 +467,41 @@ describe("the small rules", () => {
   });
 });
 
+describe("each deck asks for the service in its own order (DESIGN 22.14.1)", () => {
+  test("the onboarding deck takes slide 4's pick; the launch deck the kickoff's answer first", () => {
+    // Slide 4's pick was Architectural design; the kickoff (filed after)
+    // advertises Interior design, so the campaign was set up for that.
+    const build = (deck: "onboarding" | "launch") => {
+      const f = FIXTURES.full(deck);
+      return deckData({
+        taskId: "fixture-full",
+        deck,
+        lang: "en",
+        sources: f.sources,
+        kit: f.kit,
+        prep: {
+          ...f.prep,
+          onboarding: {
+            ...(f.prep.onboarding ?? {}),
+            service_focus: "Architectural design",
+            service_chosen_at: "2026-10-12T10:00:00Z",
+          },
+        },
+        ads: f.ads,
+        presenterName: "Sara Al-Harbi",
+        publicUrl: (_b, p) => p,
+        now: NOW,
+      });
+    };
+    const onboarding = build("onboarding");
+    expect(onboarding.service.key).toBe("architecture");
+    expect(onboarding.service.from).toBe("chosen");
+    const launch = build("launch");
+    expect(launch.service).toMatchObject({ key: "interior", from: "kickoff" });
+    expect(launch.example.service).toBe("interior");
+  });
+});
+
 describe("O7 names the launch service in the deck's own script", () => {
   // The fixer's round (2026-10-20): "لخدمة Kitchens" put a Latin name in an
   // Arabic line. The Arabic deck takes the CSM's Arabic name from prep (the
@@ -462,6 +543,8 @@ describe("O7 names the launch service in the deck's own script", () => {
           ...f.prep.onboarding,
           service_focus: "Swimming pools and spas",
           service_focus_ar: "مسابح وجاكوزي",
+          // The pack ticked for the service it names (fixer round 2).
+          starter_pack: "design-build",
         },
       },
       ads: f.ads,
@@ -496,6 +579,7 @@ describe("O7 names the launch service in the deck's own script", () => {
           onboarding: {
             ...f.prep.onboarding,
             service_focus: "Equipment rental",
+            starter_pack: "other",
           },
         },
         ads: f.ads,
@@ -591,7 +675,7 @@ describe("every slide and stop renders, for every client, in both languages", ()
           /<ul aria-hidden="true"><li data-lit=""/,
         );
         expect(seen["next:0"]).toContain(
-          lang === "ar" ? "إعلانات مثال" : "Example ads",
+          lang === "ar" ? "إعلانات للتوضيح" : "Example ads",
         );
         // The starter stop shows only with a pack and starter ads.
         expect(Object.keys(seen).includes("next:2")).toBe(key === "full");
@@ -636,6 +720,44 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
       </>,
     );
   };
+  test("score round 4: Arabic words side by side take the Arabic comma, in the English deck too", () => {
+    const h = one(data("dwy"), "one-service");
+    expect(h).not.toMatch(
+      /[\u0600-\u06ff]<\/bdi><\/span><span>, <bdi>[\u0600-\u06ff]/,
+    );
+    expect(h).toMatch(
+      /[\u0600-\u06ff]<\/bdi><\/span><span>، <bdi>[\u0600-\u06ff]/,
+    );
+  });
+
+  test("score round 4: a card with some steps done and the rest not checked reads To do", () => {
+    expect(rowStatus(["done", "done", "unchecked"])).toBe("todo");
+    expect(rowStatus(["unchecked", "unchecked"])).toBe("unchecked");
+    expect(rowStatus(["done", "done"])).toBe("done");
+    expect(rowStatus(["done", "todo"])).toBe("todo");
+  });
+
+  test("score round 4: the goal's answers sit in the deck's direction, their words isolated", () => {
+    const h = one(data("full", "ar"), "goals", 1);
+    expect(h).toMatch(/<li class="dkc-theirs"><bdi>/);
+    expect(h).not.toMatch(/<li class="dkc-theirs" dir="auto">/);
+    // An English goal in the Arabic deck keeps its own direction and hang.
+    expect(h).toMatch(/class="dkc-goal-block" dir="ltr"/);
+  });
+
+  test("score round 1: no goal but other answers to come, the question stands low on stop 1 and settles up with them", () => {
+    const d = data("full");
+    const noGoal = { ...d, goals: d.goals.filter(g => g.key !== "goal90") };
+    const asking = (h: string) =>
+      /<div class="dkc-goal-asking"[^>]*>/.exec(h)?.[0] ?? "";
+    expect(asking(one(noGoal, "goals", 0))).toContain('data-lift=""');
+    expect(asking(one(noGoal, "goals", 1))).not.toContain("data-lift");
+    // Alone (no other answers), it stays on the slide's middle, unlifted.
+    const alone = asking(one(data("sparse"), "goals", 0));
+    expect(alone).toContain('data-alone=""');
+    expect(alone).not.toContain("data-lift");
+  });
+
   test("O4: the five main services always, Other only when their words fit none", () => {
     expect([5, 6].map(rowHeight)).toEqual([92, 84]);
     const names = (html: string) =>

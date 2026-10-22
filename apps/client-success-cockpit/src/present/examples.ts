@@ -132,9 +132,78 @@ export function examplePick(
 export const sceneAt = (pick: { scenes: readonly Theme[] }, i: number) =>
   pick.scenes[i % pick.scenes.length];
 
-/** Every scene, the client's service first, then the rest in their order. */
-export function sceneOrder(pick: { scenes: readonly Theme[] }): Theme[] {
-  return [...pick.scenes, ...THEMES.filter(x => !pick.scenes.includes(x))];
+/**
+ * The scenes nearest each service, after its own (DESIGN 22.15): what a
+ * client of that service would take for their own kind of work, so the
+ * field's first rows and the next round never read as Mahara planning
+ * another service's ads for them (an interior client's field showed cranes).
+ * Never a sub-trade: a kitchen or a bathroom is no one's nearest service.
+ */
+export const NEAR: Record<MainKey, readonly Theme[]> = {
+  interior: ["office", "stairs", "fitout3", "fitout2"],
+  fitout: ["living", "majlis", "stairs", "bedroom"],
+  construction: ["designbuild", "villa", "architecture2", "facade"],
+  "design-build": ["architecture2", "construction3", "facade", "living"],
+  architecture: ["designbuild", "pool", "stairs", "landscape"],
+};
+
+/**
+ * The fill-ins after a service's own scenes and its near ones: the finished
+ * rooms and the whole home first, then the other services' leads, then the
+ * building sites, and the sub-trades (a kitchen, a bathroom) last of all,
+ * so they never stand where a service's winners are shown (CEO,
+ * 2026-10-21: "These are not kitchens").
+ */
+const FILL: readonly Theme[] = [
+  "villa",
+  "majlis",
+  "office",
+  "facade",
+  "pool",
+  "stairs",
+  "landscape",
+  "bedroom",
+  "fitout3",
+  "living",
+  "designbuild",
+  "architecture2",
+  "fitout2",
+  "construction3",
+  "construction2",
+  "construction",
+  "kitchen",
+  "bathroom",
+];
+
+/** A sub-trade's scene: one of an interior's rooms, never "the service". */
+const SUB_TRADE = new Set<Theme>(["kitchen", "bathroom"]);
+
+/**
+ * The pictures prep's switch offers for a service (fixer round 2): its own
+ * scenes without the sub-trades, so a kitchen or a bathroom is never made
+ * the client's example ad; they stay as detail tiles only.
+ */
+export const pickableScenes = (service: MainKey): Theme[] =>
+  SCENES[service].filter(x => !SUB_TRADE.has(x));
+
+/**
+ * Every scene once: the client's scenes (prep's pick first), then the ones
+ * nearest their service, then the fill-ins; a kitchen or a bathroom comes
+ * last of all, even when it is one of the service's own (an interior
+ * client's lead is never followed by kitchens). `sceneAt` keeps the
+ * service's own order: this order is for the tiles alone.
+ */
+export function sceneOrder(pick: {
+  scenes: readonly Theme[];
+  service?: MainKey;
+}): Theme[] {
+  const near = pick.service ? NEAR[pick.service] : [];
+  const lead = pick.scenes[0];
+  const out: Theme[] = [];
+  for (const x of [...pick.scenes, ...near, ...FILL, ...THEMES])
+    if (!out.includes(x) && (x === lead || !SUB_TRADE.has(x))) out.push(x);
+  for (const x of FILL) if (!out.includes(x)) out.push(x);
+  return out;
 }
 
 export const isTheme = (v: unknown): v is Theme =>
@@ -152,33 +221,125 @@ export const tileUrl = (theme: Theme, cut: "a" | "b") =>
 // ----------------------------------------------------------- the field
 
 /**
- * L3's field (DESIGN 22.14): every scene once, the client's service first.
- * The two scenes the slides either side show large (L2's ad, L4's phones)
- * take their detail tile, so no picture shows twice in a row.
+ * The field's three tiles that stay lit, "the few that work" (row 1
+ * column 1, row 1 column 5, row 3 column 3: never a line, so it reads as
+ * chance). Cards.tsx lights them; the field puts the client's own scenes
+ * on them (DESIGN 22.15), so a winner is never another service's picture.
  */
-export function serviceField(pick: ServiceExample, count = 18): string[] {
-  const order = sceneOrder(pick);
-  const hero = new Set([sceneAt(pick, 0), sceneAt(pick, 1)]);
-  return Array.from({ length: count }, (_, i) => {
-    const scene = order[i % order.length];
-    return tileUrl(scene, hero.has(scene) ? "b" : "a");
+export const KEPT = [0, 4, 14] as const;
+
+/** A building site: another service's work in a room service's field. */
+const SITES: ReadonlySet<Theme> = new Set([
+  "construction",
+  "construction2",
+  "construction3",
+]);
+/** The services whose work is a room: a crane never stands in their field. */
+const ROOMS: ReadonlySet<MainKey> = new Set(["interior", "fitout"]);
+
+type Cut = "a" | "b";
+
+/**
+ * L3's field and its next round, planned together (DESIGN 22.14, 22.15),
+ * so no tile shows twice across the two. The kept tiles take the client's
+ * own scenes, the lead and the alternate as details (cut b: L2's ad and
+ * L4's phones show them large, either side) and the third as its wide cut.
+ * The round is more of what won: their own scenes in the cut the field's
+ * kept tiles did not show, then the near ones' details. The field's other
+ * fifteen are what is left of their own scenes and the near ones, in both
+ * cuts, then the fill-ins (wide cuts, then details). An interior or
+ * fit-out client's field never shows a building site (score round 1: three
+ * cranes in an interior client's first look), and a kitchen or a bathroom
+ * only as the client's own detail, after everything else (CEO, 2026-10-21:
+ * "These are not kitchens").
+ */
+function tilePlan(
+  pick: ServiceExample,
+  count: number,
+): { field: string[]; round: string[] } {
+  const own = pick.scenes;
+  const rooms = ROOMS.has(pick.service);
+  const fits = (x: Theme) => !SUB_TRADE.has(x) && !(rooms && SITES.has(x));
+  const key = (x: Theme, c: Cut) => `${x}-${c}`;
+  const used = new Set<string>();
+  const field: (string | null)[] = Array.from({ length: count }, () => null);
+  KEPT.forEach((at, k) => {
+    if (at >= count) return;
+    const scene = own[k % own.length];
+    const cut: Cut = k < 2 ? "b" : "a";
+    used.add(key(scene, cut));
+    field[at] = tileUrl(scene, cut);
   });
+  const keptDetail = new Set(
+    KEPT.slice(0, 2).map((_, k) => own[k % own.length]),
+  );
+  const round = sceneOrder(pick)
+    .slice(0, 6)
+    .map(x => {
+      const cut: Cut = own.includes(x) && keptDetail.has(x) ? "a" : "b";
+      used.add(key(x, cut));
+      return tileUrl(x, cut);
+    });
+  const near = NEAR[pick.service] ?? [];
+  const both = (list: readonly Theme[]): [Theme, Cut][] => [
+    ...list.map(x => [x, "a"] as [Theme, Cut]),
+    ...list.map(x => [x, "b"] as [Theme, Cut]),
+  ];
+  const order: [Theme, Cut][] = [
+    ...both(own.filter(fits)),
+    ...both(near.filter(fits)),
+    ...both(sceneOrder(pick).filter(fits)),
+    // A sub-trade only as the client's own detail, last of all.
+    ...own.filter(x => SUB_TRADE.has(x)).map(x => [x, "b"] as [Theme, Cut]),
+  ];
+  const rest: string[] = [];
+  for (const [x, c] of order) {
+    if (used.has(key(x, c))) continue;
+    used.add(key(x, c));
+    rest.push(tileUrl(x, c));
+  }
+  let j = 0;
+  return {
+    field: field.map(f => f ?? rest[j++ % rest.length]),
+    round,
+  };
 }
 
-/** The next round's six: details of the scenes after the field's first six. */
+/** L3's field: the client's own scenes kept lit, the rest near their service. */
+export function serviceField(pick: ServiceExample, count = 18): string[] {
+  return tilePlan(pick, count).field;
+}
+
+/**
+ * The next round's six (DESIGN 22.15): the client's own scenes in the cut
+ * the field's kept tiles did not show, then the near ones' details; never a
+ * tile the field shows.
+ */
 export function serviceRound(pick: ServiceExample, count = 6): string[] {
-  const order = sceneOrder(pick);
-  return Array.from({ length: count }, (_, j) =>
-    tileUrl(order[(6 + j) % order.length], "b"),
-  );
+  return tilePlan(pick, 18).round.slice(0, count);
 }
 
-/** O7's strip: the first six scenes, wide, the client's lead on tile 0. */
+/**
+ * O7's two lit tiles (DESIGN 22.2.7): the first and the fifth of the row
+ * of six, apart, so they read as picks, not as a lit pair.
+ */
+export const STRIP_LIT = new Set([0, 4]);
+
+/**
+ * O7's strip (DESIGN 22.15): six wide tiles, the two lit ones (tiles 0 and
+ * 4, `STRIP_LIT`) their lead and its first alternate, so what wins is
+ * always their own service's picture; the others their remaining scenes,
+ * then the near ones and the fill-ins.
+ */
 export function stripTiles(pick: ServiceExample, count = 6): string[] {
-  const order = sceneOrder(pick);
-  return Array.from({ length: count }, (_, i) =>
-    tileUrl(order[i % order.length], "a"),
-  );
+  const own = pick.scenes;
+  const lit = new Map([...STRIP_LIT].map((at, k) => [at, own[k % own.length]]));
+  const rest = sceneOrder(pick).filter(x => ![...lit.values()].includes(x));
+  let j = 0;
+  return Array.from({ length: count }, (_, i) => {
+    const scene = lit.get(i) ?? rest[j++ % rest.length];
+    return tileUrl(scene, "a");
+  });
 }
 
 // ----------------------------------------------------- the example creative
