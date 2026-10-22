@@ -47,6 +47,7 @@ type Rail = "bank_transfer" | "cheque" | "cash" | "tap" | "ecom" | "other";
 type Currency = "USD" | "KWD";
 
 const RAILS: { value: Rail; label: string; match: RegExp }[] = [
+  { value: "ecom", label: "Ecom", match: /\becom\b/i },
   {
     value: "bank_transfer",
     label: "Bank transfer",

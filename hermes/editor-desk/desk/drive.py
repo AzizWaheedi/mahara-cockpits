@@ -25,6 +25,18 @@ FILE_FIELDS = (
     "id,name,mimeType,size,md5Checksum,createdTime,modifiedTime,webViewLink,"
     "videoMediaMetadata(width,height,durationMillis),parents,shortcutDetails(targetId,targetMimeType)"
 )
+# What the client success Drive import reads (docs/csm-decks/DRIVE-IMPORT.md 7).
+IMPORT_FIELDS = (
+    "id,name,mimeType,size,createdTime,trashed,shortcutDetails,capabilities(canDownload),resourceKey,"
+    "owners(emailAddress),driveId,parents"
+)
+
+
+def resource_key_header(resource_keys: Optional[dict[str, Optional[str]]]) -> dict[str, str]:
+    """A file shared by link before 2021 needs its resource key, sent as one
+    header: `X-Goog-Drive-Resource-Keys: <id>/<key>[,<id>/<key>...]`."""
+    pairs = [f"{fid}/{key}" for fid, key in (resource_keys or {}).items() if fid and key]
+    return {"X-Goog-Drive-Resource-Keys": ",".join(pairs)} if pairs else {}
 
 # Any Drive link shape the team pastes into ClickUp.
 _ID_PATTERNS = [
@@ -101,6 +113,7 @@ class Drive:
         self._token = ""
         self._expires = 0.0
         self.calls = 0
+        self.more = False  # whether the last list_folder stopped with a page left
 
     # ---- auth ------------------------------------------------------------
     def token(self) -> str:
@@ -123,6 +136,12 @@ class Drive:
         self._expires = time.time() + float(out.get("expires_in") or 3600)
         return self._token
 
+    def forget_token(self) -> None:
+        """Drop the cached access token, so the next call mints a fresh one
+        (once, after a 401)."""
+        self._token = ""
+        self._expires = 0.0
+
     def _headers(self, extra: Optional[dict[str, str]] = None) -> dict[str, str]:
         h = {"Authorization": f"Bearer {self.token()}"}
         if extra:
@@ -130,34 +149,63 @@ class Drive:
         return h
 
     # ---- reading ---------------------------------------------------------
-    def get(self, file_id: str) -> dict[str, Any]:
+    def get(
+        self,
+        file_id: str,
+        *,
+        fields: str = FILE_FIELDS,
+        resource_keys: Optional[dict[str, Optional[str]]] = None,
+    ) -> dict[str, Any]:
         self.calls += 1
-        q = http.encode_query({"fields": FILE_FIELDS, "supportsAllDrives": "true"})
-        out = http.get_json(f"{FILES}/{http.quote(file_id)}?{q}", headers=self._headers(), timeout=60)
+        q = http.encode_query({"fields": fields, "supportsAllDrives": "true"})
+        out = http.get_json(
+            f"{FILES}/{http.quote(file_id)}?{q}",
+            headers=self._headers(resource_key_header(resource_keys)),
+            timeout=60,
+        )
         return out if isinstance(out, dict) else {}
 
-    def list_folder(self, folder_id: str, *, pages: int = 4) -> list[dict[str, Any]]:
-        """Everything directly inside a folder. Trashed files are skipped."""
+    def list_folder(
+        self,
+        folder_id: str,
+        *,
+        pages: int = 4,
+        fields: str = FILE_FIELDS,
+        order_by: str = "folder,createdTime",
+        q_extra: str = "",
+        page_size: int = 200,
+        resource_keys: Optional[dict[str, Optional[str]]] = None,
+        stop_after: Optional[Callable[[list[dict[str, Any]]], bool]] = None,
+    ) -> list[dict[str, Any]]:
+        """Everything directly inside a folder. Trashed files are skipped.
+
+        `q_extra` is appended to the query (" and mimeType != ..."), and
+        `stop_after(items)` returning true ends the listing early. Afterwards
+        `self.more` says whether Drive still had a page when it stopped.
+        """
         items: list[dict[str, Any]] = []
         token = None
+        self.more = False
         for _ in range(max(1, pages)):
             self.calls += 1
             q = http.encode_query({
-                "q": f"'{folder_id}' in parents and trashed=false",
-                "fields": f"nextPageToken,files({FILE_FIELDS})",
-                "pageSize": 200,
+                "q": f"'{folder_id}' in parents and trashed=false{q_extra}",
+                "fields": f"nextPageToken,files({fields})",
+                "pageSize": page_size,
                 "supportsAllDrives": "true",
                 "includeItemsFromAllDrives": "true",
                 "pageToken": token,
-                "orderBy": "folder,createdTime",
+                "orderBy": order_by,
             })
-            out = http.get_json(f"{FILES}?{q}", headers=self._headers(), timeout=90)
+            out = http.get_json(f"{FILES}?{q}", headers=self._headers(resource_key_header(resource_keys)), timeout=90)
             if not isinstance(out, dict):
+                token = None
                 break
             items.extend(x for x in (out.get("files") or []) if isinstance(x, dict))
             token = out.get("nextPageToken")
-            if not token:
+            if not token or (stop_after is not None and stop_after(items)):
                 break
+        self.more = bool(token)
         return items
 
     def follow(self, shortcut: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -230,9 +278,23 @@ class Drive:
         found.sort(key=lambda f: str(f.get("createdTime") or ""))
         return found
 
-    def download(self, file_id: str, dest: str, *, max_bytes: int) -> int:
+    def download(
+        self,
+        file_id: str,
+        dest: str,
+        *,
+        max_bytes: int,
+        resource_keys: Optional[dict[str, Optional[str]]] = None,
+        timeout: float = 1800,
+        deadline: Optional[float] = None,
+        on_chunk: Optional[Callable[[int], None]] = None,
+    ) -> int:
         q = http.encode_query({"alt": "media", "supportsAllDrives": "true"})
-        return http.download(f"{FILES}/{http.quote(file_id)}?{q}", dest, max_bytes=max_bytes, headers=self._headers(), timeout=1800)
+        return http.download(
+            f"{FILES}/{http.quote(file_id)}?{q}", dest, max_bytes=max_bytes,
+            headers=self._headers(resource_key_header(resource_keys)), timeout=timeout,
+            deadline=deadline, on_chunk=on_chunk,
+        )
 
     def doc_text(self, file_id: str) -> str:
         """A Google Doc exported as plain text: the brief, when it lives in a Doc."""

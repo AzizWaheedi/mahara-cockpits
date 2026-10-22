@@ -93,6 +93,7 @@ import { createRoot } from "react-dom/client";
 import { MemoryRouter } from "react-router";
 import "../index.css";
 import { BookRefusal, bookAnswer } from "./bookingFake";
+import { dayReviewAnswer, seedDayReview } from "./dayReviewFake";
 import * as F from "./fixtures";
 import {
   answerWaves,
@@ -150,6 +151,7 @@ const scriptKnobs = {
 /** script.save's rows: the lead page and the closer read them as the call goes. */
 const scriptNotes: Row[] = [];
 const startPath = params.get("path") ?? "/";
+if (startPath.startsWith("/eod")) seedDayReview();
 const roomLead =
   /^\/lead\/([^/?#]+)/.exec(startPath)?.[1] ??
   String(F.dialItems("setter", Date.now())[0]?.contact_id ?? "lead-1");
@@ -516,6 +518,8 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
   if (wave) return wave;
   const zoom = zoomAnswer(String(b.action), b, zoomK, now);
   if (zoom) return zoom;
+  const reviewed = dayReviewAnswer(b);
+  if (reviewed) return reviewed;
   switch (b.action) {
     case "script.save":
       return await scriptSave(b, now, signal);
@@ -528,6 +532,7 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
         row.marked_status = String(b.status);
         row.status = String(b.status);
         row.marked_by = F.ME.email;
+        row.mark_note = b.note ?? null;
         row.marked_at = new Date(now).toISOString();
         row.needs_mark = false;
       }
@@ -772,6 +777,8 @@ async function salesApi(b: Row, signal?: AbortSignal | null): Promise<Row> {
         return { ...out, verified: false };
       return out;
     }
+    case "pipeline.stages":
+      return { pipelines: (await import("./pipelineFake")).PIPES };
     case "pipeline.board":
       return (await import("./pipelineFake")).pipelineBoardFake(b);
     case "pipeline.move":

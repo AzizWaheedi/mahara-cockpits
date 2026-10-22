@@ -15,9 +15,16 @@ Rules the writes follow, learned the hard way on the radar:
 """
 from __future__ import annotations
 
+import http.client as http_client
 import json
+import os
+import re
+import socket
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 from . import http
 from .config import DONE_STATUSES
@@ -105,6 +112,80 @@ class SupabaseError(Exception):
     pass
 
 
+class RpcError(SupabaseError):
+    """A database function refused, with PostgREST's own fields: `sqlstate`
+    (its `code`: a SQLSTATE such as 40001, or PGRST202 for a function that
+    does not exist), `message` (the sentence) and `hint` (the code name the
+    decks' functions put there)."""
+
+    def __init__(self, sqlstate: str, message: str, hint: Optional[str] = None, status: int = 0):
+        self.sqlstate = sqlstate
+        self.message = message
+        self.hint = hint
+        self.status = status
+        super().__init__(http.scrub(f"{sqlstate}: {message}" + (f" ({hint})" if hint else "")))
+
+
+def rpc_error(e: http.HttpError) -> Optional[RpcError]:
+    """PostgREST's JSON error as an RpcError, or None when the body is not one."""
+    try:
+        data = json.loads((e.body or b"").decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict) or not data.get("code") or "message" not in data:
+        return None
+    hint = data.get("hint")
+    return RpcError(str(data["code"]), str(data.get("message") or ""), str(hint) if hint else None, e.status)
+
+
+class StorageTooLarge(http.HttpError):
+    """Storage refused an upload for its size (413, or a 400 that says so)."""
+
+
+# The test the browser keeps as `tooLarge` in src/present/sources.ts.
+_TOO_LARGE_RE = re.compile(r"maximum allowed size|payload too large|entity too large|exceeded", re.I)
+UPLOAD_CHUNK = 1 << 20
+
+
+def _storage_duplicate(status: int, body: bytes) -> bool:
+    """Storage answers an existing object as HTTP 409, or as a 400 whose JSON
+    says statusCode "409" or error "Duplicate", depending on its version."""
+    if status == 409:
+        return True
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return False
+    return isinstance(data, dict) and (str(data.get("statusCode") or "") == "409" or data.get("error") == "Duplicate")
+
+
+def _storage_too_large(status: int, body: bytes) -> bool:
+    return status == 413 or (status == 400 and bool(_TOO_LARGE_RE.search(body.decode("utf-8", "replace"))))
+
+
+def _is_timeout(e: BaseException) -> bool:
+    if isinstance(e, (socket.timeout, TimeoutError)):
+        return True
+    return isinstance(e, urllib.error.URLError) and isinstance(getattr(e, "reason", None), (socket.timeout, TimeoutError))
+
+
+class _Chunks:
+    """A file read in 1 MB chunks for http.client, reporting progress."""
+
+    def __init__(self, fh: Any, on_chunk: Optional[Callable[[int], None]]):
+        self.fh = fh
+        self.on_chunk = on_chunk
+        self.sent = 0
+
+    def read(self, _size: int = -1) -> bytes:
+        block = self.fh.read(UPLOAD_CHUNK)
+        if block:
+            self.sent += len(block)
+            if self.on_chunk is not None:
+                self.on_chunk(self.sent)
+        return block
+
+
 class Supabase:
     def __init__(self, url: str, key: str, *, bucket: str = "editor-stills", timeout: float = 60):
         if not url or not key:
@@ -170,6 +251,101 @@ class Supabase:
     def ping(self) -> bool:
         self.rest("GET", "editor_jobs?select=task_id&limit=1")
         return True
+
+    # ---- database functions and the private buckets ----------------------
+    def rpc(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        retry: bool = True,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> Any:
+        """Call a database function. A refusal with PostgREST's JSON error
+        becomes RpcError and is never retried: the decks' functions refuse
+        on purpose (a lost claim, a bad argument), and a second try would
+        refuse the same way. A network failure or a 5xx without that body is
+        tried three times, unless `retry` is false: a call that is not
+        idempotent (the import claim) is sent once, because a retry after a
+        lost answer would take a second import."""
+        for attempt in range(3 if retry else 1):
+            try:
+                return self.rest("POST", f"rpc/{name}", json_body=args, retries=0)
+            except http.HttpError as e:
+                err = rpc_error(e)
+                if err is not None:
+                    raise err from None
+                if not retry or attempt == 2 or not (e.status == 0 or e.status in (500, 502, 503, 504)):
+                    raise
+                sleep(2 ** attempt)
+        return None
+
+    def storage_list(self, bucket: str, *, prefix: str = "", limit: int = 1) -> Any:
+        """One page of a bucket's listing: the doctor's proof the bucket is there."""
+        _, _, body = http.request(
+            "POST", f"{self.url}/storage/v1/object/list/{http.quote(bucket)}",
+            headers=self._headers(), json_body={"prefix": prefix, "limit": int(limit)},
+            timeout=self.timeout, retries=1, ok_statuses=(200,),
+        )
+        return json.loads(body.decode("utf-8")) if body else None
+
+    def upload_file(
+        self,
+        bucket: str,
+        path: str,
+        file_path: str,
+        content_type: str,
+        *,
+        upsert: bool = False,
+        on_chunk: Optional[Callable[[int], None]] = None,
+        timeout: float = 300,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> str:
+        """Stream a file from disk into a private bucket.
+
+        Returns "uploaded", or "exists" when Storage says the object is
+        already there (the caller then asks the database to check its
+        bytes). Raises StorageTooLarge when Storage refuses it for its size,
+        and HttpError for anything else. Its own loop, not http.request: the
+        file is opened afresh on every attempt, so a retry sends the whole
+        body again, and it is retried once on a timeout or a 5xx.
+        """
+        url = f"{self.url}/storage/v1/object/{http.quote(bucket)}/" + "/".join(http.quote(seg) for seg in path.split("/"))
+        size = os.path.getsize(file_path)
+        headers = self._headers(extra={
+            "Content-Type": content_type,
+            "x-upsert": "true" if upsert else "false",
+            "cache-control": "3600",
+            "Content-Length": str(size),
+            "User-Agent": http.USER_AGENT,
+        })
+        for attempt in range(2):
+            last = attempt == 1
+            try:
+                with open(file_path, "rb") as fh:
+                    req = urllib.request.Request(url, data=_Chunks(fh, on_chunk), headers=headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=timeout) as res:
+                        res.read()
+                return "uploaded"
+            except urllib.error.HTTPError as e:
+                try:
+                    body = e.read() or b""
+                except Exception:  # noqa: BLE001 - a body we cannot read is an empty one
+                    body = b""
+                if _storage_duplicate(e.code, body):
+                    return "exists"
+                if _storage_too_large(e.code, body):
+                    raise StorageTooLarge(e.code, body[:300].decode("utf-8", "replace"), body, url) from None
+                if 500 <= e.code < 600 and not last:
+                    sleep(2)
+                    continue
+                raise http.HttpError(e.code, body[:300].decode("utf-8", "replace"), body, url) from None
+            except (urllib.error.URLError, OSError, http_client.HTTPException) as e:
+                if _is_timeout(e) and not last:
+                    sleep(2)
+                    continue
+                raise http.HttpError(0, f"{type(e).__name__}: {e}", b"", url) from None
+        raise http.HttpError(0, "upload failed", b"", url)
 
     @staticmethod
     def _row(d: dict[str, Any], allowed: set[str]) -> dict[str, Any]:

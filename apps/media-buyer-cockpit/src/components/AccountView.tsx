@@ -16,6 +16,7 @@ import {
   type StatusTone,
 } from "@/components/ceo/StatusChip";
 import { LostLeads } from "@/components/LostLeads";
+import { LeadPageSection } from "@/components/pageform/LeadPageSection";
 import { RangePicker } from "@/components/RangePicker";
 import { RequestCreativeButton } from "@/components/RequestCreativeButton";
 import {
@@ -52,6 +53,7 @@ import {
 } from "@/lib/costTone";
 import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "@/lib/kpi";
 import { everyBookingPlaced, pairedDay } from "@/lib/mediaStatsClient";
+import { usePageForms } from "@/lib/pageFormClient";
 import { kuwaitDay, type Range } from "@/lib/range";
 import { cn } from "@/lib/utils";
 import { LeadSyncPanel } from "./LeadSync";
@@ -557,6 +559,10 @@ export function AccountView({
   // "Why leads were lost" (the dialer's outcomes, with the calls to play)
   // stands in for the lost pipeline; done-with-you clients keep the pipeline.
   const callsHoldLost = useCallsHoldLost(callsKey, range, leadsOnly);
+  // The client's own lead page (Merge Studio first): shown when there is one,
+  // or when the read failed, so a failure is never read as "no page".
+  const pageForms = usePageForms(client);
+  const showLeadPage = Boolean(pageForms.error || pageForms.data?.length);
   // The contents bar: one pill per card, in page order. Lost leads and the
   // open campaign show only when the page has them.
   const parts: SectionNavPart[] = [
@@ -574,6 +580,7 @@ export function AccountView({
     ...(current
       ? [{ id: "account-campaign", label: String(current.campaignName) }]
       : []),
+    ...(showLeadPage ? [{ id: "lead-page", label: "Lead page" }] : []),
   ];
   // The last day every account's spend is in (pairedDay): before the
   // tracker sheet fills, it is behind yesterday, and the page says so.
@@ -1184,6 +1191,10 @@ export function AccountView({
           </h3>
           {renderPanel(current)}
         </section>
+      )}
+
+      {showLeadPage && (
+        <LeadPageSection read={pageForms} className={SECTION_OFFSET} />
       )}
     </div>
   );

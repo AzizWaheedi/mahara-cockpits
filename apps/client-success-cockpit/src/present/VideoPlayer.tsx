@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type Lang, t, tf, VIDEO } from "./content";
+import { type Lang, sep, t, tf, VIDEO } from "./content";
 import type { VideoRow } from "./sources";
 import {
   frameSrc,
@@ -155,7 +155,7 @@ export function VideoControl({
               <bdi>{title}</bdi>
               {length ? (
                 <>
-                  <span className="dkv-dot"> · </span>
+                  <span className="dkv-dot">{sep(lang)}</span>
                   <span className="dkv-len">{length}</span>
                 </>
               ) : null}

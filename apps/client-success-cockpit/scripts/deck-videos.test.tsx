@@ -511,6 +511,21 @@ describe("the frame's address (the server builds the embed; the deck adds autopl
     for (const b of bad)
       expect(S.videoRow.safeParse(row(b)).success).toBe(false);
   });
+  test("a poster only from the provider's picture hosts; any other reads as none, and the row still plays", () => {
+    const loom =
+      "https://cdn.loom.com/sessions/thumbnails/e2d83bffee614d9aa035d898d37d8989-b17bc3f4ce782f9b.jpg";
+    expect(S.videoRow.parse(row({ posterUrl: loom })).posterUrl).toBe(loom);
+    for (const other of [
+      "https://evil.org/x.jpg",
+      "http://cdn.loom.com/x.jpg",
+      "https://cdn.loom.com.example.org/x.jpg",
+    ]) {
+      const r = S.videoRow.safeParse(row({ posterUrl: other }));
+      expect(r.success).toBe(true);
+      expect(r.data?.posterUrl).toBeNull();
+    }
+    expect(S.videoRow.parse(row({})).posterUrl).toBeUndefined();
+  });
   test("a read keeps good rows and sets refused ones apart, never as empty", () => {
     const out = S.videosFrom({
       rows: [
@@ -1030,5 +1045,37 @@ describe("the control and the player on the canvas", () => {
     expect(q(".dkv-control")).toBeNull();
     await mount(data("full", "launch", "en", rows), ["call"]);
     expect(q(".dkv-control")).not.toBeNull();
+  });
+});
+
+describe("score round 3: a Loom row before its picture exists", () => {
+  test("prep and the notes draw a designed poster, never the old one-line row", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { VideoPoster } = await import("../src/present/VideoPoster");
+    const loom = row({ posterUrl: null });
+    const prep = renderToStaticMarkup(
+      createElement(VideoPoster, {
+        title: "How we test",
+        row: loom,
+        size: "prep",
+      }),
+    );
+    expect(prep).toContain('data-video-poster="designed"');
+    expect(prep).not.toContain("data-video-row");
+    // In prep, the provider and the length over the title, as a title card.
+    expect(prep).toContain("Loom · 2:40");
+    expect(prep).toContain("How we test");
+    const notes = renderToStaticMarkup(
+      createElement(VideoPoster, {
+        title: "How we test",
+        row: loom,
+        size: "notes",
+      }),
+    );
+    expect(notes).toContain('data-video-poster="designed"');
+    // The notes window's poster carries no words (22.13).
+    expect(notes).not.toContain("How we test");
+    expect(notes).not.toContain("Loom");
   });
 });

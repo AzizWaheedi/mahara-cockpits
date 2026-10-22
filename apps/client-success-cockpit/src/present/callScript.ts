@@ -567,6 +567,15 @@ export const FAMILIES: {
   scale: "works" | "build";
 }[] = [
   {
+    key: "design-build",
+    re: /design.{0,4}(and|&|-)?.{0,2}build|turn.?key|تصميم و ?تنفيذ|التصميم والتنفيذ/i,
+    project: {
+      en: "designing and building your villa",
+      ar: "تصميم وتنفيذ فيلتك",
+    },
+    scale: "build",
+  },
+  {
     key: "interior",
     re: /interior|decor|ديكور|تصميم داخلي|التصميم الداخلي/i,
     project: {
@@ -626,11 +635,29 @@ export const FAMILIES: {
 ];
 export const ANY_PROJECT: L = { en: "your project", ar: "مشروعك" };
 
+/**
+ * The family of one of the five main services (DESIGN 22.14): the call's
+ * `{project}` and budget scale follow the service the client advertises.
+ */
+const MAIN_FAMILIES: ReadonlySet<string> = new Set([
+  "design-build",
+  "interior",
+  "architecture",
+  "fitout",
+  "construction",
+]);
+export function familyOfKey(key: string | null | undefined) {
+  return key && MAIN_FAMILIES.has(key)
+    ? (FAMILIES.find(x => x.key === key) ?? null)
+    : null;
+}
+
 /** The family a service belongs to; kitchens and interiors before the rest. */
 export function familyOf(service: string | null | undefined) {
   const s = String(service ?? "");
   if (!s) return null;
   const order = [
+    "design-build",
     "kitchens",
     "landscaping",
     "interior",
@@ -838,8 +865,9 @@ export function closingHour(hours: string | null | undefined): number | null {
 
 /**
  * The booked slot (CONTENT Appendix A): the first working day two days
- * ahead (Sunday to Thursday), at 4 pm, moved to the client's last afternoon
- * hour when they close earlier.
+ * after the day given (today, or go-live while it is ahead), Sunday to
+ * Thursday, at 4 pm, moved to the client's last afternoon hour when they
+ * close earlier.
  */
 export function bookedSlot(todayIso: string, hours?: string | null) {
   const d = new Date(`${todayIso}T12:00:00Z`);

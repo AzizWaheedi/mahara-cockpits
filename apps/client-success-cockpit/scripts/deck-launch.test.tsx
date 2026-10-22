@@ -14,16 +14,23 @@ import {
   turnsFor,
 } from "../src/present/callScript";
 import { emptyLive } from "../src/present/channel";
-import { journeyOwners, L_TITLES, type Lang } from "../src/present/content";
+import {
+  journeyOwners,
+  L_NOTES,
+  L_TITLES,
+  type Lang,
+} from "../src/present/content";
 
 const L_TITLES_GREEN = () => L_TITLES["green-light"].en;
 
-import type { SlideCtx } from "../src/present/deckContext";
+import type { Creative } from "../src/present/creative";
+import { type SlideCtx, titleFor } from "../src/present/deckContext";
 import { type DeckData, deckData } from "../src/present/deckData";
 import { shownSlides } from "../src/present/decks";
 import {
   goalAsk,
   goalAskParts,
+  LaunchControls,
   partText,
   pushbackVariant,
   replyText,
@@ -32,12 +39,15 @@ import { defaultPhones } from "../src/present/launchData";
 import {
   formStops,
   launchSlides,
+  partTiles,
   placesLine,
   portalStops,
   redLineGroups,
+  underHead,
 } from "../src/present/launchDeck";
 import { onboardingSlides } from "../src/present/onboardingDeck";
 import { CALL_STAGES, callRun, stageRange } from "../src/present/Transcript";
+import type { DeckModel } from "../src/present/useDeckModel";
 
 /**
  * The launch deck (docs/csm-decks/CONTENT.md L1 to L13, DESIGN.md sections
@@ -276,9 +286,10 @@ describe("done with you", () => {
     expect(render("your-part")).toContain(
       "Call new enquiries within 5\u00a0minutes, and note every try",
     );
-    expect(render("your-part")).toContain(
-      "Your team books into them. On a day off, block each hour, not one all-day event.",
-    );
+    // One sentence per job on the slide (score round 1); the day off is
+    // the week drawn under it, said in the notes and sent in the recap.
+    expect(render("your-part")).toContain("Your team books into them.");
+    expect(render("your-part")).not.toContain("On a day off");
     expect(render("your-part")).toContain(
       "Move each meeting to the right stage the same day",
     );
@@ -451,23 +462,35 @@ describe("the CEO's answers, drawn", () => {
       "10 to 6 Saudi time (11 to 7 in the UAE), Saturday to Thursday.",
     );
     expect(html).toContain("Up to 4 tries over 3 working days");
-    // Each row its own service, never the first one three times.
-    expect(html).toContain("Try 2 of 4 · Bathrooms · 5 pm");
-    expect(html).toContain("Callback · Full villa fit-out · 10 am");
+    // Each row its own words, never the first one three times: the
+    // advertised main service first, then the client's own words for that
+    // same service (DESIGN 22.14). Never a sub-trade or another service's
+    // words (CEO, 2026-10-21: "These are not kitchens"): the client's
+    // "Kitchens and wardrobes" and "Full villa fit-out" stay off an
+    // interior design campaign's queue.
+    expect(html).toContain("New enquiry · Interior design");
+    expect(html).toContain("Try 2 of 4 · Villa interiors · 5 pm");
+    expect(html).toContain("Callback · Majlis design · 10 am");
+    expect(html).not.toMatch(/Kitchens|fit-out/);
     const ar = render(data("full", "ar"), "journey", 2);
-    expect(ar).toContain("المحاولة ٢ من ٤ · الحمامات · ٥ مساءً");
-    expect(ar).toContain("معاودة اتصال · تشطيب فيلا كاملة · ١٠ صباحاً");
+    // The Arabic separator is the Arabic comma: a dot beside Arabic-Indic
+    // digits reads as ٠ (score round 3).
+    expect(ar).toContain("استفسار جديد، تصميم داخلي");
+    expect(ar).toContain("المحاولة ٢ من ٤، تصميم داخلي للفلل، ٥ مساءً");
+    expect(ar).toContain("معاودة اتصال، تصميم المجالس، ١٠ صباحاً");
+    expect(ar).not.toMatch(/المطابخ|تشطيب/);
+    expect(ar).not.toMatch(/[٠-٩] · |· [٠-٩]/);
     // A row past the list leaves its service out rather than repeat one.
     const one = { ...d, services: [] };
     const solo = render(
       {
         ...one,
-        launch: { ...one.launch, service: { en: "Kitchens", ar: null } },
+        launch: { ...one.launch, service: { en: "Construction", ar: null } },
       },
       "journey",
       2,
     );
-    expect(solo).toContain("New enquiry · Kitchens");
+    expect(solo).toContain("New enquiry · Construction");
     expect(solo).toContain("Try 2 of 4 · 5 pm");
     expect(solo).toContain("Callback · 10 am");
     expect(ar.replace(/<[^>]+>/g, "")).toContain(
@@ -547,7 +570,12 @@ describe("the Gamma pass, drawn", () => {
       "Reminders and rebooking",
     ])
       expect(one).toContain(n);
-    expect((one.match(/class="dkc-pie-leader"/g) ?? []).length).toBe(2);
+    // Ours, then theirs twice: stop 1's quiet twin (ink-3, shown over the
+    // dotted slot, the fixer's round) and the ink one stop 2 fades in.
+    expect((one.match(/class="dkc-pie-leader"/g) ?? []).length).toBe(3);
+    expect(one).toMatch(
+      /class="dkc-pie-label" data-side="start" data-lane="you" data-shown="" data-quiet="" aria-hidden="true"/,
+    );
     expect(one).not.toContain('class="dkc-pie" data-out');
     expect(one).not.toMatch(/dkc-pie-theirs" style/);
     // Two pieces in the SVG: ours, and theirs (ahead and lit, one shape).
@@ -560,7 +588,9 @@ describe("the Gamma pass, drawn", () => {
       /dkc-pie-theirs" style="transform:translate\(-33\.9\d*px, -33\.9\d*px\)"/,
     );
     expect(two).toContain("You win the project.");
-    expect(two).toContain("The meeting and the close");
+    // Theirs is a two-name stack under "You", like ours (DESIGN 22.6.4).
+    expect(two).toContain("The meeting");
+    expect(two).toContain("The close");
     // No number on the pie: no percentage, no fraction.
     expect(text(two)).not.toMatch(/%|٪|quarter/i);
   });
@@ -603,9 +633,11 @@ describe("the Gamma pass, drawn", () => {
     expect(three).not.toContain("dkc-partner-foot");
     expect(three).not.toContain("data-close");
     // The ad road takes longer at the same speed: its draw runs longer.
-    const ms = [...three.matchAll(/animation-duration:(\d+)ms/g)].map(m =>
-      Number(m[1]),
-    );
+    // Both durations ride --dk-m, so the still frame and reduced motion
+    // are the end state (DESIGN 22.3.1).
+    const ms = [
+      ...three.matchAll(/animation-duration:calc\((\d+)ms \* var\(--dk-m\)\)/g),
+    ].map(m => Number(m[1]));
     expect(ms.length).toBe(2);
     expect(ms[0]).toBeGreaterThan(ms[1] * 1.6);
     const four = html(d, "partnership", 3);
@@ -723,9 +755,18 @@ describe("the Gamma pass, drawn", () => {
     expect(h).toContain(
       "Mark every meeting the same day, with the value when you win",
     );
+    // One sentence per job on the slide (score round 1: six jobs at two
+    // sentences each read as a document); the second goes to the notes
+    // and the recap.
+    // The follow-up keeps its second sentence on the slide (score round 2
+    // of the five services): followed up by both of us, done for you.
     expect(h).toContain(
       "You send the quote and set the second meeting. Our caller checks in too.",
     );
+    expect(html(data("dwy"), "your-part")).not.toContain(
+      "Our caller checks in too.",
+    );
+    expect(h).not.toContain("On a day off");
     expect(h).toContain(
       "Pausing early ends the test before it tells us anything.",
     );
@@ -777,6 +818,14 @@ describe("the Gamma pass, drawn", () => {
     expect(recap.split("\n")[0]).toBe("Your six jobs, in one place");
     expect(recap).toContain("Before your meetings:");
     expect(recap.match(/^- /gm)?.length).toBe(6);
+    // The recap keeps every job's second sentence, pasted alone in the group.
+    expect(recap.replace(/\u00a0/g, " ")).toContain(
+      "- Keep at least 10 open slots, at different times. Our callers book into them. On a day off, block each hour, not one all-day event.",
+    );
+    expect(recap).toContain(
+      "You send the quote and set the second meeting. Our caller checks in too.",
+    );
+    expect(partText(data("dwy"))).not.toContain("Our caller checks in too.");
     expect(recap).toContain(
       "How we test your ads: your red lines stay fixed, your ideas go in the group before the next round, you check the facts, prices and claims before an ad goes live, and small style changes go into the next round so your launch doesn't wait.",
     );
@@ -855,6 +904,49 @@ describe("the Gamma pass, drawn", () => {
     expect(h).not.toContain("Meta's first charges");
     expect(L_TITLES_GREEN()).toBe("Happy for us to go live?");
   });
+
+  test("prep and the notes name what the slide shows: a client already live is live, and the ask is to carry on (score round 2 of the five services)", () => {
+    const slide = (id: string) => {
+      const s = launchSlides().find(x => x.id === id);
+      if (!s) throw new Error(id);
+      return s;
+    };
+    const live = data("starter");
+    expect(live.launch.live).toBe(true);
+    expect(titleFor(slide("cover"), live).en).toBe("{name} is live");
+    expect(titleFor(slide("green-light"), live).en).toBe(
+      "Happy for us to carry on?",
+    );
+    const ahead = data("full");
+    expect(ahead.launch.live).toBe(false);
+    expect(titleFor(slide("cover"), ahead).en).toBe("{name} goes live");
+    expect(titleFor(slide("green-light"), ahead).en).toBe(
+      "Happy for us to go live?",
+    );
+  });
+
+  test("a WhatsApp ad's chat: the starter's picture said in the tag, the ad over the waiting message, our call as the band (score round 2 of the five services)", () => {
+    for (const lang of ["en", "ar"] as const) {
+      const d = data("starter", lang);
+      const form = html(d, "form");
+      expect(form).toContain(
+        lang === "en"
+          ? "Example wording, starter ad"
+          : "صياغة للتوضيح، إعلان بداية",
+      );
+      // Two steps under the line, then our call as the band, its 5
+      // minutes underlined.
+      expect((form.match(/<li data-band=""/g) ?? []).length).toBe(1);
+      expect(form).toMatch(
+        /<li data-band=""><span class="dkc-q-n">[^<]*<\/span><span class="dk-body">[^<]*<span class="dkc-thanks-mark">/,
+      );
+      // Journey stop 2: the chat waiting to send, the ad it came from over
+      // the field.
+      const journey = html(d, "journey", 1);
+      expect(journey).toContain('class="dkc-wa-body" data-ref=""');
+      expect(journey).toContain("dkc-wa-ref");
+    }
+  });
 });
 
 /**
@@ -890,7 +982,15 @@ describe("creative flexibility, drawn", () => {
     );
     expect((field(h).match(/class="dkf-tile"/g) ?? []).length).toBe(18);
     expect(lit(h)).toBe(18);
-    expect(h).toContain("Illustration");
+    // Example ads in every tile, tagged as such (DESIGN 22.4.4); the note
+    // tells the CSM so, and both are pinned together.
+    expect(h).not.toContain("Illustration");
+    expect(h).toContain("Example ads");
+    // Eighteen tiles and the next round's six (shown at stop 5).
+    expect((field(h).match(/class="dkf-photo"/g) ?? []).length).toBe(24);
+    expect(L_NOTES["creative-freedom"].say.join(" ")).toContain(
+      "the tiles are example ads, not theirs",
+    );
     expect(h).not.toContain("dkc-phone");
     expect(field(h)).toContain('data-stop="0"');
     // The next round waits, unseen.
@@ -913,22 +1013,38 @@ describe("creative flexibility, drawn", () => {
   test("stop 3: their red lines on the amber panel, then the smooth way to ask, and the offer", () => {
     const h = html(data("full"), 2);
     expect(h).toContain("Your input comes first");
-    expect(h).toContain("Fixed: your red lines");
+    // The panel, lighter (DESIGN 22.6.2): no head, no foot, no per-line tag.
+    expect(h).not.toContain("Fixed: your red lines");
+    expect(h).not.toContain("We never cross these.");
+    expect(h).not.toContain("dkc-told");
+    // Input first, in fact as well as in the name: the input line, the
+    // offer, then the red lines.
+    expect(
+      h.indexOf("Ideas, a new offer, a new price, something to change?"),
+    ).toBeLessThan(h.indexOf('class="dkc-fixed"'));
     // What they told us leads.
-    expect(h.indexOf("No photos of the owner")).toBeLessThan(
+    expect(h.indexOf("Photos of the owner")).toBeLessThan(
       h.indexOf("Show our real projects, never stock photos"),
     );
-    // The spec's pair heads the groups; the lines typed on O7 carry "you
-    // told us" after them, the card's lines do not (score round 2).
     const heads = [...h.matchAll(/class="dkc-fixed-lead">([^<]*)</g)].map(
       m => m[1],
     );
     expect(heads).toEqual(["Never", "Always"]);
-    expect(h).toMatch(
-      /No photos of the owner<\/span><span class="dkc-told">you told us<\/span>/,
+    // "Never" said once: a line drops a leading word its head says.
+    expect(h).toMatch(/>Show prices in an ad<\/span><\/li>/);
+    expect(h).not.toContain("Never show prices in an ad");
+    expect(underHead("Never show prices in an ad", "never")).toBe(
+      "Show prices in an ad",
     );
-    expect(h).toMatch(/Never show prices in an ad<\/span><\/li>/);
-    expect(h).not.toContain("You told us:");
+    expect(underHead("No photos", "never")).toBe("No photos");
+    expect(underHead("Always show our real projects", "always")).toBe(
+      "Show our real projects",
+    );
+    expect(underHead("أبد ما نعرض الأسعار", "never")).toBe("ما نعرض الأسعار");
+    // One source line under the panel.
+    expect(h).toContain(
+      "From your card, and what you told us on the onboarding call.",
+    );
     // A typed line copied to the card shows once, as theirs.
     const copied = redLineGroups(
       {
@@ -942,20 +1058,49 @@ describe("creative flexibility, drawn", () => {
       { text: "No photos of the owner", told: true },
       { text: "Never show prices in an ad", told: false },
     ]);
-    // In Arabic, the card's English lines are quoted under "من ملفكم",
-    // never mixed into the Arabic groups.
+    // In Arabic, the English deck's two columns (score round 2: the panel
+    // stacked its groups, then a third head with run-in heads): أبداً and
+    // دايماً, each with its Arabic lines first, then the card's English
+    // lines with no Arabic typed, quoted as one left-to-right block, never
+    // mixed into the Arabic lines. Each quoted block carries its tag
+    // (score round 2 of the five services: once, the English line under
+    // دايماً read as untagged).
     const ar = html(data("full", "ar"), 2);
     const arHeads = [...ar.matchAll(/class="dkc-fixed-lead">([^<]*)</g)].map(
       m => m[1],
     );
-    expect(arHeads).toEqual(["أبد", "من ملفكم"]);
-    expect(ar.indexOf("من ملفكم")).toBeLessThan(
-      ar.indexOf("Never show prices in an ad"),
+    expect(arHeads).toEqual(["أبداً", "دايماً"]);
+    expect(ar).toContain('class="dkc-fixed-pair" data-side=""');
+    expect(ar.match(/بملفكم، بالإنجليزي/g)).toHaveLength(2);
+    const never = ar.slice(
+      ar.indexOf('data-group="never"'),
+      ar.indexOf('data-group="always"'),
     );
-    expect(ar).toMatch(
-      /لا تحطون صور المالك<\/span><span class="dkc-told">قلتوا لنا<\/span>/,
+    const always = ar.slice(ar.indexOf('data-group="always"'));
+    expect(never.indexOf("لا تحطون صور المالك")).toBeLessThan(
+      never.indexOf("بملفكم، بالإنجليزي"),
     );
-    expect(h).toContain("We never cross these.");
+    expect(never.indexOf("بملفكم، بالإنجليزي")).toBeLessThan(
+      never.indexOf(">Show prices in an ad<"),
+    );
+    expect(never).toMatch(
+      /<div class="dkc-fixed-quoted"><span class="dkc-fixed-sublead">[^<]*<\/span><ul dir="ltr">/,
+    );
+    expect(always).toMatch(
+      /<div class="dkc-fixed-quoted"><span class="dkc-fixed-sublead">[^<]*<\/span><ul dir="ltr">/,
+    );
+    expect(always).toContain("Show our real projects, never stock photos");
+    expect(ar).toContain("لا تحطون صور المالك");
+    // A card line with its Arabic typed in prep takes its own group.
+    const typed = redLineGroups(
+      { told: [], never: ["Never show prices in an ad"], always: [] },
+      "ar",
+      { "Never show prices in an ad": "ما نعرض الأسعار بالإعلان" },
+    );
+    expect(typed.never).toEqual([
+      { text: "ما نعرض الأسعار بالإعلان", told: false },
+    ]);
+    expect(typed.fromCard).toEqual([]);
     expect(h).not.toContain("You approve every fact");
     expect(h).toContain(
       "Ideas, a new offer, a new price, something to change? Send it in the group before we make the next round.",
@@ -987,9 +1132,7 @@ describe("creative flexibility, drawn", () => {
     const ar = html(data("full", "ar"), 3);
     const checkAr =
       ar.match(/<p class="dkc-cf-checks">[\s\S]*?<\/p>/)?.[0] ?? "";
-    expect(checkAr.replace(/<[^>]+>/g, "")).toBe(
-      "المعلومات · الأسعار · الوعود",
-    );
+    expect(checkAr.replace(/<[^>]+>/g, "")).toBe("المعلومات، الأسعار، الوعود");
   });
 
   test("stop 5: keep the content coming, with the why, and where the folder is", () => {
@@ -1007,18 +1150,29 @@ describe("creative flexibility, drawn", () => {
     for (const tour of [0, 1, 2, 3, 4]) {
       const f = field(html(data("full"), tour));
       expect(f.replace(/<[^>]+>/g, " ")).not.toMatch(/[0-9٠-٩]/);
-      // All lit at stop 1: no picture yet. From the switch-off on, their
-      // marked pick runs on one lit tile with its star, never a dimmed one.
-      const pics = f.match(/<img/g) ?? [];
-      expect(pics.length).toBe(tour === 0 ? 0 : 1);
+      // Example pictures in every tile and the next round; of the client's
+      // own creatives, only their pick, from the switch-off on, on one lit
+      // tile with its star, never a dimmed one.
+      const own = f.match(/<span class="dkf-pick"/g) ?? [];
+      expect(own.length).toBe(tour === 0 ? 0 : 1);
       if (tour > 0)
         expect(f).toMatch(
-          /<span class="dkf-tile" data-lit="" data-pick=""><span class="dkf-pick" aria-hidden="true"><img/,
+          /<span class="dkf-tile" data-lit="" data-pick=""[^>]*><span class="dkf-pick" aria-hidden="true"><img/,
         );
+      // Every picture but their pick is one of Mahara's examples.
+      for (const m of f.matchAll(/<img src="([^"]+)"/g))
+        if (!m[0].includes("custom-site"))
+          expect(m[1]).toContain("/assets/examples/tile/");
     }
-    // No pick marked: no picture at all.
-    for (const tour of [1, 4])
-      expect(field(html(data("starter"), tour))).not.toContain("<img");
+    // No pick marked: no picture of theirs at all, and the tag never says
+    // "your pick".
+    for (const tour of [1, 4]) {
+      const h = html(data("starter"), tour);
+      expect(field(h)).not.toContain("dkf-pick");
+      expect(h).toContain("Example ads");
+      expect(h).not.toContain("and your pick");
+    }
+    expect(html(data("full"), 1)).toContain("Example ads, and your pick");
   });
 
   test("the stamp, once their yes is recorded, on any stop; none before", () => {
@@ -1071,18 +1225,18 @@ describe("creative flexibility, drawn", () => {
     const full = data("full");
     expect(pushbackVariant(full)).toBe("shown");
     expect(goalAsk(full, "en")).toBe(
-      'You told us your goal is "Two to three kitchen projects signed every month, mostly in north Riyadh". What matters more: this one change, or getting the ads live so we can get there?',
+      'You told us your goal is "Two to three villa interior projects signed every month, mostly in north Riyadh". What matters more: this one change, or getting the ads live so we can get there?',
     );
     // The notes window sets the goal on its own line, between the halves.
     expect(goalAskParts(full, "en")).toEqual({
       before: "You told us your goal is",
-      goal: "Two to three kitchen projects signed every month, mostly in north Riyadh",
+      goal: "Two to three villa interior projects signed every month, mostly in north Riyadh",
       after:
         "What matters more: this one change, or getting the ads live so we can get there?",
     });
     expect(goalAskParts(full, "ar")).toEqual({
       before: "قلتوا لنا إن هدفكم:",
-      goal: "Two to three kitchen projects signed every month, mostly in north Riyadh",
+      goal: "Two to three villa interior projects signed every month, mostly in north Riyadh",
       after: "أيهم أهم لكم: هالتعديل، ولا إن الإعلانات تنزل عشان نوصل له؟",
     });
     const held = {
@@ -1100,7 +1254,7 @@ describe("creative flexibility, drawn", () => {
     );
     // Copy reply: one line, in the deck's language, never isolated.
     expect(replyText(full)).toStartWith(
-      'Thanks, noted. You told us your goal is "Two to three kitchen projects signed every month, mostly in north Riyadh", so',
+      'Thanks, noted. You told us your goal is "Two to three villa interior projects signed every month, mostly in north Riyadh", so',
     );
     // A goal written in the first person still reads: it is quoted, not spliced.
     const we = {
@@ -1112,7 +1266,7 @@ describe("creative flexibility, drawn", () => {
     );
     expect(replyText(held)).not.toMatch(/\{goal\}|Two to three/);
     const ar = data("dwy", "ar");
-    expect(replyText(ar)).toContain("قلتوا لنا إن هدفكم: نبي نوصل لمشروعين");
+    expect(replyText(ar)).toContain("قلتوا لنا إن هدفكم: نبي نوقع عقدين");
     expect(replyText(ar)).not.toMatch(/[\u2066-\u2069]/);
   });
 });
@@ -1133,6 +1287,83 @@ describe("the launch deck's fallbacks", () => {
   test("the cover never uses a starter creative", () => {
     expect(data("full").launch.cover?.id).toBe("custom-site");
     expect(data("starter").launch.cover).toBeNull();
+  });
+
+  // The ad pictures a slide draws: the fixture's files and the examples.
+  const pictures = (h: string) =>
+    [...h.matchAll(/<img[^>]*?src="([^"]+)"/g)]
+      .map(m => m[1])
+      .filter(u => /custom-|dwy-|starter-|\/examples\//.test(u));
+
+  test("the cover and journey stop 1 never show one picture (DESIGN 22.15)", () => {
+    for (const key of ["full", "starter", "sparse"] as FixtureKey[])
+      for (const lang of ["en", "ar"] as Lang[]) {
+        const d = data(key, lang);
+        const cover = pictures(
+          renderToStaticMarkup(<>{launchSlides()[0].render(ctx(d))}</>),
+        );
+        const journey = pictures(
+          renderToStaticMarkup(<>{launchSlides()[1].render(ctx(d, 0))}</>),
+        );
+        expect({ key, lang, cover: cover.length > 0 }).toEqual({
+          key,
+          lang,
+          cover: true,
+        });
+        expect(journey.length).toBeGreaterThan(0);
+        for (const u of cover)
+          expect({ key, lang, u, again: journey.includes(u) }).toEqual({
+            key,
+            lang,
+            u,
+            again: false,
+          });
+      }
+  });
+
+  test("a client with ads of their own and no cover pick shows their first ad, never the faint lanes", () => {
+    for (const lang of ["en", "ar"] as Lang[]) {
+      const d = data("dwy", lang);
+      expect(d.launch.cover).toBeNull();
+      const h = renderToStaticMarkup(<>{launchSlides()[0].render(ctx(d))}</>);
+      expect(h).not.toContain("dkc-faint");
+      expect(pictures(h).some(u => /dwy-villa/.test(u))).toBe(true);
+    }
+  });
+
+  test("prep's cover controls say what the cover shows, and switch the example when there is no ad of their own", () => {
+    const controls = (key: FixtureKey) => {
+      const d = data(key);
+      const model = {
+        prep: { onboarding: {}, launch: {} },
+        setPrep: () => {},
+        live: emptyLive(),
+        setLive: () => {},
+      } as unknown as DeckModel;
+      return renderToStaticMarkup(
+        <LaunchControls slideId="cover" d={d} model={model} tour={0} full />,
+      );
+    };
+    const starter = controls("starter");
+    expect(starter).toContain(
+      "No ads of their own yet: the cover shows the example ad, labelled Example ad.",
+    );
+    expect(starter).toContain("The example ad");
+    expect(starter.toLowerCase()).not.toContain("faint lanes");
+    // The example's switch, by service then by scene.
+    expect(starter).toContain("Fit-out and renovation");
+    const dwy = controls("dwy");
+    expect(dwy).toContain(
+      "No cover picked: it shows their first ad. Pick another here.",
+    );
+    expect(dwy).toContain("Their first ad");
+    expect(dwy.toLowerCase()).not.toContain("faint lanes");
+    // The prep check speaks only when there is an ad of theirs to pick.
+    const cover = launchSlides()[0];
+    expect(cover.missing?.(data("starter")).join(" ")).not.toContain("Cover:");
+    expect(cover.missing?.(data("dwy")).join(" ")).toContain(
+      "Cover: no ad picked, so it shows their first ad.",
+    );
   });
 
   test("the hours card shows only when the onboarding deck was never presented", () => {
@@ -1228,14 +1459,16 @@ describe("the example call", () => {
     expect(c.band.note.en).toBe("50 to 100 thousand riyals");
     expect(c.slot.day.en).toBe("Wednesday");
     expect(c.slot.spoken.en).toBe("4 pm");
-    expect(c.slot.templateDate).toBe("October 21, 2026");
+    // Counted from go-live (Monday 26 October), still ahead: never a
+    // booking before the ads run (final score round 1).
+    expect(c.slot.templateDate).toBe("October 28, 2026");
     expect(c.slots.engineer.en.text).toBe("Eng. Khalid");
     expect(c.slots.engineer.ar.text).toBe("المهندس خالد");
     expect(c.slots.free.en.text).toBe("a free consultation");
     expect(c.missing).toEqual([]);
     const line = c.turns.find(t => t.at === "3:25");
     expect(plain(line?.line.en ?? "", "en", c.slots)).toBe(
-      "At Noor Studio Interiors, we draw your kitchen in 3D before any work starts.",
+      "At Noor Studio Interiors, we design every room in 3D before any work starts.",
     );
   });
 
@@ -1368,5 +1601,59 @@ describe("the ads slide with motion reduced (DESIGN 15.4)", () => {
     });
     expect(playing).not.toContain("dkc-play");
     expect(playing).toContain("<video");
+  });
+});
+
+describe("score round 2: the Drive folder's pictures", () => {
+  const c = (
+    id: string,
+    ratio: number,
+    starter = false,
+    url: string | null = `/${id}.webp`,
+  ): Creative => ({
+    id,
+    from: "upload",
+    name: id,
+    url,
+    poster: url,
+    video: false,
+    ratio,
+    primaryText: null,
+    headline: null,
+    cta: null,
+    language: null,
+    placement: null,
+    starter,
+    seconds: null,
+  });
+  test("their own, each picture once: a feed post's Reels crop is never its twin", () => {
+    // The full client: a feed post, its Reels crop, a square, two starters.
+    const tiles = partTiles([
+      c("site", 0.8),
+      c("site-tall", 0.5625),
+      c("square", 1),
+      c("starter-feed", 0.8, true),
+      c("starter-reel", 0.5625, true),
+    ]);
+    expect(tiles).toEqual(["/site.webp", "/square.webp"]);
+    // Three different feed-shaped ones: three tiles.
+    expect(
+      partTiles([c("a", 0.8), c("b", 1), c("c", 0.8), c("d", 0.5625)]),
+    ).toEqual(["/a.webp", "/b.webp", "/c.webp"]);
+    // Only tall ones: they fill in.
+    expect(partTiles([c("a", 0.5625), c("b", 0.5625)])).toEqual([
+      "/a.webp",
+      "/b.webp",
+    ]);
+    // One picture, or starters only: no strip.
+    expect(partTiles([c("a", 0.8)])).toEqual([]);
+    expect(partTiles([c("s", 0.8, true), c("t", 1, true)])).toEqual([]);
+    // The same file twice is one tile.
+    expect(
+      partTiles([
+        c("a", 0.8),
+        { ...c("b", 1), url: "/a.webp", poster: "/a.webp" },
+      ]),
+    ).toEqual([]);
   });
 });

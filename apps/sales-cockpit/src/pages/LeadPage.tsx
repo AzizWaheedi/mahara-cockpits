@@ -41,6 +41,7 @@ import {
   type Tone,
 } from "../components/kit";
 import { Answers } from "../components/LeadAnswers";
+import { LeadProgress } from "../components/LeadProgress";
 import { LeadRecordings } from "../components/LeadRecordings";
 import { LeadTimeline, type LiveMessage } from "../components/LeadTimeline";
 import { NotesPanel } from "../components/NotesPanel";
@@ -72,7 +73,7 @@ import {
   useSetting,
   useTeam,
 } from "../lib/data";
-import { ago, classLabel, isArabic, plainStage } from "../lib/format";
+import { ago, classLabel, isArabic } from "../lib/format";
 import { ghlContactUrl } from "../lib/highlevel";
 import { roomHoldsNoShow } from "../lib/rooms";
 import { toast } from "../lib/toast";
@@ -260,13 +261,6 @@ export default function LeadPage({ me }: { me: Me }) {
             tone={CLASS_TONE[String(l.lead_class)] ?? "neutral"}
             label={classLabel(l.lead_class)}
           />
-          {l.stage_name ? (
-            <StatusChip
-              size="md"
-              tone="neutral"
-              label={plainStage(l.stage_name)}
-            />
-          ) : null}
           {signed ? (
             <StatusChip
               size="md"
@@ -296,6 +290,17 @@ export default function LeadPage({ me }: { me: Me }) {
             ]}
           />
         </p>
+        {!signed ? (
+          <LeadProgress
+            key={l.contact_id}
+            lead={l}
+            me={me}
+            onDone={() => {
+              lead.reload();
+              activity.reload();
+            }}
+          />
+        ) : null}
         {signed ? (
           <p className="muted text-sm">{CLIENT_NOTE}</p>
         ) : (

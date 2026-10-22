@@ -34,7 +34,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "connect-src 'self' https://bldgtotkfmhoxmlzowdx.supabase.co wss://bldgtotkfmhoxmlzowdx.supabase.co; frame-src https://www.loom.com https://www.youtube-nocookie.com https://fast.wistia.net https://player.vimeo.com https://drive.google.com https://facebook.com https://*.facebook.com https://instagram.com https://*.instagram.com https://forms.clickup.com"
+          "value": "connect-src 'self' https://bldgtotkfmhoxmlzowdx.supabase.co wss://bldgtotkfmhoxmlzowdx.supabase.co; frame-src https://www.loom.com https://www.youtube-nocookie.com https://fast.wistia.net https://player.vimeo.com https://drive.google.com https://facebook.com https://*.facebook.com https://instagram.com https://*.instagram.com https://forms.clickup.com https://form.typeform.com; frame-ancestors 'self'"
         }
       ]
     }

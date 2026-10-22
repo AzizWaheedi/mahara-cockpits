@@ -53,6 +53,19 @@ export const launchAdSchema = z
     createdAt: opt,
     url: opt,
     posterUrl: opt,
+    /**
+     * Where the file came from, on the tray's read only (20261020160300):
+     * an upload by hand or a Drive link. A Drive file adds the first name of
+     * whoever pasted the link and when. These three never carry an address
+     * or the link; the row's own createdBy, returned since 20261019120000,
+     * is unchanged, and on a Drive row it is the importer's address. Prep
+     * shows them; the deck window reads the same list but never renders
+     * them. Optional, so a read from before that migration still parses; a
+     * value this build does not know reads as none.
+     */
+    source: z.enum(["upload", "drive"]).nullable().optional().catch(null),
+    importedBy: opt,
+    importedAt: opt,
   })
   .passthrough();
 export type LaunchAd = z.infer<typeof launchAdSchema>;
@@ -620,6 +633,28 @@ export async function updateLaunchAd(
   return out.ad;
 }
 
+/**
+ * Delete one file from the client's tray for good: cockpit_csm_launch_ad_remove
+ * (gated, audited; the row stays for the audit), then cockpit-csm-api deletes
+ * its bytes. Prep's tray uses it for a file that is not this client's.
+ */
+export async function removeLaunchAd(
+  client: DeckClient,
+  taskId: string,
+  id: string,
+): Promise<LaunchAd> {
+  const out = await invoke(
+    client,
+    {
+      operation: "launchAds.remove",
+      requestId: crypto.randomUUID(),
+      args: { taskId, id },
+    },
+    z.object({ ad: launchAdSchema }).passthrough(),
+  );
+  return out.ad;
+}
+
 // ------------------------------------------------- the deck's video slots
 
 /**
@@ -643,6 +678,9 @@ const OPEN_HOST =
   /^(www\.loom\.com|www\.youtube\.com|fast\.wistia\.net|vimeo\.com|drive\.google\.com)$/;
 const EMBED_HOSTS =
   /^(www\.loom\.com|www\.youtube-nocookie\.com|fast\.wistia\.net|player\.vimeo\.com|drive\.google\.com)$/;
+/** Where a provider's poster lives (VIDEOS.md 9, the column's own check). */
+const POSTER_HOSTS =
+  /^(cdn\.loom\.com|embed-ssl\.wistia\.com|i\.vimeocdn\.com|i\.ytimg\.com)$/;
 /** No user, no password, no port. */
 const bare = (s: string) => {
   try {
@@ -665,6 +703,17 @@ const videoBase = z.object({
   revision: z.number().int().min(1),
   updatedBy: z.string(),
   updatedAt: z.string(),
+  /**
+   * The provider's own thumbnail, kept by the worker (VIDEOS.md 9); absent
+   * before the posters migration, null until it is found. A poster from
+   * any other host reads as none, so the card is designed and the row
+   * itself still plays.
+   */
+  posterUrl: z
+    .url({ protocol: /^https$/, hostname: POSTER_HOSTS })
+    .nullable()
+    .optional()
+    .catch(null),
 });
 const sameHost = (r: { embedUrl: string; provider: VideoProvider }) =>
   new URL(r.embedUrl).hostname === EMBED_HOST[r.provider];
@@ -863,4 +912,153 @@ export async function clearDeckVideo(
       null,
     );
   return { cleared: parsed.data.cleared, revision: parsed.data.revision };
+}
+
+// ------------------------------------------- their ads from a Drive link
+
+/**
+ * The Drive box's two calls (docs/csm-decks/DRIVE-IMPORT.md 4 and 8; the
+ * migration 20261020160000_csm_launch_ads_drive.sql): a request per link and
+ * the client's imports, both gated on the client success seat for that
+ * client. The browser never reads the imports table; the worker on the
+ * editor desk does the rest with the service key.
+ */
+export const driveImportFile = z.object({
+  driveId: z.string().regex(/^[A-Za-z0-9_-]{10,200}$/),
+  name: z.string().min(1).max(200),
+  kind: z.enum(["image", "video"]),
+  bytes: z.number().int().nonnegative().nullable(),
+  status: z.enum(["queued", "working", "landed", "skipped", "failed"]),
+  code: z
+    .enum([
+      "too_big",
+      "wrong_type",
+      "heic",
+      "unplayable",
+      "download",
+      "storage",
+      "unfinished",
+      "full",
+    ])
+    .nullable(),
+  message: z.string().nullable(),
+  note: z.literal("converted").nullable(),
+  adId: z.string().uuid().nullable(),
+});
+export type DriveImportFile = z.infer<typeof driveImportFile>;
+export const driveImport = z.object({
+  id: z.string().uuid(),
+  taskId: z.string(),
+  link: z.url({ protocol: /^https$/, hostname: /^drive\.google\.com$/ }),
+  driveId: z.string(),
+  kind: z.enum(["file", "folder", "either"]),
+  status: z.enum(["queued", "working", "done", "failed"]),
+  code: z
+    .enum([
+      "not_found",
+      "not_media",
+      "nothing_found",
+      "drive_down",
+      "access_revoked",
+      "stopped",
+      "not_started",
+    ])
+    .nullable(),
+  message: z.string().nullable(),
+  found: z.number().int().min(1).max(20).nullable(),
+  overLimit: z.boolean(),
+  landed: z.number().int(),
+  skipped: z.number().int(),
+  failed: z.number().int(),
+  files: z.array(driveImportFile).max(20),
+  requestedBy: z.string(),
+  requestedAt: z.string(),
+  startedAt: z.string().nullable(),
+  finishedAt: z.string().nullable(),
+  updatedAt: z.string(),
+});
+export type DriveImport = z.infer<typeof driveImport>;
+export const driveImports = z.object({
+  imports: z.array(driveImport).max(20),
+  workerSeenAt: z.string().nullable(),
+  at: z.string(),
+});
+export type DriveImports = z.infer<typeof driveImports>;
+
+/**
+ * A request or read the server refused: its sentence as the message, the
+ * code from the server's HINT (link_empty, too_many_open, …) when it gave
+ * one. `notLive`: the two functions are not deployed yet.
+ */
+export class DriveImportError extends Error {
+  code: string | null;
+  sqlstate: string | null;
+  notLive: boolean;
+  constructor(
+    message: string,
+    o: { code?: string | null; sqlstate?: string | null; notLive?: boolean },
+  ) {
+    super(message);
+    this.code = o.code ?? null;
+    this.sqlstate = o.sqlstate ?? null;
+    this.notLive = o.notLive ?? false;
+  }
+  /** A refusal about the link itself goes under the field. */
+  get aboutLink(): boolean {
+    return /^link_/.test(this.code ?? "");
+  }
+}
+
+function driveError(error: unknown, fallback: string): DriveImportError {
+  if (notLive(error))
+    return new DriveImportError(
+      "The Drive import's functions are not live yet.",
+      { notLive: true },
+    );
+  const e = (error ?? {}) as { code?: unknown; hint?: unknown };
+  const hint = typeof e.hint === "string" && e.hint ? e.hint : null;
+  const sqlstate = typeof e.code === "string" && e.code ? e.code : null;
+  return new DriveImportError(problem(error, fallback), {
+    code: hint && /^[a-z_]{3,40}$/.test(hint) ? hint : null,
+    sqlstate,
+  });
+}
+
+/** Ask for one import. An open import of the same link comes back with existing: true. */
+export async function requestDriveImport(
+  client: Pick<DeckClient, "rpc">,
+  taskId: string,
+  link: string,
+): Promise<DriveImport & { existing: boolean }> {
+  const { data, error } = await client.rpc(
+    "cockpit_csm_launch_ads_import_request",
+    { p_task_id: taskId, p_link: link },
+  );
+  if (error) throw driveError(error, "This link was not sent. Try again.");
+  const parsed = driveImport.extend({ existing: z.boolean() }).safeParse(data);
+  if (!parsed.success)
+    throw new DriveImportError(
+      "The server did not confirm the import. Paste the link again.",
+      {},
+    );
+  return parsed.data;
+}
+
+/** This client's imports, newest first. */
+export async function readDriveImports(
+  client: Pick<DeckClient, "rpc">,
+  taskId: string,
+): Promise<DriveImports> {
+  const { data, error } = await client.rpc(
+    "cockpit_csm_launch_ads_imports_read",
+    { p_task_id: taskId },
+  );
+  if (error) throw driveError(error, "the server did not answer");
+  const parsed = driveImports.safeParse(data);
+  if (!parsed.success)
+    throw new DriveImportError(
+      "the imports came back in a shape this page does not read",
+      {},
+    );
+  return parsed.data;
 }

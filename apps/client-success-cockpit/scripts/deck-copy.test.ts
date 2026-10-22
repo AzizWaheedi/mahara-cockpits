@@ -98,7 +98,7 @@ const ALLOWED: Record<string, string[]> = {
   // asides. A new كل line fails until it is read and added here.
   everyAr: [
     "كل الشرائح",
-    "→ ← تنقل · F ملء الشاشة · L اللغة · O كل الشرائح · N الملاحظات · Esc يقفل القائمة",
+    "→ ← تنقل، F ملء الشاشة، L اللغة، O كل الشرائح، N الملاحظات، Esc يقفل القائمة",
     "كل شي بيشوفه عملاؤكم، تشوفونه قبلهم.",
     "كل شي يشوفه عملاؤكم، واللي يصير بعدها.",
     "مو كل استفسار ينحجز له موعد. فيه ناس ما نقدر نوصل لهم، وفيه ناس ما يناسبونكم. وفريق الاتصال يكتب السبب، ونمر عليه معكم بمكالمات المتابعة.",
@@ -114,7 +114,7 @@ const ALLOWED: Record<string, string[]> = {
     "اتصلوا على الاستفسارات الجديدة خلال ٥ دقايق، وسجلوا كل محاولة",
     "ضيفوا كل موعد لنظامكم",
     "بعد كل موعد",
-    "كل اللي يقابل عملاءكم أو يرسل عروض الأسعار يشوفه، ويبدي بقسم Sales crash course.",
+    "كل اللي يقابل عملاءكم أو يرسل عروض الأسعار يشوفه، ويبدي بأول قسم فيه، أساسيات البيع.",
     "تقريباً ٤٥ دقيقة، ومعها وقت لأسئلتكم. بنمر على اللي بينزل، وعلى اللي يصير لما أحد يستفسر، وعلى مين يسوي كل خطوة، وعلى اللي نحتاجه منكم. وقفوني بأي وقت.",
     "كل ما خليتوا أوقات فاضية أكثر من ساعات دوامكم، لقى العميل وقت يناسبه أسرع.",
     "وبعدها كل أسبوع أو كل أسبوعين",
@@ -123,7 +123,6 @@ const ALLOWED: Record<string, string[]> = {
     "(What lands with them) كل اللي عرفه فريق الاتصال يوصلكم، فتدخلون الموعد وأنتم عارفين المشروع.",
     "والبوابة تقدر تذكركم بعد كل موعد عشان تسجلون نتيجته.",
     "مكالمات المتابعة: لابتوب ومكان هادي، مو وأنتم بالسيارة. واللي بعدها نحجزها بآخر كل مكالمة.",
-    "نبدي بخدمة وحدة، عشان كل إعلان وكل سؤال وكل مكالمة تكلم نوع واحد من العملاء.",
     "نمر معكم على كل شي بينزل.",
     "كل مكالمة نحجزها بآخر المكالمة اللي قبلها.",
     "كل واحد بالقروب يكلمكم عن شي واحد. وأنا نقطة تواصلكم معنا، لأي شي ثاني.",
@@ -541,7 +540,7 @@ describe("rule 9: form", () => {
   });
   test("titles in sentence case", () => {
     const PROPER =
-      /^(?:Meta|Mahara|OS|WhatsApp|Instagram|Facebook|Brand|Blueprint|Google|Calendar|CRM|Academy|Drive|Page|LeadConnector|Saudi|UAE|Saturday|Thursday|Friday|Stories|Reels|EN|F|L|O|N|Esc|I|Sponsored|Zoom|SMS|Premium|Projects|Project|Closing|Mastery)$/;
+      /^(?:Meta|Mahara|OS|WhatsApp|Instagram|Facebook|Brand|Blueprint|Google|Calendar|CRM|Academy|Drive|Page|LeadConnector|Saudi|UAE|Saturday|Thursday|Friday|Stories|Reels|EN|F|L|O|N|Esc|I|Sponsored|Zoom|SMS|Premium|Projects|Project|Closing|Mastery|Arabic|English)$/;
     const titles = ALL.filter(
       l =>
         l.lang === "en" &&
@@ -610,7 +609,59 @@ describe("Arabic numbers and register (CONTENT-AR decisions 2, 3 and 6)", () => 
         /(?:^|[\s،.])(?:شنو|شلون|ماكو|وايد|عيل|هني|جذي|باجر|وش|أبشر|إيش)(?=$|[\s،.؟])/,
       ),
     ).toEqual([]);
-    expect(offenders(AR, /طيب/)).toEqual([]);
+    // طيب as a word (تشطيب, finishing, holds the same letters).
+    expect(
+      offenders(AR, /(?:^|[^\u0621-\u064a])طيب(?=$|[^\u0621-\u064a])/),
+    ).toEqual([]);
+  });
+});
+
+describe("the five main services (CEO, 2026-10-21)", () => {
+  test("the kickoff form's five, in its order, with their Arabic; never a sub-trade", () => {
+    const S = content.SERVICES;
+    expect(
+      (
+        [
+          "design-build",
+          "interior",
+          "architecture",
+          "fitout",
+          "construction",
+        ] as const
+      ).map(k => [S[k].name.en, S[k].name.ar, S[k].mid.en, S[k].mid.ar]),
+    ).toEqual([
+      [
+        "Design and build",
+        "تصميم وتنفيذ",
+        "design and build",
+        "التصميم والتنفيذ",
+      ],
+      ["Interior design", "تصميم داخلي", "interior design", "التصميم الداخلي"],
+      [
+        "Architectural design",
+        "تصميم معماري",
+        "architectural design",
+        "التصميم المعماري",
+      ],
+      [
+        "Fit-out and renovation",
+        "تشطيب وترميم",
+        "fit-out and renovation",
+        "التشطيب والترميم",
+      ],
+      ["Construction", "بناء وإنشاءات", "construction", "البناء والإنشاءات"],
+    ]);
+    expect([S.other.name.en, S.other.name.ar]).toEqual(["Other", "خدمة أخرى"]);
+    // Construction is never مقاولات: the decks never call the client مقاول.
+    expect(offenders(AR, /مقاول/)).toEqual([]);
+    for (const k of Object.keys(S) as (keyof typeof S)[])
+      expect(S[k].name.en).not.toMatch(/kitchen|bathroom|majlis|pool/i);
+  });
+
+  test("an Arabic line never separates with a middle dot (it reads as ٠ beside a digit)", () => {
+    expect(offenders(AR, /·/)).toEqual([]);
+    expect(content.sep("ar")).toBe("، ");
+    expect(content.sep("en")).toBe(" · ");
   });
 });
 
@@ -871,14 +922,12 @@ describe("the Gamma pass: the expectations, as written", () => {
 
   test("we reply within 2 working hours, on O3 and on the good-to-know row", () => {
     const O3 = content.O.team;
-    expect(O3.foot.en).toStartWith(
-      "We reply within 2 working hours, 10 to 6, Saturday to Thursday.",
-    );
-    expect(O3.footUae.en).toContain(
-      "within 2 working hours, 10 to 6 Saudi time (11 to 7 in the UAE)",
-    );
-    expect(O3.foot.ar).toStartWith("نرد خلال ساعتين دوام، ");
-    expect(O3.footUae.ar).toStartWith("نرد خلال ساعتين دوام، ");
+    // O3's second stop: the promise as its heading, then the hours.
+    expect(O3.reply.en).toBe("We reply within 2 working hours.");
+    expect(O3.reply.ar).toBe("نرد خلال ساعتين دوام.");
+    expect(O3.hours.en).toStartWith("10 to 6, Saturday to Thursday.");
+    expect(O3.hoursUae.en).toContain("10 to 6 Saudi time (11 to 7 in the UAE)");
+    expect(O3.hours.ar).toStartWith("من ١٠ صباحاً إلى ٦ مساءً، ");
     const replies = L.know.rows.find(r => r.key === "replies");
     expect(replies?.line.en).toBe(
       "In the group within 2 working hours, 10 to 6, Saturday to Thursday.",
@@ -901,8 +950,11 @@ describe("the Gamma pass: the expectations, as written", () => {
       "Keep at least 10 open slots, at different times",
     );
     expect(slots?.job.ar).toBe("خلوا ١٠ مواعيد فاضية على الأقل، بأوقات مختلفة");
-    expect(slots?.why.en).toBe(
-      "Our callers book into them. On a day off, block each hour, not one all-day event.",
+    // The slide's one sentence, then the day off said in the notes and
+    // the recap (score round 1).
+    expect(slots?.why.en).toBe("Our callers book into them.");
+    expect(slots?.more?.en).toBe(
+      "On a day off, block each hour, not one all-day event.",
     );
     expect(slots?.whyDwy?.en).toStartWith("Your team books into them.");
     expect(L.part.days.map(d => d.en)).toEqual([
@@ -924,7 +976,7 @@ describe("the Gamma pass: the expectations, as written", () => {
       "Calls and bookings",
       "Reminders and rebooking",
     ]);
-    expect(P.theirs.map(x => x.en)).toEqual(["The meeting and the close"]);
+    expect(P.theirs.map(x => x.en)).toEqual(["The meeting", "The close"]);
     expect(P.owner.us.en).toBe("Our team");
     expect(P.owner.you.en).toBe("You");
     // Done with you, the pie splits by owner in halves: their team calls,
@@ -959,7 +1011,7 @@ describe("the Gamma pass: the expectations, as written", () => {
     expect(T.courses.map(c => c.en)).toEqual([
       "Introduction",
       "Onboarding",
-      "Google optimisation",
+      "Google optimization",
       "Offer creation",
       "Project Closing Mastery",
       "Team and operations",
@@ -1043,7 +1095,7 @@ describe("the Gamma pass: the expectations, as written", () => {
     expect(
       dwy.filter(j =>
         /\bour callers?\b|فريق الاتصال(?!\s*عندكم)/i.test(
-          `${j.why.en} ${j.why.ar}`,
+          `${j.why.en} ${j.why.ar} ${j.more?.en ?? ""} ${j.more?.ar ?? ""}`,
         ),
       ),
     ).toEqual([]);

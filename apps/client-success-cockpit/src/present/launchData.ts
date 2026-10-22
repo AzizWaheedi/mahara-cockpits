@@ -7,6 +7,7 @@ import {
   type Dialect,
   dialectFor,
   familyOf,
+  familyOfKey,
   handleOf,
   type Pain,
   PLACE_SAID,
@@ -19,6 +20,7 @@ import {
 import type { L, Lang } from "./content";
 import { type Creative, creativeOf, creativeOfMeta } from "./creative";
 import type { AccessStatus, DeckData, Overrides } from "./deckData";
+import { type ServiceKey, type ServicePick, serviceNames } from "./services";
 import type { Funnel, LaunchAd, MetaAd } from "./sources";
 
 /**
@@ -117,7 +119,12 @@ export interface LaunchData {
   hoursCard: boolean;
   /** Done with you, and Mahara OS approved for this client. */
   dwyOs: boolean;
+  /** The advertised service as a label ("Interior design", تصميم داخلي). */
   service: { en: string | null; ar: string | null };
+  /** The same inside a sentence ("interior design", التصميم الداخلي). */
+  serviceMid: { en: string | null; ar: string | null };
+  /** Which of the five main services, or "Other" in their words (DESIGN 22.14). */
+  serviceKey: ServiceKey | null;
   /** Where the selling point and the DWY playbook come from (prep and the notes). */
   refs: {
     brandDna: string | null;
@@ -144,6 +151,8 @@ export interface LaunchInput {
     areas: string;
   };
   advertised: string | null;
+  /** The launch deck's service: the kickoff's answer first (DESIGN 22.14). */
+  service: ServicePick;
   today: string;
   refs?: Partial<LaunchData["refs"]>;
 }
@@ -308,16 +317,13 @@ export function launchData(input: LaunchInput): LaunchData {
   };
 
   // The call's slots (CONTENT Appendix A).
-  const service = {
-    en: str(op.service_focus) ?? input.advertised ?? d.numberOne ?? null,
-    ar:
-      str(op.service_focus_ar) ??
-      str(op.service_focus) ??
-      input.advertised ??
-      d.numberOne ??
-      null,
-  };
-  const family = familyOf(service.en) ?? familyOf(service.ar);
+  const named = serviceNames(input.service);
+  const service = named.name;
+  const serviceMid = named.mid;
+  const family =
+    familyOfKey(input.service.key) ??
+    familyOf(service.en) ??
+    familyOf(service.ar);
   const dia = dialectFor(p.dialect, d.country, answers.areas);
   const said = (pl: Place) => PLACE_SAID[pl][dia.dialect];
   const places = placesOf(answers.consultTypes);
@@ -364,13 +370,21 @@ export function launchData(input: LaunchInput): LaunchData {
       ar: bandText("note", "ar") ?? tableBand.note.ar,
     },
   };
-  const slot = bookedSlot(today, answers.hours);
+  // The example booking lands after go-live when go-live is still ahead
+  // (final score round 1: Wed 21 October against a 26 October go-live), as
+  // O5's confirmation does; else two working days from today.
+  const goLiveDay = d.goLive ? d.goLive.slice(0, 10) : null;
+  const slot = bookedSlot(
+    goLiveDay && goLiveDay > today ? goLiveDay : today,
+    answers.hours,
+  );
   const instagram = handleOf(answers.instagram);
   const company = { en: d.nameEn, ar: d.nameAr ?? d.nameEn };
   const slots: Slots = {
     company: both(filled(company.en), filled(company.ar)),
-    service: service.en
-      ? both(filled(service.en), filled(service.ar ?? service.en))
+    // Said inside the line ("about interior design", بخصوص التصميم الداخلي).
+    service: serviceMid.en
+      ? both(filled(serviceMid.en), filled(serviceMid.ar ?? serviceMid.en))
       : both(fallback(null, ASK.service), fallback(null, ASK.service)),
     project:
       str(p.project) || str(p.project_ar)
@@ -484,6 +498,8 @@ export function launchData(input: LaunchInput): LaunchData {
     hoursCard: !d.presentedAt,
     dwyOs: op.dwy_os_approved === true,
     service,
+    serviceMid,
+    serviceKey: input.service.key,
     refs: {
       brandDna: input.refs?.brandDna ?? null,
       offer: input.refs?.offer ?? null,

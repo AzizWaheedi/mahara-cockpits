@@ -616,6 +616,8 @@ export function BookCallButton({
   children,
   variant,
   onBooked,
+  defaultOpen,
+  onAutoOpenConsumed,
 }: {
   taskId: string;
   clientName: string;
@@ -628,6 +630,9 @@ export function BookCallButton({
     receipt: ClientCallReceipt,
     kind: CallKind,
   ) => void | Promise<void>;
+  /** Open on arrival (a form's ending button asked for the booking). */
+  defaultOpen?: boolean;
+  onAutoOpenConsumed?: () => void;
 }) {
   const auth = useCockpitAuth();
   const prepare = useCallback<Prepare>(
@@ -647,6 +652,8 @@ export function BookCallButton({
       prepare={prepare}
       book={book}
       onBooked={onBooked}
+      defaultOpen={defaultOpen}
+      onAutoOpenConsumed={onAutoOpenConsumed}
       trigger={
         <Button size="sm" variant={variant}>
           <CalendarPlus aria-hidden />

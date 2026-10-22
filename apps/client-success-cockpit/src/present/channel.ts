@@ -125,6 +125,8 @@ export type DeckMessage =
   | { type: "video-state"; slot: string; phase: VideoPhase }
   /** A video was saved or cleared in prep: every window reads the videos again. */
   | { type: "videos" }
+  /** A Drive link was sent from one window: the others read the imports at once. */
+  | { type: "drive" }
   /** The deck window closed (pagehide): the notes window shows the recap. */
   | { type: "closed" };
 
