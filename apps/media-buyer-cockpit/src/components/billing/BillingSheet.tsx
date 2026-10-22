@@ -179,7 +179,6 @@ const RAIL: Record<string, string> = {
   ecom: "Ecom",
   other: "another way",
   whop: "Whop",
-  ecom: "Ecom",
   bank: "the bank statement",
   manual: "logged by hand",
 };
