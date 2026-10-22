@@ -73,7 +73,7 @@ async function main() {
   installCallCentreHarness(getCockpitSupabaseClient());
   // The Client Performance board (?path=/performance&board=...).
   installBoardHarness(getCockpitSupabaseClient());
-  // The results and speed views beside it (?path=/performance?view=gap, speed or morning).
+  // The results view beside it (?path=/performance?view=gap).
   installResultsHarness(getCockpitSupabaseClient());
   // The Ads page (?path=/ads?range=30d): made-up campaigns, their 7-day
   // snapshot and a different read for every range (adsPageHarness.ts).

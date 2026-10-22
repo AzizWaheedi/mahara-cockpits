@@ -1,20 +1,18 @@
 import { FilterChips } from "@/components/ceo/FilterChips";
 import { GapReport } from "@/components/results/GapReport";
-import { MorningList } from "@/components/results/MorningList";
-import { SpeedChart } from "@/components/results/SpeedChart";
 
 /**
- * The three results and speed screens beside the board, on the same page (Muhammed, 2026-10-21):
- * /performance?view=gap, speed or morning. The board stays the page's first view, so the address every
- * team member already knows still opens it. The database decides who reads what: the gap report and the
- * morning list for any active seat (each client through cockpit_client_allowed), the speed chart for the
- * seats that see every client.
+ * The results screen beside the board, on the same page (Muhammed, 2026-10-21): /performance?view=gap.
+ * The board stays the page's first view, so the address every team member already knows still opens it.
+ * The gap report is read by any active seat (each client through cockpit_client_allowed).
+ *
+ * The call speed chart and the morning list moved to the dialer's Lead coverage view on 22 October 2026
+ * (Muhammed): the call centre acts on them, not the media buyer. ?view=speed and ?view=morning now open
+ * the board, and the board's uncalled count stays here for context.
  */
 export const VIEWS = [
   { key: "board", label: "Board" },
   { key: "gap", label: "No result" },
-  { key: "speed", label: "Call speed" },
-  { key: "morning", label: "Morning list" },
 ] as const;
 export type ViewKey = (typeof VIEWS)[number]["key"];
 
@@ -47,14 +45,6 @@ const INTRO: Record<
     title: "Meetings with no result",
     text: "Which clients are behind on filling in how their meetings went, and why.",
   },
-  speed: {
-    title: "Speed of the first call",
-    text: "How the first call's speed lines up with bookings from paid leads.",
-  },
-  morning: {
-    title: "Morning list",
-    text: "Leads that no call is linked to, in the groups the call centre works through.",
-  },
 };
 
 /** The title and line of a view that is not the board, then the view. */
@@ -74,9 +64,7 @@ export function ResultsView({
         <p className="mt-1 text-sm text-muted-foreground">{INTRO[view].text}</p>
       </header>
       {switcher}
-      {view === "gap" ? <GapReport /> : null}
-      {view === "speed" ? <SpeedChart /> : null}
-      {view === "morning" ? <MorningList /> : null}
+      <GapReport />
     </div>
   );
 }

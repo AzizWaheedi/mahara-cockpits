@@ -345,11 +345,12 @@ describe("the files the two cockpits share", () => {
     });
 
   test("each cockpit has the screens only its seat uses, and no copy of the other's", () => {
-    expect(existsSync(join(APP, "src/components/results/SpeedChart.tsx"))).toBe(true);
-    expect(existsSync(join(APP, "src/components/results/MorningList.tsx"))).toBe(true);
+    // The speed chart and the morning list moved to the dialer on 22 October 2026: neither cockpit keeps them.
+    for (const root of [APP, OTHER])
+      for (const gone of ["SpeedChart.tsx", "MorningList.tsx"])
+        expect(existsSync(join(root, "src/components/results", gone))).toBe(false);
     expect(existsSync(join(OTHER, "src/components/results/CallList.tsx"))).toBe(true);
     expect(existsSync(join(APP, "src/components/results/CallList.tsx"))).toBe(false);
-    expect(existsSync(join(OTHER, "src/components/results/SpeedChart.tsx"))).toBe(false);
   });
 });
 
@@ -358,8 +359,6 @@ describe("the words on the screens", () => {
     [APP, "src/lib/resultsModel.ts"],
     [APP, "src/components/results/ResultsKit.tsx"],
     [APP, "src/components/results/GapReport.tsx"],
-    [APP, "src/components/results/SpeedChart.tsx"],
-    [APP, "src/components/results/MorningList.tsx"],
     [APP, "src/pages/performance/ResultsViews.tsx"],
     [OTHER, "src/components/results/CallList.tsx"],
   ] as const;

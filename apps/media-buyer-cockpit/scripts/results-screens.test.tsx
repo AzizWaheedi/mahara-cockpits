@@ -1,10 +1,9 @@
 /**
- * The gap report, the speed chart, the morning list and the view switch, drawn in happy-dom from invented
- * answers (src/dev/resultsFixture.ts) with the database's `rpc` answered here, so nothing reaches the
- * network (Muhammed, 2026-10-21). They hold what a person sees: the rows most missing first, a client that
- * opens to its meetings, a rate that says "Too few leads" instead of a small number, three morning groups
- * with their counts, and a failed read that says what to do and tries again. The sums behind them are
- * held in results-screens.test.ts.
+ * The gap report and the view switch, drawn in happy-dom from invented answers (src/dev/resultsFixture.ts)
+ * with the database's `rpc` answered here, so nothing reaches the network (Muhammed, 2026-10-21). They hold
+ * what a person sees: the rows most missing first, a client that opens to its meetings, and a failed read
+ * that says what to do and tries again. The sums behind them are held in results-screens.test.ts. The speed
+ * chart and the morning list moved to the dialer on 22 October 2026.
  *
  * Nothing here may outlive this file: bun runs every test file in one process, so no module mocks, and
  * every global and the client's `rpc` are put back.
@@ -76,8 +75,6 @@ const { createRoot } = await import("react-dom/client");
 const { act, createElement } = await import("react");
 const { supabase } = await import("../src/lib/supabase");
 const { GapReport } = await import("../src/components/results/GapReport");
-const { SpeedChart } = await import("../src/components/results/SpeedChart");
-const { MorningList } = await import("../src/components/results/MorningList");
 const { ResultsView, ViewSwitch, viewOf, VIEWS } = await import(
   "../src/pages/performance/ResultsViews"
 );
@@ -314,215 +311,36 @@ describe("the gap report", () => {
   });
 });
 
-describe("the speed chart", () => {
-  const WIN = (key: "30" | "60" | "90" = "60") => model.speedWindow(key, model.kuwaitToday());
-  const fixtureBands = (clock: "clock" | "working" = "clock", key: "30" | "60" | "90" = "60") =>
-    model.speedBands(fixtures.speedFixture(WIN(key).from, WIN(key).to, clock).cells);
-
-  test("asks for 60 days on the clock first, and draws one bar and one row per band", async () => {
-    await show(createElement(SpeedChart));
-    const read = named("cockpit_speed_read");
-    expect(read).toHaveLength(1);
-    expect(read[0].args).toEqual({ p_from: WIN().from, p_to: WIN().to, p_clock: "clock" });
-
-    const { bands, total } = fixtureBands();
-    const figure = host.querySelector('[role="figure"]') as any;
-    expect(figure).not.toBeNull();
-    const label = figure.getAttribute("aria-label") as string;
-    for (const b of bands) {
-      expect(label).toContain(b.label);
-      expect(label).toContain(
-        b.per100 === null ? `${b.label}: too few leads` : `${b.label}: ${model.rateText(b.per100)} per 100`,
-      );
-    }
-    const table = host.querySelector("table") as any;
-    const rows = Array.from(table.querySelectorAll("tbody tr") as ArrayLike<any>);
-    expect(rows).toHaveLength(bands.length + 1);
-    const last = Array.from(rows[rows.length - 1].querySelectorAll("td") as ArrayLike<any>).map(
-      (c: any) => c.textContent,
-    );
-    expect(last).toEqual([
-      "All paid leads",
-      String(total.leads),
-      String(total.bookings),
-      model.rateText(total.per100 as number),
-    ]);
-  });
-
-  test("says in one sentence what the fastest and the slowest calls booked", async () => {
-    await show(createElement(SpeedChart));
-    const { bands } = fixtureBands();
-    const fast = bands.find(b => b.key === "up_to_30m");
-    const slow = bands.find(b => b.key === "over_24h");
-    expect(fast?.per100).not.toBeNull();
-    expect(text()).toContain(
-      `Leads called within 30 minutes booked ${model.rateText(fast?.per100 as number)} per 100. Leads called after 24 hours booked ${model.rateText(slow?.per100 as number)} per 100.`,
-    );
-  });
-
-  test("a band with too few leads says so and shows no rate", async () => {
-    scenario = "few";
-    await show(createElement(SpeedChart));
-    expect(text()).toContain("Too few leads");
-    const { bands } = model.speedBands(
-      fixtures.speedFixture(WIN().from, WIN().to, "clock", "few").cells,
-    );
-    expect(bands.some(b => b.per100 === null)).toBe(true);
-    const rows = Array.from(
-      (host.querySelector("table") as any).querySelectorAll("tbody tr") as ArrayLike<any>,
-    );
-    const tooFew = rows.filter((r: any) => r.textContent.includes("Too few"));
-    expect(tooFew.length).toBeGreaterThan(0);
-  });
-
-  test("the time frame and the clock ask the database again with their own days and clock", async () => {
-    await show(createElement(SpeedChart));
-    await click(byText("30 days"));
-    expect(named("cockpit_speed_read").at(-1)?.args).toEqual({
-      p_from: WIN("30").from,
-      p_to: WIN("30").to,
-      p_clock: "clock",
-    });
-    await click(byText("Working hours"));
-    expect(named("cockpit_speed_read").at(-1)?.args).toEqual({
-      p_from: WIN("30").from,
-      p_to: WIN("30").to,
-      p_clock: "working",
-    });
-    expect(text()).toContain("Working hours count only the caller's scheduled hours");
-    expect(named("cockpit_speed_read")).toHaveLength(3);
-  });
-
-  test("the notes say it is a correlation and what is left out", async () => {
-    await show(createElement(SpeedChart));
-    const t = text();
-    expect(t).toContain("Correlation only");
-    expect(t).toContain("the last 3 days are left out");
-    expect(t).toContain("A band under 30 paid leads shows no rate.");
-  });
-
-  test("a window with no paid leads says so and draws nothing", async () => {
-    scenario = "empty";
-    await show(createElement(SpeedChart));
-    expect(text()).toContain("No paid leads for this pick");
-    expect(host.querySelector('[role="figure"]')).toBeNull();
-  });
-});
-
-describe("the morning list", () => {
-  const morning = () => fixtures.morningFixture(null, "default");
-  /** "Never called 18": a group's title and its count, which sit in two elements. */
-  const groupHeads = () =>
-    Array.from(host.querySelectorAll("section h3") as ArrayLike<any>).map(
-      (h: any) => `${h.firstChild.textContent.trim()} ${h.querySelector("span").textContent}`,
-    );
-
-  test("three groups, each with its count, in the order the caller works them", async () => {
-    await show(createElement(MorningList));
-    expect(named("cockpit_morning_uncalled_read")[0].args).toEqual({ p_location: null });
-    const m = morning().totals;
-    expect(groupHeads()).toEqual([
-      `Never called ${m.neverCalled}`,
-      `Result saved, no call ${m.outcomeOnly}`,
-      `Probably called ${m.phoneOnly}`,
-    ]);
-    expect(text()).toContain(String(m.noCallLinked));
-  });
-
-  test("shows five leads a group and the rest on request, each with a link to the CRM", async () => {
-    await show(createElement(MorningList));
-    const section = host.querySelector('section[aria-labelledby="morning-never_called"]') as any;
-    expect(section.querySelectorAll("li")).toHaveLength(5);
-    const m = morning().totals;
-    await click(
-      Array.from(section.querySelectorAll("button") as ArrayLike<any>).find((b: any) =>
-        b.textContent.startsWith("Show the other"),
-      ),
-    );
-    expect(section.querySelectorAll("li")).toHaveLength(m.neverCalled);
-    for (const a of Array.from(section.querySelectorAll("li a") as ArrayLike<any>))
-      expect(a.textContent).toContain("Open in CRM");
-  });
-
-  test("the lines say how long a lead waited and, for a result with no call, what the caller saved", async () => {
-    await show(createElement(MorningList));
-    const outcome = host.querySelector('section[aria-labelledby="morning-outcome_only"]') as any;
-    expect(outcome.textContent).toMatch(/\d+ h ago/);
-    expect(outcome.textContent).toMatch(/saved: (no answer|callback|wrong number)/);
-    const probably = host.querySelector('section[aria-labelledby="morning-phone_only"]') as any;
-    expect(probably.textContent).toContain("same number called");
-  });
-
-  test("Paid ads only narrows every group to the paid leads the database counted", async () => {
-    await show(createElement(MorningList));
-    await click(byText("Paid ads only"));
-    const paid = model.morningGroups(morning().leads, { paidOnly: true, location: null });
-    expect(groupHeads()).toEqual([
-      `Never called ${paid.never_called.length}`,
-      `Result saved, no call ${paid.outcome_only.length}`,
-      `Probably called ${paid.phone_only.length}`,
-    ]);
-    expect(text()).toContain("so they are shown on the full list only");
-    await click(byText("All leads"));
-    expect(text()).toContain("equal the board's untouched and outcome-only counts");
-  });
-
-  test("on the full list it ties the groups to the board and names a client that differs", async () => {
-    await show(createElement(MorningList));
-    const m = morning().totals;
-    const t = text();
-    expect(t).toContain(
-      `Never called (${m.neverCalled}) and Result saved, no call (${m.outcomeOnly}) equal the board's untouched and outcome-only counts.`,
-    );
-    expect(t).toContain(`The board counts Probably called (${m.phoneOnly}) as called`);
-    expect(t).toContain("1 client differ from the board (مطابخ الريم)");
-    expect(t).toContain("Kuwait, Saudi, UAE or Qatar number");
-  });
-
-  test("nothing to call says so and what to do next", async () => {
-    scenario = "empty";
-    await show(createElement(MorningList));
-    expect(text()).toContain("Every callable lead has a call linked");
-    expect(host.querySelectorAll("section h3")).toHaveLength(0);
-  });
-
-  test("a refused read shows the database's own sentence", async () => {
-    failNext = { code: "42501", message: "The morning list is for active team seats." };
-    await show(createElement(MorningList));
-    expect(text()).toContain("The morning list is for active team seats.");
-    expect(buttons().some(b => b.textContent.trim() === "Try again")).toBe(true);
-  });
-});
-
 describe("the views beside the board", () => {
-  test("any other address is the board, and the four views have the labels the team knows", () => {
+  test("any other address is the board, and the views have the labels the team knows", () => {
     expect(viewOf(null)).toBe("board");
     expect(viewOf("nonsense")).toBe("board");
     expect(viewOf("gap")).toBe("gap");
-    expect(viewOf("speed")).toBe("speed");
-    expect(viewOf("morning")).toBe("morning");
-    expect(VIEWS.map(v => v.label)).toEqual(["Board", "No result", "Call speed", "Morning list"]);
+    // The call speed chart and the morning list moved to the dialer on 22 October 2026: old links open the board.
+    expect(viewOf("speed")).toBe("board");
+    expect(viewOf("morning")).toBe("board");
+    expect(VIEWS.map(v => v.label)).toEqual(["Board", "No result"]);
   });
 
   test("the switch marks the open view and reports a pick", async () => {
     const picked: string[] = [];
-    await show(createElement(ViewSwitch, { view: "gap", onChange: (v: string) => picked.push(v) }));
+    await show(createElement(ViewSwitch, { view: "board", onChange: (v: string) => picked.push(v) }));
     const pressed = buttons().filter(b => b.getAttribute("aria-pressed") === "true");
-    expect(pressed.map(b => b.textContent.trim())).toEqual(["No result"]);
-    await click(byText("Call speed"));
-    expect(picked).toEqual(["speed"]);
+    expect(pressed.map(b => b.textContent.trim())).toEqual(["Board"]);
+    await click(byText("No result"));
+    expect(picked).toEqual(["gap"]);
   });
 
-  test("each view has its own title and draws only its own screen", async () => {
+  test("the no-result view has its own title and reads only its own numbers", async () => {
     await show(
       createElement(ResultsView, {
-        view: "speed",
-        switcher: createElement(ViewSwitch, { view: "speed", onChange: () => {} }),
+        view: "gap",
+        switcher: createElement(ViewSwitch, { view: "gap", onChange: () => {} }),
       }),
     );
-    expect(host.querySelector("h1")?.textContent).toBe("Speed of the first call");
-    expect(named("cockpit_speed_read")).toHaveLength(1);
-    expect(named("cockpit_gap_read")).toHaveLength(0);
+    expect(host.querySelector("h1")?.textContent).toBe("Meetings with no result");
+    expect(named("cockpit_gap_read")).toHaveLength(1);
+    expect(named("cockpit_speed_read")).toHaveLength(0);
     expect(named("cockpit_morning_uncalled_read")).toHaveLength(0);
   });
 });

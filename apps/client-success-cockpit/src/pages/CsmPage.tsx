@@ -57,6 +57,7 @@ import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { type Caller, useClientCallers } from "@/lib/callCentreClient";
+import { useNotCalled } from "@/lib/notCalled";
 import { readChurnPage } from "@/lib/churnClient";
 import type { MonthRow } from "@/lib/churnCore";
 import { useClientWhatsApp } from "@/lib/clientWhatsApp";
@@ -1125,6 +1126,7 @@ function ClientRow({
   handled,
   kit,
   callers,
+  notCalled,
 }: {
   c: Client;
   today: string;
@@ -1132,6 +1134,8 @@ function ClientRow({
   kit?: OnboardingRow | null;
   /** The client's callers in the dialer; undefined until they are read. */
   callers?: Caller[];
+  /** Leads with no call and no saved result, last 30 days; undefined when unknown or done-with-you. */
+  notCalled?: number;
 }) {
   const poc = nextPocState(c, today);
   const sm = serviceModel(c.service);
@@ -1162,6 +1166,14 @@ function ClientRow({
             callers={callers}
             expected={c.bucket === "management" && !sm.dwy}
           />
+          {notCalled ? (
+            <Chip
+              tone="warn"
+              title="Leads from the last 30 days with no call and no saved result. The full list is in the dialer, under Lead coverage."
+            >
+              {notCalled} not called
+            </Chip>
+          ) : null}
           {handled && (
             <span className="inline-flex items-center gap-1 text-xs font-medium txt-good">
               <Check aria-hidden className="size-3.5" />
@@ -1266,6 +1278,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
   }, [openName]);
   /** Every client's assigned callers in the dialer, for the list and the header. */
   const callerRead = useClientCallers(auth.client, auth.session?.user.id ?? "");
+  const notCalled = useNotCalled(auth.client, auth.session?.user.id ?? "");
   /** The client's calls, forms and media buyer changes from the call store. */
   const calls = useClientTimeline(
     auth.client,
@@ -1615,6 +1628,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
           ? (callerRead.byTask.get(String(c.taskId)) ?? [])
           : undefined
       }
+      notCalled={notCalled?.get(String(c.taskId))}
     />
   );
 
