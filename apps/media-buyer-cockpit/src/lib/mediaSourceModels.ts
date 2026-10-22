@@ -5,9 +5,9 @@ import {
   shiftDay,
   windowResult,
 } from "./changeResultsCore";
+import { CPL_GATE } from "./kpi";
 
-const CPL_GATE = 15,
-  MIN_SPEND = 100;
+const MIN_SPEND = 100;
 const MEANINGFUL =
   /budget|targeting|bid strategy|optimisation goal|optimization goal|created|ad updated|campaign status updated|ad set status updated/i;
 const HOUSEKEEPING =

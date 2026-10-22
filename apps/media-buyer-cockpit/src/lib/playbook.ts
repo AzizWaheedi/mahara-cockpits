@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { CPL_GATE } from "./kpi";
 
 export interface DimensionsResult {
   serviceLines: string[];
@@ -79,7 +80,6 @@ export interface WinnerAdRow {
   campaignName?: string;
 }
 
-const CPL_GATE = 15;
 const MIN_SPEND = 100;
 
 export async function fetchDimensions(

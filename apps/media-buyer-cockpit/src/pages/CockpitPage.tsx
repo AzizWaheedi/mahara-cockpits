@@ -22,6 +22,7 @@ import {
 } from "@/components/ClientUpdates";
 import { CockpitSelect } from "@/components/CockpitSelect";
 import { CreativePreview } from "@/components/CreativePreview";
+import { money as moneyShown } from "@/components/ceo/format";
 import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
 import { EditPanel } from "@/components/EditPanel";
 import { FunnelLine } from "@/components/funnel/FunnelSheet";
@@ -60,12 +61,12 @@ import {
   whatWeDid,
   whatWeDidAll,
 } from "@/lib/clientUpdate";
-import { type Id, useQueries } from "@/lib/cockpitApi";
+import { type Id, useQueries, useQueryState } from "@/lib/cockpitApi";
 import {
   COST_DOT,
   type CostTone,
   costText,
-  cpbTone,
+  cpbDisplay,
   cplTone,
 } from "@/lib/costTone";
 import { HEALTH, healthScore, missingHealth } from "@/lib/eodForm";
@@ -1123,6 +1124,13 @@ function Cockpit({ view }: { view: View }) {
     string,
     Campaign | Error | undefined
   >;
+  // The last day the media data has spend for: every range read counts
+  // bookings only through it (mediaStatsClient.ts), and the note under the
+  // range picker names it. The same shared read, so the two always agree.
+  const coverage = useQueryState<{ last?: string | null }>(
+    api.stats.coverage,
+    view === "ads" ? {} : "skip",
+  );
   const [mode, setMode] = useState<"ads" | "reroute" | "leave">("ads");
   const [campaignPanelTab, setCampaignPanelTab] = useState<
     "recommendations" | "changes"
@@ -1403,8 +1411,8 @@ function Cockpit({ view }: { view: View }) {
             c.bookings7d === undefined || c.bookings7d === null
               ? `CPL ${money(c.cpl, 2)}`
               : c.bookings7d === 0
-                ? `no booking on ${money(c.spend7d, 0)}, CPL ${money(c.cpl, 2)}`
-                : `cost per booking ${money(c.costPerBooking, 0)}, CPL ${money(c.cpl, 2)}`
+                ? `no booking on ${moneyShown(c.spend7d)}, CPL ${money(c.cpl, 2)}`
+                : `cost per booking ${moneyShown(c.costPerBooking)}, CPL ${money(c.cpl, 2)}`
           } → ${c.findings?.[0]?.fixes?.[0] ?? "watching it"}`,
       );
   }, [snap]);
@@ -1430,7 +1438,7 @@ function Cockpit({ view }: { view: View }) {
       `Total ad spend (7d): ${money(spend)}`,
       `Total leads (7d): ${leads}`,
       `Average CPL (7d): ${leads > 0 ? money(spend / leads, 2) : "no leads"}`,
-      `Bookings (7d): ${bookings}${bookings > 0 ? ` · cost per booking ${money(spend / bookings, 0)}` : ""}`,
+      `Bookings (7d): ${bookings}${bookings > 0 ? ` · cost per booking ${moneyShown(spend / bookings)}` : ""}`,
       `Any client with a 7-day CPL above ${"$"}${CPL_GATE}: ${overGate.length ? `Yes: ${overGate.map(c => c.clientName ?? c.campaignName).join(", ")}` : "No"}`,
       "",
       "ACCOUNT BY ACCOUNT — WHAT I CHANGED AND WHY",
@@ -3249,15 +3257,20 @@ function Cockpit({ view }: { view: View }) {
   };
 
   const running = (snap.campaigns as Campaign[]).filter(c => !isParked(c));
-  // The last day any campaign has Meta numbers for: the media data runs to
-  // yesterday, so "Today" reads nothing until tomorrow.
-  const mediaThrough = running.reduce<string | undefined>(
-    (last, c) =>
-      c.dataThrough && (!last || String(c.dataThrough) > last)
-        ? String(c.dataThrough)
-        : last,
-    undefined,
-  );
+  // The last day the media data has Meta numbers for: it runs to yesterday,
+  // so "Today" reads nothing until tomorrow, and a range ending today counts
+  // its bookings only to this day too (2026-10-21). The coverage read is the
+  // day the range reads cap their bookings at; until it is in, the running
+  // campaigns' own last day stands in.
+  const mediaThrough =
+    coverage.data?.last ??
+    running.reduce<string | undefined>(
+      (last, c) =>
+        c.dataThrough && (!last || String(c.dataThrough) > last)
+          ? String(c.dataThrough)
+          : last,
+      undefined,
+    );
   // Rows whose picked range is still being read.
   const rangeReading = running.filter(
     c =>
@@ -3341,9 +3354,11 @@ function Cockpit({ view }: { view: View }) {
           {globalRange.key === "7d"
             ? "Spend, leads and bookings below, and the filters on them, are for the last 7 days, the read the calls are made on."
             : `Spend, leads and bookings below, and the filters on them, are for ${globalRange.label.toLowerCase()}. The Call column and the day average always use the last 7 days.`}
-          {mediaThrough && globalRange.end > mediaThrough
-            ? ` Meta's numbers run to ${dayMonth(mediaThrough)}, so nothing after that is counted yet.`
-            : ""}
+          {mediaThrough && globalRange.start > mediaThrough
+            ? ` Meta's numbers run to ${dayMonth(mediaThrough)}, so spend and leads for this range are not in yet. Its bookings are counted; their cost waits for the numbers.`
+            : mediaThrough && globalRange.end > mediaThrough
+              ? ` Meta's numbers run to ${dayMonth(mediaThrough)}, so spend and bookings after that are not counted yet.`
+              : ""}
         </span>
       </div>
       {adsTab === "off" ? (
@@ -3462,6 +3477,12 @@ function Cockpit({ view }: { view: View }) {
                     value
                   );
                 const ok = nums.state === "ok" ? nums : undefined;
+                // No booking on more than $60 reads "None on $233" in the
+                // grid's colour, not a grey n/a (2026-10-21).
+                const cpb = cpbDisplay(ok?.spend, ok?.bookings, {
+                  cost: ok?.costPerBooking,
+                  spendNotIn: ok?.spendNotIn,
+                });
                 // Only a real finding earns the eye-catching button.
                 const needsDecision = (c.findings ?? []).some(
                   (f: Campaign) => f.severity !== "optimization",
@@ -3576,9 +3597,18 @@ function Cockpit({ view }: { view: View }) {
                         )}
                       </td>
                       <td
-                        className={`px-2 tabular-nums font-semibold ${costText(cpbTone(ok?.costPerBooking))}`}
+                        className={`whitespace-nowrap px-2 tabular-nums font-semibold ${costText(cpb.tone)}`}
+                        title={ok ? cpb.why : undefined}
                       >
-                        {cell(moneyOr(ok?.costPerBooking, 0))}
+                        {cell(
+                          cpb.text === "n/a" || cpb.text === "None yet" ? (
+                            <span className="font-normal text-muted-foreground">
+                              {cpb.text}
+                            </span>
+                          ) : (
+                            cpb.text
+                          ),
+                        )}
                       </td>
                       <td className="px-2 tabular-nums">
                         {/* What is set on Meta, where it lives, and what it actually spends. */}

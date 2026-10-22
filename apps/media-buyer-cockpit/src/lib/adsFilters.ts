@@ -1,4 +1,5 @@
 import { hasPaymentProblem, PAYMENT_FILTER } from "@/lib/adBillingStrip";
+import { cpbDisplay } from "@/lib/costTone";
 import { belowKpi, CPB_GATE } from "@/lib/kpi";
 
 // biome-ignore lint/suspicious/noExplicitAny: a campaign row from the snapshot
@@ -15,6 +16,12 @@ export type BoardNumbers =
       bookings?: number;
       bookingRate?: number;
       costPerBooking?: number;
+      /**
+       * The media data's last day, when the whole range comes after it
+       * (Today): spend and leads are not in yet, so they read n/a, never
+       * $0 and 0; the bookings are real and counted (2026-10-22).
+       */
+      spendNotIn?: string;
     };
 
 /** The numbers a row shows once its range is read. */
@@ -45,13 +52,18 @@ export function boardNumbers(
   if (read === undefined) return { state: "loading" };
   if (read instanceof Error) return { state: "error" };
   const t = read.total ?? {};
-  const spend = Number(t.spend ?? 0);
-  const leads = Number(t.leads ?? 0);
+  const spendNotIn =
+    typeof read.spendNotIn === "string" && read.spendNotIn
+      ? read.spendNotIn
+      : undefined;
   // Done-with-you accounts have no bookings at all: keep them n/a, not 0.
   const bookings =
     c.bookings7d === undefined
       ? undefined
       : Number(read.bookingsTotal ?? t.bookings ?? 0);
+  if (spendNotIn) return { state: "ok", bookings, spendNotIn };
+  const spend = Number(t.spend ?? 0);
+  const leads = Number(t.leads ?? 0);
   return {
     state: "ok",
     spend,
@@ -95,8 +107,11 @@ export const ADS_FILTERS: AdsFilter[] = [
   // Meta flags the ad account: unpaid, restricted, grace period or under
   // review. The Payments strip's count chips turn this on (2026-10-13).
   { label: PAYMENT_FILTER, test: c => hasPaymentProblem(c) },
-  // Both numbers (Muhammed, 2026-10-13): a hold or kill on the booking grid,
-  // or over the cost per lead gate where bookings are not tracked.
+  // Both numbers (Muhammed, 2026-10-13): a kill on the booking grid, or a
+  // hold because the cost per booking is over the gate; over the cost per
+  // lead gate alone only where bookings are not tracked. A high cost per lead
+  // with bookings within $60 is a watch, not out of KPI (the golden rule,
+  // 2026-10-21).
   {
     label: "Below KPI",
     ranged: true,
@@ -117,9 +132,17 @@ export const ADS_FILTERS: AdsFilter[] = [
   {
     label: `Cost per booking over $${CPB_GATE}`,
     ranged: true,
-    // Judged on the whole dollars the Cost / booking cell shows, so a row
-    // reading "$60" is never listed as over $60.
-    test: (_c, n) => Math.round(n?.costPerBooking ?? 0) > CPB_GATE,
+    // Judged on the amount the Cost / booking cell shows (cents under $100,
+    // 2026-10-22), so a row reading "$60" is never listed as over $60 and a
+    // row reading "$60.40" always is. A row with no booking on more than $60
+    // of spend ("None on $233") is over it too: one booking costs at least
+    // the spend (2026-10-21).
+    test: (_c, n) =>
+      n !== undefined &&
+      (cpbDisplay(n.spend, n.bookings, {
+        cost: n.costPerBooking,
+        spendNotIn: n.spendNotIn,
+      }).judged ?? 0) > CPB_GATE,
   },
   {
     label: "No bookings",

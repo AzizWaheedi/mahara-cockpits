@@ -31,6 +31,7 @@ import {
   CPL_GATE,
   SHOW_RATE_GOOD,
 } from "./kpi";
+import { kuwaitDay, shiftDay } from "./reportPeriod";
 
 // biome-ignore lint/suspicious/noExplicitAny: profile payloads are untyped by design
 type Any = any;
@@ -74,6 +75,67 @@ export type Diagnosis = {
   /** Sample sizes, so nobody acts on two appointments. */
   basis: string;
 };
+
+/**
+ * The days a client's sheet holds bookings for, from the profile the worker
+ * wrote (hermes/cockpit-sync csmProducer.ts and csmProviders.ts), so a card
+ * never counts days the sheet was not read for as days with no booking:
+ * missing is never zero (2026-10-22).
+ *
+ * - Never read (no sheet, or a read that failed with nothing kept, as with
+ *   Ideal Elite's 403): `read` is false and the bookings are unknown.
+ * - No longer read (a stopped client, or a read now failing after a good
+ *   one): the worker keeps the old rows and sets `staleAt`, the day of the
+ *   last good read. That day was read only in part, so the sheet's complete
+ *   days end the day before it, and `lastRead` names it.
+ * - Still read: the same rule from `performanceSyncedAt`. Read today, it ends
+ *   at yesterday, as the ad spend does; read on an earlier day (the worker
+ *   behind), it ends the day before and `lastRead` names that day.
+ * - Read from its month tabs (no Appointments tab): only this month's and
+ *   last month's tabs are read, so its bookings start on the first of last
+ *   month, counted from the day of the read.
+ */
+export type SheetCoverage = {
+  read: boolean;
+  /** The first day its bookings are on record, when it is not the start of time. */
+  from?: string;
+  /** The last complete day the sheet was read for. */
+  to?: string;
+  /** The day of the last read, when it was before today. */
+  lastRead?: string;
+  /** Why the bookings are unknown, in a sentence, when it was never read. */
+  why?: string;
+};
+
+export function sheetCoverage(
+  perf: Any,
+  syncedAt: unknown,
+  today: string,
+): SheetCoverage {
+  if (!perf || perf.error || !Array.isArray(perf.appointments))
+    return {
+      read: false,
+      why: perf?.error
+        ? "The client's performance sheet could not be read, so its bookings are unknown, not zero."
+        : "No performance sheet has been read for this client, so its bookings are unknown, not zero.",
+    };
+  const dayOf = (v: unknown): string | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v > 0
+      ? kuwaitDay(v)
+      : typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)
+        ? v.slice(0, 10)
+        : undefined;
+  const readDay = dayOf(perf.staleAt) ?? dayOf(syncedAt);
+  return {
+    read: true,
+    from:
+      perf.source === "month tabs" && readDay
+        ? `${shiftDay(`${readDay.slice(0, 7)}-01`, -1).slice(0, 7)}-01`
+        : undefined,
+    to: readDay && readDay <= today ? shiftDay(readDay, -1) : undefined,
+    lastRead: readDay && readDay < today ? readDay : undefined,
+  };
+}
 
 const pct = (n: number, d: number) =>
   d > 0 ? Math.round((n / d) * 100) : null;
@@ -144,6 +206,17 @@ function diagnoseRaw(p: Any): Diagnosis {
   const showRate = pct(shows, decided);
   const closeRate = pct(closes, shows);
 
+  // Cost per booking is judged on any volume: it already holds more than one
+  // booking's worth of spend, so it is never noise. Only the cost per lead
+  // waits for 5 leads. Behind a 5-lead floor, Castello's $188.98 for 3 leads
+  // and 1 booking (7 days to 3 Oct) and Khalida's $192.52 for 4 leads and
+  // none (7 days to 1 Oct) were never raised (2026-10-21).
+  const cplOver = cpl != null && cpl > GATES.cpl;
+  const unbooked = noBookings && bookedSpend7 > GATES.costPerBooking;
+  const cpbOver = (cpb != null && cpb > GATES.costPerBooking) || unbooked;
+  // No leads at all after a booking's worth of spend: the ads, not the calls.
+  const adsSide = cplOver || leads7 === 0;
+
   const found: Constraint[] = [];
   const watch: Constraint[] = [];
 
@@ -203,11 +276,8 @@ function diagnoseRaw(p: Any): Diagnosis {
       ],
       owner: "Media buyer",
     });
-  } else if (leads7 >= 5) {
+  } else if (leads7 >= 5 || cpbOver) {
     // ---- Cost: per booking decides, per lead only when per booking cannot. ----
-    const cplOver = cpl != null && cpl > GATES.cpl;
-    const unbooked = noBookings && bookedSpend7 > GATES.costPerBooking;
-    const cpbOver = (cpb != null && cpb > GATES.costPerBooking) || unbooked;
     if (cpbOver) {
       const fewBook = unbooked
         ? "none of them booked, so the week's spend bought no appointments"
@@ -229,20 +299,25 @@ function diagnoseRaw(p: Any): Diagnosis {
             ? `Cost per booking is $${cpb.toFixed(2)} against a $${GATES.costPerBooking} gate`
             : `No bookings from $${bookedSpend7.toFixed(0)} spent in the last 7 days, against a $${GATES.costPerBooking} gate`,
         evidence: `$${bookedSpend7.toFixed(0)} spent in the last 7 days for ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"} from ${leads7} leads.`,
-        diagnosis: cplOver
-          ? `The leads cost more than the gate and ${fewBook}. Cost per booking is the number that decides.`
-          : ourCalls
-            ? `The leads are cheap enough, but ${fewBook}. That is usually how fast and how often our call centre calls the leads, not the ads.`
-            : `The leads are cheap enough, but ${fewBook}. That is usually speed to lead on the client's side, not the ads.`,
-        // Cheap leads put the calls first: the brief shows one fix.
+        diagnosis: !leads7
+          ? "The week's spend brought no leads at all, so it is the ads, not the calls."
+          : cplOver
+            ? `The leads cost more than the gate and ${fewBook}. Cost per booking is the number that decides.`
+            : ourCalls
+              ? `The leads are cheap enough, but ${fewBook}. That is usually how fast and how often our call centre calls the leads, not the ads.`
+              : `The leads are cheap enough, but ${fewBook}. That is usually speed to lead on the client's side, not the ads.`,
+        // Cheap leads put the calls first: the brief shows one fix. No leads
+        // leave no calls to check.
         fixes: [
-          ...(cplOver ? [ticket, speed] : [speed, ticket]),
+          ...(!leads7 ? [ticket] : adsSide ? [ticket, speed] : [speed, ticket]),
           "Do not promise the client a lower cost on the call; promise the change and a date.",
         ],
-        owner: cplOver ? "Media buyer" : ourCalls ? "Call centre" : "CSM",
+        owner: adsSide ? "Media buyer" : ourCalls ? "Call centre" : "CSM",
       });
     }
-    if (cpl != null && cplOver && cpb != null && !cpbOver)
+    // The cost per lead keeps its 5-lead floor: on fewer it is noise.
+    const cplJudged = leads7 >= 5 && cplOver;
+    if (cpl != null && cplJudged && cpb != null && !cpbOver)
       watch.push({
         id: "cpl_watch",
         layer: "micro",
@@ -255,7 +330,7 @@ function diagnoseRaw(p: Any): Diagnosis {
         ],
         owner: "Media buyer",
       });
-    else if (cpl != null && cplOver)
+    else if (cpl != null && cplJudged)
       found.push({
         id: "cpl_high",
         layer: "micro",

@@ -44,6 +44,7 @@ import { rereadCeoSections, STALE_AFTER_MS } from "@/components/ceo/useCeo";
 import { range as rangeText } from "@/components/ceo/windows";
 import { Button } from "@/components/ui/button";
 import { api, useAction } from "@/lib/cockpitApi";
+import { CPL_GATE } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import type {
   B2bAdNode,
@@ -148,9 +149,6 @@ const CONSTRAINT_STAGE: Record<string, string> = {
   "leads to intros booked": "intros",
   "intros to confirmed intros": "confirmed",
 };
-
-/** The cost per lead gate every tab judges against. */
-const CPL_GATE = 15;
 
 function adsManagerUrl(
   account: string,

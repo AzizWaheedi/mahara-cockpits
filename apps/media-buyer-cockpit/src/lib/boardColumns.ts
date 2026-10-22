@@ -593,9 +593,18 @@ export function sortNumber(cell: Cell | null | undefined): number | null {
 // ---------------------------------------------------------------------------
 // The first break: the first step of the funnel that is off its target.
 
+// Cost per booking comes straight after the booking rate (2026-10-21): the
+// line read "Off at ROAS" for SAFAD, Khalida and City Wood while their cost
+// per booking was off. Where the booking rate is the cause it still names the
+// booking rate first, and the call centre's lever with it.
 export const FUNNEL_ORDER: { key: string; label: string; metric: string }[] = [
   { key: "cpl", label: "cost per lead", metric: "cpl" },
   { key: "leadToBooking", label: "booking rate", metric: "lead_to_booking" },
+  {
+    key: "costPerBooking",
+    label: "cost per booking",
+    metric: "cost_per_booking",
+  },
   { key: "showRate", label: "show rate", metric: "show_rate" },
   { key: "quotationRate", label: "quote rate", metric: "quotation_rate" },
   { key: "closeRate", label: "close rate", metric: "close_rate" },
@@ -610,14 +619,21 @@ export type FirstBreak =
 /**
  * Where this client's funnel breaks first, in funnel order: the first step
  * that is off, else the first one to watch, else on target when at least one
- * step was judged. The statuses are the database's.
+ * step was judged. The statuses are the database's. A done-with-you client
+ * books its own calls, so its cost per booking never names the break.
  */
-export function firstBreak(row: Pick<ClientRow, "values">): FirstBreak {
+export function firstBreak(
+  row: Pick<ClientRow, "values"> & { serviceMode?: string | null },
+): FirstBreak {
+  const steps =
+    row.serviceMode === "DWY"
+      ? FUNNEL_ORDER.filter(s => s.key !== "costPerBooking")
+      : FUNNEL_ORDER;
   for (const kind of ["off", "watch"] as const) {
-    const hit = FUNNEL_ORDER.find(s => statusOf(row.values[s.key]) === kind);
+    const hit = steps.find(s => statusOf(row.values[s.key]) === kind);
     if (hit) return { kind, ...hit };
   }
-  return FUNNEL_ORDER.some(s => statusOf(row.values[s.key]) === "good")
+  return steps.some(s => statusOf(row.values[s.key]) === "good")
     ? { kind: "on_target" }
     : { kind: "unknown" };
 }

@@ -637,19 +637,34 @@ describe("cost colours follow the grid", () => {
   test("the board, the tile and a client's page use the grid, not the old single gates", () => {
     const page = source("src/pages/CockpitPage.tsx");
     expect(page).toContain("costText(cplTone(ok?.cpl))");
-    expect(page).toContain("costText(cpbTone(ok?.costPerBooking))");
+    // Cost per booking, "None on $233" included, through cpbDisplay (2026-10-21).
+    expect(page).toMatch(
+      /cpbDisplay\(ok\?\.spend, ok\?\.bookings, \{\s*cost: ok\?\.costPerBooking,/,
+    );
+    expect(page).toContain("costText(cpb.tone)");
     expect(page).toContain("tone: cplTone(t.blendedCpl)");
     expect(page).not.toMatch(/ok\.cpl > CPL_GATE|costPerBooking > 80/);
     const account = source("src/components/AccountView.tsx");
     expect(account).toContain("gate(cpl, cplTone(cpl), CPL_GATE, CPL_BAD)");
-    expect(account).toContain("gate(cpb, cpbTone(cpb), CPB_GATE, CPB_BAD)");
+    expect(account).toMatch(
+      /cpbDisplay\(sum\.spend, sum\.bookings, \{\s*cost: cpb,/,
+    );
+    expect(account).toMatch(
+      /gate\(\s*cpbShown\.judged,\s*cpbShown\.tone,\s*CPB_GATE,\s*CPB_BAD,?\s*\)/,
+    );
     expect(account).not.toMatch(/> CPL_GATE|> CPB_GATE/);
     // The campaign panel under each board row and inside a client's page.
     const range = source("src/components/CampaignRange.tsx");
     expect(range).toContain("costText(cplTone(data.total.cpl))");
-    expect(range).toContain("costText(cpbTone(data.total.costPerBooking))");
+    expect(range).toMatch(
+      /cpbDisplay\(data\?\.total\?\.spend, data\?\.total\?\.bookings/,
+    );
+    expect(range).toContain("costText(totalCpb.tone)");
     expect(range).toContain("costText(cplTone(r.cpl))");
-    expect(range).toContain("costText(cpbTone(cost(r).value))");
+    // A row's own cost: cents under $100, coloured on what it reads.
+    expect(range).toContain("cpbValue(cost(r).value).tone");
+    expect(range).toContain("cpbValue(cost(r).value).text");
+    expect(range).not.toContain("money(cost(r).value, 0)");
     expect(range).not.toMatch(/> CPL_GATE|> CPB_GATE|bookingCostTone\(/);
   });
 });
@@ -671,12 +686,16 @@ describe("the words around the numbers", () => {
 
   test("a client's page shows n/a with a reason when a read fails, never $0.00 and 0", () => {
     const account = source("src/components/AccountView.tsx");
-    expect(account).toContain('const quiet = card.failed ? "n/a" : undefined;');
+    expect(account).toContain(
+      'const quiet = card.failed || (!r && card.spendNotIn) ? "n/a" : undefined;',
+    );
     expect(account).toContain("The numbers could not be read");
     // Said once above the ad wall, not on every tile; the tile keeps the
     // reason on hover.
     expect(account).toContain("show n/a: their numbers could not be read.");
-    expect(account).toContain("title={card.failed ? FAILED_READ : undefined}");
+    expect(account).toMatch(
+      /title=\{\s*card\.failed\s*\?\s*FAILED_READ\s*:\s*!r && card\.spendNotIn/,
+    );
     expect(
       account.match(/numbers could not be read\. Reload to try/g),
     ).toHaveLength(1);
@@ -722,5 +741,73 @@ describe("the words around the numbers", () => {
     const tracking = source("src/components/TrackingIssues.tsx");
     expect(tracking).not.toContain("refreshed weekly");
     expect(tracking).toContain("A daily check against Meta finds them.");
+  });
+});
+
+describe("the bookings cap reads as plain words (2026-10-22)", () => {
+  test("the cap day reads 21 Oct, never 2026-10-21", () => {
+    const range = source("src/components/CampaignRange.tsx");
+    expect(range).toContain(
+      "bookings to $" + "{shortDate(data.bookingsThrough)}",
+    );
+    expect(range).not.toContain("bookings to $" + "{data.bookingsThrough}");
+    const account = source("src/components/AccountView.tsx");
+    expect(account).toContain(
+      "Bookings are counted to {shortDate(bookingsThrough)}",
+    );
+  });
+
+  test("Today says its spend is not in and keeps its bookings, on every screen", () => {
+    const page = source("src/pages/CockpitPage.tsx");
+    expect(page).toContain("spendNotIn: ok?.spendNotIn");
+    expect(page).toContain(
+      "so spend and leads for this range are not in yet. Its bookings are counted; their cost waits for the numbers.",
+    );
+    const account = source("src/components/AccountView.tsx");
+    expect(account).toContain("spendNotInWhy(String(r.spendNotIn))");
+    expect(account).toMatch(/bookedFacts\([\s\S]*?r\.spendNotIn,\s*\)/);
+    const range = source("src/components/CampaignRange.tsx");
+    expect(range).toContain("spendNotIn: data?.spendNotIn");
+    expect(range).toContain("the cost per booking waits for the spend");
+  });
+
+  test("an ad's None is coloured only when every booking was placed, and says why when not", () => {
+    const account = source("src/components/AccountView.tsx");
+    expect(account).toContain("const allTraced = everyBookingPlaced(whole);");
+    expect(account).toContain(
+      "some bookings in this range could not be tied to one ad, so it is not coloured.",
+    );
+    expect(account).toMatch(/<dd[\s\S]*?title=\{why\}/);
+    const range = source("src/components/CampaignRange.tsx");
+    expect(range).toContain("const allTraced = everyBookingPlaced(data);");
+    for (const file of [account, range])
+      expect(file).not.toMatch(
+        /bookingsAttributed\s*===\s*data\.bookingsTotal|Number\(whole\.bookingsAttributed/,
+      );
+  });
+
+  test("the funnel sheet reads its cost per booking the panel's way", () => {
+    const sheet = source("src/components/funnel/FunnelSheet.tsx");
+    // Bookings with no spend, or a range after Meta's last day, read n/a with
+    // the reason, never "$0"; no booking on more than $60 is coloured.
+    expect(sheet).toMatch(
+      /cpbDisplay\(spendNotIn \? undefined : t\.spend, t\.booked, \{ spendNotIn \}\)/,
+    );
+    expect(sheet).toContain("className={costText(cpb?.tone)}");
+    expect(sheet).not.toContain('money(t.spend / t.booked) : "No bookings"');
+    expect(sheet).toContain(
+      "Calls counted to $" + "{shortDate(stats?.callsThrough)}",
+    );
+    expect(sheet).toContain(
+      "Meta's numbers after $" + "{shortDate(spendNotIn)}",
+    );
+  });
+
+  test("a client's page says its totals are the campaigns listed", () => {
+    // Until the worker publishes a client-level figure (R8), a stopped
+    // campaign's spend and bookings are not in the page's totals.
+    const account = source("src/components/AccountView.tsx");
+    expect(account).toContain("These totals are the campaigns listed here.");
+    expect(account).toContain("Performance board counts the whole ad account.");
   });
 });

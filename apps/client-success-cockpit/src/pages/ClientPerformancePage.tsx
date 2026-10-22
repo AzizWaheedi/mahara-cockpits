@@ -31,7 +31,12 @@ import {
 } from "@/components/ResultsLayout";
 import {
   bucketDays,
+  completeDays,
+  costJudge,
+  pairedFromRecord,
   partialBucket,
+  ratioHead,
+  ratioHeadline,
   TrendChart,
   type TrendPoint,
 } from "@/components/TrendChart";
@@ -40,10 +45,16 @@ import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import { Textarea } from "@/components/ui/textarea";
 import { type SourceHealth, staleSentence } from "@/lib/csmCalls";
-import { type Constraint, diagnose } from "@/lib/csmDiagnosis";
+import { type Constraint, diagnose, sheetCoverage } from "@/lib/csmDiagnosis";
 import { serviceModel } from "@/lib/csmTemplates";
 import { displayLabel, plural, shortDay } from "@/lib/format";
-import { CPB_GATE, CPL_GATE, SHOW_RATE_AIM, SHOW_RATE_GOOD } from "@/lib/kpi";
+import {
+  CPB_BAD,
+  CPB_GATE,
+  CPL_GATE,
+  SHOW_RATE_AIM,
+  SHOW_RATE_GOOD,
+} from "@/lib/kpi";
 import { cleanLostNote } from "@/lib/lostNotes";
 import { publishOpenClient } from "@/lib/openClient";
 import {
@@ -1311,7 +1322,10 @@ export function monthsAvailable(p: Any): string[] {
 /**
  * The client's own trends for the picked range: what the ads did per day,
  * and what came of it per day or per week (weekly once the span passes 45
- * days). Cost per booking divides ad spend by bookings made in the bucket.
+ * days). Cost per booking divides ad spend by the bookings from leads that
+ * came in during the bucket. The ratio cards headline the range's complete
+ * days, sum over sum, day by day whatever the chart's buckets are, over the
+ * days both sides are on record, and name them (2026-10-21, 2026-10-22).
  */
 function ProfileTrends({
   p,
@@ -1404,16 +1418,80 @@ function ProfileTrends({
       den: s + n,
     };
   });
-  const cpb = apptBuckets.map(b => {
-    const bk = b.rows.filter(r => r.booked).length;
-    const sp = spendByKey.get(b.key) ?? 0;
-    return {
-      x: b.key,
-      y: bk && sp ? Math.round((sp / bk) * 100) / 100 : null,
-      num: sp,
-      den: bk,
-    };
-  });
+  // Spend and bookings paired over every day either side has: on the sheet's
+  // days alone, spend on a day nobody booked fell out of the cost per
+  // booking. The headlines add up days, not the chart's buckets, over the
+  // days both sides are on record: spend from its first day on record, the
+  // sheet over the days it was read for. A sheet that was never read has no
+  // bookings to count, not none (2026-10-21, 2026-10-22).
+  const sheet = sheetCoverage(p.performance, p.performanceSyncedAt, today);
+  const record: Any[] = p.adLeads?.daily ?? [];
+  const spendOf = (rows: Any[]) =>
+    rows.reduce((s, r) => s + Number(r.spend ?? 0), 0);
+  const cplPair = pairedFromRecord<Any, Any>(
+    record,
+    record,
+    from,
+    to,
+    today,
+    spendOf,
+    rows => rows.reduce((s, r) => s + Number(r.leads ?? 0), 0),
+  );
+  const showPair = pairedFromRecord<Any, Any>(
+    sheet.read ? appts : [],
+    sheet.read ? appts : [],
+    from,
+    to,
+    today,
+    rows => rows.filter(r => r.show === "y").length,
+    rows => rows.filter(r => r.show === "y" || r.show === "n").length,
+    sheet,
+  );
+  const cpb = pairedFromRecord<Any, Any>(
+    record,
+    sheet.read ? appts : [],
+    from,
+    to,
+    today,
+    spendOf,
+    rows => rows.filter(r => r.booked).length,
+    sheet.read ? sheet : {},
+  );
+  const spent = (n: number) =>
+    n ? `$${Math.round(n).toLocaleString("en-US")} spent` : "";
+  // What the sheet leaves out of a card that counts it, as a headline.
+  const sheetGap = !sheet.read
+    ? "Sheet not read"
+    : sheet.lastRead
+      ? `Sheet not read since ${dayLabel(sheet.lastRead)}`
+      : "Bookings not on record";
+  const sheetNotes = sheet.read
+    ? [
+        sheet.lastRead &&
+        sheet.to &&
+        cpb.days &&
+        sheet.to < (completeDays(from, to, today)?.to ?? "")
+          ? `The sheet was last read on ${dayLabel(sheet.lastRead)}, so the days from then on are left out.`
+          : "",
+        sheet.from && sheet.from > from
+          ? `The sheet is read from its month tabs, so bookings before ${dayLabel(sheet.from)} are not on record.`
+          : "",
+      ]
+    : [sheet.why ?? ""];
+  // An unread sheet still names the days and the spend, never a booking count.
+  const spendOnly = ratioHead(cpb, { unit: "$", none: "", parts: spent });
+  const cpbHead = !sheet.read
+    ? { text: spendOnly.basis ? sheetGap : "", basis: spendOnly.basis }
+    : cpb.noBottom
+      ? { text: sheetGap }
+      : ratioHead(cpb, {
+          unit: "$",
+          none: "No bookings yet",
+          noTop: "No spend found",
+          parts: (n, d) =>
+            [spent(n), plural(d, "booking")].filter(Boolean).join(" · "),
+          judge: costJudge(CPB_GATE, CPB_BAD),
+        });
   const per = weekly ? "per week" : "per day";
   return (
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 lg:gap-4">
@@ -1425,6 +1503,16 @@ function ProfileTrends({
         unit="$"
         mode="avg"
         goodWhen="down"
+        head={ratioHead(cplPair, {
+          unit: "$",
+          none: "No leads yet",
+          noTop: "No spend found",
+          // With no ad day on record the leads are unknown too, not 0.
+          parts: (n, d) =>
+            cplPair.noTop
+              ? ""
+              : [spent(n), plural(d, "lead")].filter(Boolean).join(" · "),
+        })}
       />
       {adsOnly ? null : (
         <>
@@ -1438,14 +1526,42 @@ function ProfileTrends({
             points={marked(showRate)}
             unit="%"
             mode="avg"
+            head={
+              !sheet.read || showPair.noBottom
+                ? { text: showPair.days || showPair.noBottom ? sheetGap : "" }
+                : ratioHead(showPair, {
+                    unit: "%",
+                    none: "No outcomes yet",
+                    parts: (n, d) =>
+                      d ? `${n} of ${d} with an outcome attended` : "",
+                  })
+            }
           />
           <TrendChart
             title="Cost per booking"
-            points={marked(cpb)}
+            points={marked(cpb.points)}
             unit="$"
             mode="avg"
             goodWhen="down"
-            hint="Ad spend in the bucket divided by bookings made in it."
+            head={cpbHead}
+            hint={[
+              cpb.since
+                ? `Spend before ${dayLabel(cpb.since)} is not on record, so the days before it are left out.`
+                : "",
+              ...sheetNotes,
+              sheet.read
+                ? `Bookings are dated by the day the lead came in. Each ${weekly ? "week" : "day"} on the chart is its own spend over its own bookings.`
+                : "",
+              // Where the two sides come from, so a gap against the Client
+              // Performance board reads as two sources, not an error
+              // (mergestudio 14-20 Oct: $19.24 here on the sheet's 7 bookings,
+              // $16.84 on the board's 8 from GoHighLevel; 2026-10-22).
+              sheet.read
+                ? "Bookings are from the client's own sheet and spend is from the campaigns the cockpit still lists for them, so this can differ from the Client Performance board, which counts GoHighLevel bookings against the whole ad account."
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
           />
         </>
       )}
@@ -1592,6 +1708,41 @@ function BookTrends({
   label: string;
 }) {
   const today = kuwaitToday();
+  // The two ratio cards headline the pool of their complete days or weeks,
+  // named under it, since the title promises 90 days: one unnamed day under
+  // it read as the 90 days' figure (2026-10-22). The read model counts from
+  // 90 days before the read (csmReadModel.ts), so the first week can start
+  // before its first day.
+  const cplPoints: TrendPoint[] = (trend ?? []).map((r: Any) => ({
+    x: r.date,
+    y: r.cpl,
+    partial: r.date >= today,
+    num: r.spend,
+    den: r.leads,
+  }));
+  const cplDone = cplPoints.filter(pt => !pt.partial);
+  const cplPool = ratioHeadline(cplDone);
+  const cplDays = cplDone.length
+    ? { from: cplDone[0].x, to: cplDone[cplDone.length - 1].x }
+    : undefined;
+  const showPoints: TrendPoint[] = (weekly ?? []).map((w: Any) => ({
+    x: w.week,
+    y: w.showRate,
+    partial: partialBucket(w.week, true, today),
+    num: w.shows,
+    den: typeof w.shows === "number" ? w.shows + w.noshows : undefined,
+  }));
+  const showDone = showPoints.filter(pt => !pt.partial && pt.den !== undefined);
+  const showPool = ratioHeadline(showDone, 100);
+  const since = new Date(Date.now() - 90 * 86400_000)
+    .toISOString()
+    .slice(0, 10);
+  const showDays = showDone.length
+    ? {
+        from: showDone[0].x < since ? since : showDone[0].x,
+        to: shiftDays(showDone[showDone.length - 1].x, 6),
+      }
+    : undefined;
   if (!trend?.length && !weekly?.length)
     return (
       <p className="text-xs text-muted-foreground">
@@ -1621,28 +1772,47 @@ function BookTrends({
       />
       <TrendChart
         title="Cost per lead, last 90 days"
-        points={trend.map((r: Any) => ({
-          x: r.date,
-          y: r.cpl,
-          partial: r.date >= today,
-          num: r.spend,
-          den: r.leads,
-        }))}
+        points={cplPoints}
         unit="$"
         mode="avg"
         goodWhen="down"
+        head={ratioHead(
+          {
+            days: cplDays,
+            total: cplPool ? { num: cplPool.num, den: cplPool.den } : undefined,
+          },
+          {
+            unit: "$",
+            none: "No leads yet",
+            noTop: "No spend found",
+            parts: (n, d) =>
+              [
+                n ? `$${Math.round(n).toLocaleString("en-US")} spent` : "",
+                plural(d, "lead"),
+              ]
+                .filter(Boolean)
+                .join(" · "),
+          },
+        )}
       />
       <TrendChart
         title="Show rate per week, last 90 days"
-        points={(weekly ?? []).map((w: Any) => ({
-          x: w.week,
-          y: w.showRate,
-          partial: partialBucket(w.week, true, today),
-          num: w.shows,
-          den: typeof w.shows === "number" ? w.shows + w.noshows : undefined,
-        }))}
+        points={showPoints}
         unit="%"
         mode="avg"
+        head={ratioHead(
+          {
+            days: showDays,
+            total: showPool
+              ? { num: showPool.num, den: showPool.den }
+              : undefined,
+          },
+          {
+            unit: "%",
+            none: "No outcomes yet",
+            parts: (n, d) => (d ? `${n} of ${d} with an outcome attended` : ""),
+          },
+        )}
       />
     </div>
   );

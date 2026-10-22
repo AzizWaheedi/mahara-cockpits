@@ -434,6 +434,53 @@ describe("formats", () => {
       kind: "unknown",
     });
   });
+  test("cost per booking names the break before the show rate and ROAS", () => {
+    // SAFAD, 14-20 Oct: $390.80 for 2 bookings is off; the line read "Off at ROAS" (2026-10-21).
+    const v = (s: Record<string, string>) => ({
+      values: Object.fromEntries(
+        Object.entries(s).map(([k, status]) => [k, { v: 1, status }]),
+      ),
+    });
+    expect(
+      columns.firstBreak(
+        v({
+          cpl: "good",
+          leadToBooking: "good",
+          costPerBooking: "off",
+          roas: "off",
+        }),
+      ),
+    ).toEqual({
+      kind: "off",
+      key: "costPerBooking",
+      label: "cost per booking",
+      metric: "cost_per_booking",
+    });
+    // The booking rate still comes first where it is the cause.
+    expect(
+      columns.firstBreak(v({ leadToBooking: "off", costPerBooking: "off" })),
+    ).toMatchObject({ kind: "off", key: "leadToBooking" });
+    expect(
+      columns.firstBreak(v({ costPerBooking: "watch", showRate: "watch" })),
+    ).toMatchObject({ kind: "watch", key: "costPerBooking" });
+    const order = columns.FUNNEL_ORDER.map(s => s.key);
+    expect(order.indexOf("costPerBooking")).toBe(
+      order.indexOf("leadToBooking") + 1,
+    );
+    // Done with you books its own calls: never "Off at cost per booking".
+    expect(
+      columns.firstBreak({
+        ...v({ cpl: "good", costPerBooking: "off", roas: "off" }),
+        serviceMode: "DWY",
+      }),
+    ).toMatchObject({ kind: "off", key: "roas" });
+    expect(
+      columns.firstBreak({
+        ...v({ costPerBooking: "good" }),
+        serviceMode: "DWY",
+      }),
+    ).toEqual({ kind: "unknown" });
+  });
   test("a read in a shape the screen cannot use is one sentence, never a guess", () => {
     expect(() => client.parseBoard({ clients: "nope" })).toThrow(
       /shape this page cannot read/,

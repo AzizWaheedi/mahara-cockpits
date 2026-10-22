@@ -438,7 +438,8 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
     if(name==='native_fathom_checkpoint_get')return [];
     if(name==='mcp_supabase_execute_sql'){
      if(args.query.includes('select distinct s.campaign_name'))return {result:JSON.stringify([{campaign_name:'Alpha campaign',campaign_id:'111111',meta_ad_account_id:'222222'}])};
-     if(args.query.includes('thumbnail_url')||args.query.includes('ad_account_activities'))return {result:'[]'};
+     // The dialer's call-back and rescheduled bookings (dialerReplacedBookingIds): none here.
+     if(args.query.includes('thumbnail_url')||args.query.includes('ad_account_activities')||args.query.includes('cc_attempts'))return {result:'[]'};
      throw new Error('Unexpected fixture SQL source');
     }
     const url=new URL(args.url);

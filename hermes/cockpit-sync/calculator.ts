@@ -103,6 +103,69 @@ export function daysAgo(n: number): string {
     .slice(0, 10);
 }
 
+/**
+ * A dollar figure to the cent, as bookingMoney shows it. The $60 and $80 lines
+ * judge this, so "$80" is never "over the $80 line": $240.01 on 3 bookings is
+ * $80.0033 and reads "$80" (2026-10-22).
+ */
+function cents(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
+/** The day `n` days after `day` (before it when `n` is negative). */
+function shiftDay(day: string, n: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+/**
+ * The newest day these rows spent money on, never later than yesterday (the
+ * day in progress is not over). A row with no spend says nothing about how far
+ * the spend reaches, so it does not move the day. Rows with no spend at all
+ * give yesterday.
+ */
+export function lastSpendDay(rows: string[][]): string {
+  const yesterday = daysAgo(1);
+  let newest = "";
+  for (const r of rows) {
+    const d = r[C.date];
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d) && d > newest && num(r[C.cost]) > 0)
+      newest = d;
+  }
+  return newest && newest < yesterday ? newest : yesterday;
+}
+
+/**
+ * The 7 complete days that spend and bookings are both counted over, one end
+ * for every campaign. Counting today's bookings against spend that stopped
+ * yesterday read City Wood at $50.57 "scale" for $118.00 "kill" (2026-10-21).
+ * Never each campaign's own last day: Atlantis 7\10 stopped spending on 17 Oct
+ * and still bought bookings after.
+ *
+ * The end is read from the sheet rows, before the Meta rows join them. Each
+ * night the sheet's accounts stop a day short until its connector fills
+ * yesterday (about 06:00 Kuwait), and the Meta fill leaves an account one day
+ * behind alone, so only the accounts the sheet does not carry reach yesterday.
+ * Taking the end from both read 22 Oct 00:22 through 21 Oct while twelve
+ * campaigns still stopped on 20 Oct: City Wood $295.95 / 7 = $42.28 "scale",
+ * where 14 to 20 Oct made $354.00 / 3 = $118.00 "kill". A sheet two or more
+ * days behind has every spending account filled from Meta, so the end is then
+ * the newest day the filled rows spent on. `metaRows` is undefined when the
+ * Meta fill failed: the sheet's own end stands.
+ */
+export function sevenDayWindow(
+  sheetRows: string[][],
+  metaRows: string[][] | undefined,
+): { since7: string; until7: string } {
+  const sheetEnd = lastSpendDay(sheetRows);
+  const until7 =
+    sheetEnd < daysAgo(2) && metaRows?.length
+      ? lastSpendDay([...sheetRows, ...metaRows])
+      : sheetEnd;
+  return { since7: shiftDay(until7, -6), until7 };
+}
+
 export function normalize(s: string): string {
   return String(s)
     .toLowerCase()
@@ -321,13 +384,15 @@ export function diagnose(c: {
   // inside it are not a problem, and spend past the booking gate with no
   // booking at all is one, however cheap the leads.
   const tracked = c.bookings !== undefined;
+  // Judged on the cents shown, as in judge (cents).
+  const cpb = c.costPerBooking === undefined ? undefined : cents(c.costPerBooking);
   const cpbGood =
     tracked &&
     (c.bookings ?? 0) > 0 &&
-    (c.costPerBooking ?? Number.POSITIVE_INFINITY) <= CPB_GATE;
-  const noBooking = tracked && c.bookings === 0 && c.spend > CPB_GATE;
+    (cpb ?? Number.POSITIVE_INFINITY) <= CPB_GATE;
+  const noBooking = tracked && c.bookings === 0 && cents(c.spend) > CPB_GATE;
   const cplBad = (c.cpl ?? 0) > CPL_GATE && !cpbGood;
-  const cpbBad = noBooking || (c.costPerBooking ?? 0) > CPB_GATE;
+  const cpbBad = noBooking || (cpb ?? 0) > CPB_GATE;
 
   // 1. Fatigue — the first of the two things that always force a change.
   if ((c.frequency ?? 0) >= 2.5) {
@@ -452,6 +517,31 @@ type BookingEvent = {
 };
 
 /**
+ * A GHL calendar's kind, by its name: the board's rule
+ * (cockpit_board_calendar_kind, 20261016111157_board_facts.sql), so the media
+ * sync and the board count bookings on the same calendars. Only "main" and
+ * "online" hold bookings.
+ */
+export function calendarKind(
+  name: string,
+): "callback" | "provisional" | "reschedule" | "main" | "online" | "other" {
+  const n = String(name ?? "").toLowerCase();
+  if (!n) return "other";
+  if (/callback|call-back|معاودة/.test(n)) return "callback";
+  if (/not confirmed|provisional|tentative/.test(n)) return "provisional";
+  if (/reschedul/.test(n)) return "reschedule";
+  if (/appointment calendar|main appointment/.test(n))
+    return /online/.test(n) ? "online" : "main";
+  return "other";
+}
+
+/** Whether bookings on a calendar with this name count (calendarKind). */
+export function isBookingCalendar(name: string): boolean {
+  const kind = calendarKind(name);
+  return kind === "main" || kind === "online";
+}
+
+/**
  * Booked appointments for the last 30 days, each tied to the Meta ad that
  * bought it.
  *
@@ -464,7 +554,7 @@ type BookingEvent = {
 export async function ghlBookingEvents(
   loc: string,
   token: string,
-  replaced?: ReadonlySet<string>,
+  replaced?: DialerReplaced,
 ): Promise<BookingEvent[] | undefined> {
   const calHeaders = {
     Authorization: `Bearer ${token}`,
@@ -491,21 +581,28 @@ export async function ghlBookingEvents(
       { headers: calHeaders },
     );
     if (!calRes.ok) return undefined;
+    // Only the main and online appointment calendars hold bookings, as on the
+    // board (calendarKind). "Not Confirmed Appointments" is the provisional
+    // calendar and the callback / reschedule calendars are agent scheduling:
+    // counting them inflated bookings7d until 2026-09-12. Atlantis's "Project
+    // Review & Qualification Call" is left out too until the CEO says it books
+    // (decision D0c, default not counted, 2026-10-21): it held the call
+    // centre's call-backs and two widget bookings the board never counted.
     // biome-ignore lint/suspicious/noExplicitAny: GHL payload
-    const cals: any[] = (await calRes.json())?.calendars ?? [];
+    const cals: any[] = ((await calRes.json())?.calendars ?? []).filter(
+      // biome-ignore lint/suspicious/noExplicitAny: GHL payload
+      (c: any) => isBookingCalendar(String(c?.name ?? "")),
+    );
+    // A location with no booking calendar is not a client with no bookings:
+    // its bookings are unknown, and its campaigns are judged on cost per lead.
+    if (cals.length === 0) {
+      recordLog("warn", `no main or online appointment calendar at GHL location ${loc}`);
+      return undefined;
+    }
     // biome-ignore lint/suspicious/noExplicitAny: GHL payload
     const events: any[] = [];
     const seen = new Set<string>();
     for (const c of cals) {
-      // "Not Confirmed Appointments" is the provisional calendar and the
-      // callback / reschedule calendars are agent scheduling, not bookings.
-      // Counting them inflated bookings7d until 2026-09-12.
-      if (
-        /not confirmed|callback|reschedule|personal calendar/i.test(
-          String(c.name ?? ""),
-        )
-      )
-        continue;
       for (const [start, end] of windows) {
         const evRes = await providerFetch(
           `https://services.leadconnectorhq.com/calendars/events?locationId=${loc}&calendarId=${c.id}&startTime=${start}&endTime=${end}`,
@@ -547,7 +644,13 @@ export async function ghlBookingEvents(
     }
 
     const out: BookingEvent[] = [];
+    // The bookings that count before the reschedule rule below, so a moved
+    // booking can ask whether the one it moved still counts, and the ids GHL
+    // still holds, counted or not.
+    const counted = new Set<string>();
+    const held = new Set<string>();
     for (const e of events) {
+      if (e?.id && e.deleted !== true) held.add(String(e.id));
       const status = String(e.appointmentStatus ?? "").toLowerCase();
       if (status === "cancelled") continue;
       // A client's own Google Calendar event that two-way sync copied into
@@ -556,11 +659,10 @@ export async function ghlBookingEvents(
       // events are not bookings either. (Muhammed, 2026-10-12)
       if (String(e.createdBy?.source ?? "").toLowerCase() === "google_calendar") continue;
       if (e.deleted === true) continue;
-      // A booking the call centre made as a RESCHEDULE or a CALLBACK is not a
-      // new booking (dialerReplacedBookingIds). Dropped by its id, not by its
-      // calendar: Atlantis's "Project Review & Qualification Call" holds the
-      // call centre's callbacks and a lead's own widget booking (2026-10-16).
-      if (e.id && replaced?.has(String(e.id))) continue;
+      // A booking the call centre made as a CALLBACK is its own follow-up, not
+      // a lead's booking (dialerReplacedBookingIds). Dropped by its id, not by
+      // its calendar, so one made on a main calendar is left out too.
+      if (e.id && replaced?.callbacks.has(String(e.id))) continue;
       // The day the booking was MADE, not the day of the appointment. Cost per
       // booking divides spend in a window by the bookings that window bought;
       // dating by the appointment pushes next week's calls outside the window
@@ -579,49 +681,183 @@ export async function ghlBookingEvents(
         status,
         adId: adByContact.get(e.contactId) ?? undefined,
       });
+      if (e.id) counted.add(String(e.id));
     }
-    return out;
+    // A RESCHEDULE's new booking is the same lead's booking moved: left out
+    // while the one it moved still counts here (or was a call-back). Once GHL
+    // no longer holds the original, the move is the lead's booking and counts
+    // on the day the lead booked the original when public.appointments knows
+    // it as a counted booking, as on the board: Arcturus l1Ar6ZhyTqKN4baJush0,
+    // moved on 28 Sep, counts on 22 Sep for OQGyKMbxm7ZiEwNar9h4. SAFAD's
+    // MxRYJYyO64JjX7lL7kMc moved one nothing holds, and counts on its own day,
+    // 20 Oct (2026-10-21). An original whose meeting is older than the 30 days
+    // asked for is dated the same way, so its move stays in the original's
+    // weeks, never in this week's.
+    const moved = replaced?.moved;
+    if (!moved?.size) return out;
+    const kept: BookingEvent[] = [];
+    for (const b of out) {
+      if (b.eventId && movedFromCounted(b.eventId, moved, counted, replaced?.callbacks)) continue;
+      const day = b.eventId
+        ? movedBookingDay(b.eventId, moved, held, replaced?.originalDay ?? new Map())
+        : undefined;
+      kept.push(day && day < b.date ? { ...b, date: day } : b);
+    }
+    return kept;
   } catch {
     return undefined;
   }
 }
 
 /**
- * The GHL appointment ids the call centre booked as a RESCHEDULE or a
- * CALLBACK: the dialer's verified booking with that disposition, and the old
- * appointment a reschedule replaces. A reschedule moves a booking already
- * counted and a callback is the call centre's own follow-up, so neither is a
- * new booking; the board's facts drop the same ids (cockpit_board_facts_refresh,
- * _bf_rs). Undefined when the dialer cannot be read: bookings then count as
- * before, never fewer.
+ * What the dialer says about the call centre's own bookings (decision D0b,
+ * 2026-10-21):
+ * - a CALLBACK's booking (its bookingVerification id) is the call centre's
+ *   follow-up call, never a lead's booking, and is always left out;
+ * - a RESCHEDULE's new booking (its bookingVerification id and its
+ *   appointment_id, the same id) moves `originalAppointmentId`, so it is left
+ *   out only while that original still counts (ghlBookingEvents checks it
+ *   against the bookings it read), and otherwise dated by the original's
+ *   booking day when public.appointments holds the original as a counted
+ *   booking (`originalDay`).
+ * Until 2026-10-21 every RESCHEDULE's new id was dropped outright, though this
+ * comment said the old appointment was: SAFAD's 20 Oct booking
+ * MxRYJYyO64JjX7lL7kMc, whose original GHL no longer holds, was lost with it.
+ *
+ * Every media publish now depends on this read. On the native worker a failed
+ * read is a source fault, so the run does not publish and the last publish
+ * stands (transport.ts records it, worker.ts refuses). Only an answer that is
+ * not rows gets here as undefined: that run counts call-backs and moved
+ * bookings as before, never fewer, and logs a warning.
  */
-export async function dialerReplacedBookingIds(): Promise<Set<string> | undefined> {
+export type DialerReplaced = {
+  callbacks: ReadonlySet<string>;
+  /** A RESCHEDULE's new booking id -> the appointment it moved. */
+  moved: ReadonlyMap<string, string>;
+  /**
+   * A moved appointment that public.appointments holds as a counted booking
+   * (not cancelled or invalid, not a Google copy, on a main or online
+   * calendar) -> the Kuwait day it was booked.
+   */
+  originalDay: ReadonlyMap<string, string>;
+};
+
+export async function dialerReplacedBookingIds(): Promise<DialerReplaced | undefined> {
   try {
+    // No "limit" anywhere in this text: the native transport reads one as a
+    // cap and refuses a read that reaches it.
     const rows = await supabaseQuery(`
-      select distinct k.id
+      select distinct a.data->'disposition'->>'outcome' as outcome, k.id,
+        nullif(a.data->>'originalAppointmentId', '') as original,
+        to_char(o.booked_at at time zone 'Asia/Kuwait', 'YYYY-MM-DD') as original_day,
+        o.status as original_status, o.ghl_source as original_source, oc.name as original_calendar
       from mahara_reporting.cc_attempts a
       cross join lateral (values (a.data->'bookingVerification'->>'id'),
-        (case when a.data->'disposition'->>'outcome' = 'RESCHEDULE' and nullif(a.data->>'originalAppointmentId', '') is not null
-              then a.appointment_id end)) k(id)
+        (case when a.data->'disposition'->>'outcome' = 'RESCHEDULE' then a.appointment_id end)) k(id)
+      left join public.appointments o on a.data->'disposition'->>'outcome' = 'RESCHEDULE'
+        and o.ghl_appointment_id = nullif(a.data->>'originalAppointmentId', '')
+      left join lateral (
+        select (array_agg(c.name order by (c.location_id = coalesce(nullif(o.ghl_location_id, ''), nullif(o.ghl_location, ''))) desc,
+          c.synced_at desc nulls last))[1] as name
+        from public.ghl_calendars c where c.calendar_id = o.calendar_id
+      ) oc on true
       where a.data->'disposition'->>'outcome' in ('RESCHEDULE', 'CALLBACK') and nullif(k.id, '') is not null
     `);
-    return new Set(rows.map((r) => String(r.id)).filter(Boolean));
-  } catch {
+    const callbacks = new Set<string>();
+    const moved = new Map<string, string>();
+    const originalDay = new Map<string, string>();
+    for (const r of rows) {
+      const id = String(r.id ?? "");
+      if (!id) continue;
+      if (r.outcome === "CALLBACK") {
+        callbacks.add(id);
+        continue;
+      }
+      // A RESCHEDULE that names no original moved nothing we can check: it counts.
+      const original = String(r.original ?? "");
+      if (!original || original === id) continue;
+      moved.set(id, original);
+      const day = String(r.original_day ?? "");
+      const status = String(r.original_status ?? "").toLowerCase();
+      if (
+        /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+        status !== "cancelled" &&
+        status !== "invalid" &&
+        String(r.original_source ?? "").toLowerCase() !== "google_calendar" &&
+        isBookingCalendar(String(r.original_calendar ?? ""))
+      )
+        originalDay.set(original, day);
+    }
+    return { callbacks, moved, originalDay };
+  } catch (e) {
+    recordLog(
+      "warn",
+      `dialer bookings unreadable, call-back and rescheduled bookings count this run: ${String(e).slice(0, 160)}`,
+    );
     return undefined;
   }
 }
 
-/** The 7-day booked / showed / no-show counts, from the same event list. */
+/**
+ * Whether a RESCHEDULE's booking moved one that still counts: the booking it
+ * moved, or that one's own original, is among `counted`. The lead's booking
+ * then counts once, as the original. A moved call-back is still the call
+ * centre's call-back, so reaching one of `callbacks` leaves the move out too.
+ */
+export function movedFromCounted(
+  id: string,
+  moved: ReadonlyMap<string, string>,
+  counted: ReadonlySet<string>,
+  callbacks?: ReadonlySet<string>,
+): boolean {
+  let from = moved.get(id);
+  // A booking moved twice is walked back; the hop limit guards bad data.
+  for (let hop = 0; from && from !== id && hop < 10; hop += 1) {
+    if (counted.has(from) || callbacks?.has(from)) return true;
+    from = moved.get(from);
+  }
+  return false;
+}
+
+/**
+ * The day a counted RESCHEDULE's booking is dated by: the day the lead booked
+ * the earliest original GHL no longer holds and public.appointments knows as a
+ * counted booking (`originalDay`), walking back the moves. Undefined keeps the
+ * booking's own day: it moved nothing known, or an original GHL still holds
+ * that does not count (cancelled), so the move is a new booking.
+ */
+export function movedBookingDay(
+  id: string,
+  moved: ReadonlyMap<string, string>,
+  held: ReadonlySet<string>,
+  originalDay: ReadonlyMap<string, string>,
+): string | undefined {
+  let day: string | undefined;
+  let from = moved.get(id);
+  for (let hop = 0; from && from !== id && hop < 10; hop += 1) {
+    if (held.has(from)) break;
+    day = originalDay.get(from) ?? day;
+    from = moved.get(from);
+  }
+  return day;
+}
+
+/**
+ * The 7-day booked / showed / no-show counts, from the same event list.
+ * `until` is the last complete day the spend covers: a booking made today is
+ * not paired with spend that stops yesterday (2026-10-21).
+ */
 export function bookingTotals(
   events: BookingEvent[] | undefined,
   since: string,
+  until: string,
 ): { booked: number; showed: number; noshow: number } | undefined {
   if (!events) return undefined;
   let booked = 0;
   let showed = 0;
   let noshow = 0;
   for (const e of events) {
-    if (e.date < since) continue;
+    if (e.date < since || e.date > until) continue;
     booked += 1;
     if (e.status === "showed") showed += 1;
     if (e.status === "noshow") noshow += 1;
@@ -689,6 +925,11 @@ export function placeBookings(
  * own Meta ids bought. A campaign not in `tracked` keeps no booking numbers
  * and is judged on cost per lead, with `untracked` saying why. Rows are
  * changed in place.
+ *
+ * Bookings count from `since7` to `until7`, the last day the spend covers.
+ * Counting today's bookings against spend that stopped yesterday read City
+ * Wood at $354.00 / 7 = $50.57 "scale" when the 7 days held 3 bookings,
+ * $118.00, a kill (2026-10-21).
  */
 export function judgeWithBookings(
   // biome-ignore lint/suspicious/noExplicitAny: rows for storage
@@ -698,6 +939,7 @@ export function judgeWithBookings(
   // biome-ignore lint/suspicious/noExplicitAny: rows for storage
   bookingRows: any[],
   since7: string,
+  until7: string,
   tracked: Set<string>,
   untracked: Map<string, string>,
   adIds: Map<object, string[]>,
@@ -705,7 +947,8 @@ export function judgeWithBookings(
   const byCampaign = new Map<string, { booked: number; showed: number }>();
   const byAd = new Map<string, number>();
   for (const b of bookingRows) {
-    if (String(b.date ?? "") < since7) continue;
+    const day = String(b.date ?? "");
+    if (day < since7 || day > until7) continue;
     const c = byCampaign.get(b.campaignName) ?? { booked: 0, showed: 0 };
     c.booked += 1;
     if (b.status === "showed") c.showed += 1;
@@ -945,6 +1188,21 @@ type Verdict = { verdict: string; reason: string; rank: number };
 const CPL_BAD = CPL_GATE * 1.5;
 
 /**
+ * A cost per booking in a reason, as the cockpits' money format writes it:
+ * cents under $100 when there are any, whole dollars from $100. Whole dollars
+ * everywhere read Khalida's $80.27 as "$80 a booking ... over the $80 line"
+ * (2026-10-21).
+ */
+export function bookingMoney(v: number): string {
+  if (v < 100 && Math.round(v * 100) % 100 !== 0) return `$${v.toFixed(2)}`;
+  return `$${Math.round(v).toLocaleString("en-US")}`;
+}
+
+/** "$80.27 a booking (1 booking)". */
+const perBooking = (spend: number, booked: number) =>
+  `${bookingMoney(spend / booked)} a booking (${booked} booking${booked === 1 ? "" : "s"})`;
+
+/**
  * How an ad or a campaign is judged (Muhammed, 2026-10-13). Cost per lead and
  * cost per booking are read together, and neither one decides alone. Cheap
  * leads that do not book are not a working ad; dearer leads that book cheaply
@@ -984,23 +1242,23 @@ export function judge(
     // Bookings from earlier leads still came in: judge them, but an ad that
     // brings no new leads is never scaled (Muhammed, 2026-10-13).
     if (booked !== undefined && booked > 0) {
-      const cpb = spend / booked;
-      const b = `$${cpb.toFixed(0)} a booking (${booked} booking${booked === 1 ? "" : "s"})`;
+      const cpb = cents(spend / booked);
+      const b = perBooking(spend, booked);
       return cpb > CPB_BAD
         ? {
             verdict: "kill",
-            reason: `$${spend.toFixed(0)} spent, zero leads in 7 days, and ${b} is over the $${CPB_BAD} line.`,
+            reason: `${bookingMoney(spend)} spent, zero leads in 7 days, and ${b} is over the $${CPB_BAD} line.`,
             rank: 6,
           }
         : {
             verdict: "hold",
-            reason: `$${spend.toFixed(0)} spent and zero leads in 7 days, but earlier leads booked: ${b}. Watch whether leads come back. Do not scale.`,
+            reason: `${bookingMoney(spend)} spent and zero leads in 7 days, but earlier leads booked: ${b}. Watch whether leads come back. Do not scale.`,
             rank: 15,
           };
     }
     return {
       verdict: "kill",
-      reason: `$${spend.toFixed(0)} spent, zero leads in 7 days.`,
+      reason: `${bookingMoney(spend)} spent, zero leads in 7 days.`,
       rank: 5,
     };
   }
@@ -1052,8 +1310,8 @@ export function bookingGrid(
   const band = cpl <= CPL_GATE ? "good" : cpl <= CPL_BAD ? "high" : "very high";
   const veryHigh = `leads cost ${lead}, over $${CPL_BAD.toFixed(2)}`;
   if (booked > 0) {
-    const cpb = spend / booked;
-    const b = `$${cpb.toFixed(0)} a booking (${booked} booking${booked === 1 ? "" : "s"})`;
+    const cpb = cents(spend / booked);
+    const b = perBooking(spend, booked);
     if (cpb <= CPB_GATE) {
       if (band === "good")
         return {
@@ -1091,15 +1349,17 @@ export function bookingGrid(
       rank: 6,
     };
   }
-  // No booking yet: what it has spent is already the least one booking costs.
-  const none = `$${spend.toFixed(0)} spent, ${leads} lead${leads === 1 ? "" : "s"} at ${lead}`;
-  if (spend > CPB_BAD)
+  // No booking yet: what it has spent is already the least one booking costs,
+  // so it is written as one ($60.40 is not "$60 spent ... over $60").
+  const none = `${bookingMoney(spend)} spent, ${leads} lead${leads === 1 ? "" : "s"} at ${lead}`;
+  const spent = cents(spend);
+  if (spent > CPB_BAD)
     return {
       verdict: "kill",
       reason: `${none}, and no booking in 7 days.${band === "good" ? " Cheap leads that do not book." : ""}`,
       rank: 6,
     };
-  if (spend > CPB_GATE)
+  if (spent > CPB_GATE)
     return band === "very high"
       ? {
           verdict: "kill",
@@ -1188,7 +1448,6 @@ type SyncResult = { campaigns: number; ads: number; offBoard: number };
 
 export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   const now = Date.now();
-  const since7 = daysAgo(7);
   const since30 = daysAgo(30);
 
   // Prefer input staged by the sandbox (see stageClear/stagePut above). Only
@@ -1219,16 +1478,20 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // for. Any account Meta shows us that the sheet does not (City Wood, Al Ola
   // on 2026-09-12) is read straight from Meta in the same row shape, so a new
   // ad account never needs anyone to touch the sheet's connector first.
+  let extra: { rows: string[][]; accounts: string[] } | undefined;
   try {
-    const extra = await metaRowsForMissingAccounts(rows, since30);
-    if (extra.rows.length) {
-      rows.push(...extra.rows);
-      recordLog("log",
-        `meta fallback: ${extra.rows.length} row(s) for ${extra.accounts.join(", ")}`,
-      );
-    }
+    extra = await metaRowsForMissingAccounts(rows, since30);
   } catch (e) {
     recordLog("error",`meta fallback: ${String(e).slice(0, 200)}`);
+  }
+  // Spend and bookings in the 7 days both run from since7 to until7, read
+  // from the sheet before the Meta rows join it (sevenDayWindow).
+  const { since7, until7 } = sevenDayWindow(rows, extra?.rows);
+  if (extra?.rows.length) {
+    rows.push(...extra.rows);
+    recordLog("log",
+      `meta fallback: ${extra.rows.length} row(s) for ${extra.accounts.join(", ")}`,
+    );
   }
   // Unauthorized ads from the October 2026 account compromise never count.
   rows = withoutExcludedAds(rows);
@@ -1456,7 +1719,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       a.daily.set(k, d);
     }
 
-    if (date < since7) continue;
+    if (date < since7 || date > until7) continue;
 
     const leads = num(r[C.leads]);
     const impressions = num(r[C.impressions]);
@@ -1850,7 +2113,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           );
         }
         clientEvents = eventsByClient.get(key);
-        bookings = bookingTotals(clientEvents, since7);
+        bookings = bookingTotals(clientEvents, since7, until7);
       }
       // Why the leads died still matters on DWY — that is lead quality, not booking.
       if (!lostByClient.has(key)) {
@@ -1881,7 +2144,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
           : !ghlByClient.has(normalize(client))
             ? "Judged on cost per lead only: this client has no GHL connection in the cockpit."
             : clientEvents === undefined
-              ? "Judged on cost per lead only: this client's GHL bookings could not be read this run."
+              ? "Judged on cost per lead only: this client's GHL bookings could not be read this run, or its GHL has no main or online appointment calendar."
               : undefined;
     if (untracked) untrackedWhy.set(name, untracked);
     else trackedCampaigns.add(name);
@@ -2116,6 +2379,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     ads,
     bookingRows,
     since7,
+    until7,
     trackedCampaigns,
     untrackedWhy,
     adIds,
