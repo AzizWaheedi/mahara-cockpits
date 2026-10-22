@@ -76,32 +76,38 @@ export function useLogoGround(url: string | null | undefined): Ground {
   return ground;
 }
 
-/** The initials on their own ground (DESIGN 7.7). */
+/** The one letter a monogram shows: the first of the initials (DESIGN 22.5.1). */
+export const monogramLetter = (initials: string) =>
+  Array.from(initials.trim())[0] ?? "";
+
+/**
+ * No logo, on a deck surface (DESIGN 22.5.1): a rounded-square tile, never
+ * a circle (a circle with initials reads as a missing avatar; a tile reads
+ * as a mark, the way an app icon does). One letter, upper case, at half the
+ * tile, on panel-2 with a 1 px inset edge. Never teal, never a ring.
+ */
 export function Monogram({
   initials,
   size,
-  edge = true,
 }: {
   initials: string;
   size: number;
-  /** A 1 px edge on deck surfaces; none inside app chrome. */
-  edge?: boolean;
 }) {
-  const ar = ARABIC.test(initials);
-  const letters = initials || "·";
+  const letter = monogramLetter(initials);
+  const ar = ARABIC.test(letter);
   return (
     <span
       className="dkc-monogram"
-      data-edge={edge ? "" : undefined}
       data-ar={ar ? "" : undefined}
       aria-hidden
       style={{
         width: size,
         height: size,
-        fontSize: size * (letters.length > 1 ? 0.36 : 0.44),
+        borderRadius: size * 0.22,
+        fontSize: size * (ar ? 0.46 : 0.5),
       }}
     >
-      {letters}
+      <span className="dkc-monogram-letter">{letter || "·"}</span>
     </span>
   );
 }
@@ -132,21 +138,25 @@ export function ClientMark({ who, size }: { who: Identity; size: number }) {
 export function Avatar({ who, size }: { who: Identity; size: string }) {
   const ground = useLogoGround(who.logo?.url);
   const [broken, setBroken] = useState(false);
-  if (!who.logo || broken)
+  // Inside app chrome a profile picture is a circle: the same one letter
+  // on the app's own avatar ground (DESIGN 22.5.1).
+  if (!who.logo || broken) {
+    const letter = monogramLetter(who.initials);
     return (
       <span
-        className="dkc-avatar dkc-monogram"
-        data-ar={ARABIC.test(who.initials) ? "" : undefined}
+        className="dkc-avatar dkc-avatar-letter"
+        data-ar={ARABIC.test(letter) ? "" : undefined}
         aria-hidden
         style={{
           width: size,
           height: size,
-          fontSize: `calc(${size} * ${who.initials.length > 1 ? 0.36 : 0.44})`,
+          fontSize: `calc(${size} * 0.46)`,
         }}
       >
-        {who.initials || "·"}
+        {letter || "·"}
       </span>
     );
+  }
   return (
     <span
       className="dkc-avatar dkc-plate"

@@ -6,10 +6,15 @@
  *
  *   node scripts/deck-shots.mjs [--deck onboarding|launch] [--fixtures full,sparse,dwy]
  *     [--langs en,ar] [--sizes 1920x1080,1366x768] [--still yes|no]
- *     [--parts no] [--out <dir>] [--url http://localhost:5199]
+ *     [--parts no] [--drive no] [--film no] [--only drive] [--out <dir>] [--url http://localhost:5199]
  *
- * The launch deck is shot still by default (reduced motion: the call's
- * stages whole, the lines drawn), so each stop is what it settles to.
+ * The launch deck also gets the Drive box's pass (--drive no skips it,
+ * --only drive runs it alone): its sheet of states, prep's ads panel, a
+ * pasted message run until the files are in the tray, and the notes window.
+ *
+ * Both decks are shot still by default (reduced motion: the call's stages
+ * whole, the lines drawn, every arrival set), so each stop is what it
+ * settles to (DESIGN 22.3.4). --still no shoots them moving.
  *
  * Without --url it starts the Vite dev server itself and stops it after.
  * Files land in <out>/<deck>/<fixture>-<lang>/<width>x<height>/NN-<slide>-<stop>.png.
@@ -53,7 +58,7 @@ const out = resolve(args.out ?? join(app, "tmp", "deck-shots"));
 const sizes = (args.sizes ?? "1920x1080,1366x768")
   .split(",")
   .map(x => x.split("x").map(Number));
-const still = (args.still ?? (deck === "launch" ? "yes" : "no")) === "yes";
+const still = (args.still ?? "yes") === "yes";
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -285,6 +290,91 @@ const wraps = page =>
     return out;
   });
 
+/**
+ * A tag (`.dk-tag`) that sits within 12 px, above or below, of another
+ * block it overlaps across: two blocks that read as one collided block
+ * without touching (the score round's starter tag over "Your page and
+ * logo"). Each a hit, and the run fails.
+ */
+const nearTags = page =>
+  page.evaluate(() => {
+    const slide = document.querySelector(".dk-slide");
+    const canvas = document.querySelector(".dk-canvas");
+    if (!slide || !canvas) return [];
+    const c = canvas.getBoundingClientRect();
+    const k = c.width / 1920 || 1;
+    const shown = el =>
+      el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) &&
+      Number(getComputedStyle(el).opacity) > 0.05;
+    const box = el => {
+      const r = el.getBoundingClientRect();
+      return { l: (r.left - c.left) / k, t: (r.top - c.top) / k, r: (r.right - c.left) / k, b: (r.bottom - c.top) / k };
+    };
+    /** The text blocks on the slide: each element with its own text run. */
+    const blocks = [];
+    const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const el = n.parentElement;
+      if (!n.textContent.trim() || !el || !shown(el) || el.closest(".dk-tag")) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const r of range.getClientRects())
+        if (r.width > 1 && r.height > 1)
+          blocks.push({
+            what: n.textContent.trim().slice(0, 30),
+            l: (r.left - c.left) / k, t: (r.top - c.top) / k, r: (r.right - c.left) / k, b: (r.bottom - c.top) / k,
+          });
+    }
+    const out = [];
+    for (const tag of slide.querySelectorAll(".dk-tag")) {
+      if (!shown(tag)) continue;
+      const t = box(tag);
+      for (const b of blocks) {
+        const across = Math.min(t.r, b.r) - Math.max(t.l, b.l) > 2;
+        if (!across) continue;
+        const gap = b.t >= t.b ? b.t - t.b : t.t >= b.b ? t.t - b.b : -1;
+        if (gap >= 0 && gap < 12)
+          out.push(`tag "${tag.textContent.trim().slice(0, 30)}" sits ${Math.round(gap)} px from "${b.what}"`);
+      }
+    }
+    return [...new Set(out)];
+  });
+
+/**
+ * Journey stop 6 (DESIGN 22.6.1): the statement and its fork are one block,
+ * no more than 64 px apart.
+ */
+const forkGap = page =>
+  page.evaluate(() => {
+    const slide = document.querySelector(".dk-slide");
+    if (slide?.getAttribute("data-slide") !== "journey" || slide.getAttribute("data-stop") !== "5") return [];
+    const words = slide.querySelector('[data-swap="in"] .dkc-fork-pic .dkc-stop-words .dk-body');
+    const fork = slide.querySelector('[data-swap="in"] .dkc-fork');
+    if (!words || !fork) return ["journey stop 6: the statement or its fork is missing"];
+    const gap = fork.getBoundingClientRect().top - words.getBoundingClientRect().bottom;
+    const k = (document.querySelector(".dk-canvas")?.getBoundingClientRect().width ?? 1920) / 1920;
+    return gap / k > 64 ? [`journey stop 6: the statement is ${Math.round(gap / k)} px from its fork (64 at most)`] : [];
+  });
+
+/** The portal's figure: its top and end edges (DESIGN 22.6.3), in canvas px. */
+const portalEdges = page =>
+  page.evaluate(() => {
+    const slide = document.querySelector(".dk-slide");
+    if (slide?.getAttribute("data-slide") !== "portal") return null;
+    const fig = slide.querySelector('[data-swap="in"] .dkc-portal-screen-in > .dkc-tagged');
+    const tag = slide.querySelector('[data-swap="in"] .dkc-tagged > figcaption');
+    if (!fig) return null;
+    const c = document.querySelector(".dk-canvas").getBoundingClientRect();
+    const k = c.width / 1920 || 1;
+    const r = fig.getBoundingClientRect();
+    const rtl = document.querySelector(".dk-canvas")?.getAttribute("dir") === "rtl";
+    return {
+      top: (r.top - c.top) / k,
+      end: rtl ? (r.left - c.left) / k : (r.right - c.left) / k,
+      tag: tag ? (tag.getBoundingClientRect().bottom - c.top) / k : null,
+    };
+  });
+
 async function walk(browser, base, fixture, lang, [w, h]) {
   const dir = join(out, deck, `${fixture}-${lang}`, `${w}x${h}`);
   rmSync(dir, { recursive: true, force: true });
@@ -305,6 +395,8 @@ async function walk(browser, base, fixture, lang, [w, h]) {
   await sleep(2800);
   let n = 1;
   let last = "";
+  /** The portal's first figure: every later stop's edges must match it. */
+  let portal = null;
   for (let guard = 0; guard < 90; guard++) {
     let at = await where(page);
     if (at === last) {
@@ -320,6 +412,15 @@ async function walk(browser, base, fixture, lang, [w, h]) {
     for (const c of await collisions(page)) hits.push(`${file}: ${c}`);
     for (const c of await wraps(page)) hits.push(`${file}: ${c}`);
     for (const c of await overlaps(page)) hits.push(`${file}: ${c}`);
+    for (const c of await nearTags(page)) hits.push(`${file}: ${c}`);
+    for (const c of await forkGap(page)) hits.push(`${file}: ${c}`);
+    const edges = await portalEdges(page);
+    if (edges) {
+      if (portal && (Math.abs(portal.top - edges.top) > 2 || Math.abs(portal.end - edges.end) > 2 ||
+          (portal.tag != null && edges.tag != null && Math.abs(portal.tag - edges.tag) > 2)))
+        hits.push(`${file}: the portal's figure moved (top ${Math.round(portal.top)} to ${Math.round(edges.top)}, end ${Math.round(portal.end)} to ${Math.round(edges.end)})`);
+      portal = portal ?? edges;
+    }
     n++;
     last = at;
     await page.keyboard.press("ArrowRight");
@@ -327,6 +428,48 @@ async function walk(browser, base, fixture, lang, [w, h]) {
   }
   await page.close();
   return { dir, count: n - 1, errors, hits };
+}
+
+/**
+ * The portal's phone recording, live (still shots never render the video):
+ * the stop shot without still=1 at 1.2 s and 6 s after the press, and the
+ * video's own box measured against its screen (it must cover the frame;
+ * Tailwind's preflight once capped it at 440 px, 2026-10-20).
+ */
+async function filmShots(browser, base, lang) {
+  const dir = join(out, deck, `film-${lang}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const notes = [];
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  await page.goto(`${base}/client-success/present-harness.html?fixture=full&deck=launch&lang=${lang}#portal`);
+  await page.waitForSelector(".dk-slide");
+  await page.evaluate(() => document.fonts.ready);
+  for (let guard = 0; guard < 6; guard++) {
+    const at = await where(page);
+    if (at === "portal:2") break;
+    await page.keyboard.press("ArrowRight");
+    await sleep(600);
+  }
+  const t0 = Date.now();
+  for (const [ms, name] of [[1200, "1.2s"], [6000, "6s"]]) {
+    await sleep(Math.max(0, ms - (Date.now() - t0)));
+    await page.screenshot({ path: join(dir, `phone-${name}.png`) });
+    const m = await page.evaluate(() => {
+      const film = document.querySelector('[data-swap="in"] .dkc-film');
+      const v = film?.querySelector("video");
+      if (!film || !v) return null;
+      const f = film.getBoundingClientRect();
+      const r = v.getBoundingClientRect();
+      return {
+        covers: r.left <= f.left + 1 && r.top <= f.top + 1 && r.right >= f.right - 1 && r.bottom >= f.bottom - 1,
+        time: v.currentTime, w: Math.round(r.width), h: Math.round(r.height),
+      };
+    });
+    notes.push(`${name}: ${m ? `video ${m.w} x ${m.h}, covers the screen: ${m.covers}, at ${m.time.toFixed(1)} s` : "no video (still, or the file's size changed)"}`);
+  }
+  await page.close();
+  return { dir, notes };
 }
 
 /** The launch deck's shared pieces, drawn once (the harness's parts sheet). */
@@ -485,6 +628,130 @@ async function videoShots(browser, base, lang) {
   return { dir, notes };
 }
 
+/** The Drive box's field in a page. */
+const DRIVE_FIELD = "input[inputmode=url]";
+
+/** Paste a message into the Drive box the way a browser does (a ClipboardEvent). */
+const pasteInto = (page, text) =>
+  page.evaluate(
+    ([sel, t]) => {
+      const el = document.querySelector(sel);
+      el.focus();
+      const data = new DataTransfer();
+      data.setData("text/plain", t);
+      el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    },
+    [DRIVE_FIELD, text],
+  );
+
+/** The box's words (field help and progress), and whether the panel scrolls sideways. */
+const driveState = page =>
+  page.evaluate(sel => {
+    const field = document.querySelector(sel);
+    const box = field?.closest("form")?.parentElement;
+    const aside = document.querySelector("aside");
+    return {
+      button: field?.parentElement?.querySelector("button")?.textContent ?? null,
+      help: box?.querySelector("form > div:last-child")?.textContent ?? null,
+      status: box?.querySelector("[role=status]")?.innerText ?? null,
+      field: field?.value ?? null,
+      invalid: field?.getAttribute("aria-invalid") ?? null,
+      overflow: aside ? aside.scrollWidth > aside.clientWidth + 1 : null,
+      tray: document.querySelector(".dkc-tray-count")?.textContent ?? null,
+    };
+  }, DRIVE_FIELD);
+
+/**
+ * The Drive box (DESIGN 22.7): every state on the harness's sheet, the box
+ * in prep's ads panel for three scenarios, a pasted WhatsApp message with
+ * two Drive links and a Docs link run through the pretend worker until the
+ * files are in the tray, a typed refusal, and the notes window beside a
+ * deck window. Each shot's words are read back and printed; a page error,
+ * a panel that scrolls sideways or a paste that brings nothing fails the run.
+ */
+async function driveShots(browser, base, lang) {
+  const dir = join(out, "launch", `drive-${lang}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const notes = [];
+  const errors = [];
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  page.on("pageerror", e => errors.push(String(e)));
+  const harness = q => `${base}/client-success/present-harness.html?${q}`;
+  await page.goto(harness(`view=drive&lang=${lang}`));
+  await page.waitForSelector("[data-drive-sheet]");
+  await page.evaluate(() => document.fonts.ready);
+  await sleep(500);
+  await page.screenshot({ path: join(dir, "sheet.png"), fullPage: true });
+  notes.push(`sheet: ${await page.locator("[data-drive-card]").count()} states`);
+  const prep = async scenario => {
+    await page.goto(harness(`fixture=full&deck=launch&lang=${lang}&view=prep&still=1&drive=${scenario}`));
+    await page.waitForSelector("aside");
+    await page.locator("ol button", { hasText: /Your ads/ }).first().click();
+    await page.waitForSelector(`aside ${DRIVE_FIELD}`);
+    await sleep(900);
+  };
+  for (const scenario of ["working", "some", "nobody", "several"]) {
+    await prep(scenario);
+    await page.locator("aside").screenshot({ path: join(dir, `prep-${scenario}.png`) });
+    const st = await driveState(page);
+    notes.push(`prep ${scenario}: ${JSON.stringify(st)}`);
+    if (st.overflow) errors.push(`prep ${scenario}: the panel scrolls sideways`);
+  }
+  // A typed link that is not one: the sentence on leaving the field, the button off.
+  await prep("idle");
+  await page.locator(`aside ${DRIVE_FIELD}`).fill("https://docs.google.com/document/d/1AbCdEfGhIjK/edit");
+  await page.locator("aside h2").first().click();
+  await sleep(200);
+  await page.locator("aside").screenshot({ path: join(dir, "prep-typed-refused.png") });
+  notes.push(`typed refused: ${JSON.stringify(await driveState(page))}`);
+  // The paste: a WhatsApp message with two Drive links, a Docs link and a full stop.
+  await prep("idle");
+  const before = (await driveState(page)).tray;
+  await pasteInto(
+    page,
+    "Hi Sara, the project photos: https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUv?usp=sharing\nand the reel https://drive.google.com/file/d/1ZyXwVuTsRqPoNmLkJiHg/view. The brief is https://docs.google.com/document/d/1AbCdEfGhIjK/edit",
+  );
+  await sleep(150);
+  await page.locator("aside").screenshot({ path: join(dir, "paste-1-checking.png") });
+  notes.push(`paste, checking: ${JSON.stringify(await driveState(page))}`);
+  await sleep(900);
+  await page.locator("aside").screenshot({ path: join(dir, "paste-2-started.png") });
+  notes.push(`paste, started: ${JSON.stringify(await driveState(page))}`);
+  await sleep(6500);
+  await page.locator("aside").screenshot({ path: join(dir, "paste-3-working.png") });
+  notes.push(`paste, working: ${JSON.stringify(await driveState(page))}`);
+  let done = null;
+  for (let i = 0; i < 40 && !done; i++) {
+    await sleep(1000);
+    const st = await driveState(page);
+    if ((st.status ?? "").match(/Brought in|جبنا/g)?.length >= 2) done = st;
+  }
+  await page.locator("aside").screenshot({ path: join(dir, "paste-4-done.png") });
+  const after = await driveState(page);
+  notes.push(`paste, done: ${JSON.stringify(after)} (tray ${before} before)`);
+  if (!done) errors.push("the pasted links did not finish within 40 s");
+  if (after.tray === before) errors.push(`the tray did not grow: ${before} before, ${after.tray} after`);
+  await page.close();
+  // The notes window beside a deck window on the ads slide.
+  const deckPage = await ctx.newPage();
+  await deckPage.setViewportSize({ width: 1920, height: 1080 });
+  await deckPage.goto(`${harness(`fixture=full&deck=launch&lang=${lang}&still=1&drive=working`)}#ads`);
+  await deckPage.waitForSelector(".dk-slide");
+  await sleep(1200);
+  const pad = await ctx.newPage();
+  pad.on("pageerror", e => errors.push(String(e)));
+  await pad.setViewportSize({ width: 520, height: 820 });
+  await pad.goto(harness(`fixture=full&deck=launch&lang=${lang}&still=1&view=notes&drive=working`));
+  await pad.waitForSelector(DRIVE_FIELD, { timeout: 8000 }).catch(() => errors.push("the notes window shows no Drive box on the ads slide"));
+  await sleep(900);
+  await pad.screenshot({ path: join(dir, "notes-working.png"), fullPage: true });
+  notes.push(`notes: ${JSON.stringify(await driveState(pad))}`);
+  await ctx.close();
+  return { dir, notes, errors };
+}
+
 const server = args.url ? { url: args.url, stop: () => {} } : await startVite();
 // Playwright's own browser when it is installed, else the Chrome on this Mac
 // (a Playwright bump can leave the cached build behind or incomplete).
@@ -496,7 +763,8 @@ try {
 }
 let failed = false;
 try {
-  for (const fixture of fixtures)
+  // --only drive: the Drive box's pass alone (the launch deck's prep and notes).
+  if (args.only !== "drive") for (const fixture of fixtures)
     for (const lang of langs) {
       for (const size of sizes) {
         const r = await walk(browser, server.url, fixture, lang, size);
@@ -512,12 +780,26 @@ try {
       }
       console.log(`  views: ${await views(browser, server.url, fixture, lang)}`);
     }
-  if (args.parts !== "no")
+  if (args.parts !== "no" && args.only !== "drive")
     for (const lang of langs) console.log(`parts ${lang}: ${await parts(browser, server.url, lang)}`);
-  if (args.videos !== "no")
+  if (deck === "launch" && args.drive !== "no")
+    for (const lang of langs) {
+      const r = await driveShots(browser, server.url, lang);
+      console.log(`drive ${lang}: ${r.dir}\n  ${r.notes.join("\n  ")}`);
+      if (r.errors.length) {
+        failed = true;
+        console.error(`  drive box:\n  ${r.errors.join("\n  ")}`);
+      }
+    }
+  if (args.videos !== "no" && args.only !== "drive")
     for (const lang of langs) {
       const r = await videoShots(browser, server.url, lang);
       console.log(`videos ${lang}: ${r.dir}\n  ${r.notes.join("\n  ")}`);
+    }
+  if (deck === "launch" && args.film !== "no" && args.only !== "drive")
+    for (const lang of langs) {
+      const r = await filmShots(browser, server.url, lang);
+      console.log(`film ${lang}: ${r.dir}\n  ${r.notes.join("\n  ")}`);
     }
 } finally {
   await browser.close();

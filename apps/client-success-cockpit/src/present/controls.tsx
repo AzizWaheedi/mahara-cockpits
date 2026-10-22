@@ -1,7 +1,30 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { fill, GROUP_LINKS, type L, O, SHARED } from "./content";
+import {
+  EXAMPLE,
+  fill,
+  GROUP_LINKS,
+  type L,
+  O,
+  SERVICES,
+  SHARED,
+} from "./content";
 import type { AccessStatus, CallKind, DeckData, Overrides } from "./deckData";
+import {
+  choiceOf,
+  feedUrl,
+  isTheme,
+  parseChoice,
+  pickableScenes,
+  SCENES,
+} from "./examples";
+import {
+  isMain,
+  MAIN,
+  type MainKey,
+  sameWords,
+  serviceOfText,
+} from "./services";
 import type { DeckKind } from "./sources";
 import { recapVideos, slotCovered } from "./videos";
 
@@ -230,45 +253,267 @@ function GoalsControls({ d, prep, setPrep }: ControlsProps) {
   );
 }
 
-function ServiceControls({ d, prep, setPrep }: ControlsProps) {
+/**
+ * The example ad (DESIGN 22.14): match their service, or a service and then
+ * one of its pictures. Native selects, the picture beside them as the
+ * preview. Saved on the onboarding row (`example_theme`: a service's key
+ * for its lead picture, else the scene; `choiceOf`) and read by both decks.
+ */
+export function ExampleSwitch({
+  d,
+  prep,
+  setPrep,
+}: {
+  d: DeckData;
+  prep: Overrides;
+  setPrep: ControlsProps["setPrep"];
+}) {
+  const ex = d.example;
+  const choice = parseChoice(prep.example_theme);
+  // The service whose pictures the second select lists: the one chosen in
+  // the first select this session, else the one the deck reads (a saved
+  // scene shared by two services reads as the client's own, else the
+  // first that has it).
+  const [picked, setPicked] = useState<MainKey | null>(null);
+  const shown: MainKey =
+    picked && (!choice || SCENES[picked].includes(choice.scene))
+      ? picked
+      : ex.service;
+  const save = (v: string | null) =>
+    setPrep("onboarding", { example_theme: v }, true);
+  const name = EXAMPLE.names[ex.theme];
+  const svcName = SERVICES[ex.service].name.en;
+  return (
+    <Field
+      label="Example ad"
+      hint="Shown only until they have ads of their own, and labelled Example ad on the slide. Choose a service, then one of its pictures."
+    >
+      <div className="flex items-start gap-3">
+        <img
+          src={feedUrl(ex.theme)}
+          alt=""
+          className="h-[120px] w-[96px] shrink-0 rounded-md border object-cover"
+        />
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="text-xs">
+            {ex.from === "prep"
+              ? `${svcName}: ${name}, chosen here`
+              : ex.from === "service"
+                ? `${svcName}: ${name}, their service`
+                : `${svcName}: ${name}. No service on file yet, so interior design's`}
+          </div>
+          <select
+            className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+            value={choice ? shown : ""}
+            aria-label="Example ad, service"
+            onChange={e => {
+              const v = e.target.value;
+              setPicked(isMain(v) ? v : null);
+              save(isMain(v) ? v : null);
+            }}
+          >
+            <option value="">Match their service</option>
+            {MAIN.map(k => (
+              <option key={k} value={k}>
+                {SERVICES[k].name.en}
+              </option>
+            ))}
+          </select>
+          <select
+            className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+            value={choice ? choice.scene : ""}
+            aria-label="Example ad, picture"
+            onChange={e => {
+              const v = e.target.value;
+              setPicked(shown);
+              save(isTheme(v) ? choiceOf(shown, v) : null);
+            }}
+          >
+            <option value="">
+              {choice
+                ? "Their service's pictures"
+                : "Their service's lead picture"}
+            </option>
+            {/* A kitchen or a bathroom saved before (fixer round 2) is
+                listed only while it is the choice, so the select says
+                what the deck shows; it is never offered. */}
+            {choice && !pickableScenes(shown).includes(choice.scene) ? (
+              <option value={choice.scene}>
+                {EXAMPLE.names[choice.scene]}, a room, not the service
+              </option>
+            ) : null}
+            {pickableScenes(shown).map(x => (
+              <option key={x} value={x}>
+                {EXAMPLE.names[x]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </Field>
+  );
+}
+
+/**
+ * The starter pack is made for one service (fixer round 2): the tick saves
+ * that service's key ("other" for their own words), so a different choice
+ * on slide 4 leaves slide 7 without the pack until it is ticked for the
+ * new one. With no service on file yet it saves a plain yes, read as the
+ * kickoff's service.
+ */
+function StarterPackToggle({
+  d,
+  setPrep,
+}: {
+  d: DeckData;
+  setPrep: ControlsProps["setPrep"];
+}) {
+  const key = d.service.key;
+  const was = d.starterPack ? null : d.starterPackFor;
+  const other = was
+    ? isMain(was)
+      ? SERVICES[was].mid.en
+      : "their own service"
+    : null;
+  return (
+    <Toggle
+      checked={d.starterPack}
+      onChange={v =>
+        setPrep("onboarding", { starter_pack: v ? (key ?? true) : null }, true)
+      }
+    >
+      A ready starter pack exists for {d.serviceMid ?? "the launch service"}
+      <span className="block text-xs text-muted-foreground">
+        {other
+          ? `Ticked for ${other}, so slide 7 leaves the pack out while the service is ${d.serviceMid ?? "not chosen"}. Tick it again if the pack fits this one.`
+          : "Only then does slide 7 name the service and show the starter ads."}
+      </span>
+    </Toggle>
+  );
+}
+
+/** The launch service in prep: one of the five, or Other in their words. */
+function ServicePicker({ d, prep, setPrep }: ControlsProps) {
   const p = prep.onboarding;
+  const typed = typeof p.service_focus === "string" ? p.service_focus : "";
+  const typedKey = serviceOfText(typed);
+  const [other, setOther] = useState(Boolean(typed) && !typedKey);
+  // Once Other is picked here it stays open while their words are typed,
+  // even when the words turn out to belong to one of the five.
+  const value = other ? "other" : (typedKey ?? (typed ? "other" : ""));
+  return (
+    <div className="space-y-1.5">
+      <select
+        className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+        value={value}
+        aria-label="Launch service"
+        onChange={e => {
+          const v = e.target.value;
+          if (v === "other") {
+            setOther(true);
+            setPrep("onboarding", {
+              service_focus: typedKey ? null : typed || null,
+              service_focus_ar: null,
+            });
+            return;
+          }
+          setOther(false);
+          setPrep(
+            "onboarding",
+            isMain(v)
+              ? {
+                  service_focus: SERVICES[v].name.en,
+                  service_focus_ar: SERVICES[v].name.ar,
+                }
+              : { service_focus: null, service_focus_ar: null },
+            true,
+          );
+        }}
+      >
+        <option value="">
+          {d.service.key &&
+          d.service.from !== "prep" &&
+          d.service.from !== "chosen"
+            ? `From the ${d.service.from === "kickoff" ? "kickoff form" : "onboarding form"}`
+            : "Not set"}
+        </option>
+        {MAIN.map(k => (
+          <option key={k} value={k}>
+            {SERVICES[k].name.en}
+          </option>
+        ))}
+        <option value="other">Other, in their words</option>
+      </select>
+      {value === "other" ? (
+        <>
+          <PrepText
+            label="Their service, in their words"
+            value={typed}
+            placeholder="Their service, in their words"
+            onChange={v => setPrep("onboarding", { service_focus: v })}
+          />
+          <PrepText
+            label="Their service, Arabic"
+            value={
+              typeof p.service_focus_ar === "string" ? p.service_focus_ar : ""
+            }
+            placeholder="الخدمة بكلامهم"
+            rtl
+            onChange={v => setPrep("onboarding", { service_focus_ar: v })}
+          />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function ServiceControls({ d, prep, setPrep, ...rest }: ControlsProps) {
+  const p = prep.onboarding;
+  const named = d.service.key
+    ? d.service.key === "other"
+      ? `Other: "${d.service.words.en ?? d.service.words.ar ?? "their words"}"`
+      : SERVICES[d.service.key].name.en
+    : null;
   return (
     <div className="space-y-4">
       <Field
         label="Launch service"
         hint={
-          d.serviceChosen
-            ? "Chosen on the call."
-            : d.serviceFocus
-              ? `Not chosen yet. Until it is, the deck uses "${d.serviceFocus}" from the ${d.serviceFocusFrom === "kickoff" ? "kickoff form" : "onboarding form"}.`
-              : "Not chosen yet, and neither form names one."
+          d.today.service ? (
+            <span className="flex flex-wrap items-center gap-2">
+              Chosen on the call with Launch with this.
+              {/* Undo clears the stamp: the checklist's item opens again. */}
+              <button
+                type="button"
+                className="underline underline-offset-2"
+                onClick={() =>
+                  setPrep("onboarding", { service_chosen_at: null }, true)
+                }
+              >
+                Undo the choice
+              </button>
+            </span>
+          ) : d.service.from === "prep" ? (
+            "Suggested here. Slide 4 starts on it; the client chooses with Launch with this, and until then the checklist keeps it open."
+          ) : named ? (
+            `Not chosen yet. Slide 4 starts on ${named}, from the ${d.service.from === "kickoff" ? "kickoff form" : "onboarding form"}${d.service.text && !sameWords(d.service.text, named) ? ` ("${d.service.text}")` : ""}.`
+          ) : (
+            "Not chosen yet, and neither form names one. The client picks one of the five on slide 4."
+          )
         }
       >
-        <PrepText
-          label="Launch service"
-          value={typeof p.service_focus === "string" ? p.service_focus : ""}
-          onChange={v => setPrep("onboarding", { service_focus: v })}
-        />
-        <PrepText
-          label="Launch service, Arabic"
-          value={
-            typeof p.service_focus_ar === "string" ? p.service_focus_ar : ""
-          }
-          placeholder="اسم الخدمة بالعربي"
-          rtl
-          onChange={v => setPrep("onboarding", { service_focus_ar: v })}
-        />
+        <ServicePicker d={d} prep={prep} setPrep={setPrep} {...rest} />
       </Field>
       <Field
         label="Their services, one per line"
         hint={
           d.servicesFrom === "form"
-            ? "From the onboarding form, prices taken out. Edit to change the chips."
+            ? "From the onboarding form, prices taken out. Each shows quietly under the main service it belongs to on slide 4."
             : d.servicesFrom === "kickoff"
-              ? "Only the kickoff's advertised service. Add the others here or on the slide."
+              ? "Only the kickoff's advertised service. Add the others here."
               : d.servicesFrom === "prep"
-                ? "Edited here."
-                : "None in the forms. Type them here or on the slide."
+                ? "Edited here. Each shows quietly under the main service it belongs to on slide 4."
+                : "None in the forms. Type them here, in their words."
         }
       >
         <PrepText
@@ -288,15 +533,27 @@ function ServiceControls({ d, prep, setPrep }: ControlsProps) {
           }
         />
       </Field>
-      <Toggle
-        checked={p.starter_pack === true}
-        onChange={v => setPrep("onboarding", { starter_pack: v || null }, true)}
+      <Field
+        label="The same, in Arabic"
+        hint="For the Arabic deck: slide 4's quiet lines and the call queue. Blank, it shows their words as written."
       >
-        A ready starter pack exists for {d.serviceFocus ?? "the launch service"}
-        <span className="block text-xs text-muted-foreground">
-          Only then does slide 7 name the service and show the starter ads.
-        </span>
-      </Toggle>
+        <PrepText
+          label="Their services in Arabic"
+          rows={4}
+          rtl
+          value={strings(p.services_ar).join("\n")}
+          onChange={v =>
+            setPrep("onboarding", {
+              services_ar: v
+                .split("\n")
+                .map(x => x.trim())
+                .filter(Boolean),
+            })
+          }
+        />
+      </Field>
+      <ExampleSwitch d={d} prep={p} setPrep={setPrep} />
+      <StarterPackToggle d={d} setPrep={setPrep} />
     </div>
   );
 }

@@ -1,9 +1,10 @@
 import { Copy, Play, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { DeckHub, VideoPhase } from "./channel";
 import type { DeckData } from "./deckData";
 import { VIDEOS_NOT_LIVE, type VideoRow } from "./sources";
+import { VideoPoster } from "./VideoPoster";
 import {
   clock,
   LANG_NAME,
@@ -36,12 +37,22 @@ const WHY: Record<"dwy" | "os", string> = {
   os: "Not shown until Mahara OS is approved for this client.",
 };
 
+/**
+ * Above the notes window's sticky foot (its height, measured there): the
+ * row scrolls into view clear of it, and so does each button when the
+ * keyboard reaches it (focus scrolls by the focused element's own margin).
+ */
+const CLEAR_FOOT = {
+  scrollMarginBottom: "calc(var(--notes-foot, 9rem) + 16px)",
+};
+
 function CopyLink({ url }: { url: string }) {
   const [done, setDone] = useState(false);
   return (
     <Button
       size="sm"
       variant="outline"
+      style={CLEAR_FOOT}
       onClick={() => {
         void navigator.clipboard?.writeText(url).then(() => {
           setDone(true);
@@ -75,6 +86,12 @@ function Recorded({
   const play = () => hub.post({ type: "video", slot: id, lang: row.lang });
   const close = () => hub.post({ type: "video", slot: null });
   const open = mine === "loading" || mine === "ready" || mine === "playing";
+  // Once the video opens, its Close and Copy row is brought clear of the
+  // window's sticky foot (score round 3: the foot covered it).
+  const controls = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open) controls.current?.scrollIntoView?.({ block: "nearest" });
+  }, [open]);
   const line = offer
     ? offer
     : `Recorded · ${LANG_NAME[row.lang]}${row.durationSeconds ? ` · ${clock(row.durationSeconds)}` : ""}`;
@@ -105,14 +122,24 @@ function Recorded({
           Esc, V or Close closes it; a deck key closes it too.
         </div>
       ) : null}
-      <div className="flex flex-wrap gap-2">
+      <div
+        ref={controls}
+        className="flex flex-wrap gap-2"
+        // The sticky foot's height, measured by the notes window.
+        style={CLEAR_FOOT}
+      >
         {open ? (
-          <Button size="sm" variant="outline" onClick={close}>
+          <Button
+            size="sm"
+            variant="outline"
+            style={CLEAR_FOOT}
+            onClick={close}
+          >
             <X aria-hidden />
             Close the video
           </Button>
         ) : mine === "blocked" ? null : (
-          <Button size="sm" variant="outline" onClick={play}>
+          <Button size="sm" variant="outline" style={CLEAR_FOOT} onClick={play}>
             <Play aria-hidden />
             Play on screen
           </Button>
@@ -144,6 +171,13 @@ function SlotBlock({
   return (
     <div className="space-y-1.5">
       <div className="text-sm font-medium">{title}</div>
+      {state.kind === "filled" || (state.kind === "empty" && !state.other) ? (
+        <VideoPoster
+          title={title}
+          row={state.kind === "filled" ? state.row : null}
+          size="notes"
+        />
+      ) : null}
       {state.kind === "hidden" ? (
         <div className="text-xs text-muted-foreground">{WHY[state.why]}</div>
       ) : state.kind === "unread" ? (
@@ -165,9 +199,7 @@ function SlotBlock({
             hub={hub}
             offer={`Not recorded in ${deckLang} yet. The ${LANG_NAME[state.other.lang]} one:`}
           />
-        ) : (
-          <div className="text-xs text-muted-foreground">Not recorded yet.</div>
-        )
+        ) : null
       ) : (
         <Recorded slot={slot} row={state.row} player={player} hub={hub} />
       )}

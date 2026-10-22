@@ -3,6 +3,7 @@ import type { LiveState } from "./channel";
 import { type L, type Lang, type SlideNotes, tf } from "./content";
 import type { DeckData, Overrides } from "./deckData";
 import type { DeckKind } from "./sources";
+import type { ControlItem } from "./VideoPlayer";
 
 /**
  * What a slide is given (DESIGN 16.4). The engine mounts one slide at a
@@ -32,6 +33,11 @@ export interface SlideCtx {
   /** True on the shared deck; false in the prep view's preview. */
   presenting: boolean;
   /**
+   * Open a recorded video in the deck's player (O6's "Video guide" marks):
+   * the same player the head band's control opens (DESIGN 21.3, 22.2.6).
+   */
+  playVideo?: (item: ControlItem) => void;
+  /**
    * Add files to the ads tray (a file dropped on a phone): shown at once,
    * saved behind it, the words said in the notes window (DESIGN 10.3).
    */
@@ -46,6 +52,12 @@ export interface SlideCtx {
 export interface SlideDef {
   id: string;
   title: L;
+  /**
+   * The title as the slide shows it for this client, where that differs
+   * (score round 2 of the five services: prep and the notes said "goes
+   * live" over a cover saying "is live"). `titleFor` reads it.
+   */
+  titleOf?: (d: DeckData) => L;
   /** How many stops the slide has for this client (1 when left out). */
   stops?: (ctx: SlideCtx) => number;
   /** A stop's name, for the notes window and the live region. */
@@ -61,6 +73,12 @@ export interface SlideDef {
   render: (ctx: SlideCtx) => ReactNode;
   /** Prep's readiness for this slide: what is missing, in plain words. */
   missing?: (d: DeckData) => string[];
+  /**
+   * What the CSM does on the call itself (fixer round 2): an instruction,
+   * never missing data, so prep sets it in muted ink and the slide can
+   * still read Ready.
+   */
+  todo?: (d: DeckData) => string[];
   /**
    * The journey's mini rail at the foot (launch slides 3 to 7, DESIGN 6.7):
    * the step this stop opens, from 0, or null for none. The shell draws it,
@@ -90,3 +108,7 @@ export function fillNotes(lines: string[], slots: Record<string, string>) {
  */
 export const slideTitle = (title: L, lang: Lang, name: string) =>
   tf(title, lang, { name });
+
+/** A slide's title for this client: its own, else the deck's. */
+export const titleFor = (s: SlideDef, d: DeckData): L =>
+  s.titleOf?.(d) ?? s.title;

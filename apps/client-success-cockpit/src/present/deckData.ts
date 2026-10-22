@@ -22,7 +22,18 @@ import {
 } from "./clean";
 import { type L, type Lang, LINKS, O } from "./content";
 import { dayOf, gulfToday } from "./dates";
+import { examplePick, type ServiceExample } from "./examples";
 import { type LaunchData, launchData } from "./launchData";
+import {
+  isMain,
+  resolveService,
+  type ServiceKey,
+  type ServicePick,
+  type ServiceRow,
+  type ServiceSource,
+  serviceNames,
+  serviceRows,
+} from "./services";
 import type { DeckKind, DeckSources, DeckVideos, LaunchAd } from "./sources";
 import type { VideoRead } from "./videos";
 
@@ -40,6 +51,20 @@ export type AccessStatus = "done" | "todo" | "unchecked";
 export type GoalKey = "goal90" | "goal12_24" | "challenges" | "why";
 export type CallKind = "blueprint" | "launch" | "checkin" | "onboarding";
 export type Templated = "approved" | "pending" | "declined";
+
+/**
+ * A form's value said mid-sentence: a value in Title Case ("Wants To See
+ * Them First") is lowered after its first letter; one with a capital that
+ * is not a word's first (a brand, an acronym such as "OS") stays as typed.
+ */
+export function sentenceCase(value: string): string {
+  const words = value.trim().split(/\s+/);
+  const title =
+    words.length > 1 && words.every(w => /^[A-Z][a-z'’]*[.,]?$/.test(w));
+  if (!title) return value.trim();
+  const lowered = words.map(w => w.toLowerCase()).join(" ");
+  return lowered[0].toUpperCase() + lowered.slice(1);
+}
 
 export interface Goal {
   key: GoalKey;
@@ -122,16 +147,47 @@ export interface DeckData {
   services: string[];
   servicesFrom: "prep" | "form" | "kickoff" | "none";
   numberOne: string | null;
+  /**
+   * The client's main service as this deck reads it (DESIGN 22.14): the
+   * onboarding deck asks slide 4's choice, then prep, the kickoff and the
+   * forms; the launch deck asks the kickoff first.
+   */
+  service: ServicePick;
+  /** Slide 4's rows: the five main services (and "Other"), the client's own words under each. */
+  serviceRows: ServiceRow[];
+  /** The service as a label in the deck's language ("Interior design"). */
   serviceFocus: string | null;
+  /** The same, said inside a sentence ("interior design", التصميم الداخلي). */
+  serviceMid: string | null;
   serviceFocusFrom: "prep" | "kickoff" | "form" | "none";
-  /** The service the CSM confirmed on slide 4 (prep only). */
+  /**
+   * The service the client chose on slide 4 ("Launch with this" stamps
+   * `service_chosen_at`; Undo clears it). A service typed in prep with no
+   * stamp is only the proposal (DESIGN 22.2.0).
+   */
   serviceChosen: string | null;
+  serviceChosenAt: string | null;
+  /** The example ad's pictures while they have no creative (DESIGN 22.14). */
+  example: ServiceExample;
+  /** The client's own words inside an example phone: never written for them. */
+  exampleWords: { primary: string | null; headline: string | null };
+  /** The call's checklist, each item done from data, never from a press (DESIGN 22.2.0). */
+  today: { service: boolean; access: boolean; blueprint: boolean };
   templated: Templated;
   templatedAnswer: string | null;
+  /**
+   * A ready starter pack for the service this deck is on (finder round 2):
+   * prep ticks it for one main service, so a different choice on slide 4
+   * leaves O7 without the pack's line and its stop.
+   */
   starterPack: boolean;
+  /** The service prep ticked the pack for; null when none is ticked. */
+  starterPackFor: ServiceKey | null;
   starterAds: LaunchAd[];
   redLines: string[];
   dosDonts: { do: string[]; dont: string[] };
+  /** The Arabic of each card line, typed in prep (`dos_donts_ar`, DESIGN 22.6.2). */
+  dosDontsAr: Record<string, string>;
   kickoffFiled: boolean;
   access: AccessRow[];
   links: {
@@ -285,10 +341,15 @@ function setupStatus(value: string | null | undefined): AccessStatus {
   return SETUP_DONE.test(value.trim()) ? "done" : "todo";
 }
 
-/** A row's status from its ticks: done only when every tick is done. */
+/**
+ * A row's status from its ticks: done only when every tick is done; to do
+ * when one is, or when some are done and the rest not checked (score round
+ * 4: "Not checked yet" headed a card with two of its three ticked).
+ */
 export function rowStatus(ticks: AccessStatus[]): AccessStatus {
   if (ticks.length && ticks.every(s => s === "done")) return "done";
   if (ticks.some(s => s === "todo")) return "todo";
+  if (ticks.some(s => s === "done")) return "todo";
   return "unchecked";
 }
 
@@ -346,8 +407,8 @@ export function deckData(input: DeckInput): DeckData {
       : ghlMode && /^(DFY|DWY)$/.test(ghlMode)
         ? { dwy: ghlMode === "DWY", known: true, from: "highlevel" }
         : { dwy: false, known: false, from: "none" };
-  if (!mode.known)
-    notes.push("Service mode not set on the card. The deck uses done for you.");
+  // An unknown model is said once, by slide 3's prep line ("Service model
+  // not set…"), not again here (the fixer's round: prep showed both).
 
   // The presenting CSM's first name (the covers only).
   const fromAuth = str(input.presenterName);
@@ -437,10 +498,23 @@ export function deckData(input: DeckInput): DeckData {
     numberOneRaw.split(/\s+/).length <= 6
       ? numberOneRaw
       : null;
+  // The Arabic deck names the client's services in Arabic wherever prep
+  // has them (either deck's prep: the same client's words), so slide 4's
+  // quiet lines and the queue card keep one script (score round 1: O4 read
+  // "Villa interiors" under تصميم داخلي); the Latin words only when there
+  // is no Arabic list.
+  const servicesAr =
+    lang === "ar"
+      ? ([prep, onboardingPrep, input.prep.launch ?? {}]
+          .map(p => list(p.services_ar))
+          .find(l => l.length) ?? null)
+      : null;
+  // Prep's list is edited on the onboarding side: the launch deck reads it
+  // there when its own prep has none.
   const prepServices =
-    (lang === "ar" && list(prep.services_ar).length
-      ? list(prep.services_ar)
-      : null) ?? (list(prep.services).length ? list(prep.services) : null);
+    servicesAr ??
+    [prep, onboardingPrep].map(p => list(p.services)).find(l => l.length) ??
+    null;
   let services: string[];
   let servicesFrom: DeckData["servicesFrom"];
   if (prepServices) {
@@ -465,20 +539,64 @@ export function deckData(input: DeckInput): DeckData {
     }
   }
 
-  const chosen = twin(onboardingPrep, "service_focus", lang);
-  const serviceFocus = chosen ?? advertised ?? numberOne ?? null;
-  const serviceFocusFrom: DeckData["serviceFocusFrom"] = chosen
-    ? "prep"
-    : advertised
-      ? "kickoff"
-      : numberOne
-        ? "form"
-        : "none";
+  // The main service (DESIGN 22.14). Slide 4's choice and prep's line
+  // are one field (service_focus); the stamp says the client chose it.
+  const chosenAt = str(onboardingPrep.service_chosen_at);
+  const prepSource: ServiceSource = {
+    from: chosenAt ? "chosen" : "prep",
+    text: str(onboardingPrep.service_focus),
+    ar: str(onboardingPrep.service_focus_ar),
+    explicit: true,
+  };
+  const kickSource: ServiceSource = {
+    from: "kickoff",
+    text: advertised,
+    explicit: true,
+  };
+  const formSources: ServiceSource[] = [
+    numberOne,
+    ...serviceChips(answer(form, FORM.services)),
+    ...services,
+  ].map(text => ({ from: "form", text, explicit: false }));
+  const nameSource: ServiceSource = {
+    from: "none",
+    text: [nameEn, nameAr].filter(Boolean).join(" "),
+    explicit: false,
+  };
+  // The onboarding deck: the choice, prep, the kickoff, the forms. The
+  // launch deck: the kickoff first, then the choice, prep and the forms.
+  const onboardingService = resolveService([
+    prepSource,
+    kickSource,
+    ...formSources,
+  ]);
+  const launchService = resolveService([
+    kickSource,
+    prepSource,
+    ...formSources,
+  ]);
+  const service = input.deck === "launch" ? launchService : onboardingService;
+  const named = serviceNames(service);
+  const serviceFocus = named.name[lang] ?? null;
+  const serviceMid = named.mid[lang] ?? null;
+  const serviceFocusFrom: DeckData["serviceFocusFrom"] =
+    service.from === "chosen" ? "prep" : service.from;
+  const chosenNamed = serviceNames(onboardingService);
 
   // Starter ads and approval.
   const templatedAnswer = str(answer(kickoff, KICK.templated));
   const templated = TEMPLATED(templatedAnswer);
-  const starterPack = onboardingPrep.starter_pack === true;
+  // The pack is made for one service. Prep saves its key ("other": the
+  // service in their own words); a plain yes (saved before keys) means the
+  // kickoff's service, or, with none on the kickoff, the deck's.
+  const savedPack = onboardingPrep.starter_pack;
+  const starterPackFor: ServiceKey | null =
+    isMain(savedPack) || savedPack === "other"
+      ? savedPack
+      : savedPack === true
+        ? (resolveService([kickSource]).key ?? service.key)
+        : null;
+  const starterPack = starterPackFor !== null && starterPackFor === service.key;
   const starterAds = input.ads.filter(
     a => a.kind === "starter" && a.status === "ready" && !a.hidden,
   );
@@ -493,6 +611,16 @@ export function deckData(input: DeckInput): DeckData {
     do: sections.find(x => x.tone === "do")?.items ?? [],
     dont: sections.find(x => x.tone === "dont")?.items ?? [],
   };
+  // Only the lines still on the card: a key whose line is gone is ignored
+  // (and pruned on the next save in prep).
+  const cardLines = new Set([...dosDonts.do, ...dosDonts.dont]);
+  const dosDontsAr: Record<string, string> = {};
+  for (const [k, v] of Object.entries(
+    record(input.prep.launch?.dos_donts_ar),
+  )) {
+    const ar = str(v);
+    if (ar && cardLines.has(k)) dosDontsAr[k] = ar;
+  }
 
   // Access: the kickoff's setup answers, then the CSM's live ticks.
   const kickoffFiled = Boolean(kickoff);
@@ -585,6 +713,31 @@ export function deckData(input: DeckInput): DeckData {
     null,
   ];
 
+  // The example ad (DESIGN 22.14): prep's switch, else the pictures of
+  // this deck's service, else of the client's name read as a service, else
+  // interior design's. Its words are the client's own: their selling point
+  // as the caption, the service as the Facebook headline.
+  const launchPrep = input.prep.launch ?? {};
+  const byName = service.key ? null : resolveService([nameSource]);
+  const example = examplePick(
+    onboardingPrep.example_theme,
+    service.key ?? (byName?.key === "other" ? null : (byName?.key ?? null)),
+    service.text,
+  );
+  // The Arabic deck's headline: the service's Arabic name, never a Latin one.
+  const serviceAr =
+    named.name.ar && ARABIC.test(named.name.ar) ? named.name.ar : null;
+  const exampleWords =
+    lang === "ar"
+      ? {
+          primary: str(launchPrep.selling_point_ar),
+          headline: serviceAr,
+        }
+      : {
+          primary: str(launchPrep.selling_point),
+          headline: named.name.en,
+        };
+
   const kickPage = str(answer(kickoff, KICK.pageName));
   const pagePrep =
     twin(prep, "page_name", lang) ?? twin(onboardingPrep, "page_name", lang);
@@ -619,7 +772,9 @@ export function deckData(input: DeckInput): DeckData {
         : "No caller is assigned to this account yet.",
     );
   if (templatedAnswer)
-    notes.push(`Kickoff, templated ads: ${templatedAnswer}.`);
+    // The form's raw value can arrive in Title Case ("Wants To See Them
+    // First"): said in sentence case, as every line here is.
+    notes.push(`Kickoff, templated ads: ${sentenceCase(templatedAnswer)}.`);
   else if (kickoffFiled)
     notes.push("Kickoff filed without a templated ads answer.");
   else
@@ -655,15 +810,37 @@ export function deckData(input: DeckInput): DeckData {
     services,
     servicesFrom,
     numberOne,
+    service,
+    serviceRows: serviceRows(services, onboardingService),
     serviceFocus,
+    serviceMid,
     serviceFocusFrom,
-    serviceChosen: chosen,
+    serviceChosen:
+      chosenAt && onboardingService.from === "chosen"
+        ? (chosenNamed.name[lang] ?? null)
+        : null,
+    serviceChosenAt: chosenAt,
+    example,
+    exampleWords,
+    today: {
+      service: Boolean(chosenAt),
+      // The setup done live on O6: Meta access and Mahara OS (done with
+      // you, their CRM and their callers' phones), every step done.
+      access: rows
+        .filter(r => ["meta", "os", "crm", "phones"].includes(r.key))
+        .every(r => r.status === "done"),
+      // Booked, or held already (the stage past it, as O5's road shows):
+      // O7's checklist never leaves it open beside a road that says Done.
+      blueprint: Boolean(next.blueprint) || roadNow > 3,
+    },
     templated,
     templatedAnswer,
     starterPack,
+    starterPackFor,
     starterAds,
     redLines,
     dosDonts,
+    dosDontsAr,
     kickoffFiled,
     access: rows,
     links: {
@@ -706,6 +883,7 @@ export function deckData(input: DeckInput): DeckData {
         areas: answer(form, FORM.areas),
       },
       advertised,
+      service: launchService,
       today,
       refs: {
         brandDna: str(s?.editor?.brandDnaUrl) ?? str(kit?.links?.brand_dna),

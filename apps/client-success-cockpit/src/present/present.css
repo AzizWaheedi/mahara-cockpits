@@ -34,6 +34,65 @@
   --dk-beat-ms: 260ms;
   --dk-cut-ms: 200ms;
   --dk-hover-canvas-ms: 120ms;
+  /* 22.3, the motion system (DESIGN 22.3.1). One switch: every duration and
+     delay outside this block is written calc(<token> * var(--dk-m)), so
+     ?still=1 and reduced motion (--dk-m: 0) set every state at once, and
+     the shot script's still frame is the reduced-motion frame. No bounce,
+     no overshoot, no blur or shadow in motion, and no scale on a picture
+     but one: an example ad's slow drift (22.14, --dk-t-drift). */
+  --dk-m: 1;
+  --dk-ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --dk-ease-move: cubic-bezier(0.65, 0, 0.35, 1);
+  --dk-t-tick: 160ms;
+  --dk-t-join: 200ms;
+  --dk-t-swap: var(--dk-swap-ms);
+  --dk-t-move: 300ms;
+  --dk-t-stage: 420ms;
+  /* O3's group filling: the trunk, then each branch (DESIGN 22.2.3), 240
+     and 200 since 22.14 (160 each still read as a blink on a share). */
+  --dk-t-trunk: 240ms;
+  --dk-t-branch: 200ms;
+  /* 22.14, the arrivals (the CEO's "really nice animations"): each slide
+     builds its signature once on entry, confidently enough to read on a
+     Zoom share at 10 to 15 frames a second, then holds still. */
+  /* A figure or a line of words arriving: long enough to be seen moving. */
+  --dk-t-arrive: 560ms;
+  /* One beat between the parts of a build (the mark, the hello, the name;
+     a road's stops lighting one by one; a checklist ticking in order). */
+  --dk-t-step: 120ms;
+  /* Between the lines of a goal setting in. */
+  --dk-t-line: 140ms;
+  /* A line drawn across the slide (O2's 90 days). */
+  --dk-t-sweep: 900ms;
+  /* The slow drift on an example picture: once, then held; never a loop. */
+  --dk-t-drift: 9000ms;
+  --dk-ease-drift: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --dk-drift-scale: 1.04;
+  /* The distance a large figure (a phone) slides up as it arrives. */
+  --dk-rise-far: 64px;
+  /* O2's goal sits this low on its first stop and settles up on the next. */
+  --dk-lift: 150px;
+  /* ...and with one short group of answers to come, it holds this low on
+     the next too, the answers under it, so the pair is one block on the
+     stage's middle (fixer round 2: at the top it left 350 px empty). */
+  --dk-hold: 120px;
+  /* ...and this much larger, the stage's hero, growing up and away from its
+     90 days from the hung mark 80 px out (DESIGN 22.14.4: the widest goal's
+     far end at 56 + 1480 x 1.15 = 1758 of the 1784 px content edge). */
+  --dk-hero-scale: 1.15;
+  /* O1's checklist rings, one at a time (score round 2: 160 ms each read as
+     things simply appearing at a share's frame rate). */
+  --dk-t-ring: 240ms;
+  /* The progress bar's fill and the beat after it (L11). */
+  --dk-t-fill: 600ms;
+  /* One beat's wait inside a sequence (a line drawing after the cut). */
+  --dk-t-beat: 120ms;
+  /* The presenter's chrome fading when the mouse rests (not slide motion). */
+  --dk-t-chrome: 300ms;
+  --dk-stagger: 80ms;
+  --dk-stagger-fast: 32ms;
+  --dk-stagger-max: 480ms;
+  --dk-rise: 12px;
   /* The one tight drop shadow a phone carries (7.1), and the canvas's own
      edge against the window around it. */
   --dk-shadow-phone: 0 18px 36px -22px rgba(0, 0, 0, 0.9);
@@ -58,6 +117,15 @@
   overflow: hidden;
   font-family: var(--dk-font);
   -webkit-font-smoothing: antialiased;
+}
+/* The motion switch (DESIGN 22.3.1): still shots and reduced motion. */
+.dk-root[data-still] {
+  --dk-m: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dk-root {
+    --dk-m: 0;
+  }
 }
 /* Inside the prep view: a preview in a box, not the whole window. */
 .dk-root[data-embedded] {
@@ -99,7 +167,7 @@
   display: flex;
   flex-direction: column;
   text-wrap: pretty;
-  animation: dk-cut var(--dk-cut-ms) var(--dk-ease) both;
+  animation: dk-cut calc(var(--dk-cut-ms) * var(--dk-m)) var(--dk-ease) both;
 }
 .dk-slide[data-deep] {
   background: var(--dk-deep);
@@ -447,7 +515,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  transition: opacity 300ms;
+  /* The presenter's chrome: eased like the rest, and at once under reduced
+     motion or a still frame. */
+  transition: opacity calc(var(--dk-t-chrome) * var(--dk-m)) var(--dk-ease);
   font-family: var(--dk-font);
 }
 .dk-root[data-idle] .dk-chrome {
@@ -469,7 +539,7 @@
   justify-content: center;
   gap: 6px;
   cursor: pointer;
-  transition: border-color var(--dk-hover-canvas-ms) var(--dk-ease);
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
 .dk-chrome button:hover:not([aria-pressed="true"]):not(:disabled) {
   border-color: var(--dk-edge);
@@ -575,7 +645,7 @@
   font: inherit;
   font-size: 15px;
   cursor: pointer;
-  transition: border-color var(--dk-hover-canvas-ms) var(--dk-ease);
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
 .dk-overview-grid button:hover {
   border-color: var(--dk-edge);
@@ -621,7 +691,7 @@
   font: inherit;
   color: inherit;
   cursor: pointer;
-  transition: border-color var(--dk-hover-canvas-ms) var(--dk-ease);
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-press:focus-visible {
   outline: 3px solid var(--dk-teal);
@@ -652,8 +722,8 @@
   white-space: nowrap;
   color: var(--dk-ink-3);
   transition:
-    border-color var(--dk-hover-canvas-ms) var(--dk-ease),
-    color var(--dk-swap-ms) var(--dk-ease);
+    border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease),
+    color calc(var(--dk-swap-ms) * var(--dk-m)) var(--dk-ease);
 }
 [dir="rtl"] .dkc-status {
   font-size: 26px;
@@ -706,6 +776,11 @@ button.dkc-status:hover {
 [dir="rtl"] .dkc-presenter b {
   font-size: 30px;
 }
+/* O1: the presenter on the phone's end edge (.dkc-welcome-phone), so the
+   name, the phone and its tag share one edge. */
+.dkc-letterhead[data-inset] .dkc-presenter {
+  margin-inline-end: 120px;
+}
 
 /* The journey behind a cover, whole and quiet, at 80% in the end half
    (DESIGN 9.1): 840 x 692 drawn as 672 x 554, ending above the foot. */
@@ -747,189 +822,836 @@ button.dkc-status:hover {
   height: 74%;
   object-fit: contain;
 }
+/* No logo (DESIGN 22.5.1): a rounded-square tile with one letter, the way
+   an app icon reads as a mark. The radius is set inline (0.22 of the side). */
 .dkc-monogram {
   display: grid;
   place-items: center;
   flex: none;
-  border-radius: 999px;
   background: var(--dk-panel-2);
+  box-shadow: inset 0 0 0 1px var(--dk-line-strong);
   color: var(--dk-ink);
-  font-weight: 600;
+  font-family: var(--dk-font);
+  font-weight: 700;
   line-height: 1;
   letter-spacing: -0.02em;
+  text-transform: uppercase;
 }
-.dkc-monogram[data-edge] {
-  box-shadow: inset 0 0 0 1px var(--dk-line-strong);
+/* Optically centred: a capital sits 2% below the box's centre. */
+.dkc-monogram-letter {
+  display: block;
+  padding-top: 4%;
 }
-[dir="rtl"] .dkc-monogram,
 .dkc-monogram[data-ar] {
   font-family: var(--dk-font-ar);
   font-weight: 700;
   letter-spacing: 0;
 }
+.dkc-monogram[data-ar] .dkc-monogram-letter {
+  padding-top: 0;
+  transform: translateY(-4%);
+}
+/* Inside app chrome: the same letter in a circle on the app's avatar ground. */
+.dkc-avatar-letter {
+  background: var(--app-avatar, #262626);
+  color: var(--app-text, var(--dk-ink));
+  font-family: var(--dk-font);
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.dkc-avatar-letter[data-ar] {
+  font-family: var(--dk-font-ar);
+}
+
+/* ------------------------------------- the call's checklist (dkc-today) */
+
+/* DESIGN 22.2.0: three rings with their numbers, in the call's order; a
+   done item is the lanes' passed mark (a teal ring and check), its numeral
+   gone, its name in ink. Never a half state and never a count. Only a
+   change seen on screen draws (data-draw); O7's close draws its done items
+   in order, --dk-stagger apart. */
+.dkc-today {
+  contain: layout style;
+}
+.dkc-today-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dkc-today li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.dkc-today-ring-wrap {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.dkc-today-mark {
+  display: block;
+  overflow: visible;
+}
+.dkc-today-ring {
+  fill: none;
+  stroke: var(--dk-line-strong);
+  stroke-width: 2;
+}
+.dkc-today-done {
+  opacity: 0;
+}
+.dkc-today-done[data-on] {
+  opacity: 1;
+}
+.dkc-today-done circle {
+  fill: none;
+  stroke: var(--dk-teal);
+  stroke-width: 2;
+}
+.dkc-today-check {
+  fill: none;
+  stroke: var(--dk-teal);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dkc-today-num {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--dk-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.dkc-today li[data-done] .dkc-today-num {
+  opacity: 0;
+}
+.dkc-today-name {
+  color: var(--dk-ink-2);
+  transition: color calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-today li[data-done] .dkc-today-name {
+  color: var(--dk-ink);
+}
+/* A tick seen on screen: the numeral leaves first (one beat), then the
+   ring's teal layer fades in and the check draws, then the name turns ink
+   (score round 2 of the five services: the numeral and a half-drawn check
+   showed together for a moment, a garbled 3 with a tick). */
+.dkc-today li[data-draw] {
+  --dkt-delay: calc(min(calc(var(--k, 0) * var(--dk-stagger)), var(--dk-stagger-max)) * var(--dk-m));
+  --dkt-check: calc(var(--dkt-delay) + var(--dk-t-beat) * var(--dk-m));
+}
+.dkc-today li[data-draw] .dkc-today-done {
+  animation: dkc-swap calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) var(--dkt-check) both;
+}
+.dkc-today li[data-draw] .dkc-today-check {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: dkc-draw calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) var(--dkt-check) forwards;
+}
+.dkc-today li[data-draw] .dkc-today-num {
+  animation: dk-swap-out calc(var(--dk-t-beat) * var(--dk-m)) var(--dk-ease-in) var(--dkt-delay) both;
+}
+.dkc-today li[data-draw] .dkc-today-name {
+  transition-delay: calc(var(--dkt-check) + var(--dk-t-tick) * var(--dk-m));
+}
+/* The cover's agenda, under the name (the fixer's round, 22.11): rings 36,
+   names 32/600 in ink, 72 px apart, joined by the lanes' unlit dotted line.
+   On arrival the rings draw in order, one at a time (240 ms each since
+   score round 2), each name with its ring, then the joins: about 960 ms. */
+.dkc-today[data-variant="cover"] .dkc-today-lead {
+  margin: 0 0 22px;
+  font-size: 26px;
+  line-height: 1.4;
+  color: var(--dk-ink-2);
+  /* The agenda's lead sets in with its rings, after the name (22.14). */
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc(var(--today-at, 0s) * var(--dk-m)) both;
+}
+.dkc-today[data-variant="cover"] li + li {
+  margin-top: 36px;
+}
+.dkc-today[data-variant="cover"] li {
+  gap: 20px;
+}
+.dkc-today[data-variant="cover"] .dkc-today-num {
+  font-size: 18px;
+}
+.dkc-today[data-variant="cover"] .dkc-today-name {
+  font-size: 32px;
+  line-height: 1.15;
+  font-weight: 600;
+  color: var(--dk-ink);
+  letter-spacing: -0.01em;
+}
+[dir="rtl"] .dkc-today[data-variant="cover"] .dkc-today-lead {
+  font-size: 28px;
+}
+[dir="rtl"] .dkc-today[data-variant="cover"] .dkc-today-name {
+  font-size: 32px;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+[dir="rtl"] .dkc-today-num {
+  font-family: var(--dk-font-ar);
+}
+.dkc-today-join {
+  position: absolute;
+  inset-inline-start: 17px;
+  bottom: 100%;
+  overflow: visible;
+}
+.dkc-today-join line {
+  stroke: var(--dk-line-strong);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 2 8;
+}
+.dkc-today[data-variant="cover"] .dkc-today-ring {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: dkc-draw calc(var(--dk-t-ring) * var(--dk-m)) var(--dk-ease) calc((var(--today-at, 0s) + var(--i) * var(--dk-t-ring)) * var(--dk-m)) forwards;
+}
+.dkc-today[data-variant="cover"] :is(.dkc-today-num, .dkc-today-name) {
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc((var(--today-at, 0s) + (var(--i) + 1) * var(--dk-t-ring)) * var(--dk-m)) both;
+}
+.dkc-today[data-variant="cover"] .dkc-today-join {
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc((var(--today-at, 0s) + 3 * var(--dk-t-ring)) * var(--dk-m)) both;
+}
+/* At the foot of O4 and O6: "Today", then the three in one line. The
+   slide's own item in ink-2 while open, the others in ink-3, a done one in
+   ink. It sits at the content's start, bottom 44, clear of the count. */
+.dkc-today-foot {
+  position: absolute;
+  bottom: 44px;
+  inset-inline-start: 136px;
+}
+.dkc-today[data-variant="foot"],
+.dkc-today[data-variant="close"] {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+}
+.dkc-today[data-variant="foot"] .dkc-today-list {
+  display: flex;
+  align-items: center;
+  gap: 36px;
+}
+.dkc-today[data-variant="foot"] li {
+  gap: 12px;
+}
+.dkc-today-label {
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink-2);
+}
+.dkc-today[data-variant="foot"] .dkc-today-num {
+  font-size: 17px;
+}
+.dkc-today[data-variant="foot"] .dkc-today-name {
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink-3);
+}
+.dkc-today[data-variant="foot"] li[data-own] .dkc-today-name {
+  color: var(--dk-ink-2);
+}
+.dkc-today[data-variant="foot"] li[data-done] .dkc-today-name {
+  color: var(--dk-ink);
+}
+[dir="rtl"] :is(.dkc-today-label, .dkc-today[data-variant="foot"] .dkc-today-name) {
+  font-size: 26px;
+}
+/* O7's close: the three in one row, rings 44, names 30/600. */
+.dkc-today[data-variant="close"] .dkc-today-list {
+  display: flex;
+  align-items: center;
+  gap: 56px;
+}
+.dkc-today[data-variant="close"] .dkc-today-label {
+  font-size: 26px;
+}
+.dkc-today[data-variant="close"] .dkc-today-num {
+  font-size: 22px;
+}
+.dkc-today[data-variant="close"] .dkc-today-name {
+  font-size: 30px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+[dir="rtl"] .dkc-today[data-variant="close"] .dkc-today-name {
+  font-size: 32px;
+  line-height: 1.45;
+}
 
 /* -------------------------------------------------- O1 · welcome */
 
-/* Anchored a fixed 72 px under the letterhead, so the plate sits at the
-   same height for every client and a long name grows downwards. */
-.dkc-welcome-main {
+/* The cover with the checklist (DESIGN 22.2.1, re-laid in the fixer's
+   round, 22.11): their mark, their name and the three rings as one block on
+   the start half (x 136 to 920), centred on the example phone at the end
+   half's end edge (x 1784). Weight carries the name, never teal. */
+.dkc-welcome {
   position: relative;
   z-index: 1;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  /* 920 px for the name (final score round 1: at 784 a two-word name like
+     "Saha Construction" broke across two lines at 96 px beside 500 px of
+     empty stage); the phone keeps its place, 120 px in from the end. */
+  grid-template-columns: 920px minmax(0, 1fr);
+  column-gap: 120px;
+  align-items: center;
+}
+.dkc-welcome-side {
   display: flex;
   flex-direction: column;
-  max-width: 920px;
-  margin-top: 72px;
-  margin-bottom: auto;
+  align-items: flex-start;
+  min-width: 0;
+}
+.dkc-welcome-side > .dkc-today {
+  margin-top: 64px;
+  /* The rings draw once the name has set (22.14). */
+  --today-at: calc(3 * var(--dk-t-step));
+}
+/* O1's arrival (22.14): their mark, then "Welcome," and their name set in
+   one after the other, the three rings drawing under them, and the phone
+   sliding up with the example ad, whose picture then drifts slowly. About
+   1.4 s, then nothing but the drift moves. */
+.dkc-welcome-side > :first-child {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) both;
+}
+.dkc-hello {
+  animation: dk-rise-line calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-welcome-name {
+  animation: dk-rise-line calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(2 * var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-welcome-phone {
+  justify-self: end;
+  /* 120 px in from the content's end (score round 4: about 520 px of canvas
+     stood between the name block and the phone). */
+  margin-inline-end: 120px;
+  animation: dk-rise-far calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-step) * var(--dk-m)) both;
 }
 .dkc-welcome-title {
-  margin-top: 40px;
+  margin: 32px 0 0;
+  font-weight: 700;
 }
 .dkc-welcome-title span {
   display: block;
 }
-/* A very long name (over 30 characters): the client's-words size. */
-.dkc-welcome-title[data-long],
+.dkc-hello {
+  font-size: 80px;
+  line-height: 1.12;
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  color: var(--dk-ink-2);
+}
+.dkc-welcome-name {
+  margin-top: 6px;
+  font-size: 96px;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  color: var(--dk-ink);
+  text-wrap: balance;
+}
+.dkc-welcome-title[data-size="80"] .dkc-welcome-name {
+  font-size: 80px;
+  line-height: 1.06;
+}
+.dkc-welcome-title[data-size="64"] .dkc-welcome-name {
+  font-size: 64px;
+  line-height: 1.1;
+}
+[dir="rtl"] .dkc-hello {
+  font-size: 76px;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+[dir="rtl"] .dkc-welcome-name {
+  font-size: 92px;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+[dir="rtl"] .dkc-welcome-title[data-size="80"] .dkc-welcome-name {
+  font-size: 76px;
+  line-height: 1.35;
+}
+[dir="rtl"] .dkc-welcome-title[data-size="64"] .dkc-welcome-name {
+  font-size: 62px;
+  line-height: 1.4;
+}
+/* A very long launch-cover name (over 30 characters): the client's-words size. */
 .dkc-cover-title[data-long] {
   font-size: 60px;
   line-height: 1.12;
 }
-[dir="rtl"] .dkc-welcome-title[data-long],
 [dir="rtl"] .dkc-cover-title[data-long] {
   font-size: 64px;
   line-height: 1.25;
 }
-/* "Welcome," in the name's own ink, lighter by weight alone: one voice,
-   not a grey line over a bold one. */
-.dkc-welcome-title .dkc-hello {
-  font-weight: 400;
-}
-.dkc-agenda {
-  margin-top: 56px;
-}
-.dkc-agenda ol {
-  list-style: none;
-  margin: 16px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.dkc-agenda li {
-  display: flex;
-  gap: 24px;
-  align-items: baseline;
-}
-/* One-line items: the body's reading leading is more than a list needs. */
-[dir="rtl"] .dkc-agenda .dk-body {
-  line-height: 1.5;
-}
-.dkc-agenda li > span:first-child {
-  min-width: 28px;
-  font-weight: 600;
-  color: var(--dk-ink-2);
-}
 
 /* ---------------------------------------------------- O2 · goals */
 
-/* One label convention: every answer under its own label (Geist 500 24,
-   ink-2). Where the answers come from is said once, on the title's line,
-   at its end: the tag never shares a baseline with a label. */
+/* Their words, set as type (DESIGN 22.2.2): stop 1 is the 90-day goal
+   alone at 80/400; stop 2 adds the other answers as one row under a
+   hairline, arriving as one. The goal never moves or shrinks. Where the
+   answers come from is said once, on the title's line. */
 .dkc-goal-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 48px;
 }
-/* The goal the launch is built around leads, hugging its own lines. */
 .dkc-goal-block {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 18px;
-  max-width: 1360px;
-  margin-top: 80px;
+  gap: 20px;
+  max-width: 1400px;
 }
-/* The other answers side by side under one rule, each column as wide as
-   its kind of answer needs: a sentence, a short list, a sentence. */
-.dkc-goal-cols {
+/* The goal and its 90 days (22.14): on the first stop the pair stands
+   --dk-lift lower, so the goal is the stage's hero instead of a top half
+   over an empty one; when the other answers arrive it settles up (one move,
+   transform only) and the 90-day line becomes their rule. Alone (no other
+   answers), it sits on the stage's middle. */
+.dkc-goal-stage {
+  margin-top: 76px;
+  transition: transform calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease-move);
+}
+.dkc-goal-stage[data-lift] {
+  transform: translateY(var(--dk-lift));
+}
+.dkc-goal-stage[data-alone] {
+  margin-block: auto;
+}
+.dkc-goal-stage[data-hold] {
+  transform: translateY(var(--dk-hold));
+}
+/* The goal as the hero (22.14): on the first stop it stands
+   --dk-hero-scale larger, grown from its foot so the 90 days under it never
+   move, and from the hung quotation mark's outer edge (80 px out, as the
+   mark hangs) so the mark keeps its place in the margin and the words step
+   12 px in; it settles to its own size with the stage (the same one move). */
+.dkc-goal-stage .dkc-goal-block {
+  transform-origin: -80px 100%;
+  transition: transform calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease-move);
+}
+/* The hang and the origin follow the goal's own direction, in either deck
+   (score round 4): an Arabic goal sits on the right margin with its « in
+   it and grows from that mark's outer edge, an English goal on the left;
+   physical margins, so the deck's direction never moves it. */
+.dkc-goal-stage .dkc-goal-block[dir="rtl"] {
+  margin-left: auto;
+  margin-right: 0;
+  transform-origin: calc(100% + 80px) 100%;
+}
+.dkc-goal-stage .dkc-goal-block[dir="ltr"] {
+  margin-left: 0;
+  margin-right: auto;
+  transform-origin: -80px 100%;
+}
+.dkc-goal-stage:is([data-lift], [data-alone]) .dkc-goal-block {
+  transform: scale(var(--dk-hero-scale));
+}
+/* The goal sets in line by line, the quotation mark with its first. */
+.dkc-goal-w {
+  display: inline-block;
+  animation: dk-rise-line calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((var(--dk-t-step) + var(--ln, 0) * var(--dk-t-line)) * var(--dk-m)) both;
+}
+.dkc-goal-text::before {
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-step) * var(--dk-m)) both;
+}
+/* The 90 days: a 2 px line across the content from today (a teal dot) to
+   the 90th day (a teal ring), drawn from today once the goal has set. */
+.dkc-goal-track {
+  position: relative;
+  height: 72px;
+  margin-top: 44px;
+}
+.dkc-goal-track-line {
+  position: absolute;
+  top: 7px;
+  inset-inline: 7px 7px;
+  height: 2px;
+  background: var(--dk-line-strong);
+  transform-origin: left center;
+  animation: dk-sweep calc(var(--dk-t-sweep) * var(--dk-m)) var(--dk-ease-move) calc(3 * var(--dk-t-step) * var(--dk-m)) both;
+}
+[dir="rtl"] .dkc-goal-track-line {
+  transform-origin: right center;
+}
+.dkc-goal-track-from,
+.dkc-goal-track-to {
+  position: absolute;
+  top: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border-radius: 999px;
+}
+.dkc-goal-track-from {
+  inset-inline-start: 0;
+  background: var(--dk-teal);
+  animation: dkc-swap calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) calc(3 * var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-goal-track-to {
+  inset-inline-end: 0;
+  border: 2px solid var(--dk-teal);
+  background: var(--dk-space);
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc((3 * var(--dk-t-step) + var(--dk-t-sweep)) * var(--dk-m)) both;
+}
+.dkc-goal-track-today,
+.dkc-goal-track-end {
+  position: absolute;
+  top: 30px;
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.dkc-goal-track-today {
+  inset-inline-start: 0;
+  color: var(--dk-ink-2);
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc(3 * var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-goal-track-end {
+  inset-inline-end: 0;
+  font-weight: 600;
+  color: var(--dk-ink);
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc((3 * var(--dk-t-step) + var(--dk-t-sweep)) * var(--dk-m)) both;
+}
+[dir="rtl"] :is(.dkc-goal-track-today, .dkc-goal-track-end) {
+  top: 28px;
+  font-size: 26px;
+  line-height: 1.45;
+}
+/* The ends' dates under their labels (score round 4), quiet, while the
+   goal is the hero; they leave with the lift when the answers arrive. */
+.dkc-goal-track-date {
+  display: block;
+  margin-top: 4px;
+  font-size: 22px;
+  line-height: 1.3;
+  font-weight: 400;
+  color: var(--dk-ink-3);
+  transition: opacity calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-goal-track-end .dkc-goal-track-date {
+  text-align: end;
+}
+.dkc-goal-stage:not([data-lift], [data-alone]) .dkc-goal-track-date {
+  opacity: 0;
+}
+.dkc-goal-text {
+  position: relative;
+  margin: 0;
+  max-width: 1400px;
+  font-size: 80px;
+  line-height: 1.12;
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  color: var(--dk-ink);
+  text-wrap: pretty;
+}
+.dkc-goal-text[data-size="64"] {
+  font-size: 64px;
+  line-height: 1.18;
+}
+.dkc-goal-text[data-size="56"] {
+  font-size: 56px;
+  line-height: 1.2;
+}
+/* Words in Arabic letters, in either deck (score round 4: in the English
+   deck they took the Latin 80/1.12, a one-word widow and touching lines):
+   Plex at the Arabic sizes, balanced. */
+.dkc-goal-text[dir="rtl"] {
+  font-family: var(--dk-font-ar);
+  font-size: 76px;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+.dkc-goal-text[dir="rtl"][data-size="64"] {
+  font-size: 60px;
+  line-height: 1.5;
+}
+.dkc-goal-text[dir="rtl"][data-size="56"] {
+  font-size: 52px;
+  line-height: 1.55;
+}
+/* "As you wrote them" (score round 2): one teal opening quotation mark
+   hung in the start margin, top-aligned to the goal's capitals. Under 1% of
+   the slide; nothing moves. Words in Arabic letters take « in Plex (shown
+   as the opening mark of a right-to-left line), in either deck; words in
+   Latin letters keep the Latin mark on their own start. */
+.dkc-goal-text::before {
+  content: "\201C";
+  position: absolute;
+  top: -6px;
+  inset-inline-end: calc(100% + 14px);
+  font-family: var(--dk-font);
+  font-size: 160px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--dk-teal);
+  pointer-events: none;
+}
+.dkc-goal-text:dir(rtl)::before {
+  content: "\00AB";
+  top: 4px;
+  font-family: var(--dk-font-ar);
+  font-size: 128px;
+}
+/* Words in Latin letters keep the Latin metrics in the Arabic deck too
+   (the base rules above, by the goal's own dir="ltr"). */
+/* The other answers: one row of columns sized to their words (22.2.2;
+   score round 2: as a flex row the three came out nearly equal), the
+   first on the start edge and the last on the end edge. */
+.dkc-goal-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
-  gap: 72px;
-  margin-top: 88px;
-  padding-top: 36px;
-  border-top: 1px solid var(--dk-line-strong);
+  grid-auto-flow: column;
+  grid-auto-columns: auto;
+  justify-content: space-between;
+  column-gap: 72px;
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 2px solid var(--dk-line-strong);
+  /* The answers rise once the goal has begun to settle up (22.14). */
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-step) * var(--dk-m)) both;
 }
-.dkc-goal-cols[data-n="2"] {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+/* Under the goal's 90 days, the line is their rule. The answers wait
+   until the goal has nearly settled (fixer round 2: rising from 120 ms,
+   they printed under "Today" and "In 90 days" while the stage still moved
+   over them), then rise in place. */
+.dkc-goal-stage + .dkc-goal-row {
+  margin-top: 36px;
+  padding-top: 0;
+  border-top: 0;
 }
-.dkc-goal-cols[data-n="1"] {
-  grid-template-columns: minmax(0, 1100px);
+:is(.dkc-goal-stage, .dkc-goal-asking) + .dkc-goal-row {
+  animation-delay: calc(var(--dk-t-stage) * 0.8 * var(--dk-m));
 }
-.dkc-goal-cols > div {
+/* Held low with the goal (--dk-hold): the individual translate, so the
+   rise's own transform runs on top of it. */
+.dkc-goal-stage + .dkc-goal-row[data-hold] {
+  translate: 0 var(--dk-hold);
+}
+.dkc-goal-col {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 14px;
+  gap: 12px;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 560px;
 }
-.dkc-goal-cols ul {
+.dkc-goal-col p,
+.dkc-goal-col li {
+  margin: 0;
+  max-width: 100%;
+  font-size: 30px;
+  line-height: 1.4;
+  font-weight: 400;
+  color: var(--dk-ink);
+}
+/* One box for the list, as wide as its widest line (useHug on the list):
+   every item spans it, so the lines of one script start at one edge. */
+.dkc-goal-col ul {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 14px;
-}
-/* Each answer of a list as wide as its own words, on the label's edge: a
-   list in the other script lines up under its label, never ragged at the
-   label's side. */
-.dkc-goal-cols li {
+  align-items: stretch;
   max-width: 100%;
+}
+/* Each answer its own item (score round 2: three with no separator read
+   as one paragraph wrapping oddly): 16 px, a hairline, 16 px. */
+.dkc-goal-col li {
+  width: 100%;
+}
+.dkc-goal-col li + li {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--dk-line);
+}
+/* One group of answers (score round 4: a single column left about 1250 px
+   empty beside it): its label spans the content and its items run across
+   it, up to 520 px each, a hairline at each one's start. */
+.dkc-goal-row[data-n="1"] {
+  grid-auto-columns: minmax(0, 1fr);
+}
+.dkc-goal-row[data-n="1"] .dkc-goal-col {
+  max-width: none;
+}
+.dkc-goal-row[data-n="1"] .dkc-goal-col ul {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 36px;
+}
+.dkc-goal-row[data-n="1"] .dkc-goal-col li {
+  width: auto;
+  flex: 0 1 auto;
+  max-width: 520px;
+}
+.dkc-goal-row[data-n="1"] .dkc-goal-col li + li {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+  padding-inline-start: 36px;
+  border-inline-start: 1px solid var(--dk-line);
+}
+/* One group in the other script (final score round 1): the row spans the
+   content from the words' own start, and the label stands over its first
+   item at that edge, not at the deck's start 1300 px away. */
+.dkc-goal-row[data-n="1"] .dkc-goal-col[data-cross] {
+  align-items: flex-end;
+}
+.dkc-goal-row[data-n="1"] .dkc-goal-col[data-cross] :is(ul, p) {
+  width: 100%;
 }
 .dkc-foot {
   margin-top: auto;
   color: var(--dk-ink-2);
 }
-/* Nothing from the form: the question alone, the slide's one heading, at
-   the covers' size in the middle of the page. */
+/* Under the answers, a gap the foot keeps even when the row is tall (three
+   challenges in the Arabic deck left it 4 px). */
+.dkc-goal-row + .dkc-foot {
+  padding-top: 24px;
+}
+/* The foot comes in after the answers have risen (22.14), not before them. */
+.dkc-foot[data-rise] {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(4 * var(--dk-t-step) * var(--dk-m)) both;
+}
+@keyframes dk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--dk-rise));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* A large figure (a phone) sliding up into place (22.14). */
+@keyframes dk-rise-far {
+  from {
+    opacity: 0;
+    transform: translateY(var(--dk-rise-far));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* A line of words setting in: up from under its own baseline. */
+@keyframes dk-rise-line {
+  from {
+    opacity: 0;
+    transform: translateY(0.36em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* A line drawn across the slide from its start (transform only). */
+@keyframes dk-sweep {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: none;
+  }
+}
+/* An example picture's slow drift, once, then held (22.14). */
+@keyframes dk-drift {
+  from {
+    transform: none;
+  }
+  to {
+    transform: scale(var(--dk-drift-scale));
+  }
+}
+/* No goal on their form: the question is the slide's one heading, and the
+   answer's line is set at the goal's size under it. */
 .dkc-goal-asking {
+  margin-top: 96px;
+  transition: transform calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease-move);
+}
+/* Answers to come: on stop 1 the question stands as low as the hero goal
+   does, and settles up with them (one move, transform only). */
+.dkc-goal-asking[data-lift] {
+  transform: translateY(var(--dk-lift));
+}
+.dkc-goal-asking[data-alone] {
   margin-block: auto;
-  padding-bottom: 24px;
+  padding-bottom: 56px;
+}
+/* "In 90 days" over the line, as over the goal when the form has one. */
+.dkc-goal-label {
+  display: block;
+  margin-top: 56px;
 }
 .dkc-goal-ask {
   max-width: 1560px;
 }
-/* The live input on an empty goals slide, set as the 60 px line. */
+/* The empty state builds like the filled one (score round 4): the
+   question, its label and its line rise in turn, then the 90 days sweep
+   under them (the track's own animations). */
+.dkc-goal-asking > :is(.dkc-goal-ask, .dkc-goal-label, .dkc-goal-input) {
+  animation: dk-rise-line calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-goal-asking > .dkc-goal-label {
+  animation-delay: calc(2 * var(--dk-t-step) * var(--dk-m));
+}
+.dkc-goal-asking > .dkc-goal-input {
+  animation-delay: calc(3 * var(--dk-t-step) * var(--dk-m));
+}
 .dkc-goal-input {
   display: block;
   width: 100%;
-  max-width: 1500px;
-  margin-top: 48px;
+  margin-top: 12px;
   padding: 0 0 18px;
   border: 0;
   border-bottom: 2px solid var(--dk-line-strong);
   background: none;
   color: var(--dk-ink);
   font: inherit;
-  font-size: 60px;
-  line-height: 1.18;
-  letter-spacing: -0.02em;
+  font-size: 80px;
+  line-height: 1.12;
+  letter-spacing: -0.025em;
   resize: none;
   field-sizing: content;
   min-height: 1.2em;
-  transition: border-color var(--dk-hover-canvas-ms) var(--dk-ease);
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
 [dir="rtl"] .dkc-goal-input {
+  font-size: 76px;
   letter-spacing: 0;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 .dkc-goal-input::placeholder {
   color: var(--dk-ink-3);
 }
-/* Before anything is typed the line is not drawn: the CSM's pointer finds
-   it under the question. */
-.dkc-goal-input[data-empty]:not(:hover):not(:focus) {
+/* With no label over it (the track says 90 days), the field stands clear
+   of the question; and with the track under it, the track is the one line
+   drawn there: the field's own rule shows only under the pointer or while
+   typing (score round 2 of the five services: two rules 52 px apart read
+   as a form). */
+.dkc-goal-ask + .dkc-goal-input {
+  margin-top: 64px;
+}
+.dkc-goal-asking > .dkc-goal-input:has(+ .dkc-goal-track):not(:hover, :focus) {
   border-bottom-color: transparent;
 }
 .dkc-goal-input:hover {
@@ -946,19 +1668,23 @@ button.dkc-status:hover {
   margin-top: 20px;
   max-width: 1120px;
 }
-/* The group drawn as what it is: its head on the start side (their avatar,
-   the group's name, the hours), and one line from the avatar branching to
-   each member, a teal dot for each of ours, the role and what they message
-   about beside it. The drawing fills the room under the lead. */
+/* The hub (DESIGN 22.2.3): their mark on the start side with the WhatsApp
+   mark and the group's label under it, and from the mark one line that
+   branches to each role on the end side (x 800 to 1784), 110 px apart. On
+   arrival the trunk draws, then each branch in turn, one path at a time,
+   and each role arrives with its branch. */
 .dkc-group {
   position: relative;
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 500px minmax(0, 1fr);
-  column-gap: 168px;
+  /* 460 + 64 (score round 2): the roles start at x 660, so the bus sits at
+     about x 560 and the trunk is under 300 px. */
+  grid-template-columns: 460px minmax(0, 1fr);
+  column-gap: 64px;
   align-items: center;
-  margin-top: 40px;
+  margin-top: 32px;
+  contain: layout style;
 }
 .dkc-group-lines {
   position: absolute;
@@ -970,36 +1696,84 @@ button.dkc-status:hover {
 [dir="rtl"] .dkc-group-lines {
   transform: scaleX(-1);
 }
+.dkc-group-lines path {
+  fill: none;
+  stroke: var(--dk-line-strong);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+}
+/* O3's arrival (22.14): their mark fades in, the WhatsApp badge lands on
+   it, then the trunk and each branch draw in turn, each role arriving with
+   its branch: the group filling, about 1.6 s, once. Opacity only here: the
+   lines are measured from the mark and the dots, so nothing on them moves. */
+.dkc-group {
+  --group-at: calc(2 * var(--dk-t-step));
+}
+.dkc-group-mark {
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) both;
+}
+.dkc-group-badge {
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc(var(--group-at) * var(--dk-m)) both;
+}
+.dkc-group-trunk {
+  animation: dkc-draw calc(var(--dk-t-trunk) * var(--dk-m)) var(--dk-ease) calc(var(--group-at) * var(--dk-m)) forwards;
+}
+.dkc-group-branch {
+  animation: dkc-draw calc(var(--dk-t-branch) * var(--dk-m)) linear calc((var(--group-at) + var(--dk-t-trunk) + var(--i) * var(--dk-t-branch)) * var(--dk-m)) forwards;
+}
 .dkc-group-hub {
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
 }
-.dkc-group-hub b {
-  margin-top: 28px;
-  font-size: 40px;
-  line-height: 1.2;
-  font-weight: 700;
-  letter-spacing: -0.015em;
+.dkc-group-mark {
+  position: relative;
+  display: block;
 }
-.dkc-group-hub p {
+/* A 36 px disc ringed in the ground's colour on the mark's bottom end
+   corner, overlapping it (on a logo's circle the badge's centre sits on
+   the circle's edge). */
+.dkc-group-badge {
+  position: absolute;
+  bottom: -4px;
+  inset-inline-end: -4px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--dk-space);
+  box-shadow: 0 0 0 4px var(--dk-space);
+}
+.dkc-group-badge .dk-logo {
+  display: block;
+}
+/* Stop 2: the promise, the stop's heading, then the hours. Its room is
+   kept on stop 1, so nothing moves when it arrives. */
+.dkc-group-promise {
+  margin-top: 48px;
+  max-width: 400px;
+  opacity: 0;
+}
+.dkc-group-promise[data-shown] {
+  /* Stop 2's promise rises as one, at the arrival's pace (22.14). */
+  opacity: 1;
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) both;
+}
+.dkc-group-promise .dk-h3 {
+  margin: 0;
+}
+.dkc-group-hours {
   margin: 12px 0 0;
-  max-width: 460px;
   font-size: 26px;
   line-height: 1.45;
   color: var(--dk-ink-2);
 }
-[dir="rtl"] .dkc-group-hub b {
-  font-size: 42px;
-  line-height: 1.35;
-  letter-spacing: 0;
-}
-/* Arabic's reply hours run longer: 560 px (past the hub's column, short
-   of the fan's bus), so "من" is never left at a line's end (score round 2). */
-[dir="rtl"] .dkc-group-hub p {
-  max-width: 560px;
-  width: 560px;
+[dir="rtl"] .dkc-group-hours {
   font-size: 28px;
   line-height: 1.6;
 }
@@ -1010,22 +1784,23 @@ button.dkc-status:hover {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 34px;
+  gap: 30px;
 }
 .dkc-group-members li {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   padding-inline-start: 44px;
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((var(--group-at) + var(--dk-t-trunk) + (var(--i) + 1) * var(--dk-t-branch)) * var(--dk-m)) both;
 }
-/* The dot on the role's line: teal for ours, an ink ring for theirs. */
+/* The node on the role's line: teal for ours, an ink ring for theirs. */
 .dkc-member-dot {
   position: absolute;
   inset-inline-start: 0;
-  top: 13px;
-  width: 16px;
-  height: 16px;
+  top: 14px;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
   background: var(--dk-teal);
 }
@@ -1051,7 +1826,7 @@ button.dkc-status:hover {
   line-height: 1.5;
 }
 [dir="rtl"] .dkc-member-dot {
-  top: 17px;
+  top: 18px;
 }
 [dir="rtl"] .dkc-group-members span {
   font-size: 28px;
@@ -1062,94 +1837,43 @@ button.dkc-status:hover {
 
 .dkc-one-line {
   margin-top: 20px;
-  max-width: 1180px;
+  max-width: 1300px;
 }
-/* The choice is the hero on the start side (the service named at h1, as
-   the campaign it becomes); their services sit beside it as a short list,
-   the hero level with the list's middle. */
+/* The matrix (x 136 to 1000) beside the product column on the ground (x
+   1080 to 1784), DESIGN 22.2.4. The foot's checklist keeps 56 px under
+   them. */
 .dkc-one {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 800px;
-  gap: 96px;
-  align-items: center;
-  margin-top: 24px;
+  grid-template-columns: 864px 704px;
+  column-gap: 80px;
+  align-items: start;
+  margin-top: 36px;
+  padding-bottom: 72px;
 }
-.dkc-pick {
+.dkc-matrix {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 16px;
   min-width: 0;
-  padding-bottom: 40px;
+  margin-top: 16px;
+  contain: layout style;
 }
-.dkc-pick-name {
-  margin: 0;
-  text-wrap: balance;
-}
-.dkc-pick-name bdi {
-  unicode-bidi: isolate;
-}
-.dkc-pick > .dk-body {
-  max-width: 600px;
-}
-.dkc-pick-done {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-.dkc-pick-done svg {
-  flex: none;
-  width: 28px;
-  height: 28px;
-  color: var(--dk-teal);
-  stroke-width: 2.5;
-}
-/* The one control under the hero: text with a hairline under it, ink-2,
-   teal edge on hover, and drawn only while the CSM's pointer is on the
-   hero or the keyboard is on it. Its room is the hero's bottom padding, so
-   nothing moves when it shows. */
-.dkc-launch {
-  position: absolute;
-  inset-inline-start: 0;
-  bottom: 0;
-  padding: 2px 0;
-  border: 0;
-  border-bottom: 2px solid var(--dk-line-strong);
-  background: none;
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 1.3;
-  color: var(--dk-ink-2);
-}
-.dkc-launch:hover {
-  border-bottom-color: var(--dk-edge);
-  color: var(--dk-ink);
-}
-.dkc-pick:not(:hover) .dkc-launch:not(:focus-visible) {
-  opacity: 0;
-}
-[dir="rtl"] .dkc-launch {
-  font-size: 26px;
-}
-/* Their services as a short scoreboard: the tests head their columns
-   once; a yes is the journey's lit node with a check; nothing in a cell
-   not answered (the CSM's pointer finds it). The row the tests point at
-   sits on the journey's row band. */
-.dkc-board {
+.dkc-matrix-row {
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(3, 176px);
+  /* The third test is the longest ("Least painful to deliver"): its column
+     is wider, so it takes two lines like its neighbours, not three. */
+  grid-template-columns: minmax(0, 1fr) 136px 136px 164px;
   align-items: center;
+  height: var(--row-h, 72px);
 }
-.dkc-board-head,
-.dkc-board-row {
-  display: contents;
+.dkc-matrix-head {
+  height: auto;
+  align-items: end;
+  padding-bottom: 14px;
 }
-.dkc-board-head > span {
-  align-self: end;
-  padding: 0 4px 18px;
+.dkc-matrix-head > span {
+  padding: 0 4px;
   font-size: 24px;
   line-height: 1.25;
   font-weight: 500;
@@ -1157,65 +1881,101 @@ button.dkc-status:hover {
   text-align: center;
   text-wrap: balance;
 }
-[dir="rtl"] .dkc-board-head > span {
+[dir="rtl"] .dkc-matrix-head > span {
   font-size: 26px;
   line-height: 1.35;
 }
-.dkc-board-row > * {
-  height: 92px;
+.dkc-matrix-body {
+  position: relative;
+}
+.dkc-matrix-body > .dkc-matrix-row {
+  box-shadow: inset 0 1px 0 var(--dk-line);
+}
+/* The band under the row the tests point at: it moves to the new leader
+   (translateY), never repainted row by row. */
+.dkc-matrix-band {
+  position: absolute;
+  top: 0;
+  inset-inline: 0;
+  height: var(--row-h, 72px);
+  border-radius: 14px;
+  background: var(--dk-teal-faint);
+  opacity: 0;
+  transition:
+    transform calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease-move),
+    opacity calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-matrix-band[data-on] {
+  opacity: 1;
+}
+/* O4's arrival (22.14): the five services set in one after another, the
+   band then lands on the one their answers point to, with the column's
+   name, and the phone slides up with its example. A later tick or choice
+   moves only what it changes. */
+.dkc-matrix-head {
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) both;
+}
+.dkc-matrix-body > .dkc-matrix-row {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((var(--dk-t-step) + var(--i, 0) * var(--dk-stagger)) * var(--dk-m)) both;
+}
+.dkc-matrix-band[data-on] {
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(5 * var(--dk-t-step) * var(--dk-m)) backwards;
+}
+.dkc-product-text {
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(5 * var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-service {
   display: flex;
   align-items: center;
-  box-shadow: inset 0 1px 0 var(--dk-line);
-  transition: background-color 300ms var(--dk-ease);
-}
-.dkc-board-row[data-lead] > * {
-  background-color: var(--dk-teal-faint);
-  box-shadow: none;
-}
-.dkc-board-row[data-lead] > :first-child {
-  border-start-start-radius: 14px;
-  border-end-start-radius: 14px;
-}
-.dkc-board-row[data-lead] > :last-child {
-  border-start-end-radius: 14px;
-  border-end-end-radius: 14px;
-}
-.dkc-board-row[data-lead] + .dkc-board-row > * {
-  box-shadow: none;
-}
-.dkc-board-add {
-  grid-column: 1 / -1;
-  box-shadow: inset 0 1px 0 var(--dk-line);
-  padding-inline: 24px;
-}
-.dkc-board-row > .dkc-service {
-  display: flex;
-  align-items: center;
-  gap: 18px;
+  gap: 16px;
   min-width: 0;
   padding-inline: 24px 12px;
 }
-/* A service's name is never cut: a long one takes two balanced lines. */
+/* A row's button: the main service (30/600 ink) and, quiet under it, the
+   client's own words that belong to it (22/400 ink-3, one line). The five
+   names are the kickoff form's, so a name is never cut. */
 .dkc-service-name {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   border: 0;
-  border-bottom: 2px solid transparent;
   background: none;
   padding: 0;
-  font-size: 30px;
-  line-height: 1.25;
-  font-weight: 500;
+  color: var(--dk-ink);
   text-align: start;
-  text-wrap: balance;
 }
-.dkc-service-name:hover {
+.dkc-service-label {
+  border-bottom: 2px solid transparent;
+  font-size: 30px;
+  line-height: 1.2;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-service-name:hover .dkc-service-label {
   border-bottom-color: var(--dk-edge);
 }
-.dkc-service-name[aria-pressed="true"] {
-  font-weight: 700;
+.dkc-service-own {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 22px;
+  line-height: 1.3;
+  font-weight: 400;
+  color: var(--dk-ink-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-[dir="rtl"] .dkc-service-name {
+.dkc-service-own bdi {
+  unicode-bidi: isolate;
+}
+[dir="rtl"] .dkc-service-label {
   font-size: 32px;
+  line-height: 1.35;
+}
+[dir="rtl"] .dkc-service-own {
+  font-size: 23px;
   line-height: 1.4;
 }
 /* Their #1, said as words beside the name, not a pill. */
@@ -1230,8 +1990,12 @@ button.dkc-status:hover {
   font-size: 26px;
 }
 .dkc-cell {
+  display: flex;
   justify-content: center;
 }
+/* A tick ring: drawn at rest (line-strong), so the three columns never
+   look empty on a share; hover edge; a tick is the lanes' passed mark, its
+   teal layer fading in as its check draws. */
 .dkc-tick {
   position: relative;
   display: grid;
@@ -1242,133 +2006,289 @@ button.dkc-status:hover {
   border: 0;
   border-radius: 999px;
   background: none;
-  color: var(--dk-deep);
 }
-.dkc-tick::before {
+.dkc-tick::before,
+.dkc-tick::after {
   content: "";
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 30px;
-  height: 30px;
-  margin: -15px 0 0 -15px;
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
   box-sizing: border-box;
   border-radius: 999px;
-  border: 2px solid transparent;
-  transition:
-    border-color var(--dk-hover-canvas-ms) var(--dk-ease),
-    background-color var(--dk-swap-ms) var(--dk-ease);
+}
+.dkc-tick::before {
+  border: 2px solid var(--dk-line-strong);
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-tick::after {
+  background: var(--dk-teal);
+  opacity: 0;
+  transition: opacity calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-tick:hover::before {
   border-color: var(--dk-edge);
 }
-.dkc-tick[aria-pressed="true"]::before {
-  border-color: var(--dk-teal);
-  background: var(--dk-teal);
+.dkc-tick[aria-pressed="true"]::after {
+  opacity: 1;
 }
 .dkc-tick svg {
   position: relative;
-  width: 18px;
-  height: 18px;
-  stroke-width: 3.5;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  overflow: visible;
 }
-.dkc-add {
-  min-width: 0;
+.dkc-tick path {
+  fill: none;
+  stroke: var(--dk-deep);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  transition: stroke-dashoffset calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-tick[aria-pressed="true"] path {
+  stroke-dashoffset: 0;
+}
+/* The product column: its text beside the feed phone, 640 tall, its end
+   edge on the content's. No card around the phone. The text takes what the
+   phone leaves (about 396 px) and stands on the phone's middle (score
+   round 2 of the five services: at the top it left 340 px empty under
+   it). */
+.dkc-product {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 44px;
+  align-items: start;
+}
+.dkc-product-text {
+  position: relative;
   display: flex;
-  align-items: center;
-  height: 72px;
+  flex-direction: column;
+  align-items: flex-start;
+  align-self: center;
+  gap: 16px;
+  padding-bottom: 56px;
+  min-width: 0;
 }
-/* Quiet: the list's own next row, said in ink-3, no box. */
-.dkc-add-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  height: 44px;
-  padding: 0;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
-  font-size: 24px;
-  font-weight: 500;
+.dkc-product-name {
+  margin: 0;
+  max-width: none;
+  font-size: 56px;
+  line-height: 1.12;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: var(--dk-ink);
+  text-wrap: balance;
+  transition: color calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-product-name[data-long] {
+  font-size: 44px;
+  line-height: 1.15;
+}
+/* The proposal before "Launch with this" (score round 4: ink-2 read as
+   disabled on a share): ink, with a dashed rule that turns solid teal once
+   chosen. One rule under the whole name, however many lines it takes
+   (score round 2 of the five services: an underline per line made
+   "Interior / design" read as two links). */
+.dkc-product-name[data-state="proposal"] bdi,
+.dkc-product-name[data-state="chosen"] bdi {
+  display: inline-block;
+  padding-bottom: 0.1em;
+  border-bottom: 2px dashed var(--dk-line-strong);
+}
+.dkc-product-name[data-state="chosen"] bdi {
+  border-bottom-style: solid;
+  border-bottom-color: var(--dk-teal);
+}
+.dkc-product-name[data-state="none"] {
+  font-size: 44px;
   color: var(--dk-ink-3);
 }
-.dkc-add-btn:hover {
-  border-bottom-color: var(--dk-edge);
-  color: var(--dk-ink-2);
+[dir="rtl"] .dkc-product-name {
+  font-size: 54px;
+  line-height: 1.35;
+  letter-spacing: 0;
 }
-[dir="rtl"] .dkc-add-btn {
-  font-size: 26px;
+[dir="rtl"] .dkc-product-name[data-long],
+[dir="rtl"] .dkc-product-name[data-state="none"] {
+  font-size: 44px;
+  line-height: 1.4;
 }
-.dkc-add-input {
-  width: 100%;
-  max-width: 560px;
-  height: 56px;
-  padding: 0 4px;
+.dkc-product-name bdi {
+  unicode-bidi: isolate;
+}
+/* The one control: text with a hairline, ink-2, teal edge on hover; drawn
+   while the CSM's pointer is on the column or the keyboard is on it. Its
+   room is the column's bottom padding, so nothing moves when it shows. */
+.dkc-launch {
+  position: absolute;
+  inset-inline-start: 0;
+  bottom: 0;
+  padding: 2px 0;
   border: 0;
   border-bottom: 2px solid var(--dk-line-strong);
   background: none;
-  color: var(--dk-ink);
-  font: inherit;
-  font-size: 30px;
-  transition: border-color var(--dk-hover-canvas-ms) var(--dk-ease);
-}
-/* The prompt is the CSM's, not the client's: under the pointer or while
-   typing only. */
-.dkc-add-input::placeholder {
-  color: transparent;
-}
-.dkc-add-input:hover::placeholder,
-.dkc-add-input:focus::placeholder {
-  color: var(--dk-ink-3);
-}
-.dkc-add-input:focus {
-  outline: none;
-  border-bottom-color: var(--dk-teal);
-}
-/* No services yet: the three tests are the slide, said large, one to a
-   line, with the quiet control under them. */
-.dkc-one-ask {
-  margin-block: auto;
-  padding-bottom: 24px;
-}
-.dkc-one-tests {
-  list-style: none;
-  margin: 0 0 20px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.dkc-one-tests li {
-  font-size: 80px;
-  line-height: 1.12;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-}
-[dir="rtl"] .dkc-one-tests li {
-  font-size: 84px;
+  font-size: 24px;
+  font-weight: 500;
   line-height: 1.3;
-  letter-spacing: 0;
+  color: var(--dk-ink-2);
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-launch:hover {
+  border-bottom-color: var(--dk-edge);
+  color: var(--dk-ink);
+}
+.dkc-launch:disabled {
+  color: var(--dk-ink-3);
+  border-bottom-color: transparent;
+}
+.dkc-product-text:not(:hover) .dkc-launch:not(:focus-visible) {
+  opacity: 0;
+}
+[dir="rtl"] .dkc-launch {
+  font-size: 26px;
+}
+.dkc-chosen {
+  position: absolute;
+  inset-inline-start: 0;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink-2);
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) both;
+}
+.dkc-chosen svg {
+  width: 26px;
+  height: 26px;
+  color: var(--dk-teal);
+  stroke-width: 3;
+}
+/* The deck's first photograph is given its moment: the phone rises in
+   once, 160 ms after the slide's cut, its picture fading in with it. */
+.dkc-product > .dkc-product-phone {
+  /* Its tag sits beside the lead's end, so the 640 px phone stands at about
+     y 320 and the picture carries the column (the fixer's round; the
+     selector outranks .dkc-tagged's own margin, which had kept it lower). */
+  margin-top: -84px;
+  justify-self: end;
+  animation: dk-rise-far calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(3 * var(--dk-t-step) * var(--dk-m)) both;
+}
+/* The Arabic lead runs one line to the slide's other edge, level with the
+   tag at -84: the phone sits a little lower, so its tag is under the lead,
+   not on its line. */
+[dir="rtl"] .dkc-product > .dkc-product-phone {
+  margin-top: -56px;
+}
+/* The picture fades in with the phone's rise (score round 2: after it, the
+   phone landed empty and navy for about 240 ms, which read as loading);
+   decode() has already resolved, so it never lands empty. */
+.dkc-product-phone .dkc-media img {
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(3 * var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-product-phone .dkc-media img[data-example] {
+  animation:
+    dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(3 * var(--dk-t-step) * var(--dk-m)) both,
+    dk-drift calc(var(--dk-t-drift) * var(--dk-m)) var(--dk-ease-drift) calc(3 * var(--dk-t-step) * var(--dk-m)) both;
+}
+/* A picture changing inside the screen: both layers fill the screen. */
+.dkc-phone-screen > .dk-swap,
+.dkc-screen-swap {
+  position: absolute;
+  inset: 0;
 }
 
 /* ------------------------------------------------------ O5 · road */
 
-/* The road across the content's whole width, as the cover's strip draws
-   it small: six nodes evenly spaced on one line, each step's words from
-   its node's start edge, in the middle of the page. */
-.dkc-road-wrap {
+/* A route lit to today (DESIGN 22.2.5): one straight line, the lit part a
+   4 px teal line, the rest 3 px line-strong dashes (3 and 9, which hold
+   through Zoom), every label below its stop. */
+/* The line at about y 560, the slide's middle. */
+/* The title, the route and its foot line read as one block: the route
+   sits near y 440, not in a void under the title (the fixer's round). */
+.dkc-way-wrap {
   margin-block: auto;
-  padding-bottom: 32px;
 }
-.dkc-road {
+.dkc-way {
   position: relative;
 }
-.dkc-road > svg {
+.dkc-way > svg {
   display: block;
   overflow: visible;
 }
-[dir="rtl"] .dkc-road > svg {
+[dir="rtl"] .dkc-way > svg {
   transform: scaleX(-1);
+}
+.dkc-way-ahead {
+  fill: none;
+  stroke: var(--dk-line-strong);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 3 9;
+  /* The road ahead fades in under its stops as they appear (22.14). */
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(2 * var(--dk-t-step) * var(--dk-m)) both;
+}
+/* O5's arrival (22.14): the stops light dot by dot along the road, each
+   name and date rising with its dot, while the lit line draws to today;
+   then the road's payoff drops in under its last stop. */
+.dkc-way-next {
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc(var(--i) * var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-road-stop > * {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--i) * var(--dk-t-step) * var(--dk-m)) both;
+}
+.dkc-way-lit {
+  fill: none;
+  stroke: var(--dk-teal);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: dkc-draw 0s var(--dk-ease-move) forwards;
+}
+.dkc-way-fill {
+  animation: dkc-swap calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) both;
+}
+.dkc-way-pass {
+  animation: dkc-swap calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) var(--way-at) both;
+}
+.dkc-way-pass .dkc-check {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: dkc-way-check calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) var(--way-at) forwards;
+}
+@keyframes dkc-way-check {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+/* The token rides the line's head (one duration and one easing with it)
+   and is absorbed as today fills. */
+.dkc-way-token {
+  animation-name: dkc-way-ride, dk-swap-out;
+  animation-timing-function: var(--dk-ease-move), var(--dk-ease-in);
+  animation-fill-mode: both, forwards;
+}
+.dkc-way-token circle {
+  fill: var(--dk-teal);
+  stroke: var(--dk-space);
+  stroke-width: 3;
+}
+@keyframes dkc-way-ride {
+  from {
+    transform: translateX(var(--way-from));
+  }
+  to {
+    transform: translateX(var(--way-to));
+  }
 }
 .dkc-road-stops {
   display: grid;
@@ -1388,13 +2308,12 @@ button.dkc-status:hover {
 .dkc-road-name {
   font-size: 30px;
   line-height: 1.25;
-  font-weight: 500;
-  color: var(--dk-ink-2);
+  font-weight: 600;
+  color: var(--dk-ink);
   text-wrap: balance;
 }
-.dkc-road-stop[data-state="now"] .dkc-road-name {
-  color: var(--dk-ink);
-  font-weight: 700;
+.dkc-road-stop[data-state="past"] .dkc-road-name {
+  color: var(--dk-ink-2);
 }
 [dir="rtl"] .dkc-road-name {
   font-size: 32px;
@@ -1405,9 +2324,12 @@ button.dkc-status:hover {
 .dkc-road-when {
   font-size: 26px;
   line-height: 1.3;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--dk-ink-2);
   font-variant-numeric: tabular-nums;
+}
+.dkc-way .dkc-road-stop[data-state="now"] .dkc-road-when {
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) both;
 }
 [dir="rtl"] .dkc-road-when {
   font-size: 28px;
@@ -1428,14 +2350,78 @@ button.dkc-status:hover {
   font-size: 26px;
   line-height: 1.55;
 }
-.dkc-road-foot {
-  margin: 72px 0 0;
+/* The road's end (22.14): under the last two stops (x 1214 to 1784), hung
+   from the last by its drop, the confirmation their customer gets; on the
+   start half, level with the card's middle, the road's rule as the slide's
+   second statement (at 26 px it left a 400 px void beside the card). */
+.dkc-road-end {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 570px;
+  column-gap: 64px;
+  align-items: start;
+  margin-top: 8px;
 }
-/* The lit line draws to today on arrival (stroke-dashoffset). */
+/* The rule is the slide's second statement (22.14): set large on the start
+   half, its first line level with the card's top (under the card's tag),
+   so the band under the road reads as one statement and its proof, not a
+   line lost in a void. */
+.dkc-road-foot {
+  margin: 24px 0 0;
+  max-width: 880px;
+  font-size: 56px;
+  line-height: 1.16;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--dk-ink-2);
+  text-wrap: balance;
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(6 * var(--dk-t-step) * var(--dk-m)) both;
+}
+[dir="rtl"] .dkc-road-foot {
+  font-size: 56px;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+.dkc-road-card {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) both;
+}
+/* The last stop's drop: a dotted line from under its caption to the card
+   it hangs (its tag sits at the card's other corner). The node's centre is
+   18 px in from the column's start. */
+.dkc-road-drop {
+  position: relative;
+  align-self: stretch;
+  min-height: 40px;
+}
+.dkc-road-drop::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  bottom: -56px;
+  inset-inline-start: 17px;
+  border-inline-start: 3px dotted var(--dk-line-strong);
+}
+/* The card a little tighter than the journey's, so the route keeps its
+   room under the title. */
+.dkc-road-card .dkc-wa-card {
+  font-size: 23px;
+  line-height: 1.4;
+}
+.dkc-road-card .dkc-wa-card-head {
+  padding: 10px 18px;
+}
+.dkc-road-card .dkc-wa-bubble {
+  margin: 14px 18px 18px;
+  padding: 12px 16px 28px;
+}
+[dir="rtl"] .dkc-road-card .dkc-wa-card {
+  font-size: 25px;
+  line-height: 1.5;
+}
+/* A line drawing (stroke-dashoffset, the one paint-only exception). */
 .dkc-draw {
   stroke-dasharray: 1 1;
   stroke-dashoffset: 1;
-  animation: dkc-draw var(--dk-draw-ms) var(--dk-ease) 120ms forwards;
+  animation: dkc-draw calc(var(--dk-draw-ms) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-beat) * var(--dk-m)) forwards;
 }
 @keyframes dkc-draw {
   to {
@@ -1445,100 +2431,427 @@ button.dkc-status:hover {
 
 /* ------------------------------------------------- O6 · this week */
 
-.dkc-week-line {
-  margin-top: 16px;
-}
-/* A checklist read down its start: each row's mark (the journey's node:
-   done, to do, not checked yet), its name with its state under it, and
-   what it needs beside them while it still needs it. Ruled rows. */
-.dkc-week {
-  list-style: none;
-  margin: 32px 0 0;
-  padding: 0;
-  border-top: 1px solid var(--dk-line);
-}
-.dkc-week > li {
-  display: grid;
-  grid-template-columns: 32px 380px minmax(0, 880px);
-  column-gap: 32px;
-  align-items: start;
-  padding: 16px 0 18px;
-  border-bottom: 1px solid var(--dk-line);
-}
-.dkc-week[data-many] > li {
-  padding: 9px 0 11px;
-}
-[dir="rtl"] .dkc-week > li {
-  padding: 12px 0 14px;
-}
-[dir="rtl"] .dkc-week[data-many] > li {
-  padding: 6px 0 8px;
-}
-.dkc-week-mark {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  margin-top: 4px;
-  border-radius: 999px;
-  box-sizing: border-box;
-  border: 2px solid var(--dk-line-strong);
-  color: var(--dk-deep);
-}
-.dkc-week > li[data-status="done"] .dkc-week-mark {
-  border-color: var(--dk-teal);
-  background: var(--dk-teal);
-}
-.dkc-week > li[data-status="todo"] .dkc-week-mark {
-  border-color: var(--dk-leak);
-}
-.dkc-week-mark svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 3.5;
-}
-[dir="rtl"] .dkc-week-mark {
-  margin-top: 8px;
-}
-.dkc-week-head {
+/* A board (DESIGN 22.2.6): "Now, on this call" as cards, the setup done
+   live; "This week, from you" as ruled rows, the homework. */
+.dkc-week-board {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  margin-top: 36px;
+  padding-bottom: 72px;
 }
-.dkc-week-head .dkc-status {
-  height: 34px;
-}
-.dkc-week-name {
-  font-size: 30px;
+.dkc-week-group {
+  margin: 0 0 16px;
+  font-size: 24px;
   line-height: 1.3;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--dk-ink-2);
 }
-[dir="rtl"] .dkc-week-name {
+[dir="rtl"] .dkc-week-group {
+  font-size: 26px;
+}
+.dkc-setups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 32px;
+  margin-bottom: 40px;
+  contain: layout style;
+}
+.dkc-setups[data-n="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.dkc-setup {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 224px;
+  padding: 28px 32px;
+  border-radius: 16px;
+  background: var(--dk-panel);
+  box-shadow: inset 0 0 0 1px var(--dk-line);
+}
+/* Done: the card's edge turns teal, a layer fading in. */
+.dkc-setup-edge {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  box-shadow: inset 0 0 0 1px var(--dk-teal);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-setup[data-status="done"] .dkc-setup-edge {
+  opacity: 1;
+}
+.dkc-setup-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 28px;
+}
+/* The video guide's own picture (22.14: the slide had none): on a card with
+   room for it (two to a row), a 16:9 poster at the card's end, the play in
+   teal on it and the guide's words under it; the CSM's click plays it. The
+   card's words take the start column, three lines of the line a size down. */
+.dkc-setup[data-poster] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 200px;
+  grid-template-rows: auto auto 1fr;
+  column-gap: 24px;
+  row-gap: 14px;
+}
+.dkc-setup[data-poster] > .dkc-setup-head {
+  grid-column: 1 / -1;
+}
+.dkc-setup[data-poster] > :is(.dkc-setup-line, .dkc-setup-steps) {
+  grid-column: 1;
+}
+.dkc-setup[data-poster] .dkc-setup-steps {
+  gap: 12px 24px;
+}
+.dkc-setup[data-poster] .dkc-setup-line {
+  -webkit-line-clamp: 3;
+  font-size: 24px;
+}
+[dir="rtl"] .dkc-setup[data-poster] .dkc-setup-line {
+  font-size: 25px;
+  line-height: 1.45;
+}
+.dkc-setup-poster {
+  grid-column: 2;
+  grid-row: 2 / 4;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dk-ink-3);
+  text-align: start;
+}
+.dkc-setup-pic {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--dk-panel-2);
+  box-shadow: inset 0 0 0 1px var(--dk-line);
+  animation: dkc-swap calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((2 * var(--dk-t-step) + var(--i, 0) * var(--dk-stagger)) * var(--dk-m)) both;
+}
+.dkc-setup-pic img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* A guide's poster shows once decoded (22.3.2, score round 4), so it never
+   paints in after the card has built; the deck warms it on opening. */
+.dkc-setup-pic img {
+  opacity: 0;
+}
+.dkc-setup-pic[data-decoded] img {
+  opacity: 1;
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) both;
+}
+/* A screen recording's frame is near-white: a veil of the deep ground over
+   it, so it sits in the deck and the teal play reads (score round 2 of the
+   five services: at 0.42 the pale Meta access frame read as an empty
+   placeholder on a share). */
+.dkc-setup-pic::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--dk-deep);
+  opacity: 0.55;
+}
+.dkc-setup-play {
+  z-index: 1;
+}
+.dkc-setup-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin: -24px 0 0 -24px;
+  border-radius: 999px;
+  background: var(--dk-teal);
+  color: var(--dk-deep);
+}
+/* Media play never mirrors (score round 4: Arabic YouTube and WhatsApp
+   show ▶): the same triangle and the same physical optical offset in both
+   decks. */
+.dkc-setup-play svg {
+  width: 18px;
+  height: 18px;
+  margin-left: 3px;
+}
+.dkc-setup-pic-words {
+  font-size: 22px;
+  line-height: 1.3;
+  font-weight: 500;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  align-self: flex-start;
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
+}
+/* Over the poster, not under it (final score round 1: under it, "Video
+   guide · 3:51" sat on the ticks' baseline 28 px after the last tick and
+   read as a fourth step). */
+.dkc-setup-poster > .dkc-setup-pic-words {
+  order: -1;
+}
+.dkc-setup-poster:hover .dkc-setup-pic-words {
+  border-bottom-color: var(--dk-edge);
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dkc-setup-pic-words {
+  font-size: 24px;
+}
+/* No guide's picture on the Mahara OS card (22.14): the app's first screen
+   on a phone rising out of the card's foot, the demo workspace's tag over
+   it. The phone runs into the card's bottom padding and is cut by the
+   card's edge, so it reads as held, not pasted on. */
+.dkc-setup-phone {
+  grid-column: 2;
+  grid-row: 2 / 4;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  margin: 0 0 -28px;
+}
+.dkc-setup-phone .dk-tag {
+  font-size: 20px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.dkc-setup-phone-body {
+  flex: 1 1 0;
+  min-height: 132px;
+  overflow: hidden;
+  padding: 7px 7px 0;
+  border-radius: 28px 28px 0 0;
+  background: var(--dk-deep);
+  box-shadow: inset 0 0 0 2px var(--dk-line-strong);
+  animation: dk-rise-far calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((2 * var(--dk-t-step) + var(--i, 0) * var(--dk-stagger)) * var(--dk-m)) both;
+}
+.dkc-setup-phone-body img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 21px 21px 0 0;
+}
+/* O6's arrival (22.14): the setup cards rise in turn, then what is already
+   done ticks in order across them (the checklist ticking), then the
+   week's rows set in under them. A tick made on the call draws at once. */
+.dkc-setup {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--i, 0) * var(--dk-stagger) * var(--dk-m)) both;
+}
+.dkc-step[data-arrive] .dkc-step-done {
+  animation: dkc-swap calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) calc((4 * var(--dk-t-step) + var(--k, 0) * var(--dk-t-step)) * var(--dk-m)) both;
+}
+.dkc-step[data-arrive] .dkc-step-done path {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: dkc-draw calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) calc((4 * var(--dk-t-step) + var(--k, 0) * var(--dk-t-step)) * var(--dk-m)) forwards;
+}
+.dkc-later > li {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((3 * var(--dk-t-step) + var(--i, 0) * var(--dk-stagger)) * var(--dk-m)) both;
+}
+.dkc-setup-name {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.25;
+  font-weight: 700;
+}
+[dir="rtl"] .dkc-setup-name {
   font-size: 32px;
   line-height: 1.4;
 }
-.dkc-week-text {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
-  padding-top: 4px;
+.dkc-setup-head .dkc-status {
+  height: auto;
+  /* After the card's last tick has drawn (score round 4: "Done" landed
+     before its rings). */
+  animation: dkc-swap calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc(((4 + var(--k-end, 0)) * var(--dk-t-step) + var(--dk-t-tick)) * var(--dk-m)) both;
+}
+.dkc-setup-line {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.4;
+  color: var(--dk-ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+[dir="rtl"] .dkc-setup-line {
+  font-size: 27px;
+  line-height: 1.5;
+}
+/* Three cards to a row (done with you): three lines a size down, so the
+   Meta card's "your ad spend goes to Meta directly" is never cut on the
+   client's screen, and a little less air under the row to pay for it. */
+.dkc-setups[data-n="3"] {
+  margin-bottom: 24px;
+}
+.dkc-setups[data-n="3"] .dkc-setup-line {
+  -webkit-line-clamp: 3;
   font-size: 24px;
+}
+[dir="rtl"] .dkc-setups[data-n="3"] .dkc-setup-line {
+  font-size: 25px;
   line-height: 1.45;
+}
+.dkc-setup-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  margin-top: auto;
+}
+.dkc-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font-size: 26px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink-2);
+  transition: color calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
+}
+[dir="rtl"] .dkc-step {
+  font-size: 27px;
+}
+.dkc-step[data-status="done"] {
+  color: var(--dk-ink);
+}
+.dkc-step svg {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  overflow: visible;
+}
+.dkc-step-ring {
+  fill: none;
+  stroke: var(--dk-line-strong);
+  stroke-width: 2;
+}
+.dkc-step[data-status="todo"] .dkc-step-ring {
+  stroke: var(--dk-leak);
+}
+.dkc-step:hover .dkc-step-ring {
+  stroke: var(--dk-edge);
+}
+.dkc-step-done {
+  opacity: 0;
+  transition: opacity calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-step[data-status="done"] .dkc-step-done {
+  opacity: 1;
+}
+.dkc-step-done circle {
+  fill: none;
+  stroke: var(--dk-teal);
+  stroke-width: 2;
+}
+.dkc-step-done path {
+  fill: none;
+  stroke: var(--dk-teal);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dkc-step[data-draw] .dkc-step-done path {
+  stroke-dasharray: 1 1;
+  stroke-dashoffset: 1;
+  animation: dkc-draw calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) forwards;
+}
+/* The video guide: a canvas control on the card's head line, before its
+   status (score round 2), only when the slot is recorded; the CSM's click
+   opens the deck's player. */
+.dkc-guide {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  margin-inline-start: auto;
+  white-space: nowrap;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink-3);
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-guide svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.dkc-setups[data-n="3"] .dkc-guide-word {
+  display: none;
+}
+.dkc-guide:hover {
+  border-bottom-color: var(--dk-edge);
   color: var(--dk-ink-2);
 }
-[dir="rtl"] .dkc-week-text {
+[dir="rtl"] .dkc-guide {
+  font-size: 26px;
+}
+.dkc-later {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--dk-line);
+}
+.dkc-later > li {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) auto;
+  column-gap: 32px;
+  align-items: center;
+  /* 88 (score round 2): the band the video guide gave back. */
+  min-height: 88px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dk-line);
+}
+.dkc-later-name {
+  font-size: 28px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+[dir="rtl"] .dkc-later-name {
+  font-size: 30px;
+  line-height: 1.45;
+}
+.dkc-later-what {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 24px;
+  line-height: 1.4;
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dkc-later-what {
   font-size: 26px;
   line-height: 1.5;
 }
-.dkc-week-more {
-  display: block;
-}
-/* The folder, named as a thing they have (a folder mark, ink-2), not a
-   lone line of text that reads like a broken link; the CSM's pointer opens
-   it. */
-.dkc-week-text a {
+/* The folder, named as a thing they have (a folder mark, ink-2); the
+   CSM's pointer opens it. */
+.dkc-later-what a {
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -1547,96 +2860,208 @@ button.dkc-status:hover {
   text-decoration: none;
   text-underline-offset: 6px;
 }
-.dkc-week-text a svg {
-  width: 26px;
-  height: 26px;
-  color: var(--dk-ink-2);
+.dkc-later-what a svg {
+  width: 24px;
+  height: 24px;
   stroke-width: 1.8;
 }
-.dkc-week-text a:hover {
+.dkc-later-what a:hover {
   text-decoration: underline;
   text-decoration-color: var(--dk-edge);
-}
-.dkc-ticks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 28px;
-}
-.dkc-tickline {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 0;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
-  font-size: 24px;
-  line-height: 1.3;
-  color: var(--dk-ink-3);
-}
-[dir="rtl"] .dkc-tickline {
-  font-size: 26px;
-}
-.dkc-tickline:hover {
-  border-bottom-color: var(--dk-edge);
-}
-/* A part's state in the same words-and-colour voice as the row's: done
-   is ink with a teal check, to do amber with its dot, not checked yet
-   ink-3 with no mark. No boxes. */
-.dkc-tickline i {
-  display: none;
-}
-.dkc-tickline[data-status="done"] {
-  color: var(--dk-ink);
-}
-.dkc-tickline[data-status="done"] i {
-  display: grid;
-  place-items: center;
-  color: var(--dk-teal);
-}
-.dkc-tickline[data-status="todo"] {
-  color: var(--dk-leak);
-}
-.dkc-tickline[data-status="todo"] i {
-  display: block;
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: var(--dk-leak);
-}
-.dkc-tickline svg {
-  width: 22px;
-  height: 22px;
-  stroke-width: 3;
 }
 
 /* --------------------------------------------------- O7 · next */
 
-/* What to expect: two statements side by side under the title, each as
-   wide as the other, the gap dividing them (no rule, no card). */
-.dkc-next {
+/* Each stop swaps whole (the stage swap): what to expect under a strip of
+   example ads, the starter ads, then the Blueprint (DESIGN 22.2.7). */
+.dk-slide > .dk-swap {
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+.dkc-next-stop {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dkc-expect {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+/* The strip: six example tiles under the test's words in the end column
+   (score round 2), two lit and four switched off on arrival. Three across
+   and two down, square, as large as the column's height allows (about
+   195 px at 1920, capped at 240): score round 2 of the five services found
+   the one row of 127 x 159 too small to read as pictures on a share, with
+   a 300 px empty band under both columns. The grid runs to the column's
+   foot, so the words above it and the ask opposite end on one line. Under
+   about 100 px a tile no longer reads as a picture, so the strip leaves. */
+.dkc-strip {
+  flex: 1;
+  min-height: 0;
+  margin-top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  container-type: size;
+  --tile-w: min(
+    calc((100cqw - 32px) / 3),
+    calc((100cqh - 56px) / 2),
+    240px
+  );
+}
+.dkc-strip .dk-tag {
+  white-space: nowrap;
+  line-height: 1;
+}
+.dkc-strip ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 112px;
+  grid-template-columns: repeat(3, var(--tile-w));
+  grid-auto-rows: var(--tile-w);
+  justify-content: start;
+  gap: 16px;
+}
+@container (max-height: 260px) {
+  .dkc-strip > * {
+    display: none;
+  }
+}
+.dkc-strip li {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--dk-panel);
+}
+.dkc-strip img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.3;
+}
+.dkc-strip li[data-lit] img {
+  opacity: 1;
+}
+.dkc-strip li :is(i, b) {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 2px var(--dk-line-strong);
+}
+/* The lit ring is its own layer over the plain one, so switching off is an
+   opacity change. */
+.dkc-strip li b {
+  box-shadow: inset 0 0 0 2px var(--dk-teal);
+  opacity: 0;
+}
+.dkc-strip li[data-lit] b {
+  opacity: 1;
+}
+/* L3's move in miniature (score round 2): on arrival all six are lit; once
+   the column has risen (22.14) the four switch off one after another, a
+   step apart, --o in the scattered order, each picture dimming and its
+   teal ring fading as one. Under --dk-m 0, the end state at once. */
+.dkc-strip li:not([data-lit]) img {
+  animation: dkc-strip-dim calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((var(--next-at, 0s) + 2 * var(--dk-t-step) + var(--dk-t-arrive) + var(--o, 0) * var(--dk-t-step)) * var(--dk-m)) both;
+}
+.dkc-strip li:not([data-lit]) b {
+  animation: dkc-strip-off calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((var(--next-at, 0s) + 2 * var(--dk-t-step) + var(--dk-t-arrive) + var(--o, 0) * var(--dk-t-step)) * var(--dk-m)) both;
+}
+@keyframes dkc-strip-dim {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.3;
+  }
+}
+@keyframes dkc-strip-off {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+/* What to expect: two columns under the title, at sizes a share keeps;
+   the second runs to the foot, its example grid taking what is left. */
+.dkc-next {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 744px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: 80px;
   align-items: start;
-  margin-top: 64px;
+  margin-top: 36px;
+}
+.dkc-next > .dkc-next-test {
+  align-self: stretch;
+}
+/* O7's arrivals (22.14): each stop comes in after the last has gone (the
+   sequential swap, half the stage time), then builds once: the two
+   columns rise in turn; the starter phones slide up one after the other;
+   the booked call's card rises beside its words. */
+.dkc-next-stop {
+  --next-at: calc(var(--dk-t-stage) / 2);
+}
+.dkc-next > section {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--next-at) * var(--dk-m)) both;
+}
+.dkc-next > section + section {
+  animation-delay: calc((var(--next-at) + 2 * var(--dk-t-step)) * var(--dk-m));
 }
 .dkc-next > section {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
 }
-/* The red lines' ask and the list it fills, one block. */
+.dkc-next .dk-body {
+  color: var(--dk-ink);
+}
+.dkc-next-small {
+  margin: 0;
+  font-size: 26px;
+  line-height: 1.45;
+  color: var(--dk-ink-2);
+}
+.dkc-next-job {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--dk-ink);
+}
+[dir="rtl"] .dkc-next-small {
+  font-size: 27px;
+  line-height: 1.55;
+}
+/* The red lines' ask and the list it fills, one block, at the column's
+   foot (final score round 1): its last row level with the strip's lower
+   row, so the start column ends where the test column does. */
+.dkc-next > section:first-child {
+  align-self: stretch;
+}
 .dkc-next-ask {
   display: flex;
   flex-direction: column;
-  margin-top: 6px;
+  margin-top: auto;
+  padding-top: 4px;
 }
-.dkc-next-ask > .dk-small {
-  font-weight: 500;
+/* The ask runs to the column's measure and breaks once, where it must. */
+.dkc-next-ask > p {
+  margin: 0;
+  max-width: 824px;
+  font-size: 26px;
+  line-height: 1.4;
+  font-weight: 600;
   color: var(--dk-ink);
-  text-wrap: balance;
+  text-wrap: pretty;
 }
 .dkc-redlines {
   margin-top: 8px;
@@ -1644,28 +3069,28 @@ button.dkc-status:hover {
   flex-direction: column;
   gap: 12px;
 }
+/* As wide as its widest line, at the column's start edge (fixer round 2);
+   its own direction (set from its lines) puts the bullets on its start. */
 .dkc-redlines ul {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
+  align-self: flex-start;
+  width: max-content;
+  max-width: 100%;
 }
 .dkc-redlines li {
+  position: relative;
   display: flex;
   align-items: baseline;
   gap: 16px;
   font-size: 30px;
   line-height: 1.35;
-  font-weight: 500;
+  font-weight: 400;
   color: var(--dk-ink);
-}
-/* Arabic runs taller: since the plant (2026-10-20) the test's line is
-   three lines, so three typed red lines and a booked Blueprint must still
-   clear the count (DESIGN 9.7). */
-[dir="rtl"] .dkc-next {
-  margin-top: 48px;
 }
 [dir="rtl"] .dkc-redlines ul {
   gap: 4px;
@@ -1673,9 +3098,6 @@ button.dkc-status:hover {
 [dir="rtl"] .dkc-redlines li {
   font-size: 30px;
   line-height: 1.4;
-}
-[dir="rtl"] .dkc-band {
-  padding-top: 36px;
 }
 .dkc-redlines li > i {
   flex: none;
@@ -1685,11 +3107,16 @@ button.dkc-status:hover {
   background: var(--dk-leak);
   transform: translateY(-0.12em);
 }
+/* The remove button stands just past the line's end, out of the flow, so
+   the list is as wide as its words and its edge is the words' edge. */
 .dkc-redlines li button {
-  flex: none;
+  position: absolute;
+  inset-inline-start: 100%;
+  top: 50%;
+  translate: 0 -50%;
   display: grid;
   place-items: center;
-  width: 32px;
+  width: 44px;
   height: 32px;
   padding: 0;
   border-radius: 8px;
@@ -1715,13 +3142,12 @@ button.dkc-status:hover {
   color: var(--dk-leak);
   font: inherit;
   font-size: 28px;
-  transition: border-color var(--dk-hover-canvas-ms) var(--dk-ease);
+  transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
 /* The placeholder is the CSM's prompt, not the client's: it shows only
    under the CSM's pointer or while typing. */
 .dkc-redline-input::placeholder {
   color: transparent;
-  transition: color var(--dk-hover-canvas-ms) var(--dk-ease);
 }
 .dkc-redline-input:hover::placeholder,
 .dkc-redline-input:focus::placeholder {
@@ -1733,90 +3159,211 @@ button.dkc-status:hover {
   border-bottom-color: var(--dk-leak);
 }
 /* Lines on the panel: the input below them is not drawn until the CSM
-   points at the panel (or is typing in it), so the client sees their lines
-   and nothing empty under them. */
-.dkc-redlines:not([data-empty]):not(:hover):not(:focus-within)
+   points at the panel (or is typing in it). */
+.dkc-redlines:not([data-empty], [data-blanks]):not(:hover):not(:focus-within)
   .dkc-redline-input {
   display: none;
 }
-/* Nothing typed yet: no rule on the client's screen; the input's line
-   and its prompt show under the CSM's pointer or while typing. */
-.dkc-redlines[data-empty] .dkc-redline-input:not(:hover):not(:focus) {
-  border-bottom-color: transparent;
+/* Nothing typed yet (fixer round 2): three rows to fill, each a faint
+   amber mark and a dashed amber line, the first the input itself; the
+   prompt shows under the CSM's pointer or while typing, and the line goes
+   solid while it is typed in. */
+.dkc-redline-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 640px;
+  height: 52px;
 }
-/* The close, across the foot on its own rule: the next call named at h1
-   (the one place the Blueprint is described), what it is under it, and its
-   date at the end in teal once it is booked. No card. */
-.dkc-band {
+.dkc-redline-row > i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--dk-leak);
+  opacity: 0.7;
+}
+.dkc-redline-row > span {
+  flex: 1;
+  align-self: stretch;
+  border-bottom: 2px dashed var(--dk-leak-line);
+}
+.dkc-redlines[data-empty] {
+  gap: 4px;
+}
+.dkc-redlines:is([data-empty], [data-blanks]) .dkc-redline-input {
+  flex: 1;
+  min-width: 0;
+}
+.dkc-redlines:is([data-empty], [data-blanks])
+  .dkc-redline-input:not(:hover):not(:focus) {
+  border-bottom-style: dashed;
+}
+/* Typed lines, then the rows left to fill: the rows close up under the
+   list as they do under each other. */
+.dkc-redlines[data-blanks] {
+  gap: 4px;
+}
+.dkc-redlines[data-blanks] > ul {
+  margin-bottom: 8px;
+}
+/* The last stop (the fixer's round): the next call named at H1 and what it
+   is, beside it the call as their calendar shows it (the journey
+   calendar's style), then under a hairline the call's checklist, closed. */
+/* One block centred on the stop's height (score round 2: it sat at y 290
+   to 770 with 230 px empty under it), from about y 250 to 830. */
+.dkc-blueprint {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+}
+.dkc-blueprint-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 18px 64px;
-  align-items: end;
-  margin-top: auto;
-  padding-top: 44px;
-  border-top: 1px solid var(--dk-line-strong);
+  grid-template-columns: minmax(0, 1fr) 600px;
+  column-gap: 96px;
+  align-items: center;
 }
-/* The next call's name across the band on one line, what it is under it,
-   and the date at the end of that second row (the fixer's round: with the
-   ads' job added to the test's line, a two-line name pushed the band into
-   the slide count). */
-.dkc-band-what {
-  display: contents;
-}
-.dkc-band-what .dk-h1 {
-  grid-column: 1 / -1;
+.dkc-blueprint-title {
   margin: 0;
+  max-width: 960px;
   text-wrap: balance;
 }
-.dkc-band-what .dk-body {
-  grid-column: 1;
-  max-width: 980px;
-  text-wrap: balance;
+.dkc-blueprint-line {
+  margin-top: 24px;
+  max-width: 900px;
 }
-.dkc-band-when {
-  grid-column: 2;
-  grid-row: 2;
-  padding-bottom: 4px;
-  font-size: 40px;
+/* The booked call: the journey calendar's card, its rows 100 px so the
+   block holds the call's name and its length; it fades in when the
+   booking reads back. */
+.dkc-cal.dkc-cal-next {
+  width: 600px;
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((var(--next-at, 0s) + var(--dk-t-step)) * var(--dk-m)) both;
+}
+.dkc-cal-next .dkc-cal-hour {
+  height: 100px;
+}
+/* The last hour is a line and its time: no empty row under it. */
+.dkc-cal-next .dkc-cal-hour:last-child {
+  height: 28px;
+}
+.dkc-cal-next .dkc-cal-block {
+  top: calc(16px + var(--cal-min, 0) * 100px);
+  height: 71px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  font-size: 26px;
   line-height: 1.2;
-  font-weight: 600;
-  letter-spacing: -0.015em;
-  color: var(--dk-teal);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
 }
-[dir="rtl"] .dkc-band-when {
-  font-size: 42px;
+.dkc-cal-next .dkc-cal-block > span {
+  font-size: 22px;
+  font-weight: 400;
+  color: var(--dk-ink-2);
+}
+.dkc-cal-next .dkc-cal-block[data-flat] {
+  position: static;
+  height: auto;
+  padding-block: 14px;
+}
+/* Not booked: the block is a dashed 45 minutes on the ground, holding the
+   open ring and when it gets booked; the teal comes with the booking. */
+.dkc-cal-next .dkc-cal-block[data-open] {
+  background: none;
+  border: 2px dashed var(--dk-line-strong);
+}
+.dkc-cal-next .dkc-cal-block[data-open] > .dkc-cal-open {
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--dk-ink-2);
+}
+[dir="rtl"] .dkc-cal-next .dkc-cal-block[data-open] > .dkc-cal-open {
+  font-size: 26px;
+}
+.dkc-cal-open {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink-2);
+}
+.dkc-cal-open svg {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: var(--dk-line-strong);
+  stroke-width: 2;
+}
+/* Held already (the stage past it): the ring ticked in teal, solid. */
+.dkc-cal-next .dkc-cal-block[data-done] {
+  border-style: solid;
+}
+.dkc-cal-block[data-done] .dkc-cal-open svg {
+  stroke: var(--dk-teal);
+}
+[dir="rtl"] .dkc-cal-next .dkc-cal-block {
+  font-size: 27px;
   line-height: 1.35;
-  letter-spacing: 0;
+}
+[dir="rtl"] .dkc-cal-next .dkc-cal-block > span,
+[dir="rtl"] .dkc-cal-open {
+  font-size: 24px;
+}
+[dir="rtl"] .dkc-cal-open {
+  font-size: 26px;
+}
+.dkc-blueprint-today {
+  margin-top: 112px;
+  padding-top: 56px;
+  border-top: 1px solid var(--dk-line-strong);
 }
 .dkc-starter {
   display: grid;
-  grid-template-columns: 560px minmax(0, 1fr);
+  grid-template-columns: 640px minmax(0, 1fr);
   gap: 64px;
   flex: 1;
   min-height: 0;
+  height: 100%;
 }
+/* The words beside the phones, centred on them as one block (the fixer's
+   round: at the top they left the start side's lower 60% empty). */
 .dkc-starter-side {
   display: flex;
   flex-direction: column;
-  padding-top: 8px;
+  justify-content: center;
+  padding-bottom: 72px;
 }
 .dkc-starter-side .dkc-title-tag {
   flex-direction: column;
   align-items: flex-start;
-  gap: 16px;
+  /* 16 px between the letters, as the shots measure it: the tag reads as
+     the title's own line, not a block run into it. */
+  gap: 20px;
 }
 /* What the phones show, under the tag. */
 .dkc-starter-line {
   margin-top: 28px;
-  max-width: 520px;
+  max-width: 600px;
 }
 .dkc-starter-phones {
   display: flex;
   gap: 88px;
   align-items: flex-start;
   justify-content: flex-end;
+}
+.dkc-starter-phones > * {
+  animation: dk-rise-far calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc((var(--next-at) + var(--dk-t-step)) * var(--dk-m)) both;
+}
+.dkc-starter-phones > * + * {
+  animation-delay: calc((var(--next-at) + 3 * var(--dk-t-step)) * var(--dk-m));
+}
+.dkc-starter-side {
+  animation: dk-rise calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--next-at) * var(--dk-m)) both;
 }
 
 /* ===================================================== the journey lanes
@@ -1879,7 +3426,7 @@ button.dkc-status:hover {
   /* The last line sits on the node's centre line and a wrapped name grows
      upwards, away from the line that leaves the node downwards. */
   transform: translateY(calc(-100% + 0.58em));
-  transition: color 300ms var(--dk-ease);
+  transition: color calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
 }
 [dir="rtl"] .dkc-row-name {
   font-size: 28px;
@@ -1893,7 +3440,7 @@ button.dkc-status:hover {
   color: var(--dk-ink);
 }
 .dkc-row-band {
-  transition: transform 300ms var(--dk-ease);
+  transition: transform calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease);
 }
 /* The rebook node's name, beside it in our team's lane. */
 .dkc-fork-name {
@@ -1921,11 +3468,26 @@ button.dkc-status:hover {
   color: var(--dk-ink-2);
 }
 .dkc-seg-lit {
-  transition: stroke-dashoffset var(--dk-draw-ms) var(--dk-ease);
+  transition: stroke-dashoffset calc(var(--dk-draw-ms) * var(--dk-m)) var(--dk-ease);
 }
-.dkc-leader {
-  transition: d 300ms var(--dk-ease);
+/* The journey's step travels lane to lane on --dk-ease-move, with its
+   token (JourneyLanes.useToken) on the same duration and easing. */
+.dkc-draw-move {
+  animation-timing-function: var(--dk-ease-move);
 }
+/* The enquiry's token: a 12 px teal disc with a 3 px ring of the ground. */
+.dkc-token {
+  fill: var(--dk-teal);
+  stroke: var(--dk-space);
+  stroke-width: 3;
+  opacity: 0;
+}
+/* Today's node fills as the token arrives. */
+.dkc-node-fill {
+  animation: dkc-swap calc(var(--dk-t-tick) * var(--dk-m)) var(--dk-ease) calc((var(--dk-t-beat) + var(--dk-draw-ms)) * var(--dk-m)) both;
+}
+/* The leader moves to the lit row with no path morph (DESIGN 22.3.4): it
+   changes at once, and the stage swap carries the eye. */
 
 /* A check mark reads the same way in both languages: inside a mirrored
    drawing it is turned back. */
@@ -2019,6 +3581,18 @@ button.dkc-status:hover {
   justify-content: flex-end;
   min-height: 32px;
 }
+/* The covers' tag (score round 2): 24 px under the phone's foot, on its end
+   edge, out of the flow so the figure centres on the phone itself. */
+.dkc-figure[data-tag-below] {
+  position: relative;
+}
+.dkc-figure-tag-below {
+  position: absolute;
+  top: calc(100% + 24px);
+  inset-inline-end: 0;
+  white-space: nowrap;
+  line-height: 1;
+}
 /* The mark sits on the caption's first line when the name wraps. */
 .dkc-figure-foot {
   display: flex;
@@ -2036,7 +3610,11 @@ button.dkc-status:hover {
   --app-text-2: #a8a8a8;
   --app-sep: #262626;
   --app-button: #262626;
+  --app-avatar: #262626;
   --app-scrim: rgba(0, 0, 0, 0.6);
+  /* The Reels foot's scrim where the who-row sits (score round 3: the name
+     and "Sponsored" were hard to read over a light picture). */
+  --app-scrim-deep: rgba(0, 0, 0, 0.82);
   --app-pill: rgba(255, 255, 255, 0.18);
   position: absolute;
   inset: 0;
@@ -2059,6 +3637,7 @@ button.dkc-status:hover {
   --app-text-2: #b0b3b8;
   --app-sep: #3a3b3c;
   --app-button: #3a3b3c;
+  --app-avatar: #3a3b3c;
 }
 .dkc-app[data-app="form"] {
   --app-ground: #0e1013;
@@ -2148,7 +3727,15 @@ button.dkc-status:hover {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  animation: dk-cut var(--dk-swap-ms) var(--dk-ease) both;
+  animation: dk-cut calc(var(--dk-swap-ms) * var(--dk-m)) var(--dk-ease) both;
+}
+/* An example ad's picture drifts once, slowly (22.14): 1.00 to 1.04 over
+   --dk-t-drift, transform only, then holds. Never a picture of theirs. */
+.dkc-media img[data-example],
+.dkc-reel-media img[data-example] {
+  animation:
+    dk-cut calc(var(--dk-swap-ms) * var(--dk-m)) var(--dk-ease) both,
+    dk-drift calc(var(--dk-t-drift) * var(--dk-m)) var(--dk-ease-drift) both;
 }
 .dkc-media-empty {
   position: absolute;
@@ -2227,6 +3814,40 @@ button.dkc-status:hover {
 .dkc-caption-text .dkc-more {
   color: var(--app-text-2);
 }
+/* With no caption, the feed carries on (score round 4): the next post's
+   head and the top of its picture, cut by the tab bar, where a black band
+   stood between the Page name and the tabs. */
+.dkc-next-post {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: calc(var(--u) * 12);
+  border-top: 1px solid var(--app-sep);
+}
+.dkc-next-post-head {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--u) * 10);
+  padding: calc(var(--u) * 10) calc(var(--u) * 12);
+}
+.dkc-next-post-head i {
+  flex: none;
+  width: calc(var(--u) * 34);
+  height: calc(var(--u) * 34);
+  border-radius: 999px;
+  background: var(--app-sep);
+}
+.dkc-next-post-head b {
+  width: calc(var(--u) * 96);
+  height: calc(var(--u) * 10);
+  border-radius: 999px;
+  background: var(--app-sep);
+}
+.dkc-next-post-media {
+  display: block;
+  height: 100%;
+  background: var(--app-button);
+}
 .dkc-tabbar {
   margin-top: auto;
   flex: none;
@@ -2271,7 +3892,7 @@ button.dkc-status:hover {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  animation: dk-cut var(--dk-swap-ms) var(--dk-ease) both;
+  animation: dk-cut calc(var(--dk-swap-ms) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-reel-media[data-fit="contain"] img,
 .dkc-reel-media[data-fit="contain"] video {
@@ -2282,6 +3903,10 @@ button.dkc-status:hover {
   top: 0;
   inset-inline: 0;
   z-index: 2;
+  /* The white status bar over a bright ceiling or sky (the example
+     pictures): the foot's scrim, mirrored (DESIGN 22.4.3). */
+  padding-bottom: calc(var(--u) * 48);
+  background: linear-gradient(to bottom, var(--app-scrim), transparent);
 }
 .dkc-reel-foot {
   position: absolute;
@@ -2291,11 +3916,23 @@ button.dkc-status:hover {
   display: flex;
   flex-direction: column;
   gap: calc(var(--u) * 10);
-  padding: calc(var(--u) * 90) calc(var(--u) * 64) calc(var(--u) * 14) calc(var(--u) * 14);
-  background: linear-gradient(to top, var(--app-scrim), transparent);
+  padding: calc(var(--u) * 140) calc(var(--u) * 64) calc(var(--u) * 14) calc(var(--u) * 14);
+  /* Deep under the who-row and the button, fading out well above them, so
+     the white name holds over a bright floor or a marble wall. */
+  background: linear-gradient(
+    to top,
+    var(--app-scrim-deep) 0%,
+    var(--app-scrim-deep) 46%,
+    var(--app-scrim) 70%,
+    transparent 100%
+  );
 }
 .dkc-app[dir="rtl"] .dkc-reel-foot {
-  padding: calc(var(--u) * 90) calc(var(--u) * 14) calc(var(--u) * 14) calc(var(--u) * 64);
+  padding: calc(var(--u) * 140) calc(var(--u) * 14) calc(var(--u) * 14) calc(var(--u) * 64);
+}
+.dkc-reel-who,
+.dkc-reel-cap {
+  text-shadow: 0 0 calc(var(--u) * 6) var(--app-scrim);
 }
 .dkc-reel-who {
   display: flex;
@@ -2338,6 +3975,9 @@ button.dkc-status:hover {
   display: flex;
   flex-direction: column;
   gap: calc(var(--u) * 22);
+}
+.dkc-reel-rail svg {
+  filter: drop-shadow(0 0 calc(var(--u) * 3) var(--app-scrim));
 }
 .dkc-reel .dkc-tabbar {
   position: absolute;
@@ -2474,8 +4114,13 @@ button.dkc-status:hover {
   --app-text-2: #8696a0;
   --app-sep: #2a3942;
   --app-button: #202c33;
+  /* A visible ground for a letter avatar (score round 4: #202c33 was the
+     card's own colour, so the letter floated): 3.2:1 against the card. */
+  --app-avatar: #6a7175;
   --app-link: #53bdeb;
   --app-accent: #00a884;
+  /* A sent message's bubble, WhatsApp's own dark green. */
+  --app-out: #005c4b;
 }
 .dkc-app[data-app="page"] {
   --app-ground: #000;
@@ -2553,7 +4198,7 @@ button.dkc-status:hover {
   line-height: 1.25;
   font-weight: 700;
   color: var(--dk-ink);
-  transition: color 300ms var(--dk-ease);
+  transition: color calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
 }
 [dir="rtl"] .dkc-col-head {
   font-size: 32px;
@@ -2605,6 +4250,9 @@ button.dkc-status:hover {
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
+  /* As wide as the rail (or its label), so a label under the last node
+     can end at it. */
+  width: fit-content;
 }
 .dkc-roadstrip-label {
   font-size: 24px;
@@ -2621,10 +4269,11 @@ button.dkc-status:hover {
   max-width: 900px;
   text-wrap: balance;
 }
-/* On the content's end edge, the presenter's edge: one right margin. */
+/* On the content's end edge, the presenter's edge: one right margin. 760
+   tall from y 200, its tag under its foot (score round 2), as O1's. */
 .dkc-cover-phone {
   position: absolute;
-  top: 226px;
+  top: 200px;
   inset-inline-end: 136px;
   z-index: 1;
 }
@@ -2653,9 +4302,13 @@ button.dkc-status:hover {
   min-width: 0;
   height: 692px;
 }
+.dkc-journey-stage > .dk-swap {
+  height: 100%;
+  grid-template-rows: minmax(0, 1fr);
+}
 .dkc-stage-swap {
   height: 100%;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 @keyframes dkc-swap {
   from {
@@ -2664,6 +4317,49 @@ button.dkc-status:hover {
   to {
     opacity: 1;
   }
+}
+/* The stage swap's two layers in one grid cell (StageSwap.tsx): the
+   incoming one fades in on its own class's animation, the outgoing one
+   fades out at 75% of the entrance on the exit curve. Opacity only. */
+.dk-swap {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+.dk-swap > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+.dk-swap > .dk-swap-out[data-swap] {
+  pointer-events: none;
+  animation: dk-swap-out calc(var(--dk-t-stage) * 0.75 * var(--dk-m)) var(--dk-ease-in) both;
+}
+@keyframes dk-swap-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+/* Sequential (StageSwap's `sequential`, O7's stops): two different layouts.
+   The outgoing one leaves over half the stage time on the exit curve; the
+   incoming one starts halfway through that exit (score round 4: waiting
+   for all of it left the canvas blank for about 250 ms, a blink at a
+   share's frame rate). Both are opacity only and the overlap is about
+   100 ms, while neither is legible over the other. Under --dk-m: 0 both
+   are set at once. */
+.dk-swap[data-mode="seq"] > .dk-swap-out[data-swap] {
+  animation: dk-swap-out calc(var(--dk-t-stage) * 0.5 * var(--dk-m)) var(--dk-ease-in) both;
+}
+.dk-swap[data-mode="seq"] > [data-swap="in"][data-after] {
+  animation: dkc-swap calc(var(--dk-t-stage) * 0.75 * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-stage) * 0.375 * var(--dk-m)) both;
+}
+/* O7's close, arriving by the sequential swap: its checks draw once the
+   stop is in sight, not while it is still at 0 opacity. */
+.dk-swap[data-mode="seq"] > [data-after] .dkc-today li[data-draw] {
+  --dkt-delay: calc((var(--dk-t-stage) + min(calc(var(--k, 0) * var(--dk-stagger)), var(--dk-stagger-max))) * var(--dk-m));
+  --dkt-check: calc(var(--dkt-delay) + var(--dk-t-beat) * var(--dk-m));
 }
 .dkc-stage {
   display: flex;
@@ -2720,6 +4416,12 @@ button.dkc-status:hover {
   display: flex;
   flex-direction: column;
   gap: 26px;
+}
+/* Journey stop 6: the statement right above its fork (DESIGN 22.6.1). */
+.dkc-fork-block {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
 }
 .dkc-fivedots {
   position: relative;
@@ -2858,7 +4560,7 @@ button.dkc-status:hover {
   font-size: 26px;
   line-height: 1.2;
   color: var(--dk-ink-2);
-  animation: dkc-push 420ms var(--dk-ease) both;
+  animation: dkc-push calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-queue li[data-row="new"] {
   background: var(--dk-teal-faint);
@@ -3169,7 +4871,6 @@ button.dkc-status:hover {
   overflow: hidden;
   background: var(--dk-panel);
   box-shadow: 0 0 0 1px var(--dk-line-strong);
-  transition: box-shadow var(--dk-hover-canvas-ms) var(--dk-ease);
 }
 .dkc-thumb-img img {
   width: 100%;
@@ -3278,8 +4979,8 @@ button.dkc-status:hover {
   top: 0;
   transform-origin: 0 0;
   transition:
-    transform 420ms var(--dk-ease),
-    opacity 420ms var(--dk-ease);
+    transform calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease),
+    opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-phone-slot[data-over] .dkc-phone {
   box-shadow:
@@ -3316,7 +5017,7 @@ button.dkc-status:hover {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  animation: dk-cut 300ms var(--dk-ease) both;
+  animation: dk-cut calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-phone-label {
   position: absolute;
@@ -3344,7 +5045,7 @@ button.dkc-status:hover {
   inset: 0;
   overflow: visible;
   pointer-events: none;
-  animation: dk-cut 300ms var(--dk-ease) 200ms both;
+  animation: dk-cut calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-join) * var(--dk-m)) both;
 }
 .dkc-leader-label {
   position: absolute;
@@ -3356,7 +5057,7 @@ button.dkc-status:hover {
   color: var(--dk-ink);
   width: max-content;
   text-wrap: balance;
-  animation: dk-cut 300ms var(--dk-ease) 200ms both;
+  animation: dk-cut calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-join) * var(--dk-m)) both;
 }
 [dir="rtl"] .dkc-leader-label {
   font-size: 26px;
@@ -3368,11 +5069,15 @@ button.dkc-status:hover {
   display: block;
   color: var(--dk-ink-2);
 }
-/* Inside the end side's room, never cut by the phone area's edge. */
+/* The phone in focus carries its tag above its top end corner, its
+   baseline 24 px over the frame, on one line (the score round). */
+.dkc-phones-wrap {
+  position: relative;
+}
 .dkc-focus-tag {
   position: absolute;
-  top: 0;
-  text-wrap: balance;
+  bottom: calc(100% + 18px);
+  white-space: nowrap;
 }
 /* A file saving behind the preview: a 4 px bar along the screen's foot. */
 .dkc-phone-progress {
@@ -3384,8 +5089,8 @@ button.dkc-status:hover {
   background: var(--dk-teal);
   transform-origin: left center;
   transition:
-    transform 300ms var(--dk-ease),
-    opacity 400ms var(--dk-ease) 600ms;
+    transform calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease),
+    opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-fill) * var(--dk-m));
 }
 [dir="rtl"] .dkc-phone-progress {
   transform-origin: right center;
@@ -3452,6 +5157,19 @@ button.dkc-status:hover {
   height: 100%;
   object-fit: cover;
 }
+/* The example ad's picture heading the form says so on its end corner. */
+.dkc-cover-chip {
+  position: absolute;
+  top: calc(var(--u) * 10);
+  inset-inline-end: calc(var(--u) * 10);
+  padding: calc(var(--u) * 3) calc(var(--u) * 9);
+  border-radius: 999px;
+  background: var(--dk-deep);
+  color: var(--dk-ink);
+  font-family: var(--dk-mono);
+  font-size: calc(var(--u) * 13);
+  line-height: 1.3;
+}
 .dkc-form-screen[data-cover] .dkc-form-intro {
   position: relative;
   z-index: 1;
@@ -3493,14 +5211,25 @@ button.dkc-status:hover {
   line-height: 1.45;
   color: var(--app-text-2);
 }
+/* Meta's closing screen, read from the slide (score round 1: at 19u its
+   words were about 17 canvas px in a phone 80% empty): the Page's avatar
+   about 64 canvas px, its name and the thank-you words about 24, the
+   block centred in the screen's upper half, where the eye lands. */
+.dkc-form-thanks {
+  gap: calc(var(--u) * 16);
+}
+.dkc-form-thanks b {
+  font-size: calc(var(--u) * 28);
+  line-height: 1.25;
+}
 .dkc-form-thanks p {
   color: var(--app-text);
-  font-size: calc(var(--u) * 19);
+  font-size: calc(var(--u) * 27);
+  line-height: 1.4;
 }
-/* Meta's closing screen sits in the middle of the form, not at its top. */
 .dkc-form-screen[data-screen="thanks"] .dkc-form-thanks {
   justify-content: center;
-  padding-bottom: calc(var(--u) * 96);
+  padding-bottom: calc(var(--u) * 240);
 }
 .dkc-form-video {
   display: grid;
@@ -3543,13 +5272,13 @@ button.dkc-status:hover {
   flex-direction: column;
   gap: calc(var(--u) * 24);
   padding: calc(var(--u) * 8) calc(var(--u) * 16) calc(var(--u) * 24);
-  transition: transform 420ms var(--dk-ease);
+  transition: transform calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-form-q {
   display: flex;
   flex-direction: column;
   gap: calc(var(--u) * 10);
-  transition: opacity 300ms var(--dk-ease);
+  transition: opacity calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-form-q[data-dim] {
   opacity: 0.4;
@@ -3669,6 +5398,99 @@ button.dkc-status:hover {
   width: calc(var(--u) * 22);
   height: calc(var(--u) * 22);
 }
+/* L5 (fixer round 2): the first message sent, under the ad the chat was
+   opened from, as WhatsApp shows a chat started from an ad; the field is
+   empty again, its microphone where the send button was. */
+.dkc-app[data-sent] .dkc-wa-body {
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  gap: calc(var(--u) * 14);
+  padding: 0 calc(var(--u) * 12) calc(var(--u) * 8);
+}
+/* The business at the top of the chat, the message at its foot. */
+.dkc-app[data-sent] .dkc-wa-profile {
+  align-self: center;
+  margin-bottom: auto;
+  padding-top: calc(var(--u) * 28);
+}
+.dkc-wa-day {
+  align-self: center;
+  padding: calc(var(--u) * 4) calc(var(--u) * 12);
+  border-radius: calc(var(--u) * 8);
+  background: var(--app-card);
+  color: var(--app-text-2);
+  font-size: calc(var(--u) * 13);
+}
+.dkc-wa-out {
+  align-self: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--u) * 6);
+  width: 82%;
+  padding: calc(var(--u) * 4) calc(var(--u) * 4) calc(var(--u) * 6);
+  border-radius: calc(var(--u) * 12);
+  border-start-end-radius: calc(var(--u) * 3);
+  background: var(--app-out);
+  color: var(--app-text);
+}
+.dkc-wa-out > span {
+  padding: 0 calc(var(--u) * 8);
+  font-size: calc(var(--u) * 17);
+  line-height: 1.35;
+}
+.dkc-wa-ad {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: calc(var(--u) * 9);
+  overflow: hidden;
+  background: var(--app-sep);
+}
+.dkc-wa-ad img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Waiting to send (journey stop 2): the business at the top, the ad the
+   chat was opened from at the foot, over the field, on the outgoing side. */
+.dkc-wa-body[data-ref] {
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  padding: 0 calc(var(--u) * 12) calc(var(--u) * 4);
+}
+.dkc-wa-body[data-ref] .dkc-wa-profile {
+  align-self: center;
+  margin-bottom: auto;
+  padding-top: calc(var(--u) * 28);
+}
+.dkc-wa-ref {
+  align-self: flex-end;
+  width: 70%;
+  padding: calc(var(--u) * 4);
+  border-radius: calc(var(--u) * 12);
+  background: var(--app-out);
+}
+.dkc-wa-meta {
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 4);
+  padding: 0 calc(var(--u) * 6);
+  font-style: normal;
+  font-size: calc(var(--u) * 12);
+  color: var(--app-text-2);
+}
+.dkc-wa-meta svg {
+  width: calc(var(--u) * 16);
+  height: calc(var(--u) * 16);
+  color: var(--app-link);
+}
+.dkc-wa-empty {
+  color: var(--app-text-2) !important;
+}
 .dkc-page-shot {
   width: 100%;
   height: 100%;
@@ -3695,19 +5517,9 @@ button.dkc-status:hover {
   column-gap: 98px;
   margin-top: 73px;
   align-items: stretch;
-  transition: transform var(--dk-swap-ms) var(--dk-ease);
 }
-/* Stops 1 and 2 have no next round yet (its 220 px are kept, unseen): the
-   words and the tiles sit lower by half of it, in the middle of the room
-   between the title and the rail, and rise as the round arrives (the
-   fixer's round, 2026-10-20). */
-.dkc-cf[data-stop="0"],
-.dkc-cf[data-stop="1"] {
-  transform: translateY(110px);
-}
-.dk-root[data-still] .dkc-cf {
-  transition: none;
-}
+/* One place on every stop (DESIGN 22.6.2): the next round's band is kept,
+   empty, on stops 1 and 2, so the field never moves between stops. */
 .dkc-cf-words {
   display: flex;
   flex-direction: column;
@@ -3719,7 +5531,7 @@ button.dkc-status:hover {
   flex-direction: column;
   gap: 14px;
   min-height: 0;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-cf-name {
   margin-bottom: 4px;
@@ -3777,7 +5589,7 @@ button.dkc-status:hover {
 .dkc-stamp {
   flex: none;
   font-family: var(--dk-font);
-  animation: dk-cut 400ms var(--dk-ease) both;
+  animation: dk-cut calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-cf-field {
   align-self: start;
@@ -3797,37 +5609,80 @@ button.dkc-status:hover {
   background: var(--dk-panel);
   box-shadow: inset 0 0 0 1px var(--dk-leak-line);
 }
-/* The panel's head leads it (28/600 ink), its items a step under it
-   (26), and each group's head ("Never", "Always", "From your card") the
-   same small label with 12 px above it (the fixer's round). */
-.dkc-fixed > .dkc-col-head {
-  font-size: 28px;
-  line-height: 1.3;
-  font-weight: 600;
-  color: var(--dk-ink);
+/* The panel, lighter (DESIGN 22.6.2): no head and no foot, the two group
+   heads ("Never", "Always": Geist 600 24 ink-2) and their lines. With a
+   short Always group the two sit side by side (Never 480 px). */
+.dkc-fixed {
+  margin-top: 10px;
 }
-[dir="rtl"] .dkc-fixed > .dkc-col-head {
-  font-size: 30px;
-  line-height: 1.45;
+.dkc-fixed-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* Never takes what its lines need, up to half the panel, and Always the
+   rest (score round 2 of the five services: a fixed 480 px squeezed an
+   English Always line into three lines beside it; up to 480 px, a quoted
+   English Never line still took it all). */
+.dkc-fixed-pair[data-side] {
+  display: grid;
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
+  column-gap: 32px;
 }
 .dkc-fixed-group {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  margin-top: 12px;
+  gap: 4px;
+  min-width: 0;
 }
-.dkc-fixed-group + .dkc-fixed-group {
-  margin-top: 12px;
+.dkc-fixed-pair + .dkc-fixed-group {
+  margin-top: 14px;
 }
 .dkc-fixed-lead {
-  font-size: 22px;
+  font-size: 24px;
   line-height: 1.3;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--dk-ink-2);
 }
 [dir="rtl"] .dkc-fixed-lead {
-  font-size: 24px;
+  font-size: 26px;
   line-height: 1.45;
+}
+/* The card's lines in the other script, quoted under their column's own
+   head (fixer round 2): one block at the column's start edge, as wide as
+   its widest line, in its own direction, so its marks sit on its own
+   start; the first carries the small tag saying where they come from. */
+.dkc-fixed-quoted {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.dkc-fixed-group > ul + .dkc-fixed-quoted {
+  margin-top: 8px;
+}
+.dkc-fixed-quoted ul {
+  width: max-content;
+  max-width: 100%;
+}
+/* Their words wrap from their own start, not the deck's edge. */
+.dk-canvas[dir] .dkc-fixed-quoted .dkc-theirs {
+  text-align: start;
+}
+.dkc-fixed-sublead {
+  font-size: 20px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--dk-ink-3);
+  white-space: nowrap;
+}
+[dir="rtl"] .dkc-fixed-sublead {
+  font-size: 22px;
+  line-height: 1.45;
+}
+/* Where the lines come from, said once under the panel. */
+.dkc-fixed-source {
+  margin-top: 10px;
 }
 .dkc-fixed ul {
   list-style: none;
@@ -3860,18 +5715,6 @@ button.dkc-status:hover {
 }
 .dkc-fixed li > span {
   min-width: 0;
-}
-/* A line they typed on O7: "you told us" after it, small, in ink-3, on
-   the line's baseline (score round 2: a suffix, not a group head). */
-.dkc-fixed li > .dkc-told {
-  flex: none;
-  font-size: 20px;
-  font-weight: 400;
-  color: var(--dk-ink-3);
-  white-space: nowrap;
-}
-[dir="rtl"] .dkc-fixed li > .dkc-told {
-  font-size: 22px;
 }
 /* A red line in the other script: the row keeps the panel's direction
    (every mark on one edge, as O7's list), and only its words take their
@@ -3923,12 +5766,12 @@ button.dkc-status:hover {
    edge, which never fades: the teal edge is its own layer over the off
    edge. The toggle is Meta's on/off shape, the on layer over the off one. */
 .dkf-field {
-  --dkf-ms: var(--dk-swap-ms);
+  --dkf-ms: calc(var(--dk-swap-ms) * var(--dk-m));
   width: 734px;
 }
 .dkf-field[data-instant],
 .dk-root[data-still] .dkf-field {
-  --dkf-ms: 0ms;
+  --dkf-ms: 0s;
 }
 .dkf-grid {
   display: grid;
@@ -3940,6 +5783,42 @@ button.dkc-status:hover {
   position: relative;
   border-radius: 12px;
   background: var(--dk-panel);
+  /* The field's switch-off runs tile by tile in a scattered order (DESIGN
+     22.3.3), --dk-stagger-fast apart, capped at --dk-stagger-max; only a
+     step forward animates (data-instant sets a step back at once). */
+  --dkf-delay: calc(min(calc(var(--o, 0) * var(--dk-stagger-fast)), var(--dk-stagger-max)) * var(--dk-m));
+  contain: layout style;
+}
+.dkf-field[data-instant] .dkf-tile,
+.dkf-field[data-instant] .dkf-round-tile {
+  --dkf-delay: 0s;
+}
+/* An example ad's picture (DESIGN 22.4.4): under the tile's edge, full
+   when lit, 0.3 over the panel when switched off. */
+.dkf-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  object-fit: cover;
+  display: block;
+  opacity: 0.3;
+  transition: opacity var(--dkf-ms) var(--dk-ease) var(--dkf-delay);
+}
+.dkf-tile[data-lit] .dkf-photo {
+  opacity: 1;
+}
+/* Stops 3 and 4 (score round 2): the switched-off examples step back to
+   0.15, so their red lines and the quick check lead, not 17 pictures. */
+.dkf-field:is([data-stop="2"], [data-stop="3"]) .dkf-tile:not([data-lit]) .dkf-photo {
+  opacity: 0.15;
+}
+/* The tile's own edge, a layer over the picture; the teal edge over it. */
+.dkf-base {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
   box-shadow: inset 0 0 0 2px var(--dk-line-strong);
 }
 .dkf-edge {
@@ -3948,7 +5827,7 @@ button.dkc-status:hover {
   border-radius: 12px;
   box-shadow: inset 0 0 0 2px var(--dk-teal);
   opacity: 0;
-  transition: opacity var(--dkf-ms) var(--dk-ease);
+  transition: opacity var(--dkf-ms) var(--dk-ease) var(--dkf-delay);
 }
 .dkf-tile[data-lit] .dkf-edge {
   opacity: 1;
@@ -3981,11 +5860,24 @@ button.dkc-status:hover {
   color: var(--dk-ink);
   fill: var(--dk-ink);
 }
-/* The toggle stays readable over their picture. */
-.dkf-tile[data-pick] .dkf-switch {
+/* The toggle stays readable over a picture (theirs, or an example's), and
+   the format glyph sits in a disc like the pick's star (DESIGN 22.4.4). */
+.dkf-tile:is([data-pick], [data-photo]) .dkf-switch {
   z-index: 1;
   border-radius: 999px;
   box-shadow: 0 0 0 3px var(--dk-deep);
+}
+.dkf-tile[data-photo] .dkf-mark {
+  z-index: 1;
+  box-sizing: content-box;
+  width: 18px;
+  height: 18px;
+  padding: 5px;
+  top: 8px;
+  inset-inline-start: 8px;
+  border-radius: 999px;
+  background: var(--dk-deep);
+  color: var(--dk-ink);
 }
 .dkf-mark {
   position: absolute;
@@ -4003,7 +5895,7 @@ button.dkc-status:hover {
 .dkf-mark,
 .dkf-switch {
   opacity: 0.45;
-  transition: opacity var(--dkf-ms) var(--dk-ease);
+  transition: opacity var(--dkf-ms) var(--dk-ease) var(--dkf-delay);
 }
 .dkf-tile[data-lit] :is(.dkf-mark, .dkf-switch) {
   opacity: 1;
@@ -4022,7 +5914,7 @@ button.dkc-status:hover {
   height: 18px;
   border-radius: 999px;
   background: var(--dk-ink-2);
-  transition: transform var(--dkf-ms) var(--dk-ease);
+  transition: transform var(--dkf-ms) var(--dk-ease) var(--dkf-delay);
 }
 .dkf-track.dkf-on {
   background: var(--dk-teal);
@@ -4033,8 +5925,8 @@ button.dkc-status:hover {
 .dkf-on {
   opacity: 0;
   transition:
-    opacity var(--dkf-ms) var(--dk-ease),
-    transform var(--dkf-ms) var(--dk-ease);
+    opacity var(--dkf-ms) var(--dk-ease) var(--dkf-delay),
+    transform var(--dkf-ms) var(--dk-ease) var(--dkf-delay);
 }
 .dkf-tile[data-lit] .dkf-on {
   opacity: 1;
@@ -4046,11 +5938,14 @@ button.dkc-status:hover {
   transform: translateX(-16px);
 }
 /* The next round, under the field: its label at y 726, six outlines from
-   y 776. Dotted while ahead (stop 3), the client's change in ink (stop 4),
-   made (stop 5). */
+   y 776. Its dashed slots are there from the first stop at 35% (DESIGN
+   22.15: the field's stops left an empty band above the rail), labelled
+   "Next round" at the same 35% (final score round 1: unlabelled, the faint
+   row read as an empty band), so nothing moves when stop 3 brings it in at
+   full strength; then the client's change in ink (stop 4), made (stop 5). */
 .dkf-next {
   margin-top: 30px;
-  opacity: 0;
+  opacity: 0.35;
   transition: opacity var(--dkf-ms) var(--dk-ease);
 }
 .dkf-next[data-shown] {
@@ -4070,6 +5965,7 @@ button.dkc-status:hover {
   font-weight: 500;
   color: var(--dk-ink-2);
   white-space: nowrap;
+  transition: opacity var(--dkf-ms) var(--dk-ease);
 }
 [dir="rtl"] .dkf-label {
   font-size: 26px;
@@ -4105,20 +6001,27 @@ button.dkc-status:hover {
   position: relative;
   height: 130px;
   border-radius: 12px;
-  background: transparent;
-  transition: background-color var(--dkf-ms) var(--dk-ease);
+  --dkf-delay: calc(min(calc(var(--o, 0) * var(--dk-stagger-fast)), var(--dk-stagger-max)) * var(--dk-m));
+}
+/* Made (stop 5): each takes its picture, --dk-stagger-fast apart. */
+.dkf-round-tile .dkf-photo {
+  opacity: 0;
+}
+.dkf-field[data-stop="4"] .dkf-round-tile .dkf-photo {
+  opacity: 1;
 }
 .dkf-round-tile svg {
   position: absolute;
   inset: 0;
   overflow: visible;
 }
+.dkf-round-tile svg {
+  z-index: 1;
+}
 .dkf-round-tile rect {
   fill: none;
   stroke-width: 2;
-  transition:
-    opacity var(--dkf-ms) var(--dk-ease),
-    stroke var(--dkf-ms) var(--dk-ease);
+  transition: opacity var(--dkf-ms) var(--dk-ease);
 }
 .dkf-dots {
   stroke: var(--dk-line-strong);
@@ -4140,9 +6043,7 @@ button.dkc-status:hover {
 .dkf-round-tile[data-theirs] .dkf-solid {
   stroke: var(--dk-ink);
 }
-.dkf-field[data-stop="4"] .dkf-round-tile {
-  background: var(--dk-panel-2);
-}
+
 
 /* ------------------------------------------------------- L5 · form */
 
@@ -4190,12 +6091,23 @@ button.dkc-status:hover {
   min-height: 76px;
   padding: 10px 16px;
   border-radius: 12px;
-  transition:
-    background-color 300ms var(--dk-ease),
-    opacity 300ms var(--dk-ease);
+  position: relative;
+  isolation: isolate;
+  transition: opacity calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease);
 }
-.dkc-qlist li[data-row-lit] {
+/* The lit row's band: a layer fading in, never a repainted background. */
+.dkc-qlist li::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 12px;
   background: var(--dk-teal-faint);
+  opacity: 0;
+  transition: opacity calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-qlist li[data-row-lit]::before {
+  opacity: 1;
 }
 .dkc-qlist li[data-dim] {
   opacity: 0.55;
@@ -4258,13 +6170,42 @@ button.dkc-status:hover {
   padding: 18px 76px 20px 16px;
 }
 /* A WhatsApp ad: the steps after the chat opens, numbered like the
-   questions a form would have shown. */
+   questions a form would have shown. On L5 the steps start 96 px under the
+   line (score round 2 of the five services: all three at the foot left
+   360 px empty under the line), and the last (our call, its "5 minutes"
+   underlined) is the thank-you stop's band, 32 px under the second (final
+   score round 1: on the column's foot it stood 270 px from the second and
+   the three no longer read as one sequence). */
 .dkc-wa-next {
   margin-top: 56px;
   display: flex;
   flex-direction: column;
   gap: 14px;
   max-width: 900px;
+}
+.dkc-form-slide[data-wa] {
+  height: auto;
+}
+.dkc-form-slide[data-wa] .dkc-form-side {
+  align-self: stretch;
+}
+.dkc-form-slide[data-wa] .dkc-wa-next {
+  flex: 1;
+  margin-top: 96px;
+  max-width: none;
+}
+.dkc-form-slide[data-wa] .dkc-wa-next ol {
+  flex: 1;
+}
+.dkc-wa-next > ol > li[data-band] {
+  margin-top: 32px;
+  padding: 18px 16px 20px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--dk-teal-faint);
+}
+.dkc-wa-next li:has(+ li[data-band]) {
+  border-bottom: 1px solid var(--dk-line);
 }
 .dkc-wa-next ol {
   list-style: none;
@@ -4331,7 +6272,7 @@ button.dkc-status:hover {
   padding: 24px 32px 20px;
   border-radius: 16px;
   background: var(--dk-panel);
-  transition: opacity 420ms var(--dk-ease);
+  transition: opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-call-card-head {
   display: flex;
@@ -4380,7 +6321,7 @@ button.dkc-status:hover {
   height: 42px;
   font-size: 24px;
   color: var(--dk-ink-3);
-  transition: color 300ms var(--dk-ease);
+  transition: color calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
 }
 [dir="rtl"] .dkc-stages li {
   font-size: 26px;
@@ -4412,9 +6353,7 @@ button.dkc-status:hover {
   bottom: 0;
   inset-inline-start: 480px;
   inset-inline-end: 0;
-  transition:
-    opacity 420ms var(--dk-ease),
-    bottom 0ms;
+  transition: opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
 }
 /* After the call (stop 7) the record goes: the call card already says the
    call ended, and its last line's afterimage was a fourth thing to sort
@@ -4443,7 +6382,7 @@ button.dkc-status:hover {
   list-style: none;
   margin: 0;
   padding: 0;
-  transition: transform 300ms var(--dk-ease);
+  transition: transform calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-transcript[data-still] ol {
   transition: none;
@@ -4462,7 +6401,7 @@ button.dkc-status:hover {
   width: 820px;
   max-width: 100%;
   margin-bottom: 30px;
-  transition: opacity 300ms var(--dk-ease);
+  transition: opacity calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-turn[data-who="agent"] {
   margin-inline-start: 160px;
@@ -4471,7 +6410,7 @@ button.dkc-status:hover {
   visibility: hidden;
 }
 .dkc-turn[data-new] {
-  animation: dkc-turn var(--dk-beat-ms) var(--dk-ease) both;
+  animation: dkc-turn calc(var(--dk-beat-ms) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-transcript[data-still] .dkc-turn[data-new] {
   animation: none;
@@ -4550,8 +6489,8 @@ button.dkc-status:hover {
   pointer-events: none;
   transform-origin: 0 0;
   transition:
-    opacity 420ms var(--dk-ease),
-    transform 420ms var(--dk-ease);
+    opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease),
+    transform calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
 }
 [dir="rtl"] .dkc-after {
   transform-origin: 100% 0;
@@ -4622,7 +6561,7 @@ button.dkc-status:hover {
   min-height: 56px;
   padding-block: 9px;
   opacity: 0.4;
-  transition: opacity 300ms var(--dk-ease) calc(var(--i) * 400ms);
+  transition: opacity calc(var(--dk-t-move) * var(--dk-m)) var(--dk-ease) calc(min(var(--i) * var(--dk-stagger), var(--dk-stagger-max)) * var(--dk-m));
 }
 .dkc-reminders[data-lit] li {
   opacity: 1;
@@ -4652,25 +6591,35 @@ button.dkc-status:hover {
   width: 28px;
   height: 36px;
 }
+/* The mark's ring, and its lit ring over it as a second layer (opacity
+   only, DESIGN 22.3.4), each item --dk-stagger after the one before,
+   capped at --dk-stagger-max. */
 .dkc-rem-mark i {
+  position: relative;
   width: 14px;
   height: 14px;
   box-sizing: border-box;
   border-radius: 999px;
   border: 2px solid var(--dk-line-strong);
   background: var(--dk-space);
-  transition:
-    background-color 300ms var(--dk-ease) calc(var(--i) * 400ms),
-    border-color 300ms var(--dk-ease) calc(var(--i) * 400ms);
 }
-.dkc-reminders[data-lit] .dkc-rem-mark i {
-  border-color: var(--dk-teal);
+.dkc-rem-mark i::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 999px;
+  border: 2px solid var(--dk-teal);
   background: var(--dk-space);
+  opacity: 0;
+  transition: opacity calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc(min(calc(var(--i) * var(--dk-stagger)), var(--dk-stagger-max)) * var(--dk-m));
 }
-.dkc-reminders[data-lit] li:first-child .dkc-rem-mark i {
+.dkc-reminders[data-lit] .dkc-rem-mark i::after {
+  opacity: 1;
+}
+.dkc-reminders[data-lit] li:first-child .dkc-rem-mark i::after {
   background: var(--dk-teal);
 }
-.dkc-reminders[data-still] .dkc-rem-mark i {
+.dkc-reminders[data-still] .dkc-rem-mark i::after {
   transition: none;
 }
 /* One line per step in the deck's one face: its time in ink-2, then the
@@ -4753,7 +6702,7 @@ button.dkc-status:hover {
   gap: 14px;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 420ms var(--dk-ease) 120ms;
+  transition: opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-beat) * var(--dk-m));
 }
 .dkc-call[data-phase="lands"] .dkc-lands {
   opacity: 1;
@@ -4761,7 +6710,7 @@ button.dkc-status:hover {
 /* What lands with you: the call card and the appointment sit together in
    the middle of the room above the rail, not hung from the top. */
 .dkc-call-main {
-  transition: transform var(--dk-swap-ms) var(--dk-ease);
+  transition: transform calc(var(--dk-swap-ms) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-call[data-phase="after"] .dkc-call-main,
 .dkc-call[data-phase="lands"] .dkc-call-main {
@@ -4868,16 +6817,16 @@ button.dkc-status:hover {
 }
 .dkc-partner[data-out] .dkc-partner-l2 {
   opacity: 1;
-  transition: opacity 200ms var(--dk-ease);
+  transition: opacity calc(var(--dk-t-join) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-partner-caption {
   margin-top: 20px;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-partner-stage {
   position: absolute;
   inset: 0;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-partner-stage svg {
   position: absolute;
@@ -4895,13 +6844,13 @@ button.dkc-status:hover {
 }
 .dkc-pie[data-out] .dkc-pie-lit {
   opacity: 1;
-  transition: opacity 240ms var(--dk-ease);
+  transition: opacity calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
 }
 .dkc-pie[data-out] .dkc-pie-ahead {
   opacity: 0;
 }
 .dkc-pie[data-out] .dkc-pie-theirs {
-  transition: transform 420ms var(--dk-ease);
+  transition: transform calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
 }
 /* A label row: the names and one leader into the piece, ending on a dot
    in the piece's edge colour; the owner over the names. */
@@ -4915,7 +6864,7 @@ button.dkc-status:hover {
   opacity: 0;
 }
 .dkc-pie[data-out] .dkc-pie-label[data-side="start"] {
-  transition: opacity 200ms var(--dk-ease) 300ms;
+  transition: opacity calc(var(--dk-t-join) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-move) * var(--dk-m));
 }
 .dkc-pie-dot {
   flex: none;
@@ -4926,6 +6875,17 @@ button.dkc-status:hover {
 }
 .dkc-pie-label[data-lane="you"] .dkc-pie-dot {
   background: var(--dk-ink);
+}
+/* Stop 1's quiet twin of their label: the same words in ink-3 over the
+   dotted slot, crossfading to the ink one as the piece is pulled. */
+.dkc-pie-label[data-quiet] :is(.dkc-pie-owner, .dkc-pie-name) {
+  color: var(--dk-ink-3);
+}
+.dkc-pie-label[data-quiet] .dkc-pie-dot {
+  background: var(--dk-ink-3);
+}
+.dkc-pie-label[data-quiet] .dkc-pie-leader {
+  background: var(--dk-line);
 }
 .dkc-pie-leader {
   flex: none;
@@ -5009,25 +6969,27 @@ button.dkc-status:hover {
 .dkc-route-draw {
   stroke-dasharray: 1 1;
   stroke-dashoffset: 1;
-  animation: dkc-draw 520ms linear 160ms forwards;
-}
-.dkc-route-close {
-  transition: stroke 200ms var(--dk-ease);
-}
-.dkc-routes[data-close] .dkc-route-close {
-  stroke: var(--dk-ink);
+  animation: dkc-draw calc(var(--dk-draw-ms) * var(--dk-m)) linear calc(var(--dk-t-tick) * var(--dk-m)) forwards;
 }
 .dkc-route-end {
   fill: var(--dk-space);
   stroke: var(--dk-line-strong);
   stroke-width: 2;
-  transition:
-    fill 200ms var(--dk-ease),
-    stroke 200ms var(--dk-ease);
 }
-.dkc-routes[data-close] .dkc-route-end {
+/* The close in ink: a second layer over each, fading in (opacity only). */
+.dkc-route-ink {
+  opacity: 0;
+  transition: opacity calc(var(--dk-t-join) * var(--dk-m)) var(--dk-ease);
+}
+.dkc-route-close.dkc-route-ink {
+  stroke: var(--dk-ink);
+}
+.dkc-route-end.dkc-route-ink {
   fill: var(--dk-ink);
   stroke: var(--dk-ink);
+}
+.dkc-routes[data-close] .dkc-route-ink {
+  opacity: 1;
 }
 /* Each road's words in the start zone, the name level with its ring. */
 .dkc-route-words {
@@ -5075,7 +7037,7 @@ button.dkc-status:hover {
   transform: translateY(22px);
 }
 .dkc-route-bend > span {
-  animation: dkc-swap 420ms var(--dk-ease) 520ms both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) calc(var(--dk-draw-ms) * var(--dk-m)) both;
 }
 .dkc-partner[data-still] .dkc-route-bend > span {
   animation: none;
@@ -5104,7 +7066,7 @@ button.dkc-status:hover {
   line-height: 1.3;
   font-weight: 500;
   color: var(--dk-ink-2);
-  transition: color 200ms var(--dk-ease);
+  transition: color calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease);
 }
 [dir="rtl"] .dkc-route-node span {
   font-size: 26px;
@@ -5121,7 +7083,7 @@ button.dkc-status:hover {
   margin: 0;
   padding-top: 28px;
   border-top: 1px solid var(--dk-line-strong);
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-partner[data-still] .dkc-route-draw {
   animation: none;
@@ -5179,7 +7141,7 @@ button.dkc-status:hover {
   height: 100%;
   overflow: visible;
   pointer-events: none;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-train-leader path {
   fill: none;
@@ -5196,7 +7158,7 @@ button.dkc-status:hover {
    so the picture's top is level with the list's first row. In Arabic they
    move to the left column unmirrored: they are pictures of an English page. */
 .dkc-train-shot {
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-train-frame > img {
   display: block;
@@ -5352,7 +7314,7 @@ button.dkc-status:hover {
   flex-direction: column;
   gap: 48px;
   padding-top: 12px;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-train-say h3 {
   margin: 0;
@@ -5396,40 +7358,90 @@ button.dkc-status:hover {
 .dkc-portal-head .dk-h2 {
   white-space: nowrap;
 }
-.dkc-portal > .dkc-portal-stop {
+.dkc-portal > .dk-swap {
   grid-column: 1;
   grid-row: 2;
   align-self: start;
   margin-top: 48px;
 }
+/* The one stage box for every stop (DESIGN 22.6.3): x 680 to 1784, y 244 to
+   948. Each figure is anchored to the box's top and end edges; its tag sits
+   above the box's end corner, baseline at about y 214, at one place. */
 .dkc-portal > .dkc-portal-screen {
   grid-column: 2;
   grid-row: 2;
+  position: relative;
+  align-self: start;
+  height: 704px;
+  margin-top: 30px;
 }
-/* The phone: its own column at the end margin, the slide's full height,
-   beside the title and the stop's words. */
-.dkc-portal[data-stop="phone"] {
-  grid-template-columns: minmax(0, 1fr) auto;
+.dkc-portal-screen > .dk-swap {
+  position: absolute;
+  inset: 0;
 }
-.dkc-portal[data-stop="phone"] > .dkc-portal-head {
-  grid-column: 1;
+.dkc-portal-screen-in {
+  position: relative;
+  min-height: 0;
 }
-.dkc-portal[data-stop="phone"] > .dkc-portal-screen {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  justify-content: flex-start;
-  padding-bottom: 0;
-  /* In from the end margin, its middle at about 60% of the width (score
-     round 2: pinned to the margin, it left a dead middle 900 px wide). */
-  margin-inline-end: 400px;
+.dkc-portal-screen-in > .dkc-tagged {
+  position: absolute;
+  top: 0;
+  inset-inline-end: 0;
 }
-/* The install address under the stop's words, in the text face. */
-.dkc-portal-link {
-  margin-top: 6px;
-  font-variant-numeric: tabular-nums;
+/* The tag above the box's end corner, at one place whatever the figure. */
+.dkc-portal-screen-in > .dkc-tagged > figcaption {
+  position: absolute;
+  /* 20 px over the figure for every stop: the screens' own caption margin
+     (12 px) is folded in here, so the phone's tag no longer sat 12 px
+     lower than the others' (the fixer's round). */
+  bottom: calc(100% + 20px);
+  margin-bottom: 0;
+  inset-inline-end: 0;
 }
-[dir="rtl"] .dkc-portal-link {
-  text-align: right;
+.dkc-portal-screen-in > .dkc-portal-crm {
+  position: absolute;
+  top: 0;
+  inset-inline-start: 0;
+}
+/* The phone stop's install address, under "Install it like an app." in
+   the words column (score round 2 of the five services: beside the phone,
+   72 px before it, it floated mid-slide on a 44 px dash). On one line, it
+   may run past the 480 px column into the stage's empty start; a teal
+   leader runs on from its end to 16 px before the phone (whose start edge
+   is at x 1375: the stage box ends at 1784 and the framed film is 409
+   wide; the words start at 136, so the leader is 1207 px less the
+   address's width, in either direction). */
+.dkc-portal-stop .dkc-portal-install {
+  margin-top: 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.dkc-portal-install p {
+  margin: 0;
+  font-size: 40px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--dk-ink);
+  white-space: nowrap;
+}
+.dkc-portal-install p > span {
+  position: relative;
+}
+.dkc-portal-install p > span::after {
+  content: "";
+  position: absolute;
+  left: calc(100% + 16px);
+  top: 50%;
+  width: calc(1207px - 100%);
+  height: 2px;
+  background: var(--dk-teal);
+}
+[dir="rtl"] .dkc-portal-install p > span::after {
+  left: auto;
+  right: calc(100% + 16px);
 }
 .dkc-portal-start {
   display: flex;
@@ -5441,8 +7453,7 @@ button.dkc-status:hover {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  margin-top: 64px;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkc-portal-stop .dk-h3 {
   text-wrap: balance;
@@ -5466,7 +7477,7 @@ button.dkc-status:hover {
   justify-content: center;
   min-height: 0;
   padding-bottom: 8px;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
 /* The job on one line: at 1500 px wide it wrapped by 42 px in English. */
 .dkc-job-name {
@@ -5577,33 +7588,21 @@ button.dkc-status:hover {
   padding-top: 28px;
   border-top: 1px solid var(--dk-line-strong);
 }
-/* The stop's picture in the middle of its column, so it neither hangs
-   from the top nor leaves the foot empty. */
 .dkc-portal-screen {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding-bottom: 24px;
-  animation: dkc-swap 420ms var(--dk-ease) both;
 }
-.dkc-portal-screen > .dkc-portal-film {
-  align-self: flex-end;
+.dkc-portal-screen-in {
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
-/* The recorded call, narrower than its column: it sits by the stop's
-   words, its tag on its own corner. */
-.dkc-portal[data-stop="calls"] .dkc-portal-shot {
-  align-self: flex-start;
-}
-/* As wide as the framed film, so its tag ends on the frame's corner (at
-   400 the 430 film ran 30 px past its own tag). */
+/* As wide as the framed film, so its tag ends on the frame's corner. */
 .dkc-portal-film {
-  width: 464px;
+  width: 409px;
 }
-/* The phone stop's film, about 840 px tall with its bezel and tag. */
+/* The phone stop's film at the box's height: 704 with its bezel (the price
+   of a fixed stage; the phone's words are read in the notes). */
 .dkc-portal-film .dkc-film {
-  width: 440px;
-  height: 778px;
+  width: 385px;
+  height: 680px;
 }
 /* The same dark bezel as the portal's other screens (stops 1 and 4), and
    the same step down in brightness, so the three read as one device. */
@@ -5618,9 +7617,10 @@ button.dkc-status:hover {
   filter: brightness(0.9) contrast(1.12);
 }
 /* The app's own screen, nothing around it: the still is cropped to the
-   screen (586 x 1036 of the 800 x 1422 recording), and the recording is
-   cropped to the same box here, so its title card and caption band never
-   show. */
+   screen, and the recording (1080 x 1920; its screen is the 792 x 1400 box
+   at x 144, y 214, measured 2026-10-21) is cropped to the same box here,
+   so its caption bands never show. Tailwind's preflight caps a video at
+   max-width 100%, which left it 440 px wide and off its crop. */
 .dkc-film {
   position: relative;
   width: 430px;
@@ -5639,11 +7639,12 @@ button.dkc-status:hover {
 .dkc-film video {
   position: absolute;
   display: block;
-  width: calc(100% * 800 / 586);
+  max-width: none;
+  width: calc(100% * 1080 / 792);
   height: auto;
-  aspect-ratio: 800 / 1422;
-  left: calc(-100% * 107 / 586);
-  top: calc(-100% * 159 / 1036);
+  aspect-ratio: 1080 / 1920;
+  left: calc(-100% * 144 / 792);
+  top: calc(-100% * 214 / 1400);
 }
 /* The CRM's stages (DWY): the journey's nodes and dotted line, a label
    under each main stage from its node's inline-start edge, the no-show
@@ -5715,27 +7716,35 @@ button.dkc-status:hover {
   flex-direction: column;
   height: 100%;
 }
+/* The three columns share their rows (a subgrid, score round 2): each
+   moment's second job starts on one line across the slide whatever the
+   first job's length, in either language. */
 .dkc-part-cols {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: repeat(3, auto);
   column-gap: 56px;
   margin-top: 44px;
   align-items: start;
 }
 .dkc-part-col {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
+  align-content: start;
   min-width: 0;
 }
+/* One sentence per job (score round 1: two each at 24 px read as a
+   document): the moments at 28, the jobs at 32, their why at 26. */
 .dkc-part-head {
   margin: 0 0 14px;
-  font-size: 24px;
+  font-size: 28px;
   line-height: 1.25;
   font-weight: 500;
   color: var(--dk-ink-2);
 }
 [dir="rtl"] .dkc-part-head {
-  font-size: 26px;
+  font-size: 30px;
   line-height: 1.45;
 }
 .dkc-part-cell {
@@ -5751,27 +7760,31 @@ button.dkc-status:hover {
 }
 .dkc-part-job {
   margin: 0;
-  font-size: 28px;
-  line-height: 1.3;
+  font-size: 32px;
+  line-height: 1.25;
   font-weight: 700;
   text-wrap: balance;
 }
 [dir="rtl"] .dkc-part-job {
-  font-size: 30px;
+  font-size: 34px;
   line-height: 1.4;
 }
 .dkc-part-why {
   margin: 0;
-  font-size: 24px;
-  line-height: 1.45;
+  font-size: 26px;
+  line-height: 1.4;
   color: var(--dk-ink-2);
 }
 [dir="rtl"] .dkc-part-why {
-  font-size: 26px;
+  font-size: 28px;
   line-height: 1.5;
 }
 .dkc-part-pic {
   margin-top: 12px;
+}
+/* The week closes "Before your meetings", under its second job. */
+.dkc-part-cell > .dkc-wk-wrap {
+  margin-top: 28px;
 }
 .dkc-part-tray {
   display: grid;
@@ -6030,7 +8043,7 @@ button.dkc-status:hover {
   border-radius: 8px 0 0 8px;
   background: var(--dk-teal);
   transform-origin: left center;
-  animation: dkc-bar 600ms var(--dk-ease) both;
+  animation: dkc-bar calc(var(--dk-t-fill) * var(--dk-m)) var(--dk-ease) both;
 }
 [dir="rtl"] .dkc-prog-bar {
   border-radius: 0 8px 8px 0;
@@ -6053,7 +8066,7 @@ button.dkc-status:hover {
   border: 2px dashed var(--dk-teal);
   border-inline-start: 0;
   border-inline-end: 0;
-  animation: dk-cut 200ms var(--dk-ease) 600ms both;
+  animation: dk-cut calc(var(--dk-t-join) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-fill) * var(--dk-m)) both;
 }
 .dkc-prog-note {
   position: absolute;
@@ -6068,7 +8081,7 @@ button.dkc-status:hover {
   font-size: 26px;
 }
 .dkc-prog-checks > i {
-  animation: dk-cut 200ms var(--dk-ease) 600ms both;
+  animation: dk-cut calc(var(--dk-t-join) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-fill) * var(--dk-m)) both;
 }
 /* The first check-in before it is booked, and (smaller) the weeks between
    on a weekly rhythm: the chart's own diamond, open (an outline), the way
@@ -6289,10 +8302,20 @@ button.dkc-status:hover {
   display: flex;
   flex-direction: column;
   height: 100%;
-  animation: dkc-swap 420ms var(--dk-ease) both;
+  animation: dkc-swap calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease) both;
 }
+.dkc-green-mark {
+  flex: none;
+  align-self: flex-start;
+}
+/* The question, the road and the check-in as one block on the stage's
+   middle under their mark (score round 2 of the five services: at the
+   foot, the upper 550 px read as unfinished on a small Zoom tile). */
 .dkc-green-question {
   margin-top: auto;
+}
+.dkc-green > :last-child {
+  margin-bottom: auto;
 }
 .dkc-green-rail {
   position: relative;
@@ -6477,7 +8500,7 @@ button.dkc-status:hover {
   line-height: 1.3;
   font-weight: 500;
   color: var(--dk-ink-2);
-  transition: opacity 300ms;
+  transition: opacity var(--dk-t-chrome);
 }
 [dir="rtl"] .dkv-control {
   font-family: var(--dk-font-ar);
@@ -6514,8 +8537,8 @@ button.dkc-status:hover {
   color: inherit;
   cursor: pointer;
   transition:
-    color var(--dk-hover-canvas-ms) var(--dk-ease),
-    border-color var(--dk-hover-canvas-ms) var(--dk-ease);
+    color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease),
+    border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
 .dkv-item:hover {
   color: var(--dk-ink);
@@ -6550,7 +8573,7 @@ button.dkc-status:hover {
   inset: 0;
   z-index: 8;
   background: var(--dk-deep);
-  animation: dk-cut var(--dk-cut-ms) var(--dk-ease) both;
+  animation: dk-cut calc(var(--dk-cut-ms) * var(--dk-m)) var(--dk-ease) both;
 }
 .dkv-dialog {
   position: absolute;
@@ -6601,8 +8624,8 @@ button.dkc-status:hover {
   color: var(--dk-ink-2);
   cursor: pointer;
   transition:
-    color var(--dk-hover-canvas-ms) var(--dk-ease),
-    border-color var(--dk-hover-canvas-ms) var(--dk-ease);
+    color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease),
+    border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
 [dir="rtl"] .dkv-close {
   font-size: 26px;

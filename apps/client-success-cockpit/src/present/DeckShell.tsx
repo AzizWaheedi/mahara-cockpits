@@ -11,7 +11,12 @@ import {
 import type { DeckHub, VideoPhase } from "./channel";
 import { CHROME, CLOSED, digits, type Lang, t } from "./content";
 import { DeckBoundary } from "./DeckBoundary";
-import { type SlideCtx, type SlideDef, slideTitle } from "./deckContext";
+import {
+  type SlideCtx,
+  type SlideDef,
+  slideTitle,
+  titleFor,
+} from "./deckContext";
 import {
   keyCommand,
   type Pos,
@@ -157,9 +162,6 @@ export function DeckShell({
     [index, here, setPos],
   );
 
-  const ctx: SlideCtx = { ...base, tour, setTour };
-  ctxRef.current = ctx;
-
   // The slide's recorded videos (DESIGN 21.2): an empty slot has none.
   const videoItems = useMemo(
     () => (slide ? filledOn(base.d, slide.id) : []),
@@ -172,6 +174,8 @@ export function DeckShell({
       el instanceof HTMLElement && el.closest(".dkv-control") ? el : null;
     setPlayer(item);
   }, []);
+  const ctx: SlideCtx = { ...base, tour, setTour, playVideo: openVideo };
+  ctxRef.current = ctx;
   const closeVideo = useCallback(() => {
     setPlayer(null);
     // Focus goes back to the control that opened it, else to nothing.
@@ -449,7 +453,8 @@ export function DeckShell({
   const count = (i: number) =>
     lang === "ar" ? digits(i, lang) : String(i).padStart(2, "0");
   const stopName = slide?.stopName?.(tour, ctx);
-  const titleOf = (s: SlideDef) => slideTitle(s.title, lang, base.d.name);
+  const titleOf = (s: SlideDef) =>
+    slideTitle(titleFor(s, base.d), lang, base.d.name);
   const comma = lang === "ar" ? "، " : ", ";
   const announce = slide
     ? `${t(CHROME.slide, lang)} ${digits(index + 1, lang)} ${t(CHROME.of, lang)} ${digits(n, lang)}${comma}${titleOf(slide)}${stopName ? `${comma}${t(stopName, lang)}` : ""}`

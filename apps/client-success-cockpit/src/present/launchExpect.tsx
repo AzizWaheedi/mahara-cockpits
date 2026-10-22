@@ -69,6 +69,7 @@ function PieLabel({
   lane,
   lang,
   shown,
+  quiet = false,
 }: {
   side: "start" | "end";
   dot: { x: number; y: number };
@@ -77,6 +78,8 @@ function PieLabel({
   lane: "us" | "you";
   lang: SlideCtx["lang"];
   shown: boolean;
+  /** Stop 1's quiet twin of their label, in ink-3 (the fixer's round). */
+  quiet?: boolean;
 }) {
   // A row: the names and one leader into the piece, ending on a dot in the
   // piece's edge colour. Ours: dot, leader, names (end side). Theirs:
@@ -104,6 +107,8 @@ function PieLabel({
       data-side={side}
       data-lane={lane}
       data-shown={shown ? "" : undefined}
+      data-quiet={quiet ? "" : undefined}
+      aria-hidden={quiet || undefined}
       style={style}
     >
       {side === "end" ? (
@@ -182,6 +187,19 @@ function Pie({ ctx }: { ctx: SlideCtx }) {
         lane="us"
         lang={lang}
         shown
+      />
+      {/* Their label is there from stop 1, quiet (ink-3) over the slot
+          that is theirs, so the start side never opens empty; on stop 2 its
+          ink twin fades in over it as the piece is pulled. */}
+      <PieLabel
+        side="start"
+        dot={dwy ? THEIRS_DOT.wy : THEIRS_DOT.fy}
+        names={dwy ? P.theirsDwy : P.theirs}
+        owner={dwy ? P.owner.youDwy : P.owner.you}
+        lane="you"
+        lang={lang}
+        shown={!out}
+        quiet
       />
       <PieLabel
         side="start"
@@ -292,29 +310,37 @@ function Roads({ ctx }: { ctx: SlideCtx }) {
           className="dkc-route dkc-route-draw"
           d={rounded(AD_POINTS, AD_TURN)}
           pathLength={1}
-          style={{ animationDuration: `${AD_MS}ms` }}
+          style={{ animationDuration: `calc(${AD_MS}ms * var(--dk-m))` }}
         />
         <path
           className="dkc-route dkc-route-draw"
           d={rounded(REF_POINTS)}
           pathLength={1}
-          style={{ animationDuration: `${REF_MS}ms` }}
+          style={{ animationDuration: `calc(${REF_MS}ms * var(--dk-m))` }}
         />
-        {/* The client's end of the road: the meeting to the signature. */}
+        {/* The client's end of the road: the meeting to the signature. Its
+            ink is a second layer fading in over the line-strong one (a
+            colour change is never a paint transition, DESIGN 22.3.4). */}
         <path
           className="dkc-route dkc-route-close"
+          d={`M ${MEET.x} ${MEET.y} L ${SIGNED.x} ${SIGNED.y}`}
+        />
+        <path
+          className="dkc-route dkc-route-close dkc-route-ink"
           d={`M ${MEET.x} ${MEET.y} L ${SIGNED.x} ${SIGNED.y}`}
         />
         <Node x={ROAD_X} y={AD_Y} r={14} state="ahead" />
         <Node x={ROAD_X} y={MEET.y} r={14} state="ahead" />
         {ends.map(e => (
-          <circle
-            key={e.name.en}
-            className="dkc-route-end"
-            cx={e.at.x}
-            cy={e.at.y}
-            r={13}
-          />
+          <g key={e.name.en}>
+            <circle className="dkc-route-end" cx={e.at.x} cy={e.at.y} r={13} />
+            <circle
+              className="dkc-route-end dkc-route-ink"
+              cx={e.at.x}
+              cy={e.at.y}
+              r={13}
+            />
+          </g>
         ))}
       </svg>
       {/* Each road's name at its start, level with its own ring; the ad
@@ -438,13 +464,14 @@ const PCM_TILE = {
   y1: 975 / 1029,
 };
 /**
- * Stop 2: the lesson, cropped to the course's outline (down to its first
- * objection) and the lesson's title, the cut falling in the video's dark
- * ground past its speed badge, so no word is cut; drawn about 1.3 times
- * the whole screen's size, so the section names read on a share.
+ * Stop 2: the lesson, cut only across (DESIGN 22.6.5): under the top bar,
+ * and at the foot under the outline's "04: Uncertainty Objections". The
+ * player's whole width and 16 px of the page past it are kept (its end at
+ * x 1383 of 1444), so no edge of the player is cut; it is scaled to the
+ * column's 704 px, whatever that gives.
  */
 const LESSON_CROP = {
-  box: [0.03, 0.01, 0.815, 0.8] as [number, number, number, number],
+  box: [0.03, 0.01, 0.969, 0.975] as [number, number, number, number],
   ratio: 1444 / 990,
 };
 

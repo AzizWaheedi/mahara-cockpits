@@ -11,10 +11,17 @@ import { type ReactNode, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { focusOf, playOn } from "./AdsStage";
-import { PAIN_STORY, type Pain } from "./callScript";
+import {
+  ANY_PROJECT,
+  familyOf,
+  familyOfKey,
+  PAIN_STORY,
+  type Pain,
+} from "./callScript";
 import {
   CTA,
   type Cta,
+  EXAMPLE,
   fill,
   GROUP_LINKS,
   LAUNCH,
@@ -23,12 +30,15 @@ import {
   partJobs,
   t,
 } from "./content";
-import { Field, PrepText, Segmented, Toggle } from "./controls";
+import { ExampleSwitch, Field, PrepText, Segmented, Toggle } from "./controls";
+import { DriveBox } from "./DriveBox";
 import type { CallKind, DeckData, Overrides } from "./deckData";
+import { DRIVE_UI } from "./driveCopy";
 import { defaultPhones } from "./launchData";
 import type { DeckKind } from "./sources";
 import { type LocalItem, useLocalAds } from "./uploads";
 import type { DeckModel } from "./useDeckModel";
+import type { DriveBoxState } from "./useDriveImports";
 import { recapVideos, slotCovered } from "./videos";
 
 /**
@@ -60,6 +70,10 @@ export interface LaunchControlProps {
   now?: number;
   /** Motion is reduced: videos wait for a press of play (DESIGN 15.4). */
   still?: boolean;
+  /** The Drive box's state, kept by the window (DRIVE-IMPORT.md 8). */
+  drive?: DriveBoxState;
+  /** Prep's list of the saved files, under "Add a file" (TrayFiles). */
+  tray?: ReactNode;
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -270,15 +284,54 @@ function AdsControls(p: LaunchControlProps) {
   const prep = model.prep.launch;
   const planned = strings(prep.platforms_planned);
   const saved = Boolean(selected && !selected.startsWith("local-"));
+  // No ad of their own (starter templates are ours, so they do not count):
+  // the cover shows the example, and with no file at all the phones do too
+  // (DESIGN 22.5.2, 22.15), said here with its switch, above the ways to
+  // bring theirs in.
+  const noAds =
+    !d.launch.creatives.some(c => !c.starter) &&
+    !d.launch.metaCreatives.some(c => Boolean(c.poster ?? c.url));
+  const starters = d.launch.creatives.some(c => c.starter);
   return (
     <div className="space-y-4">
+      {noAds ? (
+        <Section title="The example ad">
+          <div className="text-xs text-muted-foreground">
+            {starters ? (
+              <>
+                No ads of their own yet, so the cover shows an example ad (
+                {EXAMPLE.names[d.example.theme]}); the phones show the starter
+                templates. Paste a Drive link or add files here to show theirs.
+              </>
+            ) : (
+              <>
+                No ads yet, so the phones show an example ad (
+                {EXAMPLE.names[d.example.theme]}). Paste a Drive link or add
+                files here to show theirs.
+              </>
+            )}
+          </div>
+          <ExampleSwitch
+            d={d}
+            prep={model.prep.onboarding}
+            setPrep={model.setPrep}
+          />
+        </Section>
+      ) : null}
+      {p.drive?.enabled ? (
+        <Section title={DRIVE_UI.title[p.drive.lang]}>
+          <DriveBox box={p.drive} />
+        </Section>
+      ) : null}
       <Section title="Add a file">
         <UploadPanel addFiles={p.addFiles} messages={p.messages} />
+        {/* How to present is said once, in the window's foot (score round
+            2: it was said here too). */}
         <div className="text-xs text-muted-foreground">
-          Present maximised, not full screen, so you can reach this window.
           Showing a preview is not approval; approval happens in the group.
         </div>
       </Section>
+      {p.tray ?? null}
       <Section title="On the phones">
         <div className="flex flex-wrap gap-2">
           <Button
@@ -527,6 +580,11 @@ function TextForm({
 function CallControls(p: LaunchControlProps) {
   const { d, model, full, sendKey } = p;
   const prep = model.prep.launch;
+  // What a blank project says: the launch service's own line (one of the
+  // five main services, never a sub-trade's "your new kitchen").
+  const blankProject =
+    (familyOfKey(d.launch.serviceKey) ?? familyOf(d.launch.service.en))?.project
+      .en ?? ANY_PROJECT.en;
   const set = (patch: Overrides, now = false) =>
     model.setPrep("launch", patch, now);
   const call = d.launch.call;
@@ -652,7 +710,7 @@ function CallControls(p: LaunchControlProps) {
               k="project"
               prep={prep}
               set={patch => set(patch)}
-              hint="Blank uses the service's family: 'your new kitchen'."
+              hint={`Blank uses the launch service's line: '${blankProject}'.`}
             />
             <Field
               label="The customer's budget band"
@@ -809,11 +867,14 @@ function FreedomControls({ d, model, full }: LaunchControlProps) {
             x => !hidden.includes(x) && !/[\u0600-\u06ff]/.test(x),
           ) ? (
             <div className="text-xs text-muted-foreground">
-              The Arabic deck shows the English lines under «من ملفكم» (from
-              your card), so they read as quoted from it.
+              The Arabic deck shows the English lines under «بملفكم، بالإنجليزي»
+              (on your card, in English), so they read as quoted from it.
             </div>
           ) : null}
         </Section>
+      ) : null}
+      {full && (d.dosDonts.do.length || d.dosDonts.dont.length) ? (
+        <DosDontsArabic d={d} model={model} hidden={hidden} />
       ) : null}
       <Section title="Red lines typed on the call">
         <PrepText
@@ -834,6 +895,60 @@ function FreedomControls({ d, model, full }: LaunchControlProps) {
         </div>
       </Section>
     </div>
+  );
+}
+
+/**
+ * The Arabic of each card line (DESIGN 22.6.2, `dos_donts_ar`): one field per
+ * English card line, so the Arabic deck keeps it under Never or Always in
+ * Arabic, like any other. A key whose card line is gone is pruned on save.
+ */
+function DosDontsArabic({
+  d,
+  model,
+  hidden,
+}: Pick<LaunchControlProps, "d" | "model"> & { hidden: string[] }) {
+  const lines = [...d.dosDonts.dont, ...d.dosDonts.do].filter(
+    x => !hidden.includes(x) && !/[\u0600-\u06ff]/.test(x),
+  );
+  if (!lines.length) return null;
+  const saved = d.dosDontsAr;
+  const missing = lines.filter(x => !saved[x]).length;
+  const put = (line: string, value: string) => {
+    const next: Record<string, string> = {};
+    for (const x of lines) {
+      const v = x === line ? value.trim() : saved[x];
+      if (v) next[x] = v;
+    }
+    model.setPrep("launch", {
+      dos_donts_ar: Object.keys(next).length ? next : null,
+    });
+  };
+  return (
+    <Section title="Do's & Don'ts in Arabic">
+      <div className="text-xs text-muted-foreground">
+        {missing === 0
+          ? "Every card line has its Arabic."
+          : missing === 1
+            ? "1 card line has no Arabic yet. Type it so the Arabic deck keeps it under Never or Always."
+            : `${missing} card lines have no Arabic yet. Type each one so the Arabic deck keeps it under Never or Always.`}
+      </div>
+      {lines.map(x => (
+        <div key={x} className="space-y-1">
+          <div className="text-xs">{x}</div>
+          <PrepText
+            label="In Arabic"
+            value={saved[x] ?? ""}
+            rtl
+            placeholder="بالعربي"
+            onChange={v => put(x, v)}
+          />
+        </div>
+      ))}
+      <div className="text-xs text-muted-foreground">
+        Write it without أبد or دايماً; the heading says it.
+      </div>
+    </Section>
   );
 }
 
@@ -948,6 +1063,20 @@ function FormControls({ d, model, full }: LaunchControlProps) {
 
 function CoverControls({ d, model }: LaunchControlProps) {
   const custom = d.launch.creatives.filter(c => !c.starter);
+  // The picked ad's words in the other language from this deck, while an ad
+  // of theirs in its language exists (score round 2 of the five services:
+  // the Arabic cover showed their English dining room, their Arabic majlis
+  // first on L2).
+  const picked = d.launch.cover;
+  const inLang =
+    picked?.language && picked.language !== d.lang
+      ? custom.find(c => c.language === d.lang)
+      : undefined;
+  const langHint = inLang
+    ? d.lang === "ar"
+      ? `This ad's words are in English. For the Arabic deck, pick their Arabic ad (${inLang.name}).`
+      : `This ad's words are in Arabic. For the English deck, pick their English ad (${inLang.name}).`
+    : null;
   return (
     <div className="space-y-4">
       <Field
@@ -972,8 +1101,10 @@ function CoverControls({ d, model }: LaunchControlProps) {
         label="The cover's creative (their own, never a starter)"
         hint={
           custom.length
-            ? null
-            : "No custom creatives yet: the cover shows the faint lanes."
+            ? d.launch.cover
+              ? langHint
+              : "No cover picked: it shows their first ad. Pick another here."
+            : "No ads of their own yet: the cover shows the example ad, labelled Example ad."
         }
       >
         <select
@@ -988,7 +1119,9 @@ function CoverControls({ d, model }: LaunchControlProps) {
           }
           aria-label="Cover creative"
         >
-          <option value="">The faint lanes</option>
+          <option value="">
+            {custom.length ? "Their first ad" : "The example ad"}
+          </option>
           {custom.map(c => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -996,6 +1129,15 @@ function CoverControls({ d, model }: LaunchControlProps) {
           ))}
         </select>
       </Field>
+      {/* No ad of their own: the cover's example is switched here too
+          (by service, then by scene), as in the onboarding prep. */}
+      {custom.length ? null : (
+        <ExampleSwitch
+          d={d}
+          prep={model.prep.onboarding}
+          setPrep={model.setPrep}
+        />
+      )}
     </div>
   );
 }
@@ -1032,7 +1174,10 @@ function partText(d: DeckData): string {
       `${t(P.heads[head], lang)}:`,
       ...jobs
         .filter(j => j.head === head)
-        .map(j => `- ${t(j.job, lang)}. ${t(j.why, lang)}`),
+        .map(
+          j =>
+            `- ${t(j.job, lang)}. ${t(j.why, lang)}${j.more ? ` ${t(j.more, lang)}` : ""}`,
+        ),
     ]),
     "",
     GROUP_LINKS.testing[lang],

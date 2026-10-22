@@ -6,7 +6,15 @@ import {
   Copy,
   MessageCircleQuestion,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
@@ -14,7 +22,12 @@ import { makeAddFiles } from "./adsActions";
 import type { DeckMessage } from "./channel";
 import { DECK_NAME, t } from "./content";
 import { groupLinks, Segmented, SlideControls } from "./controls";
-import { fillNotes, type SlideCtx, type SlideDef } from "./deckContext";
+import {
+  fillNotes,
+  type SlideCtx,
+  type SlideDef,
+  titleFor,
+} from "./deckContext";
 import type { CallKind } from "./deckData";
 import { TARGET_MINUTES } from "./decks";
 import {
@@ -25,8 +38,10 @@ import {
   partText,
   replyText,
 } from "./launchControls";
+import { serviceNames } from "./services";
 import type { DeckKind } from "./sources";
 import type { DeckIO, DeckModel, SaveState } from "./useDeckModel";
+import { useDriveImports } from "./useDriveImports";
 import {
   firstFilled,
   NotesVideos,
@@ -296,11 +311,31 @@ export function NotesWindow({
   playerRef.current = player;
   /** The Zoom tip, once per call: tick on the first play, untick when it closes. */
   const [zoom, setZoom] = useState<ZoomTip>(null);
+  /** The sticky foot's height, so the page's last row scrolls clear of it. */
+  const [footH, setFootH] = useState(144);
+  const footObserver = useRef<ResizeObserver | null>(null);
+  const footRef = useCallback((el: HTMLElement | null) => {
+    footObserver.current?.disconnect();
+    footObserver.current = null;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setFootH(el.offsetHeight));
+    ro.observe(el);
+    footObserver.current = ro;
+    setFootH(el.offsetHeight);
+  }, []);
   const zoomDone = useRef(false);
   /** The deck window closed: the recap takes the talk track's place. */
   const [deckClosed, setDeckClosed] = useState(false);
   /** "If they push back": stays as the CSM left it, open once opened. */
   const [pushOpen, setPushOpen] = useState(false);
+  const drive = useDriveImports({
+    taskId: deck === "launch" ? (d?.taskId ?? null) : null,
+    io,
+    hub,
+    onLanded: () => {
+      void model.reload().then(() => hub.post({ type: "ads" }));
+    },
+  });
   const addFiles = useMemo(
     () =>
       io
@@ -400,12 +435,21 @@ export function NotesWindow({
 
   const elapsed = at ? now - at.startedAt : 0;
   const target = TARGET_MINUTES[deck] * 60_000;
+  // The service as the notes say it inside a sentence, in each language.
+  const said = serviceNames(d.service).mid;
   const slots = {
-    service: d.serviceFocus ?? "the launch service",
+    service: said.en ?? "the launch service",
     csm: d.csmFirst ?? "",
     goalAsk: goalAsk(d, "en"),
   };
-  const slotsAr = { ...slots, goalAsk: goalAsk(d, "ar") };
+  // An Arabic line never says a Latin name or "الخدمة الخدمة": with no
+  // Arabic name, a cue in brackets for the CSM to say the service
+  // (CONTENT-AR O4: a Latin-only service is left out of the spoken line).
+  const slotsAr = {
+    ...slots,
+    service: said.ar && /[؀-ۿ]/.test(said.ar) ? said.ar : "(اسم الخدمة)",
+    goalAsk: goalAsk(d, "ar"),
+  };
   const askEn = goalAskParts(d, "en");
   const askAr = goalAskParts(d, "ar");
   const notes = slide.notes;
@@ -418,7 +462,10 @@ export function NotesWindow({
   const presentedAt = d.presentedAt;
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div
+      className="flex min-h-screen flex-col bg-background text-foreground"
+      style={{ "--notes-foot": `${footH}px` } as CSSProperties}
+    >
       <header className="sticky top-0 z-10 border-b bg-background/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span className="min-w-0 truncate">
@@ -439,7 +486,7 @@ export function NotesWindow({
             {String(index + 1).padStart(2, "0")} / {slides.length}
           </span>
           <h1 className="min-w-0 truncate text-base font-semibold">
-            {t(slide.title, "en").replace("{name}", d.nameEn)}
+            {t(titleFor(slide, d), "en").replace("{name}", d.nameEn)}
           </h1>
         </div>
         <div className="text-xs text-muted-foreground">
@@ -543,7 +590,7 @@ export function NotesWindow({
                 <div className="text-xs font-medium txt-warn">Temp check</div>
                 <div>{fillNotes([notes.temp.en], slots)[0]}</div>
                 {model.lang === "ar" ? (
-                  <div dir="rtl">{fillNotes([notes.temp.ar], slots)[0]}</div>
+                  <div dir="rtl">{fillNotes([notes.temp.ar], slotsAr)[0]}</div>
                 ) : null}
               </div>
             </div>
@@ -573,6 +620,9 @@ export function NotesWindow({
               <li key={n} className="txt-warn">
                 {n}
               </li>
+            ))}
+            {slide.todo?.(d).map(n => (
+              <li key={n}>{n}</li>
             ))}
           </ul>
         </Section>
@@ -616,6 +666,7 @@ export function NotesWindow({
             messages={messages}
             now={now}
             still={base.still}
+            drive={drive}
           />
         ) : (
           <SlideControls
@@ -661,9 +712,20 @@ export function NotesWindow({
             Marked as presented, so the launch deck leaves out the hours card.
           </div>
         ) : null}
+        {/* The sticky footer's measured height, so the last line (a video's
+            Close and Copy row) scrolls clear of it (score round 3: a fixed
+            112 px was shorter than the foot). */}
+        <div
+          aria-hidden
+          className="shrink-0"
+          style={{ height: "calc(var(--notes-foot, 9rem) + 16px)" }}
+        />
       </main>
 
-      <footer className="sticky bottom-0 border-t bg-background/95 px-4 py-3 backdrop-blur">
+      <footer
+        ref={footRef}
+        className="sticky bottom-0 border-t bg-background/95 px-4 py-3 backdrop-blur"
+      >
         <div
           className={cn(
             "mb-2 flex items-center justify-between gap-2 text-xs",
@@ -697,9 +759,10 @@ export function NotesWindow({
           </Button>
           <span className="min-w-0 truncate text-xs text-muted-foreground">
             {tour + 1 < stops
-              ? "Next: the next stop"
+              ? // The next stop by its name, where the slide names its stops.
+                `Next: ${stopNames(tour + 2)?.replace(/^Next:\s*/, "") ?? `stop ${tour + 2} of ${stops}`}`
               : nextSlide
-                ? `Next: ${t(nextSlide.title, "en").replace("{name}", d.nameEn)}`
+                ? `Next: ${t(titleFor(nextSlide, d), "en").replace("{name}", d.nameEn)}`
                 : "Last slide"}
           </span>
           <Button onClick={() => hub.post({ type: "nav", to: "next" })}>
@@ -708,7 +771,8 @@ export function NotesWindow({
           </Button>
         </div>
         <div className="mt-2 text-[11px] text-muted-foreground">
-          Share the deck window only, maximised rather than full screen.
+          Share the deck window only, maximised rather than full screen, so you
+          can reach this window.
         </div>
       </footer>
     </div>

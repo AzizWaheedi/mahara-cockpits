@@ -14,6 +14,7 @@ import {
 } from "./sources";
 import type { DeckIO, DeckModel } from "./useDeckModel";
 import { CheckPlayer } from "./VideoPlayer";
+import { VideoPoster } from "./VideoPoster";
 import {
   clock,
   deckSlots,
@@ -314,6 +315,7 @@ function RecordedRow({
   };
   return (
     <div className="space-y-1.5 ps-3">
+      <VideoPoster title={rowTitle(slot, row, "en")} row={row} size="prep" />
       {/* One line: the link cut in the middle, the length its own item. */}
       <div className="flex items-baseline gap-x-2 text-xs">
         <span className="w-14 shrink-0 font-medium">
@@ -413,12 +415,6 @@ function SlotRow({
             {number ? `${number} · ` : ""}
             {slotTitle(slot).en}
           </span>
-          {/* Under the title on every slot, however short the title. */}
-          {rows.length ? null : (
-            <span className="block text-xs text-muted-foreground">
-              Not recorded yet
-            </span>
-          )}
         </div>
         {!rows.length && open == null ? (
           <Button
@@ -431,6 +427,10 @@ function SlotRow({
           </Button>
         ) : null}
       </div>
+      {/* An empty slot is the poster card that says so (DESIGN 22.5.3). */}
+      {rows.length ? null : (
+        <VideoPoster title={slotTitle(slot).en} row={null} size="prep" />
+      )}
       {why ? (
         <div className="text-xs text-muted-foreground">
           {why === "dwy"

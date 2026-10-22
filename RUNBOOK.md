@@ -241,6 +241,15 @@ hour, notes hourly, each under its own lock; log `~/.editor-desk/out/cron.log`.
 | Somebody cannot sign in to the editor cockpit | Their address has to be on `editor_people` and active, and have an auth user. Aziz adds both in the Supabase dashboard | Aziz |
 | The editor cockpit says "The desk could not be opened" and names a role | That account's Supabase `role` is not `authenticated`, so PostgREST refuses everything it asks. Four accounts made by another project carried `mahara_dialer_identity`, which is not a Postgres role here (2026-09-19). Signing in through the portal repairs it; otherwise set `role` to `authenticated` on the user in the Supabase dashboard. Sign out and in afterwards: the old role is baked into the session until then | Aziz |
 | `doctor`: "Bucket not found" on stills | The private `editor-stills` bucket is missing; the one-line curl to create it is in the README | Aziz |
+| Prep's Drive box says "Nothing has picked this up yet" | The `deck-import` cron line is missing or the desk can't reach Supabase. `crontab -l \| grep deck-import`; restore it from the README's Cron block; `python3 desk.py doctor` names the blocker on its `deck-import` lines | Hermes |
+| "We can't open this folder" (or file, or link) | The client's own link is restricted to the client, or it is not their share and not under their Drive folder (the desk never pulls another client's or the team's files). Ask the client to share it as anyone with the link, or move it into their Drive folder, then paste the link again | The CSM |
+| "Drive can't be reached from our side right now" | The Google refresh token was revoked or expired: `python3 desk.py doctor`, the `google token` line. Aziz signs in again and the token goes into `~/.editor-desk/env` | Aziz |
+| iPhone photos fail with "we couldn't convert" | No `heif-convert` on the VPS: the doctor's `deck-import heic` line. Install `libheif-examples` | Hermes |
+| A video says "couldn't be converted to play in a browser" | ffmpeg failed or ran past 15 minutes on it: `grep deck-import ~/.editor-desk/out/cron.log` for its line. Export it as H.264 MP4 and upload it by hand, or paste its new link | The CSM |
+| An import says "stopped three times without bringing anything in" | The run keeps dying on that import (out of disk, killed at the 50-minute ceiling, or the desk lost Supabase). `python3 desk.py doctor`; `grep deck-import ~/.editor-desk/out/cron.log` | Hermes |
+| `deck-import: another run is working; this one does nothing` in the log | A run started by hand beside the cron run (the command takes its own lock, `<scratch>/deck-import.lock`, so it never clears a working run's downloads). Let the first one finish; use `--dry-run --link` to look at a link without a lock | Hermes |
+| An import stays "Bringing in" while the roster is refreshed | Expected for a few minutes: the server answers 55006 and the worker leaves the import working (never a file failure). It carries on once the client roster is ready | Nobody |
+| Video posters in prep stay the designed card | `python3 desk.py doctor`, the `deck-import posters` line ("missing: apply 20261020160200…" means the migration). A provider whose oEmbed fails is asked again a day later | Hermes |
 
 ## Webinar pull
 
@@ -337,6 +346,19 @@ writes to Meta.
 | `meta.ads` or `meta.funnels` is null | The media read model (`metaTree`) or the creative one (`funnels`) is not ready: the media sync owns it, see Previews and Scheduled jobs | Systems manager |
 | Storage receipts fail on the health page (`supabase-storage`, `cockpit-launch-ads/...`) | The latest receipt for that label is a failure or a 4xx: a 404 on `verify-object` means an upload did not arrive; anything else, check Storage status. The next good call clears it | Systems manager |
 
+The Drive link (the visual pass, `docs/csm-decks/DRIVE-IMPORT.md`): migration
+`20261020160000_csm_launch_ads_drive.sql` (one import per pasted link,
+`cockpit_csm_launch_ads_import_request` and `_imports_read` for CSM seats; seven
+worker functions for the service key), `20261020160100_csm_deck_prep_dos_ar.sql`
+(three prep keys: `dos_donts_ar`, `example_theme`, `service_chosen_at`),
+`20261020160200_csm_deck_video_posters.sql` and
+`20261020160300_csm_launch_ads_source.sql` (the tray's read gains `source`, and
+a Drive file the first name of the seat that pasted the link and when, for
+prep's "From Drive" line; a hand upload's name is cleaned as a Drive file's
+is). The worker is the editor desk's
+`deck-import` (Editor desk, above). Its writes are audited `driveImport.*` with
+the worker as the actor.
+
 Going live:
 
 1. Apply `20261019120000_csm_decks.sql` (`composio execute SUPABASE_APPLY_A_MIGRATION`,
@@ -355,6 +377,25 @@ Going live:
 5. On production, as a CSM seat on a test-safe client: `cockpit_csm_deck_sources`
    returns the client and no other; a picture reserves, uploads, turns ready and
    lists with a signed link; remove takes it off the tray.
+6. The Drive link: apply `20261020160000_csm_launch_ads_drive.sql`,
+   `20261020160100_csm_deck_prep_dos_ar.sql`,
+   `20261020160200_csm_deck_video_posters.sql` and
+   `20261020160300_csm_launch_ads_source.sql` in that order (each applies
+   twice; 160300 refuses to apply before 160000), and before
+   `scripts/ship.sh client-success` for the visual pass: the live
+   `cockpit_csm_deck_prep_value` refuses `example_theme`, `service_chosen_at`
+   and `dos_donts_ar`, so slide 4's "Launch with this" and prep's example
+   switch would fail to save until 160100 is in. Read back: both import tables
+   with row security on and no grant to any role; the two browser functions
+   executable by authenticated only, the seven worker functions and the two
+   poster functions by service_role only; `cockpit_csm_launch_ads_read` and
+   `cockpit_csm_launch_ad_reserve` still executable by authenticated only.
+   After the ship, on a test-safe client: "Launch with this" and the example
+   switch save.
+   On the VPS: pull, `python3 desk.py doctor` (its five `deck-import` lines and `google token`),
+   `python3 desk.py deck-import --dry-run --link <a test folder>`, then add the
+   README's `deck-import` cron line. Paste a test-safe client's folder in prep
+   and watch the files arrive in the tray.
 
 ## Sales cockpit
 

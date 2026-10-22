@@ -3,16 +3,24 @@
  * name, answer and picture here is invented for the harness (the pictures
  * are crops of Mahara's own renders), never another client's material.
  *
- * - full: Saudi, a logo, the onboarding and kickoff forms filed, services,
+ * - full: Saudi, an interior design firm (the kickoff advertises Interior
+ *   design), a logo, the onboarding and kickoff forms filed, services,
  *   access answers, a starter pack with two starter ads, Do's & Don'ts, the
  *   Blueprint booked.
  * - sparse: no logo, no forms, no country, no service model, no CSM name,
- *   nothing booked.
- * - dwy: done with you, in the UAE, answers written in Arabic, one goal
- *   held back (it counts appointments), templated ads declined.
- * - starter (the launch deck): Kuwait, only starter ads, already live, the
- *   ad opening a WhatsApp chat, no Instagram handle, no consultant's name,
- *   no Do's & Don'ts.
+ *   nothing booked; its name reads as design and build, so the example ads
+ *   show that service's pictures.
+ * - dwy: done with you, in the UAE, a construction firm (Construction only),
+ *   answers written in Arabic, one service that fits none of the five (so
+ *   slide 4 shows "Other"), one goal held back (it counts appointments),
+ *   templated ads declined.
+ * - starter (the launch deck): Kuwait, a fit-out and renovation firm, only
+ *   starter ads, already live, the ad opening a WhatsApp chat, no Instagram
+ *   handle, no consultant's name, no Do's & Don'ts.
+ *
+ * Each fixture advertises a different main service (DESIGN 22.14), so every
+ * service's example pictures are seen; none names a sub-trade (kitchens,
+ * bathrooms) as the service.
  *
  * Asked for the launch deck, each client is a week further on: the launch
  * call is booked, their creatives are in the tray, a form is confirmed.
@@ -30,11 +38,14 @@ import type {
 import { type LaunchAd, sourcesSchema } from "@/present/sources";
 import type { Loaded } from "@/present/useDeckModel";
 import { deckSlots, slotId } from "@/present/videos";
+import siteTall from "./custom-hall-tall.webp";
 import siteFeed from "./custom-site.webp";
-import siteTall from "./custom-site-tall.webp";
 import square from "./custom-square.webp";
-import feedPic from "./starter-feed.webp";
-import reelPic from "./starter-reel.webp";
+import dwyVilla from "./dwy-villa.webp";
+import fitoutFeedPic from "./starter-fitout-feed.webp";
+import fitoutReelPic from "./starter-fitout-reel.webp";
+import feedPic from "./starter-interior-feed.webp";
+import reelPic from "./starter-interior-reel.webp";
 
 export type FixtureKey = "full" | "sparse" | "dwy" | "starter";
 
@@ -117,6 +128,8 @@ function video(
   id: string,
   seconds: number | null,
   title: string | null = null,
+  /** The poster the migration seeds for this row (VIDEOS.md 9). */
+  posterUrl: string | null = null,
 ): VideoRow {
   const links: Record<VideoProvider, [string, string]> = {
     wistia: [
@@ -152,8 +165,28 @@ function video(
     revision: 1,
     updatedBy: "migration 20261020120000_csm_deck_videos",
     updatedAt: "2026-10-20T12:00:00+00:00",
+    ...(posterUrl ? { posterUrl } : {}),
   };
 }
+
+/**
+ * The posters 20261020160200_csm_deck_video_posters.sql seeds for the six
+ * rows, so the harness shows prep and the notes as production will (the
+ * fixer's round: the Loom rows fell back to the designed card).
+ */
+const SEED_POSTER = {
+  welcome:
+    "https://embed-ssl.wistia.com/deliveries/c3cdb9067a8a3c9ae21dede3cf45611b739ee3f1.jpg?image_crop_resized=960x540",
+  meta: "https://cdn.loom.com/sessions/thumbnails/e2d83bffee614d9aa035d898d37d8989-b17bc3f4ce782f9b.jpg",
+  whatsapp:
+    "https://cdn.loom.com/sessions/thumbnails/4ddc5519935f4ba8bdc7ac6f3667a701-1ddb7d7f640afcbd.jpg",
+  portalEn:
+    "https://embed-ssl.wistia.com/deliveries/02b381c067d9a4e711551bdc4923c80a0b28e6f6.jpg?image_crop_resized=960x540",
+  portalAr:
+    "https://embed-ssl.wistia.com/deliveries/234d6305c6581a586700670201e21c8f488eaa5f.jpg?image_crop_resized=960x540",
+  calendar:
+    "https://cdn.loom.com/sessions/thumbnails/6aa67297dfcf421887f8961d3c1c7768-a2384fa2a097cc77.jpg",
+} as const;
 
 /** The six seeds (VIDEOS.md 6), and the slots the server knows. */
 export function seededVideos(
@@ -161,7 +194,16 @@ export function seededVideos(
   extra: VideoRow[] = [],
 ): DeckVideos {
   const seeds = [
-    video("onboarding", "welcome", "any", "wistia", "up0z6n691k", 148),
+    video(
+      "onboarding",
+      "welcome",
+      "any",
+      "wistia",
+      "up0z6n691k",
+      148,
+      null,
+      SEED_POSTER.welcome,
+    ),
     video(
       "onboarding",
       "meta-access",
@@ -169,6 +211,8 @@ export function seededVideos(
       "loom",
       "e2d83bffee614d9aa035d898d37d8989",
       94,
+      null,
+      SEED_POSTER.meta,
     ),
     video(
       "onboarding",
@@ -177,9 +221,29 @@ export function seededVideos(
       "loom",
       "4ddc5519935f4ba8bdc7ac6f3667a701",
       231,
+      null,
+      SEED_POSTER.whatsapp,
     ),
-    video("launch", "portal-guide", "en", "wistia", "lxlse6ckhf", 277),
-    video("launch", "portal-guide", "ar", "wistia", "hyuxh7skjv", 285),
+    video(
+      "launch",
+      "portal-guide",
+      "en",
+      "wistia",
+      "lxlse6ckhf",
+      277,
+      null,
+      SEED_POSTER.portalEn,
+    ),
+    video(
+      "launch",
+      "portal-guide",
+      "ar",
+      "wistia",
+      "hyuxh7skjv",
+      285,
+      null,
+      SEED_POSTER.portalAr,
+    ),
     video(
       "launch",
       "calendar-hours",
@@ -187,6 +251,8 @@ export function seededVideos(
       "loom",
       "6aa67297dfcf421887f8961d3c1c7768",
       11,
+      null,
+      SEED_POSTER.calendar,
     ),
   ];
   return {
@@ -224,12 +290,15 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           answer("Business Name", "Noor Studio Interiors"),
           answer(
             "What services do you offer, and their prices?",
-            "Kitchens - from 25,000 SAR\nBathrooms\nFull villa fit-out\nInterior design (consultation 1,500 SAR)",
+            "Villa interiors - from 25,000 SAR\nKitchens and wardrobes\nMajlis design\nFull villa fit-out\nInterior design (consultation 1,500 SAR)",
           ),
-          answer("What is your #1 service you want to grow?", "Kitchens"),
+          answer(
+            "What is your #1 service you want to grow?",
+            "Villa interiors",
+          ),
           answer(
             "What is your goal for the next 90 Days?",
-            "Two to three kitchen projects signed every month, mostly in north Riyadh.",
+            "Two to three villa interior projects signed every month, mostly in north Riyadh.",
           ),
           answer(
             "Where do you want the business to be in 12-24 months?",
@@ -268,7 +337,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
         response_id: "k1",
         submitted_at: "2026-10-19T08:10:00Z",
         answers: [
-          answer("Which service are we advertising?", "Kitchens"),
+          answer("Which service are we advertising?", "Interior design"),
           answer(
             "Which platforms will we advertise on?",
             "Instagram, Facebook",
@@ -332,7 +401,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
             {
               sourceId: "native:fixture-form",
               formId: "9100000001",
-              formName: "Kitchens, showroom visit",
+              formName: "Interiors, showroom visit",
               kind: "Instant form",
               headline: "Book a visit to our Riyadh showroom",
               questions: [
@@ -340,9 +409,9 @@ function full(deck: DeckKind = "onboarding"): Loaded {
                   type: "CUSTOM",
                   label: "Which do you need?",
                   options: [
-                    "A new kitchen",
-                    "Renovating my kitchen",
-                    "Wardrobes",
+                    "A whole villa interior",
+                    "One room or a majlis",
+                    "A design consultation",
                   ],
                   isGate: false,
                 },
@@ -367,7 +436,7 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           ads: [
             {
               id: "120200000000001",
-              name: "Kitchen site, square",
+              name: "Family majlis, square",
               still: { url: square },
             },
           ],
@@ -376,17 +445,30 @@ function full(deck: DeckKind = "onboarding"): Loaded {
     launchAds: [],
     notes: [],
   });
+  // Their services in Arabic, typed in prep (onboarding side): the Arabic
+  // decks' slide 4 lines and queue card name each in Arabic, one script
+  // per card (score round 1: O4 read "Villa interiors" under تصميم داخلي).
+  const servicesAr = [
+    "تصميم داخلي للفلل",
+    "المطابخ والخزائن",
+    "تصميم المجالس",
+    "تشطيب فيلا كاملة",
+  ];
   const prep: { onboarding: Overrides; launch: Overrides } = {
     onboarding: launch
       ? {
           starter_pack: true,
-          service_focus: "Kitchens",
-          service_focus_ar: "المطابخ",
+          service_focus: "Interior design",
+          service_focus_ar: "تصميم داخلي",
+          services_ar: servicesAr,
           red_lines: ["No photos of the owner", "No music with lyrics"],
           red_lines_ar: ["لا تحطون صور المالك", "بدون موسيقى فيها كلمات"],
         }
       : {
-          starter_pack: true,
+          // Ticked in prep for interior design (fixer round 2: the pack
+          // names its service, so another choice on slide 4 drops it).
+          starter_pack: "interior",
+          services_ar: servicesAr,
           // Three typed live on O7: the plant's tightest fit (DESIGN 9.7).
           red_lines: [
             "No photos of the owner",
@@ -399,48 +481,60 @@ function full(deck: DeckKind = "onboarding"): Loaded {
           // Five red lines and the stamp: slide 3's tightest stop (DESIGN
           // 21.1), stamped on the launch call's own day (the cover's date).
           creative_agreed_at: "2026-10-19T10:20:00Z",
-          // The services in Arabic, so the Arabic queue card names each
-          // row's own (score round 2), never the first one three times.
-          services_ar: [
-            "المطابخ",
-            "الحمامات",
-            "تشطيب فيلا كاملة",
-            "التصميم الداخلي",
-          ],
           form_confirmed: "9100000001",
           their_pick: "custom-site",
           cover_creative: "custom-site",
           pain: "design",
-          selling_point: "we draw your kitchen in 3D before any work starts",
-          selling_point_ar: "نرسم لك المطبخ ثلاثي الأبعاد قبل لا نبدي أي شغل",
+          selling_point: "we design every room in 3D before any work starts",
+          selling_point_ar:
+            "نوريكم كل غرفة بشكل ثلاثي الأبعاد قبل لا نبدي أي شغل",
           engineer_ar: "المهندس خالد",
           call_guide_checked: true,
         }
       : {},
   };
+  // The tray as the server reads it, oldest first (created_at): the hand
+  // upload and the starter templates, then yesterday's Drive paste, then
+  // today's, each made just after its link was pasted. Prep lists it
+  // newest first, so today's paste is on top.
   const custom = launch
     ? [
         ad("custom-site", "custom", siteFeed, 720, 900, {
+          createdAt: "2026-10-17T12:00:00Z",
           primaryText:
-            "Built right, shown honestly: this is one of our sites in north Riyadh this week.",
-          headline: "See a site in progress",
+            "A dining room we finished in north Riyadh this month, from the first drawing to the last chair.",
+          headline: "See a finished home",
           cta: "GET_QUOTE",
           language: "en",
-          fileName: "site-north-riyadh.webp",
+          fileName: "dining-north-riyadh.webp",
+          source: "upload",
         }),
+        // Two came in from Drive links (prep's tray says who pasted them, and when).
         ad("custom-tall", "custom", siteTall, 540, 960, {
-          primaryText: "A minute on site with our team.",
+          primaryText: "A minute inside a home we finished.",
           cta: "LEARN_MORE",
           language: "en",
-          fileName: "site-walk.webp",
+          fileName: "home-walk.webp",
+          source: "drive",
+          importedBy: "Sara",
+          importedAt: "2026-10-19T07:15:00Z",
+          createdAt: "2026-10-19T07:20:00Z",
         }),
+        // Their own majlis at night, from Drive: never a kitchen (score
+        // round 1), and none of the eighteen example scenes, so their own
+        // ad never looks like the example beside it (score round 2: it was
+        // a mirrored crop of the example living room).
         ad("custom-square", "custom", square, 800, 800, {
           primaryText:
-            "مطبخك يتصمم على طريقة طبخ عائلتك. احجز زيارة لمعرضنا في الرياض.",
-          headline: "مطابخ نور ستوديو",
+            "بيتكم يتصمم على طريقة عيشة عائلتكم. احجزوا موعدكم في معرضنا بالرياض.",
+          headline: "تصاميم نور ستوديو",
           cta: "BOOK_NOW",
           language: "ar",
-          fileName: "villa-ar.webp",
+          fileName: "interior-ar.webp",
+          source: "drive",
+          importedBy: "Noura",
+          importedAt: "2026-10-18T16:40:00Z",
+          createdAt: "2026-10-18T16:45:00Z",
         }),
       ]
     : [];
@@ -449,17 +543,27 @@ function full(deck: DeckKind = "onboarding"): Loaded {
     kit,
     ads: [
       ...custom,
+      // Interior design's templates, cut from Mahara's own sales-deck
+      // pictures (the studio table's materials tray under a room's render;
+      // the sales deck's lit majlis, its sofa and screen, for the reel:
+      // final score round 1 read the villa model as architecture), none
+      // of the eighteen example scenes: score
+      // round 2 of the five services found the old ones were crops of the
+      // example majlis and bedroom, shown as "Example ads" on O7 stop 1 and
+      // as their starters on stop 2. Never a kitchen (CEO, 2026-10-21).
       ad("starter-feed", "starter", feedPic, 864, 1080, {
         primaryText:
-          "Your kitchen, designed around how your family cooks. Book a visit to our Riyadh showroom.",
-        headline: "Kitchens by Noor Studio",
+          "Your home's interior, designed around how your family lives. Book a visit to our Riyadh showroom.",
+        headline: "Interiors by Noor Studio",
         cta: "BOOK_NOW",
         language: "en",
+        createdAt: "2026-10-17T12:05:00Z",
       }),
       ad("starter-reel", "starter", reelPic, 608, 1080, {
-        primaryText: "From the first drawing to the last cabinet.",
+        primaryText: "From the first drawing to the last detail.",
         cta: "LEARN_MORE",
         language: "en",
+        createdAt: "2026-10-17T12:06:00Z",
       }),
     ],
     prep,
@@ -472,7 +576,7 @@ function sparse(_deck: DeckKind = "onboarding"): Loaded {
   const taskId = "fixture-sparse";
   const sources = sourcesSchema.parse({
     taskId,
-    clientName: "Atlas Fit-Out & Renovation Contracting",
+    clientName: "Atlas Design & Build Contracting",
     presenter: { email: null, firstName: null },
     client: {
       stage: "Needs Contacting",
@@ -491,7 +595,7 @@ function sparse(_deck: DeckKind = "onboarding"): Loaded {
   });
   return {
     sources,
-    kit: row(taskId, "Atlas Fit-Out & Renovation Contracting", {
+    kit: row(taskId, "Atlas Design & Build Contracting", {
       clickup_status: "needs contacting",
     }),
     ads: [],
@@ -505,7 +609,7 @@ function sparse(_deck: DeckKind = "onboarding"): Loaded {
 function dwy(deck: DeckKind = "onboarding"): Loaded {
   const taskId = "fixture-dwy";
   const launch = deck === "launch";
-  const kit = row(taskId, "Saha Kitchens", {
+  const kit = row(taskId, "Saha Construction", {
     signup_on: "2026-10-09",
     links: {},
     forms: {
@@ -514,18 +618,15 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
         response_id: "r3",
         submitted_at: "2026-10-11T12:00:00Z",
         answers: [
-          answer("Business Name", "Saha Kitchens"),
+          answer("Business Name", "Saha Construction"),
           answer(
             "What services do you offer, and their prices?",
-            "مطابخ حسب الطلب، خزائن ملابس، تجديد مطابخ قديمة",
+            "بناء فلل سكنية، عظم وتشطيب، تأجير معدات",
           ),
-          answer(
-            "What is your #1 service you want to grow?",
-            "مطابخ حسب الطلب",
-          ),
+          answer("What is your #1 service you want to grow?", "بناء فلل سكنية"),
           answer(
             "What is your goal for the next 90 Days?",
-            "نبي نوصل لمشروعين مطابخ كل شهر في دبي والشارقة.",
+            "نبي نوقع عقدين بناء فلل كل شهر في دبي والشارقة.",
           ),
           answer(
             "Where do you want the business to be in 12-24 months?",
@@ -533,12 +634,12 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
           ),
           answer(
             "What are your TOP 3 challenges right now?",
-            "الاستفسارات كثيرة بس أغلبها أسعار. ما عندنا وقت نتابع كل واحد. المعرض بعيد عن أغلب العملاء.",
+            "الاستفسارات كثيرة بس أغلبها أسعار. ما عندنا وقت نتابع كل واحد. المكتب بعيد عن أغلب العملاء.",
           ),
           answer("What are your service areas?", "Dubai, Sharjah"),
           answer(
             "What types of appointments do you offer?",
-            "في المعرض، أونلاين",
+            "في المكتب، أونلاين",
           ),
           answer("Do you offer free consultations?", "نعم"),
         ],
@@ -548,7 +649,7 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
         response_id: "k3",
         submitted_at: "2026-10-16T10:00:00Z",
         answers: [
-          answer("Which service are we advertising?", "Custom kitchens"),
+          answer("Which service are we advertising?", "Construction only"),
           answer("Templated Ads Status", "Declined"),
           answer("Facebook access", "Access confirmed"),
           answer("Card linked to the account?", "No"),
@@ -558,7 +659,7 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
   });
   const sources = sourcesSchema.parse({
     taskId,
-    clientName: "Saha Kitchens",
+    clientName: "Saha Construction",
     presenter: { email: "omar@example.com", firstName: "Omar" },
     client: {
       stage: launch ? "Launch Booked" : "Brand Blueprint Booked",
@@ -568,7 +669,7 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
     },
     logo: null,
     ghl: {
-      name: "مطابخ ساحة",
+      name: "ساحة للإنشاءات",
       country: "AE",
       city: "Dubai",
       language: "ar",
@@ -594,17 +695,21 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
     kit,
     ads: launch
       ? [
-          ad("dwy-square", "custom", square, 800, 800, {
-            primaryText: "مطبخك على مقاسك، من التصميم إلى التركيب.",
+          // A villa they built (a closer, mirrored frame of the example
+          // villa): a construction firm's own ad, never a kitchen, now the
+          // cover shows their first ad (DESIGN 22.15).
+          ad("dwy-square", "custom", dwyVilla, 800, 800, {
+            primaryText: "فيلتكم من الأساس إلى التسليم.",
             cta: "SEND_WHATSAPP_MESSAGE",
             language: "ar",
-            fileName: "kitchen-ar.webp",
+            fileName: "villa-ar.webp",
           }),
         ]
       : [],
     prep: {
       onboarding: {
-        service_focus: "مطابخ حسب الطلب",
+        // Typed in prep in their words: slide 4 reads it as Construction.
+        service_focus: "بناء الفلل",
         red_lines: ["لا تذكرون الأسعار في الإعلان"],
         access: { meta_access: "done" },
         ...(launch ? { onboarding_presented_at: "2026-10-16T10:20:00Z" } : {}),
@@ -617,9 +722,9 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
 }
 
 /** A client whose launch runs on starter ads alone, already live. */
-function starter(_deck: DeckKind = "launch"): Loaded {
+function starter(deck: DeckKind = "launch"): Loaded {
   const taskId = "fixture-starter";
-  const kit = row(taskId, "Al Reem Kitchens & Wardrobes Co.", {
+  const kit = row(taskId, "Al Reem Fit-Out & Renovation Co.", {
     signup_on: "2026-10-01",
     onboarding_call_on: "2026-10-05",
     launch_on: "2026-10-15",
@@ -629,12 +734,12 @@ function starter(_deck: DeckKind = "launch"): Loaded {
         response_id: "r4",
         submitted_at: "2026-10-03T09:00:00Z",
         answers: [
-          answer("Business Name", "Al Reem Kitchens & Wardrobes Co."),
+          answer("Business Name", "Al Reem Fit-Out & Renovation Co."),
           answer(
             "What services do you offer, and their prices?",
-            "Kitchens, Wardrobes",
+            "Villa fit-out, Shop and office fit-out, Kitchen renovation",
           ),
-          answer("What is your #1 service you want to grow?", "Kitchens"),
+          answer("What is your #1 service you want to grow?", "Villa fit-out"),
           answer(
             "What are your service areas?",
             "Kuwait City, Hawalli, Salmiya",
@@ -652,7 +757,7 @@ function starter(_deck: DeckKind = "launch"): Loaded {
         response_id: "k4",
         submitted_at: "2026-10-05T11:00:00Z",
         answers: [
-          answer("Which service are we advertising?", "Kitchens"),
+          answer("Which service are we advertising?", "Fit out and renovation"),
           answer("Templated Ads Status", "Approved"),
           answer("Card linked to the account?", "Yes"),
           answer("Facebook access", "Access confirmed"),
@@ -664,17 +769,20 @@ function starter(_deck: DeckKind = "launch"): Loaded {
   });
   const sources = sourcesSchema.parse({
     taskId,
-    clientName: "Al Reem Kitchens & Wardrobes Co.",
+    clientName: "Al Reem Fit-Out & Renovation Co.",
     presenter: { email: "sara@example.com", firstName: "Sara" },
     client: {
-      stage: "Ready For Launch",
+      // Opened for the onboarding call, the card is at that call's stage
+      // (final score round 1: at Ready For Launch, O5 showed the Blueprint
+      // done while O7 still booked it).
+      stage: deck === "onboarding" ? "Onboarding Booked" : "Ready For Launch",
       service: "DFY",
       launchDate: "2026-10-15",
       bucket: "launch",
     },
     logo: null,
     ghl: {
-      name: "مطابخ الريم",
+      name: "الريم للتشطيب والترميم",
       country: "KW",
       city: "Kuwait City",
       language: "ar",
@@ -695,7 +803,7 @@ function starter(_deck: DeckKind = "launch"): Loaded {
         {
           sourceId: "native:fixture-wa",
           formId: null,
-          formName: "WhatsApp, kitchens",
+          formName: "WhatsApp, renovation",
           kind: "WhatsApp",
           questions: [],
           adIds: [],
@@ -710,13 +818,21 @@ function starter(_deck: DeckKind = "launch"): Loaded {
     sources,
     kit,
     ads: [
-      ad("starter-feed", "starter", feedPic, 864, 1080, {
-        primaryText: "مطبخك يتصمم على طريقة طبخ عائلتك.",
+      // Fit-out pictures and words: the starter templates of the service
+      // the kickoff advertises: an office desk under the Kuwait Towers, and
+      // rolled drawings and a contract on a stone desk (the studio table's
+      // far end; full's templates are its other two parts). None of the
+      // eighteen example scenes (score round 2: the boutique and the
+      // restaurant were also this client's example ad and the strip's lit
+      // tiles, one picture shown four times).
+      ad("starter-feed", "starter", fitoutFeedPic, 864, 1080, {
+        primaryText:
+          "نشطّب ونرمّم المحلات والمطاعم والمكاتب، من المخطط لين التسليم.",
         cta: "SEND_WHATSAPP_MESSAGE",
         language: "ar",
       }),
-      ad("starter-reel", "starter", reelPic, 608, 1080, {
-        primaryText: "من أول رسمة لآخر خزانة.",
+      ad("starter-reel", "starter", fitoutReelPic, 608, 1080, {
+        primaryText: "من أول معاينة للموقع لين آخر لمسة.",
         cta: "SEND_WHATSAPP_MESSAGE",
         language: "ar",
       }),
@@ -724,6 +840,10 @@ function starter(_deck: DeckKind = "launch"): Loaded {
     prep: {
       onboarding: {
         starter_pack: true,
+        // Their services in Arabic, typed in prep: the Arabic decks' slide 4
+        // and queue card name each in Arabic (final score round 1: O4 read
+        // "+٢ Villa fit-out" and L2's call rows lost their service).
+        services_ar: ["تشطيب فلل", "تشطيب محلات ومكاتب", "ترميم مطابخ"],
         onboarding_presented_at: "2026-10-05T11:30:00Z",
       },
       launch: { form_confirmed: "native:fixture-wa" },

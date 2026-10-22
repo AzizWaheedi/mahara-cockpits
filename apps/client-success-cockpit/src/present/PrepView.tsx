@@ -15,13 +15,15 @@ import { makeAddFiles } from "./adsActions";
 import { DECK_NAME, t } from "./content";
 import { Field, Segmented, SlideControls, Toggle } from "./controls";
 import { DeckShell } from "./DeckShell";
-import type { SlideCtx, SlideDef } from "./deckContext";
+import { type SlideCtx, type SlideDef, titleFor } from "./deckContext";
 import type { CallKind } from "./deckData";
 import { type Pos, stepFrom } from "./engine";
 import { LaunchControls } from "./launchControls";
 import { saveLine } from "./NotesWindow";
 import type { DeckKind } from "./sources";
+import { TrayFiles } from "./TrayFiles";
 import type { DeckIO, DeckModel } from "./useDeckModel";
+import { useDriveImports } from "./useDriveImports";
 import { PrepVideos } from "./VideoPrep";
 
 /**
@@ -88,6 +90,14 @@ export function PrepView({
   );
   const [picked, setPicked] = useState(all[0]?.id ?? "");
   const [logoNote, setLogoNote] = useState<string | null>(null);
+  const drive = useDriveImports({
+    taskId: deck === "launch" ? (d?.taskId ?? null) : null,
+    io,
+    hub: model.hub,
+    onLanded: () => {
+      void model.reload().then(() => model.hub.post({ type: "ads" }));
+    },
+  });
   if (!d) return null;
   const prep = model.prep[deck];
   const hidden = new Set(strings(prep.hidden_slides));
@@ -120,6 +130,7 @@ export function PrepView({
   };
   const sl = saveLine(model.save);
   const missing = slide?.missing?.(d) ?? [];
+  const todo = slide?.todo?.(d) ?? [];
   const stops = shown.map(x =>
     Math.max(1, x.stops?.({ ...base, tour: 0, setTour: () => {} }) ?? 1),
   );
@@ -239,7 +250,8 @@ export function PrepView({
                             : "bg-muted-foreground/50",
                       )}
                     />
-                    {i + 1} {t(s.title, "en").replace("{name}", d.nameEn)}
+                    {i + 1}{" "}
+                    {t(titleFor(s, d), "en").replace("{name}", d.nameEn)}
                     <span className="sr-only">
                       {st === "ready"
                         ? ", ready"
@@ -265,7 +277,7 @@ export function PrepView({
               <div className="flex items-start justify-between gap-2">
                 <h2 className="text-sm font-semibold">
                   Slide {all.indexOf(slide) + 1} ·{" "}
-                  {t(slide.title, "en").replace("{name}", d.nameEn)}
+                  {t(titleFor(slide, d), "en").replace("{name}", d.nameEn)}
                 </h2>
                 <Button
                   size="sm"
@@ -296,6 +308,13 @@ export function PrepView({
               ) : (
                 <div className="text-xs txt-good">Ready.</div>
               )}
+              {todo.length ? (
+                <ul className="space-y-1 text-xs text-muted-foreground">
+                  {todo.map(m => (
+                    <li key={m}>{m}</li>
+                  ))}
+                </ul>
+              ) : null}
               {(slide.id === "welcome" || slide.id === "cover") &&
               uploadLogo ? (
                 <Field
@@ -306,7 +325,7 @@ export function PrepView({
                       ? d.logo.from === "verified"
                         ? "The verified logo from the logo library."
                         : "Uploaded here."
-                      : "None yet: the deck shows their initials.")
+                      : "None yet: the deck shows their first letter.")
                   }
                 >
                   <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:border-primary">
@@ -344,6 +363,19 @@ export function PrepView({
                   addFiles={addFiles}
                   updateAd={io?.updateAd}
                   messages={messages}
+                  drive={drive}
+                  tray={
+                    <TrayFiles
+                      ads={model.loaded?.ads ?? []}
+                      now={io?.now?.() ?? new Date()}
+                      remove={io?.removeAd}
+                      onRemoved={() => {
+                        void model
+                          .reload()
+                          .then(() => model.hub.post({ type: "ads" }));
+                      }}
+                    />
+                  }
                 />
               ) : (
                 <SlideControls
