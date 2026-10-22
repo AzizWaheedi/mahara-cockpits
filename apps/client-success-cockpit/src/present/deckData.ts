@@ -829,7 +829,9 @@ export function deckData(input: DeckInput): DeckData {
       access: rows
         .filter(r => ["meta", "os", "crm", "phones"].includes(r.key))
         .every(r => r.status === "done"),
-      blueprint: Boolean(next.blueprint),
+      // Booked, or held already (the stage past it, as O5's road shows):
+      // O7's checklist never leaves it open beside a road that says Done.
+      blueprint: Boolean(next.blueprint) || roadNow > 3,
     },
     templated,
     templatedAnswer,

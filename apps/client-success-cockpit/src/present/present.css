@@ -1102,7 +1102,10 @@ button.dkc-status:hover {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 784px minmax(0, 1fr);
+  /* 920 px for the name (final score round 1: at 784 a two-word name like
+     "Saha Construction" broke across two lines at 96 px beside 500 px of
+     empty stage); the phone keeps its place, 120 px in from the end. */
+  grid-template-columns: 920px minmax(0, 1fr);
   column-gap: 120px;
   align-items: center;
 }
@@ -1506,6 +1509,15 @@ button.dkc-status:hover {
   border-top: 0;
   padding-inline-start: 36px;
   border-inline-start: 1px solid var(--dk-line);
+}
+/* One group in the other script (final score round 1): the row spans the
+   content from the words' own start, and the label stands over its first
+   item at that edge, not at the deck's start 1300 px away. */
+.dkc-goal-row[data-n="1"] .dkc-goal-col[data-cross] {
+  align-items: flex-end;
+}
+.dkc-goal-row[data-n="1"] .dkc-goal-col[data-cross] :is(ul, p) {
+  width: 100%;
 }
 .dkc-foot {
   margin-top: auto;
@@ -2590,6 +2602,12 @@ button.dkc-status:hover {
   align-self: flex-start;
   transition: border-color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
+/* Over the poster, not under it (final score round 1: under it, "Video
+   guide · 3:51" sat on the ticks' baseline 28 px after the last tick and
+   read as a fourth step). */
+.dkc-setup-poster > .dkc-setup-pic-words {
+  order: -1;
+}
 .dkc-setup-poster:hover .dkc-setup-pic-words {
   border-bottom-color: var(--dk-edge);
   color: var(--dk-ink-2);
@@ -3023,11 +3041,17 @@ button.dkc-status:hover {
   font-size: 27px;
   line-height: 1.55;
 }
-/* The red lines' ask and the list it fills, one block. */
+/* The red lines' ask and the list it fills, one block, at the column's
+   foot (final score round 1): its last row level with the strip's lower
+   row, so the start column ends where the test column does. */
+.dkc-next > section:first-child {
+  align-self: stretch;
+}
 .dkc-next-ask {
   display: flex;
   flex-direction: column;
-  margin-top: 4px;
+  margin-top: auto;
+  padding-top: 4px;
 }
 /* The ask runs to the column's measure and breaks once, where it must. */
 .dkc-next-ask > p {
@@ -3136,7 +3160,7 @@ button.dkc-status:hover {
 }
 /* Lines on the panel: the input below them is not drawn until the CSM
    points at the panel (or is typing in it). */
-.dkc-redlines:not([data-empty]):not(:hover):not(:focus-within)
+.dkc-redlines:not([data-empty], [data-blanks]):not(:hover):not(:focus-within)
   .dkc-redline-input {
   display: none;
 }
@@ -3167,12 +3191,21 @@ button.dkc-status:hover {
 .dkc-redlines[data-empty] {
   gap: 4px;
 }
-.dkc-redlines[data-empty] .dkc-redline-input {
+.dkc-redlines:is([data-empty], [data-blanks]) .dkc-redline-input {
   flex: 1;
   min-width: 0;
 }
-.dkc-redlines[data-empty] .dkc-redline-input:not(:hover):not(:focus) {
+.dkc-redlines:is([data-empty], [data-blanks])
+  .dkc-redline-input:not(:hover):not(:focus) {
   border-bottom-style: dashed;
+}
+/* Typed lines, then the rows left to fill: the rows close up under the
+   list as they do under each other. */
+.dkc-redlines[data-blanks] {
+  gap: 4px;
+}
+.dkc-redlines[data-blanks] > ul {
+  margin-bottom: 8px;
 }
 /* The last stop (the fixer's round): the next call named at H1 and what it
    is, beside it the call as their calendar shows it (the journey
@@ -3265,6 +3298,13 @@ button.dkc-status:hover {
   fill: none;
   stroke: var(--dk-line-strong);
   stroke-width: 2;
+}
+/* Held already (the stage past it): the ring ticked in teal, solid. */
+.dkc-cal-next .dkc-cal-block[data-done] {
+  border-style: solid;
+}
+.dkc-cal-block[data-done] .dkc-cal-open svg {
+  stroke: var(--dk-teal);
 }
 [dir="rtl"] .dkc-cal-next .dkc-cal-block {
   font-size: 27px;
@@ -5898,10 +5938,11 @@ button.dkc-status:hover {
   transform: translateX(-16px);
 }
 /* The next round, under the field: its label at y 726, six outlines from
-   y 776. Its dashed slots are there from the first stop at 35%, unlabelled
-   (DESIGN 22.15: the field's stops left an empty band above the rail), so
-   nothing moves when stop 3 brings in "Next round" at full strength; then
-   the client's change in ink (stop 4), made (stop 5). */
+   y 776. Its dashed slots are there from the first stop at 35% (DESIGN
+   22.15: the field's stops left an empty band above the rail), labelled
+   "Next round" at the same 35% (final score round 1: unlabelled, the faint
+   row read as an empty band), so nothing moves when stop 3 brings it in at
+   full strength; then the client's change in ink (stop 4), made (stop 5). */
 .dkf-next {
   margin-top: 30px;
   opacity: 0.35;
@@ -5909,9 +5950,6 @@ button.dkc-status:hover {
 }
 .dkf-next[data-shown] {
   opacity: 1;
-}
-.dkf-next:not([data-shown]) .dkf-label {
-  opacity: 0;
 }
 .dkf-labels {
   position: relative;
@@ -6132,11 +6170,12 @@ button.dkc-status:hover {
   padding: 18px 76px 20px 16px;
 }
 /* A WhatsApp ad: the steps after the chat opens, numbered like the
-   questions a form would have shown. On L5 the side runs the phone's
-   height: the steps start 96 px under the line, and the last (our call,
-   its "5 minutes" underlined) is the thank-you stop's band, on the column's
-   foot, level with the chat's last line (score round 2 of the five
-   services: all three at the foot left 360 px empty under the line). */
+   questions a form would have shown. On L5 the steps start 96 px under the
+   line (score round 2 of the five services: all three at the foot left
+   360 px empty under the line), and the last (our call, its "5 minutes"
+   underlined) is the thank-you stop's band, 32 px under the second (final
+   score round 1: on the column's foot it stood 270 px from the second and
+   the three no longer read as one sequence). */
 .dkc-wa-next {
   margin-top: 56px;
   display: flex;
@@ -6159,7 +6198,7 @@ button.dkc-status:hover {
   flex: 1;
 }
 .dkc-wa-next > ol > li[data-band] {
-  margin-top: auto;
+  margin-top: 32px;
   padding: 18px 16px 20px;
   border: 0;
   border-radius: 12px;

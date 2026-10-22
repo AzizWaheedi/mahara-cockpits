@@ -294,7 +294,7 @@ describe("the words, as the spec writes them", () => {
     const arPairs = rows(ar).filter(r => r.length === 2);
     const has = (cells: string[], s: string) =>
       cells.some(c => c === s || c.startsWith(`${s} (`));
-    const skip = new Set(["yesterday", "file"]);
+    const skip = new Set(["yesterday", "today", "file"]);
     for (const [k, v] of Object.entries(C.DRIVE_UI)) {
       if (skip.has(k)) continue;
       const l = v as { en: string; ar: string };
@@ -610,7 +610,7 @@ describe("every state the box shows (DRIVE-IMPORT.md 8)", () => {
     const now = new Date(2026, 9, 20, 15, 0);
     expect(
       V.timeLabel(new Date(2026, 9, 20, 13, 2).toISOString(), now, "en"),
-    ).toBe("13:02");
+    ).toBe("today, 13:02");
     expect(
       V.timeLabel(new Date(2026, 9, 19, 9, 5).toISOString(), now, "en"),
     ).toBe("yesterday, 09:05");

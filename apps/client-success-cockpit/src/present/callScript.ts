@@ -865,8 +865,9 @@ export function closingHour(hours: string | null | undefined): number | null {
 
 /**
  * The booked slot (CONTENT Appendix A): the first working day two days
- * ahead (Sunday to Thursday), at 4 pm, moved to the client's last afternoon
- * hour when they close earlier.
+ * after the day given (today, or go-live while it is ahead), Sunday to
+ * Thursday, at 4 pm, moved to the client's last afternoon hour when they
+ * close earlier.
  */
 export function bookedSlot(todayIso: string, hours?: string | null) {
   const d = new Date(`${todayIso}T12:00:00Z`);

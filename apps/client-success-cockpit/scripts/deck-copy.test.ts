@@ -1011,7 +1011,7 @@ describe("the Gamma pass: the expectations, as written", () => {
     expect(T.courses.map(c => c.en)).toEqual([
       "Introduction",
       "Onboarding",
-      "Google optimisation",
+      "Google optimization",
       "Offer creation",
       "Project Closing Mastery",
       "Team and operations",

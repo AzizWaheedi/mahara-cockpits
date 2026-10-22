@@ -624,7 +624,7 @@ export const O = {
         name: { en: "Your content", ar: "محتواكم" },
         line: {
           en: "Before your Blueprint call: photos and videos in your Drive folder. Finished projects, work in progress, your team on site. Don't filter. We will.",
-          ar: "قبل مكالمة بناء الهوية: صور وفيديوهات بمجلد الدرايف. مشاريع خلصت، وشغل قيد التنفيذ، وفريقكم بالموقع. لا تفلترون، إحنا نفلتر.",
+          ar: "قبل مكالمة بناء الهوية: صور وفيديوهات بمجلد الدرايف. مشاريع خلصت، وشغل قيد التنفيذ، وفريقكم بالموقع. لا\u00a0تفلترون، إحنا نفلتر.",
         },
         ticks: [{ key: "content", label: { en: "Content", ar: "المحتوى" } }],
       },
@@ -1910,7 +1910,7 @@ export const LAUNCH = {
     courses: [
       { en: "Introduction", ar: "البداية" },
       { en: "Onboarding", ar: "التعريف" },
-      { en: "Google optimisation", ar: "تحسين قوقل" },
+      { en: "Google optimization", ar: "تحسين قوقل" },
       { en: "Offer creation", ar: "صناعة العرض" },
       { en: "Project Closing Mastery", ar: "إتقان توقيع المشاريع" },
       { en: "Team and operations", ar: "الفريق والتشغيل" },

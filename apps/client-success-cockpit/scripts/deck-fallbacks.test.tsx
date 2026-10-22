@@ -932,4 +932,57 @@ describe("score round 2: the onboarding deck's placeholders, designed", () => {
     expect(html).toContain("We book it before we hang up");
     expect(html).not.toMatch(/\d{1,2} (am|pm)/);
   });
+  test("O7, opened after the Blueprint: the checklist ticks it and the card says Done, as O5's road does (final score round 1)", () => {
+    // The starter client at Ready For Launch: O5 lights the launch call.
+    const d = data("starter");
+    expect(d.roadNow).toBe(4);
+    expect(d.next.blueprint).toBeUndefined();
+    expect(d.today.blueprint).toBe(true);
+    const html = one(d, "next", nextStops(d) - 1);
+    expect(html).toContain('data-done=""');
+    expect(html).toContain(">Done<");
+    expect(html).not.toContain("We book it before we hang up");
+    // The harness's starter, opened for its onboarding call, is at that
+    // call's stage.
+    const f = FIXTURES.starter("onboarding");
+    expect(roadNowFor(f.sources?.client?.stage)).toBe(2);
+    // The call's name never breaks in the close's title.
+    expect(one(data("full"), "next", 2)).toContain(
+      "Next: your Brand\u00a0Blueprint\u00a0call",
+    );
+  });
+  test("O2 and O4: the client's words in the other script keep their own direction (final score round 1)", () => {
+    // O2, one group of Arabic challenges in the English deck: the row
+    // spans the content from the words' own start.
+    const dwy = one(data("dwy"), "goals", 1);
+    expect(dwy).toContain('class="dkc-goal-col" data-cross=""');
+    // O2, a single English answer in the Arabic deck: its own direction.
+    expect(one(data("full", "ar"), "goals", 1)).toMatch(
+      /<p class="dkc-theirs" data-hug="" dir="ltr">/,
+    );
+    // O4, Arabic words in the English deck: right to left, «،» in place.
+    expect(one(data("dwy"), "one-service")).toContain(
+      '<span class="dkc-service-own" dir="rtl">',
+    );
+    // O4, a Latin line in the Arabic deck: left to right, Western digits.
+    const f = FIXTURES.starter("onboarding");
+    const latin = deckData({
+      taskId: "fixture-starter",
+      deck: "onboarding",
+      lang: "ar",
+      sources: f.sources,
+      kit: f.kit,
+      prep: {
+        ...f.prep,
+        onboarding: { ...f.prep.onboarding, services_ar: null },
+      },
+      ads: f.ads,
+      publicUrl: (_b, p) => p,
+      now: NOW,
+    });
+    const own = one(latin, "one-service");
+    expect(own).toContain('<span class="dkc-service-own" dir="ltr">');
+    expect(own).toContain('class="dkc-service-more">+2</bdi>');
+    expect(own).not.toContain("+٢");
+  });
 });

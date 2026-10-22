@@ -370,7 +370,14 @@ export function launchData(input: LaunchInput): LaunchData {
       ar: bandText("note", "ar") ?? tableBand.note.ar,
     },
   };
-  const slot = bookedSlot(today, answers.hours);
+  // The example booking lands after go-live when go-live is still ahead
+  // (final score round 1: Wed 21 October against a 26 October go-live), as
+  // O5's confirmation does; else two working days from today.
+  const goLiveDay = d.goLive ? d.goLive.slice(0, 10) : null;
+  const slot = bookedSlot(
+    goLiveDay && goLiveDay > today ? goLiveDay : today,
+    answers.hours,
+  );
   const instagram = handleOf(answers.instagram);
   const company = { en: d.nameEn, ar: d.nameAr ?? d.nameEn };
   const slots: Slots = {

@@ -544,8 +544,10 @@ function full(deck: DeckKind = "onboarding"): Loaded {
     ads: [
       ...custom,
       // Interior design's templates, cut from Mahara's own sales-deck
-      // studio table (a materials tray under a room's render; the villa
-      // model over its plan), none of the eighteen example scenes: score
+      // pictures (the studio table's materials tray under a room's render;
+      // the sales deck's lit majlis, its sofa and screen, for the reel:
+      // final score round 1 read the villa model as architecture), none
+      // of the eighteen example scenes: score
       // round 2 of the five services found the old ones were crops of the
       // example majlis and bedroom, shown as "Example ads" on O7 stop 1 and
       // as their starters on stop 2. Never a kitchen (CEO, 2026-10-21).
@@ -720,7 +722,7 @@ function dwy(deck: DeckKind = "onboarding"): Loaded {
 }
 
 /** A client whose launch runs on starter ads alone, already live. */
-function starter(_deck: DeckKind = "launch"): Loaded {
+function starter(deck: DeckKind = "launch"): Loaded {
   const taskId = "fixture-starter";
   const kit = row(taskId, "Al Reem Fit-Out & Renovation Co.", {
     signup_on: "2026-10-01",
@@ -770,7 +772,10 @@ function starter(_deck: DeckKind = "launch"): Loaded {
     clientName: "Al Reem Fit-Out & Renovation Co.",
     presenter: { email: "sara@example.com", firstName: "Sara" },
     client: {
-      stage: "Ready For Launch",
+      // Opened for the onboarding call, the card is at that call's stage
+      // (final score round 1: at Ready For Launch, O5 showed the Blueprint
+      // done while O7 still booked it).
+      stage: deck === "onboarding" ? "Onboarding Booked" : "Ready For Launch",
       service: "DFY",
       launchDate: "2026-10-15",
       bucket: "launch",
@@ -835,6 +840,10 @@ function starter(_deck: DeckKind = "launch"): Loaded {
     prep: {
       onboarding: {
         starter_pack: true,
+        // Their services in Arabic, typed in prep: the Arabic decks' slide 4
+        // and queue card name each in Arabic (final score round 1: O4 read
+        // "+٢ Villa fit-out" and L2's call rows lost their service).
+        services_ar: ["تشطيب فلل", "تشطيب محلات ومكاتب", "ترميم مطابخ"],
         onboarding_presented_at: "2026-10-05T11:30:00Z",
       },
       launch: { form_confirmed: "native:fixture-wa" },

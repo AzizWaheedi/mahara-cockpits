@@ -250,7 +250,7 @@ The six stop names are the Onboarding Map's own, exactly. Stop 4 carries only it
 | `week.2.line` | Sign in, then connect WhatsApp and Google Calendar, so bookings land in your real calendar. | سجلوا دخول، وبعدها اربطوا الواتساب وتقويم قوقل، عشان المواعيد تنزل بتقويمكم الحقيقي. |
 | `week.2.ticks` | Signed in · WhatsApp · Calendar | تسجيل الدخول · واتساب · التقويم |
 | `week.3.name` | Your content | محتواكم |
-| `week.3.line` | Before your Blueprint call: photos and videos in your Drive folder. Finished projects, work in progress, your team on site. Don't filter. We will. | قبل مكالمة بناء الهوية: صور وفيديوهات بمجلد الدرايف. مشاريع خلصت، وشغل قيد التنفيذ، وفريقكم بالموقع. لا تفلترون، إحنا نفلتر. |
+| `week.3.line` | Before your Blueprint call: photos and videos in your Drive folder. Finished projects, work in progress, your team on site. Don't filter. We will. | قبل مكالمة بناء الهوية: صور وفيديوهات بمجلد الدرايف. مشاريع خلصت، وشغل قيد التنفيذ، وفريقكم بالموقع. لا تفلترون، إحنا نفلتر. (a no-break space between لا and تفلترون, so the negation never ends a line; final score round 1) |
 | `week.3.link` | (link to {links.drive}) | مجلد الدرايف |
 | `week.4.name` | Past enquiries | الاستفسارات القديمة |
 | `week.4.line` | Have a list of old enquiries? Send it, and we'll agree whether to call them. | عندكم قائمة باستفسارات قديمة؟ أرسلوها، ونتفق إذا ينتصل عليهم. |
@@ -712,7 +712,7 @@ Done with you the pie splits by owner in halves: ours holds الإعلانات �
 | `training.academy` (over the course list) | Premium Projects Academy | أكاديمية المشاريع المميزة |
 | `training.course.1` | Introduction | البداية |
 | `training.course.2` | Onboarding | التعريف |
-| `training.course.3` | Google optimisation | تحسين قوقل |
+| `training.course.3` | Google optimization | تحسين قوقل |
 | `training.course.4` | Offer creation | صناعة العرض |
 | `training.course.5` | Project Closing Mastery | إتقان توقيع المشاريع |
 | `training.course.5.latin` (new, the visual review, the lit row only, ink-2 at 24 px) | (none) | Project Closing Mastery |

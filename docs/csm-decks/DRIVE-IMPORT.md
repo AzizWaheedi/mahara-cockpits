@@ -1059,7 +1059,7 @@ the code in `hint`; the box shows the sentence under the field for the
   deck window and the other window show the new files.
 - `requestDriveImport` with `existing: true` shows that import's progress,
   with no error.
-- `{time}` is the CSM's local time, "13:02", or "yesterday, 13:02"; in Arabic with الساعة, as a time is said after a verb: "الساعة 13:02", "أمس الساعة 09:05", "يوم ١٦ أكتوبر الساعة 09:05" (score round 4).
+- `{time}` is the CSM's local time, "today, 13:02", or "yesterday, 13:02" (final score round 1: "last ran 09:49" dropped a word); in Arabic with الساعة, as a time is said after a verb: "الساعة 13:02", "أمس الساعة 09:05", "يوم ١٦ أكتوبر الساعة 09:05" (score round 4).
 
 ## 9. The prep keys: `dos_donts_ar`, `example_theme` and `service_chosen_at`
 
@@ -1411,7 +1411,7 @@ that one never reaches it.
   and `TrayFiles.tsx` lists the client's files in prep's ads panel, under
   "Add a file", newest first: name, picture or video, kind, hidden, and
   on a Drive file "From Drive · pasted by {first name} · {when}" (the box's
-  `timeLabel`, with "today, 08:15" for today's paste, so it never reads as
+  `timeLabel`, "today, 08:15" for today's paste, so it never reads as
   a bare clock beside "yesterday, 17:40"); newest first by when each file
   was made. Delete asks once more, then calls `launchAds.remove`
   (`cockpit_csm_launch_ad_remove`, unchanged, which keeps the row for the

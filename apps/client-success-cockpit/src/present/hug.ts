@@ -10,11 +10,20 @@ import { type RefObject, useLayoutEffect } from "react";
  * Canvas pixels: the canvas is scaled to the window, so rects are divided
  * by its scale.
  */
-export function useHug(ref: RefObject<HTMLElement | null>, key: unknown) {
+export function useHug(
+  ref: RefObject<HTMLElement | null>,
+  key: unknown,
+  on = true,
+) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: key is the text being hugged
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // Off: the block keeps its CSS width (a row spanning its column).
+    if (!on) {
+      el.style.width = "";
+      return;
+    }
     let live = true;
     const fit = () => {
       if (!live) return;
@@ -40,5 +49,5 @@ export function useHug(ref: RefObject<HTMLElement | null>, key: unknown) {
     return () => {
       live = false;
     };
-  }, [ref, key]);
+  }, [ref, key, on]);
 }

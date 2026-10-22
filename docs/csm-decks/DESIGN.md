@@ -3013,7 +3013,7 @@ stop 1 of 3 (English) · a rail slide: content y 96 to 948
 |                                                          Academy screenshot  (tag)   |
 |  1      Introduction                                | +----------------------------+ |
 |  2      Onboarding                                  | | the Academy's classroom,   | |
-|  3      Google optimisation                         | | masked: six course cards,  | |
+|  3      Google optimization                         | | masked: six course cards,  | |
 |  4      Offer creation                              | | the fifth cover's figure   | |
 |# 5 (●)  Project Closing Mastery     (H3 40/700)     | | blurred, its title kept    | |
 |#        What it teaches                             | | 704 x 498                  | |
@@ -6230,3 +6230,58 @@ half), L9 stop 2 (full, both languages), L10 (full), L12 (Arabic: a
 no-break space between ومنصة and Mahara OS split the name into two
 isolates and read "OS Mahara", so it is a plain space), L13 (full) and L4
 stop 1 (starter).
+
+
+### 22.19 Final score round 1's fixes (2026-10-22)
+
+The final scoring round put three slides at 3.5 (O2, O4 and O7) and named
+no must. Each is fixed below with every should, and the cheap taste wins.
+
+| Finding | What changed |
+|---|---|
+| should: O2, Arabic deck: a single English answer was right-aligned (ragged left) beside a left-aligned English list | `AnswerText` takes its words' direction (`dir` from `wordsDir`), so the block stays at its label's edge and its lines start at their own |
+| should: O2, English deck, one group of Arabic challenges: the row was packed to the left, its first item at x 1320 under a label at x 136 | One group whose words all run the other way (`data-cross` on `.dkc-goal-col`): the row spans the content (`useHug` off) and the label stands at the words' own start, over the first item |
+| should: O4, English deck: the client's Arabic words were laid out left to right, the Arabic comma on the wrong word | `.dkc-service-own` takes the shown words' shared direction, so they read right to left with «،» in place |
+| should: O4, Arabic deck with no Arabic list: "+٢ Villa fit-out" | A Latin line runs left to right with its count after it in Western digits ("Villa fit-out +2"); the starter fixture now has its services in Arabic (`services_ar`), which also gives L2's Arabic call rows their service |
+| should: O7 stop 1, done with you: the words ended at y 540 beside a strip running to y 972 | Fewer than three red lines typed, the rows left to fill stay drawn under them (dashed, the first the input), and the ask with its list sits at the column's foot (`margin-top: auto` in a stretched section), its last row level with the strip's lower row |
+| should: O7, full: the interior client's Reels starter was the villa model over its plan, read as architecture | `starter-interior-reel.webp` is a 9:16 cut of the sales deck's lit majlis (its sofa, lamp and screen), not one of the eighteen scenes nor the feed starter's table; L4's 9:16 starter thumbnail takes it too |
+| should: O5 and O7 contradicted each other for the starter client (O5 showed the Blueprint done, O7 still booked it) | The starter fixture's onboarding deck is at its call's stage (Onboarding Booked). In code, opened after the Blueprint (`roadNow > 3`), O7's checklist ticks it and the card shows the held call from `last.blueprint`, or the block solid with a teal tick and "Done", never "We book it before we hang up" |
+| should: L3's field for an interior or fit-out client was about half exteriors, and fit-out's next round a villa's front door | The seven indoor scenes (living, majlis, bedroom, office, stairs, fitout2, fitout3) gain two tiles cut from their story render (`-c` wide, `-d` a detail; a different shot of the same room from the feed's `-a` and `-b`). A room service's field and next round take rooms only: the feed's cuts first, then the story's, each cut across every room before the next, so one room's three pictures never stand side by side; an exterior only after every room (none is needed: 24 different rooms). Other services are unchanged. Pinned in `deck-examples` |
+| taste: O6's Arabic content line broke after لا | A no-break space between لا and تفلترون |
+| taste: O6, "Video guide · 3:51" sat on the ticks' baseline 28 px after the last tick | The guide's words stand over its poster |
+| taste: O7's close titles split the call's name | The name never breaks: "Next: your / Brand Blueprint call", "الخطوة الجاية: / مكالمة بناء الهوية والعرض" |
+| taste: L2 stop 4's example booking (Wed 21 October) fell before a 26 October go-live | The slot is counted from go-live while go-live is ahead (Wed 28 October), as O5 does |
+| taste: L5's WhatsApp steps, 270 px between the second and the band | The band stands 32 px under the second step |
+| taste: L4's Arabic tray chip read «٤:٥، EN» as one left-to-right run | The chip runs right to left, the ratio, the length and the language each isolated |
+| taste: the Drive box's "last ran 09:49" | `timeLabel` says "today, 09:49" in English (the Arabic already says الساعة) |
+| taste: L3's faint next-round row read as an empty band at stops 0 and 1 | Labelled "Next round" at the same 35% (hiding it brought back the empty band 22.15 removed) |
+| taste: L8's "Google optimisation" beside the Academy's "Google Optimization" | "Google optimization", the Academy's spelling |
+| optional: O1 broke "Saha / Construction" across two lines | The name's column is 920 px and the name hugs its longest line, so a Latin name in the Arabic deck stands at the start edge |
+
+Not changed, and why:
+
+- **L1's example ad with no caption** (taste). Copy rule: inside an example
+  phone nothing is written for them (CONTENT, the example ads); the next
+  post's head under the Page name is score round 4's fix for the black
+  band, so it stays.
+- **O5's example message date** (taste). It mirrors what the live reminder
+  template prints ("November 11, 2026", "4:00 PM"); 22.17 keeps it.
+- **L2 stop 2's Arabic underline** (taste). Measured: the mark spans
+  «٥ دقايق» alone (x 344 to 437), with no trailing space, and في starts at
+  344 after the space; nothing to trim.
+- **O7's close title after the Blueprint** (the stage past it): the title
+  still reads "Next: your Brand Blueprint call"; the card and the checklist
+  now say Done. The onboarding deck is presented at the onboarding call;
+  a title for the call after it is left for the content pass.
+- **Optional items scored 4**: L9's install stop words, L10's starter
+  grid, L5's band 16 px off the rail, O6's starter peek phone, and the
+  starter's English WhatsApp line under an Arabic ad.
+
+Checked: all deck tests, both typechecks, `check-shared.sh` and Biome on
+the touched files. Shots at 1920 x 1080 (JPEG, the disk near full), read
+and deleted: O2 stop 2 (full Arabic, done with you English), O4 (done with
+you English, starter Arabic), O7 stop 1 (done with you English, full
+Arabic), O7's starter stop (full), O7's close (full Arabic, starter), O5
+(starter), O6 (full), O1 (done with you, starter, full Arabic, sparse
+Arabic), L1 (starter), L2 stops 2 and 4 (full Arabic), L3 stops 0 (full)
+and 2 (starter), L4 (full Arabic) and L5 (starter WhatsApp).

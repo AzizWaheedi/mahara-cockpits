@@ -215,8 +215,28 @@ export const feedUrl = (theme: Theme) =>
   new URL(`./assets/examples/${theme}-feed.webp`, import.meta.url).href;
 export const storyUrl = (theme: Theme) =>
   new URL(`./assets/examples/${theme}-story.webp`, import.meta.url).href;
-export const tileUrl = (theme: Theme, cut: "a" | "b") =>
+export const tileUrl = (theme: Theme, cut: Cut) =>
   new URL(`./assets/examples/tile/${theme}-${cut}.webp`, import.meta.url).href;
+
+/**
+ * A tile's cut: a and b from the feed render (wide, then a detail), c and
+ * d from the story render, a different shot of the same room (wide, then a
+ * detail). Only the indoor scenes have c and d (final score round 1): an
+ * interior or fit-out client's field and next round need twenty-four
+ * different tiles of rooms, and the feed cuts alone gave fourteen.
+ */
+export type Cut = "a" | "b" | "c" | "d";
+
+/** The finished rooms, the scenes with the story's two cuts as well. */
+export const INDOOR: ReadonlySet<Theme> = new Set<Theme>([
+  "living",
+  "majlis",
+  "bedroom",
+  "office",
+  "stairs",
+  "fitout2",
+  "fitout3",
+]);
 
 // ------------------------------------------------- the starter templates
 
@@ -279,10 +299,21 @@ const SITES: ReadonlySet<Theme> = new Set([
   "construction2",
   "construction3",
 ]);
+/**
+ * Outside a room: a villa's front, its pool and garden, a building's
+ * massing. In a room service's field they come only after every indoor
+ * tile (final score round 1: eleven of an interior client's eighteen).
+ */
+const EXTERIOR: ReadonlySet<Theme> = new Set([
+  "villa",
+  "facade",
+  "pool",
+  "landscape",
+  "architecture2",
+  "designbuild",
+]);
 /** The services whose work is a room: a crane never stands in their field. */
 const ROOMS: ReadonlySet<MainKey> = new Set(["interior", "fitout"]);
-
-type Cut = "a" | "b";
 
 /**
  * L3's field and its next round, planned together (DESIGN 22.14, 22.15),
@@ -306,8 +337,14 @@ function tilePlan(
   const pick = without(example, avoid);
   const own = pick.scenes;
   const rooms = ROOMS.has(pick.service);
+  // A room service's field and round are rooms: no building site, and an
+  // exterior only once every indoor tile is shown.
+  const outside = (x: Theme) => rooms && EXTERIOR.has(x);
   const fits = (x: Theme) =>
-    !SUB_TRADE.has(x) && !(rooms && SITES.has(x)) && !avoid.includes(x);
+    !SUB_TRADE.has(x) &&
+    !(rooms && SITES.has(x)) &&
+    !outside(x) &&
+    !avoid.includes(x);
   const key = (x: Theme, c: Cut) => `${x}-${c}`;
   const used = new Set<string>();
   const field: (string | null)[] = Array.from({ length: count }, () => null);
@@ -322,7 +359,7 @@ function tilePlan(
     KEPT.slice(0, 2).map((_, k) => own[k % own.length]),
   );
   const round = sceneOrder(pick)
-    .filter(x => !avoid.includes(x))
+    .filter(x => !avoid.includes(x) && !outside(x))
     .slice(0, 6)
     .map(x => {
       const cut: Cut = own.includes(x) && keptDetail.has(x) ? "a" : "b";
@@ -334,10 +371,23 @@ function tilePlan(
     ...list.map(x => [x, "a"] as [Theme, Cut]),
     ...list.map(x => [x, "b"] as [Theme, Cut]),
   ];
+  // A room service's rooms in the story's two cuts, after the feed's, each
+  // cut across every room before the next, so one room's three pictures
+  // never stand side by side.
+  const story = (list: readonly Theme[]): [Theme, Cut][] =>
+    rooms
+      ? (["c", "d"] as const).flatMap(c =>
+          list.filter(x => INDOOR.has(x)).map(x => [x, c] as [Theme, Cut]),
+        )
+      : [];
+  const rooms1 = [...own, ...near, ...sceneOrder(pick)].filter(fits);
   const order: [Theme, Cut][] = [
     ...both(own.filter(fits)),
     ...both(near.filter(fits)),
     ...both(sceneOrder(pick).filter(fits)),
+    ...story(rooms1.filter((x, i) => rooms1.indexOf(x) === i)),
+    // Outside, for a room service, only after every room.
+    ...both(sceneOrder(pick).filter(x => outside(x) && !avoid.includes(x))),
     // A sub-trade only as the client's own detail, last of all.
     ...own.filter(x => SUB_TRADE.has(x)).map(x => [x, "b"] as [Theme, Cut]),
   ];

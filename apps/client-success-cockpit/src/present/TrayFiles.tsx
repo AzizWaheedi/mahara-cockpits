@@ -32,8 +32,8 @@ const KIND: Record<LaunchAd["kind"], string> = {
 export function provenanceLine(ad: LaunchAd, now: Date): string | null {
   if (ad.source !== "drive") return null;
   const who = ad.importedBy?.trim();
-  const label = ad.importedAt ? timeLabel(ad.importedAt, now, "en") : "";
-  const when = /^\d{2}:\d{2}$/.test(label) ? `today, ${label}` : label;
+  // "today, 08:15", "yesterday, 17:40": the box's own clock.
+  const when = ad.importedAt ? timeLabel(ad.importedAt, now, "en") : "";
   return ["From Drive", who ? `pasted by ${who}` : null, when || null]
     .filter(Boolean)
     .join(" · ");

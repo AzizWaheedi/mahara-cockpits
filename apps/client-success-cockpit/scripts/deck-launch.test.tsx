@@ -1459,7 +1459,9 @@ describe("the example call", () => {
     expect(c.band.note.en).toBe("50 to 100 thousand riyals");
     expect(c.slot.day.en).toBe("Wednesday");
     expect(c.slot.spoken.en).toBe("4 pm");
-    expect(c.slot.templateDate).toBe("October 21, 2026");
+    // Counted from go-live (Monday 26 October), still ahead: never a
+    // booking before the ads run (final score round 1).
+    expect(c.slot.templateDate).toBe("October 28, 2026");
     expect(c.slots.engineer.en.text).toBe("Eng. Khalid");
     expect(c.slots.engineer.ar.text).toBe("المهندس خالد");
     expect(c.slots.free.en.text).toBe("a free consultation");

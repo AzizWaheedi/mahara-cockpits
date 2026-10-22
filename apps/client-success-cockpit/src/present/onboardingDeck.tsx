@@ -172,6 +172,11 @@ function WelcomePhone({ ctx }: { ctx: SlideCtx }) {
 
 function Welcome({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
+  // The name hugs its longest line (final score round 1, with the column
+  // at 920): a Latin name in the Arabic deck stands at the start edge, its
+  // lines left-aligned inside, not 400 px off it on the column's far side.
+  const nameRef = useRef<HTMLSpanElement>(null);
+  useHug(nameRef, `${lang}:${d.name}:${welcomeSize(d.name, lang)}`);
   const date = dayMonth(d.onboardingDay, lang, d.timeZone);
   // The deck opens here: slide 6's guide posters are fetched and decoded
   // now, so none pops in after that slide has built (22.3.2, score round 4).
@@ -215,7 +220,7 @@ function Welcome({ ctx }: { ctx: SlideCtx }) {
             data-size={welcomeSize(d.name, lang)}
           >
             <span className="dkc-hello">{t(O.welcome.hello, lang)}</span>
-            <span dir="auto" className="dkc-welcome-name">
+            <span ref={nameRef} dir="auto" className="dkc-welcome-name">
               {d.name}
             </span>
           </h1>
@@ -379,17 +384,18 @@ function GoalInput({ ctx }: { ctx: SlideCtx }) {
  * sits on the label's. Hugging each item alone gave one list two ragged
  * edges.
  */
-function Answers({ lines }: { lines: string[] }) {
+function Answers({ lines, span = false }: { lines: string[]; span?: boolean }) {
   const ref = useRef<HTMLUListElement>(null);
-  useHug(ref, lines.join("\n"));
+  // Spanning (one group in the other script, final score round 1): the row
+  // runs the content's width from its own start, so it is not hugged.
+  useHug(ref, lines.join("\n"), !span);
   // Each item a block in the deck's direction, the words isolated in a
   // <bdi> (score round 4, as O7's red lines): an English answer in the
   // Arabic deck sits under its Arabic label's edge, not the column's other.
   // Lines all in one script take its direction (score round 2 of the five
   // services, as O7's red lines): three Arabic challenges run across the
   // English deck's row right to left, the first on the right.
-  const dirs = lines.map(wordsDir);
-  const listDir = dirs.every(x => x === dirs[0]) ? dirs[0] : undefined;
+  const listDir = groupDir(lines);
   return (
     <ul ref={ref} data-hug="" dir={listDir}>
       {lines.map(l => (
@@ -401,15 +407,25 @@ function Answers({ lines }: { lines: string[] }) {
   );
 }
 
-/** One answer, hugging its lines; a block in the deck's direction. */
-function AnswerText({ text }: { text: string }) {
+/**
+ * One answer, hugging its lines: a block at its label's edge whose lines
+ * follow their own script (final score round 1: an English answer in the
+ * Arabic deck was right-aligned beside a left-aligned English list).
+ */
+function AnswerText({ text, span = false }: { text: string; span?: boolean }) {
   const ref = useRef<HTMLParagraphElement>(null);
-  useHug(ref, text);
+  useHug(ref, text, !span);
   return (
-    <p ref={ref} className="dkc-theirs" data-hug="">
+    <p ref={ref} className="dkc-theirs" data-hug="" dir={wordsDir(text)}>
       <bdi>{text}</bdi>
     </p>
   );
+}
+
+/** A group's words' shared direction, or none when their scripts mix. */
+function groupDir(lines: string[]): "rtl" | "ltr" | undefined {
+  const dirs = lines.map(wordsDir);
+  return dirs.length && dirs.every(x => x === dirs[0]) ? dirs[0] : undefined;
 }
 
 function GoalRow({
@@ -421,22 +437,38 @@ function GoalRow({
   lang: Lang;
   hold?: boolean;
 }) {
+  const deckDir = lang === "ar" ? "rtl" : "ltr";
   return (
     <div
       className="dkc-goal-row"
       data-n={goals.length}
       data-hold={hold ? "" : undefined}
     >
-      {goals.map(g => (
-        <div key={g.key} className="dkc-goal-col">
-          <span className="dk-label">{t(g.label, lang)}</span>
-          {g.key === "challenges" ? (
-            <Answers lines={g.lines} />
-          ) : (
-            <AnswerText text={g.lines[0] ?? ""} />
-          )}
-        </div>
-      ))}
+      {goals.map(g => {
+        // One group whose words all run the other way (final score round
+        // 1: Arabic challenges in the English deck sat packed to the left,
+        // their first item at x 1320 under a label at x 136): the row spans
+        // the content and its label stands at the words' own start.
+        const dir = groupDir(
+          g.key === "challenges" ? g.lines : g.lines.slice(0, 1),
+        );
+        const cross =
+          goals.length === 1 && dir !== undefined && dir !== deckDir;
+        return (
+          <div
+            key={g.key}
+            className="dkc-goal-col"
+            data-cross={cross ? "" : undefined}
+          >
+            <span className="dk-label">{t(g.label, lang)}</span>
+            {g.key === "challenges" ? (
+              <Answers lines={g.lines} span={cross} />
+            ) : (
+              <AnswerText text={g.lines[0] ?? ""} span={cross} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -730,27 +762,37 @@ export function ownLine(words: string[], room = 36) {
 function OwnWords({ words, lang }: { words: string[]; lang: Lang }) {
   if (!words.length) return null;
   const { shown, more } = ownLine(words, lang === "ar" ? 32 : 36);
+  // Words all in one script run in its direction (final score round 1):
+  // Arabic words in the English deck read right to left, the first on the
+  // right with the comma after it, and a Latin line in the Arabic deck
+  // reads left to right with its count after it, in Western digits
+  // ("Villa fit-out +2", never "+٢" in front of a Latin line).
+  const dirs = shown.map(wordsDir);
+  const dir = dirs.every(x => x === dirs[0]) ? dirs[0] : undefined;
   // Arabic words on both sides take the Arabic comma, in either deck
   // (score round 4: "عظم وتشطيب, بناء فلل سكنية" in the English deck).
   const sep = (a: string, b: string) =>
-    lang === "ar" || (ARABIC_LETTER.test(a) && ARABIC_LETTER.test(b))
-      ? "، "
-      : ", ";
+    dir === "ltr"
+      ? ", "
+      : lang === "ar" || (ARABIC_LETTER.test(a) && ARABIC_LETTER.test(b))
+        ? "، "
+        : ", ";
+  const count = digits(more, dir === "ltr" ? "en" : lang);
   return (
-    <span className="dkc-service-own">
+    <span className="dkc-service-own" dir={dir}>
       {shown.map((w, i) => (
         <span key={w}>
           {i ? sep(shown[i - 1], w) : null}
           <bdi>{w}</bdi>
         </span>
       ))}
-      {/* The count isolated left to right, so the Arabic deck reads +٢ after
-          their words, never ٢+ in front of a Latin line. */}
+      {/* The count isolated left to right, so it reads +2 at the line's
+          end in either direction, never 2+ in front of it. */}
       {more ? (
         <>
           {" "}
           <bdi dir="ltr" className="dkc-service-more">
-            {`+${digits(more, lang)}`}
+            {`+${count}`}
           </bdi>
         </>
       ) : null}
@@ -1462,8 +1504,13 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
         ))}
       </div>
     );
+  // Fewer than three typed (final score round 1: one line ended the column
+  // at y 540 beside a strip running to y 972): the rows left to fill stay
+  // drawn under them, dashed, the first the input itself, so the list
+  // keeps three rows whatever was typed.
+  const blanks = Math.max(0, 3 - lines.length);
   return (
-    <div className="dkc-redlines">
+    <div className="dkc-redlines" data-blanks={blanks ? "" : undefined}>
       {lines.length ? (
         <ul dir={listDir}>
           {lines.map(l => (
@@ -1491,7 +1538,22 @@ function RedLines({ ctx }: { ctx: SlideCtx }) {
           ))}
         </ul>
       ) : null}
-      {input}
+      {blanks ? (
+        <>
+          <div className="dkc-redline-row">
+            <i aria-hidden />
+            {input}
+          </div>
+          {Array.from({ length: blanks - 1 }, (_, k) => (
+            <div key={k} className="dkc-redline-row" aria-hidden>
+              <i />
+              <span />
+            </div>
+          ))}
+        </>
+      ) : (
+        input
+      )}
     </div>
   );
 }
@@ -1657,8 +1719,13 @@ const HOUR = 3_600_000;
  * and time take its place and the block's teal fades in.
  */
 function BlueprintCard({ d, lang }: { d: DeckData; lang: Lang }) {
-  const at = toDate(d.next.blueprint);
-  const timed = Boolean(at && clock(d.next.blueprint, lang, d.timeZone));
+  // Opened after the Blueprint (the stage past it, CONTENT O5): the call
+  // as it was held, or Done, never "We book it" beside a road that shows it
+  // done (final score round 1).
+  const held = !d.next.blueprint && d.roadNow > 3;
+  const when = d.next.blueprint ?? (held ? d.last.blueprint : undefined);
+  const at = toDate(when);
+  const timed = Boolean(at && clock(when, lang, d.timeZone));
   if (!at)
     return (
       <div className="dkc-cal dkc-cal-next" data-open="">
@@ -1669,12 +1736,19 @@ function BlueprintCard({ d, lang }: { d: DeckData; lang: Lang }) {
               <span className="dkc-cal-time" />
               <i />
               {k === 0 ? (
-                <span className="dkc-cal-block" data-open="">
+                <span
+                  className="dkc-cal-block"
+                  data-open=""
+                  data-done={held ? "" : undefined}
+                >
                   <span className="dkc-cal-open">
                     <svg viewBox="0 0 28 28" aria-hidden>
                       <circle cx="14" cy="14" r="13" />
+                      {held ? <path d="M8.5 14.5l3.8 3.8 7.2-8" /> : null}
                     </svg>
-                    {t(O.next.cardOpen, lang)}
+                    {held
+                      ? t(SHARED.status.done, lang)
+                      : t(O.next.cardOpen, lang)}
                   </span>
                 </span>
               ) : null}
@@ -1690,7 +1764,7 @@ function BlueprintCard({ d, lang }: { d: DeckData; lang: Lang }) {
   const rows = timed ? [0, 1, 2] : [];
   return (
     <div
-      key={String(d.next.blueprint)}
+      key={String(when)}
       className="dkc-cal dkc-cal-next"
       style={{ "--cal-min": minutes / 60 } as CSSProperties}
     >
@@ -1726,15 +1800,20 @@ function BlueprintCard({ d, lang }: { d: DeckData; lang: Lang }) {
 
 function Blueprint({ ctx }: { ctx: SlideCtx }) {
   const { d, lang } = ctx;
+  // The call's name never breaks (final score round 1: "Next: your Brand /
+  // Blueprint call"): the title breaks before it, if at all.
+  const head = t(O.next.bandHead, lang);
+  const name = t(O.next.cardName, lang);
+  const title = head.includes(name)
+    ? head.replace(name, name.replace(/ /g, "\u00a0"))
+    : head;
   // The deck ends on the next call: what it is beside it as their calendar
   // will show it, then the call's checklist, closed.
   return (
     <div className="dkc-blueprint">
       <div className="dkc-blueprint-head">
         <div className="dkc-blueprint-words">
-          <h2 className="dk-h1 dkc-blueprint-title">
-            {t(O.next.bandHead, lang)}
-          </h2>
+          <h2 className="dk-h1 dkc-blueprint-title">{title}</h2>
           <p className="dk-lead dkc-blueprint-line">
             {t(O.next.bandRest, lang)}
           </p>

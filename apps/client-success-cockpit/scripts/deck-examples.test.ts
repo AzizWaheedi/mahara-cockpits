@@ -7,6 +7,7 @@ import {
   choiceOf,
   exampleCreative,
   examplePick,
+  INDOOR,
   KEPT,
   NEAR,
   parseChoice,
@@ -423,7 +424,7 @@ describe("the tiles and the places (DESIGN 22.14)", () => {
   });
 
   const sceneOf = (url: string) =>
-    /\/tile\/([a-z0-9]+)-[ab]\.webp$/.exec(url)?.[1] ?? "";
+    /\/tile\/([a-z0-9]+)-[abcd]\.webp$/.exec(url)?.[1] ?? "";
 
   test("what wins is always their service's own picture, never a kitchen or a bathroom (DESIGN 22.15)", () => {
     for (const k of MAIN) {
@@ -481,6 +482,25 @@ describe("the tiles and the places (DESIGN 22.14)", () => {
       "majlis",
       "fitout2",
     ]);
+    // Rooms only (final score round 1: eleven of the interior client's
+    // eighteen were villa fronts, pools and gardens, and fit-out's next
+    // round had a villa's front door): with the story's two cuts of the
+    // seven indoor scenes, twenty-four different rooms, no exterior.
+    for (const k of ["interior", "fitout"] as const) {
+      const pick = examplePick(null, k);
+      const shown = [...serviceField(pick), ...serviceRound(pick)];
+      expect(new Set(shown).size).toBe(24);
+      for (const url of shown)
+        expect({
+          k,
+          scene: sceneOf(url),
+          indoor: INDOOR.has(sceneOf(url) as never),
+        }).toEqual({
+          k,
+          scene: sceneOf(url),
+          indoor: true,
+        });
+    }
     // A sub-trade the CSM picked as the lead is theirs: kept, as a detail.
     const kitchen = examplePick("kitchen", "interior");
     expect(serviceField(kitchen)[0]).toContain("/tile/kitchen-b.webp");
@@ -586,7 +606,7 @@ describe("the words inside an example phone are the client's own", () => {
   });
 });
 
-describe("the 72 files (DESIGN 22.4.1 and 22.14)", () => {
+describe("the 86 files (DESIGN 22.4.1, 22.14 and 22.19)", () => {
   const big = readdirSync(DIR).filter(f => f.endsWith(".webp"));
   const tiles = readdirSync(resolve(DIR, "tile")).filter(f =>
     f.endsWith(".webp"),
@@ -604,12 +624,16 @@ describe("the 72 files (DESIGN 22.4.1 and 22.14)", () => {
     return [b.readUInt16LE(26) & 0x3fff, b.readUInt16LE(28) & 0x3fff];
   }
 
-  test("the names: a feed and a story for each theme, an -a and a -b tile", () => {
+  test("the names: a feed and a story for each theme, an -a and a -b tile, and a -c and a -d for the indoor scenes", () => {
     expect(big.sort()).toEqual(
       THEMES.flatMap(t => [`${t}-feed.webp`, `${t}-story.webp`]).sort(),
     );
     expect(tiles.sort()).toEqual(
-      THEMES.flatMap(t => [`${t}-a.webp`, `${t}-b.webp`]).sort(),
+      THEMES.flatMap(t => [
+        `${t}-a.webp`,
+        `${t}-b.webp`,
+        ...(INDOOR.has(t) ? [`${t}-c.webp`, `${t}-d.webp`] : []),
+      ]).sort(),
     );
   });
 

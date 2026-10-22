@@ -88,6 +88,8 @@ export const DRIVE_UI = {
     ar: "الاستيراد من الدرايف ما صار جاهز للحين. ارفع الملفات هنا لين يجهز.",
   },
   yesterday: { en: "yesterday", ar: "أمس" },
+  /** Today's clock in English (final score round 1: "last ran 09:49"). */
+  today: { en: "today", ar: "اليوم" },
 } as const;
 
 /** The request's refusals, by the HINT the server raises (DRIVE-IMPORT.md 6). */

@@ -345,15 +345,30 @@ export function AdTray({
                         {t(A.onPhone[on], lang)}
                       </span>
                     ) : (
-                      <span className="dk-ltr dkc-thumb-spec">
-                        {digits(shape, lang)}
+                      // In Arabic the chip runs right to left, each Latin
+                      // or ratio piece isolated (final score round 1: one
+                      // left-to-right run put «،» on the ratio's start).
+                      <span
+                        className={
+                          lang === "ar"
+                            ? "dkc-thumb-spec"
+                            : "dk-ltr dkc-thumb-spec"
+                        }
+                      >
+                        <bdi dir="ltr">{digits(shape, lang)}</bdi>
                         {/* «، » in Arabic: a dot beside ٤:٥ reads as ٠. */}
-                        {c.video && c.seconds
-                          ? `${sep(lang)}${duration(c.seconds)}`
-                          : ""}
-                        {c.language
-                          ? `${sep(lang)}${c.language.toUpperCase()}`
-                          : ""}
+                        {c.video && c.seconds ? (
+                          <>
+                            {sep(lang)}
+                            <bdi dir="ltr">{duration(c.seconds)}</bdi>
+                          </>
+                        ) : null}
+                        {c.language ? (
+                          <>
+                            {sep(lang)}
+                            <bdi>{c.language.toUpperCase()}</bdi>
+                          </>
+                        ) : null}
                       </span>
                     )}
                     {c.starter ? (
