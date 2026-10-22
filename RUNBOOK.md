@@ -349,8 +349,12 @@ The Drive link (the visual pass, `docs/csm-decks/DRIVE-IMPORT.md`): migration
 `20261020160000_csm_launch_ads_drive.sql` (one import per pasted link,
 `cockpit_csm_launch_ads_import_request` and `_imports_read` for CSM seats; seven
 worker functions for the service key), `20261020160100_csm_deck_prep_dos_ar.sql`
-(three prep keys: `dos_donts_ar`, `example_theme`, `service_chosen_at`) and
-`20261020160200_csm_deck_video_posters.sql`. The worker is the editor desk's
+(three prep keys: `dos_donts_ar`, `example_theme`, `service_chosen_at`),
+`20261020160200_csm_deck_video_posters.sql` and
+`20261020160300_csm_launch_ads_source.sql` (the tray's read gains `source`, and
+a Drive file the first name of the seat that pasted the link and when, for
+prep's "From Drive" line; a hand upload's name is cleaned as a Drive file's
+is). The worker is the editor desk's
 `deck-import` (Editor desk, above). Its writes are audited `driveImport.*` with
 the worker as the actor.
 
@@ -373,12 +377,21 @@ Going live:
    returns the client and no other; a picture reserves, uploads, turns ready and
    lists with a signed link; remove takes it off the tray.
 6. The Drive link: apply `20261020160000_csm_launch_ads_drive.sql`,
-   `20261020160100_csm_deck_prep_dos_ar.sql` and
-   `20261020160200_csm_deck_video_posters.sql` in that order (each applies
-   twice). Read back: both import tables with row security on and no grant to
-   any role; the two browser functions executable by authenticated only, the
-   seven worker functions and the two poster functions by service_role only.
-   On the VPS: pull, `python3 desk.py doctor` (its six `deck-import` lines),
+   `20261020160100_csm_deck_prep_dos_ar.sql`,
+   `20261020160200_csm_deck_video_posters.sql` and
+   `20261020160300_csm_launch_ads_source.sql` in that order (each applies
+   twice; 160300 refuses to apply before 160000), and before
+   `scripts/ship.sh client-success` for the visual pass: the live
+   `cockpit_csm_deck_prep_value` refuses `example_theme`, `service_chosen_at`
+   and `dos_donts_ar`, so slide 4's "Launch with this" and prep's example
+   switch would fail to save until 160100 is in. Read back: both import tables
+   with row security on and no grant to any role; the two browser functions
+   executable by authenticated only, the seven worker functions and the two
+   poster functions by service_role only; `cockpit_csm_launch_ads_read` and
+   `cockpit_csm_launch_ad_reserve` still executable by authenticated only.
+   After the ship, on a test-safe client: "Launch with this" and the example
+   switch save.
+   On the VPS: pull, `python3 desk.py doctor` (its five `deck-import` lines and `google token`),
    `python3 desk.py deck-import --dry-run --link <a test folder>`, then add the
    README's `deck-import` cron line. Paste a test-safe client's folder in prep
    and watch the files arrive in the tray.

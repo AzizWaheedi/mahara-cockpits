@@ -363,7 +363,7 @@ Seven slides, about 22 minutes of a 45 to 60 minute call since the visual pass (
 
 # Launch deck
 
-Thirteen slides since 2026-10-20 (it was ten), about 28 minutes of a call booked for about 45 (27 until L3 became five stops the same day; L8's two screenshot stops add half a minute), so there is room for questions and the sign-in. Eight slides carry a video slot ([Video slots](#video-slots-ceo-2026-10-20)), so a part the CSM skips for time can still be watched. Visual first. The journey slide is the signature; the partnership pie (L7) is the second drawing the client remembers. The order: L1 cover, L2 journey, L4 ads, L3 creative freedom, L5 form, L6 call, L7 partnership, L8 training, L9 portal, L10 your part, L11 first 90 days, L12 good to know ("Before we go live"), L13 green light.
+Thirteen slides since 2026-10-20 (it was ten), about 28 minutes of a call booked for about 45 (27 until L3 became five stops the same day; L8's two screenshot stops add half a minute), so there is room for questions and the sign-in. Eight slides carry a video slot ([Video slots](#video-slots-ceo-2026-10-20)), so a part the CSM skips for time can still be watched. Visual first. The journey slide is the signature; the partnership pie (L7) is the second drawing the client remembers. The order: L1 cover, L2 journey, L3 creative freedom, L4 ads, L5 form, L6 call, L7 partnership, L8 training, L9 portal, L10 your part, L11 first 90 days, L12 good to know ("Before we go live"), L13 green light.
 
 ## L1 · `cover`
 
