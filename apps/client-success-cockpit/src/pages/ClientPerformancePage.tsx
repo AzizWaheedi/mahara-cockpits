@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { AppointmentFeedback } from "@/components/AppointmentFeedback";
 import { CallCentreSection } from "@/components/CallCentreSection";
 import { ClientCheckIn } from "@/components/ClientCheckIn";
 import { ClientUpdates } from "@/components/ClientUpdates";
@@ -134,12 +135,6 @@ export const LINK_LABELS: {
   hint: string;
   missing: string;
 }[] = [
-  {
-    key: "sheet",
-    label: "Performance sheet",
-    hint: "leads, appointments, outcomes",
-    missing: "not in the Database sheet (Client Data) yet",
-  },
   {
     key: "drive",
     label: "Client drive",
@@ -2060,6 +2055,7 @@ export function ClientProfile({
   const staleCount =
     typeof perf.staleCount === "number" ? perf.staleCount : undefined;
   const resultsParts: ResultsPart[] = [
+    { id: "results-feedback", label: "Client feedback" },
     { id: "results-numbers", label: "Numbers" },
     { id: "results-calls", label: "Calls" },
     { id: "results-ads", label: "Ads" },
@@ -2231,6 +2227,15 @@ export function ClientProfile({
         <>
           <ResultsNav parts={resultsParts} />
           <ResultsParts>
+            <div id="results-feedback" className="scroll-mt-24">
+              {p.clientName === name ? (
+                <AppointmentFeedback
+                  taskId={p.taskId}
+                  from={per.from}
+                  to={per.to}
+                />
+              ) : null}
+            </div>
             <ResultsSection
               id="results-numbers"
               title="Numbers"

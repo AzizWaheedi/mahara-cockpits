@@ -54,6 +54,21 @@ const rpcCalls: { name: string; args: any }[] = [];
 let rpcAnswer: (name: string, args: any) => Promise<Answer>;
 db.rpc = (name: string, args: any) => {
   rpcCalls.push({ name, args });
+  // The client panel also reads portal feedback independently of its numbers.
+  // Supabase's builder supports abortSignal; all records here remain invented.
+  if (name === "cockpit_client_appointment_feedback")
+    return {
+      abortSignal: async () => ({
+        data: {
+          locationId: args.p_location,
+          generatedAt: "2026-10-23T00:00:00Z",
+          total: 0,
+          items: [],
+          hasMore: false,
+        },
+        error: null,
+      }),
+    };
   return rpcAnswer(name, args);
 };
 db.auth.getSession = async () => ({

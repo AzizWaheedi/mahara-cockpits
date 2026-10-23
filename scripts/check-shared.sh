@@ -221,6 +221,12 @@ for app in apps/client-success-cockpit apps/creative-director-cockpit apps/video
   fi
 done
 
+# Client-reported appointment comments and ratings are identical in all three desks.
+for f in src/lib/appointmentFeedback.ts src/components/AppointmentFeedback.tsx; do
+  same "$f" "$MB/$f" "apps/client-success-cockpit/$f"
+  same "$f" "$MB/$f" "$CD/$f"
+done
+
 if [ "$fails" -ne 0 ]; then
   echo
   echo "$fails shared file(s) have drifted. Copy the good one over the others:"
