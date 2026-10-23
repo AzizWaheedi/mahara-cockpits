@@ -190,6 +190,8 @@ describe("Arabic on the slides (CONTENT-AR decisions 2, 3 and 6)", () => {
   test("the shared words: Brand Blueprint call, starter ads, creative director, media team", () => {
     expect(BP.cover.dateline.ar).toStartWith("مكالمة بناء الهوية والعرض");
     expect(BP.cover.byline.ar).toBe("مع المدير الإبداعي");
+    // With a name, the team, never a gendered role beside it (score round 2).
+    expect(BP.cover.bylineNamed.ar).toBe("مع {name}، من فريقنا الإبداعي");
     expect(BP.parts[1].ar).toBe("إعلانات البداية");
     expect(BP.firstAds.stamp.line.ar).toContain("لفريق الإعلانات");
   });

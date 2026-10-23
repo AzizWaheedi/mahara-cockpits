@@ -293,6 +293,8 @@ The minutes add up to 45.
 | 13 | `read-back` | "Here's what we're building" | The one sentence (3.1); "Your projects run from X to Y, and the ads anchor at Z"; "You send us … by …" (2 min) | 3.1 on the slide; 2.19 in notes | the sentence and the yes | Read it out; wait for a yes. |
 | 14 | `next` | "What happens next" | The days after the call on a clothesline (part 1 said as sent only once Send to media went), then what the launch call shows (their custom ads, the form, the questions we ask before anyone reaches their calendar); the time once booked; "Starter ads: live once your account is ready" (3 min) | the booking (opens the launch booking page in its own window); 2.20 and 2.21 and **Close the call** in notes | the booking | Book it live; then press Close the call. |
 
+Score round 2 (2026-10-23) kept the outline and fixed what the client sees (SPEC 5.3): the part 1 sheet is as tall as its words, so its fold row is never cut, and loses its tabs; part 1 ticks as the stamp lands; nothing on slides 11 and 12 covers or cuts a line; the offer tag says "In your offer sheet" once and grows with its words; empty entries are ruled rows, never boxes; slides 6, 8, 9 and 12 show their later cards from the first stop at half strength, so no arrival is half an empty wall; slide 4's park lifts the lit strip to the middle; slide 7's cards share one grid and its empty tape carries example marks, tagged; slide 14's cards hang as the string reaches them. The shot run now fails on text that overlaps, is covered, is cut, or runs off its paper.
+
 ### 3.4 How it ends: what happens next, and when
 
 1. **On the call:**

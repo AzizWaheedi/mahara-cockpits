@@ -18,7 +18,19 @@
  * - no card ends inside the foot (every .dkb-card bottom above y 1004);
  * - the title's words keep 24 px from a print, the phones, the sheet, the
  *   run sheet and the offer tag;
- * - the read-back's headline box holds its words (.dkb-feature).
+ * - the read-back's headline box holds its words (.dkb-feature);
+ * - (score round 2: the run printed 0 hits over four cut or covered lines)
+ *   no two runs of text in different blocks overlap (deck-shots.mjs's
+ *   check); no run of text is covered by something painted over it (the
+ *   folder button over the sticky's last line); no run is cut by a box
+ *   that clips it (overflow, or a clip-path such as the offer tag's); no
+ *   run reaches past the paper it is printed on (the nearest painted box
+ *   it sits in: a card, the tag, a sticky, a chip); and no card, sheet or
+ *   tag that hides its overflow holds more than it shows (scrollHeight
+ *   within 2 px of its height).
+ *
+ * --save no measures without writing the shots; --slides <id,id> walks
+ * only those slides' stops.
  */
 
 import { mkdirSync, rmSync } from "node:fs";
@@ -36,6 +48,8 @@ const states = (args.states ?? "sent").split(",");
 const langs = (args.langs ?? "en,ar").split(",");
 const [W, H] = (args.size ?? "1920x1080").split("x").map(Number);
 const out = resolve(args.out ?? "tmp/blueprint-shots");
+const save = (args.save ?? "yes") === "yes";
+const slides = args.slides ? args.slides.split(",") : null;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const where = page =>
@@ -101,6 +115,8 @@ const measure = page =>
     const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       if (!n.textContent?.trim()) continue;
+      // The wall map's name is the foot's own, beside the map (slide 2).
+      if (n.parentElement?.closest(".dkb-map-name")) continue;
       const r = document.createRange();
       r.selectNodeContents(n);
       for (const b of r.getClientRects()) {
@@ -115,7 +131,7 @@ const measure = page =>
       }
     }
     // A card that runs into the foot (a stack that grew past its room).
-    for (const el of slide.querySelectorAll(".dkb-card, .dkb-flow")) {
+    for (const el of slide.querySelectorAll(".dkb-card, .dkb-flow, .dkb-sheet, .dkb-tag, .dkb-sticky")) {
       const b = el.getBoundingClientRect();
       if (!b.height) continue;
       const bot = (b.bottom - c.top) / k;
@@ -167,10 +183,218 @@ const measure = page =>
     return [...new Set(hits)];
   });
 
+/**
+ * The text checks (score round 2), in canvas pixels. Each run of text is
+ * its line boxes, taken in by a sixth of their height top and bottom (a
+ * line box is taller than its letters, Arabic's most), so tight leading
+ * and a label's own padding are never hits.
+ * - overlap: two runs in different blocks crossing by more than 2 px;
+ * - covered: the run's middle and its two ends hit something that is not
+ *   the run's own element, its ancestors or its children;
+ * - cut: the run reaches more than 2 px past a box that clips it (overflow
+ *   other than visible, or a polygon clip-path, read point by point);
+ * - off its paper: the run reaches more than 2 px past the nearest painted
+ *   box it sits in (an opaque background, or a clip-path);
+ * - held: a card, sheet, tag or sticky that hides its overflow and holds
+ *   more than 2 px past its height.
+ */
+const textChecks = page =>
+  page.evaluate(() => {
+    const canvas = document.querySelector(".dk-canvas");
+    const slide = document.querySelector(".dk-slide");
+    if (!canvas || !slide) return [];
+    const c = canvas.getBoundingClientRect();
+    const k = c.width / 1920 || 1;
+    const X = v => Math.round((v - c.left) / k);
+    const Y = v => Math.round((v - c.top) / k);
+    const shown = el =>
+      el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) &&
+      Number(getComputedStyle(el).opacity) > 0.05;
+    const name = el =>
+      (typeof el.className === "string" && el.className
+        ? el.className
+            .split(" ")
+            .filter(x => x.startsWith("dk"))
+            .slice(0, 2)
+            .join(".")
+        : "") || el.tagName.toLowerCase();
+    /** A polygon clip-path's points, in viewport pixels (simple % and px, and calc(100% - Npx)). */
+    const polygonOf = el => {
+      const cp = getComputedStyle(el).clipPath;
+      if (!cp || cp === "none" || !cp.startsWith("polygon(")) return null;
+      const r = el.getBoundingClientRect();
+      // The polygon is drawn on the element's own box before its turn; at
+      // at most a degree, its bounding box is close enough.
+      const w = el.offsetWidth * k;
+      const h = el.offsetHeight * k;
+      const ox = r.left + (r.width - w) / 2;
+      const oy = r.top + (r.height - h) / 2;
+      const len = (s, full) => {
+        s = s.trim();
+        const calc = /^calc\((.*)\)$/.exec(s);
+        if (calc) {
+          const m = /^([\d.]+)%\s*([+-])\s*([\d.]+)px$/.exec(calc[1].trim());
+          if (m) return (Number(m[1]) / 100) * full + (m[2] === "-" ? -1 : 1) * Number(m[3]) * k;
+          return null;
+        }
+        if (s.endsWith("%")) return (Number.parseFloat(s) / 100) * full;
+        if (s.endsWith("px")) return Number.parseFloat(s) * k;
+        if (s === "0") return 0;
+        return null;
+      };
+      const body = cp.slice(8, -1);
+      const pts = [];
+      let depth = 0;
+      let cur = "";
+      for (const ch of body) {
+        if (ch === "(") depth++;
+        if (ch === ")") depth--;
+        if (ch === "," && depth === 0) {
+          pts.push(cur);
+          cur = "";
+        } else cur += ch;
+      }
+      pts.push(cur);
+      const out = [];
+      for (const p of pts) {
+        const parts = p.trim().match(/calc\([^)]*\)|[^\s]+/g) ?? [];
+        if (parts.length !== 2) return null;
+        const x = len(parts[0], w);
+        const y = len(parts[1], h);
+        if (x == null || y == null) return null;
+        // Arabic mirrors the element, not its polygon: a polygon is in
+        // physical pixels either way.
+        out.push([ox + x, oy + y]);
+      }
+      return out;
+    };
+    const inPolygon = (pt, poly) => {
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, yi] = poly[i];
+        const [xj, yj] = poly[j];
+        if (yi > pt[1] !== yj > pt[1] && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi)
+          inside = !inside;
+      }
+      return inside;
+    };
+    const opaque = el => {
+      const bg = getComputedStyle(el).backgroundColor;
+      const m = /rgba?\(([^)]+)\)/.exec(bg);
+      if (!m) return false;
+      const a = m[1].split(",").map(Number)[3];
+      return a == null || a > 0.5;
+    };
+    const runs = [];
+    const walker = document.createTreeWalker(slide, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const el = n.parentElement;
+      if (!n.textContent.trim() || !el || !shown(el)) continue;
+      // The phones draw an app's own screen: its rows are clipped by design.
+      // The fan's strips are turned by meaning, their names on each strip's
+      // free edge, so their boxes cross by design.
+      if (el.closest(".dkb-ads, .dkb-fly, .dkb-fan")) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      let block = slide;
+      for (let p = el; p && p !== slide; p = p.parentElement) {
+        const d = getComputedStyle(p).display;
+        if (d !== "inline" && d !== "contents") {
+          block = p;
+          break;
+        }
+      }
+      for (const r of range.getClientRects()) {
+        if (r.width < 2) continue;
+        const inset = r.height / 6;
+        runs.push({
+          el,
+          block,
+          what: n.textContent.trim().slice(0, 40),
+          l: r.left,
+          r: r.right,
+          t: r.top + inset,
+          b: r.bottom - inset,
+        });
+      }
+    }
+    const out = [];
+    const pad = 2 * k;
+    for (const run of runs) {
+      const at = `at ${X(run.l)},${Y(run.t)}`;
+      // Cut by a box that clips it.
+      for (let p = run.el.parentElement; p && p !== canvas; p = p.parentElement) {
+        const s = getComputedStyle(p);
+        const poly = polygonOf(p);
+        if (poly) {
+          const pts = [
+            [run.l + pad, run.t + pad],
+            [run.r - pad, run.t + pad],
+            [run.l + pad, run.b - pad],
+            [run.r - pad, run.b - pad],
+          ];
+          if (pts.some(pt => !inPolygon(pt, poly))) {
+            out.push(`"${run.what}" is cut by ${name(p)}'s clip-path ${at}`);
+            break;
+          }
+        }
+        if (s.overflowX !== "visible" || s.overflowY !== "visible") {
+          if (p === slide || p.classList.contains("dkb-wall")) continue;
+          if (p.matches("textarea, input")) continue;
+          const b = p.getBoundingClientRect();
+          if (run.l < b.left - pad || run.r > b.right + pad || run.t < b.top - pad || run.b > b.bottom + pad) {
+            out.push(`"${run.what}" is cut by ${name(p)} ${at}`);
+            break;
+          }
+        }
+      }
+      // Off the paper it is printed on.
+      for (let p = run.el; p && p !== slide; p = p.parentElement) {
+        if (p.classList.contains("dkb-wall")) break;
+        if (!opaque(p) && !polygonOf(p)) continue;
+        const b = p.getBoundingClientRect();
+        if (run.l < b.left - pad || run.r > b.right + pad || run.t < b.top - pad || run.b > b.bottom + pad)
+          out.push(`"${run.what}" runs off its paper (${name(p)}) ${at}`);
+        break;
+      }
+      // Covered by something painted over it.
+      const mid = (run.t + run.b) / 2;
+      for (const x of [run.l + 4 * k, (run.l + run.r) / 2, run.r - 4 * k]) {
+        const top = document.elementFromPoint(x, mid);
+        if (!top || top === run.el || run.el.contains(top) || top.contains(run.el)) continue;
+        if (!slide.contains(top) && !canvas.contains(top)) continue;
+        out.push(`"${run.what}" is covered by ${name(top)} ${at}`);
+        break;
+      }
+    }
+    // Two runs that overlap.
+    for (let i = 0; i < runs.length; i++)
+      for (let j = i + 1; j < runs.length; j++) {
+        const a = runs[i];
+        const b = runs[j];
+        if (a.block === b.block || a.block.contains(b.block) || b.block.contains(a.block)) continue;
+        const w = Math.min(a.r, b.r) - Math.max(a.l, b.l);
+        const h = Math.min(a.b, b.b) - Math.max(a.t, b.t);
+        if (w > pad && h > pad)
+          out.push(`"${a.what}" overlaps "${b.what}" at ${X(Math.max(a.l, b.l))},${Y(Math.max(a.t, b.t))}`);
+      }
+    // A box that hides its overflow and holds more than it shows.
+    for (const el of slide.querySelectorAll(
+      ".dkb-card, .dkb-sheet, .dkb-tag, .dkb-sticky, .dkb-feature, .dkb-board, .dkb-print",
+    )) {
+      if (!shown(el)) continue;
+      const s = getComputedStyle(el);
+      if (s.overflowY === "visible") continue;
+      if (el.scrollHeight > el.clientHeight + 2)
+        out.push(`${name(el)} holds ${el.scrollHeight - el.clientHeight}px more than it shows`);
+    }
+    return [...new Set(out)];
+  });
+
 async function deckShots(browser, fixture, state, lang) {
   const dir = join(out, `${fixture}-${state}-${lang}`);
   rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
+  if (save) mkdirSync(dir, { recursive: true });
   const page = await browser.newPage({ viewport: { width: W, height: H } });
   const errors = [];
   const hits = [];
@@ -178,25 +402,30 @@ async function deckShots(browser, fixture, state, lang) {
   page.on("console", m => {
     if (m.type() === "error") errors.push(m.text());
   });
-  await page.goto(
-    `${base}/client-success/present-harness.html?fixture=${fixture}&deck=blueprint&bp=${state}&lang=${lang}&still=1`,
-  );
-  await page.waitForSelector(".dk-slide");
-  await page.evaluate(() => document.fonts.ready);
-  await sleep(2800);
+  const url = `${base}/client-success/present-harness.html?fixture=${fixture}&deck=blueprint&bp=${state}&lang=${lang}&still=1`;
   let n = 1;
-  let last = "";
-  for (let guard = 0; guard < 40; guard++) {
-    const at = await where(page);
-    if (at === last) break;
-    const [id, stop] = at.split(":");
-    const file = `${String(n).padStart(2, "0")}-${id}-${stop}.jpg`;
-    await page.screenshot({ path: join(dir, file), type: "jpeg", quality: 75 });
-    for (const h of await measure(page)) hits.push(`${file}: ${h}`);
-    n++;
-    last = at;
-    await page.keyboard.press("ArrowRight");
-    await sleep(500);
+  // --slides: only those slides (each opened by its hash), every stop.
+  for (const only of slides ?? [null]) {
+    await page.goto(only ? `${url}#${only}` : url);
+    if (only) await page.reload();
+    await page.waitForSelector(".dk-slide");
+    await page.evaluate(() => document.fonts.ready);
+    await sleep(only ? 1600 : 2800);
+    let last = "";
+    for (let guard = 0; guard < 40; guard++) {
+      const at = await where(page);
+      if (at === last) break;
+      const [id, stop] = at.split(":");
+      if (only && id !== only) break;
+      const file = `${String(n).padStart(2, "0")}-${id}-${stop}.jpg`;
+      if (save) await page.screenshot({ path: join(dir, file), type: "jpeg", quality: 75 });
+      for (const h of await measure(page)) hits.push(`${file}: ${h}`);
+      for (const h of await textChecks(page)) hits.push(`${file}: ${h}`);
+      n++;
+      last = at;
+      await page.keyboard.press("ArrowRight");
+      await sleep(500);
+    }
   }
   await page.close();
   return { dir, count: n - 1, errors, hits };

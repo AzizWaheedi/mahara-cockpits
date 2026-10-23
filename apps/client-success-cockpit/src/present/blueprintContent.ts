@@ -78,6 +78,8 @@ export const BP = {
   },
 
   legend: { en: "Amber cards are yours to do", ar: "البطاقات الصفرا عليكم" },
+  /** The wall map's name, once, on slide 2 (score round 2: an unnamed glyph). */
+  mapName: { en: "Your wall", ar: "جداركم" },
 
   // ------------------------------------------------------------ 1 cover
   cover: {
@@ -90,10 +92,15 @@ export const BP = {
       ar: "اليوم نجمع هويتكم على جدار واحد: كيف تتكلمون، كيف تظهرون، والعرض اللي تقدمه إعلاناتكم.",
     },
     byline: { en: "With our creative director", ar: "مع المدير الإبداعي" },
-    /** The byline when the record names the presenter (their first name only). */
+    /**
+     * The byline when the record names the presenter (their first name
+     * only). The Arabic puts the name with the team, never beside a
+     * gendered role, since the record does not say whether the presenter
+     * is a man or a woman (score round 2: "مع Sara، المدير الإبداعي").
+     */
     bylineNamed: {
       en: "With {name}, our creative director",
-      ar: "مع {name}، المدير الإبداعي",
+      ar: "مع {name}، من فريقنا الإبداعي",
     },
     sticky: {
       en: "Have your price list near you. We'll ask for real numbers.",
@@ -199,8 +206,10 @@ export const BP = {
         ar: "بنقول لكم بصراحة إذا شفنا شي ما يبيع.",
       },
       { en: "Be specific on money.", ar: "خلونا دقيقين بالأرقام." },
+      // No quotation marks at 40 px (score round 2); the copy rules keep
+      // quotes plain, so the line says it without any.
       {
-        en: '"I don\'t know" is a fine answer.',
+        en: "It's fine to say you don't know.",
         ar: "عادي تقولون ما نعرف.",
       },
     ],
@@ -255,6 +264,15 @@ export const BP = {
       ar: "إعلانات جاهزة لخدمتكم، من قوالبنا.",
     },
     open: { en: "Open the pack", ar: "افتحوا الملف" },
+    /**
+     * The example ads' caption when the record has no selling line of
+     * theirs: ours, so the phones' "Example ad" tag covers it. {service} as
+     * in the pack's first line.
+     */
+    caption: {
+      en: "{service}, from the first call to the handover.",
+      ar: "{service}، من أول مكالمة لين التسليم.",
+    },
     packFor: {
       en: "The starter pack for {service}",
       ar: "ملف إعلانات البداية، {service}",
@@ -422,6 +440,11 @@ export const BP = {
     flags: {
       minimum: { en: "Smallest", ar: "الأصغر" },
       most: { en: "Most projects", ar: "أغلب المشاريع" },
+      /** A band too narrow for its two numbers: they go on its flag. */
+      mostRange: {
+        en: "Most projects: {lo} to {hi}",
+        ar: "أغلب المشاريع: {lo} إلى {hi}",
+      },
       anchor: { en: "Your ads", ar: "إعلاناتكم" },
     },
   },
@@ -485,6 +508,14 @@ export const BP = {
     },
     /** A tag line not on the record yet: it is written in the offer sheet. */
     inSheet: { en: "In your offer sheet", ar: "بملف العرض" },
+    /**
+     * The tag's foot names the offer sheet once for every open ring (score
+     * round 2: "In your offer sheet" five times over).
+     */
+    restInSheet: {
+      en: "The rest is in your offer sheet.",
+      ar: "الباقي بملف العرض.",
+    },
     nowIn: { en: "Now in your offer sheet", ar: "الحين بملف العرض" },
     sheet: { en: "Your offer sheet", ar: "ملف العرض" },
     /** Stop 2's paper card, while the sheet is shared from its own window. */
@@ -528,6 +559,7 @@ export const BP = {
     },
     approvals: {
       every: {
+        // One line each (score round 2: the middle title wrapped).
         title: { en: "Every video", ar: "كل فيديو" },
         line: {
           en: "You see each one before it runs.",
@@ -535,17 +567,14 @@ export const BP = {
         },
       },
       first_batch: {
-        title: {
-          en: "The first batch, then we run",
-          ar: "أول مجموعة وبعدها نكمل",
-        },
+        title: { en: "The first batch", ar: "أول مجموعة" },
         line: {
           en: "You approve the first round. The next ones go live as we make them.",
           ar: "توافقون على أول مجموعة، واللي بعدها تنزل أول ما تجهز.",
         },
       },
       run_then_show: {
-        title: { en: "We run, then show you", ar: "نشغلها ونوريكم بعدين" },
+        title: { en: "Run, then show you", ar: "نشغلها ونوريكم" },
         line: {
           en: "They go live, and you see them in the group.",
           ar: "تنزل، وتشوفونها بالقروب.",
@@ -575,6 +604,12 @@ export const BP = {
       en: "Your logo files, colours and type are kept there.",
       ar: "ملفات الشعار والألوان والخطوط محفوظة فيه.",
     },
+    /** With no colours on record: what the doc is opened for, one ruled row each. */
+    dnaLook: [
+      { en: "Your logo files", ar: "ملفات الشعار" },
+      { en: "Your colours", ar: "ألوانكم" },
+      { en: "Your type", ar: "خطوطكم" },
+    ],
     dnaTitle: { en: "{name} · Brand DNA", ar: "ملف الهوية، {name}" },
     always: { en: "In your ads", ar: "لازم يكون بإعلاناتكم" },
     never: { en: "Never in your ads", ar: "ممنوع بإعلاناتكم" },
@@ -630,6 +665,11 @@ export const BP = {
       first: { en: "The first step, free", ar: "الخطوة الأولى، مجاناً" },
     },
     name: { en: "Your offer's name", ar: "اسم عرضكم" },
+    /** The headline's placeholder, small, until a word is typed (score round 2). */
+    namePlaceholder: {
+      en: "The offer's name, typed together",
+      ar: "اسم العرض، نكتبه مع بعض",
+    },
     /** Two short ruled lines under the frames: the money, then the ads. */
     money: {
       en: "Projects from {minimum}. Your ads point near {anchor}.",

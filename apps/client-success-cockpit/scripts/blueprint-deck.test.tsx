@@ -950,3 +950,176 @@ describe("score round 1 (2026-10-23)", () => {
     expect(boxes(0)).toEqual(boxes(1));
   });
 });
+
+describe("score round 2 (2026-10-23)", () => {
+  const host = win.document.createElement("div");
+
+  test("the part 1 sheet has no tabs, keeps its helper's room after the press, and ticks part 1 as the stamp lands", () => {
+    const loaded = blueprintLoaded("full", "part1", { rehearse: false });
+    const d = data(loaded, "en");
+    const answers = loaded.blueprint?.row?.answers ?? {};
+    host.innerHTML = render(d, model(loaded, d, answers), "first-ads", 1);
+    expect(host.querySelectorAll(".dkb-tab").length).toBe(0);
+    expect(host.querySelectorAll(".dkb-sheet-back").length).toBe(2);
+    expect(host.querySelector(".dkb-helper")?.hasAttribute("data-gone")).toBe(
+      false,
+    );
+    // No fixed height on the sheet: its words set it (820 at least, in CSS).
+    expect(host.querySelector(".dkb-sheet")?.getAttribute("style")).not.toMatch(
+      /--h/,
+    );
+    host.innerHTML = render(
+      d,
+      model(loaded, d, answers, {
+        stamp: { at: "2026-10-22T07:12:00Z", fresh: true },
+      }),
+      "first-ads",
+      1,
+    );
+    const helper = host.querySelector(".dkb-helper");
+    expect(helper).not.toBeNull();
+    expect(helper?.hasAttribute("data-gone")).toBe(true);
+    const first = host.querySelector(".dkb-parts li");
+    expect(first?.hasAttribute("data-done")).toBe(true);
+    expect(first?.hasAttribute("data-fresh")).toBe(true);
+    expect(first?.querySelector(".dkb-part-n")?.getAttribute("data-was")).toBe(
+      "1",
+    );
+  });
+
+  test("slide 12's folder button sits under the sticky, never on it", () => {
+    const { loaded, d, answers } = midCall("en");
+    host.innerHTML = render(d, model(loaded, d, answers), "content", 0);
+    const col = host.querySelector(".dkb-due-col");
+    expect(col?.querySelector(".dkb-sticky")).not.toBeNull();
+    expect(col?.querySelector("button.dkb-button")).not.toBeNull();
+    expect(
+      col
+        ?.querySelector(".dkb-sticky")
+        ?.compareDocumentPosition(
+          col.querySelector("button.dkb-button") as Node,
+        ),
+    ).toBe(4);
+    // The camera row is on the wall from stop 1, waiting and not tappable.
+    const picks = [...host.querySelectorAll(".dkb-camera")];
+    expect(picks.length).toBe(4);
+    for (const p of picks) {
+      expect(p.hasAttribute("data-wait")).toBe(true);
+      expect(p.hasAttribute("disabled")).toBe(true);
+    }
+    host.innerHTML = render(d, model(loaded, d, answers), "content", 1);
+    for (const p of host.querySelectorAll(".dkb-camera"))
+      expect(p.hasAttribute("data-wait")).toBe(false);
+  });
+
+  test("the offer tag names the offer sheet once, and its height is its words'", () => {
+    const loaded = blueprintLoaded("full", "part1", { rehearse: false });
+    const d = data(loaded, "en");
+    host.innerHTML = render(
+      d,
+      model(loaded, d, loaded.blueprint?.row?.answers ?? {}),
+      "offer",
+      0,
+    );
+    const tag = host.querySelector(".dkb-tag");
+    expect(tag?.textContent?.match(/offer sheet/g)?.length).toBe(1);
+    expect(tag?.getAttribute("style")).not.toMatch(/--h/);
+    // Stop 2's card has no label over the doc's name, and no fixed height.
+    host.innerHTML = render(
+      d,
+      model(loaded, d, loaded.blueprint?.row?.answers ?? {}),
+      "offer",
+      1,
+    );
+    const card = host.querySelector(".dkb-sheet-card");
+    expect(card?.querySelector(".dkb-card-label")).toBeNull();
+    expect(card?.getAttribute("style")).not.toMatch(/--h/);
+  });
+
+  test("the empty price tape carries the cards' example amounts, tagged Example", () => {
+    const loaded = blueprintLoaded("full", "open", { rehearse: false });
+    const d = data(loaded, "en");
+    host.innerHTML = render(d, model(loaded, d, {}), "pricing", 0);
+    const wrap = host.querySelector(".dkb-tape-wrap");
+    expect(wrap?.hasAttribute("data-ghost")).toBe(true);
+    expect(wrap?.querySelector(".dkb-tape-eg")?.textContent).toBe("Example");
+    expect(wrap?.querySelectorAll(".dkb-tape-mark").length).toBe(2);
+    // Typed, the ghost is gone.
+    const { answers } = midCall("en");
+    host.innerHTML = render(d, model(loaded, d, answers), "pricing", 0);
+    expect(
+      host.querySelector(".dkb-tape-wrap")?.hasAttribute("data-ghost"),
+    ).toBe(false);
+    expect(host.querySelector(".dkb-tape-eg")).toBeNull();
+  });
+
+  test("slide 4's park lifts the lit strip; slides 6, 8, 9 and 10 show their later cards from the first stop, waiting", () => {
+    const { loaded, d, answers } = midCall("en");
+    const bp = model(loaded, d, answers);
+    host.innerHTML = render(d, bp, "one-service", 0);
+    expect(
+      host.querySelector(".dkb-fan-wrap")?.hasAttribute("data-parked"),
+    ).toBe(false);
+    host.innerHTML = render(d, bp, "one-service", 1);
+    expect(
+      host.querySelector(".dkb-fan-wrap")?.hasAttribute("data-parked"),
+    ).toBe(true);
+    host.innerHTML = render(d, bp, "best-at", 0);
+    expect(host.querySelectorAll(".dkb-stack .dkb-side").length).toBe(3);
+    expect(host.querySelectorAll(".dkb-stack .dkb-wait").length).toBe(2);
+    host.innerHTML = render(d, bp, "best-at", 2);
+    expect(host.querySelectorAll(".dkb-stack .dkb-wait").length).toBe(0);
+    host.innerHTML = render(d, bp, "competitors", 0);
+    expect(host.querySelector(".dkb-why")).not.toBeNull();
+    expect(host.querySelector(".dkb-why-in")?.hasAttribute("data-lit")).toBe(
+      false,
+    );
+    host.innerHTML = render(d, bp, "offer", 0);
+    expect(host.querySelector(".dkb-sheet-card.dkb-wait")).not.toBeNull();
+    host.innerHTML = render(d, bp, "how-ads-work", 0);
+    expect(host.querySelector(".dkb-learn.dkb-wait")).not.toBeNull();
+    expect(host.querySelectorAll(".dkb-approve[data-wait]").length).toBe(3);
+    host.innerHTML = render(d, bp, "how-ads-work", 2);
+    expect(host.querySelector(".dkb-wait")).toBeNull();
+    expect(host.querySelectorAll(".dkb-approve[data-wait]").length).toBe(0);
+  });
+
+  test("an empty entry is a ruled row, never a box; a full list keeps it quiet", () => {
+    const { loaded, d, answers } = midCall("en");
+    host.innerHTML = render(
+      d,
+      model(loaded, d, {
+        ...answers,
+        rules: { always: ["A", "B", "C"], never: ["D"] },
+      }),
+      "brand",
+      0,
+    );
+    const adds = [...host.querySelectorAll(".dkb-rule-card .dkb-add")];
+    expect(adds.length).toBe(3);
+    expect(adds[0].hasAttribute("data-quiet")).toBe(true);
+    expect(adds[1].hasAttribute("data-quiet")).toBe(false);
+    // Slide 2: at most two empty rules under the add row.
+    host.innerHTML = render(d, model(loaded, d, answers), "so-far", 0);
+    expect(host.querySelectorAll(".dkb-never .dkb-lines-rest").length).toBe(1);
+    // The wall map is named once, on slide 2 only.
+    expect(host.querySelector(".dkb-map-name")?.textContent).toBe("Your wall");
+    host.innerHTML = render(d, model(loaded, d, answers), "today", 0);
+    expect(host.querySelector(".dkb-map-name")).toBeNull();
+  });
+
+  test("the example ads carry an example caption when the record has none, never the app's empty skeleton", () => {
+    const { loaded, d, answers } = midCall("en");
+    const bare = { ...d, exampleWords: { ...d.exampleWords, primary: null } };
+    host.innerHTML = render(
+      bare as DeckData,
+      model(loaded, d, { ...answers, service: "interior" }),
+      "first-ads",
+      0,
+    );
+    expect(host.querySelector(".dkc-next-post")).toBeNull();
+    expect(host.textContent).toContain(
+      "Interior design, from the first call to the handover.",
+    );
+  });
+});

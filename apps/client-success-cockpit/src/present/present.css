@@ -9033,6 +9033,13 @@ button.dkc-status:hover {
   --dkb-t-stamp: 240ms;
   --dkb-t-tape-at: 300ms;
   --dkb-t-hint-at: 200ms;
+  /* Slide 14: a card is pegged as the string reaches it; its drop is
+     shorter than a pin's, so the last ends by 1.5 s. */
+  --dkb-t-peg: 360ms;
+  /* The example ads hold still: no slow drift after the entrance, which
+     could shimmer on a shared screen (score round 2). */
+  --dk-t-drift: 0ms;
+  --dk-drift-scale: 1;
 }
 .dk-root[data-deck="blueprint"] .dk-canvas[dir="rtl"] {
   --dkb-flip: -1;
@@ -9347,6 +9354,9 @@ button.dkc-status:hover {
 .dk-canvas[dir="rtl"] .dkb-sticky {
   line-height: 1.55;
 }
+.dkb-flow.dkb-sticky {
+  width: auto;
+}
 
 /* ---- a print, with its provenance label */
 .dkb-print {
@@ -9394,11 +9404,13 @@ button.dkc-status:hover {
   box-shadow: var(--dkb-shadow-paper);
   border-radius: 2px;
 }
+/* A thin keyline, a mat's window (score round 2: a 2 px dash read as a
+   wireframe placeholder). */
 .dkb-mount-well {
   position: absolute;
   inset: 92px 20px 20px;
-  border: 2px dashed var(--dkb-rule-strong);
-  border-radius: 4px;
+  border: 1px solid var(--dkb-rule);
+  border-radius: 2px;
 }
 .dkb-frame .dkb-hint {
   position: absolute;
@@ -9583,6 +9595,7 @@ button.dkc-status:hover {
 .dkb-ruled:focus-visible {
   outline-color: var(--dkb-rule);
 }
+
 .dkb-ruled:disabled {
   cursor: not-allowed;
 }
@@ -9618,6 +9631,20 @@ button.dkc-status:hover {
 .dk-canvas[dir="rtl"] .dkb-ruled[data-size="feature"][data-fit="52"] {
   --lh: 72px;
   font-size: 48px;
+}
+/* The read-back's headline, before a word is typed: its placeholder small
+   and quiet, never a giant grey name (score round 2), whatever size the
+   headline would take. */
+.dk-canvas .dkb-ruled[data-size="feature"]:placeholder-shown {
+  --lh: 56px;
+  font-size: 40px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+.dk-canvas[dir="rtl"] .dkb-ruled[data-size="feature"]:placeholder-shown {
+  --lh: 72px;
+  font-size: 40px;
+  letter-spacing: 0;
 }
 
 /* ---- lines lists (red lines, the rules) and the add box */
@@ -9707,33 +9734,55 @@ button.dkc-status:hover {
   stroke-width: 2;
   stroke-linecap: round;
 }
+/* "Add a line" (and slide 8's "Add a name"): one more ruled row on the
+   paper, no box; its placeholder in print-3, a ring only while focused
+   (score round 2: a boxed, rounded web input read as an app form). */
 .dkb-add,
 .dkb-chip-add input {
+  display: block;
   box-sizing: border-box;
   width: 100%;
-  margin-top: 12px;
-  height: 52px;
-  padding: 0 16px;
-  border: 1px solid var(--dkb-rule-strong);
-  border-radius: 8px;
-  background: var(--dkb-field);
+  margin: 0;
+  height: 56px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid var(--dkb-ruled);
+  border-radius: 0;
+  background: transparent;
   color: var(--dkb-print);
   caret-color: var(--dkb-caret);
-  font: 400 26px/1 var(--dk-font);
+  font: 400 30px/54px var(--dk-font);
   outline: 2px solid transparent;
-  outline-offset: 1px;
+  outline-offset: 6px;
 }
 .dkb-add::placeholder,
 .dkb-chip-add input::placeholder {
   color: var(--dkb-print-3);
-}
-.dkb-add:hover,
-.dkb-chip-add input:hover {
-  border-color: var(--dkb-print-3);
+  opacity: 1;
 }
 .dkb-add:focus-visible,
 .dkb-chip-add input:focus-visible {
-  outline-color: var(--dkb-caret);
+  outline-color: var(--dkb-rule-strong);
+}
+/* Out of sight once the list is full (its room kept, so nothing moves),
+   until the presenter's pointer is over the list or it has focus. */
+.dkb-add[data-quiet] {
+  opacity: 0;
+  transition: opacity calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
+}
+.dkb-lines:hover .dkb-add[data-quiet],
+.dkb-add[data-quiet]:focus {
+  opacity: 1;
+}
+/* At most two empty rules under the add row (slide 2). */
+.dkb-lines-rest {
+  display: block;
+  flex: 0 1 112px;
+  min-height: 0;
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 54px, var(--dkb-ruled) 54px, var(--dkb-ruled) 56px);
+}
+.dk-canvas[dir="rtl"] :is(.dkb-add, .dkb-chip-add input) {
+  font-family: var(--dk-font-ar);
 }
 
 /* ---- 2 · what you've told us */
@@ -9749,16 +9798,13 @@ button.dkc-status:hover {
   flex-direction: column;
 }
 .dkb-never .dkb-lines ul {
-  flex: 1;
+  flex: none;
   gap: 0;
-  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 54px, var(--dkb-ruled) 54px, var(--dkb-ruled) 56px);
 }
 .dkb-never .dkb-lines li {
   font-size: 30px;
-  line-height: 56px;
-}
-.dkb-never .dkb-add {
-  margin-top: 16px;
+  line-height: 54px;
+  border-bottom: 2px solid var(--dkb-ruled);
 }
 /* The service, as one chip (the fan is slide 4's). */
 .dkb-svc {
@@ -9894,9 +9940,37 @@ button.dkb-strip:active {
     transform: translate3d(calc(var(--dkb-park-x) * var(--dkb-flip)), -60px, 0) rotate(calc(var(--a) * var(--dkb-flip) * 0.2));
   }
 }
+/* Each parked line opens its own room as it lands, so the kraft tag grows
+   with its lines rather than jumping to its full height first. */
 .dkb-parked li[data-main] {
-  animation: dkb-arrive-line calc(var(--dkb-t-tape) * var(--dk-m)) var(--dk-ease) both;
+  overflow: hidden;
+  animation: dkb-grow-line calc(var(--dkb-t-park) * var(--dk-m)) var(--dk-ease) both;
   animation-delay: calc((var(--dkb-t-park-at) + var(--k, 0) * var(--dkb-t-fan-step)) * var(--dk-m));
+}
+@keyframes dkb-grow-line {
+  from {
+    max-height: 0;
+    margin-top: 0;
+    padding-bottom: 0;
+    border-bottom-width: 0;
+    opacity: 0;
+  }
+  to {
+    max-height: 120px;
+    opacity: 1;
+  }
+}
+/* Stop 2: once the others leave, the lit strip rises to the fan's middle
+   (y 470) at 1.1, and its line follows it. */
+.dkb-fan-wrap,
+.dkb-fan-line {
+  transition: transform calc(var(--dkb-t-park) * var(--dk-m)) var(--dk-ease) calc(var(--dkb-t-park-at) * var(--dk-m));
+}
+.dkb-fan-wrap[data-parked] {
+  transform: translate3d(0, -290px, 0) scale(1.1);
+}
+.dkb-fan-line[data-parked] {
+  transform: translate3d(0, -305px, 0);
 }
 @keyframes dkb-arrive-line {
   from {
@@ -9933,8 +10007,17 @@ button.dkb-strip:active {
   justify-content: flex-start;
   gap: 20px;
 }
+/* From the run sheet's first row to its foot: each rule a ruled third. */
 .dkb-rules3 ol {
-  gap: 34px;
+  flex: 1;
+  gap: 0;
+  margin: 0;
+}
+.dkb-rules3 ol > li {
+  flex: 1;
+  align-content: start;
+  padding-top: 26px;
+  border-top: 2px solid var(--dkb-rule);
 }
 .dkb-rules3 li {
   display: grid;
@@ -10072,7 +10155,9 @@ button.dkb-strip:active {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+}
+.dkb-parked li + li {
+  margin-top: 14px;
 }
 .dkb-parked li {
   font: 500 32px/1.25 var(--dk-font);
@@ -10223,6 +10308,30 @@ button.dkb-strip:active {
   background: none;
   box-shadow: none;
 }
+/* A fresh press: the number holds until the stamp lands (its 240 ms), and
+   the tick fades in then, in step with it. */
+.dkb-part-n {
+  position: relative;
+}
+.dkb-parts li[data-fresh] .dkb-tick {
+  animation-delay: calc(var(--dkb-t-stamp) * var(--dk-m));
+}
+.dkb-parts li[data-fresh] .dkb-part-n[data-was]::before {
+  content: attr(data-was);
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  animation: dkb-hold-out calc(var(--dkb-t-stamp) * var(--dk-m)) step-end both;
+}
+@keyframes dkb-hold-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
 .dkb-parts b {
   display: block;
   font: 600 32px/1.2 var(--dk-font);
@@ -10250,34 +10359,11 @@ button.dkb-strip:active {
   background: var(--dkb-paper-back);
   transform: rotate(calc(0.3deg * var(--dkb-flip))) translate(4px, 4px);
 }
-.dkb-tab {
-  position: absolute;
-  top: -52px;
-  height: 52px;
-  padding: 0 24px;
-  display: flex;
-  align-items: center;
-  border-radius: 8px 8px 0 0;
-  font: 600 24px/1 var(--dk-font);
-  white-space: nowrap;
-  background: var(--dkb-paper-back);
-  color: var(--dkb-print-2);
-}
-.dkb-tab[data-n="0"] {
-  inset-inline-start: 100px;
-  background: var(--dkb-paper);
-  color: var(--dkb-print);
-  z-index: 3;
-}
-.dkb-tab[data-n="1"] {
-  inset-inline-start: 380px;
-  background: var(--dkb-paper-shade);
-}
-.dkb-tab[data-n="2"] {
-  inset-inline-start: 690px;
-}
+/* Its height is its words' (at least 820): the fold row never cut, in
+   either language (score round 2: 16 px cut in English, 31 in Arabic). */
 .dkb-sheet {
   box-sizing: border-box;
+  min-height: 820px;
   background: var(--dkb-paper);
   color: var(--dkb-print);
   box-shadow: var(--dkb-shadow-paper);
@@ -10393,6 +10479,10 @@ button.dkb-strip:active {
   font: 400 22px/1.3 var(--dk-mono);
   color: var(--dkb-print-2);
 }
+/* After the press its room is kept, so the sheet does not move. */
+.dkb-helper[data-gone] {
+  visibility: hidden;
+}
 .dk-canvas[dir="rtl"] .dkb-helper {
   font-family: var(--dk-font-ar);
 }
@@ -10431,10 +10521,11 @@ button.dkb-strip:active {
 }
 
 /* the stamp: teal ink, -3 degrees, fired only by the press */
+/* 20 px under the field's source mark, never on it (score round 2). */
 .dkb-stamp {
   position: absolute;
   inset-inline-start: -18px;
-  top: -6px;
+  top: 14px;
   width: 372px;
   box-sizing: border-box;
   padding: 18px 22px;
@@ -10527,8 +10618,11 @@ button.dkb-strip:active {
   padding: 24px 32px 20px;
   gap: 8px;
 }
+/* Its foot meets the right column's last card (y 948) from the first
+   stop: 658 px from the frame's top at y 290. */
 .dkb-method {
   padding-top: 44px;
+  min-height: 658px;
 }
 .dkb-side .dkb-card-label {
   font-size: 24px;
@@ -10565,7 +10659,7 @@ button.dkb-strip:active {
 .dkb-tape-band-n {
   position: absolute;
   bottom: 10px;
-  font: 500 22px/1 var(--dk-mono);
+  font: 500 22px/1 var(--dk-font);
   color: var(--dkb-print);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -10618,10 +10712,33 @@ button.dkb-strip:active {
   font: 500 24px/1.2 var(--dk-font);
   color: var(--dkb-vinyl-2);
 }
+/* Amounts in Geist with tabular figures (score round 2: Geist Mono drew
+   "60 , 000" with wide commas). */
 .dkb-flag b {
-  font: 600 32px/1.1 var(--dk-mono);
+  font: 600 32px/1.1 var(--dk-font);
   color: var(--dkb-vinyl);
   font-variant-numeric: tabular-nums;
+}
+/* Until a first amount: the tape dimmed, its marks the cards' examples,
+   dashed, and an Example tag at its end. */
+.dkb-tape-wrap[data-ghost] :is(.dkb-tape-rule, .dkb-flag) {
+  opacity: 0.55;
+}
+.dkb-tape-wrap[data-ghost] .dkb-tape-mark {
+  background: none;
+  box-shadow: none;
+  border-inline-start: 4px dashed var(--dkb-print);
+  width: 0;
+}
+.dkb-tape-wrap[data-ghost] .dkb-tape-mark[data-kind="anchor"] {
+  border-color: var(--dkb-teal-ink);
+}
+.dkb-tape-eg {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 40px;
+  background: var(--dkb-paper);
+  border-color: transparent;
 }
 .dkb-flag[data-side="end"] > span {
   inset-inline-start: 14px;
@@ -10637,6 +10754,10 @@ button.dkb-strip:active {
 .dkb-flag[data-low] {
   top: 206px;
 }
+/* A second lane above, when the smallest project's flag would cross it. */
+.dkb-flag[data-high] {
+  top: -24px;
+}
 .dkb-flag[data-kind="anchor"] b {
   color: var(--dkb-teal);
 }
@@ -10648,11 +10769,13 @@ button.dkb-strip:active {
   font-family: var(--dk-font-ar);
 }
 .dkb-amount-card {
-  justify-content: center;
+  justify-content: flex-start;
   gap: 4px;
-  padding: 0 32px;
+  padding: 32px 32px 0;
 }
-.dkb-amount-card .dkb-card-label {
+.dkb-amount-card .dkb-card-label,
+.dkb-most .dkb-card-label,
+.dkb-terms .dkb-card-label {
   font-size: 24px;
 }
 /* An empty amount's example, smaller and in the deck's face, so the whole
@@ -10675,7 +10798,8 @@ button.dkb-strip:active {
   background: transparent;
   color: var(--dkb-print);
   caret-color: var(--dkb-caret);
-  font: 500 44px/64px var(--dk-mono);
+  font: 500 44px/64px var(--dk-font);
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   outline: 2px solid transparent;
   outline-offset: 6px;
@@ -10689,8 +10813,30 @@ button.dkb-strip:active {
   font-size: 44px;
 }
 .dkb-filter {
-  padding: 24px 40px;
+  padding: 24px 40px 28px;
   gap: 8px;
+}
+/* Slide 7's two rows: the top three share the tallest card's height (194
+   at least), the second row's two share their top. */
+.dkb-price-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+.dkb-price-row {
+  display: grid;
+  column-gap: 60px;
+}
+.dkb-price-row[data-row="1"] {
+  grid-template-columns: 440px minmax(0, 1fr) 440px;
+  align-items: stretch;
+}
+.dkb-price-row[data-row="1"] > * {
+  min-height: 194px;
+}
+.dkb-price-row[data-row="2"] {
+  grid-template-columns: 560px minmax(0, 1fr);
+  align-items: start;
 }
 .dkb-filter-line {
   margin: 0;
@@ -10751,8 +10897,13 @@ button.dkb-strip:active {
   text-align: start;
   cursor: pointer;
 }
+/* No well behind the name: a hover underlines it, nothing more (score
+   round 2: an inset white field showed on the client's screen). */
 .dkb-chip-name:hover {
-  background: var(--dkb-field);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 6px;
+  text-decoration-color: var(--dkb-rule-strong);
 }
 .dkb-chip-name:focus-visible {
   outline: 2px solid var(--dkb-caret);
@@ -10764,8 +10915,10 @@ button.dkb-strip:active {
   opacity: 0;
   transition: opacity calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
 }
+/* The cross shows only on that chip's hover, or when it has the
+   keyboard's focus itself; never at rest. */
 .dkb-chip:hover .dkb-chip-tools,
-.dkb-chip:focus-within .dkb-chip-tools {
+.dkb-chip-tools:has(:focus-visible) {
   opacity: 1;
 }
 .dkb-chip-tools button {
@@ -10800,16 +10953,28 @@ button.dkb-strip:active {
   width: auto;
   height: auto;
   display: inline-flex;
-  padding: 10px;
+  padding: 10px 24px 12px;
   background: var(--dkb-paper);
   border-radius: 3px;
   box-shadow: var(--dkb-shadow-chip);
 }
 .dkb-chip-add input {
-  margin-top: 0;
   width: 340px;
-  height: 56px;
+  height: 52px;
   font-size: 30px;
+  line-height: 50px;
+}
+/* "Why people pick you instead": on the wall from stop 1, its words at
+   half strength until stop 2 lights it. */
+.dkb-why-in {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  filter: opacity(0.45);
+  transition: filter calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
+}
+.dkb-why-in[data-lit] {
+  filter: none;
 }
 /* Until the first name: three ghost chips, ours, each marked Example. */
 .dkb-chip-ghost {
@@ -10890,12 +11055,15 @@ button.dkb-strip:active {
   box-shadow: inset 0 -4px 0 var(--dkb-teal-ink), 4px 5px 0 -2px var(--dkb-shadow-ink);
   z-index: 4;
 }
+/* Its height is its words' (at least 760), so the foot is never cut by
+   the clip-path (score round 2, Arabic). */
 .dkb-tag {
   box-sizing: border-box;
   margin: 0;
+  min-height: 760px;
   background: var(--dkb-kraft);
   color: var(--dkb-print);
-  padding: 96px 40px 28px;
+  padding: 96px 40px 32px;
   display: flex;
   flex-direction: column;
   clip-path: polygon(22% 0, 78% 0, 100% 9%, 100% 100%, 0 100%, 0 9%);
@@ -10932,10 +11100,12 @@ button.dkb-strip:active {
    holds the line), the name, and the line itself or where it is written. */
 .dkb-tag-lines {
   list-style: none;
-  margin: 28px 0 0;
+  margin: 28px 0 28px;
   padding: 0;
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
+  flex: 1 0 auto;
   gap: 20px;
 }
 .dkb-tag-lines li {
@@ -10982,6 +11152,14 @@ button.dkb-strip:active {
 .dkb-tag-lines li[data-set] .dkb-tag-value {
   font: 600 30px/1.25 var(--dk-font);
   opacity: 1;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.dkb-tag-lines li:not([data-set]) .dkb-tag-name {
+  grid-row: span 2;
+  align-self: center;
 }
 .dk-canvas[dir="rtl"] :is(.dkb-tag-name, .dkb-tag-value) {
   font-family: var(--dk-font-ar);
@@ -10993,6 +11171,17 @@ button.dkb-strip:active {
   border-top: 2px solid var(--dkb-rule-strong);
   font: 500 24px/1.2 var(--dk-font);
   color: var(--dkb-print);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dkb-tag-rest {
+  font: 400 22px/1.3 var(--dk-mono);
+  color: var(--dkb-print-2);
+}
+.dk-canvas[dir="rtl"] :is(.dkb-tag-foot, .dkb-tag-rest) {
+  font-family: var(--dk-font-ar);
+  line-height: 1.5;
 }
 
 /* ---- 10 · how paid ads work: two roads to the same client */
@@ -11068,7 +11257,7 @@ button.dkb-strip:active {
   font: 600 40px/1.25 var(--dk-font);
   letter-spacing: -0.015em;
   color: var(--dkb-vinyl);
-  text-align: center;
+  text-align: start;
 }
 .dk-canvas[dir="rtl"] .dkb-same {
   line-height: 1.5;
@@ -11180,6 +11369,26 @@ button.dkb-strip:active {
 .dkb-pick:disabled {
   cursor: default;
 }
+/* Ahead of its stop: the paper on the wall, its words at half strength,
+   not tappable yet (the paper stays paper, never a grey block). A filter,
+   since a pin's arrival holds opacity at 1 when it ends. */
+.dkb-pick[data-wait] > *,
+.dkb-wait > :not(.dkb-tape),
+.dkb-wall-label[data-wait],
+.dkb-camera-row[data-wait] > .dkb-wall-label {
+  filter: opacity(0.45);
+}
+.dkb-pick > *,
+.dkb-side > *,
+.dkb-sheet-card > *,
+.dkb-learn > *,
+.dkb-wall-label,
+.dkb-camera-row > .dkb-wall-label {
+  transition: filter calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
+}
+.dkb-quiet-print[data-gone] {
+  visibility: hidden;
+}
 .dkb-tick {
   position: absolute;
   inset-inline-end: 20px;
@@ -11200,6 +11409,19 @@ button.dkb-strip:active {
   stroke-width: 4;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+/* The approval: three equal cards, 32 px in on every side, the ring and
+   the words from the top (score round 2: a wrapped title, words at
+   different heights). */
+.dkb-pick.dkb-approve {
+  align-items: flex-start;
+  padding: 32px;
+}
+.dkb-approve b {
+  white-space: nowrap;
+}
+.dkb-approve .dkb-radio {
+  margin-top: 2px;
 }
 /* The camera's four choices: equal cards, ring and words centred. */
 .dkb-pick.dkb-camera {
@@ -11297,6 +11519,27 @@ button.dkb-strip:active {
   color: var(--dkb-print);
   text-wrap: balance;
 }
+/* What the doc is opened for: one ruled row each, a ring to tick. */
+.dkb-dna-look {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.dkb-dna-look li {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 64px;
+  border-bottom: 2px solid var(--dkb-ruled);
+  font: 500 30px/1.2 var(--dk-font);
+  color: var(--dkb-print);
+}
+.dkb-dna-look li:first-child {
+  border-top: 2px solid var(--dkb-ruled);
+}
+.dk-canvas[dir="rtl"] .dkb-dna-look li {
+  line-height: 1.5;
+}
 .dkb-dna[data-small] {
   justify-content: center;
   padding: 44px 32px 24px;
@@ -11329,12 +11572,19 @@ button.dkb-strip:active {
 .dkb-board[data-small] .dkb-swatches .dkb-mono {
   display: none;
 }
+/* The label column holds its source mark under the label (score round 2:
+   at 260 px the mark ran under the list's first line). */
 .dkb-rule-card {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 360px minmax(0, 1fr);
   column-gap: 32px;
   align-items: start;
   padding: 22px 32px;
+}
+.dkb-rule-card .dkb-card-label {
+  flex-direction: column;
+  align-items: flex-start;
+  row-gap: 6px;
 }
 .dkb-rule-card .dkb-lines ul {
   flex-direction: column;
@@ -11345,10 +11595,10 @@ button.dkb-strip:active {
   line-height: 1.25;
 }
 .dkb-rule-card .dkb-add {
-  width: 360px;
   height: 44px;
-  margin-top: 8px;
+  margin-top: 4px;
   font-size: 24px;
+  line-height: 42px;
 }
 
 /* ---- 12 · what we need: four polaroids, each an example still of their
@@ -11411,6 +11661,30 @@ button.dkb-strip:active {
     linear-gradient(var(--vf) 0 0) bottom right / var(--vt) var(--vl);
   background-repeat: no-repeat;
 }
+/* Talking to camera: a figure, in paper ink, over the room dimmed behind. */
+.dkb-polaroid[data-shot="0"] .dkb-polaroid-well img {
+  filter: brightness(0.62) saturate(0.8);
+}
+.dkb-sitter {
+  position: absolute;
+  inset-inline-start: 50%;
+  bottom: 0;
+  width: 62%;
+  height: auto;
+  transform: translateX(calc(-50% * var(--dkb-flip)));
+  fill: var(--dkb-paper);
+  opacity: 0.92;
+}
+/* The viewfinder's record dot, in teal (ours). */
+.dkb-viewfinder b {
+  position: absolute;
+  inset-inline-end: 10px;
+  top: 10px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--dkb-teal);
+}
 .dkb-polaroid-tag {
   position: absolute;
   inset-inline-start: 10px;
@@ -11435,6 +11709,16 @@ button.dkb-strip:active {
 .dkb-due {
   font: 700 36px/1.1 var(--dk-font);
 }
+/* The sticky, as tall as its words, and the folder button 24 px under it. */
+.dkb-due-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 24px;
+}
+.dkb-due-col .dkb-sticky {
+  align-self: stretch;
+}
 .dk-canvas[dir="rtl"] .dkb-due {
   line-height: 1.4;
 }
@@ -11442,6 +11726,8 @@ button.dkb-strip:active {
 /* ---- 13 · the read-back: the wall, full */
 /* The offer as a cover: the name at the top as its headline, the who /
    what / first step table at its foot. */
+/* The table follows the headline at 48 px (score round 2: a blank band
+   between them read as a missing line). */
 .dkb-feature {
   box-sizing: border-box;
   background: var(--dkb-paper);
@@ -11450,8 +11736,8 @@ button.dkb-strip:active {
   padding: 44px 40px 32px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 18px;
+  justify-content: flex-start;
+  gap: 48px;
   overflow: hidden;
 }
 .dkb-table {
@@ -11469,6 +11755,12 @@ button.dkb-strip:active {
 }
 .dkb-table > div:last-child {
   border-bottom: 2px solid var(--dkb-rule);
+}
+/* Under the headline its own rule is the table's top: no second rule
+   48 px under the first. */
+.dkb-feature .dkb-table > div:first-child {
+  border-top: 0;
+  padding-top: 0;
 }
 .dkb-table dt {
   font: 500 24px/1.3 var(--dk-font);
@@ -11547,6 +11839,8 @@ button.dkb-strip:active {
   padding: 32px 26px 22px;
   overflow: visible;
   transition: opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
+  --dkb-t-pin: var(--dkb-t-peg);
+  animation-delay: calc((var(--dkb-t-string-at) + var(--dkb-t-string) * var(--sx, 0)) * var(--dk-m));
 }
 .dkb-when[data-yours] {
   background: var(--dkb-amber);
@@ -11635,9 +11929,25 @@ button.dkb-strip:active {
 .dkb-map rect[data-filled] {
   fill: var(--dkb-vinyl-3);
 }
+/* Its name, once, on slide 2, just before it. */
+.dkb-map-name {
+  position: absolute;
+  inset-inline-start: var(--x);
+  top: var(--y);
+  transform: translate(calc(-100% * var(--dkb-flip)), -50%);
+  font: 400 18px/1 var(--dk-mono);
+  color: var(--dkb-vinyl-3);
+  white-space: nowrap;
+}
+.dk-canvas[dir="rtl"] .dkb-map-name {
+  font-family: var(--dk-font-ar);
+  font-size: 19px;
+}
 /* Slide 6: a copy of the method's first line flies into the map's "Your
    words" (from --tx, --ty away), then is gone. At rest it is gone, so a
    still shot and reduced motion never show it. */
+/* A paper copy 600 px wide, its words at 40 px over two lines at most:
+   large enough to be seen lifting off before it flies (score round 2). */
 .dkb-fly {
   position: absolute;
   inset-inline-start: var(--x);
@@ -11645,13 +11955,16 @@ button.dkb-strip:active {
   margin: 0;
   z-index: 8;
   pointer-events: none;
-  white-space: nowrap;
   box-sizing: border-box;
-  padding: 0 16px;
+  width: 600px;
+  max-height: 160px;
+  overflow: hidden;
+  padding: 20px 28px;
   background: var(--dkb-paper);
-  font: 400 48px/64px var(--dk-font);
-  letter-spacing: -0.015em;
+  font: 400 40px/56px var(--dk-font);
+  letter-spacing: -0.012em;
   color: var(--dkb-print);
+  text-wrap: pretty;
   transform-origin: top left;
   opacity: 0;
   animation: dkb-fly calc(var(--dkb-t-fly) * var(--dk-m)) var(--dk-ease) both;
@@ -11664,13 +11977,16 @@ button.dkb-strip:active {
    map and is gone. */
 @keyframes dkb-fly {
   from {
-    opacity: 1;
+    opacity: 0;
     transform: none;
     box-shadow: none;
   }
-  18% {
+  8% {
     opacity: 1;
-    transform: translate3d(0, -14px, 0);
+  }
+  33% {
+    opacity: 1;
+    transform: translate3d(calc(32px * var(--dkb-flip)), -48px, 0);
     box-shadow: var(--dkb-shadow-paper);
   }
   80% {
