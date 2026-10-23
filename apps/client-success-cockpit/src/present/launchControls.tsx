@@ -825,8 +825,8 @@ function FreedomControls({ d, model, full }: LaunchControlProps) {
       {approval ? (
         <Section title="From the Brand Blueprint">
           <div className="text-xs text-muted-foreground">
-            How they approve their custom ads, chosen on the call. Say it
-            when you come to the check: {APPROVAL_SAID[approval]}
+            How they approve their custom ads, chosen on the call. Say it when
+            you come to the check: {APPROVAL_SAID[approval]}
           </div>
         </Section>
       ) : null}

@@ -29,12 +29,7 @@ import {
   storyUrl,
   warmExamples,
 } from "./examples";
-import {
-  defaultPhones,
-  PHONES,
-  type PhoneKey,
-  starterTag,
-} from "./launchData";
+import { defaultPhones, PHONES, type PhoneKey, starterTag } from "./launchData";
 import type { Identity } from "./mockups/Identity";
 import { FbFeed, IgFeed, Phone, phoneWidth, ReelStory } from "./mockups/Phones";
 import { Logo, type PlatformMark } from "./platforms";

@@ -1395,12 +1395,11 @@ function PackPhones({ ctx }: { ctx: Ctx }) {
 
 /** Stop 1's start column: what the pack is, then "Open the pack" once there is a link. */
 function PackWords({ ctx }: { ctx: Ctx }) {
-  const { bp, lang, d } = ctx;
-  // The lit service, else the one the record already reads for them (the
-  // phones beside show its pictures); "your service" when nothing does.
-  const lit =
-    (bp?.answers.service as BpService | undefined) ??
-    (d.example.from === "default" ? undefined : d.example.service);
+  const { bp, lang } = ctx;
+  // The lit service only: until slide 4's pick is on record the line says
+  // "your service", so it never names one slide 4 is still asking about
+  // (the phones beside keep their example pictures, tagged).
+  const lit = bp?.answers.service as BpService | undefined;
   const url =
     str(bp?.answers.pack_url) ?? str(bp?.prefill.values.pack_url?.value);
   const service = lit

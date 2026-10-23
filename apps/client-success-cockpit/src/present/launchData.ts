@@ -100,7 +100,9 @@ const APPROVALS = ["every", "first_batch", "run_then_show"] as const;
 export function offerSentence(v: unknown): string | null {
   const o = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
   const line = (k: string) =>
-    typeof o[k] === "string" ? (o[k] as string).replace(/\s+/g, " ").trim() : "";
+    typeof o[k] === "string"
+      ? (o[k] as string).replace(/\s+/g, " ").trim()
+      : "";
   const name = line("name");
   const what = line("what");
   const first = line("firstStep");

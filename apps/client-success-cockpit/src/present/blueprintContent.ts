@@ -520,7 +520,7 @@ export const BP = {
     sheet: { en: "Your offer sheet", ar: "ملف العرض" },
     /** Stop 2's paper card, while the sheet is shared from its own window. */
     sheetOpen: {
-      en: "Open in the other window",
+      en: "Open in its own window",
       ar: "مفتوح بالنافذة الثانية",
     },
     sheetTitle: { en: "{name} · offer sheet", ar: "ملف العرض، {name}" },
@@ -554,7 +554,7 @@ export const BP = {
     learnStart: { en: "Day 1", ar: "أول يوم" },
     learnEnd: { en: "Day 60", ar: "يوم ٦٠" },
     approveHead: {
-      en: "How you approve your custom ads",
+      en: "How you approve your own ads",
       ar: "كيف توافقون على إعلاناتكم الخاصة",
     },
     approvals: {

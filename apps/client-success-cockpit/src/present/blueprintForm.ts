@@ -303,7 +303,7 @@ export const QUESTIONS: readonly Question[] = [
   q("2.11", "why_us", "Why people pick you instead", "no", "N", true, [
     { slide: "competitors" },
   ]),
-  q("2.12", "approval", "How you approve your custom ads", "yes", "D", true, [
+  q("2.12", "approval", "How you approve your own ads", "yes", "D", true, [
     { slide: "how-ads-work" },
   ]),
   q(
