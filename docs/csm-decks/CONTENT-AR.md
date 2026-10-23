@@ -52,6 +52,10 @@ Use these the same way in both decks, the notes and the prep view.
 | within 2 working hours | خلال ساعتين دوام | decision 12 |
 | your agreement | عقدكم | its dates: التواريخ (decision 12) |
 | starter ads | إعلانات البداية | |
+| kickoff form | نموذج بداية الشغل | O8; never مكالمة التعريف, which is the onboarding call |
+| our media team | فريق الإعلانات | the Blueprint's part 1 goes to it; the person stays مسؤول الإعلانات |
+| offer sheet | ملف العرض | the Blueprint |
+| Brand DNA doc | ملف هويتكم | the Blueprint |
 | your own ads | إعلاناتكم الخاصة | |
 | the creative director | المدير الإبداعي | |
 | the media buyer | مسؤول الإعلانات | |
@@ -325,7 +329,7 @@ The kickoff form, filled with the client and sent before the call ends (CONTENT 
 | `kickoff.title` (the overview) | Your kickoff form | نموذج بداية الشغل |
 | `kickoff.head` | Before we hang up: your kickoff form | قبل لا نسكر المكالمة: نموذج بداية الشغل |
 | `kickoff.prefilled` | Your details are already in, from your onboarding form. We check them together, then send it. | تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط. نراجعها مع بعض، وبعدها نرسله. |
-| `kickoff.together` | We fill it in together, now. | نعبيه مع بعض، الحين. |
+| `kickoff.together` | We fill it in together, now. | نعبيه مع بعض الحين. |
 | `kickoff.sent` | Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | وأول ما ينرسل، يبدي فريقنا بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
 | `kickoff.done` | Done. Your answers are with our team. | تمام، أجوبتكم وصلت لفريقنا. |
 | `kickoff.next` (the frame's card once sent) | Next: we pick the time for your Brand Blueprint call | الخطوة الجاية: نختار وقت مكالمة بناء الهوية والعرض |
@@ -337,13 +341,13 @@ The kickoff form, filled with the client and sent before the call ends (CONTENT 
 | `kickoff.rehearsal` | Rehearsal: nothing is sent | بروفة: ما ينرسل شي |
 | `kickoff.opening` | Opening your kickoff form | نفتح نموذج بداية الشغل |
 | `kickoff.away` | We'll open your kickoff form from our side. | بنفتح نموذج بداية الشغل من عندنا. |
-| `kickoff.here` (prep's preview) | Your kickoff form opens here. | نموذج بداية الشغل يفتح هنا. |
+| `kickoff.here` (prep's preview) | Your kickoff form opens here. | نموذج بداية الشغل ينفتح هنا. |
 | `kickoff.recordHead` | Kickoff on record | نموذج بداية الشغل عندنا |
 | `kickoff.filledOn` | Filled on {date} | تعبّى يوم {date} |
 | `kickoff.rows.service` | The service we advertise | الخدمة اللي نعلن عنها |
 | `kickoff.rows.page` | Your Page name | اسم صفحتكم |
 | `kickoff.rows.starter` | Starter ads | إعلانات البداية |
-| `kickoff.starter.approved` · `.pending` · `.declined` | Approved · You see them first · Your own ads first | موافقين عليها، تشوفونها أول، إعلاناتكم الخاصة أول |
+| `kickoff.starter.approved` · `.pending` · `.declined` | Approved · You see them first · Your own ads first | وافقتوا عليها، تشوفونها أول، إعلاناتكم الخاصة أول |
 | `next.cardPick` (O7's card, the kickoff sent and no time yet) | We pick the time now | نختار الوقت الحين |
 
 {time} is the deck's clock (`clock`, ١٢:١٢ مساءً) and {date} its day and month (١٩ أكتوبر), Arabic-Indic, as every date on the slides. The service row says the service by its Arabic name (تصميم داخلي); the Page name stays as typed, in `<bdi dir=auto>`. Rehearsal is بروفة (a run-through), never تجربة, which decision 10 keeps off the slides.

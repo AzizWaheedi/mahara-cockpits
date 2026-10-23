@@ -59,6 +59,8 @@ export function moneyText(
   if (amount < 10_000) return `${digits(Math.round(amount), "ar")} ${word}`;
   if (amount >= 1_000_000) {
     const m = Math.round(amount / 100_000) / 10;
+    // One million is مليون alone, never ١ مليون.
+    if (m === 1) return `مليون ${word}`;
     const n = String(m).replace(".", "٫");
     return `${digits(n, "ar")} مليون ${word}`;
   }
@@ -85,6 +87,7 @@ export function shortAmount(amount: number, lang: Lang): string {
   if (amount < 10_000) return digits(Math.round(amount), "ar");
   if (amount >= 1_000_000) {
     const m = Math.round(amount / 100_000) / 10;
+    if (m === 1) return "مليون";
     return `${digits(String(m).replace(".", "٫"), "ar")} مليون`;
   }
   const thousands = Math.round(amount / 1000);

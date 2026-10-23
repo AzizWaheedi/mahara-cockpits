@@ -700,6 +700,21 @@ class Supabase:
         rows = self.select("editor_clients", f"select=*&task_id=eq.{http.quote(task_id)}&limit=1")
         return rows[0] if rows else None
 
+    # ---- the Brand Blueprint (the cockpit's table, read only) -------------
+    def blueprint_parts(self, since: datetime) -> list[dict[str, Any]]:
+        """Each Blueprint's card and parts, for records changed since `since`.
+
+        A part's first send also moves the row's updated_at, so a record not
+        touched since then cannot hold a part sent since then: the filter only
+        narrows the read. Only task_id and parts are asked for, never the
+        answers or who gave them.
+        """
+        stamp = since.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        return self.select(
+            "cockpit_blueprints",
+            f"select=task_id,parts&updated_at=gte.{http.quote(stamp)}&order=updated_at.desc&limit=500",
+        )
+
     # ---- our own copy of an ad -------------------------------------------
     def store_winner_file(self, row: dict[str, Any]) -> None:
         body = {k: v for k, v in row.items() if k in

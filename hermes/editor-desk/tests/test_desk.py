@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -659,6 +660,60 @@ class BrandFreshnessTests(unittest.TestCase):
     def test_a_card_with_no_document_has_no_revision(self):
         d = self.Drive("x")
         self.assertIsNone(clients.revisions(d, {"brand_dna_url": "", "offer_url": ""})["brand_dna_rev"])
+
+
+class BlueprintOfferDocsTests(unittest.TestCase):
+    """docs/brand-blueprint/SPEC.md 4.6: the Brand DNA and offer text are read
+    for a client whose Blueprint offer was locked in the last 14 days, as well
+    as for a client with live work."""
+
+    NOW = supabase_mod.datetime(2026, 10, 23, 12, 0, tzinfo=supabase_mod.timezone.utc)
+
+    def rows(self):
+        return [
+            {"task_id": "c-new", "parts": {"3": {"firstAt": "2026-10-20T09:15:00.123456+00:00", "status": "done"}}},
+            {"task_id": "c-edge", "parts": {"3": {"firstAt": "2026-10-09T12:00:00Z"}}},
+            {"task_id": "c-old", "parts": {"3": {"firstAt": "2026-10-01T09:00:00Z"}}},
+            {"task_id": "c-open", "parts": {"1": {"firstAt": "2026-10-22T09:00:00Z"}, "2": {"firstAt": "2026-10-22T09:40:00Z"}}},
+            {"task_id": "c-bad", "parts": {"3": {"firstAt": "not a time"}}},
+            {"task_id": "", "parts": {"3": {"firstAt": "2026-10-22T09:00:00Z"}}},
+            {"task_id": "c-shape", "parts": []},
+        ]
+
+    def test_only_a_part_3_first_sent_in_the_last_14_days_counts(self):
+        self.assertEqual(clients.offers_locked_since(self.rows(), self.NOW), {"c-new", "c-edge"})
+        self.assertEqual(clients.offers_locked_since(self.rows(), self.NOW, days=4), {"c-new"})
+        self.assertEqual(clients.offers_locked_since([], self.NOW), set())
+
+    def test_live_work_and_recent_offers_are_read_once_each(self):
+        people = [
+            {"task_id": "c-job", "name": "Ardon"},
+            {"task_id": "c-new", "name": "Cedar"},
+            {"task_id": "c-old", "name": "Sahel"},
+        ]
+        with_jobs = [people[0], people[0]]
+        wanted = clients.docs_wanted(with_jobs, people, {"c-new", "c-gone"})
+        self.assertEqual(sorted(wanted), ["c-job", "c-new"])
+        self.assertIs(wanted["c-new"], people[1], "the roster's own row, so the read lands on it")
+        self.assertEqual(sorted(clients.docs_wanted([], people, set())), [])
+        self.assertEqual(sorted(clients.docs_wanted([], people, {"c-new"})), ["c-new"])
+
+    def test_the_read_asks_only_for_the_card_and_its_parts(self):
+        seen = []
+
+        class Rest(supabase_mod.Supabase):
+            def rest(self, method, path, **kw):
+                seen.append((method, path))
+                return [{"task_id": "c-new", "parts": {}}]
+
+        sb = Rest("https://x.supabase.co", "k")
+        since = self.NOW - supabase_mod.timedelta(days=14)
+        self.assertEqual(sb.blueprint_parts(since), [{"task_id": "c-new", "parts": {}}])
+        method, path = seen[0]
+        self.assertEqual(method, "GET")
+        self.assertTrue(path.startswith("cockpit_blueprints?select=task_id,parts&updated_at=gte."))
+        self.assertIn("updated_at=gte.2026-10-09T12:00:00Z", urllib.parse.unquote(path))
+        self.assertNotIn("answers", path)
 
 
 class SeatTests(unittest.TestCase):

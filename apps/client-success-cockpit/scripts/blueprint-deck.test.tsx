@@ -95,7 +95,9 @@ const { emptyLive, DeckHub, channelName } = await import(
 );
 const { deckData } = await import("../src/present/deckData");
 const { blueprintPrefill } = await import("../src/present/blueprintPrefill");
-const { bandOf, tapeMarks } = await import("../src/present/blueprintData");
+const { bandOf, tapeMarks, moneyText, shortAmount } = await import(
+  "../src/present/blueprintData"
+);
 const { missing } = await import("../src/present/blueprintForm");
 const { BlueprintNotes } = await import("../src/present/BlueprintNotes");
 const { PresentApp } = await import("../src/present/PresentApp");
@@ -843,6 +845,16 @@ describe("score round 1 (2026-10-23)", () => {
       0,
     );
     expect(empty).toMatch(/e\.g\. 60,000.SAR/);
+  });
+
+  test("one million is مليون alone in Arabic, never ١ مليون", () => {
+    expect(moneyText(1_000_000, "SAR", "ar")).toBe("مليون ريال");
+    expect(moneyText(1_040_000, "SAR", "ar")).toBe("مليون ريال");
+    expect(moneyText(1_200_000, "SAR", "ar")).toBe("١٫٢ مليون ريال");
+    expect(moneyText(2_000_000, "SAR", "ar")).toBe("٢ مليون ريال");
+    expect(moneyText(1_000_000, "SAR", "en")).toBe("1,000,000 SAR");
+    expect(shortAmount(1_000_000, "ar")).toBe("مليون");
+    expect(shortAmount(1_500_000, "ar")).toBe("١٫٥ مليون");
   });
 
   test("the band and the tape's scale come from their words", () => {

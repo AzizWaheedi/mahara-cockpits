@@ -586,7 +586,7 @@ function LinesField({
         {more > 0 ? (
           <li className="dkb-more">
             {lang === "ar"
-              ? `و${digits(more, lang)} غيرها`
+              ? `وغيرها (${digits(more, lang)})`
               : `and ${more} more`}
           </li>
         ) : null}
@@ -1737,7 +1737,7 @@ function Sheet({ ctx }: { ctx: Ctx }) {
                 {red.length > 4 ? (
                   <li className="dkb-more">
                     {lang === "ar"
-                      ? `و${digits(red.length - 4, lang)} غيرها`
+                      ? `وغيرها (${digits(red.length - 4, lang)})`
                       : `and ${red.length - 4} more`}
                   </li>
                 ) : null}

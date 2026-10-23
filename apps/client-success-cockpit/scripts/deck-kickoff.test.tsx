@@ -342,7 +342,7 @@ describe("the last slide", () => {
       expect(html).toContain(
         lang === "en"
           ? "Your kickoff form opens here."
-          : "نموذج بداية الشغل يفتح هنا.",
+          : "نموذج بداية الشغل ينفتح هنا.",
       );
       expect(html).toContain('data-variant="foot"');
       const items = html.match(/<li[^>]*style="--i:\d[^"]*"[^>]*>/g) ?? [];

@@ -178,7 +178,7 @@ const FIRMS: Record<BpFixture, Firm> = {
     redLinesAr: [
       "بدون خصومات أو عروض محدودة",
       "لا تطلع وجوه عائلات العملاء",
-      "ولا شي من موقع شغال",
+      "بدون لقطات من مواقع شغالة",
     ],
     packs: true,
     kickoff: true,

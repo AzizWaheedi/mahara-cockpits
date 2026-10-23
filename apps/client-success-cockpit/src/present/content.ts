@@ -802,7 +802,7 @@ export const O = {
     /** Without them: the form opens with their name only. */
     together: {
       en: "We fill it in together, now.",
-      ar: "نعبيه مع بعض، الحين.",
+      ar: "نعبيه مع بعض الحين.",
     },
     sent: {
       en: "Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group.",
@@ -854,7 +854,7 @@ export const O = {
     /** The slide outside the call (prep's preview): where the form opens. */
     here: {
       en: "Your kickoff form opens here.",
-      ar: "نموذج بداية الشغل يفتح هنا.",
+      ar: "نموذج بداية الشغل ينفتح هنا.",
     },
     /**
      * Over the form while the CSM fills its internal answers (the ad money,

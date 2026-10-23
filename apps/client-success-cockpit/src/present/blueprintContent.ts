@@ -89,7 +89,7 @@ export const BP = {
     },
     lead: {
       en: "Today we put your brand on one wall: how you talk, how you look, and what your ads offer.",
-      ar: "اليوم نجمع هويتكم على جدار واحد: كيف تتكلمون، كيف تظهرون، والعرض اللي تقدمه إعلاناتكم.",
+      ar: "اليوم نجمع هويتكم على جدار واحد: كيف تتكلمون، وكيف تظهرون، والعرض اللي تقدمه إعلاناتكم.",
     },
     byline: { en: "With our creative director", ar: "مع المدير الإبداعي" },
     /**
@@ -504,7 +504,7 @@ export const BP = {
     ],
     foot: {
       en: "Draft · locks in 1 to 2 days",
-      ar: "مسودة، نثبته خلال يوم أو يومين",
+      ar: "مسودة، ونثبت العرض معكم خلال يوم أو يومين",
     },
     /** A tag line not on the record yet: it is written in the offer sheet. */
     inSheet: { en: "In your offer sheet", ar: "بملف العرض" },
@@ -649,7 +649,7 @@ export const BP = {
     camera: {
       yes_studio: {
         en: "Yes, with a camera crew or a studio",
-        ar: "نعم، مع مصور أو باستوديو",
+        ar: "نعم، مع مصور أو في استوديو",
       },
       yes_phone: { en: "Yes, on our phone", ar: "نعم، بالجوال" },
       no: { en: "No", ar: "لا" },
@@ -973,7 +973,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
       "Stop 3: let them choose how they approve their custom ads. Tap their pick.",
     ],
     sayAr: [
-      "نفس الشخص، بس واحد جاكم من رفيجه، والثاني شاف إعلانكم. الفرق الوحيد الثقة.",
+      "نفس الشخص، بس مرة جاكم بتوصية، ومرة شاف إعلانكم. الفرق الوحيد الثقة.",
       "الإعلانات تتعلم من ٣٠ لين ٦٠ يوم. الكمية هي اللي تفرق، مو الحظ.",
       "كيف تبون توافقون على إعلاناتكم الخاصة؟",
     ],

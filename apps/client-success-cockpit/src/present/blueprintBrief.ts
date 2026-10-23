@@ -39,13 +39,17 @@ export const NEVER_WRITTEN = [
 ] as const;
 
 /**
- * Make 14 module [7]'s phase 5 message, copied verbatim by a read-only GET
- * of the scenario's blueprint (SPEC 3.6, ship step 2). Until then it is
- * null: the cockpit never invents the client's message, and the CSM's
- * comment says to send the usual phase 5 message with the map link.
- * `{map}` stands for the map link.
+ * Make 14 module [7]'s phase 5 message (whapi-cloud text), copied verbatim
+ * from a read-only export of the scenario's blueprint on 2026-10-22 (SPEC
+ * 3.6, ship step 2). `{map}` stands for the card's Onboarding Map link,
+ * which Make read from the card ({{9.custom_fields.`Onboarding Map`}}).
+ * Make's message then always carried the content-folder block with the
+ * Client Data sheet's folder ({{6.`7`}}); here CONTENT_FOLDER_BLOCK is added
+ * only when the card has a Drive folder, so no empty link is sent. Null
+ * would mean the CSM is told to send the usual message with the map link.
  */
-export const PHASE5_WHATSAPP: string | null = null;
+export const PHASE5_WHATSAPP: string | null =
+  "أكملنا المرحلة الرابعة: بناء الهوية والعرض.\nالمرحلة التالية: مكالمة الإطلاق.\n\nاطّلع على المطلوب منك وما سنعمل عليه بعد ذلك:\n{map}";
 
 /** The content-folder block live since 2026-09-17, added when the card has a Drive folder. */
 export const CONTENT_FOLDER_BLOCK =

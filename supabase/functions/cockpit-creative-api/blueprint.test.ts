@@ -185,8 +185,9 @@ describe('Close the call',()=>{
   expect(media).toContain('Custom ads approval: The first batch, then we run');expect(media).toContain('Shot list: given, due Sat 24 Oct');expect(media).toContain('Smallest project: 3,000 KWD · Ads point to: 12,000 KWD');
   const csm=fake.comments.get(CARD)![0];expect(csm.assignee).toBe(555);
   expect(csm.comment_text).toContain('For you: Asked about a second branch (example)');expect(csm.comment_text).toContain('Launch call booked for Sun 25 Oct 10:00 (Kuwait).');
-  // Make 14's text is not copied in yet: the CSM is told what to send instead, never an invented message.
-  expect(csm.comment_text).toContain(`Send the usual phase 5 message with this map link: https://mahara-onboarding-map.vercel.app/?phase=5&cid=${CARD}`);
+  // Make 14 module [7]'s text, with the map link and the card's Drive folder, ready to paste.
+  expect(csm.comment_text).toContain(["Paste this in the client's WhatsApp group:",'أكملنا المرحلة الرابعة: بناء الهوية والعرض.','المرحلة التالية: مكالمة الإطلاق.','','اطّلع على المطلوب منك وما سنعمل عليه بعد ذلك:',`https://mahara-onboarding-map.vercel.app/?phase=5&cid=${CARD}`,'',B.CONTENT_FOLDER_BLOCK.replace('{folder}','https://drive.google.com/drive/folders/acmeDrive000001')].join('\n'));
+  expect(csm.comment_text).not.toContain('Send the usual phase 5 message');
   expect(fake.slack).toEqual([]);expect(fake.make).toEqual([]);
  });
  test('slack: the cockpit posts to #media-general once, read back; a later press never posts again',async()=>{

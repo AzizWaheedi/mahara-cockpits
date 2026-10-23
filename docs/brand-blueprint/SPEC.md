@@ -71,9 +71,9 @@ AUTO, never asked, carried into the brief: platforms (`7d16afbb`), the exact ad 
 |---|---|---|---|---|---|---|---|
 | 2.1 | `best_client` | The clients you want more of | العملاء اللي تبون منهم أكثر | long | yes | **S**: onboarding "Please describe your ideal project" (`6c819933`) | slide 2 (correct), slide 6 |
 | 2.2 | `not_for` | Who you don't want | العملاء اللي ما تبونهم | long | no | **N** | slide 6 |
-| 2.3 | `method` | How a project runs with you, first call to handover, in your words | كيف يمشي المشروع معاكم، من أول مكالمة لين التسليم | long | yes | **N** | slide 6 (the pull quote) |
+| 2.3 | `method` | How a project runs with you, first call to handover, in your words | كيف يمشي المشروع معكم، من أول مكالمة لين التسليم | long | yes | **N** | slide 6 (the pull quote) |
 | 2.4 | `city_cant` | What most firms in your city can't do | اللي أغلب الشركات بمدينتكم ما تقدر تسويه | long | no | **N** | slide 6 |
-| 2.5 | `pricing` | How you price, and where most projects land | كيف تسعرون، ووين تنتهي أغلب مشاريعكم | long | yes | **S**: onboarding "What services do you offer … price" (`d976036f`) | slide 7 |
+| 2.5 | `pricing` | How you price, and where most projects land | كيف تسعرون، وقيمة أغلب مشاريعكم | long | yes | **S**: onboarding "What services do you offer … price" (`d976036f`) | slide 7 |
 | 2.6 | `minimum` | The smallest project you take | أصغر مشروع تقبلونه | money | yes | **N** | slide 7 |
 | 2.7 | `anchor` | The project size your ads point to | حجم المشروع اللي تركز عليه إعلاناتكم | money | yes | **N** | slide 7 |
 | 2.8 | `terms` | Deposit and payment terms | الدفعة الأولى وطريقة الدفع | long | no | **S**: onboarding payment options (`ee25f923`) | slide 7 |
@@ -83,9 +83,9 @@ AUTO, never asked, carried into the brief: platforms (`7d16afbb`), the exact ad 
 | 2.12 | `approval` | How you approve your own ads | كيف توافقون على إعلاناتكم: كل فيديو · أول مجموعة وبعدها نكمل · نشغلها ونوريكم بعدين | choice `every`, `first_batch`, `run_then_show` | yes | **D**: `first_batch` when the kickoff said Wants To See Them First; otherwise **N** | slide 10 (three cards) |
 | 2.13 | `dna_status`, `dna_missing` | Brand DNA doc status, and what is missing | | choice `complete`, `small_gaps`, `big_gaps` + text | yes (text when gaps) | **N**. The doc link is AUTO (card `89bbb8b0`). "Not opened" is no longer an answer. | notes 11 |
 | 2.14 | `rules` | What must always appear, never appear, and never be shown (projects, names) | لازم يكون بإعلاناتكم · ممنوع بإعلاناتكم · مشاريع وأسماء ما تنعرض | rules (each list at most 12 of 200) | yes (at least 1 line in any list) | **S**: 1.9's lines under "never", the card's DO lines under "always" | slide 11 |
-| 2.15 | `camera` | On camera, and how | بتطلعون بالفيديو؟ نعم، مع مصور أو بستوديو · نعم، بالجوال · لا · مو متأكدين للحين | choice `yes_studio`, `yes_phone`, `no`, `unsure` (the card's four) | yes | **D**: card Can Self-Record? (`39839c9d`) when set | slide 12 |
+| 2.15 | `camera` | On camera, and how | بتطلعون بالفيديو؟ نعم، مع مصور أو في استوديو · نعم، بالجوال · لا · مو متأكدين للحين | choice `yes_studio`, `yes_phone`, `no`, `unsure` (the card's four) | yes | **D**: card Can Self-Record? (`39839c9d`) when set | slide 12 |
 | 2.16 | `content_rating` | Their existing content | | choice `strong`, `usable`, `weak`, `none` | no | **S**: the links only (kickoff `3418ef58`, onboarding Drive `64d23c81`), shown as links to open | notes 12 |
-| 2.17 | `shot_list` | Shot list given; due 72 hours after the call | أربع لقطات منكم، قبل {date} | ticks; `shot_list_due` is set by the server when ticked | no | **AUTO** date: the call's start (the Blueprint booking, else the tick's time) plus 72 hours | slide 12 (date), notes 12 (tick) |
+| 2.17 | `shot_list` | Shot list given; due 72 hours after the call | أربع لقطات منكم، لين {date} | ticks; `shot_list_due` is set by the server when ticked | no | **AUTO** date: the call's start (the Blueprint booking, else the tick's time) plus 72 hours | slide 12 (date), notes 12 (tick) |
 | 2.18 | `events` | Events coming up to script for | | long | no | **N** | notes 12 |
 | 2.19 | `readback_yes` | They said yes to the read-back | | ticks | yes | **N** | notes 13 |
 | 2.20 | `csm_signals` | Capacity, UGC or upsell signals for the CSM | | long | no | **N** | notes 14 |
@@ -382,13 +382,21 @@ The editor desk's rule (section 4.6) then reads the offer and Brand DNA doc text
 | `make` (once Make 14's route exists and `BLUEPRINT_MAKE_CLOSE = on`) | Make | Make | Make sends it |
 
 - Only admins and the founders change it (CD Settings shows it read-only to the CD).
-- **The phase 5 text** is Make 14 module [7]'s Arabic, copied verbatim during the build by a read-only GET of the scenario blueprint into `PHASE5_WHATSAPP` in `blueprintBrief.ts`, with the map link (`?phase=5&cid=<card>`) and, when the card has a Drive folder, the content-folder block live since 2026-09-17:
+- **The phase 5 text** is Make 14 module [7]'s Arabic (its whapi-cloud text), copied verbatim from a read-only export of the scenario blueprint on 2026-10-22 into `PHASE5_WHATSAPP` in `blueprintBrief.ts`. Make's `{{9.custom_fields.`Onboarding Map`}}` (the card's map field) is the cockpit's map link (`?phase=5&cid=<card>`):
+  ```
+  أكملنا المرحلة الرابعة: بناء الهوية والعرض.
+  المرحلة التالية: مكالمة الإطلاق.
+
+  اطّلع على المطلوب منك وما سنعمل عليه بعد ذلك:
+  <map link>
+  ```
+  Make always followed it with the content-folder block live since 2026-09-17, filled from the Client Data sheet's folder column; the cockpit adds it, after a blank line, only when the card has a Drive folder, so an empty link is never sent:
   ```
   *إذا ما رفعتوا المحتوى للحين:*
   ارفعوا كل الصور والفيديوهات في مجلد المحتوى الموحد عشان توصل مباشرة لفريق الإبداع والمونتاج:
   <client Drive folder URL>
   ```
-  Until the GET is done, the build keeps a placeholder and a test fails, so it cannot ship without the real text.
+  The ship gate test (`blueprint-brief.test.ts`, "PHASE5_WHATSAPP holds Make 14 module [7]'s text") fails if the text is ever taken out again.
 
 ### 3.7 Rehearsal (admins and the CEO)
 
@@ -455,9 +463,11 @@ In `src/lib/creativeLinks.ts`, group "The Brand Blueprint call": remove the bare
 
 `hermes/cockpit-sync/creativeProducer.ts` `CLIENT_FIELDS` gains `offerCreationStatus: "Offer Creation"`, `templatedAdsStatus: "Templated Ads Status"`, `canSelfRecord: "Can Self-Record?"`, `adApprovalNeeded: "Ad Approval Needed?"` (dropdowns resolve to their labels in `fieldsOf`). They are reads, so the cockpit and `cockpit_blueprint_sources` see what the outbox wrote. A VPS deploy of the sync, done by the person who ships.
 
-### 4.6 The editor desk (hermes, later)
+### 4.6 The editor desk (hermes)
 
 `hermes/editor-desk/desk.py`'s doc sync reads the Brand DNA and offer text for clients whose `parts.3.firstAt` is within 14 days, as well as those with open video jobs. Its own test; a VPS deploy. Step 7 of the build order.
+
+Built (2026-10-23): `Supabase.blueprint_parts` reads `task_id, parts` from `cockpit_blueprints` (service key, rows changed in the window), `clients.offers_locked_since` keeps the cards whose part 3 was first sent in the last `OFFER_RECENT_DAYS = 14`, and `clients.docs_wanted` adds those roster rows to the companies with live work, each once. A failed read (or the table not applied yet) is a warning and the sync goes on as before. Tests: `BlueprintOfferDocsTests` in `tests/test_desk.py`. The VPS deploy is the shipper's.
 
 ### 4.7 Where the call window is served, and the gate
 
@@ -612,19 +622,19 @@ Section 24 of `present.css`, on `.dk-root[data-deck="blueprint"]` (every colour 
 ### 5.6 English and Arabic
 
 - `blueprintContent.ts` holds every string as `L` (`{en, ar}`), read with `t()` and `tf()` so Latin runs are isolated and numbers held. Client words are shown as typed, in `<bdi dir="auto">`.
-- The copy rules hold, pinned by `deck-copy.test.ts`: sentence case; no exclamation marks; no em dashes; no results promise; no leads, cost per lead or ad money on any slide; the five main services by their kickoff names; anything not the client's own tagged (Example / مثال, Example wording / صياغة للتوضيح, Starter ads, from our templates / إعلان بداية، من قوالبنا); roles, never names, except the presenter's first name in notes; unconfirmed claims ("over ten years", "well over a million dollars in this region", "worked with X companies") only in notes, behind "Confirm before you say this".
+- The copy rules hold, pinned by `deck-copy.test.ts`: sentence case; no exclamation marks; no em dashes; no results promise; no leads, cost per lead or ad money on any slide; the five main services by their kickoff names; anything not the client's own tagged (Example / مثال, Example wording / صياغة للتوضيح, Starter ads, from our templates / إعلانات البداية، من قوالبنا); roles, never names, except the presenter's first name in notes; unconfirmed claims ("over ten years", "well over a million dollars in this region", "worked with X companies") only in notes, behind "Confirm before you say this".
 - Arabic: CONTENT-AR's shared vocabulary (مكالمة بناء الهوية والعرض، إعلانات البداية، المدير الإبداعي، فريق الإعلانات، مجلد الدرايف، الخطوط الحمراء، ملف العرض), no Kuwaiti-only or Saudi-only words on slides, Arabic-Indic digits through `digits()`, money words from ١٠ آلاف, the stamp's clock in Latin digits like the Drive box's (DESIGN 13.4). The client's currency word is theirs (دينار، ريال، درهم). Every Arabic string gets the frontier-model check the decks' copy gets before ship.
 - **Slide strings (the client sees):**
 
   | Where | EN | AR |
   |---|---|---|
-  | cover lead | Today we put your brand on one wall: how you talk, how you look, and what your ads lead with. | اليوم نجمع هويتكم على جدار واحد: كيف تتكلمون، كيف تظهرون، والعرض اللي تبدي فيه إعلاناتكم. |
+  | cover lead | Today we put your brand on one wall: how you talk, how you look, and what your ads offer. | اليوم نجمع هويتكم على جدار واحد: كيف تتكلمون، وكيف تظهرون، والعرض اللي تقدمه إعلاناتكم. |
   | cover byline | With our creative director · With {first name}, our creative director | مع المدير الإبداعي · مع {first name}، من فريقنا الإبداعي |
   | frames | Your words · Your look · Your offer | كلامكم · هويتكم البصرية · عرضكم |
-  | frame hints | How you describe your work, in your own words · Materials, colours and type · What your ads lead with | كيف توصفون شغلكم، بكلامكم · الخامات والألوان والخطوط · اللي تبدي فيه إعلاناتكم |
+  | frame hints | How you describe your work, in your own words · Materials, colours and type · What your ads offer | كيف توصفون شغلكم، بكلامكم · الخامات والألوان والخطوط · العرض اللي تقدمه إعلاناتكم |
   | cover sticky | Have your price list near you. We'll ask for real numbers. | خلوا قائمة أسعاركم قريبة منكم. بنسألكم عن أرقام حقيقية. |
   | slide 2 sticky | Anything wrong? Say it now. It saves as we talk. | فيه شي غلط؟ قولوه الحين، ينحفظ وإحنا نتكلم. |
-  | source marks | From your kickoff · From your onboarding form · Said on this call · Just now | من مكالمة التعريف · من نموذج التعريف بالنشاط · قلتوه بهالمكالمة · الحين |
+  | source marks | From your kickoff form · From your onboarding call · From your onboarding form · Said on this call · Just now · From your Brand DNA doc | من نموذج بداية الشغل · من مكالمة التعريف · من نموذج التعريف بالنشاط · قلتوه بهالمكالمة · انكتب الحين · من ملف هويتكم |
   | rules | We'll push back when something won't sell. · Be specific on money. · It's fine to say you don't know. | بنقول لكم بصراحة إذا شفنا شي ما يبيع. · خلونا دقيقين بالأرقام. · عادي تقولون ما نعرف. |
   | wall map's name (slide 2) | Your wall | جداركم |
   | slide 7 narrow band's flag | Most projects: {lo} to {hi} | أغلب المشاريع: {lo} إلى {hi} |
@@ -635,23 +645,23 @@ Section 24 of `present.css`, on `.dk-root[data-deck="blueprint"]` (every colour 
   | slide 5 stop 1 lines | Ready-made ads for {service}, from our templates. · You see them, and say yes, before they run. · They run while we make yours, from your photos and your words. | إعلانات {service} جاهزة، من قوالبنا. · تشوفونها وتوافقون عليها قبل لا تنزل. · تشتغل لين نجهز إعلاناتكم الخاصة، من صوركم وكلامكم. |
   | slide 5 phones' tag | Example ad | إعلان للتوضيح |
   | slide 5 approval | Approved on this call · Approved before the call · We want changes | وافقنا عليها بهالمكالمة · وافقنا عليها من قبل · نبي تعديلات |
-  | sheet fold | Kept in our notes, off this screen: {n} answers for our media team | محفوظة بملاحظاتنا، مو على الشاشة: {n} إجابات لفريق الإعلانات |
+  | sheet fold (none: no fold) | Kept in our notes, off this screen: 1 answer · 2 answers · {n} answers for our media team | محفوظة بملاحظاتنا، مو على الشاشة: جواب واحد · جوابين · {n} أجوبة لفريق الإعلانات |
   | stamp | Part 1 done · On its way to our media team at {time} | الجزء الأول تم · انرسل لفريق الإعلانات الساعة {time} |
   | slide 6 struck | Quality work, delivered on time. (Example) · their own earlier line (Your words before) | شغل بجودة عالية، وتسليم بالوقت. (مثال) · (كلامكم من قبل) |
-  | slide 7 marks | The smallest project you take · Where most projects land · Where your ads point | أصغر مشروع تقبلونه · وين تنتهي أغلب المشاريع · وين تركز إعلاناتكم |
+  | slide 7 marks | The smallest project you take · Where most projects land · Where your ads point | أصغر مشروع تقبلونه · قيمة أغلب المشاريع · القيمة اللي تركز عليها إعلاناتكم |
   | filter line | Our projects start from {minimum}. Is that within what you had in mind? | مشاريعنا تبدي من {minimum}. هذا ضمن اللي في بالكم؟ |
   | slide 8 mark | We lose to them | نخسر قدامهم |
-  | tag lines | The pattern · Its name · Two or three bonuses · The price your ads point to · The free first step, and who gives it | الفكرة · اسمه · مكافأتين أو ثلاث · السعر اللي تركز عليه إعلاناتكم · الخطوة الأولى المجانية، ومين يقدمها |
-  | tag foot | The rest is in your offer sheet. · Draft · locks in 1 to 2 days | الباقي بملف العرض. · مسودة، نثبته خلال يوم أو يومين |
+  | tag lines | The pattern · Its name · Two or three bonuses · The price your ads point to · The free first step, and who gives it | الفكرة · اسمه · إضافتين أو ثلاث مع العرض · السعر اللي تركز عليه إعلاناتكم · الخطوة الأولى المجانية، ومين يقدمها |
+  | tag foot | The rest is in your offer sheet. · Draft · locks in 1 to 2 days | الباقي بملف العرض. · مسودة، ونثبت العرض معكم خلال يوم أو يومين |
   | approval titles | Every video · The first batch · Run, then show you | كل فيديو · أول مجموعة · نشغلها ونوريكم |
   | DNA card rows | Your logo files · Your colours · Your type | ملفات الشعار · ألوانكم · خطوطكم |
-  | slide 10 | Same person, same money. The only difference is trust. · Your ads learn for 30 to 60 days. Volume beats luck. | نفس الشخص، ونفس الميزانية. الفرق الوحيد هو الثقة. · إعلاناتكم تتعلم خلال ٣٠ إلى ٦٠ يوم. الكمية تغلب الحظ. |
-  | slide 12 shots | You, talking to camera · Your site or workshop · A finished project, walked through · Before and after | أنتم تتكلمون للكاميرا · موقعكم أو ورشتكم · جولة بمشروع مخلص · قبل وبعد |
+  | slide 10 | Same person, same money. The only difference is trust. · Your ads learn for 30 to 60 days. Volume beats luck. | نفس الشخص، ونفس المبلغ اللي بيدفعه. الفرق الوحيد هو الثقة. · أول ٣٠ إلى ٦٠ يوم نكتشف اللي يشتغل بإعلاناتكم. الكمية تغلب الحظ. |
+  | slide 12 shots | You, talking to camera · Your site or workshop · A finished project, walked through · Before and after | أنتم تتكلمون للكاميرا · موقع العمل أو ورشتكم · جولة بمشروع خلصتوه · قبل وبعد |
   | slide 13 lines | Projects from {minimum}. Your ads point near {anchor}. · Starter ads: live once your account is ready. (none: Your own ads: at your launch call.) · You send us four shots by {day}. | مشاريعكم من {minimum}، وإعلاناتكم تركز على حدود {anchor}. · إعلانات البداية: تنطلق أول ما يجهز حسابكم. (بدونها: إعلاناتكم الخاصة: بمكالمة الإطلاق.) · ترسلون لنا أربع لقطات لين {day}. |
   | slide 13 table | Who it's for · What they get · The first step, free | لمين · اللي يحصلون عليه · الخطوة الأولى، مجاناً |
   | slide 13 headline placeholder | The offer's name, typed together | اسم العرض، نكتبه مع بعض |
   | slide 14 title | What happens next | الخطوات الجاية |
-  | slide 14 cards | Part 1 sent. Your starter ads are with our media team. (not sent yet: Part 1: we send it before we hang up.) · Your offer, locked with you in your offer sheet. · Your four shots, in your Drive folder. · Starter ads go live, once your account is ready. · Launch call: your own ads, your form and our questions. | انرسل الجزء الأول، وإعلانات البداية عند فريق الإعلانات. (ما انرسل: الجزء الأول: نرسله قبل لا نسكر.) · عرضكم، نثبته معاكم بملف العرض. · أربع لقطات منكم، بمجلد الدرايف. · إعلانات البداية تنطلق أول ما يجهز حسابكم. · مكالمة الإطلاق: إعلاناتكم الخاصة، ونموذج إعلانكم، وأسئلتنا. |
+  | slide 14 cards | Part 1 sent. Your starter ads are with our media team. (not sent yet: Part 1: we send it before we hang up.) · Your offer, locked with you in your offer sheet. · Your four shots, in your Drive folder. · Starter ads go live, once your account is ready. · Launch call: your own ads, your form and our questions. | انرسل الجزء الأول، وإعلانات البداية عند فريق الإعلانات. (ما انرسل: الجزء الأول: نرسله قبل لا نسكر.) · عرضكم، نثبته معكم بملف العرض. · أربع لقطات منكم، بمجلد الدرايف. · إعلانات البداية تنطلق أول ما يجهز حسابكم. · مكالمة الإطلاق: إعلاناتكم الخاصة، ونموذج إعلانكم، وأسئلتنا. |
   | legend | Amber cards are yours to do | البطاقات الصفرا عليكم |
   | booking | Book it now · Booked: {day, time} | نحجزها الحين · محجوزة: {day, time} |
 

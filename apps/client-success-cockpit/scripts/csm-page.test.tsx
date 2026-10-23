@@ -1265,7 +1265,9 @@ test("an onboarding client's row and page show its onboarding steps", async () =
       "Starter ads sent 10:12 · call closed 10:44 · offer not locked yet",
     );
     expect(text).toContain("Open the Blueprint deck");
-    expect(text).toContain("Copy the phase 5 map link");
+    // Make 14 module [7]'s text is in the cockpit (PHASE5_WHATSAPP), so the
+    // CSM copies the whole message, not only the map link.
+    expect(text).toContain("Copy the phase 5 message for the group");
     // The kickoff opens in its own window, by name, at the client's form
     // route (docs/csm-forms/KICKOFF.md 1): the record builds its client ID.
     const opened: string[][] = [];
