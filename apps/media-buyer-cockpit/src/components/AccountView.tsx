@@ -1,6 +1,7 @@
 import "@/components/ceo/ceo.css";
 import { ArrowUpRight, ChevronLeft, TriangleAlert } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { AppointmentFeedback } from "@/components/AppointmentFeedback";
 import {
   CallCentreSection,
   CallerLine,
@@ -206,6 +207,7 @@ type AdCard = {
 
 export function AccountView({
   client,
+  clientTaskId,
   campaigns,
   tree,
   verdicts,
@@ -218,6 +220,7 @@ export function AccountView({
   accountIds,
 }: {
   client: string;
+  clientTaskId?: string;
   /** The client's campaigns from the snapshot, running and off. */
   campaigns: Row[];
   /**
@@ -567,6 +570,7 @@ export function AccountView({
   // open campaign show only when the page has them.
   const parts: SectionNavPart[] = [
     { id: "account-numbers", label: "Numbers" },
+    { id: "account-feedback", label: "Client feedback" },
     ...(lost?.total && !callsHoldLost
       ? [{ id: "account-lost", label: "Lost leads", count: lost.total }]
       : []),
@@ -947,6 +951,14 @@ export function AccountView({
           </div>
         )}
       </section>
+
+      <div id="account-feedback" className={SECTION_OFFSET}>
+        <AppointmentFeedback
+          taskId={clientTaskId}
+          from={range.start}
+          to={range.end}
+        />
+      </div>
 
       <CallCentreSection
         accountKey={callsKey}

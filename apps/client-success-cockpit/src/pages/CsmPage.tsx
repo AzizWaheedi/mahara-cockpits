@@ -629,9 +629,6 @@ function TemplatePicker({
             {nc.label}, no link needed
           </span>
         )}
-        {c.sheetLink && (
-          <ExtLink href={c.sheetLink}>Their performance sheet</ExtLink>
-        )}
         {c.noteMissing && (
           <a
             className="inline-flex items-center gap-1.5 font-medium txt-bad underline-offset-4 hover:underline"

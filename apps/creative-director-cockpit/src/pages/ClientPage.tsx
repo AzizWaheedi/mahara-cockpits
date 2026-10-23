@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { AppointmentFeedback } from "@/components/AppointmentFeedback";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
   CreativePreview,
@@ -34,6 +35,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { CopyButton, WinningAds } from "@/components/WinningAds";
+import { clickupTaskId } from "@/lib/appointmentFeedback";
 import {
   fetchClientDetail,
   fetchClientOutbox,
@@ -568,6 +570,9 @@ export function ClientPage() {
       <ContextPackPanel ctx={ctx} />
 
       <div className="mb-6 space-y-4">
+        {d.client.name === name ? (
+          <AppointmentFeedback taskId={clickupTaskId(d.client.url)} />
+        ) : null}
         <ClientStats s={d.stats} />
 
         <div className="flex flex-wrap gap-2">
