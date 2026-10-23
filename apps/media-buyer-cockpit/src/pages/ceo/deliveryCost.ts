@@ -19,6 +19,14 @@ import type {
  * A payload computed before the refresh that reads the board (no
  * `spendMeasured` on a window, no `confirmed` on a day) reads n/a with that
  * reason, never the old figure under the new label.
+ *
+ * Done With You clients (the CEO, 23 Oct 2026, cost per booking decisions,
+ * 2: "No keep the CPL but ignore CPB") book their own meetings: the refresh
+ * leaves their spend out of `spendMeasured` and their stored bookings out of
+ * `confirmed`, so every tab's cost per booking leaves them out with no work
+ * here. Their spend stays in spend, leads and cost per lead, and each tab's
+ * hint names what was left out (doneWithYouOf, doneWithYouOfDays,
+ * doneWithYouLine).
  */
 
 /** The label every tab uses for this number. */
@@ -182,4 +190,94 @@ export function confirmedOfDays(
   to: string,
 ): number | null {
   return cpbConfirmedOfDays(rows, from, to).confirmed;
+}
+
+/** Two decimals with thousands commas, for an amount a hint names exactly. */
+const dollars2 = (x: number) => {
+  const [whole, part] = cents(x).toFixed(2).split(".");
+  return `$${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${part}`;
+};
+
+/**
+ * The sentence a company booking count adds for decision 2 (contract 1.2
+ * B.5): the rule, so it holds whether or not a done-with-you client spent or
+ * booked in the window. Starts with a space.
+ */
+export const DWY_BOOKINGS_LEFT_OUT =
+  " Done-with-you clients' bookings are not counted here: they book their own meetings.";
+
+/**
+ * DWY_BOOKINGS_LEFT_OUT for a window or run of days computed since 23 Oct
+ * 2026; empty for an older payload (null), which still counted them.
+ */
+export function doneWithYouBookingsLine(
+  left: DoneWithYouLeftOut | null,
+): string {
+  return left === null ? "" : DWY_BOOKINGS_LEFT_OUT;
+}
+
+/** Done With You spend a window or a run of days leaves out of its cost per booking. */
+export type DoneWithYouLeftOut = {
+  /** The spend left out, to the cent. */
+  spend: number;
+  /** Per client, when the window names them; empty for a run of days. */
+  clients: { client: string; spend: number }[];
+};
+
+/**
+ * The Done With You spend a window's cost per booking leaves out, or null on
+ * a payload computed before 23 Oct 2026 (not known, never zero).
+ */
+export function doneWithYouOf(
+  w: DeliveryWindow | null | undefined,
+): DoneWithYouLeftOut | null {
+  if (!w || !Array.isArray(w.doneWithYou)) return null;
+  const clients = w.doneWithYou.filter(x => isNum(x.spend) && x.spend > 0);
+  return {
+    spend: cents(clients.reduce((n, x) => n + x.spend, 0)),
+    clients,
+  };
+}
+
+/**
+ * The Done With You spend over a run of days of the daily series, or null
+ * when any day predates 23 Oct 2026 or no day is kept.
+ */
+export function doneWithYouOfDays(
+  rows: readonly DeliveryDay[] | null | undefined,
+  from: string,
+  to: string,
+): DoneWithYouLeftOut | null {
+  const days = (rows ?? []).filter(r => r.date >= from && r.date <= to);
+  if (days.length === 0 || days.some(r => r.spendDoneWithYou === undefined))
+    return null;
+  return {
+    spend: cents(
+      days.reduce(
+        (n, r) => n + (isNum(r.spendDoneWithYou) ? r.spendDoneWithYou : 0),
+        0,
+      ),
+    ),
+    clients: [],
+  };
+}
+
+/**
+ * The sentence a cost per booking hint adds for decision 2: what it leaves
+ * out, with the amount. "$205.05 of نهوض نجد's spend is left out: done with
+ * you, the client books its own meetings." Starts with a space. Empty for a
+ * payload computed before 23 Oct 2026 (null), which did not leave them out,
+ * and when no done-with-you spend falls in the days: there is nothing left
+ * out to name, and the payload cannot tell whether such a client exists.
+ */
+export function doneWithYouLine(left: DoneWithYouLeftOut | null): string {
+  if (left === null || !(left.spend > 0)) return "";
+  const [one] = left.clients;
+  if (left.clients.length === 1 && one)
+    return ` ${dollars2(left.spend)} of ${one.client}'s spend is left out: done with you, the client books its own meetings.`;
+  if (left.clients.length > 1)
+    return ` ${dollars2(left.spend)} of done-with-you clients' spend is left out (${left.clients
+      .map(x => `${x.client} ${dollars2(x.spend)}`)
+      .join(", ")}): they book their own meetings.`;
+  return ` ${dollars2(left.spend)} of done-with-you clients' spend is left out: they book their own meetings.`;
 }

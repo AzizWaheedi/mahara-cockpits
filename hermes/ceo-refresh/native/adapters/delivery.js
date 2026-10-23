@@ -1,7 +1,7 @@
 import { OFF_STATUSES } from "../board.js";
-import { CPB_BAD, CPB_GATE, CPL_GATE, SHOW_RATE_GOOD } from "../constants.js";
+import { CPB_BAD, CPB_GATE, CPL_GATE, NO_LEAD_MULTIPLE, SHOW_RATE_GOOD } from "../constants.js";
 import { attendanceOf, BoardBookingsUnreadable, clientDelivery, GONE_STATUS, hasNoOutcome, isWon, } from "../data/triage.js";
-import { bookingLedger, clientBookingWindow, deliveryClientGroups, deliveryDaily, deliveryWindow, storedBookings, } from "../data/deliveryClients.js";
+import { bookingLedger, clientBookingWindow, deliveryClientGroups, deliveryDaily, deliveryWindow, isDoneWithYou, storedBookings, } from "../data/deliveryClients.js";
 import { addDays, KUWAIT_OFFSET_MS, kuwaitDay, monthStart } from "../time.js";
 // The gates come from convex/constants.ts, the one place the whole cockpit
 // reads them, so the delivery colours, the client risk points and the KPI
@@ -58,6 +58,33 @@ function shortIssue(text) {
 }
 /** The cost per lead that makes a client bad: 50% over the gate, $22.50, the same line the sync kills a campaign on. */
 const CPL_BAD = CPL_GATE * 1.5;
+/** The no-lead line where a row carries none of its own: 2 x the $15 gate. */
+const GATE_NO_LEAD_LINE = NO_LEAD_MULTIPLE * CPL_GATE;
+/** The sentence a Done With You row's booking fields carry (decision 2, 23 Oct 2026). */
+export const DWY_WHY = "Done with you: the client books its own meetings, so its cost per booking and booking rate are not judged.";
+/**
+ * Spend with no lead (the CEO, 23 Oct 2026, cost per booking decisions, 4):
+ * "Depends on how much spend if 2x target cpl then yes bad if below that then
+ * not enough data". No lead is leads known and 0; unknown leads are never "no
+ * lead". At or over the row's `noLeadLine` (2 x the client's cost per lead
+ * line, 2 x the $15 gate when it carries none), compared on the cent, the
+ * cost per lead counts as over CPL_BAD. Above $0 and under the line it is too
+ * few to judge, and never bad on leads.
+ */
+function leadsJudged(x) {
+    const line = typeof x.noLeadLine === "number" && Number.isFinite(x.noLeadLine) ? x.noLeadLine : GATE_NO_LEAD_LINE;
+    const noLead = x.leads === 0;
+    const noLeadBad = noLead && usd(x.spend) >= line;
+    return {
+        noLeadBad,
+        cplBad: noLeadBad || (x.leads > 0 && x.cpl !== null && x.cpl > CPL_BAD),
+        tooFew: x.spend > 0 && noLead && !noLeadBad,
+    };
+}
+/** Spend with no lead under the row's no-lead line: too few to judge (decision 4). */
+export function tooFew(x) {
+    return leadsJudged(x).tooFew;
+}
 /**
  * Aziz's client status rule (2026-09-21) under the golden rule (R5,
  * 2026-10-22): cost per booking is the number that matters, so a cost per
@@ -69,19 +96,26 @@ const CPL_BAD = CPL_GATE * 1.5;
  *   lead is within CPL_GATE and the show rate at least SHOW_RATE_GOOD, else
  *   watch, however high the cost per lead;
  * - known and over CPB_GATE: bad over CPB_BAD or with a cost per lead over
- *   CPL_BAD (spend with no leads is that), else watch;
+ *   CPL_BAD (spend with no lead at or over the no-lead line is that), else
+ *   watch;
  * - no confirmed booking yet (measured): the spend so far is the cost per
  *   booking: over CPB_BAD bad, over CPB_GATE watch (bad with a bad cost per
  *   lead), up to CPB_GATE too early to judge, which reads watch (bad only with
- *   a bad cost per lead or no leads);
+ *   a bad cost per lead or no lead on the no-lead line);
  * - bookings not measured (`confirmed` null: the board stores none of these
  *   days): judged on cost per lead alone, bad or watch, and the row says so.
  * A low show rate alone is watch, never bad: the one show rate line for
  * clients is 60 (Aziz, 2026-09-21). no-data is nothing spent.
  *
- * `weBook` false is a Done With You client with no bookings: they book their
- * own, so cost per lead is the only number we own and the only one judged,
- * as the sync judges DWY campaigns.
+ * `weBook` false is a Done With You client, whatever bookings GoHighLevel
+ * holds for it (decision 2, 23 Oct 2026), or a client with nothing saying we
+ * book for it and no booking: cost per lead is the only number judged, as the
+ * sync judges DWY campaigns.
+ *
+ * Spend with no lead (decision 4, 23 Oct 2026) is a bad cost per lead only at
+ * or over `noLeadLine` (2 x the client's cost per lead line; 2 x the $15 gate
+ * when absent); under it, it is too few to judge and the booking rules alone
+ * give the status.
  *
  * `confirmed` absent reads `cpbConfirmed` alone: known when it is a number,
  * no confirmed booking when it is null. `spendMeasured` is the spend on the
@@ -90,7 +124,7 @@ const CPL_BAD = CPL_GATE * 1.5;
 export function clientStatus(x) {
     if (x.spend <= 0)
         return "no-data";
-    const cplBad = x.leads === 0 || x.cpl === null || x.cpl > CPL_BAD;
+    const { cplBad } = leadsJudged(x);
     const cplGood = x.cpl !== null && x.cpl <= CPL_GATE;
     if (!x.weBook)
         return cplBad ? "bad" : cplGood ? "good" : "watch";
@@ -111,8 +145,9 @@ export function clientStatus(x) {
 /**
  * Too early to judge: a client we book for with no confirmed booking yet on
  * measured spend within the booking gate and a cost per lead that is not bad
- * (clientStatus reads it as a watch). With no leads, or a cost per lead over
- * CPL_BAD, it is off track instead, never "too early".
+ * (clientStatus reads it as a watch). With no lead at or over the no-lead
+ * line, or a cost per lead over CPL_BAD, it is off track instead, never "too
+ * early".
  */
 export function tooEarly(x) {
     if (!x.weBook || x.confirmed === null || x.confirmed === undefined)
@@ -120,7 +155,7 @@ export function tooEarly(x) {
     if (x.cpbConfirmed !== null && x.cpbConfirmed !== undefined)
         return false;
     const spent = x.spendMeasured ?? x.spend;
-    const cplBad = x.leads === 0 || x.cpl === null || x.cpl > CPL_BAD;
+    const { cplBad } = leadsJudged(x);
     return spent > 0 && spent <= CPB_GATE && !cplBad;
 }
 /** What a booking that shows would cost at the good show rate: cost per confirmed booking over 0.6. */
@@ -215,7 +250,9 @@ export const delivery = {
         }
         else
             info(`Spend and leads are Meta only, for campaigns on the Ads Management board, in USD after a fixed exchange table. A day is the ad account's reporting day. Gates are Aziz's (2026-09-16): cost per lead $${CPL_GATE}, cost per booking $${CPB_GATE}.`);
-        info(`Client status is Aziz's rule (2026-09-21) under the golden rule (2026-10-22): cost per booking decides. For a client we book for, a cost per confirmed booking within $${CPB_GATE} is on track with a cost per lead within $${CPL_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%, and a watch otherwise, however high the cost per lead. Over $${CPB_GATE} it is a watch, and off track over $${CPB_BAD} or with a cost per lead over $${CPL_BAD.toFixed(2)} (spend with no leads counts as that). With no confirmed booking yet, the spend so far counts as the cost per booking: over $${CPB_BAD} is off track, $${CPB_GATE} to $${CPB_BAD} a watch (off track with a cost per lead over $${CPL_BAD.toFixed(2)}), and up to $${CPB_GATE} too early to judge, shown as a watch (off track only with a cost per lead over $${CPL_BAD.toFixed(2)} or no leads). A client whose bookings the board does not store is judged on cost per lead alone, and its row says so. There is one show rate line for clients, ${SHOW_RATE_GOOD}%; under it is a watch, never off track. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client with no bookings is judged on cost per lead alone.`);
+        info(`Client status is Aziz's rule (2026-09-21) under the golden rule (2026-10-22): cost per booking decides. For a client we book for, a cost per confirmed booking within $${CPB_GATE} is on track with a cost per lead within $${CPL_GATE} and a show rate of at least ${SHOW_RATE_GOOD}%, and a watch otherwise, however high the cost per lead. Over $${CPB_GATE} it is a watch, and off track over $${CPB_BAD} or with a cost per lead over $${CPL_BAD.toFixed(2)} (spend with no lead at or over the no-lead line counts as that). With no confirmed booking yet, the spend so far counts as the cost per booking: over $${CPB_BAD} is off track, $${CPB_GATE} to $${CPB_BAD} a watch (off track with a cost per lead over $${CPL_BAD.toFixed(2)}), and up to $${CPB_GATE} too early to judge, shown as a watch (off track only with a cost per lead over $${CPL_BAD.toFixed(2)} or no lead on the no-lead line). Spend with no lead (Aziz, 23 Oct 2026) is off track once it reaches ${NO_LEAD_MULTIPLE} x the client's cost per lead line on the Client Performance board, $${GATE_NO_LEAD_LINE} (${NO_LEAD_MULTIPLE} x the $${CPL_GATE} gate) where the board holds no line for the client; under that it is too few to judge, never off track on leads, and the row says so. A client whose bookings the board does not store is judged on cost per lead alone, and its row says so. There is one show rate line for clients, ${SHOW_RATE_GOOD}%; under it is a watch, never off track. Costs are the last 7 days, the show rate the last 30. Beside each status is what a booking that shows would cost at a ${SHOW_RATE_GOOD}% show rate: cost per confirmed booking over 0.${SHOW_RATE_GOOD}. A Done With You client (Aziz, 23 Oct 2026) is judged on cost per lead alone, whatever bookings GoHighLevel holds for it: it books its own meetings, so its cost per booking and booking rate are not judged, and its spend is left out of every company cost per booking.`);
+        if (triage && triage.cplTargets && triage.cplTargets.ok === false)
+            warn(`The clients' cost per lead lines (cockpit_board_targets) could not be read this run, so spend with no lead is judged against $${GATE_NO_LEAD_LINE} (${NO_LEAD_MULTIPLE} x the $${CPL_GATE} gate) for every client (${triage.cplTargets.error ?? "no reason given"}).`);
         if (triageError)
             warn(`The Creative Triage database could not be read this run, so these numbers fall back to the Ads Management board, which counts only campaigns carrying a card and undercounts both spend and bookings, and no cost per confirmed booking is shown (${triageError}).`);
         const grain = data.daily ?? [];
@@ -349,14 +386,25 @@ export const delivery = {
                     info(`Cross-check, last 7 days: the media sync's own rows add up to ${dollars(board.spend)} and ${plural(board.bookings, "booking")} it tied to an ad campaign; the Client Performance board holds ${mine.confirmed === null ? "no stored count" : plural(mine.confirmed, "confirmed booking")} made on the same days. ${Math.abs(gap) >= 1
                         ? `Spend tied to a client ad account is ${dollars(mine.spend)}: the ${dollars(Math.abs(gap))} gap is campaigns that tie to no client ad account (named below).`
                         : "Spend is the same table on both sides, so it matches."} The figures above use the board, which also holds bookings the sync could not tie to a campaign.`);
-                // The spend the cost per confirmed booking leaves out, named.
-                if (mine.notMeasured.length && mine.confirmed !== null) {
+                // The spend the cost per confirmed booking leaves out, named:
+                // spend whose bookings the board does not store, and Done With
+                // You clients' spend (decision 2, 23 Oct 2026). "Over all" adds
+                // back only the first: done-with-you spend is never divided.
+                const dwyOut = mine.doneWithYou ?? [];
+                if ((mine.notMeasured.length || dwyOut.length) && mine.confirmed !== null) {
                     const left = mine.notMeasured.reduce((n, x) => n + x.spend, 0);
-                    warn(`Cost per confirmed booking for the last 7 days divides ${cents(mine.spendMeasured)} by ${plural(mine.confirmed, "confirmed booking")} and leaves out ${cents(left)} of spend whose bookings the board does not store: ${mine.notMeasured.slice(0, 6).map(x => `${x.client} ${cents(x.spend)} (${x.why.replace(/\.$/, "")})`).join("; ")}${mine.notMeasured.length > 6 ? `; and ${mine.notMeasured.length - 6} more` : ""}. Over all ${cents(mine.spend)} of spend it would read ${mine.confirmed > 0 ? cents(mine.spend / mine.confirmed) : "n/a"}.`);
+                    const dwyLeft = dwyOut.reduce((n, x) => n + x.spend, 0);
+                    const parts = [];
+                    if (mine.notMeasured.length)
+                        parts.push(`${cents(left)} of spend whose bookings the board does not store: ${mine.notMeasured.slice(0, 6).map(x => `${x.client} ${cents(x.spend)} (${x.why.replace(/\.$/, "")})`).join("; ")}${mine.notMeasured.length > 6 ? `; and ${mine.notMeasured.length - 6} more` : ""}`);
+                    if (dwyOut.length)
+                        parts.push(`${cents(dwyLeft)} of done-with-you spend: ${dwyOut.map(x => `${x.client} ${cents(x.spend)}`).join("; ")} (${dwyOut.length === 1 ? "the client books its own meetings" : "these clients book their own meetings"}, so ${dwyOut.length === 1 ? "its" : "their"} spend and stored bookings are out of the cost per booking)`);
+                    const counted = mine.spendMeasured + left;
+                    warn(`Cost per confirmed booking for the last 7 days divides ${cents(mine.spendMeasured)} by ${plural(mine.confirmed, "confirmed booking")} and leaves out ${parts.join("; and ")}.${mine.notMeasured.length ? ` Over all ${cents(counted)} of spend${dwyOut.length ? ", done-with-you spend still left out," : ""} it would read ${mine.confirmed > 0 ? cents(counted / mine.confirmed) : "n/a"}.` : ""}`);
                 }
             }
             info(`This month runs from the 1st to today so far, as every CEO tab's month does, so it adds today's spend and bookings as they come in; the last 7 days, yesterday, the Client Performance board and the timeframe card stop at yesterday.`);
-            info(`Bookings are the Client Performance board's counts (cockpit_client_days), by the Kuwait day the booking was made, never the day of the meeting. Confirmed is main and online calendar bookings, leaving out cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts; provisional is the Not Confirmed Appointments calendar; the total is both. A client ties to the board through its Meta ad account (cockpit_board_clients), else through GoHighLevel. Cost per confirmed booking divides the spend on the days the board stores a count by the confirmed bookings: spend on days it does not store is named, never divided, and a client with none stored reads "not measured", never zero bookings. Done With You clients are in it as the board stores them. Show and close rates use the day of the meeting, because they need the meeting to have happened.`);
+            info(`Bookings are the Client Performance board's counts (cockpit_client_days), by the Kuwait day the booking was made, never the day of the meeting. Confirmed is main and online calendar bookings, leaving out cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts; provisional is the Not Confirmed Appointments calendar; the total is both. A client ties to the board through its Meta ad account (cockpit_board_clients), else through GoHighLevel. Cost per confirmed booking divides the spend on the days the board stores a count by the confirmed bookings: spend on days it does not store is named, never divided, and a client with none stored reads "not measured", never zero bookings. Done With You clients are left out of it (Aziz, 23 Oct 2026): they book their own meetings, so their spend leaves the spend divided and their stored bookings leave the count, each window names that spend, and their spend and leads stay in cost per lead. Show and close rates use the day of the meeting, because they need the meeting to have happened.`);
             {
                 const p = storedBookings(ledger, [...ledger.tied], last7From, yesterday);
                 if (p.provisionalUnread > 0)
@@ -405,9 +453,9 @@ export const delivery = {
                     const month = windowOf(from, today);
                     const goneClients = deliveryClientGroups(triage.clients.filter(c => spentMonth.has(c.clientId)));
                     if (usd(lost) > 0)
-                        warn(`${dollars(lost)} of this month's spend is on ${plural(goneClients.length, "client")} whose card is marked cancelled or stopped, and it brought in ${plural(leads, "lead")}: ${goneClients
+                        warn(`${dollars(lost)} of this month's spend is on ${plural(goneClients.length, "lost client")} (cancelled, stopped or churned), and it brought in ${plural(leads, "lead")}: ${goneClients
                             .map(c => `${c.name} (${String(c.status ?? "").toLowerCase()})`)
-                            .join(", ")}. That money is inside the totals above, and these clients are not in the clients table. Without ${goneClients.length === 1 ? "it" : "them"} the month reads ${dollars(month.spend - lost)} and ${plural(month.leads - leads, "lead")}.`);
+                            .join(", ")}. That money is inside the totals above, and ${goneClients.length === 1 ? "this client is" : "these clients are"} not in the clients table. Without ${goneClients.length === 1 ? "it" : "them"} the month reads ${dollars(month.spend - lost)} and ${plural(month.leads - leads, "lead")}.`);
                 }
             }
             if (triage.media.untied.length) {
@@ -567,16 +615,25 @@ export const delivery = {
                         bookings: w30.bookings ?? 0,
                     };
                     const rates = deliveryRates(counts);
+                    // Done With You (decision 2, 23 Oct 2026): the client books
+                    // its own meetings, so its cost per booking and booking rate
+                    // are never judged, whatever GoHighLevel holds for it.
+                    const isDwy = isDoneWithYou(c.serviceMode);
                     // Lead to booking needs the bookings: not measured is n/a, never 0%.
-                    const rates30 = w30.confirmed === null
+                    const rates30 = w30.confirmed === null || isDwy
                         ? { ...rates, bookRate: null, bookRateConfirmed: null, bookRateProvisional: null }
                         : rates;
                     const cpl = r.leads > 0 ? usd(r.spend / r.leads) : null;
-                    // Done With You clients book their own appointments, so none of
-                    // ours exist to count and cost per lead is the only number we
-                    // own. A client we do book for is judged on all three, even in
-                    // a week that produced nothing.
-                    const weBook = (w7.bookings ?? 0) > 0 || /dfy|done for/i.test(c.serviceMode ?? "");
+                    // Cost per lead is the only number we own for a Done With You
+                    // client. A client we do book for is judged on all three, even
+                    // in a week that produced nothing.
+                    const weBook = !isDwy && ((w7.bookings ?? 0) > 0 || /dfy|done for/i.test(c.serviceMode ?? ""));
+                    // The client's own cost per lead line, as the board reads it
+                    // (its card's line, else the board default, else the gate):
+                    // spend with no lead is bad at NO_LEAD_MULTIPLE x it (decision 4).
+                    const targets = triage.cplTargets;
+                    const cplLine = (c.clickupTaskId ? targets?.byCard?.[c.clickupTaskId] : undefined) ?? targets?.defaults ?? CPL_GATE;
+                    const noLeadLine = NO_LEAD_MULTIPLE * cplLine;
                     const judged = {
                         spend: usd(r.spend),
                         leads: r.leads,
@@ -586,6 +643,7 @@ export const delivery = {
                         spendMeasured: w7.spendMeasured,
                         showRate: rates30.showRate,
                         weBook,
+                        noLeadLine,
                     };
                     return {
                         client: c.name,
@@ -593,28 +651,35 @@ export const delivery = {
                         spend7d: usd(r.spend),
                         leads7d: r.leads,
                         cpl7d: cpl,
-                        bookings7d: w7.bookings,
-                        cpb7d: w7.cpb,
+                        bookings7d: isDwy ? null : w7.bookings,
+                        cpb7d: isDwy ? null : w7.cpb,
                         campaigns: c.campaigns,
                         status: clientStatus(judged),
                         tooEarly: tooEarly(judged),
+                        // No lead yet on spend under the row's no-lead line: too
+                        // few to judge, a watch at worst (decision 4).
+                        tooFew: tooFew(judged),
+                        noLeadLine,
                         // Judged on cost per lead alone, and why: a Done With
                         // You client with no booking books its own meetings; a
                         // client with no card or a blank Service Mode and no
                         // booking has nothing saying we book for it; a client
                         // we book for whose days the board stores none of is
                         // not measured (a watch at best).
-                        cplOnly: weBook
-                            ? (w7.confirmed === null ? "not measured" : null)
-                            : c.serviceMode ? "dwy" : "no service mode",
-                        provisional7d: w7.provisional,
-                        confirmed7d: w7.confirmed,
+                        cplOnly: isDwy
+                            ? "dwy"
+                            : weBook
+                                ? (w7.confirmed === null ? "not measured" : null)
+                                : c.serviceMode ? "dwy" : "no service mode",
+                        provisional7d: isDwy ? null : w7.provisional,
+                        confirmed7d: isDwy ? null : w7.confirmed,
                         spendMeasured7d: w7.spendMeasured,
-                        cpbConfirmed7d: w7.cpbConfirmed,
+                        cpbConfirmed7d: isDwy ? null : w7.cpbConfirmed,
                         // Why some or all of the spend has no bookings to
-                        // divide by (not measured), in one plain sentence.
-                        bookingsWhy: w7.why,
-                        costPerShownAt60: costPerShownAt60(w7.cpbConfirmed),
+                        // divide by (not measured), in one plain sentence; for a
+                        // Done With You client, why none is judged.
+                        bookingsWhy: isDwy ? DWY_WHY : w7.why,
+                        costPerShownAt60: isDwy ? null : costPerShownAt60(w7.cpbConfirmed),
                         rates30,
                         noOutcome: c.noOutcome,
                     };
@@ -632,6 +697,18 @@ export const delivery = {
                 : null;
             // The board fallback has no calendar split and no show rate: the
             // status is judged on cost per lead and cost per booking alone.
+            const judged = {
+                spend: g.spend,
+                leads: g.leads,
+                cpl,
+                // The sync's booking events, read only where its GHL is;
+                // anywhere else bookings are not measured.
+                confirmed: g.tracked ? g.bookings : null,
+                cpbConfirmed: cpb,
+                showRate: null,
+                weBook: g.tracked,
+                noLeadLine: GATE_NO_LEAD_LINE,
+            };
             return {
                 client: g.client,
                 clickupTaskId: g.clickupTaskId,
@@ -641,17 +718,9 @@ export const delivery = {
                 bookings7d: g.bookings,
                 cpb7d: cpb,
                 campaigns: g.campaigns,
-                status: clientStatus({
-                    spend: g.spend,
-                    leads: g.leads,
-                    cpl,
-                    // The sync's booking events, read only where its GHL is;
-                    // anywhere else bookings are not measured.
-                    confirmed: g.tracked ? g.bookings : null,
-                    cpbConfirmed: cpb,
-                    showRate: null,
-                    weBook: g.tracked,
-                }),
+                status: clientStatus(judged),
+                tooFew: tooFew(judged),
+                noLeadLine: GATE_NO_LEAD_LINE,
                 cplOnly: g.tracked ? null : "not measured",
                 rates30: null,
             };
@@ -761,12 +830,13 @@ export const delivery = {
             .filter(g => !g.tracked)
             .map(g => g.client);
         if (triage) {
-            const dwy = deliveryClientGroups(triage.clients).filter(c => c.serviceMode && !/dfy|done for/i.test(c.serviceMode));
+            // Decision 2 (the CEO, 23 Oct 2026): "No keep the CPL but ignore CPB".
+            const dwy = deliveryClientGroups(triage.clients).filter(c => isDoneWithYou(c.serviceMode));
             warn(`${dwy.length
-                ? `${plural(dwy.length, "Done With You client")} ${dwy.length === 1 ? "books" : "book"} their own, so ${dwy.length === 1 ? "it is" : "they are"} judged on cost per lead alone, with no cost per booking, unless the board stores a booking for ${dwy.length === 1 ? "it" : "them"} in the last 7 days: ${dwy
+                ? `${plural(dwy.length, "Done With You client")} ${dwy.length === 1 ? "books its" : "book their"} own meetings, so ${dwy.length === 1 ? "it is" : "they are"} judged on cost per lead alone, whatever bookings GoHighLevel holds: ${dwy
                     .map(c => c.name)
                     .slice(0, 4)
-                    .join(", ")}. The company cost per confirmed booking counts ${dwy.length === 1 ? "its" : "their"} spend with the bookings the board stores for ${dwy.length === 1 ? "it" : "them"}, as the board's own total does.`
+                    .join(", ")}${dwy.length > 4 ? ` and ${dwy.length - 4} more` : ""}. ${dwy.length === 1 ? "Its" : "Their"} spend and leads stay in spend, leads and cost per lead; ${dwy.length === 1 ? "its" : "their"} spend and stored bookings are left out of every company cost per booking, and each window names that spend.`
                 : "Every client with spend is one we book appointments for."}`);
         }
         else

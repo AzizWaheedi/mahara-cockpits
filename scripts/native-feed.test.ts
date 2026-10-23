@@ -800,7 +800,7 @@ test('market provider explicit insight fallback handles ad sets and ads, explici
   expect(plays).toHaveLength(2);
   expect(requested).toEqual([
    {level:'adset',date_preset:'last_30d',fields:'adset_id,spend,actions',limit:500},
-   {level:'ad',date_preset:'last_30d',fields:'ad_id,spend,actions',limit:500},
+   {level:'ad',date_preset:'last_30d',fields:'ad_id,adset_id,spend,actions',limit:500},
   ]);
   expect(plays[0].spend).toBe(150);
   expect(plays[0].leads).toBe(10);

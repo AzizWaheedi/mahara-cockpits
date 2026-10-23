@@ -1,3 +1,4 @@
+import { NO_LEAD_MULTIPLE } from "../../../src/lib/kpi";
 import { CPL_GATE } from "../../constants";
 import { graph } from "../../tools";
 import type {
@@ -85,6 +86,11 @@ function day(d: string): string {
 }
 
 const usd = (x: number) => Math.round(x * 100) / 100;
+/**
+ * Seven days at this spend with no lead is a kill; under it, not enough data
+ * (decision 4, 23 Oct 2026). The same line as the native refresh's KILL_FLOOR.
+ */
+export const KILL_FLOOR = NO_LEAD_MULTIPLE * CPL_GATE;
 const rate = (a: number, b: number) => (b > 0 ? a / b : null);
 
 /**
@@ -400,10 +406,17 @@ function judge(
       reason: "On, but nothing spent in seven days.",
       owner: "ads",
     };
-  if (w7.leads === 0 && w7.spend >= 30)
+  if (w7.leads === 0 && Math.round(w7.spend * 100) / 100 >= KILL_FLOOR)
     return {
       verdict: "kill",
       reason: `$${w7.spend.toFixed(0)} in seven days and not one lead reached the CRM${w7.metaLeads > 0 ? `, though Meta counts ${w7.metaLeads}` : ""}.`,
+      owner: "ads",
+    };
+  // No lead yet under the kill floor: not enough data (decision 4).
+  if (w7.leads === 0)
+    return {
+      verdict: "hold",
+      reason: `$${w7.spend.toFixed(2)} in seven days and no lead yet: not enough data. The verdict comes at $${KILL_FLOOR} (${NO_LEAD_MULTIPLE} x the $${CPL_GATE} gate).`,
       owner: "ads",
     };
   if (w7.cpl !== null && w7.cpl > CPL_GATE * 1.5)

@@ -22,16 +22,23 @@
 // Bands are judged on the figure to the cent, as the cockpit shows it
 // (hermes/cockpit-sync/calculator.ts cents()): $60.004 is $60.00 and within
 // the $60 gate, and the Cost Per Lead band is judged on the CPL (7d) value
-// written beside it, so the two columns never disagree.
+// written beside it, so the two columns never disagree. Cost Per Booking's
+// "911" starts over the cockpit's $80 line (CPB_911, decision 3 of 23 Oct
+// 2026). No lead on 2 x the $15 gate or more is Cost Per Lead "911"; under
+// that it is too few to judge (noLeadLine(), decision 4 of 23 Oct 2026), and
+// under the media sync's $1 of "no delivery" it is no spend, as before. Leads
+// that were not read are not measured and get no verdict: missing is never zero.
 
-import { CPB_GATE, CPL_GATE, FIELD, FIELD_NAME, kpiBand, money, type Row } from "./rules.ts";
+import { NO_LEAD_MULTIPLE, noLeadLine } from "../../../apps/media-buyer-cockpit/src/lib/kpi.ts";
+import { CPB_GATE, CPL_GATE, cpbBand, cplBand, FIELD, FIELD_NAME, money, type Row } from "./rules.ts";
 
 /** Numbers older than this are not pushed: the Last Updated column would lie. */
 export const MAX_SOURCE_AGE_MS = 3 * 3600_000;
 
 export type KpiInputs = {
   campaigns: Row[];
-  daily: { campaignName: string; day: string; spend: number; leads: number }[];
+  /** Spend and leads by campaign and day. leads is null when no row of that day carried a lead count. */
+  daily: { campaignName: string; day: string; spend: number; leads: number | null }[];
   /** Bookings by client. Still in the inputs for older readers; the plan reads bookingsByCampaign. */
   bookings?: { client: string; day: string; booked: number }[];
   /** Bookings by campaign and booking day (20261022z). */
@@ -107,6 +114,8 @@ const num = (x: unknown): number | undefined => {
   return Number.isFinite(n) ? n : undefined;
 };
 const round2 = (n: number) => Number(n.toFixed(2));
+/** A line in whole dollars reads "$N", any other "$N.NN". */
+const dollars = (n: number) => (Number.isInteger(n) ? `$${n}` : money(n));
 /** A dollar figure to the cent, exactly as the media sync rounds it (calculator.ts cents()). */
 export const cents = (n: number) => Math.round(n * 100) / 100;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -141,21 +150,26 @@ export function optionId(fields: Row[], fieldId: string, label: string): string 
 /**
  * Sum the daily ledger over the window. With no `through` the window has no
  * upper bound, which is how convex/sync.ts summed it (the parity test keeps
- * that); the plan always passes the media sync's last day.
+ * that); the plan always passes the media sync's last day. A day whose leads
+ * were not read adds nothing to `leads` and is counted in `unknownLeads`, so
+ * the plan can tell "no lead" from "not measured".
  */
 export function sevenDay(daily: KpiInputs["daily"], campaignNames: string[], since7: string, through?: string) {
   const names = new Set(campaignNames);
   let spend = 0;
   let leads = 0;
   let rows = 0;
+  let unknownLeads = 0;
   for (const d of daily) {
     const day = String(d.day);
     if (!names.has(d.campaignName) || day < since7 || (through !== undefined && day > through)) continue;
     spend += Number(d.spend) || 0;
-    leads += Number(d.leads) || 0;
+    const dayLeads = num(d.leads);
+    if (dayLeads === undefined) unknownLeads += 1;
+    else leads += dayLeads;
     rows += 1;
   }
-  return { spend, leads, rows };
+  return { spend, leads, rows, unknownLeads };
 }
 
 /** Bookings of these campaigns made from..through, from the booking ledger by campaign. */
@@ -285,11 +299,35 @@ export function planKpi(inputs: KpiInputs, tasks: Row[], fields: Row[], now: num
       const value = round2(cpl);
       const old = num(cf(FIELD.cpl7d)?.value);
       push(FIELD.cpl7d, old, value, value, old === undefined || round2(old) !== value);
-      band(FIELD.cplStatus, kpiBand(value, CPL_GATE));
+      band(FIELD.cplStatus, cplBand(value));
     } else {
-      card.notes.push(`No leads from ${days}, so there is no CPL. The CPL columns were left as they were.`);
-      if (!blank(cf(FIELD.cpl7d))) held.push(FIELD_NAME[FIELD.cpl7d]);
-      if (!neutral(cf(FIELD.cplStatus))) held.push(FIELD_NAME[FIELD.cplStatus]);
+      // No lead (decision 4, Aziz 23 Oct 2026): judged on the spend the cost per lead would divide, to the cent.
+      const spent = cents(ledger.spend);
+      const line = noLeadLine();
+      const why = `(${NO_LEAD_MULTIPLE} x the ${dollars(CPL_GATE)} cost per lead gate)`;
+      const leaveCpl = (note: string) => {
+        card.notes.push(note);
+        if (!blank(cf(FIELD.cpl7d))) held.push(FIELD_NAME[FIELD.cpl7d]);
+        if (!neutral(cf(FIELD.cplStatus))) held.push(FIELD_NAME[FIELD.cplStatus]);
+      };
+      // Missing is never zero (decision 4, rule 1): a lead count that was not read gets no verdict.
+      const leadsUnknown = ledger.unknownLeads > 0 || rows.some(r => num(r.leads7d) === undefined);
+      if (leadsUnknown)
+        leaveCpl(
+          `Leads were not read for ${days}, so they are not measured and there is no cost per lead to judge. The CPL columns were left as they were. Check the media sync's lead counts.`,
+        );
+      else if (spent >= line) {
+        card.notes.push(`No lead on ${money(spent)} from ${days}: ${dollars(line)} or more ${why}, so Cost Per Lead is 911.`);
+        // There is no cost per lead to write: a blank CPL (7d) stays blank, an old number holds Last Updated.
+        if (!blank(cf(FIELD.cpl7d))) {
+          card.notes.push(`CPL (7d) still shows ${cf(FIELD.cpl7d)?.value} from an earlier push, and there is no cost per lead to write in its place.`);
+          held.push(FIELD_NAME[FIELD.cpl7d]);
+        }
+        band(FIELD.cplStatus, "911");
+      } else if (ledger.spend >= NO_DELIVERY_SPEND)
+        leaveCpl(`No lead yet on ${money(spent)} from ${days}: under ${dollars(line)} ${why}, too few to judge, so the CPL columns were left as they were.`);
+      // No spend, or under the media sync's $1 of "no delivery": unchanged (decision 4, rule 6).
+      else leaveCpl(`No leads from ${days}, so there is no CPL. The CPL columns were left as they were.`);
     }
 
     // Bookings and cost per booking, per campaign, summed over the card's campaigns.
@@ -336,9 +374,9 @@ export function planKpi(inputs: KpiInputs, tasks: Row[], fields: Row[], now: num
           leaveCpb(
             `${booked} ${booked === 1 ? "booking" : "bookings"} from ${days} on only ${money(ledger.spend)} of spend: the media sync calls that no delivery, so they came from earlier spend. Cost per booking is not judged and Cost Per Booking was left as it was.`,
           );
-        else if (booked > 0) band(FIELD.cpbStatus, kpiBand(cents(ledger.spend / booked), CPB_GATE));
+        else if (booked > 0) band(FIELD.cpbStatus, cpbBand(cents(ledger.spend / booked)));
         else if (spent > CPB_GATE) {
-          const label = kpiBand(spent, CPB_GATE);
+          const label = cpbBand(spent);
           card.notes.push(`No booking on ${money(ledger.spend)} from ${days}, so the spend itself is the cost per booking: ${label}.`);
           band(FIELD.cpbStatus, label);
         } else leaveCpb(`No booking yet on ${money(ledger.spend)} from ${days}: too early to judge, so Cost Per Booking was left as it was.`);

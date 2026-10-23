@@ -29,6 +29,8 @@ import {
   CLOSE_RATE_GATE,
   CPB_GATE,
   CPL_GATE,
+  NO_LEAD_MULTIPLE,
+  noLeadLine,
   SHOW_RATE_GOOD,
 } from "./kpi";
 import { kuwaitDay, shiftDay } from "./reportPeriod";
@@ -232,6 +234,14 @@ function diagnoseRaw(p: Any): Diagnosis {
   const leads7 = week
     ? week.leads
     : ads.reduce((n, c) => n + Number(c.leads7d ?? 0), 0);
+  // Leads are known only when the client's figure, or every campaign listed,
+  // carries a count: missing is never zero.
+  const leadsKnown =
+    week !== undefined ||
+    (ads.length > 0 &&
+      ads.every(
+        c => typeof c.leads7d === "number" && Number.isFinite(c.leads7d),
+      ));
   const cpl = leads7 > 0 ? spend7 / leads7 : null;
   // Done with you: the client books their own, so cost per lead alone decides.
   const dwy = serviceModel(p?.service).dwy;
@@ -415,6 +425,45 @@ function diagnoseRaw(p: Any): Diagnosis {
         owner: "Media buyer",
       });
   }
+
+  // ---- No lead at all (decision 4, Aziz, 23 Oct 2026): "Depends on how much
+  // spend if 2x target cpl then yes bad if below that then not enough data".
+  // At or over 2 x the $15 gate with no lead, the ads are the constraint, for
+  // done for you and done with you alike; under it there is not enough data
+  // yet and nothing is raised. Judged on the cents the evidence shows.
+  // A cost per booking finding on the same spend already says it. Earlier
+  // leads that still book within the $60 gate make it a watch, never the
+  // constraint (the golden rule, contract 1.4.7), as cpl_watch does.
+  const spendCents = Math.round(spend7 * 100) / 100;
+  const noLeadOut = leadsKnown && leads7 === 0 && spendCents >= noLeadLine();
+  if (noLeadOut && cpb != null && !cpbOver)
+    watch.push({
+      id: "no_leads_watch",
+      layer: "micro",
+      title: `No leads from $${spendCents.toFixed(2)} spent ${span}, but bookings still cost $${cpb.toFixed(2)}, ${cpb < GATES.costPerBooking ? "under" : "on"} the $${GATES.costPerBooking} gate`,
+      evidence: `$${spendCents.toFixed(2)} spent ${span}, no lead came in, and ${bookings7} ${bookings7 === 1 ? "booking" : "bookings"} from earlier leads cost $${cpb.toFixed(2)} each.`,
+      diagnosis:
+        "Cost per booking decides, not cost per lead: while earlier leads still book within the gate, the missing leads are a line to watch, not the constraint.",
+      fixes: [
+        `Bookings still cost ${cpb < GATES.costPerBooking ? "under" : "no more than"} $${GATES.costPerBooking}, so leave the ads alone. Submit a test lead through the form to check it still arrives, and look again if the cost per booking passes the gate.`,
+      ],
+      owner: "Media buyer",
+    });
+  else if (noLeadOut && !found.some(c => c.id === "cpb_high"))
+    found.push({
+      id: "no_leads",
+      layer: "micro",
+      title: `No leads from $${spendCents.toFixed(2)} spent ${span}`,
+      evidence: `$${spendCents.toFixed(2)} spent ${span} and no lead came in: $${noLeadLine().toFixed(2)} or more with no lead is out of KPI (${NO_LEAD_MULTIPLE} x the $${GATES.cpl} cost per lead gate).`,
+      diagnosis:
+        "The spend brought no leads at all, so it is the ads, not the calls: the form, the tracking or the ads themselves.",
+      fixes: [
+        "Submit a test lead through the form and check it arrives in the CRM.",
+        "Check the lead form and the pixel on the ad account are still connected.",
+        "Raise a ticket to the media buyer with the spend and the dates.",
+      ],
+      owner: "Media buyer",
+    });
 
   // ---- Micro leaks, in the doc's own diagnostic order. ----
   if (bookingRate != null && leads >= 10 && bookingRate < GATES.bookingRate) {

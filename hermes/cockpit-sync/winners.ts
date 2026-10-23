@@ -1,7 +1,17 @@
+import {CPL_GATE} from './constants';
+import {isExcludedAd} from './excludedAds';
 import {stillKeyFor} from './metaMedia';
 import type {Row} from './runtime';
 
-/** Same spend/CPL and best-window rules as the former market archive. Never deletes. */
+/**
+ * Same spend/CPL and best-window rules as the former market archive. Never deletes:
+ * the media publish refuses a plan that drops an archived winner ("Winner archive
+ * cannot delete history"). An ad on the compromise list (excludedAds.ts) never
+ * counts on any screen (CEO, 23 Oct 2026, default b of the cost per booking
+ * decisions), so it is never archived or updated here; a listed winner already in
+ * the archive passes through exactly as read. Taking those rows out is a database
+ * step under the publish's lock, run after this release is live.
+ */
 export function archiveWinners(state: Row, tables: Record<string, Row[]>) {
   if (!Array.isArray(state.winners) || !Array.isArray(tables.marketPlays)) throw new Error('Winner archive and current market source are required');
   const archive = new Map<string, Row>(state.winners.map((row: Row) => [String(row.adId), {...row}]));
@@ -16,8 +26,9 @@ export function archiveWinners(state: Row, tables: Record<string, Row[]>) {
   }
   const now = Date.now(), today = new Date(now + 10800000).toISOString().slice(0, 10);
   for (const play of tables.marketPlays) for (const creative of play.creatives ?? []) {
-    if (!(creative.spend >= 100) || creative.cpl == null || creative.cpl > 15) continue;
+    if (!(creative.spend >= 100) || creative.cpl == null || creative.cpl > CPL_GATE) continue;
     if (!creative.adId) throw new Error('Winning creative has no provider ad ID');
+    if (isExcludedAd(creative.adId)) continue;
     const id = String(creative.adId), previous = archive.get(id);
     const next: Row = previous ?? {adId: id, origin: 'auto', firstArchivedAt: now};
     if (!previous || creative.spend >= Number(previous.spend ?? 0)) Object.assign(next, {spend: Math.round(creative.spend), leads: creative.leads, cpl: creative.cpl});
@@ -34,6 +45,7 @@ export function archiveWinners(state: Row, tables: Record<string, Row[]>) {
     archive.set(id, next);
   }
   for (const [id, row] of archive) {
+    if (isExcludedAd(id)) continue;
     const campaign = campaignOf.get(id) ?? row.campaignName;
     if (live.has(id) || answered.has(campaign)) { row.stillLive = live.has(id); row.retiredOn = row.stillLive ? undefined : row.retiredOn ?? today; }
     delete row.previewSrc;

@@ -765,7 +765,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Confirmed plus provisional bookings the Client Performance board stores, by the Kuwait day the booking was made.",
     BOARD_BOOKINGS,
     "count",
-    "Days and clients the board stores no count for (not measured, never zero); clients with no ad account tied here.",
+    "Days and clients the board stores no count for (not measured, never zero); clients with no ad account tied here. Done-with-you clients' bookings (they book their own meetings), from 23 Oct 2026.",
   ),
   d(
     "delivery.bookings_confirmed",
@@ -774,7 +774,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Main and online calendar bookings made that day, as the Client Performance board counts them.",
     BOARD_BOOKINGS,
     "count",
-    "Cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts.",
+    "Cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts. Done-with-you clients' bookings (they book their own meetings), from 23 Oct 2026.",
   ),
   d(
     "delivery.bookings_provisional",
@@ -783,7 +783,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Bookings on the Not Confirmed Appointments calendar made that day, as the Client Performance board counts them.",
     BOARD_BOOKINGS,
     "count",
-    "Days the board stores no provisional count for (no dialer appointment sync for that client).",
+    "Days the board stores no provisional count for (no dialer appointment sync for that client). Done-with-you clients' bookings (they book their own meetings), from 23 Oct 2026.",
   ),
   d(
     "delivery.cpl",
@@ -800,7 +800,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Spend on the days the board stores bookings, over confirmed plus provisional bookings.",
     `${MEDIA}; ${BOARD_BOOKINGS}`,
     "usd",
-    "Spend on days or clients whose bookings the board does not store, named on the screen.",
+    "Spend on days or clients whose bookings the board does not store, named on the screen. Done-with-you clients' spend and bookings (they book their own meetings), from 23 Oct 2026, also named.",
   ),
   d(
     "delivery.cpb_confirmed",
@@ -809,7 +809,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Spend on the days the board stores bookings, over confirmed bookings: the main cost per booking.",
     `${MEDIA}; ${BOARD_BOOKINGS}`,
     "usd",
-    "Spend on days or clients whose bookings the board does not store, named on the screen.",
+    "Spend on days or clients whose bookings the board does not store, named on the screen. Done-with-you clients' spend and bookings (they book their own meetings), from 23 Oct 2026, also named.",
   ),
   d(
     "delivery.book_rate",
@@ -818,6 +818,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Bookings over platform leads, last 30 days.",
     `${MEDIA}; ${BOARD_BOOKINGS}`,
     "share",
+    "Done-with-you clients' spend and bookings (they book their own meetings), from 23 Oct 2026: no rate is written for them.",
   ),
   d(
     "delivery.book_rate_confirmed",
@@ -826,6 +827,7 @@ export const DEFINITIONS: MetricDefinition[] = [
     "Confirmed bookings over platform leads, last 30 days.",
     `${MEDIA}; ${BOARD_BOOKINGS}`,
     "share",
+    "Done-with-you clients' spend and bookings (they book their own meetings), from 23 Oct 2026: no rate is written for them.",
   ),
   d(
     "delivery.show_rate",

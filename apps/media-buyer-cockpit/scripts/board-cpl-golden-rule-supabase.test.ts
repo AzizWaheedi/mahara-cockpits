@@ -17,6 +17,10 @@
  *   Client D: cost per booking $70 (watch): unchanged.
  *   Client E: cost per lead $19.44 (already a watch line): unchanged, no note.
  *   Client G: its own lines ($50 a booking, $12.50 a lead): the note says them.
+ * Then done with you (20261023r, the CEO's decisions of 23 Oct 2026, 2), on the booking
+ * rule and the tree's (20261021l, 20261021m) and the number meanings (20261021e) it is
+ * written against: Client B keeps its cost per lead's own status (the golden rule still
+ * never applies to it), and its cost per booking and booking rate read done with you.
  * Every client, ad and number is invented.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -427,5 +431,75 @@ describe("the golden rule", () => {
       const strip = (r: Row) => ({ ...r, values: { ...r.values, cpl: null } });
       expect(strip(row)).toEqual(strip(was));
     }
+  });
+});
+
+describe("done with you (20261023r): the golden rule still never applies", () => {
+  const BOOKS = {
+    v: null,
+    status: "not_measured",
+    note: "Done with you: the client books its own meetings, so its cost per booking and booking rate are not judged.",
+    clientBooks: true,
+  };
+  let golden: Record<string, Row>;
+  beforeAll(async () => {
+    golden = await rows();
+    await owner(db);
+    // The dialer's inventory of GoHighLevel, as board-booking-rule-supabase.test.ts makes it.
+    const text = readFileSync(
+      new URL("./board-booking-rule-supabase.test.ts", import.meta.url),
+      "utf8",
+    );
+    const inventory = text.match(/const INVENTORY = `([\s\S]*?)`;\n/);
+    if (!inventory || inventory[1].includes("${"))
+      throw new Error("The booking rule test's INVENTORY block moved");
+    await db.exec(inventory[1]);
+    // The lever gate as live: 20261017b's body (20261023r is written against it).
+    const lever = migration("20261017b_team_only_seats.sql").match(
+      /CREATE OR REPLACE FUNCTION public\.cockpit_board_lever_context\(p_args jsonb\)[\s\S]*?END \$function\$;/,
+    );
+    if (!lever)
+      throw new Error("cockpit_board_lever_context moved in 20261017b");
+    await db.exec(lever[0]);
+    for (const f of [
+      "20261021l_board_booking_rule.sql",
+      "20261021m_board_tree_booking_rule.sql",
+      "20261021e_number_meanings.sql",
+      "20261023r_board_done_with_you.sql",
+    ])
+      await db.exec(migration(f));
+  }, 120_000);
+
+  test("Client B keeps its cost per lead's own status; its cost per booking carries clientBooks", async () => {
+    const after = await rows();
+    expect(after["Client B"].values.cpl).toEqual(golden["Client B"].values.cpl);
+    expect(after["Client B"].values.cpl).toMatchObject({
+      v: 35,
+      status: "off",
+    });
+    expect(after["Client B"].values.cpl.note ?? "").not.toContain(
+      "golden rule",
+    );
+    expect(after["Client B"].values.costPerBooking).toEqual(BOOKS);
+    expect(after["Client B"].values.leadToBooking).toEqual(BOOKS);
+    expect(
+      golden["Client B"].values.costPerBooking.clientBooks,
+    ).toBeUndefined();
+  });
+
+  test("the done-for-you clients keep the golden rule exactly as before", async () => {
+    const after = await rows();
+    for (const name of [
+      "Client A",
+      "Client C",
+      "Client D",
+      "Client E",
+      "Client G",
+    ])
+      expect([name, after[name].values]).toEqual([name, golden[name].values]);
+    expect(after["Client A"].values.cpl).toMatchObject({
+      status: "watch",
+      note: NOTE,
+    });
   });
 });

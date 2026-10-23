@@ -50,11 +50,15 @@ import type {
   DeliveryWindow,
   Note,
 } from "@/types/ceo/payloads";
+import { dwyCell } from "./DoneWithYouCell";
 import {
   BEFORE_CONFIRMED,
   CPB_CONFIRMED_LABEL,
   cpbConfirmedOf,
   daysHaveConfirmed,
+  doneWithYouBookingsLine,
+  doneWithYouLine,
+  doneWithYouOf,
   FALLBACK_CONFIRMED,
   NOT_STORED,
 } from "./deliveryCost";
@@ -62,7 +66,9 @@ import {
   cplOnlyOf,
   cplOnlyRule,
   DWY_BOOKINGS,
+  noLeadClauses,
   statusRule,
+  tooFewNote,
 } from "./deliveryStatus";
 import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
@@ -90,16 +96,25 @@ const STATUS: Record<
  */
 function statusHint(status: ClientStatus, row?: ClientRow): string {
   const only = row ? cplOnlyOf(row) : null;
-  return only ? cplOnlyRule(status, only) : statusRule(status);
+  return only ? cplOnlyRule(status, only, row?.noLeadLine) : statusRule(status);
 }
 
-/** The row's own reason under its status: too early, or why some spend is not measured. */
+/**
+ * The row's own reason under its status: too few to judge on leads (decision
+ * 4, 23 Oct 2026), too early on bookings, or why some spend is not measured.
+ * Too few and too early read together when both hold (Madana, $11.09).
+ */
 function rowStatusNote(r: ClientRow): string {
+  const few = tooFewNote(r);
+  const fewNote = few ? ` ${few}` : "";
   if (r.tooEarly)
-    return ` Too early to judge: no confirmed booking yet on ${money(r.spendMeasured7d ?? r.spend7d)} of spend, within the ${money(CPB_GATE)} gate.`;
-  if (cplOnlyOf(r) === "dwy") return "";
-  return r.bookingsWhy ? ` ${r.bookingsWhy}` : "";
+    return `${fewNote} Too early to judge: no confirmed booking yet on ${money(r.spendMeasured7d ?? r.spend7d)} of spend, within the ${money(CPB_GATE)} gate.`;
+  if (cplOnlyOf(r) === "dwy") return fewNote;
+  return `${fewNote}${r.bookingsWhy ? ` ${r.bookingsWhy}` : ""}`;
 }
+
+/** Spend with no lead, in the words the campaign verdicts use (decision 4). */
+const NO_LEAD = noLeadClauses();
 
 // Verdicts come from the media buyer sync (convex/sync.ts); unknown ones still show, in neutral.
 const VERDICTS: {
@@ -120,7 +135,7 @@ const VERDICTS: {
     key: "hold",
     label: "Hold",
     tone: "warning",
-    hint: "Cost per lead over the gate but within 50%. Watch, do not scale.",
+    hint: `Cost per lead over the gate but within 50%, or ${NO_LEAD.watch}. Watch, do not scale.`,
     always: true,
   },
   {
@@ -139,7 +154,7 @@ const VERDICTS: {
     key: "kill",
     label: "Kill",
     tone: "critical",
-    hint: "Spend with no leads, or cost per lead more than 50% over the gate.",
+    hint: `${capitalize(NO_LEAD.bad)}, or cost per lead more than 50% over the gate.`,
     always: true,
   },
   {
@@ -161,16 +176,24 @@ function shiftDay(day: string, days: number): string {
 /** A window's cost per confirmed booking (./deliveryCost.ts), or null. */
 const cpbOf = (w: DeliveryWindow) => cpbConfirmedOf(w).value;
 
-/** What the cost per confirmed booking leaves out of a window's spend, in one line. */
-function notMeasuredLine(w: DeliveryWindow): string {
+/**
+ * What the cost per confirmed booking leaves out of a window's spend, in one
+ * line: spend whose bookings the board does not store, with what it would
+ * read over that spend too, then Done With You spend (decision 2, 23 Oct
+ * 2026), which is never added back.
+ */
+export function notMeasuredLine(w: DeliveryWindow): string {
   const left = w.notMeasured ?? [];
-  if (left.length === 0) return "";
+  const dwy = doneWithYouLine(doneWithYouOf(w));
+  if (left.length === 0) return dwy;
   const total = left.reduce((n, x) => n + x.spend, 0);
   const names = left
     .slice(0, 3)
     .map(x => `${x.client} ${money(x.spend)}`)
     .join(", ");
-  return ` It leaves out ${money(total)} of spend whose bookings the board does not store (${names}${left.length > 3 ? ` and ${left.length - 3} more` : ""}); over all ${money(w.spend)} it would read ${money(isNum(w.confirmed) && w.confirmed > 0 ? w.spend / w.confirmed : null)}.`;
+  // A payload from before 23 Oct 2026 has no measured split to add to.
+  const counted = isNum(w.spendMeasured) ? w.spendMeasured + total : w.spend;
+  return ` It leaves out ${money(total)} of spend whose bookings the board does not store (${names}${left.length > 3 ? ` and ${left.length - 3} more` : ""}); over all ${money(counted)}${(doneWithYouOf(w)?.spend ?? 0) > 0 ? ", done-with-you spend still left out," : ""} it would read ${money(isNum(w.confirmed) && w.confirmed > 0 ? counted / w.confirmed : null)}.${dwy}`;
 }
 
 /** Clients' ads: spend, leads, bookings, campaign health, launches and account issues. */
@@ -467,7 +490,7 @@ function Headline({
           }
           hint={
             byBookingDay
-              ? "Bookings made on these days, as the Client Performance board counts them (cockpit_client_days), by the Kuwait day the booking was made. Confirmed is main and online calendar bookings, leaving out cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts; provisional is the Not Confirmed Appointments calendar; the headline is both."
+              ? `Bookings made on these days, as the Client Performance board counts them (cockpit_client_days), by the Kuwait day the booking was made. Confirmed is main and online calendar bookings, leaving out cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts; provisional is the Not Confirmed Appointments calendar; the headline is both.${doneWithYouBookingsLine(doneWithYouOf(w))}`
               : "Appointments on the client's booking calendars, on the day the meeting was for. This refresh predates the board's counts by booking day."
           }
         />
@@ -970,9 +993,8 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       // The total and its split; n/a when the board stores none of these
       // days for the client (not measured, never zero).
       cell: r =>
-        cplOnlyOf(r) === "dwy" ? (
-          <Na hint={DWY_BOOKINGS} />
-        ) : isNum(r.bookings7d) ? (
+        dwyCell(r) ??
+        (isNum(r.bookings7d) ? (
           <Stacked
             value={count(r.bookings7d)}
             sub={
@@ -985,21 +1007,23 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
           <Na
             hint={r.bookingsWhy ?? "Bookings are not measured for this client."}
           />
-        ),
+        )),
       sortValue: r => r.bookings7d,
     },
     {
       key: "cpb",
       header: CPB_CONFIRMED_LABEL,
       numeric: true,
-      cell: r => (
-        <GateCell
-          value={rowCost(r)}
-          gate={d.gates.cpb}
-          noun="booking"
-          naHint={rowCostWhy(r)}
-        />
-      ),
+      // Done with you (decision 2): not judged, never n/a.
+      cell: r =>
+        dwyCell(r) ?? (
+          <GateCell
+            value={rowCost(r)}
+            gate={d.gates.cpb}
+            noun="booking"
+            naHint={rowCostWhy(r)}
+          />
+        ),
       sortValue: r => rowCost(r),
     },
     {
@@ -1007,6 +1031,9 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
       header: "Lead to booking",
       numeric: true,
       cell: r => {
+        // Done with you (decision 2): the client books its own meetings.
+        const dwy = dwyCell(r);
+        if (dwy) return dwy;
         const x = r.rates30;
         // The confirmed rate is the main one; a payload from before the split carries only the whole.
         const main = x ? (x.bookRateConfirmed ?? x.bookRate) : null;
@@ -1028,7 +1055,11 @@ function ClientsTable({ d }: { d: DeliveryPayload }) {
         );
       },
       sortValue: r =>
-        r.rates30 ? (r.rates30.bookRateConfirmed ?? r.rates30.bookRate) : null,
+        cplOnlyOf(r) === "dwy"
+          ? null
+          : r.rates30
+            ? (r.rates30.bookRateConfirmed ?? r.rates30.bookRate)
+            : null,
     },
     {
       key: "showRate",

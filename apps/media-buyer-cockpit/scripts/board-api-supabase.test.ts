@@ -15,7 +15,13 @@
  * 20261021a_board_skip_excluded_ads's: ads on the compromise list
  * (cockpit_excluded_ads, matched on the ad id) never count, and their
  * outsiders' campaigns leave Budget/day and Budget used and are said instead.
- * Every person, client, ad and number is invented.
+ * Since 2026-10-23 (the CEO's cost per booking decisions) the chain also runs
+ * 20261023q (churned clients' ad accounts, with Triple Edge's row), 20261023s
+ * (no lead on 2 x the cost per lead line is off, under it too few), 20261023t
+ * ("churned" in Not in these totals) and 20261023u (the Meta ad-days notes).
+ * Every person, client, ad and number is invented, but for Triple Edge's
+ * account, which the churned list seeds, and SAFAD's outsider ad and campaign
+ * ids, read from 20261023p.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -51,6 +57,12 @@ const READ_CHECKED = [
   // Ads on the compromise list never count (2026-10-21). It takes the read as
   // live, so cockpit_is_team_only (20261017b) is loaded first.
   "20261021a_board_skip_excluded_ads.sql",
+  // The CEO's decisions of 2026-10-23: churned clients' ad accounts, no lead on
+  // 2 x the cost per lead line, "churned" off the board, the Meta notes.
+  "20261023q_churned_ad_accounts.sql",
+  "20261023s_board_cpl_no_lead.sql",
+  "20261023t_board_read_churned.sql",
+  "20261023u_meta_ad_days_churned.sql",
 ];
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
@@ -1519,12 +1531,16 @@ describe("missing is never zero", () => {
       status: "not_measured",
       notVideo: true,
     });
-    // No form lead yet for $30: already past the $22.50 line, so off, not too early.
+    // No form lead yet for $30: 2 x the $15 cost per lead line (the CEO, 23 Oct 2026,
+    // 20261023s), so off, not too few.
     expect(ad2.metrics.cpl).toMatchObject({
       v: null,
       status: "off",
       atLeast: 30,
     });
+    expect(ad2.metrics.cpl.note).toStartWith(
+      `No form lead yet for $30.00 of lead-campaign spend: $${(2 * kpi.CPL_GATE).toFixed(2)} or more with no lead is off (2 x the $${kpi.CPL_GATE.toFixed(2)} cost per lead line).`,
+    );
   });
 
   test("a time frame of today only: ad numbers are not in yet", async () => {
@@ -2590,6 +2606,8 @@ describe("the read takes the 16 October corrections", () => {
     const LOOSE = "4444444444";
     const KEPT = "5555555555";
     const LAUNCH = "6666666666";
+    // On the churned list (20261023q seeds it): Triple Edge Building Construction.
+    const CHURNED = "2002793296961811";
     const [{ ids: cBefore }] = await q<{ ids: string[] }>(
       "SELECT ad_account_ids AS ids FROM public.cockpit_board_clients WHERE location_id = $1",
       [LOC_C],
@@ -2624,10 +2642,11 @@ describe("the read takes the 16 October corrections", () => {
       await adDay(base(LOOSE, "Nobody's ads", 12.25));
       await adDay(base(KEPT, "Client A boosts", 7));
       await adDay(base(LAUNCH, "Client C ads", 20));
+      await adDay(base(CHURNED, "Triple Edge Building Construction", 3.5));
       for (const who of [CEO, ADMIN, CREATIVE]) {
         const b = await board(who);
         expect(b.offBoard).toEqual({
-          spend: 69.75,
+          spend: 73.25,
           unpriced: false,
           accounts: [
             {
@@ -2658,6 +2677,14 @@ describe("the read takes the 16 October corrections", () => {
               client: "Client A",
               reason: "kept_out",
             },
+            // A churned client's account: named with the list's client, never "not tied".
+            {
+              accountId: CHURNED,
+              name: "Triple Edge Building Construction",
+              spend: 3.5,
+              client: "Triple Edge Building Construction",
+              reason: "churned",
+            },
           ],
         });
         expect(rowOf(b, LOC_D).values.spend).toEqual(spendBefore);
@@ -2671,12 +2698,14 @@ describe("the read takes the 16 October corrections", () => {
       });
       const limited = await board(LIMITED);
       expect(limited.offBoard).toBeNull();
-      expect(JSON.stringify(limited)).not.toMatch(/Old client|3333333333/);
+      expect(JSON.stringify(limited)).not.toMatch(
+        /Old client|3333333333|Triple Edge|2002793296961811/,
+      );
     } finally {
       await owner(db);
       await q(
         "DELETE FROM public.cockpit_meta_ad_days WHERE account_id = ANY($1)",
-        [[OLD, LOOSE, KEPT, LAUNCH]],
+        [[OLD, LOOSE, KEPT, LAUNCH, CHURNED]],
       );
       await q(
         "DELETE FROM public.cockpit_board_account_ties WHERE account_id = $1",
@@ -4126,6 +4155,64 @@ describe("daily budgets and budget used (2026-10-17)", () => {
       await q(
         "DELETE FROM public.cockpit_meta_budget_days WHERE campaign_id = '80099'",
       );
+    }
+  });
+
+  test("SAFAD's Lucas shape (20261023p, 23 Oct): a listed ad with a budget-day and no ad-day row takes its campaign's budget out of Budget used, by the campaign id on its list row", async () => {
+    await seed();
+    const row = async () => rowOf(await board(CEO, kd(6), kd(4)), LOC_A).values;
+    const before = await row();
+    expect(before.budgetUsed).toMatchObject({ v: 88, num: 66, den: 75 });
+    // The outsider's ad and campaign ids as 20261023p lists them (on SAFAD's account there;
+    // on Client A's here, since the board matches a list row to the accounts it reads).
+    const listed = migration(
+      "20261023p_exclude_safad_unauthorized_ads.sql",
+    ).match(/\('(120254896955290066)', 'act_\d+', '(\d+)'/);
+    if (!listed)
+      throw new Error("20261023p no longer lists Lucas's ad with its campaign");
+    const [, AD, CAMPAIGN] = listed;
+    expect(CAMPAIGN).toBe("120254896955270066");
+    await owner(db);
+    const [{ had }] = await q<{ had: boolean }>(
+      "SELECT EXISTS (SELECT 1 FROM public.cockpit_meta_spend_reads WHERE account_id = $1 AND source = 'days' AND since = $2 AND until = $3) had",
+      [ACCT_A, kd(6), kd(4)],
+    );
+    try {
+      // "New Engagement Campaign": switched on at $555 a day on kd(5); its ad never delivered, so no
+      // ad-day row. Meta answered the account's spend for these days, so the day reads $0 spent.
+      await budgetDay(CAMPAIGN, 5, 555);
+      await spendRead(ACCT_A, 6, 4);
+      let v = await row();
+      expect(v.budgetUsed).toMatchObject({ num: 66, den: 75 + 555 });
+      // Listed with no campaign id, the board cannot tell the campaign is the outsider's.
+      await owner(db);
+      await q(
+        "INSERT INTO public.cockpit_excluded_ads(ad_id,account_id,campaign_id,reason) VALUES($1,$2,NULL,'unauthorized_meta_incident_2026_10')",
+        [AD, `act_${ACCT_A}`],
+      );
+      v = await row();
+      expect(v.budgetUsed).toMatchObject({ num: 66, den: 75 + 555 });
+      // With the campaign id 20261023p writes: the $555 leaves, and Client A reads as before.
+      await owner(db);
+      await q(
+        "UPDATE public.cockpit_excluded_ads SET campaign_id = $2 WHERE ad_id = $1",
+        [AD, CAMPAIGN],
+      );
+      v = await row();
+      for (const k of ["spend", "spendPerDay", "budgetUsed"])
+        expect(v[k]).toEqual(before[k]);
+    } finally {
+      await owner(db);
+      await q("DELETE FROM public.cockpit_excluded_ads WHERE ad_id = $1", [AD]);
+      await q(
+        "DELETE FROM public.cockpit_meta_budget_days WHERE campaign_id = $1",
+        [CAMPAIGN],
+      );
+      if (!had)
+        await q(
+          "DELETE FROM public.cockpit_meta_spend_reads WHERE account_id = $1 AND source = 'days' AND since = $2 AND until = $3",
+          [ACCT_A, kd(6), kd(4)],
+        );
     }
   });
 

@@ -229,6 +229,9 @@ function Portfolio({ rows }: { rows: ClientRow[] }) {
 const OFF_BOARD_REASON: Record<string, string> = {
   cancelled: "cancelled client",
   not_active: "client not active",
+  // Decision 5, 23 Oct 2026: a former client's account with no card or
+  // board row, listed in cockpit_churned_ad_accounts (20261023t).
+  churned: "churned client",
   not_tied: "not tied to a client",
   kept_out: "kept out: the client's own boosting",
 };
@@ -241,6 +244,22 @@ function offBoardReason(a: {
   if (a.reason === "not_active" && a.clientStatus)
     return `${a.clientStatus.toLowerCase()} client, not on the board`;
   return OFF_BOARD_REASON[a.reason ?? ""] ?? a.reason ?? undefined;
+}
+
+/**
+ * The client an off-board account belongs to, when it says more than the
+ * account's own name: a churned client's list name is often the account's
+ * (Triple Edge Building Construction), so it is not printed twice.
+ */
+function offBoardClient(a: {
+  client?: string | null;
+  name?: string | null;
+}): string | undefined {
+  const client = a.client?.trim();
+  if (!client) return undefined;
+  return client.toLowerCase() === (a.name ?? "").trim().toLowerCase()
+    ? undefined
+    : client;
 }
 
 /**
@@ -276,7 +295,9 @@ function OffBoardLine({ off }: { off: NonNullable<Board["offBoard"]> }) {
                 {a.name ?? `act_${a.accountId}`}
               </span>
               <span className="block truncate text-muted-foreground">
-                {[a.client, offBoardReason(a)].filter(Boolean).join(", ")}
+                {[offBoardClient(a), offBoardReason(a)]
+                  .filter(Boolean)
+                  .join(", ")}
               </span>
             </span>
             <span className="shrink-0 tabular-nums">

@@ -94,6 +94,8 @@ test('the full delivery adapter publishes one metric per client across multiple 
       {client_id:'account-a',day,spend_usd:100,leads:10,campaigns:['A'],source:'media'},
       {client_id:'account-b',day,spend_usd:300,leads:30,campaigns:['B'],source:'media'},
     ];
+    // The clients' cost per lead lines (decision 4, 23 Oct 2026): none set.
+    if(query.includes('cockpit_board_targets'))return [];
     throw new Error(`Unexpected database read: ${query.slice(0,80)}`);
   };
   let reads=0;
@@ -102,15 +104,15 @@ test('the full delivery adapter publishes one metric per client across multiple 
     daily:[{date:day,campaignName:'A',spend:400,leads:40}],bookings:[],clients:[],launches:[],tree:[],offBoard:[],health:{},
   })} as unknown as Runtime['repository'];
   const result=await withRuntime({env:()=>undefined,read:async(_p:string,q:string)=>{reads+=1;return answer(q);},repository,tools:{} as Runtime['tools']},()=>delivery.compute({repository}));
-  expect(reads).toBe(8);
+  expect(reads).toBe(9);
   const payload=result.payload as any;
   expect(payload.bookingSource).toBe('board');
   expect(payload.clients).toHaveLength(1);
   // The board's 4 confirmed and 1 provisional on the card's location, over the $400 the board stores.
-  expect(payload.clients[0]).toMatchObject({clickupTaskId:'client-one',spend7d:400,leads7d:40,confirmed7d:4,provisional7d:1,bookings7d:5,spendMeasured7d:400,cpbConfirmed7d:100,bookingsWhy:null,status:'bad'});
+  expect(payload.clients[0]).toMatchObject({clickupTaskId:'client-one',spend7d:400,leads7d:40,confirmed7d:4,provisional7d:1,bookings7d:5,spendMeasured7d:400,cpbConfirmed7d:100,bookingsWhy:null,status:'bad',tooFew:false,noLeadLine:30});
   // The company window counts every stored booking on a tied location; the
   // client with no spend here is named, not counted.
-  expect(payload.last7).toMatchObject({spend:400,confirmed:4,provisional:1,bookings:5,spendMeasured:400,cpbConfirmed:100,cpb:80,notMeasured:[]});
+  expect(payload.last7).toMatchObject({spend:400,confirmed:4,provisional:1,bookings:5,spendMeasured:400,cpbConfirmed:100,cpb:80,notMeasured:[],doneWithYou:[]});
   expect(payload.notes.some((n:any)=>n.text.includes('No spend (2)'))).toBe(true);
   const day1=payload.daily.find((r:any)=>r.date===day);
   expect(day1).toMatchObject({confirmed:4,provisional:1,spendMeasured:400,bookings:5});

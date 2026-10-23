@@ -78,6 +78,12 @@ export const CellSchema = z
     basis: text,
     notVideo: z.boolean().nullable().optional(),
     clientCalls: z.boolean().nullable().optional(),
+    /**
+     * Done with you (decision 2, 23 Oct 2026, 20261023r): the client books
+     * its own meetings, so its cost per booking and booking rate are not
+     * judged. Not measured by rule, never a gap in the data.
+     */
+    clientBooks: z.boolean().nullable().optional(),
     oldestDays: num,
     oldestAt: text,
     share: num,
@@ -236,8 +242,10 @@ export const BoardSchema = z
       .optional(),
     /**
      * Spend in the time frame on ad accounts no client row carries: a
-     * cancelled client's account still delivering, one tied to no client, one
-     * kept out on purpose. Whole-board seats only; null for the rest.
+     * cancelled client's account still delivering, a churned client's account
+     * (reason "churned", from cockpit_churned_ad_accounts, 20261023t), one
+     * tied to no client, one kept out on purpose. Whole-board seats only; null
+     * for the rest.
      */
     offBoard: z
       .object({

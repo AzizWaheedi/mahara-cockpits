@@ -1,7 +1,7 @@
 // Generated from the original calculator. Source SHA256: 47158039b37ab1cb814f1102b7599e9377ae107cc75b28529821f04caebe81d6
 // Regenerate with node hermes/cockpit-sync/extract.cjs; no service runtime dependency.
 import {type ActionCtx,internal,graph,allAdAccounts,callTool,supabaseQuery,unwrap,providerFetch,recordLog,MAHARA_BUSINESS_ID} from './runtime';
-import {CPL_GATE,CPB_GATE,CPB_BAD,BOOKING_RATE_GATE,NEW_CAMPAIGN_FORM_URL} from './constants';
+import {CPL_GATE,CPB_GATE,CPB_BAD,BOOKING_RATE_GATE,NEW_CAMPAIGN_FORM_URL,NO_LEAD_MULTIPLE} from './constants';
 import {isExcludedAd,withoutExcludedAds} from './excludedAds';
 import {budgetCurrency,campaignBudgets,unconvertedBudgetNote} from './currency';
 import {cleanLostNote} from './lostNotes';
@@ -347,6 +347,20 @@ type Finding = {
 /** At or under the gate the account is winning — leave it alone. */
 const GOOD_CPL = CPL_GATE;
 
+/**
+ * Spend with no lead (Aziz, 23 Oct 2026, cost per booking decisions 4): at or
+ * over NO_LEAD_MULTIPLE x the $15 gate ($30) it is bad; above $0 and under it
+ * there is not enough data to judge. The worker has no client line, so it is
+ * always 2 x the kpi.ts gate. Judged on the cents shown, as judge does.
+ */
+const NO_LEAD_LINE = NO_LEAD_MULTIPLE * CPL_GATE;
+const noLeadWords = `$${NO_LEAD_LINE} (${NO_LEAD_MULTIPLE} x the $${CPL_GATE} gate)`;
+
+/** Known leads of 0 on spend at or over the no-lead line. */
+export function noLeadBad(spend: number, leads: number | undefined): boolean {
+  return leads === 0 && cents(spend) >= NO_LEAD_LINE;
+}
+
 export function diagnose(c: {
   spend: number;
   leads: number;
@@ -362,9 +376,36 @@ export function diagnose(c: {
   costPerBooking?: number;
 }): Finding[] {
   const money = (n: number) => `$${n.toFixed(2)}`;
-  if (c.spend < 20) return [];
+  // No lead on the no-lead line or more is always the landing page or the
+  // tracking, however early (decision 4, 23 Oct 2026).
+  const noLead = noLeadBad(c.spend, c.leads);
+  const noLeadFinding: Finding = {
+    severity: "fix",
+    constraint: "Landing page or tracking",
+    evidence: `${money(c.spend)} spent and no lead recorded: ${noLeadWords} or more with no lead is bad.`,
+    fixes: [
+      "Submit a test lead yourself and confirm it lands in GHL.",
+      "Check the pixel and the lead form connection, and raise a tech ticket if it is broken.",
+    ],
+  };
+  if (c.spend < 20 && !noLead) return [];
   // Not enough spent to judge cost yet — say so instead of inventing a verdict.
   if (c.spend < MIN_SPEND_FOR_COST_CALLS && (c.leads ?? 0) < 5) {
+    if (noLead) return [noLeadFinding];
+    // No lead yet under the no-lead line: the verdict comes at that line,
+    // not at the cost line (decision 4, 23 Oct 2026).
+    if (c.leads === 0)
+      return [
+        {
+          severity: "optimization",
+          constraint: "Too early to call",
+          evidence: `Only ${money(c.spend)} spent and no lead yet: not enough data to judge.`,
+          fixes: [
+            `Let it run to ${noLeadWords}: with no lead by then it is bad.`,
+            "Check delivery and the lead form work: that is all that can be judged today.",
+          ],
+        },
+      ];
     return [
       {
         severity: "optimization",
@@ -434,7 +475,7 @@ export function diagnose(c: {
   }
 
   // Nothing is broken: cheap leads that book. Stop here — no manufactured problems.
-  if (!cplBad && !cpbBad) {
+  if (!cplBad && !cpbBad && !noLead) {
     if (c.dayRate < BUDGET_FLOOR && (cpbGood || (!tracked && cplGood))) {
       opts.push({
         severity: "optimization",
@@ -450,22 +491,12 @@ export function diagnose(c: {
   }
 
   // 3. CPL is genuinely high — now the causes are worth listing.
-  if (c.leads === 0 && c.spend >= 50) {
-    fixes.push({
-      severity: "fix",
-      constraint: "Landing page or tracking",
-      evidence: `${money(c.spend)} spent and zero leads recorded.`,
-      fixes: [
-        "Submit a test lead yourself and confirm it lands in GHL.",
-        "Check the pixel and the lead form connection — raise a tech ticket if it is broken.",
-      ],
-    });
-  }
+  if (noLead) fixes.push(noLeadFinding);
   if ((c.linkCtr ?? 99) < LINK_CTR_FLOOR) {
     fixes.push({
       severity: "fix",
       constraint: "Creative",
-      evidence: `Link CTR ${(c.linkCtr ?? 0).toFixed(2)}% is under the ${LINK_CTR_FLOOR}% floor, and leads cost ${money(c.cpl ?? 0)} — here the weak hook is actually costing money.`,
+      evidence: `Link CTR ${(c.linkCtr ?? 0).toFixed(2)}% is under the ${LINK_CTR_FLOOR}% floor, and ${c.leads === 0 ? "no lead has come in" : `leads cost ${money(c.cpl ?? 0)}`}: here the weak hook is actually costing money.`,
       fixes: [
         "Queue a new hook before touching budget or targeting.",
         "Adapt the best performing ad from another account in the same service line.",
@@ -1666,7 +1697,9 @@ const perBooking = (spend: number, booked: number) =>
  *   no booking, <= $60    hold          hold            kill
  *
  * * Or no booking yet after that much spend: one booking now would still cost
- * more than the line. Zero leads after spend is a kill. Frequency, link CTR
+ * more than the line. No lead on $30 or more (2 x the $15 gate, decision 4 of
+ * 23 Oct 2026) is a kill, and its cost per lead counts as over $22.50 when
+ * earlier leads booked; under $30 it is a hold: not enough data. Frequency, link CTR
  * and opt-in then say what to fix on an ad that is not a kill. Without
  * booking data the cost per lead rule below stands. Keep in step with the
  * media buyer site's src/lib/kpi.ts (adGrid), which shows this table.
@@ -1689,28 +1722,45 @@ export function judge(
     };
   }
   if (leads === 0) {
+    // Aziz, 23 Oct 2026 (decision 4): no lead on the no-lead line ($30, 2 x
+    // the $15 gate) or more is bad; under it there is not enough data.
+    const bad = noLeadBad(spend, leads);
     // Bookings from earlier leads still came in: judge them, but an ad that
-    // brings no new leads is never scaled (Muhammed, 2026-10-13).
+    // brings no new leads is never scaled (Muhammed, 2026-10-13). On the line
+    // or over, the cost per lead counts as over CPL_BAD on the grid, so only a
+    // booking within the $60 gate holds it.
     if (booked !== undefined && booked > 0) {
       const cpb = cents(spend / booked);
       const b = perBooking(spend, booked);
-      return cpb > CPB_BAD
-        ? {
-            verdict: "kill",
-            reason: `${bookingMoney(spend)} spent, zero leads in 7 days, and ${b} is over the $${CPB_BAD} line.`,
-            rank: 6,
-          }
-        : {
-            verdict: "hold",
-            reason: `${bookingMoney(spend)} spent and zero leads in 7 days, but earlier leads booked: ${b}. Watch whether leads come back. Do not scale.`,
-            rank: 15,
-          };
+      if (cpb > CPB_BAD)
+        return {
+          verdict: "kill",
+          reason: `${bookingMoney(spend)} spent, zero leads in 7 days, and ${b} is over the $${CPB_BAD} line.`,
+          rank: 6,
+        };
+      if (bad && cpb > CPB_GATE)
+        return {
+          verdict: "kill",
+          reason: `${bookingMoney(spend)} spent, zero leads in 7 days, and ${b} is over the $${CPB_GATE} gate.`,
+          rank: 8,
+        };
+      return {
+        verdict: "hold",
+        reason: `${bookingMoney(spend)} spent and zero leads in 7 days, but earlier leads booked: ${b}. Watch whether leads come back. Do not scale.`,
+        rank: 15,
+      };
     }
-    return {
-      verdict: "kill",
-      reason: `${bookingMoney(spend)} spent, zero leads in 7 days.`,
-      rank: 5,
-    };
+    return bad
+      ? {
+          verdict: "kill",
+          reason: `${bookingMoney(spend)} spent and no lead in 7 days.`,
+          rank: 5,
+        }
+      : {
+          verdict: "hold",
+          reason: `${bookingMoney(spend)} spent and no lead yet in 7 days: not enough data. The verdict comes at ${noLeadWords}.`,
+          rank: 16,
+        };
   }
   if (booked === undefined) {
     const j = judgeOnLeads(spend, cpl, linkCtr, optInRate, freq);
@@ -3099,7 +3149,8 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     rows: offBoardRows,
   });
   const stale = client.filter(c => (c.daysLive ?? 0) >= 14).length;
-  const noLeads = client.filter(c => c.leads7d === 0 && c.spend7d > 0).length;
+  // Decision 4 (23 Oct 2026): under the no-lead line it is too few to judge.
+  const noLeads = client.filter(c => noLeadBad(c.spend7d, c.leads7d)).length;
 
   const launchWatch = client.filter(c => (c.daysLive ?? 99) <= 3).length;
   const onboarding = inbox.filter(i =>
@@ -3165,7 +3216,7 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       key: "noleads",
       phase: "mid",
       order: 8,
-      label: "Campaigns spending with zero leads",
+      label: `Campaigns with no lead after $${NO_LEAD_LINE} of spend`,
       detail: `${noLeads} found`,
     },
     {
@@ -3464,10 +3515,13 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       ],
     };
     // Bleeding badly enough that waiting costs more than acting: keep the findings.
+    // The two $90 parts (1.5 x the $60 gate) are the learning override's own
+    // line, not ClickUp's 911 band; decision 3 of 23 Oct 2026 left them alone.
     const bleeding =
       (c.cpl ?? 0) > CPL_GATE * 2 ||
       (c.costPerBooking ?? 0) > CPB_GATE * 1.5 ||
-      (c.bookings7d === 0 && c.spend7d > CPB_GATE * 1.5);
+      (c.bookings7d === 0 && c.spend7d > CPB_GATE * 1.5) ||
+      noLeadBad(c.spend7d, c.leads7d);
     c.findings = bleeding
       ? [
           {

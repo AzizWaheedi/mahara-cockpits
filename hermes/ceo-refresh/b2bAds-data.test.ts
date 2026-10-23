@@ -447,7 +447,7 @@ describe("Our ads: verdicts (audit C)", () => {
     const { payload } = await rowsRun(ROWS, { "hidden-tax": "2.7502" });
     const v = (id: string) => adOf(payload, id).verdict;
 
-    expect(v("margin-tax")).toEqual({ verdict: "hold", reason: "$22.80 in seven days and no lead yet: too early to judge against the $15 gate.", owner: "ads" });
+    expect(v("margin-tax")).toEqual({ verdict: "hold", reason: "$22.80 in seven days and no lead yet: not enough data. The verdict comes at $30 (2 x the $15 gate).", owner: "ads" });
     expect(v("hidden-tax")).toEqual({ verdict: "not_judged", reason: "Retargeting is not judged on cost per lead.", owner: null });
     expect(v("rt-small").verdict).toBe("not_judged");
     expect(v("lg-small")).toEqual({ verdict: "hold", reason: "Delivering, but only $0.77 and 41 impressions in seven days: too little to judge.", owner: "ads" });
@@ -474,6 +474,22 @@ describe("Our ads: verdicts (audit C)", () => {
     expect(text).toContain('"Leads do not book" and "intros do not confirm" are the setter.');
     expect(text).not.toMatch(/demos do not close|cost per demo/i);
     expect(payload.verdicts.fatiguing).toBeUndefined();
+  });
+
+  // The CEO, 23 Oct 2026 (cost per booking decisions, 4): "Depends on how much
+  // spend if 2x target cpl then yes bad if below that then not enough data".
+  test("no lead: a kill at 2 x the $15 gate, judged on the cent; under it, not enough data", async () => {
+    const { payload } = await rowsRun([
+      row("under", "lg", "lead_gen", { spend: 29.99, impressions: 900 }),
+      row("cent-under", "lg", "lead_gen", { spend: 29.994, impressions: 900 }),
+      row("cent-at", "lg", "lead_gen", { spend: 29.995, impressions: 900 }),
+      row("at", "lg", "lead_gen", { spend: 30, impressions: 900 }),
+    ]);
+    const v = (id: string) => adOf(payload, id).verdict;
+    expect(v("under")).toEqual({ verdict: "hold", reason: "$29.99 in seven days and no lead yet: not enough data. The verdict comes at $30 (2 x the $15 gate).", owner: "ads" });
+    expect(v("cent-under").verdict).toBe("hold");
+    expect(v("cent-at").verdict).toBe("kill");
+    expect(v("at")).toEqual({ verdict: "kill", reason: "$30 in seven days and not one lead reached the CRM.", owner: "ads" });
   });
 
   test("a lead-gen ad at frequency 2.5 or more is still fatiguing", async () => {

@@ -74,6 +74,7 @@ import {
 import { HEALTH, healthScore, missingHealth } from "@/lib/eodForm";
 import {
   bookingsLine,
+  campaignsOverCplGate,
   clientFigures,
   outOfKpiLines as clientOutOfKpiLines,
   decisionEvidence,
@@ -81,6 +82,8 @@ import {
   figureFor,
   findClientLinks,
   overCplGate,
+  overCplGateLabel,
+  overCplGateName,
   sourceLine,
 } from "@/lib/eodRollup";
 import { CPL_BAD, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
@@ -1399,14 +1402,15 @@ function Cockpit({ view }: { view: View }) {
     const cs = ((snap?.campaigns ?? []) as Campaign[]).filter(c => !c.internal);
     const spend = cs.reduce((t, c) => t + (c.spendToday ?? 0), 0);
     const leads = cs.reduce((t, c) => t + (c.leadsToday ?? 0), 0);
-    const over = cs.filter(c => (c.cpl ?? 0) > CPL_GATE);
+    // Over the $15 gate, or no lead on 2 x the gate or more (decision 4).
+    const over = campaignsOverCplGate(cs);
     return {
       spend: Math.round(spend),
       leads,
       cpl: leads > 0 ? (spend / leads).toFixed(0) : "no leads",
       accounts: cs.length,
       overGate: over.length ? "Yes (7-day CPL)" : "No (7-day CPL)",
-      overNames: over.map(c => c.clientName ?? c.campaignName),
+      overNames: over.map(overCplGateName),
       through: cs
         .map(c => c.dataThrough)
         .filter(Boolean)
@@ -1460,7 +1464,7 @@ function Cockpit({ view }: { view: View }) {
       `Total leads (7d): ${leads}`,
       `Average CPL (7d): ${leads > 0 ? money(spend / leads, 2) : "no leads"}`,
       bookingsLine(totals),
-      `Any client with a 7-day CPL above ${"$"}${CPL_GATE}: ${overGate.length ? `Yes: ${overGate.join(", ")}` : "No"}`,
+      `${overCplGateLabel()}: ${overGate.length ? `Yes: ${overGate.join(", ")}` : "No"}`,
       sourceLine(totals),
       "",
       "ACCOUNT BY ACCOUNT - WHAT I CHANGED AND WHY",
@@ -2456,7 +2460,7 @@ function Cockpit({ view }: { view: View }) {
             ))}
           </dl>
           <p className="mt-2 text-sm">
-            Any client with a 7-day CPL over ${CPL_GATE}:{" "}
+            {overCplGateLabel()}:{" "}
             <span className="font-semibold">
               {eodNumbers.overNames.length > 0 ? "Yes" : "No"}
             </span>

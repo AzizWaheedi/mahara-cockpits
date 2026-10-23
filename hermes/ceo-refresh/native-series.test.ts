@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { KICKOFF_READ_FROM, kickoffAmount, kickoffIn, paidIn, readDealLedger, readKickoffs, typedNotSeen, withKickoff, withPaid } from "./native/adapters/growth.js";
-import { churnRegisterOf, clientDailyOf, extensionJobNote, grantRowsOf } from "./native/adapters/clients.js";
+import { churnRegisterOf, clientDailyOf, extensionJobNote, grantRowsOf, noLeadLineOf, pulseOf, riskOf } from "./native/adapters/clients.js";
 import { eodDaysOf } from "./native/adapters/team.js";
 import { hiringSeries } from "./native/adapters/hiring.js";
 
@@ -295,5 +295,67 @@ describe("Per-day series for the timeframe bar (A127)", () => {
     // 22:30 UTC on 1 Oct is 2 Oct in Kuwait.
     expect(series.appliedByDay).toEqual([{ date: "2026-10-02", count: 2 }]);
     expect(series.hiredByDay).toEqual([{ date: "2026-10-09", count: 1 }]);
+  });
+});
+
+/**
+ * The CEO's decisions of 23 Oct 2026 on the clients section. Decision 2: a
+ * Done With You client books its own meetings, so Pulse scores its bookings
+ * and cost per booking blocks at half weight, as any block it cannot judge.
+ * Decision 4: no lead is a risk only at 2 x the $15 gate; under it, too few.
+ */
+describe("Pulse and risk under the 23 Oct 2026 decisions", () => {
+  // نهوض نجد's shape: leads coming in, no booking of ours in 28 days, spend.
+  const nuhood = {
+    appts_28d: 0, appts_90d: 0, days_since_booking: null, attended_28d: 0, noshow_28d: 0,
+    leads_28d: 13, leads_prev28d: 20, spend_28d: 533.33, spend_90d: 900, open_opps: 0, stalled_opps: 0,
+  };
+  test("a Done With You client's bookings and cost per booking blocks score half weight: 28 bad becomes 53 watch", () => {
+    expect(pulseOf({ ...nuhood, service_mode: "DFY" })).toEqual({ score: 28, status: "bad" });
+    expect(pulseOf({ ...nuhood, service_mode: null })).toEqual({ score: 28, status: "bad" });
+    expect(pulseOf({ ...nuhood, service_mode: "DWY" })).toEqual({ score: 53, status: "watch" });
+    expect(pulseOf({ ...nuhood, service_mode: "done with you" })).toEqual({ score: 53, status: "watch" });
+    // Half weight whatever it booked, never more than half.
+    expect(pulseOf({ ...nuhood, appts_28d: 10, days_since_booking: 1, service_mode: "DWY" }).score).toBe(53);
+    // A location with nothing in 90 days still has no score.
+    expect(pulseOf({ ...nuhood, leads_28d: 0, leads_prev28d: 0, spend_90d: 0, service_mode: "DWY" })).toEqual({ score: null, status: "no-data" });
+  });
+
+  const base = {
+    bucket: "active", happiness: null, defcon: null, silentDays: 2, overdueDays: null,
+    boardKnown: true, leads7d: 0, spend7d: 0, cpl7d: null, pulse: null, portal: null,
+  };
+  test("no leads: no spend is +2; spend under $30 is too few (no points); $30.00 or more is +2", () => {
+    expect(riskOf(base, Date.now())).toMatchObject({ score: 2, reasons: ["no spend and no leads in 7 days"] });
+    expect(riskOf({ ...base, spend7d: 11.09 }, Date.now())).toMatchObject({ score: 0, reasons: [] });
+    expect(riskOf({ ...base, spend7d: 29.99 }, Date.now())).toMatchObject({ score: 0, reasons: [] });
+    expect(riskOf({ ...base, spend7d: 30 }, Date.now())).toMatchObject({ score: 2, reasons: ["no lead on $30.00 in 7 days"] });
+    expect(riskOf({ ...base, spend7d: 74.31 }, Date.now()).reasons).toEqual(["no lead on $74.31 in 7 days"]);
+    // A $20 client line on the board (decision 4: the client's own line, as
+    // CEO Delivery judges the row): no point at $39.99, +2 at $40.00.
+    const line20 = noLeadLineOf({ defaults: null, byCard: { card20: 20 } }, "card20");
+    expect(line20).toBe(40);
+    expect(riskOf({ ...base, spend7d: 39.99, noLeadLine: line20 }, Date.now())).toMatchObject({ score: 0, reasons: [] });
+    expect(riskOf({ ...base, spend7d: 40, noLeadLine: line20 }, Date.now())).toMatchObject({ score: 2, reasons: ["no lead on $40.00 in 7 days"] });
+    // No card line: the board default, then the gate; an unread table is the gate.
+    expect(noLeadLineOf({ defaults: 18, byCard: { card20: 20 } }, "other")).toBe(36);
+    expect(noLeadLineOf({ defaults: null, byCard: {} }, "other")).toBe(30);
+    expect(noLeadLineOf(null, "card20")).toBe(30);
+    expect(noLeadLineOf({ defaults: null, byCard: { card20: 20 } }, null)).toBe(30);
+    // A bad line passed in falls back to the gate.
+    expect(riskOf({ ...base, spend7d: 30, noLeadLine: 0 }, Date.now()).score).toBe(2);
+    // Leads, or no campaign on the board, follow their own rules.
+    expect(riskOf({ ...base, leads7d: 3, spend7d: 30 }, Date.now()).score).toBe(0);
+    expect(riskOf({ ...base, leads7d: null, spend7d: null }, Date.now()).reasons).toEqual(["no campaign on the ads board"]);
+    expect(riskOf({ ...base, bucket: "churned" }, Date.now()).score).toBe(0);
+  });
+
+  test("نهوض نجد loses the Pulse point once Pulse reads it as a watch (score 5 to 3)", () => {
+    const signals = { ...base, leads7d: 16, spend7d: 192.33, cpl7d: 12.02, overdueDays: 16, portal: { hasAccess: true, lastSeenAt: null } };
+    const before = riskOf({ ...signals, pulse: pulseOf({ ...nuhood, service_mode: "DFY" }) }, Date.now());
+    const after = riskOf({ ...signals, pulse: pulseOf({ ...nuhood, service_mode: "DWY" }) }, Date.now());
+    expect(before).toMatchObject({ score: 5, level: "high" });
+    expect(before.reasons).toContain("Pulse health 28 of 100");
+    expect(after).toMatchObject({ score: 3, level: "medium", reasons: ["payment 16 days overdue", "no portal visit on record"] });
   });
 });

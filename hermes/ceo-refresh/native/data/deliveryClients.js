@@ -75,6 +75,18 @@ const usd = (x) => Math.round(x * 100) / 100;
 /** Four places: for a per-day figure that screens add up before rounding. */
 const fine = (x) => Math.round(x * 10_000) / 10_000;
 
+/**
+ * A Done With You Service Mode (the CEO, 23 Oct 2026, cost per booking
+ * decisions, 2: "No keep the CPL but ignore CPB"). The client books its own
+ * meetings, so its spend and leads stay in every cost per lead and it is left
+ * out of every cost per booking: its spend leaves the measured spend and its
+ * stored bookings leave the count, and each window names the spend. A blank
+ * mode is not Done With You. Today's mode applies to every window: there is
+ * no mode history.
+ */
+export const DONE_WITH_YOU = /^\s*(dwy|done with you)\b/i;
+export const isDoneWithYou = (mode) => DONE_WITH_YOU.test(String(mode ?? ""));
+
 /** Every Kuwait day from `from` to `to`, inclusive. */
 export function daysOf(from, to) {
     const out = [];
@@ -86,11 +98,16 @@ export function daysOf(from, to) {
 /**
  * The board's stored days, keyed by location and day, and each client's
  * locations. `clients` are triage.js clients after the card fold, each with
- * `locationIds`.
+ * `locationIds`. `dwyLocs` are the board locations whose row is Done With
+ * You and `dwyAccounts` the ad accounts whose client is: both leave every
+ * company cost per booking (decision 2).
  */
 export function bookingLedger(triage) {
     const byLoc = new Map();
+    const dwyLocs = new Set();
     for (const r of triage.bookingDays ?? []) {
+        if (isDoneWithYou(r.serviceMode))
+            dwyLocs.add(r.locationId);
         let days = byLoc.get(r.locationId);
         if (!days) {
             days = new Map();
@@ -100,9 +117,21 @@ export function bookingLedger(triage) {
     }
     const clients = new Map(triage.clients.map(c => [c.clientId, c]));
     const tied = new Set(triage.clients.flatMap(c => c.locationIds ?? []));
-    return { byLoc, clients, tied };
+    const dwyAccounts = new Set(triage.clients.filter(c => isDoneWithYou(c.serviceMode)).map(c => c.clientId));
+    return { byLoc, clients, tied, dwyLocs, dwyAccounts };
 }
 
+/**
+ * Whether a day of spend is Done With You's: by the Service Mode of the
+ * account that spent it (triage.js keeps it on each day before the card
+ * fold), so a mixed card is left out per account (decision 2, contract 1.2);
+ * by its client's mode for a day that carries none.
+ */
+export function dwyDay(ledger, d) {
+    if (d.serviceMode !== undefined)
+        return isDoneWithYou(d.serviceMode);
+    return (ledger.dwyAccounts ?? new Set()).has(d.clientId);
+}
 /** Whether every one of `locs` has a stored confirmed count on `date`. */
 function storedOn(ledger, locs, date) {
     if (!locs.length)
@@ -148,6 +177,10 @@ export function storedBookings(ledger, locs, from, to) {
 
 /** Why a client's spend on some days is not divided by bookings, in one plain sentence. */
 function notMeasuredWhy(client, locs, missing, spendDays, storedAny) {
+    // A churned client's account (public.cockpit_churned_ad_accounts, decision 5)
+    // has no live tie, so the board holds no location for it.
+    if (!locs.length && /churn/i.test(client?.status ?? ""))
+        return "This is a churned client's ad account, so its bookings are not read.";
     if (!locs.length)
         return client?.clickupTaskId
             ? "No Client Performance board row is tied to this client's ad account, so its bookings are not read."
@@ -162,7 +195,10 @@ function notMeasuredWhy(client, locs, missing, spendDays, storedAny) {
 /**
  * Spend split into measured and not measured for a set of clients over a
  * window, from triage.days. Returns the measured spend and, per client with
- * spend on a day the board does not store, that spend and why.
+ * spend on a day the board does not store, that spend and why. A Done With
+ * You client's spend is in `spend` and `leads` (cost per lead keeps it) and
+ * never in the measured spend: it is named in `doneWithYou`, never as not
+ * measured (decision 2).
  */
 export function measuredSpend(triage, ledger, from, to, clientIds) {
     const want = clientIds ? new Set(clientIds) : null;
@@ -170,11 +206,16 @@ export function measuredSpend(triage, ledger, from, to, clientIds) {
     let leads = 0;
     let spendMeasured = 0;
     const per = new Map();
+    const dwySpend = new Map();
     for (const d of triage.days) {
         if (d.date < from || d.date > to || (want && !want.has(d.clientId)))
             continue;
         spend += d.spend;
         leads += d.leads;
+        if (dwyDay(ledger, d)) {
+            dwySpend.set(d.clientId, (dwySpend.get(d.clientId) ?? 0) + d.spend);
+            continue;
+        }
         const locs = ledger.clients.get(d.clientId)?.locationIds ?? [];
         const p = per.get(d.clientId) ?? { spend: 0, spendDays: new Set(), missingDays: new Set() };
         per.set(d.clientId, p);
@@ -201,7 +242,17 @@ export function measuredSpend(triage, ledger, from, to, clientIds) {
         });
     }
     notMeasured.sort((a, b) => b.spend - a.spend || a.client.localeCompare(b.client));
-    return { spend: usd(spend), leads, spendMeasured: usd(spendMeasured), notMeasured };
+    const doneWithYou = [...dwySpend]
+        .filter(([, x]) => usd(x) > 0)
+        .map(([clientId, x]) => ({ client: ledger.clients.get(clientId)?.name ?? clientId, spend: usd(x) }))
+        .sort((a, b) => b.spend - a.spend || a.client.localeCompare(b.client));
+    return { spend: usd(spend), leads, spendMeasured: usd(spendMeasured), notMeasured, doneWithYou };
+}
+
+/** The tied locations a company cost per booking counts: every one but Done With You's. */
+function countedLocations(ledger) {
+    const dwy = ledger.dwyLocs ?? new Set();
+    return [...ledger.tied].filter(loc => !dwy.has(loc));
 }
 
 /**
@@ -209,11 +260,14 @@ export function measuredSpend(triage, ledger, from, to, clientIds) {
  * every location the clients tie to, and the cost per confirmed booking over
  * the measured spend (DeliveryWindow in src/types/ceo/payloads.ts). When no
  * tied location stores a day of the window, `confirmed`, `provisional` and
- * `bookings` are null: not measured, never zero.
+ * `bookings` are null: not measured, never zero. Done With You clients' spend
+ * and their locations' bookings are left out of the cost per booking and its
+ * counts, and `doneWithYou` names that spend; spend, leads and cost per lead
+ * keep them (decision 2).
  */
 export function deliveryWindow(triage, ledger, from, to) {
     const s = measuredSpend(triage, ledger, from, to);
-    const b = storedBookings(ledger, [...ledger.tied], from, to);
+    const b = storedBookings(ledger, countedLocations(ledger), from, to);
     // No tied location stores a day of the window: the counts are not
     // measured (null), never zero bookings, and there is no cost to divide.
     const confirmed = b.confirmed;
@@ -230,6 +284,7 @@ export function deliveryWindow(triage, ledger, from, to) {
         spendMeasured: s.spendMeasured,
         cpbConfirmed: confirmed !== null && confirmed > 0 && s.spendMeasured > 0 ? usd(s.spendMeasured / confirmed) : null,
         notMeasured: s.notMeasured,
+        doneWithYou: s.doneWithYou,
     };
 }
 
@@ -238,11 +293,12 @@ export function deliveryWindow(triage, ledger, from, to) {
  * confirmed and provisional bookings with the spend they pair with. A day
  * with no stored count on any tied location has confirmed, provisional and
  * spendMeasured null (not measured, never 0); `bookings` stays their sum for
- * older screens.
+ * older screens. Done With You clients are left out of the counts and the
+ * measured spend, and `spendDoneWithYou` is their spend that day (decision 2).
  */
 export function deliveryDaily(triage, ledger, from, to) {
-    const out = new Map(daysOf(from, to).map(date => [date, { date, spend: 0, leads: 0, bookings: 0, confirmed: null, provisional: null, spendMeasured: null }]));
-    for (const loc of ledger.tied) {
+    const out = new Map(daysOf(from, to).map(date => [date, { date, spend: 0, leads: 0, bookings: 0, confirmed: null, provisional: null, spendMeasured: null, spendDoneWithYou: 0 }]));
+    for (const loc of countedLocations(ledger)) {
         const days = ledger.byLoc.get(loc);
         if (!days)
             continue;
@@ -261,6 +317,10 @@ export function deliveryDaily(triage, ledger, from, to) {
             continue;
         row.spend += d.spend;
         row.leads += d.leads;
+        if (dwyDay(ledger, d)) {
+            row.spendDoneWithYou += d.spend;
+            continue;
+        }
         const locs = ledger.clients.get(d.clientId)?.locationIds ?? [];
         if (storedOn(ledger, locs, d.date))
             row.spendMeasured = (row.spendMeasured ?? 0) + d.spend;
@@ -275,6 +335,7 @@ export function deliveryDaily(triage, ledger, from, to) {
         confirmed: r.confirmed,
         provisional: r.provisional,
         spendMeasured: r.spendMeasured === null ? null : fine(r.spendMeasured),
+        spendDoneWithYou: fine(r.spendDoneWithYou),
     }));
 }
 

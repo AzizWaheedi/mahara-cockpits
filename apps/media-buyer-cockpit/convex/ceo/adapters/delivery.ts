@@ -1,3 +1,4 @@
+import { NO_LEAD_MULTIPLE } from "../../../src/lib/kpi";
 import { internal } from "../../_generated/api";
 import { OFF_STATUSES } from "../../board";
 import { CPB_BAD, CPB_GATE, CPL_GATE, SHOW_RATE_GOOD } from "../../constants";
@@ -74,6 +75,44 @@ function shortIssue(text: string): string {
 
 /** The cost per lead that makes a client bad: 50% over the gate, $22.50, the same line the sync kills a campaign on. */
 const CPL_BAD = CPL_GATE * 1.5;
+/** The no-lead line where a row carries none of its own: 2 x the $15 gate. */
+const GATE_NO_LEAD_LINE = NO_LEAD_MULTIPLE * CPL_GATE;
+
+/**
+ * Spend with no lead (the CEO, 23 Oct 2026, cost per booking decisions, 4),
+ * the same rule as the native refresh's leadsJudged: no lead is leads known
+ * and 0; at or over `noLeadLine` (2 x the client's cost per lead line, 2 x
+ * the $15 gate when absent), compared on the cent, the cost per lead counts as
+ * over CPL_BAD; above $0 and under it, too few to judge.
+ */
+function leadsJudged(x: {
+  spend: number;
+  leads: number;
+  cpl: number | null;
+  noLeadLine?: number;
+}): { noLeadBad: boolean; cplBad: boolean; tooFew: boolean } {
+  const line =
+    typeof x.noLeadLine === "number" && Number.isFinite(x.noLeadLine)
+      ? x.noLeadLine
+      : GATE_NO_LEAD_LINE;
+  const noLead = x.leads === 0;
+  const noLeadBad = noLead && usd(x.spend) >= line;
+  return {
+    noLeadBad,
+    cplBad: noLeadBad || (x.leads > 0 && x.cpl !== null && x.cpl > CPL_BAD),
+    tooFew: x.spend > 0 && noLead && !noLeadBad,
+  };
+}
+
+/** Spend with no lead under the row's no-lead line: too few to judge (decision 4). */
+export function tooFew(x: {
+  spend: number;
+  leads: number;
+  cpl: number | null;
+  noLeadLine?: number;
+}): boolean {
+  return leadsJudged(x).tooFew;
+}
 
 /**
  * Aziz's client status rule (2026-09-21) under the golden rule (R5,
@@ -88,18 +127,22 @@ const CPL_BAD = CPL_GATE * 1.5;
  *   lead is within CPL_GATE and the show rate at least SHOW_RATE_GOOD, else
  *   watch, however high the cost per lead;
  * - known and over CPB_GATE: bad over CPB_BAD or with a cost per lead over
- *   CPL_BAD (spend with no leads is that), else watch;
+ *   CPL_BAD (spend with no lead at or over the no-lead line is that), else
+ *   watch;
  * - no confirmed booking yet (measured): the spend so far is the cost per
  *   booking: over CPB_BAD bad, over CPB_GATE watch (bad with a bad cost per
  *   lead), up to CPB_GATE too early to judge, which reads watch (bad only with
- *   a bad cost per lead or no leads);
+ *   a bad cost per lead or no lead on the no-lead line);
  * - bookings not measured (`confirmed` null): judged on cost per lead alone.
  * A low show rate alone is watch, never bad: the one show rate line for
  * clients is 60 (Aziz, 2026-09-21). no-data is nothing spent.
  *
- * `weBook` false is a Done With You client with no bookings: they book their
- * own, so cost per lead is the only number we own and the only one judged,
- * as the sync judges DWY campaigns.
+ * `weBook` false is a Done With You client, whatever bookings GoHighLevel
+ * holds for it (decision 2, 23 Oct 2026), or a client with nothing saying we
+ * book for it and no booking: cost per lead is the only number judged.
+ *
+ * Spend with no lead (decision 4) is a bad cost per lead only at or over
+ * `noLeadLine`; under it, the booking rules alone give the status.
  *
  * `confirmed` absent reads `cpbConfirmed` alone: known when it is a number,
  * no confirmed booking when it is null. `spendMeasured` is the spend on the
@@ -114,9 +157,10 @@ export function clientStatus(x: {
   weBook: boolean;
   confirmed?: number | null;
   spendMeasured?: number;
+  noLeadLine?: number;
 }): Status {
   if (x.spend <= 0) return "no-data";
-  const cplBad = x.leads === 0 || x.cpl === null || x.cpl > CPL_BAD;
+  const { cplBad } = leadsJudged(x);
   const cplGood = x.cpl !== null && x.cpl <= CPL_GATE;
   if (!x.weBook) return cplBad ? "bad" : cplGood ? "good" : "watch";
   if (x.confirmed === null) return cplBad ? "bad" : "watch";
@@ -146,12 +190,13 @@ export function tooEarly(x: {
   weBook: boolean;
   confirmed?: number | null;
   spendMeasured?: number;
+  noLeadLine?: number;
 }): boolean {
   if (!x.weBook || x.confirmed === null || x.confirmed === undefined)
     return false;
   if (x.cpbConfirmed !== null) return false;
   const spent = x.spendMeasured ?? x.spend;
-  const cplBad = x.leads === 0 || x.cpl === null || x.cpl > CPL_BAD;
+  const { cplBad } = leadsJudged(x);
   return spent > 0 && spent <= CPB_GATE && !cplBad;
 }
 

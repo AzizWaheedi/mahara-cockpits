@@ -1242,6 +1242,15 @@ export type DeliveryWindow = {
   spendMeasured?: number;
   /** Spend left out of spendMeasured, per client, with the plain reason. */
   notMeasured?: { client: string; spend: number; why: string }[];
+  /**
+   * Done With You clients' spend in the window, per client (the CEO, 23 Oct
+   * 2026, cost per booking decisions, 2: "No keep the CPL but ignore CPB").
+   * The client books its own meetings, so this spend is left out of
+   * spendMeasured and its stored bookings out of `confirmed` and
+   * `provisional`; `spend`, `leads` and `cpl` keep it. Never in
+   * `notMeasured`. Absent on payloads stored before then.
+   */
+  doneWithYou?: { client: string; spend: number }[];
 };
 
 /** A client's funnel rates over a window, the three booking metrics and the Mahara OS outcomes. */
@@ -1289,6 +1298,12 @@ export type DeliveryDay = {
   provisional?: number | null;
   /** Spend that day on clients whose bookings the board stores that day; null when it stores none. */
   spendMeasured?: number | null;
+  /**
+   * Done With You clients' spend that day (decision 2, 23 Oct 2026): in
+   * `spend`, never in `spendMeasured`, and their bookings are not in
+   * `confirmed` or `provisional`. Absent on rows stored before then.
+   */
+  spendDoneWithYou?: number | null;
 };
 
 export type DeliveryPayload = {
@@ -1331,15 +1346,30 @@ export type DeliveryPayload = {
      * $60 it is watch, bad over $80 or with cost per lead over $22.50. No
      * confirmed booking yet: the spend counts as the cost per booking (over
      * $80 bad, $60 to $80 watch, up to $60 too early). Bookings not measured:
-     * cost per lead alone. Done With You: cost per lead alone. no-data when
+     * cost per lead alone. Done With You: cost per lead alone, whatever
+     * GoHighLevel holds (23 Oct 2026). Spend with no lead counts as a bad cost
+     * per lead only at or over `noLeadLine` (23 Oct 2026). no-data when
      * nothing was spent.
      */
     status: "good" | "watch" | "bad" | "no-data";
     /** No confirmed booking yet on measured spend within $60: too early to judge (shown as a watch). */
     tooEarly?: boolean;
     /**
+     * No lead yet on spend above $0 and under `noLeadLine`: too few to judge
+     * (the CEO, 23 Oct 2026, cost per booking decisions, 4), so never off
+     * track on leads. Absent on payloads stored before then.
+     */
+    tooFew?: boolean;
+    /**
+     * The spend at which no lead is off track: NO_LEAD_MULTIPLE (2) x the
+     * client's cost per lead line on the Client Performance board, 2 x the
+     * $15 gate when it has none. Absent on payloads stored before 23 Oct 2026.
+     */
+    noLeadLine?: number;
+    /**
      * Set when the status is judged on cost per lead alone, and why: "dwy" is
-     * a Done With You client with no booking (it books its own meetings);
+     * a Done With You client (it books its own meetings; since 23 Oct 2026
+     * whatever GoHighLevel holds, with its booking fields null);
      * "no service mode" is a client with no card or a blank Service Mode and
      * no booking, so nothing says we book for it; "not measured" is a client
      * we book for whose bookings the board does not store (a watch at best).

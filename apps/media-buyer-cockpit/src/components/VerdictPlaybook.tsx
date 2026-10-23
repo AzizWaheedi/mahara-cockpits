@@ -8,13 +8,14 @@ import {
 } from "@/components/ui/popover";
 import {
   AD_GRID,
-  CPB_BAD,
   CPB_GATE,
   CPL_BAD,
   CPL_GATE,
   GRID_COLUMNS,
   type GridRow,
   type GridVerdict,
+  NO_LEAD_MULTIPLE,
+  noLeadLine,
 } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 
@@ -176,7 +177,7 @@ export function VerdictPlaybook() {
           {[
             [
               "Zero leads after spend",
-              `Kill. If earlier leads still booked: Hold, or Kill over $${CPB_BAD} a booking.`,
+              `No lead on $${noLeadLine()} or more (${NO_LEAD_MULTIPLE} x the $${CPL_GATE} gate): Kill, or Hold when earlier leads book within $${CPB_GATE}. Under $${noLeadLine()}: Hold, not enough data.`,
             ],
             [
               "A working ad seen 2.5 times per person",

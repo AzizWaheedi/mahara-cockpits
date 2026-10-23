@@ -4,8 +4,9 @@
  * it must never count toward spend, leads, CPL, CPB or any verdict. Kept by
  * immutable ad id; names were reused ("New Engagement Ad") and cannot be
  * trusted. Mirrors public.cockpit_excluded_ads in Creative Triage
- * (migrations 20261010a and 20261021b). Evidence: workspace
- * meta-unauthorized-ads/ and the 20261021b header.
+ * (migrations 20261010a, 20261021b and 20261023p, 23 ads). Evidence: workspace
+ * meta-unauthorized-ads/, the 20261021b header and, for SAFAD's two ads, the
+ * 20261023p header (the CEO's "Yes" of 23 Oct 2026, D0a).
  */
 export const EXCLUDED_AD_IDS: ReadonlySet<string> = new Set([
   "120246624477980705",
@@ -30,7 +31,28 @@ export const EXCLUDED_AD_IDS: ReadonlySet<string> = new Set([
   "120250765528850269",
   "120252448730350064",
   "52557072938435",
+  // 20261023p: SAFAD act_774492648699300, outsiders' ads (CEO, 23 Oct 2026, D0a).
+  "120254791600360066", // "New Engagement Campaign", Mercedes Garcia, 13 Oct (Egypt), $375.10, no lead
+  "120254896955290066", // "New Engagement Campaign", Lucas J Ortiz, 20 Oct (Saudi Arabia), $0
 ]);
+
+/**
+ * The ad accounts that hold a listed ad (the account column of the same
+ * migrations, without "act_"). The market lens reads such an account's
+ * ad-level window to find listed ads Meta leaves off an ad set's /ads edge.
+ */
+export const EXCLUDED_AD_ACCOUNTS: ReadonlySet<string> = new Set([
+  "1009665871644699", // Ideal Elite
+  "1034584029438250", // ARCWANI
+  "1275190574533155", // Munshaat Khalida
+  "1938709086836136", // Liwan
+  "774492648699300", // SAFAD (20261023p)
+  "985366551096162", // RM Designs
+]);
+
+export function holdsExcludedAd(accountId: unknown): boolean {
+  return EXCLUDED_AD_ACCOUNTS.has(String(accountId ?? "").trim().replace(/^act_/, ""));
+}
 
 /** Ad-level grain column holding the Meta ad id (data_fb column Q). */
 const AD_ID_COLUMN = 16;

@@ -21,6 +21,16 @@ recorded in `docs/client-performance/CPB-20261021.md`. The rule every screen
 is checked against is "Cost per booking" below, with "Lead to booking" and
 "ROAS" beside it, and "What changed on 21 and 22 October" lists what moved.
 
+On 23 October 2026 the CEO answered the five questions build 2 left open
+(`docs/client-performance/CPB-DECISIONS-20261023.md`). SAFAD's two
+outsider ads go on the compromise list (D0a). A done-with-you client keeps its
+cost per lead but is never judged on cost per booking, and its spend leaves
+every portfolio cost per booking (decision 2). ClickUp's "911" starts over $80
+(decision 3). Spend with no lead is off at 2 x the cost per lead line and too
+few to judge under it (decision 4). Triple Edge is a churned client
+(decision 5). "What changed on 23 October" lists what moves; section 10 of
+`CPB-20261021.md` records the ship.
+
 Roles, not names: the CEO, client success, the media buyer, the systems
 manager, the call-centre lead, and the board team (the team building the
 board's read functions and screen).
@@ -69,7 +79,10 @@ board's read functions and screen).
   refresh's audit row lists each drop.
 - **Ads on the compromise list never count** (since 21 Oct 2026,
   `20261021a_board_skip_excluded_ads.sql`). `cockpit_excluded_ads` lists the
-  ads that outsiders placed during the October 2026 Meta compromise. They are
+  ads that outsiders placed during the October 2026 Meta compromise: 23 ads
+  since 23 Oct (`20261010a`, `20261021b` and `20261023p`, which adds SAFAD's
+  two, decision D0a; 21 before), the same 23 as the worker's
+  `EXCLUDED_AD_IDS`. They are
   matched on the ad id alone, as the media sync (`withoutExcludedAds`) and the
   dashboard feed's snapshot trigger match them: Meta's ad ids are unique, so
   the account the list writes beside an ad does not matter. They leave every
@@ -124,12 +137,31 @@ board's read functions and screen).
     left" below). Both leave it.
   - **All Active clients' October spend to the 20th** went from $10,578.42 to
     $7,683.60 (Khalida −$1,442.30, Liwan −$1,184.95, ARCWANI −$267.57).
-  - **Still to list.** Khalida's "29/8 - Copy" (ad 120247012327250088, $70.91,
-    with a $9,220 daily budget) and "New Engagement Campaign" (ad
-    120247083365360088, $0 stored, $525 a day) count until they are listed.
-    Until then Khalida's October $262.44 includes "29/8 - Copy"'s $70.91, and
-    Budget used reads 0.56% ($262.44 / $47,185). Once both are listed, October
-    reads $191.53 and Budget used 34.2% ($191.53 / $560).
+  - **Listed by `20261021b` (21 Oct, 15:44 Kuwait).** Khalida's "29/8 -
+    Copy" (ad 120247012327250088, $70.91, a $9,220 daily budget) and "New
+    Engagement Campaign" (ad 120247083365360088, $0 stored, $525 a day) are
+    on the list, so Khalida's October to the 20th reads $191.53 and Budget
+    used 34.2% ($191.53 / $560; the board as the CEO seat on 23 Oct). It
+    read $262.44 and 0.56% ($262.44 / $47,185) before.
+  - **SAFAD's two outsider ads (decision D0a, 23 Oct,
+    `20261023p_exclude_safad_unauthorized_ads.sql`).** On account
+    act_774492648699300: ad 120254791600360066 (campaign 120254791600340066,
+    "New Engagement Campaign", made 13 Oct by "Mercedes Garcia", Egypt,
+    $375.10 on 13 to 15 Oct, no form lead) and ad 120254896955290066
+    (campaign 120254896955270066, made 20 Oct by "Lucas J Ortiz", Saudi
+    Arabia, no spend). The CEO's answer: "Yes". Both campaigns hold only
+    listed ads, so they are outsiders' campaigns: their budget-days ($620 a
+    day on 13 to 19 Oct, $555 on 20 Oct) leave Budget used and Budget/day.
+    The second ad has no ad-day row, so its list row names its campaign for
+    the board to take that campaign out. Listed, SAFAD reads $15.71 / 2 =
+    $7.86 for 14 to 20 Oct (was $390.80 / 2 = $195.40, off) and $308.69 / 3
+    = $102.90 for 1 to 20 Oct (was $683.79 / 3 = $227.93); Budget used for
+    14 to 20 Oct 7.48% ($15.71 of $210, was 8.71% of $4,485) and its
+    impressions 2,762 (were 484,890). Its cost per lead does not move
+    ($15.71 / 3 = $5.24: the outsiders' ads had no form lead). The migration
+    archives their 8 creative-dashboard rows ($375.10); `20261021d`, run once
+    the worker's release (N3) has published one cycle, archives the media
+    data's rows of every listed ad.
 
 ## Column by column
 
@@ -165,7 +197,12 @@ board's read functions and screen).
   `service_mode` where the card has none.
 - **Rule:** DWY means the call centre does not call the client's leads: its
   dials, leads called and waiting figures are not applicable (stored NULL,
-  shown as a dash).
+  shown as a dash). Since 23 Oct (decision 2) a DWY client is also never
+  judged on cost per booking or booking rate, and its spend leaves every
+  portfolio cost per booking (Cost per booking, Lead to booking). Done with
+  you is `upper(btrim(service_mode)) = 'DWY'` on the board's client row; a
+  blank mode is not, and today's mode applies to every window (there is no
+  mode history).
 - **Coverage:** 17 of 17 active agree (16 DFY, نهوض نجد DWY). Six non-active
   clients were blank in the registry and DFY on the card; fixed.
 
@@ -207,10 +244,28 @@ board's read functions and screen).
   from 5,890 to 28,590, link CTR from 1.73% to 0.48% and CPM from $16.01 to
   $6.09. Its row is `kept_out`; set it to tied only if the media buyer
   confirms Mahara manages the account.
-- **Left out on purpose (unsure):** Triple Edge 2002793296961811 (no
-  GoHighLevel location), Art Vision 750052678056652 (no client record),
-  ريبالو/ORB 827972432407411 (hidden; probably the Ocean Home owner's other
-  brand). See "What is left".
+- **A churned client's account (decision 5, 23 Oct):** Triple Edge Building
+  Construction 2002793296961811. The CEO: "triple edge is a old churned
+  client". Its only ClickUp card (86ex3n15w) is archived, and it has no
+  GoHighLevel location, no board row and no hand tie. A hand table,
+  `public.cockpit_churned_ad_accounts` (`20261023q_churned_ad_accounts.sql`),
+  names it; rows are added or removed only by a migration, with the evidence
+  in the row (RUNBOOK.md, Meta ad-days). It is read only when no live tie
+  exists: a board row, a hand tie or a GoHighLevel tie always wins, so a
+  client who comes back reads as live once it is tied again; its row is then
+  deleted in a migration. The account is in no client's figures; the board names its spend under "Not in these
+  totals" as "churned client" (`20261023t`), the Meta ad-days notes under
+  "Spent for a cancelled, stopped or churned client" (`20261023u`), never
+  "Not linked to a client", and CEO Delivery leaves it out of its client rows,
+  statuses and "Clients off track" and names its spend as a churned client's
+  (native release N3). Its spend stays in company spend, leads and cost per
+  lead, as a cancelled client's does: $11.13 on 11 to 18 Aug and $16.71 in
+  October 2026, on Meta Page "Promote" campaigns (read only on 23 Oct).
+  `clients.hidden_from_dashboard` and `clients.is_active` are left as they
+  are: either would drop its spend silently.
+- **Left out on purpose (unsure):** Art Vision 750052678056652 (no client
+  record), ريبالو/ORB 827972432407411 (hidden; probably the Ocean Home
+  owner's other brand). See "What is left".
 
 ### TikTok
 
@@ -517,7 +572,40 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 - **Rule:** sum(spend_usd where leads is not NULL) / sum(leads): only the
   spend of rows that can have form leads, so engagement, sales and chat ad
   sets stay out (Pidco: $60.31 / 8 = $7.54, not $553 / 12). Target $15 (the
-  KPI gate, imported from `kpi.ts`). "Not enough data" under $45 of spend.
+  KPI gate, imported from `kpi.ts`): good up to $15, a watch up to $22.50
+  (`CPL_BAD`, 1.5 x the gate), off above (`cockpit_board_default_targets`,
+  `cpl`). A client's own line replaces them (`cockpit_board_targets_map`).
+- **No form lead yet (decision 4, 23 Oct,
+  `20261023s_board_cpl_no_lead.sql`):** the CEO: "Depends on how much spend
+  if 2x target cpl then yes bad if below that then not enough data". With
+  leads known and none, the cell is off once the lead-campaign spend, rounded
+  to the cent, reaches 2 x the client's cost per lead line, and too few to
+  judge under it. The line is computed, never typed: 2 x the client's own
+  line, else the board's default, else the $15 gate (`NO_LEAD_MULTIPLE` and
+  `noLeadLine()` in `kpi.ts`; the board computes 2 x
+  `p_targets->'cpl'->>'good'`). `cockpit_board_targets` holds no row on 23
+  Oct, so the line is $30.00 for every client: $30.00 is off, $29.99 too few.
+  The cell keeps its "at least" ("$11.09+") and its note says the amounts:
+  "No form lead yet for $11.09 of lead-campaign spend: under $30.00 (2 x the
+  $15.00 cost per lead line), too few to judge." Unknown leads (no lead-form
+  rows) stay not measured, never 0; with spend in a currency with no fixed
+  rate only the priced part is judged. CEO Delivery reads the same line from
+  `cockpit_board_targets`, and so do the CEO's client risk points
+  (`noLeadLineOf` in `clients.js`). The media sync, the EOD, CSM Diagnosis,
+  the Ads "Critical" filter and the Verdict Playbook, the CSM ads meter,
+  ClickUp and the CEO's own-ads verdicts (`KILL_FLOOR` in `b2bAds.js` and
+  `cockpit-ceo-api` `windows.ts`) use 2 x the $15 gate (`NO_LEAD_MULTIPLE` x
+  `CPL_GATE`, `noLeadLine()` in the apps and ClickUp). The media sync, CSM
+  Diagnosis, ClickUp, the Verdict Playbook and the CEO's own-ads hold print
+  the line as 2 x the $15 gate beside the verdict; the EOD names the client
+  with its spend ("<client> (no lead on $X)"), the CSM ads meter says "too
+  few to judge" under the line, and the Ads filter shows no line.
+  Before it a cost per lead with no lead was judged as a floor on the $15 and
+  $22.50 lines, and the CEO read Madana's $11.09 with no lead as bad where
+  the board read too few. Client page tree, 16 to 22 Oct: Alkhalil's video ad
+  (120251783300360190, $24.10) goes from off and شركة العلا's Ad_2
+  (120252006050440391, $17.32) from watch to too few; the four ads with no
+  lead on $30 or more stay off.
 - **Checked against:** Meta ad set spend and leads on lead-campaign ad sets.
 - **Gaps:** for bulk-uploaded clients (Ardon, نهوض نجد) take leads from Meta,
   not the CRM, for cost per lead.
@@ -596,9 +684,10 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
   `cockpit_meta_ad_days_status()` gives each account's Meta `account_status`
   (from the latest run that listed it in the last 3 days) with a word, its
   client's status, its last day with spend, and two lists:
-  `cancelledDelivering` (spent in the last 2 days for a cancelled or stopped
-  client) and `billingStopped` (tied to a live client, Meta status not
-  active).
+  `cancelledDelivering` (spent in the last 2 days for a cancelled, stopped
+  or churned client; churned means listed in `cockpit_churned_ad_accounts`
+  with no live tie, since `20261023u`) and `billingStopped` (tied to a live
+  client, Meta status not active).
 - **Checked against:** `mahara-ad-billing-watchdog` (every 5 minutes).
 - **On 16 Oct:** ARCWANI (no delivery since 9 Oct), Liwan (since 12 Oct),
   Ocean Home, SAFAD and شركة العلا are unsettled (status 3); marblemore1 is
@@ -780,7 +869,8 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
     spend."). The board's cell shows the spend with a + and the dot of its
     line (`cells.tsx` `CellContent`; the help reads "at least $233"): up to
     $60 too few to judge, a hollow ring (Madana "$11.09+", 14 to 20 Oct);
-    over $60 a watch and over $80 off (Alkhalil "$233+", نهوض نجد "$192+").
+    over $60 a watch and over $80 off (Alkhalil "$233+"; a done-with-you
+    client reads "Done with you" instead, below).
     The media buyer's screens say the same floor in words (`costTone.ts`
     `cpbDisplay`): "None yet" up to $60, "None on $233" in the grid's colour
     over it, and the Ads page counts it in its "Cost per booking over $60"
@@ -811,14 +901,25 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
 - **Windows:** "Last 7" and "Last 30" end today, so cost per booking covers 6
   and 29 ad days in them; `last_7_full` and `last_30_full` cover 7 and 30.
   The picker and the cell's help say so.
-- **Done with you:** نهوض نجد books its own meetings, so a cost per booking is
-  not Mahara's to judge for it. The first break leaves cost per booking out
-  for a done-with-you client (`boardColumns.ts` `firstBreak`), the CEO and the
-  media buyer judge it on cost per lead only, and the media buyer's client
-  read gives n/a, "Done with you: the client books its own meetings." The
-  board's own cell still shows a floor ("$192+" for 14 to 20 Oct, gap below),
-  and its spend is in the Active totals while none of its bookings are
-  (Checked against).
+- **Done with you (decision 2, 23 Oct):** the CEO: "No keep the CPL but
+  ignore CPB". نهوض نجد books its own meetings, so its cost per booking is not
+  Mahara's to judge. Since `20261023r_board_done_with_you.sql` the board's
+  cost per booking, its floor and the booking rate read "Done with you", with
+  no value, status or dot, whatever GoHighLevel holds (the cell is
+  `{v: null, status: "not_measured", clientBooks: true}`, note "Done with
+  you: the client books its own meetings, so its cost per booking and booking
+  rate are not judged."; `cells.tsx` shows the words). Its campaign tree's
+  cost per booking reads the same. Its status is judged on cost per lead
+  alone (the golden rule never applies to it), and the first break skips
+  cost per booking and booking rate (`boardColumns.ts` `firstBreak`), so for
+  14 to 20 Oct it reads "On target" (was "Off at booking rate"). Its spend
+  and leads stay in its own cost per lead and in every portfolio cost per
+  lead. Its spend leaves every portfolio cost per booking, and any booking
+  stored on its location leaves the denominator (none today); each portfolio
+  figure names the amount it leaves out (CEO Delivery, Today, Backend, Goals,
+  the timeframe cards and the EOD). Its booking counts stay on screen as
+  facts. The CEO, the media buyer's client read, CSM and ClickUp read it the
+  same way.
 - **The golden rule (build 2, `20261022y_board_cpl_golden_rule.sql`):** when
   a client's cost per booking is good and not a floor, a cost per lead that
   would be off is a watch, with the note "Cost per booking is within the $60
@@ -853,10 +954,15 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
     Active clients: $3,092.14 / 49 = $63.10 (with the 3 provisional, $59.46),
     the sum of the cells. That spend includes نهوض نجد's $192.33, a client
     that books its own meetings, so none of its bookings are in the 49.
-    Without it the clients Mahara books for read $2,899.81 / 49 = $59.18,
-    inside the $60 gate. Which of the two a portfolio figure shows is the
-    CEO's call (What is left); CEO Delivery's headline and the EOD total
-    (build 2) include it.
+  - **14 to 20 Oct after the 23 Oct decisions:** SAFAD $15.71 / 2 = $7.86
+    (good; D0a lists the outsiders' $375.09) and نهوض نجد "Done with you"
+    (decision 2); every other cell as above. Active clients: **$2,524.72 / 49
+    = $51.52** (with the 3 provisional, $48.55), the sum of the cells with
+    نهوض نجد's $192.33 left out (done with you) and SAFAD's listed ads out.
+    D0a alone gives $2,717.05 / 49 = $55.45; leaving out نهوض نجد alone,
+    $2,899.81 / 49 = $59.18. Read again as the CEO seat at 20:55 Kuwait on 23
+    Oct (not committed): $3,092.14 / 49 before the decisions, $2,899.81
+    without نهوض نجد, so $2,524.72 once SAFAD's $375.09 is out.
   - 1 to 20 Oct: Alkhalil no booking on $367.34; Arcturus $56.29 (14); ARCWANI
     $151.40 (1); Ardon $138.06 (6); Atlantis $111.96 (5); Castello $333.83
     (2); City Wood $224.88 (3); Liwan $194.58 (1); Marble and more $52.34 (4);
@@ -864,26 +970,33 @@ picker) and **Budget used** (a key column, judged). Each client's page has a
     Shades $73.43 (4); شركة العلا $33.37 (19); Khalida $191.53 (1); Madana
     no booking on $11.09; نهوض نجد no booking on $533.33 (done with you).
     Active clients: $7,783.36 / 101 = $77.06 (Professional Touch's 2 bookings
-    left out: its spend is not known). نهوض نجد's $533.33 is in it; without
-    it, $7,250.03 / 101 = $71.78.
+    left out: its spend is not known). نهوض نجد's $533.33 is in it.
+  - **1 to 20 Oct after the 23 Oct decisions:** SAFAD $308.69 / 3 = $102.90
+    (off; was $227.93) and نهوض نجد "Done with you". Active clients:
+    **$6,874.93 / 101 = $68.07**, نهوض نجد's $533.33 left out (done with you)
+    and SAFAD's $375.10 on listed ads out. D0a alone gives $7,408.26 / 101 =
+    $73.35. Read again at 20:55 Kuwait: $7,783.36 / 101 before, $7,250.03
+    without نهوض نجد.
+  - **16 to 22 Oct after the 23 Oct decisions** (the board as the CEO seat at
+    14:30 Kuwait on 23 Oct): Active clients **$2,541.09 / 57 = $44.58**,
+    نهوض نجد's $205.15 left out (it read $2,746.24 / 57 = $48.18 with it, the
+    sum of the cells, as the 20:55 read gives it; the contract's section 5
+    has $2,746.23; D0a moves nothing in these days). Read again at 20:55 Kuwait: Castello's
+    confirmed bookings for these days went from 4 to 3, so $2,541.09 / 56 =
+    $45.38. The rule did not change; a booking left the count.
   - the media sync's booking events: equal client by client (Confirmed
     bookings above).
   - Mahara's campaigns in the media data (`cockpit_media_daily_stats`, one
     row per ad and day, stopped campaigns included): equal to the board's
-    spend for every Active client in both windows except SAFAD (an outsider's
-    "New Engagement Campaign" on its account, $375.09 in 14 to 20 Oct and
-    $375.10 in 1 to 20 Oct, not on the compromise list until decision D0a)
-    and Shades in 1 to 20 Oct (the client's own $90.07). So the Active
-    clients on Mahara's campaigns read $2,717.05 / 49 = $55.45 for 14 to 20
-    Oct, the sum of the board's cells too once D0a lists SAFAD's ads. Both
-    include نهوض نجد's $192.33; without it, $2,524.72 / 49 = $51.52.
+    spend for every Active client in both windows except Shades in 1 to 20
+    Oct (the client's own $90.07, decision D0d). Before D0a SAFAD differed
+    too (an outsider's "New Engagement Campaign" on its account, $375.09 in
+    14 to 20 Oct and $375.10 in 1 to 20 Oct); once its ads are listed the
+    board leaves them out as well. So the Active clients on Mahara's
+    campaigns read $2,524.72 / 49 = $51.52 for 14 to 20 Oct with نهوض نجد's
+    $192.33 left out: the board's Active total, the CEO's series for those
+    days and the EOD's 7-day total read the same figure.
 - **Gaps:**
-  - The board's cell for a done-with-you client reads like a done-for-you
-    one: نهوض نجد 14 to 20 Oct shows "$192+" with the off dot (at least
-    $192.33), and its booking rate "0%" (off), from GoHighLevel bookings it
-    does not make. The first break skips the cost per booking but not the
-    booking rate, so it reads "Off at booking rate". A dash with "Done with
-    you" in both cells is a board change: board team, after the CEO's word.
   - The board's cell reads "$0", judged good, for bookings made on days with
     no spend (above). It should read n/a with the reason, as the media
     buyer, the client range read and the CEO do: board team
@@ -904,8 +1017,8 @@ items in section 7 of `CPB-20261021.md`):
 | CSM Ads tab | client, by campaign name | the client's campaigns in the media data, stopped ones included | the media sync's | the period | "Spend, leads and clicks come from Meta, for Mahara's campaigns only (stopped ones included). The Client Performance board counts the whole ad account, so its spend can be higher." (`ClientAds.tsx`, 23 Oct) |
 | CSM Diagnosis, creative "Performance, last 7d", EOD client lines (build 2) | client | Mahara's campaigns, stopped ones included (`ads7d`) | `ads7d` | the media sync's 7 days | Mahara's campaigns, stopped ones included, and the days |
 | CSM Results tab | client | the campaigns listed | the client's sheet | the period, by sheet day | "from their sheet" |
-| CEO Delivery, Today, Backend (build 2) | client | whole ad account | confirmed, from the board's tables, by the day booked | the CEO's time frames (CEO `SOURCES.md`) | "Cost per confirmed booking" |
-| ClickUp Cost Per Booking | card | the campaign's | the media sync's | the media sync's 7 days | four bands at $45, $60 and $90, a different scale; a dry run |
+| CEO Delivery, Today, Backend (build 2) | client | whole ad account; since 23 Oct a done-with-you client's spend leaves the portfolio figure, named beside it | confirmed, from the board's tables, by the day booked | the CEO's time frames (CEO `SOURCES.md`) | "Cost per confirmed booking" |
+| ClickUp Cost Per Booking | card | the campaign's | the media sync's | the media sync's 7 days | four bands at $45, $60 and $80 (911 over the cockpit's $80 line, decision 3, 23 Oct; it was $90, 1.5 x the gate); a dry run |
 
 Two cases read differently on the board than on the other screens (No
 booking, no spend, above): no booking on spend is "$233+" on the board and
@@ -970,11 +1083,16 @@ client's own. The page says "Mahara's campaigns only, stopped ones included;
 the Client Performance board counts the whole ad account." Over the same
 days it equals the board wherever every campaign on the account is Mahara's.
 On 1 to 20 Oct, a window over on every account's clock, it differs for
-SAFAD, $308.69 / 3 = $102.90 against the board's $683.79 / 3 = $227.93 (the
-outsider's campaign, $375.10, decision D0a), and Shades, $203.63 / 4 =
-$50.91 against $293.71 / 4 = $73.43 (the client's own pre-launch campaign,
-$90.07, decision D0d); the page names both amounts as spent outside Mahara's
-campaigns. It also differs from the board, by design, when:
+Shades only: $203.63 / 4 = $50.91 against the board's $293.71 / 4 = $73.43
+(the client's own pre-launch campaign, $90.07, decision D0d), which the page
+names as spent outside Mahara's campaigns (`offBoardSpend`). SAFAD differed
+until 23 Oct: $308.69 / 3 = $102.90 against the board's $683.79 / 3 =
+$227.93, the outsiders' campaign ($375.10) named as off board. Once D0a lists
+those ads the board reads $308.69 / 3 = $102.90 too, and the page moves the
+amount from `offBoardSpend` to `excludedSpend`: "$375 on ads on the
+compromise list is left out." (`money()` shows whole dollars from $100 up;
+`excludedSpend` is 375.10 for 1 to 20 Oct and 375.09 for 14 to 20 Oct; 16 to
+22 Oct holds none). It also differs from the board, by design, when:
 - **The days differ.** It stops every client on `cockpit_media_week()`'s
   `through`: from midnight until the sheet fills, the day before yesterday,
   where the board pairs to yesterday. Atlantis's account keeps Los Angeles
@@ -990,7 +1108,9 @@ campaigns. It also differs from the board, by design, when:
 - **Bookings came on days with no spend.** Null with the reason, where the
   board shows "$0" (No booking, no spend, above).
 - **Done with you.** Bookings are n/a, "Done with you: the client books its
-  own meetings."; the board shows the floor (نهوض نجد "$533+", 1 to 20 Oct).
+  own meetings." The board showed the floor until 23 Oct (نهوض نجد "$533+",
+  1 to 20 Oct); since decision 2 it reads "Done with you" too, so the two
+  agree.
 
 Never take a client's spend for the board from `cockpit_media_daily_stats`
 (see Spend): this read takes Mahara's campaigns from it on purpose, and says
@@ -1013,9 +1133,11 @@ so.
   `lead_to_booking`, held equal to `kpi.ts` by `board-api-supabase.test.ts`).
 - **n/a:** either figure not stored ("not measured" with the source's note),
   no day with both, or no CRM lead in the time frame (too few).
-- **Done with you:** the call centre does not book for نهوض نجد, so its rate
-  reads 0% from GoHighLevel (0 of 13 CRM leads, 14 to 20 Oct) and is judged
-  off; see the gap under Cost per booking.
+- **Done with you (decision 2, 23 Oct):** the call centre does not book for
+  نهوض نجد, so since `20261023r` its rate reads "Done with you", with no value,
+  status or dot (`clientBooks`, as its cost per booking), and the first break
+  skips it. Before, it read 0% from GoHighLevel (0 of 13 CRM leads, 14 to 20
+  Oct), judged off, so the client read "Off at booking rate".
 - **Checked against** (14 to 20 Oct, read only on 23 Oct): the bookings are
   the confirmed bookings above, equal to the media sync's client by client;
   the CRM leads were checked against the dialer's report on 16 Oct. Rates:
@@ -1336,6 +1458,29 @@ builds (`CPB-20261021.md`). Shipped on 22 Oct unless the row says build 2.
 | The media buyer's client page summed only the campaigns still listed (R8) | build 2: `20261022x_media_client_range.sql`, `AccountView.tsx` | 1 to 20 Oct: Khalida $91.62 to $191.53 (1); Castello $333.83 (2); ARCWANI and Liwan open |
 | No cost per booking rule written down (R19) | this file | Cost per booking, Lead to booking, ROAS above |
 
+## What changed on 23 October
+
+The CEO's answers of 23 Oct 2026 to the questions build 2 left open, built
+from `CPB-DECISIONS-20261023.md` (rules in its section 1, the figures every
+surface must read in its section 5, the ship order in its section 6). The
+figures below are the board read as the CEO seat at 14:30 Kuwait on 23 Oct;
+what shipped and how it was checked is section 10 of `CPB-20261021.md`.
+
+| Decided | Built in | Effect |
+| --- | --- | --- |
+| D0a, "Yes": SAFAD's two outsider ads go on the compromise list | `20261023p_exclude_safad_unauthorized_ads.sql`; the worker's `EXCLUDED_AD_IDS` (native release N3); `20261021d_excluded_ads_stats_leftovers.sql` after N3's first published cycle | the list holds 23 ads. SAFAD 14 to 20 Oct $390.80 / 2 = $195.40 (off) becomes $15.71 / 2 = $7.86 (good); 1 to 20 Oct $227.93 becomes $102.90; Budget used 14 to 20 Oct 8.71% becomes 7.48%. 8 creative-dashboard rows ($375.10) and, after N3, 47 media rows ($3,452.64 at the 23 Oct count: the 10 Oct leftovers and SAFAD's 8) go to the archive |
+| 2, "No keep the CPL but ignore CPB": a done-with-you client keeps its cost per lead and is never judged on cost per booking | `20261023r_board_done_with_you.sql`; `boardColumns.ts`, `boardClient.ts`, `cells.tsx`, `eodRollup.ts`; the CEO refresh (N3) and its tabs | نهوض نجد's cost per booking and booking rate read "Done with you", its first break "On target". Its spend leaves every portfolio cost per booking and is named: Active clients 14 to 20 Oct **$51.52** (was $63.10; $55.45 after D0a alone, $59.18 after decision 2 alone), 1 to 20 Oct **$68.07** (was $77.06; $73.35 after D0a alone, $71.78 after decision 2 alone), 16 to 22 Oct **$44.58** (was $48.18, decision 2 alone). Its cost per lead ($12.02, 14 to 20 Oct) and every portfolio cost per lead keep it |
+| 3, "$80": ClickUp's "911" on Cost Per Booking starts over $80 | `clickup-writeback` `rules.ts` (`CPB_911 = CPB_BAD`, from `kpi.ts`) and `kpi.ts` | four bands at $45, $60 and $80 (was $90). Dry run 16 to 22 Oct: Arcturus 3\9 ($172.14 / 2 = $86.07) goes from "Below KPI" to "911"; 79 writes on 17 cards become 80 with decision 4. Nothing reaches ClickUp while `CLICKUP_WRITEBACK_APPLY_KPI` is off |
+| 4, "Depends on how much spend if 2x target cpl then yes bad if below that then not enough data" | `20261023s_board_cpl_no_lead.sql`; `kpi.ts` `NO_LEAD_MULTIPLE`, `noLeadLine()`, `belowKpi`; the worker's `calculator.ts` (N3); the CEO refresh (N3); `eodRollup.ts`, `adsFilters.ts`, `VerdictPlaybook.tsx`; CSM `csmDiagnosis.ts` and `ClientAds.tsx`; `clickup-writeback` `kpi.ts` | no form lead on 2 x the cost per lead line ($30.00 today) or more is off, under it too few to judge (Cost per lead). Madana, 14 to 20 Oct, no lead on $11.09: too few on the board (unchanged), a watch with "Too few to judge" on CEO Delivery (was bad), out of the EOD's "Clients out of KPI". The EOD's over-the-gate line reads "Any client with a 7-day CPL over $15, or no lead on $30 or more" and names a client or campaign with no lead on the line with its spend ("<client> (no lead on $74.31)" for monshaat-mahara-20\10); before the build such clients were never on it, since they have no cost per lead. 16 to 22 Oct: 9 of 13 zero-lead ads go from kill to hold in the media sync; monshaat-mahara-20\10 (no lead on $74.31) gets ClickUp Cost Per Lead "911" |
+| 5, "triple edge is a old churned client" | `20261023q_churned_ad_accounts.sql` (`cockpit_churned_ad_accounts`), `20261023t_board_read_churned.sql`, `20261023u_meta_ad_days_churned.sql`; `PerformancePage.tsx`; the CEO refresh (N3) | "Not in these totals" names Triple Edge Building Construction "churned client" ($14.62 in 14 to 20 and 1 to 20 Oct, $9.74 in 16 to 22 Oct; the totals do not move); the board's "Not linked" line is gone; the Meta ad-days note names it under "Spent for a cancelled, stopped or churned client". CEO Delivery 16 to 22 Oct: 16 client rows become 15 and Triple Edge leaves "Clients off track" (5 becomes 4 in the 14:22 payload; 6 becomes 5 in the 20:53 one, where Castello holds 3 bookings for those days, not 4, and reads $269.53 / 3 = $89.84, bad); its spend stays in company spend, leads and cost per lead |
+| Default (b): listed ads leave the winners archive and the market lens | the worker's `winners.ts` and `marketProducer.ts` (N3) | No listed ad joins the creative winners archive; the 3 listed winners already in it (Khalida `120246795745520088` and `120247012327250088`, Liwan `120246624477980705`) stay until a follow-up migration removes them, because the media publish refuses a plan that deletes archive history. The 18 market ad sets holding a listed creative lose it, SAFAD's outsiders' ad set among them |
+
+Closed from "What is left" by these decisions: SAFAD's outsider ads (D0a);
+the done-with-you cells and the done-with-you spend in the portfolio cost per
+booking (decision 2); whether ClickUp's "911" starts at $80 (decision 3);
+Triple Edge (decision 5). Spend with no lead (decision 4) was open in
+`CPB-20261021.md` 8.5. The switch `CLICKUP_WRITEBACK_APPLY_KPI` stays open.
+
 ## What is left, and who does it
 
 | What | Who |
@@ -1345,13 +1490,11 @@ builds (`CPB-20261021.md`). Shipped on 22 Oct unless the row says build 2.
 | Cancelled clients' accounts spent $1,507 in 30 days (Ideal Elite $578.62 on an outsider's campaign on the compromise list, not Mahara's, so the board leaves it out since 21 Oct; Pidco $553.00 still delivering, AEA, Rm decor, حول العمران, MOFAG). Confirm each client's status; switch delivery off where the client is gone; decide whether to remove Pidco's account from Mahara's business. | Client success, media buyer, CEO |
 | Alkhalil's SAR account 640644143620696 is kept out of Alkhalil's figures (only the client's own Instagram post boosts). If Mahara does manage it, set its `kept_out` to false in a migration with the evidence. | Media buyer, then systems manager |
 | Atlantis's "Project Review & Qualification Call" calendar (`GfUwbVvlYJjHSSauPwVB`) also takes leads' own bookings (3 of 5). Decision D0c, the default since 21 Oct: it is not a booking calendar, and the board and the media sync (release e4c0cpb1) both leave it out. If client success says it books, allow it by its calendar id in the worker and the board together (Atlantis would read $34.91 for 14 to 20 Oct and $79.97 for 1 to 20 Oct, audit section 1); if it does not, the booking page should not offer it. | Client success, then systems manager |
-| SAFAD's account ran two outsiders' campaigns during the compromise: "New Engagement Campaign" (ad 120254791600360066, $375.10 on 13 to 15 Oct, 0 leads) and one created on 20 Oct (ad 120254896955290066, $0). Neither is on the compromise list, so the board, the CEO and pay count them (decision D0a). Listed, SAFAD reads $15.71 / 2 = $7.86 for 14 to 20 Oct and $308.69 / 3 = $102.90 for 1 to 20 Oct, and the Active clients $2,717.05 / 49 = $55.45 (نهوض نجد's $192.33 in it; $51.52 without). Also confirm Mahara's business access to the account. | CEO's sanction, media buyer, then systems manager |
-| A done-with-you client's cost per booking and booking rate read from GoHighLevel bookings it does not make (نهوض نجد 14 to 20 Oct: "$192+" and "0%", both with the off dot). Show a dash with "Done with you" in both. | CEO, then board team |
-| Whether a portfolio cost per booking leaves out a done-with-you client's spend. نهوض نجد's spend is in the Active totals while none of its bookings are: 14 to 20 Oct $3,092.14 / 49 = $63.10 with it, $2,899.81 / 49 = $59.18 without (it crosses the $60 gate); 1 to 20 Oct $77.06 and $71.78. CEO Delivery's headline and the EOD total (build 2) include it. | CEO |
+| SAFAD's outsider ads are decided (D0a, 23 Oct). Confirm in one line that Mahara's business access to SAFAD's account act_774492648699300 is intact after the outsiders and the person-level roles were removed on 20 Oct. SAFAD's only Mahara campaign row ("Safad \| MAHARA \| 16-8") went `source_deleted` at 00:51 on 23 Oct, so it has no Ads Management card and ClickUp's plan dropped card 86eyn6c1f without naming it: say whether the card was retired on purpose. | Media buyer |
 | The board's cost per booking reads "$0", judged good, when confirmed bookings land on days with no spend (mergestudio.kw 19 Oct, Atlantis and شركة العلا 18 Oct, Ocean Home 15 Oct). Read n/a with the reason, as the media buyer, the client range read and the CEO do (Cost per booking). | Board team |
 | The appointments sync never marks the bookings it stops receiving; the board's gone check is the interim (R7). | Systems manager |
-| ClickUp's Bookings (7d) and Cost Per Booking stay a dry run after build 2 (`clickup-writeback:kpi` reads ok=false and says why). Switching `CLICKUP_WRITEBACK_APPLY_KPI` on needs the systems manager's approval; whether ClickUp's "911" starts at $80 or stays at $90 (1.5 times the gate) is the CEO's. | Systems manager, CEO |
-| Triple Edge (spending, a clients row, no GoHighLevel location): a client or not? If yes, create its location and tie it; if no, hide it. | Client success |
+| ClickUp's Bookings (7d) and Cost Per Booking stay a dry run after build 2 (`clickup-writeback:kpi` reads ok=false and says why). Switching `CLICKUP_WRITEBACK_APPLY_KPI` on needs the systems manager's approval, after the one-card canary. The "911" line is decided (over $80, decision 3 of 23 Oct). Before the switch, the media buyer knows Arcturus 3\9 goes from its 7 Oct "Above KPI" straight to "911" and monshaat's Cost Per Lead to "911". | Systems manager |
+| Triple Edge is a churned client (decision 5, 23 Oct; Ad accounts tied to a client). Whether its ad account leaves Mahara's Meta business (767701513092162): it still spent in October. Its two campaigns, and Pidco's three, still appear in the worker's launch watch and the weekly tracking backlog until the worker skips cancelled, stopped and churned accounts. | Client success; the worker's owner for the skip |
 | Art Vision (spent $25.67, no client record) and ريبالو/ORB (hidden; Ocean Home's owner's other brand?): name, hide or remove. | Client success, CEO |
 | Ardon's Page gives Mahara no lead access, so its leads cannot be matched lead by lead. | CEO asks the client |
 | ARCWANI, Liwan, Ocean Home, SAFAD and شركة العلا accounts are unsettled (billing); marblemore1 is disabled. | Client success |

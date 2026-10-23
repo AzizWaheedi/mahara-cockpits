@@ -263,7 +263,7 @@ test('custom range verdicts: retargeting is not judged, no lead is too early, a 
     adRow('few-intros', 'lead_gen', { spend: 20, leads: 6, leads_to_intro: 4 }),
   ]);
   const range = '2026-10-10 to 2026-10-16';
-  expect(adIn(result, 'margin-tax').verdict).toEqual({ verdict: 'hold', reason: `$22.80 from ${range} and no lead yet: too early to judge against the $15 gate.`, owner: 'ads' });
+  expect(adIn(result, 'margin-tax').verdict).toEqual({ verdict: 'hold', reason: `$22.80 from ${range} and no lead yet: not enough data. The verdict comes at $30 (2 x the $15 gate).`, owner: 'ads' });
   expect(adIn(result, 'hidden-tax').verdict).toEqual({ verdict: 'not_judged', reason: 'Retargeting is not judged on cost per lead.', owner: null });
   expect(adIn(result, 'lg-small').verdict).toEqual({ verdict: 'hold', reason: `Delivering, but only $0.77 and 41 impressions from ${range}: too little to judge.`, owner: 'ads' });
   expect(adIn(result, 'lg-none').verdict.verdict).toBe('no delivery');
@@ -519,4 +519,18 @@ test('hiring campaign spend stays out of lead-gen spend and cost per lead', asyn
   expect(result.account.w7.cpl).toBe(20);
   expect(result.retargetingSpend.w7).toBe(10);
   expect(adIn(result, 'hire').verdict.verdict).toBe('not_judged');
+});
+
+// The CEO, 23 Oct 2026 (cost per booking decisions, 4): "Depends on how much spend if 2x target cpl
+// then yes bad if below that then not enough data". The line is 2 x the kpi.ts gate, on the cent.
+test('custom range: no lead is a kill at 2 x the $15 gate and not enough data under it', async () => {
+  const result = await runRows([
+    adRow('under', 'lead_gen', { spend: 29.99, impressions: 900 }),
+    adRow('cent-at', 'lead_gen', { spend: 29.995, impressions: 900 }),
+    adRow('at', 'lead_gen', { spend: 30, impressions: 900 }),
+  ]);
+  const range = '2026-10-10 to 2026-10-16';
+  expect(adIn(result, 'under').verdict).toEqual({ verdict: 'hold', reason: `$29.99 from ${range} and no lead yet: not enough data. The verdict comes at $30 (2 x the $15 gate).`, owner: 'ads' });
+  expect(adIn(result, 'cent-at').verdict.verdict).toBe('kill');
+  expect(adIn(result, 'at').verdict).toEqual({ verdict: 'kill', reason: `$30 from ${range} and not one lead reached the CRM.`, owner: 'ads' });
 });

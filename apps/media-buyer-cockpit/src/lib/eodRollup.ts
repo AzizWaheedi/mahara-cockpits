@@ -1,5 +1,5 @@
 import { money, shortDate } from "@/components/ceo/format";
-import { belowKpi, CPB_GATE, CPL_GATE } from "./kpi";
+import { belowKpi, CPB_GATE, CPL_GATE, noLeadLine } from "./kpi";
 
 /**
  * The end of day report's 7-day numbers, one figure per client (R16, the
@@ -107,6 +107,9 @@ export function weekIsDwy(week: ClientWeek): boolean {
   );
 }
 
+/** Done with you, as a campaign's Service Mode says it ("DWY"); blank is not. */
+const DWY_MODE = /^\s*(dwy|done with you)\b/i;
+
 /** A client's links from the ClickUp client list, matched by name or alias. */
 export function findClientLinks(list: Row[], name: string): Row | undefined {
   const key = name.trim().toLowerCase();
@@ -134,6 +137,12 @@ export type ClientFigure = {
   week?: ClientWeek;
   spend: number;
   leads: number;
+  /**
+   * The lead count is read: always for the media sync's figure, and for
+   * listed campaigns only when every one carries one. A missing count is
+   * never zero, so no lead with an unread count gets no verdict.
+   */
+  leadsKnown: boolean;
   /** Confirmed bookings; null when not read, never 0. */
   bookings: number | null;
   /** The spend the bookings are set against. */
@@ -193,7 +202,12 @@ export function clientFigures(campaigns: Row[], links: Row[]): ClientFigure[] {
       claimed.campaigns.push(...list);
       continue;
     }
-    const dwy = list.every(c => c.serviceMode === "DWY");
+    // Done with you by the campaigns' Service Mode, or by the media sync's
+    // own sentence on the client card when a campaign's mode is blank or
+    // mixed: its spend is never "not read" (decision 2).
+    const dwy =
+      list.every(c => DWY_MODE.test(String(c.serviceMode ?? ""))) ||
+      (week !== undefined && weekIsDwy(week));
     const figure = week
       ? fromWeek(client, list, week, dwy)
       : fromCampaigns(client, list, dwy);
@@ -236,6 +250,7 @@ function fromWeek(
     week,
     spend: week.spend,
     leads: week.leads,
+    leadsKnown: true,
     bookings,
     bookedSpend: bookings === null ? 0 : week.spend,
     dwy,
@@ -257,6 +272,7 @@ function fromCampaigns(
     campaigns: [...list],
     spend: list.reduce((t, c) => t + num(c.spend7d), 0),
     leads: list.reduce((t, c) => t + num(c.leads7d), 0),
+    leadsKnown: list.length > 0 && list.every(c => finite(c.leads7d)),
     bookings:
       known.length > 0
         ? known.reduce((t, c) => t + Number(c.bookings7d), 0)
@@ -288,12 +304,14 @@ export function figureFor(
 
 /**
  * The spend a client's cost per booking divides: all of it when its
- * bookings were read, all of it for a client that books its own (as the
- * Client Performance board and the CEO's Delivery count it), only the read
- * campaigns' when some were not read, none when no count was read.
+ * bookings were read, only the read campaigns' when some were not read,
+ * none when no count was read. None for a client that books its own
+ * meetings (decision 2, 23 Oct 2026: "keep the CPL but ignore CPB"): its
+ * spend stays in the spend, leads and cost per lead, and leaves the cost
+ * per booking, named as done with you.
  */
 function costedSpend(f: ClientFigure): number {
-  if (f.dwy) return f.spend;
+  if (f.dwy) return 0;
   return f.bookings === null ? 0 : f.bookedSpend;
 }
 
@@ -305,6 +323,11 @@ export type EodTotals = {
   costPerBooking: number | null;
   /** Spend of clients whose bookings were not read, left out of the cost. */
   notRead: { clients: number; spend: number };
+  /**
+   * Done with you: clients that book their own meetings, whose spend is left
+   * out of the cost per booking by rule (decision 2), never as not read.
+   */
+  doneWithYou: { clients: string[]; spend: number };
   offBoardSpend: number;
   /** The media sync's window, when every client's figure is its. */
   window?: { from: string; through: string };
@@ -320,6 +343,7 @@ export function eodTotals(figures: ClientFigure[]): EodTotals {
   let costed = 0;
   let offBoardSpend = 0;
   const notRead = { clients: 0, spend: 0 };
+  const doneWithYou = { clients: [] as string[], spend: 0 };
   for (const f of figures) {
     spend += f.spend;
     leads += f.leads;
@@ -327,7 +351,11 @@ export function eodTotals(figures: ClientFigure[]): EodTotals {
     costed += costedSpend(f);
     offBoardSpend += f.offBoardSpend;
     const left = f.spend - costedSpend(f);
-    if (left > 0.004) {
+    if (left <= 0.004) continue;
+    if (f.dwy) {
+      doneWithYou.clients.push(f.client);
+      doneWithYou.spend += left;
+    } else {
       notRead.clients += 1;
       notRead.spend += left;
     }
@@ -339,6 +367,7 @@ export function eodTotals(figures: ClientFigure[]): EodTotals {
     bookings,
     costPerBooking: bookings > 0 ? costed / bookings : null,
     notRead,
+    doneWithYou,
     offBoardSpend,
     window:
       weeks.length > 0
@@ -355,12 +384,27 @@ export function eodTotals(figures: ClientFigure[]): EodTotals {
   };
 }
 
-/** "Bookings (7d): 49 · cost per booking $55.45", naming what it leaves out. */
+/** "$205.05": the done-with-you amount to the cent, as the board shows it. */
+const usd = (v: number) =>
+  `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * "Bookings (7d): 57 · cost per booking $43.98 ($205.05 of one done-with-you
+ * client's spend is left out of the cost: it books its own meetings)",
+ * naming what it leaves out.
+ */
 export function bookingsLine(t: EodTotals): string {
-  const left =
-    t.notRead.clients > 0
-      ? ` (${money(t.notRead.spend)} of ${t.notRead.clients === 1 ? "one client's" : `${t.notRead.clients} clients'`} spend is left out of the cost: their bookings were not read)`
-      : "";
+  const parts: string[] = [];
+  if (t.notRead.clients > 0)
+    parts.push(
+      `${money(t.notRead.spend)} of ${t.notRead.clients === 1 ? "one client's" : `${t.notRead.clients} clients'`} spend is left out of the cost: their bookings were not read`,
+    );
+  const dwy = t.doneWithYou.clients.length;
+  if (dwy > 0)
+    parts.push(
+      `${usd(t.doneWithYou.spend)} of ${dwy === 1 ? "one done-with-you client's" : `${dwy} done-with-you clients'`} spend is left out of the cost: ${dwy === 1 ? "it books its own meetings" : "they book their own meetings"}`,
+    );
+  const left = parts.length > 0 ? ` (${parts.join("; ")})` : "";
   return `Bookings (7d): ${t.bookings}${t.bookings > 0 ? ` · cost per booking ${money(t.costPerBooking)}` : ""}${left}`;
 }
 
@@ -470,19 +514,32 @@ export function worstCampaign(
   return worst && { name: worst.name, text: worst.text };
 }
 
-/** The client's 7-day CPL as the report writes it. */
+/**
+ * The client's 7-day cost per lead as the report writes it: "CPL $13.73",
+ * or "no lead on $41.65" when the spend brought none (decision 4).
+ */
 function cplText(f: ClientFigure): string {
-  return f.leads > 0 ? money(f.spend / f.leads) : "no leads";
+  return f.leads > 0
+    ? `CPL ${money(f.spend / f.leads)}`
+    : `no lead on ${money(f.spend)}`;
 }
 
-/** The client's numbers judged the way the grid judges a campaign. */
+/**
+ * The client's numbers judged the way the grid judges a campaign. With no
+ * lead, the whole 7-day spend is judged against the no-lead line (decision
+ * 4: under 2 x the $15 gate it is too few to judge), never the spend set
+ * against read bookings.
+ */
 export function clientBelowKpi(f: ClientFigure): boolean {
+  // No lead counted where a count is missing is not measured: no verdict.
+  if (f.leads <= 0 && !f.leadsKnown) return false;
   const spend = f.dwy || f.bookings === null ? f.spend : f.bookedSpend;
   return belowKpi({
     spend7d: spend,
     leads7d: f.leads,
     cpl: f.leads > 0 ? f.spend / f.leads : undefined,
     bookings7d: f.dwy ? null : f.bookings,
+    leadSpend7d: f.spend,
   });
 }
 
@@ -517,10 +574,16 @@ export function outOfKpiLines(figures: ClientFigure[], limit = 8): string[] {
       const spend = f.bookings === null ? f.spend : f.bookedSpend;
       const metric =
         f.dwy || f.bookings === null
-          ? `CPL ${cplText(f)}`
+          ? cplText(f)
           : f.bookings === 0
-            ? `no booking on ${money(spend)}, CPL ${cplText(f)}`
-            : `cost per booking ${money(spend / f.bookings)}, CPL ${cplText(f)}`;
+            ? f.leads > 0
+              ? `no booking on ${money(spend)}, ${cplText(f)}`
+              : // Bookings read on only part of the spend: say no booking
+                // on that part alone, never on spend nobody read.
+                spend < f.spend - 0.004
+                ? `${cplText(f)}, no booking on ${money(spend)}`
+                : `no lead and no booking on ${money(f.spend)}`
+            : `cost per booking ${money(spend / f.bookings)}, ${cplText(f)}`;
       const worst = f.dwy ? undefined : worstCampaign(f);
       const named = worst ? `, worst campaign ${worst.name} ${worst.text}` : "";
       const listed =
@@ -529,9 +592,64 @@ export function outOfKpiLines(figures: ClientFigure[], limit = 8): string[] {
     });
 }
 
-/** The clients whose 7-day cost per lead is over the gate, once each. */
+/** The cents a cell shows, as every no-lead line is judged. */
+const cents = (v: number) => Math.round(v * 100) / 100;
+
+/**
+ * No lead on 2 x the $15 gate or more (decision 4, 23 Oct 2026: "Depends on
+ * how much spend if 2x target cpl then yes bad if below that then not
+ * enough data"): its cost per lead is bad. Under the line it is too few to
+ * judge. The caller checks the lead count was read: missing is never zero.
+ */
+function noLeadOverLine(spend: unknown): boolean {
+  return finite(spend) && cents(spend) >= noLeadLine();
+}
+
+/**
+ * The clients whose 7-day cost per lead is over the gate, once each. A
+ * client with no lead on 2 x the gate or more is one of them, named with
+ * its spend: "Madana (no lead on $41.65)".
+ */
 export function overCplGate(figures: ClientFigure[]): string[] {
-  return figures
-    .filter(f => f.leads > 0 && f.spend / f.leads > CPL_GATE)
-    .map(f => f.client);
+  return figures.flatMap(f => {
+    if (f.leads > 0) return f.spend / f.leads > CPL_GATE ? [f.client] : [];
+    return f.leadsKnown && noLeadOverLine(f.spend)
+      ? [`${f.client} (no lead on ${money(f.spend)})`]
+      : [];
+  });
+}
+
+/**
+ * The over-the-gate line's label on the report and the form. It names both
+ * lines, so a client listed for no lead is never under "a CPL over $15"
+ * alone (decision 4): "Any client with a 7-day CPL over $15, or no lead on
+ * $30 or more". Both amounts are computed from kpi.ts.
+ */
+export function overCplGateLabel(): string {
+  return `Any client with a 7-day CPL over ${money(CPL_GATE)}, or no lead on ${money(noLeadLine())} or more`;
+}
+
+/**
+ * A campaign's name on the form's over-the-gate line, with the no-lead
+ * spend when it brought no lead: "Madana (no lead on $41.65)", as the
+ * report names a client.
+ */
+export function overCplGateName(c: Row): string {
+  const name = String(c.clientName ?? c.campaignName ?? "");
+  return c.leads7d === 0
+    ? `${name} (no lead on ${money(Number(c.spend7d ?? 0))})`
+    : name;
+}
+
+/**
+ * The EOD form's "Any client over the gate": the campaigns whose 7-day cost
+ * per lead is over the gate, and those with no lead on 2 x the gate or more
+ * (decision 4). A campaign whose lead count is missing is not judged.
+ */
+export function campaignsOverCplGate<T extends Row>(campaigns: T[]): T[] {
+  return campaigns.filter(c =>
+    c.leads7d === 0
+      ? noLeadOverLine(Number(c.spend7d ?? 0))
+      : (c.cpl ?? 0) > CPL_GATE,
+  );
 }

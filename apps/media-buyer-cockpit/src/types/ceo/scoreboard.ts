@@ -789,7 +789,7 @@ export const METRICS: MetricDef[] = [
     "delivery",
     "count",
     "up",
-    "Main and online calendar bookings made on these days, as the Client Performance board counts them. Provisional bookings are left out.",
+    "Main and online calendar bookings made on these days, as the Client Performance board counts them. Provisional bookings and done-with-you clients' bookings (they book their own meetings, 23 Oct 2026) are left out.",
   ),
   m(
     "clientCpb",
@@ -797,7 +797,7 @@ export const METRICS: MetricDef[] = [
     "delivery",
     "usd",
     "down",
-    "Client ad spend on the days the board stores bookings, over the confirmed bookings made on them. Spend the board stores no bookings for is left out.",
+    "Client ad spend on the days the board stores bookings, over the confirmed bookings made on them. Spend the board stores no bookings for is left out, and so are done-with-you clients' spend and bookings (they book their own meetings, 23 Oct 2026).",
     { level: true },
   ),
   m(

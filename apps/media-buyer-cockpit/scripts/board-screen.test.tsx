@@ -481,6 +481,58 @@ describe("formats", () => {
       }),
     ).toEqual({ kind: "unknown" });
   });
+  test("done with you is never judged on its booking rate either (decision 2, 23 Oct)", () => {
+    const v = (s: Record<string, string>) => ({
+      values: Object.fromEntries(
+        Object.entries(s).map(([k, status]) => [k, { v: 1, status }]),
+      ),
+    });
+    // نهوض نجد, 14 to 20 Oct, before 20261023r: CPL good, booking rate 0%
+    // off, cost per booking "$192.33+" off. It reads "On target".
+    const nahoud = v({
+      cpl: "good",
+      leadToBooking: "off",
+      costPerBooking: "off",
+      showRate: "too_few",
+      quotationRate: "not_filled_in",
+      closeRate: "not_filled_in",
+      roas: "too_few",
+    });
+    for (const serviceMode of ["DWY", " dwy ", "Done With You"])
+      expect(columns.firstBreak({ ...nahoud, serviceMode })).toEqual({
+        kind: "on_target",
+      });
+    // Done for you is judged on both, as before.
+    expect(columns.firstBreak({ ...nahoud, serviceMode: "DFY" })).toMatchObject(
+      { kind: "off", key: "leadToBooking" },
+    );
+    // A blank mode is not done with you.
+    expect(columns.firstBreak({ ...nahoud, serviceMode: null })).toMatchObject({
+      kind: "off",
+      key: "leadToBooking",
+    });
+    // After 20261023r both cells say the client books: skipped by the cell
+    // itself, whatever the row's mode says.
+    const DWY_NOTE =
+      "Done with you: the client books its own meetings, so its cost per booking and booking rate are not judged.";
+    const books = {
+      v: null,
+      status: "not_measured",
+      note: DWY_NOTE,
+      clientBooks: true,
+    };
+    const after = {
+      values: {
+        ...nahoud.values,
+        leadToBooking: { ...books, status: "off" },
+        costPerBooking: books,
+      },
+    };
+    expect(columns.firstBreak(after)).toEqual({ kind: "on_target" });
+    // The board's cell schema keeps the flag.
+    const parsed = client.CellSchema.parse(books);
+    expect(parsed.clientBooks).toBe(true);
+  });
   test("a read in a shape the screen cannot use is one sentence, never a guess", () => {
     expect(() => client.parseBoard({ clients: "nope" })).toThrow(
       /shape this page cannot read/,
@@ -552,7 +604,7 @@ describe("the grid", () => {
         expect([`${row.clientName} ${c.key}`, shown]).toEqual([
           `${row.clientName} ${c.key}`,
           expect.stringMatching(
-            /^(n\/a|Not filled in|Not a video|Client calls|Too few)$/,
+            /^(n\/a|Not filled in|Not a video|Client calls|Done with you|Too few)$/,
           ),
         ]);
         checked += 1;
@@ -637,6 +689,57 @@ describe("the grid", () => {
     expect(name("locFixHarbor01")).toContain("Watch close rate");
   });
 
+  test("a done-with-you client's booking rate and cost per booking read Done with you", async () => {
+    // Orbit Glass books its own meetings (decision 2, 23 Oct 2026): the
+    // cells carry no number, no status and no dot, and the help says why.
+    await show();
+    await click(button("Columns"));
+    await click(button("Every column"));
+    for (const col of ["leadToBooking", "costPerBooking"]) {
+      const cell = cellOf("locFixOrbit006", col);
+      expect([col, text(cell).trim()]).toEqual([col, "Done with you"]);
+      expect([col, cell.querySelector('[role="img"]')]).toEqual([col, null]);
+    }
+    // A screen reader hears the same words, never "not measured".
+    expect(
+      cellOf("locFixOrbit006", "costPerBooking")
+        .querySelector("button")
+        .getAttribute("aria-label"),
+    ).toBe("Cost per booking: Done with you");
+    expect(
+      cellOf("locFixOrbit006", "leadToBooking")
+        .querySelector("button")
+        .getAttribute("aria-label"),
+    ).toBe("Lead to booking: Done with you");
+    // Its bookings stay on screen as a fact.
+    expect(text(cellOf("locFixOrbit006", "confirmedBookings")).trim()).toMatch(
+      /^\d+$/,
+    );
+    // A done-for-you client keeps its numbers.
+    expect(text(cellOf("locFixHarbor01", "costPerBooking"))).toMatch(/^\$/);
+    // The first break skips both.
+    expect(
+      text(host.querySelector('tr[data-location="locFixOrbit006"] th')),
+    ).not.toMatch(/booking rate|cost per booking/);
+    const { CellHelp } = await import("../src/pages/performance/cells");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const board = boardFixture(client.shiftDay(today, -29), today, today);
+    const orbit = board.clients.find(
+      (c: any) => c.locationId === "locFixOrbit006",
+    );
+    const help = renderToStaticMarkup(
+      createElement(CellHelp, {
+        column: columns.COLUMNS.find(c => c.key === "costPerBooking") as any,
+        cell: orbit.values.costPerBooking,
+      }),
+    );
+    expect(help).toContain("Cost per booking: Done with you");
+    expect(help).toContain(
+      "Done with you: the client books its own meetings, so its cost per booking and booking rate are not judged.",
+    );
+    expect(help).not.toContain("not measured");
+  });
+
   test("the portfolio adds up only what is there, and says how many clients", async () => {
     await show();
     const board = boardFixture(client.shiftDay(today, -29), today, today);
@@ -649,6 +752,48 @@ describe("the grid", () => {
     expect(text(strip)).toContain("7 of 8 clients");
     // Every CRM lead count is known.
     expect(text(strip)).toContain("All 8 clients");
+  });
+
+  test("not in these totals: a churned client's account is named as one (decision 5, 23 Oct)", async () => {
+    // Triple Edge Building Construction has no card and no board row; it is
+    // on cockpit_churned_ad_accounts, so 20261023t gives it the reason
+    // "churned" with the list's name. 14 to 20 Oct: $14.62.
+    answer({
+      edit: b => {
+        b.offBoard.accounts.push({
+          accountId: "2002793296961811",
+          name: "Triple Edge Building Construction",
+          spend: 14.62,
+          client: "Triple Edge Building Construction",
+          reason: "churned",
+        });
+        b.offBoard.spend += 14.62;
+      },
+    });
+    await show();
+    const line = Array.from(
+      host.querySelectorAll("details") as ArrayLike<any>,
+    ).find(d => text(d).includes("Not in these totals"));
+    expect(text(line)).toContain("Not in these totals: $1,067 spent");
+    expect(text(line)).toContain("4 ad accounts");
+    const items = Array.from(line.querySelectorAll("li") as ArrayLike<any>).map(
+      li => text(li),
+    );
+    // The list's client name is the account's own, so it is said once.
+    expect(items).toContain(
+      "Triple Edge Building Constructionchurned client$14.62",
+    );
+    expect(
+      items.some(i =>
+        i.includes(
+          "Triple Edge Building ConstructionTriple Edge Building Construction",
+        ),
+      ),
+    ).toBe(false);
+    // Never the raw reason word, and the other reasons read as before.
+    expect(items.some(i => /, churned\$/.test(i))).toBe(false);
+    expect(text(line)).toContain("Gone Client, cancelled client");
+    expect(text(line)).toContain("not tied to a client");
   });
 
   test("missing ad days make a sum a floor, but a rate is said in words, never a +", async () => {

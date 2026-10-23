@@ -258,3 +258,136 @@ describe("the client's own 7 days", () => {
     }
   });
 });
+
+// Decision 4 (Aziz, 23 Oct 2026): "Depends on how much spend if 2x target cpl
+// then yes bad if below that then not enough data". No lead on 2 x the $15
+// gate or more is the ads' constraint, done for you and done with you alike;
+// under it nothing is raised.
+describe("spend with no leads", () => {
+  const noLeads = (p: unknown) => all(p).find(c => c.id === "no_leads");
+
+  test("Madana, 14 to 20 Oct: $11.09 and no lead is too few, healthy", () => {
+    const d = diagnose(
+      profile([{ spend7d: 11.09, leads7d: 0, bookings7d: 0 }]),
+    );
+    expect(d.healthy).toBe(true);
+    expect(
+      noLeads(profile([{ spend7d: 29.99, leads7d: 0, bookings7d: 0 }])),
+    ).toBeUndefined();
+    // $29.994 reads $29.99.
+    expect(
+      noLeads(profile([{ spend7d: 29.994, leads7d: 0, bookings7d: 0 }])),
+    ).toBeUndefined();
+  });
+
+  test("$30.00 with no lead is raised for the media buyer", () => {
+    const c = noLeads(profile([{ spend7d: 30, leads7d: 0, bookings7d: 0 }]));
+    expect(c?.title).toBe("No leads from $30.00 spent in the last 7 days");
+    expect(c?.evidence).toBe(
+      "$30.00 spent in the last 7 days and no lead came in: $30.00 or more with no lead is out of KPI (2 x the $15 cost per lead gate).",
+    );
+    expect(c?.diagnosis).toContain("it is the ads, not the calls");
+    expect(c?.fixes).toEqual([
+      "Submit a test lead through the form and check it arrives in the CRM.",
+      "Check the lead form and the pixel on the ad account are still connected.",
+      "Raise a ticket to the media buyer with the spend and the dates.",
+    ]);
+    expect(c?.owner).toBe("Media buyer");
+    expect(c?.layer).toBe("micro");
+    const d = diagnose(profile([{ spend7d: 30, leads7d: 0, bookings7d: 0 }]));
+    expect(d.healthy).toBe(false);
+    expect(d.top?.id).toBe("no_leads");
+  });
+
+  test("$45 with no lead is raised, done for you and done with you", () => {
+    for (const service of ["DFY", "Done With You", "DWY"]) {
+      const c = noLeads({
+        ...profile([{ spend7d: 45, leads7d: 0, bookings7d: 0 }]),
+        service,
+      });
+      expect([service, c?.title]).toEqual([
+        service,
+        "No leads from $45.00 spent in the last 7 days",
+      ]);
+    }
+    // The done-with-you client is judged on it, not left healthy.
+    const dwy = diagnose({
+      ...profile([{ spend7d: 45, leads7d: 0 }]),
+      service: "DWY",
+    });
+    expect(dwy.healthy).toBe(false);
+    expect(dwy.top?.id).toBe("no_leads");
+  });
+
+  test("the client's own 7 days name their window", () => {
+    const c = noLeads({
+      ...profile([{ spend7d: 10, leads7d: 0, bookings7d: 0 }]),
+      ads7d: {
+        from: "2026-10-16",
+        through: "2026-10-22",
+        spend: 74.31,
+        leads: 0,
+        bookings: null,
+      },
+    });
+    expect(c?.title).toBe(
+      "No leads from $74.31 spent from 16 Oct to 22 Oct on Mahara's campaigns (stopped ones included)",
+    );
+  });
+
+  test("a cost per booking finding on the same spend says it once", () => {
+    // $100, no lead and no booking: cost per booking over $60 already names
+    // the ads, so no second finding.
+    const ids = all(profile([{ spend7d: 100, leads7d: 0, bookings7d: 0 }])).map(
+      c => c.id,
+    );
+    expect(ids).toEqual(["cpb_high"]);
+  });
+
+  test("no lead, but earlier leads book within $60: a watch, never the constraint", () => {
+    // The golden rule (contract 1.4.7): $45 and no lead, 2 bookings at
+    // $22.50 each. kpi.ts belowKpi holds it in, and so does this.
+    const held = profile([{ spend7d: 45, leads7d: 0, bookings7d: 2 }]);
+    const d = diagnose(held);
+    expect(noLeads(held)).toBeUndefined();
+    expect(all(held)).toEqual([]);
+    expect(d.healthy).toBe(true);
+    expect(d.watch.map(c => c.id)).toEqual(["no_leads_watch"]);
+    expect(d.watch[0].title).toBe(
+      "No leads from $45.00 spent in the last 7 days, but bookings still cost $22.50, under the $60 gate",
+    );
+    expect(d.watch[0].owner).toBe("Media buyer");
+    expect(d.headline).toContain("Nothing needs fixing first");
+    // Exactly $60 a booking still holds.
+    expect(
+      diagnose(profile([{ spend7d: 60, leads7d: 0, bookings7d: 1 }])).healthy,
+    ).toBe(true);
+  });
+
+  test("no lead and $70 a booking: the cost per booking is raised, once", () => {
+    const dear = profile([{ spend7d: 70, leads7d: 0, bookings7d: 1 }]);
+    expect(ids(dear)).toEqual(["cpb_high"]);
+    expect(diagnose(dear).watch).toEqual([]);
+    expect(diagnose(dear).healthy).toBe(false);
+  });
+
+  test("done with you has no booking cost to hold it: still raised", () => {
+    const own = {
+      ...profile([{ spend7d: 45, leads7d: 0, bookings7d: 2 }]),
+      service: "DWY",
+    };
+    expect(noLeads(own)?.title).toBe(
+      "No leads from $45.00 spent in the last 7 days",
+    );
+    expect(diagnose(own).watch).toEqual([]);
+  });
+
+  test("leads not counted are not zero: nothing is raised", () => {
+    expect(noLeads(profile([{ spend7d: 45 }]))).toBeUndefined();
+    expect(
+      noLeads(
+        profile([{ spend7d: 40, leads7d: 0, bookings7d: 0 }, { spend7d: 5 }]),
+      ),
+    ).toBeUndefined();
+  });
+});

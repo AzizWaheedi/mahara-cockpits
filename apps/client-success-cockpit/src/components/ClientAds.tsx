@@ -57,6 +57,7 @@ import {
   validScope,
 } from "@/lib/clientAds";
 import { plural } from "@/lib/format";
+import { noLeadLine } from "@/lib/kpi";
 import { dayLabel } from "@/lib/reportPeriod";
 import { cn } from "@/lib/utils";
 
@@ -591,11 +592,34 @@ function Stats({
 }
 
 /**
+ * Spend with no lead in the period (decision 4, Aziz, 23 Oct 2026): bad once
+ * the spend reaches the no-lead line, 2 x the $15 cost per lead gate, judged
+ * on the cents shown; above $0 and under it, too few to judge. The line is in
+ * dollars, so an amount in another currency gets no tone, only the words.
+ * Null with no spend.
+ */
+export function noLeadMeter(
+  spend: number,
+  currency: string,
+): { tone: "bad" | "neutral" | null; words: string } | null {
+  if (!(spend > 0)) return null;
+  const amount = money(spend, currency, true);
+  if (currency !== "USD")
+    return { tone: null, words: `No leads from ${amount} in this period` };
+  return Math.round(spend * 100) / 100 >= noLeadLine()
+    ? { tone: "bad", words: `No leads from ${amount} in this period` }
+    : {
+        tone: "neutral",
+        words: `No leads yet from ${amount}: too few to judge`,
+      };
+}
+
+/**
  * The signature: this ad's cost per lead, or per booking, against the
  * client's average. Both are shown (Muhammed, 2026-10-13): neither number
  * judges an ad alone.
  */
-function Meter({
+export function Meter({
   t,
   avg,
   currency,
@@ -609,18 +633,20 @@ function Meter({
   className?: string;
 }) {
   const noun = measure === "cpl" ? "lead" : "booking";
-  if (measure === "cpl" && !t.leads)
-    return t.spend > 0 ? (
+  if (measure === "cpl" && !t.leads) {
+    const none = noLeadMeter(t.spend, currency);
+    return none ? (
       <div
         className={cn(
           "flex min-w-0 items-center gap-2 text-xs text-muted-foreground",
           className,
         )}
       >
-        <Dot tone="bad" />
-        No leads from {money(t.spend, currency)} in this period
+        {none.tone ? <Dot tone={none.tone} /> : null}
+        {none.words}
       </div>
     ) : null;
+  }
   // No booking yet is worth a line only once the ad has spent more than an
   // average booking costs this client.
   if (measure === "cpb" && !t.booked)

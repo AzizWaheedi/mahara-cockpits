@@ -451,6 +451,103 @@ describe("a client's 7 days", () => {
     ]);
   });
 
+  test("SAFAD's outsider ads are on the compromise list (20261023p): left out, never off board: $15.71 / 2 = $7.86", () => {
+    // The real ids (CEO, 23 Oct 2026, D0a): Mercedes Garcia's ad 120254791600360066 spent
+    // $228.26 on 14 Oct and $146.83 on 15 Oct under "New Engagement Campaign"; Lucas J Ortiz's
+    // ad 120254896955290066 has no spend. Once listed, the $375.09 is not "off board": it
+    // leaves the week, as every listed ad does.
+    const SAFAD = "SAFAD Consultant Engineering";
+    const w = clientWeeks({
+      since7,
+      until7,
+      now,
+      grain: [
+        day(
+          "Safad | MAHARA | 16-8",
+          SAFAD,
+          "2026-10-14",
+          9.93,
+          2,
+          "s1",
+          "774492648699300",
+        ),
+        day(
+          "Safad | MAHARA | 16-8",
+          SAFAD,
+          "2026-10-19",
+          5.78,
+          1,
+          "s1",
+          "774492648699300",
+        ),
+        day(
+          "New Engagement Campaign",
+          SAFAD,
+          "2026-10-14",
+          228.26,
+          0,
+          "120254791600360066",
+          "774492648699300",
+        ),
+        day(
+          "New Engagement Campaign",
+          SAFAD,
+          "2026-10-15",
+          146.83,
+          0,
+          "120254791600360066",
+          "774492648699300",
+        ),
+        day(
+          "New Engagement Campaign",
+          SAFAD,
+          "2026-10-20",
+          0,
+          0,
+          "120254896955290066",
+          "774492648699300",
+        ),
+      ],
+      clients: [
+        { name: SAFAD, accounts: ["774492648699300"], dwy: false, ghl: true },
+      ],
+      mahara,
+      live,
+      events: new Map([
+        [
+          normalize(SAFAD),
+          [
+            booking(
+              "NWlahmUkkeg9gqpMPKVm",
+              "2026-10-15",
+              "2026-10-16T12:00:00+03:00",
+              "noshow",
+            ),
+            booking(
+              "MxRYJYyO64JjX7lL7kMc",
+              "2026-10-20",
+              "2026-10-22T12:00:00+03:00",
+            ),
+          ],
+        ],
+      ]),
+      placed: [
+        placed(SAFAD, "Safad | MAHARA | 16-8", "2026-10-15"),
+        placed(SAFAD, "Safad | MAHARA | 16-8", "2026-10-20"),
+      ],
+    }).get(normalize(SAFAD));
+    expect(w).toMatchObject({
+      spend: 15.71,
+      offBoardSpend: 0,
+      leads: 3,
+      bookings: 2,
+      costPerBooking: 7.86,
+    });
+    expect(w?.campaigns.map(c => c.campaignName)).toEqual([
+      "Safad | MAHARA | 16-8",
+    ]);
+  });
+
   test("ads on the compromise list never count, even under a Mahara campaign", () => {
     const KHALIDA = "Khalida";
     const w = clientWeeks({

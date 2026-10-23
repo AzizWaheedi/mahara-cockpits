@@ -20,6 +20,8 @@ const USD = "00000000-0000-4000-8000-00000000000b";
 const OWN = "00000000-0000-4000-8000-00000000000c";
 const MOVED = "00000000-0000-4000-8000-00000000000d";
 const LOOSE = "00000000-0000-4000-8000-00000000000e";
+const CHURNED = "00000000-0000-4000-8000-00000000000f";
+const UNTIED = "00000000-0000-4000-8000-000000000010";
 
 const SCHEMA = `
   CREATE SCHEMA portal_data;
@@ -38,13 +40,39 @@ const SCHEMA = `
   CREATE TABLE portal_data.appointment_outcomes(appointment_id text, attendance text, deal text, revision integer, captured_at timestamptz);
   CREATE TABLE public.cockpit_board_clients(location_id text PRIMARY KEY, clickup_id text, client_name text, service_mode text, status text, ad_account_ids text[]);
   CREATE TABLE public.cockpit_client_days(location_id text, day date, confirmed_bookings integer, provisional_bookings integer, computed_at timestamptz);
+  CREATE TABLE public.cockpit_churned_ad_accounts(account_id text PRIMARY KEY, client_name text NOT NULL, status text NOT NULL DEFAULT 'Churned',
+    evidence text NOT NULL, added_by text NOT NULL, added_at timestamptz NOT NULL DEFAULT now());
+  CREATE TABLE public.cockpit_board_targets(scope_key text, metric text, good numeric NOT NULL, watch numeric, direction text, note text,
+    updated_by text, updated_at timestamptz DEFAULT now(), PRIMARY KEY (scope_key, metric));
 `;
 
-type Opts = { feedRows?: number; ready?: boolean; moved?: boolean; noBoardDays?: boolean; noBoardTable?: boolean; shared?: boolean; loose?: boolean; cents?: boolean };
+type Opts = {
+  feedRows?: number;
+  ready?: boolean;
+  moved?: boolean;
+  noBoardDays?: boolean;
+  noBoardTable?: boolean;
+  shared?: boolean;
+  loose?: boolean;
+  cents?: boolean;
+  /** A former client's account with no live tie, on the churned list (decision 5). */
+  churned?: boolean;
+  /** The churned list also names an account that has a live tie: the tie wins. */
+  churnedTied?: boolean;
+  /** An account tied to no card, board row or list row. */
+  untied?: boolean;
+  noChurnedTable?: boolean;
+  /** The loose GoHighLevel tie has no name or status, and the churned list names its account. */
+  looseListed?: boolean;
+  /** Ardon's card also runs a Done With You account on its own board row (a mixed card). */
+  mixed?: boolean;
+  targets?: boolean;
+  noTargetsTable?: boolean;
+};
 
 async function seed(db: { exec(sql: string): Promise<unknown> }, opts: Opts = {}) {
   const at = (day: string, hour = 9) => `${day}T${String(hour).padStart(2, "0")}:00:00+03:00`;
-  const liveRows = 7 + (opts.moved ? 1 : 0) + (opts.loose ? 1 : 0);
+  const liveRows = 7 + (opts.moved ? 1 : 0) + (opts.loose ? 1 : 0) + (opts.churned ? 1 : 0) + (opts.untied ? 1 : 0) + (opts.mixed ? 1 : 0);
   await db.exec(`
     INSERT INTO public.clients VALUES
       ('${SAR}','Ardon SAR','act_111','SAR',false),
@@ -125,6 +153,35 @@ async function seed(db: { exec(sql: string): Promise<unknown> }, opts: Opts = {}
     await db.exec(`
       INSERT INTO public.ads_daily_snapshots VALUES ('ad-r','${SAR}','${D(-4)}','c-r','Ardon cents',1,0,now());
     `);
+  if (opts.churned)
+    await db.exec(`
+      INSERT INTO public.clients VALUES ('${CHURNED}','Triple Edge','act_2002793296961811','USD',false);
+      INSERT INTO public.cockpit_campaigns VALUES (6,'2002793296961811','{"campaignName":"Promote page"}',now(),false);
+      INSERT INTO public.cockpit_media_daily_stats VALUES ('m10','Promote page','${D(-1)}','{"metaAdId":"ad-10","spend":9.74,"leads":2}');
+      INSERT INTO public.cockpit_churned_ad_accounts(account_id, client_name, evidence, added_by)
+        VALUES ('2002793296961811','Triple Edge Building Construction','Aziz, 23 Oct 2026','test');
+    `);
+  if (opts.untied)
+    await db.exec(`
+      INSERT INTO public.clients VALUES ('${UNTIED}','Art Vision','act_555','USD',false);
+      INSERT INTO public.cockpit_campaigns VALUES (7,'555','{"campaignName":"Art A"}',now(),false);
+      INSERT INTO public.cockpit_media_daily_stats VALUES ('m11','Art A','${D(-1)}','{"metaAdId":"ad-11","spend":4,"leads":1}');
+    `);
+  if (opts.churnedTied)
+    await db.exec(`
+      INSERT INTO public.cockpit_churned_ad_accounts(account_id, client_name, evidence, added_by) VALUES
+        ('111','Ardon (old name)','test','test'),
+        ('222','Ocean (old name)','test','test');
+    `);
+  if (opts.noChurnedTable) await db.exec("DROP TABLE public.cockpit_churned_ad_accounts;");
+  if (opts.targets)
+    await db.exec(`
+      INSERT INTO public.cockpit_board_targets(scope_key, metric, good, direction, updated_by) VALUES
+        ('defaults','cpl',18,'lower','test'),
+        ('client:task-ardon','cpl',20,'lower','test'),
+        ('client:task-ardon','cpb',70,'lower','test');
+    `);
+  if (opts.noTargetsTable) await db.exec("DROP TABLE public.cockpit_board_targets;");
   // An account tied through GoHighLevel to a location the board does not carry: not measured.
   if (opts.loose)
     await db.exec(`
@@ -133,6 +190,19 @@ async function seed(db: { exec(sql: string): Promise<unknown> }, opts: Opts = {}
       INSERT INTO public.cockpit_media_daily_stats VALUES ('m8','Loose A','${D(-1)}','{"metaAdId":"ad-9","spend":10,"leads":1}');
       INSERT INTO public.ghl_client_ad_accounts VALUES ('${LOOSE}','loc-nb','exact');
       INSERT INTO public.ghl_clients VALUES ('loc-nb','Loose client','task-loose','DFY','Active');
+    `);
+  if (opts.looseListed)
+    await db.exec(`
+      UPDATE public.ghl_clients SET client_name = null, status = null WHERE location_id = 'loc-nb';
+      INSERT INTO public.cockpit_churned_ad_accounts(account_id, client_name, evidence, added_by)
+        VALUES ('444','Loose (old name)','test','test');
+    `);
+  if (opts.mixed)
+    await db.exec(`
+      INSERT INTO public.clients VALUES ('${MOVED}','Ardon studio account','act_333','USD',false);
+      INSERT INTO public.cockpit_campaigns VALUES (4,'333','{"campaignName":"Ardon studio A"}',now(),false);
+      INSERT INTO public.cockpit_media_daily_stats VALUES ('m7','Ardon studio A','${D(-1)}','{"metaAdId":"ad-8","spend":25,"leads":2}');
+      INSERT INTO public.cockpit_board_clients VALUES ('loc-dwy','task-ardon','Ardon studio','DWY','Active',ARRAY['333']);
     `);
 }
 
@@ -151,6 +221,8 @@ async function withDb<T>(opts: Opts, run: () => Promise<T>): Promise<T> {
 }
 
 type Result = {
+  cplTargets: { ok: boolean; defaults: number | null; byCard: Record<string, number>; error?: string };
+  unmapped: string[];
   bookingsFreshAt?: number;
   bookingsDayFreshAt: Record<string, number>;
   days: Row[];
@@ -285,6 +357,21 @@ describe("A client on two ad accounts (one ClickUp card) with PGlite", () => {
   });
 });
 
+describe("A mixed card (decision 2, contract 1.2) with PGlite", () => {
+  test("each day keeps the Service Mode of the account that spent it, after the card fold", async () => {
+    const result = await withDb({ mixed: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    const ardon = result.clients.filter(c => c.clickupTaskId === "task-ardon");
+    expect(ardon.length).toBe(1);
+    const id = String(ardon[0].clientId);
+    const mine = result.days.filter(d => d.clientId === id);
+    // The Done With You account's $25 is under the card's one id, marked DWY.
+    expect(mine.filter(d => d.serviceMode === "DWY").map(d => Number(d.spend))).toEqual([25]);
+    // Every other day of the card is the account we book for.
+    expect(mine.filter(d => d.serviceMode !== "DWY").every(d => d.serviceMode === "DFY")).toBe(true);
+    expect(result.days.filter(d => d.clientId === USD).every(d => d.serviceMode === "DFY")).toBe(true);
+  });
+});
+
 describe("Pure helpers", () => {
   test("the rate SQL covers the rate table and leaves an unknown currency null", () => {
     const sql = usdRateSql("c.currency");
@@ -299,5 +386,73 @@ describe("Pure helpers", () => {
     expect(() => mediaFeedFresh(undefined, now, 1)).toThrow("no state row");
     expect(() => mediaFeedFresh({ ...row, first_day: null, actual_rows: 0, source_rows: 0 }, now, 3 * 3600_000)).toThrow("empty");
     expect(() => mediaFeedFresh({ ...row, snapshot_ms: now - 5 * 3600_000 }, now, 3 * 3600_000)).toThrow("5 hours ago");
+  });
+});
+
+describe("A churned client's account (decision 5, 23 Oct 2026) with PGlite", () => {
+  test("an account with no live tie on the churned list reads Churned with the list's name, and is not named as untied", async () => {
+    const result = await withDb({ churned: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    const t = result.clients.find(c => c.clientId === CHURNED);
+    expect(t).toMatchObject({ name: "Triple Edge Building Construction", status: "Churned", clickupTaskId: null, locationIds: [] });
+    // Its spend stays in the days: never dropped.
+    expect(result.days.find(d => d.clientId === CHURNED)?.spend).toBe(9.74);
+    // A lost client is named in the lost client note, not as an account tied to no card.
+    expect(result.unmapped).toEqual([]);
+  });
+
+  test("a live board or GoHighLevel tie wins over the churned list", async () => {
+    const result = await withDb({ churnedTied: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    // Ardon ties through the board's ad account, Ocean through GoHighLevel.
+    expect(result.clients.find(c => c.clientId === SAR)).toMatchObject({ name: "Ardon", status: "Active" });
+    expect(result.clients.find(c => c.clientId === USD)).toMatchObject({ name: "Ocean Home", status: "Active" });
+  });
+
+  test("an untied account not on the list keeps no status and is named as tied to no card", async () => {
+    const result = await withDb({ untied: true, churned: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.clients.find(c => c.clientId === UNTIED)).toMatchObject({ name: "Art Vision", status: null, clickupTaskId: null });
+    expect(result.unmapped).toEqual(["Art Vision"]);
+  });
+
+  test("a live tie with no name or status still wins: the list never fills it in", async () => {
+    const result = await withDb({ loose: true, looseListed: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    const loose = result.clients.find(c => c.clientId === LOOSE);
+    expect(loose).toMatchObject({ name: "Loose account", status: null, clickupTaskId: "task-loose" });
+    // Still a client row, never read as churned.
+    expect(String(loose?.status ?? "")).not.toMatch(/churn/i);
+  });
+
+  test("a GoHighLevel tie to a location the board does not carry is a live tie too", async () => {
+    const result = await withDb({ loose: true, churned: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.clients.find(c => c.clientId === LOOSE)).toMatchObject({ name: "Loose client", status: "Active" });
+  });
+
+  test("a missing churned table fails the read, never zeros", async () => {
+    await expect(withDb({ noChurnedTable: true }, () => clientDelivery(D(-40), today, D(-30), { now }))).rejects.toThrow();
+  });
+});
+
+describe("The clients' cost per lead lines (decision 4, 23 Oct 2026) with PGlite", () => {
+  test("the board default and each card's own cpl line, other metrics left out", async () => {
+    const result = await withDb({ targets: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.cplTargets).toEqual({ ok: true, defaults: 18, byCard: { "task-ardon": 20 } });
+  });
+
+  test("no rows: no lines, so every client falls back to the gate", async () => {
+    const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.cplTargets).toEqual({ ok: true, defaults: null, byCard: {} });
+  });
+
+  test("a failed read is said, never a failed section", async () => {
+    const result = await withDb({ noTargetsTable: true }, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.cplTargets.ok).toBe(false);
+    expect(result.cplTargets.error).toContain("cockpit_board_targets");
+    expect(result.clients.length).toBe(2);
+  });
+});
+
+describe("Booking days carry the board row's Service Mode (decision 2) with PGlite", () => {
+  test("each stored day says the location's mode", async () => {
+    const result = await withDb({}, () => clientDelivery(D(-40), today, D(-30), { now })) as Result;
+    expect(result.bookingDays.every(b => b.serviceMode === "DFY")).toBe(true);
   });
 });

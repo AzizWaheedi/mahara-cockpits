@@ -3,6 +3,9 @@
 // and the sync-state table, with Supabase's default privileges emulated so a
 // missing REVOKE shows. Made-up ad accounts, ads and numbers; no provider is
 // called. The rate table is pinned to the two copies the cockpits already use.
+// Since 2026-10-23 the chain also runs 20261023q (churned clients' ad accounts)
+// and 20261023u: an account with no live tie on that list is named as a churned
+// client's, never "Not linked to a client".
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { PGlite } from "@electric-sql/pglite";
@@ -49,6 +52,11 @@ const FILE = "20261016121700_meta_ad_days.sql";
 const CHECKED = "20261016210100_meta_ad_days_checked.sql";
 /** Budgets (2026-10-17), on top of both. */
 const BUDGETS = "20261017100000_meta_budgets.sql";
+/** Churned clients' ad accounts and the notes that name them (the CEO, 2026-10-23), on top. */
+const CHURNED = [
+  "20261023q_churned_ad_accounts.sql",
+  "20261023u_meta_ad_days_churned.sql",
+];
 const CEO = "00000000-0000-4000-8000-0000000000c1";
 const MEMBER = "00000000-0000-4000-8000-0000000000b1";
 const A1 = "1111111111111"; // a USD account, tied to Client One
@@ -249,6 +257,7 @@ beforeAll(async () => {
   await db.exec(migration(FILE));
   await db.exec(migration(CHECKED));
   await db.exec(migration(BUDGETS));
+  for (const f of CHURNED) await db.exec(migration(f));
   // The clock seam: the tests stand at a fixed moment.
   await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz LANGUAGE sql STABLE SET search_path='' AS
     $$ SELECT current_setting('test.now')::timestamptz $$;
@@ -370,6 +379,7 @@ describe("tables and privileges", () => {
     await db.exec(migration(FILE));
     await db.exec(migration(CHECKED));
     await db.exec(migration(BUDGETS));
+    for (const f of CHURNED) await db.exec(migration(f));
     await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_meta_ad_days_now() RETURNS timestamptz LANGUAGE sql STABLE SET search_path='' AS
       $$ SELECT current_setting('test.now')::timestamptz $$;
       REVOKE ALL ON FUNCTION public.cockpit_meta_ad_days_now() FROM PUBLIC, anon, authenticated, service_role;`);
@@ -2119,7 +2129,7 @@ describe("the corrections after the 2026-10-16 check", () => {
       expect(run.note).toContain("Hidden on purpose: ");
       expect(run.note).toContain(`ORB (${A9}, USD 100)`);
       expect(run.note).toContain(
-        `Spent for a cancelled or stopped client: Gone Ads (${A11}, Gone Client is Cancelled, USD 100).`,
+        `Spent for a cancelled, stopped or churned client: Gone Ads (${A11}, Gone Client is Cancelled, USD 100).`,
       );
 
       await service();
@@ -2178,6 +2188,109 @@ describe("the corrections after the 2026-10-16 check", () => {
         DELETE FROM public.clients WHERE meta_ad_account_id = 'act_${A9}';
         DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_GONE';
         DELETE FROM public.cockpit_meta_ad_days WHERE account_id = '${A11}';`);
+      await at(NOW);
+    }
+  });
+
+  test("a churned client's account (20261023q, 20261023u) is named as one: never not linked, in the cancelled, stopped or churned line, Churned in the status; a live tie wins, and a hidden account stays hidden", async () => {
+    // After the hidden-accounts run, so this run is the latest the status reads.
+    await at("2026-11-02T09:10:00+03:00");
+    await closeOpenRuns();
+    await owner(db);
+    const A15 = "1515151515151"; // a former client's account no tie holds, on the list
+    const A16 = "1616161616161"; // hidden on purpose (clients.hidden_from_dashboard) and on the list
+    await db.exec(`INSERT INTO public.cockpit_board_clients VALUES ('LOC_GONE2','cg2','Gone Client','Cancelled','DFY',ARRAY['${A11}'],false,now());
+      INSERT INTO public.cockpit_churned_ad_accounts(account_id, client_name, evidence, added_by) VALUES
+        ('${A15}', 'Old Client', 'A test row: a former client with no card left.', 'test'),
+        ('${A1}', 'Client One by mistake', 'A test row: Client One carries it, so the tie wins.', 'test'),
+        ('${A16}', 'Hidden Old Client', 'A test row: hidden on purpose, so it is dropped before the list is read.', 'test');
+      CREATE TABLE IF NOT EXISTS public.clients (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, meta_ad_account_id text,
+        ghl_location_id text, hidden_from_dashboard boolean);
+      INSERT INTO public.clients(name, meta_ad_account_id, hidden_from_dashboard) VALUES ('Hidden Old', 'act_${A16}', true);`);
+    await adDay(A15, "2026-11-01", 900, 20);
+    await adDay(A11, "2026-11-01", 900, 20);
+    await adDay(A16, "2026-11-01", 900, 20);
+    try {
+      const accounts = [
+        account(A3, "USD", { name: "Loose Account" }),
+        account(A11, "USD", { name: "Gone Ads" }),
+        account(A15, "USD", { name: "Old Ads" }),
+        account(A16, "USD", { name: "Hidden Old Ads" }),
+        account(A1, "USD", { name: "Tied Ads" }),
+      ];
+      const inputs = await svc("cockpit_meta_ad_days_inputs", { accounts });
+      expect(inputs.notLinked.map((a: any) => a.accountId)).toEqual([A3]);
+      expect(inputs.cancelled.map((a: any) => a.accountId)).toEqual([A11]);
+      expect(inputs.hidden.map((a: any) => a.accountId)).toContain(A16);
+
+      const begun = await svc("cockpit_meta_ad_days_begin", {
+        job: "hourly",
+        accounts,
+        tasks: [],
+        reach: null,
+      });
+      expect(begun.state).toBe("ok");
+      const [run] = await q<{ note: string }>(
+        "SELECT note FROM cockpit_meta_ad_day_runs WHERE id=$1",
+        [begun.runId],
+      );
+      expect(run.note).toContain(
+        `Spent for a cancelled, stopped or churned client: Gone Ads (${A11}, Gone Client is Cancelled, USD 100), Old Ads (${A15}, Old Client is Churned, USD 100).`,
+      );
+      expect(run.note).toContain(
+        `Not linked to a client: Loose Account (${A3}, USD 100).`,
+      );
+      expect(run.note).not.toContain("Client One by mistake");
+      // Hidden on purpose wins over the list: named there alone, never as churned.
+      expect(run.note).toContain(
+        `Hidden on purpose: Hidden Old Ads (${A16}, USD 100).`,
+      );
+      expect(run.note).not.toContain("Hidden Old Client");
+
+      await service();
+      const s = (
+        await db.query<{ r: any }>(
+          "SELECT public.cockpit_meta_ad_days_status() r",
+        )
+      ).rows[0].r;
+      expect(s.notLinked.map((a: any) => a.accountId)).toEqual([A3]);
+      expect(s.accounts.find((a: any) => a.accountId === A15)).toMatchObject({
+        linked: false,
+        clientName: "Old Client",
+        clientStatus: "Churned",
+      });
+      // Client One carries A1: its own name and status, whatever the list says.
+      expect(s.accounts.find((a: any) => a.accountId === A1)).toMatchObject({
+        linked: true,
+        clientName: "Client One",
+        clientStatus: "Active",
+      });
+      // Hidden and listed: hidden, with no client and no status from the list.
+      expect(s.accounts.find((a: any) => a.accountId === A16)).toMatchObject({
+        linked: false,
+        hidden: true,
+        clientName: null,
+        clientStatus: null,
+      });
+      expect(s.hidden.map((a: any) => a.accountId)).toContain(A16);
+      expect(
+        s.cancelledDelivering.map((a: any) => [
+          a.accountId,
+          a.clientName,
+          a.clientStatus,
+          a.spend2d,
+        ]),
+      ).toEqual([
+        [A11, "Gone Client", "Cancelled", 20],
+        [A15, "Old Client", "Churned", 20],
+      ]);
+      expect(s.billingStopped.map((a: any) => a.accountId)).not.toContain(A15);
+    } finally {
+      await owner(db);
+      await db.exec(`DELETE FROM public.cockpit_churned_ad_accounts WHERE added_by = 'test';
+        DELETE FROM public.cockpit_board_clients WHERE location_id = 'LOC_GONE2';
+        DELETE FROM public.clients WHERE meta_ad_account_id = 'act_${A16}';
+        DELETE FROM public.cockpit_meta_ad_days WHERE account_id IN ('${A15}', '${A11}', '${A16}');`);
       await at(NOW);
     }
   });

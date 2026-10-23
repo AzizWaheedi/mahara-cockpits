@@ -8,6 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { adsPageCampaignRows } from "../src/dev/adsPageFixture";
 import {
   ADS_FILTERS,
   adsFilterPasses,
@@ -15,7 +16,7 @@ import {
   type RowNumbers,
 } from "../src/lib/adsFilters";
 import { cpbDisplay, shownMoney } from "../src/lib/costTone";
-import { belowKpi, gridCell } from "../src/lib/kpi";
+import { belowKpi, gridCell, noLeadLine } from "../src/lib/kpi";
 
 const CPB = "Cost per booking over $60";
 
@@ -154,6 +155,170 @@ describe("the other filters on spend, leads and bookings follow it as well", () 
         ok(boardNumbers(quiet, true, read(60, 3, 0))),
       ),
     ).toBe(false);
+  });
+
+  test("Critical: no lead is critical from 2 x the $15 gate, not before (decision 4)", () => {
+    const c = campaign({ verdict: "hold" });
+    const critical = (spend: number, leads = 0) =>
+      adsFilterPasses(
+        "Critical",
+        c,
+        ok(boardNumbers(c, true, read(spend, leads, 0))),
+      );
+    expect(noLeadLine()).toBe(30);
+    // Madana's $11.09, and anything under $30: not enough data yet.
+    expect(critical(11.09)).toBe(false);
+    expect(critical(20.01)).toBe(false);
+    expect(critical(29.99)).toBe(false);
+    // $29.994 shows as $29.99; $29.995 shows as $30.00.
+    expect(critical(29.994)).toBe(false);
+    expect(critical(29.995)).toBe(true);
+    expect(critical(30)).toBe(true);
+    expect(critical(41.65)).toBe(true);
+    // A lead takes it off, whatever the spend.
+    expect(critical(41.65, 1)).toBe(false);
+    // Leads not in yet (Today, before Meta's numbers): never read as 0.
+    const notIn = ok({ state: "ok", bookings: 0, spendNotIn: "2026-10-22" });
+    expect(adsFilterPasses("Critical", c, notIn)).toBe(false);
+    // The 7-day snapshot reads the same way (no booking, so the line alone
+    // decides).
+    const noBooking = { bookings7d: 0, costPerBooking: undefined };
+    const week = campaign({
+      verdict: "hold",
+      leads7d: 0,
+      spend7d: 29.99,
+      ...noBooking,
+    });
+    expect(
+      adsFilterPasses(
+        "Critical",
+        week,
+        ok(boardNumbers(week, false, undefined)),
+      ),
+    ).toBe(false);
+    const due = campaign({
+      verdict: "hold",
+      leads7d: 0,
+      spend7d: 30,
+      ...noBooking,
+    });
+    expect(
+      adsFilterPasses("Critical", due, ok(boardNumbers(due, false, undefined))),
+    ).toBe(true);
+  });
+
+  test("Critical: earlier leads that book within $60 hold a no-lead row (contract 1.4.7)", () => {
+    const c = campaign({ verdict: "hold" });
+    const critical = (spend: number, bookings: number) =>
+      adsFilterPasses(
+        "Critical",
+        c,
+        ok(boardNumbers(c, true, read(spend, 0, bookings))),
+      );
+    // $45 and one booking: $45 a booking, held as the worker holds it.
+    expect(critical(45, 1)).toBe(false);
+    // $60.004 a booking shows as $60: still held. $60.01 is not.
+    expect(critical(60.004, 1)).toBe(false);
+    expect(critical(60.01, 1)).toBe(true);
+    // $70 a booking is over the gate: critical.
+    expect(critical(70, 1)).toBe(true);
+    // No booking: the line alone decides.
+    expect(critical(45, 0)).toBe(true);
+    // The 7-day snapshot reads the same way, on its own cost per booking.
+    const held = campaign({
+      verdict: "hold",
+      leads7d: 0,
+      spend7d: 45,
+      bookings7d: 2,
+      costPerBooking: 22.5,
+    });
+    expect(
+      adsFilterPasses(
+        "Critical",
+        held,
+        ok(boardNumbers(held, false, undefined)),
+      ),
+    ).toBe(false);
+  });
+
+  test("the Verdict Playbook says the no-lead line from kpi.ts, never typed", () => {
+    const playbook = readFileSync(
+      join(import.meta.dir, "../src/components/VerdictPlaybook.tsx"),
+      "utf8",
+    );
+    // "No lead on $30 or more (2 x the $15 gate): Kill, or Hold when earlier
+    // leads book within $60. Under $30: Hold, not enough data.", every
+    // amount from kpi.ts.
+    expect(playbook).toMatch(
+      /`No lead on \$\$\{noLeadLine\(\)\} or more \(\$\{NO_LEAD_MULTIPLE\} x the \$\$\{CPL_GATE\} gate\): Kill, or Hold when earlier leads book within \$\$\{CPB_GATE\}\. Under \$\$\{noLeadLine\(\)\}: Hold, not enough data\.`/,
+    );
+    expect(playbook).not.toMatch(/\$(20|30)\b/);
+    expect(playbook).not.toContain("—");
+  });
+
+  test("the harness's Lantern stays the too-early story: under the line, not Critical", () => {
+    const lantern = adsPageCampaignRows().find(r =>
+      String(r.campaign_name).startsWith("Lantern"),
+    )?.raw_data as Record<string, unknown>;
+    expect(lantern.leads7d).toBe(0);
+    expect(lantern.spend7d as number).toBeGreaterThan(20);
+    expect(lantern.spend7d as number).toBeLessThan(noLeadLine());
+    expect(
+      adsFilterPasses(
+        "Critical",
+        lantern,
+        ok(boardNumbers(lantern, false, undefined)),
+      ),
+    ).toBe(false);
+  });
+
+  test("Below KPI: no lead under the line is too few to judge (decision 4)", () => {
+    const c = campaign();
+    const below = (spend: number, bookings: number) =>
+      adsFilterPasses(
+        "Below KPI",
+        c,
+        ok(boardNumbers(c, true, read(spend, 0, bookings))),
+      );
+    expect(below(11.09, 0)).toBe(false);
+    expect(below(29.99, 0)).toBe(false);
+    expect(below(30, 0)).toBe(true);
+    // Earlier leads that booked within $60 hold it in; $70 a booking is out.
+    expect(below(45, 1)).toBe(false);
+    expect(below(70, 1)).toBe(true);
+  });
+
+  test("Below KPI: leads not read get no verdict, never no lead (contract 1.4.1)", () => {
+    // A 7-day row with no lead count and $41.65 spent, bookings unknown.
+    const unread = campaign({
+      leads7d: undefined,
+      cpl: undefined,
+      spend7d: 41.65,
+      bookings7d: undefined,
+      costPerBooking: undefined,
+    });
+    expect(
+      adsFilterPasses(
+        "Below KPI",
+        unread,
+        ok(boardNumbers(unread, false, undefined)),
+      ),
+    ).toBe(false);
+    // The same row with its count read as 0 is out of KPI.
+    const none = campaign({
+      leads7d: 0,
+      cpl: undefined,
+      spend7d: 41.65,
+      bookings7d: undefined,
+      costPerBooking: undefined,
+    });
+    expect(
+      adsFilterPasses(
+        "Below KPI",
+        none,
+        ok(boardNumbers(none, false, undefined)),
+      ),
+    ).toBe(true);
   });
 
   test("Below KPI judges the range's cost per lead and cost per booking", () => {

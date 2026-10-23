@@ -61,12 +61,17 @@ import type {
   Point,
   TeamPerson,
 } from "@/types/ceo/payloads";
+import { dwyCell } from "./DoneWithYouCell";
 import {
   CPB_CONFIRMED_LABEL,
   cpbConfirmedOf,
   cpbConfirmedOfDays,
+  doneWithYouBookingsLine,
+  doneWithYouLine,
+  doneWithYouOf,
+  doneWithYouOfDays,
 } from "./deliveryCost";
-import { cplOnlyOf, DWY_BOOKINGS } from "./deliveryStatus";
+import { cplOnlyOf } from "./deliveryStatus";
 import {
   feedState,
   jobName,
@@ -731,7 +736,7 @@ function KpiRow({
         <StatTile
           variant="plain"
           label="Client bookings made yesterday"
-          hint="Confirmed bookings made yesterday, as the Client Performance board counts them (main and online calendars, by the day the booking was made). The line under it is the last 7 days' cost per confirmed booking, the same figure as the Delivery tab's."
+          hint={`Confirmed bookings made yesterday, as the Client Performance board counts them (main and online calendars, by the day the booking was made).${d ? doneWithYouBookingsLine(doneWithYouOf(d.yesterday)) : ""} The line under it is the last 7 days' cost per confirmed booking, the same figure as the Delivery tab's.${d ? doneWithYouLine(doneWithYouOf(d.last7)) : ""}`}
           value={d ? f.count(costY?.confirmed) : null}
           naHint={pendingD ?? costY?.why ?? undefined}
           delta={
@@ -841,6 +846,7 @@ function DeliveryFunnelCard({
                   cpl: d.last7.cpl,
                   cpb: cost.value,
                   cpbWhy: cost.why,
+                  dwy: doneWithYouLine(doneWithYouOf(d.last7)),
                   dials: c?.providerDials ?? null,
                   connected: c?.connected ?? null,
                 };
@@ -861,6 +867,9 @@ function DeliveryFunnelCard({
                   cpl: leads > 0 ? spend / leads : null,
                   cpb: cost.value,
                   cpbWhy: cost.why,
+                  dwy: doneWithYouLine(
+                    doneWithYouOfDays(d.daily, w.from, w.to),
+                  ),
                   dials: callsKept ? sumIn(callDays, w, r => r.dials) : null,
                   connected: callsKept
                     ? sumIn(callDays, w, r => r.connected)
@@ -911,6 +920,11 @@ function DeliveryFunnelCard({
               <p className="mt-2 text-xs text-muted-foreground">
                 Calls are kept per day for the last 30 days only, so dials and
                 connections are n/a for a window that starts earlier.
+              </p>
+            ) : null}
+            {win7.dwy ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {CPB_CONFIRMED_LABEL}:{win7.dwy}
               </p>
             ) : null}
             {c ? (
@@ -1247,16 +1261,13 @@ const DELIVERY_COLUMNS: Column<DeliveryClient>[] = [
     // divides by (./deliveryCost.ts); n/a with the reason when the board
     // stores none of these days, for a Done With You client, or on a window
     // the board's per-client counts do not cover, never 0.
-    cell: r => (
-      <Value
-        value={cplOnlyOf(r) === "dwy" ? null : f.count(r.confirmed7d)}
-        hint={
-          cplOnlyOf(r) === "dwy"
-            ? DWY_BOOKINGS
-            : (r.bookingsWhy ?? "Bookings are not measured for this client")
-        }
-      />
-    ),
+    cell: r =>
+      dwyCell(r) ?? (
+        <Value
+          value={f.count(r.confirmed7d)}
+          hint={r.bookingsWhy ?? "Bookings are not measured for this client"}
+        />
+      ),
     sortValue: r => (cplOnlyOf(r) === "dwy" ? null : (r.confirmed7d ?? null)),
   },
 ];

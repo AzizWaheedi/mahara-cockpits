@@ -74,6 +74,17 @@ export const LINK_CTR_FLOOR = 0.3;
 
 /** Cost per lead over this is very high: half again over the gate. */
 export const CPL_BAD = CPL_GATE * 1.5;
+/**
+ * Spend with no lead, Aziz, 23 Oct 2026 (cost per booking decisions, 4): "Depends on how much
+ * spend if 2x target cpl then yes bad if below that then not enough data". At or over the line
+ * it is bad; above $0 and under it, too few to judge. Keep in step with
+ * hermes/ceo-refresh/native/constants.js and hermes/cockpit-sync/constants.ts.
+ */
+export const NO_LEAD_MULTIPLE = 2;
+/** The no-lead line for a cost per lead target: 2 x the client's line, else 2 x the $15 gate. */
+export function noLeadLine(cplTarget: number = CPL_GATE): number {
+  return NO_LEAD_MULTIPLE * cplTarget;
+}
 
 export type GridVerdict = "scale" | "hold" | "kill";
 export type GridRow = "good" | "watch" | "bad" | "early";
@@ -128,7 +139,9 @@ export function gridCell(
   booked: number,
 ): { row: GridRow; column: 0 | 1 | 2; verdict: GridVerdict } {
   const cpl = spend / leads;
-  const column = cpl <= CPL_GATE ? 0 : cpl <= CPL_BAD ? 1 : 2;
+  // No lead at all counts as over CPL_BAD (decision 4): belowKpi only asks
+  // once the spend has reached the no-lead line.
+  const column = leads <= 0 ? 2 : cpl <= CPL_GATE ? 0 : cpl <= CPL_BAD ? 1 : 2;
   // No booking yet: what it has spent is already the least one booking costs.
   // The $60 and $80 lines judge the cents a cell shows, as the worker's judge
   // and the Ads page's colours do: $60.004 reads "$60" and is not over $60
@@ -155,16 +168,26 @@ export function gridCell(
  * Atlantis at $43.63 a booking as out of KPI). Too early to judge on bookings
  * is not out of KPI either, unless its cost per lead is a kill. Without
  * booking data (Done With You, no GHL) it is the cost per lead gate alone.
+ *
+ * No lead (decision 4, 23 Oct 2026): `leadSpend7d` (the spend the cost per
+ * lead divides, `spend7d` when left out) under noLeadLine() is too few to
+ * judge, never out of KPI. At or over it, it is out of KPI when bookings are
+ * unknown or none, and the grid judges it otherwise with the cost per lead
+ * counted as over CPL_BAD: bookings within CPB_GATE hold it in.
  */
 export function belowKpi(c: {
   spend7d: number;
   leads7d: number;
   cpl?: number;
   bookings7d?: number | null;
+  leadSpend7d?: number;
 }): boolean {
-  if (c.bookings7d === undefined || c.bookings7d === null)
+  if (c.leads7d <= 0) {
+    const leadSpend = Math.round((c.leadSpend7d ?? c.spend7d) * 100) / 100;
+    if (!(leadSpend >= noLeadLine())) return false;
+    if (c.bookings7d === undefined || c.bookings7d === null) return true;
+  } else if (c.bookings7d === undefined || c.bookings7d === null)
     return c.cpl !== undefined && c.cpl > CPL_GATE;
-  if (c.leads7d <= 0) return c.spend7d >= 1;
   const cell = gridCell(c.spend7d, c.leads7d, c.bookings7d);
   return (
     cell.verdict === "kill" || (cell.verdict === "hold" && cell.row === "watch")

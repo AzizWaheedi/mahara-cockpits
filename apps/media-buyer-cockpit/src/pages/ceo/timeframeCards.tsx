@@ -6,7 +6,13 @@ import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSection } from "@/components/ceo/useCeo";
 import type { DeliveryDay, Note } from "@/types/ceo/payloads";
-import { CPB_CONFIRMED_LABEL, cpbConfirmedOfDays } from "./deliveryCost";
+import {
+  CPB_CONFIRMED_LABEL,
+  cpbConfirmedOfDays,
+  doneWithYouBookingsLine,
+  doneWithYouLine,
+  doneWithYouOfDays,
+} from "./deliveryCost";
 
 /**
  * One card per tab that rebuilds the headline numbers for any timeframe from
@@ -70,6 +76,10 @@ export function DeliveryTimeframeCard({
   const cost = bounds
     ? cpbConfirmedOfDays(inRange, bounds.from, bounds.to, source)
     : cpbConfirmedOfDays([], "", "", source);
+  // Done With You spend the cost leaves out (decision 2, 23 Oct 2026).
+  const dwy = bounds
+    ? doneWithYouOfDays(inRange, bounds.from, bounds.to)
+    : null;
   return (
     <SectionCard
       kicker={`${count(days)} days`}
@@ -106,6 +116,11 @@ export function DeliveryTimeframeCard({
               label="Confirmed bookings"
               value={count(cost.confirmed)}
               naHint={cost.why ?? undefined}
+              hint={
+                dwy
+                  ? `Confirmed bookings made on these days, as the Client Performance board counts them.${doneWithYouBookingsLine(dwy)}`
+                  : undefined
+              }
               sub={
                 cost.daysNotMeasured > 0
                   ? `made on these days; ${count(cost.daysNotMeasured)} not stored`
@@ -119,7 +134,7 @@ export function DeliveryTimeframeCard({
               naHint={cost.why ?? undefined}
               hint={
                 cost.spend !== null
-                  ? `${money(cost.spend)} of spend on the days the Client Performance board stores bookings, over the confirmed bookings made on them.`
+                  ? `${money(cost.spend)} of spend on the days the Client Performance board stores bookings, over the confirmed bookings made on them.${doneWithYouLine(dwy)}`
                   : undefined
               }
             />

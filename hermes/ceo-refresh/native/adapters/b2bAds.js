@@ -1,5 +1,5 @@
 import { ACCOUNT_TIME_ZONE_FALLBACK, campaignKind, liveOnlyAds, liveState, metaUntil, offReason, readInsights, readLevelFrequency, readLiveStatus, } from "../../../../supabase/functions/cockpit-ceo-api/frequency.ts";
-import { CPL_GATE } from "../constants.js";
+import { CPL_GATE, NO_LEAD_MULTIPLE } from "../constants.js";
 import { addKnown, knownCount, LINK_CLICKS_SQL, linkCtr } from "../linkCtr.js";
 import { graph, withOptionalReads } from "../tools.js";
 import { B2B, num, sql } from "../sb.js";
@@ -76,8 +76,13 @@ function day(d) {
     return `date '${d}'`;
 }
 const usd = (x) => Math.round(x * 100) / 100;
-/** Seven days at this spend with no lead is a kill; under it, too early to say. */
-const KILL_FLOOR = 30;
+/**
+ * Seven days at this spend with no lead is a kill; under it, not enough data
+ * (the CEO, 23 Oct 2026, cost per booking decisions, 4: "Depends on how much
+ * spend if 2x target cpl then yes bad if below that then not enough data").
+ * Computed from the gate, never typed; compared on the cent.
+ */
+export const KILL_FLOOR = NO_LEAD_MULTIPLE * CPL_GATE;
 // A count that is not known (null link clicks) gives no rate, never 0.
 const rate = (a, b) => (a !== null && b > 0 ? a / b : null);
 /**
@@ -522,7 +527,7 @@ function judge(running, w7, w30, staleSince, kind) {
             reason: `Delivering, but only $${w7.spend.toFixed(2)} and ${w7.impressions} ${w7.impressions === 1 ? "impression" : "impressions"} in seven days: too little to judge.`,
             owner: "ads",
         };
-    if (w7.leads === 0 && w7.spend >= KILL_FLOOR)
+    if (w7.leads === 0 && usd(w7.spend) >= KILL_FLOOR)
         return {
             verdict: "kill",
             reason: `$${w7.spend.toFixed(0)} in seven days and not one lead reached the CRM${w7.metaLeads > 0 ? `, though Meta counts ${w7.metaLeads}` : ""}.`,
@@ -532,7 +537,7 @@ function judge(running, w7, w30, staleSince, kind) {
     if (w7.leads === 0 || w7.cpl === null)
         return {
             verdict: "hold",
-            reason: `$${w7.spend.toFixed(2)} in seven days and no lead yet: too early to judge against the $${CPL_GATE} gate.`,
+            reason: `$${w7.spend.toFixed(2)} in seven days and no lead yet: not enough data. The verdict comes at $${KILL_FLOOR} (${NO_LEAD_MULTIPLE} x the $${CPL_GATE} gate).`,
             owner: "ads",
         };
     if (w7.cpl > CPL_GATE * 1.5)

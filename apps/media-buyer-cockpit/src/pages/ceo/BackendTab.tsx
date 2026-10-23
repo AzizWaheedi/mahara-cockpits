@@ -46,7 +46,13 @@ import type {
   Note,
 } from "@/types/ceo/payloads";
 import { CHURN_PAGE, churnView } from "./churnRegister";
-import { CPB_CONFIRMED_LABEL, cpbConfirmedOf } from "./deliveryCost";
+import {
+  CPB_CONFIRMED_LABEL,
+  cpbConfirmedOf,
+  doneWithYouBookingsLine,
+  doneWithYouLine,
+  doneWithYouOf,
+} from "./deliveryCost";
 import { statusRule } from "./deliveryStatus";
 import { DeliveryTimeframeCard } from "./timeframeCards";
 import type { CeoTabProps } from "./types";
@@ -437,6 +443,8 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
   const mtdCost = cpbConfirmedOf(d.mtd, d.bookingSource);
   const last7Cost = cpbConfirmedOf(d.last7, d.bookingSource);
   const prevCost = cpbConfirmedOf(d.prevLast7, d.bookingSource);
+  // Done With You spend the month's cost leaves out (decision 2, 23 Oct 2026).
+  const mtdDwy = doneWithYouOf(d.mtd);
 
   return (
     <div className="min-w-0 space-y-6">
@@ -490,7 +498,7 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
         <StatTile
           variant="plain"
           label="Confirmed bookings"
-          hint="Main and online calendar bookings made on these days, as the Client Performance board counts them, by the Kuwait day the booking was made. Provisional bookings are counted apart."
+          hint={`Main and online calendar bookings made on these days, as the Client Performance board counts them, by the Kuwait day the booking was made. Provisional bookings are counted apart.${doneWithYouBookingsLine(mtdDwy)}`}
           value={count(mtdCost.confirmed)}
           naHint={mtdCost.why ?? undefined}
           delta={
@@ -511,7 +519,7 @@ function MediaBuyingBody({ d }: { d: DeliveryPayload }) {
           hint={
             mtdCost.spend === null
               ? undefined
-              : `${money(mtdCost.spend)} of spend this month on the days the board stores bookings, over ${count(mtdCost.confirmed)} confirmed bookings made from the 1st to today so far, today's included as they come in. The same figure as Delivery's This month; the Client Performance board and the timeframe card stop at yesterday, so they can differ until the day ends.`
+              : `${money(mtdCost.spend)} of spend this month on the days the board stores bookings, over ${count(mtdCost.confirmed)} confirmed bookings made from the 1st to today so far, today's included as they come in. The same figure as Delivery's This month; the Client Performance board and the timeframe card stop at yesterday, so they can differ until the day ends.${doneWithYouLine(mtdDwy)}`
           }
           value={money(mtdCost.value)}
           naHint={mtdCost.why ?? undefined}

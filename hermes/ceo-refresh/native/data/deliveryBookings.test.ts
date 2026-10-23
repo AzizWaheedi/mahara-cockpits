@@ -23,7 +23,7 @@ function fixture() {
     { clientId: "acc-a", name: "Alpha", clickupTaskId: "task-a", status: "Active", locationIds: ["loc-a"] },
     { clientId: "acc-b", name: "Beta", clickupTaskId: "task-b", status: "Active", locationIds: ["loc-b"] },
     { clientId: "acc-p", name: "Pidco", clickupTaskId: "11", status: "Cancelled", locationIds: ["loc-p"] },
-    { clientId: "acc-t", name: "Triple Edge", clickupTaskId: null, status: null, locationIds: [] },
+    { clientId: "acc-t", name: "Art Vision", clickupTaskId: null, status: null, locationIds: [] },
   ];
   const days = [
     { clientId: "acc-a", date: day(14), spend: 100, leads: 5 },
@@ -78,7 +78,7 @@ describe("spend paired with stored bookings", () => {
     expect(s.notMeasured).toEqual([
       { client: "Beta", spend: 40, why: "Bookings are not stored for 1 of the 2 days it spent." },
       { client: "Pidco", spend: 30.5, why: "The card is cancelled: the board stores no booking days for it in these days." },
-      { client: "Triple Edge", spend: 9.25, why: "This ad account is tied to no client card or board row, so its bookings are not read." },
+      { client: "Art Vision", spend: 9.25, why: "This ad account is tied to no client card or board row, so its bookings are not read." },
     ]);
   });
 
@@ -96,7 +96,8 @@ describe("spend paired with stored bookings", () => {
       cpb: 35,
       cpl: 19.32,
     });
-    expect(w.notMeasured.map(x => x.client)).toEqual(["Beta", "Pidco", "Triple Edge"]);
+    expect(w.notMeasured.map(x => x.client)).toEqual(["Beta", "Pidco", "Art Vision"]);
+    expect(w.doneWithYou).toEqual([]);
   });
 
   test("a window with no stored day is not measured: null counts and no cost, never zero bookings", () => {
@@ -142,10 +143,10 @@ describe("the daily series", () => {
     const t = fixture();
     const rows = deliveryDaily(t, bookingLedger(t), day(14), day(17));
     expect(rows).toEqual([
-      { date: day(14), spend: 169.25, leads: 11, bookings: 3, confirmed: 2, provisional: 1, spendMeasured: 160 },
-      { date: day(15), spend: 80.5, leads: 3, bookings: 2, confirmed: 2, provisional: 0, spendMeasured: 50 },
-      { date: day(16), spend: 40, leads: 1, bookings: 1, confirmed: 1, provisional: 0, spendMeasured: 0 },
-      { date: day(17), spend: 0, leads: 0, bookings: 0, confirmed: null, provisional: null, spendMeasured: null },
+      { date: day(14), spend: 169.25, leads: 11, bookings: 3, confirmed: 2, provisional: 1, spendMeasured: 160, spendDoneWithYou: 0 },
+      { date: day(15), spend: 80.5, leads: 3, bookings: 2, confirmed: 2, provisional: 0, spendMeasured: 50, spendDoneWithYou: 0 },
+      { date: day(16), spend: 40, leads: 1, bookings: 1, confirmed: 1, provisional: 0, spendMeasured: 0, spendDoneWithYou: 0 },
+      { date: day(17), spend: 0, leads: 0, bookings: 0, confirmed: null, provisional: null, spendMeasured: null, spendDoneWithYou: 0 },
     ]);
     // The series adds up to the window: one rule, any run of days.
     const w = deliveryWindow(t, bookingLedger(t), day(14), day(16));
@@ -181,5 +182,140 @@ describe("one client's window", () => {
     const none = clientBookingWindow(t, ledger, { accountIds: ["acc-t"], locationIds: [] }, day(14), day(16));
     expect(none.confirmed).toBeNull();
     expect(none.why).toContain("tied to no client card");
+  });
+});
+
+/**
+ * The CEO's decisions of 23 Oct 2026. Decision 2, "No keep the CPL but ignore
+ * CPB": a Done With You client's spend and leads stay in spend, leads and cost
+ * per lead, and its spend and stored bookings leave every company cost per
+ * booking, named. Decision 5, "triple edge is a old churned client": a
+ * churned client's account (cockpit_churned_ad_accounts, status "Churned",
+ * no board location) is named as a churned client's, never as tied to no
+ * client, and its spend stays in the totals.
+ */
+describe("done with you and churned (23 Oct 2026)", () => {
+  function more() {
+    const t = fixture();
+    return {
+      clients: [
+        ...t.clients,
+        { clientId: "acc-n", name: "نهوض نجد", clickupTaskId: "task-n", status: "Active", serviceMode: "DWY", locationIds: ["loc-n"] },
+        { clientId: "acc-c", name: "Triple Edge Building Construction", clickupTaskId: null, status: "Churned", locationIds: [] },
+      ],
+      days: [
+        ...t.days,
+        { clientId: "acc-n", date: day(14), spend: 120.5, leads: 9 },
+        { clientId: "acc-n", date: day(15), spend: 71.83, leads: 7 },
+        { clientId: "acc-c", date: day(15), spend: 6.97, leads: 1 },
+      ],
+      bookingDays: [
+        ...t.bookingDays,
+        // The board stores 2 confirmed for the Done With You client: facts
+        // on its own row, never in a company cost per booking.
+        { locationId: "loc-n", date: day(14), confirmed: 2, provisional: 1, serviceMode: "DWY" },
+        { locationId: "loc-n", date: day(15), confirmed: 0, provisional: 0, serviceMode: "dwy" },
+      ],
+    };
+  }
+
+  test("the ledger knows the Done With You locations and accounts", () => {
+    const ledger = bookingLedger(more());
+    expect([...ledger.dwyLocs]).toEqual(["loc-n"]);
+    expect([...ledger.dwyAccounts]).toEqual(["acc-n"]);
+    // Its stored bookings stay facts on its own locations.
+    expect(storedBookings(ledger, ["loc-n"], day(14), day(16)).confirmed).toBe(2);
+  });
+
+  test("a Done With You account's spend and 2 stored bookings leave the cost per booking; spend, leads and cost per lead keep them", () => {
+    const t = more();
+    const w = deliveryWindow(t, bookingLedger(t), day(14), day(16));
+    expect(w).toMatchObject({
+      // 289.75 + 192.33 (done with you) + 6.97 (churned)
+      spend: 489.05,
+      leads: 32,
+      cpl: 15.28,
+      // Unchanged from the window without them: 210 over 5 confirmed.
+      confirmed: 5,
+      provisional: 1,
+      bookings: 6,
+      spendMeasured: 210,
+      cpbConfirmed: 42,
+      cpb: 35,
+    });
+    expect(w.doneWithYou).toEqual([{ client: "نهوض نجد", spend: 192.33 }]);
+    // Done with you is named as such, never as not measured.
+    expect(w.notMeasured.map(x => x.client)).not.toContain("نهوض نجد");
+  });
+
+  test("the churned account is named with its own sentence, its spend not divided and not dropped", () => {
+    const t = more();
+    const s = measuredSpend(t, bookingLedger(t), day(14), day(16));
+    expect(s.spendMeasured).toBe(210);
+    expect(s.notMeasured).toEqual([
+      { client: "Beta", spend: 40, why: "Bookings are not stored for 1 of the 2 days it spent." },
+      { client: "Pidco", spend: 30.5, why: "The card is cancelled: the board stores no booking days for it in these days." },
+      { client: "Art Vision", spend: 9.25, why: "This ad account is tied to no client card or board row, so its bookings are not read." },
+      { client: "Triple Edge Building Construction", spend: 6.97, why: "This is a churned client's ad account, so its bookings are not read." },
+    ]);
+    // The untied account keeps its own sentence.
+    expect(s.notMeasured.filter(x => x.why.includes("tied to no client")).map(x => x.client)).toEqual(["Art Vision"]);
+  });
+
+  test("the daily series leaves Done With You out of the counts and the measured spend, and carries its spend apart", () => {
+    const t = more();
+    const rows = deliveryDaily(t, bookingLedger(t), day(14), day(15));
+    expect(rows).toEqual([
+      { date: day(14), spend: 289.75, leads: 20, bookings: 3, confirmed: 2, provisional: 1, spendMeasured: 160, spendDoneWithYou: 120.5 },
+      { date: day(15), spend: 159.3, leads: 11, bookings: 2, confirmed: 2, provisional: 0, spendMeasured: 50, spendDoneWithYou: 71.83 },
+    ]);
+    // The series still adds up to the window, one rule for any run of days.
+    const w = deliveryWindow(t, bookingLedger(t), day(14), day(15));
+    expect(rows.reduce((n, r) => n + (r.confirmed ?? 0), 0)).toBe(w.confirmed);
+    expect(rows.reduce((n, r) => n + (r.spendMeasured ?? 0), 0)).toBe(w.spendMeasured);
+    expect(Math.round(rows.reduce((n, r) => n + r.spendDoneWithYou, 0) * 100) / 100).toBe(w.doneWithYou[0].spend);
+  });
+
+  test("the client's own window divides nothing and names no gap", () => {
+    const t = more();
+    const n = clientBookingWindow(t, bookingLedger(t), { accountIds: ["acc-n"], locationIds: ["loc-n"] }, day(14), day(16));
+    expect(n).toMatchObject({ spendMeasured: 0, cpbConfirmed: null, why: null });
+  });
+
+  test("a mixed card is left out per account: each day keeps the mode of the account that spent it", () => {
+    // Alpha's card also runs a Done With You account, folded into Alpha's row
+    // by triage.js: its day carries that account's mode.
+    const t = fixture();
+    t.days = [
+      ...t.days.map(d => ({ ...d, serviceMode: d.clientId === "acc-a" ? "DFY" : null })),
+      { clientId: "acc-a", date: day(14), spend: 25, leads: 2, serviceMode: "DWY" },
+    ];
+    const w = deliveryWindow(t, bookingLedger(t), day(14), day(16));
+    expect(w).toMatchObject({ spend: 314.75, leads: 17, spendMeasured: 210, confirmed: 5 });
+    expect(w.doneWithYou).toEqual([{ client: "Alpha", spend: 25 }]);
+    // The other way round: a Done With You card whose other account we book for.
+    const u = fixture();
+    u.clients[0] = { ...u.clients[0], serviceMode: "DWY" };
+    u.days = u.days.map(d => ({
+      ...d,
+      serviceMode: d.clientId !== "acc-a" ? null : d.date === day(15) ? "DFY" : "DWY",
+    }));
+    const v = deliveryWindow(u, bookingLedger(u), day(14), day(16));
+    // Alpha's $100 on the 14th (DWY account) is left out; its $50 on the 15th is measured.
+    expect(v.doneWithYou).toEqual([{ client: "Alpha", spend: 100 }]);
+    expect(v.spendMeasured).toBe(110);
+    const rows = deliveryDaily(u, bookingLedger(u), day(14), day(15));
+    expect(rows.map(r => r.spendDoneWithYou)).toEqual([100, 0]);
+    expect(rows.map(r => r.spendMeasured)).toEqual([60, 50]);
+  });
+
+  test("a blank or other mode is not done with you", () => {
+    const t = more();
+    t.clients[4] = { ...t.clients[4], serviceMode: "" };
+    t.bookingDays = t.bookingDays.map(r => (r.locationId === "loc-n" ? { ...r, serviceMode: "DFY" } : r));
+    const w = deliveryWindow(t, bookingLedger(t), day(14), day(16));
+    expect(w.doneWithYou).toEqual([]);
+    expect(w.confirmed).toBe(7);
+    expect(w.spendMeasured).toBe(402.33);
   });
 });

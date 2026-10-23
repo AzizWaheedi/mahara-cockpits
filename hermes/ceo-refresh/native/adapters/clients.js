@@ -1,8 +1,9 @@
-import { CPB_GATE, CPL_GATE } from "../constants.js";
+import { CPB_GATE, CPL_GATE, NO_LEAD_MULTIPLE } from "../constants.js";
 import { BUCKET_CHURNED, BUCKET_METRIC, LAUNCH_METRIC } from "../data/clients.js";
 import { tapKeyState } from "../data/tap.js";
 import { averageRetainer, createdDayOf, daysToLaunchOf, EXT_PAGE, EXTENSION_FIELD_NAME, FIELD_ASK, findExtensionField, isInternalText, matchCard, readExtensionForm, summariseExtensions, summariseLaunch, } from "../extensions.js";
-import { frozenFillByCardSql, mediaClientDaysSql } from "../data/triage.js";
+import { CPL_TARGETS_SQL, cplTargetsOf, frozenFillByCardSql, mediaClientDaysSql } from "../data/triage.js";
+import { isDoneWithYou } from "../data/deliveryClients.js";
 import { rollUp } from "../../../../apps/client-success-cockpit/src/lib/churnCore.ts";
 import { CEO_EMAILS } from "../gate.js";
 import { nameKey } from "../manualMatch.js";
@@ -128,6 +129,7 @@ const pulseSql = (today) => `with w as (
 -- snapshot table for the ad-days it lacks (../data/triage.js mediaClientDaysSql).
 spend_days as (${mediaClientDaysSql(addDays(today, -89), today)})
 select g.clickup_id,
+  g.service_mode,
   coalesce(ap.appts_28d, 0) as appts_28d,
   coalesce(ap.appts_90d, 0) as appts_90d,
   w.d - (ap.last_booked_at at time zone 'Asia/Kuwait')::date as days_since_booking,
@@ -188,8 +190,13 @@ limit 200`;
  * cannot be judged (no attendance marked, no ad link, no open deals) it gets
  * half its weight. A location with no leads, bookings or spend in 90 days is
  * not live, so it has no score.
+ *
+ * A Done With You client books its own meetings (the CEO, 23 Oct 2026, cost
+ * per booking decisions, 2: "No keep the CPL but ignore CPB"), so its
+ * bookings and cost per booking blocks cannot be judged: each gets half its
+ * weight (17.5 and 7.5), as any block Pulse cannot judge does.
  */
-function pulseOf(r) {
+export function pulseOf(r) {
     const appts28 = num(r.appts_28d);
     const leads28 = num(r.leads_28d);
     const spend28 = num(r.spend_28d);
@@ -200,16 +207,19 @@ function pulseOf(r) {
         num(r.spend_90d) === 0)
         return { score: null, status: "no-data" };
     const sinceBooking = r.days_since_booking == null ? null : num(r.days_since_booking);
+    const dwy = isDoneWithYou(r.service_mode);
     // Pulse calls spending with no booking in 21 days urgent.
-    const bookings = appts28 === 0 || sinceBooking === null || sinceBooking > 21
-        ? 0
-        : 35 * Math.min(1, appts28 / 10);
+    const bookings = dwy
+        ? 17.5
+        : appts28 === 0 || sinceBooking === null || sinceBooking > 21
+            ? 0
+            : 35 * Math.min(1, appts28 / 10);
     const leads = leads28 === 0
         ? 0
         : 20 * Math.min(1, leads28 / Math.max(1, num(r.leads_prev28d)));
     const known = num(r.attended_28d) + num(r.noshow_28d);
     const attendance = known === 0 ? 7.5 : (15 * num(r.attended_28d)) / known;
-    const cost = spend28 <= 0
+    const cost = spend28 <= 0 || dwy
         ? 7.5
         : appts28 === 0
             ? 0
@@ -266,8 +276,30 @@ left join access on access.client_id = dir.client_id
 left join seen on seen.client_id = dir.client_id
 group by dir.clickup_id
 limit 500`;
-/** Transparent risk points; every point comes with its reason. */
-function riskOf(s, now) {
+/** A no-lead line a caller passed: a positive number, else null. */
+const validLine = (x) => typeof x === "number" && Number.isFinite(x) && x > 0 ? x : null;
+/**
+ * The no-lead line of a card (the CEO, 23 Oct 2026, cost per booking
+ * decisions, 4): NO_LEAD_MULTIPLE x the client's own cost per lead line on
+ * the Client Performance board (its card's line, else the board default,
+ * else the $15 gate), the same line CEO Delivery judges its row by.
+ * `targets` is cplTargetsOf's `{ defaults, byCard }`, or null when the lines
+ * could not be read (the gate for every client).
+ */
+export function noLeadLineOf(targets, taskId) {
+    const own = taskId ? targets?.byCard?.[taskId] : undefined;
+    return NO_LEAD_MULTIPLE * (own ?? targets?.defaults ?? CPL_GATE);
+}
+/**
+ * Transparent risk points; every point comes with its reason.
+ *
+ * No leads in 7 days (the CEO, 23 Oct 2026, cost per booking decisions, 4):
+ * no spend either is +2, "no spend and no leads in 7 days"; spend at or over
+ * the card's no-lead line (`s.noLeadLine`, noLeadLineOf; NO_LEAD_MULTIPLE x
+ * the $15 gate when absent) is +2, "no lead on $X in 7 days"; spend above $0
+ * and under that line is too few to judge and adds nothing.
+ */
+export function riskOf(s, now) {
     // A churned client is already lost; its old signals are not a risk.
     if (s.bucket === "churned")
         return { score: 0, level: "low", reasons: [] };
@@ -287,8 +319,13 @@ function riskOf(s, now) {
         add(2, `payment ${s.overdueDays} ${s.overdueDays === 1 ? "day" : "days"} overdue`);
     if (s.bucket === "active" && s.leads7d === null && s.boardKnown)
         add(2, "no campaign on the ads board");
-    else if (s.bucket === "active" && s.leads7d === 0)
-        add(2, "no leads in 7 days");
+    else if (s.bucket === "active" && s.leads7d === 0) {
+        const spend = round2(num(s.spend7d));
+        if (!(spend > 0))
+            add(2, "no spend and no leads in 7 days");
+        else if (spend >= round2(validLine(s.noLeadLine) ?? NO_LEAD_MULTIPLE * CPL_GATE))
+            add(2, `no lead on $${spend.toFixed(2)} in 7 days`);
+    }
     if (s.cpl7d !== null && s.cpl7d > 1.5 * CPL_GATE)
         add(1, `CPL $${Math.round(s.cpl7d)} in 7 days`);
     if (s.pulse?.status === "bad")
@@ -934,6 +971,9 @@ export const clients = {
         // for the same reason (Aziz's spec of 2026-09-21, points 12 to 15).
         const extRead = readExtensionForm(ctx);
         const billingRead = ctx.repository.billing().then((rows) => ({ ok: true, rows }), (e) => ({ ok: false, error: errText(e) }));
+        // The clients' cost per lead lines, for the no-lead risk point
+        // (decision 4): the same read and fallback as Delivery's rows.
+        const targetsRead = sql(TRIAGE, CPL_TARGETS_SQL).then(rows => ({ ok: true, ...cplTargetsOf(rows) }), e => ({ ok: false, error: errText(e) }));
         const churnRead = Promise.all([sql(TRIAGE, CHURN_MONTHS_SQL), sql(TRIAGE, CHURN_DEPARTURES_SQL)])
             .then(([months, departures]) => ({ ok: true, register: churnRegisterOf(months, departures, today) }), e => ({ ok: false, error: errText(e) }));
         const extJobRead = Promise.all([
@@ -1038,7 +1078,7 @@ export const clients = {
                 });
             notes.push({
                 level: "info",
-                text: "Pulse health is scored by the cockpit with the Pulse weights (bookings 35, leads 20, attendance 15, cost per booking 15, pipeline movement 15): 75 or more is good, under 30 is bad. Pulse stores no score, so how each block is scored is the cockpit's own rule until it is checked against the Pulse screen. Attendance is only known where the client fills the stat sheet, and open deals include the Lost Leads pipelines.",
+                text: "Pulse health is scored by the cockpit with the Pulse weights (bookings 35, leads 20, attendance 15, cost per booking 15, pipeline movement 15): 75 or more is good, under 30 is bad. Pulse stores no score, so how each block is scored is the cockpit's own rule until it is checked against the Pulse screen. Attendance is only known where the client fills the stat sheet, and open deals include the Lost Leads pipelines. A Done With You client books its own meetings, so its bookings and cost per booking blocks score half their weight, as any block Pulse cannot judge does (Aziz, 23 Oct 2026).",
             });
         }
         catch (e) {
@@ -1091,6 +1131,12 @@ export const clients = {
         // could be read; a card that is not in it carries null, not zero.
         const billing = await billingRead;
         const billingByTask = new Map(billing.ok ? billing.rows.map(r => [r.taskId, r]) : []);
+        const cplTargets = await targetsRead;
+        if (!cplTargets.ok)
+            notes.push({
+                level: "warn",
+                text: `The clients' cost per lead lines (cockpit_board_targets) could not be read this run, so the no-lead risk point is judged against $${NO_LEAD_MULTIPLE * CPL_GATE} (${NO_LEAD_MULTIPLE} x the $${CPL_GATE} gate) for every client (${cplTargets.error ?? "no reason given"}).`,
+            });
         const rows = roster.map(c => {
             const bucket = bucketOf(c.bucket, String(c.stage ?? ""));
             const p = perf.get(c.taskId);
@@ -1132,6 +1178,8 @@ export const clients = {
                     overdueDays,
                     boardKnown,
                     leads7d,
+                    spend7d: p ? p.spend : null,
+                    noLeadLine: noLeadLineOf(cplTargets.ok ? cplTargets : null, c.taskId),
                     cpl7d,
                     pulse: pl,
                     portal: po,
@@ -1175,7 +1223,7 @@ export const clients = {
             });
         notes.push({
             level: "info",
-            text: `Risk points: unhappy 3, silent over 14 days 2 (8 to 14 days 1), payment overdue with no extension 2, active with no campaign on the ads board or no leads in 7 days 2, CPL over 1.5x the $${CPL_GATE} gate 1, Pulse bad 2, portal access but no visit in 14 days 1, DEFCON at risk on the latest call notes 2. High is 5 or more, medium 3 to 4; churned clients score 0. Leads, CPL and bookings are the last 7 days of on-board campaigns.`,
+            text: `Risk points: unhappy 3, silent over 14 days 2 (8 to 14 days 1), payment overdue with no extension 2, active with no campaign on the ads board, with no spend and no leads in 7 days, or with no lead on ${NO_LEAD_MULTIPLE} x its cost per lead line or more of spend in 7 days (the card's line on the Client Performance board, else the board default, else the $${CPL_GATE} gate, so $${NO_LEAD_MULTIPLE * CPL_GATE} where none is set; the line CEO Delivery judges the client by; under that it is too few to judge) 2, CPL over 1.5x the $${CPL_GATE} gate 1, Pulse bad 2, portal access but no visit in 14 days 1, DEFCON at risk on the latest call notes 2. High is 5 or more, medium 3 to 4; churned clients score 0. Leads, CPL and bookings are the last 7 days of on-board campaigns.`,
         });
         // --- Churn and renewals (decisions of 2026-09-16).
         const launchOf = new Map(roster.map(c => [

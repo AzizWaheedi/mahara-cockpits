@@ -308,6 +308,15 @@ export function boardBookingDaysSql(from, to) {
  * an account the board does not list falls back to the GoHighLevel tie
  * (ghl_client_ad_accounts, then that location's board row or ghl_clients),
  * which a cancelled client with no account on the board still has.
+ *
+ * Only when neither tie exists is public.cockpit_churned_ad_accounts read
+ * (the CEO, 23 Oct 2026, cost per booking decisions, 5: "triple edge is a old
+ * churned client"): the account takes the list's client name and the status
+ * "Churned", so the gone rule keeps it out of the live client rows and its
+ * spend is named as a churned client's, never dropped and never "tied to no
+ * client". A live tie always wins over the list. The worker reads the table
+ * as the read-only role, which bypasses its row security; a missing table
+ * fails this read, so the section keeps its labelled fallback, never zeros.
  */
 export function clientTiesSql(from, to) {
     return `with days as (${mediaClientDaysSql(from, to)})
@@ -317,10 +326,10 @@ export function clientTiesSql(from, to) {
          coalesce(c.currency, 'USD') as currency,
          nullif(replace(coalesce(c.meta_ad_account_id, ''), 'act_', ''), '') as ad_account,
          coalesce(ba.location_id, bg.location_id, m.location_id) as location_id,
-         coalesce(ba.client_name, bg.client_name, g.client_name) as name,
+         coalesce(ba.client_name, bg.client_name, g.client_name, f.client_name) as name,
          coalesce(ba.clickup_id, bg.clickup_id, g.clickup_id) as clickup_id,
          coalesce(ba.service_mode, bg.service_mode, g.service_mode) as service_mode,
-         coalesce(ba.status, bg.status, g.status) as status,
+         coalesce(ba.status, bg.status, g.status, f.status) as status,
          case when ba.location_id is not null then 'board ad account' else m.matched_by end as matched_by,
          coalesce(ba.boards, 0) as board_rows,
          (ba.location_id is not null or bg.location_id is not null) as on_board
@@ -346,6 +355,9 @@ export function clientTiesSql(from, to) {
     limit 1
   ) g on true
   left join public.cockpit_board_clients bg on bg.location_id = m.location_id
+  left join public.cockpit_churned_ad_accounts f
+    on f.account_id = nullif(replace(coalesce(c.meta_ad_account_id, ''), 'act_', ''), '')
+   and ba.location_id is null and m.location_id is null
   where c.id::text in (select client_id from days)`;
 }
 /**
@@ -382,6 +394,36 @@ export class BoardBookingsUnreadable extends Error {
 /** Card statuses whose spend is named as money on a lost client. */
 export const GONE_STATUS = /cancel|stopped|churn/i;
 /**
+ * The cost per lead lines the Client Performance board judges against
+ * (cockpit_board_targets, metric cpl): the board default and each client's
+ * own line by ClickUp card. An absent row is the official gate
+ * (cockpit_board_default_targets(), which this read-only role cannot run, is
+ * pinned to kpi.ts). Read once per run for decision 4 (the CEO, 23 Oct 2026):
+ * spend with no lead is bad at NO_LEAD_MULTIPLE x the client's line.
+ */
+export const CPL_TARGETS_SQL = `select scope_key, good from public.cockpit_board_targets
+  where metric = 'cpl' and (scope_key = 'defaults' or scope_key like 'client:%')`;
+/**
+ * The rows of CPL_TARGETS_SQL as `{ defaults, byCard }`: a line is a positive
+ * number or absent, never zero. A row with a bad value is skipped, so the
+ * client falls back to the default line, then the gate.
+ */
+export function cplTargetsOf(rows) {
+    let defaults = null;
+    const byCard = {};
+    for (const r of rows ?? []) {
+        const good = r.good === null || r.good === undefined || r.good === "" ? NaN : Number(r.good);
+        if (!(Number.isFinite(good) && good > 0))
+            continue;
+        const key = String(r.scope_key ?? "");
+        if (key === "defaults")
+            defaults = good;
+        else if (key.startsWith("client:") && key.length > 7)
+            byCard[key.slice(7)] = good;
+    }
+    return { defaults, byCard };
+}
+/**
  * Read client delivery between two Kuwait days, inclusive, plus every past
  * appointment from `recentFrom` with its Mahara OS outcome.
  *
@@ -408,7 +450,15 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
     const boardRead = sql(TRIAGE, boardBookingDaysSql(from, to)).catch(e => {
         throw new BoardBookingsUnreadable(`The Client Performance board's booking days (cockpit_client_days) could not be read: ${String(e instanceof Error ? e.message : e).slice(0, 160)}`);
     });
-    const [feedRows, dayRows, untiedRows, clientRows, boardRows, winRows, appointmentRows, metaRows] = await Promise.all([
+    // The client cost per lead lines: a failed read is said by the adapter and
+    // every client falls back to the gate, the board's own default.
+    const targetsRead = sql(TRIAGE, CPL_TARGETS_SQL).then(rows => ({ ok: true, ...cplTargetsOf(rows) }), e => ({
+        ok: false,
+        defaults: null,
+        byCard: {},
+        error: String(e instanceof Error ? e.message : e).slice(0, 160),
+    }));
+    const [feedRows, dayRows, untiedRows, clientRows, boardRows, winRows, appointmentRows, metaRows, cplTargets] = await Promise.all([
         sql(TRIAGE, MEDIA_FEED_SQL),
         sql(TRIAGE, mediaClientDaysSql(from, to)),
         sql(TRIAGE, mediaUntiedSql(from, to)),
@@ -465,6 +515,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
                  join public.appointments ap on ap.ghl_appointment_id = o.appointment_id) as outcomes_joined,
               (select to_char(min(o.captured_at) at time zone 'Asia/Kuwait', 'YYYY-MM-DD') from portal_data.appointment_outcomes o) as outcomes_since,
               (select max(o.captured_at) from portal_data.appointment_outcomes o) as outcomes_latest`),
+        targetsRead,
     ]);
     // A feed mid-rewrite or stale is not a source: the caller says so and
     // falls back, rather than showing missing spend as zero.
@@ -517,6 +568,11 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
     // counted under it. [2026-10-21]
     const canonical = new Map();
     const byCard = new Map();
+    // Each account's own Service Mode, kept on its days before the fold: a
+    // card with one Done With You account and one we book for leaves out
+    // only the first's spend from company costs per booking (decision 2,
+    // contract 1.2; the card's row keeps the first account's mode).
+    const modeOf = new Map(clients.map(c => [c.clientId, c.serviceMode]));
     for (const c of clients) {
         const first = c.clickupTaskId ? byCard.get(c.clickupTaskId) : undefined;
         if (first) {
@@ -559,6 +615,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
             spend: num(r.spend_usd),
             leads: num(r.leads),
             source: r.source === "frozen" ? "frozen" : "media",
+            serviceMode: modeOf.get(clientId) ?? null,
         });
         // Campaigns that spent in the last three days of the window, counted once.
         if (date >= recentFrom3 && date <= to) {
@@ -588,6 +645,9 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
             clickupTaskId: r.clickup_id ? String(r.clickup_id) : null,
             client: String(r.client_name ?? r.location_id),
             status: r.status ? String(r.status) : null,
+            // The board row's Service Mode: a Done With You location's
+            // bookings leave every company cost per booking (decision 2).
+            serviceMode: r.service_mode ? String(r.service_mode) : null,
             date: String(r.date),
             confirmed: count(r.confirmed),
             provisional: count(r.provisional),
@@ -640,8 +700,10 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
     }
     const meta = metaRows[0] ?? {};
     const spent = new Set(days.filter(d => d.spend > 0).map(d => d.clientId));
+    // A lost client (cancelled, stopped or churned) is named in the lost
+    // client note, not as an account tied to no card (decision 5).
     const unmapped = clients
-        .filter(c => !c.clickupTaskId && spent.has(c.clientId))
+        .filter(c => !c.clickupTaskId && spent.has(c.clientId) && !GONE_STATUS.test(c.status ?? ""))
         .map(c => c.account)
         .sort();
     return {
@@ -655,6 +717,7 @@ export async function clientDelivery(from, to, recentFrom, options = {}) {
         bookingsDayFreshAt,
         unmapped,
         sharedAccounts,
+        cplTargets,
         unknownCurrencies: [...unknown].sort(),
         media: {
             firstDay: feed.firstDay,

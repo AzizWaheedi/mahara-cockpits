@@ -675,8 +675,13 @@ describe("the words around the numbers", () => {
   test("the EOD says 7-day where it reads 7 days, and no leads is not $0", () => {
     const page = source("src/pages/CockpitPage.tsx");
     expect(page).not.toContain("CPL_GATE} today");
-    expect(page).toContain("Any client with a 7-day CPL above");
-    expect(page).toContain("Any client with a 7-day CPL over");
+    // The report and the form share one label (eodRollup.overCplGateLabel),
+    // which says "7-day CPL" and names the no-lead line (decision 4).
+    expect(page).toContain("`${overCplGateLabel()}: ${overGate.length");
+    expect(page).toContain('{overCplGateLabel()}:{" "}');
+    expect(source("src/lib/eodRollup.ts")).toContain(
+      "Any client with a 7-day CPL over ${money(CPL_GATE)}, or no lead on ${money(noLeadLine())} or more",
+    );
     expect(page).toContain(
       'cpl: leads > 0 ? (spend / leads).toFixed(0) : "no leads"',
     );
