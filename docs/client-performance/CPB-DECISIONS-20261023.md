@@ -1356,3 +1356,23 @@ blocker, so neither changes code, a test, a figure in 10.5 or a release file.
 
 Nothing was run again for 11 and 12: no code, test or release file changed, so the checks of 10.1 and 10.8, the release
 copies and `BASES.txt` stand.
+
+## 11. Shipped (23 Oct 2026, 22:40 to 23:35 Kuwait)
+
+The lead session shipped 10.6 from main `fa4f66cc` (build `7471dd88` merged with main `16dc5540`, no conflict; tsc,
+biome, check-shared and every test file of 10.1 passed on the merge). Live fingerprints, the list (21), the churned table
+(absent), the release link (`0f85cpb2`) and the 13 live release md5s were read again first: unchanged.
+
+| Step | What went live | Checked on production |
+| --- | --- | --- |
+| 1 | media buyer and client success at `fa4f66cc` | ship.sh verified both live bundles |
+| 2 | `20261023p` to `u` | 23 listed ads, 0 snapshot rows of SAFAD's two ads; churned table with row security, no policy, `service_role` SELECT only, 1 row; the nine bodies carry the new md5s with ACLs as before. Board 14 to 20 Oct: SAFAD $7.86 good; نهوض نجد cost per booking and booking rate `not_measured` with `clientBooks`; Madana too few "under $30.00 (2 x the $15.00 ...)"; Triple Edge "churned" in Not in these totals; Active (done with you out) $2,524.72 / 49 = $51.52 |
+| 3 | native release `fa4fcpb3` on `0f85cpb2` | doctor, sync dry run (no listed ad in `dailyStats`; SAFAD's ad set out of `marketPlays`; `winnersArchive` 52), CEO dry run (14 sections). The first canary failed on "supabase-management provider did not confirm" in seven CEO sections right after the dry runs (regular cycles on `0f85cpb2` stayed ok); a canary-only retry with the base and staged-file checks passed at 20:31Z. CEO Delivery 16 to 22 Oct: $2,541.09 / 56 = $45.38; 22 Oct $37.58; 9 to 15 Oct $61.48; 15 rows, no Triple Edge, 5 bad; نهوض نجد "Done with you" with $205.15 named |
+| 4 | `20261021d` | one `media.excluded_ads.stats_archived` audit row: 47 rows, $3,452.64; 0 listed rows left; feed count 1,445 equals the table |
+| 5 | `clickup-writeback` v13 (verify_jwt off, as before); `cockpit-ceo-api` v26 (verify_jwt on, as before; since its 22 Oct deploy only this build changed its folder and `kpi.ts`) | one run of the scheduled KPI job: ok=false, "Dry run: 80 writes planned on 17 cards, nothing written to ClickUp", 16 to 22 Oct; Arcturus 3\9 Cost Per Booking "911" |
+
+Still open after the ship (10.8 and 10.9): the three listed winners stay in the archive and the copy assistant can quote them;
+the tracking backlog still lists five outsider ads; `cockpit_media_live_campaigns` keeps a typed 30 and 90; the worker
+still shows Triple Edge's two campaigns in the launch watch and off-board rows; the ClickUp inputs pass no service mode.
+Rollback, unchanged from 10.6: the link back to `0f85cpb2`; the dumps in `~/.cache/mahara-ship/rollback/`; the previous
+Vercel deployments; `clickup-writeback` v12 and `cockpit-ceo-api` v25 by redeploying `352508d3`'s folders.
