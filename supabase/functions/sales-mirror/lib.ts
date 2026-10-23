@@ -223,6 +223,95 @@ where account_id is not null
 order by source`;
 }
 
+/**
+ * Two New Client Form answers B2B keeps only inside the form's raw_payload
+ * (closed_deals has no column for them), read by the question's Typeform ref.
+ * The column on the left is the column in cockpit_sales_deals (migration
+ * 20261023x adds both). Deploy this mirror after it is applied; deployed
+ * first, the deals step finds the columns missing and copies the deals
+ * without them (index.ts dealAnswersStored), so the deal copy never stops.
+ * Asked from 29 Aug 2026, so older forms read null. B2B lets a person
+ * correct a deal's money after signing (DEAL_MONEY_EDIT_FIELDS), and that
+ * correction rewrites the column, never raw_payload, so the typed answers
+ * would no longer agree with the corrected plan or contract: on a deal with
+ * such a correction both read null and the rule falls back to the plan
+ * (b2b_apply_record_edits and b2b_editable_field read 2026-10-23; that day
+ * no deal had one, the only edit was a closer's name). Billing's pending
+ * payments read them (2026-10-23). Question titles as on Typeform
+ * BTzMwXiw, read 2026-10-23.
+ */
+export const DEAL_ANSWERS = {
+  /** "Cash To Be Collected On Onboarding" (USD; 0 = nothing left to collect on the call). */
+  cash_at_onboarding: "b37f4cfe-82ab-4da7-b1f8-aaabe2afbf9b",
+  /** "Second Payment Amount After Initial Payment (0 IF PAID IN FULL)" (USD). The rule applies it to each later part; the form asks only for the second. */
+  second_payment: "ea6fccbd-d27e-4b57-8cfb-d3fa527f362f",
+} as const;
+
+/** The cockpit_sales_deals columns DEAL_ANSWERS fills (added by 20261023x). */
+export const DEAL_ANSWER_COLUMNS = Object.keys(DEAL_ANSWERS) as (keyof typeof DEAL_ANSWERS)[];
+
+/**
+ * A Triage (PostgREST) refusal that says one of those columns is not there
+ * yet: 42703 on a select, PGRST204 on a write. A mirror deployed before
+ * 20261023x is applied keeps copying deals without the two answers instead
+ * of failing every deals step (the deal copy feeds the sales cockpit, the
+ * CEO's sales numbers and payroll attribution, not only billing).
+ */
+export function missingDealAnswerColumn(error: string): boolean {
+  if (!/42703|PGRST204|does not exist|Could not find the/i.test(error)) return false;
+  return DEAL_ANSWER_COLUMNS.some(c => error.includes(c));
+}
+
+/** A deal row without the two answers, for a Triage that has no columns for them yet. */
+export function withoutDealAnswers<T extends Record<string, unknown>>(row: T): T {
+  const out = { ...row };
+  for (const c of DEAL_ANSWER_COLUMNS) delete out[c];
+  return out;
+}
+
+/**
+ * The money fields of a deal B2B lets a person correct after signing
+ * (b2b_editable_field, read 2026-10-23). It also allows names, the closer,
+ * the CSM, the lead source, the agreement, the ad spend and the signing day;
+ * none of those changes what the client owes.
+ */
+export const DEAL_MONEY_EDIT_FIELDS = [
+  "payment_structure",
+  "cash_collected",
+  "contracted_revenue",
+  "new_mrr",
+] as const;
+
+/** A money field corrected in B2B after signing: the form's typed answers may no longer agree, so they read null (the rule falls back to the plan). */
+const MONEY_EDITED_SQL = `exists (
+    select 1 from public.record_edits as e
+     where e.entity = 'closed_deal' and e.record_id = d.response_id
+       and e.field in (${DEAL_MONEY_EDIT_FIELDS.map(lit).join(", ")}))`;
+
+/**
+ * One number answer of the form by its ref. Every answer on B2B is of type
+ * number today (11 and 10 forms, 29 Aug to 17 Oct); anything else, a
+ * negative number, a missing answer or a payload with no answer list reads
+ * null (missing, never zero) and never fails the read. A 0 typed on the
+ * form stays 0.
+ */
+function answerNumberSql(ref: string): string {
+  // The CASE guards the cast: Postgres may test WHERE conditions in any order.
+  return `(select y.n from (
+      select x.i,
+             case when jsonb_typeof(x.a -> 'number') = 'number'
+                  then (x.a ->> 'number')::numeric end as n
+        from jsonb_array_elements(
+          case when jsonb_typeof(d.raw_payload -> 'answers') = 'array'
+               then d.raw_payload -> 'answers' else '[]'::jsonb end
+        ) with ordinality as x(a, i)
+       where x.a #>> '{field,ref}' = ${lit(ref)}
+    ) as y
+    where y.n >= 0
+    order by y.i
+    limit 1)`;
+}
+
 /** Every signed deal, with B2B's own void flag. */
 export function dealsSql(): string {
   return `select
@@ -247,6 +336,8 @@ export function dealsSql(): string {
   d.cash_collected,
   d.contracted_revenue,
   d.new_mrr,
+  case when not ${MONEY_EDITED_SQL} then ${answerNumberSql(DEAL_ANSWERS.cash_at_onboarding)} end as cash_at_onboarding,
+  case when not ${MONEY_EDITED_SQL} then ${answerNumberSql(DEAL_ANSWERS.second_payment)} end as second_payment,
   d.daily_ad_spend,
   d.csm,
   d.fathom_link,

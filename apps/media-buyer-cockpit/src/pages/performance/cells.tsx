@@ -64,6 +64,7 @@ export function BoardDot({
 export function emptyWords(cell: Cell | null | undefined): string {
   const s = statusOf(cell);
   if (cell?.clientCalls) return "Client calls";
+  if (cell?.clientBooks) return "Done with you";
   if (s === "not_filled_in") return "Not filled in";
   if (cell?.notVideo) return "Not a video";
   if (s === "too_few") return "Too few";

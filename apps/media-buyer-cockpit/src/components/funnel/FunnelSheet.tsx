@@ -481,7 +481,7 @@ function Destination({
                 <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
                   {spendNotIn
                     ? `Meta's numbers after ${shortDate(spendNotIn)} are not in yet, so the calls booked in ${span(range)} are counted and their spend is not.`
-                    : `Calls counted to ${shortDate(stats?.callsThrough)}, the last day with Meta's numbers, so each call meets the spend it came from.`}
+                    : `Spend, leads and calls counted to ${shortDate(stats?.callsThrough)}, the last day every account's numbers are in, so each call meets the spend it came from.`}
                 </p>
               )}
               {t.booked > 0 && (

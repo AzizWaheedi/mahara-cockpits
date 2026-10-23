@@ -48,6 +48,7 @@ import {
   readWorkspaceDirectory,
 } from "./ceoProviderClient";
 import { readClientLogos } from "./clientLogosClient";
+import { readClientRange } from "./clientRange";
 import {
   creativeProviderAction,
   listCreativeRequests,
@@ -385,6 +386,9 @@ async function handleApiCall(endpoint: string, args: any = {}): Promise<any> {
   ) {
     return readMediaStats(supabase, sub, args);
   }
+  // A client's totals over a range, stopped campaigns included (R8).
+  if (domain === "stats" && sub === "clientRange")
+    return readClientRange(supabase, args);
   if (MEDIA_READS.has(endpoint)) return mediaAction(endpoint, args);
   if (MEDIA_WRITES.has(endpoint))
     return mediaAction(endpoint, args, { apply: true });

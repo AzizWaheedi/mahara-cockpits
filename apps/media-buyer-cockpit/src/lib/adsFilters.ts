@@ -1,6 +1,6 @@
 import { hasPaymentProblem, PAYMENT_FILTER } from "@/lib/adBillingStrip";
 import { cpbDisplay } from "@/lib/costTone";
-import { belowKpi, CPB_GATE } from "@/lib/kpi";
+import { belowKpi, CPB_GATE, noLeadLine } from "@/lib/kpi";
 
 // biome-ignore lint/suspicious/noExplicitAny: a campaign row from the snapshot
 type Campaign = any;
@@ -79,6 +79,17 @@ export function boardNumbers(
   };
 }
 
+/**
+ * Earlier leads that still book within $60 hold a row with no lead (decision
+ * 4 with the golden rule, contract 1.4.7): the worker holds it, so it is not
+ * critical. The cost per booking is judged on the cents its cell shows.
+ */
+function bookingsHoldNoLead(n: RowNumbers): boolean {
+  if (!n.bookings || n.bookings <= 0) return false;
+  const cost = n.costPerBooking ?? (n.spend ?? 0) / n.bookings;
+  return Math.round(cost * 100) / 100 <= CPB_GATE;
+}
+
 export type AdsFilter = {
   label: string;
   /** Reads the row's numbers for the picked range, not the 7-day snapshot. */
@@ -96,13 +107,20 @@ export type AdsFilter = {
  */
 export const ADS_FILTERS: AdsFilter[] = [
   { label: "Everything", test: () => true },
+  // No lead on 2 x the $15 gate or more is critical; under it there is not
+  // enough data yet (decision 4, 23 Oct 2026). Judged on the cents the
+  // Spend cell shows, so $29.99 is not and $30.00 is. Earlier leads that
+  // book within $60 hold it, as the worker does.
   {
     label: "Critical",
     ranged: true,
     test: (c, n) =>
       c.verdict === "kill" ||
       c.verdict === "off board" ||
-      (n !== undefined && n.leads === 0 && (n.spend ?? 0) > 20),
+      (n !== undefined &&
+        n.leads === 0 &&
+        Math.round((n.spend ?? 0) * 100) / 100 >= noLeadLine() &&
+        !bookingsHoldNoLead(n)),
   },
   // Meta flags the ad account: unpaid, restricted, grace period or under
   // review. The Payments strip's count chips turn this on (2026-10-13).
@@ -112,14 +130,17 @@ export const ADS_FILTERS: AdsFilter[] = [
   // lead gate alone only where bookings are not tracked. A high cost per lead
   // with bookings within $60 is a watch, not out of KPI (the golden rule,
   // 2026-10-21).
+  // A row whose leads are not read gets no verdict: missing is never zero.
   {
     label: "Below KPI",
     ranged: true,
     test: (_c, n) =>
       n !== undefined &&
+      typeof n.leads === "number" &&
+      Number.isFinite(n.leads) &&
       belowKpi({
         spend7d: n.spend ?? 0,
-        leads7d: n.leads ?? 0,
+        leads7d: n.leads,
         cpl: n.cpl,
         bookings7d: n.bookings,
       }),

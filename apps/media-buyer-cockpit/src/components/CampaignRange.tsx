@@ -9,7 +9,7 @@ import {
   cplTone,
   spendNotInWhy,
 } from "@/lib/costTone";
-import { everyBookingPlaced } from "@/lib/mediaStatsClient";
+import { everyBookingPlaced, pairedDay } from "@/lib/mediaStatsClient";
 import type { Range } from "@/lib/range";
 import { kuwaitDay, rangeDays } from "@/lib/range";
 import { RangePicker } from "./RangePicker";
@@ -147,8 +147,11 @@ export function CampaignRange({
 
   // The tracker pulls each day the next morning, so its last day is normally
   // yesterday and a range ending today always runs past it. That is not
-  // stale. It is stale when even yesterday has not been pulled.
-  const behind = Boolean(coverage?.last && coverage.last < kuwaitDay(1));
+  // stale. It is stale when even yesterday has not been pulled for every
+  // account: overnight, before the sheet fills, the paired day is the day
+  // before yesterday (pairedDay, 2026-10-22).
+  const paired = pairedDay(coverage);
+  const behind = Boolean(paired && paired < kuwaitDay(1));
   // No booking on more than $60 reads "None on $233" in the grid's colour,
   // not a grey n/a (2026-10-21).
   const totalCpb = cpbDisplay(data?.total?.spend, data?.total?.bookings, {
@@ -178,11 +181,12 @@ export function CampaignRange({
         end={range.end}
       />
 
-      {behind && coverage?.last && range.end > coverage.last && (
+      {behind && paired && range.end > paired && (
         <div className="mb-3 rounded-lg border callout-warn px-3 py-2 text-xs">
           The tracker sheet has spend up to{" "}
-          <span className="font-semibold">{shortDate(coverage.last)}</span>.
-          Anything after that is not missing: it has not been pulled yet.
+          <span className="font-semibold">{shortDate(paired)}</span>, so spend,
+          leads and bookings are counted to that day. Anything after it is not
+          missing: it has not been pulled yet.
         </div>
       )}
 
@@ -258,9 +262,8 @@ export function CampaignRange({
               {!leadsOnly &&
                 data.bookingsTotal > 0 &&
                 ` · ${data.bookingsAttributed} of ${data.bookingsTotal} bookings traced to an ad`}
-              {!leadsOnly &&
-                data.bookingsThrough &&
-                ` · bookings to ${shortDate(data.bookingsThrough)}, the last day with Meta's numbers`}
+              {data.bookingsThrough &&
+                ` · ${leadsOnly ? "spend and leads" : "spend, leads and bookings"} to ${shortDate(data.bookingsThrough)}, the last day every account's numbers are in`}
             </span>
           </div>
 

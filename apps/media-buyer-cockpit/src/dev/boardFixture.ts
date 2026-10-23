@@ -396,6 +396,18 @@ function cell(
   return { ...out, ...(o.extra ?? {}) };
 }
 
+/**
+ * A done-with-you client's cost per booking and booking rate, as
+ * 20261023r_board_done_with_you.sql writes them (decision 2, 23 Oct 2026):
+ * not judged, whatever GoHighLevel holds.
+ */
+const clientBooks = (): Json => ({
+  v: null,
+  status: "not_measured",
+  note: "Done with you: the client books its own meetings, so its cost per booking and booking rate are not judged.",
+  clientBooks: true,
+});
+
 const count = (v: number | null, note?: string): Json =>
   v === null
     ? {
@@ -869,8 +881,9 @@ function clientRow(
             ? { share: r2((b.called / b.crm) * 100) }
             : {}),
         },
-    leadToBooking:
-      b.crm === null || b.booked === null
+    leadToBooking: dwy
+      ? clientBooks()
+      : b.crm === null || b.booked === null
         ? cell("lead_to_booking", null, T, { status: "not_measured" })
         : b.crm === 0
           ? cell("lead_to_booking", null, T, {
@@ -885,8 +898,9 @@ function clientRow(
               num: b.booked,
               den: b.crm,
             }),
-    costPerBooking:
-      spend === null
+    costPerBooking: dwy
+      ? clientBooks()
+      : spend === null
         ? cell("cost_per_booking", null, T, {
             status: "not_measured",
             note: "No Meta ad account is linked to this client.",
@@ -2082,7 +2096,9 @@ export function clientFixture(
   ) => {
     const s = share(a, f);
     const m = { ...adCells(s, T), ...crm(leads, bookings, shows, due) };
-    if (bookings > 0)
+    // Done with you: every campaign, ad set and ad reads the same cell.
+    if (spec.mode === "DWY") m.costPerBooking = clientBooks();
+    else if (bookings > 0)
       m.costPerBooking = cell("cost_per_booking", r2(s.spend / bookings), T, {
         sample: bookings,
         num: s.spend,

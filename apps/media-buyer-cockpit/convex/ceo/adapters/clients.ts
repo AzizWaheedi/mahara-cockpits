@@ -1,3 +1,4 @@
+import { NO_LEAD_MULTIPLE } from "../../../src/lib/kpi";
 import { internal } from "../../_generated/api";
 import { CPB_GATE, CPL_GATE } from "../../constants";
 import type { BillingRow } from "../billing";
@@ -336,13 +337,28 @@ type Signals = {
   /** False when the campaigns table came back empty, so a missing campaign proves nothing. */
   boardKnown: boolean;
   leads7d: number | null;
+  /** Spend in the last 7 days on the client's on-board campaigns; null when none. */
+  spend7d?: number | null;
+  /**
+   * The card's no-lead line: NO_LEAD_MULTIPLE x the client's own cost per
+   * lead line (the native refresh's noLeadLineOf); NO_LEAD_MULTIPLE x the
+   * $15 gate when absent. This copy reads no lines, so it passes none.
+   */
+  noLeadLine?: number | null;
   cpl7d: number | null;
   pulse: { score: number | null; status: string | null } | null;
   portal: { hasAccess: boolean; lastSeenAt: number | null } | null;
 };
 
-/** Transparent risk points; every point comes with its reason. */
-function riskOf(s: Signals, now: number): ClientRow["risk"] {
+/**
+ * Transparent risk points; every point comes with its reason. The same rule
+ * as the native refresh (hermes/ceo-refresh/native/adapters/clients.js
+ * riskOf). No leads in 7 days (decision 4, 23 Oct 2026): no spend either is
+ * +2; spend at or over the card's no-lead line (`s.noLeadLine`, else
+ * NO_LEAD_MULTIPLE x the $15 gate) is +2; spend under that line is too few
+ * to judge and adds nothing.
+ */
+export function riskOf(s: Signals, now: number): ClientRow["risk"] {
   // A churned client is already lost; its old signals are not a risk.
   if (s.bucket === "churned") return { score: 0, level: "low", reasons: [] };
   let score = 0;
@@ -364,8 +380,21 @@ function riskOf(s: Signals, now: number): ClientRow["risk"] {
     );
   if (s.bucket === "active" && s.leads7d === null && s.boardKnown)
     add(2, "no campaign on the ads board");
-  else if (s.bucket === "active" && s.leads7d === 0)
-    add(2, "no leads in 7 days");
+  else if (s.bucket === "active" && s.leads7d === 0) {
+    const spend = round2(s.spend7d ?? 0);
+    if (!(spend > 0)) add(2, "no spend and no leads in 7 days");
+    else if (
+      spend >=
+      round2(
+        typeof s.noLeadLine === "number" &&
+          Number.isFinite(s.noLeadLine) &&
+          s.noLeadLine > 0
+          ? s.noLeadLine
+          : NO_LEAD_MULTIPLE * CPL_GATE,
+      )
+    )
+      add(2, `no lead on $${spend.toFixed(2)} in 7 days`);
+  }
   if (s.cpl7d !== null && s.cpl7d > 1.5 * CPL_GATE)
     add(1, `CPL $${Math.round(s.cpl7d)} in 7 days`);
   if (s.pulse?.status === "bad")
@@ -1226,6 +1255,7 @@ export const clients: Adapter = {
             overdueDays,
             boardKnown,
             leads7d,
+            spend7d: p ? p.spend : null,
             cpl7d,
             pulse: pl,
             portal: po,

@@ -13,6 +13,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { AppointmentFeedback } from "@/components/AppointmentFeedback";
 import { EmptyState } from "@/components/ceo/EmptyState";
 import { date, isNum, money, shortDate } from "@/components/ceo/format";
 import { KICKER, Kicker } from "@/components/ceo/Kicker";
@@ -1070,6 +1071,12 @@ export function ClientPanel({
           >
             <Numbers row={live} targets={targets ?? {}} />
           </Part>
+        ) : null}
+
+        {location ? (
+          <div className="px-5 pb-6 sm:px-6">
+            <AppointmentFeedback locationId={location} from={from} to={to} />
+          </div>
         ) : null}
 
         {!data ? (

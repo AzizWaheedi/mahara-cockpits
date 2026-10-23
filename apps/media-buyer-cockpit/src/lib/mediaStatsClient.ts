@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { kuwaitDay } from "./range";
 
 // Range/attribution math preserved from convex/stats.ts at main 653fa6c.
 // Source reads are supplied by the scoped SQL contract, never a Convex connection.
@@ -222,11 +223,13 @@ export type MediaStatsData = {
 };
 
 /**
- * How a range's bookings meet the media data's last day (2026-10-21, and
- * 2026-10-22 for a range wholly after it):
+ * How a range meets the paired day, the last day every account's spend is
+ * in (mediaDataThrough; 2026-10-21, and 2026-10-22 for a range wholly
+ * after it):
  * - the range ends on or before that day: nothing changes;
- * - the day falls inside the range: bookings are counted only through it
- *   (`through`), so they meet the spend they came from;
+ * - the day falls inside the range: spend, leads and bookings are all
+ *   counted only through it (`through`), one end for the three, so the
+ *   bookings meet the spend they came from;
  * - the whole range comes after it (Today, or Yesterday before the nightly
  *   pull): there is no spend to pair with at all, so the bookings are kept
  *   as they are, a real count, and `spendNotIn` names the day so the cost
@@ -266,9 +269,10 @@ export async function computeMediaRange(
     start: string;
     end: string;
     /**
-     * The last day the media data has spend for (mediaDataThrough): no
-     * booking after it is counted, so a range ending today never sets
-     * today's bookings against spend that stops yesterday.
+     * The paired day (mediaDataThrough): no spend, lead or booking after it
+     * is counted, so a range ending today never sets today's bookings
+     * against spend that stops yesterday, and overnight a sheet account's
+     * missing day is not set against a Meta account's.
      */
     bookingsThrough?: string | null;
   },
@@ -278,12 +282,21 @@ export async function computeMediaRange(
   const bookings = through
     ? data.bookings.filter(b => String(b.date ?? "") <= through)
     : data.bookings;
+  // One paired end for spend, leads and bookings (2026-10-22): overnight the
+  // Meta-read accounts already have yesterday while the sheet accounts stop
+  // the day before, and counting the one without the other set a day of
+  // spend against no bookings, or a day of bookings against no spend. A
+  // range wholly after the day keeps no spend row at all.
+  const end = through ?? spendNotIn;
+  const spendRows = end
+    ? data.rows.filter(r => String(r.date ?? "") <= end)
+    : data.rows;
   const context = {
     db: {
       query(table: string) {
         let rows =
           table === "dailyStats"
-            ? [...data.historical, ...data.rows]
+            ? [...data.historical, ...spendRows]
             : [...bookings];
         const conditions: ((r: Record<string, any>) => boolean)[] = [];
         const builder = {
@@ -317,7 +330,7 @@ export async function computeMediaRange(
   const result = await computeRange(context, range);
   return {
     ...result,
-    /** The last day whose bookings are counted, inside the range. */
+    /** The last day whose spend, leads and bookings are counted, inside the range. */
     bookingsThrough: through,
     /**
      * The media data's last day, when the whole range comes after it: the
@@ -356,10 +369,24 @@ let coverageRead:
  * a client's page, the funnel and the page's own note all land within a few
  * seconds of each other and get the same answer. A failed read is not kept.
  */
+export type MediaCoverage = {
+  first?: string | null;
+  last?: string | null;
+  /**
+   * The media sync's 7-day end (`cockpit_media_week()`, 20261022w): the
+   * last day the tracker sheet has spend for every account. Overnight,
+   * before the sheet fills, it is the day before yesterday while the
+   * Meta-read accounts already have yesterday.
+   */
+  bookingsThrough?: string | null;
+  weekFrom?: string | null;
+  weekSource?: string | null;
+};
+
 export function mediaCoverage(
   client: SupabaseClient,
   now = Date.now(),
-): Promise<{ first?: string | null; last?: string | null }> {
+): Promise<MediaCoverage> {
   const held = coverageRead;
   if (held && held.client === client && now - held.at < COVERAGE_FRESH_MS)
     return held.value;
@@ -371,27 +398,53 @@ export function mediaCoverage(
   return entry.value;
 }
 
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
- * The last day the media data has spend for: Meta's numbers run to
- * yesterday, while a booking lands the moment it is made. A range ending
+ * The paired day from a coverage read: the media sync's own 7-day end
+ * (`bookingsThrough`) when the coverage carries it, else the media data's
+ * last day; never after yesterday, Kuwait time. Null when neither is a day.
+ *
+ * Overnight, from midnight to about 06:00 Kuwait, the tracker sheet has not
+ * filled yesterday yet while the Meta-read accounts have it: the last day
+ * across all accounts was yesterday, so a sheet account counted a day of
+ * bookings past its spend. The worker's end is the sheet's last day for
+ * every account, the day before yesterday until the sheet fills, then
+ * yesterday (2026-10-22).
+ */
+export function pairedDay(
+  coverage: MediaCoverage | null | undefined,
+  yesterday = kuwaitDay(1),
+): string | null {
+  const own = coverage?.bookingsThrough;
+  const last = coverage?.last;
+  const day =
+    typeof own === "string" && DAY.test(own)
+      ? own
+      : typeof last === "string" && DAY.test(last)
+        ? last
+        : null;
+  if (!day) return null;
+  return day > yesterday ? yesterday : day;
+}
+
+/**
+ * The last day every account's spend is in (pairedDay): Meta's numbers run
+ * to yesterday, while a booking lands the moment it is made. A range ending
  * today (Today, Month to date, Year to date, a custom range) counted today's
  * bookings against spend that stops yesterday: City Wood's month to date
  * read $674.63 / 7 = $96.38 on 21 Oct, against $224.88 for its 3 bookings
- * to 20 Oct. So a range read that runs past this day counts bookings only
- * through it (bookingsCap); a range wholly after it keeps its bookings and
- * says its spend is not in yet. One day for the whole read, never each
- * campaign's own last day: Atlantis
- * 7\10 stopped spending on 17 Oct and still bought the bookings made on
- * 18-20 Oct (2026-10-21). Spend windows stay as picked: this month still
- * runs through today. Null when there is no media data at all.
+ * to 20 Oct. So a range read that runs past this day counts spend, leads
+ * and bookings only through it (bookingsCap); a range wholly after it keeps
+ * its bookings and says its spend is not in yet. One day for the whole
+ * read, never each campaign's own last day: Atlantis 7\10 stopped spending
+ * on 17 Oct and still bought the bookings made on 18-20 Oct (2026-10-21).
+ * Null when there is no media data at all.
  */
 export async function mediaDataThrough(
   client: SupabaseClient,
 ): Promise<string | null> {
-  const last = (await mediaCoverage(client))?.last;
-  return typeof last === "string" && /^\d{4}-\d{2}-\d{2}$/.test(last)
-    ? last
-    : null;
+  return pairedDay(await mediaCoverage(client));
 }
 
 export async function readMediaStats(

@@ -14,6 +14,7 @@ import {
   computeMediaRange,
   everyBookingPlaced,
   mediaDataThrough,
+  pairedDay,
   readMediaStats,
 } from "../src/lib/mediaStatsClient";
 
@@ -295,4 +296,142 @@ test("the funnel on Today keeps its calls and names the day the spend stops", ()
   expect(stats.calls).toHaveLength(7);
   expect(stats.callsThrough).toBeUndefined();
   expect(stats.spendNotIn).toBe("2026-10-20");
+});
+
+/**
+ * Overnight, from midnight to about 06:00 Kuwait on day D, the tracker sheet
+ * has not filled D-1 yet while the Meta-read accounts already have it. The
+ * media sync publishes its own end, the sheet's last day for every account
+ * (`bookingsThrough` on the coverage read, cockpit_media_week()), and every
+ * range read counts spend, leads and bookings through that one day
+ * (2026-10-22). After the sheet fills, the day moves to D-1.
+ */
+describe("overnight: one paired day for spend, leads and bookings", () => {
+  test("the media sync's own end wins, never after yesterday", () => {
+    // 22 Oct 03:00: Meta's accounts have 21 Oct, the sheet stops on 20 Oct.
+    expect(
+      pairedDay(
+        { last: "2026-10-21", bookingsThrough: "2026-10-20" },
+        "2026-10-21",
+      ),
+    ).toBe("2026-10-20");
+    // After the sheet fills, the sync's end moves to yesterday.
+    expect(
+      pairedDay(
+        { last: "2026-10-21", bookingsThrough: "2026-10-21" },
+        "2026-10-21",
+      ),
+    ).toBe("2026-10-21");
+    // Before 20261022w is applied the coverage has no end of its own: the
+    // media data's last day, capped at yesterday.
+    expect(pairedDay({ last: "2026-10-22" }, "2026-10-21")).toBe("2026-10-21");
+    expect(pairedDay({ last: "2026-10-20" }, "2026-10-21")).toBe("2026-10-20");
+    expect(
+      pairedDay(
+        { last: "2026-10-21", bookingsThrough: "2026-10-22" },
+        "2026-10-21",
+      ),
+    ).toBe("2026-10-21");
+    expect(
+      pairedDay({ last: "21 Oct", bookingsThrough: "" }, "2026-10-21"),
+    ).toBeNull();
+    expect(pairedDay(null)).toBeNull();
+  });
+
+  test("month to date at 03:00 counts spend, leads and bookings through 20 Oct", async () => {
+    // A Meta-read account's 21 Oct row is in; its bookings of 21 Oct too.
+    const night = {
+      rows: [...mtd.rows, day("2026-10-21", 45.5, 2)],
+      historical: [],
+      bookings: mtd.bookings,
+    };
+    const r = await computeMediaRange(night, {
+      campaignName,
+      start: "2026-10-01",
+      end: "2026-10-22",
+      bookingsThrough: "2026-10-20",
+    });
+    expect(r.total.spend).toBeCloseTo(674.63, 2);
+    expect(r.total.leads).toBe(3);
+    expect(r.bookingsTotal).toBe(3);
+    expect(r.total.costPerBooking).toBeCloseTo(224.88, 2);
+    expect(r.days).toBe(3);
+    expect(r.bookingsThrough).toBe("2026-10-20");
+  });
+
+  test("a range wholly after the day keeps its bookings and no spend row", async () => {
+    const r = await computeMediaRange(
+      {
+        rows: [day("2026-10-21", 45.5, 2)],
+        historical: [],
+        bookings: [booking("2026-10-21")],
+      },
+      {
+        campaignName,
+        start: "2026-10-21",
+        end: "2026-10-21",
+        bookingsThrough: "2026-10-20",
+      },
+    );
+    expect(r.hasData).toBe(false);
+    expect(r.total.spend).toBe(0);
+    expect(r.bookingsTotal).toBe(1);
+    expect(r.spendNotIn).toBe("2026-10-20");
+  });
+
+  test("the range read takes the sync's end from the shared coverage read", async () => {
+    const { client } = fakeClient({
+      coverage: () => ({
+        data: {
+          first: "2026-08-13",
+          last: "2026-10-21",
+          rows: null,
+          bookingsThrough: "2026-10-20",
+          weekFrom: "2026-10-14",
+          weekSource: "media sync",
+        },
+        error: null,
+      }),
+      range: () => ({
+        data: {
+          rows: [...mtd.rows, day("2026-10-21", 45.5, 2)],
+          historical: [],
+          bookings: mtd.bookings,
+        },
+        error: null,
+      }),
+    });
+    expect(await mediaDataThrough(client)).toBe("2026-10-20");
+    const r = await readMediaStats(client, "range", {
+      campaignName,
+      start: "2026-10-01",
+      end: "2026-10-22",
+    });
+    expect(r.total.spend).toBeCloseTo(674.63, 2);
+    expect(r.bookingsTotal).toBe(3);
+  });
+
+  test("the funnel's spend stops on the same day as its calls", () => {
+    const night = {
+      rows: [...mtd.rows, day("2026-10-21", 45.5, 2)],
+      bookings: mtd.bookings,
+    };
+    const capped = parseStats(night, "2026-10-20");
+    expect(totalsFor(capped, [{ id: "ad-1" }])?.spend).toBeCloseTo(674.63, 2);
+    expect(totalsFor(capped, [{ id: "ad-1" }])?.booked).toBe(3);
+    // Today (21 Oct) before the sheet fills: the range's only row is after
+    // the day, so no spend is counted and every call is kept.
+    const today = parseStats(
+      {
+        rows: [day("2026-10-21", 45.5, 2)],
+        bookings: mtd.bookings.filter(b => b.date === "2026-10-21"),
+      },
+      undefined,
+      "2026-10-20",
+    );
+    expect(today.rows).toHaveLength(0);
+    expect(today.calls).toHaveLength(4);
+    expect(today.spendNotIn).toBe("2026-10-20");
+    expect(parseStats(night).rows).toHaveLength(4);
+  });
 });

@@ -887,7 +887,9 @@ export function createMoneyAdapter(snapshot) {
 
       // Client ad spend over the twelve months (R2): the live media table
       // (USD, tied to the client through its campaign's ad account), the
-      // frozen snapshot table for the ad-days the live one lacks (up to 2 Oct). The feed must be
+      // snapshot table for the ad-days the live one lacks (kept current by the
+      // Meta dashboard feed since 18 Oct), ads on the compromise list left
+      // out of both (R3 and R17, 2026-10-22). The feed must be
       // ready, whole and written within the media sync's 3-hour stale line.
       const [mediaFeedRows, clientAdRows] = await Promise.all([
         sql(TRIAGE, `/* ceo-refresh:money.media_feed */ ${MEDIA_FEED_SQL}`),
@@ -908,7 +910,7 @@ export function createMoneyAdapter(snapshot) {
         ownUsd: ROUND2(clientAdRows.filter(row => row.own === true).reduce((sum, row) => sum + usdOf(row), 0)),
         unknownCurrencyDays: clientAdRows.filter(row => row.spend_usd === null || row.spend_usd === undefined).length,
       };
-      sources.push({ name: "Client ad spend (media daily statistics)", freshestAt: mediaFeed.at, ok: true, note: `${clientAdSpend.clients} client ad accounts, $${clientAdSpend.amount.toFixed(2)} since ${dates.from12} (Mahara's own accounts, $${clientAdSpend.ownUsd.toFixed(2)}, left out); the live table starts ${mediaFeed.firstDay}; ads it does not hold come from the frozen snapshot table up to 2 Oct, matched by Meta ad id${clientAdSpend.unknownCurrencyDays ? `; ${clientAdSpend.unknownCurrencyDays} client days in a currency with no rate left out` : ""}` });
+      sources.push({ name: "Client ad spend (media daily statistics)", freshestAt: mediaFeed.at, ok: true, note: `${clientAdSpend.clients} client ad accounts, $${clientAdSpend.amount.toFixed(2)} since ${dates.from12} (Mahara's own accounts, $${clientAdSpend.ownUsd.toFixed(2)}, left out); the live table starts ${mediaFeed.firstDay}; ads it does not hold come from the snapshot table, which the Meta dashboard feed has kept current since 18 Oct, matched by Meta ad id; ads on the compromise list are left out${clientAdSpend.unknownCurrencyDays ? `; ${clientAdSpend.unknownCurrencyDays} client days in a currency with no rate left out` : ""}` });
 
       const whopRail = { label: "Whop", connected: true, ...whopCash, refundsMtd: ROUND2(num(summary.refunds_mtd)), lastPaymentAt: epoch(summary.whop_last_paid_ms) };
       const manualDayTotals = new Map();

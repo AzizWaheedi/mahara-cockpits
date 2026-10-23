@@ -1,7 +1,10 @@
 // Pure rules ported from the paused media Convex deployment (2026-10-07).
 //
 // Every function here is a copy of the Convex original, kept byte-for-byte in
-// behaviour so the ClickUp board reads the same after the move:
+// behaviour so the ClickUp board reads the same after the move. The one
+// intended difference in a band is Cost Per Booking's "911": it starts over
+// the cockpit's $80 line (CPB_911, Aziz's decision 3 of 23 Oct 2026), not
+// over 1.5 x the $60 gate ($90) as in convex/writeback.ts.
 //   kpiBand, money, decisionComment      convex/writeback.ts
 //   isChange, cardFor, changeComment,
 //   boardStatusAfter                     convex/changeLog.ts
@@ -10,6 +13,8 @@
 // convexGolden.ts holds outputs recorded from the Convex code itself; the
 // parity tests compare against it. Do not "tidy" the text: the comment watch
 // skips comments that start with the target emoji, and the notes mark.
+
+import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "../../../apps/media-buyer-cockpit/src/lib/kpi.ts";
 
 export type Row = Record<string, any>;
 
@@ -32,9 +37,18 @@ export const FIELD_NAME: Record<string, string> = {
   [FIELD.bookings7d]: "Bookings (7d)",
 };
 
-/** convex/constants.ts */
-export const CPL_GATE = 15;
-export const CPB_GATE = 60;
+/**
+ * The official gates ($15 per lead, $60 per booking), imported from the
+ * cockpit's kpi.ts, never declared here (convex/constants.ts held the same two).
+ */
+export { CPB_GATE, CPL_GATE };
+/**
+ * Aziz, 23 Oct 2026 (cost per booking decisions, 3): ClickUp's "911" on Cost Per Booking starts over
+ * $80, the cockpit's bad line. It was 1.5 x the $60 gate ($90), the Convex scale.
+ */
+export const CPB_911 = CPB_BAD;
+/** Cost Per Lead's "911" starts over the cockpit's very high line, 1.5 x the $15 gate ($22.50), as it always has. */
+export const CPL_911 = CPL_BAD;
 
 /** The tech ticket's own form fields (convex/writeback.ts TECH_FIELD). */
 export const TECH_FIELD = {
@@ -63,12 +77,24 @@ export const DEPARTMENT_LIST: Record<string, { id: string; label: string }> = {
 export const CLIENTS_LIST = "901816559981";
 export const DOS_DONTS_FIELD = "0f06a523-64f9-4f20-90a1-f76cb6f85318";
 
-/** Board dropdown band. Above KPI = beating the gate (good); Below KPI = missing it. */
-export function kpiBand(value: number, gate: number): string {
+/**
+ * Board dropdown band. Above KPI = beating the gate (good); At KPI = within it;
+ * Below KPI = missing it, up to the critical line; 911 = over the critical line.
+ * The critical line is always given: CPL_911 or CPB_911 through the two helpers below.
+ */
+export function kpiBand(value: number, gate: number, critical: number): string {
   if (value <= gate * 0.75) return "Above KPI";
   if (value <= gate) return "At KPI";
-  if (value <= gate * 1.5) return "Below KPI";
+  if (value <= critical) return "Below KPI";
   return "911";
+}
+/** The Cost Per Lead column's band: $11.25 / $15 / $22.50. */
+export function cplBand(value: number): string {
+  return kpiBand(value, CPL_GATE, CPL_911);
+}
+/** The Cost Per Booking column's band: $45 / $60 / $80. */
+export function cpbBand(value: number): string {
+  return kpiBand(value, CPB_GATE, CPB_911);
 }
 
 /**

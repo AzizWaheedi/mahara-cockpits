@@ -1,4 +1,4 @@
-import { CPL_GATE } from '../../../apps/media-buyer-cockpit/src/lib/kpi.ts';
+import { CPL_GATE, NO_LEAD_MULTIPLE } from '../../../apps/media-buyer-cockpit/src/lib/kpi.ts';
 import { B2B } from './finance/sb.ts';
 import { num } from './finance/numbers.ts';
 import { NOT_VOIDED, VOIDED, voidedDeals } from './finance/voids.ts';
@@ -459,8 +459,12 @@ function peopleOf(ads: B2bAdNode[]): B2bPeople {
   };
 }
 
-/** Seven days at this spend with no lead is a kill; under it, too early to say. */
-const KILL_FLOOR = 30;
+/**
+ * Seven days at this spend with no lead is a kill; under it, not enough data (the CEO, 23 Oct 2026,
+ * cost per booking decisions, 4: "Depends on how much spend if 2x target cpl then yes bad if below
+ * that then not enough data"). Computed from kpi.ts, never typed; compared on the cent.
+ */
+export const KILL_FLOOR = NO_LEAD_MULTIPLE * CPL_GATE;
 
 function judge(running: boolean, seven: B2bAdWindow, thirty: B2bAdWindow, staleSince: string | null, from: string, to: string, kind: string): B2bVerdict {
   const range = `${from} to ${to}`;
@@ -478,12 +482,12 @@ function judge(running: boolean, seven: B2bAdWindow, thirty: B2bAdWindow, staleS
   if (seven.spend < 1) return {
     verdict: 'hold', reason: `Delivering, but only $${seven.spend.toFixed(2)} and ${seven.impressions} ${seven.impressions === 1 ? 'impression' : 'impressions'} from ${range}: too little to judge.`, owner: 'ads',
   };
-  if (seven.leads === 0 && seven.spend >= KILL_FLOOR) return {
+  if (seven.leads === 0 && Math.round(seven.spend * 100) / 100 >= KILL_FLOOR) return {
     verdict: 'kill', reason: `$${seven.spend.toFixed(0)} from ${range} and not one lead reached the CRM${seven.metaLeads > 0 ? `, though Meta counts ${seven.metaLeads}` : ''}.`, owner: 'ads',
   };
   // No lead yet on less than the kill floor: no cost per lead exists to judge.
   if (seven.leads === 0 || seven.cpl === null) return {
-    verdict: 'hold', reason: `$${seven.spend.toFixed(2)} from ${range} and no lead yet: too early to judge against the $${CPL_GATE} gate.`, owner: 'ads',
+    verdict: 'hold', reason: `$${seven.spend.toFixed(2)} from ${range} and no lead yet: not enough data. The verdict comes at $${KILL_FLOOR} (${NO_LEAD_MULTIPLE} x the $${CPL_GATE} gate).`, owner: 'ads',
   };
   if (seven.cpl > CPL_GATE * 1.5) return {
     verdict: 'kill', reason: `$${seven.cpl.toFixed(2)} a lead from ${range}, more than half again over the $${CPL_GATE} gate.`, owner: 'ads',

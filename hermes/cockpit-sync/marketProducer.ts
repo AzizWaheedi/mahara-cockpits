@@ -1,4 +1,5 @@
 import {type Row, graph, allAdAccounts, callTool, unwrap, recordLog} from './runtime';
+import {holdsExcludedAd, isExcludedAd} from './excludedAds';
 import {creativeCopyParts, readCreativeCopy, stillKeyFor} from './metaMedia';
 const DATABASE = '1_0Nv-IFvzhH4NBNh1dxCUm6Ryp414ctM_8EO5QORBF0';
 const SKIP_ACCOUNTS: Record<string,boolean> = {maharamedia:true};
@@ -290,7 +291,9 @@ function accountWindow(accountId: string): InsightWindow {
       const res = await graph(`act_${accountId}/insights`, {
         level,
         date_preset: 'last_30d',
-        fields: `${level}_id,spend,actions`,
+        // An ad row names its ad set too: listed ads Meta leaves off an ad
+        // set's /ads edge are matched to their ad set by it (withoutListedAds).
+        fields: level === "ad" ? "ad_id,adset_id,spend,actions" : "adset_id,spend,actions",
         limit: 500,
       });
       if (!Array.isArray(res?.data)) throw new Error('Market insight window is missing or ambiguous');
@@ -399,6 +402,44 @@ async function readPlay(adset: Row, window: InsightWindow) {
     cpl: leads ? Math.round((spend / leads) * 100) / 100 : undefined,
   };
 }
+/**
+ * Ads on the compromise list (excludedAds.ts) never count on any screen (CEO,
+ * 23 Oct 2026, default b of the cost per booking decisions). Their spend and
+ * leads leave the play's totals and its cost per lead is worked out again; the
+ * caller leaves their creatives out and skips an ad set with no other spend.
+ * Meta leaves deleted and archived ads off an ad set's /ads edge while the ad
+ * set's 30-day insight still counts their spend. So for an account that holds
+ * a listed ad, the account's one ad-level window (shared with the creatives)
+ * also names this ad set's listed ads the edge left out; each ad counts once.
+ * Other accounts make no extra read.
+ */
+async function withoutListedAds(play: Awaited<ReturnType<typeof readPlay>>, ads: Row[], window: InsightWindow, accountId: string) {
+  const counted = new Set<string>();
+  let listedSpend = 0, listedLeads = 0;
+  for (const ad of ads) {
+    const id = String(ad?.id ?? "").trim();
+    if (!isExcludedAd(id) || counted.has(id)) continue;
+    counted.add(id);
+    const {spend, leads} = leadsOf(await resolveInsights(id, ad.insights, () => window("ad")));
+    listedSpend += spend;
+    listedLeads += leads;
+  }
+  if (holdsExcludedAd(accountId)) {
+    for (const [id, rows] of await window("ad")) {
+      if (!isExcludedAd(id) || counted.has(id)) continue;
+      if (!rows.some(row => String(row?.adset_id ?? "").trim() === play.adsetId)) continue;
+      counted.add(id);
+      const {spend, leads} = leadsOf({data: rows});
+      listedSpend += spend;
+      listedLeads += leads;
+    }
+  }
+  if (!counted.size) return play;
+  const spend = Math.max(0, Math.round((play.spend - listedSpend) * 100) / 100);
+  const leads = Math.max(0, play.leads - listedLeads);
+  return {...play, spend, leads, cpl: leads ? Math.round((spend / leads) * 100) / 100 : undefined};
+}
+
 export async function collectMarket(state: Row): Promise<Row[]> {
   const accounts = await loadFromMeta();
   const prior = new Map<string, Row>((state.media?.marketPlays ?? []).map((row: Row) => [String(row.adsetId), row]));
@@ -415,14 +456,18 @@ export async function collectMarket(state: Row): Promise<Row[]> {
       // Separate paginated edge avoids truncating nested ads.limit(25).
       const ads = await graph(`${adset.id}/ads`, {fields: 'id,name,creative{id,object_story_spec,thumbnail_url,image_url},insights.date_preset(last_30d){spend,actions}', limit: 100});
       if (!Array.isArray(ads.data)) throw new Error('Market creatives are unavailable');
-      const creative = await readCreatives(ads.data, window);
+      // Listed ads leave the play; an ad set with no unlisted spend is no play
+      // (SAFAD's outsider ad set 120254791600350066, $375.10, on 23 Oct 2026).
+      const own = await withoutListedAds(play, ads.data, window, account.accountId);
+      if (own.spend <= 0) continue;
+      const creative = await readCreatives(ads.data.filter((ad: Row) => !isExcludedAd(ad?.id)), window);
       const old = prior.get(play.adsetId);
       const saved = new Map<string, Row>((old?.creatives ?? []).map((row: Row) => [String(row.adId), row]));
       for (const row of creative.creatives) {
         const previous = saved.get(String(row.adId));
         for (const key of ['transcript', 'hook', 'voice']) if (previous?.[key] != null) row[key] = previous[key];
       }
-      out.push({...play, ...creative, _id: old?._id, client: label.client, accountId: label.accountId, country: label.country, city: label.city, serviceLine: classifyServiceLine(label.client, label.serviceText), windowDays: 30, syncedAt: Date.now()});
+      out.push({...own, ...creative, _id: old?._id, client: label.client, accountId: label.accountId, country: label.country, city: label.city, serviceLine: classifyServiceLine(label.client, label.serviceText), windowDays: 30, syncedAt: Date.now()});
     }
   }
   if (!accounts.length) throw new Error('No accessible market accounts; preserving prior evidence');

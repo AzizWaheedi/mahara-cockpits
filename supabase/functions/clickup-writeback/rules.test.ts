@@ -1,12 +1,18 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import * as KPI from "../../../apps/media-buyer-cockpit/src/lib/kpi.ts";
 import { GOLDEN } from "./convexGolden";
 import {
   boardStatusAfter,
   cardFor,
   changeComment,
   cleanDosDonts,
+  CPB_911,
   CPB_GATE,
+  cpbBand,
+  CPL_911,
   CPL_GATE,
+  cplBand,
   daysAgo,
   decisionComment,
   isChange,
@@ -18,11 +24,15 @@ import {
 
 // Every expectation here was produced by the Convex code itself (convexGolden.ts).
 describe("parity with the paused Convex code", () => {
-  it("bands CPL and CPB exactly as the board dropdowns did", () => {
+  it("bands CPL and CPB exactly as the board dropdowns did, on the Convex scale (1.5 x the gate)", () => {
     expect(CPL_GATE).toBe(15);
     expect(CPB_GATE).toBe(60);
-    for (const [v, label] of GOLDEN.kpiBandCpl) expect(kpiBand(v, CPL_GATE)).toBe(label);
-    for (const [v, label] of GOLDEN.kpiBandCpb) expect(kpiBand(v, CPB_GATE)).toBe(label);
+    for (const [v, label] of GOLDEN.kpiBandCpl) expect(kpiBand(v, CPL_GATE, CPL_GATE * 1.5)).toBe(label);
+    // The Convex scale before decision 3 (23 Oct 2026): 90 Below KPI, 90.01 911. A record, not today's band.
+    for (const [v, label] of GOLDEN.kpiBandCpb) expect(kpiBand(v, CPB_GATE, CPB_GATE * 1.5)).toBe(label);
+  });
+  it("Cost Per Lead keeps the Convex band: its 911 line is the cockpit's very high line, 1.5 x the gate", () => {
+    for (const [v, label] of GOLDEN.kpiBandCpl) expect(cplBand(v)).toBe(label);
   });
   // The only intended difference: em dashes become hyphens (plain), per the house style.
   it("formats money the same way", () => {
@@ -63,6 +73,35 @@ describe("parity with the paused Convex code", () => {
   });
   it("uses the Kuwait-day 7-day window", () => {
     for (const w of GOLDEN.cplWindow) expect(daysAgo(7, Date.parse(w.now))).toBe(w.since7);
+  });
+});
+
+describe("decision 3 (Aziz, 23 Oct 2026): Cost Per Booking's 911 starts over $80", () => {
+  it("takes the gates and the critical lines from the cockpit's kpi.ts, never its own numbers", () => {
+    expect(CPL_GATE).toBe(KPI.CPL_GATE);
+    expect(CPB_GATE).toBe(KPI.CPB_GATE);
+    expect(CPB_911).toBe(KPI.CPB_BAD);
+    expect(CPB_911).toBe(80);
+    expect(CPL_911).toBe(KPI.CPL_BAD);
+    expect(CPL_911).toBe(22.5);
+    const src = readFileSync(new URL("./rules.ts", import.meta.url), "utf8");
+    expect(src).toContain('import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "../../../apps/media-buyer-cockpit/src/lib/kpi.ts";');
+    expect(/const\s+(CPL_GATE|CPB_GATE|CPB_911|CPL_911)\s*=\s*\d/.test(src)).toBe(false);
+    expect(src).not.toContain("gate * 1.5");
+  });
+  it("bands Cost Per Booking at $45 / $60 / $80", () => {
+    const cases: [number, string][] = [
+      [0, "Above KPI"], [45, "Above KPI"], [45.01, "At KPI"], [60, "At KPI"], [60.01, "Below KPI"],
+      [80, "Below KPI"], [80.01, "911"], [86.07, "911"], [90, "911"], [90.01, "911"],
+    ];
+    for (const [v, label] of cases) expect([v, cpbBand(v)]).toEqual([v, label]);
+  });
+  it("bands Cost Per Lead at $11.25 / $15 / $22.50", () => {
+    const cases: [number, string][] = [[11.25, "Above KPI"], [11.26, "At KPI"], [15, "At KPI"], [15.01, "Below KPI"], [22.5, "Below KPI"], [22.51, "911"]];
+    for (const [v, label] of cases) expect([v, cplBand(v)]).toEqual([v, label]);
+  });
+  it("the convexGolden record is unchanged: it still says 90 Below KPI, 90.01 911", () => {
+    expect(GOLDEN.kpiBandCpb.slice(-2)).toEqual([[90, "Below KPI"], [90.01, "911"]]);
   });
 });
 

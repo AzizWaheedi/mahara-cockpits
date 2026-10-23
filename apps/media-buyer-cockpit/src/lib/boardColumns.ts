@@ -276,7 +276,7 @@ export const COLUMNS: BoardColumn[] = [
     group: "funnel",
     unit: "count",
     key10: true,
-    how: "Main and online calendar bookings made on these days, cancelled, invalid and Google Calendar copies left out.",
+    how: "Main and online calendar bookings made on these days. Cancelled, invalid, Google Calendar copies, the call centre's call-back bookings and rescheduled bookings whose original still counts are left out.",
   },
   {
     key: "leadToBooking",
@@ -616,19 +616,29 @@ export type FirstBreak =
   | { kind: "on_target" }
   | { kind: "unknown" };
 
+/** Done with you, as the board's service mode says it ("DWY"). */
+const DWY = /^\s*(dwy|done with you)\b/i;
+
+/** The steps a done-with-you client is never judged on: it books its own. */
+const CLIENT_BOOKS = new Set(["leadToBooking", "costPerBooking"]);
+
 /**
  * Where this client's funnel breaks first, in funnel order: the first step
  * that is off, else the first one to watch, else on target when at least one
  * step was judged. The statuses are the database's. A done-with-you client
- * books its own calls, so its cost per booking never names the break.
+ * books its own meetings (decision 2, 23 Oct 2026), so its booking rate and
+ * cost per booking never name the break, and neither does any step whose
+ * cell says the client books (`clientBooks`).
  */
 export function firstBreak(
   row: Pick<ClientRow, "values"> & { serviceMode?: string | null },
 ): FirstBreak {
-  const steps =
-    row.serviceMode === "DWY"
-      ? FUNNEL_ORDER.filter(s => s.key !== "costPerBooking")
-      : FUNNEL_ORDER;
+  const dwy = DWY.test(row.serviceMode ?? "");
+  const steps = FUNNEL_ORDER.filter(
+    s =>
+      !(dwy && CLIENT_BOOKS.has(s.key)) &&
+      row.values[s.key]?.clientBooks !== true,
+  );
   for (const kind of ["off", "watch"] as const) {
     const hit = steps.find(s => statusOf(row.values[s.key]) === kind);
     if (hit) return { kind, ...hit };

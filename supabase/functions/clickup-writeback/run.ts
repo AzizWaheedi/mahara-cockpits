@@ -1,15 +1,31 @@
 // The three ClickUp writeback jobs, with every dependency injected so the
 // tests can run them end to end without a network.
 //
-// OUTWARD SAFETY. Nothing is written to ClickUp unless the Edge Function
-// secret CLICKUP_WRITEBACK_APPLY is exactly "true". Otherwise each job reads
-// what it needs and records, in cockpit_clickup_writeback_runs (and on each
-// queue item), exactly what it would write: task id, field, old value, new
-// value. CLICKUP_WRITEBACK_ONLY_TASKS (comma-separated task ids) narrows a
-// live run to those cards, for the first one-card verification.
+// OUTWARD SAFETY. Three Edge Function secrets open writes to ClickUp, each
+// only when it is exactly "true":
+//   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts
+//   CLICKUP_WRITEBACK_APPLY_CSM_TICKETS  client success tickets in the log, on
+//                                        their own while the rest of the log
+//                                        stays a dry run (live since 2026-10-12)
+//   CLICKUP_WRITEBACK_APPLY_KPI          the board KPI columns, read by runKpi
+//                                        only; CLICKUP_WRITEBACK_APPLY does not
+//                                        write them (cost per booking build 2,
+//                                        R12, 22 Oct 2026)
+// With its switch off a job reads what it needs and records, in
+// cockpit_clickup_writeback_runs (and on each queue item), exactly what it
+// would write: task id, field, old value, new value.
+// CLICKUP_WRITEBACK_ONLY_TASKS (comma-separated task ids) narrows a live run of
+// the APPLY and APPLY_KPI switches to those cards, for a one-card check; it
+// does not narrow client success tickets.
+//
+// The KPI run reports ok=false while its switch is off (a dry run), on a run
+// limited to ONLY_TASKS, when no card had Last Updated written, and when a
+// write failed, so the health line never says ok while the board's numbers are
+// frozen. Skipped and held cards are named in the note; each keeps its old
+// Last Updated on the card.
 
-import { type KpiInputs, planKpi } from "./kpi.ts";
-import { ADS_LIST, CLIENTS_LIST, FIELD, type Row } from "./rules.ts";
+import { type KpiInputs, type KpiPlan, kuwaitDate, planKpi, shortDay } from "./kpi.ts";
+import { ADS_LIST, CLIENTS_LIST, FIELD, FIELD_NAME, type Row } from "./rules.ts";
 import {
   boardFieldsLoader,
   buildSteps,
@@ -53,6 +69,18 @@ export function gate(env: Deps["env"]) {
     apply,
     only,
     csmTickets,
+    mode: !apply ? "dry_run" : only.size ? "apply_limited" : "apply",
+    live: (taskId: string | null | undefined) => apply && (only.size === 0 || (taskId ? only.has(taskId) : false)),
+  };
+}
+
+/** The KPI columns' own gate: CLICKUP_WRITEBACK_APPLY_KPI exactly "true", narrowed by ONLY_TASKS. */
+export function kpiGate(env: Deps["env"]) {
+  const { only } = gate(env);
+  const apply = env("CLICKUP_WRITEBACK_APPLY_KPI") === "true";
+  return {
+    apply,
+    only,
     mode: !apply ? "dry_run" : only.size ? "apply_limited" : "apply",
     live: (taskId: string | null | undefined) => apply && (only.size === 0 || (taskId ? only.has(taskId) : false)),
   };
@@ -112,8 +140,27 @@ async function idle(deps: Deps, job: string, ok: boolean, note: string): Promise
 
 // --- kpi ---------------------------------------------------------------------
 
+const cardsWord = (n: number) => `${n} ${n === 1 ? "card" : "cards"}`;
+
+/** "A, B, C, D, E and 2 more": the names of the cards a sentence is about. */
+export function cardList(names: string[], max = 5): string {
+  const clean = names.map(n => n.trim());
+  const shown = clean.slice(0, max);
+  const more = clean.length - shown.length;
+  return more > 0 ? `${shown.join(", ")} and ${more} more` : shown.length > 1 ? `${shown.slice(0, -1).join(", ")} and ${shown.at(-1)}` : (shown[0] ?? "");
+}
+
+/** "The board still shows numbers last updated 7 Oct 2026. 9 cards show no numbers yet." */
+export function boardAge(plan: Pick<KpiPlan, "oldestLastUpdated" | "noNumbers" | "undated">): string {
+  const undated = plan.undated ? ` ${cardsWord(plan.undated)} ${plan.undated === 1 ? "shows" : "show"} numbers with no Last Updated date.` : "";
+  const none = plan.noNumbers ? ` ${cardsWord(plan.noNumbers)} ${plan.noNumbers === 1 ? "shows" : "show"} no numbers yet.` : "";
+  return plan.oldestLastUpdated === null
+    ? `No card on the board shows numbers with a Last Updated date.${undated}${none}`
+    : `The board still shows numbers last updated ${kuwaitDate(plan.oldestLastUpdated)}.${undated}${none}`;
+}
+
 export async function runKpi(deps: Deps): Promise<JobResult> {
-  const g = gate(deps.env);
+  const g = kpiGate(deps.env);
   if (!deps.env("CLICKUP_API_TOKEN")) return idle(deps, "kpi", false, NO_TOKEN);
   const run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "kpi", p_mode: g.mode, p_exclusive: true });
   if (!run?.id) return { ok: true, job: "kpi", note: String(run?.note ?? "Another run is in progress.") };
@@ -126,24 +173,41 @@ export async function runKpi(deps: Deps): Promise<JobResult> {
     if (!Array.isArray(fields)) throw new Error("ClickUp did not return the board fields");
     const plan = planKpi(inputs, tasks, fields, deps.now());
     if (plan.refused) return finish(deps, run.id, "kpi", g.mode, false, plan.refused, { cards: 0 }, []);
-    let updated = 0, failed = 0, skipped = 0, writes = 0, stopped = "";
+    // A dry run counts what it would do; a live run counts only what reached ClickUp. In a run limited to
+    // CLICKUP_WRITEBACK_ONLY_TASKS the other cards stay a dry run and are counted apart, never as updated.
+    let updated = 0, failed = 0, skipped = 0, writes = 0, stamped = 0, outside = 0, outsideWrites = 0, reached = 0, stopped = "";
+    const cardsWithWrites = new Set<string>();
+    const skippedNames: string[] = [], failedNames: string[] = [];
     for (const card of plan.cards) {
+      reached += 1;
       if (card.skipped) {
         skipped += 1;
+        skippedNames.push(card.taskName);
         planned.push({ taskId: card.taskId, taskName: card.taskName, campaigns: card.campaigns, field: null, status: "skipped", note: card.skipped });
         continue;
       }
       const live = g.live(card.taskId);
+      if (g.apply && !live) outside += 1;
       let cardFailed = false;
+      let lastUpdated: "written" | "planned" | null = null;
       for (const w of card.writes) {
         const entry: Row = { taskId: w.taskId, taskName: w.taskName, campaigns: card.campaigns, field: w.field, fieldId: w.fieldId, old: w.old, new: w.new, notes: card.notes };
         if (!w.changed && w.fieldId !== FIELD.lastUpdated) { planned.push({ ...entry, status: "unchanged" }); continue; }
-        if (!live) { planned.push({ ...entry, status: "planned" }); writes += 1; continue; }
+        if (!live) {
+          planned.push({ ...entry, status: "planned" });
+          if (g.apply) outsideWrites += 1;
+          else { writes += 1; cardsWithWrites.add(card.taskId); }
+          if (w.fieldId === FIELD.lastUpdated) lastUpdated = "planned";
+          continue;
+        }
         try {
           // Not queued on failure: the next hour writes fresher numbers (convex/writeback.ts pushMetrics).
+          // Last Updated is the card's last write, so a failure before it leaves the old date standing.
           await provider.call("clickup", "POST", `task/${w.taskId}/field/${w.fieldId}`, { value: w.value });
           planned.push({ ...entry, status: "written" });
           writes += 1;
+          cardsWithWrites.add(card.taskId);
+          if (w.fieldId === FIELD.lastUpdated) lastUpdated = "written";
         } catch (e) {
           cardFailed = true;
           planned.push({ ...entry, status: "failed", error: redact(String(e instanceof Error ? e.message : e)) });
@@ -151,16 +215,53 @@ export async function runKpi(deps: Deps): Promise<JobResult> {
           break;
         }
       }
-      if (live && cardFailed) failed += 1;
-      else if (live) updated += 1;
+      // A stamp is Last Updated written on a live run, or planned on a dry run. A card left as a dry run
+      // inside a live run, or whose write failed before Last Updated, is never counted as one.
+      if (lastUpdated === (g.apply ? "written" : "planned")) stamped += 1;
+      if (card.held)
+        planned.push({
+          taskId: card.taskId, taskName: card.taskName, campaigns: card.campaigns, field: FIELD_NAME[FIELD.lastUpdated], fieldId: FIELD.lastUpdated,
+          old: card.lastUpdated === undefined ? null : new Date(card.lastUpdated).toISOString(), new: null, status: "held", note: card.held, notes: card.notes,
+        });
+      if (live && cardFailed) { failed += 1; failedNames.push(card.taskName); }
+      // Updated means the card's numbers were refreshed: its Last Updated was written.
+      else if (live && lastUpdated === "written") updated += 1;
       if (stopped) break;
     }
-    const counts = { cards: plan.cards.length, updated, failed, skipped, writes, since7: plan.since7 };
+    const win = plan.window;
+    const heldNames = plan.cards.filter(c => c.held).map(c => c.taskName);
+    const counts = {
+      cards: plan.cards.length, cardsWithWrites: cardsWithWrites.size, updated, failed, skipped, writes, stamped, held: heldNames.length,
+      outside, outsideWrites, notReached: plan.cards.length - reached,
+      from: win?.from ?? null, through: win?.through ?? null, windowSource: win?.source ?? null,
+      oldestLastUpdated: plan.oldestLastUpdated === null ? null : new Date(plan.oldestLastUpdated).toISOString(),
+      noNumbers: plan.noNumbers, undated: plan.undated,
+    };
+    const days = win ? ` The 7 days run ${shortDay(win.from)} to ${shortDay(win.through)}.` : "";
+    const skippedNote = skipped
+      ? ` ${cardsWord(skipped)} ${skipped === 1 ? "was" : "were"} skipped because the sources disagree or the card is gone: ${cardList(skippedNames)}.`
+      : "";
+    const held = heldNames.length
+      ? ` Last Updated stays as it is on ${cardsWord(heldNames.length)} whose columns could not all be refreshed: ${cardList(heldNames)}.`
+      : "";
     if (!g.apply)
-      return finish(deps, run.id, "kpi", g.mode, true, `Dry run: ${writes} writes planned on ${plan.cards.length - skipped} cards, ${skipped} cards skipped. Nothing was written to ClickUp.`, counts, planned);
-    // A run where no card took the numbers fails, so the ledger says so (convex/writeback.ts).
-    const ok = !(updated === 0 && failed > 0) && !stopped;
-    const note = `${updated} cards updated, ${failed} failed, ${skipped} skipped${g.only.size ? ` (limited to ${g.only.size} cards)` : ""}.${stopped ? ` Stopped early: ${stopped}` : ""}`;
+      // A dry run is not a refreshed board: the health line reads ok=false until the KPI switch is on.
+      return finish(
+        deps, run.id, "kpi", g.mode, false,
+        `Dry run: ${writes} writes planned on ${cardsWithWrites.size} cards, nothing written to ClickUp. ${boardAge(plan)}${days}${skippedNote}${held}`,
+        counts, planned,
+      );
+    // ok only when the whole board took the numbers: no card left as a dry run, no failed write, at least one
+    // Last Updated written, and the run not stopped. Skipped and held cards are named; their own Last Updated
+    // stays old on the card, which says so.
+    const ok = !stopped && failed === 0 && stamped > 0 && outside === 0;
+    const limited = outside
+      ? ` ${cardsWord(outside)} left as a dry run (not in CLICKUP_WRITEBACK_ONLY_TASKS), ${outsideWrites} ${outsideWrites === 1 ? "write" : "writes"} planned on ${outside === 1 ? "it" : "them"}.`
+      : "";
+    const failedNote = failed ? ` Failed: ${cardList(failedNames)}.` : "";
+    const notReached = counts.notReached ? ` ${cardsWord(counts.notReached)} not reached.` : "";
+    const frozen = stamped === 0 ? ` No card was refreshed. ${boardAge(plan)}` : "";
+    const note = `${cardsWord(updated)} updated, ${failed} failed, ${skipped} skipped, Last Updated stamped on ${stamped}.${limited}${frozen}${days}${failedNote}${skippedNote}${held}${notReached}${stopped ? ` Stopped early: ${stopped}` : ""}`;
     return finish(deps, run.id, "kpi", g.mode, ok, note, counts, planned);
   } catch (e) {
     return finish(deps, run.id, "kpi", g.mode, false, redact(String(e instanceof Error ? e.message : e)), {}, planned);
@@ -291,8 +392,9 @@ export async function runDosDonts(deps: Deps): Promise<JobResult> {
 // --- doctor ------------------------------------------------------------------
 
 /** Configuration and queue health, with no provider call and no write. */
-export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row; queue: unknown }> {
+export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row; queue: unknown; kpiMode: string }> {
   const g = gate(deps.env);
+  const kpi = kpiGate(deps.env);
   const secrets = Object.fromEntries(
     ["CLICKUP_API_TOKEN", "META_SYSTEM_TOKEN", "CRON_SECRET", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"].map(k => [k, Boolean(deps.env(k))]),
   );
@@ -302,7 +404,10 @@ export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row;
     ok: missing.length === 0,
     job: "doctor",
     mode: g.mode,
-    note: missing.length ? `Missing secrets: ${missing.join(", ")}.` : `Ready. Mode: ${g.mode}.`,
+    kpiMode: kpi.mode,
+    note: `${missing.length ? `Missing secrets: ${missing.join(", ")}.` : `Ready. Mode: ${g.mode}.`} KPI columns: ${
+      kpi.apply ? kpi.mode : "dry run (they are written only when CLICKUP_WRITEBACK_APPLY_KPI is true)"
+    }.`,
     secrets,
     queue,
   };

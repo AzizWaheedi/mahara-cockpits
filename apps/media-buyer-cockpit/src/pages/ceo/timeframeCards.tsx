@@ -5,7 +5,14 @@ import { StatTile } from "@/components/ceo/StatTile";
 import { TimeframeBar } from "@/components/ceo/TimeframeBar";
 import { useTimeframe } from "@/components/ceo/timeframe";
 import type { CeoSection } from "@/components/ceo/useCeo";
-import type { Note } from "@/types/ceo/payloads";
+import type { DeliveryDay, Note } from "@/types/ceo/payloads";
+import {
+  CPB_CONFIRMED_LABEL,
+  cpbConfirmedOfDays,
+  doneWithYouBookingsLine,
+  doneWithYouLine,
+  doneWithYouOfDays,
+} from "./deliveryCost";
 
 /**
  * One card per tab that rebuilds the headline numbers for any timeframe from
@@ -48,7 +55,7 @@ export function DeliveryTimeframeCard({
   className,
 }: {
   section: CeoSection<"delivery"> | null;
-  rows: { date: string; spend: number; leads: number; bookings: number }[];
+  rows: DeliveryDay[];
   now: number;
   day: string | null;
   order: number;
@@ -63,7 +70,16 @@ export function DeliveryTimeframeCard({
   );
   const spend = inRange.reduce((t, r) => t + r.spend, 0);
   const leads = inRange.reduce((t, r) => t + r.leads, 0);
-  const bookings = inRange.reduce((t, r) => t + r.bookings, 0);
+  // Confirmed bookings by the day they were made, over the spend on the days
+  // the board stores them (./deliveryCost.ts, the one rule every tab uses).
+  const source = section?.payload?.bookingSource;
+  const cost = bounds
+    ? cpbConfirmedOfDays(inRange, bounds.from, bounds.to, source)
+    : cpbConfirmedOfDays([], "", "", source);
+  // Done With You spend the cost leaves out (decision 2, 23 Oct 2026).
+  const dwy = bounds
+    ? doneWithYouOfDays(inRange, bounds.from, bounds.to)
+    : null;
   return (
     <SectionCard
       kicker={`${count(days)} days`}
@@ -97,15 +113,30 @@ export function DeliveryTimeframeCard({
             />
             <StatTile
               variant="plain"
-              label="Bookings"
-              value={count(bookings)}
-              sub="all calendars, due"
+              label="Confirmed bookings"
+              value={count(cost.confirmed)}
+              naHint={cost.why ?? undefined}
+              hint={
+                dwy
+                  ? `Confirmed bookings made on these days, as the Client Performance board counts them.${doneWithYouBookingsLine(dwy)}`
+                  : undefined
+              }
+              sub={
+                cost.daysNotMeasured > 0
+                  ? `made on these days; ${count(cost.daysNotMeasured)} not stored`
+                  : "made on these days"
+              }
             />
             <StatTile
               variant="plain"
-              label="Cost per booking"
-              value={money(bookings > 0 ? spend / bookings : null)}
-              naHint="No bookings in these days."
+              label={CPB_CONFIRMED_LABEL}
+              value={money(cost.value)}
+              naHint={cost.why ?? undefined}
+              hint={
+                cost.spend !== null
+                  ? `${money(cost.spend)} of spend on the days the Client Performance board stores bookings, over the confirmed bookings made on them.${doneWithYouLine(dwy)}`
+                  : undefined
+              }
             />
           </div>
         </div>

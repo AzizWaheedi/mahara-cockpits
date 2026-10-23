@@ -4,20 +4,41 @@ import {
   type BillingApi,
   BillingSheet,
 } from "@/components/billing/BillingSheet";
+import type { PendingApi } from "@/components/billing/PendingPayments";
 import { PageHeader } from "@/components/kit";
 import {
+  confirmPaid,
   editBillingAccount,
   fetchBillingSheet,
+  fetchPendingPayments,
   logBillingPayment,
+  withdrawConfirmation,
 } from "@/lib/billing";
 
 /**
  * Billing: the same sheet as the CEO cockpit's Billing tab, over the clients
  * the portal gave this success manager. A payment logged here waits in the
  * billing inbox until the CEO cockpit takes it into the ledger.
+ *
+ * Pending payments sits on top (components/billing/PendingPayments.tsx): the
+ * clients who signed and have not finished paying, with Confirm paid. The
+ * server gives a success manager only their own clients and none of the
+ * CEO's groups; linking a deal to a card stays in the CEO cockpit.
  */
 export function BillingPage({ embedded = false }: { embedded?: boolean }) {
   const auth = useCockpitAuth();
+
+  const pending = useMemo<PendingApi>(() => {
+    const signedIn = () => {
+      if (!auth.client) throw new Error("Sign in to read pending payments.");
+      return auth.client;
+    };
+    return {
+      read: async () => fetchPendingPayments(signedIn()),
+      confirm: async p => (await confirmPaid(signedIn(), p, "csm")).sentence,
+      withdraw: async p => withdrawConfirmation(signedIn(), p, "csm"),
+    };
+  }, [auth.client]);
 
   const wired = useMemo<BillingApi>(
     () => ({
@@ -50,8 +71,9 @@ export function BillingPage({ embedded = false }: { embedded?: boolean }) {
       },
       ledgerLine:
         "It waits for the CEO cockpit's next refresh, then counts toward cash and the client's LTV; a payment already in the ledger is caught, not counted twice.",
+      pending,
     }),
-    [auth.client, auth.clients, auth.email],
+    [auth.client, auth.clients, auth.email, pending],
   );
 
   return (

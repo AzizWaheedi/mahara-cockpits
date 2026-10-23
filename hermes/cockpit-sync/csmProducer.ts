@@ -4,6 +4,7 @@ import {adLeadsByClient, adLeadsFor, adsForClient, adsAccess, liveCounts, metaAc
 import {payingState, stateOf, rosterDiff, ROSTER_KINDS, rosterEventId} from './csmRoster';
 import {cadenceInputs, sheetPerformance, lostLeads, provisionalFor, fathomCalls, churnValues, staffAppointments} from './csmProviders';
 import {stableId} from './capture';
+import {type ClientWeeks, clientWeekFor} from './calculator';
 import {latestUpdates} from './clientUpdates';
 
 export interface ClientDataRow {
@@ -179,6 +180,12 @@ export function reconcileRoster(
   };
 }
 
+/** The client's 7 days as the profile carries them: `ads7d` when the sync published one, else no key. */
+export function clientWeekOf(weeks: ClientWeeks | undefined, taskId: unknown, name: unknown): { ads7d?: Row } {
+  const week = clientWeekFor(weeks, taskId, name);
+  return week ? { ads7d: week } : {};
+}
+
 export function fathomCheckpoint(at: number): Row {
   if (typeof at !== 'number' || !Number.isFinite(at)) {
     throw new Error('fathomCheckpoint requires a finite epoch millisecond timestamp');
@@ -259,7 +266,7 @@ export async function performanceSnapshot(
   const perf = await sheetPerformance(link, day);
   return {performance:perf,performanceSyncedAt:perf ? now : undefined,performanceRetained:false};
 }
-export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed?: string): Promise<{ tables: Record<string, Row[]>; calendarWindow: { from: number; to: number; checkedAt: number; calendars: { id: string; name: string }[]; eventIds: string[] } }> {
+export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed?: string, weeks?: ClientWeeks): Promise<{ tables: Record<string, Row[]>; calendarWindow: { from: number; to: number; checkedAt: number; calendars: { id: string; name: string }[]; eventIds: string[] } }> {
   await assertNativeFence();
   for (const key of ['clients','csTasks','kpi','appointments','rosterDays','churnEvents','syncRuns','clientProfiles','decisions','reportDocs','outbox'])
     if (!Array.isArray(state.csm?.[key])) throw new Error(`CSM ${key} source is not initialized`);
@@ -303,7 +310,8 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
     c.pausedSince=since;c.pausedDays=since?Math.round((Date.parse(today)-Date.parse(since))/86400000):undefined;
   }
   const history = mergeDailyStats(state.dailyStats,tables.dailyStats);
-  const adLeads = Object.fromEntries(adLeadsByClient(tables.campaigns,history,now).map(r=>[r.key,r]));
+  // By the client's ad accounts, so a stopped campaign's days stay the client's (R8, 2026-10-22).
+  const adLeads = Object.fromEntries(adLeadsByClient(tables.campaigns,history,now,weeks).map(r=>[r.key,r]));
   const visibleAccounts = (await allAdAccounts()).map(a=>({name:String(a.name??''),id:String(a.account_id??'')}));
   const calls = await fathomCalls(sinceTimestamp);
   const clientProfiles = await pool(snapshot.clients,4,async c => {
@@ -373,7 +381,7 @@ export async function collectCsm(state: Row, tables: Record<string, Row[]>, seed
       profileText:fields[PROFILE_CF.profile]?.value,dosDonts:cleanDosDonts(String(fields[PROFILE_CF.dosDonts]?.value??'')).text,
       links:{clickup:c.taskUrl,sheet:sheetLink,drive:driveLink,ghl:acct?`https://app.maharamedia.com/v2/location/${acct.locationId}/dashboard`:undefined,adAccount:meta?`https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${meta.id}`:undefined,contract:fields[PROFILE_CF.contract]?.value},
       performance:perf,performanceSyncedAt:perfSnap.performanceSyncedAt,performanceRetained:perfSnap.performanceRetained,ads,live:liveCounts(ads),adsAccess:adsAccess(ads),lost,provisional,
-      adLeads:adLeadsFor(c.name,adLeads),calls:clientCalls,callsBrief,
+      adLeads:adLeadsFor(c.name,adLeads),...clientWeekOf(weeks,c.taskId,data?.clientName??c.name),calls:clientCalls,callsBrief,
       updates:latestUpdates(state.media.clientComments,c.taskId,now),
       gaps:gapsFor({client:{...c,sheetLink,driveLink},row:data,perf,acct,lost,accountId:meta?.visible?meta.id:undefined,onBoard:tables.campaigns.some(k=>normTight(k.clientName)===normTight(c.name)),visibleAccounts,calls:clientCalls.length,clientDataOk:true}),
       syncedAt:now,

@@ -259,11 +259,20 @@ function extraLine(row: ClientRow, key: string): string | null {
   return null;
 }
 
+/**
+ * What a screen reader hears for a cell. A cell left out by rule says why,
+ * as the grid shows it (emptyWords): "Done with you" for a client that
+ * books its own meetings (decision 2), "Client calls" for one that calls
+ * its own leads. Never "not measured", which reads as a gap in the data.
+ */
 function cellWords(cell: Cell | undefined, column: BoardColumn): string {
-  if (!cell || !isNum(cell.v))
+  if (!cell || !isNum(cell.v)) {
+    if (cell?.clientCalls) return "Client calls";
+    if (cell?.clientBooks) return "Done with you";
     return statusOf(cell) === "not_filled_in"
       ? "not filled in"
       : "not measured";
+  }
   return String(cell.v) + (column.unit === "percent" ? "%" : "");
 }
 

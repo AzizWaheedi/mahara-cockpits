@@ -221,6 +221,19 @@ for app in apps/client-success-cockpit apps/creative-director-cockpit apps/video
   fi
 done
 
+# Client-reported appointment comments and ratings are identical in all three desks.
+for f in src/lib/appointmentFeedback.ts src/components/AppointmentFeedback.tsx; do
+  same "$f" "$MB/$f" "apps/client-success-cockpit/$f"
+  same "$f" "$MB/$f" "$CD/$f"
+done
+
+# Pending payments in Billing (2026-10-23): the section, the rule that turns
+# the read into parts and figures, and the sheet's own rule it leans on are
+# the same in the CEO cockpit and the client success cockpit.
+for f in src/components/billing/PendingPayments.tsx src/lib/billingBalances.ts src/lib/billingCore.ts; do
+  same "$f" "$MB/$f" "$CS/$f"
+done
+
 if [ "$fails" -ne 0 ]; then
   echo
   echo "$fails shared file(s) have drifted. Copy the good one over the others:"

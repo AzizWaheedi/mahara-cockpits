@@ -17,7 +17,8 @@
  *                         payment grace period on its account
  *   Falcon Ridge          done with you: no bookings at all (n/a, not 0)
  *   Opal House            spend but no leads for the last 3 days
- *   Lantern               launched yesterday: spend, no leads yet
+ *   Lantern               launched yesterday: about $24 spent, no lead
+ *                         yet, under the $30 no-lead line (too early)
  *   Cedar Stone kitchens  steady, well under both gates
  *   Driftwood             off on the board and stopped 20 days ago
  */
@@ -232,7 +233,10 @@ const PLANS: Plan[] = [
     clientName: "Lantern Studio Architects",
     serviceType: "Architectural design",
     launched: 1,
-    day: () => ({ spend: 30, leads: 0, bookings: 0 }),
+    // About $24 over its two days (today is a part day): under 2 x the $15
+    // gate, so no lead yet is not enough data, never Critical (decision 4,
+    // 23 Oct 2026).
+    day: () => ({ spend: 15.5, leads: 0, bookings: 0 }),
     card: {
       verdict: "hold",
       budgetDaily: 30,
@@ -400,6 +404,95 @@ export function adsPageCoverage() {
     first: fixtureDay(Math.max(...PLANS.map(p => p.launched))),
     last: fixtureDay(0),
     rows: null,
+  };
+}
+
+/**
+ * cockpit_media_client_range (20261022x, R8): each made-up client over the
+ * range, every campaign it ran (a stopped one included), its bookings from
+ * the same rows, through yesterday (the paired day). With `accounts` it answers
+ * for those accounts' clients; without, for every client that spent or
+ * booked in the range, so Driftwood (stopped 20 days ago) shows under the
+ * board on "Last 30 days" and its page opens.
+ */
+export function adsPageClientRange(
+  start: string,
+  end: string,
+  accounts: unknown,
+) {
+  // The paired day, as cockpit_media_week() gives it before the media sync
+  // publishes its own: the media data's last day, never after yesterday.
+  const last = fixtureDay(1);
+  const through = end < last ? end : last;
+  const wanted =
+    Array.isArray(accounts) && accounts.length > 0
+      ? new Set(accounts.map(String))
+      : null;
+  const notIn = through < start;
+  const clients = [...new Set(PLANS.map(p => p.clientName))]
+    .map((name, i) => {
+      const plans = PLANS.filter(p => p.clientName === name);
+      const dwy = plans.every(p => p.card.serviceMode === "DWY");
+      const campaigns = plans.map(p => {
+        const { rows, bookings } = notIn
+          ? { rows: [], bookings: [] }
+          : readDays(p, start, through);
+        return {
+          campaignName: p.campaignName,
+          spend: notIn ? null : cents(sum(rows, "spend")),
+          leads: notIn ? null : sum(rows, "leads"),
+          bookings: notIn || dwy ? null : bookings.length,
+          live: !p.stopped,
+        };
+      });
+      const spend = notIn
+        ? null
+        : cents(campaigns.reduce((t, c) => t + Number(c.spend ?? 0), 0));
+      const bookings =
+        notIn || dwy
+          ? null
+          : campaigns.reduce((t, c) => t + Number(c.bookings ?? 0), 0);
+      return {
+        clickupId: `fx-client-${i + 1}`,
+        locationId: `fx-location-${i + 1}`,
+        name,
+        serviceMode: dwy ? "DWY" : "DFY",
+        status: "Active",
+        accounts: [...new Set(plans.map(accountId))],
+        spend,
+        leads: notIn
+          ? null
+          : campaigns.reduce((t, c) => t + Number(c.leads ?? 0), 0),
+        offBoardSpend: notIn ? null : 0,
+        excludedSpend: notIn ? null : 0,
+        campaigns: campaigns.filter(
+          c => Number(c.spend ?? 0) > 0 || Number(c.bookings ?? 0) > 0,
+        ),
+        bookings,
+        days: notIn ? 0 : daysBetween(start, through).length,
+        storedDays: notIn ? 0 : daysBetween(start, through).length,
+        mediaBookings: bookings,
+        costPerBooking:
+          spend !== null && bookings ? cents(spend / bookings) : null,
+        why: notIn
+          ? "Meta's numbers for these days are not in yet."
+          : dwy
+            ? "Done with you: the client books its own meetings."
+            : null,
+      };
+    })
+    .filter(c =>
+      wanted
+        ? c.accounts.some(a => wanted.has(a))
+        : Number(c.spend ?? 0) > 0 || Number(c.bookings ?? 0) > 0,
+    );
+  return {
+    from: start,
+    to: end,
+    through,
+    throughSource: "media data",
+    clients,
+    unmatched: [],
   };
 }
 

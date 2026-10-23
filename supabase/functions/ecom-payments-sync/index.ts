@@ -88,6 +88,7 @@ async function reconcile(): Promise<Response> {
     const rates = await cockpitRates();
     const rows: Row[] = [];
     let pages = 0;
+    let complete = false;
     for (let page = 1; page <= MAX_PAGES; page++) {
       const data = await ecom(`/elinks/v1/api/invoices?page=${page}&take=${PAGE}&order=DESC`);
       pages += 1;
@@ -97,11 +98,29 @@ async function reconcile(): Promise<Response> {
         if (row) rows.push(row);
       }
       const meta = (data.meta ?? {}) as Row;
-      if (!list.length || meta.hasNextPage !== true) break;
+      if (!list.length || meta.hasNextPage !== true) {
+        complete = true;
+        break;
+      }
     }
     await upsert(rows);
+    // An invoice deleted in Ecom leaves its list. Only after a complete read,
+    // mark any ledger row Ecom no longer has as DELETED (never a PAID one).
+    let removed = 0;
+    if (complete) {
+      const seen = new Set(rows.map(r => String(r.id)));
+      const open = JSON.parse(await rest("cockpit_ecom_invoices?select=id&status=neq.PAID&status=neq.DELETED")) as Row[];
+      const gone = open.map(r => String(r.id)).filter(id => !seen.has(id));
+      for (const id of gone)
+        await rest(`cockpit_ecom_invoices?id=eq.${encodeURIComponent(id)}&status=neq.PAID`, {
+          method: "PATCH",
+          body: { status: "DELETED", synced_at: now.toISOString() },
+          prefer: "return=minimal",
+        });
+      removed = gone.length;
+    }
     const paid = rows.filter(r => r.status === "PAID").length;
-    const note = `${rows.length} Ecom invoices (${paid} paid) in ${pages} pages`;
+    const note = `${rows.length} Ecom invoices (${paid} paid${removed ? `, ${removed} deleted in Ecom` : ""}) in ${pages} pages`;
     await state({ ok: true, last_ok_at: now.toISOString(), note, rows_seen: rows.length });
     return json({ ok: true, rows: rows.length, paid, pages });
   } catch (e) {
@@ -131,6 +150,11 @@ async function webhook(req: Request, raw: string): Promise<Response> {
       product_token: String(data.productPaymentToken ?? "").slice(0, 120) || null,
       status: String(data.paymentStatus ?? data.status ?? "").slice(0, 40) || null,
       payload: body,
+      // The HMAC Ecom sent and the exact bytes it signed over: not secrets, kept so the
+      // signature rule can be proven against a real delivery.
+      signature_header: given.slice(0, 200) || null,
+      raw_body: raw.slice(0, 20000),
+      headers: Object.fromEntries([...req.headers].filter(([k]) => !/authorization|cookie|apikey/i.test(k))),
     }],
     prefer: "return=minimal",
   });

@@ -23,12 +23,13 @@ export async function calculate(state:Row,reads:Reads,runContext:NativeRunContex
   await assertNativeFence();
   const begun=new Date().toISOString(),captured=capture(state);
   captured.tables.marketPlays=await collectMarket(state);
-  const result=await syncOnce(captured.context);
+  // Each client's 7 days travel in memory to the producers that publish them (ads7d); never in the plan's result.
+  const {clientWeeks,...result}=await syncOnce(captured.context);
   archiveWinners(state,captured.tables);
   const stillAssets=await captureStills(state,captured.tables,reads);
-  const csmResult=await collectCsm(state,captured.tables,env.FATHOM_CREATED_AFTER),csm=prepareTables(csmResult.tables,state.csm);
+  const csmResult=await collectCsm(state,captured.tables,env.FATHOM_CREATED_AFTER,clientWeeks),csm=prepareTables(csmResult.tables,state.csm);
   const googleCalendars=await collectSharedGoogleCalendars(state,env);
-  const creative=prepareTables({...state.creative,...await collectCreative(state,captured.tables,csm)},state.creative);
+  const creative=prepareTables({...state.creative,...await collectCreative(state,captured.tables,csm,clientWeeks)},state.creative);
   const tables={...state.media,...prepareTables(captured.tables,{...state.media,campaigns:state.oldCampaigns,ads:state.oldAds,winnersArchive:state.winners,adStills:state.stills})};
   const workingDay=kuwaitToday(),windowSince=daysAgo(30);
   // Each consumer retains its imported IDs; uploads attach by provider creative identity.

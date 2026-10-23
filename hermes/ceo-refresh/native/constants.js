@@ -28,6 +28,15 @@ export const CLOSE_RATE_GATE = 20;
 export const SHOW_RATE_GOOD = 60;
 export const CPB_BAD = 80;
 /**
+ * Spend with no lead, Aziz, 23 Oct 2026 (cost per booking decisions, 4):
+ * "Depends on how much spend if 2x target cpl then yes bad if below that then
+ * not enough data". At or over NO_LEAD_MULTIPLE x the client's cost per lead
+ * line (2 x the $15 gate where no client line exists) spend with no lead is
+ * bad; above $0 and under it, too few to judge. The line is always computed,
+ * never typed. Keep in step with src/lib/kpi.ts.
+ */
+export const NO_LEAD_MULTIPLE = 2;
+/**
  * The client show rate we aim for, in percent: the October KPI. Aziz,
  * 2026-10-13: "The October KPI is what we shoot for, but I don't want to make
  * that the main constraint." The aim, never the main constraint: nothing is

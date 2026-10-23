@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {bookingGrid, bookingMoney, bookingTotals, daysAgo, diagnose, judge, judgeWithBookings, lastSpendDay, sevenDayWindow} from './calculator';
-import {CPB_BAD, CPB_GATE, CPL_GATE} from './constants';
+import {bookingGrid, bookingMoney, bookingTotals, daysAgo, diagnose, judge, judgeWithBookings, lastSpendDay, noLeadBad, sevenDayWindow} from './calculator';
+import {CPB_BAD, CPB_GATE, CPL_GATE, NO_LEAD_MULTIPLE} from './constants';
 import type {Row} from './runtime';
 import * as site from '../../apps/media-buyer-cockpit/src/lib/kpi';
 
@@ -60,7 +60,10 @@ test('a no-booking kill on dear leads names the cost per lead once', () => {
 
 test('zero new leads but earlier leads booked: hold, or kill over the $80 line', () => {
  assert.equal(v(5, 0, 2), 'hold'); // AD-post-2 of 2026-10-13: $5, 2 bookings
- assert.equal(v(150, 0, 2), 'hold'); // $75 a booking: within the line, never scale
+ // Decision 4 (23 Oct 2026): no lead on $30 or more counts as a cost per lead
+ // over $22.50, so $75 a booking (over the $60 gate) is a kill, was a hold.
+ assert.equal(v(150, 0, 2), 'kill');
+ assert.equal(judge(150, 0, undefined, undefined, undefined, undefined, 2).reason, '$150 spent, zero leads in 7 days, and $75 a booking (2 bookings) is over the $60 gate.');
  assert.equal(v(170, 0, 2), 'kill'); // $85 a booking
  assert.equal(v(50, 0, 2, 3), 'hold'); // frequency does not turn it into a refresh
  assert.match(judge(5, 0, undefined, undefined, undefined, undefined, 2).reason, /earlier leads booked: \$2\.50 a booking \(2 bookings\)/);
@@ -75,6 +78,88 @@ test('zero leads after spend is still a kill, and no spend is no delivery', () =
  assert.equal(v(50, 0, 0), 'kill');
  assert.equal(v(50, 0), 'kill');
  assert.equal(v(0, 0, 0), 'no delivery');
+ assert.equal(v(0.99, 0), 'no delivery');
+});
+
+// Aziz, 23 Oct 2026 (cost per booking decisions, 4): "Depends on how much spend
+// if 2x target cpl then yes bad if below that then not enough data". The worker
+// has no client line: 2 x the $15 gate.
+test('no lead: a kill at 2 x the $15 gate or more, not enough data under it', () => {
+ const line = NO_LEAD_MULTIPLE * CPL_GATE;
+ assert.equal(line, 30);
+ for (const booked of [undefined, 0]) {
+  assert.equal(v(11.09, 0, booked), 'hold'); // Madana 14 to 20 Oct
+  assert.equal(v(29.99, 0, booked), 'hold');
+  assert.equal(v(29.994, 0, booked), 'hold'); // reads $29.99
+  assert.equal(v(29.996, 0, booked), 'kill'); // reads $30.00: on the line
+  assert.equal(v(30, 0, booked), 'kill');
+  assert.equal(v(41.65, 0, booked), 'kill');
+ }
+ const early = judge(11.09, 0, undefined, undefined, undefined, undefined, 0);
+ assert.equal(early.rank, 16);
+ assert.equal(early.reason, '$11.09 spent and no lead yet in 7 days: not enough data. The verdict comes at $30 (2 x the $15 gate).');
+ const kill = judge(30, 0, undefined, undefined, undefined, undefined, 0);
+ assert.equal(kill.rank, 5);
+ assert.equal(kill.reason, '$30 spent and no lead in 7 days.');
+ // Frequency never turns a no-lead hold into a refresh.
+ assert.equal(v(24.1, 0, 0, 3), 'hold');
+});
+
+test('no lead with earlier bookings: under the line bookings alone judge, on it only a booking within $60 holds', () => {
+ assert.equal(v(20, 0, 1), 'hold'); // $20 a booking, under the line
+ assert.equal(v(29.99, 0, 1), 'hold');
+ assert.equal(v(60, 0, 1), 'hold'); // $60 a booking, within the gate
+ assert.equal(v(60.01, 0, 1), 'kill'); // over the $60 gate on the line
+ assert.equal(v(140, 0, 2), 'kill'); // $70 a booking, was a hold
+ assert.equal(judge(140, 0, undefined, undefined, undefined, undefined, 2).rank, 8);
+ assert.equal(v(240.01, 0, 3), 'kill'); // reads "$80": over the $60 gate, so a kill all the same
+ assert.equal(v(170, 0, 2), 'kill'); // over $80, as before
+ assert.equal(v(4.23, 0, 1), 'hold'); // Marble ad-3, 16 to 22 Oct
+});
+
+test('the 16 to 22 Oct zero-lead ads of the 13:52 media sync on 23 Oct', () => {
+ // Nine move from kill to hold: not enough data under $30.
+ for (const spend of [24.1, 17.32, 14.96, 7.6, 4.01, 2.29, 1.77, 1.67, 1.26]) assert.equal(v(spend, 0, 0), 'hold', `$${spend}`);
+ // Four stay kills; the campaign monshaat-mahara-20\10 too.
+ for (const spend of [42.72, 37.83, 32.11, 31.59, 74.31]) assert.equal(v(spend, 0, 0), 'kill', `$${spend}`);
+});
+
+test('noLeadBad: known leads of 0 on the line or over, judged on the cents shown', () => {
+ assert.equal(noLeadBad(11.09, 0), false);
+ assert.equal(noLeadBad(29.99, 0), false);
+ assert.equal(noLeadBad(30, 0), true);
+ assert.equal(noLeadBad(41.65, 0), true);
+ assert.equal(noLeadBad(100, 1), false);
+ // Unknown leads are never "no lead".
+ assert.equal(noLeadBad(100, undefined), false);
+});
+
+test('findings: no lead on $30 or more is always the landing page or tracking, under it nothing is invented', () => {
+ const base = {cpl: undefined, dayRate: 5, bookings: 0, bookingRate: undefined, costPerBooking: undefined};
+ const at30 = diagnose({...base, spend: 30, leads: 0});
+ assert.deepEqual(at30.map(x => x.constraint), ['Landing page or tracking']);
+ assert.equal(at30[0].evidence, '$30.00 spent and no lead recorded: $30 (2 x the $15 gate) or more with no lead is bad.');
+ // The literal $50 is gone: $40 with no lead is no longer "too early to call".
+ assert.deepEqual(diagnose({...base, spend: 40, leads: 0}).map(x => x.constraint), ['Landing page or tracking']);
+ // Under the line it is too early, as for any small spend.
+ assert.deepEqual(diagnose({...base, spend: 29.99, leads: 0}).map(x => x.constraint), ['Too early to call']);
+ assert.deepEqual(diagnose({...base, spend: 11.09, leads: 0}), []);
+ // With no lead the too-early advice names the $30 line its verdict comes at,
+ // never the $45 cost line; with leads the $45 or 5 leads advice stands.
+ const early = diagnose({spend: 24.1, leads: 0, dayRate: 5, bookings: 0});
+ assert.deepEqual(early.map(x => x.constraint), ['Too early to call']);
+ assert.equal(early[0].evidence, 'Only $24.10 spent and no lead yet: not enough data to judge.');
+ assert.equal(early[0].fixes[0], 'Let it run to $30 (2 x the $15 gate): with no lead by then it is bad.');
+ assert.ok(!early.some(x => x.fixes.some(f => f.includes('$45'))));
+ const earlyWithLeads = diagnose({spend: 24.1, leads: 2, cpl: 12.05, dayRate: 5, bookings: 0});
+ assert.equal(earlyWithLeads[0].fixes[0], 'Let it run to $45 or 5 leads before judging it on cost.');
+ // Untracked bookings and no cost per lead used to say nothing at all.
+ const untracked = diagnose({spend: 100, leads: 0, dayRate: 14});
+ assert.ok(untracked.some(x => x.constraint === 'Landing page or tracking'));
+ assert.ok(!untracked.some(x => x.constraint === 'Offer or qualification'));
+ // A weak hook on no leads never reads "leads cost $0.00".
+ const hook = diagnose({spend: 100, leads: 0, dayRate: 14, linkCtr: 0.2});
+ assert.match(hook.find(x => x.constraint === 'Creative')?.evidence ?? '', /and no lead has come in: here the weak hook/);
 });
 
 test('without booking data the cost per lead rule stands and the reason says why', () => {
@@ -195,8 +280,8 @@ test('zero new leads: the spend is written to the cent too', () => {
   '$80.40 spent, zero leads in 7 days, and $80.40 a booking (1 booking) is over the $80 line.',
  );
  assert.match(judge(50.5, 0, undefined, undefined, undefined, undefined, 2).reason, /^\$50\.50 spent and zero leads in 7 days, but earlier leads booked: \$25\.25 a booking \(2 bookings\)\./);
- assert.equal(judge(41.65, 0, undefined, undefined, undefined, undefined, 0).reason, '$41.65 spent, zero leads in 7 days.');
- assert.equal(judge(233.36, 0, undefined, undefined, undefined, undefined, 0).reason, '$233 spent, zero leads in 7 days.');
+ assert.equal(judge(41.65, 0, undefined, undefined, undefined, undefined, 0).reason, '$41.65 spent and no lead in 7 days.');
+ assert.equal(judge(233.36, 0, undefined, undefined, undefined, undefined, 0).reason, '$233 spent and no lead in 7 days.');
 });
 
 test('the $60 and $80 lines judge the cents shown, so "$80" is never over the $80 line', () => {
@@ -285,6 +370,9 @@ test('the worker and the media buyer site use the same gates', () => {
  assert.equal(CPL_GATE, site.CPL_GATE);
  assert.equal(CPB_GATE, site.CPB_GATE);
  assert.equal(CPB_BAD, site.CPB_BAD);
+ // Decision 4: the no-lead multiple is kept in step with src/lib/kpi.ts.
+ assert.equal(NO_LEAD_MULTIPLE, site.NO_LEAD_MULTIPLE);
+ assert.equal(NO_LEAD_MULTIPLE * CPL_GATE, site.noLeadLine());
 });
 
 test('the playbook on the site gives the verdict the worker gives', () => {
