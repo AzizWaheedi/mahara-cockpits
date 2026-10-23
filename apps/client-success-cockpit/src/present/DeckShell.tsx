@@ -108,7 +108,10 @@ export function DeckShell({
   const pos = posIn ?? own;
   const setPos = setPosIn ?? setOwn;
   const [overview, setOverview] = useState(false);
-  const [idle, setIdle] = useState(false);
+  // The chrome starts out of sight, so a share that starts on the deck
+  // shows the slide, never the presenter's buttons (score round 1 of the
+  // Blueprint deck's design pass).
+  const [idle, setIdle] = useState(!embedded);
   /** The video playing over the slide (never kept: a reload never reopens it). */
   const [player, setPlayer] = useState<ControlItem | null>(null);
   const [scale, setScale] = useState(1);
@@ -357,20 +360,30 @@ export function DeckShell({
     return () => window.removeEventListener("resize", fit);
   }, [embedded]);
 
-  // The chrome steps aside while presenting; a move of the mouse brings it back.
+  // The chrome steps aside while presenting; a real move of the pointer
+  // brings it back. Never a key: the browser sends a mousemove from a
+  // still pointer when the slide changes under it, so a move counts only
+  // when the pointer has actually moved.
   useEffect(() => {
     if (embedded) return;
-    let timer = window.setTimeout(() => setIdle(true), 2500);
+    let timer = 0;
+    let last: { x: number; y: number } | null = null;
     const wake = () => {
       setIdle(false);
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setIdle(true), 2500);
     };
-    window.addEventListener("mousemove", wake);
+    const moved = (e: MouseEvent) => {
+      const at = { x: e.screenX, y: e.screenY };
+      const was = last;
+      last = at;
+      if (was && Math.abs(at.x - was.x) + Math.abs(at.y - was.y) > 3) wake();
+    };
+    window.addEventListener("mousemove", moved);
     window.addEventListener("touchstart", wake);
     return () => {
       window.clearTimeout(timer);
-      window.removeEventListener("mousemove", wake);
+      window.removeEventListener("mousemove", moved);
       window.removeEventListener("touchstart", wake);
     };
   }, [embedded]);

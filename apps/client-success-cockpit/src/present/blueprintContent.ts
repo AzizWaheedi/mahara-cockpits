@@ -149,6 +149,14 @@ export const BP = {
       en: "We'll write your 90-day goal together.",
       ar: "بنكتب هدفكم لأول ٩٠ يوم مع بعض.",
     },
+    /**
+     * Nothing on file for the clients they want or their red lines: one
+     * sticky in place of two blank cards (score round 1 of the design pass).
+     */
+    together: {
+      en: "The clients you want more of, and what never goes in an ad: we write them together now.",
+      ar: "العملاء اللي تبون منهم أكثر، واللي ما ينحط بأي إعلان: نكتبها مع بعض الحين.",
+    },
   },
 
   // ------------------------------------------------------------ 3 run sheet
@@ -269,6 +277,8 @@ export const BP = {
       ar: "إعلانات جاهزة لخدمتكم، من قوالبنا.",
     },
     open: { en: "Open the pack", ar: "افتحوا الملف" },
+    /** Under the Stories and Reels phone: short, so it keeps one line. */
+    reels: { en: "Stories and Reels", ar: "ستوري وريلز" },
     /**
      * The example ads' caption when the record has no selling line of
      * theirs: ours, so the phones' "Example ad" tag covers it. {service} as
@@ -503,6 +513,19 @@ export const BP = {
         },
         note: { en: "A big showroom", ar: "معرض كبير" },
       },
+      // Five across the wall: the row's free places hold examples while
+      // the call is on (score round 1 of the design pass).
+      {
+        name: {
+          en: "The big firm in your city",
+          ar: "الشركة الكبيرة بمدينتكم",
+        },
+        note: { en: "A known name", ar: "اسم معروف" },
+      },
+      {
+        name: { en: "A designer known online", ar: "مصمم معروف أونلاين" },
+        note: { en: "Striking renders", ar: "تصاميم تلفت النظر" },
+      },
     ],
     /** More names than the wall shows: the rest are counted. */
     more: { en: "and {n} more", ar: "وغيرهم ({n})" },
@@ -517,6 +540,15 @@ export const BP = {
     lead: {
       en: "We start from a draft in your offer sheet. You correct it, and we lock it with you.",
       ar: "نبدي من مسودة بملف العرض. أنتم تعدلونها، وبعدها نثبت العرض معكم.",
+    },
+    /**
+     * Stop 2, while the sheet is shared from its own window: the lead's
+     * second line (score round 1 of the design pass: the paper card for
+     * the sheet was an empty ruled card, with a presenter's instruction).
+     */
+    sheetLead: {
+      en: "Now we open your offer sheet together. It locks in 1 to 2 days, with you.",
+      ar: "الحين نفتح ملف العرض مع بعض، ونثبته معكم خلال يوم أو يومين.",
     },
     lines: [
       { en: "The pattern", ar: "الفكرة" },
@@ -578,7 +610,9 @@ export const BP = {
     },
     learn: {
       en: "Your ads learn for 30 to 60 days. Volume beats luck.",
-      ar: "أول ٣٠ إلى ٦٠ يوم نكتشف اللي يشتغل بإعلاناتكم. الكمية تغلب الحظ.",
+      // Said as people say it (score round 1 of the design pass: "الكمية
+      // تغلب الحظ" read as a translation of "Volume beats luck").
+      ar: "أول ٣٠ إلى ٦٠ يوم نكتشف اللي يشتغل بإعلاناتكم. كثرة الإعلانات هي اللي تعلمنا، مو الحظ.",
     },
     learnStart: { en: "Day 1", ar: "أول يوم" },
     learnEnd: { en: "Day 60", ar: "يوم ٦٠" },
@@ -652,6 +686,8 @@ export const BP = {
     pairing: { en: "Example pairing", ar: "خطوط للتوضيح" },
     /** What their Brand DNA doc says about type, under the specimen. */
     typeIn: { en: "In your doc: {type}", ar: "بملف هويتكم: {type}" },
+    /** The label over their doc's own words about type, on a line of its own. */
+    typeHead: { en: "In your doc", ar: "بملف هويتكم" },
     paletteExample: { en: "Example palette", ar: "ألوان للتوضيح" },
     /**
      * Never in your ads: the red lines agreed at the start, said once
@@ -755,6 +791,11 @@ export const BP = {
       en: "Your method, in one line",
       ar: "طريقتكم، بسطر واحد",
     },
+    /** Their method still blank at the read-back: where it is written. */
+    wordsSoon: {
+      en: "Your method, in one line: we write it with you.",
+      ar: "طريقتكم، بسطر واحد: نكتبها معكم.",
+    },
     /** The offer still blank at the read-back: where it is finished (score round 3). */
     finish: {
       en: "We finish this in your offer sheet.",
@@ -802,7 +843,7 @@ export const BP = {
       hours: { en: "72 hours from now", ar: "خلال ٧٢ ساعة" },
     },
     callHead: { en: "Your launch call", ar: "مكالمة الإطلاق" },
-    book: { en: "Book it now", ar: "نحجزها الحين" },
+    book: { en: "We book it together now", ar: "نحجزها مع بعض الحين" },
     booked: { en: "Booked: {when}", ar: "محجوزة: {when}" },
     bookLine: {
       en: "We'll book it together before we hang up.",
@@ -929,7 +970,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
       "In your notes: confirm the service, the starter answer and the daily figure. Those stay off the screen.",
     ],
     sayAr: [
-      "خلونا نمر بسرعة على اللي قلتوه لنا. إذا فيه شي غلط، قولوه الحين وأعدله قدامكم.",
+      "خلونا نمر بسرعة على اللي قلتوه لنا. إذا فيه شي غلط، قولوه الحين وأعدله جدامكم.",
       "هذولا العملاء اللي تبون منهم أكثر، صح؟",
       "وفيه شي ما تبونه يطلع بأي إعلان؟",
     ],
@@ -1008,7 +1049,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
       "Stop 2: why people pick them instead, in their words.",
     ],
     sayAr: [
-      "مين تنافسون؟ ومين اللي فعلاً تخسرون قدامه؟",
+      "مين تنافسون؟ ومين اللي فعلاً تخسرون جدامه؟",
       "وليش؟ شنو عندهم ما عندكم؟",
       "وليش الناس يختارونكم بدالهم؟",
     ],

@@ -15,7 +15,9 @@
  * - nothing with `data-live` (typed on live) is turned at all;
  * - nothing else is turned more than 1 degree, but the fan and the stamp;
  * - no text runs past the canvas or under the chrome's foot;
- * - no card ends inside the foot (every .dkb-card bottom above y 1004);
+ * - no card, sheet, tag, sticky or tape runs into the foot's band: every
+ *   bottom at y 960 or above (score round 1 of the design pass: Arabic
+ *   cards ended at 990 to 998, on the logo, under the old 1004 line);
  * - the title's words keep 24 px from a print, the phones, the sheet, the
  *   run sheet and the offer tag;
  * - the read-back's headline box holds its words (.dkb-feature);
@@ -130,13 +132,14 @@ const measure = page =>
           hits.push(`text in the foot: "${n.textContent.trim().slice(0, 40)}"`);
       }
     }
-    // A card that runs into the foot (a stack that grew past its room).
-    for (const el of slide.querySelectorAll(".dkb-card, .dkb-flow, .dkb-sheet, .dkb-tag, .dkb-sticky")) {
+    // A card that runs into the foot (a stack that grew past its room),
+    // its tape included.
+    for (const el of slide.querySelectorAll(".dkb-card, .dkb-flow, .dkb-sheet, .dkb-tag, .dkb-sticky, .dkb-tape")) {
       const b = el.getBoundingClientRect();
       if (!b.height) continue;
       const bot = (b.bottom - c.top) / k;
-      if (bot >= 1004)
-        hits.push(`a card ends at y ${Math.round(bot)}, inside the foot (${el.className})`);
+      if (bot > 961)
+        hits.push(`ends at y ${Math.round(bot)}, past 960 (${el.className})`);
     }
     // The title's words never come within 24 px of a print, the phones, the
     // sheet, the run sheet or the offer tag (score round 1: in Arabic slide

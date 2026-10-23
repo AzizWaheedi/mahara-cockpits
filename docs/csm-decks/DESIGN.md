@@ -1783,7 +1783,12 @@ the clock shows the stage's last time; the after-call stops are drawn at once.
 ### 12.1 The shared tab (what the client can see)
 
 The canvas plus the sales chrome, which hides after 2.5 seconds without mouse
-movement:
+movement. It starts out of sight (score round 1 of the Blueprint deck's
+design pass, 2026-10-23: a share that started on the deck showed the
+presenter's buttons for its first seconds), and only a real move of the
+pointer brings it back: a key never does, and neither does the mousemove a
+browser sends from a still pointer when the slide changes under it (a move
+counts once the pointer has travelled more than 3 px):
 
 - **Top start:** "Back to <client>". It closes the deck window (Present opened
   it) and focuses the cockpit window that opened it. It never navigates the
@@ -6337,8 +6342,10 @@ anyway; until now it lived in the CSM's own tab, then in the kickoff window
   are with our team."), since the frame's card says what happens next.
 - **The frame**, x 816 to 1784, y 112 to 936: `--dk-panel`, a 1 px
   `--dk-line-strong` edge, radius 20, no shadow, no tilt, no texture. Its
-  head (76 px): "Kickoff form" in Geist Mono 24 ink-2 (Plex 26 in Arabic),
-  the client's name 24/600 ink, and at the end the state: the checklist's
+  head (76 px): the client's name 24/600 ink (score round 1 of the Blueprint
+  deck's design pass: the mono "Kickoff form" before it read as a window's
+  redrawn chrome; the frame keeps it as its accessible name), and at the
+  end the state: the checklist's
   done mark (28 px, teal, its check drawn in `--dk-t-tick`) and "Sent at
   {time}". Its body is `--dk-space`; the form fills it, left to right in
   both languages (Typeform's form is English). It is not a re-drawn
@@ -6348,7 +6355,13 @@ anyway; until now it lived in the CSM's own tab, then in the kickoff window
   ruled rows, label 24/500 ink-2 at 320 px, value 30/500 ink: the service
   (its name from the five), the Page name (as typed, `<bdi>`), starter ads.
   `recordRows` keeps to these three; the money, the card and the sale never
-  reach the canvas.
+  reach the canvas. The panel is as tall as what it reads back, its middle on
+  the column's (`data-held`: `height: fit-content`, `margin-block: auto`
+  between y 112 and 936), and the column keeps the three "Once it's sent"
+  steps, each ticked with the done mark, then "Want to change an answer?
+  Tell us in your WhatsApp group." (score round 1 of the Blueprint deck's
+  design pass: 280 px of empty panel under the rows, and the column empty
+  under one line).
 - **Plain lines** in the body, 30 ink-2, centred: "Opening your kickoff
   form", or "We'll open your kickoff form from our side." when the record
   cannot be read, the card is unread or the form does not load.

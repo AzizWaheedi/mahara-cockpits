@@ -123,7 +123,7 @@ describe("form", () => {
   });
   test("titles and canvas lines in sentence case", () => {
     const PROPER =
-      /^(?:Brand|Blueprint|Drive|DNA|Part|Day|I|Example|Starter|Mahara)$/;
+      /^(?:Brand|Blueprint|Drive|DNA|Part|Day|I|Example|Starter|Mahara|Stories|Reels)$/;
     const bad = EN.filter(l => !l.spoken).filter(l =>
       l.text
         .replace(/\{[^}]+\}/g, "")

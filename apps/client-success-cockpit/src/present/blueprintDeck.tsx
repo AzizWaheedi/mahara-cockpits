@@ -60,7 +60,6 @@ import {
 } from "./examples";
 import { FbFeed, IgFeed, Phone, ReelStory } from "./mockups/Phones";
 import { who } from "./onboardingDeck";
-import { openNamed } from "./PresentButton";
 import { Logo } from "./platforms";
 import { type MainKey, serviceOfText } from "./services";
 import type { BpModel } from "./useBlueprint";
@@ -294,6 +293,8 @@ function Card({
   label,
   tag = "div",
   flow = false,
+  look,
+  attrs,
 }: {
   box: Box;
   live?: boolean;
@@ -303,6 +304,9 @@ function Card({
   tag?: "div" | "section" | "figure";
   /** In a stack: placed by the stack, its height by its words. */
   flow?: boolean;
+  /** The stop's focus: lifted, or stepped back. */
+  look?: Look;
+  attrs?: Record<string, string | undefined>;
 }) {
   const Tag = tag;
   return (
@@ -311,6 +315,8 @@ function Card({
       data-live={live ? "" : undefined}
       style={at(live ? { ...box, r: 0 } : box)}
       aria-label={label}
+      {...lookOf(look)}
+      {...attrs}
     >
       {children}
     </Tag>
@@ -321,19 +327,28 @@ function Sticky({
   box,
   children,
   flow = false,
+  big = false,
+  look,
+  tag = "p",
 }: {
   box: Box;
   children: ReactNode;
   /** In a column: placed by it, its height its words'. */
   flow?: boolean;
+  /** Set large, across the room an unfilled part would leave. */
+  big?: boolean;
+  look?: Look;
+  tag?: "p" | "div";
 }) {
+  const Tag = tag;
   return (
-    <p
-      className={`dkb-sticky dkb-pin${flow ? " dkb-flow" : ""}`}
+    <Tag
+      className={`dkb-sticky dkb-pin${flow ? " dkb-flow" : ""}${big ? " dkb-sticky-big" : ""}`}
       style={at(box)}
+      {...lookOf(look)}
     >
       {children}
-    </p>
+    </Tag>
   );
 }
 
@@ -365,6 +380,193 @@ function Mark({
 
 /** The client's line as drawn: a hyphen never breaks it ("limited-offer" stays whole). */
 const whole = (s: string) => s.replace(/-/g, "‑");
+
+/** Part 1 went to media (the record's part 1, or this call's press): the call is under way. */
+const underway = (bp: BpModel | null | undefined) =>
+  Boolean(bp?.stamp || bp?.parts["1"]?.status === "done");
+
+/**
+ * The call is closed (part 2 done, or the offer locked after it): the wall
+ * shows what was said, never a slot for more (score round 1 of the design
+ * pass: "Add a line" and empty "known for" lines after the call).
+ */
+const afterCall = (bp: BpModel | null | undefined) =>
+  Boolean(
+    bp?.parts["2"]?.status === "done" || bp?.parts["3"]?.status === "done",
+  );
+
+/**
+ * A stop's focus (score round 1 of the design pass: a label turning from
+ * grey to dark was a change nobody on the call saw): the card the stop asks
+ * about lifts off the wall, the others step back to 0.55. Transform and
+ * opacity only, on attributes a pin's arrival never holds.
+ */
+type Look = "active" | "dim" | undefined;
+const lookOf = (look: Look) =>
+  look === "active"
+    ? { "data-active": "" }
+    : look === "dim"
+      ? { "data-dim": "" }
+      : {};
+
+/**
+ * A loop drawn in pen round a chosen word (the CD's pen: teal ink, like the
+ * stamp), never a box or a filled ring. Sized to its word, measured, so the
+ * stroke keeps its weight on "Yes" and on "Approved before the call"; a
+ * little uneven, and it runs past its start, as a hand does.
+ */
+function loopPath(w: number, h: number, seed: number): string {
+  const cx = w / 2;
+  const cy = h / 2;
+  const rx = w / 2 - 3;
+  const ry = h / 2 - 3;
+  const n = 18;
+  const start = -0.42;
+  const sweep = Math.PI * 2 + 0.62;
+  const pts: [number, number][] = [];
+  // The hand's unevenness in pixels, not in proportion, so a long word's
+  // loop never closes in across its last letter.
+  for (let i = 0; i <= n; i++) {
+    const a = start - (sweep * i) / n;
+    const dx = 3 * Math.sin(i * 1.9 + seed) - (i / n) * 5;
+    const dy = 2 * Math.sin(i * 1.3 + seed) - (i / n) * 3;
+    pts.push([cx + Math.cos(a) * (rx + dx), cy + Math.sin(a) * (ry + dy)]);
+  }
+  const f = (v: number) => v.toFixed(1);
+  let d = `M${f(pts[0][0])} ${f(pts[0][1])}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x, y] = pts[i];
+    const [nx, ny] = pts[i + 1];
+    d += ` Q${f(x)} ${f(y)} ${f((x + nx) / 2)} ${f((y + ny) / 2)}`;
+  }
+  const end = pts[pts.length - 1];
+  return `${d} L${f(end[0])} ${f(end[1])}`;
+}
+
+function PenRing({
+  fresh = false,
+  seed = 0,
+}: {
+  fresh?: boolean;
+  seed?: number;
+}) {
+  const ref = useRef<SVGSVGElement>(null);
+  const [box, setBox] = useState<[number, number]>([160, 64]);
+  // Its word's size, measured after every render (no deps: a new word or
+  // a font arriving changes it).
+  useLayoutEffect(() => {
+    const host = ref.current?.parentElement;
+    if (!host) return;
+    const w = Math.round(host.offsetWidth + 40);
+    const h = Math.round(host.offsetHeight + 24);
+    setBox(b => (b[0] === w && b[1] === h ? b : [w, h]));
+  });
+  const [w, h] = box;
+  return (
+    <svg
+      ref={ref}
+      className="dkb-ring"
+      data-fresh={fresh ? "" : undefined}
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      aria-hidden
+    >
+      <path d={loopPath(w, h, seed)} pathLength={1} />
+    </svg>
+  );
+}
+
+/** A tick in the same pen: a part sent, a line on the offer tag the record holds. */
+function PenTick({ fresh = false }: { fresh?: boolean }) {
+  return (
+    <svg
+      className="dkb-pen-tick"
+      data-fresh={fresh ? "" : undefined}
+      viewBox="0 0 36 36"
+      aria-hidden
+    >
+      <path
+        d="M6 19.5c3.2 2.4 5.6 5.4 7.6 9.1C17.8 18.6 23.4 10.8 31 5.5"
+        pathLength={1}
+      />
+    </svg>
+  );
+}
+
+/**
+ * A question answered on paper (score round 1 of the design pass: Yes / No
+ * and a three-way control read as a web form): each answer a word in
+ * pencil, the one they gave in ink with a pen loop round it. A tap on a
+ * word picks it (again, takes it back where `toggle`); a CSM seat reads.
+ */
+function PenChoice<V extends string>({
+  ctx,
+  value,
+  options,
+  onPick,
+  label,
+  toggle = true,
+  waiting = false,
+  className,
+}: {
+  ctx: Ctx;
+  value: V | undefined;
+  options: readonly { v: V; label: ReactNode }[];
+  onPick: (v: V | null) => void;
+  label: string;
+  toggle?: boolean;
+  /** Ahead of its stop: on the wall, not tappable yet. */
+  waiting?: boolean;
+  className?: string;
+}) {
+  const editable = Boolean(ctx.bp && !ctx.bp.readOnly) && !waiting;
+  // A loop drawn because of a tap on this call draws at once; one already
+  // on the record draws with its paper's arrival.
+  const first = useRef(value);
+  const fresh = value !== first.current;
+  return (
+    <span
+      className={`dkb-pen${className ? ` ${className}` : ""}`}
+      role="group"
+      aria-label={label}
+    >
+      {options.map((o, n) => {
+        const on = value === o.v;
+        const inner = (
+          <>
+            <span className="dkb-pen-word">{o.label}</span>
+            {on ? <PenRing fresh={fresh} seed={n} /> : null}
+          </>
+        );
+        return editable || ctx.bp ? (
+          <button
+            key={o.v}
+            type="button"
+            className="dkb-pen-opt"
+            data-picked={on ? "" : undefined}
+            aria-pressed={on}
+            disabled={!editable}
+            onClick={e => {
+              onPick(on && toggle ? null : o.v);
+              letGo(e);
+            }}
+          >
+            {inner}
+          </button>
+        ) : (
+          <span
+            key={o.v}
+            className="dkb-pen-opt"
+            data-picked={on ? "" : undefined}
+          >
+            {inner}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
 
 // ------------------------------------------------------------ live fields
 
@@ -528,14 +730,17 @@ function Ruled({
 
 /**
  * A list of short lines (red lines, the rules): each line as written, and
- * "Add a line" pencilled on the paper under them, typed live there (no
- * box, no rule: score round 3, a ruled entry row still read as a form);
- * Enter adds it. The presenter can take a line off with its small cross,
- * shown on hover. `quietAt`: from this many lines the add row is out of
- * sight, its room kept, until the presenter's pointer is over the list or
- * it has focus. `fold`: lines agreed earlier, said once as one line (slide
+ * a slot for the next one, typed live on the paper under them; Enter adds
+ * it. The slot is out of sight at rest (score round 1 of the design pass:
+ * "Add a line" in grey read as a web input, on the client's screen), its
+ * room kept, and shows as a faint pencilled "+" only while the
+ * presenter's pointer is over the card or it has focus; after the call it
+ * is gone. The presenter can take a line off with its small cross, shown
+ * on hover. `fold`: lines agreed earlier, said once as one line (slide
  * 11's never list holds the red lines from the start of the call); they
  * open on hover or focus, so the presenter can still take one off.
+ * `chips`: the lines as chips (slide 11's lists, as the Studio mockup had
+ * them), else ruled lines.
  */
 function LinesField({
   ctx,
@@ -546,15 +751,15 @@ function LinesField({
   max = 12,
   show,
   label,
-  quietAt,
   fold,
+  chips = false,
 }: {
   ctx: Ctx;
   list: string[];
   onChange: (next: string[]) => void;
   addLabel: L;
-  quietAt?: number;
   fold?: { lines: string[]; label: string };
+  chips?: boolean;
   /**
    * What leads each line: a tick for what is always in their ads, a cross
    * for what never is (the line itself is never struck: a struck "No
@@ -574,7 +779,6 @@ function LinesField({
   const isFolded = (l: string) => folded.has(l.trim().toLowerCase());
   const foldCount = list.filter(isFolded).length;
   const own = list.filter(l => !isFolded(l));
-  const quiet = quietAt != null && own.length >= quietAt;
   const visible = show ? own.slice(0, show) : own;
   const more = own.length - visible.length;
   const add = () => {
@@ -589,6 +793,7 @@ function LinesField({
       className="dkb-lines"
       data-kind={kind}
       data-fold={foldCount ? "" : undefined}
+      data-chips={chips ? "" : undefined}
     >
       <ul aria-label={label}>
         {fold && foldCount ? (
@@ -627,15 +832,15 @@ function LinesField({
           </li>
         ) : null}
       </ul>
-      {editable && list.length < max ? (
+      {editable && !afterCall(bp) && list.length < max ? (
         <input
           className="dkb-add"
-          data-quiet={quiet ? "" : undefined}
+          data-quiet=""
           // Empty, the placeholder takes the deck's direction (dir="auto"
           // with no words resolves to left to right); typed, its own.
           dir={draft ? "auto" : lang === "ar" ? "rtl" : "ltr"}
           value={draft}
-          placeholder={t(addLabel, lang)}
+          placeholder={`+ ${t(addLabel, lang)}`}
           aria-label={t(addLabel, lang)}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={e => {
@@ -648,60 +853,6 @@ function LinesField({
         />
       ) : null}
     </div>
-  );
-}
-
-/**
- * One of a few cards the client picks from, like a radio: each has its
- * ring at the start, the pick fills it teal and lights the card's edge,
- * and the others step back.
- */
-function Pick({
-  ctx,
-  box,
-  lit,
-  onPick,
-  children,
-  className,
-  waiting = false,
-}: {
-  ctx: Ctx;
-  box: Box;
-  lit: boolean;
-  onPick: () => void;
-  children: ReactNode;
-  className?: string;
-  /** Shown ahead of its stop: half strength, not tappable yet. */
-  waiting?: boolean;
-}) {
-  const editable = Boolean(ctx.bp && !ctx.bp.readOnly) && !waiting;
-  return (
-    <button
-      type="button"
-      className={`dkb-card dkb-pin dkb-pick${className ? ` ${className}` : ""}`}
-      style={at(box)}
-      data-lit={lit ? "" : undefined}
-      data-wait={waiting ? "" : undefined}
-      aria-pressed={lit}
-      disabled={!editable}
-      onClick={e => {
-        onPick();
-        letGo(e);
-      }}
-    >
-      <span className="dkb-radio" data-on={lit ? "" : undefined} aria-hidden />
-      <span className="dkb-pick-in">{children}</span>
-    </button>
-  );
-}
-
-function Tick() {
-  return (
-    <span className="dkb-tick" aria-hidden>
-      <svg viewBox="0 0 24 24" aria-hidden>
-        <path d="M5 12.5l4.5 4.5L19 7.5" />
-      </svg>
-    </span>
   );
 }
 
@@ -794,8 +945,10 @@ function Frame({
   children,
   hint = true,
   tape = true,
+  tapeEnd = false,
   assemble,
   flow = false,
+  look,
 }: {
   ctx: Ctx;
   kind: FrameKind;
@@ -803,10 +956,14 @@ function Frame({
   children?: ReactNode;
   hint?: boolean;
   tape?: boolean;
+  /** Waiting: its one piece of tape across the top-end corner instead. */
+  tapeEnd?: boolean;
   /** The read-back: the frame grows out of the wall's map, in this order. */
   assemble?: number;
   /** In a row: placed by it, its size its paper's. */
   flow?: boolean;
+  /** The stop's focus: the frame, its label and its tape lift together. */
+  look?: Look;
 }) {
   const f = BP.frames[kind];
   const i = box.i ?? 0;
@@ -817,6 +974,7 @@ function Frame({
       data-kind={kind}
       data-filled={filled ? "" : undefined}
       data-assemble={assemble != null ? "" : undefined}
+      {...lookOf(look)}
       style={
         assemble != null
           ? ({
@@ -842,7 +1000,14 @@ function Frame({
           holds the top-start, so the tape takes the top-end and
           bottom-start. */}
       {tape && !filled ? (
-        <Tape x={-34} y={-10} w={104} r={-0.8} i={i} />
+        <Tape
+          x={-34}
+          y={-10}
+          w={104}
+          r={-0.8}
+          i={i}
+          from={tapeEnd ? "top-end" : undefined}
+        />
       ) : tape ? (
         <>
           <Tape x={-30} y={-12} w={110} r={0.7} i={i} from="top-end" />
@@ -891,6 +1056,17 @@ function Cover({ ctx }: { ctx: Ctx }) {
   // creative director's (a CSM reading the deck is not the presenter);
   // else the role alone.
   const presenter = ctx.bp && !ctx.bp.readOnly ? d.csmFirst : null;
+  // Once part 1 went (sent, closed, locked), the cover shows the wall as
+  // far as it got (score round 1 of the design pass: the frames stayed
+  // empty after the wall was filled): their method's first line pinned in
+  // "Your words", the offer's name in "Your offer". Before that, the
+  // frames wait, as the call's promise.
+  const a: Answers = ctx.bp?.answers ?? {};
+  const filled = underway(ctx.bp);
+  const line = filled ? firstLine(a.method, 92) : null;
+  const offerName = filled
+    ? str((a.offer as Record<string, unknown> | undefined)?.name)
+    : null;
   return (
     <Wall ctx={ctx} slide="cover">
       <div className="dkb-cover-text">
@@ -914,6 +1090,12 @@ function Cover({ ctx }: { ctx: Ctx }) {
             ? tf(BP.cover.bylineNamed, lang, { name: presenter })
             : t(BP.cover.byline, lang)}
         </p>
+        {/* The amber note under the byline, so the title column runs to the
+            wall's foot as the frames do (score round 1 of the design pass:
+            the column stood empty under the byline). */}
+        <Sticky flow box={{ x: 0, y: 0, r: -0.9, i: 5 }}>
+          {t(BP.cover.sticky, lang)}
+        </Sticky>
       </div>
       {/* The three frames, waiting: one tight cluster, 60 px gutters
           (words over offer at 1000; look at 1500, its first paper already
@@ -924,17 +1106,41 @@ function Cover({ ctx }: { ctx: Ctx }) {
         ctx={ctx}
         kind="words"
         box={{ x: 1000, y: 140, w: 440, h: 290, i: 0 }}
-      />
+      >
+        {line ? (
+          <div
+            className="dkb-card dkb-pin dkb-cover-paper"
+            style={at({ x: 0, y: 0, w: 440, h: 290, i: 0 })}
+          >
+            <p className="dkb-cover-words" dir="auto">
+              <bdi>{line}</bdi>
+            </p>
+          </div>
+        ) : null}
+      </Frame>
+      {/* Its tape on its far corner, clear of the words frame's beside it. */}
       <Frame
         ctx={ctx}
         kind="look"
         box={{ x: 1500, y: 140, w: 300, h: 400, i: 1 }}
+        tapeEnd
       />
       <Frame
         ctx={ctx}
         kind="offer"
-        box={{ x: 1000, y: 490, w: 440, h: 270, i: 2 }}
-      />
+        box={{ x: 1000, y: 490, w: 440, h: 330, i: 2 }}
+      >
+        {offerName ? (
+          <div
+            className="dkb-card dkb-pin dkb-cover-paper"
+            style={at({ x: 0, y: 0, w: 440, h: 330, i: 2 })}
+          >
+            <p className="dkb-cover-offer" dir="auto">
+              <bdi>{whole(offerName)}</bdi>
+            </p>
+          </div>
+        ) : null}
+      </Frame>
       {logo ? (
         <figure
           className="dkb-print dkb-pin dkb-cover-logo"
@@ -945,7 +1151,7 @@ function Cover({ ctx }: { ctx: Ctx }) {
       ) : null}
       <figure
         className="dkb-print dkb-pin dkb-cover-photo"
-        style={at({ x: 1492, y: 600, w: 316, h: 300, r: -0.7, i: 4 })}
+        style={at({ x: 1492, y: 604, w: 316, h: 300, r: -0.7, i: 4 })}
       >
         <Tape x={104} y={-16} w={108} r={0.6} i={4} />
         <img src={photo.url} alt="" draggable={false} />
@@ -953,9 +1159,6 @@ function Cover({ ctx }: { ctx: Ctx }) {
           {t(photo.own ? BP.cover.photoOwn : BP.cover.photoExample, lang)}
         </figcaption>
       </figure>
-      <Sticky box={{ x: 1000, y: 820, w: 440, r: -0.9, i: 5 }}>
-        {t(BP.cover.sticky, lang)}
-      </Sticky>
     </Wall>
   );
 }
@@ -1032,10 +1235,18 @@ function Fan({
           </span>
         );
       })}
-      {/* Parked: the fan closed under the lit strip, its other strips'
-          edges showing at its foot, so the rivet still holds a fan
-          (score round 3: a lone strip read as a toggle). */}
-      {parks ? <span className="dkb-fan-closed" aria-hidden /> : null}
+      {/* Parked: the fan folded under the lit strip, two blades' edges
+          showing at its far end with the stubs of their labels, so the
+          rivet still holds a fan (score round 3: a lone strip read as a
+          toggle; round 1 of the design pass: one grey slab read as a
+          button's shadow). */}
+      {parks
+        ? ([2, 1] as const).map(n => (
+            <span key={n} className="dkb-fan-edge" data-n={n} aria-hidden>
+              <i />
+            </span>
+          ))
+        : null}
       <span className="dkb-bolt" aria-hidden />
     </div>
   );
@@ -1047,7 +1258,8 @@ function ServiceChip({ ctx }: { ctx: Ctx }) {
   const service = bp?.answers.service as BpService | undefined;
   const two = !service ? (bp?.prefill.twoServices ?? []) : [];
   return (
-    <Card box={{ x: 1010, y: 280, w: 790, h: 170, i: 2 }} className="dkb-svc">
+    <Card box={{ x: 0, y: 0, r: 0.5, i: 2 }} flow className="dkb-svc">
+      <Tape x={300} y={-14} w={130} r={-0.6} />
       {/* Two asked: the question is the card's label, the two chips under it. */}
       <p className="dkb-card-label">
         {t(two.length > 1 ? BP.oneService.two : BP.soFar.service, lang)}{" "}
@@ -1076,6 +1288,19 @@ function SoFar({ ctx }: { ctx: Ctx }) {
   const { d, lang, bp } = ctx;
   const goal = shownGoals(d).find(g => g.key === "goal90");
   const red = lines(bp?.answers.red_lines);
+  const clients = str(bp?.answers.best_client);
+  // Nothing of theirs yet for a card (score round 1 of the design pass: an
+  // empty underlined field in the sparse case): no blank card on the wall.
+  // Both blank, one amber sticky says they are filled in together now; the
+  // first word typed in the notes window pins its card here, live.
+  // A card shown once stays for the slide's visit, so clearing it to type
+  // again never takes the paper from under the caret.
+  const seen = useRef({ clients: false, red: false });
+  if (clients) seen.current.clients = true;
+  if (red.length) seen.current.red = true;
+  const showClients = seen.current.clients;
+  const showRed = seen.current.red;
+  const together = !showClients && !showRed;
   return (
     <Wall ctx={ctx} slide="so-far">
       <Head
@@ -1087,75 +1312,81 @@ function SoFar({ ctx }: { ctx: Ctx }) {
         )}
         width={880}
       />
-      <Card
-        box={{ x: 120, y: 280, w: 790, h: 320, r: -0.6, i: 0 }}
-        className="dkb-goal"
-      >
-        <Tape x={330} y={-14} w={140} />
-        <p className="dkb-card-label">
-          {t(BP.soFar.goal, lang)}{" "}
-          <Mark bp={bp} lang={lang} from="onboarding" />
-        </p>
-        {goal ? (
-          <p
-            className="dkb-words"
-            data-size={goal.lines.join(" ").length > 90 ? undefined : "xl"}
-            dir="auto"
-          >
-            <bdi>{goal.lines.join(" ")}</bdi>
-          </p>
-        ) : (
-          <p className="dkb-words dkb-quiet">{t(BP.soFar.noGoal, lang)}</p>
-        )}
-      </Card>
-      {/* As tall as their words; still blank, one pencilled line (score
-          round 3: three blank rules in the sparse case). */}
-      <Card box={{ x: 120, y: 630, w: 790, i: 1 }} live className="dkb-clients">
-        <p className="dkb-card-label">
-          {t(BP.soFar.clients, lang)}{" "}
-          <Mark bp={bp} k="best_client" lang={lang} />
-        </p>
-        <Ruled
-          ctx={ctx}
-          k="best_client"
-          size="small"
-          minRows={
-            typeof bp?.answers.best_client === "string" &&
-            bp.answers.best_client.trim()
-              ? 3
-              : 1
-          }
-          maxRows={3}
-          label={t(BP.soFar.clients, lang)}
-        />
-      </Card>
-      <ServiceChip ctx={ctx} />
-      {/* The red lines' card is as tall as its lines and the pencilled
-          entry under them (score round 3: two spare rules read as a form);
-          the sticky is pinned under it, at the column's end. */}
+      {/* Two columns, the pair centred between the title and the foot, so
+          a short (sparse) wall never leaves its bottom fifth bare. */}
       <div
-        className="dkb-at dkb-stack dkb-sofar-end"
-        style={at({ x: 1010, y: 480, w: 790 })}
+        className="dkb-at dkb-sofar"
+        style={at({ x: 120, y: 250, w: 1680, h: 706 })}
       >
-        <Card box={{ x: 0, y: 0, i: 3 }} flow live className="dkb-never">
-          <p className="dkb-card-label">
-            {t(BP.soFar.never, lang)} <Mark bp={bp} k="red_lines" lang={lang} />
-          </p>
-          <LinesField
-            ctx={ctx}
-            list={red}
-            show={5}
-            kind="plain"
-            label={t(BP.soFar.never, lang)}
-            addLabel={BP.soFar.addLine}
-            onChange={next =>
-              bp?.set("red_lines", next.length ? next : null, { now: true })
-            }
-          />
-        </Card>
-        <Sticky flow box={{ x: 0, y: 0, r: 0.9, i: 4 }}>
-          {t(BP.soFar.sticky, lang)}
-        </Sticky>
+        <div className="dkb-stack dkb-sofar-col">
+          <Card box={{ x: 0, y: 0, r: -0.6, i: 0 }} flow className="dkb-goal">
+            <Tape x={330} y={-14} w={140} />
+            <p className="dkb-card-label">
+              {t(BP.soFar.goal, lang)}{" "}
+              <Mark bp={bp} lang={lang} from="onboarding" />
+            </p>
+            {goal ? (
+              <p
+                className="dkb-words"
+                data-size={goal.lines.join(" ").length > 90 ? undefined : "xl"}
+                dir="auto"
+              >
+                <bdi>{goal.lines.join(" ")}</bdi>
+              </p>
+            ) : (
+              <p className="dkb-words dkb-quiet">{t(BP.soFar.noGoal, lang)}</p>
+            )}
+          </Card>
+          {showClients ? (
+            <Card box={{ x: 0, y: 0, i: 1 }} flow live className="dkb-clients">
+              <Tape x={300} y={-14} w={120} />
+              <p className="dkb-card-label">
+                {t(BP.soFar.clients, lang)}{" "}
+                <Mark bp={bp} k="best_client" lang={lang} />
+              </p>
+              <Ruled
+                ctx={ctx}
+                k="best_client"
+                size="small"
+                minRows={1}
+                maxRows={3}
+                label={t(BP.soFar.clients, lang)}
+              />
+            </Card>
+          ) : together ? (
+            <Sticky flow big box={{ x: 0, y: 0, r: -0.8, i: 1 }}>
+              {t(BP.soFar.together, lang)}
+            </Sticky>
+          ) : null}
+        </div>
+        <div className="dkb-stack dkb-sofar-col">
+          <ServiceChip ctx={ctx} />
+          {/* The red lines' card is as tall as its lines (score round 3: two
+              spare rules read as a form); the sticky pinned under it. */}
+          {showRed ? (
+            <Card box={{ x: 0, y: 0, i: 3 }} flow live className="dkb-never">
+              <Tape x={300} y={-14} w={120} r={0.6} />
+              <p className="dkb-card-label">
+                {t(BP.soFar.never, lang)}{" "}
+                <Mark bp={bp} k="red_lines" lang={lang} />
+              </p>
+              <LinesField
+                ctx={ctx}
+                list={red}
+                show={5}
+                kind="plain"
+                label={t(BP.soFar.never, lang)}
+                addLabel={BP.soFar.addLine}
+                onChange={next =>
+                  bp?.set("red_lines", next.length ? next : null, { now: true })
+                }
+              />
+            </Card>
+          ) : null}
+          <Sticky flow box={{ x: 0, y: 0, r: 0.9, i: 4 }}>
+            {t(BP.soFar.sticky, lang)}
+          </Sticky>
+        </div>
       </div>
     </Wall>
   );
@@ -1174,8 +1405,11 @@ function RunSheet({ ctx }: { ctx: Ctx }) {
       {/* The rules run from the sheet's first row (y 285) to its foot (y
           990), one ruled third each, so no void sits under the title
           (score round 2). */}
+      {/* The rules card ends with the run sheet, by y 960; each rule takes
+          an equal third, its words centred in it, so a one-line rule never
+          leaves a gap under it (score round 1 of the design pass). */}
       <Card
-        box={{ x: 120, y: 285, w: 580, h: 705, r: 0.8, i: 2 }}
+        box={{ x: 120, y: 285, w: 580, h: 668, r: 0.8, i: 2 }}
         className="dkb-rules3"
       >
         <Tape x={220} y={-14} w={130} />
@@ -1190,7 +1424,7 @@ function RunSheet({ ctx }: { ctx: Ctx }) {
         </ol>
       </Card>
       <Card
-        box={{ x: 760, y: 120, w: 1040, h: 870, r: 0.6, i: 0 }}
+        box={{ x: 760, y: 120, w: 1040, h: 832, r: 0.6, i: 0 }}
         className="dkb-runsheet"
       >
         <Tape x={460} y={-14} w={150} />
@@ -1329,41 +1563,56 @@ function OneService({ ctx }: { ctx: Ctx }) {
       </p>
       {/* Nothing lit yet: nothing is parked, so the tag only lists what
           else they offer (score round 3: "Parked for later" over a
-          service list nobody had set aside). */}
-      <Card
-        box={{ x: 1120, y: 250, w: 680, r: 0.8, i: 6 }}
-        className="dkb-kraft dkb-parked"
-        label={t(
-          chosen.length ? BP.oneService.parked : BP.oneService.theirs,
-          lang,
-        )}
+          service list nobody had set aside). Its middle sits on the fan's
+          middle (y 500) on both stops, so the slide's two halves carry
+          the same weight (score round 1 of the design pass); on the park
+          it is pinned again at its full height as the strips reach it. */}
+      <div
+        className="dkb-at dkb-parked-at"
+        style={at({ x: 1120, y: 500, w: 680 })}
       >
-        <Tape x={270} y={-14} w={140} />
-        <p className="dkb-card-label">
-          {t(chosen.length ? BP.oneService.parked : BP.oneService.theirs, lang)}
-        </p>
-        {mains.length || theirs.length ? (
-          <ul>
-            {mains.map((k, n) => (
-              <li key={k} data-main="" style={{ "--k": n } as CSSProperties}>
-                {t(SERVICES[k].name, lang)}
-              </li>
-            ))}
-            {mains.length && theirs.length ? (
-              <li className="dkb-parked-sub">
-                {t(BP.oneService.theirs, lang)}
-              </li>
-            ) : null}
-            {theirs.map(s => (
-              <li key={s} dir="auto">
-                <span>{whole(s)}</span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="dkb-quiet-print">{t(BP.oneService.parkedNone, lang)}</p>
-        )}
-      </Card>
+        <Card
+          box={{ x: 0, y: 0, r: 0.8, i: 6 }}
+          flow
+          className="dkb-kraft dkb-parked"
+          attrs={{ "data-grown": parks ? "" : undefined }}
+          label={t(
+            chosen.length ? BP.oneService.parked : BP.oneService.theirs,
+            lang,
+          )}
+        >
+          <Tape x={270} y={-14} w={140} />
+          <p className="dkb-card-label">
+            {t(
+              chosen.length ? BP.oneService.parked : BP.oneService.theirs,
+              lang,
+            )}
+          </p>
+          {mains.length || theirs.length ? (
+            <ul>
+              {mains.map((k, n) => (
+                <li key={k} data-main="" style={{ "--k": n } as CSSProperties}>
+                  {t(SERVICES[k].name, lang)}
+                </li>
+              ))}
+              {mains.length && theirs.length ? (
+                <li className="dkb-parked-sub">
+                  {t(BP.oneService.theirs, lang)}
+                </li>
+              ) : null}
+              {theirs.map(s => (
+                <li key={s} dir="auto">
+                  <span>{whole(s)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="dkb-quiet-print">
+              {t(BP.oneService.parkedNone, lang)}
+            </p>
+          )}
+        </Card>
+      </div>
     </Wall>
   );
 }
@@ -1409,6 +1658,7 @@ function PackPhones({ ctx }: { ctx: Ctx }) {
       Ad: IgFeed,
       creative: exampleCreative(sceneAt(pick, 0), "feed", words, lang),
       label: SHARED.frame.feed,
+      caption: undefined,
       mark: "instagram" as const,
     },
     {
@@ -1416,6 +1666,9 @@ function PackPhones({ ctx }: { ctx: Ctx }) {
       Ad: ReelStory,
       creative: exampleCreative(sceneAt(pick, 1), "story", words, lang),
       label: SHARED.frame.reels,
+      // Under the phone, short, on one line (score round 1 of the design
+      // pass: "Instagram Stories and Reels" wrapped beside its mark).
+      caption: BP.firstAds.reels,
       mark: "instagram" as const,
     },
     {
@@ -1423,6 +1676,7 @@ function PackPhones({ ctx }: { ctx: Ctx }) {
       Ad: FbFeed,
       creative: exampleCreative(sceneAt(pick, 2), "feed", words, lang),
       label: SHARED.frame.facebook,
+      caption: undefined,
       mark: "facebook" as const,
     },
   ];
@@ -1432,7 +1686,7 @@ function PackPhones({ ctx }: { ctx: Ctx }) {
       className="dkb-at dkb-ads"
       style={at({ x: 780, y: 196, w: 1020, h: 740 })}
     >
-      {phones.map(({ key, Ad, creative, label, mark }, n) => (
+      {phones.map(({ key, Ad, creative, label, mark, caption }, n) => (
         <figure
           key={key}
           className="dkb-ad dkb-arrive"
@@ -1452,7 +1706,7 @@ function PackPhones({ ctx }: { ctx: Ctx }) {
           </Phone>
           <figcaption className="dkb-ad-foot">
             <Logo mark={mark} size={26} />
-            {t(label, lang)}
+            {t(caption ?? label, lang)}
           </figcaption>
         </figure>
       ))}
@@ -1460,15 +1714,18 @@ function PackPhones({ ctx }: { ctx: Ctx }) {
   );
 }
 
-/** Stop 1's start column: what the pack is, then "Open the pack" once there is a link. */
+/**
+ * Stop 1's start column: what the pack is, in three lines. The real pack
+ * opens from the notes window, in its own window (score round 1 of the
+ * design pass: a white "Open the pack" pill was a web button on the
+ * client's screen).
+ */
 function PackWords({ ctx }: { ctx: Ctx }) {
   const { bp, lang } = ctx;
   // The lit service only: until slide 4's pick is on record the line says
   // "your service", so it never names one slide 4 is still asking about
   // (the phones beside keep their example pictures, tagged).
   const lit = bp?.answers.service as BpService | undefined;
-  const url =
-    str(bp?.answers.pack_url) ?? str(bp?.prefill.values.pack_url?.value);
   const service = lit
     ? lang === "ar"
       ? SERVICES[lit].name.ar
@@ -1497,20 +1754,6 @@ function PackWords({ ctx }: { ctx: Ctx }) {
           </li>
         ))}
       </ol>
-      {url ? (
-        // The last to arrive, after the three lines it follows.
-        <button
-          type="button"
-          className="dkb-button dkb-arrive"
-          style={{ "--i": BP.firstAds.pack.length + 1 } as CSSProperties}
-          onClick={e => {
-            openNamed(url, `mahara-pack-${ctx.d.taskId}`);
-            letGo(e);
-          }}
-        >
-          {t(BP.firstAds.open, lang)}
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -1564,21 +1807,11 @@ function Shot({
             <i className="dkb-split" aria-hidden />
           </>
         ) : (
+          // A plain example still on every polaroid, its caption saying the
+          // shot (score round 1 of the design pass: a tripod drawn over the
+          // first read as clip art).
           <img src={src} alt="" draggable={false} />
         )}
-        {n === 0 ? (
-          // Talking to camera: their phone on a small tripod, set up in
-          // the room and recording, drawn in line (score round 3: a
-          // default-avatar figure read as a placeholder).
-          <svg className="dkb-rig" viewBox="0 0 120 120" aria-hidden>
-            <rect x="44" y="14" width="32" height="56" rx="6" />
-            <rect x="48" y="22" width="24" height="38" rx="2" data-screen="" />
-            <circle cx="60" cy="18" r="1.6" data-lens="" />
-            <circle cx="66" cy="27" r="2.4" data-rec="" />
-            <path d="M52 70h16v6H52z" />
-            <path d="M60 76v10M60 86L40 116M60 86l20 30M60 86v30" />
-          </svg>
-        ) : null}
         <span className="dkb-example dkb-polaroid-tag">
           {t(BP.tag.example, ctx.lang)}
         </span>
@@ -1612,7 +1845,12 @@ function ShotsPreview({ ctx, box }: { ctx: Ctx; box: Box }) {
   );
 }
 
-/** The parts of the form, as the slide lists them: done, now, later. */
+/**
+ * The parts of the form, as the slide lists them: done, now, later. Drawn
+ * as the run sheet draws them (score round 1 of the design pass: numbered
+ * circles, one filled teal, read as a checkout's steps): each part a rail
+ * in the run sheet's teal, its name in mono, a pen tick once it is sent.
+ */
 function PartsList({ ctx }: { ctx: Ctx }) {
   const { lang, bp } = ctx;
   return (
@@ -1636,7 +1874,8 @@ function PartsList({ ctx }: { ctx: Ctx }) {
               className="dkb-part-n"
               data-was={fresh ? digits(n, lang) : undefined}
             >
-              {done ? <Tick /> : digits(n, lang)}
+              {t(BP.today.brackets[n], lang).split(/\s·\s|،\s/)[0]}
+              {done ? <PenTick fresh={fresh} /> : null}
             </span>
             <span>
               <b>{t(BP.parts[n], lang)}</b>
@@ -1686,163 +1925,154 @@ function Sheet({ ctx }: { ctx: Ctx }) {
   const { lang, bp, d } = ctx;
   const a: Answers = bp?.answers ?? {};
   const service = a.service as BpService | undefined;
-  const editable = Boolean(bp && !bp.readOnly);
   const starter = a.starter as "yes" | "no" | undefined;
   const red = lines(a.red_lines);
   const n = privateCount(a);
   const fold = foldKey(n);
-  const seg = (v: "yes" | "no") => (
-    <button
-      type="button"
-      aria-pressed={starter === v}
-      disabled={!editable}
-      onClick={e => {
-        bp?.set("starter", v, { now: true });
-        letGo(e);
-      }}
-    >
-      {t(BP.firstAds[v], lang)}
-    </button>
-  );
+  const approval = a.pack_approval as
+    | "on_call"
+    | "before"
+    | "wants_changes"
+    | undefined;
   return (
     // The sheet's height is its words' (at least 820), and the two blank
     // sheets behind follow it; no tabs, since the parts list beside it
     // already names the three parts (score round 2).
     <div
-      className="dkb-at dkb-sheet-stack"
-      style={at({ x: 760, y: 120, w: 1040 })}
+      className="dkb-at dkb-sheet-area"
+      style={at({ x: 760, y: 104, w: 1040, h: 856 })}
     >
-      <span className="dkb-sheet-back" data-n="2" aria-hidden />
-      <span className="dkb-sheet-back" data-n="1" aria-hidden />
-      <section
-        className="dkb-sheet dkb-pin dkb-flow"
-        data-live=""
-        style={at({ x: 0, y: 0, w: 1040, i: 1 })}
-      >
-        <header className="dkb-sheet-head">
-          <span>
-            {t(BP.deckName, lang)}
-            {lang === "ar" ? "، " : " · "}
-            <bdi dir="auto">{d.name}</bdi>
-          </span>
-          <span className="dkb-mono">
-            {tf(BP.partOf, lang, { n: digits(1, lang) })}
-          </span>
-        </header>
-        <h3 className="dkb-sheet-title">{t(BP.parts[1], lang)}</h3>
-        <div className="dkb-field">
-          <span className="dkb-field-label">
-            {t(BP.firstAds.service, lang)}
-          </span>
-          <Mark bp={bp} k="service" lang={lang} />
-          <span className="dkb-field-ans">
-            {service ? (
-              <>
-                <span className="dkb-chip-lit">
-                  {t(SERVICES[service].name, lang)}
-                </span>
-                <span className="dkb-quiet-print">
-                  {t(BP.firstAds.serviceRest, lang)}
-                </span>
-              </>
-            ) : (
-              <span className="dkb-quiet-print">
-                {t(BP.oneService.none, lang)}
-              </span>
-            )}
-          </span>
-        </div>
-        <div className="dkb-field">
-          <span className="dkb-field-label">
-            {t(BP.firstAds.starter, lang)}
-          </span>
-          <Mark bp={bp} k="starter" lang={lang} />
-          <span className="dkb-field-ans">
-            <span className="dkb-seg">
-              {seg("yes")}
-              {seg("no")}
+      <div className="dkb-sheet-stack">
+        <span className="dkb-sheet-back" data-n="2" aria-hidden />
+        <span className="dkb-sheet-back" data-n="1" aria-hidden />
+        <section
+          className="dkb-sheet dkb-pin dkb-flow"
+          data-live=""
+          style={at({ x: 0, y: 0, w: 1040, i: 1 })}
+        >
+          <header className="dkb-sheet-head">
+            <span>
+              {t(BP.deckName, lang)}
+              {lang === "ar" ? "، " : " · "}
+              <bdi dir="auto">{d.name}</bdi>
             </span>
-            <span className="dkb-quiet-print">
-              {t(BP.firstAds.starterNote, lang)}
+            <span className="dkb-mono">
+              {tf(BP.partOf, lang, { n: digits(1, lang) })}
             </span>
-          </span>
-        </div>
-        {starter === "yes" ? (
+          </header>
+          <h3 className="dkb-sheet-title">{t(BP.parts[1], lang)}</h3>
           <div className="dkb-field">
             <span className="dkb-field-label">
-              {t(BP.firstAds.approval, lang)}
+              {t(BP.firstAds.service, lang)}
             </span>
-            <Mark bp={bp} k="pack_approval" lang={lang} />
-            {/* One of three, so a segmented control like Yes / No. */}
+            <Mark bp={bp} k="service" lang={lang} />
             <span className="dkb-field-ans">
-              <span className="dkb-seg" data-three="">
-                {(["on_call", "before", "wants_changes"] as const).map(v => (
-                  <button
-                    key={v}
-                    type="button"
-                    aria-pressed={a.pack_approval === v}
-                    disabled={!editable}
-                    onClick={e => {
-                      bp?.set(
-                        "pack_approval",
-                        a.pack_approval === v ? null : v,
-                        { now: true },
-                      );
-                      letGo(e);
-                    }}
-                  >
-                    {t(BP.firstAds.approvals[v], lang)}
-                  </button>
-                ))}
+              {service ? (
+                <>
+                  <span className="dkb-chip-lit">
+                    {t(SERVICES[service].name, lang)}
+                  </span>
+                  <span className="dkb-quiet-print">
+                    {t(BP.firstAds.serviceRest, lang)}
+                  </span>
+                </>
+              ) : (
+                <span className="dkb-quiet-print">
+                  {t(BP.oneService.none, lang)}
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="dkb-field">
+            <span className="dkb-field-label">
+              {t(BP.firstAds.starter, lang)}
+            </span>
+            <Mark bp={bp} k="starter" lang={lang} />
+            <span className="dkb-field-ans">
+              <PenChoice
+                ctx={ctx}
+                value={starter}
+                toggle={false}
+                label={t(BP.firstAds.starter, lang)}
+                options={(["yes", "no"] as const).map(v => ({
+                  v,
+                  label: t(BP.firstAds[v], lang),
+                }))}
+                onPick={v => {
+                  if (v) bp?.set("starter", v, { now: true });
+                }}
+              />
+              <span className="dkb-quiet-print">
+                {t(BP.firstAds.starterNote, lang)}
               </span>
             </span>
           </div>
-        ) : null}
-        <div className="dkb-field dkb-field-last">
-          <span className="dkb-field-label">
-            {t(BP.firstAds.redLines, lang)}
-          </span>
-          <Mark bp={bp} k="red_lines" lang={lang} />
-          <div className="dkb-field-split">
-            <div className="dkb-redcol">
-              <ul className="dkb-redlist">
-                {red.slice(0, 4).map(l => (
-                  <li key={l} dir="auto">
-                    <span>{whole(l)}</span>
-                  </li>
-                ))}
-                {red.length > 4 ? (
-                  <li className="dkb-more">
-                    {lang === "ar"
-                      ? `وغيرها (${digits(red.length - 4, lang)})`
-                      : `and ${red.length - 4} more`}
-                  </li>
-                ) : null}
-              </ul>
-              {/* One grey helper line, until the stamp says it went; its
-                  room is kept after, so the sheet never moves. */}
-              <p
-                className="dkb-helper"
-                data-gone={bp?.stamp ? "" : undefined}
-                aria-hidden={bp?.stamp ? true : undefined}
-              >
-                {t(BP.firstAds.signoff, lang)}
-              </p>
+          {starter === "yes" ? (
+            <div className="dkb-field">
+              <span className="dkb-field-label">
+                {t(BP.firstAds.approval, lang)}
+              </span>
+              <Mark bp={bp} k="pack_approval" lang={lang} />
+              {/* One of three, answered as Yes / No is: in pen on the paper. */}
+              <span className="dkb-field-ans">
+                <PenChoice
+                  ctx={ctx}
+                  value={approval}
+                  label={t(BP.firstAds.approval, lang)}
+                  options={(
+                    ["on_call", "before", "wants_changes"] as const
+                  ).map(v => ({ v, label: t(BP.firstAds.approvals[v], lang) }))}
+                  onPick={v => bp?.set("pack_approval", v, { now: true })}
+                />
+              </span>
             </div>
-            <div
-              className="dkb-signoff"
-              data-fired={bp?.stamp ? "" : undefined}
-            >
-              <Stamp ctx={ctx} />
+          ) : null}
+          <div className="dkb-field dkb-field-last">
+            <span className="dkb-field-label">
+              {t(BP.firstAds.redLines, lang)}
+            </span>
+            <Mark bp={bp} k="red_lines" lang={lang} />
+            <div className="dkb-field-split">
+              <div className="dkb-redcol">
+                <ul className="dkb-redlist">
+                  {red.slice(0, 4).map(l => (
+                    <li key={l} dir="auto">
+                      <span>{whole(l)}</span>
+                    </li>
+                  ))}
+                  {red.length > 4 ? (
+                    <li className="dkb-more">
+                      {lang === "ar"
+                        ? `وغيرها (${digits(red.length - 4, lang)})`
+                        : `and ${red.length - 4} more`}
+                    </li>
+                  ) : null}
+                </ul>
+                {/* One grey helper line, until the stamp says it went; its
+                  room is kept after, so the sheet never moves. */}
+                <p
+                  className="dkb-helper"
+                  data-gone={bp?.stamp ? "" : undefined}
+                  aria-hidden={bp?.stamp ? true : undefined}
+                >
+                  {t(BP.firstAds.signoff, lang)}
+                </p>
+              </div>
+              <div
+                className="dkb-signoff"
+                data-fired={bp?.stamp ? "" : undefined}
+              >
+                <Stamp ctx={ctx} />
+              </div>
             </div>
           </div>
-        </div>
-        {fold ? (
-          <footer className="dkb-fold">
-            {tf(BP.firstAds.fold[fold], lang, { n: digits(n, lang) })}
-          </footer>
-        ) : null}
-      </section>
+          {fold ? (
+            <footer className="dkb-fold">
+              {tf(BP.firstAds.fold[fold], lang, { n: digits(n, lang) })}
+            </footer>
+          ) : null}
+        </section>
+      </div>
     </div>
   );
 }
@@ -1930,6 +2160,13 @@ function BestAt({ ctx }: { ctx: Ctx }) {
     typeof bp?.answers.method === "string" ? bp.answers.method : "";
   const { fly, leave } = useFlight(method);
   const words = WALL_FRAMES.words;
+  // Each stop's question lifts its paper; the rest step back (score round
+  // 1 of the design pass). Stop 1 the method; stop 2 who they want and
+  // who they don't; stop 3 what others in their city can't do.
+  const look = (at: number | readonly number[]): Look =>
+    (typeof at === "number" ? at === tour : at.includes(tour))
+      ? "active"
+      : "dim";
   return (
     <Wall ctx={ctx} slide="best-at">
       <Head ctx={ctx} id="best-at" width={1100} />
@@ -1941,9 +2178,17 @@ function BestAt({ ctx }: { ctx: Ctx }) {
           holding an example of a method until the first keystroke. */}
       <div
         className="dkb-at dkb-bestat"
-        style={at({ x: 120, y: 290, w: 1680 })}
+        style={at({ x: 120, y: 268, w: 1680, h: 672 })}
       >
-        <Frame ctx={ctx} kind="words" box={{ x: 0, y: 0, i: 0 }} flow>
+        {/* The label and the tape come with the paper (score round 1 of
+            the design pass: the label landed alone on the empty wall). */}
+        <Frame
+          ctx={ctx}
+          kind="words"
+          box={{ x: 0, y: 0, i: 1 }}
+          flow
+          look={look(0)}
+        >
           <Card box={{ x: 0, y: 0, i: 1 }} flow live className="dkb-method">
             <p className="dkb-struck">
               <s dir="auto">
@@ -1958,11 +2203,15 @@ function BestAt({ ctx }: { ctx: Ctx }) {
               <Mark bp={ctx.bp} k="method" lang={lang} />
             </p>
             <div className="dkb-method-field">
+              {/* Two rules, growing with the words (score round 1 of the
+                  design pass: seven empty rules read as a textarea); past
+                  four the words step down, so the stack ends by y 940. */}
               <Ruled
                 ctx={ctx}
                 k="method"
-                minRows={4}
-                maxRows={7}
+                minRows={2}
+                maxRows={4}
+                cap={5}
                 label={t(BP.bestAt.method, lang)}
                 onLeave={leave}
               />
@@ -1976,7 +2225,13 @@ function BestAt({ ctx }: { ctx: Ctx }) {
           </Card>
         </Frame>
         <div className="dkb-stack dkb-notes">
-          <Card box={{ x: 0, y: 0, i: 2 }} flow live className="dkb-side">
+          <Card
+            box={{ x: 0, y: 0, i: 2 }}
+            flow
+            live
+            className="dkb-side"
+            look={look([1])}
+          >
             <Tape x={232} y={-14} w={112} />
             <p className="dkb-card-label">
               {t(BP.bestAt.clients, lang)}{" "}
@@ -1992,14 +2247,15 @@ function BestAt({ ctx }: { ctx: Ctx }) {
               label={t(BP.bestAt.clients, lang)}
             />
           </Card>
-          {/* The next two notes are on the wall from the first stop, at
-              half strength until their stop (score round 2: no quarter
+          {/* The next two notes are on the wall from the first stop,
+              stepped back until their stop (score round 2: no quarter
               stands empty). */}
           <Card
             box={{ x: 0, y: 0, i: 3 }}
             flow
             live
-            className={`dkb-side${tour < 1 ? " dkb-wait" : ""}`}
+            className="dkb-side"
+            look={look([1])}
           >
             <Tape x={232} y={-14} w={112} />
             <p className="dkb-card-label">{t(BP.bestAt.notFor, lang)}</p>
@@ -2017,7 +2273,8 @@ function BestAt({ ctx }: { ctx: Ctx }) {
             box={{ x: 0, y: 0, i: 4 }}
             flow
             live
-            className={`dkb-side${tour < 2 ? " dkb-wait" : ""}`}
+            className="dkb-side"
+            look={look(2)}
           >
             <Tape x={232} y={-14} w={112} />
             <p className="dkb-card-label">{t(BP.bestAt.cityCant, lang)}</p>
@@ -2061,13 +2318,30 @@ function BestAt({ ctx }: { ctx: Ctx }) {
 /**
  * Slide 7's steel tape (SPEC 5.3), drawn to the numbers: it runs from
  * nothing at the start to a round number past the highest, the smallest
- * project and where the ads point each a mark at its value with the
- * value on a flag above it, and the range typed for most projects a
- * shaded band with its two numbers. The numbers are typed in the cards
- * under the tape; the tape only draws them.
+ * project and where the ads point each a mark at its value, and the range
+ * for most projects a shaded band with its two numbers and its flag. The
+ * two amounts hang under the tape on swing tags, each tied by its string
+ * from the tag's hole to its own mark (score round 1 of the design pass:
+ * the strings dropped at fixed places and reached no number), so the tag
+ * is the mark's flag. An amount not typed yet hangs at its example value,
+ * a dashed mark, its tag saying "e.g."; with no example that fits the
+ * range they gave, its string is tied to the tape straight above the tag.
  */
-function PriceTape({ ctx }: { ctx: Ctx }) {
-  const { lang, bp, d } = ctx;
+const TAPE = { x: 120, y: 186, w: 1680 } as const;
+/** The tags' row, under the tape; a tag's hole, from its top-start corner. */
+const TAG_ROW_Y = 428;
+const TAG_W = 440;
+const HOLE = { x: 36, y: 50 } as const;
+
+type TapeAmounts = {
+  minimum: number | null;
+  anchor: number | null;
+  ghost: { minimum: boolean; anchor: boolean };
+  band: [number, number] | null;
+};
+
+function tapeAmounts(ctx: Ctx): TapeAmounts {
+  const { bp, d } = ctx;
   const num = (k: "minimum" | "anchor") => {
     const v = bp?.answers[k] as { amount?: unknown } | undefined;
     return typeof v?.amount === "number" ? v.amount : null;
@@ -2077,31 +2351,35 @@ function PriceTape({ ctx }: { ctx: Ctx }) {
   // The range for most projects: typed on this call, else their own words
   // on the onboarding form (the card under the tape says which).
   const band = bandOf(bp?.answers.pricing ?? formDraft(bp, "pricing"));
-  // Until a first amount is typed, the tape carries the tags' own example
-  // amounts as ghost marks, each flag saying "e.g." (score round 3: one
-  // Example tag at the tape's end labelled none of them), so the ruler
-  // shows what it is for; the steel stays steel, only the marks are faint.
-  const ghost = typedMin == null && typedAnchor == null && !band;
-  const amountOf = (n: number) =>
-    ghost
-      ? tf(BP.pricing.eg, lang, { amount: shortAmount(n, lang) })
-      : shortAmount(n, lang);
   const ex = EXAMPLE_AMOUNT[currencyFor(d.country)];
-  const minimum = ghost ? ex.minimum : typedMin;
-  const anchor = ghost ? ex.anchor : typedAnchor;
+  // An example hangs only where it makes sense against their range.
+  const minFits = !band || ex.minimum < band[0];
+  const anchorFits = !band || (ex.anchor >= band[0] && ex.anchor <= band[1]);
+  const minimum = typedMin ?? (minFits ? ex.minimum : null);
+  const anchor = typedAnchor ?? (anchorFits ? ex.anchor : null);
+  return {
+    minimum,
+    anchor,
+    band,
+    ghost: {
+      minimum: typedMin == null && minimum != null,
+      anchor: typedAnchor == null && anchor != null,
+    },
+  };
+}
+
+function PriceTape({ ctx }: { ctx: Ctx }) {
+  const { lang } = ctx;
+  const { minimum, anchor, band, ghost } = tapeAmounts(ctx);
   const marks = tapeMarks({ minimum, anchor, band });
   const F = BP.pricing.flags;
-  const W = 1680;
+  const W = TAPE.w;
   const px0 = 24;
   const len = W - px0 * 2;
   const xOf = (share: number) => px0 + share * len;
-  // A flag reads toward the tape's middle, so the one near either end
-  // never runs off it.
-  const side = (share: number) => (share > 0.62 ? "start" : "end");
-  // The flags never cross (the shot run's text checks found the smallest
-  // project's flag on "Most projects" when the range sat close to it, and
-  // the range's two numbers on each other in a narrow band). Widths are
-  // estimated from the words, at the flags' sizes.
+  // The flags never cross (the shot run's text checks found the range's
+  // two numbers on each other in a narrow band). Widths are estimated
+  // from the words, at the flags' sizes.
   const wide = (s: string, size: number) => s.length * size * 0.56;
   const bandPx = marks?.band ? (marks.band[1] - marks.band[0]) * len : 0;
   const lo = band ? shortAmount(band[0], lang) : "";
@@ -2115,128 +2393,121 @@ function PriceTape({ ctx }: { ctx: Ctx }) {
       ? t(F.most, lang)
       : tf(F.mostRange, lang, { lo, hi });
   const mostAt = marks?.band ? xOf((marks.band[0] + marks.band[1]) / 2) : 0;
-  const mostW = wide(mostText, 24);
-  const minAt = marks?.minimum != null ? xOf(marks.minimum) : 0;
-  const minW =
-    minimum != null
-      ? wide(amountOf(minimum), 32) + 12 + wide(t(F.minimum, lang), 24)
-      : 0;
-  const clear = (a: [number, number], b: [number, number]) =>
-    a[1] + 24 <= b[0] || b[1] + 24 <= a[0];
-  const mostSpan: [number, number] = [mostAt - mostW / 2, mostAt + mostW / 2];
-  const minSpan = (sd: "start" | "end"): [number, number] =>
-    sd === "end"
-      ? [minAt + 14, minAt + 14 + minW]
-      : [minAt - 14 - minW, minAt - 14];
-  let minSide: "start" | "end" =
-    marks?.minimum != null ? side(marks.minimum) : "end";
-  if (marks?.band && !clear(minSpan(minSide), mostSpan)) {
-    const other = minSide === "end" ? "start" : "end";
-    const [a, b] = minSpan(other);
-    if (a >= 0 && b <= W && clear([a, b], mostSpan)) minSide = other;
-  }
-  // Still crossing: "Most projects" rises to a second lane above.
-  const mostHigh = Boolean(marks?.band) && !clear(minSpan(minSide), mostSpan);
+  // Where each string is tied: its mark's foot, else the tape straight
+  // above its tag's hole.
+  const hole = {
+    minimum: HOLE.x,
+    anchor: W - TAG_W + HOLE.x,
+  } as const;
+  const tie = (k: "minimum" | "anchor") => {
+    const share = marks?.[k];
+    return share != null && (k === "minimum" ? minimum : anchor) != null
+      ? { x: xOf(share), y: 210, mark: true }
+      : { x: hole[k], y: 198, mark: false };
+  };
+  const holeY = TAG_ROW_Y - TAPE.y + HOLE.y;
   return (
-    <div
-      className="dkb-at dkb-tape-wrap"
-      data-ghost={ghost ? "" : undefined}
-      style={at({ x: 120, y: 210, w: W, h: 230 })}
-    >
+    <>
       <div
-        className="dkb-tape-rule dkb-pin"
-        style={at({ x: 0, y: 96, w: W, h: 96, i: 0 })}
+        className="dkb-at dkb-tape-wrap"
+        data-ghost={ghost.minimum && ghost.anchor ? "" : undefined}
+        style={at({ x: TAPE.x, y: TAPE.y, w: W, h: 230 })}
       >
-        <span className="dkb-tape-ticks" aria-hidden />
-        {marks?.band ? (
-          <span
-            className="dkb-tape-band"
-            style={
-              {
-                "--a": px(xOf(marks.band[0])),
-                "--b": px(xOf(Math.max(marks.band[1], marks.band[0] + 0.004))),
-              } as CSSProperties
-            }
+        <div
+          className="dkb-tape-rule dkb-pin"
+          style={at({ x: 0, y: 96, w: W, h: 96, i: 0 })}
+        >
+          <span className="dkb-tape-ticks" aria-hidden />
+          {marks?.band ? (
+            <span
+              className="dkb-tape-band"
+              style={
+                {
+                  "--a": px(xOf(marks.band[0])),
+                  "--b": px(
+                    xOf(Math.max(marks.band[1], marks.band[0] + 0.004)),
+                  ),
+                } as CSSProperties
+              }
+            >
+              {bandNumbers ? (
+                <span className="dkb-tape-band-n" data-at="lo">
+                  {lo}
+                </span>
+              ) : null}
+              {bandNumbers && band && band[1] !== band[0] ? (
+                <span className="dkb-tape-band-n" data-at="hi">
+                  {hi}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+          {(["minimum", "anchor"] as const).map(k =>
+            marks?.[k] != null &&
+            (k === "minimum" ? minimum : anchor) != null ? (
+              <span
+                key={k}
+                className="dkb-tape-mark"
+                data-kind={k}
+                data-ghost={ghost[k] ? "" : undefined}
+                data-low={k === "anchor" && marks.band ? "" : undefined}
+                style={{ "--m": px(xOf(marks[k] as number)) } as CSSProperties}
+              />
+            ) : null,
+          )}
+        </div>
+        {marks?.band && band ? (
+          <p
+            className="dkb-flag dkb-arrive"
+            data-kind="most"
+            data-side="mid"
+            style={{ "--m": px(mostAt), "--i": 2 } as CSSProperties}
           >
-            {bandNumbers ? (
-              <span className="dkb-tape-band-n" data-at="lo">
-                {lo}
-              </span>
-            ) : null}
-            {bandNumbers && band && band[1] !== band[0] ? (
-              <span className="dkb-tape-band-n" data-at="hi">
-                {hi}
-              </span>
-            ) : null}
-          </span>
-        ) : null}
-        {marks && minimum != null && marks.minimum != null ? (
-          <span
-            className="dkb-tape-mark"
-            data-kind="minimum"
-            style={{ "--m": px(xOf(marks.minimum)) } as CSSProperties}
-          />
-        ) : null}
-        {marks && anchor != null && marks.anchor != null ? (
-          <span
-            className="dkb-tape-mark"
-            data-kind="anchor"
-            data-low={marks.band ? "" : undefined}
-            style={{ "--m": px(xOf(marks.anchor)) } as CSSProperties}
-          />
+            <span>{mostText}</span>
+          </p>
         ) : null}
       </div>
-      {marks && minimum != null && marks.minimum != null ? (
-        <p
-          className="dkb-flag dkb-arrive"
-          data-kind="minimum"
-          data-side={minSide}
-          style={{ "--m": px(xOf(marks.minimum)), "--i": 1 } as CSSProperties}
-        >
-          <span>
-            <b>{amountOf(minimum)}</b>
-            {t(F.minimum, lang)}
-          </span>
-        </p>
-      ) : null}
-      {marks?.band && band ? (
-        <p
-          className="dkb-flag dkb-arrive"
-          data-kind="most"
-          data-side="mid"
-          data-high={mostHigh ? "" : undefined}
-          style={
-            {
-              "--m": px(mostAt),
-              "--i": 2,
-            } as CSSProperties
-          }
-        >
-          <span>{mostText}</span>
-        </p>
-      ) : null}
-      {marks && anchor != null && marks.anchor != null ? (
-        <p
-          className="dkb-flag dkb-arrive"
-          data-kind="anchor"
-          data-side={side(marks.anchor)}
-          data-low={marks.band ? "" : undefined}
-          style={{ "--m": px(xOf(marks.anchor)), "--i": 3 } as CSSProperties}
-        >
-          <span>
-            <b>{amountOf(anchor)}</b>
-            {t(F.anchor, lang)}
-          </span>
-        </p>
-      ) : null}
-    </div>
+      {/* The strings, drawn from each hole up to its tie once the tags
+          have landed; mirrored in Arabic with the wall. */}
+      <svg
+        className="dkb-strings"
+        viewBox={`0 0 ${W} ${holeY + 20}`}
+        aria-hidden
+        style={at({ x: TAPE.x, y: TAPE.y, w: W, h: holeY + 20 })}
+      >
+        {(["minimum", "anchor"] as const).map((k, n) => {
+          const to = tie(k);
+          const from = { x: hole[k], y: holeY };
+          // A little slack: the string bows toward the floor.
+          const mx = (from.x + to.x) / 2;
+          const my =
+            (from.y + to.y) / 2 + Math.min(14, Math.abs(to.x - from.x) * 0.04);
+          return (
+            <g
+              key={k}
+              data-kind={k}
+              data-ghost={ghost[k] ? "" : undefined}
+              style={{ "--i": n ? 4 : 2 } as CSSProperties}
+            >
+              <path
+                d={`M${from.x} ${from.y} Q${mx} ${my} ${to.x} ${to.y}`}
+                pathLength={1}
+              />
+              <circle cx={to.x} cy={to.y} r={10} />
+            </g>
+          );
+        })}
+      </svg>
+    </>
   );
 }
 
 /**
  * An amount on a swing tag (score round 3: pricing read as a web form):
- * manila card, pointed at its start, a reinforced hole there and a string
- * up to a tack; the amount typed live on it, so it hangs straight.
+ * manila card, pointed at its start, a reinforced hole there, its string
+ * tied to its mark on the tape; the amount typed live on it, so it hangs
+ * straight. Its label starts under the hole, so the string never crosses
+ * its words.
  */
 function PriceTag({
   ctx,
@@ -2256,7 +2527,6 @@ function PriceTag({
       data-kind={k}
       style={{ "--i": i } as CSSProperties}
     >
-      <span className="dkb-pricetag-string" aria-hidden />
       <div className="dkb-pricetag-card">
         <span className="dkb-pricetag-hole" aria-hidden />
         <p className="dkb-card-label">
@@ -2294,7 +2564,7 @@ function Pricing({ ctx }: { ctx: Ctx }) {
           callers' line. Nothing is turned: the amounts are typed live. */}
       <div
         className="dkb-at dkb-price-rows"
-        style={at({ x: 120, y: 458, w: 1680 })}
+        style={at({ x: TAPE.x, y: TAG_ROW_Y, w: TAPE.w })}
       >
         <div className="dkb-price-row" data-row="1">
           <PriceTag ctx={ctx} k="minimum" i={2} />
@@ -2320,39 +2590,44 @@ function Pricing({ ctx }: { ctx: Ctx }) {
           </Card>
           <PriceTag ctx={ctx} k="anchor" i={4} />
         </div>
-        {tour >= 1 ? (
-          <div className="dkb-price-row" data-row="2">
-            <Card box={{ x: 0, y: 0, i: 0 }} flow live className="dkb-terms">
-              <p className="dkb-card-label">
-                {t(BP.pricing.terms, lang)}{" "}
-                {termsDraft ? (
-                  <Mark bp={bp} lang={lang} from="onboarding" />
-                ) : (
-                  <Mark bp={bp} k="terms" lang={lang} />
-                )}
-              </p>
-              <Ruled
-                ctx={ctx}
-                k="terms"
-                size="side"
-                minRows={2}
-                maxRows={2}
-                cap={3}
-                draft={termsDraft}
-                label={t(BP.pricing.terms, lang)}
-              />
-            </Card>
-            <Card box={{ x: 0, y: 0, i: 1 }} flow className="dkb-filter">
-              <p className="dkb-card-label">{t(BP.pricing.filterHead, lang)}</p>
-              <p className="dkb-filter-line">
-                {tf(BP.pricing.filter, lang, { minimum: minimum ?? "______" })}
-              </p>
-              <span className="dkb-example">
-                {t(BP.tag.exampleWording, lang)}
-              </span>
-            </Card>
-          </div>
-        ) : null}
+        {/* How they are paid and the callers' line are on the wall from
+            the first stop, stepped back until the second (score round 1 of
+            the design pass: the bottom third stood empty). */}
+        <div
+          className="dkb-price-row"
+          data-row="2"
+          {...lookOf(tour >= 1 ? undefined : "dim")}
+        >
+          <Card box={{ x: 0, y: 0, i: 5 }} flow live className="dkb-terms">
+            <p className="dkb-card-label">
+              {t(BP.pricing.terms, lang)}{" "}
+              {termsDraft ? (
+                <Mark bp={bp} lang={lang} from="onboarding" />
+              ) : (
+                <Mark bp={bp} k="terms" lang={lang} />
+              )}
+            </p>
+            <Ruled
+              ctx={ctx}
+              k="terms"
+              size="side"
+              minRows={2}
+              maxRows={2}
+              cap={3}
+              draft={termsDraft}
+              label={t(BP.pricing.terms, lang)}
+            />
+          </Card>
+          <Card box={{ x: 0, y: 0, i: 6 }} flow className="dkb-filter">
+            <p className="dkb-card-label">{t(BP.pricing.filterHead, lang)}</p>
+            <p className="dkb-filter-line">
+              {tf(BP.pricing.filter, lang, { minimum: minimum ?? "______" })}
+            </p>
+            <span className="dkb-example">
+              {t(BP.tag.exampleWording, lang)}
+            </span>
+          </Card>
+        </div>
       </div>
     </Wall>
   );
@@ -2364,6 +2639,16 @@ type Name = { name: string; lose: boolean; note?: string };
 
 /** The wall's room for clippings: two rows of five; past it, the rest are counted. */
 const CLIPPINGS = 10;
+/** A row of clippings: five across the wall's width. */
+const CLIP_COLS = 5;
+
+/**
+ * A long name steps down a size, then another, and runs to three lines;
+ * it is never cut (score round 1 of the design pass: "The furniture
+ * showrooms' free…" showed the client their own answer truncated).
+ */
+const nameSize = (name: string) =>
+  name.length > 46 ? "more" : name.length > 28 ? "" : undefined;
 
 /**
  * One competitor as a clipping pinned to the wall (score round 3: chips and
@@ -2378,6 +2663,7 @@ function Clipping({
   i,
   names,
   save,
+  look,
 }: {
   ctx: Ctx;
   n: Name;
@@ -2385,6 +2671,7 @@ function Clipping({
   names: Name[];
   /** `now`: a mark or a removal saves at once; a typed note after a pause. */
   save: (next: Name[], now: boolean) => void;
+  look?: Look;
 }) {
   const { lang, bp } = ctx;
   const editable = Boolean(bp && !bp.readOnly);
@@ -2393,11 +2680,15 @@ function Clipping({
       names.map(x => (x.name === n.name ? { ...x, ...patch } : x)),
       now,
     );
+  // After the call an empty "known for" is said by nothing at all.
+  const note = n.note?.trim() ?? "";
+  const noteShown = Boolean(note) || !afterCall(bp);
   return (
     <li
       className="dkb-clip dkb-pin"
       data-live=""
       data-lose={n.lose ? "" : undefined}
+      {...lookOf(look)}
       style={{ "--i": Math.min(i, 6) } as CSSProperties}
     >
       <Tape x={150} y={-14} w={96} i={Math.min(i, 6)} />
@@ -2406,6 +2697,7 @@ function Clipping({
           <button
             type="button"
             className="dkb-clip-name"
+            data-long={nameSize(n.name)}
             aria-pressed={n.lose}
             aria-label={`${n.name}: ${t(BP.competitors.lose, lang)}`}
             onClick={e => {
@@ -2416,25 +2708,31 @@ function Clipping({
             <bdi dir="auto">{whole(n.name)}</bdi>
           </button>
         ) : (
-          <p className="dkb-clip-name">
+          <p className="dkb-clip-name" data-long={nameSize(n.name)}>
             <bdi dir="auto">{whole(n.name)}</bdi>
           </p>
         )}
         {n.lose ? (
           <span className="dkb-lose">{t(BP.competitors.lose, lang)}</span>
         ) : null}
-        <span className="dkb-clip-kicker">{t(BP.competitors.note, lang)}</span>
-        <Ruled
-          ctx={ctx}
-          size="clip"
-          one
-          minRows={1}
-          maxRows={2}
-          cap={2}
-          label={`${n.name}: ${t(BP.competitors.note, lang)}`}
-          value={n.note ?? ""}
-          onChange={v => set({ note: v }, false)}
-        />
+        {noteShown ? (
+          <>
+            <span className="dkb-clip-kicker">
+              {t(BP.competitors.note, lang)}
+            </span>
+            <Ruled
+              ctx={ctx}
+              size="clip"
+              one
+              minRows={1}
+              maxRows={2}
+              cap={2}
+              label={`${n.name}: ${t(BP.competitors.note, lang)}`}
+              value={n.note ?? ""}
+              onChange={v => set({ note: v }, false)}
+            />
+          </>
+        ) : null}
         {editable ? (
           <span className="dkb-chip-tools">
             <button
@@ -2467,6 +2765,7 @@ function Competitors({ ctx }: { ctx: Ctx }) {
       : []
   ).filter(n => n && typeof n.name === "string");
   const editable = Boolean(bp && !bp.readOnly);
+  const after = afterCall(bp);
   const [draft, setDraft] = useState("");
   // A note typed on a clipping saves after a pause, as typed fields do; a
   // name added, marked or taken off saves at once.
@@ -2479,14 +2778,24 @@ function Competitors({ ctx }: { ctx: Ctx }) {
       save([...names, { name: s, lose: false }].slice(0, 15), true);
     setDraft("");
   };
-  const adding = editable && names.length < 15;
+  const adding = editable && !after && names.length < 15;
   const room = CLIPPINGS - (adding ? 1 : 0);
   const shown = names.length > room ? names.slice(0, room - 1) : names;
   const more = names.length - shown.length;
+  const used = shown.length + (more ? 1 : 0) + (adding ? 1 : 0);
+  // Five across the wall while the call is on (score round 1 of the design
+  // pass: four notes left a 340 px hole): example clippings, ours and
+  // tagged, fill the row's free places. After the call only theirs, as
+  // wide as the row allows.
+  const examples = after
+    ? []
+    : BP.competitors.ghosts.slice(0, Math.max(0, CLIP_COLS - used));
+  const cols = after ? Math.min(CLIP_COLS, Math.max(3, used)) : CLIP_COLS;
   // A second row of clippings: "why people pick you" takes two rows at a
   // smaller size, so the wall still ends above the foot.
-  const twoRows =
-    (names.length ? shown.length + (more ? 1 : 0) : 3) + (adding ? 1 : 0) > 5;
+  const twoRows = used + examples.length > CLIP_COLS;
+  // Stop 2 lifts "why people pick you"; the clippings step back.
+  const clipLook: Look = tour >= 1 ? "dim" : undefined;
   return (
     <Wall ctx={ctx} slide="competitors">
       <Head
@@ -2500,9 +2809,13 @@ function Competitors({ ctx }: { ctx: Ctx }) {
           a 190 px empty band between them). */}
       <div
         className="dkb-at dkb-rivals"
-        style={at({ x: 120, y: 284, w: 1680 })}
+        style={at({ x: 120, y: 268, w: 1680, h: 692 })}
       >
-        <ul className="dkb-clips" aria-label={t(BP.competitors.head, lang)}>
+        <ul
+          className="dkb-clips"
+          aria-label={t(BP.competitors.head, lang)}
+          style={{ "--cols": cols } as CSSProperties}
+        >
           {shown.map((n, i) => (
             <Clipping
               key={n.name}
@@ -2511,14 +2824,16 @@ function Competitors({ ctx }: { ctx: Ctx }) {
               i={i}
               names={names}
               save={save}
+              look={clipLook}
             />
           ))}
-          {editable && names.length < 15 ? (
+          {adding ? (
             // The next name is typed on a blank clipping waiting to be
             // pinned: a pencilled line, no box.
             <li
               className="dkb-clip dkb-clip-add dkb-pin"
               data-live=""
+              {...lookOf(clipLook)}
               style={{ "--i": Math.min(shown.length, 6) } as CSSProperties}
             >
               <Tape x={150} y={-14} w={96} i={Math.min(shown.length, 6)} />
@@ -2526,7 +2841,7 @@ function Competitors({ ctx }: { ctx: Ctx }) {
                 <input
                   dir={draft ? "auto" : lang === "ar" ? "rtl" : "ltr"}
                   value={draft}
-                  placeholder={t(BP.competitors.add, lang)}
+                  placeholder={`+ ${t(BP.competitors.add, lang)}`}
                   aria-label={t(BP.competitors.add, lang)}
                   onChange={e => setDraft(e.target.value)}
                   onKeyDown={e => {
@@ -2544,57 +2859,61 @@ function Competitors({ ctx }: { ctx: Ctx }) {
               </div>
             </li>
           ) : null}
-          {/* Until the first name: three example clippings, ours, each
-              labelled Example (straight paper at half strength, never a
-              dashed outline). */}
-          {names.length
-            ? null
-            : BP.competitors.ghosts.map((g, i) => (
-                <li
-                  key={g.name.en}
-                  className="dkb-clip dkb-clip-ghost dkb-pin"
-                  style={
-                    {
-                      "--i": i + 1,
-                      "--r": `${[-0.6, 0.5, -0.4][i]}deg`,
-                    } as CSSProperties
-                  }
-                  aria-hidden
-                >
-                  <Tape x={56} y={-14} w={96} i={i + 1} />
-                  <span className="dkb-example dkb-clip-eg">
-                    {t(BP.tag.example, lang)}
-                  </span>
-                  <div className="dkb-clip-paper">
-                    <p className="dkb-clip-name">{t(g.name, lang)}</p>
-                    <span className="dkb-clip-kicker">
-                      {t(BP.competitors.note, lang)}
-                    </span>
-                    <p className="dkb-clip-note">{t(g.note, lang)}</p>
-                  </div>
-                </li>
-              ))}
+          {/* Example clippings, ours, in full ink, each labelled Example
+              (score round 1 of the design pass: faded, they read as
+              disabled). */}
+          {examples.map((g, i) => (
+            <li
+              key={g.name.en}
+              className="dkb-clip dkb-clip-ghost dkb-pin"
+              {...lookOf(clipLook)}
+              style={
+                {
+                  "--i": Math.min(used + i, 6),
+                  "--r": `${[-0.6, 0.5, -0.4, 0.6, -0.5][i]}deg`,
+                } as CSSProperties
+              }
+              aria-hidden
+            >
+              <Tape x={56} y={-14} w={96} i={Math.min(used + i, 6)} />
+              <span className="dkb-example dkb-clip-eg">
+                {t(BP.tag.example, lang)}
+              </span>
+              <div className="dkb-clip-paper">
+                <p className="dkb-clip-name">{t(g.name, lang)}</p>
+                <span className="dkb-clip-kicker">
+                  {t(BP.competitors.note, lang)}
+                </span>
+                <p className="dkb-clip-note">{t(g.note, lang)}</p>
+              </div>
+            </li>
+          ))}
           {more > 0 ? (
             <li className="dkb-clip-more">
               {tf(BP.competitors.more, lang, { n: digits(more, lang) })}
             </li>
           ) : null}
         </ul>
-        {/* On the wall from the first stop (the second lights it): what
-            they do differently, in their words, at 48 px. */}
-        <Card box={{ x: 0, y: 0, i: 4 }} flow live className="dkb-why">
-          <span className="dkb-why-in" data-lit={tour >= 1 ? "" : undefined}>
-            <p className="dkb-card-label">{t(BP.competitors.whyUs, lang)}</p>
-            <Ruled
-              ctx={ctx}
-              k="why_us"
-              size={twoRows ? "side" : "live"}
-              minRows={twoRows ? 2 : 3}
-              maxRows={twoRows ? 2 : 3}
-              cap={twoRows ? 3 : undefined}
-              label={t(BP.competitors.whyUs, lang)}
-            />
-          </span>
+        {/* On the wall from the first stop, stepped back; the second stop
+            lifts it: what they do differently, in their words. */}
+        <Card
+          box={{ x: 0, y: 0, i: 4 }}
+          flow
+          live
+          className="dkb-why"
+          look={tour >= 1 ? "active" : "dim"}
+        >
+          <Tape x={300} y={-14} w={130} />
+          <p className="dkb-card-label">{t(BP.competitors.whyUs, lang)}</p>
+          <Ruled
+            ctx={ctx}
+            k="why_us"
+            size={twoRows ? "side" : "live"}
+            minRows={twoRows ? 1 : 2}
+            maxRows={twoRows ? 2 : 3}
+            cap={twoRows ? 3 : undefined}
+            label={t(BP.competitors.whyUs, lang)}
+          />
         </Card>
       </div>
     </Wall>
@@ -2605,11 +2924,23 @@ function Competitors({ ctx }: { ctx: Ctx }) {
 
 /**
  * The kraft offer tag: its five ingredients as a checklist, never blank
- * dashes. A line the record already holds (the offer's name and first step
- * from the draft, the price the ads point to from slide 7) is written on
- * the tag with a ticked ring; the rest are said to be in the offer sheet.
+ * dashes. Each line has a hole punched in the tag (score round 1 of the
+ * design pass: radio circles read as a form); a line the record already
+ * holds (the offer's name and first step from the draft, the price the ads
+ * point to from slide 7) is written on the tag, its hole ticked in pen;
+ * the rest are said to be in the offer sheet.
  */
-function OfferTag({ ctx, box, draft }: { ctx: Ctx; box: Box; draft: boolean }) {
+function OfferTag({
+  ctx,
+  box,
+  draft,
+  look,
+}: {
+  ctx: Ctx;
+  box: Box;
+  draft: boolean;
+  look?: Look;
+}) {
   const { lang, bp } = ctx;
   const a: Answers = bp?.answers ?? {};
   const offer = (a.offer ?? {}) as Record<string, unknown>;
@@ -2626,6 +2957,7 @@ function OfferTag({ ctx, box, draft }: { ctx: Ctx; box: Box; draft: boolean }) {
       className="dkb-tag dkb-pin"
       data-draft={draft ? "" : undefined}
       style={at(box)}
+      {...lookOf(look)}
     >
       <span className="dkb-tag-hole" aria-hidden />
       <span className="dkb-cord" aria-hidden />
@@ -2635,12 +2967,8 @@ function OfferTag({ ctx, box, draft }: { ctx: Ctx; box: Box; draft: boolean }) {
           const v = values[n];
           return (
             <li key={l.en} data-set={v ? "" : undefined}>
-              <span className="dkb-tag-ring" aria-hidden>
-                {v ? (
-                  <svg viewBox="0 0 24 24" aria-hidden>
-                    <path d="M5 12.5l4.5 4.5L19 7.5" />
-                  </svg>
-                ) : null}
+              <span className="dkb-punch" aria-hidden>
+                {v ? <PenTick /> : null}
               </span>
               <span className="dkb-tag-name">{t(l, lang)}</span>
               {/* An open ring is the ingredient's name alone; the foot says
@@ -2665,51 +2993,36 @@ function OfferTag({ ctx, box, draft }: { ctx: Ctx; box: Box; draft: boolean }) {
 }
 
 function Offer({ ctx }: { ctx: Ctx }) {
-  const { lang, tour, d } = ctx;
+  const { lang, tour } = ctx;
   return (
     <Wall ctx={ctx} slide="offer">
       <Head ctx={ctx} id="offer" width={760} />
-      <p
-        className="dkb-lead dkb-at"
-        style={at({ x: 120, y: 300, w: 700, i: 0 })}
+      {/* The lead, its middle on the tag's (score round 1 of the design
+          pass: a card for the offer sheet, empty but for ruled lines, sat
+          under it); stop 2 says the sheet is opened now, while its own
+          window is shared, and the tag lifts. */}
+      <div
+        className="dkb-at dkb-offer-lede"
+        style={at({ x: 120, y: 520, w: 780 })}
       >
-        {t(BP.offer.lead, lang)}
-      </p>
+        <p key={tour >= 1 ? "sheet" : "draft"} className="dkb-lead dkb-arrive">
+          {t(tour >= 1 ? BP.offer.sheetLead : BP.offer.lead, lang)}
+        </p>
+      </div>
       {/* The tag's height is its words' (760 at least): its foot is never
           cut by its own clip-path (score round 2, Arabic). */}
       <div
         className="dkb-at dkb-offer-tag"
-        style={at({ x: 1180, y: 110, w: 560 })}
+        style={at({ x: 1180, y: 84, w: 560 })}
       >
         <span className="dkb-tack" aria-hidden />
-        <OfferTag ctx={ctx} box={{ x: 0, y: 40, w: 560, r: 0.8, i: 1 }} draft />
+        <OfferTag
+          ctx={ctx}
+          box={{ x: 0, y: 40, w: 560, r: 0.8, i: 1 }}
+          draft
+          look={tour >= 1 ? "active" : undefined}
+        />
       </div>
-      {/* The offer sheet's card is on the wall from the first stop, at
-          half strength; stop 2 lights it as its own window is shared, and
-          the tag stays lit. Its height is its words' (score round 2: the
-          Arabic name took two lines and pushed the last line off the
-          card). */}
-      <Card
-        box={{ x: 120, y: 560, w: 760, r: -0.5, i: 2 }}
-        className={`dkb-sheet-card${tour < 1 ? " dkb-wait" : ""}`}
-      >
-        <Tape x={320} y={-14} w={130} />
-        <p className="dkb-doc">
-          <span className="dkb-doc-glyph" aria-hidden />
-          <bdi dir="auto">
-            {tf(BP.offer.sheetTitle, lang, { name: d.name })}
-          </bdi>
-        </p>
-        <p
-          className="dkb-quiet-print"
-          data-gone={tour < 1 ? "" : undefined}
-          aria-hidden={tour < 1 ? true : undefined}
-        >
-          {t(BP.offer.sheetOpen, lang)}
-        </p>
-        {/* The sheet's page, pencilled where the draft is written. */}
-        <span className="dkb-pencil-rows" aria-hidden />
-      </Card>
     </Wall>
   );
 }
@@ -2719,7 +3032,18 @@ function Offer({ ctx }: { ctx: Ctx }) {
 function HowAds({ ctx }: { ctx: Ctx }) {
   const { lang, tour, bp } = ctx;
   const H = BP.howAds;
-  const approval = bp?.answers.approval as string | undefined;
+  const approval = bp?.answers.approval as
+    | "every"
+    | "first_batch"
+    | "run_then_show"
+    | undefined;
+  const editable = Boolean(bp && !bp.readOnly) && tour >= 2;
+  const first = useRef(approval);
+  const fresh = approval !== first.current;
+  // The argument lands in its order (score round 1 of the design pass: the
+  // curves drew into empty space, the conclusion came before its premises):
+  // the referral, the ad, the curves, the client, the conclusion, the tape,
+  // then the choices.
   return (
     <Wall ctx={ctx} slide="how-ads-work">
       <Head ctx={ctx} id="how-ads-work" width={1100} />
@@ -2735,7 +3059,7 @@ function HowAds({ ctx }: { ctx: Ctx }) {
           className="dkb-road-join"
           viewBox="0 0 220 236"
           aria-hidden
-          style={at({ x: 1080, y: 0, w: 220, h: 236 })}
+          style={at({ x: 1080, y: 0, w: 220, h: 236, i: 2 })}
         >
           <path d="M0 52 C 120 52, 110 118, 220 118" />
           <path d="M0 184 C 120 184, 110 118, 220 118" />
@@ -2755,7 +3079,7 @@ function HowAds({ ctx }: { ctx: Ctx }) {
           <span>{t(H.adWhy, lang)}</span>
         </div>
         <Card
-          box={{ x: 1300, y: 44, w: 380, h: 148, r: 0.5, i: 2 }}
+          box={{ x: 1300, y: 44, w: 380, h: 148, r: 0.5, i: 3 }}
           className="dkb-client-card"
         >
           <Tape x={130} y={-14} w={120} />
@@ -2763,56 +3087,96 @@ function HowAds({ ctx }: { ctx: Ctx }) {
         </Card>
         {/* Aligned with the strips' words (x 160), not centred on the
             canvas (score round 2). */}
-        <p
-          className="dkb-same dkb-at"
-          style={at({ x: 40, y: 262, w: 1640, i: 3 })}
-        >
-          {t(H.same, lang)}
+        <p className="dkb-same dkb-at" style={at({ x: 40, y: 262, w: 1640 })}>
+          <span className="dkb-arrive" style={{ "--i": 4 } as CSSProperties}>
+            {t(H.same, lang)}
+          </span>
         </p>
       </div>
-      {/* The first weeks and the approval are on the wall from the first
-          stop, their words at half strength until their stops light them
-          (score round 2: stop 1 left the lower half empty). */}
+      {/* The first weeks: a roll of kraft tape on the wall from the first
+          stop, unrolled along its line on the second (transform only). */}
+      <span
+        className="dkb-learn-roll dkb-at"
+        data-rolled={tour < 1 ? "" : undefined}
+        aria-hidden
+        style={at({ x: 120, y: 586, w: 96, h: 96, i: 5 })}
+      />
       <div
-        className={`dkb-learn dkb-pin${tour < 1 ? " dkb-wait" : ""}`}
-        style={at({ x: 120, y: 586, w: 1680, h: 92, r: -0.4, i: 3 })}
+        className="dkb-learn dkb-pin"
+        data-rolled={tour < 1 ? "" : undefined}
+        style={at({ x: 120, y: 586, w: 1680, h: 92, r: -0.4, i: 5 })}
       >
         <span className="dkb-learn-ticks" aria-hidden />
         <span className="dkb-mono">{t(H.learnStart, lang)}</span>
         <b>{t(H.learn, lang)}</b>
         <span className="dkb-mono">{t(H.learnEnd, lang)}</span>
       </div>
-
-      <p
-        className="dkb-wall-label dkb-at"
-        data-wait={tour < 2 ? "" : undefined}
-        style={at({ x: 120, y: 728 })}
+      {/* How they approve their own ads: three paper tabs held in one clip
+          (score round 1 of the design pass: radio cards with a teal ring
+          read as a web form). Their pick is pulled up out of the clip and
+          its name circled in pen; on the wall from the first stop,
+          stepped back until the third. */}
+      <div
+        className="dkb-at dkb-tabs"
+        {...lookOf(tour < 2 ? "dim" : undefined)}
+        style={at({ x: 120, y: 716, w: 1680, h: 244 })}
       >
-        {t(H.approveHead, lang)}
-      </p>
-      {(["every", "first_batch", "run_then_show"] as const).map((v, n) => (
-        <Pick
-          key={v}
-          ctx={ctx}
-          box={{
-            x: 120 + n * 570,
-            y: 778,
-            w: 540,
-            h: 172,
-            r: [0.5, -0.4, 0.6][n],
-            i: n,
-          }}
-          lit={approval === v}
-          className="dkb-approve"
-          waiting={tour < 2}
-          onPick={() =>
-            bp?.set("approval", approval === v ? null : v, { now: true })
-          }
+        <p
+          className="dkb-wall-label dkb-arrive"
+          style={{ "--i": 6 } as CSSProperties}
         >
-          <b>{t(H.approvals[v].title, lang)}</b>
-          <span>{t(H.approvals[v].line, lang)}</span>
-        </Pick>
-      ))}
+          {t(H.approveHead, lang)}
+        </p>
+        {(["every", "first_batch", "run_then_show"] as const).map((v, n) => {
+          const on = approval === v;
+          const body = (
+            <>
+              <b className="dkb-pen-opt" data-picked={on ? "" : undefined}>
+                <span className="dkb-pen-word">
+                  {t(H.approvals[v].title, lang)}
+                </span>
+                {on ? <PenRing fresh={fresh} seed={n} /> : null}
+              </b>
+              <span>{t(H.approvals[v].line, lang)}</span>
+            </>
+          );
+          const box = at({ x: n * 570, y: 50, w: 540, h: 192, i: 6 });
+          return ctx.bp ? (
+            <button
+              key={v}
+              type="button"
+              className="dkb-card dkb-pin dkb-tab dkb-approve"
+              data-picked={on ? "" : undefined}
+              aria-pressed={on}
+              disabled={!editable}
+              style={box}
+              onClick={e => {
+                bp?.set("approval", on ? null : v, { now: true });
+                letGo(e);
+              }}
+            >
+              {body}
+            </button>
+          ) : (
+            <div
+              key={v}
+              className="dkb-card dkb-pin dkb-tab dkb-approve"
+              data-picked={on ? "" : undefined}
+              style={box}
+            >
+              {body}
+            </div>
+          );
+        })}
+        <span
+          className="dkb-clip-bar dkb-arrive"
+          aria-hidden
+          style={{ "--i": 6 } as CSSProperties}
+        >
+          <i />
+          <i />
+        </span>
+      </div>
     </Wall>
   );
 }
@@ -2975,14 +3339,17 @@ function DnaNote({ ctx, box }: { ctx: Ctx; box: Box }) {
         {t(BP.brand.dnaDoc, lang)}
       </p>
       {type ? (
-        // Their doc's own words keep their own direction inside the line
-        // (a marker fills the slot, so the line's own Latin isolation
-        // never touches it).
+        // The label alone, in the deck's language; their doc's own words
+        // on their own line, in their own direction (score round 1 of the
+        // design pass: one Arabic sentence with an English clause in it
+        // broke the reading order).
         <p className="dkb-dna-type">
-          {tf(BP.brand.typeIn, lang, { type: "\uE000" }).split("\uE000")[0]}
-          <bdi dir="auto">{type}</bdi>
-          {tf(BP.brand.typeIn, lang, { type: "\uE000" }).split("\uE000")[1] ??
-            ""}
+          <span className="dkb-dna-type-head">
+            {t(BP.brand.typeHead, lang)}
+          </span>
+          <span className="dkb-dna-type-own" dir="auto">
+            {type}
+          </span>
         </p>
       ) : null}
       <p className="dkb-quiet-print">
@@ -3113,17 +3480,20 @@ function Brand({ ctx }: { ctx: Ctx }) {
           Studio Wall had it, materials, type and named colours, their
           logo and the doc that keeps the rest; beside it the three short
           lists, the red lines said once. */}
+      {/* The frame is the board's height, so its corner tape holds the
+          board (score round 1 of the design pass: it hung 50 px under it,
+          on the felt); its label lands with the board. */}
       <Frame
         ctx={ctx}
         kind="look"
-        box={{ x: 120, y: 290, w: 1060, h: 680, i: 0 }}
+        box={{ x: 120, y: 290, w: 1060, h: 620, i: 1 }}
       >
         <MaterialBoard
           ctx={ctx}
           box={{ x: 0, y: 0, w: 430, h: 620, r: 0.4, i: 1 }}
         />
         <Specimen ctx={ctx} box={{ x: 470, y: 8, w: 290, r: -0.8, i: 2 }} />
-        <Palette ctx={ctx} box={{ x: 476, y: 384, w: 284, i: 3, r: 0.6 }} />
+        <Palette ctx={ctx} box={{ x: 476, y: 356, w: 284, i: 3, r: 0.6 }} />
         <LogoPrint
           ctx={ctx}
           box={{ x: 798, y: 6, w: 262, h: 190, r: 0.8, i: 4 }}
@@ -3132,7 +3502,7 @@ function Brand({ ctx }: { ctx: Ctx }) {
       </Frame>
       <div
         className="dkb-at dkb-stack dkb-rules"
-        style={at({ x: 1220, y: 266, w: 580 })}
+        style={at({ x: 1220, y: 246, w: 580 })}
       >
         {cols.map((c, n) => (
           <Card
@@ -3155,8 +3525,8 @@ function Brand({ ctx }: { ctx: Ctx }) {
             <LinesField
               ctx={ctx}
               list={list(c.k)}
-              show={3}
-              quietAt={3}
+              show={4}
+              chips
               kind={c.k}
               label={t(c.l, lang)}
               addLabel={BP.brand.add}
@@ -3181,11 +3551,16 @@ function Content({ ctx }: { ctx: Ctx }) {
   const dates = datesOf(ctx);
   const ticked = bp?.answers.shot_list === true;
   const day = dayShort(dates.shots, lang, tz(d));
-  const drive = bp?.docs.driveUrl ?? null;
-  const camera = bp?.answers.camera as string | undefined;
-  // One layout on both stops (nothing jumps between them): the four
-  // shots, their sticky and the folder on top; the camera row's place kept
-  // under them and filled on stop 2.
+  const camera = bp?.answers.camera as
+    | "yes_studio"
+    | "yes_phone"
+    | "no"
+    | "unsure"
+    | undefined;
+  // One layout on both stops (nothing jumps between them): the four shots
+  // across the top; under them the camera question and the due sticky.
+  // Their Drive folder opens from the notes window, in its own window
+  // (score round 1 of the design pass: a white button on the canvas).
   return (
     <Wall ctx={ctx} slide="content">
       <Head ctx={ctx} id="content" width={1100} />
@@ -3196,74 +3571,45 @@ function Content({ ctx }: { ctx: Ctx }) {
           n={n}
           small
           box={{
-            x: 120 + n * 280,
-            y: n % 2 ? 268 : 256,
-            w: 250,
-            h: 300,
+            x: 120 + n * 430,
+            y: n % 2 ? 262 : 250,
+            w: 390,
+            h: 336,
             r: n % 2 ? 0.8 : -0.8,
             i: n,
           }}
         />
       ))}
-      {/* The sticky is as tall as its words and the folder button sits
-          24 px under it, never on it (score round 2: the button hid "A
-          phone is fine."). */}
-      <div
-        className="dkb-at dkb-due-col"
-        style={at({ x: 1300, y: 262, w: 380 })}
+      {/* Will they be on camera: one amber sticky, the four answers
+          written on it, theirs circled in pen (score round 1 of the design
+          pass: four radio cards with a teal ring). On the wall from the
+          first stop, stepped back until the second. */}
+      <Sticky
+        tag="div"
+        box={{ x: 120, y: 670, w: 1040, r: -0.6, i: 4 }}
+        look={tour < 1 ? "dim" : "active"}
       >
-        <Sticky flow box={{ x: 0, y: 0, r: 0.9, i: 4 }}>
-          <b className="dkb-due">
-            {ticked
-              ? tf(BP.content.due, lang, { day })
-              : t(BP.content.dueLater, lang)}
-          </b>
-          <span>{t(BP.content.dueHint, lang)}</span>
-        </Sticky>
-        {drive ? (
-          <button
-            type="button"
-            className="dkb-button dkb-arrive"
-            style={{ "--i": 5 } as CSSProperties}
-            onClick={e => {
-              openNamed(drive, `mahara-drive-${d.taskId}`);
-              letGo(e);
-            }}
-          >
-            {t(BP.content.folder, lang)}
-          </button>
-        ) : null}
-      </div>
-      {/* The camera row is on the wall from the first stop, at half
-          strength and not yet tappable; the second stop lights it, so
-          nothing appears from nowhere (score round 2). */}
-      <div className="dkb-camera-row" data-wait={tour < 1 ? "" : undefined}>
-        <p className="dkb-wall-label dkb-at" style={at({ x: 120, y: 650 })}>
-          {t(BP.content.cameraHead, lang)}
-        </p>
-        {(["yes_studio", "yes_phone", "no", "unsure"] as const).map((v, n) => (
-          <Pick
-            key={v}
-            ctx={ctx}
-            box={{
-              x: 120 + n * 430,
-              y: 706,
-              w: 390,
-              h: 150,
-              r: [0.5, -0.4, 0.4, -0.6][n],
-              i: n + 5,
-            }}
-            lit={camera === v}
-            className="dkb-camera"
-            waiting={tour < 1}
-            onPick={() =>
-              bp?.set("camera", camera === v ? null : v, { now: true })
-            }
-          >
-            <b>{t(BP.content.camera[v], lang)}</b>
-          </Pick>
-        ))}
-      </div>
+        <b className="dkb-camera-head">{t(BP.content.cameraHead, lang)}</b>
+        <PenChoice
+          ctx={ctx}
+          value={camera}
+          waiting={tour < 1}
+          className="dkb-camera"
+          label={t(BP.content.cameraHead, lang)}
+          options={(["yes_studio", "yes_phone", "no", "unsure"] as const).map(
+            v => ({ v, label: t(BP.content.camera[v], lang) }),
+          )}
+          onPick={v => bp?.set("camera", v, { now: true })}
+        />
+      </Sticky>
+      <Sticky box={{ x: 1240, y: 684, w: 560, r: 0.9, i: 5 }}>
+        <b className="dkb-due">
+          {ticked
+            ? tf(BP.content.due, lang, { day })
+            : t(BP.content.dueLater, lang)}
+        </b>
+        <span>{t(BP.content.dueHint, lang)}</span>
+      </Sticky>
     </Wall>
   );
 }
@@ -3288,84 +3634,117 @@ function ReadBack({ ctx }: { ctx: Ctx }) {
   const dates = datesOf(ctx);
   const day = dayShort(dates.shots, lang, tz(d));
   const T = BP.readBack.table;
-  // Nothing of the offer typed yet: its paper waits on pencil lines, and
-  // an amber note says where it is finished (score round 3: an empty
-  // headline row on the slide titled "Here's what we're building").
+  const editable = Boolean(bp && !bp.readOnly) && !afterCall(bp);
+  // Nothing of the offer typed yet (score round 1 of the design pass: an
+  // unfilled form of placeholders and empty rows): the paper shows only
+  // what exists, and a large amber note says where it is finished. Its
+  // first words are typed in the notes window (3.1); the headline and the
+  // rows then come onto the paper, live.
   const blank = !(
     offer.name?.trim() ||
     offer.what?.trim() ||
     offer.firstStep?.trim()
   );
+  // A row shows when it holds words, or while the offer is being typed on
+  // a seat that can type it.
+  const row = (v: string | null | undefined) =>
+    Boolean(v?.trim()) || (editable && !blank);
+  const rows = (
+    [
+      ["who", T.who, who],
+      ["what", T.what, offer.what],
+      ["first", T.first, offer.firstStep],
+    ] as const
+  ).filter(([, , v]) => row(v));
   return (
     <Wall ctx={ctx} slide="read-back">
       <Head ctx={ctx} id="read-back" width={1100} />
       {/* The wall, full: the cover's three frames, each now the client's
           own paper (the label on its edge, tape only where paper meets
-          felt), assembled from the small map that followed the call. */}
-      <Frame
-        ctx={ctx}
-        kind="offer"
-        box={{ x: 120, y: 236, w: 960, h: 580, i: 0 }}
-        assemble={0}
+          felt), assembled from the small map that followed the call. The
+          offer's paper is as tall as its rows, the money under it. */}
+      <div
+        className="dkb-at dkb-stack dkb-rb-col"
+        style={at({ x: 120, y: 236, w: 960 })}
       >
-        <div
-          className="dkb-feature dkb-pin"
-          data-live=""
-          style={at({ x: 0, y: 0, w: 960, h: 580, i: 1 })}
+        <Frame
+          ctx={ctx}
+          kind="offer"
+          box={{ x: 0, y: 0, i: 0 }}
+          assemble={0}
+          flow
         >
-          <Ruled
-            ctx={ctx}
-            size="feature"
-            one
-            minRows={1}
-            placeholder={t(BP.readBack.namePlaceholder, lang)}
-            label={t(BP.readBack.name, lang)}
-            value={offer.name ?? ""}
-            onChange={v => setOffer("name", v)}
-          />
-          <dl className="dkb-table">
-            <div>
-              <dt>{t(T.who, lang)}</dt>
-              <dd dir="auto" data-empty={who ? undefined : ""}>
-                <bdi>{who ?? ""}</bdi>
-              </dd>
-            </div>
-            <div>
-              <dt>{t(T.what, lang)}</dt>
-              <dd>
-                <Ruled
-                  ctx={ctx}
-                  size="line"
-                  one
-                  minRows={1}
-                  label={t(T.what, lang)}
-                  value={offer.what ?? ""}
-                  onChange={v => setOffer("what", v)}
-                />
-              </dd>
-            </div>
-            <div>
-              <dt>{t(T.first, lang)}</dt>
-              <dd>
-                <Ruled
-                  ctx={ctx}
-                  size="line"
-                  one
-                  minRows={1}
-                  label={t(T.first, lang)}
-                  value={offer.firstStep ?? ""}
-                  onChange={v => setOffer("firstStep", v)}
-                />
-              </dd>
-            </div>
-          </dl>
-        </div>
-        {blank ? (
-          <Sticky box={{ x: 620, y: 452, w: 320, r: -0.8, i: 2 }}>
-            {t(BP.readBack.finish, lang)}
-          </Sticky>
-        ) : null}
-      </Frame>
+          <div
+            className="dkb-feature dkb-pin dkb-flow"
+            data-live=""
+            data-blank={blank ? "" : undefined}
+            style={at({ x: 0, y: 0, i: 1 })}
+          >
+            {!blank ? (
+              <Ruled
+                ctx={ctx}
+                size="feature"
+                one
+                minRows={1}
+                label={t(BP.readBack.name, lang)}
+                value={offer.name ?? ""}
+                onChange={v => setOffer("name", v)}
+              />
+            ) : null}
+            {rows.length ? (
+              <dl className="dkb-table">
+                {rows.map(([k, label, v]) => (
+                  <div key={k}>
+                    <dt>{t(label, lang)}</dt>
+                    {k === "who" ? (
+                      <dd dir="auto">
+                        <bdi>{v ?? ""}</bdi>
+                      </dd>
+                    ) : (
+                      <dd>
+                        <Ruled
+                          ctx={ctx}
+                          size="line"
+                          one
+                          minRows={1}
+                          label={t(label, lang)}
+                          value={v ?? ""}
+                          onChange={x =>
+                            setOffer(k === "what" ? "what" : "firstStep", x)
+                          }
+                        />
+                      </dd>
+                    )}
+                  </div>
+                ))}
+              </dl>
+            ) : null}
+            {blank ? (
+              <Sticky big box={{ x: 0, y: 0, r: -0.8, i: 2 }} flow>
+                {t(BP.readBack.finish, lang)}
+              </Sticky>
+            ) : null}
+          </div>
+        </Frame>
+        {/* Two short ruled lines: the money, then the ads. */}
+        <ul className="dkb-money">
+          {minimum ? (
+            <li className="dkb-arrive" style={{ "--i": 5 } as CSSProperties}>
+              {anchor
+                ? tf(BP.readBack.money, lang, { minimum, anchor })
+                : tf(BP.readBack.moneyMin, lang, { minimum })}
+            </li>
+          ) : null}
+          {/* One answer for the read-back and slide 14 (score round 3:
+              unset, one said "your own ads" and the next "starter ads go
+              live"): starter ads unless they declined them. */}
+          <li className="dkb-arrive" style={{ "--i": 6 } as CSSProperties}>
+            {starterOn(a)
+              ? t(BP.readBack.starter, lang)
+              : t(BP.readBack.own, lang)}
+          </li>
+        </ul>
+      </div>
       {/* Their words on their own paper, as slide 6 pinned them; still
           blank, the paper waits on a pencilled line. */}
       <Frame
@@ -3379,15 +3758,17 @@ function ReadBack({ ctx }: { ctx: Ctx }) {
           data-empty={method ? undefined : ""}
           style={at({ x: 0, y: 0, w: 660, h: 260, i: 3 })}
         >
-          <p className="dkb-words-line" dir="auto">
-            {method ? (
+          {/* Still blank: never a grey placeholder on a line (score round
+              1 of the design pass); an amber note says where it is said. */}
+          {method ? (
+            <p className="dkb-words-line" dir="auto">
               <bdi>{method}</bdi>
-            ) : (
-              <span className="dkb-hint-in">
-                {t(BP.readBack.wordsEmpty, lang)}
-              </span>
-            )}
-          </p>
+            </p>
+          ) : (
+            <Sticky flow box={{ x: 0, y: 0, r: 0.8, i: 4 }}>
+              {t(BP.readBack.wordsSoon, lang)}
+            </Sticky>
+          )}
         </div>
       </Frame>
       <Frame
@@ -3398,25 +3779,7 @@ function ReadBack({ ctx }: { ctx: Ctx }) {
       >
         <LookMini ctx={ctx} box={{ x: 0, y: 0, w: 660, h: 260, i: 4 }} />
       </Frame>
-      {/* Two short ruled lines: the money, then the ads. */}
-      <ul className="dkb-money dkb-at" style={at({ x: 120, y: 860, w: 1180 })}>
-        {minimum ? (
-          <li className="dkb-arrive" style={{ "--i": 5 } as CSSProperties}>
-            {anchor
-              ? tf(BP.readBack.money, lang, { minimum, anchor })
-              : tf(BP.readBack.moneyMin, lang, { minimum })}
-          </li>
-        ) : null}
-        {/* One answer for the read-back and slide 14 (score round 3:
-            unset, one said "your own ads" and the next "starter ads go
-            live"): starter ads unless they declined them. */}
-        <li className="dkb-arrive" style={{ "--i": 6 } as CSSProperties}>
-          {starterOn(a)
-            ? t(BP.readBack.starter, lang)
-            : t(BP.readBack.own, lang)}
-        </li>
-      </ul>
-      <Sticky box={{ x: 1450, y: 864, w: 350, r: -0.8, i: 6 }}>
+      <Sticky box={{ x: 1440, y: 822, w: 360, r: -0.8, i: 6 }}>
         {a.shot_list === true
           ? tf(BP.readBack.shots, lang, { day })
           : t(BP.readBack.shotsSoon, lang)}
@@ -3476,33 +3839,39 @@ function Next({ ctx }: { ctx: Ctx }) {
   return (
     <Wall ctx={ctx} slide="next">
       <Head ctx={ctx} id="next" width={1100} />
-      <p className="dkb-legend dkb-at" style={at({ x: 120, y: 246 })}>
+      <p className="dkb-legend dkb-at" style={at({ x: 120, y: 262 })}>
         <i aria-hidden />
         {t(BP.legend, lang)}
       </p>
+      {/* The line hangs lower (score round 1 of the design pass: the lower
+          third stood empty), and the launch call's card waits under it
+          from the first stop. */}
       <svg
         className="dkb-line"
         viewBox="0 0 1720 80"
         aria-hidden
-        style={at({ x: 100, y: 330, w: 1720, h: 80 })}
+        style={at({ x: 100, y: 366, w: 1720, h: 80 })}
       >
         <path d="M0 10 Q 860 70 1720 10" />
       </svg>
       {/* Each card is pegged as the string's draw reaches its peg (the
           string runs from x 100 over 1720 px), never before (score round
           2: the first card hung from nothing). */}
+      {/* Stop 2: the launch card is lifted off its peg (straight, 8 px
+          up), never ringed like a focused control (score round 1 of the
+          design pass). */}
       {cards.map((c, n) => (
         <figure
           key={c.key}
           className="dkb-card dkb-pin dkb-when"
           data-yours={c.yours ? "" : undefined}
-          data-lit={tour >= 1 && c.key === "launch" ? "" : undefined}
+          data-lifted={tour >= 1 && c.key === "launch" ? "" : undefined}
           style={at(
             {
               x: 120 + n * (w + gap),
-              y: 390 + (n % 2 ? 22 : 0),
+              y: 426 + (n % 2 ? 22 : 0),
               w,
-              h: 262,
+              h: 270,
               r: [0.6, -0.5, 0.4, -0.6, 0.5][n],
               i: n,
             },
@@ -3518,28 +3887,24 @@ function Next({ ctx }: { ctx: Ctx }) {
           <p className="dkb-when-l">{t(c.line, lang)}</p>
         </figure>
       ))}
-      {tour >= 1 ? (
-        <Card
-          box={{ x: 560, y: 740, w: 800, h: 240, i: 0 }}
-          live
-          className="dkb-call-card"
-        >
-          <Tape x={290} y={-14} w={140} />
-          <p className="dkb-card-label">{t(N.callHead, lang)}</p>
-          {dates.launch ? (
-            <p className="dkb-booked">
-              {tf(N.booked, lang, {
+      <Card
+        box={{ x: 560, y: 772, w: 800, h: 180, i: 6 }}
+        live
+        className="dkb-call-card"
+        look={tour >= 1 ? "active" : "dim"}
+      >
+        <Tape x={290} y={-14} w={140} />
+        <p className="dkb-card-label">{t(N.callHead, lang)}</p>
+        {/* Not booked yet: said as what we do now, together, never as a
+            button's label (score round 1 of the design pass). */}
+        <p className="dkb-booked">
+          {dates.launch
+            ? tf(N.booked, lang, {
                 when: `${day(dates.launch)}${lang === "ar" ? "، " : ", "}${clock(dates.launch, lang, tz(d))}`,
-              })}
-            </p>
-          ) : (
-            <>
-              <p className="dkb-booked">{t(N.book, lang)}</p>
-              <p className="dkb-quiet-print">{t(N.bookLine, lang)}</p>
-            </>
-          )}
-        </Card>
-      ) : null}
+              })
+            : t(N.book, lang)}
+        </p>
+      </Card>
     </Wall>
   );
 }

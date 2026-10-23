@@ -97,23 +97,29 @@ export function KickoffFrame({
   lang,
   sentAt,
   rehearse = false,
+  held = false,
   children,
 }: {
   d: DeckData;
   lang: Lang;
   sentAt: string | null;
   rehearse?: boolean;
+  /** On record already: the panel is as tall as what it reads back. */
+  held?: boolean;
   children: ReactNode;
 }) {
   const time = sentAt ? clock(sentAt, lang, d.timeZone) : "";
+  // The head names whose form it is, and nothing that redraws a window's
+  // chrome (score round 1 of the Blueprint deck's design pass: the mono
+  // "Kickoff form" prefix); the frame keeps the name for a screen reader.
   return (
     <section
       className="dkc-kick-frame"
       aria-label={t(O.kickoff.frame, lang)}
       data-sent={sentAt ? "" : undefined}
+      data-held={held ? "" : undefined}
     >
       <header className="dkc-kick-head">
-        <span className="dkc-kick-label">{t(O.kickoff.frame, lang)}</span>
         <bdi className="dkc-kick-name" dir="auto">
           {d.name}
         </bdi>
@@ -243,13 +249,16 @@ export function KickoffSlide({ ctx }: { ctx: SlideCtx }) {
             the foot it left a 400 px gap): what sending it does, as three
             numbered steps (score round 3: one sentence left the column's
             lower half empty). Once sent, the frame's card says what
-            happens, so the column does not say it again. */}
-        {sent ? null : held ? (
-          <p key={state} className="dkc-next-small dkc-kick-then dkc-kick-say">
-            {t(O.kickoff.change, lang)}
-          </p>
-        ) : (
-          <div key={state} className="dkc-kick-then dkc-kick-steps">
+            happens, so the column does not say it again. On record
+            already, the same three steps, each ticked, then how to change
+            an answer (score round 1 of the design pass: the column stood
+            empty under one line). */}
+        {sent ? null : (
+          <div
+            key={state}
+            className="dkc-kick-then dkc-kick-steps"
+            data-done={held ? "" : undefined}
+          >
             <p className="dkc-kick-steps-head">
               {t(O.kickoff.stepsHead, lang)}
             </p>
@@ -257,12 +266,17 @@ export function KickoffSlide({ ctx }: { ctx: SlideCtx }) {
               {O.kickoff.steps.map((s, n) => (
                 <li key={s.en} style={{ "--k": n } as CSSProperties}>
                   <span className="dkc-kick-step-n" aria-hidden>
-                    {digits(n + 1, lang)}
+                    {held ? <SentMark /> : digits(n + 1, lang)}
                   </span>
                   <span>{t(s, lang)}</span>
                 </li>
               ))}
             </ol>
+            {held ? (
+              <p className="dkc-next-small dkc-kick-change">
+                {t(O.kickoff.change, lang)}
+              </p>
+            ) : null}
           </div>
         )}
       </div>
@@ -273,6 +287,7 @@ export function KickoffSlide({ ctx }: { ctx: SlideCtx }) {
           d={d}
           lang={lang}
           sentAt={d.kickoff.from === "call" ? d.kickoff.sentAt : null}
+          held={held}
         >
           {held ? (
             <KickoffRecord
@@ -538,6 +553,7 @@ function KickoffReady({
       lang={lang}
       sentAt={m.sent?.at ?? null}
       rehearse={port.rehearse}
+      held={Boolean(m.held && already)}
     >
       {m.held && already ? (
         <KickoffRecord
