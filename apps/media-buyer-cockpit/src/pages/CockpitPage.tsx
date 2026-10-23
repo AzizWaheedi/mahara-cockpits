@@ -55,6 +55,7 @@ import {
   boardNumbers,
   type RowNumbers,
 } from "@/lib/adsFilters";
+import { clickupTaskId } from "@/lib/appointmentFeedback";
 import { api, useAction } from "@/lib/board";
 import { adAccountsParam, parseAdAccounts } from "@/lib/clientRange";
 import {
@@ -3862,6 +3863,12 @@ function Cockpit({ view }: { view: View }) {
           {accountView && (
             <AccountView
               client={accountView}
+              clientTaskId={clickupTaskId(
+                findClientLinks(
+                  (snap.clientLinks ?? []) as Campaign[],
+                  accountView,
+                )?.url,
+              )}
               accountIds={accountIds}
               campaigns={(snap.campaigns as Campaign[]).filter(
                 c => clientOf(c) === accountView,
