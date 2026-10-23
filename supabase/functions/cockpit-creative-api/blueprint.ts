@@ -13,7 +13,8 @@ const ID=/^[A-Za-z0-9]{4,20}$/,CARD=/^[A-Za-z0-9_-]{1,40}$/;
 const norm=(s:unknown)=>String(s??'').normalize('NFKC').replace(/[^\p{L}\p{N}]+/gu,' ').trim().toLowerCase();
 const loose=(s:unknown)=>String(s??'').toLowerCase().replace(/\s+/g,'');
 const open=(t:Row)=>!['closed','done'].includes(String(t.status?.type??''))&&t.archived!==true;
-// The GET-only guard: a rehearsal, the members picker and every preparation read through it.
+// The GET-only guard: a rehearsal, the members picker and every preparation (the real run's and its dry
+// run's too) read through it; only executePlan, given the real provider, writes.
 export function readOnly(p:Provider):Provider{return {call(provider,method,path,body,as){if(method!=='GET')return Promise.reject(new Error('Rehearsal reads only'));return p.call(provider,method,path,body,as);}};}
 // A card field by its known ID prefix AND its name; a renamed or missing field refuses.
 function field(card:Row,key:B.CardFieldKey):Row{
@@ -32,15 +33,17 @@ function dropdown(cardId:string,f:Row,label:string):Plan|null{
 const comment=(task:string,text:string,assignee?:number):Plan=>({provider:'clickup',method:'POST',path:`task/${task}/comment`,body:{comment_text:text,notify_all:false,...(assignee!==undefined?{assignee}:{})},verifyPath:`task/${task}/comment`,expected:{comment_text:text},clickupComment:true});
 const csmOf=(card:Row)=>{const v=(card.custom_fields??[]).find((f:Row)=>f.id===B.CSM_FIELD)?.value;const u=Array.isArray(v)?v.find((x:Row)=>x&&/^\d+$/.test(String(x.id))):null;return u?{id:Number(u.id),name:String(u.username??'the CSM')}:null;};
 const twoMatches=(name:string,tasks:Row[])=>new Error(`Two open launch tasks match ${name}: ${tasks.map(t=>B.cardUrl(String(t.id))).join(', ')}. Close the extra one in ClickUp, then press Send to media again.`);
-// The open launch task: the record's, else one tagged with the card's name, else one whose name holds
-// the card's name and "launch". Two or more refuse before anything is written.
+// The open launch task: the record's, else one tagged with the card's name, else one whose name starts
+// with the card's name, then a separator or "launch", and holds "launch" ("{card} - New Client Campaign
+// Launch 🚀", "{client} | Launch campaigns after launch call"; never "{card} Interiors - … Launch" for
+// a card whose name is inside another's). Two or more refuse before anything is written.
 export async function findLaunch(provider:Provider,p:B.BlueprintPayload):Promise<Row|null>{
  if(p.launchTaskId&&ID.test(p.launchTaskId)){const t=await provider.call('clickup','GET',`task/${p.launchTaskId}`);if(String(t.id)===p.launchTaskId&&String(t.list?.id)===B.LAUNCH_LIST&&open(t))return t;}
  const tag=B.launchTag(p.card.name);
  const tagged=((await provider.call('clickup','GET',`list/${B.LAUNCH_LIST}/task?tags[]=${encodeURIComponent(tag)}&include_closed=false`)).tasks??[]).filter((t:Row)=>open(t)&&(t.tags??[]).some((x:Row)=>String(x?.name??x).toLowerCase()===tag));
  if(tagged.length>1)throw twoMatches(p.card.name,tagged);if(tagged.length===1)return tagged[0];
- const name=norm(p.card.name);const named:Row[]=[];
- for(let page=0;page<3;page++){const res=await provider.call('clickup','GET',`list/${B.LAUNCH_LIST}/task?include_closed=false&page=${page}`);const tasks:Row[]=Array.isArray(res.tasks)?res.tasks:[];for(const t of tasks){const n=norm(t.name);if(open(t)&&name&&n.includes(name)&&/\blaunch\b/.test(n))named.push(t);}if(res.last_page===true||tasks.length<100)break;}
+ const card=String(p.card.name??'').normalize('NFKC').trim().toLowerCase();const named:Row[]=[];
+ for(let page=0;page<3;page++){const res=await provider.call('clickup','GET',`list/${B.LAUNCH_LIST}/task?include_closed=false&page=${page}`);const tasks:Row[]=Array.isArray(res.tasks)?res.tasks:[];for(const t of tasks){const raw=String(t.name??'').normalize('NFKC').trim().toLowerCase();if(open(t)&&card&&raw.startsWith(card)&&/^\s*([-|:–—(]|launch\b)/.test(raw.slice(card.length))&&/\blaunch\b/.test(norm(t.name)))named.push(t);}if(res.last_page===true||tasks.length<100)break;}
  if(named.length>1)throw twoMatches(p.card.name,named);return named[0]??null;
 }
 // A Creative Onboarding step as the record names it: the right parent and the "n ·" name, read now.
@@ -147,12 +150,15 @@ export async function prepareBlueprint(row:Row,provider:Provider,env:Env,now=new
  const part=({blueprintLaunch:1,blueprintClose:2,blueprintOffer:3} as Record<string,number>)[row.kind];
  const p=row.payload as B.BlueprintPayload;
  if(p?.v!==1||p.part!==part||!p.card||!CARD.test(String(row.task_id??''))||String(p.card.id)!==String(row.task_id)||String(p.card.name)!==String(row.client_name)||!p.answers||typeof p.answers!=='object')throw new Error('This Blueprint request is not one the cockpit queued. Reconcile it.');
- const card=await provider.call('clickup','GET',`task/${row.task_id}`);
+ // Preparation reads only, whoever calls it: a stray write in a later edit fails here, before any plan
+ // is shown or fenced. executeOutbox keeps the real provider for the writes.
+ const reader=readOnly(provider);
+ const card=await reader.call('clickup','GET',`task/${row.task_id}`);
  if(String(card.id)!==String(row.task_id))throw new Error('ClickUp did not return the client card');
  if(String(card.list?.id??'')!==B.CLIENTS_LIST)throw new Error('That task is not on the Clients list');
  if(loose(card.name)!==loose(row.client_name))throw new Error("The card's name changed since the press. Refresh, then send again.");
  const lines:string[]=[];
- const plan=part===1?await prepareLaunch(p,card,provider,now,lines):part===2?await prepareClose(p,card,provider,env,lines):await prepareOffer(p,card,provider,lines);
+ const plan=part===1?await prepareLaunch(p,card,reader,now,lines):part===2?await prepareClose(p,card,reader,env,lines):await prepareOffer(p,card,reader,lines);
  assertSafe(plan);
  const {make,...rest}=plan as MultiPlan&{make?:Row};
  return {...rest,blueprint:{kind:row.kind,lines,...(make?{make}:{})}};

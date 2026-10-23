@@ -8,6 +8,7 @@ import {
   completeCockpitPasswordReset,
   requestCockpitPasswordReset,
 } from "@/auth/supabaseAccess";
+import { BlueprintSettings } from "@/components/BlueprintSettings";
 import { PageHeader } from "@/components/PageHeader";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -163,7 +164,7 @@ export function SettingsPage() {
     <div className="mx-auto w-full max-w-6xl">
       <PageHeader
         title="Settings"
-        sub="Your account and how the cockpit looks."
+        sub="Your account, how the cockpit looks, and the Brand Blueprint's settings."
       />
 
       <div className="max-w-2xl space-y-6">
@@ -219,6 +220,8 @@ export function SettingsPage() {
             </p>
           )}
         </section>
+
+        <BlueprintSettings />
 
         <section className="overflow-hidden rounded-2xl border bg-card">
           <h2 className="flex items-center gap-2 px-4 pt-4 pb-4 text-[15px] font-semibold sm:px-6 sm:pt-6">

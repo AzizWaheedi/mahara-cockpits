@@ -1,4 +1,5 @@
-import { ArrowUpRight, Copy } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Copy } from "lucide-react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/PageHeader";
 import { Button } from "@/components/ui/button";
@@ -29,42 +30,61 @@ export function KeyLinksPage() {
               <p className="mt-1 text-xs text-muted-foreground">{g.blurb}</p>
             </div>
             <ul className="divide-y border-t">
-              {g.rows.map(r => (
-                <li
-                  key={r.url + r.label}
-                  className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6"
-                >
-                  <div className="min-w-0">
-                    <a
-                      href={r.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm font-medium text-primary hover:underline"
-                    >
-                      {r.label}
-                      <ArrowUpRight className="ml-1 inline size-3.5 align-[-2px]" />
-                    </a>
-                    {r.note && (
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {r.note}
-                      </p>
-                    )}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    aria-label={`Copy the link: ${r.label}`}
-                    onClick={() => {
-                      void navigator.clipboard.writeText(r.url);
-                      toast.success("Link copied");
-                    }}
-                    className="shrink-0"
+              {g.rows.map(r => {
+                const url = r.url;
+                return (
+                  <li
+                    key={(url ?? "") + r.label}
+                    className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6"
                   >
-                    <Copy />
-                    Copy
-                  </Button>
-                </li>
-              ))}
+                    <div className="min-w-0">
+                      {url ? (
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sm font-medium text-primary hover:underline"
+                        >
+                          {r.label}
+                          <ArrowUpRight className="ml-1 inline size-3.5 align-[-2px]" />
+                        </a>
+                      ) : (
+                        // A note, not a link: it says where to go instead.
+                        <span className="text-sm font-medium">{r.label}</span>
+                      )}
+                      {r.note && (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {r.note}
+                        </p>
+                      )}
+                      {r.to ? (
+                        <Link
+                          to={r.to.path}
+                          className="mt-1 inline-flex items-center gap-0.5 text-xs font-medium text-primary underline-offset-4 hover:underline"
+                        >
+                          {r.to.label}
+                          <ChevronRight aria-hidden className="size-3.5" />
+                        </Link>
+                      ) : null}
+                    </div>
+                    {url ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        aria-label={`Copy the link: ${r.label}`}
+                        onClick={() => {
+                          void navigator.clipboard.writeText(url);
+                          toast.success("Link copied");
+                        }}
+                        className="shrink-0"
+                      >
+                        <Copy />
+                        Copy
+                      </Button>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ))}

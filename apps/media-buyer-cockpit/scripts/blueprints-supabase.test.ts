@@ -246,6 +246,17 @@ beforeAll(async () => {
       "deck prep",
     ),
   );
+  // The runner's journal: a press checks when a running send was claimed.
+  await db.exec(
+    cut(
+      migration("20260927g_cockpit_media_actions.sql"),
+      /CREATE TABLE public\.cockpit_media_actions \([\s\S]*?\n\);/,
+      "media actions",
+    ),
+  );
+  await db.exec(
+    "REVOKE ALL ON public.cockpit_media_actions FROM PUBLIC, anon, authenticated;",
+  );
   await db.exec(
     cut(
       migration("20261003a_client_logos.sql"),
@@ -406,7 +417,7 @@ beforeAll(async () => {
   await db.query(
     `INSERT INTO public.cockpit_client_onboarding(clickup_task_id,client_name,client_status,csm,onboarding_call_on,links,handover,sales_transcript,forms)
      VALUES($1,'Acme Interiors','Brand Blueprint Booked','noura al-sabah','2026-10-14',$2::jsonb,$3::jsonb,'SALES TRANSCRIPT SECRET',$4::jsonb),
-           ($5,'Beta Build','Brand Blueprint Booked','Hana Example',NULL,'{}','{}',NULL,'{}')`,
+           ($5,'Beta Build','Brand Blueprint Booked','Hana Example, someone@x.invalid',NULL,'{}','{}',NULL,'{}')`,
     [
       A,
       JSON.stringify({
@@ -414,6 +425,8 @@ beforeAll(async () => {
         brand_dna: "https://docs.google.com/document/d/acmeDna",
         market_research: "https://docs.google.com/document/d/acmeResearch",
         contract: "https://contracts.invalid/CONTRACT-SECRET",
+        sales_call: "https://calls.invalid/SALES-CALL-SECRET",
+        report_sheet: "https://sheets.invalid/REPORT-SHEET-SECRET",
       }),
       JSON.stringify({
         closer: "Sami",
@@ -476,6 +489,12 @@ beforeAll(async () => {
               "6fcbd33c-1111-4000-8000-000000000007",
               "Facebook Access Status",
               "Access Confirmed",
+            ),
+            // The internal payment question: never sent to a creative seat.
+            kickoff(
+              "75e97e7d-4c19-437a-b4b8-67570c29344f",
+              "Payment Amount",
+              "2500",
             ),
           ],
         },
@@ -638,6 +657,12 @@ describe("tables, functions and grants", () => {
       "SELECT public.cockpit_blueprint_settings_read() r",
     );
     expect(s.closeRoute).toBe("card_only");
+    // The seed has its audit row (written after the trigger exists), once.
+    expect(
+      await count(
+        "SELECT count(*) n FROM public.cockpit_audit_log WHERE entity_type='cockpit_blueprint_settings' AND entity_id='close_route'",
+      ),
+    ).toBe(1);
     expect(s.assignee).toBeNull();
     expect(Object.values(s.packs)).toEqual([null, null, null, null, null]);
     expect(Object.keys(s.packs).sort()).toEqual([
@@ -1700,8 +1725,23 @@ describe("reads", () => {
       service: "Interior design",
     });
     expect(s.kit.links.contract).toBeUndefined();
+    // Only the links the Blueprint opens: no sales call, no report sheet.
+    expect(s.kit.links.sales_call).toBeUndefined();
+    expect(s.kit.links.report_sheet).toBeUndefined();
+    expect(Object.keys(s.kit.links).sort()).toEqual([
+      "brand_dna",
+      "drive",
+      "market_research",
+    ]);
     expect(s.kit.forms.kickoff.payment).toBeUndefined();
+    // The kickoff's "Payment Amount" answer is left out too.
+    expect(
+      s.kit.forms.kickoff.answers.some((x: Row) =>
+        String(x.ref).startsWith("75e97e7d"),
+      ),
+    ).toBe(false);
     expect(s.kit.forms.kickoff.answers.length).toBe(8);
+    expect(s.kit.csm).toBe("noura al-sabah");
     expect(s.card).toEqual({
       templatedAds: "Wants To See Them First",
       canSelfRecord: "Yes - phone only",
@@ -1745,6 +1785,9 @@ describe("reads", () => {
       "No kickoff on record: ask the service and the budget.",
     );
     expect(beta.creativeOnboarding).toBeNull();
+    // A CSM entry that is an address never reaches the browser.
+    expect(beta.kit.csm).toBe("Hana Example");
+    expect(JSON.stringify(beta)).not.toContain("someone@x.invalid");
     const gamma = await one<Row>(
       CEO,
       "SELECT public.cockpit_blueprint_sources($1) r",
@@ -1756,6 +1799,232 @@ describe("reads", () => {
     expect(
       await refused(CD_A, "SELECT public.cockpit_blueprint_sources($1) r", [B]),
     ).toContain("not on your access list");
+  });
+});
+
+describe("a send still running, and what media last received", () => {
+  test("a changed press waits while the last send of its part is running, and a claim over 10 minutes old does not block it", async () => {
+    // uuid(13), the last Send to media, was claimed by the runner just now.
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET state='sending' WHERE id=$1",
+      [uuid(13)],
+    );
+    await db.query(
+      "INSERT INTO public.cockpit_media_actions(id,actor_id,operation,request) VALUES($1,$2,'creativeClient.blueprintLaunch','{}'::jsonb)",
+      [uuid(13), CD_A],
+    );
+    const cur = await owner<number>(
+      "SELECT revision r FROM public.cockpit_blueprints WHERE task_id=$1",
+      [A],
+    );
+    await save(
+      CD_A,
+      A,
+      { red_lines: [...PART1.red_lines, "No competitor names"] },
+      { base: cur },
+    );
+    const rows = await outboxRows();
+    const audits = await partAudits();
+    const all = await count("SELECT count(*) n FROM public.cockpit_audit_log");
+    const presses = await owner<number>(
+      "SELECT (parts->'1'->>'presses')::integer r FROM public.cockpit_blueprints WHERE task_id=$1",
+      [A],
+    );
+    expect(await refused(CD_A, PRESS, [A, 1, uuid(50)])).toBe(
+      "The last send of this part is still running. Wait for it to finish, then send the changes.",
+    );
+    expect(await outboxRows()).toBe(rows);
+    expect(await partAudits()).toBe(audits);
+    expect(await count("SELECT count(*) n FROM public.cockpit_audit_log")).toBe(
+      all,
+    );
+    expect(
+      await owner<number>(
+        "SELECT (parts->'1'->>'presses')::integer r FROM public.cockpit_blueprints WHERE task_id=$1",
+        [A],
+      ),
+    ).toBe(presses);
+    // A run that crashed and stayed 'sending' does not hold the part for ever.
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_media_actions SET created_at=now()-interval '11 minutes' WHERE id=$1",
+      [uuid(13)],
+    );
+    expect(await press(CD_A, A, 1, uuid(50))).toMatchObject({
+      id: uuid(50),
+      state: "pending",
+      presses: presses + 1,
+    });
+    expect(await outboxRows()).toBe(rows + 1);
+  });
+
+  test("a launch in reconcile is not what media received; a close in reconcile is, so its WhatsApp never repeats", async () => {
+    const gate = JSON.stringify({ taskId: B, clientName: "Beta Build" });
+    await asOwner();
+    await db.query(
+      `INSERT INTO public.cockpit_creative_outbox(id,client_name,kind,task_id,payload,actor_id,actor_email,state)
+       VALUES($1,'Beta Build','blueprintLaunch',$3,'{"answers":{"service":"interior"}}'::jsonb,$4,'cd-all@tests.invalid','reconcile'),
+             ($2,'Beta Build','blueprintClose',$3,'{"answers":{"camera":"no"}}'::jsonb,$4,'cd-all@tests.invalid','reconcile')`,
+      [uuid(60), uuid(61), B, CD_ALL],
+    );
+    const payload = (part: number) =>
+      owner<Row>(
+        "SELECT public.cockpit_blueprint_payload($1::jsonb,$2,'{}'::jsonb,'{}'::jsonb) r",
+        [gate, part],
+      );
+    expect((await payload(1)).previous).toBeNull();
+    expect((await payload(2)).previous).toEqual({ camera: "no" });
+    // The CSM entry that is an address is skipped for the first name.
+    expect((await payload(2)).csmFirstName).toBe("Hana");
+  });
+});
+
+describe("the browsers read what the server returns (SPEC 7.1)", () => {
+  // A stand-in for supabase-js over this database: rpc(name, args) in named
+  // notation, as PostgREST calls it, run as the seat; the real call
+  // functions of the deck (client success) and the creative director's
+  // cockpit then parse what comes back with their own schemas.
+  const CAST: Record<string, string> = {
+    p_task_ids: "text[]",
+    p_changes: "jsonb",
+    p_answers: "jsonb",
+    p_base_revision: "integer",
+    p_part: "integer",
+    p_request_id: "uuid",
+  };
+  const client = (who: string) => ({
+    rpc: async (name: string, args: Record<string, unknown> = {}) => {
+      const keys = Object.keys(args);
+      const sql = `SELECT public.${name}(${keys
+        .map((k, i) => `${k} => $${i + 1}::${CAST[k] ?? "text"}`)
+        .join(", ")}) r`;
+      const params = keys.map(k =>
+        CAST[k] === "jsonb" ? JSON.stringify(args[k]) : args[k],
+      );
+      await actor(db, who);
+      try {
+        return { data: (await db.query<{ r: unknown }>(sql, params)).rows[0].r, error: null };
+      } catch (e) {
+        const x = e as Error & { detail?: string; code?: string };
+        return {
+          data: null,
+          error: { message: x.message, details: x.detail ?? null, code: x.code ?? null },
+        };
+      } finally {
+        await asOwner();
+      }
+    },
+    functions: {
+      invoke: async () => ({ data: null, error: { message: "Not in this test" } }),
+    },
+    auth: {
+      getUser: async () => ({ data: { user: { id: who } }, error: null }),
+    },
+  });
+
+  test("the deck's calls: sources, save, a press (pending, again, duplicate), Still missing, and the CSM's line", async () => {
+    const CS = await import(
+      "../../client-success-cockpit/src/present/blueprintSources"
+    );
+    const { readBlueprintStatus } = await import(
+      "../../client-success-cockpit/src/lib/blueprintStatus"
+    );
+    const cd = client(CD_A) as never;
+    const src = await CS.readBlueprintSources(cd, A);
+    const loaded = CS.loadedFromBlueprint(src);
+    expect(loaded.sources?.clientName).toBe("Acme Interiors");
+    expect(loaded.blueprint?.row?.taskId).toBe(A);
+    expect(loaded.blueprint?.can).toMatchObject({ write: true });
+
+    const saved = await CS.saveBlueprint(
+      cd,
+      A,
+      { why_us: { value: "They measure twice (example)", seen: null } },
+      S1,
+      null,
+    );
+    expect(saved.applied).toEqual(["why_us"]);
+    expect(saved.conflicts).toEqual([]);
+
+    // A changed part 1 queues a row; the same ID again returns it; an
+    // unchanged press with a new ID is the same send.
+    await CS.saveBlueprint(
+      cd,
+      A,
+      { destination: { value: "lead_form", seen: null } },
+      S1,
+      null,
+    );
+    const first = await CS.blueprintPartDone(cd, A, 1, uuid(80));
+    expect(first).toMatchObject({ id: uuid(80), state: "pending", part: 1 });
+    expect(await CS.blueprintPartDone(cd, A, 1, uuid(80))).toMatchObject({
+      id: uuid(80),
+      again: true,
+    });
+    expect(await CS.blueprintPartDone(cd, A, 1, uuid(81))).toMatchObject({
+      id: uuid(80),
+      duplicate: true,
+    });
+
+    // A card with nothing typed: the server's missing keys reach the deck.
+    const all = client(CD_ALL) as never;
+    const miss = await CS.blueprintPartDone(all, B, 1, uuid(82)).catch(e => e);
+    expect(miss).toBeInstanceOf(CS.StillMissing);
+    expect((miss as InstanceType<typeof CS.StillMissing>).keys).toContain(
+      "service",
+    );
+
+    // The CSM's line reads the parts and the close switch.
+    const status = await readBlueprintStatus(client(CSM_A) as never, A);
+    expect(Object.keys(status.parts ?? {}).sort()).toEqual(["1", "2", "3"]);
+    expect(status.closeRoute).toBe("card_only");
+  });
+
+  test("the creative director's calls: the read, a save, a press, the settings and a setting", async () => {
+    const CD = await import("../../creative-director-cockpit/src/lib/blueprint");
+    const cd = client(CD_A) as never;
+    const read = await CD.readBlueprints(cd, [A, B]);
+    expect(read.rows.map(r => r.taskId)).toEqual([A]);
+    expect(read.rows[0].outbox?.["1"]?.id).toBe(uuid(80));
+
+    const saved = await CD.saveBlueprint(cd, {
+      taskId: A,
+      changes: { scripts_status: { value: "with_editors", seen: null } },
+      session: S1,
+      baseRevision: null,
+    });
+    expect(saved.applied).toEqual(["scripts_status"]);
+
+    // Nothing changed in part 1 since uuid(80): the press is the same send.
+    const press = await CD.blueprintPartDone(cd, {
+      taskId: A,
+      part: 1,
+      answers: read.rows[0].answers,
+    });
+    expect(press).toMatchObject({ id: uuid(80), duplicate: true });
+
+    const missing = await CD.blueprintPartDone(client(CD_ALL) as never, {
+      taskId: B,
+      part: 1,
+      answers: {},
+    }).catch(e => e);
+    expect(missing).toBeInstanceOf(CD.BlueprintError);
+    expect((missing as InstanceType<typeof CD.BlueprintError>).missing).toContain(
+      "service",
+    );
+
+    const settings = await CD.readBlueprintSettings(cd);
+    expect(settings.closeRoute).toBe("card_only");
+    expect(settings.can).toEqual({ packs: true, closeRoute: false });
+    const after = await CD.setBlueprintSetting(
+      cd,
+      "pack.fitout",
+      "https://drive.google.com/drive/folders/1ExamplePackFitout0001",
+    );
+    expect(after.packs?.fitout).toBe(
+      "https://drive.google.com/drive/folders/1ExamplePackFitout0001",
+    );
   });
 });
 

@@ -13,7 +13,16 @@
 
 import { COCKPIT_GUIDES, COCKPIT_SOP } from "./cockpits";
 
-export type LinkRow = { label: string; url: string; note?: string };
+/**
+ * A row without a URL is a note: it says where something lives instead,
+ * and `to` (a page of this cockpit) gives the way there.
+ */
+export type LinkRow = {
+  label: string;
+  url?: string;
+  note?: string;
+  to?: { path: string; label: string };
+};
 export type LinkGroup = { title: string; blurb: string; rows: LinkRow[] };
 
 export const LINK_GROUPS: LinkGroup[] = [
@@ -62,9 +71,11 @@ export const LINK_GROUPS: LinkGroup[] = [
         note: "Booked on the onboarding call. Send this if it needs rebooking",
       },
       {
-        label: "Brand Blueprint form (client fills it before the call)",
-        url: "https://maharamedia.typeform.com/to/oYZKtogO",
-        note: "Do not send this bare link: an answer sent from it cannot be matched to a client. Send the client's own link from the Brand Blueprint Form Link field on their ClickUp card. Read their answers as part of the prep, not on the call",
+        // The Typeform is retired (SPEC 4.4): the form is filled on the call,
+        // inside the deck, never by the client.
+        label: "The Blueprint call deck",
+        note: "Open it from the client's page (Run the Blueprint call). You fill it with the client on the call; the client never fills a form.",
+        to: { path: "/clients", label: "Go to clients" },
       },
     ],
   },

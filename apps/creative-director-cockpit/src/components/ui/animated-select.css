@@ -213,6 +213,15 @@ select.cockpit-native-select {
   transition: border-color 180ms ease, box-shadow 180ms ease;
 }
 
+/* A compact trigger that sits beside 32 px controls (the Blueprint card and
+   its Settings section): the same height and type size as its neighbours. */
+[data-cockpit-date].cockpit-date-trigger.is-compact,
+[data-cockpit-select].cockpit-animated-select-trigger.is-compact {
+  min-height: 2rem;
+  font-size: 0.75rem;
+  padding-block: 0.25rem;
+}
+
 [data-cockpit-date].cockpit-date-trigger:hover,
 [data-cockpit-date].cockpit-date-trigger[data-state="open"] {
   border-color: var(--mahara-teal);

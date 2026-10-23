@@ -51,7 +51,7 @@ function aliasSet(name: string): string[] {
   return [...out].filter(a => a.length > 2 && !Object.hasOwn(GENERIC_ALIAS,a)).sort();
 }
 
-const CLIENT_FIELDS: Record<string, string> = {
+export const CLIENT_FIELDS: Record<string, string> = {
   brandDnaDoc: "🧬 Brand DNA",
   offerCheatSheet: "📈 Offer Cheat Sheet",
   blueprintFormLink: "🧬 Brand Blueprint Form Link",
@@ -63,6 +63,14 @@ const CLIENT_FIELDS: Record<string, string> = {
   marketResearchDoc: "Market Research doc",
   // One list per client, read by all three cockpits and by Hermes.
   dosDonts: "Do's & Don'ts",
+  // The Brand Blueprint's card fields (docs/brand-blueprint SPEC.md 4.5):
+  // reads, so the cockpits and cockpit_blueprint_sources see what the
+  // creative outbox wrote. Dropdowns resolve to their labels in fieldsOf.
+  // Offer Creation is the only human sign-off on the board.
+  offerCreationStatus: "Offer Creation",
+  templatedAdsStatus: "Templated Ads Status",
+  canSelfRecord: "Can Self-Record?",
+  adApprovalNeeded: "Ad Approval Needed?",
 };
 
 const NOT_A_CLIENT = [
@@ -131,8 +139,6 @@ async function gatherClients(): Promise<Row[]> {
         ? Number(f["Onboarding Call Date"])
         : undefined,
       phone: f["Phone Number"],
-      // The Offer Creation dropdown is the only human sign-off on the board.
-      offerCreationStatus: f["Offer Creation"],
     };
     for (const [key, label] of Object.entries(CLIENT_FIELDS)) {
       const val = f[label];

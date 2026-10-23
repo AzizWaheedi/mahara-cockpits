@@ -57,9 +57,6 @@ CREATE TABLE IF NOT EXISTS public.cockpit_blueprint_settings (
   updated_at timestamptz NOT NULL DEFAULT now(),
   updated_by text NOT NULL CHECK (btrim(updated_by) <> '')
 );
-INSERT INTO public.cockpit_blueprint_settings(key, value, updated_by)
-VALUES ('close_route', 'card_only', 'migration') ON CONFLICT (key) DO NOTHING;
-
 -- The press looks up the latest row of a part by card and kind.
 CREATE INDEX IF NOT EXISTS cockpit_creative_outbox_task_kind
   ON public.cockpit_creative_outbox (task_id, kind, created_at DESC);
@@ -121,6 +118,12 @@ DROP TRIGGER IF EXISTS cockpit_blueprint_settings_audit ON public.cockpit_bluepr
 CREATE TRIGGER cockpit_blueprint_settings_audit AFTER INSERT OR UPDATE OR DELETE ON public.cockpit_blueprint_settings
   FOR EACH ROW EXECUTE FUNCTION public.cockpit_blueprint_audit();
 
+-- The close switch starts at card_only (SPEC 3.6). Seeded after the audit
+-- trigger exists, so this first write has its audit row too; a second apply
+-- writes nothing.
+INSERT INTO public.cockpit_blueprint_settings(key, value, updated_by)
+VALUES ('close_route', 'card_only', 'migration') ON CONFLICT (key) DO NOTHING;
+
 -- ---------------------------------------------------------------------------
 -- Internal helpers (no browser grant)
 -- ---------------------------------------------------------------------------
@@ -151,7 +154,8 @@ BEGIN
   SELECT cm.* INTO m FROM public.cockpit_members cm JOIN auth.users u ON u.id = cm.auth_user_id
    WHERE auth.uid() IS NOT NULL AND cm.auth_user_id = auth.uid() AND cm.active
      AND u.email_confirmed_at IS NOT NULL AND cm.email = lower(btrim(u.email));
-  founder := m.email IN ('aziz@maharamedia.com', 'awaheedi2008@gmail.com');
+  -- The founders as cockpit_is_ceo lists them (this runs as auth.uid()).
+  founder := coalesce(public.cockpit_is_ceo(), false);
   IF m.auth_user_id IS NULL OR NOT ('creative' = ANY(m.roles) OR 'csm' = ANY(m.roles)
                                     OR 'admin' = ANY(m.roles) OR founder) THEN
     RAISE EXCEPTION 'Current confirmed creative or client-success access is required' USING ERRCODE = '42501';
@@ -544,13 +548,16 @@ DECLARE
 BEGIN
   v_part := public.cockpit_blueprint_part_answers(p_part, a);
   -- What media last received for this part: the answers of its latest run
-  -- that started (done, or in reconcile, where something may have been
-  -- written). None means this press is the first: the brief, the WhatsApp
-  -- text, the Slack post and Make go only with a first press, so a run that
-  -- never started does not swallow them, and one that may have sent them
-  -- never repeats them.
+  -- that started (sending or done). None means this press is the first: the
+  -- brief, the WhatsApp text, the Slack post and Make go only with a first
+  -- press, so a run that never started does not swallow them. A close in
+  -- reconcile counts too, since it may have sent the WhatsApp text, Slack or
+  -- Make, which must never repeat. A launch or offer in reconcile does not:
+  -- they send nothing to the client, and a launch task made by a run that
+  -- stopped before its brief must still get the brief.
   SELECT o.payload->'answers' INTO v_previous FROM public.cockpit_creative_outbox o
-   WHERE o.task_id = v_task AND o.kind = v_kind AND o.state IN ('sending','done','reconcile')
+   WHERE o.task_id = v_task AND o.kind = v_kind
+     AND (o.state IN ('sending','done') OR (o.state = 'reconcile' AND v_kind = 'blueprintClose'))
    ORDER BY o.created_at DESC, o.id LIMIT 1;
   SELECT o.links, o.handover, o.forms->'kickoff'->'answers', o.csm INTO v_links, v_handover, v_kick, v_csm
     FROM public.cockpit_client_onboarding o WHERE o.clickup_task_id = v_task;
@@ -617,7 +624,10 @@ BEGIN
       'launchCall', v_call,
       'closeRoute', v_settings->'closeRoute',
       'mapUrl', 'https://mahara-onboarding-map.vercel.app/?phase=5&cid=' || v_task,
-      'csmFirstName', CASE WHEN v_csm LIKE '%@%' THEN NULL ELSE nullif(split_part(btrim(coalesce(v_csm, '')), ' ', 1), '') END);
+      -- The first CSM's first name; an address is never one.
+      'csmFirstName', (SELECT nullif(split_part(btrim(x.v), ' ', 1), '')
+                         FROM unnest(string_to_array(coalesce(v_csm, ''), ',')) WITH ORDINALITY x(v, i)
+                        WHERE btrim(x.v) <> '' AND x.v NOT LIKE '%@%' ORDER BY x.i LIMIT 1));
   ELSE
     v_out := v_out || jsonb_build_object(
       'dna_status', a->'dna_status',
@@ -657,6 +667,8 @@ BEGIN
   IF m.auth_user_id IS NULL THEN
     RAISE EXCEPTION 'Current confirmed creative or client-success access is required' USING ERRCODE = '42501';
   END IF;
+  -- Keyed by p_actor, not auth.uid(), so the list is spelled out here: keep
+  -- it the same as public.cockpit_is_ceo()'s (20260923m_cockpit_ceo_gate.sql).
   founder := m.email IN ('aziz@maharamedia.com', 'awaheedi2008@gmail.com');
   admin := 'admin' = ANY(m.roles);
   v_first := public.cockpit_blueprint_first_name(m.email);
@@ -781,17 +793,32 @@ BEGIN
            'syncedAt', o.synced_at),
          jsonb_build_object(
            'clickup_task_id', o.clickup_task_id, 'client_name', o.client_name, 'client_status', o.client_status,
-           'csm', o.csm,
+           -- Names only: the sync writes a username or, without one, an address.
+           'csm', nullif(array_to_string(ARRAY(
+                    SELECT btrim(x) FROM unnest(string_to_array(coalesce(o.csm, ''), ',')) x
+                     WHERE btrim(x) <> '' AND x NOT LIKE '%@%'), ', '), ''),
+           -- Only the links the Blueprint opens: never the contract, the sales
+           -- call recording or the report sheet (leads and cost per lead).
            'links', (SELECT coalesce(jsonb_object_agg(l.key, l.value), '{}'::jsonb)
                        FROM jsonb_each(CASE WHEN jsonb_typeof(o.links) = 'object' THEN o.links ELSE '{}'::jsonb END) l
-                      WHERE l.key <> 'contract' AND jsonb_typeof(l.value) = 'string'),
+                      WHERE l.key IN ('drive','drive_folder','brand_dna','offer_sheet','market_research','website',
+                                      'onboarding_map','clickup')
+                        AND jsonb_typeof(l.value) = 'string'),
            'handover', (SELECT coalesce(jsonb_object_agg(k, o.handover->k), '{}'::jsonb)
                           FROM unnest(ARRAY['closer','closer_notes','handoff_risks','go_live','client_profile',
                                             'daily_budget','service']) k
                          WHERE jsonb_typeof(o.handover) = 'object' AND o.handover ? k),
            'forms', jsonb_strip_nulls(jsonb_build_object(
              'onboarding', o.forms->'onboarding',
-             'kickoff', CASE WHEN jsonb_typeof(o.forms->'kickoff') = 'object' THEN (o.forms->'kickoff') - 'payment' END))),
+             -- The kickoff without its payment: the top-level key and the
+             -- "Payment Amount" question (ref 75e97e7d…) among its answers.
+             'kickoff', CASE WHEN jsonb_typeof(o.forms->'kickoff') = 'object' THEN
+               ((o.forms->'kickoff') - 'payment') || jsonb_build_object('answers', (
+                 SELECT coalesce(jsonb_agg(e.v ORDER BY e.i), '[]'::jsonb)
+                   FROM jsonb_array_elements(CASE WHEN jsonb_typeof(o.forms->'kickoff'->'answers') = 'array'
+                                                  THEN o.forms->'kickoff'->'answers' ELSE '[]'::jsonb END)
+                        WITH ORDINALITY e(v, i)
+                  WHERE coalesce(e.v->>'ref', '') NOT LIKE '75e97e7d%')) END))),
          jsonb_typeof(o.forms->'kickoff') = 'object'
     INTO v_deckkit, v_kit, v_has_kickoff
     FROM public.cockpit_client_onboarding o WHERE o.clickup_task_id = p_task_id;
@@ -1013,6 +1040,18 @@ BEGIN
                                 'presses', coalesce((v_old->>'presses')::integer, 0), 'duplicate', true,
                                 'lastAt', v_old->'lastAt');
     END IF;
+  END IF;
+
+  -- An earlier send of this part still running: its run may not have made
+  -- (or tagged) the launch task yet, so a second run now could make another.
+  -- A run claimed over 10 minutes ago that never settled does not block the
+  -- part for ever.
+  IF EXISTS (SELECT 1 FROM public.cockpit_creative_outbox o
+               LEFT JOIN public.cockpit_media_actions a ON a.id = o.id
+              WHERE o.task_id = p_task_id AND o.kind = v_kind AND o.state = 'sending'
+                AND coalesce(a.created_at, o.created_at) > now() - interval '10 minutes') THEN
+    RAISE EXCEPTION 'The last send of this part is still running. Wait for it to finish, then send the changes.'
+      USING ERRCODE = '55P03';
   END IF;
 
   v_payload := public.cockpit_blueprint_payload(g, p_part, r.answers, to_jsonb(r));

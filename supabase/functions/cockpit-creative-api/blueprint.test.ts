@@ -112,6 +112,18 @@ describe('Send to media',()=>{
    const result=await executeOutbox(plan,tools(fake));expect(['tag1','hand1']).toContain(String(result.launchTaskId));
   }
  });
+ test("a card whose name is inside another client's name never takes that client's launch task",async()=>{
+  const fake=new Fake();fake.tasks.get(CARD)!.name='Acme';
+  fake.task('other1','Acme Interiors - New Client Campaign Launch 🚀');fake.task('other2','Acmeco | Launch campaigns after launch call');
+  const r=row(1,PART1,{card:{id:CARD,name:'Acme'}});
+  const plan=await prep(fake,{...r,client_name:'Acme'});
+  expect(plan.steps[0].path).toBe(`list/${B.LAUNCH_LIST}/taskTemplate/${B.LAUNCH_TEMPLATE}`);
+  expect(plan.steps.some(s=>/other[12]/.test(s.path))).toBe(false);
+  // Its own hand-made task still matches: the card's name, a separator, then launch.
+  fake.task('own1','Acme - Launch campaigns after launch call');
+  const own=await prep(fake,{...r,client_name:'Acme'});
+  expect(own.steps[0].path).toBe('task/own1/comment');
+ });
  test('two open launch tasks refuse before anything is written',async()=>{
   const fake=new Fake();fake.task('t1','x',{tags:[{name:'acme interiors'}]});fake.task('t2','y',{tags:[{name:'acme interiors'}]});
   await expect(prep(fake,row(1,PART1))).rejects.toThrow('Two open launch tasks match Acme Interiors');
@@ -267,6 +279,19 @@ describe('reads only',()=>{
   const r=await blueprintMembers({rpc:async()=>({data:{},error:null})},admin,env(),(e,h)=>providerTools(e,h,fake.fetch as typeof fetch));
   expect(r).toEqual({members:[{id:'12345678',name:'Example Buyer'},{id:'555',name:'Noura'}]});
   await expect(blueprintMembers({rpc:async()=>({error:{message:'Current confirmed creative or client-success access is required'}})},admin,env())).rejects.toThrow('access is required');
+ });
+ test('every preparation reads through the GET-only guard, the real run and its dry run too',async()=>{
+  // No preparation path writes today; the guard makes sure a later edit that does fails before any
+  // plan is shown or fenced, so the three preparations must be handed the guarded reader.
+  const src=await Bun.file(new URL('./blueprint.ts',import.meta.url)).text();
+  const body=src.slice(src.indexOf('export async function prepareBlueprint'),src.indexOf('export const describePlan'));
+  expect(body).toContain('const reader=readOnly(provider);');
+  expect(body).toContain("reader.call('clickup','GET',`task/${row.task_id}`)");
+  for(const f of ['prepareLaunch(p,card,reader,','prepareClose(p,card,reader,','prepareOffer(p,card,reader,'])expect(body).toContain(f);
+  const code=body.split('\n').slice(1).filter(l=>!l.trim().startsWith('//')).join('\n').replace('readOnly(provider)','');
+  expect(code).not.toMatch(/\bprovider\b/);
+  for(const part of [1,2,3] as const){const fake=new Fake();fake.task('launch01','Acme Interiors - New Client Campaign Launch 🚀');
+   await prepareOutbox(row(part,part===1?PART1:part===2?PART2:{offer:{name:'The Site Visit (example)',what:'A measured plan',firstStep:'A free visit'}}),tools(fake),env(),NOW);expect(fake.writes()).toEqual([]);}
  });
  test('prepareOutbox sends the three kinds to the Blueprint before any source-task check',async()=>{
   const fake=new Fake();const plan=await prepareOutbox(row(1,PART1),tools(fake),env(),NOW);
