@@ -131,6 +131,11 @@ async function webhook(req: Request, raw: string): Promise<Response> {
       product_token: String(data.productPaymentToken ?? "").slice(0, 120) || null,
       status: String(data.paymentStatus ?? data.status ?? "").slice(0, 40) || null,
       payload: body,
+      // The HMAC Ecom sent and the exact bytes it signed over: not secrets, kept so the
+      // signature rule can be proven against a real delivery.
+      signature_header: given.slice(0, 200) || null,
+      raw_body: raw.slice(0, 20000),
+      headers: Object.fromEntries([...req.headers].filter(([k]) => !/authorization|cookie|apikey/i.test(k))),
     }],
     prefer: "return=minimal",
   });
