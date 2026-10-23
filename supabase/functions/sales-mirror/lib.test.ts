@@ -1,8 +1,14 @@
 // bun test supabase/functions/sales-mirror
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import type { PGlite } from "@electric-sql/pglite";
+import { cockpitTestDb, migration } from "../../../apps/media-buyer-cockpit/scripts/lib/cockpitTestDb.ts";
 import {
   applyHolds,
   callsSql,
+  DEAL_ANSWER_COLUMNS,
+  DEAL_ANSWERS,
+  DEAL_MONEY_EDIT_FIELDS,
+  dealsSql,
   type Hold,
   holdLapse,
   holdStart,
@@ -17,12 +23,14 @@ import {
   leadRow,
   applyVoids,
   leadsSql,
+  missingDealAnswerColumn,
   monthWindows,
   phone8,
   redact,
   scorecardRows,
   scorecardWindows,
   ts,
+  withoutDealAnswers,
 } from "./lib.ts";
 
 describe("phone8", () => {
@@ -371,5 +379,206 @@ describe("a call rescheduled in the cockpit (2026-10-11)", () => {
       "x",
     );
     expect(r?.meet_url).toBe("https://zoom.us/j/1");
+  });
+});
+
+// 2026-10-23, Billing's pending payments: the two New Client Form answers B2B
+// keeps only in raw_payload. The B2B side is a fixture shaped like the live
+// closed_deals (only the columns dealsSql reads, no real contact details);
+// the cockpit side is cockpit_sales_deals as the migrations build it.
+describe("the onboarding payment and the later payment from the closer form", () => {
+  const ON_CALL = "77a14b37-7f16-4c72-8c54-38f597bdddc2";
+  const ONB = DEAL_ANSWERS.cash_at_onboarding;
+  const LATER = DEAL_ANSWERS.second_payment;
+  const num = (ref: string, n: unknown) => ({ type: "number", number: n, field: { id: "f", ref, type: "number" } });
+  const payloads: Record<string, unknown> = {
+    // City Wood's shape: $500 on the call, $5,500 at onboarding, a typed 0 later.
+    "r-full": { answers: [num(ON_CALL, 500), num(ONB, 5500), num(LATER, 0)], hidden: {} },
+    // mergestudio's shape: the later question left empty.
+    "r-no-later": { answers: [num(ON_CALL, 500), num(ONB, 5500)] },
+    // A form from before 29 Aug never asked either question.
+    "r-april": { answers: [num(ON_CALL, 200)] },
+    "r-text": { answers: [{ type: "text", text: "5,500", field: { ref: ONB } }, num(LATER, 1532.5)] },
+    "r-negative": { answers: [num(ONB, -100), num(LATER, 2000)] },
+    "r-string-number": { answers: [num(ONB, "abc"), num(LATER, "2000")] },
+    "r-no-answers": {},
+    "r-odd-answers": { answers: { [ONB]: 5500 } },
+    "r-null-payload": null,
+    "r-twice": { answers: [num(ONB, 1500), num(ONB, 9999)] },
+    "r-voided": { answers: [num(ONB, 2500), num(LATER, 3000)] },
+    // Typed Paid in full, deposit $500, $5,500 at onboarding, then corrected in
+    // B2B: the contract cut to $5,000, or the plan changed to Split.
+    "r-contract-edited": { answers: [num(ON_CALL, 500), num(ONB, 5500), num(LATER, 0)] },
+    "r-plan-edited": { answers: [num(ON_CALL, 500), num(ONB, 5500), num(LATER, 0)] },
+    "r-deposit-edited": { answers: [num(ON_CALL, 500), num(ONB, 5500), num(LATER, 0)] },
+    "r-mrr-edited": { answers: [num(ON_CALL, 500), num(ONB, 1500), num(LATER, 2000)] },
+    // Alkhalil's shape: only the closer's name was corrected.
+    "r-closer-edited": { answers: [num(ON_CALL, 500), num(ONB, 2500), num(LATER, 3000)] },
+  };
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = await cockpitTestDb();
+    await db.exec(`
+      CREATE TABLE public.closed_deals (
+        response_id text PRIMARY KEY, submitted_at timestamptz, closer text, contact_id text,
+        client_first_name text, client_last_name text, business_name text, email text,
+        phone text, phone_normalized text, country text, payment_structure text, agreement_type text,
+        daily_ad_spend numeric, cash_collected numeric, contracted_revenue numeric, new_mrr numeric,
+        fathom_link text, csm text, lead_source text, ad_id text, raw_payload jsonb);
+      CREATE TABLE public.record_voids (entity text, record_id text);
+      INSERT INTO public.record_voids VALUES ('closed_deal', 'r-voided');
+      CREATE TABLE public.record_edits (entity text, record_id text, field text, new_value text, created_at timestamptz);
+      INSERT INTO public.record_edits VALUES
+        ('closed_deal', 'r-contract-edited', 'contracted_revenue', '5000', '2026-09-05T09:00:00Z'),
+        ('closed_deal', 'r-plan-edited', 'payment_structure', 'Split ($3,000 x 2)', '2026-09-05T09:00:00Z'),
+        ('closed_deal', 'r-deposit-edited', 'cash_collected', '1000', '2026-09-05T09:00:00Z'),
+        ('closed_deal', 'r-mrr-edited', 'new_mrr', '1800', '2026-09-05T09:00:00Z'),
+        ('closed_deal', 'r-closer-edited', 'closer', 'Someone else', '2026-08-29T09:00:00Z'),
+        -- A call that happens to share an id never touches a deal.
+        ('call', 'r-full', 'status', 'showed', '2026-09-05T09:00:00Z');`);
+    for (const [id, payload] of Object.entries(payloads)) {
+      await db.query(
+        `INSERT INTO public.closed_deals (response_id, submitted_at, business_name, payment_structure,
+           cash_collected, contracted_revenue, raw_payload)
+         VALUES ($1, '2026-09-01T09:00:00Z', 'Fixture ' || $1, 'Paid in full ($6,000)', 500, 6000, $2::jsonb)`,
+        [id, payload === null ? null : JSON.stringify(payload)],
+      );
+    }
+  });
+  afterAll(async () => {
+    await db?.close();
+  });
+
+  const read = async () =>
+    Object.fromEntries(
+      (
+        await db.query<{ response_id: string; onb: string | null; later: string | null; voided: boolean }>(
+          `SELECT q.response_id, q.cash_at_onboarding::text AS onb, q.second_payment::text AS later, q.voided
+             FROM (${dealsSql()}) AS q`,
+        )
+      ).rows.map(r => [r.response_id, [r.onb, r.later, r.voided]]),
+    );
+
+  test("both answers are read by their exact Typeform refs, once each", () => {
+    const sql = dealsSql();
+    expect(ONB).toBe("b37f4cfe-82ab-4da7-b1f8-aaabe2afbf9b");
+    expect(LATER).toBe("ea6fccbd-d27e-4b57-8cfb-d3fa527f362f");
+    expect(sql.split(`'${ONB}'`).length).toBe(2);
+    expect(sql.split(`'${LATER}'`).length).toBe(2);
+    expect(sql).toContain(" end as cash_at_onboarding,");
+    expect(sql).toContain(" end as second_payment,");
+    expect(sql).toContain("from public.closed_deals as d");
+  });
+
+  test("the numbers on the form come through, a typed 0 stays 0, an unasked question is null", async () => {
+    const got = await read();
+    expect(got["r-full"]).toEqual(["5500", "0", false]);
+    expect(got["r-no-later"]).toEqual(["5500", null, false]);
+    expect(got["r-april"]).toEqual([null, null, false]);
+    expect(got["r-voided"]).toEqual(["2500", "3000", true]);
+    expect(got["r-twice"]).toEqual(["1500", null, false]);
+  });
+
+  test("a deal whose money was corrected in B2B reads null on both, so the rule falls back to the plan", async () => {
+    const got = await read();
+    expect(got["r-contract-edited"]).toEqual([null, null, false]);
+    expect(got["r-plan-edited"]).toEqual([null, null, false]);
+    expect(got["r-deposit-edited"]).toEqual([null, null, false]);
+    expect(got["r-mrr-edited"]).toEqual([null, null, false]);
+    // A correction that leaves the money alone keeps what the closer typed.
+    expect(got["r-closer-edited"]).toEqual(["2500", "3000", false]);
+    expect(got["r-full"]).toEqual(["5500", "0", false]);
+  });
+
+  test("the guard names exactly the money fields B2B lets a person correct", () => {
+    expect([...DEAL_MONEY_EDIT_FIELDS].sort()).toEqual(
+      ["cash_collected", "contracted_revenue", "new_mrr", "payment_structure"],
+    );
+    const sql = dealsSql();
+    // One guard per answer, each reading only deal edits.
+    expect(sql.split("from public.record_edits as e").length).toBe(3);
+    expect(sql.split("e.entity = 'closed_deal' and e.record_id = d.response_id").length).toBe(3);
+  });
+
+  test("an odd answer reads null (missing, never zero) and never fails the read", async () => {
+    const got = await read();
+    expect(Object.keys(got).length).toBe(Object.keys(payloads).length);
+    expect(got["r-text"]).toEqual([null, "1532.5", false]);
+    expect(got["r-negative"]).toEqual([null, "2000", false]);
+    expect(got["r-string-number"]).toEqual([null, null, false]);
+    expect(got["r-no-answers"]).toEqual([null, null, false]);
+    expect(got["r-odd-answers"]).toEqual([null, null, false]);
+    expect(got["r-null-payload"]).toEqual([null, null, false]);
+  });
+
+  test("a mirror deployed before 20261023x knows the refusal and copies deals without the two answers", () => {
+    expect(DEAL_ANSWER_COLUMNS).toEqual(["cash_at_onboarding", "second_payment"]);
+    // What index.ts's rest() throws: the probe's select, then a write.
+    const select =
+      'Triage 400 on cockpit_sales_deals: {"code":"42703","details":null,"hint":null,"message":"column cockpit_sales_deals.cash_at_onboarding does not exist"}';
+    const write =
+      `Triage 400 on cockpit_sales_deals: {"code":"PGRST204","details":null,"hint":null,"message":"Could not find the 'second_payment' column of 'cockpit_sales_deals' in the schema cache"}`;
+    expect(missingDealAnswerColumn(select)).toBe(true);
+    expect(missingDealAnswerColumn(write)).toBe(true);
+    // Any other refusal still fails the step, as it should.
+    expect(
+      missingDealAnswerColumn(
+        'Triage 400 on cockpit_sales_deals: {"code":"42703","message":"column cockpit_sales_deals.closer does not exist"}',
+      ),
+    ).toBe(false);
+    expect(missingDealAnswerColumn("Triage 503 on cockpit_sales_deals: upstream timeout")).toBe(false);
+    const row = { response_id: "r1", cash_at_onboarding: 5500, second_payment: 0, contracted_revenue: 6000 };
+    expect(withoutDealAnswers(row)).toEqual({ response_id: "r1", contracted_revenue: 6000 });
+    expect(row.cash_at_onboarding).toBe(5500);
+  });
+
+  test("every column the mirror sends exists only once 20261023x is applied (deploy after it)", async () => {
+    const core = migration("20260924a_sales_cockpit.sql").match(
+      /create table if not exists public\.cockpit_sales_deals \([\s\S]*?\n\);/,
+    );
+    const added = migration("20261023x_billing_balances.sql").match(
+      /ALTER TABLE public\.cockpit_sales_deals\s+ADD COLUMN[\s\S]*?;/,
+    );
+    expect(core).not.toBeNull();
+    expect(added).not.toBeNull();
+    await db.exec(core![0]);
+    await db.exec(migration("20260924g_sales_deal_setter.sql"));
+    const cols = (await db.query(`SELECT * FROM (${dealsSql()}) AS q LIMIT 0`)).fields.map(f => f.name);
+    expect(cols).toContain("cash_at_onboarding");
+    expect(cols).toContain("second_payment");
+    // index.ts sends every column of dealsSql plus mirrored_at.
+    const upsert = `INSERT INTO public.cockpit_sales_deals (${cols.join(", ")}, mirrored_at)
+      SELECT ${cols.map(c => `q.${c}`).join(", ")}, now() FROM (${dealsSql()}) AS q
+      ON CONFLICT (response_id) DO UPDATE SET cash_at_onboarding = excluded.cash_at_onboarding,
+        second_payment = excluded.second_payment`;
+    // Before the migration the upsert is refused, as PostgREST would refuse it.
+    await expect(db.exec(upsert)).rejects.toThrow(/cash_at_onboarding/);
+    // ... and so is index.ts's probe, with a refusal it recognises; the rows
+    // without the two answers still go in, so the deal copy never stops.
+    let probe = "";
+    try {
+      await db.query(`SELECT ${DEAL_ANSWER_COLUMNS.join(", ")} FROM public.cockpit_sales_deals LIMIT 1`);
+    } catch (e) {
+      probe = String((e as Error).message);
+    }
+    expect(missingDealAnswerColumn(probe)).toBe(true);
+    const bare = cols.filter(c => !(DEAL_ANSWER_COLUMNS as string[]).includes(c));
+    await db.exec(`INSERT INTO public.cockpit_sales_deals (${bare.join(", ")}, mirrored_at)
+      SELECT ${bare.map(c => `q.${c}`).join(", ")}, now() FROM (${dealsSql()}) AS q
+      ON CONFLICT (response_id) DO NOTHING`);
+    await db.exec(added![0]);
+    await db.exec(upsert);
+    const stored = (
+      await db.query<{ response_id: string; onb: string | null; later: string | null }>(
+        `SELECT response_id, cash_at_onboarding::text AS onb, second_payment::text AS later
+           FROM public.cockpit_sales_deals WHERE response_id IN ('r-full', 'r-no-later', 'r-april') ORDER BY 1`,
+      )
+    ).rows;
+    expect(stored).toEqual([
+      { response_id: "r-april", onb: null, later: null },
+      { response_id: "r-full", onb: "5500", later: "0" },
+      { response_id: "r-no-later", onb: "5500", later: null },
+    ]);
   });
 });

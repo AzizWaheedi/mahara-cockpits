@@ -1,6 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BillingPayload } from "@/components/billing/BillingSheet";
 import {
+  type BalancesRead,
+  buildPending,
+  type ConfirmPart,
+  type PendingView,
+} from "./billingBalances";
+import {
   type Account,
   accountFrom,
   buildSheet,
@@ -225,4 +231,162 @@ export async function assignBillingPayer(
   });
   const name = String(out.client ?? p.clientName);
   return `Tied ${p.payer} to ${name}. Their payments count as ${name}'s money from the next refresh.`;
+}
+
+// --- Pending payments (2026-10-23) ------------------------------------------
+//
+// One read and one write, both gated on the server
+// (supabase/migrations/20261023x_billing_balances.sql and
+// 20261023y_billing_balance_write.sql). The read returns rows only; the
+// parts, figures and words are src/lib/billingBalances.ts's. A confirmation
+// is a person's word that a part was paid, never money: the write never
+// touches a payment, the inbox, the ledger, LTV, pay or ClickUp.
+
+/** A read that did not load: the server's sentence, for "Pending payments did not load: ...". */
+export class PendingReadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PendingReadError";
+  }
+}
+
+/**
+ * Read the Pending payments section: cockpit_billing_balances_read() for the
+ * signed-in seat (a success manager gets only their own clients), turned
+ * into the section by buildPending. `now` only judges freshness, booked
+ * calls and how old a confirmation is.
+ */
+export async function fetchPendingPayments(
+  client: SupabaseClient,
+  now: number = Date.now(),
+): Promise<PendingView> {
+  const { data, error } = await client.rpc("cockpit_billing_balances_read");
+  if (error)
+    throw new PendingReadError(
+      error.message || "The server did not answer. Try again in a minute.",
+    );
+  if (
+    !data ||
+    typeof data !== "object" ||
+    !Array.isArray((data as BalancesRead).cards)
+  )
+    throw new PendingReadError(
+      "The server sent back nothing readable. Try again in a minute.",
+    );
+  return buildPending(data as BalancesRead, now);
+}
+
+async function balanceWrite(
+  client: SupabaseClient,
+  action: "confirm" | "withdraw" | "link" | "unlink",
+  args: Record<string, unknown>,
+): Promise<Any> {
+  const { data, error } = await client.rpc("cockpit_billing_balance_write", {
+    p_action: action,
+    p_args: args,
+  });
+  if (error)
+    throw new BillingWriteError(
+      error.message ||
+        "That did not save, so nothing changed. Try again in a minute.",
+    );
+  if (data === null || data === undefined || data.ok !== true)
+    throw new BillingWriteError(
+      "The server did not confirm the change. Reload the section before you try again.",
+    );
+  return data;
+}
+
+export type ConfirmPaidInput = {
+  taskId: string;
+  /** The card's deal; null only on a card in onboarding with no terms on record (part "all"). */
+  dealResponseId: string | null;
+  part: ConfirmPart;
+  /** 0 for deposit, onboarding and all; k for the k-th later part. */
+  partNo: number;
+  amount: number;
+  currency: "USD" | "KWD";
+  rail: "whop" | "tap" | "ecom";
+  /** The day they paid, "YYYY-MM-DD". */
+  paidOn: string;
+  evidenceUrl?: string | null;
+  note?: string | null;
+};
+
+/**
+ * Confirm paid: a person's word that a part was paid on Whop, Tap or an Ecom
+ * link. Returns the server's sentence ("Confirmed by you · waiting for
+ * Tap"). A transfer, cheque or cash is refused: log it as a payment instead.
+ */
+export async function confirmPaid(
+  client: SupabaseClient,
+  p: ConfirmPaidInput,
+  source: "ceo" | "csm" = "csm",
+): Promise<{ sentence: string; confirmationId: number; repeated: boolean }> {
+  const out = await balanceWrite(client, "confirm", {
+    taskId: p.taskId,
+    dealResponseId: p.dealResponseId,
+    part: p.part,
+    partNo: p.partNo,
+    amount: p.amount,
+    currency: p.currency,
+    rail: p.rail,
+    paidOn: p.paidOn,
+    evidenceUrl: p.evidenceUrl || null,
+    note: p.note || null,
+    source,
+  });
+  return {
+    sentence: String(out.sentence ?? "Confirmed."),
+    confirmationId: Number(out.confirmation?.id),
+    repeated: out.repeated === true,
+  };
+}
+
+/** Withdraw a confirmation: the person who made it, or the CEO, once, with a reason of 3 to 300 characters. */
+export async function withdrawConfirmation(
+  client: SupabaseClient,
+  p: { taskId: string; confirmationId: number; reason: string },
+  source: "ceo" | "csm" = "csm",
+): Promise<string> {
+  const out = await balanceWrite(client, "withdraw", {
+    taskId: p.taskId,
+    confirmationId: p.confirmationId,
+    reason: p.reason,
+    source,
+  });
+  return String(out.sentence ?? "Withdrawn.");
+}
+
+/**
+ * CEO only: link a signed deal that matches no client card to a card, for
+ * this section. It does not change who the money refresh credits; tie the
+ * payment to the deal on Money for that.
+ */
+export async function linkDealToCard(
+  client: SupabaseClient,
+  p: { dealResponseId: string; taskId: string; note?: string | null },
+  source: "ceo" | "csm" = "csm",
+): Promise<string> {
+  const out = await balanceWrite(client, "link", {
+    dealResponseId: p.dealResponseId,
+    taskId: p.taskId,
+    note: p.note || null,
+    source,
+  });
+  return String(out.sentence ?? "Linked.");
+}
+
+/** CEO only: take a link back, with a reason of 3 to 300 characters. */
+export async function unlinkDeal(
+  client: SupabaseClient,
+  p: { dealResponseId: string; reason: string },
+  source: "ceo" | "csm" = "csm",
+): Promise<string> {
+  const out = await balanceWrite(client, "unlink", {
+    dealResponseId: p.dealResponseId,
+    reason: p.reason,
+    source,
+  });
+  return String(out.sentence ?? "Unlinked.");
 }
