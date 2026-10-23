@@ -6,6 +6,7 @@ import {
   setSystemTime,
   test,
 } from "bun:test";
+import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 
 /**
@@ -777,7 +778,7 @@ describe("score round 1 (2026-10-23)", () => {
     );
   });
 
-  test("slide 5's first stop shows example ads for the lit service in three phones, never a Drive frame", () => {
+  test("slide 5's first stop pins example ads for the lit service as three prints, never phones or a Drive frame", () => {
     const { loaded, d, answers } = midCall("en");
     for (const [service, scene] of [
       ["interior", "living"],
@@ -791,7 +792,10 @@ describe("score round 1 (2026-10-23)", () => {
         0,
       );
       host.innerHTML = html;
-      expect(host.querySelectorAll(".dkc-phone").length).toBe(3);
+      // Prints pinned to the wall, never hand-drawn phones (score round 2
+      // of the design pass: re-drawn app chrome, Hallmark gate 47).
+      expect(host.querySelectorAll(".dkb-adprint").length).toBe(3);
+      expect(host.querySelector(".dkc-phone")).toBeNull();
       expect(
         [...host.querySelectorAll(".dkb-ad-tag")].map(t => t.textContent),
       ).toEqual(["Example ad", "Example ad", "Example ad"]);
@@ -926,9 +930,11 @@ describe("score round 1 (2026-10-23)", () => {
     }
     host.innerHTML = render(d, bp, "read-back", 0);
     expect(host.querySelectorAll(".dkb-frame[data-assemble]").length).toBe(3);
-    // Empty on the cover: three mounts, each a dashed well, no outline.
+    // Empty on the cover: three open frames of tape, the wall through them
+    // (score round 2 of the design pass: paper mats read as upload fields).
     host.innerHTML = render(d, bp, "cover", 0);
-    expect(host.querySelectorAll(".dkb-mount .dkb-mount-well").length).toBe(3);
+    expect(host.querySelectorAll(".dkb-frame > .dkb-outline").length).toBe(3);
+    expect(host.querySelectorAll(".dkb-mount, .dkb-mount-well").length).toBe(0);
     expect(host.textContent).toContain("With Sara, our creative director");
     host.innerHTML = render(
       d,
@@ -1049,8 +1055,15 @@ describe("score round 2 (2026-10-23)", () => {
     expect(
       host.querySelector(".dkb-button, button:not(.dkb-pen-opt)"),
     ).toBeNull();
-    const sticky = host.querySelector(".dkb-camera")?.closest(".dkb-sticky");
-    expect(sticky?.hasAttribute("data-dim")).toBe(true);
+    // A paper card, never amber (amber is the client's to-do alone).
+    expect(
+      host.querySelector(".dkb-camera")?.closest(".dkb-sticky"),
+    ).toBeNull();
+    const card = host.querySelector(".dkb-camera")?.closest(".dkb-card");
+    expect(card?.hasAttribute("data-dim")).toBe(true);
+    expect(host.querySelector(".dkb-camera")?.hasAttribute("data-chips")).toBe(
+      true,
+    );
     const picks = [...host.querySelectorAll(".dkb-camera .dkb-pen-opt")];
     expect(picks.length).toBe(4);
     for (const p of picks) expect(p.hasAttribute("disabled")).toBe(true);
@@ -1058,7 +1071,7 @@ describe("score round 2 (2026-10-23)", () => {
     expect(
       host
         .querySelector(".dkb-camera")
-        ?.closest(".dkb-sticky")
+        ?.closest(".dkb-card")
         ?.hasAttribute("data-active"),
     ).toBe(true);
     for (const p of host.querySelectorAll(".dkb-camera .dkb-pen-opt"))
@@ -1115,11 +1128,14 @@ describe("score round 2 (2026-10-23)", () => {
     // of the design pass: the tag is the mark's flag).
     expect(wrap?.querySelectorAll(".dkb-tape-mark[data-ghost]").length).toBe(2);
     expect(host.querySelectorAll(".dkb-strings g").length).toBe(2);
-    const egs = [...host.querySelectorAll(".dkb-pricetag .dkb-amount")].map(
-      i => i.getAttribute("placeholder") ?? i.textContent ?? "",
+    // Pencilled on the tag, never an input's grey placeholder (score round
+    // 2 of the design pass).
+    const egs = [...host.querySelectorAll(".dkb-pricetag .dkb-prompt")].map(
+      p => p.textContent ?? "",
     );
     expect(egs.length).toBe(2);
     for (const f of egs) expect(f).toStartWith("e.g. ");
+    expect(host.querySelector(".dkb-pricetag input[placeholder]")).toBeNull();
     // Their onboarding form names a range (full): the tape draws it, marked
     // as the form's on the card under it; the examples hang only where they
     // fit that range.
@@ -1262,12 +1278,22 @@ describe("the design pass: the wall waiting for paper (score round 3, 2026-10-23
   const host = win.document.createElement("div");
   const text = () => (host.textContent ?? "").replace(/\s+/g, " ");
 
-  test("the cover's frames wait as blank mats with crop marks and one piece of tape each; the photo print says whose it is", () => {
+  test("the cover's frames wait as open frames of tape; a verified logo is pinned in its own; the photo print says whose it is", () => {
     const { loaded, d, answers } = midCall("en");
     host.innerHTML = render(d, model(loaded, d, answers), "cover", 0);
-    for (const f of host.querySelectorAll(".dkb-frame"))
-      expect(f.querySelectorAll(":scope > .dkb-tape").length).toBe(1);
-    expect(host.querySelectorAll(".dkb-mount-well").length).toBe(3);
+    for (const f of host.querySelectorAll(".dkb-frame")) {
+      expect(f.querySelectorAll(":scope > .dkb-outline > i").length).toBe(4);
+      expect(f.querySelectorAll(":scope > .dkb-tape").length).toBe(0);
+    }
+    // Their logo fills "Your look", so its hint is not printed over it
+    // (score round 2 of the design pass).
+    const look = host.querySelector('.dkb-frame[data-kind="look"]');
+    expect(look?.hasAttribute("data-holds")).toBe(true);
+    expect(look?.querySelector(".dkb-cover-logo img")).not.toBeNull();
+    expect(look?.querySelector(".dkb-hint")).toBeNull();
+    expect(
+      host.querySelector('.dkb-frame[data-kind="words"] .dkb-hint'),
+    ).not.toBeNull();
     // No upload of theirs in the fixture: their service's example render.
     expect(
       host.querySelector(".dkb-cover-photo img")?.getAttribute("src"),
@@ -1316,22 +1342,35 @@ describe("the design pass: the wall waiting for paper (score round 3, 2026-10-23
     );
   });
 
-  test("slide 6 pencils an example method until the first word, beside the notes, in one row", () => {
+  test("slide 6: blank paper with a pencil note until the first word, the struck example on its own note", () => {
     const loaded = blueprintLoaded("full", "part1", { rehearse: false });
     const d = data(loaded, "en");
     host.innerHTML = render(d, model(loaded, d, {}), "best-at", 0);
     expect(host.querySelector(".dkb-bestat .dkb-method")).not.toBeNull();
-    expect(host.querySelector(".dkb-ghost")?.textContent).toContain("Example");
+    // Nothing answered yet: a pencil note, never a grey example on rules
+    // (score round 2 of the design pass).
+    expect(host.querySelector(".dkb-method .dkb-prompt")?.textContent).toBe(
+      "We write this together",
+    );
+    expect(host.querySelector(".dkb-ghost")).toBeNull();
     expect(
       host.querySelector(".dkb-method .dkb-ruled")?.hasAttribute("data-empty"),
     ).toBe(true);
+    // What everyone says, struck, on its own small note, off the live paper.
+    const note = host.querySelector(".dkb-eg-note");
+    expect(note?.querySelector("s")?.textContent).toBe(
+      "Quality work, delivered on time.",
+    );
+    expect(note?.textContent).toContain("Example");
+    expect(note?.closest("[data-live]")).toBeNull();
+    expect(host.querySelectorAll(".dkb-side .dkb-prompt").length).toBe(3);
     host.innerHTML = render(
       d,
       model(loaded, d, { method: "We draw every room first." }),
       "best-at",
       0,
     );
-    expect(host.querySelector(".dkb-ghost")).toBeNull();
+    expect(host.querySelector(".dkb-method .dkb-prompt")).toBeNull();
   });
 
   test("slide 7 hangs the amounts on swing tags and reads their onboarding form's words into the card, marked", () => {
@@ -1404,9 +1443,15 @@ describe("the design pass: the wall waiting for paper (score round 3, 2026-10-23
     expect(host.querySelector(".dkb-materials")?.textContent).toContain(
       "Example materials",
     );
+    // Their doc names a serif for the wordmark: the specimen follows it
+    // (score round 2 of the design pass: an example grotesque contradicted
+    // it); with no type line, the deck's own pairing, an example.
     expect(host.querySelector(".dkb-specimen")?.textContent).toContain(
-      "Example pairing",
+      "Set as your doc describes",
     );
+    expect(
+      host.querySelector(".dkb-specimen")?.hasAttribute("data-serif"),
+    ).toBe(true);
     const chips = [...host.querySelectorAll(".dkb-palette li")].map(x =>
       x.textContent?.replace(/\s+/g, " "),
     );
@@ -1648,11 +1693,15 @@ describe("the design pass, score round 1 fixes (2026-10-23)", () => {
     expect(head?.textContent).not.toMatch(/[A-Za-z]/);
   });
 
-  test("the launch call's card waits from the first stop; its stop lifts the launch card, never rings it", () => {
+  test("the launch call's frame waits from the first stop; its stop pins the card and lifts the launch card, never rings it", () => {
     const { loaded, d, answers } = midCall("en");
     host.innerHTML = render(d, model(loaded, d, answers), "next", 0);
-    expect(host.querySelector(".dkb-call-card")?.hasAttribute("data-dim")).toBe(
-      true,
+    // An open frame with its name, never a sunk card (score round 2 of the
+    // design pass: big bold words on it read as a disabled control).
+    expect(host.querySelector(".dkb-call-card")).toBeNull();
+    expect(host.querySelector(".dkb-call-wait .dkb-outline")).not.toBeNull();
+    expect(host.querySelector(".dkb-call-wait")?.textContent).toBe(
+      "Your launch call",
     );
     host.innerHTML = render(d, model(loaded, d, answers), "next", 1);
     expect(host.querySelector(".dkb-when[data-lifted]")).not.toBeNull();
@@ -1666,6 +1715,149 @@ describe("the design pass, score round 1 fixes (2026-10-23)", () => {
     );
     expect(host.querySelector(".dkb-booked")?.textContent).toBe(
       "We book it together now",
+    );
+  });
+});
+
+describe("the design pass, score round 2 fixes (2026-10-23)", () => {
+  const host = win.document.createElement("div");
+  const text = () => (host.textContent ?? "").replace(/\s+/g, " ");
+  const css = readFileSync(
+    new URL("../src/present/present.css", import.meta.url),
+    "utf8",
+  );
+  const sparse = () => {
+    const loaded = blueprintLoaded("sparse", "open", { rehearse: false });
+    const d = data(loaded, "en");
+    return { loaded, d, bp: model(loaded, d, {}) };
+  };
+
+  test("a stop sinks the rest into the wall, never washes them, and amber never sinks", () => {
+    const block = css.slice(css.indexOf("24 · The Brand Blueprint call"));
+    expect(block).toMatch(
+      /\[data-dim\] \{\s*opacity: 0\.7;\s*scale: 0\.98;\s*\}/,
+    );
+    expect(block).toMatch(/\.dkb-sticky\[data-dim\] \{\s*opacity: 1;/);
+    expect(block).not.toMatch(/\[data-dim\] \{\s*opacity: 0\.55/);
+    // No amber piece is ever stepped back on the slides.
+    const { loaded, d, answers } = midCall("en");
+    for (const { id, tour, html } of everyStop(d, model(loaded, d, answers))) {
+      host.innerHTML = html;
+      expect({
+        where: `${id}:${tour}`,
+        amber: host.querySelectorAll(
+          ".dkb-sticky[data-dim], [data-dim] .dkb-sticky",
+        ).length,
+      }).toEqual({ where: `${id}:${tour}`, amber: 0 });
+    }
+  });
+
+  test("nothing answered yet is a pencil note on blank paper, never a rule, a grey option or an empty box", () => {
+    const { d, bp } = sparse();
+    host.innerHTML = render(d, bp, "first-ads", 1);
+    expect(
+      host.querySelector(".dkb-field .dkb-pen")?.hasAttribute("data-chips"),
+    ).toBe(true);
+    const prompts = [...host.querySelectorAll(".dkb-sheet .dkb-prompt")].map(
+      p => p.textContent,
+    );
+    expect(prompts).toEqual(["We pick it now", "We write this now"]);
+    expect(host.querySelector(".dkb-redlist li")).toBeNull();
+    host.innerHTML = render(d, bp, "pricing", 1);
+    // t() keeps "30 /" together with a no-break space.
+    const terms = host
+      .querySelector(".dkb-terms .dkb-prompt")
+      ?.textContent?.replace(/\u00a0/g, " ");
+    expect(terms).toContain("30 / 40 / 30?");
+    expect(terms).toContain("Example");
+    expect(text()).not.toContain("______");
+    host.innerHTML = render(d, bp, "brand", 0);
+    // The three empty lists folded into one card of dashed chips.
+    expect(host.querySelectorAll(".dkb-rule-card").length).toBe(1);
+    expect(
+      host.querySelector(".dkb-rule-card")?.hasAttribute("data-fold"),
+    ).toBe(true);
+    expect(
+      [...host.querySelectorAll(".dkb-chip-wait")].map(c => c.textContent),
+    ).toEqual([
+      "We add these together",
+      "We add these together",
+      "We add these together",
+    ]);
+    host.innerHTML = render(d, bp, "competitors", 0);
+    // The next name is typed over the first example, struck through.
+    const add = host.querySelector(".dkb-clip-add");
+    expect(add?.querySelector("s.dkb-clip-name")?.textContent).toBe(
+      "The studio you lose to most",
+    );
+    expect(add?.querySelector(".dkb-pencil-row")).toBeNull();
+    expect(host.querySelector(".dkb-why .dkb-prompt")).not.toBeNull();
+  });
+
+  test("losses are a kraft tag, never amber: amber is the client's to-do alone", () => {
+    const rule = /\.dkb-lose \{[^}]*\}/.exec(css)?.[0] ?? "";
+    expect(rule).toContain("var(--dkb-kraft)");
+    expect(rule).not.toContain("amber");
+    // One kraft for every tag: the price tags are the offer tag's material.
+    expect(css).not.toMatch(/--dkb-manila/);
+  });
+
+  test("the price tape prints a scale; the read-back's empty parts are open frames; slide 14's line runs margin to margin", () => {
+    const { loaded, d, answers } = midCall("en");
+    host.innerHTML = render(d, model(loaded, d, answers), "pricing", 0);
+    expect(
+      host.querySelectorAll(".dkb-tape-num").length,
+    ).toBeGreaterThanOrEqual(2);
+    const { d: ds, bp } = sparse();
+    host.innerHTML = render(ds, bp, "read-back", 0);
+    const offer = host.querySelector('.dkb-frame[data-kind="offer"]');
+    expect(offer?.hasAttribute("data-holds")).toBe(true);
+    expect(offer?.querySelector(".dkb-feature")).toBeNull();
+    expect(offer?.textContent).toContain("We finish this in your offer sheet.");
+    host.innerHTML = render(ds, bp, "next", 0);
+    expect(host.querySelector(".dkb-line")?.getAttribute("style")).toMatch(
+      /--x:\s*120px/,
+    );
+    const last = [...host.querySelectorAll(".dkb-when")].at(-1);
+    expect(last?.querySelector(".dkb-when-d")?.textContent).toBe("Launch call");
+    expect(last?.querySelector(".dkb-when-l")?.textContent).toBe(
+      "Your own ads, your form and our questions.",
+    );
+    expect(text()).not.toContain("To book");
+  });
+
+  test("slide 10's roll comes on only for the unroll; slide 9 ticks a line in place of its hole", () => {
+    const { loaded, d, answers } = midCall("en");
+    host.innerHTML = render(d, model(loaded, d, answers), "how-ads-work", 0);
+    expect(host.querySelector(".dkb-learn-roll")).toBeNull();
+    expect(host.querySelector(".dkb-same")?.getAttribute("style")).toMatch(
+      /--x:\s*0px/,
+    );
+    host.innerHTML = render(d, model(loaded, d, answers), "offer", 0);
+    const set = host.querySelectorAll(".dkb-tag-lines li[data-set]").length;
+    expect(set).toBeGreaterThan(0);
+    expect(
+      host.querySelectorAll(".dkb-punch[data-set] .dkb-pen-tick").length,
+    ).toBe(set);
+  });
+
+  test("the kickoff on record says its steps in the past", () => {
+    const loaded = blueprintLoaded("full", "open", { rehearse: false });
+    const d = { ...data(loaded, "en"), deck: "onboarding" } as DeckData;
+    host.innerHTML = renderToStaticMarkup(
+      <div className="dk-canvas" dir="ltr">
+        <KickoffSlide
+          ctx={
+            {
+              d: { ...d, kickoff: { ...d.kickoff, from: "record" } },
+              lang: "en",
+            } as never
+          }
+        />
+      </div>,
+    );
+    expect(host.querySelector(".dkc-kick-steps-head")?.textContent).toBe(
+      "Now it's in",
     );
   });
 });

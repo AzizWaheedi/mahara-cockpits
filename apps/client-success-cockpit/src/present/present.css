@@ -8685,7 +8685,7 @@ button.dkc-status:hover {
 
 /* DESIGN 23: the start column says what the form is and what sending it
    does; the end column is the form in a frame (x 816 to 1784, y 112 to
-   936); the call's checklist sits at the foot, its third item the slide's
+   852); the call's checklist sits at the foot, its third item the slide's
    own. Under client text the ground is flat: no texture, no tilt. The
    frame's head names whose form it is and, once Typeform has it, "Sent at
    2:02 pm" with the checklist's tick drawn. */
@@ -8780,10 +8780,12 @@ button.dkc-status:hover {
 .dkc-kick-layer[data-on] .dkc-kick-frame {
   animation: dk-rise-far calc(var(--dk-t-arrive) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-step) * var(--dk-m)) both;
 }
+/* Its foot on the column's last rule, not the slide's (score round 2 of
+   the Blueprint deck's design pass: navy stood empty under the form). */
 .dkc-kick-frame {
   position: absolute;
   top: 112px;
-  bottom: 144px;
+  bottom: 228px;
   inset-inline-end: 136px;
   width: 968px;
   display: flex;
@@ -8870,9 +8872,17 @@ button.dkc-status:hover {
   min-height: 0;
   background: var(--dk-space);
 }
+/* The form shows once it is ready, after the opening line has faded out:
+   one, then the other, never both (score round 2 of the Blueprint deck's
+   design pass: the line crossfaded over the form's first question). */
 .dkc-kick-form {
   position: absolute;
   inset: 0;
+  opacity: 0;
+}
+.dkc-kick-form[data-ready] {
+  opacity: 1;
+  transition: opacity calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease) calc(var(--dk-t-swap) * var(--dk-m));
 }
 .dkc-kick-form > div,
 .dkc-kick-form iframe {
@@ -8888,6 +8898,18 @@ button.dkc-status:hover {
   place-items: center;
   padding: 48px;
   pointer-events: none;
+}
+/* While the form opens: on the panel's own ground, over it. */
+.dkc-kick-line[data-veil] {
+  z-index: 1;
+  background: var(--dk-panel);
+  transition:
+    opacity calc(var(--dk-t-swap) * var(--dk-m)) var(--dk-ease),
+    visibility 0s linear calc(var(--dk-t-swap) * var(--dk-m));
+}
+.dkc-kick-line[data-gone] {
+  opacity: 0;
+  visibility: hidden;
 }
 .dkc-kick-line p {
   margin: 0;
@@ -8934,11 +8956,14 @@ button.dkc-status:hover {
 }
 /* On record already: the panel as tall as what it reads back (score round
    1 of the Blueprint deck's design pass: 280 px of empty panel under the
-   rows). */
-/* ... and its middle on the column's, so neither side stands half empty. */
+   rows), its top on the column's line under the head (score round 2: set
+   in the middle, its top lined up with nothing). */
 .dkc-kick-frame[data-held] {
+  top: 298px;
   height: fit-content;
-  margin-block: auto;
+}
+[dir="rtl"] .dkc-kick-frame[data-held] {
+  top: 306px;
 }
 .dkc-kick-frame[data-held] .dkc-kick-body {
   flex: none;
@@ -9069,13 +9094,11 @@ button.dkc-status:hover {
   --dkb-vinyl-3: var(--dk-ink-3);
   --dkb-paper: #eef2f5;
   --dkb-paper-shade: #dbe2e8;
-  /* An empty frame's mat: blank paper, a breath under fresh paper. */
-  --dkb-mount: #e2e8ed;
-  /* Slide 7's swing tags: manila card, paler than the offer's kraft. */
-  --dkb-manila: #e8dcc2;
-  --dkb-manila-edge: #d6c6a4;
   /* A pencil: guide lines and crop marks on paper still waiting for words. */
   --dkb-graphite: rgba(9, 19, 51, 0.34);
+  /* A pencil note in the presenter's hand, at 24 px and more (3:1 on
+     paper): what is not answered yet (score round 2 of the design pass). */
+  --dkb-pencil-ink: rgba(9, 19, 51, 0.6);
   --dkb-pencil: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 100' preserveAspectRatio='none'><path d='M3 96.4 C 120 95.2, 230 97.6, 340 96.2 S 520 95.6, 597 96.8' fill='none' stroke='%23091333' stroke-opacity='.3' stroke-width='1.7' stroke-linecap='round' vector-effect='non-scaling-stroke'/></svg>");
   --dkb-paper-back: #c9d2da;
   --dkb-field: #f8fafc;
@@ -9095,6 +9118,8 @@ button.dkc-status:hover {
   --dkb-tape: rgba(0, 207, 200, 0.52);
   --dkb-tape-paper: rgba(0, 207, 200, 0.46);
   --dkb-tape-edge: rgba(190, 255, 252, 0.28);
+  /* An empty frame's open outline: four thin strips on the felt. */
+  --dkb-tape-frame: rgba(0, 207, 200, 0.46);
   --dkb-teal-ink: #007a74;
   --dkb-caret: #0a8f8a;
   --dkb-amber: var(--dk-leak);
@@ -9106,36 +9131,50 @@ button.dkc-status:hover {
   --dkb-shadow-soft: rgba(1, 4, 14, 0.45);
   --dkb-shadow-paper: 0 1px 0 var(--dkb-shadow-soft), 0 18px 26px -16px var(--dkb-shadow-ink);
   --dkb-shadow-chip: 0 2px 0 var(--dkb-shadow-soft), 0 10px 14px -10px var(--dkb-shadow-ink);
+  /* Sunk into the wall: a stop that is not this piece's. */
+  --dkb-shadow-flat: 0 1px 0 var(--dkb-shadow-soft), 0 5px 7px -6px var(--dkb-shadow-ink);
   --dkb-ink-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='s'><feTurbulence type='fractalNoise' baseFrequency='.55' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  -4.2 0 0 0 3.4'/></filter><rect width='220' height='220' filter='url(%23s)'/></svg>");
   --dkb-tilt-max: 1deg;
+  /* A serif for the specimen only when their Brand DNA doc names one for
+     their wordmark: a system serif, never a client face loaded. */
+  --dkb-face-serif: ui-serif, Georgia, "Times New Roman", serif;
   /* An arrival's extra swing, gone once pinned (none on live paper). */
   --dkb-swing: 1deg;
   /* RTL mirrors every tilt and the fan's opening. */
   --dkb-flip: 1;
-  /* Motion: pinned once on entry, then still (5.5). */
-  --dkb-t-pin: var(--dk-t-arrive);
-  --dkb-t-lead: 120ms;
+  /* Motion: pinned once on entry, then still (5.5). The first piece
+     lands at once and the ordinary arrivals settle by about 850 ms (score
+     round 2 of the design pass: the wall stood empty for 150 ms after a
+     press, and slide 11 took 1.3 s); the long choreographies are the
+     signature beats' own (the fan, the park, the tape, the clothesline,
+     the read-back). */
+  --dkb-t-pin: 420ms;
+  --dkb-t-lead: 0ms;
+  --dkb-t-step: 70ms;
   --dkb-i-max: 6;
-  --dkb-t-tape: 320ms;
+  --dkb-t-tape: 280ms;
   --dkb-t-fan: 760ms;
   --dkb-t-fan-step: 70ms;
   /* Slide 4's park: the strips leave in 520 ms, 70 ms apart; the tag's
      lines land from 360 ms (all done by about 1.2 s). */
   --dkb-t-park: 520ms;
   --dkb-t-park-at: 360ms;
+  --dkb-t-land: 240ms;
   --dkb-park-x: 900px;
   /* Slide 6's flight into the map, and the read-back's frames growing out
      of it (three, 120 ms apart: done by 940 ms). */
   --dkb-t-fly: 900ms;
   --dkb-t-assemble: 700ms;
   --dkb-t-string: 900ms;
-  --dkb-t-string-at: 300ms;
+  /* The clothesline starts drawing with the press (score round 2 of the
+     design pass: the wall stood empty for 300 ms first). */
+  --dkb-t-string-at: 60ms;
   --dkb-t-stamp: 240ms;
   /* A pen loop round a chosen word, and a pen tick: drawn on in one go. */
   --dkb-t-ring: 420ms;
   --dkb-pen: var(--dkb-teal-ink);
-  --dkb-t-tape-at: 300ms;
-  --dkb-t-hint-at: 200ms;
+  --dkb-t-tape-at: 200ms;
+  --dkb-t-hint-at: 160ms;
   /* Slide 14: a card is pegged as the string reaches it; its drop is
      shorter than a pin's, so the last ends by 1.5 s. */
   --dkb-t-peg: 360ms;
@@ -9198,7 +9237,7 @@ button.dkc-status:hover {
      hold (a stop's focus steps it back or lifts it, below), never the
      arrival's last frame. */
   animation: dkb-pin calc(var(--dkb-t-pin) * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dk-t-step)) * var(--dk-m));
+  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dkb-t-step)) * var(--dk-m));
 }
 /* Typed on live: straight, flat, no swing. */
 .dkb-pin[data-live],
@@ -9218,17 +9257,34 @@ button.dkc-status:hover {
 
 /* A stop's focus (score round 1 of the design pass: a label turning from
    grey to dark was a change nobody on the call saw). The paper the stop
-   asks about lifts 6 px, its shadow deepens and its tape is tugged; the
-   rest step back to 0.55. Opacity and translate only: the pin's own
-   transform (its turn) is never touched. */
+   asks about lifts 6 px, its shadow deepens and its tape is tugged. The
+   rest sink into the wall (score round 2 of the design pass: washed to
+   0.55 they read as disabled controls, and amber turned a muddy brown):
+   the whole piece, its tape and label too, at 0.7 so the felt shows
+   through, a touch smaller and with a flatter shadow, never a colour laid
+   over it. Amber never sinks by opacity: what is the client's to do keeps
+   its colour. Opacity, translate and scale only: the pin's own transform
+   (its turn) is never touched. */
 .dk-root[data-deck="blueprint"] :is([data-active], [data-dim]),
-.dk-root[data-deck="blueprint"] :is(.dkb-card, .dkb-sticky, .dkb-tag, .dkb-clip, .dkb-frame, .dkb-tabs) {
+.dk-root[data-deck="blueprint"] :is(.dkb-card, .dkb-sticky, .dkb-tag, .dkb-clip, .dkb-frame, .dkb-tabs, .dkb-price-row) {
   transition:
     opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease),
-    translate calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
+    translate calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease),
+    scale calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
 }
 .dk-root[data-deck="blueprint"] [data-dim] {
-  opacity: 0.55;
+  opacity: 0.7;
+  scale: 0.98;
+}
+.dk-root[data-deck="blueprint"] .dkb-sticky[data-dim] {
+  opacity: 1;
+}
+:is(.dkb-card, .dkb-sticky)[data-dim],
+[data-dim] :is(.dkb-card, .dkb-sticky, .dkb-tab) {
+  box-shadow: var(--dkb-shadow-flat);
+}
+:is(.dkb-clip, .dkb-tag)[data-dim] {
+  filter: drop-shadow(0 4px 4px var(--dkb-shadow-soft));
 }
 .dk-root[data-deck="blueprint"] [data-active] {
   translate: 0 -6px;
@@ -9428,7 +9484,7 @@ button.dkc-status:hover {
   transform: rotate(calc(var(--tr, 0deg) * var(--dkb-flip)));
   clip-path: polygon(0 0, 100% 0, calc(100% - 4px) 14%, 100% 28%, calc(100% - 4px) 43%, 100% 57%, calc(100% - 4px) 71%, 100% 86%, calc(100% - 3px) 100%, 0 100%, 4px 86%, 0 71%, 4px 57%, 0 43%, 4px 28%, 0 14%);
   animation: dkb-tape calc(var(--dkb-t-tape) * var(--dk-m)) var(--dk-ease) both;
-  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dk-t-step) + var(--dkb-t-tape-at)) * var(--dk-m));
+  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dkb-t-step) + var(--dkb-t-tape-at)) * var(--dk-m));
 }
 /* Placed from another corner of its paper (paper whose size is its words'). */
 .dkb-tape[data-from="top-end"] {
@@ -9453,7 +9509,7 @@ button.dkc-status:hover {
    lines): the pin's drop and fade, without its absolute place. */
 .dkb-arrive {
   animation: dkb-pin calc(var(--dkb-t-pin) * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dk-t-step)) * var(--dk-m));
+  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dkb-t-step)) * var(--dk-m));
 }
 @keyframes dkb-tape {
   from {
@@ -9536,30 +9592,85 @@ button.dkc-status:hover {
   font-size: 22px;
 }
 
-/* ---- the three frames: waiting on the cover as pale mounts with a dashed
-   well; filled as the call goes, when the client's own paper is the frame
-   (its label on the paper's top edge, the tape across its corners). */
+/* ---- the three frames: waiting as open frames of teal tape on the felt,
+   four strips crossing at the corners and the wall through them, as the
+   Studio Wall mockup had them (score round 2 of the design pass: solid
+   paper mats with crop marks read as empty upload fields); filled as the
+   call goes, when the client's own paper is the frame (its label on the
+   paper's top edge, the tape across its corners). The strips are thinner
+   than a paper's tape, so the cover's teal stays under 5 %. */
 .dkb-frame {
   box-sizing: border-box;
 }
-.dkb-mount {
-  inset-inline-start: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  background: var(--dkb-mount);
-  box-shadow: var(--dkb-shadow-paper);
-  border-radius: 2px;
+.dkb-outline {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
-/* Where the print will go: four pencil crop marks, 24 px each way (score
-   round 3: a keyline well read as a greyed-out input). */
-.dkb-mount-well,
+.dkb-outline i {
+  --tw: 18px;
+  --over: 16px;
+  position: absolute;
+  background: var(--dkb-tape-frame);
+  box-shadow: inset 0 2px 0 var(--dkb-tape-edge);
+  animation: dkb-strip-h calc(var(--dkb-t-tape) * var(--dk-m)) var(--dk-ease) both;
+  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dkb-t-step)) * var(--dk-m));
+}
+.dkb-outline i:is([data-edge="top"], [data-edge="bottom"]) {
+  inset-inline: calc(var(--over) * -1);
+  height: var(--tw);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 3px) 25%, 100% 50%, calc(100% - 3px) 75%, 100% 100%, 0 100%, 3px 75%, 0 50%, 3px 25%);
+}
+.dkb-outline i:is([data-edge="start"], [data-edge="end"]) {
+  top: calc(var(--over) * -1);
+  bottom: calc(var(--over) * -1);
+  width: var(--tw);
+  clip-path: polygon(0 0, 25% 3px, 50% 0, 75% 3px, 100% 0, 100% 100%, 75% calc(100% - 3px), 50% 100%, 25% calc(100% - 3px), 0 100%);
+  animation-name: dkb-strip-v;
+}
+.dkb-outline i[data-edge="top"] {
+  --tr: -0.4deg;
+  top: calc(var(--tw) / -2);
+}
+.dkb-outline i[data-edge="bottom"] {
+  --tr: 0.3deg;
+  bottom: calc(var(--tw) / -2);
+}
+.dkb-outline i[data-edge="start"] {
+  --tr: 0.3deg;
+  inset-inline-start: calc(var(--tw) / -2);
+}
+.dkb-outline i[data-edge="end"] {
+  --tr: -0.4deg;
+  inset-inline-end: calc(var(--tw) / -2);
+}
+@keyframes dkb-strip-h {
+  from {
+    opacity: 0;
+    transform: rotate(calc(var(--tr, 0deg) * var(--dkb-flip))) scaleX(0.25);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(calc(var(--tr, 0deg) * var(--dkb-flip))) scaleX(1);
+  }
+}
+@keyframes dkb-strip-v {
+  from {
+    opacity: 0;
+    transform: rotate(calc(var(--tr, 0deg) * var(--dkb-flip))) scaleY(0.25);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(calc(var(--tr, 0deg) * var(--dkb-flip))) scaleY(1);
+  }
+}
+/* A print still waiting for its picture (slide 11's logo): four pencil
+   crop marks, 24 px each way. */
 .dkb-crop {
   --cm: 24px;
   --cw: 2px;
   position: absolute;
-  inset: 92px 22px 22px;
+  inset: 18px;
   background:
     linear-gradient(var(--dkb-graphite) 0 0) top left / var(--cm) var(--cw),
     linear-gradient(var(--dkb-graphite) 0 0) top left / var(--cw) var(--cm),
@@ -9571,20 +9682,22 @@ button.dkc-status:hover {
     linear-gradient(var(--dkb-graphite) 0 0) bottom right / var(--cw) var(--cm);
   background-repeat: no-repeat;
 }
+/* Its hint on the felt, in the wall's own lettering, under its label. */
 .dkb-frame .dkb-hint {
   position: absolute;
-  inset-inline: 44px 40px;
-  top: 112px;
+  inset-inline: 32px 32px;
+  top: 104px;
   margin: 0;
-  font: 400 26px/1.35 var(--dk-font);
-  color: var(--dkb-print-2);
+  font: 400 27px/1.35 var(--dk-font);
+  color: var(--dkb-vinyl-2);
   animation: dkb-fade calc(var(--dkb-t-tape) * var(--dk-m)) var(--dk-ease) both;
-  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dk-t-step) + var(--dkb-t-hint-at)) * var(--dk-m));
+  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dkb-t-step) + var(--dkb-t-hint-at)) * var(--dk-m));
 }
 .dk-canvas[dir="rtl"] .dkb-frame .dkb-hint {
   line-height: 1.55;
 }
-.dkb-frame-in {
+.dkb-frame-in,
+.dkb-frame-holds {
   position: relative;
   width: 100%;
   height: 100%;
@@ -10088,6 +10201,22 @@ button.dkc-status:hover {
   align-content: center;
   align-items: start;
 }
+/* No red lines on file: the right column, its sticky set larger, sits on
+   the left column's middle (score round 2 of the design pass: it ended at
+   y 640 and left 800 x 330 of bare wall under it). */
+.dkb-sofar-col[data-drop] {
+  align-self: center;
+  gap: 36px;
+}
+.dkb-sofar-col[data-drop] > .dkb-sticky:not(.dkb-sticky-big) {
+  width: 600px;
+  font-size: 34px;
+  line-height: 1.25;
+  padding: 30px 34px 30px;
+}
+.dk-canvas[dir="rtl"] .dkb-sofar-col[data-drop] > .dkb-sticky:not(.dkb-sticky-big) {
+  line-height: 1.55;
+}
 .dkb-sofar-col {
   gap: 24px;
 }
@@ -10257,35 +10386,58 @@ button.dkb-strip:active {
 .dkb-parked-at {
   transform: translateY(-50%);
 }
-/* The park: the tag is pinned again at its full height as the strips reach
-   it, and its new lines slide in, one after another (transform and
-   opacity only; score round 1 of the design pass: the lines grew by
-   animating their height). */
+/* The park: the tag is lifted and pinned again at its full height as the
+   strips set off (translate only; score round 1 of the design pass: the
+   lines grew by animating their height), and each parked service is
+   written on it only as its strip lands there, never before (score round
+   2: the flying strip's label printed over a row already written). Their
+   own words under them land after the four. */
 .dkb-parked[data-grown] {
-  animation: dkb-repin calc(var(--dkb-t-park) * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc(var(--dkb-t-park-at) * 0.5 * var(--dk-m));
+  animation: dkb-repin calc(var(--dkb-t-park) * 0.6 * var(--dk-m)) var(--dk-ease) backwards;
 }
 @keyframes dkb-repin {
   from {
-    opacity: 0.35;
-    translate: 0 -18px;
+    translate: 0 -14px;
   }
 }
 .dkb-parked li[data-main] {
-  animation: dkb-arrive-line calc(var(--dkb-t-park) * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc((var(--dkb-t-park-at) + var(--k, 0) * var(--dkb-t-fan-step)) * var(--dk-m));
+  animation: dkb-land-line calc(var(--dkb-t-land) * var(--dk-m)) var(--dk-ease) backwards;
+  animation-delay: calc((var(--k, 0) * var(--dkb-t-fan-step) + var(--dkb-t-park) * 0.82) * var(--dk-m));
 }
-/* Stop 2: once the others leave, the lit strip rises to the tag's middle
-   (y 500) at 1.1, and its line follows 32 px under the folded fan. */
+.dkb-parked[data-grown] li:not([data-main]) {
+  animation: dkb-land-line calc(var(--dkb-t-land) * var(--dk-m)) var(--dk-ease) backwards;
+  animation-delay: calc((4 * var(--dkb-t-fan-step) + var(--dkb-t-park) * 0.82) * var(--dk-m));
+}
+@keyframes dkb-land-line {
+  from {
+    opacity: 0;
+    transform: translate3d(calc(-18px * var(--dkb-flip)), 0, 0);
+  }
+}
+/* A strip's own label fades as it nears the tag, so it never prints over
+   the line that names it there. */
+.dkb-strip[data-gone] > span {
+  animation: dkb-label-out calc(var(--dkb-t-park) * 0.6 * var(--dk-m)) linear both;
+  animation-delay: calc(var(--i, 0) * var(--dkb-t-fan-step) * var(--dk-m));
+}
+@keyframes dkb-label-out {
+  to {
+    opacity: 0;
+  }
+}
+/* Stop 2: once the others leave, the lit strip rises at 1.1 and its line
+   follows 32 px under the folded fan, the two centred on the tag's middle
+   (y 560; score round 2 of the design pass: they sat high, 300 px of wall
+   under them). */
 .dkb-fan-wrap,
 .dkb-fan-line {
   transition: transform calc(var(--dkb-t-park) * var(--dk-m)) var(--dk-ease) calc(var(--dkb-t-park-at) * var(--dk-m));
 }
 .dkb-fan-wrap[data-parked] {
-  transform: translate3d(0, -260px, 0) scale(1.1);
+  transform: translate3d(0, -270px, 0) scale(1.1);
 }
 .dkb-fan-line[data-parked] {
-  transform: translate3d(0, -250px, 0);
+  transform: translate3d(0, -245px, 0);
 }
 @keyframes dkb-arrive-line {
   from {
@@ -10372,25 +10524,20 @@ button.dkb-strip:active {
   justify-content: flex-start;
   gap: 20px;
 }
-/* From the run sheet's first row to its foot: each rule a ruled third. */
+/* As tall as its three rules, each on its own rule (score round 2 of the
+   design pass: equal thirds of a tall card left blank paper between). */
 .dkb-rules3 ol {
-  flex: 1;
   gap: 0;
   margin: 0;
 }
-/* Each rule an equal third, its words centred in it, so a one-line rule
-   never leaves a gap under it (score round 1 of the design pass). */
 .dkb-rules3 ol > li {
-  flex: 1;
-  align-content: center;
-  padding: 10px 0;
+  padding: 22px 0 24px;
   border-top: 2px solid var(--dkb-rule);
 }
 /* Arabic: the title's line is taller, so the card and its tape start 24 px
    lower (score round 1 of the design pass: the tape sat on its descenders). */
 .dk-canvas[dir="rtl"] .dkb-rules3 {
   top: calc(var(--y) + 24px);
-  height: calc(var(--h) - 24px);
 }
 .dkb-rules3 li {
   display: grid;
@@ -10552,45 +10699,83 @@ button.dkb-strip:active {
   font-family: var(--dk-font-ar);
 }
 
-/* ---- 5 · your first ads: example ads in three phones, then part 1's sheet */
-.dkb-ads {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-.dkb-ad {
-  position: relative;
-  margin: 0;
+/* ---- 5 · your first ads: three example ads pinned as prints, then part
+   1's sheet. A print: the photo, the ad's strip with the client's name and
+   its one line; its "Example ad" tag and the place it runs hang under it on
+   the felt (score round 2 of the design pass: hand-drawn phones were
+   re-drawn app chrome, Hallmark gate 47). */
+.dkb-adprint-at {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 16px;
+  align-items: flex-start;
+  gap: 18px;
 }
-/* The provenance tag over each phone's end corner: quiet, mono, a hairline
-   (score round 1 of the design pass: three paper chips weighed on the
-   phones). */
+.dkb-adprint {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: 14px 14px 0;
+  background: var(--dkb-paper);
+  box-shadow: var(--dkb-shadow-paper);
+  display: flex;
+  flex-direction: column;
+}
+.dkb-adprint-photo {
+  position: relative;
+  display: block;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: var(--dkb-print);
+}
+.dkb-adprint-photo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* The ad's own strip under the photo: their name, then its one line. */
+.dkb-adprint-strip {
+  margin: 0 -14px;
+  padding: 14px 18px 18px;
+  background: var(--dkb-print);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dkb-adprint-name {
+  font: 500 19px/1.2 var(--dk-font);
+  letter-spacing: 0.01em;
+  color: var(--dkb-kraft);
+}
+.dkb-adprint-line {
+  font: 600 22px/1.28 var(--dk-font);
+  letter-spacing: -0.005em;
+  color: var(--dkb-paper);
+  text-wrap: balance;
+}
+.dk-canvas[dir="rtl"] :is(.dkb-adprint-name, .dkb-adprint-line) {
+  font-family: var(--dk-font-ar);
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+/* Its tag, as the cover's photo carries its own: paper, mono, a step in
+   from the print's start. */
 .dkb-prov.dkb-ad-tag {
   position: static;
-  align-self: flex-end;
-  background: transparent;
-  box-shadow: none;
-  border: 1px solid var(--dkb-vinyl-3);
-  border-radius: 3px;
-  padding: 5px 10px;
-  font-size: 18px;
-  line-height: 1.2;
-  color: var(--dkb-vinyl-2);
-}
-.dk-canvas[dir="rtl"] .dkb-prov.dkb-ad-tag {
-  font-size: 19px;
+  margin-inline-start: 18px;
+  font-size: 20px;
+  rotate: calc(-0.6deg * var(--dkb-flip));
 }
 .dkb-ad-foot {
+  margin: 0;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
-  max-width: 300px;
   font: 500 22px/1.3 var(--dk-font);
   color: var(--dkb-vinyl-2);
+  white-space: nowrap;
 }
 .dk-canvas[dir="rtl"] .dkb-ad-foot {
   font-family: var(--dk-font-ar);
@@ -10741,9 +10926,10 @@ button.dkb-strip:active {
   border-radius: 2px;
   transform: rotate(calc(0.9deg * var(--dkb-flip))) translate(10px, 8px);
   /* They come with the sheet (score round 1 of the design pass: two blank
-     sheets stood alone for a moment, a grey slab, before it landed). */
+     sheets stood alone for a moment, a grey slab, before it landed), from
+     the press itself (score round 2: the room stood empty 150 ms). */
   animation: dkb-fade calc(var(--dkb-t-pin) * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc((var(--dkb-t-lead) + var(--dk-t-step)) * var(--dk-m));
+  animation-delay: calc(var(--dkb-t-lead) * var(--dk-m));
 }
 .dkb-sheet-back[data-n="1"] {
   background: var(--dkb-paper-back);
@@ -10853,9 +11039,10 @@ button.dkb-strip:active {
   color: var(--dkb-print-3);
   font-weight: 500;
 }
+/* None yet: the pencil note says so, no rules waiting (score round 2 of
+   the design pass). */
 .dkb-redlist:empty {
-  min-height: 104px;
-  background: var(--dkb-pencil) left top / 100% 52px repeat-y;
+  display: none;
 }
 .dk-canvas[dir="rtl"] .dkb-redlist li {
   line-height: 54px;
@@ -11004,7 +11191,7 @@ button.dkb-pen-opt:focus-visible {
   stroke-dasharray: 1;
   stroke-dashoffset: 0;
   animation: dkb-draw calc(var(--dkb-t-ring) * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dk-t-step) + var(--dkb-t-tape-at)) * var(--dk-m));
+  animation-delay: calc((var(--dkb-t-lead) + min(var(--i, 0), var(--dkb-i-max)) * var(--dkb-t-step) + var(--dkb-t-tape-at)) * var(--dk-m));
 }
 /* Drawn because of a tap on this call: at once. */
 :is(.dkb-ring, .dkb-pen-tick)[data-fresh] path {
@@ -11029,6 +11216,137 @@ button.dkb-pen-opt:focus-visible {
   from {
     stroke-dashoffset: 1;
   }
+}
+/* Answers as small paper chips in ink (score round 2 of the design pass:
+   grey words in a row read as a form's options); theirs circled in pen. */
+.dkb-pen[data-chips] {
+  align-items: center;
+  gap: 14px 18px;
+}
+.dkb-pen[data-chips] .dkb-pen-opt {
+  padding: 5px 20px 6px;
+  border-radius: 999px;
+  background: var(--dkb-paper-shade);
+  box-shadow: inset 0 0 0 2px var(--dkb-rule);
+  color: var(--dkb-print);
+  font-size: 26px;
+}
+.dkb-pen[data-chips] .dkb-pen-opt[data-picked] {
+  background: var(--dkb-paper);
+  box-shadow: inset 0 0 0 2px var(--dkb-rule-strong);
+  font-weight: 700;
+}
+.dk-canvas[dir="rtl"] .dkb-pen[data-chips] .dkb-pen-opt {
+  line-height: 1.35;
+}
+.dkb-pen[data-chips] button.dkb-pen-opt:hover:not(:disabled):not([data-picked]) {
+  color: var(--dkb-print);
+  box-shadow: inset 0 0 0 2px var(--dkb-rule-strong);
+}
+
+/* ---- what is not answered yet: a pencil note in the presenter's hand on
+   blank paper, a pencil tick before it (score round 2 of the design pass:
+   bare underlines, grey options, placeholder sentences and empty boxes
+   read as a web form). One language for the whole wall. */
+.dkb-prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 100%;
+  font: 400 26px/1.3 var(--dk-font);
+  letter-spacing: -0.005em;
+  color: var(--dkb-pencil-ink);
+  white-space: nowrap;
+}
+.dkb-prompt-tick {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  overflow: visible;
+}
+.dkb-prompt-tick path {
+  fill: none;
+  stroke: var(--dkb-pencil-ink);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.dkb-prompt-tick path + path {
+  stroke-width: 1.3;
+  opacity: 0.55;
+}
+.dkb-prompt .dkb-example {
+  margin-inline-start: 4px;
+}
+.dk-canvas[dir="rtl"] .dkb-prompt {
+  font-family: var(--dk-font-ar);
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+/* A typing field with its note: the note on the blank paper where the
+   words will go; the presenter's caret on it, the note steps aside and one
+   pencilled rule shows the line. */
+.dkb-ruled-wrap {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.dkb-ruled-prompt {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  cursor: text;
+  transition: opacity calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
+}
+.dkb-ruled[data-prompted][data-empty] {
+  background-image: none;
+}
+.dkb-ruled[data-prompted][data-empty]:focus {
+  background-image: var(--dkb-pencil);
+  background-repeat: no-repeat;
+}
+.dkb-ruled-wrap:focus-within .dkb-ruled-prompt {
+  opacity: 0;
+}
+.dkb-ruled-wrap:is([data-size="side"], [data-size="line"]) .dkb-prompt {
+  font-size: 24px;
+}
+.dkb-ruled-wrap[data-size="clip"] .dkb-prompt {
+  gap: 8px;
+  font-size: 20px;
+}
+.dkb-ruled-wrap[data-size="clip"] .dkb-prompt-tick {
+  width: 22px;
+  height: 22px;
+}
+/* A list with no line yet: its note (ruled lists), or one dashed chip
+   (slide 11's), never an empty box. */
+.dkb-lines li.dkb-lines-empty {
+  border-bottom: 0;
+}
+.dkb-lines li.dkb-lines-empty::before {
+  content: none;
+}
+.dkb-lines[data-chips] li.dkb-lines-empty {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.dkb-chip-wait {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 16px 7px;
+  border-radius: 999px;
+  border: 2px dashed var(--dkb-rule-strong);
+  font: 400 22px/1.2 var(--dk-font);
+  color: var(--dkb-pencil-ink);
+}
+.dk-canvas[dir="rtl"] .dkb-chip-wait {
+  font-family: var(--dk-font-ar);
+  line-height: 1.45;
 }
 
 /* the four shots, small, when they start with their own ads */
@@ -11080,8 +11398,10 @@ button.dkb-pen-opt:focus-visible {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 580px;
   column-gap: 40px;
-  align-items: stretch;
-  /* A short row (nothing typed yet) sits in the middle of its room. */
+  /* Each side as tall as its own words (score round 2 of the design pass:
+     200 px of blank paper under the method), the two on one middle, the
+     row in the middle of its room. */
+  align-items: center;
   align-content: center;
 }
 .dkb-frame.dkb-frame-flow {
@@ -11103,6 +11423,40 @@ button.dkb-pen-opt:focus-visible {
 }
 .dkb-method {
   padding-top: 44px;
+  padding-bottom: 36px;
+}
+/* The label keeps clear of the example note pinned to the corner. */
+.dkb-method .dkb-card-label {
+  padding-inline-end: 330px;
+}
+/* What everyone says, struck, on its own small note pinned across the
+   method's top-end corner (score round 2 of the design pass: printed on
+   the card, it read as a placeholder). Paper a shade darker than the
+   card's, never amber: it is an example, not the client's to do. */
+.dkb-eg-note {
+  inset-inline-start: auto;
+  inset-inline-end: -30px;
+  top: -46px;
+  width: 340px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 22px 24px 18px;
+  background: var(--dkb-paper-shade);
+  color: var(--dkb-print-2);
+  box-shadow: var(--dkb-shadow-chip);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  font: 400 25px/1.3 var(--dk-font);
+  z-index: 6;
+}
+.dkb-eg-note s {
+  text-decoration-thickness: 3px;
+  text-decoration-color: var(--dkb-print-2);
+}
+.dk-canvas[dir="rtl"] .dkb-eg-note {
+  line-height: 1.55;
 }
 .dkb-method-field {
   position: relative;
@@ -11136,30 +11490,9 @@ button.dkb-pen-opt:focus-visible {
   --lh: 32px;
   font-size: 22px;
 }
-.dkb-notes > .dkb-side:last-child {
-  flex: 1;
-}
-/* What a method sounds like, pencilled on the first rules until the first
-   keystroke: graphite at 34 px, tagged Example; the caret lands under it. */
-.dkb-ghost {
-  position: absolute;
-  inset-inline: 0;
-  top: 0;
-  margin: 0;
-  pointer-events: none;
-  font: 400 34px/64px var(--dk-font);
-  letter-spacing: -0.01em;
-  color: var(--dkb-graphite);
-  text-wrap: pretty;
-}
-.dkb-ghost .dkb-example {
-  display: inline-block;
-  margin-inline-start: 14px;
-  vertical-align: 4px;
-  color: var(--dkb-print-2);
-}
-.dk-canvas[dir="rtl"] .dkb-ghost {
-  letter-spacing: 0;
+/* The method's note sits on blank paper as large as its words will be. */
+.dkb-method-field .dkb-prompt {
+  font-size: 30px;
 }
 
 /* ---- 7 · your projects in numbers: a steel tape drawn to the numbers.
@@ -11174,11 +11507,38 @@ button.dkb-pen-opt:focus-visible {
 }
 .dkb-tape-ticks {
   position: absolute;
-  inset: 0 0 auto;
-  height: 40px;
-  background-image: repeating-linear-gradient(to right, var(--dkb-print-2) 0 2px, transparent 2px 24px), repeating-linear-gradient(to right, var(--dkb-print-2) 0 3px, transparent 3px 120px);
-  background-size: 100% 22px, 100% 40px;
+  inset: 0 24px auto;
+  height: 18px;
+  background-image: repeating-linear-gradient(to right, var(--dkb-print-3) 0 2px, transparent 2px 24px);
+  background-size: 100% 18px;
   background-repeat: no-repeat;
+}
+/* The tape's scale: a few round values, each under its own long tick
+   (score round 2 of the design pass: past the band's ends the ruler had
+   no numbers), faint so the marks and the band stay what it says. */
+.dkb-tape-num {
+  position: absolute;
+  top: 0;
+  inset-inline-start: var(--m);
+  padding-top: 34px;
+  transform: translateX(calc(-50% * var(--dkb-flip)));
+  font: 500 19px/1 var(--dk-font);
+  font-variant-numeric: tabular-nums;
+  color: var(--dkb-print-2);
+  white-space: nowrap;
+}
+.dkb-tape-num::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  inset-inline-start: calc(50% - 1.5px);
+  width: 3px;
+  height: 28px;
+  background: var(--dkb-print-2);
+}
+.dk-canvas[dir="rtl"] .dkb-tape-num {
+  font-family: var(--dk-font-ar);
+  font-size: 20px;
 }
 .dkb-tape-band {
   position: absolute;
@@ -11289,14 +11649,14 @@ button.dkb-pen-opt:focus-visible {
   stroke-linecap: round;
   stroke-dasharray: 1;
   animation: dkb-draw calc(var(--dkb-t-string) * 0.6 * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc((var(--dkb-t-lead) + var(--i, 0) * var(--dk-t-step) + var(--dkb-t-pin) * 0.7) * var(--dk-m));
+  animation-delay: calc((var(--dkb-t-lead) + var(--i, 0) * var(--dkb-t-step) + var(--dkb-t-pin) * 0.7) * var(--dk-m));
 }
 .dkb-strings circle {
   fill: var(--dkb-teal);
   stroke: var(--dkb-teal-ink);
   stroke-width: 3;
   animation: dkb-fade calc(var(--dkb-t-tape) * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc((var(--dkb-t-lead) + var(--i, 0) * var(--dk-t-step) + var(--dkb-t-pin) * 0.7 + var(--dkb-t-string) * 0.5) * var(--dk-m));
+  animation-delay: calc((var(--dkb-t-lead) + var(--i, 0) * var(--dkb-t-step) + var(--dkb-t-pin) * 0.7 + var(--dkb-t-string) * 0.5) * var(--dk-m));
 }
 .dkb-flag[data-side="end"] > span {
   inset-inline-start: 14px;
@@ -11327,7 +11687,8 @@ button.dkb-pen-opt:focus-visible {
   font-family: var(--dk-font-ar);
 }
 /* The two amounts as swing tags (score round 3: pricing read as a form):
-   manila card pointed at its start, a reinforced hole there, its string
+   kraft card, the offer tag's material (score round 2 of the design pass:
+   a paler manila made two materials for one object), pointed at its start, a reinforced hole there, its string
    up to a tack on the wall; the amount typed live on it, so it hangs
    straight. */
 .dkb-pricetag {
@@ -11342,7 +11703,7 @@ button.dkb-pen-opt:focus-visible {
   position: relative;
   flex: 1;
   box-sizing: border-box;
-  background: var(--dkb-manila);
+  background: var(--dkb-kraft);
   color: var(--dkb-print);
   padding: 62px 32px 24px 32px;
   padding-inline-start: 84px;
@@ -11366,10 +11727,39 @@ button.dkb-pen-opt:focus-visible {
   height: 28px;
   border-radius: 50%;
   background: var(--dkb-wall);
-  box-shadow: 0 0 0 7px var(--dkb-manila-edge);
+  box-shadow: 0 0 0 7px var(--dkb-kraft-edge);
 }
 .dkb-pricetag .dkb-card-label {
   font-size: 24px;
+  color: var(--dkb-print);
+}
+/* An amount not typed yet: its example pencilled on the tag (never an
+   input's grey placeholder), stepping aside for the presenter's caret. */
+.dkb-amount-wrap {
+  position: relative;
+  display: block;
+  margin-top: auto;
+}
+.dkb-amount-eg {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  cursor: text;
+}
+.dkb-amount-wrap:focus-within .dkb-amount-eg {
+  opacity: 0;
+}
+.dkb-pricetag .dkb-prompt,
+.dkb-amount .dkb-prompt {
+  font-size: 30px;
+  color: var(--dkb-print-2);
+}
+.dkb-pricetag .dkb-prompt-tick path {
+  stroke: var(--dkb-print-2);
 }
 .dkb-pricetag .dkb-amount {
   margin-top: auto;
@@ -11389,16 +11779,11 @@ button.dkb-pen-opt:focus-visible {
 .dkb-terms .dkb-card-label {
   font-size: 24px;
 }
-/* An empty amount's example, smaller and in the deck's face, so the whole
-   "e.g. 60,000 SAR" fits its card. */
-.dkb-amount[data-empty],
-.dkb-amount::placeholder {
-  color: var(--dkb-graphite);
-  opacity: 1;
-  font: 400 32px/64px var(--dk-font);
-}
-.dk-canvas[dir="rtl"] :is(.dkb-amount[data-empty], .dkb-amount::placeholder) {
-  font-family: var(--dk-font-ar);
+/* An empty amount: no rule under it, its example pencilled on the tag. */
+.dkb-amount[data-empty] {
+  border-bottom-color: transparent;
+  display: flex;
+  align-items: center;
 }
 .dkb-amount {
   box-sizing: border-box;
@@ -11497,7 +11882,9 @@ button.dkb-pen-opt:focus-visible {
   flex: 1;
   min-width: 0;
   box-sizing: border-box;
-  min-height: 196px;
+  /* As tall as what it holds (score round 2 of the design pass: a name
+     alone sat on 200 px of paper); the row's clippings share the tallest. */
+  min-height: 136px;
   padding: 28px 24px 32px;
   background: var(--dkb-paper);
   color: var(--dkb-print);
@@ -11561,16 +11948,26 @@ button.dkb-clip-name:focus-visible {
   font: 400 26px/40px var(--dk-font);
   color: var(--dkb-print);
 }
-/* We lose to them: an amber label stuck across the clipping. */
+/* We lose to them: a small kraft tag tied on the clipping, ours as the
+   wall's other tags are (score round 2 of the design pass: amber is the
+   client's to-do on slide 14, so it cannot also mean a loss). */
 .dkb-lose {
   align-self: flex-start;
-  margin-top: 4px;
-  padding: 6px 10px;
-  border-radius: 2px;
-  background: var(--dkb-amber);
+  margin-top: 6px;
+  padding: 6px 12px 7px 24px;
+  background:
+    radial-gradient(circle at 11px 50%, var(--dkb-paper) 0 4px, transparent 4.5px),
+    var(--dkb-kraft);
   color: var(--dkb-print);
   font: 600 19px/1.1 var(--dk-font);
-  box-shadow: 0 2px 0 var(--dkb-amber-shade);
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 10px 100%, 0 50%);
+}
+.dk-canvas[dir="rtl"] .dkb-lose {
+  padding: 6px 24px 7px 12px;
+  background:
+    radial-gradient(circle at calc(100% - 11px) 50%, var(--dkb-paper) 0 4px, transparent 4.5px),
+    var(--dkb-kraft);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%);
 }
 .dk-canvas[dir="rtl"] :is(.dkb-clip-kicker, .dkb-lose) {
   font-family: var(--dk-font-ar);
@@ -11581,27 +11978,38 @@ button.dkb-clip-name:focus-visible {
   line-height: 1.45;
   letter-spacing: 0;
 }
-/* The next name: a blank clipping waiting to be pinned, typed on a
-   pencilled line. */
-.dkb-clip-add input {
-  font-size: 28px;
-}
-/* The blank clipping waits as paper with its pencil lines; "+ Add a name"
-   shows only under the presenter's pointer or with focus (score round 1
-   of the design pass: a placeholder read as a web input). */
-.dkb-clip-add input::placeholder {
-  color: transparent;
-  transition: color calc(var(--dk-hover-canvas-ms) * var(--dk-m)) var(--dk-ease);
-}
-.dkb-clip-add:hover input::placeholder,
-.dkb-clip-add input:focus::placeholder {
-  color: var(--dkb-graphite);
-}
-.dkb-pencil-row {
+/* The next name is typed straight over an example clipping, its example
+   struck through as slide 6's is (score round 2 of the design pass: a
+   blank clipping with two pencilled rules read as an input). The field
+   lies over the struck name; typed, the example is gone. */
+.dkb-clip-type {
+  position: relative;
   display: block;
   width: 100%;
-  height: 40px;
-  background: var(--dkb-pencil) left bottom / 100% 12px no-repeat;
+}
+.dkb-clip-type s.dkb-clip-name {
+  position: relative;
+  z-index: 1;
+  cursor: text;
+}
+.dkb-clip-type s.dkb-clip-name,
+.dkb-clip-add s.dkb-clip-note {
+  display: block;
+  color: var(--dkb-print-3);
+  text-decoration-thickness: 3px;
+  text-decoration-color: var(--dkb-print-2);
+}
+.dkb-clip-add input {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  background: none;
+  font: 700 30px/1.15 var(--dk-font);
+  letter-spacing: -0.02em;
+}
+.dkb-clip-add[data-typing] input {
+  position: relative;
+  min-height: 40px;
 }
 /* Example clippings, ours, in the row's free places: full ink, each
    labelled Example on its paper (score round 1 of the design pass: faded,
@@ -11687,8 +12095,9 @@ button.dkb-clip-name:focus-visible {
   transform: translateY(-50%);
 }
 .dkb-offer-lede .dkb-lead {
-  font-size: 42px;
-  line-height: 1.32;
+  font-size: 46px;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
   color: var(--dkb-vinyl);
 }
 .dk-canvas[dir="rtl"] .dkb-offer-lede .dkb-lead {
@@ -11746,7 +12155,7 @@ button.dkb-clip-name:focus-visible {
   min-height: 760px;
   background: var(--dkb-kraft);
   color: var(--dkb-print);
-  padding: 96px 40px 32px;
+  padding: 100px 52px 32px;
   display: flex;
   flex-direction: column;
   clip-path: polygon(22% 0, 78% 0, 100% 9%, 100% 100%, 0 100%, 0 9%);
@@ -11773,7 +12182,7 @@ button.dkb-clip-name:focus-visible {
 }
 .dkb-tag-kind {
   margin: 0;
-  font: 400 22px/1.2 var(--dk-mono);
+  font: 400 26px/1.2 var(--dk-mono);
   color: var(--dkb-print-2);
 }
 .dk-canvas[dir="rtl"] .dkb-tag-kind {
@@ -11783,21 +12192,21 @@ button.dkb-clip-name:focus-visible {
    holds the line), the name, and the line itself or where it is written. */
 .dkb-tag-lines {
   list-style: none;
-  margin: 28px 0 28px;
+  margin: 22px 0 24px;
   padding: 0;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   flex: 1 0 auto;
-  gap: 20px;
+  gap: 16px;
 }
 .dkb-tag-lines li {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  column-gap: 16px;
-  row-gap: 4px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  column-gap: 18px;
+  row-gap: 2px;
   align-items: start;
-  padding-bottom: 18px;
+  padding-bottom: 14px;
   border-bottom: 2px solid var(--dkb-rule);
 }
 /* Each line's hole, punched through the tag (the wall shows through), and
@@ -11810,37 +12219,45 @@ button.dkb-clip-name:focus-visible {
 .dkb-punch {
   grid-row: span 2;
   position: relative;
-  width: 18px;
-  height: 18px;
-  margin: 7px 0 0 6px;
+  width: 20px;
+  height: 20px;
+  margin-block-start: 10px;
+  margin-inline-start: 10px;
   border-radius: 50%;
   background: var(--dkb-wall);
   /* The wall through it, the hole's cut edge a darker kraft round it. */
   box-shadow: inset 0 3px 2px var(--dkb-shadow-ink), 0 0 0 4px var(--dkb-band), 0 1px 0 4px var(--dkb-raise);
 }
-/* The tick's foot on the hole, its long arm up across the kraft, so it
-   reads against the paper, not the dark hole. */
+/* A line the record holds: the pen tick in the hole's place, never drawn
+   over it (score round 2 of the design pass: the dot showed through the
+   tick), kept inside its column so it never runs into the words. */
+.dkb-punch[data-set] {
+  background: none;
+  box-shadow: none;
+}
 .dkb-punch .dkb-pen-tick {
   position: absolute;
-  inset-inline-start: -4px;
-  top: -28px;
-  width: 52px;
-  height: 52px;
+  inset-inline-start: -10px;
+  top: -12px;
+  width: 40px;
+  height: 40px;
 }
 .dkb-punch .dkb-pen-tick path {
   stroke-width: 4.6;
 }
+/* Read on a shared screen: 28 px and more (score round 2 of the design
+   pass: the 22 px labels were small on Zoom). */
 .dkb-tag-name {
-  font: 600 24px/1.25 var(--dk-font);
+  font: 600 28px/1.25 var(--dk-font);
   color: var(--dkb-print);
 }
 .dkb-tag-value {
-  font: 400 22px/1.3 var(--dk-mono);
+  font: 400 26px/1.3 var(--dk-mono);
   color: var(--dkb-print);
   opacity: 0.86;
 }
 .dkb-tag-lines li[data-set] .dkb-tag-value {
-  font: 600 30px/1.25 var(--dk-font);
+  font: 600 32px/1.22 var(--dk-font);
   opacity: 1;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -11853,20 +12270,20 @@ button.dkb-clip-name:focus-visible {
 }
 .dk-canvas[dir="rtl"] :is(.dkb-tag-name, .dkb-tag-value) {
   font-family: var(--dk-font-ar);
-  line-height: 1.5;
+  line-height: 1.4;
 }
 .dkb-tag-foot {
   margin-top: auto;
-  padding-top: 16px;
+  padding-top: 18px;
   border-top: 2px solid var(--dkb-rule-strong);
-  font: 500 24px/1.2 var(--dk-font);
+  font: 500 28px/1.2 var(--dk-font);
   color: var(--dkb-print);
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 .dkb-tag-rest {
-  font: 400 22px/1.3 var(--dk-mono);
+  font: 400 26px/1.3 var(--dk-mono);
   color: var(--dkb-print-2);
 }
 .dk-canvas[dir="rtl"] :is(.dkb-tag-foot, .dkb-tag-rest) {
@@ -11927,7 +12344,7 @@ button.dkb-clip-name:focus-visible {
   stroke-linecap: round;
   stroke-dasharray: 300;
   animation: dkb-string calc(var(--dkb-t-tape) * 2 * var(--dk-m)) var(--dk-ease) both;
-  animation-delay: calc((var(--dkb-t-lead) + 2 * var(--dk-t-step)) * var(--dk-m));
+  animation-delay: calc((var(--dkb-t-lead) + 2 * var(--dkb-t-step)) * var(--dk-m));
 }
 .dkb-client-card {
   justify-content: center;
@@ -11976,31 +12393,42 @@ button.dkb-clip-name:focus-visible {
 .dk-canvas[dir="rtl"] .dkb-learn {
   transform-origin: 100% 50%;
 }
-/* The roll it comes off: at the strip's start on stop 1; on stop 2 it
-   rolls along the line as the tape unrolls behind it, and is gone at its
-   end (transform and opacity). */
+/* The roll it comes off: only for the unroll, the step from the first
+   stop to the second (score round 2 of the design pass: parked at the
+   strip's start from the first stop, it meant nothing yet). It rolls
+   along the line as the tape unrolls behind it and is gone at its end; at
+   rest, and in a still shot, it is gone. */
 .dkb-learn-roll {
   z-index: 2;
   pointer-events: none;
   border-radius: 50%;
-  background: radial-gradient(circle, var(--dkb-wall) 0 22%, var(--dkb-kraft-edge, #a6865c) 22% 27%, var(--dkb-kraft) 27% 100%);
+  background: radial-gradient(circle, var(--dkb-wall) 0 22%, var(--dkb-kraft-edge) 22% 27%, var(--dkb-kraft) 27% 100%);
   box-shadow: var(--dkb-shadow-chip), inset 0 0 0 3px var(--dkb-band);
   transform: translateY(-2px);
-  translate: calc((1680px - 96px) * var(--dkb-flip)) 0;
   opacity: 0;
-  transition:
-    translate calc(var(--dkb-t-assemble) * var(--dk-m)) var(--dk-ease),
-    opacity calc(var(--dkb-t-tape) * 0.6 * var(--dk-m)) var(--dk-ease) calc(var(--dkb-t-assemble) * 0.8 * var(--dk-m));
-  animation: dkb-fade calc(var(--dkb-t-pin) * var(--dk-m)) var(--dk-ease) backwards;
-  animation-delay: calc((var(--dkb-t-lead) + 5 * var(--dk-t-step)) * var(--dk-m));
+  animation: dkb-roll calc(var(--dkb-t-assemble) * var(--dk-m)) var(--dk-ease);
 }
-.dkb-learn-roll[data-rolled] {
-  translate: 0 0;
-  opacity: 1;
-  transition: none;
+@keyframes dkb-roll {
+  from {
+    opacity: 1;
+    translate: 0 0;
+  }
+  86% {
+    opacity: 1;
+    translate: calc((1680px - 96px) * var(--dkb-flip)) 0;
+  }
+  to {
+    opacity: 0;
+    translate: calc((1680px - 96px) * var(--dkb-flip)) 0;
+  }
 }
 .dkb-learn[data-rolled] {
   scale: 0 1;
+}
+/* A second step before the unroll ends lands the tape at once. */
+.dkb-learn[data-landed],
+.dkb-learn[data-landed] > * {
+  transition: none;
 }
 .dkb-learn > * {
   transition: opacity calc(var(--dkb-t-tape) * var(--dk-m)) var(--dk-ease) calc(var(--dkb-t-assemble) * 0.6 * var(--dk-m));
@@ -12186,6 +12614,16 @@ button.dkb-clip-name:focus-visible {
   font-family: var(--dk-font-ar);
   line-height: 1.5;
 }
+/* Set as their doc describes: "Aa" and their name in a serif wordmark,
+   the rest in the deck's Geist (score round 2 of the design pass). */
+.dkb-specimen[data-serif] :is(.dkb-aa, .dkb-spec-en) {
+  font-family: var(--dkb-face-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+.dkb-specimen[data-serif] .dkb-spec-en {
+  font-size: 30px;
+}
 /* Named colour chips, each a band of the colour with its name and code. */
 .dkb-palette {
   padding: 16px 16px 14px;
@@ -12305,6 +12743,18 @@ button.dkb-clip-name:focus-visible {
 .dkb-rule-card {
   padding: 18px 26px 18px;
   gap: 8px;
+}
+.dkb-rule-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* Nothing on the three lists yet: one card, each list a dashed chip
+   (score round 2 of the design pass: three empty boxes read as
+   textareas). */
+.dkb-rule-card[data-fold] {
+  padding: 24px 28px 26px;
+  gap: 22px;
 }
 .dkb-rule-card .dkb-card-label {
   font-size: 24px;
@@ -12450,31 +12900,31 @@ button.dkb-clip-name:focus-visible {
 .dk-canvas[dir="rtl"] .dkb-due {
   line-height: 1.4;
 }
-/* Will they be on camera: one amber sticky, the question and its four
-   answers written on it, theirs circled in pen (score round 1 of the
-   design pass: four radio cards with a teal ring). */
+/* Will they be on camera: a paper card, its four answers small paper
+   chips in a row, theirs circled in pen (score round 2 of the design
+   pass: four options on an amber card read as a radio question, and
+   amber is the client's to-do alone). */
+.dkb-camera-card {
+  padding: 30px 36px 32px;
+  gap: 18px;
+}
 .dkb-camera-head {
   font: 700 34px/1.15 var(--dk-font);
   letter-spacing: -0.01em;
+  color: var(--dkb-print);
 }
 .dk-canvas[dir="rtl"] .dkb-camera-head {
   line-height: 1.45;
   letter-spacing: 0;
 }
 .dkb-pen.dkb-camera {
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  justify-content: start;
-  gap: 18px 64px;
-  margin-top: 10px;
-  padding-inline-start: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 16px;
+  padding-inline-start: 4px;
 }
 .dkb-camera .dkb-pen-opt {
-  font-size: 30px;
-  color: var(--dkb-print-2);
-}
-.dkb-camera .dkb-pen-opt[data-picked] {
-  color: var(--dkb-print);
+  font-size: 24px;
 }
 
 /* ---- 13 · the read-back: the wall, full */
@@ -12556,6 +13006,29 @@ button.dkb-clip-name:focus-visible {
   font: 400 28px/1.35 var(--dk-font);
   min-width: 0;
 }
+/* Arabic: each value starts beside its label, whatever its own direction
+   (score round 2 of the design pass: English values sat at the row's far
+   end, 500 px from their labels). */
+.dk-canvas[dir="rtl"] .dkb-table :is(dd, .dkb-ruled) {
+  text-align: right;
+}
+/* A read-back part not written yet: the open frame holds its note, no
+   paper (score round 2 of the design pass: a 960 x 580 white card held
+   one sticky). */
+.dkb-frame[data-holds] > .dkb-frame-holds {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 96px 36px 32px;
+}
+/* The read-back's offer not written yet: the cover's open frame, as tall
+   as the two frames beside it, its note in the middle. */
+.dkb-rb-col > .dkb-frame[data-holds] {
+  min-height: 580px;
+}
+.dkb-rb-col > .dkb-frame[data-holds] > .dkb-frame-holds {
+  flex: 1;
+}
 .dkb-table .dkb-ruled[data-size="line"] {
   --lh: 40px;
   font-size: 28px;
@@ -12634,7 +13107,7 @@ button.dkb-clip-name:focus-visible {
   }
 }
 .dkb-when {
-  padding: 32px 26px 22px;
+  padding: 40px 26px 22px;
   overflow: visible;
   transition: opacity calc(var(--dk-t-stage) * var(--dk-m)) var(--dk-ease);
   --dkb-t-pin: var(--dkb-t-peg);
@@ -12709,6 +13182,23 @@ button.dkb-clip-name:focus-visible {
 .dkb-call-card {
   z-index: 6;
   justify-content: center;
+}
+/* The launch call waiting under the line, an open frame with its name on
+   the felt (score round 2 of the design pass: a sunk card with big bold
+   words read as a disabled control). */
+.dkb-call-wait {
+  display: grid;
+  place-items: center;
+}
+.dkb-call-wait-name {
+  margin: 0;
+  font: 500 30px/1.3 var(--dk-font);
+  color: var(--dkb-vinyl-2);
+  animation: dkb-fade calc(var(--dkb-t-tape) * var(--dk-m)) var(--dk-ease) both;
+  animation-delay: calc((var(--dkb-t-lead) + var(--dkb-t-hint-at)) * var(--dk-m));
+}
+.dk-canvas[dir="rtl"] .dkb-call-wait-name {
+  line-height: 1.5;
 }
 .dkb-booked {
   margin: 0;
@@ -12839,16 +13329,16 @@ button.dkb-clip-name:focus-visible {
 
 /* ---- reduced motion and still shots: every Blueprint state set at once */
 @media (prefers-reduced-motion: reduce) {
-  .dk-root[data-deck="blueprint"] :is(.dkb-pin, .dkb-arrive, .dkb-tape, .dkb-strip, .dkb-parked li, .dkb-stamp, .dkb-hint, .dkb-line path, .dkb-road-join path, .dkb-fly, .dkb-map, .dkb-map i, .dkb-frame[data-assemble], .dkb-fan-edge, .dkb-swap > *, .dkb-ring path, .dkb-pen-tick path, .dkb-strings path, .dkb-strings circle, .dkb-sheet-back, .dkb-learn-roll) {
+  .dk-root[data-deck="blueprint"] :is(.dkb-pin, .dkb-arrive, .dkb-tape, .dkb-strip, .dkb-parked li, .dkb-stamp, .dkb-hint, .dkb-line path, .dkb-road-join path, .dkb-fly, .dkb-map, .dkb-map i, .dkb-frame[data-assemble], .dkb-fan-edge, .dkb-swap > *, .dkb-ring path, .dkb-pen-tick path, .dkb-strings path, .dkb-strings circle, .dkb-sheet-back, .dkb-learn-roll, .dkb-outline i, .dkb-call-wait-name, .dkb-strip[data-gone] > span, .dkb-parked[data-grown]) {
     animation: none;
   }
-  .dk-root[data-deck="blueprint"] :is(.dkb-when, .dkb-x, .dkb-tab, .dkb-learn, .dkb-learn > *, .dkb-card, .dkb-card::after, .dkb-sticky, .dkb-tag, .dkb-clip, .dkb-frame, .dkb-tabs, .dkb-tape, .dkb-learn-roll, [data-active], [data-dim]) {
+  .dk-root[data-deck="blueprint"] :is(.dkb-when, .dkb-x, .dkb-tab, .dkb-learn, .dkb-learn > *, .dkb-card, .dkb-card::after, .dkb-sticky, .dkb-tag, .dkb-clip, .dkb-frame, .dkb-tabs, .dkb-tape, .dkb-learn-roll, .dkb-price-row, .dkb-ruled-prompt, [data-active], [data-dim]) {
     transition: none;
   }
 }
-.dk-root[data-still][data-deck="blueprint"] :is(.dkb-pin, .dkb-arrive, .dkb-tape, .dkb-strip, .dkb-parked li, .dkb-stamp, .dkb-hint, .dkb-line path, .dkb-road-join path, .dkb-fly, .dkb-map, .dkb-map i, .dkb-frame[data-assemble], .dkb-fan-edge, .dkb-swap > *, .dkb-ring path, .dkb-pen-tick path, .dkb-strings path, .dkb-strings circle, .dkb-sheet-back, .dkb-learn-roll) {
+.dk-root[data-still][data-deck="blueprint"] :is(.dkb-pin, .dkb-arrive, .dkb-tape, .dkb-strip, .dkb-parked li, .dkb-stamp, .dkb-hint, .dkb-line path, .dkb-road-join path, .dkb-fly, .dkb-map, .dkb-map i, .dkb-frame[data-assemble], .dkb-fan-edge, .dkb-swap > *, .dkb-ring path, .dkb-pen-tick path, .dkb-strings path, .dkb-strings circle, .dkb-sheet-back, .dkb-learn-roll, .dkb-outline i, .dkb-call-wait-name, .dkb-strip[data-gone] > span, .dkb-parked[data-grown]) {
   animation: none;
 }
-.dk-root[data-still][data-deck="blueprint"] :is(.dkb-when, .dkb-tab, .dkb-learn, .dkb-learn > *, .dkb-card, .dkb-card::after, .dkb-sticky, .dkb-tag, .dkb-clip, .dkb-frame, .dkb-tabs, .dkb-tape, .dkb-learn-roll, [data-active], [data-dim]) {
+.dk-root[data-still][data-deck="blueprint"] :is(.dkb-when, .dkb-tab, .dkb-learn, .dkb-learn > *, .dkb-card, .dkb-card::after, .dkb-sticky, .dkb-tag, .dkb-clip, .dkb-frame, .dkb-tabs, .dkb-tape, .dkb-learn-roll, .dkb-price-row, .dkb-ruled-prompt, [data-active], [data-dim]) {
   transition: none;
 }

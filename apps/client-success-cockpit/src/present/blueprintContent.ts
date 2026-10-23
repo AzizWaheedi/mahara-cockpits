@@ -78,6 +78,19 @@ export const BP = {
   },
 
   legend: { en: "Amber cards are yours to do", ar: "البطاقات الصفرا عليكم" },
+
+  /**
+   * The wall's one way of saying "not answered yet" (score round 2 of the
+   * design pass: bare underlines, grey options and placeholder sentences
+   * read as a web form): a pencil note in the presenter's hand, with a
+   * pencil tick, on blank paper. Never a placeholder in grey.
+   */
+  prompt: {
+    together: { en: "We write this together", ar: "نكتبها مع بعض" },
+    now: { en: "We write this now", ar: "نكتبها الحين" },
+    pick: { en: "We pick it now", ar: "نختارها الحين" },
+    add: { en: "We add these together", ar: "نضيفها مع بعض" },
+  },
   /** The wall map's name, once, on slide 2 (score round 2: an unnamed glyph). */
   mapName: { en: "Your wall", ar: "جداركم" },
 
@@ -408,14 +421,6 @@ export const BP = {
       en: "How a project runs with you, first call to handover",
       ar: "كيف يمشي المشروع معكم، من أول مكالمة لين التسليم",
     },
-    /**
-     * What a method sounds like, pencilled on the first rule until the first
-     * keystroke: ours, so tagged Example (score round 3: seven blank rules).
-     */
-    sample: {
-      en: "A fixed price before we start, one person in charge, and a weekly update until handover.",
-      ar: "سعر ثابت قبل لا نبدي، وشخص واحد مسؤول، وتحديث أسبوعي لين التسليم.",
-    },
     clients: {
       en: "The clients you want more of",
       ar: "العملاء اللي تبون منهم أكثر",
@@ -456,6 +461,12 @@ export const BP = {
       en: "How our callers check it, when someone enquires",
       ar: "كيف يتأكد فريق الاتصال، لما أحد يستفسر",
     },
+    /**
+     * How they are paid, not said yet: a pencilled example of a split on
+     * blank paper, tagged Example (score round 2 of the design pass: two
+     * bare underlines read as a form field).
+     */
+    termsEg: { en: "30 / 40 / 30?", ar: "٣٠ / ٤٠ / ٣٠؟" },
     amount: { en: "Amount", ar: "المبلغ" },
     /** An empty amount's placeholder, in their currency (an example, so marked e.g.). */
     eg: { en: "e.g. {amount}", ar: "مثلاً {amount}" },
@@ -684,6 +695,12 @@ export const BP = {
     materialsExample: { en: "Example materials", ar: "خامات للتوضيح" },
     /** The type specimen, set in the deck's own faces, so always an example. */
     pairing: { en: "Example pairing", ar: "خطوط للتوضيح" },
+    /**
+     * The specimen set as their Brand DNA doc describes their type (a serif
+     * for the wordmark, Geist for text: score round 2 of the design pass,
+     * an example grotesque beside a doc that names a serif contradicted it).
+     */
+    pairingDoc: { en: "Set as your doc describes", ar: "على وصف ملف هويتكم" },
     /** What their Brand DNA doc says about type, under the specimen. */
     typeIn: { en: "In your doc: {type}", ar: "بملف هويتكم: {type}" },
     /** The label over their doc's own words about type, on a line of its own. */
@@ -836,10 +853,20 @@ export const BP = {
         en: "Launch call: your own ads, your form and our questions.",
         ar: "مكالمة الإطلاق: إعلاناتكم الخاصة، ونموذج إعلانكم، وأسئلتنا.",
       },
+      /**
+       * Not booked yet: the card is headed "Launch call", so its line says
+       * what the call is for, once (score round 2 of the design pass: "To
+       * book" over the card said what the booking card under it says).
+       */
+      launchOpen: {
+        en: "Your own ads, your form and our questions.",
+        ar: "إعلاناتكم الخاصة، ونموذج إعلانكم، وأسئلتنا.",
+      },
     },
     when: {
       ready: { en: "Once ready", ar: "أول ما يجهز" },
       tbd: { en: "To book", ar: "نحجزها" },
+      launch: { en: "Launch call", ar: "مكالمة الإطلاق" },
       hours: { en: "72 hours from now", ar: "خلال ٧٢ ساعة" },
     },
     callHead: { en: "Your launch call", ar: "مكالمة الإطلاق" },
@@ -1002,7 +1029,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
   },
   "first-ads": {
     say: [
-      "Stop 1: three example ads for their service, in phones. Open the real pack from your notes, in its own window, and share it.",
+      "Stop 1: three example ads for their service, pinned as prints. Open the real pack from your notes, in its own window, and share it.",
       "Get their yes on the slide: one tap on the approval.",
       "Stop 2: the part 1 sheet. Confirm the daily figure, where the ad sends people and whose Page it runs from, in your notes.",
       "Press Send to media before you leave this slide. The stamp lands on the sheet when the press is saved.",
@@ -1017,11 +1044,13 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
     say: [
       "A method, not an adjective. Type their words, not yours.",
       "Stop 1: the struck line is their own earlier line when the record has one, else an example of what everyone says. Ask how a project actually runs with them, from the first call to the handover. The clients they want more of sit beside it, from the onboarding form.",
+      "If they stall on the method, offer the example: a fixed price before we start, one person in charge, and a weekly update until handover. The slide shows only their own words.",
       "Stop 2: who they don't want.",
       "Stop 3: what most firms in their city can't do. If they say quality, ask for the proof.",
     ],
     sayAr: [
       "هالجملة الكل يقولها. أبي أسمع منكم: كيف يمشي المشروع معاكم من أول مكالمة لين التسليم؟",
+      "مثلاً: سعر ثابت قبل لا نبدي، وشخص واحد مسؤول، وتحديث أسبوعي لين التسليم.",
       "مين العملاء اللي تبون منهم أكثر؟ ومين اللي ما تبونهم؟",
       "شنو الشي اللي أغلب الشركات بمدينتكم ما تقدر تسويه؟",
     ],

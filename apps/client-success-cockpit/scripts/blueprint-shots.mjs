@@ -18,7 +18,7 @@
  * - no card, sheet, tag, sticky or tape runs into the foot's band: every
  *   bottom at y 960 or above (score round 1 of the design pass: Arabic
  *   cards ended at 990 to 998, on the logo, under the old 1004 line);
- * - the title's words keep 24 px from a print, the phones, the sheet, the
+ * - the title's words keep 24 px from a print, the ad prints, the sheet, the
  *   run sheet and the offer tag;
  * - the read-back's headline box holds its words (.dkb-feature);
  * - (score round 2: the run printed 0 hits over four cut or covered lines)
@@ -141,7 +141,7 @@ const measure = page =>
       if (bot > 961)
         hits.push(`ends at y ${Math.round(bot)}, past 960 (${el.className})`);
     }
-    // The title's words never come within 24 px of a print, the phones, the
+    // The title's words never come within 24 px of a print, the ad prints, the
     // sheet, the run sheet or the offer tag (score round 1: in Arabic slide
     // 5's print touched the title's second line). The words' own boxes, so
     // a short title is not held to its header's full width.
@@ -293,12 +293,11 @@ const textChecks = page =>
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const el = n.parentElement;
       if (!n.textContent.trim() || !el || !shown(el)) continue;
-      // The phones draw an app's own screen: its rows are clipped by design.
       // The fan's strips are turned by meaning, their names on each strip's
-      // free edge, so their boxes cross by design.
-      // The example pencilled on slide 6's sheet sits under the field it
-      // waits in, by design (the field takes the clicks).
-      if (el.closest(".dkb-ads, .dkb-fly, .dkb-fan, .dkb-ghost")) continue;
+      // free edge, so their boxes cross by design. Slide 5's ads are prints
+      // now (design pass, score round 2), so their words are checked as
+      // any paper's are.
+      if (el.closest(".dkb-fly, .dkb-fan")) continue;
       const range = document.createRange();
       range.selectNodeContents(n);
       let block = slide;

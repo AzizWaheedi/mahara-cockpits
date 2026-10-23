@@ -205,14 +205,19 @@ describe("the Brand Blueprint's wall (section 24)", () => {
       const v = token(n);
       return v === "var(--dk-t-arrive)" ? ms(token("--dk-t-arrive")) : ms(v);
     };
+    // The ordinary arrivals: the first piece lands at once, the last has
+    // settled by about 900 ms (score round 2 of the design pass: the wall
+    // stood empty for 150 ms after a press, and slide 11 took 1.3 s); the
+    // signature beats below keep their own, longer timings.
+    expect(t("--dkb-t-lead")).toBe(0);
     const last =
-      t("--dkb-t-lead") + Number(token("--dkb-i-max")) * t("--dk-t-step");
-    expect(last + t("--dkb-t-pin")).toBeLessThanOrEqual(1500);
+      t("--dkb-t-lead") + Number(token("--dkb-i-max")) * t("--dkb-t-step");
+    expect(last + t("--dkb-t-pin")).toBeLessThanOrEqual(900);
     expect(last + t("--dkb-t-tape-at") + t("--dkb-t-tape")).toBeLessThanOrEqual(
-      1500,
+      900,
     );
     expect(last + t("--dkb-t-hint-at") + t("--dkb-t-tape")).toBeLessThanOrEqual(
-      1500,
+      900,
     );
     expect(
       t("--dkb-t-lead") + 4 * t("--dkb-t-fan-step") + t("--dkb-t-fan"),

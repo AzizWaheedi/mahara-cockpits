@@ -158,10 +158,30 @@ function SentCard({ lang }: { lang: Lang }) {
   );
 }
 
-/** A plain line in the frame, where the form will be or could not be. */
-function FrameLine({ children }: { children: ReactNode }) {
+/**
+ * A plain line in the frame, where the form will be or could not be.
+ * `veil`: over the form while it opens, on the panel's own ground, so the
+ * two never show at once; `gone` once the form is ready, when the line
+ * fades out first and the form fades in after it (score round 2 of the
+ * Blueprint deck's design pass: the line crossfaded over the form's first
+ * question).
+ */
+function FrameLine({
+  children,
+  veil = false,
+  gone = false,
+}: {
+  children: ReactNode;
+  veil?: boolean;
+  gone?: boolean;
+}) {
   return (
-    <div className="dkc-kick-line">
+    <div
+      className="dkc-kick-line"
+      data-veil={veil ? "" : undefined}
+      data-gone={gone ? "" : undefined}
+      aria-hidden={gone || undefined}
+    >
       <p>{children}</p>
     </div>
   );
@@ -259,8 +279,11 @@ export function KickoffSlide({ ctx }: { ctx: SlideCtx }) {
             className="dkc-kick-then dkc-kick-steps"
             data-done={held ? "" : undefined}
           >
+            {/* On record, the steps are already under way: said in the
+                past (score round 2 of the design pass: "Once it's sent"
+                headed steps that were done). */}
             <p className="dkc-kick-steps-head">
-              {t(O.kickoff.stepsHead, lang)}
+              {t(held ? O.kickoff.stepsHeadDone : O.kickoff.stepsHead, lang)}
             </p>
             <ol>
               {O.kickoff.steps.map((s, n) => (
@@ -564,18 +587,18 @@ function KickoffReady({
         />
       ) : (
         <>
-          {/* Typeform's form is English: its frame keeps its own direction. */}
+          {/* Typeform's form is English: its frame keeps its own direction.
+              It shows only once ready, after the opening line has gone. */}
           <div
             ref={m.box}
             className="dkc-kick-form"
             dir="ltr"
             data-form-frame
+            data-ready={m.ready ? "" : undefined}
           />
-          {m.ready ? null : (
-            <FrameLine>
-              {t(m.slow ? O.kickoff.away : O.kickoff.opening, lang)}
-            </FrameLine>
-          )}
+          <FrameLine veil gone={m.ready}>
+            {t(m.slow ? O.kickoff.away : O.kickoff.opening, lang)}
+          </FrameLine>
           {/* Typeform's own ending ("The client will receive their summary
               shortly.") is never what the client reads: the deck's sent
               card covers it. */}

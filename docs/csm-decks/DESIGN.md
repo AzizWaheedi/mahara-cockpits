@@ -6340,7 +6340,9 @@ anyway; until now it lived in the CSM's own tab, then in the kickoff window
   400 px gap). The lines swap (`--dk-t-swap`) when the form is sent or found
   on record; once sent the column keeps only its line ("Done. Your answers
   are with our team."), since the frame's card says what happens next.
-- **The frame**, x 816 to 1784, y 112 to 936: `--dk-panel`, a 1 px
+- **The frame**, x 816 to 1784, y 112 to 852 (its foot on the column's
+  last rule; score round 2 of the Blueprint deck's design pass: navy stood
+  empty under the form): `--dk-panel`, a 1 px
   `--dk-line-strong` edge, radius 20, no shadow, no tilt, no texture. Its
   head (76 px): the client's name 24/600 ink (score round 1 of the Blueprint
   deck's design pass: the mono "Kickoff form" before it read as a window's
@@ -6355,16 +6357,23 @@ anyway; until now it lived in the CSM's own tab, then in the kickoff window
   ruled rows, label 24/500 ink-2 at 320 px, value 30/500 ink: the service
   (its name from the five), the Page name (as typed, `<bdi>`), starter ads.
   `recordRows` keeps to these three; the money, the card and the sale never
-  reach the canvas. The panel is as tall as what it reads back, its middle on
-  the column's (`data-held`: `height: fit-content`, `margin-block: auto`
-  between y 112 and 936), and the column keeps the three "Once it's sent"
-  steps, each ticked with the done mark, then "Want to change an answer?
-  Tell us in your WhatsApp group." (score round 1 of the Blueprint deck's
-  design pass: 280 px of empty panel under the rows, and the column empty
-  under one line).
+  reach the canvas. The panel is as tall as what it reads back, its top on
+  the column's line under the title (`data-held`: `height: fit-content`,
+  top y 298, 306 in Arabic; score round 2 of the Blueprint deck's design
+  pass: set in the middle, its top lined up with nothing), and the column
+  keeps the three steps, each ticked with the done mark, under "Now it's
+  in" / «وصلنا، والحين» (score round 2: "Once it's sent" headed steps
+  already done), then "Want to change an answer? Tell us in your WhatsApp
+  group." (score round 1 of the Blueprint deck's design pass: 280 px of
+  empty panel under the rows, and the column empty under one line).
 - **Plain lines** in the body, 30 ink-2, centred: "Opening your kickoff
   form", or "We'll open your kickoff form from our side." when the record
-  cannot be read, the card is unread or the form does not load.
+  cannot be read, the card is unread or the form does not load. While the
+  form opens the line lies on the panel's own ground over it, and the form
+  is hidden; once Typeform is ready the line fades out (`--dk-t-swap`) and
+  only then the form fades in, never the two at once (score round 2 of the
+  Blueprint deck's design pass: the line crossfaded over the form's first
+  question).
 - **Once sent**, a card covers Typeform's own ending: the done mark at
   64 px, "Next: we pick the time for your Brand Blueprint call" (40/600),
   and what our team does now (32 ink-2). "Sent" is said once, in the head.

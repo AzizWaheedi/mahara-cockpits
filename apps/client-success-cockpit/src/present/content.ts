@@ -813,6 +813,8 @@ export const O = {
      * Blueprint deck: one sentence left the column's lower half empty).
      */
     stepsHead: { en: "Once it's sent", ar: "أول ما ينرسل" },
+    /** On record already: the same steps, under way (score round 2 of the design pass). */
+    stepsHeadDone: { en: "Now it's in", ar: "وصلنا، والحين" },
     steps: [
       {
         en: "Our team starts on your setup.",
