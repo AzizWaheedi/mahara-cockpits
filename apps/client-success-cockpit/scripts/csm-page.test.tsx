@@ -1545,7 +1545,8 @@ test("the Ads tab shows the ads read only, and Results links to it", async () =>
     const parts = [
       ...host.querySelectorAll('nav[aria-label="On this tab"] a'),
     ].map(a => a.getAttribute("href"));
-    expect(parts.slice(0, 3)).toEqual([
+    expect(parts.slice(0, 4)).toEqual([
+      "#results-feedback",
       "#results-numbers",
       "#results-calls",
       "#results-ads",
