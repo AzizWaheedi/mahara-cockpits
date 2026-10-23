@@ -154,7 +154,8 @@ function video(
     ],
   };
   return {
-    deck,
+    // The video slots are the CSM decks' only.
+    deck: deck as VideoRow["deck"],
     slotKey,
     lang,
     provider,

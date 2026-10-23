@@ -29,7 +29,12 @@ import {
   storyUrl,
   warmExamples,
 } from "./examples";
-import { defaultPhones, PHONES, type PhoneKey } from "./launchData";
+import {
+  defaultPhones,
+  PHONES,
+  type PhoneKey,
+  starterTag,
+} from "./launchData";
 import type { Identity } from "./mockups/Identity";
 import { FbFeed, IgFeed, Phone, phoneWidth, ReelStory } from "./mockups/Phones";
 import { Logo, type PlatformMark } from "./platforms";
@@ -814,7 +819,7 @@ export function PhoneRow({
   // the clipped phone area, so it can sit over the phone's top edge.
   const tag =
     focus && focused?.starter
-      ? t(SHARED.tag.starter, lang)
+      ? starterTag(ctx.d.launch, lang)
       : focus && focused?.from === "example" && !model.example
         ? t(EXAMPLE.tag, lang)
         : null;

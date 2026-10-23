@@ -68,6 +68,33 @@ export function AuthenticatedRoutes() {
             <Route path="/invoices" element={<InvoicesPage />} />
           </Route>
         </Route>
+        {/* The Brand Blueprint call (docs/brand-blueprint/SPEC.md 4.7): the
+            creative director presents it, the CSM reads it. Its static
+            segment outranks :deck below, so the onboarding and launch decks
+            stay CSM-only; cockpit_blueprint_gate_for_actor decides who may
+            write. */}
+        <Route element={<RoleRoute anyOf={["csm", "creative"]} />}>
+          <Route
+            path="/clients/:key/present/blueprint"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <PresentPage deck="blueprint" />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
+          <Route
+            path="/clients/:key/present/blueprint/notes"
+            element={
+              <DeckRouteBoundary>
+                <Suspense fallback={null}>
+                  <PresentPage deck="blueprint" notes />
+                </Suspense>
+              </DeckRouteBoundary>
+            }
+          />
+        </Route>
         {/* The client decks (CSM decks, 2026-10-19): the CSM seat only, and
             outside AppLayout, so no sidebar, HermesChat or Cmd+K can take
             focus while the deck is shared on a call. */}

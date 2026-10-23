@@ -7,7 +7,8 @@
  * blocked-roster | blocked-identity | unreadable | unread; sharing=1;
  * rehearse=1; theme=light). state=panel and state=panel-sent draw the
  * client page's Onboarding panel before and after a kickoff sent from the
- * window (KICKOFF.md 1, step 10).
+ * window (KICKOFF.md 1, step 10); bp=none|sent|closed|locked|make gives the
+ * panel a Brand Blueprint record (docs/brand-blueprint SPEC.md 6.1).
  *
  * Typeform is a stand-in drawn here: no Typeform page loads and nothing is
  * submitted anywhere. Its "submit" only calls the panel's own handler, and
@@ -276,9 +277,30 @@ function Harness() {
   );
 }
 
+/** A Brand Blueprint record for the panel's line, held in this page. */
+function blueprintStandIn(state: string | null) {
+  if (!state) return undefined;
+  const at = (minutesAgo: number) =>
+    new Date(Date.parse(NOW) - minutesAgo * 60_000).toISOString();
+  const parts =
+    state === "none"
+      ? null
+      : {
+          "1": { firstAt: at(48) },
+          ...(state === "sent" ? {} : { "2": { firstAt: at(16) } }),
+          ...(state === "locked" ? { "3": { firstAt: at(2) } } : {}),
+        };
+  return async () => ({
+    parts,
+    closeRoute: state === "make" ? "make" : "card_only",
+    now: NOW,
+  });
+}
+
 /** The client page's Onboarding panel, before and after a cockpit send. */
 function PanelHarness() {
   const kit = fixtureRow();
+  const blueprintRead = useMemo(() => blueprintStandIn(params.get("bp")), []);
   const sent = scenario === "panel-sent" ? fixtureSend({ sentAt: NOW }) : null;
   return (
     <div className="min-h-dvh bg-background p-6 text-foreground">
@@ -296,6 +318,7 @@ function PanelHarness() {
           refreshing={false}
           onRefresh={() => {}}
           kickSend={sent}
+          blueprintRead={blueprintRead}
         />
       </div>
       <Toaster />

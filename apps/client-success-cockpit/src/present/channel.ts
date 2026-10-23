@@ -140,7 +140,54 @@ export type DeckMessage =
   /** A Drive link was sent from one window: the others read the imports at once. */
   | { type: "drive" }
   /** The deck window closed (pagehide): the notes window shows the recap. */
-  | { type: "closed" };
+  | { type: "closed" }
+  /**
+   * The Brand Blueprint (docs/brand-blueprint/SPEC.md 2.4, 3.1): an answer
+   * typed in one window shows in the others at once; a confirmed save
+   * tells them what the server now holds; a press says how it is going
+   * (the deck's Part 1 stamp fires only on this call's "queued"); a
+   * conflict is shown where the creative director can settle it.
+   */
+  | { type: "bp-set"; key: string; value: unknown }
+  | {
+      type: "bp-saved";
+      values: Record<string, unknown>;
+      revision: number | null;
+    }
+  | {
+      type: "bp-part";
+      part: 1 | 2 | 3;
+      phase: BpPhase;
+      at: string;
+      requestId?: string | null;
+      lines?: string[];
+      error?: string | null;
+      result?: unknown;
+      presses?: number;
+      firstAt?: string | null;
+      sent?: Record<string, unknown>;
+    }
+  | {
+      type: "bp-conflict";
+      key: string;
+      theirs: unknown;
+      mine: unknown;
+      by: string | null;
+      at: string | null;
+    }
+  /** Before a press: every window sends what it still holds, then says so. */
+  | { type: "bp-flush"; id: string }
+  /** `ok` is false when that window still holds answers it could not save. */
+  | { type: "bp-flushed"; id: string; ok?: boolean };
+
+/** A press's run, as the notes window and the deck show it. */
+export type BpPhase =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "rehearsed"
+  | "reconcile";
 
 export type VideoPhase =
   | "loading"

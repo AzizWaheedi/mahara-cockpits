@@ -1,12 +1,13 @@
 import {
-  ArrowUpRight,
   Check,
   ChevronRight,
   Copy,
+  Presentation,
   RefreshCw,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton, MainContact } from "@/components/ClientCheckIn";
 import { Chip, Dot, ExtLink, Kicker, type Tone } from "@/components/kit";
 import { PortalTasksButton } from "@/components/PortalTasks";
@@ -21,6 +22,15 @@ import {
 import type { FormSend } from "@/forms/formConfig";
 import { kickoffCardDone, sendLine } from "@/forms/formStatus";
 import { FillFormButton } from "@/forms/OpenFormButton";
+import {
+  type BlueprintStatus,
+  blueprintDone,
+  blueprintLine,
+  blueprintPrepUrl,
+  blueprintPrepWindow,
+  phase5Copy,
+  readBlueprintStatus,
+} from "@/lib/blueprintStatus";
 import { shortDay } from "@/lib/format";
 import {
   type FormEntry,
@@ -31,7 +41,7 @@ import {
   stepOf,
 } from "@/lib/onboardingCore";
 import { cn } from "@/lib/utils";
-import { PresentDeckLinks } from "@/present/PresentButton";
+import { openNamed, PresentDeckLinks } from "@/present/PresentButton";
 
 /**
  * One client's onboarding, in the order it happens (Aziz, 2026-10-05: "the
@@ -104,7 +114,7 @@ function Item({
         {label}
       </div>
       {status ? (
-        <div className="mt-0.5 pl-3 text-xs text-muted-foreground">
+        <div className="mt-0.5 pl-3 text-xs text-pretty text-muted-foreground">
           {status}
         </div>
       ) : null}
@@ -144,6 +154,78 @@ function CopyLink({ url, children }: { url: string; children: ReactNode }) {
       onClick={() => {
         navigator.clipboard.writeText(url).then(
           () => toast.success("Link copied, send it from WhatsApp"),
+          () =>
+            toast.error(
+              "The copy did not work. Open the card and copy it there.",
+            ),
+        );
+      }}
+      className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+    >
+      <Copy aria-hidden className="size-3.5 shrink-0" />
+      {children}
+    </button>
+  );
+}
+
+/**
+ * The Brand Blueprint for one card (SPEC 6.1): undefined while reading, an
+ * error sentence when the read failed. A CSM reads it; only the creative
+ * director's presses change it.
+ */
+function useBlueprintStatus(
+  taskId: string,
+  read?: (taskId: string) => Promise<BlueprintStatus>,
+  /** Goes up with each Refresh press, so the line is read again with the card. */
+  again = 0,
+): BlueprintStatus | { error: string } | undefined {
+  const auth = useCockpitAuth();
+  const [state, setState] = useState<
+    BlueprintStatus | { error: string } | undefined
+  >(undefined);
+  // `again` is the Refresh press: it only makes the read run once more.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: again re-runs the read
+  useEffect(() => {
+    const client = auth.client;
+    const reader =
+      read ?? (client ? (id: string) => readBlueprintStatus(client, id) : null);
+    if (!reader) return;
+    let gone = false;
+    setState(undefined);
+    (async () => {
+      try {
+        const s = await reader(taskId);
+        if (!gone) setState(s);
+      } catch (e) {
+        if (!gone)
+          setState({ error: e instanceof Error ? e.message : String(e) });
+      }
+    })();
+    return () => {
+      gone = true;
+    };
+  }, [taskId, read, auth.client, again]);
+  return state;
+}
+
+function CopyText({
+  text,
+  children,
+  done,
+  title,
+}: {
+  text: string;
+  children: ReactNode;
+  done: string;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={() => {
+        navigator.clipboard.writeText(text).then(
+          () => toast.success(done),
           () =>
             toast.error(
               "The copy did not work. Open the card and copy it there.",
@@ -220,6 +302,7 @@ export function OnboardingKit({
   refreshing,
   onRefresh,
   kickSend = null,
+  blueprintRead,
 }: {
   client: Client;
   /** undefined while loading, null when the table has no row for the card. */
@@ -233,8 +316,12 @@ export function OnboardingKit({
    * read once by the client page so its header agrees with this panel.
    */
   kickSend?: FormSend | null;
+  /** The harness's and the tests' stand-in for cockpit_blueprint_read. */
+  blueprintRead?: (taskId: string) => Promise<BlueprintStatus>;
 }) {
   const [reading, setReading] = useState<Reading | null>(null);
+  const [bpAgain, setBpAgain] = useState(0);
+  const bp = useBlueprintStatus(client.taskId, blueprintRead, bpAgain);
   const track = kit ? kit.in_onboarding : client.bucket === "onboarding";
   const step: Step | null = track ? stepOf(kit ?? { forms: {} }) : null;
   const order: Step[] = ["before", "call", "after"];
@@ -300,7 +387,10 @@ export function OnboardingKit({
         <Button
           size="sm"
           variant="ghost"
-          onClick={onRefresh}
+          onClick={() => {
+            setBpAgain(n => n + 1);
+            onRefresh();
+          }}
           disabled={refreshing}
         >
           <RefreshCw
@@ -566,53 +656,84 @@ export function OnboardingKit({
                 </ExtLink>
               ) : null}
             </Item>
-            <Item
-              tone={
-                f.blueprint
-                  ? "good"
-                  : !live && links.blueprint_form
-                    ? "warn"
-                    : "neutral"
-              }
-              label="Brand Blueprint form"
-              status={
-                filled(f.blueprint) ??
-                (live
-                  ? "Not on record"
-                  : links.blueprint_form
-                    ? "Not filled yet."
-                    : "Appears on the card after the kickoff form.")
-              }
-            >
-              {f.blueprint ? (
-                <Read
-                  onClick={() =>
-                    setReading({
-                      kind: "form",
-                      title: `${client.name}, Brand Blueprint`,
-                      entry: f.blueprint as FormEntry,
-                    })
+            {(() => {
+              const status = bp && !("error" in bp) ? bp : null;
+              const copy = status
+                ? phase5Copy({
+                    taskId: client.taskId,
+                    clientName: client.name,
+                    status,
+                    links,
+                  })
+                : null;
+              const started = Boolean(status?.parts);
+              return (
+                <Item
+                  tone={
+                    status?.parts
+                      ? blueprintDone(status.parts)
+                        ? "good"
+                        : "accent"
+                      : f.blueprint
+                        ? "good"
+                        : "neutral"
+                  }
+                  label="Brand Blueprint"
+                  status={
+                    bp === undefined
+                      ? "Reading the Blueprint…"
+                      : "error" in bp
+                        ? `The Blueprint could not be read: ${bp.error}`
+                        : status?.parts || !f.blueprint
+                          ? blueprintLine(bp)
+                          : `${filled(f.blueprint)} on the Typeform, before the call deck.`
                   }
                 >
-                  Read it
-                </Read>
-              ) : step === "after" && links.blueprint_form ? (
-                <Button size="sm" asChild>
-                  <a
-                    href={links.blueprint_form}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open the blueprint form
-                    <ArrowUpRight aria-hidden />
-                  </a>
-                </Button>
-              ) : !live && links.blueprint_form ? (
-                <ExtLink href={links.blueprint_form}>
-                  Open the blueprint form
-                </ExtLink>
-              ) : null}
-            </Item>
+                  {f.blueprint ? (
+                    <Read
+                      onClick={() =>
+                        setReading({
+                          kind: "form",
+                          title: `${client.name}, Brand Blueprint`,
+                          entry: f.blueprint as FormEntry,
+                        })
+                      }
+                    >
+                      Read it
+                    </Read>
+                  ) : null}
+                  {!live || started ? (
+                    <button
+                      type="button"
+                      title="Opens the Blueprint's prep view, read only for you"
+                      onClick={() =>
+                        openNamed(
+                          blueprintPrepUrl(client.taskId),
+                          blueprintPrepWindow(client.taskId),
+                        )
+                      }
+                      className="inline-flex items-center gap-1 text-primary underline-offset-4 hover:underline"
+                    >
+                      <Presentation aria-hidden className="size-3.5 shrink-0" />
+                      Open the Blueprint deck
+                    </button>
+                  ) : null}
+                  {copy ? (
+                    <CopyText
+                      text={copy.text}
+                      title={copy.note ?? "The same text as the card comment"}
+                      done={
+                        copy.note
+                          ? "Map link copied. Send it with the usual phase 5 message."
+                          : "Copied, paste it in their WhatsApp group"
+                      }
+                    >
+                      {copy.label}
+                    </CopyText>
+                  ) : null}
+                </Item>
+              );
+            })()}
             {live ? null : (
               <Item tone="neutral" label="Blueprint and launch calls">
                 <BookCallButton
@@ -648,7 +769,7 @@ export function OnboardingKit({
                   <ExtLink href={links.brand_dna}>Brand DNA</ExtLink>
                 ) : null}
                 {links.offer_sheet ? (
-                  <ExtLink href={links.offer_sheet}>Offer cheat sheet</ExtLink>
+                  <ExtLink href={links.offer_sheet}>Offer sheet</ExtLink>
                 ) : null}
               </Item>
             ) : null}

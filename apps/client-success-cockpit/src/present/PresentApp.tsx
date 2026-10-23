@@ -12,6 +12,7 @@ import { NotesWindow } from "./NotesWindow";
 import { PrepView } from "./PrepView";
 import { openNamed } from "./PresentButton";
 import type { DeckKind } from "./sources";
+import { useBlueprint } from "./useBlueprint";
 import { type DeckIO, useDeckModel } from "./useDeckModel";
 
 /**
@@ -78,13 +79,31 @@ export function PresentApp({
    */
   kickoff?: KickoffPort;
 }) {
+  // The Brand Blueprint's answers and parts, on its own deck only. A
+  // rehearsal is asked by the address and allowed by the seat (admins and
+  // the CEO): answers stay in memory and each press shows its plan. Its
+  // windows talk on their own channel, so a rehearsal never reaches (or
+  // saves through) a real window of the same client.
+  const [rehearseAsked] = useState(
+    () => new URLSearchParams(window.location.search).get("rehearse") === "1",
+  );
   const model = useDeckModel({
     taskId,
     deck,
     io,
-    hubName: channelName(taskId, deck),
+    hubName: `${channelName(taskId, deck)}${rehearseAsked ? ":rehearse" : ""}`,
   });
   const [still] = useState(prefersStill);
+  const bp = useBlueprint({
+    enabled: deck === "blueprint",
+    taskId,
+    loaded: model.loaded,
+    d: model.data,
+    io: io.blueprint,
+    hub: model.hub,
+    rehearseAsked,
+    now: io.now,
+  });
   const [closed, setClosed] = useState(false);
   const all = useMemo(() => DECKS[deck](), [deck]);
   const d = model.data;
@@ -93,7 +112,7 @@ export function PresentApp({
     [all, d, model.prep, deck],
   );
 
-  const notesName = `mahara-notes-${taskId}-${deck}`;
+  const notesName = `mahara-notes-${taskId}-${deck}${rehearseAsked ? "-rehearse" : ""}`;
   const openNotes = useCallback(
     () => openWindow(urls.notes, notesName, "popup,width=520,height=820"),
     [urls.notes, notesName],
@@ -186,6 +205,7 @@ export function PresentApp({
   const base = {
     ...baseCtx(model, d, deck, still, view === "present"),
     ads: { add: addFiles },
+    ...(deck === "blueprint" ? { bp } : {}),
     // On the shared deck the live layer draws the kickoff's frame; until
     // its guard has read the client, the record says what is filled.
     ...(live
@@ -234,7 +254,10 @@ export function PresentApp({
           other: urls.other,
           present: () => {
             void model.flush();
-            openWindow(urls.deck, `mahara-deck-${taskId}-${deck}`);
+            openWindow(
+              urls.deck,
+              `mahara-deck-${taskId}-${deck}${rehearseAsked ? "-rehearse" : ""}`,
+            );
           },
         }}
       />

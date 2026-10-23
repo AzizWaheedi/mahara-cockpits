@@ -984,6 +984,13 @@ shows progress, and counts add nothing on a call.
    built; Make's card link is 4,783), above the 3,168 proven so far.
 4. **The guard.** Open the window for a client with a kickoff (z8xmdvh0k9),
    see the warning, and do not open the second kickoff.
+4a. **The deck's last slide, scaled** (score round 1 of the Blueprint deck,
+   2026-10-23: the harness stand-in cannot test typing inside the deck's
+   scaled canvas). Present the onboarding deck at 1366 x 768 (a laptop
+   share), open its kickoff stop with `?rehearse=1` (Typeform's sandbox), and
+   check that a field takes typing and focus where it is clicked, a long
+   choice list scrolls inside the frame, and the deck's keys do not move the
+   slide while a field has focus. Do not press Submit.
 5. **The one-card refresh.** Press Refresh on one client's Onboarding panel,
    then check with `sq.py` that a new `cockpit_client_onboarding_runs` row has
    `trigger='one'` and `ok=true`, and that it has an audit row. This writes

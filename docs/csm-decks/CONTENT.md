@@ -372,13 +372,13 @@ Eight slides since 2026-10-22, about 30 minutes of a 45 to 60 minute call: about
 - The line under it, by state:
   - their onboarding answers on record: "Your details are already in, from your onboarding form. We check them together, then send it."
   - none on record: "We fill it in together, now."
-  - sent on this call: "It's sent. Next, we pick the time for your Brand Blueprint call."
+  - sent on this call: "Done. Your answers are with our team." (score round 1 of the Blueprint deck, 2026-10-23: "sent" was said three times; the frame's head keeps "Sent at {time}" and its card says what is next)
   - on record already: "We already have it, so there's nothing to fill in now."
-- At the column's foot, over a hairline, by state: "Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group." Sent: "Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group." On record: "Want to change an answer? Tell us in your WhatsApp group."
-- The frame: "Kickoff form" and {client.name} in its head; inside it, the kickoff form itself (Typeform's own `tG7dnxBn`, its words are Typeform's). Once Typeform has the response, the head says "Sent at {time}" with a tick. In rehearsal (admins and the CEO, `?rehearse=1`): "Rehearsal: nothing is sent".
+- Right under the line, over a hairline (the column reads top down; pinned to the foot it left a 400 px gap), by state: "Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group." On record: "Want to change an answer? Tell us in your WhatsApp group." Sent: nothing here; the frame's card says it.
+- The frame: "Kickoff form" and {client.name} in its head; inside it, the kickoff form itself (Typeform's own `tG7dnxBn`, its words are Typeform's). Once Typeform has the response, the head says "Sent at {time}" with a tick, and a card covers Typeform's own ending: the tick, "Next: we pick the time for your Brand Blueprint call", and "Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group." In rehearsal (admins and the CEO, `?rehearse=1`): "Rehearsal: nothing is sent".
 - While the form opens: "Opening your kickoff form". When it cannot open here (the record unreadable, the card unread, the form not loading): "We'll open your kickoff form from our side." The CSM opens the kickoff window from the notes.
 - On record already, in the frame instead of a form: "Kickoff on record", "Filled on {date}", then their own answers about their ads, and nothing else: "The service we advertise" (the five main services' names), "Your Page name", "Starter ads" ("Approved", "You see them first", "Your own ads first"). Never the daily spend, the payment, the contract, the recording, the close rate or the earlier enquiries (copy rule 3).
-- At the foot, the call's checklist ("Today", the three items), its third, "Blueprint call", the slide's own. The form's Submit ticks it.
+- At the foot, the call's checklist ("Today", the three items), its third, "Blueprint call", the slide's own. The form's Submit ticks it, and until the Blueprint call is booked or held the ticked item reads "Kickoff sent" (never as if the call were booked).
 
 **Slots:** `kit.forms.kickoff` (on record: the read-back), `kit.forms.onboarding` (which line), `client.name`, the send's time (this call's Submit).
 
@@ -387,7 +387,7 @@ Eight slides since 2026-10-22, about 30 minutes of a 45 to 60 minute call: about
 - Their onboarding answers are read back in the form's first groups. Ask them to check each one as you go.
 - The service: the one they chose on slide 4. The rest of the form's order is below, each with where it came from.
 - At the end, copy the call recording link and the payment amount from below into the last two questions, then press Submit with them.
-- Once it's sent, the checklist ticks the Blueprint call. Press Book the Brand Blueprint call (the form's last screen, or below) and pick the time with them.
+- Once it's sent, the checklist ticks "Kickoff sent". Press Book the Brand Blueprint call (the form's last screen, or below) and pick the time with them.
 - If the slide says Kickoff on record, don't send another. Read what was filled below, and fix a wrong answer in Typeform's results.
 - **Temp check:** "Anything in the form you'd like to change before we send it?"
 

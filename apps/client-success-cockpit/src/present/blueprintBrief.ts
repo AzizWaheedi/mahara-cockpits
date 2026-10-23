@@ -112,11 +112,12 @@ export interface BlueprintPayload {
 
 // ------------------------------------------------------------------ labels
 
+/** The five main services, as the deck's slides name them (content.ts SERVICES). */
 export const SERVICE_LABEL: Record<string, string> = {
   "design-build": "Design and build",
   interior: "Interior design",
-  architecture: "Architecture",
-  fitout: "Fit-out",
+  architecture: "Architectural design",
+  fitout: "Fit-out and renovation",
   construction: "Construction",
 };
 

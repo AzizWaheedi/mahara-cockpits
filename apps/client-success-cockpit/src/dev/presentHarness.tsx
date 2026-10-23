@@ -6,7 +6,10 @@
  * parts | drive; still=1 for no motion; drive=<scenario> for the Drive box,
  * src/dev/deck/driveFixtures.ts; kickoff=<scenario> for the onboarding
  * deck's last slide, src/dev/deck/kickoffFixtures.ts, with Typeform's
- * stand-in, and rehearse=1 for its sandbox). Saves and uploads stay in
+ * stand-in, and rehearse=1 for its sandbox; deck=blueprint for the Brand
+ * Blueprint call, with fixture=full|sparse|nokickoff|two|declined|nopack|arabic and
+ * bp=open|part1|sent|closed|locked, src/dev/deck/blueprintFixtures.ts, and
+ * rehearse=1 for its plan-only presses). Saves and uploads stay in
  * memory (an upload pretends to take a second and a half); nothing is sent
  * anywhere and no form loads or submits.
  *
@@ -28,6 +31,13 @@ import {
   VideoSaveError,
 } from "@/present/sources";
 import type { DeckIO } from "@/present/useDeckModel";
+import {
+  BP_NOW,
+  type BpFixture,
+  type BpState,
+  blueprintLoaded,
+  fakeBlueprintIO,
+} from "./deck/blueprintFixtures";
 import { DriveSheet } from "./deck/DriveSheet";
 import { fakeDrive, HARNESS_NOW } from "./deck/driveFixtures";
 import { FIXTURES, type FixtureKey } from "./deck/fixtures";
@@ -37,9 +47,13 @@ import "@/index.css";
 
 const params = new URLSearchParams(window.location.search);
 const fixture = (params.get("fixture") ?? "full") as FixtureKey;
-const deck = (
-  params.get("deck") === "launch" ? "launch" : "onboarding"
-) as DeckKind;
+const deckParam = params.get("deck");
+const deck: DeckKind =
+  deckParam === "launch"
+    ? "launch"
+    : deckParam === "blueprint"
+      ? "blueprint"
+      : "onboarding";
 const view = (params.get("view") ?? "present") as View;
 
 /**
@@ -106,6 +120,15 @@ function at(change: Record<string, string | null>) {
  * Blueprint booked yet, as on a real onboarding call.
  */
 function fixtureFor() {
+  if (deck === "blueprint")
+    return {
+      scenario: "record" as const,
+      loaded: blueprintLoaded(
+        (params.get("fixture") ?? "full") as BpFixture,
+        (params.get("bp") ?? "part1") as BpState,
+        { rehearse: params.get("rehearse") === "1" },
+      ),
+    };
   const loaded = FIXTURES[fixture]?.(deck) ?? FIXTURES.full(deck);
   const scenario = kickoffScenario(params.get("kickoff"), loaded);
   if (deck !== "onboarding" || scenario === "record")
@@ -144,7 +167,11 @@ const kickoff =
 
 function Harness() {
   const io = useMemo<DeckIO>(() => {
-    const store: Record<DeckKind, Overrides> = { onboarding: {}, launch: {} };
+    const store: Record<DeckKind, Overrides> = {
+      onboarding: {},
+      launch: {},
+      blueprint: {},
+    };
     const loaded = fixed.loaded;
     store.onboarding = loaded.prep.onboarding;
     store.launch = loaded.prep.launch;
@@ -222,7 +249,7 @@ function Harness() {
             "title",
           );
         const row: VideoRow = {
-          deck,
+          deck: deck === "launch" ? "launch" : "onboarding",
           slotKey: v.slotKey,
           lang: v.lang,
           ...harnessParse(v.url),
@@ -289,12 +316,28 @@ function Harness() {
       savePrep: async (k, patch) => {
         store[k] = applyPatch(store[k], patch);
         revision += 1;
-        return { deck: k, overrides: store[k], revision, changed: true };
+        return {
+          deck: k === "launch" ? "launch" : "onboarding",
+          overrides: store[k],
+          revision,
+          changed: true,
+        };
       },
       ...drive,
+      ...(deck === "blueprint"
+        ? {
+            blueprint: fakeBlueprintIO(
+              loaded,
+              () => new Date(BP_NOW + (Date.now() - opened)),
+            ),
+          }
+        : {}),
       presenterName: fixture === "sparse" ? null : "Sara Al-Harbi",
       publicUrl: (_bucket, path) => path,
-      now: () => new Date(HARNESS_NOW),
+      now: () =>
+        deck === "blueprint"
+          ? new Date(BP_NOW + (Date.now() - opened))
+          : new Date(HARNESS_NOW),
     };
   }, []);
   return (
@@ -309,7 +352,12 @@ function Harness() {
         prep: at({ view: "prep" }),
         client: at({ view: null }),
         other: at({
-          deck: deck === "onboarding" ? "launch" : "onboarding",
+          deck:
+            deck === "blueprint"
+              ? "blueprint"
+              : deck === "onboarding"
+                ? "launch"
+                : "onboarding",
           view: "prep",
         }),
       }}

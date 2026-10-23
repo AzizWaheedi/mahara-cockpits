@@ -272,22 +272,26 @@ describe("the close and the offer", () => {
       }),
     ).toContain("Launch call not booked yet.");
   });
-  test("until Make 14's text is copied in, the CSM is told to send the usual phase 5 message with the map link", () => {
-    expect(B.PHASE5_WHATSAPP).toBeNull();
-    expect(B.phase5Message(close())).toBeNull();
+  test("without Make 14's text, the CSM is told to send the usual phase 5 message with the map link", () => {
+    expect(B.phase5Message(close(), null)).toBeNull();
     expect(
       B.closeCsmComment(close(), {
         whatsapp: true,
         launchFound: true,
         makeFallback: false,
+        phase5: null,
       }),
     ).toContain(
       "Send the usual phase 5 message with this map link: https://mahara-onboarding-map.vercel.app/?phase=5&cid=taskA1",
     );
   });
-  test.todo(
-    "PHASE5_WHATSAPP holds Make 14 module [7]'s text, copied by a read-only GET (SPEC 7.3 ship step 2)",
-  );
+  // The ship gate (SPEC 3.6, 7.3 step 2): this fails until Make 14 module
+  // [7]'s phase 5 text is copied into blueprintBrief.ts by a read-only GET
+  // of the scenario's blueprint, so the build cannot ship without it.
+  test("PHASE5_WHATSAPP holds Make 14 module [7]'s text (ship step 2)", () => {
+    expect(B.PHASE5_WHATSAPP).not.toBeNull();
+    expect(B.PHASE5_WHATSAPP).toContain("{map}");
+  });
   test("the Make body has six keys here; the provider adds the key when it sends, so seven go to Make", () => {
     const body = B.makeClose(close(), B.slackCloseText(close(), "lt12345"));
     expect(Object.keys(body)).toEqual([
@@ -370,4 +374,16 @@ describe("copy rules", () => {
     expect(src).not.toMatch(/^\s*import\s/m);
     expect(src).not.toMatch(/^\s*export .* from /m);
   });
+});
+
+test("the brief and the notes name the five services as the slides do", async () => {
+  const { SERVICES } = await import("../src/present/content");
+  for (const k of [
+    "design-build",
+    "interior",
+    "architecture",
+    "fitout",
+    "construction",
+  ] as const)
+    expect(B.SERVICE_LABEL[k]).toBe(SERVICES[k].name.en);
 });

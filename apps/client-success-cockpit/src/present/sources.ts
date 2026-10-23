@@ -9,7 +9,11 @@ import { z } from "zod";
  * here returns leads, cost per lead, spend or budgets.
  */
 
-export type DeckKind = "onboarding" | "launch";
+/**
+ * The client decks: the CSM's two, and the creative director's Brand
+ * Blueprint call (docs/brand-blueprint/SPEC.md 5).
+ */
+export type DeckKind = "onboarding" | "launch" | "blueprint";
 
 /** The few calls the decks make, so a harness or a test can stand in. */
 export type DeckClient = Pick<SupabaseClient, "rpc" | "functions" | "auth">;

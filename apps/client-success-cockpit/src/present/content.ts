@@ -115,6 +115,11 @@ export const SHARED = {
       en: "Starter, from our templates",
       ar: "إعلان بداية، من قوالبنا",
     },
+    /** A starter when the Brand Blueprint chose its pack (SPEC 6.2). */
+    starterPack: {
+      en: "From our {service} pack",
+      ar: "من ملف {service} عندنا",
+    },
     yourForm: { en: "Your form", ar: "نموذجكم" },
     exampleForm: { en: "Example form", ar: "نموذج للتوضيح" },
     example: { en: "Example", ar: "مثال" },
@@ -400,8 +405,15 @@ export const O = {
     short: [
       { en: "Launch service", ar: "خدمة الإطلاق" },
       { en: "Your access", ar: "الصلاحيات" },
-      { en: "Blueprint call", ar: "مكالمة بناء الهوية" },
+      // One Arabic name for the call across both decks (score round 1).
+      { en: "Blueprint call", ar: "مكالمة بناء الهوية والعرض" },
     ],
+    /**
+     * The third item when the kickoff's Submit ticked it and no Blueprint
+     * call is booked or held yet: it says what was done, never that the
+     * call is booked (score round 1 of the Blueprint deck).
+     */
+    kickoffSent: { en: "Kickoff sent", ar: "انرسل نموذج بداية الشغل" },
   },
   goals: {
     title: {
@@ -796,10 +808,19 @@ export const O = {
       en: "Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group.",
       ar: "وأول ما ينرسل، يبدي فريقنا بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب.",
     },
-    /** Sent on this call: what happens now, said in the present. */
+    /**
+     * Sent on this call: the column's line (score round 1 of the Blueprint
+     * deck: "sent" was said three times; the frame's head keeps the time,
+     * its card says what comes next).
+     */
     done: {
-      en: "It's sent. Next, we pick the time for your Brand Blueprint call.",
-      ar: "انرسل. والحين نختار وقت مكالمة بناء الهوية والعرض.",
+      en: "Done. Your answers are with our team.",
+      ar: "تمام، أجوبتكم وصلت لفريقنا.",
+    },
+    /** The frame's card once sent: the next action, not "sent" again. */
+    next: {
+      en: "Next: we pick the time for your Brand Blueprint call",
+      ar: "الخطوة الجاية: نختار وقت مكالمة بناء الهوية والعرض",
     },
     doneThen: {
       en: "Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group.",
@@ -835,6 +856,15 @@ export const O = {
       en: "Your kickoff form opens here.",
       ar: "نموذج بداية الشغل يفتح هنا.",
     },
+    /**
+     * Over the form while the CSM fills its internal answers (the ad money,
+     * the payment, the recording link): the client sees this card, never
+     * those questions.
+     */
+    cover: {
+      en: "A few answers for our team, filled in on our side.",
+      ar: "كم جواب لفريقنا، نعبيها من عندنا.",
+    },
     recordHead: { en: "Kickoff on record", ar: "نموذج بداية الشغل عندنا" },
     filledOn: { en: "Filled on {date}", ar: "تعبّى يوم {date}" },
     rows: {
@@ -846,7 +876,7 @@ export const O = {
       starter: { en: "Starter ads", ar: "إعلانات البداية" },
     },
     starter: {
-      approved: { en: "Approved", ar: "موافقين عليها" },
+      approved: { en: "Approved", ar: "وافقتوا عليها" },
       pending: { en: "You see them first", ar: "تشوفونها أول" },
       declined: { en: "Your own ads first", ar: "إعلاناتكم الخاصة أول" },
     },
@@ -1261,10 +1291,11 @@ export const journeyName = (i: number, dwy: boolean): L => {
   return (dwy && row.dwy) || row.name;
 };
 
-/** The two decks' names, for the chrome and the presenter's windows. */
-export const DECK_NAME: Record<"onboarding" | "launch", L> = {
+/** The decks' names, for the chrome and the presenter's windows. */
+export const DECK_NAME: Record<"onboarding" | "launch" | "blueprint", L> = {
   onboarding: { en: "Onboarding", ar: "التعريف" },
   launch: { en: "Launch", ar: "الإطلاق" },
+  blueprint: { en: "Brand Blueprint", ar: "بناء الهوية والعرض" },
 };
 
 export const CLOSED = { en: "Deck closed", ar: "انتهى العرض" } as const;

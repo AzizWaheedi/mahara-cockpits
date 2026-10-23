@@ -10,7 +10,7 @@ Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm
 2. **Slide text is a white Gulf Arabic a Saudi engineering office reads as serious.** No ج/ي spelling swaps on slides. No Kuwaiti-only words (شنو، شلون، ماكو، وايد، عيل، هني، جذي، باجر، مال as a possessive). No Saudi-only words (وش، أبشر، إيش). Questions use كيف، ليش، متى، وين، أي. The example call is the only place that speaks a dialect, on purpose.
 3. **Voice-skill rules kept:** تمام never طيب; بصراحة; نبدي and تبدي, not نبدأ; plain spoken verbs, never bookish ones (يحاكي، يجسد، يعكس); never مقاول for the client; loanwords in Arabic script where people say them (سكربت، كورس، لابتوب، زوم، فيد، ريلز، ستوري).
 4. **Form:** no guillemets and no quote marks around Arabic words, no em dashes, no exclamation marks. ".." only inside spoken lines.
-5. **Times:** on slides, ١٠ صباحاً and ٦ مساءً (how Gulf businesses write their hours). In spoken lines and in the call, الصبح، العصر، المسا.
+5. **Times:** on slides, ١٠ صباحاً and ٦ مساءً (how Gulf businesses write their hours). A clock from noon to 2:59 is ظهراً (١٢ ظهراً, ٢:٣٠ ظهراً): ١٢ مساءً reads as midnight or the evening (`clock()` in dates.ts, score round 1 of the Blueprint deck, 2026-10-23). In spoken lines and in the call, الصبح، العصر، المسا.
 6. **Numbers:** Arabic-Indic digits through `Fig`, never ٬, never a lone ٠, never a digit glued to بـ or لـ (write إلى ٦, not لـ٦). Small numbers inside speech are words (ست شهور، سنتين). The running call clock, the WhatsApp confirmation's date and time, and the Drive box's clock in {time} (أمس الساعة 09:05; a date before it keeps Arabic-Indic digits, يوم ١٦ أكتوبر) stay in Latin digits (DESIGN 13.4, 7.6, DRIVE-IMPORT 8); once the call ends, its length takes Arabic-Indic digits, ٤:٥١ (the fixer's round).
 7. **Slots keep CONTENT's ids** in braces. Client and page names, handles and English words sit in `<bdi dir=auto>` (DESIGN 13.2). In the Arabic deck `{client.name}` is the Arabic name from `ghl_clients.client_name` when there is one.
 8. **The presenting CSM's title is gendered in Arabic.** Store `csm.title_ar` on the seat, or a gender: مدير نجاح العملاء for a man, مديرة نجاح العملاء for a woman. With no name and no gender, the line reads فريق نجاح العملاء. Inside the O3 group, where the CSM is a role, the row reads نجاح العملاء.
@@ -327,7 +327,8 @@ The kickoff form, filled with the client and sent before the call ends (CONTENT 
 | `kickoff.prefilled` | Your details are already in, from your onboarding form. We check them together, then send it. | تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط. نراجعها مع بعض، وبعدها نرسله. |
 | `kickoff.together` | We fill it in together, now. | نعبيه مع بعض، الحين. |
 | `kickoff.sent` | Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | وأول ما ينرسل، يبدي فريقنا بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
-| `kickoff.done` | It's sent. Next, we pick the time for your Brand Blueprint call. | انرسل. والحين نختار وقت مكالمة بناء الهوية والعرض. |
+| `kickoff.done` | Done. Your answers are with our team. | تمام، أجوبتكم وصلت لفريقنا. |
+| `kickoff.next` (the frame's card once sent) | Next: we pick the time for your Brand Blueprint call | الخطوة الجاية: نختار وقت مكالمة بناء الهوية والعرض |
 | `kickoff.doneThen` | Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | فريقنا يبدي بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
 | `kickoff.have` | We already have it, so there's nothing to fill in now. | النموذج وصلنا من قبل، فما فيه شي نعبيه الحين. |
 | `kickoff.change` | Want to change an answer? Tell us in your WhatsApp group. | تبون تغيرون أي جواب؟ قولوا لنا بقروب الواتساب. |
@@ -1043,7 +1044,8 @@ The Arabic for every new or changed string in `CONTENT.md`, [The visual pass](CO
 | `today.label` | Today | اليوم |
 | `today.1.short` | Launch service | خدمة الإطلاق |
 | `today.2.short` | Your access | الصلاحيات |
-| `today.3.short` | Blueprint call | مكالمة بناء الهوية |
+| `today.3.short` | Blueprint call | مكالمة بناء الهوية والعرض (score round 1 of the Blueprint deck: one Arabic name for the call across both decks) |
+| `today.kickoffSent` (the third item, ticked by the kickoff's Submit, no call booked or held yet) | Kickoff sent | انرسل نموذج بداية الشغل |
 
 The long names are O1's agenda, unchanged (نختار خدمة الإطلاق · نجهّز الصلاحيات · نحجز مكالمة بناء الهوية والعرض). The numbers in the rings are written from `"١٢٣"`.
 

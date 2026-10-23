@@ -470,7 +470,7 @@ export function DeckShell({
 
   if (closed)
     return (
-      <div className="dk-root">
+      <div className="dk-root" data-deck={base.deck}>
         <div className="dk-closed" dir={dir} lang={lang}>
           <strong>{t(CLOSED, lang)}</strong>
         </div>
@@ -481,6 +481,7 @@ export function DeckShell({
     <div
       ref={rootRef}
       className="dk-root"
+      data-deck={base.deck}
       data-idle={idle && !overview ? "" : undefined}
       data-still={base.still ? "" : undefined}
       data-embedded={embedded ? "" : undefined}

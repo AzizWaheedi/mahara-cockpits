@@ -32,7 +32,9 @@ export type KickoffAct =
   | { act: "reload"; confirmed: boolean }
   | { act: "load" }
   | { act: "refresh" }
-  | { act: "booked-open" };
+  | { act: "booked-open" }
+  /** Lay a paper card over the form on the canvas (the internal answers). */
+  | { act: "cover"; on: boolean };
 
 /** The kickoff as the deck window has it, for the notes window to draw. */
 export interface KickoffView {
@@ -69,6 +71,8 @@ export interface KickoffView {
   /** The form's ending button was pressed: the booking opens on its own. */
   autoBook: boolean;
   links: OnboardingRow["links"] | null;
+  /** The canvas covers the form while the CSM fills its internal answers. */
+  covered?: boolean;
 }
 
 /** What the live layer tells the slide: the frame is its, and whether it holds a kickoff on record. */
@@ -112,6 +116,7 @@ export function emptyView(
     checkError: null,
     autoBook: false,
     links: null,
+    covered: false,
   };
 }
 

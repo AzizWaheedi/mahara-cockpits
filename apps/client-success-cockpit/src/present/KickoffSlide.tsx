@@ -133,6 +133,21 @@ export function KickoffFrame({
   );
 }
 
+/**
+ * Over the form once it is sent (Typeform's own ending is never what the
+ * client reads): the tick, the next action, and what our team does now.
+ * The frame's head keeps the time.
+ */
+function SentCard({ lang }: { lang: Lang }) {
+  return (
+    <div className="dkc-kick-cover" data-kind="sent" role="status">
+      <SentMark />
+      <p className="dkc-kick-cover-head">{t(O.kickoff.next, lang)}</p>
+      <p>{t(O.kickoff.doneThen, lang)}</p>
+    </div>
+  );
+}
+
 /** A plain line in the frame, where the form will be or could not be. */
 function FrameLine({ children }: { children: ReactNode }) {
   return (
@@ -220,16 +235,14 @@ export function KickoffSlide({ ctx }: { ctx: SlideCtx }) {
             )}
           </p>
         </div>
-        <p key={state} className="dkc-next-small dkc-kick-then dkc-kick-say">
-          {t(
-            held
-              ? O.kickoff.change
-              : sent
-                ? O.kickoff.doneThen
-                : O.kickoff.sent,
-            lang,
-          )}
-        </p>
+        {/* Under the line (score round 1 of the Blueprint deck: pinned to
+            the foot it left a 400 px gap). Once sent, the frame's card says
+            what happens, so the column does not say it again. */}
+        {sent ? null : (
+          <p key={state} className="dkc-next-small dkc-kick-then dkc-kick-say">
+            {t(held ? O.kickoff.change : O.kickoff.sent, lang)}
+          </p>
+        )}
       </div>
       {/* On the call the live layer draws the frame over this spot; outside
           it (prep's preview, the tests) the slide draws it, still. */}
@@ -246,6 +259,8 @@ export function KickoffSlide({ ctx }: { ctx: SlideCtx }) {
               entry={d.kickoff.entry}
               at={d.kickoff.sentAt}
             />
+          ) : sent ? (
+            <SentCard lang={lang} />
           ) : (
             <FrameLine>{t(O.kickoff.here, lang)}</FrameLine>
           )}
@@ -474,6 +489,10 @@ function KickoffReady({
     embed: port.embed,
     onSent,
   });
+  // The notes window's "Cover the form": a paper card over the form on the
+  // canvas while the CSM fills the internal answers. The form stays live
+  // under it (the card lets every key and click through).
+  const [covered, setCovered] = useState(false);
 
   useEffect(() => {
     onShown({ live: true, held: m.held });
@@ -485,8 +504,9 @@ function KickoffReady({
       else if (a.act === "reload") m.reload(a.confirmed);
       else if (a.act === "booked-open") m.bookConsumed();
       else if (a.act === "recheck") void io.recheck().catch(() => {});
+      else if (a.act === "cover") setCovered(a.on);
     };
-    publish(viewOf(base, form, m));
+    publish({ ...viewOf(base, form, m), covered });
   });
 
   const already = m.already;
@@ -518,6 +538,24 @@ function KickoffReady({
               {t(m.slow ? O.kickoff.away : O.kickoff.opening, lang)}
             </FrameLine>
           )}
+          {/* Typeform's own ending ("The client will receive their summary
+              shortly.") is never what the client reads: the deck's sent
+              card covers it. */}
+          {/* Sent: the head keeps "Sent at" and the time; the card says
+              the next action, not "sent" a third time. */}
+          {m.sent ? (
+            <SentCard lang={lang} />
+          ) : m.rehearsed ? (
+            <div className="dkc-kick-cover" data-kind="sent" role="status">
+              <p className="dkc-kick-cover-head">
+                {t(O.kickoff.rehearsal, lang)}
+              </p>
+            </div>
+          ) : covered ? (
+            <div className="dkc-kick-cover" aria-hidden>
+              <p>{t(O.kickoff.cover, lang)}</p>
+            </div>
+          ) : null}
         </>
       )}
     </KickoffFrame>
@@ -726,6 +764,23 @@ export function KickoffNotes({
           </Button>
         </div>
       ) : null}
+      {sent || view.rehearsed ? null : (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3 py-2 text-xs">
+          <Button
+            size="sm"
+            variant={view.covered ? "default" : "outline"}
+            aria-pressed={Boolean(view.covered)}
+            onClick={() => post({ act: "cover", on: !view.covered })}
+          >
+            {view.covered ? "Uncover the form" : "Cover the form"}
+          </Button>
+          <span className="min-w-0 flex-1 text-muted-foreground">
+            {view.covered
+              ? "The client sees a paper card over the form. It still takes your typing: answer, press Enter, then uncover to check."
+              : "Cover it before the internal answers (the ad money, the payment, the recording link), so the client never sees those questions."}
+          </span>
+        </div>
+      )}
       {/* -mx: the panel's own padding lines up with the notes' column. */}
       <div className="-mx-4 sm:-mx-5">
         <RailView

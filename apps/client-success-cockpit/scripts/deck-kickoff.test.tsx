@@ -8,7 +8,8 @@ import { Window } from "happy-dom";
  * card ID from the record, the same guard (a kickoff on record shows
  * "Kickoff on record" with what was filled, never a fresh form), the same
  * one note per response, the side panel's facts and the trail in the notes
- * window only, and the checklist's Blueprint call ticked by the Submit.
+ * window only, and the checklist's third item ticked by the Submit (as
+ * "Kickoff sent" until the Blueprint call is booked).
  * Typeform's SDK is a stand-in that captures its options: nothing loads and
  * nothing is submitted.
  *
@@ -429,19 +430,37 @@ describe("the last slide", () => {
     ).toEqual([]);
   });
 
-  test("sent on this call: the checklist ticks the Blueprint call, the frame says when, and O7's card picks the time", () => {
+  test("sent on this call: the checklist ticks the kickoff as sent, the frame says when and what is next, and O7's card picks the time", () => {
     for (const lang of ["en", "ar"] as Lang[]) {
       const d = data(beforeKickoff(), lang, "2026-10-19T09:12:00Z");
       expect(d.kickoff.from).toBe("call");
       expect(d.today.blueprint).toBe(true);
+      // Ticked by the Submit, not booked: the item says what was done.
+      expect(d.blueprintBooked).toBe(false);
       const html = still(d).replace(/&#x27;/g, "'");
       expect(html).toContain(
         lang === "en"
-          ? "It's sent. Next, we pick the time for your Brand Blueprint call."
-          : "انرسل. والحين نختار وقت مكالمة بناء الهوية والعرض.",
+          ? "Done. Your answers are with our team."
+          : "تمام، أجوبتكم وصلت لفريقنا.",
       );
+      // "Sent" once (the frame's head, with the time); the card says what is next.
       expect(html).toMatch(
-        lang === "en" ? /Sent at 12:12.pm/ : /انرسل الساعة ١٢:١٢.مساءً/,
+        lang === "en" ? /Sent at 12:12.pm/ : /انرسل الساعة ١٢:١٢.ظهراً/,
+      );
+      expect(html).toContain(
+        lang === "en"
+          ? "Next: we pick the time for your Brand Blueprint call"
+          : "الخطوة الجاية: نختار وقت مكالمة بناء الهوية والعرض",
+      );
+      expect(
+        html.split(
+          lang === "en"
+            ? "Our team starts on your setup"
+            : "فريقنا يبدي بتجهيز",
+        ).length - 1,
+      ).toBe(1);
+      expect(html).toContain(
+        lang === "en" ? "Kickoff sent" : "انرسل نموذج بداية الشغل",
       );
       const items = html.match(/<li[^>]*style="--i:\d[^"]*"[^>]*>/g) ?? [];
       expect(items[2]).toContain("data-done");
@@ -485,7 +504,7 @@ describe("on the call", () => {
     expect(v?.parts.map(p => p.id)).toContain("missing");
   });
 
-  test("Submit notes the response once, ticks the Blueprint call and says Sent on the frame; the trail goes to the notes window", async () => {
+  test("Submit notes the response once, ticks the checklist as Kickoff sent and says Sent on the frame; the trail goes to the notes window", async () => {
     const k = port(beforeKickoff());
     const host = await present(beforeKickoff(), k);
     const o = k.mounted[0]?.options ?? {};
@@ -507,7 +526,9 @@ describe("on the call", () => {
       host.querySelector(".dkc-kick-frame")?.hasAttribute("data-sent"),
     ).toBe(true);
     expect(canvasText()).toContain("Sent at");
-    expect(canvasText()).toContain("It's sent.");
+    expect(canvasText()).toContain("Done. Your answers are with our team.");
+    expect(canvasText()).toContain("Next: we pick the time");
+    expect(canvasText()).toContain("Kickoff sent");
     expect(canvasText()).not.toMatch(NEVER_ON_CANVAS);
     expect(
       Channel.heard.some(h => (h.data as any)?.type === "kickoff-sent"),

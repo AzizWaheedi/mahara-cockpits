@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { OnboardingRow } from "@/lib/onboardingCore";
+import type { Answers, BpPart } from "./blueprintForm";
+import type { Change, SaveResult } from "./blueprintSaver";
+import type {
+  BlueprintBundle,
+  BlueprintRow,
+  PressResult,
+  RunResult,
+} from "./blueprintSources";
 import {
   DeckHub,
   type DeckMessage,
@@ -17,6 +25,7 @@ import {
   type Overrides,
 } from "./deckData";
 import { langParam } from "./engine";
+import type { LaunchBlueprint } from "./launchData";
 import { applyPatch, PrepSaver, prepAfterLoad } from "./prep";
 import {
   type clearDeckVideo,
@@ -47,7 +56,18 @@ export interface Loaded {
   sources: DeckSources | null;
   kit: OnboardingRow | null;
   ads: LaunchAd[];
-  prep: { onboarding: Overrides; launch: Overrides };
+  prep: { onboarding: Overrides; launch: Overrides; blueprint?: Overrides };
+  /**
+   * The Brand Blueprint beside the deck's read (cockpit_blueprint_sources):
+   * the seat's rights, the card, the settings and the record.
+   */
+  blueprint?: BlueprintBundle;
+  /**
+   * The launch deck's Brand Blueprint (cockpit_blueprint_read beside its own
+   * read, SPEC 6.2): null when the card has none or the read failed (then
+   * `problems` says so).
+   */
+  launchBlueprint?: LaunchBlueprint | null;
   /** What could not be read, in plain sentences (the notes and prep show them). */
   problems: string[];
   /** This deck's video slots (VIDEOS.md 7): null or absent is "not read". */
@@ -83,12 +103,33 @@ export interface DeckIO {
   clearVideo?: (
     v: Parameters<typeof clearDeckVideo>[1],
   ) => ReturnType<typeof clearDeckVideo>;
+  /** The Brand Blueprint's writes (blueprintSources.ts, or the harness's stand-ins). */
+  blueprint?: BlueprintIO;
   /** Bring in this client's files from one Drive link (DRIVE-IMPORT.md 8). */
   requestDriveImport?: (
     link: string,
   ) => Promise<DriveImport & { existing: boolean }>;
   /** This client's Drive imports, newest first. */
   readDriveImports?: () => Promise<DriveImports>;
+}
+
+/** The Brand Blueprint's writes, handed in like the deck's own. */
+export interface BlueprintIO {
+  save: (
+    changes: Record<string, Change>,
+    session: string,
+    baseRevision: number | null,
+  ) => Promise<SaveResult>;
+  partDone: (part: BpPart, requestId: string) => Promise<PressResult>;
+  run: (id: string) => Promise<RunResult>;
+  rehearse: (
+    part: BpPart,
+    answers: Answers,
+  ) => Promise<{ lines: string[]; missing: string[] }>;
+  /** The record read again (after a run, or another window's press). */
+  reread?: () => Promise<BlueprintRow | null>;
+  /** The harness only: pictures in place of Drive's folder view (no frame loads Drive). */
+  packStandIn?: string[];
 }
 
 export type SaveState =
@@ -130,9 +171,10 @@ export function useDeckModel({
 }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [prep, setPrepState] = useState<Loaded["prep"]>({
+  const [prep, setPrepState] = useState<Required<Loaded["prep"]>>({
     onboarding: {},
     launch: {},
+    blueprint: {},
   });
   const prepRef = useRef(prep);
   prepRef.current = prep;
@@ -198,7 +240,7 @@ export function useDeckModel({
         // Prep comes from the server on the first read only (prepAfterLoad).
         const nextPrep = prepAfterLoad(
           prepRef.current,
-          out.prep,
+          { blueprint: {}, ...out.prep },
           firstLoad.current,
         );
         firstLoad.current = false;
@@ -208,7 +250,7 @@ export function useDeckModel({
         // The client's own language, unless the address or the CSM chose one.
         if (!langChosen.current) {
           const own =
-            (out.prep[deck].language as Lang | undefined) ??
+            (out.prep[deck]?.language as Lang | undefined) ??
             clientLang(out.sources);
           if (own === "en" || own === "ar") setLangState(own);
         }
@@ -282,7 +324,9 @@ export function useDeckModel({
 
   const setPrep = useCallback(
     (k: DeckKind, patch: Overrides, now = false) => {
-      const refused = savers[k].set(patch, now);
+      // The Blueprint deck keeps its slide choices for the call only: its
+      // answers save through the Blueprint's own saver (useBlueprint.ts).
+      const refused = k === "blueprint" ? null : savers[k].set(patch, now);
       if (refused) {
         setSave({ kind: "error", message: refused });
         return;
@@ -406,6 +450,7 @@ export function useDeckModel({
       publicUrl: io.publicUrl,
       videos: loaded.videos ?? null,
       videosProblem: loaded.videosProblem ?? null,
+      blueprint: loaded.launchBlueprint ?? null,
       now: io.now?.() ?? new Date(),
     });
   }, [loaded, taskId, deck, lang, prep, booked, kickoffSent, io]);

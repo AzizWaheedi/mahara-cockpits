@@ -23,7 +23,11 @@ import {
 import { type L, type Lang, LINKS, O } from "./content";
 import { dayOf, gulfToday } from "./dates";
 import { examplePick, type ServiceExample } from "./examples";
-import { type LaunchData, launchData } from "./launchData";
+import {
+  type LaunchBlueprint,
+  type LaunchData,
+  launchData,
+} from "./launchData";
 import {
   isMain,
   resolveService,
@@ -103,7 +107,7 @@ export interface DeckInput {
   /** The client's row from cockpit_csm_onboarding_read (forms, links, dates). */
   kit: OnboardingRow | null;
   /** This deck's prep overrides, and the other deck's (red lines carry over). */
-  prep: { onboarding: Overrides; launch: Overrides };
+  prep: { onboarding: Overrides; launch: Overrides; blueprint?: Overrides };
   /** This client's ready uploads, with signed links when they were signed. */
   ads: LaunchAd[];
   /** The signed-in seat's name, when the server has no first name for it. */
@@ -117,6 +121,8 @@ export interface DeckInput {
   /** This deck's video slots as read (null: not read), and why not. */
   videos?: DeckVideos | null;
   videosProblem?: string | null;
+  /** The launch deck's Brand Blueprint, read beside its sources (SPEC 6.2). */
+  blueprint?: LaunchBlueprint | null;
   now: Date;
 }
 
@@ -175,6 +181,12 @@ export interface DeckData {
   exampleWords: { primary: string | null; headline: string | null };
   /** The call's checklist, each item done from data, never from a press (DESIGN 22.2.0). */
   today: { service: boolean; access: boolean; blueprint: boolean };
+  /**
+   * The Blueprint call is booked or held (not only ticked by the kickoff's
+   * Submit): the checklist's third item names the call only then, and
+   * "Kickoff sent" before it.
+   */
+  blueprintBooked: boolean;
   templated: Templated;
   templatedAnswer: string | null;
   /**
@@ -590,7 +602,9 @@ export function deckData(input: DeckInput): DeckData {
     prepSource,
     ...formSources,
   ]);
-  const service = input.deck === "launch" ? launchService : onboardingService;
+  // The Brand Blueprint reads it as the launch deck does (SPEC 5.1).
+  const service =
+    input.deck === "onboarding" ? onboardingService : launchService;
   const named = serviceNames(service);
   const serviceFocus = named.name[lang] ?? null;
   const serviceMid = named.mid[lang] ?? null;
@@ -749,7 +763,9 @@ export function deckData(input: DeckInput): DeckData {
           headline: serviceAr,
         }
       : {
-          primary: str(launchPrep.selling_point),
+          primary:
+            str(launchPrep.selling_point) ??
+            (input.deck === "launch" ? (input.blueprint?.offer ?? null) : null),
           headline: named.name.en,
         };
 
@@ -855,6 +871,7 @@ export function deckData(input: DeckInput): DeckData {
         Boolean(input.kickoffSent) ||
         kickoffFiled,
     },
+    blueprintBooked: Boolean(next.blueprint) || roadNow > 3,
     templated,
     templatedAnswer,
     starterPack,
@@ -913,6 +930,7 @@ export function deckData(input: DeckInput): DeckData {
       advertised,
       service: launchService,
       today,
+      blueprint: input.deck === "launch" ? (input.blueprint ?? null) : null,
       refs: {
         brandDna: str(s?.editor?.brandDnaUrl) ?? str(kit?.links?.brand_dna),
         offer: str(s?.editor?.offerUrl) ?? str(kit?.links?.offer_sheet),

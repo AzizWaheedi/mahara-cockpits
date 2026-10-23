@@ -15,7 +15,8 @@ import {
  * notes) is never the tab that gets shared.
  */
 
-export type DeckKind = "onboarding" | "launch";
+/** The CSM's two decks, and the Brand Blueprint (the CSM's "Open the Blueprint deck"). */
+export type DeckKind = "onboarding" | "launch" | "blueprint";
 
 /** The app's base path; read when used (tests run without Vite's env). */
 const base = () =>
@@ -74,6 +75,7 @@ export function deckFor(
 const NAMES: Record<DeckKind, string> = {
   onboarding: "onboarding deck",
   launch: "launch deck",
+  blueprint: "Brand Blueprint deck",
 };
 
 /** "Present", with the other deck and both prep views a click away. */

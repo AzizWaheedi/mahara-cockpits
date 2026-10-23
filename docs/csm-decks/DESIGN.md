@@ -6304,7 +6304,7 @@ anyway; until now it lived in the CSM's own tab, then in the kickoff window
 | The guard | **Never a fresh form here.** A kickoff on record, sent from the cockpit or in the form history shows "Kickoff on record" with what was filled. There is no "Open a second kickoff anyway" in the deck; the notes window links the kickoff window, which keeps its own guard. |
 | What the canvas shows | The form in a frame, the client's name, "Sent at 2:02 pm" once Typeform has it, the checklist. **Never the side panel**: the seal and the card ID, Still missing, the offer and the area, the contract, the daily spend, the payment, the recording, the sale's notes, the trail and the booking are the notes window's (12.2: CSM-only facts and booking buttons never touch the canvas; the trail's late sentences tell the CSM what to do, not the client). |
 | The notes window | Its **Kickoff** part is the kickoff window's side panel, drawn from a `KickoffView` the deck window posts on the hub (`kickoff`), with the panel's own components (`Seal`, `RailView`, `AfterSend`, `AnswersSheet`). Its presses (Check now, Try again, Check again, Reload the form, Refresh, the booking's auto-open) go back as `kickoff-act` and run in the deck window, which owns the form. |
-| The checklist | Item 3, "Blueprint call", is the slide's own at the foot. It is done when the Blueprint is booked or held (as before), or when the kickoff is sent: this call's Submit (`kickoff-sent` on the hub, so every window ticks it) or a kickoff on record. Make 12's submit is what books the Blueprint on our side. O1's agenda stays open, always (22.2.1): it is the agenda. |
+| The checklist | Item 3, "Blueprint call", is the slide's own at the foot. It is done when the Blueprint is booked or held (as before), or when the kickoff is sent: this call's Submit (`kickoff-sent` on the hub, so every window ticks it) or a kickoff on record. Make 12's submit is what books the Blueprint on our side. Ticked by the kickoff alone (no call booked or held, `blueprintBooked` false), the item reads "Kickoff sent" / انرسل نموذج بداية الشغل (score round 1 of the Blueprint deck: "Blueprint call" ticked read as booked or held). O1's agenda stays open, always (22.2.1): it is the agenda. |
 | O7's card | The kickoff sent and no time on the calendar: the block is ticked, solid, and says "We pick the time now", never "We book it before we hang up" beside a ticked checklist. |
 | The timer | 30 minutes (22 of slides and setup, about 8 for the form). |
 | Rehearsal | `?rehearse=1` on the deck, admins and the CEO: Typeform's sandbox, as in the kickoff window. The frame's head says "Rehearsal: nothing is sent"; a sandbox submit ticks nothing. |
@@ -6320,19 +6320,21 @@ anyway; until now it lived in the CSM's own tab, then in the kickoff window
 | from your onboarding form.    | |                                                            | |
 | We check them together, then  | |                                                            | |
 | send it.  (30 ink)            | |                                                            | |
-|                               | |                                                            | |
 | ----------------------------- | |                                                            | |
-| Once it's sent, our team ...  | +------------------------------------------------------------+ |
-| (26 ink-2)                    |                                                                |
+| Once it's sent, our team ...  | |                                                            | |
+| (26 ink-2)                    | +------------------------------------------------------------+ |
+|                               |                                                                |
 | Today (1) Launch service (2) Your access (3) Blueprint call                          08 / 08  |
 +------------------------------------------------------------------------------------------+
 ```
 
-- **Start column**, x 136 to 736, as tall as the frame: the title and its
-  line at the top, beside the frame's head; what sending it does at the
-  foot, over a hairline, level with the frame's foot and right over the
-  checklist it ticks. The two lines swap (`--dk-t-swap`) when the form is
-  sent or found on record.
+- **Start column**, x 136 to 736, as tall as the frame, read top down:
+  the title and its line at the top, beside the frame's head; what sending
+  it does right under the line, over a hairline, 48 px down (score round 1
+  of the Blueprint deck, 2026-10-23: pinned to the column's foot it left a
+  400 px gap). The lines swap (`--dk-t-swap`) when the form is sent or found
+  on record; once sent the column keeps only its line ("Done. Your answers
+  are with our team."), since the frame's card says what happens next.
 - **The frame**, x 816 to 1784, y 112 to 936: `--dk-panel`, a 1 px
   `--dk-line-strong` edge, radius 20, no shadow, no tilt, no texture. Its
   head (76 px): "Kickoff form" in Geist Mono 24 ink-2 (Plex 26 in Arabic),
@@ -6350,7 +6352,12 @@ anyway; until now it lived in the CSM's own tab, then in the kickoff window
 - **Plain lines** in the body, 30 ink-2, centred: "Opening your kickoff
   form", or "We'll open your kickoff form from our side." when the record
   cannot be read, the card is unread or the form does not load.
-- **The checklist**: the foot variant of 22.2.0, item 3 `data-own`.
+- **Once sent**, a card covers Typeform's own ending: the done mark at
+  64 px, "Next: we pick the time for your Brand Blueprint call" (40/600),
+  and what our team does now (32 ink-2). "Sent" is said once, in the head.
+- **The checklist**: the foot variant of 22.2.0, item 3 `data-own`; ticked
+  by the Submit with no Blueprint call booked or held yet, it reads
+  "Kickoff sent" (`today.kickoffSent`), never as if the call were booked.
 - **RTL**: the columns mirror; the frame's head runs right to left; the
   form inside stays left to right.
 
