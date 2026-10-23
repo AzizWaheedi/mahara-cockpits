@@ -44,6 +44,7 @@ import {
   B2B_REF,
   type CalendarInfo,
   callsSql,
+  DEAL_ANSWER_COLUMNS,
   dealsSql,
   dialsSql,
   ghlContactRow,
@@ -51,6 +52,7 @@ import {
   inboxRow,
   leadRow,
   leadsSql,
+  missingDealAnswerColumn,
   redact,
   repsSql,
   SALES_LOCATION,
@@ -58,6 +60,7 @@ import {
   scorecardSql,
   scorecardWindows,
   monthWindows,
+  withoutDealAnswers,
   applyVoids,
   dropLooksWrong,
   sourcesSql,
@@ -231,12 +234,34 @@ async function mirrorReps(at: string): Promise<{ n: number; dropped: number }> {
   return { n, dropped: await dropStale("cockpit_sales_reps", at, n) };
 }
 
-async function mirrorDeals(at: string): Promise<{ n: number; dropped: number }> {
-  const rows = (await b2b(dealsSql())).map(r => ({ ...r, mirrored_at: at }));
+/**
+ * Whether Triage has the two closer-form answer columns yet (20261023x). A
+ * mirror deployed before that migration copies deals without them rather
+ * than failing every deals step; asked every run, so the answers start
+ * flowing on the first run after the migration.
+ */
+async function dealAnswersStored(): Promise<boolean> {
+  try {
+    await rest(`cockpit_sales_deals?select=${DEAL_ANSWER_COLUMNS.join(",")}&limit=1`);
+    return true;
+  } catch (e) {
+    if (missingDealAnswerColumn(String(e instanceof Error ? e.message : e))) return false;
+    throw e;
+  }
+}
+
+async function mirrorDeals(
+  at: string,
+): Promise<{ n: number; dropped: number; answers: boolean }> {
+  const answers = await dealAnswersStored();
+  const rows = (await b2b(dealsSql())).map(r => ({
+    ...(answers ? r : withoutDealAnswers(r)),
+    mirrored_at: at,
+  }));
   if (!rows.length) throw new Error("B2B returned no deals; the copy was kept");
   const n = await upsert("cockpit_sales_deals", "response_id", rows);
   // A deal deleted in B2B (not voided) would otherwise stay in pay.
-  return { n, dropped: await dropStale("cockpit_sales_deals", at, n) };
+  return { n, dropped: await dropStale("cockpit_sales_deals", at, n), answers };
 }
 
 async function mirrorLeads(

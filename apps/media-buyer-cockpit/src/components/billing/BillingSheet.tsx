@@ -27,6 +27,12 @@ import type {
   SheetRow,
 } from "@/lib/billingCore";
 import { ladderOf, METHODS, PLANS } from "@/lib/billingCore";
+import {
+  type LogPaymentHandoff,
+  type PendingApi,
+  PendingPayments,
+  type SetCardNext,
+} from "./PendingPayments";
 
 /**
  * The client billing sheet. The same file in the CEO cockpit and the client
@@ -103,15 +109,23 @@ export type BillingApi = {
   }) => Promise<string>;
   /** What happens to a logged payment in this cockpit, in one line. */
   ledgerLine: string;
+  /**
+   * Pending payments (PendingPayments.tsx): who signed and has not finished
+   * paying. A cockpit that passes nothing shows no such section.
+   */
+  pending?: PendingApi;
 };
 
 // --- look ------------------------------------------------------------------
 
 // The CEO kit's status roles (components/ceo/ceo.css), redeclared here so the
 // sheet looks the same in the client success cockpit, which has no CEO kit.
-// Status colour goes on a dot or a mark, never on text.
+// Status colour goes on a dot or a mark, never on text. The last four are the
+// Pending payments ribbon's: rail money is the brand teal, a person's word
+// the same teal hatched, due and not seen the critical red, another source
+// the warning orange hatched (PendingPayments.tsx draws the hatches).
 const STYLE = `
-.billing-root{--b-good:var(--success);--b-warning:var(--warning);--b-serious:color-mix(in oklch,var(--warning) 45%,var(--destructive));--b-critical:var(--destructive);--b-line:color-mix(in srgb,currentColor 14%,transparent);--b-today:color-mix(in srgb,currentColor 45%,transparent)}
+.billing-root{--b-good:var(--success);--b-warning:var(--warning);--b-serious:color-mix(in oklch,var(--warning) 45%,var(--destructive));--b-critical:var(--destructive);--b-line:color-mix(in srgb,currentColor 14%,transparent);--b-today:color-mix(in srgb,currentColor 45%,transparent);--b-rail:var(--primary);--b-person:var(--primary);--b-due:var(--b-critical);--b-another:var(--b-warning)}
 `;
 
 const TONE: Record<Ladder["tone"], string> = {
@@ -365,6 +379,7 @@ function Panel({
   ltv,
   lastPaid,
   notice,
+  start,
   onDone,
 }: {
   row: SheetRow;
@@ -374,22 +389,28 @@ function Panel({
   ltv?: Ltv;
   lastPaid?: { day: string; usd: number; rail: string };
   notice: string | null;
+  /** Opened from Pending payments' "Log it as a payment": the payment form, filled in. */
+  start?: { amount: string; currency: "USD" | "KWD"; note: string } | null;
   onDone: (message: string, updated?: Account) => void;
 }) {
   const paused = row.group === "paused";
-  const [tab, setTab] = useState<Tab>(paused ? "pause" : "pay");
+  const [tab, setTab] = useState<Tab>(start || !paused ? "pay" : "pause");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [repeat, setRepeat] = useState(false);
 
   // A payment
   const [day, setDay] = useState(today);
-  const [amount, setAmount] = useState(row.nextUsd ? String(row.nextUsd) : "");
-  const [currency, setCurrency] = useState<"USD" | "KWD">("USD");
+  const [amount, setAmount] = useState(
+    start?.amount ?? (row.nextUsd ? String(row.nextUsd) : ""),
+  );
+  const [currency, setCurrency] = useState<"USD" | "KWD">(
+    start?.currency ?? "USD",
+  );
   const [rail, setRail] = useState<Rail>("bank_transfer");
   const [reference, setReference] = useState("");
   const [evidence, setEvidence] = useState("");
-  const [payNote, setPayNote] = useState("");
+  const [payNote, setPayNote] = useState(start?.note ?? "");
   const recurring = /monthly|split|months after|performance/i.test(
     row.plan ?? "",
   );
@@ -1081,13 +1102,38 @@ function Panel({
   );
 }
 
+/** The part a confirmation names, in words ("the onboarding payment"). */
+function partOf(d: Record<string, unknown>): string {
+  const no = Number(d.partNo ?? 0);
+  switch (d.part) {
+    case "deposit":
+      return "the deposit";
+    case "onboarding":
+      return "the onboarding payment";
+    case "later":
+      return no <= 1
+        ? "the first payment after onboarding"
+        : `payment ${no} after onboarding`;
+    case "all":
+      return "what they paid in all";
+    default:
+      return "a part of the plan";
+  }
+}
+
 function sentenceOf(e: EventRow): string {
   const who = e.source === "maher" ? "Maher" : String(e.by_whom).split("@")[0];
   const d = (e.detail ?? {}) as Record<string, unknown>;
-  const paid =
-    d.currency === "KWD"
-      ? `${Number(d.amount).toLocaleString("en-US")} KWD`
-      : usd(Number(d.amount));
+  // A payment row with no amount on record says so in words, never "$NaN".
+  const amount =
+    d.amount === null || d.amount === undefined || d.amount === ""
+      ? Number.NaN
+      : Number(d.amount);
+  const paid = !Number.isFinite(amount)
+    ? "a payment"
+    : d.currency === "KWD"
+      ? `${amount.toLocaleString("en-US")} KWD`
+      : usd(amount);
   switch (e.kind) {
     case "payment":
       return `${who} logged ${paid}${d.rail ? ` by ${RAIL[String(d.rail)] ?? d.rail}` : ""}${e.to_value && e.to_value !== e.from_value ? `; next due ${shortDay(e.to_value)}` : ""}.`;
@@ -1109,6 +1155,17 @@ function sentenceOf(e: EventRow): string {
       return e.reason ?? `${who} tied a payer to this client.`;
     case "note":
       return `${who}: ${e.reason}`;
+    // Pending payments (20261023y): a person's word and the CEO's links.
+    case "confirm": {
+      const said = Number(e.to_value ?? d.usd ?? Number.NaN);
+      return `${who} confirmed ${Number.isFinite(said) ? `${usd(said)} paid` : "a payment"}${d.rail ? ` by ${RAIL[String(d.rail)] ?? d.rail}` : ""}${d.paidOn ? ` on ${shortDay(String(d.paidOn))}` : ""} for ${partOf(d)}. A person's word, not money.`;
+    }
+    case "unconfirm":
+      return `${who} withdrew a confirmation${e.from_value ? ` of ${usd(Number(e.from_value))}` : ""}${e.reason ? `: ${e.reason}` : "."}`;
+    case "link":
+      return `${who} linked a signed deal to this client.`;
+    case "unlink":
+      return `${who} unlinked a signed deal from this client${e.reason ? `: ${e.reason}` : "."}`;
     default:
       return `${who}: ${e.kind}${e.reason ? `, ${e.reason}` : ""}.`;
   }
@@ -1130,6 +1187,18 @@ export function BillingSheet({ api }: { api: BillingApi }) {
     null,
   );
   const [banner, setBanner] = useState<string | null>(null);
+  // Bumped after every decision the sheet saves, so Pending payments reads
+  // again (a payment logged here is "Another source says paid" there).
+  const [pendingReads, setPendingReads] = useState(0);
+  // Pending payments' "Log it as a payment": the row to open on its payment
+  // form, filled in, and a counter so the same row opens afresh each time.
+  const [start, setStart] = useState<{
+    taskId: string;
+    amount: string;
+    currency: "USD" | "KWD";
+    note: string;
+    n: number;
+  } | null>(null);
 
   const load = useCallback(
     async (fresh = false) => {
@@ -1149,9 +1218,130 @@ export function BillingSheet({ api }: { api: BillingApi }) {
     void load();
   }, [load]);
 
+  // Bring the row Pending payments opened into view once it has rendered.
+  useEffect(() => {
+    if (!start) return;
+    const still =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const el = document.getElementById(`billing-row-${start.taskId}`);
+    el?.scrollIntoView?.({
+      behavior: still ? "auto" : "smooth",
+      block: "start",
+    });
+  }, [start]);
+
+  /** Pending payments' "Log it as a payment": this client's payment form, filled in. */
+  const logFromPending: LogPaymentHandoff = p => {
+    if (!data?.rows.some(r => r.taskId === p.taskId)) return false;
+    setQuery("");
+    setOpen(p.taskId);
+    const typed = p.amount !== null && p.amount > 0;
+    setStart(s => ({
+      taskId: p.taskId,
+      amount: typed ? String(p.amount) : "",
+      // A dinar figure arrives as dinars, never as the same number of dollars.
+      currency: typed ? p.currency : "USD",
+      note: p.note,
+      n: (s?.n ?? 0) + 1,
+    }));
+    return true;
+  };
+
+  /** One saved card on the sheet at once, before the read behind it. */
+  const showAccount = (fresh: Account | undefined) => {
+    if (!fresh) return;
+    setData(d =>
+      d
+        ? {
+            ...d,
+            rows: d.rows.map(r =>
+              r.taskId === fresh.taskId
+                ? { ...fresh, ladder: ladderOf(fresh, d.today) }
+                : r,
+            ),
+          }
+        : d,
+    );
+  };
+
+  /** Pending payments' "Set on the card": the plan's next part, through the sheet's own edit path. */
+  const setCardNext: SetCardNext = async p => {
+    const row = data?.rows.find(r => r.taskId === p.taskId);
+    if (!row)
+      throw new Error(
+        "That client is not in the billing sheet yet. Reload the page, then try again.",
+      );
+    let updated: Account | undefined;
+    const amountDiffers =
+      row.nextUsd === null || Math.abs(row.nextUsd - p.usd) > 1;
+    if (amountDiffers)
+      updated = await api.edit({
+        taskId: p.taskId,
+        edit: { kind: "amount", value: p.usd },
+      });
+    if (row.nextDate !== p.date) {
+      try {
+        updated = await api.edit({
+          taskId: p.taskId,
+          edit: {
+            kind: "date",
+            value: p.date,
+            reason: `${p.label}, the plan's next part (Pending payments)`,
+          },
+        });
+      } catch (e) {
+        // The amount saved and the date did not: the row shows the amount
+        // now, so trying again sends only the date, never the amount twice.
+        showAccount(updated);
+        throw new Error(
+          amountDiffers
+            ? `The amount is on the card, but the date is not: ${errorText(e)}`
+            : errorText(e),
+        );
+      }
+    }
+    // The card's row shows the new values at once; Pending payments' own
+    // onChanged reads the sheet again behind it.
+    showAccount(updated);
+    return "Set on the card. ClickUp gets it when write-back is on.";
+  };
+
+  /** The footnote's clients: the sheet's Late view, brought into view. */
+  const showLate = () => {
+    setQuery("");
+    setFilter("late");
+    const still =
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    document.getElementById("billing-sheet-rows")?.scrollIntoView?.({
+      behavior: still ? "auto" : "smooth",
+      block: "start",
+    });
+  };
+
+  const pending = api.pending ? (
+    <PendingPayments
+      api={api.pending}
+      // A decision saved in the sheet (a payment logged, a date moved) can
+      // change what is pending: the section reads again.
+      reloadKey={pendingReads}
+      // Where a deal with no card can go: the Active and onboarding cards
+      // cockpit_billing_card_listed accepts (paused and gone ones refuse).
+      cards={data?.cards.filter(
+        c => c.group === "active" || c.group === "pipeline",
+      )}
+      onLogPayment={logFromPending}
+      onSetCardNext={setCardNext}
+      onShowLate={showLate}
+      onChanged={() => void load()}
+    />
+  ) : null;
+
   /** Show a decision at once, then read the sheet again behind it. */
   const settle = (taskId: string, text: string, updated?: Account) => {
     setNotice({ taskId, text });
+    setPendingReads(n => n + 1);
     if (updated)
       setData(d =>
         d
@@ -1189,23 +1379,27 @@ export function BillingSheet({ api }: { api: BillingApi }) {
 
   if (!data)
     return (
-      <div className="billing-root rounded-xl border bg-card p-6">
+      <div className="billing-root grid gap-4">
         <style>{STYLE}</style>
-        {error ? (
-          <div className="grid gap-3">
-            <p className="text-sm text-destructive">{error}</p>
-            <div>
-              <Button size="sm" variant="outline" onClick={() => load()}>
-                Try again
-              </Button>
+        <div className="rounded-xl border bg-card p-6">
+          {error ? (
+            <div className="grid gap-3">
+              <p className="text-sm text-destructive">{error}</p>
+              <div>
+                <Button size="sm" variant="outline" onClick={() => load()}>
+                  Try again
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Reading the billing sheet
-          </p>
-        )}
+          ) : (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+              Reading the billing sheet
+            </p>
+          )}
+        </div>
+        {/* Pending payments loads on its own: the sheet's failure never hides it. */}
+        {pending}
       </div>
     );
 
@@ -1290,7 +1484,13 @@ export function BillingSheet({ api }: { api: BillingApi }) {
         ) : null}
       </section>
 
-      <section className="overflow-hidden rounded-xl border bg-card">
+      {/* Its own read: its failure never blocks the sheet below. */}
+      {pending}
+
+      <section
+        id="billing-sheet-rows"
+        className="scroll-mt-4 overflow-hidden rounded-xl border bg-card"
+      >
         <div className="flex flex-wrap items-center gap-2 border-b p-3 sm:px-4">
           {/* One row that scrolls sideways on a phone; an empty view is not offered. */}
           <div className="-mx-3 flex w-[calc(100%+1.5rem)] gap-1 overflow-x-auto px-3 [scrollbar-width:none] sm:mx-0 sm:w-auto sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
@@ -1356,11 +1556,19 @@ export function BillingSheet({ api }: { api: BillingApi }) {
                   ? `${shortDay(r.nextDate)}, ${when(r.ladder.days)}`
                   : "no date on the card";
               return (
-                <li key={r.taskId} className="border-b last:border-b-0">
+                <li
+                  key={r.taskId}
+                  id={`billing-row-${r.taskId}`}
+                  className="scroll-mt-4 border-b last:border-b-0"
+                >
                   <button
                     type="button"
                     aria-expanded={isOpen}
-                    onClick={() => setOpen(isOpen ? null : r.taskId)}
+                    onClick={() => {
+                      setOpen(isOpen ? null : r.taskId);
+                      // A form Pending payments filled in is not kept for later.
+                      if (start?.taskId === r.taskId) setStart(null);
+                    }}
                     className={`grid w-full gap-x-4 gap-y-1.5 px-3 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none sm:px-4 md:items-center ${COLS} ${isOpen ? "bg-muted/30" : ""}`}
                   >
                     {/* Client, and on a phone the amount beside it */}
@@ -1433,6 +1641,18 @@ export function BillingSheet({ api }: { api: BillingApi }) {
                   </button>
                   {isOpen ? (
                     <Panel
+                      key={
+                        start?.taskId === r.taskId ? `start-${start.n}` : "own"
+                      }
+                      start={
+                        start?.taskId === r.taskId
+                          ? {
+                              amount: start.amount,
+                              currency: start.currency,
+                              note: start.note,
+                            }
+                          : null
+                      }
                       row={r}
                       api={api}
                       events={data.events}

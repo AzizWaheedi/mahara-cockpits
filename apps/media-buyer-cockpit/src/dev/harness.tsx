@@ -21,6 +21,8 @@
  * (`&calls=` picks the answer). The Client Performance board
  * (?path=/performance) reads boardHarness.ts (`&board=` picks the answer).
  * The Ads page (?path=/ads?range=30d) reads adsPageHarness.ts.
+ * Billing (?tab=billing) reads billingFixture.ts: the sheet and Pending
+ * payments from the 23 Oct read (`&pending=` picks the scenario).
  */
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
@@ -44,6 +46,7 @@ import { TeamPage } from "@/pages/team/TeamPage";
 import "@/index.css";
 import { getCockpitSupabaseClient } from "@/auth/SupabaseAuthProvider";
 import { installAdsPageHarness } from "./adsPageHarness";
+import { installBillingHarness } from "./billingFixture";
 import { installBoardHarness } from "./boardHarness";
 import { installCallCentreHarness } from "./callCentreHarness";
 import { CallsHarnessPage } from "./callsHarnessPage";
@@ -78,6 +81,9 @@ async function main() {
   // The Ads page (?path=/ads?range=30d): made-up campaigns, their 7-day
   // snapshot and a different read for every range (adsPageHarness.ts).
   installAdsPageHarness(getCockpitSupabaseClient());
+  // Billing (?tab=billing&pending=...): the sheet and Pending payments from
+  // the 23 Oct read, writes kept in memory (billingFixture.ts).
+  installBillingHarness(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
     // Optional since the cutover: the CEO tabs that still read them show
     // their empty states without.
