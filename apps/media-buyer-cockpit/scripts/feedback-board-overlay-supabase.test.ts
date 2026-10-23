@@ -210,6 +210,50 @@ test("legacy unbound reports retain fallback without becoming authoritative", as
   );
 });
 
+test("a comments-only report still needs attendance in appointment lists and facts", async () => {
+  await db.exec("BEGIN");
+  try {
+    await q(
+      "insert into portal_data.appointment_outcomes(location_id,appointment_id,revision,feedback,source,request_id) values('locA','other-contact',2,'Invented comment only','portal','comment-only')",
+    );
+    await q(
+      "insert into portal_data.outbox(location_id,request_id,operation,object_id,expected_revision,state) values('locA','comment-only','appointment-outcome','other-contact','2','pending')",
+    );
+    await q(
+      "insert into portal_data.journey_outcome_bindings values('locA','other-contact',2,$1,'lead-other-contact')",
+      [at(2)],
+    );
+    expect((await board()).find(r => r.id === "other-contact")).toMatchObject({
+      attendance: "unknown",
+      no_outcome: true,
+    });
+    const result = (
+      await q("select public.cockpit_board_facts_refresh($1,$2) as v", [
+        day(5),
+        day(0),
+      ])
+    )[0].v;
+    expect(result.ok).toBe(true);
+    expect(
+      (
+        await q(
+          "select sum(value)::int n from pg_temp._bf_v where location_id='locA' and metric='no_outcome'",
+        )
+      )[0].n,
+    ).toBe(3);
+    // A provider-recorded attendance is already an answer without a portal row.
+    await db.exec(
+      "update public.appointments set status='showed' where ghl_appointment_id='cross-client'",
+    );
+    expect((await board()).find(r => r.id === "cross-client")).toMatchObject({
+      attendance: "showed",
+      no_outcome: false,
+    });
+  } finally {
+    await db.exec("ROLLBACK");
+  }
+});
+
 test("full facts refresh uses the same attendance and suppresses no-show quality", async () => {
   await db.exec("BEGIN");
   try {

@@ -74,10 +74,14 @@ BEGIN
              WHEN a.status = 'showed' THEN 'showed' WHEN a.status = 'noshow' THEN 'noshow'
              WHEN coalesce(a.attended, sm.mark, sd.mark)$new$);
   changed:=replace(changed,
+   '(o.appointment_id IS NULL AND coalesce(a.attended, sm.mark, sd.mark) IS NULL) AS no_outcome,',
+   '(coalesce(o.attendance,''unknown'') NOT IN (''showed'',''no_show'') AND coalesce(a.status,'''') NOT IN (''showed'',''noshow'') AND coalesce(a.attended, sm.mark, sd.mark) IS NULL) AS no_outcome,');
+  changed:=replace(changed,
    '(''no_outcome'', m.no_outcome::int), (''lq_sum'', m.lq), (''lq_count'', CASE WHEN m.lq IS NOT NULL THEN 1 ELSE 0 END),',
    '(''no_outcome'', m.no_outcome::int), (''lq_sum'', CASE WHEN m.att<>''noshow'' THEN m.lq END), (''lq_count'', CASE WHEN m.att<>''noshow'' AND m.lq IS NOT NULL THEN 1 ELSE 0 END),');
   IF changed=original OR changed NOT LIKE '%portal_data.cockpit_feedback_outcomes(l.location_id)%'
    OR changed NOT LIKE '%WHEN o.authoritative_attendance AND o.attendance = ''no_show''%'
+   OR changed LIKE '%(o.appointment_id IS NULL AND coalesce(a.attended, sm.mark, sd.mark) IS NULL) AS no_outcome,%'
    OR changed NOT LIKE '%CASE WHEN m.att<>''noshow'' THEN m.lq END%' THEN
    RAISE EXCEPTION 'Board facts feedback patch did not match the expected body';
   END IF;
@@ -103,7 +107,11 @@ BEGIN
          WHEN o.authoritative_attendance AND o.attendance = 'no_show' THEN 'noshow'
          WHEN a.status = 'showed' THEN 'showed' WHEN a.status = 'noshow' THEN 'noshow'
          WHEN coalesce(a.attended, sm.mark)$new$);
+  changed:=replace(changed,
+   '(o.appointment_id IS NULL AND coalesce(a.attended, sm.mark) IS NULL)',
+   '(coalesce(o.attendance,''unknown'') NOT IN (''showed'',''no_show'') AND coalesce(a.status,'''') NOT IN (''showed'',''noshow'') AND coalesce(a.attended, sm.mark) IS NULL)');
   IF changed=original OR changed NOT LIKE '%portal_data.cockpit_feedback_outcomes(p_location)%'
+   OR changed LIKE '%(o.appointment_id IS NULL AND coalesce(a.attended, sm.mark) IS NULL)%'
    OR changed NOT LIKE '%WHEN o.authoritative_attendance AND o.attendance = ''no_show''%' THEN
    RAISE EXCEPTION 'Board appointments feedback patch did not match the expected body';
   END IF;
