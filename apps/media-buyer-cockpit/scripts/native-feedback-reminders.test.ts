@@ -21,6 +21,7 @@ beforeAll(async()=>{
  `);
  await db.exec(readFileSync(new URL('./fixtures/reporting-sync.sql',import.meta.url),'utf8'));
  await db.exec(migration('20261023105854_native_feedback_delivery.sql'));
+ await db.exec(migration('20261023111458_native_feedback_reminder_claim.sql'));
  await db.query("insert into portal_data.reporting_reader_config values('weekly-reporting-reminders',encode(sha256(convert_to($1,'UTF8')),'hex'),true,now()+interval '1 day',now())",[TOKEN]);
  for(const [id,status] of [['missing','confirmed'],['showed','showed'],['noshow','noshow'],['canceled','cancelled'],['future','confirmed']]){
   await db.query("insert into mahara_reporting.facts(namespace,source,kind,external_id,data) values('production','ghl','appointment',$1,jsonb_build_object('id',$2::text,'locationId','locA','contactId',$3::text,'calendarId','cal','startAt',now()+$4::interval,'status',$5::text))",['locA:'+id,id,'contact-'+id,id==='future'?'1 day':'-1 day',status]);
@@ -44,10 +45,13 @@ test('completed provider sync preserves its original scan start',async()=>{
  const v=await call();expect(v.complete).toBe(true);expect(v.showGaps.map((x:any)=>x.appointmentId)).toEqual(['missing']);expect(v.closeGaps.map((x:any)=>x.appointmentId)).toEqual(['showed']);
 });
 test('accepted client feedback immediately stops the corresponding reminder without Sheet delivery',async()=>{
+ const oldApproval=(await call()).approvalToken;
  await owner(db);
  await db.exec("insert into portal_data.appointments(location_id,appointment_id,contact_id,start_at) select 'locA',data->>'id',data->>'contactId',(data->>'startAt')::timestamptz from mahara_reporting.facts where kind='appointment' and data->>'id'='missing'");
  await db.exec("select public.portal_feedback_accept('locA','missing','50000000-0000-4000-8000-000000000001','{\"attendance\":\"showed\",\"deal\":\"pending\"}',now(),contact_id,start_at) from portal_data.appointments where location_id='locA' and appointment_id='missing'");
  await db.exec('set role anon');const v=await call();expect(v.showGaps).toEqual([]);expect(v.closeGaps.map((x:any)=>x.appointmentId)).toEqual(['showed']);
+ const claim=(await db.query<any>('select public.portal_reporting_reminder_claim($1) v',[oldApproval])).rows[0].v;
+ expect(claim).toEqual({allowed:false,reason:'feedback_changed'});
 });
 test('a reschedule cannot inherit feedback from an earlier occurrence',async()=>{
  await owner(db);await db.exec("update mahara_reporting.facts set data=jsonb_set(data,'{startAt}',to_jsonb(now()-interval '2 days')) where external_id='locA:missing'");await db.exec('set role anon');
@@ -58,6 +62,18 @@ test('stale, failed, conflicting and incomplete source reads never produce remin
  await owner(db);await db.exec("update mahara_reporting.sync_jobs set error=null,source_complete_at=now()-interval '3 hours'");await db.exec('set role anon');expect((await call()).complete).toBe(false);
  await owner(db);await db.exec("update mahara_reporting.sync_jobs set source_complete_at=now()-interval '1 hour'; update mahara_reporting.facts set conflict=true where external_id='locA:missing'");await db.exec('set role anon');expect(await call()).toMatchObject({complete:false,showGaps:[],closeGaps:[]});
  await owner(db);await db.exec("update mahara_reporting.facts set conflict=false; update mahara_reporting.inventory set checked_at=null where external_id='locA:missing'");await db.exec('set role anon');expect((await call()).complete).toBe(false);
+});
+test('approval must be current, fresh, unexpired and single-use even after a lost response',async()=>{
+ await owner(db);await db.exec("update mahara_reporting.inventory set checked_at=now(); update mahara_reporting.sync_jobs set source_complete_at=now()-interval '1 hour',error=null");await db.exec('set role anon');
+ const first=await call(),second=await call();expect(first.approvalToken).toMatch(/^native-[a-f0-9]{32}$/);expect(second.approvalToken).toBe(first.approvalToken);
+ const claim=async(token:string)=>(await db.query<any>('select public.portal_reporting_reminder_claim($1) v',[token])).rows[0].v;
+ expect(await claim('report-locA-2026-43')).toEqual({allowed:false,reason:'refresh_review'});
+ await owner(db);await db.exec("update mahara_reporting.sync_jobs set error='provider failed'");await db.exec('set role anon');
+ expect(await claim(first.approvalToken)).toEqual({allowed:false,reason:'source_unavailable'});
+ await owner(db);await db.exec("update mahara_reporting.sync_jobs set error=null");await db.exec('set role anon');
+ expect(await claim(first.approvalToken)).toMatchObject({allowed:true,locationId:'locA'});
+ expect(await claim(first.approvalToken)).toEqual({allowed:false,reason:'already_claimed'});
+ expect((await call()).approvalState).toBe('already_claimed');
 });
 test('rotated or expired credentials stop access immediately',async()=>{
  await owner(db);await db.exec("update portal_data.reporting_reader_config set expires_at=now()-interval '1 second'");await db.exec('set role anon');await expect(call()).rejects.toThrow();
