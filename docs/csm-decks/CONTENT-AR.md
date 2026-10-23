@@ -10,7 +10,7 @@ Written 2026-10-19 under `mahara-context/skills/aziz-kuwaiti-voice`, in the warm
 2. **Slide text is a white Gulf Arabic a Saudi engineering office reads as serious.** No ج/ي spelling swaps on slides. No Kuwaiti-only words (شنو، شلون، ماكو، وايد، عيل، هني، جذي، باجر، مال as a possessive). No Saudi-only words (وش، أبشر، إيش). Questions use كيف، ليش، متى، وين، أي. The example call is the only place that speaks a dialect, on purpose.
 3. **Voice-skill rules kept:** تمام never طيب; بصراحة; نبدي and تبدي, not نبدأ; plain spoken verbs, never bookish ones (يحاكي، يجسد، يعكس); never مقاول for the client; loanwords in Arabic script where people say them (سكربت، كورس، لابتوب، زوم، فيد، ريلز، ستوري).
 4. **Form:** no guillemets and no quote marks around Arabic words, no em dashes, no exclamation marks. ".." only inside spoken lines.
-5. **Times:** on slides, ١٠ صباحاً and ٦ مساءً (how Gulf businesses write their hours). In spoken lines and in the call, الصبح، العصر، المسا.
+5. **Times:** on slides, ١٠ صباحاً and ٦ مساءً (how Gulf businesses write their hours). A clock from noon to 2:59 is ظهراً (١٢ ظهراً, ٢:٣٠ ظهراً): ١٢ مساءً reads as midnight or the evening (`clock()` in dates.ts, score round 1 of the Blueprint deck, 2026-10-23). In spoken lines and in the call, الصبح، العصر، المسا.
 6. **Numbers:** Arabic-Indic digits through `Fig`, never ٬, never a lone ٠, never a digit glued to بـ or لـ (write إلى ٦, not لـ٦). Small numbers inside speech are words (ست شهور، سنتين). The running call clock, the WhatsApp confirmation's date and time, and the Drive box's clock in {time} (أمس الساعة 09:05; a date before it keeps Arabic-Indic digits, يوم ١٦ أكتوبر) stay in Latin digits (DESIGN 13.4, 7.6, DRIVE-IMPORT 8); once the call ends, its length takes Arabic-Indic digits, ٤:٥١ (the fixer's round).
 7. **Slots keep CONTENT's ids** in braces. Client and page names, handles and English words sit in `<bdi dir=auto>` (DESIGN 13.2). In the Arabic deck `{client.name}` is the Arabic name from `ghl_clients.client_name` when there is one.
 8. **The presenting CSM's title is gendered in Arabic.** Store `csm.title_ar` on the seat, or a gender: مدير نجاح العملاء for a man, مديرة نجاح العملاء for a woman. With no name and no gender, the line reads فريق نجاح العملاء. Inside the O3 group, where the CSM is a role, the row reads نجاح العملاء.
@@ -52,6 +52,10 @@ Use these the same way in both decks, the notes and the prep view.
 | within 2 working hours | خلال ساعتين دوام | decision 12 |
 | your agreement | عقدكم | its dates: التواريخ (decision 12) |
 | starter ads | إعلانات البداية | |
+| kickoff form | نموذج بداية الشغل | O8; never مكالمة التعريف, which is the onboarding call |
+| our media team | فريق الإعلانات | the Blueprint's part 1 goes to it; the person stays مسؤول الإعلانات |
+| offer sheet | ملف العرض | the Blueprint |
+| Brand DNA doc | ملف هويتكم | the Blueprint |
 | your own ads | إعلاناتكم الخاصة | |
 | the creative director | المدير الإبداعي | |
 | the media buyer | مسؤول الإعلانات | |
@@ -313,6 +317,50 @@ Since the spec review of 2026-10-20, O6 starts them on the introduction, the cou
 - (Before we make anything, the spec review) قبل لا نسوي أي إعلان: أفكاركم، وعرضكم، والمعلومات مثل الأسعار والخدمات والمناطق، قولوها بمكالمة بناء الهوية والعرض، أو أرسلوها بالقروب قبلها.
 - خلنا نحجز مكالمة بناء الهوية والعرض الحين.
 - **Temp check:** فيه شي مو واضح لكم قبل لا نحجز مكالمة بناء الهوية؟
+
+## O8 · `kickoff` (2026-10-22)
+
+The kickoff form, filled with the client and sent before the call ends (CONTENT O8, DESIGN 23). "Kickoff form" is نموذج بداية الشغل on the slides and in the spoken lines: plain, and apart from الإطلاق (the launch) and انطلاقة (the launch deck's cover). The form inside the frame is Typeform's own, in its own words.
+
+**On screen**
+
+| Key | English | Arabic |
+|---|---|---|
+| `kickoff.title` (the overview) | Your kickoff form | نموذج بداية الشغل |
+| `kickoff.head` | Before we hang up: your kickoff form | قبل لا نسكر المكالمة: نموذج بداية الشغل |
+| `kickoff.prefilled` | Your details are already in, from your onboarding form. We check them together, then send it. | تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط. نراجعها مع بعض، وبعدها نرسله. |
+| `kickoff.together` | We fill it in together, now. | نعبيه مع بعض الحين. |
+| `kickoff.sent` | Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | وأول ما ينرسل، يبدي فريقنا بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
+| `kickoff.stepsHead` · `kickoff.steps` (the column's three steps before it is sent) | Once it's sent · Our team starts on your setup. · We get your Brand Blueprint call ready. · The next step reaches your WhatsApp group. | أول ما ينرسل · يبدي فريقنا بتجهيز حسابكم. · نجهز لمكالمة بناء الهوية والعرض. · وتوصلكم الخطوة الجاية بقروب الواتساب. |
+| `kickoff.stepsHeadDone` (on record already: the same three steps, ticked) | Now it's in | وصلنا، والحين |
+| `kickoff.formLang` (the frame's head, Arabic deck only: the form is Typeform's own, in English) | In English | النموذج بالإنجليزي |
+| `kickoff.done` | Done. Your answers are with our team. | تمام، أجوبتكم وصلت لفريقنا. |
+| `kickoff.next` (the frame's card once sent) | Next: we pick the time for your Brand Blueprint call | الخطوة الجاية: نختار وقت مكالمة بناء الهوية والعرض |
+| `kickoff.doneThen` | Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | فريقنا يبدي بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
+| `kickoff.have` | We already have it, so there's nothing to fill in now. | النموذج وصلنا من قبل، فما فيه شي نعبيه الحين. |
+| `kickoff.change` | Want to change an answer? Tell us in your WhatsApp group. | تبون تغيرون أي جواب؟ قولوا لنا بقروب الواتساب. |
+| `kickoff.frame` | Kickoff form | نموذج بداية الشغل |
+| `kickoff.sentAt` | Sent at {time} | انرسل الساعة {time} |
+| `kickoff.rehearsal` | Rehearsal: nothing is sent | بروفة: ما ينرسل شي |
+| `kickoff.opening` | Opening your kickoff form | نفتح نموذج بداية الشغل |
+| `kickoff.away` | We'll open your kickoff form from our side. | بنفتح نموذج بداية الشغل من عندنا. |
+| `kickoff.here` (prep's preview) | Your kickoff form opens here. | نموذج بداية الشغل ينفتح هنا. |
+| `kickoff.recordHead` | Kickoff on record | نموذج بداية الشغل عندنا |
+| `kickoff.filledOn` | Filled on {date} | تعبّى يوم {date} |
+| `kickoff.rows.service` | The service we advertise | الخدمة اللي نعلن عنها |
+| `kickoff.rows.page` | Your Page name | اسم صفحتكم |
+| `kickoff.rows.starter` | Starter ads | إعلانات البداية |
+| `kickoff.starter.approved` · `.pending` · `.declined` | Approved · You see them first · Your own ads first | وافقتوا عليها، تشوفونها أول، إعلاناتكم الخاصة أول |
+| `next.cardPick` (O7's card, the kickoff sent and no time yet) | We pick the time now | نختار الوقت الحين |
+
+{time} is the deck's clock (`clock`, ١٢:١٢ مساءً) and {date} its day and month (١٩ أكتوبر), Arabic-Indic, as every date on the slides. The service row says the service by its Arabic name (تصميم داخلي); the Page name stays as typed, in `<bdi dir=auto>`. Rehearsal is بروفة (a run-through), never تجربة, which decision 10 keeps off the slides.
+
+**Spoken lines (Arabic)**
+- هذا نموذج بداية الشغل. تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط، فبس نراجعها مع بعض.
+- تأكدوا من الأجوبة، وإذا شي تغير قولوا لي وأعدله الحين.
+- (Once it's sent) تمام، انرسل. خلنا نختار وقت مكالمة بناء الهوية والعرض الحين.
+- (Kickoff on record) نموذج بداية الشغل وصلنا من قبل. وإذا تبون تغيرون أي جواب، قولوا لنا بالقروب.
+- **Temp check:** فيه شي بالنموذج تبون تغيرونه قبل لا نرسله؟
 
 ---
 
@@ -1003,7 +1051,8 @@ The Arabic for every new or changed string in `CONTENT.md`, [The visual pass](CO
 | `today.label` | Today | اليوم |
 | `today.1.short` | Launch service | خدمة الإطلاق |
 | `today.2.short` | Your access | الصلاحيات |
-| `today.3.short` | Blueprint call | مكالمة بناء الهوية |
+| `today.3.short` | Blueprint call | مكالمة بناء الهوية والعرض (score round 1 of the Blueprint deck: one Arabic name for the call across both decks) |
+| `today.kickoffSent` (the third item, ticked by the kickoff's Submit, no call booked or held yet) | Kickoff sent | انرسل نموذج بداية الشغل |
 
 The long names are O1's agenda, unchanged (نختار خدمة الإطلاق · نجهّز الصلاحيات · نحجز مكالمة بناء الهوية والعرض). The numbers in the rings are written from `"١٢٣"`.
 

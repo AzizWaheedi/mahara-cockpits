@@ -2,7 +2,7 @@ import { ClipboardList } from "lucide-react";
 import { type ReactNode, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { openNamed } from "@/present/PresentButton";
-import type { FormKey } from "./formConfig";
+import type { FormKey, FormNews } from "./formConfig";
 
 /**
  * The ways into a form window (KICKOFF.md 1), light on purpose: nothing of
@@ -83,16 +83,7 @@ export function FillFormButton({
 
 // --------------------------------------------------- news between windows
 
-/** What a form window tells the cockpit's own tab. */
-export type FormNews =
-  | {
-      type: "sent";
-      taskId: string;
-      form: FormKey;
-      clientName: string;
-      say: string;
-    }
-  | { type: "checked" | "noted"; taskId: string; form: FormKey };
+export type { FormNews } from "./formConfig";
 
 const CHANNEL = "mahara-forms";
 

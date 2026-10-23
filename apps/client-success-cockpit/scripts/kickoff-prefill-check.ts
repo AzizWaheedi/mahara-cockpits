@@ -23,7 +23,7 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { FormContext } from "../src/forms/formConfig";
-import { KICKOFF } from "../src/forms/formConfig";
+import { KICKOFF } from "../src/forms/kickoff";
 import {
   formLink,
   KICKOFF_HIDDEN,

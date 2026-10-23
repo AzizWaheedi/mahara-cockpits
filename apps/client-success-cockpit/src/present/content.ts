@@ -115,6 +115,11 @@ export const SHARED = {
       en: "Starter, from our templates",
       ar: "إعلان بداية، من قوالبنا",
     },
+    /** A starter when the Brand Blueprint chose its pack (SPEC 6.2). */
+    starterPack: {
+      en: "From our {service} pack",
+      ar: "من ملف {service} عندنا",
+    },
     yourForm: { en: "Your form", ar: "نموذجكم" },
     exampleForm: { en: "Example form", ar: "نموذج للتوضيح" },
     example: { en: "Example", ar: "مثال" },
@@ -400,8 +405,15 @@ export const O = {
     short: [
       { en: "Launch service", ar: "خدمة الإطلاق" },
       { en: "Your access", ar: "الصلاحيات" },
-      { en: "Blueprint call", ar: "مكالمة بناء الهوية" },
+      // One Arabic name for the call across both decks (score round 1).
+      { en: "Blueprint call", ar: "مكالمة بناء الهوية والعرض" },
     ],
+    /**
+     * The third item when the kickoff's Submit ticked it and no Blueprint
+     * call is booked or held yet: it says what was done, never that the
+     * call is booked (score round 1 of the Blueprint deck).
+     */
+    kickoffSent: { en: "Kickoff sent", ar: "انرسل نموذج بداية الشغل" },
   },
   goals: {
     title: {
@@ -750,6 +762,15 @@ export const O = {
       en: "We book it before we hang up",
       ar: "نحجزها قبل لا نسكر المكالمة",
     },
+    /**
+     * The kickoff is sent, so the Blueprint is booked on our side, and its
+     * time is not on the calendar yet: the block is ticked, as the
+     * checklist is, and says what is left (the kickoff slide, 2026-10-22).
+     */
+    cardPick: {
+      en: "We pick the time now",
+      ar: "نختار الوقت الحين",
+    },
     starterTitle: { en: "Your starter ads", ar: "إعلانات البداية" },
     /** Stop 2, under its tag: what the client is looking at (not stop 1's approval line again). */
     starterLine: {
@@ -759,6 +780,132 @@ export const O = {
     starterLineNoPack: {
       en: "Our ready templates, under your Page name and logo.",
       ar: "قوالبنا الجاهزة، باسم صفحتكم وشعاركم.",
+    },
+  },
+  /**
+   * O8, the kickoff form (CEO, 2026-10-22: "embed the kick off form at the
+   * end of the onboarding presentation"). The form itself is Typeform's
+   * own; these are the words around it. Nothing about money, the card or
+   * the sale is on the canvas: those facts are in the notes window.
+   */
+  kickoff: {
+    title: { en: "Your kickoff form", ar: "نموذج بداية الشغل" },
+    head: {
+      en: "Before we hang up: your kickoff form",
+      ar: "قبل لا نسكر المكالمة: نموذج بداية الشغل",
+    },
+    /** With their onboarding answers on record: the read-backs are in. */
+    prefilled: {
+      en: "Your details are already in, from your onboarding form. We check them together, then send it.",
+      ar: "تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط. نراجعها مع بعض، وبعدها نرسله.",
+    },
+    /** Without them: the form opens with their name only. */
+    together: {
+      en: "We fill it in together, now.",
+      ar: "نعبيه مع بعض الحين.",
+    },
+    sent: {
+      en: "Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group.",
+      ar: "وأول ما ينرسل، يبدي فريقنا بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب.",
+    },
+    /**
+     * The same, as the column's three numbered steps (score round 3 of the
+     * Blueprint deck: one sentence left the column's lower half empty).
+     */
+    stepsHead: { en: "Once it's sent", ar: "أول ما ينرسل" },
+    /** On record already: the same steps, under way (score round 2 of the design pass). */
+    stepsHeadDone: { en: "Now it's in", ar: "وصلنا، والحين" },
+    steps: [
+      {
+        en: "Our team starts on your setup.",
+        ar: "يبدي فريقنا بتجهيز حسابكم.",
+      },
+      {
+        en: "We get your Brand Blueprint call ready.",
+        ar: "نجهز لمكالمة بناء الهوية والعرض.",
+      },
+      {
+        en: "The next step reaches your WhatsApp group.",
+        ar: "وتوصلكم الخطوة الجاية بقروب الواتساب.",
+      },
+    ],
+    /**
+     * Sent on this call: the column's line (score round 1 of the Blueprint
+     * deck: "sent" was said three times; the frame's head keeps the time,
+     * its card says what comes next).
+     */
+    done: {
+      en: "Done. Your answers are with our team.",
+      ar: "تمام، أجوبتكم وصلت لفريقنا.",
+    },
+    /** The frame's card once sent: the next action, not "sent" again. */
+    next: {
+      en: "Next: we pick the time for your Brand Blueprint call",
+      ar: "الخطوة الجاية: نختار وقت مكالمة بناء الهوية والعرض",
+    },
+    doneThen: {
+      en: "Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group.",
+      ar: "فريقنا يبدي بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب.",
+    },
+    /** On record already: never a fresh form. */
+    have: {
+      en: "We already have it, so there's nothing to fill in now.",
+      ar: "النموذج وصلنا من قبل، فما فيه شي نعبيه الحين.",
+    },
+    change: {
+      en: "Want to change an answer? Tell us in your WhatsApp group.",
+      ar: "تبون تغيرون أي جواب؟ قولوا لنا بقروب الواتساب.",
+    },
+    /** The frame's label, beside the client's name. */
+    frame: { en: "Kickoff form", ar: "نموذج بداية الشغل" },
+    /**
+     * The form is Typeform's own, in English: the Arabic deck says so in
+     * the frame's head (score round 3), so its English questions are no
+     * surprise.
+     */
+    formLang: { en: "In English", ar: "النموذج بالإنجليزي" },
+    sentAt: { en: "Sent at {time}", ar: "انرسل الساعة {time}" },
+    rehearsal: {
+      en: "Rehearsal: nothing is sent",
+      ar: "بروفة: ما ينرسل شي",
+    },
+    opening: {
+      en: "Opening your kickoff form",
+      ar: "نفتح نموذج بداية الشغل",
+    },
+    /** The form could not open on the canvas: the CSM opens it from the notes window. */
+    away: {
+      en: "We'll open your kickoff form from our side.",
+      ar: "بنفتح نموذج بداية الشغل من عندنا.",
+    },
+    /** The slide outside the call (prep's preview): where the form opens. */
+    here: {
+      en: "Your kickoff form opens here.",
+      ar: "نموذج بداية الشغل ينفتح هنا.",
+    },
+    /**
+     * Over the form while the CSM fills its internal answers (the ad money,
+     * the payment, the recording link): the client sees this card, never
+     * those questions.
+     */
+    cover: {
+      en: "A few answers for our team, filled in on our side.",
+      ar: "كم جواب لفريقنا، نعبيها من عندنا.",
+    },
+    recordHead: { en: "Kickoff on record", ar: "نموذج بداية الشغل عندنا" },
+    filledOn: { en: "Filled on {date}", ar: "تعبّى يوم {date}" },
+    rows: {
+      service: {
+        en: "The service we advertise",
+        ar: "الخدمة اللي نعلن عنها",
+      },
+      page: { en: "Your Page name", ar: "اسم صفحتكم" },
+      starter: { en: "Starter ads", ar: "إعلانات البداية" },
+    },
+    starter: {
+      approved: { en: "Approved", ar: "وافقتوا عليها" },
+      pending: { en: "You see them first", ar: "تشوفونها أول" },
+      declined: { en: "Your own ads first", ar: "إعلاناتكم الخاصة أول" },
     },
   },
 } as const;
@@ -772,6 +919,7 @@ export const O_TITLES = {
   road: O.road.title,
   "this-week": O.week.title,
   next: O.next.title,
+  kickoff: O.kickoff.title,
 } as const;
 
 // ----------------------------------------------------- presenter notes
@@ -802,7 +950,7 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
       'Frame the call: "About 45 minutes. A few slides first, then we set most things up together, live."',
       "Check who is on the call. If the owner isn't there, ask who decides on the ads and who meets the customers.",
       "Say the call is recorded for the team.",
-      "Keep the kickoff form open in your own tab.",
+      "The kickoff form is the deck's last slide: you fill it in with them before you hang up.",
       "Point at the three: by the end of this call, these are done.",
     ],
     sayAr: [
@@ -914,7 +1062,7 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
       "Before we make anything: their ideas, the offer and the facts (prices, services, areas) go into the Blueprint call, or in the group before it. That is the easy way to shape the ads before they exist.",
       "Book the Blueprint before you hang up.",
       "Stop 1: the small pictures are example ads, not theirs: most get switched off, a few keep running. That's the test.",
-      "The last stop: read the checklist back. If one is still open, agree who finishes it and by when, and write it in the kickoff form.",
+      "The last stop: read the checklist back. If one is still open, agree who finishes it and by when, and write it in the kickoff form on the next slide.",
     ],
     sayAr: [
       "تبون تشوفون إعلانات البداية الحين؟",
@@ -928,6 +1076,26 @@ export const O_NOTES: Record<keyof typeof O_TITLES, SlideNotes> = {
     temp: {
       en: "Anything you're unsure about before we book the Blueprint?",
       ar: "فيه شي مو واضح لكم قبل لا نحجز مكالمة بناء الهوية؟",
+    },
+  },
+  kickoff: {
+    say: [
+      "Share the deck window as it is: the form is theirs to see. The card's facts, the payment and the sale's notes stay in this window, under Kickoff.",
+      "Their onboarding answers are read back in the form's first groups. Ask them to check each one as you go.",
+      "The service: the one they chose on slide 4. The rest of the form's order is below, each with where it came from.",
+      "At the end, copy the call recording link and the payment amount from below into the last two questions, then press Submit with them.",
+      "Once it's sent, the checklist ticks the Blueprint call. Press Book the Brand Blueprint call (the form's last screen, or below) and pick the time with them.",
+      "If the slide says Kickoff on record, don't send another. Read what was filled below, and fix a wrong answer in Typeform's results.",
+    ],
+    sayAr: [
+      "هذا نموذج بداية الشغل. تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط، فبس نراجعها مع بعض.",
+      "تأكدوا من الأجوبة، وإذا شي تغير قولوا لي وأعدله الحين.",
+      "(Once it's sent) تمام، انرسل. خلنا نختار وقت مكالمة بناء الهوية والعرض الحين.",
+      "(Kickoff on record) نموذج بداية الشغل وصلنا من قبل. وإذا تبون تغيرون أي جواب، قولوا لنا بالقروب.",
+    ],
+    temp: {
+      en: "Anything in the form you'd like to change before we send it?",
+      ar: "فيه شي بالنموذج تبون تغيرونه قبل لا نرسله؟",
     },
   },
 };
@@ -1150,10 +1318,11 @@ export const journeyName = (i: number, dwy: boolean): L => {
   return (dwy && row.dwy) || row.name;
 };
 
-/** The two decks' names, for the chrome and the presenter's windows. */
-export const DECK_NAME: Record<"onboarding" | "launch", L> = {
+/** The decks' names, for the chrome and the presenter's windows. */
+export const DECK_NAME: Record<"onboarding" | "launch" | "blueprint", L> = {
   onboarding: { en: "Onboarding", ar: "التعريف" },
   launch: { en: "Launch", ar: "الإطلاق" },
+  blueprint: { en: "Brand Blueprint", ar: "بناء الهوية والعرض" },
 };
 
 export const CLOSED = { en: "Deck closed", ar: "انتهى العرض" } as const;

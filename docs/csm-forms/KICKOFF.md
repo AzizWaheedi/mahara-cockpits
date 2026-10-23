@@ -107,6 +107,20 @@ submit.
     disagree. Once the kickoff is on record the panel moves to "After the
     call".
 
+### On the onboarding deck's last slide (2026-10-22)
+The CEO: "embed the kick off form at the end of the onboarding
+presentation ... just make it easy for them at the end so they can submit
+it." The deck's last slide (`docs/csm-decks/DESIGN.md` 23) holds the same
+form: `useFormPanel` with this config, read through `useLiveForm`, the card
+ID from the record, the same guard and the same trail. The form sits in a
+frame on the shared canvas; everything this window keeps in its side panel
+(the seal, Still missing, the facts in the form's order, the trail, the
+booking) is in the deck's notes window, never on the shared screen. A
+kickoff already on record shows "Kickoff on record" with what was filled and
+no form; a second kickoff, if ever needed, is this window's. The send
+reaches the cockpit tab the same way (`announceForm`), and ticks the deck's
+checklist ("Blueprint call").
+
 ### Full window, not a sheet
 The window is the "full-screen" option the CEO allowed: it can be shared on
 its own, it survives navigating the cockpit, and nothing from the app shell
@@ -123,13 +137,17 @@ Blueprint call better.
 
 | File | What it holds |
 |---|---|
-| `formConfig.ts` | `FormConfig` type and the `KICKOFF` config. Pure, no React, no I/O. |
-| `prefill.ts` | Hidden-field builders, the Typeform hash parser and the cross-check. Pure. |
-| `formRail.ts` | Side-panel facts from the reads. Pure. |
+| `formConfig.ts` | The contract, types only: `FormConfig`, `FormContext`, `RailPart`, `RailRow`, `Already`, `FormSend`, `SendInput`, `FormNews`. No value, no React, no I/O (split 2026-10-22). |
+| `kickoff.ts` | The `KICKOFF` config and the registry of the forms this cockpit opens (`FORM_CONFIGS`, `formConfig(key)`). Pure. |
+| `prefill.ts` | Hidden-field builders, the Typeform hash parser and the cross-check, with the kickoff's hidden-field spec (`KICKOFF_HIDDEN`, Make 13's refs). Pure. |
+| `formRail.ts` | The kickoff's side-panel facts from the reads (`kickoffRail`). Pure. |
 | `formStatus.ts` | The after-submit trail as a function of the reads and the time. Pure. |
+| `formTime.ts` | Kuwait's clock for the trail and the panel. Pure. |
 | `formClient.ts` | The two new RPCs, zod-checked, with the same sign-in guard as `onboardingClient.ts`. |
-| `FormPanel.tsx` | Embed, side panel, warnings, trail. Takes a config and a context. |
-| `FormWindow.tsx` | The route page: reads, header, Sharing switch, close guard. |
+| `useFormPanel.ts` | The panel's state without a layout: the guard, the frozen hidden object, the embed, the one note per response, the checks and the trail (split out 2026-10-22, so the onboarding deck's last slide draws the same panel). |
+| `FormPanel.tsx` | The kickoff window's layout of that state: the form, the side panel (`RailView`), the guard, the trail (`AfterSend`), the answers (`AnswersSheet`) and the seal (`Seal`). Takes a config and a context. |
+| `useLiveForm.ts` | One client's reads for a form (row, deck sources, timeline, sends), the focus re-read, the io and the plain blocked sentences (`blockedFor`), behind injectable reads (`formReads(client, taskId, form)`). |
+| `FormWindow.tsx` | The route page: header, seal, Sharing switch, plain states. |
 | `OpenFormButton.tsx` | `openForm(taskId, key)` (a window of its own), the button used in the two entry points, and the news between windows. |
 | `useFormSend.ts` | The newest send of one form for one client, read once for the client page's header and its Onboarding panel. |
 
@@ -376,9 +394,51 @@ no word is left alone on its line.
 ### 2.6 How the Brand Blueprint will use it (not built here)
 
 - **Where:** the creative director cockpit, gated for its seats plus admin
-  and the CEO. Apps cannot import from each other, so `src/forms/*` is
-  copied byte for byte and pinned in `scripts/check-shared.sh`, with only the
-  config files and the gate differing.
+  and the CEO. Apps cannot import from each other, so the core of
+  `src/forms/` is copied byte for byte and pinned in
+  `scripts/check-shared.sh`, with only the config files, the reads and the
+  gate differing.
+- **The core and the rest.** The core is six files: `formConfig.ts` (the
+  contract, types only), `useFormPanel.ts`, `FormPanel.tsx`,
+  `formStatus.ts`, `formTime.ts` and `prefill.ts`. The rest is the
+  kickoff's or this cockpit's own and is not copied: `kickoff.ts` (the
+  config and the registry; the Blueprint brings `blueprint.ts`),
+  `formRail.ts` (the kickoff's side panel), `formClient.ts` and
+  `useLiveForm.ts` (this cockpit's gated calls), `FormWindow.tsx`,
+  `OpenFormButton.tsx` and `useFormSend.ts`. `kickoffAlready`,
+  `kickoffCardDone` and `KICKOFF_HIDDEN` ride along inside the core files
+  unused. `scripts/form-contract.test.ts` pins the list below against the
+  core's imports.
+
+#### The core's dependencies on the client success app
+
+Everything the six core files import from outside themselves. The creative
+director cockpit has, or copies, each one:
+
+| Import | What the core uses |
+|---|---|
+| `react` | hooks |
+| `sonner` | `toast` (copy confirmations, the rehearsal's booking note) |
+| `lucide-react` | `Check`, `ChevronRight`, `Copy`, `RefreshCw`, `RotateCcw` |
+| `@typeform/embed` | `createWidget` and `WidgetOptions`, loaded on demand, version 6.0.0 |
+| `@typeform/embed/build/css/widget.css` | the SDK's stylesheet, loaded with it |
+| `@/components/kit` | `Dot`, `ExtLink`, `Kicker` |
+| `@/components/ui/button` | `Button` |
+| `@/components/ui/popover` | the seal's popover |
+| `@/components/ui/sheet` | the answers sheet |
+| `@/lib/utils` | `cn` |
+| `@/lib/format` | `shortDay` (formTime) |
+| `@/lib/onboardingCore` | `FORMS` (the onboarding form's ID); the types `OnboardingRow`, `FormEntry`, `LinkKey` |
+| `@/lib/csmCalls` | the types `Timeline`, `TimelineForm` |
+| `@/present/sources` | the type `DeckSources` (the context's deck read) |
+
+And the CSS the panel's class names need, beyond Tailwind's own:
+
+| Class or token | Defined in |
+|---|---|
+| `txt-warn`, `txt-good`, `callout-warn`, `glow-teal`, `no-marker` | `src/index.css` |
+| `text-primary-ink` (`--primary-ink`), `bg-success`, `bg-warning`, `border-warning`, `bg-primary/…`, `ring-primary` | the theme tokens in `src/index.css` |
+| `animate-in`, `fade-in`, `zoom-in-50` | `tw-animate-css` |
 - **Form:** `oYZKtogO`, `idField: "onboarding_client_id"`.
 - **Hidden fields, from the kickoff first:**
 
@@ -924,6 +984,13 @@ shows progress, and counts add nothing on a call.
    built; Make's card link is 4,783), above the 3,168 proven so far.
 4. **The guard.** Open the window for a client with a kickoff (z8xmdvh0k9),
    see the warning, and do not open the second kickoff.
+4a. **The deck's last slide, scaled** (score round 1 of the Blueprint deck,
+   2026-10-23: the harness stand-in cannot test typing inside the deck's
+   scaled canvas). Present the onboarding deck at 1366 x 768 (a laptop
+   share), open its kickoff stop with `?rehearse=1` (Typeform's sandbox), and
+   check that a field takes typing and focus where it is clicked, a long
+   choice list scrolls inside the frame, and the deck's keys do not move the
+   slide while a field has focus. Do not press Submit.
 5. **The one-card refresh.** Press Refresh on one client's Onboarding panel,
    then check with `sq.py` that a new `cockpit_client_onboarding_runs` row has
    `trigger='one'` and `ok=true`, and that it has an audit row. This writes

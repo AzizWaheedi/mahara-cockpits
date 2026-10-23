@@ -48,6 +48,14 @@ when the match is wrong it is visible on the job rather than buried in a score.
 A client card that cannot be found never blocks a job. It is a note on the
 job, because an editor with footage and a script can still cut.
 
+The documents are read for companies with live work, and also for those
+whose offer was locked on the Brand Blueprint call in the last 14 days
+(`docs/brand-blueprint/SPEC.md` 4.6): their offer sheet and Brand DNA are
+written up in those days, usually before any video job exists. The sync
+reads only `task_id` and `parts` from the cockpit's `cockpit_blueprints`
+(part 3's `firstAt`), never the answers. If that read fails, or the table is
+not there yet, it logs a warning and carries on as before.
+
 One trap worth recording: a ClickUp dropdown's value is an index, and index 0
 is a real choice. Reading it as falsy is how a first probe decided two live
 clients had no Client Status and lost them.

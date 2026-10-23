@@ -31,6 +31,7 @@ import json
 import re
 import shutil
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -243,7 +244,9 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
                 matched += 1
         sb.store_clients([{**c, "synced_at": stamp} for c in people])
 
-    # Documents: read once per company, and only for companies with live work.
+    # Documents: read once per company, and only for companies with live work
+    # or an offer locked on the Brand Blueprint call in the last 14 days, whose
+    # offer sheet and Brand DNA are being written up (brand-blueprint SPEC 4.6).
     docs_read = 0
     drive: Optional[Drive] = None
     if cfg.google_configured and not args.no_docs:
@@ -251,8 +254,17 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             drive = Drive(cfg, log.info)
         except http.HttpError as e:
             log.warn(f"Drive not available: {http.scrub(str(e))[:160]}")
-    if drive is not None and by_job:
-        wanted = {c["task_id"]: c for c in by_job.values()}
+    offers: set[str] = set()
+    if drive is not None and people:
+        now = datetime.now(timezone.utc)
+        try:
+            offers = clients_mod.offers_locked_since(
+                sb.blueprint_parts(now - timedelta(days=clients_mod.OFFER_RECENT_DAYS)), now
+            )
+        except Exception as e:  # noqa: BLE001 - the Blueprint is extra context, never a gate
+            log.warn(f"Brand Blueprint offers not read: {http.scrub(str(e))[:160]}")
+    wanted = clients_mod.docs_wanted(by_job.values(), people, offers)
+    if drive is not None and wanted:
         have = {c["task_id"]: c for c in sb.clients(wanted.keys())}
         fresh: list[dict[str, Any]] = []
         for tid, c in wanted.items():
@@ -340,7 +352,7 @@ def cmd_sync(cfg: Config, args: argparse.Namespace, log: Logger) -> int:
             stale += 1
     summary = {
         "tasks": len(rows), **out, "closed": closed, "stale": stale,
-        "clients": len(people), "matched": matched, "docs_read": docs_read,
+        "clients": len(people), "matched": matched, "docs_read": docs_read, "offers_recent": len(offers),
         "seats": seats, "retired": retired.get("retired", 0),
     }
     log.info(f"sync: {summary}")

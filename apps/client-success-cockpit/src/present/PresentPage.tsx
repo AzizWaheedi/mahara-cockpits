@@ -2,7 +2,17 @@ import { useMemo } from "react";
 import { Navigate, useLocation, useParams } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton } from "@/components/ClientCheckIn";
+import { loadTypeform } from "@/forms/useFormPanel";
+import { formReads } from "@/forms/useLiveForm";
+import {
+  blueprintPartDone,
+  loadBlueprint,
+  rehearseBlueprintPart,
+  runBlueprintPart,
+  saveBlueprint,
+} from "./blueprintSources";
 import { useDeckReport } from "./DeckBoundary";
+import type { KickoffPort } from "./KickoffSlide";
 import { loadDeck } from "./load";
 import { PresentApp, type PresentUrls, type View } from "./PresentApp";
 import {
@@ -36,21 +46,42 @@ export function presentUrls(
   key: string,
   deck: DeckKind,
   lang?: string,
+  rehearse = false,
 ): PresentUrls {
   const k = encodeURIComponent(key);
-  const q = lang ? `?lang=${lang}` : "";
-  const other: DeckKind = deck === "onboarding" ? "launch" : "onboarding";
+  // A rehearsal stays a rehearsal in every window it opens: each window
+  // reads ?rehearse=1 from its own address only.
+  const params = [lang ? `lang=${lang}` : null, rehearse ? "rehearse=1" : null]
+    .filter(Boolean)
+    .join("&");
+  const q = params ? `?${params}` : "";
+  const r = rehearse ? "&rehearse=1" : "";
+  // The Blueprint deck has no sister deck: its "other" link is its own prep.
+  const other: DeckKind =
+    deck === "blueprint"
+      ? "blueprint"
+      : deck === "onboarding"
+        ? "launch"
+        : "onboarding";
   return {
     deck: `${base()}/clients/${k}/present/${deck}${q}`,
     notes: `${base()}/clients/${k}/present/${deck}/notes${q}`,
-    prep: `${base()}/clients/${k}/present/${deck}?view=prep`,
+    prep: `${base()}/clients/${k}/present/${deck}?view=prep${r}`,
     client: `${base()}/clients/${k}?tab=onboarding`,
-    other: `${base()}/clients/${k}/present/${other}?view=prep`,
+    other: `${base()}/clients/${k}/present/${other}?view=prep${r}`,
   };
 }
 
-export default function PresentPage({ notes = false }: { notes?: boolean }) {
-  const { key = "", deck = "" } = useParams();
+export default function PresentPage({
+  notes = false,
+  deck: deckProp,
+}: {
+  notes?: boolean;
+  /** The Blueprint's own routes name their deck (docs/brand-blueprint/SPEC.md 4.7). */
+  deck?: DeckKind;
+}) {
+  const { key = "", deck: deckParam = "" } = useParams();
+  const deck = deckProp ?? deckParam;
   const { search } = useLocation();
   const auth = useCockpitAuth();
   const client = auth.client;
@@ -66,12 +97,44 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
     () => ({
       load: () => {
         if (!client) throw Error("Sign in to the cockpit to open the deck.");
+        if (deck === "blueprint") return loadBlueprint(client, key);
         return loadDeck(
           client,
           key,
           deck === "launch" ? "launch" : "onboarding",
         );
       },
+      // The Brand Blueprint's writes, through the seat's own client:
+      // cockpit_blueprint_* decide who may save and press.
+      ...(deck === "blueprint"
+        ? {
+            blueprint: {
+              save: (changes, session, baseRevision) => {
+                if (!client) throw Error("Saving needs your cockpit sign-in.");
+                return saveBlueprint(
+                  client,
+                  key,
+                  changes,
+                  session,
+                  baseRevision,
+                );
+              },
+              partDone: (part, requestId) => {
+                if (!client) throw Error("Sending needs your cockpit sign-in.");
+                return blueprintPartDone(client, key, part, requestId);
+              },
+              run: id => {
+                if (!client) throw Error("Sending needs your cockpit sign-in.");
+                return runBlueprintPart(client, id);
+              },
+              rehearse: (part, answers) => {
+                if (!client)
+                  throw Error("The rehearsal needs your cockpit sign-in.");
+                return rehearseBlueprintPart(client, key, part, answers);
+              },
+            },
+          }
+        : {}),
       savePrep: (k, patch) => {
         if (!client)
           throw Error(
@@ -140,7 +203,27 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
     [client, key, auth.name, deck],
   );
 
-  if (deck !== "onboarding" && deck !== "launch")
+  // The kickoff on the onboarding deck's last slide (O8) reads and notes
+  // through the same gated calls as the kickoff window. Rehearsal is
+  // Typeform's sandbox, for admins and the CEO only, as there.
+  const rehearse =
+    new URLSearchParams(search).get("rehearse") === "1" &&
+    (auth.isAdmin || auth.isCeo);
+  const kickoff = useMemo<KickoffPort>(() => {
+    const name = auth.name.trim();
+    return {
+      reads: formReads(client, key, "kickoff"),
+      me: {
+        email: auth.email,
+        firstName:
+          name && !name.includes("@") ? (name.split(/\s+/)[0] ?? null) : null,
+      },
+      rehearse,
+      embed: loadTypeform,
+    };
+  }, [client, key, auth.email, auth.name, rehearse]);
+
+  if (deck !== "onboarding" && deck !== "launch" && deck !== "blueprint")
     return <Navigate to={`/clients/${encodeURIComponent(key)}`} replace />;
 
   return (
@@ -151,19 +234,33 @@ export default function PresentPage({ notes = false }: { notes?: boolean }) {
       view={view}
       io={io}
       report={report}
-      urls={presentUrls(key, deck, lang)}
-      book={(d, kind, label, onBooked) => (
-        <BookCallButton
-          taskId={d.taskId}
-          clientName={d.nameEn}
-          stage={d.stage ?? undefined}
-          kind={kind}
-          variant="outline"
-          onBooked={r => onBooked(r.startTime)}
-        >
-          {label}
-        </BookCallButton>
+      urls={presentUrls(
+        key,
+        deck,
+        lang,
+        new URLSearchParams(search).get("rehearse") === "1",
       )}
+      // The booking button books through CSM-gated calls: the Blueprint
+      // opens the launch booking page in its own window instead (SPEC 0.1).
+      book={
+        deck === "blueprint"
+          ? undefined
+          : (d, kind, label, onBooked, opts) => (
+              <BookCallButton
+                taskId={d.taskId}
+                clientName={d.nameEn}
+                stage={d.stage ?? undefined}
+                kind={kind}
+                variant={opts?.variant ?? "outline"}
+                defaultOpen={opts?.autoOpen}
+                onAutoOpenConsumed={opts?.onAutoOpenConsumed}
+                onBooked={r => onBooked(r.startTime)}
+              >
+                {label}
+              </BookCallButton>
+            )
+      }
+      kickoff={deck === "onboarding" ? kickoff : undefined}
       uploadLogo={async file => {
         if (!client)
           throw Error(

@@ -87,6 +87,12 @@ export function TodayList({
     <ol className="dkc-today-list">
       {names.map((name, i) => {
         const on = done[i];
+        // The third item ticked by the kickoff's Submit alone (no call
+        // booked or held yet) says what was done: "Kickoff sent".
+        const label =
+          variant !== "cover" && i === 2 && on && !d.blueprintBooked
+            ? O.today.kickoffSent
+            : name;
         // O7's close draws its done items in order; elsewhere only a tick
         // made while the slide is up draws.
         const draw = on && (variant === "close" || !atOpen.current[i]);
@@ -117,7 +123,7 @@ export function TodayList({
                 {stepNumeral(i, lang)}
               </span>
             </span>
-            <span className="dkc-today-name">{t(name, lang)}</span>
+            <span className="dkc-today-name">{t(label, lang)}</span>
             {/* The state, for a screen reader: the ring says it on screen. */}
             <span className="dk-sr">{on ? ", done" : ""}</span>
           </li>

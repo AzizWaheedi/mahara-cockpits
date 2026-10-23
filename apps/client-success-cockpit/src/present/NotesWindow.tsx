@@ -16,9 +16,11 @@ import {
   useState,
 } from "react";
 import { Button } from "@/components/ui/button";
+import { KICKOFF } from "@/forms/kickoff";
 import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
+import { BlueprintNotes } from "./BlueprintNotes";
 import type { DeckMessage } from "./channel";
 import { DECK_NAME, t } from "./content";
 import { groupLinks, Segmented, SlideControls } from "./controls";
@@ -30,6 +32,8 @@ import {
 } from "./deckContext";
 import type { CallKind } from "./deckData";
 import { TARGET_MINUTES } from "./decks";
+import { KickoffNotes } from "./KickoffSlide";
+import { type BookOpts, KICKOFF_SLIDE, type KickoffView } from "./kickoffStop";
 import {
   CopyButton,
   goalAsk,
@@ -297,10 +301,12 @@ export function NotesWindow({
   deck: DeckKind;
   slides: SlideDef[];
   base: Omit<SlideCtx, "tour" | "setTour">;
-  book?: (kind: CallKind, label: string) => ReactNode;
+  book?: (kind: CallKind, label: string, opts?: BookOpts) => ReactNode;
   io?: DeckIO;
 }) {
   const { hub, data: d } = model;
+  /** The kickoff on the deck's last slide, as the deck window has it. */
+  const [kickoff, setKickoff] = useState<KickoffView | null>(null);
   const [at, setAt] = useState<DeckState | null>(null);
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
@@ -357,6 +363,8 @@ export function NotesWindow({
       if (m.type === "state") {
         setAt(m);
         setDeckClosed(false);
+      } else if (m.type === "kickoff") {
+        setKickoff(m.view);
       } else if (m.type === "closed") {
         setDeckClosed(true);
         setPlayer(null);
@@ -458,7 +466,9 @@ export function NotesWindow({
   const stopName = slide.stopName?.(tour, ctx);
   const stopNames = (n: number) => slide.stopName?.(n - 1, ctx)?.en ?? null;
   const nextSlide = slides[index + 1];
-  const sl = saveLine(model.save);
+  const sl = saveLine(
+    deck === "blueprint" ? (base.bp?.save ?? model.save) : model.save,
+  );
   const presentedAt = d.presentedAt;
 
   return (
@@ -495,6 +505,11 @@ export function NotesWindow({
             : "One stop"}
           {at ? "" : " · open the deck window to follow it here"}
         </div>
+        {deck === "blueprint" && base.bp?.rehearsal ? (
+          <div className="mt-1 rounded-md bg-primary/15 px-2 py-1 text-xs font-medium">
+            Rehearsal: nothing is saved or sent.
+          </div>
+        ) : null}
       </header>
 
       <main className="flex-1 space-y-4 px-4 py-4 text-sm leading-6">
@@ -597,6 +612,28 @@ export function NotesWindow({
           ) : null}
         </section>
 
+        {slide.id === KICKOFF_SLIDE && !deckClosed ? (
+          // The kickoff window's side panel, here and never on the canvas:
+          // the seal, the call sheet in the form's order, then the trail.
+          <Section title="Kickoff">
+            <KickoffNotes
+              view={kickoff}
+              post={act => hub.post({ type: "kickoff-act", act })}
+              book={
+                book
+                  ? o =>
+                      book(
+                        "blueprint",
+                        KICKOFF.ending?.label ??
+                          "Book the Brand Blueprint call",
+                        o,
+                      )
+                  : undefined
+              }
+            />
+          </Section>
+        ) : null}
+
         <NotesVideos
           d={d}
           slideId={slide.id}
@@ -627,10 +664,11 @@ export function NotesWindow({
           </ul>
         </Section>
 
-        {slide.id === "team" ||
-        slide.id === "welcome" ||
-        slide.id === "cover" ||
-        slide.id === "journey" ? (
+        {deck !== "blueprint" &&
+        (slide.id === "team" ||
+          slide.id === "welcome" ||
+          slide.id === "cover" ||
+          slide.id === "journey") ? (
           <Section title="This client's service model">
             <Segmented
               label="Service model"
@@ -653,7 +691,14 @@ export function NotesWindow({
           </Section>
         ) : null}
 
-        {deck === "launch" ? (
+        {deck === "blueprint" ? (
+          <BlueprintNotes
+            bp={base.bp}
+            d={d}
+            slideId={slide.id}
+            reload={model.reload}
+          />
+        ) : deck === "launch" ? (
           <LaunchControls
             slideId={slide.id}
             d={d}

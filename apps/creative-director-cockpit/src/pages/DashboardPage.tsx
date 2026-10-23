@@ -4,12 +4,10 @@ import {
   CalendarDays,
   Check,
   ChevronRight,
-  Circle,
   Dna,
   Film,
   ListChecks,
   MessageSquare,
-  Minus,
   MoonStar,
   PenLine,
   Rocket,
@@ -21,6 +19,11 @@ import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import {
+  OffersToLock,
+  OnboardingSteps,
+  waitedFor,
+} from "@/components/BlueprintSignoff";
 import {
   CreativePreview,
   stillPropsFor,
@@ -414,6 +417,7 @@ function Creative({ view }: { view: View }) {
               onToggle={auth.client ? sb.toggleCheck : undefined}
             />
             <ScriptingCalendar compact onReadyChange={setCalendarReady} />
+            <OffersToLock rows={snap.offersWaiting ?? []} />
             {/* Brand DNA. Mostly already written, so the board rows are noise. */}
             <Section
               icon={Dna}
@@ -1047,73 +1051,6 @@ function TouchpointRow({
   );
 }
 
-/**
- * The three sign-offs that actually end creative onboarding.
- *
- * A filled Brand DNA or cheat sheet link means the template was generated, not
- * that the work is done, so completion is read from the closed task, the
- * "Done" on Offer Creation, and a submitted Brand Blueprint form.
- * [aziz, 2026-09-08]
- */
-function OnboardingSteps({
-  r,
-}: {
-  // biome-ignore lint/suspicious/noExplicitAny: snapshot rows are untyped
-  r: any;
-}) {
-  const steps = r.onboardingSteps ?? [];
-  if (steps.length === 0) return null;
-  return (
-    <ul className="space-y-1">
-      {steps.map(
-        (st: {
-          done: boolean;
-          label: string;
-          note: string;
-          doc: string | null;
-        }) => {
-          const skip =
-            !r.blueprintExpected &&
-            st.label === "Brand Blueprint form submitted" &&
-            !st.done;
-          const Icon = st.done ? Check : skip ? Minus : Circle;
-          return (
-            <li key={st.label} className="flex gap-2">
-              <Icon
-                aria-label={st.done ? "Done" : skip ? "Not needed" : "Not yet"}
-                className={`mt-0.5 size-3.5 shrink-0 ${
-                  st.done
-                    ? "txt-good"
-                    : skip
-                      ? "text-muted-foreground"
-                      : "txt-bad"
-                }`}
-              />
-              <span className="min-w-0">
-                {st.doc ? (
-                  <a
-                    href={st.doc}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    {st.label}
-                  </a>
-                ) : (
-                  st.label
-                )}
-                <span className="block text-xs text-muted-foreground">
-                  {st.note}
-                </span>
-              </span>
-            </li>
-          );
-        },
-      )}
-    </ul>
-  );
-}
-
 type LiveAd = {
   metaId: string;
   name: string;
@@ -1209,6 +1146,11 @@ function ClientProfiles({
                     </span>
                   )}
                   {r.postsLate > 0 && <span>{r.postsLate} posts late</span>}
+                  {r.offerWaiting && (
+                    <span className={r.offerWaiting.late ? "txt-warn" : ""}>
+                      Offer waiting {waitedFor(r.offerWaiting.hours)}
+                    </span>
+                  )}
                   {r.cpl !== undefined && (
                     <span title={cplTitle(r.performance)}>
                       {money(r.cpl)} CPL
@@ -1228,11 +1170,6 @@ function ClientProfiles({
                   <div className="grid gap-4 sm:grid-cols-3">
                     <Stat label="Creative onboarding">
                       <OnboardingSteps r={r} />
-                      {r.stillMissing && (
-                        <span className="mt-1 block text-muted-foreground">
-                          Missing: {r.stillMissing}
-                        </span>
-                      )}
                     </Stat>
                     <ClientWeekStat performance={r.performance} />
                     <Stat label="Touchpoints this week">

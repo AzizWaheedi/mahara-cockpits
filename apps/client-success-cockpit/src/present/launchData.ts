@@ -17,7 +17,7 @@ import {
   type SlotValue,
   turnsFor,
 } from "./callScript";
-import type { L, Lang } from "./content";
+import { type L, type Lang, SHARED, t, tf } from "./content";
 import { type Creative, creativeOf, creativeOfMeta } from "./creative";
 import type { AccessStatus, DeckData, Overrides } from "./deckData";
 import { type ServiceKey, type ServicePick, serviceNames } from "./services";
@@ -79,6 +79,102 @@ export interface CallData {
   missing: string[];
 }
 
+/**
+ * What the launch deck takes from the Brand Blueprint (docs/brand-blueprint
+ * SPEC.md 6.2), read beside the deck's own read through
+ * cockpit_blueprint_read (a CSM reads it): the offer as one sentence, how
+ * they approve their custom ads, the starter pack, the rules, and when each
+ * part was sent. Null when the card has no Blueprint in the cockpit.
+ */
+export interface LaunchBlueprint {
+  offer: string | null;
+  approval: "every" | "first_batch" | "run_then_show" | null;
+  packUrl: string | null;
+  rules: { always: string[]; never: string[]; neverShow: string[] };
+  parts: Partial<Record<"1" | "2" | "3", string>>;
+}
+
+const APPROVALS = ["every", "first_batch", "run_then_show"] as const;
+
+/** "Name: what they get. First step: …", one sentence (the CD cockpit's offerLine). */
+export function offerSentence(v: unknown): string | null {
+  const o = v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+  const line = (k: string) =>
+    typeof o[k] === "string"
+      ? (o[k] as string).replace(/\s+/g, " ").trim()
+      : "";
+  const name = line("name");
+  const what = line("what");
+  const first = line("firstStep");
+  if (!name && !what && !first) return null;
+  const head = [name, what].filter(Boolean).join(": ");
+  const tail = first ? `First step: ${first}` : "";
+  return [head, tail]
+    .filter(Boolean)
+    .map(x => (/[.!?]$/.test(x) ? x : `${x}.`))
+    .join(" ");
+}
+
+/** The launch deck's view of one Blueprint row (answers and parts), or null. */
+export function launchBlueprintOf(
+  row: { answers?: unknown; parts?: unknown } | null | undefined,
+): LaunchBlueprint | null {
+  if (!row) return null;
+  const a = record(row.answers);
+  const rules = record(a.rules);
+  const parts: LaunchBlueprint["parts"] = {};
+  for (const k of ["1", "2", "3"] as const) {
+    const at = str(record(record(row.parts)[k]).firstAt);
+    if (at) parts[k] = at;
+  }
+  const approval = APPROVALS.find(x => x === a.approval) ?? null;
+  return {
+    offer: offerSentence(a.offer),
+    approval,
+    packUrl: a.starter === "yes" ? str(a.pack_url) : null,
+    rules: {
+      always: list(rules.always),
+      never: list(rules.never),
+      neverShow: list(rules.neverShow),
+    },
+    parts,
+  };
+}
+
+/** The creative-freedom slide's line for their choice (notes only, SPEC 6.2). */
+export const APPROVAL_SAID: Record<
+  NonNullable<LaunchBlueprint["approval"]>,
+  string
+> = {
+  every: "You chose to approve every video before it runs.",
+  first_batch: "You chose to approve the first batch, then we run.",
+  run_then_show: "You chose that we run your ads, then show you.",
+};
+
+/**
+ * A starter ad's tag: "From our {service} pack" once the Brand Blueprint
+ * chose the pack for their service, else "Starter, from our templates".
+ */
+export function starterTag(
+  launch: Pick<LaunchData, "blueprint" | "serviceMid">,
+  lang: Lang,
+): string {
+  const service = launch.serviceMid[lang] ?? launch.serviceMid.en;
+  return launch.blueprint?.packUrl && service
+    ? tf(SHARED.tag.starterPack, lang, { service })
+    : t(SHARED.tag.starter, lang);
+}
+
+const dedupe = (xs: string[]) => {
+  const seen = new Set<string>();
+  return xs.filter(x => {
+    const k = x.replace(/\s+/g, " ").trim().toLowerCase();
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+};
+
 export interface LaunchData {
   today: string;
   /** The go-live date has passed: "is live" on the cover. */
@@ -107,6 +203,8 @@ export interface LaunchData {
   funnels: Funnel[];
   redLines: { told: string[]; always: string[]; never: string[] };
   agreedAt: string | null;
+  /** The Brand Blueprint, when the card has one (SPEC 6.2). */
+  blueprint: LaunchBlueprint | null;
   call: CallData;
   goal90: string | null;
   /**
@@ -155,6 +253,8 @@ export interface LaunchInput {
   service: ServicePick;
   today: string;
   refs?: Partial<LaunchData["refs"]>;
+  /** The Brand Blueprint as read beside the deck (null: none, or not read). */
+  blueprint?: LaunchBlueprint | null;
 }
 
 const str = (v: unknown): string | null =>
@@ -308,11 +408,21 @@ export function launchData(input: LaunchInput): LaunchData {
     url: str(funnel?.url) ?? str(funnel?.followUpUrl),
   };
 
-  // Red lines: what they told us on slide 7, then the card's DO and DON'T.
+  // Red lines: what they told us on slide 7 and on the Blueprint call (its
+  // never and never-show lines), then the card's DO and DON'T, with the
+  // Blueprint's always beside the DO. Each line once.
+  const bp = input.blueprint ?? null;
   const hidden = new Set(list(p.dos_donts_hidden));
   const redLines = {
-    told: d.redLines,
-    always: d.dosDonts.do.filter(x => !hidden.has(x)),
+    told: dedupe([
+      ...d.redLines,
+      ...(bp?.rules.never ?? []),
+      ...(bp?.rules.neverShow ?? []),
+    ]),
+    always: dedupe([
+      ...d.dosDonts.do.filter(x => !hidden.has(x)),
+      ...(bp?.rules.always ?? []),
+    ]),
     never: d.dosDonts.dont.filter(x => !hidden.has(x)),
   };
 
@@ -341,9 +451,12 @@ export function launchData(input: LaunchInput): LaunchData {
     ar:
       str(p.engineer_ar) ?? str(p.engineer) ?? engineerName(answers.engineers),
   };
+  // The selling point: prep's line, else the Blueprint's offer as one
+  // sentence (the client's own words); else prep asks for one line from
+  // their Brand DNA or offer doc, as before (SPEC 6.2).
   const selling = {
-    en: str(p.selling_point),
-    ar: str(p.selling_point_ar) ?? str(p.selling_point),
+    en: str(p.selling_point) ?? bp?.offer ?? null,
+    ar: str(p.selling_point_ar) ?? str(p.selling_point) ?? bp?.offer ?? null,
   };
   const project = {
     en: str(p.project) ?? family?.project.en ?? null,
@@ -472,6 +585,7 @@ export function launchData(input: LaunchInput): LaunchData {
     funnels: input.funnels,
     redLines,
     agreedAt: str(p.creative_agreed_at),
+    blueprint: bp,
     call: {
       slots,
       dialect: dia.dialect,

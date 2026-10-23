@@ -1783,7 +1783,12 @@ the clock shows the stage's last time; the after-call stops are drawn at once.
 ### 12.1 The shared tab (what the client can see)
 
 The canvas plus the sales chrome, which hides after 2.5 seconds without mouse
-movement:
+movement. It starts out of sight (score round 1 of the Blueprint deck's
+design pass, 2026-10-23: a share that started on the deck showed the
+presenter's buttons for its first seconds), and only a real move of the
+pointer brings it back: a key never does, and neither does the mousemove a
+browser sends from a still pointer when the slide changes under it (a move
+counts once the pointer has travelled more than 3 px):
 
 - **Top start:** "Back to <client>". It closes the deck window (Present opened
   it) and focuses the cockpit window that opened it. It never navigates the
@@ -1858,8 +1863,9 @@ theme, kit components), not the canvas.
   in `<bdi dir=auto>`, under "Their goal, in their words:", between the
   question's two halves.
 - **Temp check:** every three to four slides, as the framework asks.
-- **Timer:** elapsed against the deck's target (10 minutes onboarding, 28
-  launch, `TARGET_MINUTES` in `decks.ts`); amber past the target, never red.
+- **Timer:** elapsed against the deck's target (30 minutes onboarding since
+  the kickoff joined its end, section 23; 28 launch; `TARGET_MINUTES` in
+  `decks.ts`); amber past the target, never red.
 - **Booking buttons:** Brand Blueprint (onboarding) and first check-in
   (launch), through the existing `BookCallButton` (real GHL bookings; never
   tested on a real client).
@@ -4338,7 +4344,7 @@ number inside, and its name:
 |---|---|---|---|
 | 1 | Choose your launch service | Launch service | `prep.service_chosen_at` is set: O4's "Launch with this" writes it (with `service_focus`), the notes window's Undo clears it |
 | 2 | Set up your access | Your access | O6's Meta access and Mahara OS cards are both Done (done with you: Meta access and Your CRM; plus the callers' phones card when it shows) |
-| 3 | Book your Brand Blueprint call | Blueprint call | `next.blueprint` reads back (the notes window's Book button) |
+| 3 | Book your Brand Blueprint call | Blueprint call | `next.blueprint` reads back (the notes window's Book button), or the kickoff is sent: O8's Submit, or a kickoff on record (section 23) |
 
 - **Proposed is not chosen.** A `service_focus` typed in prep before the
   call, with no `service_chosen_at`, is the column's proposal (22.2.4): item 1
@@ -6285,3 +6291,128 @@ Arabic), O7's starter stop (full), O7's close (full Arabic, starter), O5
 (starter), O6 (full), O1 (done with you, starter, full Arabic, sparse
 Arabic), L1 (starter), L2 stops 2 and 4 (full Arabic), L3 stops 0 (full)
 and 2 (starter), L4 (full Arabic) and L5 (starter WhatsApp).
+
+## 23. The kickoff form at the end of the onboarding deck (2026-10-22)
+
+The CEO: "embed the kick off form at the end of the onboarding presentation,
+since we do the kickoff form on the onboarding call, just make it easy for
+them at the end so they can submit it." The kickoff is filled on this call
+anyway; until now it lived in the CSM's own tab, then in the kickoff window
+(`docs/csm-forms/KICKOFF.md`). Now it is the deck's last slide, O8.
+
+### 23.1 Decisions
+
+| Decision | Choice, and why |
+|---|---|
+| A stop on O7, or a slide | **A slide of its own, last** (`kickoff`). Filling a form together is a different activity from O7's expectations: it has its own overview title, notes, prep readiness and keys, and O7 still ends on the next call with the checklist closed. O7's last stop now says "We book it before we hang up"; the next slide is how. |
+| The form | **The kickoff window's own**: `useFormPanel` (FormPanel's state, split out for this) with the `KICKOFF` config. The same hidden object from the record (the card ID is the record's `clickup_task_id`, the route key the gate checked), the same frozen-at-open rule, the same one note per response, the same checks at 45 s, 2 and 5 min and the same trail. The reads are `useLiveForm`'s, the kickoff window's. |
+| The guard | **Never a fresh form here.** A kickoff on record, sent from the cockpit or in the form history shows "Kickoff on record" with what was filled. There is no "Open a second kickoff anyway" in the deck; the notes window links the kickoff window, which keeps its own guard. |
+| What the canvas shows | The form in a frame, the client's name, "Sent at 2:02 pm" once Typeform has it, the checklist. **Never the side panel**: the seal and the card ID, Still missing, the offer and the area, the contract, the daily spend, the payment, the recording, the sale's notes, the trail and the booking are the notes window's (12.2: CSM-only facts and booking buttons never touch the canvas; the trail's late sentences tell the CSM what to do, not the client). |
+| The notes window | Its **Kickoff** part is the kickoff window's side panel, drawn from a `KickoffView` the deck window posts on the hub (`kickoff`), with the panel's own components (`Seal`, `RailView`, `AfterSend`, `AnswersSheet`). Its presses (Check now, Try again, Check again, Reload the form, Refresh, the booking's auto-open) go back as `kickoff-act` and run in the deck window, which owns the form. |
+| The checklist | Item 3, "Blueprint call", is the slide's own at the foot. It is done when the Blueprint is booked or held (as before), or when the kickoff is sent: this call's Submit (`kickoff-sent` on the hub, so every window ticks it) or a kickoff on record. Make 12's submit is what books the Blueprint on our side. Ticked by the kickoff alone (no call booked or held, `blueprintBooked` false), the item reads "Kickoff sent" / انرسل نموذج بداية الشغل (score round 1 of the Blueprint deck: "Blueprint call" ticked read as booked or held). O1's agenda stays open, always (22.2.1): it is the agenda. |
+| O7's card | The kickoff sent and no time on the calendar: the block is ticked, solid, and says "We pick the time now", never "We book it before we hang up" beside a ticked checklist. |
+| The timer | 30 minutes (22 of slides and setup, about 8 for the form). |
+| Rehearsal | `?rehearse=1` on the deck, admins and the CEO: Typeform's sandbox, as in the kickoff window. The frame's head says "Rehearsal: nothing is sent"; a sandbox submit ticks nothing. |
+
+### 23.2 The layout (1920 x 1080)
+
+```text
++------------------------------------------------------------------------------------------+
+| Before we hang up:            | +- Kickoff form   Noor Studio Interiors  (v) Sent at 2:02 pm -+ |
+| your kickoff form  (H2 56)    | |                                                            | |
+|                               | |            Typeform's form (the iframe), 968 x 748         | |
+| Your details are already in,  | |                                                            | |
+| from your onboarding form.    | |                                                            | |
+| We check them together, then  | |                                                            | |
+| send it.  (30 ink)            | |                                                            | |
+| ----------------------------- | |                                                            | |
+| Once it's sent, our team ...  | |                                                            | |
+| (26 ink-2)                    | +------------------------------------------------------------+ |
+|                               |                                                                |
+| Today (1) Launch service (2) Your access (3) Blueprint call                          08 / 08  |
++------------------------------------------------------------------------------------------+
+```
+
+- **Start column**, x 136 to 736, as tall as the frame, read top down:
+  the title and its line at the top, beside the frame's head; what sending
+  it does right under the line, over a hairline, 48 px down (score round 1
+  of the Blueprint deck, 2026-10-23: pinned to the column's foot it left a
+  400 px gap). The lines swap (`--dk-t-swap`) when the form is sent or found
+  on record; once sent the column keeps only its line ("Done. Your answers
+  are with our team."), since the frame's card says what happens next.
+- **The frame**, x 816 to 1784, y 112 to 852 (its foot on the column's
+  last rule; score round 2 of the Blueprint deck's design pass: navy stood
+  empty under the form): `--dk-panel`, a 1 px
+  `--dk-line-strong` edge, radius 20, no shadow, no tilt, no texture. Its
+  head (76 px): the client's name 24/600 ink (score round 1 of the Blueprint
+  deck's design pass: the mono "Kickoff form" before it read as a window's
+  redrawn chrome; the frame keeps it as its accessible name), and at the
+  end the state: the checklist's
+  done mark (28 px, teal, its check drawn in `--dk-t-tick`) and "Sent at
+  {time}". Its body is `--dk-space`; the form fills it, left to right in
+  both languages (Typeform's form is English). It is not a re-drawn
+  browser: no dots, no address bar.
+- **On record**, the body is the panel: the done mark at 44 px, "Kickoff on
+  record" (H3 40/700), "Filled on {date}" (Mono 24 ink-2), then up to three
+  ruled rows, label 24/500 ink-2 at 320 px, value 30/500 ink: the service
+  (its name from the five), the Page name (as typed, `<bdi>`), starter ads.
+  `recordRows` keeps to these three; the money, the card and the sale never
+  reach the canvas. The panel is as tall as what it reads back, its top on
+  the column's line under the title (`data-held`: `height: fit-content`,
+  top y 298, 306 in Arabic; score round 2 of the Blueprint deck's design
+  pass: set in the middle, its top lined up with nothing), and the column
+  keeps the three steps, each ticked with the done mark, under "Now it's
+  in" / «وصلنا، والحين» (score round 2: "Once it's sent" headed steps
+  already done), then "Want to change an answer? Tell us in your WhatsApp
+  group." (score round 1 of the Blueprint deck's design pass: 280 px of
+  empty panel under the rows, and the column empty under one line).
+- **Plain lines** in the body, 30 ink-2, centred: "Opening your kickoff
+  form", or "We'll open your kickoff form from our side." when the record
+  cannot be read, the card is unread or the form does not load. While the
+  form opens the line lies on the panel's own ground over it, and the form
+  is hidden; once Typeform is ready the line fades out (`--dk-t-swap`) and
+  only then the form fades in, never the two at once (score round 2 of the
+  Blueprint deck's design pass: the line crossfaded over the form's first
+  question).
+- **Once sent**, a card covers Typeform's own ending: the done mark at
+  64 px, "Next: we pick the time for your Brand Blueprint call" (40/600),
+  and what our team does now (32 ink-2). "Sent" is said once, in the head.
+- **The checklist**: the foot variant of 22.2.0, item 3 `data-own`; ticked
+  by the Submit with no Blueprint call booked or held yet, it reads
+  "Kickoff sent" (`today.kickoffSent`), never as if the call were booked.
+- **RTL**: the columns mirror; the frame's head runs right to left; the
+  form inside stays left to right.
+
+### 23.3 A form that survives the call
+
+The engine mounts one slide at a time, keyed by slide and language (16.4),
+so a form inside the slide would reload on L or a step back. The live form
+is a **layer** the deck window keeps above the slides (`DeckShell`'s
+`layer`, `KickoffLayer`): mounted on the first arrival at O8 and kept until
+the deck closes, shown only on O8 (it cuts in with the slide, `--dk-cut-ms`,
+and leaves at once), `inert` and hidden elsewhere, inert under the video
+player. The slide draws its own still frame only where there is no layer
+(prep's preview, the tests). A half-filled form asks before the deck window
+closes, as the kickoff window does.
+
+### 23.4 States, all drawn
+
+Open (prefilled, or not), opening, sent (head and lines swap, item 3
+ticks), on record (from the record, a cockpit send or the history), could
+not open (blocked, unread, slow), rehearsal. The harness shows each:
+`present-harness.html?fixture=full&deck=onboarding&lang=en#kickoff` with
+`kickoff=open|sent|done|record|cockpit|blocked|slow` and `rehearse=1`,
+Typeform's stand-in in the frame (`src/dev/typeformStandIn.ts`; nothing
+loads or submits). Any scenario but `record` is the client before its
+kickoff: no kickoff on record and no Blueprint booked.
+
+### 23.5 Checked
+
+`scripts/deck-kickoff.test.tsx` pins the slide, the states in both
+languages, the read-back's three rows (never the money), the record's card
+ID in the hidden object, one note per response, the tick and "Sent at", the
+trail and the booking going to the notes window only, a notes press run on
+the deck, the form surviving a step back and L, and no form ever created
+for a kickoff on record. Shots at 1920 x 1080 (JPEG, read and deleted): the
+open, sent, on-record and could-not-open states in English and Arabic, and
+the notes window's part.

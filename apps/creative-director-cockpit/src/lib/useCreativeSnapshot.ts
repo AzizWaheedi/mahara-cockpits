@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { offerLine, readBlueprints } from "./blueprint";
 import { logClientTouch } from "./clients";
 import { buildSnapshot, snapshotContext } from "./creativeSourceModels";
 import { readPersonalEod, savePersonalEod } from "./personalEod";
@@ -67,6 +68,59 @@ const DEFAULT_CREATIVE_CHECKS = [
     href: "/calendar",
   },
 ];
+
+/**
+ * The roster's Brand Blueprint rows, as the snapshot's `blueprints` table:
+ * `{_id, taskId, client, parts, offerLine, approval, dnaStatus, dnaMissing}`.
+ * Null when the read failed, so the sign-off says "not tracked".
+ */
+export async function readBlueprintRows(
+  client: SupabaseClient,
+  clients: Any[],
+  allowedClients?: string[] | null,
+): Promise<Any[] | null> {
+  const scope = allowedClients?.length
+    ? new Set(allowedClients.map(n => n.trim().toLowerCase()))
+    : null;
+  const ids = clients
+    .filter(
+      c =>
+        !scope ||
+        scope.has(
+          String(c.name ?? "")
+            .trim()
+            .toLowerCase(),
+        ),
+    )
+    .map(c => String(c.taskId ?? ""))
+    .filter(Boolean);
+  try {
+    const { rows } = await readBlueprints(client, ids);
+    return rows.map(r => ({
+      _id: r.taskId,
+      taskId: r.taskId,
+      client: r.clientName,
+      parts: Object.fromEntries(
+        Object.entries(r.parts).map(([k, v]) => [
+          k,
+          { at: v.firstAt, lastAt: v.lastAt },
+        ]),
+      ),
+      offerLine: offerLine(r.answers.offer),
+      approval:
+        typeof r.answers.approval === "string" ? r.answers.approval : null,
+      dnaStatus:
+        typeof r.answers.dna_status === "string" ? r.answers.dna_status : null,
+      dnaMissing:
+        typeof r.answers.dna_missing === "string"
+          ? r.answers.dna_missing
+          : null,
+    }));
+  } catch (err) {
+    console.warn("The Brand Blueprint record could not be read:", err);
+    return null;
+  }
+}
 
 export interface UseCreativeSnapshotResult {
   snap: Any | undefined;
@@ -157,6 +211,15 @@ export function useCreativeSnapshot(
       if (!source?.tables)
         throw new Error("Creative source data is unavailable.");
 
+      // 5. The Brand Blueprint record for the roster's cards, beside the
+      // source (SPEC 4.2). A failed read keeps the "not tracked" note; it
+      // never stops the cockpit loading.
+      const blueprints = await readBlueprintRows(
+        client,
+        (source.tables.clients ?? []) as Any[],
+        allowedClients,
+      );
+
       const checksMap = new Map((checkRows ?? []).map(c => [c.check_key, c]));
       const checks = DEFAULT_CREATIVE_CHECKS.map((def, idx) => {
         const found = checksMap.get(def.key);
@@ -195,6 +258,7 @@ export function useCreativeSnapshot(
       const model = await buildSnapshot(
         snapshotContext({
           ...source.tables,
+          blueprints: blueprints ?? source.tables.blueprints ?? [],
           checks: (checkRows ?? []).map(c => ({
             ...c,
             key: c.check_key,
@@ -210,6 +274,7 @@ export function useCreativeSnapshot(
         allowedClients?.length
           ? new Set(allowedClients.map(n => n.trim().toLowerCase()))
           : null,
+        { blueprintsTracked: blueprints !== null },
       );
       const builtSnap: Any = {
         ...model,

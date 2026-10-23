@@ -22,6 +22,7 @@ rather than hidden in a score.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable, Optional
 
 from . import http
@@ -198,6 +199,54 @@ DOCS = (
     ("brand_dna_url", "brand_dna", "brand_dna_rev"),
     ("offer_url", "offer", "offer_rev"),
 )
+
+# docs/brand-blueprint/SPEC.md 4.6: the offer locked on the Brand Blueprint
+# call ("Lock the offer", part 3) is written up in the offer sheet and the
+# Brand DNA doc over the following days, usually before the client has a
+# video job. So for this long after part 3 was first sent, their text is read
+# as it is for a client with live work.
+OFFER_RECENT_DAYS = 14
+
+
+def _when(value: Any) -> Optional[datetime]:
+    """An ISO time as Postgres or the cockpit writes it, or None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        at = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
+def offers_locked_since(rows: Iterable[dict[str, Any]], now: datetime, days: int = OFFER_RECENT_DAYS) -> set[str]:
+    """The client cards whose Blueprint part 3 was first sent within `days`
+    of `now` (rows of cockpit_blueprints: task_id and parts)."""
+    since = now - timedelta(days=days)
+    out: set[str] = set()
+    for r in rows:
+        parts = r.get("parts") if isinstance(r, dict) else None
+        part3 = parts.get("3") if isinstance(parts, dict) else None
+        at = _when(part3.get("firstAt")) if isinstance(part3, dict) else None
+        tid = str(r.get("task_id") or "")
+        if tid and at is not None and since <= at <= now + timedelta(minutes=5):
+            out.add(tid)
+    return out
+
+
+def docs_wanted(
+    with_jobs: Iterable[dict[str, Any]], people: Iterable[dict[str, Any]], offers: Iterable[str]
+) -> dict[str, dict[str, Any]]:
+    """The companies whose brand documents a sync reads, once each: those
+    with live work, and those whose offer was locked recently (SPEC 4.6)."""
+    wanted = {c["task_id"]: c for c in with_jobs if c.get("task_id")}
+    recent = set(offers)
+    for c in people:
+        tid = c.get("task_id")
+        if tid and tid in recent and tid not in wanted:
+            wanted[tid] = c
+    return wanted
 
 
 def doc_id_in(link: Any) -> Optional[str]:

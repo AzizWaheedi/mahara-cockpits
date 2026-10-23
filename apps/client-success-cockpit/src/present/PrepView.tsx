@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
 import { makeAddFiles } from "./adsActions";
+import { BlueprintNotes } from "./BlueprintNotes";
+import { BlueprintPrep } from "./BlueprintPrep";
 import { DECK_NAME, t } from "./content";
 import { Field, Segmented, SlideControls, Toggle } from "./controls";
 import { DeckShell } from "./DeckShell";
@@ -128,7 +130,10 @@ export function PrepView({
       true,
     );
   };
-  const sl = saveLine(model.save);
+  // The Blueprint saves its answers through its own saver (useBlueprint.ts).
+  const sl = saveLine(
+    deck === "blueprint" ? (base.bp?.save ?? model.save) : model.save,
+  );
   const missing = slide?.missing?.(d) ?? [];
   const todo = slide?.todo?.(d) ?? [];
   const stops = shown.map(x =>
@@ -153,14 +158,20 @@ export function PrepView({
           <bdi>{d.nameEn}</bdi>
         </a>
         <span className="text-sm font-semibold">
-          Prepare the {DECK_NAME[deck].en.toLowerCase()} deck
+          Prepare the{" "}
+          {deck === "blueprint"
+            ? DECK_NAME[deck].en
+            : DECK_NAME[deck].en.toLowerCase()}{" "}
+          deck
         </span>
-        <a
-          href={links.other}
-          className="text-sm text-primary underline-offset-4 hover:underline"
-        >
-          {deck === "onboarding" ? "The launch deck" : "The onboarding deck"}
-        </a>
+        {deck === "blueprint" ? null : (
+          <a
+            href={links.other}
+            className="text-sm text-primary underline-offset-4 hover:underline"
+          >
+            {deck === "onboarding" ? "The launch deck" : "The onboarding deck"}
+          </a>
+        )}
         <span className="text-sm text-muted-foreground">
           {ready} of {shown.length} slides ready
         </span>
@@ -269,6 +280,7 @@ export function PrepView({
             call. Back, Next and the strip move it; the shared deck opens in its
             own window with Present.
           </div>
+          {deck === "blueprint" ? <BlueprintPrep bp={base.bp} d={d} /> : null}
         </div>
 
         <aside className="space-y-4 rounded-xl border p-4">
@@ -352,7 +364,14 @@ export function PrepView({
                   </label>
                 </Field>
               ) : null}
-              {deck === "launch" ? (
+              {deck === "blueprint" ? (
+                <BlueprintNotes
+                  bp={base.bp}
+                  d={d}
+                  slideId={slide.id}
+                  reload={model.reload}
+                />
+              ) : deck === "launch" ? (
                 <LaunchControls
                   slideId={slide.id}
                   d={d}
@@ -395,29 +414,31 @@ export function PrepView({
             <h3 className="text-xs font-medium text-muted-foreground">
               The whole deck
             </h3>
-            <Field
-              label="Service model"
-              hint={
-                d.mode.from === "prep"
-                  ? "Set here."
-                  : d.mode.known
-                    ? `From the ${d.mode.from === "card" ? "ClickUp card" : "HighLevel account"}.`
-                    : "Service model not set on the card. The deck uses done for you. Change it if their team calls."
-              }
-            >
-              <Segmented
+            {deck === "blueprint" ? null : (
+              <Field
                 label="Service model"
-                value={d.mode.dwy ? "DWY" : "DFY"}
-                options={[
-                  { value: "DFY", label: "Done for you" },
-                  { value: "DWY", label: "Done with you" },
-                ]}
-                onChange={v =>
-                  model.setPrep("onboarding", { service_model: v }, true)
+                hint={
+                  d.mode.from === "prep"
+                    ? "Set here."
+                    : d.mode.known
+                      ? `From the ${d.mode.from === "card" ? "ClickUp card" : "HighLevel account"}.`
+                      : "Service model not set on the card. The deck uses done for you. Change it if their team calls."
                 }
-              />
-            </Field>
-            {d.mode.dwy ? (
+              >
+                <Segmented
+                  label="Service model"
+                  value={d.mode.dwy ? "DWY" : "DFY"}
+                  options={[
+                    { value: "DFY", label: "Done for you" },
+                    { value: "DWY", label: "Done with you" },
+                  ]}
+                  onChange={v =>
+                    model.setPrep("onboarding", { service_model: v }, true)
+                  }
+                />
+              </Field>
+            )}
+            {deck !== "blueprint" && d.mode.dwy ? (
               <Toggle
                 checked={model.prep.onboarding.dwy_os_approved === true}
                 onChange={v =>
@@ -465,7 +486,9 @@ export function PrepView({
               ) : null}
             </div>
           </section>
-          <PrepVideos model={model} deck={deck} all={all} io={io} />
+          {deck === "blueprint" ? null : (
+            <PrepVideos model={model} deck={deck} all={all} io={io} />
+          )}
         </aside>
       </div>
     </div>

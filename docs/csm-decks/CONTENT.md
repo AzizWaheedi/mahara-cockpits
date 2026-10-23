@@ -114,7 +114,7 @@ Where `CONTENT.md` and `DESIGN.md` gave the same fact different homes, this tabl
 
 # Onboarding deck
 
-Seven slides, about 22 minutes of a 45 to 60 minute call since the visual pass (it was about 10, counting the slides only): about 13 on the slides and 9 for the setup, done live while slide 6 is up. Payment, the contract and the kickoff form stay in the talk track, and the kickoff form stays in the CSM's own tab.
+Eight slides since 2026-10-22, about 30 minutes of a 45 to 60 minute call: about 13 on the slides and 9 for the setup, done live while slide 6 is up (the visual pass), and about 8 for the kickoff form, filled with the client and sent on slide 8 ([O8](#o8--kickoff)). Payment and the contract stay in the talk track; the kickoff form's money questions are the form's own, and the facts for them are in the notes window, never on the canvas.
 
 ## O1 · `welcome`
 
@@ -142,7 +142,7 @@ Seven slides, about 22 minutes of a 45 to 60 minute call since the visual pass (
 - Frame the call: "About 45 minutes. A few slides first, then we set most things up together, live."
 - Check who is on the call. If the owner isn't there, ask who decides on the ads and who meets the customers.
 - Say the call is recorded for the team.
-- Keep the kickoff form open in your own tab. (How to share the deck, the
+- The kickoff form is the deck's last slide: you fill it in with them before you hang up. (How to share the deck, the
   deck window only and maximised, is said once, in the notes window's foot.)
 
 **DWY:** same.
@@ -359,6 +359,43 @@ Seven slides, about 22 minutes of a 45 to 60 minute call since the visual pass (
 
 **Sources:** FCL (templates are ready but not every service has an accurate pack; approval must name the asset, offer and identity; no response is not approval; templates are never shown as the client's own work), KF (templated ads status), PS §3 (3 of 4 kickoffs "Wants To See Them First"), PEA (red lines are fixed, everything else is tested), OM and PS §2 (the 45-minute Blueprint with the creative director produces the Brand DNA, the offer and the first scripts), CEO 2026-10-20 (creative flexibility: test a lot, fast; set it before the ads exist; a smooth way to ask before we create; the check as small as possible) and CV (set the guard rails before it becomes an issue; the red lines agreed on the onboarding call are what the launch call goes back to).
 
+---
+
+## O8 · `kickoff`
+
+**Title:** Your kickoff form (the overview and the notes)
+**Time:** about 8 minutes
+**Added 2026-10-22** for the CEO: "embed the kick off form at the end of the onboarding presentation, since we do the kickoff form on the onboarding call, just make it easy for them at the end so they can submit it." DESIGN 23 has the layout and why it is a slide of its own.
+
+**On screen**
+- Title: "Before we hang up: your kickoff form"
+- The line under it, by state:
+  - their onboarding answers on record: "Your details are already in, from your onboarding form. We check them together, then send it."
+  - none on record: "We fill it in together, now."
+  - sent on this call: "Done. Your answers are with our team." (score round 1 of the Blueprint deck, 2026-10-23: "sent" was said three times; the frame's head keeps "Sent at {time}" and its card says what is next)
+  - on record already: "We already have it, so there's nothing to fill in now."
+- Right under the line, over a hairline (the column reads top down; pinned to the foot it left a 400 px gap), by state: "Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group." On record: the three steps, ticked, under "Now it's in" (said in the past, since they are under way), then "Want to change an answer? Tell us in your WhatsApp group." Sent: nothing here; the frame's card says it.
+- The frame: "Kickoff form" and {client.name} in its head; inside it, the kickoff form itself (Typeform's own `tG7dnxBn`, its words are Typeform's). Once Typeform has the response, the head says "Sent at {time}" with a tick, and a card covers Typeform's own ending: the tick, "Next: we pick the time for your Brand Blueprint call", and "Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group." In rehearsal (admins and the CEO, `?rehearse=1`): "Rehearsal: nothing is sent".
+- While the form opens: "Opening your kickoff form". When it cannot open here (the record unreadable, the card unread, the form not loading): "We'll open your kickoff form from our side." The CSM opens the kickoff window from the notes.
+- On record already, in the frame instead of a form: "Kickoff on record", "Filled on {date}", then their own answers about their ads, and nothing else: "The service we advertise" (the five main services' names), "Your Page name", "Starter ads" ("Approved", "You see them first", "Your own ads first"). Never the daily spend, the payment, the contract, the recording, the close rate or the earlier enquiries (copy rule 3).
+- At the foot, the call's checklist ("Today", the three items), its third, "Blueprint call", the slide's own. The form's Submit ticks it, and until the Blueprint call is booked or held the ticked item reads "Kickoff sent" (never as if the call were booked).
+
+**Slots:** `kit.forms.kickoff` (on record: the read-back), `kit.forms.onboarding` (which line), `client.name`, the send's time (this call's Submit).
+
+**Notes**
+- Share the deck window as it is: the form is theirs to see. The card's facts, the payment and the sale's notes stay in this window, under Kickoff.
+- Their onboarding answers are read back in the form's first groups. Ask them to check each one as you go.
+- The service: the one they chose on slide 4. The rest of the form's order is below, each with where it came from.
+- At the end, copy the call recording link and the payment amount from below into the last two questions, then press Submit with them.
+- Once it's sent, the checklist ticks "Kickoff sent". Press Book the Brand Blueprint call (the form's last screen, or below) and pick the time with them.
+- If the slide says Kickoff on record, don't send another. Read what was filled below, and fix a wrong answer in Typeform's results.
+- **Temp check:** "Anything in the form you'd like to change before we send it?"
+
+The notes window's Kickoff part is the kickoff window's side panel (`docs/csm-forms/KICKOFF.md` 3 and 4): the "Sends to" seal, Still missing, the client, the form's order with a source on every row, what the form carries, the sale; after the send, the trail in its own sentences, Check now and the booking; on record, Read what was filled, Typeform's results and the kickoff window for the rare second one.
+
+**DWY:** same.
+
+**Sources:** CEO 2026-10-22 (the ask above), KICKOFF.md (the form, its hidden fields, the guard, the trail), Make 12 (what the submit sets off: the card comment, In Progress, the onboarding tasks, the Blueprint link and Brand Blueprint Booked, the phase-4 WhatsApp to the group).
 ---
 
 # Launch deck
@@ -987,7 +1024,7 @@ The CEO, 2026-10-20: "make the onboarding presentation: look better. Add more vi
 | `today.label` (new) | Today | The foot of O4 and O6; O7's last stop |
 | `today.1.short` · `today.2.short` · `today.3.short` (new) | Launch service · Your access · Blueprint call | The foot of O4 and O6 |
 
-An item is done from data, never from a Next press: the service when it was chosen with O4's "Launch with this" (`prep.service_chosen_at`; the notes window's Undo clears it), the access when O6's setup cards are both Done, the Blueprint when the booking reads back. A service typed in prep before the call is only the column's proposal: the item stays open until the client chooses. Never "2 of 3".
+An item is done from data, never from a Next press: the service when it was chosen with O4's "Launch with this" (`prep.service_chosen_at`; the notes window's Undo clears it), the access when O6's setup cards are both Done, the Blueprint when the booking reads back, or (since 2026-10-22) when the kickoff is sent: O8's Submit, or a kickoff already on record, since its submit is what books the Blueprint on our side (Make 12). O7's calendar card then reads "We pick the time now" with the tick, until the booking reads back. A service typed in prep before the call is only the column's proposal: the item stays open until the client chooses. Never "2 of 3".
 
 **Notes, added**
 - O1: "Point at the three: by the end of this call, these are done."

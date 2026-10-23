@@ -74,7 +74,11 @@ export function dayShort(value: unknown, lang: Lang, timeZone: string): string {
   return p ? `${p.weekday} ${p.day} ${p.month}` : "";
 }
 
-/** "4 pm", "10:30 am" · "٤ مساءً", "١٠:٣٠ صباحاً". */
+/**
+ * "4 pm", "10:30 am" · "٤ مساءً", "١٠:٣٠ صباحاً". In Arabic noon to 2:59 is
+ * ظهراً ("١٢ ظهراً"): a Gulf reader takes ١٢ مساءً for midnight or the
+ * evening.
+ */
 export function clock(value: unknown, lang: Lang, timeZone: string): string {
   const d = toDate(value);
   if (!d || isDay(value)) return "";
@@ -89,7 +93,7 @@ export function clock(value: unknown, lang: Lang, timeZone: string): string {
   const h12 = h24 % 12 || 12;
   const time = min === "00" ? `${h12}` : `${h12}:${min}`;
   if (lang === "ar")
-    return `${digits(time, "ar")} ${h24 < 12 ? "صباحاً" : "مساءً"}`;
+    return `${digits(time, "ar")} ${h24 < 12 ? "صباحاً" : h24 < 15 ? "ظهراً" : "مساءً"}`;
   return `${time} ${h24 < 12 ? "am" : "pm"}`;
 }
 

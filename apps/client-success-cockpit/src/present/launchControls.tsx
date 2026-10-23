@@ -34,7 +34,7 @@ import { ExampleSwitch, Field, PrepText, Segmented, Toggle } from "./controls";
 import { DriveBox } from "./DriveBox";
 import type { CallKind, DeckData, Overrides } from "./deckData";
 import { DRIVE_UI } from "./driveCopy";
-import { defaultPhones } from "./launchData";
+import { APPROVAL_SAID, defaultPhones } from "./launchData";
 import type { DeckKind } from "./sources";
 import { type LocalItem, useLocalAds } from "./uploads";
 import type { DeckModel } from "./useDeckModel";
@@ -292,8 +292,22 @@ function AdsControls(p: LaunchControlProps) {
     !d.launch.creatives.some(c => !c.starter) &&
     !d.launch.metaCreatives.some(c => Boolean(c.poster ?? c.url));
   const starters = d.launch.creatives.some(c => c.starter);
+  const pack = d.launch.blueprint?.packUrl ?? null;
   return (
     <div className="space-y-4">
+      {pack ? (
+        <div className="text-xs text-muted-foreground">
+          Chosen on the Brand Blueprint call.{" "}
+          <a
+            href={pack}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-primary underline-offset-4 hover:underline"
+          >
+            Starter pack: open it
+          </a>
+        </div>
+      ) : null}
       {noAds ? (
         <Section title="The example ad">
           <div className="text-xs text-muted-foreground">
@@ -805,8 +819,17 @@ function FreedomControls({ d, model, full }: LaunchControlProps) {
   const agreed = d.launch.agreedAt;
   const prep = model.prep.launch;
   const hidden = strings(prep.dos_donts_hidden);
+  const approval = d.launch.blueprint?.approval;
   return (
     <div className="space-y-4">
+      {approval ? (
+        <Section title="From the Brand Blueprint">
+          <div className="text-xs text-muted-foreground">
+            How they approve their custom ads, chosen on the call. Say it when
+            you come to the check: {APPROVAL_SAID[approval]}
+          </div>
+        </Section>
+      ) : null}
       <Section title="Agreement">
         <div className="flex flex-wrap items-center gap-2">
           <Button

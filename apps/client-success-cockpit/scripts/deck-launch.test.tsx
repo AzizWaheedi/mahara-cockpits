@@ -35,7 +35,12 @@ import {
   pushbackVariant,
   replyText,
 } from "../src/present/launchControls";
-import { defaultPhones } from "../src/present/launchData";
+import {
+  APPROVAL_SAID,
+  defaultPhones,
+  launchBlueprintOf,
+  starterTag,
+} from "../src/present/launchData";
 import {
   formStops,
   launchSlides,
@@ -1655,5 +1660,122 @@ describe("score round 2: the Drive folder's pictures", () => {
         { ...c("b", 1), url: "/a.webp", poster: "/a.webp" },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe("what the launch deck reads from the Brand Blueprint (SPEC 6.2)", () => {
+  const BP = {
+    answers: {
+      starter: "yes",
+      pack_url:
+        "https://drive.google.com/drive/folders/1ExamplePackInterior0001",
+      approval: "first_batch",
+      offer: {
+        name: "The whole-floor refresh (example)",
+        what: "Design and fit-out for one floor",
+        firstStep: "A free site visit",
+      },
+      rules: {
+        always: ["Our real projects", "Show our real projects, never stock photos"],
+        never: ["No prices on screen", "No photos of the owner"],
+        neverShow: ["The Salmiya villa"],
+      },
+    },
+    parts: {
+      "1": { firstAt: "2026-10-15T07:12:00Z" },
+      "2": { firstAt: "2026-10-15T07:44:00Z" },
+    },
+  };
+  function withBlueprint(key: FixtureKey, row: unknown, lang: Lang = "en") {
+    const f = FIXTURES[key]("launch");
+    return deckData({
+      taskId: `fixture-${key}`,
+      deck: "launch",
+      lang,
+      sources: f.sources,
+      kit: f.kit,
+      prep: f.prep,
+      ads: f.ads,
+      presenterName: "Sara Al-Harbi",
+      publicUrl: (_b, p) => p,
+      videos: f.videos,
+      videosProblem: f.videosProblem,
+      blueprint: launchBlueprintOf(row as never),
+      now: NOW,
+    });
+  }
+
+  test("the offer becomes the selling point only when prep has none", () => {
+    const sparse = withBlueprint("sparse", BP);
+    expect(sparse.launch.call.slots.selling.en.text).toBe(
+      "The whole-floor refresh (example): Design and fit-out for one floor. First step: A free site visit.",
+    );
+    expect(sparse.launch.call.slots.selling.en.given).toBe(true);
+    const full = data("full");
+    expect(withBlueprint("full", BP).launch.call.slots.selling).toEqual(
+      full.launch.call.slots.selling,
+    );
+  });
+
+  test("how they approve is a notes line, never a slide line", () => {
+    const d = withBlueprint("full", BP);
+    expect(d.launch.blueprint?.approval).toBe("first_batch");
+    expect(APPROVAL_SAID.first_batch).toBe(
+      "You chose to approve the first batch, then we run.",
+    );
+    for (const s of launchSlides()) {
+      const n = s.stops?.(ctx(d)) ?? 1;
+      for (let i = 0; i < n; i++)
+        expect(renderToStaticMarkup(<>{s.render(ctx(d, i))}</>)).not.toContain(
+          "You chose to approve",
+        );
+    }
+  });
+
+  test("the pack: the notes open it, and a starter's tag names the service's pack", () => {
+    const d = withBlueprint("full", BP);
+    expect(d.launch.blueprint?.packUrl).toBe(
+      "https://drive.google.com/drive/folders/1ExamplePackInterior0001",
+    );
+    expect(starterTag(d.launch, "en")).toBe(
+      `From our ${d.launch.serviceMid.en} pack`,
+    );
+    expect(starterTag(withBlueprint("full", BP, "ar").launch, "ar")).toContain(
+      "عندنا",
+    );
+    // Starter no: no pack, the usual tag.
+    const no = withBlueprint("full", {
+      ...BP,
+      answers: { ...BP.answers, starter: "no" },
+    });
+    expect(no.launch.blueprint?.packUrl).toBeNull();
+    expect(starterTag(no.launch, "en")).toBe("Starter, from our templates");
+  });
+
+  test("the rules join the red lines, each once", () => {
+    const R = withBlueprint("full", BP).launch.redLines;
+    expect(R.told).toEqual([
+      "No photos of the owner",
+      "No music with lyrics",
+      "No prices on screen",
+      "The Salmiya villa",
+    ]);
+    expect(R.always).toContain("Our real projects");
+    expect(
+      R.always.filter(x => x === "Show our real projects, never stock photos"),
+    ).toHaveLength(1);
+  });
+
+  test("with no Blueprint the launch deck is unchanged", () => {
+    for (const key of ["full", "sparse", "dwy", "starter"] as FixtureKey[]) {
+      const plain = data(key);
+      const none = withBlueprint(key, null);
+      expect(none.launch.blueprint).toBeNull();
+      expect({ ...none.launch, blueprint: undefined }).toEqual({
+        ...plain.launch,
+        blueprint: undefined,
+      });
+      expect(none.exampleWords).toEqual(plain.exampleWords);
+    }
   });
 });

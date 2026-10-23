@@ -4,6 +4,7 @@ import {executePlan} from '../cockpit-media-api/execute.ts';
 import {requestPlan,launchLink,feedbackRange,feedbackText} from './lib.ts';
 import {runClientAction,executeOutbox} from './outbox.ts';
 import {runBuild} from './build.ts';
+import {rehearseBlueprint,blueprintMembers} from './blueprint.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{...cors,'Content-Type':'application/json'}});
 const canonical=(value:any):string=>JSON.stringify(value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.keys(value).sort().map(k=>[k,JSON.parse(canonical(value[k]))])):value??null);
@@ -21,6 +22,16 @@ Deno.serve(async(req:Request)=>{
   if(operation==='clientAction'){
    admin=createClient(url,service,{auth:{persistSession:false}});
    return json(await runClientAction(input,client,admin,env,auth.user.id));
+  }
+  // The Brand Blueprint's reads: a rehearsal's plan (admins and the CEO) and the launch media buyer picker.
+  // Both read ClickUp with GETs only; nothing is queued or journalled.
+  if(operation==='blueprintRehearse'){
+   admin=createClient(url,service,{auth:{persistSession:false}});
+   return json(await rehearseBlueprint(args,client,admin,env));
+  }
+  if(operation==='blueprintMembers'){
+   admin=createClient(url,service,{auth:{persistSession:false}});
+   return json(await blueprintMembers(client,admin,env));
   }
   if(['requestBuild','launchBuild'].includes(operation)){
    admin=createClient(url,service,{auth:{persistSession:false}});

@@ -13,7 +13,6 @@ import {
   fixtureSend,
   fixtureTimeline,
 } from "../src/dev/formFixtures";
-import { KICKOFF } from "../src/forms/formConfig";
 import {
   kickoffAlready,
   kickoffCardDone,
@@ -22,6 +21,7 @@ import {
   trailSummary,
 } from "../src/forms/formStatus";
 import { atWhen, kuwaitTime, whenSaid } from "../src/forms/formTime";
+import { KICKOFF } from "../src/forms/kickoff";
 
 const SENT_AT = "2026-10-22T11:02:00.000Z"; // 14:02 Kuwait
 const send = { responseId: "fixtureresp0001", sentAt: SENT_AT };

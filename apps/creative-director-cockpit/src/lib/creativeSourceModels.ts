@@ -337,6 +337,7 @@ export async function buildDetail(
       };
     })(),
     client: {
+      taskId: client.taskId,
       name: client.name,
       url: client.url,
       clientStatus: client.clientStatus,
@@ -1555,11 +1556,84 @@ const HIS_MOVE = new Set([
   "update required",
 ]);
 const BLUEPRINT_FORM_LIVE = Date.UTC(2026, 8, 5);
+const KUWAIT_MS = 3 * 3_600_000;
+const MON = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+/** "22 Oct" on Kuwait's calendar. */
+function kuwaitDay(iso?: string | null): string {
+  const ms = Date.parse(String(iso ?? ""));
+  if (!Number.isFinite(ms)) return "";
+  const d = new Date(ms + KUWAIT_MS);
+  return `${d.getUTCDate()} ${MON[d.getUTCMonth()]}`;
+}
+const APPROVAL_LABEL: Record<string, string> = {
+  every: "Every video",
+  first_batch: "The first batch, then we run",
+  run_then_show: "Run them, then show them",
+};
+const DNA_LABEL: Record<string, string> = {
+  complete: "Complete",
+  small_gaps: "Small gaps",
+  big_gaps: "Big gaps",
+};
+/**
+ * The Brand Blueprint sign-off's note (SPEC 4.2): what was sent and when,
+ * or what is next.
+ */
+export function blueprintNote(
+  parts: Record<string, { at?: string | null } | undefined>,
+  now: number,
+): string {
+  const p1 = parts["1"]?.at;
+  const p2 = parts["2"]?.at;
+  const p3 = parts["3"]?.at;
+  const bits: string[] = [];
+  bits.push(
+    p1 ? `starter ads sent ${kuwaitDay(p1)}` : "starter ads not sent yet",
+  );
+  if (p2)
+    bits.push(
+      kuwaitDay(p2) === kuwaitDay(p1)
+        ? "call closed"
+        : `call closed ${kuwaitDay(p2)}`,
+    );
+  else if (p1) bits.push("the call is not closed yet");
+  if (p3) bits.push(`offer locked ${kuwaitDay(p3)}`);
+  else if (p2) {
+    const h = (now - Date.parse(p2)) / 3_600_000;
+    const d = Math.floor(h / 24);
+    bits.push(
+      !Number.isFinite(h) || h < 24
+        ? "offer waiting"
+        : `offer waiting ${d} day${d === 1 ? "" : "s"}`,
+    );
+  }
+  const line = bits.join(" · ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
+}
 export async function buildSnapshot(
   ctx: QueryCtx,
   scope: Set<string> | null,
+  /**
+   * `blueprintsTracked`: the cockpit_blueprint_read succeeded. Tracked means
+   * the read worked, not that rows exist (SPEC 4.2); a failed read keeps the
+   * "not tracked" note.
+   */
+  opts: { blueprintsTracked?: boolean; now?: number } = {},
 ): Promise<any> {
-  const now = Date.now();
+  const now = opts.now ?? Date.now();
   const tasks = (await ctx.db.query("creativeTasks").collect()).filter(
     (t: any) => rowInScope(scope, t),
   );
@@ -1607,6 +1681,7 @@ export async function buildSnapshot(
   }
   function docsFor(raw: string):
     | {
+        taskId?: string;
         brand?: string;
         offer?: string;
         matchedTo?: string;
@@ -1617,6 +1692,7 @@ export async function buildSnapshot(
     const hit = boardRowFor(raw);
     return hit
       ? {
+          taskId: hit.taskId,
           brand: hit.brandDnaDoc,
           offer: hit.offerCheatSheet,
           matchedTo: hit.name,
@@ -1894,19 +1970,20 @@ export async function buildSnapshot(
   for (const j of videos) remember(j.client);
   for (const pp of posts) remember(pp.client);
   for (const c of campaigns) remember(c.clientName ?? c.accountName);
+  /**
+   * The Brand Blueprint record (cockpit_blueprints, read beside the source
+   * by useCreativeSnapshot): one row per client card, its three parts.
+   * Tracked is "the read succeeded", not "rows exist" (SPEC 4.2).
+   */
   const blueprintRows = (await ctx.db.query("blueprints").collect()).filter(
     (b: any) => inScope(scope, b.client),
   );
-  // The Typeform read is not ported yet (HOSTING.md, "still pending"), so an
-  // empty table means "not tracked", not "nobody submitted". Only score the
-  // form once rows exist; until then it is neither open nor done.
-  const blueprintsTracked = blueprintRows.length > 0;
-  const blueprintByClient = new Map<string, (typeof blueprintRows)[number]>();
-  for (const b of blueprintRows) {
-    if (!b.client) continue;
-    const k = b.client.toLowerCase().trim();
-    const prev = blueprintByClient.get(k);
-    if (!prev || b.submittedAt > prev.submittedAt) blueprintByClient.set(k, b);
+  const blueprintsTracked = opts.blueprintsTracked === true;
+  const blueprintByTask = new Map<string, any>();
+  const blueprintByClient = new Map<string, any>();
+  for (const b of blueprintsTracked ? blueprintRows : []) {
+    if (b.taskId) blueprintByTask.set(String(b.taskId), b);
+    if (b.client) blueprintByClient.set(b.client.toLowerCase().trim(), b);
   }
   const tree = await ctx.db.query("metaTree").collect();
   const touchRows = (await ctx.db.query("touchLog").collect()).filter(
@@ -1945,7 +2022,6 @@ export async function buildSnapshot(
           campaignNames.has(t.campaignName) &&
           (t.effectiveStatus ?? t.status) === "ACTIVE",
       );
-      const blueprint = blueprintByClient.get(key);
       /**
        * The Brand Blueprint Typeform went live on 2026-09-05, so a client
        * onboarded before that date was never asked to fill it and an empty
@@ -1953,6 +2029,18 @@ export async function buildSnapshot(
        * after the cutoff. [aziz, 2026-09-07]
        */
       const boardDocs = docsFor(name);
+      const blueprint =
+        (boardDocs?.taskId
+          ? blueprintByTask.get(boardDocs.taskId)
+          : undefined) ?? blueprintByClient.get(key);
+      const bpParts: Record<string, { at?: string | null } | undefined> =
+        blueprint?.parts ?? {};
+      const bpDone = Boolean(bpParts["2"]?.at && bpParts["3"]?.at);
+      const offerSince =
+        bpParts["2"]?.at && !bpParts["3"]?.at ? String(bpParts["2"].at) : null;
+      const offerHours = offerSince
+        ? (now - Date.parse(offerSince)) / 3_600_000
+        : null;
       const onboardedAt = boardDocs?.onboardedAt;
       const blueprintExpected =
         blueprintsTracked &&
@@ -1966,29 +2054,45 @@ export async function buildSnapshot(
        * decide it instead:
        *   1. the Brand DNA task on the creative board is closed,
        *   2. the Offer Creation dropdown on the client board reads "Done",
-       *   3. the Brand Blueprint form has been submitted.
+       *   3. the Brand Blueprint: the call closed (part 2) and the offer
+       *      locked (part 3) in the cockpit (SPEC 4.2).
        * Anything short of all three is unfinished, however full the fields
        * look.
        */
       const offerStep = offerStepByClient.get(nrm(name));
       const offerStatus = boardDocs?.offerStatus ?? null;
+      // What the Blueprint call noted the Brand DNA still needs, said on the
+      // Brand DNA step itself so a closed task never reads as complete.
+      const dnaGap =
+        blueprint?.dnaStatus &&
+        blueprint.dnaStatus !== "complete" &&
+        blueprint.dnaMissing
+          ? String(blueprint.dnaMissing)
+          : null;
       const brandDnaSteps = {
         brandDna: {
+          key: "brandDna",
           done: brand.length === 0,
+          gap: Boolean(dnaGap),
           label: "Brand DNA finished and the task closed",
           note:
             brand.length === 0
-              ? "no open Brand DNA task"
-              : boardDocs?.brand
-                ? "a draft doc exists, finish it and close the task"
-                : "no doc started yet",
+              ? dnaGap
+                ? `Task closed. The Blueprint call noted it still needs: ${dnaGap}`
+                : "no open Brand DNA task"
+              : `${
+                  boardDocs?.brand
+                    ? "a draft doc exists, finish it and close the task"
+                    : "no doc started yet"
+                }${dnaGap ? `. The Blueprint call noted it still needs: ${dnaGap}` : ""}`,
           doc: boardDocs?.brand ?? null,
         },
         offer: {
+          key: "offer",
           // The creative board decides this. The client-board dropdown is
           // only quoted underneath when it happens to be set.
           done: offerStep !== undefined && !offerStep.open,
-          label: "Offer cheat sheet finished",
+          label: "Offer sheet finished",
           note: offerStep
             ? offerStep.open
               ? `"Lock The Brand DNA And The Offer" is ${offerStep.status} on the creative board`
@@ -1997,15 +2101,16 @@ export async function buildSnapshot(
           doc: offerStep?.url ?? boardDocs?.offer ?? null,
         },
         blueprint: {
-          done: Boolean(blueprint),
+          key: "blueprint",
+          done: bpDone,
           tracked: blueprintsTracked,
-          label: "Brand Blueprint form submitted",
-          note: blueprint
-            ? "submitted"
-            : !blueprintsTracked
-              ? "not tracked in the cockpit yet, check Typeform"
+          label: "Brand Blueprint",
+          note: !blueprintsTracked
+            ? "Could not read the Blueprint. Open their page to see it."
+            : blueprint
+              ? blueprintNote(bpParts, now)
               : blueprintExpected
-                ? "still waiting on the form"
+                ? "Not started. Run the Blueprint call from their page."
                 : "onboarded before the form existed, so nothing is expected",
           doc: null as string | null,
         },
@@ -2018,7 +2123,7 @@ export async function buildSnapshot(
       const onboardingOpen =
         onboardingSteps.filter(
           (st: any) => !st.done && st !== brandDnaSteps.blueprint,
-        ).length + (blueprintExpected && !blueprint ? 1 : 0);
+        ).length + (blueprintExpected && !bpDone ? 1 : 0);
       const touchesThisWeek = touchRows.filter(
         (r: any) => r.client.toLowerCase() === key && r.at >= now - 7 * DAY,
       ).length;
@@ -2043,20 +2148,32 @@ export async function buildSnapshot(
       );
       return {
         client: name,
-        // Creative onboarding is "done" only when the Brand Blueprint form
-        // exists for them. A closed ClickUp task proves nothing.
-        blueprintDone: Boolean(blueprint),
+        // Creative onboarding is "done" only when the Brand Blueprint's call
+        // is closed and its offer locked. A closed ClickUp task proves nothing.
+        blueprintDone: bpDone,
         blueprintExpected,
+        blueprintStarted: Boolean(blueprint),
+        blueprintTaskId: boardDocs?.taskId ?? blueprint?.taskId ?? null,
         offerStatus,
         onboardingSteps,
         onboardingOpen,
         onboardingComplete: onboardingOpen === 0,
-        blueprintAt: blueprint?.submittedAt ?? null,
-        brandDnaStatus: blueprint?.brandDnaStatus ?? null,
-        brandDnaDoc: blueprint?.brandDnaDoc ?? null,
-        offerSheet: blueprint?.offerSheet ?? null,
-        stillMissing: blueprint?.stillMissing ?? null,
-        approvalNeeded: blueprint?.approvalNeeded ?? null,
+        blueprintAt: bpParts["3"]?.at ?? null,
+        brandDnaStatus: blueprint?.dnaStatus
+          ? (DNA_LABEL[blueprint.dnaStatus] ?? blueprint.dnaStatus)
+          : null,
+        brandDnaDoc: boardDocs?.brand ?? null,
+        offerSheet: boardDocs?.offer ?? null,
+        offerLine: blueprint?.offerLine ?? null,
+        stillMissing: blueprint?.dnaMissing ?? null,
+        approvalNeeded: blueprint?.approval
+          ? (APPROVAL_LABEL[blueprint.approval] ?? blueprint.approval)
+          : null,
+        // Part 2 closed and part 3 not locked: the offer row, orange after 48h.
+        offerWaiting:
+          offerSince && offerHours !== null
+            ? { since: offerSince, hours: offerHours, late: offerHours >= 48 }
+            : null,
         campaigns: myCampaigns.map((c: any) => ({
           campaignName: c.campaignName,
           spend7d: c.spend7d,
@@ -2189,9 +2306,10 @@ export async function buildSnapshot(
         const missing = c.onboardingSteps
           .filter((st: { done: boolean; label: string }) => !st.done)
           .filter(
-            (st: { label: string }) =>
+            (st: { key: string }) =>
               c.blueprintExpected ||
-              st.label !== "Brand Blueprint form submitted",
+              c.blueprintStarted ||
+              st.key !== "blueprint",
           )
           .map((st: { label: string }) => st.label.toLowerCase());
         if (missing.length > 0) {
@@ -2283,8 +2401,18 @@ export async function buildSnapshot(
       count: videoJobs.filter((j: any) => j.stage === st).length,
     })),
     awaitingHisMove: videoJobs.filter((j: any) => j.hisMove).length,
-    blueprintsOnFile: blueprintRows.length,
+    blueprintsOnFile: blueprintsTracked ? blueprintRows.length : 0,
     blueprintsTracked,
+    // The offers waiting to be locked, the longest first (SPEC 4.2).
+    offersWaiting: clients
+      .filter((c: any) => c.offerWaiting)
+      .map((c: any) => ({
+        client: c.client,
+        taskId: c.blueprintTaskId,
+        offerSheet: c.offerSheet,
+        ...c.offerWaiting,
+      }))
+      .sort((a: any, b: any) => b.hours - a.hours),
     touchpointsPerWeek: TOUCHPOINTS_PER_WEEK,
     counts: {
       openTasks: openTasks.length,

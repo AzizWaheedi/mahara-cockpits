@@ -1,8 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { z } from "zod";
 import { readOnboardingKits } from "@/lib/onboardingClient";
 import type { OnboardingRow } from "@/lib/onboardingCore";
 import { fetchClientProfile } from "@/lib/performance";
 import type { Overrides } from "./deckData";
+import { type LaunchBlueprint, launchBlueprintOf } from "./launchData";
 import {
   type DeckKind,
   type DeckSources,
@@ -88,18 +90,56 @@ export function videosRead(r: PromiseSettledResult<DeckVideos>): {
   };
 }
 
+const blueprintRows = z.object({
+  rows: z.array(
+    z
+      .object({
+        taskId: z.string(),
+        answers: z.record(z.string(), z.unknown()).optional(),
+        parts: z.record(z.string(), z.unknown()).optional(),
+      })
+      .passthrough(),
+  ),
+});
+
+/**
+ * The launch deck's Brand Blueprint (SPEC 6.2), through cockpit_blueprint_read
+ * (a CSM seat reads it). Null when the card has none.
+ */
+export async function readLaunchBlueprint(
+  client: Pick<SupabaseClient, "rpc">,
+  taskId: string,
+): Promise<LaunchBlueprint | null> {
+  const { data, error } = await client.rpc("cockpit_blueprint_read", {
+    p_task_ids: [taskId],
+  });
+  if (error) throw error;
+  const page = blueprintRows.safeParse(data);
+  if (!page.success)
+    throw Error("it came back in a shape this deck does not read");
+  return launchBlueprintOf(page.data.rows.find(r => r.taskId === taskId));
+}
+
 export async function loadDeck(
   client: SupabaseClient,
   taskId: string,
   deck: DeckKind,
 ): Promise<Loaded> {
   const problems: string[] = [];
-  const [src, kits, ads, videos] = await Promise.allSettled([
+  const [src, kits, ads, videos, bp] = await Promise.allSettled([
     readDeckSources(client, taskId),
     readOnboardingKits(client, [taskId]),
     listLaunchAds(client, taskId),
     readDeckVideos(client, deck),
+    deck === "launch"
+      ? readLaunchBlueprint(client, taskId)
+      : Promise.resolve(null),
   ]);
+  // A failed Blueprint read is a notes line; the slides keep their own reads.
+  if (bp.status === "rejected")
+    problems.push(
+      `The Brand Blueprint could not be read, so the offer, the rules and the starter pack from the call are left out: ${problem(bp.reason, "try again")}`,
+    );
   const read = videosRead(videos);
   if (read.line) problems.push(read.line);
   const kit =
@@ -155,5 +195,6 @@ export async function loadDeck(
     problems,
     videos: read.videos,
     videosProblem: read.problem,
+    launchBlueprint: bp.status === "fulfilled" ? bp.value : null,
   };
 }

@@ -1,3 +1,4 @@
+import { blueprintSlides } from "./blueprintDeck";
 import type { SlideCtx, SlideDef } from "./deckContext";
 import type { DeckData, Overrides } from "./deckData";
 import { visible } from "./engine";
@@ -6,16 +7,23 @@ import { onboardingSlides } from "./onboardingDeck";
 import type { DeckKind } from "./sources";
 import type { DeckModel } from "./useDeckModel";
 
-/** The two decks' slide lists. */
+/** The decks' slide lists. */
 export const DECKS: Record<DeckKind, () => SlideDef[]> = {
   onboarding: onboardingSlides,
   launch: launchSlides,
+  blueprint: blueprintSlides,
 };
 
-/** The call's length the notes window's timer counts against (DESIGN 12.2). */
+/**
+ * The call's length the notes window's timer counts against (DESIGN 12.2):
+ * the onboarding deck's 22 minutes of slides, plus about 8 for the kickoff
+ * form filled with the client on its last slide (DESIGN 23).
+ */
 export const TARGET_MINUTES: Record<DeckKind, number> = {
-  onboarding: 22,
+  onboarding: 30,
   launch: 28,
+  /** The Brand Blueprint call: 14 slides, 45 minutes (SPEC 5.2). */
+  blueprint: 45,
 };
 
 /** The slides the client sees: prep's hides and shows, and DESIGN 14's defaults. */
@@ -58,8 +66,8 @@ export function baseCtx(
     d,
     lang: m.lang,
     deck,
-    prep: m.prep[deck],
-    prepOf: k => m.prep[k],
+    prep: m.prep[deck] ?? {},
+    prepOf: k => m.prep[k] ?? {},
     save: (patch, now) => m.setPrep(deck, patch, now),
     saveTo: (k, patch, now) => m.setPrep(k, patch, now),
     live: m.live,

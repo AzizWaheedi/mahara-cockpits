@@ -1,6 +1,7 @@
 import "./present.css";
 import {
   type CSSProperties,
+  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -64,6 +65,12 @@ export interface ShellProps {
   onPos?: (p: Pos, slideId: string) => void;
   /** Sends a slide's crash to the issue queue (the slide itself shows a calm line). */
   report?: (r: { title: string; detail: string }) => Promise<unknown>;
+  /**
+   * What the deck window keeps above the slides, not keyed by slide or
+   * language, so it survives a move and an L (the kickoff form, O8): told
+   * where the call is, it decides when to show.
+   */
+  layer?: (at: { slideId: string; tour: number; ctx: SlideCtx }) => ReactNode;
 }
 
 /** A slide's own render, inside its boundary (so a throw there is caught). */
@@ -90,6 +97,7 @@ export function DeckShell({
   closed = false,
   onPos,
   report,
+  layer,
 }: ShellProps) {
   const { lang } = base;
   const [own, setOwn] = useState<Pos>(() => {
@@ -100,7 +108,10 @@ export function DeckShell({
   const pos = posIn ?? own;
   const setPos = setPosIn ?? setOwn;
   const [overview, setOverview] = useState(false);
-  const [idle, setIdle] = useState(false);
+  // The chrome starts out of sight, so a share that starts on the deck
+  // shows the slide, never the presenter's buttons (score round 1 of the
+  // Blueprint deck's design pass).
+  const [idle, setIdle] = useState(!embedded);
   /** The video playing over the slide (never kept: a reload never reopens it). */
   const [player, setPlayer] = useState<ControlItem | null>(null);
   const [scale, setScale] = useState(1);
@@ -349,20 +360,30 @@ export function DeckShell({
     return () => window.removeEventListener("resize", fit);
   }, [embedded]);
 
-  // The chrome steps aside while presenting; a move of the mouse brings it back.
+  // The chrome steps aside while presenting; a real move of the pointer
+  // brings it back. Never a key: the browser sends a mousemove from a
+  // still pointer when the slide changes under it, so a move counts only
+  // when the pointer has actually moved.
   useEffect(() => {
     if (embedded) return;
-    let timer = window.setTimeout(() => setIdle(true), 2500);
+    let timer = 0;
+    let last: { x: number; y: number } | null = null;
     const wake = () => {
       setIdle(false);
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setIdle(true), 2500);
     };
-    window.addEventListener("mousemove", wake);
+    const moved = (e: MouseEvent) => {
+      const at = { x: e.screenX, y: e.screenY };
+      const was = last;
+      last = at;
+      if (was && Math.abs(at.x - was.x) + Math.abs(at.y - was.y) > 3) wake();
+    };
+    window.addEventListener("mousemove", moved);
     window.addEventListener("touchstart", wake);
     return () => {
       window.clearTimeout(timer);
-      window.removeEventListener("mousemove", wake);
+      window.removeEventListener("mousemove", moved);
       window.removeEventListener("touchstart", wake);
     };
   }, [embedded]);
@@ -462,7 +483,7 @@ export function DeckShell({
 
   if (closed)
     return (
-      <div className="dk-root">
+      <div className="dk-root" data-deck={base.deck}>
         <div className="dk-closed" dir={dir} lang={lang}>
           <strong>{t(CLOSED, lang)}</strong>
         </div>
@@ -473,6 +494,7 @@ export function DeckShell({
     <div
       ref={rootRef}
       className="dk-root"
+      data-deck={base.deck}
       data-idle={idle && !overview ? "" : undefined}
       data-still={base.still ? "" : undefined}
       data-embedded={embedded ? "" : undefined}
@@ -522,6 +544,13 @@ export function DeckShell({
                 <SlideBody slide={slide} ctx={ctx} />
               </DeckBoundary>
             </section>
+          ) : null}
+          {/* Above the slide, below the player: inert while the player
+              covers the canvas. */}
+          {layer && !embedded && slide ? (
+            <div className="dk-layer" inert={player ? true : undefined}>
+              {layer({ slideId: slide.id, tour, ctx })}
+            </div>
           ) : null}
           {railAt != null ? (
             <MiniRail lang={lang} current={railAt} dwy={base.d.mode.dwy} />

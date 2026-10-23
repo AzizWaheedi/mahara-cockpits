@@ -60,7 +60,7 @@ import {
   RebookMark,
   rowY,
 } from "./JourneyLanes";
-import { type FormQuestion, PHONES } from "./launchData";
+import { type FormQuestion, PHONES, starterTag } from "./launchData";
 import {
   PARTNER_STOPS,
   Partnership,
@@ -603,7 +603,7 @@ function JourneyStage({ ctx, i }: { ctx: SlideCtx; i: number }) {
       feed?.from === "example"
         ? t(EXAMPLE.tag, lang)
         : feed?.starter
-          ? t(SHARED.tag.starter, lang)
+          ? starterTag(L, lang)
           : t(SHARED.tag.preview, lang);
     return (
       <div className="dkc-stage" data-kind="phone">

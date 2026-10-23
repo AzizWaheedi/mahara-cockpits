@@ -10,7 +10,7 @@ import {
   SETUP_DONE,
 } from "@/lib/clientBrief";
 import { serviceModel } from "@/lib/csmTemplates";
-import type { OnboardingRow } from "@/lib/onboardingCore";
+import type { FormEntry, OnboardingRow } from "@/lib/onboardingCore";
 import {
   challengeLines,
   cleanAnswer,
@@ -23,7 +23,11 @@ import {
 import { type L, type Lang, LINKS, O } from "./content";
 import { dayOf, gulfToday } from "./dates";
 import { examplePick, type ServiceExample } from "./examples";
-import { type LaunchData, launchData } from "./launchData";
+import {
+  type LaunchBlueprint,
+  type LaunchData,
+  launchData,
+} from "./launchData";
 import {
   isMain,
   resolveService,
@@ -103,18 +107,22 @@ export interface DeckInput {
   /** The client's row from cockpit_csm_onboarding_read (forms, links, dates). */
   kit: OnboardingRow | null;
   /** This deck's prep overrides, and the other deck's (red lines carry over). */
-  prep: { onboarding: Overrides; launch: Overrides };
+  prep: { onboarding: Overrides; launch: Overrides; blueprint?: Overrides };
   /** This client's ready uploads, with signed links when they were signed. */
   ads: LaunchAd[];
   /** The signed-in seat's name, when the server has no first name for it. */
   presenterName?: string | null;
   /** Calls booked from the notes window in this session, before they read back. */
   booked?: Partial<Record<CallKind, string>>;
+  /** When the kickoff was sent from the deck's last slide in this call (its submit). */
+  kickoffSent?: string | null;
   /** The public link of an object in a public bucket (the verified logos). */
   publicUrl?: (bucket: string, path: string) => string;
   /** This deck's video slots as read (null: not read), and why not. */
   videos?: DeckVideos | null;
   videosProblem?: string | null;
+  /** The launch deck's Brand Blueprint, read beside its sources (SPEC 6.2). */
+  blueprint?: LaunchBlueprint | null;
   now: Date;
 }
 
@@ -173,6 +181,12 @@ export interface DeckData {
   exampleWords: { primary: string | null; headline: string | null };
   /** The call's checklist, each item done from data, never from a press (DESIGN 22.2.0). */
   today: { service: boolean; access: boolean; blueprint: boolean };
+  /**
+   * The Blueprint call is booked or held (not only ticked by the kickoff's
+   * Submit): the checklist's third item names the call only then, and
+   * "Kickoff sent" before it.
+   */
+  blueprintBooked: boolean;
   templated: Templated;
   templatedAnswer: string | null;
   /**
@@ -189,6 +203,19 @@ export interface DeckData {
   /** The Arabic of each card line, typed in prep (`dos_donts_ar`, DESIGN 22.6.2). */
   dosDontsAr: Record<string, string>;
   kickoffFiled: boolean;
+  /**
+   * The kickoff (the deck's last slide, 2026-10-22): when it went in, and
+   * how the deck knows. "call": its Submit on this call's last slide;
+   * "record": the kickoff on the client's record. `entry` is what was
+   * filled, when the record has it; `prefilled` says the onboarding form
+   * is on record, so the form opens with their details read back.
+   */
+  kickoff: {
+    sentAt: string | null;
+    from: "call" | "record" | null;
+    entry: FormEntry | null;
+    prefilled: boolean;
+  };
   access: AccessRow[];
   links: {
     drive: string | null;
@@ -575,7 +602,9 @@ export function deckData(input: DeckInput): DeckData {
     prepSource,
     ...formSources,
   ]);
-  const service = input.deck === "launch" ? launchService : onboardingService;
+  // The Brand Blueprint reads it as the launch deck does (SPEC 5.1).
+  const service =
+    input.deck === "onboarding" ? onboardingService : launchService;
   const named = serviceNames(service);
   const serviceFocus = named.name[lang] ?? null;
   const serviceMid = named.mid[lang] ?? null;
@@ -734,7 +763,9 @@ export function deckData(input: DeckInput): DeckData {
           headline: serviceAr,
         }
       : {
-          primary: str(launchPrep.selling_point),
+          primary:
+            str(launchPrep.selling_point) ??
+            (input.deck === "launch" ? (input.blueprint?.offer ?? null) : null),
           headline: named.name.en,
         };
 
@@ -831,8 +862,16 @@ export function deckData(input: DeckInput): DeckData {
         .every(r => r.status === "done"),
       // Booked, or held already (the stage past it, as O5's road shows):
       // O7's checklist never leaves it open beside a road that says Done.
-      blueprint: Boolean(next.blueprint) || roadNow > 3,
+      // Or the kickoff is sent: its submit is what books the Blueprint on
+      // our side (Make 12, Brand Blueprint Booked), so the last slide's
+      // Submit ticks it (2026-10-22).
+      blueprint:
+        Boolean(next.blueprint) ||
+        roadNow > 3 ||
+        Boolean(input.kickoffSent) ||
+        kickoffFiled,
     },
+    blueprintBooked: Boolean(next.blueprint) || roadNow > 3,
     templated,
     templatedAnswer,
     starterPack,
@@ -842,6 +881,12 @@ export function deckData(input: DeckInput): DeckData {
     dosDonts,
     dosDontsAr,
     kickoffFiled,
+    kickoff: {
+      sentAt: input.kickoffSent ?? kickoff?.submitted_at ?? null,
+      from: input.kickoffSent ? "call" : kickoff ? "record" : null,
+      entry: kickoff,
+      prefilled: Boolean(form),
+    },
     access: rows,
     links: {
       drive,
@@ -885,6 +930,7 @@ export function deckData(input: DeckInput): DeckData {
       advertised,
       service: launchService,
       today,
+      blueprint: input.deck === "launch" ? (input.blueprint ?? null) : null,
       refs: {
         brandDna: str(s?.editor?.brandDnaUrl) ?? str(kit?.links?.brand_dna),
         offer: str(s?.editor?.offerUrl) ?? str(kit?.links?.offer_sheet),

@@ -152,15 +152,17 @@ const CLIENT_TABS: { tab: string; label: string; keywords: string }[] = [
 ];
 
 const LINKS: Hit[] = LINK_GROUPS.flatMap(g =>
-  g.rows.map(r => ({
-    value: `link:${r.url}|${r.label}`,
-    label: r.label,
-    sub: r.note ?? g.title,
-    kind: "Link" as const,
-    href: r.url,
-    external: true,
-    keywords: [r.label, r.note ?? "", g.title],
-  })),
+  g.rows
+    .flatMap(r => (r.url ? [{ ...r, url: r.url }] : []))
+    .map(r => ({
+      value: `link:${r.url}|${r.label}`,
+      label: r.label,
+      sub: r.note ?? g.title,
+      kind: "Link" as const,
+      href: r.url,
+      external: true,
+      keywords: [r.label, r.note ?? "", g.title],
+    })),
 );
 
 export function CommandPalette() {

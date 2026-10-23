@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 import type { LiveState } from "./channel";
 import { type L, type Lang, type SlideNotes, tf } from "./content";
 import type { DeckData, Overrides } from "./deckData";
+import type { KickoffShown } from "./kickoffStop";
 import type { DeckKind } from "./sources";
+import type { BpModel } from "./useBlueprint";
 import type { ControlItem } from "./VideoPlayer";
 
 /**
@@ -47,6 +49,18 @@ export interface SlideCtx {
       phone?: "feed" | "reels" | "facebook" | null,
     ) => Promise<void>;
   };
+  /**
+   * The kickoff's live layer on the deck window (O8, DESIGN 23): it draws
+   * the form's frame itself, so the slide leaves that spot to it. Absent in
+   * prep's preview and the tests: the slide draws the frame, still.
+   */
+  kickoff?: KickoffShown;
+  /**
+   * The Brand Blueprint on its own deck (docs/brand-blueprint/SPEC.md 5):
+   * the answers typed on the slides, the parts and the stamp. Absent on the
+   * CSM decks, and null until the Blueprint has been read.
+   */
+  bp?: BpModel | null;
 }
 
 export interface SlideDef {

@@ -1,10 +1,13 @@
 import type {Provider,Plan,MultiPlan,Row} from '../cockpit-media-api/core.ts';
 import {providerTools} from '../cockpit-media-api/tools.ts';
 import {executePlan} from '../cockpit-media-api/execute.ts';
+import {isBlueprint,prepareBlueprint,describePlan,type BlueprintPlan} from './blueprint.ts';
 const VIDEO_LIST='901816720767',CREATIVE_LIST='901818016338',FOOTAGE_FIELD='d37a6747-c4a1-43c5-bb73-e1725ecec982';
 const due=(value:unknown)=>{const s=String(value??'');const d=new Date(`${s}T09:00:00+03:00`);if(!/^\d{4}-\d{2}-\d{2}$/.test(s)||!Number.isFinite(d.getTime())||new Date(d.getTime()+10800000).toISOString().slice(0,10)!==s)throw new Error('Choose a valid due date');return d.getTime();};
-export async function prepareOutbox(row:Row,provider:Provider):Promise<Plan|MultiPlan|{comment:{task:string;text:string}}> {
+export async function prepareOutbox(row:Row,provider:Provider,env:(key:string)=>string|undefined=()=>undefined,now=new Date()):Promise<Plan|MultiPlan|BlueprintPlan|{comment:{task:string;text:string}}> {
  const p=row.payload??{};
+ // A Brand Blueprint press is about a client card, not a creative task: it never has a source task.
+ if(isBlueprint(row.kind))return prepareBlueprint(row,provider,env,now);
  if(['videoRequest','planScript'].includes(row.kind)){
   const list=row.kind==='videoRequest'?VIDEO_LIST:CREATIVE_LIST;
   if(typeof p.brief!=='string'||!p.brief.trim())throw new Error('Write the brief first');
@@ -29,6 +32,14 @@ export async function prepareOutbox(row:Row,provider:Provider):Promise<Plan|Mult
  throw new Error('Unsupported client action');
 }
 export async function executeOutbox(plan:Awaited<ReturnType<typeof prepareOutbox>>,provider:Provider){
+ if('blueprint' in plan){
+  // ClickUp and Slack steps first, each read back; Make last, sent once, never retried (no read-back exists).
+  const result=(await executePlan(plan,provider)).result;
+  if(!plan.blueprint.make)return result;
+  const sent=await provider.call('make','POST','hook',plan.blueprint.make);
+  if(sent.ok!==true)throw new Error("Make did not confirm the close. Check the client's WhatsApp group before sending again.");
+  return {...result,make:'sent'};
+ }
  if(!('comment' in plan))return (await executePlan(plan,provider)).result;
  const {task,text}=plan.comment;const made=await provider.call('clickup','POST',`task/${task}/comment`,{comment_text:text,notify_all:false});
  if(!made.id)throw new Error('Comment outcome is unknown. Reconcile before retrying');
@@ -44,12 +55,15 @@ export async function runClientAction(input:Row,client:any,admin:any,env:(key:st
  const check=async()=>{const current=await load();if(JSON.stringify([current.client_name,current.task_id,current.actor_id,current.payload,current.sourceTask])!==fence)throw new Error('Client access or task source changed. Refresh and reconcile this request');};
  const provider=providerTools(env,async(event)=>{if(event.phase==='intent'&&event.method!=='GET')await check();const {error}=await admin.from('cockpit_media_provider_health').insert({...event,action_id:started?id:null});if(error)throw new Error('Could not save provider receipt');});
  try{
-  const plan=await prepareOutbox(row,provider);if(input.apply!==true)return {dryRun:true,plan};await check();
+  const plan=await prepareOutbox(row,provider,env);if(input.apply!==true)return {dryRun:true,plan,...('blueprint' in plan?{lines:describePlan(plan)}:{})};await check();
   const journal=await admin.from('cockpit_media_actions').insert({id,actor_id:userId,operation:`creativeClient.${row.kind}`,campaign_name:null,request:{outbox:row}});if(journal.error)throw new Error('This client action needs reconciliation before retrying');started=true;
   const claimed=await admin.from('cockpit_creative_outbox').update({state:'sending'}).eq('id',id).eq('state','pending').select('id').single();if(claimed.error)throw new Error('Client action was already claimed');
   const result=await executeOutbox(plan,provider);
   const done=await admin.from('cockpit_creative_outbox').update({state:'done',result,settled_at:new Date().toISOString()}).eq('id',id).eq('state','sending');if(done.error)throw new Error('Provider action completed but its result was not saved');
   const final=await admin.from('cockpit_media_actions').update({state:'confirmed',result,completed_at:new Date().toISOString()}).eq('id',id).eq('state','pending');if(final.error)throw new Error('Provider action completed but its receipt was not saved');
+  // Send to media names its launch task on the record, so the next press goes there first. The task is
+  // already confirmed in ClickUp, so a failed note is reported, not thrown: the next press finds it by tag.
+  if(row.kind==='blueprintLaunch'&&typeof result?.launchTaskId==='string'){const settled=await admin.rpc('cockpit_blueprint_outbox_settled',{p_request_id:id,p_launch_task_id:result.launchTaskId});if(settled.error)return {id,state:'done',result,note:'The launch task is ready, but the Blueprint did not save its link. The next press finds it by its tag.'};}
   return {id,state:'done',result};
  }catch(error){const message=error instanceof Error?error.message:'Client action failed';if(started){await admin.from('cockpit_creative_outbox').update({state:'reconcile',error:message.slice(0,1000)}).eq('id',id);await admin.from('cockpit_media_actions').update({state:'reconcile',result:{error:message},completed_at:new Date().toISOString()}).eq('id',id).eq('state','pending');}throw error;}
 }

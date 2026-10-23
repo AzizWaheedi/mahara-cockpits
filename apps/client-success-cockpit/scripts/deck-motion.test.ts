@@ -176,3 +176,95 @@ describe("the arrivals (DESIGN 22.14.5)", () => {
     );
   });
 });
+
+/**
+ * The Brand Blueprint call (docs/brand-blueprint/SPEC.md 5.4, 5.5): the
+ * studio wall, tamed. Every build runs once on entry on the motion switch,
+ * ends within 1.5 s by its tokens, nothing loops; the felt stays at 4 %,
+ * and none of the untamed wall's tells come back (no client face, no pin
+ * holes).
+ */
+describe("the Brand Blueprint's wall (section 24)", () => {
+  const block = css.slice(css.indexOf("24 · The Brand Blueprint call"));
+  const bareBlock = block.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  test("every animation and transition runs on the motion switch", () => {
+    const decls = [
+      ...bareBlock.matchAll(/(?:animation|transition)(?:-delay)?\s*:([^;]*);/g),
+    ].filter(([, d]) => !/^\s*none\s*$/.test(d));
+    expect(decls.length).toBeGreaterThan(10);
+    for (const [, d] of decls)
+      expect({ d: d.trim(), m: d.includes("var(--dk-m)") }).toEqual({
+        d: d.trim(),
+        m: true,
+      });
+  });
+
+  test("every entrance ends within 1.5 s, by the tokens", () => {
+    const t = (n: string) => {
+      const v = token(n);
+      return v === "var(--dk-t-arrive)" ? ms(token("--dk-t-arrive")) : ms(v);
+    };
+    // The ordinary arrivals: the first piece lands at once, the last has
+    // settled by about 900 ms (score round 2 of the design pass: the wall
+    // stood empty for 150 ms after a press, and slide 11 took 1.3 s); the
+    // signature beats below keep their own, longer timings.
+    expect(t("--dkb-t-lead")).toBe(0);
+    const last =
+      t("--dkb-t-lead") + Number(token("--dkb-i-max")) * t("--dkb-t-step");
+    expect(last + t("--dkb-t-pin")).toBeLessThanOrEqual(900);
+    expect(last + t("--dkb-t-tape-at") + t("--dkb-t-tape")).toBeLessThanOrEqual(
+      900,
+    );
+    expect(last + t("--dkb-t-hint-at") + t("--dkb-t-tape")).toBeLessThanOrEqual(
+      900,
+    );
+    expect(
+      t("--dkb-t-lead") + 4 * t("--dkb-t-fan-step") + t("--dkb-t-fan"),
+    ).toBeLessThanOrEqual(1500);
+    expect(t("--dkb-t-string-at") + t("--dkb-t-string")).toBeLessThanOrEqual(
+      1500,
+    );
+    expect(t("--dkb-t-stamp")).toBeLessThanOrEqual(300);
+    // Slide 4's park (four strips leave, 70 ms apart; the tag's lines land),
+    // slide 6's flight into the wall map, the read-back growing out of it
+    // (three frames, a step apart): each done within 1.5 s (score round 1).
+    expect(4 * t("--dkb-t-fan-step") + t("--dkb-t-park")).toBeLessThanOrEqual(
+      1500,
+    );
+    expect(
+      t("--dkb-t-park-at") + 3 * t("--dkb-t-fan-step") + t("--dkb-t-tape"),
+    ).toBeLessThanOrEqual(1500);
+    expect(t("--dkb-t-fly")).toBeLessThanOrEqual(1500);
+    expect(2 * t("--dk-t-step") + t("--dkb-t-assemble")).toBeLessThanOrEqual(
+      1500,
+    );
+  });
+
+  test("the felt is at most 4 %, the tilt capped at 1 degree, the stamp only when fired", () => {
+    // The data URI holds a ";", so the line is read whole.
+    const felt = /^\s*--dkb-felt:(.*)$/m.exec(css)?.[1] ?? "";
+    const alphas = [...felt.matchAll(/0 0 0 \.?(\d*\.?\d+) 0'/g)].map(m =>
+      Number.parseFloat(m[1].startsWith(".") ? `0${m[1]}` : `0.${m[1]}`),
+    );
+    expect(alphas.length).toBe(2);
+    for (const a of alphas) expect(a).toBeLessThanOrEqual(0.04);
+    expect(token("--dkb-tilt-max")).toBe("1deg");
+    // The stamp's motion belongs to a fresh press only.
+    expect(bareBlock).toMatch(
+      /\.dkb-stamp\[data-fresh\] \{\s*animation: dkb-stamp/,
+    );
+    expect(bareBlock).not.toMatch(/\.dkb-stamp \{[^}]*animation/);
+  });
+
+  test("live paper is straight and swings in straight", () => {
+    expect(bareBlock).toMatch(
+      /\.dkb-pin\[data-live\],\s*\[data-live\] \.dkb-pin \{\s*--r: 0deg;\s*--dkb-swing: 0deg;/,
+    );
+  });
+
+  test("no client face, no pin holes, nothing that loops", () => {
+    expect(css).not.toMatch(/Marcellus/);
+    expect(bareBlock).not.toMatch(/\.dkb-hole|#holes|\binfinite\b/);
+  });
+});

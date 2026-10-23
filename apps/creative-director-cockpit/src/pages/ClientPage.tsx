@@ -14,6 +14,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AppointmentFeedback } from "@/components/AppointmentFeedback";
+import { BlueprintCard } from "@/components/BlueprintCard";
 import { ClientUpdates } from "@/components/ClientUpdates";
 import {
   CreativePreview,
@@ -583,7 +584,7 @@ export function ClientPage() {
           />
           <DocChip
             href={d.client.docs.offerCheatSheet}
-            label="Offer creation strategy"
+            label="Offer sheet"
             hint="The offer every script has to sell"
           />
           <DocChip
@@ -597,6 +598,15 @@ export function ClientPage() {
             hint="Raw footage and brand assets"
           />
         </div>
+
+        {d.client.taskId ? (
+          <BlueprintCard
+            taskId={d.client.taskId}
+            clientName={d.client.name}
+            status={status}
+            offerSheet={d.client.docs.offerCheatSheet}
+          />
+        ) : null}
 
         {/* Side by side when both show; one alone takes the full width. */}
         <div className="flex flex-wrap gap-4 [&>*]:min-w-0 [&>*]:flex-1 [&>*]:basis-80">

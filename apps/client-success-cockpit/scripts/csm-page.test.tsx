@@ -189,6 +189,40 @@ const mockClient: any = {
     if (name === "cockpit_csm_onboarding_read") {
       return Promise.resolve({ data: KITS, error: null });
     }
+    // The Brand Blueprint (SPEC 6.1): starter ads sent and the call closed,
+    // the offer not locked yet; the close switch at card only.
+    if (name === "cockpit_blueprint_read") {
+      return Promise.resolve({
+        data: {
+          rows: (_args.p_task_ids as string[]).includes("86exnk0v4")
+            ? [
+                {
+                  taskId: "86exnk0v4",
+                  clientName: "Greystone Contracting",
+                  parts: {
+                    "1": {
+                      firstAt: "2026-10-05T07:12:00Z",
+                      lastAt: "2026-10-05T07:12:00Z",
+                    },
+                    "2": {
+                      firstAt: "2026-10-05T07:44:00Z",
+                      lastAt: "2026-10-05T07:44:00Z",
+                    },
+                  },
+                },
+              ]
+            : [],
+          now: "2026-10-05T08:00:00Z",
+        },
+        error: null,
+      });
+    }
+    if (name === "cockpit_blueprint_settings_read") {
+      return Promise.resolve({
+        data: { closeRoute: "card_only", packs: {}, assignee: null },
+        error: null,
+      });
+    }
     if (name === "cockpit_csm_client_ads") {
       adsReads.push(_args);
       return Promise.resolve({ data: ADS_READ, error: null });
@@ -1225,6 +1259,15 @@ test("an onboarding client's row and page show its onboarding steps", async () =
     expect(text).toContain("Filled 2 Oct");
     expect(text).toContain("Fill the kickoff");
     expect(text).toContain("You are here");
+    // The Brand Blueprint's line (SPEC 6.1): each part's time, Kuwait's
+    // clock, the deck read only, and the phase 5 copy once the call closed.
+    expect(text).toContain(
+      "Starter ads sent 10:12 · call closed 10:44 · offer not locked yet",
+    );
+    expect(text).toContain("Open the Blueprint deck");
+    // Make 14 module [7]'s text is in the cockpit (PHASE5_WHATSAPP), so the
+    // CSM copies the whole message, not only the map link.
+    expect(text).toContain("Copy the phase 5 message for the group");
     // The kickoff opens in its own window, by name, at the client's form
     // route (docs/csm-forms/KICKOFF.md 1): the record builds its client ID.
     const opened: string[][] = [];

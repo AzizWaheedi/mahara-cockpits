@@ -48,7 +48,7 @@ const { createRoot } = await import("react-dom/client");
 const { act } = await import("react");
 const { FormPanel } = await import("../src/forms/FormPanel");
 const { FormWindowView } = await import("../src/forms/FormWindow");
-const { KICKOFF } = await import("../src/forms/formConfig");
+const { KICKOFF } = await import("../src/forms/kickoff");
 const { hiddenSha256 } = await import("../src/forms/prefill");
 const fx = await import("../src/dev/formFixtures");
 
