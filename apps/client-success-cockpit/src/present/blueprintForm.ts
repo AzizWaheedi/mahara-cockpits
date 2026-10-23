@@ -627,14 +627,30 @@ export function checkValue(
       case "names": {
         if (!Array.isArray(value))
           return { error: "The competitors are a list of names." };
-        const out: { name: string; lose: boolean }[] = [];
-        for (const x of value as { name?: unknown; lose?: unknown }[]) {
+        // A name, marked or not as one they lose to, and what they are known
+        // for in the client's words (slide 8's clipping), as the server keeps it.
+        const out: { name: string; lose: boolean; note?: string }[] = [];
+        for (const x of value as {
+          name?: unknown;
+          lose?: unknown;
+          note?: unknown;
+        }[]) {
           const nm = str(x?.name)?.replace(/\s+/g, " ");
           if (!nm || out.some(y => y.name.toLowerCase() === nm.toLowerCase()))
             continue;
           if (nm.length > 120)
             return { error: "Keep a competitor's name under 120 characters." };
-          out.push({ name: nm, lose: x.lose === true });
+          const note = str(x?.note)?.replace(/\s+/g, " ");
+          if (note && note.length > 160)
+            return {
+              error:
+                "Keep what a competitor is known for under 160 characters.",
+            };
+          out.push({
+            name: nm,
+            lose: x.lose === true,
+            ...(note ? { note } : {}),
+          });
         }
         if (out.length > 15) return { error: "Name 15 competitors at most." };
         return { value: out.length ? out : null };

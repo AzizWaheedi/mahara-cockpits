@@ -293,7 +293,9 @@ const textChecks = page =>
       // The phones draw an app's own screen: its rows are clipped by design.
       // The fan's strips are turned by meaning, their names on each strip's
       // free edge, so their boxes cross by design.
-      if (el.closest(".dkb-ads, .dkb-fly, .dkb-fan")) continue;
+      // The example pencilled on slide 6's sheet sits under the field it
+      // waits in, by design (the field takes the clicks).
+      if (el.closest(".dkb-ads, .dkb-fly, .dkb-fan, .dkb-ghost")) continue;
       const range = document.createRange();
       range.selectNodeContents(n);
       let block = slide;

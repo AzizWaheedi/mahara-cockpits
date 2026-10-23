@@ -341,12 +341,20 @@ export function say(key: string, v: unknown): string {
       ? kuwaitDay(key === "scripts_date" ? `${v}T09:00:00+03:00` : v)
       : String(v);
   if (key === "competitors" && Array.isArray(v))
-    return v
-      .map(
-        c =>
-          `${(c as { name: string }).name}${(c as { lose?: boolean }).lose ? " (they lose to them)" : ""}`,
-      )
-      .join(", ");
+    return (
+      v
+        .map(c => {
+          const x = c as { name: string; lose?: boolean; note?: string };
+          const note = typeof x.note === "string" && x.note.trim();
+          return `${x.name}${x.lose ? " (they lose to them)" : ""}${note ? `: ${note}` : ""}`;
+        })
+        // A note may hold a comma, so names with notes are set apart by ";".
+        .join(
+          v.some(c => typeof (c as { note?: unknown }).note === "string")
+            ? "; "
+            : ", ",
+        )
+    );
   if (key === "rules" && typeof v === "object") {
     const r = v as {
       always?: string[];

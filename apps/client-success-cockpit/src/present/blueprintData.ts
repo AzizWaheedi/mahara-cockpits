@@ -107,27 +107,51 @@ export function bandOf(text: unknown): [number, number] | null {
     .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660))
     .replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06f0))
     .replace(/٫/g, ".");
-  const found: number[] = [];
+  const scale = (unit: string) =>
+    unit === "k" || unit === "thousand" || /ألف|الف|آلاف/.test(unit)
+      ? 1000
+      : unit === "m" || unit === "million" || unit === "مليون"
+        ? 1_000_000
+        : 1;
+  const tokens: { base: number; unit: string; at: number; end: number }[] = [];
   const re =
     /(\d{1,3}(?:[,٬]\d{3})+|\d+(?:\.\d+)?)\s*(k\b|m\b|million|thousand|ألف|الف|آلاف|مليون)?/gi;
   for (const m of latin.matchAll(re)) {
     const unit = (m[2] ?? "").toLowerCase();
     // A year ("since 2019") is not an amount.
     if (!unit && /^(19|20)\d\d$/.test(m[1])) continue;
-    const base = Number(m[1].replace(/[,٬]/g, ""));
-    const n =
-      unit === "k" || unit === "thousand" || /ألف|الف|آلاف/.test(unit)
-        ? base * 1000
-        : unit === "m" || unit === "million" || unit === "مليون"
-          ? base * 1_000_000
-          : base;
-    if (n >= 1000 && !found.includes(n)) found.push(Math.round(n));
+    tokens.push({
+      base: Number(m[1].replace(/[,٬]/g, "")),
+      unit,
+      at: m.index ?? 0,
+      end: (m.index ?? 0) + m[0].length,
+    });
+  }
+  // A range said as one ("between 180,000 and 260,000", "180k to 260k",
+  // "بين ١٥ و٢٥ ألف": the first takes the second's unit) wins over amounts
+  // said apart ("from 25,000 for the design ... between 180,000 and
+  // 260,000"); else the first two amounts.
+  for (let i = 0; i + 1 < tokens.length; i++) {
+    const between = latin.slice(tokens[i].end, tokens[i + 1].at);
+    if (
+      !/^\s*(?:[A-Z]{3}\s*)?(?:to|and|-|–|—|إلى|الى|لين|حتى|و)\s*$/i.test(
+        between,
+      )
+    )
+      continue;
+    const b = tokens[i + 1].base * scale(tokens[i + 1].unit);
+    const a = tokens[i].base * scale(tokens[i].unit || tokens[i + 1].unit);
+    if (a >= 1000 && b >= 1000)
+      return [Math.round(Math.min(a, b)), Math.round(Math.max(a, b))];
+  }
+  const found: number[] = [];
+  for (const t of tokens) {
+    const n = Math.round(t.base * scale(t.unit));
+    if (n >= 1000 && !found.includes(n)) found.push(n);
     if (found.length === 2) break;
   }
   if (!found.length) return null;
-  const lo = Math.min(...found);
-  const hi = Math.max(...found);
-  return [lo, hi];
+  return [Math.min(...found), Math.max(...found)];
 }
 
 /** A round number at or above n, for the tape's far end (1, 2, 2.5 or 5 times a power of ten). */
@@ -256,16 +280,56 @@ export function hhmm(at: string, timeZone: string): string {
 
 /** Up to four colours from the Brand DNA doc's text (#hex under its colours). */
 export function brandColours(text: string | null | undefined): string[] {
+  return brandPalette(text).map(c => c.hex);
+}
+
+/**
+ * The Brand DNA doc's colours with the names the doc gives them ("- Sand
+ * D9C8AD", "Sand: #D9C8AD"): up to four, in the doc's order. A colour with
+ * no word before it on its line has no name (the chip shows its code only).
+ */
+export function brandPalette(
+  text: string | null | undefined,
+): { hex: string; name: string | null }[] {
   if (!text) return [];
   const at = text.search(/colou?rs?|palette|الألوان|ألوان/i);
   const scope = at >= 0 ? text.slice(at) : text;
-  const out: string[] = [];
-  for (const m of scope.matchAll(/#?\b([0-9A-Fa-f]{6})\b/g)) {
-    const hex = `#${m[1].toUpperCase()}`;
-    if (!out.includes(hex)) out.push(hex);
-    if (out.length === 4) break;
+  const out: { hex: string; name: string | null }[] = [];
+  for (const line of scope.split(/\n/)) {
+    for (const m of line.matchAll(/#?\b([0-9A-Fa-f]{6})\b/g)) {
+      const hex = `#${m[1].toUpperCase()}`;
+      if (out.some(c => c.hex === hex)) continue;
+      const before = line
+        .slice(0, m.index)
+        .replace(/^[\s\-*•·]+/, "")
+        .replace(/[\s:=#\-–(]+$/, "")
+        .trim();
+      const name =
+        before &&
+        before.length <= 20 &&
+        !/\d/.test(before) &&
+        !/colou?rs?|palette|الألوان|ألوان/i.test(before)
+          ? before
+          : null;
+      out.push({ hex, name });
+      if (out.length === 4) return out;
+    }
   }
   return out;
+}
+
+/**
+ * What the Brand DNA doc says about type, as written ("Type: a serif for
+ * the wordmark, Geist for text"): the rest of its type line, or null.
+ */
+export function brandType(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const m =
+    /^\s*[-*•]?\s*(?:type|typefaces?|fonts?|typography|الخطوط|الخط)\s*[:：]\s*(.+)$/im.exec(
+      text,
+    );
+  const v = m?.[1]?.trim().replace(/[.。]$/, "");
+  return v && v.length <= 80 ? v : null;
 }
 
 /** Ink that reads on a colour chip: the paper on a dark one, the print on a light one. */

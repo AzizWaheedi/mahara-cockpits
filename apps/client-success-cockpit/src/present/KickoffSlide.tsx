@@ -1,5 +1,6 @@
 import { ArrowUpRight, RefreshCw, RotateCcw } from "lucide-react";
 import {
+  type CSSProperties,
   type ReactNode,
   useCallback,
   useEffect,
@@ -30,7 +31,7 @@ import { type FormReads, useLiveForm } from "@/forms/useLiveForm";
 import type { FormEntry } from "@/lib/onboardingCore";
 import { cn } from "@/lib/utils";
 import type { DeckHub } from "./channel";
-import { type Lang, O, t, tf } from "./content";
+import { digits, type Lang, O, t, tf } from "./content";
 import { clock, dayMonth } from "./dates";
 import type { SlideCtx } from "./deckContext";
 import type { DeckData } from "./deckData";
@@ -116,6 +117,9 @@ export function KickoffFrame({
         <bdi className="dkc-kick-name" dir="auto">
           {d.name}
         </bdi>
+        {lang === "ar" ? (
+          <span className="dkc-kick-lang">{t(O.kickoff.formLang, lang)}</span>
+        ) : null}
         {rehearse ? (
           <span className="dkc-kick-state" data-tone="rehearse">
             <span className="dkc-kick-dot" aria-hidden />
@@ -236,12 +240,30 @@ export function KickoffSlide({ ctx }: { ctx: SlideCtx }) {
           </p>
         </div>
         {/* Under the line (score round 1 of the Blueprint deck: pinned to
-            the foot it left a 400 px gap). Once sent, the frame's card says
-            what happens, so the column does not say it again. */}
-        {sent ? null : (
+            the foot it left a 400 px gap): what sending it does, as three
+            numbered steps (score round 3: one sentence left the column's
+            lower half empty). Once sent, the frame's card says what
+            happens, so the column does not say it again. */}
+        {sent ? null : held ? (
           <p key={state} className="dkc-next-small dkc-kick-then dkc-kick-say">
-            {t(held ? O.kickoff.change : O.kickoff.sent, lang)}
+            {t(O.kickoff.change, lang)}
           </p>
+        ) : (
+          <div key={state} className="dkc-kick-then dkc-kick-steps">
+            <p className="dkc-kick-steps-head">
+              {t(O.kickoff.stepsHead, lang)}
+            </p>
+            <ol>
+              {O.kickoff.steps.map((s, n) => (
+                <li key={s.en} style={{ "--k": n } as CSSProperties}>
+                  <span className="dkc-kick-step-n" aria-hidden>
+                    {digits(n + 1, lang)}
+                  </span>
+                  <span>{t(s, lang)}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
         )}
       </div>
       {/* On the call the live layer draws the frame over this spot; outside

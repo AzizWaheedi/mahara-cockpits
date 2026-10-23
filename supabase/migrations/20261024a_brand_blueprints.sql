@@ -349,19 +349,26 @@ BEGIN
     END IF;
     v_out := '[]'::jsonb;
     FOR x IN SELECT e FROM jsonb_array_elements(p_value) e LOOP
+      -- A name, marked or not as one they lose to, and what they are known
+      -- for in the client's words (one line, the clipping on slide 8).
       IF jsonb_typeof(x) <> 'object'
-         OR EXISTS (SELECT 1 FROM jsonb_object_keys(x) k WHERE k NOT IN ('name','lose'))
+         OR EXISTS (SELECT 1 FROM jsonb_object_keys(x) k WHERE k NOT IN ('name','lose','note'))
          OR jsonb_typeof(x->'name') IS DISTINCT FROM 'string'
-         OR (x ? 'lose' AND jsonb_typeof(x->'lose') NOT IN ('boolean','null')) THEN
-        RAISE EXCEPTION 'Each competitor is a name, marked or not as one they lose to' USING ERRCODE = '22023';
+         OR (x ? 'lose' AND jsonb_typeof(x->'lose') NOT IN ('boolean','null'))
+         OR (x ? 'note' AND jsonb_typeof(x->'note') NOT IN ('string','null')) THEN
+        RAISE EXCEPTION 'Each competitor is a name, marked or not as one they lose to, with a line on what they are known for' USING ERRCODE = '22023';
       END IF;
       nm := regexp_replace(btrim(x->>'name'), '\s+', ' ', 'g');
       CONTINUE WHEN nm = '' OR lower(nm) = ANY(seen);
       IF char_length(nm) > 120 THEN
         RAISE EXCEPTION 'A competitor''s name is at most 120 characters' USING ERRCODE = '22023';
       END IF;
+      s := nullif(regexp_replace(btrim(coalesce(x->>'note', '')), '\s+', ' ', 'g'), '');
+      IF char_length(s) > 160 THEN
+        RAISE EXCEPTION 'What a competitor is known for is at most 160 characters' USING ERRCODE = '22023';
+      END IF;
       seen := seen || lower(nm);
-      v_out := v_out || jsonb_build_array(jsonb_build_object('name', nm, 'lose', coalesce(x->'lose' = 'true'::jsonb, false)));
+      v_out := v_out || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object('name', nm, 'lose', coalesce(x->'lose' = 'true'::jsonb, false), 'note', s)));
     END LOOP;
     IF jsonb_array_length(v_out) > 15 THEN
       RAISE EXCEPTION 'Name at most 15 competitors' USING ERRCODE = '22023';

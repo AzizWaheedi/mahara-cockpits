@@ -107,6 +107,9 @@ export const BP = {
       ar: "خلوا قائمة أسعاركم قريبة منكم. بنسألكم عن أرقام حقيقية.",
     },
     logo: { en: "Your logo", ar: "شعاركم" },
+    /** The cover's photo print: theirs from the record, else an example render. */
+    photoOwn: { en: "From your photos", ar: "من صوركم" },
+    photoExample: { en: "Example photo", ar: "صورة للتوضيح" },
   },
 
   // ------------------------------------------------------------ 2 so far
@@ -194,9 +197,11 @@ export const BP = {
         en: "Part 2 · Brand and money",
         ar: "الجزء الثاني، الهوية والأرقام",
       },
+      // Two deliberate lines under the part (score round 3: "in" was left
+      // alone on its own line).
       3: {
-        en: "Part 3 · after the call, in 1 to 2 days",
-        ar: "الجزء الثالث، بعد المكالمة بيوم أو يومين",
+        en: "Part 3 · After the call · in 1 to 2 days",
+        ar: "الجزء الثالث، بعد المكالمة، خلال يوم أو يومين",
       },
     },
     rulesHead: { en: "Three rules for today", ar: "ثلاث قواعد لليوم" },
@@ -393,6 +398,14 @@ export const BP = {
       en: "How a project runs with you, first call to handover",
       ar: "كيف يمشي المشروع معكم، من أول مكالمة لين التسليم",
     },
+    /**
+     * What a method sounds like, pencilled on the first rule until the first
+     * keystroke: ours, so tagged Example (score round 3: seven blank rules).
+     */
+    sample: {
+      en: "A fixed price before we start, one person in charge, and a weekly update until handover.",
+      ar: "سعر ثابت قبل لا نبدي، وشخص واحد مسؤول، وتحديث أسبوعي لين التسليم.",
+    },
     clients: {
       en: "The clients you want more of",
       ar: "العملاء اللي تبون منهم أكثر",
@@ -462,21 +475,37 @@ export const BP = {
     },
     lose: { en: "We lose to them", ar: "نخسر قدامهم" },
     add: { en: "Add a name", ar: "أضيفوا اسم" },
-    /** Ghost chips until the first name is typed: ours, so marked Example. */
+    /** Under each name on its clipping: what they are known for, in the client's words. */
+    note: { en: "What they're known for", ar: "اللي يتميزون فيه" },
+    /**
+     * Example clippings until the first name is typed: ours, so each is
+     * tagged Example (score round 3: dashed chips read as a web form).
+     */
     ghosts: [
       {
-        en: "Example: the studio you lose to most",
-        ar: "مثال: الاستوديو اللي تخسرون قدامه أكثر",
+        name: {
+          en: "The studio you lose to most",
+          ar: "الاستوديو اللي تخسرون قدامه أكثر",
+        },
+        note: { en: "Quick quotes", ar: "عروض أسعار سريعة" },
       },
       {
-        en: "Example: a firm that wins on price",
-        ar: "مثال: شركة تكسب بالسعر",
+        name: {
+          en: "A firm that wins on price",
+          ar: "شركة تكسب بالسعر",
+        },
+        note: { en: "Lower prices", ar: "أسعار أقل" },
       },
       {
-        en: "Example: a name clients compare you with",
-        ar: "مثال: اسم يقارنكم فيه العملاء",
+        name: {
+          en: "A name clients compare you with",
+          ar: "اسم يقارنكم فيه العملاء",
+        },
+        note: { en: "A big showroom", ar: "معرض كبير" },
       },
     ],
+    /** More names than the wall shows: the rest are counted. */
+    more: { en: "and {n} more", ar: "وغيرهم ({n})" },
     whyUs: {
       en: "Why people pick you instead",
       ar: "ليش العملاء يختارونكم بدالهم",
@@ -611,6 +640,33 @@ export const BP = {
       { en: "Your type", ar: "خطوطكم" },
     ],
     dnaTitle: { en: "{name} · Brand DNA", ar: "ملف الهوية، {name}" },
+    /** Slide 11's page for the doc, beside their logo: its name, short. */
+    dnaDoc: { en: "Your Brand DNA doc", ar: "ملف هويتكم" },
+    /** The material board: their photos' materials, else examples of their service's. */
+    materials: {
+      en: "Materials from your projects",
+      ar: "خامات من مشاريعكم",
+    },
+    materialsExample: { en: "Example materials", ar: "خامات للتوضيح" },
+    /** The type specimen, set in the deck's own faces, so always an example. */
+    pairing: { en: "Example pairing", ar: "خطوط للتوضيح" },
+    /** What their Brand DNA doc says about type, under the specimen. */
+    typeIn: { en: "In your doc: {type}", ar: "بملف هويتكم: {type}" },
+    paletteExample: { en: "Example palette", ar: "ألوان للتوضيح" },
+    /**
+     * Never in your ads: the red lines agreed at the start, said once
+     * (score round 3: the same three lines a third time).
+     */
+    redFrom: {
+      one: {
+        en: "Your red line, from the start of this call",
+        ar: "خطكم الأحمر، من بداية المكالمة",
+      },
+      many: {
+        en: "Your {n} red lines, from the start of this call",
+        ar: "خطوطكم الحمراء ({n})، من بداية المكالمة",
+      },
+    },
     always: { en: "In your ads", ar: "لازم يكون بإعلاناتكم" },
     never: { en: "Never in your ads", ar: "ممنوع بإعلاناتكم" },
     neverShow: {
@@ -698,6 +754,11 @@ export const BP = {
     wordsEmpty: {
       en: "Your method, in one line",
       ar: "طريقتكم، بسطر واحد",
+    },
+    /** The offer still blank at the read-back: where it is finished (score round 3). */
+    finish: {
+      en: "We finish this in your offer sheet.",
+      ar: "نكمله معكم بملف العرض.",
     },
   },
 

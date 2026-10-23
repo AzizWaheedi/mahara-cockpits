@@ -838,6 +838,11 @@ describe("answers", () => {
       }),
     ).toContain("at most 15");
     expect(
+      await saveRefused(CD_A, A, {
+        competitors: [{ name: "Rival", note: "x".repeat(161) }],
+      }),
+    ).toContain("at most 160");
+    expect(
       await saveRefused(CD_A, A, { offer: { name: "x".repeat(81) } }),
     ).toContain("at most 80");
     expect(
@@ -875,7 +880,7 @@ describe("answers", () => {
         competitors: [
           { name: " Example Studio " },
           { name: "example studio", lose: true },
-          { name: "Other Example", lose: true },
+          { name: "Other Example", lose: true, note: "  Quick   quotes " },
         ],
         capacity_note: "line one\nline two",
         daily_budget: { usd: 40, said: " $50 a day " },
@@ -889,7 +894,8 @@ describe("answers", () => {
       red_lines: ["No prices on screen", "No faces"],
       competitors: [
         { name: "Example Studio", lose: false },
-        { name: "Other Example", lose: true },
+        // What they are known for, trimmed (slide 8's clipping).
+        { name: "Other Example", lose: true, note: "Quick quotes" },
       ],
       capacity_note: "line one line two",
       daily_budget: { usd: 40, said: "$50 a day" },

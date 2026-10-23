@@ -95,9 +95,9 @@ const { emptyLive, DeckHub, channelName } = await import(
 );
 const { deckData } = await import("../src/present/deckData");
 const { blueprintPrefill } = await import("../src/present/blueprintPrefill");
-const { bandOf, tapeMarks, moneyText, shortAmount } = await import(
-  "../src/present/blueprintData"
-);
+const { bandOf, brandPalette, brandType, tapeMarks, moneyText, shortAmount } =
+  await import("../src/present/blueprintData");
+const { KickoffSlide } = await import("../src/present/KickoffSlide");
 const { missing } = await import("../src/present/blueprintForm");
 const { BlueprintNotes } = await import("../src/present/BlueprintNotes");
 const { PresentApp } = await import("../src/present/PresentApp");
@@ -1048,21 +1048,41 @@ describe("score round 2 (2026-10-23)", () => {
     expect(card?.getAttribute("style")).not.toMatch(/--h/);
   });
 
-  test("the empty price tape carries the cards' example amounts, tagged Example", () => {
+  test("the empty price tape carries the tags' example amounts, each flag saying e.g.", () => {
+    // No range on their onboarding form (sparse): the tape's marks are the
+    // tags' examples, each flag "e.g." (score round 3: one Example tag at
+    // the tape's end labelled none of them).
+    const sparse = blueprintLoaded("sparse", "open", { rehearse: false });
+    const ds = data(sparse, "en");
+    host.innerHTML = render(ds, model(sparse, ds, {}), "pricing", 0);
+    const wrap = host.querySelector(".dkb-tape-wrap");
+    expect(wrap?.hasAttribute("data-ghost")).toBe(true);
+    expect(wrap?.querySelectorAll(".dkb-tape-mark").length).toBe(2);
+    const flags = [...(wrap?.querySelectorAll(".dkb-flag b") ?? [])].map(
+      b => b.textContent,
+    );
+    expect(flags.length).toBe(2);
+    for (const f of flags) expect(f).toStartWith("e.g. ");
+    // Their onboarding form names a range (full): the tape draws it, marked
+    // as the form's on the card under it, and no example marks.
     const loaded = blueprintLoaded("full", "open", { rehearse: false });
     const d = data(loaded, "en");
     host.innerHTML = render(d, model(loaded, d, {}), "pricing", 0);
-    const wrap = host.querySelector(".dkb-tape-wrap");
-    expect(wrap?.hasAttribute("data-ghost")).toBe(true);
-    expect(wrap?.querySelector(".dkb-tape-eg")?.textContent).toBe("Example");
-    expect(wrap?.querySelectorAll(".dkb-tape-mark").length).toBe(2);
+    expect(
+      host.querySelector(".dkb-tape-wrap")?.hasAttribute("data-ghost"),
+    ).toBe(false);
+    expect(host.querySelector(".dkb-tape-band")?.textContent).toContain(
+      "180,000",
+    );
+    expect(host.querySelector(".dkb-most")?.textContent).toContain(
+      "From your onboarding form",
+    );
     // Typed, the ghost is gone.
     const { answers } = midCall("en");
     host.innerHTML = render(d, model(loaded, d, answers), "pricing", 0);
     expect(
       host.querySelector(".dkb-tape-wrap")?.hasAttribute("data-ghost"),
     ).toBe(false);
-    expect(host.querySelector(".dkb-tape-eg")).toBeNull();
   });
 
   test("slide 4's park lifts the lit strip; slides 6, 8, 9 and 10 show their later cards from the first stop, waiting", () => {
@@ -1111,9 +1131,13 @@ describe("score round 2 (2026-10-23)", () => {
     expect(adds.length).toBe(3);
     expect(adds[0].hasAttribute("data-quiet")).toBe(true);
     expect(adds[1].hasAttribute("data-quiet")).toBe(false);
-    // Slide 2: at most two empty rules under the add row.
+    // Slide 2: the red lines' card is as tall as its lines and the
+    // pencilled entry, no spare rules (score round 3).
     host.innerHTML = render(d, model(loaded, d, answers), "so-far", 0);
-    expect(host.querySelectorAll(".dkb-never .dkb-lines-rest").length).toBe(1);
+    expect(host.querySelectorAll(".dkb-never .dkb-lines-rest").length).toBe(0);
+    expect(host.querySelector(".dkb-never")?.getAttribute("style")).not.toMatch(
+      /--h/,
+    );
     // The wall map is named once, on slide 2 only.
     expect(host.querySelector(".dkb-map-name")?.textContent).toBe("Your wall");
     host.innerHTML = render(d, model(loaded, d, answers), "today", 0);
@@ -1132,6 +1156,254 @@ describe("score round 2 (2026-10-23)", () => {
     expect(host.querySelector(".dkc-next-post")).toBeNull();
     expect(host.textContent).toContain(
       "Interior design, from the first call to the handover.",
+    );
+  });
+});
+
+describe("the design pass: the wall waiting for paper (score round 3, 2026-10-23)", () => {
+  const host = win.document.createElement("div");
+  const text = () => (host.textContent ?? "").replace(/\s+/g, " ");
+
+  test("the cover's frames wait as blank mats with crop marks and one piece of tape each; the photo print says whose it is", () => {
+    const { loaded, d, answers } = midCall("en");
+    host.innerHTML = render(d, model(loaded, d, answers), "cover", 0);
+    for (const f of host.querySelectorAll(".dkb-frame"))
+      expect(f.querySelectorAll(":scope > .dkb-tape").length).toBe(1);
+    expect(host.querySelectorAll(".dkb-mount-well").length).toBe(3);
+    // No upload of theirs in the fixture: their service's example render.
+    expect(
+      host.querySelector(".dkb-cover-photo img")?.getAttribute("src"),
+    ).toContain("living-feed");
+    expect(host.querySelector(".dkb-cover-photo")?.textContent).toContain(
+      "Example photo",
+    );
+  });
+
+  test("slide 4 with nothing lit is one stop, and its tag lists what else they offer, never parked", () => {
+    const sparse = blueprintLoaded("sparse", "open", { rehearse: false });
+    const d = data(sparse, "en");
+    const bp = model(sparse, d, {});
+    const s = blueprintSlides().find(x => x.id === "one-service");
+    expect(s?.stops?.({ bp } as never)).toBe(1);
+    expect(
+      s?.stops?.({ bp: model(sparse, d, { service: "fitout" }) } as never),
+    ).toBe(2);
+    host.innerHTML = render(d, bp, "one-service", 0);
+    expect(host.querySelector(".dkb-parked .dkb-card-label")?.textContent).toBe(
+      "Also on your list",
+    );
+  });
+
+  test("slide 5's red lines are ruled lines, and a fresh press turns part 1's line with the stamp", () => {
+    const loaded = blueprintLoaded("full", "part1", { rehearse: false });
+    const d = data(loaded, "en");
+    const answers = loaded.blueprint?.row?.answers ?? {};
+    host.innerHTML = render(
+      d,
+      model(loaded, d, answers, {
+        stamp: { at: "2026-10-22T07:12:00Z", fresh: true },
+      }),
+      "first-ads",
+      1,
+    );
+    expect(
+      host.querySelector(".dkb-redlist textarea, .dkb-redlist input"),
+    ).toBeNull();
+    const swap = host.querySelector(".dkb-parts li .dkb-swap");
+    expect(swap?.querySelector("[data-was]")?.textContent).toBe(
+      "Being filled in now",
+    );
+    expect(swap?.querySelector("[data-now]")?.textContent).toBe(
+      "Sent to our media team",
+    );
+  });
+
+  test("slide 6 pencils an example method until the first word, beside the notes, in one row", () => {
+    const loaded = blueprintLoaded("full", "part1", { rehearse: false });
+    const d = data(loaded, "en");
+    host.innerHTML = render(d, model(loaded, d, {}), "best-at", 0);
+    expect(host.querySelector(".dkb-bestat .dkb-method")).not.toBeNull();
+    expect(host.querySelector(".dkb-ghost")?.textContent).toContain("Example");
+    expect(
+      host.querySelector(".dkb-method .dkb-ruled")?.hasAttribute("data-empty"),
+    ).toBe(true);
+    host.innerHTML = render(
+      d,
+      model(loaded, d, { method: "We draw every room first." }),
+      "best-at",
+      0,
+    );
+    expect(host.querySelector(".dkb-ghost")).toBeNull();
+  });
+
+  test("slide 7 hangs the amounts on swing tags and reads their onboarding form's words into the card, marked", () => {
+    const loaded = blueprintLoaded("full", "part1", { rehearse: false });
+    const d = data(loaded, "en");
+    host.innerHTML = render(d, model(loaded, d, {}), "pricing", 1);
+    expect(
+      host.querySelectorAll(".dkb-pricetag[data-live] input.dkb-amount").length,
+    ).toBe(2);
+    const most = host.querySelector(".dkb-most textarea");
+    expect(most?.hasAttribute("data-draft")).toBe(true);
+    expect((most as HTMLTextAreaElement | null)?.value).toContain(
+      "between 180,000 and 260,000",
+    );
+    expect(host.querySelector(".dkb-terms")?.textContent).toContain(
+      "From your onboarding form",
+    );
+  });
+
+  test("slide 8 pins each name as a clipping with what they are known for; until the first, labelled example clippings", () => {
+    const loaded = blueprintLoaded("full", "part1", { rehearse: false });
+    const d = data(loaded, "en");
+    host.innerHTML = render(d, model(loaded, d, {}), "competitors", 0);
+    const ghosts = [...host.querySelectorAll(".dkb-clip-ghost")];
+    expect(ghosts.length).toBe(3);
+    for (const g of ghosts) expect(g.textContent).toContain("Example");
+    expect(host.querySelector(".dkb-chip-ghost")).toBeNull();
+    // Typing only on paper: the name on a blank clipping.
+    for (const i of host.querySelectorAll("input"))
+      expect(i.closest(".dkb-clip")).not.toBeNull();
+    host.innerHTML = render(
+      d,
+      model(loaded, d, {
+        competitors: [
+          { name: "Atelier Rival", lose: true, note: "Quick quotes" },
+          { name: "Other Firm", lose: false },
+        ],
+      }),
+      "competitors",
+      0,
+    );
+    expect(host.querySelectorAll(".dkb-clip-ghost").length).toBe(0);
+    const clips = [...host.querySelectorAll(".dkb-clip:not(.dkb-clip-add)")];
+    expect(clips.length).toBe(2);
+    expect(clips[0].textContent).toContain("We lose to them");
+    expect(
+      (clips[0].querySelector("textarea") as HTMLTextAreaElement)?.value,
+    ).toBe("Quick quotes");
+  });
+
+  test("slide 11 keeps the cover's promise: materials, type and named colours, and says the red lines once", () => {
+    const { loaded, d, answers } = midCall("en");
+    host.innerHTML = render(
+      d,
+      model(loaded, d, { ...answers, rules: undefined }),
+      "brand",
+      0,
+    );
+    const swatches = [...host.querySelectorAll(".dkb-swatch-name")].map(
+      x => x.textContent,
+    );
+    expect(swatches).toEqual(["Travertine", "Bouclé", "Oak", "Brass"]);
+    expect(host.querySelector(".dkb-materials")?.textContent).toContain(
+      "Example materials",
+    );
+    expect(host.querySelector(".dkb-specimen")?.textContent).toContain(
+      "Example pairing",
+    );
+    const chips = [...host.querySelectorAll(".dkb-palette li")].map(x =>
+      x.textContent?.replace(/\s+/g, " "),
+    );
+    expect(chips[0]).toBe("SandD9C8AD");
+    expect(host.querySelector(".dkb-dna-note")?.textContent).toContain(
+      "a serif for the wordmark",
+    );
+    // In Arabic too, the slot filled: never a raw "{type}".
+    const ar = midCall("ar");
+    host.innerHTML = render(
+      ar.d,
+      model(ar.loaded, ar.d, { ...ar.answers, rules: undefined }),
+      "brand",
+      0,
+    );
+    const note = host.querySelector(".dkb-dna-note")?.textContent ?? "";
+    expect(note).toContain("a serif for the wordmark");
+    expect(note).not.toContain("{");
+    host.innerHTML = render(
+      d,
+      model(loaded, d, { ...answers, rules: undefined }),
+      "brand",
+      0,
+    );
+    const never = host.querySelector('.dkb-lines[data-kind="never"]');
+    expect(
+      never?.querySelector(".dkb-fold-line")?.textContent?.replace(/\s+/g, " "),
+    ).toBe("Your 3 red lines, from the start of this call");
+    expect(never?.querySelectorAll("li[data-folded]").length).toBe(3);
+  });
+
+  test("slide 12's talking-to-camera shot is a phone on a tripod, never an avatar", () => {
+    const { loaded, d, answers } = midCall("en");
+    host.innerHTML = render(d, model(loaded, d, answers), "content", 0);
+    expect(host.querySelector(".dkb-sitter")).toBeNull();
+    expect(
+      host.querySelector('.dkb-polaroid[data-shot="0"] .dkb-rig'),
+    ).not.toBeNull();
+  });
+
+  for (const lang of ["en", "ar"] as const)
+    test(`slides 13 and 14 say the same about starter ads while it is unset, and a blank offer says where it is finished (${lang})`, () => {
+      const sparse = blueprintLoaded("sparse", "open", { rehearse: false });
+      const d = data(sparse, lang);
+      const bp = model(sparse, d, {});
+      host.innerHTML = render(d, bp, "read-back", 0);
+      const back = text();
+      host.innerHTML = render(d, bp, "next", 0);
+      const next = text();
+      if (lang === "en") {
+        expect(back).toContain("Starter ads: live once your account is ready.");
+        expect(back).not.toContain("Your own ads: at your launch call.");
+        expect(next).toContain("Starter ads go live");
+        expect(back).toContain("We finish this in your offer sheet.");
+      } else {
+        expect(back).toContain("إعلانات البداية: تنطلق");
+        expect(next).toContain("إعلانات البداية تنطلق");
+        expect(back).toContain("نكمله معكم بملف العرض.");
+      }
+    });
+
+  test("the Brand DNA doc's colours keep their names; its type line is read as written; a range said as one wins", () => {
+    expect(
+      brandPalette("Colours\n- Sand D9C8AD\n- Oak: #8A6A4A\n- 1F2532"),
+    ).toEqual([
+      { hex: "#D9C8AD", name: "Sand" },
+      { hex: "#8A6A4A", name: "Oak" },
+      { hex: "#1F2532", name: null },
+    ]);
+    expect(brandType("Voice: calm\nType: Geist for text.")).toBe(
+      "Geist for text",
+    );
+    expect(brandType("No type here")).toBeNull();
+    expect(
+      bandOf(
+        "From 25,000 SAR for the design. Most land between 180,000 and 260,000 SAR.",
+      ),
+    ).toEqual([180_000, 260_000]);
+    expect(bandOf("بين ١٥ و٢٥ ألف دينار")).toEqual([15_000, 25_000]);
+  });
+
+  test("the onboarding deck's kickoff stop lists what sending it does as three steps", () => {
+    const loaded = blueprintLoaded("full", "open", { rehearse: false });
+    const d = { ...data(loaded, "en"), deck: "onboarding" } as DeckData;
+    host.innerHTML = renderToStaticMarkup(
+      <div className="dk-canvas" dir="ltr">
+        <KickoffSlide
+          ctx={
+            {
+              d: { ...d, kickoff: { ...d.kickoff, from: null } },
+              lang: "en",
+            } as never
+          }
+        />
+      </div>,
+    );
+    const steps = [...host.querySelectorAll(".dkc-kick-steps li")].map(l =>
+      l.textContent?.trim(),
+    );
+    expect(steps.length).toBe(3);
+    expect(host.querySelector(".dkc-kick-steps-head")?.textContent).toBe(
+      "Once it's sent",
     );
   });
 });

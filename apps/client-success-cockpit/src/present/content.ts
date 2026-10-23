@@ -809,6 +809,25 @@ export const O = {
       ar: "وأول ما ينرسل، يبدي فريقنا بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب.",
     },
     /**
+     * The same, as the column's three numbered steps (score round 3 of the
+     * Blueprint deck: one sentence left the column's lower half empty).
+     */
+    stepsHead: { en: "Once it's sent", ar: "أول ما ينرسل" },
+    steps: [
+      {
+        en: "Our team starts on your setup.",
+        ar: "يبدي فريقنا بتجهيز حسابكم.",
+      },
+      {
+        en: "We get your Brand Blueprint call ready.",
+        ar: "نجهز لمكالمة بناء الهوية والعرض.",
+      },
+      {
+        en: "The next step reaches your WhatsApp group.",
+        ar: "وتوصلكم الخطوة الجاية بقروب الواتساب.",
+      },
+    ],
+    /**
      * Sent on this call: the column's line (score round 1 of the Blueprint
      * deck: "sent" was said three times; the frame's head keeps the time,
      * its card says what comes next).
@@ -837,6 +856,12 @@ export const O = {
     },
     /** The frame's label, beside the client's name. */
     frame: { en: "Kickoff form", ar: "نموذج بداية الشغل" },
+    /**
+     * The form is Typeform's own, in English: the Arabic deck says so in
+     * the frame's head (score round 3), so its English questions are no
+     * surprise.
+     */
+    formLang: { en: "In English", ar: "النموذج بالإنجليزي" },
     sentAt: { en: "Sent at {time}", ar: "انرسل الساعة {time}" },
     rehearsal: {
       en: "Rehearsal: nothing is sent",

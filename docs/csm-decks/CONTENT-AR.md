@@ -331,6 +331,8 @@ The kickoff form, filled with the client and sent before the call ends (CONTENT 
 | `kickoff.prefilled` | Your details are already in, from your onboarding form. We check them together, then send it. | تفاصيلكم موجودة فيه من نموذج التعريف بالنشاط. نراجعها مع بعض، وبعدها نرسله. |
 | `kickoff.together` | We fill it in together, now. | نعبيه مع بعض الحين. |
 | `kickoff.sent` | Once it's sent, our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | وأول ما ينرسل، يبدي فريقنا بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
+| `kickoff.stepsHead` · `kickoff.steps` (the column's three steps before it is sent) | Once it's sent · Our team starts on your setup. · We get your Brand Blueprint call ready. · The next step reaches your WhatsApp group. | أول ما ينرسل · يبدي فريقنا بتجهيز حسابكم. · نجهز لمكالمة بناء الهوية والعرض. · وتوصلكم الخطوة الجاية بقروب الواتساب. |
+| `kickoff.formLang` (the frame's head, Arabic deck only: the form is Typeform's own, in English) | In English | النموذج بالإنجليزي |
 | `kickoff.done` | Done. Your answers are with our team. | تمام، أجوبتكم وصلت لفريقنا. |
 | `kickoff.next` (the frame's card once sent) | Next: we pick the time for your Brand Blueprint call | الخطوة الجاية: نختار وقت مكالمة بناء الهوية والعرض |
 | `kickoff.doneThen` | Our team starts on your setup and your Brand Blueprint call, and the next step reaches your WhatsApp group. | فريقنا يبدي بتجهيز حسابكم ومكالمة بناء الهوية والعرض، وتوصلكم الخطوة الجاية بقروب الواتساب. |
