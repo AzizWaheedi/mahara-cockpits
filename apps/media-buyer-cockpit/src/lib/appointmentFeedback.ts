@@ -8,6 +8,7 @@ export const AppointmentFeedbackSchema = z.object({
   contactId: text.optional(),
   contactName: text,
   startAt: text,
+  occurrenceVerified: z.boolean().optional(),
   attendance: text,
   deal: text,
   leadQuality: z.number().min(1).max(10).nullable(),

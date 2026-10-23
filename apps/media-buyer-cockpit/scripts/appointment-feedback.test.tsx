@@ -318,6 +318,18 @@ test("two occurrences of a moved appointment stay visible as separate rows", asy
   expect(host.textContent).toContain("26 Oct 2026");
 });
 
+test("an imported report never implies its appointment time was verified", async () => {
+  await render(
+    <AppointmentFeedbackRow
+      row={{ ...row, startAt: null, occurrenceVerified: false }}
+    />,
+  );
+  expect(host.textContent).toContain(
+    "Imported report · appointment time not verified",
+  );
+  expect(host.textContent).not.toContain("Kuwait time");
+});
+
 test("focus refreshes feedback and a failed refresh keeps an explicit stale notice", async () => {
   let reads = 0;
   const reader: Reader = async () => {

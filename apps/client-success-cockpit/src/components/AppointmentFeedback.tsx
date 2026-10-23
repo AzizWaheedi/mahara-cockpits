@@ -67,7 +67,9 @@ export function AppointmentFeedbackRow({ row }: { row: Feedback }) {
             {row.contactName || "Contact name unavailable"}
           </h3>
           <p className="text-xs text-muted-foreground">
-            Appointment · {date(row.startAt)} · Kuwait time
+            {row.occurrenceVerified === false
+              ? "Imported report · appointment time not verified"
+              : `Appointment · ${date(row.startAt)} · Kuwait time`}
           </p>
           <div className="flex flex-wrap gap-2 pt-1 text-xs text-muted-foreground">
             <span className="rounded-full bg-muted/50 px-2.5 py-1">
