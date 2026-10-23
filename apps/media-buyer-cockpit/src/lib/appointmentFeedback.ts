@@ -54,6 +54,21 @@ export function clickupTaskId(value: unknown): string | undefined {
   }
 }
 
+/** The existing client card may declare an alias; never guess or pick a collision. */
+export function feedbackTaskIdForClient(
+  cards: ReadonlyArray<Record<string, unknown>>,
+  name: string,
+): string | undefined {
+  const key = name.trim().toLowerCase();
+  if (!key) return undefined;
+  const matches = cards.filter(card =>
+    [card.name, ...(Array.isArray(card.aliases) ? card.aliases : [])].some(
+      value => typeof value === "string" && value.trim().toLowerCase() === key,
+    ),
+  );
+  return matches.length === 1 ? clickupTaskId(matches[0].url) : undefined;
+}
+
 export function feedbackScopeKey(scope: FeedbackScope): string {
   return JSON.stringify([
     scope.locationId || null,

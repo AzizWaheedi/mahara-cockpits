@@ -19,6 +19,7 @@ const { AppointmentFeedback, AppointmentFeedbackRow } = await import(
 );
 const {
   clickupTaskId,
+  feedbackTaskIdForClient,
   feedbackQuality,
   feedbackDelivery,
   readAppointmentFeedback,
@@ -130,6 +131,34 @@ test("a no-show has no lead quality even when legacy data carries one", () => {
   ).toBeNull();
   expect(feedbackQuality({ ...row, leadQuality: null })).toBeNull();
   expect(feedbackQuality(row)).toBe(8);
+});
+
+test("a unique exact client card or declared alias selects feedback without fuzzy collisions", () => {
+  const cards = [
+    {
+      name: "Example Interiors",
+      aliases: ["Example Studio"],
+      url: "https://app.clickup.com/t/clientA",
+    },
+    {
+      name: "Different Client",
+      aliases: [],
+      url: "https://app.clickup.com/t/clientB",
+    },
+  ];
+  expect(feedbackTaskIdForClient(cards, " example interiors ")).toBe("clientA");
+  expect(feedbackTaskIdForClient(cards, "EXAMPLE STUDIO")).toBe("clientA");
+  expect(feedbackTaskIdForClient(cards, "Example-Studio")).toBeUndefined();
+  expect(
+    feedbackTaskIdForClient(
+      [
+        ...cards,
+        { name: "Example Studio", url: "https://app.clickup.com/t/clientC" },
+      ],
+      "Example Studio",
+    ),
+  ).toBeUndefined();
+  expect(feedbackTaskIdForClient(cards, "")).toBeUndefined();
 });
 
 test("delivery wording never changes a saved comment into a delivery success", () => {
