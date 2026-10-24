@@ -1,5 +1,6 @@
 """Native monitor boundaries. No network or provider writes."""
 import unittest
+from datetime import timedelta
 from checks import native
 from guard.context import Context
 from guard.model import FAIL, OK
@@ -64,6 +65,18 @@ class Native(unittest.TestCase):
         value["checks"][0]["at"] = fakes.ago(45.001)
         self.assertEqual(native.run_native(context(value)).status, FAIL)
         value["checks"][0]["at"] = fakes.ago(-2)
+        self.assertEqual(native.run_native(context(value)).status, FAIL)
+
+    def test_summary_stamped_at_the_read_is_fresh(self):
+        # The view stamps checked_at when the guardian reads it, a moment after the scan's start.
+        value = snapshot()
+        value["checked_at"] = (fakes.NOW + timedelta(seconds=1)).isoformat()
+        self.assertEqual(native.run_native(context(value)).status, OK)
+        value["checked_at"] = fakes.ago(-6)
+        self.assertEqual(native.run_native(context(value)).status, FAIL)
+        value["checked_at"] = fakes.ago(11)
+        self.assertEqual(native.run_native(context(value)).status, FAIL)
+        value["checked_at"] = None
         self.assertEqual(native.run_native(context(value)).status, FAIL)
 
     def test_failed_doctor_is_not_a_fresh_success(self):

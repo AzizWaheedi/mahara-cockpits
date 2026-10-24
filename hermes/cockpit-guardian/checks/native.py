@@ -18,8 +18,10 @@ def run_native(ctx):
     value=rows[0].get('snapshot') if rows else None
     if not isinstance(value,dict) or value.get('version')!=1 or not isinstance(value.get('checks'),list):
         return fail('The native worker summary is unavailable. Empty queues cannot verify activation.')
+    # checked_at is the database's time of this read, so it is always a little after the scan's start (ctx.now,
+    # whole seconds): -0.015 min failed every scan from 9 Oct 2026. Only more than 5 minutes ahead is a wrong clock.
     age=age_min(value.get('checked_at'),ctx.now)
-    if age is None or not 0<=age<=10:return fail('The native worker summary timestamp is unavailable or stale.')
+    if age is None or not -5<=age<=10:return fail('The native worker summary timestamp is unavailable or stale.')
     readings=value['checks'];keys=[r.get('key') for r in readings if isinstance(r,dict)]
     if len(keys)!=len(readings) or any(not isinstance(key,str) or not key for key in keys) or len(keys)!=len(set(keys)) or not REQUIRED_CHECKS.issubset(keys):
         return fail('The native worker summary is incomplete. Every required producer needs its own evidence.')
