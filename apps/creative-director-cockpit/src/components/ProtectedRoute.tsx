@@ -63,12 +63,28 @@ function AppSkeleton() {
   );
 }
 
+/** The Blueprint call's notes popup (520 x 820): no cockpit shell in it. */
+export const isNotesPopup = (pathname: string) =>
+  /^\/blueprint\/[A-Za-z0-9_-]{1,40}\/notes\/?$/.test(pathname);
+
+/** The popup's one line while the sign-in and the seat are checked. */
+export function NotesOpening() {
+  return (
+    <div
+      role="status"
+      className="grid min-h-dvh place-content-center bg-background text-sm text-muted-foreground"
+    >
+      Opening the notes…
+    </div>
+  );
+}
+
 export function ProtectedRoute() {
   const { ready, session, isAuthenticated } = useCockpitAuth();
   const location = useLocation();
 
   if (!ready) {
-    return <AppSkeleton />;
+    return isNotesPopup(location.pathname) ? <NotesOpening /> : <AppSkeleton />;
   }
 
   if (!session || !isAuthenticated) {

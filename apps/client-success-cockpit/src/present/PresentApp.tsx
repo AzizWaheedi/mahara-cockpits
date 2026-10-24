@@ -1,9 +1,17 @@
 import "./present.css";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { makeAddFiles } from "./adsActions";
 import { channelName } from "./channel";
 import { DeckShell } from "./DeckShell";
 import type { CallKind, DeckData } from "./deckData";
+import { NOTES_FEATURES } from "./deckHost";
 import { baseCtx, DECKS, prefersStill, shownSlides } from "./decks";
 import type { Pos } from "./engine";
 import { KickoffLayer, type KickoffPort } from "./KickoffSlide";
@@ -14,12 +22,18 @@ import { openNamed } from "./PresentButton";
 import type { DeckKind } from "./sources";
 import { useBlueprint } from "./useBlueprint";
 import { type DeckIO, useDeckModel } from "./useDeckModel";
+import { useHost } from "./useHost";
 
 /**
  * One client's deck in one of its three views: the shared deck, the CSM's
  * notes window, or the prep view. The route (PresentPage) and the harness
  * (src/dev/presentHarness.tsx) both render this, with real reads or
  * fixtures handed in through `io`.
+ *
+ * In host mode (the Brand Blueprint inside the creative director cockpit,
+ * docs/brand-blueprint/EMBED.md 4.5) the deck opens no window of its own:
+ * Present and Back tell the page that holds the frame, and the notes
+ * window opens at its /creative address.
  */
 
 export type View = "present" | "notes" | "prep";
@@ -105,6 +119,7 @@ export function PresentApp({
     now: io.now,
   });
   const [closed, setClosed] = useState(false);
+  const host = useHost(taskId, deck);
   const all = useMemo(() => DECKS[deck](), [deck]);
   const d = model.data;
   const shown = useMemo(
@@ -114,10 +129,22 @@ export function PresentApp({
 
   const notesName = `mahara-notes-${taskId}-${deck}${rehearseAsked ? "-rehearse" : ""}`;
   const openNotes = useCallback(
-    () => openWindow(urls.notes, notesName, "popup,width=520,height=820"),
-    [urls.notes, notesName],
+    () =>
+      host
+        ? openWindow(host.notes.url, host.notes.name, NOTES_FEATURES)
+        : openWindow(urls.notes, notesName, NOTES_FEATURES),
+    [host, urls.notes, notesName],
   );
   const back = useCallback(() => {
+    // In the cockpit's page the tab stays the shared screen: the deck
+    // closes in place and the page offers prep again, one press later.
+    if (host) {
+      if (document.fullscreenElement)
+        void document.exitFullscreen().catch(() => undefined);
+      setClosed(true);
+      host.post({ type: "end" });
+      return;
+    }
     try {
       window.opener?.focus();
     } catch {
@@ -129,7 +156,27 @@ export function PresentApp({
     window.setTimeout(() => {
       if (!window.closed) setClosed(true);
     }, 250);
-  }, []);
+  }, [host]);
+
+  // The shared deck's document speaks the deck's language, so the page that
+  // holds the frame labels its two buttons on the closed screen in it.
+  useEffect(() => {
+    if (host && view === "present") document.documentElement.lang = model.lang;
+  }, [host, view, model.lang]);
+
+  // The page that holds the frame learns when the data is drawn (its name
+  // for the header) or why it never will be.
+  const told = useRef<"ready" | "failed" | null>(null);
+  useEffect(() => {
+    if (!host || told.current === "ready") return;
+    if (d) {
+      told.current = "ready";
+      host.post({ type: "ready", view, name: d.nameEn });
+    } else if (model.error && told.current !== "failed") {
+      told.current = "failed";
+      host.post({ type: "failed", message: model.error });
+    }
+  }, [host, d, model.error, view]);
 
   // The onboarding deck counts as presented once the call reaches the team
   // slide, which says the group's hours (the launch deck then leaves its
@@ -227,6 +274,7 @@ export function PresentApp({
         base={base}
         book={bookFor}
         io={io}
+        hosted={Boolean(host)}
       />
     );
   if (view === "prep")
@@ -239,6 +287,7 @@ export function PresentApp({
         base={base}
         book={bookFor}
         io={io}
+        hosted={Boolean(host)}
         uploadLogo={
           uploadLogo
             ? async file => {
@@ -253,6 +302,18 @@ export function PresentApp({
           client: urls.client,
           other: urls.other,
           present: () => {
+            if (host) {
+              // Every typed answer is sent before the deck reads the
+              // record; a slow save never holds the call up past 1.5 s.
+              const saved = Promise.all([model.flush(), bp?.flush()]).catch(
+                () => undefined,
+              );
+              void Promise.race([
+                saved,
+                new Promise(r => window.setTimeout(r, 1500)),
+              ]).then(() => host.post({ type: "present" }));
+              return;
+            }
             void model.flush();
             openWindow(
               urls.deck,
@@ -269,6 +330,7 @@ export function PresentApp({
       setLang={model.setLang}
       hub={model.hub}
       onBack={back}
+      endsInPlace={Boolean(host)}
       onNotes={openNotes}
       onPos={onPos}
       closed={closed}

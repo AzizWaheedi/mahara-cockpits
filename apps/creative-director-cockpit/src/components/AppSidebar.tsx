@@ -68,10 +68,12 @@ const navItems: NavItem[] = [
 const INSIDE: Record<string, string[]> = {
   "/dashboard": ["/eod", "/review", "/meetings"],
   "/what-works": ["/scripting", "/scripts", "/ideation", "/swipe"],
+  // The Blueprint call is part of the client (EMBED.md 4.1).
+  "/clients": ["/blueprint"],
 };
 
 /** A place stays lit on its own pages too: a client's page is under Clients. */
-function isActive(pathname: string, href: string): boolean {
+export function isActive(pathname: string, href: string): boolean {
   if (pathname === href || pathname.startsWith(`${href}/`)) return true;
   return (INSIDE[href] ?? []).some(
     p => pathname === p || pathname.startsWith(`${p}/`),

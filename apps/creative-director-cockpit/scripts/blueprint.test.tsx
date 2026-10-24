@@ -8,9 +8,11 @@
  */
 
 import { expect, test } from "bun:test";
-import { createElement } from "react";
+import { readFileSync } from "node:fs";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BlueprintCard } from "../src/components/BlueprintCard";
+import { MemoryRouter } from "react-router";
+import { BlueprintCard, callLink } from "../src/components/BlueprintCard";
 import { BlueprintSettings } from "../src/components/BlueprintSettings";
 import {
   fakeBlueprintIO,
@@ -25,15 +27,14 @@ import {
   settingsFixture,
   TASK,
 } from "../src/dev/blueprintFixtures";
+import * as lib from "../src/lib/blueprint";
 import {
   type BlueprintRow,
   FieldSaver,
   missing,
   offerLine,
   offerWait,
-  openPrep,
   partState,
-  prepUrl,
   problem,
   required,
   type SaveResult,
@@ -254,7 +255,11 @@ test("the autosave never lets a line this card still shows overwrite another sea
     for (const [k, c] of Object.entries(changes)) {
       const same = (a: unknown, b: unknown) =>
         JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-      if (theirs.has(k) && !same(stored[k], c.seen) && !same(stored[k], c.value)) {
+      if (
+        theirs.has(k) &&
+        !same(stored[k], c.seen) &&
+        !same(stored[k], c.value)
+      ) {
         out.push({ key: k, theirs: stored[k], by: "Omar", at: null });
         continue;
       }
@@ -271,7 +276,10 @@ test("the autosave never lets a line this card still shows overwrite another sea
   const saver = new FieldSaver(
     { save },
     row({ answers: { ...stored }, revision: 2 }),
-    { saved: r => conflicts.push(...r.conflicts.map(c => c.key)), failed: () => {} },
+    {
+      saved: r => conflicts.push(...r.conflicts.map(c => c.key)),
+      failed: () => {},
+    },
     1,
   );
   // Another seat changes the offer; the card saves the scripts' status,
@@ -302,45 +310,56 @@ test("a refusal reads as a sentence, and Still missing names the answers", () =>
   );
 });
 
-test("Run the Blueprint call opens the prep window by name, at a part when asked", () => {
-  expect(prepUrl(TASK, "part2")).toMatch(
-    /\/client-success\/clients\/86exmpl01\/present\/blueprint\?view=prep#part2$/,
-  );
-  const opened: string[][] = [];
-  const replaced: string[] = [];
-  const fake = {
-    location: {
-      href: "about:blank",
-      hash: "",
-      replace: (u: string) => replaced.push(u),
+/** The card sits in the cockpit's router: its ways into the call are links. */
+const routed = (el: ReactElement) =>
+  renderToStaticMarkup(createElement(MemoryRouter, null, el));
+
+test("Run the Blueprint call opens the call in this cockpit, at a part when asked (EMBED.md 4.1)", () => {
+  expect(callLink(TASK, "part2", true, NAME, "Launch Booked")).toEqual({
+    to: {
+      pathname: "/blueprint/86exmpl01",
+      search: "?rehearse=1",
+      hash: "#part2",
     },
-    focus: () => {},
-  };
-  openPrep(TASK, undefined, (u, n) => {
-    opened.push([u, n]);
-    return fake as unknown as Window;
+    state: { clientName: NAME, status: "Launch Booked" },
   });
-  expect(opened).toEqual([["", "mahara-prep-86exmpl01-blueprint"]]);
-  expect(replaced[0]).toMatch(/present\/blueprint\?view=prep$/);
-  // A rehearsal stays one in every window it opens, under its own name.
-  expect(prepUrl(TASK, "part2", true)).toMatch(
-    /present\/blueprint\?view=prep&rehearse=1#part2$/,
+  expect(callLink(TASK, undefined, false, NAME, null).to).toEqual({
+    pathname: "/blueprint/86exmpl01",
+    search: "",
+    hash: "",
+  });
+  // Links (Cmd-click still gives a tab), never a window of the other cockpit.
+  const open = card("open");
+  expect(open).toMatch(
+    /<a (?=[^>]*href="\/blueprint\/86exmpl01")(?=[^>]*title="Opens the call here: prepare it, then Present")[^>]*>(?:(?!<\/a>).)*Run the Blueprint call<\/a>/,
   );
-  openPrep(
-    TASK,
-    undefined,
-    (u, n) => {
-      opened.push([u, n]);
-      return { ...fake, location: { ...fake.location } } as unknown as Window;
-    },
-    true,
+  const part1 = card("part1");
+  expect(part1).toContain("Ready: Send to media on the call");
+  expect(part1).not.toContain("from the call window");
+  expect(part1).toMatch(
+    /href="\/blueprint\/86exmpl01#part1"[^>]*>Open part 1</,
   );
-  expect(opened[1]).toEqual(["", "mahara-prep-86exmpl01-blueprint-rehearse"]);
-  expect(replaced[1]).toMatch(/present\/blueprint\?view=prep&rehearse=1$/);
+  expect(card("sent")).toMatch(
+    /href="\/blueprint\/86exmpl01#part2"[^>]*>Finish part 2</,
+  );
+  // A rehearsal stays one on the call page.
+  expect(card("part1", { rehearse: true })).toMatch(
+    /href="\/blueprint\/86exmpl01\?rehearse=1#part1"/,
+  );
+  for (const html of [open, part1, card("sent"), card("closed")])
+    expect(html).not.toContain("/client-success/");
+  // Nothing on the card opens a window or names the other cockpit's deck.
+  const source = readFileSync(
+    new URL("../src/components/BlueprintCard.tsx", import.meta.url),
+    "utf8",
+  );
+  expect(source).not.toMatch(/window\.open|openNamed|openPrep|client-success/);
+  expect("openPrep" in lib).toBe(false);
+  expect("prepUrl" in lib).toBe(false);
 });
 
 const card = (state: string, extra: Record<string, unknown> = {}) =>
-  renderToStaticMarkup(
+  routed(
     createElement(BlueprintCard, {
       taskId: TASK,
       clientName: NAME,
@@ -400,7 +419,7 @@ test("the card folds to one line once all three are sent, and says so in rehears
   expect(card("closed", { rehearse: true })).toContain("Show the Lock plan");
   // An active client with no Blueprint on record gets no card at all.
   expect(
-    renderToStaticMarkup(
+    routed(
       createElement(BlueprintCard, {
         taskId: TASK,
         clientName: NAME,

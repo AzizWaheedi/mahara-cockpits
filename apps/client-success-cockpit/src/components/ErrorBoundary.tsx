@@ -1,6 +1,8 @@
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Component, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
+import { hostFrame } from "@/present/useHost";
+import { FrameLine } from "./FrameLine";
 
 interface Props {
   children: ReactNode;
@@ -21,7 +23,20 @@ class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
+  // The Brand Blueprint's frame in the creative director cockpit (a stale
+  // chunk after a deploy lands here): the page around it says what to do,
+  // and no stack trace shows inside another cockpit's page (EMBED.md 4.6).
+  componentDidCatch() {
+    hostFrame()?.post({
+      type: "failed",
+      message:
+        "The Blueprint could not be drawn. Reload it to go on. Nothing you saved is lost.",
+    });
+  }
+
   render() {
+    if (this.state.hasError && hostFrame())
+      return <FrameLine>The Blueprint could not be drawn.</FrameLine>;
     if (this.state.hasError) {
       return (
         <div className="flex items-center justify-center min-h-screen p-8 bg-background">

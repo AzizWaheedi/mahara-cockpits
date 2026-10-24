@@ -1,11 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
-import { portalUrl } from "./portal";
 
 /**
  * The Brand Blueprint in the creative director cockpit (docs/brand-blueprint
  * SPEC.md 4): the three parts' states, the offer's save and press, the
- * Settings, and the way into the call window.
+ * Settings, and the way into the call. The call opens inside this cockpit,
+ * at /creative/blueprint/:taskId (EMBED.md): the client success app's deck
+ * draws it in a frame on the same origin, so nothing sends the creative
+ * director to another cockpit.
  *
  * The form's registry lives in the client success app's deck
  * (src/present/blueprintForm.ts), and an app cannot import from another, so
@@ -492,14 +494,34 @@ export function waited(hours: number): string {
   return `${d} day${d === 1 ? "" : "s"}`;
 }
 
-// ----------------------------------------------------------- the call window
+// ------------------------------------------------------------------ the call
+
+/** The Blueprint call's own pages in this cockpit (EMBED.md 4.1). */
+export const isBlueprintCall = (pathname: string) =>
+  /^\/blueprint\//.test(pathname);
 
 type Opener = (url: string, name: string, features?: string) => Window | null;
 
 /**
+ * The call page inside this cockpit (EMBED.md 4.1), for the router: at a
+ * part when given, and a rehearsal stays one (the page reads ?rehearse=1).
+ */
+export function callRoute(
+  taskId: string,
+  at?: "part1" | "part2" | "part3",
+  rehearse = false,
+): { pathname: string; search: string; hash: string } {
+  return {
+    pathname: `/blueprint/${encodeURIComponent(taskId)}`,
+    search: rehearse ? "?rehearse=1" : "",
+    hash: at ? `#${at}` : "",
+  };
+}
+
+/**
  * Opens a named window, or brings it forward as it is (the deck's openNamed,
- * copied: window.open(url, name) would reload a deck that is already open
- * and send a shared deck back to its cover mid-call).
+ * copied: window.open(url, name) would reload a notes window that is
+ * already open mid-call). The call page's "Open the notes window" uses it.
  */
 export function openNamed(
   url: string,
@@ -517,41 +539,6 @@ export function openNamed(
   }
   if (isBlank) w.location.replace(url);
   w.focus();
-  return w;
-}
-
-/**
- * The Blueprint's prep view in the client success app, at a part when
- * given. A rehearsal carries its flag, so every window it opens stays one
- * (each reads ?rehearse=1 from its own address).
- */
-export function prepUrl(
-  taskId: string,
-  at?: "part1" | "part2" | "part3",
-  rehearse = false,
-) {
-  return `${portalUrl()}/client-success/clients/${encodeURIComponent(taskId)}/present/blueprint?view=prep${rehearse ? "&rehearse=1" : ""}${at ? `#${at}` : ""}`;
-}
-export function openPrep(
-  taskId: string,
-  at?: "part1" | "part2" | "part3",
-  open?: Opener,
-  rehearse = false,
-) {
-  // Its own window name, so an open real prep is never reused for it.
-  const w = openNamed(
-    prepUrl(taskId, at, rehearse),
-    `mahara-prep-${taskId}-blueprint${rehearse ? "-rehearse" : ""}`,
-    undefined,
-    open,
-  );
-  if (w && at) {
-    try {
-      if (w.location.hash !== `#${at}`) w.location.hash = at;
-    } catch {
-      // not ours to steer
-    }
-  }
   return w;
 }
 

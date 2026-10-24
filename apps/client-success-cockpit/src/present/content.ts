@@ -358,6 +358,8 @@ export const HOURS = {
 /** The chrome around the canvas and the presenter's own windows. */
 export const CHROME = {
   back: { en: "Back to", ar: "رجوع إلى" },
+  /** Back in the creative director's page: the deck closes in place. */
+  end: { en: "End the deck", ar: "سكّر العرض" },
   notes: { en: "Notes", ar: "الملاحظات" },
   all: { en: "All slides", ar: "كل الشرائح" },
   full: { en: "Full screen", ar: "ملء الشاشة" },

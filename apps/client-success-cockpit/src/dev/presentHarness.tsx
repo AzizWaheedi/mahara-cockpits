@@ -9,7 +9,10 @@
  * stand-in, and rehearse=1 for its sandbox; deck=blueprint for the Brand
  * Blueprint call, with fixture=full|sparse|nokickoff|two|declined|nopack|arabic and
  * bp=open|part1|sent|closed|locked, src/dev/deck/blueprintFixtures.ts, and
- * rehearse=1 for its plan-only presses). Saves and uploads stay in
+ * rehearse=1 for its plan-only presses; host=creative, inside a frame on
+ * the same origin, for the creative director cockpit's host mode, with
+ * notes=<a /creative/ path> for the notes window it opens, EMBED.md 6).
+ * Saves and uploads stay in
  * memory (an upload pretends to take a second and a half); nothing is sent
  * anywhere and no form loads or submits.
  *
@@ -55,6 +58,9 @@ const deck: DeckKind =
       ? "blueprint"
       : "onboarding";
 const view = (params.get("view") ?? "present") as View;
+// theme=light, as the creative director harness's light shot asks.
+if (params.get("theme") === "light")
+  document.documentElement.classList.remove("dark");
 
 /**
  * The harness's stand-in for the server's link check (VIDEOS.md 3), so prep's

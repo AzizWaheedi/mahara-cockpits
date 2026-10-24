@@ -6,6 +6,8 @@ import { PublicLayout } from "@/components/PublicLayout";
 import { PublicOnlyRoute } from "@/components/PublicOnlyRoute";
 import { RoleRoute } from "@/components/RoleRoute";
 import {
+  BlueprintCallPage,
+  BlueprintNotesPage,
   ClientDatabasePage,
   ClientPage,
   CreativeEodPage,
@@ -77,12 +79,23 @@ export function AuthenticatedRoutes() {
           element={<Moved to="/dashboard#touchpoints" />}
         />
         <Route path="/profiles" element={<Moved to="/clients?view=worst" />} />
+        {/* The Blueprint call's notes popup (EMBED.md 4.4): outside the
+            layout, so no sidebar or chat sits in the small window. */}
+        {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
+        <Route element={<RoleRoute role="creative" />}>
+          <Route
+            path="/blueprint/:taskId/notes"
+            element={<BlueprintNotesPage />}
+          />
+        </Route>
         <Route element={<AppLayout />}>
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="creative" />}>
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/clients" element={<ClientDatabasePage />} />
             <Route path="/clients/:name" element={<ClientPage />} />
+            {/* The Brand Blueprint call, inside this cockpit (EMBED.md 4.1). */}
+            <Route path="/blueprint/:taskId" element={<BlueprintCallPage />} />
             <Route path="/links" element={<KeyLinksPage />} />
             <Route
               path="/what-works"

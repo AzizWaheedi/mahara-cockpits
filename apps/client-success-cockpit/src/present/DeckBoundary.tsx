@@ -1,5 +1,6 @@
 import { Component, type ReactNode, useCallback } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { hostFrame } from "./useHost";
 
 /**
  * The shared deck's own error boundaries. The deck is on the client's
@@ -18,6 +19,8 @@ interface Props {
   report?: Report;
   /** Where the failure was, for the report's title. */
   where?: string;
+  /** Told once, when the fallback shows. */
+  onFail?: () => void;
 }
 interface State {
   failed: boolean;
@@ -31,6 +34,7 @@ export class DeckBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error) {
+    this.props.onFail?.();
     const at = `${window.location.pathname}${this.props.where ? `#${this.props.where}` : ""}`;
     const sig = `deck|${at}|${error.message}`.slice(0, 200);
     try {
@@ -58,12 +62,17 @@ export function useDeckReport(): Report {
   return useCallback(
     async r => {
       if (!client) return;
+      // The Blueprint's frame in the creative director cockpit reports as
+      // that cockpit: the server takes an app only with its own role
+      // (client-success with csm, creative with creative), as the creative
+      // director cockpit's own AppLayout reports.
+      const hosted = hostFrame() !== null;
       try {
         const { error } = await client.rpc("cockpit_submit_issue_report", {
-          p_app: "client-success",
+          p_app: hosted ? "creative" : "client-success",
           p_page: window.location.pathname,
           p_text: `${r.title}\n${r.detail}`.trim(),
-          p_role: "csm",
+          p_role: hosted ? "creative" : "csm",
         });
         if (error) throw error;
       } catch (err) {
@@ -85,6 +94,14 @@ export function DeckRouteBoundary({ children }: { children: ReactNode }) {
     <DeckBoundary
       report={report}
       where="deck"
+      // In the creative director cockpit's page, the page says it instead.
+      onFail={() =>
+        hostFrame()?.post({
+          type: "failed",
+          message:
+            "The deck could not be drawn. Reload it to go on. Nothing you saved is lost.",
+        })
+      }
       fallback={
         <div
           role="alert"

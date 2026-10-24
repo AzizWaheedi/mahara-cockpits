@@ -452,7 +452,7 @@ export function partState(
   const done = asked.length - left;
   if (left === 0) return { text: "Ready to send", tone: "good" };
   if (keys.some(x => has(bp.answers, x)))
-    return { text: `In progress (${done} of ${asked.length})`, tone: "muted" };
+    return { text: `In progress · ${done} of ${asked.length}`, tone: "muted" };
   return { text: "Not started", tone: "muted" };
 }
 

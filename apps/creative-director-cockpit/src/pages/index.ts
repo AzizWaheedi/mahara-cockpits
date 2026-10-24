@@ -1,3 +1,5 @@
+export { BlueprintCallPage } from "./BlueprintCallPage";
+export { BlueprintNotesPage } from "./BlueprintNotesPage";
 export { ScriptingCalendar } from "./CalendarPage";
 export { ClientDatabasePage, ScriptDatabasePage } from "./ClientDatabasePage";
 export { ClientPage } from "./ClientPage";

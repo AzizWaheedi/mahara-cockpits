@@ -17,6 +17,8 @@
   --color-mahara-teal: var(--mahara-teal);
   --color-deep-space: var(--deep-space);
   --color-royal-blue: var(--royal-blue);
+  --color-deck-ground: var(--deck-ground);
+  --color-deck-ink: var(--deck-ink);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -68,6 +70,12 @@
   --mahara-teal: #00cfc8;
   --deep-space: #091333;
   --royal-blue: #2e5bd6;
+
+  /* The shared deck's ground and ink (the client success deck's own
+     --dk-space and --dk-ink), the same in both themes: the Blueprint call's
+     presenting layer sits on them. */
+  --deck-ground: var(--deep-space);
+  --deck-ink: #f2f6fa;
 
   /* Teal as the primary action colour, Deep Space text on it for contrast. */
   --primary: var(--mahara-teal);
