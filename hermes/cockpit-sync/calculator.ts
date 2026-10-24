@@ -3427,6 +3427,12 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
   // Who changed what in each campaign over the last 14 days. Meta activities
   // belong to an account; use the object id to avoid showing one campaign's
   // edits under every other campaign in that account.
+  // The source is cockpit_csm_meta_activities, the activity log hermes/csm-calls
+  // reads every few minutes for every client account (person changes only).
+  // ad_account_activities, the creative dashboard's mirror, got its last row on
+  // 2 Oct 2026, so this feed and every campaign's lastChangeAt froze without a
+  // word (24 Oct 2026). A failed read is a source failure like any other: the
+  // worker then refuses to publish a partial cycle (worker.ts).
   // biome-ignore lint/suspicious/noExplicitAny: change rows
   const adChanges: any[] = [];
   try {
@@ -3437,13 +3443,18 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
     }
     for (const node of metaTree)
       byObject.set(String(node.metaId), node.campaignName);
-    for (const r of await supabaseQuery(`
-        select activity_hash, meta_ad_account_id, event_time, actor_name,
-               event_type, translated_event_type, object_id, object_name, object_type
-        from ad_account_activities
+    const rows = await supabaseQuery(`
+        select account_id, event_time, actor_name, event_type,
+               translated_event_type, object_id, object_name, object_type
+        from cockpit_csm_meta_activities
         where event_time >= now() - interval '14 days'
-        order by event_time desc limit 1500
-      `)) {
+        order by event_time desc limit 3000
+      `);
+    // Two raw event types can share one English name on the same object in the
+    // same second. The publish keys a change by object, time, name and actor
+    // and refuses a duplicate, so keep the first.
+    const seen = new Set<string>();
+    for (const r of rows) {
       const objectId = String(r.object_id ?? "");
       const campaignName = byObject.get(objectId);
       if (!campaignName) continue;
@@ -3451,22 +3462,33 @@ export async function syncOnce(ctx: ActionCtx): Promise<SyncResult> {
       if (
         !campaign ||
         String(campaign.metaAccountId ?? "").replace(/^act_/, "") !==
-          String(r.meta_ad_account_id ?? "").replace(/^act_/, "")
+          String(r.account_id ?? "").replace(/^act_/, "")
       )
         continue;
+      const at = Date.parse(String(r.event_time));
+      const eventType = String(r.translated_event_type ?? r.event_type ?? "");
+      const actor = r.actor_name ? String(r.actor_name) : undefined;
+      const identity = `${objectId}|${at}|${eventType}|${actor ?? ""}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
       adChanges.push({
         campaignName,
-        at: Date.parse(String(r.event_time)),
-        activityHash: r.activity_hash ? String(r.activity_hash) : undefined,
+        at,
         objectId,
-        actor: r.actor_name ? String(r.actor_name) : undefined,
-        eventType: String(r.translated_event_type ?? r.event_type ?? ""),
+        actor,
+        eventType,
         objectName: r.object_name ? String(r.object_name) : undefined,
         objectType: r.object_type ? String(r.object_type) : undefined,
       });
     }
-  } catch {
-    // The change feed is a bonus; never fail the sync over it.
+    const newest = rows.length ? String(rows[0].event_time) : "none";
+    recordLog("log",
+      `change feed: ${adChanges.length} campaign change(s) from ${rows.length} activity row(s) in 14 days, newest activity ${newest}${rows.length >= 3000 ? " (capped at 3000)" : ""}`,
+    );
+  } catch (err) {
+    recordLog("error",
+      `change feed failed: could not read Meta's activity log (${err instanceof Error ? err.message : String(err)})`,
+    );
   }
 
   // Media buying needs time to breathe: after a real change, three days of data

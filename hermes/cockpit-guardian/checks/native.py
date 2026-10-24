@@ -70,8 +70,32 @@ def run_producer(ctx):
     if age>90:return fail('The native source producer has no recent publication. Check its approved schedule and receipts.',evidence={'last_publication_minutes':int(age)})
     return ok('A native source publication is recorded within 90 minutes. This does not certify the other workers.',evidence={'last_publication_minutes':int(age)})
 
+# Meta's names for a campaign, an ad set and an ad: the objects the change feed can place on the board.
+CHANGE_OBJECTS=('CAMPAIGN_GROUP','CAMPAIGN','ADGROUP')
+FEED_LAG_HOURS=24
+
+def run_change_feed(ctx):
+    """The Ads change feed keeps up with Meta's activity log. Its old source stopped on 2 Oct 2026 and the feed froze
+    for three weeks: every cycle republished the old rows, so the snapshot stamps stayed fresh (24 Oct 2026). Compare
+    the newest change in the feed with the newest campaign change in the log, never the stamp."""
+    try:
+        log=ctx.rows('cockpit_csm_meta_activities','event_time',where=[('object_type','in',CHANGE_OBJECTS)],order='event_time.desc',limit=1)
+        feed=ctx.rows('cockpit_media_sources','data',where=[('table_name','eq','adChanges')])
+    except SourceError:
+        return unknown("The Ads change feed or Meta's activity log could not be read. Restore Creative Triage access.")
+    newest_log=parse_time(log[0].get('event_time')) if log else None
+    if newest_log is None:
+        return unknown("Meta's activity log has no campaign change, so the Ads change feed cannot be compared.")
+    stamps=[r['data'].get('at') for r in feed if isinstance(r.get('data'),dict)]
+    newest_feed=parse_time(max((s for s in stamps if isinstance(s,(int,float)) and not isinstance(s,bool)),default=None))
+    evidence={'newest_log_change':newest_log.isoformat(),'newest_feed_change':newest_feed.isoformat() if newest_feed else None,'feed_rows':len(feed)}
+    if newest_feed is None or (newest_log-newest_feed).total_seconds()>FEED_LAG_HOURS*3600:
+        return fail(f"The Ads change feed is more than {FEED_LAG_HOURS} hours behind Meta's activity log.",evidence=evidence)
+    return ok("The Ads change feed keeps up with Meta's activity log.",evidence=evidence)
+
 CHECKS=(
  Check('native-source-readiness','supabase','Native source readiness','The cockpit history must have verified coverage.','high','Native source-state rows and matching source counts.','Missing, unready or mismatched source evidence.',run_sources,owner='the systems manager',action='Review the protected reconciliation plan. Apply only after approval.',confirm=2,urgent=True),
  Check('native-source-producer','workers','Native source producer','A real publication is required to verify the source producer.','high','The latest published cockpit_native_media_runs receipt.','No receipt or no publication within 90 minutes.',run_producer,owner='Hermes',action='Read the worker doctor, flock schedule and publication receipt.',confirm=3),
+ Check('native-change-feed','supabase','Ads change feed','Campaign changes and the learning guard in the media buyer cockpit stop updating.','medium',"The newest adChanges row in cockpit_media_sources against the newest campaign, ad set or ad change in cockpit_csm_meta_activities.",f'The feed is more than {FEED_LAG_HOURS} hours behind the log.',run_change_feed,owner='Hermes',action="Check that hermes/cockpit-sync reads cockpit_csm_meta_activities and that hermes/csm-calls still fills it.",confirm=2),
  Check('native-worker-summary','workers','Native worker evidence','Every replacement producer needs an independent successful reading.','high','The native monitor snapshot contract.','Missing publisher, required worker, timestamp or successful reading.',run_native,owner='Hermes',action='Verify the snapshot publisher and every worker before switching monitoring.',confirm=2,urgent=True),
 )

@@ -145,6 +145,25 @@ class NativeTests(unittest.TestCase):
         tables={'cockpit_native_media_runs':[dict(status='published',published_at=(fakes.NOW-timedelta(minutes=80)).isoformat())]}
         self.assertEqual(native.run_producer(self.context(tables=tables)).status,OK)
 
+    def change_feed(self,feed_hours_ago,log_hours_ago,log_type='CAMPAIGN'):
+        ms=lambda h:int((fakes.NOW-timedelta(hours=h)).timestamp()*1000)
+        tables={'cockpit_media_sources':[dict(table_name='adChanges',data=dict(at=ms(h))) for h in feed_hours_ago]+[dict(table_name='ads',data=dict(at=ms(0)))],
+                'cockpit_csm_meta_activities':[dict(event_time=(fakes.NOW-timedelta(hours=h)).isoformat(),object_type=log_type) for h in log_hours_ago]}
+        return native.run_change_feed(self.context(tables=tables))
+
+    def test_change_feed_follows_the_newest_change_not_the_snapshot(self):
+        # 24 Oct 2026: the feed's newest change was 2 Oct while the log had changes that day.
+        self.assertEqual(self.change_feed([22*24,23*24],[3]).status,FAIL)
+        self.assertEqual(self.change_feed([],[3]).status,FAIL)
+        self.assertEqual(self.change_feed([5,40],[3,30]).status,OK)
+        # A quiet weekend is not a lag: the log has nothing newer either.
+        self.assertEqual(self.change_feed([50],[49]).status,OK)
+
+    def test_change_feed_ignores_account_events_and_an_empty_log(self):
+        self.assertEqual(self.change_feed([200],[1],log_type='ACCOUNT').status,UNKNOWN)
+        self.assertEqual(self.change_feed([200],[]).status,UNKNOWN)
+        self.assertEqual(native.run_change_feed(self.context(db=fakes.FakeDb(down=True))).status,UNKNOWN)
+
     def test_native_and_hybrid_run_the_same_checks_with_the_supabase_readings_kept(self):
         hybrid={c.id for c in all_checks('hybrid')};selected={c.id for c in all_checks('native')}
         self.assertIn('native-source-readiness',selected);self.assertIn('native-source-producer',selected)

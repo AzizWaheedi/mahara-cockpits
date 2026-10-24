@@ -414,6 +414,7 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   await db.exec("UPDATE cockpit_creative_source_state SET row_count=1 WHERE table_name='campaigns'");await service(db);
   const s=await state(db),c=await claim(db);
   const yesterday=new Date(Date.now()+10800000-86400000).toISOString().slice(0,10);
+  const changedAt=new Date(Date.now()-5*86400000).toISOString();
   const grid=Array<string>(25).fill('');Object.assign(grid,{0:yesterday,1:'Alpha',2:'Alpha campaign',3:'Set',4:'120',5:'10',7:'1000',8:'40',10:'1.2',16:'333333',17:'One',18:'PAUSED',24:'USD'});
   const headers=['Client Name','Clickup ID','Service Mode','GHL ID','GHL API','WA GROUP ID','Sheet Link','Google Drive Link','Ad Account - Meta','Status','Country','City'];
   const clientData=[headers,['Alpha','cu1','DWY','','','','','','Alpha','Active','Kuwait','Kuwait']];
@@ -439,7 +440,15 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
     if(name==='mcp_supabase_execute_sql'){
      if(args.query.includes('select distinct s.campaign_name'))return {result:JSON.stringify([{campaign_name:'Alpha campaign',campaign_id:'111111',meta_ad_account_id:'222222'}])};
      // The dialer's call-back and rescheduled bookings (dialerReplacedBookingIds): none here.
-     if(args.query.includes('thumbnail_url')||args.query.includes('ad_account_activities')||args.query.includes('cc_attempts'))return {result:'[]'};
+     if(args.query.includes('thumbnail_url')||args.query.includes('cc_attempts'))return {result:'[]'};
+     // Meta's activity log (cockpit_csm_meta_activities): one person's ad set budget change five days ago,
+     // logged twice under two raw types with one English name (kept once), plus one on an object that is
+     // not on the board, which the change feed leaves out.
+     if(args.query.includes('cockpit_csm_meta_activities'))return {result:JSON.stringify([
+      {account_id:'222222',event_time:changedAt,actor_name:'Nada Al Saed',event_type:'update_ad_set_budget',translated_event_type:'Ad set budget updated',object_id:'555555',object_name:'Set',object_type:'CAMPAIGN'},
+      {account_id:'222222',event_time:changedAt,actor_name:'Nada Al Saed',event_type:'update_ad_set_budget_schedule',translated_event_type:'Ad set budget updated',object_id:'555555',object_name:'Set',object_type:'CAMPAIGN'},
+      {account_id:'222222',event_time:changedAt,actor_name:'Nada Al Saed',event_type:'add_images',translated_event_type:'Image added to the library',object_id:'999999',object_name:'image.jpg',object_type:'IMAGE'},
+     ])};
      // Campaigns ever written to cockpit_campaigns (publishedCampaigns): Mahara's, stopped ones included.
      if(args.query.includes('from public.cockpit_campaigns'))return {result:JSON.stringify([{name:'Alpha campaign'}])};
      throw new Error('Unexpected fixture SQL source');
@@ -482,6 +491,10 @@ test('real worker calculations from raw provider fixture publish campaign, CSM a
   expect(p.tables.campaigns[0].leads7d).toBe(10);
   expect(p.tables.campaigns[0].cpl).toBe(12);
   expect(p.tables.campaigns[0]).toMatchObject({budgetLevel:'campaign',budgetDaily:30});
+  // The change feed reads the live activity log: the ad set's budget change lands under its campaign
+  // and sets the campaign's last change; the library image (no campaign) stays out. [2026-10-24]
+  expect(p.tables.adChanges.map((r:Row)=>({campaignName:r.campaignName,actor:r.actor,eventType:r.eventType,objectId:r.objectId}))).toEqual([{campaignName:'Alpha campaign',actor:'Nada Al Saed',eventType:'Ad set budget updated',objectId:'555555'}]);
+  expect(p.tables.campaigns[0].lastChangeAt).toBe(Date.parse(changedAt));
   // Budgets are in dollars, read in the account's currency per Meta's listing, never the sheet's
   // blank-means-USD: Ardon's SAR 175 ("17500") is $46.66, not $175. A currency the worker cannot
   // convert leaves the budget blank with a warning, never an error that stops the run. [2026-10-21]
