@@ -112,6 +112,14 @@ Release N3 (base `0f85cpb2`; contract `docs/client-performance/CPB-DECISIONS-202
 
 Checks after N3's first published cycle: the cycle published (no "Winner archive cannot delete history"); the plan's `dailyStats` holds no row of the 23 ads; `marketPlays` holds no ad set `120254791600350066` and no listed creative; `winnersArchive` still holds all its rows, the 3 listed ones unchanged, and gains no listed ad; no table drops to 0; every zero-lead ad under $30 reads hold and every one on $30 or more reads kill (the counts move as leads come in: the builder's replays gave 9 holds and 4 kills at the 13:52 sync of 23 Oct and 8 and 4 at 18:22, once Atlantis 19\10 ad-SC3 had a lead). Once the follow-up listed-winners migration exists and has run: `winnersArchive` holds none of the 3 and the next cycle still publishes. Rollback: point the link back at `0f85cpb2` and run neither `20261021d` nor any listed-winners migration until N3 is live again (the old release's list has 21 ads).
 
+## Ads change feed (24 Oct 2026)
+
+Release `3eb1chg1` (base `fa4fcpb3`, commit 3eb1d7f5) reads the change feed (`adChanges`, and from it each campaign's `lastChangeAt` and the "In learning" guard) from `cockpit_csm_meta_activities`, which `hermes/csm-calls` fills every few minutes for every client account (person changes only). The old source, `ad_account_activities`, got its last row on 2 Oct 2026; the feed then froze without a word, because 0 rows was not an error and the publish republishes old rows every cycle.
+
+- A failed read logs at error, so the cycle refuses to publish like any other source failure. Same-second repeats of one change on one object are kept once (the publish refuses duplicate identities).
+- Guardian check `native-change-feed` compares the feed's newest change with the log's newest campaign, ad set or ad change and fails past 24 hours. It never reads the snapshot stamp.
+- Check after a release: the plan's `adChanges` has rows from today, and `cockpit_campaigns` rows carry `raw_data.lastChangeAt` (17 of 17 on 24 Oct, Al Ola 22 Oct 22:54 Kuwait). Rollback: point the link back at `fa4fcpb3`.
+
 ## Preservation and failure behavior
 
 - A publication compares exact table counts/content fingerprints and source stamps after taking write-conflicting locks. A concurrent source, human checklist, decision, profile, or dismissal change rejects the entire plan.
