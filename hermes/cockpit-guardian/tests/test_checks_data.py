@@ -5,6 +5,7 @@ from pathlib import Path
 
 from tests import fakes
 from checks import edge_functions, pg_cron, queues, sections, supabase, syncs, whatsapp, worker_status
+from guard import engine
 from guard.context import SourceError
 from guard.model import FAIL, NOT_DEPLOYED, OK, PAUSED, UNKNOWN, WARN, Result
 
@@ -79,6 +80,32 @@ class Salma(unittest.TestCase):
     def test_captions_paused_by_signin_is_folded(self):
         r = worker_status.run_salma(make(self.rows(captions={"ok": False, "detail": SIGNED_OUT})))
         self.assertEqual(r.caused_by, "claude-signin")
+
+    def at(self, value):
+        rows = self.rows()
+        for r in rows["social_worker_status"]:
+            r["checked_at"] = value
+        return rows
+
+    def test_a_row_from_this_second_is_fresh(self):
+        # 24 Oct 2026: Salma wrote in the scan's own second, the age was 0.0, and 0.0 was read as
+        # missing: "Salma has not reported for 694444.4 days" with all 8 checks ok.
+        r = worker_status.run_salma(make(self.at(fakes.ago(0))))
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertEqual(r.evidence["freshest_min"], 0.0)
+
+    def test_a_clock_just_ahead_is_fresh(self):
+        r = worker_status.run_salma(make(self.at(fakes.ago(-0.5))))
+        self.assertEqual(r.status, OK, r.summary)
+
+    def test_only_a_missing_time_is_missing(self):
+        rows = self.at(None)
+        r = worker_status.run_salma(make(rows))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("an unknown time", r.summary)
+        self.assertIsNone(r.evidence["freshest_min"])
+        rows["social_worker_status"][0]["checked_at"] = fakes.ago(0)
+        self.assertEqual(worker_status.run_salma(make(rows)).status, OK)
 
 
 class Webinar(unittest.TestCase):
@@ -266,6 +293,15 @@ class Sections(unittest.TestCase):
     def test_old_machine_section_cannot_vouch(self):
         t = {"cockpit_sections": [{"key": "machine", "computed_at": fakes.ago(90), "payload": {"jobs": []}}]}
         self.assertEqual(sections.run_jobs(make(t)).status, FAIL)
+
+    def test_old_machine_section_points_at_ceo_sections(self):
+        # ceo-sections reads the same row, so it already has the incident; the readers fold into it.
+        t = {"cockpit_sections": [{"key": "machine", "ok": True, "computed_at": fakes.ago(60),
+                                   "payload": {"sources": [{"source": "meta", "ok": True}], "hermes": {}}}]}
+        readers = [c for c in sections.CHECKS if c.id in ("native-sources", "ask-ai-queue")]
+        found = engine.run_checks(make(t), readers)
+        self.assertEqual([(f.result.status, f.result.caused_by) for f in found], [(UNKNOWN, "ceo-sections")] * 2)
+        self.assertIn("machine section is 60 min old", found[0].result.summary)
 
     def test_sources(self):
         p = self.machine(sources=[{"source": "sheets", "ok": False, "lastError": "HTTP 404"}, {"source": "meta", "ok": True}])

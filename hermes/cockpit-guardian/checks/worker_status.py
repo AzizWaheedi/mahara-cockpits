@@ -89,10 +89,13 @@ def run_salma(ctx: Context) -> Result:
     rows = ctx.rows("social_worker_status", "check_name,ok,detail,checked_at")
     if not rows:
         return unknown("social_worker_status has no rows, so Salma's state is unknown.")
-    freshest = min((age_min(r.get("checked_at"), ctx.now) or 1e9) for r in rows)
+    # Only a missing time is missing: a row written in the scan's own second is 0 min old, and 0 is fresh.
+    ages = [a for a in (age_min(r.get("checked_at"), ctx.now) for r in rows) if a is not None]
+    freshest = min(ages) if ages else None
     bad = [r for r in rows if r.get("ok") is False]
-    ev = {"checks": len(rows), "freshest_min": round(freshest, 1), "failing": {r["check_name"]: clean(r.get("detail"), 160) for r in bad}}
-    if freshest > 15:
+    ev = {"checks": len(rows), "freshest_min": None if freshest is None else round(freshest, 1),
+          "failing": {r["check_name"]: clean(r.get("detail"), 160) for r in bad}}
+    if freshest is None or freshest > 15:
         return fail(f"Salma has not reported for {ago(freshest)}; she checks in every minute.", evidence=ev)
     off = [r for r in bad if r.get("check_name") == "publishing"]
     signin = [r for r in bad if r.get("check_name") == "captions" and signed_out_text(r.get("detail"))]

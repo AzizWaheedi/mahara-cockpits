@@ -27,12 +27,15 @@ from .redact import clean
 
 DB = "db"
 VPS = "vps"
-PARENT_OF_SOURCE = {DB: "supabase-health", VPS: "vps-snapshot"}
+# The CEO refresh worker writes the machine section; ceo-sections reads that same row, so a stale
+# machine section is already its incident and the checks that read the section fold into it.
+MACHINE = "machine"
+PARENT_OF_SOURCE = {DB: "supabase-health", VPS: "vps-snapshot", MACHINE: "ceo-sections"}
 
 
 class SourceError(Exception):
     """A source could not be read; the check says 'could not be checked'.
-    `source` says which (db, vps, or None for anything else)."""
+    `source` says which (db, vps, machine, or None for anything else)."""
 
     def __init__(self, message: Any = "", source: Optional[str] = None):
         super().__init__(message)

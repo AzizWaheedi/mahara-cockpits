@@ -39,6 +39,18 @@ class CsmCalls(unittest.TestCase):
                 for k in csm_calls.CSM_KEYS]
         self.assertEqual(csm_calls.run_freshness(ctx({"cockpit_sync_state": rows})).status, OK)
 
+    def test_daily_line_reads_an_age_of_zero_as_fresh(self):
+        # A good run written in the scan's own second is 0 min old; 0 was once read as "never ran".
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(0)} for k in csm_calls.CSM_KEYS]
+        rows[1]["last_ok_at"] = fakes.ago(-0.5)
+        r = csm_calls.run_daily_line(ctx({"cockpit_sync_state": rows}))
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertIn("0 stale source(s)", r.summary)
+        rows[0]["last_ok_at"] = None
+        r = csm_calls.run_daily_line(ctx({"cockpit_sync_state": rows}))
+        self.assertEqual(r.status, WARN)
+        self.assertIn("csm-ghl-calls", r.summary)
+
     def test_missing_call_in_last_21_days_is_named(self):
         roster = [{"table_name": "clients", "data": {"name": "Client A", "taskId": "task-a", "bucket": "management"}},
                   {"table_name": "clients", "data": {"name": "Client B", "taskId": "task-b", "bucket": "onboarding"}}]

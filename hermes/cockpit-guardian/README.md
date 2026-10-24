@@ -90,7 +90,9 @@ checked", never zero. A reading caused by another failing check (every
 "Claude sign-in lapsed" row) is folded into that check's incident, without a
 "Resolved" message for the reading folded in. Every "could not be checked"
 caused by Creative Triage or the VPS not answering folds into
-`supabase-health` or `vps-snapshot`: an outage is one incident. A circuit
+`supabase-health` or `vps-snapshot`: an outage is one incident. A machine
+section too old to read (`native-sources`, `ask-ai-queue`) folds into
+`ceo-sections`, which reads that same row. A circuit
 breaker keeps it short: `supabase-health` runs first, and after the first
 database call that times out or answers 5xx, every later database read in
 that scan fails at once instead of waiting out 30 s each.
@@ -437,7 +439,7 @@ Generated with `python3 guardian.py checks --json`.
 | `log-ideation-radar` | H5 | No write for 10 min: fail; a Python traceback written since the last scan: warn. |  |
 | `log-sales-desk` | H5 | No write for 10 min: fail; a Python traceback written since the last scan: warn. |  |
 | `desk-doctor` | W2 | Older than 75 min while the live-calls watchdog exists: warn. |  |
-| `salma-status` | W10, M3 | Newest row older than 15 min, or a check failing: fail; captions paused by the Claude sign-in: folded into claude-signin; publishing switched off for every client: paused. |  |
+| `salma-status` | W10, M3 | Newest row older than 15 min (a row from this second is fresh), or no row with a time, or a check failing: fail; captions paused by the Claude sign-in: folded into claude-signin; publishing switched off for every client: paused. |  |
 | `salma-publishing` | W10 | Any client switched on: warn (report only). |  |
 | `webinar-zoom` | W13 | No ok read in 3 h, or no run in 90 min: fail. | start one catch-up run of webinar-pull under its own lock |
 | `webinar-survey` | W13 | No ok read in 24 h: fail. |  |

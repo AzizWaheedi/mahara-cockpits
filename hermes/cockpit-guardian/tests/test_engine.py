@@ -162,6 +162,24 @@ class Folding(unittest.TestCase):
         h.scan()
         self.assertIn("desk-followups", h.store.open)
 
+    def test_a_stale_machine_section_is_one_incident(self):
+        # 18-23 Oct 2026: native-sources and ask-ai-queue each opened "could not be checked" beside the
+        # ceo-sections incident for the same stale row (15 openings in a week).
+        from checks import sections
+        rows = [{"key": f"s{i}", "ok": True, "error": None, "computed_at": fakes.ago(3)} for i in range(13)]
+        rows.append({"key": "machine", "ok": True, "error": None, "computed_at": fakes.ago(60),
+                     "payload": {"sources": [{"source": "meta", "ok": True}], "hermes": {"queued": 0, "failed": 0}}})
+        db = fakes.FakeDb({"cockpit_guardian_incidents": [], "cockpit_sections": rows})
+        h = Harness([c for c in sections.CHECKS if c.id in ("ceo-sections", "native-sources", "ask-ai-queue")], db=db)
+        for i in range(6):
+            out = h.scan(fakes.NOW + timedelta(minutes=5 * i))
+        self.assertEqual(list(h.store.open), ["ceo-sections"])
+        self.assertEqual({f.check.id: (f.result.status, f.result.caused_by) for f in out.findings},
+                         {"ceo-sections": (WARN, None), "native-sources": (UNKNOWN, "ceo-sections"),
+                          "ask-ai-queue": (UNKNOWN, "ceo-sections")})
+        self.assertEqual(len(h.posted), 1, h.posted)
+        self.assertIn("CEO sections refresh", h.posted[0])
+
 
 class FixRules(unittest.TestCase):
     def test_report_only_never_fixes(self):

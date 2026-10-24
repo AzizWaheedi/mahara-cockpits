@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 
-from guard.context import Context, SourceError
+from guard.context import MACHINE, Context, SourceError
 from guard.model import Check, Result, age_min, ago, fail, ok, parse_time, unknown, warn
 from guard.redact import brief_error, clean
 
@@ -55,7 +55,8 @@ def _machine(ctx: Context) -> dict:
     sec = ctx.section("machine")
     age = age_min(sec.get("computed_at"), ctx.now)
     if age is None or age > SECTION_LIMIT_MIN:
-        raise SourceError(f"the machine section is {ago(age)} old, so its job and source readings are stale")
+        raise SourceError(f"the machine section is {ago(age)} old, so its job and source readings are stale",
+                          source=MACHINE)
     return sec.get("payload") or {}
 
 

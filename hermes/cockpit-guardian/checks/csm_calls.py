@@ -173,13 +173,19 @@ def run_changes(ctx: Context) -> Result:
     return ok(f"All {len(spend_clients)} clients with spend have a change in {CHANGE_GAP_DAYS} days.", evidence=ev)
 
 
+def _late(r: dict, limit: float, now) -> bool:
+    """Failed, or no good run within the limit. Only a missing time is missing: an age of 0 is fresh."""
+    age = age_min(r.get("last_ok_at"), now)
+    return r.get("ok") is False or age is None or age > limit
+
+
 def run_daily_line(ctx: Context) -> Result:
     """One line for the daily summary: calls synced yesterday, unmatched, stale sources."""
     try:
         rec = ctx.rows("cockpit_sync_state", "ok,note,detail", where=[("key", "eq", "csm-reconcile")])
         stale = [k for k, r in ((str(r.get("key")), r) for r in ctx.rows(
             "cockpit_sync_state", "key,ok,last_ok_at", where=[("key", "in", list(CSM_KEYS))]))
-            if k in CSM_KEYS and (r.get("ok") is False or (age_min(r.get("last_ok_at"), ctx.now) or 1e9) > CSM_KEYS[k][0])]
+            if k in CSM_KEYS and _late(r, CSM_KEYS[k][0], ctx.now)]
     except SourceError:
         return unknown("The CSM call store could not be read.")
     detail = (rec[0].get("detail") or {}) if rec else {}
