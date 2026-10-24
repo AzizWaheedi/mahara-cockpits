@@ -87,8 +87,13 @@ let auth: Record<string, unknown> = {
   session: { user: { id: "u1" } },
   isAuthenticated: true,
 };
+// Every export the app's modules name, so a module that finishes loading
+// after this file (a lazy chunk) still links when other suites run in the
+// same process (auth-password-ui.test.tsx imports getCockpitSupabaseClient).
 mock.module("@/auth/SupabaseAuthProvider", () => ({
   useCockpitAuth: () => auth,
+  getCockpitSupabaseClient: () => auth.client,
+  SupabaseAuthProvider: ({ children }: { children: unknown }) => children,
 }));
 
 const { createRoot } = await import("react-dom/client");
