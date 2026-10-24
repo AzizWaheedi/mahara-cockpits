@@ -28,6 +28,12 @@ import { DosDontsList, parseDosDonts } from "@/components/DosDonts";
 import { EditPanel } from "@/components/EditPanel";
 import { FunnelLine } from "@/components/funnel/FunnelSheet";
 import { LostLeads } from "@/components/LostLeads";
+import {
+  JustLaunched,
+  LaunchAccountLink,
+  LaunchNothingRunning,
+  LaunchToday,
+} from "@/components/launch/LaunchLinks";
 import { Onboardings } from "@/components/Onboardings";
 import { RangePicker } from "@/components/RangePicker";
 import { StatusToggle } from "@/components/StatusToggle";
@@ -88,6 +94,7 @@ import {
   sourceLine,
 } from "@/lib/eodRollup";
 import { CPL_BAD, CPL_GATE, LEARNING_DAYS } from "@/lib/kpi";
+import { useLaunch } from "@/lib/launchClient";
 import { type MediaCoverage, pairedDay } from "@/lib/mediaStatsClient";
 import { type EodOutbox, eodDeliveryNote } from "@/lib/personalEod";
 import {
@@ -286,8 +293,9 @@ function LiveInMeta({ c, tree }: { c: Campaign; tree: Campaign[] }) {
   if (tree.length === 0) {
     return (
       <p className="mt-4 text-xs text-muted-foreground">
-        Ad sets and creative can't be shown for this account yet. It isn't
-        shared with our Meta partner ID.
+        {c.justLaunched
+          ? "Ad set details appear after the next Meta sync. The campaign controls are available above."
+          : "Ad sets and creative can't be shown for this account yet. It isn't shared with our Meta partner ID."}
       </p>
     );
   }
@@ -1179,7 +1187,10 @@ function Cockpit({ view }: { view: View }) {
   }, [params, setParams]);
   // Ads management has two tabs: what is running, and what the board has off
   // with nothing running on Meta. [Aziz, 2026-09-14]
-  const [adsTab, setAdsTab] = useState<"running" | "off">("running");
+  const launch = useLaunch(undefined, view === "ads" || view === "sod");
+  const [adsTab, setAdsTab] = useState<"running" | "off" | "nothing">(
+    "running",
+  );
   const [chatOpen, setChatOpen] = useState(false);
   const [chatText, setChatText] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -1458,7 +1469,7 @@ function Cockpit({ view }: { view: View }) {
     const leads = totals.leads;
     const overGate = overCplGate(figures);
     const lines: string[] = [
-      `EOD - ${snap?.eodDay ? new Date(snap.eodDay + "T12:00:00+03:00").toLocaleDateString("en-GB", { timeZone: "Asia/Kuwait", weekday: "long", day: "numeric", month: "long" }) : "Date unavailable"}`,
+      `EOD - ${snap?.eodDay ? new Date(`${snap.eodDay}T12:00:00+03:00`).toLocaleDateString("en-GB", { timeZone: "Asia/Kuwait", weekday: "long", day: "numeric", month: "long" }) : "Date unavailable"}`,
       "",
       `Active client accounts managed: ${cs.length}`,
       `Total ad spend (7d): ${money(spend)}`,
@@ -2983,11 +2994,14 @@ function Cockpit({ view }: { view: View }) {
                 campaignName={c.campaignName}
                 // Campaign rows carry no status; an
                 // ad delivering under it means on.
-                active={tree.some(
-                  (t: Campaign) =>
-                    t.kind === "ad" &&
-                    (t.effectiveStatus ?? t.status) === "ACTIVE",
-                )}
+                active={
+                  c.justLaunched ||
+                  tree.some(
+                    (t: Campaign) =>
+                      t.kind === "ad" &&
+                      (t.effectiveStatus ?? t.status) === "ACTIVE",
+                  )
+                }
               />
             </div>
             <EditPanel campaign={c} tree={tree} />
@@ -2999,78 +3013,82 @@ function Cockpit({ view }: { view: View }) {
             <p className="mb-1 mt-4 text-xs text-muted-foreground">
               The call below is the 7-day read: {c.reason}
             </p>
-            <CampaignRange
-              campaignName={c.campaignName}
-              range={where.range}
-              onRangeChange={where.onRangeChange}
-              leadsOnly={c.serviceMode === "DWY"}
-              extraAds={[
-                ...new Set<string>(
-                  tree
-                    .filter((t: Campaign) => t.kind === "ad")
-                    .map((t: Campaign) => String(t.name)),
-                ),
-              ]}
-              adIdsByName={idsByName(tree)}
-              renderAdCell={(
-                adName: string,
-                rangeRow?: { adIds?: string[] },
-              ) => {
-                const p = adPicture(adName, rangeRow?.adIds);
-                return (
-                  <div className="flex items-center gap-2">
-                    <CreativePreview
-                      name={adName}
-                      metaAdId={p.metaAdId}
-                      accountId={p.accountId ?? c.metaAccountId ?? undefined}
-                      stillUrl={p.stillUrl}
-                      stillTinyUrl={p.stillTinyUrl}
-                      thumbUrl={p.thumbUrl}
-                    />
-                    <span>{adName}</span>
-                  </div>
-                );
-              }}
-              renderAdCall={(
-                adName: string,
-                rangeRow?: { adIds?: string[] },
-              ) => {
-                const row = ads.find((a: Campaign) => a.adName === adName);
-                const sameName = tree.filter(
-                  (t: Campaign) => t.kind === "ad" && t.name === adName,
-                );
-                const requestAdId =
-                  rangeRow?.adIds?.length === 1
-                    ? rangeRow.adIds[0]
-                    : sameName.length === 1
-                      ? sameName[0].metaId
-                      : undefined;
-                return (
-                  <div className="flex items-center gap-1.5">
-                    {row && (
-                      <StatusChip tone={VERDICT_TONE[row.verdict] ?? "neutral"}>
-                        {sentence(row.verdict)}
-                      </StatusChip>
-                    )}
-                    <StatusToggle
-                      compact
-                      metaId={adMetaId(adName)}
-                      level="ad"
-                      name={adName}
-                      clientTag={c.clientTag}
-                      campaignName={c.campaignName}
-                      active={adIsActive(adName)}
-                    />
-                    <RequestCreativeButton
-                      campaignName={c.campaignName}
-                      adId={requestAdId}
-                      adName={adName}
-                      compact
-                    />
-                  </div>
-                );
-              }}
-            />
+            {!c.justLaunched && (
+              <CampaignRange
+                campaignName={c.campaignName}
+                range={where.range}
+                onRangeChange={where.onRangeChange}
+                leadsOnly={c.serviceMode === "DWY"}
+                extraAds={[
+                  ...new Set<string>(
+                    tree
+                      .filter((t: Campaign) => t.kind === "ad")
+                      .map((t: Campaign) => String(t.name)),
+                  ),
+                ]}
+                adIdsByName={idsByName(tree)}
+                renderAdCell={(
+                  adName: string,
+                  rangeRow?: { adIds?: string[] },
+                ) => {
+                  const p = adPicture(adName, rangeRow?.adIds);
+                  return (
+                    <div className="flex items-center gap-2">
+                      <CreativePreview
+                        name={adName}
+                        metaAdId={p.metaAdId}
+                        accountId={p.accountId ?? c.metaAccountId ?? undefined}
+                        stillUrl={p.stillUrl}
+                        stillTinyUrl={p.stillTinyUrl}
+                        thumbUrl={p.thumbUrl}
+                      />
+                      <span>{adName}</span>
+                    </div>
+                  );
+                }}
+                renderAdCall={(
+                  adName: string,
+                  rangeRow?: { adIds?: string[] },
+                ) => {
+                  const row = ads.find((a: Campaign) => a.adName === adName);
+                  const sameName = tree.filter(
+                    (t: Campaign) => t.kind === "ad" && t.name === adName,
+                  );
+                  const requestAdId =
+                    rangeRow?.adIds?.length === 1
+                      ? rangeRow.adIds[0]
+                      : sameName.length === 1
+                        ? sameName[0].metaId
+                        : undefined;
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      {row && (
+                        <StatusChip
+                          tone={VERDICT_TONE[row.verdict] ?? "neutral"}
+                        >
+                          {sentence(row.verdict)}
+                        </StatusChip>
+                      )}
+                      <StatusToggle
+                        compact
+                        metaId={adMetaId(adName)}
+                        level="ad"
+                        name={adName}
+                        clientTag={c.clientTag}
+                        campaignName={c.campaignName}
+                        active={adIsActive(adName)}
+                      />
+                      <RequestCreativeButton
+                        campaignName={c.campaignName}
+                        adId={requestAdId}
+                        adName={adName}
+                        compact
+                      />
+                    </div>
+                  );
+                }}
+              />
+            )}
             {(c.findings ?? []).length > 0 && (
               <div className="mb-4 rounded-xl bg-muted/40 p-4">
                 <div className={`mb-3 ${KICKER}`}>
@@ -3122,7 +3140,7 @@ function Cockpit({ view }: { view: View }) {
                 </p>
               </div>
             )}
-            {!where.inAccount && (
+            {!where.inAccount && !c.justLaunched && (
               <LostLeads
                 lost={c.lost}
                 adNameById={Object.fromEntries(
@@ -3344,6 +3362,7 @@ function Cockpit({ view }: { view: View }) {
           {(
             [
               ["running", "Running", running.length],
+              ["nothing", "Nothing running", launch.data?.lanes.nothing ?? "…"],
               [
                 "off",
                 "Off the board",
@@ -3372,392 +3391,429 @@ function Cockpit({ view }: { view: View }) {
           Client logos could not load. Refresh the page to try again.
         </p>
       )}
-      {/* The window every campaign opens on. Each campaign can still be
-          switched on its own once it is open. [aziz, 2026-09-07] */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl bg-muted/40 px-3 py-2">
-        <RangePicker
-          value={globalRange}
-          onChange={r => {
-            setGlobalRange(r);
-            setRanges({});
-          }}
+      {adsTab === "nothing" ? (
+        <LaunchNothingRunning
+          data={launch.data}
+          error={launch.error}
+          refresh={launch.refresh}
         />
-        <span className="text-xs text-muted-foreground">
-          {globalRange.key === "7d"
-            ? "Spend, leads and bookings below, and the filters on them, are for the last 7 days, the read the calls are made on."
-            : `Spend, leads and bookings below, and the filters on them, are for ${globalRange.label.toLowerCase()}. The Call column and the day average always use the last 7 days.`}
-          {mediaThrough && globalRange.start > mediaThrough
-            ? ` Meta's numbers run to ${dayMonth(mediaThrough)}, so spend and leads for this range are not in yet. Its bookings are counted; their cost waits for the numbers.`
-            : mediaThrough && globalRange.end > mediaThrough
-              ? ` Spend, leads and bookings are counted to ${dayMonth(mediaThrough)}, the last day every account's numbers are in, so they cover the same days.`
-              : ""}
-        </span>
-      </div>
-      {adsTab === "off" ? (
-        <p className="mt-4 text-sm text-muted-foreground">
-          The Ads Management board has these as {OFF_STATUSES.join(", ")}, and
-          nothing is running on Meta. Set the Ad Status to bring one back to
-          Running. A campaign the board has off but Meta still runs stays in
-          Running with a red warning.
-        </p>
       ) : (
-        // Filters, so she can work one problem at a time instead of the
-        // whole list. A filter with nothing in it hides, unless it is on.
-        // A filter on the range's numbers counts "…" until every row's range
-        // is read, so a count is never made of half the rows.
-        <div className="mt-4 -mx-1 flex flex-nowrap gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden">
-          {ADS_FILTERS.map(f => {
-            const reading = Boolean(f.ranged) && rangeReading > 0;
-            const n = running.filter(c => passes(f.label, c)).length;
-            if (
-              n === 0 &&
-              !reading &&
-              f.label !== filter &&
-              f.label !== "Everything"
-            )
-              return null;
-            return (
-              <button
-                key={f.label}
-                type="button"
-                onClick={() => adsTransition.change(() => setFilter(f.label))}
-                aria-pressed={filter === f.label}
-                className={pill(f.label === filter)}
-              >
-                {f.label}
-                <span className="ml-1.5 tabular-nums opacity-70">
-                  {reading ? "…" : n}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {/* The container lets an opened campaign's panel be exactly as wide as
+        <>
+          {/* The window every campaign opens on. Each campaign can still be
+          switched on its own once it is open. [aziz, 2026-09-07] */}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl bg-muted/40 px-3 py-2">
+            <RangePicker
+              value={globalRange}
+              onChange={r => {
+                setGlobalRange(r);
+                setRanges({});
+              }}
+            />
+            <span className="text-xs text-muted-foreground">
+              {globalRange.key === "7d"
+                ? "Spend, leads and bookings below, and the filters on them, are for the last 7 days, the read the calls are made on."
+                : `Spend, leads and bookings below, and the filters on them, are for ${globalRange.label.toLowerCase()}. The Call column and the day average always use the last 7 days.`}
+              {mediaThrough && globalRange.start > mediaThrough
+                ? ` Meta's numbers run to ${dayMonth(mediaThrough)}, so spend and leads for this range are not in yet. Its bookings are counted; their cost waits for the numbers.`
+                : mediaThrough && globalRange.end > mediaThrough
+                  ? ` Spend, leads and bookings are counted to ${dayMonth(mediaThrough)}, the last day every account's numbers are in, so they cover the same days.`
+                  : ""}
+            </span>
+          </div>
+          {adsTab === "off" ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              The Ads Management board has these as {OFF_STATUSES.join(", ")},
+              and nothing is running on Meta. Set the Ad Status to bring one
+              back to Running. A campaign the board has off but Meta still runs
+              stays in Running with a red warning.
+            </p>
+          ) : (
+            // Filters, so she can work one problem at a time instead of the
+            // whole list. A filter with nothing in it hides, unless it is on.
+            // A filter on the range's numbers counts "…" until every row's range
+            // is read, so a count is never made of half the rows.
+            <div className="mt-4 -mx-1 flex flex-nowrap gap-1.5 overflow-x-auto px-1 pb-1 [scrollbar-width:none] sm:flex-wrap [&::-webkit-scrollbar]:hidden">
+              {ADS_FILTERS.map(f => {
+                const reading = Boolean(f.ranged) && rangeReading > 0;
+                const n = running.filter(c => passes(f.label, c)).length;
+                if (
+                  n === 0 &&
+                  !reading &&
+                  f.label !== filter &&
+                  f.label !== "Everything"
+                )
+                  return null;
+                return (
+                  <button
+                    key={f.label}
+                    type="button"
+                    onClick={() =>
+                      adsTransition.change(() => setFilter(f.label))
+                    }
+                    aria-pressed={filter === f.label}
+                    className={pill(f.label === filter)}
+                  >
+                    {f.label}
+                    <span className="ml-1.5 tabular-nums opacity-70">
+                      {reading ? "…" : n}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {/* The container lets an opened campaign's panel be exactly as wide as
           what is visible, so on a phone it does not scroll sideways with the
           table. */}
-      <div className="@container mt-4 overflow-x-auto" ref={adsTransition.ref}>
-        <table className="campaign-board w-full text-[14px]">
-          <thead>
-            <tr className="border-b font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
-              <th className="py-2 pr-2 text-left font-medium">Campaign</th>
-              <th className="px-2 text-left font-medium">Spend</th>
-              <th className="px-2 text-left font-medium">Leads</th>
-              <th className="px-2 text-left font-medium">CPL</th>
-              <th className="px-2 text-left font-medium">Bookings</th>
-              <th className="px-2 text-left font-medium">Cost / booking</th>
-              <th className="px-2 text-left font-medium">Budget / spend</th>
-              <th className="px-2 text-left font-medium">Call</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filterReading && (
-              <tr>
-                <td
-                  colSpan={8}
-                  className="py-6 text-center text-sm text-muted-foreground"
-                >
-                  Reading {globalRange.label.toLowerCase()} for every campaign…
-                </td>
-              </tr>
+          <div
+            className="@container mt-4 overflow-x-auto"
+            ref={adsTransition.ref}
+          >
+            {adsTab === "running" && (
+              <JustLaunched
+                data={launch.data}
+                renderPanel={c =>
+                  campaignPanel(c, {
+                    range: globalRange,
+                    onRangeChange: setGlobalRange,
+                    onDone: () => setOpen(null),
+                  })
+                }
+              />
             )}
-            {(snap.campaigns as Campaign[])
-              .filter(c => {
-                // Parked campaigns have their own screen; nothing else
-                // shows there. [Aziz, 2026-09-14]
-                if (adsTab === "off") return isParked(c);
-                if (isParked(c)) return false;
-                if (filterReading) return false;
-                return passes(filter, c);
-              })
-              // Grouped by client.
-              .sort(
-                (a, b) =>
-                  clientOf(a).localeCompare(clientOf(b)) ||
-                  String(a.campaignName).localeCompare(String(b.campaignName)),
-              )
-              .map((c: Campaign, i: number, list: Campaign[]) => {
-                const prev = i > 0 ? list[i - 1] : undefined;
-                const newClient = !prev || clientOf(prev) !== clientOf(c);
-                const isOpen = open === c.campaignName;
-                const links = findClientLinks(
-                  (snap.clientLinks ?? []) as Campaign[],
-                  clientOf(c),
-                );
-                const updates = updatesFor(
-                  snap.clientUpdates as ClientUpdate[],
-                  links,
-                );
-                const decided = decidedBySubject.get(c.campaignName);
-                const flag = flagFor(c);
-                const nums = boardNumbers(
-                  c,
-                  globalRange.key !== "7d",
-                  boardReads[String(c.campaignName)],
-                );
-                const cell = (value: React.ReactNode) =>
-                  nums.state === "loading" ? (
-                    <span className="font-normal text-muted-foreground">…</span>
-                  ) : nums.state === "error" ? (
-                    <span
-                      className="font-normal text-muted-foreground"
-                      title="This range could not be read. Pick it again, or open the campaign."
+            <table className="campaign-board w-full text-[14px]">
+              <thead>
+                <tr className="border-b font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">
+                  <th className="py-2 pr-2 text-left font-medium">Campaign</th>
+                  <th className="px-2 text-left font-medium">Spend</th>
+                  <th className="px-2 text-left font-medium">Leads</th>
+                  <th className="px-2 text-left font-medium">CPL</th>
+                  <th className="px-2 text-left font-medium">Bookings</th>
+                  <th className="px-2 text-left font-medium">Cost / booking</th>
+                  <th className="px-2 text-left font-medium">Budget / spend</th>
+                  <th className="px-2 text-left font-medium">Call</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filterReading && (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="py-6 text-center text-sm text-muted-foreground"
                     >
-                      n/a
-                    </span>
-                  ) : (
-                    value
-                  );
-                const ok = nums.state === "ok" ? nums : undefined;
-                // No booking on more than $60 reads "None on $233" in the
-                // grid's colour, not a grey n/a (2026-10-21).
-                const cpb = cpbDisplay(ok?.spend, ok?.bookings, {
-                  cost: ok?.costPerBooking,
-                  spendNotIn: ok?.spendNotIn,
-                });
-                // Only a real finding earns the eye-catching button.
-                const needsDecision = (c.findings ?? []).some(
-                  (f: Campaign) => f.severity !== "optimization",
-                );
-                // The name, the button and the row itself all open the
-                // same panel.
-                const toggle = () => {
-                  setMode("ads");
-                  if (!isOpen) setCampaignPanelTab("recommendations");
-                  setOpen(isOpen && mode === "ads" ? null : c.campaignName);
-                };
-                return (
-                  <Fragment key={c._id}>
-                    {newClient && (
-                      <tr>
-                        <td colSpan={8} className="campaign-client-header">
-                          <ClientHeader
-                            name={clientOf(c)}
-                            logoSrc={clientLogos[logoKey(c)]}
-                            links={links}
-                            updates={updates}
-                            rulesBelow={
-                              Boolean(open) &&
-                              mode === "ads" &&
-                              clientOf(
-                                (snap.campaigns as Campaign[]).find(
-                                  x => x.campaignName === open,
-                                ),
-                              ) === clientOf(c)
-                            }
-                            onOpen={
-                              c.internal
-                                ? undefined
-                                : () => {
-                                    setAccountView(
-                                      c.clientName ?? c.accountName,
-                                    );
-                                  }
-                            }
-                          />
-                        </td>
-                      </tr>
-                    )}
-                    <tr
-                      key={c._id}
-                      className={`campaign-summary cursor-pointer border-b align-top transition-colors hover:bg-muted/30 ${isOpen ? "bg-muted/40" : ""} ${adsTab === "off" && !isOpen ? "opacity-80" : ""}`}
-                      onClick={e => {
-                        // The controls inside the row keep their own clicks.
-                        if (
-                          (e.target as HTMLElement).closest(
-                            "button, a, input, select, textarea",
-                          )
-                        )
-                          return;
-                        toggle();
-                      }}
-                    >
-                      <td className="py-2.5 pr-2">
-                        <button
-                          type="button"
-                          className="text-left font-bold hover:underline"
-                          aria-expanded={isOpen}
-                          onClick={toggle}
+                      Reading {globalRange.label.toLowerCase()} for every
+                      campaign…
+                    </td>
+                  </tr>
+                )}
+                {(snap.campaigns as Campaign[])
+                  .filter(c => {
+                    // Parked campaigns have their own screen; nothing else
+                    // shows there. [Aziz, 2026-09-14]
+                    if (adsTab === "off") return isParked(c);
+                    if (isParked(c)) return false;
+                    if (filterReading) return false;
+                    return passes(filter, c);
+                  })
+                  // Grouped by client.
+                  .sort(
+                    (a, b) =>
+                      clientOf(a).localeCompare(clientOf(b)) ||
+                      String(a.campaignName).localeCompare(
+                        String(b.campaignName),
+                      ),
+                  )
+                  .map((c: Campaign, i: number, list: Campaign[]) => {
+                    const prev = i > 0 ? list[i - 1] : undefined;
+                    const newClient = !prev || clientOf(prev) !== clientOf(c);
+                    const isOpen = open === c.campaignName;
+                    const links = findClientLinks(
+                      (snap.clientLinks ?? []) as Campaign[],
+                      clientOf(c),
+                    );
+                    const updates = updatesFor(
+                      snap.clientUpdates as ClientUpdate[],
+                      links,
+                    );
+                    const decided = decidedBySubject.get(c.campaignName);
+                    const flag = flagFor(c);
+                    const nums = boardNumbers(
+                      c,
+                      globalRange.key !== "7d",
+                      boardReads[String(c.campaignName)],
+                    );
+                    const cell = (value: React.ReactNode) =>
+                      nums.state === "loading" ? (
+                        <span className="font-normal text-muted-foreground">
+                          …
+                        </span>
+                      ) : nums.state === "error" ? (
+                        <span
+                          className="font-normal text-muted-foreground"
+                          title="This range could not be read. Pick it again, or open the campaign."
                         >
-                          {c.campaignName}
-                        </button>
-                        {flag || c.serviceMode === "DWY" ? (
-                          <div>
-                            {flag && (
-                              <StatusChip tone={flag.tone} title={flag.title}>
-                                {flag.label}
-                              </StatusChip>
+                          n/a
+                        </span>
+                      ) : (
+                        value
+                      );
+                    const ok = nums.state === "ok" ? nums : undefined;
+                    // No booking on more than $60 reads "None on $233" in the
+                    // grid's colour, not a grey n/a (2026-10-21).
+                    const cpb = cpbDisplay(ok?.spend, ok?.bookings, {
+                      cost: ok?.costPerBooking,
+                      spendNotIn: ok?.spendNotIn,
+                    });
+                    // Only a real finding earns the eye-catching button.
+                    const needsDecision = (c.findings ?? []).some(
+                      (f: Campaign) => f.severity !== "optimization",
+                    );
+                    // The name, the button and the row itself all open the
+                    // same panel.
+                    const toggle = () => {
+                      setMode("ads");
+                      if (!isOpen) setCampaignPanelTab("recommendations");
+                      setOpen(isOpen && mode === "ads" ? null : c.campaignName);
+                    };
+                    return (
+                      <Fragment key={c._id}>
+                        {newClient && (
+                          <tr>
+                            <td colSpan={8} className="campaign-client-header">
+                              <ClientHeader
+                                name={clientOf(c)}
+                                logoSrc={clientLogos[logoKey(c)]}
+                                links={links}
+                                updates={updates}
+                                rulesBelow={
+                                  Boolean(open) &&
+                                  mode === "ads" &&
+                                  clientOf(
+                                    (snap.campaigns as Campaign[]).find(
+                                      x => x.campaignName === open,
+                                    ),
+                                  ) === clientOf(c)
+                                }
+                                onOpen={
+                                  c.internal
+                                    ? undefined
+                                    : () => {
+                                        setAccountView(
+                                          c.clientName ?? c.accountName,
+                                        );
+                                      }
+                                }
+                              />
+                            </td>
+                          </tr>
+                        )}
+                        <tr
+                          key={c._id}
+                          className={`campaign-summary cursor-pointer border-b align-top transition-colors hover:bg-muted/30 ${isOpen ? "bg-muted/40" : ""} ${adsTab === "off" && !isOpen ? "opacity-80" : ""}`}
+                          onClick={e => {
+                            // The controls inside the row keep their own clicks.
+                            if (
+                              (e.target as HTMLElement).closest(
+                                "button, a, input, select, textarea",
+                              )
+                            )
+                              return;
+                            toggle();
+                          }}
+                        >
+                          <td className="py-2.5 pr-2">
+                            <button
+                              type="button"
+                              className="text-left font-bold hover:underline"
+                              aria-expanded={isOpen}
+                              onClick={toggle}
+                            >
+                              {c.campaignName}
+                            </button>
+                            {flag || c.serviceMode === "DWY" ? (
+                              <div>
+                                {flag && (
+                                  <StatusChip
+                                    tone={flag.tone}
+                                    title={flag.title}
+                                  >
+                                    {flag.label}
+                                  </StatusChip>
+                                )}
+                                {c.serviceMode === "DWY" && (
+                                  <span
+                                    className="rounded-full border px-2 py-0.5 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground"
+                                    title="Done with you: we do not book for them, so this account is judged on cost per lead only."
+                                  >
+                                    DWY
+                                  </span>
+                                )}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="px-2 tabular-nums font-semibold">
+                            {cell(moneyOr(ok?.spend))}
+                          </td>
+                          <td className="px-2 tabular-nums font-semibold">
+                            {cell(ok?.leads ?? "n/a")}
+                          </td>
+                          <td
+                            className={`px-2 tabular-nums font-semibold ${costText(cplTone(ok?.cpl))}`}
+                          >
+                            {cell(moneyOr(ok?.cpl, 2))}
+                          </td>
+                          <td className="px-2 tabular-nums font-semibold">
+                            {cell(
+                              ok?.bookings === undefined ? (
+                                <span className="font-normal text-muted-foreground">
+                                  n/a
+                                </span>
+                              ) : (
+                                <>
+                                  {ok.bookings}
+                                  {ok.bookingRate !== undefined && (
+                                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                                      {Math.round(ok.bookingRate)}%
+                                    </span>
+                                  )}
+                                </>
+                              ),
                             )}
-                            {c.serviceMode === "DWY" && (
-                              <span
-                                className="rounded-full border px-2 py-0.5 font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground"
-                                title="Done with you: we do not book for them, so this account is judged on cost per lead only."
-                              >
-                                DWY
-                              </span>
+                          </td>
+                          <td
+                            className={`whitespace-nowrap px-2 tabular-nums font-semibold ${costText(cpb.tone)}`}
+                            title={ok ? cpb.why : undefined}
+                          >
+                            {cell(
+                              cpb.text === "n/a" || cpb.text === "None yet" ? (
+                                <span className="font-normal text-muted-foreground">
+                                  {cpb.text}
+                                </span>
+                              ) : (
+                                cpb.text
+                              ),
                             )}
-                          </div>
-                        ) : null}
-                      </td>
-                      <td className="px-2 tabular-nums font-semibold">
-                        {cell(moneyOr(ok?.spend))}
-                      </td>
-                      <td className="px-2 tabular-nums font-semibold">
-                        {cell(ok?.leads ?? "n/a")}
-                      </td>
-                      <td
-                        className={`px-2 tabular-nums font-semibold ${costText(cplTone(ok?.cpl))}`}
-                      >
-                        {cell(moneyOr(ok?.cpl, 2))}
-                      </td>
-                      <td className="px-2 tabular-nums font-semibold">
-                        {cell(
-                          ok?.bookings === undefined ? (
-                            <span className="font-normal text-muted-foreground">
-                              n/a
-                            </span>
-                          ) : (
-                            <>
-                              {ok.bookings}
-                              {ok.bookingRate !== undefined && (
-                                <span className="ml-1 text-xs font-normal text-muted-foreground">
-                                  {Math.round(ok.bookingRate)}%
+                          </td>
+                          <td className="px-2 tabular-nums">
+                            {/* What is set on Meta, where it lives, and what it actually spends. */}
+                            <div className="flex flex-wrap items-center gap-1.5 font-semibold">
+                              {c.budgetDaily !== undefined
+                                ? `${money(c.budgetDaily)}/day`
+                                : c.budgetLifetime !== undefined
+                                  ? `${money(c.budgetLifetime)} lifetime`
+                                  : "Not set"}
+                              {c.budgetLevel && (
+                                <span
+                                  className="rounded-full border px-1.5 py-px font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
+                                  title={
+                                    c.budgetLevel === "campaign"
+                                      ? "CBO: the budget is set on the campaign and Meta splits it across the ad sets"
+                                      : "ABO: each ad set has its own budget; this is their total"
+                                  }
+                                >
+                                  {c.budgetLevel === "campaign" ? "CBO" : "ABO"}
                                 </span>
                               )}
-                            </>
-                          ),
-                        )}
-                      </td>
-                      <td
-                        className={`whitespace-nowrap px-2 tabular-nums font-semibold ${costText(cpb.tone)}`}
-                        title={ok ? cpb.why : undefined}
-                      >
-                        {cell(
-                          cpb.text === "n/a" || cpb.text === "None yet" ? (
-                            <span className="font-normal text-muted-foreground">
-                              {cpb.text}
-                            </span>
-                          ) : (
-                            cpb.text
-                          ),
-                        )}
-                      </td>
-                      <td className="px-2 tabular-nums">
-                        {/* What is set on Meta, where it lives, and what it actually spends. */}
-                        <div className="flex flex-wrap items-center gap-1.5 font-semibold">
-                          {c.budgetDaily !== undefined
-                            ? `${money(c.budgetDaily)}/day`
-                            : c.budgetLifetime !== undefined
-                              ? `${money(c.budgetLifetime)} lifetime`
-                              : "Not set"}
-                          {c.budgetLevel && (
-                            <span
-                              className="rounded-full border px-1.5 py-px font-mono text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground"
-                              title={
-                                c.budgetLevel === "campaign"
-                                  ? "CBO: the budget is set on the campaign and Meta splits it across the ad sets"
-                                  : "ABO: each ad set has its own budget; this is their total"
-                              }
+                            </div>
+                            <div
+                              className={`text-xs ${c.dayRate < 30 ? "txt-bad" : "text-muted-foreground"}`}
                             >
-                              {c.budgetLevel === "campaign" ? "CBO" : "ABO"}
-                            </span>
-                          )}
-                        </div>
-                        <div
-                          className={`text-xs ${c.dayRate < 30 ? "txt-bad" : "text-muted-foreground"}`}
-                        >
-                          {money(c.dayRate)}/day avg
-                          {rangedBoard ? " over 7 days" : ""}
-                          {c.dataThrough
-                            ? ` · ${moneyOr(c.spendToday, 2)} on ${dayMonth(c.dataThrough)}`
-                            : ""}
-                        </div>
-                      </td>
-                      <td className="px-2">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <StatusChip
-                            tone={VERDICT_TONE[c.verdict] ?? "neutral"}
-                            title={c.reason}
+                              {money(c.dayRate)}/day avg
+                              {rangedBoard ? " over 7 days" : ""}
+                              {c.dataThrough
+                                ? ` · ${moneyOr(c.spendToday, 2)} on ${dayMonth(c.dataThrough)}`
+                                : ""}
+                            </div>
+                          </td>
+                          <td className="px-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <StatusChip
+                                tone={VERDICT_TONE[c.verdict] ?? "neutral"}
+                                title={c.reason}
+                              >
+                                {sentence(c.verdict)}
+                              </StatusChip>
+                              {decided ? (
+                                <span className="inline-flex items-start gap-1 text-xs text-muted-foreground">
+                                  <Check
+                                    className="mt-px size-3.5 shrink-0 text-[color:var(--success)]"
+                                    aria-hidden
+                                  />
+                                  <span>
+                                    {decided.action}
+                                    {decided.reroutedTo
+                                      ? `, sent to ${deptLabel(decided.reroutedTo)}`
+                                      : ""}
+                                  </span>
+                                </span>
+                              ) : (
+                                // One button, not four. The decisions live
+                                // inside the panel where the evidence is.
+                                <Button
+                                  size="sm"
+                                  variant={needsDecision ? "teal" : "outline"}
+                                  className="h-7 whitespace-nowrap px-2.5 text-xs"
+                                  onClick={() => {
+                                    setMode("ads");
+                                    if (!isOpen)
+                                      setCampaignPanelTab("recommendations");
+                                    setOpen(isOpen ? null : c.campaignName);
+                                  }}
+                                >
+                                  {isOpen ? "Close" : "What to do"}
+                                </Button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr
+                            key={`${c._id}-panel`}
+                            className="border-b bg-muted/20"
                           >
-                            {sentence(c.verdict)}
-                          </StatusChip>
-                          {decided ? (
-                            <span className="inline-flex items-start gap-1 text-xs text-muted-foreground">
-                              <Check
-                                className="mt-px size-3.5 shrink-0 text-[color:var(--success)]"
-                                aria-hidden
-                              />
-                              <span>
-                                {decided.action}
-                                {decided.reroutedTo
-                                  ? `, sent to ${deptLabel(decided.reroutedTo)}`
-                                  : ""}
-                              </span>
-                            </span>
-                          ) : (
-                            // One button, not four. The decisions live
-                            // inside the panel where the evidence is.
-                            <Button
-                              size="sm"
-                              variant={needsDecision ? "teal" : "outline"}
-                              className="h-7 whitespace-nowrap px-2.5 text-xs"
-                              onClick={() => {
-                                setMode("ads");
-                                if (!isOpen)
-                                  setCampaignPanelTab("recommendations");
-                                setOpen(isOpen ? null : c.campaignName);
-                              }}
-                            >
-                              {isOpen ? "Close" : "What to do"}
-                            </Button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                    {isOpen && (
-                      <tr
-                        key={`${c._id}-panel`}
-                        className="border-b bg-muted/20"
-                      >
-                        {/* Spans every header column. The panel inside is
+                            {/* Spans every header column. The panel inside is
                             pinned to the visible width, so on a phone the
                             chat and the forms fit the screen while the
                             table beside them scrolls. */}
-                        <td colSpan={8} className="p-0">
-                          <div className="sticky left-0 w-[100cqw] p-3 sm:p-4">
-                            {campaignPanel(c, {
-                              range: rangeFor(c.campaignName),
-                              onRangeChange: r => setRange(c.campaignName, r),
-                              onDone: () => setOpen(null),
-                            })}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-          </tbody>
-        </table>
-      </div>
-      {adsTab === "running" && (
-        <ClientsNotListed
-          range={globalRange}
-          campaigns={running}
-          onOpen={(name, accounts) => setAccountView(name, accounts)}
-        />
-      )}
-      {adsTab === "running" && (
-        <OffBoardCampaigns
-          rows={(snap.offBoardCampaigns ?? []) as Campaign[]}
-        />
-      )}
-      {adsTab === "off" && (
-        <BoardView
-          cards={(snap.boardCards ?? []) as Campaign[]}
-          campaigns={(snap.campaigns ?? []) as Campaign[]}
-          clientLogos={clientLogos}
-        />
+                            <td colSpan={8} className="p-0">
+                              <div className="sticky left-0 w-[100cqw] p-3 sm:p-4">
+                                {campaignPanel(c, {
+                                  range: rangeFor(c.campaignName),
+                                  onRangeChange: r =>
+                                    setRange(c.campaignName, r),
+                                  onDone: () => setOpen(null),
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+
+          {adsTab === "running" && (
+            <ClientsNotListed
+              range={globalRange}
+              campaigns={running}
+              onOpen={(name, accounts) => setAccountView(name, accounts)}
+            />
+          )}
+          {adsTab === "running" && (
+            <OffBoardCampaigns
+              rows={(snap.offBoardCampaigns ?? []) as Campaign[]}
+            />
+          )}
+          {adsTab === "off" && (
+            <BoardView
+              cards={(snap.boardCards ?? []) as Campaign[]}
+              campaigns={(snap.campaigns ?? []) as Campaign[]}
+              clientLogos={clientLogos}
+            />
+          )}
+        </>
       )}
     </section>
   );
@@ -3830,7 +3886,19 @@ function Cockpit({ view }: { view: View }) {
             <div className="min-w-0 space-y-6">
               {sprint}
               <div id="tasks" className="scroll-mt-6 space-y-6">
-                <Onboardings />
+                <LaunchToday data={launch.data} />
+                <Onboardings
+                  onBuild={name => {
+                    const c = launch.data?.clients.find(
+                      c => c.name.toLowerCase() === name.toLowerCase(),
+                    );
+                    if (c)
+                      window.location.assign(
+                        `/launch?client=${encodeURIComponent(c.id)}`,
+                      );
+                    else window.location.assign("/launch");
+                  }}
+                />
                 {tasksCard}
               </div>
               <div id="touchpoints" className="scroll-mt-6">
@@ -3864,6 +3932,9 @@ function Cockpit({ view }: { view: View }) {
           {!accountView && tiles}
           {!accountView && <LeadSyncStrip />}
           {!accountView && <TrackingIssues />}
+          {accountView && (
+            <LaunchAccountLink data={launch.data} name={accountView} />
+          )}
           {accountView && (
             <AccountView
               client={accountView}

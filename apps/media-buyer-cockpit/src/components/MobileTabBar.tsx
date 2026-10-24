@@ -5,6 +5,7 @@ import {
   Megaphone,
   Menu,
   MousePointerClick,
+  Rocket,
   Search,
   ShieldCheck,
   Sun,
@@ -87,6 +88,13 @@ export function MobileTabBar() {
             icon: Sunrise,
             to: "/dashboard",
             active: path === "/dashboard" || path === "/eod",
+          },
+          {
+            key: "launch",
+            label: "Launch",
+            icon: Rocket,
+            to: "/launch",
+            active: path === "/launch",
           },
           {
             key: "ads",

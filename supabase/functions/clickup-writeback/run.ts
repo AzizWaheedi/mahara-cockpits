@@ -288,6 +288,7 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
   try {
     const inputs = await deps.rpc("cockpit_clickup_writeback_inputs", { p_with_stats: false });
     const campaigns = ((inputs?.campaigns ?? []) as Row[]).filter(c => !c.internal) as any[];
+    const launches = items.some(i => String(i.payload?.operation ?? "").startsWith("launch.")) ? await deps.rpc("cockpit_launch_writeback_campaigns", {}) : [];
     const runProvider = paced(deps.providerFor(run.id), deps.pace);
     const boardFields = boardFieldsLoader(runProvider);
     // Billing edits write on Clients - Mahara cards; its dropdown options are read once per run.
@@ -299,7 +300,7 @@ export async function runLog(deps: Deps, limit = 15): Promise<JobResult> {
       }
       try {
         const provider = paced(deps.providerFor(item.id), deps.pace);
-        const built = item.steps?.length ? { steps: item.steps } : buildSteps(item, campaigns, deps.now());
+        const built = item.steps?.length ? { steps: item.steps } : buildSteps(item, campaigns, deps.now(), launches);
         if ("skip" in built) {
           counts.skipped += 1;
           await save(item.id, { state: "skipped", error: built.skip });

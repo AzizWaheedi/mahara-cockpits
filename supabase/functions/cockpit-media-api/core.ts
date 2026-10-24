@@ -13,7 +13,7 @@ export const STATUS_FIELD = '7f118f61-34b6-483a-b749-ff9fc31fd423';
 export const CITIES_FIELD = 'b98aa20e-c2d1-4785-baae-67e67506023d';
 export const OPERATIONS = new Set(['control.setStatus','ceo.b2bControl.setStatus','edit.setAdSetBudget',
  'edit.duplicateAdSet','board.adStatusOptions','board.advertisingCityOptions','board.setAdStatus',
- 'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS,...FUNNEL_OPERATIONS,...PAGE_FORM_OPERATIONS]);
+ 'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply','launch.readiness','launch.copyIdeas','launch.switchOn','launch.copy','launch.rebuild','launch.new','launch.attachAccount',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS,...FUNNEL_OPERATIONS,...PAGE_FORM_OPERATIONS]);
 export interface Provider { call(provider:'meta'|'clickup'|'slack'|'ghl'|'make', method:string,path:string,body?:Row,as?:{token:string}):Promise<Row> }
 // has: a tag or an assignee the read-back must show (the rest of the list is the provider's).
 // idFrom: where a create's id sits when the response does not carry it at the top (a ClickUp template task).
@@ -36,6 +36,7 @@ export async function dollarAccount(account:unknown,p:Provider) {
  if(cur!=='USD') throw new Error(`This ad account is in ${cur}, not USD. Change the budget in Ads Manager.`);
  return cur;
 }
+export function boardCardBody(name:string,tag:string,adStatus:unknown,cities:unknown[]=[]):Row { return {name,tags:[tag.toLowerCase()],custom_fields:[{id:STATUS_FIELD,value:adStatus},...(cities.length?[{id:CITIES_FIELD,value:cities}]:[])]}; }
 export async function prepare(operation:string,a:Row,s:Row,p:Provider):Promise<Plan|MultiPlan|{read:unknown}> {
  if(!OPERATIONS.has(operation)) throw new Error(`Unsupported provider operation: ${operation}`);
  if(B2B_OPERATIONS.includes(operation))return prepareB2b(operation,a,s,p);
@@ -63,7 +64,7 @@ export async function prepare(operation:string,a:Row,s:Row,p:Provider):Promise<P
    }
    if(operation==='board.addToBoard') {
     if(s.task) throw new Error('This campaign already has a board card');
-    return {provider:'clickup',method:'POST',path:`list/${ADS_LIST}/task`,body:{name:text(s.campaignName),tags:[text(s.client).toLowerCase()],custom_fields:[{id:STATUS_FIELD,value}]},verifyPath:'task/$id',expected:{name:s.campaignName,list:{id:ADS_LIST},field:STATUS_FIELD,value,aliases},result:{taskId:'$id',url:'$url'}};
+    return {provider:'clickup',method:'POST',path:`list/${ADS_LIST}/task`,body:boardCardBody(text(s.campaignName),text(s.client),value),verifyPath:'task/$id',expected:{name:s.campaignName,list:{id:ADS_LIST},field:STATUS_FIELD,value,aliases},result:{taskId:'$id',url:'$url'}};
    }
    const task=await checkedTask(s,p); const field=cities?CITIES_FIELD:STATUS_FIELD;
    const empty=cities&&(value as unknown[]).length===0;

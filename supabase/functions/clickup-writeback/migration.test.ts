@@ -31,7 +31,7 @@ describe("migration 20261009f", () => {
     const revoked = /REVOKE ALL ON FUNCTION([\s\S]*?)FROM PUBLIC,anon,authenticated;/g;
     const revokeText = [...SQL.matchAll(revoked)].map(m => m[1]).join(",");
     const grantText = /GRANT EXECUTE ON FUNCTION([\s\S]*?)TO service_role;/.exec(SQL)?.[1] ?? "";
-    for (const name of called) {
+    for (const name of called.filter(n=>n!=="cockpit_launch_writeback_campaigns")) {
       expect(SQL).toContain(`FUNCTION public.${name}(`);
       expect(revokeText).toContain(`public.${name}(`);
       expect(grantText).toContain(`public.${name}(`);
@@ -105,3 +105,5 @@ describe("migration 20261022z (R12 inputs)", () => {
     expect(/GRANT [^;]*cockpit_clickup_writeback_inputs[^;]* TO [^;]*(anon|authenticated)/.test(sql)).toBe(false);
   });
 });
+
+it('launch writeback RPC is service only in the launch migration',()=>{const sql=read('../../migrations/20261024b_media_launch_desk.sql');expect(sql).toContain('FUNCTION public.cockpit_launch_writeback_campaigns()');expect(sql).toContain('REVOKE ALL ON FUNCTION public.cockpit_launch_writeback_campaigns() FROM PUBLIC,anon,authenticated,service_role;');expect(sql).toContain('GRANT EXECUTE ON FUNCTION public.cockpit_launch_writeback_campaigns() TO service_role;');});

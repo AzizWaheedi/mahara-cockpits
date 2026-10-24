@@ -85,7 +85,7 @@ export const RETRY_MINUTES = [1, 5, 15, 60, 240];
 const trimTo = (s: unknown, n: number) => String(s ?? "").slice(0, n);
 
 /** The writes an item needs, or why it stays in the cockpit only. */
-export function buildSteps(item: QueueItem, campaigns: Campaign[], now: number): { steps: Step[] } | { skip: string } {
+export function buildSteps(item: QueueItem, campaigns: Campaign[], now: number, launches: Row[] = []): { steps: Step[] } | { skip: string } {
   const p = item.payload ?? {};
   if (item.kind === "tracking_backlog") {
     const marker = refLine(item.id, "t");
@@ -161,7 +161,7 @@ export function buildSteps(item: QueueItem, campaigns: Campaign[], now: number):
   const what = String(p.what ?? "");
   if (!isChange(what)) return { skip: "A question or a request, not a change, so it stays in the cockpit." };
   const campaignName = String(p.campaignName ?? "");
-  const card = cardFor(campaignName, campaigns);
+  const card = cardFor(campaignName, campaigns, launches);
   if (!card) return { skip: `No card on the ads management board for ${campaignName}, so this change is in the cockpit only.` };
   const steps: Step[] = [{
     key: "comment",

@@ -17,13 +17,24 @@ let state: CockpitAuthState | null = null;
 
 export function useCockpitAuth(): CockpitAuthState {
   if (!state) {
+    const launchSeat = new URLSearchParams(window.location.search)
+      .get("path")
+      ?.startsWith("/launch");
     const access = {
-      email: "ceo@example.test",
-      name: "The CEO",
-      roles: ["ceo"],
+      email: launchSeat ? "buyer@example.test" : "ceo@example.test",
+      name: launchSeat ? "Media buyer" : "The CEO",
+      roles: new URLSearchParams(window.location.search)
+        .get("path")
+        ?.startsWith("/launch")
+        ? ["media_buyer"]
+        : ["ceo"],
       clients: [],
-      isAdmin: true,
-      isCeo: true,
+      isAdmin: !new URLSearchParams(window.location.search)
+        .get("path")
+        ?.startsWith("/launch"),
+      isCeo: !new URLSearchParams(window.location.search)
+        .get("path")
+        ?.startsWith("/launch"),
       cockpits: ["csm", "creative", "editor", "sales"],
       home: "/ceo",
     };
@@ -50,8 +61,12 @@ export function useCockpitAuth(): CockpitAuthState {
       ready: true,
       error: null,
       isAuthenticated: true,
-      isAdmin: true,
-      isCeo: true,
+      isAdmin: !new URLSearchParams(window.location.search)
+        .get("path")
+        ?.startsWith("/launch"),
+      isCeo: !new URLSearchParams(window.location.search)
+        .get("path")
+        ?.startsWith("/launch"),
       email: access.email,
       name: access.name,
       roles: access.roles,
