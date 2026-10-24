@@ -9,7 +9,7 @@ const BUILT={version:'v1',questions:[
 const REQ='11111111-2222-4333-8444-555555555555';
 
 /** A page, its versions and its bucket in memory, with every call written down. */
-function world(opts:{live?:number;versions?:VersionRow[];built?:Row|null;uploadFails?:boolean;storedDiffers?:boolean;publicDown?:boolean}={}){
+function world(opts:{live?:number;versions?:VersionRow[];built?:Row|null;uploadFails?:boolean;storedDiffers?:boolean;publicDown?:boolean;noCounts?:boolean}={}){
  const calls:string[]=[];
  const form:FormRow={slug:'mergestudio',client_name:'mergestudio.kw',title:'Merge Studio form page',site_url:'https://mergestudio-form.vercel.app',object_path:'mergestudio/live.json',photos:['type-villa','type-apartment','band-dining'],bindings:{project_type:'ms_project_type',timing:'ms_timing'},live_version:opts.live??null};
  const versions:VersionRow[]=[...(opts.versions??[])];
@@ -34,7 +34,7 @@ function world(opts:{live?:number;versions?:VersionRow[];built?:Row|null;uploadF
   async begin(row){calls.push(`begin ${row.operation}`);const prior=actions[row.id];if(prior){if(prior.state==='confirmed')return prior.result;throw new Error('already');}actions[row.id]={state:'pending',...row};return null;},
   async finish(id,result){calls.push('finish');actions[id]={...actions[id],state:'confirmed',result};},
   async reconcile(id,message){calls.push('reconcile');actions[id]={...actions[id],state:'reconcile',message};},
-  async funnel(slug,version,since){calls.push(`funnel ${slug} ${version} ${since.toISOString().slice(0,10)}`);return {screens:{intro:100,'q:project_type':60,'q:timing':45,contact:40,send:22,thanks:20,'q:retired':9},versions:[{version:'v1',visits:100}],lastAt:'2026-10-22T11:00:00Z',hosts:['mergestudio-form.vercel.app']};},
+  async funnel(slug,version,since,adsOnly){calls.push(`funnel ${slug} ${version} ${since.toISOString().slice(0,10)} ${adsOnly?'ads':'all'}`);return {screens:{intro:100,'q:project_type':60,'q:timing':45,contact:40,send:22,thanks:20,'q:retired':9},versions:[{version:'v1',visits:100}],lastAt:'2026-10-22T11:00:00Z',hosts:['mergestudio-form.vercel.app'],...(opts.noCounts?{}:{counts:{all:130,ads:100}})};},
  };
  const fetcher=(async(url:string)=>{
   calls.push(`fetch ${url}`);
@@ -174,8 +174,25 @@ test('the funnel follows the version\'s own questions, in order, and names zero 
  expect(out.version).toBe('v1');
  expect(out.steps.map((s:Row)=>`${s.screen}=${s.visits}`)).toEqual(['intro=100','q:project_type=60','q:timing=45','contact=40','send=22','thanks=20']);
  expect(out.steps[1].label).toBe('شنو نوع مشروعك؟');
- expect(w.calls).toContain('funnel mergestudio v1 2026-10-15');
+ expect(w.calls).toContain('funnel mergestudio v1 2026-10-15 ads');
  expect(w.scopes).toContainEqual({slug:'mergestudio',client:null});
+});
+
+test('the funnel counts visits from ads unless all visits are asked for, and returns both totals', async () => {
+ const w=world();
+ const ads=await pageFormOperation('pageForms.funnel',{slug:'mergestudio',days:7},false,undefined,w.d) as Row;
+ expect(ads.source).toBe('ads');
+ expect(ads.counts).toEqual({all:130,ads:100});
+ const all=await pageFormOperation('pageForms.funnel',{slug:'mergestudio',days:7,source:'all'},false,undefined,w.d) as Row;
+ expect(all.source).toBe('all');
+ await pageFormOperation('pageForms.funnel',{slug:'mergestudio',days:7,source:'bots'},false,undefined,w.d);
+ expect(w.calls.filter(c=>c.startsWith('funnel'))).toEqual(['funnel mergestudio v1 2026-10-15 ads','funnel mergestudio v1 2026-10-15 all','funnel mergestudio v1 2026-10-15 ads']);
+});
+
+test('a funnel read from the old database function names missing totals as zero', async () => {
+ const w=world({noCounts:true});
+ const out=await pageFormOperation('pageForms.funnel',{slug:'mergestudio'},false,undefined,w.d) as Row;
+ expect(out.counts).toEqual({all:0,ads:0});
 });
 
 test('the funnel of a published version uses that version, and refuses an unknown one', async () => {

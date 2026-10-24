@@ -98,11 +98,17 @@ export type FunnelStep = {
   visits: number;
 };
 
+/** "ads": visits whose link carried a Meta ad or campaign id. "all": every visit. */
+export type FunnelSource = "ads" | "all";
+
 export type PageFormFunnel = {
   slug: string;
   version: string;
   liveVersion: string;
   days: number;
+  source: FunnelSource;
+  /** Visits in the range, all versions: from ads, and in all. */
+  counts: { all: number; ads: number };
   since: string;
   steps: FunnelStep[];
   /** Versions with any counted visit in the range. */
@@ -116,6 +122,7 @@ export async function readPageFormFunnel(args: {
   slug: string;
   version?: string;
   days: number;
+  source: FunnelSource;
 }): Promise<PageFormFunnel> {
   const data = (await mediaAction("pageForms.funnel", args)) as PageFormFunnel;
   if (!Array.isArray(data?.steps))
@@ -127,6 +134,7 @@ export function usePageFormFunnel(
   slug: string,
   version: string | undefined,
   days: number,
+  source: FunnelSource,
   tick: number,
 ) {
   const [data, setData] = useState<PageFormFunnel | undefined>(undefined);
@@ -140,7 +148,7 @@ export function usePageFormFunnel(
     const run = ++latest.current;
     setLoading(true);
     setError(null);
-    readPageFormFunnel({ slug, version, days })
+    readPageFormFunnel({ slug, version, days, source })
       .then(f => {
         if (run === latest.current) setData(f);
       })
@@ -151,7 +159,7 @@ export function usePageFormFunnel(
       .finally(() => {
         if (run === latest.current) setLoading(false);
       });
-  }, [slug, version, days, tick, again]);
+  }, [slug, version, days, source, tick, again]);
 
   const reload = useCallback(() => setAgain(t => t + 1), []);
   return { data, error, loading, reload };

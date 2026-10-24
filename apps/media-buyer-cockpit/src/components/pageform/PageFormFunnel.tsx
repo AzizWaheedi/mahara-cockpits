@@ -3,10 +3,20 @@ import { count, dateTime, pct, shortDate } from "@/components/ceo/format";
 import { STATUS_COLOR, StatusChip } from "@/components/ceo/StatusChip";
 import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { type FunnelStep, usePageFormFunnel } from "@/lib/pageFormClient";
+import {
+  type FunnelSource,
+  type FunnelStep,
+  usePageFormFunnel,
+} from "@/lib/pageFormClient";
 import { cn } from "@/lib/utils";
 
 const RANGES = [7, 30, 90] as const;
+const SOURCES: { value: FunnelSource; label: string }[] = [
+  { value: "ads", label: "From ads" },
+  { value: "all", label: "All visits" },
+];
+/** What the ad's URL parameters need for a visit to count as from an ad. */
+const AD_PARAM = "ad_id={{ad.id}}";
 
 /** Visits lost at a step: the step before it, minus this one. */
 const lost = (steps: FunnelStep[], i: number) =>
@@ -16,6 +26,8 @@ const lost = (steps: FunnelStep[], i: number) =>
  * Where visitors stop on the page, screen by screen, for one version.
  * Muhammed, 2026-10-22: see where leads fall while they fill the form.
  * Counts come from the page's own events (page-form-events), once per visit.
+ * "From ads" is the default, so the team's own visits stay out (Muhammed,
+ * 2026-10-24); "All visits" counts every visit.
  */
 export function PageFormFunnel({
   slug,
@@ -29,7 +41,8 @@ export function PageFormFunnel({
 }) {
   const [days, setDays] = useState<number>(30);
   const [version, setVersion] = useState<string | undefined>(undefined);
-  const funnel = usePageFormFunnel(slug, version, days, tick);
+  const [source, setSource] = useState<FunnelSource>("ads");
+  const funnel = usePageFormFunnel(slug, version, days, source, tick);
   const f = funnel.data;
   const steps = f?.steps ?? [];
   const opened = steps[0]?.visits ?? 0;
@@ -49,6 +62,25 @@ export function PageFormFunnel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm font-medium">Where visitors stop</p>
         <div className="flex flex-wrap items-center gap-2">
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={source}
+            onValueChange={v => v && setSource(v as FunnelSource)}
+            aria-label="Visits counted"
+          >
+            {SOURCES.map(s => (
+              <ToggleGroupItem key={s.value} value={s.value} className="px-2.5">
+                {s.label}
+                {f?.counts && (
+                  <span className="ml-1.5 text-muted-foreground tabular-nums">
+                    {count(f.counts[s.value])}
+                  </span>
+                )}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           {versions.length > 1 && (
             <ToggleGroup
               type="single"
@@ -99,10 +131,21 @@ export function PageFormFunnel({
           Reading the visits…
         </p>
       ) : opened === 0 && !f.lastAt ? (
-        <p className="mt-3 text-sm text-muted-foreground">
-          No visits recorded for {shown} in the last {days} days. Counts start
-          with the first real visit to the page; test visits never count.
-        </p>
+        f.source === "ads" ? (
+          <p className="mt-3 text-sm text-muted-foreground">
+            No visits from ads for {shown} in the last {days} days.{" "}
+            {(f.counts?.all ?? 0) > 0
+              ? `${count(f.counts.all)} ${f.counts.all === 1 ? "visit" : "visits"} came without an ad link, such as the team's; choose All visits to see them. `
+              : ""}
+            A visit counts as from an ad when the ad's URL parameters include{" "}
+            <code className="text-xs">{AD_PARAM}</code>.
+          </p>
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">
+            No visits recorded for {shown} in the last {days} days. Counts start
+            with the first real visit to the page; test visits never count.
+          </p>
+        )
       ) : (
         <ol
           className={cn("mt-3 space-y-2", funnel.loading && "opacity-60")}
@@ -159,11 +202,15 @@ export function PageFormFunnel({
         <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
           Each visit counts once per screen, on{" "}
           {f.hosts.length ? f.hosts.join(", ") : "no host yet"}, since{" "}
-          {shortDate(f.since)}. Test visits and the editor preview are not
-          counted.{" "}
+          {shortDate(f.since)}. From ads counts visits whose link carried a
+          Meta ad or campaign id (<code>{AD_PARAM}</code> in the ad's URL
+          parameters); All visits adds every other visit, such as the team's.
+          Test visits and the editor preview are never counted.{" "}
           {f.lastAt
-            ? `Last visit recorded ${dateTime(Date.parse(f.lastAt))}.`
-            : "No visit recorded yet."}{" "}
+            ? `Last ${f.source === "ads" ? "visit from an ad" : "visit"} recorded ${dateTime(Date.parse(f.lastAt))}.`
+            : f.source === "ads"
+              ? "No visit from an ad recorded yet."
+              : "No visit recorded yet."}{" "}
           Leads in the CRM are the count of record; "Saw the thank-you page"
           should match them.
         </p>
