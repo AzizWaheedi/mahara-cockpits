@@ -202,8 +202,8 @@ export function PageFormFunnel({
         <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
           Each visit counts once per screen, on{" "}
           {f.hosts.length ? f.hosts.join(", ") : "no host yet"}, since{" "}
-          {shortDate(f.since)}. From ads counts visits whose link carried a
-          Meta ad or campaign id (<code>{AD_PARAM}</code> in the ad's URL
+          {shortDate(f.since)}. From ads counts visits whose link carried a Meta
+          ad or campaign id (<code>{AD_PARAM}</code> in the ad's URL
           parameters); All visits adds every other visit, such as the team's.
           Test visits and the editor preview are never counted.{" "}
           {f.lastAt
