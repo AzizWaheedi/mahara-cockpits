@@ -74,7 +74,8 @@ export const isTaskId = (s: string) => /^[A-Za-z0-9_-]{1,40}$/.test(s);
 
 /**
  * A path on this origin under /creative/, else null: no second slash, no
- * backslash, no space or control character, no dot segment, 400 at most.
+ * backslash, no space or control character, no dot segment (plain or
+ * percent-encoded), 400 at most.
  */
 export function creativePath(p: string | null | undefined): string | null {
   if (typeof p !== "string" || p.length > 400) return null;
@@ -86,6 +87,8 @@ export function creativePath(p: string | null | undefined): string | null {
     if (c < 32 || c === 127) return null;
   }
   if (/\/\.\.?(?:[/?#]|$)/.test(p)) return null;
+  // The browser reads %2e as a dot: /creative/%2e%2e/x is /x.
+  if (/%2e/i.test(p)) return null;
   return p;
 }
 

@@ -22,7 +22,13 @@
  * - a frame sits on a path other than the deck harness's (the Blueprint's
  *   own path on the portal);
  * - while presenting, the prep frame is not inert or the deck frame does
- *   not have the keyboard;
+ *   not have the keyboard; Back (the browser's) takes the deck down or
+ *   moves the address; F does not put the deck frame full screen;
+ * - the prep's Present does not end under Open the notes window, the
+ *   frame's scrollbar is not at the window's edge, the prep's toolbar has
+ *   a rule of its own under the seam, or Present scrolls away;
+ * - a wheel over the header does not scroll the prep;
+ * - Ask Hermes shows on the call;
  * - the page or the stage scrolls sideways at 1024, 1440 or 1920 wide.
  */
 
@@ -110,6 +116,39 @@ const prepFrame = page =>
 const deckFrame = page =>
   page.frameLocator('iframe[title="Brand Blueprint deck"]');
 
+/** The seam: one rule, Present under the notes button, the bar at the edge. */
+async function seam(page, label) {
+  const r = await page.evaluate(() => {
+    const frame = document.querySelector('iframe[title="Brand Blueprint prep"]');
+    const notes = [...document.querySelectorAll("button")].find(
+      b => b.textContent?.trim() === "Open the notes window",
+    );
+    const doc = frame?.contentDocument;
+    const present = doc
+      ? [...doc.querySelectorAll("button")].find(
+          b => b.textContent?.trim() === "Present",
+        )
+      : null;
+    const fr = frame?.getBoundingClientRect();
+    const head = present?.closest("header");
+    return {
+      frameRight: fr ? fr.right : null,
+      notesRight: notes ? notes.getBoundingClientRect().right : null,
+      presentRight:
+        present && fr ? fr.left + present.getBoundingClientRect().right : null,
+      rule: head ? getComputedStyle(head).borderBottomWidth : null,
+      hermes: Boolean(document.querySelector("[data-hermes]")),
+    };
+  });
+  if (r.frameRight !== null && Math.abs(r.frameRight - page.viewportSize().width) > 1)
+    hit(`${label}: the prep frame stops ${page.viewportSize().width - r.frameRight}px short of the window's edge`);
+  if (r.notesRight !== null && r.presentRight !== null && Math.abs(r.notesRight - r.presentRight) > 2)
+    hit(`${label}: Present ends at ${r.presentRight}, Open the notes window at ${r.notesRight}`);
+  if (r.rule && r.rule !== "0px")
+    hit(`${label}: the prep's toolbar draws a second rule (${r.rule}) under the seam`);
+  if (r.hermes) hit(`${label}: Ask Hermes sits over the call`);
+}
+
 async function openCall(page, q, hash = "") {
   await page.goto(`${harness(q)}${hash}`);
   await page.waitForSelector('[data-stage="ready"]', { timeout: 30_000 });
@@ -123,11 +162,14 @@ async function wake(page) {
   await sleep(250);
 }
 
+// Scrollbars drawn as a desktop browser draws them (Playwright hides them
+// by default): the prep's 10px bar decides where its toolbar ends.
+const launch = { ignoreDefaultArgs: ["--hide-scrollbars"] };
 let browser;
 try {
-  browser = await chromium.launch({ channel: "chrome" });
+  browser = await chromium.launch({ ...launch, channel: "chrome" });
 } catch {
-  browser = await chromium.launch();
+  browser = await chromium.launch(launch);
 }
 
 try {
@@ -147,11 +189,37 @@ try {
         await page.evaluate(l => localStorage.setItem("csm_deck_lang", l), lang);
         await openCall(page, { bp });
         await sideways(page, `${tag} ${bp} ${lang}`);
+        await seam(page, `${tag} ${bp} ${lang}`);
         await shoot(page, `call-${bp}-${lang}-${tag}`);
       }
 
-    // Present, from the prep's own button.
+    // A wheel over the header scrolls the prep; Present stays under the seam.
     await page.evaluate(() => localStorage.setItem("csm_deck_lang", "en"));
+    await openCall(page, { bp: "part1" });
+    await page.mouse.move(600, 80);
+    await page.mouse.wheel(0, 900);
+    await sleep(500);
+    const scrolled = await page.evaluate(() => {
+      const w = document.querySelector(
+        'iframe[title="Brand Blueprint prep"]',
+      )?.contentWindow;
+      const present = w
+        ? [...w.document.querySelectorAll("button")].find(
+            b => b.textContent?.trim() === "Present",
+          )
+        : null;
+      return {
+        y: w?.scrollY ?? 0,
+        top: present ? present.getBoundingClientRect().top : null,
+      };
+    });
+    if (scrolled.y < 100)
+      hit(`${tag}: a wheel over the header did not scroll the prep (${scrolled.y})`);
+    if (scrolled.top === null || scrolled.top < 0 || scrolled.top > 40)
+      hit(`${tag}: Present scrolled away with the prep (top ${scrolled.top})`);
+    await shoot(page, `scrolled-${tag}`);
+
+    // Present, from the prep's own button.
     await openCall(page, { bp: "part1" });
     await prepFrame(page).getByRole("button", { name: "Present", exact: true }).click();
     await page.waitForSelector('[data-layer="live"]', { timeout: 30_000 });
@@ -169,6 +237,18 @@ try {
     await sleep(500);
     await shoot(page, `presenting-${tag}`);
 
+    // The browser's Back (a swipe, the mouse's back button) keeps the deck up.
+    const address = page.url();
+    await page.goBack({ waitUntil: "commit", timeout: 3_000 }).catch(() => null);
+    await sleep(500);
+    if (!(await page.$("[data-layer]")))
+      hit(`${tag}: Back took the shared deck down`);
+    if (page.url() !== address)
+      hit(`${tag}: Back moved the address to ${page.url()}`);
+    await page.evaluate(() =>
+      document.querySelector('iframe[title="Brand Blueprint deck"]')?.focus(),
+    );
+
     // Full screen (F), then out again.
     await page.keyboard.press("f");
     await sleep(600);
@@ -176,7 +256,7 @@ try {
       () => document.fullscreenElement?.getAttribute?.("title") ?? null,
     );
     if (full !== "Brand Blueprint deck")
-      console.log(`note: full screen held by ${full} (headless may refuse it)`);
+      hit(`${tag}: F did not put the deck frame full screen (${full})`);
     await shoot(page, `fullscreen-${tag}`);
     await page.evaluate(() =>
       document.fullscreenElement ? document.exitFullscreen() : null,
@@ -210,6 +290,10 @@ try {
     await page.waitForSelector('[data-layer="ended"]', { timeout: 10_000 });
     await sleep(300);
     await shoot(page, `ended-${tag}`);
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await sleep(150);
+    await shoot(page, `ended-focus-${tag}`);
     await page.getByRole("button", { name: "Present again" }).click();
     await page.waitForSelector('[data-layer="live"]', { timeout: 30_000 });
     await sleep(600);
@@ -229,6 +313,25 @@ try {
     }));
     if (after.root || after.prep)
       hit(`${tag}: the cockpit stayed out of reach after Back to prep`);
+
+    // An Arabic deck: its own End button, and the two buttons in Arabic.
+    await page.evaluate(() => localStorage.setItem("csm_deck_lang", "ar"));
+    await openCall(page, { bp: "part1" });
+    await prepFrame(page).getByRole("button", { name: "Present", exact: true }).click();
+    await page.waitForSelector('[data-layer="live"]', { timeout: 30_000 });
+    await sleep(600);
+    await wake(page);
+    const endAr = deckFrame(page).locator(".dk-chrome button").first();
+    if ((await endAr.textContent())?.trim() !== "سكّر العرض")
+      hit(`${tag}: the Arabic deck's Back reads ${await endAr.textContent()}`);
+    await endAr.click();
+    await page.waitForSelector('[data-layer="ended"]', { timeout: 10_000 });
+    await sleep(300);
+    if (!(await page.getByRole("button", { name: "رجوع للتحضير" }).count()))
+      hit(`${tag}: the closed Arabic deck's buttons are not in Arabic`);
+    await shoot(page, `ended-ar-${tag}`);
+    await page.getByRole("button", { name: "رجوع للتحضير" }).click();
+    await page.evaluate(() => localStorage.setItem("csm_deck_lang", "en"));
 
     // Open part 1 lands the prep at its part, and the frame still loads.
     await openCall(page, { bp: "part1" }, "#part1");
@@ -255,11 +358,27 @@ try {
       "signedout",
       "wronghost",
       "badid",
+      "noseat",
     ]) {
       await page.goto(harness({ bp: "part1", state }));
       await sleep(700);
       await sideways(page, `${tag} state=${state}`);
       await shoot(page, `state-${state}-${tag}`);
+    }
+
+    // The notes popup's own lines: the sign-in checked, and no seat.
+    if (W === sizes[0][0]) {
+      const small = await ctx.newPage();
+      await small.setViewportSize({ width: 520, height: 820 });
+      for (const state of ["checking", "noseat"]) {
+        await small.goto(
+          `${base}/creative/blueprint-harness.html?view=notes&fixture=full&bp=part1&state=${state}`,
+        );
+        await sleep(500);
+        await shoot(small, `notes-${state}`);
+      }
+      await small.close();
+      pages.splice(pages.indexOf(small), 1);
     }
 
     // A rehearsal, a read-only seat, and the light theme once.
@@ -288,6 +407,7 @@ try {
   watch(page, "1024");
   await openCall(page, { bp: "part1" });
   await sideways(page, "1024");
+  await seam(page, "1024");
   await shoot(page, "call-part1-en-1024");
   await ctx.close();
 } finally {

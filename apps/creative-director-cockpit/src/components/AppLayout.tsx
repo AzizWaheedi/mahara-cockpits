@@ -3,6 +3,7 @@ import { Search } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { useLocation, useOutlet } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { isBlueprintCall } from "@/lib/blueprint";
 import { openSearch } from "@/lib/search";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
@@ -121,7 +122,10 @@ function LayoutContent() {
             </motion.div>
           </RouteErrorBoundary>
         </div>
-        <HermesChat />
+        {/* Ask Hermes floats on every page but the Blueprint call: there
+            it would sit over the prep's right column at every scroll
+            position, and the call is the page's one job (EMBED.md 11.1). */}
+        {isBlueprintCall(location.pathname) ? null : <HermesChat />}
       </SidebarInset>
       <CommandPalette />
     </>

@@ -435,7 +435,7 @@ Brand Blueprint                                   [Run the Blueprint call]
                                                   [Lock the offer]
 ```
 
-- Each part shows one state: Not started · In progress (n of m) · Ready to send · Sending… · Sent {time} · Saved, not confirmed (Run it again) · Needs a look: {error} (link to the outbox row) · Changed since sent (Send the changes).
+- Each part shows one state: Not started · `In progress · n of m` · Ready to send · Sending… · Sent {time} · Saved, not confirmed (Run it again) · Needs a look: {error} (link to the outbox row) · Changed since sent (Send the changes).
 - **Run the Blueprint call** opens the prep view by name (`mahara-prep-{taskId}-blueprint`) at `${portalUrl()}/client-success/clients/{taskId}/present/blueprint?view=prep`, with the deck's `openNamed` logic copied into `src/lib/blueprint.ts` (15 lines; not pinned).
 - **Finish part 2** appears when part 2 is open after the call's time: it opens the same prep view at `#part2`, the whole form.
 - **Lock the offer** saves 3.1 and 3.4 through `cockpit_blueprint_save` (the same `p_changes` shape and session ID) and presses part 3 as in 3.1. Disabled with the reason while part 2 is open or 3.1 is incomplete.

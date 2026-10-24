@@ -79,6 +79,7 @@ const {
   callReducer,
   PartsRail,
   portalFrames,
+  railView,
   readsAgain,
   startCall,
   wrongHost,
@@ -86,7 +87,9 @@ const {
 const { BlueprintNotes } = await import("../src/pages/BlueprintNotesPage");
 const { stateView } = await import("../src/components/BlueprintCard");
 const { isActive } = await import("../src/components/AppSidebar");
-const { offerWait, partState, PARTS } = await import("../src/lib/blueprint");
+const { isBlueprintCall, offerWait, partState, PARTS } = await import(
+  "../src/lib/blueprint"
+);
 const { fakeBlueprintIO, rowFor, TASK } = await import(
   "../src/dev/blueprintFixtures"
 );
@@ -167,6 +170,25 @@ describe("the routes", () => {
     );
   });
 
+  test("while the sign-in is checked, the notes popup shows one centred line, never the cockpit's shell", () => {
+    auth = {
+      ready: false,
+      session: null,
+      isAuthenticated: false,
+      access: null,
+    };
+    const popup = html(
+      createElement(AuthenticatedRoutes),
+      `/blueprint/${TASK}/notes`,
+    );
+    expect(text(popup)).toBe("Opening the notes…");
+    expect(popup).not.toContain("data-sidebar");
+    const call = html(createElement(AuthenticatedRoutes), `/blueprint/${TASK}`);
+    expect(call).toContain("data-sidebar");
+    expect(text(call)).not.toContain("Opening the notes");
+    seat("creative");
+  });
+
   test("signed out, neither draws: the sign-in gate sends both away", () => {
     // ProtectedRoute's Navigate to /login moves after the first paint, so a
     // static render shows nothing at all, never the page.
@@ -219,7 +241,9 @@ describe("the frames' addresses", () => {
     expect(host.blueprintCall("not a card")).toBeNull();
     const h = page(startCall, { taskId: "not a card" });
     expect(text(h)).toContain("No client card with that ID.");
-    expect(text(h)).toContain("Back to clients");
+    // One name for one place: the back link's own words.
+    expect(text(h)).toContain("All clients");
+    expect(text(h)).not.toContain("Back to clients");
     expect(h).not.toContain("<iframe");
     expect(
       text(
@@ -386,10 +410,29 @@ describe("the states (EMBED.md 4.6)", () => {
       }),
     );
     const h = page(s);
-    expect(text(h)).toContain("The Blueprint is for clients in onboarding.");
+    // A headline, then the deck's own sentence as the quiet line, as slow reads.
+    expect(text(h)).toContain(
+      "The Blueprint did not open. The Blueprint is for clients in onboarding.",
+    );
+    expect(h).toMatch(
+      /<p class="[^"]*text-muted-foreground[^"]*">The Blueprint is for clients in onboarding\.<\/p>/,
+    );
     expect(text(h)).toContain("Reload");
     expect(text(h)).toContain("Back to Cedar and Stone Interiors (example)");
     expect(h).not.toContain("<iframe");
+    // No name anywhere: the clients, in the back link's own words.
+    expect(
+      text(
+        page(s, {
+          clientName: null,
+          initialRead: {
+            row: { ...rowFor("part1")!, clientName: "" },
+            now: new Date().toISOString(),
+            at: Date.now(),
+          },
+        }),
+      ),
+    ).toContain("All clients");
     // A frame that wandered off its path is hidden the same way.
     const left = run(ready, { type: "trouble", from: "prep", t: "left" });
     expect(left.stage.kind).toBe("failed");
@@ -401,7 +444,11 @@ describe("the states (EMBED.md 4.6)", () => {
     expect(text(page(s, { offline: true }))).toContain(
       "You're offline. The Blueprint opens when the connection is back.",
     );
-    expect(text(page(s, { offline: true }))).toContain(
+    // Nothing to type into yet: the stage says it, the chip does not.
+    expect(text(page(s, { offline: true }))).not.toContain(
+      "Offline: what you type saves",
+    );
+    expect(text(page(ready, { offline: true }))).toContain(
       "Offline: what you type saves when the connection is back.",
     );
     expect(
@@ -412,11 +459,21 @@ describe("the states (EMBED.md 4.6)", () => {
     expect(mid.stage.kind).toBe("ready");
   });
 
-  test("signed out in the frame: one line, no frame", () => {
+  test("signed out in the frame: one line, Sign in, and Reload quietly", () => {
     const s = run(ready, from("prep", { type: "signed-out" }));
     const h = page(s);
-    expect(text(h)).toContain("Sign in to the cockpit again.");
+    expect(text(h)).toContain("Sign in to the cockpit again. Sign in Reload");
     expect(h).not.toContain("<iframe");
+    // Without the page's sign-out (the harness), the sign-in page itself,
+    // coming back to this call.
+    expect(h).toContain(
+      `href="/login?next=${encodeURIComponent(`/blueprint/${TASK}`)}"`,
+    );
+    // On the route, Sign in signs this browser out, so the cockpit's own
+    // gate sends him to sign in and back here.
+    const routed = page(s, { onSignIn: () => {} });
+    expect(routed).not.toContain('href="/login');
+    expect(text(routed)).toContain("Sign in Reload");
   });
 
   test("wrong host: the direct Vercel address sends him to the portal", () => {
@@ -492,7 +549,7 @@ describe("the states (EMBED.md 4.6)", () => {
 
 describe("the parts rail", () => {
   const now = Date.parse("2026-10-24T09:00:00Z");
-  test("the card's words for every record state", () => {
+  test("where each part was sent, in the card's words; no progress (the prep's panel has it)", () => {
     for (const state of [
       "open",
       "part1",
@@ -515,15 +572,38 @@ describe("the parts rail", () => {
         ),
       );
       for (const p of PARTS) {
-        const v = stateView(
-          p,
-          partState(row, p, row?.answers ?? {}, now),
-          row,
-          p === 3 ? offerWait(row, now) : null,
-        );
+        const st = partState(row, p, row?.answers ?? {}, now);
+        const wait = p === 3 ? offerWait(row, now) : null;
+        const v = railView(p, st, row, wait);
         expect(h).toContain(v.text);
+        // A part with a send to its name reads as the card does.
+        if (
+          ["sent", "sending", "unconfirmed", "needs_look", "changed"].includes(
+            st.kind,
+          )
+        )
+          expect(v.text).toBe(stateView(p, st, row, wait).text);
       }
+      // Counts and readiness are the prep's to say.
+      expect(h).not.toMatch(/\d+ of \d+|In progress|Ready|Not started/);
     }
+    // Not sent yet, in each part's own words.
+    const open = text(
+      html(
+        createElement(PartsRail, {
+          read: {
+            row: rowFor("open"),
+            now: new Date(now).toISOString(),
+            at: Date.now(),
+          },
+          onRetry: () => {},
+          now,
+        }),
+      ),
+    );
+    expect(open).toContain("Not sent yet");
+    expect(open).toContain("Call not closed yet");
+    expect(open).toContain("Opens when the call closes");
   });
 
   test("a failed read says so and offers to read again, never Not started", () => {
@@ -553,6 +633,34 @@ describe("the parts rail", () => {
     expect(readsAgain({ type: "state" })).toBeNull();
     expect(readsAgain(null)).toBeNull();
   });
+});
+
+test("Ask Hermes stays off the call page, and on everywhere else", () => {
+  // AppLayout leaves HermesChat out where this is true.
+  expect(isBlueprintCall(`/blueprint/${TASK}`)).toBe(true);
+  expect(isBlueprintCall("/clients/Noor")).toBe(false);
+  expect(isBlueprintCall("/dashboard")).toBe(false);
+  const layout = readFileSync(
+    new URL("../src/components/AppLayout.tsx", import.meta.url),
+    "utf8",
+  );
+  expect(layout).toContain(
+    "{isBlueprintCall(location.pathname) ? null : <HermesChat />}",
+  );
+});
+
+test("the shared deck's colours are the cockpit's tokens", () => {
+  const src = readFileSync(
+    new URL("../src/pages/BlueprintCallPage.tsx", import.meta.url),
+    "utf8",
+  );
+  expect(src).not.toMatch(/#[0-9a-f]{6}\b/i);
+  const css = readFileSync(
+    new URL("../src/index.css", import.meta.url),
+    "utf8",
+  );
+  expect(css).toContain("--color-deck-ground: var(--deck-ground);");
+  expect(css).toContain("--color-deck-ink: var(--deck-ink);");
 });
 
 // ------------------------------------------------------------- 7. the rail lit

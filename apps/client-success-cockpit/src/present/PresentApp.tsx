@@ -158,6 +158,12 @@ export function PresentApp({
     }, 250);
   }, [host]);
 
+  // The shared deck's document speaks the deck's language, so the page that
+  // holds the frame labels its two buttons on the closed screen in it.
+  useEffect(() => {
+    if (host && view === "present") document.documentElement.lang = model.lang;
+  }, [host, view, model.lang]);
+
   // The page that holds the frame learns when the data is drawn (its name
   // for the header) or why it never will be.
   const told = useRef<"ready" | "failed" | null>(null);
@@ -324,6 +330,7 @@ export function PresentApp({
       setLang={model.setLang}
       hub={model.hub}
       onBack={back}
+      endsInPlace={Boolean(host)}
       onNotes={openNotes}
       onPos={onPos}
       closed={closed}

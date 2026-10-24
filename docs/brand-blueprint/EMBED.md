@@ -13,8 +13,8 @@ The CEO's ask (2026-10-24, verbatim): "And make the Brand Blueprint part not red
 | What | The Blueprint call (prep, the shared deck, the notes window) opens **inside the creative director cockpit**, in the same tab, at `/creative/blueprint/:taskId`. The client success app's deck engine still draws it, inside a same-origin frame on a creative director (CD) page. No code is copied. |
 | Why this and not a second copy of the engine | The engine is 74 files and about 54,500 lines (`apps/client-success-cockpit/src/present`), plus 21 other client success modules it imports. `scripts/ship.sh` deploys each app from its own folder (`vercel deploy --archive tgz` in `apps/<app>`), so the CD build on Vercel never sees the client success sources: a shared alias cannot build there, and a copy would be about 95 files (the engine and what it imports) pinned in `check-shared.sh`, with every deck fix made twice. Section 3. |
 | Why it works | Both apps are on one origin in production (`cockpit.maharamedia.com`), keep the Supabase session under the same `localStorage` key, and get one header that allows same-origin framing (`frame-ancestors 'self'`, no `X-Frame-Options`, no `frame-src`). Checked on production on 24 Oct (section 2). A frame of `/client-success/...` on a `/creative/...` page is signed in, gated by the same seat rules, and shares `BroadcastChannel` with the notes window. |
-| The flow | Client page, **Run the Blueprint call** → the call page in the same tab: the CD's header (back to the client, the three parts, Open the notes window) over the prep view. **Present** (in prep) → the deck takes the whole tab; **Full screen** (F) fills the monitor. **Notes** (N) → a small popup at `/creative/blueprint/:taskId/notes`. **Back** on the deck → "Deck closed", then Back to prep or Present again. |
-| What changes | Client success app: a dormant "host mode" read from `?host=creative` inside a same-origin frame, only for the Blueprint deck (about 150 lines). CD app: two routes, the call page, the notes page, the card's buttons, a dev proxy, the harness (about 450 lines). One new 80-line import-free file, `deckHost.ts`, pinned byte for byte in both apps. No SQL, no Edge Function, no `vercel.json` change. |
+| The flow | Client page, **Run the Blueprint call** → the call page in the same tab: the CD's header (back to the client, the three parts, Open the notes window) over the prep view. **Present** (in prep) → the deck takes the whole tab; **Full screen** (F) fills the monitor. **Notes** (N) → a small popup at `/creative/blueprint/:taskId/notes`. **End the deck** (the deck's Back) → "Deck closed", then Back to prep or Present again. The browser's Back while presenting keeps the deck up. |
+| What changes | Client success app: a dormant "host mode" read from `?host=creative` inside a same-origin frame, only for the Blueprint deck (about 150 lines). CD app: two routes, the call page, the notes page, the card's buttons, a dev proxy, the harness (about 450 lines). One new 80-line import-free file, `deckHost.ts`, pinned byte for byte in both apps. One header line: the CD project's own policy gains `frame-ancestors 'self'` (its direct host could be framed by any site; nothing changes on the portal, which sends the media buyer's header). No SQL, no Edge Function. |
 | What does not change | The CSM's onboarding and launch decks, their windows and routes; the server gate (`cockpit_blueprint_gate_for_actor`); every write path (`cockpit_blueprint_*` from the seat's own client); the CSM's own "Open the Blueprint deck". |
 | Size | About half a day for one builder (client success part about 2 hours, CD part about 3, tests and shots about 1.5), or two builders in parallel. |
 
@@ -107,7 +107,7 @@ Headless Chrome; the headed check is in section 8.
 **Design plan** (the cockpit's own system, `docs/DESIGN.md`; nothing new):
 - **Subject and job.** The CD, 15 minutes before and during a 45-minute call. The page has one job: take him from prep to presenting without leaving the cockpit, and keep prep off the client's screen.
 - **Tokens.** Deep Space ground (`--background`), cards one step lighter, `--border` hairlines; Geist for words, Geist Mono for part numbers and times; the card's dots (`--success` sent, `--primary` live or ready, `--warning` changed or unconfirmed, `--destructive` needs a look, muted for not yet). Teal stays on one action, Present, which lives in the prep toolbar inside the frame. No new colour, font or radius.
-- **Layout.** The header block at the stage's width (built: see 11; the same back link as `ClientPage.tsx`), then the stage, full-bleed: negative margins cancel `AppLayout`'s padding below the header, and the frame's height is the viewport below its own top edge (measured on mount and resize, at least 560 px), so the frame scrolls inside and the page never shows two scrollbars.
+- **Layout.** The header block at the stage's width (built: see 11; the same back link as `ClientPage.tsx`), then the stage, full-bleed: negative margins cancel `AppLayout`'s padding below the header, and the frame's height is the viewport below its own top edge (measured on mount and resize, at least 560 px), so the frame scrolls inside and the page never shows two scrollbars. The frame reaches the window's right edge, so its scrollbar is where every cockpit page has one; a wheel over the header scrolls the prep (11.1).
 - **Signature: the seam.** The frame sits flush under one hairline that runs the page's width, with no card around it, so the prep reads as the lower half of the CD page, not a box inside it. The one other new thing is the parts rail: the card's three rows folded into one line. Everything else is quiet.
 
 ```
@@ -127,17 +127,17 @@ Headless Chrome; the headed check is in section 8.
 └─────────┴──────────────────────────────────────────────────────────────────────┘
 ```
 
-- **The parts rail** uses the card's own state words and dots (`stateView` and `Dot`, exported from `BlueprintCard.tsx`, so the card and the rail cannot say different things), without the card's buttons. It reads the record (`readBlueprints`) on mount, on window focus (5 s throttle), and at once on `bp-part` and `bp-saved` from the call's channel (not in a rehearsal), exactly as the card does. It says what the record holds; the prep's "The parts" panel says what is typed in this call. A failed read shows the card's sentence ("The Blueprint record could not be read: … Read it again"), never "Not started".
+- **The parts rail** says only what the record holds and the prep cannot see: where each part was sent (11.1). A part sent, sending, changed or needing a look reads in the card's own words and dots (`stateView` and `Dot`, exported from `BlueprintCard.tsx`); a part not sent yet says "Not sent yet", "Call not closed yet", "Opens when the call closes" or "Not locked yet" (`railView`). Progress ("In progress · 5 of 8") is the prep's "The parts" panel's alone. No buttons. It reads the record (`readBlueprints`) on mount, on window focus (5 s throttle), and at once on `bp-part` and `bp-saved` from the call's channel (not in a rehearsal), exactly as the card does. It says what the record holds; the prep's "The parts" panel says what is typed in this call, in the one format `In progress · n of m` (that panel's old "In progress (n of m)" changed with it, for the CSM's windows too). A failed read shows the card's sentence ("The Blueprint record could not be read: … Read it again"), never "Not started".
 - **Open the notes window** (outline) opens the popup from the page itself, so the CD can put it on his second screen before the call. Same window name as the deck's N (`mahara-notes-{taskId}-blueprint`, `-rehearse` in a rehearsal), so there is only ever one.
-- **In the frame (host mode)** the prep toolbar drops its "← {client}" link and its "Prepare the Brand Blueprint deck" title (the CD header holds both) and keeps the ready count, the language switch and **Present**. Its explanatory line becomes "Present fills this tab with the shared deck."
+- **In the frame (host mode)** the prep toolbar drops its "← {client}" link and its "Prepare the Brand Blueprint deck" title (the CD header holds both) and keeps the ready count, the language switch and **Present**. It has no rule of its own (the seam is the one rule), sticks to the top as the prep scrolls, and ends where the CD header ends (11.1). Its explanatory line ends at "Back, Next and the strip move it.": the CD header already says what Present does.
 - A hash on the CD address (`#part2` from **Finish part 2**) is passed in the frame's address; a later change is forwarded to the frame's `location.hash`. The Blueprint prep scrolls to `#part1` to `#part3` once its data is drawn and on `hashchange` (a fix that also helps the CSM's windows, which today land at the top).
 
 ### 4.3 Present, full screen, and back
 
-- **Present** (prep toolbar) flushes the prep's saves, then asks the host to present. The host shows the **presenting layer**: a `fixed inset-0` layer above everything (`z-[60]`, over HermesChat's `z-40` and dialogs' `z-50`; `AppLayout`'s page wrapper animates opacity only, so `position: fixed` reaches the viewport) on the deck's ground (`#091333`), holding a second frame with the shared deck. The prep frame stays mounted beneath it, `inert`, so it keeps its place and no key reaches it. When the deck says `ready`, the host focuses the deck frame, so arrows, Space, N, F and L go to the deck.
+- **Present** (prep toolbar) flushes the prep's saves, then asks the host to present. The host shows the **presenting layer**: a `fixed inset-0` layer above everything (`z-[60]`, over HermesChat's `z-40` and dialogs' `z-50`; `AppLayout`'s page wrapper animates opacity only, so `position: fixed` reaches the viewport) on the deck's ground (the `--deck-ground` token, Deep Space), holding a second frame with the shared deck. The prep frame stays mounted beneath it, `inert`, so it keeps its place and no key reaches it. When the deck says `ready`, the host focuses the deck frame, so arrows, Space, N, F and L go to the deck. While the layer is up, the browser's Back (a trackpad swipe, the mouse's back button, Cmd+[) does nothing: a guard history entry with the router's own state is pushed and pushed again on each Back, and taken off when the layer goes, as the old deck window had no history to go back to.
 - **The tab is the shared screen.** Present fills the tab, not the monitor, so the notes popup stays reachable on one screen. This keeps the deck's standing advice ("maximised rather than full screen, so you can reach this window"); the CD shares the tab ("Share this tab" in Chrome and Meet) instead of a window, and the client sees only the deck.
 - **Full screen** (the deck's own button and F) works unchanged: the deck frame calls `requestFullscreen()` on its own document, which a same-origin frame may do (probe 1); the layer carries `allow="fullscreen"` and `allowfullscreen` anyway. Esc leaves full screen and the deck still fills the tab.
-- **Back** (the deck's "Back to {client}") leaves full screen if it is on, shows the deck's existing closed screen ("Deck closed" / "انتهى العرض"), and tells the host, which puts two small buttons on it: **Back to prep** and **Present again**. Prep never appears on a shared tab by surprise: leaving takes a second, deliberate press. **Back to prep** removes the deck frame; its `pagehide` posts `closed` on the channel, and the notes window shows its recap, as when the deck window closes today. **Present again** draws a fresh deck at the cover; the notes window rejoins mid-call as it does today.
+- **End the deck** (the deck's Back, which in host mode reads "End the deck" / "سكّر العرض", since it never goes to the client) leaves full screen if it is on, shows the deck's existing closed screen ("Deck closed" / "انتهى العرض"), and tells the host, which puts two small buttons on it, in the deck's language (the deck frame's document carries it): **Back to prep** and **Present again** ("رجوع للتحضير", "اعرض مرة ثانية"). Prep never appears on a shared tab by surprise: leaving takes a second, deliberate press. **Back to prep** removes the deck frame; its `pagehide` posts `closed` on the channel, and the notes window shows its recap, as when the deck window closes today. **Present again** draws a fresh deck at the cover; the notes window rejoins mid-call as it does today.
 - Leaving the page mid-prep keeps typed answers: removing a frame fires `pagehide`, and the Blueprint saver already flushes on it (`useBlueprint.ts` 419 to 430).
 
 ### 4.4 The notes window
@@ -184,14 +184,14 @@ export const notesWindowName = (taskId: string, rehearse = false) =>
 |---|---|---|
 | Loading | Call page stage | The CD header draws at once (name from router state, or a skeleton line). The stage says "Opening the Blueprint…" on the cockpit ground; the frame fades in (140 ms, none under reduced motion) on `ready`. |
 | Slow or never opened | Stage, after 15 s with no `ready` | "The Blueprint did not open." · "Reload it. Nothing you saved is lost." · **Reload** (mounts the frame again). |
-| Refused or failed | Stage, on `failed` | The deck's own sentence (the server's refusal through `problem()`, a read that failed, or the deck's crash screen) · **Reload** · "Back to {client}". |
+| Refused or failed | Stage, on `failed` | "The Blueprint did not open." over the deck's own sentence as the quiet line (the server's refusal through `problem()`, a read that failed, the deck's crash screen, or the client success app's root crash in a host frame) · **Reload** · "Back to {client}" ("All clients" with no name). |
 | No seat | Call page | The CD's `RoleRoute`: "This cockpit isn't yours" (unchanged). A CSM keeps her own route at `/client-success/…`. |
-| Signed out | Call page and frames | The CD's `ProtectedRoute` sends the page to `/creative/login?next=…` (unchanged). A frame in host mode never shows the client success sign-in or its sidebar skeleton: while the session is checked it says "Opening…", and with no session it says "Sign in to the cockpit again." and posts `signed-out`. |
+| Signed out | Call page and frames | The CD's `ProtectedRoute` sends the page to `/creative/login?next=…` (unchanged). A frame in host mode never shows the client success sign-in or its sidebar skeleton: while the session is checked it says "Opening…", and with no session it says "Sign in to the cockpit again." and posts `signed-out`. The page then shows that line with **Sign in** (signs this browser out, so the CD's own gate sends him to `/login?next=/blueprint/:taskId` and back) and a quiet Reload. |
 | Offline when opening | Stage | "You're offline. The Blueprint opens when the connection is back." The frame mounts on the `online` event. |
-| Offline mid-call | Header chip | "Offline: what you type saves when the connection is back." (the saver retries; `blueprint-saver.test.ts` covers it). The prep and the open deck keep working. |
+| Offline mid-call | Header chip, only once the prep is open | "Offline: what you type saves when the connection is back." (the saver retries; `blueprint-saver.test.ts` covers it). The prep and the open deck keep working. Offline before the prep opens, only the stage line shows. |
 | Present while offline, or the deck fails | Presenting layer | "The deck did not open." · **Back to prep**. |
 | Wrong host (a `*.vercel.app` address or a preview) | Call page | "The Blueprint opens on cockpit.maharamedia.com." · **Open it there** (the same path on the portal). |
-| Not a card ID | Call page | "No client card with that ID." · "Back to clients". |
+| Not a card ID | Call page | "No client card with that ID." · "All clients". |
 | Rehearsal | Header | The card's callout: "Rehearsal: nothing is saved or sent. Each press shows its plan." The rail reads the real record; the channel is not listened to. |
 | Read only (a CSM or a seat that may not write) | Header | The card's line: "Only the creative director sends the parts." |
 
@@ -205,11 +205,12 @@ export const notesWindowName = (taskId: string, rehearse = false) =>
 | Call page, title | "Brand Blueprint call" |
 | Call page, hint | "Present fills this tab with the deck. Share only this tab on the call." |
 | Call page, button | "Open the notes window" |
-| Presenting layer, after Back | "Back to prep" · "Present again" |
-| Prep (host mode), explanatory line | "Present fills this tab with the shared deck." |
+| Deck (host mode), its Back | "End the deck" · "سكّر العرض" |
+| Presenting layer, after End the deck | "Back to prep" · "Present again" (Arabic deck: "رجوع للتحضير" · "اعرض مرة ثانية") |
+| Prep (host mode), explanatory line | "The preview is live: tick, type and pick on it as you will on the call. Back, Next and the strip move it." |
 | Notes (host mode), footer | "Share only the Blueprint's tab on the call. The deck fills it; this window stays private." |
 | Notes (host mode), header | "press Present to follow it here" |
-| Frame (host mode), session | "Opening…" · "Sign in to the cockpit again." |
+| Frame (host mode), session | "Opening…" · "Sign in to the cockpit again." (the page adds **Sign in** · Reload) · a crash: "The Blueprint could not be drawn." |
 | Notes page | window title "Notes · {client}"; "Opening the notes…"; "The notes did not open. Reload this window." · **Reload** |
 | States | as in 4.6 |
 
@@ -226,12 +227,15 @@ export const notesWindowName = (taskId: string, rehearse = false) =>
 | `src/present/PresentApp.tsx` | With a host: `openNotes` opens `host.notes` under `notesWindowName`; `back` leaves full screen, sets `closed`, and posts `end`; prep's `links.present` flushes and posts `present` (no window); posts `ready` when the data is first drawn and `failed` when `model.error` has no data. Hands `host` to `PrepView` and `NotesWindow`. Without a host, nothing changes. |
 | `src/present/PrepView.tsx` | With a host: hide the back link and the title; the explanatory line of 4.7. For the Blueprint, scroll to `#part1` to `#part3` after drawing and on `hashchange`. |
 | `src/present/NotesWindow.tsx` | With a host: the two lines of 4.4. |
-| `src/components/ProtectedRoute.tsx` | In a host-mode frame: "Opening…" instead of `AppSkeleton`; "Sign in to the cockpit again." and `post signed-out` instead of `Navigate` to `/login`. |
-| `src/present/DeckBoundary.tsx` | `DeckRouteBoundary` posts `failed` in host mode; reports carry `p_role: "creative"` from a host frame (one line). |
+| `src/components/ProtectedRoute.tsx`, `src/components/FrameLine.tsx` (new) | In a host-mode frame: "Opening…" instead of `AppSkeleton`; "Sign in to the cockpit again." and `post signed-out` instead of `Navigate` to `/login`. |
+| `src/components/ErrorBoundary.tsx` | The root boundary in a host frame (a stale chunk after a deploy): posts `failed` and draws one plain line, never the stack trace. |
+| `src/present/DeckBoundary.tsx` | `DeckRouteBoundary` posts `failed` in host mode; reports from a host frame carry `p_app` and `p_role` creative (`cockpit_submit_issue_report` takes an app only with its own role). |
+| `src/present/DeckShell.tsx`, `src/present/content.ts` | `endsInPlace`: the deck's Back reads "End the deck" / "سكّر العرض" (`CHROME.end`) in host mode. |
+| `src/present/BlueprintFields.tsx` | "In progress · n of m", the one progress format. |
 | `src/dev/presentHarness.tsx` | The doc comment lists `host=creative` and `notes=`; `PresentApp` reads them itself, so the harness needs no code. |
 | `scripts/blueprint-host.test.tsx` (new) | Section 7. |
 
-Not touched: `DeckShell.tsx` (full screen works from a frame as it is), `PresentPage.tsx`, the routes, `useDeckModel.ts`, `channel.ts`, every slide, `present.css`, the byte-pinned deck files (`layout.ts`, `figure.ts`, `fig.tsx`, `platforms.tsx`) and every `src/lib` file in `check-shared.sh`.
+Not touched: full screen in `DeckShell.tsx` (it works from a frame as it is), `PresentPage.tsx`, the routes, `useDeckModel.ts`, `channel.ts`, every slide, `present.css`, the byte-pinned deck files (`layout.ts`, `figure.ts`, `fig.tsx`, `platforms.tsx`) and every `src/lib` file in `check-shared.sh`.
 
 ### 5.2 Creative director app (`apps/creative-director-cockpit`)
 
@@ -239,7 +243,11 @@ Not touched: `DeckShell.tsx` (full screen works from a frame as it is), `Present
 |---|---|
 | `src/lib/deckHost.ts` (new) | 4.5, pinned twin. |
 | `src/components/DeckFrame.tsx` (new, about 110 lines) | The `<iframe>` (`title`, `allow="fullscreen"`, `allowfullscreen`, no sandbox: it needs storage, scripts and popups on our own origin), the message bridge (origin, source and envelope checks), the 15 s `ready` timer, the address watch of 4.5, the offline wait, `inert` when told, and the fade-in. |
-| `src/pages/BlueprintCallPage.tsx` (new, about 220 lines) | 4.2, 4.3, 4.6: the header, the parts rail, the stage, the presenting layer with its two buttons, the states. Reads `?rehearse=1` for admins and the CEO, as the card does. |
+| `src/pages/BlueprintCallPage.tsx` (new, about 220 lines) | 4.2, 4.3, 4.6: the header, the parts rail, the stage, the presenting layer with its two buttons, the states, the Back guard and `--host-end`. Reads `?rehearse=1` for admins and the CEO, as the card does. |
+| `src/components/AppLayout.tsx`, `src/lib/blueprint.ts` | No Ask Hermes on the call (`isBlueprintCall`). |
+| `src/components/ProtectedRoute.tsx`, `src/components/RoleRoute.tsx` | The notes popup keeps one centred "Opening the notes…" while the sign-in and the seat are checked (`isNotesPopup`, `NotesOpening`); `NotYourCockpit` exported for the harness. |
+| `src/index.css` | `--deck-ground`, `--deck-ink` (Tailwind `deck-ground`, `deck-ink`) for the presenting layer. |
+| `vercel.json` | `frame-ancestors 'self'` added to the project's own policy (its direct host). |
 | `src/pages/BlueprintNotesPage.tsx` (new, about 50 lines) | 4.4. |
 | `src/pages/index.ts` | Exports both. |
 | `src/auth/authenticated/AuthenticatedAppRoutes.tsx` | `/blueprint/:taskId` inside `AppLayout`'s `RoleRoute role="creative"`; `/blueprint/:taskId/notes` in its own `RoleRoute role="creative"` outside `AppLayout`. |
@@ -254,7 +262,7 @@ Not touched: `DeckShell.tsx` (full screen works from a frame as it is), `Present
 ### 5.3 Elsewhere
 
 - `scripts/check-shared.sh`: one pin, `same deckHost` plus a `cmp` (both copies import-free, byte for byte).
-- No change to `apps/media-buyer-cockpit/vercel.json`, the client success or CD `vercel.json`, any migration, any Edge Function, hermes or the reliability monitor's profile (no new public path, cron or worker; the call page sits behind sign-in).
+- No change to `apps/media-buyer-cockpit/vercel.json` or the client success `vercel.json`, any migration, any Edge Function, hermes or the reliability monitor's profile (no new public path, cron or worker; the call page sits behind sign-in). One hardening line in the CD's `vercel.json`: `frame-ancestors 'self'`, as the client success and media buyer policies have; the portal keeps sending only the media buyer header, so `cockpit.maharamedia.com` is unchanged.
 
 ---
 
@@ -266,9 +274,9 @@ Not touched: `DeckShell.tsx` (full screen works from a frame as it is), `Present
   - deck: the same with `view=present`
   - notes view: `/creative/blueprint-harness.html?view=notes&fixture={f}&bp={bp}`, which frames `…present-harness.html?deck=blueprint&view=notes&…&host=creative`.
   So Present, Back, Present again, N and the notes popup all run against fixtures, with nothing signed in and nothing saved outside the page.
-- **`state=`** forces the host's states without a server: `loading` (never `ready`), `slow` (timer at 0), `failed` (a sample sentence), `offline`, `signedout`, `wronghost`, `badid`; `rehearse=1` and `readonly=1` as the card's harness has them; `theme=light`.
+- **`state=`** forces the host's states without a server: `loading` (never `ready`), `slow` (timer at 0), `failed` (a sample sentence), `offline`, `signedout`, `wronghost`, `badid`, `noseat` (the CD's own "This cockpit isn't yours" in the shell); `view=notes&state=checking|noseat` for the popup's own lines; `rehearse=1` and `readonly=1` as the card's harness has them; `theme=light`. The shell shows Ask Hermes where `AppLayout` would (never on the call).
 - The existing views (`card`, `dashboard`, `settings`) stay as they are.
-- **Shots:** `scripts/blueprint-call-shots.mjs` (Playwright and system Chrome, both already in the CD app) at 1440 x 900, JPEG quality 75: the call page per `bp` (`open`, `part1`, `sent`, `closed`) in English and Arabic deck language; presenting (after pressing Present in the frame); the closed deck with its two buttons; full screen; the notes popup at 520 x 820; every `state=`; light theme once. Its checks fail the run: the top page's address never leaves `/creative/` from the first click to the last; the only new page in the browser context is the notes popup, at a `/creative/` address; no frame ever sits on a path other than its Blueprint path; the prep frame is `inert` while presenting and the deck frame has focus; the stage has no horizontal scroll at 1024, 1440 and 1920 wide.
+- **Shots:** `scripts/blueprint-call-shots.mjs` (Playwright and system Chrome, both already in the CD app) at 1440 x 900, JPEG quality 75: the call page per `bp` (`open`, `part1`, `sent`, `closed`) in English and Arabic deck language; presenting (after pressing Present in the frame); the closed deck with its two buttons; full screen; the notes popup at 520 x 820; every `state=`; light theme once. Its checks fail the run: the top page's address never leaves `/creative/` from the first click to the last; the only new page in the browser context is the notes popup, at a `/creative/` address; no frame ever sits on a path other than its Blueprint path; the prep frame is `inert` while presenting and the deck frame has focus; the browser's Back while presenting leaves the deck up and the address unchanged; F puts the deck frame full screen; Present ends under Open the notes window (at 1024, 1440 and 1920), the prep frame reaches the window's edge, and its toolbar draws no second rule; a wheel over the header scrolls the prep and Present stays under the seam; an Arabic deck's Back reads "سكّر العرض" and the closed screen's buttons are Arabic; Ask Hermes is not on the call; the stage has no horizontal scroll at 1024, 1440 and 1920 wide. Scrollbars are drawn as a desktop browser draws them (Playwright's `--hide-scrollbars` is dropped).
 
 ---
 
@@ -276,12 +284,12 @@ Not touched: `DeckShell.tsx` (full screen works from a frame as it is), `Present
 
 **Client success app** (`bun test scripts/blueprint-host.test.tsx`, happy-dom as the deck tests use):
 1. Host mode is off without `host`, off when not framed, off when the parent is another origin, off for the onboarding and launch decks even with `host=creative`, and on only for the Blueprint deck in a same-origin frame.
-2. `creativePath` accepts `/creative/blueprint/86exmpl01/notes?rehearse=1` and refuses `//evil`, `/creative//x`, `/client-success/…`, `https://…`, `\`, spaces and 401 characters.
+2. `creativePath` accepts `/creative/blueprint/86exmpl01/notes?rehearse=1` and refuses `//evil`, `/creative//x`, `/client-success/…`, `https://…`, `\`, spaces, dot segments plain or percent-encoded (`%2e%2e`, `.%2e`, `%2E%2E`) and 401 characters.
 3. In host mode: prep's Present posts `present`, flushes, and opens no window (spy `window.open`); the deck's N opens `/creative/blueprint/{id}/notes` under `mahara-notes-{id}-blueprint`; Back posts `end` and draws "Deck closed"; the first drawn data posts `ready` with the view and the name; `model.error` with no data posts `failed` with the sentence; a rehearsal keeps `-rehearse` and `?rehearse=1`.
 4. Without a host, the Blueprint and both CSM decks open exactly today's windows and addresses (`mahara-deck-…`, `/client-success/…/notes`).
-5. `ProtectedRoute` in a host frame: "Opening…" and no sidebar skeleton while not ready; "Sign in to the cockpit again." and `signed-out`, no redirect to `/login`, when signed out. Outside a frame: today's behaviour.
+5. `ProtectedRoute` in a host frame: "Opening…" and no sidebar skeleton while not ready; "Sign in to the cockpit again." and `signed-out`, no redirect to `/login`, when signed out. Outside a frame: today's behaviour. The root `ErrorBoundary` in a host frame posts `failed` and draws one line; a deck crash report from a host frame sends `p_app` and `p_role` creative, and client-success with csm elsewhere. The hosted prep toolbar has no rule and sticks; the deck's Back reads "End the deck" hosted and "Back to {client}" otherwise; the hosted deck's document carries its language.
 6. Prep scrolls to `#part2` after drawing and on `hashchange`.
-7. The headers stay frameable: `apps/media-buyer-cockpit/vercel.json`'s policy has `frame-ancestors 'self'` and either no `frame-src` or one that lists `'self'`; no `X-Frame-Options` in the media buyer, client success or CD `vercel.json`.
+7. The headers stay frameable: `apps/media-buyer-cockpit/vercel.json`'s policy has `frame-ancestors 'self'` and either no `frame-src` or one that lists `'self'`; no `X-Frame-Options` in the media buyer, client success or CD `vercel.json`; the client success and CD projects' own policies refuse other sites' frames (`frame-ancestors 'self'`).
 8. The existing deck suites (`scripts/deck-*.test.ts(x)`, `scripts/blueprint-*.test.ts(x)`) pass unchanged; `ship.sh` runs them.
 
 **CD app** (`bun test scripts/blueprint-call.test.tsx scripts/blueprint.test.tsx`):
@@ -290,8 +298,9 @@ Not touched: `DeckShell.tsx` (full screen works from a frame as it is), `Present
 3. The bridge ignores a message from another origin, from another frame, or without the envelope; `present` draws the layer with the deck frame and makes the prep frame `inert`; `ready` from the deck focuses it; `end` shows Back to prep and Present again; Back to prep removes the deck frame; Present again mounts a fresh one.
 4. The states of 4.6, each from a fake: slow (fake timers), failed, offline then `online`, signed out, wrong host, read only, rehearsal.
 5. The card: the three buttons are links to `/blueprint/86exmpl01`, `#part1`, `#part2`, with `?rehearse=1` in a rehearsal and router state; nothing calls `window.open`. The copy of 4.7.
-6. The rail: the card's words for each `rowFor(state)` fixture; a failed read shows the card's sentence, never "Not started"; a `bp-part` on the channel reads the record again.
+6. The rail: where each part was sent for each `rowFor(state)` fixture (the card's words for a part sent, sending, changed or needing a look; "Not sent yet" and the rest otherwise; no count); a failed read shows the card's sentence, never "Not started"; a `bp-part` on the channel reads the record again.
 7. `isActive("/blueprint/86exmpl01", "/clients")` is true.
+8. While the sign-in is checked, the notes popup shows one centred "Opening the notes…" and no sidebar; the call page keeps the skeleton. No Ask Hermes on the call (`isBlueprintCall`). The presenting layer has no hex colour, only the `deck-ground` and `deck-ink` tokens. The rail says where each part was sent (`railView`), never a count. Failed, signed out (Sign in, Reload), the offline chip only once the prep is open, and "All clients" for the client list.
 
 **Repo:** `scripts/check-shared.sh` passes with the new pin, and fails if one copy of `deckHost.ts` changes alone.
 
@@ -366,3 +375,13 @@ Built on `bp-embed-1024` as designed, with these choices made while building and
 - **Prep's Present waits for the saves at most 1.5 s**, then tells the page, so a slow connection never holds the call up.
 - **Harness:** `view=notes` frames the deck harness's notes view; `theme=light` reaches the deck harness too.
 
+### 11.1 After review (2026-10-24)
+
+- **Crash reports land.** A deck crash in the creative director's frame files as `p_app` creative with `p_role` creative; the server pairs app and role before it checks the seat, so the earlier client-success-with-creative pair was refused for every seat.
+- **Back keeps the deck up.** The browser's Back while presenting no longer takes the shared tab to the client page (4.3).
+- **One seam.** The hosted prep toolbar has no rule of its own, sticks under the seam as the prep scrolls, and ends where the CD header ends. The frame reaches the window's right edge (its scrollbar where every cockpit page has one); the page measures how far the prep must pad its right side (the header's right edge, less the frame's own scrollbar) and sets `--host-end` on the frame's document, since the frame's breakpoints are its own width, not the page's (at 1024 to 1279 wide a fixed `lg:` padding missed by 8 px). A wheel over the header scrolls the prep.
+- **One job each.** The rail says where each part was sent; the prep's panel says how far each part has got, in one format (`In progress · 5 of 8`).
+- **The shared tab.** The deck's Back reads "End the deck" hosted; the closed screen's two buttons speak the deck's language and show a visible focus ring (offset from the teal fill).
+- **States.** Failed reads as slow does (a headline, then the sentence); every stage line sits at the notices' height (`pt-24`); "All clients" everywhere for the client list; Sign in on the signed-out line; the offline chip only once the prep is open; the client success root crash screen never draws in the frame; the notes popup shows one centred "Opening the notes…" while the sign-in and the seat are checked (not the cockpit's sidebar skeleton).
+- **Quiet.** Ask Hermes is not on the call page; the presenting layer's colours are tokens (`--deck-ground`, `--deck-ink`).
+- **Safety.** `creativePath` refuses percent-encoded dot segments (`/creative/%2e%2e/…` is `/…` to the browser); the CD project's own header refuses other sites' frames.

@@ -98,6 +98,10 @@ const host = await import("../src/present/deckHost");
 const { hostFor, hostFrame } = await import("../src/present/useHost");
 const { PresentApp } = await import("../src/present/PresentApp");
 const { ProtectedRoute } = await import("../src/components/ProtectedRoute");
+const { default: ErrorBoundary } = await import(
+  "../src/components/ErrorBoundary"
+);
+const { useDeckReport } = await import("../src/present/DeckBoundary");
 const { blueprintLoaded, fakeBlueprintIO, BP_NOW } = await import(
   "../src/dev/deck/blueprintFixtures"
 );
@@ -306,6 +310,11 @@ describe("the protocol file", () => {
       "/creative/\\x",
       "/creative/a b",
       "/creative/../client-success/x",
+      // The browser reads %2e as a dot: each of these leaves /creative/.
+      "/creative/%2e%2e/client-success/x",
+      "/creative/.%2e/x",
+      "/creative/%2E%2E/",
+      "/creative/blueprint/%2e%2e/%2e%2e/api/watchdog",
       `/creative/${"a".repeat(391)}`,
       "",
       null,
@@ -396,11 +405,18 @@ describe("in the creative director cockpit's page", () => {
       view: "prep",
       name: "Noor Studio Interiors",
     });
-    // The page above holds the name and the title.
+    // The page above holds the name, the title and what Present does.
     expect(el.textContent).not.toContain("Prepare the Brand Blueprint deck");
-    expect(el.textContent).toContain(
-      "Present fills this tab with the shared deck.",
-    );
+    expect(el.textContent).toContain("Back, Next and the strip move it.");
+    expect(el.textContent).not.toContain("Present fills");
+    expect(el.textContent).not.toContain("in its own window");
+    // Its toolbar is the first row under the page's seam: no rule of its
+    // own, held at the top as the prep scrolls, its right edge where the
+    // page says (past the frame's scrollbar, at the page's own edge).
+    const bar = el.querySelector("header") as HTMLElement;
+    expect(bar.className).not.toMatch(/(^|\s)border-b(\s|$)/);
+    expect(bar.className).toContain("sticky top-0");
+    expect(bar.className).toContain("pr-[var(--host-end,16px)]");
     // A line typed a moment before Present, still inside the saver's pause.
     const field = el.querySelector("#part2 textarea") as HTMLTextAreaElement;
     expect(field).not.toBeNull();
@@ -449,7 +465,12 @@ describe("in the creative director cockpit's page", () => {
         url: `/creative/blueprint/${TASK}/notes`,
       },
     ]);
+    // The shared deck's document speaks its language (the page's two
+    // buttons on the closed screen read it).
+    expect(win.document.documentElement.lang).toBe("en");
     const back = el.querySelector(".dk-chrome button") as HTMLButtonElement;
+    // It ends the deck in place, so it says so, never "Back to {client}".
+    expect(back.textContent?.trim()).toBe("End the deck");
     await act(async () => back.click());
     await flush();
     expect(types()).toEqual(["ready", "end"]);
@@ -530,6 +551,9 @@ describe("without a host, every deck opens today's windows", () => {
       expect(prep.textContent).toContain(
         "the shared deck opens in its own window with Present.",
       );
+      expect(prep.querySelector("header")?.className).toMatch(
+        /(^|\s)border-b(\s|$)/,
+      );
       await act(async () => button(prep, "Present")?.click());
       await flush();
       expect(opened.at(-1)).toEqual({
@@ -541,7 +565,10 @@ describe("without a host, every deck opens today's windows", () => {
         `/client-success/clients/${TASK}/present/${deck}${deck === "blueprint" ? "" : "?host=creative"}`,
         deck === "blueprint" ? "none" : "same",
       );
-      await mount(deck, "present");
+      const shared = await mount(deck, "present");
+      expect(
+        shared.querySelector(".dk-chrome button")?.textContent?.trim(),
+      ).toStartWith("Back to ");
       await press("n");
       expect(opened.at(-1)).toEqual({
         name: `mahara-notes-${TASK}-${deck}`,
@@ -620,6 +647,89 @@ describe("ProtectedRoute", () => {
   });
 });
 
+// ------------------------------------------------- 5b. a crash, framed or not
+
+describe("a crash in the frame", () => {
+  test("a deck crash report files under the creative director cockpit from its frame, client success elsewhere", async () => {
+    const calls: Record<string, unknown>[] = [];
+    auth = {
+      ready: true,
+      session: { user: { id: "u1" } },
+      isAuthenticated: true,
+      client: {
+        rpc: async (fn: string, args: Record<string, unknown>) => {
+          calls.push({ fn, ...args });
+          return { error: null };
+        },
+      },
+    };
+    let report: ReturnType<typeof useDeckReport> | null = null;
+    function Probe() {
+      report = useDeckReport();
+      return null;
+    }
+    const el = win.document.createElement("div");
+    win.document.body.append(el);
+    const root = createRoot(el as unknown as Element);
+    roots.push(root);
+    await act(async () => root.render(<Probe />));
+    at(`${BP}?host=creative`);
+    await report?.({ title: "Deck slide crashed", detail: "x" });
+    at(BP, "none");
+    await report?.({ title: "Deck slide crashed", detail: "y" });
+    // The server takes an app only with its own role (client-success with
+    // csm, creative with creative); the seat's own role is checked after.
+    expect(calls.map(c => [c.fn, c.p_app, c.p_role])).toEqual([
+      ["cockpit_submit_issue_report", "creative", "creative"],
+      ["cockpit_submit_issue_report", "client-success", "csm"],
+    ]);
+  });
+
+  test("the app's own crash screen never draws in the frame: one line, and the page is told", async () => {
+    function Boom(): never {
+      throw new Error("a stale chunk");
+    }
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      for (const framed of ["same", "none"] as const) {
+        at(`${BP}?view=prep&host=creative`, framed);
+        posted.length = 0;
+        const el = win.document.createElement("div");
+        win.document.body.append(el);
+        const root = createRoot(el as unknown as Element);
+        roots.push(root);
+        await act(async () =>
+          root.render(
+            <ErrorBoundary>
+              <Boom />
+            </ErrorBoundary>,
+          ),
+        );
+        await flush();
+        if (framed === "same") {
+          expect(el.textContent).toBe("The Blueprint could not be drawn.");
+          expect(el.querySelector("pre")).toBeNull();
+          expect(posted.map(p => p.m)).toEqual([
+            {
+              type: "failed",
+              message:
+                "The Blueprint could not be drawn. Reload it to go on. Nothing you saved is lost.",
+              source: "mahara-deck-host",
+              v: 1,
+            },
+          ]);
+        } else {
+          expect(el.textContent).toContain("An unexpected error occurred.");
+          expect(posted).toEqual([]);
+        }
+      }
+    } finally {
+      console.error = quiet;
+    }
+  });
+});
+
 // -------------------------------------------------------- 6. a part by address
 
 describe("prep at a part", () => {
@@ -690,6 +800,11 @@ describe("the portal's headers let a /creative page frame /client-success", () =
       policy("creative-director-cockpit"),
     );
     if (src) expect(src[1]).toContain("'self'");
+  });
+
+  test("each app's own header refuses other sites' frames (their direct hosts)", () => {
+    for (const app of ["client-success-cockpit", "creative-director-cockpit"])
+      expect(policy(app)).toMatch(/frame-ancestors 'self'(;|$)/);
   });
 
   test("no X-Frame-Options on the portal, client success or creative director", () => {

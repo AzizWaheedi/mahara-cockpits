@@ -48,6 +48,11 @@ export interface ShellProps {
   hub?: DeckHub | null;
   /** "Back to <client>" (left out in the prep preview). */
   onBack?: () => void;
+  /**
+   * Back closes the deck in place instead of going to the client (the
+   * Blueprint inside the creative director cockpit), so it says so.
+   */
+  endsInPlace?: boolean;
   /** N and the Notes button. */
   onNotes?: () => void;
   /** A preview inside the prep view: no chrome, no keys, no address. */
@@ -88,6 +93,7 @@ export function DeckShell({
   setLang,
   hub,
   onBack,
+  endsInPlace = false,
   onNotes,
   embedded = false,
   pos: posIn,
@@ -598,7 +604,13 @@ export function DeckShell({
                 {/* One run: the button's flex gap plus the space read as
                     two spaces before the name (score round 2). */}
                 <span>
-                  {t(CHROME.back, lang)} <bdi>{base.d.name}</bdi>
+                  {endsInPlace ? (
+                    t(CHROME.end, lang)
+                  ) : (
+                    <>
+                      {t(CHROME.back, lang)} <bdi>{base.d.name}</bdi>
+                    </>
+                  )}
                 </span>
               </button>
             ) : null}

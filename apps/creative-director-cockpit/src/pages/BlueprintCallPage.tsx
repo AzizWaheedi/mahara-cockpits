@@ -19,6 +19,7 @@ import {
   Dot,
   stateView,
   supabaseBlueprintIO,
+  type Tone,
 } from "@/components/BlueprintCard";
 import { DeckFrame, type FrameTrouble } from "@/components/DeckFrame";
 import { Button } from "@/components/ui/button";
@@ -28,8 +29,12 @@ import {
   openNamed,
   PART_NAME,
   PARTS,
+  type Part,
+  type PartState,
   partState,
   problem,
+  stampOf,
+  waited,
 } from "@/lib/blueprint";
 import {
   blueprintCall,
@@ -313,7 +318,51 @@ function useRecord(
   return { read, reload };
 }
 
-/** The card's three rows folded into one line, in the card's own words. */
+/**
+ * What the rail says of a part: only what the record holds and the prep
+ * cannot see, so the prep's own "The parts" panel keeps the progress
+ * (EMBED.md 11.1). A part sent, sending, changed or needing a look reads in
+ * the card's own words; one not sent yet says only that.
+ */
+export function railView(
+  part: Part,
+  st: PartState,
+  row: BlueprintRow | null,
+  wait: { since: string; hours: number; late: boolean } | null,
+): { tone: Tone; text: string; toneText?: string } {
+  switch (st.kind) {
+    case "sent":
+    case "sending":
+    case "unconfirmed":
+    case "needs_look":
+    case "changed": {
+      const v = stateView(part, st, row, wait);
+      return { tone: v.tone, text: v.text, toneText: v.toneText };
+    }
+    default: {
+      const quiet = "text-muted-foreground";
+      if (part === 1)
+        return { tone: "quiet", text: "Not sent yet", toneText: quiet };
+      if (part === 2)
+        return { tone: "quiet", text: "Call not closed yet", toneText: quiet };
+      if (!stampOf(row, 2))
+        return {
+          tone: "quiet",
+          text: "Opens when the call closes",
+          toneText: quiet,
+        };
+      return wait
+        ? {
+            tone: wait.late ? "warn" : "quiet",
+            text: `Not locked yet · waiting ${waited(wait.hours)}`,
+            toneText: wait.late ? "txt-warn" : quiet,
+          }
+        : { tone: "quiet", text: "Not locked yet", toneText: quiet };
+    }
+  }
+}
+
+/** The card's three rows folded into one line: where each part was sent. */
 export function PartsRail({
   read,
   onRetry,
@@ -355,7 +404,7 @@ export function PartsRail({
     >
       {PARTS.map(p => {
         const st = partState(read.row, p, stored, now);
-        const v = stateView(p, st, read.row, p === 3 ? wait : null);
+        const v = railView(p, st, read.row, p === 3 ? wait : null);
         return (
           <li
             key={p}
@@ -416,6 +465,7 @@ export function BlueprintCall({
   offline: forcedOffline,
   host,
   readOnly: readOnlyGiven,
+  onSignIn,
 }: {
   taskId: string;
   rehearse: boolean;
@@ -435,6 +485,11 @@ export function BlueprintCall({
   /** The page's own host, for the wrong-host state. */
   host?: string;
   readOnly?: boolean;
+  /**
+   * Signs this browser out, so the cockpit's own sign-in gate sends him to
+   * sign in and back here. Left out (the harness), a link to the sign-in.
+   */
+  onSignIn?: () => void;
 }) {
   const valid = isTaskId(taskId);
   const frames = useMemo(
@@ -498,6 +553,82 @@ export function BlueprintCall({
     return () => root?.removeAttribute("inert");
   }, [presenting]);
 
+  // Back (a swipe, the mouse's back button, Cmd+[) while the deck is shared
+  // keeps the deck up, as the old deck window did: it had no history to go
+  // back to. The guard copies the router's own state, so the router sees
+  // the same place and the page stays as it is.
+  useEffect(() => {
+    if (!presenting) return;
+    const hold = () =>
+      window.history.pushState({ ...window.history.state, bpDeck: true }, "");
+    hold();
+    window.addEventListener("popstate", hold);
+    return () => {
+      window.removeEventListener("popstate", hold);
+      if (window.history.state?.bpDeck) window.history.back();
+    };
+  }, [presenting]);
+
+  // The prep's toolbar and body end where this header ends, past the
+  // frame's own scrollbar, at every width: the frame's breakpoints are its
+  // own, not the page's, so the page tells it how far that is (--host-end).
+  // A hidden or overlay scrollbar takes no room, and the sum still holds.
+  const prepShown = s.stage.kind === "ready";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a fresh prep frame (prepKey) is measured again
+  useEffect(() => {
+    if (!prepShown) return;
+    const frame = prepRef.current;
+    const head = headRef.current;
+    const w = frame?.contentWindow;
+    if (!frame || !head || !w) return;
+    const fit = () => {
+      try {
+        const doc = w.document.documentElement;
+        const bar = w.innerWidth - doc.clientWidth;
+        const end =
+          frame.getBoundingClientRect().right -
+          head.getBoundingClientRect().right -
+          bar;
+        doc.style.setProperty(
+          "--host-end",
+          `${Math.max(0, Math.round(end))}px`,
+        );
+      } catch {
+        // not ours to measure
+      }
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    let ro: ResizeObserver | null = null;
+    try {
+      // The frame's own scrollbar comes and goes with its content.
+      const RO = (w as unknown as { ResizeObserver?: typeof ResizeObserver })
+        .ResizeObserver;
+      if (RO) {
+        ro = new RO(fit);
+        ro.observe(w.document.documentElement);
+      }
+    } catch {
+      ro = null;
+    }
+    return () => {
+      window.removeEventListener("resize", fit);
+      ro?.disconnect();
+    };
+  }, [prepShown, s.prepKey]);
+
+  // The page itself never scrolls; the prep does. A wheel over the header
+  // scrolls the prep, as a wheel anywhere scrolls every other cockpit page.
+  const wheel = (e: { deltaY: number; deltaMode: number }) => {
+    const k =
+      e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
+    try {
+      prepRef.current?.contentWindow?.scrollBy({ top: e.deltaY * k });
+    } catch {
+      // not ours to scroll
+    }
+  };
+
   // The stage is the viewport below its own top edge, so the frame scrolls
   // inside and the page never shows two scrollbars.
   const stageRef = useRef<HTMLDivElement>(null);
@@ -554,13 +685,14 @@ export function BlueprintCall({
     </Link>
   );
 
+  const stage = s.stage;
   if (!valid)
     return (
       <Notice
         title="No client card with that ID."
         action={
           <Button asChild size="sm" variant="outline">
-            <Link to="/clients">Back to clients</Link>
+            <Link to="/clients">All clients</Link>
           </Button>
         }
       />
@@ -580,7 +712,6 @@ export function BlueprintCall({
     );
   }
 
-  const stage = s.stage;
   const mounted =
     !frameless &&
     prepSrc !== null &&
@@ -604,7 +735,7 @@ export function BlueprintCall({
       {/* The stage's width, not the client page's: the header's edges meet
           the prep's own (16 px in from the frame), so the two read as one
           page at every width, 1920 included. */}
-      <div ref={headRef} className="w-full">
+      <div ref={headRef} className="w-full" onWheel={wheel}>
         {back}
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
@@ -617,7 +748,9 @@ export function BlueprintCall({
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {online ? null : (
+            {/* Offline before the prep opens, the stage says it; the chip is
+                for a call already under way. */}
+            {online || stage.kind !== "ready" ? null : (
               <span
                 role="status"
                 className="tone-warn inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs"
@@ -654,7 +787,10 @@ export function BlueprintCall({
 
       {/* The seam: the prep is the lower half of this page, flush under one
           hairline the page's full width, with no card around it. The frame
-          sits in by the page's padding less the prep's own 16 px. */}
+          sits in on the left by the page's padding less the prep's own
+          16 px, and reaches the window's right edge, so its scrollbar is
+          where every cockpit page has one; the prep pads its right side to
+          meet the header's edge (EMBED.md 11.1). */}
       <div
         ref={stageRef}
         data-stage={stage.kind}
@@ -662,7 +798,7 @@ export function BlueprintCall({
         style={{ height: height ?? 560 }}
       >
         {mounted && prepSrc ? (
-          <div className="absolute inset-0 sm:inset-x-2 lg:inset-x-4">
+          <div className="absolute inset-y-0 right-0 left-0 sm:left-2 lg:left-4">
             <DeckFrame
               key={s.prepKey}
               src={prepSrc}
@@ -694,7 +830,10 @@ export function BlueprintCall({
               </>
             ) : stage.kind === "failed" ? (
               <>
-                <p className="max-w-lg text-balance text-[15px] font-semibold">
+                <p className="text-[15px] font-semibold">
+                  The Blueprint did not open.
+                </p>
+                <p className="max-w-lg text-balance text-sm text-muted-foreground">
                   {stage.message}
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3">
@@ -708,7 +847,7 @@ export function BlueprintCall({
                         Back to <bdi>{name}</bdi>
                       </>
                     ) : (
-                      "Back to clients"
+                      "All clients"
                     )}
                   </Link>
                 </div>
@@ -722,7 +861,28 @@ export function BlueprintCall({
                 <p className="text-[15px] font-semibold">
                   Sign in to the cockpit again.
                 </p>
-                <div>{reloadButton}</div>
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  {onSignIn ? (
+                    <Button size="sm" onClick={onSignIn}>
+                      Sign in
+                    </Button>
+                  ) : (
+                    <Button asChild size="sm">
+                      <Link
+                        to={`/login?next=${encodeURIComponent(`/blueprint/${taskId}`)}`}
+                      >
+                        Sign in
+                      </Link>
+                    </Button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => send({ type: "reload" })}
+                    className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                  >
+                    Reload
+                  </button>
+                </div>
               </>
             )}
           </StageLine>
@@ -749,7 +909,7 @@ function StageLine({ children }: { children: ReactNode }) {
   return (
     <div
       role="status"
-      className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center"
+      className="absolute inset-0 flex flex-col items-center justify-start gap-3 px-6 pt-24 text-center"
     >
       {children}
     </div>
@@ -800,18 +960,31 @@ function Presenting({
   onAgain: () => void;
 }) {
   const againRef = useRef<HTMLButtonElement>(null);
+  // The two buttons sit on the shared tab, so they speak the deck's
+  // language: the deck's own document says which (same origin).
+  const [ar, setAr] = useState(false);
+  useLayoutEffect(() => {
+    if (layer.kind !== "ended") return;
+    let lang: string | undefined;
+    try {
+      lang = deckRef.current?.contentDocument?.documentElement.lang;
+    } catch {
+      lang = undefined;
+    }
+    setAr(lang === "ar");
+  }, [layer.kind, deckRef]);
   useEffect(() => {
     if (layer.kind === "ended") againRef.current?.focus();
   }, [layer.kind]);
   const pill =
-    "inline-flex h-9 items-center rounded-full px-4 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary";
+    "inline-flex h-9 items-center rounded-full px-4 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-deck-ground";
   const body = (
     <div
       role="dialog"
       aria-modal="true"
       aria-label="The shared deck"
       data-layer={layer.kind}
-      className="fixed inset-0 z-[60] bg-[#091333] text-[#f2f6fa]"
+      className="fixed inset-0 z-[60] bg-deck-ground text-deck-ink"
     >
       {layer.kind !== "failed" && src ? (
         <DeckFrame
@@ -826,21 +999,25 @@ function Presenting({
         />
       ) : null}
       {layer.kind === "opening" ? (
-        <p className="absolute inset-0 grid place-content-center text-sm text-[#f2f6fa]/60">
+        <p className="absolute inset-0 grid place-content-center text-sm text-deck-ink/60">
           Opening the deck…
         </p>
       ) : null}
       {layer.kind === "ended" ? (
-        <div className="absolute inset-x-0 top-[calc(50%+3.5rem)] flex justify-center gap-3">
+        <div
+          dir={ar ? "rtl" : "ltr"}
+          lang={ar ? "ar" : "en"}
+          className="absolute inset-x-0 top-[calc(50%+3.5rem)] flex justify-center gap-3"
+        >
           <button
             type="button"
             onClick={onBack}
             className={cn(
               pill,
-              "border border-white/25 text-[#f2f6fa] hover:bg-white/10",
+              "border border-white/25 text-deck-ink hover:bg-white/10",
             )}
           >
-            Back to prep
+            {ar ? "رجوع للتحضير" : "Back to prep"}
           </button>
           <button
             ref={againRef}
@@ -851,7 +1028,7 @@ function Presenting({
               "bg-primary text-primary-foreground hover:bg-primary/90",
             )}
           >
-            Present again
+            {ar ? "اعرض مرة ثانية" : "Present again"}
           </button>
         </div>
       ) : null}
@@ -865,7 +1042,7 @@ function Presenting({
             onClick={onBack}
             className={cn(
               pill,
-              "border border-white/25 text-[#f2f6fa] hover:bg-white/10",
+              "border border-white/25 text-deck-ink hover:bg-white/10",
             )}
           >
             Back to prep
@@ -907,6 +1084,7 @@ export function BlueprintCallPage() {
       }
       at={at}
       host={typeof window === "undefined" ? undefined : window.location.host}
+      onSignIn={() => void auth.signOut()}
     />
   );
 }

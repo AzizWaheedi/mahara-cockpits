@@ -496,6 +496,10 @@ export function waited(hours: number): string {
 
 // ------------------------------------------------------------------ the call
 
+/** The Blueprint call's own pages in this cockpit (EMBED.md 4.1). */
+export const isBlueprintCall = (pathname: string) =>
+  /^\/blueprint\//.test(pathname);
+
 type Opener = (url: string, name: string, features?: string) => Window | null;
 
 /**

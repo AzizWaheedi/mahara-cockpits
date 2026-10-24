@@ -174,7 +174,20 @@ export function PrepView({
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
+      {/* Hosted, the page's seam above is the only rule: the toolbar is the
+          first row of the lower half and stays under the seam as the prep
+          scrolls (Present never scrolls away). Its right edge, and the
+          body's, meet the page's own past the frame's scrollbar: the page
+          sets --host-end, since this frame's breakpoints are its own
+          (EMBED.md 11.1). */}
+      <header
+        className={cn(
+          "flex flex-wrap items-center gap-3 px-4 py-3",
+          hosted
+            ? "sticky top-0 z-10 bg-background pr-[var(--host-end,16px)]"
+            : "border-b",
+        )}
+      >
         {hosted ? null : (
           <>
             <a
@@ -224,7 +237,12 @@ export function PrepView({
         </div>
       </header>
 
-      <div className="grid flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div
+        className={cn(
+          "grid flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_380px]",
+          hosted && "pr-[var(--host-end,16px)]",
+        )}
+      >
         <div className="min-w-0 space-y-3">
           <div className="relative aspect-video w-full overflow-hidden rounded-xl border">
             <DeckShell
@@ -307,8 +325,9 @@ export function PrepView({
           <div className="text-xs text-muted-foreground">
             The preview is live: tick, type and pick on it as you will on the
             call. Back, Next and the strip move it
+            {/* Hosted, the page's header already says what Present does. */}
             {hosted
-              ? ". Present fills this tab with the shared deck."
+              ? "."
               : "; the shared deck opens in its own window with Present."}
           </div>
           {deck === "blueprint" ? <BlueprintPrep bp={base.bp} d={d} /> : null}

@@ -22,8 +22,10 @@
  * deck too (any other card state draws the rail only, over part1's deck);
  * #part1 to #part3 open the prep at that part; readonly=1 is a seat that
  * may not write; state=loading | slow | failed | offline | signedout |
- * wronghost | badid draws that state with no frame. view=notes is the
- * notes popup the deck's N opens.
+ * wronghost | badid draws that state with no frame, and state=noseat the
+ * cockpit's own refusal for a seat without the creative director's role.
+ * view=notes is the notes popup the deck's N opens (state=checking: its
+ * line while the sign-in is checked; state=noseat: the refusal in it).
  *
  * Every save, press and run is held in this page's memory; nothing reaches
  * Supabase, ClickUp, Slack or Make.
@@ -47,8 +49,11 @@ import {
   OnboardingSteps,
   waitedFor,
 } from "@/components/BlueprintSignoff";
+import { NotesOpening } from "@/components/ProtectedRoute";
+import { NotYourCockpit } from "@/components/RoleRoute";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { isBlueprintCall } from "@/lib/blueprint";
 import { buildSnapshot, snapshotContext } from "@/lib/creativeSourceModels";
 import type { PartAnchor } from "@/lib/deckHost";
 import {
@@ -272,6 +277,17 @@ const partOf = (hash: string): PartAnchor | null => {
 function CallView() {
   const state = params.get("state");
   const forced = forcedCall(state);
+  if (state === "noseat") return <NotYourCockpit home="/client-success/" />;
+  return <HarnessCall state={state} forced={forced} />;
+}
+
+function HarnessCall({
+  state,
+  forced,
+}: {
+  state: string | null;
+  forced: Call | null;
+}) {
   const [at, setAt] = useState(() => partOf(window.location.hash));
   useEffect(() => {
     const on = () => setAt(partOf(window.location.hash));
@@ -313,8 +329,17 @@ function CallView() {
   );
 }
 
-/** The cockpit's own rail and page padding, as AppLayout draws them. */
-function CockpitShell({ children }: { children: ReactNode }) {
+/**
+ * The cockpit's own rail and page padding, as AppLayout draws them, and Ask
+ * Hermes where AppLayout shows it (never on the call: isBlueprintCall).
+ */
+function CockpitShell({
+  path,
+  children,
+}: {
+  path: string;
+  children: ReactNode;
+}) {
   return (
     <ThemeProvider defaultTheme={light ? "light" : "dark"}>
       <SidebarProvider>
@@ -323,27 +348,44 @@ function CockpitShell({ children }: { children: ReactNode }) {
           <div className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
             {children}
           </div>
+          {isBlueprintCall(path) ? null : (
+            <span
+              data-hermes=""
+              className="glow-teal fixed right-4 bottom-4 z-40 flex h-11 items-center gap-2 rounded-full border bg-card/95 px-4 text-[13px] font-semibold lg:right-6 lg:bottom-6"
+            >
+              <span className="inline-block size-2 rounded-full bg-[color:var(--mahara-teal)]" />
+              Ask Hermes
+            </span>
+          )}
         </SidebarInset>
       </SidebarProvider>
     </ThemeProvider>
   );
 }
 
+const CALL_PATH = `/blueprint/${CALL_TASK}`;
+
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
     {view === "call" ? (
-      <MemoryRouter initialEntries={[`/blueprint/${CALL_TASK}`]}>
-        <CockpitShell>
+      <MemoryRouter initialEntries={[CALL_PATH]}>
+        <CockpitShell path={CALL_PATH}>
           <CallView />
         </CockpitShell>
         <Toaster />
       </MemoryRouter>
     ) : view === "notes" ? (
-      <BlueprintNotes
-        taskId={CALL_TASK}
-        src={deckHarness("notes")}
-        allowed={p => p === DECK_HARNESS}
-      />
+      params.get("state") === "checking" ? (
+        <NotesOpening />
+      ) : params.get("state") === "noseat" ? (
+        <NotYourCockpit home="/client-success/" />
+      ) : (
+        <BlueprintNotes
+          taskId={CALL_TASK}
+          src={deckHarness("notes")}
+          allowed={p => p === DECK_HARNESS}
+        />
+      )
     ) : (
       <MemoryRouter>
         <div className="min-h-dvh bg-background p-6 text-foreground sm:p-10">

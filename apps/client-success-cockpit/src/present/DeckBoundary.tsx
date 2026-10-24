@@ -62,13 +62,17 @@ export function useDeckReport(): Report {
   return useCallback(
     async r => {
       if (!client) return;
+      // The Blueprint's frame in the creative director cockpit reports as
+      // that cockpit: the server takes an app only with its own role
+      // (client-success with csm, creative with creative), as the creative
+      // director cockpit's own AppLayout reports.
+      const hosted = hostFrame() !== null;
       try {
         const { error } = await client.rpc("cockpit_submit_issue_report", {
-          p_app: "client-success",
+          p_app: hosted ? "creative" : "client-success",
           p_page: window.location.pathname,
           p_text: `${r.title}\n${r.detail}`.trim(),
-          // The Blueprint's frame in the creative director cockpit.
-          p_role: hostFrame() ? "creative" : "csm",
+          p_role: hosted ? "creative" : "csm",
         });
         if (error) throw error;
       } catch (err) {
