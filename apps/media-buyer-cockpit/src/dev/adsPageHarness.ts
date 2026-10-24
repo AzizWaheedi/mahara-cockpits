@@ -243,6 +243,9 @@ export function installAdsPageHarness(client: SupabaseClient): void {
         );
       case "cockpit_media_eod_changes":
         return ok(harnessEodChanges(now));
+      // A decision (Leave it, a call) is accepted and kept nowhere.
+      case "cockpit_log_decision":
+        return ok({ id: 9100 });
       case "cockpit_media_preferences":
         return args.p_language ? ok({ ok: true }) : ok([]);
       case "cockpit_media_statistics": {
