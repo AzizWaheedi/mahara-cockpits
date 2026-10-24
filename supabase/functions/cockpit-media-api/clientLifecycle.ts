@@ -22,6 +22,7 @@ export async function stopReview(s:Row,c:Row,p:Provider){
 }
 export async function prepareStop(operation:string,a:Row,s:Row,c:Row,p:Provider){
  if(!['client.pause','client.offboard'].includes(operation))throw Error('Choose pause or offboarding.');
+ if(operation==='client.pause'&&!s.accounts.length)throw Error('Link and check the client ad accounts before pausing.');
  const reason=String(a.reason??'').trim();if(reason.length<5||reason.length>1000)throw Error('Add a short reason, up to 1000 characters.');
  const reviewed=await stopReview(s,c,p);
  if(reviewed.errors.length)throw Error('One or more accounts could not be checked. Review their access in Ads Manager first.');
@@ -65,7 +66,7 @@ export async function lifecycleOperation(operation:string,a:Row,apply:boolean,re
   if(final.active.length)throw Error('Meta still reports a Mahara campaign switched on. Check the pause receipts before trying again.');
   let taskId=s.lifecycle?.state==='released'?null:s.lifecycle?.task_id??null;
   if(task){const created=await executePlan(task,guarded);taskId=created.actual.id;}
-  const result={ok:true,clickupId:s.clickupId,paused:paused.receipts.map(x=>({id:x.id,name:x.name,accountId:x.account_id})),unverified:final.unverified.map(x=>({id:x.id,name:x.name,accountId:x.accountId})),taskId,checkedAt:final.checkedAt,did:operation==='client.offboard'?'Campaign pause checked. Offboarding request saved; access removal is still pending.':'Mahara campaigns paused. Client access is unchanged.',receiptId:requestId};
+  const result={ok:true,clickupId:s.clickupId,paused:paused.receipts.map(x=>({id:x.id,name:x.name,accountId:x.account_id})),unverified:final.unverified.map(x=>({id:x.id,name:x.name,accountId:x.accountId})),taskId,checkedAt:final.accounts.length?final.checkedAt:null,did:operation==='client.offboard'?(final.accounts.length?'Campaign pause checked. Offboarding request saved; access removal is still pending.':'Offboarding request saved. The team needs to confirm campaign status and remove access.'):'Mahara campaigns checked and paused. Client access is unchanged.',receiptId:requestId};
   if(identity(await dep.scope())!==identity(s))throw Error('Client access or mapping changed before completion. Review the receipts.');
   await dep.finish(requestId,result);return result;
  }catch(e){await dep.fail(requestId,e instanceof Error?e.message:String(e));throw e;}
