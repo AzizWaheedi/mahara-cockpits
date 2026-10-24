@@ -41,6 +41,11 @@ export async function poll(t: Transport, finishWaits = FINISH_WAITS_MS) {
 			} catch (e) {
 				error = e instanceof Error ? e.message : "Source verification failed";
 				failures++;
+				// The next run overwrites the binding's error, so this line in cron.log is the only lasting record of
+				// which client and which service failed (19 Oct 2026: 3 failures nobody could trace afterwards).
+				console.error(
+					JSON.stringify({ at: new Date().toISOString(), client: b.client_name, error }),
+				);
 			}
 			const copy = bodies(
 				signal === "healthy" ? "recovered" : signal,

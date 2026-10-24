@@ -98,7 +98,7 @@ if (args.includes("--doctor")) {
 		),
 	);
 } else if (args.includes("--poll")) {
-	console.log(JSON.stringify(await poll(t)));
+	console.log(JSON.stringify({ at: new Date().toISOString(), ...(await poll(t)) }));
 	await reconcileUnknown(t);
 	if (env.AD_BILLING_APPLY === "true")
 		for (let count = 0; count < 40 && (await dispatchOne(t)); count++) {}
