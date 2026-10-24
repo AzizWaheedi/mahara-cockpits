@@ -2,7 +2,7 @@ import {type Row,type Provider,type Plan,assertObjectScope} from './core.ts';
 import {campaignOwner,id,launchEnabled,REHEARSAL} from './launchDesk.ts';
 import {executePlan} from './execute.ts';
 export const LIFECYCLE_OPERATIONS=['client.stopReview','client.pause','client.offboard'];
-const REQUEST_LIST='901816723211',REQUEST_FIELD='e9fd8024-8abe-4094-ac08-e6c0e736ad7e';
+const REQUEST_LIST='901816723190',REQUEST_FIELD='e9fd8024-8abe-4094-ac08-e6c0e736ad7e';
 function complete(r:Row,label:string):Row[]{if(!Array.isArray(r.data)||r.paging?.next)throw Error(`The complete ${label} list is unavailable. Check it in Ads Manager before continuing.`);return r.data;}
 const fingerprint=(rows:Row[])=>JSON.stringify(rows.map(x=>[x.accountId,x.id,x.name,x.status,x.owner.kind]).sort((a,b)=>String(a).localeCompare(String(b))));
 export async function stopReview(s:Row,c:Row,p:Provider){
@@ -44,7 +44,7 @@ export async function offboardTask(s:Row,a:Row,p:Provider):Promise<Plan>{
  '4. Review GoHighLevel, calendars, Drive sharing and other client connections. Remove only the access approved for offboarding. Record what was removed or not applicable.',
  'No automatic deletion of accounts, leads, recordings, files or history. A completed request is a team confirmation, not a provider access check.',
  `Linked ad accounts: ${s.accounts.join(', ')||'None, confirm manually'}`].join('\n');
- return {provider:'clickup',method:'POST',path:`list/${REQUEST_LIST}/task`,body:{name,description,custom_fields:[{id:REQUEST_FIELD,value:opt.id}]},verifyPath:'task/$id',expected:{name,list:{id:REQUEST_LIST},field:REQUEST_FIELD,value:opt.id,aliases:[opt.id,opt.orderindex]}};
+ return {provider:'clickup',method:'POST',path:`list/${REQUEST_LIST}/task`,body:{name,description,tags:[s.client.toLowerCase()],custom_fields:[{id:REQUEST_FIELD,value:opt.id}]},verifyPath:'task/$id',expected:{name,list:{id:REQUEST_LIST},field:REQUEST_FIELD,value:opt.id,aliases:[opt.id,opt.orderindex]},has:[{path:'tags',key:'name',value:s.client.toLowerCase()}]};
 }
 export function identity(s:Row){return JSON.stringify([s.actor,s.clickupId,s.client,s.locationId,[...s.accounts].sort()]);}
 export async function lifecycleOperation(operation:string,a:Row,apply:boolean,requestId:string,dep:{scope:()=>Promise<Row>;client:()=>Promise<Row>;provider:Provider;env:(k:string)=>string|undefined;prior:(id:string)=>Promise<Row|null>;begin:(id:string,operation:string,args:Row,scope:Row)=>Promise<Row>;finish:(id:string,result:Row)=>Promise<void>;fail:(id:string,message:string)=>Promise<void>}){

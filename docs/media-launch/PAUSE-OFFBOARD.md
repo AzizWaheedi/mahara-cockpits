@@ -10,7 +10,7 @@ partial Meta lists block apply. Budget, ad sets, client access and source record
 are preserved.
 
 Full offboarding pauses the same verified campaigns and creates a typed Client
-Offboarding Request on the existing Client Success list. It does **not** revoke
+Offboarding Request on the existing Operations / Tech list, matching the CSM request route. It does **not** revoke
 access automatically. The team completes and records four checks: campaigns,
 client access to Mahara OS/Academy, Mahara access to client Meta assets, and other
 connections including GHL, calendars and Drive. The client keeps an administrator.
