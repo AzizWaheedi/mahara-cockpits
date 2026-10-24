@@ -526,6 +526,11 @@ test("client service holds fence launches and workers; offboarding needs all rec
   const sql = migration("20261024172848_media_client_lifecycle.sql");
   await db.exec(sql);
   await db.exec(sql);
+  const hardening = migration(
+    "20261024175515_media_client_lifecycle_revision_guard.sql",
+  );
+  await db.exec(hardening);
+  await db.exec(hardening);
   for (const role of ["anon", "authenticated"]) {
     expect(
       (
@@ -620,6 +625,16 @@ test("client service holds fence launches and workers; offboarding needs all rec
       [h.revision],
     ),
   ).rejects.toThrow("admin");
+  await expect(
+    db.query(
+      "select cockpit_client_lifecycle_action('stopped',null,'check','client_access','Confirmed with a missing revision')",
+    ),
+  ).rejects.toThrow("record changed");
+  const afterMissingRevision = (
+    await db.query<any>("select cockpit_client_lifecycle_scope('stopped') r")
+  ).rows[0].r.lifecycle;
+  expect(afterMissingRevision.revision).toBe(h.revision);
+  expect(afterMissingRevision.checks).toEqual(h.checks);
   for (const step of [
     "campaigns",
     "client_access",

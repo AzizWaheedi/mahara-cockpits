@@ -26,3 +26,15 @@ test('a lost response or failed readback stops with reconcile and no automatic r
 test('mapping revoked after intent blocks every write',async()=>{const c=await context();c.dep.begin=async()=>{c.dep.scope=async()=>({...scope,accounts:['999999']});return {};};await expect(lifecycleOperation('client.pause',c.args,true,crypto.randomUUID(),c.dep)).rejects.toThrow('mapping changed');expect(c.p.calls.every(x=>x.method==='GET')).toBe(true);});
 test('confirmed duplicate returns its receipt without rechecking the stale campaign fingerprint',async()=>{const c=await context(fake(),{prior:async()=>({ok:true,receiptId:'already'})});const r=await lifecycleOperation('client.pause',{...c.args,fingerprint:'old'},true,crypto.randomUUID(),c.dep);expect(r.receiptId).toBe('already');expect(c.stats().started).toBe(0);});
 test('a completed or released offboarding creates a new task only after reopening',async()=>{const c=await context();c.dep.scope=async()=>({...scope,lifecycle:{state:'released',task_id:'old'}} as any);const r=await lifecycleOperation('client.offboard',c.args,true,crypto.randomUUID(),c.dep);expect(r.taskId).toBe('ticket1');});
+test('a client without linked accounts cannot be reported as paused',async()=>{
+ const c=await context();c.dep.scope=async()=>({...scope,accounts:[]});c.p.calls.length=0;
+ await expect(lifecycleOperation('client.pause',{...c.args,fingerprint:'[]'},true,crypto.randomUUID(),c.dep)).rejects.toThrow('Link and check');
+ expect(c.stats()).toEqual({started:0,finished:0,failed:0});expect(c.p.calls).toHaveLength(0);
+});
+test('offboarding without mapped accounts requests a manual campaign check without claiming a pause',async()=>{
+ const c=await context();c.dep.scope=async()=>({...scope,accounts:[]});c.p.calls.length=0;
+ const r=await lifecycleOperation('client.offboard',{...c.args,fingerprint:'[]'},true,crypto.randomUUID(),c.dep);
+ expect(r.ok).toBe(true);expect(r.checkedAt).toBeNull();expect(r.paused).toEqual([]);expect(r.did).toContain('team needs to confirm campaign status');
+ expect(c.p.calls.some(x=>x.provider==='meta')).toBe(false);expect(c.p.calls.filter(x=>x.method==='POST').map(x=>x.path)).toEqual(['list/901816723190/task']);
+ expect(c.stats()).toEqual({started:1,finished:1,failed:0});
+});
