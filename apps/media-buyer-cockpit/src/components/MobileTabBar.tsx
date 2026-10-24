@@ -11,6 +11,7 @@ import {
   Sunrise,
   Table2,
   Truck,
+  Users,
   Wallet,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
@@ -87,6 +88,13 @@ export function MobileTabBar() {
             icon: Sunrise,
             to: "/dashboard",
             active: path === "/dashboard" || path === "/eod",
+          },
+          {
+            key: "launch",
+            label: "Clients",
+            icon: Users,
+            to: "/clients",
+            active: path === "/clients" || path === "/launch",
           },
           {
             key: "ads",

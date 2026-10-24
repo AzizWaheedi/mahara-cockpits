@@ -10,6 +10,7 @@ import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
+import { ClientAlerts } from "./launch/ClientAlerts";
 import { MobileTabBar } from "./MobileTabBar";
 import { OfflineBanner } from "./OfflineBanner";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
@@ -84,6 +85,7 @@ function LayoutContent() {
             it clear of the tab bar. */}
         <main className="flex-1 px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-28 sm:px-6 sm:pt-[max(1.5rem,env(safe-area-inset-top))] lg:px-8 lg:pt-8 lg:pb-12">
           <OfflineBanner />
+          <ClientAlerts />
           <RouteErrorBoundary report={handleReport}>
             <AnimatePresence initial={false} mode="wait">
               <motion.div

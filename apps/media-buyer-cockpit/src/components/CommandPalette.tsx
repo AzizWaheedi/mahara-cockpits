@@ -54,6 +54,13 @@ const PAGES: (Hit & { role?: "media_buyer" | "admin" | "ceo" })[] = [
     role: "media_buyer",
   },
   {
+    href: "/clients",
+    label: "Clients",
+    sub: "All clients, accounts, launches and relaunches",
+    old: "launch relaunch paused onboarding nothing running tasks status accounts",
+    role: "media_buyer",
+  },
+  {
     href: "/ads",
     label: "Ads",
     sub: "Every campaign, and each client's page",

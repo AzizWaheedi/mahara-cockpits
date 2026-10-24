@@ -17,13 +17,24 @@ let state: CockpitAuthState | null = null;
 
 export function useCockpitAuth(): CockpitAuthState {
   if (!state) {
+    const launchSeat = new URLSearchParams(window.location.search)
+      .get("path")
+      ?.match(/^\/(launch|clients)/);
     const access = {
-      email: "ceo@example.test",
-      name: "The CEO",
-      roles: ["ceo"],
+      email: launchSeat ? "buyer@example.test" : "ceo@example.test",
+      name: launchSeat ? "Media buyer" : "The CEO",
+      roles: new URLSearchParams(window.location.search)
+        .get("path")
+        ?.match(/^\/(launch|clients)/)
+        ? ["media_buyer"]
+        : ["ceo"],
       clients: [],
-      isAdmin: true,
-      isCeo: true,
+      isAdmin: !new URLSearchParams(window.location.search)
+        .get("path")
+        ?.match(/^\/(launch|clients)/),
+      isCeo: !new URLSearchParams(window.location.search)
+        .get("path")
+        ?.match(/^\/(launch|clients)/),
       cockpits: ["csm", "creative", "editor", "sales"],
       home: "/ceo",
     };
@@ -50,8 +61,12 @@ export function useCockpitAuth(): CockpitAuthState {
       ready: true,
       error: null,
       isAuthenticated: true,
-      isAdmin: true,
-      isCeo: true,
+      isAdmin: !new URLSearchParams(window.location.search)
+        .get("path")
+        ?.match(/^\/(launch|clients)/),
+      isCeo: !new URLSearchParams(window.location.search)
+        .get("path")
+        ?.match(/^\/(launch|clients)/),
       email: access.email,
       name: access.name,
       roles: access.roles,

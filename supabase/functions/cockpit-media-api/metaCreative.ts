@@ -247,6 +247,7 @@ export const CREATIVE_FIELDS =
  * not seen before is better read raw than guessed at.
  */
 export function explainMeta(raw: string): string {
+  if (raw.includes('4841021')) return 'This ad account owes Meta a payment. Meta refuses every change on it, pausing included, until the client pays in Ads Manager.';
   const page = /Page (\d{5,})/.exec(raw)?.[1];
   if (raw.includes("3858749"))
     return `Meta will not let the cockpit post to that client's Facebook Page${page ? ` (${page})` : ""}. The app needs the Advertiser role or higher on the Page: add it in the client's Business Settings under Pages, then try again. Until then the ad has to be made in Ads Manager.`;
@@ -260,5 +261,6 @@ export function explainMeta(raw: string): string {
     return "Meta refused the thumbnail on the copied creative. Tell Aziz: this is a cockpit bug, not a setting.";
   if (raw.includes("2490592"))
     return "The ad account is not in good standing, so Meta refuses every change on it. Settle the balance in Ads Manager first.";
+  if (/code 200(?:\D|$)/.test(raw)) return 'Mahara no longer has permission to this ad account. Ask the client to share access again.';
   return raw;
 }

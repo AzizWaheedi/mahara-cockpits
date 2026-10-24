@@ -109,11 +109,17 @@ function fakeServer(built: PageFormSpec & { version: string }) {
       if (fail === "funnel") throw new Error("Edge function returned 500");
       const wanted = String(body.args.version ?? `v${live || 1}`);
       const days = Number(body.args.days) || 30;
+      // From ads: about two thirds of all visits (?funnel=noads for none from ads).
+      const source = body.args.source === "all" ? "all" : "ads";
+      const noAds =
+        new URLSearchParams(window.location.search).get("funnel") === "noads";
       const chosen =
         versions.find(v => `v${v.version}` === wanted)?.spec ?? built;
       const empty =
         new URLSearchParams(window.location.search).get("funnel") === "empty";
-      let n = empty ? 0 : Math.round(8 * days);
+      const all = empty ? 0 : Math.round(8 * days);
+      const ads = noAds ? 0 : Math.round(all * 0.68);
+      let n = source === "ads" ? ads : all;
       const step = (screen: string, label: string, keep: number) => {
         n = Math.round(n * keep);
         return { screen, label, visits: n };
@@ -132,15 +138,19 @@ function fakeServer(built: PageFormSpec & { version: string }) {
         version: wanted,
         liveVersion: `v${live || 1}`,
         days,
+        source,
+        counts: { all, ads },
         since: new Date(Date.now() - days * 86_400_000).toISOString(),
         steps,
-        versions: empty
+        versions: !steps[0].visits
           ? []
           : [
               { version: wanted, visits: steps[0].visits },
               { version: "v1", visits: 90 },
             ],
-        lastAt: empty ? null : new Date(Date.now() - 600_000).toISOString(),
+        lastAt: !steps[0].visits
+          ? null
+          : new Date(Date.now() - 600_000).toISOString(),
         hosts: ["mergestudio-form.vercel.app"],
       };
     }

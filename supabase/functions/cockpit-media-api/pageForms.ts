@@ -18,8 +18,8 @@ const SLUG=/^[a-z][a-z0-9-]{1,40}$/;
 
 export type FormRow={slug:string;client_name:string;title:string;site_url:string;object_path:string;photos:string[];bindings:Record<string,string>;live_version:number|null};
 export type VersionRow={version:number;spec:PageFormSpec;summary:string;source:'build'|'cockpit';actor_email:string|null;created_at:string;first_live_at:string|null};
-/** cockpit_page_form_funnel: visits per screen for one version, visits per version, the last event, the hosts counted. */
-export type FunnelData={screens:Record<string,number>;versions:{version:string;visits:number}[];lastAt:string|null;hosts:string[]|null};
+/** cockpit_page_form_funnel: visits per screen for one version, visits per version, the last event, the hosts counted, and visits in the range from ads and in all. */
+export type FunnelData={screens:Record<string,number>;versions:{version:string;visits:number}[];lastAt:string|null;hosts:string[]|null;counts?:{all:number;ads:number}};
 
 /** Everything the operations touch, so tests can run them without Supabase. */
 export interface PageFormStore {
@@ -35,8 +35,8 @@ export interface PageFormStore {
  begin(row:{id:string;operation:string;args:Row;plan:Row}):Promise<Row|null>;
  finish(id:string,result:Row):Promise<void>;
  reconcile(id:string,message:string):Promise<void>;
- /** The page's drop-off events (page-form-events), counted per visit. */
- funnel(slug:string,version:string,since:Date):Promise<FunnelData>;
+ /** The page's drop-off events (page-form-events), counted per visit; adsOnly keeps visits whose link carried an ad or campaign id. */
+ funnel(slug:string,version:string,since:Date,adsOnly:boolean):Promise<FunnelData>;
 }
 export type PageFormDeps={store:PageFormStore;scope:(slug:string|null,client:string|null)=>Promise<Row>;fetch:typeof fetch;health:(row:Row)=>Promise<void>;now?:()=>Date};
 
@@ -193,7 +193,9 @@ const FUNNEL_DAYS=[7,30,90];
  * pageForms.funnel: where visitors stop, for one version of a page. The steps
  * follow that version's own questions, so a key that stays the same keeps its
  * count across edits. Muhammed, 2026-10-22: "detects if the leads are falling
- * during the completion of the form".
+ * during the completion of the form". Visits from ads by default (source
+ * 'ads'), so the team's own visits stay out; source 'all' counts every visit
+ * (Muhammed, 2026-10-24).
  */
 export async function readFunnel(args:Row,d:PageFormDeps){
  const slug=typeof args.slug==='string'&&SLUG.test(args.slug)?args.slug:fail('Choose a page');
@@ -201,6 +203,7 @@ export async function readFunnel(args:Row,d:PageFormDeps){
  const [form]=await d.store.forms([slug]);
  if(!form)fail('Unknown page');
  const days=FUNNEL_DAYS.includes(args.days as number)?args.days as number:30;
+ const source=args.source==='all'?'all':'ads';
  const versions=await d.store.versions(slug);
  const liveLabel=label(form.live_version??1);
  const wanted=typeof args.version==='string'&&/^v\d{1,4}$/.test(args.version)?args.version:liveLabel;
@@ -209,7 +212,7 @@ export async function readFunnel(args:Row,d:PageFormDeps){
  const spec=stored?.spec??(wanted==='v1'?await builtQuestions(form,d):null);
  if(!spec)fail(`${wanted} is not a version of this page`);
  const since=new Date((d.now??(()=>new Date()))().getTime()-days*86_400_000);
- const data=await d.store.funnel(slug,wanted,since);
+ const data=await d.store.funnel(slug,wanted,since,source==='ads');
  const visits=(screen:string)=>Number(data.screens?.[screen]??0);
  const steps=[
   {screen:'intro',label:'Opened the page',visits:visits('intro')},
@@ -218,7 +221,8 @@ export async function readFunnel(args:Row,d:PageFormDeps){
   {screen:'send',label:'Pressed send',visits:visits('send')},
   {screen:'thanks',label:'Saw the thank-you page',visits:visits('thanks')},
  ];
- return {slug,version:wanted,liveVersion:liveLabel,days,since:since.toISOString(),steps,versions:data.versions??[],lastAt:data.lastAt??null,hosts:data.hosts??[]};
+ const counts={all:Number(data.counts?.all??0),ads:Number(data.counts?.ads??0)};
+ return {slug,version:wanted,liveVersion:liveLabel,days,source,counts,since:since.toISOString(),steps,versions:data.versions??[],lastAt:data.lastAt??null,hosts:data.hosts??[]};
 }
 
 /**
@@ -279,9 +283,9 @@ export function supabasePageForms(admin:any,supabaseUrl:string,actor:string){
   async reconcile(id,message){
    await admin.from('cockpit_media_actions').update({state:'reconcile',result:{ok:false,error:message},completed_at:new Date().toISOString()}).eq('id',id).eq('state','pending');
   },
-  async funnel(slug,version,since){
-   const {data,error}=await admin.rpc('cockpit_page_form_funnel',{p_slug:slug,p_version:version,p_since:since.toISOString()});
-   if(error)throw new Error(/cockpit_page_form_funnel/.test(error.message)?'The drop-off counts are not set up yet. Apply 20261022r_cockpit_page_form_events.sql in the coordinated release.':error.message);
+  async funnel(slug,version,since,adsOnly){
+   const {data,error}=await admin.rpc('cockpit_page_form_funnel',{p_slug:slug,p_version:version,p_since:since.toISOString(),p_ads_only:adsOnly});
+   if(error)throw new Error(/cockpit_page_form_funnel/.test(error.message)?'The drop-off counts are not set up yet. Apply 20261024q_cockpit_page_form_funnel_ads.sql in the coordinated release.':error.message);
    return (data??{screens:{},versions:[],lastAt:null,hosts:[]}) as FunnelData;
   },
  };

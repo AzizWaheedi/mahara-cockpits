@@ -1,0 +1,3 @@
+import {expect,test} from 'bun:test';
+import {cardFor} from './rules';
+test('launch own card then client card, preserves ordinary existing card',()=>{const launches=[{campaignName:'New launch',clientName:'Harbour',taskId:'newcard',clientTaskId:'clientcard'}];expect(cardFor('New launch',[],launches)?.taskId).toBe('newcard');expect(cardFor('New launch',[],[{...launches[0],taskId:null}])?.ownCard).toBe(false);expect(cardFor('New launch',[],[{...launches[0],taskId:null}])?.taskId).toBe('clientcard');expect(cardFor('New launch',[{campaignName:'New launch',taskId:'existing'}],launches)?.taskId).toBe('existing');expect(cardFor('Ambiguous',[],[{campaignName:'Ambiguous',taskId:'a'},{campaignName:'Ambiguous',taskId:'b'}])).toBeUndefined();});

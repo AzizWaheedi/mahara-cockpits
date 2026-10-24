@@ -453,3 +453,38 @@ export const buildCreativeLaunchResult = async (ctx: any, args: any) => {
     ),
   };
 };
+
+/** Launch receipts bridge the hourly delivery read and the native Ads listing. */
+export function launchRows(p: import("./launchModel").LaunchPipeline) {
+  return p.clients
+    .filter(c => !c.readOnly)
+    .flatMap(c =>
+      c.launches
+        .filter(l => l.hasImpressions && !l.inAds && l.state === "switched_on")
+        .map(l => ({
+          _id: l.id,
+          justLaunched: true,
+          campaignName: l.campaign_name,
+          clientName: c.name,
+          clientTag: c.name,
+          accountName: c.name,
+          metaCampaignId: l.meta_campaign_id,
+          metaAccountId: l.account_id,
+          taskId: l.card_task_id,
+          serviceMode: c.serviceMode,
+          adStatus: "Live",
+          boardAdStatus: "Live",
+          taskUrl: l.card_task_id
+            ? `https://app.clickup.com/t/${l.card_task_id}`
+            : undefined,
+          currency: c.accounts.find(a => a.id === l.account_id)?.currency,
+          advertisingCities: c.cards.flatMap(x => x.advertisingCities ?? []),
+          today: l.today,
+          findings: [],
+          reason: "Numbers start with the next sync",
+          spend7d: null,
+          leads7d: null,
+          cpl7d: null,
+        })),
+    );
+}

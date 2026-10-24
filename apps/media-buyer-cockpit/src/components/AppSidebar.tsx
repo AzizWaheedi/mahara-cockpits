@@ -11,6 +11,7 @@ import {
   Sun,
   Sunrise,
   Table2,
+  Users,
   X,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
@@ -58,6 +59,13 @@ const navItems = [
     icon: Sunrise,
     role: "media_buyer",
     also: ["/eod"],
+  },
+  {
+    href: "/clients",
+    label: "Clients",
+    icon: Users,
+    role: "media_buyer",
+    also: [] as string[],
   },
   {
     href: "/ads",
