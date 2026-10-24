@@ -7,7 +7,7 @@ import {
   Presentation,
   Upload,
 } from "lucide-react";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { focusOf } from "./AdsStage";
@@ -32,6 +32,8 @@ import { PrepVideos } from "./VideoPrep";
  * Before the call, never shared (DESIGN 12.3): the deck live in a box, a
  * strip of its slides with what each one is missing, the slide's own
  * settings, and Present, which opens the shared deck in its own window.
+ * Hosted in the creative director cockpit (EMBED.md 4.2), the page above
+ * holds the client's name and the title, and Present fills that tab.
  */
 
 const strings = (v: unknown): string[] =>
@@ -53,6 +55,7 @@ export function PrepView({
   links,
   uploadLogo,
   io,
+  hosted = false,
 }: {
   model: DeckModel;
   deck: DeckKind;
@@ -64,6 +67,8 @@ export function PrepView({
   /** Save a logo to the client's tray (left out where nothing can be saved). */
   uploadLogo?: (file: File) => Promise<void>;
   io?: DeckIO;
+  /** Inside the creative director cockpit's page (EMBED.md 4.2). */
+  hosted?: boolean;
 }) {
   const d = model.data;
   const [pos, setPos] = useState<Pos>({ index: 0, tour: 0 });
@@ -100,6 +105,26 @@ export function PrepView({
       void model.reload().then(() => model.hub.post({ type: "ads" }));
     },
   });
+  // The Blueprint's parts by address (#part1 to #part3): opened and brought
+  // up once the form is drawn, and again when the address changes.
+  const drawn = Boolean(d);
+  useEffect(() => {
+    if (deck !== "blueprint" || !drawn) return;
+    const go = () => {
+      const id = window.location.hash.slice(1);
+      if (!/^part[123]$/.test(id)) return;
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.tagName === "DETAILS") (el as HTMLDetailsElement).open = true;
+      el.scrollIntoView?.({ block: "start" });
+    };
+    const first = window.setTimeout(go, 0);
+    window.addEventListener("hashchange", go);
+    return () => {
+      window.clearTimeout(first);
+      window.removeEventListener("hashchange", go);
+    };
+  }, [deck, drawn]);
   if (!d) return null;
   const prep = model.prep[deck];
   const hidden = new Set(strings(prep.hidden_slides));
@@ -150,20 +175,24 @@ export function PrepView({
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
-        <a
-          href={links.client}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft aria-hidden className="size-4" />
-          <bdi>{d.nameEn}</bdi>
-        </a>
-        <span className="text-sm font-semibold">
-          Prepare the{" "}
-          {deck === "blueprint"
-            ? DECK_NAME[deck].en
-            : DECK_NAME[deck].en.toLowerCase()}{" "}
-          deck
-        </span>
+        {hosted ? null : (
+          <>
+            <a
+              href={links.client}
+              className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+            >
+              <ArrowLeft aria-hidden className="size-4" />
+              <bdi>{d.nameEn}</bdi>
+            </a>
+            <span className="text-sm font-semibold">
+              Prepare the{" "}
+              {deck === "blueprint"
+                ? DECK_NAME[deck].en
+                : DECK_NAME[deck].en.toLowerCase()}{" "}
+              deck
+            </span>
+          </>
+        )}
         {deck === "blueprint" ? null : (
           <a
             href={links.other}
@@ -277,8 +306,10 @@ export function PrepView({
           </ol>
           <div className="text-xs text-muted-foreground">
             The preview is live: tick, type and pick on it as you will on the
-            call. Back, Next and the strip move it; the shared deck opens in its
-            own window with Present.
+            call. Back, Next and the strip move it
+            {hosted
+              ? ". Present fills this tab with the shared deck."
+              : "; the shared deck opens in its own window with Present."}
           </div>
           {deck === "blueprint" ? <BlueprintPrep bp={base.bp} d={d} /> : null}
         </div>

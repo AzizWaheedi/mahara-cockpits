@@ -149,6 +149,23 @@ for f in "$MB/src/lib/callRecording.ts" "$CS/src/lib/callRecording.ts"; do
   fi
 done
 
+# The Brand Blueprint call inside the creative director cockpit
+# (docs/brand-blueprint/EMBED.md 4.5): the five messages the client success
+# deck's frame and the creative director's page exchange, and the addresses
+# both sides build. Byte for byte, and import-free in both apps.
+same deckHost.ts "$CS/src/present/deckHost.ts" "$CD/src/lib/deckHost.ts"
+if [ -f "$CS/src/present/deckHost.ts" ] && [ -f "$CD/src/lib/deckHost.ts" ] \
+  && ! cmp -s "$CS/src/present/deckHost.ts" "$CD/src/lib/deckHost.ts"; then
+  echo "DRIFTED  deckHost.ts: the two copies must be byte for byte"
+  fails=$((fails + 1))
+fi
+for f in "$CS/src/present/deckHost.ts" "$CD/src/lib/deckHost.ts"; do
+  if [ -f "$f" ] && grep -qE '^(import |export .* from )' "$f"; then
+    echo "IMPORTS  $f must stay import-free: two apps hold it"
+    fails=$((fails + 1))
+  fi
+done
+
 # The client decks (CSM decks, 2026-10-19) copy the sales deck's generic
 # parts: the photo-book layout, the figure rules, the figure itself, the
 # platform marks and their artwork. The pitch deck is not refactored, so the

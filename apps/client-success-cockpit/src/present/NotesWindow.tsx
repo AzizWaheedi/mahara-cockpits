@@ -296,6 +296,7 @@ export function NotesWindow({
   base,
   book,
   io,
+  hosted = false,
 }: {
   model: DeckModel;
   deck: DeckKind;
@@ -303,6 +304,8 @@ export function NotesWindow({
   base: Omit<SlideCtx, "tour" | "setTour">;
   book?: (kind: CallKind, label: string, opts?: BookOpts) => ReactNode;
   io?: DeckIO;
+  /** The Blueprint's notes for the creative director cockpit (EMBED.md 4.4). */
+  hosted?: boolean;
 }) {
   const { hub, data: d } = model;
   /** The kickoff on the deck's last slide, as the deck window has it. */
@@ -503,7 +506,11 @@ export function NotesWindow({
           {stops > 1
             ? `Stop ${tour + 1} of ${stops}${stopName ? `: ${stopName.en}` : ""}`
             : "One stop"}
-          {at ? "" : " · open the deck window to follow it here"}
+          {at
+            ? ""
+            : hosted
+              ? " · press Present to follow it here"
+              : " · open the deck window to follow it here"}
         </div>
         {deck === "blueprint" && base.bp?.rehearsal ? (
           <div className="mt-1 rounded-md bg-primary/15 px-2 py-1 text-xs font-medium">
@@ -816,8 +823,9 @@ export function NotesWindow({
           </Button>
         </div>
         <div className="mt-2 text-[11px] text-muted-foreground">
-          Share the deck window only, maximised rather than full screen, so you
-          can reach this window.
+          {hosted
+            ? "Share only the Blueprint's tab on the call. The deck fills it; this window stays private."
+            : "Share the deck window only, maximised rather than full screen, so you can reach this window."}
         </div>
       </footer>
     </div>

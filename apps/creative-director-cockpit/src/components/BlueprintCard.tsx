@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import {
   blueprintSession,
   type Change,
   type Conflict,
+  callRoute,
   clickupTask,
   dayShort,
   FieldSaver,
@@ -33,7 +35,6 @@ import {
   type OfferLine,
   offerOf,
   offerWait,
-  openPrep,
   PART_NAME,
   PARTS,
   type Part,
@@ -57,9 +58,10 @@ import { cn } from "@/lib/utils";
 
 /**
  * The Brand Blueprint card on a client's page (docs/brand-blueprint SPEC.md
- * 4.0 and 4.1): the three parts as a run sheet, the way into the call
- * window, and the offer slip, where the creative director finishes part 3 a
- * day or two after the call and locks it.
+ * 4.0 and 4.1): the three parts as a run sheet, the way into the call (its
+ * page inside this cockpit, EMBED.md 4.1), and the offer slip, where the
+ * creative director finishes part 3 a day or two after the call and locks
+ * it.
  *
  * Everything the card writes goes through the record's own functions
  * (cockpit_blueprint_save and cockpit_blueprint_part_done) and the creative
@@ -251,6 +253,8 @@ export function BlueprintCard({
     <BlueprintBody
       key={taskId}
       taskId={taskId}
+      clientName={clientName}
+      status={status ?? null}
       offerSheet={offerSheet ?? null}
       row={read.row}
       serverNow={Date.parse(read.now) || Date.now()}
@@ -301,8 +305,31 @@ type Run = {
   notice?: string | null;
 };
 
+/** What the call page shows at once, before it reads the record. */
+export type CallRouteState = { clientName: string; status: string | null };
+
+/**
+ * The card's way into the call (EMBED.md 4.1): the page in this cockpit, at
+ * a part when given, a rehearsal kept, and the name and status riding along
+ * so the call page draws its header before it reads anything.
+ */
+export function callLink(
+  taskId: string,
+  at: "part1" | "part2" | undefined,
+  rehearse: boolean,
+  clientName: string,
+  status: string | null,
+): { to: ReturnType<typeof callRoute>; state: CallRouteState } {
+  return {
+    to: callRoute(taskId, at, rehearse),
+    state: { clientName, status },
+  };
+}
+
 function BlueprintBody({
   taskId,
+  clientName,
+  status,
   offerSheet,
   row: firstRow,
   serverNow,
@@ -313,6 +340,8 @@ function BlueprintBody({
   reload,
 }: {
   taskId: string;
+  clientName: string;
+  status: string | null;
   offerSheet: string | null;
   row: BlueprintRow | null;
   serverNow: number;
@@ -559,16 +588,17 @@ function BlueprintBody({
     await reload();
   }
 
+  // The call opens here, in this tab (EMBED.md 4.1): links, so Cmd-click
+  // still gives a tab of its own.
   const nextIsCall = !sent1;
+  const link = (at?: "part1" | "part2") =>
+    callLink(taskId, at, rehearse, clientName, status);
   const callButton = (
-    <Button
-      size="sm"
-      variant={nextIsCall ? "default" : "outline"}
-      onClick={() => openPrep(taskId, undefined, undefined, rehearse)}
-      title="Opens the call's prep window, then present from it"
-    >
-      <Presentation />
-      Run the Blueprint call
+    <Button size="sm" variant={nextIsCall ? "default" : "outline"} asChild>
+      <Link {...link()} title="Opens the call here: prepare it, then Present">
+        <Presentation />
+        Run the Blueprint call
+      </Link>
     </Button>
   );
 
@@ -652,23 +682,15 @@ function BlueprintBody({
             onSend={() => void press(p)}
             action={
               p === 1 && states[1].kind === "ready" ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => openPrep(taskId, "part1", undefined, rehearse)}
-                >
-                  Open part 1
+                <Button size="sm" variant="outline" asChild>
+                  <Link {...link("part1")}>Open part 1</Link>
                 </Button>
               ) : p === 2 &&
                 sent1 &&
                 !sent2 &&
                 now - Date.parse(sent1.firstAt) > CLOSED_AFTER_MS ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => openPrep(taskId, "part2", undefined, rehearse)}
-                >
-                  Finish part 2
+                <Button size="sm" variant="outline" asChild>
+                  <Link {...link("part2")}>Finish part 2</Link>
                 </Button>
               ) : p === 3 ? (
                 offerSheet ? (
@@ -797,7 +819,7 @@ function withDraft(stored: Answers, d: Draft): Answers {
   return a;
 }
 
-type Tone = "good" | "warn" | "bad" | "live" | "quiet";
+export type Tone = "good" | "warn" | "bad" | "live" | "quiet";
 const DOT: Record<Tone, string> = {
   good: "bg-success",
   warn: "bg-warning",
@@ -805,7 +827,8 @@ const DOT: Record<Tone, string> = {
   live: "bg-primary",
   quiet: "bg-muted-foreground/50",
 };
-function Dot({ tone, pulse }: { tone: Tone; pulse?: boolean }) {
+/** The part's dot; the call page's parts rail draws the same one. */
+export function Dot({ tone, pulse }: { tone: Tone; pulse?: boolean }) {
   return (
     <span
       aria-hidden
@@ -901,7 +924,8 @@ function PartRow({
   );
 }
 
-function stateView(
+/** A part's words and tone, for the card's rows and the call page's rail. */
+export function stateView(
   part: Part,
   s: PartState,
   row: BlueprintRow | null,
@@ -962,7 +986,7 @@ function stateView(
               ? `Ready to lock · waiting ${waited(wait.hours)}`
               : "Ready to lock"
             : part === 1
-              ? "Ready: Send to media from the call window"
+              ? "Ready: Send to media on the call"
               : "Ready: Close the call",
         toneText: part === 3 && wait?.late ? "txt-warn" : undefined,
       };

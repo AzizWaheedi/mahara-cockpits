@@ -1,5 +1,7 @@
+import { useEffect, useMemo } from "react";
 import { Navigate, Outlet, useLocation } from "react-router";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
+import { hostFrame } from "@/present/useHost";
 import {
   Sidebar,
   SidebarContent,
@@ -73,15 +75,38 @@ function AppSkeleton() {
   );
 }
 
+/**
+ * One plain line for the Brand Blueprint's frame in the creative director
+ * cockpit (EMBED.md 4.6): never this app's sidebar skeleton or its sign-in
+ * page inside the other cockpit's page.
+ */
+function FrameLine({ children }: { children: string }) {
+  return (
+    <div
+      role="status"
+      className="grid min-h-screen place-content-center bg-background p-6 text-sm text-muted-foreground"
+    >
+      {children}
+    </div>
+  );
+}
+
 export function ProtectedRoute() {
   const { ready, session, isAuthenticated } = useCockpitAuth();
   const location = useLocation();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the frame's address decides; read again when it changes
+  const host = useMemo(() => hostFrame(), [location.pathname, location.search]);
+  const signedOut = ready && (!session || !isAuthenticated);
+  useEffect(() => {
+    if (host && signedOut) host.post({ type: "signed-out" });
+  }, [host, signedOut]);
 
   if (!ready) {
-    return <AppSkeleton />;
+    return host ? <FrameLine>Opening…</FrameLine> : <AppSkeleton />;
   }
 
   if (!session || !isAuthenticated) {
+    if (host) return <FrameLine>Sign in to the cockpit again.</FrameLine>;
     const wanted = `${location.pathname}${location.search}`;
     const next = wanted === "/" ? "" : `?next=${encodeURIComponent(wanted)}`;
     return <Navigate to={`/login${next}`} replace />;
