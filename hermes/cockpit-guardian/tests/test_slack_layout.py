@@ -190,12 +190,12 @@ class Better(unittest.TestCase):
 
 class AdBillingCoverage(unittest.TestCase):
     def test_a_client_without_meta_access_is_not_a_coverage_gap(self):
-        bound = {'client_task_id': 'one', 'enabled': True, 'manual_cutover_verified': True}
+        bound = {'client_task_id': 'one', 'enabled': True, 'manual_cutover_verified': True, 'last_good_at': fakes.ago(1)}
         roster = [{'client_task_id': 'one'}, {'client_task_id': '86ex4j8f3'}]
         self.assertEqual(ad_billing.run(context(roster=roster, bindings=[bound])).status, 'ok')
 
     def test_a_run_that_finished_during_the_scan_is_fresh(self):
-        bound = [{'client_task_id': 'one', 'enabled': True, 'manual_cutover_verified': True}]
+        bound = [{'client_task_id': 'one', 'enabled': True, 'manual_cutover_verified': True, 'last_good_at': fakes.ago(1)}]
         self.assertEqual(ad_billing.run(context(age=-0.5, roster=[{'client_task_id': 'one'}], bindings=bound)).status, 'ok')
         self.assertEqual(ad_billing.run(context(age=-6)).status, 'fail', 'a finish far ahead of the clock is still wrong')
 
