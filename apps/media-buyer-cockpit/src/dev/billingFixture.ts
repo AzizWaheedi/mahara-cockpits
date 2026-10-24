@@ -509,6 +509,76 @@ export function installBillingHarness(client: SupabaseClient): void {
       d.matchedBy = null;
       return ok({ ok: true, sentence: `Unlinked from ${name ?? "the card"}.` });
     }
+    // The CEO leaves a payment out of program money (20261024p), as the
+    // server does: off the deal's rails, onto the exclusions list.
+    if (action === "exclude") {
+      if (!read.ceo)
+        return refuse("Only the CEO can leave a payment out of program money.");
+      const i = read.rails.findIndex(
+        r =>
+          r.paymentId === String(a.paymentId) &&
+          r.dealResponseId === String(a.dealResponseId),
+      );
+      if (i < 0)
+        return refuse(
+          "That payment is not one of this client's rail payments. Reload the page.",
+        );
+      const [rail] = read.rails.splice(i, 1);
+      read.exclusions = [
+        ...(read.exclusions ?? []),
+        {
+          id: nextId++,
+          paymentId: rail.paymentId,
+          dealResponseId: rail.dealResponseId,
+          taskId,
+          day: rail.day,
+          usd: rail.usd,
+          rail: rail.rail,
+          reason: a.reason === "other" ? "other" : "website",
+          setByName: "Abdulaziz Waheedi",
+          setAt: new Date().toISOString(),
+          note: (a.note as string | null) ?? null,
+        },
+      ];
+      logEvent(taskId, "exclude", {
+        to_value: rail.paymentId,
+        detail: {
+          usd: rail.usd,
+          day: rail.day,
+          rail: rail.rail,
+          reason: a.reason,
+        },
+      });
+      return ok({
+        ok: true,
+        sentence: `Left $${rail.usd.toLocaleString("en-US")} out of program money.`,
+      });
+    }
+    if (action === "unexclude") {
+      const x = (read.exclusions ?? []).find(
+        e => e.paymentId === String(a.paymentId),
+      );
+      if (!x)
+        return refuse(
+          "That payment already counts as program money. Reload the page.",
+        );
+      read.exclusions = (read.exclusions ?? []).filter(e => e !== x);
+      read.rails.push({
+        dealResponseId: x.dealResponseId,
+        paymentId: x.paymentId,
+        day: x.day,
+        usd: x.usd,
+        rail: x.rail,
+        kind: "remainder",
+        fromLedger: true,
+        byHand: false,
+      });
+      logEvent(x.taskId ?? taskId, "unexclude", {
+        from_value: x.paymentId,
+        reason: String(a.reason ?? ""),
+      });
+      return ok({ ok: true, sentence: "Counted as program money again." });
+    }
     return refuse("That is not a pending payments action.");
   }
 

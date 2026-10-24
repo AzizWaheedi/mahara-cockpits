@@ -109,6 +109,20 @@ export type PendingApi = {
   unlink?: (p: { dealResponseId: string; reason: string }) => Promise<string>;
   /** CEO cockpit only: open Money's tie sheet for this untied payment. */
   openTie?: (paymentId: string) => void;
+  /**
+   * CEO cockpit only (20261024p): leave a payment the row's deal holds out of
+   * program money (the website), so it fills no part. Cash, ties and pay are
+   * left as they are. Returns the server's sentence.
+   */
+  exclude?: (p: {
+    taskId: string;
+    dealResponseId: string;
+    paymentId: string;
+    reason: "website" | "other";
+    note: string | null;
+  }) => Promise<string>;
+  /** CEO cockpit only: count a payment left out of program money again. */
+  unexclude?: (p: { paymentId: string; reason: string }) => Promise<string>;
 };
 
 /**
@@ -1290,6 +1304,230 @@ function Unlink({
 }
 
 /**
+ * CEO only (20261024p): a payment the client's deal holds that was not
+ * program money, such as the website sold beside the program. Leaving it out
+ * stops this section counting it toward the plan; the money refresh, ties,
+ * cash and pay are left as they are. A payment left out can be counted again.
+ */
+function ProgramMoney({
+  api,
+  row,
+  today,
+  onDone,
+  onSection,
+}: {
+  api: PendingApi;
+  row: PendingRow;
+  today: string;
+  onDone: (sentence: string) => void;
+  /** Counting a payment again can finish the row, so its sentence shows on the section. */
+  onSection: (sentence: string) => void;
+}) {
+  // null: closed; "out": leaving a payment out; a payment id: counting it again.
+  const [mode, setMode] = useState<string | null>(null);
+  const [pick, setPick] = useState("");
+  const [why, setWhy] = useState<"website" | "other">("website");
+  const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const deal = row.deal;
+  const { exclude, unexclude } = api;
+  if (!deal || !exclude || !unexclude) return null;
+  if (row.rails.length === 0 && row.excluded.length === 0) return null;
+  const chosen = row.rails.some(r => r.paymentId === pick)
+    ? pick
+    : (row.rails[0]?.paymentId ?? "");
+  const open = (next: string | null) => {
+    setMode(next);
+    setError(null);
+    setReason("");
+    setNote("");
+  };
+  const send = async (
+    write: () => Promise<string>,
+    done: (sentence: string) => void,
+  ) => {
+    setBusy(true);
+    setError(null);
+    try {
+      done(await write());
+      open(null);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const paymentWords = (r: { rail: string; usd: number; day: string }) =>
+    `${railWord(r.rail)} ${usdText(r.usd)} on ${dayText(r.day, today)}`;
+  // Two payments alike (Castello's two $1,500 of 21 Aug) are told apart by their id.
+  const alike = (r: { rail: string; usd: number; day: string }) =>
+    row.rails.filter(o => paymentWords(o) === paymentWords(r)).length > 1;
+  const optionWords = (r: (typeof row.rails)[number]) =>
+    alike(r)
+      ? `${paymentWords(r)} · ${r.paymentId.slice(r.paymentId.indexOf(":") + 1)}`
+      : paymentWords(r);
+  return (
+    <div className="grid gap-2">
+      {row.excluded.map(x =>
+        mode === x.paymentId ? (
+          <div key={x.paymentId} className="grid gap-2">
+            <Field label={`Why ${paymentWords(x)} counts again`}>
+              {id => (
+                <Input
+                  id={id}
+                  value={reason}
+                  maxLength={300}
+                  onChange={e => setReason(e.target.value)}
+                  placeholder="It was program money after all"
+                />
+              )}
+            </Field>
+            <span className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy || reason.trim().length < 3}
+                onClick={() =>
+                  send(
+                    () =>
+                      unexclude({
+                        paymentId: x.paymentId,
+                        reason: reason.trim(),
+                      }),
+                    onSection,
+                  )
+                }
+              >
+                {busy ? <Loader2 className={spin} aria-hidden /> : null}
+                {busy ? "Counting it again" : "Count it again"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => open(null)}
+              >
+                Keep it out
+              </Button>
+            </span>
+          </div>
+        ) : mode === null ? (
+          <div key={x.paymentId}>
+            <Button size="sm" variant="ghost" onClick={() => open(x.paymentId)}>
+              {`Count ${usdText(x.usd)} on ${dayText(x.day, today)} again`}
+            </Button>
+          </div>
+        ) : null,
+      )}
+      {mode === "out" ? (
+        <div className="grid gap-3">
+          <p className="text-xs text-muted-foreground">
+            It stops counting toward the plan here. Cash, ties and pay stay as
+            they are.
+          </p>
+          <div className="grid gap-3 @md:grid-cols-2">
+            <Field label="Payment">
+              {id => (
+                <AnimatedSelect
+                  id={id}
+                  className={select}
+                  value={chosen}
+                  onChange={e => {
+                    setPick(e.target.value);
+                    setError(null);
+                  }}
+                >
+                  {row.rails.map(r => (
+                    <option key={r.paymentId} value={r.paymentId}>
+                      {optionWords(r)}
+                    </option>
+                  ))}
+                </AnimatedSelect>
+              )}
+            </Field>
+            <Field label="What it was for">
+              {id => (
+                <AnimatedSelect
+                  id={id}
+                  className={select}
+                  value={why}
+                  onChange={e => {
+                    setWhy(e.target.value === "other" ? "other" : "website");
+                    setError(null);
+                  }}
+                >
+                  <option value="website">The website</option>
+                  <option value="other">Something else</option>
+                </AnimatedSelect>
+              )}
+            </Field>
+          </div>
+          {why === "other" ? (
+            <Field label="Say what it was">
+              {id => (
+                <Input
+                  id={id}
+                  value={note}
+                  maxLength={500}
+                  onChange={e => setNote(e.target.value)}
+                  placeholder="Logo design"
+                />
+              )}
+            </Field>
+          ) : null}
+          <span className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={
+                busy || !chosen || (why === "other" && note.trim().length < 3)
+              }
+              onClick={() =>
+                send(
+                  () =>
+                    exclude({
+                      taskId: row.taskId,
+                      dealResponseId: deal.responseId,
+                      paymentId: chosen,
+                      reason: why,
+                      note: why === "other" ? note.trim() : null,
+                    }),
+                  onDone,
+                )
+              }
+            >
+              {busy ? <Loader2 className={spin} aria-hidden /> : null}
+              {busy ? "Leaving it out" : "Leave it out"}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => open(null)}
+            >
+              Keep counting it
+            </Button>
+          </span>
+        </div>
+      ) : mode === null && row.rails.length > 0 ? (
+        <div>
+          <Button size="sm" variant="ghost" onClick={() => open("out")}>
+            Leave a payment out of program money
+          </Button>
+        </div>
+      ) : null}
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * A card-only row (an Active client with no closer form): no plan to confirm
  * a part against, and the server takes no confirmation without a deal on a
  * card past onboarding, so a payment is logged from the sheet's own form.
@@ -1459,6 +1697,15 @@ function RowPanel({
         />
         {ceo ? <RowHints api={api} hints={row.hints} /> : null}
         {ceo ? <Unlink api={api} row={row} onDone={onUnlinked} /> : null}
+        {ceo ? (
+          <ProgramMoney
+            api={api}
+            row={row}
+            today={view.today}
+            onDone={onDone}
+            onSection={onUnlinked}
+          />
+        ) : null}
         <div className="grid gap-2">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
             <h4 className="font-medium">Where the numbers come from</h4>

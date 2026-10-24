@@ -10,10 +10,12 @@ import {
   assignBillingPayer,
   confirmPaid,
   editBillingAccount,
+  excludePayment,
   fetchBillingSheet,
   fetchPendingPayments,
   linkDealToCard,
   logBillingPayment,
+  unexcludePayment,
   unlinkDeal,
   withdrawConfirmation,
 } from "@/lib/billing";
@@ -60,6 +62,8 @@ export function BillingTab({ sections, goTab }: CeoTabProps) {
       withdraw: async p => withdrawConfirmation(signedIn(), p, "ceo"),
       link: async p => linkDealToCard(signedIn(), p, "ceo"),
       unlink: async p => unlinkDeal(signedIn(), p, "ceo"),
+      exclude: async p => excludePayment(signedIn(), p, "ceo"),
+      unexclude: async p => unexcludePayment(signedIn(), p, "ceo"),
       // Money's tie sheet on that payment; Transactions when it is not there.
       openTie: tieOpener(() => linesNow.current, setTying, goTab),
     };

@@ -8,8 +8,9 @@
  * ribbon's parts and words, what a success manager never sees, the loading,
  * error, empty and money-not-read states, Confirm paid (busy, refused,
  * done), Log it as a payment handing over to the sheet's own form, Withdraw,
- * Link to a card, Open Transactions, Put the next part on the card, and the
- * billing log's sentences for the four new kinds. No network.
+ * Link to a card, Open Transactions, Put the next part on the card, the
+ * CEO's Leave a payment out of program money and Count it again (20261024p),
+ * and the billing log's sentences for the six new kinds. No network.
  */
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -89,9 +90,8 @@ const { BillingSheet } = await import("../src/components/billing/BillingSheet");
 const { buildPending } = await import("../src/lib/billingBalances");
 const { accountFrom, buildSheet } = await import("../src/lib/billingCore");
 const { billingRead, sheetTables } = await import("../src/dev/billingFixture");
-const { LIVE_2026_10_23, copyRead } = await import(
-  "./fixtures/billingBalances20261023"
-);
+const { CASTELLO_WEBSITE, LIVE_2026_10_23, copyRead, websiteLeftOut } =
+  await import("./fixtures/billingBalances20261023");
 const { tieOpener } = await import("../src/pages/ceo/billingTie");
 
 type PendingApi =
@@ -457,6 +457,147 @@ describe("the CEO's read of 23 Oct", () => {
     expect(api.calls.find(c => c.name === "openTie")?.args).toBe(
       first.paymentId,
     );
+  });
+});
+
+describe("a payment left out of program money (20261024p)", () => {
+  const LINE =
+    "$1,500 on 21 Aug was the website, not program money (Whop; left out by Abdulaziz)";
+  const castello = () => rowOf(/^Castello Industries$/);
+  /** What the CEO's two writes were sent, in order. */
+  let sent: { name: string; args: unknown }[] = [];
+  const ceoApi = (read: BalancesRead) => {
+    sent = [];
+    return apiOf(async () => view(read), {
+      exclude: async p => {
+        sent.push({ name: "exclude", args: p });
+        return "Left $1,500 on 21 Aug out of program money.";
+      },
+      unexclude: async p => {
+        sent.push({ name: "unexclude", args: p });
+        return "Counted as program money again.";
+      },
+    });
+  };
+  async function openCastello() {
+    const more = button(/^Show all/);
+    if (more) await click(more);
+    await openRow(castello().taskId);
+  }
+
+  test("Castello's row reads $2,000 not seen and says where the website $1,500 went", async () => {
+    const api = ceoApi(websiteLeftOut(LIVE_2026_10_23));
+    await render(h(PendingPayments, { api }));
+    expect(page()).toContain("Later parts$9,532 · 4 clients");
+    await openCastello();
+    const panel = win.document.getElementById(`pending-${castello().taskId}`);
+    const text = String(panel?.textContent ?? "");
+    expect(text).toContain("Where the numbers come from");
+    expect(text).toContain(LINE);
+    expect(text).toContain("Rails: Whop $500 (17 Aug), Whop $1,500 (21 Aug)");
+    expect(text).not.toContain("the rails leave $500 on month 2 of 3");
+  });
+
+  test("the CEO counts it again with a reason, and the section reads again", async () => {
+    const api = ceoApi(websiteLeftOut(LIVE_2026_10_23));
+    await render(h(PendingPayments, { api }));
+    await openCastello();
+    await click(button("Count $1,500 on 21 Aug again"));
+    const panel = win.document.getElementById(
+      `pending-${castello().taskId}`,
+    ) as any;
+    const field = [...panel.querySelectorAll("label")].find(
+      (l: any) =>
+        String(l.textContent) === "Why Whop $1,500 on 21 Aug counts again",
+    ) as any;
+    const input = panel.querySelector(`[id="${field.getAttribute("for")}"]`);
+    expect(button("Count it again")?.disabled).toBe(true);
+    await type(input, "It was program money after all");
+    const reads = api.calls.filter(c => c.name === "read").length;
+    await click(button("Count it again"));
+    expect(sent).toEqual([
+      {
+        name: "unexclude",
+        args: {
+          paymentId: CASTELLO_WEBSITE,
+          reason: "It was program money after all",
+        },
+      },
+    ]);
+    expect(page()).toContain("Counted as program money again.");
+    expect(api.calls.filter(c => c.name === "read").length).toBe(reads + 1);
+  });
+
+  test("the CEO leaves a payment out: the payment, what it was for, and a note for something else", async () => {
+    const api = ceoApi(LIVE_2026_10_23);
+    await render(h(PendingPayments, { api }));
+    await openCastello();
+    expect(button(/^Count .* again$/)).toBeUndefined();
+    await click(button("Leave a payment out of program money"));
+    const panel = win.document.getElementById(
+      `pending-${castello().taskId}`,
+    ) as any;
+    expect(String(panel.textContent)).toContain(
+      "It stops counting toward the plan here. Cash, ties and pay stay as they are.",
+    );
+    // The two $1,500 payments of 21 Aug are alike, so each option says its id.
+    await choose(
+      selectIn(panel, "Payment"),
+      "Whop $1,500 on 21 Aug · pay_GYsGMMpS9xosfk",
+    );
+    await choose(selectIn(panel, "What it was for"), "Something else");
+    expect(button("Leave it out")?.disabled).toBe(true);
+    const note = [...panel.querySelectorAll("label")].find(
+      (l: any) => String(l.textContent) === "Say what it was",
+    ) as any;
+    await type(
+      panel.querySelector(`[id="${note.getAttribute("for")}"]`),
+      "Logo design",
+    );
+    await click(button("Leave it out"));
+    const out = sent[0] as { name: string; args: any };
+    expect(out.name).toBe("exclude");
+    expect(out.args).toMatchObject({
+      taskId: castello().taskId,
+      dealResponseId: "r6zgixh2u6paruulr6zgi2w9lckol261",
+      reason: "other",
+      note: "Logo design",
+    });
+    expect(out.args.paymentId).toBe("whop:pay_GYsGMMpS9xosfk");
+    expect(page()).toContain("Left $1,500 on 21 Aug out of program money.");
+  });
+
+  test("a refusal shows the server's sentence; Keep counting it closes the form", async () => {
+    const api = apiOf(async () => view(), {
+      exclude: async () => {
+        throw new Error("That payment is already left out of program money.");
+      },
+      unexclude: async () => "Counted as program money again.",
+    });
+    await render(h(PendingPayments, { api }));
+    await openCastello();
+    await click(button("Leave a payment out of program money"));
+    await click(button("Leave it out"));
+    expect(page()).toContain(
+      "That payment is already left out of program money.",
+    );
+    await click(button("Keep counting it"));
+    expect(button("Leave it out")).toBeUndefined();
+    expect(button("Leave a payment out of program money")).toBeDefined();
+  });
+
+  test("a success manager reads the line and gets no control", async () => {
+    const read = websiteLeftOut(LIVE_2026_10_23);
+    read.ceo = false;
+    const api = apiOf(async () => view(read), {
+      link: undefined,
+      unlink: undefined,
+      openTie: undefined,
+    });
+    await render(h(PendingPayments, { api }));
+    await openCastello();
+    expect(page()).toContain(LINE);
+    expect(button(/program money|again$/)).toBeUndefined();
   });
 });
 
@@ -1103,6 +1244,32 @@ describe("inside the billing sheet", () => {
       at: "2026-10-23T12:00:00Z",
     },
     {
+      id: 6,
+      clickup_task_id: tables.accounts[0].clickup_task_id,
+      client_name: tables.accounts[0].client_name,
+      kind: "exclude",
+      from_value: null,
+      to_value: "whop:pay_fixture",
+      reason: null,
+      detail: { usd: 1500, rail: "whop", day: "2026-08-21", reason: "website" },
+      source: "ceo",
+      by_whom: "ceo@example.test",
+      at: "2026-10-23T13:00:00Z",
+    },
+    {
+      id: 7,
+      clickup_task_id: tables.accounts[0].clickup_task_id,
+      client_name: tables.accounts[0].client_name,
+      kind: "unexclude",
+      from_value: "whop:pay_fixture",
+      to_value: null,
+      reason: "Program money after all",
+      detail: {},
+      source: "ceo",
+      by_whom: "ceo@example.test",
+      at: "2026-10-23T14:00:00Z",
+    },
+    {
       id: 5,
       clickup_task_id: tables.accounts[0].clickup_task_id,
       client_name: tables.accounts[0].client_name,
@@ -1161,7 +1328,15 @@ describe("inside the billing sheet", () => {
     expect(t).toContain(
       "ceo unlinked a signed deal from this client: Linked to the wrong card",
     );
-    expect(t).not.toMatch(/: (confirm|unconfirm|link|unlink)[.,]/);
+    expect(t).toContain(
+      "ceo left $1,500 by Whop on 21 Aug out of program money (the website). Cash and pay are unchanged.",
+    );
+    expect(t).toContain(
+      "ceo counted a payment as program money again: Program money after all",
+    );
+    expect(t).not.toMatch(
+      /: (confirm|unconfirm|link|unlink|exclude|unexclude)[.,]/,
+    );
     // A payment row with no amount on record says so, never "$NaN".
     expect(t).toContain("Maher logged a payment.");
     expect(t).not.toContain("NaN");

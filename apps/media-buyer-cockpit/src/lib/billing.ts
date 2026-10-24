@@ -278,7 +278,7 @@ export async function fetchPendingPayments(
 
 async function balanceWrite(
   client: SupabaseClient,
-  action: "confirm" | "withdraw" | "link" | "unlink",
+  action: "confirm" | "withdraw" | "link" | "unlink" | "exclude" | "unexclude",
   args: Record<string, unknown>,
 ): Promise<Any> {
   const { data, error } = await client.rpc("cockpit_billing_balance_write", {
@@ -389,4 +389,46 @@ export async function unlinkDeal(
     source,
   });
   return String(out.sentence ?? "Unlinked.");
+}
+
+/**
+ * CEO only (20261024p): leave a payment the client's deal holds out of
+ * program money (the website, or something else with a note), so Pending
+ * payments fills no part with it. The money refresh, ties, cash and pay are
+ * left as they are. Returns the server's sentence.
+ */
+export async function excludePayment(
+  client: SupabaseClient,
+  p: {
+    taskId: string;
+    dealResponseId: string;
+    paymentId: string;
+    reason: "website" | "other";
+    note: string | null;
+  },
+  source: "ceo" | "csm" = "ceo",
+): Promise<string> {
+  const out = await balanceWrite(client, "exclude", {
+    taskId: p.taskId,
+    dealResponseId: p.dealResponseId,
+    paymentId: p.paymentId,
+    reason: p.reason,
+    note: p.note || null,
+    source,
+  });
+  return String(out.sentence ?? "Left out of program money.");
+}
+
+/** CEO only: count a payment left out of program money again, with a reason of 3 to 300 characters. */
+export async function unexcludePayment(
+  client: SupabaseClient,
+  p: { paymentId: string; reason: string },
+  source: "ceo" | "csm" = "ceo",
+): Promise<string> {
+  const out = await balanceWrite(client, "unexclude", {
+    paymentId: p.paymentId,
+    reason: p.reason,
+    source,
+  });
+  return String(out.sentence ?? "Counted as program money again.");
 }

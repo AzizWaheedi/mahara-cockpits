@@ -20,8 +20,10 @@ import {
 } from "../src/lib/billingBalances";
 import {
   afterTies,
+  CASTELLO_WEBSITE,
   copyRead,
   LIVE_2026_10_23,
+  websiteLeftOut,
 } from "./fixtures/billingBalances20261023";
 
 // Pending payments: the rule (src/lib/billingBalances.ts) on the rows the
@@ -566,6 +568,272 @@ describe("the list after Aziz's ties (PLAN 5, last part)", () => {
     expect(
       v.possibleMoney.some(p => p.day === "2026-08-30" && p.rail === "tap"),
     ).toBe(false);
+  });
+});
+
+describe("the CEO's website mark on Castello (20261024p, WRITE-PLAN S7)", () => {
+  const LINE =
+    "$1,500 on 21 Aug was the website, not program money (Whop; left out by Abdulaziz)";
+  const ties = buildPending(afterTies(LIVE_2026_10_23), NOW);
+  const v = buildPending(websiteLeftOut(afterTies(LIVE_2026_10_23)), NOW);
+  const others = (x: PendingView) =>
+    JSON.stringify(
+      [...x.rows, ...x.quiet.rows].filter(
+        r => r.name !== "Castello Industries",
+      ),
+    );
+
+  test("Castello reads $2,000 not seen on Month 2 of 3, and Later parts $11,532", () => {
+    expect(v.figures.later).toEqual({ usd: 11532, count: 5, unknown: 0 });
+    // Nothing else moves: the onboarding and another-source figures stay as after the ties.
+    expect(v.figures.onboarding).toEqual(ties.figures.onboarding);
+    expect(v.figures.another).toEqual(ties.figures.another);
+    expect(v.figures.notSeen).toEqual({
+      ...ties.figures.notSeen,
+      usd: (ties.figures.notSeen.usd as number) + 1500,
+    });
+    expect(v.figures.notSeen.usd).toBe(32284.82);
+    const castello = rowOf(v, "Castello Industries");
+    expect([
+      castello.railsUsd,
+      castello.notSeenUsd,
+      castello.laterNotSeenUsd,
+      castello.leftUsd,
+      castello.daysLate,
+      castello.tone,
+    ]).toEqual([2000, 2000, 2000, 4000, 15, "critical"]);
+    expect(castello.headline).toBe("Monthly · Month 2 of 3");
+    expect(castello.chips).toEqual(["notSeen", "later"]);
+    expect(
+      castello.parts.map(p => [p.key, p.usd, p.rails, p.notSeen, p.notDue]),
+    ).toEqual([
+      ["deposit", 500, 500, 0, 0],
+      ["onboarding", 1500, 1500, 0, 0],
+      ["later-1", 2000, 0, 2000, 0],
+      ["later-2", 2000, 0, 0, 2000],
+    ]);
+    // The card's $2,000 now agrees with the rails, so the understated note is gone.
+    expect(castello.notes.some(n => n.startsWith("The card asks"))).toBe(false);
+    expect(partOf(castello, "later-1").dueLine).toBe(
+      "8 Oct (launch 8 Sep + 1 month); the card agrees",
+    );
+    // The website payment is a source line, never a rail; its twin still counts.
+    expect(castello.sources).toContain(LINE);
+    expect(castello.sources.indexOf(LINE)).toBe(2);
+    expect(castello.sources[1]).toBe(
+      "Rails: Whop $500 (17 Aug), Whop $1,500 (21 Aug)",
+    );
+    expect(castello.rails.map(r => r.paymentId)).toEqual([
+      "whop:pay_muyoob7p33D97Q",
+      "whop:pay_GYsGMMpS9xosfk",
+    ]);
+    expect(castello.excluded.map(x => x.paymentId)).toEqual([CASTELLO_WEBSITE]);
+    // Every other row is as it was after the ties.
+    expect(others(v)).toBe(others(ties));
+  });
+
+  test("on the live read alone the mark moves Later parts from $8,032 to $9,532", () => {
+    expect(live().figures.later).toEqual({ usd: 8032, count: 4, unknown: 0 });
+    const alone = buildPending(websiteLeftOut(LIVE_2026_10_23), NOW);
+    expect(alone.figures.later).toEqual({ usd: 9532, count: 4, unknown: 0 });
+    expect(rowOf(alone, "Castello Industries").laterNotSeenUsd).toBe(2000);
+  });
+
+  test("an excluded payment is never counted twice", () => {
+    // Listed twice in the read: taken out once, said once.
+    const twice = websiteLeftOut(afterTies(LIVE_2026_10_23));
+    twice.exclusions = [
+      ...(twice.exclusions ?? []),
+      ...(twice.exclusions ?? []),
+    ];
+    const t2 = buildPending(twice, NOW);
+    expect(t2.figures).toEqual(v.figures);
+    const c2 = rowOf(t2, "Castello Industries");
+    expect(c2.railsUsd).toBe(2000);
+    expect(c2.sources.filter(s => s === LINE)).toHaveLength(1);
+    expect(c2.excluded).toHaveLength(1);
+    // A read whose rails still carry the payment (a server before 20261024p
+    // with the row added): the rule takes it out itself, once, not twice.
+    const older = afterTies(LIVE_2026_10_23);
+    older.exclusions = websiteLeftOut(older).exclusions;
+    const t3 = buildPending(older, NOW);
+    expect(t3.figures).toEqual(v.figures);
+    expect(rowOf(t3, "Castello Industries")).toEqual(
+      rowOf(v, "Castello Industries"),
+    );
+    // With no exclusions (an older read, or none set), nothing changes.
+    const none = afterTies(LIVE_2026_10_23);
+    delete none.exclusions;
+    expect(buildPending(none, NOW)).toEqual(ties);
+  });
+
+  test("an exclusion never invents money: it only takes out the payment it names", () => {
+    // A payment no row holds, on a deal no row shows: no figure, row or line changes.
+    const stray = afterTies(LIVE_2026_10_23);
+    stray.exclusions = [
+      {
+        ...(websiteLeftOut(stray).exclusions?.[0] as NonNullable<
+          BalancesRead["exclusions"]
+        >[number]),
+        paymentId: "whop:pay_notOnAnyRow",
+        dealResponseId: "no-such-deal",
+        usd: 9999,
+      },
+    ];
+    const s = buildPending(stray, NOW);
+    expect(s.figures).toEqual(ties.figures);
+    expect(
+      JSON.stringify([...s.rows, ...s.quiet.rows].map(r => r.sources)),
+    ).toBe(
+      JSON.stringify([...ties.rows, ...ties.quiet.rows].map(r => r.sources)),
+    );
+    for (const r of [...s.rows, ...s.quiet.rows])
+      expect(r.excluded).toEqual([]);
+    // Its own dollars never move a figure: only the named payment leaves the rails.
+    const big = websiteLeftOut(afterTies(LIVE_2026_10_23));
+    (big.exclusions as NonNullable<BalancesRead["exclusions"]>)[0].usd = 9999;
+    const b = buildPending(big, NOW);
+    expect(b.figures).toEqual(v.figures);
+    expect(rowOf(b, "Castello Industries").railsUsd).toBe(2000);
+    // A mark counts only on the deal it was set on: the website payment named
+    // on another deal (a read whose rails still carry it on Castello's) leaves
+    // Castello's row, and every figure, as it was.
+    const elsewhere = afterTies(LIVE_2026_10_23);
+    elsewhere.exclusions = websiteLeftOut(elsewhere).exclusions?.map(x => ({
+      ...x,
+      dealResponseId: "no-such-deal",
+    }));
+    const e = buildPending(elsewhere, NOW);
+    expect(e.figures).toEqual(ties.figures);
+    expect(rowOf(e, "Castello Industries")).toEqual(
+      rowOf(ties, "Castello Industries"),
+    );
+    // An untied payment is on no deal, so a mark on a deal never takes it off
+    // Possible money (Money untied it since, or the mark names another deal).
+    const read = copyRead(LIVE_2026_10_23);
+    const offered = live().possibleMoney[0];
+    read.exclusions = [
+      {
+        id: 7,
+        paymentId: offered.paymentId,
+        dealResponseId: "no-such-deal",
+        taskId: null,
+        day: offered.day,
+        usd: offered.usd,
+        rail: offered.rail,
+        reason: "other",
+        setByName: "Abdulaziz Waheedi",
+        setAt: "2026-10-24T09:00:00+03:00",
+        note: "A tile sample",
+      },
+    ];
+    const p = buildPending(read, NOW);
+    expect(p.possibleMoney).toEqual(live().possibleMoney);
+  });
+
+  test("Back with sales and the deals with no card count program money only too", () => {
+    const read = copyRead(LIVE_2026_10_23);
+    const sales = read.backWithSales.find(s => s.rails.length > 0);
+    if (!sales?.deal) throw new Error("no Back with sales card with rails");
+    const before = buildPending(read, NOW).backWithSales?.rows.find(
+      r => r.taskId === sales.taskId,
+    );
+    const pay = sales.rails[0];
+    read.exclusions = [
+      {
+        id: 8,
+        paymentId: pay.paymentId,
+        dealResponseId: sales.deal.responseId,
+        taskId: sales.taskId,
+        day: pay.day,
+        usd: pay.usd,
+        rail: pay.rail,
+        reason: "website",
+        setByName: "Abdulaziz Waheedi",
+        setAt: "2026-10-24T09:00:00+03:00",
+      },
+    ];
+    const after = buildPending(read, NOW).backWithSales?.rows.find(
+      r => r.taskId === sales.taskId,
+    );
+    expect(before?.railsUsd).not.toBeNull();
+    expect(after?.railsUsd).toBe((before?.railsUsd as number) - pay.usd);
+
+    // The deal with no card: the 23 Oct read has one, with no rails, so a
+    // made-up payment on it is left out, and the row fills as without it.
+    const base = copyRead(LIVE_2026_10_23);
+    const deal = base.unlinked[0];
+    if (!deal) throw new Error("no deal with no card in the 23 Oct read");
+    const rail = {
+      dealResponseId: deal.responseId,
+      paymentId: "whop:pay_unlinked1",
+      usd: 500,
+      day: deal.signedOn as string,
+      rail: "whop",
+      kind: "deposit",
+      fromLedger: true,
+      byHand: false,
+    };
+    const withRail = copyRead(LIVE_2026_10_23);
+    withRail.unlinked[0].rails.push(rail);
+    const leftOut = copyRead(withRail);
+    leftOut.exclusions = [
+      {
+        id: 9,
+        paymentId: rail.paymentId,
+        dealResponseId: deal.responseId,
+        taskId: null,
+        day: rail.day,
+        usd: rail.usd,
+        rail: rail.rail,
+        reason: "website",
+        setByName: "Abdulaziz Waheedi",
+        setAt: "2026-10-24T09:00:00+03:00",
+      },
+    ];
+    const filled = (read: BalancesRead) => {
+      const u = buildPending(read, NOW).unlinked.find(
+        x => x.deal.responseId === deal.responseId,
+      );
+      if (!u) throw new Error("the deal with no card is not listed");
+      return [
+        u.railsUsd,
+        u.leftUsd,
+        u.preview?.railsUsd ?? null,
+        u.preview?.parts.map(p => [p.key, p.rails]) ?? null,
+      ];
+    };
+    expect(filled(withRail)).not.toEqual(filled(base));
+    expect(filled(withRail)[0]).toBe(500);
+    expect(filled(leftOut)).toEqual(filled(base));
+    // Its preview on the suggested card names the payment as a source line, never a rail.
+    const preview = buildPending(leftOut, NOW).unlinked.find(
+      x => x.deal.responseId === deal.responseId,
+    )?.preview;
+    if (!preview) throw new Error("no preview for the deal with no card");
+    expect(preview.rails.map(r => r.paymentId)).not.toContain(rail.paymentId);
+    expect(preview.sources).toContain(
+      "$500 on 25 Aug was the website, not program money (Whop; left out by Abdulaziz)",
+    );
+  });
+
+  test("the line for something else carries the CEO's note; a success manager's read has none", () => {
+    const read = websiteLeftOut(LIVE_2026_10_23);
+    const x = (read.exclusions as NonNullable<BalancesRead["exclusions"]>)[0];
+    x.reason = "other";
+    x.note = "Logo design, sold the same day";
+    expect(
+      rowOf(buildPending(read, NOW), "Castello Industries").sources,
+    ).toContain(
+      "$1,500 on 21 Aug is not program money: Logo design, sold the same day (Whop; left out by Abdulaziz)",
+    );
+    // The server sends no note to a success manager; the website line needs none.
+    const csm = websiteLeftOut(LIVE_2026_10_23);
+    csm.ceo = false;
+    delete (csm.exclusions as NonNullable<BalancesRead["exclusions"]>)[0].note;
+    expect(
+      rowOf(buildPending(csm, NOW), "Castello Industries").sources,
+    ).toContain(LINE);
   });
 });
 

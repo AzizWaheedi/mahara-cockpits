@@ -3405,3 +3405,37 @@ export function afterTies(read: BalancesRead): BalancesRead {
     tie(id, deal.responseId);
   return out;
 }
+
+/** One of Castello's two $1,500 Whop payments of 21 Aug: the one the CEO's mark of 23 Oct names. */
+export const CASTELLO_WEBSITE = "whop:pay_fjRE96EdeUqfmO";
+
+/**
+ * The read once 20261024p is applied: the CEO's mark of 23 Oct leaves
+ * Castello's website $1,500 out of program money. As the server returns it,
+ * the payment is off the deal's rails and listed under exclusions with its
+ * own day, dollars and rail (cockpit_billing_deal_rails_held).
+ */
+export function websiteLeftOut(read: BalancesRead): BalancesRead {
+  const out = copyRead(read);
+  const rail = out.rails.find(r => r.paymentId === CASTELLO_WEBSITE);
+  if (!rail) throw new Error(`no rail ${CASTELLO_WEBSITE}`);
+  out.rails = out.rails.filter(r => r !== rail);
+  const deal = out.deals.find(d => d.responseId === rail.dealResponseId);
+  out.exclusions = [
+    ...(out.exclusions ?? []),
+    {
+      id: 1,
+      paymentId: rail.paymentId,
+      dealResponseId: rail.dealResponseId,
+      taskId: deal?.taskId ?? null,
+      day: rail.day,
+      usd: rail.usd,
+      rail: rail.rail,
+      reason: "website",
+      setByName: "Abdulaziz Waheedi",
+      setAt: "2026-10-24T09:00:00+03:00",
+      note: "The CEO, 23 Oct 2026: one of Castello's two $1,500 payments of 21 Aug was the website, not program money (the two are identical in Whop; the later one carries the mark).",
+    },
+  ];
+  return out;
+}

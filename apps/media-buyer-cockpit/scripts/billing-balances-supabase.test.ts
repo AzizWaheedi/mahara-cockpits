@@ -3,10 +3,13 @@ import type { PGlite } from "@electric-sql/pglite";
 import { readFileSync } from "node:fs";
 import { actor, cockpitTestDb, member, migration, owner } from "./lib/cockpitTestDb";
 
-// supabase/migrations/20261023x_billing_balances.sql and 20261023y_billing_balance_write.sql
-// against canonical SQL (hw-notes/billing-pending/PLAN.md 3.4): the tables, the helpers,
-// the gated read and the write (confirm, withdraw, link, unlink). Made-up clients, people,
-// deals and payment ids only; no live credentials.
+// supabase/migrations/20261023x_billing_balances.sql, 20261023y_billing_balance_write.sql and
+// 20261024p_billing_payment_exclusions.sql against canonical SQL (hw-notes/billing-pending/PLAN.md
+// 3.4): the tables, the helpers, the gated read and the write (confirm, withdraw, link, unlink,
+// exclude, unexclude). Made-up clients, people, deals and payment ids only, except the 13e and
+// 13f seed tests, which use the three ids the 20261024p seed names (a card, a deal and a Whop
+// payment, already in scripts/fixtures/billingBalances20261023.ts) under a made-up name; no live
+// credentials.
 
 const CEO = "00000000-0000-4000-8000-0000000000c1";
 const CSM = "00000000-0000-4000-8000-0000000000c2";
@@ -18,6 +21,7 @@ const GONE_SEAT = "00000000-0000-4000-8000-0000000000c7";
 
 const X = "20261023x_billing_balances.sql";
 const Y = "20261023y_billing_balance_write.sql";
+const P = "20261024p_billing_payment_exclusions.sql";
 const KICKOFF_PAYMENT_REF = "75e97e7d-4c19-437a-b4b8-67570c29344f";
 
 function extract(file: string, pattern: RegExp): string {
@@ -98,6 +102,7 @@ async function schema(db: PGlite, beforeX?: string) {
   if (beforeX) await db.exec(beforeX);
   await db.exec(migration(X));
   await db.exec(migration(Y));
+  await db.exec(migration(P));
 }
 
 const MONEY = {
@@ -894,7 +899,7 @@ test("7b. a link goes only to a card on the list whose own deal is older; its no
   }
 });
 
-test("the billing log's confirm, unconfirm, link and unlink rows are read only by the CEO, client success and finance", async () => {
+test("the billing log's confirm, unconfirm, link, unlink, exclude and unexclude rows are read only by the CEO, client success and finance", async () => {
   const db = await fixture();
   try {
     await actor(db, CSM);
@@ -903,25 +908,27 @@ test("the billing log's confirm, unconfirm, link and unlink rows are read only b
     await actor(db, CEO);
     await write(db, "link", { dealResponseId: "resp_orphan", taskId: "task_arc", note: "Arabic name on the form" });
     await write(db, "unlink", { dealResponseId: "resp_orphan", reason: "Wrong card" });
+    await write(db, "exclude", { taskId: "task_a", dealResponseId: "resp_acme_2", paymentId: "whop:pay_a1", reason: "website" });
+    await write(db, "unexclude", { paymentId: "whop:pay_a1", reason: "Program money after all" });
     const kinds = async (seat: string) => {
       await actor(db, seat);
       return (await db.query<{ kind: string }>("SELECT kind FROM public.cockpit_billing_events ORDER BY id")).rows.map(r => r.kind);
     };
-    const all = ["extension", "note", "date", "confirm", "unconfirm", "link", "unlink"];
+    const all = ["extension", "note", "date", "confirm", "unconfirm", "link", "unlink", "exclude", "unexclude"];
     for (const seat of [CEO, CSM, FINANCE]) expect(await kinds(seat)).toEqual(all);
-    // A media buyer still reads the older kinds, and none of the four.
+    // A media buyer still reads the older kinds, and none of the six.
     expect(await kinds(BUYER)).toEqual(["extension", "note", "date"]);
   } finally {
     await db.close();
   }
 });
 
-test("8. the browser cannot touch either table or the helpers; the service key reads (Supabase default privileges on)", async () => {
+test("8. the browser cannot touch the three tables or the helpers; the service key reads (Supabase default privileges on)", async () => {
   const db = await fixture({ supabaseDefaultPrivileges: true });
   try {
     for (const seat of [null, CSM, CEO]) {
       await actor(db, seat);
-      for (const table of ["cockpit_billing_confirmations", "cockpit_billing_deal_links"]) {
+      for (const table of ["cockpit_billing_confirmations", "cockpit_billing_deal_links", "cockpit_billing_payment_exclusions"]) {
         expect(await refused(db.query(`SELECT * FROM public.${table}`))).toContain("permission denied");
         expect(await refused(db.query(`INSERT INTO public.${table}(clickup_task_id) VALUES('task_a')`))).toContain("permission denied");
         expect(await refused(db.query(`UPDATE public.${table} SET clickup_task_id='task_b'`))).toContain("permission denied");
@@ -934,25 +941,30 @@ test("8. the browser cannot touch either table or the helpers; the service key r
         "* FROM public.cockpit_billing_deal_assignments()",
         "* FROM public.cockpit_billing_deal_cards()",
         "* FROM public.cockpit_billing_deal_rails('resp_acme_2','task_a')",
+        "* FROM public.cockpit_billing_deal_rails_held('resp_acme_2','task_a')",
       ]) expect(await refused(db.query(`SELECT ${call}`))).toContain("permission denied");
       expect(await refused(db.query("SELECT nextval('public.cockpit_billing_confirmations_id_seq')"))).toContain("permission denied");
+      expect(await refused(db.query("SELECT nextval('public.cockpit_billing_payment_exclusions_id_seq')"))).toContain("permission denied");
     }
     // The two functions are the door, and only for a signed-in seat.
     await actor(db, CEO);
     expect((await read(db)).ceo).toBe(true);
     expect((await write(db, "confirm", confirmAcme())).ok).toBe(true);
+    expect((await write(db, "exclude", { taskId: "task_b", dealResponseId: "resp_beta", paymentId: "whop:pay_b1", reason: "website" })).ok).toBe(true);
     await actor(db, null);
     expect(await refused(read(db))).toContain("permission denied");
+    expect(await refused(write(db, "unexclude", { paymentId: "whop:pay_b1", reason: "Program money after all" }))).toContain("permission denied");
     // The service key reads both tables.
     await owner(db);
     await db.exec("SET ROLE service_role");
     expect((await db.query("SELECT id FROM public.cockpit_billing_confirmations")).rows).toHaveLength(1);
     expect((await db.query("SELECT id FROM public.cockpit_billing_deal_links")).rows).toHaveLength(0);
+    expect((await db.query("SELECT id FROM public.cockpit_billing_payment_exclusions")).rows).toHaveLength(1);
     for (const call of ["public.cockpit_billing_balances_read()", "public.cockpit_name_key('x')"])
       expect(await refused(db.query(`SELECT ${call}`))).toContain("permission denied");
     await owner(db);
     const grants = await rows(db, `SELECT grantee, privilege_type FROM information_schema.role_table_grants
-      WHERE table_name IN ('cockpit_billing_confirmations','cockpit_billing_deal_links') AND grantee IN ('anon','authenticated','PUBLIC')`);
+      WHERE table_name IN ('cockpit_billing_confirmations','cockpit_billing_deal_links','cockpit_billing_payment_exclusions') AND grantee IN ('anon','authenticated','PUBLIC')`);
     expect(grants).toEqual([]);
   } finally {
     await db.close();
@@ -966,7 +978,8 @@ test("9. the kind check takes the four new kinds, and the ClickUp write-back que
     await owner(db);
     await db.exec(`INSERT INTO cockpit_billing_events(clickup_task_id,client_name,kind,source,by_whom) VALUES
       ('task_a','Acme','confirm','csm','fixture'),('task_a','Acme','unconfirm','ceo','fixture'),
-      ('task_a','Acme','link','ceo','fixture'),('task_a','Acme','unlink','csm','fixture')`);
+      ('task_a','Acme','link','ceo','fixture'),('task_a','Acme','unlink','csm','fixture'),
+      ('task_a','Acme','exclude','ceo','fixture'),('task_a','Acme','unexclude','ceo','fixture')`);
     expect(await refused(db.query("INSERT INTO cockpit_billing_events(clickup_task_id,kind,source,by_whom) VALUES('task_a','dance','csm','x')"))).toContain(
       "cockpit_billing_events_kind_check",
     );
@@ -978,6 +991,8 @@ test("9. the kind check takes the four new kinds, and the ClickUp write-back que
     await actor(db, CEO);
     await write(db, "link", { dealResponseId: "resp_orphan", taskId: "task_arc" });
     await write(db, "unlink", { dealResponseId: "resp_orphan", reason: "Wrong card" });
+    await write(db, "exclude", { taskId: "task_a", dealResponseId: "resp_acme_2", paymentId: "whop:pay_a1", reason: "website" });
+    await write(db, "unexclude", { paymentId: "whop:pay_a1", reason: "Program money after all" });
     expect(await count(db, "SELECT count(*)::int AS n FROM cockpit_clickup_writeback_queue")).toBe(queued);
   } finally {
     await db.close();
@@ -999,8 +1014,8 @@ test("9b. the kind check is rebuilt from the live list: a kind another build add
       return [...def.matchAll(/'([a-z_]+)'/g)].map(m => m[1]).sort();
     };
     const want = [
-      "amount", "assign", "chase", "churn", "confirm", "date", "extension", "invoice", "link", "method",
-      "note", "pause", "payment", "plan", "refund", "resume", "unconfirm", "unlink",
+      "amount", "assign", "chase", "churn", "confirm", "date", "exclude", "extension", "invoice", "link", "method",
+      "note", "pause", "payment", "plan", "refund", "resume", "unconfirm", "unexclude", "unlink",
     ];
     expect(await kinds()).toEqual(want);
     await db.exec(`INSERT INTO cockpit_billing_events(clickup_task_id,kind,source,by_whom) VALUES
@@ -1120,6 +1135,402 @@ test("12. cockpit_billing_deal_rails: the ledger, the card's own payments from s
   }
 });
 
+const exclusions = async (db: PGlite, live = false) =>
+  count(db, `SELECT count(*)::int AS n FROM cockpit_billing_payment_exclusions${live ? " WHERE withdrawn_at IS NULL" : ""}`);
+const leaveAcme = (over: Record<string, unknown> = {}) => ({
+  taskId: "task_a", dealResponseId: "resp_acme_2", paymentId: "whop:pay_a1", reason: "website", ...over,
+});
+const acmeRails = async (db: PGlite) =>
+  (await read(db)).rails
+    .filter((r: { dealResponseId: string }) => r.dealResponseId === "resp_acme_2")
+    .map((r: { paymentId: string }) => r.paymentId);
+
+test("13. exclude and unexclude are the CEO's, audited, and only for a payment the deal already holds", async () => {
+  const db = await fixture();
+  try {
+    for (const seat of [CSM, FINANCE]) {
+      await actor(db, seat);
+      expect(await refused(write(db, "exclude", leaveAcme()))).toBe("Only the CEO can leave a payment out of program money.");
+      expect(await refused(write(db, "unexclude", { paymentId: "whop:pay_a1", reason: "Program money after all" }))).toBe(
+        "Only the CEO can leave a payment out of program money.",
+      );
+    }
+    const before = { ...(await writes(db)), exclusions: await exclusions(db) };
+    await actor(db, CEO);
+    const notHeld = "That payment is not one of Acme's rail payments. Reload the page.";
+    const cases: [Record<string, unknown>, string][] = [
+      [leaveAcme({ taskId: "task_x" }), "Stopped Co is not on the pending payments list. Reload the page to see who is."],
+      [leaveAcme({ taskId: "no such card" }), "That is not a ClickUp card id."],
+      [leaveAcme({ paymentId: "pay_a1" }), "That is not a payment id."],
+      [leaveAcme({ paymentId: "whop:pay a1" }), "That is not a payment id."],
+      [leaveAcme({ reason: "" }), "Say what the payment was for: the website, or something else."],
+      [leaveAcme({ reason: "refund" }), "Say what the payment was for: the website, or something else."],
+      [leaveAcme({ reason: "other" }), "Say what the payment was for in 3 to 500 characters."],
+      [leaveAcme({ reason: "other", note: " ab " }), "Say what the payment was for in 3 to 500 characters."],
+      [leaveAcme({ taskId: "task_abc", dealResponseId: "resp_abc" }), "Abcde has no signed deal on record, so no payment counts toward a plan yet."],
+      [leaveAcme({ dealResponseId: "resp_acme_1" }), "That signed deal is not this client's newest deal on record. Reload the page."],
+      [leaveAcme({ dealResponseId: undefined }), "That signed deal is not this client's newest deal on record. Reload the page."],
+      // Invented, another deal's, inactive (ledger and card), the older deal's, before signing - 7, or untied:
+      // never a payment Acme's newest deal holds, so nothing can be left out that the row does not count.
+      [leaveAcme({ paymentId: "whop:pay_nope" }), notHeld],
+      [leaveAcme({ paymentId: "whop:pay_b1" }), notHeld],
+      [leaveAcme({ paymentId: "whop:pay_a7" }), notHeld],
+      [leaveAcme({ paymentId: "whop:pay_a6" }), notHeld],
+      [leaveAcme({ paymentId: "whop:pay_a5" }), notHeld],
+      [leaveAcme({ paymentId: "whop:pay_a4" }), notHeld],
+      [leaveAcme({ paymentId: "whop:pay_u1" }), notHeld],
+    ];
+    for (const [args, message] of cases) expect(await refused(write(db, "exclude", args))).toBe(message);
+    expect(await refused(write(db, "unexclude", { paymentId: "whop:pay_a1", reason: "Program money after all" }))).toBe(
+      "That payment already counts as program money. Reload the page.",
+    );
+    expect({ ...(await writes(db)), exclusions: await exclusions(db) }).toEqual(before);
+
+    // Before: the card's transfer, the deposit and the Tap remainder, and the cap leaves $3,500.
+    await actor(db, CEO);
+    expect(await acmeRails(db)).toEqual(["manual:m_a3", "whop:pay_a1", "tap:chg_a2"]);
+    expect(await refused(write(db, "confirm", confirmAcme({ amount: 4000 })))).toBe("That is more than the $3,500 the rails have not shown.");
+
+    const out = await write(db, "exclude", leaveAcme({ note: "Sold with the program" }));
+    expect(out).toMatchObject({
+      ok: true,
+      sentence: "Left $500 on 1 Sep out of program money.",
+      exclusion: { paymentId: "whop:pay_a1", taskId: "task_a", dealResponseId: "resp_acme_2", reason: "website", usd: 500, day: "2026-09-01", rail: "whop" },
+    });
+    // One exclusion, one event, one audit row; no payment, inbox row or ClickUp write.
+    expect({ ...(await writes(db)), exclusions: await exclusions(db) }).toEqual({
+      ...before, events: before.events + 1, audit: before.audit + 1, exclusions: 1,
+    });
+    // Off the rails everywhere: the read, the helper and the confirm cap. The payment is held by the
+    // ledger and by the card, and is taken out once and listed once.
+    await actor(db, CEO);
+    expect(await acmeRails(db)).toEqual(["manual:m_a3", "tap:chg_a2"]);
+    expect((await rows(db, "SELECT payment_id FROM public.cockpit_billing_deal_rails('resp_acme_2','task_a') ORDER BY payment_id")).map(r => r.payment_id))
+      .toEqual(["manual:m_a3", "tap:chg_a2"]);
+    expect((await rows(db, "SELECT payment_id FROM public.cockpit_billing_deal_rails_held('resp_acme_2','task_a') ORDER BY payment_id")).map(r => r.payment_id))
+      .toEqual(["manual:m_a3", "tap:chg_a2", "whop:pay_a1"]);
+    await actor(db, CEO);
+    const view = await read(db);
+    expect(view.exclusions).toEqual([{
+      id: out.exclusion.id, paymentId: "whop:pay_a1", dealResponseId: "resp_acme_2", taskId: "task_a", day: "2026-09-01",
+      usd: 500, rail: "whop", reason: "website", setByName: "Aziz Waheedi", setAt: expect.any(String), note: "Sold with the program",
+    }]);
+    expect((await write(db, "confirm", confirmAcme({ amount: 4000 }))).ok).toBe(true);
+    expect(await refused(write(db, "exclude", leaveAcme()))).toBe("That payment is already left out of program money.");
+
+    const [e] = await rows(db, "SELECT * FROM cockpit_billing_events WHERE kind='exclude'");
+    expect(e).toMatchObject({ clickup_task_id: "task_a", client_name: "Acme", from_value: null, to_value: "whop:pay_a1", reason: null, source: "ceo", by_whom: "aziz@maharamedia.com" });
+    expect(e.detail).toEqual({
+      exclusionId: out.exclusion.id, paymentId: "whop:pay_a1", dealResponseId: "resp_acme_2", usd: 500, day: "2026-09-01", rail: "whop", reason: "website",
+    });
+    const [x] = await rows(db, "SELECT * FROM cockpit_billing_payment_exclusions");
+    expect(x).toMatchObject({
+      payment_id: "whop:pay_a1", clickup_task_id: "task_a", deal_response_id: "resp_acme_2", reason: "website",
+      note: "Sold with the program", set_by: "aziz@maharamedia.com", withdrawn_at: null,
+    });
+    expect(Number(x.event_id)).toBe(Number(e.id));
+    const [a] = await rows(db, "SELECT * FROM cockpit_audit_log WHERE action='billing.exclude'");
+    expect(a).toMatchObject({
+      entity_type: "cockpit_billing_payment_exclusions", entity_id: String(x.id), actor_email: "aziz@maharamedia.com",
+      source_app: "media-buyer-cockpit", source_system: "supabase", before: null,
+    });
+    expect((a.after as { note: string }).note).toBe("Sold with the program");
+    expect(a.metadata).toMatchObject({ payment_id: "whop:pay_a1", deal_response_id: "resp_acme_2", usd: 500, day: "2026-09-01", rail: "whop" });
+
+    // Counted again: the CEO, with a reason, once.
+    await actor(db, CEO);
+    expect(await refused(write(db, "unexclude", { paymentId: "whop:pay_a1", reason: "x" }))).toBe("Say why in 3 to 300 characters.");
+    expect(await refused(write(db, "unexclude", { paymentId: "nope", reason: "Program money after all" }))).toBe("That is not a payment id.");
+    expect(await write(db, "unexclude", { paymentId: "whop:pay_a1", reason: "Program money after all" })).toMatchObject({
+      ok: true, sentence: "Counted as program money again.", exclusion: { paymentId: "whop:pay_a1" },
+    });
+    expect(await acmeRails(db)).toEqual(["manual:m_a3", "whop:pay_a1", "tap:chg_a2"]);
+    expect((await read(db)).exclusions).toEqual([]);
+    const [u] = await rows(db, "SELECT * FROM cockpit_billing_events WHERE kind='unexclude'");
+    expect(u).toMatchObject({ clickup_task_id: "task_a", client_name: "Acme", from_value: "whop:pay_a1", reason: "Program money after all", source: "ceo" });
+    const [ua] = await rows(db, "SELECT before, after FROM cockpit_audit_log WHERE action='billing.unexclude'");
+    expect((ua.before as { withdrawn_at: string | null }).withdrawn_at).toBeNull();
+    expect((ua.after as { withdrawn_reason: string }).withdrawn_reason).toBe("Program money after all");
+    await actor(db, CEO);
+    expect(await refused(write(db, "unexclude", { paymentId: "whop:pay_a1", reason: "Program money after all" }))).toBe(
+      "That payment already counts as program money. Reload the page.",
+    );
+    // Left out again: a fresh row, the withdrawn one kept.
+    expect((await write(db, "exclude", leaveAcme({ reason: "other", note: "A logo, sold the same day" }))).ok).toBe(true);
+    expect(await exclusions(db)).toBe(2);
+    expect(await exclusions(db, true)).toBe(1);
+  } finally {
+    await db.close();
+  }
+});
+
+test("13b. the read lists exclusions only on the caller's deals, the note only for the CEO; an untied payment stays Possible money", async () => {
+  const db = await fixture();
+  try {
+    await actor(db, CEO);
+    await write(db, "exclude", leaveAcme({ reason: "other", note: "A logo, sold the same day" }));
+    await write(db, "exclude", { taskId: "task_b", dealResponseId: "resp_beta", paymentId: "whop:pay_b1", reason: "website" });
+    // The CEO's Back with sales card: only he may leave one of its payments out.
+    await write(db, "exclude", { taskId: "task_s", dealResponseId: "resp_sales", paymentId: "whop:pay_s1", reason: "website" });
+    // The service key can hold rows the write never makes: one naming an untied payment, and one on a deal with no card.
+    await owner(db);
+    await db.exec(`INSERT INTO cockpit_deal_payments(payment_id,deal_response_id,day,usd,rail,kind,deposit_usd,matched_by,active)
+        VALUES('whop:pay_o1','resp_orphan','2026-08-26',500,'whop','deposit',500,'ceo',true);
+      INSERT INTO cockpit_billing_payment_exclusions(payment_id,clickup_task_id,deal_response_id,reason,note,set_by) VALUES
+        ('whop:pay_u1','task_arc','resp_orphan','other','Not this client''s money','aziz@maharamedia.com'),
+        ('whop:pay_o1','task_arc','resp_orphan','website',NULL,'aziz@maharamedia.com')`);
+
+    await actor(db, CEO);
+    const all = await read(db);
+    expect(all.exclusions.map((x: { paymentId: string; dealResponseId: string; taskId: string | null }) => [x.paymentId, x.dealResponseId, x.taskId])).toEqual([
+      ["whop:pay_a1", "resp_acme_2", "task_a"],
+      ["whop:pay_b1", "resp_beta", "task_b"],
+      ["whop:pay_s1", "resp_sales", "task_s"],
+      ["whop:pay_o1", "resp_orphan", null],
+    ]);
+    // A mark naming a payment its deal does not hold is listed on no row.
+    expect(JSON.stringify(all.exclusions)).not.toContain("whop:pay_u1");
+    expect(all.exclusions[0].note).toBe("A logo, sold the same day");
+    expect(all.rails.some((r: { paymentId: string }) => ["whop:pay_a1", "whop:pay_b1"].includes(r.paymentId))).toBe(false);
+    expect(all.backWithSales[0].rails).toEqual([]);
+    expect(all.unlinked.find((d: { responseId: string }) => d.responseId === "resp_orphan").rails).toEqual([]);
+    // An untied payment is on no deal, so no mark takes it off the CEO's Possible money.
+    expect(all.untied.map((u: { id: string }) => u.id)).toEqual(["whop:pay_u1"]);
+
+    await actor(db, CSM);
+    const mine = await read(db);
+    expect(mine.exclusions).toEqual([{
+      id: expect.any(Number), paymentId: "whop:pay_a1", dealResponseId: "resp_acme_2", taskId: "task_a", day: "2026-09-01",
+      usd: 500, rail: "whop", reason: "other", setByName: "Aziz Waheedi", setAt: expect.any(String),
+    }]);
+    const text = JSON.stringify(mine);
+    for (const other of ["whop:pay_b1", "whop:pay_s1", "whop:pay_o1", "A logo", "aziz@maharamedia.com"]) expect(text).not.toContain(other);
+  } finally {
+    await db.close();
+  }
+});
+
+test("13h. a mark counts only on the deal it was set on: Money moving the payment moves the money, and a new mark replaces the old", async () => {
+  const db = await fixture();
+  try {
+    await actor(db, CEO);
+    const first = await write(db, "exclude", leaveAcme());
+    // Money ties the payment to Beta's deal since, and credits Beta's card (the
+    // ledger and the cards' payments hold a payment once each).
+    await owner(db);
+    await db.exec(`UPDATE cockpit_deal_payments SET deal_response_id='resp_beta' WHERE payment_id='whop:pay_a1';
+      UPDATE cockpit_client_payments SET clickup_task_id='task_b', client_name='Beta Co' WHERE payment_id='whop:pay_a1'`);
+    expect((await rows(db, "SELECT payment_id FROM cockpit_billing_deal_rails('resp_beta','task_b') ORDER BY payment_id")).map(r => r.payment_id)).toEqual([
+      "whop:pay_a1", "whop:pay_b1",
+    ]);
+    await actor(db, CEO);
+    const moved = await read(db);
+    // Beta's rails count it; Acme's no longer hold it; no row names the mark, which was Acme's.
+    expect(moved.rails.filter((r: { dealResponseId: string }) => r.dealResponseId === "resp_beta").map((r: { paymentId: string }) => r.paymentId)).toEqual([
+      "whop:pay_a1", "whop:pay_b1",
+    ]);
+    expect(await acmeRails(db)).toEqual(["manual:m_a3", "tap:chg_a2"]);
+    expect(moved.exclusions).toEqual([]);
+    // Nor does a success manager's read.
+    await actor(db, CSM);
+    expect((await read(db)).exclusions).toEqual([]);
+
+    // The CEO leaves it out on Beta: the old mark is withdrawn with its own event and audit row.
+    await actor(db, CEO);
+    const before = { ...(await writes(db)), exclusions: await exclusions(db) };
+    const out = await write(db, "exclude", { taskId: "task_b", dealResponseId: "resp_beta", paymentId: "whop:pay_a1", reason: "website" });
+    expect(out).toMatchObject({ ok: true, sentence: "Left $500 on 1 Sep out of program money.", exclusion: { taskId: "task_b", dealResponseId: "resp_beta" } });
+    expect({ ...(await writes(db)), exclusions: await exclusions(db) }).toEqual({
+      ...before, events: before.events + 2, audit: before.audit + 2, exclusions: before.exclusions + 1,
+    });
+    expect(await exclusions(db, true)).toBe(1);
+    const [old] = await rows(db, `SELECT * FROM cockpit_billing_payment_exclusions WHERE id = ${first.exclusion.id}`);
+    expect(old).toMatchObject({
+      deal_response_id: "resp_acme_2", withdrawn_by: "aziz@maharamedia.com",
+      withdrawn_reason: "Left out again on the deal that holds it now (resp_beta)",
+    });
+    expect(old.withdrawn_at).not.toBeNull();
+    const [u] = await rows(db, "SELECT * FROM cockpit_billing_events WHERE kind='unexclude'");
+    expect(u).toMatchObject({ clickup_task_id: "task_a", client_name: "Acme", from_value: "whop:pay_a1", source: "ceo", by_whom: "aziz@maharamedia.com" });
+    expect(u.detail).toEqual({ exclusionId: first.exclusion.id, paymentId: "whop:pay_a1", dealResponseId: "resp_acme_2", movedToDealResponseId: "resp_beta" });
+    const [ua] = await rows(db, "SELECT * FROM cockpit_audit_log WHERE action='billing.unexclude'");
+    expect(ua).toMatchObject({ entity_id: String(first.exclusion.id), actor_email: "aziz@maharamedia.com" });
+    expect(ua.before.withdrawn_at).toBeNull();
+    expect(ua.after.withdrawn_reason).toBe("Left out again on the deal that holds it now (resp_beta)");
+    const now = await read(db);
+    expect(now.exclusions.map((x: { paymentId: string; dealResponseId: string; taskId: string }) => [x.paymentId, x.dealResponseId, x.taskId])).toEqual([
+      ["whop:pay_a1", "resp_beta", "task_b"],
+    ]);
+    expect(now.rails.some((r: { paymentId: string }) => r.paymentId === "whop:pay_a1")).toBe(false);
+    expect(await refused(write(db, "exclude", { taskId: "task_b", dealResponseId: "resp_beta", paymentId: "whop:pay_a1", reason: "website" }))).toBe(
+      "That payment is already left out of program money.",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("13c. delete and truncate are refused on the exclusions table; a row is withdrawn once and never edited", async () => {
+  const db = await fixture();
+  try {
+    await actor(db, CEO);
+    const id = (await write(db, "exclude", leaveAcme())).exclusion.id;
+    await owner(db);
+    const table = "cockpit_billing_payment_exclusions";
+    expect(await refused(db.query(`DELETE FROM public.${table}`))).toBe(`${table} rows are kept for good: withdraw or replace instead of deleting`);
+    expect(await refused(db.query(`TRUNCATE public.${table}`))).toBe(`${table} rows are kept for good: withdraw or replace instead of deleting`);
+    expect(await refused(db.query(`UPDATE ${table} SET reason='other', note='Changed' WHERE id=${id}`))).toBe(
+      `${table} rows are never edited: withdraw or clear them instead`,
+    );
+    expect(await refused(db.query(`UPDATE ${table} SET withdrawn_by='x', withdrawn_at=now(), withdrawn_reason='Typed twice', payment_id='whop:pay_b1' WHERE id=${id}`))).toBe(
+      `${table} rows are never edited: withdraw or clear them instead`,
+    );
+    await db.exec(`UPDATE ${table} SET withdrawn_by='x', withdrawn_at=now(), withdrawn_reason='Typed twice' WHERE id=${id}`);
+    expect(await refused(db.query(`UPDATE ${table} SET withdrawn_reason='Changed my mind' WHERE id=${id}`))).toBe(
+      `${table} rows are kept as they were once withdrawn or cleared`,
+    );
+    // One live row per payment, a reason from the list, and "other" says what.
+    await db.exec(`INSERT INTO ${table}(payment_id,clickup_task_id,deal_response_id,reason,set_by) VALUES('whop:pay_a1','task_a','resp_acme_2','website','x')`);
+    expect(await refused(db.query(`INSERT INTO ${table}(payment_id,clickup_task_id,deal_response_id,reason,set_by) VALUES('whop:pay_a1','task_a','resp_acme_2','website','x')`))).toContain(
+      "cockpit_billing_payment_exclusions_live",
+    );
+    expect(await refused(db.query(`INSERT INTO ${table}(payment_id,clickup_task_id,deal_response_id,reason,set_by) VALUES('whop:pay_b1','task_b','resp_beta','refund','x')`))).toContain(
+      "cockpit_billing_payment_exclusions_reason_check",
+    );
+    expect(await refused(db.query(`INSERT INTO ${table}(payment_id,clickup_task_id,deal_response_id,reason,set_by) VALUES('whop:pay_b1','task_b','resp_beta','other','x')`))).toContain(
+      "cockpit_billing_payment_exclusions_other_says_what",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+/** The card, deal and Whop payments the 20261024p seed names, under a made-up name. */
+const SEED = {
+  task: "86eynfnv5",
+  deal: "r6zgixh2u6paruulr6zgi2w9lckol261",
+  website: "whop:pay_fjRE96EdeUqfmO",
+  twin: "whop:pay_GYsGMMpS9xosfk",
+  deposit: "whop:pay_muyoob7p33D97Q",
+};
+async function seedClient(db: PGlite, payments: string[]) {
+  await owner(db);
+  const day = (id: string) => (id === SEED.deposit ? "2026-08-17" : "2026-08-21");
+  const usd = (id: string) => (id === SEED.deposit ? 500 : 1500);
+  await db.exec(`
+    INSERT INTO cockpit_billing_accounts(clickup_task_id,client_name,stage,stage_group,client_status,payment_plan,next_payment_usd,next_payment_date,ltv_field_usd)
+      VALUES('${SEED.task}','Seed Client','Active','active','Active','Monthly',2000,'2026-10-08',2000);
+    INSERT INTO cockpit_sales_deals(response_id,submitted_at,closer,client_name,business_name,payment_structure,cash_collected,contracted_revenue,voided)
+      VALUES('${SEED.deal}','2026-08-17T14:00:28Z','Closer One','Contact Seed','Seed Client','Monthly',500,6000,false);
+    INSERT INTO cockpit_deal_payments(payment_id,deal_response_id,day,usd,rail,kind,deposit_usd,matched_by,active) VALUES
+      ${payments.map(id => `('${id}','${SEED.deal}','${day(id)}',${usd(id)},'whop','${id === SEED.deposit ? "deposit" : "remainder"}',${id === SEED.deposit ? 500 : 0},'ceo',true)`).join(",")};
+    INSERT INTO cockpit_client_payments(payment_id,clickup_task_id,client_name,day,usd,rail,side,kind,active) VALUES
+      ${payments.map(id => `('${id}','${SEED.task}','Seed Client','${day(id)}',${usd(id)},'whop','front_end','${id === SEED.deposit ? "deposit" : "remainder"}',true)`).join(",")};`);
+}
+
+test("13e. the seed leaves Castello's website $1,500 out once, with its event and audit row, and never again", async () => {
+  const db = await fixture();
+  try {
+    // The first run (in schema) found no such card here, so it wrote nothing.
+    expect(await exclusions(db)).toBe(0);
+    await seedClient(db, [SEED.deposit, SEED.website, SEED.twin]);
+    await db.exec(migration(P));
+    const [x] = await rows(db, "SELECT * FROM cockpit_billing_payment_exclusions");
+    expect(x).toMatchObject({
+      payment_id: SEED.website, clickup_task_id: SEED.task, deal_response_id: SEED.deal, reason: "website",
+      note: "The CEO, 23 Oct 2026: one of Castello's two $1,500 payments of 21 Aug was the website, not program money (the two are identical in Whop; the later one carries the mark).",
+      set_by: "aziz@maharamedia.com", withdrawn_at: null,
+    });
+    const [e] = await rows(db, "SELECT * FROM cockpit_billing_events WHERE kind='exclude'");
+    expect(e).toMatchObject({ clickup_task_id: SEED.task, client_name: "Seed Client", to_value: SEED.website, reason: null, source: "ceo", by_whom: "aziz@maharamedia.com" });
+    expect(e.detail).toMatchObject({ paymentId: SEED.website, dealResponseId: SEED.deal, usd: 1500, day: "2026-08-21", rail: "whop", reason: "website" });
+    expect(Number(x.event_id)).toBe(Number(e.id));
+    const [a] = await rows(db, "SELECT * FROM cockpit_audit_log WHERE action='billing.exclude'");
+    expect(a).toMatchObject({ entity_type: "cockpit_billing_payment_exclusions", entity_id: String(x.id), actor_email: "aziz@maharamedia.com", before: null });
+    expect(a.metadata).toMatchObject({ payment_id: SEED.website, usd: 1500, run_by: "migration 20261024p" });
+
+    // Pending payments counts the deposit and the twin only: $2,000, not $3,500.
+    await actor(db, CEO);
+    const view = await read(db);
+    const rails = view.rails.filter((r: { dealResponseId: string }) => r.dealResponseId === SEED.deal);
+    expect(rails.map((r: { paymentId: string }) => r.paymentId)).toEqual([SEED.deposit, SEED.twin]);
+    expect(rails.reduce((t: number, r: { usd: number }) => t + Number(r.usd), 0)).toBe(2000);
+    expect(view.exclusions).toEqual([{
+      id: expect.any(Number), paymentId: SEED.website, dealResponseId: SEED.deal, taskId: SEED.task, day: "2026-08-21", usd: 1500,
+      rail: "whop", reason: "website", setByName: "Aziz Waheedi", setAt: expect.any(String), note: x.note,
+    }]);
+
+    // Safe to run twice: still one of each.
+    await owner(db);
+    await db.exec(migration(P));
+    await db.exec(migration(P));
+    expect(await exclusions(db)).toBe(1);
+    expect(await count(db, "SELECT count(*)::int AS n FROM cockpit_billing_events WHERE kind='exclude'")).toBe(1);
+    expect(await count(db, "SELECT count(*)::int AS n FROM cockpit_audit_log WHERE action='billing.exclude'")).toBe(1);
+    // Counted again by the CEO, a later run does not put it back.
+    await actor(db, CEO);
+    await write(db, "unexclude", { paymentId: SEED.website, reason: "Checked the Whop receipt" });
+    await owner(db);
+    await db.exec(migration(P));
+    expect(await exclusions(db)).toBe(1);
+    expect(await exclusions(db, true)).toBe(0);
+  } finally {
+    await db.close();
+  }
+});
+
+test("13f. the seed refuses, and writes nothing, when the website payment is no longer the deal's", async () => {
+  const db = await fixture();
+  try {
+    await seedClient(db, [SEED.deposit, SEED.twin]);
+    expect(await refused(db.exec(migration(P)))).toContain(
+      `20261024p: ${SEED.website} is not one of Castello's rail payments any more; read it again before applying.`,
+    );
+    await db.exec("ROLLBACK");
+    expect(await exclusions(db)).toBe(0);
+    expect(await count(db, "SELECT count(*)::int AS n FROM cockpit_billing_events WHERE kind='exclude'")).toBe(0);
+    expect(await count(db, "SELECT count(*)::int AS n FROM cockpit_audit_log WHERE action='billing.exclude'")).toBe(0);
+  } finally {
+    await db.close();
+  }
+});
+
+test("13g. the guard: a live body that is neither 20261023's nor this file's stops the file, which changes nothing", async () => {
+  const db = await fixture();
+  try {
+    await owner(db);
+    const src = async (fn: string) =>
+      String((await rows(db, `SELECT md5(prosrc) AS m FROM pg_proc WHERE oid = to_regprocedure('${fn}')`))[0].m);
+    const writeNow = await src("public.cockpit_billing_balance_write(text,jsonb)");
+    // Someone changed the rails since 20261023x.
+    await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_billing_deal_rails(p_deal text, p_task text)
+      RETURNS TABLE(payment_id text, day date, usd numeric, rail text, from_ledger boolean, kind text, recorded_at timestamptz)
+      LANGUAGE sql STABLE SET search_path='' AS $$ SELECT * FROM public.cockpit_billing_deal_rails_held(p_deal, p_task) $$;`);
+    const railsChanged = await src("public.cockpit_billing_deal_rails(text,text)");
+    expect(await refused(db.exec(migration(P)))).toContain(
+      "cockpit_billing_deal_rails is not the definition this file was written against",
+    );
+    await db.exec("ROLLBACK");
+    expect(await src("public.cockpit_billing_deal_rails(text,text)")).toBe(railsChanged);
+    // And the write (20261023x's rails back first, which this file accepts).
+    await db.exec(migration(X));
+    await db.exec(migration(P));
+    await db.exec(`CREATE OR REPLACE FUNCTION public.cockpit_billing_balance_write(p_action text, p_args jsonb DEFAULT '{}'::jsonb)
+      RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path='' AS $$ BEGIN RETURN NULL; END $$;`);
+    expect(await refused(db.exec(migration(P)))).toContain(
+      "cockpit_billing_balance_write is not the definition this file was written against",
+    );
+    await db.exec("ROLLBACK");
+    expect(await src("public.cockpit_billing_balance_write(text,jsonb)")).not.toBe(writeNow);
+    // 20261023y's body again is accepted, and replaced by this file's.
+    await db.exec(migration(Y));
+    await db.exec(migration(P));
+    expect(await src("public.cockpit_billing_balance_write(text,jsonb)")).toBe(writeNow);
+  } finally {
+    await db.close();
+  }
+});
+
 test("cockpit_name_key agrees with money.js nameKey, Arabic presentation forms included", async () => {
   const money = readFileSync(new URL("../../../hermes/ceo-refresh/native/adapters/money.js", import.meta.url), "utf8");
   // The expression below is money.js's; if money.js changes it, this test points here.
@@ -1149,15 +1560,25 @@ test("cockpit_name_key agrees with money.js nameKey, Arabic presentation forms i
   }
 });
 
-test("safe to run twice: both migrations again keep every row and every rule", async () => {
+test("safe to run twice: the three migrations again keep every row and every rule", async () => {
   const db = await fixture({ supabaseDefaultPrivileges: true });
   try {
     await actor(db, CEO);
     const first = (await write(db, "confirm", confirmAcme())).confirmation.id;
     await write(db, "link", { dealResponseId: "resp_orphan", taskId: "task_arc" });
+    await write(db, "exclude", { taskId: "task_b", dealResponseId: "resp_beta", paymentId: "whop:pay_b1", reason: "website" });
     await owner(db);
     await db.exec(migration(X));
     await db.exec(migration(Y));
+    await db.exec(migration(P));
+    await db.exec(migration(P));
+    expect(await count(db, "SELECT count(*)::int AS n FROM cockpit_billing_payment_exclusions WHERE withdrawn_at IS NULL")).toBe(1);
+    expect(await refused(db.query("DELETE FROM cockpit_billing_payment_exclusions"))).toContain("kept for good");
+    await actor(db, CEO);
+    const again = await read(db);
+    expect(again.exclusions.map((x: { paymentId: string }) => x.paymentId)).toEqual(["whop:pay_b1"]);
+    expect(again.rails.some((r: { paymentId: string }) => r.paymentId === "whop:pay_b1")).toBe(false);
+    await owner(db);
     expect(await count(db, "SELECT count(*)::int AS n FROM cockpit_billing_confirmations")).toBe(1);
     expect(await count(db, "SELECT count(*)::int AS n FROM cockpit_billing_deal_links WHERE cleared_at IS NULL")).toBe(1);
     expect(await refused(db.query("DELETE FROM cockpit_billing_confirmations"))).toContain("kept for good");

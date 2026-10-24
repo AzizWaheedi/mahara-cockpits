@@ -21,7 +21,8 @@
  *   2. Paid means a rail shows the money: Whop, Tap, Ecom, or a transfer,
  *      cheque or cash logged by hand that reached the ledger. A person's
  *      word, the closer's typed amount, the card's LTV and Maher's logs are
- *      never money.
+ *      never money, and nor is a payment the CEO left out of program money
+ *      (the website, 20261024p): it is listed as a source, never in a part.
  *   3. The amount is worked out per part of the plan (deposit, onboarding
  *      payment, second half, month 2 of 3 ...). Rail money fills the parts
  *      in order; Not seen is what is due and still empty.
@@ -223,6 +224,27 @@ export type ReadUntied = {
   payerName?: string | null;
 };
 
+/**
+ * A rail payment the CEO left out of program money (20261024p): the deal
+ * holds it, but it never fills a part. day, usd and rail are the payment's
+ * own, from the payments the deal holds; note is the CEO's only.
+ */
+export type ReadExclusion = {
+  id: number;
+  paymentId: string;
+  dealResponseId: string;
+  taskId: string | null;
+  day: string;
+  usd: number;
+  rail: string;
+  /** website: the client's website, sold beside the program; other: the note says what. */
+  reason: "website" | "other";
+  setByName: string | null;
+  setAt: string;
+  /** CEO only. */
+  note?: string | null;
+};
+
 export type ReadUnlinked = ReadDeal & {
   suggestedTaskId: string | null;
   suggestedName: string | null;
@@ -260,6 +282,8 @@ export type BalancesRead = {
   invoices: ReadInvoice[];
   ecomOpen: ReadEcom[];
   confirmations: ReadConfirmation[];
+  /** Payments left out of program money (20261024p); absent from an older read. */
+  exclusions?: ReadExclusion[];
   untied: ReadUntied[];
   unlinked: ReadUnlinked[];
   backWithSales: ReadSalesCard[];
@@ -452,7 +476,10 @@ export type PendingRow = {
   confirmable: Confirmable[];
   /** CEO only: untied payments that fit a part. */
   hints: Hint[];
+  /** Program money only: a payment left out of program money is never here. */
   rails: ReadRail[];
+  /** The payments on this row's deal the CEO left out of program money (each a source line too). */
+  excluded: ReadExclusion[];
   /** Pending and refused billing-inbox logs for the card. */
   inbox: ReadInbox[];
   /** The next part with room left. */
@@ -1202,6 +1229,17 @@ function rowFor(
         .sort((a, b) => a.day.localeCompare(b.day))
     : [];
   const R = rails.reduce((t, r) => t + cents(r.usd), 0);
+  // Never in the rails (programMoneyOnly took them out); said in words instead.
+  const excluded = deal
+    ? (ctx.read.exclusions ?? [])
+        .filter(x => x.dealResponseId === deal.responseId)
+        .slice()
+        .sort(
+          (a, b) =>
+            a.day.localeCompare(b.day) ||
+            a.paymentId.localeCompare(b.paymentId),
+        )
+    : [];
   const inboxAll = ctx.byTask(ctx.read.inbox, card.taskId);
   const inbox = inboxAll.filter(
     i => i.status === "pending" || i.status === "rejected",
@@ -1259,6 +1297,7 @@ function rowFor(
     confirmable: [],
     hints: [],
     rails,
+    excluded,
     inbox,
     nextPart: null,
     cardNext: null,
@@ -1428,6 +1467,7 @@ function rowFor(
         : "no second payment",
     );
   if (deal.newMrrUsd !== null) form.push(`${usdText(deal.newMrrUsd)} a month`);
+  sources.unshift(...excluded.map(x => exclusionLine(x, today)));
   sources.unshift(
     `Rails: ${
       rails.length === 0
@@ -1469,7 +1509,9 @@ function rowFor(
     );
   if (rails.length === 0)
     notes.push(
-      "No rail has ever shown a payment from this client. A transfer shows only once someone logs it.",
+      excluded.length
+        ? "No rail shows program money from this client: every payment on record was left out of it."
+        : "No rail has ever shown a payment from this client. A transfer shows only once someone logs it.",
     );
   if (
     card.plan &&
@@ -1987,6 +2029,51 @@ function rowFor(
   return base;
 }
 
+/** "$1,500 on 21 Aug was the website, not program money (Whop; left out by Abdulaziz)". */
+export function exclusionLine(x: ReadExclusion, today: string): string {
+  const what =
+    x.reason === "website"
+      ? "was the website, not program money"
+      : `is not program money${x.note ? `: ${x.note}` : ""}`;
+  return `${usdText(numOrNull(x.usd))} on ${dayText(x.day, today)} ${what} (${railName(x.rail)}; left out by ${firstName(x.setByName)})`;
+}
+
+/**
+ * The read with every payment the CEO left out of program money (20261024p)
+ * off the rails of the deal it was left out on (the cards', the deals with no
+ * card and Back with sales): an excluded payment never fills a part there.
+ * The server's rails already leave them out; this holds the rule for any read
+ * that still carries one. Each exclusion is kept once per deal and payment,
+ * and only ever takes out the payment it names on the deal it names, so it can
+ * never add money, take out more than that payment, or touch another deal's
+ * row. The untied list is left as it is: an untied payment is on no deal, so
+ * no mark applies to it.
+ */
+function programMoneyOnly(read: BalancesRead): BalancesRead {
+  const key = (dealResponseId: string, paymentId: string) =>
+    `${dealResponseId}|${paymentId}`;
+  const out = new Set<string>();
+  const exclusions = (read.exclusions ?? []).filter(x => {
+    const k = key(x.dealResponseId, x.paymentId);
+    if (out.has(k)) return false;
+    out.add(k);
+    return true;
+  });
+  if (out.size === 0) return { ...read, exclusions };
+  const keep = (list: ReadRail[] | undefined) =>
+    (list ?? []).filter(r => !out.has(key(r.dealResponseId, r.paymentId)));
+  return {
+    ...read,
+    exclusions,
+    rails: keep(read.rails),
+    unlinked: (read.unlinked ?? []).map(u => ({ ...u, rails: keep(u.rails) })),
+    backWithSales: (read.backWithSales ?? []).map(s => ({
+      ...s,
+      rails: keep(s.rails),
+    })),
+  };
+}
+
 function hintsFor(
   clientName: string,
   taskId: string | null,
@@ -2235,9 +2322,10 @@ function rowOrder(a: PendingRow, b: PendingRow): number {
  * calls and how old a confirmation is; the day is the server's Kuwait day.
  */
 export function buildPending(
-  read: BalancesRead,
+  sent: BalancesRead,
   now: number = Date.now(),
 ): PendingView {
+  const read = programMoneyOnly(sent);
   const today = read.today;
   const lists = new WeakMap<object, Map<string, unknown[]>>();
   const byTask = <T extends { taskId: string }>(

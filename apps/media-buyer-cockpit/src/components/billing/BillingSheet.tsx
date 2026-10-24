@@ -1166,6 +1166,13 @@ function sentenceOf(e: EventRow): string {
       return `${who} linked a signed deal to this client.`;
     case "unlink":
       return `${who} unlinked a signed deal from this client${e.reason ? `: ${e.reason}` : "."}`;
+    // 20261024p: the CEO leaves a payment out of program money, or counts it again.
+    case "exclude": {
+      const out = Number(d.usd ?? Number.NaN);
+      return `${who} left ${Number.isFinite(out) ? usd(out) : "a payment"}${d.rail ? ` by ${RAIL[String(d.rail)] ?? d.rail}` : ""}${d.day ? ` on ${shortDay(String(d.day))}` : ""} out of program money${d.reason === "website" ? " (the website)" : ""}. Cash and pay are unchanged.`;
+    }
+    case "unexclude":
+      return `${who} counted a payment as program money again${e.reason ? `: ${e.reason}` : "."}`;
     default:
       return `${who}: ${e.kind}${e.reason ? `, ${e.reason}` : ""}.`;
   }
