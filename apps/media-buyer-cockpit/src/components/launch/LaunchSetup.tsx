@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { launchOperation } from "@/lib/launchClient";
 import type { LaunchClient } from "@/lib/launchModel";
 
+import { LaunchCreativeImport } from "./LaunchCreativeImport";
+
 type Props = {
+  rehearse: boolean;
   client: any;
   c: LaunchClient;
   account: string;
@@ -18,6 +21,7 @@ type Props = {
 };
 export function LaunchSetup({
   client,
+  rehearse,
   c,
   account,
   route,
@@ -34,6 +38,10 @@ export function LaunchSetup({
     [other, setOther] = useState<any>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const latest = useRef(value);
+  latest.current = value;
+  const [catalogVersion, setCatalogVersion] = useState(0);
+  const refreshCatalog = useCallback(() => setCatalogVersion(v => v + 1), []);
   const change = (patch: Record<string, any>) =>
     onChange({ ...value, ...patch });
   const read = useCallback(
@@ -41,10 +49,12 @@ export function LaunchSetup({
       launchOperation(client, "launch.readiness", {
         clickupId: c.id,
         accountId: account,
+        rehearse,
         ...args,
       }),
-    [client, c.id, account],
+    [client, c.id, account, rehearse],
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: catalogVersion deliberately refreshes the server read.
   useEffect(() => {
     let current = true;
     setError("");
@@ -60,7 +70,7 @@ export function LaunchSetup({
     return () => {
       current = false;
     };
-  }, [route, read]);
+  }, [route, read, catalogVersion]);
   useEffect(() => {
     let current = true;
     setSets([]);
@@ -112,6 +122,8 @@ export function LaunchSetup({
     };
   }, [route, value.sourceAccountId, read]);
   async function findCities() {
+    const query = value.geoQuery,
+      country = value.country;
     setBusy(true);
     setError("");
     try {
@@ -120,7 +132,11 @@ export function LaunchSetup({
         geoQuery: value.geoQuery,
         country: value.country,
       });
-      setCities(r.cities ?? []);
+      if (
+        latest.current.geoQuery === query &&
+        latest.current.country === country
+      )
+        setCities(r.cities ?? []);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -128,6 +144,7 @@ export function LaunchSetup({
     }
   }
   async function ideas() {
+    const requested = value;
     setBusy(true);
     setError("");
     try {
@@ -135,7 +152,14 @@ export function LaunchSetup({
         clickupId: c.id,
         accountId: account,
         language: value.language ?? "ar",
+        rehearse,
       });
+      if (latest.current !== requested)
+        throw Error(
+          "Your draft changed while copy was being written. Try again when you are ready.",
+        );
+      if (!Array.isArray(r.variants) || !r.variants.length)
+        throw Error("No copy was returned. You can write your own below.");
       change({
         variants: (value.media ?? []).map(
           (_: any, i: number) => r.variants[i % r.variants.length],
@@ -392,6 +416,22 @@ export function LaunchSetup({
               Use this client’s imported files. Preview each selection before
               creating the plan.
             </p>
+            <LaunchCreativeImport
+              client={client}
+              clientId={c.id}
+              account={account}
+              enabled={ready?.applyEnabled === true}
+              rehearse={rehearse}
+              onReady={refreshCatalog}
+            />
+            <div className="launch-import-actions">
+              <small>
+                Choose up to six ready images or videos for this campaign.
+              </small>
+              <Button variant="outline" size="sm" onClick={refreshCatalog}>
+                Refresh library
+              </Button>
+            </div>
             <div className="launch-media-grid">
               {catalog?.media?.map((m: any) => (
                 <button

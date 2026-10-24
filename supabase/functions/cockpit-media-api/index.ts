@@ -1,3 +1,4 @@
+import {normalizeImportLinks} from './launchImport.ts';
 import {DESK_OPERATIONS,launchEnabled,prepareDesk,REHEARSAL} from './launchDesk.ts';
 import {clientCampaignCopy} from '../_shared/clientCampaignCopy.ts';
 import {structuredJson} from './model.ts';
@@ -44,7 +45,7 @@ Deno.serve(async(req:Request)=>{
    const scope=async(slug:string|null,client:string|null)=>{const {data,error}=await userClient.rpc('cockpit_page_form_scope',{p_slug:slug,p_client:client});if(error)throw new Error(error.message);return data as Row;};
    return json(await pageFormOperation(operation,args,input.apply===true,input.requestId,{store,scope,fetch,health}));
   }
-  const scopeCall=()=>desk?userClient.rpc('cockpit_media_account_scope',{p_operation:operation,p_clickup_id:args.clickupId,p_account:args.accountId??null,p_launch:args.launchId??null}):operation==='previews.fresh'?userClient.rpc('cockpit_ad_preview_scope',{p_ad:args.adId}):operation==='cockpit.askForDetail'?userClient.rpc('cockpit_media_task_scope',{p_task:args.taskId}):operation==='edit.askViktorFor'?userClient.rpc('cockpit_media_request_scope',{p_campaign:args.campaignName??null,p_client:args.client??null}):userClient.rpc('cockpit_media_scope',{p_operation:operation,p_campaign:args.campaignName??(args.level==='campaign'?args.name:null)});
+  const scopeCall=()=>desk?userClient.rpc('cockpit_media_account_scope',{p_operation:operation==='launch.importCreatives'?'launch.new':operation,p_clickup_id:args.clickupId,p_account:args.accountId??null,p_launch:args.launchId??null}):operation==='previews.fresh'?userClient.rpc('cockpit_ad_preview_scope',{p_ad:args.adId}):operation==='cockpit.askForDetail'?userClient.rpc('cockpit_media_task_scope',{p_task:args.taskId}):operation==='edit.askViktorFor'?userClient.rpc('cockpit_media_request_scope',{p_campaign:args.campaignName??null,p_client:args.client??null}):userClient.rpc('cockpit_media_scope',{p_operation:operation,p_campaign:args.campaignName??(args.level==='campaign'?args.name:null)});
   const {data:scope,error:scopeError}=await scopeCall();
   if(scopeError) return json({ok:false,error:scopeError.message},403);
   let serverPreview:Row|null=null;
@@ -85,6 +86,15 @@ Deno.serve(async(req:Request)=>{
    const allowed=await userClient.rpc('cockpit_launch_available_accounts',{p_clickup_id:args.clickupId,p_ids:choices.map((a:Row)=>a.id)});if(allowed.error)throw Error(allowed.error.message);
    const words=String(scope.client).toLowerCase().split(/\s+/).filter((w:string)=>w.length>2);const score=(a:Row)=>words.filter((w:string)=>String(a.name).toLowerCase().includes(w)).length;
    return json({ok:true,applyEnabled:deskApply,accounts:choices.filter((a:Row)=>allowed.data.includes(a.id)).sort((a:Row,b:Row)=>score(b)-score(a)||String(a.name).localeCompare(String(b.name))),more:!!listed.paging?.next});
+  }
+  if(operation==='launch.importCreatives'){
+   const {read:ready}=await prepareDesk('launch.readiness',args,scope,deskClient!,provider,deskApply) as {read:Row};
+   if(ready.checks.some((c:Row)=>c.key==='account'&&c.state==='block'))throw new Error('Resolve the account problem before importing creatives.');
+   const links=normalizeImportLinks(args.driveLinks);
+   if(!deskApply||input.apply!==true)return json({ok:false,dryRun:true,did:REHEARSAL});
+   const {data,error}=await admin.rpc('cockpit_launch_import_enqueue',{p_actor:auth.user.id,p_client:args.clickupId,p_account:args.accountId,p_links:links,p_id:input.requestId});
+   if(error)throw new Error(error.message);
+   return json(data);
   }
   if(operation==='launch.copyIdeas'){
    if(!deskClient?.brief?.sentAt)throw new Error('Send Blueprint part 1 first.');

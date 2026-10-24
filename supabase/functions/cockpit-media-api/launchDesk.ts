@@ -6,7 +6,7 @@ import {copyableSpec,CREATIVE_FIELDS,storyOf,explainMeta} from './metaCreative.t
 import {fromMeta,problems,toMetaCreate} from '../../../apps/media-buyer-cockpit/src/lib/leadForm.ts';
 import {pages} from './funnel.ts';
 import {CPL_GATE} from '../../../apps/media-buyer-cockpit/src/lib/kpi.ts';
-export const DESK_OPERATIONS=['launch.readiness','launch.copyIdeas','launch.switchOn','launch.copy','launch.rebuild','launch.new','launch.attachAccount'];
+export const DESK_OPERATIONS=['launch.readiness','launch.importCreatives','launch.copyIdeas','launch.switchOn','launch.copy','launch.rebuild','launch.new','launch.attachAccount'];
 export const REHEARSAL='Rehearsal. No changes will be made to Meta or ClickUp.';
 export const UNPAID='This ad account owes Meta a payment. Meta refuses every change on it, pausing included, until the client pays in Ads Manager.';
 export const id=(v:unknown)=>{if(!/^[0-9]{5,25}$/.test(String(v??'')))throw Error('Choose a valid Meta object');return String(v);};

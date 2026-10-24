@@ -5,6 +5,7 @@ export function installLaunchHarness(client: SupabaseClient) {
   const params = new URLSearchParams(window.location.search),
     state = params.get("fixture") ?? "all";
   const fixture = launchFixture(state);
+  const imports: any[] = [];
   const notices = {
     asOf: new Date().toISOString(),
     sourceAt: new Date().toISOString(),
@@ -48,6 +49,13 @@ export function installLaunchHarness(client: SupabaseClient) {
         : fixture;
       return Promise.resolve({ data, error: null });
     }
+    if (name === "cockpit_launch_imports")
+      return Promise.resolve({
+        data: imports.filter(
+          x => x.clickupId === args.p_client && x.accountId === args.p_account,
+        ),
+        error: null,
+      });
     if (name === "cockpit_media_client_notices")
       return Promise.resolve({ data: notices, error: null });
     if (name === "cockpit_media_notices_seen") {
@@ -78,6 +86,19 @@ export function installLaunchHarness(client: SupabaseClient) {
           data: { ok: false, error: "No fictional client" },
           error: null,
         });
+      if (operation === "launch.importCreatives") {
+        if (args.rehearse)
+          return Promise.resolve({ data: { dryRun: true }, error: null });
+        const id = "demo-import";
+        imports.push({
+          id,
+          clickupId: args.clickupId,
+          accountId: args.accountId,
+          status: "ready",
+          media: [{ name: "Approved interior.jpg", imageHash: "sampleimage" }],
+        });
+        return Promise.resolve({ data: { ok: true, id }, error: null });
+      }
       if (operation === "launch.readiness" && args.availableAccounts)
         return Promise.resolve({
           data: {
@@ -136,7 +157,10 @@ export function installLaunchHarness(client: SupabaseClient) {
         });
       if (operation === "launch.readiness")
         return Promise.resolve({
-          data: fixtureReadiness(c, args.accountId, state),
+          data: {
+            ...fixtureReadiness(c, args.accountId, state),
+            applyEnabled: state === "interactive",
+          },
           error: null,
         });
       if (operation === "launch.copyIdeas")

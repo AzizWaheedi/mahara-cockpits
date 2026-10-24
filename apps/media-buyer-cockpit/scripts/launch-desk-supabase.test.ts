@@ -59,6 +59,9 @@ beforeAll(async () => {
     `ALTER TABLE cockpit_board_clients ADD COLUMN registry_status text, ADD COLUMN card_stage text; CREATE TABLE cockpit_client_onboarding(clickup_task_id text PRIMARY KEY,in_onboarding boolean,handover jsonb,links jsonb); CREATE TABLE cockpit_excluded_ads(ad_id text,account_id text);`,
   );
   await db.exec(
+    table("20261004d_media_native_surface.sql", "cockpit_media_native_records"),
+  );
+  await db.exec(
     migration("20261024a_brand_blueprints.sql").match(
       /CREATE OR REPLACE FUNCTION public.cockpit_blueprint_part_answers[\s\S]*?END \$\$;/,
     )![0],
@@ -67,6 +70,16 @@ beforeAll(async () => {
   await db.exec(migration(file));
   await db.exec(migration("20261024125012_media_clients_workspace.sql"));
   await db.exec(migration("20261024125012_media_clients_workspace.sql"));
+  await db.exec(
+    migration("20261024131543_launch_creative_imports.sql").match(
+      /CREATE OR REPLACE FUNCTION public.cockpit_media_clients\([\s\S]*?END \$\$;/,
+    )![0],
+  );
+  await db.exec(
+    migration("20261024131543_launch_creative_imports.sql").match(
+      /CREATE OR REPLACE FUNCTION public.cockpit_media_client_notices\(\)[\s\S]*?END \$\$;/,
+    )![0],
+  );
   await db.exec(
     `CREATE TRIGGER cockpit_media_confirmed_effects AFTER UPDATE OF state ON cockpit_media_actions FOR EACH ROW EXECUTE FUNCTION cockpit_media_action_effects();`,
   );
@@ -481,4 +494,25 @@ test("partial task snapshots never appear complete", async () => {
   const p = await notices();
   expect(p.tasksReady).toBe(false);
   expect(p.notices.filter((n: any) => n.kind === "task")).toHaveLength(0);
+});
+
+test("ambiguous tasks are never assigned to the first matching client", async () => {
+  await owner(db);
+  await db.exec(
+    "INSERT INTO cockpit_media_source_state(table_name,ready,row_count,source_snapshot_at) VALUES('inbox',true,1,'2026-10-24T12:00:00Z') ON CONFLICT(table_name) DO UPDATE SET ready=true,row_count=1,source_snapshot_at=excluded.source_snapshot_at; DELETE FROM cockpit_media_sources WHERE table_name='inbox'; INSERT INTO cockpit_media_sources(table_name,source_id,data,client_names,source_snapshot_at) VALUES('inbox','ambiguous-task','{\"_id\":\"ambiguous-task\",\"taskId\":\"ready\",\"title\":\"Check client identity\"}',ARRAY['Onboarding'],'2026-10-24T12:00:00Z');",
+  );
+  await actor(db, BUYER);
+  const result = (
+    await db.query<any>("select cockpit_media_client_notices() r")
+  ).rows[0].r;
+  const task = result.notices.find((n: any) => n.id === "task:ambiguous-task");
+  expect(task.clientId).toBeNull();
+  await actor(db, OTHER);
+  const scoped = (
+    await db.query<any>("select cockpit_media_client_notices() r")
+  ).rows[0].r;
+  // Ambiguity is checked across the full universe, even for a restricted seat.
+  expect(scoped.notices.some((n: any) => n.id === "task:ambiguous-task")).toBe(
+    false,
+  );
 });

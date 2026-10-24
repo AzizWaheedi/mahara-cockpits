@@ -297,7 +297,7 @@ export function ClientActivity({ c }: { c: LaunchClient }) {
   return (
     <section className="launch-section">
       <p className="launch-eyebrow">Saved receipts</p>
-      <h2>Campaign action log</h2>
+      <h2>Campaign and creative log</h2>
       <p className="client-section-lede">
         The latest 50 recorded actions. Confirmed means Meta or ClickUp verified
         the change. Previews do not create an action.
@@ -326,7 +326,11 @@ export function ClientActivity({ c }: { c: LaunchClient }) {
                     ? "Saved in the cockpit"
                     : a.state === "reconcile"
                       ? "Needs reconciliation. Do not repeat this action."
-                      : "Pending provider confirmation"}
+                      : a.state === "failed"
+                        ? "Import failed. Review the details before retrying."
+                        : a.state === "queued"
+                          ? "Queued for processing"
+                          : "Pending provider confirmation"}
               </small>
             </div>
           </div>
