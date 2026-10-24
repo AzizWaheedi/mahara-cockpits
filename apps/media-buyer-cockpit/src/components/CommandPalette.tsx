@@ -49,7 +49,7 @@ const PAGES: (Hit & { role?: "media_buyer" | "admin" | "ceo" })[] = [
   {
     href: "/dashboard",
     label: "Today",
-    sub: "Morning sprint, watch list, tasks, touchpoints",
+    sub: "Morning sprint, review queue, tasks, touchpoints",
     old: "start of day task list tasks touchpoints clickup change log",
     role: "media_buyer",
   },

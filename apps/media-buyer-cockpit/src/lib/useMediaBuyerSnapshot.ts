@@ -1,8 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { shiftDay } from "./changeResultsCore";
+import type { MetaChange } from "./eodChanges";
 import { readMediaSnapshot } from "./mediaSourceClient";
 import { readPersonalEod, savePersonalEod } from "./personalEod";
 import { markStale, retryDelay, toError } from "./readHealth";
+import type { Review } from "./reviewQueue";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic cockpit rows
 type Any = any;
@@ -369,6 +372,44 @@ export function useMediaBuyerSnapshot(
       const eodRow = eodContext.report;
       reportDay.current = eodRow?.submitted_at ? undefined : eodContext.day;
 
+      // 7. Three weeks of her decisions: a decision on a campaign is its
+      // weekly review in the review queue (reviewQueue.ts).
+      const { data: reviewRows, error: rErr } = await client
+        .from("cockpit_decisions")
+        .select("subject,kind,action,reason,logged_at,created_at,metadata")
+        .eq("role", "media_buyer")
+        .gte("day", shiftDay(day, -21))
+        .limit(1000);
+      if (rErr) throw rErr;
+      const reviews: Review[] = (reviewRows ?? []).map(r => ({
+        subject: String(r.subject ?? ""),
+        kind: String(r.kind ?? ""),
+        action: String(r.action ?? ""),
+        reason: r.reason ?? undefined,
+        at: Date.parse(r.logged_at ?? r.created_at),
+        snooze:
+          typeof r.metadata?.snooze === "string"
+            ? r.metadata.snooze
+            : undefined,
+        verdictAtDecision:
+          typeof r.metadata?.verdictAtDecision === "string"
+            ? r.metadata.verdictAtDecision
+            : undefined,
+      }));
+
+      // 8. What Mahara changed in Ads Manager on the EOD day. A failed read
+      // stays unknown on the EOD (null), never "no changes".
+      const { data: changeRows, error: cErr } = await client.rpc(
+        "cockpit_media_eod_changes",
+        { p_day: eodContext.day },
+      );
+      if (cErr) console.error("Ads Manager changes could not load:", cErr);
+      const eodChanges: MetaChange[] | null = cErr
+        ? null
+        : Array.isArray(changeRows)
+          ? changeRows
+          : null;
+
       // Normalize checks
       const checks = normalizeChecks(checkRows);
 
@@ -400,6 +441,8 @@ export function useMediaBuyerSnapshot(
         eod: eodRow ?? null,
         eodOwner: eodContext.owner,
         eodDay: eodContext.day,
+        reviews,
+        eodChanges,
       };
 
       failures.current = 0;

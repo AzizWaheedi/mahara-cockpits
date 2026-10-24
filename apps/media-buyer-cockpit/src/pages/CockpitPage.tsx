@@ -78,6 +78,11 @@ import {
   cpbDisplay,
   cplTone,
 } from "@/lib/costTone";
+import {
+  eodChangeLines,
+  eodTaskEvidence,
+  type MetaChange,
+} from "@/lib/eodChanges";
 import { HEALTH, healthScore, missingHealth } from "@/lib/eodForm";
 import {
   bookingsLine,
@@ -106,6 +111,12 @@ import {
   savedRange,
   saveRange,
 } from "@/lib/range";
+import {
+  ONLY_IF_WORSE,
+  REVIEW_DAYS,
+  type Review,
+  reviewState,
+} from "@/lib/reviewQueue";
 import { useMediaBuyerSnapshot } from "@/lib/useMediaBuyerSnapshot";
 import { CampaignChangesResults } from "../components/CampaignChangesResults";
 import { CampaignChat } from "../components/CampaignChat";
@@ -147,18 +158,14 @@ const REQUESTS: { label: string; dept: string; deptLabel: string }[] = [
   },
 ];
 const REASONS = [
+  "Numbers are on track",
   "Client hasn't approved the budget",
   "Waiting on creative",
   "Card / payment issue",
   "Already actioned elsewhere",
   "Disagree with the call",
 ];
-const CLOCKS = [
-  "Tomorrow",
-  "In 3 days",
-  "Next week",
-  "Only if the number gets worse",
-];
+const CLOCKS = ["Tomorrow", "In 3 days", "Next week", ONLY_IF_WORSE];
 
 /** Straight into Ads Manager, filtered to that one campaign. Meta blocks iframes. */
 function adsManagerUrl(c: Campaign): string | undefined {
@@ -1462,7 +1469,32 @@ function Cockpit({ view }: { view: View }) {
       action: string;
       kind: string;
       reason?: string;
+      loggedAt?: number;
     }[];
+    // Work done in Ads Manager, from Meta's log (eodChanges.ts). A cockpit
+    // decision's own write is not listed twice; an unread log is said.
+    const clientOf = new Map(
+      cs.map(c => [
+        String(c.campaignName),
+        String(c.clientName ?? c.campaignName),
+      ]),
+    );
+    const changeLines = [
+      ...ds.map(
+        d => `• ${d.subject} - ${d.action}${d.reason ? ` (${d.reason})` : ""}`,
+      ),
+      ...(snap?.eodChanges
+        ? eodChangeLines(
+            snap.eodChanges as MetaChange[],
+            ds.map(d => ({
+              client: clientOf.get(d.subject) ?? d.subject,
+              at: Number(d.loggedAt ?? 0),
+            })),
+          )
+        : [
+            "• Ads Manager changes could not be read. Add them to your summary.",
+          ]),
+    ];
     // One figure per client, summed: never a campaign's count read twice.
     const totals = eodTotals(figures);
     const spend = totals.spend;
@@ -1480,12 +1512,7 @@ function Cockpit({ view }: { view: View }) {
       sourceLine(totals),
       "",
       "ACCOUNT BY ACCOUNT - WHAT I CHANGED AND WHY",
-      ...(ds.length
-        ? ds.map(
-            d =>
-              `• ${d.subject} - ${d.action}${d.reason ? ` (${d.reason})` : ""}`,
-          )
-        : ["• No changes logged today"]),
+      ...(changeLines.length ? changeLines : ["• No changes logged today"]),
       "",
       "CLIENTS OUT OF KPI - METRIC AND NEXT ACTION",
       ...(outOfKpiLines.length ? outOfKpiLines : ["• None"]),
@@ -1557,41 +1584,54 @@ function Cockpit({ view }: { view: View }) {
   const checksDone = sodChecks.filter(c => c.done).length;
 
   /**
-   * Launch cadence: first 72 hours is twice a day, then every 3–7 days.
-   * "Due" means nothing has been changed or reviewed for a week.
+   * The review queue (reviewQueue.ts). Launch cadence: the first 72 hours
+   * twice a day, the learning days after a change, then a decision at least
+   * once a week. A decision in Ads or a real change in Meta counts as the
+   * review; Leave it sets when the campaign comes back.
    */
-  const watchList = (snap.campaigns as Campaign[])
-    .filter(c => !c.internal)
-    .map(c => {
-      const live = c.daysLive ?? 99;
-      const sinceChange = c.lastChangeAt
-        ? Math.floor((Date.now() - c.lastChangeAt) / 86400000)
-        : undefined;
-      if (live <= 3)
-        return {
-          c,
-          hot: true,
-          tag: `Day ${Math.max(live, 0) + 1} of 3`,
-          why: "Just launched: check it this morning and again before you log off.",
-        };
-      if (sinceChange !== undefined && sinceChange < LEARNING_DAYS)
-        return {
-          c,
-          hot: false,
-          tag: "In learning",
-          why: `Changed ${sinceChange === 0 ? "today" : `${sinceChange}d ago`}; read it again on day ${LEARNING_DAYS}.`,
-        };
-      if ((sinceChange ?? live) >= 7)
-        return {
-          c,
-          hot: true,
-          tag: "Review due",
-          why: `Nothing touched for ${sinceChange ?? live} days, past the 7 day check.`,
-        };
-      return null;
-    })
-    .filter((w): w is NonNullable<typeof w> => w !== null)
-    .sort((a, b) => Number(b.hot) - Number(a.hot));
+  const reviewNow = Date.now();
+  const reviewsBySubject = new Map<string, Review[]>();
+  for (const r of (snap.reviews ?? []) as Review[])
+    reviewsBySubject.set(r.subject, [
+      ...(reviewsBySubject.get(r.subject) ?? []),
+      r,
+    ]);
+  const due: { c: Campaign; since: number | null }[] = [];
+  const watching: { c: Campaign; tag: string; why: string; hot: boolean }[] =
+    [];
+  const reviewed: { c: Campaign; review: Review; nextAt: number | null }[] = [];
+  for (const c of (snap.campaigns as Campaign[]).filter(c => !c.internal)) {
+    const s = reviewState(
+      c,
+      reviewsBySubject.get(c.campaignName) ?? [],
+      reviewNow,
+    );
+    if (!s) continue;
+    if (s.state === "due") due.push({ c, since: s.since });
+    else if (s.state === "reviewed")
+      reviewed.push({ c, review: s.review, nextAt: s.nextAt });
+    else if (s.state === "launch")
+      watching.push({
+        c,
+        hot: true,
+        tag: `Day ${s.day} of 3`,
+        why: "Just launched: check it this morning and again before you log off.",
+      });
+    else
+      watching.push({
+        c,
+        hot: false,
+        tag: "In learning",
+        why: `Changed ${s.sinceChange === 0 ? "today" : `${s.sinceChange}d ago`}; read it again on day ${LEARNING_DAYS}.`,
+      });
+  }
+  // The longest wait first; a campaign with no history on record leads.
+  due.sort(
+    (a, b) =>
+      (b.since ?? Number.MAX_SAFE_INTEGER) -
+      (a.since ?? Number.MAX_SAFE_INTEGER),
+  );
+  watching.sort((a, b) => Number(b.hot) - Number(a.hot));
 
   const act = async (
     c: Campaign,
@@ -1652,7 +1692,9 @@ function Cockpit({ view }: { view: View }) {
       kind === "rerouted"
         ? `Sent to ${extra.reroutedTo}`
         : kind === "left"
-          ? "Left, with a reason logged"
+          ? extra.snooze === ONLY_IF_WORSE
+            ? "Left. It comes back to the review queue if the number gets worse."
+            : `Left. It comes back to the review queue ${String(extra.snooze ?? "next week").toLowerCase()}.`
           : "Logged. ClickUp task queued.",
     );
   };
@@ -2064,27 +2106,137 @@ function Cockpit({ view }: { view: View }) {
     </section>
   );
 
+  /** A due row's wait: two weeks of track, teal to the 7-day mark, orange past it. */
+  const SPAN = 14;
+  const sinceBar = (since: number | null) => {
+    const shown = since === null ? SPAN : Math.min(since, SPAN);
+    const at = (d: number) => `${(d / SPAN) * 100}%`;
+    return (
+      <span
+        className="flex items-center gap-2"
+        role="img"
+        aria-label={
+          since === null
+            ? "No change or decision on record"
+            : `${since} days since the last change or decision`
+        }
+      >
+        <span
+          aria-hidden
+          className="relative h-1.5 w-20 overflow-hidden rounded-full bg-muted"
+        >
+          <span
+            className="absolute inset-y-0 left-0 bg-primary"
+            style={{ width: at(Math.min(shown, REVIEW_DAYS)) }}
+          />
+          {shown > REVIEW_DAYS && (
+            <span
+              className="absolute inset-y-0"
+              style={{
+                left: at(REVIEW_DAYS),
+                width: at(shown - REVIEW_DAYS),
+                backgroundColor: "var(--warning)",
+              }}
+            />
+          )}
+          <span
+            className="absolute inset-y-0 w-0.5 bg-card"
+            style={{ left: at(REVIEW_DAYS) }}
+          />
+        </span>
+        <span
+          aria-hidden
+          className="w-9 text-right font-mono text-xs tabular-nums text-muted-foreground"
+        >
+          {since === null ? "n/a" : `${since}d`}
+        </span>
+      </span>
+    );
+  };
+  const shortDay = (at: number) =>
+    new Date(at).toLocaleDateString("en-GB", {
+      timeZone: "Asia/Kuwait",
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+    });
+  const reviewWords = (r: Review) => {
+    const ago = Math.floor((reviewNow - r.at) / 86400000);
+    const when = ago <= 0 ? "today" : ago === 1 ? "yesterday" : `${ago}d ago`;
+    return r.kind === "left"
+      ? `Left ${when}${r.reason ? `: ${r.reason}` : ""}`
+      : `${r.action}, ${when}`;
+  };
   const watch = (
-    <section className={CARD}>
-      <h2 className="text-[15px] font-semibold">Watch list</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        A new campaign is read twice a day for its first 72 hours, then every 3
-        to 7 days, sooner if you changed something.
-      </p>
-      {watchList.length === 0 ? (
+    <section id="review" className={`${CARD} scroll-mt-6`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-[15px] font-semibold">Review queue</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Every live campaign gets a decision at least once a week. A change
+            in Meta or a decision in Ads counts. Leave it sets when the campaign
+            comes back.
+          </p>
+        </div>
+        {due.length > 0 && (
+          <span className={`${KICKER} shrink-0 pt-1`}>{due.length} due</span>
+        )}
+      </div>
+      {due.length === 0 && watching.length === 0 ? (
         <p className="mt-4 text-sm text-muted-foreground">
-          No campaign is inside its launch window and nothing is overdue a
-          review. Work the accounts below instead.
+          Nothing is due. Every live campaign has a change or a decision from
+          the last 7 days.
         </p>
       ) : (
         <ul className="mt-4 divide-y">
-          {watchList.map(w => (
+          {due.map(({ c, since }) => (
+            <li
+              key={c.campaignName}
+              className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3 first:pt-0 last:pb-0"
+            >
+              <div className="min-w-0 flex-1 basis-64">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-sm font-medium" dir="auto">
+                    {c.clientName ?? c.campaignName}
+                  </span>
+                  {c.verdict && (
+                    <StatusChip tone={VERDICT_TONE[c.verdict] ?? "neutral"}>
+                      {sentence(c.verdict)}
+                    </StatusChip>
+                  )}
+                </div>
+                <div
+                  className="truncate text-xs text-muted-foreground"
+                  dir="auto"
+                >
+                  {c.campaignName}
+                </div>
+                {c.reason && (
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {c.reason}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                {sinceBar(since)}
+                <Button asChild size="sm" variant="outline">
+                  <Link
+                    to={`/ads?account=${encodeURIComponent(String(c.clientName ?? c.accountName ?? "Unassigned"))}&campaign=${encodeURIComponent(String(c.campaignName))}`}
+                  >
+                    Review
+                    <ChevronRight />
+                  </Link>
+                </Button>
+              </div>
+            </li>
+          ))}
+          {watching.map(w => (
             <li
               key={w.c.campaignName}
               className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5 py-3 first:pt-0 last:pb-0"
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium">
+                <div className="truncate text-sm font-medium" dir="auto">
                   {w.c.clientName ?? w.c.campaignName}
                 </div>
                 <div className="text-xs text-muted-foreground">{w.why}</div>
@@ -2093,6 +2245,35 @@ function Cockpit({ view }: { view: View }) {
             </li>
           ))}
         </ul>
+      )}
+      {reviewed.length > 0 && (
+        <details className="mt-4 rounded-xl bg-muted/40 px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            Reviewed, not due yet ({reviewed.length})
+          </summary>
+          <ul className="mt-2 space-y-2">
+            {reviewed.map(({ c, review, nextAt }) => (
+              <li
+                key={c.campaignName}
+                className="flex flex-wrap justify-between gap-x-3 gap-y-0.5 text-xs"
+              >
+                <span className="min-w-0">
+                  <span className="font-medium text-foreground" dir="auto">
+                    {c.clientName ?? c.campaignName}
+                  </span>{" "}
+                  <span className="text-muted-foreground">
+                    {reviewWords(review)}
+                  </span>
+                </span>
+                <span className="text-muted-foreground">
+                  {nextAt === null
+                    ? "Back if the number gets worse"
+                    : `Back on ${shortDay(nextAt)}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </section>
   );
@@ -2376,14 +2557,19 @@ function Cockpit({ view }: { view: View }) {
     </section>
   );
 
+  /** The two task answers Meta's log can back, as a line under each. */
+  const eodEvidence = eodTaskEvidence(
+    (snap.eodChanges ?? null) as MetaChange[] | null,
+  );
   const eod = (
     <section className={CARD}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-[15px] font-semibold">Your EOD report</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Your day from today's decisions. Submit below and your answers go to
-            #media-eods and the EOD sheet for you.
+            Your day from today's decisions and Mahara's changes in Ads Manager.
+            Submit below and your answers go to #media-eods and the EOD sheet
+            for you.
           </p>
         </div>
       </div>
@@ -2434,7 +2620,14 @@ function Cockpit({ view }: { view: View }) {
                 key={k}
                 className="flex items-center justify-between gap-3 py-2"
               >
-                <span className="text-sm">{label}</span>
+                <span className="text-sm">
+                  {label}
+                  {k in eodEvidence && (
+                    <span className="block text-xs text-muted-foreground">
+                      {eodEvidence[k as keyof typeof eodEvidence]}
+                    </span>
+                  )}
+                </span>
                 <div className="flex flex-none gap-1">
                   {["Yes", "No"].map(opt => (
                     <button
@@ -3279,6 +3472,7 @@ function Cockpit({ view }: { view: View }) {
               ))}
             </div>
             <p className="text-xs leading-relaxed text-muted-foreground">
+              The campaign leaves Today's review queue until the time you pick.
               "Client hasn't approved the budget" creates a CSM touchpoint task.
               "Disagree with the call" is logged separately, and a rule
               disagreed with three times gets changed, not re-shown.
@@ -3290,6 +3484,8 @@ function Cockpit({ view }: { view: View }) {
                   act(c, "Left", "left", {
                     reason,
                     snooze: clock,
+                    // "Only if the number gets worse" compares with this call.
+                    verdictAtDecision: c.verdict,
                   })
                 }
               >

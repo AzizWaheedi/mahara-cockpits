@@ -63,11 +63,74 @@ function reply(answer: Promise<Answer>) {
   return Object.assign(answer, { abortSignal: () => answer });
 }
 
+/**
+ * Today's review queue (/dashboard): two campaigns aged past the 7-day check,
+ * so the queue holds three due rows with Driftwood, and one Leave it on
+ * Falcon Ridge two hours ago, so it shows as reviewed.
+ */
+const AGED: Record<string, number> = {
+  "Marble Bay | Interior design | Leads": 12,
+  "Cedar Stone | Kitchens | Retarget": 8,
+};
+function harnessDecisions(now: number): unknown[] {
+  const at = new Date(now - 2 * 3_600_000).toISOString();
+  return [
+    {
+      id: 9001,
+      role: "media_buyer",
+      day: fixtureDay(0),
+      subject: "Falcon Ridge | Construction only | DWY",
+      action: "Left",
+      kind: "left",
+      reason: "Numbers are on track",
+      logged_at: at,
+      created_at: at,
+      metadata: { snooze: "In 3 days", verdictAtDecision: "scale" },
+    },
+  ];
+}
+/** End of day (/eod): what Mahara changed in Ads Manager today, made up. */
+function harnessEodChanges(now: number): unknown[] {
+  const at = (h: number) => now - h * 3_600_000;
+  return [
+    {
+      at: at(6),
+      client: "Cedar Stone Interiors",
+      actor: "Nada Al Saed",
+      eventType: "Ad set budget updated",
+    },
+    {
+      at: at(5),
+      client: "Juniper Kitchens",
+      actor: "Nada Al Saed",
+      eventType: "Ad created",
+    },
+    {
+      at: at(5),
+      client: "Juniper Kitchens",
+      actor: "Nada Al Saed",
+      eventType: "Ad created",
+    },
+    {
+      at: at(4),
+      client: "Opal House Renovation",
+      actor: "Nada Al Saed",
+      eventType: "Ad status updated",
+    },
+  ];
+}
+
 /** The table reads on the Ads page, by table name. */
 function tableAnswer(name: string): Answer | undefined {
   switch (name) {
-    // Today's decisions and plan: none yet.
+    // Today's decisions: the queue's one Leave it on Today and End of day.
     case "cockpit_decisions":
+      return /^\/(dashboard|eod)\b/.test(
+        new URLSearchParams(window.location.search).get("path") ?? "",
+      )
+        ? ok(harnessDecisions(Date.now()))
+        : ok([]);
+    // Today's plan: none yet.
     case "cockpit_plan_items":
     // Lead sync: no client checked yet, so the strip stays quiet.
     case "cockpit_lead_sync_status":
@@ -118,7 +181,8 @@ function nativeRead(operation: unknown, now: number): Answer {
 
 export function installAdsPageHarness(client: SupabaseClient): void {
   const params = new URLSearchParams(window.location.search);
-  if (!/^\/ads\b/.test(params.get("path") ?? "")) return;
+  const path = params.get("path") ?? "";
+  if (!/^\/(ads|dashboard|eod)\b/.test(path)) return;
   const c = client as unknown as {
     rpc: (name: string, args?: Record<string, unknown>) => Promise<Answer>;
     from: (name: string) => unknown;
@@ -163,7 +227,22 @@ export function installAdsPageHarness(client: SupabaseClient): void {
         return ok(adsPageSource(now));
       case "cockpit_media_live_campaigns":
         await wait(150);
-        return ok(adsPageCampaignRows(now));
+        return ok(
+          adsPageCampaignRows(now).map(row => {
+            const age = AGED[String(row.campaign_name)];
+            return age && /^\/dashboard\b/.test(path)
+              ? {
+                  ...row,
+                  raw_data: {
+                    ...(row.raw_data as Record<string, unknown>),
+                    lastChangeAt: now - age * 86_400_000,
+                  },
+                }
+              : row;
+          }),
+        );
+      case "cockpit_media_eod_changes":
+        return ok(harnessEodChanges(now));
       case "cockpit_media_preferences":
         return args.p_language ? ok({ ok: true }) : ok([]);
       case "cockpit_media_statistics": {
