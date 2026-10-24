@@ -165,9 +165,16 @@ export type Campaign = {
 export function cardFor<T extends Campaign>(
   campaignName: string,
   campaigns: T[],
+  launches: Row[] = [],
 ): { taskId: string; ownCard: boolean; campaign?: T } | undefined {
   const own = campaigns.find(c => c.campaignName === campaignName);
   if (own?.taskId) return { taskId: own.taskId, ownCard: true, campaign: own };
+  const matches = launches.filter(l => l.campaignName === campaignName);
+  if (matches.length === 1) {
+    const launch = matches[0];
+    if (launch.taskId) return { taskId: launch.taskId, ownCard: true, campaign: launch as T };
+    if (launch.clientTaskId) return { taskId: launch.clientTaskId, ownCard: false, campaign: launch as T };
+  }
   const keys = new Set([campaignName, own?.clientName, own?.clientTag].map(tight).filter(Boolean));
   const sibling = campaigns
     .filter(c => c.taskId && (keys.has(tight(c.clientName)) || keys.has(tight(c.clientTag))))

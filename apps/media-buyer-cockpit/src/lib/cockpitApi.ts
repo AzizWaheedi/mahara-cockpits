@@ -122,12 +122,19 @@ async function getTeamUserContext(client: any): Promise<TeamUserContext> {
 }
 
 const MEDIA_READS = new Set([
+  "launch.readiness",
+  "launch.copyIdeas",
   "board.adStatusOptions",
   "board.advertisingCityOptions",
   "ceo.b2bManage.inspect",
   "ceo.b2bLaunch.list",
 ]);
 const MEDIA_WRITES = new Set([
+  "launch.switchOn",
+  "launch.copy",
+  "launch.rebuild",
+  "launch.new",
+  "launch.attachAccount",
   "control.setStatus",
   "ceo.b2bControl.setStatus",
   "edit.setAdSetBudget",

@@ -37,12 +37,14 @@ import { AdminPage } from "@/pages/AdminPage";
 import { CeoPage } from "@/pages/CeoPage";
 import { AdsPage, EndOfDayPage, TodayPage } from "@/pages/CockpitPage";
 import { DataViewPage } from "@/pages/data/DataViewPage";
+import { LaunchPage } from "@/pages/LaunchPage";
 import { LoginPage } from "@/pages/LoginPage";
 import { PlaybookPage } from "@/pages/PlaybookPage";
 import { PerformancePage } from "@/pages/performance/PerformancePage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
+import { installLaunchHarness } from "./launchHarness";
 import "@/index.css";
 import { getCockpitSupabaseClient } from "@/auth/SupabaseAuthProvider";
 import { installAdsPageHarness } from "./adsPageHarness";
@@ -84,6 +86,7 @@ async function main() {
   // Billing (?tab=billing&pending=...): the sheet and Pending payments from
   // the 23 Oct read, writes kept in memory (billingFixture.ts).
   installBillingHarness(getCockpitSupabaseClient());
+  installLaunchHarness(getCockpitSupabaseClient());
   const [today, people, more] = await Promise.all([
     // Optional since the cutover: the CEO tabs that still read them show
     // their empty states without.
@@ -131,6 +134,7 @@ async function main() {
                 <Route path="/performance" element={<PerformancePage />} />
                 <Route path="/team/:id" element={<MeetingPage />} />
                 <Route path="/dashboard" element={<TodayPage />} />
+                <Route path="/launch" element={<LaunchPage />} />
                 <Route path="/ads" element={<AdsPage />} />
                 <Route path="/calls" element={<CallsHarnessPage />} />
                 <Route path="/eod" element={<EndOfDayPage />} />

@@ -6,6 +6,7 @@ import {
   Moon,
   PanelLeft,
   PanelLeftClose,
+  Rocket,
   Search,
   Settings,
   Sun,
@@ -58,6 +59,13 @@ const navItems = [
     icon: Sunrise,
     role: "media_buyer",
     also: ["/eod"],
+  },
+  {
+    href: "/launch",
+    label: "Launch",
+    icon: Rocket,
+    role: "media_buyer",
+    also: [] as string[],
   },
   {
     href: "/ads",

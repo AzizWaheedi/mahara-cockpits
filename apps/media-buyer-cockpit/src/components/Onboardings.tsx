@@ -140,13 +140,13 @@ export function Onboardings({
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {onBuild && r.accountId && (
+                  {onBuild && (
                     <Button
                       size="sm"
                       className="h-7 text-xs"
                       onClick={() => onBuild(r.client)}
                     >
-                      Build the campaign
+                      Open in Launch
                     </Button>
                   )}
                   <Button

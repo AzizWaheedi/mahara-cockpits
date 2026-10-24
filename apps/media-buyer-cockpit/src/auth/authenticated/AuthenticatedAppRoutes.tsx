@@ -22,6 +22,7 @@ import {
   TodayPage,
 } from "@/pages";
 import { DataViewPage } from "@/pages/data/DataViewPage";
+import { LaunchPage } from "@/pages/LaunchPage";
 import { PerformancePage } from "@/pages/performance/PerformancePage";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
@@ -86,6 +87,7 @@ export function AuthenticatedRoutes() {
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="media_buyer" />}>
             <Route path="/dashboard" element={<TodayPage />} />
+            <Route path="/launch" element={<LaunchPage />} />
             <Route path="/ads" element={<AdsPage />} />
             <Route path="/eod" element={<EndOfDayPage />} />
             <Route
