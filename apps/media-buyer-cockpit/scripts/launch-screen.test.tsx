@@ -9,10 +9,9 @@ import {
   JustLaunched,
   LaunchNothingRunning,
 } from "../src/components/launch/LaunchLinks";
+import { LaunchSetup } from "../src/components/launch/LaunchSetup";
 import { launchFixture } from "../src/dev/launchFixture";
 import { LANES, laneClients } from "../src/lib/launchModel";
-
-import { LaunchSetup } from "../src/components/launch/LaunchSetup";
 
 const render = (node: React.ReactNode) =>
   renderToStaticMarkup(<MemoryRouter>{node}</MemoryRouter>);
@@ -53,6 +52,22 @@ test("Just launched needs impressions and disappears when sync catches up", () =
 });
 
 test("a pending build shows the actual campaign to activate, not an older source picker", () => {
- const html=render(<LaunchSetup client={{}} c={launchFixture().clients[0]} account="111111" route="switchOn" source="old-campaign" ready={{}} value={{}} onChange={()=>{}} onSource={()=>{}} rehearse={false} builtCampaignName="Harbour |MAHARA| New build" />);
- expect(html).toContain("Harbour |MAHARA| New build");expect(html).toContain("saved paused build");expect(html).not.toContain("Source campaign");
+  const html = render(
+    <LaunchSetup
+      client={{}}
+      c={launchFixture().clients[0]}
+      account="111111"
+      route="switchOn"
+      source="old-campaign"
+      ready={{}}
+      value={{}}
+      onChange={() => {}}
+      onSource={() => {}}
+      rehearse={false}
+      builtCampaignName="Harbour |MAHARA| New build"
+    />,
+  );
+  expect(html).toContain("Harbour |MAHARA| New build");
+  expect(html).toContain("saved paused build");
+  expect(html).not.toContain("Source campaign");
 });

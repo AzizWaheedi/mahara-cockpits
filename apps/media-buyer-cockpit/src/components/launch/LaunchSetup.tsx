@@ -208,28 +208,36 @@ export function LaunchSetup({
         </label>
       )}
       {route === "switchOn" && builtCampaignName ? (
-        <div className="launch-inline-note"><small>Ready to switch on</small><p><strong>{builtCampaignName}</strong></p><small>This is the saved paused build for this account.</small></div>
-      ) : route !== "new" && (
-        <label htmlFor="launch-setup-2">
-          Source campaign
-          <AnimatedSelect
-            id="launch-setup-2"
-            value={source}
-            onChange={e => {
-              onSource(e.target.value);
-              change({ sourceAdsetId: undefined });
-            }}
-          >
-            <option value="">Choose a campaign</option>
-            {(candidates ?? [])
-              .filter((x: any) => x.owner.kind === "mahara")
-              .map((x: any) => (
-                <option key={x.id} value={x.id}>
-                  {x.name} · …{x.id.slice(-6)}
-                </option>
-              ))}
-          </AnimatedSelect>
-        </label>
+        <div className="launch-inline-note">
+          <small>Ready to switch on</small>
+          <p>
+            <strong>{builtCampaignName}</strong>
+          </p>
+          <small>This is the saved paused build for this account.</small>
+        </div>
+      ) : (
+        route !== "new" && (
+          <label htmlFor="launch-setup-2">
+            Source campaign
+            <AnimatedSelect
+              id="launch-setup-2"
+              value={source}
+              onChange={e => {
+                onSource(e.target.value);
+                change({ sourceAdsetId: undefined });
+              }}
+            >
+              <option value="">Choose a campaign</option>
+              {(candidates ?? [])
+                .filter((x: any) => x.owner.kind === "mahara")
+                .map((x: any) => (
+                  <option key={x.id} value={x.id}>
+                    {x.name} · …{x.id.slice(-6)}
+                  </option>
+                ))}
+            </AnimatedSelect>
+          </label>
+        )
       )}
       {sets.length > 1 && (
         <label htmlFor="launch-setup-3">
