@@ -312,17 +312,30 @@ function answerNumberSql(ref: string): string {
     limit 1)`;
 }
 
-/** Every signed deal, with B2B's own void flag. */
+/** B2B's contact `c` has the deal's email or the last eight digits of its phone. */
+const SHARES_DEAL_SQL = `(coalesce(nullif(lower(btrim(c.email)), '') = nullif(lower(btrim(d.email)), ''), false)
+      or coalesce(nullif(${PHONE8_SQL("c.phone")}, '') = nullif(${PHONE8_SQL("coalesce(d.phone_normalized, d.phone)")}, ''), false))`;
+
+/**
+ * Every signed deal, with B2B's own void flag.
+ *
+ * The deal's lead is the form's hidden contact_id, the lead page the closer
+ * opened the form from, else B2B's match by email and phone. The form loses
+ * when it names the wrong lead: B2B has that contact and it shares neither
+ * the deal's email nor its phone, while B2B matched another contact that
+ * shares one of them. On 17 Oct 2026 Mohamed Sabri's form was opened from
+ * Sami's page, and Sami read as an active client (out of the dialer, the
+ * follow-ups and the hot list). A form contact B2B does not have yet keeps
+ * the form, so a new lead's deal does not flip once its contact syncs.
+ */
 export function dealsSql(): string {
   return `select
   d.response_id,
   d.submitted_at,
   d.closer,
-  -- The form's own hidden contact_id when the cockpit filled it (exact),
-  -- else B2B's match by email and phone.
-  coalesce(nullif(btrim(d.raw_payload #>> '{hidden,contact_id}'), ''), d.contact_id) as contact_id,
+  case when w.wrong_form then d.contact_id else coalesce(f.form_id, d.contact_id) end as contact_id,
   case
-    when nullif(btrim(d.raw_payload #>> '{hidden,contact_id}'), '') is not null then 'form'
+    when f.form_id is not null and not w.wrong_form then 'form'
     when d.contact_id is not null then 'matched'
   end as contact_from,
   nullif(btrim(d.raw_payload #>> '{hidden,setter}'), '') as setter,
@@ -347,7 +360,19 @@ export function dealsSql(): string {
     select 1 from public.record_voids as v
      where v.entity = 'closed_deal' and v.record_id = d.response_id
   ) as voided
-from public.closed_deals as d`;
+from public.closed_deals as d
+cross join lateral (
+  select nullif(btrim(d.raw_payload #>> '{hidden,contact_id}'), '') as form_id
+) as f
+cross join lateral (
+  select f.form_id is not null
+     and d.contact_id is not null
+     and d.contact_id <> f.form_id
+     and exists (select 1 from public.leads as c
+                  where c.contact_id = f.form_id and not ${SHARES_DEAL_SQL})
+     and exists (select 1 from public.leads as c
+                  where c.contact_id = d.contact_id and ${SHARES_DEAL_SQL}) as wrong_form
+) as w`;
 }
 
 /** Deals B2B has voided, with what the scorecard attributes them by. */

@@ -426,6 +426,7 @@ describe("the onboarding payment and the later payment from the closer form", ()
         phone text, phone_normalized text, country text, payment_structure text, agreement_type text,
         daily_ad_spend numeric, cash_collected numeric, contracted_revenue numeric, new_mrr numeric,
         fathom_link text, csm text, lead_source text, ad_id text, raw_payload jsonb);
+      CREATE TABLE public.leads (contact_id text PRIMARY KEY, email text, phone text);
       CREATE TABLE public.record_voids (entity text, record_id text);
       INSERT INTO public.record_voids VALUES ('closed_deal', 'r-voided');
       CREATE TABLE public.record_edits (entity text, record_id text, field text, new_value text, created_at timestamptz);
@@ -580,5 +581,88 @@ describe("the onboarding payment and the later payment from the closer form", ()
       { response_id: "r-full", onb: "5500", later: "0" },
       { response_id: "r-no-later", onb: "5500", later: null },
     ]);
+  });
+});
+
+// 2026-10-24: Mohamed Sabri's form was opened from Sami's lead page, so its
+// hidden contact_id named Sami while B2B matched Mohamed by email and phone.
+// Fixture contacts only, shaped like B2B's leads and closed_deals.
+describe("the deal's lead when the form names the wrong one", () => {
+  let db: PGlite;
+
+  beforeAll(async () => {
+    db = await cockpitTestDb();
+    await db.exec(`
+      CREATE TABLE public.closed_deals (
+        response_id text PRIMARY KEY, submitted_at timestamptz, closer text, contact_id text,
+        client_first_name text, client_last_name text, business_name text, email text,
+        phone text, phone_normalized text, country text, payment_structure text, agreement_type text,
+        daily_ad_spend numeric, cash_collected numeric, contracted_revenue numeric, new_mrr numeric,
+        fathom_link text, csm text, lead_source text, ad_id text, raw_payload jsonb);
+      CREATE TABLE public.leads (contact_id text PRIMARY KEY, email text, phone text);
+      CREATE TABLE public.record_voids (entity text, record_id text);
+      CREATE TABLE public.record_edits (entity text, record_id text, field text, new_value text, created_at timestamptz);
+      INSERT INTO public.leads VALUES
+        ('c-page', 'page@example.com', '+966 50 111 1111'),
+        ('c-signer', 'Signer@Example.com ', '+965 9222 2222'),
+        ('c-other', 'other@example.com', '+965 9333 3333'),
+        ('c-no-details', NULL, NULL);
+      INSERT INTO public.closed_deals (response_id, contact_id, email, phone, phone_normalized, raw_payload) VALUES
+        -- Sabri's shape: the page's lead shares nothing, B2B's match has the email.
+        ('r-wrong-page', 'c-signer', 'signer@example.com', NULL, NULL, '{"hidden":{"contact_id":"c-page"}}'),
+        -- The page's lead has the deal's phone: the form stands.
+        ('r-page-phone', 'c-signer', 'signer@example.com', '0501111111', '+966501111111', '{"hidden":{"contact_id":"c-page"}}'),
+        -- The page's lead has the deal's email: the form stands.
+        ('r-page-email', 'c-signer', 'PAGE@example.com', NULL, '+96592222222', '{"hidden":{"contact_id":"c-page"}}'),
+        -- B2B's match shares nothing either: no better answer, the form stands.
+        ('r-match-weak', 'c-other', 'signer@example.com', NULL, NULL, '{"hidden":{"contact_id":"c-page"}}'),
+        -- A form contact B2B has not read yet: the form stands, nothing flips later.
+        ('r-new-lead', 'c-signer', 'signer@example.com', NULL, NULL, '{"hidden":{"contact_id":"c-not-synced"}}'),
+        -- A page lead with no details at all shares nothing: B2B's match by phone wins.
+        ('r-bare-page', 'c-signer', NULL, '+965 9222 2222', NULL, '{"hidden":{"contact_id":"c-no-details"}}'),
+        -- B2B matched no one: the form stands.
+        ('r-no-match', NULL, 'signer@example.com', NULL, NULL, '{"hidden":{"contact_id":"c-page"}}'),
+        -- Form and match agree, or there is no form.
+        ('r-agree', 'c-signer', 'signer@example.com', NULL, NULL, '{"hidden":{"contact_id":"c-signer"}}'),
+        ('r-matched', 'c-signer', 'signer@example.com', NULL, NULL, '{"answers":[]}'),
+        ('r-nobody', NULL, NULL, NULL, NULL, NULL);`);
+  });
+  afterAll(async () => {
+    await db?.close();
+  });
+
+  const read = async () =>
+    Object.fromEntries(
+      (
+        await db.query<{ response_id: string; contact_id: string | null; contact_from: string | null }>(
+          `SELECT q.response_id, q.contact_id, q.contact_from FROM (${dealsSql()}) AS q`,
+        )
+      ).rows.map(r => [r.response_id, [r.contact_id, r.contact_from]]),
+    );
+
+  test("B2B's match wins only when the form's lead shares neither the email nor the phone and the match shares one", async () => {
+    const got = await read();
+    expect(got["r-wrong-page"]).toEqual(["c-signer", "matched"]);
+    expect(got["r-bare-page"]).toEqual(["c-signer", "matched"]);
+  });
+
+  test("otherwise the form's lead stands, as before", async () => {
+    const got = await read();
+    expect(got["r-page-phone"]).toEqual(["c-page", "form"]);
+    expect(got["r-page-email"]).toEqual(["c-page", "form"]);
+    expect(got["r-match-weak"]).toEqual(["c-page", "form"]);
+    expect(got["r-new-lead"]).toEqual(["c-not-synced", "form"]);
+    expect(got["r-no-match"]).toEqual(["c-page", "form"]);
+    expect(got["r-agree"]).toEqual(["c-signer", "form"]);
+    expect(got["r-matched"]).toEqual(["c-signer", "matched"]);
+    expect(got["r-nobody"]).toEqual([null, null]);
+  });
+
+  test("one row per deal, and the columns the mirror sends are unchanged", async () => {
+    expect(Object.keys(await read()).length).toBe(10);
+    const cols = (await db.query(`SELECT * FROM (${dealsSql()}) AS q LIMIT 0`)).fields.map(f => f.name);
+    expect(cols).not.toContain("form_id");
+    expect(cols).not.toContain("wrong_form");
+    expect(cols.slice(0, 5)).toEqual(["response_id", "submitted_at", "closer", "contact_id", "contact_from"]);
   });
 });
