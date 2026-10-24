@@ -809,6 +809,7 @@ function LaunchDetail({
                   {ready && activeRoute?.available && (
                     <div className="launch-plan-inputs">
                       <LaunchSetup
+                        builtCampaignName={pending?.campaign_name}
                         rehearse={rehearse}
                         key={`${account}-${route}`}
                         client={client}

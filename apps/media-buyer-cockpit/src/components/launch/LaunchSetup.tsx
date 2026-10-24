@@ -9,6 +9,7 @@ import { LaunchCreativeImport } from "./LaunchCreativeImport";
 
 type Props = {
   rehearse: boolean;
+  builtCampaignName?: string;
   client: any;
   c: LaunchClient;
   account: string;
@@ -22,6 +23,7 @@ type Props = {
 export function LaunchSetup({
   client,
   rehearse,
+  builtCampaignName,
   c,
   account,
   route,
@@ -205,7 +207,9 @@ export function LaunchSetup({
           </small>
         </label>
       )}
-      {route !== "new" && (
+      {route === "switchOn" && builtCampaignName ? (
+        <div className="launch-inline-note"><small>Ready to switch on</small><p><strong>{builtCampaignName}</strong></p><small>This is the saved paused build for this account.</small></div>
+      ) : route !== "new" && (
         <label htmlFor="launch-setup-2">
           Source campaign
           <AnimatedSelect
