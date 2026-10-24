@@ -62,4 +62,36 @@ class Billing(unittest.TestCase):
         self.assertEqual(ad_billing.run(context(roster=[{'client_task_id':'one'}])).status, 'warn')
 
     def test_complete_idle_coverage(self):
-        self.assertEqual(ad_billing.run(context(roster=[{'client_task_id':'one'}], bindings=[{'client_task_id':'one','enabled':True,'manual_cutover_verified':True}])).status, 'ok')
+        self.assertEqual(ad_billing.run(context(roster=[{'client_task_id':'one'}], bindings=[binding()])).status, 'ok')
+
+
+def binding(good=1, **kw):
+    return {'client_task_id': 'one', 'client_name': 'Ardon', 'enabled': True, 'manual_cutover_verified': True,
+            'error': None, 'last_good_at': fakes.ago(good) if good is not None else None, **kw}
+
+
+class StaleReads(unittest.TestCase):
+    """19 Oct 2026: one run missed 3 of 17 clients, the next read all 17, and the old rule still paged."""
+
+    def test_one_failed_run_does_not_page(self):
+        cfg_error = '3 binding checks failed. Review the billing panel.'
+        ctx = context(roster=[{'client_task_id': 'one'}],
+                      bindings=[binding(good=6, error='Database request failed (network).')])
+        ctx.db.tables['cockpit_ad_billing_config'][0]['last_error'] = cfg_error
+        self.assertEqual(ad_billing.run(ctx).status, 'ok')
+
+    def test_a_client_unread_for_20_minutes_pages(self):
+        result = ad_billing.run(context(roster=[{'client_task_id': 'one'}], bindings=[binding(good=21, error='x')]))
+        self.assertEqual(result.status, 'fail')
+        self.assertTrue(result.urgent)
+        self.assertIn('Ardon', result.summary)
+        self.assertEqual(result.evidence['stale_clients'], 1)
+
+    def test_a_client_never_read_pages(self):
+        self.assertEqual(ad_billing.run(context(bindings=[binding(good=None)])).status, 'fail')
+
+    def test_a_read_finishing_after_the_scan_started_is_fresh(self):
+        self.assertEqual(ad_billing.run(context(bindings=[binding(good=-0.5)])).status, 'ok')
+
+    def test_a_disabled_binding_is_not_read_and_does_not_page(self):
+        self.assertEqual(ad_billing.run(context(bindings=[binding(good=None, enabled=False)])).status, 'ok')
