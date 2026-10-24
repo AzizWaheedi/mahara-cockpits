@@ -47,6 +47,7 @@ export type ClientNotices = {
   notices: ClientNotice[];
 };
 export type LaunchClient = {
+  serviceHold?: { mode: string; state: string; reason: string };
   mediaTasks?: ClientNotice[];
   tasksReady?: boolean;
   actionHistory?: {

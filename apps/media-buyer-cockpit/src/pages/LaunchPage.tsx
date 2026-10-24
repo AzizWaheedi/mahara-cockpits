@@ -21,6 +21,7 @@ import {
   ClientTasks,
   clientState,
 } from "@/components/launch/ClientDirectory";
+import { ClientService } from "@/components/launch/ClientService";
 import { LaunchSetup } from "@/components/launch/LaunchSetup";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -126,7 +127,7 @@ function LaunchDetail({
   rehearse: boolean;
 }) {
   const [params, setParams] = useSearchParams();
-  const tab = ["overview", "launch", "tasks", "activity"].includes(
+  const tab = ["overview", "launch", "tasks", "activity", "service"].includes(
     params.get("tab") ?? "",
   )
     ? params.get("tab")!
@@ -136,6 +137,9 @@ function LaunchDetail({
     next.set("tab", value);
     setParams(next);
   };
+  const [held, setHeld] = useState(
+    !!c.serviceHold && c.serviceHold.state !== "released",
+  );
   const [account, setAccount] = useState(defaultAccount(c)?.id ?? "");
   const [ready, setReady] = useState<any>(null),
     [readError, setReadError] = useState(""),
@@ -204,7 +208,8 @@ function LaunchDetail({
   const cap = ready?.budget?.cap;
   const applyEnabled =
     (ready?.applyEnabled === true || choices?.applyEnabled === true) &&
-    !rehearse;
+    !rehearse &&
+    !held;
   async function preview(apply = false, check = false) {
     setBusy(true);
     setError("");
@@ -312,6 +317,12 @@ function LaunchDetail({
           <ShieldCheck size={16} />
           This client is stopped. Its launch history is read-only.
         </div>
+      ) : held ? (
+        <div className="launch-rehearsal">
+          <ShieldCheck size={16} />
+          Campaign changes are on hold. Review Pause &amp; offboard before
+          relaunching.
+        </div>
       ) : !applyEnabled ? (
         <div className="launch-rehearsal">
           <ShieldCheck size={16} />
@@ -338,6 +349,7 @@ function LaunchDetail({
             `Tasks${c.mediaTasks?.length ? ` (${c.mediaTasks.length})` : ""}`,
           ],
           ["activity", "Activity"],
+          ["service", "Pause & offboard"],
         ].map(([key, label]) => (
           <button
             type="button"
@@ -687,6 +699,20 @@ function LaunchDetail({
               </section>
               <ClientTasks c={c} />
             </>
+          )}
+          {tab === "service" && (
+            <ClientService
+              c={c}
+              client={client}
+              rehearse={rehearse}
+              onHold={setHeld}
+            />
+          )}
+          {held && tab === "launch" && (
+            <div className="launch-rehearsal">
+              Campaign changes are on hold. Review Pause & offboard before
+              relaunching.
+            </div>
           )}
           {tab === "tasks" && <ClientTasks c={c} />}
           {tab === "activity" && <ClientActivity c={c} />}

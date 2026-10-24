@@ -516,3 +516,151 @@ test("ambiguous tasks are never assigned to the first matching client", async ()
     false,
   );
 });
+
+test("client service holds fence launches and workers; offboarding needs all recorded checks", async () => {
+  await owner(db);
+  // The older worker/import migrations are covered by their own complete worker suite.
+  // These stubs isolate this migration's wrapper fencing from unrelated queue fixtures.
+  await db.exec(`CREATE FUNCTION public.cockpit_media_native_guard(uuid,uuid) RETURNS jsonb LANGUAGE sql AS $$ SELECT '{"record":{"client_name":"Stopped"},"campaign":{"meta_account_id":"444444"}}'::jsonb $$;
+  CREATE FUNCTION public.cockpit_launch_import_scope(uuid,text,text) RETURNS jsonb LANGUAGE sql AS $$ SELECT '{"client":"Stopped","account":"444444"}'::jsonb $$;`);
+  const sql = migration("20261024172848_media_client_lifecycle.sql");
+  await db.exec(sql);
+  await db.exec(sql);
+  for (const role of ["anon", "authenticated"]) {
+    expect(
+      (
+        await db.query<any>(
+          "select has_table_privilege($1,'cockpit_client_holds','SELECT') ok",
+          [role],
+        )
+      ).rows[0].ok,
+    ).toBe(false);
+    expect(
+      (
+        await db.query<any>(
+          "select has_function_privilege($1,'cockpit_client_stop_begin(uuid,uuid,text,jsonb,jsonb)','EXECUTE') ok",
+          [role],
+        )
+      ).rows[0].ok,
+    ).toBe(false);
+    expect(
+      (
+        await db.query<any>(
+          "select has_function_privilege($1,'cockpit_media_account_scope_before_client_hold(text,text,text,uuid)','EXECUTE') ok",
+          [role],
+        )
+      ).rows[0].ok,
+    ).toBe(false);
+  }
+  await actor(db, OTHER);
+  await expect(
+    db.query("select cockpit_client_lifecycle_scope('stopped')"),
+  ).rejects.toThrow("access list");
+  await actor(db, CSM);
+  await expect(
+    db.query("select cockpit_client_lifecycle_scope('stopped')"),
+  ).rejects.toThrow("membership");
+  await actor(db, BUYER);
+  const s = (
+    await db.query<any>("select cockpit_client_lifecycle_scope('stopped') r")
+  ).rows[0].r;
+  expect(s.accounts).toEqual(["444444"]); // stopping a stopped client is permitted
+  await owner(db);
+  await db.exec("SET ROLE service_role");
+  const id = crypto.randomUUID(),
+    args = {
+      clickupId: "stopped",
+      reason: "Approved full offboarding",
+      fingerprint: "test",
+    };
+  const begin = () =>
+    db.query<any>("select cockpit_client_stop_begin($1,$2,$3,$4,$5) r", [
+      BUYER,
+      id,
+      "client.offboard",
+      JSON.stringify(args),
+      JSON.stringify(s),
+    ]);
+  await begin();
+  await expect(begin()).rejects.toThrow("already has an intent");
+  await expect(
+    db.query("select cockpit_media_native_guard($1,$2)", [
+      crypto.randomUUID(),
+      crypto.randomUUID(),
+    ]),
+  ).rejects.toThrow("hold");
+  await expect(
+    db.query("select cockpit_launch_import_scope($1,'stopped','444444')", [
+      BUYER,
+    ]),
+  ).rejects.toThrow("hold");
+  await db.query("select cockpit_client_stop_finish($1,$2)", [
+    id,
+    JSON.stringify({
+      ok: true,
+      checkedAt: new Date().toISOString(),
+      taskId: "task1",
+      unverified: [],
+    }),
+  ]);
+  expect((await begin()).rows[0].r.reused).toBe(true);
+  await actor(db, BUYER);
+  let h = (
+    await db.query<any>("select cockpit_client_lifecycle_scope('stopped') r")
+  ).rows[0].r.lifecycle;
+  await expect(
+    db.query(
+      "select cockpit_client_lifecycle_action('stopped',$1,'complete',null,'All checked by the team')",
+      [h.revision],
+    ),
+  ).rejects.toThrow("every offboarding step");
+  await expect(
+    db.query(
+      "select cockpit_client_lifecycle_action('stopped',$1,'release',null,'Release this client hold')",
+      [h.revision],
+    ),
+  ).rejects.toThrow("admin");
+  for (const step of [
+    "campaigns",
+    "client_access",
+    "agency_access",
+    "connections",
+  ]) {
+    const r = await db.query<any>(
+      "select cockpit_client_lifecycle_action('stopped',$1,'check',$2,'Checked in source, evidence https://example.test/receipt') r",
+      [h.revision, step],
+    );
+    h = r.rows[0].r.lifecycle;
+  }
+  const stale = h.revision;
+  h = (
+    await db.query<any>(
+      "select cockpit_client_lifecycle_action('stopped',$1,'complete',null,'Confirmed all four source checks') r",
+      [h.revision],
+    )
+  ).rows[0].r.lifecycle;
+  expect(h.state).toBe("complete");
+  expect(h.checks.agency_access.confirmation).toBe("team");
+  await expect(
+    db.query(
+      "select cockpit_client_lifecycle_action('stopped',$1,'check','client_access','Another valid confirmation')",
+      [stale],
+    ),
+  ).rejects.toThrow("record changed");
+  await owner(db);
+  await db.exec(
+    `UPDATE cockpit_members SET roles=ARRAY['media_buyer','admin'] WHERE auth_user_id='${BUYER}'`,
+  );
+  await actor(db, BUYER);
+  await db.query(
+    "select cockpit_client_lifecycle_action('stopped',$1,'release',null,'Client approved the planned relaunch')",
+    [h.revision],
+  );
+  await owner(db);
+  await db.exec("SET ROLE service_role");
+  await db.query("select cockpit_media_native_guard($1,$2)", [
+    crypto.randomUUID(),
+    crypto.randomUUID(),
+  ]);
+  await owner(db);
+}, 30000);
