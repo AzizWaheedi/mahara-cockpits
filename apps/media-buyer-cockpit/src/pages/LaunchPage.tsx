@@ -11,13 +11,16 @@ import {
   LoaderCircle,
   Radio,
   RefreshCw,
-  Search,
   ShieldCheck,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
-import { LaunchClientRow, LaunchLane } from "@/components/launch/LaunchLane";
-import { LaunchLine } from "@/components/launch/LaunchLine";
+import {
+  ClientActivity,
+  ClientDirectory,
+  ClientTasks,
+  clientState,
+} from "@/components/launch/ClientDirectory";
 import { LaunchSetup } from "@/components/launch/LaunchSetup";
 import { AnimatedSelect } from "@/components/ui/animated-select";
 import { Button } from "@/components/ui/button";
@@ -31,9 +34,7 @@ import {
   contractedBudget,
   defaultAccount,
   firstBlock,
-  LANES,
   type LaunchClient,
-  laneClients,
   launchAge,
 } from "@/lib/launchModel";
 import "@/components/launch/launch.css";
@@ -69,7 +70,6 @@ export function LaunchPage() {
   const [params] = useSearchParams();
   const id = params.get("client") ?? undefined;
   const { data, error, loading, refresh, client } = useLaunch(id);
-  const [search, setSearch] = useState("");
   if (loading)
     return (
       <main className="launch-page">
@@ -82,11 +82,11 @@ export function LaunchPage() {
   if (error || !data)
     return (
       <main className="launch-page">
-        <h1>Launch</h1>
+        <h1>Clients</h1>
         <div className="launch-error" role="alert">
           <AlertTriangle size={20} />
           <div>
-            <h2>The launch list could not load.</h2>
+            <h2>The client list could not load.</h2>
             <p>
               Refresh the page; if it stays, the client board sync may be down.
             </p>
@@ -111,111 +111,9 @@ export function LaunchPage() {
         rehearse={params.get("rehearse") === "1"}
       />
     );
-  const results = search.trim()
-    ? data.clients.filter(c =>
-        [
-          c.name,
-          c.id,
-          c.stage,
-          c.status,
-          ...c.accounts.flatMap(a => [a.id, a.name]),
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(search.toLowerCase().trim()),
-      )
-    : null;
-  const stale =
-    data.sources?.board?.at &&
-    Date.now() - new Date(data.sources.board.at).getTime() > 3600000;
-  return (
-    <main className="launch-page">
-      <header className="launch-page-header">
-        <div>
-          <p className="launch-eyebrow">Media buyer · Client book</p>
-          <h1>Launch</h1>
-          <p>
-            Every client you can launch or relaunch, from onboarding to first
-            spend.
-          </p>
-        </div>
-        <label className="launch-search" htmlFor="launch-detail-1">
-          <Search size={17} />
-          <Input
-            id="launch-detail-1"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Find any client"
-            aria-label="Find any client by name, ID or ad account"
-          />
-          {search && (
-            <button type="button" onClick={() => setSearch("")}>
-              Clear
-            </button>
-          )}
-        </label>
-      </header>
-      <div className="launch-status-line">
-        <span>
-          {stale
-            ? `Client board read ${time(data.sources.board.at)}`
-            : `Client book checked ${time(data.asOf)}`}
-        </span>
-        <button type="button" onClick={refresh}>
-          <RefreshCw size={12} />
-          Refresh
-        </button>
-      </div>
-      {data.clients.length === 0 ? (
-        <div className="launch-lane launch-empty">
-          Your seat has no clients yet. Ask the CEO to add them in Team.
-        </div>
-      ) : results ? (
-        <section className="launch-lane">
-          <header>
-            <div>
-              <h2>
-                All matching clients<span>{results.length}</span>
-              </h2>
-              <p>Includes stopped clients and every linked account.</p>
-            </div>
-          </header>
-          {results.length ? (
-            results.map(c => <LaunchClientRow key={c.id} client={c} />)
-          ) : (
-            <p className="launch-empty">
-              No client matches this search. Try a name or account ID.
-            </p>
-          )}
-        </section>
-      ) : (
-        <>
-          <LaunchLine data={data} />
-          <div className="launch-lanes">
-            {LANES.filter(l => l.id !== "ads").map(l => (
-              <LaunchLane
-                key={l.id}
-                lane={l.id}
-                clients={laneClients(data, l.id)}
-              />
-            ))}
-          </div>
-          <div className="launch-footer-note">
-            <ShieldCheck size={16} />
-            <span>
-              Stopped clients remain in search. New campaigns are built paused
-              for review.
-            </span>
-            <Link to="/ads">
-              Open Ads
-              <ArrowUpRight size={14} />
-            </Link>
-          </div>
-        </>
-      )}
-    </main>
-  );
+  return <ClientDirectory data={data} refresh={refresh} />;
 }
+
 function LaunchDetail({
   c,
   client,
@@ -227,6 +125,17 @@ function LaunchDetail({
   refresh: () => void;
   rehearse: boolean;
 }) {
+  const [params, setParams] = useSearchParams();
+  const tab = ["overview", "launch", "tasks", "activity"].includes(
+    params.get("tab") ?? "",
+  )
+    ? params.get("tab")!
+    : "overview";
+  const setTab = (value: string) => {
+    const next = new URLSearchParams(params);
+    next.set("tab", value);
+    setParams(next);
+  };
   const [account, setAccount] = useState(defaultAccount(c)?.id ?? "");
   const [ready, setReady] = useState<any>(null),
     [readError, setReadError] = useState(""),
@@ -320,7 +229,14 @@ function LaunchDetail({
       if (result.ok) {
         setMessage(result.did ?? "The provider receipt is confirmed.");
         refresh();
-      } else if (result.dryRun) setMessage(REHEARSAL);
+      } else if (result.dryRun)
+        setMessage(
+          applyEnabled
+            ? check
+              ? "The plan check is complete. Review the result before applying."
+              : "Plan ready. Nothing has changed yet."
+            : REHEARSAL,
+        );
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "The launch could not be checked.",
@@ -340,7 +256,13 @@ function LaunchDetail({
         apply,
       );
       setLinkPlan(r.plan);
-      setMessage(r.ok ? "Account linked." : REHEARSAL);
+      setMessage(
+        r.ok
+          ? "Account linked."
+          : applyEnabled
+            ? "Account link checked. Review it before linking."
+            : REHEARSAL,
+      );
       if (r.ok) refresh();
     } catch (e) {
       setError(
@@ -352,8 +274,8 @@ function LaunchDetail({
   }
   const steps = plan?.steps ?? [];
   return (
-    <main className="launch-page launch-detail">
-      <Link to="/launch" className="launch-back">
+    <main className="launch-page launch-detail" data-section={tab}>
+      <Link to="/clients" className="launch-back">
         <ArrowLeft size={15} />
         All clients
       </Link>
@@ -396,6 +318,37 @@ function LaunchDetail({
           {REHEARSAL}
         </div>
       ) : null}
+      {applyEnabled && !c.readOnly && (
+        <div className="launch-inline-note">
+          <ShieldCheck size={14} />
+          Campaign actions are enabled. Preview first. Every change has a saved
+          receipt.
+        </div>
+      )}
+      <div
+        className="client-profile-tabs"
+        role="group"
+        aria-label="Client sections"
+      >
+        {[
+          ["overview", "Overview"],
+          ["launch", "Launch & relaunch"],
+          [
+            "tasks",
+            `Tasks${c.mediaTasks?.length ? ` (${c.mediaTasks.length})` : ""}`,
+          ],
+          ["activity", "Activity"],
+        ].map(([key, label]) => (
+          <button
+            type="button"
+            key={key}
+            aria-pressed={tab === key}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="launch-detail-grid">
         <aside className="launch-context">
           <section className="launch-section launch-account-plate">
@@ -696,373 +649,429 @@ function LaunchDetail({
           </section>
         </aside>
         <div className="launch-main">
-          <section className="launch-section">
-            <div className="launch-section-heading">
-              <div>
-                <p className="launch-eyebrow">Before you launch</p>
-                <h2>What this client needs</h2>
-              </div>
-              {account && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={reading}
-                  onClick={() => setReadVersion(v => v + 1)}
-                >
-                  <RefreshCw size={14} />
-                  {reading ? "Checking" : "Check again"}
-                </Button>
-              )}
-            </div>
-            {reading ? (
-              <p className="launch-inline-loading">
-                <LoaderCircle size={15} className="animate-spin" />
-                Reading account health and campaign ownership from Meta…
-              </p>
-            ) : readError ? (
-              <div role="alert" className="launch-error">
-                <AlertTriangle size={18} />
-                <p>
-                  Meta did not answer for this account: {readError} Nothing can
-                  be checked or created until it does.
-                </p>
-              </div>
-            ) : ready ? (
-              <ul className="launch-checks">
-                {ready.checks.map((r: any) => (
-                  <li key={r.key}>
-                    <span className={`launch-check-icon ${r.state}`}>
-                      {r.state === "ok" ? (
-                        <Check size={15} />
-                      ) : r.state === "block" ? (
-                        <AlertTriangle size={15} />
-                      ) : (
-                        <Clock3 size={15} />
-                      )}
-                    </span>
-                    <div>
-                      <p>{r.sentence}</p>
-                      {r.state !== "ok" && (
-                        <small>
-                          {r.owner} · {r.fix}
-                        </small>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>
-                {firstBlock(c)}. Start with the account details on this page.
-              </p>
-            )}
-          </section>
-          {!c.readOnly && (
-            <section className="launch-section">
-              <p className="launch-eyebrow">Your next move</p>
-              <h2>Choose how to launch</h2>
-              <div
-                className="launch-routes"
-                role="radiogroup"
-                aria-label="Launch route"
-              >
-                {(
-                  ready?.routes ?? [
-                    { id: "switchOn", label: "Switch back on" },
-                    { id: "copy", label: "Copy a past campaign" },
-                    { id: "rebuild", label: "Rebuild on a clean account" },
-                    { id: "new", label: "New from the brief" },
-                  ]
-                ).map((r: any) => (
-                  <label
-                    key={r.id}
-                    className={`launch-route ${route === r.id ? "selected" : ""} ${!r.available ? "unavailable" : ""}`}
-                  >
-                    <input
-                      type="radio"
-                      name="launch-route"
-                      value={r.id}
-                      checked={route === r.id}
-                      disabled={!r.available}
-                      onChange={() => {
-                        setRoute(r.id);
-                        setPlan(null);
-                        setError("");
-                      }}
-                    />
-                    <span>
-                      <strong>{r.label}</strong>
-                      <small>
-                        {r.reason ??
-                          (
-                            {
-                              switchOn:
-                                "Keep a verified Mahara campaign and review its budget.",
-                              copy: "Reuse the client’s own campaign. Create it paused.",
-                              rebuild:
-                                "Move the client’s media to a different linked account.",
-                              new: "Use the approved brief and imported client creatives.",
-                            } as Record<string, string>
-                          )[r.id]}
-                      </small>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              {ready && activeRoute?.available && (
-                <div className="launch-plan-inputs">
-                  <LaunchSetup
-                    key={`${account}-${route}`}
-                    client={client}
-                    c={c}
-                    account={account}
-                    route={route}
-                    source={source}
-                    ready={ready}
-                    value={setup}
-                    onChange={v => {
-                      setSetup(v);
-                      setPlan(null);
-                    }}
-                    onSource={v => {
-                      setSource(v);
-                      setPlan(null);
-                    }}
-                  />
-                  <label htmlFor="launch-detail-4">
-                    Daily budget, USD
-                    <div className="launch-budget">
-                      <span>$</span>
-                      <Input
-                        id="launch-detail-4"
-                        type="number"
-                        min={5}
-                        max={cap ?? 100}
-                        value={budget}
-                        onChange={e => {
-                          setBudget(e.target.value);
-                          setPlan(null);
-                        }}
-                      />
-                      <span>/ day</span>
-                    </div>
-                    <small>
-                      {ready.budget.contractedUsd
-                        ? `$${ready.budget.contractedUsd} contracted · ${ready.budget.source}`
-                        : "No contracted budget recorded"}{" "}
-                      · Limit ${cap}
-                    </small>
-                  </label>
-                  {route === "new" && (
-                    <p className="launch-inline-note">
-                      The plan needs approved copy, a Page, an audience and
-                      imported client media. These are checked before any
-                      campaign is created.
-                    </p>
-                  )}
-                </div>
-              )}
-              {plan && (
-                <div className="launch-plan-review">
-                  <div className="launch-section-heading">
-                    <h3>The plan</h3>
-                    <span className="launch-micro">
-                      {steps.length} planned steps
-                    </span>
-                  </div>
-                  <p>
-                    {plan.result?.campaignName ?? "Link the shared account"}
-                  </p>
-                  {plan.result?.budgetWords && <p>{plan.result.budgetWords}</p>}
-                  <ol>
-                    {steps.map((s: any, i: number) => (
-                      <li key={`${s.path}-${i}`}>
-                        <span>{i + 1}</span>
-                        <div>
-                          {s.provider === "clickup"
-                            ? "Update the Ads Management card"
-                            : s.body?.status === "ACTIVE"
-                              ? "Switch on the selected object"
-                              : s.path.endsWith("/campaigns")
-                                ? "Create the campaign, paused"
-                                : s.path.endsWith("/adsets")
-                                  ? "Create the ad set, paused"
-                                  : s.path.endsWith("/adcreatives")
-                                    ? "Prepare the client creative"
-                                    : s.path.endsWith("/ads")
-                                      ? "Create the ad, paused"
-                                      : "Prepare the client media"}
-                          <small>{s.body?.name ?? s.provider}</small>
-                        </div>
-                      </li>
-                    ))}
-                  </ol>
-                  {plan.check?.ready === false && (
-                    <p className="launch-error">
-                      Meta refused part of this plan. Change it, then check
-                      again.
-                    </p>
-                  )}
-                </div>
-              )}
-              {error && (
-                <p role="alert" className="launch-error">
-                  {error}
-                </p>
-              )}
-              {message && (
-                <p role="status" className="launch-inline-note">
-                  {message}
-                </p>
-              )}
-              <div className="launch-plan-footer">
-                <span>
-                  <ShieldCheck size={14} />
-                  {route === "switchOn"
-                    ? "First impressions confirm delivery."
-                    : "Created paused. Switch on is a separate step."}
-                </span>
-                <div>
-                  {applyEnabled && plan && (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => preview(false, true)}
-                    >
-                      Check with Meta
-                    </Button>
-                  )}
-                  <Button
-                    disabled={
-                      busy ||
-                      reading ||
-                      !activeRoute?.available ||
-                      plan?.check?.ready === false
-                    }
-                    onClick={() => preview(applyEnabled && !!plan)}
-                  >
-                    {busy ? (
-                      <LoaderCircle className="animate-spin" size={15} />
-                    ) : (
-                      <ArrowRight size={15} />
-                    )}{" "}
-                    {plan
-                      ? `${route === "switchOn" ? "Switch on" : "Create it paused"}${applyEnabled ? "" : " (rehearsal)"}`
-                      : "Preview the plan"}
-                  </Button>
-                </div>
-              </div>
-            </section>
-          )}
-          <section className="launch-section">
-            <div className="launch-section-heading">
-              <div>
-                <p className="launch-eyebrow">Client history · Last 120 days</p>
-                <h2>Past campaigns</h2>
-              </div>
-              {best && (
-                <span className="launch-best">
-                  <span className="launch-dot ok" />
-                  Best past result
-                </span>
-              )}
-            </div>
-            {c.history.filter(h => h.account_id === account).length ? (
-              <div className="launch-history">
-                {c.history
-                  .filter(h => h.account_id === account)
-                  .map(h => (
-                    <div
-                      key={`${h.account_id}-${h.campaign_id}`}
-                      className={
-                        h.campaign_id === best?.campaign_id ? "is-best" : ""
-                      }
-                    >
-                      <div>
-                        <p>{h.name}</p>
-                        <small>
-                          …{h.campaign_id?.slice(-6)} ·{" "}
-                          {h.creator ?? "Creator not recorded"}
-                        </small>
-                      </div>
-                      <span>
-                        {h.leads ?? "Unknown"}
-                        <small>leads</small>
-                      </span>
-                      <span>
-                        {h.cpl != null
-                          ? `$${Number(h.cpl).toFixed(2)}`
-                          : "Unknown"}
-                        <small>per lead</small>
-                      </span>
-                      <span>
-                        {h.last_ran ? time(h.last_ran) : "Not recorded"}
-                        <small>last spend</small>
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            ) : (
-              <p>
-                No campaign is recorded on this account in the last 120 days.
-              </p>
-            )}
-          </section>
-          {c.launches.length > 0 && (
-            <section className="launch-section">
-              <p className="launch-eyebrow">Launch history</p>
-              <h2>From paused to first spend</h2>
-              {c.launches.map(l => (
-                <div key={l.id} className="launch-history-item">
-                  <Radio size={16} />
+          {tab === "overview" && (
+            <>
+              <section className="launch-section">
+                <p className="launch-eyebrow">Client overview</p>
+                <h2>Where things stand</h2>
+                <div className="client-overview-state">
                   <div>
-                    <p>{l.campaign_name}</p>
+                    <strong>{clientState(c)}</strong>
                     <small>
-                      {l.state === "reconcile"
-                        ? "This launch may have reached Meta. Do not launch again; the CEO reconciles it."
-                        : l.inAds
-                          ? "Now listed in Ads"
-                          : l.hasImpressions
-                            ? "First impressions recorded"
-                            : l.state === "built"
-                              ? "Created paused"
-                              : launchAge(l) > 24
-                                ? "No impressions after 24 hours"
-                                : "Waiting for first impressions"}{" "}
-                      · {time(l.created_at)}
+                      {c.accounts.length} linked account
+                      {c.accounts.length === 1 ? "" : "s"} ·{" "}
+                      {c.mediaTasks?.length ?? 0} open media task
+                      {c.mediaTasks?.length === 1 ? "" : "s"}
                     </small>
                   </div>
-                  {l.state === "built" && !c.readOnly && (
+                  {c.inAds && (
+                    <Link className="launch-text-link" to={adsHref(c)}>
+                      Review Ads
+                      <ArrowUpRight size={14} />
+                    </Link>
+                  )}
+                </div>
+                <p className="client-section-lede">
+                  {c.readOnly
+                    ? "This client is inactive. Their accounts, brief and history stay here for the team."
+                    : c.inAds
+                      ? "Review the current campaigns in Ads, or prepare the next campaign from this client profile."
+                      : firstBlock(c)}
+                </p>
+                {!c.readOnly && (
+                  <Button onClick={() => setTab("launch")}>
+                    Launch or relaunch
+                    <ArrowRight size={14} />
+                  </Button>
+                )}
+              </section>
+              <ClientTasks c={c} />
+            </>
+          )}
+          {tab === "tasks" && <ClientTasks c={c} />}
+          {tab === "activity" && <ClientActivity c={c} />}
+          {tab === "launch" && (
+            <>
+              <section className="launch-section">
+                <div className="launch-section-heading">
+                  <div>
+                    <p className="launch-eyebrow">Before you launch</p>
+                    <h2>What this client needs</h2>
+                  </div>
+                  {account && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      disabled={busy}
-                      onClick={async () => {
-                        setBusy(true);
-                        try {
-                          const r = await client.rpc("cockpit_launch_action", {
-                            p_action: "discard",
-                            p_args: { id: l.id },
-                          });
-                          if (r.error) throw r.error;
-                          setMessage(
-                            "The paused campaign stays in Ads Manager; nothing was deleted.",
-                          );
-                          refresh();
-                        } catch (e) {
-                          setError((e as Error).message);
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
+                      disabled={reading}
+                      onClick={() => setReadVersion(v => v + 1)}
                     >
-                      Remove from Launch
+                      <RefreshCw size={14} />
+                      {reading ? "Checking" : "Check again"}
                     </Button>
                   )}
                 </div>
-              ))}
+                {reading ? (
+                  <p className="launch-inline-loading">
+                    <LoaderCircle size={15} className="animate-spin" />
+                    Reading account health and campaign ownership from Meta…
+                  </p>
+                ) : readError ? (
+                  <div role="alert" className="launch-error">
+                    <AlertTriangle size={18} />
+                    <p>
+                      Meta did not answer for this account: {readError} Nothing
+                      can be checked or created until it does.
+                    </p>
+                  </div>
+                ) : ready ? (
+                  <ul className="launch-checks">
+                    {ready.checks.map((r: any) => (
+                      <li key={r.key}>
+                        <span className={`launch-check-icon ${r.state}`}>
+                          {r.state === "ok" ? (
+                            <Check size={15} />
+                          ) : r.state === "block" ? (
+                            <AlertTriangle size={15} />
+                          ) : (
+                            <Clock3 size={15} />
+                          )}
+                        </span>
+                        <div>
+                          <p>{r.sentence}</p>
+                          {r.state !== "ok" && (
+                            <small>
+                              {r.owner} · {r.fix}
+                            </small>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>
+                    {firstBlock(c)}. Start with the account details on this
+                    page.
+                  </p>
+                )}
+              </section>
+              {!c.readOnly && (
+                <section className="launch-section">
+                  <p className="launch-eyebrow">Your next move</p>
+                  <h2>Choose how to launch</h2>
+                  <div
+                    className="launch-routes"
+                    role="radiogroup"
+                    aria-label="Launch route"
+                  >
+                    {(
+                      ready?.routes ?? [
+                        { id: "switchOn", label: "Switch back on" },
+                        { id: "copy", label: "Copy a past campaign" },
+                        { id: "rebuild", label: "Rebuild on a clean account" },
+                        { id: "new", label: "New from the brief" },
+                      ]
+                    ).map((r: any) => (
+                      <label
+                        key={r.id}
+                        className={`launch-route ${route === r.id ? "selected" : ""} ${!r.available ? "unavailable" : ""}`}
+                      >
+                        <input
+                          type="radio"
+                          name="launch-route"
+                          value={r.id}
+                          checked={route === r.id}
+                          disabled={!r.available}
+                          onChange={() => {
+                            setRoute(r.id);
+                            setPlan(null);
+                            setError("");
+                          }}
+                        />
+                        <span>
+                          <strong>{r.label}</strong>
+                          <small>
+                            {r.reason ??
+                              (
+                                {
+                                  switchOn:
+                                    "Keep a verified Mahara campaign and review its budget.",
+                                  copy: "Reuse the client’s own campaign. Create it paused.",
+                                  rebuild:
+                                    "Move the client’s media to a different linked account.",
+                                  new: "Use the approved brief and imported client creatives.",
+                                } as Record<string, string>
+                              )[r.id]}
+                          </small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {ready && activeRoute?.available && (
+                    <div className="launch-plan-inputs">
+                      <LaunchSetup
+                        key={`${account}-${route}`}
+                        client={client}
+                        c={c}
+                        account={account}
+                        route={route}
+                        source={source}
+                        ready={ready}
+                        value={setup}
+                        onChange={v => {
+                          setSetup(v);
+                          setPlan(null);
+                        }}
+                        onSource={v => {
+                          setSource(v);
+                          setPlan(null);
+                        }}
+                      />
+                      <label htmlFor="launch-detail-4">
+                        Daily budget, USD
+                        <div className="launch-budget">
+                          <span>$</span>
+                          <Input
+                            id="launch-detail-4"
+                            type="number"
+                            min={5}
+                            max={cap ?? 100}
+                            value={budget}
+                            onChange={e => {
+                              setBudget(e.target.value);
+                              setPlan(null);
+                            }}
+                          />
+                          <span>/ day</span>
+                        </div>
+                        <small>
+                          {ready.budget.contractedUsd
+                            ? `$${ready.budget.contractedUsd} contracted · ${ready.budget.source}`
+                            : "No contracted budget recorded"}{" "}
+                          · Limit ${cap}
+                        </small>
+                      </label>
+                      {route === "new" && (
+                        <p className="launch-inline-note">
+                          The plan needs approved copy, a Page, an audience and
+                          imported client media. These are checked before any
+                          campaign is created.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {plan && (
+                    <div className="launch-plan-review">
+                      <div className="launch-section-heading">
+                        <h3>The plan</h3>
+                        <span className="launch-micro">
+                          {steps.length} planned steps
+                        </span>
+                      </div>
+                      <p>
+                        {plan.result?.campaignName ?? "Link the shared account"}
+                      </p>
+                      {plan.result?.budgetWords && (
+                        <p>{plan.result.budgetWords}</p>
+                      )}
+                      <ol>
+                        {steps.map((s: any, i: number) => (
+                          <li key={`${s.path}-${i}`}>
+                            <span>{i + 1}</span>
+                            <div>
+                              {s.provider === "clickup"
+                                ? "Update the Ads Management card"
+                                : s.body?.status === "ACTIVE"
+                                  ? "Switch on the selected object"
+                                  : s.path.endsWith("/campaigns")
+                                    ? "Create the campaign, paused"
+                                    : s.path.endsWith("/adsets")
+                                      ? "Create the ad set, paused"
+                                      : s.path.endsWith("/adcreatives")
+                                        ? "Prepare the client creative"
+                                        : s.path.endsWith("/ads")
+                                          ? "Create the ad, paused"
+                                          : "Prepare the client media"}
+                              <small>{s.body?.name ?? s.provider}</small>
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                      {plan.check?.ready === false && (
+                        <p className="launch-error">
+                          Meta refused part of this plan. Change it, then check
+                          again.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {error && (
+                    <p role="alert" className="launch-error">
+                      {error}
+                    </p>
+                  )}
+                  {message && (
+                    <p role="status" className="launch-inline-note">
+                      {message}
+                    </p>
+                  )}
+                  <div className="launch-plan-footer">
+                    <span>
+                      <ShieldCheck size={14} />
+                      {route === "switchOn"
+                        ? "First impressions confirm delivery."
+                        : "Created paused. Switch on is a separate step."}
+                    </span>
+                    <div>
+                      {applyEnabled && plan && (
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => preview(false, true)}
+                        >
+                          Check with Meta
+                        </Button>
+                      )}
+                      <Button
+                        disabled={
+                          busy ||
+                          reading ||
+                          !activeRoute?.available ||
+                          plan?.check?.ready === false
+                        }
+                        onClick={() => preview(applyEnabled && !!plan)}
+                      >
+                        {busy ? (
+                          <LoaderCircle className="animate-spin" size={15} />
+                        ) : (
+                          <ArrowRight size={15} />
+                        )}{" "}
+                        {plan
+                          ? `${route === "switchOn" ? "Switch on" : "Create it paused"}${applyEnabled ? "" : " (rehearsal)"}`
+                          : "Preview the plan"}
+                      </Button>
+                    </div>
+                  </div>
+                </section>
+              )}
+            </>
+          )}
+          {(tab === "overview" || tab === "activity") && (
+            <section className="launch-section">
+              <div className="launch-section-heading">
+                <div>
+                  <p className="launch-eyebrow">
+                    Client history · Last 120 days
+                  </p>
+                  <h2>Past campaigns</h2>
+                </div>
+                {best && (
+                  <span className="launch-best">
+                    <span className="launch-dot ok" />
+                    Best past result
+                  </span>
+                )}
+              </div>
+              {c.history.filter(h => h.account_id === account).length ? (
+                <div className="launch-history">
+                  {c.history
+                    .filter(h => h.account_id === account)
+                    .map(h => (
+                      <div
+                        key={`${h.account_id}-${h.campaign_id}`}
+                        className={
+                          h.campaign_id === best?.campaign_id ? "is-best" : ""
+                        }
+                      >
+                        <div>
+                          <p>{h.name}</p>
+                          <small>
+                            …{h.campaign_id?.slice(-6)} ·{" "}
+                            {h.creator ?? "Creator not recorded"}
+                          </small>
+                        </div>
+                        <span>
+                          {h.leads ?? "Unknown"}
+                          <small>leads</small>
+                        </span>
+                        <span>
+                          {h.cpl != null
+                            ? `$${Number(h.cpl).toFixed(2)}`
+                            : "Unknown"}
+                          <small>per lead</small>
+                        </span>
+                        <span>
+                          {h.last_ran ? time(h.last_ran) : "Not recorded"}
+                          <small>last spend</small>
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <p>
+                  No campaign is recorded on this account in the last 120 days.
+                </p>
+              )}
             </section>
           )}
+          {(tab === "activity" || tab === "launch") &&
+            c.launches.length > 0 && (
+              <section className="launch-section">
+                <p className="launch-eyebrow">Launch history</p>
+                <h2>From paused to first spend</h2>
+                {c.launches.map(l => (
+                  <div key={l.id} className="launch-history-item">
+                    <Radio size={16} />
+                    <div>
+                      <p>{l.campaign_name}</p>
+                      <small>
+                        {l.state === "reconcile"
+                          ? "This launch may have reached Meta. Do not launch again; the CEO reconciles it."
+                          : l.inAds
+                            ? "Now listed in Ads"
+                            : l.hasImpressions
+                              ? "First impressions recorded"
+                              : l.state === "built"
+                                ? "Created paused"
+                                : launchAge(l) > 24
+                                  ? "No impressions after 24 hours"
+                                  : "Waiting for first impressions"}{" "}
+                        · {time(l.created_at)}
+                      </small>
+                    </div>
+                    {l.state === "built" && !c.readOnly && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            const r = await client.rpc(
+                              "cockpit_launch_action",
+                              {
+                                p_action: "discard",
+                                p_args: { id: l.id },
+                              },
+                            );
+                            if (r.error) throw r.error;
+                            setMessage(
+                              "The paused campaign stays in Ads Manager; nothing was deleted.",
+                            );
+                            refresh();
+                          } catch (e) {
+                            setError((e as Error).message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Dismiss paused build
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </section>
+            )}
         </div>
       </div>
     </main>

@@ -65,6 +65,8 @@ beforeAll(async () => {
   );
   await db.exec(migration(file));
   await db.exec(migration(file));
+  await db.exec(migration("20261024125012_media_clients_workspace.sql"));
+  await db.exec(migration("20261024125012_media_clients_workspace.sql"));
   await db.exec(
     `CREATE TRIGGER cockpit_media_confirmed_effects AFTER UPDATE OF state ON cockpit_media_actions FOR EACH ROW EXECUTE FUNCTION cockpit_media_action_effects();`,
   );
@@ -330,4 +332,153 @@ test("old same-day impressions do not mark a relaunch live", async () => {
   );
   expect(after.hasImpressions).toBe(true);
   expect(after.firstImpressionAt).not.toBe(null);
+});
+
+async function notices(who = BUYER) {
+  await actor(db, who);
+  try {
+    return (await db.query<any>("select cockpit_media_client_notices() r"))
+      .rows[0].r;
+  } finally {
+    await owner(db);
+  }
+}
+test("client notices include inactive-spend clients but never stopped or another seat's clients", async () => {
+  const all = await notices();
+  expect(all.notices.some((n: any) => n.clientId === "nothing")).toBe(true);
+  expect(
+    all.notices.some((n: any) => ["stopped", "cancelled"].includes(n.clientId)),
+  ).toBe(false);
+  const limited = await notices(OTHER);
+  expect(limited.notices.every((n: any) => n.clientId === "ready")).toBe(true);
+  await actor(db, CSM);
+  await expect(
+    db.query("select cockpit_media_client_notices()"),
+  ).rejects.toThrow();
+});
+test("task notices match only exact client identity and never leak unmatched work to a scoped seat", async () => {
+  await db.exec(`INSERT INTO cockpit_media_source_state(table_name,ready,row_count,source_snapshot_at) VALUES('inbox',true,3,'2026-10-24T12:00:00Z') ON CONFLICT(table_name) DO UPDATE SET ready=true,row_count=3,source_snapshot_at='2026-10-24T12:00:00Z';
+ INSERT INTO cockpit_media_sources(table_name,source_id,client_names,data,source_snapshot_at) VALUES
+ ('inbox','task-ready',ARRAY['Ready'],'{"_id":"task-ready","taskId":"abc-ready","title":"Review Ready","reason":"assigned to you","status":"open"}','2026-10-24T12:00:00Z'),
+ ('inbox','task-other',ARRAY['Nothing'],'{"_id":"task-other","taskId":"abc-other","title":"Other client work","status":"open"}','2026-10-24T12:00:00Z'),
+ ('inbox','task-unknown',ARRAY[]::text[],'{"_id":"task-unknown","taskId":"abc-team","title":"Team work","status":"open"}','2026-10-24T12:00:00Z') ON CONFLICT DO NOTHING;`);
+  const mine = await notices(OTHER);
+  expect(
+    mine.notices.filter((n: any) => n.kind === "task").map((n: any) => n.id),
+  ).toEqual(["task:task-ready"]);
+  const all = await notices();
+  expect(all.notices.filter((n: any) => n.kind === "task")).toHaveLength(3);
+  await actor(db, OTHER);
+  const p = (await db.query<any>("select cockpit_media_clients('ready') r"))
+    .rows[0].r;
+  expect(p.clients[0].mediaTasks.map((n: any) => n.title)).toEqual([
+    "Review Ready",
+  ]);
+  expect(p.clients[0].actionHistory).toBeArray();
+  await expect(
+    db.query("select cockpit_media_clients('nothing')"),
+  ).rejects.toThrow();
+});
+test("read state belongs to the current user and a changed task becomes unread again", async () => {
+  const p = await notices(OTHER);
+  const n = p.notices.find((n: any) => n.id === "task:task-ready");
+  expect(n).toBeTruthy();
+  await actor(db, OTHER);
+  await db.query("select cockpit_media_notices_seen($1::jsonb)", [
+    JSON.stringify([
+      { id: n.id, version: n.version },
+      { id: "task:task-other", version: "forged" },
+    ]),
+  ]);
+  await owner(db);
+  expect(
+    (await notices(OTHER)).notices.find((x: any) => x.id === n.id)?.read,
+  ).toBe(true);
+  expect(
+    (await notices()).notices.find((x: any) => x.id === n.id)?.read,
+  ).not.toBe(true);
+  expect(
+    (
+      await db.query<any>(
+        "select count(*)::int n from cockpit_media_notice_reads where actor_id=$1",
+        [OTHER],
+      )
+    ).rows[0].n,
+  ).toBe(1);
+  await db.exec(
+    `UPDATE cockpit_media_sources SET data=data||'{"title":"Updated task"}'::jsonb WHERE source_id='task-ready';`,
+  );
+  expect(
+    (await notices(OTHER)).notices.find((x: any) => x.id === n.id)?.read,
+  ).not.toBe(true);
+});
+test("unavailable task feed is explicit and direct notice storage stays closed", async () => {
+  await db.exec(
+    "UPDATE cockpit_media_source_state SET ready=false WHERE table_name='inbox'",
+  );
+  const p = await notices();
+  expect(p.tasksReady).toBe(false);
+  expect(p.notices.filter((n: any) => n.kind === "task")).toHaveLength(0);
+  for (const role of ["anon", "authenticated"])
+    expect(
+      (
+        await db.query<any>(
+          "select has_table_privilege($1,'cockpit_media_notice_reads','SELECT') ok",
+          [role],
+        )
+      ).rows[0].ok,
+    ).toBe(false);
+  expect(
+    (
+      await db.query<any>(
+        "select has_function_privilege('anon','cockpit_media_client_notices()','EXECUTE') ok",
+      )
+    ).rows[0].ok,
+  ).toBe(false);
+  expect(
+    (
+      await db.query<any>(
+        "select relrowsecurity ok from pg_class where relname='cockpit_media_notice_reads'",
+      )
+    ).rows[0].ok,
+  ).toBe(true);
+});
+
+test("activity respects explicit client IDs and refuses ambiguous campaign names", async () => {
+  await db.exec(`INSERT INTO cockpit_campaigns(client_name,meta_account_id,meta_campaign_id,raw_data) VALUES
+    ('Ready','111111','991101','{"campaignName":"Duplicate"}'),
+    ('Nothing','333333','991102','{"campaignName":"Duplicate"}'),
+    ('Ready','111111','991103','{"campaignName":"Unique"}');`);
+  for (const [suffix, name, args] of [
+    ["11", "Duplicate", {}],
+    ["12", "Unique", { clickupId: "nothing" }],
+    ["13", "Unique", {}],
+    ["14", "Duplicate", { clickupId: "ready" }],
+  ] as const)
+    await db.query(
+      `INSERT INTO cockpit_media_actions(id,actor_id,operation,campaign_name,request) VALUES($1,$2,'control.setStatus',$3,$4)`,
+      [`20000000-0000-4000-8000-0000000000${suffix}`, BUYER, name, { args }],
+    );
+  await actor(db, OTHER);
+  const rows = (await db.query<any>("select cockpit_media_clients('ready') r"))
+    .rows[0].r.clients[0].actionHistory;
+  const ids = rows.map((x: any) => x.id);
+  expect(ids).not.toContain("20000000-0000-4000-8000-000000000011");
+  expect(ids).not.toContain("20000000-0000-4000-8000-000000000012");
+  expect(ids).toContain("20000000-0000-4000-8000-000000000013");
+  expect(ids).toContain("20000000-0000-4000-8000-000000000014");
+  expect(
+    rows.some(
+      (x: any) => x.operation === "launch.discard" && x.state === "recorded",
+    ),
+  ).toBe(true);
+  expect(JSON.stringify(rows)).not.toContain('"request"');
+});
+test("partial task snapshots never appear complete", async () => {
+  await db.exec(
+    "UPDATE cockpit_media_source_state SET ready=true,row_count=4 WHERE table_name='inbox'",
+  );
+  const p = await notices();
+  expect(p.tasksReady).toBe(false);
+  expect(p.notices.filter((n: any) => n.kind === "task")).toHaveLength(0);
 });

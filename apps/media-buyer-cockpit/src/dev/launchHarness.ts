@@ -5,10 +5,36 @@ export function installLaunchHarness(client: SupabaseClient) {
   const params = new URLSearchParams(window.location.search),
     state = params.get("fixture") ?? "all";
   const fixture = launchFixture(state);
+  const notices = {
+    asOf: new Date().toISOString(),
+    sourceAt: new Date().toISOString(),
+    tasksReady: true,
+    notices: fixture.clients.flatMap(c => [
+      ...(!c.readOnly && c.lane === "nothing"
+        ? [
+            {
+              id: `client:${c.id}`,
+              version: "1",
+              kind: "relaunch",
+              title: c.name,
+              body: "Review the account and next launch.",
+              href: `/clients?client=${c.id}&tab=launch`,
+              clientId: c.id,
+              priority: 1,
+              read: false,
+            },
+          ]
+        : []),
+      ...(c.mediaTasks ?? []),
+    ]),
+  };
   const rpc = client.rpc.bind(client),
     invoke = client.functions.invoke.bind(client.functions);
   client.rpc = ((name: string, args: any = {}) => {
-    if (name === "cockpit_launch_pipeline") {
+    if (
+      name === "cockpit_launch_pipeline" ||
+      name === "cockpit_media_clients"
+    ) {
       if (state === "read-failed")
         return Promise.resolve({
           data: null,
@@ -21,6 +47,18 @@ export function installLaunchHarness(client: SupabaseClient) {
           }
         : fixture;
       return Promise.resolve({ data, error: null });
+    }
+    if (name === "cockpit_media_client_notices")
+      return Promise.resolve({ data: notices, error: null });
+    if (name === "cockpit_media_notices_seen") {
+      for (const n of notices.notices)
+        if (
+          args.p_notices?.some(
+            (x: any) => x.id === n.id && x.version === n.version,
+          )
+        )
+          n.read = true;
+      return Promise.resolve({ data: { ok: true }, error: null });
     }
     if (name === "cockpit_launch_action")
       return Promise.resolve({ data: { ok: true }, error: null });
@@ -168,7 +206,7 @@ export function installLaunchHarness(client: SupabaseClient) {
     }
     return invoke(fn, options);
   }) as any;
-  if (params.get("path")?.startsWith("/launch")) {
+  if (params.get("path")?.match(/^\/(launch|clients)/)) {
     const note = document.createElement("div");
     note.textContent =
       "Design preview · Fictional clients · No provider writes";

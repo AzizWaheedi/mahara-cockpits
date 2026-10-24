@@ -42,6 +42,35 @@ function client(
     caller: lane !== "onboarding",
     cards: [],
     tasks: [],
+    mediaTasks:
+      id === "1"
+        ? [
+            {
+              id: "task:fictional",
+              version: "1",
+              kind: "task",
+              title: "Review the new client creatives",
+              body: "Assigned to the media buyer",
+              clientId: id,
+              clientName: name,
+              href: "https://app.clickup.com/t/fictional-preview",
+              read: false,
+              priority: 2,
+              task: { status: "in progress" },
+            },
+          ]
+        : [],
+    actionHistory: [
+      {
+        id: "fixture-action",
+        operation: "launch.copy",
+        state: "confirmed",
+        at: now,
+        actor: "Mahara buyer",
+        campaign: "Fictional client campaign",
+        did: "Campaign created paused",
+      },
+    ],
     launches: [],
     waiting: false,
     inAds: lane === "ads",

@@ -5,13 +5,13 @@ import {
   Megaphone,
   Menu,
   MousePointerClick,
-  Rocket,
   Search,
   ShieldCheck,
   Sun,
   Sunrise,
   Table2,
   Truck,
+  Users,
   Wallet,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
@@ -91,10 +91,10 @@ export function MobileTabBar() {
           },
           {
             key: "launch",
-            label: "Launch",
-            icon: Rocket,
-            to: "/launch",
-            active: path === "/launch",
+            label: "Clients",
+            icon: Users,
+            to: "/clients",
+            active: path === "/clients" || path === "/launch",
           },
           {
             key: "ads",

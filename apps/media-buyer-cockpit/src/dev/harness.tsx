@@ -135,6 +135,7 @@ async function main() {
                 <Route path="/team/:id" element={<MeetingPage />} />
                 <Route path="/dashboard" element={<TodayPage />} />
                 <Route path="/launch" element={<LaunchPage />} />
+                <Route path="/clients" element={<LaunchPage />} />
                 <Route path="/ads" element={<AdsPage />} />
                 <Route path="/calls" element={<CallsHarnessPage />} />
                 <Route path="/eod" element={<EndOfDayPage />} />

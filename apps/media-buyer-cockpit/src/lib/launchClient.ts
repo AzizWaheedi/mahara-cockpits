@@ -6,12 +6,12 @@ export async function readLaunch(
   client: SupabaseClient,
   id?: string,
 ): Promise<LaunchPipeline> {
-  const { data, error } = await client.rpc("cockpit_launch_pipeline", {
+  const { data, error } = await client.rpc("cockpit_media_clients", {
     p_clickup_id: id ?? null,
   });
   if (error) throw Error(error.message);
   if (!data || !Array.isArray(data.clients))
-    throw Error("The launch list did not return client records.");
+    throw Error("The client list did not return client records.");
   return data;
 }
 export function useLaunch(id?: string, enabled = true) {

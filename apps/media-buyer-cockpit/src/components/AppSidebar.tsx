@@ -6,12 +6,12 @@ import {
   Moon,
   PanelLeft,
   PanelLeftClose,
-  Rocket,
   Search,
   Settings,
   Sun,
   Sunrise,
   Table2,
+  Users,
   X,
 } from "lucide-react";
 import { Link, useLocation, useSearchParams } from "react-router";
@@ -61,9 +61,9 @@ const navItems = [
     also: ["/eod"],
   },
   {
-    href: "/launch",
-    label: "Launch",
-    icon: Rocket,
+    href: "/clients",
+    label: "Clients",
+    icon: Users,
     role: "media_buyer",
     also: [] as string[],
   },

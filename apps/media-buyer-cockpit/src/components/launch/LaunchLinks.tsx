@@ -21,15 +21,15 @@ export function LaunchToday({ data }: { data: LaunchPipeline | null }) {
     <section className="rounded-2xl border bg-card p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-sm font-semibold">Client launches</h2>
+          <h2 className="text-sm font-semibold">Clients needing attention</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             {data.lanes.ready} ready · {data.lanes.nothing} with nothing running
             · {data.lanes.waiting} waiting for spend
           </p>
         </div>
         <Button variant="outline" size="sm" asChild>
-          <Link to="/launch">
-            Open Launch
+          <Link to="/clients?view=attention">
+            Open client
             <ArrowRight size={14} />
           </Link>
         </Button>
@@ -134,14 +134,14 @@ export function LaunchAccountLink({
   return (
     <div className="flex items-center justify-between gap-4 rounded-xl border bg-card p-4">
       <div>
-        <p className="text-sm font-medium">Launch or relaunch {c.name}</p>
+        <p className="text-sm font-medium">Client profile · {c.name}</p>
         <p className="text-xs text-muted-foreground">
           Account access, brief, past campaigns and the next launch.
         </p>
       </div>
       <Button variant="outline" size="sm" asChild>
         <Link to={launchHref(c.id)}>
-          Open Launch
+          Open client
           <ArrowRight size={14} />
         </Link>
       </Button>

@@ -3894,9 +3894,9 @@ function Cockpit({ view }: { view: View }) {
                     );
                     if (c)
                       window.location.assign(
-                        `/launch?client=${encodeURIComponent(c.id)}`,
+                        `/clients?client=${encodeURIComponent(c.id)}&tab=launch`,
                       );
-                    else window.location.assign("/launch");
+                    else window.location.assign("/clients");
                   }}
                 />
                 {tasksCard}

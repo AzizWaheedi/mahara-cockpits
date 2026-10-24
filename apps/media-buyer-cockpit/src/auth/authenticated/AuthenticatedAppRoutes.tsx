@@ -87,7 +87,8 @@ export function AuthenticatedRoutes() {
           {/* biome-ignore lint/a11y/useValidAriaRole: RoleRoute's role prop is a seat name, not an ARIA role */}
           <Route element={<RoleRoute role="media_buyer" />}>
             <Route path="/dashboard" element={<TodayPage />} />
-            <Route path="/launch" element={<LaunchPage />} />
+            <Route path="/launch" element={<Moved to="/clients" />} />
+            <Route path="/clients" element={<LaunchPage />} />
             <Route path="/ads" element={<AdsPage />} />
             <Route path="/eod" element={<EndOfDayPage />} />
             <Route

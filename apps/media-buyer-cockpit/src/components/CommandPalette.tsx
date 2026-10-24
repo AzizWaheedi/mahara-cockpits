@@ -54,10 +54,10 @@ const PAGES: (Hit & { role?: "media_buyer" | "admin" | "ceo" })[] = [
     role: "media_buyer",
   },
   {
-    href: "/launch",
-    label: "Launch",
+    href: "/clients",
+    label: "Clients",
     sub: "All clients, accounts, launches and relaunches",
-    old: "paused onboarding nothing running",
+    old: "launch relaunch paused onboarding nothing running tasks status accounts",
     role: "media_buyer",
   },
   {

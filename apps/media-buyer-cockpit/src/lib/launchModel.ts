@@ -27,7 +27,37 @@ export type LaunchAccount = {
   lastRan: string | null;
   hasHistory: boolean;
 };
+export type ClientNotice = {
+  id: string;
+  version: string;
+  kind: string;
+  title: string;
+  body: string;
+  href: string;
+  clientId?: string;
+  clientName?: string;
+  read?: boolean;
+  priority: number;
+  task?: any;
+};
+export type ClientNotices = {
+  asOf: string;
+  sourceAt?: string;
+  tasksReady: boolean;
+  notices: ClientNotice[];
+};
 export type LaunchClient = {
+  mediaTasks?: ClientNotice[];
+  tasksReady?: boolean;
+  actionHistory?: {
+    id: string;
+    operation: string;
+    state: string;
+    at: string;
+    actor: string;
+    campaign?: string;
+    did?: string;
+  }[];
   id: string;
   locationId: string;
   name: string;
@@ -55,6 +85,7 @@ export type LaunchClient = {
 };
 export type Lane = "onboarding" | "ready" | "nothing" | "waiting" | "ads";
 export type LaunchPipeline = {
+  notices?: ClientNotices;
   asOf: string;
   sources: any;
   clients: LaunchClient[];
@@ -208,6 +239,6 @@ export function contractedBudget(c: LaunchClient) {
   return null;
 }
 export const launchHref = (id: string) =>
-  `/launch?client=${encodeURIComponent(id)}`;
+  `/clients?client=${encodeURIComponent(id)}`;
 export const adsHref = (c: LaunchClient) =>
   `/ads?account=${encodeURIComponent(c.name)}&adAccounts=${encodeURIComponent(c.accounts.map(a => a.id).join(","))}`;
