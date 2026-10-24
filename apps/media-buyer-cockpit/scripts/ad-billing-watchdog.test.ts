@@ -53,6 +53,30 @@ test("a safe stop that a newer event replaced is not a delivery problem; other f
   } finally { await db.close(); }
 });
 
+test("one failed run is not a source problem; a client unread for 20 minutes is", async () => {
+  const db = await cockpitTestDb({ supabaseDefaultPrivileges: true });
+  try {
+    for (const f of ["20261011174920_ad_billing_guard.sql", "20261011195000_ad_billing_watchdog.sql",
+      "20261013104500_ad_billing_watchdog_quieter.sql", "20261014142708_ad_billing_watchdog_replaced_safe_stop.sql",
+      "20261019151500_ad_billing_watchdog_stale_reads.sql"])
+      await db.exec(migration(f));
+    const call = async () => (await db.query<any>("select cockpit_ad_billing_watchdog_claim() as event")).rows[0].event;
+    const binding = (await db.query<any>(`insert into cockpit_ad_billing_bindings(client_task_id,client_name,account_id,ads_task_ids,
+      whatsapp_group,sheet_account_ref,identity_evidence,identity_verified_at,enabled,last_good_at)
+      values('abc123','Synthetic client','1234567','{t1}','123-456@g.us','ref','synthetic evidence',now(),true,now()-interval '6 minutes')
+      returning id`)).rows[0].id;
+    // 19 Oct 14:40 Kuwait: the run missed some clients and left its error, but every client read a few minutes ago.
+    await db.exec("update cockpit_ad_billing_config set apply=true,last_finished_at=now(),last_error='3 binding checks failed. Review the billing panel.' where singleton");
+    expect(await call()).toBeNull(); // stays healthy: nothing is posted
+    await db.query("update cockpit_ad_billing_bindings set last_good_at=now()-interval '21 minutes' where id=$1", [binding]);
+    expect((await call()).kind).toBe("source_error");
+    await db.query("update cockpit_ad_billing_bindings set last_good_at=null where id=$1", [binding]);
+    expect(await call()).toBeNull(); // never read is still source_error, no second post
+    await db.query("update cockpit_ad_billing_bindings set enabled=false where id=$1", [binding]);
+    expect((await call()).kind).toBe("healthy"); // a disabled binding is not read on purpose
+  } finally { await db.close(); }
+});
+
 function harness(mode = "ok") {
   let posts = 0; const results: any[] = [];
   const handler = makeHandler({ secret: "synthetic", slackToken: "synthetic", rpc: async (name, args) => {
