@@ -6,6 +6,8 @@ export function installLaunchHarness(client: SupabaseClient) {
     state = params.get("fixture") ?? "all";
   const fixture = launchFixture(state);
   const imports: any[] = [];
+  const holds = new Map<string, any>();
+  const paused = new Set<string>();
   const notices = {
     asOf: new Date().toISOString(),
     sourceAt: new Date().toISOString(),
@@ -49,6 +51,26 @@ export function installLaunchHarness(client: SupabaseClient) {
         : fixture;
       return Promise.resolve({ data, error: null });
     }
+    if (name === "cockpit_client_lifecycle_action") {
+      const h = holds.get(args.p_client);
+      if (!h || h.revision !== args.p_revision)
+        return Promise.resolve({
+          error: { message: "Refresh the fictional record." },
+        });
+      h.revision++;
+      if (args.p_action === "release") h.state = "released";
+      if (args.p_action === "complete") h.state = "complete";
+      if (args.p_action === "check")
+        h.checks[args.p_step] = {
+          note: args.p_note,
+          at: new Date().toISOString(),
+          confirmation: "team",
+        };
+      return Promise.resolve({
+        data: { ok: true, lifecycle: { ...h } },
+        error: null,
+      });
+    }
     if (name === "cockpit_launch_imports")
       return Promise.resolve({
         data: imports.filter(
@@ -73,6 +95,70 @@ export function installLaunchHarness(client: SupabaseClient) {
     return rpc(name, args);
   }) as any;
   client.functions.invoke = ((fn: string, options: any) => {
+    if (
+      fn === "cockpit-media-api" &&
+      options?.body?.operation?.startsWith("client.")
+    ) {
+      const { operation, args, apply } = options.body,
+        c = fixture.clients.find(x => x.id === args.clickupId)!;
+      if (!c)
+        return Promise.resolve({
+          data: { ok: false, error: "No fictional client" },
+          error: null,
+        });
+      const campaign = {
+        id: "222222",
+        name: `${c.name} |MAHARA| approved campaign`,
+        accountId: c.accounts[0]?.id ?? "111111",
+        status: "ACTIVE",
+        owner: { kind: "mahara" },
+      };
+      if (operation === "client.stopReview")
+        return Promise.resolve({
+          data: {
+            ok: true,
+            accounts: c.accounts,
+            active: paused.has(c.id) ? [] : [campaign],
+            unverified: [],
+            errors: [],
+            fingerprint: paused.has(c.id) ? "paused" : "active",
+            checkedAt: new Date().toISOString(),
+            lifecycle: holds.get(c.id) ?? null,
+            canRelease: true,
+            applyEnabled: !args.rehearse,
+          },
+          error: null,
+        });
+      if (!apply || args.rehearse)
+        return Promise.resolve({
+          data: {
+            ok: false,
+            dryRun: true,
+            message: "Fictional rehearsal only",
+          },
+          error: null,
+        });
+      paused.add(c.id);
+      const h = {
+        mode: operation === "client.offboard" ? "offboard" : "pause",
+        state: "active",
+        reason: args.reason,
+        checks: {},
+        revision: 1,
+        task_id: operation === "client.offboard" ? "demo-offboard" : null,
+      };
+      holds.set(c.id, h);
+      return Promise.resolve({
+        data: {
+          ok: true,
+          did:
+            operation === "client.offboard"
+              ? "Demo: campaigns paused and offboarding task saved. Access removal is pending."
+              : "Demo: campaigns paused. Client access is unchanged.",
+        },
+        error: null,
+      });
+    }
     if (
       fn === "cockpit-media-api" &&
       options?.body?.operation?.startsWith("launch.")

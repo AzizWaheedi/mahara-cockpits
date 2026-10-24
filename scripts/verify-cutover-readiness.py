@@ -119,6 +119,10 @@ RELEVANT_TEST_FILES = [
     "apps/media-buyer-cockpit/scripts/money-attribution-parity.test.ts",
     "apps/media-buyer-cockpit/scripts/money-screens.test.tsx",
     "apps/client-success-cockpit/scripts/csm-money.test.ts",
+    # Client pause/offboarding: provider receipts, holds and native upload regression.
+    "supabase/functions/cockpit-media-api/clientLifecycle.test.ts",
+    "apps/media-buyer-cockpit/scripts/launch-desk-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/launch-import-supabase.test.ts",
     # CSM decks backend: prep, launch ads and deck sources (20261019120000_csm_decks.sql, docs/csm-decks, 2026-10-19).
     "apps/media-buyer-cockpit/scripts/csm-decks-supabase.test.ts",
     "supabase/functions/cockpit-csm-api/launchAds.test.ts",

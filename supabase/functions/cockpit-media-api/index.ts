@@ -1,3 +1,4 @@
+import {LIFECYCLE_OPERATIONS,lifecycleOperation} from './clientLifecycle.ts';
 import {normalizeImportLinks} from './launchImport.ts';
 import {DESK_OPERATIONS,launchEnabled,prepareDesk,REHEARSAL} from './launchDesk.ts';
 import {clientCampaignCopy} from '../_shared/clientCampaignCopy.ts';
@@ -44,6 +45,20 @@ Deno.serve(async(req:Request)=>{
    const {store,health}=supabasePageForms(admin,url,auth.user.id);
    const scope=async(slug:string|null,client:string|null)=>{const {data,error}=await userClient.rpc('cockpit_page_form_scope',{p_slug:slug,p_client:client});if(error)throw new Error(error.message);return data as Row;};
    return json(await pageFormOperation(operation,args,input.apply===true,input.requestId,{store,scope,fetch,health}));
+  }
+  if(LIFECYCLE_OPERATIONS.includes(operation)){
+   admin=createClient(url,service,{auth:{persistSession:false}});
+   const rpc=async(name:string,params:Row)=>{const r=await admin.rpc(name,params);if(r.error)throw Error(r.error.message);return r.data;};
+   const scope=async()=>{const r=await userClient.rpc('cockpit_client_lifecycle_scope',{p_client:args.clickupId});if(r.error)throw Error(r.error.message);return r.data;};
+   const provider=providerTools(env,async(row:Row)=>{if(row.phase==='intent'&&row.method!=='GET'&&!launchEnabled(env,args.rehearse))throw Error(REHEARSAL);const r=await admin.from('cockpit_media_provider_health').insert({...row,action_id:actionId??null});if(r.error)throw Error('Could not save provider health receipt');});
+   return json(await lifecycleOperation(operation,args,input.apply===true,input.requestId,{
+    scope,env,provider,
+    client:async()=>{const r=await userClient.rpc('cockpit_launch_pipeline',{p_clickup_id:args.clickupId});if(r.error)throw Error(r.error.message);if(!r.data?.clients?.[0])throw Error('This client is unavailable.');return r.data.clients[0];},
+    prior:async(id:string)=>{const r=await admin.from('cockpit_media_actions').select('*').eq('id',id).eq('actor_id',auth.user.id).maybeSingle();if(r.error)throw Error('Could not read the earlier receipt');if(!r.data)return null;if(r.data.operation===operation&&canonical(r.data.request.args)===canonical(args)&&r.data.state==='confirmed')return r.data.result;throw Error('This request already has an intent. Review its receipt before retrying.');},
+    begin:async(id:string,op:string,a:Row,s:Row)=>{const r=await rpc('cockpit_client_stop_begin',{p_actor:auth.user.id,p_id:id,p_operation:op,p_args:a,p_scope:s});if(!r.reused)actionId=id;return r;},
+    finish:async(id:string,result:Row)=>{await rpc('cockpit_client_stop_finish',{p_id:id,p_result:result});},
+    fail:async(id:string,message:string)=>{await admin.from('cockpit_media_actions').update({state:'reconcile',result:{ok:false,error:message},completed_at:new Date().toISOString()}).eq('id',id).eq('state','pending');}
+   }));
   }
   const scopeCall=()=>desk?userClient.rpc('cockpit_media_account_scope',{p_operation:operation==='launch.importCreatives'?'launch.new':operation,p_clickup_id:args.clickupId,p_account:args.accountId??null,p_launch:args.launchId??null}):operation==='previews.fresh'?userClient.rpc('cockpit_ad_preview_scope',{p_ad:args.adId}):operation==='cockpit.askForDetail'?userClient.rpc('cockpit_media_task_scope',{p_task:args.taskId}):operation==='edit.askViktorFor'?userClient.rpc('cockpit_media_request_scope',{p_campaign:args.campaignName??null,p_client:args.client??null}):userClient.rpc('cockpit_media_scope',{p_operation:operation,p_campaign:args.campaignName??(args.level==='campaign'?args.name:null)});
   const {data:scope,error:scopeError}=await scopeCall();

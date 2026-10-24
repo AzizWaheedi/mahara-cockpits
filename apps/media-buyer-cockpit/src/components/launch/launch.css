@@ -26,3 +26,41 @@
 .launch-import textarea{display:block;width:100%;resize:vertical;background:var(--background);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;margin-top:6px}
 .launch-import-actions{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}.launch-import-actions small{flex:1;min-width:180px}
 .launch-import-jobs{display:grid;gap:10px;padding:0;list-style:none}.launch-import-jobs li{display:grid;gap:3px;border-top:1px solid var(--border);padding-top:10px;font-size:13px}
+
+.client-service { display: grid; gap: 24px; }
+.client-service-heading, .client-service-inventory { display: flex; justify-content: space-between; align-items: start; gap: 16px; }
+.client-service-heading > svg { color: var(--primary); flex-shrink: 0; }
+.client-service p, .client-service label { font-size: 13px; line-height: 1.65; }
+.client-service h3 { font-size: 15px; font-weight: 600; }
+.client-service-hold { display: flex; align-items: start; gap: 12px; padding: 16px; border-radius: 16px; background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.client-service-hold > svg { color: var(--primary); flex-shrink: 0; margin-top: 3px; }
+.client-service-hold p { margin: 4px 0 8px; }
+.client-service-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.client-service-choices button { border: 1px solid var(--border); border-radius: 16px; text-align: left; padding: 18px; display: grid; gap: 10px; }
+.client-service-choices button[aria-pressed="true"] { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 7%, transparent); }
+.client-service-choices button[aria-pressed="true"] svg { color: var(--primary); }
+.client-service-choices span { font-size: 12px; line-height: 1.6; color: var(--muted-foreground); }
+.client-service small { color: var(--muted-foreground); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.client-service-campaigns { list-style: none; padding: 0; }
+.client-service-campaigns li { display: flex; gap: 12px; align-items: start; padding: 14px 0; border-top: 1px solid var(--border); }
+.client-service-campaigns li > svg { flex-shrink: 0; margin-top: 3px; color: var(--muted-foreground); }
+.client-service-campaigns strong, .client-service-campaigns small { display: block; }
+.client-service-campaigns strong { font-size: 13px; overflow-wrap: anywhere; }
+.client-service-campaigns li > span { margin-left: auto; font-size: 11px; white-space: nowrap; }
+.client-service-warning { border-left: 2px solid var(--warning); padding: 4px 0 4px 14px; font-size: 13px; }
+.client-service-warning a { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; overflow-wrap: anywhere; }
+.client-service-empty { color: var(--muted-foreground); }
+.client-service-action, .client-service-proof, .client-service-confirm { display: grid; gap: 12px; justify-items: start; }
+.client-service textarea { width: 100%; min-height: 80px; padding: 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--background); font-size: 13px; resize: vertical; }
+.client-service textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.client-service-confirm { width: 100%; background: var(--muted); padding: 16px; border-radius: 14px; }
+.client-service-confirm > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.client-service-checklist > p { margin: 6px 0 16px; color: var(--muted-foreground); }
+.client-service-check { display: flex; gap: 12px; align-items: start; padding: 18px 0; border-top: 1px solid var(--border); }
+.client-service-check > svg { flex-shrink: 0; margin-top: 3px; }
+.client-service-check > div { flex: 1; min-width: 0; }
+.client-service-check strong { font-size: 13px; }
+.client-service-check p { margin: 4px 0 8px; color: var(--muted-foreground); }
+.client-service-check > button { flex-shrink: 0; }
+.client-service-loading { display: flex; gap: 8px; align-items: center; }
+@media(max-width: 480px) { .client-service-choices { grid-template-columns: 1fr; } .client-service-check { flex-wrap: wrap; } .client-service-check > button { margin-left: 30px; } .client-service-campaigns li { flex-wrap: wrap; } }

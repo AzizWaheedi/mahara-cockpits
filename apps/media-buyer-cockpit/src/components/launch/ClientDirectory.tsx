@@ -19,6 +19,12 @@ import {
 } from "@/lib/launchModel";
 
 export function clientState(c: LaunchClient) {
+  if (c.serviceHold && c.serviceHold.state !== "released")
+    return c.serviceHold.mode === "offboard"
+      ? c.serviceHold.state === "complete"
+        ? "Offboarded"
+        : "Offboarding"
+      : "On hold";
   if (c.readOnly) return c.status;
   if (c.waiting) return "Awaiting delivery";
   if (c.inAds) return "In Ads";
@@ -27,6 +33,8 @@ export function clientState(c: LaunchClient) {
   return "Nothing running";
 }
 export function needsAttention(c: LaunchClient) {
+  if (c.serviceHold && c.serviceHold.state !== "released")
+    return c.serviceHold.state !== "complete";
   return (
     !c.readOnly &&
     (!!c.mediaTasks?.length ||
@@ -61,7 +69,9 @@ export function filterClients(
         (view === "attention"
           ? needsAttention(c)
           : view === "running"
-            ? c.inAds && !c.readOnly
+            ? c.inAds &&
+              !c.readOnly &&
+              (!c.serviceHold || c.serviceHold.state === "released")
             : view === "onboarding"
               ? c.lane === "onboarding"
               : view === "inactive"

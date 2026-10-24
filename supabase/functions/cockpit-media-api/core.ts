@@ -11,7 +11,7 @@ export type Row = Record<string, any>;
 export const ADS_LIST = '901817774521';
 export const STATUS_FIELD = '7f118f61-34b6-483a-b749-ff9fc31fd423';
 export const CITIES_FIELD = 'b98aa20e-c2d1-4785-baae-67e67506023d';
-export const OPERATIONS = new Set(['control.setStatus','ceo.b2bControl.setStatus','edit.setAdSetBudget',
+export const OPERATIONS = new Set(['client.stopReview','client.pause','client.offboard','control.setStatus','ceo.b2bControl.setStatus','edit.setAdSetBudget',
  'edit.duplicateAdSet','board.adStatusOptions','board.advertisingCityOptions','board.setAdStatus',
  'board.setAdvertisingCities','board.renameCard','board.addToBoard','board.dismissOffBoard','ceo.ltv.apply','edit.askViktorFor','cockpit.askForDetail','execute.runAction','previews.fresh','comms.sendReply','launch.readiness','launch.importCreatives','launch.copyIdeas','launch.switchOn','launch.copy','launch.rebuild','launch.new','launch.attachAccount',...B2B_OPERATIONS,...CREATIVE_OPERATIONS,...LAUNCH_OPERATIONS,...FUNNEL_OPERATIONS,...PAGE_FORM_OPERATIONS]);
 export interface Provider { call(provider:'meta'|'clickup'|'slack'|'ghl'|'make', method:string,path:string,body?:Row,as?:{token:string}):Promise<Row> }
