@@ -1,12 +1,13 @@
 """Sites, keys and the Hermes monitors."""
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 
 from tests import fakes
 from checks import hermes_monitors, keys, sites
 from guard.context import SourceError
-from guard.model import FAIL, OK, UNKNOWN, WARN
+from guard.model import FAIL, OK, UNKNOWN, WARN, iso
 
 DB = b"https://bldgtotkfmhoxmlzowdx.supabase.co"
 
@@ -153,6 +154,51 @@ class Monitors(unittest.TestCase):
             m.pop("beat_last_ok", None)
         with self.assertRaises(SourceError):  # the engine reads it as unknown, never as healthy
             hermes_monitors.run_deadman(make(snap))
+
+    def deadman_after(self, every, extra=(), state=None, scans=5):
+        """Scans 5 min apart, as the guardian runs, over monitors beating every `every` min (a dict: per monitor)."""
+        snap = fakes.snapshot()
+        for name in extra:
+            snap["monitors"][name] = dict(snap["monitors"]["portal"])
+        state = {} if state is None else state
+        base = fakes.NOW.timestamp() - 30
+        for i in range(scans):
+            for name, m in snap["monitors"].items():
+                e = every.get(name, every["*"]) if isinstance(every, dict) else every
+                m["beat_last_ok"] = base + e * 60 * ((5 * i) // e)
+            r = hermes_monitors.run_deadman(make(snap, state=state, now=fakes.NOW + timedelta(minutes=5 * i)))
+        return r
+
+    def test_deadman_clears_once_the_10_minute_release_is_seen(self):
+        # 24 Oct 2026 release: 5 monitors x 144 beats + the worker's watcher key about 48 times = 768 a day.
+        r = self.deadman_after(10, extra=("media-api",))
+        self.assertEqual(r.status, OK, r.summary)
+        self.assertEqual(r.evidence["kv_writes_a_day"], 5 * 144 + 48)
+        self.assertEqual(set(r.evidence["beat_every_min"].values()), {10.0})
+
+    def test_deadman_still_warns_before_the_release(self):
+        r = self.deadman_after(5, extra=("media-api",))
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.evidence["kv_writes_a_day"], 6 * 288)
+        # One monitor still on 5 min: the worker is not trusted to be on its 30-minute watcher either.
+        r = self.deadman_after({"*": 10, "dialer": 5})
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.evidence["kv_writes_a_day"], 3 * 144 + 288 + 288)
+
+    def test_a_refused_evening_does_not_hide_the_cadence(self):
+        t0 = fakes.NOW - timedelta(hours=10, minutes=10)
+        state = {"history": {"beats": {"portal": [iso(t0), iso(t0 + timedelta(minutes=5)), iso(t0 + timedelta(hours=10))]}}}
+        snap = fakes.snapshot()
+        snap["monitors"]["portal"]["beat_last_ok"] = (t0 + timedelta(hours=10, minutes=5)).timestamp()
+        self.assertEqual(hermes_monitors.beat_every_min(make(snap, state=state), snap["monitors"])["portal"], 5.0)
+
+    def test_the_guardians_own_beat_is_counted_when_on(self):
+        state = {"beat": {"at": iso(fakes.NOW), "ok_at": iso(fakes.NOW)}}
+        r = self.deadman_after(10, extra=("media-api",), state=state)
+        self.assertEqual(r.status, WARN)
+        self.assertEqual(r.evidence["kv_writes_a_day"], 5 * 144 + 48 + 288)
+        state["beat"]["off"] = True
+        self.assertEqual(self.deadman_after(10, extra=("media-api",), state=state).status, OK)
 
     def test_failing_hermes_job(self):
         snap = fakes.snapshot(hermes_jobs=[{"name": "Nightly Backup", "enabled": True, "last_status": "error", "last_error": "exit 1"},

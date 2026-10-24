@@ -421,7 +421,7 @@ Generated with `python3 guardian.py checks --json`.
 | `claude-proxy-up` | H2 | No answer, or a status other than ok: fail. |  |
 | `claude-proxy-exposed` | H3 | Listening on 0.0.0.0 or [::], or an outside GET answers 200: fail. |  |
 | `ceo-sections` | C1, C3 | All older than 45 min: fail (urgent); some old or failing: warn. |  |
-| `native-jobs` | C3 | ok false, or older than 3 times its interval (45 min at least): fail. |  |
+| `native-jobs` | C3 | ok false, or older than 3 times its interval (45 min at least): fail. `clickup-writeback:kpi` and `:dosdonts` run only 03:00-19:00 UTC, so only those hours count. |  |
 | `native-sources` | C7 | Any ok false: fail. |  |
 | `ask-ai-queue` | H12 | Jobs waiting while nothing finished for 20 min: fail; 10 or more new failures in an hour: warn. |  |
 | `vps-memory` | H7 | Under 1024 MB available: warn; under 700 MB: fail (urgent with no swap); 3 scans in a row; clears only above 1536 MB, two scans in a row. |  |

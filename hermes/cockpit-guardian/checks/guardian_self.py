@@ -4,7 +4,8 @@ Supabase, and does its dead-man heartbeat go out.
 Who watches the watcher: after every full scan on the VPS the guardian puts
 `beat:cockpit-guardian` in the Cloudflare KV namespace the Hermes dead-man
 worker reads (deadman-worker.mjs). That worker runs on Cloudflare, not on the
-VPS, and posts to #health when the beat is more than 10 minutes old or when
+VPS, and posts to #health when the beat is older than its limit (STALE_S: 20
+minutes since the 24 Oct 2026 cadence release, 10 before it) or when
 the guardian's undelivered alerts are older than 15 minutes. So a wiped
 crontab, a crash at import, a full disk or the VPS going down all reach a
 person without the guardian. `guardian-beat` says when the beat itself fails.
@@ -66,9 +67,12 @@ def run_beat(ctx) -> Result:
     b = ctx.state.get("beat") or {}
     if b.get("off"):
         return paused("The guardian's own dead-man heartbeat is off (GUARDIAN_BEAT=off): Cloudflare's free plan allows "
-                      "1,000 storage writes a day and the Hermes monitors' beats already use them up (deadman-beats). "
-                      "Until it is back on, a stopped guardian shows only as an old last scan in its report.",
-                      action="Once deadman-beats is ok, delete GUARDIAN_BEAT=off from ~/.cockpit-guardian/env.")
+                      "1,000 storage writes a day. The Hermes monitors and the dead-man worker use about 770 of them at "
+                      "their 10-minute cadence, and a guardian beat on every 5-minute scan would add 288 (deadman-beats "
+                      "counts both). Until it is back on, a stopped guardian shows only as an old last scan in its report.",
+                      action="Keep GUARDIAN_BEAT=off. Turn it back on only once the guardian beats every 10 minutes or "
+                             "less often (about 144 writes a day) and deadman-beats stays ok, or once the Cloudflare "
+                             "account is on Workers Paid.")
     if b.get("missing"):
         return fail(f"The guardian's dead-man heartbeat is not sent: {b['missing']} cannot be read, so nobody would "
                     "notice if the guardian stopped.",

@@ -15,11 +15,43 @@ TICK_LIMIT_MIN = 3
 OUTBOX_STUCK_MIN = 30
 # The dead-man switch (a Cloudflare worker) reads one KV heartbeat per monitor.
 # Cloudflare's free plan takes 1,000 KV writes a day (error 10048 after that,
-# until 00:00 UTC). Each monitor beats every 5 minutes (288 a day) and the
-# worker writes its own `watcher` key every 5 minutes (288 more).
+# until 00:00 UTC). Until the 24 Oct 2026 cadence release each monitor beat
+# every 5 minutes (288 a day) and the worker wrote its `watcher` key every 5
+# minutes (288 more). After it a monitor beats every 10 minutes (144) and the
+# worker writes `watcher` on a change or every 30 minutes (about 48). The
+# release puts the worker in first, so beats 10 minutes apart mean both are in.
+# The cadence is read from the beats the guardian has seen, never assumed.
 BEAT_LATE_MIN = 15
 KV_FREE_WRITES_A_DAY = 1000
-BEATS_A_DAY = 288
+OLD_BEAT_MIN = 5
+NEW_BEAT_MIN = 9.5          # beats this far apart or more: the 10-minute release is in
+WATCHER_OLD, WATCHER_NEW = 288, 48
+GUARDIAN_BEATS_A_DAY = 288  # the guardian's own beat, once per 5-minute scan, when it is on
+BEATS_KEPT = 4
+
+
+def beat_every_min(ctx: Context, beats: dict) -> dict:
+    """Each monitor's beat interval: the shortest gap between the last good beats this guardian saw (None until
+    two). The shortest, because a refused stretch (every evening on the free plan) leaves one long gap."""
+    seen = ctx.state.setdefault("history", {}).setdefault("beats", {})
+    out = {}
+    for k, v in sorted(beats.items()):
+        t = parse_time(v.get("beat_last_ok"))
+        times = [x for x in seen.get(k) or [] if parse_time(x) is not None]
+        if t is not None and (not times or parse_time(times[-1]) < t):
+            times.append(t.isoformat())
+        seen[k] = times[-BEATS_KEPT:]
+        ts = [parse_time(x) for x in seen[k]]
+        gaps = [(b - a).total_seconds() / 60 for a, b in zip(ts, ts[1:])]
+        out[k] = round(min(gaps), 1) if gaps else None
+    return out
+
+
+def kv_writes_a_day(every: dict, guardian_beat: bool) -> int:
+    """An unknown cadence counts as the old 5 minutes, so the count can only clear on what was seen."""
+    monitors = sum(round(1440 / max(m or OLD_BEAT_MIN, 1)) for m in every.values())
+    new = bool(every) and all(m is not None and m >= NEW_BEAT_MIN for m in every.values())
+    return monitors + (WATCHER_NEW if new else WATCHER_OLD) + (GUARDIAN_BEATS_A_DAY if guardian_beat else 0)
 
 
 def monitor_check(name: str, label: str):
@@ -62,12 +94,17 @@ def run_deadman(ctx: Context) -> Result:
         raise SourceError("no Hermes monitor's heartbeat could be read")
     ages = {k: age_min(v.get("beat_last_ok"), ctx.now) for k, v in sorted(beats.items())}
     blind = [k for k, a in ages.items() if a is None or a > BEAT_LATE_MIN]
-    writes = (len(beats) + 1) * BEATS_A_DAY  # the monitors' beats and the worker's watcher key
+    every = beat_every_min(ctx, beats)
+    own = ctx.state.get("beat") or {}
+    guardian_beat = bool(own.get("at")) and not own.get("off")
+    writes = kv_writes_a_day(every, guardian_beat)  # the monitors' beats, the worker's watcher key, the guardian's
     ev = {"beat_age_min": ages, "beat_failures": {k: beats[k].get("beat_failures") for k in ages},
+          "beat_every_min": every, "guardian_beat": guardian_beat,
           "kv_writes_a_day": writes, "kv_free_limit": KV_FREE_WRITES_A_DAY}
-    action = ("Either move the Cloudflare account to Workers Paid ($5 a month, 1 million KV writes), or beat every 10 "
-              "minutes with the dead-man limit at 20 (monitor.py heartbeat_every_min, deadman-worker.mjs STALE_S, and "
-              "its watcher key written only when it changes).")
+    action = ("Either move the Cloudflare account to Workers Paid ($5 a month, 1 million KV writes), or install the "
+              "24 Oct 2026 cadence release (the worker first: deadman-worker.mjs STALE_S 1200 and its watcher key every "
+              "30 minutes; then monitor.py heartbeat_every_min 10). Keep GUARDIAN_BEAT=off while the guardian beats "
+              "on every 5-minute scan.")
     budget = (f"Cloudflare's free plan takes {KV_FREE_WRITES_A_DAY:,} storage writes a day and the monitors and the "
               f"dead-man worker write about {writes:,}")
     if blind:
@@ -148,7 +185,8 @@ CHECKS = [
           means="The Hermes monitors' heartbeats reach the Cloudflare dead-man switch, so a stopped monitor or a dead "
                 "VPS would be noticed.",
           severity="medium", reads=".../state/*/state.json (heartbeat.last_ok, failures) for every monitor",
-          threshold=f"A beat older than {BEAT_LATE_MIN} min, or more KV writes a day than the free plan allows: warn.",
+          threshold=f"A beat older than {BEAT_LATE_MIN} min, or more KV writes a day than the free plan allows (counted "
+                    "from the beat interval the guardian sees): warn.",
           run=run_deadman, owner="the CEO", clear=2,
           action="Workers Paid on the Cloudflare account, or fewer beats (see the warning)."),
     Check(id="hermes-jobs", area="monitors", name="Hermes scheduled jobs",

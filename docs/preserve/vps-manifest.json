@@ -45,10 +45,10 @@
    },
    {
     "n": 2,
-    "sha256": "14821412e6a8eeae2f6307803fdb596293e9b2fd06a7c76894e877f5ba563e0e",
+    "sha256": "b1cca94ec6812217fbacd8ea0f117257edb61f9504a23bc7e61b8d2ed03f8d63",
     "kind": "job",
-    "text": "2,32 * * * *  flock -n $HOME/.editor-desk/sync.lock    bash -c \"set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet sync\"    >> $HOME/.editor-desk/out/cron.log 2>&1",
-    "schedule": "2,32 * * * *",
+    "text": "*/5 * * * *   flock -n $HOME/.editor-desk/sync.lock    bash -c \"set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet sync\"    >> $HOME/.editor-desk/out/cron.log 2>&1",
+    "schedule": "*/5 * * * *",
     "component": "editor-desk",
     "runs": "desk.py --quiet sync",
     "lock": "$HOME/.editor-desk/sync.lock",

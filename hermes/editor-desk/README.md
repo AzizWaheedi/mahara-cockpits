@@ -106,7 +106,7 @@ written down -- `meetings` had to be recovered from the mtime of its lock
 file. If you add a job, add its row here in the same commit.
 
 ```
-2,32 * * * *  flock -n $HOME/.editor-desk/sync.lock    bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet sync"   >> $HOME/.editor-desk/out/cron.log 2>&1
+*/5 * * * *   flock -n $HOME/.editor-desk/sync.lock    bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet sync"   >> $HOME/.editor-desk/out/cron.log 2>&1
 7,37 * * * *  flock -n $HOME/.editor-desk/prepare.lock bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet prepare" >> $HOME/.editor-desk/out/cron.log 2>&1
 17 * * * *    flock -n $HOME/.editor-desk/notes.lock   bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet notes"   >> $HOME/.editor-desk/out/cron.log 2>&1
 */3 * * * *   flock -n $HOME/.editor-desk/requests.lock bash -c "set -a; . $HOME/.editor-desk/env; set +a; cd $HOME/mahara-cockpits/hermes/editor-desk && python3 desk.py --quiet requests" >> $HOME/.editor-desk/out/cron.log 2>&1

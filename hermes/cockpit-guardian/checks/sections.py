@@ -10,6 +10,7 @@ so no reading is muted on the belief that Convex alerts on it.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 from guard.context import MACHINE, Context, SourceError
 from guard.model import Check, Result, age_min, ago, fail, ok, parse_time, unknown, warn
@@ -19,6 +20,29 @@ from .claude_proxy import signed_out_text
 
 SECTION_LIMIT_MIN = 45
 EXPECTED_SECTIONS = 14
+# Jobs that run only in set UTC hours (pg_cron '5 3-18 * * *' and '35 3-18 * * *'): their lateness counts the
+# minutes inside those hours, so the night with no run is not "late" (19, 20 and 21 Oct 2026, 22:25-07:35 Kuwait).
+SCHEDULED_HOURS_UTC = {"clickup-writeback:kpi": (3, 19), "clickup-writeback:dosdonts": (3, 19)}
+
+
+def scheduled_minutes(since: datetime, now: datetime, start_h: int, end_h: int) -> float:
+    """Minutes between since and now that fall inside start_h:00-end_h:00 UTC, on any day."""
+    total = 0.0
+    day = since.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    while day < now:
+        lo, hi = max(since, day + timedelta(hours=start_h)), min(now, day + timedelta(hours=end_h))
+        if hi > lo:
+            total += (hi - lo).total_seconds() / 60
+        day += timedelta(days=1)
+    return total
+
+
+def job_age(key: str, at: object, now: datetime):
+    """Minutes since the last good run; for a job with set hours, only the minutes inside them."""
+    since = parse_time(at)
+    if since is None or key not in SCHEDULED_HOURS_UTC:
+        return age_min(at, now)
+    return scheduled_minutes(since, now, *SCHEDULED_HOURS_UTC[key])
 
 
 def run_sections(ctx: Context) -> Result:
@@ -98,7 +122,7 @@ def run_jobs(ctx: Context) -> Result:
     bad = []
     for key, cap in keys.items():
         r = rows.get(key)
-        age = age_min(r.get("last_ok_at"), ctx.now) if r else None
+        age = job_age(key, r.get("last_ok_at"), ctx.now) if r else None
         if not r or r.get("ok") is False or age is None or age > cap:
             bad.append(key)
     if bad:
@@ -157,7 +181,8 @@ CHECKS = [
         id="native-jobs", area="workers", name="Cockpit jobs", catalogue="C3",
         means="Every cockpit job in the machine section ran on time and worked.", severity="medium",
         reads="cockpit_sections machine.jobs (from cockpit_sync_state)",
-        threshold="ok false, or older than 3 times its interval (45 min at least): fail.",
+        threshold="ok false, or older than 3 times its interval (45 min at least): fail. The ClickUp KPI and dos-and-donts "
+                  "writebacks count only their 03:00-19:00 UTC hours.",
         run=run_jobs, owner="Hermes",
         action="Read the job's note in cockpit_sync_state (the Machine tab shows it) and that worker's log on the VPS.",
     ),

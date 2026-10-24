@@ -4,7 +4,8 @@ After every full scan on the VPS the guardian PUTs `beat:cockpit-guardian` into
 the Cloudflare KV namespace that the Hermes dead-man worker
 (/docker/hermes-agent-ff5p/data/portal-monitor/deadman-worker.mjs) reads every
 5 minutes. That worker runs on Cloudflare, so it sees what the guardian cannot
-see about itself: no beat for 10 minutes (a wiped crontab, a crash at import, a
+see about itself: no beat within its limit (STALE_S: 20 minutes since the 24 Oct
+2026 cadence release, 10 before it) (a wiped crontab, a crash at import, a
 full disk, the VPS down) or alerts stuck undelivered for 15 minutes (Slack
 refusing the token). It posts to #health either way, and it watches a project
 from its first beat; to retire the guardian, delete `beat:cockpit-guardian`
@@ -16,6 +17,9 @@ Keys by name: PORTAL_MONITOR_CF_TOKEN, PORTAL_MONITOR_CF_ACCOUNT,
 PORTAL_MONITOR_CF_KV_NAMESPACE (in monitor.env, one of the key files).
 GUARDIAN_BEAT=off in ~/.cockpit-guardian/env stops the PUT (a Cloudflare free
 plan's daily KV writes are already spent by the Hermes monitors, 2026-10-03).
+Keep it off while the guardian beats on every 5-minute scan: that adds 288
+writes a day and takes the total over 1,000 even at the monitors' 10-minute
+cadence (deadman-beats counts it).
 """
 from __future__ import annotations
 

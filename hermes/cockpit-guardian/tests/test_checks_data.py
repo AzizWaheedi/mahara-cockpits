@@ -1,6 +1,7 @@
 """Thresholds of the checks that read Creative Triage, the CEO sections included."""
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from tests import fakes
@@ -289,6 +290,38 @@ class Sections(unittest.TestCase):
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
         rows[-1]["last_ok_at"] = fakes.ago(46)
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["lead-sync-watch"])
+
+    JOBS = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log", "clickup-writeback:kpi",
+            "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine", "hiring-sync:intake",
+            "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync", "tap-charges-sync",
+            "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form", "csm-forms-history", "csm-fathom",
+            "csm-meta-activities", "csm-media-changes", "csm-reconcile", "lead-sync-watch")
+
+    def writebacks_at(self, now, kpi, dosdonts):
+        rows = [{"key": k, "ok": True, "last_ok_at": (now - timedelta(minutes=1)).isoformat()} for k in self.JOBS]
+        for r in rows:
+            r["last_ok_at"] = {"clickup-writeback:kpi": kpi, "clickup-writeback:dosdonts": dosdonts}.get(r["key"], r["last_ok_at"])
+        return sections.run_jobs(make({"cockpit_sync_state": rows}, now=now))
+
+    def test_clickup_writebacks_are_not_late_at_night(self):
+        # They run hourly 03:00-18:59 UTC only; the night is not 8 hours late (19, 20 and 21 Oct 2026).
+        utc = lambda d, h, m: datetime(2026, 10, d, h, m, tzinfo=timezone.utc)
+        last_kpi, last_dd = utc(24, 18, 5).isoformat(), utc(24, 18, 35).isoformat()
+        self.assertEqual(self.writebacks_at(utc(24, 19, 25), last_kpi, last_dd).status, OK)   # 22:25 Kuwait
+        self.assertEqual(self.writebacks_at(utc(25, 2, 55), last_kpi, last_dd).status, OK)    # 05:55 Kuwait
+        # The morning runs are missed: 55 + 100 and 25 + 100 scheduled minutes.
+        self.assertEqual(self.writebacks_at(utc(25, 4, 40), last_kpi, last_dd).items,
+                         ["clickup-writeback:kpi", "clickup-writeback:dosdonts"])
+        # Inside the hours nothing changes: kpi missed its 11:05 run, dosdonts did not.
+        r = self.writebacks_at(utc(24, 11, 40), utc(24, 10, 5).isoformat(), utc(24, 10, 35).isoformat())
+        self.assertEqual(r.items, ["clickup-writeback:kpi"])
+        self.assertEqual(self.writebacks_at(utc(24, 19, 25), None, last_dd).items, ["clickup-writeback:kpi"])
+
+    def test_scheduled_minutes_cross_midnight(self):
+        since = datetime(2026, 10, 24, 18, 35, tzinfo=timezone.utc)
+        self.assertEqual(sections.scheduled_minutes(since, since + timedelta(hours=8, minutes=35), 3, 19), 35)
+        self.assertEqual(sections.scheduled_minutes(since, since + timedelta(days=2), 3, 19), 25 + 16 * 60 + 15 * 60 + 35)
+        self.assertEqual(sections.scheduled_minutes(since, since - timedelta(minutes=1), 3, 19), 0)
 
     def test_old_machine_section_cannot_vouch(self):
         t = {"cockpit_sections": [{"key": "machine", "computed_at": fakes.ago(90), "payload": {"jobs": []}}]}
