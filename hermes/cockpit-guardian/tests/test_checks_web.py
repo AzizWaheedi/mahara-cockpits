@@ -192,6 +192,27 @@ class Monitors(unittest.TestCase):
         snap["monitors"]["portal"]["beat_last_ok"] = (t0 + timedelta(hours=10, minutes=5)).timestamp()
         self.assertEqual(hermes_monitors.beat_every_min(make(snap, state=state), snap["monitors"])["portal"], 5.0)
 
+    def deadman_scans(self, dialer_beats, until):
+        """A scan every 5 min up to `until`. The dialer beats at the given minutes, the other monitors every 10."""
+        snap = fakes.snapshot()
+        snap["monitors"]["media-api"] = dict(snap["monitors"]["portal"])
+        state, base, out = {}, fakes.NOW.timestamp(), []
+        for scan in range(5, until + 1, 5):
+            for name, m in snap["monitors"].items():
+                times = dialer_beats if name == "dialer" else range(1, until + 1, 10)
+                m["beat_last_ok"] = base + 60 * [t for t in times if t <= scan][-1]
+            out.append((scan, hermes_monitors.run_deadman(make(snap, state=state, now=fakes.NOW + timedelta(minutes=scan)))))
+        return out
+
+    def test_an_extra_beat_does_not_set_the_cadence(self):
+        # A monitor beats at once when its incidents open or close. Dialer, 25 Oct 2026: open 11:32, closed 11:35.
+        for beats in ([1, 11, 21, 28, 38, 48, 58], [1, 11, 21, 28, 31, 41, 51, 61]):
+            for scan, r in self.deadman_scans(beats, until=65):
+                if scan >= 15:  # two beats seen
+                    self.assertEqual(r.status, OK, f"{beats} at minute {scan}: {r.summary}")
+                    self.assertEqual(r.evidence["beat_every_min"]["dialer"], 10.0)
+                    self.assertEqual(r.evidence["kv_writes_a_day"], 5 * 144 + 48)
+
     def test_the_guardians_own_beat_is_counted_when_on(self):
         state = {"beat": {"at": iso(fakes.NOW), "ok_at": iso(fakes.NOW)}}
         r = self.deadman_after(10, extra=("media-api",), state=state)

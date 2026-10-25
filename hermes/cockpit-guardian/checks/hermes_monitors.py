@@ -7,6 +7,8 @@ so "Hermes already alerts" no longer holds.
 """
 from __future__ import annotations
 
+from statistics import median_high
+
 from guard.context import Context, SourceError
 from guard.model import Check, Result, age_min, ago, fail, ok, parse_time, warn
 from guard.redact import clean
@@ -27,12 +29,14 @@ OLD_BEAT_MIN = 5
 NEW_BEAT_MIN = 9.5          # beats this far apart or more: the 10-minute release is in
 WATCHER_OLD, WATCHER_NEW = 288, 48
 GUARDIAN_BEATS_A_DAY = 288  # the guardian's own beat, once per 5-minute scan, when it is on
-BEATS_KEPT = 4
+BEATS_KEPT = 7
 
 
 def beat_every_min(ctx: Context, beats: dict) -> dict:
-    """Each monitor's beat interval: the shortest gap between the last good beats this guardian saw (None until
-    two). The shortest, because a refused stretch (every evening on the free plan) leaves one long gap."""
+    """Each monitor's beat interval: the middle gap (the longer of two) between the last good beats this guardian
+    saw, gaps over BEAT_LATE_MIN left out (None until one such gap). A refused stretch (every evening on the free
+    plan) or a missed scan leaves a long gap. A monitor beats at once when its incidents open or close, which
+    leaves a short one. Neither is the interval."""
     seen = ctx.state.setdefault("history", {}).setdefault("beats", {})
     out = {}
     for k, v in sorted(beats.items()):
@@ -42,8 +46,8 @@ def beat_every_min(ctx: Context, beats: dict) -> dict:
             times.append(t.isoformat())
         seen[k] = times[-BEATS_KEPT:]
         ts = [parse_time(x) for x in seen[k]]
-        gaps = [(b - a).total_seconds() / 60 for a, b in zip(ts, ts[1:])]
-        out[k] = round(min(gaps), 1) if gaps else None
+        gaps = [g for g in ((b - a).total_seconds() / 60 for a, b in zip(ts, ts[1:])) if g <= BEAT_LATE_MIN]
+        out[k] = round(median_high(gaps), 1) if gaps else None
     return out
 
 
