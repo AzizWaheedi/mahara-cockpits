@@ -137,6 +137,14 @@ gateway check. ClickUp is written only when the function secret
 `TYPEFORM_TOKEN`. To check: POST `{"doctor":true}` with `x-cron-secret`, then
 read that row.
 
+Two pg_cron jobs serve the kickoff and the Brand Blueprint (migrations
+`20261025n` and `20261025o`): `mahara-slack-notices` (every minute) sends the
+Slack notices through the Edge Function `cockpit-notices`, and
+`mahara-creative-drain` (every 2 minutes) runs Blueprint presses the browser
+left pending. Each calls its function only when there is work. Their rows are
+below, under "Slack notices (kickoff and Brand Blueprint)" and "Brand
+Blueprint press drain".
+
 ## Previews
 
 Ad previews and pictures in all three cockpits (health row "Ad previews and
@@ -396,6 +404,221 @@ Going live:
    `python3 desk.py deck-import --dry-run --link <a test folder>`, then add the
    README's `deck-import` cron line. Paste a test-safe client's folder in prep
    and watch the files arrive in the tray.
+
+## Slack notices (kickoff and Brand Blueprint)
+
+The cockpit tells the team in Slack when a kickoff is complete and when a
+Brand Blueprint is closed (the forms program's Stage 1,
+`docs/forms/STAGE1-CONTRACT.md`). Migration `20261025n_slack_notices.sql`
+holds it:
+
+- `cockpit_slack_notices`, the outbox: one row per notice, never deleted. Each
+  message ends with its own marker, `Ref CN-` and the first 8 characters of
+  the row's id, so a person or the sender can find it in Slack.
+- `cockpit_slack_notice_settings` (per notice: on or off, the channel, who it
+  tags), `cockpit_slack_channels` (the channels a notice may use, each checked
+  by the sender before it counts as Ready) and `cockpit_forms_editors` (the
+  seats the CEO or an admin gave the right to change these). Editors change
+  all of it in the client success cockpit, Settings, Notices and routing, and
+  a change applies to the next notice. Nothing needs a code change. Every
+  change is an audit row with the old and the new value.
+- Two triggers queue a notice: a new kickoff response on
+  `cockpit_client_onboarding` (written by the 10-minute mirror and the
+  one-card refresh), and a Brand Blueprint close or offer press settling on
+  `cockpit_creative_outbox`. A trigger never stops the mirror: an error goes to
+  `cockpit_sync_state` key `slack-notices-queue`, and the sweep queues the
+  notice on the next run. The sweep looks 48 hours back on every run, so it is
+  the second source behind both triggers.
+- pg_cron `mahara-slack-notices` runs `cockpit_slack_notices_kick()` every
+  minute. Only when there is work, it posts `{"job":"run"}` to the Edge
+  Function `cockpit-notices` with `x-cron-secret` from the vault's
+  `cockpit_notices_cron_secret`, and notes what it did in `cockpit_sync_state`
+  key `slack-notices-kick`.
+- `cockpit-notices` (JWT check off; its door compares `x-cron-secret` with
+  `NOTICES_CRON_SECRET`) posts as mahara-club-bot (`U0C0MJZNS2Y`) with
+  `SLACK_BOT_TOKEN` and reads the card's comments with `CLICKUP_API_TOKEN`.
+  Every call has an intent row and a response row in
+  `cockpit_csm_provider_health` (`run_key` = the notice id). A post counts only
+  when Slack's receipt names the channel it asked for. Anything else is
+  `unknown`, and an unknown is never sent again.
+
+What posts, with the settings it starts with:
+
+| Notice | Posts | Tags |
+| --- | --- | --- |
+| Kickoff complete | #csm-general, once the card has Make's Kickoff Handoff comment, at most 20 minutes after the kickoff | the creative director |
+| Kickoff late | where Kickoff complete posts, 20 minutes after a kickoff whose card has no Kickoff Handoff comment (or whose comments could not be read) | the CSM and the systems manager |
+| Second kickoff | a line in either kickoff notice | the CSM |
+| Kickoff card updated | a reply under a late notice, once the card catches up (within 48 hours) | nobody |
+| Brand Blueprint closed | #csm-general, when the first Close the call press settles | the CSM |
+| Brand Blueprint completed, for media | #media-general, at the same moment | nobody |
+| Blueprint card confirmed | a reply under the close, once a close that needed a check is confirmed | nobody |
+| Offer locked | a reply under the close (top level if the close did not post) | nobody |
+
+Tags are worked out when the notice is sent, by seat: the active seat with
+that role and that client in `cockpit_members`, its roster row in
+`cockpit_people`, its Slack id in `cockpit_eod_radar_slack_ids`, else Slack's
+lookup by email. The systems manager is the roster row whose role is Systems
+manager. A tag that finds nobody, or nobody Slack knows, is written as the role
+in plain text, and the sender
+writes a warning row in `cockpit_csm_provider_health` (resource
+`notices/mentions`) until a later notice resolves every tag.
+
+| State | Means |
+| --- | --- |
+| `queued` | Waiting its turn: a kickoff waits for the card for up to 20 minutes, a reply waits for its first notice, a rate limit waits for Slack's retry time |
+| `sending` | The sender has it. Still sending after 10 minutes: it becomes `unknown` |
+| `posted` | Slack confirmed it in the channel it asked for; `slack_ts`, `channel` and `permalink` are kept |
+| `failed` | Slack refused it, or 3 rate limits in a row; `error` says why in a sentence. Never tried again by itself |
+| `unknown` | It may have posted: the request left and no receipt came back, or Slack answered for another channel. The sender looks for its Ref in the channel every 10 minutes for 24 hours. Never sent again |
+| `skipped` | Not sent on purpose: a kickoff more than 48 hours old when the mirror listed it (every kickoff from before the notices began), a kickoff with no readable submit time, or a reply whose first notice did not post |
+| `muted` | Its notice was off in Settings when its turn came. It never posts later |
+
+To find a notice from its Ref:
+`select id, kind, state, target, channel, error, created_at from public.cockpit_slack_notices where id::text like '<the 8 characters>%';`
+
+Calling the sender by hand (the secret stays in the vault):
+
+```sql
+select net.http_post(url := 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-notices',
+  headers := jsonb_build_object('Content-Type','application/json','x-cron-secret',(select decrypted_secret from vault.decrypted_secrets where name='cockpit_notices_cron_secret')),
+  body := '{"job":"doctor"}'::jsonb, timeout_milliseconds := 60000);
+-- a few seconds later, with the id it returned:
+select status_code, left(content::text, 3000) from net._http_response where id = <id>;
+```
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| Checking the sender (the doctor) | The call above with body `{"job":"doctor"}`. It must answer 200 with `"ok": true`. It writes nothing but receipts and each channel's check. `bot.ok` false: `SLACK_BOT_TOKEN` is not mahara-club-bot's token; set it again as a function secret. `missingScopes` not empty: add those bot scopes to the Slack app (`chat:write`, `groups:history`, `users:read.email`, and `channels:history` while a public channel is listed) and reinstall it. A channel with `member` false: invite @mahara-club-bot there, then add the channel again in Settings. A mention with `ok` false: nobody holds that seat for the client, or the person has no Slack id; add their work email on Team & payroll, or choose other tags in Settings. A secret false: set that function secret | the tech lead; Slack app scopes: the CEO |
+| Seeing a notice before it is real (the dry run) | Body `{"job":"dryRun","responseId":"<a kickoff's response_id>"}` builds that kickoff's notice from the mirror (one ClickUp read for the comment check). Body `{"job":"dryRun","kind":"blueprint.close","taskId":"<card id>","facts":{"taskId":"<card id>","client":"<card name>","source":"cockpit","settled":"done","closedAt":"2026-10-25T11:00:00Z","closedByRole":"the creative director","mapPhase":4,"service":"interior"}}` builds any other kind from the facts given. It answers the text, the layout, the variant, the channel and who it would tag. It writes no notice and posts nothing | the tech lead |
+| Seeing a real post safely (the rehearsal) | Body `{"job":"rehearse","to":"U..."}` (without `to`, the CEO's direct messages, `ALERT_SLACK_TO`). It posts the sample notice with `[Rehearsal]` in front to that person's direct messages, tags nobody, stores the `D` channel Slack returned and looks for its Ref there. The answer must say `"state": "posted"` and `"reconcileFound": true` (finding the Ref in a direct message needs the Slack app's `im:history` scope; without it the post still counts and `reconcileFound` is false). An editor can do the same from Settings, Notices and routing, Send a test to me: it reaches their own direct messages within a minute. A rehearsal never posts in a team channel | the tech lead, or any editor |
+| A kickoff is in but nothing posted yet | Normal for up to 20 minutes: the notice waits for Make's Kickoff Handoff comment on the card (`error` reads "Waiting for Make's Kickoff Handoff comment."). It posts Kickoff complete when the comment is there, or Kickoff late at 20 minutes | nobody |
+| Kickoff late posted | Make did not finish the card. Open the card: the Kickoff Handoff comment, the Technical and Creative tasks, the Brand Blueprint link, the status. Fix what is missing by hand, or tell the systems manager. Never send the kickoff again: a second one runs Make again. When the card catches up, a reply "Card updated at ..." follows in the thread | the CSM, the systems manager |
+| `unknown` | It may be in Slack. Open the channel (for a reply, the thread) from the notice's `created_at` on and search for its `Ref CN-xxxxxxxx`. Found: copy the message link (`.../archives/C09RZ0GS0V9/p1792872070187739` is channel `C09RZ0GS0V9`, ts `1792872070.187739`: a dot before the last six digits) and record it: `select public.cockpit_slack_notice_result('<id>','posted','<ts>','<channel>',null);`. Not found: record what you checked, `select public.cockpit_slack_notice_fix('<id>','not_posted','<where you looked>');`, then requeue it (next row). Never post it by hand | the tech lead |
+| `failed` | Its `error` names the cause. "mahara-club-bot is not in #x": invite it there. "#x is archived" or "The channel for this notice is not ready": choose a Ready channel in Settings, Notices and routing. "the bot lacks a permission": add the scope (doctor). "Slack refused the bot's token": set `SLACK_BOT_TOKEN` again. "Slack refused the message's layout": read the notice's `text` and the dry run. Once fixed, requeue it as the service role: `select public.cockpit_slack_notice_fix('<id>','requeue',null);` (it goes back to `queued` with its tries reset and posts on the next run) | the tech lead |
+| A test says "No Slack account was found for you" | The editor's seat email is not on the roster, or Slack has no member with it. Add their work email on Team & payroll | the CEO, the systems manager |
+| A channel stays Checking, or reads Refused | Checking turns Ready or Refused on the sender's next run, within a minute or two. Still Checking: the runs have stopped (next row). Refused: its note says what to do (invite the bot, then add it again) | an editor, the CEO for invites |
+| Nothing posts at all | `select key, ok, note, last_run_at, last_ok_at from public.cockpit_sync_state where key in ('slack-notices-kick','slack-notices-queue');`. "The vault has no cockpit_notices_cron_secret": add it with the same value as the function secret `NOTICES_CRON_SECRET`. "pg_net is not installed": the database lost the extension. "Posted a notices run" while nothing posts: read the response with `select status_code, left(content::text, 500) from net._http_response order by id desc limit 5;` (401 means the vault and function secrets differ). Also check `mahara-slack-notices` is in `cron.job` and active, and `cockpit-notices` is deployed with the JWT check off | the tech lead |
+| `slack-notices-queue` reads `ok` false | A queue trigger hit an error (its note). The mirror carried on, and the sweep queues the notice on the next run; fix the cause if it comes back | the tech lead |
+| The guardian's "Slack notice queue" | A notice stayed queued, sending or unknown over 30 minutes, or one failed in 24 hours. Follow the rows above for that state | the tech lead |
+
+To stop the posts: turn each notice off in Settings, Notices and routing (a
+queued notice becomes `muted` at its turn and never posts later). To stop the
+runs too:
+`select cron.unschedule(jobid) from cron.job where jobname = 'mahara-slack-notices';`.
+A notice left `queued` while the runs are stopped posts when they start again.
+
+Going live (the lead session, in this order):
+
+1. Function secret `NOTICES_CRON_SECRET` (new; `SLACK_BOT_TOKEN` and
+   `CLICKUP_API_TOKEN` are already set project-wide), and the same value in
+   the vault as `cockpit_notices_cron_secret`. Never in a migration, a cron
+   command or a terminal log.
+2. Deploy `cockpit-notices` with the JWT check off, from a throwaway worktree
+   at merged main:
+
+   ```sh
+   python3 scripts/dev/deploy_composio.py cockpit-notices --extra $(python3 scripts/dev/fn_extras.py . cockpit-notices) --verify-jwt off --dry
+   ```
+
+   then without `--dry`. Read `verify_jwt` back as false. If the deploy cannot
+   turn it off, add the vault secret `cockpit_anon_key` (the kick then sends it
+   as `Authorization`) and set `"cockpit-notices": True` in the guardian's
+   `checks/edge_functions.py`.
+3. Apply `20261025n_slack_notices.sql` (Composio
+   `SUPABASE_APPLY_A_MIGRATION`). It applies twice without harm. Read back:
+   every kickoff older than 48 hours is a `skipped` notice and none is
+   `queued`; the four tables have row security on and SELECT for service_role
+   only; the browser functions are executable by authenticated only and the
+   service functions by service_role only; `mahara-slack-notices` is in
+   `cron.job`.
+4. The doctor, as above. It must be `"ok": true`.
+5. Dry runs: the newest kickoff's response ID, and a Blueprint close built
+   from facts for a card with no close yet. The text must match section 4.5 of
+   the contract; nothing is written or posted.
+6. The rehearsal to the CEO's direct messages: `posted`, a `D` channel, the
+   Ref found, and an intent and a response row in
+   `cockpit_csm_provider_health` for the post.
+7. Ship the client success cockpit (`scripts/ship.sh client-success`) for the
+   Slack stop and Settings, Notices and routing.
+8. Update the guardian on the VPS (`rsync -a --exclude __pycache__` the folder,
+   then `python3.11 -m unittest` there) only after `cockpit-notices` is
+   deployed and both `20261025n` and `20261025o` are applied, or it reports
+   the function and the two jobs missing.
+
+## Brand Blueprint press drain
+
+The creative director's three Blueprint presses (Send to media,
+`blueprintLaunch`; Close the call, `blueprintClose`; Lock the offer,
+`blueprintOffer`) are rows in `cockpit_creative_outbox` that
+`cockpit-creative-api` runs. The browser runs a press at once. Since
+`20261025o_blueprint_close_drain.sql` a server drain also runs any press the
+browser left `pending` (a closed tab, a dropped connection):
+
+- pg_cron `mahara-creative-drain` runs `cockpit_creative_drain_kick()` every 2
+  minutes. Only when a Blueprint press has waited over 2 minutes, it posts
+  `{"operation":"cron","job":"drain","apply":true}` to `cockpit-creative-api`
+  with `x-cron-secret` (vault `cockpit_creative_cron_secret`, function secret
+  `CREATIVE_CRON_SECRET`) and the project's anon key (vault
+  `cockpit_anon_key`), because the function keeps its JWT check. It notes what
+  it did in `cockpit_sync_state` key `creative-drain-kick`.
+- `cockpit_creative_outbox_due` hands out up to 5 pending presses between 2 and
+  30 minutes old with fewer than 3 refusals, and fails older ones ("This press
+  did not finish within 30 minutes. Press again.").
+- Each press runs as the person who pressed it:
+  `cockpit_creative_outbox_load_for_actor` checks, at that moment, that they
+  still hold the creative seat and the client.
+- A refusal while the plan is being prepared (before anything is written)
+  counts: `attempts` goes up by one, and at 3 the press fails. A run that wrote
+  something and then broke goes to `reconcile`, which nothing retries.
+- Every audit row of a drain run says `source_system = 'cron'`.
+- The close writes the card only. `close_route` is fixed at `card_only`, and
+  the close's Slack posts are notices (the section above), so a Slack problem
+  never sends a close to `reconcile`.
+
+| Symptom | What to do | Who |
+| --- | --- | --- |
+| The card says "This press was refused: {error}. The cockpit tries again in 2 minutes (1 of 3)." | The error names the cause: two open launch tasks for the client, the launch media buyer no longer on Marketing / ADs, the card renamed since the press. Fix it in ClickUp or in Settings; the next try runs the press | the creative director |
+| The card says "This press was refused: {error}. Fix it and press again." | Three refusals: the press failed. Fix the cause, then press again from the card (a new press) | the creative director |
+| "This press did not finish within 30 minutes. Press again." | Press again from the card. If it happens again, the drain is not running (next row) | the creative director, then the tech lead |
+| A press stays pending past a few minutes | `select key, ok, note, last_run_at from public.cockpit_sync_state where key = 'creative-drain-kick';`. A note naming `cockpit_creative_cron_secret` or `cockpit_anon_key`: add that vault secret. "Nothing to drain": no press is older than 2 minutes. A run posted but the press did not move: read `select status_code, left(content::text, 500) from net._http_response order by id desc limit 5;` (401 `not allowed` means `CREATIVE_CRON_SECRET` differs from the vault's; a gateway 401 means the anon key is wrong). Also check `mahara-creative-drain` is in `cron.job` and active | the tech lead |
+| What would the drain do now (a dry run) | `select public.cockpit_creative_outbox_due(false);` lists the presses it would run and how many it would fail, and writes nothing. Or call the drain with `apply` false (the SQL below the table): it prepares each press and writes nothing | the tech lead |
+| The card says "Needs a look" (`reconcile`) | ClickUp took some of the press and the read-back did not match. Open the card and the launch task and check each step of the press (its `payload` and `result`, and its `cockpit_media_actions` journal row) against what ClickUp shows. Make any missing change in ClickUp by hand. Then settle the row: `begin; select set_config('cockpit.audit_source','runbook',true); update public.cockpit_creative_outbox set state = 'done', settled_at = now(), error = left('Settled by hand: <what you checked>', 1000) where id = '<id>' and state = 'reconcile'; commit;` (the audit trigger records it; a close settled this way posts the "card update is confirmed" reply under its notice). Never press again before looking | the tech lead |
+| The guardian's "Brand Blueprint press" or "needing a look" rows | A press stayed pending over 10 minutes, one failed in 24 hours, or one is in `reconcile`. Follow the rows above | the tech lead |
+
+The drain by hand, with `apply` false (the secrets stay in the vault):
+
+```sql
+select net.http_post(url := 'https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-creative-api',
+  headers := jsonb_build_object('Content-Type','application/json',
+    'x-cron-secret',(select decrypted_secret from vault.decrypted_secrets where name='cockpit_creative_cron_secret'),
+    'Authorization','Bearer '||(select decrypted_secret from vault.decrypted_secrets where name='cockpit_anon_key'),
+    'apikey',(select decrypted_secret from vault.decrypted_secrets where name='cockpit_anon_key')),
+  body := '{"operation":"cron","job":"drain","apply":false}'::jsonb, timeout_milliseconds := 60000);
+-- then: select status_code, left(content::text, 3000) from net._http_response where id = <id>;
+```
+
+Going live (the lead session, in this order):
+
+1. Function secret `CREATIVE_CRON_SECRET`, the same value in the vault as
+   `cockpit_creative_cron_secret`, and the vault secret `cockpit_anon_key` (the
+   project's public anon key).
+2. Deploy `cockpit-creative-api` with the JWT check on, before the migration
+   (so the cron never calls a function without the drain):
+
+   ```sh
+   python3 scripts/dev/deploy_composio.py cockpit-creative-api --extra $(python3 scripts/dev/fn_extras.py . cockpit-creative-api) --verify-jwt on --dry
+   ```
+
+   then without `--dry`. Read `verify_jwt` back as true.
+3. Apply `20261025o_blueprint_close_drain.sql`. It applies twice without harm.
+   Read back: `attempts` on `cockpit_creative_outbox`; `close_route` is
+   `card_only`; the three drain functions are executable by service_role only;
+   `mahara-creative-drain` is in `cron.job`.
+4. The dry run, as above: it writes nothing.
+5. Ship the creative cockpit (`scripts/ship.sh creative`): Settings no longer
+   offers a close route, and the Blueprint card shows refusals and the Slack
+   stops.
 
 ## Sales cockpit
 

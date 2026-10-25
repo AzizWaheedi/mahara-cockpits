@@ -1,8 +1,10 @@
 /**
  * The creative director's Brand Blueprint pieces (docs/brand-blueprint
  * SPEC.md 4): the parts' states, the autosave, the press's words, the card,
- * the Settings section, the Links page fix and the dashboard's read.
- * Synthetic records only.
+ * the Settings section, the Links page fix and the dashboard's read; and
+ * (docs/forms/STAGE1-CONTRACT.md 6.2) the nudge for a held call with no
+ * close, the close's Slack stops, the server drain's refusals, and
+ * Settings without a close route to choose. Synthetic records only.
  *
  * Run: bun test scripts/blueprint.test.tsx
  */
@@ -15,10 +17,12 @@ import { MemoryRouter } from "react-router";
 import { BlueprintCard, callLink } from "../src/components/BlueprintCard";
 import { BlueprintSettings } from "../src/components/BlueprintSettings";
 import {
+  callFor,
   fakeBlueprintIO,
   fakeSettingsIO,
   MEMBERS,
   NAME,
+  noticesFor,
   OFFER,
   OFFER_SHEET,
   PART1,
@@ -41,6 +45,7 @@ import {
   SERVICES,
 } from "../src/lib/blueprint";
 import { LINK_GROUPS } from "../src/lib/creativeLinks";
+import { readNotices } from "../src/lib/notices";
 import { readBlueprintRows } from "../src/lib/useCreativeSnapshot";
 
 const H = 3_600_000;
@@ -431,7 +436,7 @@ test("the card folds to one line once all three are sent, and says so in rehears
   ).toBe("");
 });
 
-test("Settings: five packs in the kickoff's order and words; the close switch is the CEO's", () => {
+test("Settings: five packs in the kickoff's order and words; the close is fixed and points to the notices", () => {
   const html = (admin: boolean) =>
     renderToStaticMarkup(
       createElement(BlueprintSettings, {
@@ -456,11 +461,175 @@ test("Settings: five packs in the kickoff's order and words; the close switch is
   expect(cd).toContain("Not set: part 1 asks for the link on the call.");
   expect(cd).toContain("Share each folder as Anyone with the link can view.");
   expect(cd).toContain("Example media buyer");
-  expect(cd).toContain("Only an admin or the CEO changes this.");
-  expect(cd).not.toContain('name="bp-close-route"');
-  expect(cd).toContain('aria-current="true"');
-  const ceo = html(true);
-  expect(ceo.match(/name="bp-close-route"/g)).toHaveLength(3);
+  // No route to choose, for anyone (docs/forms/PLAN.md D5).
+  for (const page of [cd, html(true)]) {
+    expect(page).toContain("After Close the call");
+    expect(page).toContain(
+      "The cockpit writes the card and its comments, and the CSM pastes the phase 5 WhatsApp from the card comment. #csm-general and #media-general hear through the notices.",
+    );
+    expect(page).toContain(
+      "Change where and who in the client success cockpit",
+    );
+    expect(page).toContain(
+      'href="https://cockpit.maharamedia.com/client-success/settings"',
+    );
+    expect(page).not.toContain('name="bp-close-route"');
+    expect(page).not.toMatch(/Card and Slack|Make 14|Card only/);
+  }
+  expect("CLOSE_ROUTES" in lib).toBe(false);
+  expect(lib.NOTICES_SETTINGS_URL).toBe(
+    "https://cockpit.maharamedia.com/client-success/settings",
+  );
+});
+
+test("the nudge: a held Blueprint call with no close says so and opens the call page", () => {
+  const at = (state: string, over: Record<string, unknown> = {}) =>
+    routed(
+      createElement(BlueprintCard, {
+        taskId: TASK,
+        clientName: NAME,
+        status: "Brand Blueprint Booked♠️",
+        offerSheet: OFFER_SHEET,
+        io: fakeBlueprintIO(rowFor(state)),
+        initial: {
+          row: rowFor(state),
+          now: new Date().toISOString(),
+          call: callFor("nudge"),
+          ...over,
+        },
+      }),
+    ).replace(/<!-- -->/g, "");
+  const held = callFor("nudge")?.heldAt as string;
+  const html = at("nudge");
+  expect(html).toContain(
+    `Blueprint call held ${lib.dayWeek(held)}. No Blueprint record yet.`,
+  );
+  expect(html).toMatch(
+    /<a [^>]*href="\/blueprint\/86exmpl01"[^>]*>Open the call page\.<\/a>/,
+  );
+  expect(lib.dayWeek("2026-10-18T10:00:00Z")).toBe("Sun 18 Oct");
+  // The server says no nudge, or the call is closed: no nudge.
+  expect(
+    at("nudge", { call: { ...callFor("nudge"), nudge: false } }),
+  ).not.toContain("Blueprint call held");
+  expect(at("closed")).not.toContain("Blueprint call held");
+});
+
+test("the close's Slack stops: where and when each posted, and what to do when one did not", () => {
+  const at = (state: string, notices: unknown) =>
+    routed(
+      createElement(BlueprintCard, {
+        taskId: TASK,
+        clientName: NAME,
+        status: "Launch Booked",
+        offerSheet: OFFER_SHEET,
+        io: fakeBlueprintIO(rowFor(state)),
+        initial: { row: rowFor(state), now: new Date().toISOString(), notices },
+      }),
+    ).replace(/<!-- -->/g, "");
+  const posted = at("posted", noticesFor("posted"));
+  expect(posted).toMatch(
+    /Posted in #csm-general (at|on \w{3} \d{1,2} \w{3}) ?\d\d:\d\d/,
+  );
+  expect(posted).toMatch(
+    /Posted in #media-general (at|on \w{3} \d{1,2} \w{3}) ?\d\d:\d\d/,
+  );
+  expect(posted).toContain(
+    'href="https://example-workspace.slack.com/archives/C09RZ0GS0V9/p1"',
+  );
+  expect(posted).toContain("Open in Slack");
+  const refused = at("notposted", noticesFor("notposted"));
+  expect(refused).toContain(
+    "Not posted in #csm-general: Slack refused it: mahara-club-bot is not in #csm-general. Invite it there, then ask the tech lead to requeue this notice.",
+  );
+  // Nothing on record, or a failed read: said, never blank.
+  const none = at("closed", {
+    taskId: TASK,
+    now: new Date().toISOString(),
+    notices: [],
+  });
+  expect(none).toContain("No #csm-general notice is on record for this close.");
+  expect(none).toContain(
+    "No #media-general notice is on record for this close.",
+  );
+  expect(at("closed", null)).toContain(
+    "The cockpit could not read the Slack notices just now.",
+  );
+  // Part 3's reply under the close.
+  expect(at("needs", noticesFor("locked"))).toMatch(
+    /Reply posted in #csm-general at \d\d:\d\d/,
+  );
+  // Before the close there is nothing to say about Slack.
+  expect(at("sent", noticesFor("posted"))).not.toContain("#csm-general");
+});
+
+test("the server drain's refusals: trying again, then fix it and press again; a timed-out press as stored", () => {
+  expect(card("refused")).toContain(
+    "This press was refused: The Marketing/ADs list has two open launch tasks for this client. Close one in ClickUp. The cockpit tries again in 2 minutes (1 of 3).",
+  );
+  expect(card("refused3")).toContain(
+    "This press was refused: The Marketing/ADs list has two open launch tasks for this client. Close one in ClickUp. Fix it and press again.",
+  );
+  expect(card("refused3")).not.toContain("Needs a look:");
+  expect(card("timedout")).toContain(
+    "This press did not finish within 30 minutes. Press again.",
+  );
+  expect(card("timedout")).not.toContain("Needs a look:");
+  // A press stopped part way still needs a person.
+  expect(card("needs")).toContain("Needs a look:");
+});
+
+test("the reads: the call's nudge, the outbox's attempts, the Slack notices", async () => {
+  const rpc = (answer: unknown, error: unknown = null) => ({
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      seen.push([name, args]);
+      return { data: answer, error };
+    },
+    functions: {} as never,
+    auth: {} as never,
+  });
+  const seen: [string, Record<string, unknown>][] = [];
+  const call = await lib.readBlueprintCall(
+    rpc({ clientName: NAME, blueprintCall: callFor("nudge") }) as never,
+    TASK,
+  );
+  expect(call?.nudge).toBe(true);
+  expect(seen[0]).toEqual(["cockpit_blueprint_sources", { p_task_id: TASK }]);
+  expect(
+    await lib.readBlueprintCall(rpc({ clientName: NAME }) as never, TASK),
+  ).toBeNull();
+  const refused = rowFor("refused") as BlueprintRow;
+  const { rows } = await lib.readBlueprints(
+    rpc({ rows: [refused], now: new Date().toISOString() }) as never,
+    [TASK],
+  );
+  expect(rows[0]?.outbox?.["1"]?.attempts).toBe(1);
+  const read = await readNotices(rpc(noticesFor("posted")) as never, TASK);
+  expect(read.notices.map(n => n.kind)).toEqual([
+    "blueprint.media",
+    "blueprint.close",
+  ]);
+  expect(seen.at(-1)).toEqual([
+    "cockpit_slack_notice_read",
+    { p_task_id: TASK },
+  ]);
+  await expect(
+    readNotices(
+      rpc(null, {
+        message: "That client is not on your access list",
+        code: "42501",
+      }) as never,
+      TASK,
+    ),
+  ).rejects.toThrow("That client is not on your access list");
+});
+
+test("the client's brief no longer lists the old Brand blueprint form", () => {
+  const source = readFileSync(
+    new URL("../src/lib/creativeSourceModels.ts", import.meta.url),
+    "utf8",
+  );
+  expect(source).not.toContain('line("Brand blueprint form"');
 });
 
 test("the Links page no longer sends the bare Typeform; the deck is a note", () => {

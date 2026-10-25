@@ -536,6 +536,8 @@ describe("on the call", () => {
     const v = lastView();
     expect(v?.phase).toBe("sent");
     expect(v?.sent?.responseId).toBe("resp00000001");
+    // The deck window is on the client's screen: its trail never has the
+    // Slack stop (docs/forms/STAGE1-CONTRACT.md 6.1).
     expect(v?.trail?.stops.map(s => s.key)).toEqual([
       "sent",
       "typeform",
@@ -722,11 +724,28 @@ describe("the notes window's kickoff part", () => {
       />,
     );
     expect(html).toContain(
-      "Kickoff sent. Make is booking the Brand Blueprint.",
+      "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
     );
     expect(html).toContain("Typeform lists it");
     expect(html).toContain("Book the Brand Blueprint call");
     expect(asked[0]?.autoOpen).toBe(true);
     expect(html).not.toContain("Still missing");
+  });
+});
+
+describe("the deck never reads the Slack notices", () => {
+  test("its reads carry no notices, so its trail has no Slack stop", async () => {
+    const { formReads } = await import("../src/forms/useLiveForm");
+    expect(formReads(null, TASK, "kickoff").notices).toBeUndefined();
+    expect(
+      typeof formReads(null, TASK, "kickoff", { notices: true }).notices,
+    ).toBe("function");
+    const { readFileSync } = await import("node:fs");
+    const page = readFileSync(
+      new URL("../src/present/PresentPage.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(page).toContain('formReads(client, key, "kickoff")');
+    expect(page).not.toContain("notices: true");
   });
 });

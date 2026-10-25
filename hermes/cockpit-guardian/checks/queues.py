@@ -16,6 +16,11 @@ still not posted.
 The guardian never edits a queue row: each worker's own reaper owns its
 rows, and a retry can spend a picture or reach a lead. It only says how long
 something has waited, what failed and what a person can do.
+
+Some tables name their state column `state`, not `status` (the Slack notices
+and the creative outbox, docs/forms/STAGE1-CONTRACT.md section 7), and the
+creative outbox holds more than Blueprint presses, so a queue can name its
+state column and keep only some kinds. The reading still calls it `status`.
 """
 from __future__ import annotations
 
@@ -43,6 +48,17 @@ class Queue:
     id_col: str = "id"
     error_hint: Optional[str] = None
     failed_col: Optional[str] = None   # set: also warn on rows that ended failed in 24 h, dated by this column
+    status_col: str = "status"         # the column that holds the state (reported as status)
+    kind_col: Optional[str] = None     # set with kinds: only rows whose kind_col is one of kinds count
+    kinds: tuple[str, ...] = ()
+
+    def scope(self) -> list[tuple[str, str, Any]]:
+        """The kind filter, as a where clause (empty when the queue reads every row)."""
+        return [(self.kind_col, "in", list(self.kinds))] if self.kind_col and self.kinds else []
+
+
+# The creative outbox's Brand Blueprint presses (20261024a, 20261025o); its other kinds are not drained.
+BLUEPRINT_KINDS = ("blueprintLaunch", "blueprintClose", "blueprintOffer")
 
 
 QUEUES = (
@@ -66,18 +82,40 @@ QUEUES = (
           "at", 30, "the CEO", "Set the calendar sign-in (GOOGLE_CAL_* in ~/.team-sync/env) or fix the refused series.", "W12"),
     Queue("queue-feedback", "cockpit_feedback", "cockpit change request", ("queued",), "created_at", 1440, "the CEO",
           "Open the Claude desktop app: the feedback scan runs only while it is open.", "X3"),
+    # The Slack notices (20261025n): 30 minutes, not 15, because a kickoff waits up to 20 minutes for Make by design
+    # (docs/forms/STAGE1-CONTRACT.md section 11, X7).
+    Queue("queue-slack-notices", "cockpit_slack_notices", "Slack notice", ("queued", "sending", "unknown"), "created_at", 30,
+          "the tech lead", "Run the cockpit-notices doctor; an unknown needs a person to look in Slack for its Ref "
+          "(RUNBOOK, Slack notices).", "", status_col="state", failed_col="finished_at"),
+    # The Brand Blueprint presses and their server drain (20261025o): the drain runs every 2 minutes and fails a
+    # press at 30 minutes or after 3 refusals, so one still pending after 10 minutes is stuck.
+    Queue("queue-creative-blueprint", "cockpit_creative_outbox", "Brand Blueprint press", ("pending",), "created_at", 10,
+          "the tech lead", "Read the press's error on the Blueprint card; the drain runs every 2 minutes "
+          "(RUNBOOK, Brand Blueprint press drain).", "", status_col="state", kind_col="kind", kinds=BLUEPRINT_KINDS,
+          failed_col="settled_at"),
+    # A press in reconcile reached ClickUp but its read-back did not match: nothing retries it, so any one is a look.
+    Queue("queue-creative-reconcile", "cockpit_creative_outbox", "Brand Blueprint press needing a look", ("reconcile",),
+          "created_at", 0, "the tech lead", "Check the card in ClickUp against the press, then settle the row by hand "
+          "(RUNBOOK, Brand Blueprint press drain).", "", status_col="state", kind_col="kind", kinds=BLUEPRINT_KINDS),
 )
 
 
 WITH_ERROR = ("eod_outbox", "team_calendar_ops", "cockpit_post_jobs", "editor_requests", "ideation_requests", "social_jobs",
-              "cockpit_sales_requests")
+              "cockpit_sales_requests", "cockpit_slack_notices", "cockpit_creative_outbox")
+
+
+def _as_status(r: dict[str, Any], col: str) -> dict[str, Any]:
+    """A row read by its own state column, reported as status."""
+    return r if col == "status" else {**{k: v for k, v in r.items() if k != col}, "status": r.get(col)}
 
 
 def queue_check(q: Queue) -> Callable[[Context], Result]:
     def run(ctx: Context) -> Result:
         err_col = ",error" if q.table in WITH_ERROR else ""
-        rows = ctx.rows(q.table, f"{q.id_col},status,{q.time_col}{err_col}",
-                        where=[("status", "in", list(q.states))], order=f"{q.time_col}.asc", limit=50)
+        st = q.status_col
+        rows = ctx.rows(q.table, f"{q.id_col},{st},{q.time_col}{err_col}",
+                        where=[(st, "in", list(q.states))] + q.scope(), order=f"{q.time_col}.asc", limit=50)
+        rows = [_as_status(r, st) for r in rows]
         old = []
         for r in rows:
             age = age_min(r.get(q.time_col), ctx.now)
@@ -86,11 +124,14 @@ def queue_check(q: Queue) -> Callable[[Context], Result]:
         failed = []
         if q.failed_col:
             since = (ctx.now - timedelta(hours=24)).isoformat()
-            failed = ctx.rows(q.table, f"{q.id_col},status,{q.failed_col}{err_col}",
-                              where=[("status", "eq", "failed"), (q.failed_col, "gt", since)],
+            failed = ctx.rows(q.table, f"{q.id_col},{st},{q.failed_col}{err_col}",
+                              where=[(st, "eq", "failed"), (q.failed_col, "gt", since)] + q.scope(),
                               order=f"{q.failed_col}.desc", limit=50)
+            failed = [_as_status(r, st) for r in failed]
         ev = {"waiting": len(rows), "over_limit": len(old), "failed_24h": len(failed)}
         if not old and not failed:
+            if not q.limit_min:
+                return ok(f"No {q.label} is open" + (" and none failed in 24 h." if q.failed_col else "."), evidence=ev)
             return ok(f"No {q.label} has waited over {ago(q.limit_min)} ({len(rows)} open)"
                       + (" and none failed in 24 h." if q.failed_col else "."), evidence=ev)
         parts, items, since_t = [], [], None
@@ -99,7 +140,8 @@ def queue_check(q: Queue) -> Callable[[Context], Result]:
             ev["oldest"] = {"id": clean(r.get(q.id_col), 80), "status": r.get("status"), "minutes": int(age)}
             errors = [clean(x.get("error"), 120) for x, _ in old if x.get("error")]
             tail = f" Last error: {errors[0]}" if errors else ""
-            parts.append(f"{len(old)} {q.label}(s) waited past {ago(q.limit_min)}; the oldest is {r.get('status')} "
+            waited = "are open" if not q.limit_min else f"waited past {ago(q.limit_min)}"
+            parts.append(f"{len(old)} {q.label}(s) {waited}; the oldest is {r.get('status')} "
                          f"for {ago(age)} (since {r.get(q.time_col)}).{tail}")
             items.append("waiting")
             since_t = parse_time(r.get(q.time_col))
@@ -235,13 +277,24 @@ def run_issue_reports(ctx: Context) -> Result:
     return ok("No issue report is open.")
 
 
+def _means(q: Queue) -> str:
+    if not q.limit_min:
+        return f"No {q.label} is left open: a person looks at each one."
+    return f"Every {q.label} is picked up within {ago(q.limit_min)}."
+
+
+def _threshold(q: Queue) -> str:
+    first = "Any open row" if not q.limit_min else f"Any row waiting over {ago(q.limit_min)}"
+    return first + (", or any row failed in 24 h" if q.failed_col else "") + ": warn."
+
+
 CHECKS = [
     Check(id=q.id, area="queues", name=f"{q.label[0].upper() + q.label[1:]} queue", catalogue=q.catalogue,
-          means=f"Every {q.label} is picked up within {ago(q.limit_min)}.", severity="low",
-          reads=f"{q.table} where status in ({', '.join(q.states)}), by {q.time_col}"
-                + (f"; and status failed by {q.failed_col} in 24 h" if q.failed_col else ""),
-          threshold=f"Any row waiting over {ago(q.limit_min)}" + (", or any row failed in 24 h" if q.failed_col else "")
-                    + ": warn.", run=queue_check(q), owner=q.owner, action=q.action)
+          means=_means(q), severity="low",
+          reads=f"{q.table} where {q.status_col} in ({', '.join(q.states)})"
+                + (f" and {q.kind_col} in ({', '.join(q.kinds)})" if q.scope() else "") + f", by {q.time_col}"
+                + (f"; and {q.status_col} failed by {q.failed_col} in 24 h" if q.failed_col else ""),
+          threshold=_threshold(q), run=queue_check(q), owner=q.owner, action=q.action)
     for q in QUEUES
 ] + [
     Check(id="queue-eod-outbox", area="queues", name="End of day posts", catalogue="W8",

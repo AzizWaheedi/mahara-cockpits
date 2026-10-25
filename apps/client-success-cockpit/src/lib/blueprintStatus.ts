@@ -158,3 +158,61 @@ export function blueprintPrepUrl(taskId: string): string {
 }
 export const blueprintPrepWindow = (taskId: string) =>
   `mahara-prep-${taskId}-blueprint`;
+
+/** The stages before launch at which a Blueprint call is held. */
+const NUDGE_STAGE = /brand blueprint booked|ready for launch/i;
+/** A Blueprint call that took place, or was due to. */
+const HELD = new Set(["held", "showed", "confirmed", "booked"]);
+
+/** The phase in the card's Onboarding Map link (`?phase=4`), or null. */
+export function mapPhaseOf(url: string | null | undefined): number | null {
+  const m = String(url ?? "").match(/[?&]phase=([0-9]+)/);
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * A Blueprint call took place, yet the cockpit has no close for it (docs/
+ * forms/PLAN.md S8; the same rule as cockpit_blueprint_sources'
+ * blueprintCall.nudge, on the CSM's own reads): the card at Brand Blueprint
+ * Booked or Ready For Launch, its Onboarding Map at phase 4 or lower, the
+ * latest past `kind = blueprint` call, and no part 2. Null otherwise.
+ */
+export function blueprintNudge(args: {
+  stage: string | null | undefined;
+  mapUrl: string | null | undefined;
+  parts: BlueprintParts | null | undefined;
+  calls: { kind: string; startsAt?: string; status: string }[];
+  now: string;
+}): { heldAt: string } | null {
+  if (!NUDGE_STAGE.test(String(args.stage ?? ""))) return null;
+  if ((mapPhaseOf(args.mapUrl) ?? 0) > 4) return null;
+  if (args.parts?.["2"]) return null;
+  const now = Date.parse(args.now);
+  const held = args.calls
+    .filter(
+      c =>
+        c.kind === "blueprint" &&
+        HELD.has(String(c.status).toLowerCase()) &&
+        Number.isFinite(Date.parse(String(c.startsAt ?? ""))) &&
+        Date.parse(String(c.startsAt)) <= now,
+    )
+    .map(c => String(c.startsAt))
+    .sort((a, b) => Date.parse(b) - Date.parse(a));
+  return held[0] ? { heldAt: held[0] } : null;
+}
+
+/** Only these stages read the call store for the nudge. */
+export const nudgeStage = (stage: string | null | undefined) =>
+  NUDGE_STAGE.test(String(stage ?? ""));
+
+/** "Sun 18 Oct", Kuwait's calendar. */
+export function nudgeDay(iso: string): string {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return "";
+  const k = new Date(at + KUWAIT_MS);
+  return `${WEEKDAY[k.getUTCDay()]} ${k.getUTCDate()} ${MONTH[k.getUTCMonth()]}`;
+}
+
+/** The nudge's one sentence. */
+export const nudgeLine = (heldAt: string) =>
+  `Blueprint call held ${nudgeDay(heldAt)}. No Blueprint record yet. Open the call page.`;

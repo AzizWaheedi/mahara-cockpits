@@ -6,8 +6,11 @@
  *
  * view: card | dashboard | settings | call | notes
  * bp (card): open | part1 | unconfirmed | sent | changed | closed | late |
- *            conflict | needs | locked
- * rehearse=1, admin=1 (settings: the close switch editable), theme=light.
+ *            conflict | needs | locked, and (docs/forms/STAGE1-CONTRACT.md
+ *            6.2) nudge (a held call, no close) | posted | notposted (the
+ *            close's Slack stops) | refused | refused3 | timedout (the
+ *            server drain's refusals)
+ * rehearse=1, admin=1, theme=light.
  *
  * view=call is the Blueprint call inside this cockpit (EMBED.md 6): the call
  * page in the cockpit's shell, its frames on the client success deck
@@ -64,11 +67,13 @@ import {
 } from "@/pages/BlueprintCallPage";
 import { BlueprintNotes } from "@/pages/BlueprintNotesPage";
 import {
+  callFor,
   dashboardTables,
   fakeBlueprintIO,
   fakeSettingsIO,
   MEMBERS,
   NAME,
+  noticesFor,
   OFFER_SHEET,
   rowFor,
   settingsFixture,
@@ -129,6 +134,8 @@ function CardView() {
     () =>
       fakeBlueprintIO(row, {
         conflictOnce: bp === "conflict",
+        call: callFor(bp),
+        notices: noticesFor(bp),
       }),
     [row],
   );
@@ -138,7 +145,7 @@ function CardView() {
       <BlueprintCard
         taskId={TASK}
         clientName={NAME}
-        status="Launch Booked"
+        status={bp === "nudge" ? "Brand Blueprint Booked♠️" : "Launch Booked"}
         offerSheet={OFFER_SHEET}
         io={io}
         rehearse={rehearse}

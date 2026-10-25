@@ -126,6 +126,31 @@ RELEVANT_TEST_FILES = [
     # CSM decks backend: prep, launch ads and deck sources (20261019120000_csm_decks.sql, docs/csm-decks, 2026-10-19).
     "apps/media-buyer-cockpit/scripts/csm-decks-supabase.test.ts",
     "supabase/functions/cockpit-csm-api/launchAds.test.ts",
+    # Slack notices and the Brand Blueprint close and drain (docs/forms/STAGE1-CONTRACT.md section 9, 2026-10-25):
+    # each passes as `bun test <path>` from the repo root. The guardian's Python tests are not listed: they import
+    # `tests.fakes`, so they run only from hermes/cockpit-guardian (`python3.11 -m unittest`).
+    "apps/media-buyer-cockpit/scripts/slack-notices-supabase.test.ts",
+    "apps/media-buyer-cockpit/scripts/blueprints-supabase.test.ts",
+    # The two migrations together, applied twice in order, driven through the sender and both browsers' calls.
+    "apps/media-buyer-cockpit/scripts/stage1-fit-supabase.test.ts",
+    "supabase/functions/cockpit-notices/text.test.ts",
+    "supabase/functions/cockpit-notices/door.test.ts",
+    "supabase/functions/cockpit-notices/run.test.ts",
+    "supabase/functions/cockpit-notices/receipt.test.ts",
+    "supabase/functions/cockpit-creative-api/blueprint.test.ts",
+    "supabase/functions/cockpit-creative-api/outbox.test.ts",
+    "supabase/functions/cockpit-creative-api/drain.test.ts",
+    "supabase/functions/cockpit-media-api/slack.test.ts",
+    "supabase/functions/cockpit-media-api/workflows.test.ts",
+    "apps/client-success-cockpit/scripts/form-status.test.ts",
+    "apps/client-success-cockpit/scripts/form-panel.test.tsx",
+    "apps/client-success-cockpit/scripts/form-contract.test.ts",
+    "apps/client-success-cockpit/scripts/deck-kickoff.test.tsx",
+    "apps/client-success-cockpit/scripts/blueprint-csm-line.test.ts",
+    "apps/client-success-cockpit/scripts/notices-routing.test.tsx",
+    "apps/client-success-cockpit/scripts/blueprint-brief.test.ts",
+    "apps/creative-director-cockpit/scripts/blueprint.test.tsx",
+    "hermes/cockpit-sync/creative-fields.test.ts",
 ]
 
 MANDATORY_EVIDENCE_SUBCHECKS: Dict[str, List[str]] = {

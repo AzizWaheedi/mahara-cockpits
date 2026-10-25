@@ -1,3 +1,4 @@
+import { blueprintPrepUrl } from "@/lib/blueprintStatus";
 import { FORMS, onboardingFormLink } from "@/lib/onboardingCore";
 import type { FormConfig, FormKey } from "./formConfig";
 import { kickoffRail } from "./formRail";
@@ -30,20 +31,21 @@ export const KICKOFF: FormConfig = {
   rail: kickoffRail,
   already: kickoffAlready,
   again:
-    "a second Technical and Creative task, a second WhatsApp to the client's group and a second summary",
+    "a second Kickoff Handoff comment, a second Technical and Creative task and a second WhatsApp to the client's group",
+  // What Make 8925654 writes, as the card shows it (docs/forms/PLAN.md S10).
+  // Make books nothing: the CSM books the Brand Blueprint call.
   makeDoes: [
-    "A comment with every answer on the client's ClickUp card.",
-    "The card moves to In Progress.",
+    "The Kickoff Handoff comment, with every answer, on the client's ClickUp card.",
     "A Technical Onboarding task and a Creative Onboarding task.",
-    "The Brand Blueprint link on the card, and Brand Blueprint Booked.",
-    "The phase-4 WhatsApp to the client's group.",
-    "Make 06's summary of the call, waiting for approval in Slack.",
+    "The Brand Blueprint link on the card, and the card at Brand Blueprint Booked.",
+    "The Onboarding Map at phase 4.",
+    "The phase 4 WhatsApp to the client's group.",
   ],
   // Typeform's ending says "Book the Brand Blueprint call"; so does the cockpit.
   ending: { book: "blueprint", label: "Book the Brand Blueprint call" },
   after: {
-    say: "Kickoff sent. Make is booking the Brand Blueprint.",
-    sub: "Make also drafts the client's WhatsApp summary for approval in Slack.",
+    say: "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
+    sub: "The team hears in #csm-general once the card is updated.",
     lateSay: {
       make: "Kickoff sent. Make has not updated the card yet.",
       typeform: "Kickoff sent. Typeform has not listed it yet.",
@@ -58,12 +60,22 @@ export const KICKOFF: FormConfig = {
       `The card is at ${String(row.client_status ?? "")
         .replace(/[^\p{L}\p{N}\s-]/gu, "")
         .trim()}.`,
+    // The stop reads the card's Brand Blueprint link; the button opens the
+    // cockpit's own Blueprint, never the retired Typeform (PLAN.md S9).
     linkBack: {
       key: "blueprint_form",
-      label: "Blueprint link on the card",
-      pending: "Make adds the Blueprint link",
+      label: "The card has the Brand Blueprint link",
+      pending: "Make adds the Brand Blueprint link to the card",
       short: "the Blueprint link",
-      open: "Open the Brand Blueprint form",
+      open: "Open the Brand Blueprint",
+      href: taskId => blueprintPrepUrl(taskId),
+    },
+    // The cockpit's own #csm-general notice (cockpit-notices), once Make
+    // has updated the card or 20 minutes have passed.
+    notice: {
+      kind: "kickoff",
+      pending: "The team hears in #csm-general",
+      line: "Once Make has updated the card, usually within a few minutes.",
     },
   },
 };

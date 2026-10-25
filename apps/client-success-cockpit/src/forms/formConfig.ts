@@ -52,6 +52,44 @@ export type FormNews =
     }
   | { type: "checked" | "noted"; taskId: string; form: FormKey };
 
+/**
+ * One Slack notice as a browser sees it (cockpit_slack_notice_read,
+ * docs/forms/STAGE1-CONTRACT.md 2.1): its state, where and when, and the
+ * plain reason when it did not post. Never its text or facts. Parsed by
+ * src/lib/notices.ts; declared here so the panel imports nothing new.
+ */
+export interface NoticeView {
+  id: string;
+  kind: string;
+  state:
+    | "queued"
+    | "sending"
+    | "posted"
+    | "failed"
+    | "unknown"
+    | "skipped"
+    | "muted";
+  variant: string | null;
+  /** The kickoff's Typeform response ID (kickoff notices only). */
+  responseId: string | null;
+  outboxId: string | null;
+  parentKind: string | null;
+  /** Where it posted, or where it is aimed; null when neither is known yet. */
+  channel: { id: string; name: string | null } | null;
+  at: string;
+  dueAt: string | null;
+  permalink: string | null;
+  /** Null once posted; else what it waits for, or why it did not post. */
+  reason: string | null;
+}
+
+/** cockpit_slack_notice_read: one card's notices, newest first. */
+export interface NoticeRead {
+  taskId: string;
+  now: string;
+  notices: NoticeView[];
+}
+
 /** Everything the panel reads about one client, already gated. */
 export interface FormContext {
   /** The route key: the card ID the gate checked. */
@@ -64,12 +102,23 @@ export interface FormContext {
   timeline: Timeline | null;
   /** cockpit_csm_form_sends_read, newest first. */
   sends: FormSend[];
+  /**
+   * cockpit_slack_notice_read, this card. Undefined or null when this
+   * screen does not read it (the onboarding deck, on the client's screen):
+   * the trail then has no Slack stop.
+   */
+  notices?: NoticeRead | null;
   me: { email: string; firstName: string | null };
   /** The server's clock at the last read, and this browser's clock then. */
   now: string;
   readAt: number;
   /** A side read that failed, in plain words: only its part says so. */
-  failed: { deck?: string; timeline?: string; sends?: string };
+  failed: {
+    deck?: string;
+    timeline?: string;
+    sends?: string;
+    notices?: string;
+  };
 }
 
 /** A response already on record for this client. */
@@ -168,7 +217,7 @@ export interface FormConfig {
   /** Partial submit point (the Blueprint only, KICKOFF.md 2.6). */
   partial?: { afterRef: string; say: string };
   after: {
-    /** "Kickoff sent. Make is booking the Brand Blueprint." */
+    /** "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below." */
     say: string;
     /** The muted line under it. */
     sub: string;
@@ -184,17 +233,33 @@ export interface FormConfig {
     cardDone(row: OnboardingRow, sentAt: string): boolean;
     /** The card stop's line once it is done: "The card is at Brand Blueprint Booked." */
     cardLine(row: OnboardingRow): string;
-    /** The last stop: a link Make writes back, when there is one. */
+    /** A link Make writes back, when there is one. */
     linkBack?: {
       key: LinkKey;
-      /** The stop once done: "Blueprint link on the card". */
+      /** The stop once done: "The card has the Brand Blueprint link". */
       label: string;
-      /** The stop while it waits: "Make adds the Blueprint link". */
+      /** The stop while it waits: "Make adds the Brand Blueprint link to the card". */
       pending: string;
       /** In the short summary: "waiting for the Blueprint link". */
       short: string;
-      /** The link's own words once it is there: "Open the Brand Blueprint form". */
+      /** The button's own words once the stop is done: "Open the Brand Blueprint". */
       open: string;
+      /**
+       * Where the button goes. The stop still reads `links[key]`; without
+       * this, the button opens that card link.
+       */
+      href?: (taskId: string) => string;
+    };
+    /**
+     * The last stop: the cockpit's own Slack notice for this response
+     * (cockpit_slack_notice_read), when the screen reads it.
+     */
+    notice?: {
+      kind: "kickoff";
+      /** The stop while it waits: "The team hears in #csm-general". */
+      pending: string;
+      /** The line under it while it waits. */
+      line: string;
     };
   };
 }

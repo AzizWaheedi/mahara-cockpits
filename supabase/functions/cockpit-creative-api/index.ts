@@ -2,7 +2,8 @@ import {createClient} from 'npm:@supabase/supabase-js@2';
 import {providerTools} from '../cockpit-media-api/tools.ts';
 import {executePlan} from '../cockpit-media-api/execute.ts';
 import {requestPlan,launchLink,feedbackRange,feedbackText} from './lib.ts';
-import {runClientAction,executeOutbox} from './outbox.ts';
+import {runClientAction,executeOutbox,browserLoader} from './outbox.ts';
+import {cronDoor} from './drain.ts';
 import {runBuild} from './build.ts';
 import {rehearseBlueprint,blueprintMembers} from './blueprint.ts';
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'authorization,apikey,content-type,x-client-info','Access-Control-Allow-Methods':'POST,OPTIONS'};
@@ -15,13 +16,19 @@ Deno.serve(async(req:Request)=>{
  try{
   const env=(name:string)=>Deno.env.get(name);const url=env('SUPABASE_URL'),key=env('SUPABASE_ANON_KEY'),service=env('SUPABASE_SERVICE_ROLE_KEY');
   if(!url||!key||!service)throw new Error('Server connection is not configured');
+  // The body is read once, before the sign-in check, so pg_cron's drain is decided by its secret alone
+  // (drain.ts). The service key it uses tells the outbox audit the writes came from the cron.
+  let input:any=null;try{input=await req.json();}catch{input=null;}
+  const cron=await cronDoor(input,req.headers.get('x-cron-secret'),env,()=>createClient(url,service,{auth:{persistSession:false},global:{headers:{'x-cockpit-source':'cron'}}}));
+  if(cron)return json(cron.body,cron.status);
   const authorization=req.headers.get('Authorization')??'';
   const client=createClient(url,key,{global:{headers:{Authorization:authorization}},auth:{persistSession:false}});
   const {data:auth,error:authError}=await client.auth.getUser();if(authError||!auth.user)return json({error:'Sign in again'},401);
-  const input=await req.json(),args=input.args??{},operation=input.operation;
+  if(!input||typeof input!=='object'||Array.isArray(input))throw new Error('Send the request as a JSON object');
+  const args=input.args??{},operation=input.operation;
   if(operation==='clientAction'){
    admin=createClient(url,service,{auth:{persistSession:false}});
-   return json(await runClientAction(input,client,admin,env,auth.user.id));
+   return json(await runClientAction(input,browserLoader(client),admin,env,auth.user.id));
   }
   // The Brand Blueprint's reads: a rehearsal's plan (admins and the CEO) and the launch media buyer picker.
   // Both read ClickUp with GETs only; nothing is queued or journalled.

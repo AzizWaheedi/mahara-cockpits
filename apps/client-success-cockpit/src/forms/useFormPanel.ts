@@ -17,7 +17,7 @@ import type {
   RailPart,
   SendInput,
 } from "./formConfig";
-import { type Trail, trailFor } from "./formStatus";
+import { sendNotice, type Trail, trailFor } from "./formStatus";
 import { formLink, hiddenSha256, type Prefill, sameHidden } from "./prefill";
 
 /**
@@ -48,6 +48,11 @@ export interface FormIO {
   check(): Promise<void>;
   /** Re-reads the call store only (the recording). */
   recheck(): Promise<void>;
+  /**
+   * Re-reads this card's Slack notices only, while the trail's Slack stop
+   * waits. Absent where the screen does not read the notices.
+   */
+  notices?(): Promise<void>;
   /** Tells the cockpit's own tab. */
   announce?(news: FormNews): void;
 }
@@ -66,6 +71,10 @@ export interface SentState {
 /** The server's clock now, from its clock at the last read. */
 export const serverNow = (ctx: Pick<FormContext, "now" | "readAt">) =>
   Date.parse(ctx.now) + Math.max(0, Date.now() - ctx.readAt);
+
+/** The Slack stop's re-read: every minute, for 25 minutes after the send. */
+const NOTICE_EVERY_MS = 60_000;
+const NOTICE_WATCH_MS = 25 * 60_000;
 
 export const message = (e: unknown) =>
   String((e as Error)?.message ?? e ?? "").trim() || "No reason was given.";
@@ -358,8 +367,37 @@ export function useFormPanel({
         ctx,
         { responseId: sent.responseId, sentAt: sent.at, noted: !sent.error },
         serverNow(ctx),
+        sendNotice(config, ctx, sent.responseId),
       )
     : null;
+
+  // While the Slack stop waits and this window is in view, the notices are
+  // read again every minute, for the 25 minutes a kickoff notice can take
+  // (Make's update, or 20 minutes, then the sender's next minute).
+  const slackWaits = Boolean(
+    trail?.stops.some(
+      s => s.key === "slack" && !s.done && !s.problem && !s.unread,
+    ),
+  );
+  const readNotices = io.notices;
+  const sentAt = sent?.at ?? null;
+  useEffect(() => {
+    if (!slackWaits || !readNotices || !sentAt) return;
+    const until = Date.parse(sentAt) + NOTICE_WATCH_MS;
+    const t = window.setInterval(() => {
+      if (serverNow(ctxRef.current) > until) {
+        window.clearInterval(t);
+        return;
+      }
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      )
+        return;
+      void readNotices().catch(() => {});
+    }, NOTICE_EVERY_MS);
+    return () => window.clearInterval(t);
+  }, [slackWaits, readNotices, sentAt]);
 
   return {
     already,

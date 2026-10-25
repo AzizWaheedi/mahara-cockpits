@@ -90,6 +90,52 @@ describe("kickoff.ts holds the config and the registry", () => {
   });
 });
 
+describe("the kickoff's words tell the truth (docs/forms/PLAN.md S9, S10)", () => {
+  test("after the send: Make updates the card, the CSM books the call, the team hears in Slack", () => {
+    expect(KICKOFF.after.say).toBe(
+      "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below.",
+    );
+    expect(KICKOFF.after.sub).toBe(
+      "The team hears in #csm-general once the card is updated.",
+    );
+    expect(KICKOFF.again).toBe(
+      "a second Kickoff Handoff comment, a second Technical and Creative task and a second WhatsApp to the client's group",
+    );
+    expect(KICKOFF.makeDoes).toEqual([
+      "The Kickoff Handoff comment, with every answer, on the client's ClickUp card.",
+      "A Technical Onboarding task and a Creative Onboarding task.",
+      "The Brand Blueprint link on the card, and the card at Brand Blueprint Booked.",
+      "The Onboarding Map at phase 4.",
+      "The phase 4 WhatsApp to the client's group.",
+    ]);
+    const all = [KICKOFF.after.say, KICKOFF.after.sub, ...KICKOFF.makeDoes];
+    for (const line of all) {
+      expect(line).not.toMatch(/booking the Brand Blueprint|Make 06|summary/);
+      expect(line).not.toMatch(/[!—]/);
+    }
+  });
+
+  test("the trail's last link opens the cockpit's own Blueprint; the old Typeform is gone", () => {
+    const back = KICKOFF.after.linkBack;
+    expect(back).toMatchObject({
+      key: "blueprint_form",
+      label: "The card has the Brand Blueprint link",
+      pending: "Make adds the Brand Blueprint link to the card",
+      short: "the Blueprint link",
+      open: "Open the Brand Blueprint",
+    });
+    expect(back?.href?.("86fixture1")).toBe(
+      "/client-success/clients/86fixture1/present/blueprint?view=prep",
+    );
+    expect(read("src/forms/kickoff.ts")).not.toContain("oYZKtogO");
+    expect(KICKOFF.after.notice).toEqual({
+      kind: "kickoff",
+      pending: "The team hears in #csm-general",
+      line: "Once Make has updated the card, usually within a few minutes.",
+    });
+  });
+});
+
 describe("the core's dependencies are the ones KICKOFF.md 2.6 lists", () => {
   const doc = read("../../docs/csm-forms/KICKOFF.md");
   const section =

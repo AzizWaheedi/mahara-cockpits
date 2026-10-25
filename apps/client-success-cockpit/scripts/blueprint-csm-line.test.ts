@@ -1,7 +1,9 @@
 /**
  * The Brand Blueprint on the CSM's Onboarding panel (docs/brand-blueprint
- * SPEC.md 6.1): the one line, the phase 5 copy and its conditions, and the
- * read. Synthetic records only.
+ * SPEC.md 6.1): the one line, the phase 5 copy and its conditions, the
+ * read, and the nudge for a held call with no close (docs/forms/PLAN.md S8,
+ * the rule of cockpit_blueprint_sources' blueprintCall.nudge). Synthetic
+ * records only.
  *
  * Run: bun test scripts/blueprint-csm-line.test.ts
  */
@@ -10,8 +12,12 @@ import { expect, test } from "bun:test";
 import {
   blueprintDone,
   blueprintLine,
+  blueprintNudge,
   blueprintPrepUrl,
   blueprintPrepWindow,
+  mapPhaseOf,
+  nudgeLine,
+  nudgeStage,
   partWhen,
   phase5Copy,
   readBlueprintStatus,
@@ -42,9 +48,7 @@ test("one line: each part's time on Kuwait's clock, or not yet", () => {
       parts: { "1": { firstAt: "2026-10-24T07:12:00Z" } },
       now: NOW,
     }),
-  ).toBe(
-    "Starter ads sent 10:12 · call not closed yet · offer not locked yet",
-  );
+  ).toBe("Starter ads sent 10:12 · call not closed yet · offer not locked yet");
   // 23:30 UTC is already the next day in Kuwait.
   expect(partWhen("2026-10-23T23:30:00Z", NOW)).toBe("02:30");
   expect(blueprintDone({ "1": { firstAt: NOW }, "2": { firstAt: NOW } })).toBe(
@@ -160,4 +164,83 @@ test("the read: the card's row and the close switch; a failed setting is no copy
       TASK,
     ),
   ).rejects.toThrow("Choose at most 200 client cards");
+});
+
+test("the nudge: a held Blueprint call, before launch, and no close", () => {
+  const held = {
+    kind: "blueprint",
+    startsAt: "2026-10-18T10:00:00Z",
+    status: "held",
+  };
+  const map = (n: number) =>
+    `https://mahara-onboarding-map.vercel.app/?phase=${n}&cid=${TASK}`;
+  const base = {
+    stage: "Brand Blueprint Booked♠️",
+    mapUrl: map(4),
+    parts: null,
+    calls: [held],
+    now: NOW,
+  };
+  expect(blueprintNudge(base)).toEqual({ heldAt: "2026-10-18T10:00:00Z" });
+  // Ready For Launch counts too; the latest held call is the one named.
+  expect(
+    blueprintNudge({
+      ...base,
+      stage: "Ready For Launch🚀",
+      calls: [
+        held,
+        {
+          kind: "blueprint",
+          startsAt: "2026-10-20T08:00:00Z",
+          status: "showed",
+        },
+      ],
+    }),
+  ).toEqual({ heldAt: "2026-10-20T08:00:00Z" });
+  // Part 1 alone still nudges; part 2 ends it.
+  expect(
+    blueprintNudge({ ...base, parts: { "1": { firstAt: NOW } } }),
+  ).not.toBeNull();
+  expect(
+    blueprintNudge({
+      ...base,
+      parts: { "1": { firstAt: NOW }, "2": { firstAt: NOW } },
+    }),
+  ).toBeNull();
+  // Past phase 4, Active, no call, a call still to come, a cancelled call,
+  // another kind of call: no nudge.
+  expect(blueprintNudge({ ...base, mapUrl: map(6) })).toBeNull();
+  expect(blueprintNudge({ ...base, stage: "Active" })).toBeNull();
+  expect(blueprintNudge({ ...base, calls: [] })).toBeNull();
+  expect(
+    blueprintNudge({
+      ...base,
+      calls: [{ ...held, startsAt: "2026-10-25T10:00:00Z" }],
+    }),
+  ).toBeNull();
+  expect(
+    blueprintNudge({ ...base, calls: [{ ...held, status: "cancelled" }] }),
+  ).toBeNull();
+  expect(
+    blueprintNudge({ ...base, calls: [{ ...held, kind: "launch" }] }),
+  ).toBeNull();
+  // An unreadable map counts as phase 0, as the SQL's coalesce does.
+  expect(blueprintNudge({ ...base, mapUrl: null })).not.toBeNull();
+  expect(mapPhaseOf(map(5))).toBe(5);
+  expect(mapPhaseOf("https://example.com/map")).toBeNull();
+  // Only the two stages read the call store at all.
+  expect(nudgeStage("Brand Blueprint Booked♠️")).toBe(true);
+  expect(nudgeStage("Ready For Launch🚀")).toBe(true);
+  expect(nudgeStage("Onboarding Booked")).toBe(false);
+  expect(nudgeStage(null)).toBe(false);
+});
+
+test("the nudge's sentence: the call's day on Kuwait's calendar, and what to do", () => {
+  expect(nudgeLine("2026-10-18T10:00:00Z")).toBe(
+    "Blueprint call held Sun 18 Oct. No Blueprint record yet. Open the call page.",
+  );
+  // 22:30 UTC is already the next day in Kuwait.
+  expect(nudgeLine("2026-10-17T22:30:00Z")).toBe(
+    "Blueprint call held Sun 18 Oct. No Blueprint record yet. Open the call page.",
+  );
 });

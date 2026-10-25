@@ -82,6 +82,8 @@ export interface FormPanelProps {
   /** The cockpit's booking dialog, for the ending's button. */
   book?: (p: BookProps) => ReactNode;
   onPhase?: (phase: FormPhase) => void;
+  /** This form's own window, in full, for the trail's copy button. */
+  windowLink?: string;
 }
 
 /** A reason inside a sentence: its own last full stop goes, the sentence adds one. */
@@ -96,6 +98,10 @@ const reducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const STEPS = ["", "one", "two", "three", "four", "five", "six"];
+
+/** Every stop but the Slack notice is done: the card is ready for the next step. */
+const cardSteps = (trail: Trail) =>
+  trail.stops.every(s => s.key === "slack" || s.done);
 const http = (s: string) => /^https?:\/\/\S+$/i.test(s.trim());
 
 async function copyText(text: string, label: string) {
@@ -136,6 +142,7 @@ export function FormPanel({
   embed,
   book,
   onPhase,
+  windowLink,
 }: FormPanelProps) {
   const m = useFormPanel({
     config,
@@ -188,7 +195,9 @@ export function FormPanel({
         sent && trail ? (
           <AfterSend
             config={config}
+            taskId={ctx.taskId}
             links={ctx.row.links}
+            windowLink={windowLink}
             sent={sent}
             trail={trail}
             checking={m.checking}
@@ -201,7 +210,8 @@ export function FormPanel({
                 ? book({
                     kind: config.ending.book,
                     label: config.ending.label,
-                    variant: trail.current === null ? "default" : "outline",
+                    // The Slack notice does not hold the booking up.
+                    variant: cardSteps(trail) ? "default" : "outline",
                     autoOpen: m.autoBook,
                     onAutoOpenConsumed: m.bookConsumed,
                   })
@@ -1023,7 +1033,9 @@ function Choices({ choices }: { choices: NonNullable<RailRow["choices"]> }) {
 
 export function AfterSend({
   config,
+  taskId,
   links,
+  windowLink,
   sent,
   trail,
   checking,
@@ -1034,8 +1046,12 @@ export function AfterSend({
   book,
 }: {
   config: Pick<FormConfig, "title" | "after" | "makeDoes" | "resultsUrl">;
+  /** The card the form sent to: the link-back button's target is built from it. */
+  taskId: string;
   /** The card's links: the ClickUp card, and the one Make writes back. */
   links: OnboardingRow["links"] | undefined;
+  /** This form's own window, in full: a quiet line copies it. */
+  windowLink?: string | null;
   sent: { error: string | null; busy: boolean; send: FormSend | null };
   trail: Trail;
   checking: boolean;
@@ -1047,8 +1063,12 @@ export function AfterSend({
 }) {
   const back = config.after.linkBack;
   const link = back ? links?.[back.key] : undefined;
+  // The stop reads the card's link; the button goes where the config says.
+  const linked = trail.stops.some(s => s.key === "link" && s.done);
+  const linkHref = back?.href ? back.href(taskId) : link;
   const name = config.title.toLowerCase();
   const late = trail.late;
+  const allDone = trail.stops.every(s => s.done);
   // The late sentence: its first sentence in bold, the rest as it is.
   const lateFirst = trail.lateLine?.match(/^.*?\.(?=\s|$)/)?.[0] ?? "";
   const lateRest = trail.lateLine?.slice(lateFirst.length).trim() ?? "";
@@ -1103,35 +1123,64 @@ export function AfterSend({
                 key={`${s.key}-${s.done}`}
                 className={cn(
                   "relative mt-1 size-[11px] shrink-0 rounded-full",
-                  s.done
-                    ? "bg-success motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-[180ms] motion-safe:ease-out"
-                    : now
-                      ? late
-                        ? "bg-warning"
-                        : "glow-teal bg-primary"
-                      : "bg-muted-foreground/30",
+                  s.problem
+                    ? "bg-warning"
+                    : s.done
+                      ? cn(
+                          s.quiet ? "bg-muted-foreground/60" : "bg-success",
+                          "motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-50 motion-safe:duration-[180ms] motion-safe:ease-out",
+                        )
+                      : now
+                        ? late
+                          ? "bg-warning"
+                          : "glow-teal bg-primary"
+                        : "bg-muted-foreground/30",
                 )}
               />
               <div className="min-w-0">
                 <div
                   className={cn(
                     "text-sm",
-                    s.done || now ? "font-medium" : "text-muted-foreground",
+                    s.problem
+                      ? "text-foreground"
+                      : s.done || now
+                        ? "font-medium"
+                        : "text-muted-foreground",
                   )}
                 >
-                  {s.label}
+                  {s.problem && s.label.includes(": ") ? (
+                    // "Not posted:" carries the warning; the reason reads
+                    // as a plain sentence after it.
+                    <>
+                      <span className="txt-warn font-medium">
+                        {s.label.slice(0, s.label.indexOf(": ") + 1)}
+                      </span>
+                      {s.label.slice(s.label.indexOf(": ") + 1)}
+                    </>
+                  ) : (
+                    s.label
+                  )}
                   <span className="sr-only">
-                    {s.done
-                      ? ", done"
-                      : now
-                        ? late
-                          ? ", late"
-                          : ", next"
-                        : ", waiting"}
+                    {s.problem
+                      ? ", needs a person"
+                      : s.unread
+                        ? ", not read"
+                        : s.done
+                          ? ", done"
+                          : now
+                            ? late
+                              ? ", late"
+                              : ", next"
+                            : ", waiting"}
                   </span>
                 </div>
                 {line && line.replace(/\.$/, "") !== s.label ? (
                   <div className="text-xs text-muted-foreground">{line}</div>
+                ) : null}
+                {s.link ? (
+                  <ExtLink href={s.link.href} className={cn(INK, "text-xs")}>
+                    {s.link.label}
+                  </ExtLink>
                 ) : null}
               </div>
             </li>
@@ -1164,11 +1213,11 @@ export function AfterSend({
         </div>
       ) : null}
 
-      {book || link ? (
+      {book || (linked && linkHref) ? (
         <div className="flex flex-wrap items-center gap-3">
           {book}
-          {link && back && trail.current === null ? (
-            <ExtLink href={link} className={cn(INK, "text-sm")}>
+          {linked && linkHref && back ? (
+            <ExtLink href={linkHref} className={cn(INK, "text-sm")}>
               {back.open}
             </ExtLink>
           ) : null}
@@ -1179,7 +1228,7 @@ export function AfterSend({
         <span>
           {checkError
             ? null
-            : trail.current === null
+            : allDone
               ? `All ${steps} steps are done.`
               : checkedAt
                 ? `Checked ClickUp and Typeform at ${kuwaitTime(checkedAt)}.`
@@ -1201,6 +1250,34 @@ export function AfterSend({
         <p className="txt-warn text-xs">
           {`The cockpit could not read ClickUp and Typeform just now: ${clause(checkError)}. The ${name} is safe in Typeform; the 10-minute sync will catch up.`}
         </p>
+      ) : null}
+
+      {windowLink ? (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>This {name}'s window</span>
+          <button
+            type="button"
+            className={cn(
+              INK,
+              "inline-flex items-center gap-1 underline-offset-4 hover:underline",
+            )}
+            onClick={() =>
+              navigator.clipboard.writeText(windowLink).then(
+                () =>
+                  toast.success(
+                    `Link copied. It opens this client's ${name} window.`,
+                  ),
+                () =>
+                  toast.error(
+                    "The browser would not copy. Select the text instead.",
+                  ),
+              )
+            }
+          >
+            <Copy aria-hidden className="size-3.5" />
+            Copy the link
+          </button>
+        </div>
       ) : null}
 
       <details className="group/make text-xs">

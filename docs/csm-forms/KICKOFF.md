@@ -13,12 +13,25 @@ reuses it: the Brand Blueprint form in the creative director cockpit,
 prefilled from the kickoff, with a partial submit. So this ships as a
 reusable **form panel** with the kickoff as its first configuration.
 
-**Never submit a kickoff to test it.** One submission runs Make 12 (card
-comment, In Progress, a Technical and a Creative onboarding task, the
-Blueprint link, Brand Blueprint Booked, the phase-4 WhatsApp to the client's
-group) and Make 06 (an AI WhatsApp summary held for approval in Slack). A
-second submission does all of it again. Every test below works without a
-submit.
+**Never submit a kickoff to test it.** One submission runs Make 12
+(`8925654`: card comment, In Progress, a Technical and a Creative onboarding
+task, the Blueprint link, Brand Blueprint Booked, the phase-4 WhatsApp to the
+client's group), Make 06 (`9209179`: an AI WhatsApp summary held for approval
+in Slack, until the CEO's A3 takes the kickoff's `postcallsummary` webhook
+off) and, since Stage 1, the cockpit's own notice in #csm-general, which tags
+the creative director. A second submission does all of it again. Every test
+below works without a submit.
+
+**Stage 1 of the forms program (2026-10-25,
+`docs/forms/STAGE1-CONTRACT.md`) changed this spec in five places.** The
+window tells the truth: Make updates the card and books nothing, so the CSM
+books the Brand Blueprint call. The trail gains a fifth stop, the team's
+notice in #csm-general. The link stop's button opens the cockpit's own Brand
+Blueprint, never the retired Typeform `oYZKtogO`. The window shows its own
+link to copy. The notice is sent by the Edge Function `cockpit-notices`
+(5.2), and where it posts and who it tags are set in the client success
+cockpit, Settings, Notices and routing, never in code. Sections 0, 1, 2, 4
+and 5 below say so where it matters.
 
 ---
 
@@ -32,9 +45,10 @@ submit.
 | The client ID | `onboarding_client_id` is always the record's `clickup_task_id`, never read from a link or a form. The window shows it before anything else. |
 | The other 22 hidden fields | Rebuilt from the client's newest completed onboarding response (Make 13's mapping, below). Make's card link is a cross-check and nothing more. |
 | A second kickoff | Warned and held behind a deliberate second click. |
-| After submit | "Kickoff sent. Make is booking the Brand Blueprint." and a four-stop trail, confirmed by one-card refreshes at 45 s, 2 min and 5 min. The header's "Open in Typeform" goes, so no fresh form for the same client is one click away. |
+| After submit | "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below." and a five-stop trail (sent, Typeform, the card, the Brand Blueprint link, the #csm-general notice), confirmed by one-card refreshes at 45 s, 2 min and 5 min and by reading the notice. The header's "Open in Typeform" goes, so no fresh form for the same client is one click away. |
+| The team hears | The cockpit posts in #csm-general once Make has updated the card ("Kickoff complete", tagging the creative director), or 20 minutes after the kickoff if it has not ("Kickoff in, card not updated", tagging the CSM and the systems manager). Sent by `cockpit-notices` (5.2); the channel, the tags and on or off are rows editors change in Settings, Notices and routing. |
 | Make late | After 5 minutes, the headline says who is late, and one plain sentence with a link to the ClickUp card. |
-| Backend | One table and two gated functions (record a send, read sends), one audit row per send. No new Edge Function operation: the one-card refresh is the existing `onboarding.refresh`. No Make change. |
+| Backend | One table and two gated functions (record a send, read sends), one audit row per send. No new Edge Function operation: the one-card refresh is the existing `onboarding.refresh`. Since Stage 1, the notices outbox and its sender (`20261025n_slack_notices.sql`, `cockpit-notices`). The Make and Typeform changes A2 and A3 are the CEO's batch (5.4). |
 | CSP | Add `https://form.typeform.com` to `frame-src` in `apps/client-success-cockpit/vercel.json`, and `frame-ancestors 'self'` to both cockpit headers (5.3). |
 
 ---
@@ -87,13 +101,29 @@ submit.
    from the panel into the last two questions, then press Typeform's Submit.
 
 ### After the call
-8. The window shows **"Kickoff sent. Make is booking the Brand
-   Blueprint."** and the trail: sent, Typeform has it, Make updated the
-   card, Blueprint link on the card.
+8. The window shows **"Kickoff sent. Make is updating the card. Book the
+   Brand Blueprint call below."**, with "The team hears in #csm-general once
+   the card is updated." under it, and the trail: sent, Typeform has it,
+   Make updated the card, the card has the Brand Blueprint link, the team
+   hears in #csm-general. Make books nothing: the CSM books the Brand
+   Blueprint call (step 9). Once the link stop is done its button, **Open the
+   Brand Blueprint**, opens the cockpit's own Blueprint prep view
+   (`/client-success/clients/{taskId}/present/blueprint?view=prep`), never
+   the retired Typeform `oYZKtogO`. The stop itself still reads the card's
+   Brand Blueprint link, because that is what shows Make got that far.
 9. Typeform's ending button ("Book the Brand Blueprint call") opens the
    cockpit's own **Book the Brand Blueprint call** dialog for this client
    (`BookCallButton kind="blueprint"`, the same HighLevel calendar
    `x84ET6KnA8odlsjYiVLq`) instead of leaving the window.
+9a. **The team hears in #csm-general.** Once Make has updated the card (the
+   stage and the Kickoff Handoff comment are there), the cockpit posts
+   "Kickoff complete: {client}" and tags the creative director, who runs the
+   Brand Blueprint call. If the card has not caught up 20 minutes after the
+   kickoff, it posts "Kickoff in, card not updated: {client}" instead and
+   tags the CSM and the systems manager, and a reply follows in its thread
+   when the card catches up. A second kickoff adds a line and tags the CSM.
+   The trail's last stop reads "Posted in #csm-general at 14:03" with **Open
+   in Slack**. The notice is posted whether or not the window stays open.
 10. The cockpit tab gets the same news (a toast and a re-read of the
     Onboarding panel) through a `BroadcastChannel("mahara-forms")` message,
     and a second message (`noted`) once the cockpit has noted the send, so
@@ -106,6 +136,12 @@ submit.
     (`useFormSend`) serves the header and the panel, so they never
     disagree. Once the kickoff is on record the panel moves to "After the
     call".
+11. **The window's own link.** The window shows a quiet line, "This
+    kickoff's window", with a copy button for its address, and the
+    Onboarding panel's kickoff item has **Copy the kickoff window's link**
+    ("Link copied. It opens this client's kickoff window."). The card's
+    Kickoff Form Link field is not touched: it keeps Make's prefilled
+    Typeform link, which the prefill reads (2.2).
 
 ### On the onboarding deck's last slide (2026-10-22)
 The CEO: "embed the kick off form at the end of the onboarding
@@ -184,20 +220,26 @@ interface FormConfig {
   /** Partial submit point (Blueprint only): see section 2.6. */
   partial?: { afterRef: string; say: string };
   after: {
-    say: string;                  // "Kickoff sent. Make is booking the Brand Blueprint."
-    sub: string;                  // the muted line under it
+    say: string;                  // "Kickoff sent. Make is updating the card. Book the Brand Blueprint call below."
+    sub: string;                  // the muted line under it: "The team hears in #csm-general once the card is updated."
     lateSay: { make: string; typeform: string };  // the headline once a step is late
     lateMake: string;             // Make is late, in full: names the card comment Make writes
     checksAtSec: number[];        // [45, 120, 300]
     lateAfterMin: number;         // 5
     cardDone(row: OnboardingRow, sentAt: string): boolean;
     cardLine(row: OnboardingRow): string;         // "The card is at Brand Blueprint Booked."
-    linkBack?: {                  // the last stop, a link Make writes back
-      key: LinkKey;               // "blueprint_form"
-      label: string;              // done: "Blueprint link on the card"
-      pending: string;            // waiting: "Make adds the Blueprint link"
+    linkBack?: {                  // a stop that reads a link Make writes back
+      key: LinkKey;               // "blueprint_form": the stop reads links[key]
+      label: string;              // done: "The card has the Brand Blueprint link"
+      pending: string;            // waiting: "Make adds the Brand Blueprint link to the card"
       short: string;              // folded summary: "the Blueprint link"
-      open: string;               // the link: "Open the Brand Blueprint form"
+      open: string;               // the button: "Open the Brand Blueprint"
+      href?: (taskId: string) => string;  // the button's target: the cockpit's Blueprint prep view
+    };
+    notice?: {                    // the Slack stop, after the link stop (Stage 1)
+      kind: "kickoff";
+      pending: string;            // "The team hears in #csm-general"
+      line: string;               // "Once Make has updated the card, usually within a few minutes."
     };
   };
 }
@@ -209,8 +251,9 @@ interface FormContext {
   timeline: ClientTimeline | null;// cockpit_csm_client_timeline: calls, form history
   sends: FormSend[];              // cockpit_csm_form_sends_read
   me: { email: string; firstName: string | null };
+  notices: NoticeRead | null;     // cockpit_slack_notice_read, this card (Stage 1)
   now: string; readAt: number;    // the server's clock at the last read
-  failed: { deck?: string; timeline?: string; sends?: string };
+  failed: { deck?: string; timeline?: string; sends?: string; notices?: string };
 }
 
 interface Prefill {
@@ -546,13 +589,15 @@ would not copy. Select the text instead."
 ## 4. After submit
 
 ### 4.1 What the window shows
-Above the trail, in a teal-ringed strip: **"Kickoff sent. Make is booking the
-Brand Blueprint."** Under it, a muted line: "Make also drafts the client's
-WhatsApp summary for approval in Slack." The header's "Open in Typeform" is
-gone from here on: it would open a fresh form for the same client, a second
-kickoff without the guard.
+Above the trail, in a teal-ringed strip: **"Kickoff sent. Make is updating
+the card. Book the Brand Blueprint call below."** Under it, a muted line:
+"The team hears in #csm-general once the card is updated." (Make books
+nothing, and the old line about Make's WhatsApp summary is gone: that draft
+never reached a client, and A3 takes its webhook off.) The header's "Open in
+Typeform" is gone from here on: it would open a fresh form for the same
+client, a second kickoff without the guard.
 
-The trail, a thin vertical line with four stops. Each stop is written in the
+The trail, a thin vertical line with five stops. Each stop is written in the
 tense of its state; a pending stop says only what is useful next, only on
 the current stop, and not once that step is late. The current stop carries
 the window's one teal glow:
@@ -562,19 +607,41 @@ the window's one teal glow:
 | Sent | the send row exists | | "Sent from the cockpit at 14:02." ("Sent at 14:02. Not noted in the cockpit yet." while the note has failed) |
 | Typeform | `row.forms.kickoff.response_id` equals the send's ID, or the timeline's form history has its token | "Typeform lists it", "Usually within a minute." | "Typeform has it", "Submitted at 14:02." |
 | Card | `client_status` is Brand Blueprint Booked♠️ (or a later stage: LAUNCH BOOKED, Ready For Launch🚀, Active) **and** `card_updated_at` is at or after the submit | "Make updates the card", "Usually within a minute of Typeform." | "Make updated the card at 14:03", "The card is at Brand Blueprint Booked." |
-| Link | the card stop is done and `links.blueprint_form` is present | "Make adds the Blueprint link" | "Blueprint link on the card", then **Book the Brand Blueprint call** (teal) and "Open the Brand Blueprint form" (external link) |
+| Link | the card stop is done and `links.blueprint_form` is present | "Make adds the Brand Blueprint link to the card" | "The card has the Brand Blueprint link", then **Book the Brand Blueprint call** (teal) and **Open the Brand Blueprint** (the cockpit's own Blueprint prep view, `linkBack.href`; never the retired Typeform) |
+| Slack | the `kickoff` notice whose `responseId` is the send's is `posted` (`muted` and `skipped` count as done, quietly) | "The team hears in #csm-general", "Once Make has updated the card, usually within a few minutes." | "Posted in #csm-general at 14:03", with **Open in Slack** when Slack gave a link. A late notice adds "It says the card was not updated, so the team checks it." |
 
-When all four are done, the line under the trail says "All four steps are
-done."
+The Slack stop reads `cockpit_slack_notice_read(taskId)` with the window's
+other reads and on every check, and, while it is pending and the window is
+visible, again every 60 seconds for 25 minutes (a kickoff waits for Make up
+to 20 minutes by design). It is written from the notice's state:
+- `queued` or `sending`, or no notice yet: the pending words above.
+- `failed`: "Not posted: {reason}. Tell the tech lead.", with a warning dot.
+- `unknown`: "Not confirmed: {reason}. Tell the tech lead.", with a warning
+  dot. An unknown may already be in Slack, so it never says "not posted";
+  the sender never posts it twice.
+- "Tell the tech lead." is left off when the reason already names the tech
+  lead.
+- `muted`: "Not posted: the kickoff notice is off in Settings." (done).
+- `skipped`: "Not posted: {reason}" (done), for example a kickoff more than
+  48 hours old when the mirror listed it.
+- The read failed: "The cockpit could not read the Slack notice just now."
+  (not done, and not the current stop).
+
+When every stop is done, the line under the trail says "All five steps are
+done.", and the folded summary reads "Kickoff sent · posted in Slack" (or
+"· not posted in Slack" when the notice was off or skipped). The deck's last
+slide shows the same trail without the Slack stop: the deck is on the
+client's screen.
 
 The Onboarding Map phase is not used as a signal: three GHOSTED cards
 already sit at phase 5 without a kickoff.
 
-A fold, **What Make does now**, lists `makeDoes` in plain words: a comment
-with every answer on the card; the card moves to In Progress; a Technical
-Onboarding task and a Creative Onboarding task; the Blueprint link and Brand
-Blueprint Booked; the phase-4 WhatsApp to the client's group; and Make 06's
-summary waiting for approval in Slack.
+A fold, **What Make does now**, lists `makeDoes`, as the card shows it:
+"The Kickoff Handoff comment, with every answer, on the client's ClickUp
+card."; "A Technical Onboarding task and a Creative Onboarding task."; "The
+Brand Blueprint link on the card, and the card at Brand Blueprint Booked.";
+"The Onboarding Map at phase 4."; "The phase 4 WhatsApp to the client's
+group." Make books nothing, and Make 06's summary is no longer listed.
 
 Below 1024 px the panel is a fold above the form. After a send its summary
 carries the trail ("Kickoff sent · waiting for Make", "Kickoff sent · Make
@@ -619,6 +686,17 @@ The Onboarding panel's kickoff row shows the same one-line state, with the
 day, so it reads right the next day too: "Sent from the cockpit today at
 14:02 by Lina. Make updated the card at 14:03." (on another day: "on 15 Oct
 at 14:02").
+
+The team does not depend on this window being open. The cockpit's notice
+waits for the card for 20 minutes, not 5: Make takes at most about 2.5
+minutes and the mirror publishes every 10, so 20 is the line where the card
+is late. At 20 minutes without the Kickoff Handoff comment it posts "Kickoff
+in, card not updated: {client}. Open the card and check it." in #csm-general
+and tags the CSM and the systems manager ("Do not send the kickoff again."
+is in it too). If the cockpit could not read the card's comments, it says so
+instead. When the card later passes, a reply "Card updated at 14:31." follows
+in that thread (within 48 hours). The late notice is also the check that
+Make's status step (module [21]) still completed.
 
 ### 4.4 A second kickoff
 `already` is true when any of these holds: `forms.kickoff` on the record
@@ -698,9 +776,51 @@ This is a server-gated action with its own audit row. It calls no provider,
 so it needs no Edge Function. Nothing is granted on the table itself.
 
 ### 5.2 Edge Functions
-- **No new operation.** The one-card refresh is `cockpit-csm-api`
-  `onboarding.refresh` (gate, ClickUp and Typeform through `tools.ts`, health
-  ledger, run row, publish).
+- **No new operation for the window.** The one-card refresh is
+  `cockpit-csm-api` `onboarding.refresh` (gate, ClickUp and Typeform through
+  `tools.ts`, health ledger, run row, publish).
+- **`cockpit-notices` (Stage 1, new), the #csm-general notice.**
+  - Queued in the database, not by the window: a trigger on
+    `cockpit_client_onboarding` queues one `kickoff` row in
+    `cockpit_slack_notices` (`dedupe_key = kickoff:{response_id}`) when the
+    mirror or the one-card refresh lists a new kickoff response; a sweep on
+    every run is the second source. A kickoff more than 48 hours old when it
+    is listed is `skipped`, never posted (the migration seeds every kickoff
+    already on record that way). `second` is set when the card had another
+    response or the send row says so.
+  - Sent by pg_cron `mahara-slack-notices` every minute (only when there is
+    work) through the function, with `x-cron-secret` (JWT check off). It
+    claims a kickoff once the card looks done (the `BLUEPRINT_ON` stages and
+    `card_updated_at` at or after the submit, the trail's own rule, pinned by
+    a test) or 20 minutes have passed. It then reads the card's comments
+    through the `tools.ts` ClickUp helper: a "Kickoff Handoff" comment dated
+    at or after the submit gives "Kickoff complete"; none yet within 20
+    minutes waits a minute (never counted as a try); after 20 minutes it is
+    "Kickoff late".
+  - Posts as mahara-club-bot with `slackTools` (appended to
+    `cockpit-csm-api/tools.ts`). Every call has an intent and a response row
+    in `cockpit_csm_provider_health`. A post counts only when Slack's receipt
+    names the channel it asked for; anything else is `unknown` and is never
+    sent again (a person looks for its `Ref CN-` marker; the RUNBOOK's "Slack
+    notices" section).
+  - The text names roles, never people ("Filled by the CSM", the creative
+    director tagged), and never carries answers, prices, budgets, phone
+    numbers or emails. Links are the cockpit's onboarding tab and the
+    ClickUp card.
+  - **Where it posts and who it tags are rows, not code (D17).**
+    `cockpit_slack_notice_settings` holds on or off, the channel (from
+    `cockpit_slack_channels`, each checked by the sender before it can be
+    chosen) and the tags (a seat rule, or named people from the team list)
+    for `kickoff`, `kickoff.late`, `kickoff.second` and `kickoff.updated`.
+    The CEO, an admin, or a seat they add changes them in the client success
+    cockpit, Settings, Notices and routing; each change is an audit row with
+    the old and new value, and applies to the next notice. Tags are worked
+    out at send time; a seat that finds nobody is written as the role in
+    plain text and leaves a warning row.
+  - The window reads it with `cockpit_slack_notice_read(taskId)`: the
+    client's CSM, a creative seat with the client, admins and the CEO; it
+    returns each notice's state, time, channel, link and reason, never its
+    text or facts.
 - **It has never been seen working natively in production**: the only
   `trigger='one'` run is from 2026-10-05, the Convex era. Proving it is the
   first build step (section 7, check 5) before anything depends on it.
@@ -732,8 +852,26 @@ frames a cockpit page from another origin (the cockpits' own frames are
 https://cockpit.maharamedia.com/client-success/` shows `frame-ancestors`.
 
 ### 5.4 Make and Typeform
-No change to either. The open questions (section 8) list the two Typeform
-settings that may need changing, each with its default.
+The build changes neither. Two changes are in the CEO's batch
+(`docs/forms/PLAN.md` 5.2), carried out by the build session through the
+APIs on his yes:
+
+- **A2, Make `8925654` module [21]**, in this order: an Ignore error
+  handler on [21], so a failure there no longer stops [22] [23] [26] [25];
+  the cockpit's Brand Blueprint URL written into the card's Brand Blueprint
+  link field (`1b7a4a74`); Service Advertised set from the first chosen
+  service by option ID (left unset for "Other"); and Client Status forward
+  only (Brand Blueprint Booked only from Onboarding Booked, Needs
+  Contacting, SALES TEAM TO CONTACT, DELAY OUT OF OUR CONTROL or empty).
+  Kickoff Form Link `87d7d889` keeps Make's prefilled Typeform link.
+- **A3, Typeform `tG7dnxBn`:** the `postcallsummary` webhook off (Make 06,
+  `9209179`, drafted a summary for every kickoff and none was ever sent), and
+  the ending's sentence "Kickoff saved. The team hears in #csm-general once
+  Make updates the card." Until A3 is done, an APPROVE card may still appear
+  in #csm-general after a kickoff: deny it, never approve it.
+
+The open questions (section 8) list the Typeform settings that may need
+changing, each with its default.
 
 ---
 
@@ -851,14 +989,15 @@ shows progress, and counts add nothing on a call.
   "Sharing", "Check now", "Copy", "Read what was filled", "Open a second
   kickoff anyway", "Reload the form", "Book the Brand Blueprint call" (the
   trail and the Onboarding panel, the same words as Typeform's ending),
-  "Open the Brand Blueprint form", "Open the ClickUp card", "Open Typeform's
-  results", "Open the recording", "Check again", "Try again", "Close this
-  window".
+  "Open the Brand Blueprint" (the cockpit's own Blueprint), "Open in Slack",
+  "Open the ClickUp card", "Open Typeform's results", "Open the recording",
+  "Check again", "Try again", "Close this window", "Copy the kickoff
+  window's link".
 - Kickers: "Still missing", "The client", "In the form's order", "From the
   sale", "Already sent". The "Suggest" tag marks the rows the cockpit
   suggests from the client's words or the deck.
-- Toast (cockpit tab): "Kickoff sent for <client>. Make is booking the Brand
-  Blueprint."
+- Toast (cockpit tab): "Kickoff sent for <client>. Make is updating the card.
+  Book the Brand Blueprint call below."
 - Rehearsal banner (admin and CEO only, `?rehearse=1`): "Rehearsal in
   Typeform's sandbox: nothing is saved and Make does not run. Walk the form;
   do not press Submit."
@@ -1003,8 +1142,10 @@ shows progress, and counts add nothing on a call.
    Check:
    - one `csm_form.sent` audit row;
    - the trail reaches the Blueprint stop within 2 minutes;
-   - Make 12 and Make 06 each show one run (read in Make);
-   - one Technical and one Creative task exist.
+   - Make 12 shows one run (read in Make), and Make 06 none once A3 is done;
+   - one Technical and one Creative task exist;
+   - one `kickoff` notice in `cockpit_slack_notices` reaches `posted` in
+     #csm-general (variant `complete`), and the trail's Slack stop says so.
 
 ### Not in scope
 - Changes to Make or to Typeform forms.

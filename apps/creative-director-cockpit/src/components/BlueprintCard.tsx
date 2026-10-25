@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { DateInput } from "@/components/ui/date-input";
 import {
   type Answers,
+  type BlueprintCall,
   type BlueprintRow,
   blueprintDone,
   blueprintPartDone,
@@ -23,6 +24,7 @@ import {
   callRoute,
   clickupTask,
   dayShort,
+  dayWeek,
   FieldSaver,
   forgetPress,
   KEY_LABEL,
@@ -35,6 +37,7 @@ import {
   type OfferLine,
   offerOf,
   offerWait,
+  outboxOf,
   PART_NAME,
   PARTS,
   type Part,
@@ -43,6 +46,7 @@ import {
   partState,
   problem,
   type RunResult,
+  readBlueprintCall,
   readBlueprints,
   rehearseBlueprintPart,
   runBlueprintPart,
@@ -54,6 +58,12 @@ import {
   whenLong,
   whenNear,
 } from "@/lib/blueprint";
+import {
+  type NoticeRead,
+  type NoticeView,
+  noticeOf,
+  readNotices,
+} from "@/lib/notices";
 import { cn } from "@/lib/utils";
 
 /**
@@ -90,6 +100,13 @@ export type BlueprintIO = {
     answers: Answers;
   }) => Promise<{ missing: string[]; lines: string[] }>;
   session: () => string;
+  /**
+   * The Blueprint call against the record (cockpit_blueprint_sources'
+   * blueprintCall): the nudge when a call was held and nothing was closed.
+   */
+  call?: (taskId: string) => Promise<BlueprintCall | null>;
+  /** The client success cockpit's Slack notices for this card. */
+  notices?: (taskId: string) => Promise<NoticeRead>;
 };
 
 type Client = NonNullable<ReturnType<typeof useCockpitAuth>["client"]>;
@@ -106,6 +123,8 @@ export function supabaseBlueprintIO(client: Client): BlueprintIO {
     forget: forgetPress,
     rehearse: args => rehearseBlueprintPart(client, args),
     session: blueprintSession,
+    call: taskId => readBlueprintCall(client, taskId),
+    notices: taskId => readNotices(client, taskId),
   };
 }
 
@@ -150,6 +169,8 @@ function rehearsalIO(real: BlueprintIO, clientName: string): BlueprintIO {
 }
 
 const CLOSED_AFTER_MS = 35 * 60_000;
+/** The stages at which a held Blueprint call with no close is a miss. */
+const NUDGE_STAGE = /brand blueprint booked|ready for launch/i;
 const IN_ONBOARDING =
   /onboarding|blueprint|launch booked|ready for launch|kick ?off/i;
 
@@ -172,7 +193,14 @@ export function BlueprintCard({
   /** The harness's rehearsal; the page reads ?rehearse=1 for admins and the CEO. */
   rehearse?: boolean;
   /** A record already read (the harness and the tests render it at once). */
-  initial?: { row: BlueprintRow | null; now: string };
+  initial?: {
+    row: BlueprintRow | null;
+    now: string;
+    /** The nudge's read, already made. */
+    call?: BlueprintCall | null;
+    /** The Slack notices, already read. */
+    notices?: NoticeRead | null;
+  };
 }) {
   const auth = useCockpitAuth();
   const rehearse =
@@ -263,6 +291,8 @@ export function BlueprintCard({
       rehearse={rehearse}
       canWrite={read.row?.can?.write !== false}
       reload={reload}
+      initialCall={initial?.call}
+      initialNotices={initial?.notices}
     />
   );
 }
@@ -338,6 +368,8 @@ function BlueprintBody({
   rehearse,
   canWrite,
   reload,
+  initialCall,
+  initialNotices,
 }: {
   taskId: string;
   clientName: string;
@@ -350,6 +382,8 @@ function BlueprintBody({
   rehearse: boolean;
   canWrite: boolean;
   reload: () => Promise<void>;
+  initialCall?: BlueprintCall | null;
+  initialNotices?: NoticeRead | null;
 }) {
   const [row, setRow] = useState(firstRow);
   const [tick, setTick] = useState(() => Date.now());
@@ -466,6 +500,62 @@ function BlueprintBody({
       ch?.close();
     };
   }, [taskId, rehearse]);
+
+  // The nudge (docs/forms/PLAN.md S8): read only before part 2, at the two
+  // stages where a held call with no close means something was missed.
+  const closedYet = Boolean(stampOf(row, 2));
+  const [call, setCall] = useState<BlueprintCall | null | undefined>(
+    initialCall,
+  );
+  const askCall =
+    !rehearse &&
+    !closedYet &&
+    initialCall === undefined &&
+    NUDGE_STAGE.test(status ?? "") &&
+    Boolean(io.call);
+  useEffect(() => {
+    if (!askCall || !io.call) return;
+    let gone = false;
+    io.call(taskId).then(
+      c => !gone && setCall(c),
+      () => !gone && setCall(null),
+    );
+    return () => {
+      gone = true;
+    };
+  }, [askCall, io, taskId]);
+  const nudge = !closedYet && call?.nudge && call.heldAt ? call.heldAt : null;
+
+  // The close's Slack notices (STAGE1-CONTRACT.md 6.2), once part 2 is in;
+  // read again with the record.
+  const [notices, setNotices] = useState<
+    NoticeRead | { error: string } | null | undefined
+  >(initialNotices);
+  const readsNotices =
+    !rehearse &&
+    closedYet &&
+    initialNotices === undefined &&
+    Boolean(io.notices);
+  const lastSettled = [1, 2, 3]
+    .map(p => outboxOf(row, p as Part)?.state ?? "")
+    .join(",");
+  // A part's run settling is when a notice is queued: `lastSettled` reads
+  // the notices again then.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: lastSettled re-runs the read
+  useEffect(() => {
+    if (!readsNotices || !io.notices) return;
+    let gone = false;
+    io.notices(taskId).then(
+      r => !gone && setNotices(r),
+      e =>
+        !gone &&
+        setNotices({ error: e instanceof Error ? e.message : String(e) }),
+    );
+    return () => {
+      gone = true;
+    };
+  }, [readsNotices, io, taskId, lastSettled]);
+  const noticeRead = notices && !("error" in notices) ? notices : null;
 
   const stored = row?.answers ?? {};
   const answers: Answers = useMemo(
@@ -623,11 +713,14 @@ function BlueprintBody({
     );
 
   const offer3 = states[3];
+  // A press the server refused three times, or that ran out of time, is
+  // pressed again; a press stopped part way needs a person first.
+  const again3 = outboxOf(row, 3)?.state === "failed";
   const lockBlocked = !sent2
     ? "Close the call first: part 2 is still open."
     : !canWrite
       ? "Only the creative director locks the offer."
-      : offer3.kind === "needs_look"
+      : offer3.kind === "needs_look" && !again3
         ? `Needs a look first: ask an admin to reconcile request ${offer3.id.slice(0, 8)}.`
         : conflicts.offer || conflicts.scripts_status || conflicts.scripts_date
           ? "Pick yours or theirs first."
@@ -642,7 +735,8 @@ function BlueprintBody({
     (offer3.kind === "ready" ||
       offer3.kind === "in_progress" ||
       offer3.kind === "changed" ||
-      offer3.kind === "not_started");
+      offer3.kind === "not_started" ||
+      (offer3.kind === "needs_look" && again3));
 
   return (
     <Shell
@@ -667,6 +761,25 @@ function BlueprintBody({
           Only the creative director sends the parts.
         </p>
       ) : null}
+      {nudge ? (
+        <p
+          role="note"
+          className="callout-warn mb-3 flex gap-2 rounded-lg border px-3 py-2 text-sm"
+        >
+          <span className="mt-[7px] flex">
+            <Dot tone="warn" />
+          </span>
+          <span className="min-w-0">
+            Blueprint call held {dayWeek(nudge)}. No Blueprint record yet.{" "}
+            <Link
+              {...link()}
+              className="font-medium text-primary underline-offset-4 hover:underline"
+            >
+              Open the call page.
+            </Link>
+          </span>
+        </p>
+      ) : null}
 
       <ol className="divide-y divide-border/70 rounded-xl bg-muted/30">
         {PARTS.map(p => (
@@ -680,6 +793,13 @@ function BlueprintBody({
             canWrite={canWrite && !rehearse}
             onRunAgain={id => void runAgain(p, id)}
             onSend={() => void press(p)}
+            notices={
+              p === 2 && sent2 ? (
+                <CloseStops read={notices} />
+              ) : p === 3 && sent3 && noticeRead ? (
+                <OfferStop n={noticeOf(noticeRead, "blueprint.offer")} />
+              ) : null
+            }
             action={
               p === 1 && states[1].kind === "ready" ? (
                 <Button size="sm" variant="outline" asChild>
@@ -688,6 +808,8 @@ function BlueprintBody({
               ) : p === 2 &&
                 sent1 &&
                 !sent2 &&
+                // A refused part 1 is pressed again first.
+                outboxOf(row, 1)?.state !== "failed" &&
                 now - Date.parse(sent1.firstAt) > CLOSED_AFTER_MS ? (
                 <Button size="sm" variant="outline" asChild>
                   <Link {...link("part2")}>Finish part 2</Link>
@@ -852,6 +974,7 @@ function PartRow({
   onSend,
   action,
   detail,
+  notices,
 }: {
   part: Part;
   state: PartState;
@@ -863,8 +986,16 @@ function PartRow({
   onSend: () => void;
   action?: ReactNode;
   detail?: ReactNode;
+  /** The part's Slack notices: the close's two posts, the offer's reply. */
+  notices?: ReactNode;
 }) {
   const view = stateView(part, state, row, wait);
+  const box = outboxOf(row, part);
+  // The server drain refused this press and tries it again (20261025o).
+  const retrying =
+    box?.state === "pending" && (box.attempts ?? 0) > 0 && box.error
+      ? `This press was refused: ${clause(box.error)}. The cockpit tries again in 2 minutes (${box.attempts} of 3).`
+      : null;
   return (
     <li className="px-3 py-3 sm:px-4" data-part={part} data-state={state.kind}>
       <div className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-2 sm:grid-cols-[1.5rem_9.5rem_minmax(0,1fr)_auto] sm:items-center">
@@ -902,11 +1033,19 @@ function PartRow({
         <p className="mt-1 pl-8 text-xs text-muted-foreground">
           Changed: {state.keys.map(k => KEY_LABEL[k] ?? k).join(", ")}.
         </p>
+      ) : retrying ? (
+        <p role="status" className="mt-1 pl-8 text-xs txt-warn">
+          {retrying}
+        </p>
       ) : state.kind === "unconfirmed" ? (
         <p className="mt-1 pl-8 text-xs text-muted-foreground">
           The press is saved, but ClickUp did not confirm it. Run it again: it
           reuses the same request, so nothing is made twice.
         </p>
+      ) : null}
+      {notices ? (
+        // Under the part's state words, where the grid puts them.
+        <div className="mt-1.5 pl-8 sm:pl-48">{notices}</div>
       ) : null}
       {run?.error &&
       state.kind !== "needs_look" &&
@@ -968,13 +1107,30 @@ export function stateView(
           <span className="text-xs text-muted-foreground">{s.error}</span>
         ) : null,
       };
-    case "needs_look":
+    case "needs_look": {
+      const o = outboxOf(row, part);
+      // The drain's ends (20261025o): three refusals, or 30 minutes.
+      if (o?.state === "failed" && (o.attempts ?? 0) >= 3)
+        return {
+          tone: "bad",
+          text: `This press was refused: ${clause(s.error)}. Fix it and press again.`,
+          toneText: "txt-bad",
+          extra: <CopyId id={s.id} />,
+        };
+      if (o?.state === "failed" && /within 30 minutes/i.test(s.error))
+        return {
+          tone: "bad",
+          text: s.error,
+          toneText: "txt-bad",
+          extra: <CopyId id={s.id} />,
+        };
       return {
         tone: "bad",
         text: `Needs a look: ${s.error}`,
         toneText: "txt-bad",
         extra: <CopyId id={s.id} />,
       };
+    }
     case "changed":
       return { tone: "warn", text: "Changed since sent" };
     case "ready":
@@ -1022,6 +1178,131 @@ export function stateView(
           };
     }
   }
+}
+
+/** A reason inside a sentence: its own last full stop goes. */
+const clause = (t: string) => t.trim().replace(/\.\s*$/, "");
+
+/** "Tell the tech lead.", unless the reason already says who to tell. */
+const tell = (reason: string) =>
+  /tech lead/i.test(reason) ? "" : " Tell the tech lead.";
+
+/** "at 14:03" on the read's Kuwait day, else "on Sun 25 Oct 14:03". */
+const noticeTime = (n: NoticeView, now: string) => {
+  const w = whenNear(n.at, now);
+  return /^\d\d:\d\d$/.test(w) ? `at ${w}` : `on ${w}`;
+};
+const place = (n: NoticeView) =>
+  n.channel?.name ? `#${n.channel.name}` : (n.channel?.id ?? "Slack");
+
+/**
+ * One notice as a stop (STAGE1-CONTRACT.md 6.2): "Posted in #csm-general at
+ * 14:03", or "Not posted in #media-general: … Tell the tech lead.", or what
+ * it waits for.
+ */
+function NoticeStop({
+  n,
+  now,
+  reply,
+  fallback,
+}: {
+  n: NoticeView | null;
+  now: string;
+  reply?: boolean;
+  /** Said when there is no notice of this kind. */
+  fallback: string;
+}) {
+  if (!n)
+    return (
+      <span className="flex items-baseline gap-2 text-xs text-muted-foreground">
+        <Dot tone="quiet" />
+        {fallback}
+      </span>
+    );
+  const where = place(n);
+  const reason = clause(n.reason ?? "") || "no reason was given";
+  const [tone, text]: [Tone, string] =
+    n.state === "posted"
+      ? [
+          "good",
+          `${reply ? "Reply posted" : "Posted"} in ${where} ${noticeTime(n, now)}`,
+        ]
+      : n.state === "failed"
+        ? ["warn", `Not posted in ${where}: ${reason}.${tell(reason)}`]
+        : n.state === "unknown"
+          ? ["warn", `Not confirmed in ${where}: ${reason}.${tell(reason)}`]
+          : n.state === "muted"
+            ? ["quiet", "Not posted: it is off in the client success Settings."]
+            : n.state === "skipped"
+              ? ["quiet", `Not posted: ${reason}.`]
+              : n.state === "sending"
+                ? ["live", `Posting in ${where} now.`]
+                : ["live", `Waiting to post in ${where}.`];
+  return (
+    <span
+      className={cn(
+        "flex gap-2 text-xs",
+        tone === "warn" ? "txt-warn" : "text-muted-foreground",
+      )}
+    >
+      <span className="mt-[5px] flex">
+        <Dot tone={tone} />
+      </span>
+      <span className="min-w-0">
+        {text}
+        {n.state === "posted" && n.permalink ? (
+          <>
+            {" "}
+            <a
+              href={n.permalink}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 whitespace-nowrap text-primary underline-offset-4 hover:underline"
+            >
+              Open in Slack
+              <ArrowUpRight aria-hidden className="size-3.5" />
+            </a>
+          </>
+        ) : null}
+      </span>
+    </span>
+  );
+}
+
+/** Part 2's two posts: #csm-general and #media-general. */
+function CloseStops({
+  read,
+}: {
+  read: NoticeRead | { error: string } | null | undefined;
+}) {
+  if (read === undefined) return null;
+  if (read === null || "error" in read)
+    return (
+      <span className="flex items-baseline gap-2 text-xs text-muted-foreground">
+        <Dot tone="quiet" />
+        The cockpit could not read the Slack notices just now.
+      </span>
+    );
+  return (
+    <span className="flex flex-col gap-0.5">
+      <NoticeStop
+        n={noticeOf(read, "blueprint.close")}
+        now={read.now}
+        fallback="No #csm-general notice is on record for this close."
+      />
+      <NoticeStop
+        n={noticeOf(read, "blueprint.media")}
+        now={read.now}
+        fallback="No #media-general notice is on record for this close."
+      />
+    </span>
+  );
+}
+
+/** Part 3's reply under the close. */
+function OfferStop({ n }: { n: NoticeView | null }) {
+  if (!n) return null;
+  return <NoticeStop n={n} now={n.at} reply fallback="" />;
 }
 
 function CopyId({ id }: { id: string }) {

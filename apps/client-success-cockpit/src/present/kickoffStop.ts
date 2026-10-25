@@ -64,6 +64,11 @@ export interface KickoffView {
   /** The same form and values, in Typeform (not in rehearsal). */
   fallback: string | null;
   sent: SentState | null;
+  /**
+   * The kickoff window's trail, without its Slack stop: the deck never
+   * reads the notices, since the deck window is on the client's screen
+   * (docs/forms/STAGE1-CONTRACT.md 6.1).
+   */
   trail: Trail | null;
   checking: boolean;
   checkedAt: string | null;

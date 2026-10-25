@@ -12,12 +12,19 @@
  * kit, the call store and the team list are cut-down stand-ins with the live
  * column names. Every person, client and answer is invented. Nothing here
  * reaches ClickUp, Slack or Make: a press is an outbox row and audit rows.
+ *
+ * 20261025o_blueprint_close_drain.sql is applied twice on top (the close
+ * route fixed at card_only, blueprintCall, the outbox's attempts and audit
+ * source, and the server drain's RPCs and kick). PGlite has no pg_cron, vault
+ * or pg_net: the guarded blocks skip, and the kick's tests stand in a vault
+ * table and a net.http_post that records its call.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { PGlite } from "@electric-sql/pglite";
 import { actor, cockpitTestDb, member, migration } from "./lib/cockpitTestDb";
 
 const FILE = "20261024a_brand_blueprints.sql";
+const DRAIN = "20261025o_blueprint_close_drain.sql";
 
 const CD_A = "00000000-0000-4000-8000-0000000000d1"; // creative, Acme only
 const CD_ALL = "00000000-0000-4000-8000-0000000000d2"; // creative, every client
@@ -527,9 +534,23 @@ beforeAll(async () => {
     [A],
   );
 
+  // The kick's note goes here (20260921e, the canonical table).
+  await db.exec(
+    cut(
+      migration("20260921e_tap_charges.sql"),
+      /create table if not exists public\.cockpit_sync_state \([\s\S]*?\n\);/,
+      "cockpit_sync_state",
+    ),
+  );
+  await db.exec(
+    "ALTER TABLE public.cockpit_sync_state ENABLE ROW LEVEL SECURITY; REVOKE ALL ON public.cockpit_sync_state FROM anon, authenticated;",
+  );
+
   // Applied twice: the second run must change nothing and raise nothing.
   await db.exec(migration(FILE));
   await db.exec(migration(FILE));
+  await db.exec(migration(DRAIN));
+  await db.exec(migration(DRAIN));
 }, 60000);
 afterAll(async () => {
   await db?.close();
@@ -1530,12 +1551,21 @@ describe("settings", () => {
         "https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOp",
       ),
     ).toContain("access is required");
-    expect(await setRefused(ADMIN, "close_route", "whatsapp")).toContain(
-      "card_only, slack or make",
-    );
-    expect(await setRefused(ADMIN, "close_route", "")).toContain(
-      "card_only, slack or make",
-    );
+    const ROUTE_GONE =
+      "The close writes the card only. #csm-general and #media-general hear through the notices: Settings, Notices and routing in the client success cockpit.";
+    expect(await setRefused(ADMIN, "close_route", "whatsapp")).toBe(ROUTE_GONE);
+    expect(await setRefused(ADMIN, "close_route", "")).toBe("Choose card_only.");
+    // The two routes 20261024a allowed are gone too (20261025o), for admins and the CEO alike.
+    for (const who of [ADMIN, CEO])
+      for (const route of ["slack", "make"]) {
+        const e = await failure(
+          who,
+          "SELECT public.cockpit_blueprint_settings_set($1,$2,$3) r",
+          ["close_route", route, null],
+        );
+        expect(e.message).toBe(ROUTE_GONE);
+        expect(e.code).toBe("22023");
+      }
     expect(
       await count(
         "SELECT count(*) n FROM public.cockpit_audit_log WHERE action='blueprint.setting'",
@@ -1553,11 +1583,10 @@ describe("settings", () => {
     expect(s.changes["pack.interior"].by).toBe("Dana");
     const a = await set(CD_A, "launch_assignee", "12345678", "Example Buyer");
     expect(a.assignee).toEqual({ id: "12345678", label: "Example Buyer" });
-    // The same value again writes nothing.
+    // The same value again writes nothing; so does card_only, which it already is.
     await set(CD_A, "launch_assignee", "12345678", "Example Buyer");
-    const route = await set(ADMIN, "close_route", "slack");
-    expect(route.closeRoute).toBe("slack");
-    await set(CEO, "close_route", "card_only");
+    const route = await set(CEO, "close_route", "card_only");
+    expect(route.closeRoute).toBe("card_only");
     // A blank removes a pack.
     await set(
       CD_A,
@@ -1569,7 +1598,7 @@ describe("settings", () => {
       await count(
         "SELECT count(*) n FROM public.cockpit_audit_log WHERE action='blueprint.setting'",
       ),
-    ).toBe(before + 6);
+    ).toBe(before + 4);
     expect(
       JSON.stringify(
         await one(CSM_A, "SELECT public.cockpit_blueprint_settings_read() r"),
@@ -2034,6 +2063,627 @@ describe("the browsers read what the server returns (SPEC 7.1)", () => {
   });
 });
 
+describe("the close drain and the Blueprint call (20261025o)", () => {
+  const DRAIN_FNS = [
+    "public.cockpit_creative_outbox_due(boolean)",
+    "public.cockpit_creative_outbox_load_for_actor(uuid)",
+    "public.cockpit_creative_outbox_refused(uuid,text)",
+  ];
+  const can = (role: string, sig: string) =>
+    owner<boolean>("SELECT has_function_privilege($1,$2,'EXECUTE') r", [
+      role,
+      sig,
+    ]);
+  async function service<T = any>(
+    text: string,
+    params: unknown[] = [],
+  ): Promise<T> {
+    await asOwner();
+    await db.exec("SET ROLE service_role");
+    try {
+      return (await db.query<{ r: T }>(text, params)).rows[0].r;
+    } finally {
+      await db.exec("RESET ROLE");
+    }
+  }
+  async function serviceRefused(text: string, params: unknown[] = []) {
+    await asOwner();
+    await db.exec("SET ROLE service_role");
+    try {
+      await db.query(text, params);
+    } catch (e) {
+      return e as Error & Row;
+    } finally {
+      await db.exec("RESET ROLE");
+    }
+    throw new Error(`Expected a refusal for ${text}`);
+  }
+  // An outbox row put straight in (as the press would), aged by minutes.
+  const queue = async (
+    id: string,
+    o: {
+      kind?: string;
+      task?: string;
+      client?: string;
+      actor?: string;
+      email?: string;
+      age?: number;
+      state?: string;
+      attempts?: number;
+    } = {},
+  ) => {
+    await asOwner();
+    await db.query(
+      `INSERT INTO public.cockpit_creative_outbox(id,client_name,kind,task_id,payload,actor_id,actor_email,state,attempts,created_at)
+       VALUES($1,$2,$3,$4,'{"v":1}'::jsonb,$5,$6,$7,$8,now()-make_interval(mins => $9::int))`,
+      [
+        id,
+        o.client ?? "Acme Interiors",
+        o.kind ?? "blueprintClose",
+        o.task ?? A,
+        o.actor ?? CD_A,
+        o.email ?? "cd-a@tests.invalid",
+        o.state ?? "pending",
+        o.attempts ?? 0,
+        o.age ?? 0,
+      ],
+    );
+  };
+  const state = (id: string) =>
+    owner<Row>(
+      "SELECT jsonb_build_object('state',state,'error',error,'attempts',attempts,'settled',settled_at IS NOT NULL) r FROM public.cockpit_creative_outbox WHERE id=$1",
+      [id],
+    );
+  const sources = (who: string, task: string) =>
+    one<Row>(who, "SELECT public.cockpit_blueprint_sources($1) r", [task]);
+
+  test("the drain RPCs are the service key's only; the kick and the audit are nobody's; each is a definer with an empty path", async () => {
+    for (const sig of DRAIN_FNS) {
+      expect(await can("service_role", sig)).toBe(true);
+      expect(await can("authenticated", sig)).toBe(false);
+      expect(await can("anon", sig)).toBe(false);
+    }
+    for (const sig of [
+      "public.cockpit_creative_drain_kick()",
+      "public.cockpit_creative_outbox_audit()",
+    ])
+      for (const role of ["anon", "authenticated", "service_role"])
+        expect(await can(role, sig)).toBe(false);
+    await asOwner();
+    const fns = (
+      await db.query<{ definer: boolean; config: string[] | null }>(
+        "SELECT prosecdef definer, proconfig config FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN ('cockpit_creative_outbox_due','cockpit_creative_outbox_load_for_actor','cockpit_creative_outbox_refused','cockpit_creative_drain_kick','cockpit_creative_outbox_audit')",
+      )
+    ).rows;
+    expect(fns.length).toBe(5);
+    for (const fn of fns) {
+      expect(fn.definer).toBe(true);
+      expect(fn.config).toContain('search_path=""');
+    }
+    expect(
+      await refused(
+        CD_A,
+        "SELECT public.cockpit_creative_outbox_due(false) r",
+      ),
+    ).toContain("permission denied");
+    expect(
+      await refused(
+        CD_A,
+        "SELECT public.cockpit_creative_outbox_load_for_actor($1::uuid) r",
+        [uuid(10)],
+      ),
+    ).toContain("permission denied");
+    // The table's grants are as 20260927s left them.
+    for (const privilege of ["SELECT", "INSERT", "UPDATE"])
+      expect(
+        await owner(
+          "SELECT has_table_privilege('service_role','public.cockpit_creative_outbox',$1) r",
+          [privilege],
+        ),
+      ).toBe(true);
+    for (const role of ["anon", "authenticated"])
+      expect(
+        await owner(
+          "SELECT has_table_privilege($1,'public.cockpit_creative_outbox','SELECT') r",
+          [role],
+        ),
+      ).toBe(false);
+  });
+
+  test("attempts starts at 0, is 0 to 3, and the drain's index is there", async () => {
+    await queue(uuid(300), { age: 0 });
+    expect((await state(uuid(300))).attempts).toBe(0);
+    await asOwner();
+    let message = "";
+    try {
+      await db.query(
+        "UPDATE public.cockpit_creative_outbox SET attempts=4 WHERE id=$1",
+        [uuid(300)],
+      );
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toContain("cockpit_creative_outbox_attempts_check");
+    expect(
+      await owner(
+        "SELECT pg_get_indexdef('public.cockpit_creative_outbox_pending_bp'::regclass) r",
+      ),
+    ).toContain("WHERE ((state = 'pending'::text) AND (kind = ANY");
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET state='failed', settled_at=now() WHERE id=$1",
+      [uuid(300)],
+    );
+  });
+
+  test("the outbox audit names the cron as the source: by the setting, or by the service key's header; else none", async () => {
+    await queue(uuid(301));
+    // The audit row of one write, found by the error that write stored: two
+    // writes in the same clock tick tie on created_at, and the id is random.
+    const lastSource = (error: string | null = null) =>
+      owner<string | null>(
+        error === null
+          ? "SELECT source_system r FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND entity_id=$1 AND action='insert'"
+          : "SELECT source_system r FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND entity_id=$1 AND after->>'error' = $2",
+        error === null ? [uuid(301)] : [uuid(301), error],
+      );
+    const audits = () =>
+      count(
+        "SELECT count(*) n FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND entity_id=$1",
+        [uuid(301)],
+      );
+    expect(await lastSource()).toBeNull();
+    expect(await audits()).toBe(1);
+    const write = async (settings: Record<string, string>) => {
+      await asOwner();
+      await db.exec("SET ROLE service_role");
+      try {
+        await db.exec("BEGIN");
+        for (const [k, v] of Object.entries(settings))
+          await db.query("SELECT set_config($1,$2,true)", [k, v]);
+        await db.query(
+          "UPDATE public.cockpit_creative_outbox SET error=$2 WHERE id=$1",
+          [uuid(301), JSON.stringify(settings)],
+        );
+        await db.exec("COMMIT");
+      } finally {
+        await db.exec("RESET ROLE");
+      }
+      return lastSource(JSON.stringify(settings));
+    };
+    expect(await write({ "cockpit.audit_source": "cron" })).toBe("cron");
+    expect(
+      await write({ "request.headers": '{"x-cockpit-source":"cron","accept":"*/*"}' }),
+    ).toBe("cron");
+    expect(
+      await write({ "request.headers": '{"x-cockpit-source":"browser"}' }),
+    ).toBeNull();
+    // An unreadable header never breaks the write.
+    expect(await write({ "request.headers": "not json" })).toBeNull();
+    expect(await write({})).toBeNull();
+    expect(await audits()).toBe(6);
+    const row = await owner<Row>(
+      "SELECT jsonb_build_object('action',action,'source_app',source_app,'actor',actor_email,'after',after) r FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND entity_id=$1 AND source_system='cron' ORDER BY created_at, id LIMIT 1",
+      [uuid(301)],
+    );
+    expect(row).toMatchObject({
+      action: "update",
+      source_app: "creative",
+      actor: "cd-a@tests.invalid",
+      after: { id: uuid(301), attempts: 0 },
+    });
+  });
+
+  test("the due list: pending Blueprint presses 2 to 30 minutes old with under 3 refusals, oldest first; older ones fail; a dry run writes nothing", async () => {
+    await queue(uuid(310), { age: 5 });
+    await queue(uuid(311), { age: 1 }); // too young: the browser may still be running it
+    await queue(uuid(312), { age: 45 }); // too old: failed
+    await queue(uuid(313), { age: 5, kind: "comment" }); // not a Blueprint press
+    await queue(uuid(314), { age: 50, kind: "videoRequest" }); // not a Blueprint press, never failed here
+    await queue(uuid(315), { age: 8, attempts: 3 });
+    await queue(uuid(316), { age: 12, kind: "blueprintOffer" });
+    await queue(uuid(317), { age: 9, state: "sending" });
+    const mine = (r: Row) =>
+      r.rows.filter((x: Row) => x.id >= uuid(310) && x.id <= uuid(317));
+    const writesBefore = await count(
+      "SELECT count(*) n FROM public.cockpit_audit_log",
+    );
+    const dry = await service<Row>(
+      "SELECT public.cockpit_creative_outbox_due(false) r",
+    );
+    expect(dry.apply).toBe(false);
+    expect(dry.failed).toBe(1);
+    expect(mine(dry).map((x: Row) => x.id)).toEqual([uuid(316), uuid(310)]);
+    expect(mine(dry)[1]).toEqual({
+      id: uuid(310),
+      kind: "blueprintClose",
+      taskId: A,
+      clientName: "Acme Interiors",
+      actorId: CD_A,
+      attempts: 0,
+      createdAt: expect.any(String),
+    });
+    // An explicit null is a dry run too.
+    expect(
+      (await service<Row>("SELECT public.cockpit_creative_outbox_due(null) r"))
+        .apply,
+    ).toBe(false);
+    expect(await state(uuid(312))).toMatchObject({ state: "pending" });
+    expect(
+      await count("SELECT count(*) n FROM public.cockpit_audit_log"),
+    ).toBe(writesBefore);
+
+    const run = await service<Row>(
+      "SELECT public.cockpit_creative_outbox_due() r",
+    );
+    expect(run.apply).toBe(true);
+    expect(run.failed).toBe(1);
+    expect(mine(run).map((x: Row) => x.id)).toEqual([uuid(316), uuid(310)]);
+    expect(await state(uuid(312))).toEqual({
+      state: "failed",
+      error: "This press did not finish within 30 minutes. Press again.",
+      attempts: 0,
+      settled: true,
+    });
+    expect(await state(uuid(314))).toMatchObject({ state: "pending" });
+    expect(
+      await owner<string>(
+        "SELECT source_system r FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND entity_id=$1 AND after->>'state' = 'failed'",
+        [uuid(312)],
+      ),
+    ).toBe("cron");
+    // Again: nothing new fails.
+    expect(
+      (await service<Row>("SELECT public.cockpit_creative_outbox_due(true) r"))
+        .failed,
+    ).toBe(0);
+    // At most five, oldest first.
+    for (let i = 0; i < 6; i++) await queue(uuid(320 + i), { age: 20 - i });
+    const five = await service<Row>(
+      "SELECT public.cockpit_creative_outbox_due(false) r",
+    );
+    expect(five.rows.length).toBe(5);
+    expect(five.rows.map((x: Row) => x.id)).toEqual(
+      [0, 1, 2, 3, 4].map(i => uuid(320 + i)),
+    );
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET state='failed', settled_at=now() WHERE id >= $1 AND id <= $2 AND state='pending'",
+      [uuid(310), uuid(329)],
+    );
+  });
+
+  test("load_for_actor returns exactly what the presser's get returns, and checks the presser's seat and client now", async () => {
+    await queue(uuid(330), { age: 3 });
+    const viaGet = await one<Row>(
+      CD_A,
+      "SELECT public.cockpit_creative_client_action('get',$1::jsonb) r",
+      [JSON.stringify({ id: uuid(330) })],
+    );
+    const viaService = await service<Row>(
+      "SELECT public.cockpit_creative_outbox_load_for_actor($1::uuid) r",
+      [uuid(330)],
+    );
+    expect(viaService).toEqual(viaGet);
+    expect(viaService).toMatchObject({
+      id: uuid(330),
+      state: "pending",
+      attempts: 0,
+      sourceTask: null,
+    });
+
+    // A presser who is no longer an active seat, one without the client, and a client success seat.
+    await queue(uuid(331), { actor: GONE, email: "gone@tests.invalid" });
+    await queue(uuid(332), { task: B, client: "Beta Build" });
+    await queue(uuid(333), { actor: CSM_A, email: "csm-a@tests.invalid" });
+    const load = (id: string) =>
+      serviceRefused(
+        "SELECT public.cockpit_creative_outbox_load_for_actor($1::uuid) r",
+        [id],
+      );
+    expect((await load(uuid(331))).message).toBe(
+      "Current confirmed creative or client-success access is required",
+    );
+    expect((await load(uuid(332))).message).toBe(
+      "That client is not on your access list",
+    );
+    expect((await load(uuid(333))).message).toBe(
+      "Only the creative director sends the parts.",
+    );
+    // A creative seat that loses its client after the press.
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_members SET clients=$1 WHERE auth_user_id=$2",
+      [["Beta Build"], CD_A],
+    );
+    try {
+      expect((await load(uuid(330))).message).toBe(
+        "That client is not on your access list",
+      );
+    } finally {
+      await asOwner();
+      await db.query(
+        "UPDATE public.cockpit_members SET clients=$1 WHERE auth_user_id=$2",
+        [["Acme Interiors"], CD_A],
+      );
+    }
+    // Not a Blueprint press, or no press at all.
+    await queue(uuid(334), { kind: "comment" });
+    for (const id of [uuid(334), uuid(399)]) {
+      const e = await load(id);
+      expect(e.message).toBe("This press is not a Brand Blueprint press.");
+      expect(e.code).toBe("22023");
+    }
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET state='failed', settled_at=now() WHERE id >= $1 AND id <= $2",
+      [uuid(330), uuid(334)],
+    );
+  });
+
+  test("refused counts an attempt with its sentence, fails the press at the third, and leaves other states alone", async () => {
+    await queue(uuid(340), { age: 3 });
+    const refuse = (id: string, error: string | null) =>
+      service<Row>(
+        "SELECT public.cockpit_creative_outbox_refused($1::uuid,$2) r",
+        [id, error],
+      );
+    expect(await refuse(uuid(340), "The card's name changed since the press. Refresh, then send again.")).toEqual({
+      id: uuid(340),
+      state: "pending",
+      attempts: 1,
+    });
+    expect(await state(uuid(340))).toEqual({
+      state: "pending",
+      error: "The card's name changed since the press. Refresh, then send again.",
+      attempts: 1,
+      settled: false,
+    });
+    expect((await refuse(uuid(340), "x".repeat(1500))).attempts).toBe(2);
+    expect(((await state(uuid(340))).error as string).length).toBe(1000);
+    expect(await refuse(uuid(340), "   ")).toEqual({
+      id: uuid(340),
+      state: "failed",
+      attempts: 3,
+    });
+    expect(await state(uuid(340))).toEqual({
+      state: "failed",
+      error: "The press was refused while it was prepared.",
+      attempts: 3,
+      settled: true,
+    });
+    // No longer pending: returned as it is.
+    expect(await refuse(uuid(340), "Again")).toEqual({
+      id: uuid(340),
+      state: "failed",
+      attempts: 3,
+    });
+    await queue(uuid(341), { state: "done" });
+    expect(await refuse(uuid(341), "Late")).toEqual({
+      id: uuid(341),
+      state: "done",
+      attempts: 0,
+    });
+    expect((await state(uuid(341))).error).toBeNull();
+    // Each counted refusal left one audit row, from the cron.
+    expect(
+      await count(
+        "SELECT count(*) n FROM public.cockpit_audit_log WHERE entity_type='creative_outbox' AND entity_id=$1 AND action='update' AND source_system='cron'",
+        [uuid(340)],
+      ),
+    ).toBe(3);
+    await queue(uuid(342), { kind: "videoRequest" });
+    expect(
+      (
+        await serviceRefused(
+          "SELECT public.cockpit_creative_outbox_refused($1::uuid,'x') r",
+          [uuid(342)],
+        )
+      ).message,
+    ).toBe("This press is not a Brand Blueprint press.");
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET state='failed', settled_at=now() WHERE id=$1",
+      [uuid(342)],
+    );
+  });
+
+  test("the kick: nothing waiting says so; a waiting press without the vault's secrets or pg_net says which; with both it posts once", async () => {
+    const note = () =>
+      owner<Row>(
+        "SELECT jsonb_build_object('ok',ok,'note',note,'lastOk',last_ok_at IS NOT NULL) r FROM public.cockpit_sync_state WHERE key='creative-drain-kick'",
+      );
+    const kick = () =>
+      owner<number | null>("SELECT public.cockpit_creative_drain_kick() r");
+    await asOwner();
+    expect(
+      await count(
+        "SELECT count(*) n FROM public.cockpit_creative_outbox WHERE state='pending' AND kind LIKE 'blueprint%' AND created_at < now()-interval '2 minutes'",
+      ),
+    ).toBe(0);
+    expect(await kick()).toBeNull();
+    expect(await note()).toEqual({
+      ok: true,
+      note: "Nothing to drain",
+      lastOk: true,
+    });
+
+    await queue(uuid(350), { age: 4 });
+    expect(await kick()).toBeNull();
+    expect(await note()).toMatchObject({
+      ok: false,
+      note: "The vault has no cockpit_creative_cron_secret and no cockpit_anon_key, so the Brand Blueprint drain did not run (1 press waiting). Add them to the vault.",
+    });
+
+    // A vault with only the cron secret, then both but no pg_net, then pg_net.
+    await asOwner();
+    await db.exec(`
+      CREATE SCHEMA vault;
+      CREATE TABLE vault.decrypted_secrets(name text PRIMARY KEY, decrypted_secret text);
+      INSERT INTO vault.decrypted_secrets VALUES ('cockpit_creative_cron_secret','test-cron-secret');`);
+    try {
+      await queue(uuid(351), { age: 6, kind: "blueprintOffer" });
+      expect(await kick()).toBeNull();
+      expect((await note()).note).toBe(
+        "The vault has no cockpit_anon_key, so the Brand Blueprint drain did not run (2 presses waiting). Add it to the vault.",
+      );
+      await db.exec(
+        "INSERT INTO vault.decrypted_secrets VALUES ('cockpit_anon_key','test-anon-key')",
+      );
+      expect(await kick()).toBeNull();
+      expect(await note()).toMatchObject({
+        ok: false,
+        note: "pg_net is not installed, so the Brand Blueprint drain did not run (2 presses waiting). Turn the pg_net extension on.",
+      });
+      await db.exec(`
+        CREATE SCHEMA net;
+        CREATE TABLE net.calls(url text, body jsonb, headers jsonb, timeout_ms integer);
+        CREATE FUNCTION net.http_post(url text, body jsonb, headers jsonb, timeout_milliseconds integer) RETURNS bigint
+          LANGUAGE sql AS $$ INSERT INTO net.calls VALUES (url, body, headers, timeout_milliseconds); SELECT 42::bigint $$;`);
+      expect(Number(await kick())).toBe(42);
+      expect(await note()).toEqual({
+        ok: true,
+        note: "Posted a drain run",
+        lastOk: true,
+      });
+      const calls = (
+        await db.query<Row>("SELECT url, body, headers, timeout_ms FROM net.calls")
+      ).rows;
+      expect(calls).toEqual([
+        {
+          url: "https://bldgtotkfmhoxmlzowdx.supabase.co/functions/v1/cockpit-creative-api",
+          body: { operation: "cron", job: "drain", apply: true },
+          headers: {
+            "Content-Type": "application/json",
+            "x-cron-secret": "test-cron-secret",
+            Authorization: "Bearer test-anon-key",
+            apikey: "test-anon-key",
+          },
+          timeout_ms: 5000,
+        },
+      ]);
+    } finally {
+      await asOwner();
+      await db.exec(
+        "DROP SCHEMA IF EXISTS net CASCADE; DROP SCHEMA IF EXISTS vault CASCADE;",
+      );
+      await db.query(
+        "UPDATE public.cockpit_creative_outbox SET state='failed', settled_at=now() WHERE id IN ($1,$2)",
+        [uuid(350), uuid(351)],
+      );
+    }
+  });
+
+  test("each part's outbox object carries its attempts", async () => {
+    const read = async () =>
+      (
+        await one<Row>(
+          CD_A,
+          "SELECT public.cockpit_blueprint_read($1::text[]) r",
+          [[A]],
+        )
+      ).rows[0].outbox;
+    const before = await read();
+    for (const n of ["1", "2", "3"]) expect(before[n].attempts).toBe(0);
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET attempts=2 WHERE id=$1",
+      [before["1"].id],
+    );
+    expect((await read())["1"]).toMatchObject({
+      id: before["1"].id,
+      attempts: 2,
+    });
+    expect((await sources(CD_A, A)).outbox["1"].attempts).toBe(2);
+    await asOwner();
+    await db.query(
+      "UPDATE public.cockpit_creative_outbox SET attempts=0 WHERE id=$1",
+      [before["1"].id],
+    );
+  });
+
+  test("blueprintCall: the latest call that happened, the stage and the map's phase; the nudge only before launch, with no part 2", async () => {
+    // Beta Build: Brand Blueprint Booked, no map link, no calls, no part 2.
+    const call = async (who: string = CEO) =>
+      (await sources(who, B)).blueprintCall;
+    expect(await call()).toEqual({
+      heldAt: null,
+      status: null,
+      stage: "Brand Blueprint Booked",
+      mapPhase: null,
+      nudge: false,
+    });
+    await asOwner();
+    await db.query(
+      `INSERT INTO public.cockpit_csm_calls(task_id,kind,starts_at,status) VALUES
+         ($1,'blueprint',now()-interval '3 days','held'),
+         ($1,'blueprint',now()-interval '1 day','cancelled'),
+         ($1,'blueprint',now()+interval '2 days','booked'),
+         ($1,'launch',now()-interval '2 hours','held')`,
+      [B],
+    );
+    const held = await owner<string>(
+      "SELECT to_jsonb(starts_at)#>>'{}' r FROM public.cockpit_csm_calls WHERE task_id=$1 AND kind='blueprint' AND status='held'",
+      [B],
+    );
+    const nudged = await call();
+    expect(nudged).toEqual({
+      heldAt: held,
+      status: "held",
+      stage: "Brand Blueprint Booked",
+      mapPhase: null,
+      nudge: true,
+    });
+    // A creative seat with the client reads the same.
+    expect(await call(CD_ALL)).toEqual(nudged);
+
+    const setCard = (status: string, map: string | null) =>
+      db.query(
+        "UPDATE public.cockpit_client_onboarding SET client_status=$2, links=CASE WHEN $3::text IS NULL THEN links - 'onboarding_map' ELSE links || jsonb_build_object('onboarding_map',$3::text) END WHERE clickup_task_id=$1",
+        [B, status, map],
+      );
+    const at = (phase: number) =>
+      `https://mahara-onboarding-map.vercel.app/?phase=${phase}&cid=${B}`;
+    await asOwner();
+    await setCard("Brand Blueprint Booked♠️", at(4));
+    expect(await call()).toMatchObject({ mapPhase: 4, nudge: true });
+    await setCard("Ready For Launch🚀", at(4));
+    expect(await call()).toMatchObject({
+      stage: "Ready For Launch🚀",
+      nudge: true,
+    });
+    await setCard("Ready For Launch🚀", at(6));
+    expect(await call()).toMatchObject({ mapPhase: 6, nudge: false });
+    await setCard("Active", at(4));
+    expect(await call()).toMatchObject({ stage: "Active", nudge: false });
+    await setCard("Brand Blueprint Booked♠️", "https://mahara-onboarding-map.vercel.app/?cid=x");
+    expect(await call()).toMatchObject({ mapPhase: null, nudge: true });
+
+    // Part 2 on the record ends the nudge.
+    await asOwner();
+    await db.query(
+      `INSERT INTO public.cockpit_blueprints(task_id,client_name,parts,updated_by) VALUES($1,'Beta Build','{"2":{"status":"done"}}','test')
+       ON CONFLICT (task_id) DO UPDATE SET parts = public.cockpit_blueprints.parts || '{"2":{"status":"done"}}'::jsonb`,
+      [B],
+    );
+    expect(await call()).toMatchObject({ heldAt: held, nudge: false });
+
+    // No call that has happened: no nudge. The client success seat reads the key for its client too.
+    const acme = (await sources(CSM_A, A)).blueprintCall;
+    expect(Object.keys(acme).sort()).toEqual([
+      "heldAt",
+      "mapPhase",
+      "nudge",
+      "stage",
+      "status",
+    ]);
+    expect(acme).toMatchObject({ stage: "Brand Blueprint Booked", nudge: false });
+    expect(
+      await refused(CD_A, "SELECT public.cockpit_blueprint_sources($1) r", [B]),
+    ).toContain("not on your access list");
+  });
+});
+
 describe("applying again", () => {
   test("keeps every row, the settings and every grant", async () => {
     const before = [
@@ -2042,6 +2692,7 @@ describe("applying again", () => {
     ];
     await asOwner();
     await db.exec(migration(FILE));
+    await db.exec(migration(DRAIN));
     expect([
       await count("SELECT count(*) n FROM public.cockpit_blueprints"),
       await count("SELECT count(*) n FROM public.cockpit_blueprint_settings"),
@@ -2056,6 +2707,33 @@ describe("applying again", () => {
         "SELECT value r FROM public.cockpit_blueprint_settings WHERE key='close_route'",
       ),
     ).toBe("card_only");
+    // 20261025o's bodies win again (applied in order), with their grants.
+    expect(
+      await refused(
+        ADMIN,
+        "SELECT public.cockpit_blueprint_settings_set('close_route','slack',null) r",
+      ),
+    ).toContain("The close writes the card only.");
+    expect(Object.keys((await one<Row>(CEO, "SELECT public.cockpit_blueprint_sources($1) r", [A])))).toContain(
+      "blueprintCall",
+    );
+    for (const sig of [
+      "public.cockpit_creative_outbox_due(boolean)",
+      "public.cockpit_creative_outbox_load_for_actor(uuid)",
+      "public.cockpit_creative_outbox_refused(uuid,text)",
+    ]) {
+      expect(
+        await owner("SELECT has_function_privilege('service_role',$1,'EXECUTE') r", [sig]),
+      ).toBe(true);
+      expect(
+        await owner("SELECT has_function_privilege('authenticated',$1,'EXECUTE') r", [sig]),
+      ).toBe(false);
+    }
+    expect(
+      await owner(
+        "SELECT count(*)::int r FROM pg_constraint WHERE conname='cockpit_creative_outbox_attempts_check'",
+      ),
+    ).toBe(1);
     expect(
       (
         await one<Row>(

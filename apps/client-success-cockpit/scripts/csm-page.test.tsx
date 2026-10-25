@@ -50,7 +50,7 @@ const KITS = {
   now: "2026-10-05T08:00:00.000Z",
 };
 
-let currentSnapshot: any = undefined;
+let currentSnapshot: any;
 let isSnapshotLoading = true;
 let snapshotError: Error | null = null;
 
@@ -213,6 +213,49 @@ const mockClient: any = {
               ]
             : [],
           now: "2026-10-05T08:00:00Z",
+        },
+        error: null,
+      });
+    }
+    // The Slack notices (docs/forms/STAGE1-CONTRACT.md 2.1): the close
+    // posted in #csm-general, its #media-general post refused.
+    if (name === "cockpit_slack_notice_read") {
+      return Promise.resolve({
+        data: {
+          taskId: _args.p_task_id,
+          now: "2026-10-05T08:00:00Z",
+          notices: [
+            {
+              id: "00000000-0000-4000-8000-0000000000a2",
+              kind: "blueprint.media",
+              state: "failed",
+              variant: null,
+              responseId: null,
+              outboxId: "00000000-0000-4000-8000-0000000000b1",
+              parentKind: null,
+              channel: { id: "C0AE8G5MT7Y", name: "media-general" },
+              at: "2026-10-05T07:45:00Z",
+              dueAt: null,
+              permalink: null,
+              reason:
+                "Slack refused it: mahara-club-bot is not in #media-general. Invite it there, then ask the tech lead to requeue this notice.",
+            },
+            {
+              id: "00000000-0000-4000-8000-0000000000a1",
+              kind: "blueprint.close",
+              state: "posted",
+              variant: "done",
+              responseId: null,
+              outboxId: "00000000-0000-4000-8000-0000000000b1",
+              parentKind: null,
+              channel: { id: "C09RZ0GS0V9", name: "csm-general" },
+              at: "2026-10-05T07:45:00Z",
+              dueAt: null,
+              permalink:
+                "https://example-workspace.slack.com/archives/C09RZ0GS0V9/p1",
+              reason: null,
+            },
+          ],
         },
         error: null,
       });
@@ -1265,6 +1308,14 @@ test("an onboarding client's row and page show its onboarding steps", async () =
       "Starter ads sent 10:12 · call closed 10:44 · offer not locked yet",
     );
     expect(text).toContain("Open the Blueprint deck");
+    // The close's Slack stops (STAGE1-CONTRACT.md 6.1): where and when it
+    // posted, and what to do about the one that did not.
+    expect(text).toContain("Posted in #csm-general at 10:45");
+    expect(text).toContain(
+      "Not posted in #media-general: Slack refused it: mahara-club-bot is not in #media-general. Invite it there, then ask the tech lead to requeue this notice.",
+    );
+    // The kickoff window's own address, to copy (PLAN.md S10).
+    expect(text).toContain("Copy the kickoff window's link");
     // Make 14 module [7]'s text is in the cockpit (PHASE5_WHATSAPP), so the
     // CSM copies the whole message, not only the map link.
     expect(text).toContain("Copy the phase 5 message for the group");

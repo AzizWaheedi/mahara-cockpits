@@ -5,7 +5,7 @@ import {
   Presentation,
   RefreshCw,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
 import { BookCallButton, MainContact } from "@/components/ClientCheckIn";
@@ -21,17 +21,27 @@ import {
 } from "@/components/ui/sheet";
 import type { FormSend } from "@/forms/formConfig";
 import { kickoffCardDone, sendLine } from "@/forms/formStatus";
-import { FillFormButton } from "@/forms/OpenFormButton";
+import { FillFormButton, formUrl } from "@/forms/OpenFormButton";
 import {
   type BlueprintStatus,
   blueprintDone,
   blueprintLine,
+  blueprintNudge,
   blueprintPrepUrl,
   blueprintPrepWindow,
+  nudgeLine,
+  nudgeStage,
   phase5Copy,
   readBlueprintStatus,
 } from "@/lib/blueprintStatus";
+import { readClientTimeline, type Timeline } from "@/lib/csmCalls";
 import { shortDay } from "@/lib/format";
+import {
+  type NoticeRead,
+  type NoticeView,
+  noticeStop,
+  readNotices,
+} from "@/lib/notices";
 import {
   type FormEntry,
   type KitsPage,
@@ -208,6 +218,85 @@ function useBlueprintStatus(
   return state;
 }
 
+type Loaded<T> = T | { error: string } | undefined;
+
+/**
+ * One gated read for the panel, run only when `on`: undefined while it
+ * reads (or when off), an error sentence when it failed. `again` is the
+ * Refresh press.
+ */
+function useCardRead<T>(
+  on: boolean,
+  taskId: string,
+  read: ((taskId: string) => Promise<T>) | null,
+  again: number,
+): Loaded<T> {
+  const [state, setState] = useState<Loaded<T>>(undefined);
+  // `again` is the Refresh press: it only makes the read run once more.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: again re-runs the read
+  useEffect(() => {
+    if (!on || !read) {
+      setState(undefined);
+      return;
+    }
+    let gone = false;
+    setState(undefined);
+    read(taskId).then(
+      v => !gone && setState(v),
+      e =>
+        !gone &&
+        setState({ error: e instanceof Error ? e.message : String(e) }),
+    );
+    return () => {
+      gone = true;
+    };
+  }, [on, taskId, read, again]);
+  return state;
+}
+
+const failed = <T,>(v: Loaded<T>): v is { error: string } =>
+  Boolean(v && typeof v === "object" && "error" in v);
+
+/**
+ * A notice as one quiet line under its step (STAGE1-CONTRACT.md 6.1), the
+ * same stop as the kickoff window's trail: "Posted in #csm-general at
+ * 14:03" with Open in Slack, or what it waits for, or why it did not post.
+ */
+function NoticeLine({
+  notice,
+  now,
+  reply,
+  offLine,
+}: {
+  notice: NoticeView;
+  now: string;
+  reply?: boolean;
+  offLine?: string;
+}) {
+  const stop = noticeStop(notice, now, { reply, offLine });
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 gap-1.5",
+        stop.tone === "warn" ? "txt-warn" : "text-muted-foreground",
+      )}
+    >
+      <span className="mt-[5px] flex">
+        <Dot tone={stop.tone} />
+      </span>
+      <span className="min-w-0">
+        {stop.text}
+        {stop.href ? (
+          <>
+            {" "}
+            <ExtLink href={stop.href}>Open in Slack</ExtLink>
+          </>
+        ) : null}
+      </span>
+    </div>
+  );
+}
+
 function CopyText({
   text,
   children,
@@ -303,6 +392,8 @@ export function OnboardingKit({
   onRefresh,
   kickSend = null,
   blueprintRead,
+  noticesRead,
+  timelineRead,
 }: {
   client: Client;
   /** undefined while loading, null when the table has no row for the card. */
@@ -318,7 +409,12 @@ export function OnboardingKit({
   kickSend?: FormSend | null;
   /** The harness's and the tests' stand-in for cockpit_blueprint_read. */
   blueprintRead?: (taskId: string) => Promise<BlueprintStatus>;
+  /** Stand-in for cockpit_slack_notice_read. */
+  noticesRead?: (taskId: string) => Promise<NoticeRead>;
+  /** Stand-in for cockpit_csm_client_timeline (the Blueprint nudge's calls). */
+  timelineRead?: (taskId: string) => Promise<Pick<Timeline, "calls">>;
 }) {
+  const auth = useCockpitAuth();
   const [reading, setReading] = useState<Reading | null>(null);
   const [bpAgain, setBpAgain] = useState(0);
   const bp = useBlueprintStatus(client.taskId, blueprintRead, bpAgain);
@@ -373,6 +469,64 @@ export function OnboardingKit({
   const shownFiles = files.filter(
     (x): x is [string, string] => typeof x[1] === "string" && isUrl(x[1]),
   );
+
+  // The Slack notices (cockpit_slack_notice_read), read only once there is
+  // something to have posted: a kickoff, or the Blueprint call's close.
+  const status = bp && !failed(bp) ? bp : null;
+  const closed = Boolean(status?.parts?.["2"]);
+  const kickoffId = f.kickoff?.response_id ?? kickSend?.responseId ?? null;
+  const db = auth.client;
+  const noticeReader = useMemo(
+    () => noticesRead ?? (db ? (id: string) => readNotices(db, id) : null),
+    [noticesRead, db],
+  );
+  const notices = useCardRead(
+    Boolean((kickoffId && !live) || closed),
+    client.taskId,
+    noticeReader,
+    bpAgain,
+  );
+  // The nudge (PLAN.md S8) reads the call store only at the two stages
+  // where a held call with no close means something was missed.
+  const stage = kit?.client_status ?? client.stage ?? null;
+  const timelineReader = useMemo(
+    () =>
+      timelineRead ?? (db ? (id: string) => readClientTimeline(db, id) : null),
+    [timelineRead, db],
+  );
+  const calls = useCardRead(
+    Boolean(status && !closed && nudgeStage(stage)),
+    client.taskId,
+    timelineReader,
+    bpAgain,
+  );
+  const nudge =
+    status && calls && !failed(calls)
+      ? blueprintNudge({
+          stage,
+          mapUrl: links.onboarding_map,
+          parts: status.parts,
+          calls: calls.calls,
+          now: status.now,
+        })
+      : null;
+  const noticeNow =
+    notices && !failed(notices)
+      ? notices.now
+      : (page?.now ?? new Date().toISOString());
+  const noticeOf = (kind: string, responseId?: string | null) =>
+    notices && !failed(notices)
+      ? (notices.notices.find(
+          n =>
+            n.kind === kind &&
+            (responseId === undefined || n.responseId === responseId),
+        ) ?? null)
+      : null;
+  const kickoffNotice = kickoffId ? noticeOf("kickoff", kickoffId) : null;
+  const windowLink =
+    typeof window !== "undefined"
+      ? `${window.location.origin}${formUrl(client.taskId, "kickoff")}`
+      : formUrl(client.taskId, "kickoff");
 
   return (
     <div className="space-y-4">
@@ -562,6 +716,26 @@ export function OnboardingKit({
                         : "Not filled yet. Their onboarding answers are not in, so it opens without them."))
               }
             >
+              {kickoffId && !live ? (
+                <div className="basis-full">
+                  {kickoffNotice ? (
+                    <NoticeLine
+                      notice={kickoffNotice}
+                      now={noticeNow}
+                      offLine="Not posted: the kickoff notice is off in Settings."
+                    />
+                  ) : failed(notices) ? (
+                    <span className="text-muted-foreground">
+                      The cockpit could not read the Slack notice just now.
+                    </span>
+                  ) : notices ? (
+                    <span className="text-muted-foreground">
+                      The team hears in #csm-general once Make has updated the
+                      card.
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               {f.kickoff ? (
                 <Read
                   onClick={() =>
@@ -592,6 +766,15 @@ export function OnboardingKit({
                 >
                   Fill the kickoff
                 </FillFormButton>
+              )}
+              {live ? null : (
+                <CopyText
+                  text={windowLink}
+                  title="The cockpit's own kickoff window for this client"
+                  done="Link copied. It opens this client's kickoff window."
+                >
+                  Copy the kickoff window's link
+                </CopyText>
               )}
             </Item>
             {live ? null : (
@@ -657,7 +840,6 @@ export function OnboardingKit({
               ) : null}
             </Item>
             {(() => {
-              const status = bp && !("error" in bp) ? bp : null;
               const copy = status
                 ? phase5Copy({
                     taskId: client.taskId,
@@ -667,16 +849,23 @@ export function OnboardingKit({
                   })
                 : null;
               const started = Boolean(status?.parts);
+              const close = closed ? noticeOf("blueprint.close") : null;
+              const media = closed ? noticeOf("blueprint.media") : null;
+              const offer = status?.parts?.["3"]
+                ? noticeOf("blueprint.offer")
+                : null;
               return (
                 <Item
                   tone={
-                    status?.parts
-                      ? blueprintDone(status.parts)
-                        ? "good"
-                        : "accent"
-                      : f.blueprint
-                        ? "good"
-                        : "neutral"
+                    nudge
+                      ? "warn"
+                      : status?.parts
+                        ? blueprintDone(status.parts)
+                          ? "good"
+                          : "accent"
+                        : f.blueprint
+                          ? "good"
+                          : "neutral"
                   }
                   label="Brand Blueprint"
                   status={
@@ -684,11 +873,38 @@ export function OnboardingKit({
                       ? "Reading the Blueprint…"
                       : "error" in bp
                         ? `The Blueprint could not be read: ${bp.error}`
-                        : status?.parts || !f.blueprint
-                          ? blueprintLine(bp)
-                          : `${filled(f.blueprint)} on the Typeform, before the call deck.`
+                        : nudge
+                          ? nudgeLine(nudge.heldAt)
+                          : status?.parts || !f.blueprint
+                            ? blueprintLine(bp)
+                            : `${filled(f.blueprint)} on the Typeform, before the call deck.`
                   }
                 >
+                  {closed ? (
+                    <div className="basis-full space-y-0.5">
+                      {failed(notices) ? (
+                        <span className="text-muted-foreground">
+                          The cockpit could not read the Slack notices just now.
+                        </span>
+                      ) : notices === undefined ? null : close || media ? (
+                        <>
+                          {close ? (
+                            <NoticeLine notice={close} now={noticeNow} />
+                          ) : null}
+                          {media ? (
+                            <NoticeLine notice={media} now={noticeNow} />
+                          ) : null}
+                          {offer ? (
+                            <NoticeLine notice={offer} now={noticeNow} reply />
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="text-muted-foreground">
+                          No Slack notice is on record for this close.
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
                   {f.blueprint ? (
                     <Read
                       onClick={() =>
@@ -702,7 +918,7 @@ export function OnboardingKit({
                       Read it
                     </Read>
                   ) : null}
-                  {!live || started ? (
+                  {!live || started || nudge ? (
                     <button
                       type="button"
                       title="Opens the Blueprint's prep view, read only for you"

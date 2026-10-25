@@ -268,6 +268,8 @@ const outbox = z.object({
   result: z.unknown().optional(),
   createdAt: text,
   settledAt: text.nullable().optional(),
+  /** The server drain's refusals so far (20261025o): 3 fails the press. */
+  attempts: z.number().int().optional(),
 });
 const rowSchema = z.object({
   taskId: text,
@@ -813,24 +815,13 @@ export const SERVICES = [
 ] as const;
 export type ServiceKey = (typeof SERVICES)[number]["key"];
 
-export const CLOSE_ROUTES = [
-  {
-    key: "card_only",
-    label: "Card only",
-    line: "The cockpit writes the card and its comments. The CSM pastes the phase 5 WhatsApp from the card comment.",
-  },
-  {
-    key: "slack",
-    label: "Card and Slack",
-    line: "As card only, and the cockpit posts the close to #media-general. Needs the Slack bot in #media-general first.",
-  },
-  {
-    key: "make",
-    label: "Make",
-    line: "Make 14 posts to Slack, writes Can Self-Record? and the Onboarding Map, and sends the phase 5 WhatsApp. Needs Make 14's route and the server switch; until both exist the close falls back to card only.",
-  },
-] as const;
-export type CloseRoute = (typeof CLOSE_ROUTES)[number]["key"];
+/**
+ * After Close the call the cockpit writes the card only (docs/forms/PLAN.md
+ * D5): close_route is fixed at card_only on the server, and #csm-general and
+ * #media-general hear through the client success cockpit's notices.
+ */
+export const NOTICES_SETTINGS_URL =
+  "https://cockpit.maharamedia.com/client-success/settings";
 
 export const DRIVE_FOLDER =
   /^https:\/\/drive\.google\.com\/drive\/(u\/[0-9]\/)?folders\/[A-Za-z0-9_-]{10,100}(\?[A-Za-z0-9=&_.-]{0,100})?$/;
@@ -867,7 +858,7 @@ export async function readBlueprintSettings(
 
 export async function setBlueprintSetting(
   client: Rpc,
-  key: `pack.${ServiceKey}` | "launch_assignee" | "close_route",
+  key: `pack.${ServiceKey}` | "launch_assignee",
   value: string | null,
   label: string | null = null,
 ): Promise<BlueprintSettings> {
@@ -878,6 +869,42 @@ export async function setBlueprintSetting(
   });
   if (error) fail(error);
   return parse(settingsSchema, data, "settings");
+}
+
+// ------------------------------------------------------------- the nudge
+
+const callSchema = z.object({
+  heldAt: text.nullable().optional(),
+  status: text.nullable().optional(),
+  stage: text.nullable().optional(),
+  mapPhase: z.number().int().nullable().optional(),
+  nudge: z.boolean(),
+});
+export type BlueprintCall = z.infer<typeof callSchema>;
+
+/**
+ * The Blueprint call against the record (cockpit_blueprint_sources'
+ * blueprintCall, 20261025o): `nudge` when a call was held at Brand Blueprint
+ * Booked or Ready For Launch, the map at phase 4 or lower, and no part 2.
+ * Null when the server does not send it yet.
+ */
+export async function readBlueprintCall(
+  client: Rpc,
+  taskId: string,
+): Promise<BlueprintCall | null> {
+  const { data, error } = await client.rpc("cockpit_blueprint_sources", {
+    p_task_id: taskId,
+  });
+  if (error) fail(error);
+  const call = (data as { blueprintCall?: unknown } | null)?.blueprintCall;
+  if (call === undefined || call === null) return null;
+  return parse(callSchema, call, "call read");
+}
+
+/** "Sun 18 Oct", Kuwait's calendar. */
+export function dayWeek(iso: string | null | undefined): string {
+  const k = kuwait(iso);
+  return k ? `${k.weekday} ${k.date}` : "";
 }
 
 export async function blueprintMembers(

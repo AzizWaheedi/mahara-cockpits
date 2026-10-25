@@ -8,6 +8,7 @@ import {
   requestCockpitPasswordReset,
 } from "@/auth/supabaseAccess";
 import { PageHeader } from "@/components/kit";
+import { NoticesRouting } from "@/components/NoticesRouting";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -148,7 +149,7 @@ export function SettingsPage() {
     <div className="mx-auto w-full max-w-6xl space-y-6">
       <PageHeader
         title="Settings"
-        sub="Your account and how the cockpit looks"
+        sub="Your account, how the cockpit looks, and where it posts in Slack"
       />
 
       <div className="max-w-2xl space-y-6">
@@ -249,6 +250,10 @@ export function SettingsPage() {
             </div>
           </div>
         </section>
+
+        {/* D17: who hears in Slack, and who is tagged, changed here and
+            never in code. Seats without the right to see it see nothing. */}
+        <NoticesRouting />
       </div>
 
       {emailPasswordAvailable && (

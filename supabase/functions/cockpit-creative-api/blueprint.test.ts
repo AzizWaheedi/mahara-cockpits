@@ -1,6 +1,6 @@
 import {afterEach,describe,expect,test} from 'bun:test';
 import {prepareBlueprint,describePlan,readOnly,assertSafe,rehearseBlueprint,blueprintMembers,type BlueprintPlan} from './blueprint';
-import {executeOutbox,prepareOutbox,runClientAction} from './outbox';
+import {executeOutbox,prepareOutbox,runClientAction,browserLoader,ClientActionError} from './outbox';
 import {providerTools} from '../cockpit-media-api/tools';
 import type {Provider,Row} from '../cockpit-media-api/core';
 import * as B from '../../../apps/client-success-cockpit/src/present/blueprintBrief';
@@ -190,47 +190,76 @@ describe('Close the call',()=>{
   expect(csm.comment_text).not.toContain('Send the usual phase 5 message');
   expect(fake.slack).toEqual([]);expect(fake.make).toEqual([]);
  });
- test('slack: the cockpit posts to #media-general once, read back; a later press never posts again',async()=>{
-  const fake=new Fake();fake.task('launch01','Acme Interiors - New Client Campaign Launch 🚀');
-  const plan=await prep(fake,row(2,PART2,{launchTaskId:'launch01',closeRoute:'slack'}));
-  await executeOutbox(plan,tools(fake));
-  expect(fake.slack).toEqual([{ts:expect.any(String),channel:B.MEDIA_GENERAL,text:'Brand Blueprint completed: Acme Interiors. Scripts and custom creative can start. https://app.clickup.com/t/launch01'}]);
-  const later=await prep(fake,row(2,{...PART2,camera:'yes_studio'},{launchTaskId:'launch01',closeRoute:'slack',press:2,previous:PART2}));
-  expect(later.steps.some(s=>s.provider==='slack')).toBe(false);
-  expect(later.steps.find(s=>s.path===`task/${CARD}/comment`)!.body!.comment_text).not.toContain('WhatsApp');
-  expect(later.steps.find(s=>s.path==='task/launch01/comment')!.body!.comment_text).toContain('On camera: Yes, on their phone → Yes, with a cameraman or studio');
- });
- test('make with the flag and both secrets: Make writes Can Self-Record? and the map; one send with exactly seven keys, the key added only when sending',async()=>{
+ test('whatever closeRoute the payload carries, the close has no Slack or Make step, and its result names the route, the phase and the skip',async()=>{
   const live={BLUEPRINT_MAKE_CLOSE:'on',MAKE_BLUEPRINT_HOOK:HOOK,MAKE_BLUEPRINT_KEY:'make-secret'};
-  const fake=new Fake();fake.task('launch01','Acme Interiors - New Client Campaign Launch 🚀');
-  const plan=await prep(fake,row(2,PART2,{launchTaskId:'launch01',closeRoute:'make'}),live);
-  expect(plan.steps.some(s=>s.path.includes(FIELD.self)||s.path.includes(FIELD.map))).toBe(false);
-  expect(JSON.stringify(plan)).not.toContain('make-secret');
-  expect(plan.steps.find(s=>s.path===`task/${CARD}/comment`)!.body!.comment_text).not.toContain('phase 5');
-  const result=await executeOutbox(plan,tools(fake,live));
-  expect(result.make).toBe('sent');expect(fake.make.length).toBe(1);
-  expect(Object.keys(fake.make[0])).toEqual(['source','key','event','task_id','card_name','can_self_record','slack_text']);
-  expect(fake.make[0]).toMatchObject({source:'mahara-cockpit',key:'make-secret',event:'blueprint.call_closed',task_id:CARD,card_name:'Acme Interiors',can_self_record:'Yes - phone only'});
-  // The Make post comes last, after every read-back step.
-  expect(fake.calls.at(-1)!.url).toBe(HOOK);
-  const later=await prep(fake,row(2,PART2,{launchTaskId:'launch01',closeRoute:'make',press:2,previous:PART2}),live);expect(later.blueprint.make).toBeUndefined();
- });
- test('make chosen but not switched on falls back to card_only, and says so',async()=>{
-  for(const e of [{},{BLUEPRINT_MAKE_CLOSE:'on',MAKE_BLUEPRINT_HOOK:HOOK},{MAKE_BLUEPRINT_HOOK:HOOK,MAKE_BLUEPRINT_KEY:'k'}]){
-   const fake=new Fake();const plan=await prep(fake,row(2,PART2,{closeRoute:'make'}),e as Record<string,string>);
-   expect(plan.blueprint.make).toBeUndefined();expect(plan.steps.some(s=>s.path.includes(FIELD.self))).toBe(true);
-   expect(describePlan(plan)[0]).toBe('Make close is chosen but not switched on in the server: the CSM pastes the WhatsApp.');
-   expect(plan.steps.find(s=>s.path===`task/${CARD}/comment`)!.body!.comment_text).toContain('Make close is chosen but not switched on');
-   expect(describePlan(plan)).toContain('No open launch task was found, so the launch-task comment is skipped.');
+  for(const closeRoute of ['card_only','slack','make',undefined,'whatsapp'])for(const e of [{},live] as Record<string,string>[]){
+   const fake=new Fake();fake.task('launch01','Acme Interiors - New Client Campaign Launch 🚀');
+   const plan=await prep(fake,row(2,PART2,{launchTaskId:'launch01',closeRoute}),e);
+   expect(plan.steps.every(s=>s.provider==='clickup')).toBe(true);
+   expect(plan.steps.some(s=>s.slackMessage)).toBe(false);
+   expect('make' in plan.blueprint).toBe(false);
+   expect(plan.steps.map(s=>s.path)).toEqual([`task/${CARD}/field/${FIELD.approval}`,`task/${CARD}/field/${FIELD.self}`,`task/${CARD}/field/${FIELD.map}`,'task/step2x','task/launch01/comment',`task/${CARD}/comment`]);
+   expect(describePlan(plan).some(l=>/Make|#media-general/.test(l))).toBe(false);
+   const result=await executeOutbox(plan,tools(fake,e));
+   expect(result).toEqual({kind:'blueprintClose',launchTaskId:'launch01',closeRoute:'card_only',mapPhase:4,mapSkipped:false});
+   expect(Object.keys(result)).toEqual(['kind','launchTaskId','closeRoute','mapPhase','mapSkipped']);
+   expect(fake.slack).toEqual([]);expect(fake.make).toEqual([]);
+   expect(fake.calls.some(c=>String(c.url).startsWith('https://slack.com/')||String(c.url)===HOOK)).toBe(false);
+   expect(fake.comments.get(CARD)![0].comment_text).not.toContain('Make close');
   }
  });
- test('a Make failure after the send is never retried: the run moves to reconcile',async()=>{
-  const live={BLUEPRINT_MAKE_CLOSE:'on',MAKE_BLUEPRINT_HOOK:HOOK,MAKE_BLUEPRINT_KEY:'make-secret'};
-  const fake=new Fake();fake.makeStatus=500;const r={...row(2,PART2,{closeRoute:'make'}),id:'20000000-0000-4000-8000-000000000020'};
+ test('the first close says the notices tell the team; a later press does not, and never touches the map or the paste',async()=>{
+  const fake=new Fake();fake.task('launch01','Acme Interiors - New Client Campaign Launch 🚀');
+  const first=await prep(fake,row(2,PART2,{launchTaskId:'launch01'}));
+  expect(describePlan(first).at(-1)).toBe("On the first close the cockpit's notices tell the team in Slack (Settings, Notices and routing).");
+  await executeOutbox(first,tools(fake));
+  const later=await prep(fake,row(2,{...PART2,camera:'yes_studio'},{launchTaskId:'launch01',press:2,previous:PART2}));
+  expect(describePlan(later).join('\n')).not.toContain('notices');
+  expect(later.steps.some(s=>s.path.includes(FIELD.map))).toBe(false);
+  expect(later.steps.find(s=>s.path===`task/${CARD}/comment`)!.body!.comment_text).not.toContain('WhatsApp');
+  expect(later.steps.find(s=>s.path==='task/launch01/comment')!.body!.comment_text).toContain('On camera: Yes, on their phone → Yes, with a cameraman or studio');
+  const result=await executeOutbox(later,tools(fake));
+  expect(result).toEqual({kind:'blueprintClose',launchTaskId:'launch01',closeRoute:'card_only',mapPhase:null,mapSkipped:false});
+ });
+ test('a card already at phase 6 keeps its map and gets no phase 5 paste; the plan says why and the result names the phase',async()=>{
+  for(const phase of [5,6]){
+   const fake=new Fake();fake.task('launch01','Acme Interiors - New Client Campaign Launch 🚀');
+   const map=fake.tasks.get(CARD)!.custom_fields.find((f:Row)=>f.id===FIELD.map);map.value=`https://mahara-onboarding-map.vercel.app/?cid=${CARD}&phase=${phase}`;
+   const plan=await prep(fake,row(2,PART2,{launchTaskId:'launch01'}));
+   expect(plan.steps.some(s=>s.path.includes(FIELD.map))).toBe(false);
+   expect(describePlan(plan)).toContain(`The Onboarding Map is already at phase ${phase}, so it is left as it is.`);
+   expect(describePlan(plan)).not.toContain('Would set the Onboarding Map to phase 5.');
+   expect(describePlan(plan).find(l=>l.startsWith('Would comment on the client card'))).toBe('Would comment on the client card for Noura.');
+   const result=await executeOutbox(plan,tools(fake));
+   expect(result).toEqual({kind:'blueprintClose',launchTaskId:'launch01',closeRoute:'card_only',mapPhase:phase,mapSkipped:true});
+   expect(map.value).toBe(`https://mahara-onboarding-map.vercel.app/?cid=${CARD}&phase=${phase}`);
+   const csm=fake.comments.get(CARD)![0].comment_text as string;
+   expect(csm).not.toContain("Paste this in the client's WhatsApp group:");expect(csm).not.toContain('phase 5 WhatsApp');
+   expect(csm).toContain('Brand Blueprint call closed for Acme Interiors.');
+  }
+ });
+ test('a card at phase 4, or with no phase in its map link, gets the map step and the paste',async()=>{
+  for(const value of ['https://mahara-onboarding-map.vercel.app/?phase=4&cid=taskA1','https://mahara-onboarding-map.vercel.app/?cid=taskA1','']){
+   const fake=new Fake();const map=fake.tasks.get(CARD)!.custom_fields.find((f:Row)=>f.id===FIELD.map);map.value=value||undefined;
+   const plan=await prep(fake,row(2,PART2));
+   expect(plan.steps.some(s=>s.path===`task/${CARD}/field/${FIELD.map}`)).toBe(true);
+   expect(describePlan(plan)).toContain('Would set the Onboarding Map to phase 5.');
+   expect(describePlan(plan)).toContain("Would comment on the client card for Noura, with the phase 5 WhatsApp to paste.");
+   const result=await executeOutbox(plan,tools(fake));
+   expect(result.mapPhase).toBe(value.includes('phase=4')?4:null);expect(result.mapSkipped).toBe(false);
+   expect(map.value).toBe(`https://mahara-onboarding-map.vercel.app/?phase=5&cid=${CARD}`);
+   expect(fake.comments.get(CARD)![0].comment_text).toContain("Paste this in the client's WhatsApp group:");
+  }
+ });
+ test('a ClickUp failure after the claim settles the press to reconcile and is never retried',async()=>{
+  const fake=new Fake();const r={...row(2,PART2),id:'20000000-0000-4000-8000-000000000020'};
+  const broken=fake.fetch;fake.fetch=async(input,init={})=>String(input).endsWith('/task/step2x')&&init.method==='PUT'?new Response(JSON.stringify({err:'Team not authorized'}),{status:401}):broken(input,init);
   const {client,admin,log}=supabaseFakes(r);const original=globalThis.fetch;globalThis.fetch=fake.fetch as typeof fetch;
-  try{await expect(runClientAction({args:{id:r.id},apply:true},client,admin,env(live),'actor')).rejects.toThrow('Make rejected the close (500)');}finally{globalThis.fetch=original;}
-  expect(fake.make.length).toBe(1);
+  let error:any;try{await runClientAction({args:{id:r.id},apply:true},browserLoader(client),admin,env(),'actor');}catch(e){error=e;}finally{globalThis.fetch=original;}
+  expect(error).toBeInstanceOf(ClientActionError);expect(error.started).toBe(true);expect(error.message).toContain('clickup rejected the request (401)');
   expect(log.filter(x=>x.table==='cockpit_creative_outbox'&&x.op==='update').map(x=>x.payload.state)).toEqual(['sending','reconcile']);
+  // A press already failed (superseded, or past the drain's 30 minutes) is never moved to reconcile.
+  expect(log.find(x=>x.table==='cockpit_creative_outbox'&&x.payload.state==='reconcile')!.filters).toContainEqual(['state','!failed']);
  });
 });
 
@@ -304,7 +333,7 @@ describe('the outbox runner, end to end',()=>{
  test('claims the row, runs the plan, settles it done, and names the launch task on the record',async()=>{
   const fake=new Fake();const r=row(1,PART1);const {client,admin,log}=supabaseFakes(r);
   const original=globalThis.fetch;globalThis.fetch=fake.fetch as typeof fetch;
-  let out:Row;try{out=await runClientAction({args:{id:r.id},apply:true},client,admin,env(),'actor');}finally{globalThis.fetch=original;}
+  let out:Row;try{out=await runClientAction({args:{id:r.id},apply:true},browserLoader(client),admin,env(),'actor');}finally{globalThis.fetch=original;}
   expect(out.state).toBe('done');expect(out.result.launchTaskId).toMatch(/^new\dx$/);
   expect(log.filter(x=>x.table==='cockpit_creative_outbox'&&x.op==='update').map(x=>x.payload.state)).toEqual(['sending','done']);
   expect(log.find(x=>x.rpc==='cockpit_blueprint_outbox_settled')!.args).toEqual({p_request_id:r.id,p_launch_task_id:out.result.launchTaskId});
@@ -313,7 +342,7 @@ describe('the outbox runner, end to end',()=>{
  test('without apply it returns the plan and its sentences, and writes nothing',async()=>{
   const fake=new Fake();const r=row(1,PART1);const {client,admin,log}=supabaseFakes(r);
   const original=globalThis.fetch;globalThis.fetch=fake.fetch as typeof fetch;
-  let out:Row;try{out=await runClientAction({args:{id:r.id}},client,admin,env(),'actor');}finally{globalThis.fetch=original;}
+  let out:Row;try{out=await runClientAction({args:{id:r.id}},browserLoader(client),admin,env(),'actor');}finally{globalThis.fetch=original;}
   expect(out.dryRun).toBe(true);expect(out.lines[0]).toContain('Would create');expect(fake.writes()).toEqual([]);
   expect(log.filter(x=>x.op!=='insert'||x.table!=='cockpit_media_provider_health')).toEqual([]);
  });
@@ -321,7 +350,7 @@ describe('the outbox runner, end to end',()=>{
 afterEach(()=>{});
 function supabaseFakes(r:Row){
  const log:Row[]=[];
- const chain=(table:string,op:string,payload:Row)=>{const q:Row={table,op,payload,filters:[]};log.push(q);const done:any=Promise.resolve({data:{id:r.id},error:null});done.eq=(k:string,v:unknown)=>{q.filters.push([k,v]);return done;};done.select=()=>done;done.single=()=>done;return done;};
+ const chain=(table:string,op:string,payload:Row)=>{const q:Row={table,op,payload,filters:[]};log.push(q);const done:any=Promise.resolve({data:{id:r.id},error:null});done.eq=(k:string,v:unknown)=>{q.filters.push([k,v]);return done;};done.neq=(k:string,v:unknown)=>{q.filters.push([k,`!${v}`]);return done;};done.select=()=>done;done.single=()=>done;return done;};
  const client={rpc:async(name:string)=>{expect(name).toBe('cockpit_creative_client_action');return {data:{...r,sourceTask:null},error:null};}};
  const admin={from:(t:string)=>({insert:(p:Row)=>chain(t,'insert',p),update:(p:Row)=>chain(t,'update',p)}),rpc:async(name:string,args:Row)=>{log.push({rpc:name,args});return {error:null};}};
  return {client,admin,log};
