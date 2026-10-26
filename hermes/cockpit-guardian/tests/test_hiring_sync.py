@@ -143,7 +143,8 @@ class Registered(unittest.TestCase):
         for job in ("mahara-hiring-mirror", "mahara-hiring-intake", "mahara-hiring-engine"):
             self.assertIn(job, pg_cron.EXPECTED_JOBS)
         # 21 + mahara-eod-retry (20261015190100) + mahara-slack-notices (20261025n) + mahara-creative-drain (20261025o)
-        self.assertEqual(len(pg_cron.EXPECTED_JOBS), 24)
+        # + mahara-clickup-writeback-requests (20261026r) + mahara-task-mirror and mahara-task-mirror-seats (20261026t)
+        self.assertEqual(len(pg_cron.EXPECTED_JOBS), 27)
         self.assertIs(edge_functions.EXPECTED["hiring-sync"], False)
         self.assertIs(edge_functions.EXPECTED["hiring-api"], True)
 

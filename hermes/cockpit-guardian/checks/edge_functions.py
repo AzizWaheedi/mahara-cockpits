@@ -44,6 +44,9 @@ EXPECTED = {
     # The creative director's API: signed-in presses, and since 20261025o the Blueprint drain, which pg_cron calls
     # with the anon key and x-cron-secret, so its JWT check stays on.
     "cockpit-creative-api": True,
+    # The task mirror (docs/requests/CONTRACT.md section 5): pg_cron calls it with x-cron-secret and a signed-in
+    # cockpit with its own JWT, which the door checks itself, so the gateway's JWT check is off.
+    "cockpit-tasks": False,
 }
 
 

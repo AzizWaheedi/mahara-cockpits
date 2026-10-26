@@ -1,42 +1,48 @@
-import { Bell, CheckCheck, RefreshCw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
-import { Button } from "@/components/ui/button";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import type { ExtraAlert, ExtraAlerts } from "@/components/tasks/AlertsBell";
 import type { ClientNotice, ClientNotices } from "@/lib/launchModel";
+import { useTaskFeed } from "@/lib/tasksClient";
+// Loaded with the layout since the bell lived here; Today's launch parts
+// still lean on it.
 import "./launch.css";
-export function ClientAlerts() {
+
+/**
+ * The media buyer's launch notices (relaunch checks, reviews, holds and the
+ * media tasks of the old inbox) as the shared bell's second list
+ * (CONTRACT.md 6.3). Media buyer, admin and CEO seats only, on every page of
+ * the portal; everyone else gets undefined and a bell with task alerts only.
+ *
+ * Once the seat's own task feed is linked to its ClickUp user, the notices
+ * of kind "task" are left out: the task alerts above carry them, so a task
+ * shows once. The read keeps the pattern it had: on open, every 2 minutes
+ * while the tab is visible, on focus, never twice within 30 seconds.
+ */
+export function useLaunchNotices(): ExtraAlerts | undefined {
   const { client, access } = useCockpitAuth();
-  const { pathname } = useLocation();
+  const feed = useTaskFeed();
   const enabled =
-    /^\/(clients|launch|ads|dashboard|eod|playbook|ideation|swipe)(\/|$)/.test(
-      pathname,
-    ) &&
+    !!client &&
     !!access &&
     (access.roles.includes("media_buyer") || access.isAdmin || access.isCeo);
-  const [open, setOpen] = useState(false);
-  const [data, setData] = useState<ClientNotices | null>(null),
-    [error, setError] = useState(""),
-    [saving, setSaving] = useState(false);
-  const refreshRef = useRef<() => void>(() => {});
+  const [data, setData] = useState<ClientNotices | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  // A new seat on the same client reads its own notices from scratch.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the seat's email is the trigger
   useEffect(() => {
     if (!enabled || !client) return;
     setData(null);
-    setError("");
+    setFailed(false);
     let active = true,
       busy = false,
       last = 0;
-    async function read(force = false) {
+    async function read() {
       if (
         !active ||
         busy ||
         document.visibilityState === "hidden" ||
-        (!force && Date.now() - last < 30000)
+        Date.now() - last < 30000
       )
         return;
       busy = true;
@@ -48,15 +54,14 @@ export function ClientAlerts() {
           throw Error("Notices are unavailable");
         if (active) {
           setData(r.data);
-          setError("");
+          setFailed(false);
         }
       } catch {
-        if (active) setError("Alerts could not refresh. Try again.");
+        if (active) setFailed(true);
       } finally {
         busy = false;
       }
     }
-    refreshRef.current = () => void read(true);
     const visible = () => void read();
     void read();
     const timer = window.setInterval(visible, 120000);
@@ -69,154 +74,58 @@ export function ClientAlerts() {
       document.removeEventListener("visibilitychange", visible);
     };
   }, [client, enabled, access?.email]);
-  if (!enabled) return null;
-  const unread = data?.notices.filter(n => !n.read) ?? [];
-  async function seen(notices: ClientNotice[]) {
-    if (!client || !notices.length) return;
-    setSaving(true);
-    try {
+
+  const markRead = useCallback(
+    async (items: ExtraAlert[]) => {
+      if (!client || !items.length) return;
+      const some = items.slice(0, 200);
       const r = await client.rpc("cockpit_media_notices_seen", {
-        p_notices: notices
-          .slice(0, 200)
-          .map(({ id, version }) => ({ id, version })),
+        p_notices: some.map(({ id, version }) => ({ id, version })),
       });
-      if (r.error) throw r.error;
-      const versions = new Set(
-        notices.slice(0, 200).map(n => `${n.id}:${n.version}`),
-      );
+      if (r.error) throw new Error("Read status could not save. Try again.");
+      const seen = new Set(some.map(n => `${n.id}:${n.version}`));
       setData(d =>
         d
           ? {
               ...d,
               notices: d.notices.map(n =>
-                versions.has(`${n.id}:${n.version}`) ? { ...n, read: true } : n,
+                seen.has(`${n.id}:${n.version}`) ? { ...n, read: true } : n,
               ),
             }
           : d,
       );
-    } catch {
-      setError("Read status could not save. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <div className="client-alert-bar">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            aria-label={`Client alerts${unread.length ? `, ${unread.length} unread` : ""}`}
-          >
-            <Bell size={15} />
-            Alerts
-            {unread.length > 0 && (
-              <span className="client-alert-count" aria-live="polite">
-                {unread.length}
-              </span>
-            )}
-            {error && <span>Unavailable</span>}
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="end" className="client-alert-panel">
-          <header>
-            <div>
-              <h2>Client alerts</h2>
-              <p>Relaunch checks and media tasks.</p>
-            </div>
-            <Button
-              size="icon"
-              variant="ghost"
-              aria-label="Refresh alerts"
-              onClick={() => refreshRef.current()}
-            >
-              <RefreshCw size={14} />
-            </Button>
-          </header>
-          {error && <p role="alert">{error}</p>}
-          {data && !data.tasksReady && (
-            <p role="status">
-              Task updates are unavailable. Check Today or ClickUp.
-            </p>
-          )}
-          {data?.sourceAt && (
-            <small>
-              Task source checked{" "}
-              {new Date(data.sourceAt).toLocaleString("en-GB", {
-                day: "numeric",
-                month: "short",
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </small>
-          )}
-          {!!unread.length && (
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={saving}
-              onClick={() => void seen(unread)}
-            >
-              <CheckCheck size={14} />
-              Mark all read
-            </Button>
-          )}
-          <div className="client-alert-list">
-            {!data && !error ? (
-              <p>Loading alerts…</p>
-            ) : data?.notices.length ? (
-              data.notices.map(n => {
-                const content = (
-                  <>
-                    <span
-                      className={`client-notice-dot ${n.read ? "read" : ""}`}
-                    />
-                    <div>
-                      <strong>{n.title}</strong>
-                      <p>{n.body}</p>
-                      {n.clientName && n.kind === "task" && (
-                        <small>{n.clientName}</small>
-                      )}
-                    </div>
-                  </>
-                );
-                return n.href.startsWith("https://app.clickup.com/t/") ? (
-                  <a
-                    key={n.id}
-                    href={n.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={() => {
-                      setOpen(false);
-                      void seen([n]);
-                    }}
-                  >
-                    {content}
-                  </a>
-                ) : (
-                  <Link
-                    key={n.id}
-                    to={n.href}
-                    onClick={() => {
-                      setOpen(false);
-                      void seen([n]);
-                    }}
-                  >
-                    {content}
-                  </Link>
-                );
-              })
-            ) : !error ? (
-              <p>No client action or media task is waiting.</p>
-            ) : null}
-          </div>
-          <footer>
-            Checked while this cockpit is open. Source updates follow the
-            existing sync.
-          </footer>
-        </PopoverContent>
-      </Popover>
-    </div>
+    },
+    [client],
   );
+
+  const linked = feed.tasks?.link === "linked";
+  return useMemo(() => {
+    if (!enabled) return undefined;
+    const notices: ClientNotice[] = (data?.notices ?? []).filter(
+      n => !(linked && n.kind === "task"),
+    );
+    const tasksLate = !!data && !data.tasksReady && !linked;
+    return {
+      label: "Client alerts",
+      ready: !!data && !failed && !tasksLate,
+      note: failed
+        ? "Client alerts could not refresh. Try again in a minute."
+        : !data
+          ? "Reading client alerts…"
+          : tasksLate
+            ? "Task updates are unavailable. Check Today or ClickUp."
+            : null,
+      items: notices.map(n => ({
+        id: n.id,
+        version: n.version,
+        title: n.title,
+        body: n.body,
+        clientName: n.kind === "task" ? (n.clientName ?? null) : null,
+        href: n.href,
+        external: /^https?:\/\//.test(n.href),
+        read: !!n.read,
+      })),
+      markRead,
+    };
+  }, [enabled, data, failed, linked, markRead]);
 }

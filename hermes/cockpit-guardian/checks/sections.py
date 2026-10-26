@@ -117,6 +117,9 @@ def run_jobs(ctx: Context) -> Result:
         "csm-reconcile": 26 * 60,
         # Facebook leads vs CRM, every 15 min (hermes/lead-sync-watch).
         "lead-sync-watch": 45,
+        # The requests writer reports every minute; the task mirror every 2 minutes and its seats read hourly
+        # (20261026r, 20261026t, docs/requests/CONTRACT.md section 7).
+        "clickup-writeback:requests": 10, "task-mirror:delta": 10, "task-mirror:seats": 90,
     }
     rows = {r.get("key"): r for r in ctx.rows("cockpit_sync_state", "key,ok,note,last_ok_at", where=[("key", "in", list(keys))])}
     bad = []

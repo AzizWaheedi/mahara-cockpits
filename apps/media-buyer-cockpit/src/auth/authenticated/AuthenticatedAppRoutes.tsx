@@ -24,6 +24,8 @@ import {
 import { DataViewPage } from "@/pages/data/DataViewPage";
 import { LaunchPage } from "@/pages/LaunchPage";
 import { PerformancePage } from "@/pages/performance/PerformancePage";
+import { RequestsPage } from "@/pages/requests/RequestsPage";
+import { RequestsSettings } from "@/pages/requests/RequestsSettings";
 import { MeetingPage } from "@/pages/team/MeetingPage";
 import { TeamPage } from "@/pages/team/TeamPage";
 
@@ -118,6 +120,11 @@ export function AuthenticatedRoutes() {
           </Route>
           {/* Team meetings: everybody with a seat in the portal. */}
           <Route path="/team" element={<TeamPage />} />
+          {/* Requests: every seat asks a team here, and editors set where
+              each request goes (docs/requests/CONTRACT.md 6.4). The
+              database gates every read and write, so no RoleRoute. */}
+          <Route path="/requests" element={<RequestsPage />} />
+          <Route path="/requests/settings" element={<RequestsSettings />} />
           {/* Client performance: every seat (Aziz, 2026-10-16). The database
               gates the read: any active seat, each client through
               cockpit_client_allowed. */}

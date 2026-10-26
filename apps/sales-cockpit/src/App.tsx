@@ -14,6 +14,8 @@ import { PageBoundary } from "./components/PageBoundary";
 import { SalesBanner } from "./components/SalesBanner";
 import { SearchBox } from "./components/SearchBox";
 import Sidebar from "./components/Sidebar";
+import { AlertsBell } from "./components/tasks/AlertsBell";
+import { TaskFocusHost } from "./components/tasks/TaskFocus";
 import { Wordmark } from "./components/Wordmark";
 import { SessionProvider, useWho } from "./lib/auth";
 import { useFollowupsWaiting, useMe, useOwed, useProposals } from "./lib/data";
@@ -301,6 +303,8 @@ export function Seated({
                 {counts.owed} owed
               </span>
             ) : null}
+            {/* Task alerts, beside the search, on a phone or a tablet. */}
+            <AlertsBell variant="icon" />
             <button
               type="button"
               onClick={openSearch}
@@ -366,6 +370,8 @@ export function Seated({
 
       <TabBar owed={counts.owed} onMore={() => setDrawer(true)} />
       <SearchBox isManager={Boolean(me.manager)} />
+      {/* One task, in place, wherever the address has ?focus=. */}
+      <TaskFocusHost />
     </div>
   );
 }

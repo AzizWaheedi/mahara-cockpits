@@ -41,9 +41,8 @@ import { StatusToggle } from "@/components/StatusToggle";
 import { TodayMeetings } from "@/components/TodayMeetings";
 import { TrackingIssues } from "@/components/TrackingIssues";
 import { PortfolioTrends } from "@/components/Trends";
-import { AnimatedSelect } from "@/components/ui/animated-select";
+import { YourTasks } from "@/components/tasks/YourTasks";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Popover,
   PopoverContent,
@@ -1035,7 +1034,6 @@ function Cockpit({ view }: { view: View }) {
   }, [hasSnapshot, view, loadClientLogos, auth.session?.user.id]);
   const run = useAction(api.execute.runAction);
   const addPlanItems = sb.addPlanItems as any;
-  const askForDetail = useAction(api.cockpit.askForDetail);
   const setClientLanguage = useAction(api.cockpit.setClientLanguage);
   const removeDecision = sb.removeDecision as any;
   const saveEod = sb.saveEod as any;
@@ -1174,9 +1172,6 @@ function Cockpit({ view }: { view: View }) {
   const [reason, setReason] = useState(REASONS[0]);
   const [clock, setClock] = useState(CLOCKS[1]);
   const [dump, setDump] = useState("");
-  const [ask, setAsk] = useState<string | null>(null);
-  const [askText, setAskText] = useState("");
-  const [askWho, setAskWho] = useState<string>("");
   // The Payments strip on Today opens the board as /ads?filter=payment. The
   // address is read once and cleared, so a reload does not pin the filter.
   const [filter, setFilter] = useState(() =>
@@ -2324,124 +2319,6 @@ function Cockpit({ view }: { view: View }) {
       <Button asChild size="sm" className="mt-4">
         <Link to="/ads">Open Ads management</Link>
       </Button>
-    </section>
-  );
-
-  const inbox = (snap.inbox ?? []) as {
-    _id: string;
-    url?: string;
-    title: string;
-    body?: string;
-    kind?: string;
-    author?: string;
-    reason?: string;
-    listName?: string;
-    overdue?: boolean;
-    taskId?: string;
-  }[];
-  const tasksCard = (
-    <section className={CARD}>
-      <h2 className="text-[15px] font-semibold">Your ClickUp tasks</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Open work on the Ads Management and Marketing / ADs boards. Ticking it
-        here is not enough: open the task and move it, so the rest of the team
-        sees it.
-      </p>
-      {inbox.length === 0 ? (
-        <p className="mt-4 text-sm text-muted-foreground">Nothing open.</p>
-      ) : (
-        <ul className="mt-4 divide-y">
-          {inbox.map(i => (
-            <li key={i._id} className="py-3 first:pt-0 last:pb-0">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-sm">
-                <a
-                  href={i.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="min-w-0 hover:underline"
-                >
-                  <span className="font-medium">{i.title}</span>
-                  {i.body && (
-                    <span className="text-muted-foreground"> · {i.body}</span>
-                  )}
-                </a>
-                <span className="basis-full text-xs text-muted-foreground sm:basis-auto">
-                  {i.kind === "mention" ? `${i.author} tagged you` : i.listName}
-                  {i.overdue ? " · overdue" : ""}
-                </span>
-              </div>
-              {ask === i._id ? (
-                <div className="mt-2 space-y-2 rounded-xl bg-muted/40 p-3">
-                  <AnimatedSelect
-                    className="h-8 w-full rounded-lg border bg-background px-2 text-sm"
-                    value={askWho}
-                    onChange={e => setAskWho(e.target.value)}
-                  >
-                    <option value="">Who needs to answer?</option>
-                    {/* biome-ignore lint/suspicious/noExplicitAny: member row */}
-                    {((snap.members ?? []) as any[]).map(m => (
-                      <option key={m.userId} value={String(m.userId)}>
-                        {m.username}
-                      </option>
-                    ))}
-                  </AnimatedSelect>
-                  <Input
-                    value={askText}
-                    placeholder="What is missing? e.g. which landing page should this point to?"
-                    className="h-8 text-sm"
-                    onChange={e => setAskText(e.target.value)}
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      disabled={!askText.trim() || !i.taskId}
-                      onClick={async () => {
-                        const who = (
-                          (snap.members ?? []) as {
-                            userId: number;
-                            username: string;
-                          }[]
-                        ).find(m => String(m.userId) === askWho);
-                        await askForDetail({
-                          taskId: i.taskId as string,
-                          question: askText.trim(),
-                          assignee: who?.userId,
-                          assigneeName: who?.username,
-                        });
-                        setAsk(null);
-                        setAskText("");
-                        setAskWho("");
-                        toast.success(
-                          who
-                            ? `Asked ${who.username} on the task`
-                            : "Asked on the task",
-                        );
-                      }}
-                    >
-                      Ask on the task
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setAsk(null)}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="mt-1 text-xs text-primary hover:underline"
-                  onClick={() => setAsk(i._id)}
-                >
-                  Something missing? Ask someone on this task
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
     </section>
   );
 
@@ -4084,8 +3961,12 @@ function Cockpit({ view }: { view: View }) {
               {/* Exception alerts (plan 4.1): the clients whose numbers
                   broke, first, so the day starts where the money is. */}
               <ExceptionAlerts />
+              {/* Your tasks (PLAN.md D19): this seat's own open ClickUp
+                  tasks, five at most, each opening in place. It holds the
+                  #tasks anchor the old /tasks address lands on. */}
+              <YourTasks id="tasks" />
               {sprint}
-              <div id="tasks" className="scroll-mt-6 space-y-6">
+              <div className="space-y-6">
                 <LaunchToday data={launch.data} />
                 <Onboardings
                   onBuild={name => {
@@ -4099,7 +3980,6 @@ function Cockpit({ view }: { view: View }) {
                     else window.location.assign("/clients");
                   }}
                 />
-                {tasksCard}
               </div>
               <div id="touchpoints" className="scroll-mt-6">
                 {touch}

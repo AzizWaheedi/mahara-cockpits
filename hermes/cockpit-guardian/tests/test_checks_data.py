@@ -14,6 +14,10 @@ from guard.model import FAIL, NOT_DEPLOYED, OK, PAUSED, UNKNOWN, WARN, Result
 SIGNED_OUT = "The Claude sign-in on the VPS has lapsed, so nothing can be drafted. run claude, then /login"
 
 
+# The requests writer and the task mirror (docs/requests/CONTRACT.md section 7).
+REQUEST_JOBS = ("clickup-writeback:requests", "task-mirror:delta", "task-mirror:seats")
+
+
 def make(tables=None, **kw):
     tmp = Path(tempfile.mkdtemp())
     db = kw.pop("db", None) or fakes.FakeDb(tables or {})
@@ -248,7 +252,7 @@ class Sections(unittest.TestCase):
                 "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync",
                 "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
                 "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile",
-                "lead-sync-watch")
+                "lead-sync-watch") + REQUEST_JOBS
         rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
         rows[0]["last_ok_at"] = fakes.ago(60)
@@ -265,7 +269,7 @@ class Sections(unittest.TestCase):
                 "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hubstaff-sync", "onboarding-sync",
                 "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
                 "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile",
-                "lead-sync-watch")
+                "lead-sync-watch") + REQUEST_JOBS
         rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
         missing = run_jobs(make({"cockpit_sync_state": rows}))
         self.assertEqual(missing.status, FAIL)
@@ -285,7 +289,7 @@ class Sections(unittest.TestCase):
             "clickup-writeback:kpi", "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine",
             "hiring-sync:intake", "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync",
             "tap-charges-sync", "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form",
-            "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile")]
+            "csm-forms-history", "csm-fathom", "csm-meta-activities", "csm-media-changes", "csm-reconcile") + REQUEST_JOBS]
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).items, ["lead-sync-watch"])
         rows.append({"key": "lead-sync-watch", "ok": True, "last_ok_at": fakes.ago(44)})
         self.assertEqual(run_jobs(make({"cockpit_sync_state": rows})).status, OK)
@@ -296,7 +300,7 @@ class Sections(unittest.TestCase):
             "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine", "hiring-sync:intake",
             "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync", "tap-charges-sync",
             "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form", "csm-forms-history", "csm-fathom",
-            "csm-meta-activities", "csm-media-changes", "csm-reconcile", "lead-sync-watch")
+            "csm-meta-activities", "csm-media-changes", "csm-reconcile", "lead-sync-watch") + REQUEST_JOBS
 
     def writebacks_at(self, now, kpi, dosdonts):
         rows = [{"key": k, "ok": True, "last_ok_at": (now - timedelta(minutes=1)).isoformat()} for k in self.JOBS]
@@ -690,7 +694,7 @@ class StageOneQueues(unittest.TestCase):
 
     def test_the_other_queues_still_read_status(self):
         for q in queues.QUEUES:
-            if q.table not in ("cockpit_slack_notices", "cockpit_creative_outbox"):
+            if q.table not in ("cockpit_slack_notices", "cockpit_creative_outbox", "cockpit_clickup_writeback_queue"):
                 self.assertEqual((q.status_col, q.kind_col, q.kinds), ("status", None, ()), q.id)
 
     def test_the_sender_and_the_drain_are_expected(self):
@@ -698,6 +702,77 @@ class StageOneQueues(unittest.TestCase):
         self.assertIs(edge_functions.EXPECTED["cockpit-creative-api"], True)
         self.assertIn("mahara-slack-notices", pg_cron.EXPECTED_JOBS)
         self.assertIn("mahara-creative-drain", pg_cron.EXPECTED_JOBS)
+
+
+def queued(state, minutes, kind="request", **kw):
+    return {"id": f"q-{kind}-{state}-{minutes}", "kind": kind, "state": state, "created_at": fakes.ago(minutes), **kw}
+
+
+class RequestsAndTaskMirror(unittest.TestCase):
+    """docs/requests/CONTRACT.md section 7: the requests writer's queue rows and the task mirror's jobs."""
+
+    def q(self):
+        return next(x for x in queues.QUEUES if x.id == "queue-clickup-requests")
+
+    def run_q(self, rows):
+        db = fakes.FakeDb({"cockpit_clickup_writeback_queue": rows})
+        return queues.queue_check(self.q())(make(db=db)), db
+
+    def test_the_row_reads_only_requests_and_task_changes_by_state(self):
+        q = self.q()
+        self.assertEqual((q.table, q.status_col, q.kind_col, q.kinds, q.limit_min, q.time_col, q.failed_col, q.owner),
+                         ("cockpit_clickup_writeback_queue", "state", "kind", ("request", "task_action"), 15, "created_at",
+                          "updated_at", "the tech lead"))
+        self.assertEqual(q.states, ("queued", "sending", "retry", "unknown"))
+        self.assertIn("cockpit_clickup_writeback_queue", queues.WITH_ERROR)
+        self.assertIn("requests_doctor", q.action)
+        self.assertIn("RUNBOOK, Requests writer", q.action)
+        self.assertIn("kind in (request, task_action)", checks_mod.by_id()["queue-clickup-requests"].reads)
+
+    def test_a_request_waiting_past_15_minutes_warns_and_the_log_jobs_kinds_are_left_alone(self):
+        r, _ = self.run_q([queued("queued", 2, kind="task_action"), queued("retry", 9),
+                           queued("queued", 400, kind="decision")])
+        self.assertEqual(r.status, OK)
+        r, _ = self.run_q([queued("unknown", 40, error="ClickUp did not answer; look for its Cockpit ref."), queued("queued", 3)])
+        self.assertEqual(r.status, WARN)
+        self.assertIn("1 request or task change bound for ClickUp(s) waited past 15 min; the oldest is unknown", r.summary)
+        self.assertIn("look for its Cockpit ref", r.summary)
+
+    def test_a_failed_request_in_24_hours_warns(self):
+        r, _ = self.run_q([queued("failed", 90, updated_at=fakes.ago(60), error="clickup rejected the request (400)")])
+        self.assertEqual(r.status, WARN)
+        self.assertIn("failed in the last 24 h", r.summary)
+        self.assertIn("clickup rejected the request (400)", r.summary)
+
+    def test_the_jobs_and_the_function_are_expected(self):
+        for job in ("mahara-clickup-writeback-requests", "mahara-task-mirror", "mahara-task-mirror-seats"):
+            self.assertIn(job, pg_cron.EXPECTED_JOBS)
+        self.assertIs(edge_functions.EXPECTED["cockpit-tasks"], False)
+        import inspect
+        src = inspect.getsource(sections.run_jobs)
+        for line in ('"clickup-writeback:requests": 10', '"task-mirror:delta": 10', '"task-mirror:seats": 90'):
+            self.assertIn(line, src)
+
+    def test_a_late_task_mirror_fails_the_jobs_check(self):
+        keys = TestSectionsJobKeys.ALL
+        rows = [{"key": k, "ok": True, "last_ok_at": fakes.ago(1)} for k in keys]
+        self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": rows})).status, OK)
+        for r in rows:
+            if r["key"] == "task-mirror:delta":
+                r["last_ok_at"] = fakes.ago(11)
+            if r["key"] == "task-mirror:seats":
+                r["last_ok_at"] = fakes.ago(80)
+        self.assertEqual(sections.run_jobs(make({"cockpit_sync_state": rows})).items, ["task-mirror:delta"])
+        rows = [r for r in rows if r["key"] != "clickup-writeback:requests"]
+        self.assertIn("clickup-writeback:requests", sections.run_jobs(make({"cockpit_sync_state": rows})).items)
+
+
+class TestSectionsJobKeys:
+    ALL = ("ai-watch-tick", "billing-sync", "ceo-extensions-auto", "clickup-writeback:log", "clickup-writeback:kpi",
+           "clickup-writeback:dosdonts", "comment-watch", "hiring-sync:engine", "hiring-sync:intake",
+           "hiring-sync:mirror", "hours-kick", "hours-watch", "hubstaff-sync", "onboarding-sync", "tap-charges-sync",
+           "timetastic-sync", "tracking-audit", "csm-ghl-calls", "csm-checkin-form", "csm-forms-history", "csm-fathom",
+           "csm-meta-activities", "csm-media-changes", "csm-reconcile", "lead-sync-watch") + REQUEST_JOBS
 
 
 if __name__ == "__main__":

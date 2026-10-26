@@ -13,6 +13,7 @@ import {
   StatusChip,
 } from "../components/bits";
 import { ReportIssue } from "../components/ReportIssue";
+import { YourTasks } from "../components/tasks/YourTasks";
 import { Button } from "../components/ui/button";
 import { useWho } from "../lib/auth";
 import { useJobs } from "../lib/data";
@@ -263,6 +264,13 @@ export default function JobsPage({ actions }: { actions?: ReactNode } = {}) {
           </p>
         </>
       ) : null}
+
+      {/* Your tasks (PLAN.md D19): your other open ClickUp tasks, five at
+          most. The Video Pipeline stays here on Jobs, so it is left out
+          (the seat adapter asks with cockpit "editor"). */}
+      <div className="mb-6">
+        <YourTasks />
+      </div>
 
       <div className="-mx-4 mb-6 flex flex-nowrap items-center gap-2 overflow-x-auto px-4 no-scrollbar sm:mx-0 sm:flex-wrap sm:px-0">
         <button

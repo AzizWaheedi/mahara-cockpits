@@ -9,6 +9,8 @@ import { AppSidebar } from "./AppSidebar";
 import { CommandPalette } from "./CommandPalette";
 import { HermesChat } from "./HermesChat";
 import { RouteErrorBoundary } from "./RouteErrorBoundary";
+import { AlertsBell } from "./tasks/AlertsBell";
+import { TaskFocusHost } from "./tasks/TaskFocus";
 import {
   SidebarInset,
   SidebarProvider,
@@ -94,11 +96,15 @@ function LayoutContent() {
             <span className="text-sm text-muted-foreground">
               Creative director
             </span>
+            {/* Task alerts, beside the search, on a phone or a tablet. */}
+            <span className="ml-auto">
+              <AlertsBell variant="icon" />
+            </span>
             <button
               type="button"
               onClick={openSearch}
               aria-label="Search"
-              className="ml-auto inline-flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="inline-flex size-10 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               <Search aria-hidden className="size-5" />
             </button>
@@ -111,6 +117,10 @@ function LayoutContent() {
             only: a transform here would pin the Social sheet (position:
             fixed) to this wrapper instead of the screen. */}
         <div className="flex-1 px-4 pt-4 pb-24 sm:px-6 sm:pt-6 lg:px-8 lg:pt-8 lg:pb-12">
+          {/* From 1024px there is no bar, so the bell is a row on top. */}
+          <div className="hidden lg:block">
+            <AlertsBell variant="row" />
+          </div>
           <RouteErrorBoundary report={handleReport}>
             <motion.div
               key={location.pathname}
@@ -128,6 +138,8 @@ function LayoutContent() {
         {isBlueprintCall(location.pathname) ? null : <HermesChat />}
       </SidebarInset>
       <CommandPalette />
+      {/* One task, in place, wherever the address has ?focus=. */}
+      <TaskFocusHost />
     </>
   );
 }

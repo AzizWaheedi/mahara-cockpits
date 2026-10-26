@@ -251,6 +251,59 @@ for f in src/components/billing/PendingPayments.tsx src/lib/billingBalances.ts s
   same "$f" "$MB/$f" "$CS/$f"
 done
 
+# Your tasks, the alerts bell, the focus view and the request form
+# (PLAN.md D18, D19; docs/requests/CONTRACT.md 6.2): one set of eleven files
+# in all five apps, byte for byte, imports included. The client success copy
+# is the master. Each app's own adapter is src/lib/taskSeat.ts; nothing else
+# in the set differs.
+TASK_SET="src/lib/tasksCore.ts src/lib/tasksClient.ts
+src/components/tasks/TaskPanel.tsx src/components/tasks/YourTasks.tsx
+src/components/tasks/AlertsBell.tsx src/components/tasks/TaskFocus.tsx
+src/components/tasks/tasks.css src/lib/requestsCore.ts
+src/lib/requestsClient.ts src/components/tasks/RequestForm.tsx
+src/components/tasks/requests.css"
+for f in $TASK_SET; do
+  if [ ! -f "$CS/$f" ]; then
+    echo "MISSING  $f: $CS/$f does not exist"; fails=$((fails + 1)); continue
+  fi
+  for app in "$MB" "$CD" "$ED" "$SA"; do
+    if ! cmp -s "$CS/$f" "$app/$f"; then
+      echo "DRIFTED  $f: copy $CS/$f to $app/"; fails=$((fails + 1))
+    fi
+  done
+done
+# The two cores carry the rules and the words; they import nothing.
+for f in src/lib/tasksCore.ts src/lib/requestsCore.ts; do
+  if [ -f "$CS/$f" ] && grep -qE '^(import |export .* from )' "$CS/$f"; then
+    echo "IMPORTS  $CS/$f must stay import-free"; fails=$((fails + 1))
+  fi
+done
+# The rest may import only React, the router, lucide icons, the Supabase
+# client's type, the seat adapter, each other and their own CSS, so the set
+# builds the same in the two apps without Radix, sonner or zod.
+for f in $TASK_SET; do
+  case "$f" in *Core.ts|*.css) continue ;; esac
+  [ -f "$CS/$f" ] || continue
+  if grep -oE "(from|import) +[\"'][^\"']+[\"']" "$CS/$f" \
+    | grep -vE "[\"'](react|react-dom|react-router|lucide-react|@supabase/supabase-js|@/lib/(taskSeat|tasksClient|tasksCore|requestsClient|requestsCore)|\./(TaskPanel|YourTasks|AlertsBell|TaskFocus|RequestForm|tasks\.css|requests\.css))[\"']$" >/dev/null; then
+    echo "IMPORTS  $CS/$f may import only react, react-dom, react-router, lucide-react, the Supabase client type, @/lib/taskSeat and the set itself"
+    fails=$((fails + 1))
+  fi
+  if grep -E "[\"']@supabase/supabase-js[\"']" "$CS/$f" \
+    | grep -vqE "^import type \{ SupabaseClient \} from [\"']@supabase/supabase-js[\"'];$"; then
+    echo "IMPORTS  $CS/$f may take only the SupabaseClient type from @supabase/supabase-js"
+    fails=$((fails + 1))
+  fi
+done
+for f in src/components/tasks/tasks.css src/components/tasks/requests.css; do
+  if [ -f "$CS/$f" ] && grep -q '@import' "$CS/$f"; then
+    echo "IMPORTS  $CS/$f must not @import anything"; fails=$((fails + 1))
+  fi
+done
+for app in "$CS" "$MB" "$CD" "$ED" "$SA"; do
+  [ -f "$app/src/lib/taskSeat.ts" ] || { echo "MISSING  $app/src/lib/taskSeat.ts"; fails=$((fails + 1)); }
+done
+
 if [ "$fails" -ne 0 ]; then
   echo
   echo "$fails shared file(s) have drifted. Copy the good one over the others:"

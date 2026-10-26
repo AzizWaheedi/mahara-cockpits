@@ -158,6 +158,15 @@ export function MobileTabBar() {
             to: "/team",
             active: path.startsWith("/team"),
           },
+          // Everybody's: Ask a team. The media buyer's bar is full and
+          // reaches it through More.
+          {
+            key: "requests",
+            label: "Requests",
+            icon: COCKPIT_ICON.requests,
+            to: "/requests",
+            active: path.startsWith("/requests"),
+          },
           {
             key: "performance",
             label: "Clients",

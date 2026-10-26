@@ -1,0 +1,510 @@
+/*
+ * Requests: the shared form's classes (CONTRACT.md 6.2), byte-identical in
+ * all five apps. Only the tokens every app defines: --card, --border,
+ * --foreground, --muted, --muted-foreground, --background, --primary,
+ * --primary-foreground, --warning, --destructive, --success, --ring, and
+ * var(--primary-ink, var(--primary)) for teal marks (only client success
+ * and creative define --primary-ink). No Tailwind class, no new colour.
+ *
+ * Hallmark · component: request form · states: default · hover · focus ·
+ * active · disabled · loading · error · success. Inputs keep a 1px border
+ * in every state; focus is an outline in the reserved slot, so nothing
+ * shifts.
+ */
+
+.rq-form {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+  font-size: 14px;
+  color: var(--foreground);
+}
+.rq-form.rq-compact {
+  gap: 16px;
+}
+.rq-form *,
+.rq-form *::before,
+.rq-form *::after {
+  box-sizing: border-box;
+}
+
+/* --- Fields -------------------------------------------------------------- */
+
+.rq-field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+.rq-label {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--foreground);
+}
+.rq-optional {
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.rq-help,
+.rq-error,
+.rq-note,
+.rq-muted {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.rq-help,
+.rq-muted,
+.rq-note {
+  color: var(--muted-foreground);
+}
+.rq-error {
+  color: var(--destructive);
+}
+.rq-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rq-pad {
+  padding: 12px;
+}
+
+.rq-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  outline: 2px solid transparent;
+  outline-offset: 1px;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  transition: background-color 120ms ease;
+}
+.rq-input::placeholder {
+  color: var(--muted-foreground);
+}
+@media (hover: hover) {
+  .rq-input:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--foreground) 3%, var(--background));
+  }
+}
+.rq-input:focus-visible {
+  outline-color: var(--ring);
+}
+.rq-input[aria-invalid="true"] {
+  border-color: var(--destructive);
+}
+.rq-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.rq-textarea {
+  height: auto;
+  min-height: 96px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+.rq-select {
+  appearance: auto;
+  padding-right: 8px;
+}
+input[type="date"].rq-input {
+  font-variant-numeric: tabular-nums;
+}
+
+.rq-search {
+  position: relative;
+  min-width: 0;
+}
+.rq-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  transform: translateY(-50%);
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+.rq-search-input {
+  padding-left: 36px;
+}
+
+.rq-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 32px;
+  font-size: 13px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.rq-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+.rq-check input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.rq-pair {
+  display: grid;
+  gap: 16px;
+}
+@media (min-width: 640px) {
+  .rq-pair {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* --- The type list and the client list ----------------------------------- */
+
+.rq-types,
+.rq-clients {
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+.rq-types-short,
+.rq-clients {
+  max-height: 264px;
+}
+.rq-group + .rq-group {
+  border-top: 1px solid var(--border);
+}
+.rq-group-label {
+  margin: 0;
+  padding: 12px 12px 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.rq-type {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 14px;
+  text-align: start;
+  cursor: pointer;
+}
+.rq-clients > .rq-type + .rq-type {
+  border-top: 1px solid var(--border);
+}
+@media (hover: hover) {
+  .rq-type:hover {
+    background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  }
+}
+.rq-type:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.rq-type:active {
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+}
+.rq-type-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rq-type-also {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+
+.rq-chosen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 4px 4px 12px;
+  border: 1px solid color-mix(in oklab, var(--primary) 45%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--primary) 8%, transparent);
+}
+.rq-chosen-text {
+  display: grid;
+  min-width: 0;
+}
+.rq-chosen-name {
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.rq-chosen .rq-muted {
+  font-size: 12px;
+}
+
+/* --- The route line (the signature) -------------------------------------- */
+
+.rq-route {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  transition: opacity 120ms ease;
+}
+.rq-route[data-busy="true"] {
+  opacity: 0.65;
+}
+.rq-kicker {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.rq-route-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rq-route-line {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.rq-route-mark {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--primary-ink, var(--primary));
+}
+.rq-route-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.rq-route-text p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rq-route-text strong {
+  font-weight: 600;
+}
+.rq-route-text .rq-muted {
+  font-size: 12px;
+}
+
+/* --- Buttons ------------------------------------------------------------- */
+
+.rq-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.rq-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+.rq-btn:focus-visible {
+  outline-color: var(--ring);
+}
+.rq-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.rq-btn:disabled,
+.rq-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.rq-btn[data-state="loading"] {
+  opacity: 0.8;
+  cursor: progress;
+}
+.rq-btn-sm {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.rq-btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+@media (hover: hover) {
+  .rq-btn-primary:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--primary) 88%, var(--foreground));
+  }
+  .rq-btn-outline:hover:not(:disabled),
+  .rq-btn-ghost:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--foreground) 6%, transparent);
+  }
+}
+.rq-btn-outline {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--foreground);
+}
+.rq-btn-ghost {
+  background: transparent;
+  color: var(--primary-ink, var(--primary));
+}
+@media (max-width: 639px) {
+  .rq-form:not(.rq-compact) .rq-actions > .rq-btn:not(.rq-btn-sm) {
+    flex: 1 1 100%;
+  }
+}
+
+.rq-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  border-radius: 4px;
+  color: var(--primary-ink, var(--primary));
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+@media (hover: hover) {
+  .rq-link:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+}
+.rq-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.rq-link-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.rq-spin {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  animation: rq-spin 0.9s linear infinite;
+}
+@keyframes rq-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rq-spin {
+    animation-duration: 2.4s;
+  }
+  .rq-btn:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* --- Panels: refused, writer off, sent ----------------------------------- */
+
+.rq-alert,
+.rq-sent,
+.rq-off {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.rq-alert {
+  border: 1px solid color-mix(in oklab, var(--destructive) 35%, var(--border));
+}
+.rq-alert p,
+.rq-sent p,
+.rq-off p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rq-alert > div {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.rq-alert-icon,
+.rq-sent-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--destructive);
+}
+.rq-alert-icon.rq-warn {
+  color: var(--warning);
+}
+.rq-alert:has(.rq-warn) {
+  border-color: color-mix(in oklab, var(--warning) 40%, var(--border));
+}
+.rq-sent {
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+}
+.rq-sent-icon {
+  color: var(--success);
+}
+.rq-sent-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.rq-sent-line {
+  font-size: 14px;
+  font-weight: 500;
+}
+.rq-off {
+  flex-direction: column;
+  gap: 8px;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  color: var(--foreground);
+}

@@ -109,6 +109,12 @@ const PAGES: (Hit & { role?: "media_buyer" | "admin" | "ceo" })[] = [
     old: "meetings team agenda",
   },
   {
+    href: "/requests",
+    label: "Ask a team",
+    sub: "Requests · it becomes a ClickUp task with an owner",
+    old: "request ticket ask tech creative call centre",
+  },
+  {
     href: "/performance",
     label: "Client performance",
     sub: "Every active client against its targets, and the levers",

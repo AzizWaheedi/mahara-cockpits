@@ -1,7 +1,8 @@
-// The three ClickUp writeback jobs, with every dependency injected so the
-// tests can run them end to end without a network.
+// The ClickUp writeback jobs (kpi, log, dosdonts, requests and the two
+// doctors), with every dependency injected so the tests can run them end to
+// end without a network.
 //
-// OUTWARD SAFETY. Three Edge Function secrets open writes to ClickUp, each
+// OUTWARD SAFETY. Four Edge Function secrets open writes to ClickUp, each
 // only when it is exactly "true":
 //   CLICKUP_WRITEBACK_APPLY              the log and Do's & Don'ts
 //   CLICKUP_WRITEBACK_APPLY_CSM_TICKETS  client success tickets in the log, on
@@ -11,6 +12,11 @@
 //                                        only; CLICKUP_WRITEBACK_APPLY does not
 //                                        write them (cost per booking build 2,
 //                                        R12, 22 Oct 2026)
+//   CLICKUP_WRITEBACK_APPLY_REQUESTS     the requests job's two kinds, request and
+//                                        task_action, and nothing else; no other
+//                                        switch opens them (requests.ts requestsGate).
+//                                        CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS narrows
+//                                        it to listed client cards (a canary)
 // With its switch off a job reads what it needs and records, in
 // cockpit_clickup_writeback_runs (and on each queue item), exactly what it
 // would write: task id, field, old value, new value.
@@ -40,6 +46,20 @@ import {
   type Step,
 } from "./queue.ts";
 import { DOS_DONTS_LIST, dosDontsCandidates, type DosDontsResult, planDosDonts, tidyCard } from "./dosdonts.ts";
+import {
+  doctorChecks,
+  executeRequest,
+  planRequest,
+  REQUEST_SECRETS,
+  type RequestOutcome,
+  type RequestsItem,
+  requestsDb,
+  requestsGate,
+  requestStepKeys,
+  runContext,
+  SAY,
+} from "./requests.ts";
+import { executeTaskAction, planTaskAction, taskActionStepKeys } from "./taskActions.ts";
 
 export type Deps = {
   env: (name: string) => string | undefined;
@@ -50,7 +70,15 @@ export type Deps = {
   uuid: () => string;
   /** Wait between ClickUp calls so a run stays under ClickUp's per-minute limit. */
   pace?: () => Promise<void>;
+  /** Upsert one cockpit_sync_state row by key (the requests doctor's health line). */
+  syncState?: (key: string, row: Row) => Promise<void>;
 };
+
+/** The jobs index.ts runs, in the order the unknown-job sentence names them. */
+export const JOBS = ["kpi", "log", "dosdonts", "doctor", "requests", "requests_doctor"] as const;
+const jobList = `${JOBS.slice(0, -1).join(", ")} or ${JOBS.at(-1)}`;
+export const unknownJobNote = (job: string) => `Unknown job "${job.slice(0, 40)}". Use ${jobList}.`;
+export const noJobNote = `Send a JSON body with a job: ${jobList}.`;
 
 export type JobResult = { ok: boolean; job: string; mode?: string; note: string; counts?: Row };
 
@@ -392,10 +420,26 @@ export async function runDosDonts(deps: Deps): Promise<JobResult> {
 
 // --- doctor ------------------------------------------------------------------
 
+/** The requests switch in words, for the doctors' notes. */
+function requestsWords(env: Deps["env"]) {
+  const rq = requestsGate(env);
+  const cards = [...rq.onlyCards];
+  return {
+    mode: rq.mode,
+    cards,
+    text: !rq.apply
+      ? "dry run (they are written only when CLICKUP_WRITEBACK_APPLY_REQUESTS is true)"
+      : cards.length
+        ? `apply_limited to the cards ${cards.join(", ")} (CLICKUP_WRITEBACK_REQUESTS_ONLY_CARDS)`
+        : "apply",
+  };
+}
+
 /** Configuration and queue health, with no provider call and no write. */
-export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row; queue: unknown; kpiMode: string }> {
+export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row; queue: unknown; kpiMode: string; requestsMode: string; requestsOnlyCards: string[] }> {
   const g = gate(deps.env);
   const kpi = kpiGate(deps.env);
+  const rq = requestsWords(deps.env);
   const secrets = Object.fromEntries(
     ["CLICKUP_API_TOKEN", "META_SYSTEM_TOKEN", "CRON_SECRET", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"].map(k => [k, Boolean(deps.env(k))]),
   );
@@ -406,10 +450,203 @@ export async function runDoctor(deps: Deps): Promise<JobResult & { secrets: Row;
     job: "doctor",
     mode: g.mode,
     kpiMode: kpi.mode,
+    requestsMode: rq.mode,
+    requestsOnlyCards: rq.cards,
     note: `${missing.length ? `Missing secrets: ${missing.join(", ")}.` : `Ready. Mode: ${g.mode}.`} KPI columns: ${
       kpi.apply ? kpi.mode : "dry run (they are written only when CLICKUP_WRITEBACK_APPLY_KPI is true)"
-    }.`,
+    }. Requests and task changes: ${rq.text}.`,
     secrets,
     queue,
   };
+}
+
+// --- requests ------------------------------------------------------------------
+// Tickets from /requests and presses in the focus views (requests.ts,
+// taskActions.ts; docs/requests/CONTRACT.md section 4). Its own switch, its own
+// claim, its own run rows and its own health key clickup-writeback:requests.
+
+/** A run stops taking new items after this long, so it ends inside the Edge Function's wall clock. */
+export const REQUESTS_RUN_BUDGET_MS = 100_000;
+const HELD = "Held for the next run, so this run ends inside its time limit.";
+const NOT_STARTED = "The requests run could not start, so this waits for the next run.";
+const GAVE_UP = "Gave up after the retry ladder.";
+
+type Tally = { requests: number; actions: number; checks: number };
+const tally = (): Tally => ({ requests: 0, actions: 0, checks: 0 });
+const tallyKey = (item: RequestsItem): keyof Tally => (item.kind === "request" ? "requests" : item.payload?.op === "verify" ? "checks" : "actions");
+const NOUNS: Record<keyof Tally, [string, string]> = { requests: ["request", "requests"], actions: ["task change", "task changes"], checks: ["owner check", "owner checks"] };
+/** "3 requests", "2 requests and 1 task change"; with none, the noun of the first kind claimed. */
+function itemsWords(t: Tally, claimed: Tally): string {
+  const keys = Object.keys(NOUNS) as (keyof Tally)[];
+  const parts = keys.filter(k => t[k] > 0).map(k => `${t[k]} ${NOUNS[k][t[k] === 1 ? 0 : 1]}`);
+  if (!parts.length) return `0 ${NOUNS[keys.find(k => claimed[k] > 0) ?? "requests"][1]}`;
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0];
+}
+
+export async function runRequests(deps: Deps, limit = 6): Promise<JobResult> {
+  const g = requestsGate(deps.env);
+  const onlyCards = [...g.onlyCards];
+  const db = requestsDb(deps.rpc);
+  const report = (ok: boolean, note: string, counts: Row = {}) => db.state(ok, note, g.mode, onlyCards, counts);
+  if (!deps.env("CLICKUP_API_TOKEN")) {
+    await report(false, SAY.noToken);
+    return { ok: false, job: "requests", mode: g.mode, note: SAY.noToken };
+  }
+  await db.sweep();
+  const token = deps.uuid();
+  const items = ((await db.claim(token, limit)) ?? []) as RequestsItem[];
+  if (!items.length) {
+    await report(true, "Nothing to write.");
+    return { ok: true, job: "requests", mode: g.mode, note: "Nothing to write." };
+  }
+  const counts = { claimed: items.length, delivered: 0, dryRun: 0, skipped: 0, retry: 0, unknown: 0, failed: 0, held: 0 };
+  const claimed = tally(), delivered = tally(), dry = tally();
+  const planned: Planned[] = [];
+  const save = (id: string, patch: Row) => deps.rpc("cockpit_clickup_writeback_save", { p_id: id, p_token: token, p_patch: patch });
+  let runId: string | null = null;
+  let stop = "";
+  try {
+    let run: Row | null = null;
+    try {
+      run = await deps.rpc("cockpit_clickup_writeback_begin", { p_job: "requests", p_mode: g.mode, p_exclusive: false });
+    } catch (e) {
+      run = { note: redact(String(e instanceof Error ? e.message : e)) };
+    }
+    if (!run?.id) {
+      // Nothing was written: hand every claimed item back at once instead of leaving it claimed for ten minutes.
+      for (const item of items) await save(item.id, { state: "retry", next_attempt_at: new Date(deps.now()).toISOString(), error: NOT_STARTED }).catch(() => {});
+      throw new Error(`${NOT_STARTED} ${String(run?.note ?? "")}`.trim());
+    }
+    runId = String(run.id);
+    const started = deps.now();
+    const ctx = runContext(paced(deps.providerFor(runId), deps.pace), deps.now, deps.rpc);
+    for (const item of items) {
+      const kind = tallyKey(item);
+      claimed[kind] += 1;
+      if (stop || deps.now() - started > REQUESTS_RUN_BUDGET_MS) {
+        counts.held += 1;
+        // A held item that cannot be handed back is claimed again after ten minutes; the run goes on.
+        await save(item.id, { state: "retry", next_attempt_at: new Date(deps.now()).toISOString(), error: stop || HELD }).catch(() => {});
+        continue;
+      }
+      try {
+        if (item.source_exists === false) {
+          await save(item.id, { state: "skipped", error: SAY.cancelled });
+          counts.skipped += 1;
+          continue;
+        }
+        const live = item.kind === "task_action" && item.payload?.op === "verify" ? g.apply : g.live(item.payload?.clientTaskId);
+        if (!live) {
+          // A dry run calls no provider: the plan comes from the frozen payload alone.
+          const plan = item.kind === "request" ? planRequest(item) : planTaskAction(item);
+          await save(item.id, { state: "dry_run", planned: plan });
+          planned.push(...plan);
+          counts.dryRun += 1;
+          dry[kind] += 1;
+          continue;
+        }
+        const keys = item.steps?.length ? item.steps : item.kind === "request" ? requestStepKeys(item.payload) : taskActionStepKeys(item.payload);
+        if (!item.steps?.length) await save(item.id, { steps: keys });
+        const provider = paced(deps.providerFor(item.id), deps.pace);
+        const itemSave = async (patch: Row) => {
+          await save(item.id, patch);
+        };
+        const frozen = { ...item, steps: keys };
+        const o: RequestOutcome =
+          item.kind === "request" ? await executeRequest(frozen, provider, itemSave, ctx) : await executeTaskAction(frozen, provider, itemSave, ctx);
+        const now = deps.now();
+        const taskId = o.taskId ? { task_id: o.taskId } : {};
+        const settle =
+          o.state === "delivered"
+            // A note on a delivered item (a field that did not save, a moved task) shows on its request part.
+            ? { state: "delivered", progress: o.progress, delivered_at: new Date(now).toISOString(), error: o.note ? redact(o.note) : null, ...taskId }
+            : o.state === "skipped"
+              ? { state: "skipped", progress: o.progress, error: o.error ? redact(o.error) : null, ...taskId }
+              : o.state === "failed" || item.attempts > RETRY_MINUTES.length
+                ? { state: "failed", progress: o.progress, error: redact(o.error ?? GAVE_UP), ...taskId }
+                : {
+                    state: o.state,
+                    progress: o.progress,
+                    error: o.error ? redact(o.error) : null,
+                    next_attempt_at: new Date(now + RETRY_MINUTES[Math.min(Math.max(item.attempts - 1, 0), RETRY_MINUTES.length - 1)] * 60_000).toISOString(),
+                    ...taskId,
+                  };
+        // Counted only once its state is saved: an item whose last save failed is counted as unknown below.
+        await save(item.id, settle);
+        const settled = settle.state as "delivered" | "skipped" | "failed" | "retry" | "unknown";
+        counts[settled] += 1;
+        if (settled === "delivered") delivered[kind] += 1;
+        if ((settled === "retry" || settled === "unknown") && o.stop) stop = redact(o.error ?? "A provider secret is missing.");
+      } catch (e) {
+        // Our own bookkeeping failed. The item may have reached ClickUp, so it is read back next time.
+        counts.unknown += 1;
+        await save(item.id, { state: "unknown", error: redact(String(e instanceof Error ? e.message : e)), next_attempt_at: new Date(deps.now() + 60_000).toISOString() }).catch(() => {});
+      }
+    }
+    const toRetry = counts.retry + counts.unknown;
+    const tail = [
+      counts.skipped ? `${counts.skipped} skipped.` : "",
+      counts.held ? `${counts.held} held for the next run.` : "",
+      stop ? `Stopped: ${stop}` : "",
+    ].filter(Boolean).join(" ");
+    const note = !g.apply
+      ? `Dry run: ${itemsWords(dry, claimed)} planned. Nothing was written to ClickUp.`
+      : g.mode === "apply_limited"
+        ? `Testing on the canary card: ${counts.delivered} delivered, ${counts.dryRun} held as a dry run.${toRetry || counts.failed ? ` ${toRetry} to retry, ${counts.failed} failed.` : ""}`
+        : `${itemsWords(delivered, claimed)} delivered, ${toRetry} to retry, ${counts.failed} failed.${counts.dryRun ? ` ${counts.dryRun} held as a dry run.` : ""}`;
+    const full = tail ? `${note} ${tail}` : note;
+    const ok = counts.failed === 0 && !stop;
+    await deps.rpc("cockpit_clickup_writeback_finish", { p_run: runId, p_ok: ok, p_note: full, p_counts: counts, p_planned: planned });
+    await report(ok, full, counts);
+    return { ok, job: "requests", mode: g.mode, note: full, counts };
+  } catch (e) {
+    const note = redact(String(e instanceof Error ? e.message : e));
+    if (runId) await deps.rpc("cockpit_clickup_writeback_finish", { p_run: runId, p_ok: false, p_note: note, p_counts: counts, p_planned: planned }).catch(() => {});
+    await report(false, note, counts).catch(() => {});
+    return { ok: false, job: "requests", mode: g.mode, note, counts };
+  }
+}
+
+/**
+ * The requests doctor: reads only. Secrets by name (never a value), the mode,
+ * and every template, Request Type option, field, named owner and done status
+ * the request types rely on. Its result lands in cockpit_sync_state under
+ * clickup-writeback:requests-doctor.
+ */
+export async function runRequestsDoctor(deps: Deps): Promise<JobResult & { problems: string[]; secrets: Row; onlyCards: string[] }> {
+  const rq = requestsWords(deps.env);
+  const secrets = Object.fromEntries(REQUEST_SECRETS.map(k => [k, Boolean(deps.env(k))]));
+  const problems: string[] = [];
+  let counts: Row = {};
+  if (!secrets.CLICKUP_API_TOKEN) problems.push(SAY.noToken);
+  if (!secrets.CRON_SECRET) problems.push("CRON_SECRET is not set on this Edge Function, so the cron cannot start a requests run.");
+  if (secrets.CLICKUP_API_TOKEN) {
+    try {
+      const inputs = await requestsDb(deps.rpc).doctorInputs();
+      const checked = await doctorChecks(inputs ?? {}, paced(deps.providerFor(deps.uuid()), deps.pace));
+      problems.push(...checked.problems);
+      counts = checked.counts;
+    } catch (e) {
+      problems.push(`Could not read the request types: ${redact(String(e instanceof Error ? e.message : e))}`);
+    }
+  }
+  const ok = problems.length === 0;
+  const head = `Requests and task changes: ${rq.text}.`;
+  const note = ok
+    ? `Ready. ${head} ${counts.types ?? 0} request types and ${counts.targets ?? 0} targets checked against ClickUp.`
+    : `${problems.length} ${problems.length === 1 ? "problem" : "problems"}. ${head} ${problems.slice(0, 5).join(" ")}${problems.length > 5 ? ` And ${problems.length - 5} more.` : ""}`;
+  const at = new Date(deps.now()).toISOString();
+  try {
+    await deps.syncState?.("clickup-writeback:requests-doctor", {
+      last_run_at: at,
+      ...(ok ? { last_ok_at: at } : {}),
+      ok,
+      note: note.slice(0, 500),
+      detail: { mode: rq.mode, onlyCards: rq.cards, secrets, problems, counts, at },
+      updated_at: at,
+    });
+  } catch (e) {
+    problems.push(`The doctor's result could not be saved: ${redact(String(e instanceof Error ? e.message : e))}`);
+  }
+  return { ok: ok && problems.length === 0, job: "requests_doctor", mode: rq.mode, note, problems, secrets, onlyCards: rq.cards, counts };
 }

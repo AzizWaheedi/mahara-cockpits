@@ -21,6 +21,7 @@ import {
 } from "../components/kit";
 import { MarkControls, type MarkHold } from "../components/MarkControls";
 import { type ScopeView, useScope } from "../components/Scope";
+import { YourTasks } from "../components/tasks/YourTasks";
 import {
   useCalendar,
   useLeadsById,
@@ -168,6 +169,9 @@ export default function TodayPage({ me }: { me: Me }) {
           <WeekCard me={me} view={view} />
         </div>
         <div className="min-w-0 space-y-4 lg:col-span-5 lg:space-y-6">
+          {/* Your tasks (PLAN.md D19): your own open ClickUp tasks, five at
+              most, each opening in place. */}
+          <YourTasks />
           <SectionCard
             title="Coming up"
             side={<span className="muted text-xs">Next 36 hours</span>}
