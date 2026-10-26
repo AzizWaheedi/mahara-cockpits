@@ -99,6 +99,7 @@ import {
   buildCallDraft,
   countDecisions,
   eodDayLabel,
+  markEodOpened,
   readEodCalls,
 } from "@/lib/eodDraft";
 import {
@@ -120,7 +121,7 @@ import {
 } from "@/lib/onboardingCore";
 import { publishOpenClient } from "@/lib/openClient";
 import { fetchClientProfile } from "@/lib/performance";
-import { eodDeliveryNote, markEodOpened } from "@/lib/personalEod";
+import { eodDeliveryNote } from "@/lib/personalEod";
 import { portalUrl } from "@/lib/portal";
 import { kuwaitDay, periodOf } from "@/lib/reportPeriod";
 import { fold, matchScore } from "@/lib/search";
@@ -1427,7 +1428,7 @@ function CsmContent({ section, embedded = false, clientKey }: CsmProps) {
     const key = `${snap.eodOwner}:${day}`;
     if (openedFor.current === key) return;
     openedFor.current = key;
-    markEodOpened(auth.client, "csm", day).catch(error =>
+    markEodOpened(auth.client, day).catch(error =>
       console.warn("The EOD open time was not saved:", error),
     );
   }, [

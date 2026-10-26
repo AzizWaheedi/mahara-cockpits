@@ -249,3 +249,21 @@ export async function readEodCalls(
     throw new Error("The Fathom read did not confirm the day");
   return data.calls as EodCall[];
 }
+
+/**
+ * Keeps the first time the form was opened for a working day. The server
+ * writes it once and returns the time it already has after that.
+ */
+export async function markEodOpened(
+  client: SupabaseClient,
+  day: string,
+): Promise<{ openedAt: string | null; first: boolean }> {
+  const { data, error } = await client.rpc("cockpit_mark_eod_opened", {
+    p_role: "csm",
+    p_day: day,
+  });
+  if (error) throw new Error(error.message);
+  if (!data || data.day !== day)
+    throw new Error("The server did not confirm the open time.");
+  return { openedAt: data.openedAt ?? null, first: data.first === true };
+}
