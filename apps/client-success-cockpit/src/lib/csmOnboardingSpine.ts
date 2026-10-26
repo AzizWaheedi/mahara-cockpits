@@ -42,10 +42,14 @@ Anything you need, ask here and I'll sort it or get the right person on it.`,
     label: "Onboarding call confirmed",
     en: `Hey NAME, your onboarding call is confirmed for DATE/TIME.
 
-Nothing to prepare, but it helps if you can think about which service you most want more of, and roughly what a good project is worth to you. We'll cover the rest on the call.`,
+Before the call, open your client portal with your registered email and complete the Google Calendar and business WhatsApp connections. This short guide shows each step: https://home.wistia.com/medias/5pfkucw6kh
+
+If something is not ready, send me the step you are stuck on and keep your scheduled call. Also think about which service you want more of, and roughly what a good project is worth to you.`,
     ar: `هلا NAME، مكالمتك التعريفية مثبتة بتاريخ DATE/TIME.
 
-ما تحتاج تجهز شي، بس يساعد إذا تفكر بأي خدمة تبي منها أكثر، وكم تقريباً يساوي لك المشروع الزين. والباقي نغطيه بالمكالمة.`,
+قبل المكالمة، ادخل بوابة العميل ببريدك المسجّل وأكمل ربط تقويم جوجل وواتساب العمل. هذا الدليل القصير يوضح لك الخطوات: https://home.wistia.com/medias/vtw74gdruq
+
+إذا وقفت عند أي خطوة، أرسل لي وين وصلت وخل موعد المكالمة مثل ما هو. وفكّر بأي خدمة تبي منها أكثر، وكم تقريباً يساوي لك المشروع الزين.`,
   },
   {
     day: 2,
