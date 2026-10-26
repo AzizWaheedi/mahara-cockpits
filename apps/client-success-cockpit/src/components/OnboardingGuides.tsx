@@ -30,7 +30,7 @@ export function OnboardingGuides() {
       </p>
       <div className="mt-3 flex flex-wrap gap-3">
         {guides.map(guide => {
-          const url = `https://home.wistia.com/medias/${guide.id}`;
+          const url = `https://maharamedia.wistia.com/medias/${guide.id}`;
           return (
             <div
               key={guide.id}
