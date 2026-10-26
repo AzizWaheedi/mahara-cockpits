@@ -1,0 +1,40 @@
+{
+  "verifiedAt": "2026-10-26T18:43:15.312377+00:00",
+  "sourceCommit": "baff8d18a9e8f43e6259f0440af5168629f76e50",
+  "pullRequests": [
+    78,
+    79
+  ],
+  "deploymentId": "dpl_5Fvr4S27TTtnqxayjtqT7TCt8gPA",
+  "immutableUrl": "https://mahara-client-success-lvhe61jzf-aziz-6097s-projects.vercel.app",
+  "canonicalUrl": "https://cockpit.maharamedia.com/client-success",
+  "canonicalEntry": "/client-success/assets/index-Dje2-n2Q.js",
+  "guides": {
+    "en": "https://maharamedia.wistia.com/medias/5pfkucw6kh",
+    "ar": "https://maharamedia.wistia.com/medias/vtw74gdruq"
+  },
+  "validation": {
+    "focusedTests": 18,
+    "assertions": 65,
+    "offlineSuites": 105,
+    "allFiveBuilds": "passed",
+    "allFiveTypechecks": "passed",
+    "sharedAuthConfig": "passed",
+    "canonicalDeploymentGuard": "passed",
+    "anonymousVideoPages": "passed"
+  },
+  "sharedDeckConfiguration": {
+    "slot": "onboarding:whatsapp-calendar",
+    "english": "5pfkucw6kh",
+    "arabic": "vtw74gdruq",
+    "oldAnyLanguageLoom": "cleared through existing editor; source media retained",
+    "englishPlayback": "passed",
+    "arabicPlayback": "passed",
+    "savedReload": "passed"
+  },
+  "messagesSent": false,
+  "clientChecklistChanged": false,
+  "databasePermissionsChanged": false,
+  "workersChanged": false,
+  "rollbackDeploymentId": "dpl_5CyFmzB57sinAu36ungwzWiFntky"
+}
