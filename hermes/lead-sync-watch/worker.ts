@@ -507,6 +507,36 @@ const arg = (name: string) => {
   return i > 0 ? process.argv[i + 1] : undefined;
 };
 
+/**
+ * Exception alerts (plan 4.1, hermes/exception-alerts) ride this cron line instead of a
+ * scheduler of their own. They run at most once in 55 minutes, keep their own health row
+ * (cockpit_sync_state key exception-alerts) and their own log line, and never change this
+ * check's exit code. EXCEPTION_ALERTS=off in their env file switches them off.
+ */
+async function exceptionAlerts(apply: boolean) {
+  const at = () => new Date().toISOString();
+  try {
+    const x = await import("../exception-alerts/worker");
+    const env = x.readEnv();
+    // A budget, so a slow database never holds this job's lock past its 15-minute beat.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const budget = new Promise<never>((_, fail) => {
+      timer = setTimeout(() => fail(new Error("took longer than 4 minutes and was stopped")), 4 * 60_000);
+    });
+    try {
+      const r = await Promise.race([x.runExceptions(x.makeIo(env), env, { apply }), budget]);
+      console.log(`[${at()}] exception-alerts ${r.skipped ? `skipped (${r.skipped})` : r.ok ? "ok" : "FAILED"}: ${r.note}`);
+    } catch (e) {
+      console.error(`[${at()}] exception-alerts FAILED: ${String((e as Error)?.stack ?? e).slice(0, 600)}`);
+      if (apply && env.SUPABASE_SERVICE_ROLE_KEY) await x.recordFailure(x.makeIo(env), e);
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (e) {
+    console.error(`[${at()}] exception-alerts FAILED to load: ${String((e as Error)?.message ?? e).slice(0, 400)}`);
+  }
+}
+
 if (import.meta.main) {
   const env = readEnv();
   const cmd = process.argv[2] ?? "run";
@@ -528,6 +558,7 @@ if (import.meta.main) {
     const rep = arg("--report");
     if (rep) writeFileSync(rep, JSON.stringify(r, null, 1));
     console.log(`[${new Date().toISOString()}] ${r.note}${r.sends.length ? ` Slack: ${r.sends.map(s => `${s.client} ${s.kind} ${s.status}`).join(", ")}` : ""}`);
+    if (cmd === "run") await exceptionAlerts(process.argv.includes("--apply"));
     process.exit(r.ok ? 0 : 2);
   } catch (e) {
     console.error(`[${new Date().toISOString()}] lead-sync-watch failed: ${String((e as Error)?.stack ?? e).slice(0, 600)}`);
@@ -537,6 +568,7 @@ if (import.meta.main) {
       const now = new Date().toISOString();
       await io.db.upsert("cockpit_sync_state", [{ key: HEALTH_KEY, last_run_at: now, ok: false, note: `Run failed: ${String((e as Error)?.message ?? e).slice(0, 400)}`, updated_at: now }], "key");
     } catch {}
+    if (cmd === "run") await exceptionAlerts(process.argv.includes("--apply"));
     process.exit(1);
   }
 }
