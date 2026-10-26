@@ -245,6 +245,25 @@ export class Transport {
 		if (d.channel === "clickup") this.needed("CLICKUP_API_TOKEN");
 		if (d.channel === "whatsapp") this.needed("AD_BILLING_WHAPI_TOKEN");
 	}
+	// One plain line to the billing channel after the worker changes a binding by itself. Never a client message.
+	async notice(text: string): Promise<string> {
+		const result = await this.json("Slack", "https://slack.com/api/chat.postMessage", {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${this.needed("SLACK_BOT_TOKEN")}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				channel: SLACK_CHANNEL,
+				text: text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"),
+				unfurl_links: false,
+				unfurl_media: false,
+			}),
+		});
+		if (result.ok !== true || typeof result.ts !== "string")
+			throw new ProviderError("Slack", 400);
+		return result.ts;
+	}
 	marker(d: Delivery) {
 		return `BG-${d.id}`;
 	}

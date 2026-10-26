@@ -8,7 +8,7 @@ import {
 	classify,
 } from "./core";
 import { Transport, type Env } from "./transport";
-import { poll, dispatchOne, reconcileUnknown } from "./worker";
+import { autoMoveMode, poll, dispatchOne, reconcileUnknown } from "./worker";
 const args = process.argv.slice(2);
 const configIndex = args.indexOf("--config");
 const config: Env =
@@ -38,6 +38,7 @@ if (args.includes("--doctor")) {
 				].map((k) => [k, Boolean(env[k])]),
 			),
 			apply: env.AD_BILLING_APPLY === "true",
+			auto_move: autoMoveMode(env.AD_BILLING_AUTO_MOVE),
 		}),
 	);
 } else if (args.includes("--audit")) {

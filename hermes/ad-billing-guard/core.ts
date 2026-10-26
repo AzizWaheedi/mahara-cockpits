@@ -30,6 +30,9 @@ export interface Binding {
 }
 export interface Task {
 	id: string;
+	name?: string;
+	tags?: { name: string }[];
+	status?: { type?: string };
 	list?: { id: string };
 	archived?: boolean;
 	custom_fields?: {
@@ -204,13 +207,13 @@ export function validateBinding(
 	if (identity.group !== b.whatsapp_group)
 		throw new Error("WhatsApp group changed; review the binding");
 	if (identity.reference !== b.sheet_account_ref)
-		throw new Error(
+		throw new IdentityDrift(
 			"Client Data account reference changed; review the binding",
 		);
 	// Names cannot establish identity. Until Client Data contains a numeric ID,
 	// an operator-approved binding plus exact account URLs on every ads task is required.
 	if (identity.account && identity.account !== b.account_id)
-		throw new Error("Client Data account changed; review the binding");
+		throw new IdentityDrift("Client Data account changed; review the binding");
 	if (
 		!b.ads_task_ids.length ||
 		new Set(b.ads_task_ids).size !== b.ads_task_ids.length ||
@@ -223,5 +226,143 @@ export function validateBinding(
 			ads.some((t) => adsTaskMatches(t, id, b.account_id)),
 		)
 	)
-		throw new Error("Ads task account identity changed or is missing");
+		throw new IdentityDrift("Ads task account identity changed or is missing");
+}
+/** A Client Data or ads-task change that can mean a new account. The worker checks it with planAccountChange. */
+export class IdentityDrift extends Error {}
+// Meta and Client Data names differ in spacing and case ("Madana Engineering Consulting " in Meta, 26 Oct 2026).
+const plain = (s: string) => s.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
+export const adsTaskAccount = (t: Task) =>
+	accountId(t.custom_fields?.find((f) => f.id === ADS_ACCOUNT)?.value);
+const openTask = (t: Task) => !["closed", "done"].includes(t.status?.type ?? "");
+/** The client's ads tasks: tagged with the client's name, or with a tag its current ads tasks carry (Arcturus
+ * Construction's tasks use other tags, 26 Oct 2026). ClickUp does not list archived tasks. */
+export function clientAdsTasks(b: Binding, clientName: string, ads: Task[]): Task[] {
+	const tags = new Set([plain(clientName)]);
+	for (const t of ads)
+		if (b.ads_task_ids.includes(t.id))
+			for (const g of t.tags ?? []) tags.add(plain(g.name));
+	tags.delete("");
+	return ads.filter(
+		(t) =>
+			t.list?.id === ADS_LIST &&
+			!t.archived &&
+			(b.ads_task_ids.includes(t.id) ||
+				(t.tags ?? []).some((g) => tags.has(plain(g.name)))),
+	);
+}
+/** The accounts whose Meta names the worker reads before it plans. */
+export function accountsToRead(b: Binding, tasks: Task[]): string[] {
+	const linked = tasks.map(adsTaskAccount).filter((a): a is string => Boolean(a));
+	return [...new Set([b.account_id, ...linked])].slice(0, 8);
+}
+export type AccountPlan =
+	| {
+			kind: "rename" | "tasks" | "move";
+			account: string;
+			ref: string;
+			adsTasks: string[];
+			evidence: string;
+			notice: string;
+	  }
+	| { kind: "blocked"; hint: string };
+/**
+ * The 17 Oct 2026 rebind rule, applied by the worker (Muhammed, 26 Oct 2026). A renamed account changes only the
+ * reference. A new account replaces the binding's account only when all four proofs hold: an open ads task for the
+ * client links it, the worker's Meta token reads it, Client Data names it, and no other binding has it. A missing
+ * proof changes nothing and returns one sentence that says what to fix.
+ */
+export function planAccountChange(p: {
+	binding: Binding;
+	sheet: unknown[][];
+	tasks: Task[];
+	names: Record<string, string | null>;
+	taken: Record<string, string>;
+}): AccountPlan {
+	const b = p.binding,
+		client = b.client_name,
+		cell = sheetIdentity(p.sheet, b.client_task_id),
+		ref = cell.reference,
+		review = `Review: ${BILLING_REVIEW_URL}?binding=${b.id}`;
+	const readable = (a: string) => typeof p.names[a] === "string";
+	const named = (a: string) =>
+		cell.account ? cell.account === a : readable(a) && plain(p.names[a]!) === plain(ref);
+	const linking = (a: string) =>
+		p.tasks.filter((t) => openTask(t) && adsTaskAccount(t) === a).map((t) => t.id);
+	const blocked = (hint: string): AccountPlan => ({ kind: "blocked", hint });
+	if (ref === b.sheet_account_ref || named(b.account_id)) {
+		const account = b.account_id;
+		const current = b.ads_task_ids.every((id) =>
+			p.tasks.some((t) => adsTaskMatches(t, id, account)),
+		);
+		const adsTasks = current ? b.ads_task_ids : linking(account);
+		if (!adsTasks.length)
+			return blocked(
+				`No open ads task for ${client} links Meta account ${account}. Put its Ads Manager link in the Meta Ad Account field of the current ads task. If the client moved to a new account, also put the new account's name in Client Data.`,
+			);
+		if (current && ref === b.sheet_account_ref)
+			return blocked("The account, ads tasks and Client Data match again. The next run checks normally.");
+		const source = cell.account
+			? "its own ID"
+			: `the Meta name of account ${account}, read with the worker's token`;
+		return current
+			? {
+					kind: "rename",
+					account,
+					ref,
+					adsTasks,
+					evidence: `Automatic rename: Client Data shows "${ref}", ${source}. Ads tasks ${adsTasks.join(", ")} still link the account.`,
+					notice: `Ad billing: ${client} renamed Meta account ${account} to "${ref}" in Client Data. Same account, so the watch only updated its reference. ${review}`,
+				}
+			: {
+					kind: "tasks",
+					account,
+					ref,
+					adsTasks,
+					evidence: `Automatic ads-task change: open ads tasks ${adsTasks.join(", ")} link Meta account ${account}. Client Data shows "${ref}".`,
+					notice: `Ad billing: ${client}'s watch now follows ads task ${adsTasks.join(", ")} for Meta account ${account}. The ads task it followed is archived or no longer links the account. ${review}`,
+				};
+	}
+	const shown = `Client Data shows "${ref}" for ${client}`;
+	const others = [...new Set(p.tasks.filter(openTask).map(adsTaskAccount))].filter(
+		(a): a is string => Boolean(a) && a !== b.account_id,
+	);
+	if (!others.length)
+		return blocked(
+			`${shown}, but no open ads task links a different Meta account. Put the new account's Ads Manager link in the Meta Ad Account field of the client's current ads task.`,
+		);
+	if (cell.account && !others.includes(cell.account))
+		return blocked(
+			`${shown}, but no open ads task links account ${cell.account}. Put its Ads Manager link in the Meta Ad Account field of the client's current ads task.`,
+		);
+	const matches = others.filter((a) => readable(a) && named(a));
+	if (matches.length > 1)
+		return blocked(
+			`${shown}, and ${matches.length} linked accounts match it (${matches.join(", ")}). Keep the link only on the current account's ads tasks.`,
+		);
+	if (!matches.length) {
+		const unread = others.filter((a) => !readable(a));
+		if (unread.length)
+			return blocked(
+				`The worker's Meta token cannot read account ${unread.join(", ")}, linked on an open ads task for ${client}. Give the Mahara system user access to it in Meta Business Settings.`,
+			);
+		return blocked(
+			`${shown}, but Meta names the linked account ${others.map((a) => `${a} "${p.names[a]?.trim()}"`).join(", ")}. Make Client Data and the ads-task link name the same account.`,
+		);
+	}
+	const account = matches[0],
+		name = p.names[account]!.trim(),
+		adsTasks = linking(account);
+	if (p.taken[account])
+		return blocked(
+			`Meta account ${account} already belongs to the billing watch for ${p.taken[account]}. Check the ads-task link and Client Data for ${client}.`,
+		);
+	return {
+		kind: "move",
+		account,
+		ref,
+		adsTasks,
+		evidence: `Automatic account change from ${b.account_id}: open ads task ${adsTasks.join(", ")} links Meta account ${account}, the worker's Meta token reads it as "${name}", Client Data shows "${ref}", and no other binding has it.`,
+		notice: `Ad billing: ${client} moved to Meta account ${account} "${name}" (was ${b.account_id}). Proof: ads task ${adsTasks.join(", ")} links it, the worker's Meta token reads it, and Client Data names it. The watch checks the new account from now on. ${review}`,
+	};
 }
