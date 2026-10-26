@@ -11,6 +11,7 @@ import {
   saveCsmLanguage,
   saveCsmMoneyGoals,
 } from "./csmStateClient";
+import { eodWorkingDay, readEodDecisions } from "./eodDraft";
 import { readPersonalEod, savePersonalEod } from "./personalEod";
 
 // biome-ignore lint/suspicious/noExplicitAny: generic client success rows
@@ -422,8 +423,11 @@ export function useCsmSnapshot(
         ),
       ]);
       const day = staffState.day;
+      // The EOD reads its own working day (04:00 to 04:00 Kuwait), not the
+      // calendar day above. Guessed here to read it in the same round trip.
+      const eodGuess = reportDay.current ?? eodWorkingDay();
 
-      const [checkRows, decisionsResult, planResult, eodResult] =
+      const [checkRows, decisionsResult, planResult, eodResult, eodDayRows] =
         await Promise.all([
           fetchDailyChecksRpc(client, "csm", day),
           client
@@ -437,6 +441,7 @@ export function useCsmSnapshot(
             .eq("role", "csm")
             .eq("day", day),
           readPersonalEod(client, "csm", reportDay.current),
+          readEodDecisions(client, eodGuess),
         ]);
       if (decisionsResult.error) throw decisionsResult.error;
       if (planResult.error) throw planResult.error;
@@ -445,6 +450,11 @@ export function useCsmSnapshot(
       const eodContext = eodResult;
       const eodRow = eodContext.report;
       reportDay.current = eodContext.day;
+      // The server's day wins over the guess (a clock near 04:00).
+      const eodRows =
+        eodContext.day === eodGuess
+          ? eodDayRows
+          : await readEodDecisions(client, eodContext.day);
 
       // Normalize checks
       const checks = normalizeChecks(checkRows);
@@ -474,6 +484,7 @@ export function useCsmSnapshot(
         eodOwner: eodContext.owner,
         eodDay: eodContext.day,
       });
+      (builtSnap as Any).eodDecisions = normalizeDecisions(eodRows);
 
       if ("clients" in callSummary && callSummary.clients) {
         const summary = callSummary.clients;

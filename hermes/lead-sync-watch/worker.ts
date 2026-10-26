@@ -5,7 +5,7 @@
  * account's own time zone, summed over every ad account of the client) against
  * the leads that reached its GoHighLevel sub-account (public.client_leads, kept
  * fresh by the existing GHL lead sync) over the same rolling 24h and 6h
- * windows. A confirmed gap posts once to #tech-general tagging the media buyer,
+ * windows. A confirmed gap posts once to #tech-general tagging the systems manager,
  * and a "fixed" reply goes in the same thread when the counts match again.
  *
  *   bun hermes/lead-sync-watch/worker.ts doctor
@@ -234,15 +234,18 @@ export const sumHours = (hours: { at: number; leads: number }[], w: { start: num
 
 // ------------------------------------------------------------------ Slack
 
-async function mentionsFor(io: Io, client: Client, cache: Map<string, string | null>): Promise<string[]> {
-  // The media buyers on duty. Kept small and explicit: the cockpit roster's media buyers who are
-  // not admins. Unknown emails are skipped, never guessed by name.
-  const rows = await io.db.all("cockpit_members", "select=email,roles,clients,active&active=is.true");
-  const buyers = rows.filter(r => (r.roles ?? []).includes("media_buyer") && !(r.roles ?? []).includes("admin") && !(r.roles ?? []).includes("ceo"));
-  const mine = buyers.filter(r => !(r.clients ?? []).length || (r.clients ?? []).some((c: string) => c.trim().toLowerCase() === client.name.trim().toLowerCase()));
+/** The roster role that owns lead-connection alerts (Aziz, 2026-10-26: the systems manager, not the media buyer). */
+export const ALERT_OWNER_ROLE = "systems manager";
+const roleKey = (s: unknown) => String(s ?? "").toLowerCase().replace(/[^a-z]+/g, " ").trim();
+
+export async function mentionsFor(io: Io, _client: Client, cache: Map<string, string | null>): Promise<string[]> {
+  // The systems manager(s) on the active team roster (cockpit_people.role). Slack ID by exact
+  // email, never guessed by name. Unknown emails are skipped.
+  const rows = await io.db.all("cockpit_people", "select=email,role,active&active=is.true");
+  const owners = rows.filter(r => roleKey(r.role) === ALERT_OWNER_ROLE && r.email);
   const out: string[] = [];
-  for (const b of mine) {
-    const email = String(b.email).toLowerCase();
+  for (const b of owners) {
+    const email = String(b.email).trim().toLowerCase();
     if (!cache.has(email)) {
       try {
         cache.set(email, (await io.slack("users.lookupByEmail", { email })).user?.id ?? null);
@@ -251,7 +254,7 @@ async function mentionsFor(io: Io, client: Client, cache: Map<string, string | n
       }
     }
     const id = cache.get(email);
-    if (id) out.push(id);
+    if (id && !out.includes(id)) out.push(id);
   }
   return out;
 }
