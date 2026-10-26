@@ -10,9 +10,12 @@ import { describe, expect, test } from "bun:test";
 import {
   alsoRuns,
   type CampaignFunnel,
+  cardsNotCounted,
   funnelName,
+  notCountedYet,
   parseFunnel,
   splitByFunnel,
+  tagKey,
 } from "../src/lib/funnelSplit";
 
 const FORM = "Merge Studio | Instant Form | Leads | Oct2026 | MHM™";
@@ -171,6 +174,54 @@ describe("parseFunnel", () => {
     expect(parseFunnel(null)).toBeNull();
     expect(parseFunnel({ campaign: "X", kind: "spaceship" })?.kind).toBe(
       "unknown",
+    );
+  });
+});
+
+describe("cardsNotCounted (20261026u)", () => {
+  // 26 Oct: the web campaign's card (17:36) carried the tag "mergestudio.kw";
+  // the listed instant form campaign carries the sync's key "mergestudiokw".
+  const cards = [
+    { name: FORM, tag: "mergestudio.kw", adStatus: "Live" },
+    { name: WEB, tag: "mergestudio.kw", adStatus: "Live" },
+    { name: "Merge Studio | Old", tag: "mergestudio.kw", adStatus: "Paused" },
+    { name: "Castello | Web", tag: "castello industries", adStatus: "Live" },
+    { name: "No tag", adStatus: "Live" },
+  ];
+
+  test("names the client's Live cards that the page does not count", () => {
+    expect(cardsNotCounted(cards, "mergestudio.kw", [], [FORM])).toEqual([WEB]);
+    // By a tag the listed campaigns carry, when the client's name differs.
+    expect(
+      cardsNotCounted(cards, "Merge Studio", ["mergestudiokw"], [FORM]),
+    ).toEqual([WEB]);
+  });
+
+  test("leaves out counted, paused, untagged and other clients' cards", () => {
+    expect(cardsNotCounted(cards, "mergestudio.kw", [], [FORM, WEB])).toEqual(
+      [],
+    );
+    expect(cardsNotCounted(cards, "Merge Studio", [], [])).toEqual([]);
+    expect(
+      cardsNotCounted(
+        [
+          { name: WEB, tag: "mergestudio.kw", adStatus: "live" },
+          { name: WEB, tag: "mergestudio.kw", adStatus: "Live" },
+        ],
+        "mergestudio.kw",
+        [],
+        [],
+      ),
+    ).toEqual([WEB]);
+    expect(tagKey("Merge-Studio.KW")).toBe("mergestudiokw");
+  });
+
+  test("the Lead page sentence says it has no full day yet", () => {
+    expect(notCountedYet([WEB])).toBe(
+      `${WEB} is on the ads board but has no full day in the numbers above yet. It joins them after the next morning update.`,
+    );
+    expect(notCountedYet(["A", "B"])).toBe(
+      "A, B are on the ads board but have no full day in the numbers above yet. They join them after the next morning update.",
     );
   });
 });

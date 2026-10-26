@@ -128,6 +128,46 @@ export function splitByFunnel(
     );
 }
 
+/** A client name or tag as the cockpit sync keys it: "mergestudio.kw" and "mergestudiokw" are one client. */
+export const tagKey = (v: unknown): string =>
+  String(v ?? "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
+/**
+ * The client's campaigns that are Live on the ads board but not in the page's
+ * numbers. The campaign list counts full days only, so a campaign that first
+ * spent today is missing until the next morning update (Merge Studio's web
+ * campaign, 26 Oct 2026). A card counts for the client by its tag: the
+ * client's name or a tag its listed campaigns carry.
+ */
+export function cardsNotCounted(
+  cards: { name?: unknown; tag?: unknown; adStatus?: unknown }[],
+  client: string,
+  clientTags: unknown[],
+  counted: string[],
+): string[] {
+  const keys = new Set([client, ...clientTags].map(tagKey).filter(Boolean));
+  const seen = new Set(counted);
+  const out: string[] = [];
+  for (const c of cards) {
+    const name = typeof c.name === "string" ? c.name.trim() : "";
+    if (!name || seen.has(name)) continue;
+    if (String(c.adStatus ?? "").toLowerCase() !== "live") continue;
+    if (!keys.has(tagKey(c.tag))) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
+/** The Lead page's sentence for website campaigns the client's numbers do not count yet. */
+export function notCountedYet(names: string[]): string {
+  return names.length === 1
+    ? `${names[0]} is on the ads board but has no full day in the numbers above yet. It joins them after the next morning update.`
+    : `${names.join(", ")} are on the ads board but have no full day in the numbers above yet. They join them after the next morning update.`;
+}
+
 const num = (v: unknown): number | null =>
   v === null || v === undefined || !Number.isFinite(Number(v))
     ? null

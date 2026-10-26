@@ -4190,6 +4190,7 @@ function Cockpit({ view }: { view: View }) {
               campaigns={(snap.campaigns as Campaign[]).filter(
                 c => clientOf(c) === accountView,
               )}
+              boardCards={(snap.boardCards ?? []) as Campaign[]}
               tree={((snap.metaTree ?? []) as Campaign[]).filter(t =>
                 (snap.campaigns as Campaign[]).some(
                   c =>

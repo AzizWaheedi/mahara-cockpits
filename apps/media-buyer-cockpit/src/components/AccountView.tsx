@@ -54,7 +54,7 @@ import {
   cplTone,
   spendNotInWhy,
 } from "@/lib/costTone";
-import { splitByFunnel } from "@/lib/funnelSplit";
+import { cardsNotCounted, splitByFunnel } from "@/lib/funnelSplit";
 import { useCampaignFunnels } from "@/lib/funnelSplitClient";
 import { CPB_BAD, CPB_GATE, CPL_BAD, CPL_GATE } from "@/lib/kpi";
 import { everyBookingPlaced, pairedDay } from "@/lib/mediaStatsClient";
@@ -222,11 +222,14 @@ export function AccountView({
   renderPanel,
   onClose,
   accountIds,
+  boardCards,
 }: {
   client: string;
   clientTaskId?: string;
   /** The client's campaigns from the snapshot, running and off. */
   campaigns: Row[];
+  /** The ads board's cards (every client): a Live one not in these numbers yet is named on the Lead page. */
+  boardCards?: Row[];
   /**
    * The ad accounts the page was opened with (`?adAccounts=`): a client with
    * no campaign listed reads its own numbers by them, on any range.
@@ -574,9 +577,17 @@ export function AccountView({
   // Each campaign's funnel (20261026s), listed or stopped, and the client's
   // numbers split by it (Muhammed, 2026-10-26: say whether they come from
   // the instant form or the lead page). The rows are the same campaign
-  // figures the Campaigns list shows.
+  // figures the Campaigns list shows. A campaign Live on the board but not in
+  // these numbers yet (no full day) is read too, for the Lead page (20261026u).
+  const counted = [...names, ...notListed.map(c => String(c.campaignName))];
+  const notCounted = cardsNotCounted(
+    boardCards ?? [],
+    client,
+    campaigns.flatMap(c => (Array.isArray(c.tags) ? c.tags : [])),
+    counted,
+  );
   const funnels = useCampaignFunnels(
-    [...names, ...notListed.map(c => c.campaignName)],
+    [...counted, ...notCounted],
     range.start,
     range.end,
   );
@@ -599,8 +610,13 @@ export function AccountView({
     hasLeadPage,
   );
   // The website campaigns: their Meta clicks go beside the page's visits.
-  const pageCampaigns = (funnels.data ?? [])
-    .filter(f => f.kind === "website")
+  // The ones not in these numbers yet are named apart on the Lead page.
+  const websites = (funnels.data ?? []).filter(f => f.kind === "website");
+  const pageCampaigns = websites
+    .filter(f => !notCounted.includes(f.campaign))
+    .map(f => f.campaign);
+  const waitingCampaigns = websites
+    .filter(f => notCounted.includes(f.campaign))
     .map(f => f.campaign);
   const toLeadPage = () => {
     const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1024,6 +1040,7 @@ export function AccountView({
           read={pageForms}
           className={SECTION_OFFSET}
           metaCampaigns={pageCampaigns}
+          waitingCampaigns={waitingCampaigns}
         />
       )}
 
