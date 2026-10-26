@@ -994,7 +994,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
       "Read it back. Fix anything wrong on the slide now; it saves as you type.",
       "Correct the clients they want more of on the card itself, in their words.",
       "Add any red line they give you on the card. Each line saves as you press Enter.",
-      "In your notes: confirm the service, the starter answer and the daily figure. Those stay off the screen.",
+      "Part 1's settings (the daily figure, where the ad sends people, whose Page) were set in prep. Your notes show them as one line; they stay off the screen.",
     ],
     sayAr: [
       "خلونا نمر بسرعة على اللي قلتوه لنا. إذا فيه شي غلط، قولوه الحين وأعدله جدامكم.",
@@ -1016,7 +1016,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
   "one-service": {
     say: [
       "One service. Margin wins over capacity; a capacity risk goes to the CSM in writing, never into this conversation.",
-      "Stop 1: tap the strip on the slide to set the service. Undo in your notes for 10 seconds.",
+      "Stop 1: tap the strip on the slide to set the service. Tap it again to clear it.",
       "Two services on the kickoff: both strips glow amber. Ask which goes first; the other is parked.",
       "Stop 2: the other strips go to the parked tag, with the other services they offer.",
       "Capacity goes in your notes: yes, tight or no, with one line when it is tight.",
@@ -1031,7 +1031,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
     say: [
       "Stop 1: three example ads for their service, pinned as prints. Open the real pack from your notes, in its own window, and share it.",
       "Get their yes on the slide: one tap on the approval.",
-      "Stop 2: the part 1 sheet. Confirm the daily figure, where the ad sends people and whose Page it runs from, in your notes.",
+      "Stop 2: the part 1 sheet. Your notes show part 1 as set in prep: the daily figure, where the ad sends people and whose Page it runs from. Press Change there only if they correct one.",
       "Press Send to media before you leave this slide. The stamp lands on the sheet when the press is saved.",
     ],
     sayAr: [
@@ -1058,10 +1058,10 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
   pricing: {
     say: [
       "Specific numbers for the smallest project and where the ads point; a range only for where most projects land.",
-      "Type the amounts in the two cards. The tape places each mark by its value, and the range typed under where most projects land shades the tape. The currency follows their country; change it in your notes.",
+      "Type the amounts in the two cards. The tape places each mark by its value, and the range typed under where most projects land shades the tape. The currency follows their country; set a different one in prep.",
       "Stop 2: how they are paid. Then read the example line our callers use, and ask if it fits.",
       "Ask for a photo of a real quotation in their Drive folder.",
-      "The margin goes in your notes only.",
+      "If they say their margin, add it in the wrap-up after the call. It never goes on the slide.",
     ],
     sayAr: [
       "خلونا نتكلم أرقام. شكثر أصغر مشروع تقبلونه؟",
@@ -1087,7 +1087,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
     say: [
       "Share the offer sheet window; start from your pre-written draft, so they correct it instead of facing a blank page.",
       "Walk the five lines on the tag: the pattern, its name, two or three bonuses, the price the ads point to, the free first step and who gives it. A line fills from the record (the name, the price, the first step) as it is typed; the rest live in the offer sheet.",
-      "Type the draft's name, what they get and the first step in your notes; they read it back on slide 13.",
+      "Your draft from prep shows in your notes. Correct it with them in the offer sheet; they read it back on slide 13.",
       "Stop 2: share the sheet's own window. Say it locks in 1 to 2 days, with them, in the offer sheet.",
     ],
     sayAr: [
@@ -1114,7 +1114,7 @@ export const BP_NOTES: Record<BpSlideId, SlideNotes> = {
       "If a Brand DNA section is blank, open their doc in its own window and say what is missing.",
       "The board: their logo and up to four colours read from their Brand DNA doc. With no colours on record, the card says you open the doc together.",
       "Beside it, three short lists: what must be in their ads, what must never be (their red lines from the onboarding call start it), and the projects and names never shown.",
-      "Mark the Brand DNA doc's status in your notes.",
+      "The Brand DNA status was set in prep; your notes show it.",
     ],
     sayAr: [
       "هذي هويتكم: الشعار والألوان من ملف هويتكم.",

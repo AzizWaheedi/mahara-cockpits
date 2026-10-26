@@ -100,9 +100,15 @@ const { bandOf, brandPalette, brandType, tapeMarks, moneyText, shortAmount } =
   await import("../src/present/blueprintData");
 const { KickoffSlide } = await import("../src/present/KickoffSlide");
 const { missing, QUESTIONS } = await import("../src/present/blueprintForm");
-const { BlueprintDoHere, BlueprintNotes, CALL_TAPS, WRAP_KEYS } = await import(
-  "../src/present/BlueprintNotes"
-);
+const {
+  BlueprintDoHere,
+  BlueprintNotes,
+  BlueprintWhere,
+  CALL_TAPS,
+  fillLine,
+  fillPlaces,
+  WRAP_KEYS,
+} = await import("../src/present/BlueprintNotes");
 const { PresentApp } = await import("../src/present/PresentApp");
 const { blueprintLoaded, fakeBlueprintIO, BP_NOW } = await import(
   "../src/practice/fixtures/blueprintFixtures"
@@ -433,6 +439,44 @@ describe("the tamed wall", () => {
         host.querySelectorAll("textarea, input, button[aria-pressed]").length,
       ).toBe(0);
     }
+  });
+
+  test("every slide says where it is filled: on the slide, in the notes, both or neither", () => {
+    const { loaded, d } = midCall("en");
+    const bp = model(loaded, d, {});
+    const place = (id: string) => {
+      const p = fillPlaces(bp, id);
+      return [p.slide > 0, Boolean(p.notes)];
+    };
+    const slideOnly = [
+      "so-far",
+      "best-at",
+      "pricing",
+      "competitors",
+      "how-ads-work",
+      "brand",
+    ];
+    const both = ["one-service", "first-ads", "content", "read-back"];
+    for (const id of slideOnly) expect(place(id)).toEqual([true, false]);
+    for (const id of both) expect(place(id)).toEqual([true, true]);
+    for (const id of ["cover", "today", "offer"])
+      expect(place(id)).toEqual([false, false]);
+    expect(place("next")).toEqual([false, true]);
+    expect(fillLine(fillPlaces(bp, "pricing"))).toBe("Fill on the slide");
+    expect(fillLine(fillPlaces(bp, "next"))).toBe("Fill in your notes");
+    host.innerHTML = renderToStaticMarkup(
+      <BlueprintWhere bp={bp} slideId="pricing" />,
+    );
+    expect(host.querySelectorAll("[data-on]").length).toBe(1);
+    expect(host.textContent).toContain("4 to tap, with them");
+    expect(
+      renderToStaticMarkup(
+        <BlueprintWhere
+          bp={model(loaded, d, {}, { readOnly: true })}
+          slideId="pricing"
+        />,
+      ),
+    ).toBe("");
   });
 
   test("each question has one place on the call", () => {

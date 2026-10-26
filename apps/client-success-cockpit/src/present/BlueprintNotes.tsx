@@ -1,4 +1,11 @@
-import { CalendarPlus, Check, RefreshCw } from "lucide-react";
+import {
+  CalendarPlus,
+  Check,
+  type LucideIcon,
+  NotebookPen,
+  Presentation,
+  RefreshCw,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -188,15 +195,146 @@ function Part1Line({ bp, change }: { bp: BpModel; change: boolean }) {
   );
 }
 
-/** The client's answers on this slide, read here; they are tapped on the slide. */
-function SlideAnswers({ bp, slideId }: { bp: BpModel; slideId: string }) {
-  const qs = QUESTIONS.filter(
+/** The client's questions tapped on this slide, with them. */
+const slideQuestions = (bp: BpModel, slideId: string) =>
+  QUESTIONS.filter(
     q =>
       q.key &&
       q.client &&
       q.where.some(w => "slide" in w && w.slide === slideId) &&
       shown(q, bp.answers),
   );
+
+/**
+ * Where this slide is filled: its answers on the shared slide, and the one
+ * thing for the notes (a tap, Send to media or the booking), or neither.
+ */
+export function fillPlaces(bp: BpModel, slideId: string) {
+  const qs = slideQuestions(bp, slideId);
+  const taps = asked(CALL_TAPS[slideId] ?? []).filter(q =>
+    shown(q, bp.answers),
+  );
+  return {
+    slide: qs.length,
+    open: qs.filter(q => !has(bp.answers, q.key as BpKey)).length,
+    notes:
+      slideId === "first-ads"
+        ? "Send part 1 to media"
+        : slideId === "next"
+          ? "Book the launch call"
+          : taps.length
+            ? `${taps.length} tap${taps.length > 1 ? "s" : ""}`
+            : null,
+  };
+}
+
+/** The next slide's place, said in the notes' footer before it is reached. */
+export function fillLine(p: ReturnType<typeof fillPlaces>) {
+  return p.slide && p.notes
+    ? "Fill on the slide and in your notes"
+    : p.slide
+      ? "Fill on the slide"
+      : p.notes
+        ? "Fill in your notes"
+        : "Nothing to fill";
+}
+
+function Place({
+  icon: Icon,
+  title,
+  value,
+  on,
+  done,
+  notes,
+}: {
+  icon: LucideIcon;
+  title: string;
+  value: string;
+  on: boolean;
+  done?: boolean;
+  notes?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "min-w-0 rounded-lg border px-2.5 py-1.5",
+        !on
+          ? "border-dashed text-muted-foreground"
+          : notes
+            ? "border-primary/50 bg-primary/10"
+            : "border-foreground/25 bg-muted/60",
+      )}
+      data-on={on || undefined}
+    >
+      <div
+        className={cn(
+          "flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider",
+          on && notes ? "text-primary" : on ? "text-foreground" : "",
+        )}
+      >
+        <Icon aria-hidden className="size-3.5 shrink-0" />
+        {title}
+      </div>
+      <div
+        className={cn(
+          "mt-0.5 flex items-center gap-1 truncate text-xs",
+          on && "font-medium",
+          done && "txt-good",
+        )}
+      >
+        {done ? <Check aria-hidden className="size-3.5 shrink-0" /> : null}
+        {value}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Where to fill this slide, at the top of the notes on every slide: on the
+ * shared slide with the client, in the notes, both or neither.
+ */
+export function BlueprintWhere({
+  bp,
+  slideId,
+}: {
+  bp: BpModel | null | undefined;
+  slideId: string;
+}) {
+  if (!bp || bp.readOnly) return null;
+  const p = fillPlaces(bp, slideId);
+  return (
+    <section aria-label="Where to fill" className="mt-2 grid grid-cols-2 gap-2">
+      <Place
+        icon={Presentation}
+        title="On the slide"
+        on={p.slide > 0}
+        done={p.slide > 0 && !p.open}
+        value={
+          !p.slide
+            ? "Nothing"
+            : !p.open
+              ? p.slide > 1
+                ? `All ${p.slide} tapped`
+                : "Tapped"
+              : p.open < p.slide
+                ? `${p.open} of ${p.slide} to tap, with them`
+                : `${p.open} to tap, with them`
+        }
+      />
+      <Place
+        icon={NotebookPen}
+        title="In your notes"
+        on={Boolean(p.notes)}
+        notes
+        value={p.notes ?? "Nothing"}
+      />
+    </section>
+  );
+}
+
+/** The client's answers on this slide, read here; they are tapped on the slide. */
+function SlideAnswers({ bp, slideId }: { bp: BpModel; slideId: string }) {
+  const qs = slideQuestions(bp, slideId);
   if (!qs.length) return null;
   return (
     <section className="space-y-2 border-t pt-3">
