@@ -1,5 +1,5 @@
 import { CalendarPlus } from "lucide-react";
-import { useMemo } from "react";
+import { type ComponentProps, useMemo } from "react";
 import { Navigate, useLocation, useParams } from "react-router";
 import { toast } from "sonner";
 import { useCockpitAuth } from "@/auth/SupabaseAuthProvider";
@@ -39,6 +39,23 @@ function practiceBooking(kind: string) {
   );
   return at.toISOString();
 }
+
+/** The practice decks' booking button: the real one's look, and a time that books nothing. */
+export const practiceBook: NonNullable<
+  ComponentProps<typeof PresentApp>["book"]
+> = (_d, kind, label, onBooked, opts) => (
+  <Button
+    size="sm"
+    variant={opts?.variant ?? "outline"}
+    onClick={() => {
+      opts?.onAutoOpenConsumed?.();
+      onBooked(practiceBooking(kind));
+    }}
+  >
+    <CalendarPlus aria-hidden />
+    {label}
+  </Button>
+);
 
 export default function PracticeDeckPage({
   notes = false,
@@ -80,23 +97,7 @@ export default function PracticeDeckPage({
       io={io}
       practice
       urls={practiceUrls(deck)}
-      book={
-        deck === "blueprint"
-          ? undefined
-          : (_d, kind, label, onBooked, opts) => (
-              <Button
-                size="sm"
-                variant={opts?.variant ?? "outline"}
-                onClick={() => {
-                  opts?.onAutoOpenConsumed?.();
-                  onBooked(practiceBooking(kind));
-                }}
-              >
-                <CalendarPlus aria-hidden />
-                {label}
-              </Button>
-            )
-      }
+      book={deck === "blueprint" ? undefined : practiceBook}
       kickoff={kickoff}
     />
   );

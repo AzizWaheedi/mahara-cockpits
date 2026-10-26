@@ -258,7 +258,10 @@ export function PrepView({
       {/* The CSM's read-only view of the Blueprint runs no call of its own. */}
       {deck !== "blueprint" || (base.bp && !base.bp.readOnly) ? (
         <div className={cn(hosted && "pr-[var(--host-end,16px)]")}>
-          {made ? <PracticeNote className="mx-4 mt-3 w-fit" /> : null}
+          {/* Hosted, the creative director's page says it once, above. */}
+          {made && !hosted ? (
+            <PracticeNote className="mx-4 mt-3 w-fit" />
+          ) : null}
           <CallGuideBand
             deck={deck}
             taskId={d.taskId}

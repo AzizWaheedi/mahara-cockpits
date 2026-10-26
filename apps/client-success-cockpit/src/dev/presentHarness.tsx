@@ -50,6 +50,7 @@ import { fakeKickoff, kickoffScenario } from "./deck/kickoffFixtures";
 import { PartsSheet } from "./deck/PartsSheet";
 import "@/index.css";
 import { Toaster } from "sonner";
+import { practiceBook } from "@/practice/PracticeDeckPage";
 import PracticePage from "@/practice/PracticePage";
 import { practiceIO, practiceKickoff } from "@/practice/practiceClient";
 import { PRACTICE_TASK } from "@/present/deckHost";
@@ -448,15 +449,7 @@ function PracticeHarness() {
             view: "prep",
           }),
         }}
-        book={(_d, kind, label, onBooked) => (
-          <button
-            type="button"
-            className="rounded-lg border px-3 py-1.5 text-sm hover:border-primary"
-            onClick={() => onBooked(new Date(HARNESS_NOW).toISOString())}
-          >
-            {label} ({kind}, practice)
-          </button>
-        )}
+        book={deck === "blueprint" ? undefined : practiceBook}
         kickoff={kickoff}
       />
       <Toaster />
